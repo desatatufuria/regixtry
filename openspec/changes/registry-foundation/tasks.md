@@ -46,6 +46,6 @@ Chain strategy: feature-branch-chain
 
 ## Phase 4: Operator Console and Verification
 
-- [ ] 4.1 Create `internal/tui/` Bubble Tea models for repositories, tags, manifests, blobs, uploads, empty state, and unavailable v1 mutations via service queries only.
-- [ ] 4.2 Add protocol integration tests for push/pull success, digest mismatch rejection, anonymous pull on/off, missing blob publish rejection, and incomplete upload invisibility.
-- [ ] 4.3 Add end-to-end verification notes/scripts under `docs/` for Docker push/pull compatibility and TUI inspection smoke coverage; keep them aligned with PR work units.
+- [x] 4.1 Create `internal/tui/` Bubble Tea models for repositories, tags, manifests, blobs, uploads, empty state, and unavailable v1 mutations via service queries only.
+- [x] 4.2 Add protocol integration tests for push/pull success, digest mismatch rejection, anonymous pull on/off, missing blob publish rejection, and incomplete upload invisibility.
+- [x] 4.3 Add end-to-end verification notes/scripts under `docs/` for Docker push/pull compatibility and TUI inspection smoke coverage; keep them aligned with PR work units.
