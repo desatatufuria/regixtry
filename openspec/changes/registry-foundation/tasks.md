@@ -33,10 +33,10 @@ Chain strategy: feature-branch-chain
 
 ## Phase 2: Domain and Storage Foundation
 
-- [ ] 2.1 Create `internal/domain/registry/` types for digest, repository reference, manifest, upload state, descriptors, and registry errors with unit tests.
-- [ ] 2.2 Create `internal/ports/` interfaces for `BlobStore`, `MetadataStore`, `AccessController`, `TenantResolver`, and `JobRunner` plus config-ready single-tenant/auth defaults.
-- [ ] 2.3 Create `internal/infra/storage/fsblob/` for upload staging, digest validation, blob promotion, and blob reads with temp-dir integration tests.
-- [ ] 2.4 Create `internal/infra/metadata/sqlite/` schema and repositories for catalog, tags, manifest references, blob linkage, and restart-safe upload metadata with SQLite integration tests.
+- [x] 2.1 Create `internal/domain/registry/` types for digest, repository reference, manifest, upload state, descriptors, and registry errors with unit tests.
+- [x] 2.2 Create `internal/ports/` interfaces for `BlobStore`, `MetadataStore`, `AccessController`, `TenantResolver`, and `JobRunner` plus config-ready single-tenant/auth defaults.
+- [x] 2.3 Create `internal/infra/storage/fsblob/` for upload staging, digest validation, blob promotion, and blob reads with temp-dir integration tests.
+- [x] 2.4 Create `internal/infra/metadata/sqlite/` schema and repositories for catalog, tags, manifest references, blob linkage, and restart-safe upload metadata with SQLite integration tests.
 
 ## Phase 3: Registry Service and Protocol Wiring
 
