@@ -29,7 +29,7 @@ Chain strategy: feature-branch-chain
 
 - [x] 1.1 Create `go.mod`, `.gitignore`, `README.md`, `docs/roadmap.md`, `docs/glossary.md`, and `docs/contributing.md` with v1 scope, non-goals, API boundary, and GitFlow workflow.
 - [x] 1.2 Create `docs/architecture.md` describing single-binary layers, ports, storage/auth seams, and TUI thin-client boundary from `design.md`.
-- [ ] 1.3 Make the first repository commit on `main`, create `develop`, then create `feature/registry-foundation`; document branch/PR order in `docs/contributing.md`.
+- [x] 1.3 Make the first repository commit on `main`, create `develop`, then create `feature/registry-foundation`; document branch/PR order in `docs/contributing.md`.
 
 ## Phase 2: Domain and Storage Foundation
 
