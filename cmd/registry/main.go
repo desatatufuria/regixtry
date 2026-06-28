@@ -1,0 +1,158 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"net"
+	stdhttp "net/http"
+	"os"
+	"path/filepath"
+
+	appregistry "registry/internal/app/registry"
+	metadata "registry/internal/infra/metadata/sqlite"
+	"registry/internal/infra/storage/fsblob"
+	"registry/internal/ports"
+	registryhttp "registry/internal/protocol/http"
+)
+
+func main() {
+	if err := run(context.Background(), os.Args[1:], os.Stdout, os.Stderr); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+func run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) error {
+	if len(args) == 0 {
+		return errors.New("expected subcommand: serve or tui")
+	}
+
+	switch args[0] {
+	case "serve":
+		cfg, err := parseServeConfig(args[1:])
+		if err != nil {
+			return err
+		}
+
+		listener, err := net.Listen("tcp", cfg.Address)
+		if err != nil {
+			return err
+		}
+		defer listener.Close()
+
+		return serve(ctx, listener, cfg, stdout)
+	case "tui":
+		return runTUI(stdout)
+	default:
+		return fmt.Errorf("unknown subcommand %q", args[0])
+	}
+}
+
+type serveConfig struct {
+	Address            string
+	StorageRoot        string
+	DatabasePath       string
+	Tenant             string
+	AllowAnonymousPull bool
+	Realm              string
+	ServiceName        string
+}
+
+func parseServeConfig(args []string) (serveConfig, error) {
+	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+
+	var cfg serveConfig
+	flags.StringVar(&cfg.Address, "addr", "127.0.0.1:5000", "address to listen on")
+	flags.StringVar(&cfg.StorageRoot, "storage-root", filepath.Join(".", "data"), "root directory for registry storage")
+	flags.StringVar(&cfg.DatabasePath, "db", "", "path to the SQLite metadata database")
+	flags.StringVar(&cfg.Tenant, "tenant", ports.DefaultTenant, "tenant identifier")
+	flags.BoolVar(&cfg.AllowAnonymousPull, "allow-anonymous-pull", false, "allow unauthenticated manifest/blob reads")
+	flags.StringVar(&cfg.Realm, "realm", "registry", "auth challenge realm")
+	flags.StringVar(&cfg.ServiceName, "service", "registry", "auth challenge service name")
+
+	if err := flags.Parse(args); err != nil {
+		return serveConfig{}, err
+	}
+
+	if cfg.DatabasePath == "" {
+		cfg.DatabasePath = filepath.Join(cfg.StorageRoot, "metadata.db")
+	}
+
+	return cfg, nil
+}
+
+func serve(ctx context.Context, listener net.Listener, cfg serveConfig, stdout io.Writer) error {
+	handler, cleanup, err := newHandler(cfg)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	server := &stdhttp.Server{Handler: handler}
+	errCh := make(chan error, 1)
+	go func() {
+		err := server.Serve(listener)
+		if err != nil && !errors.Is(err, stdhttp.ErrServerClosed) {
+			errCh <- err
+			return
+		}
+		errCh <- nil
+	}()
+
+	if stdout != nil {
+		fmt.Fprintf(stdout, "registry serving on %s\n", listener.Addr().String())
+	}
+
+	select {
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		_ = server.Shutdown(shutdownCtx)
+		return <-errCh
+	case err := <-errCh:
+		return err
+	}
+}
+
+func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
+	if err := os.MkdirAll(cfg.StorageRoot, 0o755); err != nil {
+		return nil, nil, err
+	}
+
+	blobStore, err := fsblob.New(filepath.Join(cfg.StorageRoot, "content"))
+	if err != nil {
+		return nil, nil, err
+	}
+
+	metadataStore, err := metadata.New(cfg.DatabasePath)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	service := appregistry.NewService(
+		blobStore,
+		metadataStore,
+		ports.NewConfigurableAccessController(ports.AccessConfig{
+			AllowAnonymousPull: cfg.AllowAnonymousPull,
+			Realm:              cfg.Realm,
+			Service:            cfg.ServiceName,
+		}),
+		ports.NewSingleTenantResolver(cfg.Tenant),
+		ports.NewInlineJobRunner(),
+	)
+
+	return registryhttp.NewRouter(service), func() {
+		_ = metadataStore.Close()
+	}, nil
+}
+
+func runTUI(stdout io.Writer) error {
+	if stdout != nil {
+		fmt.Fprintln(stdout, "tui command is reserved for Phase 4 and is not implemented in this slice")
+	}
+	return errors.New("tui command is not implemented yet")
+}

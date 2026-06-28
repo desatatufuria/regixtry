@@ -40,9 +40,9 @@ Chain strategy: feature-branch-chain
 
 ## Phase 3: Registry Service and Protocol Wiring
 
-- [ ] 3.1 Create `internal/app/registry/service.go` and `queries.go` for publish, resolve, catalog, tags, manifest/blob inspection, and upload-state queries.
-- [ ] 3.2 Create `internal/protocol/http/` routing and OCI-compatible handlers for blob upload, manifest publish/read, catalog, tags, and auth-challenge responses.
-- [ ] 3.3 Create `cmd/registry/main.go` with `serve` and `tui` commands, filesystem/SQLite wiring, config for anonymous pull, and smoke-start tests.
+- [x] 3.1 Create `internal/app/registry/service.go` and `queries.go` for publish, resolve, catalog, tags, manifest/blob inspection, and upload-state queries.
+- [x] 3.2 Create `internal/protocol/http/` routing and OCI-compatible handlers for blob upload, manifest publish/read, catalog, tags, and auth-challenge responses.
+- [x] 3.3 Create `cmd/registry/main.go` with `serve` and `tui` commands, filesystem/SQLite wiring, config for anonymous pull, and smoke-start tests.
 
 ## Phase 4: Operator Console and Verification
 
