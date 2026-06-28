@@ -1,0 +1,13 @@
+.atl/
+.devcontainer/.env
+
+# Go
+bin/
+dist/
+coverage.out
+*.test
+
+# Editor / OS
+.DS_Store
+*.swp
+*.swo

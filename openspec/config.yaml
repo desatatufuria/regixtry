@@ -1,0 +1,72 @@
+schema: spec-driven
+
+context: |
+  Stack: No application stack initialized yet; repository currently contains only a Go-focused devcontainer bootstrap.
+  Runtime: Docker-based development container with Go 1.26.4, Docker CLI/Compose, Node.js/npm, sqlite3, gopls, dlv, staticcheck, and Air.
+  Architecture: Not implemented yet; application, domain, and storage layers are still to be defined.
+  Testing: No test runner, module manifest, or CI pipeline detected in the repository state.
+  Style: English technical artifacts, minimalistic polished UX, low-resource design, GitFlow workflow, benchmark before implementation, clean commits.
+
+strict_tdd: false
+
+testing:
+  detected: "2026-06-28"
+  strict_tdd: false
+  runner:
+    available: false
+    framework: "—"
+    command: "—"
+  layers:
+    unit:
+      available: false
+      tool: "—"
+    integration:
+      available: false
+      tool: "—"
+    e2e:
+      available: false
+      tool: "—"
+  coverage:
+    available: false
+    command: "—"
+  quality:
+    linter:
+      available: true
+      command: "staticcheck ./... (available in devcontainer once a Go module exists)"
+    type_checker:
+      available: true
+      command: "go test ./... or go build ./... (available in devcontainer once a Go module exists)"
+    formatter:
+      available: true
+      command: "gofmt -w ./... (available in Go toolchain once source files exist)"
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes.
+    - Benchmark existing OSS and industry registries before proposing implementation details.
+    - Keep roadmap and documentation impact explicit from the start.
+  specs:
+    - Use Given/When/Then for scenarios.
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY).
+    - Distinguish current repository facts from planned product behavior.
+  design:
+    - Document architecture decisions with rationale and performance/resource tradeoffs.
+    - Explain Docker API boundaries, registry storage model, and Bubble Tea TUI interaction model before implementation.
+  tasks:
+    - Group by phase, use hierarchical numbering.
+    - Keep tasks completable in one session.
+    - Separate benchmarking, documentation, platform bootstrap, and implementation tracks.
+  apply:
+    constraints:
+      - Follow existing code patterns once they exist.
+      - Keep commits clean and aligned with GitFlow.
+    tdd: false
+    test_command: ""
+  verify:
+    constraints:
+      - Prove benchmark assumptions and UX constraints against implementation artifacts.
+    test_command: ""
+    build_command: ""
+    coverage_threshold: 0
+  archive:
+    - Warn before merging destructive deltas.
