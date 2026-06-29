@@ -5,6 +5,7 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -15,6 +16,40 @@ import (
 	"registry/internal/infra/storage/fsblob"
 	"registry/internal/ports"
 )
+
+func TestParseServeConfigAnonymousAccessDefaults(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := parseServeConfig(nil)
+	if err != nil {
+		t.Fatalf("parseServeConfig() error = %v", err)
+	}
+
+	if cfg.AllowAnonymousPull {
+		t.Fatal("AllowAnonymousPull = true, want false")
+	}
+
+	if cfg.AllowAnonymousPush {
+		t.Fatal("AllowAnonymousPush = true, want false")
+	}
+}
+
+func TestParseServeConfigAllowsAnonymousPushFlag(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := parseServeConfig([]string{"-allow-anonymous-push", "-allow-anonymous-pull"})
+	if err != nil {
+		t.Fatalf("parseServeConfig() error = %v", err)
+	}
+
+	if !cfg.AllowAnonymousPull {
+		t.Fatal("AllowAnonymousPull = false, want true")
+	}
+
+	if !cfg.AllowAnonymousPush {
+		t.Fatal("AllowAnonymousPush = false, want true")
+	}
+}
 
 func TestServeStartsAndRespondsToPing(t *testing.T) {
 	t.Parallel()
@@ -62,6 +97,58 @@ func TestServeStartsAndRespondsToPing(t *testing.T) {
 
 	if !strings.Contains(stdout.String(), "registry serving on") {
 		t.Fatalf("stdout = %q, want start message", stdout.String())
+	}
+}
+
+func TestNewHandlerAnonymousPushWiring(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name               string
+		allowAnonymousPush bool
+		wantStatus         int
+	}{
+		{
+			name:       "anonymous push disabled stays unauthorized",
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:               "anonymous push enabled allows upload start",
+			allowAnonymousPush: true,
+			wantStatus:         http.StatusAccepted,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			storageRoot := t.TempDir()
+			handler, cleanup, err := newHandler(serveConfig{
+				StorageRoot:        storageRoot,
+				DatabasePath:       filepath.Join(storageRoot, "registry.db"),
+				AllowAnonymousPush: tt.allowAnonymousPush,
+			})
+			if err != nil {
+				t.Fatalf("newHandler() error = %v", err)
+			}
+			defer cleanup()
+
+			req := httptest.NewRequest(http.MethodPost, "/v2/library/alpine/blobs/uploads/", nil)
+			recorder := httptest.NewRecorder()
+
+			handler.ServeHTTP(recorder, req)
+
+			if recorder.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d", recorder.Code, tt.wantStatus)
+			}
+
+			if tt.wantStatus == http.StatusAccepted {
+				if got := recorder.Header().Get("Location"); !strings.HasPrefix(got, "/v2/library/alpine/blobs/uploads/") {
+					t.Fatalf("Location = %q, want upload location", got)
+				}
+			}
+		})
 	}
 }
 

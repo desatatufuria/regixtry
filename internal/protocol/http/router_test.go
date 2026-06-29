@@ -167,6 +167,38 @@ func TestRouterAllowsAnonymousPullWhenConfigured(t *testing.T) {
 	}
 }
 
+func TestRouterRejectsAnonymousPushByDefault(t *testing.T) {
+	t.Parallel()
+
+	handler, cleanup := newTestRouter(t, ports.NewConfigurableAccessController(ports.AccessConfig{AllowAnonymousPull: true}))
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodPost, "/v2/library/alpine/blobs/uploads/", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestRouterAllowsAnonymousPushWhenConfigured(t *testing.T) {
+	t.Parallel()
+
+	handler, cleanup := newTestRouter(t, ports.NewConfigurableAccessController(ports.AccessConfig{AllowAnonymousPush: true}))
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodPost, "/v2/library/alpine/blobs/uploads/", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusAccepted)
+	}
+}
+
 func TestRouterRejectsManifestWithMissingBlob(t *testing.T) {
 	t.Parallel()
 

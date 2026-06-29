@@ -70,6 +70,7 @@ type serveConfig struct {
 	DatabasePath       string
 	Tenant             string
 	AllowAnonymousPull bool
+	AllowAnonymousPush bool
 	Realm              string
 	ServiceName        string
 }
@@ -84,6 +85,7 @@ func parseServeConfig(args []string) (serveConfig, error) {
 	flags.StringVar(&cfg.DatabasePath, "db", "", "path to the SQLite metadata database")
 	flags.StringVar(&cfg.Tenant, "tenant", ports.DefaultTenant, "tenant identifier")
 	flags.BoolVar(&cfg.AllowAnonymousPull, "allow-anonymous-pull", false, "allow unauthenticated manifest/blob reads")
+	flags.BoolVar(&cfg.AllowAnonymousPush, "allow-anonymous-push", false, "allow unauthenticated blob/manifest writes")
 	flags.StringVar(&cfg.Realm, "realm", "registry", "auth challenge realm")
 	flags.StringVar(&cfg.ServiceName, "service", "registry", "auth challenge service name")
 
@@ -172,6 +174,7 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 		metadataStore,
 		ports.NewConfigurableAccessController(ports.AccessConfig{
 			AllowAnonymousPull: cfg.AllowAnonymousPull,
+			AllowAnonymousPush: cfg.AllowAnonymousPush,
 			Realm:              cfg.Realm,
 			Service:            cfg.ServiceName,
 		}),

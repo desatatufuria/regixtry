@@ -16,5 +16,6 @@ go run ./cmd/registry tui \
   >"${OUTPUT_FILE}"
 
 grep -q "Registry Console" "${OUTPUT_FILE}"
+grep -q "registry-foundation/smoke" "${OUTPUT_FILE}"
 
 echo "TUI smoke output captured at ${OUTPUT_FILE}."

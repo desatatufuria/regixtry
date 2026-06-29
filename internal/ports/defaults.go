@@ -10,6 +10,7 @@ const DefaultTenant = "default"
 
 type AccessConfig struct {
 	AllowAnonymousPull bool
+	AllowAnonymousPush bool
 	Realm              string
 	Service            string
 }
@@ -32,6 +33,7 @@ func (r singleTenantResolver) Resolve(context.Context) string {
 
 type configurableAccessController struct {
 	allowAnonymousPull bool
+	allowAnonymousPush bool
 	challenge          Challenge
 }
 
@@ -48,6 +50,7 @@ func NewConfigurableAccessController(config AccessConfig) AccessController {
 
 	return configurableAccessController{
 		allowAnonymousPull: config.AllowAnonymousPull,
+		allowAnonymousPush: config.AllowAnonymousPush,
 		challenge: Challenge{
 			Scheme:  "Bearer",
 			Realm:   realm,
@@ -58,6 +61,10 @@ func NewConfigurableAccessController(config AccessConfig) AccessController {
 
 func (c configurableAccessController) Authorize(_ context.Context, action Action) error {
 	if action.Verb == ActionPull && c.allowAnonymousPull {
+		return nil
+	}
+
+	if action.Verb == ActionPush && c.allowAnonymousPush {
 		return nil
 	}
 

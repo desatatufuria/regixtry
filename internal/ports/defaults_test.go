@@ -26,6 +26,7 @@ func TestConfigurableAccessController(t *testing.T) {
 		wantError bool
 	}{
 		{name: "anonymous pull allowed", config: AccessConfig{AllowAnonymousPull: true}, action: Action{Verb: ActionPull}},
+		{name: "anonymous push allowed", config: AccessConfig{AllowAnonymousPush: true}, action: Action{Verb: ActionPush}},
 		{name: "push requires auth", config: AccessConfig{AllowAnonymousPull: true}, action: Action{Verb: ActionPush}, wantError: true},
 		{name: "pull requires auth when disabled", config: AccessConfig{}, action: Action{Verb: ActionPull}, wantError: true},
 	}

@@ -3,15 +3,19 @@
 set -euo pipefail
 
 ROOT_DIR="${1:-/tmp/registry-foundation-smoke}"
-ADDR="127.0.0.1:5500"
-IMAGE="localhost:5500/registry-foundation/smoke:latest"
+PORT="${PORT:-${2:-5500}}"
+ADDR="127.0.0.1:${PORT}"
+IMAGE="localhost:${PORT}/registry-foundation/smoke:latest"
 PID=""
+LOG_FILE="$(mktemp "${TMPDIR:-/tmp}/registry-foundation-serve.${PORT}.XXXXXX.log")"
 
 cleanup() {
   if [[ -n "${PID}" ]] && kill -0 "${PID}" >/dev/null 2>&1; then
     kill "${PID}" >/dev/null 2>&1 || true
     wait "${PID}" 2>/dev/null || true
   fi
+
+  rm -f "${LOG_FILE}" >/dev/null 2>&1 || true
 }
 
 trap cleanup EXIT
@@ -25,7 +29,8 @@ go run ./cmd/registry serve \
   -addr "${ADDR}" \
   -storage-root "${ROOT_DIR}" \
   -allow-anonymous-pull \
-  >/tmp/registry-foundation-serve.log 2>&1 &
+  -allow-anonymous-push \
+  >"${LOG_FILE}" 2>&1 &
 PID="$!"
 
 sleep 2

@@ -6,7 +6,7 @@ This slice closes `registry-foundation` Phase 4.
 
 1. Run the Go integration suite for protocol and TUI behavior.
 2. Run the Docker push/pull smoke script against a local registry instance.
-3. Run the TUI smoke script against the same storage root and confirm the repository view renders.
+3. Run the TUI smoke script against the same storage root and confirm the snapshot includes the seeded repository view, not only the console title.
 
 ## Verification checklist
 
@@ -33,6 +33,8 @@ GOMODCACHE="/tmp/opencode/gomodcache" GOPATH="/tmp/opencode/gopath" GOSUMDB=off 
 
 docs/verification/scripts/docker-push-pull-smoke.sh /tmp/registry-foundation-smoke
 
+PORT=5600 docs/verification/scripts/docker-push-pull-smoke.sh /tmp/registry-foundation-smoke
+
 docs/verification/scripts/tui-smoke.sh /tmp/registry-foundation-smoke
 ```
 
@@ -41,10 +43,12 @@ docs/verification/scripts/tui-smoke.sh /tmp/registry-foundation-smoke
 | Step | Expected result |
 |---|---|
 | Go integration suite | All package tests pass. |
-| Docker smoke | `docker pull` returns the image pushed into the local registry. |
-| TUI smoke | Snapshot output includes `Registry Console` and the seeded repository name. |
+| Docker smoke | `docker pull` returns the image pushed into the local registry; the smoke server is started with explicit `-allow-anonymous-push` for this verification flow. |
+| TUI smoke | Snapshot output includes `Registry Console` and the seeded `registry-foundation/smoke` repository name. |
 
 ## Notes
 
 - The environment used for automated apply work requires explicit `GOMODCACHE`, `GOPATH`, and `GOSUMDB=off` values for Go commands.
 - The Docker smoke script assumes a working local Docker daemon and an available loopback port.
+- When a machine requires `sudo` for Docker, running `sudo bash docs/verification/scripts/docker-push-pull-smoke.sh ...` is acceptable; the script now uses a per-run log file to avoid stale `/tmp` permission collisions.
+- Anonymous push is a smoke/dev verification flag for this script, not a statement that anonymous push is generally enabled by product policy.
