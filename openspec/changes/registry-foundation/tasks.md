@@ -29,23 +29,23 @@ Chain strategy: feature-branch-chain
 
 - [x] 1.1 Create `go.mod`, `.gitignore`, `README.md`, `docs/roadmap.md`, `docs/glossary.md`, and `docs/contributing.md` with v1 scope, non-goals, API boundary, and GitFlow workflow.
 - [x] 1.2 Create `docs/architecture.md` describing single-binary layers, ports, storage/auth seams, and TUI thin-client boundary from `design.md`.
-- [ ] 1.3 Make the first repository commit on `main`, create `develop`, then create `feature/registry-foundation`; document branch/PR order in `docs/contributing.md`.
+- [x] 1.3 Make the first repository commit on `main`, create `develop`, then create `feature/registry-foundation`; document branch/PR order in `docs/contributing.md`.
 
 ## Phase 2: Domain and Storage Foundation
 
-- [ ] 2.1 Create `internal/domain/registry/` types for digest, repository reference, manifest, upload state, descriptors, and registry errors with unit tests.
-- [ ] 2.2 Create `internal/ports/` interfaces for `BlobStore`, `MetadataStore`, `AccessController`, `TenantResolver`, and `JobRunner` plus config-ready single-tenant/auth defaults.
-- [ ] 2.3 Create `internal/infra/storage/fsblob/` for upload staging, digest validation, blob promotion, and blob reads with temp-dir integration tests.
-- [ ] 2.4 Create `internal/infra/metadata/sqlite/` schema and repositories for catalog, tags, manifest references, blob linkage, and restart-safe upload metadata with SQLite integration tests.
+- [x] 2.1 Create `internal/domain/registry/` types for digest, repository reference, manifest, upload state, descriptors, and registry errors with unit tests.
+- [x] 2.2 Create `internal/ports/` interfaces for `BlobStore`, `MetadataStore`, `AccessController`, `TenantResolver`, and `JobRunner` plus config-ready single-tenant/auth defaults.
+- [x] 2.3 Create `internal/infra/storage/fsblob/` for upload staging, digest validation, blob promotion, and blob reads with temp-dir integration tests.
+- [x] 2.4 Create `internal/infra/metadata/sqlite/` schema and repositories for catalog, tags, manifest references, blob linkage, and restart-safe upload metadata with SQLite integration tests.
 
 ## Phase 3: Registry Service and Protocol Wiring
 
-- [ ] 3.1 Create `internal/app/registry/service.go` and `queries.go` for publish, resolve, catalog, tags, manifest/blob inspection, and upload-state queries.
-- [ ] 3.2 Create `internal/protocol/http/` routing and OCI-compatible handlers for blob upload, manifest publish/read, catalog, tags, and auth-challenge responses.
-- [ ] 3.3 Create `cmd/registry/main.go` with `serve` and `tui` commands, filesystem/SQLite wiring, config for anonymous pull, and smoke-start tests.
+- [x] 3.1 Create `internal/app/registry/service.go` and `queries.go` for publish, resolve, catalog, tags, manifest/blob inspection, and upload-state queries.
+- [x] 3.2 Create `internal/protocol/http/` routing and OCI-compatible handlers for blob upload, manifest publish/read, catalog, tags, and auth-challenge responses.
+- [x] 3.3 Create `cmd/registry/main.go` with `serve` and `tui` commands, filesystem/SQLite wiring, config for anonymous pull, and smoke-start tests.
 
 ## Phase 4: Operator Console and Verification
 
-- [ ] 4.1 Create `internal/tui/` Bubble Tea models for repositories, tags, manifests, blobs, uploads, empty state, and unavailable v1 mutations via service queries only.
-- [ ] 4.2 Add protocol integration tests for push/pull success, digest mismatch rejection, anonymous pull on/off, missing blob publish rejection, and incomplete upload invisibility.
-- [ ] 4.3 Add end-to-end verification notes/scripts under `docs/` for Docker push/pull compatibility and TUI inspection smoke coverage; keep them aligned with PR work units.
+- [x] 4.1 Create `internal/tui/` Bubble Tea models for repositories, tags, manifests, blobs, uploads, empty state, and unavailable v1 mutations via service queries only.
+- [x] 4.2 Add protocol integration tests for push/pull success, digest mismatch rejection, anonymous pull on/off, missing blob publish rejection, and incomplete upload invisibility.
+- [x] 4.3 Add end-to-end verification notes/scripts under `docs/` for Docker push/pull compatibility and TUI inspection smoke coverage; keep them aligned with PR work units.

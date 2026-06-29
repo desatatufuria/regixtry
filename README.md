@@ -1,42 +1,80 @@
 # Registry
 
-Registry is a low-resource, single-binary OCI registry for internal and OSS use.
+Registry is a low-resource, single-binary OCI registry for internal and OSS use. V1 is intentionally narrow: deliver correct local registry behavior first, keep operator visibility simple, and leave platform expansion behind explicit seams instead of mixing it into the first release.
 
 ## Quick path
 
 1. Treat the OCI Distribution API as the product boundary.
 2. Keep v1 single-tenant, local-storage, and operationally simple.
-3. Use the docs in `docs/` and the active change in `openspec/` before implementation work.
+3. Use `docs/` for reader-facing decisions and `openspec/changes/registry-foundation/` for the active implementation contract.
 
-## V1 scope
+## V1 outcome
 
-- OCI/Docker-compatible push and pull for manifests and blobs.
-- Repository and tag browsing plus manifest/blob inspection.
-- Local filesystem blob storage with SQLite-backed metadata.
-- Keyboard-first TUI for operator visibility and maintenance basics.
-- Architecture seams for auth, tenancy, jobs, and alternate storage.
+V1 delivers a correct local registry with clear operator visibility.
+
+| Area | Included in v1 |
+| --- | --- |
+| Registry protocol | OCI/Docker-compatible push and pull for manifests and blobs |
+| Discovery | Repository listing, tag browsing, manifest inspection, and blob inspection |
+| Storage model | Local filesystem blob storage with SQLite-backed metadata |
+| Upload lifecycle | Staged uploads, digest validation, and publish-only-on-valid-content rules |
+| Operator experience | Keyboard-first Bubble Tea console for inspection and maintenance basics |
+| Future readiness | Auth, tenant, storage, and background-job seams kept explicit |
 
 ## Non-goals
 
-- Multi-tenant isolation and broad RBAC.
-- Replication, signing orchestration, scanning, and remote object storage.
+These are intentionally OUT of v1:
+
+- Multi-tenant isolation and complex RBAC.
+- Replication, remote object storage, or cross-instance synchronization.
+- Signing orchestration, scanning, provenance pipelines, or broad admin APIs.
+- Deletion/retention platforms, operator-driven garbage collection controls, or Harbor-like feature expansion.
 - Treating the Docker Engine API as the registry contract.
-- TUI-owned registry rules or direct storage reads from the console.
+- Letting the TUI own registry rules or read storage directly.
 
 ## API boundary
 
-The product contract is the OCI Distribution / Docker Registry HTTP API surface for registry content exchange. Docker Engine behavior is out of scope unless it uses that registry protocol as a client.
+The product contract is the OCI Distribution / Docker Registry HTTP API surface for registry content exchange.
 
-## Repository guide
+| In boundary | Out of boundary |
+| --- | --- |
+| Manifest push/pull | Docker daemon lifecycle management |
+| Blob upload/download | Container runtime control |
+| Catalog and tag listing | Host orchestration features |
+| Auth challenge-ready registry access behavior | Docker Engine APIs that do not act as registry clients |
+
+If a capability depends on Docker daemon control instead of registry protocol behavior, it is not part of this product unless introduced later as a separate capability.
+
+## Architecture guardrails
+
+- Single Go binary with `serve` and `tui` entry modes.
+- Registry semantics live in application/domain layers, not in HTTP handlers or the TUI.
+- Filesystem blobs remain authoritative for content bytes.
+- SQLite exists to index repositories, tags, manifests, and upload state cheaply.
+- Anonymous pull MAY be enabled by configuration, but auth remains a seam rather than a full v1 subsystem.
+
+## Workflow baseline
+
+This repository follows GitFlow plus a feature-branch-chain review strategy for oversized changes.
+
+1. `main` holds the release/bootstrap baseline.
+2. `develop` integrates ongoing product work.
+3. `feature/registry-foundation` is the tracker branch for the active change.
+4. PR 1 targets `feature/registry-foundation`.
+5. Later PR slices target the immediate previous PR branch until the tracker branch is ready for `develop`.
+
+Read `docs/contributing.md` before opening or retargeting any PR slice.
+
+## Documentation map
 
 | Path | Purpose |
 | --- | --- |
-| `docs/architecture.md` | Layer boundaries, ports, and runtime seams |
-| `docs/contributing.md` | GitFlow workflow, branch order, and documentation habits |
-| `docs/glossary.md` | Shared protocol and architecture vocabulary |
-| `docs/roadmap.md` | V1 and post-v1 capability sequencing |
-| `openspec/` | Active change planning, specs, design, and tasks |
+| `docs/architecture.md` | Layer boundaries, runtime flows, ports, and explicit seams |
+| `docs/contributing.md` | GitFlow, feature-branch-chain workflow, and documentation duties |
+| `docs/glossary.md` | Shared protocol, storage, and architecture vocabulary |
+| `docs/roadmap.md` | V1 workstreams, non-goals, and post-v1 sequencing |
+| `openspec/changes/registry-foundation/` | Approved proposal, specs, design, and task tracking for the active change |
 
 ## Current status
 
-This repository is in the foundation stage. The bootstrap commit establishes the module, contributor workflow, and architectural boundaries before protocol and storage implementation starts.
+The repository is still in the foundation phase. Documentation and architectural boundaries are being tightened before protocol, storage, and operator-console implementation proceeds.
