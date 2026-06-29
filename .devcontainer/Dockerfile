@@ -52,12 +52,6 @@ WORKDIR /home/${USERNAME}
 
 ENV PATH="/home/${USERNAME}/.local/bin:${PATH}"
 
-# Install Claude Code CLI and gentle-ai (as user → ~/.local/bin)
-# gentle-ai install script exits with code 1 due to an unbound 'tmpdir' variable during cleanup,
-# even though the binary installs successfully. Use || true to allow the build to proceed.
-RUN curl -fsSL https://claude.ai/install.sh | bash \
-    && (curl -fsSL https://raw.githubusercontent.com/Gentleman-Programming/gentle-ai/main/scripts/install.sh | bash || true)
-
 EXPOSE 8095
 
 CMD ["air"]

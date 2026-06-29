@@ -77,4 +77,9 @@ Read `docs/contributing.md` before opening or retargeting any PR slice.
 
 ## Current status
 
-The repository is still in the foundation phase. Documentation and architectural boundaries are being tightened before protocol, storage, and operator-console implementation proceeds.
+`registry-foundation` is implemented in the repository and has been verified at two levels:
+
+- The Go test suite passes for the current codebase.
+- Local smoke verification has confirmed Docker push/pull plus TUI snapshot rendering for the seeded `registry-foundation/smoke` repository.
+
+This does **not** mean the product is feature-complete beyond the documented v1 scope. The repository currently proves the local single-node foundation: OCI/Docker-compatible content flows, SQLite-backed metadata, filesystem blob storage, and a read-oriented operator console.

@@ -67,5 +67,6 @@
     "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind",
     "source=go-mod-cache,target=/go/pkg/mod,type=volume"
    // "source=${localEnv:USERPROFILE}\\.ssh,target=/root/.ssh,type=bind"
-  ]
+  ],
+  "postCreateCommand": "bash .devcontainer/post-create.sh"
 }

@@ -1,4 +1,6 @@
 .atl/
+.codegraph/
+.devcontainer/.codegraph/
 .devcontainer/.env
 
 # Go
