@@ -8,6 +8,26 @@ Registry is a low-resource, single-binary OCI registry for internal and OSS use.
 2. Keep v1 single-tenant, local-storage, and operationally simple.
 3. Use `docs/` for reader-facing decisions and `openspec/changes/registry-foundation/` for the active implementation contract.
 
+## Local Docker Compose runtime
+
+Use Docker Compose when you want a disposable local runtime with the registry plus Postgres-backed auth.
+
+### Quick path
+
+1. Start Postgres: `docker compose up -d postgres`
+2. Bootstrap the first admin: `docker compose run --rm registry bootstrap-admin -password '<admin-password>'`
+3. Start the registry: `docker compose up -d registry`
+
+The registry listens on `127.0.0.1:5000`. Compose keeps SQLite/blob data in the `registry-data` volume and auth state in the `postgres-data` volume.
+
+### Notes
+
+| Topic | Decision |
+| --- | --- |
+| Image build | Top-level `Dockerfile` builds `cmd/registry` into a single runtime image. |
+| Auth wiring | `docker-compose.yml` sets both `REGISTRY_AUTH_POSTGRES_DSN` and `REGISTRY_AUTH_TOKEN_REALM_URL` so the registry shares the same local Postgres service and advertises Docker-compatible bearer challenges that point at `/auth/token`. |
+| First startup | Auth-enabled `serve` fails fast until a global admin exists, so bootstrap the admin before bringing up `registry`. |
+
 ## V1 outcome
 
 V1 delivers a correct local registry with clear operator visibility.
