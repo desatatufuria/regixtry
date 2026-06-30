@@ -87,7 +87,7 @@ The Bubble Tea console is an operator client, not a second backend. Any maintena
 - No deletion/retention platform semantics until later scope explicitly approves them.
 
 ## Repository direction
-
+git diff --cached --stat
 The planned code layout is:
 
 - `cmd/registry/` for binary entrypoints.

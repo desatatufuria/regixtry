@@ -29,7 +29,7 @@ V1 is complete when ALL of the following are true:
 - Incomplete uploads never appear as published registry content.
 - The operator console exposes visibility first and keeps unsupported mutations explicit.
 - Reader-facing docs continue to describe the same scope as the OpenSpec proposal, design, and specs.
-
+git diff --cached --stat
 ## Explicit non-goals for the active change
 
 These items must stay out of PR 1 through PR 3 unless the approved scope changes first:
