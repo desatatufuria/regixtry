@@ -40,6 +40,10 @@
         "openai.chatgpt"
       ],
       "settings": {
+        "go.toolsEnvVars": {
+          "GOMODCACHE": "/tmp/opencode/gomodcache",
+          "GOCACHE": "/tmp/opencode/gocache"
+        },
         "workbench.colorCustomizations": {
           "titleBar.activeBackground": "#2E7D8C",
           "titleBar.activeForeground": "#E8F6F8",
@@ -60,7 +64,9 @@
   "remoteUser": "${localEnv:USER}",
   "updateRemoteUserUID": true,
   "remoteEnv": {
-    "DOCKER_BUILDKIT": "1"
+    "DOCKER_BUILDKIT": "1",
+    "GOMODCACHE": "/tmp/opencode/gomodcache",
+    "GOCACHE": "/tmp/opencode/gocache"
   },
   "mounts": [
     //"source=${localWorkspaceFolder},target=/workspace,type=bind",
