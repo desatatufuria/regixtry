@@ -60,7 +60,11 @@ func NewConfigurableAccessController(config AccessConfig) AccessController {
 }
 
 func (c configurableAccessController) Authorize(_ context.Context, action Action) error {
-	if action.Verb == ActionPull && c.allowAnonymousPull {
+	if action.Principal != nil {
+		return nil
+	}
+
+	if (action.Verb == ActionPull || action.Verb == ActionInspect || action.Verb == ActionCatalog) && c.allowAnonymousPull {
 		return nil
 	}
 
@@ -71,8 +75,59 @@ func (c configurableAccessController) Authorize(_ context.Context, action Action
 	return domain.NewUnauthorizedError("authentication required")
 }
 
-func (c configurableAccessController) Challenge() Challenge {
-	return c.challenge
+func (c configurableAccessController) Challenge(action Action) Challenge {
+	challenge := c.challenge
+	challenge.Scope = action.Scope()
+	return challenge
+}
+
+type principalAccessController struct {
+	challenge Challenge
+}
+
+func NewPrincipalAccessController(challenge Challenge) AccessController {
+	if challenge.Scheme == "" {
+		challenge.Scheme = "Bearer"
+	}
+	if challenge.Realm == "" {
+		challenge.Realm = "registry"
+	}
+	if challenge.Service == "" {
+		challenge.Service = "registry"
+	}
+
+	return principalAccessController{challenge: challenge}
+}
+
+func (c principalAccessController) Authorize(_ context.Context, action Action) error {
+	if action.Principal == nil {
+		return domain.NewUnauthorizedError("authentication required")
+	}
+
+	if action.Principal.IsAdmin {
+		return nil
+	}
+
+	switch action.Verb {
+	case ActionCatalog:
+		return nil
+	case ActionPull, ActionInspect:
+		if action.Repository == "" || action.Principal.HasReadAccess(action.Repository) {
+			return nil
+		}
+	case ActionPush:
+		if action.Repository != "" && action.Principal.HasWriteAccess(action.Repository) {
+			return nil
+		}
+	}
+
+	return domain.NewUnauthorizedError("authorization required")
+}
+
+func (c principalAccessController) Challenge(action Action) Challenge {
+	challenge := c.challenge
+	challenge.Scope = action.Scope()
+	return challenge
 }
 
 type inlineJobRunner struct{}
