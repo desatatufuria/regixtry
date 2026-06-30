@@ -4,12 +4,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	appregistry "registry/internal/app/registry"
+	domainauth "registry/internal/domain/auth"
 	domain "registry/internal/domain/registry"
 	metadata "registry/internal/infra/metadata/sqlite"
 	"registry/internal/infra/storage/fsblob"
@@ -148,9 +152,9 @@ func TestRouterAllowsAnonymousPullWhenConfigured(t *testing.T) {
 	blobStore, metadataStore, cleanup := newTestStores(t)
 	defer cleanup()
 
-	seedHandler := newRouterWithStores(blobStore, metadataStore, allowAllAccessController{})
+	seedHandler := newRouterWithStores(blobStore, metadataStore, allowAllAccessController{}, nil)
 	digest := seedPublishedManifest(t, seedHandler)
-	readOnlyHandler := newRouterWithStores(blobStore, metadataStore, ports.NewConfigurableAccessController(ports.AccessConfig{AllowAnonymousPull: true}))
+	readOnlyHandler := newRouterWithStores(blobStore, metadataStore, ports.NewConfigurableAccessController(ports.AccessConfig{AllowAnonymousPull: true}), nil)
 
 	manifestReq := httptest.NewRequest(http.MethodGet, "/v2/library/alpine/manifests/latest", nil)
 	manifestRecorder := httptest.NewRecorder()
@@ -170,7 +174,7 @@ func TestRouterAllowsAnonymousPullWhenConfigured(t *testing.T) {
 func TestRouterRejectsAnonymousPushByDefault(t *testing.T) {
 	t.Parallel()
 
-	handler, cleanup := newTestRouter(t, ports.NewConfigurableAccessController(ports.AccessConfig{AllowAnonymousPull: true}))
+	handler, cleanup := newTestRouterWithAuth(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "http://127.0.0.1:5000/auth/token", Service: "registry"}), fakeAuthService{})
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodPost, "/v2/library/alpine/blobs/uploads/", nil)
@@ -180,6 +184,205 @@ func TestRouterRejectsAnonymousPushByDefault(t *testing.T) {
 
 	if recorder.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
+	}
+
+	challenge := recorder.Header().Get("WWW-Authenticate")
+	if !strings.Contains(challenge, `realm="http://127.0.0.1:5000/auth/token"`) || !strings.Contains(challenge, `scope="repository:library/alpine:pull,push"`) {
+		t.Fatalf("WWW-Authenticate = %q, want configured token realm URL with combined push scope", challenge)
+	}
+}
+
+func TestRouterChallengesUnauthenticatedV2PingWhenAuthEnabled(t *testing.T) {
+	t.Parallel()
+
+	handler, cleanup := newTestRouterWithAuth(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "http://127.0.0.1:5000/auth/token", Service: "registry"}), fakeAuthService{})
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/v2/", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
+	}
+
+	challenge := recorder.Header().Get("WWW-Authenticate")
+	if !strings.Contains(challenge, `realm="http://127.0.0.1:5000/auth/token"`) || !strings.Contains(challenge, `service="registry"`) {
+		t.Fatalf("WWW-Authenticate = %q, want bearer challenge for /v2/ ping", challenge)
+	}
+	if strings.Contains(challenge, `scope=`) {
+		t.Fatalf("WWW-Authenticate = %q, did not expect scope on /v2/ ping challenge", challenge)
+	}
+}
+
+func TestRouterAcceptsAuthenticatedV2PingWhenAuthEnabled(t *testing.T) {
+	t.Parallel()
+
+	handler, cleanup := newTestRouterWithAuth(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "http://127.0.0.1:5000/auth/token", Service: "registry"}), fakeAuthService{
+		verify: &domainauth.Principal{Subject: "user-1", Username: "alice"},
+	})
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/v2/", nil)
+	req.Header.Set("Authorization", "Bearer valid-token")
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+	if got := recorder.Header().Get("WWW-Authenticate"); got != "" {
+		t.Fatalf("WWW-Authenticate = %q, want empty on authenticated ping", got)
+	}
+}
+
+func TestRouterKeepsV2PingOpenWhenAuthDisabled(t *testing.T) {
+	t.Parallel()
+
+	handler, cleanup := newTestRouter(t, ports.NewConfigurableAccessController(ports.AccessConfig{}))
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/v2/", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+	if got := recorder.Header().Get("WWW-Authenticate"); got != "" {
+		t.Fatalf("WWW-Authenticate = %q, want empty when auth is disabled", got)
+	}
+}
+
+func TestRouterLogsUnauthorizedChallengeDetails(t *testing.T) {
+	var logs bytes.Buffer
+	handler, cleanup := newTestRouterWithAuth(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "http://127.0.0.1:5000/auth/token", Service: "registry"}), fakeAuthService{}, WithLogger(log.New(&logs, "", 0)))
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodPost, "/v2/library/alpine/blobs/uploads/", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	output := logs.String()
+	if !strings.Contains(output, "method=POST") || !strings.Contains(output, "path=/v2/library/alpine/blobs/uploads/") || !strings.Contains(output, "status=401") {
+		t.Fatalf("log output = %q, want method/path/status details", output)
+	}
+	if !strings.Contains(output, `auth_challenge="Bearer realm=\"http://127.0.0.1:5000/auth/token\"`) || !strings.Contains(output, `scope=\"repository:library/alpine:pull,push\"`) {
+		t.Fatalf("log output = %q, want challenge hints", output)
+	}
+	if !strings.Contains(output, "duration=") {
+		t.Fatalf("log output = %q, want duration", output)
+	}
+}
+
+func TestRouterLogsRequestPathWithQueryString(t *testing.T) {
+	var logs bytes.Buffer
+	handler, cleanup := newTestRouterWithAuth(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "registry", Service: "registry"}), fakeAuthService{
+		loginResult: ports.LoginResult{BearerToken: "issued-token", ExpiresAt: time.Date(2026, 1, 2, 3, 19, 5, 0, time.UTC)},
+	}, WithLogger(log.New(&logs, "", 0)))
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/auth/token?service=registry&scope=repository:team/app:pull", nil)
+	req.SetBasicAuth("alice", "password123")
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	output := logs.String()
+	if !strings.Contains(output, "path=/auth/token?service=registry&scope=repository:team/app:pull") || !strings.Contains(output, "status=200") {
+		t.Fatalf("log output = %q, want request URI and status", output)
+	}
+	if strings.Contains(output, "auth_challenge=") {
+		t.Fatalf("log output = %q, did not expect auth challenge on success", output)
+	}
+}
+
+func TestRouterIssuesAccessTokenFromBasicCredentials(t *testing.T) {
+	t.Parallel()
+
+	handler, cleanup := newTestRouterWithAuth(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "registry", Service: "registry"}), fakeAuthService{
+		loginResult: ports.LoginResult{BearerToken: "issued-token", ExpiresAt: time.Date(2026, 1, 2, 3, 19, 5, 0, time.UTC)},
+	})
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/auth/token?service=registry&scope=repository:team/app:pull", nil)
+	req.SetBasicAuth("alice", "password123")
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if payload["token"] != "issued-token" {
+		t.Fatalf("token = %#v, want issued-token", payload["token"])
+	}
+	if payload["scope"] != "repository:team/app:pull" {
+		t.Fatalf("scope = %#v, want repository:team/app:pull", payload["scope"])
+	}
+}
+
+func TestRouterChallengesProtectedPullWithConfiguredTokenRealm(t *testing.T) {
+	t.Parallel()
+
+	handler, cleanup := newTestRouterWithAuth(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "http://127.0.0.1:5000/auth/token", Service: "registry"}), fakeAuthService{})
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/v2/team/app/manifests/latest", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
+	}
+
+	challenge := recorder.Header().Get("WWW-Authenticate")
+	if !strings.Contains(challenge, `realm="http://127.0.0.1:5000/auth/token"`) || !strings.Contains(challenge, `scope="repository:team/app:pull"`) {
+		t.Fatalf("WWW-Authenticate = %q, want configured token realm URL with pull scope", challenge)
+	}
+}
+
+func TestRouterRejectsInvalidBearerTokens(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{name: "expired", err: domainauth.NewExpiredTokenError("atk_expired")},
+		{name: "revoked", err: domainauth.NewRevokedTokenError("atk_revoked")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			handler, cleanup := newTestRouterWithAuth(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "registry", Service: "registry"}), fakeAuthService{verifyErr: tt.err})
+			defer cleanup()
+
+			req := httptest.NewRequest(http.MethodGet, "/v2/team/app/tags/list", nil)
+			req.Header.Set("Authorization", "Bearer invalid-token")
+			recorder := httptest.NewRecorder()
+
+			handler.ServeHTTP(recorder, req)
+
+			if recorder.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
+			}
+			if got := recorder.Header().Get("WWW-Authenticate"); !strings.Contains(got, `scope="repository:team/app:pull"`) || !strings.Contains(got, `error="invalid_token"`) {
+				t.Fatalf("WWW-Authenticate = %q, want scoped invalid_token challenge", got)
+			}
+		})
 	}
 }
 
@@ -297,7 +500,14 @@ func newTestRouter(t *testing.T, accessController ports.AccessController) (*Rout
 	t.Helper()
 
 	blobStore, metadataStore, cleanup := newTestStores(t)
-	return newRouterWithStores(blobStore, metadataStore, accessController), cleanup
+	return newRouterWithStores(blobStore, metadataStore, accessController, nil), cleanup
+}
+
+func newTestRouterWithAuth(t *testing.T, accessController ports.AccessController, authService ports.AuthService, options ...RouterOption) (*Router, func()) {
+	t.Helper()
+
+	blobStore, metadataStore, cleanup := newTestStores(t)
+	return newRouterWithStores(blobStore, metadataStore, accessController, authService, options...), cleanup
 }
 
 func newTestStores(t *testing.T) (*fsblob.Store, *metadata.Store, func()) {
@@ -319,7 +529,7 @@ func newTestStores(t *testing.T) (*fsblob.Store, *metadata.Store, func()) {
 	}
 }
 
-func newRouterWithStores(blobStore *fsblob.Store, metadataStore *metadata.Store, accessController ports.AccessController) *Router {
+func newRouterWithStores(blobStore *fsblob.Store, metadataStore *metadata.Store, accessController ports.AccessController, authService ports.AuthService, options ...RouterOption) *Router {
 	service := appregistry.NewService(
 		blobStore,
 		metadataStore,
@@ -328,7 +538,7 @@ func newRouterWithStores(blobStore *fsblob.Store, metadataStore *metadata.Store,
 		ports.NewInlineJobRunner(),
 	)
 
-	return NewRouter(service)
+	return NewRouter(service, authService, options...)
 }
 
 type allowAllAccessController struct{}
@@ -337,6 +547,51 @@ func (allowAllAccessController) Authorize(context.Context, ports.Action) error {
 	return nil
 }
 
-func (allowAllAccessController) Challenge() ports.Challenge {
+func (allowAllAccessController) Challenge(ports.Action) ports.Challenge {
 	return ports.Challenge{Scheme: "Bearer", Realm: "registry", Service: "registry"}
+}
+
+type fakeAuthService struct {
+	loginResult ports.LoginResult
+	loginErr    error
+	verify      *domainauth.Principal
+	verifyErr   error
+}
+
+func (f fakeAuthService) EnsureBootstrapAdmin(context.Context) error { return nil }
+func (f fakeAuthService) BootstrapAdmin(context.Context, ports.BootstrapAdminInput) (ports.BootstrapAdminResult, error) {
+	return ports.BootstrapAdminResult{}, nil
+}
+func (f fakeAuthService) LoginWithPassword(context.Context, string, string) (ports.LoginResult, error) {
+	return f.loginResult, f.loginErr
+}
+func (f fakeAuthService) LoginWithPreissuedToken(context.Context, string, string) (ports.LoginResult, error) {
+	return f.loginResult, f.loginErr
+}
+func (f fakeAuthService) VerifyAccessToken(context.Context, string) (domainauth.Principal, error) {
+	if f.verifyErr != nil {
+		return domainauth.Principal{}, f.verifyErr
+	}
+	if f.verify == nil {
+		return domainauth.Principal{}, nil
+	}
+	return *f.verify, nil
+}
+func (f fakeAuthService) CreateAdminToken(context.Context, domainauth.Principal, ports.CreateAdminTokenInput) (ports.CreatedAdminToken, error) {
+	return ports.CreatedAdminToken{}, nil
+}
+func (f fakeAuthService) ListAdminTokens(context.Context, domainauth.Principal, string) ([]domainauth.Token, error) {
+	return nil, nil
+}
+func (f fakeAuthService) RevokeAdminToken(context.Context, domainauth.Principal, string) error {
+	return nil
+}
+func (f fakeAuthService) ResetPassword(context.Context, domainauth.Principal, string, string) error {
+	return nil
+}
+func (f fakeAuthService) PutRepoGrant(context.Context, domainauth.Principal, string, string, domainauth.RepoRole) (domainauth.RepoGrant, error) {
+	return domainauth.RepoGrant{}, nil
+}
+func (f fakeAuthService) DeleteRepoGrant(context.Context, domainauth.Principal, string, string) error {
+	return nil
 }

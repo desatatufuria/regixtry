@@ -41,8 +41,8 @@ func NewService(blobStore ports.BlobStore, metadataStore ports.MetadataStore, ac
 	}
 }
 
-func (s *Service) Challenge() ports.Challenge {
-	return s.access.Challenge()
+func (s *Service) Challenge(action ports.Action) ports.Challenge {
+	return s.access.Challenge(action)
 }
 
 func (s *Service) BeginUpload(ctx context.Context, repositoryName string) (UploadDetails, error) {
@@ -213,6 +213,7 @@ func parseRepository(repositoryName string) (domain.RepositoryRef, error) {
 }
 
 func (s *Service) authorize(ctx context.Context, action ports.Action) error {
+	action.Principal = ports.PrincipalFromContext(ctx)
 	return s.access.Authorize(ctx, action)
 }
 

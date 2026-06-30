@@ -82,7 +82,8 @@ func (s *Service) OpenManifest(ctx context.Context, repositoryName string, refer
 }
 
 func (s *Service) Catalog(ctx context.Context, limit int, after string) (CatalogResult, error) {
-	if err := s.authorize(ctx, ports.Action{Verb: ports.ActionCatalog}); err != nil {
+	action := ports.Action{Verb: ports.ActionCatalog}
+	if err := s.authorize(ctx, action); err != nil {
 		return CatalogResult{}, err
 	}
 
@@ -91,8 +92,12 @@ func (s *Service) Catalog(ctx context.Context, limit int, after string) (Catalog
 		return CatalogResult{}, err
 	}
 
+	principal := ports.PrincipalFromContext(ctx)
 	result := CatalogResult{Repositories: make([]string, 0, len(repositories))}
 	for _, repository := range repositories {
+		if principal != nil && !principal.IsAdmin && !principal.HasReadAccess(repository.String()) {
+			continue
+		}
 		result.Repositories = append(result.Repositories, repository.String())
 	}
 

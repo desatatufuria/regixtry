@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 
+	domainauth "registry/internal/domain/auth"
 	domain "registry/internal/domain/registry"
 )
 
@@ -41,17 +42,60 @@ const (
 type Action struct {
 	Verb       ActionVerb
 	Repository string
+	Principal  *domainauth.Principal
 }
 
 type Challenge struct {
 	Scheme  string
 	Realm   string
 	Service string
+	Scope   string
+	Error   string
 }
 
 type AccessController interface {
 	Authorize(ctx context.Context, action Action) error
-	Challenge() Challenge
+	Challenge(action Action) Challenge
+}
+
+type principalContextKey struct{}
+
+func ContextWithPrincipal(ctx context.Context, principal domainauth.Principal) context.Context {
+	return context.WithValue(ctx, principalContextKey{}, principal)
+}
+
+func PrincipalFromContext(ctx context.Context) *domainauth.Principal {
+	principal, ok := ctx.Value(principalContextKey{}).(domainauth.Principal)
+	if !ok {
+		return nil
+	}
+
+	copy := principal
+	return &copy
+}
+
+func (a Action) WithPrincipal(principal *domainauth.Principal) Action {
+	a.Principal = principal
+	return a
+}
+
+func (a Action) Scope() string {
+	switch a.Verb {
+	case ActionCatalog:
+		return "registry:catalog:*"
+	case ActionPull, ActionInspect:
+		if a.Repository == "" {
+			return ""
+		}
+		return "repository:" + a.Repository + ":pull"
+	case ActionPush:
+		if a.Repository == "" {
+			return ""
+		}
+		return "repository:" + a.Repository + ":pull,push"
+	default:
+		return ""
+	}
 }
 
 type TenantResolver interface {
