@@ -7,10 +7,10 @@ The v1 system is a single Go binary with two entry modes: `serve` for the regist
 This document describes the approved v1 boundary only.
 
 - Single tenant is the default and only supported tenancy model.
-- Local filesystem blobs plus SQLite metadata are the only planned v1 storage shape.
+- Local filesystem blobs remain authoritative for content bytes, SQLite keeps registry metadata, and Postgres now holds auth state.
 - The registry protocol is the public contract.
 - The Bubble Tea console is an operator client, not a second backend.
-- Auth, jobs, and alternate storage are design seams, not fully delivered subsystems in this phase.
+- Auth is now delivered for registry enforcement and bootstrap flows, while jobs, alternate storage, and TUI admin remain incomplete seams or later work.
 
 ## Layer map
 
@@ -19,20 +19,29 @@ This document describes the approved v1 boundary only.
 | Protocol edge | Expose OCI-compatible HTTP handlers and auth challenge responses | Own registry business rules or storage details |
 | Application services | Coordinate push, pull, publish, browse, inspect, and maintenance workflows | Depend on HTTP or Bubble Tea types |
 | Domain | Define digests, references, manifests, upload state, and invariants | Read files, execute SQL, or render UI |
-| Infrastructure adapters | Implement filesystem blob storage, SQLite metadata, config-backed auth, and tenant defaults | Reinterpret domain policy in adapter-specific ways |
+| Infrastructure adapters | Implement filesystem blob storage, SQLite metadata, Postgres-backed auth state, and tenant defaults | Reinterpret domain policy in adapter-specific ways |
 | Operator console | Present service-backed views for repositories, tags, manifests, blobs, and uploads | Read storage directly or compute registry truth locally |
 
 ## Runtime flows
 
 ### Registry flow
 
-`OCI/Docker client -> HTTP handlers -> application services -> blob store + metadata store`
+`OCI/Docker client -> HTTP handlers -> auth middleware/challenge -> application services -> blob store + metadata store`
 
 - Blob uploads start in staging storage.
 - Digest validation happens before promotion into durable blob storage.
 - Manifest publication succeeds only after referenced blobs are durably available.
 - Metadata publishing makes content discoverable for catalog, tags, and pull resolution.
-- Access policy is applied through an auth seam so anonymous pull and future challenge behavior stay configurable.
+- When auth is enabled, protected requests challenge through Docker-compatible Bearer semantics and application services receive the resolved principal through context.
+
+### Auth flow
+
+`OCI/Docker client -> /auth/token -> Basic credentials or admin-preissued token -> auth service -> Postgres auth state -> short-lived bearer token -> retry /v2/*`
+
+- `/auth/token` is the token exchange endpoint advertised by the Bearer challenge.
+- Postgres stores users, password hashes, preissued credential tokens, bearer revocation state, and repository grants.
+- SQLite remains the source of registry metadata; repository authorization links the two stores by validated repository names rather than shared foreign keys.
+- The current implementation covers registry auth and bootstrap flows only; TUI-based user administration is still pending work.
 
 ### Operator flow
 
@@ -49,7 +58,7 @@ This document describes the approved v1 boundary only.
 | Public protocol | OCI Distribution / Docker Registry HTTP API |
 | Out-of-scope control plane | Docker Engine APIs and general host/runtime management |
 | Console data source | Application/query services, never direct storage reads |
-| Persistence contract | Filesystem for blobs, SQLite for metadata |
+| Persistence contract | Filesystem for blobs, SQLite for registry metadata, Postgres for auth state |
 
 ## Core ports
 
@@ -57,7 +66,8 @@ This document describes the approved v1 boundary only.
 | --- | --- | --- |
 | `BlobStore` | Manage upload staging, blob promotion, and blob reads | Filesystem-backed adapter |
 | `MetadataStore` | Publish and resolve manifests, tags, catalog, and upload state | SQLite-backed adapter |
-| `AccessController` | Authorize actions and produce challenge behavior | Configurable access seam |
+| `AccessController` | Authorize actions and produce challenge behavior | Principal-aware access seam with Bearer challenge support |
+| `AuthService` | Issue/verify auth tokens and bootstrap the first admin | Postgres-backed service over auth tables |
 | `TenantResolver` | Resolve active tenant context | Single-tenant resolver |
 | `JobRunner` | Future async maintenance and background work boundary | Deferred seam for post-v1 |
 
@@ -69,7 +79,7 @@ Filesystem blobs are authoritative for content bytes, while SQLite provides rest
 
 ### Auth seam
 
-V1 does not require full RBAC, but handlers and services must depend on an access-control boundary so anonymous pull and future challenge flows do not leak protocol concerns into domain logic.
+V1 still avoids a broad platform-RBAC scope, but the registry now has a concrete auth subsystem: Postgres-backed users, repository grants, `/auth/token`, short-lived bearer access tokens, and scoped `WWW-Authenticate` challenges. The seam stays explicit so unfinished operator admin work and later auth backends do not leak protocol concerns into domain logic.
 
 ### Tenant seam
 
@@ -77,7 +87,7 @@ V1 resolves a single tenant by default, but the boundary stays explicit so futur
 
 ### TUI boundary
 
-The Bubble Tea console is an operator client, not a second backend. Any maintenance action exposed in v1 must go through application services so the UI remains replaceable and does not become the source of registry rules.
+The Bubble Tea console is an operator client, not a second backend. Any maintenance action exposed in v1 must go through application services so the UI remains replaceable and does not become the source of registry rules. The current shipped console remains inspection-oriented; auth-related user/grant/token administration is planned but not finished.
 
 ## Non-goals that shape the design
 
@@ -87,13 +97,15 @@ The Bubble Tea console is an operator client, not a second backend. Any maintena
 - No deletion/retention platform semantics until later scope explicitly approves them.
 
 ## Repository direction
-git diff --cached --stat
 The planned code layout is:
 
 - `cmd/registry/` for binary entrypoints.
+- `internal/app/auth/` for auth workflows and token issuance/verification.
 - `internal/app/registry/` for workflows and queries.
+- `internal/domain/auth/` for users, grants, principals, tokens, and auth invariants.
 - `internal/domain/registry/` for registry types and invariants.
 - `internal/ports/` for seams between core logic and adapters.
+- `internal/infra/auth/postgres/` for Postgres-backed auth persistence and schema bootstrap.
 - `internal/infra/storage/fsblob/` and `internal/infra/metadata/sqlite/` for v1 adapters.
 - `internal/protocol/http/` for OCI-compatible delivery.
 - `internal/tui/` for the thin operator console.

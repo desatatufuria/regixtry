@@ -12,27 +12,37 @@ Read this document as a sequencing contract, not a wish list.
 
 ## V1 workstreams
 
-| Group | Outcome | Notes |
+| Group | Outcome | Current state |
 | --- | --- | --- |
-| Repository foundation | Stable module, docs baseline, GitFlow workflow, and review slices | Establishes reader and contributor context before runtime implementation |
-| Registry protocol | OCI-compatible push, pull, catalog, tags, manifests, and blobs | Registry protocol is the primary external contract |
-| Local durability | Filesystem blob storage, SQLite metadata, and safe upload lifecycle | Local storage only in v1 |
-| Operator console | Thin Bubble Tea client for inspection and maintenance basics | Console stays service-backed and read-oriented |
+| Repository foundation | Stable module, docs baseline, GitFlow workflow, and review slices | Implemented and verified |
+| Registry protocol | OCI-compatible push, pull, catalog, tags, manifests, and blobs | Implemented on the local single-node runtime |
+| Local durability | Filesystem blob storage, SQLite metadata, and safe upload lifecycle | Implemented |
+| Registry auth v1 | Postgres-backed auth state, `/auth/token`, bearer challenge interoperability, and repository enforcement | Active workstream; foundation + registry enforcement are implemented, admin/TUI and remaining verification/docs slices are still pending |
+| Operator console | Thin Bubble Tea client for inspection and maintenance basics | Inspection flow exists; auth administration is not finished |
 
 ## Approved v1 boundary
 
 V1 is complete when ALL of the following are true:
 
 - Single tenant is the only supported runtime model.
-- Local storage is the only supported persistence mode.
+- Local runtime storage remains the only supported deployment mode.
+- Registry metadata stays in SQLite while auth state lives beside it in Postgres.
 - Anonymous pull is configuration-driven rather than hard-coded policy.
+- Auth-enabled registry access uses Docker-compatible Bearer challenges plus `/auth/token` token exchange.
 - Incomplete uploads never appear as published registry content.
 - The operator console exposes visibility first and keeps unsupported mutations explicit.
 - Reader-facing docs continue to describe the same scope as the OpenSpec proposal, design, and specs.
-git diff --cached --stat
+
+## Current implementation checkpoint
+
+- `registry-foundation` is complete and verified.
+- `registry-auth-v1` Work Unit 1 (auth foundation) and Work Unit 2 (registry enforcement) are implemented on the active feature branch.
+- Local compose runtime has proven authenticated Docker push with Postgres-backed auth enabled.
+- Remaining planned work is still real scope: TUI admin workflows, auth-oriented smoke-script expansion, and final reader-facing doc updates tied to those slices.
+
 ## Explicit non-goals for the active change
 
-These items must stay out of PR 1 through PR 3 unless the approved scope changes first:
+These items must stay out of the active auth-v1 review slices unless the approved scope changes first:
 
 - Multi-tenant isolation and advanced RBAC.
 - Replication or remote-object-store adapters.
@@ -49,13 +59,21 @@ These items must stay out of PR 1 through PR 3 unless the approved scope changes
 | PR 2 | Storage and protocol core | Domain, ports, filesystem, SQLite, HTTP, and tests |
 | PR 3 | Operator console and verification | TUI views plus end-to-end verification artifacts |
 
+## Delivery sequence for `registry-auth-v1`
+
+| Work unit | Target outcome | Status |
+| --- | --- | --- |
+| PR 1 | Postgres auth domain/store/bootstrap foundation | Completed |
+| PR 2 | `/auth/token`, bearer middleware, repository enforcement, and focused tests | Completed |
+| PR 3 | TUI admin flows plus auth-aware smoke coverage and remaining doc alignment | In progress / pending |
+
 ## Documentation maintenance rule
 
 When roadmap-relevant scope changes:
 
 1. Update this file.
 2. Update `README.md` and `docs/glossary.md` if the reader-facing boundary changed.
-3. Update `openspec/changes/registry-foundation/` artifacts if the implementation contract changed.
+3. Update the relevant OpenSpec change artifacts (`registry-foundation`, `registry-auth-v1`, or both) if the implementation contract changed.
 4. Keep v1 and post-v1 work separated in the same edit.
 
 ## Post-v1 candidates

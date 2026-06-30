@@ -6,7 +6,7 @@ Registry is a low-resource, single-binary OCI registry for internal and OSS use.
 
 1. Treat the OCI Distribution API as the product boundary.
 2. Keep v1 single-tenant, local-storage, and operationally simple.
-3. Use `docs/` for reader-facing decisions and `openspec/changes/registry-foundation/` for the active implementation contract.
+3. Use `docs/` for reader-facing decisions and `openspec/changes/registry-foundation/` plus `openspec/changes/registry-auth-v1/` for the current implementation contracts.
 
 ## Local Docker Compose runtime
 
@@ -18,14 +18,14 @@ Use Docker Compose when you want a disposable local runtime with the registry pl
 2. Bootstrap the first admin: `docker compose run --rm registry bootstrap-admin -password '<admin-password>'`
 3. Start the registry: `docker compose up -d registry`
 
-The registry listens on `127.0.0.1:5000`. Compose keeps SQLite/blob data in the `registry-data` volume and auth state in the `postgres-data` volume.
+Compose publishes the registry on `127.0.0.1:${REGISTRY_PORT:-5503}`. It keeps SQLite/blob data in the `registry-data` volume and auth state in the `postgres-data` volume.
 
 ### Notes
 
 | Topic | Decision |
 | --- | --- |
 | Image build | Top-level `Dockerfile` builds `cmd/registry` into a single runtime image. |
-| Auth wiring | `docker-compose.yml` sets both `REGISTRY_AUTH_POSTGRES_DSN` and `REGISTRY_AUTH_TOKEN_REALM_URL` so the registry shares the same local Postgres service and advertises Docker-compatible bearer challenges that point at `/auth/token`. |
+| Auth wiring | `docker-compose.yml` sets both `REGISTRY_AUTH_POSTGRES_DSN` and `REGISTRY_AUTH_TOKEN_REALM_URL` so the registry shares the same local Postgres service and advertises Docker-compatible bearer challenges that point at `/auth/token`. Keep the advertised realm URL aligned with the host/port clients actually use. |
 | First startup | Auth-enabled `serve` fails fast until a global admin exists, so bootstrap the admin before bringing up `registry`. |
 
 ## V1 outcome
@@ -39,7 +39,8 @@ V1 delivers a correct local registry with clear operator visibility.
 | Storage model | Local filesystem blob storage with SQLite-backed metadata |
 | Upload lifecycle | Staged uploads, digest validation, and publish-only-on-valid-content rules |
 | Operator experience | Keyboard-first Bubble Tea console for inspection and maintenance basics |
-| Future readiness | Auth, tenant, storage, and background-job seams kept explicit |
+| Access model | Postgres-backed auth state, `/auth/token`, and repository-scoped enforcement for auth-enabled runtime |
+| Future readiness | Tenant, storage, and background-job seams kept explicit while auth admin work remains partial |
 
 ## Non-goals
 
@@ -71,7 +72,8 @@ If a capability depends on Docker daemon control instead of registry protocol be
 - Registry semantics live in application/domain layers, not in HTTP handlers or the TUI.
 - Filesystem blobs remain authoritative for content bytes.
 - SQLite exists to index repositories, tags, manifests, and upload state cheaply.
-- Anonymous pull MAY be enabled by configuration, but auth remains a seam rather than a full v1 subsystem.
+- Registry metadata stays in SQLite while auth state lives in Postgres when auth is enabled.
+- Anonymous pull MAY be enabled by configuration; when disabled, the registry advertises Docker-compatible Bearer challenges that lead clients to `/auth/token`.
 
 ## Workflow baseline
 
@@ -79,7 +81,7 @@ This repository follows GitFlow plus a feature-branch-chain review strategy for 
 
 1. `main` holds the release/bootstrap baseline.
 2. `develop` integrates ongoing product work.
-3. `feature/registry-foundation` is the tracker branch for the active change.
+3. `feature/registry-foundation` is the base tracker branch, and `registry-auth-v1` currently advances on feature-branch review slices above that foundation.
 4. PR 1 targets `feature/registry-foundation`.
 5. Later PR slices target the immediate previous PR branch until the tracker branch is ready for `develop`.
 
@@ -93,13 +95,15 @@ Read `docs/contributing.md` before opening or retargeting any PR slice.
 | `docs/contributing.md` | GitFlow, feature-branch-chain workflow, and documentation duties |
 | `docs/glossary.md` | Shared protocol, storage, and architecture vocabulary |
 | `docs/roadmap.md` | V1 workstreams, non-goals, and post-v1 sequencing |
-| `openspec/changes/registry-foundation/` | Approved proposal, specs, design, and task tracking for the active change |
+| `openspec/changes/registry-foundation/` | Baseline proposal, specs, design, and task tracking for the implemented foundation |
+| `openspec/changes/registry-auth-v1/` | Active auth-v1 proposal, specs, design, tasks, and apply progress |
 
 ## Current status
 
-`registry-foundation` is implemented in the repository and has been verified at two levels:
+`registry-foundation` is implemented in the repository, and `registry-auth-v1` has partial implementation on top of it.
 
 - The Go test suite passes for the current codebase.
 - Local smoke verification has confirmed Docker push/pull plus TUI snapshot rendering for the seeded `registry-foundation/smoke` repository.
+- Local compose verification has also confirmed authenticated Docker push against the auth-enabled runtime.
 
-This does **not** mean the product is feature-complete beyond the documented v1 scope. The repository currently proves the local single-node foundation: OCI/Docker-compatible content flows, SQLite-backed metadata, filesystem blob storage, and a read-oriented operator console.
+This does **not** mean the product is feature-complete beyond the documented v1 scope. The repository currently proves the local single-node foundation plus the auth-v1 registry path: OCI/Docker-compatible content flows, SQLite-backed metadata, Postgres-backed auth state, `/auth/token`, bearer challenge interoperability, and a read-oriented operator console. TUI-based auth administration and the remaining auth smoke/doc slices are still unfinished.
