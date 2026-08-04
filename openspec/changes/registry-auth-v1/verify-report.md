@@ -50,9 +50,9 @@ ok   registry/internal/protocol/http          0.545s  coverage: 74.3% of stateme
 ok   registry/internal/tui                    0.011s  coverage: 52.6% of statements
 ```
 
-**Runtime / manual evidence**: ✅ Verified from established session evidence
+**Runtime / manual evidence**: ✅ Supplemental evidence from established session verification
 ```text
-- Auth-enabled local compose runtime started successfully with Postgres and bootstrap-admin.
+- Auth-enabled local Compose helper runtime started successfully with Postgres and bootstrap-admin.
 - Unauthenticated GET /v2/_catalog returned 401 Unauthorized with a Bearer challenge.
 - Docker-compatible GET /auth/token?... returned 200 after the /v2/ ping challenge fix.
 - Authenticated docker push to 127.0.0.1:5517/registry-foundation/smoke:latest succeeded end-to-end.
@@ -63,6 +63,7 @@ ok   registry/internal/tui                    0.011s  coverage: 52.6% of stateme
 **Local smoke rerun in this verify environment**: ⚠️ Not rerun here
 ```text
 Current verify container still lacks Docker daemon access, so this refresh relies on the already-established session runtime evidence above rather than a fresh local smoke-script execution.
+The primary automated verification contract for this artifact remains the Go build/test evidence above; the Compose helper runtime evidence is supportive, not canonical on its own.
 ```
 
 ### Spec Compliance Matrix
@@ -101,7 +102,7 @@ Current verify container still lacks Docker daemon access, so this refresh relie
 - None.
 
 **WARNING**:
-- This artifact refresh reuses externally verified runtime/manual evidence already established in the session; the smoke scripts were not rerun inside the current verify container because Docker daemon access remains unavailable.
+- This artifact refresh reuses previously established runtime/manual evidence from the local Compose helper runtime; the smoke scripts were not rerun inside the current verify container because Docker daemon access remains unavailable, so Compose behavior is not re-proven here as a standalone automated contract.
 - The requested parallel `sdd/registry-auth-v1/*` artifact mirror was not present in `/workspace`; verification relied on the available OpenSpec artifacts as the authoritative source set.
 
 **SUGGESTION**:

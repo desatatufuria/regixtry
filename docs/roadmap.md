@@ -37,7 +37,7 @@ V1 is complete when ALL of the following are true:
 
 - `registry-foundation` is complete and verified.
 - `registry-auth-v1` Work Unit 1 (auth foundation) and Work Unit 2 (registry enforcement) are implemented on the active feature branch.
-- Local compose runtime has proven authenticated Docker push with Postgres-backed auth enabled.
+- Manual checks against the local Compose helper runtime have demonstrated authenticated Docker push with Postgres-backed auth enabled, but that helper runtime is still supporting evidence rather than the primary automated verification contract.
 - Remaining planned work is still real scope: TUI admin workflows, auth-oriented smoke-script expansion, and final reader-facing doc updates tied to those slices.
 
 ## Explicit non-goals for the active change

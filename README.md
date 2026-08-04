@@ -8,9 +8,11 @@ Registry is a low-resource, single-binary OCI registry for internal and OSS use.
 2. Keep v1 single-tenant, local-storage, and operationally simple.
 3. Use `docs/` for reader-facing decisions and `openspec/changes/registry-foundation/` plus `openspec/changes/registry-auth-v1/` for the current implementation contracts.
 
-## Local Docker Compose runtime
+## Local Docker Compose helper runtime
 
-Use Docker Compose when you want a disposable local runtime with the registry plus Postgres-backed auth.
+Use Docker Compose when you want a disposable local helper runtime for manual testing with the registry plus Postgres-backed auth.
+
+This top-level Compose setup is a convenience for local bring-up and smoke-style manual checks. It is **not** the primary product verification contract. The canonical verification baseline for this repository remains the Go test/build evidence plus any explicitly captured runtime/manual evidence called out in the verification artifacts.
 
 ### Quick path
 
@@ -140,6 +142,8 @@ Read `docs/contributing.md` before opening or retargeting any PR slice.
 
 - The Go test suite passes for the current codebase.
 - Local smoke verification has confirmed Docker push/pull plus TUI snapshot rendering for the seeded `registry-foundation/smoke` repository.
-- Local compose verification has also confirmed authenticated Docker push against the auth-enabled runtime.
+- Manual checks against the local Compose helper runtime have also produced supporting evidence for authenticated Docker push against the auth-enabled runtime.
+
+Those local Compose checks are supporting runtime evidence only. They do **not** mean the repository currently guarantees Compose automation as a first-class externally verified runtime contract.
 
 This does **not** mean the product is feature-complete beyond the documented v1 scope. The repository currently proves the local single-node foundation plus the auth-v1 registry path: OCI/Docker-compatible content flows, SQLite-backed metadata, Postgres-backed auth state, `/auth/token`, bearer challenge interoperability, and a minimal TUI operator workflow for user/grant/token administration.
