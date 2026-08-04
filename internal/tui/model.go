@@ -10,6 +10,14 @@ import (
 	appregistry "registry/internal/app/registry"
 )
 
+type Option func(*Model)
+
+func WithNotice(notice string) Option {
+	return func(m *Model) {
+		m.notice = strings.TrimSpace(notice)
+	}
+}
+
 type QueryService interface {
 	Catalog(ctx context.Context, limit int, after string) (appregistry.CatalogResult, error)
 	Tags(ctx context.Context, repositoryName string, limit int, after string) (appregistry.TagsResult, error)
@@ -68,6 +76,7 @@ const (
 type Model struct {
 	ctx         context.Context
 	service     QueryService
+	notice      string
 	screen      screen
 	loadingText string
 	err         error
@@ -79,6 +88,7 @@ type Model struct {
 	uploads      UploadsModel
 	empty        EmptyStateModel
 	mutation     MutationUnavailableModel
+	status       string
 
 	showMutationNotice bool
 	lastRepository     string
@@ -104,8 +114,8 @@ type manifestLoadedMsg struct {
 	err        error
 }
 
-func NewModel(service QueryService) Model {
-	return Model{
+func NewModel(service QueryService, options ...Option) Model {
+	m := Model{
 		ctx:         context.Background(),
 		service:     service,
 		screen:      screenLoading,
@@ -119,6 +129,10 @@ func NewModel(service QueryService) Model {
 			Reason: "Mutations such as deletion and retention controls are unavailable in v1.",
 		},
 	}
+	for _, option := range options {
+		option(&m)
+	}
+	return m
 }
 
 func (m Model) Init() tea.Cmd {
@@ -155,6 +169,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.tags = TagsModel{Repository: msg.repository, Items: append([]string(nil), msg.result.Tags...)}
 		m.lastRepository = msg.repository
 		m.showMutationNotice = false
+		m.status = ""
 		if len(m.tags.Items) == 0 {
 			m.screen = screenEmpty
 			m.empty = EmptyStateModel{
@@ -182,6 +197,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		})
 		m.uploads = UploadsModel{Repository: msg.repository, Items: append([]appregistry.UploadDetails(nil), msg.uploads...)}
 		m.showMutationNotice = false
+		m.status = ""
 		m.screen = screenManifest
 		return m, nil
 	}
@@ -199,7 +215,12 @@ func (m Model) View() string {
 	case screenRepositories:
 		body.WriteString("Repositories\n")
 		body.WriteString(renderList(m.repositories.Items, m.repositories.Selected))
-		body.WriteString("\n\nEnter: open tags · q: quit")
+		body.WriteString("\n\n")
+		body.WriteString("Enter: open tags · q: quit")
+		if strings.TrimSpace(m.notice) != "" {
+			body.WriteString("\n\nNotice\n")
+			body.WriteString(m.notice)
+		}
 	case screenTags:
 		body.WriteString(fmt.Sprintf("Tags · %s\n", m.tags.Repository))
 		body.WriteString(renderList(m.tags.Items, m.tags.Selected))
@@ -228,6 +249,10 @@ func (m Model) View() string {
 	if m.showMutationNotice {
 		body.WriteString("\n\nUnavailable in v1\n")
 		body.WriteString(fmt.Sprintf("%s: %s", strings.Title(m.mutation.Action), m.mutation.Reason))
+	}
+	if m.status != "" {
+		body.WriteString("\n\nStatus\n")
+		body.WriteString(m.status)
 	}
 
 	return body.String()
@@ -260,6 +285,7 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "esc", "backspace":
 		m.showMutationNotice = false
+		m.status = ""
 		switch m.screen {
 		case screenTags, screenEmpty:
 			if m.lastRepository != "" {
@@ -295,7 +321,7 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *Model) moveSelection(delta int) {
+func (m Model) moveSelection(delta int) {
 	switch m.screen {
 	case screenRepositories:
 		m.repositories.Selected = boundedIndex(m.repositories.Selected+delta, len(m.repositories.Items))

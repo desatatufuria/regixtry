@@ -1,44 +1,44 @@
 schema: spec-driven
 
 context: |
-  Stack: No application stack initialized yet; repository currently contains only a Go-focused devcontainer bootstrap.
-  Runtime: Docker-based development container with Go 1.26.4, Docker CLI/Compose, Node.js/npm, sqlite3, gopls, dlv, staticcheck, and Air.
-  Architecture: Not implemented yet; application, domain, and storage layers are still to be defined.
-  Testing: No test runner, module manifest, or CI pipeline detected in the repository state.
+  Stack: Go application initialized; the repository contains a single-binary OCI registry, Bubble Tea operator console, and active OpenSpec artifacts under `openspec/changes/registry-foundation/`.
+  Runtime: Docker-based development container with Go 1.26.x, Docker CLI/Compose, Node.js/npm, sqlite3, gopls, dlv, staticcheck, Air, and bootstrap tooling for opencode, codex, gentle-ai, and codegraph.
+  Architecture: Implemented single Go binary with `serve` and `tui` entry modes, layered into application, domain, ports, protocol, infrastructure adapters, and TUI packages; filesystem blob storage and SQLite metadata back the current v1 runtime, while auth, tenant, and job seams remain explicit.
+  Testing: Go module, package tests, protocol/integration tests, and local verification smoke scripts are present; no GitHub Actions workflow is currently checked into the repository.
   Style: English technical artifacts, minimalistic polished UX, low-resource design, GitFlow workflow, benchmark before implementation, clean commits.
 
 strict_tdd: false
 
 testing:
-  detected: "2026-06-28"
+  detected: "2026-06-30"
   strict_tdd: false
   runner:
-    available: false
-    framework: "—"
-    command: "—"
+    available: true
+    framework: "Go testing"
+    command: "go test ./..."
   layers:
     unit:
-      available: false
-      tool: "—"
+      available: true
+      tool: "Go testing table-driven package tests"
     integration:
-      available: false
-      tool: "—"
+      available: true
+      tool: "httptest, temp dirs, disposable SQLite DB, and filesystem adapter tests"
     e2e:
-      available: false
-      tool: "—"
+      available: true
+      tool: "docs/verification/scripts/docker-push-pull-smoke.sh and docs/verification/scripts/tui-smoke.sh"
   coverage:
-    available: false
-    command: "—"
+    available: true
+    command: "go test -cover ./..."
   quality:
     linter:
       available: true
-      command: "staticcheck ./... (available in devcontainer once a Go module exists)"
+      command: "go vet ./..."
     type_checker:
       available: true
-      command: "go test ./... or go build ./... (available in devcontainer once a Go module exists)"
+      command: "go test ./... or go build ./..."
     formatter:
       available: true
-      command: "gofmt -w ./... (available in Go toolchain once source files exist)"
+      command: "gofmt -w ."
 
 rules:
   proposal:
@@ -61,12 +61,13 @@ rules:
       - Follow existing code patterns once they exist.
       - Keep commits clean and aligned with GitFlow.
     tdd: false
-    test_command: ""
+    test_command: "go test ./..."
   verify:
     constraints:
-      - Prove benchmark assumptions and UX constraints against implementation artifacts.
-    test_command: ""
-    build_command: ""
+      - Prove benchmark assumptions, protocol behavior, and UX constraints against implementation artifacts.
+      - Use the documented smoke scripts when validating Docker push/pull and TUI snapshot behavior.
+    test_command: "go test ./..."
+    build_command: "go build ./..."
     coverage_threshold: 0
   archive:
     - Warn before merging destructive deltas.

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -54,15 +55,7 @@ func TestModelNavigatesRepositoriesManifestBlobsAndUploads(t *testing.T) {
 			},
 		},
 		uploads: map[string][]appregistry.UploadDetails{
-			"library/alpine": {{
-				Repository: "library/alpine",
-				ID:         "upload-1",
-				Status:     "active",
-				Size:       42,
-				StartedAt:  now,
-				UpdatedAt:  now,
-				Location:   "/tmp/upload-1",
-			}},
+			"library/alpine": {{Repository: "library/alpine", ID: "upload-1", Status: "active", Size: 42, StartedAt: now, UpdatedAt: now, Location: "/tmp/upload-1"}},
 		},
 	}
 
@@ -113,19 +106,9 @@ func TestModelShowsUnavailableMutationNotice(t *testing.T) {
 	t.Parallel()
 
 	service := &fakeQueryService{
-		catalog: appregistry.CatalogResult{Repositories: []string{"library/alpine"}},
-		tags: map[string]appregistry.TagsResult{
-			"library/alpine": {Name: "library/alpine", Tags: []string{"latest"}},
-		},
-		manifests: map[string]appregistry.ManifestDetails{
-			"library/alpine:latest": {
-				Repository: "library/alpine",
-				Reference:  "latest",
-				MediaType:  "application/vnd.oci.image.manifest.v1+json",
-				Digest:     "sha256:manifest",
-				Size:       512,
-			},
-		},
+		catalog:   appregistry.CatalogResult{Repositories: []string{"library/alpine"}},
+		tags:      map[string]appregistry.TagsResult{"library/alpine": {Name: "library/alpine", Tags: []string{"latest"}}},
+		manifests: map[string]appregistry.ManifestDetails{"library/alpine:latest": {Repository: "library/alpine", Reference: "latest", MediaType: "application/vnd.oci.image.manifest.v1+json", Digest: "sha256:manifest", Size: 512}},
 	}
 
 	model := NewModel(service)
@@ -160,19 +143,25 @@ func (f *fakeQueryService) Catalog(context.Context, int, string) (appregistry.Ca
 	return f.catalog, nil
 }
 
-func (f *fakeQueryService) Tags(context.Context, string, int, string) (appregistry.TagsResult, error) {
+func (f *fakeQueryService) Tags(_ context.Context, repository string, _ int, _ string) (appregistry.TagsResult, error) {
 	f.calls.tags++
-	return f.tags["library/alpine"], nil
+	if result, ok := f.tags[repository]; ok {
+		return result, nil
+	}
+	return appregistry.TagsResult{Name: repository}, nil
 }
 
-func (f *fakeQueryService) ResolveManifest(context.Context, string, string) (appregistry.ManifestDetails, error) {
+func (f *fakeQueryService) ResolveManifest(_ context.Context, repository string, reference string) (appregistry.ManifestDetails, error) {
 	f.calls.manifest++
-	return f.manifests["library/alpine:latest"], nil
+	if result, ok := f.manifests[fmt.Sprintf("%s:%s", repository, reference)]; ok {
+		return result, nil
+	}
+	return appregistry.ManifestDetails{}, nil
 }
 
-func (f *fakeQueryService) Uploads(context.Context, string) ([]appregistry.UploadDetails, error) {
+func (f *fakeQueryService) Uploads(_ context.Context, repository string) ([]appregistry.UploadDetails, error) {
 	f.calls.uploads++
-	return append([]appregistry.UploadDetails(nil), f.uploads["library/alpine"]...), nil
+	return append([]appregistry.UploadDetails(nil), f.uploads[repository]...), nil
 }
 
 func runCmd(t *testing.T, model Model, cmd tea.Cmd) Model {
@@ -191,12 +180,20 @@ func runCmd(t *testing.T, model Model, cmd tea.Cmd) Model {
 
 func runKey(t *testing.T, model Model, key string) Model {
 	t.Helper()
-	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key), Alt: false}
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}
 	switch key {
 	case "enter":
 		msg = tea.KeyMsg{Type: tea.KeyEnter}
 	case "esc":
 		msg = tea.KeyMsg{Type: tea.KeyEsc}
+	case "tab":
+		msg = tea.KeyMsg{Type: tea.KeyTab}
+	case "down":
+		msg = tea.KeyMsg{Type: tea.KeyDown}
+	case "up":
+		msg = tea.KeyMsg{Type: tea.KeyUp}
+	case "backspace":
+		msg = tea.KeyMsg{Type: tea.KeyBackspace}
 	}
 	updated, cmd := model.Update(msg)
 	result := updated.(Model)

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	appregistry "registry/internal/app/registry"
+	authpostgres "registry/internal/infra/auth/postgres"
 	metadata "registry/internal/infra/metadata/sqlite"
 	"registry/internal/infra/storage/fsblob"
 	"registry/internal/ports"
@@ -48,6 +50,32 @@ func TestParseServeConfigAllowsAnonymousPushFlag(t *testing.T) {
 
 	if !cfg.AllowAnonymousPush {
 		t.Fatal("AllowAnonymousPush = false, want true")
+	}
+}
+
+func TestParseServeConfigParsesAuthPostgresDSN(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := parseServeConfig([]string{"-auth-postgres-dsn", "postgres://auth"})
+	if err != nil {
+		t.Fatalf("parseServeConfig() error = %v", err)
+	}
+
+	if cfg.AuthPostgresDSN != "postgres://auth" {
+		t.Fatalf("AuthPostgresDSN = %q, want %q", cfg.AuthPostgresDSN, "postgres://auth")
+	}
+}
+
+func TestParseServeConfigParsesAuthTokenRealmURL(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := parseServeConfig([]string{"-auth-token-realm", "http://127.0.0.1:5000/auth/token"})
+	if err != nil {
+		t.Fatalf("parseServeConfig() error = %v", err)
+	}
+
+	if cfg.AuthTokenRealmURL != "http://127.0.0.1:5000/auth/token" {
+		t.Fatalf("AuthTokenRealmURL = %q, want %q", cfg.AuthTokenRealmURL, "http://127.0.0.1:5000/auth/token")
 	}
 }
 
@@ -152,6 +180,103 @@ func TestNewHandlerAnonymousPushWiring(t *testing.T) {
 	}
 }
 
+func TestNewHandlerFailsFastWhenAuthEnabledWithoutAdmin(t *testing.T) {
+	restore := swapAuthStoreOpener(t)
+	defer restore()
+
+	storageRoot := t.TempDir()
+	_, cleanup, err := newHandler(serveConfig{
+		StorageRoot:     storageRoot,
+		DatabasePath:    filepath.Join(storageRoot, "registry.db"),
+		AuthPostgresDSN: filepath.Join(t.TempDir(), "auth.db"),
+	})
+	if err == nil {
+		cleanup()
+		t.Fatal("newHandler() error = nil, want bootstrap admin failure")
+	}
+	if !strings.Contains(err.Error(), "bootstrap-admin") {
+		t.Fatalf("newHandler() error = %v, want bootstrap-admin guidance", err)
+	}
+}
+
+func TestRunBootstrapAdminIsIdempotent(t *testing.T) {
+	restore := swapAuthStoreOpener(t)
+	defer restore()
+
+	authDB := filepath.Join(t.TempDir(), "auth.db")
+	stdout := &bytes.Buffer{}
+	args := []string{"bootstrap-admin", "-auth-postgres-dsn", authDB, "-username", "admin", "-password", "change-me-now"}
+	if err := run(context.Background(), args, stdout, io.Discard); err != nil {
+		t.Fatalf("run(first bootstrap) error = %v", err)
+	}
+	if !strings.Contains(stdout.String(), "bootstrapped global admin") {
+		t.Fatalf("stdout = %q, want bootstrap message", stdout.String())
+	}
+
+	stdout.Reset()
+	if err := run(context.Background(), args, stdout, io.Discard); err != nil {
+		t.Fatalf("run(second bootstrap) error = %v", err)
+	}
+	if !strings.Contains(stdout.String(), "already configured") {
+		t.Fatalf("stdout = %q, want idempotent message", stdout.String())
+	}
+
+	storageRoot := t.TempDir()
+	handler, cleanup, err := newHandler(serveConfig{
+		StorageRoot:        storageRoot,
+		DatabasePath:       filepath.Join(storageRoot, "registry.db"),
+		AllowAnonymousPull: true,
+		AuthPostgresDSN:    authDB,
+	})
+	if err != nil {
+		t.Fatalf("newHandler() error = %v", err)
+	}
+	defer cleanup()
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/v2/", nil))
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
+	}
+	if challenge := recorder.Header().Get("WWW-Authenticate"); !strings.Contains(challenge, "Bearer") {
+		t.Fatalf("WWW-Authenticate = %q, want Bearer challenge", challenge)
+	}
+}
+
+func TestNewHandlerUsesConfiguredAuthTokenRealmInChallenge(t *testing.T) {
+	restore := swapAuthStoreOpener(t)
+	defer restore()
+
+	authDB := filepath.Join(t.TempDir(), "auth.db")
+	if err := run(context.Background(), []string{"bootstrap-admin", "-auth-postgres-dsn", authDB, "-username", "admin", "-password", "change-me-now"}, io.Discard, io.Discard); err != nil {
+		t.Fatalf("run(bootstrap-admin) error = %v", err)
+	}
+
+	storageRoot := t.TempDir()
+	handler, cleanup, err := newHandler(serveConfig{
+		StorageRoot:       storageRoot,
+		DatabasePath:      filepath.Join(storageRoot, "registry.db"),
+		AuthPostgresDSN:   authDB,
+		AuthTokenRealmURL: "http://127.0.0.1:5000/auth/token",
+	})
+	if err != nil {
+		t.Fatalf("newHandler() error = %v", err)
+	}
+	defer cleanup()
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/v2/team/app/tags/list", nil))
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
+	}
+
+	challenge := recorder.Header().Get("WWW-Authenticate")
+	if !strings.Contains(challenge, `realm="http://127.0.0.1:5000/auth/token"`) {
+		t.Fatalf("WWW-Authenticate = %q, want configured token realm URL", challenge)
+	}
+}
+
 func TestRunTUIRendersRepositorySnapshot(t *testing.T) {
 	t.Parallel()
 
@@ -168,6 +293,37 @@ func TestRunTUIRendersRepositorySnapshot(t *testing.T) {
 	view := stdout.String()
 	if !strings.Contains(view, "Registry Console") || !strings.Contains(view, "library/alpine") {
 		t.Fatalf("stdout = %q, want rendered repository view", view)
+	}
+}
+
+func TestRunTUIDisablesAuthAdminShortcutWhenAuthIsEnabled(t *testing.T) {
+	restore := swapAuthStoreOpener(t)
+	defer restore()
+
+	authDB := filepath.Join(t.TempDir(), "auth.db")
+	if err := run(context.Background(), []string{"bootstrap-admin", "-auth-postgres-dsn", authDB, "-username", "admin", "-password", "change-me-now"}, io.Discard, io.Discard); err != nil {
+		t.Fatalf("run(bootstrap-admin) error = %v", err)
+	}
+
+	storageRoot := t.TempDir()
+	databasePath := filepath.Join(storageRoot, "registry.db")
+	seedRegistryState(t, storageRoot, databasePath)
+
+	stdout := &bytes.Buffer{}
+	err := runTUI(tuiConfig{StorageRoot: storageRoot, DatabasePath: databasePath, Tenant: "tenant-a", AuthPostgresDSN: authDB, Snapshot: true}, strings.NewReader("q"), stdout)
+	if err != nil {
+		t.Fatalf("runTUI() error = %v", err)
+	}
+
+	view := stdout.String()
+	if strings.Contains(view, "a: admin") {
+		t.Fatalf("stdout = %q, want auth admin shortcut removed", view)
+	}
+	if !strings.Contains(view, "Auth-backed admin actions are disabled in the local TUI until a real operator login flow exists.") {
+		t.Fatalf("stdout = %q, want explicit auth admin notice", view)
+	}
+	if !strings.Contains(view, "library/alpine") {
+		t.Fatalf("stdout = %q, want repository snapshot to stay available", view)
 	}
 }
 
@@ -200,5 +356,18 @@ func seedRegistryState(t *testing.T, storageRoot string, databasePath string) {
 	manifest := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{"mediaType":"application/vnd.oci.image.config.v1+json","digest":"` + digest + `","size":9},"layers":[{"mediaType":"application/vnd.oci.image.layer.v1.tar","digest":"` + digest + `","size":9}]}`)
 	if _, err := service.PublishManifest(context.Background(), "library/alpine", "latest", "application/vnd.oci.image.manifest.v1+json", manifest); err != nil {
 		t.Fatalf("PublishManifest() error = %v", err)
+	}
+}
+
+func swapAuthStoreOpener(t *testing.T) func() {
+	t.Helper()
+
+	previous := openAuthStore
+	openAuthStore = func(dsn string) (ports.AuthStore, error) {
+		return authpostgres.NewWithDriver("sqlite", dsn)
+	}
+
+	return func() {
+		openAuthStore = previous
 	}
 }
