@@ -42,10 +42,10 @@ Chain strategy: stacked-to-main
 
 ## Phase 3: Operator Administration
 
-- [ ] 3.1 Expand `internal/tui/model.go` and create `internal/tui/admin_users.go`, `admin_grants.go`, and `admin_tokens.go` for admin-only user CRUD, password reset, enable/disable, and repo grant editing.
-- [ ] 3.2 Add `internal/tui/model_test.go` coverage for grant assignment, password reset outcomes, and non-admin token-management rejection paths.
+- [x] 3.1 Expand `internal/tui/model.go` and create `internal/tui/admin_users.go`, `admin_grants.go`, and `admin_tokens.go` for admin-only user CRUD, password reset, enable/disable, and repo grant editing.
+- [x] 3.2 Add `internal/tui/model_test.go` coverage for grant assignment, password reset outcomes, and non-admin token-management rejection paths.
 
 ## Phase 4: Verification and Docs
 
-- [ ] 4.1 Extend `docs/verification/scripts/docker-push-pull-smoke.sh` for `docker login`, authorized pull/push, and unauthorized catalog/tag scenarios with anonymous pull disabled.
-- [ ] 4.2 Extend `docs/verification/scripts/tui-smoke.sh` and update `README.md` with Postgres auth bootstrap/runtime steps and the `bootstrap-admin` workflow.
+- [x] 4.1 Extend `docs/verification/scripts/docker-push-pull-smoke.sh` for `docker login`, authorized pull/push, and unauthorized catalog/tag scenarios with anonymous pull disabled.
+- [x] 4.2 Extend `docs/verification/scripts/tui-smoke.sh` and update `README.md` with Postgres auth bootstrap/runtime steps and the `bootstrap-admin` workflow.

@@ -6,7 +6,7 @@
 - Mode: Standard
 - Delivery strategy: `auto-forecast`
 - Chain strategy: `stacked-to-main`
-- Current work unit: `Work Unit 2 / Registry Enforcement`
+- Current work unit: `Work Unit 3 / TUI Admin and Smoke Coverage`
 
 ## Completed Tasks
 
@@ -19,6 +19,10 @@
 - [x] 2.2 Update `internal/app/registry/service.go` and `queries.go` to authorize pull/push/catalog/tag access, filter catalog results, and apply admin bypass.
 - [x] 2.3 Update `internal/protocol/http/router.go` to add `/auth/token`, Basic credential exchange, bearer parsing, scoped `WWW-Authenticate` challenges, and context principal injection.
 - [x] 2.4 Add auth-focused cases in `internal/app/registry/service_test.go` and `internal/protocol/http/router_test.go` for token issuance, expired/revoked bearer rejection, reader-vs-writer rules, and catalog filtering.
+- [x] 3.1 Expand `internal/tui/model.go` and create `internal/tui/admin_users.go`, `admin_grants.go`, and `admin_tokens.go` for admin-only user CRUD, password reset, enable/disable, and repo grant editing.
+- [x] 3.2 Add `internal/tui/model_test.go` coverage for grant assignment, password reset outcomes, and non-admin token-management rejection paths.
+- [x] 4.1 Extend `docs/verification/scripts/docker-push-pull-smoke.sh` for `docker login`, authorized pull/push, and unauthorized catalog/tag scenarios with anonymous pull disabled.
+- [x] 4.2 Extend `docs/verification/scripts/tui-smoke.sh` and update `README.md` with Postgres auth bootstrap/runtime steps and the `bootstrap-admin` workflow.
 
 ## Files Changed
 
@@ -40,6 +44,19 @@
 | `internal/protocol/http/router.go` | Modified | Added `/auth/token`, bearer verification, principal injection, and scoped `WWW-Authenticate` handling. |
 | `internal/app/registry/service_test.go` | Modified | Covered reader-vs-writer enforcement, catalog filtering, and admin bypass. |
 | `internal/protocol/http/router_test.go` | Modified | Covered token issuance plus expired/revoked bearer rejection and challenge scopes. |
+| `cmd/registry/main.go` | Modified | Wired auth-enabled TUI admin mode through the existing local operator console. |
+| `cmd/registry/main_test.go` | Modified | Updated auth-enabled `/v2/` ping expectation to the current Bearer challenge behavior. |
+| `internal/ports/auth.go` | Modified | Added user-list/delete and grant-list contracts needed by the TUI admin slice. |
+| `internal/app/auth/service.go` | Modified | Added admin-only user list/create/update/enable-disable/delete flows plus grant listing. |
+| `internal/infra/auth/postgres/store.go` | Modified | Added auth user listing and deletion persistence to support TUI CRUD. |
+| `internal/tui/model.go` | Modified | Added auth-aware admin screens, command routing, and inline form submission support. |
+| `internal/tui/admin_users.go` | Created | Added user list rendering plus create/update/reset-password/enable-disable/delete workflows. |
+| `internal/tui/admin_grants.go` | Created | Added repository grant list, assignment, and removal workflows. |
+| `internal/tui/admin_tokens.go` | Created | Added admin token list, creation, and revocation workflows. |
+| `internal/tui/model_test.go` | Modified | Added admin grant, password reset, and non-admin token rejection coverage. |
+| `docs/verification/scripts/docker-push-pull-smoke.sh` | Modified | Added auth-enabled bootstrap, docker login, and anonymous challenge checks. |
+| `docs/verification/scripts/tui-smoke.sh` | Modified | Added auth-enabled bootstrap flow and admin-hint snapshot verification. |
+| `README.md` | Modified | Documented compose bootstrap/runtime flow, admin login, and TUI auth workflow. |
 
 ## Verification
 
@@ -51,26 +68,27 @@
 - Result: PASS
 - Command: `go test ./...`
 - Result: PASS
+- Command: `go test ./internal/tui ./internal/app/auth ./internal/infra/auth/postgres ./internal/protocol/http ./cmd/registry`
+- Result: PASS
+- Command: `go test ./internal/tui`
+- Result: PASS
 
 ## Deviations
 
-- None — implementation matches Work Unit 2 and intentionally stops before TUI admin flows or auth-aware smoke-script work.
+- None — implementation matches Work Unit 3 and keeps broader auth UX beyond the minimal operator-admin slice out of scope.
 
 ## Remaining Tasks
 
-- [ ] 3.1 Expand `internal/tui/model.go` and create `internal/tui/admin_users.go`, `admin_grants.go`, and `admin_tokens.go` for admin-only user CRUD, password reset, enable/disable, and repo grant editing.
-- [ ] 3.2 Add `internal/tui/model_test.go` coverage for grant assignment, password reset outcomes, and non-admin token-management rejection paths.
-- [ ] 4.1 Extend `docs/verification/scripts/docker-push-pull-smoke.sh` for `docker login`, authorized pull/push, and unauthorized catalog/tag scenarios with anonymous pull disabled.
-- [ ] 4.2 Extend `docs/verification/scripts/tui-smoke.sh` and update `README.md` with Postgres auth bootstrap/runtime steps and the `bootstrap-admin` workflow.
+- None.
 
 ## Workload / PR Boundary
 
 - Mode: stacked PR slice
-- Boundary: registry enforcement only — principal-aware ports, service authorization/filtering, router token+bearer handling, and focused tests
-- Review budget impact: kept inside Work Unit 2; TUI admin and smoke/doc work remain out of scope for this slice
+- Boundary: admin-only TUI user/grant/token workflows plus auth-enabled smoke scripts and README/runtime guidance
+- Review budget impact: scoped to the planned PR 3 slice; registry auth foundations and protocol enforcement remain unchanged
 
 ## Status
 
-- 9/13 tasks complete overall
-- Work Unit 2 complete
-- Next recommended phase: continue `sdd-apply` with Work Unit 3
+- 13/13 tasks complete overall
+- Work Unit 3 complete
+- Next recommended phase: continue with `sdd-verify`
