@@ -22,7 +22,7 @@ $ go build ./...
 ```text
 $ go test ./...
 ok   registry/cmd/registry                    (cached)
-?    registry/internal/app/auth               [no test files]
+ok   registry/internal/app/auth               (cached)
 ok   registry/internal/app/registry           (cached)
 ?    registry/internal/domain/auth            [no test files]
 ok   registry/internal/domain/registry        (cached)
@@ -37,17 +37,17 @@ ok   registry/internal/tui                    (cached)
 **Coverage**: Per-package coverage reported / threshold: 0% → ✅ Above
 ```text
 $ go test -cover ./...
-ok   registry/cmd/registry                    0.446s  coverage: 62.4% of statements
-registry/internal/app/auth                            coverage: 0.0% of statements
+ok   registry/cmd/registry                    (cached) coverage: 66.1% of statements
+ok   registry/internal/app/auth               (cached) coverage: 22.6% of statements
 ok   registry/internal/app/registry           0.410s  coverage: 60.0% of statements
 registry/internal/domain/auth                         coverage: 0.0% of statements
 ok   registry/internal/domain/registry        0.010s  coverage: 64.0% of statements
-ok   registry/internal/infra/auth/postgres    0.289s  coverage: 56.6% of statements
+ok   registry/internal/infra/auth/postgres    0.289s  coverage: 57.4% of statements
 ok   registry/internal/infra/metadata/sqlite  0.219s  coverage: 58.3% of statements
 ok   registry/internal/infra/storage/fsblob   0.012s  coverage: 61.7% of statements
-ok   registry/internal/ports                  0.009s  coverage: 60.7% of statements
-ok   registry/internal/protocol/http          0.545s  coverage: 74.3% of statements
-ok   registry/internal/tui                    0.011s  coverage: 52.6% of statements
+ok   registry/internal/ports                  0.009s  coverage: 60.0% of statements
+ok   registry/internal/protocol/http          0.545s  coverage: 75.0% of statements
+ok   registry/internal/tui                    0.011s  coverage: 52.1% of statements
 ```
 
 **Runtime / manual evidence**: ✅ Supplemental evidence from established session verification
