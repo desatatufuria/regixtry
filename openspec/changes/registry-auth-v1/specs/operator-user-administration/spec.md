@@ -2,37 +2,48 @@
 
 ## Purpose
 
-Define the first-slice operator workflows for managing local users and repository grants.
+Define the currently shipped auth-enabled TUI behavior for operator-facing auth administration.
 
 ## Current Repository Facts (Non-normative)
 
 - Today the TUI is an inspection console for repositories, tags, manifests, blobs, and uploads.
-- The TUI currently runs with a local operator access controller that bypasses registry authorization.
+- In auth-enabled mode, the shipped TUI intentionally does not authenticate a local operator into backend admin capabilities.
+- Auth-backed user, grant, and token mutations are deferred until a real operator login flow exists.
 
 ## Requirements
 
-### Requirement: Minimal TUI user administration
+### Requirement: Auth-enabled TUI remains inspection-oriented
 
-The system MUST provide TUI workflows for user create, user update, password reset, user disable/enable, and repository grant assignment/removal for local users.
+When auth is enabled, the system MUST keep repository inspection available and MUST NOT enable local admin mutations through the TUI.
 
-#### Scenario: Operator grants repository access
+#### Scenario: Operator can still inspect repositories in auth-enabled mode
 
-- GIVEN an operator is managing local users in the TUI
-- WHEN the operator assigns `repo-writer` for repository `team/app` to a user
-- THEN subsequent authorization decisions use that grant
+- GIVEN auth is enabled for the local runtime
+- WHEN the operator launches the TUI snapshot or interactive inspection view
+- THEN repository inspection data remains available
 
-#### Scenario: Operator resets a password
+#### Scenario: Auth-backed admin shortcuts stay unavailable
 
-- GIVEN an existing local user
-- WHEN the operator resets that user's password
-- THEN the old password no longer authenticates and the new password does
+- GIVEN auth is enabled for the local runtime
+- WHEN the operator opens the TUI
+- THEN the local TUI does not expose or activate backend admin mutation workflows
 
-### Requirement: Admin-only token administration
+### Requirement: Auth-enabled TUI shows an explicit security notice
 
-The system MUST restrict token create, list, and revoke operations to administrators and MUST NOT expose self-service token minting in this slice.
+The system MUST render a clear notice that local auth-backed admin actions are intentionally disabled until a real operator login flow exists.
 
-#### Scenario: Non-admin cannot preissue a token
+#### Scenario: Security notice explains the deferred admin path
 
-- GIVEN an authenticated principal without administrator authority
-- WHEN that principal attempts to create or revoke a token
-- THEN the system rejects the operation as forbidden
+- GIVEN auth is enabled for the local runtime
+- WHEN the TUI renders its inspection view
+- THEN the output explains that auth-backed admin actions are disabled in the local TUI
+
+### Requirement: Safe operator login and admin UI remain deferred
+
+The system MUST defer local auth-backed user, grant, and token mutations until a real operator authentication flow is designed and delivered.
+
+#### Scenario: Deferred operator admin workflow is not claimed as shipped
+
+- GIVEN the current auth-enabled TUI release
+- WHEN operator-facing documentation or verification artifacts describe TUI behavior
+- THEN they describe inspection plus the security notice, not shipped local admin mutation workflows

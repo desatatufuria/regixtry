@@ -8,7 +8,7 @@
 | 1200-line budget risk | High |
 | 400-line budget risk | High |
 | Chained PRs recommended | Yes |
-| Suggested split | PR 1 auth foundation -> PR 2 registry enforcement -> PR 3 TUI admin + smoke coverage |
+| Suggested split | PR 1 auth foundation -> PR 2 registry enforcement -> PR 3 auth-mode TUI hardening + smoke/docs alignment |
 | Delivery strategy | auto-forecast |
 | Chain strategy | stacked-to-main |
 
@@ -23,7 +23,7 @@ Chain strategy: stacked-to-main
 |---|---|---|---|
 | 1 | Postgres auth domain, store, bootstrap CLI | PR 1 | Base slice; include unit/integration tests |
 | 2 | `/auth/token`, bearer middleware, registry authorization | PR 2 | Depends on PR 1; keep router + service tests together |
-| 3 | TUI admin flows and auth-enabled smoke scripts | PR 3 | Depends on PR 2; docs/tests stay in same slice |
+| 3 | Auth-enabled TUI hardening, inspection-only notice, and smoke/docs alignment | PR 3 | Depends on PR 2; safe authenticated operator admin remains follow-up work |
 
 ## Phase 1: Auth Foundation
 
@@ -42,10 +42,12 @@ Chain strategy: stacked-to-main
 
 ## Phase 3: Operator Administration
 
-- [x] 3.1 Expand `internal/tui/model.go` and create `internal/tui/admin_users.go`, `admin_grants.go`, and `admin_tokens.go` for admin-only user CRUD, password reset, enable/disable, and repo grant editing.
-- [x] 3.2 Add `internal/tui/model_test.go` coverage for grant assignment, password reset outcomes, and non-admin token-management rejection paths.
+> Current shipped status: the auth-enabled TUI is intentionally inspection-only. A previous local admin shortcut was disabled before ship because it bypassed the backend auth boundary. A safe authenticated operator admin UI remains pending.
+
+- [ ] 3.1 Deliver a safe authenticated operator admin UI for local user CRUD, password reset, enable/disable, grant editing, and token management without bypassing backend auth.
+- [ ] 3.2 Add auth-enabled TUI verification coverage for the future authenticated operator admin UI once that workflow exists.
 
 ## Phase 4: Verification and Docs
 
 - [x] 4.1 Extend `docs/verification/scripts/docker-push-pull-smoke.sh` for `docker login`, authorized pull/push, and unauthorized catalog/tag scenarios with anonymous pull disabled.
-- [x] 4.2 Extend `docs/verification/scripts/tui-smoke.sh` and update `README.md` with Postgres auth bootstrap/runtime steps and the `bootstrap-admin` workflow.
+- [x] 4.2 Extend `docs/verification/scripts/tui-smoke.sh` and update `README.md` with Postgres auth bootstrap/runtime steps plus the auth-mode inspection/security-notice behavior.

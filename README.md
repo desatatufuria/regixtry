@@ -146,4 +146,4 @@ Read `docs/contributing.md` before opening or retargeting any PR slice.
 
 Those local Compose checks are supporting runtime evidence only. They do **not** mean the repository currently guarantees Compose automation as a first-class externally verified runtime contract.
 
-This does **not** mean the product is feature-complete beyond the documented v1 scope. The repository currently proves the local single-node foundation plus the auth-v1 registry path: OCI/Docker-compatible content flows, SQLite-backed metadata, Postgres-backed auth state, `/auth/token`, bearer challenge interoperability, and a minimal TUI operator workflow for user/grant/token administration.
+This does **not** mean the product is feature-complete beyond the documented v1 scope. The repository currently proves the local single-node foundation plus the auth-v1 registry path: OCI/Docker-compatible content flows, SQLite-backed metadata, Postgres-backed auth state, `/auth/token`, bearer challenge interoperability, and an inspection-oriented TUI that shows a security notice instead of allowing local auth-backed admin mutations.
