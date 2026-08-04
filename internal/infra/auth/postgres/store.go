@@ -220,15 +220,15 @@ func (s *Store) CreateToken(ctx context.Context, token domainauth.Token) error {
 	}
 
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO auth_tokens (id, user_id, kind, name, accessor, secret_hash, expires_at, created_at, revoked_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-	`, token.ID, token.UserID, string(token.Kind), token.Name, token.Accessor, token.SecretHash, formatTime(token.ExpiresAt), formatTime(token.CreatedAt), revokedAt)
+		INSERT INTO auth_tokens (id, user_id, kind, name, scope, accessor, secret_hash, expires_at, created_at, revoked_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	`, token.ID, token.UserID, string(token.Kind), token.Name, token.Scope, token.Accessor, token.SecretHash, formatTime(token.ExpiresAt), formatTime(token.CreatedAt), revokedAt)
 	return err
 }
 
 func (s *Store) GetTokenBySecretHash(ctx context.Context, kind domainauth.TokenKind, secretHash string) (domainauth.Token, error) {
 	return s.scanToken(s.db.QueryRowContext(ctx, `
-		SELECT id, user_id, kind, name, accessor, secret_hash, expires_at, created_at, revoked_at
+		SELECT id, user_id, kind, name, scope, accessor, secret_hash, expires_at, created_at, revoked_at
 		FROM auth_tokens
 		WHERE kind = $1 AND secret_hash = $2
 	`, string(kind), strings.TrimSpace(secretHash)))
@@ -236,7 +236,7 @@ func (s *Store) GetTokenBySecretHash(ctx context.Context, kind domainauth.TokenK
 
 func (s *Store) ListTokensByUser(ctx context.Context, userID string, kind domainauth.TokenKind) ([]domainauth.Token, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, user_id, kind, name, accessor, secret_hash, expires_at, created_at, revoked_at
+		SELECT id, user_id, kind, name, scope, accessor, secret_hash, expires_at, created_at, revoked_at
 		FROM auth_tokens
 		WHERE user_id = $1 AND kind = $2
 		ORDER BY created_at DESC
@@ -329,7 +329,7 @@ func scanTokenRow(scanner rowScanner) (domainauth.Token, error) {
 	var expiresAt string
 	var createdAt string
 	var revokedAt sql.NullString
-	if err := scanner.Scan(&token.ID, &token.UserID, &token.Kind, &token.Name, &token.Accessor, &token.SecretHash, &expiresAt, &createdAt, &revokedAt); err != nil {
+	if err := scanner.Scan(&token.ID, &token.UserID, &token.Kind, &token.Name, &token.Scope, &token.Accessor, &token.SecretHash, &expiresAt, &createdAt, &revokedAt); err != nil {
 		return domainauth.Token{}, err
 	}
 

@@ -15,7 +15,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	appauth "registry/internal/app/auth"
 	appregistry "registry/internal/app/registry"
-	domainauth "registry/internal/domain/auth"
 	authpostgres "registry/internal/infra/auth/postgres"
 	metadata "registry/internal/infra/metadata/sqlite"
 	"registry/internal/infra/storage/fsblob"
@@ -285,9 +284,8 @@ func runTUI(cfg tuiConfig, stdin io.Reader, stdout io.Writer) error {
 	defer metadataStore.Close()
 
 	var (
-		authStore   ports.AuthStore
-		authService ports.AuthService
-		modelOpts   []tui.Option
+		authStore ports.AuthStore
+		modelOpts []tui.Option
 	)
 	if cfg.AuthPostgresDSN != "" {
 		authStore, err = openAuthStore(cfg.AuthPostgresDSN)
@@ -296,11 +294,11 @@ func runTUI(cfg tuiConfig, stdin io.Reader, stdout io.Writer) error {
 		}
 		defer authStore.Close()
 
-		authService = appauth.NewService(authStore)
+		authService := appauth.NewService(authStore)
 		if err := authService.EnsureBootstrapAdmin(context.Background()); err != nil {
 			return err
 		}
-		modelOpts = append(modelOpts, tui.WithAuthAdministration(authService, domainauth.Principal{IsAdmin: true, Username: "local-operator"}))
+		modelOpts = append(modelOpts, tui.WithNotice("Auth-backed admin actions are disabled in the local TUI until a real operator login flow exists."))
 	}
 
 	service := appregistry.NewService(

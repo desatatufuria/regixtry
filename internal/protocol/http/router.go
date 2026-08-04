@@ -376,9 +376,15 @@ func (r *Router) handleToken(w stdhttp.ResponseWriter, req *stdhttp.Request) {
 		return
 	}
 
-	result, err := r.auth.LoginWithPassword(req.Context(), username, secret)
+	requestedScopes, err := requestedScopes(req)
+	if err != nil {
+		writeError(w, req, err, challenge, "UNAUTHORIZED")
+		return
+	}
+
+	result, err := r.auth.LoginWithPassword(req.Context(), username, secret, requestedScopes)
 	if err != nil && domainauth.IsCode(err, domainauth.ErrorCodeInvalidCredentials) {
-		result, err = r.auth.LoginWithPreissuedToken(req.Context(), username, secret)
+		result, err = r.auth.LoginWithPreissuedToken(req.Context(), username, secret, requestedScopes)
 	}
 	if err != nil {
 		writeError(w, req, err, challenge, "UNAUTHORIZED")
@@ -395,8 +401,8 @@ func (r *Router) handleToken(w stdhttp.ResponseWriter, req *stdhttp.Request) {
 	if service := strings.TrimSpace(req.URL.Query().Get("service")); service != "" {
 		response["service"] = service
 	}
-	if scope := strings.TrimSpace(req.URL.Query().Get("scope")); scope != "" {
-		response["scope"] = scope
+	if result.Scope != "" {
+		response["scope"] = result.Scope
 	}
 
 	writeJSON(w, stdhttp.StatusOK, response)
@@ -470,6 +476,18 @@ func registryRealm(challenge ports.Challenge) string {
 	}
 
 	return "registry"
+}
+
+func requestedScopes(req *stdhttp.Request) ([]domainauth.Scope, error) {
+	if req == nil {
+		return nil, nil
+	}
+
+	if err := req.ParseForm(); err != nil {
+		return nil, domainauth.NewValidationError("scope request could not be parsed")
+	}
+
+	return domainauth.ParseScopes(req.Form["scope"])
 }
 
 func parsePagination(req *stdhttp.Request) (int, string, error) {

@@ -17,9 +17,15 @@ Use Docker Compose when you want a disposable local runtime with the registry pl
 1. Start Postgres: `docker compose up -d postgres`
 2. Bootstrap the first admin: `docker compose run --rm registry bootstrap-admin -password '<admin-password>'`
 3. Start the registry: `docker compose up -d registry`
-4. Log in from Docker: `docker login localhost:${REGISTRY_PORT:-5503} -u admin -p '<admin-password>'`
+4. Log in from Docker: `docker login localhost:${REGISTRY_PORT:-5517} -u admin -p '<admin-password>'`
 
-Compose publishes the registry on `127.0.0.1:${REGISTRY_PORT:-5503}`. It keeps SQLite/blob data in the `registry-data` volume and auth state in the `postgres-data` volume.
+Compose publishes the registry on `127.0.0.1:${REGISTRY_PORT:-5517}`. It keeps SQLite/blob data in the `registry-data` volume and auth state in the `postgres-data` volume.
+
+Before the first compose run on a fresh machine, make sure the external Docker network expected by the devcontainer/runtime exists:
+
+```bash
+docker network create dtf-netwok
+```
 
 ### Bootstrap and runtime steps
 
@@ -28,20 +34,16 @@ Use this order whenever auth is enabled:
 1. `docker compose up -d postgres`
 2. `docker compose run --rm registry bootstrap-admin -username admin -password '<admin-password>'`
 3. `docker compose up -d registry`
-4. `docker login localhost:${REGISTRY_PORT:-5503} -u admin -p '<admin-password>'`
-5. Push or pull images against `localhost:${REGISTRY_PORT:-5503}`.
+4. `docker login localhost:${REGISTRY_PORT:-5517} -u admin -p '<admin-password>'`
+5. Push or pull images against `localhost:${REGISTRY_PORT:-5517}`.
 
 If you need to rotate the bootstrap password later, rerun the bootstrap command with `-rotate-password`.
 
 ### TUI auth administration
 
-The TUI stays local-operator oriented. When `-auth-postgres-dsn` is configured, the repositories screen exposes `a: admin` and enables first-slice user administration:
+The local TUI no longer fabricates an authenticated admin when `-auth-postgres-dsn` is configured. Repository inspection still works, but auth-backed admin mutations stay disabled until a real operator login flow exists.
 
-- create/update local users,
-- reset passwords,
-- enable or disable users,
-- edit repository grants,
-- create or revoke admin-issued credential tokens.
+For now, use `bootstrap-admin` only to create or rotate the initial global admin account, then perform auth administration through authenticated backend flows instead of the local TUI.
 
 Example snapshot run against the compose Postgres service:
 
@@ -51,6 +53,8 @@ go run ./cmd/registry tui \
   -auth-postgres-dsn "postgres://registry:registry@127.0.0.1:5432/registry_auth?sslmode=disable" \
   -snapshot
 ```
+
+The snapshot will render a notice explaining that local TUI admin actions are intentionally disabled in auth-backed mode.
 
 ### Notes
 

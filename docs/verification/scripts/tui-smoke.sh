@@ -61,6 +61,6 @@ go run ./cmd/registry tui \
 
 grep -q "Registry Console" "${OUTPUT_FILE}"
 grep -q "registry-auth/smoke" "${OUTPUT_FILE}"
-grep -q "a: admin" "${OUTPUT_FILE}"
+grep -q "Auth-backed admin actions are disabled in the local TUI until a real operator login flow exists." "${OUTPUT_FILE}"
 
 echo "Auth-enabled TUI smoke output captured at ${OUTPUT_FILE}."

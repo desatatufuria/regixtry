@@ -104,13 +104,11 @@ func (c principalAccessController) Authorize(_ context.Context, action Action) e
 		return domain.NewUnauthorizedError("authentication required")
 	}
 
-	if action.Principal.IsAdmin {
-		return nil
-	}
-
 	switch action.Verb {
 	case ActionCatalog:
-		return nil
+		if action.Principal.CanAccessCatalog() {
+			return nil
+		}
 	case ActionPull, ActionInspect:
 		if action.Repository == "" || action.Principal.HasReadAccess(action.Repository) {
 			return nil

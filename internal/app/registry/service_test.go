@@ -106,11 +106,11 @@ func TestServiceAuthorizesRepositoryActionsAndFiltersCatalog(t *testing.T) {
 	service, cleanup := newTestService(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "registry", Service: "registry"}))
 	defer cleanup()
 
-	adminCtx := ports.ContextWithPrincipal(context.Background(), domainauth.Principal{IsAdmin: true})
+	adminCtx := ports.ContextWithPrincipal(context.Background(), domainauth.Principal{IsAdmin: true, Scopes: []domainauth.Scope{{Type: "registry", Name: "catalog", Actions: []string{"*"}, Canonical: "registry:catalog:*"}, {Type: "repository", Name: "team/app", Actions: []string{"pull", "push"}, Canonical: "repository:team/app:pull,push"}, {Type: "repository", Name: "team/other", Actions: []string{"pull", "push"}, Canonical: "repository:team/other:pull,push"}}})
 	seedRepository(t, service, adminCtx, "team/app")
 	seedRepository(t, service, adminCtx, "team/other")
 
-	readerCtx := ports.ContextWithPrincipal(context.Background(), principalForGrants("team/app", domainauth.RepoRoleReader))
+	readerCtx := ports.ContextWithPrincipal(context.Background(), principalForGrants("team/app", domainauth.RepoRoleReader, []domainauth.Scope{{Type: "repository", Name: "team/app", Actions: []string{"pull"}, Canonical: "repository:team/app:pull"}}))
 	catalog, err := service.Catalog(readerCtx, 10, "")
 	if err != nil {
 		t.Fatalf("Catalog() error = %v", err)
@@ -140,7 +140,7 @@ func TestServiceAdminBypassesRepositoryChecks(t *testing.T) {
 	service, cleanup := newTestService(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "registry", Service: "registry"}))
 	defer cleanup()
 
-	adminCtx := ports.ContextWithPrincipal(context.Background(), domainauth.Principal{IsAdmin: true})
+	adminCtx := ports.ContextWithPrincipal(context.Background(), domainauth.Principal{IsAdmin: true, Scopes: []domainauth.Scope{{Type: "repository", Name: "team/app", Actions: []string{"pull", "push"}, Canonical: "repository:team/app:pull,push"}, {Type: "repository", Name: "team/other", Actions: []string{"pull", "push"}, Canonical: "repository:team/other:pull,push"}, {Type: "registry", Name: "catalog", Actions: []string{"*"}, Canonical: "registry:catalog:*"}}})
 	seedRepository(t, service, adminCtx, "team/app")
 
 	if _, err := service.BeginUpload(adminCtx, "team/other"); err != nil {
@@ -209,8 +209,8 @@ func seedRepository(t *testing.T, service *Service, ctx context.Context, reposit
 	}
 }
 
-func principalForGrants(repository string, role domainauth.RepoRole) domainauth.Principal {
-	return domainauth.Principal{Grants: []domainauth.RepoGrant{{Repository: domain.MustParseRepositoryRef(repository), Role: role}}}
+func principalForGrants(repository string, role domainauth.RepoRole, scopes []domainauth.Scope) domainauth.Principal {
+	return domainauth.Principal{Grants: []domainauth.RepoGrant{{Repository: domain.MustParseRepositoryRef(repository), Role: role}}, Scopes: scopes}
 }
 
 func digestForTest(payload []byte) string {

@@ -20,6 +20,7 @@ type Token struct {
 	UserID     string
 	Kind       TokenKind
 	Name       string
+	Scope      string
 	Accessor   string
 	SecretHash string
 	ExpiresAt  time.Time
@@ -64,7 +65,24 @@ func (t Token) Validate() error {
 		return NewValidationError("access tokens must not have a display name")
 	}
 
+	if t.Kind == TokenKindAdminCredential && strings.TrimSpace(t.Scope) != "" {
+		return NewValidationError("admin credential tokens must not store access scope")
+	}
+
+	if _, err := t.Scopes(); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+func (t Token) Scopes() ([]Scope, error) {
+	trimmed := strings.TrimSpace(t.Scope)
+	if trimmed == "" {
+		return nil, nil
+	}
+
+	return ParseScopes([]string{trimmed})
 }
 
 func (t Token) IsExpired(now time.Time) bool {

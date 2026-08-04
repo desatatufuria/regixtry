@@ -95,7 +95,7 @@ func (s *Service) Catalog(ctx context.Context, limit int, after string) (Catalog
 	principal := ports.PrincipalFromContext(ctx)
 	result := CatalogResult{Repositories: make([]string, 0, len(repositories))}
 	for _, repository := range repositories {
-		if principal != nil && !principal.IsAdmin && !principal.HasReadAccess(repository.String()) {
+		if principal != nil && !principal.HasCatalogAccess(repository.String()) {
 			continue
 		}
 		result.Repositories = append(result.Repositories, repository.String())

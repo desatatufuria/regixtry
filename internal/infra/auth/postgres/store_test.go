@@ -67,6 +67,18 @@ func TestStoreBootstrapsAndPersistsAuthState(t *testing.T) {
 		t.Fatalf("loadedToken = %#v, want accessor=%q name=%q", loadedToken, token.Accessor, token.Name)
 	}
 
+	accessToken := domainauth.Token{ID: "token-2", UserID: user.ID, Kind: domainauth.TokenKindAccess, Scope: "repository:team/app:pull", Accessor: "atk_1", SecretHash: "access-secret-hash", CreatedAt: now, ExpiresAt: now.Add(domainauth.AccessTokenTTL)}
+	if err := store.CreateToken(context.Background(), accessToken); err != nil {
+		t.Fatalf("CreateToken(access) error = %v", err)
+	}
+	loadedAccessToken, err := store.GetTokenBySecretHash(context.Background(), domainauth.TokenKindAccess, accessToken.SecretHash)
+	if err != nil {
+		t.Fatalf("GetTokenBySecretHash(access) error = %v", err)
+	}
+	if loadedAccessToken.Scope != accessToken.Scope {
+		t.Fatalf("loadedAccessToken.Scope = %q, want %q", loadedAccessToken.Scope, accessToken.Scope)
+	}
+
 	tokens, err := store.ListTokensByUser(context.Background(), user.ID, domainauth.TokenKindAdminCredential)
 	if err != nil {
 		t.Fatalf("ListTokensByUser() error = %v", err)

@@ -236,7 +236,7 @@ func (s *Service) DeleteUser(ctx context.Context, actor domainauth.Principal, us
 	return s.store.DeleteUser(ctx, userID)
 }
 
-func (s *Service) LoginWithPassword(ctx context.Context, username string, password string) (ports.LoginResult, error) {
+func (s *Service) LoginWithPassword(ctx context.Context, username string, password string, requestedScopes []domainauth.Scope) (ports.LoginResult, error) {
 	user, err := s.getActiveUserByUsername(ctx, username)
 	if err != nil {
 		return ports.LoginResult{}, err
@@ -245,10 +245,10 @@ func (s *Service) LoginWithPassword(ctx context.Context, username string, passwo
 		return ports.LoginResult{}, domainauth.NewInvalidCredentialsError()
 	}
 
-	return s.issueAccessToken(ctx, user)
+	return s.issueAccessToken(ctx, user, requestedScopes)
 }
 
-func (s *Service) LoginWithPreissuedToken(ctx context.Context, username string, token string) (ports.LoginResult, error) {
+func (s *Service) LoginWithPreissuedToken(ctx context.Context, username string, token string, requestedScopes []domainauth.Scope) (ports.LoginResult, error) {
 	user, err := s.getActiveUserByUsername(ctx, username)
 	if err != nil {
 		return ports.LoginResult{}, err
@@ -268,7 +268,7 @@ func (s *Service) LoginWithPreissuedToken(ctx context.Context, username string, 
 		return ports.LoginResult{}, err
 	}
 
-	return s.issueAccessToken(ctx, user)
+	return s.issueAccessToken(ctx, user, requestedScopes)
 }
 
 func (s *Service) VerifyAccessToken(ctx context.Context, bearerToken string) (domainauth.Principal, error) {
@@ -291,7 +291,12 @@ func (s *Service) VerifyAccessToken(ctx context.Context, bearerToken string) (do
 		return domainauth.Principal{}, domainauth.NewDisabledUserError(user.Username)
 	}
 
-	return s.buildPrincipal(ctx, user, storedToken), nil
+	principal, err := s.buildPrincipal(ctx, user, storedToken)
+	if err != nil {
+		return domainauth.Principal{}, domainauth.NewInvalidCredentialsError()
+	}
+
+	return principal, nil
 }
 
 func (s *Service) CreateAdminToken(ctx context.Context, actor domainauth.Principal, input ports.CreateAdminTokenInput) (ports.CreatedAdminToken, error) {
@@ -433,19 +438,30 @@ func (s *Service) ensureAnotherActiveAdmin(ctx context.Context, exceptUserID str
 	return nil
 }
 
-func (s *Service) issueAccessToken(ctx context.Context, user domainauth.User) (ports.LoginResult, error) {
+func (s *Service) issueAccessToken(ctx context.Context, user domainauth.User, requestedScopes []domainauth.Scope) (ports.LoginResult, error) {
 	secret, err := randomSecret(32)
 	if err != nil {
 		return ports.LoginResult{}, err
 	}
 
+	grantedScopes, err := s.grantedScopes(ctx, user, requestedScopes)
+	if err != nil {
+		return ports.LoginResult{}, err
+	}
+	grantedScope := domainauth.NormalizeScopes(grantedScopes)
+
 	now := s.now()
-	token := domainauth.Token{ID: uuid.NewString(), UserID: user.ID, Kind: domainauth.TokenKindAccess, Accessor: shortAccessor("atk"), SecretHash: hashSecret(secret), CreatedAt: now, ExpiresAt: now.Add(domainauth.AccessTokenTTL)}
+	token := domainauth.Token{ID: uuid.NewString(), UserID: user.ID, Kind: domainauth.TokenKindAccess, Scope: grantedScope, Accessor: shortAccessor("atk"), SecretHash: hashSecret(secret), CreatedAt: now, ExpiresAt: now.Add(domainauth.AccessTokenTTL)}
 	if err := s.store.CreateToken(ctx, token); err != nil {
 		return ports.LoginResult{}, err
 	}
 
-	return ports.LoginResult{Principal: s.buildPrincipal(ctx, user, token), BearerToken: secret, ExpiresAt: token.ExpiresAt, Accessor: token.Accessor}, nil
+	principal, err := s.buildPrincipal(ctx, user, token)
+	if err != nil {
+		return ports.LoginResult{}, err
+	}
+
+	return ports.LoginResult{Principal: principal, BearerToken: secret, ExpiresAt: token.ExpiresAt, Accessor: token.Accessor, Scope: grantedScope}, nil
 }
 
 func (s *Service) getActiveUserByUsername(ctx context.Context, username string) (domainauth.User, error) {
@@ -463,13 +479,81 @@ func (s *Service) getActiveUserByUsername(ctx context.Context, username string) 
 	return user, nil
 }
 
-func (s *Service) buildPrincipal(ctx context.Context, user domainauth.User, token domainauth.Token) domainauth.Principal {
+func (s *Service) buildPrincipal(ctx context.Context, user domainauth.User, token domainauth.Token) (domainauth.Principal, error) {
 	grants, err := s.store.ListRepoGrants(ctx, user.ID)
 	if err != nil {
 		grants = nil
 	}
+	scopes, err := token.Scopes()
+	if err != nil {
+		return domainauth.Principal{}, err
+	}
 
-	return domainauth.Principal{Subject: token.Accessor, UserID: user.ID, Username: user.Username, IsAdmin: user.IsAdmin, Grants: grants, ExpiresAt: token.ExpiresAt}
+	return domainauth.Principal{Subject: token.Accessor, UserID: user.ID, Username: user.Username, IsAdmin: user.IsAdmin, Grants: grants, Scopes: scopes, ExpiresAt: token.ExpiresAt}, nil
+}
+
+func (s *Service) grantedScopes(ctx context.Context, user domainauth.User, requestedScopes []domainauth.Scope) ([]domainauth.Scope, error) {
+	if len(requestedScopes) == 0 {
+		return nil, nil
+	}
+
+	grants, err := s.store.ListRepoGrants(ctx, user.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	granted := make([]domainauth.Scope, 0, len(requestedScopes))
+	for _, requested := range requestedScopes {
+		if requested.IsRegistryCatalog() {
+			granted = append(granted, requested)
+			continue
+		}
+		if !requested.IsRepository() {
+			continue
+		}
+
+		actions := intersectRequestedActions(user.IsAdmin, grants, requested)
+		if len(actions) == 0 {
+			continue
+		}
+
+		granted = append(granted, domainauth.Scope{Type: "repository", Name: requested.Repository().String(), Actions: actions, Canonical: "repository:" + requested.Repository().String() + ":" + strings.Join(actions, ",")})
+	}
+
+	return granted, nil
+}
+
+func intersectRequestedActions(isAdmin bool, grants []domainauth.RepoGrant, requested domainauth.Scope) []string {
+	allowPull := false
+	allowPush := false
+
+	if isAdmin {
+		allowPull = requested.AllowsPull()
+		allowPush = requested.AllowsPush()
+	} else {
+		for _, grant := range grants {
+			if grant.Repository.String() != requested.Repository().String() {
+				continue
+			}
+			if grant.Role.AllowsRead() && requested.AllowsPull() {
+				allowPull = true
+			}
+			if grant.Role.AllowsWrite() && requested.AllowsPush() {
+				allowPush = true
+			}
+			break
+		}
+	}
+
+	actions := make([]string, 0, 2)
+	if allowPull {
+		actions = append(actions, "pull")
+	}
+	if allowPush {
+		actions = append(actions, "push")
+	}
+
+	return actions
 }
 
 func requireAdmin(actor domainauth.Principal) error {

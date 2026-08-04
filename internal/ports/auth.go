@@ -30,6 +30,7 @@ type LoginResult struct {
 	BearerToken string
 	ExpiresAt   time.Time
 	Accessor    string
+	Scope       string
 }
 
 type BootstrapAdminInput struct {
@@ -81,8 +82,8 @@ type AuthService interface {
 	UpdateUser(ctx context.Context, actor domainauth.Principal, input UpdateUserInput) (domainauth.User, error)
 	SetUserEnabled(ctx context.Context, actor domainauth.Principal, userID string, enabled bool) (domainauth.User, error)
 	DeleteUser(ctx context.Context, actor domainauth.Principal, userID string) error
-	LoginWithPassword(ctx context.Context, username string, password string) (LoginResult, error)
-	LoginWithPreissuedToken(ctx context.Context, username string, token string) (LoginResult, error)
+	LoginWithPassword(ctx context.Context, username string, password string, requestedScopes []domainauth.Scope) (LoginResult, error)
+	LoginWithPreissuedToken(ctx context.Context, username string, token string, requestedScopes []domainauth.Scope) (LoginResult, error)
 	VerifyAccessToken(ctx context.Context, bearerToken string) (domainauth.Principal, error)
 	CreateAdminToken(ctx context.Context, actor domainauth.Principal, input CreateAdminTokenInput) (CreatedAdminToken, error)
 	ListRepoGrants(ctx context.Context, actor domainauth.Principal, userID string) ([]domainauth.RepoGrant, error)

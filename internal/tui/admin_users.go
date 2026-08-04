@@ -19,6 +19,12 @@ func WithAuthAdministration(authService ports.AuthService, actor domainauth.Prin
 	}
 }
 
+func WithNotice(notice string) Option {
+	return func(m *Model) {
+		m.notice = strings.TrimSpace(notice)
+	}
+}
+
 type AdminUsersModel struct {
 	Items    []domainauth.User
 	Selected int

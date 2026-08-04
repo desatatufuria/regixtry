@@ -302,6 +302,37 @@ func TestRunTUIRendersRepositorySnapshot(t *testing.T) {
 	}
 }
 
+func TestRunTUIDisablesAuthAdminShortcutWhenAuthIsEnabled(t *testing.T) {
+	restore := swapAuthStoreOpener(t)
+	defer restore()
+
+	authDB := filepath.Join(t.TempDir(), "auth.db")
+	if err := run(context.Background(), []string{"bootstrap-admin", "-auth-postgres-dsn", authDB, "-username", "admin", "-password", "change-me-now"}, io.Discard, io.Discard); err != nil {
+		t.Fatalf("run(bootstrap-admin) error = %v", err)
+	}
+
+	storageRoot := t.TempDir()
+	databasePath := filepath.Join(storageRoot, "registry.db")
+	seedRegistryState(t, storageRoot, databasePath)
+
+	stdout := &bytes.Buffer{}
+	err := runTUI(tuiConfig{StorageRoot: storageRoot, DatabasePath: databasePath, Tenant: "tenant-a", AuthPostgresDSN: authDB, Snapshot: true}, strings.NewReader("q"), stdout)
+	if err != nil {
+		t.Fatalf("runTUI() error = %v", err)
+	}
+
+	view := stdout.String()
+	if strings.Contains(view, "a: admin") {
+		t.Fatalf("stdout = %q, want auth admin shortcut removed", view)
+	}
+	if !strings.Contains(view, "Auth-backed admin actions are disabled in the local TUI until a real operator login flow exists.") {
+		t.Fatalf("stdout = %q, want explicit auth admin notice", view)
+	}
+	if !strings.Contains(view, "library/alpine") {
+		t.Fatalf("stdout = %q, want repository snapshot to stay available", view)
+	}
+}
+
 func seedRegistryState(t *testing.T, storageRoot string, databasePath string) {
 	t.Helper()
 

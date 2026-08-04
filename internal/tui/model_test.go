@@ -355,10 +355,10 @@ func (f *fakeAdminAuthService) DeleteUser(_ context.Context, actor domainauth.Pr
 	}
 	return domainauth.NewNotFoundError("user", userID)
 }
-func (f *fakeAdminAuthService) LoginWithPassword(context.Context, string, string) (ports.LoginResult, error) {
+func (f *fakeAdminAuthService) LoginWithPassword(context.Context, string, string, []domainauth.Scope) (ports.LoginResult, error) {
 	return ports.LoginResult{}, nil
 }
-func (f *fakeAdminAuthService) LoginWithPreissuedToken(context.Context, string, string) (ports.LoginResult, error) {
+func (f *fakeAdminAuthService) LoginWithPreissuedToken(context.Context, string, string, []domainauth.Scope) (ports.LoginResult, error) {
 	return ports.LoginResult{}, nil
 }
 func (f *fakeAdminAuthService) VerifyAccessToken(context.Context, string) (domainauth.Principal, error) {

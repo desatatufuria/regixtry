@@ -305,7 +305,7 @@ func TestRouterIssuesAccessTokenFromBasicCredentials(t *testing.T) {
 	t.Parallel()
 
 	handler, cleanup := newTestRouterWithAuth(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "registry", Service: "registry"}), fakeAuthService{
-		loginResult: ports.LoginResult{BearerToken: "issued-token", ExpiresAt: time.Date(2026, 1, 2, 3, 19, 5, 0, time.UTC)},
+		loginResult: ports.LoginResult{BearerToken: "issued-token", ExpiresAt: time.Date(2026, 1, 2, 3, 19, 5, 0, time.UTC), Scope: "repository:team/app:pull"},
 	})
 	defer cleanup()
 
@@ -328,6 +328,47 @@ func TestRouterIssuesAccessTokenFromBasicCredentials(t *testing.T) {
 	}
 	if payload["scope"] != "repository:team/app:pull" {
 		t.Fatalf("scope = %#v, want repository:team/app:pull", payload["scope"])
+	}
+}
+
+func TestRouterRejectsPushWhenBearerScopeIsPullOnly(t *testing.T) {
+	t.Parallel()
+
+	handler, cleanup := newTestRouterWithAuth(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "registry", Service: "registry"}), fakeAuthService{
+		verify: &domainauth.Principal{
+			Subject:  "atk_1",
+			Username: "alice",
+			Grants:   []domainauth.RepoGrant{{Repository: domain.MustParseRepositoryRef("team/app"), Role: domainauth.RepoRoleWriter}},
+			Scopes:   []domainauth.Scope{{Type: "repository", Name: "team/app", Actions: []string{"pull"}, Canonical: "repository:team/app:pull"}},
+		},
+	})
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodPost, "/v2/team/app/blobs/uploads/", nil)
+	req.Header.Set("Authorization", "Bearer pull-only-token")
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestRouterRejectsMalformedTokenScopeRequests(t *testing.T) {
+	t.Parallel()
+
+	handler, cleanup := newTestRouterWithAuth(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "registry", Service: "registry"}), fakeAuthService{})
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/auth/token?service=registry&scope=repository:team/app", nil)
+	req.SetBasicAuth("alice", "password123")
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
 	}
 }
 
@@ -556,6 +597,7 @@ type fakeAuthService struct {
 	loginErr    error
 	verify      *domainauth.Principal
 	verifyErr   error
+	lastScopes  []domainauth.Scope
 }
 
 func (f fakeAuthService) EnsureBootstrapAdmin(context.Context) error { return nil }
@@ -575,10 +617,13 @@ func (f fakeAuthService) DeleteUser(context.Context, domainauth.Principal, strin
 func (f fakeAuthService) BootstrapAdmin(context.Context, ports.BootstrapAdminInput) (ports.BootstrapAdminResult, error) {
 	return ports.BootstrapAdminResult{}, nil
 }
-func (f fakeAuthService) LoginWithPassword(context.Context, string, string) (ports.LoginResult, error) {
+
+func (f fakeAuthService) LoginWithPassword(_ context.Context, _ string, _ string, requestedScopes []domainauth.Scope) (ports.LoginResult, error) {
+	f.lastScopes = append([]domainauth.Scope(nil), requestedScopes...)
 	return f.loginResult, f.loginErr
 }
-func (f fakeAuthService) LoginWithPreissuedToken(context.Context, string, string) (ports.LoginResult, error) {
+func (f fakeAuthService) LoginWithPreissuedToken(_ context.Context, _ string, _ string, requestedScopes []domainauth.Scope) (ports.LoginResult, error) {
+	f.lastScopes = append([]domainauth.Scope(nil), requestedScopes...)
 	return f.loginResult, f.loginErr
 }
 func (f fakeAuthService) VerifyAccessToken(context.Context, string) (domainauth.Principal, error) {

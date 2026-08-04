@@ -24,7 +24,7 @@ services:
         condition: service_healthy
     environment:
       REGISTRY_AUTH_POSTGRES_DSN: postgres://registry:registry@postgres:5432/registry_auth?sslmode=disable
-      REGISTRY_AUTH_TOKEN_REALM_URL: http://127.0.0.1:${REGISTRY_PORT:-5502}/auth/token
+      REGISTRY_AUTH_TOKEN_REALM_URL: http://127.0.0.1:${REGISTRY_PORT:-5517}/auth/token
     command:
       [
         "serve",
@@ -34,7 +34,7 @@ services:
         "/var/lib/registry"
       ]
     ports:
-      - "${REGISTRY_PORT:-5503}:5000"
+      - "${REGISTRY_PORT:-5517}:5000"
     volumes:
       - registry-data:/var/lib/registry
     networks:

@@ -76,6 +76,7 @@ type Model struct {
 	service     QueryService
 	authService ports.AuthService
 	actor       domainauth.Principal
+	notice      string
 	screen      screen
 	loadingText string
 	err         error
@@ -337,6 +338,10 @@ func (m Model) View() string {
 			body.WriteString(" · a: admin")
 		}
 		body.WriteString(" · q: quit")
+		if strings.TrimSpace(m.notice) != "" {
+			body.WriteString("\n\nNotice\n")
+			body.WriteString(m.notice)
+		}
 	case screenTags:
 		body.WriteString(fmt.Sprintf("Tags · %s\n", m.tags.Repository))
 		body.WriteString(renderList(m.tags.Items, m.tags.Selected))

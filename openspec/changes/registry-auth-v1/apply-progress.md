@@ -75,7 +75,7 @@
 
 ## Deviations
 
-- None — implementation matches Work Unit 3 and keeps broader auth UX beyond the minimal operator-admin slice out of scope.
+- Post-review security hardening: auth-backed local TUI administration is now disabled until a real operator login flow exists. This intentionally narrows the original Work Unit 3 behavior because the previous implementation fabricated a global admin principal and violated the auth boundary.
 
 ## Remaining Tasks
 
@@ -92,3 +92,14 @@
 - 13/13 tasks complete overall
 - Work Unit 3 complete
 - Next recommended phase: continue with `sdd-verify`
+
+## Post-merge Security Fixes
+
+- Removed the fabricated `IsAdmin: true` local TUI principal from `cmd/registry/main.go`.
+- Kept auth-enabled TUI repository inspection available, but replaced the old admin shortcut with an explicit security notice.
+- Updated `cmd/registry/main_test.go`, `README.md`, and `docs/verification/scripts/tui-smoke.sh` to lock the secure behavior in place.
+- Verification: `go test ./cmd/registry ./internal/tui` and `go test ./...` both PASS after the fix.
+- Bound `/auth/token` requested repository scopes to the issued access token by intersecting requested actions with the authenticated user's actual repository grants before persisting the token.
+- Enforced stored access-token scopes during `/v2/*` authorization and catalog filtering so token-restricted pull access can no longer be upgraded into push or broader repository visibility.
+- Added malformed-scope rejection plus persistence/authorization tests in `internal/app/auth/service_test.go`, `internal/ports/defaults_test.go`, `internal/protocol/http/router_test.go`, and `internal/infra/auth/postgres/store_test.go`.
+- Verification: `go test ./internal/ports ./internal/app/registry ./internal/protocol/http ./internal/app/auth ./internal/infra/auth/postgres ./internal/tui` and `go test ./...` both PASS after the scope-binding fix.

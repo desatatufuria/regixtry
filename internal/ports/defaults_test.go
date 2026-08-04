@@ -2,6 +2,7 @@ package ports
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	domainauth "registry/internal/domain/auth"
@@ -72,6 +73,20 @@ func TestPrincipalAccessController(t *testing.T) {
 	}
 }
 
+func TestPrincipalAccessControllerEnforcesTokenScope(t *testing.T) {
+	t.Parallel()
+
+	controller := NewPrincipalAccessController(Challenge{Realm: "registry", Service: "registry"})
+	principal := &domainauth.Principal{
+		IsAdmin: true,
+		Scopes:  []domainauth.Scope{{Type: "repository", Name: "team/app", Actions: []string{"pull"}, Canonical: "repository:team/app:pull"}},
+	}
+
+	if err := controller.Authorize(context.Background(), Action{Verb: ActionPush, Repository: "team/app", Principal: principal}); err == nil {
+		t.Fatal("expected token-scoped admin push to be rejected")
+	}
+}
+
 func TestActionScope(t *testing.T) {
 	t.Parallel()
 
@@ -118,9 +133,11 @@ func TestInlineJobRunnerExecutesFunction(t *testing.T) {
 
 func testPrincipal(repository string, canWrite bool) *domainauth.Principal {
 	role := domainauth.RepoRoleReader
+	scopeActions := []string{"pull"}
 	if canWrite {
 		role = domainauth.RepoRoleWriter
+		scopeActions = []string{"pull", "push"}
 	}
 
-	return &domainauth.Principal{Grants: []domainauth.RepoGrant{{Repository: domain.MustParseRepositoryRef(repository), Role: role}}}
+	return &domainauth.Principal{Grants: []domainauth.RepoGrant{{Repository: domain.MustParseRepositoryRef(repository), Role: role}}, Scopes: []domainauth.Scope{{Type: "repository", Name: repository, Actions: scopeActions, Canonical: "repository:" + repository + ":" + strings.Join(scopeActions, ",")}}}
 }
