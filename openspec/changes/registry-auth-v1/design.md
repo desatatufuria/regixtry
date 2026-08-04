@@ -42,7 +42,7 @@ Keep the current `app/registry` + HTTP router shape, but replace the binary anon
 | `internal/infra/auth/postgres/*.go` | Create | Postgres store and schema bootstrap for auth tables only. |
 | `internal/app/registry/service.go` / `queries.go` | Modify | Enforce principal-aware authorization and catalog filtering. |
 | `internal/protocol/http/router.go` | Modify | Add `/auth/token`, bearer parsing, scoped challenges, and auth middleware. |
-| `internal/tui/model.go` + `internal/tui/admin_*.go` | Modify/Create | First-slice user CRUD, password reset, repo grants, and admin-only token management. |
+| `internal/tui/model.go` | Modify | Keep auth-enabled TUI inspection-only and render the deferred-admin security notice. |
 
 ## Interfaces / Contracts
 
@@ -67,7 +67,7 @@ Postgres tables: `auth_users`, `auth_tokens`, `auth_repo_grants`. Repository nam
 |---|---|---|
 | Unit | Scope-to-role mapping, TTL checks, revoke behavior, admin bypass | Table-driven auth/domain tests |
 | Integration | `/auth/token`, bearer challenge headers, catalog filtering, Postgres+SQLite coexistence | `httptest` + disposable Postgres + temp SQLite/blob store |
-| E2E | `docker login/pull/push` with anonymous off; TUI admin CRUD happy path | Extend smoke scripts with auth-enabled scenario |
+| E2E | `docker login/pull/push` with anonymous off; auth-enabled TUI inspection snapshot plus deferred-admin notice | Extend smoke scripts with auth-enabled scenario |
 
 ## Migration / Rollout
 

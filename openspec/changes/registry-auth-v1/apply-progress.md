@@ -6,7 +6,7 @@
 - Mode: Standard
 - Delivery strategy: `auto-forecast`
 - Chain strategy: `stacked-to-main`
-- Current work unit: `Post-ship artifact alignment for auth-enabled TUI behavior`
+- Current work unit: `Post-ship cleanup for auth-enabled TUI shipped scope`
 
 ## Completed Tasks
 
@@ -48,10 +48,11 @@
 | `internal/app/auth/service.go` | Modified | Added admin-only user list/create/update/enable-disable/delete flows plus grant listing. |
 | `internal/infra/auth/postgres/store.go` | Modified | Added auth user listing and deletion persistence to support TUI CRUD. |
 | `internal/tui/model.go` | Modified | Preserved inspection flows and added the auth-mode security notice for the shipped behavior. |
-| `internal/tui/admin_users.go` | Created | Contains deferred admin workflow code that is not currently shipped through the auth-enabled local TUI path. |
-| `internal/tui/admin_grants.go` | Created | Contains deferred admin workflow code that is not currently shipped through the auth-enabled local TUI path. |
-| `internal/tui/admin_tokens.go` | Created | Contains deferred admin workflow code that is not currently shipped through the auth-enabled local TUI path. |
-| `internal/tui/model_test.go` | Modified | Covers deferred admin-path protections; shipped inspection-mode/auth-notice behavior is verified in `cmd/registry/main_test.go`. |
+| `internal/tui/model.go` | Modified | Removed dormant auth-admin navigation so the shipped TUI stays inspection-only with the existing notice. |
+| `internal/tui/admin_users.go` | Deleted | Removed deferred user-admin workflow code that was not reachable in shipped auth-enabled mode. |
+| `internal/tui/admin_grants.go` | Deleted | Removed deferred grant-management workflow code that was not reachable in shipped auth-enabled mode. |
+| `internal/tui/admin_tokens.go` | Deleted | Removed deferred token-management workflow code that was not reachable in shipped auth-enabled mode. |
+| `internal/tui/model_test.go` | Modified | Dropped unreachable admin-workflow tests and kept inspection/mutation-notice coverage only. |
 | `docs/verification/scripts/docker-push-pull-smoke.sh` | Modified | Added auth-enabled bootstrap, docker login, and anonymous challenge checks. |
 | `docs/verification/scripts/tui-smoke.sh` | Modified | Added auth-enabled bootstrap flow and verification for the inspection snapshot plus security notice. |
 | `README.md` | Modified | Documented compose bootstrap/runtime flow and clarified that auth-enabled TUI admin mutations are disabled. |
@@ -70,11 +71,16 @@
 - Result: PASS
 - Command: `go test ./internal/tui`
 - Result: PASS
+- Command: `go test ./internal/tui ./cmd/registry`
+- Result: PASS
+- Command: `go test ./...`
+- Result: PASS
 
 ## Deviations
 
 - Post-review security hardening: auth-backed local TUI administration is intentionally disabled until a real operator login flow exists. This narrows the originally planned Work Unit 3 scope because the prior local admin shortcut violated the auth boundary.
 - Artifact alignment: OpenSpec tasks/spec/verify artifacts now describe the shipped inspection-only TUI behavior instead of claiming local admin mutation workflows are delivered.
+- Dormant-code cleanup: removed deferred `internal/tui/admin_*.go` files and related unreachable tests so shipped code now matches the narrowed auth-enabled TUI scope.
 
 ## Remaining Tasks
 
@@ -84,8 +90,8 @@
 ## Workload / PR Boundary
 
 - Mode: stacked PR slice
-- Boundary: shipped auth-enabled TUI inspection mode, security notice behavior, and artifact alignment; safe operator admin UI remains outside the current shipped slice
-- Review budget impact: documentation/spec alignment only; registry auth runtime behavior remains unchanged
+- Boundary: shipped auth-enabled TUI inspection mode, security notice behavior, and dormant-code cleanup; safe operator admin UI remains outside the current shipped slice
+- Review budget impact: focused cleanup under the shipped TUI slice; registry auth runtime behavior remains unchanged
 
 ## Status
 
@@ -104,3 +110,5 @@
 - Enforced stored access-token scopes during `/v2/*` authorization and catalog filtering so token-restricted pull access can no longer be upgraded into push or broader repository visibility.
 - Added malformed-scope rejection plus persistence/authorization tests in `internal/app/auth/service_test.go`, `internal/ports/defaults_test.go`, `internal/protocol/http/router_test.go`, and `internal/infra/auth/postgres/store_test.go`.
 - Verification: `go test ./internal/ports ./internal/app/registry ./internal/protocol/http ./internal/app/auth ./internal/infra/auth/postgres ./internal/tui` and `go test ./...` both PASS after the scope-binding fix.
+- Removed dormant `internal/tui/admin_*.go` files plus unreachable admin-workflow tests so the shipped branch now contains only the inspection-only auth-enabled TUI behavior.
+- Verification: `go test ./internal/tui ./cmd/registry` and `go test ./...` both PASS after the cleanup.

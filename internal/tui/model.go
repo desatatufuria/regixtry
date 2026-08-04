@@ -5,13 +5,18 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	appregistry "registry/internal/app/registry"
-	domainauth "registry/internal/domain/auth"
-	"registry/internal/ports"
 )
+
+type Option func(*Model)
+
+func WithNotice(notice string) Option {
+	return func(m *Model) {
+		m.notice = strings.TrimSpace(notice)
+	}
+}
 
 type QueryService interface {
 	Catalog(ctx context.Context, limit int, after string) (appregistry.CatalogResult, error)
@@ -64,9 +69,6 @@ const (
 	screenManifest     screen = "manifest"
 	screenBlobs        screen = "blobs"
 	screenUploads      screen = "uploads"
-	screenAdminUsers   screen = "admin-users"
-	screenAdminGrants  screen = "admin-grants"
-	screenAdminTokens  screen = "admin-tokens"
 	screenEmpty        screen = "empty"
 	screenError        screen = "error"
 )
@@ -74,8 +76,6 @@ const (
 type Model struct {
 	ctx         context.Context
 	service     QueryService
-	authService ports.AuthService
-	actor       domainauth.Principal
 	notice      string
 	screen      screen
 	loadingText string
@@ -86,12 +86,8 @@ type Model struct {
 	manifest     ManifestModel
 	blobs        BlobsModel
 	uploads      UploadsModel
-	adminUsers   AdminUsersModel
-	adminGrants  AdminGrantsModel
-	adminTokens  AdminTokensModel
 	empty        EmptyStateModel
 	mutation     MutationUnavailableModel
-	form         *adminFormModel
 	status       string
 
 	showMutationNotice bool
@@ -116,47 +112,6 @@ type manifestLoadedMsg struct {
 	manifest   appregistry.ManifestDetails
 	uploads    []appregistry.UploadDetails
 	err        error
-}
-
-type adminUsersLoadedMsg struct {
-	users []domainauth.User
-	err   error
-}
-
-type adminGrantsLoadedMsg struct {
-	user   domainauth.User
-	grants []domainauth.RepoGrant
-	err    error
-}
-
-type adminTokensLoadedMsg struct {
-	user   domainauth.User
-	tokens []domainauth.Token
-	err    error
-}
-
-type adminUserMutationMsg struct {
-	users          []domainauth.User
-	selectedUserID string
-	status         string
-	err            error
-}
-
-type adminGrantMutationMsg struct {
-	user               domainauth.User
-	grants             []domainauth.RepoGrant
-	selectedRepository string
-	status             string
-	err                error
-}
-
-type adminTokenMutationMsg struct {
-	user             domainauth.User
-	tokens           []domainauth.Token
-	selectedAccessor string
-	issuedSecret     string
-	status           string
-	err              error
 }
 
 func NewModel(service QueryService, options ...Option) Model {
@@ -187,12 +142,6 @@ func (m Model) Init() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		if m.form != nil {
-			return m.updateFormKey(msg)
-		}
-		if handled, next, cmd := m.updateAdminKey(msg); handled {
-			return next, cmd
-		}
 		return m.updateKey(msg)
 	case catalogLoadedMsg:
 		if msg.err != nil {
@@ -251,72 +200,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = ""
 		m.screen = screenManifest
 		return m, nil
-	case adminUsersLoadedMsg:
-		if msg.err != nil {
-			return m.fail(msg.err), nil
-		}
-		m.adminUsers.Items = append([]domainauth.User(nil), msg.users...)
-		m.adminUsers.Selected = boundedIndex(m.adminUsers.Selected, len(m.adminUsers.Items))
-		m.screen = screenAdminUsers
-		m.loadingText = ""
-		m.status = ""
-		return m, nil
-	case adminGrantsLoadedMsg:
-		if msg.err != nil {
-			return m.fail(msg.err), nil
-		}
-		m.adminGrants.User = msg.user
-		m.adminGrants.Items = append([]domainauth.RepoGrant(nil), msg.grants...)
-		m.adminGrants.Selected = boundedIndex(m.adminGrants.Selected, len(m.adminGrants.Items))
-		m.screen = screenAdminGrants
-		m.loadingText = ""
-		m.status = ""
-		return m, nil
-	case adminTokensLoadedMsg:
-		if msg.err != nil {
-			return m.fail(msg.err), nil
-		}
-		m.adminTokens.User = msg.user
-		m.adminTokens.Items = append([]domainauth.Token(nil), msg.tokens...)
-		m.adminTokens.Selected = boundedIndex(m.adminTokens.Selected, len(m.adminTokens.Items))
-		m.adminTokens.IssuedSecret = ""
-		m.screen = screenAdminTokens
-		m.loadingText = ""
-		m.status = ""
-		return m, nil
-	case adminUserMutationMsg:
-		if msg.err != nil {
-			return m.fail(msg.err), nil
-		}
-		m.form = nil
-		m.adminUsers.Items = append([]domainauth.User(nil), msg.users...)
-		m.adminUsers.Selected = selectedUserIndex(m.adminUsers.Items, msg.selectedUserID)
-		m.status = msg.status
-		m.screen = screenAdminUsers
-		return m, nil
-	case adminGrantMutationMsg:
-		if msg.err != nil {
-			return m.fail(msg.err), nil
-		}
-		m.form = nil
-		m.adminGrants.User = msg.user
-		m.adminGrants.Items = append([]domainauth.RepoGrant(nil), msg.grants...)
-		m.adminGrants.Selected = selectedGrantIndex(m.adminGrants.Items, msg.selectedRepository)
-		m.status = msg.status
-		m.screen = screenAdminGrants
-		return m, nil
-	case adminTokenMutationMsg:
-		if msg.err != nil {
-			return m.fail(msg.err), nil
-		}
-		m.form = nil
-		m.adminTokens.User = msg.user
-		m.adminTokens.Items = append([]domainauth.Token(nil), msg.tokens...)
-		m.adminTokens.Selected = selectedTokenIndex(m.adminTokens.Items, msg.selectedAccessor)
-		m.adminTokens.IssuedSecret = msg.issuedSecret
-		m.status = msg.status
-		m.screen = screenAdminTokens
-		return m, nil
 	}
 
 	return m, nil
@@ -333,11 +216,7 @@ func (m Model) View() string {
 		body.WriteString("Repositories\n")
 		body.WriteString(renderList(m.repositories.Items, m.repositories.Selected))
 		body.WriteString("\n\n")
-		body.WriteString("Enter: open tags")
-		if m.authService != nil {
-			body.WriteString(" · a: admin")
-		}
-		body.WriteString(" · q: quit")
+		body.WriteString("Enter: open tags · q: quit")
 		if strings.TrimSpace(m.notice) != "" {
 			body.WriteString("\n\nNotice\n")
 			body.WriteString(m.notice)
@@ -356,15 +235,6 @@ func (m Model) View() string {
 	case screenUploads:
 		body.WriteString(renderUploads(m.uploads))
 		body.WriteString("\n\nesc: back · q: quit")
-	case screenAdminUsers:
-		body.WriteString(renderAdminUsers(m.adminUsers))
-		body.WriteString("\n\nn: create · e: edit · !: enable/disable · p: reset password · g: grants · o: tokens · x: delete · r: refresh · esc: back")
-	case screenAdminGrants:
-		body.WriteString(renderAdminGrants(m.adminGrants))
-		body.WriteString("\n\nn: assign grant · x: remove grant · esc: back")
-	case screenAdminTokens:
-		body.WriteString(renderAdminTokens(m.adminTokens))
-		body.WriteString("\n\nn: create token · x: revoke token · esc: back")
 	case screenEmpty:
 		body.WriteString(m.empty.Title)
 		body.WriteString("\n")
@@ -383,10 +253,6 @@ func (m Model) View() string {
 	if m.status != "" {
 		body.WriteString("\n\nStatus\n")
 		body.WriteString(m.status)
-	}
-	if m.form != nil {
-		body.WriteString("\n\n")
-		body.WriteString(renderAdminForm(*m.form))
 	}
 
 	return body.String()
@@ -455,37 +321,6 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) updateFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.Type {
-	case tea.KeyCtrlC:
-		return m, tea.Quit
-	case tea.KeyEsc:
-		m.form = nil
-		m.status = ""
-		return m, nil
-	case tea.KeyTab, tea.KeyDown:
-		m.form.selected = boundedIndex(m.form.selected+1, len(m.form.fields))
-		return m, nil
-	case tea.KeyShiftTab, tea.KeyUp:
-		m.form.selected = boundedIndex(m.form.selected-1, len(m.form.fields))
-		return m, nil
-	case tea.KeyBackspace:
-		field := &m.form.fields[m.form.selected]
-		if len(field.Value) > 0 {
-			field.Value = field.Value[:len(field.Value)-1]
-		}
-		return m, nil
-	case tea.KeyEnter:
-		m.status = "Submitting admin action..."
-		return m, m.submitAdminFormCmd()
-	default:
-		if len(msg.Runes) > 0 {
-			m.form.fields[m.form.selected].Value += string(msg.Runes)
-		}
-		return m, nil
-	}
-}
-
 func (m Model) moveSelection(delta int) {
 	switch m.screen {
 	case screenRepositories:
@@ -494,12 +329,6 @@ func (m Model) moveSelection(delta int) {
 		m.tags.Selected = boundedIndex(m.tags.Selected+delta, len(m.tags.Items))
 	case screenBlobs:
 		m.blobs.Selected = boundedIndex(m.blobs.Selected+delta, len(m.blobs.Items))
-	case screenAdminUsers:
-		m.adminUsers.Selected = boundedIndex(m.adminUsers.Selected+delta, len(m.adminUsers.Items))
-	case screenAdminGrants:
-		m.adminGrants.Selected = boundedIndex(m.adminGrants.Selected+delta, len(m.adminGrants.Items))
-	case screenAdminTokens:
-		m.adminTokens.Selected = boundedIndex(m.adminTokens.Selected+delta, len(m.adminTokens.Items))
 	}
 }
 
@@ -553,31 +382,6 @@ func (m Model) loadManifestCmd(repository string, tag string) tea.Cmd {
 
 		uploads, uploadsErr := m.service.Uploads(m.ctx, repository)
 		return manifestLoadedMsg{repository: repository, tag: tag, manifest: manifest, uploads: uploads, err: uploadsErr}
-	}
-}
-
-func (m Model) fail(err error) Model {
-	m.form = nil
-	m.screen = screenError
-	m.err = err
-	m.status = ""
-	return m
-}
-
-func (m Model) submitAdminFormCmd() tea.Cmd {
-	if m.form == nil {
-		return nil
-	}
-	form := *m.form
-	return func() tea.Msg {
-		switch form.kind {
-		case adminFormCreateGrant:
-			return submitGrantForm(m.ctx, m, form)
-		case adminFormCreateToken:
-			return submitTokenForm(m.ctx, m, form)
-		default:
-			return submitUserForm(m.ctx, m, form)
-		}
 	}
 }
 
@@ -642,25 +446,4 @@ func renderUploads(uploads UploadsModel) string {
 		lines = append(lines, fmt.Sprintf("- %s · %s · %d bytes", upload.ID, upload.Status, upload.Size))
 	}
 	return strings.Join(lines, "\n")
-}
-
-func parseBoolInput(value string) bool {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "y", "yes", "true", "1", "admin":
-		return true
-	default:
-		return false
-	}
-}
-
-func parseTTLHours(value string) (time.Duration, error) {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return 0, nil
-	}
-	hours, err := time.ParseDuration(trimmed + "h")
-	if err != nil {
-		return 0, domainauth.NewValidationError("token ttl hours must be a whole number")
-	}
-	return hours, nil
 }

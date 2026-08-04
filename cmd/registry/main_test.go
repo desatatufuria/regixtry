@@ -181,8 +181,6 @@ func TestNewHandlerAnonymousPushWiring(t *testing.T) {
 }
 
 func TestNewHandlerFailsFastWhenAuthEnabledWithoutAdmin(t *testing.T) {
-	t.Parallel()
-
 	restore := swapAuthStoreOpener(t)
 	defer restore()
 
@@ -202,8 +200,6 @@ func TestNewHandlerFailsFastWhenAuthEnabledWithoutAdmin(t *testing.T) {
 }
 
 func TestRunBootstrapAdminIsIdempotent(t *testing.T) {
-	t.Parallel()
-
 	restore := swapAuthStoreOpener(t)
 	defer restore()
 
@@ -248,8 +244,6 @@ func TestRunBootstrapAdminIsIdempotent(t *testing.T) {
 }
 
 func TestNewHandlerUsesConfiguredAuthTokenRealmInChallenge(t *testing.T) {
-	t.Parallel()
-
 	restore := swapAuthStoreOpener(t)
 	defer restore()
 
