@@ -239,8 +239,11 @@ func TestRunBootstrapAdminIsIdempotent(t *testing.T) {
 
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/v2/", nil))
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
+	}
+	if challenge := recorder.Header().Get("WWW-Authenticate"); !strings.Contains(challenge, "Bearer") {
+		t.Fatalf("WWW-Authenticate = %q, want Bearer challenge", challenge)
 	}
 }
 

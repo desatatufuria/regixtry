@@ -48,6 +48,29 @@ func (s *Store) HasActiveGlobalAdmin(ctx context.Context) (bool, error) {
 	return count > 0, nil
 }
 
+func (s *Store) ListUsers(ctx context.Context) ([]domainauth.User, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, username, password_hash, is_admin, enabled, created_at, updated_at
+		FROM auth_users
+		ORDER BY username ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	users := make([]domainauth.User, 0)
+	for rows.Next() {
+		user, err := scanUserRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		users = append(users, user)
+	}
+
+	return users, rows.Err()
+}
+
 func (s *Store) GetUserByUsername(ctx context.Context, username string) (domainauth.User, error) {
 	return s.scanUser(s.db.QueryRowContext(ctx, `
 		SELECT id, username, password_hash, is_admin, enabled, created_at, updated_at
@@ -80,6 +103,40 @@ func (s *Store) UpsertUser(ctx context.Context, user domainauth.User) error {
 			enabled = excluded.enabled,
 			updated_at = excluded.updated_at
 	`, user.ID, user.Username, user.PasswordHash, user.IsAdmin, user.Enabled, formatTime(user.CreatedAt), formatTime(user.UpdatedAt))
+	return err
+}
+
+func (s *Store) DeleteUser(ctx context.Context, userID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	trimmedUserID := strings.TrimSpace(userID)
+	if _, err = tx.ExecContext(ctx, `DELETE FROM auth_repo_grants WHERE user_id = $1`, trimmedUserID); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM auth_tokens WHERE user_id = $1`, trimmedUserID); err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `DELETE FROM auth_users WHERE id = $1`, trimmedUserID)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return domainauth.NewNotFoundError("user", trimmedUserID)
+	}
+
+	err = tx.Commit()
 	return err
 }
 
@@ -227,13 +284,22 @@ func (s *Store) bootstrap(ctx context.Context) error {
 }
 
 func (s *Store) scanUser(row *sql.Row) (domainauth.User, error) {
-	var user domainauth.User
-	var createdAt string
-	var updatedAt string
-	if err := row.Scan(&user.ID, &user.Username, &user.PasswordHash, &user.IsAdmin, &user.Enabled, &createdAt, &updatedAt); err != nil {
+	user, err := scanUserRow(row)
+	if err != nil {
 		if err == sql.ErrNoRows {
 			return domainauth.User{}, domainauth.NewNotFoundError("user", "")
 		}
+		return domainauth.User{}, err
+	}
+
+	return user, nil
+}
+
+func scanUserRow(scanner rowScanner) (domainauth.User, error) {
+	var user domainauth.User
+	var createdAt string
+	var updatedAt string
+	if err := scanner.Scan(&user.ID, &user.Username, &user.PasswordHash, &user.IsAdmin, &user.Enabled, &createdAt, &updatedAt); err != nil {
 		return domainauth.User{}, err
 	}
 

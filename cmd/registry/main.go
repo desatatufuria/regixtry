@@ -15,6 +15,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	appauth "registry/internal/app/auth"
 	appregistry "registry/internal/app/registry"
+	domainauth "registry/internal/domain/auth"
 	authpostgres "registry/internal/infra/auth/postgres"
 	metadata "registry/internal/infra/metadata/sqlite"
 	"registry/internal/infra/storage/fsblob"
@@ -283,6 +284,25 @@ func runTUI(cfg tuiConfig, stdin io.Reader, stdout io.Writer) error {
 	}
 	defer metadataStore.Close()
 
+	var (
+		authStore   ports.AuthStore
+		authService ports.AuthService
+		modelOpts   []tui.Option
+	)
+	if cfg.AuthPostgresDSN != "" {
+		authStore, err = openAuthStore(cfg.AuthPostgresDSN)
+		if err != nil {
+			return err
+		}
+		defer authStore.Close()
+
+		authService = appauth.NewService(authStore)
+		if err := authService.EnsureBootstrapAdmin(context.Background()); err != nil {
+			return err
+		}
+		modelOpts = append(modelOpts, tui.WithAuthAdministration(authService, domainauth.Principal{IsAdmin: true, Username: "local-operator"}))
+	}
+
 	service := appregistry.NewService(
 		blobStore,
 		metadataStore,
@@ -292,7 +312,7 @@ func runTUI(cfg tuiConfig, stdin io.Reader, stdout io.Writer) error {
 	)
 
 	if cfg.Snapshot {
-		model := tui.NewModel(service)
+		model := tui.NewModel(service, modelOpts...)
 		msg := model.Init()()
 		updated, _ := model.Update(msg)
 		if stdout != nil {
@@ -302,7 +322,7 @@ func runTUI(cfg tuiConfig, stdin io.Reader, stdout io.Writer) error {
 	}
 
 	program := tea.NewProgram(
-		tui.NewModel(service),
+		tui.NewModel(service, modelOpts...),
 		tea.WithInput(stdin),
 		tea.WithOutput(stdout),
 	)

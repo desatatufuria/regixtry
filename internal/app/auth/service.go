@@ -37,6 +37,14 @@ func (s *Service) EnsureBootstrapAdmin(ctx context.Context) error {
 	return nil
 }
 
+func (s *Service) ListUsers(ctx context.Context, actor domainauth.Principal) ([]domainauth.User, error) {
+	if err := requireAdmin(actor); err != nil {
+		return nil, err
+	}
+
+	return s.store.ListUsers(ctx)
+}
+
 func (s *Service) BootstrapAdmin(ctx context.Context, input ports.BootstrapAdminInput) (ports.BootstrapAdminResult, error) {
 	username := normalizeUsername(input.Username)
 	if username == "" {
@@ -104,6 +112,128 @@ func (s *Service) BootstrapAdmin(ctx context.Context, input ports.BootstrapAdmin
 	}
 
 	return ports.BootstrapAdminResult{User: user, Created: true}, nil
+}
+
+func (s *Service) CreateUser(ctx context.Context, actor domainauth.Principal, input ports.CreateUserInput) (domainauth.User, error) {
+	if err := requireAdmin(actor); err != nil {
+		return domainauth.User{}, err
+	}
+
+	username := normalizeUsername(input.Username)
+	if username == "" {
+		return domainauth.User{}, domainauth.NewValidationError("username is required")
+	}
+	if err := validatePassword(input.Password); err != nil {
+		return domainauth.User{}, err
+	}
+	if _, err := s.store.GetUserByUsername(ctx, username); err == nil {
+		return domainauth.User{}, domainauth.NewConflictError("username already exists")
+	} else if !domainauth.IsCode(err, domainauth.ErrorCodeNotFound) {
+		return domainauth.User{}, err
+	}
+
+	hash, err := hashPassword(input.Password)
+	if err != nil {
+		return domainauth.User{}, err
+	}
+
+	now := s.now()
+	user := domainauth.User{
+		ID:           uuid.NewString(),
+		Username:     username,
+		PasswordHash: hash,
+		IsAdmin:      input.IsAdmin,
+		Enabled:      input.Enabled,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	if err := s.store.UpsertUser(ctx, user); err != nil {
+		return domainauth.User{}, err
+	}
+
+	return user, nil
+}
+
+func (s *Service) UpdateUser(ctx context.Context, actor domainauth.Principal, input ports.UpdateUserInput) (domainauth.User, error) {
+	if err := requireAdmin(actor); err != nil {
+		return domainauth.User{}, err
+	}
+
+	user, err := s.store.GetUserByID(ctx, input.UserID)
+	if err != nil {
+		return domainauth.User{}, err
+	}
+
+	nextUsername := normalizeUsername(input.Username)
+	if nextUsername == "" {
+		nextUsername = user.Username
+	}
+	if nextUsername != user.Username {
+		other, lookupErr := s.store.GetUserByUsername(ctx, nextUsername)
+		if lookupErr == nil && other.ID != user.ID {
+			return domainauth.User{}, domainauth.NewConflictError("username already exists")
+		}
+		if lookupErr != nil && !domainauth.IsCode(lookupErr, domainauth.ErrorCodeNotFound) {
+			return domainauth.User{}, lookupErr
+		}
+	}
+
+	if user.IsAdmin && !input.IsAdmin {
+		if err := s.ensureAnotherActiveAdmin(ctx, user.ID, user.Enabled); err != nil {
+			return domainauth.User{}, err
+		}
+	}
+
+	user.Username = nextUsername
+	user.IsAdmin = input.IsAdmin
+	user.UpdatedAt = s.now()
+	if err := s.store.UpsertUser(ctx, user); err != nil {
+		return domainauth.User{}, err
+	}
+
+	return user, nil
+}
+
+func (s *Service) SetUserEnabled(ctx context.Context, actor domainauth.Principal, userID string, enabled bool) (domainauth.User, error) {
+	if err := requireAdmin(actor); err != nil {
+		return domainauth.User{}, err
+	}
+
+	user, err := s.store.GetUserByID(ctx, userID)
+	if err != nil {
+		return domainauth.User{}, err
+	}
+	if user.IsAdmin && user.Enabled && !enabled {
+		if err := s.ensureAnotherActiveAdmin(ctx, user.ID, true); err != nil {
+			return domainauth.User{}, err
+		}
+	}
+
+	user.Enabled = enabled
+	user.UpdatedAt = s.now()
+	if err := s.store.UpsertUser(ctx, user); err != nil {
+		return domainauth.User{}, err
+	}
+
+	return user, nil
+}
+
+func (s *Service) DeleteUser(ctx context.Context, actor domainauth.Principal, userID string) error {
+	if err := requireAdmin(actor); err != nil {
+		return err
+	}
+
+	user, err := s.store.GetUserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if user.IsAdmin && user.Enabled {
+		if err := s.ensureAnotherActiveAdmin(ctx, user.ID, true); err != nil {
+			return err
+		}
+	}
+
+	return s.store.DeleteUser(ctx, userID)
 }
 
 func (s *Service) LoginWithPassword(ctx context.Context, username string, password string) (ports.LoginResult, error) {
@@ -199,6 +329,14 @@ func (s *Service) CreateAdminToken(ctx context.Context, actor domainauth.Princip
 	return ports.CreatedAdminToken{Token: token, Secret: secret, Plaintext: secret, Accessor: token.Accessor, ExpiresAt: token.ExpiresAt, TargetUser: user}, nil
 }
 
+func (s *Service) ListRepoGrants(ctx context.Context, actor domainauth.Principal, userID string) ([]domainauth.RepoGrant, error) {
+	if err := requireAdmin(actor); err != nil {
+		return nil, err
+	}
+
+	return s.store.ListRepoGrants(ctx, userID)
+}
+
 func (s *Service) ListAdminTokens(ctx context.Context, actor domainauth.Principal, userID string) ([]domainauth.Token, error) {
 	if err := requireAdmin(actor); err != nil {
 		return nil, err
@@ -272,6 +410,27 @@ func (s *Service) DeleteRepoGrant(ctx context.Context, actor domainauth.Principa
 	}
 
 	return s.store.DeleteRepoGrant(ctx, userID, repo)
+}
+
+func (s *Service) ensureAnotherActiveAdmin(ctx context.Context, exceptUserID string, includeTarget bool) error {
+	users, err := s.store.ListUsers(ctx)
+	if err != nil {
+		return err
+	}
+
+	for _, user := range users {
+		if user.ID == exceptUserID {
+			continue
+		}
+		if user.IsAdmin && user.Enabled {
+			return nil
+		}
+	}
+	if includeTarget {
+		return domainauth.NewConflictError("at least one active global admin must remain configured")
+	}
+
+	return nil
 }
 
 func (s *Service) issueAccessToken(ctx context.Context, user domainauth.User) (ports.LoginResult, error) {

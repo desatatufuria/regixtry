@@ -559,6 +559,19 @@ type fakeAuthService struct {
 }
 
 func (f fakeAuthService) EnsureBootstrapAdmin(context.Context) error { return nil }
+func (f fakeAuthService) ListUsers(context.Context, domainauth.Principal) ([]domainauth.User, error) {
+	return nil, nil
+}
+func (f fakeAuthService) CreateUser(context.Context, domainauth.Principal, ports.CreateUserInput) (domainauth.User, error) {
+	return domainauth.User{}, nil
+}
+func (f fakeAuthService) UpdateUser(context.Context, domainauth.Principal, ports.UpdateUserInput) (domainauth.User, error) {
+	return domainauth.User{}, nil
+}
+func (f fakeAuthService) SetUserEnabled(context.Context, domainauth.Principal, string, bool) (domainauth.User, error) {
+	return domainauth.User{}, nil
+}
+func (f fakeAuthService) DeleteUser(context.Context, domainauth.Principal, string) error { return nil }
 func (f fakeAuthService) BootstrapAdmin(context.Context, ports.BootstrapAdminInput) (ports.BootstrapAdminResult, error) {
 	return ports.BootstrapAdminResult{}, nil
 }
@@ -579,6 +592,9 @@ func (f fakeAuthService) VerifyAccessToken(context.Context, string) (domainauth.
 }
 func (f fakeAuthService) CreateAdminToken(context.Context, domainauth.Principal, ports.CreateAdminTokenInput) (ports.CreatedAdminToken, error) {
 	return ports.CreatedAdminToken{}, nil
+}
+func (f fakeAuthService) ListRepoGrants(context.Context, domainauth.Principal, string) ([]domainauth.RepoGrant, error) {
+	return nil, nil
 }
 func (f fakeAuthService) ListAdminTokens(context.Context, domainauth.Principal, string) ([]domainauth.Token, error) {
 	return nil, nil

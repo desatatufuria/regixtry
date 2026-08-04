@@ -17,8 +17,40 @@ Use Docker Compose when you want a disposable local runtime with the registry pl
 1. Start Postgres: `docker compose up -d postgres`
 2. Bootstrap the first admin: `docker compose run --rm registry bootstrap-admin -password '<admin-password>'`
 3. Start the registry: `docker compose up -d registry`
+4. Log in from Docker: `docker login localhost:${REGISTRY_PORT:-5503} -u admin -p '<admin-password>'`
 
 Compose publishes the registry on `127.0.0.1:${REGISTRY_PORT:-5503}`. It keeps SQLite/blob data in the `registry-data` volume and auth state in the `postgres-data` volume.
+
+### Bootstrap and runtime steps
+
+Use this order whenever auth is enabled:
+
+1. `docker compose up -d postgres`
+2. `docker compose run --rm registry bootstrap-admin -username admin -password '<admin-password>'`
+3. `docker compose up -d registry`
+4. `docker login localhost:${REGISTRY_PORT:-5503} -u admin -p '<admin-password>'`
+5. Push or pull images against `localhost:${REGISTRY_PORT:-5503}`.
+
+If you need to rotate the bootstrap password later, rerun the bootstrap command with `-rotate-password`.
+
+### TUI auth administration
+
+The TUI stays local-operator oriented. When `-auth-postgres-dsn` is configured, the repositories screen exposes `a: admin` and enables first-slice user administration:
+
+- create/update local users,
+- reset passwords,
+- enable or disable users,
+- edit repository grants,
+- create or revoke admin-issued credential tokens.
+
+Example snapshot run against the compose Postgres service:
+
+```bash
+go run ./cmd/registry tui \
+  -storage-root ./data \
+  -auth-postgres-dsn "postgres://registry:registry@127.0.0.1:5432/registry_auth?sslmode=disable" \
+  -snapshot
+```
 
 ### Notes
 
@@ -40,7 +72,7 @@ V1 delivers a correct local registry with clear operator visibility.
 | Upload lifecycle | Staged uploads, digest validation, and publish-only-on-valid-content rules |
 | Operator experience | Keyboard-first Bubble Tea console for inspection and maintenance basics |
 | Access model | Postgres-backed auth state, `/auth/token`, and repository-scoped enforcement for auth-enabled runtime |
-| Future readiness | Tenant, storage, and background-job seams kept explicit while auth admin work remains partial |
+| Future readiness | Tenant, storage, and background-job seams kept explicit while broader auth workflows remain intentionally narrow |
 
 ## Non-goals
 
@@ -106,4 +138,4 @@ Read `docs/contributing.md` before opening or retargeting any PR slice.
 - Local smoke verification has confirmed Docker push/pull plus TUI snapshot rendering for the seeded `registry-foundation/smoke` repository.
 - Local compose verification has also confirmed authenticated Docker push against the auth-enabled runtime.
 
-This does **not** mean the product is feature-complete beyond the documented v1 scope. The repository currently proves the local single-node foundation plus the auth-v1 registry path: OCI/Docker-compatible content flows, SQLite-backed metadata, Postgres-backed auth state, `/auth/token`, bearer challenge interoperability, and a read-oriented operator console. TUI-based auth administration and the remaining auth smoke/doc slices are still unfinished.
+This does **not** mean the product is feature-complete beyond the documented v1 scope. The repository currently proves the local single-node foundation plus the auth-v1 registry path: OCI/Docker-compatible content flows, SQLite-backed metadata, Postgres-backed auth state, `/auth/token`, bearer challenge interoperability, and a minimal TUI operator workflow for user/grant/token administration.
