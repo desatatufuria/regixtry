@@ -79,6 +79,31 @@ func TestParseServeConfigParsesAuthTokenRealmURL(t *testing.T) {
 	}
 }
 
+func TestParseTUIConfigParsesAdminAPIBaseURL(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := parseTUIConfig([]string{"-api-base-url", "http://127.0.0.1:5000/"})
+	if err != nil {
+		t.Fatalf("parseTUIConfig() error = %v", err)
+	}
+
+	if cfg.APIBaseURL != "http://127.0.0.1:5000" {
+		t.Fatalf("APIBaseURL = %q, want %q", cfg.APIBaseURL, "http://127.0.0.1:5000")
+	}
+}
+
+func TestParseTUIConfigRejectsRelativeAdminAPIBaseURL(t *testing.T) {
+	t.Parallel()
+
+	_, err := parseTUIConfig([]string{"-api-base-url", "/admin"})
+	if err == nil {
+		t.Fatal("parseTUIConfig() error = nil, want invalid admin API base URL")
+	}
+	if !strings.Contains(err.Error(), "absolute http(s) URL") {
+		t.Fatalf("parseTUIConfig() error = %v, want absolute URL validation", err)
+	}
+}
+
 func TestServeStartsAndRespondsToPing(t *testing.T) {
 	t.Parallel()
 
@@ -319,8 +344,8 @@ func TestRunTUIDisablesAuthAdminShortcutWhenAuthIsEnabled(t *testing.T) {
 	if strings.Contains(view, "a: admin") {
 		t.Fatalf("stdout = %q, want auth admin shortcut removed", view)
 	}
-	if !strings.Contains(view, "Auth-backed admin actions are disabled in the local TUI until a real operator login flow exists.") {
-		t.Fatalf("stdout = %q, want explicit auth admin notice", view)
+	if strings.Contains(view, "Auth-backed admin actions are disabled in the local TUI until a real operator login flow exists.") {
+		t.Fatalf("stdout = %q, want local admin shortcut notice removed", view)
 	}
 	if !strings.Contains(view, "library/alpine") {
 		t.Fatalf("stdout = %q, want repository snapshot to stay available", view)

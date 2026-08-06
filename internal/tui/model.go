@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	appregistry "registry/internal/app/registry"
+	"registry/internal/ports"
 )
 
 type Option func(*Model)
@@ -15,6 +17,12 @@ type Option func(*Model)
 func WithNotice(notice string) Option {
 	return func(m *Model) {
 		m.notice = strings.TrimSpace(notice)
+	}
+}
+
+func WithAdminClient(adminClient AdminClient) Option {
+	return func(m *Model) {
+		m.adminClient = adminClient
 	}
 }
 
@@ -63,15 +71,42 @@ type MutationUnavailableModel struct {
 type screen string
 
 const (
-	screenLoading      screen = "loading"
-	screenRepositories screen = "repositories"
-	screenTags         screen = "tags"
-	screenManifest     screen = "manifest"
-	screenBlobs        screen = "blobs"
-	screenUploads      screen = "uploads"
-	screenEmpty        screen = "empty"
-	screenError        screen = "error"
+	screenLoading             screen = "loading"
+	screenRepositories        screen = "repositories"
+	screenTags                screen = "tags"
+	screenManifest            screen = "manifest"
+	screenBlobs               screen = "blobs"
+	screenUploads             screen = "uploads"
+	screenEmpty               screen = "empty"
+	screenError               screen = "error"
+	screenAdminLogin          screen = "admin-login"
+	screenAdminAuthenticating screen = "admin-authenticating"
+	screenAdminUsers          screen = "admin-users"
+	screenAdminGrants         screen = "admin-grants"
+	screenAdminTokens         screen = "admin-tokens"
 )
+
+type adminAuthState string
+
+const (
+	adminAuthStateUnauthenticated adminAuthState = "unauthenticated"
+	adminAuthStateAuthenticating  adminAuthState = "authenticating"
+	adminAuthStateAuthenticated   adminAuthState = "authenticated"
+	adminAuthStateExpired         adminAuthState = "expired"
+)
+
+type loginField int
+
+const (
+	loginFieldUsername loginField = iota
+	loginFieldPassword
+)
+
+type adminLoginForm struct {
+	Username string
+	Password string
+	Focus    loginField
+}
 
 type Model struct {
 	ctx         context.Context
@@ -80,12 +115,19 @@ type Model struct {
 	screen      screen
 	loadingText string
 	err         error
+	now         func() time.Time
 
 	repositories RepositoriesModel
 	tags         TagsModel
 	manifest     ManifestModel
 	blobs        BlobsModel
 	uploads      UploadsModel
+	adminClient  AdminClient
+	adminSession AdminSession
+	adminView    AdminViewState
+	adminAuth    adminAuthState
+	adminLogin   adminLoginForm
+	adminReturn  screen
 	empty        EmptyStateModel
 	mutation     MutationUnavailableModel
 	status       string
@@ -114,12 +156,39 @@ type manifestLoadedMsg struct {
 	err        error
 }
 
+type adminLoginCompletedMsg struct {
+	session AdminSession
+	err     error
+}
+
+type adminUsersLoadedMsg struct {
+	users []ports.AdminUser
+	err   error
+}
+
+type adminUserGrantsLoadedMsg struct {
+	userID   string
+	username string
+	grants   []ports.AdminRepoGrant
+	err      error
+}
+
+type adminUserTokensLoadedMsg struct {
+	userID   string
+	username string
+	tokens   []ports.AdminToken
+	err      error
+}
+
 func NewModel(service QueryService, options ...Option) Model {
 	m := Model{
 		ctx:         context.Background(),
 		service:     service,
 		screen:      screenLoading,
 		loadingText: "Loading repositories...",
+		now:         func() time.Time { return time.Now().UTC() },
+		adminAuth:   adminAuthStateUnauthenticated,
+		adminReturn: screenLoading,
 		empty: EmptyStateModel{
 			Title:   "Registry is empty",
 			Message: "No repositories have been published yet.",
@@ -200,6 +269,94 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = ""
 		m.screen = screenManifest
 		return m, nil
+	case adminLoginCompletedMsg:
+		if msg.err != nil {
+			if IsAdminSessionExpired(msg.err) {
+				return m.expireAdminSession(msg.err.Error()), nil
+			}
+			m.adminAuth = adminAuthStateUnauthenticated
+			m.adminSession, m.adminView = LogoutAdminState()
+			m.adminLogin.Password = ""
+			m.screen = screenAdminLogin
+			m.loadingText = ""
+			m.status = msg.err.Error()
+			return m, nil
+		}
+
+		m.adminSession = msg.session
+		m.adminSession.ExpiredReason = ""
+		m.adminAuth = adminAuthStateAuthenticated
+		m.adminLogin.Username = msg.session.Username
+		m.adminLogin.Password = ""
+		m.screen = screenAdminUsers
+		m.loadingText = ""
+		m.status = "Loading admin users..."
+		return m, m.loadAdminUsersCmd()
+	case adminUsersLoadedMsg:
+		if msg.err != nil {
+			if IsAdminSessionExpired(msg.err) {
+				return m.expireAdminSession(msg.err.Error()), nil
+			}
+			m.screen = screenAdminUsers
+			m.status = msg.err.Error()
+			return m, nil
+		}
+
+		selected := m.adminView.SelectedUserID
+		m.adminView.Users = append([]ports.AdminUser(nil), msg.users...)
+		m.adminView.SelectedUser = 0
+		if selected != "" {
+			for index, user := range m.adminView.Users {
+				if user.ID == selected {
+					m.adminView.SelectedUser = index
+					break
+				}
+			}
+		}
+		if len(m.adminView.Users) == 0 {
+			m.adminView.SelectedUserID = ""
+			m.adminView.SelectedUsername = ""
+			m.adminView.Grants = nil
+			m.adminView.AdminTokens = nil
+			m.status = "No admin users found."
+			m.screen = screenAdminUsers
+			return m, nil
+		}
+
+		m.adminView.SelectedUser = boundedIndex(m.adminView.SelectedUser, len(m.adminView.Users))
+		m.status = ""
+		m.screen = screenAdminUsers
+		return m, nil
+	case adminUserGrantsLoadedMsg:
+		if msg.err != nil {
+			if IsAdminSessionExpired(msg.err) {
+				return m.expireAdminSession(msg.err.Error()), nil
+			}
+			m.status = msg.err.Error()
+			return m, nil
+		}
+
+		m.adminView.SelectedUserID = msg.userID
+		m.adminView.SelectedUsername = msg.username
+		m.adminView.Grants = append([]ports.AdminRepoGrant(nil), msg.grants...)
+		m.status = ""
+		m.screen = screenAdminGrants
+		return m, nil
+	case adminUserTokensLoadedMsg:
+		if msg.err != nil {
+			if IsAdminSessionExpired(msg.err) {
+				return m.expireAdminSession(msg.err.Error()), nil
+			}
+			m.status = msg.err.Error()
+			return m, nil
+		}
+
+		m.adminView.SelectedUserID = msg.userID
+		m.adminView.SelectedUsername = msg.username
+		m.adminView.AdminTokens = append([]ports.AdminToken(nil), msg.tokens...)
+		m.status = ""
+		m.screen = screenAdminTokens
+		return m, nil
 	}
 
 	return m, nil
@@ -216,7 +373,7 @@ func (m Model) View() string {
 		body.WriteString("Repositories\n")
 		body.WriteString(renderList(m.repositories.Items, m.repositories.Selected))
 		body.WriteString("\n\n")
-		body.WriteString("Enter: open tags · q: quit")
+		body.WriteString("Enter: open tags · tab: admin · q: quit")
 		if strings.TrimSpace(m.notice) != "" {
 			body.WriteString("\n\nNotice\n")
 			body.WriteString(m.notice)
@@ -224,26 +381,38 @@ func (m Model) View() string {
 	case screenTags:
 		body.WriteString(fmt.Sprintf("Tags · %s\n", m.tags.Repository))
 		body.WriteString(renderList(m.tags.Items, m.tags.Selected))
-		body.WriteString("\n\nEnter: inspect manifest · esc: back · q: quit")
+		body.WriteString("\n\nEnter: inspect manifest · tab: admin · esc: back · q: quit")
 	case screenManifest:
 		body.WriteString(renderManifest(m.manifest.Details))
 		body.WriteString("\n\n")
-		body.WriteString("b: blobs · u: uploads · d: unsupported delete · esc: back · q: quit")
+		body.WriteString("b: blobs · u: uploads · d: unsupported delete · tab: admin · esc: back · q: quit")
 	case screenBlobs:
 		body.WriteString(renderBlobs(m.blobs))
-		body.WriteString("\n\nesc: back · q: quit")
+		body.WriteString("\n\ntab: admin · esc: back · q: quit")
 	case screenUploads:
 		body.WriteString(renderUploads(m.uploads))
-		body.WriteString("\n\nesc: back · q: quit")
+		body.WriteString("\n\ntab: admin · esc: back · q: quit")
 	case screenEmpty:
 		body.WriteString(m.empty.Title)
 		body.WriteString("\n")
 		body.WriteString(m.empty.Message)
-		body.WriteString("\n\nesc: back · q: quit")
+		body.WriteString("\n\ntab: admin · esc: back · q: quit")
 	case screenError:
 		body.WriteString("Error\n")
 		body.WriteString(m.err.Error())
 		body.WriteString("\n\nq: quit")
+	case screenAdminLogin:
+		body.WriteString(renderAdminLogin(m.adminLogin))
+	case screenAdminAuthenticating:
+		body.WriteString("Admin Login\n")
+		body.WriteString(m.loadingText)
+		body.WriteString("\n\nq: quit")
+	case screenAdminUsers:
+		body.WriteString(renderAdminUsers(m.adminSession, m.adminView, m.now()))
+	case screenAdminGrants:
+		body.WriteString(renderAdminGrants(m.adminSession, m.adminView, m.now()))
+	case screenAdminTokens:
+		body.WriteString(renderAdminTokens(m.adminSession, m.adminView, m.now()))
 	}
 
 	if m.showMutationNotice {
@@ -262,6 +431,17 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "q":
 		return m, tea.Quit
+	}
+
+	if isAdminScreen(m.screen) {
+		return m.updateAdminKey(msg)
+	}
+
+	if msg.String() == "tab" {
+		return m.openAdmin()
+	}
+
+	switch msg.String() {
 	case "up", "k":
 		m.moveSelection(-1)
 		return m, nil
@@ -321,6 +501,113 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) updateAdminKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.String() == "l" && m.adminAuth == adminAuthStateAuthenticated {
+		return m.logoutAdmin(), nil
+	}
+
+	switch m.screen {
+	case screenAdminLogin:
+		return m.updateAdminLoginKey(msg)
+	case screenAdminAuthenticating:
+		return m, nil
+	case screenAdminUsers:
+		return m.updateAdminUsersKey(msg)
+	case screenAdminGrants, screenAdminTokens:
+		return m.updateAdminDetailKey(msg)
+	default:
+		return m, nil
+	}
+}
+
+func (m Model) updateAdminLoginKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		return m.returnToInspection(), nil
+	case "tab", "up", "down":
+		m.adminLogin.Focus = oppositeLoginField(m.adminLogin.Focus)
+		return m, nil
+	case "enter":
+		username := strings.TrimSpace(m.adminLogin.Username)
+		if username == "" || m.adminLogin.Password == "" {
+			m.status = "Username and password are required."
+			return m, nil
+		}
+		if m.adminClient == nil {
+			m.status = "Admin API is unavailable for this session."
+			return m, nil
+		}
+
+		m.adminAuth = adminAuthStateAuthenticating
+		m.screen = screenAdminAuthenticating
+		m.loadingText = fmt.Sprintf("Signing in as %s...", username)
+		m.status = ""
+		return m, m.loginCmd(username, m.adminLogin.Password)
+	case "backspace":
+		m.deleteLoginRune()
+		return m, nil
+	}
+
+	if msg.Type == tea.KeyRunes {
+		m.appendLoginRunes(string(msg.Runes))
+		return m, nil
+	}
+
+	return m, nil
+}
+
+func (m Model) updateAdminUsersKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		return m.returnToInspection(), nil
+	case "up", "k":
+		m.moveSelection(-1)
+		return m, nil
+	case "down", "j":
+		m.moveSelection(1)
+		return m, nil
+	case "enter":
+		user, ok := m.selectedAdminUser()
+		if !ok {
+			return m, nil
+		}
+		m.adminView.SelectedUserID = user.ID
+		m.adminView.SelectedUsername = user.Username
+		m.adminView.Grants = nil
+		m.adminView.AdminTokens = nil
+		m.status = fmt.Sprintf("Loading grants for %s...", user.Username)
+		return m, m.loadAdminGrantsCmd(user.ID, user.Username)
+	case "r":
+		m.status = "Loading admin users..."
+		return m, m.loadAdminUsersCmd()
+	}
+
+	return m, nil
+}
+
+func (m Model) updateAdminDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.screen = screenAdminUsers
+		m.status = ""
+		return m, nil
+	case "g":
+		if m.adminView.SelectedUserID == "" {
+			return m, nil
+		}
+		m.status = fmt.Sprintf("Loading grants for %s...", m.adminView.SelectedUsername)
+		return m, m.loadAdminGrantsCmd(m.adminView.SelectedUserID, m.adminView.SelectedUsername)
+	case "t":
+		if m.adminView.SelectedUserID == "" {
+			return m, nil
+		}
+		m.status = fmt.Sprintf("Loading admin tokens for %s...", m.adminView.SelectedUsername)
+		return m, m.loadAdminTokensCmd(m.adminView.SelectedUserID, m.adminView.SelectedUsername)
+	}
+
+	return m, nil
+}
+
 func (m Model) moveSelection(delta int) {
 	switch m.screen {
 	case screenRepositories:
@@ -329,6 +616,8 @@ func (m Model) moveSelection(delta int) {
 		m.tags.Selected = boundedIndex(m.tags.Selected+delta, len(m.tags.Items))
 	case screenBlobs:
 		m.blobs.Selected = boundedIndex(m.blobs.Selected+delta, len(m.blobs.Items))
+	case screenAdminUsers:
+		m.adminView.SelectedUser = boundedIndex(m.adminView.SelectedUser+delta, len(m.adminView.Users))
 	}
 }
 
@@ -359,6 +648,14 @@ func (m Model) selectedTag() (string, bool) {
 	return m.tags.Items[m.tags.Selected], true
 }
 
+func (m Model) selectedAdminUser() (ports.AdminUser, bool) {
+	if len(m.adminView.Users) == 0 {
+		return ports.AdminUser{}, false
+	}
+	index := boundedIndex(m.adminView.SelectedUser, len(m.adminView.Users))
+	return m.adminView.Users[index], true
+}
+
 func (m Model) loadCatalogCmd() tea.Cmd {
 	return func() tea.Msg {
 		result, err := m.service.Catalog(m.ctx, 100, "")
@@ -382,6 +679,153 @@ func (m Model) loadManifestCmd(repository string, tag string) tea.Cmd {
 
 		uploads, uploadsErr := m.service.Uploads(m.ctx, repository)
 		return manifestLoadedMsg{repository: repository, tag: tag, manifest: manifest, uploads: uploads, err: uploadsErr}
+	}
+}
+
+func (m Model) loginCmd(username string, password string) tea.Cmd {
+	return func() tea.Msg {
+		if m.adminClient == nil {
+			return adminLoginCompletedMsg{err: fmt.Errorf("admin API is unavailable for this session")}
+		}
+		session, err := m.adminClient.Login(m.ctx, username, password)
+		return adminLoginCompletedMsg{session: session, err: err}
+	}
+}
+
+func (m Model) loadAdminUsersCmd() tea.Cmd {
+	return func() tea.Msg {
+		if m.adminClient == nil {
+			return adminUsersLoadedMsg{err: fmt.Errorf("admin API is unavailable for this session")}
+		}
+		users, err := m.adminClient.ListUsers(m.ctx, m.adminSession)
+		return adminUsersLoadedMsg{users: users, err: err}
+	}
+}
+
+func (m Model) loadAdminGrantsCmd(userID string, username string) tea.Cmd {
+	return func() tea.Msg {
+		if m.adminClient == nil {
+			return adminUserGrantsLoadedMsg{userID: userID, username: username, err: fmt.Errorf("admin API is unavailable for this session")}
+		}
+		grants, err := m.adminClient.ListUserGrants(m.ctx, m.adminSession, userID)
+		return adminUserGrantsLoadedMsg{userID: userID, username: username, grants: grants, err: err}
+	}
+}
+
+func (m Model) loadAdminTokensCmd(userID string, username string) tea.Cmd {
+	return func() tea.Msg {
+		if m.adminClient == nil {
+			return adminUserTokensLoadedMsg{userID: userID, username: username, err: fmt.Errorf("admin API is unavailable for this session")}
+		}
+		tokens, err := m.adminClient.ListUserAdminTokens(m.ctx, m.adminSession, userID)
+		return adminUserTokensLoadedMsg{userID: userID, username: username, tokens: tokens, err: err}
+	}
+}
+
+func (m Model) openAdmin() (tea.Model, tea.Cmd) {
+	if m.adminClient == nil {
+		m.status = "Admin API is unavailable for this session."
+		return m, nil
+	}
+
+	m.adminReturn = m.screen
+	m.showMutationNotice = false
+	m.err = nil
+
+	if m.adminSession.IsAuthenticated() {
+		if m.adminSession.IsExpired(m.now()) {
+			return m.expireAdminSession(AdminSessionExpiredReasonExpired), nil
+		}
+		m.adminAuth = adminAuthStateAuthenticated
+		m.status = ""
+		m.screen = screenAdminUsers
+		if len(m.adminView.Users) == 0 {
+			m.status = "Loading admin users..."
+			return m, m.loadAdminUsersCmd()
+		}
+		return m, nil
+	}
+
+	if strings.TrimSpace(m.adminSession.ExpiredReason) != "" {
+		m.adminAuth = adminAuthStateExpired
+		m.status = m.adminSession.ExpiredReason
+	} else {
+		m.adminAuth = adminAuthStateUnauthenticated
+		m.status = ""
+	}
+	m.screen = screenAdminLogin
+	return m, nil
+}
+
+func (m Model) logoutAdmin() Model {
+	m.adminSession, m.adminView = LogoutAdminState()
+	m.adminAuth = adminAuthStateUnauthenticated
+	m.adminLogin.Password = ""
+	m.adminLogin.Focus = loginFieldUsername
+	m.screen = screenAdminLogin
+	m.loadingText = ""
+	m.status = "Logged out."
+	return m
+}
+
+func (m Model) returnToInspection() Model {
+	m.screen = m.adminReturn
+	m.loadingText = ""
+	m.status = ""
+	return m
+}
+
+func (m Model) expireAdminSession(reason string) Model {
+	m.adminSession, m.adminView = ExpireAdminState(reason)
+	m.adminAuth = adminAuthStateExpired
+	m.adminLogin.Password = ""
+	m.adminLogin.Focus = loginFieldUsername
+	m.screen = screenAdminLogin
+	m.loadingText = ""
+	m.status = m.adminSession.ExpiredReason
+	return m
+}
+
+func (m *Model) appendLoginRunes(value string) {
+	if value == "" {
+		return
+	}
+	if m.adminLogin.Focus == loginFieldPassword {
+		m.adminLogin.Password += value
+		return
+	}
+	m.adminLogin.Username += value
+}
+
+func (m *Model) deleteLoginRune() {
+	if m.adminLogin.Focus == loginFieldPassword {
+		m.adminLogin.Password = trimLastRune(m.adminLogin.Password)
+		return
+	}
+	m.adminLogin.Username = trimLastRune(m.adminLogin.Username)
+}
+
+func trimLastRune(value string) string {
+	runes := []rune(value)
+	if len(runes) == 0 {
+		return ""
+	}
+	return string(runes[:len(runes)-1])
+}
+
+func oppositeLoginField(field loginField) loginField {
+	if field == loginFieldPassword {
+		return loginFieldUsername
+	}
+	return loginFieldPassword
+}
+
+func isAdminScreen(current screen) bool {
+	switch current {
+	case screenAdminLogin, screenAdminAuthenticating, screenAdminUsers, screenAdminGrants, screenAdminTokens:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -446,4 +890,99 @@ func renderUploads(uploads UploadsModel) string {
 		lines = append(lines, fmt.Sprintf("- %s · %s · %d bytes", upload.ID, upload.Status, upload.Size))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func renderAdminLogin(form adminLoginForm) string {
+	usernamePrefix := "  "
+	passwordPrefix := "  "
+	if form.Focus == loginFieldUsername {
+		usernamePrefix = "> "
+	} else {
+		passwordPrefix = "> "
+	}
+
+	return strings.Join([]string{
+		"Admin Login",
+		fmt.Sprintf("%sUsername: %s", usernamePrefix, form.Username),
+		fmt.Sprintf("%sPassword: %s", passwordPrefix, strings.Repeat("*", len([]rune(form.Password)))),
+		"",
+		"Enter: sign in · tab: switch field · esc: back · q: quit",
+	}, "\n")
+}
+
+func renderAdminUsers(session AdminSession, view AdminViewState, now time.Time) string {
+	lines := adminHeader(session, now)
+	lines = append(lines, "Users")
+	if len(view.Users) == 0 {
+		lines = append(lines, "No admin users available.")
+	} else {
+		for index, user := range view.Users {
+			prefix := "  "
+			if index == view.SelectedUser {
+				prefix = "> "
+			}
+			role := "user"
+			if user.IsAdmin {
+				role = "admin"
+			}
+			state := "disabled"
+			if user.Enabled {
+				state = "enabled"
+			}
+			lines = append(lines, fmt.Sprintf("%s%s [%s, %s]", prefix, user.Username, role, state))
+		}
+	}
+	lines = append(lines, "", "Enter: view grants · r: refresh · esc: inspection · l: logout · q: quit")
+	return strings.Join(lines, "\n")
+}
+
+func renderAdminGrants(session AdminSession, view AdminViewState, now time.Time) string {
+	lines := adminHeader(session, now)
+	lines = append(lines, fmt.Sprintf("Repository Grants · %s", view.SelectedUsername))
+	if len(view.Grants) == 0 {
+		lines = append(lines, "No repository grants for the selected user.")
+	} else {
+		for _, grant := range view.Grants {
+			lines = append(lines, fmt.Sprintf("- %s · %s", grant.Repository, grant.Role))
+		}
+	}
+	lines = append(lines, "", "t: admin tokens · g: refresh grants · esc: back · l: logout · q: quit")
+	return strings.Join(lines, "\n")
+}
+
+func renderAdminTokens(session AdminSession, view AdminViewState, now time.Time) string {
+	lines := adminHeader(session, now)
+	lines = append(lines, fmt.Sprintf("Admin Tokens · %s", view.SelectedUsername))
+	if len(view.AdminTokens) == 0 {
+		lines = append(lines, "No admin tokens for the selected user.")
+	} else {
+		for _, token := range view.AdminTokens {
+			expiresAt := token.ExpiresAt.UTC().Format(time.RFC3339)
+			state := "active"
+			if token.RevokedAt != nil {
+				state = "revoked"
+			}
+			lines = append(lines, fmt.Sprintf("- %s · %s · expires %s", token.Accessor, state, expiresAt))
+		}
+	}
+	lines = append(lines, "", "g: grants · t: refresh tokens · esc: back · l: logout · q: quit")
+	return strings.Join(lines, "\n")
+}
+
+func adminHeader(session AdminSession, now time.Time) []string {
+	lines := []string{"Admin"}
+	if strings.TrimSpace(session.Username) != "" {
+		lines[0] = fmt.Sprintf("Admin · %s", session.Username)
+	}
+	if !session.ExpiresAt.IsZero() {
+		lines = append(lines, fmt.Sprintf("Session expires in %s", formatRemaining(session.Remaining(now))))
+	}
+	return append(lines, "")
+}
+
+func formatRemaining(remaining time.Duration) string {
+	if remaining <= 0 {
+		return "0s"
+	}
+	return remaining.Truncate(time.Second).String()
 }

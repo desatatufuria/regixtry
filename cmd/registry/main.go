@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	stdhttp "net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -75,6 +76,7 @@ type tuiConfig struct {
 	DatabasePath    string
 	Tenant          string
 	AuthPostgresDSN string
+	APIBaseURL      string
 	Snapshot        bool
 }
 
@@ -134,6 +136,7 @@ func parseTUIConfig(args []string) (tuiConfig, error) {
 	flags.StringVar(&cfg.DatabasePath, "db", "", "path to the SQLite metadata database")
 	flags.StringVar(&cfg.Tenant, "tenant", ports.DefaultTenant, "tenant identifier")
 	flags.StringVar(&cfg.AuthPostgresDSN, "auth-postgres-dsn", os.Getenv("REGISTRY_AUTH_POSTGRES_DSN"), "Postgres DSN for auth state")
+	flags.StringVar(&cfg.APIBaseURL, "api-base-url", os.Getenv("REGISTRY_API_BASE_URL"), "base URL for authenticated admin API")
 	flags.BoolVar(&cfg.Snapshot, "snapshot", false, "render the first inspection view and exit")
 
 	if err := flags.Parse(args); err != nil {
@@ -142,6 +145,20 @@ func parseTUIConfig(args []string) (tuiConfig, error) {
 
 	if cfg.DatabasePath == "" {
 		cfg.DatabasePath = filepath.Join(cfg.StorageRoot, "metadata.db")
+	}
+	cfg.APIBaseURL = strings.TrimSpace(cfg.APIBaseURL)
+	if cfg.APIBaseURL != "" {
+		parsed, err := url.Parse(cfg.APIBaseURL)
+		if err != nil {
+			return tuiConfig{}, fmt.Errorf("parse admin API base URL: %w", err)
+		}
+		if !parsed.IsAbs() || strings.TrimSpace(parsed.Host) == "" {
+			return tuiConfig{}, errors.New("admin API base URL must be an absolute http(s) URL")
+		}
+		if parsed.Scheme != "http" && parsed.Scheme != "https" {
+			return tuiConfig{}, errors.New("admin API base URL must use http or https")
+		}
+		cfg.APIBaseURL = strings.TrimRight(parsed.String(), "/")
 	}
 
 	return cfg, nil
@@ -298,7 +315,13 @@ func runTUI(cfg tuiConfig, stdin io.Reader, stdout io.Writer) error {
 		if err := authService.EnsureBootstrapAdmin(context.Background()); err != nil {
 			return err
 		}
-		modelOpts = append(modelOpts, tui.WithNotice("Auth-backed admin actions are disabled in the local TUI until a real operator login flow exists."))
+	}
+	if cfg.APIBaseURL != "" {
+		adminClient, err := tui.NewHTTPAdminClient(cfg.APIBaseURL, nil)
+		if err != nil {
+			return err
+		}
+		modelOpts = append(modelOpts, tui.WithAdminClient(adminClient))
 	}
 
 	service := appregistry.NewService(
