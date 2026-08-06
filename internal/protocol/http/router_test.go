@@ -12,12 +12,16 @@ import (
 	"testing"
 	"time"
 
+	appauth "registry/internal/app/auth"
 	appregistry "registry/internal/app/registry"
 	domainauth "registry/internal/domain/auth"
 	domain "registry/internal/domain/registry"
+	authpostgres "registry/internal/infra/auth/postgres"
 	metadata "registry/internal/infra/metadata/sqlite"
 	"registry/internal/infra/storage/fsblob"
 	"registry/internal/ports"
+
+	_ "modernc.org/sqlite"
 )
 
 func TestRouterChallengesProtectedPull(t *testing.T) {
@@ -235,6 +239,566 @@ func TestRouterAcceptsAuthenticatedV2PingWhenAuthEnabled(t *testing.T) {
 	}
 	if got := recorder.Header().Get("WWW-Authenticate"); got != "" {
 		t.Fatalf("WWW-Authenticate = %q, want empty on authenticated ping", got)
+	}
+}
+
+func TestRouterAdminBoundaryRejectsMissingBearerToken(t *testing.T) {
+	t.Parallel()
+
+	handler, cleanup := newTestRouterWithAuth(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "http://127.0.0.1:5000/auth/token", Service: "registry"}), fakeAuthService{})
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/users", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
+	}
+	if got := recorder.Header().Get("WWW-Authenticate"); !strings.Contains(got, `realm="http://127.0.0.1:5000/auth/token"`) {
+		t.Fatalf("WWW-Authenticate = %q, want bearer realm", got)
+	}
+}
+
+func TestRouterAdminBoundaryRejectsNonAdminPrincipal(t *testing.T) {
+	t.Parallel()
+
+	handler, cleanup := newTestRouterWithAuth(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "registry", Service: "registry"}), fakeAuthService{
+		verify: &domainauth.Principal{Subject: "atk_1", UserID: "user-1", Username: "alice", IsAdmin: false},
+	})
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/users", nil)
+	req.Header.Set("Authorization", "Bearer valid-token")
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusForbidden)
+	}
+}
+
+func TestRouterListsAdminUsersWithoutPasswordHashes(t *testing.T) {
+	t.Parallel()
+
+	handler, authService, adminActor, adminToken, cleanup := newTestRouterWithRealAuth(t)
+	defer cleanup()
+
+	if _, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
+		Username: "bob",
+		Password: "password123",
+		Enabled:  true,
+	}); err != nil {
+		t.Fatalf("CreateAdminUser() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/users", nil)
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+
+	var users []map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &users); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if len(users) != 2 {
+		t.Fatalf("len(users) = %d, want 2", len(users))
+	}
+	if _, ok := users[0]["password_hash"]; ok {
+		t.Fatalf("users[0] = %#v, did not expect password_hash", users[0])
+	}
+	if _, ok := users[1]["password_hash"]; ok {
+		t.Fatalf("users[1] = %#v, did not expect password_hash", users[1])
+	}
+	if strings.Contains(recorder.Body.String(), "password123") {
+		t.Fatalf("body = %q, did not expect plaintext password", recorder.Body.String())
+	}
+	if users[0]["username"] != "admin" || users[1]["username"] != "bob" {
+		t.Fatalf("users = %#v, want usernames [admin bob]", users)
+	}
+	if users[1]["enabled"] != true {
+		t.Fatalf("users[1].enabled = %#v, want true", users[1]["enabled"])
+	}
+	if users[1]["is_admin"] != false {
+		t.Fatalf("users[1].is_admin = %#v, want false", users[1]["is_admin"])
+	}
+}
+
+func TestRouterAdminUserRoutesSupportCreateEnableDisableAndResetPassword(t *testing.T) {
+	t.Parallel()
+
+	handler, authService, _, adminToken, cleanup := newTestRouterWithRealAuth(t)
+	defer cleanup()
+
+	createReq := httptest.NewRequest(http.MethodPost, "/admin/v1/users", strings.NewReader(`{"username":"bob","password":"password123","enabled":false,"is_admin":false}`))
+	createReq.Header.Set("Authorization", "Bearer "+adminToken)
+	createReq.Header.Set("Content-Type", "application/json")
+	createRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(createRecorder, createReq)
+
+	if createRecorder.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, want %d", createRecorder.Code, http.StatusCreated)
+	}
+
+	var created ports.AdminUser
+	if err := json.Unmarshal(createRecorder.Body.Bytes(), &created); err != nil {
+		t.Fatalf("json.Unmarshal(create) error = %v", err)
+	}
+	if created.Username != "bob" || created.Enabled {
+		t.Fatalf("created = %#v, want disabled bob user", created)
+	}
+
+	enableReq := httptest.NewRequest(http.MethodPost, "/admin/v1/users/"+created.ID+":enable", nil)
+	enableReq.Header.Set("Authorization", "Bearer "+adminToken)
+	enableRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(enableRecorder, enableReq)
+
+	if enableRecorder.Code != http.StatusOK {
+		t.Fatalf("enable status = %d, want %d", enableRecorder.Code, http.StatusOK)
+	}
+
+	var enabled ports.AdminUser
+	if err := json.Unmarshal(enableRecorder.Body.Bytes(), &enabled); err != nil {
+		t.Fatalf("json.Unmarshal(enable) error = %v", err)
+	}
+	if !enabled.Enabled {
+		t.Fatalf("enabled = %#v, want enabled=true", enabled)
+	}
+
+	resetReq := httptest.NewRequest(http.MethodPost, "/admin/v1/users/"+created.ID+":reset-password", strings.NewReader(`{"new_password":"password456"}`))
+	resetReq.Header.Set("Authorization", "Bearer "+adminToken)
+	resetReq.Header.Set("Content-Type", "application/json")
+	resetRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(resetRecorder, resetReq)
+
+	if resetRecorder.Code != http.StatusNoContent {
+		t.Fatalf("reset status = %d, want %d", resetRecorder.Code, http.StatusNoContent)
+	}
+
+	if _, err := authService.LoginWithPassword(context.Background(), "bob", "password123", nil); !domainauth.IsCode(err, domainauth.ErrorCodeInvalidCredentials) {
+		t.Fatalf("LoginWithPassword(old password) error = %v, want invalid credentials", err)
+	}
+	if _, err := authService.LoginWithPassword(context.Background(), "bob", "password456", nil); err != nil {
+		t.Fatalf("LoginWithPassword(new password) error = %v", err)
+	}
+
+	disableReq := httptest.NewRequest(http.MethodPost, "/admin/v1/users/"+created.ID+":disable", nil)
+	disableReq.Header.Set("Authorization", "Bearer "+adminToken)
+	disableRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(disableRecorder, disableReq)
+
+	if disableRecorder.Code != http.StatusOK {
+		t.Fatalf("disable status = %d, want %d", disableRecorder.Code, http.StatusOK)
+	}
+
+	var disabled ports.AdminUser
+	if err := json.Unmarshal(disableRecorder.Body.Bytes(), &disabled); err != nil {
+		t.Fatalf("json.Unmarshal(disable) error = %v", err)
+	}
+	if disabled.Enabled {
+		t.Fatalf("disabled = %#v, want enabled=false", disabled)
+	}
+}
+
+func TestRouterAdminCreateUserRejectsUsernameConflicts(t *testing.T) {
+	t.Parallel()
+
+	handler, authService, adminActor, adminToken, cleanup := newTestRouterWithRealAuth(t)
+	defer cleanup()
+
+	if _, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
+		Username: "bob",
+		Password: "password123",
+		Enabled:  true,
+	}); err != nil {
+		t.Fatalf("CreateAdminUser() setup error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/v1/users", strings.NewReader(`{"username":"bob","password":"password123","enabled":true,"is_admin":false}`))
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusConflict)
+	}
+}
+
+func TestRouterAdminDisableRejectsLastActiveAdmin(t *testing.T) {
+	t.Parallel()
+
+	handler, _, adminActor, adminToken, cleanup := newTestRouterWithRealAuth(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/v1/users/"+adminActor.UserID+":disable", nil)
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusConflict)
+	}
+}
+
+func TestRouterAdminResetPasswordRejectsWeakPasswords(t *testing.T) {
+	t.Parallel()
+
+	handler, authService, adminActor, adminToken, cleanup := newTestRouterWithRealAuth(t)
+	defer cleanup()
+
+	user, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
+		Username: "bob",
+		Password: "password123",
+		Enabled:  true,
+	})
+	if err != nil {
+		t.Fatalf("CreateAdminUser() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/v1/users/"+user.ID+":reset-password", strings.NewReader(`{"new_password":"short"}`))
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnprocessableEntity)
+	}
+}
+
+func TestRouterAdminUserMutationRoutesRemainUnavailable(t *testing.T) {
+	t.Parallel()
+
+	handler, authService, adminActor, adminToken, cleanup := newTestRouterWithRealAuth(t)
+	defer cleanup()
+
+	user, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
+		Username: "bob",
+		Password: "password123",
+		Enabled:  true,
+	})
+	if err != nil {
+		t.Fatalf("CreateAdminUser() error = %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{name: "delete user route", method: http.MethodDelete, path: "/admin/v1/users/" + user.ID},
+		{name: "broad profile update route", method: http.MethodPut, path: "/admin/v1/users/" + user.ID, body: `{"username":"robert","enabled":false}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, tt.path, strings.NewReader(tt.body))
+			req.Header.Set("Authorization", "Bearer "+adminToken)
+			if tt.body != "" {
+				req.Header.Set("Content-Type", "application/json")
+			}
+			recorder := httptest.NewRecorder()
+
+			handler.ServeHTTP(recorder, req)
+
+			if recorder.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want %d", recorder.Code, http.StatusNotFound)
+			}
+		})
+	}
+}
+
+func TestRouterAdminGrantRoutesSupportListPutReplaceAndDelete(t *testing.T) {
+	t.Parallel()
+
+	handler, authService, adminActor, adminToken, cleanup := newTestRouterWithRealAuth(t)
+	defer cleanup()
+
+	user, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
+		Username: "bob",
+		Password: "password123",
+		Enabled:  true,
+	})
+	if err != nil {
+		t.Fatalf("CreateAdminUser() error = %v", err)
+	}
+
+	putReq := httptest.NewRequest(http.MethodPut, "/admin/v1/users/"+user.ID+"/grants/team/app", strings.NewReader(`{"role":"repo-reader"}`))
+	putReq.Header.Set("Authorization", "Bearer "+adminToken)
+	putReq.Header.Set("Content-Type", "application/json")
+	putRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(putRecorder, putReq)
+
+	if putRecorder.Code != http.StatusOK {
+		t.Fatalf("put status = %d, want %d", putRecorder.Code, http.StatusOK)
+	}
+
+	var createdGrant ports.AdminRepoGrant
+	if err := json.Unmarshal(putRecorder.Body.Bytes(), &createdGrant); err != nil {
+		t.Fatalf("json.Unmarshal(put) error = %v", err)
+	}
+	if createdGrant.Repository.String() != "team/app" || createdGrant.Role != domainauth.RepoRoleReader {
+		t.Fatalf("createdGrant = %#v, want team/app repo-reader", createdGrant)
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/admin/v1/users/"+user.ID+"/grants", nil)
+	listReq.Header.Set("Authorization", "Bearer "+adminToken)
+	listRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(listRecorder, listReq)
+
+	if listRecorder.Code != http.StatusOK {
+		t.Fatalf("list status = %d, want %d", listRecorder.Code, http.StatusOK)
+	}
+
+	var grants []ports.AdminRepoGrant
+	if err := json.Unmarshal(listRecorder.Body.Bytes(), &grants); err != nil {
+		t.Fatalf("json.Unmarshal(list) error = %v", err)
+	}
+	if len(grants) != 1 {
+		t.Fatalf("len(grants) = %d, want 1", len(grants))
+	}
+	if grants[0].Repository.String() != "team/app" || grants[0].Role != domainauth.RepoRoleReader {
+		t.Fatalf("grants[0] = %#v, want repository team/app and role repo-reader", grants[0])
+	}
+
+	replaceReq := httptest.NewRequest(http.MethodPut, "/admin/v1/users/"+user.ID+"/grants/team/app", strings.NewReader(`{"role":"repo-admin"}`))
+	replaceReq.Header.Set("Authorization", "Bearer "+adminToken)
+	replaceReq.Header.Set("Content-Type", "application/json")
+	replaceRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(replaceRecorder, replaceReq)
+
+	if replaceRecorder.Code != http.StatusOK {
+		t.Fatalf("replace status = %d, want %d", replaceRecorder.Code, http.StatusOK)
+	}
+
+	var replacedGrant ports.AdminRepoGrant
+	if err := json.Unmarshal(replaceRecorder.Body.Bytes(), &replacedGrant); err != nil {
+		t.Fatalf("json.Unmarshal(replace) error = %v", err)
+	}
+	if replacedGrant.Role != domainauth.RepoRoleAdmin {
+		t.Fatalf("replacedGrant.Role = %q, want %q", replacedGrant.Role, domainauth.RepoRoleAdmin)
+	}
+
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/admin/v1/users/"+user.ID+"/grants/team/app", nil)
+	deleteReq.Header.Set("Authorization", "Bearer "+adminToken)
+	deleteRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(deleteRecorder, deleteReq)
+
+	if deleteRecorder.Code != http.StatusNoContent {
+		t.Fatalf("delete status = %d, want %d", deleteRecorder.Code, http.StatusNoContent)
+	}
+
+	listAfterDeleteReq := httptest.NewRequest(http.MethodGet, "/admin/v1/users/"+user.ID+"/grants", nil)
+	listAfterDeleteReq.Header.Set("Authorization", "Bearer "+adminToken)
+	listAfterDeleteRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(listAfterDeleteRecorder, listAfterDeleteReq)
+
+	if listAfterDeleteRecorder.Code != http.StatusOK {
+		t.Fatalf("list after delete status = %d, want %d", listAfterDeleteRecorder.Code, http.StatusOK)
+	}
+	if strings.TrimSpace(listAfterDeleteRecorder.Body.String()) != "[]" {
+		t.Fatalf("body after delete = %q, want []", listAfterDeleteRecorder.Body.String())
+	}
+}
+
+func TestRouterAdminGrantRoutesRejectInvalidInput(t *testing.T) {
+	t.Parallel()
+
+	handler, authService, adminActor, adminToken, cleanup := newTestRouterWithRealAuth(t)
+	defer cleanup()
+
+	user, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
+		Username: "bob",
+		Password: "password123",
+		Enabled:  true,
+	})
+	if err != nil {
+		t.Fatalf("CreateAdminUser() error = %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		path   string
+		body   string
+		status int
+	}{
+		{name: "invalid role", path: "/admin/v1/users/" + user.ID + "/grants/team/app", body: `{"role":"owner"}`, status: http.StatusUnprocessableEntity},
+		{name: "invalid repository", path: "/admin/v1/users/" + user.ID + "/grants/Team/App", body: `{"role":"repo-reader"}`, status: http.StatusUnprocessableEntity},
+		{name: "missing user", path: "/admin/v1/users/missing-user/grants/team/app", body: `{"role":"repo-reader"}`, status: http.StatusNotFound},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPut, tt.path, strings.NewReader(tt.body))
+			req.Header.Set("Authorization", "Bearer "+adminToken)
+			req.Header.Set("Content-Type", "application/json")
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, req)
+
+			if recorder.Code != tt.status {
+				t.Fatalf("status = %d, want %d", recorder.Code, tt.status)
+			}
+		})
+	}
+}
+
+func TestRouterAdminTokenRoutesSupportListCreateAndScopedRevoke(t *testing.T) {
+	t.Parallel()
+
+	handler, authService, adminActor, adminToken, cleanup := newTestRouterWithRealAuth(t)
+	defer cleanup()
+
+	user, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
+		Username: "bob",
+		Password: "password123",
+		Enabled:  true,
+		IsAdmin:  true,
+	})
+	if err != nil {
+		t.Fatalf("CreateAdminUser() error = %v", err)
+	}
+
+	createReq := httptest.NewRequest(http.MethodPost, "/admin/v1/users/"+user.ID+"/admin-tokens", strings.NewReader(`{"name":"ci","ttl_seconds":3600}`))
+	createReq.Header.Set("Authorization", "Bearer "+adminToken)
+	createReq.Header.Set("Content-Type", "application/json")
+	createRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(createRecorder, createReq)
+
+	if createRecorder.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, want %d", createRecorder.Code, http.StatusCreated)
+	}
+	if strings.Contains(createRecorder.Body.String(), "secret_hash") {
+		t.Fatalf("body = %q, did not expect secret hash", createRecorder.Body.String())
+	}
+
+	var createdToken map[string]any
+	if err := json.Unmarshal(createRecorder.Body.Bytes(), &createdToken); err != nil {
+		t.Fatalf("json.Unmarshal(create) error = %v", err)
+	}
+	secret, _ := createdToken["secret"].(string)
+	if secret == "" {
+		t.Fatalf("createdToken = %#v, want one-time secret", createdToken)
+	}
+	tokenPayload, ok := createdToken["token"].(map[string]any)
+	if !ok {
+		t.Fatalf("createdToken.token = %#v, want object", createdToken["token"])
+	}
+	accessor, _ := tokenPayload["accessor"].(string)
+	if accessor == "" {
+		t.Fatalf("tokenPayload = %#v, want accessor", tokenPayload)
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/admin/v1/users/"+user.ID+"/admin-tokens", nil)
+	listReq.Header.Set("Authorization", "Bearer "+adminToken)
+	listRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(listRecorder, listReq)
+
+	if listRecorder.Code != http.StatusOK {
+		t.Fatalf("list status = %d, want %d", listRecorder.Code, http.StatusOK)
+	}
+	if strings.Contains(listRecorder.Body.String(), secret) {
+		t.Fatalf("list body = %q, did not expect plaintext secret", listRecorder.Body.String())
+	}
+
+	var listed []ports.AdminToken
+	if err := json.Unmarshal(listRecorder.Body.Bytes(), &listed); err != nil {
+		t.Fatalf("json.Unmarshal(list) error = %v", err)
+	}
+	if len(listed) != 1 {
+		t.Fatalf("len(listed) = %d, want 1", len(listed))
+	}
+	if listed[0].Accessor != accessor {
+		t.Fatalf("listed[0].Accessor = %q, want %q", listed[0].Accessor, accessor)
+	}
+
+	revokeReq := httptest.NewRequest(http.MethodDelete, "/admin/v1/users/"+user.ID+"/admin-tokens/"+accessor, nil)
+	revokeReq.Header.Set("Authorization", "Bearer "+adminToken)
+	revokeRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(revokeRecorder, revokeReq)
+
+	if revokeRecorder.Code != http.StatusNoContent {
+		t.Fatalf("revoke status = %d, want %d", revokeRecorder.Code, http.StatusNoContent)
+	}
+
+	if _, err := authService.LoginWithPreissuedToken(context.Background(), user.Username, secret, nil); !domainauth.IsCode(err, domainauth.ErrorCodeRevokedToken) {
+		t.Fatalf("LoginWithPreissuedToken(revoked) error = %v, want revoked token", err)
+	}
+}
+
+func TestRouterAdminTokenRoutesRejectExcessiveTTLAndMismatchedRevoke(t *testing.T) {
+	t.Parallel()
+
+	handler, authService, adminActor, adminToken, cleanup := newTestRouterWithRealAuth(t)
+	defer cleanup()
+
+	owner, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
+		Username: "owner",
+		Password: "password123",
+		Enabled:  true,
+		IsAdmin:  true,
+	})
+	if err != nil {
+		t.Fatalf("CreateAdminUser(owner) error = %v", err)
+	}
+	other, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
+		Username: "other",
+		Password: "password123",
+		Enabled:  true,
+		IsAdmin:  true,
+	})
+	if err != nil {
+		t.Fatalf("CreateAdminUser(other) error = %v", err)
+	}
+
+	createReq := httptest.NewRequest(http.MethodPost, "/admin/v1/users/"+owner.ID+"/admin-tokens", strings.NewReader(`{"name":"ci","ttl_seconds":2592001}`))
+	createReq.Header.Set("Authorization", "Bearer "+adminToken)
+	createReq.Header.Set("Content-Type", "application/json")
+	createRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(createRecorder, createReq)
+
+	if createRecorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("create status = %d, want %d", createRecorder.Code, http.StatusUnprocessableEntity)
+	}
+
+	seedReq := httptest.NewRequest(http.MethodPost, "/admin/v1/users/"+owner.ID+"/admin-tokens", strings.NewReader(`{"name":"seed","ttl_seconds":3600}`))
+	seedReq.Header.Set("Authorization", "Bearer "+adminToken)
+	seedReq.Header.Set("Content-Type", "application/json")
+	seedRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(seedRecorder, seedReq)
+
+	if seedRecorder.Code != http.StatusCreated {
+		t.Fatalf("seed create status = %d, want %d", seedRecorder.Code, http.StatusCreated)
+	}
+
+	var seeded map[string]any
+	if err := json.Unmarshal(seedRecorder.Body.Bytes(), &seeded); err != nil {
+		t.Fatalf("json.Unmarshal(seed) error = %v", err)
+	}
+	tokenPayload, ok := seeded["token"].(map[string]any)
+	if !ok {
+		t.Fatalf("seeded.token = %#v, want object", seeded["token"])
+	}
+	accessor, _ := tokenPayload["accessor"].(string)
+	if accessor == "" {
+		t.Fatalf("tokenPayload = %#v, want accessor", tokenPayload)
+	}
+
+	revokeReq := httptest.NewRequest(http.MethodDelete, "/admin/v1/users/"+other.ID+"/admin-tokens/"+accessor, nil)
+	revokeReq.Header.Set("Authorization", "Bearer "+adminToken)
+	revokeRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(revokeRecorder, revokeReq)
+
+	if revokeRecorder.Code != http.StatusNotFound {
+		t.Fatalf("revoke status = %d, want %d", revokeRecorder.Code, http.StatusNotFound)
 	}
 }
 
@@ -551,6 +1115,46 @@ func newTestRouterWithAuth(t *testing.T, accessController ports.AccessController
 	return newRouterWithStores(blobStore, metadataStore, accessController, authService, options...), cleanup
 }
 
+func newTestRouterWithRealAuth(t *testing.T) (*Router, *appauth.Service, domainauth.Principal, string, func()) {
+	t.Helper()
+
+	authStore := newSQLiteAuthStore(t)
+	accessController := ports.NewPrincipalAccessController(ports.Challenge{Realm: "http://127.0.0.1:5000/auth/token", Service: "registry"})
+	authService := appauth.NewService(authStore)
+	handler, cleanup := newTestRouterWithAuth(t, accessController, authServiceOrFatal(t, authService))
+
+	bootstrapResult, err := authService.BootstrapAdmin(context.Background(), ports.BootstrapAdminInput{
+		Username: "admin",
+		Password: "password123",
+	})
+	if err != nil {
+		cleanup()
+		_ = authStore.Close()
+		t.Fatalf("BootstrapAdmin() error = %v", err)
+	}
+
+	loginResult, err := authService.LoginWithPassword(context.Background(), "admin", "password123", nil)
+	if err != nil {
+		cleanup()
+		_ = authStore.Close()
+		t.Fatalf("LoginWithPassword() error = %v", err)
+	}
+
+	adminActor := domainauth.Principal{UserID: bootstrapResult.User.ID, Username: bootstrapResult.User.Username, IsAdmin: true}
+	return handler, authService, adminActor, loginResult.BearerToken, func() {
+		cleanup()
+		_ = authStore.Close()
+	}
+}
+
+func authServiceOrFatal(t *testing.T, service *appauth.Service) ports.AuthService {
+	t.Helper()
+	if service == nil {
+		t.Fatal("expected auth service")
+	}
+	return service
+}
+
 func newTestStores(t *testing.T) (*fsblob.Store, *metadata.Store, func()) {
 	t.Helper()
 
@@ -568,6 +1172,17 @@ func newTestStores(t *testing.T) (*fsblob.Store, *metadata.Store, func()) {
 	return blobStore, metadataStore, func() {
 		_ = metadataStore.Close()
 	}
+}
+
+func newSQLiteAuthStore(t *testing.T) *authpostgres.Store {
+	t.Helper()
+
+	store, err := authpostgres.NewWithDriver("sqlite", filepath.Join(t.TempDir(), "auth.db"))
+	if err != nil {
+		t.Fatalf("authpostgres.NewWithDriver() error = %v", err)
+	}
+
+	return store
 }
 
 func newRouterWithStores(blobStore *fsblob.Store, metadataStore *metadata.Store, accessController ports.AccessController, authService ports.AuthService, options ...RouterOption) *Router {
@@ -637,6 +1252,39 @@ func (f fakeAuthService) VerifyAccessToken(context.Context, string) (domainauth.
 }
 func (f fakeAuthService) CreateAdminToken(context.Context, domainauth.Principal, ports.CreateAdminTokenInput) (ports.CreatedAdminToken, error) {
 	return ports.CreatedAdminToken{}, nil
+}
+func (f fakeAuthService) ListAdminUsers(context.Context, domainauth.Principal) ([]ports.AdminUser, error) {
+	return nil, nil
+}
+func (f fakeAuthService) CreateAdminUser(context.Context, domainauth.Principal, ports.AdminCreateUserInput) (ports.AdminUser, error) {
+	return ports.AdminUser{}, nil
+}
+func (f fakeAuthService) EnableAdminUser(context.Context, domainauth.Principal, string) (ports.AdminUser, error) {
+	return ports.AdminUser{}, nil
+}
+func (f fakeAuthService) DisableAdminUser(context.Context, domainauth.Principal, string) (ports.AdminUser, error) {
+	return ports.AdminUser{}, nil
+}
+func (f fakeAuthService) ResetAdminUserPassword(context.Context, domainauth.Principal, ports.AdminResetPasswordInput) error {
+	return nil
+}
+func (f fakeAuthService) ListAdminUserRepoGrants(context.Context, domainauth.Principal, string) ([]ports.AdminRepoGrant, error) {
+	return nil, nil
+}
+func (f fakeAuthService) PutAdminUserRepoGrant(context.Context, domainauth.Principal, ports.AdminPutRepoGrantInput) (ports.AdminRepoGrant, error) {
+	return ports.AdminRepoGrant{}, nil
+}
+func (f fakeAuthService) DeleteAdminUserRepoGrant(context.Context, domainauth.Principal, string, string) error {
+	return nil
+}
+func (f fakeAuthService) ListAdminUserTokens(context.Context, domainauth.Principal, string) ([]ports.AdminToken, error) {
+	return nil, nil
+}
+func (f fakeAuthService) CreateAdminUserToken(context.Context, domainauth.Principal, ports.AdminCreateTokenInput) (ports.AdminCreatedToken, error) {
+	return ports.AdminCreatedToken{}, nil
+}
+func (f fakeAuthService) RevokeAdminUserToken(context.Context, domainauth.Principal, string, string) error {
+	return nil
 }
 func (f fakeAuthService) ListRepoGrants(context.Context, domainauth.Principal, string) ([]domainauth.RepoGrant, error) {
 	return nil, nil

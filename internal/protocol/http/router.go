@@ -19,6 +19,7 @@ import (
 type Router struct {
 	service *appregistry.Service
 	auth    ports.AuthService
+	admin   ports.AdminHTTPService
 	logger  *log.Logger
 	mux     *stdhttp.ServeMux
 }
@@ -35,6 +36,9 @@ func WithLogger(logger *log.Logger) RouterOption {
 
 func NewRouter(service *appregistry.Service, authService ports.AuthService, options ...RouterOption) *Router {
 	router := &Router{service: service, auth: authService, logger: log.Default(), mux: stdhttp.NewServeMux()}
+	if adminService, ok := authService.(ports.AdminHTTPService); ok {
+		router.admin = adminService
+	}
 	for _, option := range options {
 		if option != nil {
 			option(router)
@@ -42,6 +46,12 @@ func NewRouter(service *appregistry.Service, authService ports.AuthService, opti
 	}
 	if authService != nil {
 		router.mux.HandleFunc("/auth/token", router.handleToken)
+	}
+	if router.admin != nil {
+		router.mux.HandleFunc("/admin/v1", router.handleAdmin)
+		router.mux.HandleFunc("/admin/v1/", router.handleAdmin)
+		router.mux.HandleFunc("/admin/v1/users", router.handleAdmin)
+		router.mux.HandleFunc("/admin/v1/users/", router.handleAdmin)
 	}
 	router.mux.HandleFunc("/v2/", router.handleV2)
 	router.mux.HandleFunc("/v2", router.handleV2)
