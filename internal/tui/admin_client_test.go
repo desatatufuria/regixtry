@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"registry/internal/domain/auth"
+	"registry/internal/ports"
 )
 
 func TestHTTPAdminClientLogin(t *testing.T) {
@@ -237,5 +238,208 @@ func TestHTTPAdminClientRejectsLocallyExpiredSession(t *testing.T) {
 	}
 	if !IsAdminSessionExpired(err) {
 		t.Fatalf("ListUsers() error = %v, want expired-session error", err)
+	}
+}
+
+func TestHTTPAdminClientUserMutations(t *testing.T) {
+	t.Parallel()
+
+	fixedNow := time.Date(2026, time.August, 4, 23, 5, 0, 0, time.UTC)
+	activeSession := AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: fixedNow.Add(10 * time.Minute)}
+
+	tests := []struct {
+		name        string
+		method      string
+		path        string
+		statusCode  int
+		headers     map[string]string
+		body        string
+		run         func(context.Context, *HTTPAdminClient, AdminSession) (ports.AdminUser, error)
+		assertError func(t *testing.T, err error)
+		assertUser  func(t *testing.T, user ports.AdminUser)
+		session     AdminSession
+	}{
+		{
+			name:       "enable user succeeds",
+			method:     http.MethodPost,
+			path:       "/admin/v1/users/user/one:enable",
+			statusCode: http.StatusOK,
+			body:       `{"id":"u-1","username":"alice","is_admin":true,"enabled":true,"created_at":"2026-08-04T22:00:00Z","updated_at":"2026-08-04T22:15:00Z"}`,
+			run: func(ctx context.Context, client *HTTPAdminClient, session AdminSession) (ports.AdminUser, error) {
+				return client.EnableUser(ctx, session, "user/one")
+			},
+			assertError: func(t *testing.T, err error) {
+				t.Helper()
+				if err != nil {
+					t.Fatalf("EnableUser() error = %v, want nil", err)
+				}
+			},
+			assertUser: func(t *testing.T, user ports.AdminUser) {
+				t.Helper()
+				if user.Username != "alice" || !user.Enabled {
+					t.Fatalf("user = %#v, want enabled alice", user)
+				}
+			},
+			session: activeSession,
+		},
+		{
+			name:       "disable user conflict stays recoverable",
+			method:     http.MethodPost,
+			path:       "/admin/v1/users/u-1:disable",
+			statusCode: http.StatusConflict,
+			body:       `{"error":"cannot disable the last active admin"}`,
+			run: func(ctx context.Context, client *HTTPAdminClient, session AdminSession) (ports.AdminUser, error) {
+				return client.DisableUser(ctx, session, "u-1")
+			},
+			assertError: func(t *testing.T, err error) {
+				t.Helper()
+				if err == nil {
+					t.Fatal("DisableUser() error = nil, want conflict error")
+				}
+				if got, want := err.Error(), "mutate admin resource: cannot disable the last active admin"; got != want {
+					t.Fatalf("DisableUser() error = %q, want %q", got, want)
+				}
+			},
+			assertUser: func(t *testing.T, user ports.AdminUser) {
+				t.Helper()
+				if user != (ports.AdminUser{}) {
+					t.Fatalf("user = %#v, want zero value on error", user)
+				}
+			},
+			session: activeSession,
+		},
+		{
+			name:       "validation failure stays recoverable",
+			method:     http.MethodPost,
+			path:       "/admin/v1/users/u-1:enable",
+			statusCode: http.StatusBadRequest,
+			body:       `{"error":"user id is required"}`,
+			run: func(ctx context.Context, client *HTTPAdminClient, session AdminSession) (ports.AdminUser, error) {
+				return client.EnableUser(ctx, session, "u-1")
+			},
+			assertError: func(t *testing.T, err error) {
+				t.Helper()
+				if err == nil {
+					t.Fatal("EnableUser() error = nil, want validation error")
+				}
+				if got, want := err.Error(), "mutate admin resource: user id is required"; got != want {
+					t.Fatalf("EnableUser() error = %q, want %q", got, want)
+				}
+			},
+			assertUser: func(t *testing.T, user ports.AdminUser) {
+				t.Helper()
+				if user != (ports.AdminUser{}) {
+					t.Fatalf("user = %#v, want zero value on error", user)
+				}
+			},
+			session: activeSession,
+		},
+		{
+			name:       "invalid token maps to expired session",
+			method:     http.MethodPost,
+			path:       "/admin/v1/users/u-1:disable",
+			statusCode: http.StatusUnauthorized,
+			headers: map[string]string{
+				"WWW-Authenticate": `Bearer realm="registry", error="invalid_token"`,
+			},
+			body: `{"error":"expired access token"}`,
+			run: func(ctx context.Context, client *HTTPAdminClient, session AdminSession) (ports.AdminUser, error) {
+				return client.DisableUser(ctx, session, "u-1")
+			},
+			assertError: func(t *testing.T, err error) {
+				t.Helper()
+				if err == nil {
+					t.Fatal("DisableUser() error = nil, want expired-session error")
+				}
+				if !IsAdminSessionExpired(err) {
+					t.Fatalf("DisableUser() error = %v, want expired-session error", err)
+				}
+				if got, want := err.Error(), AdminSessionExpiredReasonExpired; got != want {
+					t.Fatalf("DisableUser() error = %q, want %q", got, want)
+				}
+			},
+			assertUser: func(t *testing.T, user ports.AdminUser) {
+				t.Helper()
+				if user != (ports.AdminUser{}) {
+					t.Fatalf("user = %#v, want zero value on error", user)
+				}
+			},
+			session: activeSession,
+		},
+		{
+			name:   "locally expired session rejects mutation without request",
+			method: http.MethodPost,
+			path:   "/admin/v1/users/u-1:disable",
+			run: func(ctx context.Context, client *HTTPAdminClient, session AdminSession) (ports.AdminUser, error) {
+				return client.DisableUser(ctx, session, "u-1")
+			},
+			assertError: func(t *testing.T, err error) {
+				t.Helper()
+				if err == nil {
+					t.Fatal("DisableUser() error = nil, want expired-session error")
+				}
+				if !IsAdminSessionExpired(err) {
+					t.Fatalf("DisableUser() error = %v, want expired-session error", err)
+				}
+			},
+			assertUser: func(t *testing.T, user ports.AdminUser) {
+				t.Helper()
+				if user != (ports.AdminUser{}) {
+					t.Fatalf("user = %#v, want zero value on error", user)
+				}
+			},
+			session: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: fixedNow.Add(-time.Second)},
+		},
+	}
+
+	for _, tt := range tests {
+		tc := tt
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			requestCount := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requestCount++
+				if got, want := r.Method, tc.method; got != want {
+					t.Fatalf("method = %q, want %q", got, want)
+				}
+				if got, want := r.URL.Path, tc.path; got != want {
+					t.Fatalf("path = %q, want %q", got, want)
+				}
+				if got, want := r.Header.Get("Authorization"), "Bearer bearer-token"; got != want {
+					t.Fatalf("Authorization = %q, want %q", got, want)
+				}
+
+				w.Header().Set("Content-Type", "application/json")
+				for key, value := range tc.headers {
+					w.Header().Set(key, value)
+				}
+				if tc.statusCode != 0 {
+					w.WriteHeader(tc.statusCode)
+				}
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+
+			client, err := NewHTTPAdminClient(server.URL, server.Client())
+			if err != nil {
+				t.Fatalf("NewHTTPAdminClient() error = %v", err)
+			}
+			client.now = func() time.Time { return fixedNow }
+
+			user, err := tc.run(context.Background(), client, tc.session)
+			tc.assertError(t, err)
+			tc.assertUser(t, user)
+
+			if tc.session.IsExpired(fixedNow) {
+				if requestCount != 0 {
+					t.Fatalf("requestCount = %d, want 0 for locally expired session", requestCount)
+				}
+				return
+			}
+			if requestCount != 1 {
+				t.Fatalf("requestCount = %d, want 1", requestCount)
+			}
+		})
 	}
 }
