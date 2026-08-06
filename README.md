@@ -6,7 +6,7 @@ Registry is a low-resource, single-binary OCI registry for internal and OSS use.
 
 1. Treat the OCI Distribution API as the product boundary.
 2. Keep v1 single-tenant, local-storage, and operationally simple.
-3. Use `docs/` for reader-facing decisions and `openspec/changes/registry-foundation/` plus `openspec/changes/registry-auth-v1/` for the current implementation contracts.
+3. Use `docs/` for reader-facing decisions and `openspec/changes/registry-foundation/`, `openspec/changes/registry-auth-v1/`, and `openspec/changes/registry-operator-admin-api/` for the current implementation contracts.
 
 ## Local Docker Compose helper runtime
 
@@ -41,11 +41,39 @@ Use this order whenever auth is enabled:
 
 If you need to rotate the bootstrap password later, rerun the bootstrap command with `-rotate-password`.
 
+### Operator admin API
+
+Auth-backed operator administration now has a narrow HTTP surface under `/admin/v1`.
+
+#### Quick path
+
+1. Bootstrap the first admin with `bootstrap-admin` if the auth store is empty.
+2. Exchange Basic credentials or an admin credential token at `/auth/token`.
+3. Call `/admin/v1/...` with `Authorization: Bearer <access-token>`.
+
+#### Delivered v1 routes
+
+| Area | Endpoints |
+| --- | --- |
+| Users | `GET /admin/v1/users`, `POST /admin/v1/users`, `POST /admin/v1/users/{id}:enable`, `POST /admin/v1/users/{id}:disable`, `POST /admin/v1/users/{id}:reset-password` |
+| Repository grants | `GET /admin/v1/users/{id}/grants`, `PUT /admin/v1/users/{id}/grants/{repository}`, `DELETE /admin/v1/users/{id}/grants/{repository}` |
+| Admin credential tokens | `GET /admin/v1/users/{id}/admin-tokens`, `POST /admin/v1/users/{id}/admin-tokens`, `DELETE /admin/v1/users/{id}/admin-tokens/{accessor}` |
+
+#### Admin API guardrails
+
+| Topic | Decision |
+| --- | --- |
+| Auth model | `/admin/v1` accepts only Bearer access tokens issued through `/auth/token`. |
+| Safety rules | The API reuses the existing backend safeguards for admin-only access, weak-password rejection, disabled-user checks, TTL caps, and last-active-admin protection. |
+| Error semantics | Admin routes return explicit `401`, `403`, `404`, `409`, and `422` responses without changing Docker-oriented `/v2/*` challenge behavior. |
+| Deferred scope | User-list pagination, delete-user, broad profile edits, and break-glass bootstrap flows over `/admin/v1` remain out of scope for this slice. |
+| Future clients | CLI-next and TUI-later must act as authenticated API clients; they must not write auth state through local shortcuts. |
+
 ### TUI auth administration
 
 The local TUI no longer fabricates an authenticated admin when `-auth-postgres-dsn` is configured. Repository inspection still works, but auth-backed admin mutations stay disabled until a real operator login flow exists.
 
-For now, use `bootstrap-admin` only to create or rotate the initial global admin account, then perform auth administration through authenticated backend flows instead of the local TUI.
+For now, use `bootstrap-admin` only to create or rotate the initial global admin account, then perform auth administration through `/auth/token` plus `/admin/v1` instead of the local TUI.
 
 Example snapshot run against the compose Postgres service:
 
@@ -77,7 +105,7 @@ V1 delivers a correct local registry with clear operator visibility.
 | Storage model | Local filesystem blob storage with SQLite-backed metadata |
 | Upload lifecycle | Staged uploads, digest validation, and publish-only-on-valid-content rules |
 | Operator experience | Keyboard-first Bubble Tea console for inspection and maintenance basics |
-| Access model | Postgres-backed auth state, `/auth/token`, and repository-scoped enforcement for auth-enabled runtime |
+| Access model | Postgres-backed auth state, `/auth/token`, repository-scoped enforcement, and narrow `/admin/v1` operator administration for auth-enabled runtime |
 | Future readiness | Tenant, storage, and background-job seams kept explicit while broader auth workflows remain intentionally narrow |
 
 ## Non-goals
@@ -86,7 +114,7 @@ These are intentionally OUT of v1:
 
 - Multi-tenant isolation and complex RBAC.
 - Replication, remote object storage, or cross-instance synchronization.
-- Signing orchestration, scanning, provenance pipelines, or broad admin APIs.
+- Signing orchestration, scanning, provenance pipelines, or platform-style admin APIs beyond the narrow `/admin/v1` operator surface.
 - Deletion/retention platforms, operator-driven garbage collection controls, or Harbor-like feature expansion.
 - Treating the Docker Engine API as the registry contract.
 - Letting the TUI own registry rules or read storage directly.
@@ -134,11 +162,12 @@ Read `docs/contributing.md` before opening or retargeting any PR slice.
 | `docs/glossary.md` | Shared protocol, storage, and architecture vocabulary |
 | `docs/roadmap.md` | V1 workstreams, non-goals, and post-v1 sequencing |
 | `openspec/changes/registry-foundation/` | Baseline proposal, specs, design, and task tracking for the implemented foundation |
-| `openspec/changes/registry-auth-v1/` | Active auth-v1 proposal, specs, design, tasks, and apply progress |
+| `openspec/changes/registry-auth-v1/` | Auth-v1 proposal, specs, design, tasks, apply progress, and verify report |
+| `openspec/changes/registry-operator-admin-api/` | Operator admin API proposal, specs, design, tasks, and apply progress |
 
 ## Current status
 
-`registry-foundation` is implemented in the repository, and `registry-auth-v1` has partial implementation on top of it.
+`registry-foundation`, `registry-auth-v1`, and `registry-operator-admin-api` are implemented in the repository.
 
 - The Go test suite passes for the current codebase.
 - Local smoke verification has confirmed Docker push/pull plus TUI snapshot rendering for the seeded `registry-foundation/smoke` repository.
@@ -146,4 +175,4 @@ Read `docs/contributing.md` before opening or retargeting any PR slice.
 
 Those local Compose checks are supporting runtime evidence only. They do **not** mean the repository currently guarantees Compose automation as a first-class externally verified runtime contract.
 
-This does **not** mean the product is feature-complete beyond the documented v1 scope. The repository currently proves the local single-node foundation plus the auth-v1 registry path: OCI/Docker-compatible content flows, SQLite-backed metadata, Postgres-backed auth state, `/auth/token`, bearer challenge interoperability, and an inspection-oriented TUI that shows a security notice instead of allowing local auth-backed admin mutations.
+This does **not** mean the product is feature-complete beyond the documented v1 scope. The repository currently proves the local single-node foundation plus the auth-backed registry/operator path: OCI/Docker-compatible content flows, SQLite-backed metadata, Postgres-backed auth state, `/auth/token`, bearer challenge interoperability, authenticated `/admin/v1` operator administration, and an inspection-oriented TUI that shows a security notice instead of allowing local auth-backed admin mutations.

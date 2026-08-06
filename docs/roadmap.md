@@ -17,8 +17,9 @@ Read this document as a sequencing contract, not a wish list.
 | Repository foundation | Stable module, docs baseline, GitFlow workflow, and review slices | Implemented and verified |
 | Registry protocol | OCI-compatible push, pull, catalog, tags, manifests, and blobs | Implemented on the local single-node runtime |
 | Local durability | Filesystem blob storage, SQLite metadata, and safe upload lifecycle | Implemented |
-| Registry auth v1 | Postgres-backed auth state, `/auth/token`, bearer challenge interoperability, and repository enforcement | Active workstream; foundation + registry enforcement are implemented, admin/TUI and remaining verification/docs slices are still pending |
-| Operator console | Thin Bubble Tea client for inspection and maintenance basics | Inspection flow exists; auth administration is not finished |
+| Registry auth v1 | Postgres-backed auth state, `/auth/token`, bearer challenge interoperability, and repository enforcement | Implemented and verified |
+| Operator admin API | Narrow `/admin/v1` user/grant/admin-token administration over the shared auth service | Implemented and repo-verified; pagination, delete-user, and richer clients stay deferred |
+| Operator console | Thin Bubble Tea client for inspection plus authenticated, read-only admin browsing | Implemented for login, users, grants, and admin tokens; admin mutations and richer client ergonomics stay deferred |
 
 ## Approved v1 boundary
 
@@ -36,9 +37,11 @@ V1 is complete when ALL of the following are true:
 ## Current implementation checkpoint
 
 - `registry-foundation` is complete and verified.
-- `registry-auth-v1` Work Unit 1 (auth foundation) and Work Unit 2 (registry enforcement) are implemented on the active feature branch.
+- `registry-auth-v1` is complete and verified for the shipped auth-enabled registry flow.
+- `registry-operator-admin-api` is complete and verified for authenticated `/admin/v1` user, grant, and admin-token administration.
+- `registry-operator-admin-tui` is now complete for authenticated login plus GET-only admin browsing over the shipped backend API.
 - Manual checks against the local Compose helper runtime have demonstrated authenticated Docker push with Postgres-backed auth enabled, but that helper runtime is still supporting evidence rather than the primary automated verification contract.
-- Remaining planned work is still real scope: TUI admin workflows, auth-oriented smoke-script expansion, and final reader-facing doc updates tied to those slices.
+- Remaining planned work is still real scope: admin mutations in the TUI, optional admin-API pagination, and any future auth-oriented smoke expansion for richer clients.
 
 ## Explicit non-goals for the active change
 
@@ -48,7 +51,7 @@ These items must stay out of the active auth-v1 review slices unless the approve
 - Replication or remote-object-store adapters.
 - Deletion/retention platforms and operator-triggered garbage collection controls.
 - Signing, scanning, provenance, and supply-chain automation.
-- Broad admin APIs beyond registry protocol and the thin operator console.
+- Platform-style admin APIs beyond the narrow `/admin/v1` surface and thin operator console.
 
 ## Delivery sequence for `registry-foundation`
 
@@ -65,7 +68,25 @@ These items must stay out of the active auth-v1 review slices unless the approve
 | --- | --- | --- |
 | PR 1 | Postgres auth domain/store/bootstrap foundation | Completed |
 | PR 2 | `/auth/token`, bearer middleware, repository enforcement, and focused tests | Completed |
-| PR 3 | TUI admin flows plus auth-aware smoke coverage and remaining doc alignment | In progress / pending |
+| PR 3 | Auth verification close-out and doc alignment | Completed |
+
+## Delivery sequence for `registry-operator-admin-api`
+
+| Work unit | Target outcome | Status |
+| --- | --- | --- |
+| PR 1 | Narrow admin service/store contract and safety coverage | Completed |
+| PR 2 | `/admin/v1/users` list/create/enable/disable/reset-password routes | Completed |
+| PR 3 | `/admin/v1` grants and admin-token routes with nested revoke coverage | Completed |
+| PR 4 | Reader-facing docs plus repo-wide verification refresh | Completed |
+
+## Delivery sequence for `registry-operator-admin-tui`
+
+| Work unit | Target outcome | Status |
+| --- | --- | --- |
+| PR 1 | CLI wiring, admin HTTP client seam, and in-memory session primitives | Completed |
+| PR 2 | Bubble Tea login gate, authenticated admin navigation, and logout/expiry handling | Completed |
+| PR 3 | Admin client integration tests plus Bubble Tea behavior coverage | Completed |
+| PR 4 | Architecture/roadmap close-out for the shipped read-only admin TUI path | Completed |
 
 ## Documentation maintenance rule
 
