@@ -68,6 +68,38 @@ type MutationUnavailableModel struct {
 	Reason string
 }
 
+type adminUserMutationAction string
+
+const (
+	adminUserMutationActionEnable  adminUserMutationAction = "enable"
+	adminUserMutationActionDisable adminUserMutationAction = "disable"
+)
+
+type adminUserMutationState struct {
+	UserID   string
+	Username string
+	Action   adminUserMutationAction
+	InFlight bool
+}
+
+func (m adminUserMutationState) Active() bool {
+	return strings.TrimSpace(m.UserID) != ""
+}
+
+func (m adminUserMutationState) Verb() string {
+	if m.Action == adminUserMutationActionEnable {
+		return "enable"
+	}
+	return "disable"
+}
+
+func (m adminUserMutationState) PastTense() string {
+	if m.Action == adminUserMutationActionEnable {
+		return "enabled"
+	}
+	return "disabled"
+}
+
 type screen string
 
 const (
@@ -117,20 +149,22 @@ type Model struct {
 	err         error
 	now         func() time.Time
 
-	repositories RepositoriesModel
-	tags         TagsModel
-	manifest     ManifestModel
-	blobs        BlobsModel
-	uploads      UploadsModel
-	adminClient  AdminClient
-	adminSession AdminSession
-	adminView    AdminViewState
-	adminAuth    adminAuthState
-	adminLogin   adminLoginForm
-	adminReturn  screen
-	empty        EmptyStateModel
-	mutation     MutationUnavailableModel
-	status       string
+	repositories       RepositoriesModel
+	tags               TagsModel
+	manifest           ManifestModel
+	blobs              BlobsModel
+	uploads            UploadsModel
+	adminClient        AdminClient
+	adminSession       AdminSession
+	adminView          AdminViewState
+	adminAuth          adminAuthState
+	adminLogin         adminLoginForm
+	adminReturn        screen
+	empty              EmptyStateModel
+	mutation           MutationUnavailableModel
+	adminMutation      adminUserMutationState
+	adminRefreshStatus string
+	status             string
 
 	showMutationNotice bool
 	lastRepository     string
@@ -164,6 +198,12 @@ type adminLoginCompletedMsg struct {
 type adminUsersLoadedMsg struct {
 	users []ports.AdminUser
 	err   error
+}
+
+type adminUserMutatedMsg struct {
+	user     ports.AdminUser
+	mutation adminUserMutationState
+	err      error
 }
 
 type adminUserGrantsLoadedMsg struct {
@@ -297,6 +337,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if IsAdminSessionExpired(msg.err) {
 				return m.expireAdminSession(msg.err.Error()), nil
 			}
+			m.adminRefreshStatus = ""
 			m.screen = screenAdminUsers
 			m.status = msg.err.Error()
 			return m, nil
@@ -318,15 +359,38 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.adminView.SelectedUsername = ""
 			m.adminView.Grants = nil
 			m.adminView.AdminTokens = nil
+			m.adminRefreshStatus = ""
 			m.status = "No admin users found."
 			m.screen = screenAdminUsers
 			return m, nil
 		}
 
 		m.adminView.SelectedUser = boundedIndex(m.adminView.SelectedUser, len(m.adminView.Users))
-		m.status = ""
+		if user, ok := m.selectedAdminUser(); ok {
+			m.adminView.SelectedUserID = user.ID
+			m.adminView.SelectedUsername = user.Username
+		}
+		m.status = m.adminRefreshStatus
+		m.adminRefreshStatus = ""
 		m.screen = screenAdminUsers
 		return m, nil
+	case adminUserMutatedMsg:
+		m.adminMutation = adminUserMutationState{}
+		if msg.err != nil {
+			if IsAdminSessionExpired(msg.err) {
+				return m.expireAdminSession(msg.err.Error()), nil
+			}
+			m.screen = screenAdminUsers
+			m.status = msg.err.Error()
+			return m, nil
+		}
+
+		m.adminView.SelectedUserID = msg.user.ID
+		m.adminView.SelectedUsername = msg.user.Username
+		m.screen = screenAdminUsers
+		m.adminRefreshStatus = fmt.Sprintf("User %q %s.", msg.user.Username, msg.mutation.PastTense())
+		m.status = fmt.Sprintf("User %q %s. Refreshing users...", msg.user.Username, msg.mutation.PastTense())
+		return m, m.loadAdminUsersCmd()
 	case adminUserGrantsLoadedMsg:
 		if msg.err != nil {
 			if IsAdminSessionExpired(msg.err) {
@@ -408,7 +472,7 @@ func (m Model) View() string {
 		body.WriteString(m.loadingText)
 		body.WriteString("\n\nq: quit")
 	case screenAdminUsers:
-		body.WriteString(renderAdminUsers(m.adminSession, m.adminView, m.now()))
+		body.WriteString(renderAdminUsers(m.adminSession, m.adminView, m.adminMutation, m.now()))
 	case screenAdminGrants:
 		body.WriteString(renderAdminGrants(m.adminSession, m.adminView, m.now()))
 	case screenAdminTokens:
@@ -503,6 +567,9 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) updateAdminKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "l" && m.adminAuth == adminAuthStateAuthenticated {
+		if m.adminMutation.InFlight {
+			return m, nil
+		}
 		return m.logoutAdmin(), nil
 	}
 
@@ -557,6 +624,24 @@ func (m Model) updateAdminLoginKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateAdminUsersKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.adminMutation.InFlight {
+		return m, nil
+	}
+
+	if m.adminMutation.Active() {
+		switch msg.String() {
+		case "esc", "n":
+			m.adminMutation = adminUserMutationState{}
+			return m, nil
+		case "enter":
+			m.adminMutation.InFlight = true
+			m.status = fmt.Sprintf("Submitting %s for %s...", m.adminMutation.Verb(), m.adminMutation.Username)
+			return m, m.mutateAdminUserCmd(m.adminMutation)
+		default:
+			return m, nil
+		}
+	}
+
 	switch msg.String() {
 	case "esc":
 		return m.returnToInspection(), nil
@@ -580,6 +665,27 @@ func (m Model) updateAdminUsersKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "r":
 		m.status = "Loading admin users..."
 		return m, m.loadAdminUsersCmd()
+	case "e", "d":
+		user, ok := m.selectedAdminUser()
+		if !ok {
+			return m, nil
+		}
+		if msg.String() == "e" && user.Enabled {
+			return m, nil
+		}
+		if msg.String() == "d" && !user.Enabled {
+			return m, nil
+		}
+		m.adminMutation = adminUserMutationState{UserID: user.ID, Username: user.Username}
+		m.adminView.SelectedUserID = user.ID
+		m.adminView.SelectedUsername = user.Username
+		if msg.String() == "e" {
+			m.adminMutation.Action = adminUserMutationActionEnable
+		} else {
+			m.adminMutation.Action = adminUserMutationActionDisable
+		}
+		m.status = ""
+		return m, nil
 	}
 
 	return m, nil
@@ -618,6 +724,10 @@ func (m Model) moveSelection(delta int) {
 		m.blobs.Selected = boundedIndex(m.blobs.Selected+delta, len(m.blobs.Items))
 	case screenAdminUsers:
 		m.adminView.SelectedUser = boundedIndex(m.adminView.SelectedUser+delta, len(m.adminView.Users))
+		if user, ok := m.selectedAdminUser(); ok {
+			m.adminView.SelectedUserID = user.ID
+			m.adminView.SelectedUsername = user.Username
+		}
 	}
 }
 
@@ -702,6 +812,26 @@ func (m Model) loadAdminUsersCmd() tea.Cmd {
 	}
 }
 
+func (m Model) mutateAdminUserCmd(mutation adminUserMutationState) tea.Cmd {
+	return func() tea.Msg {
+		if m.adminClient == nil {
+			return adminUserMutatedMsg{mutation: mutation, err: fmt.Errorf("admin API is unavailable for this session")}
+		}
+
+		var (
+			user ports.AdminUser
+			err  error
+		)
+		switch mutation.Action {
+		case adminUserMutationActionEnable:
+			user, err = m.adminClient.EnableUser(m.ctx, m.adminSession, mutation.UserID)
+		default:
+			user, err = m.adminClient.DisableUser(m.ctx, m.adminSession, mutation.UserID)
+		}
+		return adminUserMutatedMsg{user: user, mutation: mutation, err: err}
+	}
+}
+
 func (m Model) loadAdminGrantsCmd(userID string, username string) tea.Cmd {
 	return func() tea.Msg {
 		if m.adminClient == nil {
@@ -762,6 +892,8 @@ func (m Model) logoutAdmin() Model {
 	m.adminAuth = adminAuthStateUnauthenticated
 	m.adminLogin.Password = ""
 	m.adminLogin.Focus = loginFieldUsername
+	m.adminMutation = adminUserMutationState{}
+	m.adminRefreshStatus = ""
 	m.screen = screenAdminLogin
 	m.loadingText = ""
 	m.status = "Logged out."
@@ -771,6 +903,8 @@ func (m Model) logoutAdmin() Model {
 func (m Model) returnToInspection() Model {
 	m.screen = m.adminReturn
 	m.loadingText = ""
+	m.adminMutation = adminUserMutationState{}
+	m.adminRefreshStatus = ""
 	m.status = ""
 	return m
 }
@@ -780,6 +914,8 @@ func (m Model) expireAdminSession(reason string) Model {
 	m.adminAuth = adminAuthStateExpired
 	m.adminLogin.Password = ""
 	m.adminLogin.Focus = loginFieldUsername
+	m.adminMutation = adminUserMutationState{}
+	m.adminRefreshStatus = ""
 	m.screen = screenAdminLogin
 	m.loadingText = ""
 	m.status = m.adminSession.ExpiredReason
@@ -910,7 +1046,7 @@ func renderAdminLogin(form adminLoginForm) string {
 	}, "\n")
 }
 
-func renderAdminUsers(session AdminSession, view AdminViewState, now time.Time) string {
+func renderAdminUsers(session AdminSession, view AdminViewState, mutation adminUserMutationState, now time.Time) string {
 	lines := adminHeader(session, now)
 	lines = append(lines, "Users")
 	if len(view.Users) == 0 {
@@ -932,8 +1068,41 @@ func renderAdminUsers(session AdminSession, view AdminViewState, now time.Time) 
 			lines = append(lines, fmt.Sprintf("%s%s [%s, %s]", prefix, user.Username, role, state))
 		}
 	}
-	lines = append(lines, "", "Enter: view grants · r: refresh · esc: inspection · l: logout · q: quit")
+	if mutation.Active() {
+		lines = append(lines, "")
+		if mutation.InFlight {
+			lines = append(lines,
+				fmt.Sprintf("Submitting %s for %q...", mutation.Verb(), mutation.Username),
+				"Please wait until the current mutation completes.",
+			)
+		} else {
+			lines = append(lines,
+				fmt.Sprintf("Confirm %s user %q?", mutation.Verb(), mutation.Username),
+				"Enter: confirm · n: cancel · esc: cancel · l: logout · q: quit",
+			)
+		}
+		return strings.Join(lines, "\n")
+	}
+
+	hints := []string{"Enter: view grants", "r: refresh"}
+	if user, ok := selectedAdminUserForView(view); ok {
+		if user.Enabled {
+			hints = append(hints, "d: disable")
+		} else {
+			hints = append(hints, "e: enable")
+		}
+	}
+	hints = append(hints, "esc: inspection", "l: logout", "q: quit")
+	lines = append(lines, "", strings.Join(hints, " · "))
 	return strings.Join(lines, "\n")
+}
+
+func selectedAdminUserForView(view AdminViewState) (ports.AdminUser, bool) {
+	if len(view.Users) == 0 {
+		return ports.AdminUser{}, false
+	}
+	index := boundedIndex(view.SelectedUser, len(view.Users))
+	return view.Users[index], true
 }
 
 func renderAdminGrants(session AdminSession, view AdminViewState, now time.Time) string {

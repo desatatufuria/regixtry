@@ -348,6 +348,285 @@ func TestModelLogoutReturnsToLoginAndClearsAdminSession(t *testing.T) {
 	}
 }
 
+func TestModelDisableUserSuccessRefreshesUsersAndPreservesSelectionByID(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 6, 22, 0, 0, 0, time.UTC)
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+		listUsersResults: [][]ports.AdminUser{
+			{
+				{ID: "u-1", Username: "alice", IsAdmin: true, Enabled: true},
+				{ID: "u-2", Username: "bob", IsAdmin: false, Enabled: true},
+			},
+			{
+				{ID: "u-2", Username: "bob", IsAdmin: false, Enabled: false},
+				{ID: "u-1", Username: "alice", IsAdmin: true, Enabled: true},
+			},
+		},
+		disableUser: ports.AdminUser{ID: "u-2", Username: "bob", IsAdmin: false, Enabled: false},
+	}
+	model := newAdminReadyModel(t, adminClient)
+	model.now = func() time.Time { return now }
+
+	updated := runAdminLogin(t, model, "operator", "secret-pass")
+	updated.adminView.SelectedUser = 1
+	updated.adminView.SelectedUserID = "u-2"
+	updated.adminView.SelectedUsername = "bob"
+	updated = runKey(t, updated, "d")
+
+	confirmationView := updated.View()
+	if !strings.Contains(confirmationView, "Confirm disable user \"bob\"?") {
+		t.Fatalf("view = %q, want disable confirmation", confirmationView)
+	}
+
+	updated = runKey(t, updated, "enter")
+
+	if updated.screen != screenAdminUsers {
+		t.Fatalf("screen = %q, want %q", updated.screen, screenAdminUsers)
+	}
+	if got, want := updated.status, `User "bob" disabled.`; got != want {
+		t.Fatalf("status = %q, want %q", got, want)
+	}
+	if got, want := updated.adminView.SelectedUserID, "u-2"; got != want {
+		t.Fatalf("SelectedUserID = %q, want %q", got, want)
+	}
+	if got, want := updated.adminView.SelectedUser, 0; got != want {
+		t.Fatalf("SelectedUser = %d, want %d after refresh reordered users", got, want)
+	}
+	if adminClient.disableCalls != 1 || adminClient.listUsersCalls != 2 {
+		t.Fatalf("admin client calls = %#v, want one disable and two user loads", adminClient)
+	}
+	if got, want := adminClient.lastDisableUserID, "u-2"; got != want {
+		t.Fatalf("lastDisableUserID = %q, want %q", got, want)
+	}
+
+	view := updated.View()
+	if !strings.Contains(view, "> bob [user, disabled]") {
+		t.Fatalf("view = %q, want refreshed disabled user selection", view)
+	}
+	if !strings.Contains(view, `User "bob" disabled.`) {
+		t.Fatalf("view = %q, want success status", view)
+	}
+	if strings.Contains(view, "Confirm disable") {
+		t.Fatalf("view = %q, want confirmation cleared after success", view)
+	}
+	if !strings.Contains(view, "e: enable") {
+		t.Fatalf("view = %q, want enable action hint for disabled user", view)
+	}
+	if strings.Contains(view, "d: disable") {
+		t.Fatalf("view = %q, want action hints to reflect refreshed user state", view)
+	}
+	if strings.Contains(view, "Submitting disable") {
+		t.Fatalf("view = %q, want in-flight copy cleared after completion", view)
+	}
+	if updated.adminMutation.Active() {
+		t.Fatalf("adminMutation = %#v, want cleared after success", updated.adminMutation)
+	}
+}
+
+func TestModelAdminMutationCancelDismissSendsNoRequest(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		key  string
+	}{
+		{name: "esc", key: "esc"},
+		{name: "n", key: "n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			adminClient := &fakeAdminClient{
+				loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: time.Date(2026, time.August, 6, 22, 5, 0, 0, time.UTC)},
+				users:        []ports.AdminUser{{ID: "u-1", Username: "alice", IsAdmin: true, Enabled: true}},
+			}
+			model := newAdminReadyModel(t, adminClient)
+			updated := runAdminLogin(t, model, "operator", "secret-pass")
+			updated = runKey(t, updated, "d")
+
+			if !strings.Contains(updated.View(), "Confirm disable user \"alice\"?") {
+				t.Fatalf("view = %q, want confirmation before cancel", updated.View())
+			}
+
+			updated = runKey(t, updated, tc.key)
+
+			if updated.screen != screenAdminUsers {
+				t.Fatalf("screen = %q, want %q", updated.screen, screenAdminUsers)
+			}
+			if adminClient.disableCalls != 0 || adminClient.enableCalls != 0 {
+				t.Fatalf("admin client calls = %#v, want no mutation request", adminClient)
+			}
+			view := updated.View()
+			if strings.Contains(view, "Confirm disable") {
+				t.Fatalf("view = %q, want confirmation dismissed", view)
+			}
+			if !strings.Contains(view, "d: disable") {
+				t.Fatalf("view = %q, want normal users-screen action hints restored", view)
+			}
+			if updated.adminMutation.Active() {
+				t.Fatalf("adminMutation = %#v, want cleared after cancel", updated.adminMutation)
+			}
+		})
+	}
+}
+
+func TestModelAdminMutationInFlightBlocksRepeatSubmission(t *testing.T) {
+	t.Parallel()
+
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: time.Date(2026, time.August, 6, 22, 7, 0, 0, time.UTC)},
+		users:        []ports.AdminUser{{ID: "u-1", Username: "alice", IsAdmin: true, Enabled: true}},
+		disableUser:  ports.AdminUser{ID: "u-1", Username: "alice", IsAdmin: true, Enabled: false},
+	}
+	model := newAdminReadyModel(t, adminClient)
+	updated := runAdminLogin(t, model, "operator", "secret-pass")
+	updated = runKey(t, updated, "d")
+
+	midflightModel, cmd := updated.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	midflight := midflightModel.(Model)
+	if cmd == nil {
+		t.Fatal("expected mutation command after confirmation")
+	}
+	if !midflight.adminMutation.InFlight {
+		t.Fatalf("adminMutation = %#v, want in-flight state before command completion", midflight.adminMutation)
+	}
+	if got, want := midflight.status, "Submitting disable for alice..."; got != want {
+		t.Fatalf("status = %q, want %q", got, want)
+	}
+	if !strings.Contains(midflight.View(), "Please wait until the current mutation completes.") {
+		t.Fatalf("view = %q, want in-flight guidance", midflight.View())
+	}
+
+	blockedModel, blockedCmd := midflight.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	blocked := blockedModel.(Model)
+	if blockedCmd != nil {
+		t.Fatal("expected no second mutation command while first request is in flight")
+	}
+	if blocked.status != midflight.status {
+		t.Fatalf("status = %q, want in-flight status unchanged", blocked.status)
+	}
+	if adminClient.disableCalls != 0 {
+		t.Fatalf("disableCalls = %d before executing command, want 0", adminClient.disableCalls)
+	}
+
+	completed := runCmd(t, midflight, cmd)
+	if adminClient.disableCalls != 1 {
+		t.Fatalf("disableCalls = %d, want 1 after command execution", adminClient.disableCalls)
+	}
+	if got, want := completed.status, `User "alice" disabled.`; got != want {
+		t.Fatalf("status = %q, want %q", got, want)
+	}
+}
+
+func TestModelAdminMutationRecoverableFailuresStayOnUsersScreen(t *testing.T) {
+	t.Parallel()
+
+	baseSession := AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: time.Date(2026, time.August, 6, 22, 10, 0, 0, time.UTC)}
+	for _, tc := range []struct {
+		name       string
+		openKey    string
+		wantStatus string
+		client     *fakeAdminClient
+		wantCalls  func(*fakeAdminClient) int
+	}{
+		{
+			name:       "conflict",
+			openKey:    "d",
+			wantStatus: "mutate admin resource: cannot disable the last active admin",
+			client: &fakeAdminClient{
+				loginSession: baseSession,
+				users:        []ports.AdminUser{{ID: "u-1", Username: "alice", IsAdmin: true, Enabled: true}},
+				disableErr:   errors.New("mutate admin resource: cannot disable the last active admin"),
+			},
+			wantCalls: func(client *fakeAdminClient) int { return client.disableCalls },
+		},
+		{
+			name:       "validation",
+			openKey:    "e",
+			wantStatus: "mutate admin resource: user id is required",
+			client: &fakeAdminClient{
+				loginSession: baseSession,
+				users:        []ports.AdminUser{{ID: "u-2", Username: "bob", IsAdmin: false, Enabled: false}},
+				enableErr:    errors.New("mutate admin resource: user id is required"),
+			},
+			wantCalls: func(client *fakeAdminClient) int { return client.enableCalls },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			model := newAdminReadyModel(t, tc.client)
+			updated := runAdminLogin(t, model, "operator", "secret-pass")
+			updated = runKey(t, updated, tc.openKey)
+			updated = runKey(t, updated, "enter")
+
+			if updated.screen != screenAdminUsers {
+				t.Fatalf("screen = %q, want %q", updated.screen, screenAdminUsers)
+			}
+			if updated.adminAuth != adminAuthStateAuthenticated {
+				t.Fatalf("adminAuth = %q, want %q", updated.adminAuth, adminAuthStateAuthenticated)
+			}
+			if got, want := updated.status, tc.wantStatus; got != want {
+				t.Fatalf("status = %q, want %q", got, want)
+			}
+			if tc.wantCalls(tc.client) != 1 {
+				t.Fatalf("admin client calls = %#v, want exactly one mutation request", tc.client)
+			}
+			if tc.client.listUsersCalls != 1 {
+				t.Fatalf("listUsersCalls = %d, want only initial login load without refresh", tc.client.listUsersCalls)
+			}
+			view := updated.View()
+			if !strings.Contains(view, tc.wantStatus) {
+				t.Fatalf("view = %q, want recoverable backend message", view)
+			}
+			if strings.Contains(view, "Confirm ") {
+				t.Fatalf("view = %q, want confirmation cleared after failure", view)
+			}
+			if updated.adminMutation.Active() {
+				t.Fatalf("adminMutation = %#v, want cleared after failure", updated.adminMutation)
+			}
+		})
+	}
+}
+
+func TestModelAdminMutationExpiredSessionReturnsToLogin(t *testing.T) {
+	t.Parallel()
+
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: time.Date(2026, time.August, 6, 22, 15, 0, 0, time.UTC)},
+		users:        []ports.AdminUser{{ID: "u-1", Username: "alice", IsAdmin: true, Enabled: true}},
+		disableErr:   NewAdminSessionExpiredError(AdminSessionExpiredReasonExpired),
+	}
+	model := newAdminReadyModel(t, adminClient)
+
+	updated := runAdminLogin(t, model, "operator", "secret-pass")
+	updated = runKey(t, updated, "d")
+	updated = runKey(t, updated, "enter")
+
+	if updated.screen != screenAdminLogin {
+		t.Fatalf("screen = %q, want %q", updated.screen, screenAdminLogin)
+	}
+	if updated.adminAuth != adminAuthStateExpired {
+		t.Fatalf("adminAuth = %q, want %q", updated.adminAuth, adminAuthStateExpired)
+	}
+	if updated.adminSession.IsAuthenticated() {
+		t.Fatalf("session = %#v, want expired unauthenticated session", updated.adminSession)
+	}
+	if got, want := updated.adminSession.ExpiredReason, AdminSessionExpiredReasonExpired; got != want {
+		t.Fatalf("ExpiredReason = %q, want %q", got, want)
+	}
+	if got, want := updated.status, AdminSessionExpiredReasonExpired; got != want {
+		t.Fatalf("status = %q, want %q", got, want)
+	}
+	if adminClient.disableCalls != 1 || adminClient.listUsersCalls != 1 {
+		t.Fatalf("admin client calls = %#v, want one failed disable and no refresh", adminClient)
+	}
+	if updated.adminMutation.Active() {
+		t.Fatalf("adminMutation = %#v, want cleared after expiry", updated.adminMutation)
+	}
+	if !strings.Contains(updated.View(), AdminSessionExpiredReasonExpired) {
+		t.Fatalf("view = %q, want expiry-specific relogin message", updated.View())
+	}
+}
+
 type fakeQueryService struct {
 	catalog   appregistry.CatalogResult
 	tags      map[string]appregistry.TagsResult
@@ -362,18 +641,27 @@ type fakeQueryService struct {
 }
 
 type fakeAdminClient struct {
-	loginSession    AdminSession
-	loginErr        error
-	users           []ports.AdminUser
-	usersErr        error
-	grants          map[string][]ports.AdminRepoGrant
-	grantsErr       error
-	tokens          map[string][]ports.AdminToken
-	tokensErr       error
-	loginCalls      int
-	listUsersCalls  int
-	listGrantsCalls int
-	listTokensCalls int
+	loginSession      AdminSession
+	loginErr          error
+	users             []ports.AdminUser
+	listUsersResults  [][]ports.AdminUser
+	usersErr          error
+	grants            map[string][]ports.AdminRepoGrant
+	grantsErr         error
+	tokens            map[string][]ports.AdminToken
+	tokensErr         error
+	enableUser        ports.AdminUser
+	enableErr         error
+	disableUser       ports.AdminUser
+	disableErr        error
+	loginCalls        int
+	listUsersCalls    int
+	listGrantsCalls   int
+	listTokensCalls   int
+	enableCalls       int
+	disableCalls      int
+	lastEnableUserID  string
+	lastDisableUserID string
 }
 
 func (f *fakeAdminClient) Login(context.Context, string, string) (AdminSession, error) {
@@ -388,6 +676,13 @@ func (f *fakeAdminClient) ListUsers(context.Context, AdminSession) ([]ports.Admi
 	f.listUsersCalls++
 	if f.usersErr != nil {
 		return nil, f.usersErr
+	}
+	if len(f.listUsersResults) > 0 {
+		index := f.listUsersCalls - 1
+		if index >= len(f.listUsersResults) {
+			index = len(f.listUsersResults) - 1
+		}
+		return append([]ports.AdminUser(nil), f.listUsersResults[index]...), nil
 	}
 	return append([]ports.AdminUser(nil), f.users...), nil
 }
@@ -406,6 +701,30 @@ func (f *fakeAdminClient) ListUserAdminTokens(_ context.Context, _ AdminSession,
 		return nil, f.tokensErr
 	}
 	return append([]ports.AdminToken(nil), f.tokens[userID]...), nil
+}
+
+func (f *fakeAdminClient) EnableUser(_ context.Context, _ AdminSession, userID string) (ports.AdminUser, error) {
+	f.enableCalls++
+	f.lastEnableUserID = userID
+	if f.enableErr != nil {
+		return ports.AdminUser{}, f.enableErr
+	}
+	if strings.TrimSpace(f.enableUser.ID) != "" {
+		return f.enableUser, nil
+	}
+	return ports.AdminUser{ID: userID}, nil
+}
+
+func (f *fakeAdminClient) DisableUser(_ context.Context, _ AdminSession, userID string) (ports.AdminUser, error) {
+	f.disableCalls++
+	f.lastDisableUserID = userID
+	if f.disableErr != nil {
+		return ports.AdminUser{}, f.disableErr
+	}
+	if strings.TrimSpace(f.disableUser.ID) != "" {
+		return f.disableUser, nil
+	}
+	return ports.AdminUser{ID: userID}, nil
 }
 
 func (f *fakeQueryService) Catalog(context.Context, int, string) (appregistry.CatalogResult, error) {

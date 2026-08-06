@@ -50,14 +50,14 @@ Session material MUST remain in process memory only. The TUI MUST clear password
 
 ### Requirement: Read-Only Admin Browsing
 
-After login, the TUI MUST provide read-only views for admin users, per-user repository grants, and per-user admin tokens using `/admin/v1` GET endpoints. The TUI MUST preserve existing local registry inspection views, but admin mutations MUST NOT be offered in this slice.
+After login, the TUI MUST provide admin views for users, per-user repository grants, and per-user admin tokens using `/admin/v1` endpoints. User views SHALL support confirmed single-user enable and disable mutations through backend-authoritative write routes, while grants and admin-token views MUST remain read-only. The TUI MUST preserve existing local registry inspection views, and it MUST NOT offer password reset, grant writes, user creation, admin-token writes, batch actions, inline editing, or extra detail panes in this slice.
 
 #### Scenario: Operator browses admin data
 
 - GIVEN an authenticated admin session exists
 - WHEN the operator opens users, grants, or admin-token views
-- THEN the TUI SHALL load data from the corresponding `/admin/v1` GET endpoint
-- AND the UI SHALL present the data without edit, create, revoke, enable, disable, or reset actions
+- THEN the TUI SHALL load data from the corresponding `/admin/v1` endpoint
+- AND only the users view MAY expose confirmed enable or disable actions
 
 #### Scenario: Unauthenticated state blocks admin reads
 
@@ -65,3 +65,44 @@ After login, the TUI MUST provide read-only views for admin users, per-user repo
 - WHEN the operator attempts to open an admin view
 - THEN the TUI MUST block the view behind login
 - AND local registry inspection MAY remain available without granting admin capabilities
+
+### Requirement: Confirmed User Enable Disable Actions
+
+The system MUST allow an authenticated operator to request enable or disable for a selected user from the users screen only after explicit confirmation. This slice MUST remain limited to single-user enable/disable actions and MUST NOT add batch actions, inline editing, extra detail panes, or other mutation types.
+
+#### Scenario: Confirmed disable succeeds
+
+- GIVEN an authenticated operator is focused on a user in the users screen
+- WHEN the operator confirms a disable action for that user
+- THEN the TUI SHALL send the disable request through the authenticated backend client
+- AND the TUI SHALL show a success status and refresh the users list
+
+#### Scenario: Confirmation declined prevents mutation
+
+- GIVEN an authenticated operator has opened an enable or disable confirmation
+- WHEN the operator cancels or dismisses the confirmation
+- THEN the TUI MUST NOT send any mutation request
+
+### Requirement: Mutation Failure Feedback
+
+The system MUST surface recoverable feedback for mutation failures, including backend conflicts, expired sessions, and validation errors, without inventing local bypass behavior.
+
+#### Scenario: Backend conflict is shown clearly
+
+- GIVEN an authenticated operator confirms a disable action
+- WHEN the backend rejects it because self-disable or last-active-admin protection applies
+- THEN the TUI MUST keep the backend result authoritative
+- AND the TUI SHALL show a clear conflict message without changing local state optimistically
+
+#### Scenario: Expired session blocks mutation completion
+
+- GIVEN an authenticated operator confirms an enable or disable action
+- WHEN the backend rejects the request because the session is expired or invalid
+- THEN the TUI MUST stop using that session
+- AND the TUI SHALL return the operator to re-authenticate with expiry-specific feedback
+
+#### Scenario: Validation failure remains recoverable
+
+- GIVEN an authenticated operator confirms an enable or disable action
+- WHEN the backend rejects the request as invalid
+- THEN the TUI MUST show a clear recoverable validation message

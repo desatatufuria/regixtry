@@ -19,6 +19,8 @@ type AdminClient interface {
 	ListUsers(ctx context.Context, session AdminSession) ([]ports.AdminUser, error)
 	ListUserGrants(ctx context.Context, session AdminSession, userID string) ([]ports.AdminRepoGrant, error)
 	ListUserAdminTokens(ctx context.Context, session AdminSession, userID string) ([]ports.AdminToken, error)
+	EnableUser(ctx context.Context, session AdminSession, userID string) (ports.AdminUser, error)
+	DisableUser(ctx context.Context, session AdminSession, userID string) (ports.AdminUser, error)
 }
 
 type HTTPAdminClient struct {
@@ -132,12 +134,33 @@ func (c *HTTPAdminClient) ListUserAdminTokens(ctx context.Context, session Admin
 	return tokens, nil
 }
 
+func (c *HTTPAdminClient) EnableUser(ctx context.Context, session AdminSession, userID string) (ports.AdminUser, error) {
+	return c.mutateUser(ctx, session, userID, ":enable")
+}
+
+func (c *HTTPAdminClient) DisableUser(ctx context.Context, session AdminSession, userID string) (ports.AdminUser, error) {
+	return c.mutateUser(ctx, session, userID, ":disable")
+}
+
+func (c *HTTPAdminClient) mutateUser(ctx context.Context, session AdminSession, userID string, action string) (ports.AdminUser, error) {
+	var user ports.AdminUser
+	path := "/admin/v1/users/" + url.PathEscape(strings.TrimSpace(userID)) + action
+	if err := c.requestJSON(ctx, stdhttp.MethodPost, session, path, &user); err != nil {
+		return ports.AdminUser{}, err
+	}
+	return user, nil
+}
+
 func (c *HTTPAdminClient) getJSON(ctx context.Context, session AdminSession, path string, target any) error {
+	return c.requestJSON(ctx, stdhttp.MethodGet, session, path, target)
+}
+
+func (c *HTTPAdminClient) requestJSON(ctx context.Context, method string, session AdminSession, path string, target any) error {
 	if session.IsExpired(c.now()) {
 		return NewAdminSessionExpiredError(AdminSessionExpiredReasonExpired)
 	}
 
-	req, err := stdhttp.NewRequestWithContext(ctx, stdhttp.MethodGet, c.endpoint(path), nil)
+	req, err := stdhttp.NewRequestWithContext(ctx, method, c.endpoint(path), nil)
 	if err != nil {
 		return err
 	}
@@ -150,13 +173,22 @@ func (c *HTTPAdminClient) getJSON(ctx context.Context, session AdminSession, pat
 	defer resp.Body.Close()
 
 	if resp.StatusCode != stdhttp.StatusOK {
-		return decodeAdminAPIError("read admin resource", resp)
+		return decodeAdminAPIError(requestActionLabel(method), resp)
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(target); err != nil {
 		return err
 	}
 	return nil
+}
+
+func requestActionLabel(method string) string {
+	switch method {
+	case stdhttp.MethodPost:
+		return "mutate admin resource"
+	default:
+		return "read admin resource"
+	}
 }
 
 func (c *HTTPAdminClient) endpoint(path string) string {
