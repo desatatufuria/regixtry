@@ -45,6 +45,20 @@ func (s *Service) ListUsers(ctx context.Context, actor domainauth.Principal) ([]
 	return s.store.ListUsers(ctx)
 }
 
+func (s *Service) ListAdminUsers(ctx context.Context, actor domainauth.Principal) ([]ports.AdminUser, error) {
+	users, err := s.ListUsers(ctx, actor)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]ports.AdminUser, 0, len(users))
+	for _, user := range users {
+		result = append(result, toAdminUser(user))
+	}
+
+	return result, nil
+}
+
 func (s *Service) BootstrapAdmin(ctx context.Context, input ports.BootstrapAdminInput) (ports.BootstrapAdminResult, error) {
 	username := normalizeUsername(input.Username)
 	if username == "" {
@@ -154,6 +168,20 @@ func (s *Service) CreateUser(ctx context.Context, actor domainauth.Principal, in
 	return user, nil
 }
 
+func (s *Service) CreateAdminUser(ctx context.Context, actor domainauth.Principal, input ports.AdminCreateUserInput) (ports.AdminUser, error) {
+	user, err := s.CreateUser(ctx, actor, ports.CreateUserInput{
+		Username: input.Username,
+		Password: input.Password,
+		IsAdmin:  input.IsAdmin,
+		Enabled:  input.Enabled,
+	})
+	if err != nil {
+		return ports.AdminUser{}, err
+	}
+
+	return toAdminUser(user), nil
+}
+
 func (s *Service) UpdateUser(ctx context.Context, actor domainauth.Principal, input ports.UpdateUserInput) (domainauth.User, error) {
 	if err := requireAdmin(actor); err != nil {
 		return domainauth.User{}, err
@@ -216,6 +244,24 @@ func (s *Service) SetUserEnabled(ctx context.Context, actor domainauth.Principal
 	}
 
 	return user, nil
+}
+
+func (s *Service) EnableAdminUser(ctx context.Context, actor domainauth.Principal, userID string) (ports.AdminUser, error) {
+	user, err := s.SetUserEnabled(ctx, actor, userID, true)
+	if err != nil {
+		return ports.AdminUser{}, err
+	}
+
+	return toAdminUser(user), nil
+}
+
+func (s *Service) DisableAdminUser(ctx context.Context, actor domainauth.Principal, userID string) (ports.AdminUser, error) {
+	user, err := s.SetUserEnabled(ctx, actor, userID, false)
+	if err != nil {
+		return ports.AdminUser{}, err
+	}
+
+	return toAdminUser(user), nil
 }
 
 func (s *Service) DeleteUser(ctx context.Context, actor domainauth.Principal, userID string) error {
@@ -334,20 +380,73 @@ func (s *Service) CreateAdminToken(ctx context.Context, actor domainauth.Princip
 	return ports.CreatedAdminToken{Token: token, Secret: secret, Plaintext: secret, Accessor: token.Accessor, ExpiresAt: token.ExpiresAt, TargetUser: user}, nil
 }
 
+func (s *Service) CreateAdminUserToken(ctx context.Context, actor domainauth.Principal, input ports.AdminCreateTokenInput) (ports.AdminCreatedToken, error) {
+	created, err := s.CreateAdminToken(ctx, actor, ports.CreateAdminTokenInput{
+		UserID: input.UserID,
+		Name:   input.Name,
+		TTL:    input.TTL,
+	})
+	if err != nil {
+		return ports.AdminCreatedToken{}, err
+	}
+
+	return ports.AdminCreatedToken{
+		Token:      toAdminToken(created.Token),
+		Secret:     created.Secret,
+		Accessor:   created.Accessor,
+		ExpiresAt:  created.ExpiresAt,
+		TargetUser: toAdminUser(created.TargetUser),
+	}, nil
+}
+
 func (s *Service) ListRepoGrants(ctx context.Context, actor domainauth.Principal, userID string) ([]domainauth.RepoGrant, error) {
 	if err := requireAdmin(actor); err != nil {
+		return nil, err
+	}
+	if _, err := s.store.GetUserByID(ctx, userID); err != nil {
 		return nil, err
 	}
 
 	return s.store.ListRepoGrants(ctx, userID)
 }
 
+func (s *Service) ListAdminUserRepoGrants(ctx context.Context, actor domainauth.Principal, userID string) ([]ports.AdminRepoGrant, error) {
+	grants, err := s.ListRepoGrants(ctx, actor, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]ports.AdminRepoGrant, 0, len(grants))
+	for _, grant := range grants {
+		result = append(result, toAdminRepoGrant(grant))
+	}
+
+	return result, nil
+}
+
 func (s *Service) ListAdminTokens(ctx context.Context, actor domainauth.Principal, userID string) ([]domainauth.Token, error) {
 	if err := requireAdmin(actor); err != nil {
 		return nil, err
 	}
+	if _, err := s.store.GetUserByID(ctx, userID); err != nil {
+		return nil, err
+	}
 
 	return s.store.ListTokensByUser(ctx, userID, domainauth.TokenKindAdminCredential)
+}
+
+func (s *Service) ListAdminUserTokens(ctx context.Context, actor domainauth.Principal, userID string) ([]ports.AdminToken, error) {
+	tokens, err := s.ListAdminTokens(ctx, actor, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]ports.AdminToken, 0, len(tokens))
+	for _, token := range tokens {
+		result = append(result, toAdminToken(token))
+	}
+
+	return result, nil
 }
 
 func (s *Service) RevokeAdminToken(ctx context.Context, actor domainauth.Principal, accessor string) error {
@@ -356,6 +455,27 @@ func (s *Service) RevokeAdminToken(ctx context.Context, actor domainauth.Princip
 	}
 
 	return s.store.RevokeTokenByAccessor(ctx, strings.TrimSpace(accessor), s.now())
+}
+
+func (s *Service) RevokeAdminUserToken(ctx context.Context, actor domainauth.Principal, userID string, accessor string) error {
+	if err := requireAdmin(actor); err != nil {
+		return err
+	}
+
+	user, err := s.store.GetUserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+
+	token, err := s.store.GetTokenByAccessor(ctx, domainauth.TokenKindAdminCredential, accessor)
+	if err != nil {
+		return err
+	}
+	if token.UserID != user.ID {
+		return domainauth.NewNotFoundError("token", strings.TrimSpace(accessor))
+	}
+
+	return s.store.RevokeTokenByAccessor(ctx, token.Accessor, s.now())
 }
 
 func (s *Service) ResetPassword(ctx context.Context, actor domainauth.Principal, userID string, newPassword string) error {
@@ -377,6 +497,10 @@ func (s *Service) ResetPassword(ctx context.Context, actor domainauth.Principal,
 	user.PasswordHash = hash
 	user.UpdatedAt = s.now()
 	return s.store.UpsertUser(ctx, user)
+}
+
+func (s *Service) ResetAdminUserPassword(ctx context.Context, actor domainauth.Principal, input ports.AdminResetPasswordInput) error {
+	return s.ResetPassword(ctx, actor, input.UserID, input.NewPassword)
 }
 
 func (s *Service) PutRepoGrant(ctx context.Context, actor domainauth.Principal, userID string, repository string, role domainauth.RepoRole) (domainauth.RepoGrant, error) {
@@ -404,8 +528,20 @@ func (s *Service) PutRepoGrant(ctx context.Context, actor domainauth.Principal, 
 	return grant, nil
 }
 
+func (s *Service) PutAdminUserRepoGrant(ctx context.Context, actor domainauth.Principal, input ports.AdminPutRepoGrantInput) (ports.AdminRepoGrant, error) {
+	grant, err := s.PutRepoGrant(ctx, actor, input.UserID, input.Repository, input.Role)
+	if err != nil {
+		return ports.AdminRepoGrant{}, err
+	}
+
+	return toAdminRepoGrant(grant), nil
+}
+
 func (s *Service) DeleteRepoGrant(ctx context.Context, actor domainauth.Principal, userID string, repository string) error {
 	if err := requireAdmin(actor); err != nil {
+		return err
+	}
+	if _, err := s.store.GetUserByID(ctx, userID); err != nil {
 		return err
 	}
 
@@ -415,6 +551,44 @@ func (s *Service) DeleteRepoGrant(ctx context.Context, actor domainauth.Principa
 	}
 
 	return s.store.DeleteRepoGrant(ctx, userID, repo)
+}
+
+func (s *Service) DeleteAdminUserRepoGrant(ctx context.Context, actor domainauth.Principal, userID string, repository string) error {
+	return s.DeleteRepoGrant(ctx, actor, userID, repository)
+}
+
+func toAdminUser(user domainauth.User) ports.AdminUser {
+	return ports.AdminUser{
+		ID:        user.ID,
+		Username:  user.Username,
+		IsAdmin:   user.IsAdmin,
+		Enabled:   user.Enabled,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+	}
+}
+
+func toAdminRepoGrant(grant domainauth.RepoGrant) ports.AdminRepoGrant {
+	return ports.AdminRepoGrant{
+		UserID:     grant.UserID,
+		Repository: grant.Repository,
+		Role:       grant.Role,
+		CreatedAt:  grant.CreatedAt,
+		UpdatedAt:  grant.UpdatedAt,
+	}
+}
+
+func toAdminToken(token domainauth.Token) ports.AdminToken {
+	return ports.AdminToken{
+		ID:        token.ID,
+		UserID:    token.UserID,
+		Kind:      token.Kind,
+		Name:      token.Name,
+		Accessor:  token.Accessor,
+		ExpiresAt: token.ExpiresAt,
+		CreatedAt: token.CreatedAt,
+		RevokedAt: token.RevokedAt,
+	}
 }
 
 func (s *Service) ensureAnotherActiveAdmin(ctx context.Context, exceptUserID string, includeTarget bool) error {

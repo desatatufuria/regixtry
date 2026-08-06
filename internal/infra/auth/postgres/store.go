@@ -234,6 +234,14 @@ func (s *Store) GetTokenBySecretHash(ctx context.Context, kind domainauth.TokenK
 	`, string(kind), strings.TrimSpace(secretHash)))
 }
 
+func (s *Store) GetTokenByAccessor(ctx context.Context, kind domainauth.TokenKind, accessor string) (domainauth.Token, error) {
+	return s.scanToken(s.db.QueryRowContext(ctx, `
+		SELECT id, user_id, kind, name, scope, accessor, secret_hash, expires_at, created_at, revoked_at
+		FROM auth_tokens
+		WHERE kind = $1 AND accessor = $2
+	`, string(kind), strings.TrimSpace(accessor)))
+}
+
 func (s *Store) ListTokensByUser(ctx context.Context, userID string, kind domainauth.TokenKind) ([]domainauth.Token, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, user_id, kind, name, scope, accessor, secret_hash, expires_at, created_at, revoked_at

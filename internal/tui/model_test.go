@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -9,6 +10,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	appregistry "registry/internal/app/registry"
+	"registry/internal/domain/auth"
+	"registry/internal/domain/registry"
+	"registry/internal/ports"
 )
 
 func TestModelShowsEmptyStateWhenCatalogIsEmpty(t *testing.T) {
@@ -125,6 +129,225 @@ func TestModelShowsUnavailableMutationNotice(t *testing.T) {
 	}
 }
 
+func TestModelBlocksAdminUntilLogin(t *testing.T) {
+	t.Parallel()
+
+	model := newAdminReadyModel(t, &fakeAdminClient{})
+
+	updated := runKey(t, model, "tab")
+
+	if updated.screen != screenAdminLogin {
+		t.Fatalf("screen = %q, want %q", updated.screen, screenAdminLogin)
+	}
+	if updated.adminAuth != adminAuthStateUnauthenticated {
+		t.Fatalf("adminAuth = %q, want %q", updated.adminAuth, adminAuthStateUnauthenticated)
+	}
+	if !strings.Contains(updated.View(), "Admin Login") {
+		t.Fatalf("view = %q, want login screen", updated.View())
+	}
+	if strings.Contains(updated.View(), "Users") {
+		t.Fatalf("view = %q, want admin users to stay blocked", updated.View())
+	}
+}
+
+func TestModelSuccessfulLoginOpensAdminUsers(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 4, 23, 5, 0, 0, time.UTC)
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{
+			Username:    "operator",
+			BearerToken: "bearer-token",
+			ExpiresAt:   now.Add(2 * time.Minute),
+		},
+		users: []ports.AdminUser{{ID: "u-1", Username: "alice", IsAdmin: true, Enabled: true}},
+	}
+	model := newAdminReadyModel(t, adminClient)
+	model.now = func() time.Time { return now }
+
+	updated := runAdminLogin(t, model, "operator", "secret-pass")
+
+	if updated.screen != screenAdminUsers {
+		t.Fatalf("screen = %q, want %q", updated.screen, screenAdminUsers)
+	}
+	if updated.adminAuth != adminAuthStateAuthenticated {
+		t.Fatalf("adminAuth = %q, want %q", updated.adminAuth, adminAuthStateAuthenticated)
+	}
+	if updated.adminSession.BearerToken != "bearer-token" {
+		t.Fatalf("BearerToken = %q, want %q", updated.adminSession.BearerToken, "bearer-token")
+	}
+	if updated.adminLogin.Password != "" {
+		t.Fatalf("Password = %q, want cleared after login", updated.adminLogin.Password)
+	}
+	if adminClient.loginCalls != 1 || adminClient.listUsersCalls != 1 {
+		t.Fatalf("admin client calls = %#v, want one login and one user load", adminClient)
+	}
+
+	view := updated.View()
+	if !strings.Contains(view, "Admin · operator") {
+		t.Fatalf("view = %q, want authenticated admin header", view)
+	}
+	if !strings.Contains(view, "> alice [admin, enabled]") {
+		t.Fatalf("view = %q, want loaded admin user", view)
+	}
+	if strings.Contains(view, "secret-pass") {
+		t.Fatalf("view = %q, password leaked in UI", view)
+	}
+}
+
+func TestModelInvalidCredentialsStayOnLoginScreen(t *testing.T) {
+	t.Parallel()
+
+	adminClient := &fakeAdminClient{loginErr: errors.New("login: invalid credentials")}
+	model := newAdminReadyModel(t, adminClient)
+
+	updated := runAdminLogin(t, model, "operator", "wrong-pass")
+
+	if updated.screen != screenAdminLogin {
+		t.Fatalf("screen = %q, want %q", updated.screen, screenAdminLogin)
+	}
+	if updated.adminAuth != adminAuthStateUnauthenticated {
+		t.Fatalf("adminAuth = %q, want %q", updated.adminAuth, adminAuthStateUnauthenticated)
+	}
+	if updated.adminSession.IsAuthenticated() {
+		t.Fatalf("session = %#v, want unauthenticated session", updated.adminSession)
+	}
+	if updated.adminLogin.Password != "" {
+		t.Fatalf("Password = %q, want cleared after failed login", updated.adminLogin.Password)
+	}
+	if got, want := updated.status, "login: invalid credentials"; got != want {
+		t.Fatalf("status = %q, want %q", got, want)
+	}
+	if !strings.Contains(updated.View(), "login: invalid credentials") {
+		t.Fatalf("view = %q, want login error", updated.View())
+	}
+}
+
+func TestModelReadOnlyAdminBrowsing(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 4, 23, 10, 0, 0, time.UTC)
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+		users:        []ports.AdminUser{{ID: "u-1", Username: "alice", IsAdmin: true, Enabled: true}},
+		grants: map[string][]ports.AdminRepoGrant{
+			"u-1": {{UserID: "u-1", Repository: registry.MustParseRepositoryRef("library/alpine"), Role: auth.RepoRoleWriter}},
+		},
+		tokens: map[string][]ports.AdminToken{
+			"u-1": {{ID: "tok-1", UserID: "u-1", Kind: auth.TokenKindAdminCredential, Accessor: "tok_abc", ExpiresAt: now.Add(24 * time.Hour), CreatedAt: now}},
+		},
+	}
+	model := newAdminReadyModel(t, adminClient)
+	model.now = func() time.Time { return now }
+
+	updated := runAdminLogin(t, model, "operator", "secret-pass")
+	updated = runKey(t, updated, "enter")
+
+	if updated.screen != screenAdminGrants {
+		t.Fatalf("screen = %q, want %q", updated.screen, screenAdminGrants)
+	}
+	grantsView := updated.View()
+	if !strings.Contains(grantsView, "Repository Grants · alice") || !strings.Contains(grantsView, "- library/alpine · repo-writer") {
+		t.Fatalf("view = %q, want read-only grants data", grantsView)
+	}
+	assertNoAdminMutations(t, grantsView)
+
+	updated = runKey(t, updated, "t")
+	if updated.screen != screenAdminTokens {
+		t.Fatalf("screen = %q, want %q", updated.screen, screenAdminTokens)
+	}
+	tokensView := updated.View()
+	if !strings.Contains(tokensView, "Admin Tokens · alice") || !strings.Contains(tokensView, "tok_abc") {
+		t.Fatalf("view = %q, want read-only admin tokens", tokensView)
+	}
+	assertNoAdminMutations(t, tokensView)
+
+	if adminClient.listGrantsCalls != 1 || adminClient.listTokensCalls != 1 {
+		t.Fatalf("admin client calls = %#v, want one grants load and one token load", adminClient)
+	}
+}
+
+func TestModelExpiredSessionForcesRelogin(t *testing.T) {
+	t.Parallel()
+
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: time.Date(2026, time.August, 4, 23, 20, 0, 0, time.UTC)},
+		users:        []ports.AdminUser{{ID: "u-1", Username: "alice", IsAdmin: true, Enabled: true}},
+		grantsErr:    NewAdminSessionExpiredError(AdminSessionExpiredReasonExpired),
+	}
+	model := newAdminReadyModel(t, adminClient)
+
+	updated := runAdminLogin(t, model, "operator", "secret-pass")
+	updated = runKey(t, updated, "enter")
+
+	if updated.screen != screenAdminLogin {
+		t.Fatalf("screen = %q, want %q", updated.screen, screenAdminLogin)
+	}
+	if updated.adminAuth != adminAuthStateExpired {
+		t.Fatalf("adminAuth = %q, want %q", updated.adminAuth, adminAuthStateExpired)
+	}
+	if updated.adminSession.IsAuthenticated() {
+		t.Fatalf("session = %#v, want expired unauthenticated session", updated.adminSession)
+	}
+	if updated.adminSession.ExpiredReason != AdminSessionExpiredReasonExpired {
+		t.Fatalf("ExpiredReason = %q, want %q", updated.adminSession.ExpiredReason, AdminSessionExpiredReasonExpired)
+	}
+	if len(updated.adminView.Users) != 0 || len(updated.adminView.Grants) != 0 || len(updated.adminView.AdminTokens) != 0 {
+		t.Fatalf("adminView = %#v, want cleared view state", updated.adminView)
+	}
+	if !strings.Contains(updated.View(), AdminSessionExpiredReasonExpired) {
+		t.Fatalf("view = %q, want expiry-specific relogin message", updated.View())
+	}
+}
+
+func TestModelLogoutReturnsToLoginAndClearsAdminSession(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 4, 23, 25, 0, 0, time.UTC)
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+		users:        []ports.AdminUser{{ID: "u-1", Username: "alice", IsAdmin: true, Enabled: true}},
+	}
+	model := newAdminReadyModel(t, adminClient)
+	model.now = func() time.Time { return now }
+
+	authenticated := runAdminLogin(t, model, "operator", "secret-pass")
+	loggedOut := runKey(t, authenticated, "l")
+
+	if loggedOut.screen != screenAdminLogin {
+		t.Fatalf("screen = %q, want %q", loggedOut.screen, screenAdminLogin)
+	}
+	if loggedOut.adminAuth != adminAuthStateUnauthenticated {
+		t.Fatalf("adminAuth = %q, want %q", loggedOut.adminAuth, adminAuthStateUnauthenticated)
+	}
+	if loggedOut.adminSession.IsAuthenticated() {
+		t.Fatalf("session = %#v, want unauthenticated session", loggedOut.adminSession)
+	}
+	if loggedOut.adminSession.ExpiredReason != "" {
+		t.Fatalf("ExpiredReason = %q, want empty after logout", loggedOut.adminSession.ExpiredReason)
+	}
+	if len(loggedOut.adminView.Users) != 0 || len(loggedOut.adminView.Grants) != 0 || len(loggedOut.adminView.AdminTokens) != 0 {
+		t.Fatalf("adminView = %#v, want cleared view state", loggedOut.adminView)
+	}
+	if got, want := loggedOut.status, "Logged out."; got != want {
+		t.Fatalf("status = %q, want %q", got, want)
+	}
+	if !strings.Contains(loggedOut.View(), "Admin Login") {
+		t.Fatalf("view = %q, want login screen after logout", loggedOut.View())
+	}
+
+	reopened := runKey(t, runKey(t, loggedOut, "esc"), "tab")
+	if reopened.screen != screenAdminLogin {
+		t.Fatalf("screen after reopening admin = %q, want %q", reopened.screen, screenAdminLogin)
+	}
+	if reopened.adminSession.IsAuthenticated() {
+		t.Fatalf("session after reopening admin = %#v, want fresh login required", reopened.adminSession)
+	}
+	if adminClient.loginCalls != 1 || adminClient.listUsersCalls != 1 {
+		t.Fatalf("admin client calls = %#v, want no extra admin access after logout", adminClient)
+	}
+}
+
 type fakeQueryService struct {
 	catalog   appregistry.CatalogResult
 	tags      map[string]appregistry.TagsResult
@@ -136,6 +359,53 @@ type fakeQueryService struct {
 		manifest int
 		uploads  int
 	}
+}
+
+type fakeAdminClient struct {
+	loginSession    AdminSession
+	loginErr        error
+	users           []ports.AdminUser
+	usersErr        error
+	grants          map[string][]ports.AdminRepoGrant
+	grantsErr       error
+	tokens          map[string][]ports.AdminToken
+	tokensErr       error
+	loginCalls      int
+	listUsersCalls  int
+	listGrantsCalls int
+	listTokensCalls int
+}
+
+func (f *fakeAdminClient) Login(context.Context, string, string) (AdminSession, error) {
+	f.loginCalls++
+	if f.loginErr != nil {
+		return AdminSession{}, f.loginErr
+	}
+	return f.loginSession, nil
+}
+
+func (f *fakeAdminClient) ListUsers(context.Context, AdminSession) ([]ports.AdminUser, error) {
+	f.listUsersCalls++
+	if f.usersErr != nil {
+		return nil, f.usersErr
+	}
+	return append([]ports.AdminUser(nil), f.users...), nil
+}
+
+func (f *fakeAdminClient) ListUserGrants(_ context.Context, _ AdminSession, userID string) ([]ports.AdminRepoGrant, error) {
+	f.listGrantsCalls++
+	if f.grantsErr != nil {
+		return nil, f.grantsErr
+	}
+	return append([]ports.AdminRepoGrant(nil), f.grants[userID]...), nil
+}
+
+func (f *fakeAdminClient) ListUserAdminTokens(_ context.Context, _ AdminSession, userID string) ([]ports.AdminToken, error) {
+	f.listTokensCalls++
+	if f.tokensErr != nil {
+		return nil, f.tokensErr
+	}
+	return append([]ports.AdminToken(nil), f.tokens[userID]...), nil
 }
 
 func (f *fakeQueryService) Catalog(context.Context, int, string) (appregistry.CatalogResult, error) {
@@ -176,6 +446,31 @@ func runCmd(t *testing.T, model Model, cmd tea.Cmd) Model {
 		return runCmd(t, result, nextCmd)
 	}
 	return result
+}
+
+func newAdminReadyModel(t *testing.T, adminClient AdminClient) Model {
+	t.Helper()
+	model := NewModel(&fakeQueryService{catalog: appregistry.CatalogResult{Repositories: []string{"library/alpine"}}}, WithAdminClient(adminClient))
+	return runCmd(t, model, model.Init())
+}
+
+func runAdminLogin(t *testing.T, model Model, username string, password string) Model {
+	t.Helper()
+
+	updated := runKey(t, model, "tab")
+	updated = runKey(t, updated, username)
+	updated = runKey(t, updated, "tab")
+	updated = runKey(t, updated, password)
+	return runKey(t, updated, "enter")
+}
+
+func assertNoAdminMutations(t *testing.T, view string) {
+	t.Helper()
+	for _, forbidden := range []string{"create", "revoke", "enable", "disable", "reset"} {
+		if strings.Contains(strings.ToLower(view), forbidden) {
+			t.Fatalf("view = %q, want read-only admin browsing without %q action", view, forbidden)
+		}
+	}
 }
 
 func runKey(t *testing.T, model Model, key string) Model {
