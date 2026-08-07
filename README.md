@@ -10,35 +10,60 @@ Registry is a low-resource, single-binary OCI registry for internal and OSS use.
 
 ## Install from GitHub Releases
 
-Use the repo-hosted installer when you want a verified Linux release plus the truthful `daemon + SQLite` bootstrap path for a single-node host.
+Use the repo-hosted installer when you want a verified Linux release and a truthful deployment choice. This slice supports only two automated outcomes: `binary only` and `binary + daemon/service`.
 
 ### Quick path
 
-1. Use a root-owned systemd host on Debian, Ubuntu, Linux Mint, RHEL 9.x, or RHEL 10.x.
-2. Run `curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash`.
-3. Confirm reachability with `curl -fsSI http://127.0.0.1:5000/v2/` and expect HTTP `200` or `401`.
+1. Run `curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash` from an interactive shell when you want the chooser.
+2. Select either `binary only` or `binary + daemon/service`.
+3. For the service path, confirm reachability with `curl -fsSI http://127.0.0.1:5000/v2/` and expect HTTP `200` or `401`.
+
+### Supported installer choices
+
+| Choice | What it does | Constraints |
+| --- | --- | --- |
+| `binary only` | Installs the verified `registry` binary and stops. | No daemon/service is created. You start the runtime manually when ready. |
+| `binary + daemon/service` | Installs the verified binary, then runs `registry bootstrap --mode daemon-sqlite`. | Supported only on Debian, Ubuntu, Linux Mint, RHEL 9.x, and RHEL 10.x hosts with systemd. |
+
+Deferred automation remains out of scope in this slice:
+
+- Postgres-auth deployment: manual today, automated later.
+- Container deployment: manual today, automated later.
 
 ### Common install commands
 
 ```bash
-# Install the latest Linux release and bootstrap daemon + SQLite with
-# /usr/local/bin, /var/lib/registry, /etc/registry, and systemd defaults.
+# Interactive chooser for the latest Linux release.
 curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash
 
-# Install a specific release tag
+# Install a specific release tag and choose interactively.
 curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash -s -- --ref v1.2.3
 
-# Override the public URL and storage root for the bootstrap receipt and service.
+# Non-interactive binary-only install.
+curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash -s -- --mode binary-only
+
+# Non-interactive daemon/service install with bootstrap overrides.
 curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash -s -- \
+  --mode daemon-sqlite \
   --public-url https://registry.example.com \
   --storage-root /srv/registry
 
-# Roll back generated bootstrap artifacts while keeping the verified binary installed.
+# Roll back generated daemon/service bootstrap artifacts while keeping the verified binary installed.
 curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash -s -- \
+  --mode daemon-sqlite \
   --rollback \
   --state-path /etc/registry/bootstrap-state.json \
   --unit-path /etc/systemd/system/registry.service
 ```
+
+### Mode selection and non-interactive runs
+
+| Topic | Decision |
+| --- | --- |
+| Interactive behavior | If no explicit mode is provided and a controlling TTY is available, the installer requires an explicit choice between `binary only` and `binary + daemon/service`. |
+| Non-interactive behavior | If no TTY is available, you must set `--mode <binary-only|daemon-sqlite>` or `REGISTRY_INSTALL_MODE=<binary-only|daemon-sqlite>`. The installer fails instead of silently defaulting. |
+| Mode override precedence | `--mode` and `REGISTRY_INSTALL_MODE` skip the chooser and drive the install path directly. |
+| Unsupported automated modes | Any automated mode other than `binary-only` or `daemon-sqlite` is rejected after the binary install, with manual-today guidance for deferred paths. |
 
 ### Installer behavior
 
@@ -46,28 +71,28 @@ curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/instal
 | --- | --- |
 | Source | Resolves the latest release or `--ref <tag>` from GitHub Releases. |
 | Verification | Downloads the matching `registry_<version>_linux_<arch>.tar.gz` plus `registry_<version>_checksums.txt` and verifies the archive before install. |
-| Truthful host scope | Linux only, with `amd64` and `arm64` assets; host bootstrap is truthful only on Debian, Ubuntu, Linux Mint, RHEL 9.x, and RHEL 10.x with systemd. |
-| Deferred host scope | Alpine host bootstrap, Postgres-backed install modes, and all-container install modes remain out of scope for this slice. |
-| Default bootstrap | After installation, the script runs `registry bootstrap --mode daemon-sqlite` with `http://127.0.0.1:5000`, `/var/lib/registry`, `/etc/registry/bootstrap-state.json`, and `registry.service` defaults. |
-| Success contract | Success means the service is installed and `/v2/` is reachable with HTTP `200` or `401`. |
-| Rollback | `--rollback` removes generated bootstrap artifacts and stops/disables the service, but keeps the verified `registry` binary installed. |
+| Truthful host scope | Linux only, with `amd64` and `arm64` assets; automated daemon/service bootstrap is truthful only on Debian, Ubuntu, Linux Mint, RHEL 9.x, and RHEL 10.x with systemd. |
+| Deferred host scope | Alpine host bootstrap, Postgres-auth installer orchestration, and containerized installs remain manual today. |
+| Binary-only success contract | Success means the verified `registry` binary is installed and the installer prints manual next steps. It does not claim service activation. |
+| Daemon/service success contract | Success means the service is installed and `/v2/` is reachable with HTTP `200` or `401`. |
 | Failure mode | Hard-fails on release asset, checksum, extraction, unsupported-host, activation, or readiness problems. Archive/download failures print manual guidance; bootstrap failures keep the binary in place and report the failing step. |
 | Install target | Uses `/usr/local/bin` when writable, otherwise `~/.local/bin`, or `--dir` when provided. |
 | Installed binary name | Always installs the executable as `registry`. |
 
-### Bootstrap assumptions and verification
+### Daemon/service bootstrap assumptions and rollback
 
 | Topic | Decision |
 | --- | --- |
-| Privileges | The default bootstrap writes under `/etc` and `/var/lib`, so use a root-owned install path when you want the automatic daemon + SQLite flow. |
-| Service manager | V1 host bootstrap requires systemd. The installer does not pretend SysV, OpenRC, or user-level services are supported here. |
+| Privileges | The default daemon/service bootstrap writes under `/etc` and `/var/lib`, so use a root-owned install path when you want that flow. |
+| Service manager | Automated host bootstrap requires systemd. The installer does not pretend SysV, OpenRC, or user-level services are supported here. |
 | Reachability check | Bootstrap polls `GET <public-url>/v2/` and succeeds only when the registry answers with HTTP `200` or `401`. |
-| Receipt path | The bootstrap receipt defaults to `/etc/registry/bootstrap-state.json`; reuse that same path when you invoke `--rollback`. |
+| Receipt path | The bootstrap receipt defaults to `/etc/registry/bootstrap-state.json`; reuse that same path when you invoke `--mode daemon-sqlite --rollback`. |
+| Rollback scope | `--rollback` applies only to `daemon-sqlite` bootstrap artifacts. It removes generated runtime/service artifacts and stops or disables the service. |
 | Binary retention | Rollback and failed activation remove generated bootstrap artifacts only. They do not uninstall the verified release binary. |
 
 ### Manual fallback
 
-Use the manual paths below when you want only the release asset, need a deferred host, or cannot satisfy the root + systemd bootstrap assumptions.
+Use the manual paths below when you want only the release asset, need a deferred host or deployment model, or cannot satisfy the daemon/service bootstrap assumptions.
 
 - Download a verified Linux asset manually from GitHub Releases when you want a release-backed path without `curl | bash`.
 - Build from source manually when you need a non-release or non-Linux path:

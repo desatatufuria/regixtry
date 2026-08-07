@@ -13,7 +13,7 @@ RELEASES_API_URL="${REGISTRY_INSTALL_RELEASES_API_URL:-$DEFAULT_RELEASES_API_URL
 RELEASES_PAGE_URL="${REGISTRY_INSTALL_RELEASES_PAGE_URL:-$DEFAULT_RELEASES_PAGE_URL}"
 TARGET_OS="${REGISTRY_INSTALL_OS:-}"
 TARGET_ARCH="${REGISTRY_INSTALL_ARCH:-}"
-BOOTSTRAP_MODE="${REGISTRY_INSTALL_MODE:-daemon-sqlite}"
+INSTALLER_MODE="${REGISTRY_INSTALL_MODE:-}"
 BOOTSTRAP_PUBLIC_URL="${REGISTRY_INSTALL_PUBLIC_URL:-http://127.0.0.1:5000}"
 BOOTSTRAP_ADDR="${REGISTRY_INSTALL_ADDR:-127.0.0.1:5000}"
 BOOTSTRAP_STORAGE_ROOT="${REGISTRY_INSTALL_STORAGE_ROOT:-}"
@@ -35,6 +35,14 @@ manual_guidance() {
 EOF
 }
 
+deferred_mode_guidance() {
+  cat <<EOF
+Deferred automated paths:
+- Postgres-auth deployment: manual today, automated later.
+- Container deployment: manual today, automated later.
+EOF
+}
+
 fail() {
   printf '[registry-install] ERROR: %s\n' "$*" >&2
   exit 1
@@ -48,16 +56,16 @@ fail_with_guidance() {
 
 usage() {
   cat <<EOF
-Install the registry binary from verified GitHub Release assets and bootstrap
-the Linux daemon + SQLite runtime by default.
+Install the registry binary from verified GitHub Release assets and choose
+either a binary-only install or a Linux + systemd daemon/service bootstrap.
 
 Usage:
-  ${SCRIPT_NAME} [--ref <release-tag>] [--dir <install-dir>] [bootstrap options] [--help]
+  ${SCRIPT_NAME} [--ref <release-tag>] [--dir <install-dir>] [installer options] [bootstrap options] [--help]
 
 Options:
   --ref <release-tag>  Install a specific release tag. Defaults to the latest release.
   --dir <path>         Install the binary into this directory.
-  --mode <mode>        Bootstrap mode to invoke after install. Only daemon-sqlite is supported.
+  --mode <mode>        Installer mode after download. Supported: binary-only or daemon-sqlite.
   --public-url <url>   Public URL passed to registry bootstrap. Defaults to http://127.0.0.1:5000.
   --addr <addr>        Listen address passed to registry bootstrap. Defaults to 127.0.0.1:5000.
   --storage-root <path>
@@ -73,7 +81,7 @@ Environment overrides:
   REGISTRY_INSTALL_DIR                Default install directory when --dir is not provided.
   REGISTRY_INSTALL_RELEASES_API_URL   Override the release API base URL.
   REGISTRY_INSTALL_RELEASES_PAGE_URL  Override the release downloads page URL.
-  REGISTRY_INSTALL_MODE               Default bootstrap mode when --mode is not provided.
+  REGISTRY_INSTALL_MODE               Default installer mode when --mode is not provided.
   REGISTRY_INSTALL_PUBLIC_URL         Default bootstrap public URL when --public-url is not provided.
   REGISTRY_INSTALL_ADDR               Default bootstrap listen address when --addr is not provided.
   REGISTRY_INSTALL_STORAGE_ROOT       Default bootstrap storage root when --storage-root is not provided.
@@ -84,8 +92,10 @@ Environment overrides:
 Examples:
   curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash
   curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash -s -- --ref v1.2.3
-  curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash -s -- --dir "$HOME/.local/bin"
-  curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash -s -- --public-url https://registry.example.com
+  curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash -s -- --mode binary-only
+  curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash -s -- --mode daemon-sqlite --public-url https://registry.example.com
+
+$(deferred_mode_guidance)
 EOF
 }
 
@@ -133,7 +143,7 @@ parse_args() {
         ;;
       --mode)
         [[ $# -ge 2 ]] || fail "--mode requires a value"
-        BOOTSTRAP_MODE="$2"
+        INSTALLER_MODE="$2"
         shift 2
         ;;
       --public-url)
@@ -179,6 +189,124 @@ parse_args() {
         ;;
     esac
   done
+}
+
+validate_installer_mode() {
+  local mode="$1"
+
+  case "${mode}" in
+    binary-only|daemon-sqlite)
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+unsupported_mode_guidance() {
+  local current_mode="$1"
+  local registry_binary="$2"
+
+  cat >&2 <<EOF
+[registry-install] ERROR: unsupported installer mode: ${current_mode}
+[registry-install] Supported installer modes in this slice:
+[registry-install] - binary-only
+[registry-install] - daemon-sqlite (binary + daemon/service on Linux + systemd)
+[registry-install] The verified registry binary remains installed at ${registry_binary}
+EOF
+  deferred_mode_guidance >&2
+  exit 1
+}
+
+missing_mode_guidance() {
+  local registry_binary="$1"
+
+  cat >&2 <<EOF
+[registry-install] ERROR: no installer mode was selected and no controlling TTY is available
+[registry-install] Non-interactive runs must set --mode or REGISTRY_INSTALL_MODE to binary-only or daemon-sqlite
+[registry-install] The verified registry binary remains installed at ${registry_binary}
+EOF
+  deferred_mode_guidance >&2
+  exit 1
+}
+
+binary_only_rollback_guidance() {
+  local registry_binary="$1"
+
+  cat >&2 <<EOF
+[registry-install] ERROR: --rollback only applies to daemon-sqlite bootstrap artifacts in this slice
+[registry-install] Use --mode daemon-sqlite --rollback to remove generated service/runtime artifacts
+[registry-install] The verified registry binary remains installed at ${registry_binary}
+EOF
+  exit 1
+}
+
+prompt_installer_mode() {
+  local choice=""
+
+  exec 3<>/dev/tty || return 1
+  while true; do
+    cat >&3 <<'EOF'
+[registry-install] Choose deployment mode:
+[registry-install] 1) binary only
+[registry-install] 2) binary + daemon/service (Linux + systemd only)
+[registry-install] Deferred automated paths:
+[registry-install] - Postgres-auth deployment: manual today, automated later.
+[registry-install] - Container deployment: manual today, automated later.
+EOF
+    printf '[registry-install] Enter choice [1-2]: ' >&3
+    if ! IFS= read -r choice <&3; then
+      exec 3>&-
+      return 1
+    fi
+
+    case "${choice}" in
+      1)
+        printf 'binary-only\n'
+        exec 3>&-
+        return 0
+        ;;
+      2)
+        printf 'daemon-sqlite\n'
+        exec 3>&-
+        return 0
+        ;;
+      *)
+        printf '[registry-install] Invalid choice: %s\n' "${choice}" >&3
+        ;;
+    esac
+  done
+}
+
+resolve_installer_mode() {
+  local registry_binary="$1"
+  local resolved_mode="${INSTALLER_MODE}"
+
+  if [[ -n "${resolved_mode}" ]]; then
+    validate_installer_mode "${resolved_mode}" || unsupported_mode_guidance "${resolved_mode}" "${registry_binary}"
+  else
+    if ! resolved_mode="$(prompt_installer_mode)"; then
+      missing_mode_guidance "${registry_binary}"
+    fi
+  fi
+
+  if [[ "${BOOTSTRAP_ROLLBACK}" == "1" && "${resolved_mode}" != "daemon-sqlite" ]]; then
+    binary_only_rollback_guidance "${registry_binary}"
+  fi
+
+  printf '%s\n' "${resolved_mode}"
+}
+
+print_binary_only_success() {
+  local registry_binary="$1"
+
+  log "Completed binary-only install with ${registry_binary}"
+  log "Next steps: run '${registry_binary} serve -addr ${BOOTSTRAP_ADDR} -public-url ${BOOTSTRAP_PUBLIC_URL} -storage-root ./data -db ./data/metadata.db -service ${BOOTSTRAP_SERVICE_NAME}' when you are ready"
+  log "Linux + systemd daemon/service automation remains available through '--mode daemon-sqlite'"
+  while IFS= read -r line; do
+    [[ -n "${line}" ]] || continue
+    log "${line}"
+  done < <(deferred_mode_guidance)
 }
 
 validate_ref() {
@@ -377,7 +505,8 @@ extract_registry_binary() {
 
 run_bootstrap() {
   local registry_binary="$1"
-  local bootstrap_args=("bootstrap" "--mode" "${BOOTSTRAP_MODE}" "--public-url" "${BOOTSTRAP_PUBLIC_URL}" "--addr" "${BOOTSTRAP_ADDR}" "--service" "${BOOTSTRAP_SERVICE_NAME}")
+  local bootstrap_mode="daemon-sqlite"
+  local bootstrap_args=("bootstrap" "--mode" "${bootstrap_mode}" "--public-url" "${BOOTSTRAP_PUBLIC_URL}" "--addr" "${BOOTSTRAP_ADDR}" "--service" "${BOOTSTRAP_SERVICE_NAME}")
 
   if [[ -n "${BOOTSTRAP_STORAGE_ROOT}" ]]; then
     bootstrap_args+=("--storage-root" "${BOOTSTRAP_STORAGE_ROOT}")
@@ -402,7 +531,7 @@ run_bootstrap() {
     return
   fi
 
-  log "Applied bootstrap mode ${BOOTSTRAP_MODE} with ${registry_binary}"
+  log "Applied bootstrap mode ${bootstrap_mode} with ${registry_binary}"
 }
 
 main() {
@@ -457,7 +586,17 @@ main() {
   extract_registry_binary "${archive_file}" "${INSTALL_DIR}"
 
   log "Installed ${DEFAULT_BIN_NAME} to ${INSTALL_DIR}/${DEFAULT_BIN_NAME}"
-  run_bootstrap "${INSTALL_DIR}/${DEFAULT_BIN_NAME}"
+
+  INSTALLER_MODE="$(resolve_installer_mode "${INSTALL_DIR}/${DEFAULT_BIN_NAME}")"
+
+  case "${INSTALLER_MODE}" in
+    binary-only)
+      print_binary_only_success "${INSTALL_DIR}/${DEFAULT_BIN_NAME}"
+      ;;
+    daemon-sqlite)
+      run_bootstrap "${INSTALL_DIR}/${DEFAULT_BIN_NAME}"
+      ;;
+  esac
 
   case ":${PATH}:" in
     *":${INSTALL_DIR}:"*)
