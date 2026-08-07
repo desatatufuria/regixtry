@@ -3,9 +3,11 @@ package linux
 import (
 	"context"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -119,10 +121,13 @@ func TestBootstrapRunWritesArtifactsAndRollsBackOnProbeFailure(t *testing.T) {
 			},
 			stat: func(string) (os.FileInfo, error) { return fakeInfo{name: "systemd"}, nil },
 		},
-		mkdirAll:       os.MkdirAll,
-		writeFile:      os.WriteFile,
-		readFile:       os.ReadFile,
-		removeAll:      os.RemoveAll,
+		mkdirAll:  os.MkdirAll,
+		writeFile: os.WriteFile,
+		readFile:  os.ReadFile,
+		removeAll: os.RemoveAll,
+		listen: func(string, string) (net.Listener, error) {
+			return stubListener{}, nil
+		},
 		executablePath: func() (string, error) { return "/usr/local/bin/registry", nil },
 		runCommand: func(_ context.Context, name string, args ...string) error {
 			commandCalls = append(commandCalls, name+" "+strings.Join(args, " "))
@@ -168,6 +173,7 @@ func TestBootstrapRunReportsSuccessAfterActivationAndReadiness(t *testing.T) {
 	unitPath := filepath.Join(root, "etc", "systemd", "system", "registry.service")
 	commandCalls := make([]string, 0, 2)
 	probeCalls := make([]string, 0, 1)
+	listenCalls := make([]string, 0, 1)
 
 	b := &Bootstrapper{
 		detector: detector{
@@ -177,10 +183,14 @@ func TestBootstrapRunReportsSuccessAfterActivationAndReadiness(t *testing.T) {
 			},
 			stat: func(string) (os.FileInfo, error) { return fakeInfo{name: "systemd"}, nil },
 		},
-		mkdirAll:       os.MkdirAll,
-		writeFile:      os.WriteFile,
-		readFile:       os.ReadFile,
-		removeAll:      os.RemoveAll,
+		mkdirAll:  os.MkdirAll,
+		writeFile: os.WriteFile,
+		readFile:  os.ReadFile,
+		removeAll: os.RemoveAll,
+		listen: func(network string, addr string) (net.Listener, error) {
+			listenCalls = append(listenCalls, network+" "+addr)
+			return stubListener{}, nil
+		},
 		executablePath: func() (string, error) { return "/usr/local/bin/registry", nil },
 		runCommand: func(_ context.Context, name string, args ...string) error {
 			commandCalls = append(commandCalls, name+" "+strings.Join(args, " "))
@@ -210,6 +220,9 @@ func TestBootstrapRunReportsSuccessAfterActivationAndReadiness(t *testing.T) {
 	if got, want := commandCalls, []string{"systemctl daemon-reload", "systemctl enable --now registry.service"}; strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Fatalf("command calls = %v, want %v", got, want)
 	}
+	if got, want := listenCalls, []string{"tcp 127.0.0.1:5000"}; strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("listen calls = %v, want %v", got, want)
+	}
 	if len(probeCalls) != 1 || probeCalls[0] != "http://127.0.0.1:5000/v2/" {
 		t.Fatalf("probe calls = %v, want [http://127.0.0.1:5000/v2/]", probeCalls)
 	}
@@ -226,6 +239,204 @@ func TestBootstrapRunReportsSuccessAfterActivationAndReadiness(t *testing.T) {
 	}
 	if !strings.Contains(string(receiptBytes), `"service_name": "registry"`) {
 		t.Fatalf("receipt = %q, want service_name", string(receiptBytes))
+	}
+}
+
+func TestBootstrapRunSkipsStartupWhenNoStart(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	statePath := filepath.Join(root, "etc", "registry", "bootstrap-state.json")
+	storageRoot := filepath.Join(root, "var", "lib", "registry")
+	unitPath := filepath.Join(root, "etc", "systemd", "system", "registry.service")
+	var listenCalls, commandCalls, probeCalls int
+
+	b := &Bootstrapper{
+		detector: detector{
+			goos: "linux",
+			readFile: func(string) ([]byte, error) {
+				return []byte("ID=ubuntu\nVERSION_ID=24.04\n"), nil
+			},
+			stat: func(string) (os.FileInfo, error) { return fakeInfo{name: "systemd"}, nil },
+		},
+		mkdirAll:  os.MkdirAll,
+		writeFile: os.WriteFile,
+		readFile:  os.ReadFile,
+		removeAll: os.RemoveAll,
+		listen: func(string, string) (net.Listener, error) {
+			listenCalls++
+			return stubListener{}, nil
+		},
+		executablePath: func() (string, error) { return "/usr/local/bin/registry", nil },
+		runCommand: func(_ context.Context, _ string, _ ...string) error {
+			commandCalls++
+			return nil
+		},
+		probe: func(context.Context, string) (int, error) {
+			probeCalls++
+			return 200, nil
+		},
+		probeInterval: time.Millisecond,
+		probeTimeout:  50 * time.Millisecond,
+	}
+
+	err := b.Run(context.Background(), BootstrapConfig{
+		Mode:        supportedMode,
+		PublicURL:   "http://127.0.0.1:5000",
+		Addr:        "127.0.0.1:5000",
+		StorageRoot: storageRoot,
+		StatePath:   statePath,
+		UnitPath:    unitPath,
+		ServiceName: "registry",
+		NoStart:     true,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if listenCalls != 0 {
+		t.Fatalf("listenCalls = %d, want 0", listenCalls)
+	}
+	if commandCalls != 0 {
+		t.Fatalf("commandCalls = %d, want 0", commandCalls)
+	}
+	if probeCalls != 0 {
+		t.Fatalf("probeCalls = %d, want 0", probeCalls)
+	}
+	for _, path := range []string{statePath, filepath.Join(root, "etc", "registry", "registry.env"), unitPath, filepath.Join(storageRoot, "metadata.db"), filepath.Join(storageRoot, "content")} {
+		if _, statErr := os.Stat(path); statErr != nil {
+			t.Fatalf("expected %s to exist after no-start bootstrap, stat error = %v", path, statErr)
+		}
+	}
+}
+
+func TestBootstrapRunFailsBeforeServiceStartWhenLocalBindIsOccupied(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	statePath := filepath.Join(root, "etc", "registry", "bootstrap-state.json")
+	storageRoot := filepath.Join(root, "var", "lib", "registry")
+	unitPath := filepath.Join(root, "etc", "systemd", "system", "registry.service")
+	commandCalls := make([]string, 0, 2)
+	probeCalls := 0
+
+	b := &Bootstrapper{
+		detector: detector{
+			goos: "linux",
+			readFile: func(string) ([]byte, error) {
+				return []byte("ID=ubuntu\nVERSION_ID=24.04\n"), nil
+			},
+			stat: func(string) (os.FileInfo, error) { return fakeInfo{name: "systemd"}, nil },
+		},
+		mkdirAll:  os.MkdirAll,
+		writeFile: os.WriteFile,
+		readFile:  os.ReadFile,
+		removeAll: os.RemoveAll,
+		listen: func(string, string) (net.Listener, error) {
+			return nil, &net.OpError{Op: "listen", Net: "tcp", Err: syscall.EADDRINUSE}
+		},
+		executablePath: func() (string, error) { return "/usr/local/bin/registry", nil },
+		runCommand: func(_ context.Context, name string, args ...string) error {
+			commandCalls = append(commandCalls, name+" "+strings.Join(args, " "))
+			return nil
+		},
+		probe: func(context.Context, string) (int, error) {
+			probeCalls++
+			return 200, nil
+		},
+		probeInterval: time.Millisecond,
+		probeTimeout:  50 * time.Millisecond,
+	}
+
+	err := b.Run(context.Background(), BootstrapConfig{
+		Mode:        supportedMode,
+		PublicURL:   "http://127.0.0.1:5000",
+		Addr:        "127.0.0.1:5000",
+		StorageRoot: storageRoot,
+		StatePath:   statePath,
+		UnitPath:    unitPath,
+		ServiceName: "registry",
+	})
+	if err == nil {
+		t.Fatal("Run() error = nil, want occupied local bind failure")
+	}
+	if !strings.Contains(err.Error(), "configured local bind address 127.0.0.1:5000 is already in use") {
+		t.Fatalf("Run() error = %v, want occupied bind summary", err)
+	}
+	if !strings.Contains(err.Error(), "sudo ss -ltnp 'sport = :5000'") {
+		t.Fatalf("Run() error = %v, want ss recovery command", err)
+	}
+	if !strings.Contains(err.Error(), "sudo systemctl stop registry.service") {
+		t.Fatalf("Run() error = %v, want systemctl stop recovery command", err)
+	}
+	if !strings.Contains(err.Error(), "registry bootstrap --mode daemon-sqlite --addr 127.0.0.1:5001 --public-url http://127.0.0.1:5001") {
+		t.Fatalf("Run() error = %v, want rerun recovery command", err)
+	}
+	if len(commandCalls) != 0 {
+		t.Fatalf("commandCalls = %v, want no systemctl calls before failure", commandCalls)
+	}
+	if probeCalls != 0 {
+		t.Fatalf("probeCalls = %d, want 0", probeCalls)
+	}
+	if _, statErr := os.Stat(statePath); statErr != nil {
+		t.Fatalf("expected state receipt to exist after preflight failure, stat error = %v", statErr)
+	}
+}
+
+func TestBootstrapRunSkipsLocalPreflightForNonLocalBind(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	statePath := filepath.Join(root, "etc", "registry", "bootstrap-state.json")
+	storageRoot := filepath.Join(root, "var", "lib", "registry")
+	unitPath := filepath.Join(root, "etc", "systemd", "system", "registry.service")
+	listenCalls := 0
+	commandCalls := make([]string, 0, 2)
+
+	b := &Bootstrapper{
+		detector: detector{
+			goos: "linux",
+			readFile: func(string) ([]byte, error) {
+				return []byte("ID=ubuntu\nVERSION_ID=24.04\n"), nil
+			},
+			stat: func(string) (os.FileInfo, error) { return fakeInfo{name: "systemd"}, nil },
+		},
+		mkdirAll:  os.MkdirAll,
+		writeFile: os.WriteFile,
+		readFile:  os.ReadFile,
+		removeAll: os.RemoveAll,
+		listen: func(string, string) (net.Listener, error) {
+			listenCalls++
+			return stubListener{}, nil
+		},
+		executablePath: func() (string, error) { return "/usr/local/bin/registry", nil },
+		runCommand: func(_ context.Context, name string, args ...string) error {
+			commandCalls = append(commandCalls, name+" "+strings.Join(args, " "))
+			return nil
+		},
+		probe: func(context.Context, string) (int, error) {
+			return 401, nil
+		},
+		probeInterval: time.Millisecond,
+		probeTimeout:  50 * time.Millisecond,
+	}
+
+	err := b.Run(context.Background(), BootstrapConfig{
+		Mode:        supportedMode,
+		PublicURL:   "http://registry.example.com:5443",
+		Addr:        "0.0.0.0:5443",
+		StorageRoot: storageRoot,
+		StatePath:   statePath,
+		UnitPath:    unitPath,
+		ServiceName: "registry",
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if listenCalls != 0 {
+		t.Fatalf("listenCalls = %d, want 0 for non-local bind", listenCalls)
+	}
+	if got, want := commandCalls, []string{"systemctl daemon-reload", "systemctl enable --now registry.service"}; strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("command calls = %v, want %v", got, want)
 	}
 }
 
@@ -283,3 +494,9 @@ func (f fakeInfo) Mode() os.FileMode  { return os.ModeDir }
 func (f fakeInfo) ModTime() time.Time { return time.Time{} }
 func (f fakeInfo) IsDir() bool        { return true }
 func (f fakeInfo) Sys() any           { return nil }
+
+type stubListener struct{}
+
+func (stubListener) Accept() (net.Conn, error) { return nil, errors.New("not implemented") }
+func (stubListener) Close() error              { return nil }
+func (stubListener) Addr() net.Addr            { return &net.TCPAddr{} }

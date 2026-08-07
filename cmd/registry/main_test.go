@@ -413,6 +413,18 @@ func TestBootstrapParseConfigRejectsUnsupportedModeAndWhitespacePaths(t *testing
 	}
 }
 
+func TestBootstrapParseConfigSupportsNoStart(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := parseBootstrapConfig([]string{"-mode", "daemon-sqlite", "-public-url", "http://127.0.0.1:5000", "-no-start"})
+	if err != nil {
+		t.Fatalf("parseBootstrapConfig() error = %v", err)
+	}
+	if !cfg.NoStart {
+		t.Fatal("NoStart = false, want true")
+	}
+}
+
 func TestRunBootstrapPropagatesHostAndRuntimeFailures(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -438,6 +450,11 @@ func TestRunBootstrapPropagatesHostAndRuntimeFailures(t *testing.T) {
 			name:    "probe failure",
 			runErr:  errors.New("registry readiness probe failed: connect: connection refused"),
 			wantErr: "registry readiness probe failed",
+		},
+		{
+			name:    "occupied local bind recovery guidance",
+			runErr:  errors.New("configured local bind address 127.0.0.1:5000 is already in use\nRecover with:\n  sudo ss -ltnp 'sport = :5000'\n  sudo systemctl stop registry.service"),
+			wantErr: "sudo systemctl stop registry.service",
 		},
 	}
 
@@ -476,6 +493,7 @@ func TestRunBootstrapPassesParsedConfigToRunner(t *testing.T) {
 		"-state-path", "/etc/registry/bootstrap-state.json",
 		"-unit-path", "/etc/systemd/system/registry-custom.service",
 		"-service", "registry-custom",
+		"-no-start",
 	}
 
 	if err := run(context.Background(), args, io.Discard, io.Discard); err != nil {
@@ -497,6 +515,7 @@ func TestRunBootstrapPassesParsedConfigToRunner(t *testing.T) {
 		StatePath:   "/etc/registry/bootstrap-state.json",
 		UnitPath:    "/etc/systemd/system/registry-custom.service",
 		ServiceName: "registry-custom",
+		NoStart:     true,
 	}
 	if runner.lastConfig != want {
 		t.Fatalf("lastConfig = %#v, want %#v", runner.lastConfig, want)

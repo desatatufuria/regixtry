@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -25,6 +28,7 @@ type BootstrapConfig struct {
 	Addr        string
 	ServiceName string
 	BinaryPath  string
+	NoStart     bool
 	Rollback    bool
 }
 
@@ -40,6 +44,7 @@ type Bootstrapper struct {
 	writeFile      func(string, []byte, os.FileMode) error
 	readFile       func(string) ([]byte, error)
 	removeAll      func(string) error
+	listen         func(string, string) (net.Listener, error)
 	runCommand     func(context.Context, string, ...string) error
 	probe          func(context.Context, string) (int, error)
 	executablePath func() (string, error)
@@ -56,6 +61,7 @@ func NewBootstrapper() *Bootstrapper {
 		writeFile: os.WriteFile,
 		readFile:  os.ReadFile,
 		removeAll: os.RemoveAll,
+		listen:    net.Listen,
 		runCommand: func(ctx context.Context, name string, args ...string) error {
 			cmd := exec.CommandContext(ctx, name, args...)
 			cmd.Stdout = ioDiscard{}
@@ -140,6 +146,14 @@ func (b *Bootstrapper) Run(ctx context.Context, cfg BootstrapConfig) error {
 		return err
 	}
 
+	if cfg.NoStart {
+		return nil
+	}
+
+	if err := b.preflightLocalBind(cfg); err != nil {
+		return err
+	}
+
 	rollbackErr := func(runErr error) error {
 		cleanupErr := b.rollbackWithReceipt(ctx, receipt)
 		if cleanupErr != nil {
@@ -159,6 +173,22 @@ func (b *Bootstrapper) Run(ctx context.Context, cfg BootstrapConfig) error {
 	}
 
 	return nil
+}
+
+func (b *Bootstrapper) preflightLocalBind(cfg BootstrapConfig) error {
+	if !isConfiguredLocalBind(cfg.Addr) {
+		return nil
+	}
+
+	listener, err := b.listenTCP(strings.TrimSpace(cfg.Addr))
+	if err == nil {
+		return listener.Close()
+	}
+	if errors.Is(err, syscall.EADDRINUSE) {
+		return occupiedLocalBindError{cfg: cfg}
+	}
+
+	return fmt.Errorf("preflight local bind %s: %w", strings.TrimSpace(cfg.Addr), err)
 }
 
 func (b *Bootstrapper) Rollback(ctx context.Context, cfg BootstrapConfig) error {
@@ -338,6 +368,73 @@ func containsWhitespace(value string) bool {
 		}
 	}
 	return false
+}
+
+func isConfiguredLocalBind(addr string) bool {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(addr))
+	if err != nil {
+		return false
+	}
+
+	switch strings.ToLower(host) {
+	case "127.0.0.1", "localhost", "::1":
+		return true
+	default:
+		return false
+	}
+}
+
+func (b *Bootstrapper) listenTCP(addr string) (net.Listener, error) {
+	if b.listen != nil {
+		return b.listen("tcp", addr)
+	}
+	return net.Listen("tcp", addr)
+}
+
+type occupiedLocalBindError struct {
+	cfg BootstrapConfig
+}
+
+func (e occupiedLocalBindError) Error() string {
+	port := bindPort(e.cfg.Addr)
+	suggestedAddr, suggestedPublicURL := suggestedRecoveryEndpoints(e.cfg.Addr, e.cfg.PublicURL)
+
+	return strings.Join([]string{
+		fmt.Sprintf("configured local bind address %s is already in use", strings.TrimSpace(e.cfg.Addr)),
+		"Recover with:",
+		fmt.Sprintf("  sudo ss -ltnp 'sport = :%s'", port),
+		fmt.Sprintf("  sudo systemctl stop %s.service", strings.TrimSpace(e.cfg.ServiceName)),
+		fmt.Sprintf("  registry bootstrap --mode %s --addr %s --public-url %s --storage-root %s --state-path %s --unit-path %s --service %s", strings.TrimSpace(e.cfg.Mode), suggestedAddr, suggestedPublicURL, strings.TrimSpace(e.cfg.StorageRoot), strings.TrimSpace(e.cfg.StatePath), strings.TrimSpace(e.cfg.UnitPath), strings.TrimSpace(e.cfg.ServiceName)),
+	}, "\n")
+}
+
+func bindPort(addr string) string {
+	_, port, err := net.SplitHostPort(strings.TrimSpace(addr))
+	if err != nil || strings.TrimSpace(port) == "" {
+		return "<port>"
+	}
+	return port
+}
+
+func suggestedRecoveryEndpoints(addr string, publicURL string) (string, string) {
+	host, port, err := net.SplitHostPort(strings.TrimSpace(addr))
+	if err != nil {
+		return "<new-addr>", "<matching-public-url>"
+	}
+
+	nextPort, convErr := strconv.Atoi(port)
+	if convErr != nil || nextPort <= 0 || nextPort >= 65535 {
+		return "<new-addr>", "<matching-public-url>"
+	}
+
+	suggestedAddr := net.JoinHostPort(host, strconv.Itoa(nextPort+1))
+	parsedURL, parseErr := normalizeAbsoluteHTTPURL(publicURL)
+	if parseErr != nil {
+		return suggestedAddr, "<matching-public-url>"
+	}
+	parsedURL.Host = suggestedAddr
+
+	return suggestedAddr, parsedURL.String()
 }
 
 type ioDiscard struct{}
