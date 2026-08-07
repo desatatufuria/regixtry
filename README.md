@@ -8,6 +8,55 @@ Registry is a low-resource, single-binary OCI registry for internal and OSS use.
 2. Keep v1 single-tenant, local-storage, and operationally simple.
 3. Use `docs/` for reader-facing decisions and `openspec/changes/registry-foundation/`, `openspec/changes/registry-auth-v1/`, and `openspec/changes/registry-operator-admin-api/` for the current implementation contracts.
 
+## Install from GitHub Releases
+
+Use the repo-hosted installer when you want a simple `curl | bash` setup that installs a verified Linux release.
+
+### Quick path
+
+1. Use Linux on `amd64` or `arm64`.
+2. Run `curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash`.
+3. Run `registry` after the installer places the binary in your install directory.
+
+### Common install commands
+
+```bash
+# Install the latest Linux release into /usr/local/bin when writable,
+# otherwise fall back to ~/.local/bin
+curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash
+
+# Install a specific release tag
+curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash -s -- --ref v1.2.3
+
+# Install into a custom directory
+curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash -s -- --dir "$HOME/.local/bin"
+```
+
+### Installer behavior
+
+| Topic | Decision |
+| --- | --- |
+| Source | Resolves the latest release or `--ref <tag>` from GitHub Releases. |
+| Verification | Downloads the matching `registry_<version>_linux_<arch>.tar.gz` plus `registry_<version>_checksums.txt` and verifies the archive before install. |
+| Scope | Linux only in this slice, with `amd64` and `arm64` assets. |
+| Failure mode | Hard-fails on release asset, checksum, extraction, or support-boundary problems and prints manual guidance. |
+| Install target | Uses `/usr/local/bin` when writable, otherwise `~/.local/bin`, or `--dir` when provided. |
+| Installed binary name | Always installs the executable as `registry`. |
+
+### Manual fallback
+
+The installer does **not** rebuild from source automatically.
+
+- Download a verified Linux asset manually from GitHub Releases when you want a release-backed path without `curl | bash`.
+- Build from source manually when you need a non-release or non-Linux path:
+
+```bash
+git clone https://github.com/desatatufuria/workspace.git
+cd workspace
+go build -o registry ./cmd/registry
+install -m 0755 registry "$HOME/.local/bin/registry"
+```
+
 ## Local Docker Compose helper runtime
 
 Use Docker Compose when you want a disposable local helper runtime for manual testing with the registry plus Postgres-backed auth.
@@ -17,11 +66,11 @@ This top-level Compose setup is a convenience for local bring-up and smoke-style
 ### Quick path
 
 1. Start Postgres: `docker compose up -d postgres`
-2. Bootstrap the first admin: `docker compose run --rm registry bootstrap-admin -password '<admin-password>'`
+2. Bootstrap the first admin: `printf '%s\n' '<admin-password>' | docker compose run --rm -T registry bootstrap-admin -password-stdin`
 3. Start the registry: `docker compose up -d registry`
-4. Log in from Docker: `docker login localhost:${REGISTRY_PORT:-5517} -u admin -p '<admin-password>'`
+4. Log in from Docker: `printf '%s\n' '<admin-password>' | docker login localhost:${REGISTRY_PORT:-5517} -u admin --password-stdin`
 
-Compose publishes the registry on `127.0.0.1:${REGISTRY_PORT:-5517}`. It keeps SQLite/blob data in the `registry-data` volume and auth state in the `postgres-data` volume.
+Compose publishes the registry on `127.0.0.1:${REGISTRY_PORT:-5517}` and sets `REGISTRY_PUBLIC_URL=http://localhost:${REGISTRY_PORT:-5517}` for the explicit local HTTP path. It keeps SQLite/blob data in the `registry-data` volume and auth state in the `postgres-data` volume.
 
 Before the first compose run on a fresh machine, make sure the external Docker network expected by the devcontainer/runtime exists:
 
@@ -34,12 +83,29 @@ docker network create dtf-netwok
 Use this order whenever auth is enabled:
 
 1. `docker compose up -d postgres`
-2. `docker compose run --rm registry bootstrap-admin -username admin -password '<admin-password>'`
+2. `printf '%s\n' '<admin-password>' | docker compose run --rm -T registry bootstrap-admin -username admin -password-stdin`
 3. `docker compose up -d registry`
-4. `docker login localhost:${REGISTRY_PORT:-5517} -u admin -p '<admin-password>'`
+4. `printf '%s\n' '<admin-password>' | docker login localhost:${REGISTRY_PORT:-5517} -u admin --password-stdin`
 5. Push or pull images against `localhost:${REGISTRY_PORT:-5517}`.
 
 If you need to rotate the bootstrap password later, rerun the bootstrap command with `-rotate-password`.
+
+### Runtime hardening modes
+
+Use one canonical public surface per runtime. The registry derives `/auth/token` from `REGISTRY_PUBLIC_URL`, so operator-facing examples must stay aligned with that URL.
+
+| Mode | Required inputs | Result |
+| --- | --- | --- |
+| Explicit local HTTP | `REGISTRY_PUBLIC_URL=http://localhost:${REGISTRY_PORT:-5517}` and no TLS cert/key inputs | Supported local/dev path. Docker clients can use the published port directly. |
+| HTTPS runtime | `REGISTRY_PUBLIC_URL=https://<host>:<port>` plus both `REGISTRY_TLS_CERT_FILE` and `REGISTRY_TLS_KEY_FILE` | The registry serves HTTPS directly and advertises an HTTPS token realm derived from the canonical public URL. |
+
+Startup now fails before serving traffic when the runtime surface is inconsistent:
+
+- `https://...` public URLs without both TLS files
+- `http://...` public URLs combined with TLS inputs
+- compatibility `REGISTRY_AUTH_TOKEN_REALM_URL` values that do not exactly match `REGISTRY_PUBLIC_URL + /auth/token`
+
+For local HTTPS smoke runs, provide trusted cert/key files to `docs/verification/scripts/docker-push-pull-smoke.sh` through `TLS_CERT_FILE` and `TLS_KEY_FILE`. When the certificate is self-signed, also set `TLS_CA_FILE` for curl-based readiness checks and make sure your Docker daemon trusts the registry certificate before attempting push/pull.
 
 ### Operator admin API
 
@@ -91,7 +157,7 @@ The snapshot will render a notice explaining that local TUI admin actions are in
 | Topic | Decision |
 | --- | --- |
 | Image build | Top-level `Dockerfile` builds `cmd/registry` into a single runtime image. |
-| Auth wiring | `docker-compose.yml` sets both `REGISTRY_AUTH_POSTGRES_DSN` and `REGISTRY_AUTH_TOKEN_REALM_URL` so the registry shares the same local Postgres service and advertises Docker-compatible bearer challenges that point at `/auth/token`. Keep the advertised realm URL aligned with the host/port clients actually use. |
+| Auth wiring | `docker-compose.yml` sets `REGISTRY_AUTH_POSTGRES_DSN` plus a canonical `REGISTRY_PUBLIC_URL`. The registry derives `/auth/token` from that public URL, so the advertised bearer challenge stays aligned with the host/port clients actually use. |
 | First startup | Auth-enabled `serve` fails fast until a global admin exists, so bootstrap the admin before bringing up `registry`. |
 
 ## V1 outcome
