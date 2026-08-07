@@ -1,0 +1,38 @@
+project_name: registry
+
+version: 2
+
+builds:
+  - id: registry
+    binary: registry
+    main: ./cmd/registry
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    ldflags:
+      - >-
+        -s -w
+        -X main.buildVersion={{ .Version }}
+        -X main.buildCommit={{ .Commit }}
+        -X main.buildDate={{ .Date }}
+
+archives:
+  - id: registry-archives
+    ids:
+      - registry
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - none*
+
+checksum:
+  name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
+  algorithm: sha256
