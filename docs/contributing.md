@@ -66,7 +66,7 @@ Each PR slice should tell one reviewable story.
 ## Release installer expectations
 
 - GitHub Releases are the source of truth for the installer path.
-- Release assets must keep the `registry_<version>_linux_<arch>.tar.gz` and `registry_<version>_checksums.txt` contract in sync with `install.sh`.
+- Release assets must keep the `regixtry_<version>_linux_<arch>.tar.gz` and `regixtry_<version>_checksums.txt` contract in sync with `install.sh`.
 - Checksums are mandatory; if asset naming or checksum publication changes, update the installer, `README.md`, `docs/verification/scripts/install-release-smoke.sh`, and the active OpenSpec tasks in the same slice.
 - Tag-driven release automation must fail if the expected archive or checksum assets are missing.
 

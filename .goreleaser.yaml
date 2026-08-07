@@ -1,11 +1,11 @@
-project_name: registry
+project_name: regixtry
 
 version: 2
 
 builds:
-  - id: registry
-    binary: registry
-    main: ./cmd/registry
+  - id: regixtry
+    binary: regixtry
+    main: ./cmd/regixtry
     goos:
       - linux
     goarch:
@@ -24,9 +24,9 @@ builds:
         -X main.buildDate={{ .Date }}
 
 archives:
-  - id: registry-archives
+  - id: regixtry-archives
     ids:
-      - registry
+      - regixtry
     formats:
       - tar.gz
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"

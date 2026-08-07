@@ -24,7 +24,7 @@ This document describes the approved v1 boundary only.
 
 ## Runtime flows
 
-### Registry flow
+### Regixtry flow
 
 `OCI/Docker client -> HTTP handlers -> auth middleware/challenge -> application services -> blob store + metadata store`
 
@@ -109,11 +109,11 @@ The Bubble Tea console is an operator client, not a second backend. Any maintena
 ## Repository direction
 The planned code layout is:
 
-- `cmd/registry/` for binary entrypoints.
+- `cmd/regixtry/` for binary entrypoints.
 - `internal/app/auth/` for auth workflows and token issuance/verification.
-- `internal/app/registry/` for workflows and queries.
+- `internal/app/regixtry/` for workflows and queries.
 - `internal/domain/auth/` for users, grants, principals, tokens, and auth invariants.
-- `internal/domain/registry/` for registry types and invariants.
+- `internal/domain/regixtry/` for registry types and invariants.
 - `internal/ports/` for seams between core logic and adapters.
 - `internal/infra/auth/postgres/` for Postgres-backed auth persistence and schema bootstrap.
 - `internal/infra/storage/fsblob/` and `internal/infra/metadata/sqlite/` for v1 adapters.

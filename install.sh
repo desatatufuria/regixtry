@@ -3,7 +3,7 @@
 set -euo pipefail
 
 SCRIPT_NAME="install.sh"
-DEFAULT_BIN_NAME="registry"
+DEFAULT_BIN_NAME="regixtry"
 DEFAULT_RELEASES_API_URL="https://api.github.com/repos/desatatufuria/workspace/releases"
 DEFAULT_RELEASES_PAGE_URL="https://github.com/desatatufuria/workspace/releases"
 
@@ -19,19 +19,19 @@ BOOTSTRAP_ADDR="${REGISTRY_INSTALL_ADDR:-127.0.0.1:5000}"
 BOOTSTRAP_STORAGE_ROOT="${REGISTRY_INSTALL_STORAGE_ROOT:-}"
 BOOTSTRAP_STATE_PATH="${REGISTRY_INSTALL_STATE_PATH:-}"
 BOOTSTRAP_UNIT_PATH="${REGISTRY_INSTALL_UNIT_PATH:-}"
-BOOTSTRAP_SERVICE_NAME="${REGISTRY_INSTALL_SERVICE_NAME:-registry}"
+BOOTSTRAP_SERVICE_NAME="${REGISTRY_INSTALL_SERVICE_NAME:-regixtry}"
 BOOTSTRAP_ROLLBACK=0
 TMP_DIR=""
 
 log() {
-  printf '[registry-install] %s\n' "$*"
+  printf '[regixtry-install] %s\n' "$*"
 }
 
 manual_guidance() {
   cat >&2 <<EOF
-[registry-install] Manual options:
-[registry-install] - Download a verified Linux release from: ${RELEASES_PAGE_URL}
-[registry-install] - Or build from source manually with: git clone https://github.com/desatatufuria/workspace.git && cd workspace && go build -o registry ./cmd/registry
+[regixtry-install] Manual options:
+[regixtry-install] - Download a verified Linux release from: ${RELEASES_PAGE_URL}
+[regixtry-install] - Or build from source manually with: git clone https://github.com/desatatufuria/workspace.git && cd workspace && go build -o regixtry ./cmd/regixtry
 EOF
 }
 
@@ -44,19 +44,19 @@ EOF
 }
 
 fail() {
-  printf '[registry-install] ERROR: %s\n' "$*" >&2
+  printf '[regixtry-install] ERROR: %s\n' "$*" >&2
   exit 1
 }
 
 fail_with_guidance() {
-  printf '[registry-install] ERROR: %s\n' "$*" >&2
+  printf '[regixtry-install] ERROR: %s\n' "$*" >&2
   manual_guidance
   exit 1
 }
 
 usage() {
   cat <<EOF
-Install the registry binary from verified GitHub Release assets and choose
+Install the regixtry binary from verified GitHub Release assets and choose
 either a binary-only install or a Linux + systemd daemon/service bootstrap.
 
 Usage:
@@ -66,13 +66,13 @@ Options:
   --ref <release-tag>  Install a specific release tag. Defaults to the latest release.
   --dir <path>         Install the binary into this directory.
   --mode <mode>        Installer mode after download. Supported: binary-only or daemon-sqlite.
-  --public-url <url>   Public URL passed to registry bootstrap. Defaults to http://127.0.0.1:5000.
-  --addr <addr>        Listen address passed to registry bootstrap. Defaults to 127.0.0.1:5000.
+  --public-url <url>   Public URL passed to regixtry bootstrap. Defaults to http://127.0.0.1:5000.
+  --addr <addr>        Listen address passed to regixtry bootstrap. Defaults to 127.0.0.1:5000.
   --storage-root <path>
-                       Storage root passed to registry bootstrap.
-  --state-path <path>  Receipt path passed to registry bootstrap.
-  --unit-path <path>   Systemd unit path passed to registry bootstrap.
-  --service <name>     Systemd service name passed to registry bootstrap. Defaults to registry.
+                       Storage root passed to regixtry bootstrap.
+  --state-path <path>  Receipt path passed to regixtry bootstrap.
+  --unit-path <path>   Systemd unit path passed to regixtry bootstrap.
+  --service <name>     Systemd service name passed to regixtry bootstrap. Defaults to regixtry.
   --rollback           Run bootstrap rollback after installing the verified binary.
   --help               Show this help output.
 
@@ -93,7 +93,7 @@ Examples:
   curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash
   curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash -s -- --ref v1.2.3
   curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash -s -- --mode binary-only
-  curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash -s -- --mode daemon-sqlite --public-url https://registry.example.com
+  curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash -s -- --mode daemon-sqlite --public-url https://regixtry.example.com
 
 $(deferred_mode_guidance)
 EOF
@@ -205,38 +205,38 @@ validate_installer_mode() {
 
 unsupported_mode_guidance() {
   local current_mode="$1"
-  local registry_binary="$2"
+  local regixtry_binary="$2"
 
   cat >&2 <<EOF
-[registry-install] ERROR: unsupported installer mode: ${current_mode}
-[registry-install] Supported installer modes in this slice:
-[registry-install] - binary-only
-[registry-install] - daemon-sqlite (binary + daemon/service on Linux + systemd)
-[registry-install] The verified registry binary remains installed at ${registry_binary}
+[regixtry-install] ERROR: unsupported installer mode: ${current_mode}
+[regixtry-install] Supported installer modes in this slice:
+[regixtry-install] - binary-only
+[regixtry-install] - daemon-sqlite (binary + daemon/service on Linux + systemd)
+[regixtry-install] The verified regixtry binary remains installed at ${regixtry_binary}
 EOF
   deferred_mode_guidance >&2
   exit 1
 }
 
 missing_mode_guidance() {
-  local registry_binary="$1"
+  local regixtry_binary="$1"
 
   cat >&2 <<EOF
-[registry-install] ERROR: no installer mode was selected and no controlling TTY is available
-[registry-install] Non-interactive runs must set --mode or REGISTRY_INSTALL_MODE to binary-only or daemon-sqlite
-[registry-install] The verified registry binary remains installed at ${registry_binary}
+[regixtry-install] ERROR: no installer mode was selected and no controlling TTY is available
+[regixtry-install] Non-interactive runs must set --mode or REGISTRY_INSTALL_MODE to binary-only or daemon-sqlite
+[regixtry-install] The verified regixtry binary remains installed at ${regixtry_binary}
 EOF
   deferred_mode_guidance >&2
   exit 1
 }
 
 binary_only_rollback_guidance() {
-  local registry_binary="$1"
+  local regixtry_binary="$1"
 
   cat >&2 <<EOF
-[registry-install] ERROR: --rollback only applies to daemon-sqlite bootstrap artifacts in this slice
-[registry-install] Use --mode daemon-sqlite --rollback to remove generated service/runtime artifacts
-[registry-install] The verified registry binary remains installed at ${registry_binary}
+[regixtry-install] ERROR: --rollback only applies to daemon-sqlite bootstrap artifacts in this slice
+[regixtry-install] Use --mode daemon-sqlite --rollback to remove generated service/runtime artifacts
+[regixtry-install] The verified regixtry binary remains installed at ${regixtry_binary}
 EOF
   exit 1
 }
@@ -247,14 +247,14 @@ prompt_installer_mode() {
   exec 3<>/dev/tty || return 1
   while true; do
     cat >&3 <<'EOF'
-[registry-install] Choose deployment mode:
-[registry-install] 1) binary only
-[registry-install] 2) binary + daemon/service (Linux + systemd only)
-[registry-install] Deferred automated paths:
-[registry-install] - Postgres-auth deployment: manual today, automated later.
-[registry-install] - Container deployment: manual today, automated later.
+[regixtry-install] Choose deployment mode:
+[regixtry-install] 1) binary only
+[regixtry-install] 2) binary + daemon/service (Linux + systemd only)
+[regixtry-install] Deferred automated paths:
+[regixtry-install] - Postgres-auth deployment: manual today, automated later.
+[regixtry-install] - Container deployment: manual today, automated later.
 EOF
-    printf '[registry-install] Enter choice [1-2]: ' >&3
+    printf '[regixtry-install] Enter choice [1-2]: ' >&3
     if ! IFS= read -r choice <&3; then
       exec 3>&-
       return 1
@@ -272,36 +272,36 @@ EOF
         return 0
         ;;
       *)
-        printf '[registry-install] Invalid choice: %s\n' "${choice}" >&3
+        printf '[regixtry-install] Invalid choice: %s\n' "${choice}" >&3
         ;;
     esac
   done
 }
 
 resolve_installer_mode() {
-  local registry_binary="$1"
+  local regixtry_binary="$1"
   local resolved_mode="${INSTALLER_MODE}"
 
   if [[ -n "${resolved_mode}" ]]; then
-    validate_installer_mode "${resolved_mode}" || unsupported_mode_guidance "${resolved_mode}" "${registry_binary}"
+    validate_installer_mode "${resolved_mode}" || unsupported_mode_guidance "${resolved_mode}" "${regixtry_binary}"
   else
     if ! resolved_mode="$(prompt_installer_mode)"; then
-      missing_mode_guidance "${registry_binary}"
+      missing_mode_guidance "${regixtry_binary}"
     fi
   fi
 
   if [[ "${BOOTSTRAP_ROLLBACK}" == "1" && "${resolved_mode}" != "daemon-sqlite" ]]; then
-    binary_only_rollback_guidance "${registry_binary}"
+    binary_only_rollback_guidance "${regixtry_binary}"
   fi
 
   printf '%s\n' "${resolved_mode}"
 }
 
 print_binary_only_success() {
-  local registry_binary="$1"
+  local regixtry_binary="$1"
 
-  log "Completed binary-only install with ${registry_binary}"
-  log "Next steps: run '${registry_binary} serve -addr ${BOOTSTRAP_ADDR} -public-url ${BOOTSTRAP_PUBLIC_URL} -storage-root ./data -db ./data/metadata.db -service ${BOOTSTRAP_SERVICE_NAME}' when you are ready"
+  log "Completed binary-only install with ${regixtry_binary}"
+  log "Next steps: run '${regixtry_binary} serve -addr ${BOOTSTRAP_ADDR} -public-url ${BOOTSTRAP_PUBLIC_URL} -storage-root ./data -db ./data/metadata.db -service ${BOOTSTRAP_SERVICE_NAME}' when you are ready"
   log "Linux + systemd daemon/service automation remains available through '--mode daemon-sqlite'"
   while IFS= read -r line; do
     [[ -n "${line}" ]] || continue
@@ -485,26 +485,26 @@ validate_archive() {
   local entries=()
 
   mapfile -t entries < <(tar -tzf "${archive_file}")
-  if [[ ${#entries[@]} -ne 1 || "${entries[0]}" != "registry" ]]; then
-    fail_with_guidance "archive must contain exactly one registry entry named registry"
+  if [[ ${#entries[@]} -ne 1 || "${entries[0]}" != "regixtry" ]]; then
+    fail_with_guidance "archive must contain exactly one regixtry entry named regixtry"
   fi
 }
 
-extract_registry_binary() {
+extract_regixtry_binary() {
   local archive_file="$1"
   local destination="$2"
   local extract_dir="${TMP_DIR}/extract"
 
   mkdir -p "${extract_dir}"
-  if ! tar -xzf "${archive_file}" -C "${extract_dir}" registry; then
-    fail_with_guidance "failed to extract registry from ${archive_file}"
+  if ! tar -xzf "${archive_file}" -C "${extract_dir}" regixtry; then
+    fail_with_guidance "failed to extract regixtry from ${archive_file}"
   fi
 
-  install -m 0755 "${extract_dir}/registry" "${destination}/${DEFAULT_BIN_NAME}"
+  install -m 0755 "${extract_dir}/regixtry" "${destination}/${DEFAULT_BIN_NAME}"
 }
 
 run_bootstrap() {
-  local registry_binary="$1"
+  local regixtry_binary="$1"
   local bootstrap_mode="daemon-sqlite"
   local bootstrap_args=("bootstrap" "--mode" "${bootstrap_mode}" "--public-url" "${BOOTSTRAP_PUBLIC_URL}" "--addr" "${BOOTSTRAP_ADDR}" "--service" "${BOOTSTRAP_SERVICE_NAME}")
 
@@ -521,17 +521,17 @@ run_bootstrap() {
     bootstrap_args+=("--rollback")
   fi
 
-  if ! "${registry_binary}" "${bootstrap_args[@]}"; then
-    printf '[registry-install] ERROR: bootstrap command failed; verified registry binary remains installed at %s\n' "${registry_binary}" >&2
+  if ! "${regixtry_binary}" "${bootstrap_args[@]}"; then
+    printf '[regixtry-install] ERROR: bootstrap command failed; verified regixtry binary remains installed at %s\n' "${regixtry_binary}" >&2
     exit 1
   fi
 
   if [[ "${BOOTSTRAP_ROLLBACK}" == "1" ]]; then
-    log "Rolled back bootstrap artifacts with ${registry_binary}"
+    log "Rolled back bootstrap artifacts with ${regixtry_binary}"
     return
   fi
 
-  log "Applied bootstrap mode ${bootstrap_mode} with ${registry_binary}"
+  log "Applied bootstrap mode ${bootstrap_mode} with ${regixtry_binary}"
 }
 
 main() {
@@ -560,7 +560,7 @@ main() {
   INSTALL_DIR="$(resolve_install_dir)"
   ensure_install_dir "${INSTALL_DIR}"
 
-  TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/registry-install.XXXXXX")"
+  TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/regixtry-install.XXXXXX")"
   release_file="${TMP_DIR}/release.json"
 
   fetch_release_metadata "${release_file}"
@@ -570,8 +570,8 @@ main() {
     fail_with_guidance "release metadata did not contain a tag name"
   fi
 
-  archive_url="$(select_release_url "${release_file}" "registry_*_${normalized_os}_${normalized_arch}.tar.gz" "release asset")"
-  checksums_url="$(select_release_url "${release_file}" "registry_*_checksums.txt" "checksum asset")"
+  archive_url="$(select_release_url "${release_file}" "regixtry_*_${normalized_os}_${normalized_arch}.tar.gz" "release asset")"
+  checksums_url="$(select_release_url "${release_file}" "regixtry_*_checksums.txt" "checksum asset")"
 
   archive_name="${archive_url##*/}"
   checksums_name="${checksums_url##*/}"
@@ -583,7 +583,7 @@ main() {
   download_file "${checksums_url}" "${checksums_file}"
   verify_checksum "${archive_file}" "${archive_name}" "${checksums_file}"
   validate_archive "${archive_file}"
-  extract_registry_binary "${archive_file}" "${INSTALL_DIR}"
+  extract_regixtry_binary "${archive_file}" "${INSTALL_DIR}"
 
   log "Installed ${DEFAULT_BIN_NAME} to ${INSTALL_DIR}/${DEFAULT_BIN_NAME}"
 

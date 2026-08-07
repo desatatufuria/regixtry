@@ -15,9 +15,9 @@ Read this document as a sequencing contract, not a wish list.
 | Group | Outcome | Current state |
 | --- | --- | --- |
 | Repository foundation | Stable module, docs baseline, GitFlow workflow, and review slices | Implemented and verified |
-| Registry protocol | OCI-compatible push, pull, catalog, tags, manifests, and blobs | Implemented on the local single-node runtime |
+| Regixtry protocol | OCI-compatible push, pull, catalog, tags, manifests, and blobs | Implemented on the local single-node runtime |
 | Local durability | Filesystem blob storage, SQLite metadata, and safe upload lifecycle | Implemented |
-| Registry auth v1 | Postgres-backed auth state, `/auth/token`, bearer challenge interoperability, and repository enforcement | Implemented and verified |
+| Regixtry auth v1 | Postgres-backed auth state, `/auth/token`, bearer challenge interoperability, and repository enforcement | Implemented and verified |
 | Operator admin API | Narrow `/admin/v1` user/grant/admin-token administration over the shared auth service | Implemented and repo-verified; pagination, delete-user, and richer clients stay deferred |
 | Operator console | Thin Bubble Tea client for inspection plus authenticated, read-only admin browsing | Implemented for login, users, grants, and admin tokens; admin mutations and richer client ergonomics stay deferred |
 
@@ -27,7 +27,7 @@ V1 is complete when ALL of the following are true:
 
 - Single tenant is the only supported runtime model.
 - Local runtime storage remains the only supported deployment mode.
-- Registry metadata stays in SQLite while auth state lives beside it in Postgres.
+- Regixtry metadata stays in SQLite while auth state lives beside it in Postgres.
 - Anonymous pull is configuration-driven rather than hard-coded policy.
 - Auth-enabled registry access uses Docker-compatible Bearer challenges plus `/auth/token` token exchange.
 - Incomplete uploads never appear as published registry content.

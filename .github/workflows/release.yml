@@ -40,9 +40,9 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
 
-          amd64=(dist/registry_*_linux_amd64.tar.gz)
-          arm64=(dist/registry_*_linux_arm64.tar.gz)
-          checksums=(dist/registry_*_checksums.txt)
+          amd64=(dist/regixtry_*_linux_amd64.tar.gz)
+          arm64=(dist/regixtry_*_linux_arm64.tar.gz)
+          checksums=(dist/regixtry_*_checksums.txt)
 
           if [ "${#amd64[@]}" -ne 1 ]; then
             echo "expected exactly one amd64 archive, found ${#amd64[@]}"

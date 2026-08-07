@@ -2,11 +2,11 @@ services:
   postgres:
     image: postgres:17-alpine
     environment:
-      POSTGRES_DB: registry_auth
+      POSTGRES_DB: regixtry_auth
       POSTGRES_USER: registry
       POSTGRES_PASSWORD: registry
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U registry -d registry_auth"]
+      test: ["CMD-SHELL", "pg_isready -U registry -d regixtry_auth"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -17,7 +17,7 @@ services:
     networks:
       - dtf-netwok
 
-  registry:
+  regixtry:
     build:
       context: .
       dockerfile: Dockerfile
@@ -25,7 +25,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      REGISTRY_AUTH_POSTGRES_DSN: postgres://registry:registry@postgres:5432/registry_auth?sslmode=disable
+      REGISTRY_AUTH_POSTGRES_DSN: postgres://registry:registry@postgres:5432/regixtry_auth?sslmode=disable
       REGISTRY_PUBLIC_URL: http://localhost:${REGISTRY_PORT:-5517}
     command:
       [
@@ -33,12 +33,12 @@ services:
         "-addr",
         "0.0.0.0:5000",
         "-storage-root",
-        "/var/lib/registry"
+        "/var/lib/regixtry"
       ]
     ports:
       - "${REGISTRY_PORT:-5517}:5000"
     volumes:
-      - registry-data:/var/lib/registry
+      - registry-data:/var/lib/regixtry
     networks:
       - dtf-netwok
 

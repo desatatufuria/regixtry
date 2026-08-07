@@ -6,7 +6,7 @@ Define the first secure admin slice for the TUI: authenticated login, in-memory 
 
 ## Current Repository Facts
 
-- `cmd/registry/main.go` `runTUI` currently opens local blob/metadata stores and launches the inspection TUI directly.
+- `cmd/regixtry/main.go` `runTUI` currently opens local blob/metadata stores and launches the inspection TUI directly.
 - When `--auth-postgres-dsn` is set, the TUI only ensures bootstrap auth state and shows a notice; it still uses `localOperatorAccessController`, which authorizes all actions locally.
 - The backend already exposes `GET|POST /auth/token`, `GET /admin/v1/users`, `GET /admin/v1/users/{id}/grants`, and `GET /admin/v1/users/{id}/admin-tokens`.
 

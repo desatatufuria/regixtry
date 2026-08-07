@@ -5,7 +5,7 @@ set -euo pipefail
 ROOT_DIR="${1:-/tmp/registry-auth-smoke}"
 OUTPUT_FILE="${ROOT_DIR}/tui-smoke.txt"
 POSTGRES_PORT="${POSTGRES_PORT:-55433}"
-AUTH_DSN="${AUTH_DSN:-postgres://registry:registry@127.0.0.1:${POSTGRES_PORT}/registry_auth?sslmode=disable}"
+AUTH_DSN="${AUTH_DSN:-postgres://registry:registry@127.0.0.1:${POSTGRES_PORT}/regixtry_auth?sslmode=disable}"
 ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-change-me-now}"
 POSTGRES_CONTAINER="registry-tui-smoke-postgres-${POSTGRES_PORT}"
@@ -21,11 +21,11 @@ trap cleanup EXIT
 
 mkdir -p "${ROOT_DIR}"
 
-if [[ -z "${AUTH_DSN:-}" || "${AUTH_DSN}" == postgres://registry:registry@127.0.0.1:${POSTGRES_PORT}/registry_auth?sslmode=disable ]]; then
+if [[ -z "${AUTH_DSN:-}" || "${AUTH_DSN}" == postgres://registry:registry@127.0.0.1:${POSTGRES_PORT}/regixtry_auth?sslmode=disable ]]; then
   docker rm -f "${POSTGRES_CONTAINER}" >/dev/null 2>&1 || true
   docker run -d \
     --name "${POSTGRES_CONTAINER}" \
-    -e POSTGRES_DB=registry_auth \
+    -e POSTGRES_DB=regixtry_auth \
     -e POSTGRES_USER=registry \
     -e POSTGRES_PASSWORD=registry \
     -p "${POSTGRES_PORT}:5432" \
@@ -33,19 +33,19 @@ if [[ -z "${AUTH_DSN:-}" || "${AUTH_DSN}" == postgres://registry:registry@127.0.
   STARTED_POSTGRES=1
 
   for _ in $(seq 1 30); do
-    if docker exec "${POSTGRES_CONTAINER}" pg_isready -U registry -d registry_auth >/dev/null 2>&1; then
+    if docker exec "${POSTGRES_CONTAINER}" pg_isready -U registry -d regixtry_auth >/dev/null 2>&1; then
       break
     fi
     sleep 1
   done
 
-  docker exec "${POSTGRES_CONTAINER}" pg_isready -U registry -d registry_auth >/dev/null 2>&1
+  docker exec "${POSTGRES_CONTAINER}" pg_isready -U registry -d regixtry_auth >/dev/null 2>&1
 fi
 
 GOMODCACHE="${GOMODCACHE:-/tmp/opencode/gomodcache}" \
 GOPATH="${GOPATH:-/tmp/opencode/gopath}" \
 GOSUMDB="${GOSUMDB:-off}" \
-go run ./cmd/registry bootstrap-admin \
+go run ./cmd/regixtry bootstrap-admin \
   -auth-postgres-dsn "${AUTH_DSN}" \
   -username "${ADMIN_USERNAME}" \
   -password "${ADMIN_PASSWORD}" >/dev/null
@@ -53,13 +53,13 @@ go run ./cmd/registry bootstrap-admin \
 GOMODCACHE="${GOMODCACHE:-/tmp/opencode/gomodcache}" \
 GOPATH="${GOPATH:-/tmp/opencode/gopath}" \
 GOSUMDB="${GOSUMDB:-off}" \
-go run ./cmd/registry tui \
+go run ./cmd/regixtry tui \
   -storage-root "${ROOT_DIR}" \
   -auth-postgres-dsn "${AUTH_DSN}" \
   -snapshot \
   >"${OUTPUT_FILE}"
 
-grep -q "Registry Console" "${OUTPUT_FILE}"
+grep -q "Regixtry Console" "${OUTPUT_FILE}"
 grep -q "registry-auth/smoke" "${OUTPUT_FILE}"
 grep -q "Auth-backed admin actions are disabled in the local TUI until a real operator login flow exists." "${OUTPUT_FILE}"
 
