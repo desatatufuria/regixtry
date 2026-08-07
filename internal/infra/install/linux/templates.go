@@ -34,7 +34,7 @@ func RenderEnvFile(plan BootstrapPlan) string {
 
 func RenderSystemdUnit(plan BootstrapPlan) string {
 	return fmt.Sprintf(`[Unit]
-Description=Registry service
+Description=Regixtry service
 After=network-online.target
 Wants=network-online.target
 

@@ -85,11 +85,11 @@ func TestTemplateRendering(t *testing.T) {
 	plan := BootstrapPlan{
 		Addr:         "127.0.0.1:5000",
 		PublicURL:    "http://127.0.0.1:5000",
-		StorageRoot:  "/var/lib/registry",
-		DatabasePath: "/var/lib/registry/metadata.db",
-		EnvPath:      "/etc/registry/registry.env",
-		BinaryPath:   "/usr/local/bin/registry",
-		ServiceName:  "registry",
+		StorageRoot:  "/var/lib/regixtry",
+		DatabasePath: "/var/lib/regixtry/metadata.db",
+		EnvPath:      "/etc/regixtry/regixtry.env",
+		BinaryPath:   "/usr/local/bin/regixtry",
+		ServiceName:  "regixtry",
 	}
 
 	env := RenderEnvFile(plan)
@@ -98,11 +98,11 @@ func TestTemplateRendering(t *testing.T) {
 	}
 
 	unit := RenderSystemdUnit(plan)
-	if !strings.Contains(unit, "EnvironmentFile=/etc/registry/registry.env") {
+	if !strings.Contains(unit, "EnvironmentFile=/etc/regixtry/regixtry.env") {
 		t.Fatalf("unit = %q, want environment file", unit)
 	}
-	if !strings.Contains(unit, "/usr/local/bin/registry serve") {
-		t.Fatalf("unit = %q, want registry serve exec start", unit)
+	if !strings.Contains(unit, "/usr/local/bin/regixtry serve") {
+		t.Fatalf("unit = %q, want regixtry serve exec start", unit)
 	}
 }
 
@@ -110,7 +110,7 @@ func TestBootstrapRunWritesArtifactsAndRollsBackOnProbeFailure(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	statePath := filepath.Join(root, "etc", "registry", "bootstrap-state.json")
+	statePath := filepath.Join(root, "etc", "regixtry", "bootstrap-state.json")
 	commandCalls := make([]string, 0, 2)
 
 	b := &Bootstrapper{
@@ -128,7 +128,7 @@ func TestBootstrapRunWritesArtifactsAndRollsBackOnProbeFailure(t *testing.T) {
 		listen: func(string, string) (net.Listener, error) {
 			return stubListener{}, nil
 		},
-		executablePath: func() (string, error) { return "/usr/local/bin/registry", nil },
+		executablePath: func() (string, error) { return "/usr/local/bin/regixtry", nil },
 		runCommand: func(_ context.Context, name string, args ...string) error {
 			commandCalls = append(commandCalls, name+" "+strings.Join(args, " "))
 			return nil
@@ -144,12 +144,12 @@ func TestBootstrapRunWritesArtifactsAndRollsBackOnProbeFailure(t *testing.T) {
 		Mode:        supportedMode,
 		PublicURL:   "http://127.0.0.1:5000",
 		Addr:        "127.0.0.1:5000",
-		StorageRoot: filepath.Join(root, "var", "lib", "registry"),
+		StorageRoot: filepath.Join(root, "var", "lib", "regixtry"),
 		StatePath:   statePath,
-		UnitPath:    filepath.Join(root, "etc", "systemd", "system", "registry.service"),
-		ServiceName: "registry",
+		UnitPath:    filepath.Join(root, "etc", "systemd", "system", "regixtry.service"),
+		ServiceName: "regixtry",
 	})
-	if err == nil || !strings.Contains(err.Error(), "registry readiness probe returned 503") {
+	if err == nil || !strings.Contains(err.Error(), "regixtry readiness probe returned 503") {
 		t.Fatalf("Run() error = %v, want readiness probe failure", err)
 	}
 
@@ -159,7 +159,7 @@ func TestBootstrapRunWritesArtifactsAndRollsBackOnProbeFailure(t *testing.T) {
 	if _, statErr := os.Stat(statePath); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("state receipt still exists after rollback, stat error = %v", statErr)
 	}
-	if _, statErr := os.Stat(filepath.Join(root, "var", "lib", "registry", "content")); !errors.Is(statErr, os.ErrNotExist) {
+	if _, statErr := os.Stat(filepath.Join(root, "var", "lib", "regixtry", "content")); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("content path still exists after rollback, stat error = %v", statErr)
 	}
 }
@@ -168,9 +168,9 @@ func TestBootstrapRunReportsSuccessAfterActivationAndReadiness(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	statePath := filepath.Join(root, "etc", "registry", "bootstrap-state.json")
-	storageRoot := filepath.Join(root, "var", "lib", "registry")
-	unitPath := filepath.Join(root, "etc", "systemd", "system", "registry.service")
+	statePath := filepath.Join(root, "etc", "regixtry", "bootstrap-state.json")
+	storageRoot := filepath.Join(root, "var", "lib", "regixtry")
+	unitPath := filepath.Join(root, "etc", "systemd", "system", "regixtry.service")
 	commandCalls := make([]string, 0, 2)
 	probeCalls := make([]string, 0, 1)
 	listenCalls := make([]string, 0, 1)
@@ -191,7 +191,7 @@ func TestBootstrapRunReportsSuccessAfterActivationAndReadiness(t *testing.T) {
 			listenCalls = append(listenCalls, network+" "+addr)
 			return stubListener{}, nil
 		},
-		executablePath: func() (string, error) { return "/usr/local/bin/registry", nil },
+		executablePath: func() (string, error) { return "/usr/local/bin/regixtry", nil },
 		runCommand: func(_ context.Context, name string, args ...string) error {
 			commandCalls = append(commandCalls, name+" "+strings.Join(args, " "))
 			return nil
@@ -211,13 +211,13 @@ func TestBootstrapRunReportsSuccessAfterActivationAndReadiness(t *testing.T) {
 		StorageRoot: storageRoot,
 		StatePath:   statePath,
 		UnitPath:    unitPath,
-		ServiceName: "registry",
+		ServiceName: "regixtry",
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	if got, want := commandCalls, []string{"systemctl daemon-reload", "systemctl enable --now registry.service"}; strings.Join(got, "|") != strings.Join(want, "|") {
+	if got, want := commandCalls, []string{"systemctl daemon-reload", "systemctl enable --now regixtry.service"}; strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Fatalf("command calls = %v, want %v", got, want)
 	}
 	if got, want := listenCalls, []string{"tcp 127.0.0.1:5000"}; strings.Join(got, "|") != strings.Join(want, "|") {
@@ -227,7 +227,7 @@ func TestBootstrapRunReportsSuccessAfterActivationAndReadiness(t *testing.T) {
 		t.Fatalf("probe calls = %v, want [http://127.0.0.1:5000/v2/]", probeCalls)
 	}
 
-	for _, path := range []string{statePath, filepath.Join(root, "etc", "registry", "registry.env"), unitPath, filepath.Join(storageRoot, "metadata.db"), filepath.Join(storageRoot, "content")} {
+	for _, path := range []string{statePath, filepath.Join(root, "etc", "regixtry", "regixtry.env"), unitPath, filepath.Join(storageRoot, "metadata.db"), filepath.Join(storageRoot, "content")} {
 		if _, statErr := os.Stat(path); statErr != nil {
 			t.Fatalf("expected %s to exist after successful bootstrap, stat error = %v", path, statErr)
 		}
@@ -237,7 +237,7 @@ func TestBootstrapRunReportsSuccessAfterActivationAndReadiness(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadFile(receipt) error = %v", err)
 	}
-	if !strings.Contains(string(receiptBytes), `"service_name": "registry"`) {
+	if !strings.Contains(string(receiptBytes), `"service_name": "regixtry"`) {
 		t.Fatalf("receipt = %q, want service_name", string(receiptBytes))
 	}
 }
@@ -246,9 +246,9 @@ func TestBootstrapRunSkipsStartupWhenNoStart(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	statePath := filepath.Join(root, "etc", "registry", "bootstrap-state.json")
-	storageRoot := filepath.Join(root, "var", "lib", "registry")
-	unitPath := filepath.Join(root, "etc", "systemd", "system", "registry.service")
+	statePath := filepath.Join(root, "etc", "regixtry", "bootstrap-state.json")
+	storageRoot := filepath.Join(root, "var", "lib", "regixtry")
+	unitPath := filepath.Join(root, "etc", "systemd", "system", "regixtry.service")
 	var listenCalls, commandCalls, probeCalls int
 
 	b := &Bootstrapper{
@@ -267,7 +267,7 @@ func TestBootstrapRunSkipsStartupWhenNoStart(t *testing.T) {
 			listenCalls++
 			return stubListener{}, nil
 		},
-		executablePath: func() (string, error) { return "/usr/local/bin/registry", nil },
+		executablePath: func() (string, error) { return "/usr/local/bin/regixtry", nil },
 		runCommand: func(_ context.Context, _ string, _ ...string) error {
 			commandCalls++
 			return nil
@@ -287,7 +287,7 @@ func TestBootstrapRunSkipsStartupWhenNoStart(t *testing.T) {
 		StorageRoot: storageRoot,
 		StatePath:   statePath,
 		UnitPath:    unitPath,
-		ServiceName: "registry",
+		ServiceName: "regixtry",
 		NoStart:     true,
 	})
 	if err != nil {
@@ -302,7 +302,7 @@ func TestBootstrapRunSkipsStartupWhenNoStart(t *testing.T) {
 	if probeCalls != 0 {
 		t.Fatalf("probeCalls = %d, want 0", probeCalls)
 	}
-	for _, path := range []string{statePath, filepath.Join(root, "etc", "registry", "registry.env"), unitPath, filepath.Join(storageRoot, "metadata.db"), filepath.Join(storageRoot, "content")} {
+	for _, path := range []string{statePath, filepath.Join(root, "etc", "regixtry", "regixtry.env"), unitPath, filepath.Join(storageRoot, "metadata.db"), filepath.Join(storageRoot, "content")} {
 		if _, statErr := os.Stat(path); statErr != nil {
 			t.Fatalf("expected %s to exist after no-start bootstrap, stat error = %v", path, statErr)
 		}
@@ -313,9 +313,9 @@ func TestBootstrapRunFailsBeforeServiceStartWhenLocalBindIsOccupied(t *testing.T
 	t.Parallel()
 
 	root := t.TempDir()
-	statePath := filepath.Join(root, "etc", "registry", "bootstrap-state.json")
-	storageRoot := filepath.Join(root, "var", "lib", "registry")
-	unitPath := filepath.Join(root, "etc", "systemd", "system", "registry.service")
+	statePath := filepath.Join(root, "etc", "regixtry", "bootstrap-state.json")
+	storageRoot := filepath.Join(root, "var", "lib", "regixtry")
+	unitPath := filepath.Join(root, "etc", "systemd", "system", "regixtry.service")
 	commandCalls := make([]string, 0, 2)
 	probeCalls := 0
 
@@ -334,7 +334,7 @@ func TestBootstrapRunFailsBeforeServiceStartWhenLocalBindIsOccupied(t *testing.T
 		listen: func(string, string) (net.Listener, error) {
 			return nil, &net.OpError{Op: "listen", Net: "tcp", Err: syscall.EADDRINUSE}
 		},
-		executablePath: func() (string, error) { return "/usr/local/bin/registry", nil },
+		executablePath: func() (string, error) { return "/usr/local/bin/regixtry", nil },
 		runCommand: func(_ context.Context, name string, args ...string) error {
 			commandCalls = append(commandCalls, name+" "+strings.Join(args, " "))
 			return nil
@@ -354,7 +354,7 @@ func TestBootstrapRunFailsBeforeServiceStartWhenLocalBindIsOccupied(t *testing.T
 		StorageRoot: storageRoot,
 		StatePath:   statePath,
 		UnitPath:    unitPath,
-		ServiceName: "registry",
+		ServiceName: "regixtry",
 	})
 	if err == nil {
 		t.Fatal("Run() error = nil, want occupied local bind failure")
@@ -365,10 +365,10 @@ func TestBootstrapRunFailsBeforeServiceStartWhenLocalBindIsOccupied(t *testing.T
 	if !strings.Contains(err.Error(), "sudo ss -ltnp 'sport = :5000'") {
 		t.Fatalf("Run() error = %v, want ss recovery command", err)
 	}
-	if !strings.Contains(err.Error(), "sudo systemctl stop registry.service") {
+	if !strings.Contains(err.Error(), "sudo systemctl stop regixtry.service") {
 		t.Fatalf("Run() error = %v, want systemctl stop recovery command", err)
 	}
-	if !strings.Contains(err.Error(), "registry bootstrap --mode daemon-sqlite --addr 127.0.0.1:5001 --public-url http://127.0.0.1:5001") {
+	if !strings.Contains(err.Error(), "regixtry bootstrap --mode daemon-sqlite --addr 127.0.0.1:5001 --public-url http://127.0.0.1:5001") {
 		t.Fatalf("Run() error = %v, want rerun recovery command", err)
 	}
 	if len(commandCalls) != 0 {
@@ -386,9 +386,9 @@ func TestBootstrapRunSkipsLocalPreflightForNonLocalBind(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	statePath := filepath.Join(root, "etc", "registry", "bootstrap-state.json")
-	storageRoot := filepath.Join(root, "var", "lib", "registry")
-	unitPath := filepath.Join(root, "etc", "systemd", "system", "registry.service")
+	statePath := filepath.Join(root, "etc", "regixtry", "bootstrap-state.json")
+	storageRoot := filepath.Join(root, "var", "lib", "regixtry")
+	unitPath := filepath.Join(root, "etc", "systemd", "system", "regixtry.service")
 	listenCalls := 0
 	commandCalls := make([]string, 0, 2)
 
@@ -408,7 +408,7 @@ func TestBootstrapRunSkipsLocalPreflightForNonLocalBind(t *testing.T) {
 			listenCalls++
 			return stubListener{}, nil
 		},
-		executablePath: func() (string, error) { return "/usr/local/bin/registry", nil },
+		executablePath: func() (string, error) { return "/usr/local/bin/regixtry", nil },
 		runCommand: func(_ context.Context, name string, args ...string) error {
 			commandCalls = append(commandCalls, name+" "+strings.Join(args, " "))
 			return nil
@@ -422,12 +422,12 @@ func TestBootstrapRunSkipsLocalPreflightForNonLocalBind(t *testing.T) {
 
 	err := b.Run(context.Background(), BootstrapConfig{
 		Mode:        supportedMode,
-		PublicURL:   "http://registry.example.com:5443",
+		PublicURL:   "http://regixtry.example.com:5443",
 		Addr:        "0.0.0.0:5443",
 		StorageRoot: storageRoot,
 		StatePath:   statePath,
 		UnitPath:    unitPath,
-		ServiceName: "registry",
+		ServiceName: "regixtry",
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -435,7 +435,7 @@ func TestBootstrapRunSkipsLocalPreflightForNonLocalBind(t *testing.T) {
 	if listenCalls != 0 {
 		t.Fatalf("listenCalls = %d, want 0 for non-local bind", listenCalls)
 	}
-	if got, want := commandCalls, []string{"systemctl daemon-reload", "systemctl enable --now registry.service"}; strings.Join(got, "|") != strings.Join(want, "|") {
+	if got, want := commandCalls, []string{"systemctl daemon-reload", "systemctl enable --now regixtry.service"}; strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Fatalf("command calls = %v, want %v", got, want)
 	}
 }
@@ -444,9 +444,9 @@ func TestBootstrapRollbackRemovesGeneratedArtifacts(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	statePath := filepath.Join(root, "etc", "registry", "bootstrap-state.json")
-	servicePath := filepath.Join(root, "registry.service")
-	envPath := filepath.Join(root, "registry.env")
+	statePath := filepath.Join(root, "etc", "regixtry", "bootstrap-state.json")
+	servicePath := filepath.Join(root, "regixtry.service")
+	envPath := filepath.Join(root, "regixtry.env")
 	contentPath := filepath.Join(root, "content")
 	if err := os.WriteFile(envPath, []byte("env\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile(env) error = %v", err)
@@ -457,7 +457,7 @@ func TestBootstrapRollbackRemovesGeneratedArtifacts(t *testing.T) {
 	if err := os.WriteFile(servicePath, []byte("unit\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile(unit) error = %v", err)
 	}
-	receipt := []byte(`{"mode":"daemon-sqlite","service_name":"registry","paths":["` + envPath + `","` + servicePath + `","` + contentPath + `","` + statePath + `"]}`)
+	receipt := []byte(`{"mode":"daemon-sqlite","service_name":"regixtry","paths":["` + envPath + `","` + servicePath + `","` + contentPath + `","` + statePath + `"]}`)
 	if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {
 		t.Fatalf("MkdirAll(state) error = %v", err)
 	}
@@ -478,7 +478,7 @@ func TestBootstrapRollbackRemovesGeneratedArtifacts(t *testing.T) {
 	if err := b.Rollback(context.Background(), BootstrapConfig{StatePath: statePath}); err != nil {
 		t.Fatalf("Rollback() error = %v", err)
 	}
-	if len(commands) != 1 || !strings.Contains(commands[0], "disable --now registry.service") {
+	if len(commands) != 1 || !strings.Contains(commands[0], "disable --now regixtry.service") {
 		t.Fatalf("commands = %v, want systemctl disable --now", commands)
 	}
 	if _, err := os.Stat(envPath); !errors.Is(err, os.ErrNotExist) {

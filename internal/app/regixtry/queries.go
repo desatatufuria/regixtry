@@ -1,12 +1,12 @@
-package registry
+package regixtry
 
 import (
 	"context"
 	"io"
 	"time"
 
-	domain "registry/internal/domain/registry"
-	"registry/internal/ports"
+	domain "regixtry/internal/domain/regixtry"
+	"regixtry/internal/ports"
 )
 
 type CatalogResult struct {

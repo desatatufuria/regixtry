@@ -1,4 +1,4 @@
-module registry
+module regixtry
 
 go 1.26.0
 

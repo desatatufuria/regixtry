@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	domain "registry/internal/domain/registry"
+	domain "regixtry/internal/domain/regixtry"
 )
 
 func TestStoreUploadCommitAndRead(t *testing.T) {

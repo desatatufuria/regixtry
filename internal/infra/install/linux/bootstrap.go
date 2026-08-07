@@ -210,7 +210,7 @@ func (b *Bootstrapper) plan(cfg BootstrapConfig) (BootstrapPlan, BootstrapReceip
 		var err error
 		binaryPath, err = b.executablePath()
 		if err != nil {
-			return BootstrapPlan{}, BootstrapReceipt{}, fmt.Errorf("locate registry executable: %w", err)
+			return BootstrapPlan{}, BootstrapReceipt{}, fmt.Errorf("locate regixtry executable: %w", err)
 		}
 	}
 	if containsWhitespace(binaryPath) {
@@ -232,7 +232,7 @@ func (b *Bootstrapper) plan(cfg BootstrapConfig) (BootstrapPlan, BootstrapReceip
 		DatabasePath: filepath.Join(storageRoot, "metadata.db"),
 		ContentPath:  filepath.Join(storageRoot, "content"),
 		StatePath:    statePath,
-		EnvPath:      filepath.Join(filepath.Dir(statePath), "registry.env"),
+		EnvPath:      filepath.Join(filepath.Dir(statePath), "regixtry.env"),
 		UnitPath:     unitPath,
 		BinaryPath:   binaryPath,
 		ServiceName:  serviceName,
@@ -327,9 +327,9 @@ func (b *Bootstrapper) waitUntilReachable(ctx context.Context, publicURL string)
 		}
 		if time.Now().After(deadline) {
 			if probeErr != nil {
-				return fmt.Errorf("registry readiness probe failed: %w", probeErr)
+				return fmt.Errorf("regixtry readiness probe failed: %w", probeErr)
 			}
-			return fmt.Errorf("registry readiness probe returned %d, want 200 or 401", statusCode)
+			return fmt.Errorf("regixtry readiness probe returned %d, want 200 or 401", statusCode)
 		}
 
 		select {
@@ -404,7 +404,7 @@ func (e occupiedLocalBindError) Error() string {
 		"Recover with:",
 		fmt.Sprintf("  sudo ss -ltnp 'sport = :%s'", port),
 		fmt.Sprintf("  sudo systemctl stop %s.service", strings.TrimSpace(e.cfg.ServiceName)),
-		fmt.Sprintf("  registry bootstrap --mode %s --addr %s --public-url %s --storage-root %s --state-path %s --unit-path %s --service %s", strings.TrimSpace(e.cfg.Mode), suggestedAddr, suggestedPublicURL, strings.TrimSpace(e.cfg.StorageRoot), strings.TrimSpace(e.cfg.StatePath), strings.TrimSpace(e.cfg.UnitPath), strings.TrimSpace(e.cfg.ServiceName)),
+		fmt.Sprintf("  regixtry bootstrap --mode %s --addr %s --public-url %s --storage-root %s --state-path %s --unit-path %s --service %s", strings.TrimSpace(e.cfg.Mode), suggestedAddr, suggestedPublicURL, strings.TrimSpace(e.cfg.StorageRoot), strings.TrimSpace(e.cfg.StatePath), strings.TrimSpace(e.cfg.UnitPath), strings.TrimSpace(e.cfg.ServiceName)),
 	}, "\n")
 }
 

@@ -4,12 +4,12 @@ import (
 	"sort"
 	"strings"
 
-	registrydomain "registry/internal/domain/registry"
+	regixtrydomain "regixtry/internal/domain/regixtry"
 )
 
 const (
 	scopeTypeRepository = "repository"
-	scopeTypeRegistry   = "registry"
+	scopeTypeRegixtry   = "regixtry"
 	actionPull          = "pull"
 	actionPush          = "push"
 	actionCatalog       = "catalog"
@@ -22,7 +22,7 @@ type Scope struct {
 	Actions   []string
 	Canonical string
 
-	repository registrydomain.RepositoryRef
+	repository regixtrydomain.RepositoryRef
 }
 
 func ParseScopes(values []string) ([]Scope, error) {
@@ -58,7 +58,7 @@ func ParseScope(raw string) (Scope, error) {
 
 	switch resourceType {
 	case scopeTypeRepository:
-		repository, err := registrydomain.ParseRepositoryRef(resourceName)
+		repository, err := regixtrydomain.ParseRepositoryRef(resourceName)
 		if err != nil {
 			return Scope{}, err
 		}
@@ -75,7 +75,7 @@ func ParseScope(raw string) (Scope, error) {
 			Canonical:  scopeTypeRepository + ":" + repository.String() + ":" + strings.Join(actions, ","),
 			repository: repository,
 		}, nil
-	case scopeTypeRegistry:
+	case scopeTypeRegixtry:
 		if resourceName != actionCatalog {
 			return Scope{}, NewValidationError("registry scope name is invalid")
 		}
@@ -85,7 +85,7 @@ func ParseScope(raw string) (Scope, error) {
 			return Scope{}, err
 		}
 
-		return Scope{Type: scopeTypeRegistry, Name: resourceName, Actions: actions, Canonical: scopeTypeRegistry + ":" + resourceName + ":" + strings.Join(actions, ",")}, nil
+		return Scope{Type: scopeTypeRegixtry, Name: resourceName, Actions: actions, Canonical: scopeTypeRegixtry + ":" + resourceName + ":" + strings.Join(actions, ",")}, nil
 	default:
 		return Scope{}, NewValidationError("scope resource type is invalid")
 	}
@@ -117,11 +117,11 @@ func (s Scope) IsRepository() bool {
 	return s.Type == scopeTypeRepository
 }
 
-func (s Scope) IsRegistryCatalog() bool {
-	return s.Type == scopeTypeRegistry && s.Name == actionCatalog && len(s.Actions) == 1 && s.Actions[0] == actionWildcard
+func (s Scope) IsRegixtryCatalog() bool {
+	return s.Type == scopeTypeRegixtry && s.Name == actionCatalog && len(s.Actions) == 1 && s.Actions[0] == actionWildcard
 }
 
-func (s Scope) Repository() registrydomain.RepositoryRef {
+func (s Scope) Repository() regixtrydomain.RepositoryRef {
 	return s.repository
 }
 

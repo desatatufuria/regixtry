@@ -3,7 +3,7 @@ package ports
 import (
 	"context"
 
-	domain "registry/internal/domain/registry"
+	domain "regixtry/internal/domain/regixtry"
 )
 
 const DefaultTenant = "default"
@@ -40,12 +40,12 @@ type configurableAccessController struct {
 func NewConfigurableAccessController(config AccessConfig) AccessController {
 	realm := config.Realm
 	if realm == "" {
-		realm = "registry"
+		realm = "regixtry"
 	}
 
 	service := config.Service
 	if service == "" {
-		service = "registry"
+		service = "regixtry"
 	}
 
 	return configurableAccessController{
@@ -90,10 +90,10 @@ func NewPrincipalAccessController(challenge Challenge) AccessController {
 		challenge.Scheme = "Bearer"
 	}
 	if challenge.Realm == "" {
-		challenge.Realm = "registry"
+		challenge.Realm = "regixtry"
 	}
 	if challenge.Service == "" {
-		challenge.Service = "registry"
+		challenge.Service = "regixtry"
 	}
 
 	return principalAccessController{challenge: challenge}

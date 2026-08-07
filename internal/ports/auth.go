@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	domainauth "registry/internal/domain/auth"
-	registrydomain "registry/internal/domain/registry"
+	domainauth "regixtry/internal/domain/auth"
+	regixtrydomain "regixtry/internal/domain/regixtry"
 )
 
 type AuthStore interface {
@@ -18,7 +18,7 @@ type AuthStore interface {
 	DeleteUser(ctx context.Context, userID string) error
 	ListRepoGrants(ctx context.Context, userID string) ([]domainauth.RepoGrant, error)
 	PutRepoGrant(ctx context.Context, grant domainauth.RepoGrant) error
-	DeleteRepoGrant(ctx context.Context, userID string, repository registrydomain.RepositoryRef) error
+	DeleteRepoGrant(ctx context.Context, userID string, repository regixtrydomain.RepositoryRef) error
 	CreateToken(ctx context.Context, token domainauth.Token) error
 	GetTokenBySecretHash(ctx context.Context, kind domainauth.TokenKind, secretHash string) (domainauth.Token, error)
 	GetTokenByAccessor(ctx context.Context, kind domainauth.TokenKind, accessor string) (domainauth.Token, error)
@@ -98,7 +98,7 @@ type AdminResetPasswordInput struct {
 
 type AdminRepoGrant struct {
 	UserID     string                       `json:"user_id"`
-	Repository registrydomain.RepositoryRef `json:"repository"`
+	Repository regixtrydomain.RepositoryRef `json:"repository"`
 	Role       domainauth.RepoRole          `json:"role"`
 	CreatedAt  time.Time                    `json:"created_at"`
 	UpdatedAt  time.Time                    `json:"updated_at"`

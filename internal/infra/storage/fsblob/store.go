@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
-	domain "registry/internal/domain/registry"
+	domain "regixtry/internal/domain/regixtry"
 )
 
 type Store struct {

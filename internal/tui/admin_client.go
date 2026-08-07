@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"registry/internal/ports"
+	"regixtry/internal/ports"
 )
 
 const defaultAdminClientTimeout = 15 * time.Second

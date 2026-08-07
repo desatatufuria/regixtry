@@ -11,9 +11,9 @@ import (
 
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
-	domainauth "registry/internal/domain/auth"
-	registrydomain "registry/internal/domain/registry"
-	"registry/internal/ports"
+	domainauth "regixtry/internal/domain/auth"
+	regixtrydomain "regixtry/internal/domain/regixtry"
+	"regixtry/internal/ports"
 )
 
 type Service struct {
@@ -511,7 +511,7 @@ func (s *Service) PutRepoGrant(ctx context.Context, actor domainauth.Principal, 
 		return domainauth.RepoGrant{}, err
 	}
 
-	repo, err := registrydomain.ParseRepositoryRef(strings.TrimSpace(repository))
+	repo, err := regixtrydomain.ParseRepositoryRef(strings.TrimSpace(repository))
 	if err != nil {
 		return domainauth.RepoGrant{}, err
 	}
@@ -545,7 +545,7 @@ func (s *Service) DeleteRepoGrant(ctx context.Context, actor domainauth.Principa
 		return err
 	}
 
-	repo, err := registrydomain.ParseRepositoryRef(strings.TrimSpace(repository))
+	repo, err := regixtrydomain.ParseRepositoryRef(strings.TrimSpace(repository))
 	if err != nil {
 		return err
 	}
@@ -678,7 +678,7 @@ func (s *Service) grantedScopes(ctx context.Context, user domainauth.User, reque
 
 	granted := make([]domainauth.Scope, 0, len(requestedScopes))
 	for _, requested := range requestedScopes {
-		if requested.IsRegistryCatalog() {
+		if requested.IsRegixtryCatalog() {
 			granted = append(granted, requested)
 			continue
 		}

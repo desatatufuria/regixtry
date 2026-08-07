@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	domain "registry/internal/domain/registry"
+	domain "regixtry/internal/domain/regixtry"
 )
 
 func TestStorePublishResolveCatalogAndTags(t *testing.T) {

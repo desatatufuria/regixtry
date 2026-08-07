@@ -16,15 +16,15 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	appauth "registry/internal/app/auth"
-	appregistry "registry/internal/app/registry"
-	authpostgres "registry/internal/infra/auth/postgres"
-	installlinux "registry/internal/infra/install/linux"
-	metadata "registry/internal/infra/metadata/sqlite"
-	"registry/internal/infra/storage/fsblob"
-	"registry/internal/ports"
-	registryhttp "registry/internal/protocol/http"
-	"registry/internal/tui"
+	appauth "regixtry/internal/app/auth"
+	appregixtry "regixtry/internal/app/regixtry"
+	authpostgres "regixtry/internal/infra/auth/postgres"
+	installlinux "regixtry/internal/infra/install/linux"
+	metadata "regixtry/internal/infra/metadata/sqlite"
+	"regixtry/internal/infra/storage/fsblob"
+	"regixtry/internal/ports"
+	regixtryhttp "regixtry/internal/protocol/http"
+	"regixtry/internal/tui"
 )
 
 var openAuthStore = func(dsn string) (ports.AuthStore, error) {
@@ -202,8 +202,8 @@ func parseServeConfig(args []string) (serveConfig, error) {
 	flags.BoolVar(&cfg.AllowAnonymousPush, "allow-anonymous-push", false, "allow unauthenticated blob/manifest writes")
 	flags.StringVar(&cfg.AuthPostgresDSN, "auth-postgres-dsn", os.Getenv("REGISTRY_AUTH_POSTGRES_DSN"), "Postgres DSN for auth state")
 	flags.StringVar(&cfg.AuthTokenRealmURL, "auth-token-realm", os.Getenv("REGISTRY_AUTH_TOKEN_REALM_URL"), "Bearer token realm URL advertised to registry clients")
-	flags.StringVar(&cfg.Realm, "realm", "registry", "auth challenge realm")
-	flags.StringVar(&cfg.ServiceName, "service", "registry", "auth challenge service name")
+	flags.StringVar(&cfg.Realm, "realm", "regixtry", "auth challenge realm")
+	flags.StringVar(&cfg.ServiceName, "service", "regixtry", "auth challenge service name")
 	flags.DurationVar(&cfg.ReadHeaderTimeout, "read-header-timeout", defaultReadHeaderTimeout, "maximum time to read request headers")
 	flags.DurationVar(&cfg.ReadTimeout, "read-timeout", defaultReadTimeout, "maximum time to read the full request")
 	flags.DurationVar(&cfg.WriteTimeout, "write-timeout", defaultWriteTimeout, "maximum time to write a response")
@@ -410,10 +410,10 @@ func parseBootstrapConfig(args []string) (BootstrapConfig, error) {
 	flags.StringVar(&cfg.Mode, "mode", "", "bootstrap mode to apply")
 	flags.StringVar(&cfg.PublicURL, "public-url", os.Getenv("REGISTRY_PUBLIC_URL"), "canonical public URL advertised to registry clients")
 	flags.StringVar(&cfg.Addr, "addr", "127.0.0.1:5000", "address to listen on")
-	flags.StringVar(&cfg.StorageRoot, "storage-root", "/var/lib/registry", "root directory for registry runtime state")
-	flags.StringVar(&cfg.StatePath, "state-path", "/etc/registry/bootstrap-state.json", "path to the bootstrap receipt file")
-	flags.StringVar(&cfg.UnitPath, "unit-path", "/etc/systemd/system/registry.service", "path to the generated systemd unit")
-	flags.StringVar(&cfg.ServiceName, "service", "registry", "systemd service name")
+	flags.StringVar(&cfg.StorageRoot, "storage-root", "/var/lib/regixtry", "root directory for registry runtime state")
+	flags.StringVar(&cfg.StatePath, "state-path", "/etc/regixtry/bootstrap-state.json", "path to the bootstrap receipt file")
+	flags.StringVar(&cfg.UnitPath, "unit-path", "/etc/systemd/system/regixtry.service", "path to the generated systemd unit")
+	flags.StringVar(&cfg.ServiceName, "service", "regixtry", "systemd service name")
 	flags.BoolVar(&cfg.NoStart, "no-start", false, "generate bootstrap artifacts without starting the service")
 	flags.BoolVar(&cfg.Rollback, "rollback", false, "remove generated bootstrap artifacts and stop the service")
 
@@ -462,7 +462,7 @@ func serve(ctx context.Context, listener net.Listener, cfg serveConfig, stdout i
 	}()
 
 	if stdout != nil {
-		fmt.Fprintf(stdout, "registry serving on %s\n", listener.Addr().String())
+		fmt.Fprintf(stdout, "regixtry serving on %s\n", listener.Addr().String())
 	}
 
 	select {
@@ -555,7 +555,7 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 		return nil, nil, err
 	}
 
-	service := appregistry.NewService(
+	service := appregixtry.NewService(
 		blobStore,
 		metadataStore,
 		accessController,
@@ -563,7 +563,7 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 		ports.NewInlineJobRunner(),
 	)
 
-	return registryhttp.NewRouter(service, authService), func() {
+	return regixtryhttp.NewRouter(service, authService), func() {
 		_ = metadataStore.Close()
 		if authStore != nil {
 			_ = authStore.Close()
@@ -611,7 +611,7 @@ func runTUI(cfg tuiConfig, stdin io.Reader, stdout io.Writer) error {
 		modelOpts = append(modelOpts, tui.WithAdminClient(adminClient))
 	}
 
-	service := appregistry.NewService(
+	service := appregixtry.NewService(
 		blobStore,
 		metadataStore,
 		localOperatorAccessController{},
@@ -677,5 +677,5 @@ func (localOperatorAccessController) Authorize(context.Context, ports.Action) er
 }
 
 func (localOperatorAccessController) Challenge(ports.Action) ports.Challenge {
-	return ports.Challenge{Scheme: "Bearer", Realm: "registry", Service: "registry"}
+	return ports.Challenge{Scheme: "Bearer", Realm: "regixtry", Service: "regixtry"}
 }
