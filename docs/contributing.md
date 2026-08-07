@@ -63,6 +63,13 @@ Each PR slice should tell one reviewable story.
 - Keep `docs/architecture.md` aligned with the approved layer boundaries and service/TUI separation.
 - Mark completed OpenSpec tasks in `openspec/changes/<change>/tasks.md` as part of the same work unit.
 
+## Release installer expectations
+
+- GitHub Releases are the source of truth for the installer path.
+- Release assets must keep the `registry_<version>_linux_<arch>.tar.gz` and `registry_<version>_checksums.txt` contract in sync with `install.sh`.
+- Checksums are mandatory; if asset naming or checksum publication changes, update the installer, `README.md`, `docs/verification/scripts/install-release-smoke.sh`, and the active OpenSpec tasks in the same slice.
+- Tag-driven release automation must fail if the expected archive or checksum assets are missing.
+
 ## Documentation update triggers
 
 Update reader-facing documentation in the same slice when you change any of the following:
