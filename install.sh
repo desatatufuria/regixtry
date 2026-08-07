@@ -13,6 +13,14 @@ RELEASES_API_URL="${REGISTRY_INSTALL_RELEASES_API_URL:-$DEFAULT_RELEASES_API_URL
 RELEASES_PAGE_URL="${REGISTRY_INSTALL_RELEASES_PAGE_URL:-$DEFAULT_RELEASES_PAGE_URL}"
 TARGET_OS="${REGISTRY_INSTALL_OS:-}"
 TARGET_ARCH="${REGISTRY_INSTALL_ARCH:-}"
+BOOTSTRAP_MODE="${REGISTRY_INSTALL_MODE:-daemon-sqlite}"
+BOOTSTRAP_PUBLIC_URL="${REGISTRY_INSTALL_PUBLIC_URL:-http://127.0.0.1:5000}"
+BOOTSTRAP_ADDR="${REGISTRY_INSTALL_ADDR:-127.0.0.1:5000}"
+BOOTSTRAP_STORAGE_ROOT="${REGISTRY_INSTALL_STORAGE_ROOT:-}"
+BOOTSTRAP_STATE_PATH="${REGISTRY_INSTALL_STATE_PATH:-}"
+BOOTSTRAP_UNIT_PATH="${REGISTRY_INSTALL_UNIT_PATH:-}"
+BOOTSTRAP_SERVICE_NAME="${REGISTRY_INSTALL_SERVICE_NAME:-registry}"
+BOOTSTRAP_ROLLBACK=0
 TMP_DIR=""
 
 log() {
@@ -40,14 +48,24 @@ fail_with_guidance() {
 
 usage() {
   cat <<EOF
-Install the registry binary from verified GitHub Release assets.
+Install the registry binary from verified GitHub Release assets and bootstrap
+the Linux daemon + SQLite runtime by default.
 
 Usage:
-  ${SCRIPT_NAME} [--ref <release-tag>] [--dir <install-dir>] [--help]
+  ${SCRIPT_NAME} [--ref <release-tag>] [--dir <install-dir>] [bootstrap options] [--help]
 
 Options:
   --ref <release-tag>  Install a specific release tag. Defaults to the latest release.
   --dir <path>         Install the binary into this directory.
+  --mode <mode>        Bootstrap mode to invoke after install. Only daemon-sqlite is supported.
+  --public-url <url>   Public URL passed to registry bootstrap. Defaults to http://127.0.0.1:5000.
+  --addr <addr>        Listen address passed to registry bootstrap. Defaults to 127.0.0.1:5000.
+  --storage-root <path>
+                       Storage root passed to registry bootstrap.
+  --state-path <path>  Receipt path passed to registry bootstrap.
+  --unit-path <path>   Systemd unit path passed to registry bootstrap.
+  --service <name>     Systemd service name passed to registry bootstrap. Defaults to registry.
+  --rollback           Run bootstrap rollback after installing the verified binary.
   --help               Show this help output.
 
 Environment overrides:
@@ -55,11 +73,19 @@ Environment overrides:
   REGISTRY_INSTALL_DIR                Default install directory when --dir is not provided.
   REGISTRY_INSTALL_RELEASES_API_URL   Override the release API base URL.
   REGISTRY_INSTALL_RELEASES_PAGE_URL  Override the release downloads page URL.
+  REGISTRY_INSTALL_MODE               Default bootstrap mode when --mode is not provided.
+  REGISTRY_INSTALL_PUBLIC_URL         Default bootstrap public URL when --public-url is not provided.
+  REGISTRY_INSTALL_ADDR               Default bootstrap listen address when --addr is not provided.
+  REGISTRY_INSTALL_STORAGE_ROOT       Default bootstrap storage root when --storage-root is not provided.
+  REGISTRY_INSTALL_STATE_PATH         Default bootstrap receipt path when --state-path is not provided.
+  REGISTRY_INSTALL_UNIT_PATH          Default bootstrap systemd unit path when --unit-path is not provided.
+  REGISTRY_INSTALL_SERVICE_NAME       Default bootstrap systemd service name when --service is not provided.
 
 Examples:
   curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash
   curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash -s -- --ref v1.2.3
   curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash -s -- --dir "$HOME/.local/bin"
+  curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash -s -- --public-url https://registry.example.com
 EOF
 }
 
@@ -104,6 +130,45 @@ parse_args() {
         [[ $# -ge 2 ]] || fail "--dir requires a value"
         INSTALL_DIR="$2"
         shift 2
+        ;;
+      --mode)
+        [[ $# -ge 2 ]] || fail "--mode requires a value"
+        BOOTSTRAP_MODE="$2"
+        shift 2
+        ;;
+      --public-url)
+        [[ $# -ge 2 ]] || fail "--public-url requires a value"
+        BOOTSTRAP_PUBLIC_URL="$2"
+        shift 2
+        ;;
+      --addr)
+        [[ $# -ge 2 ]] || fail "--addr requires a value"
+        BOOTSTRAP_ADDR="$2"
+        shift 2
+        ;;
+      --storage-root)
+        [[ $# -ge 2 ]] || fail "--storage-root requires a value"
+        BOOTSTRAP_STORAGE_ROOT="$2"
+        shift 2
+        ;;
+      --state-path)
+        [[ $# -ge 2 ]] || fail "--state-path requires a value"
+        BOOTSTRAP_STATE_PATH="$2"
+        shift 2
+        ;;
+      --unit-path)
+        [[ $# -ge 2 ]] || fail "--unit-path requires a value"
+        BOOTSTRAP_UNIT_PATH="$2"
+        shift 2
+        ;;
+      --service)
+        [[ $# -ge 2 ]] || fail "--service requires a value"
+        BOOTSTRAP_SERVICE_NAME="$2"
+        shift 2
+        ;;
+      --rollback)
+        BOOTSTRAP_ROLLBACK=1
+        shift
         ;;
       --help|-h)
         usage
@@ -310,6 +375,36 @@ extract_registry_binary() {
   install -m 0755 "${extract_dir}/registry" "${destination}/${DEFAULT_BIN_NAME}"
 }
 
+run_bootstrap() {
+  local registry_binary="$1"
+  local bootstrap_args=("bootstrap" "--mode" "${BOOTSTRAP_MODE}" "--public-url" "${BOOTSTRAP_PUBLIC_URL}" "--addr" "${BOOTSTRAP_ADDR}" "--service" "${BOOTSTRAP_SERVICE_NAME}")
+
+  if [[ -n "${BOOTSTRAP_STORAGE_ROOT}" ]]; then
+    bootstrap_args+=("--storage-root" "${BOOTSTRAP_STORAGE_ROOT}")
+  fi
+  if [[ -n "${BOOTSTRAP_STATE_PATH}" ]]; then
+    bootstrap_args+=("--state-path" "${BOOTSTRAP_STATE_PATH}")
+  fi
+  if [[ -n "${BOOTSTRAP_UNIT_PATH}" ]]; then
+    bootstrap_args+=("--unit-path" "${BOOTSTRAP_UNIT_PATH}")
+  fi
+  if [[ "${BOOTSTRAP_ROLLBACK}" == "1" ]]; then
+    bootstrap_args+=("--rollback")
+  fi
+
+  if ! "${registry_binary}" "${bootstrap_args[@]}"; then
+    printf '[registry-install] ERROR: bootstrap command failed; verified registry binary remains installed at %s\n' "${registry_binary}" >&2
+    exit 1
+  fi
+
+  if [[ "${BOOTSTRAP_ROLLBACK}" == "1" ]]; then
+    log "Rolled back bootstrap artifacts with ${registry_binary}"
+    return
+  fi
+
+  log "Applied bootstrap mode ${BOOTSTRAP_MODE} with ${registry_binary}"
+}
+
 main() {
   local normalized_os=""
   local normalized_arch=""
@@ -362,6 +457,7 @@ main() {
   extract_registry_binary "${archive_file}" "${INSTALL_DIR}"
 
   log "Installed ${DEFAULT_BIN_NAME} to ${INSTALL_DIR}/${DEFAULT_BIN_NAME}"
+  run_bootstrap "${INSTALL_DIR}/${DEFAULT_BIN_NAME}"
 
   case ":${PATH}:" in
     *":${INSTALL_DIR}:"*)
