@@ -1,4 +1,4 @@
-package registryhttp
+package regixtryhttp
 
 import (
 	"bytes"
@@ -12,14 +12,14 @@ import (
 	"testing"
 	"time"
 
-	appauth "registry/internal/app/auth"
-	appregistry "registry/internal/app/registry"
-	domainauth "registry/internal/domain/auth"
-	domain "registry/internal/domain/registry"
-	authpostgres "registry/internal/infra/auth/postgres"
-	metadata "registry/internal/infra/metadata/sqlite"
-	"registry/internal/infra/storage/fsblob"
-	"registry/internal/ports"
+	appauth "regixtry/internal/app/auth"
+	appregixtry "regixtry/internal/app/regixtry"
+	domainauth "regixtry/internal/domain/auth"
+	domain "regixtry/internal/domain/regixtry"
+	authpostgres "regixtry/internal/infra/auth/postgres"
+	metadata "regixtry/internal/infra/metadata/sqlite"
+	"regixtry/internal/infra/storage/fsblob"
+	"regixtry/internal/ports"
 
 	_ "modernc.org/sqlite"
 )
@@ -178,7 +178,7 @@ func TestRouterAllowsAnonymousPullWhenConfigured(t *testing.T) {
 func TestRouterRejectsAnonymousPushByDefault(t *testing.T) {
 	t.Parallel()
 
-	handler, cleanup := newTestRouterWithAuth(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "http://127.0.0.1:5000/auth/token", Service: "registry"}), fakeAuthService{})
+	handler, cleanup := newTestRouterWithAuth(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "http://127.0.0.1:5000/auth/token", Service: "regixtry"}), fakeAuthService{})
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodPost, "/v2/library/alpine/blobs/uploads/", nil)
@@ -199,7 +199,7 @@ func TestRouterRejectsAnonymousPushByDefault(t *testing.T) {
 func TestRouterChallengesUnauthenticatedV2PingWhenAuthEnabled(t *testing.T) {
 	t.Parallel()
 
-	handler, cleanup := newTestRouterWithAuth(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "http://127.0.0.1:5000/auth/token", Service: "registry"}), fakeAuthService{})
+	handler, cleanup := newTestRouterWithAuth(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "http://127.0.0.1:5000/auth/token", Service: "regixtry"}), fakeAuthService{})
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodGet, "/v2/", nil)
@@ -212,7 +212,7 @@ func TestRouterChallengesUnauthenticatedV2PingWhenAuthEnabled(t *testing.T) {
 	}
 
 	challenge := recorder.Header().Get("WWW-Authenticate")
-	if !strings.Contains(challenge, `realm="http://127.0.0.1:5000/auth/token"`) || !strings.Contains(challenge, `service="registry"`) {
+	if !strings.Contains(challenge, `realm="http://127.0.0.1:5000/auth/token"`) || !strings.Contains(challenge, `service="regixtry"`) {
 		t.Fatalf("WWW-Authenticate = %q, want bearer challenge for /v2/ ping", challenge)
 	}
 	if strings.Contains(challenge, `scope=`) {
@@ -223,7 +223,7 @@ func TestRouterChallengesUnauthenticatedV2PingWhenAuthEnabled(t *testing.T) {
 func TestRouterAcceptsAuthenticatedV2PingWhenAuthEnabled(t *testing.T) {
 	t.Parallel()
 
-	handler, cleanup := newTestRouterWithAuth(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "http://127.0.0.1:5000/auth/token", Service: "registry"}), fakeAuthService{
+	handler, cleanup := newTestRouterWithAuth(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "http://127.0.0.1:5000/auth/token", Service: "regixtry"}), fakeAuthService{
 		verify: &domainauth.Principal{Subject: "user-1", Username: "alice"},
 	})
 	defer cleanup()
@@ -245,7 +245,7 @@ func TestRouterAcceptsAuthenticatedV2PingWhenAuthEnabled(t *testing.T) {
 func TestRouterAdminBoundaryRejectsMissingBearerToken(t *testing.T) {
 	t.Parallel()
 
-	handler, cleanup := newTestRouterWithAuth(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "http://127.0.0.1:5000/auth/token", Service: "registry"}), fakeAuthService{})
+	handler, cleanup := newTestRouterWithAuth(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "http://127.0.0.1:5000/auth/token", Service: "regixtry"}), fakeAuthService{})
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/v1/users", nil)
@@ -264,7 +264,7 @@ func TestRouterAdminBoundaryRejectsMissingBearerToken(t *testing.T) {
 func TestRouterAdminBoundaryRejectsNonAdminPrincipal(t *testing.T) {
 	t.Parallel()
 
-	handler, cleanup := newTestRouterWithAuth(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "registry", Service: "registry"}), fakeAuthService{
+	handler, cleanup := newTestRouterWithAuth(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "regixtry", Service: "regixtry"}), fakeAuthService{
 		verify: &domainauth.Principal{Subject: "atk_1", UserID: "user-1", Username: "alice", IsAdmin: false},
 	})
 	defer cleanup()
@@ -823,7 +823,7 @@ func TestRouterKeepsV2PingOpenWhenAuthDisabled(t *testing.T) {
 
 func TestRouterLogsUnauthorizedChallengeDetails(t *testing.T) {
 	var logs bytes.Buffer
-	handler, cleanup := newTestRouterWithAuth(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "http://127.0.0.1:5000/auth/token", Service: "registry"}), fakeAuthService{}, WithLogger(log.New(&logs, "", 0)))
+	handler, cleanup := newTestRouterWithAuth(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "http://127.0.0.1:5000/auth/token", Service: "regixtry"}), fakeAuthService{}, WithLogger(log.New(&logs, "", 0)))
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodPost, "/v2/library/alpine/blobs/uploads/", nil)
@@ -845,7 +845,7 @@ func TestRouterLogsUnauthorizedChallengeDetails(t *testing.T) {
 
 func TestRouterLogsRequestPathWithQueryString(t *testing.T) {
 	var logs bytes.Buffer
-	handler, cleanup := newTestRouterWithAuth(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "registry", Service: "registry"}), fakeAuthService{
+	handler, cleanup := newTestRouterWithAuth(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "regixtry", Service: "regixtry"}), fakeAuthService{
 		loginResult: ports.LoginResult{BearerToken: "issued-token", ExpiresAt: time.Date(2026, 1, 2, 3, 19, 5, 0, time.UTC)},
 	}, WithLogger(log.New(&logs, "", 0)))
 	defer cleanup()
@@ -868,7 +868,7 @@ func TestRouterLogsRequestPathWithQueryString(t *testing.T) {
 func TestRouterIssuesAccessTokenFromBasicCredentials(t *testing.T) {
 	t.Parallel()
 
-	handler, cleanup := newTestRouterWithAuth(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "registry", Service: "registry"}), fakeAuthService{
+	handler, cleanup := newTestRouterWithAuth(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "regixtry", Service: "regixtry"}), fakeAuthService{
 		loginResult: ports.LoginResult{BearerToken: "issued-token", ExpiresAt: time.Date(2026, 1, 2, 3, 19, 5, 0, time.UTC), Scope: "repository:team/app:pull"},
 	})
 	defer cleanup()
@@ -898,7 +898,7 @@ func TestRouterIssuesAccessTokenFromBasicCredentials(t *testing.T) {
 func TestRouterRejectsPushWhenBearerScopeIsPullOnly(t *testing.T) {
 	t.Parallel()
 
-	handler, cleanup := newTestRouterWithAuth(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "registry", Service: "registry"}), fakeAuthService{
+	handler, cleanup := newTestRouterWithAuth(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "regixtry", Service: "regixtry"}), fakeAuthService{
 		verify: &domainauth.Principal{
 			Subject:  "atk_1",
 			Username: "alice",
@@ -922,7 +922,7 @@ func TestRouterRejectsPushWhenBearerScopeIsPullOnly(t *testing.T) {
 func TestRouterRejectsMalformedTokenScopeRequests(t *testing.T) {
 	t.Parallel()
 
-	handler, cleanup := newTestRouterWithAuth(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "registry", Service: "registry"}), fakeAuthService{})
+	handler, cleanup := newTestRouterWithAuth(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "regixtry", Service: "regixtry"}), fakeAuthService{})
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodGet, "/auth/token?service=registry&scope=repository:team/app", nil)
@@ -939,7 +939,7 @@ func TestRouterRejectsMalformedTokenScopeRequests(t *testing.T) {
 func TestRouterChallengesProtectedPullWithConfiguredTokenRealm(t *testing.T) {
 	t.Parallel()
 
-	handler, cleanup := newTestRouterWithAuth(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "http://127.0.0.1:5000/auth/token", Service: "registry"}), fakeAuthService{})
+	handler, cleanup := newTestRouterWithAuth(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "http://127.0.0.1:5000/auth/token", Service: "regixtry"}), fakeAuthService{})
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodGet, "/v2/team/app/manifests/latest", nil)
@@ -972,7 +972,7 @@ func TestRouterRejectsInvalidBearerTokens(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			handler, cleanup := newTestRouterWithAuth(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "registry", Service: "registry"}), fakeAuthService{verifyErr: tt.err})
+			handler, cleanup := newTestRouterWithAuth(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "regixtry", Service: "regixtry"}), fakeAuthService{verifyErr: tt.err})
 			defer cleanup()
 
 			req := httptest.NewRequest(http.MethodGet, "/v2/team/app/tags/list", nil)
@@ -1119,7 +1119,7 @@ func newTestRouterWithRealAuth(t *testing.T) (*Router, *appauth.Service, domaina
 	t.Helper()
 
 	authStore := newSQLiteAuthStore(t)
-	accessController := ports.NewPrincipalAccessController(ports.Challenge{Realm: "http://127.0.0.1:5000/auth/token", Service: "registry"})
+	accessController := ports.NewPrincipalAccessController(ports.Challenge{Realm: "http://127.0.0.1:5000/auth/token", Service: "regixtry"})
 	authService := appauth.NewService(authStore)
 	handler, cleanup := newTestRouterWithAuth(t, accessController, authServiceOrFatal(t, authService))
 
@@ -1186,7 +1186,7 @@ func newSQLiteAuthStore(t *testing.T) *authpostgres.Store {
 }
 
 func newRouterWithStores(blobStore *fsblob.Store, metadataStore *metadata.Store, accessController ports.AccessController, authService ports.AuthService, options ...RouterOption) *Router {
-	service := appregistry.NewService(
+	service := appregixtry.NewService(
 		blobStore,
 		metadataStore,
 		accessController,
@@ -1204,7 +1204,7 @@ func (allowAllAccessController) Authorize(context.Context, ports.Action) error {
 }
 
 func (allowAllAccessController) Challenge(ports.Action) ports.Challenge {
-	return ports.Challenge{Scheme: "Bearer", Realm: "registry", Service: "registry"}
+	return ports.Challenge{Scheme: "Bearer", Realm: "regixtry", Service: "regixtry"}
 }
 
 type fakeAuthService struct {

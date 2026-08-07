@@ -8,8 +8,8 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	appregistry "registry/internal/app/registry"
-	"registry/internal/ports"
+	appregixtry "regixtry/internal/app/regixtry"
+	"regixtry/internal/ports"
 )
 
 type Option func(*Model)
@@ -27,10 +27,10 @@ func WithAdminClient(adminClient AdminClient) Option {
 }
 
 type QueryService interface {
-	Catalog(ctx context.Context, limit int, after string) (appregistry.CatalogResult, error)
-	Tags(ctx context.Context, repositoryName string, limit int, after string) (appregistry.TagsResult, error)
-	ResolveManifest(ctx context.Context, repositoryName string, reference string) (appregistry.ManifestDetails, error)
-	Uploads(ctx context.Context, repositoryName string) ([]appregistry.UploadDetails, error)
+	Catalog(ctx context.Context, limit int, after string) (appregixtry.CatalogResult, error)
+	Tags(ctx context.Context, repositoryName string, limit int, after string) (appregixtry.TagsResult, error)
+	ResolveManifest(ctx context.Context, repositoryName string, reference string) (appregixtry.ManifestDetails, error)
+	Uploads(ctx context.Context, repositoryName string) ([]appregixtry.UploadDetails, error)
 }
 
 type RepositoriesModel struct {
@@ -45,17 +45,17 @@ type TagsModel struct {
 }
 
 type ManifestModel struct {
-	Details appregistry.ManifestDetails
+	Details appregixtry.ManifestDetails
 }
 
 type BlobsModel struct {
-	Items    []appregistry.BlobDetails
+	Items    []appregixtry.BlobDetails
 	Selected int
 }
 
 type UploadsModel struct {
 	Repository string
-	Items      []appregistry.UploadDetails
+	Items      []appregixtry.UploadDetails
 }
 
 type EmptyStateModel struct {
@@ -172,21 +172,21 @@ type Model struct {
 }
 
 type catalogLoadedMsg struct {
-	result appregistry.CatalogResult
+	result appregixtry.CatalogResult
 	err    error
 }
 
 type tagsLoadedMsg struct {
 	repository string
-	result     appregistry.TagsResult
+	result     appregixtry.TagsResult
 	err        error
 }
 
 type manifestLoadedMsg struct {
 	repository string
 	tag        string
-	manifest   appregistry.ManifestDetails
-	uploads    []appregistry.UploadDetails
+	manifest   appregixtry.ManifestDetails
+	uploads    []appregixtry.UploadDetails
 	err        error
 }
 
@@ -230,7 +230,7 @@ func NewModel(service QueryService, options ...Option) Model {
 		adminAuth:   adminAuthStateUnauthenticated,
 		adminReturn: screenLoading,
 		empty: EmptyStateModel{
-			Title:   "Registry is empty",
+			Title:   "Regixtry is empty",
 			Message: "No repositories have been published yet.",
 		},
 		mutation: MutationUnavailableModel{
@@ -300,11 +300,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lastRepository = msg.repository
 		m.lastTag = msg.tag
 		m.manifest = ManifestModel{Details: msg.manifest}
-		m.blobs = BlobsModel{Items: append([]appregistry.BlobDetails(nil), msg.manifest.Blobs...)}
+		m.blobs = BlobsModel{Items: append([]appregixtry.BlobDetails(nil), msg.manifest.Blobs...)}
 		sort.Slice(msg.uploads, func(i, j int) bool {
 			return msg.uploads[i].StartedAt.Before(msg.uploads[j].StartedAt)
 		})
-		m.uploads = UploadsModel{Repository: msg.repository, Items: append([]appregistry.UploadDetails(nil), msg.uploads...)}
+		m.uploads = UploadsModel{Repository: msg.repository, Items: append([]appregixtry.UploadDetails(nil), msg.uploads...)}
 		m.showMutationNotice = false
 		m.status = ""
 		m.screen = screenManifest
@@ -428,7 +428,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) View() string {
 	var body strings.Builder
-	body.WriteString("Registry Console\n\n")
+	body.WriteString("Regixtry Console\n\n")
 
 	switch m.screen {
 	case screenLoading:
@@ -981,7 +981,7 @@ func renderList(items []string, selected int) string {
 	return strings.Join(lines, "\n")
 }
 
-func renderManifest(manifest appregistry.ManifestDetails) string {
+func renderManifest(manifest appregixtry.ManifestDetails) string {
 	lines := []string{
 		fmt.Sprintf("Manifest · %s:%s", manifest.Repository, manifest.Reference),
 		fmt.Sprintf("Digest: %s", manifest.Digest),

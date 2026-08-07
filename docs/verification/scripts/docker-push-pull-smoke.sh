@@ -17,7 +17,7 @@ fi
 PUBLIC_URL="${PUBLIC_URL:-${REGISTRY_SCHEME}://${REGISTRY_HOST}}"
 REPOSITORY="registry-auth/smoke"
 IMAGE="${REGISTRY_HOST}/${REPOSITORY}:latest"
-AUTH_DSN="postgres://registry:registry@127.0.0.1:${POSTGRES_PORT}/registry_auth?sslmode=disable"
+AUTH_DSN="postgres://registry:registry@127.0.0.1:${POSTGRES_PORT}/regixtry_auth?sslmode=disable"
 ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-change-me-now}"
 POSTGRES_CONTAINER="registry-auth-smoke-postgres-${PORT}"
@@ -53,31 +53,31 @@ mkdir -p "${ROOT_DIR}"
 docker rm -f "${POSTGRES_CONTAINER}" >/dev/null 2>&1 || true
 docker run -d \
   --name "${POSTGRES_CONTAINER}" \
-  -e POSTGRES_DB=registry_auth \
+  -e POSTGRES_DB=regixtry_auth \
   -e POSTGRES_USER=registry \
   -e POSTGRES_PASSWORD=registry \
   -p "${POSTGRES_PORT}:5432" \
   postgres:17-alpine >/dev/null
 
 for _ in $(seq 1 30); do
-  if docker exec "${POSTGRES_CONTAINER}" pg_isready -U registry -d registry_auth >/dev/null 2>&1; then
+  if docker exec "${POSTGRES_CONTAINER}" pg_isready -U registry -d regixtry_auth >/dev/null 2>&1; then
     break
   fi
   sleep 1
 done
 
-docker exec "${POSTGRES_CONTAINER}" pg_isready -U registry -d registry_auth >/dev/null 2>&1
+docker exec "${POSTGRES_CONTAINER}" pg_isready -U registry -d regixtry_auth >/dev/null 2>&1
 
 GOMODCACHE="${GOMODCACHE:-/tmp/opencode/gomodcache}" \
 GOPATH="${GOPATH:-/tmp/opencode/gopath}" \
 GOSUMDB="${GOSUMDB:-off}" \
-printf '%s\n' "${ADMIN_PASSWORD}" | go run ./cmd/registry bootstrap-admin \
+printf '%s\n' "${ADMIN_PASSWORD}" | go run ./cmd/regixtry bootstrap-admin \
   -auth-postgres-dsn "${AUTH_DSN}" \
   -username "${ADMIN_USERNAME}" \
   -password-stdin
 
 serve_args=(
-  ./cmd/registry
+  ./cmd/regixtry
   serve
   -addr "${ADDR}"
   -storage-root "${ROOT_DIR}"

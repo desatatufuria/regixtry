@@ -22,7 +22,7 @@ This slice closes `registry-foundation` Phase 4.
 
 | Work unit | What to verify first | Out of scope |
 |---|---|---|
-| PR 3 / Unit 3 | `go test ./...` for `internal/protocol/http`, `internal/tui`, and `cmd/registry` | Post-v1 mutations such as delete, retention, and GC |
+| PR 3 / Unit 3 | `go test ./...` for `internal/protocol/http`, `internal/tui`, and `cmd/regixtry` | Post-v1 mutations such as delete, retention, and GC |
 | Docker smoke | `docs/verification/scripts/docker-push-pull-smoke.sh` | Remote storage backends, auth providers, multi-tenant setups |
 | TUI smoke | `docs/verification/scripts/tui-smoke.sh` | Interactive visual polish beyond inspection flows |
 
@@ -44,7 +44,7 @@ docs/verification/scripts/tui-smoke.sh /tmp/registry-foundation-smoke
 |---|---|
 | Go integration suite | All package tests pass. |
 | Docker smoke | `docker pull` returns the image pushed into the local registry; the smoke server is started with explicit `-allow-anonymous-push` for this verification flow. |
-| TUI smoke | Snapshot output includes `Registry Console` and the seeded `registry-foundation/smoke` repository name. |
+| TUI smoke | Snapshot output includes `Regixtry Console` and the seeded `registry-foundation/smoke` repository name. |
 
 ## Notes
 

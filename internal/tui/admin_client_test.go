@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"registry/internal/domain/auth"
-	"registry/internal/ports"
+	"regixtry/internal/domain/auth"
+	"regixtry/internal/ports"
 )
 
 func TestNewHTTPAdminClient(t *testing.T) {
@@ -18,7 +18,7 @@ func TestNewHTTPAdminClient(t *testing.T) {
 	t.Run("uses bounded default timeout when client is nil", func(t *testing.T) {
 		t.Parallel()
 
-		client, err := NewHTTPAdminClient("https://registry.example.com", nil)
+		client, err := NewHTTPAdminClient("https://regixtry.example.com", nil)
 		if err != nil {
 			t.Fatalf("NewHTTPAdminClient() error = %v", err)
 		}
@@ -37,7 +37,7 @@ func TestNewHTTPAdminClient(t *testing.T) {
 		t.Parallel()
 
 		injected := &http.Client{Timeout: 42 * time.Second}
-		client, err := NewHTTPAdminClient("https://registry.example.com", injected)
+		client, err := NewHTTPAdminClient("https://regixtry.example.com", injected)
 		if err != nil {
 			t.Fatalf("NewHTTPAdminClient() error = %v", err)
 		}
@@ -234,7 +234,7 @@ func TestHTTPAdminClientMapsInvalidTokenToExpiredSession(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("WWW-Authenticate", `Bearer realm="registry", error="invalid_token"`)
+		w.Header().Set("WWW-Authenticate", `Bearer realm="regixtry", error="invalid_token"`)
 		w.WriteHeader(http.StatusUnauthorized)
 		_, _ = w.Write([]byte(`{"error":"expired access token"}`))
 	}))
@@ -261,7 +261,7 @@ func TestHTTPAdminClientMapsInvalidTokenToExpiredSession(t *testing.T) {
 func TestHTTPAdminClientRejectsLocallyExpiredSession(t *testing.T) {
 	t.Parallel()
 
-	client, err := NewHTTPAdminClient("https://registry.example.com", nil)
+	client, err := NewHTTPAdminClient("https://regixtry.example.com", nil)
 	if err != nil {
 		t.Fatalf("NewHTTPAdminClient() error = %v", err)
 	}
@@ -375,7 +375,7 @@ func TestHTTPAdminClientUserMutations(t *testing.T) {
 			path:       "/admin/v1/users/u-1:disable",
 			statusCode: http.StatusUnauthorized,
 			headers: map[string]string{
-				"WWW-Authenticate": `Bearer realm="registry", error="invalid_token"`,
+				"WWW-Authenticate": `Bearer realm="regixtry", error="invalid_token"`,
 			},
 			body: `{"error":"expired access token"}`,
 			run: func(ctx context.Context, client *HTTPAdminClient, session AdminSession) (ports.AdminUser, error) {

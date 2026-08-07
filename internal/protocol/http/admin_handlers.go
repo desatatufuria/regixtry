@@ -1,4 +1,4 @@
-package registryhttp
+package regixtryhttp
 
 import (
 	"encoding/json"
@@ -9,9 +9,9 @@ import (
 	"time"
 
 	stdhttp "net/http"
-	domainauth "registry/internal/domain/auth"
-	domainregistry "registry/internal/domain/registry"
-	"registry/internal/ports"
+	domainauth "regixtry/internal/domain/auth"
+	domainregistry "regixtry/internal/domain/regixtry"
+	"regixtry/internal/ports"
 )
 
 func (r *Router) handleAdmin(w stdhttp.ResponseWriter, req *stdhttp.Request) {

@@ -1,6 +1,6 @@
-# Registry
+# Regixtry
 
-Registry is a low-resource, single-binary OCI registry for internal and OSS use. V1 is intentionally narrow: deliver correct local registry behavior first, keep operator visibility simple, and leave platform expansion behind explicit seams instead of mixing it into the first release.
+Regixtry is a low-resource, single-binary OCI registry for internal and OSS use. V1 is intentionally narrow: deliver correct local registry behavior first, keep operator visibility simple, and leave platform expansion behind explicit seams instead of mixing it into the first release.
 
 ## Quick path
 
@@ -22,8 +22,8 @@ Use the repo-hosted installer when you want a verified Linux release and a truth
 
 | Choice | What it does | Constraints |
 | --- | --- | --- |
-| `binary only` | Installs the verified `registry` binary and stops. | No daemon/service is created. You start the runtime manually when ready. |
-| `binary + daemon/service` | Installs the verified binary, then runs `registry bootstrap --mode daemon-sqlite`. | Supported only on Debian, Ubuntu, Linux Mint, RHEL 9.x, and RHEL 10.x hosts with systemd. |
+| `binary only` | Installs the verified `regixtry` binary and stops. | No daemon/service is created. You start the runtime manually when ready. |
+| `binary + daemon/service` | Installs the verified binary, then runs `regixtry bootstrap --mode daemon-sqlite`. | Supported only on Debian, Ubuntu, Linux Mint, RHEL 9.x, and RHEL 10.x hosts with systemd. |
 
 Deferred automation remains out of scope in this slice:
 
@@ -45,15 +45,15 @@ curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/instal
 # Non-interactive daemon/service install with bootstrap overrides.
 curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash -s -- \
   --mode daemon-sqlite \
-  --public-url https://registry.example.com \
-  --storage-root /srv/registry
+  --public-url https://regixtry.example.com \
+  --storage-root /srv/regixtry
 
 # Roll back generated daemon/service bootstrap artifacts while keeping the verified binary installed.
 curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash -s -- \
   --mode daemon-sqlite \
   --rollback \
-  --state-path /etc/registry/bootstrap-state.json \
-  --unit-path /etc/systemd/system/registry.service
+  --state-path /etc/regixtry/bootstrap-state.json \
+  --unit-path /etc/systemd/system/regixtry.service
 ```
 
 ### Mode selection and non-interactive runs
@@ -70,14 +70,14 @@ curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/instal
 | Topic | Decision |
 | --- | --- |
 | Source | Resolves the latest release or `--ref <tag>` from GitHub Releases. |
-| Verification | Downloads the matching `registry_<version>_linux_<arch>.tar.gz` plus `registry_<version>_checksums.txt` and verifies the archive before install. |
+| Verification | Downloads the matching `regixtry_<version>_linux_<arch>.tar.gz` plus `regixtry_<version>_checksums.txt` and verifies the archive before install. |
 | Truthful host scope | Linux only, with `amd64` and `arm64` assets; automated daemon/service bootstrap is truthful only on Debian, Ubuntu, Linux Mint, RHEL 9.x, and RHEL 10.x with systemd. |
 | Deferred host scope | Alpine host bootstrap, Postgres-auth installer orchestration, and containerized installs remain manual today. |
-| Binary-only success contract | Success means the verified `registry` binary is installed and the installer prints manual next steps. It does not claim service activation. |
+| Binary-only success contract | Success means the verified `regixtry` binary is installed and the installer prints manual next steps. It does not claim service activation. |
 | Daemon/service success contract | Success means the service is installed and `/v2/` is reachable with HTTP `200` or `401`. |
 | Failure mode | Hard-fails on release asset, checksum, extraction, unsupported-host, activation, or readiness problems. Archive/download failures print manual guidance; bootstrap failures keep the binary in place and report the failing step. |
 | Install target | Uses `/usr/local/bin` when writable, otherwise `~/.local/bin`, or `--dir` when provided. |
-| Installed binary name | Always installs the executable as `registry`. |
+| Installed binary name | Always installs the executable as `regixtry`. |
 
 ### Daemon/service bootstrap assumptions and rollback
 
@@ -86,7 +86,7 @@ curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/instal
 | Privileges | The default daemon/service bootstrap writes under `/etc` and `/var/lib`, so use a root-owned install path when you want that flow. |
 | Service manager | Automated host bootstrap requires systemd. The installer does not pretend SysV, OpenRC, or user-level services are supported here. |
 | Reachability check | Bootstrap polls `GET <public-url>/v2/` and succeeds only when the registry answers with HTTP `200` or `401`. |
-| Receipt path | The bootstrap receipt defaults to `/etc/registry/bootstrap-state.json`; reuse that same path when you invoke `--mode daemon-sqlite --rollback`. |
+| Receipt path | The bootstrap receipt defaults to `/etc/regixtry/bootstrap-state.json`; reuse that same path when you invoke `--mode daemon-sqlite --rollback`. |
 | Rollback scope | `--rollback` applies only to `daemon-sqlite` bootstrap artifacts. It removes generated runtime/service artifacts and stops or disables the service. |
 | Binary retention | Rollback and failed activation remove generated bootstrap artifacts only. They do not uninstall the verified release binary. |
 
@@ -100,8 +100,8 @@ Use the manual paths below when you want only the release asset, need a deferred
 ```bash
 git clone https://github.com/desatatufuria/workspace.git
 cd workspace
-go build -o registry ./cmd/registry
-install -m 0755 registry "$HOME/.local/bin/registry"
+go build -o regixtry ./cmd/regixtry
+install -m 0755 regixtry "$HOME/.local/bin/regixtry"
 ```
 
 ## Local Docker Compose helper runtime
@@ -113,8 +113,8 @@ This top-level Compose setup is a convenience for local bring-up and smoke-style
 ### Quick path
 
 1. Start Postgres: `docker compose up -d postgres`
-2. Bootstrap the first admin: `printf '%s\n' '<admin-password>' | docker compose run --rm -T registry bootstrap-admin -password-stdin`
-3. Start the registry: `docker compose up -d registry`
+2. Bootstrap the first admin: `printf '%s\n' '<admin-password>' | docker compose run --rm -T regixtry bootstrap-admin -password-stdin`
+3. Start the registry: `docker compose up -d regixtry`
 4. Log in from Docker: `printf '%s\n' '<admin-password>' | docker login localhost:${REGISTRY_PORT:-5517} -u admin --password-stdin`
 
 Compose publishes the registry on `127.0.0.1:${REGISTRY_PORT:-5517}` and sets `REGISTRY_PUBLIC_URL=http://localhost:${REGISTRY_PORT:-5517}` for the explicit local HTTP path. It keeps SQLite/blob data in the `registry-data` volume and auth state in the `postgres-data` volume.
@@ -130,8 +130,8 @@ docker network create dtf-netwok
 Use this order whenever auth is enabled:
 
 1. `docker compose up -d postgres`
-2. `printf '%s\n' '<admin-password>' | docker compose run --rm -T registry bootstrap-admin -username admin -password-stdin`
-3. `docker compose up -d registry`
+2. `printf '%s\n' '<admin-password>' | docker compose run --rm -T regixtry bootstrap-admin -username admin -password-stdin`
+3. `docker compose up -d regixtry`
 4. `printf '%s\n' '<admin-password>' | docker login localhost:${REGISTRY_PORT:-5517} -u admin --password-stdin`
 5. Push or pull images against `localhost:${REGISTRY_PORT:-5517}`.
 
@@ -191,9 +191,9 @@ For now, use `bootstrap-admin` only to create or rotate the initial global admin
 Example snapshot run against the compose Postgres service:
 
 ```bash
-go run ./cmd/registry tui \
+go run ./cmd/regixtry tui \
   -storage-root ./data \
-  -auth-postgres-dsn "postgres://registry:registry@127.0.0.1:5432/registry_auth?sslmode=disable" \
+  -auth-postgres-dsn "postgres://registry:registry@127.0.0.1:5432/regixtry_auth?sslmode=disable" \
   -snapshot
 ```
 
@@ -203,9 +203,9 @@ The snapshot will render a notice explaining that local TUI admin actions are in
 
 | Topic | Decision |
 | --- | --- |
-| Image build | Top-level `Dockerfile` builds `cmd/registry` into a single runtime image. |
+| Image build | Top-level `Dockerfile` builds `cmd/regixtry` into a single runtime image. |
 | Auth wiring | `docker-compose.yml` sets `REGISTRY_AUTH_POSTGRES_DSN` plus a canonical `REGISTRY_PUBLIC_URL`. The registry derives `/auth/token` from that public URL, so the advertised bearer challenge stays aligned with the host/port clients actually use. |
-| First startup | Auth-enabled `serve` fails fast until a global admin exists, so bootstrap the admin before bringing up `registry`. |
+| First startup | Auth-enabled `serve` fails fast until a global admin exists, so bootstrap the admin before bringing up `regixtry`. |
 
 ## V1 outcome
 
@@ -213,7 +213,7 @@ V1 delivers a correct local registry with clear operator visibility.
 
 | Area | Included in v1 |
 | --- | --- |
-| Registry protocol | OCI/Docker-compatible push and pull for manifests and blobs |
+| Regixtry protocol | OCI/Docker-compatible push and pull for manifests and blobs |
 | Discovery | Repository listing, tag browsing, manifest inspection, and blob inspection |
 | Storage model | Local filesystem blob storage with SQLite-backed metadata |
 | Upload lifecycle | Staged uploads, digest validation, and publish-only-on-valid-content rules |
@@ -248,10 +248,10 @@ If a capability depends on Docker daemon control instead of registry protocol be
 ## Architecture guardrails
 
 - Single Go binary with `serve` and `tui` entry modes.
-- Registry semantics live in application/domain layers, not in HTTP handlers or the TUI.
+- Regixtry semantics live in application/domain layers, not in HTTP handlers or the TUI.
 - Filesystem blobs remain authoritative for content bytes.
 - SQLite exists to index repositories, tags, manifests, and upload state cheaply.
-- Registry metadata stays in SQLite while auth state lives in Postgres when auth is enabled.
+- Regixtry metadata stays in SQLite while auth state lives in Postgres when auth is enabled.
 - Anonymous pull MAY be enabled by configuration; when disabled, the registry advertises Docker-compatible Bearer challenges that lead clients to `/auth/token`.
 
 ## Workflow baseline

@@ -1,4 +1,4 @@
-package registry
+package regixtry
 
 import (
 	"context"
@@ -7,8 +7,8 @@ import (
 	"io"
 	"strings"
 
-	domain "registry/internal/domain/registry"
-	"registry/internal/ports"
+	domain "regixtry/internal/domain/regixtry"
+	"regixtry/internal/ports"
 )
 
 type Service struct {

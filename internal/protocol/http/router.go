@@ -1,4 +1,4 @@
-package registryhttp
+package regixtryhttp
 
 import (
 	"encoding/json"
@@ -10,14 +10,14 @@ import (
 	"strings"
 	"time"
 
-	appregistry "registry/internal/app/registry"
-	domainauth "registry/internal/domain/auth"
-	domain "registry/internal/domain/registry"
-	"registry/internal/ports"
+	appregixtry "regixtry/internal/app/regixtry"
+	domainauth "regixtry/internal/domain/auth"
+	domain "regixtry/internal/domain/regixtry"
+	"regixtry/internal/ports"
 )
 
 type Router struct {
-	service *appregistry.Service
+	service *appregixtry.Service
 	auth    ports.AuthService
 	admin   ports.AdminHTTPService
 	logger  *log.Logger
@@ -34,7 +34,7 @@ func WithLogger(logger *log.Logger) RouterOption {
 	}
 }
 
-func NewRouter(service *appregistry.Service, authService ports.AuthService, options ...RouterOption) *Router {
+func NewRouter(service *appregixtry.Service, authService ports.AuthService, options ...RouterOption) *Router {
 	router := &Router{service: service, auth: authService, logger: log.Default(), mux: stdhttp.NewServeMux()}
 	if adminService, ok := authService.(ports.AdminHTTPService); ok {
 		router.admin = adminService
@@ -485,7 +485,7 @@ func registryRealm(challenge ports.Challenge) string {
 		return challenge.Realm
 	}
 
-	return "registry"
+	return "regixtry"
 }
 
 func requestedScopes(req *stdhttp.Request) ([]domainauth.Scope, error) {

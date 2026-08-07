@@ -3,7 +3,7 @@ package auth
 import (
 	"time"
 
-	registrydomain "registry/internal/domain/registry"
+	regixtrydomain "regixtry/internal/domain/regixtry"
 )
 
 type RepoRole string
@@ -16,7 +16,7 @@ const (
 
 type RepoGrant struct {
 	UserID     string
-	Repository registrydomain.RepositoryRef
+	Repository regixtrydomain.RepositoryRef
 	Role       RepoRole
 	CreatedAt  time.Time
 	UpdatedAt  time.Time

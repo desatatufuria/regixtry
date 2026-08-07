@@ -1,4 +1,4 @@
-package registry
+package regixtry
 
 import (
 	"context"
@@ -6,11 +6,11 @@ import (
 	"strings"
 	"testing"
 
-	domainauth "registry/internal/domain/auth"
-	domain "registry/internal/domain/registry"
-	metadata "registry/internal/infra/metadata/sqlite"
-	"registry/internal/infra/storage/fsblob"
-	"registry/internal/ports"
+	domainauth "regixtry/internal/domain/auth"
+	domain "regixtry/internal/domain/regixtry"
+	metadata "regixtry/internal/infra/metadata/sqlite"
+	"regixtry/internal/infra/storage/fsblob"
+	"regixtry/internal/ports"
 )
 
 func TestServiceUploadPublishAndQuery(t *testing.T) {
@@ -103,7 +103,7 @@ func TestServiceRejectsManifestWithMissingBlob(t *testing.T) {
 func TestServiceAuthorizesRepositoryActionsAndFiltersCatalog(t *testing.T) {
 	t.Parallel()
 
-	service, cleanup := newTestService(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "registry", Service: "registry"}))
+	service, cleanup := newTestService(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "regixtry", Service: "regixtry"}))
 	defer cleanup()
 
 	adminCtx := ports.ContextWithPrincipal(context.Background(), domainauth.Principal{IsAdmin: true, Scopes: []domainauth.Scope{{Type: "registry", Name: "catalog", Actions: []string{"*"}, Canonical: "registry:catalog:*"}, {Type: "repository", Name: "team/app", Actions: []string{"pull", "push"}, Canonical: "repository:team/app:pull,push"}, {Type: "repository", Name: "team/other", Actions: []string{"pull", "push"}, Canonical: "repository:team/other:pull,push"}}})
@@ -137,7 +137,7 @@ func TestServiceAuthorizesRepositoryActionsAndFiltersCatalog(t *testing.T) {
 func TestServiceAdminBypassesRepositoryChecks(t *testing.T) {
 	t.Parallel()
 
-	service, cleanup := newTestService(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "registry", Service: "registry"}))
+	service, cleanup := newTestService(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "regixtry", Service: "regixtry"}))
 	defer cleanup()
 
 	adminCtx := ports.ContextWithPrincipal(context.Background(), domainauth.Principal{IsAdmin: true, Scopes: []domainauth.Scope{{Type: "repository", Name: "team/app", Actions: []string{"pull", "push"}, Canonical: "repository:team/app:pull,push"}, {Type: "repository", Name: "team/other", Actions: []string{"pull", "push"}, Canonical: "repository:team/other:pull,push"}, {Type: "registry", Name: "catalog", Actions: []string{"*"}, Canonical: "registry:catalog:*"}}})
@@ -182,7 +182,7 @@ func (allowAllAccessController) Authorize(context.Context, ports.Action) error {
 }
 
 func (allowAllAccessController) Challenge(ports.Action) ports.Challenge {
-	return ports.Challenge{Scheme: "Bearer", Realm: "registry", Service: "registry"}
+	return ports.Challenge{Scheme: "Bearer", Realm: "regixtry", Service: "regixtry"}
 }
 
 func seedRepository(t *testing.T, service *Service, ctx context.Context, repository string) {

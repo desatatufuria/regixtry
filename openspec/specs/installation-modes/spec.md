@@ -7,8 +7,8 @@ Define a truthful, flag-driven installation/bootstrap contract for single-node L
 ## Current Repository Facts
 
 - `install.sh` currently installs a verified Linux release binary only; it does not generate runtime or service artifacts.
-- `cmd/registry/main.go` currently exposes `serve`, `tui`, and `bootstrap-admin`; no installation-mode bootstrap command exists today.
-- The current README installer flow ends with running `registry` manually; service activation and reachability checks are not yet part of install success.
+- `cmd/regixtry/main.go` currently exposes `serve`, `tui`, and `bootstrap-admin`; no installation-mode bootstrap command exists today.
+- The current README installer flow ends with running `regixtry` manually; service activation and reachability checks are not yet part of install success.
 
 ## Requirements
 
@@ -62,7 +62,7 @@ Bootstrap for `daemon-sqlite` MUST start the service by default, and installatio
 
 ### Requirement: Scoped Rollback
 
-Rollback for `daemon-sqlite` MUST remove generated bootstrap artifacts and stop or disable the created service, but it MUST NOT uninstall the already installed `registry` binary.
+Rollback for `daemon-sqlite` MUST remove generated bootstrap artifacts and stop or disable the created service, but it MUST NOT uninstall the already installed `regixtry` binary.
 
 #### Scenario: Operator rolls back a completed bootstrap
 

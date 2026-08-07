@@ -8,8 +8,8 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
-	domainauth "registry/internal/domain/auth"
-	registrydomain "registry/internal/domain/registry"
+	domainauth "regixtry/internal/domain/auth"
+	regixtrydomain "regixtry/internal/domain/regixtry"
 )
 
 func TestStoreBootstrapsAndPersistsAuthState(t *testing.T) {
@@ -40,7 +40,7 @@ func TestStoreBootstrapsAndPersistsAuthState(t *testing.T) {
 		t.Fatalf("loadedUser = %#v, want id=%q admin=true", loadedUser, user.ID)
 	}
 
-	repo := registrydomain.MustParseRepositoryRef("team/app")
+	repo := regixtrydomain.MustParseRepositoryRef("team/app")
 	grant := domainauth.RepoGrant{UserID: user.ID, Repository: repo, Role: domainauth.RepoRoleWriter, CreatedAt: now, UpdatedAt: now}
 	if err := store.PutRepoGrant(context.Background(), grant); err != nil {
 		t.Fatalf("PutRepoGrant() error = %v", err)

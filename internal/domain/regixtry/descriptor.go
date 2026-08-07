@@ -1,4 +1,4 @@
-package registry
+package regixtry
 
 type Descriptor struct {
 	MediaType string

@@ -4,8 +4,8 @@ import (
 	"context"
 	"io"
 
-	domainauth "registry/internal/domain/auth"
-	domain "registry/internal/domain/registry"
+	domainauth "regixtry/internal/domain/auth"
+	domain "regixtry/internal/domain/regixtry"
 )
 
 type BlobStore interface {

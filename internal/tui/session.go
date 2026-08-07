@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"registry/internal/ports"
+	"regixtry/internal/ports"
 )
 
 const AdminSessionExpiredReasonExpired = "Session expired. Log in again."

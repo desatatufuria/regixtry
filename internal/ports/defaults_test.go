@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	domainauth "registry/internal/domain/auth"
-	domain "registry/internal/domain/registry"
+	domainauth "regixtry/internal/domain/auth"
+	domain "regixtry/internal/domain/regixtry"
 )
 
 func TestSingleTenantResolverUsesDefaults(t *testing.T) {
@@ -61,7 +61,7 @@ func TestConfigurableAccessController(t *testing.T) {
 func TestPrincipalAccessController(t *testing.T) {
 	t.Parallel()
 
-	controller := NewPrincipalAccessController(Challenge{Realm: "registry", Service: "registry"})
+	controller := NewPrincipalAccessController(Challenge{Realm: "regixtry", Service: "regixtry"})
 	principal := testPrincipal("team/app", true)
 
 	if err := controller.Authorize(context.Background(), Action{Verb: ActionPull, Repository: "team/app", Principal: principal}); err != nil {
@@ -76,7 +76,7 @@ func TestPrincipalAccessController(t *testing.T) {
 func TestPrincipalAccessControllerEnforcesTokenScope(t *testing.T) {
 	t.Parallel()
 
-	controller := NewPrincipalAccessController(Challenge{Realm: "registry", Service: "registry"})
+	controller := NewPrincipalAccessController(Challenge{Realm: "regixtry", Service: "regixtry"})
 	principal := &domainauth.Principal{
 		IsAdmin: true,
 		Scopes:  []domainauth.Scope{{Type: "repository", Name: "team/app", Actions: []string{"pull"}, Canonical: "repository:team/app:pull"}},

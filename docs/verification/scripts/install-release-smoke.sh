@@ -74,27 +74,27 @@ create_fake_tool_path() {
   done
 }
 
-create_registry_tarball() {
+create_regixtry_tarball() {
   local output="$1"
   local text="$2"
   local workdir="$3"
 
   mkdir -p "${workdir}/payload"
-  cat >"${workdir}/payload/registry" <<EOF
+  cat >"${workdir}/payload/regixtry" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' '${text}'
 EOF
-  chmod +x "${workdir}/payload/registry"
-  tar -C "${workdir}/payload" -czf "${output}" registry
+  chmod +x "${workdir}/payload/regixtry"
+  tar -C "${workdir}/payload" -czf "${output}" regixtry
 }
 
 create_bad_tarball_missing_registry() {
   local output="$1"
   local workdir="$2"
 
-  mkdir -p "${workdir}/missing-registry"
-  printf 'not-a-binary\n' >"${workdir}/missing-registry/README.txt"
-  tar -C "${workdir}/missing-registry" -czf "${output}" README.txt
+  mkdir -p "${workdir}/missing-regixtry"
+  printf 'not-a-binary\n' >"${workdir}/missing-regixtry/README.txt"
+  tar -C "${workdir}/missing-regixtry" -czf "${output}" README.txt
 }
 
 create_bad_tarball_unexpected_path() {
@@ -102,8 +102,8 @@ create_bad_tarball_unexpected_path() {
   local workdir="$2"
 
   mkdir -p "${workdir}/unexpected/bin"
-  printf 'wrong path\n' >"${workdir}/unexpected/bin/registry"
-  tar -C "${workdir}/unexpected" -czf "${output}" bin/registry
+  printf 'wrong path\n' >"${workdir}/unexpected/bin/regixtry"
+  tar -C "${workdir}/unexpected" -czf "${output}" bin/regixtry
 }
 
 create_bootstrap_stub_tarball() {
@@ -111,7 +111,7 @@ create_bootstrap_stub_tarball() {
   local workdir="$2"
 
   mkdir -p "${workdir}/payload"
-  cat >"${workdir}/payload/registry" <<'EOF'
+  cat >"${workdir}/payload/regixtry" <<'EOF'
 #!/usr/bin/env bash
 
 set -euo pipefail
@@ -130,7 +130,7 @@ write_artifacts() {
   local service_name="$6"
   local env_path
 
-  env_path="$(dirname "${state_path}")/registry.env"
+  env_path="$(dirname "${state_path}")/regixtry.env"
   mkdir -p "$(dirname "${state_path}")" "$(dirname "${unit_path}")" "${storage_root}/content"
   : >"${storage_root}/metadata.db"
   cat >"${env_path}" <<ARTIFACTS
@@ -140,11 +140,11 @@ REGISTRY_STORAGE_ROOT=${storage_root}
 ARTIFACTS
   cat >"${unit_path}" <<ARTIFACTS
 [Unit]
-Description=Registry smoke stub
+Description=Regixtry smoke stub
 
 [Service]
 EnvironmentFile=${env_path}
-ExecStart=/usr/local/bin/registry serve
+ExecStart=/usr/local/bin/regixtry serve
 
 [Install]
 WantedBy=multi-user.target
@@ -170,7 +170,7 @@ remove_artifacts() {
   local unit_path="$3"
   local env_path
 
-  env_path="$(dirname "${state_path}")/registry.env"
+  env_path="$(dirname "${state_path}")/regixtry.env"
   rm -f "${env_path}" "${unit_path}" "${storage_root}/metadata.db" "${state_path}"
   rm -rf "${storage_root}/content"
 }
@@ -190,7 +190,7 @@ case "${command_name}" in
     storage_root=""
     state_path=""
     unit_path=""
-    service_name="registry"
+    service_name="regixtry"
     rollback="0"
 
     while [[ $# -gt 0 ]]; do
@@ -267,8 +267,8 @@ case "${command_name}" in
     ;;
 esac
 EOF
-  chmod +x "${workdir}/payload/registry"
-  tar -C "${workdir}/payload" -czf "${output}" registry
+  chmod +x "${workdir}/payload/regixtry"
+  tar -C "${workdir}/payload" -czf "${output}" regixtry
 }
 
 resolve_release_dist_assets() {
@@ -278,9 +278,9 @@ resolve_release_dist_assets() {
   local checksums=()
 
   shopt -s nullglob
-  amd64=("${dist_dir}"/registry_*_linux_amd64.tar.gz)
-  arm64=("${dist_dir}"/registry_*_linux_arm64.tar.gz)
-  checksums=("${dist_dir}"/registry_*_checksums.txt)
+  amd64=("${dist_dir}"/regixtry_*_linux_amd64.tar.gz)
+  arm64=("${dist_dir}"/regixtry_*_linux_arm64.tar.gz)
+  checksums=("${dist_dir}"/regixtry_*_checksums.txt)
   shopt -u nullglob
 
   [[ ${#amd64[@]} -eq 1 ]] || fail "expected exactly one amd64 archive in ${dist_dir}, found ${#amd64[@]}"
@@ -374,9 +374,9 @@ prepare_fixtures() {
   local fixtures_root="${ROOT_DIR}/fixtures"
   local tag="v1.2.3"
   local version="1.2.3"
-  local amd64_asset="registry_${version}_linux_amd64.tar.gz"
-  local arm64_asset="registry_${version}_linux_arm64.tar.gz"
-  local checksum_asset="registry_${version}_checksums.txt"
+  local amd64_asset="regixtry_${version}_linux_amd64.tar.gz"
+  local arm64_asset="regixtry_${version}_linux_arm64.tar.gz"
+  local checksum_asset="regixtry_${version}_checksums.txt"
 
   mkdir -p "${web_root}/api/good/tags" "${web_root}/api/bootstrap-good/tags" "${web_root}/api/bootstrap-unsupported-distro/tags" "${web_root}/api/bootstrap-start-failure/tags" "${web_root}/api/missing-checksum/tags" "${web_root}/api/missing-asset/tags" "${web_root}/api/checksum-mismatch/tags" "${web_root}/api/bad-archive-missing-entry/tags" "${web_root}/api/bad-archive-unexpected-path/tags" "${web_root}/downloads/good" "${web_root}/downloads/bootstrap-good" "${web_root}/downloads/bootstrap-unsupported-distro" "${web_root}/downloads/bootstrap-start-failure" "${web_root}/downloads/missing-asset" "${web_root}/downloads/checksum-mismatch" "${web_root}/downloads/bad-archive-missing-entry" "${web_root}/downloads/bad-archive-unexpected-path" "${fixtures_root}"
 
@@ -388,15 +388,15 @@ prepare_fixtures() {
     amd64_asset="$(basename "${resolved_assets[0]}")"
     arm64_asset="$(basename "${resolved_assets[1]}")"
     checksum_asset="$(basename "${resolved_assets[2]}")"
-    tag="$(printf '%s' "${amd64_asset}" | sed -E 's/^registry_(.+)_linux_amd64\.tar\.gz$/v\1/')"
+    tag="$(printf '%s' "${amd64_asset}" | sed -E 's/^regixtry_(.+)_linux_amd64\.tar\.gz$/v\1/')"
   fi
 
-  create_registry_tarball "${web_root}/downloads/good/${amd64_asset}" "registry fixture amd64" "${fixtures_root}/good-amd64"
-  create_registry_tarball "${web_root}/downloads/good/${arm64_asset}" "registry fixture arm64" "${fixtures_root}/good-arm64"
+  create_regixtry_tarball "${web_root}/downloads/good/${amd64_asset}" "regixtry fixture amd64" "${fixtures_root}/good-amd64"
+  create_regixtry_tarball "${web_root}/downloads/good/${arm64_asset}" "regixtry fixture arm64" "${fixtures_root}/good-arm64"
   sha256sum "${web_root}/downloads/good/${amd64_asset}" "${web_root}/downloads/good/${arm64_asset}" | sed "s#${web_root}/downloads/good/##" >"${web_root}/downloads/good/${checksum_asset}"
 
-  create_registry_tarball "${web_root}/downloads/missing-asset/${arm64_asset}" "registry fixture arm64" "${fixtures_root}/missing-asset-arm64"
-  create_registry_tarball "${web_root}/downloads/checksum-mismatch/${amd64_asset}" "registry mismatch amd64" "${fixtures_root}/mismatch-amd64"
+  create_regixtry_tarball "${web_root}/downloads/missing-asset/${arm64_asset}" "regixtry fixture arm64" "${fixtures_root}/missing-asset-arm64"
+  create_regixtry_tarball "${web_root}/downloads/checksum-mismatch/${amd64_asset}" "regixtry mismatch amd64" "${fixtures_root}/mismatch-amd64"
   create_bootstrap_stub_tarball "${web_root}/downloads/bootstrap-good/${amd64_asset}" "${fixtures_root}/bootstrap-good"
   create_bootstrap_stub_tarball "${web_root}/downloads/bootstrap-unsupported-distro/${amd64_asset}" "${fixtures_root}/bootstrap-unsupported-distro"
   create_bootstrap_stub_tarball "${web_root}/downloads/bootstrap-start-failure/${amd64_asset}" "${fixtures_root}/bootstrap-start-failure"
@@ -475,19 +475,19 @@ run_success_case() {
 
   bash "${SCRIPT_PATH}" --dir "${install_dir}" >"${log_file}" 2>&1
 
-  assert_exists "${install_dir}/registry"
-  assert_executable "${install_dir}/registry"
-  assert_contains "${log_file}" "Installed registry to ${install_dir}/registry"
+  assert_exists "${install_dir}/regixtry"
+  assert_executable "${install_dir}/regixtry"
+  assert_contains "${log_file}" "Installed regixtry to ${install_dir}/regixtry"
 
   if [[ -n "${RELEASE_DIST_DIR}" && "${arch}" == "amd64" ]]; then
     set +e
-    "${install_dir}/registry" >"${run_log}" 2>&1
+    "${install_dir}/regixtry" >"${run_log}" 2>&1
     local exit_code=$?
     set -e
     [[ ${exit_code} -ne 0 ]] || fail "expected installed amd64 release binary to exit non-zero without a subcommand"
-    assert_contains "${run_log}" "expected subcommand: serve, tui, or bootstrap-admin"
+    assert_contains "${run_log}" "expected subcommand: serve, tui, bootstrap, or bootstrap-admin"
   elif [[ -z "${RELEASE_DIST_DIR}" ]]; then
-    assert_contains "${install_dir}/registry" "registry fixture ${arch}"
+    assert_contains "${install_dir}/regixtry" "regixtry fixture ${arch}"
   fi
 }
 
@@ -590,7 +590,7 @@ run_failure_case() {
   set -e
 
   [[ ${exit_code} -ne 0 ]] || fail "expected ${scenario} to fail"
-  assert_not_exists "${install_dir}/registry"
+  assert_not_exists "${install_dir}/regixtry"
   assert_contains "${log_file}" "Manual options:"
 }
 
@@ -600,7 +600,7 @@ run_bootstrap_success_case() {
   local install_dir="${ROOT_DIR}/${scenario}/bin"
   local storage_root="${ROOT_DIR}/${scenario}/storage"
   local state_path="${ROOT_DIR}/${scenario}/etc/bootstrap-state.json"
-  local unit_path="${ROOT_DIR}/${scenario}/systemd/registry.service"
+  local unit_path="${ROOT_DIR}/${scenario}/systemd/regixtry.service"
   local log_file="${ROOT_DIR}/${scenario}.log"
   local stub_log="${ROOT_DIR}/${scenario}.bootstrap.log"
 
@@ -622,15 +622,15 @@ run_bootstrap_success_case() {
     --storage-root "${storage_root}" \
     --state-path "${state_path}" \
     --unit-path "${unit_path}" \
-    --service registry >"${log_file}" 2>&1
+    --service regixtry >"${log_file}" 2>&1
 
-  assert_exists "${install_dir}/registry"
-  assert_executable "${install_dir}/registry"
+  assert_exists "${install_dir}/regixtry"
+  assert_executable "${install_dir}/regixtry"
   assert_exists "${storage_root}/metadata.db"
   assert_exists "${storage_root}/content"
   assert_exists "${state_path}"
   assert_exists "${unit_path}"
-  assert_exists "$(dirname "${state_path}")/registry.env"
+  assert_exists "$(dirname "${state_path}")/regixtry.env"
   assert_contains "${log_file}" "Applied bootstrap mode daemon-sqlite"
   assert_contains "${stub_log}" "mode=daemon-sqlite"
   assert_contains "${stub_log}" "storage_root=${storage_root}"
@@ -644,7 +644,7 @@ run_bootstrap_failure_case() {
   local install_dir="${ROOT_DIR}/${scenario}/bin"
   local storage_root="${ROOT_DIR}/${scenario}/storage"
   local state_path="${ROOT_DIR}/${scenario}/etc/bootstrap-state.json"
-  local unit_path="${ROOT_DIR}/${scenario}/systemd/registry.service"
+  local unit_path="${ROOT_DIR}/${scenario}/systemd/regixtry.service"
   local log_file="${ROOT_DIR}/${scenario}.log"
   local stub_log="${ROOT_DIR}/${scenario}.bootstrap.log"
 
@@ -667,20 +667,20 @@ run_bootstrap_failure_case() {
     --storage-root "${storage_root}" \
     --state-path "${state_path}" \
     --unit-path "${unit_path}" \
-    --service registry >"${log_file}" 2>&1
+    --service regixtry >"${log_file}" 2>&1
   local exit_code=$?
   set -e
 
   [[ ${exit_code} -ne 0 ]] || fail "expected ${scenario} to fail"
-  assert_exists "${install_dir}/registry"
-  assert_contains "${log_file}" "bootstrap command failed; verified registry binary remains installed"
+  assert_exists "${install_dir}/regixtry"
+  assert_contains "${log_file}" "bootstrap command failed; verified regixtry binary remains installed"
   assert_contains "${log_file}" "${expected_message}"
   assert_contains "${stub_log}" "mode=daemon-sqlite"
   assert_not_exists "${storage_root}/metadata.db"
   assert_not_exists "${storage_root}/content"
   assert_not_exists "${state_path}"
   assert_not_exists "${unit_path}"
-  assert_not_exists "$(dirname "${state_path}")/registry.env"
+  assert_not_exists "$(dirname "${state_path}")/regixtry.env"
 }
 
 run_bootstrap_rollback_case() {
@@ -689,7 +689,7 @@ run_bootstrap_rollback_case() {
   local install_dir="${ROOT_DIR}/${scenario}/bin"
   local storage_root="${ROOT_DIR}/${scenario}/storage"
   local state_path="${ROOT_DIR}/${scenario}/etc/bootstrap-state.json"
-  local unit_path="${ROOT_DIR}/${scenario}/systemd/registry.service"
+  local unit_path="${ROOT_DIR}/${scenario}/systemd/regixtry.service"
   local apply_log="${ROOT_DIR}/${scenario}.apply.log"
   local rollback_log="${ROOT_DIR}/${scenario}.rollback.log"
   local stub_log="${ROOT_DIR}/${scenario}.bootstrap.log"
@@ -712,7 +712,7 @@ run_bootstrap_rollback_case() {
     --storage-root "${storage_root}" \
     --state-path "${state_path}" \
     --unit-path "${unit_path}" \
-    --service registry >"${apply_log}" 2>&1
+    --service regixtry >"${apply_log}" 2>&1
 
   assert_exists "${state_path}"
   assert_exists "${unit_path}"
@@ -727,16 +727,16 @@ run_bootstrap_rollback_case() {
     --storage-root "${storage_root}" \
     --state-path "${state_path}" \
     --unit-path "${unit_path}" \
-    --service registry \
+    --service regixtry \
     --rollback >"${rollback_log}" 2>&1
 
-  assert_exists "${install_dir}/registry"
+  assert_exists "${install_dir}/regixtry"
   assert_contains "${rollback_log}" "Rolled back bootstrap artifacts"
   assert_not_exists "${storage_root}/metadata.db"
   assert_not_exists "${storage_root}/content"
   assert_not_exists "${state_path}"
   assert_not_exists "${unit_path}"
-  assert_not_exists "$(dirname "${state_path}")/registry.env"
+  assert_not_exists "$(dirname "${state_path}")/regixtry.env"
   assert_contains "${stub_log}" "rollback=1"
 }
 
@@ -756,7 +756,7 @@ run_binary_only_mode_flag_case() {
 
   bash "${SCRIPT_PATH}" --dir "${install_dir}" --mode binary-only >"${log_file}" 2>&1
 
-  assert_exists "${install_dir}/registry"
+  assert_exists "${install_dir}/regixtry"
   assert_contains "${log_file}" "Completed binary-only install"
   assert_contains "${log_file}" "Deferred automated paths:"
   assert_contains "${log_file}" "Postgres-auth deployment: manual today, automated later."
@@ -781,7 +781,7 @@ run_binary_only_mode_env_case() {
 
   bash "${SCRIPT_PATH}" --dir "${install_dir}" >"${log_file}" 2>&1
 
-  assert_exists "${install_dir}/registry"
+  assert_exists "${install_dir}/regixtry"
   assert_contains "${log_file}" "Completed binary-only install"
   assert_not_contains "${log_file}" "Choose deployment mode"
   unset REGISTRY_INSTALL_MODE
@@ -803,7 +803,7 @@ run_interactive_binary_only_case() {
 
   run_installer_with_pty "${log_file}" $'1\n' --dir "${install_dir}"
 
-  assert_exists "${install_dir}/registry"
+  assert_exists "${install_dir}/regixtry"
   assert_contains "${log_file}" "Choose deployment mode"
   assert_contains "${log_file}" "1) binary only"
   assert_contains "${log_file}" "2) binary + daemon/service (Linux + systemd only)"
@@ -816,7 +816,7 @@ run_interactive_bootstrap_success_case() {
   local install_dir="${ROOT_DIR}/${scenario}/bin"
   local storage_root="${ROOT_DIR}/${scenario}/storage"
   local state_path="${ROOT_DIR}/${scenario}/etc/bootstrap-state.json"
-  local unit_path="${ROOT_DIR}/${scenario}/systemd/registry.service"
+  local unit_path="${ROOT_DIR}/${scenario}/systemd/regixtry.service"
   local log_file="${ROOT_DIR}/${scenario}.log"
   local stub_log="${ROOT_DIR}/${scenario}.bootstrap.log"
 
@@ -838,9 +838,9 @@ run_interactive_bootstrap_success_case() {
     --storage-root "${storage_root}" \
     --state-path "${state_path}" \
     --unit-path "${unit_path}" \
-    --service registry
+    --service regixtry
 
-  assert_exists "${install_dir}/registry"
+  assert_exists "${install_dir}/regixtry"
   assert_exists "${storage_root}/metadata.db"
   assert_exists "${storage_root}/content"
   assert_exists "${state_path}"
@@ -870,10 +870,10 @@ run_missing_mode_without_tty_case() {
   set -e
 
   [[ ${exit_code} -ne 0 ]] || fail "expected ${scenario} to fail"
-  assert_exists "${install_dir}/registry"
+  assert_exists "${install_dir}/regixtry"
   assert_contains "${log_file}" "no installer mode was selected and no controlling TTY is available"
   assert_contains "${log_file}" "Non-interactive runs must set --mode or REGISTRY_INSTALL_MODE"
-  assert_contains "${log_file}" "The verified registry binary remains installed"
+  assert_contains "${log_file}" "The verified regixtry binary remains installed"
 }
 
 run_unsupported_mode_case() {
@@ -896,7 +896,7 @@ run_unsupported_mode_case() {
   set -e
 
   [[ ${exit_code} -ne 0 ]] || fail "expected ${scenario} to fail"
-  assert_exists "${install_dir}/registry"
+  assert_exists "${install_dir}/regixtry"
   assert_contains "${log_file}" "unsupported installer mode: postgres-auth"
   assert_contains "${log_file}" "Supported installer modes in this slice:"
   assert_contains "${log_file}" "Postgres-auth deployment: manual today, automated later."
@@ -919,7 +919,7 @@ main() {
   if [[ $# -eq 1 ]]; then
     ROOT_DIR="$1"
   else
-    ROOT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/registry-install-smoke.XXXXXX")"
+    ROOT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/regixtry-install-smoke.XXXXXX")"
   fi
 
   mkdir -p "${ROOT_DIR}"
@@ -945,7 +945,7 @@ main() {
 
   run_bootstrap_success_case "bootstrap-success" bootstrap-good
   run_bootstrap_failure_case "bootstrap-unsupported-distro" bootstrap-unsupported-distro unsupported-distro 'unsupported Linux distribution "alpine": Alpine host bootstrap is deferred'
-  run_bootstrap_failure_case "bootstrap-start-failure" bootstrap-start-failure start-failure 'systemctl enable --now registry.service: exit status 1'
+  run_bootstrap_failure_case "bootstrap-start-failure" bootstrap-start-failure start-failure 'systemctl enable --now regixtry.service: exit status 1'
   run_bootstrap_rollback_case "bootstrap-rollback" bootstrap-good
 
   run_failure_case "malformed-ref" good amd64 --ref "bad/ref"
@@ -955,10 +955,10 @@ main() {
   assert_contains "${ROOT_DIR}/missing-checksum.log" "checksum asset"
 
   run_failure_case "bad-archive-missing-entry" bad-archive-missing-entry amd64
-  assert_contains "${ROOT_DIR}/bad-archive-missing-entry.log" "archive must contain exactly one registry entry"
+  assert_contains "${ROOT_DIR}/bad-archive-missing-entry.log" "archive must contain exactly one regixtry entry"
 
   run_failure_case "bad-archive-unexpected-path" bad-archive-unexpected-path amd64
-  assert_contains "${ROOT_DIR}/bad-archive-unexpected-path.log" "archive must contain exactly one registry entry"
+  assert_contains "${ROOT_DIR}/bad-archive-unexpected-path.log" "archive must contain exactly one regixtry entry"
 
   run_failure_case "checksum-mismatch" checksum-mismatch amd64
   assert_contains "${ROOT_DIR}/checksum-mismatch.log" "checksum verification failed"

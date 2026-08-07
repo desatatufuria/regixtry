@@ -10,7 +10,7 @@ RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
 
-RUN CGO_ENABLED=0 GOOS=linux go build -o /out/registry ./cmd/registry
+RUN CGO_ENABLED=0 GOOS=linux go build -o /out/regixtry ./cmd/regixtry
 
 FROM debian:bookworm-slim
 
@@ -20,9 +20,9 @@ RUN apt-get update \
 
 WORKDIR /app
 
-COPY --from=build /out/registry /usr/local/bin/registry
+COPY --from=build /out/regixtry /usr/local/bin/regixtry
 
 EXPOSE 5000
 
-ENTRYPOINT ["/usr/local/bin/registry"]
-CMD ["serve", "-addr", "0.0.0.0:5000", "-storage-root", "/var/lib/registry"]
+ENTRYPOINT ["/usr/local/bin/regixtry"]
+CMD ["serve", "-addr", "0.0.0.0:5000", "-storage-root", "/var/lib/regixtry"]

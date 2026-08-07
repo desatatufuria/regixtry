@@ -9,10 +9,10 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	appregistry "registry/internal/app/registry"
-	"registry/internal/domain/auth"
-	"registry/internal/domain/registry"
-	"registry/internal/ports"
+	appregixtry "regixtry/internal/app/regixtry"
+	"regixtry/internal/domain/auth"
+	regixtrydomain "regixtry/internal/domain/regixtry"
+	"regixtry/internal/ports"
 )
 
 func TestModelShowsEmptyStateWhenCatalogIsEmpty(t *testing.T) {
@@ -26,7 +26,7 @@ func TestModelShowsEmptyStateWhenCatalogIsEmpty(t *testing.T) {
 	}
 
 	view := updated.View()
-	if !strings.Contains(view, "Registry is empty") {
+	if !strings.Contains(view, "Regixtry is empty") {
 		t.Fatalf("view = %q, want empty-state title", view)
 	}
 	if !strings.Contains(view, "No repositories have been published yet.") {
@@ -39,18 +39,18 @@ func TestModelNavigatesRepositoriesManifestBlobsAndUploads(t *testing.T) {
 
 	now := time.Date(2026, time.June, 28, 23, 0, 0, 0, time.UTC)
 	service := &fakeQueryService{
-		catalog: appregistry.CatalogResult{Repositories: []string{"library/alpine"}},
-		tags: map[string]appregistry.TagsResult{
+		catalog: appregixtry.CatalogResult{Repositories: []string{"library/alpine"}},
+		tags: map[string]appregixtry.TagsResult{
 			"library/alpine": {Name: "library/alpine", Tags: []string{"latest"}},
 		},
-		manifests: map[string]appregistry.ManifestDetails{
+		manifests: map[string]appregixtry.ManifestDetails{
 			"library/alpine:latest": {
 				Repository: "library/alpine",
 				Reference:  "latest",
 				MediaType:  "application/vnd.oci.image.manifest.v1+json",
 				Digest:     "sha256:manifest",
 				Size:       512,
-				Blobs: []appregistry.BlobDetails{{
+				Blobs: []appregixtry.BlobDetails{{
 					Repository: "library/alpine",
 					MediaType:  "application/vnd.oci.image.layer.v1.tar",
 					Digest:     "sha256:layer",
@@ -58,7 +58,7 @@ func TestModelNavigatesRepositoriesManifestBlobsAndUploads(t *testing.T) {
 				}},
 			},
 		},
-		uploads: map[string][]appregistry.UploadDetails{
+		uploads: map[string][]appregixtry.UploadDetails{
 			"library/alpine": {{Repository: "library/alpine", ID: "upload-1", Status: "active", Size: 42, StartedAt: now, UpdatedAt: now, Location: "/tmp/upload-1"}},
 		},
 	}
@@ -110,9 +110,9 @@ func TestModelShowsUnavailableMutationNotice(t *testing.T) {
 	t.Parallel()
 
 	service := &fakeQueryService{
-		catalog:   appregistry.CatalogResult{Repositories: []string{"library/alpine"}},
-		tags:      map[string]appregistry.TagsResult{"library/alpine": {Name: "library/alpine", Tags: []string{"latest"}}},
-		manifests: map[string]appregistry.ManifestDetails{"library/alpine:latest": {Repository: "library/alpine", Reference: "latest", MediaType: "application/vnd.oci.image.manifest.v1+json", Digest: "sha256:manifest", Size: 512}},
+		catalog:   appregixtry.CatalogResult{Repositories: []string{"library/alpine"}},
+		tags:      map[string]appregixtry.TagsResult{"library/alpine": {Name: "library/alpine", Tags: []string{"latest"}}},
+		manifests: map[string]appregixtry.ManifestDetails{"library/alpine:latest": {Repository: "library/alpine", Reference: "latest", MediaType: "application/vnd.oci.image.manifest.v1+json", Digest: "sha256:manifest", Size: 512}},
 	}
 
 	model := NewModel(service)
@@ -231,7 +231,7 @@ func TestModelReadOnlyAdminBrowsing(t *testing.T) {
 		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
 		users:        []ports.AdminUser{{ID: "u-1", Username: "alice", IsAdmin: true, Enabled: true}},
 		grants: map[string][]ports.AdminRepoGrant{
-			"u-1": {{UserID: "u-1", Repository: registry.MustParseRepositoryRef("library/alpine"), Role: auth.RepoRoleWriter}},
+			"u-1": {{UserID: "u-1", Repository: regixtrydomain.MustParseRepositoryRef("library/alpine"), Role: auth.RepoRoleWriter}},
 		},
 		tokens: map[string][]ports.AdminToken{
 			"u-1": {{ID: "tok-1", UserID: "u-1", Kind: auth.TokenKindAdminCredential, Accessor: "tok_abc", ExpiresAt: now.Add(24 * time.Hour), CreatedAt: now}},
@@ -628,10 +628,10 @@ func TestModelAdminMutationExpiredSessionReturnsToLogin(t *testing.T) {
 }
 
 type fakeQueryService struct {
-	catalog   appregistry.CatalogResult
-	tags      map[string]appregistry.TagsResult
-	manifests map[string]appregistry.ManifestDetails
-	uploads   map[string][]appregistry.UploadDetails
+	catalog   appregixtry.CatalogResult
+	tags      map[string]appregixtry.TagsResult
+	manifests map[string]appregixtry.ManifestDetails
+	uploads   map[string][]appregixtry.UploadDetails
 	calls     struct {
 		catalog  int
 		tags     int
@@ -727,30 +727,30 @@ func (f *fakeAdminClient) DisableUser(_ context.Context, _ AdminSession, userID 
 	return ports.AdminUser{ID: userID}, nil
 }
 
-func (f *fakeQueryService) Catalog(context.Context, int, string) (appregistry.CatalogResult, error) {
+func (f *fakeQueryService) Catalog(context.Context, int, string) (appregixtry.CatalogResult, error) {
 	f.calls.catalog++
 	return f.catalog, nil
 }
 
-func (f *fakeQueryService) Tags(_ context.Context, repository string, _ int, _ string) (appregistry.TagsResult, error) {
+func (f *fakeQueryService) Tags(_ context.Context, repository string, _ int, _ string) (appregixtry.TagsResult, error) {
 	f.calls.tags++
 	if result, ok := f.tags[repository]; ok {
 		return result, nil
 	}
-	return appregistry.TagsResult{Name: repository}, nil
+	return appregixtry.TagsResult{Name: repository}, nil
 }
 
-func (f *fakeQueryService) ResolveManifest(_ context.Context, repository string, reference string) (appregistry.ManifestDetails, error) {
+func (f *fakeQueryService) ResolveManifest(_ context.Context, repository string, reference string) (appregixtry.ManifestDetails, error) {
 	f.calls.manifest++
 	if result, ok := f.manifests[fmt.Sprintf("%s:%s", repository, reference)]; ok {
 		return result, nil
 	}
-	return appregistry.ManifestDetails{}, nil
+	return appregixtry.ManifestDetails{}, nil
 }
 
-func (f *fakeQueryService) Uploads(_ context.Context, repository string) ([]appregistry.UploadDetails, error) {
+func (f *fakeQueryService) Uploads(_ context.Context, repository string) ([]appregixtry.UploadDetails, error) {
 	f.calls.uploads++
-	return append([]appregistry.UploadDetails(nil), f.uploads[repository]...), nil
+	return append([]appregixtry.UploadDetails(nil), f.uploads[repository]...), nil
 }
 
 func runCmd(t *testing.T, model Model, cmd tea.Cmd) Model {
@@ -769,7 +769,7 @@ func runCmd(t *testing.T, model Model, cmd tea.Cmd) Model {
 
 func newAdminReadyModel(t *testing.T, adminClient AdminClient) Model {
 	t.Helper()
-	model := NewModel(&fakeQueryService{catalog: appregistry.CatalogResult{Repositories: []string{"library/alpine"}}}, WithAdminClient(adminClient))
+	model := NewModel(&fakeQueryService{catalog: appregixtry.CatalogResult{Repositories: []string{"library/alpine"}}}, WithAdminClient(adminClient))
 	return runCmd(t, model, model.Init())
 }
 

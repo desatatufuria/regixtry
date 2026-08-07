@@ -76,7 +76,7 @@ func (p Principal) scopeAllowsRepository(repository string, allows func(Scope) b
 
 func (p Principal) scopeAllowsCatalog() bool {
 	for _, scope := range p.Scopes {
-		if scope.IsRegistryCatalog() {
+		if scope.IsRegixtryCatalog() {
 			return true
 		}
 	}

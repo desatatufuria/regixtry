@@ -2,7 +2,7 @@
 
 ## Quick path
 
-- **Registry API**: the OCI Distribution / Docker Registry HTTP API used to push and pull content.
+- **Regixtry API**: the OCI Distribution / Docker Registry HTTP API used to push and pull content.
 - **Docker Engine API**: daemon management APIs for containers, images, and runtime operations; not this product boundary.
 - **Thin client**: a UI that requests data and actions from services instead of owning domain rules.
 - **Feature-branch chain**: a chained PR strategy where each slice targets the previous slice branch instead of `main`.
@@ -29,7 +29,7 @@
 
 | Distinction | What it means here |
 | --- | --- |
-| Registry API vs Docker Engine API | Registry content exchange is in scope; daemon/runtime control is not |
+| Regixtry API vs Docker Engine API | Regixtry content exchange is in scope; daemon/runtime control is not |
 | Thin client vs second backend | The TUI calls services for truth instead of rebuilding rules locally |
 | Local durability vs platform storage | V1 stores blobs locally and defers remote storage abstractions beyond the initial seam |
 | Auth seam vs full auth product | V1 prepares challenge/authorization boundaries without shipping broad RBAC |

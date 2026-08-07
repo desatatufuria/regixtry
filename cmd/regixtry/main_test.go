@@ -21,12 +21,12 @@ import (
 	"testing"
 	"time"
 
-	appregistry "registry/internal/app/registry"
-	authpostgres "registry/internal/infra/auth/postgres"
-	installlinux "registry/internal/infra/install/linux"
-	metadata "registry/internal/infra/metadata/sqlite"
-	"registry/internal/infra/storage/fsblob"
-	"registry/internal/ports"
+	appregixtry "regixtry/internal/app/regixtry"
+	authpostgres "regixtry/internal/infra/auth/postgres"
+	installlinux "regixtry/internal/infra/install/linux"
+	metadata "regixtry/internal/infra/metadata/sqlite"
+	"regixtry/internal/infra/storage/fsblob"
+	"regixtry/internal/ports"
 )
 
 func TestDefaultBuildValue(t *testing.T) {
@@ -181,7 +181,7 @@ func TestParseServeConfigParsesPublicURLAndTLSInputs(t *testing.T) {
 	t.Parallel()
 
 	cfg, err := parseServeConfig([]string{
-		"-public-url", "https://registry.example.com",
+		"-public-url", "https://regixtry.example.com",
 		"-tls-cert-file", "/tmp/registry.crt",
 		"-tls-key-file", "/tmp/registry.key",
 	})
@@ -189,8 +189,8 @@ func TestParseServeConfigParsesPublicURLAndTLSInputs(t *testing.T) {
 		t.Fatalf("parseServeConfig() error = %v", err)
 	}
 
-	if cfg.PublicURL != "https://registry.example.com" {
-		t.Fatalf("PublicURL = %q, want %q", cfg.PublicURL, "https://registry.example.com")
+	if cfg.PublicURL != "https://regixtry.example.com" {
+		t.Fatalf("PublicURL = %q, want %q", cfg.PublicURL, "https://regixtry.example.com")
 	}
 	if cfg.TLSCertFile != "/tmp/registry.crt" {
 		t.Fatalf("TLSCertFile = %q, want %q", cfg.TLSCertFile, "/tmp/registry.crt")
@@ -220,14 +220,14 @@ func TestNormalizeRuntimeConfig(t *testing.T) {
 		{
 			name: "https public URL requires TLS pair and derives token realm",
 			cfg: serveConfig{
-				PublicURL:         "https://registry.example.com/edge/",
+				PublicURL:         "https://regixtry.example.com/edge/",
 				TLSCertFile:       "/tmp/registry.crt",
 				TLSKeyFile:        "/tmp/registry.key",
 				ReadHeaderTimeout: defaultReadHeaderTimeout,
 				ShutdownTimeout:   defaultShutdownTimeout,
 			},
-			wantPublicURL:  "https://registry.example.com/edge",
-			wantTokenRealm: "https://registry.example.com/edge/auth/token",
+			wantPublicURL:  "https://regixtry.example.com/edge",
+			wantTokenRealm: "https://regixtry.example.com/edge/auth/token",
 			wantTLSEnabled: true,
 		},
 		{
@@ -243,10 +243,10 @@ func TestNormalizeRuntimeConfig(t *testing.T) {
 		{
 			name: "configured auth realm must match derived token realm",
 			cfg: serveConfig{
-				PublicURL:         "https://registry.example.com",
+				PublicURL:         "https://regixtry.example.com",
 				TLSCertFile:       "/tmp/registry.crt",
 				TLSKeyFile:        "/tmp/registry.key",
-				AuthTokenRealmURL: "https://registry.example.com/custom/token",
+				AuthTokenRealmURL: "https://regixtry.example.com/custom/token",
 				ReadHeaderTimeout: defaultReadHeaderTimeout,
 				ShutdownTimeout:   defaultShutdownTimeout,
 			},
@@ -255,7 +255,7 @@ func TestNormalizeRuntimeConfig(t *testing.T) {
 		{
 			name: "https public URL rejects incomplete TLS pair",
 			cfg: serveConfig{
-				PublicURL:         "https://registry.example.com",
+				PublicURL:         "https://regixtry.example.com",
 				TLSCertFile:       "/tmp/registry.crt",
 				ReadHeaderTimeout: defaultReadHeaderTimeout,
 				ShutdownTimeout:   defaultShutdownTimeout,
@@ -443,8 +443,8 @@ func TestRunBootstrapPropagatesHostAndRuntimeFailures(t *testing.T) {
 		},
 		{
 			name:    "systemctl enable failure",
-			runErr:  errors.New("systemctl enable --now registry.service: exit status 1"),
-			wantErr: "systemctl enable --now registry.service",
+			runErr:  errors.New("systemctl enable --now regixtry.service: exit status 1"),
+			wantErr: "systemctl enable --now regixtry.service",
 		},
 		{
 			name:    "probe failure",
@@ -453,8 +453,8 @@ func TestRunBootstrapPropagatesHostAndRuntimeFailures(t *testing.T) {
 		},
 		{
 			name:    "occupied local bind recovery guidance",
-			runErr:  errors.New("configured local bind address 127.0.0.1:5000 is already in use\nRecover with:\n  sudo ss -ltnp 'sport = :5000'\n  sudo systemctl stop registry.service"),
-			wantErr: "sudo systemctl stop registry.service",
+			runErr:  errors.New("configured local bind address 127.0.0.1:5000 is already in use\nRecover with:\n  sudo ss -ltnp 'sport = :5000'\n  sudo systemctl stop regixtry.service"),
+			wantErr: "sudo systemctl stop regixtry.service",
 		},
 	}
 
@@ -487,10 +487,10 @@ func TestRunBootstrapPassesParsedConfigToRunner(t *testing.T) {
 	args := []string{
 		"bootstrap",
 		"-mode", "daemon-sqlite",
-		"-public-url", "https://registry.example.com",
+		"-public-url", "https://regixtry.example.com",
 		"-addr", "0.0.0.0:5443",
-		"-storage-root", "/var/lib/registry-data",
-		"-state-path", "/etc/registry/bootstrap-state.json",
+		"-storage-root", "/var/lib/regixtry-data",
+		"-state-path", "/etc/regixtry/bootstrap-state.json",
 		"-unit-path", "/etc/systemd/system/registry-custom.service",
 		"-service", "registry-custom",
 		"-no-start",
@@ -509,10 +509,10 @@ func TestRunBootstrapPassesParsedConfigToRunner(t *testing.T) {
 
 	want := installlinux.BootstrapConfig{
 		Mode:        "daemon-sqlite",
-		PublicURL:   "https://registry.example.com",
+		PublicURL:   "https://regixtry.example.com",
 		Addr:        "0.0.0.0:5443",
-		StorageRoot: "/var/lib/registry-data",
-		StatePath:   "/etc/registry/bootstrap-state.json",
+		StorageRoot: "/var/lib/regixtry-data",
+		StatePath:   "/etc/regixtry/bootstrap-state.json",
 		UnitPath:    "/etc/systemd/system/registry-custom.service",
 		ServiceName: "registry-custom",
 		NoStart:     true,
@@ -529,7 +529,7 @@ func TestRunBootstrapRollbackUsesRunnerRollback(t *testing.T) {
 
 	err := run(
 		context.Background(),
-		[]string{"bootstrap", "-mode", "daemon-sqlite", "-public-url", "http://127.0.0.1:5000", "-rollback", "-state-path", "/etc/registry/bootstrap-state.json"},
+		[]string{"bootstrap", "-mode", "daemon-sqlite", "-public-url", "http://127.0.0.1:5000", "-rollback", "-state-path", "/etc/regixtry/bootstrap-state.json"},
 		io.Discard,
 		io.Discard,
 	)
@@ -545,8 +545,8 @@ func TestRunBootstrapRollbackUsesRunnerRollback(t *testing.T) {
 	if !runner.lastConfig.Rollback {
 		t.Fatal("lastConfig.Rollback = false, want true")
 	}
-	if runner.lastConfig.StatePath != "/etc/registry/bootstrap-state.json" {
-		t.Fatalf("StatePath = %q, want %q", runner.lastConfig.StatePath, "/etc/registry/bootstrap-state.json")
+	if runner.lastConfig.StatePath != "/etc/regixtry/bootstrap-state.json" {
+		t.Fatalf("StatePath = %q, want %q", runner.lastConfig.StatePath, "/etc/regixtry/bootstrap-state.json")
 	}
 }
 
@@ -613,7 +613,7 @@ func TestServeStartsAndRespondsToPing(t *testing.T) {
 		t.Fatalf("serve() error = %v", err)
 	}
 
-	if !strings.Contains(stdout.String(), "registry serving on") {
+	if !strings.Contains(stdout.String(), "regixtry serving on") {
 		t.Fatalf("stdout = %q, want start message", stdout.String())
 	}
 }
@@ -671,7 +671,7 @@ func TestServeStartsAndRespondsToPingOverTLS(t *testing.T) {
 		t.Fatalf("serve() error = %v", err)
 	}
 
-	if !strings.Contains(stdout.String(), "registry serving on") {
+	if !strings.Contains(stdout.String(), "regixtry serving on") {
 		t.Fatalf("stdout = %q, want start message", stdout.String())
 	}
 }
@@ -923,7 +923,7 @@ func TestRunTUIRendersRepositorySnapshot(t *testing.T) {
 
 	storageRoot := t.TempDir()
 	databasePath := filepath.Join(storageRoot, "registry.db")
-	seedRegistryState(t, storageRoot, databasePath)
+	seedRegixtryState(t, storageRoot, databasePath)
 
 	stdout := &bytes.Buffer{}
 	err := runTUI(tuiConfig{StorageRoot: storageRoot, DatabasePath: databasePath, Tenant: "tenant-a", Snapshot: true}, strings.NewReader("q"), stdout)
@@ -932,7 +932,7 @@ func TestRunTUIRendersRepositorySnapshot(t *testing.T) {
 	}
 
 	view := stdout.String()
-	if !strings.Contains(view, "Registry Console") || !strings.Contains(view, "library/alpine") {
+	if !strings.Contains(view, "Regixtry Console") || !strings.Contains(view, "library/alpine") {
 		t.Fatalf("stdout = %q, want rendered repository view", view)
 	}
 }
@@ -948,7 +948,7 @@ func TestRunTUIDisablesAuthAdminShortcutWhenAuthIsEnabled(t *testing.T) {
 
 	storageRoot := t.TempDir()
 	databasePath := filepath.Join(storageRoot, "registry.db")
-	seedRegistryState(t, storageRoot, databasePath)
+	seedRegixtryState(t, storageRoot, databasePath)
 
 	stdout := &bytes.Buffer{}
 	err := runTUI(tuiConfig{StorageRoot: storageRoot, DatabasePath: databasePath, Tenant: "tenant-a", AuthPostgresDSN: authDB, Snapshot: true}, strings.NewReader("q"), stdout)
@@ -968,7 +968,7 @@ func TestRunTUIDisablesAuthAdminShortcutWhenAuthIsEnabled(t *testing.T) {
 	}
 }
 
-func seedRegistryState(t *testing.T, storageRoot string, databasePath string) {
+func seedRegixtryState(t *testing.T, storageRoot string, databasePath string) {
 	t.Helper()
 
 	blobStore, err := fsblob.New(filepath.Join(storageRoot, "content"))
@@ -982,7 +982,7 @@ func seedRegistryState(t *testing.T, storageRoot string, databasePath string) {
 	}
 	defer metadataStore.Close()
 
-	service := appregistry.NewService(blobStore, metadataStore, localOperatorAccessController{}, ports.NewSingleTenantResolver("tenant-a"), ports.NewInlineJobRunner())
+	service := appregixtry.NewService(blobStore, metadataStore, localOperatorAccessController{}, ports.NewSingleTenantResolver("tenant-a"), ports.NewInlineJobRunner())
 	upload, err := service.BeginUpload(context.Background(), "library/alpine")
 	if err != nil {
 		t.Fatalf("BeginUpload() error = %v", err)

@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	domainauth "registry/internal/domain/auth"
-	registrydomain "registry/internal/domain/registry"
-	"registry/internal/ports"
+	domainauth "regixtry/internal/domain/auth"
+	regixtrydomain "regixtry/internal/domain/regixtry"
+	"regixtry/internal/ports"
 )
 
 func TestServiceGrantsOnlyAllowedRequestedRepositoryScopes(t *testing.T) {
@@ -18,7 +18,7 @@ func TestServiceGrantsOnlyAllowedRequestedRepositoryScopes(t *testing.T) {
 	user := domainauth.User{ID: "user-1", Username: "alice", PasswordHash: mustHashPassword(t, "password123"), Enabled: true, CreatedAt: now, UpdatedAt: now}
 	store.usersByID[user.ID] = user
 	store.usersByUsername[user.Username] = user
-	store.grants[user.ID] = []domainauth.RepoGrant{{UserID: user.ID, Repository: registrydomain.MustParseRepositoryRef("team/app"), Role: domainauth.RepoRoleReader, CreatedAt: now, UpdatedAt: now}}
+	store.grants[user.ID] = []domainauth.RepoGrant{{UserID: user.ID, Repository: regixtrydomain.MustParseRepositoryRef("team/app"), Role: domainauth.RepoRoleReader, CreatedAt: now, UpdatedAt: now}}
 
 	service := NewService(store)
 	service.now = func() time.Time { return now }
@@ -226,7 +226,7 @@ func (s *memoryAuthStore) ListRepoGrants(_ context.Context, userID string) ([]do
 	return append([]domainauth.RepoGrant(nil), s.grants[userID]...), nil
 }
 func (s *memoryAuthStore) PutRepoGrant(context.Context, domainauth.RepoGrant) error { return nil }
-func (s *memoryAuthStore) DeleteRepoGrant(context.Context, string, registrydomain.RepositoryRef) error {
+func (s *memoryAuthStore) DeleteRepoGrant(context.Context, string, regixtrydomain.RepositoryRef) error {
 	return nil
 }
 func (s *memoryAuthStore) CreateToken(_ context.Context, token domainauth.Token) error {

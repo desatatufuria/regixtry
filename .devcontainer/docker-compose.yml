@@ -1,5 +1,5 @@
 services:
-  dev-registry:
+  dev-regixtry:
     container_name: ${PROJECT}
     build:
       context: ..

@@ -7,8 +7,8 @@ import (
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
-	domainauth "registry/internal/domain/auth"
-	registrydomain "registry/internal/domain/registry"
+	domainauth "regixtry/internal/domain/auth"
+	regixtrydomain "regixtry/internal/domain/regixtry"
 )
 
 type Store struct {
@@ -162,7 +162,7 @@ func (s *Store) ListRepoGrants(ctx context.Context, userID string) ([]domainauth
 			return nil, err
 		}
 
-		repository, err := registrydomain.ParseRepositoryRef(repositoryName)
+		repository, err := regixtrydomain.ParseRepositoryRef(repositoryName)
 		if err != nil {
 			return nil, err
 		}
@@ -192,7 +192,7 @@ func (s *Store) PutRepoGrant(ctx context.Context, grant domainauth.RepoGrant) er
 	return err
 }
 
-func (s *Store) DeleteRepoGrant(ctx context.Context, userID string, repository registrydomain.RepositoryRef) error {
+func (s *Store) DeleteRepoGrant(ctx context.Context, userID string, repository regixtrydomain.RepositoryRef) error {
 	result, err := s.db.ExecContext(ctx, `DELETE FROM auth_repo_grants WHERE user_id = $1 AND repository = $2`, strings.TrimSpace(userID), repository.String())
 	if err != nil {
 		return err
