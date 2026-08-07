@@ -414,6 +414,7 @@ func parseBootstrapConfig(args []string) (BootstrapConfig, error) {
 	flags.StringVar(&cfg.StatePath, "state-path", "/etc/registry/bootstrap-state.json", "path to the bootstrap receipt file")
 	flags.StringVar(&cfg.UnitPath, "unit-path", "/etc/systemd/system/registry.service", "path to the generated systemd unit")
 	flags.StringVar(&cfg.ServiceName, "service", "registry", "systemd service name")
+	flags.BoolVar(&cfg.NoStart, "no-start", false, "generate bootstrap artifacts without starting the service")
 	flags.BoolVar(&cfg.Rollback, "rollback", false, "remove generated bootstrap artifacts and stop the service")
 
 	if err := flags.Parse(args); err != nil {
