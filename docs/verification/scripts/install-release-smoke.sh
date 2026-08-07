@@ -34,6 +34,14 @@ assert_contains() {
   grep -F "${expected}" "${file}" >/dev/null || fail "expected '${expected}' in ${file}"
 }
 
+assert_not_contains() {
+  local file="$1"
+  local unexpected="$2"
+  if grep -F "${unexpected}" "${file}" >/dev/null; then
+    fail "did not expect '${unexpected}' in ${file}"
+  fi
+}
+
 assert_not_exists() {
   local path="$1"
   [[ ! -e "${path}" ]] || fail "expected path to be absent: ${path}"
@@ -483,6 +491,55 @@ run_success_case() {
   fi
 }
 
+run_installer_with_pty() {
+  local log_file="$1"
+  local pty_input="$2"
+  shift 2
+
+  PTY_INPUT="${pty_input}" python3 - "${SCRIPT_PATH}" "${log_file}" "$@" <<'PY'
+import errno
+import os
+import pty
+import subprocess
+import sys
+
+script_path = sys.argv[1]
+log_file = sys.argv[2]
+args = sys.argv[3:]
+input_data = os.environ.get("PTY_INPUT", "")
+
+master, slave = pty.openpty()
+proc = subprocess.Popen(["bash", script_path, *args], stdin=slave, stdout=slave, stderr=slave, env=os.environ.copy(), close_fds=True)
+os.close(slave)
+
+if input_data:
+    os.write(master, input_data.encode())
+
+chunks = []
+while True:
+    try:
+        data = os.read(master, 4096)
+        if data:
+            chunks.append(data)
+            continue
+    except OSError as exc:
+        if exc.errno != errno.EIO:
+            raise
+
+    if proc.poll() is not None:
+        break
+
+proc.wait()
+os.close(master)
+
+with open(log_file, "wb") as fh:
+    for chunk in chunks:
+        fh.write(chunk)
+
+sys.exit(proc.returncode)
+PY
+}
+
 run_missing_command_case() {
   local command_name="$1"
   local tool_path="${ROOT_DIR}/tool-path-${command_name}"
@@ -559,6 +616,7 @@ run_bootstrap_success_case() {
 
   bash "${SCRIPT_PATH}" \
     --dir "${install_dir}" \
+    --mode daemon-sqlite \
     --public-url "http://127.0.0.1:${SERVER_PORT}" \
     --addr "127.0.0.1:5110" \
     --storage-root "${storage_root}" \
@@ -603,6 +661,7 @@ run_bootstrap_failure_case() {
   set +e
   bash "${SCRIPT_PATH}" \
     --dir "${install_dir}" \
+    --mode daemon-sqlite \
     --public-url "http://127.0.0.1:${SERVER_PORT}" \
     --addr "127.0.0.1:5111" \
     --storage-root "${storage_root}" \
@@ -647,6 +706,7 @@ run_bootstrap_rollback_case() {
 
   bash "${SCRIPT_PATH}" \
     --dir "${install_dir}" \
+    --mode daemon-sqlite \
     --public-url "http://127.0.0.1:${SERVER_PORT}" \
     --addr "127.0.0.1:5112" \
     --storage-root "${storage_root}" \
@@ -661,6 +721,7 @@ run_bootstrap_rollback_case() {
 
   bash "${SCRIPT_PATH}" \
     --dir "${install_dir}" \
+    --mode daemon-sqlite \
     --public-url "http://127.0.0.1:${SERVER_PORT}" \
     --addr "127.0.0.1:5112" \
     --storage-root "${storage_root}" \
@@ -677,6 +738,168 @@ run_bootstrap_rollback_case() {
   assert_not_exists "${unit_path}"
   assert_not_exists "$(dirname "${state_path}")/registry.env"
   assert_contains "${stub_log}" "rollback=1"
+}
+
+run_binary_only_mode_flag_case() {
+  local scenario="$1"
+  local install_dir="${ROOT_DIR}/${scenario}/bin"
+  local log_file="${ROOT_DIR}/${scenario}.log"
+
+  export HOME="${ROOT_DIR}/home-${scenario}"
+  mkdir -p "${HOME}"
+  export PATH="${ORIGINAL_PATH}"
+  export REGISTRY_INSTALL_RELEASES_API_URL="http://127.0.0.1:${SERVER_PORT}/api/good"
+  export REGISTRY_INSTALL_RELEASES_PAGE_URL="https://example.invalid/releases"
+  export REGISTRY_INSTALL_OS="linux"
+  export REGISTRY_INSTALL_ARCH="amd64"
+  unset REGISTRY_INSTALL_MODE
+
+  bash "${SCRIPT_PATH}" --dir "${install_dir}" --mode binary-only >"${log_file}" 2>&1
+
+  assert_exists "${install_dir}/registry"
+  assert_contains "${log_file}" "Completed binary-only install"
+  assert_contains "${log_file}" "Deferred automated paths:"
+  assert_contains "${log_file}" "Postgres-auth deployment: manual today, automated later."
+  assert_contains "${log_file}" "Container deployment: manual today, automated later."
+  assert_not_contains "${log_file}" "Choose deployment mode"
+  assert_not_contains "${log_file}" "Applied bootstrap mode daemon-sqlite"
+}
+
+run_binary_only_mode_env_case() {
+  local scenario="$1"
+  local install_dir="${ROOT_DIR}/${scenario}/bin"
+  local log_file="${ROOT_DIR}/${scenario}.log"
+
+  export HOME="${ROOT_DIR}/home-${scenario}"
+  mkdir -p "${HOME}"
+  export PATH="${ORIGINAL_PATH}"
+  export REGISTRY_INSTALL_RELEASES_API_URL="http://127.0.0.1:${SERVER_PORT}/api/good"
+  export REGISTRY_INSTALL_RELEASES_PAGE_URL="https://example.invalid/releases"
+  export REGISTRY_INSTALL_OS="linux"
+  export REGISTRY_INSTALL_ARCH="amd64"
+  export REGISTRY_INSTALL_MODE="binary-only"
+
+  bash "${SCRIPT_PATH}" --dir "${install_dir}" >"${log_file}" 2>&1
+
+  assert_exists "${install_dir}/registry"
+  assert_contains "${log_file}" "Completed binary-only install"
+  assert_not_contains "${log_file}" "Choose deployment mode"
+  unset REGISTRY_INSTALL_MODE
+}
+
+run_interactive_binary_only_case() {
+  local scenario="$1"
+  local install_dir="${ROOT_DIR}/${scenario}/bin"
+  local log_file="${ROOT_DIR}/${scenario}.log"
+
+  export HOME="${ROOT_DIR}/home-${scenario}"
+  mkdir -p "${HOME}"
+  export PATH="${ORIGINAL_PATH}"
+  export REGISTRY_INSTALL_RELEASES_API_URL="http://127.0.0.1:${SERVER_PORT}/api/good"
+  export REGISTRY_INSTALL_RELEASES_PAGE_URL="https://example.invalid/releases"
+  export REGISTRY_INSTALL_OS="linux"
+  export REGISTRY_INSTALL_ARCH="amd64"
+  unset REGISTRY_INSTALL_MODE
+
+  run_installer_with_pty "${log_file}" $'1\n' --dir "${install_dir}"
+
+  assert_exists "${install_dir}/registry"
+  assert_contains "${log_file}" "Choose deployment mode"
+  assert_contains "${log_file}" "1) binary only"
+  assert_contains "${log_file}" "2) binary + daemon/service (Linux + systemd only)"
+  assert_contains "${log_file}" "Completed binary-only install"
+  assert_not_contains "${log_file}" "Applied bootstrap mode daemon-sqlite"
+}
+
+run_interactive_bootstrap_success_case() {
+  local scenario="$1"
+  local install_dir="${ROOT_DIR}/${scenario}/bin"
+  local storage_root="${ROOT_DIR}/${scenario}/storage"
+  local state_path="${ROOT_DIR}/${scenario}/etc/bootstrap-state.json"
+  local unit_path="${ROOT_DIR}/${scenario}/systemd/registry.service"
+  local log_file="${ROOT_DIR}/${scenario}.log"
+  local stub_log="${ROOT_DIR}/${scenario}.bootstrap.log"
+
+  export HOME="${ROOT_DIR}/home-${scenario}"
+  mkdir -p "${HOME}"
+  export PATH="${ORIGINAL_PATH}"
+  export REGISTRY_INSTALL_RELEASES_API_URL="http://127.0.0.1:${SERVER_PORT}/api/bootstrap-good"
+  export REGISTRY_INSTALL_RELEASES_PAGE_URL="https://example.invalid/releases"
+  export REGISTRY_INSTALL_OS="linux"
+  export REGISTRY_INSTALL_ARCH="amd64"
+  export BOOTSTRAP_STUB_OUTCOME="success"
+  export BOOTSTRAP_STUB_LOG="${stub_log}"
+  unset REGISTRY_INSTALL_MODE
+
+  run_installer_with_pty "${log_file}" $'2\n' \
+    --dir "${install_dir}" \
+    --public-url "http://127.0.0.1:${SERVER_PORT}" \
+    --addr "127.0.0.1:5113" \
+    --storage-root "${storage_root}" \
+    --state-path "${state_path}" \
+    --unit-path "${unit_path}" \
+    --service registry
+
+  assert_exists "${install_dir}/registry"
+  assert_exists "${storage_root}/metadata.db"
+  assert_exists "${storage_root}/content"
+  assert_exists "${state_path}"
+  assert_exists "${unit_path}"
+  assert_contains "${log_file}" "Choose deployment mode"
+  assert_contains "${log_file}" "Applied bootstrap mode daemon-sqlite"
+  assert_contains "${stub_log}" "mode=daemon-sqlite"
+}
+
+run_missing_mode_without_tty_case() {
+  local scenario="$1"
+  local install_dir="${ROOT_DIR}/${scenario}/bin"
+  local log_file="${ROOT_DIR}/${scenario}.log"
+
+  export HOME="${ROOT_DIR}/home-${scenario}"
+  mkdir -p "${HOME}"
+  export PATH="${ORIGINAL_PATH}"
+  export REGISTRY_INSTALL_RELEASES_API_URL="http://127.0.0.1:${SERVER_PORT}/api/good"
+  export REGISTRY_INSTALL_RELEASES_PAGE_URL="https://example.invalid/releases"
+  export REGISTRY_INSTALL_OS="linux"
+  export REGISTRY_INSTALL_ARCH="amd64"
+  unset REGISTRY_INSTALL_MODE
+
+  set +e
+  bash "${SCRIPT_PATH}" --dir "${install_dir}" >"${log_file}" 2>&1
+  local exit_code=$?
+  set -e
+
+  [[ ${exit_code} -ne 0 ]] || fail "expected ${scenario} to fail"
+  assert_exists "${install_dir}/registry"
+  assert_contains "${log_file}" "no installer mode was selected and no controlling TTY is available"
+  assert_contains "${log_file}" "Non-interactive runs must set --mode or REGISTRY_INSTALL_MODE"
+  assert_contains "${log_file}" "The verified registry binary remains installed"
+}
+
+run_unsupported_mode_case() {
+  local scenario="$1"
+  local install_dir="${ROOT_DIR}/${scenario}/bin"
+  local log_file="${ROOT_DIR}/${scenario}.log"
+
+  export HOME="${ROOT_DIR}/home-${scenario}"
+  mkdir -p "${HOME}"
+  export PATH="${ORIGINAL_PATH}"
+  export REGISTRY_INSTALL_RELEASES_API_URL="http://127.0.0.1:${SERVER_PORT}/api/good"
+  export REGISTRY_INSTALL_RELEASES_PAGE_URL="https://example.invalid/releases"
+  export REGISTRY_INSTALL_OS="linux"
+  export REGISTRY_INSTALL_ARCH="amd64"
+  unset REGISTRY_INSTALL_MODE
+
+  set +e
+  bash "${SCRIPT_PATH}" --dir "${install_dir}" --mode postgres-auth >"${log_file}" 2>&1
+  local exit_code=$?
+  set -e
+
+  [[ ${exit_code} -ne 0 ]] || fail "expected ${scenario} to fail"
+  assert_exists "${install_dir}/registry"
+  assert_contains "${log_file}" "unsupported installer mode: postgres-auth"
+  assert_contains "${log_file}" "Supported installer modes in this slice:"
+  assert_contains "${log_file}" "Postgres-auth deployment: manual today, automated later."
 }
 
 main() {
@@ -712,6 +935,13 @@ main() {
   run_missing_command_case curl
   run_missing_command_case tar
   run_missing_command_case sha256sum
+
+  run_interactive_binary_only_case "interactive-binary-only"
+  run_interactive_bootstrap_success_case "interactive-bootstrap-success"
+  run_binary_only_mode_flag_case "mode-flag-binary-only"
+  run_binary_only_mode_env_case "mode-env-binary-only"
+  run_missing_mode_without_tty_case "missing-mode-without-tty"
+  run_unsupported_mode_case "unsupported-mode"
 
   run_bootstrap_success_case "bootstrap-success" bootstrap-good
   run_bootstrap_failure_case "bootstrap-unsupported-distro" bootstrap-unsupported-distro unsupported-distro 'unsupported Linux distribution "alpine": Alpine host bootstrap is deferred'
