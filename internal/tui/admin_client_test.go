@@ -12,6 +12,41 @@ import (
 	"registry/internal/ports"
 )
 
+func TestNewHTTPAdminClient(t *testing.T) {
+	t.Parallel()
+
+	t.Run("uses bounded default timeout when client is nil", func(t *testing.T) {
+		t.Parallel()
+
+		client, err := NewHTTPAdminClient("https://registry.example.com", nil)
+		if err != nil {
+			t.Fatalf("NewHTTPAdminClient() error = %v", err)
+		}
+		if client.client == nil {
+			t.Fatal("client.client = nil, want allocated HTTP client")
+		}
+		if client.client == http.DefaultClient {
+			t.Fatal("client.client reused http.DefaultClient, want dedicated bounded client")
+		}
+		if client.client.Timeout != defaultAdminClientTimeout {
+			t.Fatalf("client timeout = %s, want %s", client.client.Timeout, defaultAdminClientTimeout)
+		}
+	})
+
+	t.Run("preserves injected client", func(t *testing.T) {
+		t.Parallel()
+
+		injected := &http.Client{Timeout: 42 * time.Second}
+		client, err := NewHTTPAdminClient("https://registry.example.com", injected)
+		if err != nil {
+			t.Fatalf("NewHTTPAdminClient() error = %v", err)
+		}
+		if client.client != injected {
+			t.Fatal("client.client != injected client, want injected instance preserved")
+		}
+	})
+}
+
 func TestHTTPAdminClientLogin(t *testing.T) {
 	t.Parallel()
 

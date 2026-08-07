@@ -10,6 +10,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    ports:
+      - "15432:5432"  
     volumes:
       - postgres-data:/var/lib/postgresql/data
     networks:
@@ -24,7 +26,7 @@ services:
         condition: service_healthy
     environment:
       REGISTRY_AUTH_POSTGRES_DSN: postgres://registry:registry@postgres:5432/registry_auth?sslmode=disable
-      REGISTRY_AUTH_TOKEN_REALM_URL: http://127.0.0.1:${REGISTRY_PORT:-5517}/auth/token
+      REGISTRY_PUBLIC_URL: http://localhost:${REGISTRY_PORT:-5517}
     command:
       [
         "serve",

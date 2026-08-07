@@ -14,6 +14,8 @@ import (
 	"registry/internal/ports"
 )
 
+const defaultAdminClientTimeout = 15 * time.Second
+
 type AdminClient interface {
 	Login(ctx context.Context, username, password string) (AdminSession, error)
 	ListUsers(ctx context.Context, session AdminSession) ([]ports.AdminUser, error)
@@ -35,7 +37,7 @@ func NewHTTPAdminClient(baseURL string, client *stdhttp.Client) (*HTTPAdminClien
 		return nil, err
 	}
 	if client == nil {
-		client = stdhttp.DefaultClient
+		client = &stdhttp.Client{Timeout: defaultAdminClientTimeout}
 	}
 
 	return &HTTPAdminClient{
