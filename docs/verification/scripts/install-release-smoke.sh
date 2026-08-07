@@ -98,6 +98,171 @@ create_bad_tarball_unexpected_path() {
   tar -C "${workdir}/unexpected" -czf "${output}" bin/registry
 }
 
+create_bootstrap_stub_tarball() {
+  local output="$1"
+  local workdir="$2"
+
+  mkdir -p "${workdir}/payload"
+  cat >"${workdir}/payload/registry" <<'EOF'
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+fail() {
+  printf '%s\n' "$*" >&2
+  exit 1
+}
+
+write_artifacts() {
+  local public_url="$1"
+  local addr="$2"
+  local storage_root="$3"
+  local state_path="$4"
+  local unit_path="$5"
+  local service_name="$6"
+  local env_path
+
+  env_path="$(dirname "${state_path}")/registry.env"
+  mkdir -p "$(dirname "${state_path}")" "$(dirname "${unit_path}")" "${storage_root}/content"
+  : >"${storage_root}/metadata.db"
+  cat >"${env_path}" <<ARTIFACTS
+REGISTRY_PUBLIC_URL=${public_url}
+REGISTRY_ADDR=${addr}
+REGISTRY_STORAGE_ROOT=${storage_root}
+ARTIFACTS
+  cat >"${unit_path}" <<ARTIFACTS
+[Unit]
+Description=Registry smoke stub
+
+[Service]
+EnvironmentFile=${env_path}
+ExecStart=/usr/local/bin/registry serve
+
+[Install]
+WantedBy=multi-user.target
+ARTIFACTS
+  cat >"${state_path}" <<ARTIFACTS
+{
+  "mode": "daemon-sqlite",
+  "service_name": "${service_name}",
+  "paths": [
+    "${env_path}",
+    "${unit_path}",
+    "${storage_root}/metadata.db",
+    "${storage_root}/content",
+    "${state_path}"
+  ]
+}
+ARTIFACTS
+}
+
+remove_artifacts() {
+  local storage_root="$1"
+  local state_path="$2"
+  local unit_path="$3"
+  local env_path
+
+  env_path="$(dirname "${state_path}")/registry.env"
+  rm -f "${env_path}" "${unit_path}" "${storage_root}/metadata.db" "${state_path}"
+  rm -rf "${storage_root}/content"
+}
+
+if [[ $# -eq 0 ]]; then
+  fail 'expected subcommand: serve, tui, bootstrap, or bootstrap-admin'
+fi
+
+command_name="$1"
+shift
+
+case "${command_name}" in
+  bootstrap)
+    mode=""
+    public_url=""
+    addr=""
+    storage_root=""
+    state_path=""
+    unit_path=""
+    service_name="registry"
+    rollback="0"
+
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --mode)
+          mode="$2"
+          shift 2
+          ;;
+        --public-url)
+          public_url="$2"
+          shift 2
+          ;;
+        --addr)
+          addr="$2"
+          shift 2
+          ;;
+        --storage-root)
+          storage_root="$2"
+          shift 2
+          ;;
+        --state-path)
+          state_path="$2"
+          shift 2
+          ;;
+        --unit-path)
+          unit_path="$2"
+          shift 2
+          ;;
+        --service)
+          service_name="$2"
+          shift 2
+          ;;
+        --rollback)
+          rollback="1"
+          shift
+          ;;
+        *)
+          fail "unknown bootstrap arg: $1"
+          ;;
+      esac
+    done
+
+    [[ "${mode}" == "daemon-sqlite" ]] || fail "unsupported mode \"${mode}\": only daemon-sqlite is supported"
+
+    if [[ -n "${BOOTSTRAP_STUB_LOG:-}" ]]; then
+      printf 'mode=%s public_url=%s addr=%s storage_root=%s state_path=%s unit_path=%s service=%s rollback=%s\n' \
+        "${mode}" "${public_url}" "${addr}" "${storage_root}" "${state_path}" "${unit_path}" "${service_name}" "${rollback}" >>"${BOOTSTRAP_STUB_LOG}"
+    fi
+
+    if [[ "${rollback}" == "1" ]]; then
+      remove_artifacts "${storage_root}" "${state_path}" "${unit_path}"
+      exit 0
+    fi
+
+    case "${BOOTSTRAP_STUB_OUTCOME:-success}" in
+      success)
+        write_artifacts "${public_url}" "${addr}" "${storage_root}" "${state_path}" "${unit_path}" "${service_name}"
+        ;;
+      unsupported-distro)
+        fail 'unsupported Linux distribution "alpine": Alpine host bootstrap is deferred'
+        ;;
+      start-failure)
+        write_artifacts "${public_url}" "${addr}" "${storage_root}" "${state_path}" "${unit_path}" "${service_name}"
+        remove_artifacts "${storage_root}" "${state_path}" "${unit_path}"
+        fail "systemctl enable --now ${service_name}.service: exit status 1"
+        ;;
+      *)
+        fail "unknown stub outcome: ${BOOTSTRAP_STUB_OUTCOME:-}"
+        ;;
+    esac
+    ;;
+  *)
+    fail "unknown subcommand \"${command_name}\""
+    ;;
+esac
+EOF
+  chmod +x "${workdir}/payload/registry"
+  tar -C "${workdir}/payload" -czf "${output}" registry
+}
+
 resolve_release_dist_assets() {
   local dist_dir="$1"
   local amd64=()
@@ -205,24 +370,28 @@ prepare_fixtures() {
   local arm64_asset="registry_${version}_linux_arm64.tar.gz"
   local checksum_asset="registry_${version}_checksums.txt"
 
-  mkdir -p "${web_root}/api/good/tags" "${web_root}/api/missing-checksum/tags" "${web_root}/api/missing-asset/tags" "${web_root}/api/checksum-mismatch/tags" "${web_root}/api/bad-archive-missing-entry/tags" "${web_root}/api/bad-archive-unexpected-path/tags" "${web_root}/downloads/good" "${web_root}/downloads/missing-asset" "${web_root}/downloads/checksum-mismatch" "${web_root}/downloads/bad-archive-missing-entry" "${web_root}/downloads/bad-archive-unexpected-path" "${fixtures_root}"
+  mkdir -p "${web_root}/api/good/tags" "${web_root}/api/bootstrap-good/tags" "${web_root}/api/bootstrap-unsupported-distro/tags" "${web_root}/api/bootstrap-start-failure/tags" "${web_root}/api/missing-checksum/tags" "${web_root}/api/missing-asset/tags" "${web_root}/api/checksum-mismatch/tags" "${web_root}/api/bad-archive-missing-entry/tags" "${web_root}/api/bad-archive-unexpected-path/tags" "${web_root}/downloads/good" "${web_root}/downloads/bootstrap-good" "${web_root}/downloads/bootstrap-unsupported-distro" "${web_root}/downloads/bootstrap-start-failure" "${web_root}/downloads/missing-asset" "${web_root}/downloads/checksum-mismatch" "${web_root}/downloads/bad-archive-missing-entry" "${web_root}/downloads/bad-archive-unexpected-path" "${fixtures_root}"
 
   printf 'ok\n' >"${web_root}/healthz"
 
   if [[ -n "${RELEASE_DIST_DIR}" ]]; then
-    prepare_good_downloads_from_dist "${RELEASE_DIST_DIR}" "${web_root}"
-    amd64_asset="$(basename "$(printf '%s\n' "${web_root}/downloads/good/"registry_*_linux_amd64.tar.gz)")"
-    arm64_asset="$(basename "$(printf '%s\n' "${web_root}/downloads/good/"registry_*_linux_arm64.tar.gz)")"
-    checksum_asset="$(basename "$(printf '%s\n' "${web_root}/downloads/good/"registry_*_checksums.txt)")"
+    local resolved_assets=()
+    mapfile -t resolved_assets < <(resolve_release_dist_assets "${RELEASE_DIST_DIR}")
+    amd64_asset="$(basename "${resolved_assets[0]}")"
+    arm64_asset="$(basename "${resolved_assets[1]}")"
+    checksum_asset="$(basename "${resolved_assets[2]}")"
     tag="$(printf '%s' "${amd64_asset}" | sed -E 's/^registry_(.+)_linux_amd64\.tar\.gz$/v\1/')"
-  else
-    create_registry_tarball "${web_root}/downloads/good/${amd64_asset}" "registry fixture amd64" "${fixtures_root}/good-amd64"
-    create_registry_tarball "${web_root}/downloads/good/${arm64_asset}" "registry fixture arm64" "${fixtures_root}/good-arm64"
-    sha256sum "${web_root}/downloads/good/${amd64_asset}" "${web_root}/downloads/good/${arm64_asset}" | sed "s#${web_root}/downloads/good/##" >"${web_root}/downloads/good/${checksum_asset}"
   fi
+
+  create_registry_tarball "${web_root}/downloads/good/${amd64_asset}" "registry fixture amd64" "${fixtures_root}/good-amd64"
+  create_registry_tarball "${web_root}/downloads/good/${arm64_asset}" "registry fixture arm64" "${fixtures_root}/good-arm64"
+  sha256sum "${web_root}/downloads/good/${amd64_asset}" "${web_root}/downloads/good/${arm64_asset}" | sed "s#${web_root}/downloads/good/##" >"${web_root}/downloads/good/${checksum_asset}"
 
   create_registry_tarball "${web_root}/downloads/missing-asset/${arm64_asset}" "registry fixture arm64" "${fixtures_root}/missing-asset-arm64"
   create_registry_tarball "${web_root}/downloads/checksum-mismatch/${amd64_asset}" "registry mismatch amd64" "${fixtures_root}/mismatch-amd64"
+  create_bootstrap_stub_tarball "${web_root}/downloads/bootstrap-good/${amd64_asset}" "${fixtures_root}/bootstrap-good"
+  create_bootstrap_stub_tarball "${web_root}/downloads/bootstrap-unsupported-distro/${amd64_asset}" "${fixtures_root}/bootstrap-unsupported-distro"
+  create_bootstrap_stub_tarball "${web_root}/downloads/bootstrap-start-failure/${amd64_asset}" "${fixtures_root}/bootstrap-start-failure"
   create_bad_tarball_missing_registry "${web_root}/downloads/bad-archive-missing-entry/${amd64_asset}" "${fixtures_root}/bad-missing-entry"
   create_bad_tarball_unexpected_path "${web_root}/downloads/bad-archive-unexpected-path/${amd64_asset}" "${fixtures_root}/bad-unexpected-path"
 
@@ -230,6 +399,9 @@ prepare_fixtures() {
   sha256sum "${web_root}/downloads/bad-archive-missing-entry/${amd64_asset}" | sed "s#${web_root}/downloads/bad-archive-missing-entry/##" >"${web_root}/downloads/bad-archive-missing-entry/${checksum_asset}"
   sha256sum "${web_root}/downloads/bad-archive-unexpected-path/${amd64_asset}" | sed "s#${web_root}/downloads/bad-archive-unexpected-path/##" >"${web_root}/downloads/bad-archive-unexpected-path/${checksum_asset}"
   sha256sum "${web_root}/downloads/missing-asset/${arm64_asset}" | sed "s#${web_root}/downloads/missing-asset/##" >"${web_root}/downloads/missing-asset/${checksum_asset}"
+  sha256sum "${web_root}/downloads/bootstrap-good/${amd64_asset}" | sed "s#${web_root}/downloads/bootstrap-good/##" >"${web_root}/downloads/bootstrap-good/${checksum_asset}"
+  sha256sum "${web_root}/downloads/bootstrap-unsupported-distro/${amd64_asset}" | sed "s#${web_root}/downloads/bootstrap-unsupported-distro/##" >"${web_root}/downloads/bootstrap-unsupported-distro/${checksum_asset}"
+  sha256sum "${web_root}/downloads/bootstrap-start-failure/${amd64_asset}" | sed "s#${web_root}/downloads/bootstrap-start-failure/##" >"${web_root}/downloads/bootstrap-start-failure/${checksum_asset}"
 
   write_release_json "${web_root}/api/good/latest" "${tag}" \
     "http://127.0.0.1:${SERVER_PORT}/downloads/good/${amd64_asset}" \
@@ -240,6 +412,21 @@ prepare_fixtures() {
   write_release_json "${web_root}/api/missing-checksum/latest" "${tag}" \
     "http://127.0.0.1:${SERVER_PORT}/downloads/good/${amd64_asset}"
   cp "${web_root}/api/missing-checksum/latest" "${web_root}/api/missing-checksum/tags/${tag}"
+
+  write_release_json "${web_root}/api/bootstrap-good/latest" "${tag}" \
+    "http://127.0.0.1:${SERVER_PORT}/downloads/bootstrap-good/${amd64_asset}" \
+    "http://127.0.0.1:${SERVER_PORT}/downloads/bootstrap-good/${checksum_asset}"
+  cp "${web_root}/api/bootstrap-good/latest" "${web_root}/api/bootstrap-good/tags/${tag}"
+
+  write_release_json "${web_root}/api/bootstrap-unsupported-distro/latest" "${tag}" \
+    "http://127.0.0.1:${SERVER_PORT}/downloads/bootstrap-unsupported-distro/${amd64_asset}" \
+    "http://127.0.0.1:${SERVER_PORT}/downloads/bootstrap-unsupported-distro/${checksum_asset}"
+  cp "${web_root}/api/bootstrap-unsupported-distro/latest" "${web_root}/api/bootstrap-unsupported-distro/tags/${tag}"
+
+  write_release_json "${web_root}/api/bootstrap-start-failure/latest" "${tag}" \
+    "http://127.0.0.1:${SERVER_PORT}/downloads/bootstrap-start-failure/${amd64_asset}" \
+    "http://127.0.0.1:${SERVER_PORT}/downloads/bootstrap-start-failure/${checksum_asset}"
+  cp "${web_root}/api/bootstrap-start-failure/latest" "${web_root}/api/bootstrap-start-failure/tags/${tag}"
 
   write_release_json "${web_root}/api/missing-asset/latest" "${tag}" \
     "http://127.0.0.1:${SERVER_PORT}/downloads/missing-asset/${checksum_asset}"
@@ -350,6 +537,148 @@ run_failure_case() {
   assert_contains "${log_file}" "Manual options:"
 }
 
+run_bootstrap_success_case() {
+  local scenario="$1"
+  local api_scope="$2"
+  local install_dir="${ROOT_DIR}/${scenario}/bin"
+  local storage_root="${ROOT_DIR}/${scenario}/storage"
+  local state_path="${ROOT_DIR}/${scenario}/etc/bootstrap-state.json"
+  local unit_path="${ROOT_DIR}/${scenario}/systemd/registry.service"
+  local log_file="${ROOT_DIR}/${scenario}.log"
+  local stub_log="${ROOT_DIR}/${scenario}.bootstrap.log"
+
+  export HOME="${ROOT_DIR}/home-${scenario}"
+  mkdir -p "${HOME}"
+  export PATH="${ORIGINAL_PATH}"
+  export REGISTRY_INSTALL_RELEASES_API_URL="http://127.0.0.1:${SERVER_PORT}/api/${api_scope}"
+  export REGISTRY_INSTALL_RELEASES_PAGE_URL="https://example.invalid/releases"
+  export REGISTRY_INSTALL_OS="linux"
+  export REGISTRY_INSTALL_ARCH="amd64"
+  export BOOTSTRAP_STUB_OUTCOME="success"
+  export BOOTSTRAP_STUB_LOG="${stub_log}"
+
+  bash "${SCRIPT_PATH}" \
+    --dir "${install_dir}" \
+    --public-url "http://127.0.0.1:${SERVER_PORT}" \
+    --addr "127.0.0.1:5110" \
+    --storage-root "${storage_root}" \
+    --state-path "${state_path}" \
+    --unit-path "${unit_path}" \
+    --service registry >"${log_file}" 2>&1
+
+  assert_exists "${install_dir}/registry"
+  assert_executable "${install_dir}/registry"
+  assert_exists "${storage_root}/metadata.db"
+  assert_exists "${storage_root}/content"
+  assert_exists "${state_path}"
+  assert_exists "${unit_path}"
+  assert_exists "$(dirname "${state_path}")/registry.env"
+  assert_contains "${log_file}" "Applied bootstrap mode daemon-sqlite"
+  assert_contains "${stub_log}" "mode=daemon-sqlite"
+  assert_contains "${stub_log}" "storage_root=${storage_root}"
+}
+
+run_bootstrap_failure_case() {
+  local scenario="$1"
+  local api_scope="$2"
+  local outcome="$3"
+  local expected_message="$4"
+  local install_dir="${ROOT_DIR}/${scenario}/bin"
+  local storage_root="${ROOT_DIR}/${scenario}/storage"
+  local state_path="${ROOT_DIR}/${scenario}/etc/bootstrap-state.json"
+  local unit_path="${ROOT_DIR}/${scenario}/systemd/registry.service"
+  local log_file="${ROOT_DIR}/${scenario}.log"
+  local stub_log="${ROOT_DIR}/${scenario}.bootstrap.log"
+
+  export HOME="${ROOT_DIR}/home-${scenario}"
+  mkdir -p "${HOME}"
+  export PATH="${ORIGINAL_PATH}"
+  export REGISTRY_INSTALL_RELEASES_API_URL="http://127.0.0.1:${SERVER_PORT}/api/${api_scope}"
+  export REGISTRY_INSTALL_RELEASES_PAGE_URL="https://example.invalid/releases"
+  export REGISTRY_INSTALL_OS="linux"
+  export REGISTRY_INSTALL_ARCH="amd64"
+  export BOOTSTRAP_STUB_OUTCOME="${outcome}"
+  export BOOTSTRAP_STUB_LOG="${stub_log}"
+
+  set +e
+  bash "${SCRIPT_PATH}" \
+    --dir "${install_dir}" \
+    --public-url "http://127.0.0.1:${SERVER_PORT}" \
+    --addr "127.0.0.1:5111" \
+    --storage-root "${storage_root}" \
+    --state-path "${state_path}" \
+    --unit-path "${unit_path}" \
+    --service registry >"${log_file}" 2>&1
+  local exit_code=$?
+  set -e
+
+  [[ ${exit_code} -ne 0 ]] || fail "expected ${scenario} to fail"
+  assert_exists "${install_dir}/registry"
+  assert_contains "${log_file}" "bootstrap command failed; verified registry binary remains installed"
+  assert_contains "${log_file}" "${expected_message}"
+  assert_contains "${stub_log}" "mode=daemon-sqlite"
+  assert_not_exists "${storage_root}/metadata.db"
+  assert_not_exists "${storage_root}/content"
+  assert_not_exists "${state_path}"
+  assert_not_exists "${unit_path}"
+  assert_not_exists "$(dirname "${state_path}")/registry.env"
+}
+
+run_bootstrap_rollback_case() {
+  local scenario="$1"
+  local api_scope="$2"
+  local install_dir="${ROOT_DIR}/${scenario}/bin"
+  local storage_root="${ROOT_DIR}/${scenario}/storage"
+  local state_path="${ROOT_DIR}/${scenario}/etc/bootstrap-state.json"
+  local unit_path="${ROOT_DIR}/${scenario}/systemd/registry.service"
+  local apply_log="${ROOT_DIR}/${scenario}.apply.log"
+  local rollback_log="${ROOT_DIR}/${scenario}.rollback.log"
+  local stub_log="${ROOT_DIR}/${scenario}.bootstrap.log"
+
+  export HOME="${ROOT_DIR}/home-${scenario}"
+  mkdir -p "${HOME}"
+  export PATH="${ORIGINAL_PATH}"
+  export REGISTRY_INSTALL_RELEASES_API_URL="http://127.0.0.1:${SERVER_PORT}/api/${api_scope}"
+  export REGISTRY_INSTALL_RELEASES_PAGE_URL="https://example.invalid/releases"
+  export REGISTRY_INSTALL_OS="linux"
+  export REGISTRY_INSTALL_ARCH="amd64"
+  export BOOTSTRAP_STUB_OUTCOME="success"
+  export BOOTSTRAP_STUB_LOG="${stub_log}"
+
+  bash "${SCRIPT_PATH}" \
+    --dir "${install_dir}" \
+    --public-url "http://127.0.0.1:${SERVER_PORT}" \
+    --addr "127.0.0.1:5112" \
+    --storage-root "${storage_root}" \
+    --state-path "${state_path}" \
+    --unit-path "${unit_path}" \
+    --service registry >"${apply_log}" 2>&1
+
+  assert_exists "${state_path}"
+  assert_exists "${unit_path}"
+  assert_exists "${storage_root}/metadata.db"
+  assert_exists "${storage_root}/content"
+
+  bash "${SCRIPT_PATH}" \
+    --dir "${install_dir}" \
+    --public-url "http://127.0.0.1:${SERVER_PORT}" \
+    --addr "127.0.0.1:5112" \
+    --storage-root "${storage_root}" \
+    --state-path "${state_path}" \
+    --unit-path "${unit_path}" \
+    --service registry \
+    --rollback >"${rollback_log}" 2>&1
+
+  assert_exists "${install_dir}/registry"
+  assert_contains "${rollback_log}" "Rolled back bootstrap artifacts"
+  assert_not_exists "${storage_root}/metadata.db"
+  assert_not_exists "${storage_root}/content"
+  assert_not_exists "${state_path}"
+  assert_not_exists "${unit_path}"
+  assert_not_exists "$(dirname "${state_path}")/registry.env"
+  assert_contains "${stub_log}" "rollback=1"
+}
+
 main() {
   if [[ $# -eq 1 && "$1" == "--release-dist" ]]; then
     fail "usage: $0 [--release-dist <dist-dir>] [root-dir]"
@@ -384,8 +713,10 @@ main() {
   run_missing_command_case tar
   run_missing_command_case sha256sum
 
-  run_success_case "success-amd64-space-dir" good amd64 "${ROOT_DIR}/install dir/bin"
-  run_success_case "success-arm64" good arm64 "${ROOT_DIR}/arm64/bin"
+  run_bootstrap_success_case "bootstrap-success" bootstrap-good
+  run_bootstrap_failure_case "bootstrap-unsupported-distro" bootstrap-unsupported-distro unsupported-distro 'unsupported Linux distribution "alpine": Alpine host bootstrap is deferred'
+  run_bootstrap_failure_case "bootstrap-start-failure" bootstrap-start-failure start-failure 'systemctl enable --now registry.service: exit status 1'
+  run_bootstrap_rollback_case "bootstrap-rollback" bootstrap-good
 
   run_failure_case "malformed-ref" good amd64 --ref "bad/ref"
   assert_contains "${ROOT_DIR}/malformed-ref.log" "invalid release ref"

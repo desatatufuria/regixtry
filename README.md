@@ -10,26 +10,34 @@ Registry is a low-resource, single-binary OCI registry for internal and OSS use.
 
 ## Install from GitHub Releases
 
-Use the repo-hosted installer when you want a simple `curl | bash` setup that installs a verified Linux release.
+Use the repo-hosted installer when you want a verified Linux release plus the truthful `daemon + SQLite` bootstrap path for a single-node host.
 
 ### Quick path
 
-1. Use Linux on `amd64` or `arm64`.
+1. Use a root-owned systemd host on Debian, Ubuntu, Linux Mint, RHEL 9.x, or RHEL 10.x.
 2. Run `curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash`.
-3. Run `registry` after the installer places the binary in your install directory.
+3. Confirm reachability with `curl -fsSI http://127.0.0.1:5000/v2/` and expect HTTP `200` or `401`.
 
 ### Common install commands
 
 ```bash
-# Install the latest Linux release into /usr/local/bin when writable,
-# otherwise fall back to ~/.local/bin
+# Install the latest Linux release and bootstrap daemon + SQLite with
+# /usr/local/bin, /var/lib/registry, /etc/registry, and systemd defaults.
 curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash
 
 # Install a specific release tag
 curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash -s -- --ref v1.2.3
 
-# Install into a custom directory
-curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash -s -- --dir "$HOME/.local/bin"
+# Override the public URL and storage root for the bootstrap receipt and service.
+curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash -s -- \
+  --public-url https://registry.example.com \
+  --storage-root /srv/registry
+
+# Roll back generated bootstrap artifacts while keeping the verified binary installed.
+curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash -s -- \
+  --rollback \
+  --state-path /etc/registry/bootstrap-state.json \
+  --unit-path /etc/systemd/system/registry.service
 ```
 
 ### Installer behavior
@@ -38,14 +46,28 @@ curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/instal
 | --- | --- |
 | Source | Resolves the latest release or `--ref <tag>` from GitHub Releases. |
 | Verification | Downloads the matching `registry_<version>_linux_<arch>.tar.gz` plus `registry_<version>_checksums.txt` and verifies the archive before install. |
-| Scope | Linux only in this slice, with `amd64` and `arm64` assets. |
-| Failure mode | Hard-fails on release asset, checksum, extraction, or support-boundary problems and prints manual guidance. |
+| Truthful host scope | Linux only, with `amd64` and `arm64` assets; host bootstrap is truthful only on Debian, Ubuntu, Linux Mint, RHEL 9.x, and RHEL 10.x with systemd. |
+| Deferred host scope | Alpine host bootstrap, Postgres-backed install modes, and all-container install modes remain out of scope for this slice. |
+| Default bootstrap | After installation, the script runs `registry bootstrap --mode daemon-sqlite` with `http://127.0.0.1:5000`, `/var/lib/registry`, `/etc/registry/bootstrap-state.json`, and `registry.service` defaults. |
+| Success contract | Success means the service is installed and `/v2/` is reachable with HTTP `200` or `401`. |
+| Rollback | `--rollback` removes generated bootstrap artifacts and stops/disables the service, but keeps the verified `registry` binary installed. |
+| Failure mode | Hard-fails on release asset, checksum, extraction, unsupported-host, activation, or readiness problems. Archive/download failures print manual guidance; bootstrap failures keep the binary in place and report the failing step. |
 | Install target | Uses `/usr/local/bin` when writable, otherwise `~/.local/bin`, or `--dir` when provided. |
 | Installed binary name | Always installs the executable as `registry`. |
 
+### Bootstrap assumptions and verification
+
+| Topic | Decision |
+| --- | --- |
+| Privileges | The default bootstrap writes under `/etc` and `/var/lib`, so use a root-owned install path when you want the automatic daemon + SQLite flow. |
+| Service manager | V1 host bootstrap requires systemd. The installer does not pretend SysV, OpenRC, or user-level services are supported here. |
+| Reachability check | Bootstrap polls `GET <public-url>/v2/` and succeeds only when the registry answers with HTTP `200` or `401`. |
+| Receipt path | The bootstrap receipt defaults to `/etc/registry/bootstrap-state.json`; reuse that same path when you invoke `--rollback`. |
+| Binary retention | Rollback and failed activation remove generated bootstrap artifacts only. They do not uninstall the verified release binary. |
+
 ### Manual fallback
 
-The installer does **not** rebuild from source automatically.
+Use the manual paths below when you want only the release asset, need a deferred host, or cannot satisfy the root + systemd bootstrap assumptions.
 
 - Download a verified Linux asset manually from GitHub Releases when you want a release-backed path without `curl | bash`.
 - Build from source manually when you need a non-release or non-Linux path:

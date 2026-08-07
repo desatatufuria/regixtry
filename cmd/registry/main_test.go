@@ -9,6 +9,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"io"
 	"math/big"
 	"net"
@@ -22,6 +23,7 @@ import (
 
 	appregistry "registry/internal/app/registry"
 	authpostgres "registry/internal/infra/auth/postgres"
+	installlinux "registry/internal/infra/install/linux"
 	metadata "registry/internal/infra/metadata/sqlite"
 	"registry/internal/infra/storage/fsblob"
 	"registry/internal/ports"
@@ -375,6 +377,157 @@ func TestParseBootstrapAdminConfigWarnsWhenUsingLegacyPasswordFlag(t *testing.T)
 	}
 	if !strings.Contains(cfg.PasswordWarning, "-password is discouraged") {
 		t.Fatalf("PasswordWarning = %q, want discouraged argv guidance", cfg.PasswordWarning)
+	}
+}
+
+func TestBootstrapParseConfigRejectsUnsupportedModeAndWhitespacePaths(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		args    []string
+		wantErr string
+	}{
+		{
+			name:    "rejects unsupported mode",
+			args:    []string{"-mode", "containers", "-public-url", "http://127.0.0.1:5000"},
+			wantErr: `unsupported mode "containers"`,
+		},
+		{
+			name:    "rejects whitespace storage root",
+			args:    []string{"-mode", "daemon-sqlite", "-public-url", "http://127.0.0.1:5000", "-storage-root", "/tmp/registry data"},
+			wantErr: "storage-root must not contain whitespace",
+		},
+	}
+
+	for _, testCase := range tests {
+		tt := testCase
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := parseBootstrapConfig(tt.args)
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("parseBootstrapConfig() error = %v, want substring %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestRunBootstrapPropagatesHostAndRuntimeFailures(t *testing.T) {
+	tests := []struct {
+		name    string
+		runErr  error
+		wantErr string
+	}{
+		{
+			name:    "unsupported os release",
+			runErr:  errors.New(`unsupported Linux distribution "fedora"`),
+			wantErr: `unsupported Linux distribution "fedora"`,
+		},
+		{
+			name:    "missing systemd",
+			runErr:  errors.New("systemd runtime not detected at /run/systemd/system"),
+			wantErr: "systemd runtime not detected",
+		},
+		{
+			name:    "systemctl enable failure",
+			runErr:  errors.New("systemctl enable --now registry.service: exit status 1"),
+			wantErr: "systemctl enable --now registry.service",
+		},
+		{
+			name:    "probe failure",
+			runErr:  errors.New("registry readiness probe failed: connect: connection refused"),
+			wantErr: "registry readiness probe failed",
+		},
+	}
+
+	for _, testCase := range tests {
+		tt := testCase
+		t.Run(tt.name, func(t *testing.T) {
+			runner := &stubBootstrapRunner{runErr: tt.runErr}
+			restore := swapBootstrapRunner(t, runner)
+			defer restore()
+
+			err := run(context.Background(), []string{"bootstrap", "-mode", "daemon-sqlite", "-public-url", "http://127.0.0.1:5000"}, io.Discard, io.Discard)
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("run(bootstrap) error = %v, want substring %q", err, tt.wantErr)
+			}
+			if runner.runCalls != 1 {
+				t.Fatalf("runCalls = %d, want 1", runner.runCalls)
+			}
+			if runner.rollbackCalls != 0 {
+				t.Fatalf("rollbackCalls = %d, want 0", runner.rollbackCalls)
+			}
+		})
+	}
+}
+
+func TestRunBootstrapPassesParsedConfigToRunner(t *testing.T) {
+	runner := &stubBootstrapRunner{}
+	restore := swapBootstrapRunner(t, runner)
+	defer restore()
+
+	args := []string{
+		"bootstrap",
+		"-mode", "daemon-sqlite",
+		"-public-url", "https://registry.example.com",
+		"-addr", "0.0.0.0:5443",
+		"-storage-root", "/var/lib/registry-data",
+		"-state-path", "/etc/registry/bootstrap-state.json",
+		"-unit-path", "/etc/systemd/system/registry-custom.service",
+		"-service", "registry-custom",
+	}
+
+	if err := run(context.Background(), args, io.Discard, io.Discard); err != nil {
+		t.Fatalf("run(bootstrap) error = %v", err)
+	}
+
+	if runner.runCalls != 1 {
+		t.Fatalf("runCalls = %d, want 1", runner.runCalls)
+	}
+	if runner.rollbackCalls != 0 {
+		t.Fatalf("rollbackCalls = %d, want 0", runner.rollbackCalls)
+	}
+
+	want := installlinux.BootstrapConfig{
+		Mode:        "daemon-sqlite",
+		PublicURL:   "https://registry.example.com",
+		Addr:        "0.0.0.0:5443",
+		StorageRoot: "/var/lib/registry-data",
+		StatePath:   "/etc/registry/bootstrap-state.json",
+		UnitPath:    "/etc/systemd/system/registry-custom.service",
+		ServiceName: "registry-custom",
+	}
+	if runner.lastConfig != want {
+		t.Fatalf("lastConfig = %#v, want %#v", runner.lastConfig, want)
+	}
+}
+
+func TestRunBootstrapRollbackUsesRunnerRollback(t *testing.T) {
+	runner := &stubBootstrapRunner{}
+	restore := swapBootstrapRunner(t, runner)
+	defer restore()
+
+	err := run(
+		context.Background(),
+		[]string{"bootstrap", "-mode", "daemon-sqlite", "-public-url", "http://127.0.0.1:5000", "-rollback", "-state-path", "/etc/registry/bootstrap-state.json"},
+		io.Discard,
+		io.Discard,
+	)
+	if err != nil {
+		t.Fatalf("run(bootstrap rollback) error = %v", err)
+	}
+	if runner.runCalls != 0 {
+		t.Fatalf("runCalls = %d, want 0", runner.runCalls)
+	}
+	if runner.rollbackCalls != 1 {
+		t.Fatalf("rollbackCalls = %d, want 1", runner.rollbackCalls)
+	}
+	if !runner.lastConfig.Rollback {
+		t.Fatal("lastConfig.Rollback = false, want true")
+	}
+	if runner.lastConfig.StatePath != "/etc/registry/bootstrap-state.json" {
+		t.Fatalf("StatePath = %q, want %q", runner.lastConfig.StatePath, "/etc/registry/bootstrap-state.json")
 	}
 }
 
@@ -839,6 +992,39 @@ func swapAuthStoreOpener(t *testing.T) func() {
 	return func() {
 		openAuthStore = previous
 	}
+}
+
+func swapBootstrapRunner(t *testing.T, runner bootstrapRunner) func() {
+	t.Helper()
+
+	previous := newBootstrapRunner
+	newBootstrapRunner = func() bootstrapRunner {
+		return runner
+	}
+
+	return func() {
+		newBootstrapRunner = previous
+	}
+}
+
+type stubBootstrapRunner struct {
+	runErr        error
+	rollbackErr   error
+	lastConfig    installlinux.BootstrapConfig
+	runCalls      int
+	rollbackCalls int
+}
+
+func (s *stubBootstrapRunner) Run(_ context.Context, cfg installlinux.BootstrapConfig) error {
+	s.lastConfig = cfg
+	s.runCalls++
+	return s.runErr
+}
+
+func (s *stubBootstrapRunner) Rollback(_ context.Context, cfg installlinux.BootstrapConfig) error {
+	s.lastConfig = cfg
+	s.rollbackCalls++
+	return s.rollbackErr
 }
 
 func writeTestTLSCertificate(t *testing.T) (string, string) {

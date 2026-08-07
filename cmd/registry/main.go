@@ -19,6 +19,7 @@ import (
 	appauth "registry/internal/app/auth"
 	appregistry "registry/internal/app/registry"
 	authpostgres "registry/internal/infra/auth/postgres"
+	installlinux "registry/internal/infra/install/linux"
 	metadata "registry/internal/infra/metadata/sqlite"
 	"registry/internal/infra/storage/fsblob"
 	"registry/internal/ports"
@@ -28,6 +29,15 @@ import (
 
 var openAuthStore = func(dsn string) (ports.AuthStore, error) {
 	return authpostgres.New(dsn)
+}
+
+type bootstrapRunner interface {
+	Run(context.Context, installlinux.BootstrapConfig) error
+	Rollback(context.Context, installlinux.BootstrapConfig) error
+}
+
+var newBootstrapRunner = func() bootstrapRunner {
+	return installlinux.NewBootstrapper()
 }
 
 var (
@@ -70,7 +80,7 @@ func main() {
 
 func run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("expected subcommand: serve, tui, or bootstrap-admin")
+		return errors.New("expected subcommand: serve, tui, bootstrap, or bootstrap-admin")
 	}
 
 	switch args[0] {
@@ -107,6 +117,18 @@ func run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer)
 			_, _ = fmt.Fprintln(stderr, cfg.PasswordWarning)
 		}
 		return runBootstrapAdmin(ctx, cfg, stdout)
+	case "bootstrap":
+		cfg, err := parseBootstrapConfig(args[1:])
+		if err != nil {
+			return err
+		}
+
+		runner := newBootstrapRunner()
+		if cfg.Rollback {
+			return runner.Rollback(ctx, cfg)
+		}
+
+		return runner.Run(ctx, cfg)
 	default:
 		return fmt.Errorf("unknown subcommand %q", args[0])
 	}
@@ -150,6 +172,8 @@ type bootstrapAdminConfig struct {
 	PasswordWarning string
 	RotatePassword  bool
 }
+
+type BootstrapConfig = installlinux.BootstrapConfig
 
 type runtimeConfig struct {
 	publicURL         *url.URL
@@ -373,6 +397,31 @@ func parseBootstrapAdminConfig(args []string, stdin io.Reader) (bootstrapAdminCo
 
 	if strings.TrimSpace(cfg.Password) == "" {
 		return bootstrapAdminConfig{}, errors.New("bootstrap admin password is required")
+	}
+
+	return cfg, nil
+}
+
+func parseBootstrapConfig(args []string) (BootstrapConfig, error) {
+	flags := flag.NewFlagSet("bootstrap", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+
+	var cfg BootstrapConfig
+	flags.StringVar(&cfg.Mode, "mode", "", "bootstrap mode to apply")
+	flags.StringVar(&cfg.PublicURL, "public-url", os.Getenv("REGISTRY_PUBLIC_URL"), "canonical public URL advertised to registry clients")
+	flags.StringVar(&cfg.Addr, "addr", "127.0.0.1:5000", "address to listen on")
+	flags.StringVar(&cfg.StorageRoot, "storage-root", "/var/lib/registry", "root directory for registry runtime state")
+	flags.StringVar(&cfg.StatePath, "state-path", "/etc/registry/bootstrap-state.json", "path to the bootstrap receipt file")
+	flags.StringVar(&cfg.UnitPath, "unit-path", "/etc/systemd/system/registry.service", "path to the generated systemd unit")
+	flags.StringVar(&cfg.ServiceName, "service", "registry", "systemd service name")
+	flags.BoolVar(&cfg.Rollback, "rollback", false, "remove generated bootstrap artifacts and stop the service")
+
+	if err := flags.Parse(args); err != nil {
+		return BootstrapConfig{}, err
+	}
+
+	if err := installlinux.ValidateConfig(cfg); err != nil {
+		return BootstrapConfig{}, err
 	}
 
 	return cfg, nil
