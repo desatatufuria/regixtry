@@ -1,20 +1,11 @@
-# Installation Modes Specification
+# Delta for installation-modes
 
-## Purpose
-
-Define a truthful, flag-driven installation/bootstrap contract for single-node Linux operators, starting with `daemon + SQLite`.
-
-## Current Repository Facts
-
-- `install.sh` currently installs a verified Linux release binary only; it does not generate runtime or service artifacts.
-- `cmd/regixtry/main.go` currently exposes `serve`, `tui`, and `bootstrap-admin`; no installation-mode bootstrap command exists today.
-- The current README installer flow ends with running `regixtry` manually; service activation and reachability checks are not yet part of install success.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Truthful Mode Contract
 
 The system MUST present install lifecycle outcomes through binary-owned commands. In this slice, `daemon-sqlite` SHALL remain the only supported automated install mode, and the system MUST state Linux + systemd as the only supported lifecycle target. Unsupported modes or targets MUST fail without implying Postgres or upgrade support.
+(Previously: install bootstrap was the primary mode contract and mode validation did not shift lifecycle ownership into the binary.)
 
 #### Scenario: Supported lifecycle target is selected
 
@@ -31,6 +22,7 @@ The system MUST present install lifecycle outcomes through binary-owned commands
 ### Requirement: Linux Bootstrap Artifacts
 
 For `daemon-sqlite`, the system MUST generate the runtime and service artifacts required for service activation on Linux + systemd hosts. The system MUST reject non-Linux or non-systemd targets as unsupported rather than implying deferred environments succeeded.
+(Previously: the requirement enumerated supported Linux distributions instead of the Linux + systemd lifecycle boundary.)
 
 #### Scenario: Supported host receives runnable artifacts
 
@@ -47,6 +39,7 @@ For `daemon-sqlite`, the system MUST generate the runtime and service artifacts 
 ### Requirement: Default Service Activation and Reachability
 
 For phase 1, setup success MUST mean the binary is installed, the service is running, and the registry is reachable. The system SHALL treat partial completion as failure and MUST return verification results that distinguish startup or reachability problems.
+(Previously: success focused on activated bootstrap artifacts plus reachability, without requiring installed-binary success as part of the contract.)
 
 #### Scenario: Setup reaches minimum success
 
@@ -63,6 +56,7 @@ For phase 1, setup success MUST mean the binary is installed, the service is run
 ### Requirement: Scoped Rollback
 
 Rollback and uninstall MUST be provenance-driven best-effort cleanup. The system SHALL remove recorded lifecycle artifacts and stop or disable recorded services without requiring prior operator parameters, and it MUST report removed, skipped, or already-missing items truthfully. The system MUST NOT claim full cleanup for unrecorded or drifted state.
+(Previously: rollback assumed a known bootstrap run and focused on deleting generated artifacts while leaving the binary installed.)
 
 #### Scenario: Recorded lifecycle state is cleaned up
 

@@ -13,14 +13,6 @@ RELEASES_API_URL="${REGISTRY_INSTALL_RELEASES_API_URL:-$DEFAULT_RELEASES_API_URL
 RELEASES_PAGE_URL="${REGISTRY_INSTALL_RELEASES_PAGE_URL:-$DEFAULT_RELEASES_PAGE_URL}"
 TARGET_OS="${REGISTRY_INSTALL_OS:-}"
 TARGET_ARCH="${REGISTRY_INSTALL_ARCH:-}"
-INSTALLER_MODE="${REGISTRY_INSTALL_MODE:-}"
-BOOTSTRAP_PUBLIC_URL="${REGISTRY_INSTALL_PUBLIC_URL:-http://127.0.0.1:5000}"
-BOOTSTRAP_ADDR="${REGISTRY_INSTALL_ADDR:-127.0.0.1:5000}"
-BOOTSTRAP_STORAGE_ROOT="${REGISTRY_INSTALL_STORAGE_ROOT:-}"
-BOOTSTRAP_STATE_PATH="${REGISTRY_INSTALL_STATE_PATH:-}"
-BOOTSTRAP_UNIT_PATH="${REGISTRY_INSTALL_UNIT_PATH:-}"
-BOOTSTRAP_SERVICE_NAME="${REGISTRY_INSTALL_SERVICE_NAME:-regixtry}"
-BOOTSTRAP_ROLLBACK=0
 TMP_DIR=""
 
 log() {
@@ -32,14 +24,6 @@ manual_guidance() {
 [regixtry-install] Manual options:
 [regixtry-install] - Download a verified Linux release from: ${RELEASES_PAGE_URL}
 [regixtry-install] - Or build from source manually with: git clone https://github.com/desatatufuria/workspace.git && cd workspace && go build -o regixtry ./cmd/regixtry
-EOF
-}
-
-deferred_mode_guidance() {
-  cat <<EOF
-Deferred automated paths:
-- Postgres-auth deployment: manual today, automated later.
-- Container deployment: manual today, automated later.
 EOF
 }
 
@@ -56,24 +40,17 @@ fail_with_guidance() {
 
 usage() {
   cat <<EOF
-Install the regixtry binary from verified GitHub Release assets and choose
-either a binary-only install or a Linux + systemd daemon/service bootstrap.
+Install the verified regixtry binary from GitHub Releases.
+
+This installer places the binary only. Lifecycle setup and uninstall are owned by
+the installed regixtry binary through 'regixtry setup' and 'regixtry uninstall'.
 
 Usage:
-  ${SCRIPT_NAME} [--ref <release-tag>] [--dir <install-dir>] [installer options] [bootstrap options] [--help]
+  ${SCRIPT_NAME} [--ref <release-tag>] [--dir <install-dir>] [--help]
 
 Options:
   --ref <release-tag>  Install a specific release tag. Defaults to the latest release.
   --dir <path>         Install the binary into this directory.
-  --mode <mode>        Installer mode after download. Supported: binary-only or daemon-sqlite.
-  --public-url <url>   Public URL passed to regixtry bootstrap. Defaults to http://127.0.0.1:5000.
-  --addr <addr>        Listen address passed to regixtry bootstrap. Defaults to 127.0.0.1:5000.
-  --storage-root <path>
-                       Storage root passed to regixtry bootstrap.
-  --state-path <path>  Receipt path passed to regixtry bootstrap.
-  --unit-path <path>   Systemd unit path passed to regixtry bootstrap.
-  --service <name>     Systemd service name passed to regixtry bootstrap. Defaults to regixtry.
-  --rollback           Run bootstrap rollback after installing the verified binary.
   --help               Show this help output.
 
 Environment overrides:
@@ -81,21 +58,11 @@ Environment overrides:
   REGISTRY_INSTALL_DIR                Default install directory when --dir is not provided.
   REGISTRY_INSTALL_RELEASES_API_URL   Override the release API base URL.
   REGISTRY_INSTALL_RELEASES_PAGE_URL  Override the release downloads page URL.
-  REGISTRY_INSTALL_MODE               Default installer mode when --mode is not provided.
-  REGISTRY_INSTALL_PUBLIC_URL         Default bootstrap public URL when --public-url is not provided.
-  REGISTRY_INSTALL_ADDR               Default bootstrap listen address when --addr is not provided.
-  REGISTRY_INSTALL_STORAGE_ROOT       Default bootstrap storage root when --storage-root is not provided.
-  REGISTRY_INSTALL_STATE_PATH         Default bootstrap receipt path when --state-path is not provided.
-  REGISTRY_INSTALL_UNIT_PATH          Default bootstrap systemd unit path when --unit-path is not provided.
-  REGISTRY_INSTALL_SERVICE_NAME       Default bootstrap systemd service name when --service is not provided.
 
 Examples:
   curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash
   curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash -s -- --ref v1.2.3
-  curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash -s -- --mode binary-only
-  curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash -s -- --mode daemon-sqlite --public-url https://regixtry.example.com
-
-$(deferred_mode_guidance)
+  curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash -s -- --dir "${HOME}/.local/bin"
 EOF
 }
 
@@ -141,45 +108,6 @@ parse_args() {
         INSTALL_DIR="$2"
         shift 2
         ;;
-      --mode)
-        [[ $# -ge 2 ]] || fail "--mode requires a value"
-        INSTALLER_MODE="$2"
-        shift 2
-        ;;
-      --public-url)
-        [[ $# -ge 2 ]] || fail "--public-url requires a value"
-        BOOTSTRAP_PUBLIC_URL="$2"
-        shift 2
-        ;;
-      --addr)
-        [[ $# -ge 2 ]] || fail "--addr requires a value"
-        BOOTSTRAP_ADDR="$2"
-        shift 2
-        ;;
-      --storage-root)
-        [[ $# -ge 2 ]] || fail "--storage-root requires a value"
-        BOOTSTRAP_STORAGE_ROOT="$2"
-        shift 2
-        ;;
-      --state-path)
-        [[ $# -ge 2 ]] || fail "--state-path requires a value"
-        BOOTSTRAP_STATE_PATH="$2"
-        shift 2
-        ;;
-      --unit-path)
-        [[ $# -ge 2 ]] || fail "--unit-path requires a value"
-        BOOTSTRAP_UNIT_PATH="$2"
-        shift 2
-        ;;
-      --service)
-        [[ $# -ge 2 ]] || fail "--service requires a value"
-        BOOTSTRAP_SERVICE_NAME="$2"
-        shift 2
-        ;;
-      --rollback)
-        BOOTSTRAP_ROLLBACK=1
-        shift
-        ;;
       --help|-h)
         usage
         exit 0
@@ -189,124 +117,6 @@ parse_args() {
         ;;
     esac
   done
-}
-
-validate_installer_mode() {
-  local mode="$1"
-
-  case "${mode}" in
-    binary-only|daemon-sqlite)
-      ;;
-    *)
-      return 1
-      ;;
-  esac
-}
-
-unsupported_mode_guidance() {
-  local current_mode="$1"
-  local regixtry_binary="$2"
-
-  cat >&2 <<EOF
-[regixtry-install] ERROR: unsupported installer mode: ${current_mode}
-[regixtry-install] Supported installer modes in this slice:
-[regixtry-install] - binary-only
-[regixtry-install] - daemon-sqlite (binary + daemon/service on Linux + systemd)
-[regixtry-install] The verified regixtry binary remains installed at ${regixtry_binary}
-EOF
-  deferred_mode_guidance >&2
-  exit 1
-}
-
-missing_mode_guidance() {
-  local regixtry_binary="$1"
-
-  cat >&2 <<EOF
-[regixtry-install] ERROR: no installer mode was selected and no controlling TTY is available
-[regixtry-install] Non-interactive runs must set --mode or REGISTRY_INSTALL_MODE to binary-only or daemon-sqlite
-[regixtry-install] The verified regixtry binary remains installed at ${regixtry_binary}
-EOF
-  deferred_mode_guidance >&2
-  exit 1
-}
-
-binary_only_rollback_guidance() {
-  local regixtry_binary="$1"
-
-  cat >&2 <<EOF
-[regixtry-install] ERROR: --rollback only applies to daemon-sqlite bootstrap artifacts in this slice
-[regixtry-install] Use --mode daemon-sqlite --rollback to remove generated service/runtime artifacts
-[regixtry-install] The verified regixtry binary remains installed at ${regixtry_binary}
-EOF
-  exit 1
-}
-
-prompt_installer_mode() {
-  local choice=""
-
-  exec 3<>/dev/tty || return 1
-  while true; do
-    cat >&3 <<'EOF'
-[regixtry-install] Choose deployment mode:
-[regixtry-install] 1) binary only
-[regixtry-install] 2) binary + daemon/service (Linux + systemd only)
-[regixtry-install] Deferred automated paths:
-[regixtry-install] - Postgres-auth deployment: manual today, automated later.
-[regixtry-install] - Container deployment: manual today, automated later.
-EOF
-    printf '[regixtry-install] Enter choice [1-2]: ' >&3
-    if ! IFS= read -r choice <&3; then
-      exec 3>&-
-      return 1
-    fi
-
-    case "${choice}" in
-      1)
-        printf 'binary-only\n'
-        exec 3>&-
-        return 0
-        ;;
-      2)
-        printf 'daemon-sqlite\n'
-        exec 3>&-
-        return 0
-        ;;
-      *)
-        printf '[regixtry-install] Invalid choice: %s\n' "${choice}" >&3
-        ;;
-    esac
-  done
-}
-
-resolve_installer_mode() {
-  local regixtry_binary="$1"
-  local resolved_mode="${INSTALLER_MODE}"
-
-  if [[ -n "${resolved_mode}" ]]; then
-    validate_installer_mode "${resolved_mode}" || unsupported_mode_guidance "${resolved_mode}" "${regixtry_binary}"
-  else
-    if ! resolved_mode="$(prompt_installer_mode)"; then
-      missing_mode_guidance "${regixtry_binary}"
-    fi
-  fi
-
-  if [[ "${BOOTSTRAP_ROLLBACK}" == "1" && "${resolved_mode}" != "daemon-sqlite" ]]; then
-    binary_only_rollback_guidance "${regixtry_binary}"
-  fi
-
-  printf '%s\n' "${resolved_mode}"
-}
-
-print_binary_only_success() {
-  local regixtry_binary="$1"
-
-  log "Completed binary-only install with ${regixtry_binary}"
-  log "Next steps: run '${regixtry_binary} serve -addr ${BOOTSTRAP_ADDR} -public-url ${BOOTSTRAP_PUBLIC_URL} -storage-root ./data -db ./data/metadata.db -service ${BOOTSTRAP_SERVICE_NAME}' when you are ready"
-  log "Linux + systemd daemon/service automation remains available through '--mode daemon-sqlite'"
-  while IFS= read -r line; do
-    [[ -n "${line}" ]] || continue
-    log "${line}"
-  done < <(deferred_mode_guidance)
 }
 
 validate_ref() {
@@ -503,35 +313,23 @@ extract_regixtry_binary() {
   install -m 0755 "${extract_dir}/regixtry" "${destination}/${DEFAULT_BIN_NAME}"
 }
 
-run_bootstrap() {
-  local regixtry_binary="$1"
-  local bootstrap_mode="daemon-sqlite"
-  local bootstrap_args=("bootstrap" "--mode" "${bootstrap_mode}" "--public-url" "${BOOTSTRAP_PUBLIC_URL}" "--addr" "${BOOTSTRAP_ADDR}" "--service" "${BOOTSTRAP_SERVICE_NAME}")
+print_next_steps() {
+  local binary_path="$1"
+  local command_name="${DEFAULT_BIN_NAME}"
 
-  if [[ -n "${BOOTSTRAP_STORAGE_ROOT}" ]]; then
-    bootstrap_args+=("--storage-root" "${BOOTSTRAP_STORAGE_ROOT}")
-  fi
-  if [[ -n "${BOOTSTRAP_STATE_PATH}" ]]; then
-    bootstrap_args+=("--state-path" "${BOOTSTRAP_STATE_PATH}")
-  fi
-  if [[ -n "${BOOTSTRAP_UNIT_PATH}" ]]; then
-    bootstrap_args+=("--unit-path" "${BOOTSTRAP_UNIT_PATH}")
-  fi
-  if [[ "${BOOTSTRAP_ROLLBACK}" == "1" ]]; then
-    bootstrap_args+=("--rollback")
-  fi
+  case ":${PATH}:" in
+    *":${INSTALL_DIR}:"*)
+      ;;
+    *)
+      command_name="${binary_path}"
+      ;;
+  esac
 
-  if ! "${regixtry_binary}" "${bootstrap_args[@]}"; then
-    printf '[regixtry-install] ERROR: bootstrap command failed; verified regixtry binary remains installed at %s\n' "${regixtry_binary}" >&2
-    exit 1
-  fi
-
-  if [[ "${BOOTSTRAP_ROLLBACK}" == "1" ]]; then
-    log "Rolled back bootstrap artifacts with ${regixtry_binary}"
-    return
-  fi
-
-  log "Applied bootstrap mode ${bootstrap_mode} with ${regixtry_binary}"
+  log "Binary placement is complete. Continue with the installed lifecycle commands:"
+  log "- ${command_name} setup --mode binary-only"
+  log "- ${command_name} setup --mode daemon-sqlite --public-url http://127.0.0.1:5000"
+  log "- ${command_name} uninstall"
+  log "Linux + systemd lifecycle automation remains limited to the regixtry binary."
 }
 
 main() {
@@ -545,6 +343,7 @@ main() {
   local checksums_name=""
   local archive_file=""
   local checksums_file=""
+  local binary_path=""
 
   parse_args "$@"
   validate_ref
@@ -577,6 +376,7 @@ main() {
   checksums_name="${checksums_url##*/}"
   archive_file="${TMP_DIR}/${archive_name}"
   checksums_file="${TMP_DIR}/${checksums_name}"
+  binary_path="${INSTALL_DIR}/${DEFAULT_BIN_NAME}"
 
   log "Resolved release ${release_tag} for ${normalized_os}/${normalized_arch}"
   download_file "${archive_url}" "${archive_file}"
@@ -585,18 +385,7 @@ main() {
   validate_archive "${archive_file}"
   extract_regixtry_binary "${archive_file}" "${INSTALL_DIR}"
 
-  log "Installed ${DEFAULT_BIN_NAME} to ${INSTALL_DIR}/${DEFAULT_BIN_NAME}"
-
-  INSTALLER_MODE="$(resolve_installer_mode "${INSTALL_DIR}/${DEFAULT_BIN_NAME}")"
-
-  case "${INSTALLER_MODE}" in
-    binary-only)
-      print_binary_only_success "${INSTALL_DIR}/${DEFAULT_BIN_NAME}"
-      ;;
-    daemon-sqlite)
-      run_bootstrap "${INSTALL_DIR}/${DEFAULT_BIN_NAME}"
-      ;;
-  esac
+  log "Installed ${DEFAULT_BIN_NAME} to ${binary_path}"
 
   case ":${PATH}:" in
     *":${INSTALL_DIR}:"*)
@@ -606,6 +395,8 @@ main() {
       log "Add this to your shell profile: export PATH=\"${INSTALL_DIR}:\$PATH\""
       ;;
   esac
+
+  print_next_steps "${binary_path}"
 }
 
 main "$@"

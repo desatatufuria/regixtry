@@ -10,60 +10,51 @@ Regixtry is a low-resource, single-binary OCI registry for internal and OSS use.
 
 ## Install from GitHub Releases
 
-Use the repo-hosted installer when you want a verified Linux release and a truthful deployment choice. This slice supports only two automated outcomes: `binary only` and `binary + daemon/service`.
+Use the repo-hosted installer when you want a verified Linux release asset. The installer now owns download, checksum verification, and binary placement only. Lifecycle setup and removal are owned by the installed `regixtry` binary.
 
 ### Quick path
 
-1. Run `curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash` from an interactive shell when you want the chooser.
-2. Select either `binary only` or `binary + daemon/service`.
-3. For the service path, confirm reachability with `curl -fsSI http://127.0.0.1:5000/v2/` and expect HTTP `200` or `401`.
+1. Run `curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash` to install the verified Linux binary.
+2. Finish lifecycle setup with either `regixtry setup --mode binary-only` or `regixtry setup --mode daemon-sqlite --public-url <url>`.
+3. When setup uses `daemon-sqlite`, confirm reachability with `curl -fsSI <public-url>/v2/` and expect HTTP `200` or `401`.
 
-### Supported installer choices
-
-| Choice | What it does | Constraints |
-| --- | --- | --- |
-| `binary only` | Installs the verified `regixtry` binary and stops. | No daemon/service is created. You start the runtime manually when ready. |
-| `binary + daemon/service` | Installs the verified binary, then runs `regixtry bootstrap --mode daemon-sqlite`. | Supported only on Debian, Ubuntu, Linux Mint, RHEL 9.x, and RHEL 10.x hosts with systemd. |
-
-Deferred automation remains out of scope in this slice:
-
-- Postgres-auth deployment: manual today, automated later.
-- Container deployment: manual today, automated later.
-
-### Common install commands
-
-```bash
-# Interactive chooser for the latest Linux release.
-curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash
-
-# Install a specific release tag and choose interactively.
-curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash -s -- --ref v1.2.3
-
-# Non-interactive binary-only install.
-curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash -s -- --mode binary-only
-
-# Non-interactive daemon/service install with bootstrap overrides.
-curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash -s -- \
-  --mode daemon-sqlite \
-  --public-url https://regixtry.example.com \
-  --storage-root /srv/regixtry
-
-# Roll back generated daemon/service bootstrap artifacts while keeping the verified binary installed.
-curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash -s -- \
-  --mode daemon-sqlite \
-  --rollback \
-  --state-path /etc/regixtry/bootstrap-state.json \
-  --unit-path /etc/systemd/system/regixtry.service
-```
-
-### Mode selection and non-interactive runs
+### Installer and lifecycle contract
 
 | Topic | Decision |
 | --- | --- |
-| Interactive behavior | If no explicit mode is provided and a controlling TTY is available, the installer requires an explicit choice between `binary only` and `binary + daemon/service`. |
-| Non-interactive behavior | If no TTY is available, you must set `--mode <binary-only|daemon-sqlite>` or `REGISTRY_INSTALL_MODE=<binary-only|daemon-sqlite>`. The installer fails instead of silently defaulting. |
-| Mode override precedence | `--mode` and `REGISTRY_INSTALL_MODE` skip the chooser and drive the install path directly. |
-| Unsupported automated modes | Any automated mode other than `binary-only` or `daemon-sqlite` is rejected after the binary install, with manual-today guidance for deferred paths. |
+| Installer scope | `install.sh` downloads, verifies, and places the `regixtry` binary only. It does not prompt for lifecycle mode, run setup, or run uninstall. |
+| Lifecycle entrypoints | `regixtry setup` and `regixtry uninstall` are the operator-facing lifecycle commands in this slice. |
+| Supported automated lifecycle target | Linux + systemd only. The current host validation accepts Debian, Ubuntu, Linux Mint, and RHEL 9.x/10.x before claiming `daemon-sqlite` success. |
+| Deferred automation | Postgres-auth deployment, container deployment, and `regixtry upgrade` remain manual or deferred in this slice. |
+| Binary-only truth | `regixtry setup --mode binary-only` prints next steps only. It does not claim setup success and it writes no lifecycle provenance. |
+| Daemon/service truth | `regixtry setup --mode daemon-sqlite` succeeds only when the binary is installed, the service is running, and `/v2/` is reachable with HTTP `200` or `401`. |
+| Uninstall truth | `regixtry uninstall` removes recorded lifecycle artifacts best effort from persisted provenance and reports removed, missing, skipped, or failed items truthfully. |
+
+### Common install and lifecycle commands
+
+```bash
+# Install the latest verified Linux release binary.
+curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash
+
+# Install a specific release tag.
+curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash -s -- --ref v1.2.3
+
+# Install into a custom directory.
+curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash -s -- --dir "$HOME/.local/bin"
+
+# Binary-owned guidance-only setup.
+regixtry setup --mode binary-only
+
+# Linux + systemd lifecycle setup.
+sudo regixtry setup --mode daemon-sqlite \
+  --public-url https://regixtry.example.com \
+  --storage-root /var/lib/regixtry \
+  --state-path /etc/regixtry/bootstrap-state.json \
+  --unit-path /etc/systemd/system/regixtry.service
+
+# Provenance-driven uninstall.
+sudo regixtry uninstall
+```
 
 ### Installer behavior
 
@@ -71,24 +62,21 @@ curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/instal
 | --- | --- |
 | Source | Resolves the latest release or `--ref <tag>` from GitHub Releases. |
 | Verification | Downloads the matching `regixtry_<version>_linux_<arch>.tar.gz` plus `regixtry_<version>_checksums.txt` and verifies the archive before install. |
-| Truthful host scope | Linux only, with `amd64` and `arm64` assets; automated daemon/service bootstrap is truthful only on Debian, Ubuntu, Linux Mint, RHEL 9.x, and RHEL 10.x with systemd. |
-| Deferred host scope | Alpine host bootstrap, Postgres-auth installer orchestration, and containerized installs remain manual today. |
-| Binary-only success contract | Success means the verified `regixtry` binary is installed and the installer prints manual next steps. It does not claim service activation. |
-| Daemon/service success contract | Success means the service is installed and `/v2/` is reachable with HTTP `200` or `401`. |
-| Failure mode | Hard-fails on release asset, checksum, extraction, unsupported-host, activation, or readiness problems. Archive/download failures print manual guidance; bootstrap failures keep the binary in place and report the failing step. |
+| Host scope | Installer automation is Linux only, with `amd64` and `arm64` release assets. |
+| Success contract | Success means the verified `regixtry` binary is installed and the installer prints the next binary-owned lifecycle commands. |
+| Failure mode | Hard-fails on release asset, checksum, extraction, or unsupported target problems. Archive/download failures print manual guidance. |
 | Install target | Uses `/usr/local/bin` when writable, otherwise `~/.local/bin`, or `--dir` when provided. |
 | Installed binary name | Always installs the executable as `regixtry`. |
 
-### Daemon/service bootstrap assumptions and rollback
+### Daemon/service setup and uninstall assumptions
 
 | Topic | Decision |
 | --- | --- |
-| Privileges | The default daemon/service bootstrap writes under `/etc` and `/var/lib`, so use a root-owned install path when you want that flow. |
-| Service manager | Automated host bootstrap requires systemd. The installer does not pretend SysV, OpenRC, or user-level services are supported here. |
-| Reachability check | Bootstrap polls `GET <public-url>/v2/` and succeeds only when the registry answers with HTTP `200` or `401`. |
-| Receipt path | The bootstrap receipt defaults to `/etc/regixtry/bootstrap-state.json`; reuse that same path when you invoke `--mode daemon-sqlite --rollback`. |
-| Rollback scope | `--rollback` applies only to `daemon-sqlite` bootstrap artifacts. It removes generated runtime/service artifacts and stops or disables the service. |
-| Binary retention | Rollback and failed activation remove generated bootstrap artifacts only. They do not uninstall the verified release binary. |
+| Privileges | The default `daemon-sqlite` lifecycle paths write under `/etc` and `/var/lib`, so use a root-owned command context when you want that flow. |
+| Service manager | Automated lifecycle setup requires systemd. Regixtry does not pretend SysV, OpenRC, or user-level services are supported here. |
+| Reachability check | `setup --mode daemon-sqlite` polls `GET <public-url>/v2/` and succeeds only when the registry answers with HTTP `200` or `401`. |
+| Provenance path | Lifecycle provenance defaults beside the bootstrap receipt as `/etc/regixtry/regixtry-lifecycle-state.json`. |
+| Uninstall scope | `regixtry uninstall` removes only recorded lifecycle-managed artifacts and the recorded installed binary. Unrecorded drift stays truthfully out of scope. |
 
 ### Manual fallback
 
