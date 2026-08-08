@@ -493,8 +493,9 @@ EOF
   assert_contains_one_of "${unsupported_log}" \
     "unsupported Linux distribution" \
     "systemd runtime not detected" \
+    "systemctl daemon-reload" \
     "systemctl enable --now regixtry.service" \
-    "regixtry readiness probe failed"
+    "registry readiness probe failed"
 }
 
 main() {
