@@ -16,6 +16,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -460,6 +461,48 @@ func TestParseSetupConfigUsesEnvPublicURLWhenFlagMissing(t *testing.T) {
 	}
 }
 
+func TestBuildSetupAuthPostgresDSNUsesDefaultDatabaseName(t *testing.T) {
+	t.Parallel()
+
+	dsn, err := buildSetupAuthPostgresDSN("db.example.com", "5432", "registry", "secret", "require")
+	if err != nil {
+		t.Fatalf("buildSetupAuthPostgresDSN() error = %v", err)
+	}
+	if dsn != "postgres://registry:secret@db.example.com:5432/regixtry_auth?sslmode=require" {
+		t.Fatalf("buildSetupAuthPostgresDSN() = %q, want default auth database name in DSN", dsn)
+	}
+}
+
+func TestBuildSetupAuthPostgresDSNRequiresHostPortUserAndSSLMode(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		host    string
+		port    string
+		user    string
+		sslMode string
+		wantErr string
+	}{
+		{name: "missing host", port: "5432", user: "registry", sslMode: "disable", wantErr: "auth Postgres host is required"},
+		{name: "missing port", host: "db.example.com", user: "registry", sslMode: "disable", wantErr: "auth Postgres port is required"},
+		{name: "missing user", host: "db.example.com", port: "5432", sslMode: "disable", wantErr: "auth Postgres user is required"},
+		{name: "missing ssl mode", host: "db.example.com", port: "5432", user: "registry", wantErr: "auth Postgres ssl mode is required"},
+	}
+
+	for _, testCase := range tests {
+		tt := testCase
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := buildSetupAuthPostgresDSN(tt.host, tt.port, tt.user, "secret", tt.sslMode)
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("buildSetupAuthPostgresDSN() error = %v, want substring %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestRunSetupRequiresAdminPasswordWhenAuthEnabledWithoutTTY(t *testing.T) {
 	restoreTTY := swapInteractiveTTYDetector(t, false)
 	defer restoreTTY()
@@ -782,20 +825,23 @@ func TestRunSetupInteractivePromptBootstrapsAuthAndPrintsDockerLoginGuidance(t *
 	restoreTTY := swapInteractiveTTYDetector(t, true)
 	defer restoreTTY()
 
-	authDB := filepath.Join(t.TempDir(), "auth.db")
+	authDBURL, err := url.Parse("postgres://bootstrap:change-me@127.0.0.1:5432/" + defaultSetupAuthDBName + "?sslmode=disable")
+	if err != nil {
+		t.Fatalf("url.Parse() error = %v", err)
+	}
 	stdout := &bytes.Buffer{}
-	err := runWithIO(
+	err = runWithIO(
 		context.Background(),
 		[]string{"setup"},
-		strings.NewReader("2\n\n\n\ny\n"+authDB+"\nbootstrap-admin\nchange-me-now\n"),
+		strings.NewReader("2\n\n\n\ny\ndb.example.com\n5432\nregistry\nregistry-secret\ndisable\nbootstrap-admin\nchange-me-now\n"),
 		stdout,
 		io.Discard,
 	)
 	if err != nil {
 		t.Fatalf("runWithIO(setup auth prompt) error = %v", err)
 	}
-	if runner.lastConfig.AuthPostgresDSN != authDB {
-		t.Fatalf("lastConfig.AuthPostgresDSN = %q, want prompted auth DSN", runner.lastConfig.AuthPostgresDSN)
+	if runner.lastConfig.AuthPostgresDSN != "postgres://registry:registry-secret@db.example.com:5432/regixtry_auth?sslmode=disable" {
+		t.Fatalf("lastConfig.AuthPostgresDSN = %q, want assembled auth DSN", runner.lastConfig.AuthPostgresDSN)
 	}
 	if !strings.Contains(stdout.String(), `Auth bootstrap complete: created global admin "bootstrap-admin".`) {
 		t.Fatalf("stdout = %q, want auth bootstrap success message", stdout.String())
@@ -806,11 +852,14 @@ func TestRunSetupInteractivePromptBootstrapsAuthAndPrintsDockerLoginGuidance(t *
 	if !strings.Contains(stdout.String(), "Enable auth [y/N]: ") {
 		t.Fatalf("stdout = %q, want enable auth prompt", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), "Auth Postgres host [127.0.0.1]: ") || !strings.Contains(stdout.String(), "Auth Postgres port [5432]: ") || !strings.Contains(stdout.String(), "Auth Postgres user [regixtry]: ") || !strings.Contains(stdout.String(), "Auth Postgres password: ") || !strings.Contains(stdout.String(), "Auth Postgres ssl mode [disable]: ") {
+		t.Fatalf("stdout = %q, want structured auth prompts", stdout.String())
+	}
 
 	handler, cleanup, err := newHandler(serveConfig{
 		StorageRoot:     t.TempDir(),
 		DatabasePath:    filepath.Join(t.TempDir(), "registry.db"),
-		AuthPostgresDSN: authDB,
+		AuthPostgresDSN: authDBURL.String(),
 	})
 	if err != nil {
 		t.Fatalf("newHandler() error = %v", err)
@@ -1554,7 +1603,19 @@ func swapAuthStoreOpener(t *testing.T) func() {
 	t.Helper()
 
 	previous := openAuthStore
+	sqliteRoot := t.TempDir()
 	openAuthStore = func(dsn string) (ports.AuthStore, error) {
+		if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+			parsed, err := url.Parse(dsn)
+			if err != nil {
+				return nil, err
+			}
+			dbName := strings.TrimPrefix(strings.TrimSpace(parsed.Path), "/")
+			if dbName == "" {
+				dbName = defaultSetupAuthDBName
+			}
+			dsn = filepath.Join(sqliteRoot, dbName+".db")
+		}
 		return authpostgres.NewWithDriver("sqlite", dsn)
 	}
 

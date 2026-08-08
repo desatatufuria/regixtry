@@ -93,6 +93,11 @@ const (
 	defaultIdleTimeout       = 120 * time.Second
 	defaultShutdownTimeout   = 10 * time.Second
 	defaultSetupPublicURL    = "http://127.0.0.1:5000"
+	defaultSetupAuthDBName   = "regixtry_auth"
+	defaultSetupAuthHost     = "127.0.0.1"
+	defaultSetupAuthPort     = "5432"
+	defaultSetupAuthUser     = "regixtry"
+	defaultSetupAuthSSLMode  = "disable"
 )
 
 func releaseMetadata() string {
@@ -234,6 +239,11 @@ type setupConfig struct {
 type setupAuthConfig struct {
 	Enabled         bool
 	AuthPostgresDSN string
+	Host            string
+	Port            string
+	User            string
+	Password        string
+	SSLMode         string
 	AdminUsername   string
 	AdminPassword   string
 }
@@ -551,6 +561,10 @@ func parseSetupConfigWithPromptState(args []string) (setupConfig, setupPromptSta
 	}
 
 	cfg.Auth.Enabled = strings.TrimSpace(cfg.Auth.AuthPostgresDSN) != ""
+	cfg.Auth.Host = defaultSetupAuthHost
+	cfg.Auth.Port = defaultSetupAuthPort
+	cfg.Auth.User = defaultSetupAuthUser
+	cfg.Auth.SSLMode = defaultSetupAuthSSLMode
 	cfg.Auth.AdminUsername = strings.TrimSpace(cfg.Auth.AdminUsername)
 	cfg.Auth.AdminPassword = strings.TrimSpace(cfg.Auth.AdminPassword)
 	cfg.Auth.AuthPostgresDSN = strings.TrimSpace(cfg.Auth.AuthPostgresDSN)
@@ -733,11 +747,11 @@ func promptSetupDaemonConfig(reader *bufio.Reader, stdout io.Writer, cfg setupCo
 		return cfg, nil
 	}
 	if !promptState.authPostgresDSNProvided {
-		value, err := promptSetupValue(reader, stdout, "Auth Postgres DSN", cfg.Auth.AuthPostgresDSN)
+		authDSN, err := promptSetupAuthPostgresDSN(reader, stdout, cfg.Auth)
 		if err != nil {
 			return setupConfig{}, err
 		}
-		cfg.Auth.AuthPostgresDSN = value
+		cfg.Auth.AuthPostgresDSN = authDSN
 	}
 	if !promptState.adminUsernameProvided {
 		value, err := promptSetupValue(reader, stdout, "Admin username", firstNonEmpty(cfg.Auth.AdminUsername, "admin"))
@@ -756,6 +770,59 @@ func promptSetupDaemonConfig(reader *bufio.Reader, stdout io.Writer, cfg setupCo
 	cfg.BootstrapConfig.AuthPostgresDSN = strings.TrimSpace(cfg.Auth.AuthPostgresDSN)
 
 	return cfg, nil
+}
+
+func promptSetupAuthPostgresDSN(reader *bufio.Reader, stdout io.Writer, cfg setupAuthConfig) (string, error) {
+	host, err := promptSetupValue(reader, stdout, "Auth Postgres host", firstNonEmpty(cfg.Host, defaultSetupAuthHost))
+	if err != nil {
+		return "", err
+	}
+	port, err := promptSetupValue(reader, stdout, "Auth Postgres port", firstNonEmpty(cfg.Port, defaultSetupAuthPort))
+	if err != nil {
+		return "", err
+	}
+	user, err := promptSetupValue(reader, stdout, "Auth Postgres user", firstNonEmpty(cfg.User, defaultSetupAuthUser))
+	if err != nil {
+		return "", err
+	}
+	password, err := promptSetupValue(reader, stdout, "Auth Postgres password", cfg.Password)
+	if err != nil {
+		return "", err
+	}
+	sslMode, err := promptSetupValue(reader, stdout, "Auth Postgres ssl mode", firstNonEmpty(cfg.SSLMode, defaultSetupAuthSSLMode))
+	if err != nil {
+		return "", err
+	}
+	return buildSetupAuthPostgresDSN(host, port, user, password, sslMode)
+}
+
+func buildSetupAuthPostgresDSN(host string, port string, user string, password string, sslMode string) (string, error) {
+	host = strings.TrimSpace(host)
+	port = strings.TrimSpace(port)
+	user = strings.TrimSpace(user)
+	sslMode = strings.TrimSpace(sslMode)
+	if host == "" {
+		return "", errors.New("auth Postgres host is required when auth is enabled")
+	}
+	if port == "" {
+		return "", errors.New("auth Postgres port is required when auth is enabled")
+	}
+	if user == "" {
+		return "", errors.New("auth Postgres user is required when auth is enabled")
+	}
+	if sslMode == "" {
+		return "", errors.New("auth Postgres ssl mode is required when auth is enabled")
+	}
+	assembled := &url.URL{
+		Scheme: "postgres",
+		User:   url.UserPassword(user, password),
+		Host:   net.JoinHostPort(host, port),
+		Path:   defaultSetupAuthDBName,
+	}
+	query := assembled.Query()
+	query.Set("sslmode", sslMode)
+	assembled.RawQuery = query.Encode()
+	return assembled.String(), nil
 }
 
 func runUninstall(ctx context.Context, args []string, stdout io.Writer) error {
