@@ -18,6 +18,8 @@ Use the repo-hosted installer when you want a verified Linux release asset. The 
 2. Finish lifecycle setup with `regixtry setup` for interactive prompts, or pass `--mode binary-only` / `--mode daemon-sqlite --public-url <url>` explicitly.
 3. When setup uses `daemon-sqlite`, confirm reachability with `curl -fsSI <public-url>/v2/` and expect HTTP `200` or `401`.
 
+If the installer placed the binary under `~/.local/bin`, use that absolute path with `sudo` for privileged lifecycle commands. The installer and `regixtry setup --mode binary-only` print the exact rerun command for the current binary location.
+
 ### Installer and lifecycle contract
 
 | Topic | Decision |
@@ -50,14 +52,14 @@ regixtry setup --mode binary-only
 regixtry setup
 
 # Linux + systemd lifecycle setup.
-sudo regixtry setup --mode daemon-sqlite \
+sudo /absolute/path/to/regixtry setup --mode daemon-sqlite \
   --public-url https://regixtry.example.com \
   --storage-root /var/lib/regixtry \
   --state-path /etc/regixtry/bootstrap-state.json \
   --unit-path /etc/systemd/system/regixtry.service
 
 # Provenance-driven uninstall.
-sudo regixtry uninstall
+sudo /absolute/path/to/regixtry uninstall
 ```
 
 ### Installer behavior

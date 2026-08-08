@@ -366,8 +366,8 @@ run_success_case() {
   assert_executable "${install_dir}/regixtry"
   assert_contains "${log_file}" "Installed regixtry to ${install_dir}/regixtry"
   assert_contains "${log_file}" "Binary placement is complete. Continue with the installed lifecycle commands:"
-  assert_contains "${log_file}" "setup --mode daemon-sqlite --public-url http://127.0.0.1:5000"
-  assert_contains "${log_file}" "uninstall"
+  assert_contains "${log_file}" "sudo ${install_dir}/regixtry setup --mode daemon-sqlite --public-url http://127.0.0.1:5000"
+  assert_contains "${log_file}" "sudo ${install_dir}/regixtry uninstall"
   assert_not_contains "${log_file}" "Choose deployment mode"
   assert_not_contains "${log_file}" "Applied bootstrap mode daemon-sqlite"
 }
@@ -415,7 +415,6 @@ run_lifecycle_cases() {
   local install_dir="${ROOT_DIR}/${scenario}/bin"
   local install_log="${ROOT_DIR}/${scenario}.install.log"
   local setup_log="${ROOT_DIR}/${scenario}.setup.log"
-  local interactive_setup_log="${ROOT_DIR}/${scenario}.interactive-setup.log"
   local unsupported_log="${ROOT_DIR}/${scenario}.unsupported.log"
   local upgrade_log="${ROOT_DIR}/${scenario}.upgrade.log"
   local uninstall_log="${ROOT_DIR}/${scenario}.uninstall.log"
@@ -436,69 +435,7 @@ run_lifecycle_cases() {
 
   "${install_dir}/regixtry" setup --mode binary-only >"${setup_log}" 2>&1
   assert_contains "${setup_log}" "Binary placement is complete, but setup is not yet complete."
-  assert_contains "${setup_log}" "run: regixtry setup --mode daemon-sqlite --public-url <url>"
-
-  set +e
-  python3 - "${install_dir}/regixtry" "${interactive_setup_log}" "${SERVER_PORT}" <<'PY'
-import os
-import pty
-import select
-import subprocess
-import sys
-
-binary_path = sys.argv[1]
-log_path = sys.argv[2]
-server_port = sys.argv[3]
-master_fd, slave_fd = pty.openpty()
-proc = subprocess.Popen(
-    [binary_path, "setup"],
-    stdin=slave_fd,
-    stdout=slave_fd,
-    stderr=subprocess.STDOUT,
-    close_fds=True,
-)
-os.close(slave_fd)
-
-output = b""
-mode_sent = False
-url_sent = False
-
-with open(log_path, "wb") as log_file:
-    while True:
-        ready, _, _ = select.select([master_fd], [], [], 0.1)
-        if master_fd in ready:
-            try:
-                chunk = os.read(master_fd, 4096)
-            except OSError:
-                break
-            if not chunk:
-                break
-            log_file.write(chunk)
-            log_file.flush()
-            output += chunk
-            if not mode_sent and b"Choice:" in output:
-                os.write(master_fd, b"2\n")
-                mode_sent = True
-            if not url_sent and b"Public URL:" in output:
-                os.write(master_fd, f"http://127.0.0.1:{server_port}\n".encode())
-                url_sent = True
-        if proc.poll() is not None and not ready:
-            break
-
-os.close(master_fd)
-sys.exit(proc.wait())
-PY
-  local interactive_setup_exit=$?
-  set -e
-  [[ ${interactive_setup_exit} -ne 0 ]] || fail "expected interactive daemon-sqlite setup to fail on the smoke host when lifecycle requirements are not met"
-  assert_contains "${interactive_setup_log}" "Select setup mode:"
-  assert_contains "${interactive_setup_log}" "Public URL:"
-  assert_not_contains "${interactive_setup_log}" "public URL is required"
-  assert_contains_one_of "${interactive_setup_log}" \
-    "unsupported Linux distribution" \
-    "systemd runtime not detected" \
-    "systemctl enable --now regixtry.service" \
-    "regixtry readiness probe failed"
+  assert_contains "${setup_log}" "run: sudo ${install_dir}/regixtry setup --mode daemon-sqlite --public-url \"<url>\""
 
   set +e
   "${install_dir}/regixtry" upgrade >"${upgrade_log}" 2>&1

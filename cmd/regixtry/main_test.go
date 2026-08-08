@@ -10,6 +10,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"io"
 	"math/big"
 	"net"
@@ -460,6 +461,11 @@ func TestRunSetupRequiresModeWithoutTTY(t *testing.T) {
 }
 
 func TestRunSetupInteractivePromptSupportsBinaryOnly(t *testing.T) {
+	restoreExec := swapCurrentExecutablePath(t, "/home/test/.local/bin/regixtry")
+	defer restoreExec()
+	restoreEUID := swapCurrentEUID(t, 1000)
+	defer restoreEUID()
+
 	restoreTTY := swapInteractiveTTYDetector(t, true)
 	defer restoreTTY()
 
@@ -473,6 +479,9 @@ func TestRunSetupInteractivePromptSupportsBinaryOnly(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "Binary placement is complete, but setup is not yet complete.") {
 		t.Fatalf("stdout = %q, want binary-only guidance", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "sudo /home/test/.local/bin/regixtry setup --mode daemon-sqlite --public-url \"<url>\"") {
+		t.Fatalf("stdout = %q, want sudo-safe daemon setup guidance", stdout.String())
 	}
 }
 
@@ -623,6 +632,30 @@ func TestRunSetupRollsBackWhenProvenanceSaveFails(t *testing.T) {
 	}
 }
 
+func TestRunSetupPermissionDeniedReturnsSudoSafeRerunGuidance(t *testing.T) {
+	runner := &stubBootstrapRunner{runErr: fmt.Errorf("mkdir /etc/regixtry: %w", os.ErrPermission)}
+	restoreRunner := swapBootstrapRunner(t, runner)
+	defer restoreRunner()
+	restoreExec := swapCurrentExecutablePath(t, "/home/test/.local/bin/regixtry")
+	defer restoreExec()
+	restoreEUID := swapCurrentEUID(t, 1000)
+	defer restoreEUID()
+
+	err := runWithIO(context.Background(), []string{"setup", "-mode", "daemon-sqlite", "-public-url", "https://regixtry.example.com"}, strings.NewReader(""), io.Discard, io.Discard)
+	if err == nil {
+		t.Fatal("runWithIO(setup) error = nil, want permission guidance")
+	}
+	if !strings.Contains(err.Error(), "permission-denied failure") {
+		t.Fatalf("runWithIO(setup) error = %v, want permission guidance", err)
+	}
+	if !strings.Contains(err.Error(), "sudo /home/test/.local/bin/regixtry setup --mode daemon-sqlite --public-url https://regixtry.example.com --addr 127.0.0.1:5000 --storage-root /var/lib/regixtry --state-path /etc/regixtry/bootstrap-state.json --unit-path /etc/systemd/system/regixtry.service --service regixtry") {
+		t.Fatalf("runWithIO(setup) error = %v, want sudo-safe rerun command", err)
+	}
+	if runner.rollbackCalls != 0 {
+		t.Fatalf("rollbackCalls = %d, want 0", runner.rollbackCalls)
+	}
+}
+
 func TestRunUninstallUsesProvenanceStatePathAndPrintsReport(t *testing.T) {
 	runner := &stubBootstrapRunner{
 		uninstallReport: installlinux.UninstallReport{
@@ -647,6 +680,27 @@ func TestRunUninstallUsesProvenanceStatePathAndPrintsReport(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "Uninstall report:") {
 		t.Fatalf("stdout = %q, want uninstall report", stdout.String())
+	}
+}
+
+func TestRunUninstallPermissionDeniedReturnsSudoSafeRerunGuidance(t *testing.T) {
+	runner := &stubBootstrapRunner{uninstallErr: fmt.Errorf("remove /etc/regixtry/regixtry-lifecycle-state.json: %w", os.ErrPermission)}
+	restoreRunner := swapBootstrapRunner(t, runner)
+	defer restoreRunner()
+	restoreExec := swapCurrentExecutablePath(t, "/home/test/.local/bin/regixtry")
+	defer restoreExec()
+	restoreEUID := swapCurrentEUID(t, 1000)
+	defer restoreEUID()
+
+	err := runWithIO(context.Background(), []string{"uninstall", "-state-path", "/etc/regixtry/regixtry-lifecycle-state.json"}, strings.NewReader(""), io.Discard, io.Discard)
+	if err == nil {
+		t.Fatal("runWithIO(uninstall) error = nil, want permission guidance")
+	}
+	if !strings.Contains(err.Error(), "permission-denied failure") {
+		t.Fatalf("runWithIO(uninstall) error = %v, want permission guidance", err)
+	}
+	if !strings.Contains(err.Error(), "sudo /home/test/.local/bin/regixtry uninstall --state-path /etc/regixtry/regixtry-lifecycle-state.json") {
+		t.Fatalf("runWithIO(uninstall) error = %v, want sudo-safe rerun command", err)
 	}
 }
 
@@ -1255,6 +1309,32 @@ func swapBootstrapRunner(t *testing.T, runner bootstrapRunner) func() {
 
 	return func() {
 		newBootstrapRunner = previous
+	}
+}
+
+func swapCurrentExecutablePath(t *testing.T, path string) func() {
+	t.Helper()
+
+	previous := resolveCurrentExecutable
+	resolveCurrentExecutable = func() string {
+		return path
+	}
+
+	return func() {
+		resolveCurrentExecutable = previous
+	}
+}
+
+func swapCurrentEUID(t *testing.T, euid int) func() {
+	t.Helper()
+
+	previous := currentEUID
+	currentEUID = func() int {
+		return euid
+	}
+
+	return func() {
+		currentEUID = previous
 	}
 }
 

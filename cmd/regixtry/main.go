@@ -13,6 +13,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -42,6 +43,21 @@ type bootstrapRunner interface {
 
 var newBootstrapRunner = func() bootstrapRunner {
 	return installlinux.NewBootstrapper()
+}
+
+var resolveCurrentExecutable = func() string {
+	path, err := os.Executable()
+	if err == nil {
+		return path
+	}
+	if len(os.Args) > 0 {
+		return os.Args[0]
+	}
+	return "regixtry"
+}
+
+var currentEUID = func() int {
+	return os.Geteuid()
 }
 
 var isInteractiveTTYPair = func(stdin io.Reader, stdout io.Writer) bool {
@@ -541,7 +557,7 @@ func runSetup(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 
 		runner := newBootstrapRunner()
 		if err := runner.Run(ctx, cfg); err != nil {
-			return err
+			return upgradeLifecyclePermissionError(err, "daemon-sqlite setup", formatSetupCommand(cfg, false))
 		}
 
 		provenance, err := runner.PlanLifecycleProvenance(cfg)
@@ -549,7 +565,11 @@ func runSetup(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 			return rollbackSetupFailure(ctx, runner, cfg, fmt.Errorf("plan lifecycle provenance: %w", err))
 		}
 		if err := runner.SaveLifecycleProvenance(provenance); err != nil {
-			return rollbackSetupFailure(ctx, runner, cfg, fmt.Errorf("write lifecycle provenance: %w", err))
+			return upgradeLifecyclePermissionError(
+				rollbackSetupFailure(ctx, runner, cfg, fmt.Errorf("write lifecycle provenance: %w", err)),
+				"daemon-sqlite setup",
+				formatSetupCommand(cfg, false),
+			)
 		}
 
 		if stdout != nil {
@@ -576,7 +596,7 @@ func runUninstall(ctx context.Context, args []string, stdout io.Writer) error {
 		}
 	}
 
-	return uninstallErr
+	return upgradeLifecyclePermissionError(uninstallErr, "daemon-sqlite uninstall", formatUninstallCommand(cfg))
 }
 
 func resolveSetupMode(rawMode string, interactive bool, reader *bufio.Reader, stdout io.Writer) (string, bool, error) {
@@ -647,8 +667,92 @@ func printBinaryOnlyGuidance(stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	_, err = fmt.Fprintln(stdout, "To finish phase-1 setup on a supported Linux + systemd host, run: regixtry setup --mode daemon-sqlite --public-url <url>")
+	_, err = fmt.Fprintf(stdout, "To finish phase-1 setup on a supported Linux + systemd host, run: %s\n", formatSetupCommand(BootstrapConfig{Mode: "daemon-sqlite", PublicURL: "<url>"}, true))
 	return err
+}
+
+func lifecycleExecutablePath() string {
+	raw := strings.TrimSpace(resolveCurrentExecutable())
+	if raw == "" {
+		return "regixtry"
+	}
+	if filepath.IsAbs(raw) {
+		return raw
+	}
+	abs, err := filepath.Abs(raw)
+	if err == nil {
+		return abs
+	}
+	return raw
+}
+
+func formatSetupCommand(cfg BootstrapConfig, placeholderOnly bool) string {
+	args := []string{"setup", "--mode", "daemon-sqlite"}
+	publicURL := strings.TrimSpace(cfg.PublicURL)
+	if placeholderOnly {
+		publicURL = "<url>"
+	}
+	if publicURL != "" {
+		args = append(args, "--public-url", publicURL)
+	}
+	if !placeholderOnly {
+		args = append(args,
+			"--addr", cfg.Addr,
+			"--storage-root", cfg.StorageRoot,
+			"--state-path", cfg.StatePath,
+			"--unit-path", cfg.UnitPath,
+			"--service", cfg.ServiceName,
+		)
+		if cfg.NoStart {
+			args = append(args, "--no-start")
+		}
+	}
+	return formatPrivilegedLifecycleCommand(args...)
+}
+
+func formatUninstallCommand(cfg uninstallConfig) string {
+	return formatPrivilegedLifecycleCommand("uninstall", "--state-path", cfg.StatePath)
+}
+
+func formatPrivilegedLifecycleCommand(args ...string) string {
+	parts := make([]string, 0, len(args)+2)
+	if currentEUID() != 0 {
+		parts = append(parts, "sudo")
+	}
+	parts = append(parts, lifecycleExecutablePath())
+	parts = append(parts, args...)
+	for i, part := range parts {
+		parts[i] = shellQuote(part)
+	}
+	return strings.Join(parts, " ")
+}
+
+func shellQuote(value string) string {
+	if value == "" {
+		return `""`
+	}
+	if strings.ContainsAny(value, " \t\n\"'\\$`!&|;()<>*?[]{}") {
+		return strconv.Quote(value)
+	}
+	return value
+}
+
+func upgradeLifecyclePermissionError(err error, action string, rerunCommand string) error {
+	if err == nil || !isPermissionDenied(err) {
+		return err
+	}
+	return fmt.Errorf("%s hit a permission-denied failure on privileged lifecycle paths: %w\nRerun with:\n  %s", action, err, rerunCommand)
+}
+
+func isPermissionDenied(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, os.ErrPermission) {
+		return true
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "permission denied") || strings.Contains(message, "operation not permitted")
 }
 
 func rollbackSetupFailure(ctx context.Context, runner bootstrapRunner, cfg BootstrapConfig, runErr error) error {

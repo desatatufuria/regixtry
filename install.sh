@@ -316,6 +316,7 @@ extract_regixtry_binary() {
 print_next_steps() {
   local binary_path="$1"
   local command_name="${DEFAULT_BIN_NAME}"
+  local privileged_command="${binary_path}"
 
   case ":${PATH}:" in
     *":${INSTALL_DIR}:"*)
@@ -327,8 +328,8 @@ print_next_steps() {
 
   log "Binary placement is complete. Continue with the installed lifecycle commands:"
   log "- ${command_name} setup --mode binary-only"
-  log "- ${command_name} setup --mode daemon-sqlite --public-url http://127.0.0.1:5000"
-  log "- ${command_name} uninstall"
+  log "- sudo ${privileged_command} setup --mode daemon-sqlite --public-url http://127.0.0.1:5000"
+  log "- sudo ${privileged_command} uninstall"
   log "Linux + systemd lifecycle automation remains limited to the regixtry binary."
 }
 
