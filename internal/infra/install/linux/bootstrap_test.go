@@ -83,18 +83,24 @@ func TestTemplateRendering(t *testing.T) {
 	t.Parallel()
 
 	plan := BootstrapPlan{
-		Addr:         "127.0.0.1:5000",
-		PublicURL:    "http://127.0.0.1:5000",
-		StorageRoot:  "/var/lib/regixtry",
-		DatabasePath: "/var/lib/regixtry/metadata.db",
-		EnvPath:      "/etc/regixtry/regixtry.env",
-		BinaryPath:   "/usr/local/bin/regixtry",
-		ServiceName:  "regixtry",
+		Addr:           "127.0.0.1:5000",
+		PublicURL:      "https://regixtry.example.com",
+		RuntimeTLSMode: RuntimeTLSModeDirectTLS,
+		TLSCertFile:    "/etc/regixtry/tls/registry.crt",
+		TLSKeyFile:     "/etc/regixtry/tls/registry.key",
+		StorageRoot:    "/var/lib/regixtry",
+		DatabasePath:   "/var/lib/regixtry/metadata.db",
+		EnvPath:        "/etc/regixtry/regixtry.env",
+		BinaryPath:     "/usr/local/bin/regixtry",
+		ServiceName:    "regixtry",
 	}
 
 	env := RenderEnvFile(plan)
-	if !strings.Contains(env, `REGISTRY_PUBLIC_URL="http://127.0.0.1:5000"`) {
+	if !strings.Contains(env, `REGISTRY_PUBLIC_URL="https://regixtry.example.com"`) {
 		t.Fatalf("env = %q, want quoted public URL", env)
+	}
+	if !strings.Contains(env, `REGISTRY_TLS_CERT_FILE="/etc/regixtry/tls/registry.crt"`) {
+		t.Fatalf("env = %q, want quoted TLS cert path", env)
 	}
 
 	unit := RenderSystemdUnit(plan)
@@ -103,6 +109,9 @@ func TestTemplateRendering(t *testing.T) {
 	}
 	if !strings.Contains(unit, "/usr/local/bin/regixtry serve") {
 		t.Fatalf("unit = %q, want regixtry serve exec start", unit)
+	}
+	if !strings.Contains(unit, "-tls-cert-file=${REGISTRY_TLS_CERT_FILE} -tls-key-file=${REGISTRY_TLS_KEY_FILE}") {
+		t.Fatalf("unit = %q, want TLS serve flags", unit)
 	}
 }
 
@@ -133,7 +142,7 @@ func TestBootstrapRunWritesArtifactsAndRollsBackOnProbeFailure(t *testing.T) {
 			commandCalls = append(commandCalls, name+" "+strings.Join(args, " "))
 			return nil
 		},
-		probe: func(context.Context, string) (int, error) {
+		probe: func(context.Context, string, bool) (int, error) {
 			return 503, nil
 		},
 		probeInterval: time.Millisecond,
@@ -234,7 +243,7 @@ func TestBootstrapRunRollsBackOnEnableFailure(t *testing.T) {
 			}
 			return nil
 		},
-		probe: func(context.Context, string) (int, error) {
+		probe: func(context.Context, string, bool) (int, error) {
 			return 401, nil
 		},
 		probeInterval: time.Millisecond,
@@ -323,7 +332,7 @@ func TestBootstrapRunReportsSuccessAfterActivationAndReadiness(t *testing.T) {
 			commandCalls = append(commandCalls, name+" "+strings.Join(args, " "))
 			return nil
 		},
-		probe: func(_ context.Context, rawURL string) (int, error) {
+		probe: func(_ context.Context, rawURL string, _ bool) (int, error) {
 			probeCalls = append(probeCalls, rawURL)
 			return 401, nil
 		},
@@ -369,6 +378,118 @@ func TestBootstrapRunReportsSuccessAfterActivationAndReadiness(t *testing.T) {
 	}
 }
 
+func TestBootstrapRunReverseProxyModeProbesLocalHTTPBackend(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	statePath := filepath.Join(root, "etc", "regixtry", "bootstrap-state.json")
+	storageRoot := filepath.Join(root, "var", "lib", "regixtry")
+	unitPath := filepath.Join(root, "etc", "systemd", "system", "regixtry.service")
+	probeCalls := make([]string, 0, 1)
+	insecureProbeFlags := make([]bool, 0, 1)
+
+	b := &Bootstrapper{
+		detector: detector{
+			goos: "linux",
+			readFile: func(string) ([]byte, error) {
+				return []byte("ID=ubuntu\nVERSION_ID=24.04\n"), nil
+			},
+			stat: func(string) (os.FileInfo, error) { return fakeInfo{name: "systemd"}, nil },
+		},
+		mkdirAll:       os.MkdirAll,
+		writeFile:      os.WriteFile,
+		readFile:       os.ReadFile,
+		removeAll:      os.RemoveAll,
+		listen:         func(string, string) (net.Listener, error) { return stubListener{}, nil },
+		executablePath: func() (string, error) { return "/usr/local/bin/regixtry", nil },
+		runCommand:     func(_ context.Context, _ string, _ ...string) error { return nil },
+		probe: func(_ context.Context, rawURL string, insecureTLS bool) (int, error) {
+			probeCalls = append(probeCalls, rawURL)
+			insecureProbeFlags = append(insecureProbeFlags, insecureTLS)
+			return 401, nil
+		},
+		probeInterval: time.Millisecond,
+		probeTimeout:  50 * time.Millisecond,
+	}
+
+	err := b.Run(context.Background(), BootstrapConfig{
+		Mode:           supportedMode,
+		PublicURL:      "https://regixtry.example.com",
+		RuntimeTLSMode: RuntimeTLSModeReverseProxy,
+		Addr:           "0.0.0.0:5443",
+		StorageRoot:    storageRoot,
+		StatePath:      statePath,
+		UnitPath:       unitPath,
+		ServiceName:    "regixtry",
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := probeCalls, []string{"http://127.0.0.1:5443/v2/"}; strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("probe calls = %v, want %v", got, want)
+	}
+	if len(insecureProbeFlags) != 1 || insecureProbeFlags[0] {
+		t.Fatalf("insecureProbeFlags = %v, want [false]", insecureProbeFlags)
+	}
+}
+
+func TestBootstrapRunDirectTLSModeProbesLocalHTTPSBackend(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	statePath := filepath.Join(root, "etc", "regixtry", "bootstrap-state.json")
+	storageRoot := filepath.Join(root, "var", "lib", "regixtry")
+	unitPath := filepath.Join(root, "etc", "systemd", "system", "regixtry.service")
+	probeCalls := make([]string, 0, 1)
+	insecureProbeFlags := make([]bool, 0, 1)
+
+	b := &Bootstrapper{
+		detector: detector{
+			goos: "linux",
+			readFile: func(string) ([]byte, error) {
+				return []byte("ID=ubuntu\nVERSION_ID=24.04\n"), nil
+			},
+			stat: func(string) (os.FileInfo, error) { return fakeInfo{name: "systemd"}, nil },
+		},
+		mkdirAll:       os.MkdirAll,
+		writeFile:      os.WriteFile,
+		readFile:       os.ReadFile,
+		removeAll:      os.RemoveAll,
+		listen:         func(string, string) (net.Listener, error) { return stubListener{}, nil },
+		executablePath: func() (string, error) { return "/usr/local/bin/regixtry", nil },
+		runCommand:     func(_ context.Context, _ string, _ ...string) error { return nil },
+		probe: func(_ context.Context, rawURL string, insecureTLS bool) (int, error) {
+			probeCalls = append(probeCalls, rawURL)
+			insecureProbeFlags = append(insecureProbeFlags, insecureTLS)
+			return 401, nil
+		},
+		probeInterval: time.Millisecond,
+		probeTimeout:  50 * time.Millisecond,
+	}
+
+	err := b.Run(context.Background(), BootstrapConfig{
+		Mode:           supportedMode,
+		PublicURL:      "https://regixtry.example.com",
+		RuntimeTLSMode: RuntimeTLSModeDirectTLS,
+		TLSCertFile:    "/etc/regixtry/tls/registry.crt",
+		TLSKeyFile:     "/etc/regixtry/tls/registry.key",
+		Addr:           "0.0.0.0:5443",
+		StorageRoot:    storageRoot,
+		StatePath:      statePath,
+		UnitPath:       unitPath,
+		ServiceName:    "regixtry",
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := probeCalls, []string{"https://127.0.0.1:5443/v2/"}; strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("probe calls = %v, want %v", got, want)
+	}
+	if len(insecureProbeFlags) != 1 || !insecureProbeFlags[0] {
+		t.Fatalf("insecureProbeFlags = %v, want [true]", insecureProbeFlags)
+	}
+}
+
 func TestBootstrapRunSkipsStartupWhenNoStart(t *testing.T) {
 	t.Parallel()
 
@@ -399,7 +520,7 @@ func TestBootstrapRunSkipsStartupWhenNoStart(t *testing.T) {
 			commandCalls++
 			return nil
 		},
-		probe: func(context.Context, string) (int, error) {
+		probe: func(context.Context, string, bool) (int, error) {
 			probeCalls++
 			return 200, nil
 		},
@@ -466,7 +587,7 @@ func TestBootstrapRunFailsBeforeServiceStartWhenLocalBindIsOccupied(t *testing.T
 			commandCalls = append(commandCalls, name+" "+strings.Join(args, " "))
 			return nil
 		},
-		probe: func(context.Context, string) (int, error) {
+		probe: func(context.Context, string, bool) (int, error) {
 			probeCalls++
 			return 200, nil
 		},
@@ -540,7 +661,7 @@ func TestBootstrapRunSkipsLocalPreflightForNonLocalBind(t *testing.T) {
 			commandCalls = append(commandCalls, name+" "+strings.Join(args, " "))
 			return nil
 		},
-		probe: func(context.Context, string) (int, error) {
+		probe: func(context.Context, string, bool) (int, error) {
 			return 401, nil
 		},
 		probeInterval: time.Millisecond,

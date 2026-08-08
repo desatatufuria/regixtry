@@ -226,8 +226,11 @@ type bootstrapAdminConfig struct {
 type BootstrapConfig = installlinux.BootstrapConfig
 
 type setupPromptState struct {
-	addrProvided      bool
-	publicURLProvided bool
+	addrProvided           bool
+	publicURLProvided      bool
+	runtimeTLSModeProvided bool
+	tlsCertFileProvided    bool
+	tlsKeyFileProvided     bool
 }
 
 type uninstallConfig struct {
@@ -297,9 +300,7 @@ func normalizeRuntimeConfig(cfg serveConfig) (runtimeConfig, error) {
 	tlsEnabled := hasTLSCert && hasTLSKey
 	switch publicURL.Scheme {
 	case "https":
-		if !tlsEnabled {
-			return runtimeConfig{}, errors.New("https public URL requires TLS cert/key inputs")
-		}
+		// HTTPS public URLs can be served directly by regixtry or terminated by a reverse proxy.
 	case "http":
 		if tlsEnabled {
 			return runtimeConfig{}, errors.New("http public URL cannot be combined with TLS cert/key inputs")
@@ -468,6 +469,9 @@ func parseBootstrapConfig(args []string) (BootstrapConfig, error) {
 	var cfg BootstrapConfig
 	flags.StringVar(&cfg.Mode, "mode", "", "bootstrap mode to apply")
 	flags.StringVar(&cfg.PublicURL, "public-url", os.Getenv("REGISTRY_PUBLIC_URL"), "canonical public URL advertised to registry clients")
+	flags.StringVar(&cfg.RuntimeTLSMode, "runtime-tls-mode", "", "runtime TLS mode (local-http, reverse-proxy, or direct-tls)")
+	flags.StringVar(&cfg.TLSCertFile, "tls-cert-file", os.Getenv("REGISTRY_TLS_CERT_FILE"), "path to the TLS certificate PEM file for direct-tls mode")
+	flags.StringVar(&cfg.TLSKeyFile, "tls-key-file", os.Getenv("REGISTRY_TLS_KEY_FILE"), "path to the TLS private key PEM file for direct-tls mode")
 	flags.StringVar(&cfg.Addr, "addr", "127.0.0.1:5000", "address to listen on")
 	flags.StringVar(&cfg.StorageRoot, "storage-root", "/var/lib/regixtry", "root directory for registry runtime state")
 	flags.StringVar(&cfg.StatePath, "state-path", "/etc/regixtry/bootstrap-state.json", "path to the bootstrap receipt file")
@@ -483,6 +487,14 @@ func parseBootstrapConfig(args []string) (BootstrapConfig, error) {
 	if err := installlinux.ValidateConfig(cfg); err != nil {
 		return BootstrapConfig{}, err
 	}
+	runtimeTLSMode, normalizedPublicURL, normalizedTLSCertFile, normalizedTLSKeyFile, err := installlinux.ResolveRuntimeTLSMode(cfg.RuntimeTLSMode, cfg.PublicURL, cfg.TLSCertFile, cfg.TLSKeyFile)
+	if err != nil {
+		return BootstrapConfig{}, err
+	}
+	cfg.RuntimeTLSMode = runtimeTLSMode
+	cfg.PublicURL = normalizedPublicURL
+	cfg.TLSCertFile = normalizedTLSCertFile
+	cfg.TLSKeyFile = normalizedTLSKeyFile
 
 	return cfg, nil
 }
@@ -504,6 +516,9 @@ func parseSetupConfigWithPromptState(args []string) (BootstrapConfig, setupPromp
 	var cfg BootstrapConfig
 	flags.StringVar(&cfg.Mode, "mode", "", "setup mode to apply (daemon-sqlite or binary-only)")
 	flags.StringVar(&cfg.PublicURL, "public-url", defaultPublicURL, "canonical public URL advertised to registry clients")
+	flags.StringVar(&cfg.RuntimeTLSMode, "runtime-tls-mode", "", "runtime TLS mode (local-http, reverse-proxy, or direct-tls)")
+	flags.StringVar(&cfg.TLSCertFile, "tls-cert-file", os.Getenv("REGISTRY_TLS_CERT_FILE"), "path to the TLS certificate PEM file for direct-tls mode")
+	flags.StringVar(&cfg.TLSKeyFile, "tls-key-file", os.Getenv("REGISTRY_TLS_KEY_FILE"), "path to the TLS private key PEM file for direct-tls mode")
 	flags.StringVar(&cfg.Addr, "addr", "127.0.0.1:5000", "address to listen on")
 	flags.StringVar(&cfg.StorageRoot, "storage-root", "/var/lib/regixtry", "root directory for registry runtime state")
 	flags.StringVar(&cfg.StatePath, "state-path", "/etc/regixtry/bootstrap-state.json", "path to the bootstrap receipt file")
@@ -524,6 +539,12 @@ func parseSetupConfigWithPromptState(args []string) (BootstrapConfig, setupPromp
 			promptState.addrProvided = true
 		case "public-url":
 			promptState.publicURLProvided = true
+		case "runtime-tls-mode":
+			promptState.runtimeTLSModeProvided = true
+		case "tls-cert-file":
+			promptState.tlsCertFileProvided = true
+		case "tls-key-file":
+			promptState.tlsKeyFileProvided = true
 		}
 	})
 
@@ -581,6 +602,10 @@ func runSetup(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 		if err := installlinux.ValidateConfig(cfg); err != nil {
 			return err
 		}
+		cfg.RuntimeTLSMode, cfg.PublicURL, cfg.TLSCertFile, cfg.TLSKeyFile, err = installlinux.ResolveRuntimeTLSMode(cfg.RuntimeTLSMode, cfg.PublicURL, cfg.TLSCertFile, cfg.TLSKeyFile)
+		if err != nil {
+			return err
+		}
 
 		runner := newBootstrapRunner()
 		if err := runner.Run(ctx, cfg); err != nil {
@@ -610,10 +635,6 @@ func runSetup(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 }
 
 func promptSetupDaemonConfig(reader *bufio.Reader, stdout io.Writer, cfg BootstrapConfig, promptState setupPromptState, selectedInteractively bool) (BootstrapConfig, error) {
-	if !selectedInteractively && promptState.addrProvided && promptState.publicURLProvided {
-		return cfg, nil
-	}
-
 	if !promptState.addrProvided {
 		value, err := promptSetupValue(reader, stdout, "Listen address", cfg.Addr)
 		if err != nil {
@@ -621,17 +642,40 @@ func promptSetupDaemonConfig(reader *bufio.Reader, stdout io.Writer, cfg Bootstr
 		}
 		cfg.Addr = value
 	}
+	if !promptState.runtimeTLSModeProvided {
+		value, err := promptSetupRuntimeTLSMode(reader, stdout, defaultSetupRuntimeTLSMode(cfg))
+		if err != nil {
+			return BootstrapConfig{}, err
+		}
+		cfg.RuntimeTLSMode = value
+	}
 
 	if !promptState.publicURLProvided {
 		defaultPublicURL := cfg.PublicURL
 		if strings.TrimSpace(defaultPublicURL) == "" {
-			defaultPublicURL = defaultSetupPublicURL
+			defaultPublicURL = defaultSetupPublicURLForMode(cfg.Addr, cfg.RuntimeTLSMode)
 		}
 		value, err := promptSetupValue(reader, stdout, "Public URL", defaultPublicURL)
 		if err != nil {
 			return BootstrapConfig{}, err
 		}
 		cfg.PublicURL = value
+	}
+	if strings.TrimSpace(cfg.RuntimeTLSMode) == installlinux.RuntimeTLSModeDirectTLS {
+		if !promptState.tlsCertFileProvided {
+			value, err := promptSetupValue(reader, stdout, "TLS cert file", cfg.TLSCertFile)
+			if err != nil {
+				return BootstrapConfig{}, err
+			}
+			cfg.TLSCertFile = value
+		}
+		if !promptState.tlsKeyFileProvided {
+			value, err := promptSetupValue(reader, stdout, "TLS key file", cfg.TLSKeyFile)
+			if err != nil {
+				return BootstrapConfig{}, err
+			}
+			cfg.TLSKeyFile = value
+		}
 	}
 
 	return cfg, nil
@@ -713,6 +757,88 @@ func promptSetupValue(reader *bufio.Reader, stdout io.Writer, label string, defa
 	return trimmed, nil
 }
 
+func promptSetupRuntimeTLSMode(reader *bufio.Reader, stdout io.Writer, defaultMode string) (string, error) {
+	if stdout != nil {
+		_, _ = fmt.Fprintln(stdout, "Select runtime TLS mode:")
+		_, _ = fmt.Fprintln(stdout, "  1) local HTTP test")
+		_, _ = fmt.Fprintln(stdout, "  2) reverse proxy terminates TLS and forwards HTTP internally")
+		_, _ = fmt.Fprintln(stdout, "  3) regixtry serves TLS directly")
+		if label := runtimeTLSModeLabel(defaultMode); label != "" {
+			_, _ = fmt.Fprintf(stdout, "Choice [%s]: ", label)
+		} else {
+			_, _ = fmt.Fprint(stdout, "Choice: ")
+		}
+	}
+
+	selection, err := reader.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", fmt.Errorf("read runtime TLS mode selection: %w", err)
+	}
+
+	trimmed := strings.ToLower(strings.TrimSpace(selection))
+	if trimmed == "" {
+		trimmed = strings.TrimSpace(defaultMode)
+	}
+
+	switch trimmed {
+	case "1", installlinux.RuntimeTLSModeLocalHTTP:
+		return installlinux.RuntimeTLSModeLocalHTTP, nil
+	case "2", installlinux.RuntimeTLSModeReverseProxy:
+		return installlinux.RuntimeTLSModeReverseProxy, nil
+	case "3", installlinux.RuntimeTLSModeDirectTLS:
+		return installlinux.RuntimeTLSModeDirectTLS, nil
+	default:
+		return "", fmt.Errorf("unsupported runtime TLS mode selection %q", strings.TrimSpace(selection))
+	}
+}
+
+func defaultSetupRuntimeTLSMode(cfg BootstrapConfig) string {
+	mode, _, _, _, err := installlinux.ResolveRuntimeTLSMode(cfg.RuntimeTLSMode, firstNonEmpty(cfg.PublicURL, defaultSetupPublicURL), cfg.TLSCertFile, cfg.TLSKeyFile)
+	if err != nil {
+		return installlinux.RuntimeTLSModeLocalHTTP
+	}
+	return mode
+}
+
+func defaultSetupPublicURLForMode(addr string, runtimeTLSMode string) string {
+	host, port, err := net.SplitHostPort(strings.TrimSpace(addr))
+	if err != nil {
+		return defaultSetupPublicURL
+	}
+	host = strings.TrimSpace(host)
+	switch host {
+	case "", "0.0.0.0", "::", "[::]":
+		host = "127.0.0.1"
+	}
+	scheme := "http"
+	if strings.TrimSpace(runtimeTLSMode) != installlinux.RuntimeTLSModeLocalHTTP {
+		scheme = "https"
+	}
+	return (&url.URL{Scheme: scheme, Host: net.JoinHostPort(host, port)}).String()
+}
+
+func runtimeTLSModeLabel(mode string) string {
+	switch strings.TrimSpace(mode) {
+	case installlinux.RuntimeTLSModeLocalHTTP:
+		return "1"
+	case installlinux.RuntimeTLSModeReverseProxy:
+		return "2"
+	case installlinux.RuntimeTLSModeDirectTLS:
+		return "3"
+	default:
+		return ""
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 func printBinaryOnlyGuidance(stdout io.Writer) error {
 	if stdout == nil {
 		return nil
@@ -751,6 +877,9 @@ func formatSetupCommand(cfg BootstrapConfig, placeholderOnly bool) string {
 		args = append(args, "--public-url", publicURL)
 	}
 	if !placeholderOnly {
+		if strings.TrimSpace(cfg.RuntimeTLSMode) != "" {
+			args = append(args, "--runtime-tls-mode", cfg.RuntimeTLSMode)
+		}
 		args = append(args,
 			"--addr", cfg.Addr,
 			"--storage-root", cfg.StorageRoot,
@@ -758,6 +887,12 @@ func formatSetupCommand(cfg BootstrapConfig, placeholderOnly bool) string {
 			"--unit-path", cfg.UnitPath,
 			"--service", cfg.ServiceName,
 		)
+		if strings.TrimSpace(cfg.TLSCertFile) != "" {
+			args = append(args, "--tls-cert-file", cfg.TLSCertFile)
+		}
+		if strings.TrimSpace(cfg.TLSKeyFile) != "" {
+			args = append(args, "--tls-key-file", cfg.TLSKeyFile)
+		}
 		if cfg.NoStart {
 			args = append(args, "--no-start")
 		}

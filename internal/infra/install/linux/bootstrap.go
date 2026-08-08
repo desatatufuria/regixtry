@@ -2,6 +2,7 @@ package linux
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,19 +18,27 @@ import (
 	"time"
 )
 
-const supportedMode = "daemon-sqlite"
+const (
+	supportedMode              = "daemon-sqlite"
+	RuntimeTLSModeLocalHTTP    = "local-http"
+	RuntimeTLSModeReverseProxy = "reverse-proxy"
+	RuntimeTLSModeDirectTLS    = "direct-tls"
+)
 
 type BootstrapConfig struct {
-	Mode        string
-	PublicURL   string
-	StorageRoot string
-	StatePath   string
-	UnitPath    string
-	Addr        string
-	ServiceName string
-	BinaryPath  string
-	NoStart     bool
-	Rollback    bool
+	Mode           string
+	PublicURL      string
+	RuntimeTLSMode string
+	TLSCertFile    string
+	TLSKeyFile     string
+	StorageRoot    string
+	StatePath      string
+	UnitPath       string
+	Addr           string
+	ServiceName    string
+	BinaryPath     string
+	NoStart        bool
+	Rollback       bool
 }
 
 type BootstrapReceipt struct {
@@ -47,7 +56,7 @@ type Bootstrapper struct {
 	removeAll      func(string) error
 	listen         func(string, string) (net.Listener, error)
 	runCommand     func(context.Context, string, ...string) error
-	probe          func(context.Context, string) (int, error)
+	probe          func(context.Context, string, bool) (int, error)
 	executablePath func() (string, error)
 	probeInterval  time.Duration
 	probeTimeout   time.Duration
@@ -70,12 +79,21 @@ func NewBootstrapper() *Bootstrapper {
 			cmd.Stderr = ioDiscard{}
 			return cmd.Run()
 		},
-		probe: func(ctx context.Context, rawURL string) (int, error) {
+		probe: func(ctx context.Context, rawURL string, insecureTLS bool) (int, error) {
+			clientToUse := client
+			if insecureTLS {
+				clientToUse = &http.Client{
+					Timeout: client.Timeout,
+					Transport: &http.Transport{
+						TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+					},
+				}
+			}
 			req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 			if err != nil {
 				return 0, err
 			}
-			resp, err := client.Do(req)
+			resp, err := clientToUse.Do(req)
 			if err != nil {
 				return 0, err
 			}
@@ -93,7 +111,7 @@ func ValidateConfig(cfg BootstrapConfig) error {
 		return err
 	}
 
-	if _, err := normalizeAbsoluteHTTPURL(cfg.PublicURL); err != nil {
+	if _, _, _, _, err := ResolveRuntimeTLSMode(cfg.RuntimeTLSMode, cfg.PublicURL, cfg.TLSCertFile, cfg.TLSKeyFile); err != nil {
 		return err
 	}
 
@@ -117,6 +135,61 @@ func ValidateConfig(cfg BootstrapConfig) error {
 	}
 
 	return nil
+}
+
+func ResolveRuntimeTLSMode(mode string, publicURL string, tlsCertFile string, tlsKeyFile string) (resolvedMode string, normalizedPublicURL string, normalizedTLSCertFile string, normalizedTLSKeyFile string, err error) {
+	parsedPublicURL, err := normalizeAbsoluteHTTPURL(publicURL)
+	if err != nil {
+		return "", "", "", "", err
+	}
+
+	normalizedTLSCertFile = strings.TrimSpace(tlsCertFile)
+	normalizedTLSKeyFile = strings.TrimSpace(tlsKeyFile)
+	hasTLSCert := normalizedTLSCertFile != ""
+	hasTLSKey := normalizedTLSKeyFile != ""
+	if hasTLSCert != hasTLSKey {
+		return "", "", "", "", errors.New("TLS cert file and key file must both be set")
+	}
+
+	resolvedMode = strings.TrimSpace(mode)
+	if resolvedMode == "" {
+		switch {
+		case hasTLSCert:
+			resolvedMode = RuntimeTLSModeDirectTLS
+		case parsedPublicURL.Scheme == "https":
+			resolvedMode = RuntimeTLSModeReverseProxy
+		default:
+			resolvedMode = RuntimeTLSModeLocalHTTP
+		}
+	}
+
+	switch resolvedMode {
+	case RuntimeTLSModeLocalHTTP:
+		if parsedPublicURL.Scheme != "http" {
+			return "", "", "", "", errors.New("local-http runtime TLS mode requires an http public URL")
+		}
+		if hasTLSCert {
+			return "", "", "", "", errors.New("local-http runtime TLS mode cannot be combined with TLS cert/key inputs")
+		}
+	case RuntimeTLSModeReverseProxy:
+		if parsedPublicURL.Scheme != "https" {
+			return "", "", "", "", errors.New("reverse-proxy runtime TLS mode requires an https public URL")
+		}
+		if hasTLSCert {
+			return "", "", "", "", errors.New("reverse-proxy runtime TLS mode cannot be combined with TLS cert/key inputs")
+		}
+	case RuntimeTLSModeDirectTLS:
+		if parsedPublicURL.Scheme != "https" {
+			return "", "", "", "", errors.New("direct-tls runtime TLS mode requires an https public URL")
+		}
+		if !hasTLSCert {
+			return "", "", "", "", errors.New("direct-tls runtime TLS mode requires TLS cert/key inputs")
+		}
+	default:
+		return "", "", "", "", fmt.Errorf("unsupported runtime TLS mode %q", resolvedMode)
+	}
+
+	return resolvedMode, parsedPublicURL.String(), normalizedTLSCertFile, normalizedTLSKeyFile, nil
 }
 
 func ValidateMode(mode string) error {
@@ -170,7 +243,7 @@ func (b *Bootstrapper) Run(ctx context.Context, cfg BootstrapConfig) error {
 	if err := b.runCommand(ctx, "systemctl", "enable", "--now", receipt.ServiceName+".service"); err != nil {
 		return rollbackErr(fmt.Errorf("systemctl enable --now %s.service: %w", receipt.ServiceName, err))
 	}
-	if err := b.waitUntilReachable(ctx, plan.PublicURL); err != nil {
+	if err := b.waitUntilReachable(ctx, plan); err != nil {
 		return rollbackErr(err)
 	}
 
@@ -237,21 +310,28 @@ func (b *Bootstrapper) plan(cfg BootstrapConfig) (BootstrapPlan, BootstrapReceip
 	statePath := strings.TrimSpace(cfg.StatePath)
 	unitPath := strings.TrimSpace(cfg.UnitPath)
 	serviceName := strings.TrimSpace(cfg.ServiceName)
+	runtimeTLSMode, publicURL, tlsCertFile, tlsKeyFile, err := ResolveRuntimeTLSMode(cfg.RuntimeTLSMode, cfg.PublicURL, cfg.TLSCertFile, cfg.TLSKeyFile)
+	if err != nil {
+		return BootstrapPlan{}, BootstrapReceipt{}, LifecycleProvenance{}, err
+	}
 	if unitPath == "" {
 		unitPath = filepath.Join("/etc/systemd/system", serviceName+".service")
 	}
 	plan := BootstrapPlan{
-		Mode:         strings.TrimSpace(cfg.Mode),
-		Addr:         strings.TrimSpace(cfg.Addr),
-		PublicURL:    strings.TrimSpace(cfg.PublicURL),
-		StorageRoot:  storageRoot,
-		DatabasePath: filepath.Join(storageRoot, "metadata.db"),
-		ContentPath:  filepath.Join(storageRoot, "content"),
-		StatePath:    statePath,
-		EnvPath:      filepath.Join(filepath.Dir(statePath), "regixtry.env"),
-		UnitPath:     unitPath,
-		BinaryPath:   binaryPath,
-		ServiceName:  serviceName,
+		Mode:           strings.TrimSpace(cfg.Mode),
+		Addr:           strings.TrimSpace(cfg.Addr),
+		PublicURL:      publicURL,
+		RuntimeTLSMode: runtimeTLSMode,
+		TLSCertFile:    tlsCertFile,
+		TLSKeyFile:     tlsKeyFile,
+		StorageRoot:    storageRoot,
+		DatabasePath:   filepath.Join(storageRoot, "metadata.db"),
+		ContentPath:    filepath.Join(storageRoot, "content"),
+		StatePath:      statePath,
+		EnvPath:        filepath.Join(filepath.Dir(statePath), "regixtry.env"),
+		UnitPath:       unitPath,
+		BinaryPath:     binaryPath,
+		ServiceName:    serviceName,
 	}
 
 	receipt := BootstrapReceipt{
@@ -399,17 +479,15 @@ func (b *Bootstrapper) pathExists(target string) (bool, error) {
 	return true, nil
 }
 
-func (b *Bootstrapper) waitUntilReachable(ctx context.Context, publicURL string) error {
-	parsed, err := normalizeAbsoluteHTTPURL(publicURL)
+func (b *Bootstrapper) waitUntilReachable(ctx context.Context, plan BootstrapPlan) error {
+	probeURL, insecureTLS, err := readinessProbeURL(plan)
 	if err != nil {
 		return err
 	}
-	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/v2/"
-	parsed.RawPath = ""
 
 	deadline := time.Now().Add(b.probeTimeout)
 	for {
-		statusCode, probeErr := b.probe(ctx, parsed.String())
+		statusCode, probeErr := b.probe(ctx, probeURL, insecureTLS)
 		if probeErr == nil && (statusCode == http.StatusOK || statusCode == http.StatusUnauthorized) {
 			return nil
 		}
@@ -426,6 +504,31 @@ func (b *Bootstrapper) waitUntilReachable(ctx context.Context, publicURL string)
 		case <-time.After(b.probeInterval):
 		}
 	}
+}
+
+func readinessProbeURL(plan BootstrapPlan) (string, bool, error) {
+	host, port, err := net.SplitHostPort(strings.TrimSpace(plan.Addr))
+	if err != nil {
+		return "", false, fmt.Errorf("parse listen address for readiness probe: %w", err)
+	}
+
+	host = strings.TrimSpace(host)
+	switch host {
+	case "", "0.0.0.0", "::", "[::]":
+		host = "127.0.0.1"
+	}
+
+	probeURL := &url.URL{
+		Scheme: "http",
+		Host:   net.JoinHostPort(host, port),
+		Path:   "/v2/",
+	}
+	if plan.RuntimeTLSMode == RuntimeTLSModeDirectTLS {
+		probeURL.Scheme = "https"
+		return probeURL.String(), true, nil
+	}
+
+	return probeURL.String(), false, nil
 }
 
 func normalizeAbsoluteHTTPURL(raw string) (*url.URL, error) {

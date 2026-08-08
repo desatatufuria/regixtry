@@ -219,7 +219,7 @@ func TestNormalizeRuntimeConfig(t *testing.T) {
 		wantErr        string
 	}{
 		{
-			name: "https public URL requires TLS pair and derives token realm",
+			name: "direct TLS derives token realm from https public URL",
 			cfg: serveConfig{
 				PublicURL:         "https://regixtry.example.com/edge/",
 				TLSCertFile:       "/tmp/registry.crt",
@@ -230,6 +230,16 @@ func TestNormalizeRuntimeConfig(t *testing.T) {
 			wantPublicURL:  "https://regixtry.example.com/edge",
 			wantTokenRealm: "https://regixtry.example.com/edge/auth/token",
 			wantTLSEnabled: true,
+		},
+		{
+			name: "reverse proxy mode allows https public URL without local TLS files",
+			cfg: serveConfig{
+				PublicURL:         "https://regixtry.example.com",
+				ReadHeaderTimeout: defaultReadHeaderTimeout,
+				ShutdownTimeout:   defaultShutdownTimeout,
+			},
+			wantPublicURL:  "https://regixtry.example.com",
+			wantTokenRealm: "https://regixtry.example.com/auth/token",
 		},
 		{
 			name: "explicit local http mode stays http without TLS",
@@ -254,7 +264,7 @@ func TestNormalizeRuntimeConfig(t *testing.T) {
 			wantErr: "auth token realm URL must match derived public token realm",
 		},
 		{
-			name: "https public URL rejects incomplete TLS pair",
+			name: "https public URL still rejects incomplete TLS pair",
 			cfg: serveConfig{
 				PublicURL:         "https://regixtry.example.com",
 				TLSCertFile:       "/tmp/registry.crt",
@@ -502,7 +512,7 @@ func TestRunSetupInteractivePromptCollectsAddrAndPublicURLForDaemonSQLite(t *tes
 	defer restoreTTY()
 
 	stdout := &bytes.Buffer{}
-	err := runWithIO(context.Background(), []string{"setup"}, strings.NewReader("2\n0.0.0.0:5443\nhttps://regixtry.example.com\n"), stdout, io.Discard)
+	err := runWithIO(context.Background(), []string{"setup"}, strings.NewReader("2\n0.0.0.0:5443\n2\nhttps://regixtry.example.com\n"), stdout, io.Discard)
 	if err != nil {
 		t.Fatalf("runWithIO(setup prompt) error = %v", err)
 	}
@@ -512,11 +522,17 @@ func TestRunSetupInteractivePromptCollectsAddrAndPublicURLForDaemonSQLite(t *tes
 	if runner.lastConfig.PublicURL != "https://regixtry.example.com" {
 		t.Fatalf("lastConfig.PublicURL = %q, want prompted public URL", runner.lastConfig.PublicURL)
 	}
+	if runner.lastConfig.RuntimeTLSMode != installlinux.RuntimeTLSModeReverseProxy {
+		t.Fatalf("lastConfig.RuntimeTLSMode = %q, want reverse-proxy", runner.lastConfig.RuntimeTLSMode)
+	}
 	if !strings.Contains(stdout.String(), "Listen address [127.0.0.1:5000]: ") {
 		t.Fatalf("stdout = %q, want listen address prompt with default", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "Public URL ["+defaultSetupPublicURL+"]: ") {
-		t.Fatalf("stdout = %q, want public URL prompt with default", stdout.String())
+	if !strings.Contains(stdout.String(), "Select runtime TLS mode:") {
+		t.Fatalf("stdout = %q, want runtime TLS mode prompt", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "Public URL [https://127.0.0.1:5443]: ") {
+		t.Fatalf("stdout = %q, want public URL prompt with https default derived from selected mode", stdout.String())
 	}
 }
 
@@ -537,7 +553,7 @@ func TestRunSetupInteractivePromptDefaultsAddrAndPublicURLForDaemonSQLite(t *tes
 	defer restoreTTY()
 
 	stdout := &bytes.Buffer{}
-	err := runWithIO(context.Background(), []string{"setup"}, strings.NewReader("2\n\n\n"), stdout, io.Discard)
+	err := runWithIO(context.Background(), []string{"setup"}, strings.NewReader("2\n\n\n\n"), stdout, io.Discard)
 	if err != nil {
 		t.Fatalf("runWithIO(setup prompt) error = %v", err)
 	}
@@ -550,8 +566,49 @@ func TestRunSetupInteractivePromptDefaultsAddrAndPublicURLForDaemonSQLite(t *tes
 	if !strings.Contains(stdout.String(), "Listen address [127.0.0.1:5000]: ") {
 		t.Fatalf("stdout = %q, want default listen address prompt", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), "Select runtime TLS mode:") {
+		t.Fatalf("stdout = %q, want runtime TLS mode prompt", stdout.String())
+	}
 	if !strings.Contains(stdout.String(), "Public URL ["+defaultSetupPublicURL+"]: ") {
 		t.Fatalf("stdout = %q, want default public URL prompt", stdout.String())
+	}
+}
+
+func TestRunSetupInteractivePromptCollectsCertAndKeyOnlyForDirectTLS(t *testing.T) {
+	runner := &stubBootstrapRunner{
+		plannedProvenance: installlinux.LifecycleProvenance{
+			Version:      1,
+			Mode:         "daemon-sqlite",
+			InstalledBin: "/usr/local/bin/regixtry",
+			ServiceName:  "regixtry",
+			StatePath:    "/etc/regixtry/regixtry-lifecycle-state.json",
+		},
+	}
+	restoreRunner := swapBootstrapRunner(t, runner)
+	defer restoreRunner()
+
+	restoreTTY := swapInteractiveTTYDetector(t, true)
+	defer restoreTTY()
+
+	stdout := &bytes.Buffer{}
+	err := runWithIO(context.Background(), []string{"setup"}, strings.NewReader("2\n0.0.0.0:5443\n3\nhttps://regixtry.example.com\n/tmp/registry.crt\n/tmp/registry.key\n"), stdout, io.Discard)
+	if err != nil {
+		t.Fatalf("runWithIO(setup prompt) error = %v", err)
+	}
+	if runner.lastConfig.RuntimeTLSMode != installlinux.RuntimeTLSModeDirectTLS {
+		t.Fatalf("lastConfig.RuntimeTLSMode = %q, want direct-tls", runner.lastConfig.RuntimeTLSMode)
+	}
+	if runner.lastConfig.TLSCertFile != "/tmp/registry.crt" {
+		t.Fatalf("lastConfig.TLSCertFile = %q, want prompted cert path", runner.lastConfig.TLSCertFile)
+	}
+	if runner.lastConfig.TLSKeyFile != "/tmp/registry.key" {
+		t.Fatalf("lastConfig.TLSKeyFile = %q, want prompted key path", runner.lastConfig.TLSKeyFile)
+	}
+	if !strings.Contains(stdout.String(), "TLS cert file:") {
+		t.Fatalf("stdout = %q, want cert prompt", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "TLS key file:") {
+		t.Fatalf("stdout = %q, want key prompt", stdout.String())
 	}
 }
 
@@ -559,7 +616,7 @@ func TestRunSetupInteractivePromptValidatesPromptedPublicURL(t *testing.T) {
 	restoreTTY := swapInteractiveTTYDetector(t, true)
 	defer restoreTTY()
 
-	err := runWithIO(context.Background(), []string{"setup"}, strings.NewReader("2\n0.0.0.0:5443\nnot-a-url\n"), io.Discard, io.Discard)
+	err := runWithIO(context.Background(), []string{"setup"}, strings.NewReader("2\n0.0.0.0:5443\n2\nnot-a-url\n"), io.Discard, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "public URL must be an absolute http(s) URL") {
 		t.Fatalf("runWithIO(setup prompt) error = %v, want prompted public URL validation failure", err)
 	}
@@ -584,7 +641,7 @@ func TestRunSetupInteractivePromptKeepsExplicitFlagValues(t *testing.T) {
 	stdout := &bytes.Buffer{}
 	err := runWithIO(
 		context.Background(),
-		[]string{"setup", "-mode", "daemon-sqlite", "-addr", "0.0.0.0:5443", "-public-url", "https://flag.example.com"},
+		[]string{"setup", "-mode", "daemon-sqlite", "-addr", "0.0.0.0:5443", "-public-url", "https://flag.example.com", "-runtime-tls-mode", "reverse-proxy"},
 		strings.NewReader(""),
 		stdout,
 		io.Discard,
@@ -598,7 +655,7 @@ func TestRunSetupInteractivePromptKeepsExplicitFlagValues(t *testing.T) {
 	if runner.lastConfig.PublicURL != "https://flag.example.com" {
 		t.Fatalf("lastConfig.PublicURL = %q, want explicit flag value", runner.lastConfig.PublicURL)
 	}
-	if strings.Contains(stdout.String(), "Listen address [") || strings.Contains(stdout.String(), "Public URL [") {
+	if strings.Contains(stdout.String(), "Listen address [") || strings.Contains(stdout.String(), "Public URL [") || strings.Contains(stdout.String(), "Select runtime TLS mode:") {
 		t.Fatalf("stdout = %q, want explicit values to skip interactive prompts", stdout.String())
 	}
 	if runner.runCalls != 1 {
@@ -624,7 +681,7 @@ func TestRunSetupInteractivePromptAppliesPromptedAddrBeforePortConflict(t *testi
 	restoreTTY := swapInteractiveTTYDetector(t, true)
 	defer restoreTTY()
 
-	err := runWithIO(context.Background(), []string{"setup"}, strings.NewReader("2\n0.0.0.0:5443\nhttps://regixtry.example.com\n"), io.Discard, io.Discard)
+	err := runWithIO(context.Background(), []string{"setup"}, strings.NewReader("2\n0.0.0.0:5443\n2\nhttps://regixtry.example.com\n"), io.Discard, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "--addr 0.0.0.0:5444 --public-url https://regixtry.example.com") {
 		t.Fatalf("runWithIO(setup prompt) error = %v, want prompted endpoints in port-conflict guidance", err)
 	}
@@ -659,6 +716,7 @@ func TestRunSetupPassesParsedConfigToRunnerAndWritesProvenance(t *testing.T) {
 		"setup",
 		"-mode", "daemon-sqlite",
 		"-public-url", "https://regixtry.example.com",
+		"-runtime-tls-mode", "reverse-proxy",
 		"-addr", "0.0.0.0:5443",
 		"-storage-root", "/var/lib/regixtry-data",
 		"-state-path", "/etc/regixtry/bootstrap-state.json",
@@ -677,6 +735,9 @@ func TestRunSetupPassesParsedConfigToRunnerAndWritesProvenance(t *testing.T) {
 	}
 	if runner.lastConfig.Mode != "daemon-sqlite" {
 		t.Fatalf("lastConfig.Mode = %q, want daemon-sqlite", runner.lastConfig.Mode)
+	}
+	if runner.lastConfig.RuntimeTLSMode != installlinux.RuntimeTLSModeReverseProxy {
+		t.Fatalf("lastConfig.RuntimeTLSMode = %q, want reverse-proxy", runner.lastConfig.RuntimeTLSMode)
 	}
 	if runner.savedProvenance.StatePath != "/etc/regixtry/regixtry-lifecycle-state.json" {
 		t.Fatalf("saved provenance path = %q, want lifecycle provenance path", runner.savedProvenance.StatePath)
@@ -725,7 +786,7 @@ func TestRunSetupPermissionDeniedReturnsSudoSafeRerunGuidance(t *testing.T) {
 	if !strings.Contains(err.Error(), "permission-denied failure") {
 		t.Fatalf("runWithIO(setup) error = %v, want permission guidance", err)
 	}
-	if !strings.Contains(err.Error(), "sudo /home/test/.local/bin/regixtry setup --mode daemon-sqlite --public-url https://regixtry.example.com --addr 127.0.0.1:5000 --storage-root /var/lib/regixtry --state-path /etc/regixtry/bootstrap-state.json --unit-path /etc/systemd/system/regixtry.service --service regixtry") {
+	if !strings.Contains(err.Error(), "sudo /home/test/.local/bin/regixtry setup --mode daemon-sqlite --public-url https://regixtry.example.com --runtime-tls-mode reverse-proxy --addr 127.0.0.1:5000 --storage-root /var/lib/regixtry --state-path /etc/regixtry/bootstrap-state.json --unit-path /etc/systemd/system/regixtry.service --service regixtry") {
 		t.Fatalf("runWithIO(setup) error = %v, want sudo-safe rerun command", err)
 	}
 	if runner.rollbackCalls != 0 {
@@ -871,14 +932,15 @@ func TestRunBootstrapPassesParsedConfigToRunner(t *testing.T) {
 	}
 
 	want := installlinux.BootstrapConfig{
-		Mode:        "daemon-sqlite",
-		PublicURL:   "https://regixtry.example.com",
-		Addr:        "0.0.0.0:5443",
-		StorageRoot: "/var/lib/regixtry-data",
-		StatePath:   "/etc/regixtry/bootstrap-state.json",
-		UnitPath:    "/etc/systemd/system/registry-custom.service",
-		ServiceName: "registry-custom",
-		NoStart:     true,
+		Mode:           "daemon-sqlite",
+		PublicURL:      "https://regixtry.example.com",
+		RuntimeTLSMode: installlinux.RuntimeTLSModeReverseProxy,
+		Addr:           "0.0.0.0:5443",
+		StorageRoot:    "/var/lib/regixtry-data",
+		StatePath:      "/etc/regixtry/bootstrap-state.json",
+		UnitPath:       "/etc/systemd/system/registry-custom.service",
+		ServiceName:    "registry-custom",
+		NoStart:        true,
 	}
 	if runner.lastConfig != want {
 		t.Fatalf("lastConfig = %#v, want %#v", runner.lastConfig, want)
