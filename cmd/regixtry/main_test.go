@@ -1123,6 +1123,14 @@ func TestRunUpgradePassesConfigToGoOwnedLifecycleRunner(t *testing.T) {
 	if runner.upgradeConfig.Ref != "v1.2.3" || runner.upgradeConfig.ProvenancePath != "/tmp/lifecycle.json" || !runner.upgradeConfig.AssumeYes {
 		t.Fatalf("upgradeConfig = %#v, want parsed upgrade config", runner.upgradeConfig)
 	}
+	for _, want := range []string{
+		"Installed version: v1.2.2 (1.2.2)",
+		"Available version: v1.2.3 (1.2.3)",
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout = %q, want %q", stdout.String(), want)
+		}
+	}
 	if !strings.Contains(stdout.String(), "Upgrade complete: v1.2.2 (1.2.2) -> v1.2.3 (1.2.3)") {
 		t.Fatalf("stdout = %q, want upgrade success message with from/to", stdout.String())
 	}
@@ -1183,8 +1191,8 @@ func TestRunUpgradeRejectsUnmanagedTargetTruthfully(t *testing.T) {
 	}
 }
 
-func TestRunUpgradeSameShapeDoesNotPromptAndPreservesNonInteractiveFlow(t *testing.T) {
-	runner := &stubBootstrapRunner{upgradeResult: installlinux.UpgradeResult{TargetRef: "v1.2.3", ToVersion: "1.2.3", ProvenancePath: "/etc/regixtry/regixtry-lifecycle-state.json"}}
+func TestRunUpgradeAlreadyUpToDateSkipsPromptAndCompletionOutput(t *testing.T) {
+	runner := &stubBootstrapRunner{upgradeResult: installlinux.UpgradeResult{FromRef: "v1.2.3", FromVersion: "1.2.3", TargetRef: "v1.2.3", ToVersion: "1.2.3", ProvenancePath: "/etc/regixtry/regixtry-lifecycle-state.json", UpToDate: true}}
 	restoreRunner := swapBootstrapRunner(t, runner)
 	defer restoreRunner()
 	restoreTTY := swapInteractiveTTYDetector(t, false)
@@ -1195,8 +1203,70 @@ func TestRunUpgradeSameShapeDoesNotPromptAndPreservesNonInteractiveFlow(t *testi
 	if err != nil {
 		t.Fatalf("runWithIO(upgrade) error = %v", err)
 	}
-	if strings.Contains(stdout.String(), "Choice:") || strings.Contains(stdout.String(), "Confirm") {
-		t.Fatalf("stdout = %q, want non-interactive same-shape upgrade", stdout.String())
+	for _, unwanted := range []string{"Proceed with upgrade", "Upgrade complete:"} {
+		if strings.Contains(stdout.String(), unwanted) {
+			t.Fatalf("stdout = %q, want no %q output", stdout.String(), unwanted)
+		}
+	}
+	for _, want := range []string{
+		"Installed version: v1.2.3 (1.2.3)",
+		"Available version: v1.2.3 (1.2.3)",
+		"regixtry is already up to date.",
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout = %q, want %q", stdout.String(), want)
+		}
+	}
+	if runner.upgradeCalls != 1 {
+		t.Fatalf("upgradeCalls = %d, want 1", runner.upgradeCalls)
+	}
+	if runner.upgradeConfig.AssumeYes {
+		t.Fatalf("upgradeConfig.AssumeYes = true, want false")
+	}
+	if runner.upgradeConfig.Preflight == nil {
+		t.Fatal("upgradeConfig.Preflight = nil, want preflight callback")
+	}
+	if runner.upgradeConfig.Progress == nil {
+		t.Fatal("upgradeConfig.Progress = nil, want progress callback")
+	}
+}
+
+func TestRunUpgradePromptsForConfirmationWhenInteractive(t *testing.T) {
+	runner := &stubBootstrapRunner{upgradeResult: installlinux.UpgradeResult{FromRef: "v1.2.2", FromVersion: "1.2.2", TargetRef: "v1.2.3", ToVersion: "1.2.3", ProvenancePath: "/etc/regixtry/regixtry-lifecycle-state.json"}}
+	restoreRunner := swapBootstrapRunner(t, runner)
+	defer restoreRunner()
+	restoreTTY := swapInteractiveTTYDetector(t, true)
+	defer restoreTTY()
+
+	stdout := &bytes.Buffer{}
+	err := runWithIO(context.Background(), []string{"upgrade"}, strings.NewReader("y\n"), stdout, io.Discard)
+	if err != nil {
+		t.Fatalf("runWithIO(upgrade) error = %v", err)
+	}
+	if !strings.Contains(stdout.String(), "Proceed with upgrade [y/N]:") {
+		t.Fatalf("stdout = %q, want confirmation prompt", stdout.String())
+	}
+}
+
+func TestRunUpgradeDeclinesConfirmationInteractively(t *testing.T) {
+	runner := &stubBootstrapRunner{
+		upgradeResult: installlinux.UpgradeResult{FromRef: "v1.2.2", FromVersion: "1.2.2", TargetRef: "v1.2.3", ToVersion: "1.2.3", ProvenancePath: "/etc/regixtry/regixtry-lifecycle-state.json"},
+		upgradeHook: func(installlinux.UpgradeConfig) {
+			t.Fatal("upgradeHook should not run after declined confirmation")
+		},
+	}
+	restoreRunner := swapBootstrapRunner(t, runner)
+	defer restoreRunner()
+	restoreTTY := swapInteractiveTTYDetector(t, true)
+	defer restoreTTY()
+
+	stdout := &bytes.Buffer{}
+	err := runWithIO(context.Background(), []string{"upgrade"}, strings.NewReader("n\n"), stdout, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "upgrade cancelled") {
+		t.Fatalf("runWithIO(upgrade) error = %v, want cancellation", err)
+	}
+	if !strings.Contains(stdout.String(), "Proceed with upgrade [y/N]:") {
+		t.Fatalf("stdout = %q, want confirmation prompt", stdout.String())
 	}
 }
 
@@ -1900,6 +1970,28 @@ func (s *stubBootstrapRunner) Uninstall(_ context.Context, provenancePath string
 func (s *stubBootstrapRunner) Upgrade(_ context.Context, cfg installlinux.UpgradeConfig) (installlinux.UpgradeResult, error) {
 	s.upgradeConfig = cfg
 	s.upgradeCalls++
+	if cfg.Preflight != nil {
+		if err := cfg.Preflight(installlinux.UpgradePreflight{
+			InstalledRef:     s.upgradeResult.FromRef,
+			InstalledVersion: s.upgradeResult.FromVersion,
+			TargetRef:        s.upgradeResult.TargetRef,
+			TargetVersion:    s.upgradeResult.ToVersion,
+			UpToDate:         s.upgradeResult.UpToDate,
+		}); err != nil {
+			return installlinux.UpgradeResult{}, err
+		}
+	}
+	if cfg.Confirm != nil {
+		if err := cfg.Confirm(installlinux.UpgradePreflight{
+			InstalledRef:     s.upgradeResult.FromRef,
+			InstalledVersion: s.upgradeResult.FromVersion,
+			TargetRef:        s.upgradeResult.TargetRef,
+			TargetVersion:    s.upgradeResult.ToVersion,
+			UpToDate:         s.upgradeResult.UpToDate,
+		}); err != nil {
+			return installlinux.UpgradeResult{}, err
+		}
+	}
 	if s.upgradeHook != nil {
 		s.upgradeHook(cfg)
 	}

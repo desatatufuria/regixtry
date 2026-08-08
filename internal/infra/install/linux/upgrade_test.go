@@ -179,6 +179,73 @@ func TestBootstrapperUpgradeRestoresProvenanceAfterProvenanceWriteFailure(t *tes
 	assertFileEquals(t, provenancePath, originalProvenanceBody)
 }
 
+func TestBootstrapperUpgradeAlreadyUpToDateReturnsWithoutUpgradeActions(t *testing.T) {
+	_, provenancePath, plan := writeInstalledRuntimeFixture(t)
+	events := make([]string, 0, 4)
+	restoreRelease := swapReleaseClient(t, stubReleaseClient{
+		resolveFn: func(context.Context, string, string, string) (releases.ReleaseAsset, error) {
+			events = append(events, "resolve")
+			return releases.ReleaseAsset{Tag: "v1.2.2", Version: "1.2.2", ArchiveName: "regixtry_1.2.2_linux_amd64.tar.gz"}, nil
+		},
+		downloadFn: func(context.Context, releases.ReleaseAsset, string, func(releases.DownloadProgress)) (string, error) {
+			t.Fatal("DownloadVerifiedBinary should not run for an up-to-date install")
+			return "", nil
+		},
+	})
+	defer restoreRelease()
+
+	b := newUpgradeTestBootstrapper(&events)
+	result, err := b.Upgrade(context.Background(), UpgradeConfig{ProvenancePath: provenancePath, Progress: func(progress UpgradeProgress) {
+		if progress.Stage != "" {
+			events = append(events, progress.Stage)
+		}
+	}})
+	if err != nil {
+		t.Fatalf("Upgrade() error = %v", err)
+	}
+	if !result.UpToDate {
+		t.Fatalf("UpToDate = %v, want true", result.UpToDate)
+	}
+	if result.TargetRef != "v1.2.2" || result.ToVersion != "1.2.2" {
+		t.Fatalf("result = %#v, want same installed target identity", result)
+	}
+	if got := strings.Join(events, "|"); got != "resolve|resolve|resolve" {
+		t.Fatalf("events = %s, want only resolve-stage preflight", got)
+	}
+	assertFileBody(t, plan.BinaryPath, "old-binary")
+	assertFileContains(t, provenancePath, `"installed_ref": "v1.2.2"`)
+	assertNoBinarySwapArtifacts(t, plan.BinaryPath)
+	assertFileContains(t, plan.EnvPath, `REGISTRY_PUBLIC_URL="http://127.0.0.1:5000"`)
+}
+
+func TestCaptureManagedRuntimeBackupIncludesManagedArtifacts(t *testing.T) {
+	_, provenancePath, plan := writeInstalledRuntimeFixture(t)
+	b := newUpgradeTestBootstrapper(nil)
+
+	backup, err := b.captureManagedRuntimeBackup(plan, provenancePath)
+	if err != nil {
+		t.Fatalf("captureManagedRuntimeBackup() error = %v", err)
+	}
+	if backup.Binary.Path != plan.BinaryPath || string(backup.Binary.Body) != "old-binary" {
+		t.Fatalf("binary backup = %#v, want installed binary snapshot", backup.Binary)
+	}
+	if backup.Binary.BackupPath != "" {
+		t.Fatalf("binary backup path = %q, want empty before swap", backup.Binary.BackupPath)
+	}
+	if backup.Env.Path != plan.EnvPath || !strings.Contains(string(backup.Env.Body), `REGISTRY_PUBLIC_URL="http://127.0.0.1:5000"`) {
+		t.Fatalf("env backup = %#v, want managed env snapshot", backup.Env)
+	}
+	if backup.Unit.Path != plan.UnitPath || !strings.Contains(string(backup.Unit.Body), "regixtry serve") {
+		t.Fatalf("unit backup = %#v, want systemd unit snapshot", backup.Unit)
+	}
+	if backup.BootstrapReceipt.Path != plan.StatePath || !strings.Contains(string(backup.BootstrapReceipt.Body), `"service_name":"regixtry"`) {
+		t.Fatalf("receipt backup = %#v, want bootstrap receipt snapshot", backup.BootstrapReceipt)
+	}
+	if backup.Provenance.Path != provenancePath || !strings.Contains(string(backup.Provenance.Body), `"installed_version": "1.2.2"`) {
+		t.Fatalf("provenance backup = %#v, want lifecycle provenance snapshot", backup.Provenance)
+	}
+}
+
 type stubReleaseClient struct {
 	resolveFn  func(context.Context, string, string, string) (releases.ReleaseAsset, error)
 	downloadFn func(context.Context, releases.ReleaseAsset, string, func(releases.DownloadProgress)) (string, error)
@@ -283,12 +350,14 @@ func writeInstalledRuntimeFixture(t *testing.T) (string, string, BootstrapPlan) 
 		t.Fatalf("WriteFile(receipt) error = %v", err)
 	}
 	provenance := LifecycleProvenance{
-		Version:      1,
-		Mode:         supportedMode,
-		InstalledBin: plan.BinaryPath,
-		ServiceName:  plan.ServiceName,
-		StatePath:    filepath.Join(root, "etc", "regixtry", lifecycleProvenanceFileName),
-		ManagedPaths: []string{plan.EnvPath, plan.UnitPath, plan.DatabasePath, plan.ContentPath, plan.StatePath},
+		Version:          1,
+		Mode:             supportedMode,
+		InstalledBin:     plan.BinaryPath,
+		InstalledRef:     "v1.2.2",
+		InstalledVersion: "1.2.2",
+		ServiceName:      plan.ServiceName,
+		StatePath:        filepath.Join(root, "etc", "regixtry", lifecycleProvenanceFileName),
+		ManagedPaths:     []string{plan.EnvPath, plan.UnitPath, plan.DatabasePath, plan.ContentPath, plan.StatePath},
 	}
 	provenancePath := provenance.StatePath
 	b := &Bootstrapper{writeFile: os.WriteFile}

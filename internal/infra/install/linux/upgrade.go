@@ -17,7 +17,17 @@ type UpgradeConfig struct {
 	Ref            string
 	ProvenancePath string
 	AssumeYes      bool
+	Preflight      func(UpgradePreflight) error
+	Confirm        func(UpgradePreflight) error
 	Progress       func(UpgradeProgress)
+}
+
+type UpgradePreflight struct {
+	InstalledRef     string
+	InstalledVersion string
+	TargetRef        string
+	TargetVersion    string
+	UpToDate         bool
 }
 
 type UpgradeResult struct {
@@ -26,6 +36,7 @@ type UpgradeResult struct {
 	ToVersion      string
 	TargetRef      string
 	ProvenancePath string
+	UpToDate       bool
 }
 
 type UpgradeProgress struct {
@@ -46,17 +57,20 @@ var newReleaseClient = func() releaseClient {
 	return releases.NewGitHubClient(os.Getenv("REGISTRY_INSTALL_RELEASES_API_URL"))
 }
 
-type upgradeSnapshot struct {
-	BinaryBody       []byte
-	BinaryBackupPath string
-	BinaryMode       os.FileMode
-	EnvBody          []byte
-	UnitBody         []byte
-	BootstrapReceipt []byte
-	ProvenanceBody   []byte
-	ProvenanceMode   os.FileMode
+type managedRuntimeArtifactBackup struct {
+	Path       string
+	Body       []byte
+	Mode       os.FileMode
+	BackupPath string
+}
+
+type managedRuntimeBackup struct {
+	Binary           managedRuntimeArtifactBackup
+	Env              managedRuntimeArtifactBackup
+	Unit             managedRuntimeArtifactBackup
+	BootstrapReceipt managedRuntimeArtifactBackup
+	Provenance       managedRuntimeArtifactBackup
 	Plan             BootstrapPlan
-	ProvenancePath   string
 }
 
 func (b *Bootstrapper) Upgrade(ctx context.Context, cfg UpgradeConfig) (UpgradeResult, error) {
@@ -100,7 +114,27 @@ func (b *Bootstrapper) Upgrade(ctx context.Context, cfg UpgradeConfig) (UpgradeR
 		ToRef:       asset.Tag,
 		ToVersion:   asset.Version,
 	})
-	if err := requireUpgradeConfirmation(intent, asset, cfg.AssumeYes); err != nil {
+	preflight := UpgradePreflight{
+		InstalledRef:     provenance.InstalledRef,
+		InstalledVersion: intent.InstalledVersion,
+		TargetRef:        asset.Tag,
+		TargetVersion:    asset.Version,
+		UpToDate:         sameUpgradeVersion(intent.InstalledVersion, asset.Version, provenance.InstalledRef, asset.Tag),
+	}
+	if err := reportUpgradePreflight(cfg.Preflight, preflight); err != nil {
+		return UpgradeResult{}, err
+	}
+	if preflight.UpToDate {
+		return UpgradeResult{
+			FromRef:        provenance.InstalledRef,
+			FromVersion:    intent.InstalledVersion,
+			ToVersion:      asset.Version,
+			TargetRef:      asset.Tag,
+			ProvenancePath: provenance.StatePath,
+			UpToDate:       true,
+		}, nil
+	}
+	if err := confirmUpgrade(preflight, cfg.AssumeYes, cfg.Confirm); err != nil {
 		return UpgradeResult{}, err
 	}
 
@@ -127,7 +161,7 @@ func (b *Bootstrapper) Upgrade(ctx context.Context, cfg UpgradeConfig) (UpgradeR
 		return UpgradeResult{}, err
 	}
 
-	snapshot, err := b.captureUpgradeSnapshot(plan, provenancePath)
+	backup, err := b.captureManagedRuntimeBackup(plan, provenancePath)
 	if err != nil {
 		return UpgradeResult{}, err
 	}
@@ -139,18 +173,18 @@ func (b *Bootstrapper) Upgrade(ctx context.Context, cfg UpgradeConfig) (UpgradeR
 
 	rollback := func(runErr error) error {
 		reportUpgradeProgress(cfg.Progress, UpgradeProgress{Stage: "rollback", Detail: "Restoring previous installation", FromRef: provenance.InstalledRef, FromVersion: intent.InstalledVersion, ToRef: asset.Tag, ToVersion: asset.Version})
-		if rollbackErr := b.restoreUpgradeSnapshot(ctx, snapshot); rollbackErr != nil {
+		if rollbackErr := b.restoreManagedRuntimeBackup(ctx, backup); rollbackErr != nil {
 			return errors.Join(runErr, rollbackErr)
 		}
 		return runErr
 	}
 
 	reportUpgradeProgress(cfg.Progress, UpgradeProgress{Stage: "swap", Detail: fmt.Sprintf("Swapping installed binary at %s", plan.BinaryPath), FromRef: provenance.InstalledRef, FromVersion: intent.InstalledVersion, ToRef: asset.Tag, ToVersion: asset.Version})
-	binaryBackupPath, err := b.swapInstalledBinary(plan.BinaryPath, stagedBinaryPath, snapshot.BinaryMode)
+	binaryBackupPath, err := b.swapInstalledBinary(plan.BinaryPath, stagedBinaryPath, backup.Binary.Mode)
 	if err != nil {
 		return UpgradeResult{}, rollback(fmt.Errorf("replace installed binary: %w", err))
 	}
-	snapshot.BinaryBackupPath = binaryBackupPath
+	backup.Binary.BackupPath = binaryBackupPath
 	if err := b.writeManagedArtifacts(plan, bootstrapReceiptFromPlan(plan), false); err != nil {
 		return UpgradeResult{}, rollback(err)
 	}
@@ -173,20 +207,27 @@ func (b *Bootstrapper) Upgrade(ctx context.Context, cfg UpgradeConfig) (UpgradeR
 	if err := b.writeLifecycleProvenance(provenance); err != nil {
 		return UpgradeResult{}, rollback(fmt.Errorf("write lifecycle provenance: %w", err))
 	}
-	if snapshot.BinaryBackupPath != "" {
-		if err := b.removeAll(snapshot.BinaryBackupPath); err != nil {
+	if backup.Binary.BackupPath != "" {
+		if err := b.removeAll(backup.Binary.BackupPath); err != nil {
 			return UpgradeResult{}, rollback(fmt.Errorf("remove binary backup: %w", err))
 		}
-		snapshot.BinaryBackupPath = ""
+		backup.Binary.BackupPath = ""
 	}
 
 	return UpgradeResult{
-		FromRef:        provenance.InstalledRef,
+		FromRef:        preflight.InstalledRef,
 		FromVersion:    intent.InstalledVersion,
 		ToVersion:      asset.Version,
 		TargetRef:      asset.Tag,
 		ProvenancePath: provenance.StatePath,
 	}, nil
+}
+
+func reportUpgradePreflight(preflight func(UpgradePreflight) error, event UpgradePreflight) error {
+	if preflight == nil {
+		return nil
+	}
+	return preflight(event)
 }
 
 func reportUpgradeProgress(progress func(UpgradeProgress), event UpgradeProgress) {
@@ -209,6 +250,17 @@ func formatUpgradeIdentity(ref string, version string) string {
 		return trimmedVersion
 	}
 	return "unknown version"
+}
+
+func sameUpgradeVersion(installedVersion string, targetVersion string, installedRef string, targetRef string) bool {
+	trimmedInstalledVersion := strings.TrimSpace(installedVersion)
+	trimmedTargetVersion := strings.TrimSpace(targetVersion)
+	if trimmedInstalledVersion != "" && trimmedTargetVersion != "" {
+		return trimmedInstalledVersion == trimmedTargetVersion
+	}
+	trimmedInstalledRef := strings.TrimSpace(installedRef)
+	trimmedTargetRef := strings.TrimSpace(targetRef)
+	return trimmedInstalledRef != "" && trimmedInstalledRef == trimmedTargetRef
 }
 
 func (b *Bootstrapper) swapInstalledBinary(installedPath string, stagedBinaryPath string, mode os.FileMode) (string, error) {
@@ -291,19 +343,26 @@ func (b *Bootstrapper) readManagedEnv(path string) (map[string]string, error) {
 	return parseManagedEnvFile(body)
 }
 
-func requireUpgradeConfirmation(intent InstalledIntent, asset releases.ReleaseAsset, assumeYes bool) error {
+func confirmUpgrade(preflight UpgradePreflight, assumeYes bool, confirm func(UpgradePreflight) error) error {
 	if assumeYes {
 		return nil
 	}
-	if intent.InstalledVersion == "" {
+	if confirm != nil {
+		return confirm(preflight)
+	}
+	return requireUpgradeConfirmation(preflight)
+}
+
+func requireUpgradeConfirmation(preflight UpgradePreflight) error {
+	if preflight.InstalledVersion == "" {
 		return nil
 	}
-	currentMajor := semanticMajor(intent.InstalledVersion)
-	targetMajor := semanticMajor(asset.Version)
+	currentMajor := semanticMajor(preflight.InstalledVersion)
+	targetMajor := semanticMajor(preflight.TargetVersion)
 	if currentMajor == 0 || targetMajor == 0 || currentMajor == targetMajor {
 		return nil
 	}
-	return fmt.Errorf("major-version upgrade from %s to %s requires --yes", intent.InstalledVersion, asset.Version)
+	return fmt.Errorf("major-version upgrade from %s to %s requires --yes", preflight.InstalledVersion, preflight.TargetVersion)
 }
 
 func semanticMajor(version string) int {
@@ -313,49 +372,50 @@ func semanticMajor(version string) int {
 	return major
 }
 
-func (b *Bootstrapper) captureUpgradeSnapshot(plan BootstrapPlan, provenancePath string) (upgradeSnapshot, error) {
-	binaryBody, err := b.readFile(plan.BinaryPath)
+func (b *Bootstrapper) captureManagedRuntimeBackup(plan BootstrapPlan, provenancePath string) (managedRuntimeBackup, error) {
+	binary, err := b.captureManagedRuntimeArtifact(plan.BinaryPath, "read installed binary", "stat installed binary")
 	if err != nil {
-		return upgradeSnapshot{}, fmt.Errorf("read installed binary: %w", err)
+		return managedRuntimeBackup{}, err
 	}
-	envBody, err := b.readFile(plan.EnvPath)
+	env, err := b.captureManagedRuntimeArtifact(plan.EnvPath, "read env file", "stat env file")
 	if err != nil {
-		return upgradeSnapshot{}, fmt.Errorf("read env file: %w", err)
+		return managedRuntimeBackup{}, err
 	}
-	unitBody, err := b.readFile(plan.UnitPath)
+	unit, err := b.captureManagedRuntimeArtifact(plan.UnitPath, "read service unit", "stat service unit")
 	if err != nil {
-		return upgradeSnapshot{}, fmt.Errorf("read service unit: %w", err)
+		return managedRuntimeBackup{}, err
 	}
-	receiptBody, err := b.readFile(plan.StatePath)
+	receipt, err := b.captureManagedRuntimeArtifact(plan.StatePath, "read bootstrap receipt", "stat bootstrap receipt")
 	if err != nil {
-		return upgradeSnapshot{}, fmt.Errorf("read bootstrap receipt: %w", err)
+		return managedRuntimeBackup{}, err
 	}
-	provenanceBody, err := b.readFile(provenancePath)
+	provenance, err := b.captureManagedRuntimeArtifact(provenancePath, "read lifecycle provenance", "stat lifecycle provenance")
 	if err != nil {
-		return upgradeSnapshot{}, fmt.Errorf("read lifecycle provenance: %w", err)
+		return managedRuntimeBackup{}, err
 	}
-	info, err := b.stat(plan.BinaryPath)
-	if err != nil {
-		return upgradeSnapshot{}, fmt.Errorf("stat installed binary: %w", err)
-	}
-	provenanceInfo, err := b.stat(provenancePath)
-	if err != nil {
-		return upgradeSnapshot{}, fmt.Errorf("stat lifecycle provenance: %w", err)
-	}
-	return upgradeSnapshot{
-		BinaryBody:       binaryBody,
-		BinaryMode:       info.Mode(),
-		EnvBody:          envBody,
-		UnitBody:         unitBody,
-		BootstrapReceipt: receiptBody,
-		ProvenanceBody:   provenanceBody,
-		ProvenanceMode:   provenanceInfo.Mode(),
+	return managedRuntimeBackup{
+		Binary:           binary,
+		Env:              env,
+		Unit:             unit,
+		BootstrapReceipt: receipt,
+		Provenance:       provenance,
 		Plan:             plan,
-		ProvenancePath:   provenancePath,
 	}, nil
 }
 
-func (b *Bootstrapper) restoreUpgradeSnapshot(ctx context.Context, snapshot upgradeSnapshot) error {
+func (b *Bootstrapper) captureManagedRuntimeArtifact(path string, readErr string, statErr string) (managedRuntimeArtifactBackup, error) {
+	body, err := b.readFile(path)
+	if err != nil {
+		return managedRuntimeArtifactBackup{}, fmt.Errorf("%s: %w", readErr, err)
+	}
+	info, err := b.stat(path)
+	if err != nil {
+		return managedRuntimeArtifactBackup{}, fmt.Errorf("%s: %w", statErr, err)
+	}
+	return managedRuntimeArtifactBackup{Path: path, Body: body, Mode: info.Mode()}, nil
+}
+
+func (b *Bootstrapper) restoreManagedRuntimeBackup(ctx context.Context, backup managedRuntimeBackup) error {
 	var errs []error
 	rename := b.rename
 	if rename == nil {
@@ -365,42 +425,42 @@ func (b *Bootstrapper) restoreUpgradeSnapshot(ctx context.Context, snapshot upgr
 	if removeAll == nil {
 		removeAll = os.RemoveAll
 	}
-	if snapshot.BinaryBackupPath != "" {
-		rollbackBinaryPath := snapshot.BinaryBackupPath + ".rollback"
-		if err := rename(snapshot.Plan.BinaryPath, rollbackBinaryPath); err != nil {
+	if backup.Binary.BackupPath != "" {
+		rollbackBinaryPath := backup.Binary.BackupPath + ".rollback"
+		if err := rename(backup.Binary.Path, rollbackBinaryPath); err != nil {
 			errs = append(errs, fmt.Errorf("move upgraded binary aside: %w", err))
 		} else {
-			if err := rename(snapshot.BinaryBackupPath, snapshot.Plan.BinaryPath); err != nil {
+			if err := rename(backup.Binary.BackupPath, backup.Binary.Path); err != nil {
 				errs = append(errs, fmt.Errorf("restore installed binary from backup: %w", err))
-				if moveBackErr := rename(rollbackBinaryPath, snapshot.Plan.BinaryPath); moveBackErr != nil {
+				if moveBackErr := rename(rollbackBinaryPath, backup.Binary.Path); moveBackErr != nil {
 					errs = append(errs, fmt.Errorf("restore upgraded binary after failed rollback: %w", moveBackErr))
 				}
 			} else if err := removeAll(rollbackBinaryPath); err != nil {
 				errs = append(errs, fmt.Errorf("cleanup upgraded binary after rollback: %w", err))
 			}
 		}
-	} else if err := b.writeFile(snapshot.Plan.BinaryPath, snapshot.BinaryBody, snapshot.BinaryMode); err != nil {
+	} else if err := b.writeFile(backup.Binary.Path, backup.Binary.Body, backup.Binary.Mode); err != nil {
 		errs = append(errs, fmt.Errorf("restore installed binary: %w", err))
 	}
-	if err := b.writeFile(snapshot.Plan.EnvPath, snapshot.EnvBody, 0o644); err != nil {
+	if err := b.writeFile(backup.Env.Path, backup.Env.Body, backup.Env.Mode); err != nil {
 		errs = append(errs, fmt.Errorf("restore env file: %w", err))
 	}
-	if err := b.writeFile(snapshot.Plan.UnitPath, snapshot.UnitBody, 0o644); err != nil {
+	if err := b.writeFile(backup.Unit.Path, backup.Unit.Body, backup.Unit.Mode); err != nil {
 		errs = append(errs, fmt.Errorf("restore service unit: %w", err))
 	}
-	if err := b.writeFile(snapshot.Plan.StatePath, snapshot.BootstrapReceipt, 0o644); err != nil {
+	if err := b.writeFile(backup.BootstrapReceipt.Path, backup.BootstrapReceipt.Body, backup.BootstrapReceipt.Mode); err != nil {
 		errs = append(errs, fmt.Errorf("restore bootstrap receipt: %w", err))
 	}
-	if err := b.writeFile(snapshot.ProvenancePath, snapshot.ProvenanceBody, snapshot.ProvenanceMode); err != nil {
+	if err := b.writeFile(backup.Provenance.Path, backup.Provenance.Body, backup.Provenance.Mode); err != nil {
 		errs = append(errs, fmt.Errorf("restore lifecycle provenance: %w", err))
 	}
 	if err := b.runCommand(ctx, "systemctl", "daemon-reload"); err != nil {
 		errs = append(errs, fmt.Errorf("systemctl daemon-reload during rollback: %w", err))
 	}
-	if err := b.runCommand(ctx, "systemctl", "enable", "--now", snapshot.Plan.ServiceName+".service"); err != nil {
-		errs = append(errs, fmt.Errorf("systemctl enable --now %s.service during rollback: %w", snapshot.Plan.ServiceName, err))
+	if err := b.runCommand(ctx, "systemctl", "enable", "--now", backup.Plan.ServiceName+".service"); err != nil {
+		errs = append(errs, fmt.Errorf("systemctl enable --now %s.service during rollback: %w", backup.Plan.ServiceName, err))
 	}
-	if err := b.waitUntilReachable(ctx, snapshot.Plan); err != nil {
+	if err := b.waitUntilReachable(ctx, backup.Plan); err != nil {
 		errs = append(errs, fmt.Errorf("rollback readiness validation: %w", err))
 	}
 	return errors.Join(errs...)

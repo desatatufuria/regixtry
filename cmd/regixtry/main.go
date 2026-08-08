@@ -990,22 +990,81 @@ func runUpgrade(ctx context.Context, args []string, stdin io.Reader, stdout io.W
 	if err != nil {
 		return err
 	}
+	if stdin == nil {
+		stdin = strings.NewReader("")
+	}
 
 	runner := newBootstrapRunner()
-	progress := newUpgradeProgressWriter(stdout, isInteractiveTTYPair(stdin, stdout))
+	interactive := isInteractiveTTYPair(stdin, stdout)
+	progress := newUpgradeProgressWriter(stdout, interactive)
+	reader := bufio.NewReader(stdin)
 	result, upgradeErr := runner.Upgrade(ctx, installlinux.UpgradeConfig{
 		Ref:            cfg.Ref,
 		ProvenancePath: cfg.StatePath,
 		AssumeYes:      cfg.AssumeYes,
-		Progress:       progress.Advance,
+		Preflight: func(preflight installlinux.UpgradePreflight) error {
+			return renderUpgradePreflight(stdout, preflight)
+		},
+		Confirm: func(preflight installlinux.UpgradePreflight) error {
+			return confirmUpgradePreflight(reader, stdout, interactive, cfg.AssumeYes, preflight)
+		},
+		Progress: progress.Advance,
 	})
 	if stdout != nil && upgradeErr == nil {
+		if result.UpToDate {
+			return nil
+		}
 		progress.Finish(result)
 	}
 	if upgradeErr != nil {
 		progress.Fail()
 	}
 	return upgradeLifecyclePermissionError(upgradeErr, "daemon-sqlite upgrade", formatUpgradeCommand(cfg))
+}
+
+func renderUpgradePreflight(stdout io.Writer, preflight installlinux.UpgradePreflight) error {
+	if stdout != nil {
+		_, _ = fmt.Fprintf(stdout, "Installed version: %s\n", formatUpgradeSummaryIdentity(preflight.InstalledRef, preflight.InstalledVersion))
+		_, _ = fmt.Fprintf(stdout, "Available version: %s\n", formatUpgradeSummaryIdentity(preflight.TargetRef, preflight.TargetVersion))
+	}
+	if preflight.UpToDate {
+		if stdout != nil {
+			_, _ = fmt.Fprintln(stdout, "regixtry is already up to date.")
+		}
+		return nil
+	}
+	return nil
+}
+
+func confirmUpgradePreflight(reader *bufio.Reader, stdout io.Writer, interactive bool, assumeYes bool, preflight installlinux.UpgradePreflight) error {
+	if preflight.UpToDate {
+		return nil
+	}
+	if assumeYes || !interactive {
+		return nil
+	}
+	return promptUpgradeConfirmation(reader, stdout)
+}
+
+func promptUpgradeConfirmation(reader *bufio.Reader, stdout io.Writer) error {
+	if reader == nil {
+		return errors.New("upgrade confirmation requires input")
+	}
+	if stdout != nil {
+		_, _ = fmt.Fprint(stdout, "Proceed with upgrade [y/N]: ")
+	}
+	value, err := reader.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return fmt.Errorf("read upgrade confirmation: %w", err)
+	}
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "y", "yes":
+		return nil
+	case "", "n", "no":
+		return errors.New("upgrade cancelled")
+	default:
+		return fmt.Errorf("unsupported upgrade confirmation %q", strings.TrimSpace(value))
+	}
 }
 
 type upgradeProgressWriter struct {
