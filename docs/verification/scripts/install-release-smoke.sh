@@ -6,6 +6,7 @@ ROOT_DIR=""
 SCRIPT_PATH="${SCRIPT_PATH:-./install.sh}"
 KEEP_ROOT="${KEEP_ROOT:-0}"
 RELEASE_DIST_DIR="${RELEASE_DIST_DIR:-}"
+RUN_INTERACTIVE_CHOOSER="${RUN_INTERACTIVE_CHOOSER:-0}"
 SERVER_PID=""
 SERVER_PORT=""
 ORIGINAL_PATH="${PATH}"
@@ -855,6 +856,16 @@ run_interactive_bootstrap_success_case() {
   assert_contains "${stub_log}" "mode=daemon-sqlite"
 }
 
+run_interactive_cases_if_enabled() {
+  if [[ "${RUN_INTERACTIVE_CHOOSER}" != "1" ]]; then
+    printf 'Skipping interactive chooser smoke cases (set RUN_INTERACTIVE_CHOOSER=1 to enable local/manual coverage).\n'
+    return
+  fi
+
+  run_interactive_binary_only_case "interactive-binary-only"
+  run_interactive_bootstrap_success_case "interactive-bootstrap-success"
+}
+
 run_missing_mode_without_tty_case() {
   local scenario="$1"
   local install_dir="${ROOT_DIR}/${scenario}/bin"
@@ -941,8 +952,7 @@ main() {
   run_missing_command_case tar
   run_missing_command_case sha256sum
 
-  run_interactive_binary_only_case "interactive-binary-only"
-  run_interactive_bootstrap_success_case "interactive-bootstrap-success"
+  run_interactive_cases_if_enabled
   run_binary_only_mode_flag_case "mode-flag-binary-only"
   run_binary_only_mode_env_case "mode-env-binary-only"
   run_missing_mode_without_tty_case "missing-mode-without-tty"

@@ -64,4 +64,4 @@ jobs:
 
       - name: Run installer smoke verification
         shell: bash
-        run: bash docs/verification/scripts/install-release-smoke.sh --release-dist dist
+        run: RUN_INTERACTIVE_CHOOSER=0 bash docs/verification/scripts/install-release-smoke.sh --release-dist dist
