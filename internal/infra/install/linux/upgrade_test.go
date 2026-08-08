@@ -26,7 +26,11 @@ func TestBootstrapperUpgradeStagesBeforeStoppingAndPreservesMetadataDB(t *testin
 			events = append(events, "resolve")
 			return releases.ReleaseAsset{Tag: "v1.2.3", Version: "1.2.3", ArchiveName: "regixtry_1.2.3_linux_amd64.tar.gz"}, nil
 		},
-		downloadFn: func(_ context.Context, _ releases.ReleaseAsset, dir string) (string, error) {
+		downloadFn: func(_ context.Context, _ releases.ReleaseAsset, dir string, progress func(releases.DownloadProgress)) (string, error) {
+			if progress != nil {
+				progress(releases.DownloadProgress{Stage: "download", Detail: "Downloading regixtry_1.2.3_linux_amd64.tar.gz"})
+				progress(releases.DownloadProgress{Stage: "verify", Detail: "Verifying regixtry_1.2.3_linux_amd64.tar.gz"})
+			}
 			events = append(events, "download")
 			stagedPath := filepath.Join(dir, "regixtry")
 			return stagedPath, os.WriteFile(stagedPath, []byte("new-binary"), 0o755)
@@ -43,14 +47,18 @@ func TestBootstrapperUpgradeStagesBeforeStoppingAndPreservesMetadataDB(t *testin
 		return originalWriteFile(path, body, mode)
 	}
 
-	result, err := b.Upgrade(context.Background(), UpgradeConfig{ProvenancePath: provenancePath})
+	result, err := b.Upgrade(context.Background(), UpgradeConfig{ProvenancePath: provenancePath, Progress: func(progress UpgradeProgress) {
+		if progress.Stage != "" {
+			events = append(events, progress.Stage)
+		}
+	}})
 	if err != nil {
 		t.Fatalf("Upgrade() error = %v", err)
 	}
 	if result.TargetRef != "v1.2.3" {
 		t.Fatalf("TargetRef = %q, want v1.2.3", result.TargetRef)
 	}
-	if got, wantPrefix := strings.Join(events, "|"), "resolve|download|systemctl disable --now regixtry.service"; !strings.HasPrefix(got, wantPrefix) {
+	if got, wantPrefix := strings.Join(events, "|"), "resolve|resolve|resolve|download|verify|download|stop|systemctl disable --now regixtry.service"; !strings.HasPrefix(got, wantPrefix) {
 		t.Fatalf("events = %s, want staging before service stop", got)
 	}
 	body, err := os.ReadFile(plan.DatabasePath)
@@ -77,7 +85,7 @@ func TestBootstrapperUpgradeRestoresAfterSystemctlFailure(t *testing.T) {
 		resolveFn: func(context.Context, string, string, string) (releases.ReleaseAsset, error) {
 			return releases.ReleaseAsset{Tag: "v1.2.3", Version: "1.2.3", ArchiveName: "regixtry_1.2.3_linux_amd64.tar.gz"}, nil
 		},
-		downloadFn: func(_ context.Context, _ releases.ReleaseAsset, dir string) (string, error) {
+		downloadFn: func(_ context.Context, _ releases.ReleaseAsset, dir string, _ func(releases.DownloadProgress)) (string, error) {
 			stagedPath := filepath.Join(dir, "regixtry")
 			return stagedPath, os.WriteFile(stagedPath, []byte("new-binary"), 0o755)
 		},
@@ -114,7 +122,7 @@ func TestBootstrapperUpgradeRestoresAfterProbeFailure(t *testing.T) {
 		resolveFn: func(context.Context, string, string, string) (releases.ReleaseAsset, error) {
 			return releases.ReleaseAsset{Tag: "v1.2.3", Version: "1.2.3", ArchiveName: "regixtry_1.2.3_linux_amd64.tar.gz"}, nil
 		},
-		downloadFn: func(_ context.Context, _ releases.ReleaseAsset, dir string) (string, error) {
+		downloadFn: func(_ context.Context, _ releases.ReleaseAsset, dir string, _ func(releases.DownloadProgress)) (string, error) {
 			stagedPath := filepath.Join(dir, "regixtry")
 			return stagedPath, os.WriteFile(stagedPath, []byte("new-binary"), 0o755)
 		},
@@ -142,7 +150,7 @@ func TestBootstrapperUpgradeRestoresProvenanceAfterProvenanceWriteFailure(t *tes
 		resolveFn: func(context.Context, string, string, string) (releases.ReleaseAsset, error) {
 			return releases.ReleaseAsset{Tag: "v1.2.3", Version: "1.2.3", ArchiveName: "regixtry_1.2.3_linux_amd64.tar.gz"}, nil
 		},
-		downloadFn: func(_ context.Context, _ releases.ReleaseAsset, dir string) (string, error) {
+		downloadFn: func(_ context.Context, _ releases.ReleaseAsset, dir string, _ func(releases.DownloadProgress)) (string, error) {
 			stagedPath := filepath.Join(dir, "regixtry")
 			return stagedPath, os.WriteFile(stagedPath, []byte("new-binary"), 0o755)
 		},
@@ -173,15 +181,15 @@ func TestBootstrapperUpgradeRestoresProvenanceAfterProvenanceWriteFailure(t *tes
 
 type stubReleaseClient struct {
 	resolveFn  func(context.Context, string, string, string) (releases.ReleaseAsset, error)
-	downloadFn func(context.Context, releases.ReleaseAsset, string) (string, error)
+	downloadFn func(context.Context, releases.ReleaseAsset, string, func(releases.DownloadProgress)) (string, error)
 }
 
 func (s stubReleaseClient) Resolve(ctx context.Context, ref string, targetOS string, targetArch string) (releases.ReleaseAsset, error) {
 	return s.resolveFn(ctx, ref, targetOS, targetArch)
 }
 
-func (s stubReleaseClient) DownloadVerifiedBinary(ctx context.Context, asset releases.ReleaseAsset, dir string) (string, error) {
-	return s.downloadFn(ctx, asset, dir)
+func (s stubReleaseClient) DownloadVerifiedBinary(ctx context.Context, asset releases.ReleaseAsset, dir string, progress func(releases.DownloadProgress)) (string, error) {
+	return s.downloadFn(ctx, asset, dir, progress)
 }
 
 func swapReleaseClient(t *testing.T, client releaseClient) func() {

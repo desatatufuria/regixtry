@@ -56,7 +56,7 @@ func TestGitHubReleaseDownloadVerifiedBinaryRejectsWrongChecksum(t *testing.T) {
 
 	client := NewGitHubClient(server.URL)
 	dir := t.TempDir()
-	_, err := client.DownloadVerifiedBinary(context.Background(), asset, dir)
+	_, err := client.DownloadVerifiedBinary(context.Background(), asset, dir, nil)
 	if err == nil || !strings.Contains(err.Error(), "checksum verification failed") {
 		t.Fatalf("DownloadVerifiedBinary() error = %v, want checksum failure", err)
 	}
@@ -70,7 +70,7 @@ func TestGitHubReleaseDownloadVerifiedBinaryRejectsMultiEntryArchive(t *testing.
 
 	client := NewGitHubClient(server.URL)
 	dir := t.TempDir()
-	_, err := client.DownloadVerifiedBinary(context.Background(), asset, dir)
+	_, err := client.DownloadVerifiedBinary(context.Background(), asset, dir, nil)
 	if err == nil || !strings.Contains(err.Error(), "archive must contain exactly one regixtry entry") {
 		t.Fatalf("DownloadVerifiedBinary() error = %v, want archive validation failure", err)
 	}

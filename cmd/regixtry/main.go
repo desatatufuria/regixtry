@@ -185,7 +185,7 @@ func runWithIO(ctx context.Context, args []string, stdin io.Reader, stdout io.Wr
 	case "uninstall":
 		return runUninstall(ctx, args[1:], stdout)
 	case "upgrade":
-		return runUpgrade(ctx, args[1:], stdout)
+		return runUpgrade(ctx, args[1:], stdin, stdout)
 	default:
 		return fmt.Errorf("unknown subcommand %q", args[0])
 	}
@@ -985,22 +985,156 @@ func runUninstall(ctx context.Context, args []string, stdout io.Writer) error {
 	return upgradeLifecyclePermissionError(uninstallErr, "daemon-sqlite uninstall", formatUninstallCommand(cfg))
 }
 
-func runUpgrade(ctx context.Context, args []string, stdout io.Writer) error {
+func runUpgrade(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) error {
 	cfg, err := parseUpgradeConfig(args)
 	if err != nil {
 		return err
 	}
 
 	runner := newBootstrapRunner()
+	progress := newUpgradeProgressWriter(stdout, isInteractiveTTYPair(stdin, stdout))
 	result, upgradeErr := runner.Upgrade(ctx, installlinux.UpgradeConfig{
 		Ref:            cfg.Ref,
 		ProvenancePath: cfg.StatePath,
 		AssumeYes:      cfg.AssumeYes,
+		Progress:       progress.Advance,
 	})
 	if stdout != nil && upgradeErr == nil {
-		_, _ = fmt.Fprintf(stdout, "Upgrade complete: regixtry is running target %s and lifecycle provenance is recorded at %s\n", firstNonEmpty(result.TargetRef, result.ToVersion), result.ProvenancePath)
+		progress.Finish(result)
+	}
+	if upgradeErr != nil {
+		progress.Fail()
 	}
 	return upgradeLifecyclePermissionError(upgradeErr, "daemon-sqlite upgrade", formatUpgradeCommand(cfg))
+}
+
+type upgradeProgressWriter struct {
+	out         io.Writer
+	interactive bool
+	stageIndex  map[string]int
+	currentStep int
+	lastWidth   int
+}
+
+func newUpgradeProgressWriter(out io.Writer, interactive bool) *upgradeProgressWriter {
+	return &upgradeProgressWriter{
+		out:         out,
+		interactive: interactive,
+		stageIndex: map[string]int{
+			"resolve":      1,
+			"download":     2,
+			"verify":       3,
+			"stop":         4,
+			"swap":         5,
+			"restart":      6,
+			"health-check": 7,
+			"rollback":     8,
+		},
+	}
+}
+
+func (w *upgradeProgressWriter) Advance(event installlinux.UpgradeProgress) {
+	if w == nil || w.out == nil {
+		return
+	}
+	step, ok := w.stageIndex[event.Stage]
+	if !ok {
+		return
+	}
+	if step > w.currentStep {
+		w.currentStep = step
+	}
+	line := w.formatLine(event)
+	if w.interactive {
+		padding := ""
+		if delta := w.lastWidth - len(line); delta > 0 {
+			padding = strings.Repeat(" ", delta)
+		}
+		_, _ = fmt.Fprintf(w.out, "\r%s%s", line, padding)
+		w.lastWidth = len(line)
+		return
+	}
+	_, _ = fmt.Fprintln(w.out, line)
+}
+
+func (w *upgradeProgressWriter) Finish(result installlinux.UpgradeResult) {
+	if w == nil || w.out == nil {
+		return
+	}
+	if w.interactive {
+		_, _ = fmt.Fprintln(w.out)
+	}
+	_, _ = fmt.Fprintf(w.out, "Upgrade complete: %s -> %s. Lifecycle provenance: %s\n", formatUpgradeSummaryIdentity(result.FromRef, result.FromVersion), formatUpgradeSummaryIdentity(result.TargetRef, result.ToVersion), result.ProvenancePath)
+}
+
+func (w *upgradeProgressWriter) Fail() {
+	if w == nil || w.out == nil || !w.interactive {
+		return
+	}
+	_, _ = fmt.Fprintln(w.out)
+}
+
+func (w *upgradeProgressWriter) formatLine(event installlinux.UpgradeProgress) string {
+	label := upgradeStageLabel(event.Stage)
+	detail := strings.TrimSpace(event.Detail)
+	step := minInt(w.currentStep, 7)
+	if w.interactive {
+		if detail == "" {
+			return fmt.Sprintf("%s %d/7 %s", renderUpgradeBar(step, 7), step, label)
+		}
+		return fmt.Sprintf("%s %d/7 %s: %s", renderUpgradeBar(step, 7), step, label, detail)
+	}
+	if detail == "" {
+		return fmt.Sprintf("[%d/7] %s", step, label)
+	}
+	return fmt.Sprintf("[%d/7] %s: %s", step, label, detail)
+}
+
+func renderUpgradeBar(step int, total int) string {
+	filled := minInt(step, total)
+	if filled < 0 {
+		filled = 0
+	}
+	return "[" + strings.Repeat("#", filled) + strings.Repeat("-", total-filled) + "]"
+}
+
+func upgradeStageLabel(stage string) string {
+	switch stage {
+	case "resolve":
+		return "Resolve"
+	case "download":
+		return "Download"
+	case "verify":
+		return "Verify"
+	case "stop":
+		return "Stop"
+	case "swap":
+		return "Swap"
+	case "restart":
+		return "Restart"
+	case "health-check":
+		return "Health check"
+	case "rollback":
+		return "Rollback"
+	default:
+		return stage
+	}
+}
+
+func formatUpgradeSummaryIdentity(ref string, version string) string {
+	trimmedRef := strings.TrimSpace(ref)
+	trimmedVersion := strings.TrimSpace(version)
+	if trimmedRef != "" && trimmedVersion != "" {
+		return fmt.Sprintf("%s (%s)", trimmedRef, trimmedVersion)
+	}
+	return firstNonEmpty(trimmedRef, trimmedVersion, "unknown version")
+}
+
+func minInt(a int, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func resolveSetupMode(rawMode string, interactive bool, reader *bufio.Reader, stdout io.Writer) (string, bool, error) {

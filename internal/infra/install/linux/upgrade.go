@@ -17,18 +17,29 @@ type UpgradeConfig struct {
 	Ref            string
 	ProvenancePath string
 	AssumeYes      bool
+	Progress       func(UpgradeProgress)
 }
 
 type UpgradeResult struct {
+	FromRef        string
 	FromVersion    string
 	ToVersion      string
 	TargetRef      string
 	ProvenancePath string
 }
 
+type UpgradeProgress struct {
+	Stage       string
+	Detail      string
+	FromRef     string
+	FromVersion string
+	ToRef       string
+	ToVersion   string
+}
+
 type releaseClient interface {
 	Resolve(context.Context, string, string, string) (releases.ReleaseAsset, error)
-	DownloadVerifiedBinary(context.Context, releases.ReleaseAsset, string) (string, error)
+	DownloadVerifiedBinary(context.Context, releases.ReleaseAsset, string, func(releases.DownloadProgress)) (string, error)
 }
 
 var newReleaseClient = func() releaseClient {
@@ -66,6 +77,12 @@ func (b *Bootstrapper) Upgrade(ctx context.Context, cfg UpgradeConfig) (UpgradeR
 		return UpgradeResult{}, err
 	}
 	plan := buildPlanFromInstalledIntent(intent)
+	reportUpgradeProgress(cfg.Progress, UpgradeProgress{
+		Stage:       "resolve",
+		Detail:      "Resolving target release",
+		FromRef:     provenance.InstalledRef,
+		FromVersion: intent.InstalledVersion,
+	})
 
 	arch, err := releases.CurrentLinuxArch()
 	if err != nil {
@@ -75,6 +92,14 @@ func (b *Bootstrapper) Upgrade(ctx context.Context, cfg UpgradeConfig) (UpgradeR
 	if err != nil {
 		return UpgradeResult{}, err
 	}
+	reportUpgradeProgress(cfg.Progress, UpgradeProgress{
+		Stage:       "resolve",
+		Detail:      fmt.Sprintf("Upgrading from %s to %s", formatUpgradeIdentity(provenance.InstalledRef, intent.InstalledVersion), formatUpgradeIdentity(asset.Tag, asset.Version)),
+		FromRef:     provenance.InstalledRef,
+		FromVersion: intent.InstalledVersion,
+		ToRef:       asset.Tag,
+		ToVersion:   asset.Version,
+	})
 	if err := requireUpgradeConfirmation(intent, asset, cfg.AssumeYes); err != nil {
 		return UpgradeResult{}, err
 	}
@@ -85,7 +110,16 @@ func (b *Bootstrapper) Upgrade(ctx context.Context, cfg UpgradeConfig) (UpgradeR
 	}
 	defer os.RemoveAll(stageDir)
 
-	stagedBinaryPath, err := newReleaseClient().DownloadVerifiedBinary(ctx, asset, stageDir)
+	stagedBinaryPath, err := newReleaseClient().DownloadVerifiedBinary(ctx, asset, stageDir, func(progress releases.DownloadProgress) {
+		reportUpgradeProgress(cfg.Progress, UpgradeProgress{
+			Stage:       progress.Stage,
+			Detail:      progress.Detail,
+			FromRef:     provenance.InstalledRef,
+			FromVersion: intent.InstalledVersion,
+			ToRef:       asset.Tag,
+			ToVersion:   asset.Version,
+		})
+	})
 	if err != nil {
 		return UpgradeResult{}, err
 	}
@@ -97,18 +131,21 @@ func (b *Bootstrapper) Upgrade(ctx context.Context, cfg UpgradeConfig) (UpgradeR
 	if err != nil {
 		return UpgradeResult{}, err
 	}
+	reportUpgradeProgress(cfg.Progress, UpgradeProgress{Stage: "stop", Detail: fmt.Sprintf("Stopping %s.service", plan.ServiceName), FromRef: provenance.InstalledRef, FromVersion: intent.InstalledVersion, ToRef: asset.Tag, ToVersion: asset.Version})
 
 	if err := b.runCommand(ctx, "systemctl", "disable", "--now", plan.ServiceName+".service"); err != nil {
 		return UpgradeResult{}, fmt.Errorf("systemctl disable --now %s.service: %w", plan.ServiceName, err)
 	}
 
 	rollback := func(runErr error) error {
+		reportUpgradeProgress(cfg.Progress, UpgradeProgress{Stage: "rollback", Detail: "Restoring previous installation", FromRef: provenance.InstalledRef, FromVersion: intent.InstalledVersion, ToRef: asset.Tag, ToVersion: asset.Version})
 		if rollbackErr := b.restoreUpgradeSnapshot(ctx, snapshot); rollbackErr != nil {
 			return errors.Join(runErr, rollbackErr)
 		}
 		return runErr
 	}
 
+	reportUpgradeProgress(cfg.Progress, UpgradeProgress{Stage: "swap", Detail: fmt.Sprintf("Swapping installed binary at %s", plan.BinaryPath), FromRef: provenance.InstalledRef, FromVersion: intent.InstalledVersion, ToRef: asset.Tag, ToVersion: asset.Version})
 	binaryBackupPath, err := b.swapInstalledBinary(plan.BinaryPath, stagedBinaryPath, snapshot.BinaryMode)
 	if err != nil {
 		return UpgradeResult{}, rollback(fmt.Errorf("replace installed binary: %w", err))
@@ -117,12 +154,14 @@ func (b *Bootstrapper) Upgrade(ctx context.Context, cfg UpgradeConfig) (UpgradeR
 	if err := b.writeManagedArtifacts(plan, bootstrapReceiptFromPlan(plan), false); err != nil {
 		return UpgradeResult{}, rollback(err)
 	}
+	reportUpgradeProgress(cfg.Progress, UpgradeProgress{Stage: "restart", Detail: fmt.Sprintf("Restarting %s.service", plan.ServiceName), FromRef: provenance.InstalledRef, FromVersion: intent.InstalledVersion, ToRef: asset.Tag, ToVersion: asset.Version})
 	if err := b.runCommand(ctx, "systemctl", "daemon-reload"); err != nil {
 		return UpgradeResult{}, rollback(fmt.Errorf("systemctl daemon-reload: %w", err))
 	}
 	if err := b.runCommand(ctx, "systemctl", "enable", "--now", plan.ServiceName+".service"); err != nil {
 		return UpgradeResult{}, rollback(fmt.Errorf("systemctl enable --now %s.service: %w", plan.ServiceName, err))
 	}
+	reportUpgradeProgress(cfg.Progress, UpgradeProgress{Stage: "health-check", Detail: fmt.Sprintf("Waiting for %s health check", plan.ServiceName), FromRef: provenance.InstalledRef, FromVersion: intent.InstalledVersion, ToRef: asset.Tag, ToVersion: asset.Version})
 	if err := b.waitUntilReachable(ctx, plan); err != nil {
 		return UpgradeResult{}, rollback(err)
 	}
@@ -142,11 +181,34 @@ func (b *Bootstrapper) Upgrade(ctx context.Context, cfg UpgradeConfig) (UpgradeR
 	}
 
 	return UpgradeResult{
+		FromRef:        provenance.InstalledRef,
 		FromVersion:    intent.InstalledVersion,
 		ToVersion:      asset.Version,
 		TargetRef:      asset.Tag,
 		ProvenancePath: provenance.StatePath,
 	}, nil
+}
+
+func reportUpgradeProgress(progress func(UpgradeProgress), event UpgradeProgress) {
+	if progress == nil {
+		return
+	}
+	progress(event)
+}
+
+func formatUpgradeIdentity(ref string, version string) string {
+	trimmedRef := strings.TrimSpace(ref)
+	trimmedVersion := strings.TrimSpace(version)
+	if trimmedRef != "" && trimmedVersion != "" {
+		return fmt.Sprintf("%s (%s)", trimmedRef, trimmedVersion)
+	}
+	if trimmedRef != "" {
+		return trimmedRef
+	}
+	if trimmedVersion != "" {
+		return trimmedVersion
+	}
+	return "unknown version"
 }
 
 func (b *Bootstrapper) swapInstalledBinary(installedPath string, stagedBinaryPath string, mode os.FileMode) (string, error) {

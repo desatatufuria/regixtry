@@ -27,6 +27,11 @@ type ReleaseAsset struct {
 	ArchiveName  string
 }
 
+type DownloadProgress struct {
+	Stage  string
+	Detail string
+}
+
 type GitHubClient struct {
 	baseURL string
 	client  *http.Client
@@ -130,15 +135,17 @@ func selectAsset(assets []struct {
 	return matches[0], filepath.Base(matches[0]), nil
 }
 
-func (c *GitHubClient) DownloadVerifiedBinary(ctx context.Context, asset ReleaseAsset, dir string) (string, error) {
+func (c *GitHubClient) DownloadVerifiedBinary(ctx context.Context, asset ReleaseAsset, dir string, progress func(DownloadProgress)) (string, error) {
 	archivePath := filepath.Join(dir, asset.ArchiveName)
 	checksumsPath := filepath.Join(dir, filepath.Base(asset.ChecksumsURL))
+	reportDownloadProgress(progress, "download", fmt.Sprintf("Downloading %s", asset.ArchiveName))
 	if err := c.downloadFile(ctx, asset.ArchiveURL, archivePath); err != nil {
 		return "", err
 	}
 	if err := c.downloadFile(ctx, asset.ChecksumsURL, checksumsPath); err != nil {
 		return "", err
 	}
+	reportDownloadProgress(progress, "verify", fmt.Sprintf("Verifying %s", asset.ArchiveName))
 	if err := verifyChecksum(archivePath, asset.ArchiveName, checksumsPath); err != nil {
 		return "", err
 	}
@@ -150,6 +157,13 @@ func (c *GitHubClient) DownloadVerifiedBinary(ctx context.Context, asset Release
 		return "", err
 	}
 	return stagedPath, nil
+}
+
+func reportDownloadProgress(progress func(DownloadProgress), stage string, detail string) {
+	if progress == nil {
+		return
+	}
+	progress(DownloadProgress{Stage: stage, Detail: detail})
 }
 
 func (c *GitHubClient) downloadFile(ctx context.Context, sourceURL string, destination string) error {

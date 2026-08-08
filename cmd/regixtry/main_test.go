@@ -1108,7 +1108,7 @@ func TestRunUninstallPermissionDeniedReturnsSudoSafeRerunGuidance(t *testing.T) 
 }
 
 func TestRunUpgradePassesConfigToGoOwnedLifecycleRunner(t *testing.T) {
-	runner := &stubBootstrapRunner{upgradeResult: installlinux.UpgradeResult{TargetRef: "v1.2.3", ToVersion: "1.2.3", ProvenancePath: "/etc/regixtry/regixtry-lifecycle-state.json"}}
+	runner := &stubBootstrapRunner{upgradeResult: installlinux.UpgradeResult{FromRef: "v1.2.2", FromVersion: "1.2.2", TargetRef: "v1.2.3", ToVersion: "1.2.3", ProvenancePath: "/etc/regixtry/regixtry-lifecycle-state.json"}}
 	restore := swapBootstrapRunner(t, runner)
 	defer restore()
 
@@ -1123,8 +1123,52 @@ func TestRunUpgradePassesConfigToGoOwnedLifecycleRunner(t *testing.T) {
 	if runner.upgradeConfig.Ref != "v1.2.3" || runner.upgradeConfig.ProvenancePath != "/tmp/lifecycle.json" || !runner.upgradeConfig.AssumeYes {
 		t.Fatalf("upgradeConfig = %#v, want parsed upgrade config", runner.upgradeConfig)
 	}
-	if !strings.Contains(stdout.String(), "Upgrade complete:") {
-		t.Fatalf("stdout = %q, want upgrade success message", stdout.String())
+	if !strings.Contains(stdout.String(), "Upgrade complete: v1.2.2 (1.2.2) -> v1.2.3 (1.2.3)") {
+		t.Fatalf("stdout = %q, want upgrade success message with from/to", stdout.String())
+	}
+}
+
+func TestRunUpgradeRendersProgressStagesWithoutTTY(t *testing.T) {
+	runner := &stubBootstrapRunner{
+		upgradeResult: installlinux.UpgradeResult{FromRef: "v1.2.2", FromVersion: "1.2.2", TargetRef: "v1.2.3", ToVersion: "1.2.3", ProvenancePath: "/etc/regixtry/regixtry-lifecycle-state.json"},
+		upgradeHook: func(cfg installlinux.UpgradeConfig) {
+			for _, event := range []installlinux.UpgradeProgress{
+				{Stage: "resolve", Detail: "Upgrading from v1.2.2 (1.2.2) to v1.2.3 (1.2.3)"},
+				{Stage: "download", Detail: "Downloading regixtry_1.2.3_linux_amd64.tar.gz"},
+				{Stage: "verify", Detail: "Verifying regixtry_1.2.3_linux_amd64.tar.gz"},
+				{Stage: "stop", Detail: "Stopping regixtry.service"},
+				{Stage: "swap", Detail: "Swapping installed binary at /usr/local/bin/regixtry"},
+				{Stage: "restart", Detail: "Restarting regixtry.service"},
+				{Stage: "health-check", Detail: "Waiting for regixtry health check"},
+			} {
+				if cfg.Progress != nil {
+					cfg.Progress(event)
+				}
+			}
+		},
+	}
+	restore := swapBootstrapRunner(t, runner)
+	defer restore()
+	restoreTTY := swapInteractiveTTYDetector(t, false)
+	defer restoreTTY()
+
+	stdout := &bytes.Buffer{}
+	err := runWithIO(context.Background(), []string{"upgrade"}, strings.NewReader(""), stdout, io.Discard)
+	if err != nil {
+		t.Fatalf("runWithIO(upgrade) error = %v", err)
+	}
+	for _, want := range []string{
+		"[1/7] Resolve: Upgrading from v1.2.2 (1.2.2) to v1.2.3 (1.2.3)",
+		"[2/7] Download:",
+		"[3/7] Verify:",
+		"[4/7] Stop:",
+		"[5/7] Swap:",
+		"[6/7] Restart:",
+		"[7/7] Health check:",
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout = %q, want %q", stdout.String(), want)
+		}
 	}
 }
 
@@ -1815,6 +1859,7 @@ type stubBootstrapRunner struct {
 	rollbackErr         error
 	uninstallErr        error
 	upgradeErr          error
+	upgradeHook         func(installlinux.UpgradeConfig)
 	planProvenanceErr   error
 	saveProvenanceErr   error
 	lastConfig          installlinux.BootstrapConfig
@@ -1855,6 +1900,9 @@ func (s *stubBootstrapRunner) Uninstall(_ context.Context, provenancePath string
 func (s *stubBootstrapRunner) Upgrade(_ context.Context, cfg installlinux.UpgradeConfig) (installlinux.UpgradeResult, error) {
 	s.upgradeConfig = cfg
 	s.upgradeCalls++
+	if s.upgradeHook != nil {
+		s.upgradeHook(cfg)
+	}
 	return s.upgradeResult, s.upgradeErr
 }
 
