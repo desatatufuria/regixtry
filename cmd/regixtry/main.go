@@ -38,6 +38,7 @@ type bootstrapRunner interface {
 	Run(context.Context, installlinux.BootstrapConfig) error
 	Rollback(context.Context, installlinux.BootstrapConfig) error
 	Uninstall(context.Context, string) (installlinux.UninstallReport, error)
+	Upgrade(context.Context, installlinux.UpgradeConfig) (installlinux.UpgradeResult, error)
 	PlanLifecycleProvenance(installlinux.BootstrapConfig) (installlinux.LifecycleProvenance, error)
 	SaveLifecycleProvenance(installlinux.LifecycleProvenance) error
 }
@@ -184,7 +185,7 @@ func runWithIO(ctx context.Context, args []string, stdin io.Reader, stdout io.Wr
 	case "uninstall":
 		return runUninstall(ctx, args[1:], stdout)
 	case "upgrade":
-		return errors.New("upgrade is deferred for this slice; supported lifecycle commands are setup and uninstall on Linux + systemd hosts")
+		return runUpgrade(ctx, args[1:], stdout)
 	default:
 		return fmt.Errorf("unknown subcommand %q", args[0])
 	}
@@ -261,6 +262,13 @@ type setupPromptState struct {
 
 type uninstallConfig struct {
 	StatePath string
+}
+
+type upgradeConfig struct {
+	Ref            string
+	StatePath      string
+	AssumeYes      bool
+	CurrentVersion string
 }
 
 type runtimeConfig struct {
@@ -731,6 +739,28 @@ func parseUninstallConfig(args []string) (uninstallConfig, error) {
 	return cfg, nil
 }
 
+func parseUpgradeConfig(args []string) (upgradeConfig, error) {
+	flags := flag.NewFlagSet("upgrade", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+
+	defaultStatePath := installlinux.LifecycleProvenancePath("/etc/regixtry/bootstrap-state.json")
+	var cfg upgradeConfig
+	flags.StringVar(&cfg.Ref, "ref", "", "target release tag; defaults to the latest compatible release")
+	flags.StringVar(&cfg.StatePath, "state-path", defaultStatePath, "path to the lifecycle provenance file")
+	flags.BoolVar(&cfg.AssumeYes, "yes", false, "accept risky upgrade confirmations without prompting")
+
+	if err := flags.Parse(args); err != nil {
+		return upgradeConfig{}, err
+	}
+
+	cfg.Ref = strings.TrimSpace(cfg.Ref)
+	cfg.StatePath = strings.TrimSpace(cfg.StatePath)
+	if cfg.StatePath == "" {
+		return upgradeConfig{}, errors.New("state-path is required")
+	}
+	return cfg, nil
+}
+
 func runSetup(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) error {
 	cfg, promptState, err := parseSetupConfigWithPromptState(args)
 	if err != nil {
@@ -953,6 +983,24 @@ func runUninstall(ctx context.Context, args []string, stdout io.Writer) error {
 	}
 
 	return upgradeLifecyclePermissionError(uninstallErr, "daemon-sqlite uninstall", formatUninstallCommand(cfg))
+}
+
+func runUpgrade(ctx context.Context, args []string, stdout io.Writer) error {
+	cfg, err := parseUpgradeConfig(args)
+	if err != nil {
+		return err
+	}
+
+	runner := newBootstrapRunner()
+	result, upgradeErr := runner.Upgrade(ctx, installlinux.UpgradeConfig{
+		Ref:            cfg.Ref,
+		ProvenancePath: cfg.StatePath,
+		AssumeYes:      cfg.AssumeYes,
+	})
+	if stdout != nil && upgradeErr == nil {
+		_, _ = fmt.Fprintf(stdout, "Upgrade complete: regixtry is running target %s and lifecycle provenance is recorded at %s\n", firstNonEmpty(result.TargetRef, result.ToVersion), result.ProvenancePath)
+	}
+	return upgradeLifecyclePermissionError(upgradeErr, "daemon-sqlite upgrade", formatUpgradeCommand(cfg))
 }
 
 func resolveSetupMode(rawMode string, interactive bool, reader *bufio.Reader, stdout io.Writer) (string, bool, error) {
@@ -1189,6 +1237,17 @@ func formatSetupCommand(cfg BootstrapConfig, placeholderOnly bool) string {
 
 func formatUninstallCommand(cfg uninstallConfig) string {
 	return formatPrivilegedLifecycleCommand("uninstall", "--state-path", cfg.StatePath)
+}
+
+func formatUpgradeCommand(cfg upgradeConfig) string {
+	args := []string{"upgrade", "--state-path", cfg.StatePath}
+	if cfg.Ref != "" {
+		args = append(args, "--ref", cfg.Ref)
+	}
+	if cfg.AssumeYes {
+		args = append(args, "--yes")
+	}
+	return formatPrivilegedLifecycleCommand(args...)
 }
 
 func formatPrivilegedLifecycleCommand(args ...string) string {

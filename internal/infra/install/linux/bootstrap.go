@@ -54,6 +54,7 @@ type Bootstrapper struct {
 	writeFile      func(string, []byte, os.FileMode) error
 	readFile       func(string) ([]byte, error)
 	stat           func(string) (os.FileInfo, error)
+	rename         func(string, string) error
 	removeAll      func(string) error
 	listen         func(string, string) (net.Listener, error)
 	runCommand     func(context.Context, string, ...string) error
@@ -72,6 +73,7 @@ func NewBootstrapper() *Bootstrapper {
 		writeFile: os.WriteFile,
 		readFile:  os.ReadFile,
 		stat:      os.Stat,
+		rename:    os.Rename,
 		removeAll: os.RemoveAll,
 		listen:    net.Listen,
 		runCommand: func(ctx context.Context, name string, args ...string) error {
@@ -218,7 +220,7 @@ func (b *Bootstrapper) Run(ctx context.Context, cfg BootstrapConfig) error {
 		return err
 	}
 
-	if err := b.writeArtifacts(plan, receipt); err != nil {
+	if err := b.writeSetupArtifacts(plan, receipt); err != nil {
 		return err
 	}
 
@@ -337,7 +339,14 @@ func (b *Bootstrapper) plan(cfg BootstrapConfig) (BootstrapPlan, BootstrapReceip
 		ServiceName:     serviceName,
 	}
 
-	receipt := BootstrapReceipt{
+	receipt := bootstrapReceiptFromPlan(plan)
+	provenance := lifecycleProvenanceFromPlan(plan, receipt)
+
+	return plan, receipt, provenance, nil
+}
+
+func bootstrapReceiptFromPlan(plan BootstrapPlan) BootstrapReceipt {
+	return BootstrapReceipt{
 		Mode:        plan.Mode,
 		ServiceName: plan.ServiceName,
 		Paths: []string{
@@ -348,12 +357,13 @@ func (b *Bootstrapper) plan(cfg BootstrapConfig) (BootstrapPlan, BootstrapReceip
 			plan.StatePath,
 		},
 	}
-	provenance := lifecycleProvenanceFromPlan(plan, receipt)
-
-	return plan, receipt, provenance, nil
 }
 
-func (b *Bootstrapper) writeArtifacts(plan BootstrapPlan, receipt BootstrapReceipt) error {
+func (b *Bootstrapper) writeSetupArtifacts(plan BootstrapPlan, receipt BootstrapReceipt) error {
+	return b.writeManagedArtifacts(plan, receipt, true)
+}
+
+func (b *Bootstrapper) writeManagedArtifacts(plan BootstrapPlan, receipt BootstrapReceipt, createDatabase bool) error {
 	for _, dir := range []string{filepath.Dir(plan.EnvPath), filepath.Dir(plan.UnitPath), plan.StorageRoot, plan.ContentPath} {
 		if err := b.mkdirAll(dir, 0o755); err != nil {
 			return err
@@ -366,14 +376,21 @@ func (b *Bootstrapper) writeArtifacts(plan BootstrapPlan, receipt BootstrapRecei
 	if err := b.writeFile(plan.UnitPath, []byte(RenderSystemdUnit(plan)), 0o644); err != nil {
 		return fmt.Errorf("write service unit: %w", err)
 	}
-	if err := b.writeFile(plan.DatabasePath, []byte{}, 0o644); err != nil {
-		return fmt.Errorf("create SQLite database file: %w", err)
+	if createDatabase {
+		if err := b.writeFile(plan.DatabasePath, []byte{}, 0o644); err != nil {
+			return fmt.Errorf("create SQLite database file: %w", err)
+		}
 	}
+
+	return b.writeBootstrapReceipt(plan.StatePath, receipt)
+}
+
+func (b *Bootstrapper) writeBootstrapReceipt(statePath string, receipt BootstrapReceipt) error {
 	receiptBytes, err := json.MarshalIndent(receipt, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal bootstrap receipt: %w", err)
 	}
-	if err := b.writeFile(plan.StatePath, append(receiptBytes, '\n'), 0o644); err != nil {
+	if err := b.writeFile(statePath, append(receiptBytes, '\n'), 0o644); err != nil {
 		return fmt.Errorf("write bootstrap receipt: %w", err)
 	}
 

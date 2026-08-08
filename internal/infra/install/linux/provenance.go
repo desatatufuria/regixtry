@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	lifecycleProvenanceVersion  = 1
+	lifecycleProvenanceVersion  = 2
 	lifecycleProvenanceFileName = "regixtry-lifecycle-state.json"
 )
 
@@ -21,12 +21,32 @@ const (
 )
 
 type LifecycleProvenance struct {
-	Version      int      `json:"version"`
-	Mode         string   `json:"mode"`
-	InstalledBin string   `json:"installed_bin"`
-	ServiceName  string   `json:"service_name"`
-	StatePath    string   `json:"state_path"`
-	ManagedPaths []string `json:"managed_paths"`
+	Version          int             `json:"version"`
+	Mode             string          `json:"mode"`
+	InstalledBin     string          `json:"installed_bin"`
+	InstalledRef     string          `json:"installed_ref,omitempty"`
+	InstalledVersion string          `json:"installed_version,omitempty"`
+	ServiceName      string          `json:"service_name"`
+	StatePath        string          `json:"state_path"`
+	ManagedPaths     []string        `json:"managed_paths"`
+	Intent           LifecycleIntent `json:"intent,omitempty"`
+}
+
+type LifecycleIntent struct {
+	Addr               string `json:"addr,omitempty"`
+	PublicURL          string `json:"public_url,omitempty"`
+	RuntimeTLSMode     string `json:"runtime_tls_mode,omitempty"`
+	TLSCertFile        string `json:"tls_cert_file,omitempty"`
+	TLSKeyFile         string `json:"tls_key_file,omitempty"`
+	AuthPostgresDSN    string `json:"auth_postgres_dsn,omitempty"`
+	StorageRoot        string `json:"storage_root,omitempty"`
+	DatabasePath       string `json:"database_path,omitempty"`
+	ContentPath        string `json:"content_path,omitempty"`
+	BootstrapStatePath string `json:"bootstrap_state_path,omitempty"`
+	EnvPath            string `json:"env_path,omitempty"`
+	UnitPath           string `json:"unit_path,omitempty"`
+	BinaryPath         string `json:"binary_path,omitempty"`
+	ServiceName        string `json:"service_name,omitempty"`
 }
 
 type CleanupItem struct {
@@ -62,6 +82,22 @@ func lifecycleProvenanceFromPlan(plan BootstrapPlan, receipt BootstrapReceipt) L
 		ServiceName:  plan.ServiceName,
 		StatePath:    lifecycleProvenancePath(plan.StatePath),
 		ManagedPaths: append([]string(nil), receipt.Paths...),
+		Intent: LifecycleIntent{
+			Addr:               plan.Addr,
+			PublicURL:          plan.PublicURL,
+			RuntimeTLSMode:     plan.RuntimeTLSMode,
+			TLSCertFile:        plan.TLSCertFile,
+			TLSKeyFile:         plan.TLSKeyFile,
+			AuthPostgresDSN:    plan.AuthPostgresDSN,
+			StorageRoot:        plan.StorageRoot,
+			DatabasePath:       plan.DatabasePath,
+			ContentPath:        plan.ContentPath,
+			BootstrapStatePath: plan.StatePath,
+			EnvPath:            plan.EnvPath,
+			UnitPath:           plan.UnitPath,
+			BinaryPath:         plan.BinaryPath,
+			ServiceName:        plan.ServiceName,
+		},
 	}
 }
 
@@ -117,14 +153,17 @@ func (b *Bootstrapper) PlanLifecycleProvenance(cfg BootstrapConfig) (LifecyclePr
 func normalizeLifecycleProvenance(provenance LifecycleProvenance) (LifecycleProvenance, error) {
 	provenance.Mode = strings.TrimSpace(provenance.Mode)
 	provenance.InstalledBin = strings.TrimSpace(provenance.InstalledBin)
+	provenance.InstalledRef = strings.TrimSpace(provenance.InstalledRef)
+	provenance.InstalledVersion = strings.TrimSpace(provenance.InstalledVersion)
 	provenance.ServiceName = strings.TrimSpace(provenance.ServiceName)
 	provenance.StatePath = strings.TrimSpace(provenance.StatePath)
 	provenance.ManagedPaths = normalizeCleanupPaths(provenance.ManagedPaths)
+	provenance.Intent = normalizeLifecycleIntent(provenance.Intent)
 
 	if provenance.Version == 0 {
-		provenance.Version = lifecycleProvenanceVersion
+		provenance.Version = 1
 	}
-	if provenance.Version != lifecycleProvenanceVersion {
+	if provenance.Version != 1 && provenance.Version != lifecycleProvenanceVersion {
 		return LifecycleProvenance{}, fmt.Errorf("unsupported lifecycle provenance version %d", provenance.Version)
 	}
 	if provenance.Mode == "" {
@@ -138,6 +177,24 @@ func normalizeLifecycleProvenance(provenance LifecycleProvenance) (LifecycleProv
 	}
 
 	return provenance, nil
+}
+
+func normalizeLifecycleIntent(intent LifecycleIntent) LifecycleIntent {
+	intent.Addr = strings.TrimSpace(intent.Addr)
+	intent.PublicURL = strings.TrimSpace(intent.PublicURL)
+	intent.RuntimeTLSMode = strings.TrimSpace(intent.RuntimeTLSMode)
+	intent.TLSCertFile = strings.TrimSpace(intent.TLSCertFile)
+	intent.TLSKeyFile = strings.TrimSpace(intent.TLSKeyFile)
+	intent.AuthPostgresDSN = strings.TrimSpace(intent.AuthPostgresDSN)
+	intent.StorageRoot = strings.TrimSpace(intent.StorageRoot)
+	intent.DatabasePath = strings.TrimSpace(intent.DatabasePath)
+	intent.ContentPath = strings.TrimSpace(intent.ContentPath)
+	intent.BootstrapStatePath = strings.TrimSpace(intent.BootstrapStatePath)
+	intent.EnvPath = strings.TrimSpace(intent.EnvPath)
+	intent.UnitPath = strings.TrimSpace(intent.UnitPath)
+	intent.BinaryPath = strings.TrimSpace(intent.BinaryPath)
+	intent.ServiceName = strings.TrimSpace(intent.ServiceName)
+	return intent
 }
 
 func normalizeCleanupPaths(paths []string) []string {

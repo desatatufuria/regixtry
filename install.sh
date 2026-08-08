@@ -42,8 +42,9 @@ usage() {
   cat <<EOF
 Install the verified regixtry binary from GitHub Releases.
 
-This installer places the binary only. Lifecycle setup and uninstall are owned by
-the installed regixtry binary through 'regixtry setup' and 'regixtry uninstall'.
+This installer places the binary only. Lifecycle setup, upgrade, and uninstall are
+owned by the installed regixtry binary through 'regixtry setup', 'regixtry upgrade',
+and 'regixtry uninstall'.
 
 Usage:
   ${SCRIPT_NAME} [--ref <release-tag>] [--dir <install-dir>] [--help]
@@ -329,6 +330,7 @@ print_next_steps() {
   log "Binary placement is complete. Continue with the installed lifecycle commands:"
   log "- ${command_name} setup --mode binary-only"
   log "- sudo ${privileged_command} setup --mode daemon-sqlite --public-url http://127.0.0.1:5000"
+  log "- sudo ${privileged_command} upgrade"
   log "- sudo ${privileged_command} uninstall"
   log "Linux + systemd lifecycle automation remains limited to the regixtry binary."
 }

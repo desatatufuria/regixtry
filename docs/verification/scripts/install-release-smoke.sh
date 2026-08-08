@@ -10,11 +10,30 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 SERVER_PID=""
 SERVER_PORT=""
 ORIGINAL_PATH="${PATH}"
+REAL_UPGRADE_BINARY=""
+REAL_UPGRADE_PROVENANCE_PATH=""
+REAL_UPGRADE_UNIT_PATH=""
+REAL_UPGRADE_SERVICE_NAME=""
 
 cleanup() {
   if [[ -n "${SERVER_PID}" ]] && kill -0 "${SERVER_PID}" >/dev/null 2>&1; then
     kill "${SERVER_PID}" >/dev/null 2>&1 || true
     wait "${SERVER_PID}" 2>/dev/null || true
+  fi
+
+  if [[ -n "${REAL_UPGRADE_BINARY}" ]] && [[ -x "${REAL_UPGRADE_BINARY}" ]] && [[ -n "${REAL_UPGRADE_PROVENANCE_PATH}" ]] && [[ -e "${REAL_UPGRADE_PROVENANCE_PATH}" ]]; then
+    "${REAL_UPGRADE_BINARY}" uninstall --state-path "${REAL_UPGRADE_PROVENANCE_PATH}" >/dev/null 2>&1 || true
+  fi
+
+  if [[ -n "${REAL_UPGRADE_SERVICE_NAME}" ]] && command -v systemctl >/dev/null 2>&1; then
+    systemctl disable --now "${REAL_UPGRADE_SERVICE_NAME}.service" >/dev/null 2>&1 || true
+  fi
+
+  if [[ -n "${REAL_UPGRADE_UNIT_PATH}" ]]; then
+    rm -f "${REAL_UPGRADE_UNIT_PATH}" >/dev/null 2>&1 || true
+    if command -v systemctl >/dev/null 2>&1; then
+      systemctl daemon-reload >/dev/null 2>&1 || true
+    fi
   fi
 
   if [[ "${KEEP_ROOT}" != "1" ]]; then
@@ -223,6 +242,16 @@ PY
 )"
 }
 
+reserve_free_port() {
+  python3 - <<'PY'
+import socket
+sock = socket.socket()
+sock.bind(("127.0.0.1", 0))
+print(sock.getsockname()[1])
+sock.close()
+PY
+}
+
 start_server() {
   python3 -m http.server "${SERVER_PORT}" --bind 127.0.0.1 --directory "${ROOT_DIR}/web" >/dev/null 2>&1 &
   SERVER_PID="$!"
@@ -367,6 +396,7 @@ run_success_case() {
   assert_contains "${log_file}" "Installed regixtry to ${install_dir}/regixtry"
   assert_contains "${log_file}" "Binary placement is complete. Continue with the installed lifecycle commands:"
   assert_contains "${log_file}" "sudo ${install_dir}/regixtry setup --mode daemon-sqlite --public-url http://127.0.0.1:5000"
+  assert_contains "${log_file}" "sudo ${install_dir}/regixtry upgrade"
   assert_contains "${log_file}" "sudo ${install_dir}/regixtry uninstall"
   assert_not_contains "${log_file}" "Choose deployment mode"
   assert_not_contains "${log_file}" "Applied bootstrap mode daemon-sqlite"
@@ -416,11 +446,15 @@ run_lifecycle_cases() {
   local install_log="${ROOT_DIR}/${scenario}.install.log"
   local setup_log="${ROOT_DIR}/${scenario}.setup.log"
   local unsupported_log="${ROOT_DIR}/${scenario}.unsupported.log"
-  local upgrade_log="${ROOT_DIR}/${scenario}.upgrade.log"
+  local upgrade_latest_log="${ROOT_DIR}/${scenario}.upgrade-latest.log"
+  local upgrade_ref_log="${ROOT_DIR}/${scenario}.upgrade-ref.log"
   local uninstall_log="${ROOT_DIR}/${scenario}.uninstall.log"
   local lifecycle_root="${ROOT_DIR}/${scenario}/lifecycle"
   local storage_root="${lifecycle_root}/storage"
   local state_dir="${lifecycle_root}/etc/regixtry"
+  local release_tag=""
+  local env_path="${state_dir}/regixtry.env"
+  local unit_path="${ROOT_DIR}/${scenario}/systemd/regixtry.service"
   local provenance_path="${state_dir}/regixtry-lifecycle-state.json"
   local bootstrap_state_path="${state_dir}/bootstrap-state.json"
   local managed_existing="${storage_root}/content"
@@ -428,6 +462,7 @@ run_lifecycle_cases() {
   local managed_bin="${ROOT_DIR}/${scenario}/managed-bin/regixtry"
 
   prepare_install_env "${scenario}" good amd64
+  release_tag="$(grep -oE '"tag_name": "[^"]+"' "${ROOT_DIR}/web/api/good/latest" | head -n 1 | sed -E 's/^"tag_name": "([^"]+)"$/\1/')"
   bash "${SCRIPT_PATH}" --dir "${install_dir}" >"${install_log}" 2>&1
 
   assert_contains "${install_log}" "Binary placement is complete. Continue with the installed lifecycle commands:"
@@ -437,17 +472,29 @@ run_lifecycle_cases() {
   assert_contains "${setup_log}" "Binary placement is complete, but setup is not yet complete."
   assert_contains "${setup_log}" "run: sudo ${install_dir}/regixtry setup --mode daemon-sqlite --public-url \"<url>\""
 
-  set +e
-  "${install_dir}/regixtry" upgrade >"${upgrade_log}" 2>&1
-  local upgrade_exit=$?
-  set -e
-  [[ ${upgrade_exit} -ne 0 ]] || fail "expected upgrade to stay deferred"
-  assert_contains "${upgrade_log}" "upgrade is deferred for this slice"
-
   mkdir -p "${storage_root}" "${state_dir}" "$(dirname "${managed_bin}")"
   mkdir -p "${managed_existing}"
-  : >"${managed_bin}"
+  printf 'old-binary\n' >"${managed_bin}"
   : >"${bootstrap_state_path}"
+  mkdir -p "$(dirname "${unit_path}")"
+  cat >"${env_path}" <<EOF
+REGISTRY_ADDR="127.0.0.1:5120"
+REGISTRY_PUBLIC_URL="http://127.0.0.1:5120"
+REGISTRY_STORAGE_ROOT="${storage_root}"
+REGISTRY_DATABASE_PATH="${managed_missing}"
+REGISTRY_SERVICE_NAME="regixtry"
+EOF
+  cat >"${unit_path}" <<EOF
+[Unit]
+Description=Regixtry service
+
+[Service]
+EnvironmentFile=${env_path}
+ExecStart=${managed_bin} serve -addr=\${REGISTRY_ADDR} -public-url=\${REGISTRY_PUBLIC_URL} -storage-root=\${REGISTRY_STORAGE_ROOT} -db=\${REGISTRY_DATABASE_PATH} -service=\${REGISTRY_SERVICE_NAME}
+
+[Install]
+WantedBy=multi-user.target
+EOF
   cat >"${provenance_path}" <<EOF
 {
   "version": 1,
@@ -456,12 +503,37 @@ run_lifecycle_cases() {
   "service_name": "regixtry",
   "state_path": "${provenance_path}",
   "managed_paths": [
+    "${env_path}",
+    "${unit_path}",
     "${managed_existing}",
     "${managed_missing}",
     "${bootstrap_state_path}"
   ]
 }
 EOF
+
+  set +e
+  "${install_dir}/regixtry" upgrade --state-path "${provenance_path}" --yes >"${upgrade_latest_log}" 2>&1
+  local upgrade_latest_exit=$?
+  set -e
+  [[ ${upgrade_latest_exit} -ne 0 ]] || fail "expected latest upgrade smoke to fail truthfully on the fixture host"
+  assert_contains_one_of "${upgrade_latest_log}" \
+    "unsupported Linux distribution" \
+    "systemd runtime not detected" \
+    "systemctl disable --now regixtry.service" \
+    "systemctl enable --now regixtry.service" \
+    "regixtry readiness probe"
+
+  printf 'old-binary\n' >"${managed_bin}"
+  export REGISTRY_INSTALL_RELEASES_API_URL="http://127.0.0.1:${SERVER_PORT}/api/checksum-mismatch"
+  set +e
+  "${install_dir}/regixtry" upgrade --state-path "${provenance_path}" --ref "${release_tag}" --yes >"${upgrade_ref_log}" 2>&1
+  local upgrade_ref_exit=$?
+  set -e
+  [[ ${upgrade_ref_exit} -ne 0 ]] || fail "expected explicit-ref upgrade smoke to fail on checksum mismatch"
+  assert_contains "${upgrade_ref_log}" "checksum verification failed"
+  grep -F -- 'old-binary' "${managed_bin}" >/dev/null || fail "expected checksum failure to leave managed binary unchanged"
+  export REGISTRY_INSTALL_RELEASES_API_URL="http://127.0.0.1:${SERVER_PORT}/api/good"
 
   set +e
   "${install_dir}/regixtry" uninstall --state-path "${provenance_path}" >"${uninstall_log}" 2>&1
@@ -496,6 +568,76 @@ EOF
     "systemctl daemon-reload" \
     "systemctl enable --now regixtry.service" \
     "registry readiness probe failed"
+}
+
+run_real_upgrade_success_case() {
+  if [[ "${REGIXTRY_SMOKE_REAL_UPGRADE:-0}" != "1" ]]; then
+    return
+  fi
+
+  command -v systemctl >/dev/null 2>&1 || fail "real upgrade smoke requires systemctl"
+  [[ -d /run/systemd/system ]] || fail "real upgrade smoke requires a running systemd host"
+  [[ ${EUID} -eq 0 ]] || fail "real upgrade smoke requires root privileges"
+
+  local scenario="real-systemd-upgrade"
+  local install_dir="${ROOT_DIR}/${scenario}/bin"
+  local lifecycle_root="${ROOT_DIR}/${scenario}/lifecycle"
+  local storage_root="${lifecycle_root}/storage"
+  local state_dir="${lifecycle_root}/etc/regixtry"
+  local runtime_port="$(reserve_free_port)"
+  local service_name="regixtry-smoke-${runtime_port}"
+  local unit_path="/etc/systemd/system/${service_name}.service"
+  local provenance_path="${state_dir}/regixtry-lifecycle-state.json"
+  local setup_log="${ROOT_DIR}/${scenario}.setup.log"
+  local upgrade_log="${ROOT_DIR}/${scenario}.upgrade.log"
+  local uninstall_log="${ROOT_DIR}/${scenario}.uninstall.log"
+  local v2_status=""
+  local release_tag=""
+
+  prepare_install_env "${scenario}" good amd64
+  release_tag="$(python3 - <<'PY' "${ROOT_DIR}/web/api/good/latest"
+import json
+import sys
+with open(sys.argv[1], 'r', encoding='utf-8') as fh:
+    print(json.load(fh)['tag_name'])
+PY
+)"
+
+  bash "${SCRIPT_PATH}" --dir "${install_dir}" >/dev/null 2>&1
+
+  mkdir -p "${storage_root}" "${state_dir}"
+  REAL_UPGRADE_BINARY="${install_dir}/regixtry"
+  REAL_UPGRADE_PROVENANCE_PATH="${provenance_path}"
+  REAL_UPGRADE_UNIT_PATH="${unit_path}"
+  REAL_UPGRADE_SERVICE_NAME="${service_name}"
+
+  "${install_dir}/regixtry" setup \
+    --mode daemon-sqlite \
+    --public-url "http://127.0.0.1:${runtime_port}" \
+    --addr "127.0.0.1:${runtime_port}" \
+    --storage-root "${storage_root}" \
+    --state-path "${state_dir}/bootstrap-state.json" \
+    --unit-path "${unit_path}" \
+    --service "${service_name}" >"${setup_log}" 2>&1
+
+  v2_status="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${runtime_port}/v2/")"
+  [[ "${v2_status}" == "200" || "${v2_status}" == "401" ]] || fail "expected setup-managed service readiness, got ${v2_status}"
+
+  "${install_dir}/regixtry" upgrade --state-path "${provenance_path}" --ref "${release_tag}" --yes >"${upgrade_log}" 2>&1
+
+  v2_status="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${runtime_port}/v2/")"
+  [[ "${v2_status}" == "200" || "${v2_status}" == "401" ]] || fail "expected upgraded service readiness, got ${v2_status}"
+  assert_contains "${provenance_path}" "\"installed_ref\": \"${release_tag}\""
+  systemctl is-active --quiet "${service_name}.service" || fail "expected upgraded systemd service to remain active"
+
+  "${install_dir}/regixtry" uninstall --state-path "${provenance_path}" >"${uninstall_log}" 2>&1
+
+  assert_not_exists "${provenance_path}"
+  assert_not_exists "${unit_path}"
+  REAL_UPGRADE_BINARY=""
+  REAL_UPGRADE_PROVENANCE_PATH=""
+  REAL_UPGRADE_UNIT_PATH=""
+  REAL_UPGRADE_SERVICE_NAME=""
 }
 
 main() {
@@ -535,6 +677,7 @@ main() {
   run_success_case "good-install-amd64" amd64 "${ROOT_DIR}/good-install-amd64/bin"
   run_success_case "good-install-arm64" arm64 "${ROOT_DIR}/good-install-arm64/bin"
   run_lifecycle_cases
+  run_real_upgrade_success_case
   run_unsupported_target_case
 
   run_failure_case "malformed-ref" good amd64 --ref "bad/ref"
