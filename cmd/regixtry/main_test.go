@@ -485,7 +485,7 @@ func TestRunSetupInteractivePromptSupportsBinaryOnly(t *testing.T) {
 	}
 }
 
-func TestRunSetupInteractivePromptCollectsPublicURLForDaemonSQLite(t *testing.T) {
+func TestRunSetupInteractivePromptCollectsAddrAndPublicURLForDaemonSQLite(t *testing.T) {
 	runner := &stubBootstrapRunner{
 		plannedProvenance: installlinux.LifecycleProvenance{
 			Version:      1,
@@ -502,19 +502,25 @@ func TestRunSetupInteractivePromptCollectsPublicURLForDaemonSQLite(t *testing.T)
 	defer restoreTTY()
 
 	stdout := &bytes.Buffer{}
-	err := runWithIO(context.Background(), []string{"setup"}, strings.NewReader("2\nhttps://regixtry.example.com\n"), stdout, io.Discard)
+	err := runWithIO(context.Background(), []string{"setup"}, strings.NewReader("2\n0.0.0.0:5443\nhttps://regixtry.example.com\n"), stdout, io.Discard)
 	if err != nil {
 		t.Fatalf("runWithIO(setup prompt) error = %v", err)
 	}
+	if runner.lastConfig.Addr != "0.0.0.0:5443" {
+		t.Fatalf("lastConfig.Addr = %q, want prompted listen address", runner.lastConfig.Addr)
+	}
 	if runner.lastConfig.PublicURL != "https://regixtry.example.com" {
 		t.Fatalf("lastConfig.PublicURL = %q, want prompted public URL", runner.lastConfig.PublicURL)
+	}
+	if !strings.Contains(stdout.String(), "Listen address [127.0.0.1:5000]: ") {
+		t.Fatalf("stdout = %q, want listen address prompt with default", stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "Public URL ["+defaultSetupPublicURL+"]: ") {
 		t.Fatalf("stdout = %q, want public URL prompt with default", stdout.String())
 	}
 }
 
-func TestRunSetupInteractivePromptDefaultsPublicURLForDaemonSQLite(t *testing.T) {
+func TestRunSetupInteractivePromptDefaultsAddrAndPublicURLForDaemonSQLite(t *testing.T) {
 	runner := &stubBootstrapRunner{
 		plannedProvenance: installlinux.LifecycleProvenance{
 			Version:      1,
@@ -531,12 +537,18 @@ func TestRunSetupInteractivePromptDefaultsPublicURLForDaemonSQLite(t *testing.T)
 	defer restoreTTY()
 
 	stdout := &bytes.Buffer{}
-	err := runWithIO(context.Background(), []string{"setup"}, strings.NewReader("2\n\n"), stdout, io.Discard)
+	err := runWithIO(context.Background(), []string{"setup"}, strings.NewReader("2\n\n\n"), stdout, io.Discard)
 	if err != nil {
 		t.Fatalf("runWithIO(setup prompt) error = %v", err)
 	}
+	if runner.lastConfig.Addr != "127.0.0.1:5000" {
+		t.Fatalf("lastConfig.Addr = %q, want default listen address %q", runner.lastConfig.Addr, "127.0.0.1:5000")
+	}
 	if runner.lastConfig.PublicURL != defaultSetupPublicURL {
 		t.Fatalf("lastConfig.PublicURL = %q, want default public URL %q", runner.lastConfig.PublicURL, defaultSetupPublicURL)
+	}
+	if !strings.Contains(stdout.String(), "Listen address [127.0.0.1:5000]: ") {
+		t.Fatalf("stdout = %q, want default listen address prompt", stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "Public URL ["+defaultSetupPublicURL+"]: ") {
 		t.Fatalf("stdout = %q, want default public URL prompt", stdout.String())
@@ -547,9 +559,74 @@ func TestRunSetupInteractivePromptValidatesPromptedPublicURL(t *testing.T) {
 	restoreTTY := swapInteractiveTTYDetector(t, true)
 	defer restoreTTY()
 
-	err := runWithIO(context.Background(), []string{"setup"}, strings.NewReader("2\nnot-a-url\n"), io.Discard, io.Discard)
+	err := runWithIO(context.Background(), []string{"setup"}, strings.NewReader("2\n0.0.0.0:5443\nnot-a-url\n"), io.Discard, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "public URL must be an absolute http(s) URL") {
 		t.Fatalf("runWithIO(setup prompt) error = %v, want prompted public URL validation failure", err)
+	}
+}
+
+func TestRunSetupInteractivePromptKeepsExplicitFlagValues(t *testing.T) {
+	runner := &stubBootstrapRunner{
+		plannedProvenance: installlinux.LifecycleProvenance{
+			Version:      1,
+			Mode:         "daemon-sqlite",
+			InstalledBin: "/usr/local/bin/regixtry",
+			ServiceName:  "regixtry",
+			StatePath:    "/etc/regixtry/regixtry-lifecycle-state.json",
+		},
+	}
+	restoreRunner := swapBootstrapRunner(t, runner)
+	defer restoreRunner()
+
+	restoreTTY := swapInteractiveTTYDetector(t, true)
+	defer restoreTTY()
+
+	stdout := &bytes.Buffer{}
+	err := runWithIO(
+		context.Background(),
+		[]string{"setup", "-mode", "daemon-sqlite", "-addr", "0.0.0.0:5443", "-public-url", "https://flag.example.com"},
+		strings.NewReader(""),
+		stdout,
+		io.Discard,
+	)
+	if err != nil {
+		t.Fatalf("runWithIO(setup explicit flags) error = %v", err)
+	}
+	if runner.lastConfig.Addr != "0.0.0.0:5443" {
+		t.Fatalf("lastConfig.Addr = %q, want explicit flag value", runner.lastConfig.Addr)
+	}
+	if runner.lastConfig.PublicURL != "https://flag.example.com" {
+		t.Fatalf("lastConfig.PublicURL = %q, want explicit flag value", runner.lastConfig.PublicURL)
+	}
+	if strings.Contains(stdout.String(), "Listen address [") || strings.Contains(stdout.String(), "Public URL [") {
+		t.Fatalf("stdout = %q, want explicit values to skip interactive prompts", stdout.String())
+	}
+	if runner.runCalls != 1 {
+		t.Fatalf("runCalls = %d, want 1", runner.runCalls)
+	}
+}
+
+func TestRunSetupInteractivePromptAppliesPromptedAddrBeforePortConflict(t *testing.T) {
+	runner := &stubBootstrapRunner{
+		runHook: func(cfg installlinux.BootstrapConfig) error {
+			if cfg.Addr != "0.0.0.0:5443" {
+				t.Fatalf("cfg.Addr = %q, want prompted address", cfg.Addr)
+			}
+			if cfg.PublicURL != "https://regixtry.example.com" {
+				t.Fatalf("cfg.PublicURL = %q, want prompted public URL", cfg.PublicURL)
+			}
+			return errors.New("configured local bind address 0.0.0.0:5443 is already in use\nRecover with:\n  sudo ss -ltnp 'sport = :5443'\n  sudo systemctl stop regixtry.service\n  regixtry bootstrap --mode daemon-sqlite --addr 0.0.0.0:5444 --public-url https://regixtry.example.com --storage-root /var/lib/regixtry --state-path /etc/regixtry/bootstrap-state.json --unit-path /etc/systemd/system/regixtry.service --service regixtry")
+		},
+	}
+	restoreRunner := swapBootstrapRunner(t, runner)
+	defer restoreRunner()
+
+	restoreTTY := swapInteractiveTTYDetector(t, true)
+	defer restoreTTY()
+
+	err := runWithIO(context.Background(), []string{"setup"}, strings.NewReader("2\n0.0.0.0:5443\nhttps://regixtry.example.com\n"), io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "--addr 0.0.0.0:5444 --public-url https://regixtry.example.com") {
+		t.Fatalf("runWithIO(setup prompt) error = %v, want prompted endpoints in port-conflict guidance", err)
 	}
 }
 
@@ -1353,6 +1430,7 @@ func swapInteractiveTTYDetector(t *testing.T, value bool) func() {
 
 type stubBootstrapRunner struct {
 	runErr              error
+	runHook             func(installlinux.BootstrapConfig) error
 	rollbackErr         error
 	uninstallErr        error
 	planProvenanceErr   error
@@ -1371,6 +1449,9 @@ type stubBootstrapRunner struct {
 func (s *stubBootstrapRunner) Run(_ context.Context, cfg installlinux.BootstrapConfig) error {
 	s.lastConfig = cfg
 	s.runCalls++
+	if s.runHook != nil {
+		return s.runHook(cfg)
+	}
 	return s.runErr
 }
 

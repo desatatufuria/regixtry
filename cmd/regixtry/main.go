@@ -225,6 +225,11 @@ type bootstrapAdminConfig struct {
 
 type BootstrapConfig = installlinux.BootstrapConfig
 
+type setupPromptState struct {
+	addrProvided      bool
+	publicURLProvided bool
+}
+
 type uninstallConfig struct {
 	StatePath string
 }
@@ -483,12 +488,22 @@ func parseBootstrapConfig(args []string) (BootstrapConfig, error) {
 }
 
 func parseSetupConfig(args []string) (BootstrapConfig, error) {
+	cfg, _, err := parseSetupConfigWithPromptState(args)
+	if err != nil {
+		return BootstrapConfig{}, err
+	}
+
+	return cfg, nil
+}
+
+func parseSetupConfigWithPromptState(args []string) (BootstrapConfig, setupPromptState, error) {
 	flags := flag.NewFlagSet("setup", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 
+	defaultPublicURL := os.Getenv("REGISTRY_PUBLIC_URL")
 	var cfg BootstrapConfig
 	flags.StringVar(&cfg.Mode, "mode", "", "setup mode to apply (daemon-sqlite or binary-only)")
-	flags.StringVar(&cfg.PublicURL, "public-url", os.Getenv("REGISTRY_PUBLIC_URL"), "canonical public URL advertised to registry clients")
+	flags.StringVar(&cfg.PublicURL, "public-url", defaultPublicURL, "canonical public URL advertised to registry clients")
 	flags.StringVar(&cfg.Addr, "addr", "127.0.0.1:5000", "address to listen on")
 	flags.StringVar(&cfg.StorageRoot, "storage-root", "/var/lib/regixtry", "root directory for registry runtime state")
 	flags.StringVar(&cfg.StatePath, "state-path", "/etc/regixtry/bootstrap-state.json", "path to the bootstrap receipt file")
@@ -497,10 +512,22 @@ func parseSetupConfig(args []string) (BootstrapConfig, error) {
 	flags.BoolVar(&cfg.NoStart, "no-start", false, "generate setup artifacts without starting the service")
 
 	if err := flags.Parse(args); err != nil {
-		return BootstrapConfig{}, err
+		return BootstrapConfig{}, setupPromptState{}, err
 	}
 
-	return cfg, nil
+	promptState := setupPromptState{
+		publicURLProvided: strings.TrimSpace(defaultPublicURL) != "",
+	}
+	flags.Visit(func(flag *flag.Flag) {
+		switch flag.Name {
+		case "addr":
+			promptState.addrProvided = true
+		case "public-url":
+			promptState.publicURLProvided = true
+		}
+	})
+
+	return cfg, promptState, nil
 }
 
 func parseUninstallConfig(args []string) (uninstallConfig, error) {
@@ -524,7 +551,7 @@ func parseUninstallConfig(args []string) (uninstallConfig, error) {
 }
 
 func runSetup(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) error {
-	cfg, err := parseSetupConfig(args)
+	cfg, promptState, err := parseSetupConfigWithPromptState(args)
 	if err != nil {
 		return err
 	}
@@ -545,8 +572,8 @@ func runSetup(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 		return printBinaryOnlyGuidance(stdout)
 	case "daemon-sqlite":
 		cfg.Mode = mode
-		if selectedInteractively && strings.TrimSpace(cfg.PublicURL) == "" {
-			cfg.PublicURL, err = promptSetupPublicURL(reader, stdout, defaultSetupPublicURL)
+		if interactive {
+			cfg, err = promptSetupDaemonConfig(reader, stdout, cfg, promptState, selectedInteractively)
 			if err != nil {
 				return err
 			}
@@ -580,6 +607,34 @@ func runSetup(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 	default:
 		return fmt.Errorf("unsupported setup mode %q", mode)
 	}
+}
+
+func promptSetupDaemonConfig(reader *bufio.Reader, stdout io.Writer, cfg BootstrapConfig, promptState setupPromptState, selectedInteractively bool) (BootstrapConfig, error) {
+	if !selectedInteractively && promptState.addrProvided && promptState.publicURLProvided {
+		return cfg, nil
+	}
+
+	if !promptState.addrProvided {
+		value, err := promptSetupValue(reader, stdout, "Listen address", cfg.Addr)
+		if err != nil {
+			return BootstrapConfig{}, err
+		}
+		cfg.Addr = value
+	}
+
+	if !promptState.publicURLProvided {
+		defaultPublicURL := cfg.PublicURL
+		if strings.TrimSpace(defaultPublicURL) == "" {
+			defaultPublicURL = defaultSetupPublicURL
+		}
+		value, err := promptSetupValue(reader, stdout, "Public URL", defaultPublicURL)
+		if err != nil {
+			return BootstrapConfig{}, err
+		}
+		cfg.PublicURL = value
+	}
+
+	return cfg, nil
 }
 
 func runUninstall(ctx context.Context, args []string, stdout io.Writer) error {
@@ -636,18 +691,18 @@ func resolveSetupMode(rawMode string, interactive bool, reader *bufio.Reader, st
 	}
 }
 
-func promptSetupPublicURL(reader *bufio.Reader, stdout io.Writer, defaultValue string) (string, error) {
+func promptSetupValue(reader *bufio.Reader, stdout io.Writer, label string, defaultValue string) (string, error) {
 	if stdout != nil {
 		if strings.TrimSpace(defaultValue) != "" {
-			_, _ = fmt.Fprintf(stdout, "Public URL [%s]: ", defaultValue)
+			_, _ = fmt.Fprintf(stdout, "%s [%s]: ", label, defaultValue)
 		} else {
-			_, _ = fmt.Fprint(stdout, "Public URL: ")
+			_, _ = fmt.Fprintf(stdout, "%s: ", label)
 		}
 	}
 
 	value, err := reader.ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
-		return "", fmt.Errorf("read public URL: %w", err)
+		return "", fmt.Errorf("read %s: %w", strings.ToLower(label), err)
 	}
 
 	trimmed := strings.TrimSpace(value)
