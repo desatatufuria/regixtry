@@ -1208,6 +1208,11 @@ func TestRunUpgradeAlreadyUpToDateSkipsPromptAndCompletionOutput(t *testing.T) {
 			t.Fatalf("stdout = %q, want no %q output", stdout.String(), unwanted)
 		}
 	}
+	for _, unwanted := range []string{"[#", "[1/7]", "Resolve:"} {
+		if strings.Contains(stdout.String(), unwanted) {
+			t.Fatalf("stdout = %q, want no progress output containing %q", stdout.String(), unwanted)
+		}
+	}
 	for _, want := range []string{
 		"Installed version: v1.2.3 (1.2.3)",
 		"Available version: v1.2.3 (1.2.3)",
@@ -1228,6 +1233,36 @@ func TestRunUpgradeAlreadyUpToDateSkipsPromptAndCompletionOutput(t *testing.T) {
 	}
 	if runner.upgradeConfig.Progress == nil {
 		t.Fatal("upgradeConfig.Progress = nil, want progress callback")
+	}
+}
+
+func TestRunUpgradeRendersProgressOnlyAfterConfirmation(t *testing.T) {
+	runner := &stubBootstrapRunner{
+		upgradeResult: installlinux.UpgradeResult{FromRef: "v1.2.2", FromVersion: "1.2.2", TargetRef: "v1.2.3", ToVersion: "1.2.3", ProvenancePath: "/etc/regixtry/regixtry-lifecycle-state.json"},
+		upgradeHook: func(cfg installlinux.UpgradeConfig) {
+			cfg.Progress(installlinux.UpgradeProgress{Stage: "resolve", Detail: "Resolving target release"})
+		},
+	}
+	restoreRunner := swapBootstrapRunner(t, runner)
+	defer restoreRunner()
+	restoreTTY := swapInteractiveTTYDetector(t, true)
+	defer restoreTTY()
+
+	stdout := &bytes.Buffer{}
+	err := runWithIO(context.Background(), []string{"upgrade"}, strings.NewReader("y\n"), stdout, io.Discard)
+	if err != nil {
+		t.Fatalf("runWithIO(upgrade) error = %v", err)
+	}
+	out := stdout.String()
+	installedIndex := strings.Index(out, "Installed version: v1.2.2 (1.2.2)")
+	availableIndex := strings.Index(out, "Available version: v1.2.3 (1.2.3)")
+	promptIndex := strings.Index(out, "Proceed with upgrade [y/N]: ")
+	progressIndex := strings.Index(out, "[#------] 1/7 Resolve: Resolving target release")
+	if installedIndex == -1 || availableIndex == -1 || promptIndex == -1 || progressIndex == -1 {
+		t.Fatalf("stdout = %q, want preflight, prompt, and progress output", out)
+	}
+	if !(installedIndex < availableIndex && availableIndex < promptIndex && promptIndex < progressIndex) {
+		t.Fatalf("stdout = %q, want preflight and prompt before progress", out)
 	}
 }
 

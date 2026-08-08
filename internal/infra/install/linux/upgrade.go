@@ -91,13 +91,6 @@ func (b *Bootstrapper) Upgrade(ctx context.Context, cfg UpgradeConfig) (UpgradeR
 		return UpgradeResult{}, err
 	}
 	plan := buildPlanFromInstalledIntent(intent)
-	reportUpgradeProgress(cfg.Progress, UpgradeProgress{
-		Stage:       "resolve",
-		Detail:      "Resolving target release",
-		FromRef:     provenance.InstalledRef,
-		FromVersion: intent.InstalledVersion,
-	})
-
 	arch, err := releases.CurrentLinuxArch()
 	if err != nil {
 		return UpgradeResult{}, err
@@ -106,14 +99,6 @@ func (b *Bootstrapper) Upgrade(ctx context.Context, cfg UpgradeConfig) (UpgradeR
 	if err != nil {
 		return UpgradeResult{}, err
 	}
-	reportUpgradeProgress(cfg.Progress, UpgradeProgress{
-		Stage:       "resolve",
-		Detail:      fmt.Sprintf("Upgrading from %s to %s", formatUpgradeIdentity(provenance.InstalledRef, intent.InstalledVersion), formatUpgradeIdentity(asset.Tag, asset.Version)),
-		FromRef:     provenance.InstalledRef,
-		FromVersion: intent.InstalledVersion,
-		ToRef:       asset.Tag,
-		ToVersion:   asset.Version,
-	})
 	preflight := UpgradePreflight{
 		InstalledRef:     provenance.InstalledRef,
 		InstalledVersion: intent.InstalledVersion,
@@ -137,6 +122,14 @@ func (b *Bootstrapper) Upgrade(ctx context.Context, cfg UpgradeConfig) (UpgradeR
 	if err := confirmUpgrade(preflight, cfg.AssumeYes, cfg.Confirm); err != nil {
 		return UpgradeResult{}, err
 	}
+	reportUpgradeProgress(cfg.Progress, UpgradeProgress{
+		Stage:       "resolve",
+		Detail:      fmt.Sprintf("Upgrading from %s to %s", formatUpgradeIdentity(provenance.InstalledRef, intent.InstalledVersion), formatUpgradeIdentity(asset.Tag, asset.Version)),
+		FromRef:     provenance.InstalledRef,
+		FromVersion: intent.InstalledVersion,
+		ToRef:       asset.Tag,
+		ToVersion:   asset.Version,
+	})
 
 	stageDir, err := os.MkdirTemp("", "regixtry-upgrade-*")
 	if err != nil {

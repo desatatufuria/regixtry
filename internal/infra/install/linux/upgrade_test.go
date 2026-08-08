@@ -58,7 +58,7 @@ func TestBootstrapperUpgradeStagesBeforeStoppingAndPreservesMetadataDB(t *testin
 	if result.TargetRef != "v1.2.3" {
 		t.Fatalf("TargetRef = %q, want v1.2.3", result.TargetRef)
 	}
-	if got, wantPrefix := strings.Join(events, "|"), "resolve|resolve|resolve|download|verify|download|stop|systemctl disable --now regixtry.service"; !strings.HasPrefix(got, wantPrefix) {
+	if got, wantPrefix := strings.Join(events, "|"), "resolve|resolve|download|verify|download|stop|systemctl disable --now regixtry.service"; !strings.HasPrefix(got, wantPrefix) {
 		t.Fatalf("events = %s, want staging before service stop", got)
 	}
 	body, err := os.ReadFile(plan.DatabasePath)
@@ -195,8 +195,10 @@ func TestBootstrapperUpgradeAlreadyUpToDateReturnsWithoutUpgradeActions(t *testi
 	defer restoreRelease()
 
 	b := newUpgradeTestBootstrapper(&events)
+	progressCalls := 0
 	result, err := b.Upgrade(context.Background(), UpgradeConfig{ProvenancePath: provenancePath, Progress: func(progress UpgradeProgress) {
 		if progress.Stage != "" {
+			progressCalls++
 			events = append(events, progress.Stage)
 		}
 	}})
@@ -209,13 +211,59 @@ func TestBootstrapperUpgradeAlreadyUpToDateReturnsWithoutUpgradeActions(t *testi
 	if result.TargetRef != "v1.2.2" || result.ToVersion != "1.2.2" {
 		t.Fatalf("result = %#v, want same installed target identity", result)
 	}
-	if got := strings.Join(events, "|"); got != "resolve|resolve|resolve" {
-		t.Fatalf("events = %s, want only resolve-stage preflight", got)
+	if got := strings.Join(events, "|"); got != "resolve" {
+		t.Fatalf("events = %s, want only release resolution without progress callbacks", got)
+	}
+	if progressCalls != 0 {
+		t.Fatalf("progressCalls = %d, want 0", progressCalls)
 	}
 	assertFileBody(t, plan.BinaryPath, "old-binary")
 	assertFileContains(t, provenancePath, `"installed_ref": "v1.2.2"`)
 	assertNoBinarySwapArtifacts(t, plan.BinaryPath)
 	assertFileContains(t, plan.EnvPath, `REGISTRY_PUBLIC_URL="http://127.0.0.1:5000"`)
+}
+
+func TestBootstrapperUpgradeRunsPreflightAndConfirmBeforeProgress(t *testing.T) {
+	_, provenancePath, _ := writeInstalledRuntimeFixture(t)
+	steps := make([]string, 0, 6)
+	restoreRelease := swapReleaseClient(t, stubReleaseClient{
+		resolveFn: func(context.Context, string, string, string) (releases.ReleaseAsset, error) {
+			steps = append(steps, "resolve-client")
+			return releases.ReleaseAsset{Tag: "v1.2.3", Version: "1.2.3", ArchiveName: "regixtry_1.2.3_linux_amd64.tar.gz"}, nil
+		},
+		downloadFn: func(_ context.Context, _ releases.ReleaseAsset, dir string, progress func(releases.DownloadProgress)) (string, error) {
+			if progress != nil {
+				progress(releases.DownloadProgress{Stage: "download", Detail: "Downloading regixtry_1.2.3_linux_amd64.tar.gz"})
+			}
+			stagedPath := filepath.Join(dir, "regixtry")
+			return stagedPath, os.WriteFile(stagedPath, []byte("new-binary"), 0o755)
+		},
+	})
+	defer restoreRelease()
+
+	b := newUpgradeTestBootstrapper(nil)
+	_, err := b.Upgrade(context.Background(), UpgradeConfig{
+		ProvenancePath: provenancePath,
+		Preflight: func(UpgradePreflight) error {
+			steps = append(steps, "preflight")
+			return nil
+		},
+		Confirm: func(UpgradePreflight) error {
+			steps = append(steps, "confirm")
+			return nil
+		},
+		Progress: func(progress UpgradeProgress) {
+			if progress.Stage != "" {
+				steps = append(steps, "progress:"+progress.Stage)
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Upgrade() error = %v", err)
+	}
+	if got, wantPrefix := strings.Join(steps, "|"), "resolve-client|preflight|confirm|progress:resolve|progress:download"; !strings.HasPrefix(got, wantPrefix) {
+		t.Fatalf("steps = %s, want preflight and confirm before progress", got)
+	}
 }
 
 func TestCaptureManagedRuntimeBackupIncludesManagedArtifacts(t *testing.T) {
