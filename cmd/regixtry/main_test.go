@@ -425,6 +425,136 @@ func TestBootstrapParseConfigSupportsNoStart(t *testing.T) {
 	}
 }
 
+func TestRunSetupRequiresModeWithoutTTY(t *testing.T) {
+	restore := swapInteractiveTTYDetector(t, false)
+	defer restore()
+
+	err := runWithIO(context.Background(), []string{"setup"}, strings.NewReader(""), io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "setup mode is required without a TTY") {
+		t.Fatalf("runWithIO(setup) error = %v, want explicit non-TTY mode guidance", err)
+	}
+}
+
+func TestRunSetupInteractivePromptSupportsBinaryOnly(t *testing.T) {
+	restoreTTY := swapInteractiveTTYDetector(t, true)
+	defer restoreTTY()
+
+	stdout := &bytes.Buffer{}
+	err := runWithIO(context.Background(), []string{"setup"}, strings.NewReader("1\n"), stdout, io.Discard)
+	if err != nil {
+		t.Fatalf("runWithIO(setup prompt) error = %v", err)
+	}
+	if !strings.Contains(stdout.String(), "Select setup mode:") {
+		t.Fatalf("stdout = %q, want setup mode prompt", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "Binary placement is complete, but setup is not yet complete.") {
+		t.Fatalf("stdout = %q, want binary-only guidance", stdout.String())
+	}
+}
+
+func TestRunSetupPassesParsedConfigToRunnerAndWritesProvenance(t *testing.T) {
+	runner := &stubBootstrapRunner{
+		plannedProvenance: installlinux.LifecycleProvenance{
+			Version:      1,
+			Mode:         "daemon-sqlite",
+			InstalledBin: "/usr/local/bin/regixtry",
+			ServiceName:  "registry-custom",
+			StatePath:    "/etc/regixtry/regixtry-lifecycle-state.json",
+			ManagedPaths: []string{"/etc/regixtry/bootstrap-state.json"},
+		},
+	}
+	restore := swapBootstrapRunner(t, runner)
+	defer restore()
+
+	stdout := &bytes.Buffer{}
+	args := []string{
+		"setup",
+		"-mode", "daemon-sqlite",
+		"-public-url", "https://regixtry.example.com",
+		"-addr", "0.0.0.0:5443",
+		"-storage-root", "/var/lib/regixtry-data",
+		"-state-path", "/etc/regixtry/bootstrap-state.json",
+		"-unit-path", "/etc/systemd/system/registry-custom.service",
+		"-service", "registry-custom",
+	}
+
+	if err := runWithIO(context.Background(), args, strings.NewReader(""), stdout, io.Discard); err != nil {
+		t.Fatalf("runWithIO(setup) error = %v", err)
+	}
+	if runner.runCalls != 1 {
+		t.Fatalf("runCalls = %d, want 1", runner.runCalls)
+	}
+	if runner.saveProvenanceCalls != 1 {
+		t.Fatalf("saveProvenanceCalls = %d, want 1", runner.saveProvenanceCalls)
+	}
+	if runner.lastConfig.Mode != "daemon-sqlite" {
+		t.Fatalf("lastConfig.Mode = %q, want daemon-sqlite", runner.lastConfig.Mode)
+	}
+	if runner.savedProvenance.StatePath != "/etc/regixtry/regixtry-lifecycle-state.json" {
+		t.Fatalf("saved provenance path = %q, want lifecycle provenance path", runner.savedProvenance.StatePath)
+	}
+	if !strings.Contains(stdout.String(), "Setup complete:") {
+		t.Fatalf("stdout = %q, want setup success message", stdout.String())
+	}
+}
+
+func TestRunSetupRollsBackWhenProvenanceSaveFails(t *testing.T) {
+	runner := &stubBootstrapRunner{
+		plannedProvenance: installlinux.LifecycleProvenance{
+			Version:      1,
+			Mode:         "daemon-sqlite",
+			InstalledBin: "/usr/local/bin/regixtry",
+			ServiceName:  "regixtry",
+			StatePath:    "/etc/regixtry/regixtry-lifecycle-state.json",
+		},
+		saveProvenanceErr: errors.New("disk full"),
+	}
+	restore := swapBootstrapRunner(t, runner)
+	defer restore()
+
+	err := runWithIO(context.Background(), []string{"setup", "-mode", "daemon-sqlite", "-public-url", "http://127.0.0.1:5000"}, strings.NewReader(""), io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "write lifecycle provenance") {
+		t.Fatalf("runWithIO(setup) error = %v, want provenance write failure", err)
+	}
+	if runner.rollbackCalls != 1 {
+		t.Fatalf("rollbackCalls = %d, want 1", runner.rollbackCalls)
+	}
+}
+
+func TestRunUninstallUsesProvenanceStatePathAndPrintsReport(t *testing.T) {
+	runner := &stubBootstrapRunner{
+		uninstallReport: installlinux.UninstallReport{
+			Mode:        "daemon-sqlite",
+			ServiceName: "regixtry",
+			Service:     installlinux.CleanupItem{Path: "regixtry.service", Status: installlinux.CleanupStatusRemoved, Detail: "systemd service disabled and stopped"},
+			Items:       []installlinux.CleanupItem{{Path: "/usr/local/bin/regixtry", Status: installlinux.CleanupStatusRemoved, Detail: "path removed"}},
+		},
+	}
+	restore := swapBootstrapRunner(t, runner)
+	defer restore()
+
+	stdout := &bytes.Buffer{}
+	if err := runWithIO(context.Background(), []string{"uninstall", "-state-path", "/tmp/regixtry-lifecycle-state.json"}, strings.NewReader(""), stdout, io.Discard); err != nil {
+		t.Fatalf("runWithIO(uninstall) error = %v", err)
+	}
+	if runner.uninstallCalls != 1 {
+		t.Fatalf("uninstallCalls = %d, want 1", runner.uninstallCalls)
+	}
+	if runner.uninstallPath != "/tmp/regixtry-lifecycle-state.json" {
+		t.Fatalf("uninstallPath = %q, want provenance state path", runner.uninstallPath)
+	}
+	if !strings.Contains(stdout.String(), "Uninstall report:") {
+		t.Fatalf("stdout = %q, want uninstall report", stdout.String())
+	}
+}
+
+func TestRunUpgradeReportsDeferredLifecycleStatus(t *testing.T) {
+	err := runWithIO(context.Background(), []string{"upgrade"}, strings.NewReader(""), io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "upgrade is deferred for this slice") {
+		t.Fatalf("runWithIO(upgrade) error = %v, want deferred upgrade message", err)
+	}
+}
+
 func TestRunBootstrapPropagatesHostAndRuntimeFailures(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -1026,12 +1156,34 @@ func swapBootstrapRunner(t *testing.T, runner bootstrapRunner) func() {
 	}
 }
 
+func swapInteractiveTTYDetector(t *testing.T, value bool) func() {
+	t.Helper()
+
+	previous := isInteractiveTTYPair
+	isInteractiveTTYPair = func(io.Reader, io.Writer) bool {
+		return value
+	}
+
+	return func() {
+		isInteractiveTTYPair = previous
+	}
+}
+
 type stubBootstrapRunner struct {
-	runErr        error
-	rollbackErr   error
-	lastConfig    installlinux.BootstrapConfig
-	runCalls      int
-	rollbackCalls int
+	runErr              error
+	rollbackErr         error
+	uninstallErr        error
+	planProvenanceErr   error
+	saveProvenanceErr   error
+	lastConfig          installlinux.BootstrapConfig
+	plannedProvenance   installlinux.LifecycleProvenance
+	savedProvenance     installlinux.LifecycleProvenance
+	uninstallReport     installlinux.UninstallReport
+	uninstallPath       string
+	runCalls            int
+	rollbackCalls       int
+	uninstallCalls      int
+	saveProvenanceCalls int
 }
 
 func (s *stubBootstrapRunner) Run(_ context.Context, cfg installlinux.BootstrapConfig) error {
@@ -1044,6 +1196,26 @@ func (s *stubBootstrapRunner) Rollback(_ context.Context, cfg installlinux.Boots
 	s.lastConfig = cfg
 	s.rollbackCalls++
 	return s.rollbackErr
+}
+
+func (s *stubBootstrapRunner) Uninstall(_ context.Context, provenancePath string) (installlinux.UninstallReport, error) {
+	s.uninstallPath = provenancePath
+	s.uninstallCalls++
+	return s.uninstallReport, s.uninstallErr
+}
+
+func (s *stubBootstrapRunner) PlanLifecycleProvenance(cfg installlinux.BootstrapConfig) (installlinux.LifecycleProvenance, error) {
+	s.lastConfig = cfg
+	if s.planProvenanceErr != nil {
+		return installlinux.LifecycleProvenance{}, s.planProvenanceErr
+	}
+	return s.plannedProvenance, nil
+}
+
+func (s *stubBootstrapRunner) SaveLifecycleProvenance(provenance installlinux.LifecycleProvenance) error {
+	s.savedProvenance = provenance
+	s.saveProvenanceCalls++
+	return s.saveProvenanceErr
 }
 
 func writeTestTLSCertificate(t *testing.T) (string, string) {

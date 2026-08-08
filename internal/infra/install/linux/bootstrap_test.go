@@ -164,6 +164,133 @@ func TestBootstrapRunWritesArtifactsAndRollsBackOnProbeFailure(t *testing.T) {
 	}
 }
 
+func TestBootstrapRunRejectsUnsupportedMode(t *testing.T) {
+	t.Parallel()
+
+	b := &Bootstrapper{}
+	err := b.Run(context.Background(), BootstrapConfig{
+		Mode:        "postgres",
+		PublicURL:   "http://127.0.0.1:5000",
+		Addr:        "127.0.0.1:5000",
+		StorageRoot: "/var/lib/regixtry",
+		StatePath:   "/etc/regixtry/bootstrap-state.json",
+		UnitPath:    "/etc/systemd/system/regixtry.service",
+		ServiceName: "regixtry",
+	})
+	if err == nil || !strings.Contains(err.Error(), `unsupported mode "postgres"`) {
+		t.Fatalf("Run() error = %v, want unsupported mode error", err)
+	}
+}
+
+func TestBootstrapRunRejectsUnsupportedHost(t *testing.T) {
+	t.Parallel()
+
+	b := &Bootstrapper{
+		detector: detector{
+			goos: "darwin",
+		},
+	}
+	err := b.Run(context.Background(), BootstrapConfig{
+		Mode:        supportedMode,
+		PublicURL:   "http://127.0.0.1:5000",
+		Addr:        "127.0.0.1:5000",
+		StorageRoot: "/var/lib/regixtry",
+		StatePath:   "/etc/regixtry/bootstrap-state.json",
+		UnitPath:    "/etc/systemd/system/regixtry.service",
+		ServiceName: "regixtry",
+	})
+	if err == nil || !strings.Contains(err.Error(), `unsupported operating system "darwin"`) {
+		t.Fatalf("Run() error = %v, want unsupported host error", err)
+	}
+}
+
+func TestBootstrapRunRollsBackOnEnableFailure(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	statePath := filepath.Join(root, "etc", "regixtry", "bootstrap-state.json")
+	commandCalls := make([]string, 0, 3)
+
+	b := &Bootstrapper{
+		detector: detector{
+			goos: "linux",
+			readFile: func(string) ([]byte, error) {
+				return []byte("ID=ubuntu\nVERSION_ID=24.04\n"), nil
+			},
+			stat: func(string) (os.FileInfo, error) { return fakeInfo{name: "systemd"}, nil },
+		},
+		mkdirAll:  os.MkdirAll,
+		writeFile: os.WriteFile,
+		readFile:  os.ReadFile,
+		removeAll: os.RemoveAll,
+		listen: func(string, string) (net.Listener, error) {
+			return stubListener{}, nil
+		},
+		executablePath: func() (string, error) { return "/usr/local/bin/regixtry", nil },
+		runCommand: func(_ context.Context, name string, args ...string) error {
+			commandCalls = append(commandCalls, name+" "+strings.Join(args, " "))
+			if strings.Join(args, " ") == "enable --now regixtry.service" {
+				return errors.New("systemd start failed")
+			}
+			return nil
+		},
+		probe: func(context.Context, string) (int, error) {
+			return 401, nil
+		},
+		probeInterval: time.Millisecond,
+		probeTimeout:  50 * time.Millisecond,
+	}
+
+	err := b.Run(context.Background(), BootstrapConfig{
+		Mode:        supportedMode,
+		PublicURL:   "http://127.0.0.1:5000",
+		Addr:        "127.0.0.1:5000",
+		StorageRoot: filepath.Join(root, "var", "lib", "regixtry"),
+		StatePath:   statePath,
+		UnitPath:    filepath.Join(root, "etc", "systemd", "system", "regixtry.service"),
+		ServiceName: "regixtry",
+	})
+	if err == nil || !strings.Contains(err.Error(), "systemctl enable --now regixtry.service") {
+		t.Fatalf("Run() error = %v, want enable failure", err)
+	}
+	if got, want := commandCalls, []string{"systemctl daemon-reload", "systemctl enable --now regixtry.service", "systemctl disable --now regixtry.service"}; strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("command calls = %v, want %v", got, want)
+	}
+	if _, statErr := os.Stat(statePath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("state receipt still exists after rollback, stat error = %v", statErr)
+	}
+}
+
+func TestBootstrapPlanEmitsLifecycleProvenance(t *testing.T) {
+	t.Parallel()
+
+	b := &Bootstrapper{
+		executablePath: func() (string, error) { return "/usr/local/bin/regixtry", nil },
+	}
+
+	_, receipt, provenance, err := b.plan(BootstrapConfig{
+		Mode:        supportedMode,
+		PublicURL:   "http://127.0.0.1:5000",
+		Addr:        "127.0.0.1:5000",
+		StorageRoot: "/var/lib/regixtry",
+		StatePath:   "/etc/regixtry/bootstrap-state.json",
+		UnitPath:    "/etc/systemd/system/regixtry.service",
+		ServiceName: "regixtry",
+	})
+	if err != nil {
+		t.Fatalf("plan() error = %v", err)
+	}
+	if provenance.InstalledBin != "/usr/local/bin/regixtry" {
+		t.Fatalf("InstalledBin = %q, want %q", provenance.InstalledBin, "/usr/local/bin/regixtry")
+	}
+	if provenance.StatePath != "/etc/regixtry/"+lifecycleProvenanceFileName {
+		t.Fatalf("StatePath = %q, want %q", provenance.StatePath, "/etc/regixtry/"+lifecycleProvenanceFileName)
+	}
+	if strings.Join(provenance.ManagedPaths, "|") != strings.Join(receipt.Paths, "|") {
+		t.Fatalf("ManagedPaths = %v, want %v", provenance.ManagedPaths, receipt.Paths)
+	}
+}
+
 func TestBootstrapRunReportsSuccessAfterActivationAndReadiness(t *testing.T) {
 	t.Parallel()
 
@@ -483,6 +610,40 @@ func TestBootstrapRollbackRemovesGeneratedArtifacts(t *testing.T) {
 	}
 	if _, err := os.Stat(envPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("env path still exists, stat error = %v", err)
+	}
+}
+
+func TestBootstrapRollbackReportsDisableFailureAndStillRemovesArtifacts(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	statePath := filepath.Join(root, "etc", "regixtry", "bootstrap-state.json")
+	envPath := filepath.Join(root, "regixtry.env")
+	if err := os.WriteFile(envPath, []byte("env\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(env) error = %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {
+		t.Fatalf("MkdirAll(state) error = %v", err)
+	}
+	receipt := []byte(`{"mode":"daemon-sqlite","service_name":"regixtry","paths":["` + envPath + `","` + statePath + `"]}`)
+	if err := os.WriteFile(statePath, receipt, 0o644); err != nil {
+		t.Fatalf("WriteFile(receipt) error = %v", err)
+	}
+
+	b := &Bootstrapper{
+		readFile:  os.ReadFile,
+		removeAll: os.RemoveAll,
+		runCommand: func(_ context.Context, _ string, _ ...string) error {
+			return errors.New("systemd unavailable")
+		},
+	}
+
+	err := b.Rollback(context.Background(), BootstrapConfig{StatePath: statePath})
+	if err == nil || !strings.Contains(err.Error(), "systemctl disable --now regixtry.service") {
+		t.Fatalf("Rollback() error = %v, want disable failure", err)
+	}
+	if _, statErr := os.Stat(envPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("env path still exists after disable failure, stat error = %v", statErr)
 	}
 }
 

@@ -43,6 +43,7 @@ type Bootstrapper struct {
 	mkdirAll       func(string, os.FileMode) error
 	writeFile      func(string, []byte, os.FileMode) error
 	readFile       func(string) ([]byte, error)
+	stat           func(string) (os.FileInfo, error)
 	removeAll      func(string) error
 	listen         func(string, string) (net.Listener, error)
 	runCommand     func(context.Context, string, ...string) error
@@ -60,6 +61,7 @@ func NewBootstrapper() *Bootstrapper {
 		mkdirAll:  os.MkdirAll,
 		writeFile: os.WriteFile,
 		readFile:  os.ReadFile,
+		stat:      os.Stat,
 		removeAll: os.RemoveAll,
 		listen:    net.Listen,
 		runCommand: func(ctx context.Context, name string, args ...string) error {
@@ -137,7 +139,7 @@ func (b *Bootstrapper) Run(ctx context.Context, cfg BootstrapConfig) error {
 		return err
 	}
 
-	plan, receipt, err := b.plan(cfg)
+	plan, receipt, _, err := b.plan(cfg)
 	if err != nil {
 		return err
 	}
@@ -204,17 +206,31 @@ func (b *Bootstrapper) Rollback(ctx context.Context, cfg BootstrapConfig) error 
 	return b.rollbackWithReceipt(ctx, receipt)
 }
 
-func (b *Bootstrapper) plan(cfg BootstrapConfig) (BootstrapPlan, BootstrapReceipt, error) {
+func (b *Bootstrapper) Uninstall(ctx context.Context, provenancePath string) (UninstallReport, error) {
+	trimmedPath := strings.TrimSpace(provenancePath)
+	if trimmedPath == "" {
+		return UninstallReport{}, errors.New("provenance path is required")
+	}
+
+	provenance, err := b.readLifecycleProvenance(trimmedPath)
+	if err != nil {
+		return UninstallReport{}, err
+	}
+
+	return b.uninstallWithProvenance(ctx, provenance)
+}
+
+func (b *Bootstrapper) plan(cfg BootstrapConfig) (BootstrapPlan, BootstrapReceipt, LifecycleProvenance, error) {
 	binaryPath := strings.TrimSpace(cfg.BinaryPath)
 	if binaryPath == "" {
 		var err error
 		binaryPath, err = b.executablePath()
 		if err != nil {
-			return BootstrapPlan{}, BootstrapReceipt{}, fmt.Errorf("locate regixtry executable: %w", err)
+			return BootstrapPlan{}, BootstrapReceipt{}, LifecycleProvenance{}, fmt.Errorf("locate regixtry executable: %w", err)
 		}
 	}
 	if containsWhitespace(binaryPath) {
-		return BootstrapPlan{}, BootstrapReceipt{}, errors.New("binary-path must not contain whitespace")
+		return BootstrapPlan{}, BootstrapReceipt{}, LifecycleProvenance{}, errors.New("binary-path must not contain whitespace")
 	}
 
 	storageRoot := strings.TrimSpace(cfg.StorageRoot)
@@ -249,8 +265,9 @@ func (b *Bootstrapper) plan(cfg BootstrapConfig) (BootstrapPlan, BootstrapReceip
 			plan.StatePath,
 		},
 	}
+	provenance := lifecycleProvenanceFromPlan(plan, receipt)
 
-	return plan, receipt, nil
+	return plan, receipt, provenance, nil
 }
 
 func (b *Bootstrapper) writeArtifacts(plan BootstrapPlan, receipt BootstrapReceipt) error {
@@ -309,6 +326,77 @@ func (b *Bootstrapper) rollbackWithReceipt(ctx context.Context, receipt Bootstra
 	}
 
 	return errors.Join(errs...)
+}
+
+func (b *Bootstrapper) uninstallWithProvenance(ctx context.Context, provenance LifecycleProvenance) (UninstallReport, error) {
+	report := UninstallReport{
+		Mode:        provenance.Mode,
+		ServiceName: provenance.ServiceName,
+	}
+
+	var errs []error
+	serviceUnit := strings.TrimSpace(provenance.ServiceName)
+	if serviceUnit != "" {
+		serviceUnit += ".service"
+	}
+	if err := b.runCommand(ctx, "systemctl", "disable", "--now", serviceUnit); err != nil {
+		report.Service = CleanupItem{Path: serviceUnit, Status: CleanupStatusFailed, Detail: err.Error()}
+		errs = append(errs, fmt.Errorf("systemctl disable --now %s: %w", serviceUnit, err))
+	} else {
+		report.Service = CleanupItem{Path: serviceUnit, Status: CleanupStatusRemoved, Detail: "systemd service disabled and stopped"}
+	}
+
+	for _, target := range uninstallCleanupTargets(provenance) {
+		item, err := b.cleanupPath(target)
+		report.Items = append(report.Items, item)
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	return report, errors.Join(errs...)
+}
+
+func (b *Bootstrapper) cleanupPath(target string) (CleanupItem, error) {
+	trimmedTarget := strings.TrimSpace(target)
+	if trimmedTarget == "" {
+		return CleanupItem{Status: CleanupStatusSkipped, Detail: "path is empty"}, nil
+	}
+
+	exists, err := b.pathExists(trimmedTarget)
+	if err != nil {
+		return CleanupItem{Path: trimmedTarget, Status: CleanupStatusFailed, Detail: err.Error()}, fmt.Errorf("stat %s: %w", trimmedTarget, err)
+	}
+	if !exists {
+		return CleanupItem{Path: trimmedTarget, Status: CleanupStatusMissing, Detail: "path already absent"}, nil
+	}
+
+	if err := b.removeAll(trimmedTarget); err != nil {
+		return CleanupItem{Path: trimmedTarget, Status: CleanupStatusFailed, Detail: err.Error()}, fmt.Errorf("remove %s: %w", trimmedTarget, err)
+	}
+
+	return CleanupItem{Path: trimmedTarget, Status: CleanupStatusRemoved, Detail: "path removed"}, nil
+}
+
+func (b *Bootstrapper) pathExists(target string) (bool, error) {
+	if b.stat != nil {
+		if _, err := b.stat(target); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return false, nil
+			}
+			return false, err
+		}
+		return true, nil
+	}
+
+	if _, err := os.Stat(target); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+
+	return true, nil
 }
 
 func (b *Bootstrapper) waitUntilReachable(ctx context.Context, publicURL string) error {

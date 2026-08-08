@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -34,10 +35,32 @@ var openAuthStore = func(dsn string) (ports.AuthStore, error) {
 type bootstrapRunner interface {
 	Run(context.Context, installlinux.BootstrapConfig) error
 	Rollback(context.Context, installlinux.BootstrapConfig) error
+	Uninstall(context.Context, string) (installlinux.UninstallReport, error)
+	PlanLifecycleProvenance(installlinux.BootstrapConfig) (installlinux.LifecycleProvenance, error)
+	SaveLifecycleProvenance(installlinux.LifecycleProvenance) error
 }
 
 var newBootstrapRunner = func() bootstrapRunner {
 	return installlinux.NewBootstrapper()
+}
+
+var isInteractiveTTYPair = func(stdin io.Reader, stdout io.Writer) bool {
+	stdinFile, stdinOK := stdin.(*os.File)
+	stdoutFile, stdoutOK := stdout.(*os.File)
+	if !stdinOK || !stdoutOK {
+		return false
+	}
+
+	stdinInfo, err := stdinFile.Stat()
+	if err != nil || stdinInfo.Mode()&os.ModeCharDevice == 0 {
+		return false
+	}
+	stdoutInfo, err := stdoutFile.Stat()
+	if err != nil || stdoutInfo.Mode()&os.ModeCharDevice == 0 {
+		return false
+	}
+
+	return true
 }
 
 var (
@@ -79,8 +102,12 @@ func main() {
 }
 
 func run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) error {
+	return runWithIO(ctx, args, os.Stdin, stdout, stderr)
+}
+
+func runWithIO(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("expected subcommand: serve, tui, bootstrap, or bootstrap-admin")
+		return errors.New("expected subcommand: serve, tui, bootstrap, bootstrap-admin, setup, uninstall, or upgrade")
 	}
 
 	switch args[0] {
@@ -129,6 +156,12 @@ func run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer)
 		}
 
 		return runner.Run(ctx, cfg)
+	case "setup":
+		return runSetup(ctx, args[1:], stdin, stdout)
+	case "uninstall":
+		return runUninstall(ctx, args[1:], stdout)
+	case "upgrade":
+		return errors.New("upgrade is deferred for this slice; supported lifecycle commands are setup and uninstall on Linux + systemd hosts")
 	default:
 		return fmt.Errorf("unknown subcommand %q", args[0])
 	}
@@ -174,6 +207,10 @@ type bootstrapAdminConfig struct {
 }
 
 type BootstrapConfig = installlinux.BootstrapConfig
+
+type uninstallConfig struct {
+	StatePath string
+}
 
 type runtimeConfig struct {
 	publicURL         *url.URL
@@ -426,6 +463,166 @@ func parseBootstrapConfig(args []string) (BootstrapConfig, error) {
 	}
 
 	return cfg, nil
+}
+
+func parseSetupConfig(args []string) (BootstrapConfig, error) {
+	flags := flag.NewFlagSet("setup", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+
+	var cfg BootstrapConfig
+	flags.StringVar(&cfg.Mode, "mode", "", "setup mode to apply (daemon-sqlite or binary-only)")
+	flags.StringVar(&cfg.PublicURL, "public-url", os.Getenv("REGISTRY_PUBLIC_URL"), "canonical public URL advertised to registry clients")
+	flags.StringVar(&cfg.Addr, "addr", "127.0.0.1:5000", "address to listen on")
+	flags.StringVar(&cfg.StorageRoot, "storage-root", "/var/lib/regixtry", "root directory for registry runtime state")
+	flags.StringVar(&cfg.StatePath, "state-path", "/etc/regixtry/bootstrap-state.json", "path to the bootstrap receipt file")
+	flags.StringVar(&cfg.UnitPath, "unit-path", "/etc/systemd/system/regixtry.service", "path to the generated systemd unit")
+	flags.StringVar(&cfg.ServiceName, "service", "regixtry", "systemd service name")
+	flags.BoolVar(&cfg.NoStart, "no-start", false, "generate setup artifacts without starting the service")
+
+	if err := flags.Parse(args); err != nil {
+		return BootstrapConfig{}, err
+	}
+
+	return cfg, nil
+}
+
+func parseUninstallConfig(args []string) (uninstallConfig, error) {
+	flags := flag.NewFlagSet("uninstall", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+
+	defaultStatePath := installlinux.LifecycleProvenancePath("/etc/regixtry/bootstrap-state.json")
+	var cfg uninstallConfig
+	flags.StringVar(&cfg.StatePath, "state-path", defaultStatePath, "path to the lifecycle provenance file")
+
+	if err := flags.Parse(args); err != nil {
+		return uninstallConfig{}, err
+	}
+
+	cfg.StatePath = strings.TrimSpace(cfg.StatePath)
+	if cfg.StatePath == "" {
+		return uninstallConfig{}, errors.New("state-path is required")
+	}
+
+	return cfg, nil
+}
+
+func runSetup(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) error {
+	cfg, err := parseSetupConfig(args)
+	if err != nil {
+		return err
+	}
+
+	mode, err := resolveSetupMode(cfg.Mode, stdin, stdout)
+	if err != nil {
+		return err
+	}
+
+	switch mode {
+	case "binary-only":
+		return printBinaryOnlyGuidance(stdout)
+	case "daemon-sqlite":
+		cfg.Mode = mode
+		if err := installlinux.ValidateConfig(cfg); err != nil {
+			return err
+		}
+
+		runner := newBootstrapRunner()
+		if err := runner.Run(ctx, cfg); err != nil {
+			return err
+		}
+
+		provenance, err := runner.PlanLifecycleProvenance(cfg)
+		if err != nil {
+			return rollbackSetupFailure(ctx, runner, cfg, fmt.Errorf("plan lifecycle provenance: %w", err))
+		}
+		if err := runner.SaveLifecycleProvenance(provenance); err != nil {
+			return rollbackSetupFailure(ctx, runner, cfg, fmt.Errorf("write lifecycle provenance: %w", err))
+		}
+
+		if stdout != nil {
+			_, _ = fmt.Fprintf(stdout, "Setup complete: regixtry is installed, %s.service is running, and %s is reachable.\n", cfg.ServiceName, cfg.PublicURL)
+			_, _ = fmt.Fprintf(stdout, "Lifecycle provenance recorded at %s\n", provenance.StatePath)
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported setup mode %q", mode)
+	}
+}
+
+func runUninstall(ctx context.Context, args []string, stdout io.Writer) error {
+	cfg, err := parseUninstallConfig(args)
+	if err != nil {
+		return err
+	}
+
+	runner := newBootstrapRunner()
+	report, uninstallErr := runner.Uninstall(ctx, cfg.StatePath)
+	if stdout != nil {
+		if _, err := fmt.Fprintln(stdout, report.Format()); err != nil {
+			return err
+		}
+	}
+
+	return uninstallErr
+}
+
+func resolveSetupMode(rawMode string, stdin io.Reader, stdout io.Writer) (string, error) {
+	mode := strings.TrimSpace(rawMode)
+	if mode != "" {
+		switch mode {
+		case "daemon-sqlite", "binary-only":
+			return mode, nil
+		default:
+			return "", fmt.Errorf("unsupported setup mode %q", mode)
+		}
+	}
+
+	if !isInteractiveTTYPair(stdin, stdout) {
+		return "", errors.New("setup mode is required without a TTY; rerun with --mode binary-only or --mode daemon-sqlite")
+	}
+
+	if stdout != nil {
+		_, _ = fmt.Fprintln(stdout, "Select setup mode:")
+		_, _ = fmt.Fprintln(stdout, "  1) binary-only")
+		_, _ = fmt.Fprintln(stdout, "  2) daemon-sqlite")
+		_, _ = fmt.Fprint(stdout, "Choice: ")
+	}
+
+	reader := bufio.NewReader(stdin)
+	selection, err := reader.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", fmt.Errorf("read setup mode selection: %w", err)
+	}
+
+	switch strings.ToLower(strings.TrimSpace(selection)) {
+	case "1", "binary-only":
+		return "binary-only", nil
+	case "2", "daemon-sqlite":
+		return "daemon-sqlite", nil
+	default:
+		return "", fmt.Errorf("unsupported setup selection %q", strings.TrimSpace(selection))
+	}
+}
+
+func printBinaryOnlyGuidance(stdout io.Writer) error {
+	if stdout == nil {
+		return nil
+	}
+
+	_, err := fmt.Fprintln(stdout, "Binary placement is complete, but setup is not yet complete.")
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(stdout, "To finish phase-1 setup on a supported Linux + systemd host, run: regixtry setup --mode daemon-sqlite --public-url <url>")
+	return err
+}
+
+func rollbackSetupFailure(ctx context.Context, runner bootstrapRunner, cfg BootstrapConfig, runErr error) error {
+	rollbackErr := runner.Rollback(ctx, BootstrapConfig{StatePath: cfg.StatePath})
+	if rollbackErr != nil {
+		return errors.Join(runErr, fmt.Errorf("rollback failed: %w", rollbackErr))
+	}
+	return runErr
 }
 
 func readSecretFromReader(reader io.Reader) (string, error) {
