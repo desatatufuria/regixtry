@@ -193,6 +193,8 @@ Auth-backed operator administration now has a narrow HTTP surface under `/admin/
 
 The local TUI no longer fabricates an authenticated admin when `-auth-postgres-dsn` is configured. Repository inspection still works, but auth-backed admin mutations stay disabled until a real operator login flow exists.
 
+When a setup-managed systemd installation exists, `regixtry tui` now auto-detects the installed runtime storage root, metadata DB path, and auth Postgres DSN from `/etc/regixtry/regixtry.env`. Explicit CLI flags still override those detected values.
+
 For now, use `bootstrap-admin` only to create or rotate the initial global admin account, then perform auth administration through `/auth/token` plus `/admin/v1` instead of the local TUI.
 
 Example snapshot run against the compose Postgres service:

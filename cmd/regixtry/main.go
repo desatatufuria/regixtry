@@ -413,14 +413,23 @@ func normalizeURLPath(rawPath string) string {
 }
 
 func parseTUIConfig(args []string) (tuiConfig, error) {
+	return parseTUIConfigWithBootstrapStatePath(args, "/etc/regixtry/bootstrap-state.json")
+}
+
+func parseTUIConfigWithBootstrapStatePath(args []string, bootstrapStatePath string) (tuiConfig, error) {
+	defaultCfg, err := defaultTUIConfigWithBootstrapStatePath(bootstrapStatePath)
+	if err != nil {
+		return tuiConfig{}, err
+	}
+
 	flags := flag.NewFlagSet("tui", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 
-	var cfg tuiConfig
-	flags.StringVar(&cfg.StorageRoot, "storage-root", filepath.Join(".", "data"), "root directory for registry storage")
-	flags.StringVar(&cfg.DatabasePath, "db", "", "path to the SQLite metadata database")
+	cfg := defaultCfg
+	flags.StringVar(&cfg.StorageRoot, "storage-root", defaultCfg.StorageRoot, "root directory for registry storage")
+	flags.StringVar(&cfg.DatabasePath, "db", defaultCfg.DatabasePath, "path to the SQLite metadata database")
 	flags.StringVar(&cfg.Tenant, "tenant", ports.DefaultTenant, "tenant identifier")
-	flags.StringVar(&cfg.AuthPostgresDSN, "auth-postgres-dsn", os.Getenv("REGISTRY_AUTH_POSTGRES_DSN"), "Postgres DSN for auth state")
+	flags.StringVar(&cfg.AuthPostgresDSN, "auth-postgres-dsn", defaultCfg.AuthPostgresDSN, "Postgres DSN for auth state")
 	flags.StringVar(&cfg.APIBaseURL, "api-base-url", os.Getenv("REGISTRY_API_BASE_URL"), "base URL for authenticated admin API")
 	flags.BoolVar(&cfg.Snapshot, "snapshot", false, "render the first inspection view and exit")
 
@@ -428,7 +437,12 @@ func parseTUIConfig(args []string) (tuiConfig, error) {
 		return tuiConfig{}, err
 	}
 
-	if cfg.DatabasePath == "" {
+	visited := map[string]bool{}
+	flags.Visit(func(f *flag.Flag) {
+		visited[f.Name] = true
+	})
+
+	if !visited["db"] && (visited["storage-root"] || strings.TrimSpace(cfg.DatabasePath) == "") {
 		cfg.DatabasePath = filepath.Join(cfg.StorageRoot, "metadata.db")
 	}
 	cfg.APIBaseURL = strings.TrimSpace(cfg.APIBaseURL)
@@ -447,6 +461,105 @@ func parseTUIConfig(args []string) (tuiConfig, error) {
 	}
 
 	return cfg, nil
+}
+
+func defaultTUIConfig() (tuiConfig, error) {
+	return defaultTUIConfigWithBootstrapStatePath("/etc/regixtry/bootstrap-state.json")
+}
+
+func defaultTUIConfigWithBootstrapStatePath(bootstrapStatePath string) (tuiConfig, error) {
+	cfg := tuiConfig{
+		StorageRoot:     filepath.Join(".", "data"),
+		AuthPostgresDSN: os.Getenv("REGISTRY_AUTH_POSTGRES_DSN"),
+		APIBaseURL:      os.Getenv("REGISTRY_API_BASE_URL"),
+	}
+
+	installedCfg, ok, err := loadSetupManagedTUIConfig(bootstrapStatePath)
+	if err != nil {
+		return tuiConfig{}, err
+	}
+	if ok {
+		cfg.StorageRoot = installedCfg.StorageRoot
+		cfg.DatabasePath = installedCfg.DatabasePath
+		cfg.AuthPostgresDSN = installedCfg.AuthPostgresDSN
+	}
+
+	return cfg, nil
+}
+
+func loadSetupManagedTUIConfig(bootstrapStatePath string) (tuiConfig, bool, error) {
+	provenancePath := installlinux.LifecycleProvenancePath(bootstrapStatePath)
+	if _, err := os.Stat(provenancePath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return tuiConfig{}, false, nil
+		}
+		return tuiConfig{}, false, fmt.Errorf("stat setup-managed runtime config: %w", err)
+	}
+
+	envPath := filepath.Join(filepath.Dir(provenancePath), "regixtry.env")
+	envValues, err := readSetupManagedEnvFile(envPath)
+	if err != nil {
+		return tuiConfig{}, false, err
+	}
+
+	storageRoot := strings.TrimSpace(envValues["REGISTRY_STORAGE_ROOT"])
+	if storageRoot == "" {
+		return tuiConfig{}, false, nil
+	}
+
+	databasePath := strings.TrimSpace(envValues["REGISTRY_DATABASE_PATH"])
+	if databasePath == "" {
+		databasePath = filepath.Join(storageRoot, "metadata.db")
+	}
+
+	return tuiConfig{
+		StorageRoot:     storageRoot,
+		DatabasePath:    databasePath,
+		AuthPostgresDSN: strings.TrimSpace(envValues["REGISTRY_AUTH_POSTGRES_DSN"]),
+	}, true, nil
+}
+
+func readSetupManagedEnvFile(path string) (map[string]string, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read setup-managed runtime env: %w", err)
+	}
+
+	values := make(map[string]string)
+	scanner := bufio.NewScanner(strings.NewReader(string(body)))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		key, rawValue, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+
+		parsedValue, err := parseSetupManagedEnvValue(rawValue)
+		if err != nil {
+			return nil, fmt.Errorf("parse setup-managed runtime env %q: %w", strings.TrimSpace(key), err)
+		}
+		values[strings.TrimSpace(key)] = parsedValue
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scan setup-managed runtime env: %w", err)
+	}
+
+	return values, nil
+}
+
+func parseSetupManagedEnvValue(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", nil
+	}
+	if unquoted, err := strconv.Unquote(trimmed); err == nil {
+		return unquoted, nil
+	}
+	return trimmed, nil
 }
 
 func parseBootstrapAdminConfig(args []string, stdin io.Reader) (bootstrapAdminConfig, error) {
