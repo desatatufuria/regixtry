@@ -47,6 +47,9 @@ func RenderEnvFile(plan BootstrapPlan) string {
 
 func RenderSystemdUnit(plan BootstrapPlan) string {
 	execStart := fmt.Sprintf("%s serve -addr=${REGISTRY_ADDR} -public-url=${REGISTRY_PUBLIC_URL} -storage-root=${REGISTRY_STORAGE_ROOT} -db=${REGISTRY_DATABASE_PATH} -service=${REGISTRY_SERVICE_NAME}", plan.BinaryPath)
+	if strings.TrimSpace(plan.AuthPostgresDSN) != "" {
+		execStart += " -auth-postgres-dsn=${REGISTRY_AUTH_POSTGRES_DSN}"
+	}
 	if strings.TrimSpace(plan.TLSCertFile) != "" && strings.TrimSpace(plan.TLSKeyFile) != "" {
 		execStart += " -tls-cert-file=${REGISTRY_TLS_CERT_FILE} -tls-key-file=${REGISTRY_TLS_KEY_FILE}"
 	}
