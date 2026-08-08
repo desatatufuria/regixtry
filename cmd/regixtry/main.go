@@ -20,6 +20,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	appauth "regixtry/internal/app/auth"
 	appregixtry "regixtry/internal/app/regixtry"
+	domainauth "regixtry/internal/domain/auth"
 	authpostgres "regixtry/internal/infra/auth/postgres"
 	installlinux "regixtry/internal/infra/install/linux"
 	metadata "regixtry/internal/infra/metadata/sqlite"
@@ -225,12 +226,27 @@ type bootstrapAdminConfig struct {
 
 type BootstrapConfig = installlinux.BootstrapConfig
 
+type setupConfig struct {
+	BootstrapConfig
+	Auth setupAuthConfig
+}
+
+type setupAuthConfig struct {
+	Enabled         bool
+	AuthPostgresDSN string
+	AdminUsername   string
+	AdminPassword   string
+}
+
 type setupPromptState struct {
-	addrProvided           bool
-	publicURLProvided      bool
-	runtimeTLSModeProvided bool
-	tlsCertFileProvided    bool
-	tlsKeyFileProvided     bool
+	addrProvided            bool
+	publicURLProvided       bool
+	runtimeTLSModeProvided  bool
+	tlsCertFileProvided     bool
+	tlsKeyFileProvided      bool
+	authPostgresDSNProvided bool
+	adminUsernameProvided   bool
+	adminPasswordProvided   bool
 }
 
 type uninstallConfig struct {
@@ -505,15 +521,16 @@ func parseSetupConfig(args []string) (BootstrapConfig, error) {
 		return BootstrapConfig{}, err
 	}
 
-	return cfg, nil
+	return cfg.BootstrapConfig, nil
 }
 
-func parseSetupConfigWithPromptState(args []string) (BootstrapConfig, setupPromptState, error) {
+func parseSetupConfigWithPromptState(args []string) (setupConfig, setupPromptState, error) {
 	flags := flag.NewFlagSet("setup", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 
 	defaultPublicURL := os.Getenv("REGISTRY_PUBLIC_URL")
-	var cfg BootstrapConfig
+	defaultAuthPostgresDSN := os.Getenv("REGISTRY_AUTH_POSTGRES_DSN")
+	cfg := setupConfig{}
 	flags.StringVar(&cfg.Mode, "mode", "", "setup mode to apply (daemon-sqlite or binary-only)")
 	flags.StringVar(&cfg.PublicURL, "public-url", defaultPublicURL, "canonical public URL advertised to registry clients")
 	flags.StringVar(&cfg.RuntimeTLSMode, "runtime-tls-mode", "", "runtime TLS mode (local-http, reverse-proxy, or direct-tls)")
@@ -525,13 +542,23 @@ func parseSetupConfigWithPromptState(args []string) (BootstrapConfig, setupPromp
 	flags.StringVar(&cfg.UnitPath, "unit-path", "/etc/systemd/system/regixtry.service", "path to the generated systemd unit")
 	flags.StringVar(&cfg.ServiceName, "service", "regixtry", "systemd service name")
 	flags.BoolVar(&cfg.NoStart, "no-start", false, "generate setup artifacts without starting the service")
+	flags.StringVar(&cfg.Auth.AuthPostgresDSN, "auth-postgres-dsn", defaultAuthPostgresDSN, "Postgres DSN for auth state")
+	flags.StringVar(&cfg.Auth.AdminUsername, "admin-username", "admin", "username for the setup bootstrap admin account")
+	flags.StringVar(&cfg.Auth.AdminPassword, "admin-password", "", "password for the setup bootstrap admin account")
 
 	if err := flags.Parse(args); err != nil {
-		return BootstrapConfig{}, setupPromptState{}, err
+		return setupConfig{}, setupPromptState{}, err
 	}
 
+	cfg.Auth.Enabled = strings.TrimSpace(cfg.Auth.AuthPostgresDSN) != ""
+	cfg.Auth.AdminUsername = strings.TrimSpace(cfg.Auth.AdminUsername)
+	cfg.Auth.AdminPassword = strings.TrimSpace(cfg.Auth.AdminPassword)
+	cfg.Auth.AuthPostgresDSN = strings.TrimSpace(cfg.Auth.AuthPostgresDSN)
+	cfg.BootstrapConfig.AuthPostgresDSN = cfg.Auth.AuthPostgresDSN
+
 	promptState := setupPromptState{
-		publicURLProvided: strings.TrimSpace(defaultPublicURL) != "",
+		publicURLProvided:       strings.TrimSpace(defaultPublicURL) != "",
+		authPostgresDSNProvided: strings.TrimSpace(defaultAuthPostgresDSN) != "",
 	}
 	flags.Visit(func(flag *flag.Flag) {
 		switch flag.Name {
@@ -545,6 +572,12 @@ func parseSetupConfigWithPromptState(args []string) (BootstrapConfig, setupPromp
 			promptState.tlsCertFileProvided = true
 		case "tls-key-file":
 			promptState.tlsKeyFileProvided = true
+		case "auth-postgres-dsn":
+			promptState.authPostgresDSNProvided = true
+		case "admin-username":
+			promptState.adminUsernameProvided = true
+		case "admin-password":
+			promptState.adminPasswordProvided = true
 		}
 	})
 
@@ -599,7 +632,11 @@ func runSetup(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 				return err
 			}
 		}
-		if err := installlinux.ValidateConfig(cfg); err != nil {
+		if err := validateSetupAuthConfig(cfg.Auth); err != nil {
+			return err
+		}
+		cfg.BootstrapConfig.AuthPostgresDSN = cfg.Auth.AuthPostgresDSN
+		if err := installlinux.ValidateConfig(cfg.BootstrapConfig); err != nil {
 			return err
 		}
 		cfg.RuntimeTLSMode, cfg.PublicURL, cfg.TLSCertFile, cfg.TLSKeyFile, err = installlinux.ResolveRuntimeTLSMode(cfg.RuntimeTLSMode, cfg.PublicURL, cfg.TLSCertFile, cfg.TLSKeyFile)
@@ -607,26 +644,32 @@ func runSetup(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 			return err
 		}
 
-		runner := newBootstrapRunner()
-		if err := runner.Run(ctx, cfg); err != nil {
-			return upgradeLifecyclePermissionError(err, "daemon-sqlite setup", formatSetupCommand(cfg, false))
+		authOutcome, err := bootstrapSetupAuth(ctx, cfg.Auth)
+		if err != nil {
+			return err
 		}
 
-		provenance, err := runner.PlanLifecycleProvenance(cfg)
+		runner := newBootstrapRunner()
+		if err := runner.Run(ctx, cfg.BootstrapConfig); err != nil {
+			return upgradeLifecyclePermissionError(err, "daemon-sqlite setup", formatSetupCommand(cfg.BootstrapConfig, false))
+		}
+
+		provenance, err := runner.PlanLifecycleProvenance(cfg.BootstrapConfig)
 		if err != nil {
-			return rollbackSetupFailure(ctx, runner, cfg, fmt.Errorf("plan lifecycle provenance: %w", err))
+			return rollbackSetupFailure(ctx, runner, cfg.BootstrapConfig, fmt.Errorf("plan lifecycle provenance: %w", err))
 		}
 		if err := runner.SaveLifecycleProvenance(provenance); err != nil {
 			return upgradeLifecyclePermissionError(
-				rollbackSetupFailure(ctx, runner, cfg, fmt.Errorf("write lifecycle provenance: %w", err)),
+				rollbackSetupFailure(ctx, runner, cfg.BootstrapConfig, fmt.Errorf("write lifecycle provenance: %w", err)),
 				"daemon-sqlite setup",
-				formatSetupCommand(cfg, false),
+				formatSetupCommand(cfg.BootstrapConfig, false),
 			)
 		}
 
 		if stdout != nil {
 			_, _ = fmt.Fprintf(stdout, "Setup complete: regixtry is installed, %s.service is running, and %s is reachable.\n", cfg.ServiceName, cfg.PublicURL)
 			_, _ = fmt.Fprintf(stdout, "Lifecycle provenance recorded at %s\n", provenance.StatePath)
+			printSetupAuthGuidance(stdout, cfg, authOutcome)
 		}
 		return nil
 	default:
@@ -634,18 +677,18 @@ func runSetup(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 	}
 }
 
-func promptSetupDaemonConfig(reader *bufio.Reader, stdout io.Writer, cfg BootstrapConfig, promptState setupPromptState, selectedInteractively bool) (BootstrapConfig, error) {
+func promptSetupDaemonConfig(reader *bufio.Reader, stdout io.Writer, cfg setupConfig, promptState setupPromptState, selectedInteractively bool) (setupConfig, error) {
 	if !promptState.addrProvided {
 		value, err := promptSetupValue(reader, stdout, "Listen address", cfg.Addr)
 		if err != nil {
-			return BootstrapConfig{}, err
+			return setupConfig{}, err
 		}
 		cfg.Addr = value
 	}
 	if !promptState.runtimeTLSModeProvided {
-		value, err := promptSetupRuntimeTLSMode(reader, stdout, defaultSetupRuntimeTLSMode(cfg))
+		value, err := promptSetupRuntimeTLSMode(reader, stdout, defaultSetupRuntimeTLSMode(cfg.BootstrapConfig))
 		if err != nil {
-			return BootstrapConfig{}, err
+			return setupConfig{}, err
 		}
 		cfg.RuntimeTLSMode = value
 	}
@@ -657,7 +700,7 @@ func promptSetupDaemonConfig(reader *bufio.Reader, stdout io.Writer, cfg Bootstr
 		}
 		value, err := promptSetupValue(reader, stdout, "Public URL", defaultPublicURL)
 		if err != nil {
-			return BootstrapConfig{}, err
+			return setupConfig{}, err
 		}
 		cfg.PublicURL = value
 	}
@@ -665,18 +708,52 @@ func promptSetupDaemonConfig(reader *bufio.Reader, stdout io.Writer, cfg Bootstr
 		if !promptState.tlsCertFileProvided {
 			value, err := promptSetupValue(reader, stdout, "TLS cert file", cfg.TLSCertFile)
 			if err != nil {
-				return BootstrapConfig{}, err
+				return setupConfig{}, err
 			}
 			cfg.TLSCertFile = value
 		}
 		if !promptState.tlsKeyFileProvided {
 			value, err := promptSetupValue(reader, stdout, "TLS key file", cfg.TLSKeyFile)
 			if err != nil {
-				return BootstrapConfig{}, err
+				return setupConfig{}, err
 			}
 			cfg.TLSKeyFile = value
 		}
 	}
+
+	enableAuth, err := promptSetupBool(reader, stdout, "Enable auth", cfg.Auth.Enabled)
+	if err != nil {
+		return setupConfig{}, err
+	}
+	cfg.Auth.Enabled = enableAuth
+	if !cfg.Auth.Enabled {
+		cfg.Auth.AuthPostgresDSN = ""
+		cfg.Auth.AdminPassword = ""
+		cfg.BootstrapConfig.AuthPostgresDSN = ""
+		return cfg, nil
+	}
+	if !promptState.authPostgresDSNProvided {
+		value, err := promptSetupValue(reader, stdout, "Auth Postgres DSN", cfg.Auth.AuthPostgresDSN)
+		if err != nil {
+			return setupConfig{}, err
+		}
+		cfg.Auth.AuthPostgresDSN = value
+	}
+	if !promptState.adminUsernameProvided {
+		value, err := promptSetupValue(reader, stdout, "Admin username", firstNonEmpty(cfg.Auth.AdminUsername, "admin"))
+		if err != nil {
+			return setupConfig{}, err
+		}
+		cfg.Auth.AdminUsername = value
+	}
+	if !promptState.adminPasswordProvided {
+		value, err := promptSetupValue(reader, stdout, "Admin password", "")
+		if err != nil {
+			return setupConfig{}, err
+		}
+		cfg.Auth.AdminPassword = value
+	}
+	cfg.BootstrapConfig.AuthPostgresDSN = strings.TrimSpace(cfg.Auth.AuthPostgresDSN)
 
 	return cfg, nil
 }
@@ -755,6 +832,33 @@ func promptSetupValue(reader *bufio.Reader, stdout io.Writer, label string, defa
 	}
 
 	return trimmed, nil
+}
+
+func promptSetupBool(reader *bufio.Reader, stdout io.Writer, label string, defaultValue bool) (bool, error) {
+	defaultHint := "y/N"
+	if defaultValue {
+		defaultHint = "Y/n"
+	}
+	if stdout != nil {
+		_, _ = fmt.Fprintf(stdout, "%s [%s]: ", label, defaultHint)
+	}
+
+	value, err := reader.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return false, fmt.Errorf("read %s: %w", strings.ToLower(label), err)
+	}
+
+	trimmed := strings.ToLower(strings.TrimSpace(value))
+	switch trimmed {
+	case "":
+		return defaultValue, nil
+	case "y", "yes":
+		return true, nil
+	case "n", "no":
+		return false, nil
+	default:
+		return false, fmt.Errorf("unsupported %s selection %q", strings.ToLower(label), strings.TrimSpace(value))
+	}
 }
 
 func promptSetupRuntimeTLSMode(reader *bufio.Reader, stdout io.Writer, defaultMode string) (string, error) {
@@ -879,6 +983,9 @@ func formatSetupCommand(cfg BootstrapConfig, placeholderOnly bool) string {
 	if !placeholderOnly {
 		if strings.TrimSpace(cfg.RuntimeTLSMode) != "" {
 			args = append(args, "--runtime-tls-mode", cfg.RuntimeTLSMode)
+		}
+		if strings.TrimSpace(cfg.AuthPostgresDSN) != "" {
+			args = append(args, "--auth-postgres-dsn", cfg.AuthPostgresDSN)
 		}
 		args = append(args,
 			"--addr", cfg.Addr,
@@ -1165,9 +1272,105 @@ func runTUI(cfg tuiConfig, stdin io.Reader, stdout io.Writer) error {
 }
 
 func runBootstrapAdmin(ctx context.Context, cfg bootstrapAdminConfig, stdout io.Writer) error {
-	authStore, err := openAuthStore(cfg.AuthPostgresDSN)
+	_, err := bootstrapAdmin(ctx, cfg, stdout)
 	if err != nil {
 		return err
+	}
+
+	return nil
+}
+
+type setupAuthBootstrapOutcome struct {
+	Enabled              bool
+	Username             string
+	Created              bool
+	AlreadyConfigured    bool
+	RequiresExistingAuth bool
+}
+
+func validateSetupAuthConfig(cfg setupAuthConfig) error {
+	if !cfg.Enabled {
+		return nil
+	}
+	if strings.TrimSpace(cfg.AuthPostgresDSN) == "" {
+		return errors.New("auth Postgres DSN is required when auth is enabled")
+	}
+	if strings.TrimSpace(cfg.AdminUsername) == "" {
+		return errors.New("admin username is required when auth is enabled")
+	}
+	if strings.TrimSpace(cfg.AdminPassword) == "" {
+		return errors.New("admin password is required when auth is enabled")
+	}
+	return nil
+}
+
+func bootstrapSetupAuth(ctx context.Context, cfg setupAuthConfig) (setupAuthBootstrapOutcome, error) {
+	if !cfg.Enabled {
+		return setupAuthBootstrapOutcome{}, nil
+	}
+
+	result, err := bootstrapAdmin(ctx, bootstrapAdminConfig{
+		AuthPostgresDSN: strings.TrimSpace(cfg.AuthPostgresDSN),
+		Username:        strings.TrimSpace(cfg.AdminUsername),
+		Password:        strings.TrimSpace(cfg.AdminPassword),
+	}, nil)
+	if err == nil {
+		return setupAuthBootstrapOutcome{
+			Enabled:           true,
+			Username:          result.User.Username,
+			Created:           result.Created,
+			AlreadyConfigured: !result.Created && !result.PasswordRotated,
+		}, nil
+	}
+	if domainauth.IsCode(err, domainauth.ErrorCodeConflict) {
+		return setupAuthBootstrapOutcome{
+			Enabled:              true,
+			Username:             strings.TrimSpace(cfg.AdminUsername),
+			RequiresExistingAuth: true,
+		}, nil
+	}
+	return setupAuthBootstrapOutcome{}, err
+}
+
+func printSetupAuthGuidance(stdout io.Writer, cfg setupConfig, outcome setupAuthBootstrapOutcome) {
+	if stdout == nil || !outcome.Enabled {
+		return
+	}
+
+	registryHost := dockerLoginHost(cfg.PublicURL)
+	if registryHost == "" {
+		return
+	}
+
+	switch {
+	case outcome.Created:
+		_, _ = fmt.Fprintf(stdout, "Auth bootstrap complete: created global admin %q.\n", outcome.Username)
+		_, _ = fmt.Fprintf(stdout, "Next: printf '%%s\\n' '<admin-password>' | docker login %s -u %s --password-stdin\n", registryHost, shellQuote(outcome.Username))
+	case outcome.RequiresExistingAuth:
+		_, _ = fmt.Fprintln(stdout, "Auth bootstrap skipped: a global admin already exists in the auth store.")
+		_, _ = fmt.Fprintf(stdout, "Next: docker login %s with the existing global admin credentials.\n", registryHost)
+	default:
+		_, _ = fmt.Fprintf(stdout, "Auth bootstrap confirmed: global admin %q is already configured.\n", outcome.Username)
+		_, _ = fmt.Fprintf(stdout, "Next: printf '%%s\\n' '<admin-password>' | docker login %s -u %s --password-stdin\n", registryHost, shellQuote(outcome.Username))
+	}
+
+	if strings.HasPrefix(strings.TrimSpace(cfg.PublicURL), "http://") {
+		_, _ = fmt.Fprintln(stdout, "Docker may require this registry to be configured as insecure before login, push, or pull over HTTP.")
+	}
+}
+
+func dockerLoginHost(publicURL string) string {
+	parsed, err := url.Parse(strings.TrimSpace(publicURL))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(parsed.Host)
+}
+
+func bootstrapAdmin(ctx context.Context, cfg bootstrapAdminConfig, stdout io.Writer) (ports.BootstrapAdminResult, error) {
+	authStore, err := openAuthStore(cfg.AuthPostgresDSN)
+	if err != nil {
+		return ports.BootstrapAdminResult{}, err
 	}
 	defer authStore.Close()
 
@@ -1178,7 +1381,7 @@ func runBootstrapAdmin(ctx context.Context, cfg bootstrapAdminConfig, stdout io.
 		RotatePassword: cfg.RotatePassword,
 	})
 	if err != nil {
-		return err
+		return ports.BootstrapAdminResult{}, err
 	}
 
 	if stdout != nil {
@@ -1192,7 +1395,7 @@ func runBootstrapAdmin(ctx context.Context, cfg bootstrapAdminConfig, stdout io.
 		}
 	}
 
-	return nil
+	return result, nil
 }
 
 type localOperatorAccessController struct{}

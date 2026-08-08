@@ -7,20 +7,21 @@ import (
 )
 
 type BootstrapPlan struct {
-	Mode           string
-	Addr           string
-	PublicURL      string
-	RuntimeTLSMode string
-	TLSCertFile    string
-	TLSKeyFile     string
-	StorageRoot    string
-	DatabasePath   string
-	ContentPath    string
-	StatePath      string
-	EnvPath        string
-	UnitPath       string
-	BinaryPath     string
-	ServiceName    string
+	Mode            string
+	Addr            string
+	PublicURL       string
+	RuntimeTLSMode  string
+	TLSCertFile     string
+	TLSKeyFile      string
+	AuthPostgresDSN string
+	StorageRoot     string
+	DatabasePath    string
+	ContentPath     string
+	StatePath       string
+	EnvPath         string
+	UnitPath        string
+	BinaryPath      string
+	ServiceName     string
 }
 
 func RenderEnvFile(plan BootstrapPlan) string {
@@ -30,6 +31,9 @@ func RenderEnvFile(plan BootstrapPlan) string {
 		fmt.Sprintf("REGISTRY_STORAGE_ROOT=%s", quoteEnvValue(plan.StorageRoot)),
 		fmt.Sprintf("REGISTRY_DATABASE_PATH=%s", quoteEnvValue(plan.DatabasePath)),
 		fmt.Sprintf("REGISTRY_SERVICE_NAME=%s", quoteEnvValue(plan.ServiceName)),
+	}
+	if strings.TrimSpace(plan.AuthPostgresDSN) != "" {
+		lines = append(lines, fmt.Sprintf("REGISTRY_AUTH_POSTGRES_DSN=%s", quoteEnvValue(plan.AuthPostgresDSN)))
 	}
 	if strings.TrimSpace(plan.TLSCertFile) != "" && strings.TrimSpace(plan.TLSKeyFile) != "" {
 		lines = append(lines,

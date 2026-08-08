@@ -26,19 +26,20 @@ const (
 )
 
 type BootstrapConfig struct {
-	Mode           string
-	PublicURL      string
-	RuntimeTLSMode string
-	TLSCertFile    string
-	TLSKeyFile     string
-	StorageRoot    string
-	StatePath      string
-	UnitPath       string
-	Addr           string
-	ServiceName    string
-	BinaryPath     string
-	NoStart        bool
-	Rollback       bool
+	Mode            string
+	PublicURL       string
+	RuntimeTLSMode  string
+	TLSCertFile     string
+	TLSKeyFile      string
+	AuthPostgresDSN string
+	StorageRoot     string
+	StatePath       string
+	UnitPath        string
+	Addr            string
+	ServiceName     string
+	BinaryPath      string
+	NoStart         bool
+	Rollback        bool
 }
 
 type BootstrapReceipt struct {
@@ -310,6 +311,7 @@ func (b *Bootstrapper) plan(cfg BootstrapConfig) (BootstrapPlan, BootstrapReceip
 	statePath := strings.TrimSpace(cfg.StatePath)
 	unitPath := strings.TrimSpace(cfg.UnitPath)
 	serviceName := strings.TrimSpace(cfg.ServiceName)
+	authPostgresDSN := strings.TrimSpace(cfg.AuthPostgresDSN)
 	runtimeTLSMode, publicURL, tlsCertFile, tlsKeyFile, err := ResolveRuntimeTLSMode(cfg.RuntimeTLSMode, cfg.PublicURL, cfg.TLSCertFile, cfg.TLSKeyFile)
 	if err != nil {
 		return BootstrapPlan{}, BootstrapReceipt{}, LifecycleProvenance{}, err
@@ -318,20 +320,21 @@ func (b *Bootstrapper) plan(cfg BootstrapConfig) (BootstrapPlan, BootstrapReceip
 		unitPath = filepath.Join("/etc/systemd/system", serviceName+".service")
 	}
 	plan := BootstrapPlan{
-		Mode:           strings.TrimSpace(cfg.Mode),
-		Addr:           strings.TrimSpace(cfg.Addr),
-		PublicURL:      publicURL,
-		RuntimeTLSMode: runtimeTLSMode,
-		TLSCertFile:    tlsCertFile,
-		TLSKeyFile:     tlsKeyFile,
-		StorageRoot:    storageRoot,
-		DatabasePath:   filepath.Join(storageRoot, "metadata.db"),
-		ContentPath:    filepath.Join(storageRoot, "content"),
-		StatePath:      statePath,
-		EnvPath:        filepath.Join(filepath.Dir(statePath), "regixtry.env"),
-		UnitPath:       unitPath,
-		BinaryPath:     binaryPath,
-		ServiceName:    serviceName,
+		Mode:            strings.TrimSpace(cfg.Mode),
+		Addr:            strings.TrimSpace(cfg.Addr),
+		PublicURL:       publicURL,
+		RuntimeTLSMode:  runtimeTLSMode,
+		TLSCertFile:     tlsCertFile,
+		TLSKeyFile:      tlsKeyFile,
+		AuthPostgresDSN: authPostgresDSN,
+		StorageRoot:     storageRoot,
+		DatabasePath:    filepath.Join(storageRoot, "metadata.db"),
+		ContentPath:     filepath.Join(storageRoot, "content"),
+		StatePath:       statePath,
+		EnvPath:         filepath.Join(filepath.Dir(statePath), "regixtry.env"),
+		UnitPath:        unitPath,
+		BinaryPath:      binaryPath,
+		ServiceName:     serviceName,
 	}
 
 	receipt := BootstrapReceipt{

@@ -15,7 +15,7 @@ Use the repo-hosted installer when you want a verified Linux release asset. The 
 ### Quick path
 
 1. Run `curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash` to install the verified Linux binary.
-2. Finish lifecycle setup with `regixtry setup` for interactive prompts, or pass `--mode binary-only` / `--mode daemon-sqlite --public-url <url> --runtime-tls-mode <local-http|reverse-proxy|direct-tls> --addr <listen-address>` explicitly.
+2. Finish lifecycle setup with `regixtry setup` for interactive prompts, or pass `--mode binary-only` / `--mode daemon-sqlite --public-url <url> --runtime-tls-mode <local-http|reverse-proxy|direct-tls> --addr <listen-address>` explicitly. Interactive setup can also enable Postgres-backed auth, persist `REGISTRY_AUTH_POSTGRES_DSN`, and bootstrap the first admin.
 3. When setup uses `daemon-sqlite`, confirm reachability with `curl -fsSI <public-url>/v2/` and expect HTTP `200` or `401`.
 
 If the installer placed the binary under `~/.local/bin`, use that absolute path with `sudo` for privileged lifecycle commands. The installer and `regixtry setup --mode binary-only` print the exact rerun command for the current binary location.
@@ -26,9 +26,9 @@ If the installer placed the binary under `~/.local/bin`, use that absolute path 
 | --- | --- |
 | Installer scope | `install.sh` downloads, verifies, and places the `regixtry` binary only. It does not prompt for lifecycle mode, run setup, or run uninstall. |
 | Lifecycle entrypoints | `regixtry setup` and `regixtry uninstall` are the operator-facing lifecycle commands in this slice. |
-| Interactive setup flow | `regixtry setup` still prompts for `binary-only` vs `daemon-sqlite`; choosing `daemon-sqlite` now also prompts for runtime TLS mode, then prompts for editable `Listen address` and `Public URL`, and asks for local cert/key paths only in `direct-tls` mode unless those values were already supplied explicitly. |
+| Interactive setup flow | `regixtry setup` still prompts for `binary-only` vs `daemon-sqlite`; choosing `daemon-sqlite` now also prompts for runtime TLS mode, then prompts for editable `Listen address` and `Public URL`, asks whether auth should be enabled, and when auth is enabled collects the Postgres DSN plus bootstrap admin credentials. It asks for local cert/key paths only in `direct-tls` mode unless those values were already supplied explicitly. |
 | Supported automated lifecycle target | Linux + systemd only. The current host validation accepts Debian, Ubuntu, Linux Mint, and RHEL 9.x/10.x before claiming `daemon-sqlite` success. |
-| Deferred automation | Postgres-auth deployment, container deployment, and `regixtry upgrade` remain manual or deferred in this slice. |
+| Deferred automation | Container deployment and `regixtry upgrade` remain manual or deferred in this slice. |
 | Binary-only truth | `regixtry setup --mode binary-only` prints next steps only. It does not claim setup success and it writes no lifecycle provenance. |
 | Daemon/service truth | `regixtry setup --mode daemon-sqlite` succeeds only when the binary is installed, the service is running, and the configured backend listen address answers `/v2/` with HTTP `200` or `401` using the selected runtime TLS mode. |
 | Uninstall truth | `regixtry uninstall` removes recorded lifecycle artifacts best effort from persisted provenance and reports removed, missing, skipped, or failed items truthfully. |
@@ -48,7 +48,7 @@ curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/instal
 # Binary-owned guidance-only setup.
 regixtry setup --mode binary-only
 
-# Interactive setup prompts for mode, runtime TLS mode, and, when needed, the daemon listen address plus public URL.
+# Interactive setup prompts for mode, runtime TLS mode, and, when needed, the daemon listen address, public URL, and auth bootstrap inputs.
 regixtry setup
 
 # Linux + systemd lifecycle setup behind a reverse proxy.

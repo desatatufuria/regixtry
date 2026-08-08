@@ -83,16 +83,17 @@ func TestTemplateRendering(t *testing.T) {
 	t.Parallel()
 
 	plan := BootstrapPlan{
-		Addr:           "127.0.0.1:5000",
-		PublicURL:      "https://regixtry.example.com",
-		RuntimeTLSMode: RuntimeTLSModeDirectTLS,
-		TLSCertFile:    "/etc/regixtry/tls/registry.crt",
-		TLSKeyFile:     "/etc/regixtry/tls/registry.key",
-		StorageRoot:    "/var/lib/regixtry",
-		DatabasePath:   "/var/lib/regixtry/metadata.db",
-		EnvPath:        "/etc/regixtry/regixtry.env",
-		BinaryPath:     "/usr/local/bin/regixtry",
-		ServiceName:    "regixtry",
+		Addr:            "127.0.0.1:5000",
+		PublicURL:       "https://regixtry.example.com",
+		RuntimeTLSMode:  RuntimeTLSModeDirectTLS,
+		TLSCertFile:     "/etc/regixtry/tls/registry.crt",
+		TLSKeyFile:      "/etc/regixtry/tls/registry.key",
+		AuthPostgresDSN: "postgres://registry:registry@db.example.com:5432/regixtry_auth?sslmode=disable",
+		StorageRoot:     "/var/lib/regixtry",
+		DatabasePath:    "/var/lib/regixtry/metadata.db",
+		EnvPath:         "/etc/regixtry/regixtry.env",
+		BinaryPath:      "/usr/local/bin/regixtry",
+		ServiceName:     "regixtry",
 	}
 
 	env := RenderEnvFile(plan)
@@ -101,6 +102,9 @@ func TestTemplateRendering(t *testing.T) {
 	}
 	if !strings.Contains(env, `REGISTRY_TLS_CERT_FILE="/etc/regixtry/tls/registry.crt"`) {
 		t.Fatalf("env = %q, want quoted TLS cert path", env)
+	}
+	if !strings.Contains(env, `REGISTRY_AUTH_POSTGRES_DSN="postgres://registry:registry@db.example.com:5432/regixtry_auth?sslmode=disable"`) {
+		t.Fatalf("env = %q, want quoted auth DSN", env)
 	}
 
 	unit := RenderSystemdUnit(plan)

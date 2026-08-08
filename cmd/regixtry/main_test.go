@@ -460,6 +460,22 @@ func TestParseSetupConfigUsesEnvPublicURLWhenFlagMissing(t *testing.T) {
 	}
 }
 
+func TestRunSetupRequiresAdminPasswordWhenAuthEnabledWithoutTTY(t *testing.T) {
+	restoreTTY := swapInteractiveTTYDetector(t, false)
+	defer restoreTTY()
+
+	err := runWithIO(
+		context.Background(),
+		[]string{"setup", "-mode", "daemon-sqlite", "-public-url", "https://regixtry.example.com", "-runtime-tls-mode", "reverse-proxy", "-auth-postgres-dsn", "postgres://registry:registry@db.example.com:5432/regixtry_auth?sslmode=disable"},
+		strings.NewReader(""),
+		io.Discard,
+		io.Discard,
+	)
+	if err == nil || !strings.Contains(err.Error(), "admin password is required when auth is enabled") {
+		t.Fatalf("runWithIO(setup auth non-interactive) error = %v, want missing admin password guidance", err)
+	}
+}
+
 func TestRunSetupRequiresModeWithoutTTY(t *testing.T) {
 	restore := swapInteractiveTTYDetector(t, false)
 	defer restore()
@@ -744,6 +760,115 @@ func TestRunSetupPassesParsedConfigToRunnerAndWritesProvenance(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "Setup complete:") {
 		t.Fatalf("stdout = %q, want setup success message", stdout.String())
+	}
+}
+
+func TestRunSetupInteractivePromptBootstrapsAuthAndPrintsDockerLoginGuidance(t *testing.T) {
+	restoreAuth := swapAuthStoreOpener(t)
+	defer restoreAuth()
+
+	runner := &stubBootstrapRunner{
+		plannedProvenance: installlinux.LifecycleProvenance{
+			Version:      1,
+			Mode:         "daemon-sqlite",
+			InstalledBin: "/usr/local/bin/regixtry",
+			ServiceName:  "regixtry",
+			StatePath:    "/etc/regixtry/regixtry-lifecycle-state.json",
+		},
+	}
+	restoreRunner := swapBootstrapRunner(t, runner)
+	defer restoreRunner()
+
+	restoreTTY := swapInteractiveTTYDetector(t, true)
+	defer restoreTTY()
+
+	authDB := filepath.Join(t.TempDir(), "auth.db")
+	stdout := &bytes.Buffer{}
+	err := runWithIO(
+		context.Background(),
+		[]string{"setup"},
+		strings.NewReader("2\n\n\n\ny\n"+authDB+"\nbootstrap-admin\nchange-me-now\n"),
+		stdout,
+		io.Discard,
+	)
+	if err != nil {
+		t.Fatalf("runWithIO(setup auth prompt) error = %v", err)
+	}
+	if runner.lastConfig.AuthPostgresDSN != authDB {
+		t.Fatalf("lastConfig.AuthPostgresDSN = %q, want prompted auth DSN", runner.lastConfig.AuthPostgresDSN)
+	}
+	if !strings.Contains(stdout.String(), `Auth bootstrap complete: created global admin "bootstrap-admin".`) {
+		t.Fatalf("stdout = %q, want auth bootstrap success message", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "docker login 127.0.0.1:5000 -u bootstrap-admin --password-stdin") {
+		t.Fatalf("stdout = %q, want docker login guidance", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "Enable auth [y/N]: ") {
+		t.Fatalf("stdout = %q, want enable auth prompt", stdout.String())
+	}
+
+	handler, cleanup, err := newHandler(serveConfig{
+		StorageRoot:     t.TempDir(),
+		DatabasePath:    filepath.Join(t.TempDir(), "registry.db"),
+		AuthPostgresDSN: authDB,
+	})
+	if err != nil {
+		t.Fatalf("newHandler() error = %v", err)
+	}
+	defer cleanup()
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/v2/", nil))
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestRunSetupSkipsBootstrapFailureWhenGlobalAdminAlreadyExists(t *testing.T) {
+	restoreAuth := swapAuthStoreOpener(t)
+	defer restoreAuth()
+
+	authDB := filepath.Join(t.TempDir(), "auth.db")
+	if err := run(context.Background(), []string{"bootstrap-admin", "-auth-postgres-dsn", authDB, "-username", "existing-admin", "-password", "change-me-now"}, io.Discard, io.Discard); err != nil {
+		t.Fatalf("run(bootstrap-admin) error = %v", err)
+	}
+
+	runner := &stubBootstrapRunner{
+		plannedProvenance: installlinux.LifecycleProvenance{
+			Version:      1,
+			Mode:         "daemon-sqlite",
+			InstalledBin: "/usr/local/bin/regixtry",
+			ServiceName:  "regixtry",
+			StatePath:    "/etc/regixtry/regixtry-lifecycle-state.json",
+		},
+	}
+	restoreRunner := swapBootstrapRunner(t, runner)
+	defer restoreRunner()
+
+	stdout := &bytes.Buffer{}
+	err := runWithIO(
+		context.Background(),
+		[]string{
+			"setup",
+			"-mode", "daemon-sqlite",
+			"-public-url", "https://regixtry.example.com",
+			"-runtime-tls-mode", "reverse-proxy",
+			"-auth-postgres-dsn", authDB,
+			"-admin-username", "different-admin",
+			"-admin-password", "change-me-now",
+		},
+		strings.NewReader(""),
+		stdout,
+		io.Discard,
+	)
+	if err != nil {
+		t.Fatalf("runWithIO(setup existing admin) error = %v", err)
+	}
+	if !strings.Contains(stdout.String(), "Auth bootstrap skipped: a global admin already exists in the auth store.") {
+		t.Fatalf("stdout = %q, want existing-admin guidance", stdout.String())
+	}
+	if runner.runCalls != 1 {
+		t.Fatalf("runCalls = %d, want 1", runner.runCalls)
 	}
 }
 
