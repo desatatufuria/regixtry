@@ -1,0 +1,17 @@
+trigger:
+- main
+pool:
+  vmImage: ubuntu-latest
+variables:
+  REGISTRY: registry.example.com
+  IMAGE: team/app
+steps:
+- checkout: self
+- bash: |
+    set -euo pipefail
+    echo "$(REGISTRY_PASSWORD)" | docker login "$(REGISTRY)" -u "$(REGISTRY_USERNAME)" --password-stdin
+    docker build -t "$(REGISTRY)/$(IMAGE):$(Build.SourceVersion)" .
+    docker push "$(REGISTRY)/$(IMAGE):$(Build.SourceVersion)"
+  env:
+    REGISTRY_USERNAME: $(REGISTRY_USERNAME)
+    REGISTRY_PASSWORD: $(REGISTRY_PASSWORD)
