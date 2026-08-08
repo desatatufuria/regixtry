@@ -1,6 +1,5 @@
 services:
-  dev-regixtry:
-    container_name: ${PROJECT}
+  dev-registry:
     build:
       context: ..
       dockerfile: .devcontainer/Dockerfile

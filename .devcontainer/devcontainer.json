@@ -3,7 +3,7 @@
 "dockerComposeFile": [
     "docker-compose.yml"
   ],
-  "service": "dev-regixtry",
+  "service": "dev-registry",
   "workspaceFolder": "/workspace",
 //   "build": {
 //   "dockerfile": "Dockerfile",
