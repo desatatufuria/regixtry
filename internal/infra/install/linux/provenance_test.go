@@ -5,9 +5,108 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestReadLifecycleProvenanceAcceptsV1AndV2(t *testing.T) {
+	t.Parallel()
+
+	b := &Bootstrapper{readFile: func(path string) ([]byte, error) {
+		switch filepath.Base(path) {
+		case "v1.json":
+			return []byte(`{"version":1,"mode":"daemon-sqlite","installed_bin":"/usr/local/bin/regixtry","service_name":"regixtry","state_path":"/etc/regixtry/regixtry-lifecycle-state.json","managed_paths":["/etc/regixtry/regixtry.env"]}`), nil
+		case "v2.json":
+			return []byte(`{"version":2,"mode":"daemon-sqlite","installed_bin":"/usr/local/bin/regixtry","installed_ref":"v1.2.3","installed_version":"1.2.3","service_name":"regixtry","state_path":"/etc/regixtry/regixtry-lifecycle-state.json","managed_paths":["/etc/regixtry/regixtry.env"],"intent":{"public_url":"http://127.0.0.1:5000"}}`), nil
+		default:
+			return nil, os.ErrNotExist
+		}
+	}}
+
+	v1, err := b.readLifecycleProvenance("/tmp/v1.json")
+	if err != nil {
+		t.Fatalf("readLifecycleProvenance(v1) error = %v", err)
+	}
+	if v1.Version != 1 {
+		t.Fatalf("v1.Version = %d, want 1", v1.Version)
+	}
+
+	v2, err := b.readLifecycleProvenance("/tmp/v2.json")
+	if err != nil {
+		t.Fatalf("readLifecycleProvenance(v2) error = %v", err)
+	}
+	if v2.Version != 2 || v2.InstalledRef != "v1.2.3" || v2.Intent.PublicURL != "http://127.0.0.1:5000" {
+		t.Fatalf("v2 = %#v, want preserved v2 provenance", v2)
+	}
+}
+
+func TestLoadInstalledIntentRecoversFromManagedEnv(t *testing.T) {
+	t.Parallel()
+
+	provenance := LifecycleProvenance{
+		Version:      1,
+		Mode:         supportedMode,
+		InstalledBin: "/usr/local/bin/regixtry",
+		ServiceName:  "regixtry",
+		StatePath:    "/etc/regixtry/regixtry-lifecycle-state.json",
+		ManagedPaths: []string{"/etc/regixtry/regixtry.env", "/etc/systemd/system/regixtry.service", "/var/lib/regixtry/metadata.db", "/var/lib/regixtry/content", "/etc/regixtry/bootstrap-state.json"},
+	}
+	envValues := map[string]string{
+		"REGISTRY_ADDR":              "127.0.0.1:5000",
+		"REGISTRY_PUBLIC_URL":        "http://127.0.0.1:5000",
+		"REGISTRY_STORAGE_ROOT":      "/var/lib/regixtry",
+		"REGISTRY_DATABASE_PATH":     "/var/lib/regixtry/metadata.db",
+		"REGISTRY_SERVICE_NAME":      "regixtry",
+		"REGISTRY_AUTH_POSTGRES_DSN": "postgres://regixtry:secret@127.0.0.1:5432/regixtry_auth?sslmode=disable",
+	}
+
+	intent, err := loadInstalledIntent(provenance, envValues)
+	if err != nil {
+		t.Fatalf("loadInstalledIntent() error = %v", err)
+	}
+	want := InstalledIntent{
+		Mode:               supportedMode,
+		Addr:               "127.0.0.1:5000",
+		PublicURL:          "http://127.0.0.1:5000",
+		RuntimeTLSMode:     RuntimeTLSModeLocalHTTP,
+		AuthPostgresDSN:    envValues["REGISTRY_AUTH_POSTGRES_DSN"],
+		StorageRoot:        "/var/lib/regixtry",
+		DatabasePath:       "/var/lib/regixtry/metadata.db",
+		ContentPath:        "/var/lib/regixtry/content",
+		BootstrapStatePath: "/etc/regixtry/bootstrap-state.json",
+		EnvPath:            "/etc/regixtry/regixtry.env",
+		UnitPath:           "/etc/systemd/system/regixtry.service",
+		BinaryPath:         "/usr/local/bin/regixtry",
+		ServiceName:        "regixtry",
+	}
+	if !reflect.DeepEqual(intent, want) {
+		t.Fatalf("intent = %#v, want %#v", intent, want)
+	}
+}
+
+func TestLoadInstalledIntentReportsMissingLifecycleCriticalValues(t *testing.T) {
+	t.Parallel()
+
+	_, err := loadInstalledIntent(LifecycleProvenance{
+		Version:      1,
+		Mode:         supportedMode,
+		InstalledBin: "/usr/local/bin/regixtry",
+		ServiceName:  "regixtry",
+		StatePath:    "/etc/regixtry/regixtry-lifecycle-state.json",
+		ManagedPaths: []string{"/etc/regixtry/regixtry.env"},
+	}, map[string]string{"REGISTRY_STORAGE_ROOT": "/var/lib/regixtry"})
+	if err == nil {
+		t.Fatal("loadInstalledIntent() error = nil, want missing intent guidance")
+	}
+	var missingErr MissingIntentError
+	if !errors.As(err, &missingErr) {
+		t.Fatalf("loadInstalledIntent() error = %v, want MissingIntentError", err)
+	}
+	if !strings.Contains(err.Error(), "public_url") || !strings.Contains(err.Error(), "addr") {
+		t.Fatalf("loadInstalledIntent() error = %v, want named missing fields", err)
+	}
+}
 
 func TestBootstrapperUninstallFailsWhenProvenanceIsMissing(t *testing.T) {
 	t.Parallel()

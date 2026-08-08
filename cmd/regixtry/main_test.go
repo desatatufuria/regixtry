@@ -1107,10 +1107,52 @@ func TestRunUninstallPermissionDeniedReturnsSudoSafeRerunGuidance(t *testing.T) 
 	}
 }
 
-func TestRunUpgradeReportsDeferredLifecycleStatus(t *testing.T) {
+func TestRunUpgradePassesConfigToGoOwnedLifecycleRunner(t *testing.T) {
+	runner := &stubBootstrapRunner{upgradeResult: installlinux.UpgradeResult{TargetRef: "v1.2.3", ToVersion: "1.2.3", ProvenancePath: "/etc/regixtry/regixtry-lifecycle-state.json"}}
+	restore := swapBootstrapRunner(t, runner)
+	defer restore()
+
+	stdout := &bytes.Buffer{}
+	err := runWithIO(context.Background(), []string{"upgrade", "--ref", "v1.2.3", "--yes", "--state-path", "/tmp/lifecycle.json"}, strings.NewReader(""), stdout, io.Discard)
+	if err != nil {
+		t.Fatalf("runWithIO(upgrade) error = %v", err)
+	}
+	if runner.upgradeCalls != 1 {
+		t.Fatalf("upgradeCalls = %d, want 1", runner.upgradeCalls)
+	}
+	if runner.upgradeConfig.Ref != "v1.2.3" || runner.upgradeConfig.ProvenancePath != "/tmp/lifecycle.json" || !runner.upgradeConfig.AssumeYes {
+		t.Fatalf("upgradeConfig = %#v, want parsed upgrade config", runner.upgradeConfig)
+	}
+	if !strings.Contains(stdout.String(), "Upgrade complete:") {
+		t.Fatalf("stdout = %q, want upgrade success message", stdout.String())
+	}
+}
+
+func TestRunUpgradeRejectsUnmanagedTargetTruthfully(t *testing.T) {
+	runner := &stubBootstrapRunner{upgradeErr: errors.New("lifecycle provenance is missing service_name")}
+	restore := swapBootstrapRunner(t, runner)
+	defer restore()
+
 	err := runWithIO(context.Background(), []string{"upgrade"}, strings.NewReader(""), io.Discard, io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "upgrade is deferred for this slice") {
-		t.Fatalf("runWithIO(upgrade) error = %v, want deferred upgrade message", err)
+	if err == nil || !strings.Contains(err.Error(), "lifecycle provenance is missing service_name") {
+		t.Fatalf("runWithIO(upgrade) error = %v, want unmanaged upgrade failure", err)
+	}
+}
+
+func TestRunUpgradeSameShapeDoesNotPromptAndPreservesNonInteractiveFlow(t *testing.T) {
+	runner := &stubBootstrapRunner{upgradeResult: installlinux.UpgradeResult{TargetRef: "v1.2.3", ToVersion: "1.2.3", ProvenancePath: "/etc/regixtry/regixtry-lifecycle-state.json"}}
+	restoreRunner := swapBootstrapRunner(t, runner)
+	defer restoreRunner()
+	restoreTTY := swapInteractiveTTYDetector(t, false)
+	defer restoreTTY()
+
+	stdout := &bytes.Buffer{}
+	err := runWithIO(context.Background(), []string{"upgrade"}, strings.NewReader(""), stdout, io.Discard)
+	if err != nil {
+		t.Fatalf("runWithIO(upgrade) error = %v", err)
+	}
+	if strings.Contains(stdout.String(), "Choice:") || strings.Contains(stdout.String(), "Confirm") {
+		t.Fatalf("stdout = %q, want non-interactive same-shape upgrade", stdout.String())
 	}
 }
 
@@ -1772,16 +1814,20 @@ type stubBootstrapRunner struct {
 	runHook             func(installlinux.BootstrapConfig) error
 	rollbackErr         error
 	uninstallErr        error
+	upgradeErr          error
 	planProvenanceErr   error
 	saveProvenanceErr   error
 	lastConfig          installlinux.BootstrapConfig
+	upgradeConfig       installlinux.UpgradeConfig
 	plannedProvenance   installlinux.LifecycleProvenance
 	savedProvenance     installlinux.LifecycleProvenance
 	uninstallReport     installlinux.UninstallReport
+	upgradeResult       installlinux.UpgradeResult
 	uninstallPath       string
 	runCalls            int
 	rollbackCalls       int
 	uninstallCalls      int
+	upgradeCalls        int
 	saveProvenanceCalls int
 }
 
@@ -1804,6 +1850,12 @@ func (s *stubBootstrapRunner) Uninstall(_ context.Context, provenancePath string
 	s.uninstallPath = provenancePath
 	s.uninstallCalls++
 	return s.uninstallReport, s.uninstallErr
+}
+
+func (s *stubBootstrapRunner) Upgrade(_ context.Context, cfg installlinux.UpgradeConfig) (installlinux.UpgradeResult, error) {
+	s.upgradeConfig = cfg
+	s.upgradeCalls++
+	return s.upgradeResult, s.upgradeErr
 }
 
 func (s *stubBootstrapRunner) PlanLifecycleProvenance(cfg installlinux.BootstrapConfig) (installlinux.LifecycleProvenance, error) {
