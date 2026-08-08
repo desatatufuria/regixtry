@@ -384,7 +384,12 @@ prepare_fixtures() {
 
   if [[ -n "${RELEASE_DIST_DIR}" ]]; then
     local resolved_assets=()
-    mapfile -t resolved_assets < <(resolve_release_dist_assets "${RELEASE_DIST_DIR}")
+    if ! mapfile -t resolved_assets < <(resolve_release_dist_assets "${RELEASE_DIST_DIR}"); then
+      fail "failed to resolve release assets from ${RELEASE_DIST_DIR}"
+    fi
+    if [[ ${#resolved_assets[@]} -ne 3 ]]; then
+      fail "expected 3 resolved release assets from ${RELEASE_DIST_DIR}, found ${#resolved_assets[@]}"
+    fi
     amd64_asset="$(basename "${resolved_assets[0]}")"
     arm64_asset="$(basename "${resolved_assets[1]}")"
     checksum_asset="$(basename "${resolved_assets[2]}")"
