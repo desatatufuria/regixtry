@@ -75,6 +75,7 @@ const (
 	defaultWriteTimeout      = 30 * time.Second
 	defaultIdleTimeout       = 120 * time.Second
 	defaultShutdownTimeout   = 10 * time.Second
+	defaultSetupPublicURL    = "http://127.0.0.1:5000"
 )
 
 func releaseMetadata() string {
@@ -511,8 +512,14 @@ func runSetup(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 	if err != nil {
 		return err
 	}
+	if stdin == nil {
+		stdin = strings.NewReader("")
+	}
 
-	mode, err := resolveSetupMode(cfg.Mode, stdin, stdout)
+	interactive := isInteractiveTTYPair(stdin, stdout)
+	reader := bufio.NewReader(stdin)
+
+	mode, selectedInteractively, err := resolveSetupMode(cfg.Mode, interactive, reader, stdout)
 	if err != nil {
 		return err
 	}
@@ -522,6 +529,12 @@ func runSetup(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 		return printBinaryOnlyGuidance(stdout)
 	case "daemon-sqlite":
 		cfg.Mode = mode
+		if selectedInteractively && strings.TrimSpace(cfg.PublicURL) == "" {
+			cfg.PublicURL, err = promptSetupPublicURL(reader, stdout, defaultSetupPublicURL)
+			if err != nil {
+				return err
+			}
+		}
 		if err := installlinux.ValidateConfig(cfg); err != nil {
 			return err
 		}
@@ -566,19 +579,19 @@ func runUninstall(ctx context.Context, args []string, stdout io.Writer) error {
 	return uninstallErr
 }
 
-func resolveSetupMode(rawMode string, stdin io.Reader, stdout io.Writer) (string, error) {
+func resolveSetupMode(rawMode string, interactive bool, reader *bufio.Reader, stdout io.Writer) (string, bool, error) {
 	mode := strings.TrimSpace(rawMode)
 	if mode != "" {
 		switch mode {
 		case "daemon-sqlite", "binary-only":
-			return mode, nil
+			return mode, false, nil
 		default:
-			return "", fmt.Errorf("unsupported setup mode %q", mode)
+			return "", false, fmt.Errorf("unsupported setup mode %q", mode)
 		}
 	}
 
-	if !isInteractiveTTYPair(stdin, stdout) {
-		return "", errors.New("setup mode is required without a TTY; rerun with --mode binary-only or --mode daemon-sqlite")
+	if !interactive {
+		return "", false, errors.New("setup mode is required without a TTY; rerun with --mode binary-only or --mode daemon-sqlite")
 	}
 
 	if stdout != nil {
@@ -588,20 +601,41 @@ func resolveSetupMode(rawMode string, stdin io.Reader, stdout io.Writer) (string
 		_, _ = fmt.Fprint(stdout, "Choice: ")
 	}
 
-	reader := bufio.NewReader(stdin)
 	selection, err := reader.ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
-		return "", fmt.Errorf("read setup mode selection: %w", err)
+		return "", false, fmt.Errorf("read setup mode selection: %w", err)
 	}
 
 	switch strings.ToLower(strings.TrimSpace(selection)) {
 	case "1", "binary-only":
-		return "binary-only", nil
+		return "binary-only", true, nil
 	case "2", "daemon-sqlite":
-		return "daemon-sqlite", nil
+		return "daemon-sqlite", true, nil
 	default:
-		return "", fmt.Errorf("unsupported setup selection %q", strings.TrimSpace(selection))
+		return "", false, fmt.Errorf("unsupported setup selection %q", strings.TrimSpace(selection))
 	}
+}
+
+func promptSetupPublicURL(reader *bufio.Reader, stdout io.Writer, defaultValue string) (string, error) {
+	if stdout != nil {
+		if strings.TrimSpace(defaultValue) != "" {
+			_, _ = fmt.Fprintf(stdout, "Public URL [%s]: ", defaultValue)
+		} else {
+			_, _ = fmt.Fprint(stdout, "Public URL: ")
+		}
+	}
+
+	value, err := reader.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", fmt.Errorf("read public URL: %w", err)
+	}
+
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return strings.TrimSpace(defaultValue), nil
+	}
+
+	return trimmed, nil
 }
 
 func printBinaryOnlyGuidance(stdout io.Writer) error {

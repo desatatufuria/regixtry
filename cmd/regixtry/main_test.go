@@ -425,6 +425,30 @@ func TestBootstrapParseConfigSupportsNoStart(t *testing.T) {
 	}
 }
 
+func TestParseSetupConfigPublicURLPrefersFlagOverEnv(t *testing.T) {
+	t.Setenv("REGISTRY_PUBLIC_URL", "https://env.example.com")
+
+	cfg, err := parseSetupConfig([]string{"-public-url", "https://flag.example.com"})
+	if err != nil {
+		t.Fatalf("parseSetupConfig() error = %v", err)
+	}
+	if cfg.PublicURL != "https://flag.example.com" {
+		t.Fatalf("PublicURL = %q, want explicit flag value", cfg.PublicURL)
+	}
+}
+
+func TestParseSetupConfigUsesEnvPublicURLWhenFlagMissing(t *testing.T) {
+	t.Setenv("REGISTRY_PUBLIC_URL", "https://env.example.com")
+
+	cfg, err := parseSetupConfig(nil)
+	if err != nil {
+		t.Fatalf("parseSetupConfig() error = %v", err)
+	}
+	if cfg.PublicURL != "https://env.example.com" {
+		t.Fatalf("PublicURL = %q, want environment value", cfg.PublicURL)
+	}
+}
+
 func TestRunSetupRequiresModeWithoutTTY(t *testing.T) {
 	restore := swapInteractiveTTYDetector(t, false)
 	defer restore()
@@ -449,6 +473,84 @@ func TestRunSetupInteractivePromptSupportsBinaryOnly(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "Binary placement is complete, but setup is not yet complete.") {
 		t.Fatalf("stdout = %q, want binary-only guidance", stdout.String())
+	}
+}
+
+func TestRunSetupInteractivePromptCollectsPublicURLForDaemonSQLite(t *testing.T) {
+	runner := &stubBootstrapRunner{
+		plannedProvenance: installlinux.LifecycleProvenance{
+			Version:      1,
+			Mode:         "daemon-sqlite",
+			InstalledBin: "/usr/local/bin/regixtry",
+			ServiceName:  "regixtry",
+			StatePath:    "/etc/regixtry/regixtry-lifecycle-state.json",
+		},
+	}
+	restoreRunner := swapBootstrapRunner(t, runner)
+	defer restoreRunner()
+
+	restoreTTY := swapInteractiveTTYDetector(t, true)
+	defer restoreTTY()
+
+	stdout := &bytes.Buffer{}
+	err := runWithIO(context.Background(), []string{"setup"}, strings.NewReader("2\nhttps://regixtry.example.com\n"), stdout, io.Discard)
+	if err != nil {
+		t.Fatalf("runWithIO(setup prompt) error = %v", err)
+	}
+	if runner.lastConfig.PublicURL != "https://regixtry.example.com" {
+		t.Fatalf("lastConfig.PublicURL = %q, want prompted public URL", runner.lastConfig.PublicURL)
+	}
+	if !strings.Contains(stdout.String(), "Public URL ["+defaultSetupPublicURL+"]: ") {
+		t.Fatalf("stdout = %q, want public URL prompt with default", stdout.String())
+	}
+}
+
+func TestRunSetupInteractivePromptDefaultsPublicURLForDaemonSQLite(t *testing.T) {
+	runner := &stubBootstrapRunner{
+		plannedProvenance: installlinux.LifecycleProvenance{
+			Version:      1,
+			Mode:         "daemon-sqlite",
+			InstalledBin: "/usr/local/bin/regixtry",
+			ServiceName:  "regixtry",
+			StatePath:    "/etc/regixtry/regixtry-lifecycle-state.json",
+		},
+	}
+	restoreRunner := swapBootstrapRunner(t, runner)
+	defer restoreRunner()
+
+	restoreTTY := swapInteractiveTTYDetector(t, true)
+	defer restoreTTY()
+
+	stdout := &bytes.Buffer{}
+	err := runWithIO(context.Background(), []string{"setup"}, strings.NewReader("2\n\n"), stdout, io.Discard)
+	if err != nil {
+		t.Fatalf("runWithIO(setup prompt) error = %v", err)
+	}
+	if runner.lastConfig.PublicURL != defaultSetupPublicURL {
+		t.Fatalf("lastConfig.PublicURL = %q, want default public URL %q", runner.lastConfig.PublicURL, defaultSetupPublicURL)
+	}
+	if !strings.Contains(stdout.String(), "Public URL ["+defaultSetupPublicURL+"]: ") {
+		t.Fatalf("stdout = %q, want default public URL prompt", stdout.String())
+	}
+}
+
+func TestRunSetupInteractivePromptValidatesPromptedPublicURL(t *testing.T) {
+	restoreTTY := swapInteractiveTTYDetector(t, true)
+	defer restoreTTY()
+
+	err := runWithIO(context.Background(), []string{"setup"}, strings.NewReader("2\nnot-a-url\n"), io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "public URL must be an absolute http(s) URL") {
+		t.Fatalf("runWithIO(setup prompt) error = %v, want prompted public URL validation failure", err)
+	}
+}
+
+func TestRunSetupDaemonSQLiteWithoutPublicURLFailsWithoutTTY(t *testing.T) {
+	restoreTTY := swapInteractiveTTYDetector(t, false)
+	defer restoreTTY()
+
+	err := runWithIO(context.Background(), []string{"setup", "-mode", "daemon-sqlite"}, strings.NewReader(""), io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "public URL is required") {
+		t.Fatalf("runWithIO(setup daemon-sqlite) error = %v, want explicit public URL requirement", err)
 	}
 }
 
