@@ -9,9 +9,9 @@ import (
 	"regixtry/internal/ports"
 )
 
-func renderAdminWorkspace(current screen, session AdminSession, view AdminViewState, status string, now time.Time) string {
+func renderAdminWorkspace(current screen, session AdminSession, view AdminViewState, knownRepositories []string, status string, now time.Time) string {
 	theme := newAdminTheme()
-	context, body, help := renderAdminScreen(theme, current, session, view, now)
+	context, body, help := renderAdminScreen(theme, current, session, view, knownRepositories, now)
 	sections := []string{
 		theme.title.Render("Regixtry Admin"),
 		theme.context.Render(context),
@@ -27,7 +27,7 @@ func renderAdminWorkspace(current screen, session AdminSession, view AdminViewSt
 	return theme.app.Render(lipgloss.JoinVertical(lipgloss.Left, sections...))
 }
 
-func renderAdminScreen(theme adminTheme, current screen, session AdminSession, view AdminViewState, now time.Time) (string, string, string) {
+func renderAdminScreen(theme adminTheme, current screen, session AdminSession, view AdminViewState, knownRepositories []string, now time.Time) (string, string, string) {
 	switch current {
 	case screenAdminCreateUser:
 		return "Users / Create User", renderAdminCreateUserScreen(theme, view), "Enter: create user | Tab: next field | Space: toggle | Esc: cancel"
@@ -38,7 +38,7 @@ func renderAdminScreen(theme adminTheme, current screen, session AdminSession, v
 	case screenAdminEditUserGrants:
 		return fmt.Sprintf("Users / %s / Grants", selectedAdminUsername(view)), renderAdminGrantsScreen(theme, view), "n: add grant | e: edit selected grant | x: remove grant | t: tokens | Esc: back | q: quit"
 	case screenAdminAddGrant:
-		return fmt.Sprintf("Users / %s / Grants / Add Grant", selectedAdminUsername(view)), renderAdminAddGrantScreen(theme, view), "Enter: save grant | Tab: next field | Space: cycle role | Esc: cancel"
+		return fmt.Sprintf("Users / %s / Grants / Add Grant", selectedAdminUsername(view)), renderAdminAddGrantScreen(theme, view, knownRepositories), "Up/Down: pick repository | Enter: accept or save | Tab: next field | Space: cycle role | Esc: cancel"
 	case screenAdminEditUserTokens:
 		return fmt.Sprintf("Users / %s / Tokens", selectedAdminUsername(view)), renderAdminTokensScreen(theme, view), "n: create token | x: revoke token | g: grants | Esc: back | q: quit"
 	case screenAdminCreateToken:
@@ -152,13 +152,37 @@ func renderAdminGrantsScreen(theme adminTheme, view AdminViewState) string {
 	return theme.section.Render(strings.Join(lines, "\n"))
 }
 
-func renderAdminAddGrantScreen(theme adminTheme, view AdminViewState) string {
-	return theme.section.Render(strings.Join([]string{
+func renderAdminAddGrantScreen(theme adminTheme, view AdminViewState, knownRepositories []string) string {
+	lines := []string{
 		theme.subheading.Render("Grant Details"),
 		fmt.Sprintf("User: %s", selectedAdminUsername(view)),
 		renderTextField(theme, "Repository", view.GrantForm.Repository, view.GrantForm.Focus == adminGrantFieldRepository),
 		renderTextField(theme, "Role", string(view.GrantForm.Role), view.GrantForm.Focus == adminGrantFieldRole),
-	}, "\n"))
+	}
+	suggestions := grantRepositorySuggestions(view.GrantForm, knownRepositories)
+	if len(suggestions) == 0 {
+		lines = append(lines, theme.muted.Render("No known repositories match the current filter."))
+	} else {
+		selected := boundedIndex(view.GrantForm.RepositorySuggestion, len(suggestions))
+		start := 0
+		if selected >= 5 {
+			start = selected - 4
+		}
+		end := start + 5
+		if end > len(suggestions) {
+			end = len(suggestions)
+		}
+		lines = append(lines, "", theme.subheading.Render("Known Repositories"))
+		for index := start; index < end; index++ {
+			repository := suggestions[index]
+			label := repository
+			if index == selected {
+				label = theme.selected.Render(label)
+			}
+			lines = append(lines, label)
+		}
+	}
+	return theme.section.Render(strings.Join(lines, "\n"))
 }
 
 func renderAdminTokensScreen(theme adminTheme, view AdminViewState) string {

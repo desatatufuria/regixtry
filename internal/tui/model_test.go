@@ -476,6 +476,209 @@ func TestModelSearchPreservesSelectionByIDAndEnterOpensEditUser(t *testing.T) {
 	}
 }
 
+func TestModelTypingLInEditingInputsDoesNotLogout(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 8, 12, 0, 0, 0, time.UTC)
+	baseSession := AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)}
+	user := ports.AdminUser{ID: "u-1", Username: "alice", IsAdmin: true, Enabled: true}
+	grant := ports.AdminRepoGrant{UserID: "u-1", Repository: regixtrydomain.MustParseRepositoryRef("library/alpine"), Role: domainauth.RepoRoleReader}
+
+	tests := []struct {
+		name   string
+		setup  func() Model
+		assert func(t *testing.T, got Model)
+	}{
+		{
+			name: "admin login username",
+			setup: func() Model {
+				model := newAdminReadyModel(t, &fakeAdminClient{})
+				model.screen = screenAdminLogin
+				model.adminAuth = adminAuthStateAuthenticated
+				model.adminSession = baseSession
+				model.adminLogin.Focus = loginFieldUsername
+				return model
+			},
+			assert: func(t *testing.T, got Model) {
+				if got.screen != screenAdminLogin {
+					t.Fatalf("screen = %q, want %q", got.screen, screenAdminLogin)
+				}
+				if got.adminLogin.Username != "l" {
+					t.Fatalf("username = %q, want %q", got.adminLogin.Username, "l")
+				}
+			},
+		},
+		{
+			name: "create user username",
+			setup: func() Model {
+				model := newAdminReadyModel(t, &fakeAdminClient{})
+				model.screen = screenAdminCreateUser
+				model.adminAuth = adminAuthStateAuthenticated
+				model.adminSession = baseSession
+				model.adminView.CreateUserForm.Focus = adminCreateUserFieldUsername
+				return model
+			},
+			assert: func(t *testing.T, got Model) {
+				if got.adminView.CreateUserForm.Username != "l" {
+					t.Fatalf("username = %q, want %q", got.adminView.CreateUserForm.Username, "l")
+				}
+			},
+		},
+		{
+			name: "change password",
+			setup: func() Model {
+				model := newAdminReadyModel(t, &fakeAdminClient{})
+				model.screen = screenAdminChangePassword
+				model.adminAuth = adminAuthStateAuthenticated
+				model.adminSession = baseSession
+				model.adminView.SelectedUserID = user.ID
+				model.adminView.SelectedUsername = user.Username
+				return model
+			},
+			assert: func(t *testing.T, got Model) {
+				if got.adminView.ResetPasswordForm.NewPassword != "l" {
+					t.Fatalf("new password = %q, want %q", got.adminView.ResetPasswordForm.NewPassword, "l")
+				}
+			},
+		},
+		{
+			name: "grant repository",
+			setup: func() Model {
+				model := newAdminReadyModel(t, &fakeAdminClient{})
+				model.screen = screenAdminAddGrant
+				model.adminAuth = adminAuthStateAuthenticated
+				model.adminSession = baseSession
+				model.adminView.SelectedUserID = user.ID
+				model.adminView.SelectedUsername = user.Username
+				model.adminView.GrantForm.Focus = adminGrantFieldRepository
+				return model
+			},
+			assert: func(t *testing.T, got Model) {
+				if got.adminView.GrantForm.Repository != "l" {
+					t.Fatalf("repository = %q, want %q", got.adminView.GrantForm.Repository, "l")
+				}
+			},
+		},
+		{
+			name: "token name",
+			setup: func() Model {
+				model := newAdminReadyModel(t, &fakeAdminClient{})
+				model.screen = screenAdminCreateToken
+				model.adminAuth = adminAuthStateAuthenticated
+				model.adminSession = baseSession
+				model.adminView.SelectedUserID = user.ID
+				model.adminView.SelectedUsername = user.Username
+				model.adminView.TokenForm.Focus = adminTokenFieldName
+				return model
+			},
+			assert: func(t *testing.T, got Model) {
+				if got.adminView.TokenForm.Name != "l" {
+					t.Fatalf("name = %q, want %q", got.adminView.TokenForm.Name, "l")
+				}
+			},
+		},
+		{
+			name: "user search",
+			setup: func() Model {
+				model := newAdminReadyModel(t, &fakeAdminClient{users: []ports.AdminUser{user}})
+				model.screen = screenAdminUsers
+				model.adminAuth = adminAuthStateAuthenticated
+				model.adminSession = baseSession
+				model.adminView.Users = []ports.AdminUser{user}
+				model.adminView.UserSearchActive = true
+				return model
+			},
+			assert: func(t *testing.T, got Model) {
+				if got.adminView.UserSearchQuery != "l" {
+					t.Fatalf("query = %q, want %q", got.adminView.UserSearchQuery, "l")
+				}
+				if !got.adminView.UserSearchActive {
+					t.Fatal("expected search to stay active")
+				}
+			},
+		},
+		{
+			name: "grant edit repository",
+			setup: func() Model {
+				model := newAdminReadyModel(t, &fakeAdminClient{})
+				model.screen = screenAdminAddGrant
+				model.adminAuth = adminAuthStateAuthenticated
+				model.adminSession = baseSession
+				model.adminView.SelectedUserID = user.ID
+				model.adminView.SelectedUsername = user.Username
+				model.adminView.Grants = []ports.AdminRepoGrant{grant}
+				model.adminView.GrantForm.Repository = grant.Repository.String()
+				model.adminView.GrantForm.Focus = adminGrantFieldRepository
+				return model
+			},
+			assert: func(t *testing.T, got Model) {
+				if got.adminView.GrantForm.Repository != "library/alpinel" {
+					t.Fatalf("repository = %q, want appended input", got.adminView.GrantForm.Repository)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			updated := runKey(t, tt.setup(), "l")
+			if updated.screen == screenAdminLogin && updated.status == "Logged out." {
+				t.Fatalf("unexpected logout: %+v", updated)
+			}
+			if got, want := updated.adminSession.BearerToken, baseSession.BearerToken; got != want {
+				t.Fatalf("bearer token = %q, want %q", got, want)
+			}
+			tt.assert(t, updated)
+		})
+	}
+}
+
+func TestModelGrantRepositorySuggestionsFilterAndSelect(t *testing.T) {
+	t.Parallel()
+
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: time.Date(2026, time.August, 8, 13, 0, 0, 0, time.UTC)},
+		users:        []ports.AdminUser{{ID: "u-1", Username: "alice", IsAdmin: true, Enabled: true}},
+	}
+	model := newAdminReadyModelWithCatalog(t, []string{"library/alpine", "team/demo", "team/backend", "ops/console"}, adminClient)
+	updated := runAdminLogin(t, model, "operator", "secret-pass")
+	updated = runKey(t, updated, "enter")
+	updated = runKey(t, updated, "g")
+	updated = runKey(t, updated, "n")
+
+	initialView := updated.View()
+	if !strings.Contains(initialView, "Known Repositories") || !strings.Contains(initialView, "team/demo") || !strings.Contains(initialView, "team/backend") {
+		t.Fatalf("view = %q, want known repository suggestions", initialView)
+	}
+
+	updated = runKey(t, updated, "tea")
+	filteredView := updated.View()
+	if strings.Contains(filteredView, "library/alpine") {
+		t.Fatalf("view = %q, want non-matching repository hidden", filteredView)
+	}
+	if !strings.Contains(filteredView, "team/demo") || !strings.Contains(filteredView, "team/backend") {
+		t.Fatalf("view = %q, want filtered suggestions", filteredView)
+	}
+
+	updated = runKey(t, updated, "down")
+	updated = runKey(t, updated, "enter")
+	if got, want := updated.adminView.GrantForm.Repository, "team/backend"; got != want {
+		t.Fatalf("repository = %q, want %q", got, want)
+	}
+	if got, want := updated.adminView.GrantForm.Focus, adminGrantFieldRole; got != want {
+		t.Fatalf("focus = %v, want %v", got, want)
+	}
+
+	updated = runKey(t, updated, "enter")
+	if adminClient.putGrantCalls != 1 {
+		t.Fatalf("putGrantCalls = %d, want 1", adminClient.putGrantCalls)
+	}
+	if got, want := adminClient.lastGrantInput.Repository, "team/backend"; got != want {
+		t.Fatalf("grant repository = %q, want %q", got, want)
+	}
+}
+
 type fakeQueryService struct {
 	catalog   appregixtry.CatalogResult
 	tags      map[string]appregixtry.TagsResult
@@ -683,6 +886,12 @@ func runCmd(t *testing.T, model Model, cmd tea.Cmd) Model {
 func newAdminReadyModel(t *testing.T, adminClient AdminClient) Model {
 	t.Helper()
 	model := NewModel(&fakeQueryService{catalog: appregixtry.CatalogResult{Repositories: []string{"library/alpine"}}}, WithAdminClient(adminClient))
+	return runCmd(t, model, model.Init())
+}
+
+func newAdminReadyModelWithCatalog(t *testing.T, repositories []string, adminClient AdminClient) Model {
+	t.Helper()
+	model := NewModel(&fakeQueryService{catalog: appregixtry.CatalogResult{Repositories: append([]string(nil), repositories...)}}, WithAdminClient(adminClient))
 	return runCmd(t, model, model.Init())
 }
 

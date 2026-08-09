@@ -526,7 +526,7 @@ func (m Model) View() string {
 		body.WriteString(m.loadingText)
 		body.WriteString("\n\nq: quit")
 	case screenAdminUsers, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken:
-		body.WriteString(renderAdminWorkspace(m.screen, m.adminSession, m.adminView, m.status, m.now()))
+		body.WriteString(renderAdminWorkspace(m.screen, m.adminSession, m.adminView, m.repositories.Items, m.status, m.now()))
 	}
 
 	if m.showMutationNotice {
@@ -616,7 +616,7 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateAdminKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if isRuneKey(msg, 'l') && m.adminAuth == adminAuthStateAuthenticated && !m.adminView.ConfirmModal.Active() {
+	if isRuneKey(msg, 'l') && m.canLogoutAdminFromCurrentScreen() {
 		return m.logoutAdmin(), nil
 	}
 
@@ -1042,6 +1042,18 @@ func (m Model) updateGrantFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case isEscKey(msg):
 		m.screen = screenAdminEditUserGrants
 		return m, nil
+	case isMoveUpKey(msg):
+		if m.adminView.GrantForm.Focus == adminGrantFieldRepository {
+			suggestions := grantRepositorySuggestions(m.adminView.GrantForm, m.repositories.Items)
+			m.adminView.GrantForm.RepositorySuggestion = boundedIndex(m.adminView.GrantForm.RepositorySuggestion-1, len(suggestions))
+			return m, nil
+		}
+	case isMoveDownKey(msg):
+		if m.adminView.GrantForm.Focus == adminGrantFieldRepository {
+			suggestions := grantRepositorySuggestions(m.adminView.GrantForm, m.repositories.Items)
+			m.adminView.GrantForm.RepositorySuggestion = boundedIndex(m.adminView.GrantForm.RepositorySuggestion+1, len(suggestions))
+			return m, nil
+		}
 	case isTabKey(msg):
 		if m.adminView.GrantForm.Focus == adminGrantFieldRepository {
 			m.adminView.GrantForm.Focus = adminGrantFieldRole
@@ -1052,6 +1064,7 @@ func (m Model) updateGrantFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case isBackspaceKey(msg):
 		if m.adminView.GrantForm.Focus == adminGrantFieldRepository {
 			m.adminView.GrantForm.Repository = trimLastRune(m.adminView.GrantForm.Repository)
+			m.adminView.GrantForm.RepositorySuggestion = 0
 		}
 		return m, nil
 	case isRuneKey(msg, ' '):
@@ -1060,6 +1073,19 @@ func (m Model) updateGrantFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case isEnterKey(msg):
+		if m.adminView.GrantForm.Focus == adminGrantFieldRepository {
+			suggestions := grantRepositorySuggestions(m.adminView.GrantForm, m.repositories.Items)
+			if len(suggestions) > 0 {
+				m.adminView.GrantForm.Repository = suggestions[boundedIndex(m.adminView.GrantForm.RepositorySuggestion, len(suggestions))]
+			}
+			if strings.TrimSpace(m.adminView.GrantForm.Repository) == "" {
+				m.status = "Repository is required."
+				return m, nil
+			}
+			m.adminView.GrantForm.Focus = adminGrantFieldRole
+			m.adminView.GrantForm.RepositorySuggestion = 0
+			return m, nil
+		}
 		if strings.TrimSpace(m.adminView.SelectedUserID) == "" {
 			m.status = "Select a user to manage grants."
 			return m, nil
@@ -1075,6 +1101,7 @@ func (m Model) updateGrantFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if msg.Type == tea.KeyRunes && m.adminView.GrantForm.Focus == adminGrantFieldRepository {
 		m.adminView.GrantForm.Repository += string(msg.Runes)
+		m.adminView.GrantForm.RepositorySuggestion = 0
 		return m, nil
 	}
 	return m, nil
@@ -1545,6 +1572,42 @@ func isAdminPrincipalScreen(current screen) bool {
 	default:
 		return false
 	}
+}
+
+func (m Model) canLogoutAdminFromCurrentScreen() bool {
+	if m.adminAuth != adminAuthStateAuthenticated || m.adminView.ConfirmModal.Active() {
+		return false
+	}
+
+	switch m.screen {
+	case screenAdminUsers:
+		return !m.adminView.UserSearchActive
+	case screenAdminEditUser, screenAdminEditUserGrants, screenAdminEditUserTokens:
+		return true
+	default:
+		return false
+	}
+}
+
+func grantRepositorySuggestions(form adminGrantForm, repositories []string) []string {
+	query := strings.ToLower(strings.TrimSpace(form.Repository))
+	seen := make(map[string]struct{}, len(repositories))
+	suggestions := make([]string, 0, len(repositories))
+	for _, repository := range repositories {
+		repository = strings.TrimSpace(repository)
+		if repository == "" {
+			continue
+		}
+		if _, ok := seen[repository]; ok {
+			continue
+		}
+		seen[repository] = struct{}{}
+		if query != "" && !strings.Contains(strings.ToLower(repository), query) {
+			continue
+		}
+		suggestions = append(suggestions, repository)
+	}
+	return suggestions
 }
 
 func renderList(items []string, selected int) string {

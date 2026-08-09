@@ -64,9 +64,10 @@ type adminResetPasswordForm struct {
 }
 
 type adminGrantForm struct {
-	Repository string
-	Role       domainauth.RepoRole
-	Focus      adminGrantField
+	Repository           string
+	Role                 domainauth.RepoRole
+	Focus                adminGrantField
+	RepositorySuggestion int
 }
 
 type adminTokenForm struct {
