@@ -1683,6 +1683,9 @@ func runTUI(cfg tuiConfig, stdin io.Reader, stdout io.Writer) error {
 		}
 		modelOpts = append(modelOpts, tui.WithAdminClient(adminClient))
 	}
+	if tuiRequiresStartupLogin(cfg) {
+		modelOpts = append(modelOpts, tui.WithStartupLogin())
+	}
 
 	service := appregixtry.NewService(
 		blobStore,
@@ -1694,8 +1697,10 @@ func runTUI(cfg tuiConfig, stdin io.Reader, stdout io.Writer) error {
 
 	if cfg.Snapshot {
 		model := tui.NewModel(service, modelOpts...)
-		msg := model.Init()()
-		updated, _ := model.Update(msg)
+		updated := tea.Model(model)
+		if cmd := model.Init(); cmd != nil {
+			updated, _ = model.Update(cmd())
+		}
 		if stdout != nil {
 			_, _ = io.WriteString(stdout, updated.(tui.Model).View())
 		}
@@ -1710,6 +1715,10 @@ func runTUI(cfg tuiConfig, stdin io.Reader, stdout io.Writer) error {
 
 	_, err = program.Run()
 	return err
+}
+
+func tuiRequiresStartupLogin(cfg tuiConfig) bool {
+	return strings.TrimSpace(cfg.AuthPostgresDSN) != "" && strings.TrimSpace(cfg.APIBaseURL) != ""
 }
 
 func runBootstrapAdmin(ctx context.Context, cfg bootstrapAdminConfig, stdout io.Writer) error {

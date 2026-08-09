@@ -12,19 +12,11 @@ import (
 func renderAdminWorkspace(current screen, session AdminSession, view AdminViewState, knownRepositories []string, status string, now time.Time) string {
 	theme := newAdminTheme()
 	context, body, help := renderAdminScreen(theme, current, session, view, knownRepositories, now)
-	sections := []string{
-		theme.title.Render("Regixtry Admin"),
-		theme.context.Render(context),
-		body,
-	}
-	if strings.TrimSpace(status) != "" {
-		sections = append(sections, renderAdminStatus(theme, status))
-	}
+	fullBody := body
 	if view.ConfirmModal.Active() {
-		sections = append(sections, renderAdminModal(theme, view.ConfirmModal))
+		fullBody = lipgloss.JoinVertical(lipgloss.Left, body, renderAdminModal(theme, view.ConfirmModal))
 	}
-	sections = append(sections, theme.help.Render(help))
-	return theme.app.Render(lipgloss.JoinVertical(lipgloss.Left, sections...))
+	return renderConsoleWorkspace("Regixtry Admin", context, fullBody, status, help)
 }
 
 func renderAdminScreen(theme adminTheme, current screen, session AdminSession, view AdminViewState, knownRepositories []string, now time.Time) (string, string, string) {

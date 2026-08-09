@@ -30,6 +30,66 @@ func TestModelShowsEmptyStateWhenCatalogIsEmpty(t *testing.T) {
 	}
 }
 
+func TestModelStartupLoginDefersCatalogUntilLoginSucceeds(t *testing.T) {
+	t.Parallel()
+
+	service := &fakeQueryService{catalog: appregixtry.CatalogResult{Repositories: []string{"library/alpine"}}}
+	model := NewModel(service, WithAdminClient(&fakeAdminClient{loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: time.Date(2099, time.August, 9, 12, 0, 0, 0, time.UTC)}}), WithStartupLogin())
+
+	model = runCmd(t, model, model.Init())
+	if got, want := service.calls.catalog, 0; got != want {
+		t.Fatalf("catalog calls = %d, want %d before login", got, want)
+	}
+	if got, want := model.screen, screenAdminLogin; got != want {
+		t.Fatalf("screen = %q, want %q", got, want)
+	}
+	if !strings.Contains(model.View(), "Operator Login") {
+		t.Fatalf("view = %q, want login shell", model.View())
+	}
+
+	updated := runKey(t, model, "operator")
+	updated = runKey(t, updated, "tab")
+	updated = runKey(t, updated, "secret-pass")
+	updated = runKey(t, updated, "enter")
+
+	if got, want := service.calls.catalog, 1; got != want {
+		t.Fatalf("catalog calls = %d, want %d after login", got, want)
+	}
+	if got, want := updated.screen, screenRepositories; got != want {
+		t.Fatalf("screen = %q, want %q", got, want)
+	}
+	if strings.Contains(updated.View(), "alice [admin, enabled]") {
+		t.Fatalf("view = %q, want repository flow instead of admin users", updated.View())
+	}
+	if !strings.Contains(updated.View(), "Repositories") || !strings.Contains(updated.View(), "library/alpine") {
+		t.Fatalf("view = %q, want repositories shell after login", updated.View())
+	}
+
+	updated = runKey(t, updated, "tab")
+	if got, want := updated.screen, screenAdminUsers; got != want {
+		t.Fatalf("screen = %q, want %q after opening admin", got, want)
+	}
+}
+
+func TestModelLocalStartupLoadsCatalogImmediately(t *testing.T) {
+	t.Parallel()
+
+	service := &fakeQueryService{catalog: appregixtry.CatalogResult{Repositories: []string{"library/alpine"}}}
+	model := NewModel(service, WithAdminClient(&fakeAdminClient{}))
+	updated := runCmd(t, model, model.Init())
+
+	if got, want := service.calls.catalog, 1; got != want {
+		t.Fatalf("catalog calls = %d, want %d", got, want)
+	}
+	if got, want := updated.screen, screenRepositories; got != want {
+		t.Fatalf("screen = %q, want %q", got, want)
+	}
+	view := updated.View()
+	if !strings.Contains(view, "Regixtry Console") || !strings.Contains(view, "Enter: open tags | Tab: admin | q: quit") {
+		t.Fatalf("view = %q, want unified repository shell", view)
+	}
+}
+
 func TestModelNavigatesRepositoriesManifestBlobsAndUploads(t *testing.T) {
 	t.Parallel()
 
@@ -97,7 +157,7 @@ func TestModelBlocksAdminUntilLogin(t *testing.T) {
 	if updated.adminAuth != adminAuthStateUnauthenticated {
 		t.Fatalf("adminAuth = %q, want %q", updated.adminAuth, adminAuthStateUnauthenticated)
 	}
-	if !strings.Contains(updated.View(), "Admin Login") {
+	if !strings.Contains(updated.View(), "Operator Login") {
 		t.Fatalf("view = %q, want login screen", updated.View())
 	}
 }

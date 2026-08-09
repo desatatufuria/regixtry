@@ -10,6 +10,7 @@ import (
 	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	appregixtry "regixtry/internal/app/regixtry"
 	domainauth "regixtry/internal/domain/auth"
 	"regixtry/internal/ports"
@@ -26,6 +27,12 @@ func WithNotice(notice string) Option {
 func WithAdminClient(adminClient AdminClient) Option {
 	return func(m *Model) {
 		m.adminClient = adminClient
+	}
+}
+
+func WithStartupLogin() Option {
+	return func(m *Model) {
+		m.startupLogin = true
 	}
 }
 
@@ -145,6 +152,7 @@ type Model struct {
 	showMutationNotice bool
 	lastRepository     string
 	lastTag            string
+	startupLogin       bool
 }
 
 type catalogLoadedMsg struct {
@@ -226,6 +234,8 @@ type adminUserEnabledMsg struct {
 	err     error
 }
 
+type startupLoginMsg struct{}
+
 func NewModel(service QueryService, options ...Option) Model {
 	m := Model{
 		ctx:         context.Background(),
@@ -252,6 +262,9 @@ func NewModel(service QueryService, options ...Option) Model {
 }
 
 func (m Model) Init() tea.Cmd {
+	if m.startupLogin {
+		return func() tea.Msg { return startupLoginMsg{} }
+	}
 	return m.loadCatalogCmd()
 }
 
@@ -272,6 +285,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.screen = screenRepositories
 		m.loadingText = ""
+		return m, nil
+	case startupLoginMsg:
+		m.screen = screenAdminLogin
+		m.loadingText = ""
+		m.adminReturn = screenRepositories
 		return m, nil
 	case tagsLoadedMsg:
 		if msg.err != nil {
@@ -325,6 +343,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.adminLogin.Username = msg.session.Username
 		m.adminLogin.Password = ""
 		m.loadingText = ""
+		if m.startupLogin && len(m.repositories.Items) == 0 {
+			m.status = ""
+			m.screen = screenLoading
+			m.loadingText = "Loading repositories..."
+			m.startupLogin = false
+			return m, m.loadCatalogCmd()
+		}
 		m.status = "Loading admin users..."
 		m.screen = screenAdminUsers
 		return m, m.loadAdminUsersCmd()
@@ -477,64 +502,78 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
-	var body strings.Builder
-	body.WriteString("Regixtry Console\n\n")
-
 	switch m.screen {
 	case screenLoading:
-		body.WriteString(m.loadingText)
+		return renderInspectionWorkspace("Loading", renderConsoleTextSection(m.loadingText), "", "q: quit")
 	case screenRepositories:
-		body.WriteString("Repositories\n")
-		body.WriteString(renderList(m.repositories.Items, m.repositories.Selected))
-		body.WriteString("\n\n")
-		body.WriteString("Enter: open tags · tab: admin · q: quit")
-		if strings.TrimSpace(m.notice) != "" {
-			body.WriteString("\n\nNotice\n")
-			body.WriteString(m.notice)
-		}
+		return renderInspectionWorkspace(
+			"Repositories",
+			renderConsoleListSection("Repositories", m.repositories.Items, m.repositories.Selected),
+			m.notice,
+			"Enter: open tags | Tab: admin | q: quit",
+		)
 	case screenTags:
-		body.WriteString(fmt.Sprintf("Tags · %s\n", m.tags.Repository))
-		body.WriteString(renderList(m.tags.Items, m.tags.Selected))
-		body.WriteString("\n\nEnter: inspect manifest · tab: admin · esc: back · q: quit")
+		return renderInspectionWorkspace(
+			fmt.Sprintf("Repositories / %s / Tags", m.tags.Repository),
+			renderConsoleListSection("Tags", m.tags.Items, m.tags.Selected),
+			"",
+			"Enter: inspect manifest | Tab: admin | Esc: back | q: quit",
+		)
 	case screenManifest:
-		body.WriteString(renderManifest(m.manifest.Details))
-		body.WriteString("\n\n")
-		body.WriteString("b: blobs · u: uploads · d: unsupported delete · tab: admin · esc: back · q: quit")
-	case screenBlobs:
-		body.WriteString(renderBlobs(m.blobs))
-		body.WriteString("\n\ntab: admin · esc: back · q: quit")
-	case screenUploads:
-		body.WriteString(renderUploads(m.uploads))
-		body.WriteString("\n\ntab: admin · esc: back · q: quit")
-	case screenEmpty:
-		body.WriteString(m.empty.Title)
-		body.WriteString("\n")
-		body.WriteString(m.empty.Message)
-		body.WriteString("\n\ntab: admin · esc: back · q: quit")
-	case screenError:
-		body.WriteString("Error\n")
-		body.WriteString(m.err.Error())
-		body.WriteString("\n\nq: quit")
-	case screenAdminLogin:
-		body.WriteString(renderAdminLogin(m.adminLogin))
-		if m.status != "" {
-			body.WriteString("\n\nStatus\n")
-			body.WriteString(m.status)
+		status := ""
+		if m.showMutationNotice {
+			status = fmt.Sprintf("Delete unavailable in v1: %s", m.mutation.Reason)
 		}
+		return renderInspectionWorkspace(
+			fmt.Sprintf("Repositories / %s / %s / Manifest", m.manifest.Details.Repository, m.manifest.Details.Reference),
+			renderConsoleTextSection(renderManifest(m.manifest.Details)),
+			status,
+			"b: blobs | u: uploads | d: unsupported delete | Tab: admin | Esc: back | q: quit",
+		)
+	case screenBlobs:
+		status := ""
+		if m.showMutationNotice {
+			status = fmt.Sprintf("Delete unavailable in v1: %s", m.mutation.Reason)
+		}
+		return renderInspectionWorkspace(
+			fmt.Sprintf("Repositories / %s / %s / Blobs", m.lastRepository, m.lastTag),
+			renderConsoleTextSection(renderBlobs(m.blobs)),
+			status,
+			"Tab: admin | Esc: back | q: quit",
+		)
+	case screenUploads:
+		status := ""
+		if m.showMutationNotice {
+			status = fmt.Sprintf("Delete unavailable in v1: %s", m.mutation.Reason)
+		}
+		return renderInspectionWorkspace(
+			fmt.Sprintf("Repositories / %s / %s / Uploads", m.lastRepository, m.lastTag),
+			renderConsoleTextSection(renderUploads(m.uploads)),
+			status,
+			"Tab: admin | Esc: back | q: quit",
+		)
+	case screenEmpty:
+		return renderInspectionWorkspace(
+			"Empty",
+			renderConsoleTextSection(strings.Join([]string{m.empty.Title, "", m.empty.Message}, "\n")),
+			"",
+			"Tab: admin | Esc: back | q: quit",
+		)
+	case screenError:
+		errText := "Unknown error"
+		if m.err != nil {
+			errText = m.err.Error()
+		}
+		return renderInspectionWorkspace("Error", renderConsoleTextSection(errText), errText, "q: quit")
+	case screenAdminLogin:
+		return renderInspectionWorkspace("Sign In", renderAdminLogin(newAdminTheme(), m.adminLogin), m.status, "Enter: sign in | Tab: switch field | Esc: back | q: quit")
 	case screenAdminAuthenticating:
-		body.WriteString("Admin Login\n")
-		body.WriteString(m.loadingText)
-		body.WriteString("\n\nq: quit")
+		return renderInspectionWorkspace("Sign In", renderConsoleTextSection(m.loadingText), "", "q: quit")
 	case screenAdminUsers, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken:
-		body.WriteString(renderAdminWorkspace(m.screen, m.adminSession, m.adminView, m.repositories.Items, m.status, m.now()))
+		return renderAdminWorkspace(m.screen, m.adminSession, m.adminView, m.repositories.Items, m.status, m.now())
 	}
 
-	if m.showMutationNotice {
-		body.WriteString("\n\nUnavailable in v1\n")
-		body.WriteString(fmt.Sprintf("%s: %s", strings.Title(m.mutation.Action), m.mutation.Reason))
-	}
-
-	return body.String()
+	return renderInspectionWorkspace("Regixtry", renderConsoleTextSection("Ready."), "", "q: quit")
 }
 
 func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1625,6 +1664,47 @@ func renderList(items []string, selected int) string {
 	return strings.Join(lines, "\n")
 }
 
+func renderConsoleWorkspace(title string, context string, body string, status string, help string) string {
+	theme := newAdminTheme()
+	sections := []string{
+		theme.title.Render(title),
+		theme.context.Render(context),
+		body,
+	}
+	if strings.TrimSpace(status) != "" {
+		sections = append(sections, renderAdminStatus(theme, status))
+	}
+	if strings.TrimSpace(help) != "" {
+		sections = append(sections, theme.help.Render(help))
+	}
+	return theme.app.Render(lipgloss.JoinVertical(lipgloss.Left, sections...))
+}
+
+func renderInspectionWorkspace(context string, body string, status string, help string) string {
+	return renderConsoleWorkspace("Regixtry Console", context, body, status, help)
+}
+
+func renderConsoleTextSection(content string) string {
+	return newAdminTheme().section.Render(content)
+}
+
+func renderConsoleListSection(title string, items []string, selected int) string {
+	theme := newAdminTheme()
+	lines := []string{theme.subheading.Render(title)}
+	if len(items) == 0 {
+		lines = append(lines, theme.muted.Render("No items available."))
+	} else {
+		for index, item := range items {
+			label := item
+			if index == selected {
+				label = theme.selected.Render(item)
+			}
+			lines = append(lines, label)
+		}
+	}
+	return theme.section.Render(strings.Join(lines, "\n"))
+}
+
 func renderManifest(manifest appregixtry.ManifestDetails) string {
 	lines := []string{
 		fmt.Sprintf("Manifest · %s:%s", manifest.Repository, manifest.Reference),
@@ -1672,21 +1752,12 @@ func renderUploads(uploads UploadsModel) string {
 	return strings.Join(lines, "\n")
 }
 
-func renderAdminLogin(form adminLoginForm) string {
-	usernamePrefix := "  "
-	passwordPrefix := "  "
-	if form.Focus == loginFieldUsername {
-		usernamePrefix = "> "
-	} else {
-		passwordPrefix = "> "
-	}
-	return strings.Join([]string{
-		"Admin Login",
-		fmt.Sprintf("%sUsername: %s", usernamePrefix, form.Username),
-		fmt.Sprintf("%sPassword: %s", passwordPrefix, strings.Repeat("*", len([]rune(form.Password)))),
-		"",
-		"Enter: sign in · tab: switch field · esc: back · q: quit",
-	}, "\n")
+func renderAdminLogin(theme adminTheme, form adminLoginForm) string {
+	return theme.section.Render(strings.Join([]string{
+		theme.subheading.Render("Operator Login"),
+		renderTextField(theme, "Username", form.Username, form.Focus == loginFieldUsername),
+		renderSecretField(theme, "Password", form.Password, form.Focus == loginFieldPassword),
+	}, "\n"))
 }
 
 func formatRemaining(remaining time.Duration) string {

@@ -61,12 +61,12 @@ func TestDefaultBuildValue(t *testing.T) {
 	}
 
 	for _, testCase := range tests {
-		tt := testCase
-		t.Run(tt.name, func(t *testing.T) {
+		tc := testCase
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			if got := defaultBuildValue(tt.value, tt.fallback); got != tt.want {
-				t.Fatalf("defaultBuildValue(%q, %q) = %q, want %q", tt.value, tt.fallback, got, tt.want)
+			if got := defaultBuildValue(tc.value, tc.fallback); got != tc.want {
+				t.Fatalf("defaultBuildValue(%q, %q) = %q, want %q", tc.value, tc.fallback, got, tc.want)
 			}
 		})
 	}
@@ -1907,6 +1907,34 @@ func TestRunTUIRendersRepositorySnapshot(t *testing.T) {
 	if !strings.Contains(view, "Regixtry Console") || !strings.Contains(view, "library/alpine") {
 		t.Fatalf("stdout = %q, want rendered repository view", view)
 	}
+	if !strings.Contains(view, "Enter: open tags | Tab: admin | q: quit") {
+		t.Fatalf("stdout = %q, want unified help footer", view)
+	}
+}
+
+func TestTUIRequiresStartupLoginOnlyWhenAuthAndAPIAreConfigured(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		cfg  tuiConfig
+		want bool
+	}{
+		{name: "local only", cfg: tuiConfig{}, want: false},
+		{name: "auth only", cfg: tuiConfig{AuthPostgresDSN: "postgres://auth"}, want: false},
+		{name: "api only", cfg: tuiConfig{APIBaseURL: "https://registry.example.com/admin"}, want: false},
+		{name: "both configured", cfg: tuiConfig{AuthPostgresDSN: "postgres://auth", APIBaseURL: "https://registry.example.com/admin"}, want: true},
+	}
+
+	for _, tt := range tests {
+		tc := tt
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tuiRequiresStartupLogin(tc.cfg); got != tc.want {
+				t.Fatalf("tuiRequiresStartupLogin(%+v) = %v, want %v", tc.cfg, got, tc.want)
+			}
+		})
+	}
 }
 
 func TestRunTUIDisablesAuthAdminShortcutWhenAuthIsEnabled(t *testing.T) {
@@ -1937,6 +1965,38 @@ func TestRunTUIDisablesAuthAdminShortcutWhenAuthIsEnabled(t *testing.T) {
 	}
 	if !strings.Contains(view, "library/alpine") {
 		t.Fatalf("stdout = %q, want repository snapshot to stay available", view)
+	}
+}
+
+func TestRunTUISnapshotRequiresLoginWhenAuthAndAPIAreConfigured(t *testing.T) {
+	restore := swapAuthStoreOpener(t)
+	defer restore()
+
+	authDB := filepath.Join(t.TempDir(), "auth.db")
+	if err := run(context.Background(), []string{"bootstrap-admin", "-auth-postgres-dsn", authDB, "-username", "admin", "-password", "change-me-now"}, io.Discard, io.Discard); err != nil {
+		t.Fatalf("run(bootstrap-admin) error = %v", err)
+	}
+
+	storageRoot := t.TempDir()
+	databasePath := filepath.Join(storageRoot, "registry.db")
+	seedRegixtryState(t, storageRoot, databasePath)
+	apiServer := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("snapshot login screen should not hit the admin API before login")
+	}))
+	defer apiServer.Close()
+
+	stdout := &bytes.Buffer{}
+	err := runTUI(tuiConfig{StorageRoot: storageRoot, DatabasePath: databasePath, Tenant: "tenant-a", AuthPostgresDSN: authDB, APIBaseURL: apiServer.URL, Snapshot: true}, strings.NewReader("q"), stdout)
+	if err != nil {
+		t.Fatalf("runTUI() error = %v", err)
+	}
+
+	view := stdout.String()
+	if !strings.Contains(view, "Operator Login") || !strings.Contains(view, "Enter: sign in | Tab: switch field | Esc: back | q: quit") {
+		t.Fatalf("stdout = %q, want login-first snapshot", view)
+	}
+	if strings.Contains(view, "library/alpine") {
+		t.Fatalf("stdout = %q, want catalog hidden until login", view)
 	}
 }
 
