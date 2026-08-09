@@ -24,6 +24,10 @@ func renderAdminWorkspace(session AdminSession, view AdminViewState, status stri
 }
 
 func renderAdminSidebar(theme adminTheme, session AdminSession, view AdminViewState, now time.Time) string {
+	focusLabel := theme.muted.Render("Focus: main panel")
+	if view.Focus == adminFocusSidebar {
+		focusLabel = theme.selected.Render("Focus: sidebar")
+	}
 	lines := []string{theme.heading.Render("Admin Workspace")}
 	if strings.TrimSpace(session.Username) != "" {
 		lines = append(lines, theme.text.Render(fmt.Sprintf("Operator: %s", session.Username)))
@@ -31,7 +35,7 @@ func renderAdminSidebar(theme adminTheme, session AdminSession, view AdminViewSt
 	if !session.ExpiresAt.IsZero() {
 		lines = append(lines, theme.muted.Render(fmt.Sprintf("Session expires in %s", formatRemaining(session.Remaining(now)))))
 	}
-	lines = append(lines, "", theme.heading.Render("Navigation"))
+	lines = append(lines, focusLabel, "", theme.heading.Render("Navigation"))
 	for _, item := range []struct {
 		panel adminPanel
 		label string
@@ -46,6 +50,8 @@ func renderAdminSidebar(theme adminTheme, session AdminSession, view AdminViewSt
 		}
 		lines = append(lines, label)
 	}
+	lines = append(lines, "", theme.heading.Render("User Search"))
+	lines = append(lines, renderTextField(theme, "Filter (/ or s)", view.UserSearchQuery, view.Focus == adminFocusSidebar && view.UserSearchActive))
 	lines = append(lines, "", theme.heading.Render("Selected User"))
 	if view.SelectedUserID == "" {
 		lines = append(lines, theme.muted.Render("No user selected"))
@@ -53,10 +59,15 @@ func renderAdminSidebar(theme adminTheme, session AdminSession, view AdminViewSt
 		lines = append(lines, theme.badge.Render(view.SelectedUsername))
 	}
 	lines = append(lines, "", theme.heading.Render("Users"))
-	if len(view.Users) == 0 {
-		lines = append(lines, theme.muted.Render("No admin users available."))
+	filteredUsers := filteredAdminUsers(view)
+	if len(filteredUsers) == 0 {
+		if strings.TrimSpace(view.UserSearchQuery) != "" {
+			lines = append(lines, theme.muted.Render("No users match the current filter."))
+		} else {
+			lines = append(lines, theme.muted.Render("No admin users available."))
+		}
 	} else {
-		for index, user := range view.Users {
+		for _, user := range filteredUsers {
 			role := "user"
 			if user.IsAdmin {
 				role = "admin"
@@ -66,17 +77,26 @@ func renderAdminSidebar(theme adminTheme, session AdminSession, view AdminViewSt
 				state = "enabled"
 			}
 			label := fmt.Sprintf("%s [%s, %s]", user.Username, role, state)
-			if index == view.SelectedUser {
+			if user.ID == view.SelectedUserID {
 				label = theme.selected.Render(label)
 			}
 			lines = append(lines, label)
 		}
 	}
-	lines = append(lines, "", theme.muted.Render("u/g/t: switch panel · j/k: move user · l: logout · q: quit"))
+	lines = append(lines, "")
+	if view.Focus == adminFocusSidebar {
+		lines = append(lines, theme.muted.Render("tab: focus main · enter: use selected user · j/k: move user · / or s: search · l: logout · q: quit"))
+	} else {
+		lines = append(lines, theme.muted.Render("tab: focus sidebar · j/k and arrows follow the focused area"))
+	}
 	return theme.sidebar.Render(strings.Join(lines, "\n"))
 }
 
 func renderAdminMainPanel(theme adminTheme, session AdminSession, view AdminViewState, now time.Time) string {
+	focusLabel := theme.muted.Render("Focus: sidebar")
+	if view.Focus == adminFocusMain {
+		focusLabel = theme.selected.Render("Focus: main panel")
+	}
 	var title string
 	var content string
 	switch view.SelectedPanel {
@@ -90,7 +110,7 @@ func renderAdminMainPanel(theme adminTheme, session AdminSession, view AdminView
 		title = "Users"
 		content = renderAdminUsersPanel(theme, session, view, now)
 	}
-	return theme.panel.Render(lipgloss.JoinVertical(lipgloss.Left, theme.heading.Render(title), "", content))
+	return theme.panel.Render(lipgloss.JoinVertical(lipgloss.Left, theme.heading.Render(title), focusLabel, "", content))
 }
 
 func renderAdminUsersPanel(theme adminTheme, session AdminSession, view AdminViewState, now time.Time) string {
@@ -99,7 +119,7 @@ func renderAdminUsersPanel(theme adminTheme, session AdminSession, view AdminVie
 			theme.accent.Render("Workspace"),
 			fmt.Sprintf("Selected user: %s", selectedAdminUsername(view)),
 			fmt.Sprintf("Session remaining: %s", formatRemaining(session.Remaining(now))),
-			"Enter: open grants · c: create user · p: reset password · e/d: enable or disable",
+			"c: create user · p: reset password · e/d: enable or disable · g/t: open grants or tokens",
 		}, "\n")),
 		renderCreateUserSection(theme, view),
 		renderResetPasswordSection(theme, view),

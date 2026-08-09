@@ -160,6 +160,7 @@ func TestModelCreateAdminUserRefreshesUsers(t *testing.T) {
 	}
 	model := newAdminReadyModel(t, adminClient)
 	updated := runAdminLogin(t, model, "operator", "secret-pass")
+	updated = runKey(t, updated, "tab")
 
 	updated = runKey(t, updated, "c")
 	updated = runKey(t, updated, "bob")
@@ -189,9 +190,10 @@ func TestModelExistingUserViewOmitsUnsupportedAdminEditAndDeleteControls(t *test
 	}
 	model := newAdminReadyModel(t, adminClient)
 	updated := runAdminLogin(t, model, "operator", "secret-pass")
+	updated = runKey(t, updated, "tab")
 	view := updated.View()
 
-	if !strings.Contains(view, "Enter: open grants · c: create user · p: reset password · e/d: enable or disable") {
+	if !strings.Contains(view, "c: create user · p: reset password · e/d: enable or disable") || !strings.Contains(view, "open grants") || !strings.Contains(view, "or tokens") {
 		t.Fatalf("view = %q, want only supported existing-user actions", view)
 	}
 	if !strings.Contains(view, "Create as admin") {
@@ -216,6 +218,7 @@ func TestModelResetPasswordFailureKeepsFormVisible(t *testing.T) {
 	}
 	model := newAdminReadyModel(t, adminClient)
 	updated := runAdminLogin(t, model, "operator", "secret-pass")
+	updated = runKey(t, updated, "tab")
 
 	updated = runKey(t, updated, "p")
 	updated = runKey(t, updated, "short")
@@ -247,6 +250,7 @@ func TestModelDisableUserSuccessRefreshesUsersAndPreservesSelectionByID(t *testi
 	model := newAdminReadyModel(t, adminClient)
 	updated := runAdminLogin(t, model, "operator", "secret-pass")
 	updated = runKey(t, updated, "j")
+	updated = runKey(t, updated, "tab")
 	updated = runKey(t, updated, "d")
 
 	if !strings.Contains(updated.View(), `Confirm disable user "bob"?`) {
@@ -296,6 +300,7 @@ func TestModelGrantSaveAndRemoveStayContextualizedToSelectedUser(t *testing.T) {
 	model := newAdminReadyModel(t, adminClient)
 	updated := runAdminLogin(t, model, "operator", "secret-pass")
 	updated = runKey(t, updated, "g")
+	updated = runKey(t, updated, "tab")
 
 	updated = runKey(t, updated, "a")
 	updated = runKey(t, updated, "team/demo")
@@ -343,6 +348,7 @@ func TestModelTokenCreateRevealOnceAndRevokeConfirmation(t *testing.T) {
 	model := newAdminReadyModel(t, adminClient)
 	updated := runAdminLogin(t, model, "operator", "secret-pass")
 	updated = runKey(t, updated, "t")
+	updated = runKey(t, updated, "tab")
 	updated = runKey(t, updated, "n")
 	updated = runKey(t, updated, "console")
 	updated = runKey(t, updated, "tab")
@@ -392,6 +398,123 @@ func TestModelExpiredSessionForcesRelogin(t *testing.T) {
 	}
 	if !strings.Contains(updated.View(), AdminSessionExpiredReasonExpired) {
 		t.Fatalf("view = %q, want expiry-specific relogin message", updated.View())
+	}
+}
+
+func TestModelSidebarNavigationPersistsAcrossPanelsAndReloadsSelectedUserContext(t *testing.T) {
+	t.Parallel()
+
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: time.Date(2026, time.August, 7, 21, 0, 0, 0, time.UTC)},
+		users: []ports.AdminUser{
+			{ID: "u-1", Username: "alice", IsAdmin: true, Enabled: true},
+			{ID: "u-2", Username: "bob", IsAdmin: false, Enabled: true},
+		},
+		grants: map[string][]ports.AdminRepoGrant{
+			"u-1": {{UserID: "u-1", Repository: regixtrydomain.MustParseRepositoryRef("library/alpine"), Role: domainauth.RepoRoleReader}},
+			"u-2": {{UserID: "u-2", Repository: regixtrydomain.MustParseRepositoryRef("team/demo"), Role: domainauth.RepoRoleWriter}},
+		},
+	}
+	model := newAdminReadyModel(t, adminClient)
+	updated := runAdminLogin(t, model, "operator", "secret-pass")
+
+	updated = runKey(t, updated, "g")
+	if updated.screen != screenAdminGrants {
+		t.Fatalf("screen = %q, want %q", updated.screen, screenAdminGrants)
+	}
+	if got, want := adminClient.listGrantsCalls, 1; got != want {
+		t.Fatalf("listGrantsCalls = %d, want %d", got, want)
+	}
+	view := updated.View()
+	if !strings.Contains(view, "Users") || !strings.Contains(view, "alice [admin, enabled]") || !strings.Contains(view, "library/alpine") {
+		t.Fatalf("view = %q, want persistent sidebar and alice grants", view)
+	}
+
+	updated = runKey(t, updated, "j")
+	if got, want := updated.adminView.SelectedUserID, "u-2"; got != want {
+		t.Fatalf("SelectedUserID = %q, want %q", got, want)
+	}
+	if got, want := adminClient.listGrantsCalls, 2; got != want {
+		t.Fatalf("listGrantsCalls = %d, want %d after sidebar navigation", got, want)
+	}
+	if !strings.Contains(updated.View(), "team/demo") {
+		t.Fatalf("view = %q, want grants reloaded for bob", updated.View())
+	}
+}
+
+func TestModelSidebarSearchPreservesSelectionByIDWhenPossible(t *testing.T) {
+	t.Parallel()
+
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: time.Date(2026, time.August, 7, 21, 5, 0, 0, time.UTC)},
+		users: []ports.AdminUser{
+			{ID: "u-1", Username: "alice", IsAdmin: true, Enabled: true},
+			{ID: "u-2", Username: "bob", IsAdmin: false, Enabled: true},
+			{ID: "u-3", Username: "bobby", IsAdmin: false, Enabled: true},
+		},
+	}
+	model := newAdminReadyModel(t, adminClient)
+	updated := runAdminLogin(t, model, "operator", "secret-pass")
+	updated = runKey(t, updated, "j")
+
+	updated = runKey(t, updated, "/")
+	updated = runKey(t, updated, "bo")
+	updated = runKey(t, updated, "enter")
+
+	if got, want := updated.adminView.SelectedUserID, "u-2"; got != want {
+		t.Fatalf("SelectedUserID = %q, want %q", got, want)
+	}
+	view := updated.View()
+	if !strings.Contains(view, "Filter (/ or s)") || !strings.Contains(view, "bo") {
+		t.Fatalf("view = %q, want visible search query", view)
+	}
+	if strings.Contains(view, "alice [admin, enabled]") {
+		t.Fatalf("view = %q, want alice filtered out", view)
+	}
+
+	updated = runKey(t, updated, "/")
+	updated = runKey(t, updated, "bb")
+	updated = runKey(t, updated, "enter")
+
+	if got, want := updated.adminView.SelectedUserID, "u-3"; got != want {
+		t.Fatalf("SelectedUserID = %q, want %q after narrowing filter", got, want)
+	}
+	if strings.Contains(updated.View(), "bob [user, enabled]") {
+		t.Fatalf("view = %q, want bob filtered out after narrowing", updated.View())
+	}
+}
+
+func TestModelTabSwitchesAdminFocusAndMovementFollowsFocusedArea(t *testing.T) {
+	t.Parallel()
+
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: time.Date(2026, time.August, 7, 21, 10, 0, 0, time.UTC)},
+		users:        []ports.AdminUser{{ID: "u-1", Username: "alice", IsAdmin: true, Enabled: true}},
+		grants: map[string][]ports.AdminRepoGrant{
+			"u-1": {
+				{UserID: "u-1", Repository: regixtrydomain.MustParseRepositoryRef("library/alpine"), Role: domainauth.RepoRoleReader},
+				{UserID: "u-1", Repository: regixtrydomain.MustParseRepositoryRef("team/demo"), Role: domainauth.RepoRoleWriter},
+			},
+		},
+	}
+	model := newAdminReadyModel(t, adminClient)
+	updated := runAdminLogin(t, model, "operator", "secret-pass")
+	updated = runKey(t, updated, "g")
+
+	if got, want := updated.adminView.Focus, adminFocusSidebar; got != want {
+		t.Fatalf("Focus = %q, want %q", got, want)
+	}
+	updated = runKey(t, updated, "tab")
+	if got, want := updated.adminView.Focus, adminFocusMain; got != want {
+		t.Fatalf("Focus = %q, want %q", got, want)
+	}
+
+	updated = runKey(t, updated, "j")
+	if got, want := updated.adminView.SelectedGrant, 1; got != want {
+		t.Fatalf("SelectedGrant = %d, want %d", got, want)
+	}
+	if got, want := updated.adminView.SelectedUserID, "u-1"; got != want {
+		t.Fatalf("SelectedUserID = %q, want %q while main panel is focused", got, want)
 	}
 }
 

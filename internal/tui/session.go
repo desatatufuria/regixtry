@@ -19,6 +19,13 @@ const (
 	adminPanelTokens adminPanel = "tokens"
 )
 
+type adminFocusArea string
+
+const (
+	adminFocusSidebar adminFocusArea = "sidebar"
+	adminFocusMain    adminFocusArea = "main"
+)
+
 type adminFormKind string
 
 const (
@@ -120,6 +127,9 @@ type AdminViewState struct {
 	SelectedUser           int
 	SelectedUserID         string
 	SelectedUsername       string
+	Focus                  adminFocusArea
+	UserSearchQuery        string
+	UserSearchActive       bool
 	SelectedPanel          adminPanel
 	Grants                 []ports.AdminRepoGrant
 	SelectedGrant          int
@@ -183,6 +193,7 @@ func (s AdminSession) Remaining(now time.Time) time.Duration {
 
 func newAdminViewState() AdminViewState {
 	return AdminViewState{
+		Focus:         adminFocusSidebar,
 		SelectedPanel: adminPanelUsers,
 		CreateUserForm: adminCreateUserForm{
 			Enabled: true,

@@ -642,6 +642,33 @@ func (m Model) updateAdminKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateAdminLoginKey(msg)
 	case screenAdminAuthenticating:
 		return m, nil
+	}
+
+	if m.adminView.ActiveForm == adminFormNone {
+		if m.adminView.UserSearchActive {
+			return m.updateAdminSearchKey(msg)
+		}
+		if isTabKey(msg) {
+			if m.adminView.Focus == adminFocusSidebar {
+				m.adminView.Focus = adminFocusMain
+			} else {
+				m.adminView.Focus = adminFocusSidebar
+			}
+			m.status = ""
+			return m, nil
+		}
+		if isRuneKey(msg, '/', 's') {
+			m.adminView.Focus = adminFocusSidebar
+			m.adminView.UserSearchActive = true
+			m.status = ""
+			return m, nil
+		}
+		if m.adminView.Focus == adminFocusSidebar {
+			return m.updateAdminSidebarKey(msg)
+		}
+	}
+
+	switch m.screen {
 	case screenAdminUsers:
 		return m.updateAdminUsersKey(msg)
 	case screenAdminGrants:
@@ -686,6 +713,94 @@ func (m Model) updateAdminLoginKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) updateAdminSidebarKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case isEscKey(msg):
+		return m.returnToInspection(), nil
+	case isRuneKey(msg, 'u'):
+		return m.switchAdminPanel(adminPanelUsers)
+	case isRuneKey(msg, 'g'):
+		return m.switchAdminPanel(adminPanelGrants)
+	case isRuneKey(msg, 't'):
+		return m.switchAdminPanel(adminPanelTokens)
+	case isMoveUpKey(msg):
+		return m.moveAdminSidebarSelection(-1)
+	case isMoveDownKey(msg):
+		return m.moveAdminSidebarSelection(1)
+	case isEnterKey(msg):
+		m.adminView.Focus = adminFocusMain
+		m.adminView.UserSearchActive = false
+		m.status = ""
+		return m, nil
+	case isRuneKey(msg, 'r'):
+		m.status = "Loading admin users..."
+		return m, m.loadAdminUsersCmd()
+	}
+
+	return m, nil
+}
+
+func (m Model) updateAdminSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case isEscKey(msg):
+		m.adminView.UserSearchActive = false
+		m.status = ""
+		return m, nil
+	case isEnterKey(msg):
+		m.adminView.UserSearchActive = false
+		m.status = ""
+		return m, nil
+	case isBackspaceKey(msg):
+		m.adminView.UserSearchQuery = trimLastRune(m.adminView.UserSearchQuery)
+		return m.applyAdminUserFilter()
+	case isMoveUpKey(msg):
+		return m.moveAdminSidebarSelection(-1)
+	case isMoveDownKey(msg):
+		return m.moveAdminSidebarSelection(1)
+	}
+
+	if msg.Type == tea.KeyRunes {
+		value := string(msg.Runes)
+		if value == "/" {
+			return m, nil
+		}
+		m.adminView.UserSearchQuery += value
+		return m.applyAdminUserFilter()
+	}
+
+	return m, nil
+}
+
+func (m Model) moveAdminSidebarSelection(delta int) (tea.Model, tea.Cmd) {
+	previousUserID := m.adminView.SelectedUserID
+	filteredUsers := filteredAdminUsers(m.adminView)
+	if len(filteredUsers) == 0 {
+		m.adminView.SelectedUser = 0
+		m.adminView.SelectedUserID = ""
+		m.adminView.SelectedUsername = ""
+		m.clearSelectedAdminDetails()
+		return m, nil
+	}
+
+	m.adminView.SelectedUser = boundedIndex(m.adminView.SelectedUser+delta, len(filteredUsers))
+	selectedUser := filteredUsers[m.adminView.SelectedUser]
+	m.adminView.SelectedUserID = selectedUser.ID
+	m.adminView.SelectedUsername = selectedUser.Username
+	if previousUserID != selectedUser.ID {
+		m.clearSelectedAdminDetails()
+	}
+	return m, m.reloadAdminPanelForSelectedUserChange(previousUserID != selectedUser.ID)
+}
+
+func (m Model) applyAdminUserFilter() (tea.Model, tea.Cmd) {
+	previousUserID := m.adminView.SelectedUserID
+	selectionChanged := m.syncAdminUserSelection(previousUserID)
+	if m.adminView.SelectedUserID == "" {
+		m.clearSelectedAdminDetails()
+	}
+	return m, m.reloadAdminPanelForSelectedUserChange(selectionChanged)
+}
+
 func (m Model) updateAdminUsersKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.adminView.ActiveForm == adminFormCreateUser {
 		return m.updateCreateUserFormKey(msg)
@@ -703,6 +818,7 @@ func (m Model) updateAdminUsersKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.switchAdminPanel(adminPanelTokens)
 	case isRuneKey(msg, 'c'):
 		m.adminView.ActiveForm = adminFormCreateUser
+		m.adminView.Focus = adminFocusMain
 		m.status = ""
 		return m, nil
 	case isRuneKey(msg, 'p'):
@@ -711,15 +827,8 @@ func (m Model) updateAdminUsersKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.adminView.ActiveForm = adminFormResetPassword
+		m.adminView.Focus = adminFocusMain
 		m.status = ""
-		return m, nil
-	case isMoveUpKey(msg):
-		m.moveSelection(-1)
-		m.clearSelectedAdminDetails()
-		return m, nil
-	case isMoveDownKey(msg):
-		m.moveSelection(1)
-		m.clearSelectedAdminDetails()
 		return m, nil
 	case isEnterKey(msg):
 		if m.adminView.SelectedUserID == "" {
@@ -782,6 +891,7 @@ func (m Model) updateAdminGrantsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.adminView.ActiveForm = adminFormGrant
+		m.adminView.Focus = adminFocusMain
 		m.status = ""
 		return m, nil
 	case isMoveUpKey(msg):
@@ -842,6 +952,7 @@ func (m Model) updateAdminTokensKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.adminView.ActiveForm = adminFormToken
+		m.adminView.Focus = adminFocusMain
 		m.status = ""
 		return m, nil
 	case isMoveUpKey(msg):
@@ -1113,12 +1224,6 @@ func (m *Model) moveSelection(delta int) {
 		m.tags.Selected = boundedIndex(m.tags.Selected+delta, len(m.tags.Items))
 	case screenBlobs:
 		m.blobs.Selected = boundedIndex(m.blobs.Selected+delta, len(m.blobs.Items))
-	case screenAdminUsers:
-		m.adminView.SelectedUser = boundedIndex(m.adminView.SelectedUser+delta, len(m.adminView.Users))
-		if user, ok := m.selectedAdminUser(); ok {
-			m.adminView.SelectedUserID = user.ID
-			m.adminView.SelectedUsername = user.Username
-		}
 	}
 }
 
@@ -1150,11 +1255,27 @@ func (m Model) selectedTag() (string, bool) {
 }
 
 func (m Model) selectedAdminUser() (ports.AdminUser, bool) {
-	if len(m.adminView.Users) == 0 {
+	filteredUsers := filteredAdminUsers(m.adminView)
+	if len(filteredUsers) == 0 {
 		return ports.AdminUser{}, false
 	}
-	index := boundedIndex(m.adminView.SelectedUser, len(m.adminView.Users))
-	return m.adminView.Users[index], true
+	index := boundedIndex(m.adminView.SelectedUser, len(filteredUsers))
+	return filteredUsers[index], true
+}
+
+func filteredAdminUsers(view AdminViewState) []ports.AdminUser {
+	query := strings.ToLower(strings.TrimSpace(view.UserSearchQuery))
+	if query == "" {
+		return view.Users
+	}
+
+	filteredUsers := make([]ports.AdminUser, 0, len(view.Users))
+	for _, user := range view.Users {
+		if strings.Contains(strings.ToLower(user.Username), query) {
+			filteredUsers = append(filteredUsers, user)
+		}
+	}
+	return filteredUsers
 }
 
 func (m Model) loadCatalogCmd() tea.Cmd {
@@ -1319,6 +1440,11 @@ func (m Model) openAdmin() (tea.Model, tea.Cmd) {
 			m.status = "Loading admin users..."
 			return m, m.loadAdminUsersCmd()
 		}
+		m.syncAdminUserSelection(m.adminView.SelectedUserID)
+		if m.adminView.SelectedUserID == "" {
+			m.clearSelectedAdminDetails()
+		}
+		m.adminView.UserSearchActive = false
 		return m, nil
 	}
 	if strings.TrimSpace(m.adminSession.ExpiredReason) != "" {
@@ -1349,6 +1475,7 @@ func (m Model) returnToInspection() Model {
 	m.status = ""
 	m.adminView.ActiveForm = adminFormNone
 	m.adminView.ConfirmModal = adminConfirmModal{}
+	m.adminView.UserSearchActive = false
 	return m
 }
 
@@ -1556,10 +1683,12 @@ func (m Model) switchAdminPanel(panel adminPanel) (tea.Model, tea.Cmd) {
 	m.setAdminPanel(panel)
 	m.adminView.ActiveForm = adminFormNone
 	m.adminView.ConfirmModal = adminConfirmModal{}
+	m.adminView.UserSearchActive = false
 	if panel != adminPanelTokens {
 		m.adminView.RevealedTokenSecret = ""
 		m.adminView.RevealedTokenAccessor = ""
 	}
+	m.syncAdminUserSelection(m.adminView.SelectedUserID)
 	if m.adminView.SelectedUserID == "" && panel != adminPanelUsers {
 		switch panel {
 		case adminPanelGrants:
@@ -1583,26 +1712,9 @@ func (m Model) switchAdminPanel(panel adminPanel) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) applyLoadedUsers(users []ports.AdminUser) {
-	selectedID := m.adminView.SelectedUserID
 	m.adminView.Users = append([]ports.AdminUser(nil), users...)
-	m.adminView.SelectedUser = 0
-	if selectedID != "" {
-		for index, user := range m.adminView.Users {
-			if user.ID == selectedID {
-				m.adminView.SelectedUser = index
-				break
-			}
-		}
-	}
-	if len(m.adminView.Users) == 0 {
-		m.adminView.SelectedUserID = ""
-		m.adminView.SelectedUsername = ""
+	if m.syncAdminUserSelection(m.adminView.SelectedUserID) || len(m.adminView.Users) == 0 {
 		m.clearSelectedAdminDetails()
-		return
-	}
-	if user, ok := m.selectedAdminUser(); ok {
-		m.adminView.SelectedUserID = user.ID
-		m.adminView.SelectedUsername = user.Username
 	}
 }
 
@@ -1617,4 +1729,52 @@ func (m *Model) clearSelectedAdminDetails() {
 	m.adminView.RevealedTokenSecret = ""
 	m.adminView.RevealedTokenAccessor = ""
 	m.adminView.RevealedTokenExpiresAt = time.Time{}
+}
+
+func (m *Model) syncAdminUserSelection(preferredUserID string) bool {
+	previousUserID := m.adminView.SelectedUserID
+	filteredUsers := filteredAdminUsers(m.adminView)
+	if len(filteredUsers) == 0 {
+		m.adminView.SelectedUser = 0
+		m.adminView.SelectedUserID = ""
+		m.adminView.SelectedUsername = ""
+		return previousUserID != ""
+	}
+
+	selectedIndex := -1
+	if preferredUserID != "" {
+		for index, user := range filteredUsers {
+			if user.ID == preferredUserID {
+				selectedIndex = index
+				break
+			}
+		}
+	}
+	if selectedIndex == -1 {
+		selectedIndex = boundedIndex(m.adminView.SelectedUser, len(filteredUsers))
+	}
+
+	m.adminView.SelectedUser = selectedIndex
+	m.adminView.SelectedUserID = filteredUsers[selectedIndex].ID
+	m.adminView.SelectedUsername = filteredUsers[selectedIndex].Username
+	return previousUserID != m.adminView.SelectedUserID
+}
+
+func (m *Model) reloadAdminPanelForSelectedUserChange(selectionChanged bool) tea.Cmd {
+	if !selectionChanged || m.adminView.SelectedUserID == "" {
+		return nil
+	}
+
+	switch m.adminView.SelectedPanel {
+	case adminPanelGrants:
+		m.status = fmt.Sprintf("Loading grants for %s...", m.adminView.SelectedUsername)
+		return m.loadAdminGrantsCmd(m.adminView.SelectedUserID, m.adminView.SelectedUsername)
+	case adminPanelTokens:
+		m.adminView.RevealedTokenSecret = ""
+		m.adminView.RevealedTokenAccessor = ""
+		m.status = fmt.Sprintf("Loading admin tokens for %s...", m.adminView.SelectedUsername)
+		return m.loadAdminTokensCmd(m.adminView.SelectedUserID, m.adminView.SelectedUsername)
+	default:
+		return nil
+	}
 }
