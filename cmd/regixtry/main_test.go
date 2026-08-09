@@ -119,6 +119,55 @@ func TestReleaseMetadataUsesDefaultsAndOverrides(t *testing.T) {
 	}
 }
 
+func TestRunVersionPrintsReleaseMetadata(t *testing.T) {
+	previousVersion := buildVersion
+	previousCommit := buildCommit
+	previousDate := buildDate
+	t.Cleanup(func() {
+		buildVersion = previousVersion
+		buildCommit = previousCommit
+		buildDate = previousDate
+	})
+
+	buildVersion = "1.2.3"
+	buildCommit = "abc1234"
+	buildDate = "2026-08-09T12:00:00Z"
+
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{
+			name: "flag",
+			args: []string{"--version"},
+		},
+		{
+			name: "subcommand",
+			args: []string{"version"},
+		},
+	}
+
+	for _, testCase := range tests {
+		tt := testCase
+		t.Run(tt.name, func(t *testing.T) {
+			stdout := &bytes.Buffer{}
+			stderr := &bytes.Buffer{}
+
+			if err := run(context.Background(), tt.args, stdout, stderr); err != nil {
+				t.Fatalf("run(%v) error = %v", tt.args, err)
+			}
+
+			if got, want := stdout.String(), "version=1.2.3 commit=abc1234 date=2026-08-09T12:00:00Z\n"; got != want {
+				t.Fatalf("stdout = %q, want %q", got, want)
+			}
+
+			if stderr.Len() != 0 {
+				t.Fatalf("stderr = %q, want empty", stderr.String())
+			}
+		})
+	}
+}
+
 func TestParseServeConfigAnonymousAccessDefaults(t *testing.T) {
 	t.Parallel()
 

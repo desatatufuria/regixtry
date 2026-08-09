@@ -130,6 +130,11 @@ func run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer)
 }
 
 func runWithIO(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) error {
+	if len(args) == 1 && (args[0] == "--version" || args[0] == "version") {
+		_, err := fmt.Fprintln(stdout, releaseMetadata())
+		return err
+	}
+
 	if len(args) == 0 {
 		return errors.New("expected subcommand: serve, tui, bootstrap, bootstrap-admin, setup, uninstall, or upgrade")
 	}
