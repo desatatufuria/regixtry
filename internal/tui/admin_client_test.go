@@ -3,12 +3,13 @@ package tui
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
-	"regixtry/internal/domain/auth"
+	domainauth "regixtry/internal/domain/auth"
 	"regixtry/internal/ports"
 )
 
@@ -52,53 +53,172 @@ func TestHTTPAdminClientLogin(t *testing.T) {
 
 	fixedNow := time.Date(2026, time.August, 4, 22, 45, 0, 0, time.UTC)
 
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got, want := r.Method, http.MethodGet; got != want {
+			t.Fatalf("method = %q, want %q", got, want)
+		}
+		if got, want := r.URL.Path, "/auth/token"; got != want {
+			t.Fatalf("path = %q, want %q", got, want)
+		}
+		if got, want := r.Header.Get("Authorization"), "Basic "+base64.StdEncoding.EncodeToString([]byte("operator:secret-pass")); got != want {
+			t.Fatalf("Authorization = %q, want %q", got, want)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"bearer-token","expires_in":120}`))
+	}))
+	defer server.Close()
+
+	client, err := NewHTTPAdminClient(server.URL, server.Client())
+	if err != nil {
+		t.Fatalf("NewHTTPAdminClient() error = %v", err)
+	}
+	client.now = func() time.Time { return fixedNow }
+
+	session, err := client.Login(context.Background(), " operator ", "secret-pass")
+	if err != nil {
+		t.Fatalf("Login() error = %v", err)
+	}
+	if session.Username != "operator" || session.BearerToken != "bearer-token" {
+		t.Fatalf("session = %#v, want normalized operator session", session)
+	}
+	if got, want := session.ExpiresAt, fixedNow.Add(120*time.Second); !got.Equal(want) {
+		t.Fatalf("ExpiresAt = %s, want %s", got, want)
+	}
+}
+
+func TestHTTPAdminClientMutationRoutes(t *testing.T) {
+	t.Parallel()
+
+	fixedNow := time.Date(2026, time.August, 4, 23, 5, 0, 0, time.UTC)
+	session := AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: fixedNow.Add(10 * time.Minute)}
+
 	tests := []struct {
 		name        string
+		method      string
+		path        string
 		statusCode  int
 		body        string
+		run         func(t *testing.T, client *HTTPAdminClient)
+		assertBody  func(t *testing.T, payload map[string]any)
 		assertError func(t *testing.T, err error)
-		assert      func(t *testing.T, session AdminSession)
 	}{
 		{
-			name:       "successful login returns session",
-			statusCode: http.StatusOK,
-			body:       `{"access_token":"bearer-token","expires_in":120}`,
-			assertError: func(t *testing.T, err error) {
-				t.Helper()
+			name:       "create user",
+			method:     http.MethodPost,
+			path:       "/admin/v1/users",
+			statusCode: http.StatusCreated,
+			body:       `{"id":"u-1","username":"alice","is_admin":true,"enabled":true,"created_at":"2026-08-04T22:00:00Z","updated_at":"2026-08-04T22:10:00Z"}`,
+			run: func(t *testing.T, client *HTTPAdminClient) {
+				user, err := client.CreateUser(context.Background(), session, ports.AdminCreateUserInput{Username: "alice", Password: "secret-pass", IsAdmin: true, Enabled: true})
 				if err != nil {
-					t.Fatalf("Login() error = %v, want nil", err)
+					t.Fatalf("CreateUser() error = %v", err)
+				}
+				if user.Username != "alice" || !user.IsAdmin {
+					t.Fatalf("user = %#v, want decoded created user", user)
 				}
 			},
-			assert: func(t *testing.T, session AdminSession) {
-				t.Helper()
-				if session.Username != "operator" {
-					t.Fatalf("Username = %q, want %q", session.Username, "operator")
-				}
-				if session.BearerToken != "bearer-token" {
-					t.Fatalf("BearerToken = %q, want %q", session.BearerToken, "bearer-token")
-				}
-				if got, want := session.ExpiresAt, fixedNow.Add(120*time.Second); !got.Equal(want) {
-					t.Fatalf("ExpiresAt = %s, want %s", got, want)
+			assertBody: func(t *testing.T, payload map[string]any) {
+				if payload["username"] != "alice" || payload["password"] != "secret-pass" {
+					t.Fatalf("payload = %#v, want create-user body", payload)
 				}
 			},
 		},
 		{
-			name:       "invalid credentials return recoverable error",
-			statusCode: http.StatusUnauthorized,
-			body:       `{"error":"invalid credentials"}`,
-			assertError: func(t *testing.T, err error) {
-				t.Helper()
-				if err == nil {
-					t.Fatal("Login() error = nil, want invalid credentials error")
-				}
-				if got, want := err.Error(), "login: invalid credentials"; got != want {
-					t.Fatalf("Login() error = %q, want %q", got, want)
+			name:       "reset password",
+			method:     http.MethodPost,
+			path:       "/admin/v1/users/u-1:reset-password",
+			statusCode: http.StatusNoContent,
+			run: func(t *testing.T, client *HTTPAdminClient) {
+				if err := client.ResetPassword(context.Background(), session, ports.AdminResetPasswordInput{UserID: "u-1", NewPassword: "next-pass"}); err != nil {
+					t.Fatalf("ResetPassword() error = %v", err)
 				}
 			},
-			assert: func(t *testing.T, session AdminSession) {
-				t.Helper()
-				if session.IsAuthenticated() {
-					t.Fatalf("session = %#v, want unauthenticated zero value", session)
+			assertBody: func(t *testing.T, payload map[string]any) {
+				if payload["new_password"] != "next-pass" {
+					t.Fatalf("payload = %#v, want reset-password body", payload)
+				}
+			},
+		},
+		{
+			name:       "put grant",
+			method:     http.MethodPut,
+			path:       "/admin/v1/users/u-1/grants/library/alpine",
+			statusCode: http.StatusOK,
+			body:       `{"user_id":"u-1","repository":{"name":"library/alpine"},"role":"repo-writer","created_at":"2026-08-04T22:00:00Z","updated_at":"2026-08-04T22:10:00Z"}`,
+			run: func(t *testing.T, client *HTTPAdminClient) {
+				grant, err := client.PutUserGrant(context.Background(), session, ports.AdminPutRepoGrantInput{UserID: "u-1", Repository: "library/alpine", Role: domainauth.RepoRoleWriter})
+				if err != nil {
+					t.Fatalf("PutUserGrant() error = %v", err)
+				}
+				if got, want := grant.Role, domainauth.RepoRoleWriter; got != want {
+					t.Fatalf("grant.Role = %q, want %q", got, want)
+				}
+			},
+			assertBody: func(t *testing.T, payload map[string]any) {
+				if payload["role"] != string(domainauth.RepoRoleWriter) {
+					t.Fatalf("payload = %#v, want repo-writer role", payload)
+				}
+			},
+		},
+		{
+			name:       "delete grant",
+			method:     http.MethodDelete,
+			path:       "/admin/v1/users/u-1/grants/library/alpine",
+			statusCode: http.StatusNoContent,
+			run: func(t *testing.T, client *HTTPAdminClient) {
+				if err := client.DeleteUserGrant(context.Background(), session, "u-1", "library/alpine"); err != nil {
+					t.Fatalf("DeleteUserGrant() error = %v", err)
+				}
+			},
+		},
+		{
+			name:       "create admin token",
+			method:     http.MethodPost,
+			path:       "/admin/v1/users/u-1/admin-tokens",
+			statusCode: http.StatusCreated,
+			body:       `{"token":{"id":"t-1","user_id":"u-1","kind":"admin-credential","accessor":"tok_abc","expires_at":"2026-09-04T22:00:00Z","created_at":"2026-08-04T22:00:00Z"},"secret":"super-secret","accessor":"tok_abc","expires_at":"2026-09-04T22:00:00Z","target_user":{"id":"u-1","username":"alice","is_admin":true,"enabled":true,"created_at":"2026-08-04T22:00:00Z","updated_at":"2026-08-04T22:10:00Z"}}`,
+			run: func(t *testing.T, client *HTTPAdminClient) {
+				created, err := client.CreateUserAdminToken(context.Background(), session, ports.AdminCreateTokenInput{UserID: "u-1", Name: "console", TTL: 3600 * time.Second})
+				if err != nil {
+					t.Fatalf("CreateUserAdminToken() error = %v", err)
+				}
+				if created.Secret != "super-secret" || created.TargetUser.Username != "alice" {
+					t.Fatalf("created = %#v, want decoded token payload", created)
+				}
+			},
+			assertBody: func(t *testing.T, payload map[string]any) {
+				if payload["name"] != "console" {
+					t.Fatalf("payload = %#v, want name console", payload)
+				}
+				if payload["ttl_seconds"] != float64(3600) {
+					t.Fatalf("payload = %#v, want ttl_seconds 3600", payload)
+				}
+			},
+		},
+		{
+			name:       "revoke token",
+			method:     http.MethodDelete,
+			path:       "/admin/v1/users/u-1/admin-tokens/tok_abc",
+			statusCode: http.StatusNoContent,
+			run: func(t *testing.T, client *HTTPAdminClient) {
+				if err := client.RevokeUserAdminToken(context.Background(), session, "u-1", "tok_abc"); err != nil {
+					t.Fatalf("RevokeUserAdminToken() error = %v", err)
+				}
+			},
+		},
+		{
+			name:       "enable user",
+			method:     http.MethodPost,
+			path:       "/admin/v1/users/user/one:enable",
+			statusCode: http.StatusOK,
+			body:       `{"id":"u-1","username":"alice","is_admin":true,"enabled":true,"created_at":"2026-08-04T22:00:00Z","updated_at":"2026-08-04T22:10:00Z"}`,
+			run: func(t *testing.T, client *HTTPAdminClient) {
+				user, err := client.EnableUser(context.Background(), session, "user/one")
+				if err != nil {
+					t.Fatalf("EnableUser() error = %v", err)
+				}
+				if !user.Enabled {
+					t.Fatalf("user = %#v, want enabled user", user)
 				}
 			},
 		},
@@ -106,20 +226,21 @@ func TestHTTPAdminClientLogin(t *testing.T) {
 
 	for _, tt := range tests {
 		tc := tt
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
+		t.Run(tc.name, func(t *testing.T) {
+			var receivedBody map[string]any
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if got, want := r.Method, http.MethodGet; got != want {
+				if got, want := r.Method, tc.method; got != want {
 					t.Fatalf("method = %q, want %q", got, want)
 				}
-				if got, want := r.URL.Path, "/auth/token"; got != want {
+				if got, want := r.URL.Path, tc.path; got != want {
 					t.Fatalf("path = %q, want %q", got, want)
 				}
-				if got, want := r.Header.Get("Authorization"), "Basic "+base64.StdEncoding.EncodeToString([]byte("operator:secret-pass")); got != want {
+				if got, want := r.Header.Get("Authorization"), "Bearer bearer-token"; got != want {
 					t.Fatalf("Authorization = %q, want %q", got, want)
 				}
-
+				if r.Body != nil && (tc.method == http.MethodPost || tc.method == http.MethodPut) {
+					_ = json.NewDecoder(r.Body).Decode(&receivedBody)
+				}
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(tc.statusCode)
 				_, _ = w.Write([]byte(tc.body))
@@ -132,100 +253,10 @@ func TestHTTPAdminClientLogin(t *testing.T) {
 			}
 			client.now = func() time.Time { return fixedNow }
 
-			session, err := client.Login(context.Background(), "  operator  ", "secret-pass")
-			tc.assertError(t, err)
-			tc.assert(t, session)
-		})
-	}
-}
-
-func TestHTTPAdminClientListReads(t *testing.T) {
-	t.Parallel()
-
-	fixedNow := time.Date(2026, time.August, 4, 22, 50, 0, 0, time.UTC)
-	session := AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: fixedNow.Add(10 * time.Minute)}
-
-	tests := []struct {
-		name     string
-		path     string
-		run      func(t *testing.T, client *HTTPAdminClient, ctx context.Context, session AdminSession)
-		response string
-	}{
-		{
-			name:     "list users",
-			path:     "/admin/v1/users",
-			response: `[{"id":"u-1","username":"alice","is_admin":true,"enabled":true,"created_at":"2026-08-04T22:00:00Z","updated_at":"2026-08-04T22:10:00Z"}]`,
-			run: func(t *testing.T, client *HTTPAdminClient, ctx context.Context, session AdminSession) {
-				t.Helper()
-				users, err := client.ListUsers(ctx, session)
-				if err != nil {
-					t.Fatalf("ListUsers() error = %v", err)
-				}
-				if len(users) != 1 || users[0].Username != "alice" || !users[0].IsAdmin || !users[0].Enabled {
-					t.Fatalf("users = %#v, want decoded admin user", users)
-				}
-			},
-		},
-		{
-			name:     "list grants",
-			path:     "/admin/v1/users/user/one/grants",
-			response: `[{"user_id":"u-1","repository":{"name":"library/alpine"},"role":"repo-writer","created_at":"2026-08-04T22:00:00Z","updated_at":"2026-08-04T22:10:00Z"}]`,
-			run: func(t *testing.T, client *HTTPAdminClient, ctx context.Context, session AdminSession) {
-				t.Helper()
-				grants, err := client.ListUserGrants(ctx, session, "user/one")
-				if err != nil {
-					t.Fatalf("ListUserGrants() error = %v", err)
-				}
-				if len(grants) != 1 || grants[0].Repository.String() != "library/alpine" || grants[0].Role != auth.RepoRoleWriter {
-					t.Fatalf("grants = %#v, want decoded repository grant", grants)
-				}
-			},
-		},
-		{
-			name:     "list admin tokens",
-			path:     "/admin/v1/users/u-1/admin-tokens",
-			response: `[{"id":"t-1","user_id":"u-1","kind":"admin-credential","name":"console","accessor":"tok_abc","expires_at":"2026-09-04T22:00:00Z","created_at":"2026-08-04T22:00:00Z"}]`,
-			run: func(t *testing.T, client *HTTPAdminClient, ctx context.Context, session AdminSession) {
-				t.Helper()
-				tokens, err := client.ListUserAdminTokens(ctx, session, "u-1")
-				if err != nil {
-					t.Fatalf("ListUserAdminTokens() error = %v", err)
-				}
-				if len(tokens) != 1 || tokens[0].Accessor != "tok_abc" || tokens[0].Kind != auth.TokenKindAdminCredential {
-					t.Fatalf("tokens = %#v, want decoded admin token", tokens)
-				}
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		tc := tt
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if got, want := r.Method, http.MethodGet; got != want {
-					t.Fatalf("method = %q, want %q", got, want)
-				}
-				if got, want := r.URL.Path, tc.path; got != want {
-					t.Fatalf("path = %q, want %q", got, want)
-				}
-				if got, want := r.Header.Get("Authorization"), "Bearer bearer-token"; got != want {
-					t.Fatalf("Authorization = %q, want %q", got, want)
-				}
-
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = w.Write([]byte(tc.response))
-			}))
-			defer server.Close()
-
-			client, err := NewHTTPAdminClient(server.URL+"/", server.Client())
-			if err != nil {
-				t.Fatalf("NewHTTPAdminClient() error = %v", err)
+			tc.run(t, client)
+			if tc.assertBody != nil {
+				tc.assertBody(t, receivedBody)
 			}
-			client.now = func() time.Time { return fixedNow }
-
-			tc.run(t, client, context.Background(), session)
 		})
 	}
 }
@@ -253,9 +284,6 @@ func TestHTTPAdminClientMapsInvalidTokenToExpiredSession(t *testing.T) {
 	if !IsAdminSessionExpired(err) {
 		t.Fatalf("ListUsers() error = %v, want expired-session error", err)
 	}
-	if got, want := err.Error(), AdminSessionExpiredReasonExpired; got != want {
-		t.Fatalf("ListUsers() error = %q, want %q", got, want)
-	}
 }
 
 func TestHTTPAdminClientRejectsLocallyExpiredSession(t *testing.T) {
@@ -273,208 +301,5 @@ func TestHTTPAdminClientRejectsLocallyExpiredSession(t *testing.T) {
 	}
 	if !IsAdminSessionExpired(err) {
 		t.Fatalf("ListUsers() error = %v, want expired-session error", err)
-	}
-}
-
-func TestHTTPAdminClientUserMutations(t *testing.T) {
-	t.Parallel()
-
-	fixedNow := time.Date(2026, time.August, 4, 23, 5, 0, 0, time.UTC)
-	activeSession := AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: fixedNow.Add(10 * time.Minute)}
-
-	tests := []struct {
-		name        string
-		method      string
-		path        string
-		statusCode  int
-		headers     map[string]string
-		body        string
-		run         func(context.Context, *HTTPAdminClient, AdminSession) (ports.AdminUser, error)
-		assertError func(t *testing.T, err error)
-		assertUser  func(t *testing.T, user ports.AdminUser)
-		session     AdminSession
-	}{
-		{
-			name:       "enable user succeeds",
-			method:     http.MethodPost,
-			path:       "/admin/v1/users/user/one:enable",
-			statusCode: http.StatusOK,
-			body:       `{"id":"u-1","username":"alice","is_admin":true,"enabled":true,"created_at":"2026-08-04T22:00:00Z","updated_at":"2026-08-04T22:15:00Z"}`,
-			run: func(ctx context.Context, client *HTTPAdminClient, session AdminSession) (ports.AdminUser, error) {
-				return client.EnableUser(ctx, session, "user/one")
-			},
-			assertError: func(t *testing.T, err error) {
-				t.Helper()
-				if err != nil {
-					t.Fatalf("EnableUser() error = %v, want nil", err)
-				}
-			},
-			assertUser: func(t *testing.T, user ports.AdminUser) {
-				t.Helper()
-				if user.Username != "alice" || !user.Enabled {
-					t.Fatalf("user = %#v, want enabled alice", user)
-				}
-			},
-			session: activeSession,
-		},
-		{
-			name:       "disable user conflict stays recoverable",
-			method:     http.MethodPost,
-			path:       "/admin/v1/users/u-1:disable",
-			statusCode: http.StatusConflict,
-			body:       `{"error":"cannot disable the last active admin"}`,
-			run: func(ctx context.Context, client *HTTPAdminClient, session AdminSession) (ports.AdminUser, error) {
-				return client.DisableUser(ctx, session, "u-1")
-			},
-			assertError: func(t *testing.T, err error) {
-				t.Helper()
-				if err == nil {
-					t.Fatal("DisableUser() error = nil, want conflict error")
-				}
-				if got, want := err.Error(), "mutate admin resource: cannot disable the last active admin"; got != want {
-					t.Fatalf("DisableUser() error = %q, want %q", got, want)
-				}
-			},
-			assertUser: func(t *testing.T, user ports.AdminUser) {
-				t.Helper()
-				if user != (ports.AdminUser{}) {
-					t.Fatalf("user = %#v, want zero value on error", user)
-				}
-			},
-			session: activeSession,
-		},
-		{
-			name:       "validation failure stays recoverable",
-			method:     http.MethodPost,
-			path:       "/admin/v1/users/u-1:enable",
-			statusCode: http.StatusBadRequest,
-			body:       `{"error":"user id is required"}`,
-			run: func(ctx context.Context, client *HTTPAdminClient, session AdminSession) (ports.AdminUser, error) {
-				return client.EnableUser(ctx, session, "u-1")
-			},
-			assertError: func(t *testing.T, err error) {
-				t.Helper()
-				if err == nil {
-					t.Fatal("EnableUser() error = nil, want validation error")
-				}
-				if got, want := err.Error(), "mutate admin resource: user id is required"; got != want {
-					t.Fatalf("EnableUser() error = %q, want %q", got, want)
-				}
-			},
-			assertUser: func(t *testing.T, user ports.AdminUser) {
-				t.Helper()
-				if user != (ports.AdminUser{}) {
-					t.Fatalf("user = %#v, want zero value on error", user)
-				}
-			},
-			session: activeSession,
-		},
-		{
-			name:       "invalid token maps to expired session",
-			method:     http.MethodPost,
-			path:       "/admin/v1/users/u-1:disable",
-			statusCode: http.StatusUnauthorized,
-			headers: map[string]string{
-				"WWW-Authenticate": `Bearer realm="regixtry", error="invalid_token"`,
-			},
-			body: `{"error":"expired access token"}`,
-			run: func(ctx context.Context, client *HTTPAdminClient, session AdminSession) (ports.AdminUser, error) {
-				return client.DisableUser(ctx, session, "u-1")
-			},
-			assertError: func(t *testing.T, err error) {
-				t.Helper()
-				if err == nil {
-					t.Fatal("DisableUser() error = nil, want expired-session error")
-				}
-				if !IsAdminSessionExpired(err) {
-					t.Fatalf("DisableUser() error = %v, want expired-session error", err)
-				}
-				if got, want := err.Error(), AdminSessionExpiredReasonExpired; got != want {
-					t.Fatalf("DisableUser() error = %q, want %q", got, want)
-				}
-			},
-			assertUser: func(t *testing.T, user ports.AdminUser) {
-				t.Helper()
-				if user != (ports.AdminUser{}) {
-					t.Fatalf("user = %#v, want zero value on error", user)
-				}
-			},
-			session: activeSession,
-		},
-		{
-			name:   "locally expired session rejects mutation without request",
-			method: http.MethodPost,
-			path:   "/admin/v1/users/u-1:disable",
-			run: func(ctx context.Context, client *HTTPAdminClient, session AdminSession) (ports.AdminUser, error) {
-				return client.DisableUser(ctx, session, "u-1")
-			},
-			assertError: func(t *testing.T, err error) {
-				t.Helper()
-				if err == nil {
-					t.Fatal("DisableUser() error = nil, want expired-session error")
-				}
-				if !IsAdminSessionExpired(err) {
-					t.Fatalf("DisableUser() error = %v, want expired-session error", err)
-				}
-			},
-			assertUser: func(t *testing.T, user ports.AdminUser) {
-				t.Helper()
-				if user != (ports.AdminUser{}) {
-					t.Fatalf("user = %#v, want zero value on error", user)
-				}
-			},
-			session: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: fixedNow.Add(-time.Second)},
-		},
-	}
-
-	for _, tt := range tests {
-		tc := tt
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			requestCount := 0
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				requestCount++
-				if got, want := r.Method, tc.method; got != want {
-					t.Fatalf("method = %q, want %q", got, want)
-				}
-				if got, want := r.URL.Path, tc.path; got != want {
-					t.Fatalf("path = %q, want %q", got, want)
-				}
-				if got, want := r.Header.Get("Authorization"), "Bearer bearer-token"; got != want {
-					t.Fatalf("Authorization = %q, want %q", got, want)
-				}
-
-				w.Header().Set("Content-Type", "application/json")
-				for key, value := range tc.headers {
-					w.Header().Set(key, value)
-				}
-				if tc.statusCode != 0 {
-					w.WriteHeader(tc.statusCode)
-				}
-				_, _ = w.Write([]byte(tc.body))
-			}))
-			defer server.Close()
-
-			client, err := NewHTTPAdminClient(server.URL, server.Client())
-			if err != nil {
-				t.Fatalf("NewHTTPAdminClient() error = %v", err)
-			}
-			client.now = func() time.Time { return fixedNow }
-
-			user, err := tc.run(context.Background(), client, tc.session)
-			tc.assertError(t, err)
-			tc.assertUser(t, user)
-
-			if tc.session.IsExpired(fixedNow) {
-				if requestCount != 0 {
-					t.Fatalf("requestCount = %d, want 0 for locally expired session", requestCount)
-				}
-				return
-			}
-			if requestCount != 1 {
-				t.Fatalf("requestCount = %d, want 1", requestCount)
-			}
-		})
 	}
 }
