@@ -11,31 +11,6 @@ import (
 
 const AdminSessionExpiredReasonExpired = "Session expired. Log in again."
 
-type adminPanel string
-
-const (
-	adminPanelUsers  adminPanel = "users"
-	adminPanelGrants adminPanel = "grants"
-	adminPanelTokens adminPanel = "tokens"
-)
-
-type adminFocusArea string
-
-const (
-	adminFocusSidebar adminFocusArea = "sidebar"
-	adminFocusMain    adminFocusArea = "main"
-)
-
-type adminFormKind string
-
-const (
-	adminFormNone          adminFormKind = ""
-	adminFormCreateUser    adminFormKind = "create-user"
-	adminFormResetPassword adminFormKind = "reset-password"
-	adminFormGrant         adminFormKind = "grant"
-	adminFormToken         adminFormKind = "token"
-)
-
 type adminCreateUserField int
 
 const (
@@ -127,15 +102,12 @@ type AdminViewState struct {
 	SelectedUser           int
 	SelectedUserID         string
 	SelectedUsername       string
-	Focus                  adminFocusArea
 	UserSearchQuery        string
 	UserSearchActive       bool
-	SelectedPanel          adminPanel
 	Grants                 []ports.AdminRepoGrant
 	SelectedGrant          int
 	AdminTokens            []ports.AdminToken
 	SelectedToken          int
-	ActiveForm             adminFormKind
 	CreateUserForm         adminCreateUserForm
 	ResetPasswordForm      adminResetPasswordForm
 	GrantForm              adminGrantForm
@@ -193,8 +165,6 @@ func (s AdminSession) Remaining(now time.Time) time.Duration {
 
 func newAdminViewState() AdminViewState {
 	return AdminViewState{
-		Focus:         adminFocusSidebar,
-		SelectedPanel: adminPanelUsers,
 		CreateUserForm: adminCreateUserForm{
 			Enabled: true,
 		},

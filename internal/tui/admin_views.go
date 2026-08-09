@@ -9,223 +9,208 @@ import (
 	"regixtry/internal/ports"
 )
 
-func renderAdminWorkspace(session AdminSession, view AdminViewState, status string, now time.Time) string {
+func renderAdminWorkspace(current screen, session AdminSession, view AdminViewState, status string, now time.Time) string {
 	theme := newAdminTheme()
-	sidebar := renderAdminSidebar(theme, session, view, now)
-	main := renderAdminMainPanel(theme, session, view, now)
-	body := lipgloss.JoinHorizontal(lipgloss.Top, sidebar, " ", main)
-	if view.ConfirmModal.Active() {
-		body = lipgloss.JoinVertical(lipgloss.Left, body, "", renderAdminModal(theme, view.ConfirmModal))
+	context, body, help := renderAdminScreen(theme, current, session, view, now)
+	sections := []string{
+		theme.title.Render("Regixtry Admin"),
+		theme.context.Render(context),
+		body,
 	}
 	if strings.TrimSpace(status) != "" {
-		body = lipgloss.JoinVertical(lipgloss.Left, body, "", renderAdminStatus(theme, status))
+		sections = append(sections, renderAdminStatus(theme, status))
 	}
-	return theme.app.Render(body)
+	if view.ConfirmModal.Active() {
+		sections = append(sections, renderAdminModal(theme, view.ConfirmModal))
+	}
+	sections = append(sections, theme.help.Render(help))
+	return theme.app.Render(lipgloss.JoinVertical(lipgloss.Left, sections...))
 }
 
-func renderAdminSidebar(theme adminTheme, session AdminSession, view AdminViewState, now time.Time) string {
-	focusLabel := theme.muted.Render("Focus: main panel")
-	if view.Focus == adminFocusSidebar {
-		focusLabel = theme.selected.Render("Focus: sidebar")
+func renderAdminScreen(theme adminTheme, current screen, session AdminSession, view AdminViewState, now time.Time) (string, string, string) {
+	switch current {
+	case screenAdminCreateUser:
+		return "Users / Create User", renderAdminCreateUserScreen(theme, view), "Enter: create user | Tab: next field | Space: toggle | Esc: cancel"
+	case screenAdminEditUser:
+		return fmt.Sprintf("Users / %s / General", selectedAdminUsername(view)), renderAdminEditUserScreen(theme, session, view, now), "g: grants | t: tokens | p: change password | e: enable | x: disable | Esc: back | q: quit"
+	case screenAdminChangePassword:
+		return fmt.Sprintf("Users / %s / Change Password", selectedAdminUsername(view)), renderAdminChangePasswordScreen(theme, view), "Enter: save password | Esc: cancel"
+	case screenAdminEditUserGrants:
+		return fmt.Sprintf("Users / %s / Grants", selectedAdminUsername(view)), renderAdminGrantsScreen(theme, view), "n: add grant | e: edit selected grant | x: remove grant | t: tokens | Esc: back | q: quit"
+	case screenAdminAddGrant:
+		return fmt.Sprintf("Users / %s / Grants / Add Grant", selectedAdminUsername(view)), renderAdminAddGrantScreen(theme, view), "Enter: save grant | Tab: next field | Space: cycle role | Esc: cancel"
+	case screenAdminEditUserTokens:
+		return fmt.Sprintf("Users / %s / Tokens", selectedAdminUsername(view)), renderAdminTokensScreen(theme, view), "n: create token | x: revoke token | g: grants | Esc: back | q: quit"
+	case screenAdminCreateToken:
+		return fmt.Sprintf("Users / %s / Tokens / Create Token", selectedAdminUsername(view)), renderAdminCreateTokenScreen(theme, view), "Enter: create token | Tab: next field | Esc: cancel"
+	default:
+		return "Users", renderAdminUsersScreen(theme, session, view, now), "/: search | Enter/e: edit user | n: create user | Esc: back | q: quit"
 	}
-	lines := []string{theme.heading.Render("Admin Workspace")}
-	if strings.TrimSpace(session.Username) != "" {
-		lines = append(lines, theme.text.Render(fmt.Sprintf("Operator: %s", session.Username)))
+}
+
+func renderAdminUsersScreen(theme adminTheme, session AdminSession, view AdminViewState, now time.Time) string {
+	searchHint := "Press / to edit the search"
+	if view.UserSearchActive {
+		searchHint = "Typing updates the user list"
 	}
-	if !session.ExpiresAt.IsZero() {
-		lines = append(lines, theme.muted.Render(fmt.Sprintf("Session expires in %s", formatRemaining(session.Remaining(now)))))
+	lines := []string{
+		theme.subheading.Render("Search"),
+		renderTextField(theme, "Username contains", view.UserSearchQuery, view.UserSearchActive),
+		theme.muted.Render(searchHint),
+		"",
+		theme.subheading.Render("Users"),
 	}
-	lines = append(lines, focusLabel, "", theme.heading.Render("Navigation"))
-	for _, item := range []struct {
-		panel adminPanel
-		label string
-	}{
-		{adminPanelUsers, "Users"},
-		{adminPanelGrants, "Grants"},
-		{adminPanelTokens, "Tokens"},
-	} {
-		label := item.label
-		if view.SelectedPanel == item.panel {
-			label = theme.selected.Render(label)
-		}
-		lines = append(lines, label)
-	}
-	lines = append(lines, "", theme.heading.Render("User Search"))
-	lines = append(lines, renderTextField(theme, "Filter (/ or s)", view.UserSearchQuery, view.Focus == adminFocusSidebar && view.UserSearchActive))
-	lines = append(lines, "", theme.heading.Render("Selected User"))
-	if view.SelectedUserID == "" {
-		lines = append(lines, theme.muted.Render("No user selected"))
-	} else {
-		lines = append(lines, theme.badge.Render(view.SelectedUsername))
-	}
-	lines = append(lines, "", theme.heading.Render("Users"))
 	filteredUsers := filteredAdminUsers(view)
 	if len(filteredUsers) == 0 {
+		message := "No admin users available."
 		if strings.TrimSpace(view.UserSearchQuery) != "" {
-			lines = append(lines, theme.muted.Render("No users match the current filter."))
-		} else {
-			lines = append(lines, theme.muted.Render("No admin users available."))
+			message = "No users match the current search."
 		}
+		lines = append(lines, theme.muted.Render(message))
 	} else {
 		for _, user := range filteredUsers {
-			role := "user"
-			if user.IsAdmin {
-				role = "admin"
-			}
-			state := "disabled"
-			if user.Enabled {
-				state = "enabled"
-			}
-			label := fmt.Sprintf("%s [%s, %s]", user.Username, role, state)
+			label := formatAdminUserLabel(user)
 			if user.ID == view.SelectedUserID {
 				label = theme.selected.Render(label)
 			}
 			lines = append(lines, label)
 		}
 	}
-	lines = append(lines, "")
-	if view.Focus == adminFocusSidebar {
-		lines = append(lines, theme.muted.Render("tab: focus main · enter: use selected user · j/k: move user · / or s: search · l: logout · q: quit"))
-	} else {
-		lines = append(lines, theme.muted.Render("tab: focus sidebar · j/k and arrows follow the focused area"))
-	}
-	return theme.sidebar.Render(strings.Join(lines, "\n"))
+	lines = append(lines,
+		"",
+		theme.muted.Render(fmt.Sprintf("Operator: %s", session.Username)),
+		theme.muted.Render(fmt.Sprintf("Session remaining: %s", formatRemaining(session.Remaining(now)))),
+	)
+	return theme.section.Render(strings.Join(lines, "\n"))
 }
 
-func renderAdminMainPanel(theme adminTheme, session AdminSession, view AdminViewState, now time.Time) string {
-	focusLabel := theme.muted.Render("Focus: sidebar")
-	if view.Focus == adminFocusMain {
-		focusLabel = theme.selected.Render("Focus: main panel")
-	}
-	var title string
-	var content string
-	switch view.SelectedPanel {
-	case adminPanelGrants:
-		title = fmt.Sprintf("Repository Grants · %s", selectedAdminUsername(view))
-		content = renderAdminGrantsPanel(theme, view)
-	case adminPanelTokens:
-		title = fmt.Sprintf("Admin Tokens · %s", selectedAdminUsername(view))
-		content = renderAdminTokensPanel(theme, view)
-	default:
-		title = "Users"
-		content = renderAdminUsersPanel(theme, session, view, now)
-	}
-	return theme.panel.Render(lipgloss.JoinVertical(lipgloss.Left, theme.heading.Render(title), focusLabel, "", content))
-}
-
-func renderAdminUsersPanel(theme adminTheme, session AdminSession, view AdminViewState, now time.Time) string {
-	sections := []string{
-		theme.section.Render(strings.Join([]string{
-			theme.accent.Render("Workspace"),
-			fmt.Sprintf("Selected user: %s", selectedAdminUsername(view)),
-			fmt.Sprintf("Session remaining: %s", formatRemaining(session.Remaining(now))),
-			"c: create user · p: reset password · e/d: enable or disable · g/t: open grants or tokens",
-		}, "\n")),
-		renderCreateUserSection(theme, view),
-		renderResetPasswordSection(theme, view),
-	}
-	return lipgloss.JoinVertical(lipgloss.Left, sections...)
-}
-
-func renderCreateUserSection(theme adminTheme, view AdminViewState) string {
+func renderAdminCreateUserScreen(theme adminTheme, view AdminViewState) string {
 	form := view.CreateUserForm
+	return theme.section.Render(strings.Join([]string{
+		theme.subheading.Render("Create User"),
+		renderTextField(theme, "Username", form.Username, form.Focus == adminCreateUserFieldUsername),
+		renderSecretField(theme, "Password", form.Password, form.Focus == adminCreateUserFieldPassword),
+		renderToggleField(theme, "Create as admin", form.IsAdmin, form.Focus == adminCreateUserFieldIsAdmin),
+		renderToggleField(theme, "Enabled", form.Enabled, form.Focus == adminCreateUserFieldEnabled),
+	}, "\n"))
+}
+
+func renderAdminEditUserScreen(theme adminTheme, session AdminSession, view AdminViewState, now time.Time) string {
+	user, ok := selectedAdminUserForView(view)
+	if !ok {
+		return theme.section.Render(theme.warning.Render("Select a user from Users before opening edit mode."))
+	}
+	role := "User"
+	if user.IsAdmin {
+		role = "Admin"
+	}
+	status := theme.success.Render("Enabled")
+	if !user.Enabled {
+		status = theme.warning.Render("Disabled")
+	}
+	return theme.section.Render(strings.Join([]string{
+		theme.subheading.Render("Account"),
+		fmt.Sprintf("Username: %s", user.Username),
+		fmt.Sprintf("Role: %s", role),
+		fmt.Sprintf("Status: %s", status),
+		fmt.Sprintf("User ID: %s", user.ID),
+		"",
+		theme.subheading.Render("Context"),
+		fmt.Sprintf("Session remaining: %s", formatRemaining(session.Remaining(now))),
+		"Grants and tokens are managed from their dedicated screens.",
+	}, "\n"))
+}
+
+func renderAdminChangePasswordScreen(theme adminTheme, view AdminViewState) string {
+	return theme.section.Render(strings.Join([]string{
+		theme.subheading.Render("Change Password"),
+		fmt.Sprintf("Target: %s", selectedAdminUsername(view)),
+		renderSecretField(theme, "New password", view.ResetPasswordForm.NewPassword, true),
+	}, "\n"))
+}
+
+func renderAdminGrantsScreen(theme adminTheme, view AdminViewState) string {
+	if strings.TrimSpace(view.SelectedUserID) == "" {
+		return theme.section.Render(theme.warning.Render("Select a user before opening grants."))
+	}
 	lines := []string{
-		theme.accent.Render("Create User"),
-		renderTextField(theme, "Username", form.Username, view.ActiveForm == adminFormCreateUser && form.Focus == adminCreateUserFieldUsername),
-		renderSecretField(theme, "Password", form.Password, view.ActiveForm == adminFormCreateUser && form.Focus == adminCreateUserFieldPassword),
-		renderToggleField(theme, "Create as admin", form.IsAdmin, view.ActiveForm == adminFormCreateUser && form.Focus == adminCreateUserFieldIsAdmin),
-		renderToggleField(theme, "Enabled", form.Enabled, view.ActiveForm == adminFormCreateUser && form.Focus == adminCreateUserFieldEnabled),
-		theme.muted.Render("c: edit · tab: next field · space: toggle · enter: submit · esc: cancel"),
+		theme.subheading.Render("Repository Grants"),
+		fmt.Sprintf("User: %s", selectedAdminUsername(view)),
+		"",
+	}
+	if len(view.Grants) == 0 {
+		lines = append(lines, theme.muted.Render("No repository grants for the selected user."))
+	} else {
+		for index, grant := range view.Grants {
+			label := fmt.Sprintf("%s | %s", grant.Repository, grant.Role)
+			if index == view.SelectedGrant {
+				label = theme.selected.Render(label)
+			}
+			lines = append(lines, label)
+		}
 	}
 	return theme.section.Render(strings.Join(lines, "\n"))
 }
 
-func renderResetPasswordSection(theme adminTheme, view AdminViewState) string {
-	if view.SelectedUserID == "" {
-		return theme.section.Render(strings.Join([]string{
-			theme.accent.Render("Reset Password"),
-			theme.warning.Render("Select a user before resetting a password."),
-		}, "\n"))
-	}
-	form := view.ResetPasswordForm
+func renderAdminAddGrantScreen(theme adminTheme, view AdminViewState) string {
 	return theme.section.Render(strings.Join([]string{
-		theme.accent.Render("Reset Password"),
-		fmt.Sprintf("Target: %s", view.SelectedUsername),
-		renderSecretField(theme, "New password", form.NewPassword, view.ActiveForm == adminFormResetPassword && form.Focus == adminResetPasswordFieldPassword),
-		theme.muted.Render("p: edit · enter: submit · esc: cancel"),
+		theme.subheading.Render("Grant Details"),
+		fmt.Sprintf("User: %s", selectedAdminUsername(view)),
+		renderTextField(theme, "Repository", view.GrantForm.Repository, view.GrantForm.Focus == adminGrantFieldRepository),
+		renderTextField(theme, "Role", string(view.GrantForm.Role), view.GrantForm.Focus == adminGrantFieldRole),
 	}, "\n"))
 }
 
-func renderAdminGrantsPanel(theme adminTheme, view AdminViewState) string {
-	if view.SelectedUserID == "" {
-		return theme.section.Render(strings.Join([]string{
-			theme.warning.Render("Select a user to manage grants."),
-			theme.muted.Render("Grant mutations stay blocked until a user is selected."),
-		}, "\n"))
+func renderAdminTokensScreen(theme adminTheme, view AdminViewState) string {
+	if strings.TrimSpace(view.SelectedUserID) == "" {
+		return theme.section.Render(theme.warning.Render("Select a user before opening tokens."))
 	}
-	items := []string{theme.accent.Render("Grant Form")}
-	items = append(items,
-		renderTextField(theme, "Repository", view.GrantForm.Repository, view.ActiveForm == adminFormGrant && view.GrantForm.Focus == adminGrantFieldRepository),
-		renderTextField(theme, "Role", string(view.GrantForm.Role), view.ActiveForm == adminFormGrant && view.GrantForm.Focus == adminGrantFieldRole),
-		theme.muted.Render("a: edit · tab: next field · space: cycle role · enter: save grant · x: remove selected grant"),
-		"",
-		theme.accent.Render("Current Grants"),
-	)
-	if len(view.Grants) == 0 {
-		items = append(items, theme.muted.Render("No repository grants for the selected user."))
-	} else {
-		for index, grant := range view.Grants {
-			line := fmt.Sprintf("- %s · %s", grant.Repository, grant.Role)
-			if index == view.SelectedGrant {
-				line = theme.selected.Render(line)
-			}
-			items = append(items, line)
-		}
+	lines := []string{
+		theme.subheading.Render("Admin Tokens"),
+		fmt.Sprintf("User: %s", selectedAdminUsername(view)),
 	}
-	return theme.section.Render(strings.Join(items, "\n"))
-}
-
-func renderAdminTokensPanel(theme adminTheme, view AdminViewState) string {
-	if view.SelectedUserID == "" {
-		return theme.section.Render(strings.Join([]string{
-			theme.warning.Render("Select a user to manage admin tokens."),
-			theme.muted.Render("Token mutations stay blocked until a user is selected."),
-		}, "\n"))
-	}
-	items := []string{theme.accent.Render("Create Admin Token")}
-	items = append(items,
-		renderTextField(theme, "Name", view.TokenForm.Name, view.ActiveForm == adminFormToken && view.TokenForm.Focus == adminTokenFieldName),
-		renderTextField(theme, "TTL seconds", view.TokenForm.TTLSeconds, view.ActiveForm == adminFormToken && view.TokenForm.Focus == adminTokenFieldTTL),
-		theme.muted.Render("n: edit · tab: next field · enter: create token · x: revoke selected token"),
-	)
 	if strings.TrimSpace(view.RevealedTokenSecret) != "" {
-		items = append(items, "", theme.success.Render("One-time secret"), fmt.Sprintf("Accessor: %s", view.RevealedTokenAccessor), view.RevealedTokenSecret)
+		lines = append(lines,
+			"",
+			theme.success.Render("One-time secret"),
+			fmt.Sprintf("Accessor: %s", view.RevealedTokenAccessor),
+			theme.text.Render(view.RevealedTokenSecret),
+		)
 	}
-	items = append(items, "", theme.accent.Render("Current Tokens"))
+	lines = append(lines, "")
 	if len(view.AdminTokens) == 0 {
-		items = append(items, theme.muted.Render("No admin tokens for the selected user."))
+		lines = append(lines, theme.muted.Render("No admin tokens for the selected user."))
 	} else {
 		for index, token := range view.AdminTokens {
 			state := "active"
 			if token.RevokedAt != nil {
 				state = "revoked"
 			}
-			line := fmt.Sprintf("- %s · %s · expires %s", token.Accessor, state, token.ExpiresAt.UTC().Format(time.RFC3339))
+			label := fmt.Sprintf("%s | %s | expires %s", token.Accessor, state, token.ExpiresAt.UTC().Format(time.RFC3339))
 			if index == view.SelectedToken {
-				line = theme.selected.Render(line)
+				label = theme.selected.Render(label)
 			}
-			items = append(items, line)
+			lines = append(lines, label)
 		}
 	}
-	return theme.section.Render(strings.Join(items, "\n"))
+	return theme.section.Render(strings.Join(lines, "\n"))
+}
+
+func renderAdminCreateTokenScreen(theme adminTheme, view AdminViewState) string {
+	return theme.section.Render(strings.Join([]string{
+		theme.subheading.Render("Create Token"),
+		fmt.Sprintf("User: %s", selectedAdminUsername(view)),
+		renderTextField(theme, "Name", view.TokenForm.Name, view.TokenForm.Focus == adminTokenFieldName),
+		renderTextField(theme, "TTL seconds", view.TokenForm.TTLSeconds, view.TokenForm.Focus == adminTokenFieldTTL),
+	}, "\n"))
 }
 
 func renderAdminModal(theme adminTheme, modal adminConfirmModal) string {
-	return theme.modal.Render(strings.Join([]string{
-		theme.heading.Render(modal.Title),
+	return theme.section.Render(strings.Join([]string{
+		theme.subheading.Render(modal.Title),
 		modal.Message,
 		"",
-		theme.muted.Render(fmt.Sprintf("Enter: %s · n: cancel · esc: cancel", modal.ConfirmText)),
+		theme.muted.Render(fmt.Sprintf("Enter: %s | Esc: cancel", modal.ConfirmText)),
 	}, "\n"))
 }
 
@@ -237,10 +222,10 @@ func renderAdminStatus(theme adminTheme, status string) string {
 		style = theme.error
 	case strings.Contains(lower, "created"), strings.Contains(lower, "enabled"), strings.Contains(lower, "disabled"), strings.Contains(lower, "reset"), strings.Contains(lower, "saved"), strings.Contains(lower, "revoked"):
 		style = theme.success
-	case strings.Contains(lower, "loading"), strings.Contains(lower, "refreshing"):
+	case strings.Contains(lower, "loading"), strings.Contains(lower, "refreshing"), strings.Contains(lower, "submitting"):
 		style = theme.warning
 	}
-	return theme.section.Render(strings.Join([]string{theme.heading.Render("Status"), style.Render(status)}, "\n"))
+	return theme.section.Render(strings.Join([]string{theme.subheading.Render("Status"), style.Render(status)}, "\n"))
 }
 
 func renderTextField(theme adminTheme, label string, value string, focused bool) string {
@@ -249,16 +234,13 @@ func renderTextField(theme adminTheme, label string, value string, focused bool)
 		style = theme.inputFocus
 	}
 	if strings.TrimSpace(value) == "" {
-		value = " "
+		value = ""
 	}
 	return fmt.Sprintf("%s\n%s", label, style.Render(value))
 }
 
 func renderSecretField(theme adminTheme, label string, value string, focused bool) string {
 	masked := strings.Repeat("*", len([]rune(value)))
-	if masked == "" {
-		masked = " "
-	}
 	style := theme.input
 	if focused {
 		style = theme.inputFocus
@@ -285,6 +267,15 @@ func selectedAdminUsername(view AdminViewState) string {
 	return "No selection"
 }
 
+func selectedAdminUserForView(view AdminViewState) (ports.AdminUser, bool) {
+	for _, user := range view.Users {
+		if user.ID == view.SelectedUserID {
+			return user, true
+		}
+	}
+	return ports.AdminUser{}, false
+}
+
 func selectedGrantForView(view AdminViewState) (ports.AdminRepoGrant, bool) {
 	if len(view.Grants) == 0 {
 		return ports.AdminRepoGrant{}, false
@@ -299,4 +290,16 @@ func selectedTokenForView(view AdminViewState) (ports.AdminToken, bool) {
 	}
 	index := boundedIndex(view.SelectedToken, len(view.AdminTokens))
 	return view.AdminTokens[index], true
+}
+
+func formatAdminUserLabel(user ports.AdminUser) string {
+	role := "user"
+	if user.IsAdmin {
+		role = "admin"
+	}
+	state := "disabled"
+	if user.Enabled {
+		state = "enabled"
+	}
+	return fmt.Sprintf("%s [%s, %s]", user.Username, role, state)
 }
