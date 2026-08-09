@@ -408,6 +408,7 @@ func TestParseTUIConfigAutoDetectsSetupManagedRuntime(t *testing.T) {
 		`REGISTRY_STORAGE_ROOT="/var/lib/regixtry"`,
 		`REGISTRY_DATABASE_PATH="/var/lib/regixtry/metadata.db"`,
 		`REGISTRY_AUTH_POSTGRES_DSN="postgres://regixtry:secret@127.0.0.1:5432/regixtry_auth?sslmode=disable"`,
+		`REGISTRY_PUBLIC_URL="https://registry.example.com/admin/"`,
 	}, "\n")+"\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile(envPath) error = %v", err)
 	}
@@ -425,6 +426,9 @@ func TestParseTUIConfigAutoDetectsSetupManagedRuntime(t *testing.T) {
 	}
 	if cfg.AuthPostgresDSN != "postgres://regixtry:secret@127.0.0.1:5432/regixtry_auth?sslmode=disable" {
 		t.Fatalf("AuthPostgresDSN = %q, want installed DSN", cfg.AuthPostgresDSN)
+	}
+	if cfg.APIBaseURL != "https://registry.example.com/admin" {
+		t.Fatalf("APIBaseURL = %q, want %q", cfg.APIBaseURL, "https://registry.example.com/admin")
 	}
 }
 
@@ -448,6 +452,7 @@ func TestParseTUIConfigExplicitFlagsOverrideSetupManagedRuntime(t *testing.T) {
 		`REGISTRY_STORAGE_ROOT="/var/lib/regixtry"`,
 		`REGISTRY_DATABASE_PATH="/var/lib/regixtry/metadata.db"`,
 		`REGISTRY_AUTH_POSTGRES_DSN="postgres://regixtry:secret@127.0.0.1:5432/regixtry_auth?sslmode=disable"`,
+		`REGISTRY_PUBLIC_URL="https://registry.example.com/managed/"`,
 	}, "\n")+"\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile(envPath) error = %v", err)
 	}
@@ -455,6 +460,7 @@ func TestParseTUIConfigExplicitFlagsOverrideSetupManagedRuntime(t *testing.T) {
 	cfg, err := parseTUIConfigWithBootstrapStatePath([]string{
 		"-storage-root", "/tmp/override-root",
 		"-auth-postgres-dsn", "postgres://override",
+		"-api-base-url", "https://override.example.com/api/",
 	}, bootstrapStatePath)
 	if err != nil {
 		t.Fatalf("parseTUIConfig() error = %v", err)
@@ -469,6 +475,9 @@ func TestParseTUIConfigExplicitFlagsOverrideSetupManagedRuntime(t *testing.T) {
 	if cfg.AuthPostgresDSN != "postgres://override" {
 		t.Fatalf("AuthPostgresDSN = %q, want %q", cfg.AuthPostgresDSN, "postgres://override")
 	}
+	if cfg.APIBaseURL != "https://override.example.com/api" {
+		t.Fatalf("APIBaseURL = %q, want %q", cfg.APIBaseURL, "https://override.example.com/api")
+	}
 
 	cfg, err = parseTUIConfigWithBootstrapStatePath([]string{"-db", "/tmp/override.db"}, bootstrapStatePath)
 	if err != nil {
@@ -476,6 +485,39 @@ func TestParseTUIConfigExplicitFlagsOverrideSetupManagedRuntime(t *testing.T) {
 	}
 	if cfg.DatabasePath != "/tmp/override.db" {
 		t.Fatalf("DatabasePath = %q, want %q", cfg.DatabasePath, "/tmp/override.db")
+	}
+}
+
+func TestParseTUIConfigEnvAPIBaseURLOverridesSetupManagedRuntime(t *testing.T) {
+	t.Setenv("REGISTRY_API_BASE_URL", "https://env.example.com/base/")
+
+	tempDir := t.TempDir()
+	bootstrapStatePath := filepath.Join(tempDir, "etc", "regixtry", "bootstrap-state.json")
+	lifecyclePath := installlinux.LifecycleProvenancePath(bootstrapStatePath)
+	envPath := filepath.Join(filepath.Dir(lifecyclePath), "regixtry.env")
+
+	for _, path := range []string{lifecyclePath, envPath} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("MkdirAll(%q) error = %v", filepath.Dir(path), err)
+		}
+	}
+	if err := os.WriteFile(lifecyclePath, []byte("{}\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(lifecyclePath) error = %v", err)
+	}
+	if err := os.WriteFile(envPath, []byte(strings.Join([]string{
+		`REGISTRY_STORAGE_ROOT="/var/lib/regixtry"`,
+		`REGISTRY_PUBLIC_URL="https://managed.example.com/admin/"`,
+	}, "\n")+"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(envPath) error = %v", err)
+	}
+
+	cfg, err := parseTUIConfigWithBootstrapStatePath(nil, bootstrapStatePath)
+	if err != nil {
+		t.Fatalf("parseTUIConfig() error = %v", err)
+	}
+
+	if cfg.APIBaseURL != "https://env.example.com/base" {
+		t.Fatalf("APIBaseURL = %q, want %q", cfg.APIBaseURL, "https://env.example.com/base")
 	}
 }
 

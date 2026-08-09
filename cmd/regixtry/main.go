@@ -443,7 +443,7 @@ func parseTUIConfigWithBootstrapStatePath(args []string, bootstrapStatePath stri
 	flags.StringVar(&cfg.DatabasePath, "db", defaultCfg.DatabasePath, "path to the SQLite metadata database")
 	flags.StringVar(&cfg.Tenant, "tenant", ports.DefaultTenant, "tenant identifier")
 	flags.StringVar(&cfg.AuthPostgresDSN, "auth-postgres-dsn", defaultCfg.AuthPostgresDSN, "Postgres DSN for auth state")
-	flags.StringVar(&cfg.APIBaseURL, "api-base-url", os.Getenv("REGISTRY_API_BASE_URL"), "base URL for authenticated admin API")
+	flags.StringVar(&cfg.APIBaseURL, "api-base-url", defaultCfg.APIBaseURL, "base URL for authenticated admin API")
 	flags.BoolVar(&cfg.Snapshot, "snapshot", false, "render the first inspection view and exit")
 
 	if err := flags.Parse(args); err != nil {
@@ -495,6 +495,9 @@ func defaultTUIConfigWithBootstrapStatePath(bootstrapStatePath string) (tuiConfi
 		cfg.StorageRoot = installedCfg.StorageRoot
 		cfg.DatabasePath = installedCfg.DatabasePath
 		cfg.AuthPostgresDSN = installedCfg.AuthPostgresDSN
+		if strings.TrimSpace(cfg.APIBaseURL) == "" {
+			cfg.APIBaseURL = installedCfg.APIBaseURL
+		}
 	}
 
 	return cfg, nil
@@ -529,6 +532,7 @@ func loadSetupManagedTUIConfig(bootstrapStatePath string) (tuiConfig, bool, erro
 		StorageRoot:     storageRoot,
 		DatabasePath:    databasePath,
 		AuthPostgresDSN: strings.TrimSpace(envValues["REGISTRY_AUTH_POSTGRES_DSN"]),
+		APIBaseURL:      strings.TrimSpace(envValues["REGISTRY_PUBLIC_URL"]),
 	}, true, nil
 }
 
