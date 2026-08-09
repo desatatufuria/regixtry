@@ -106,6 +106,59 @@ func TestModelNavigatesRepositoriesManifestBlobsAndUploads(t *testing.T) {
 	}
 }
 
+func TestModelMovesRepositorySelectionWithRuneAndArrowKeys(t *testing.T) {
+	t.Parallel()
+
+	service := &fakeQueryService{
+		catalog: appregixtry.CatalogResult{Repositories: []string{"alpine", "team/demo"}},
+		tags: map[string]appregixtry.TagsResult{
+			"team/demo": {Name: "team/demo", Tags: []string{"latest"}},
+		},
+	}
+
+	model := NewModel(service)
+	updated := runCmd(t, model, model.Init())
+	if updated.screen != screenRepositories {
+		t.Fatalf("screen = %q, want %q", updated.screen, screenRepositories)
+	}
+
+	updated = runKey(t, updated, "j")
+	if updated.repositories.Selected != 1 {
+		t.Fatalf("selected = %d, want 1 after j", updated.repositories.Selected)
+	}
+
+	updated = runKey(t, updated, "enter")
+	if updated.screen != screenTags {
+		t.Fatalf("screen = %q, want %q", updated.screen, screenTags)
+	}
+	if updated.tags.Repository != "team/demo" {
+		t.Fatalf("repository = %q, want team/demo", updated.tags.Repository)
+	}
+
+	updated.screen = screenRepositories
+	updated = runKey(t, updated, "up")
+	if updated.repositories.Selected != 0 {
+		t.Fatalf("selected = %d, want 0 after up", updated.repositories.Selected)
+	}
+}
+
+func TestNavigationKeyHelpersRecognizeRunesAndArrows(t *testing.T) {
+	t.Parallel()
+
+	if !isMoveDownKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")}) {
+		t.Fatal("expected j rune to be recognized as move-down")
+	}
+	if !isMoveUpKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")}) {
+		t.Fatal("expected k rune to be recognized as move-up")
+	}
+	if !isMoveDownKey(tea.KeyMsg{Type: tea.KeyDown}) {
+		t.Fatal("expected KeyDown to be recognized as move-down")
+	}
+	if !isMoveUpKey(tea.KeyMsg{Type: tea.KeyUp}) {
+		t.Fatal("expected KeyUp to be recognized as move-up")
+	}
+}
+
 func TestModelShowsUnavailableMutationNotice(t *testing.T) {
 	t.Parallel()
 
@@ -192,6 +245,42 @@ func TestModelSuccessfulLoginOpensAdminUsers(t *testing.T) {
 	}
 	if strings.Contains(view, "secret-pass") {
 		t.Fatalf("view = %q, password leaked in UI", view)
+	}
+}
+
+func TestModelMovesAdminUserSelectionWithRuneAndArrowKeys(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 4, 23, 5, 0, 0, time.UTC)
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{
+			Username:    "operator",
+			BearerToken: "bearer-token",
+			ExpiresAt:   now.Add(2 * time.Minute),
+		},
+		users: []ports.AdminUser{
+			{ID: "u-1", Username: "alice", IsAdmin: true, Enabled: true},
+			{ID: "u-2", Username: "bob", IsAdmin: false, Enabled: true},
+		},
+	}
+	model := newAdminReadyModel(t, adminClient)
+	model.now = func() time.Time { return now }
+
+	updated := runAdminLogin(t, model, "operator", "secret-pass")
+	updated = runKey(t, updated, "j")
+	if updated.adminView.SelectedUser != 1 {
+		t.Fatalf("selectedUser = %d, want 1 after j", updated.adminView.SelectedUser)
+	}
+	if updated.adminView.SelectedUsername != "bob" {
+		t.Fatalf("selectedUsername = %q, want bob", updated.adminView.SelectedUsername)
+	}
+
+	updated = runKey(t, updated, "up")
+	if updated.adminView.SelectedUser != 0 {
+		t.Fatalf("selectedUser = %d, want 0 after up", updated.adminView.SelectedUser)
+	}
+	if updated.adminView.SelectedUsername != "alice" {
+		t.Fatalf("selectedUsername = %q, want alice", updated.adminView.SelectedUsername)
 	}
 }
 

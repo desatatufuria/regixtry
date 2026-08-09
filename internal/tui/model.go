@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
 	appregixtry "regixtry/internal/app/regixtry"
@@ -505,14 +506,14 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.openAdmin()
 	}
 
-	switch msg.String() {
-	case "up", "k":
+	switch {
+	case isMoveUpKey(msg):
 		m.moveSelection(-1)
 		return m, nil
-	case "down", "j":
+	case isMoveDownKey(msg):
 		m.moveSelection(1)
 		return m, nil
-	case "enter":
+	case isEnterKey(msg):
 		switch m.screen {
 		case screenRepositories:
 			if repository, ok := m.selectedRepository(); ok {
@@ -527,7 +528,7 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, m.loadManifestCmd(m.tags.Repository, tag)
 			}
 		}
-	case "esc", "backspace":
+	case isBackKey(msg):
 		m.showMutationNotice = false
 		m.status = ""
 		switch m.screen {
@@ -543,19 +544,19 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.screen = screenManifest
 			return m, nil
 		}
-	case "b":
+	case isRuneKey(msg, 'b'):
 		if m.screen == screenManifest {
 			m.screen = screenBlobs
 			m.showMutationNotice = false
 		}
 		return m, nil
-	case "u":
+	case isRuneKey(msg, 'u'):
 		if m.screen == screenManifest {
 			m.screen = screenUploads
 			m.showMutationNotice = false
 		}
 		return m, nil
-	case "d", "x":
+	case isRuneKey(msg, 'd', 'x'):
 		if m.screen == screenManifest || m.screen == screenBlobs || m.screen == screenUploads {
 			m.showMutationNotice = true
 		}
@@ -566,7 +567,7 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateAdminKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if msg.String() == "l" && m.adminAuth == adminAuthStateAuthenticated {
+	if isRuneKey(msg, 'l') && m.adminAuth == adminAuthStateAuthenticated {
 		if m.adminMutation.InFlight {
 			return m, nil
 		}
@@ -588,13 +589,13 @@ func (m Model) updateAdminKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateAdminLoginKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc":
+	switch {
+	case isEscKey(msg):
 		return m.returnToInspection(), nil
-	case "tab", "up", "down":
+	case isTabKey(msg), isMoveUpKey(msg), isMoveDownKey(msg):
 		m.adminLogin.Focus = oppositeLoginField(m.adminLogin.Focus)
 		return m, nil
-	case "enter":
+	case isEnterKey(msg):
 		username := strings.TrimSpace(m.adminLogin.Username)
 		if username == "" || m.adminLogin.Password == "" {
 			m.status = "Username and password are required."
@@ -610,7 +611,7 @@ func (m Model) updateAdminLoginKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.loadingText = fmt.Sprintf("Signing in as %s...", username)
 		m.status = ""
 		return m, m.loginCmd(username, m.adminLogin.Password)
-	case "backspace":
+	case isBackspaceKey(msg):
 		m.deleteLoginRune()
 		return m, nil
 	}
@@ -629,11 +630,11 @@ func (m Model) updateAdminUsersKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.adminMutation.Active() {
-		switch msg.String() {
-		case "esc", "n":
+		switch {
+		case isEscKey(msg), isRuneKey(msg, 'n'):
 			m.adminMutation = adminUserMutationState{}
 			return m, nil
-		case "enter":
+		case isEnterKey(msg):
 			m.adminMutation.InFlight = true
 			m.status = fmt.Sprintf("Submitting %s for %s...", m.adminMutation.Verb(), m.adminMutation.Username)
 			return m, m.mutateAdminUserCmd(m.adminMutation)
@@ -642,16 +643,16 @@ func (m Model) updateAdminUsersKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	switch msg.String() {
-	case "esc":
+	switch {
+	case isEscKey(msg):
 		return m.returnToInspection(), nil
-	case "up", "k":
+	case isMoveUpKey(msg):
 		m.moveSelection(-1)
 		return m, nil
-	case "down", "j":
+	case isMoveDownKey(msg):
 		m.moveSelection(1)
 		return m, nil
-	case "enter":
+	case isEnterKey(msg):
 		user, ok := m.selectedAdminUser()
 		if !ok {
 			return m, nil
@@ -662,24 +663,24 @@ func (m Model) updateAdminUsersKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.adminView.AdminTokens = nil
 		m.status = fmt.Sprintf("Loading grants for %s...", user.Username)
 		return m, m.loadAdminGrantsCmd(user.ID, user.Username)
-	case "r":
+	case isRuneKey(msg, 'r'):
 		m.status = "Loading admin users..."
 		return m, m.loadAdminUsersCmd()
-	case "e", "d":
+	case isRuneKey(msg, 'e', 'd'):
 		user, ok := m.selectedAdminUser()
 		if !ok {
 			return m, nil
 		}
-		if msg.String() == "e" && user.Enabled {
+		if isRuneKey(msg, 'e') && user.Enabled {
 			return m, nil
 		}
-		if msg.String() == "d" && !user.Enabled {
+		if isRuneKey(msg, 'd') && !user.Enabled {
 			return m, nil
 		}
 		m.adminMutation = adminUserMutationState{UserID: user.ID, Username: user.Username}
 		m.adminView.SelectedUserID = user.ID
 		m.adminView.SelectedUsername = user.Username
-		if msg.String() == "e" {
+		if isRuneKey(msg, 'e') {
 			m.adminMutation.Action = adminUserMutationActionEnable
 		} else {
 			m.adminMutation.Action = adminUserMutationActionDisable
@@ -692,18 +693,18 @@ func (m Model) updateAdminUsersKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateAdminDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc":
+	switch {
+	case isEscKey(msg):
 		m.screen = screenAdminUsers
 		m.status = ""
 		return m, nil
-	case "g":
+	case isRuneKey(msg, 'g'):
 		if m.adminView.SelectedUserID == "" {
 			return m, nil
 		}
 		m.status = fmt.Sprintf("Loading grants for %s...", m.adminView.SelectedUsername)
 		return m, m.loadAdminGrantsCmd(m.adminView.SelectedUserID, m.adminView.SelectedUsername)
-	case "t":
+	case isRuneKey(msg, 't'):
 		if m.adminView.SelectedUserID == "" {
 			return m, nil
 		}
@@ -714,7 +715,48 @@ func (m Model) updateAdminDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) moveSelection(delta int) {
+func isMoveUpKey(msg tea.KeyMsg) bool {
+	return msg.Type == tea.KeyUp || msg.String() == "up" || isRuneKey(msg, 'k')
+}
+
+func isMoveDownKey(msg tea.KeyMsg) bool {
+	return msg.Type == tea.KeyDown || msg.String() == "down" || isRuneKey(msg, 'j')
+}
+
+func isEnterKey(msg tea.KeyMsg) bool {
+	return msg.Type == tea.KeyEnter || msg.String() == "enter"
+}
+
+func isTabKey(msg tea.KeyMsg) bool {
+	return msg.Type == tea.KeyTab || msg.String() == "tab"
+}
+
+func isEscKey(msg tea.KeyMsg) bool {
+	return msg.Type == tea.KeyEsc || msg.String() == "esc"
+}
+
+func isBackspaceKey(msg tea.KeyMsg) bool {
+	return msg.Type == tea.KeyBackspace || msg.String() == "backspace"
+}
+
+func isBackKey(msg tea.KeyMsg) bool {
+	return isEscKey(msg) || isBackspaceKey(msg)
+}
+
+func isRuneKey(msg tea.KeyMsg, candidates ...rune) bool {
+	if len(msg.Runes) != 1 {
+		return false
+	}
+	r := unicode.ToLower(msg.Runes[0])
+	for _, candidate := range candidates {
+		if r == unicode.ToLower(candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Model) moveSelection(delta int) {
 	switch m.screen {
 	case screenRepositories:
 		m.repositories.Selected = boundedIndex(m.repositories.Selected+delta, len(m.repositories.Items))
