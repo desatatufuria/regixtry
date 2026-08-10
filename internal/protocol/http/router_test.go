@@ -827,7 +827,7 @@ func TestRouterAdminScanSettingsRoutesRequireAuthAndPersistUpdates(t *testing.T)
 		t.Fatalf("body = %q, want disabled defaults", getRecorder.Body.String())
 	}
 
-	putReq := httptest.NewRequest(http.MethodPut, "/admin/v1/scan-settings", strings.NewReader(`{"enabled":true,"schedule_enabled":true,"interval":"6h","timeout":"20m","cache_dir":"/var/lib/regixtry/trivy-cache","binary_path":"trivy","max_concurrency":2}`))
+	putReq := httptest.NewRequest(http.MethodPut, "/admin/v1/scan-settings", strings.NewReader(`{"enabled":true,"schedule_enabled":true,"interval":"6h","timeout":"20m","service_url":"https://scanner.example.com","registry_reachable_url":"https://registry.internal:5443","max_concurrency":2}`))
 	putReq.Header.Set("Authorization", "Bearer admin-token")
 	putReq.Header.Set("Content-Type", "application/json")
 	putRecorder := httptest.NewRecorder()
@@ -847,7 +847,7 @@ func TestRouterAdminScanRoutesQueueAndListRuns(t *testing.T) {
 	defer cleanup()
 	seedPublishedManifest(t, handler)
 
-	putReq := httptest.NewRequest(http.MethodPut, "/admin/v1/scan-settings", strings.NewReader(`{"enabled":true,"schedule_enabled":false,"interval":"24h","timeout":"15m","cache_dir":"/tmp/trivy-cache","binary_path":"trivy","max_concurrency":1}`))
+	putReq := httptest.NewRequest(http.MethodPut, "/admin/v1/scan-settings", strings.NewReader(`{"enabled":true,"schedule_enabled":false,"interval":"24h","timeout":"15m","service_url":"https://scanner.example.com","registry_reachable_url":"https://registry.internal:5443","max_concurrency":1}`))
 	putReq.Header.Set("Authorization", "Bearer admin-token")
 	putReq.Header.Set("Content-Type", "application/json")
 	putRecorder := httptest.NewRecorder()
@@ -886,7 +886,7 @@ func TestRouterAdminScanRoutesRejectInvalidTargetsAndSettings(t *testing.T) {
 	handler, cleanup := newTestRouterWithAuth(t, allowAllAccessController{}, fakeAuthService{verify: &domainauth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
 	defer cleanup()
 
-	settingsReq := httptest.NewRequest(http.MethodPut, "/admin/v1/scan-settings", strings.NewReader(`{"enabled":true,"schedule_enabled":true,"interval":"0s","timeout":"0s","cache_dir":"","binary_path":"trivy","max_concurrency":0}`))
+	settingsReq := httptest.NewRequest(http.MethodPut, "/admin/v1/scan-settings", strings.NewReader(`{"enabled":true,"schedule_enabled":true,"interval":"0s","timeout":"0s","service_url":"ftp://scanner.example.com","registry_reachable_url":"http://127.0.0.1:5000","max_concurrency":0}`))
 	settingsReq.Header.Set("Authorization", "Bearer admin-token")
 	settingsReq.Header.Set("Content-Type", "application/json")
 	settingsRecorder := httptest.NewRecorder()
@@ -895,7 +895,7 @@ func TestRouterAdminScanRoutesRejectInvalidTargetsAndSettings(t *testing.T) {
 		t.Fatalf("settings status = %d, want %d", settingsRecorder.Code, http.StatusUnprocessableEntity)
 	}
 
-	validSettingsReq := httptest.NewRequest(http.MethodPut, "/admin/v1/scan-settings", strings.NewReader(`{"enabled":true,"schedule_enabled":false,"interval":"24h","timeout":"15m","cache_dir":"/tmp/trivy-cache","binary_path":"trivy","max_concurrency":1}`))
+	validSettingsReq := httptest.NewRequest(http.MethodPut, "/admin/v1/scan-settings", strings.NewReader(`{"enabled":true,"schedule_enabled":false,"interval":"24h","timeout":"15m","service_url":"https://scanner.example.com","registry_reachable_url":"https://registry.internal:5443","max_concurrency":1}`))
 	validSettingsReq.Header.Set("Authorization", "Bearer admin-token")
 	validSettingsReq.Header.Set("Content-Type", "application/json")
 	validSettingsRecorder := httptest.NewRecorder()
@@ -920,7 +920,7 @@ func TestRouterAdminFeatureRoutesProjectBuiltinTrivyState(t *testing.T) {
 	handler, cleanup := newTestRouterWithAuth(t, allowAllAccessController{}, fakeAuthService{verify: &domainauth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
 	defer cleanup()
 
-	configureReq := httptest.NewRequest(http.MethodPut, "/admin/v1/features/trivy/config", strings.NewReader(`{"enabled":true,"schedule_enabled":true,"interval":"6h","timeout":"20m","cache_dir":"/var/lib/regixtry/trivy-cache","binary_path":"trivy","max_concurrency":2}`))
+	configureReq := httptest.NewRequest(http.MethodPut, "/admin/v1/features/trivy/config", strings.NewReader(`{"enabled":true,"schedule_enabled":true,"interval":"6h","timeout":"20m","service_url":"https://scanner.example.com","registry_reachable_url":"https://registry.internal:5443","max_concurrency":2}`))
 	configureReq.Header.Set("Authorization", "Bearer admin-token")
 	configureReq.Header.Set("Content-Type", "application/json")
 	configureRecorder := httptest.NewRecorder()
@@ -982,7 +982,7 @@ func TestRouterAdminFeatureRoutesRequireAuthAndMutateAuthoritativeState(t *testi
 		t.Fatalf("unauth status = %d, want %d", unauthRecorder.Code, http.StatusUnauthorized)
 	}
 
-	seedReq := httptest.NewRequest(http.MethodPut, "/admin/v1/scan-settings", strings.NewReader(`{"enabled":false,"schedule_enabled":false,"interval":"24h","timeout":"15m","cache_dir":"/tmp/trivy-cache","binary_path":"trivy","max_concurrency":1}`))
+	seedReq := httptest.NewRequest(http.MethodPut, "/admin/v1/scan-settings", strings.NewReader(`{"enabled":false,"schedule_enabled":false,"interval":"24h","timeout":"15m","service_url":"https://scanner.example.com","registry_reachable_url":"https://registry.internal:5443","max_concurrency":1}`))
 	seedReq.Header.Set("Authorization", "Bearer admin-token")
 	seedReq.Header.Set("Content-Type", "application/json")
 	seedRecorder := httptest.NewRecorder()

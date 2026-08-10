@@ -366,11 +366,20 @@ func encodeFeatureConfigureInput(input ports.FeatureConfigureInput) map[string]a
 	if input.Timeout != nil {
 		body["timeout"] = input.Timeout.String()
 	}
-	if input.CacheDir != nil {
-		body["cache_dir"] = *input.CacheDir
+	if input.ServiceURL != nil {
+		body["service_url"] = *input.ServiceURL
 	}
-	if input.BinaryPath != nil {
-		body["binary_path"] = *input.BinaryPath
+	if input.RegistryReachableURL != nil {
+		body["registry_reachable_url"] = *input.RegistryReachableURL
+	}
+	if input.AuthToken != nil {
+		body["auth_token"] = *input.AuthToken
+	}
+	if input.TLSCACertPath != nil {
+		body["tls_ca_cert_path"] = *input.TLSCACertPath
+	}
+	if input.TLSInsecureSkipVerify != nil {
+		body["tls_insecure_skip_verify"] = *input.TLSInsecureSkipVerify
 	}
 	if input.MaxConcurrency != nil {
 		body["max_concurrency"] = *input.MaxConcurrency

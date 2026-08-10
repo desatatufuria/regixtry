@@ -58,9 +58,10 @@ sudo /absolute/path/to/regixtry setup --mode daemon-sqlite \
   --trivy-schedule-enabled \
   --trivy-interval 6h \
   --trivy-timeout 20m \
-  --trivy-cache-dir /var/lib/regixtry/trivy-cache \
   --trivy-max-concurrency 2
 ```
+
+Those legacy `setup --trivy-*` flags only bridge shared scheduling knobs into feature state. Operators still need to configure `service_url` plus `registry_reachable_url` before Trivy scans can run.
 
 Use the feature CLI after setup:
 
@@ -73,10 +74,15 @@ regixtry feature configure trivy \
   -schedule-enabled \
   -interval 6h \
   -timeout 20m \
-  -cache-dir /var/lib/regixtry/trivy-cache \
-  -binary-path trivy \
+  -service-url https://scanner.example.com \
+  -registry-reachable-url https://registry.internal:5443 \
+  -tls-ca-cert-path /etc/regixtry/trivy-ca.pem \
   -max-concurrency 2
 ```
+
+- `service_url` must use `http` or `https`.
+- `registry_reachable_url` is the scanner-facing registry address for localhost-container and remote-scanner deployments.
+- `feature status trivy` reports `/healthz` and `/version` readiness details.
 
 Legacy `setup --trivy-*` flags remain available for one migration slice. When provided, setup imports them into feature state and then points operators to `regixtry feature ...` for future changes.
 

@@ -83,22 +83,22 @@ func TestTemplateRendering(t *testing.T) {
 	t.Parallel()
 
 	plan := BootstrapPlan{
-		Addr:                "127.0.0.1:5000",
-		PublicURL:           "https://regixtry.example.com",
-		RuntimeTLSMode:      RuntimeTLSModeDirectTLS,
-		TLSCertFile:         "/etc/regixtry/tls/registry.crt",
-		TLSKeyFile:          "/etc/regixtry/tls/registry.key",
-		AuthPostgresDSN:     "postgres://registry:registry@db.example.com:5432/regixtry_auth?sslmode=disable",
-		StorageRoot:         "/var/lib/regixtry",
-		DatabasePath:        "/var/lib/regixtry/metadata.db",
-		TrivyCacheDir:       "/var/lib/regixtry/trivy-cache",
-		TrivyBinaryPath:     "trivy",
-		TrivyTimeout:        15 * time.Minute,
-		TrivyInterval:       24 * time.Hour,
-		TrivyMaxConcurrency: 1,
-		EnvPath:             "/etc/regixtry/regixtry.env",
-		BinaryPath:          "/usr/local/bin/regixtry",
-		ServiceName:         "regixtry",
+		Addr:                      "127.0.0.1:5000",
+		PublicURL:                 "https://regixtry.example.com",
+		RuntimeTLSMode:            RuntimeTLSModeDirectTLS,
+		TLSCertFile:               "/etc/regixtry/tls/registry.crt",
+		TLSKeyFile:                "/etc/regixtry/tls/registry.key",
+		AuthPostgresDSN:           "postgres://registry:registry@db.example.com:5432/regixtry_auth?sslmode=disable",
+		StorageRoot:               "/var/lib/regixtry",
+		DatabasePath:              "/var/lib/regixtry/metadata.db",
+		TrivyServiceURL:           "http://127.0.0.1:4954",
+		TrivyRegistryReachableURL: "http://regixtry:5000",
+		TrivyTimeout:              15 * time.Minute,
+		TrivyInterval:             24 * time.Hour,
+		TrivyMaxConcurrency:       1,
+		EnvPath:                   "/etc/regixtry/regixtry.env",
+		BinaryPath:                "/usr/local/bin/regixtry",
+		ServiceName:               "regixtry",
 	}
 
 	env := RenderEnvFile(plan)
@@ -111,15 +111,7 @@ func TestTemplateRendering(t *testing.T) {
 	if !strings.Contains(env, `REGISTRY_AUTH_POSTGRES_DSN="postgres://registry:registry@db.example.com:5432/regixtry_auth?sslmode=disable"`) {
 		t.Fatalf("env = %q, want quoted auth DSN", env)
 	}
-	for _, unwanted := range []string{
-		"REGISTRY_TRIVY_ENABLED",
-		"REGISTRY_TRIVY_SCHEDULE_ENABLED",
-		"REGISTRY_TRIVY_CACHE_DIR",
-		"REGISTRY_TRIVY_TIMEOUT",
-		"REGISTRY_TRIVY_INTERVAL",
-		"REGISTRY_TRIVY_MAX_CONCURRENCY",
-		"REGISTRY_TRIVY_BINARY_PATH",
-	} {
+	for _, unwanted := range []string{"REGISTRY_TRIVY_"} {
 		if strings.Contains(env, unwanted) {
 			t.Fatalf("env = %q, want base-only env without %s", env, unwanted)
 		}

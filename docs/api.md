@@ -33,11 +33,11 @@ Todas estas rutas requieren Bearer de un usuario admin. Los JSON se decodifican 
 | GET | `/admin/v1/features` | ninguno | `200`, built-in feature inventory |
 | GET | `/admin/v1/features/{name}` | ninguno | `200`, feature-owned configuration |
 | GET | `/admin/v1/features/{name}/status` | ninguno | `200`, feature configuration plus runtime health |
-| PUT | `/admin/v1/features/{name}/config` | `enabled`, `schedule_enabled`, `interval`, `timeout`, `cache_dir`, `binary_path`, `max_concurrency` | `200`, persisted feature state |
+| PUT | `/admin/v1/features/{name}/config` | `enabled`, `schedule_enabled`, `interval`, `timeout`, `service_url`, `registry_reachable_url`, optional `auth_token`, `tls_ca_cert_path`, `tls_insecure_skip_verify`, `max_concurrency` | `200`, persisted feature state |
 | POST | `/admin/v1/features/{name}:enable` | ninguno | `200`, enabled feature state |
 | POST | `/admin/v1/features/{name}:disable` | ninguno | `200`, disabled feature state |
 | GET | `/admin/v1/scan-settings` | ninguno | `200`, settings actuales |
-| PUT | `/admin/v1/scan-settings` | `enabled`, `schedule_enabled`, `interval`, `timeout`, `cache_dir`, `binary_path`, `max_concurrency` | `200`, settings persistidos |
+| PUT | `/admin/v1/scan-settings` | `enabled`, `schedule_enabled`, `interval`, `timeout`, `service_url`, `registry_reachable_url`, optional `auth_token`, `tls_ca_cert_path`, `tls_insecure_skip_verify`, `max_concurrency` | `200`, settings persistidos |
 | POST | `/admin/v1/scan-runs` | `repository`, `reference` | `202`, run encolado con digest canónico |
 | GET | `/admin/v1/scan-runs?repository=&limit=` | ninguno | `200`, historial de runs |
 
@@ -55,11 +55,14 @@ curl -X PUT \
     "schedule_enabled": true,
     "interval": "6h",
     "timeout": "20m",
-    "cache_dir": "/var/lib/regixtry/trivy-cache",
-    "binary_path": "trivy",
+    "service_url": "https://scanner.example.com",
+    "registry_reachable_url": "https://registry.internal:5443",
+    "tls_ca_cert_path": "/etc/regixtry/trivy-ca.pem",
     "max_concurrency": 2
   }'
 ```
+
+`auth_token` is write-only. Read/status responses never echo it back.
 
 ### Feature status example
 

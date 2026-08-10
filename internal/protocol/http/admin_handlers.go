@@ -201,13 +201,16 @@ func (r *Router) handleAdminScanRuns(w stdhttp.ResponseWriter, req *stdhttp.Requ
 
 func decodeScanSettings(req *stdhttp.Request) (ports.ScanSettings, error) {
 	var payload struct {
-		Enabled         bool   `json:"enabled"`
-		ScheduleEnabled bool   `json:"schedule_enabled"`
-		Interval        string `json:"interval"`
-		Timeout         string `json:"timeout"`
-		CacheDir        string `json:"cache_dir"`
-		BinaryPath      string `json:"binary_path"`
-		MaxConcurrency  int    `json:"max_concurrency"`
+		Enabled               bool   `json:"enabled"`
+		ScheduleEnabled       bool   `json:"schedule_enabled"`
+		Interval              string `json:"interval"`
+		Timeout               string `json:"timeout"`
+		ServiceURL            string `json:"service_url"`
+		RegistryReachableURL  string `json:"registry_reachable_url"`
+		AuthToken             string `json:"auth_token"`
+		TLSCACertPath         string `json:"tls_ca_cert_path"`
+		TLSInsecureSkipVerify bool   `json:"tls_insecure_skip_verify"`
+		MaxConcurrency        int    `json:"max_concurrency"`
 	}
 	if err := decodeAdminJSON(req, &payload); err != nil {
 		return ports.ScanSettings{}, err
@@ -220,41 +223,49 @@ func decodeScanSettings(req *stdhttp.Request) (ports.ScanSettings, error) {
 	if err != nil {
 		return ports.ScanSettings{}, domainauth.NewValidationError("timeout must be a valid duration")
 	}
-	return ports.ScanSettings{Enabled: payload.Enabled, ScheduleEnabled: payload.ScheduleEnabled, Interval: interval, Timeout: timeout, CacheDir: payload.CacheDir, BinaryPath: payload.BinaryPath, MaxConcurrency: payload.MaxConcurrency}, nil
+	return ports.ScanSettings{Enabled: payload.Enabled, ScheduleEnabled: payload.ScheduleEnabled, Interval: interval, Timeout: timeout, ServiceURL: payload.ServiceURL, RegistryReachableURL: payload.RegistryReachableURL, AuthToken: payload.AuthToken, TLSCACertPath: payload.TLSCACertPath, TLSInsecureSkipVerify: payload.TLSInsecureSkipVerify, MaxConcurrency: payload.MaxConcurrency}, nil
 }
 
 func scanSettingsResponse(settings ports.ScanSettings) map[string]any {
 	return map[string]any{
-		"enabled":          settings.Enabled,
-		"schedule_enabled": settings.ScheduleEnabled,
-		"interval":         settings.Interval.String(),
-		"timeout":          settings.Timeout.String(),
-		"cache_dir":        settings.CacheDir,
-		"binary_path":      settings.BinaryPath,
-		"max_concurrency":  settings.MaxConcurrency,
-		"updated_at":       settings.UpdatedAt,
+		"enabled":                  settings.Enabled,
+		"schedule_enabled":         settings.ScheduleEnabled,
+		"interval":                 settings.Interval.String(),
+		"timeout":                  settings.Timeout.String(),
+		"service_url":              settings.ServiceURL,
+		"registry_reachable_url":   settings.RegistryReachableURL,
+		"tls_ca_cert_path":         settings.TLSCACertPath,
+		"tls_insecure_skip_verify": settings.TLSInsecureSkipVerify,
+		"max_concurrency":          settings.MaxConcurrency,
+		"updated_at":               settings.UpdatedAt,
 	}
 }
 
 func decodeFeatureConfigureInput(req *stdhttp.Request) (ports.FeatureConfigureInput, error) {
 	var payload struct {
-		Enabled         *bool   `json:"enabled"`
-		ScheduleEnabled *bool   `json:"schedule_enabled"`
-		Interval        string  `json:"interval"`
-		Timeout         string  `json:"timeout"`
-		CacheDir        *string `json:"cache_dir"`
-		BinaryPath      *string `json:"binary_path"`
-		MaxConcurrency  *int    `json:"max_concurrency"`
+		Enabled               *bool   `json:"enabled"`
+		ScheduleEnabled       *bool   `json:"schedule_enabled"`
+		Interval              string  `json:"interval"`
+		Timeout               string  `json:"timeout"`
+		ServiceURL            *string `json:"service_url"`
+		RegistryReachableURL  *string `json:"registry_reachable_url"`
+		AuthToken             *string `json:"auth_token"`
+		TLSCACertPath         *string `json:"tls_ca_cert_path"`
+		TLSInsecureSkipVerify *bool   `json:"tls_insecure_skip_verify"`
+		MaxConcurrency        *int    `json:"max_concurrency"`
 	}
 	if err := decodeAdminJSON(req, &payload); err != nil {
 		return ports.FeatureConfigureInput{}, err
 	}
 	input := ports.FeatureConfigureInput{
-		Enabled:         payload.Enabled,
-		ScheduleEnabled: payload.ScheduleEnabled,
-		CacheDir:        payload.CacheDir,
-		BinaryPath:      payload.BinaryPath,
-		MaxConcurrency:  payload.MaxConcurrency,
+		Enabled:               payload.Enabled,
+		ScheduleEnabled:       payload.ScheduleEnabled,
+		ServiceURL:            payload.ServiceURL,
+		RegistryReachableURL:  payload.RegistryReachableURL,
+		AuthToken:             payload.AuthToken,
+		TLSCACertPath:         payload.TLSCACertPath,
+		TLSInsecureSkipVerify: payload.TLSInsecureSkipVerify,
+		MaxConcurrency:        payload.MaxConcurrency,
 	}
 	if strings.TrimSpace(payload.Interval) != "" {
 		interval, err := time.ParseDuration(strings.TrimSpace(payload.Interval))
@@ -275,16 +286,18 @@ func decodeFeatureConfigureInput(req *stdhttp.Request) (ports.FeatureConfigureIn
 
 func featureDetailsResponse(details ports.FeatureDetails, includeRuntime bool) map[string]any {
 	response := map[string]any{
-		"name":             details.Name,
-		"kind":             details.Kind,
-		"enabled":          details.Enabled,
-		"configured":       details.Configured,
-		"schedule_enabled": details.ScheduleEnabled,
-		"interval":         details.Interval.String(),
-		"timeout":          details.Timeout.String(),
-		"cache_dir":        details.CacheDir,
-		"binary_path":      details.BinaryPath,
-		"max_concurrency":  details.MaxConcurrency,
+		"name":                     details.Name,
+		"kind":                     details.Kind,
+		"enabled":                  details.Enabled,
+		"configured":               details.Configured,
+		"schedule_enabled":         details.ScheduleEnabled,
+		"interval":                 details.Interval.String(),
+		"timeout":                  details.Timeout.String(),
+		"service_url":              details.ServiceURL,
+		"registry_reachable_url":   details.RegistryReachableURL,
+		"tls_ca_cert_path":         details.TLSCACertPath,
+		"tls_insecure_skip_verify": details.TLSInsecureSkipVerify,
+		"max_concurrency":          details.MaxConcurrency,
 	}
 	if includeRuntime {
 		response["runtime"] = details.Runtime

@@ -3,8 +3,8 @@ package regixtry
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -55,6 +55,9 @@ func (s *Service) QueueManualScan(ctx context.Context, repositoryName string, re
 	if !settings.Enabled {
 		return ports.ScanRun{}, domain.NewValidationError("scan settings must be enabled")
 	}
+	if _, err := s.scanTarget(settings, repositoryName, "sha256:placeholder"); err != nil {
+		return ports.ScanRun{}, err
+	}
 	repository, err := parseRepository(repositoryName)
 	if err != nil {
 		return ports.ScanRun{}, err
@@ -70,16 +73,7 @@ func (s *Service) QueueManualScan(ctx context.Context, repositoryName string, re
 		return ports.ScanRun{}, err
 	}
 	now := s.now()
-	run := ports.ScanRun{
-		ID:           uuid.NewString(),
-		Repository:   repository.String(),
-		RequestedRef: strings.TrimSpace(reference),
-		Digest:       digest,
-		Status:       ports.ScanRunStatusQueued,
-		Trigger:      ports.ScanTriggerManual,
-		CreatedAt:    now,
-		UpdatedAt:    now,
-	}
+	run := ports.ScanRun{ID: uuid.NewString(), Repository: repository.String(), RequestedRef: strings.TrimSpace(reference), Digest: digest, Status: ports.ScanRunStatusQueued, Trigger: ports.ScanTriggerManual, CreatedAt: now, UpdatedAt: now}
 	if err := s.metadata.UpsertScanRun(ctx, s.tenant(ctx), run); err != nil {
 		return ports.ScanRun{}, err
 	}
@@ -113,6 +107,9 @@ func (s *Service) RunScheduledScans(ctx context.Context) error {
 }
 
 func (s *Service) queueScheduledScan(ctx context.Context, repositoryName string, reference string, settings ports.ScanSettings) (ports.ScanRun, error) {
+	if _, err := s.scanTarget(settings, repositoryName, "sha256:placeholder"); err != nil {
+		return ports.ScanRun{}, err
+	}
 	repository, err := parseRepository(repositoryName)
 	if err != nil {
 		return ports.ScanRun{}, err
@@ -149,7 +146,16 @@ func (s *Service) executeScanRun(ctx context.Context, tenant string, run ports.S
 	run.StartedAt = &now
 	run.UpdatedAt = now
 	_ = s.metadata.UpsertScanRun(ctx, tenant, run)
-	target := s.scanTarget(run.Repository, run.Digest)
+	target, err := s.scanTarget(settings, run.Repository, run.Digest)
+	if err != nil {
+		finished := s.now()
+		run.FinishedAt = &finished
+		run.UpdatedAt = finished
+		run.Status = ports.ScanRunStatusFailed
+		run.Error = err.Error()
+		_ = s.metadata.UpsertScanRun(ctx, tenant, run)
+		return
+	}
 	result, err := s.scanRunner.Run(ctx, target, settings)
 	finished := s.now()
 	run.FinishedAt = &finished
@@ -171,26 +177,48 @@ func (s *Service) executeScanRun(ctx context.Context, tenant string, run ports.S
 	_ = s.metadata.UpsertScanRun(ctx, tenant, run)
 }
 
-func (s *Service) scanTarget(repository string, digest string) string {
-	host := strings.TrimSpace(s.scanHost)
-	if parsed, err := url.Parse(host); err == nil && strings.TrimSpace(parsed.Host) != "" {
-		host = parsed.Host
+func (s *Service) scanTarget(settings ports.ScanSettings, repository string, digest string) (string, error) {
+	base, err := s.scannerReachableRegistryBase(settings)
+	if err != nil {
+		return "", err
 	}
-	if host == "" {
-		host = "registry.local"
+	parsed, err := url.Parse(base)
+	if err == nil && strings.TrimSpace(parsed.Host) != "" {
+		base = parsed.Host
 	}
-	return fmt.Sprintf("%s/%s@%s", host, strings.TrimSpace(repository), strings.TrimSpace(digest))
+	return fmt.Sprintf("%s/%s@%s", strings.TrimSpace(base), strings.TrimSpace(repository), strings.TrimSpace(digest)), nil
+}
+
+func (s *Service) scannerReachableRegistryBase(settings ports.ScanSettings) (string, error) {
+	base := strings.TrimSpace(settings.RegistryReachableURL)
+	if base == "" {
+		base = strings.TrimSpace(s.scanHost)
+	}
+	if base == "" || isLoopbackOnlyAddress(base) {
+		return "", domain.NewValidationError("registry_reachable_url is required when the registry public URL is loopback-only")
+	}
+	return base, nil
 }
 
 func (s *Service) normalizeScanSettings(input ports.ScanSettings) (ports.ScanSettings, error) {
 	settings := input
-	settings.CacheDir = strings.TrimSpace(settings.CacheDir)
-	settings.BinaryPath = strings.TrimSpace(settings.BinaryPath)
-	if settings.CacheDir == "" {
-		return ports.ScanSettings{}, domain.NewValidationError("cache_dir is required")
+	settings.ServiceURL = strings.TrimSpace(settings.ServiceURL)
+	settings.RegistryReachableURL = strings.TrimSpace(settings.RegistryReachableURL)
+	settings.AuthToken = strings.TrimSpace(settings.AuthToken)
+	settings.TLSCACertPath = strings.TrimSpace(settings.TLSCACertPath)
+	if settings.ServiceURL != "" {
+		parsed, err := url.Parse(settings.ServiceURL)
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || strings.TrimSpace(parsed.Host) == "" {
+			return ports.ScanSettings{}, domain.NewValidationError("service_url must use http or https")
+		}
+		settings.ServiceURL = strings.TrimRight(parsed.String(), "/")
 	}
-	if settings.BinaryPath == "" {
-		settings.BinaryPath = "trivy"
+	if settings.RegistryReachableURL != "" {
+		parsed, err := url.Parse(settings.RegistryReachableURL)
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || strings.TrimSpace(parsed.Host) == "" {
+			return ports.ScanSettings{}, domain.NewValidationError("registry_reachable_url must use http or https")
+		}
+		settings.RegistryReachableURL = strings.TrimRight(parsed.String(), "/")
 	}
 	if settings.Timeout <= 0 {
 		return ports.ScanSettings{}, domain.NewValidationError("timeout must be greater than zero")
@@ -201,7 +229,26 @@ func (s *Service) normalizeScanSettings(input ports.ScanSettings) (ports.ScanSet
 	if settings.MaxConcurrency <= 0 {
 		return ports.ScanSettings{}, domain.NewValidationError("max_concurrency must be greater than zero")
 	}
-	settings.CacheDir = filepath.Clean(settings.CacheDir)
 	settings.UpdatedAt = s.now()
 	return settings, nil
+}
+
+func isLoopbackOnlyAddress(raw string) bool {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return true
+	}
+	parsed, err := url.Parse(trimmed)
+	host := trimmed
+	if err == nil && strings.TrimSpace(parsed.Host) != "" {
+		host = parsed.Hostname()
+	}
+	host = strings.TrimSpace(host)
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }

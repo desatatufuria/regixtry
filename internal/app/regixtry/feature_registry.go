@@ -2,9 +2,6 @@ package regixtry
 
 import (
 	"context"
-	"fmt"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -21,16 +18,8 @@ type featureDescriptor struct {
 
 var builtInFeatures = []featureDescriptor{{name: trivyFeatureName, kind: ports.FeatureKindBuiltin}}
 
-var probeTrivyRuntime = func(binaryPath string) ports.FeatureRuntime {
-	trimmed := strings.TrimSpace(binaryPath)
-	if trimmed == "" {
-		return ports.FeatureRuntime{Health: "unconfigured", Detail: "binary path is empty"}
-	}
-	resolved, err := exec.LookPath(trimmed)
-	if err != nil {
-		return ports.FeatureRuntime{Health: "unavailable", Detail: err.Error()}
-	}
-	return ports.FeatureRuntime{Health: "ready", Detail: fmt.Sprintf("binary reachable at %s", resolved)}
+type trivyRuntimeProber interface {
+	Probe(context.Context, ports.ScanSettings) (ports.FeatureRuntime, error)
 }
 
 func lookupFeature(name string) (featureDescriptor, error) {
@@ -40,7 +29,7 @@ func lookupFeature(name string) (featureDescriptor, error) {
 			return feature, nil
 		}
 	}
-	return featureDescriptor{}, domain.NewValidationError(fmt.Sprintf("unsupported feature %q", trimmed))
+	return featureDescriptor{}, domain.NewValidationError("unsupported feature \"" + trimmed + "\"")
 }
 
 func ValidateFeatureName(name string) error {
@@ -55,12 +44,7 @@ func (s *Service) ListFeatures(ctx context.Context) ([]ports.FeatureSummary, err
 		if err != nil {
 			return nil, err
 		}
-		summaries = append(summaries, ports.FeatureSummary{
-			Name:       details.Name,
-			Kind:       details.Kind,
-			Enabled:    details.Enabled,
-			Configured: details.Configured,
-		})
+		summaries = append(summaries, ports.FeatureSummary{Name: details.Name, Kind: details.Kind, Enabled: details.Enabled, Configured: details.Configured})
 	}
 	return summaries, nil
 }
@@ -74,12 +58,34 @@ func (s *Service) GetFeature(ctx context.Context, name string) (ports.FeatureDet
 }
 
 func (s *Service) GetFeatureStatus(ctx context.Context, name string) (ports.FeatureDetails, error) {
-	details, err := s.GetFeature(ctx, name)
+	feature, settings, configured, err := s.loadFeatureSettings(ctx, name)
 	if err != nil {
 		return ports.FeatureDetails{}, err
 	}
-	details.Runtime = probeTrivyRuntime(details.BinaryPath)
+	details := featureDetailsFromSettings(feature, settings, configured)
+	details.Runtime = s.probeFeatureRuntime(ctx, settings)
 	return details, nil
+}
+
+func (s *Service) probeFeatureRuntime(ctx context.Context, settings ports.ScanSettings) ports.FeatureRuntime {
+	if strings.TrimSpace(settings.ServiceURL) == "" {
+		return ports.FeatureRuntime{Mode: string(ports.FeatureKindExternalService), Health: "unconfigured", Detail: "service_url is required"}
+	}
+	if _, err := s.scannerReachableRegistryBase(settings); err != nil {
+		return ports.FeatureRuntime{Mode: string(ports.FeatureKindExternalService), Health: "degraded", Detail: err.Error()}
+	}
+	prober, ok := s.scanRunner.(trivyRuntimeProber)
+	if !ok || prober == nil {
+		return ports.FeatureRuntime{Mode: string(ports.FeatureKindExternalService), Health: "unknown", Detail: "service probe is not configured"}
+	}
+	runtime, err := prober.Probe(ctx, settings)
+	if runtime.Mode == "" {
+		runtime.Mode = string(ports.FeatureKindExternalService)
+	}
+	if err != nil {
+		return runtime
+	}
+	return runtime
 }
 
 func (s *Service) ConfigureFeature(ctx context.Context, name string, input ports.FeatureConfigureInput) (ports.FeatureDetails, error) {
@@ -113,7 +119,13 @@ func (s *Service) ImportLegacyFeatureConfigIfMissing(ctx context.Context, name s
 	if configured {
 		return featureDetailsFromSettings(feature, settings, true), nil
 	}
-	return s.ConfigureFeature(ctx, name, input)
+	return s.ConfigureFeature(ctx, name, ports.FeatureConfigureInput{
+		Enabled:         input.Enabled,
+		ScheduleEnabled: input.ScheduleEnabled,
+		Interval:        input.Interval,
+		Timeout:         input.Timeout,
+		MaxConcurrency:  input.MaxConcurrency,
+	})
 }
 
 func (s *Service) loadFeatureSettings(ctx context.Context, name string) (featureDescriptor, ports.ScanSettings, bool, error) {
@@ -133,8 +145,6 @@ func (s *Service) loadFeatureSettings(ctx context.Context, name string) (feature
 		ScheduleEnabled: false,
 		Interval:        24 * time.Hour,
 		Timeout:         15 * time.Minute,
-		CacheDir:        filepath.Join(".", "trivy-cache"),
-		BinaryPath:      "trivy",
 		MaxConcurrency:  1,
 	}, false, nil
 }
@@ -156,11 +166,20 @@ func (s *Service) mergeFeatureSettings(base ports.ScanSettings, configured bool,
 	if input.Timeout != nil {
 		settings.Timeout = *input.Timeout
 	}
-	if input.CacheDir != nil {
-		settings.CacheDir = *input.CacheDir
+	if input.ServiceURL != nil {
+		settings.ServiceURL = *input.ServiceURL
 	}
-	if input.BinaryPath != nil {
-		settings.BinaryPath = *input.BinaryPath
+	if input.RegistryReachableURL != nil {
+		settings.RegistryReachableURL = *input.RegistryReachableURL
+	}
+	if input.AuthToken != nil {
+		settings.AuthToken = *input.AuthToken
+	}
+	if input.TLSCACertPath != nil {
+		settings.TLSCACertPath = *input.TLSCACertPath
+	}
+	if input.TLSInsecureSkipVerify != nil {
+		settings.TLSInsecureSkipVerify = *input.TLSInsecureSkipVerify
 	}
 	if input.MaxConcurrency != nil {
 		settings.MaxConcurrency = *input.MaxConcurrency
@@ -170,15 +189,17 @@ func (s *Service) mergeFeatureSettings(base ports.ScanSettings, configured bool,
 
 func featureDetailsFromSettings(feature featureDescriptor, settings ports.ScanSettings, configured bool) ports.FeatureDetails {
 	return ports.FeatureDetails{
-		Name:            feature.name,
-		Kind:            feature.kind,
-		Enabled:         settings.Enabled,
-		Configured:      configured,
-		ScheduleEnabled: settings.ScheduleEnabled,
-		Interval:        settings.Interval,
-		Timeout:         settings.Timeout,
-		CacheDir:        settings.CacheDir,
-		BinaryPath:      settings.BinaryPath,
-		MaxConcurrency:  settings.MaxConcurrency,
+		Name:                  feature.name,
+		Kind:                  feature.kind,
+		Enabled:               settings.Enabled,
+		Configured:            configured,
+		ScheduleEnabled:       settings.ScheduleEnabled,
+		Interval:              settings.Interval,
+		Timeout:               settings.Timeout,
+		ServiceURL:            settings.ServiceURL,
+		RegistryReachableURL:  settings.RegistryReachableURL,
+		TLSCACertPath:         settings.TLSCACertPath,
+		TLSInsecureSkipVerify: settings.TLSInsecureSkipVerify,
+		MaxConcurrency:        settings.MaxConcurrency,
 	}
 }

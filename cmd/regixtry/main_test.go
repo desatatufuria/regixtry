@@ -1046,11 +1046,14 @@ func TestRunSetupImportsLegacyTrivyFlagsIntoFeatureState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetScanSettings() error = %v", err)
 	}
-	if !settings.Enabled || !settings.ScheduleEnabled || settings.Interval != 3*time.Hour || settings.Timeout != 17*time.Minute || settings.CacheDir != filepath.Join(root, "var", "cache", "trivy-custom") || settings.BinaryPath != "/usr/local/bin/trivy-custom" || settings.MaxConcurrency != 4 {
-		t.Fatalf("settings = %#v, want imported setup trivy flags", settings)
+	if !settings.Enabled || !settings.ScheduleEnabled || settings.Interval != 3*time.Hour || settings.Timeout != 17*time.Minute || settings.ServiceURL != "" || settings.RegistryReachableURL != "" || settings.MaxConcurrency != 4 {
+		t.Fatalf("settings = %#v, want legacy setup knobs imported without binary-backed runtime", settings)
 	}
 	if !strings.Contains(stdout.String(), "Legacy Trivy setup flags were imported into feature state.") {
 		t.Fatalf("stdout = %q, want legacy import guidance", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "service_url and registry_reachable_url are still required") {
+		t.Fatalf("stdout = %q, want service runtime follow-up guidance", stdout.String())
 	}
 	if runner.savedProvenance.Intent.TrivyBinaryPath != "" || runner.savedProvenance.Intent.TrivyCacheDir != "" || runner.savedProvenance.Intent.TrivyInterval != "" {
 		t.Fatalf("saved provenance intent = %#v, want base-only lifecycle provenance", runner.savedProvenance.Intent)
@@ -1061,6 +1064,21 @@ func TestRunFeatureCommandsManageBuiltInTrivyState(t *testing.T) {
 	root := t.TempDir()
 	storageRoot := filepath.Join(root, "data")
 	databasePath := filepath.Join(storageRoot, "metadata.db")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer secret-token" {
+			http.Error(w, fmt.Sprintf("unexpected auth header %q", got), http.StatusUnauthorized)
+			return
+		}
+		switch r.URL.Path {
+		case "/healthz":
+			w.WriteHeader(http.StatusOK)
+		case "/version":
+			_, _ = w.Write([]byte(`{"Version":"0.57.1"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
 	if err := os.MkdirAll(storageRoot, 0o755); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
 	}
@@ -1079,7 +1097,7 @@ func TestRunFeatureCommandsManageBuiltInTrivyState(t *testing.T) {
 	}
 
 	stdout.Reset()
-	if err := runWithIO(context.Background(), []string{"feature", "configure", "trivy", "-storage-root", storageRoot, "-db", databasePath, "-enabled", "-schedule-enabled", "-interval", "6h", "-timeout", "10m", "-cache-dir", filepath.Join(root, "cache", "trivy"), "-binary-path", "definitely-missing-trivy", "-max-concurrency", "2"}, strings.NewReader(""), stdout, io.Discard); err != nil {
+	if err := runWithIO(context.Background(), []string{"feature", "configure", "trivy", "-storage-root", storageRoot, "-db", databasePath, "-enabled", "-schedule-enabled", "-interval", "6h", "-timeout", "10m", "-service-url", server.URL, "-registry-reachable-url", "https://registry.internal:5443", "-auth-token", "secret-token", "-max-concurrency", "2"}, strings.NewReader(""), stdout, io.Discard); err != nil {
 		t.Fatalf("runWithIO(feature configure) error = %v", err)
 	}
 	if !strings.Contains(stdout.String(), "Configured feature trivy") {
@@ -1090,9 +1108,24 @@ func TestRunFeatureCommandsManageBuiltInTrivyState(t *testing.T) {
 	if err := runWithIO(context.Background(), []string{"feature", "status", "trivy", "-storage-root", storageRoot, "-db", databasePath}, strings.NewReader(""), stdout, io.Discard); err != nil {
 		t.Fatalf("runWithIO(feature status) error = %v", err)
 	}
-	for _, want := range []string{"Name: trivy", "Enabled: true", "Schedule Enabled: true", "Runtime Health: unavailable"} {
+	for _, want := range []string{"Name: trivy", "Enabled: true", "Schedule Enabled: true", "Service URL: " + server.URL, "Registry Reachable URL: https://registry.internal:5443", "Runtime Health: ready", "Runtime Version: 0.57.1"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("stdout = %q, want %q", stdout.String(), want)
+		}
+	}
+
+	stdout.Reset()
+	if err := runWithIO(context.Background(), []string{"feature", "configure", "trivy", "-storage-root", storageRoot, "-db", databasePath, "-enabled", "-schedule-enabled", "-interval", "6h", "-timeout", "10m", "-service-url", server.URL, "-auth-token", "secret-token", "-max-concurrency", "2"}, strings.NewReader(""), stdout, io.Discard); err != nil {
+		t.Fatalf("runWithIO(feature configure fallback) error = %v", err)
+	}
+
+	stdout.Reset()
+	if err := runWithIO(context.Background(), []string{"feature", "status", "trivy", "-storage-root", storageRoot, "-db", databasePath, "-public-url", "https://registry.example.com"}, strings.NewReader(""), stdout, io.Discard); err != nil {
+		t.Fatalf("runWithIO(feature status with public-url fallback) error = %v", err)
+	}
+	for _, want := range []string{"Runtime Health: ready", "Runtime Version: 0.57.1"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout = %q, want %q after public-url fallback", stdout.String(), want)
 		}
 	}
 

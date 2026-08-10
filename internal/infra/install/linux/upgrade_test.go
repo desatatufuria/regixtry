@@ -312,7 +312,7 @@ func TestBootstrapperUpgradeImportsLegacyTrivySettingsWhenFeatureStateMissing(t 
 	if err != nil {
 		t.Fatalf("GetScanSettings() error = %v", err)
 	}
-	if !settings.Enabled || !settings.ScheduleEnabled || settings.Interval != 6*time.Hour || settings.Timeout != 10*time.Minute || settings.BinaryPath != "trivy-custom" || settings.MaxConcurrency != 2 {
+	if !settings.Enabled || !settings.ScheduleEnabled || settings.Interval != 6*time.Hour || settings.Timeout != 10*time.Minute || settings.ServiceURL != "" || settings.RegistryReachableURL != "" || settings.MaxConcurrency != 2 {
 		t.Fatalf("settings = %#v, want imported legacy trivy state", settings)
 	}
 }
@@ -325,14 +325,14 @@ func TestBootstrapperUpgradeKeepsExistingFeatureStateWhenLegacyInputsDiffer(t *t
 	}
 	defer store.Close()
 	existing := ports.ScanSettings{
-		Enabled:         true,
-		ScheduleEnabled: false,
-		Interval:        24 * time.Hour,
-		Timeout:         15 * time.Minute,
-		CacheDir:        filepath.Join(plan.StorageRoot, "configured-cache"),
-		BinaryPath:      "trivy",
-		MaxConcurrency:  1,
-		UpdatedAt:       time.Now().UTC(),
+		Enabled:              true,
+		ScheduleEnabled:      false,
+		Interval:             24 * time.Hour,
+		Timeout:              15 * time.Minute,
+		ServiceURL:           "https://scanner.example.com",
+		RegistryReachableURL: "https://registry.internal",
+		MaxConcurrency:       1,
+		UpdatedAt:            time.Now().UTC(),
 	}
 	if err := store.UpsertScanSettings(context.Background(), ports.DefaultTenant, existing); err != nil {
 		t.Fatalf("UpsertScanSettings() error = %v", err)
@@ -374,7 +374,7 @@ func TestBootstrapperUpgradeKeepsExistingFeatureStateWhenLegacyInputsDiffer(t *t
 	if err != nil {
 		t.Fatalf("GetScanSettings() error = %v", err)
 	}
-	if settings.Enabled != existing.Enabled || settings.ScheduleEnabled != existing.ScheduleEnabled || settings.Interval != existing.Interval || settings.Timeout != existing.Timeout || settings.CacheDir != existing.CacheDir || settings.BinaryPath != existing.BinaryPath || settings.MaxConcurrency != existing.MaxConcurrency {
+	if settings.Enabled != existing.Enabled || settings.ScheduleEnabled != existing.ScheduleEnabled || settings.Interval != existing.Interval || settings.Timeout != existing.Timeout || settings.ServiceURL != existing.ServiceURL || settings.RegistryReachableURL != existing.RegistryReachableURL || settings.MaxConcurrency != existing.MaxConcurrency {
 		t.Fatalf("settings = %#v, want preserved existing feature state %#v", settings, existing)
 	}
 }

@@ -52,14 +52,21 @@ const (
 )
 
 type ScanSettings struct {
-	Enabled         bool          `json:"enabled"`
-	ScheduleEnabled bool          `json:"schedule_enabled"`
-	Interval        time.Duration `json:"-"`
-	Timeout         time.Duration `json:"-"`
-	CacheDir        string        `json:"cache_dir"`
-	BinaryPath      string        `json:"binary_path"`
-	MaxConcurrency  int           `json:"max_concurrency"`
-	UpdatedAt       time.Time     `json:"updated_at,omitempty"`
+	Enabled               bool          `json:"enabled"`
+	ScheduleEnabled       bool          `json:"schedule_enabled"`
+	Interval              time.Duration `json:"-"`
+	Timeout               time.Duration `json:"-"`
+	ServiceURL            string        `json:"service_url"`
+	RegistryReachableURL  string        `json:"registry_reachable_url"`
+	AuthToken             string        `json:"-"`
+	TLSCACertPath         string        `json:"tls_ca_cert_path,omitempty"`
+	TLSInsecureSkipVerify bool          `json:"tls_insecure_skip_verify,omitempty"`
+	CacheDir              string        `json:"-"`
+	BinaryPath            string        `json:"-"`
+	LegacyCacheDir        string        `json:"-"`
+	LegacyBinaryPath      string        `json:"-"`
+	MaxConcurrency        int           `json:"max_concurrency"`
+	UpdatedAt             time.Time     `json:"updated_at,omitempty"`
 }
 
 type ScanResult struct {
@@ -118,33 +125,44 @@ type FeatureSummary struct {
 }
 
 type FeatureRuntime struct {
+	Mode    string `json:"mode,omitempty"`
 	Health  string `json:"health,omitempty"`
 	Version string `json:"version,omitempty"`
 	Detail  string `json:"detail,omitempty"`
 }
 
 type FeatureDetails struct {
-	Name            string         `json:"name"`
-	Kind            FeatureKind    `json:"kind"`
-	Enabled         bool           `json:"enabled"`
-	Configured      bool           `json:"configured"`
-	ScheduleEnabled bool           `json:"schedule_enabled"`
-	Interval        time.Duration  `json:"-"`
-	Timeout         time.Duration  `json:"-"`
-	CacheDir        string         `json:"cache_dir"`
-	BinaryPath      string         `json:"binary_path"`
-	MaxConcurrency  int            `json:"max_concurrency"`
-	Runtime         FeatureRuntime `json:"runtime,omitempty"`
+	Name                  string         `json:"name"`
+	Kind                  FeatureKind    `json:"kind"`
+	Enabled               bool           `json:"enabled"`
+	Configured            bool           `json:"configured"`
+	ScheduleEnabled       bool           `json:"schedule_enabled"`
+	Interval              time.Duration  `json:"-"`
+	Timeout               time.Duration  `json:"-"`
+	ServiceURL            string         `json:"service_url"`
+	RegistryReachableURL  string         `json:"registry_reachable_url"`
+	AuthToken             string         `json:"-"`
+	TLSCACertPath         string         `json:"tls_ca_cert_path,omitempty"`
+	TLSInsecureSkipVerify bool           `json:"tls_insecure_skip_verify,omitempty"`
+	CacheDir              string         `json:"-"`
+	BinaryPath            string         `json:"-"`
+	MaxConcurrency        int            `json:"max_concurrency"`
+	Runtime               FeatureRuntime `json:"runtime,omitempty"`
 }
 
 type FeatureConfigureInput struct {
-	Enabled         *bool
-	ScheduleEnabled *bool
-	Interval        *time.Duration
-	Timeout         *time.Duration
-	CacheDir        *string
-	BinaryPath      *string
-	MaxConcurrency  *int
+	Enabled               *bool
+	ScheduleEnabled       *bool
+	Interval              *time.Duration
+	Timeout               *time.Duration
+	ServiceURL            *string
+	RegistryReachableURL  *string
+	AuthToken             *string
+	TLSCACertPath         *string
+	TLSInsecureSkipVerify *bool
+	CacheDir              *string
+	BinaryPath            *string
+	MaxConcurrency        *int
 }
 
 type ActionVerb string

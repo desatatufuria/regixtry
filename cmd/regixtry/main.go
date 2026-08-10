@@ -280,6 +280,7 @@ type setupPromptState struct {
 type featureConfig struct {
 	StorageRoot  string
 	DatabasePath string
+	PublicURL    string
 	Tenant       string
 }
 
@@ -824,6 +825,7 @@ func parseFeatureConfig(args []string) (featureConfig, error) {
 	var cfg featureConfig
 	flags.StringVar(&cfg.StorageRoot, "storage-root", filepath.Join(".", "data"), "root directory for registry runtime state")
 	flags.StringVar(&cfg.DatabasePath, "db", "", "path to the SQLite metadata database")
+	flags.StringVar(&cfg.PublicURL, "public-url", os.Getenv("REGISTRY_PUBLIC_URL"), "canonical public URL advertised to registry clients")
 	flags.StringVar(&cfg.Tenant, "tenant", ports.DefaultTenant, "tenant identifier")
 
 	if err := flags.Parse(args); err != nil {
@@ -918,14 +920,17 @@ func runFeature(ctx context.Context, args []string, stdout io.Writer) error {
 		flags := flag.NewFlagSet("feature configure", flag.ContinueOnError)
 		flags.SetOutput(io.Discard)
 		var (
-			cfg             featureConfig
-			enabled         bool
-			scheduleEnabled bool
-			interval        time.Duration
-			timeout         time.Duration
-			cacheDir        string
-			binaryPath      string
-			maxConcurrency  int
+			cfg                   featureConfig
+			enabled               bool
+			scheduleEnabled       bool
+			interval              time.Duration
+			timeout               time.Duration
+			serviceURL            string
+			registryReachableURL  string
+			authToken             string
+			tlsCACertPath         string
+			tlsInsecureSkipVerify bool
+			maxConcurrency        int
 		)
 		flags.StringVar(&cfg.StorageRoot, "storage-root", filepath.Join(".", "data"), "root directory for registry runtime state")
 		flags.StringVar(&cfg.DatabasePath, "db", "", "path to the SQLite metadata database")
@@ -934,8 +939,11 @@ func runFeature(ctx context.Context, args []string, stdout io.Writer) error {
 		flags.BoolVar(&scheduleEnabled, "schedule-enabled", false, "enable scheduled execution")
 		flags.DurationVar(&interval, "interval", 0, "feature interval")
 		flags.DurationVar(&timeout, "timeout", 0, "feature timeout")
-		flags.StringVar(&cacheDir, "cache-dir", "", "feature cache directory")
-		flags.StringVar(&binaryPath, "binary-path", "", "feature binary path")
+		flags.StringVar(&serviceURL, "service-url", "", "feature service URL")
+		flags.StringVar(&registryReachableURL, "registry-reachable-url", "", "scanner-facing registry URL")
+		flags.StringVar(&authToken, "auth-token", "", "feature bearer token")
+		flags.StringVar(&tlsCACertPath, "tls-ca-cert-path", "", "feature TLS CA certificate path")
+		flags.BoolVar(&tlsInsecureSkipVerify, "tls-insecure-skip-verify", false, "skip feature TLS verification")
 		flags.IntVar(&maxConcurrency, "max-concurrency", 0, "feature max concurrency")
 		if err := flags.Parse(args[2:]); err != nil {
 			return err
@@ -954,10 +962,16 @@ func runFeature(ctx context.Context, args []string, stdout io.Writer) error {
 				input.Interval = &interval
 			case "timeout":
 				input.Timeout = &timeout
-			case "cache-dir":
-				input.CacheDir = &cacheDir
-			case "binary-path":
-				input.BinaryPath = &binaryPath
+			case "service-url":
+				input.ServiceURL = &serviceURL
+			case "registry-reachable-url":
+				input.RegistryReachableURL = &registryReachableURL
+			case "auth-token":
+				input.AuthToken = &authToken
+			case "tls-ca-cert-path":
+				input.TLSCACertPath = &tlsCACertPath
+			case "tls-insecure-skip-verify":
+				input.TLSInsecureSkipVerify = &tlsInsecureSkipVerify
 			case "max-concurrency":
 				input.MaxConcurrency = &maxConcurrency
 			}
@@ -987,6 +1001,8 @@ func openFeatureService(cfg featureConfig) (*appregixtry.Service, func(), error)
 		return nil, nil, err
 	}
 	service := appregixtry.NewService(nil, store, ports.NewConfigurableAccessController(ports.AccessConfig{}), ports.NewSingleTenantResolver(cfg.Tenant), ports.NewInlineJobRunner())
+	service.SetScanHost(cfg.PublicURL)
+	service.SetScanRunner(trivyinfra.New(trivyinfra.RunnerConfig{}))
 	return service, func() { _ = store.Close() }, nil
 }
 
@@ -999,8 +1015,10 @@ func writeFeatureDetails(stdout io.Writer, details ports.FeatureDetails, include
 		fmt.Sprintf("Schedule Enabled: %t", details.ScheduleEnabled),
 		fmt.Sprintf("Interval: %s", details.Interval),
 		fmt.Sprintf("Timeout: %s", details.Timeout),
-		fmt.Sprintf("Cache Dir: %s", details.CacheDir),
-		fmt.Sprintf("Binary Path: %s", details.BinaryPath),
+		fmt.Sprintf("Service URL: %s", details.ServiceURL),
+		fmt.Sprintf("Registry Reachable URL: %s", details.RegistryReachableURL),
+		fmt.Sprintf("TLS CA Cert Path: %s", details.TLSCACertPath),
+		fmt.Sprintf("TLS Insecure Skip Verify: %t", details.TLSInsecureSkipVerify),
 		fmt.Sprintf("Max Concurrency: %d", details.MaxConcurrency),
 	}
 	if includeRuntime {
@@ -1090,7 +1108,7 @@ func runSetup(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 			_, _ = fmt.Fprintf(stdout, "Setup complete: regixtry is installed, %s.service is running, and %s is reachable.\n", cfg.ServiceName, cfg.PublicURL)
 			_, _ = fmt.Fprintf(stdout, "Lifecycle provenance recorded at %s\n", provenance.StatePath)
 			if legacyImported {
-				_, _ = fmt.Fprintln(stdout, "Legacy Trivy setup flags were imported into feature state. Use `regixtry feature ...` to manage Trivy going forward.")
+				_, _ = fmt.Fprintln(stdout, "Legacy Trivy setup flags were imported into feature state. Use `regixtry feature ...` to manage Trivy going forward; service_url and registry_reachable_url are still required.")
 			}
 			printSetupAuthGuidance(stdout, cfg, authOutcome)
 		}
@@ -1249,8 +1267,6 @@ func importLegacySetupTrivyFlags(ctx context.Context, cfg installlinux.Bootstrap
 		ScheduleEnabled: boolPointer(cfg.TrivyScheduleEnabled),
 		Interval:        durationPointer(cfg.TrivyInterval),
 		Timeout:         durationPointer(cfg.TrivyTimeout),
-		CacheDir:        stringPointer(cfg.TrivyCacheDir),
-		BinaryPath:      stringPointer(cfg.TrivyBinaryPath),
 		MaxConcurrency:  intPointer(cfg.TrivyMaxConcurrency),
 	})
 	if err != nil {
@@ -1970,11 +1986,6 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 	)
 	service.SetScanHost(cfg.PublicURL)
 	service.SetScanRunner(trivyinfra.New(trivyinfra.RunnerConfig{}))
-	trivyCacheDir := strings.TrimSpace(cfg.TrivyCacheDir)
-	if trivyCacheDir == "" {
-		trivyCacheDir = filepath.Join(cfg.StorageRoot, "trivy-cache")
-	}
-	trivyBinaryPath := firstNonEmpty(cfg.TrivyBinaryPath, "trivy")
 	trivyMaxConcurrency := cfg.TrivyMaxConcurrency
 	if trivyMaxConcurrency <= 0 {
 		trivyMaxConcurrency = 1
@@ -1992,8 +2003,6 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 		ScheduleEnabled: cfg.TrivyScheduleEnabled,
 		Interval:        trivyInterval,
 		Timeout:         trivyTimeout,
-		CacheDir:        trivyCacheDir,
-		BinaryPath:      trivyBinaryPath,
 		MaxConcurrency:  trivyMaxConcurrency,
 	})
 	if err != nil {

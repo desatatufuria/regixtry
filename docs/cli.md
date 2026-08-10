@@ -13,7 +13,7 @@
 | `feature show <name>` | `-storage-root`, `-db`, `-tenant` | Shows feature-owned configuration |
 | `feature status <name>` | `-storage-root`, `-db`, `-tenant` | Shows feature state plus runtime health |
 | `feature enable <name>` / `disable <name>` | `-storage-root`, `-db`, `-tenant` | Toggles a built-in feature |
-| `feature configure <name>` | `-storage-root`, `-db`, `-tenant`, `-enabled`, `-schedule-enabled`, `-interval`, `-timeout`, `-cache-dir`, `-binary-path`, `-max-concurrency` | Updates feature-owned configuration |
+| `feature configure <name>` | `-storage-root`, `-db`, `-tenant`, `-enabled`, `-schedule-enabled`, `-interval`, `-timeout`, `-service-url`, `-registry-reachable-url`, optional `-auth-token`, `-tls-ca-cert-path`, `-tls-insecure-skip-verify`, `-max-concurrency` | Updates feature-owned configuration |
 | `uninstall` | `-state-path` | Elimina artefactos registrados |
 | `upgrade` | `-ref`, `-state-path`, `-yes` | Upgrade con preflight |
 

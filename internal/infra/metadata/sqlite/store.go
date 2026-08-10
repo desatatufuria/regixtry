@@ -421,21 +421,26 @@ func (s *Store) ListManifestBlobs(ctx context.Context, tenant string, repository
 
 func (s *Store) GetScanSettings(ctx context.Context, tenant string) (ports.ScanSettings, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT enabled, schedule_enabled, interval, timeout, cache_dir, binary_path, max_concurrency, updated_at
+		SELECT enabled, schedule_enabled, interval, timeout, cache_dir, binary_path, service_url, registry_reachable_url, auth_token, tls_ca_cert_path, tls_insecure_skip_verify, max_concurrency, updated_at
 		FROM scan_settings
 		WHERE tenant = ?
 	`, tenant)
 	var (
-		enabled         bool
-		scheduleEnabled bool
-		intervalRaw     string
-		timeoutRaw      string
-		cacheDir        string
-		binaryPath      string
-		maxConcurrency  int
-		updatedAtRaw    string
+		enabled               bool
+		scheduleEnabled       bool
+		intervalRaw           string
+		timeoutRaw            string
+		cacheDir              string
+		binaryPath            string
+		serviceURL            string
+		registryReachableURL  string
+		authToken             string
+		tlsCACertPath         string
+		tlsInsecureSkipVerify bool
+		maxConcurrency        int
+		updatedAtRaw          string
 	)
-	if err := row.Scan(&enabled, &scheduleEnabled, &intervalRaw, &timeoutRaw, &cacheDir, &binaryPath, &maxConcurrency, &updatedAtRaw); err != nil {
+	if err := row.Scan(&enabled, &scheduleEnabled, &intervalRaw, &timeoutRaw, &cacheDir, &binaryPath, &serviceURL, &registryReachableURL, &authToken, &tlsCACertPath, &tlsInsecureSkipVerify, &maxConcurrency, &updatedAtRaw); err != nil {
 		if err == sql.ErrNoRows {
 			return ports.ScanSettings{}, domain.NewNotFoundError("scan_settings", tenant)
 		}
@@ -453,13 +458,13 @@ func (s *Store) GetScanSettings(ctx context.Context, tenant string) (ports.ScanS
 	if err != nil {
 		return ports.ScanSettings{}, err
 	}
-	return ports.ScanSettings{Enabled: enabled, ScheduleEnabled: scheduleEnabled, Interval: interval, Timeout: timeout, CacheDir: cacheDir, BinaryPath: binaryPath, MaxConcurrency: maxConcurrency, UpdatedAt: updatedAt}, nil
+	return ports.ScanSettings{Enabled: enabled, ScheduleEnabled: scheduleEnabled, Interval: interval, Timeout: timeout, ServiceURL: serviceURL, RegistryReachableURL: registryReachableURL, AuthToken: authToken, TLSCACertPath: tlsCACertPath, TLSInsecureSkipVerify: tlsInsecureSkipVerify, LegacyCacheDir: cacheDir, LegacyBinaryPath: binaryPath, MaxConcurrency: maxConcurrency, UpdatedAt: updatedAt}, nil
 }
 
 func (s *Store) UpsertScanSettings(ctx context.Context, tenant string, settings ports.ScanSettings) error {
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO scan_settings (tenant, enabled, schedule_enabled, interval, timeout, cache_dir, binary_path, max_concurrency, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO scan_settings (tenant, enabled, schedule_enabled, interval, timeout, cache_dir, binary_path, service_url, registry_reachable_url, auth_token, tls_ca_cert_path, tls_insecure_skip_verify, max_concurrency, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(tenant) DO UPDATE SET
 			enabled = excluded.enabled,
 			schedule_enabled = excluded.schedule_enabled,
@@ -467,9 +472,14 @@ func (s *Store) UpsertScanSettings(ctx context.Context, tenant string, settings 
 			timeout = excluded.timeout,
 			cache_dir = excluded.cache_dir,
 			binary_path = excluded.binary_path,
+			service_url = excluded.service_url,
+			registry_reachable_url = excluded.registry_reachable_url,
+			auth_token = excluded.auth_token,
+			tls_ca_cert_path = excluded.tls_ca_cert_path,
+			tls_insecure_skip_verify = excluded.tls_insecure_skip_verify,
 			max_concurrency = excluded.max_concurrency,
 			updated_at = excluded.updated_at
-	`, tenant, settings.Enabled, settings.ScheduleEnabled, settings.Interval.String(), settings.Timeout.String(), settings.CacheDir, settings.BinaryPath, settings.MaxConcurrency, settings.UpdatedAt.UTC().Format(time.RFC3339Nano))
+	`, tenant, settings.Enabled, settings.ScheduleEnabled, settings.Interval.String(), settings.Timeout.String(), settings.LegacyCacheDir, settings.LegacyBinaryPath, settings.ServiceURL, settings.RegistryReachableURL, settings.AuthToken, settings.TLSCACertPath, settings.TLSInsecureSkipVerify, settings.MaxConcurrency, settings.UpdatedAt.UTC().Format(time.RFC3339Nano))
 	return err
 }
 
@@ -704,9 +714,19 @@ func (s *Store) init() error {
 			timeout TEXT NOT NULL,
 			cache_dir TEXT NOT NULL,
 			binary_path TEXT NOT NULL,
+			service_url TEXT NOT NULL DEFAULT '',
+			registry_reachable_url TEXT NOT NULL DEFAULT '',
+			auth_token TEXT NOT NULL DEFAULT '',
+			tls_ca_cert_path TEXT NOT NULL DEFAULT '',
+			tls_insecure_skip_verify INTEGER NOT NULL DEFAULT 0,
 			max_concurrency INTEGER NOT NULL,
 			updated_at TEXT NOT NULL
 		);`,
+		`ALTER TABLE scan_settings ADD COLUMN service_url TEXT NOT NULL DEFAULT '';`,
+		`ALTER TABLE scan_settings ADD COLUMN registry_reachable_url TEXT NOT NULL DEFAULT '';`,
+		`ALTER TABLE scan_settings ADD COLUMN auth_token TEXT NOT NULL DEFAULT '';`,
+		`ALTER TABLE scan_settings ADD COLUMN tls_ca_cert_path TEXT NOT NULL DEFAULT '';`,
+		`ALTER TABLE scan_settings ADD COLUMN tls_insecure_skip_verify INTEGER NOT NULL DEFAULT 0;`,
 		`CREATE TABLE IF NOT EXISTS scan_runs (
 			id TEXT PRIMARY KEY,
 			tenant TEXT NOT NULL,
@@ -738,6 +758,10 @@ func (s *Store) init() error {
 
 	for _, statement := range statements {
 		if _, err := s.db.Exec(statement); err != nil {
+			message := strings.ToLower(err.Error())
+			if strings.Contains(message, "duplicate column name") {
+				continue
+			}
 			return err
 		}
 	}

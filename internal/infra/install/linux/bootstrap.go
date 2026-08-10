@@ -26,27 +26,32 @@ const (
 )
 
 type BootstrapConfig struct {
-	Mode                 string
-	PublicURL            string
-	RuntimeTLSMode       string
-	TLSCertFile          string
-	TLSKeyFile           string
-	AuthPostgresDSN      string
-	StorageRoot          string
-	StatePath            string
-	UnitPath             string
-	Addr                 string
-	ServiceName          string
-	BinaryPath           string
-	TrivyEnabled         bool
-	TrivyScheduleEnabled bool
-	TrivyInterval        time.Duration
-	TrivyTimeout         time.Duration
-	TrivyCacheDir        string
-	TrivyBinaryPath      string
-	TrivyMaxConcurrency  int
-	NoStart              bool
-	Rollback             bool
+	Mode                       string
+	PublicURL                  string
+	RuntimeTLSMode             string
+	TLSCertFile                string
+	TLSKeyFile                 string
+	AuthPostgresDSN            string
+	StorageRoot                string
+	StatePath                  string
+	UnitPath                   string
+	Addr                       string
+	ServiceName                string
+	BinaryPath                 string
+	TrivyEnabled               bool
+	TrivyScheduleEnabled       bool
+	TrivyInterval              time.Duration
+	TrivyTimeout               time.Duration
+	TrivyServiceURL            string
+	TrivyRegistryReachableURL  string
+	TrivyAuthToken             string
+	TrivyTLSCACertPath         string
+	TrivyTLSInsecureSkipVerify bool
+	TrivyCacheDir              string
+	TrivyBinaryPath            string
+	TrivyMaxConcurrency        int
+	NoStart                    bool
+	Rollback                   bool
 }
 
 type BootstrapReceipt struct {

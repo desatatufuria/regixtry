@@ -3,6 +3,9 @@ package regixtry
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -13,6 +16,7 @@ import (
 	domainauth "regixtry/internal/domain/auth"
 	domain "regixtry/internal/domain/regixtry"
 	metadata "regixtry/internal/infra/metadata/sqlite"
+	trivy "regixtry/internal/infra/scanning/trivy"
 	"regixtry/internal/infra/storage/fsblob"
 	"regixtry/internal/ports"
 )
@@ -153,14 +157,12 @@ func TestServiceAdminBypassesRepositoryChecks(t *testing.T) {
 }
 
 func TestServiceQueuesDigestCentricManualScansAndDedupesActiveRuns(t *testing.T) {
-	t.Parallel()
-
 	service, cleanup := newTestService(t, allowAllAccessController{})
 	defer cleanup()
 
 	seedRepository(t, service, context.Background(), "library/alpine")
 
-	if _, err := service.EnsureScanSettings(context.Background(), ports.ScanSettings{Enabled: true, Timeout: time.Minute, Interval: time.Hour, MaxConcurrency: 1, CacheDir: filepath.Join(t.TempDir(), "trivy-cache"), BinaryPath: "trivy"}); err != nil {
+	if _, err := service.EnsureScanSettings(context.Background(), ports.ScanSettings{Enabled: true, Timeout: time.Minute, Interval: time.Hour, ServiceURL: "https://scanner.example.com", RegistryReachableURL: "https://registry.internal", MaxConcurrency: 1}); err != nil {
 		t.Fatalf("EnsureScanSettings() error = %v", err)
 	}
 
@@ -186,7 +188,7 @@ func TestServiceRejectsInvalidOrUnpublishedScanTargets(t *testing.T) {
 	service, cleanup := newTestService(t, allowAllAccessController{})
 	defer cleanup()
 
-	if _, err := service.EnsureScanSettings(context.Background(), ports.ScanSettings{Enabled: true, Timeout: time.Minute, Interval: time.Hour, MaxConcurrency: 1, CacheDir: filepath.Join(t.TempDir(), "trivy-cache"), BinaryPath: "trivy"}); err != nil {
+	if _, err := service.EnsureScanSettings(context.Background(), ports.ScanSettings{Enabled: true, Timeout: time.Minute, Interval: time.Hour, ServiceURL: "https://scanner.example.com", RegistryReachableURL: "https://registry.internal", MaxConcurrency: 1}); err != nil {
 		t.Fatalf("EnsureScanSettings() error = %v", err)
 	}
 
@@ -201,7 +203,7 @@ func TestServiceRejectsOutOfBoundsScanSettings(t *testing.T) {
 	service, cleanup := newTestService(t, allowAllAccessController{})
 	defer cleanup()
 
-	_, err := service.UpdateScanSettings(context.Background(), ports.ScanSettings{Enabled: true, Timeout: 0, Interval: 0, MaxConcurrency: 0, CacheDir: " ", BinaryPath: "trivy"})
+	_, err := service.UpdateScanSettings(context.Background(), ports.ScanSettings{Enabled: true, Timeout: 0, Interval: 0, MaxConcurrency: 0, ServiceURL: "ftp://scanner.example.com", RegistryReachableURL: "http://127.0.0.1:5000"})
 	if err == nil {
 		t.Fatal("UpdateScanSettings() error = nil, want validation error")
 	}
@@ -229,32 +231,26 @@ func TestServiceListFeaturesReturnsBuiltinTrivyInventory(t *testing.T) {
 	}
 }
 
-func TestServiceGetFeatureStatusProjectsTrivyRuntimeDetails(t *testing.T) {
-	t.Parallel()
-
+func TestServiceGetFeatureStatusProjectsExternalServiceRuntimeDetails(t *testing.T) {
 	service, cleanup := newTestService(t, allowAllAccessController{})
 	defer cleanup()
+	runner, server := newTestTrivyRunner(t, "secret-token")
+	defer server.Close()
+	service.SetScanRunner(runner)
 
-	settings, err := service.ImportLegacyFeatureConfigIfMissing(context.Background(), "trivy", ports.FeatureConfigureInput{
-		Enabled:         boolPtr(true),
-		ScheduleEnabled: boolPtr(true),
-		Interval:        durationPtr(6 * time.Hour),
-		Timeout:         durationPtr(10 * time.Minute),
-		CacheDir:        stringPtr(filepath.Join(t.TempDir(), "trivy-cache")),
-		BinaryPath:      stringPtr("trivy-custom"),
-		MaxConcurrency:  intPtr(2),
+	settings, err := service.ConfigureFeature(context.Background(), "trivy", ports.FeatureConfigureInput{
+		Enabled:              boolPtr(true),
+		ScheduleEnabled:      boolPtr(true),
+		Interval:             durationPtr(6 * time.Hour),
+		Timeout:              durationPtr(10 * time.Minute),
+		ServiceURL:           stringPtr(server.URL),
+		RegistryReachableURL: stringPtr("https://registry.internal:5443"),
+		AuthToken:            stringPtr("secret-token"),
+		MaxConcurrency:       intPtr(2),
 	})
 	if err != nil {
 		t.Fatalf("ImportLegacyFeatureConfigIfMissing() error = %v", err)
 	}
-
-	restoreProbe := swapTrivyRuntimeProbe(t, func(path string) ports.FeatureRuntime {
-		if path != settings.BinaryPath {
-			t.Fatalf("probe path = %q, want %q", path, settings.BinaryPath)
-		}
-		return ports.FeatureRuntime{Health: "ready", Version: "0.57.1", Detail: "binary reachable"}
-	})
-	defer restoreProbe()
 
 	status, err := service.GetFeatureStatus(context.Background(), "trivy")
 	if err != nil {
@@ -269,8 +265,115 @@ func TestServiceGetFeatureStatusProjectsTrivyRuntimeDetails(t *testing.T) {
 	if status.Interval != 6*time.Hour || status.Timeout != 10*time.Minute {
 		t.Fatalf("status timings = %#v, want imported timings", status)
 	}
-	if status.Runtime.Health != "ready" || status.Runtime.Version != "0.57.1" {
+	if status.ServiceURL != settings.ServiceURL || status.RegistryReachableURL != settings.RegistryReachableURL {
+		t.Fatalf("status endpoints = %#v, want configured service endpoints", status)
+	}
+	if status.AuthToken != "" {
+		t.Fatalf("status.AuthToken = %q, want redacted read-only output", status.AuthToken)
+	}
+	if status.Runtime.Mode != string(ports.FeatureKindExternalService) || status.Runtime.Health != "ready" || status.Runtime.Version != "0.57.1" {
 		t.Fatalf("status runtime = %#v, want projected runtime details", status.Runtime)
+	}
+}
+
+func TestServiceGetFeatureStatusFallsBackToNonLoopbackPublicURL(t *testing.T) {
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+	runner, server := newTestTrivyRunner(t, "")
+	defer server.Close()
+	service.SetScanRunner(runner)
+	service.SetScanHost("https://registry.example.com")
+
+	if _, err := service.ConfigureFeature(context.Background(), "trivy", ports.FeatureConfigureInput{
+		Enabled:         boolPtr(true),
+		ScheduleEnabled: boolPtr(true),
+		Interval:        durationPtr(6 * time.Hour),
+		Timeout:         durationPtr(10 * time.Minute),
+		ServiceURL:      stringPtr(server.URL),
+		MaxConcurrency:  intPtr(2),
+	}); err != nil {
+		t.Fatalf("ConfigureFeature() error = %v", err)
+	}
+
+	status, err := service.GetFeatureStatus(context.Background(), "trivy")
+	if err != nil {
+		t.Fatalf("GetFeatureStatus() error = %v", err)
+	}
+	if status.Runtime.Health != "ready" || status.Runtime.Version != "0.57.1" {
+		t.Fatalf("status.Runtime = %#v, want ready runtime via public URL fallback", status.Runtime)
+	}
+	if status.RegistryReachableURL != "" {
+		t.Fatalf("status.RegistryReachableURL = %q, want persisted field unchanged when fallback is implicit", status.RegistryReachableURL)
+	}
+}
+
+func TestServiceBuildsScannerFacingTargetAndRejectsLoopbackFallback(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+	service.SetScanHost("http://127.0.0.1:5000")
+
+	target, err := service.scanTarget(ports.ScanSettings{RegistryReachableURL: "https://registry.internal:5443"}, "library/alpine", "sha256:abc")
+	if err != nil {
+		t.Fatalf("scanTarget() error = %v", err)
+	}
+	if target != "registry.internal:5443/library/alpine@sha256:abc" {
+		t.Fatalf("scanTarget() = %q, want registry-internal target", target)
+	}
+
+	_, err = service.scanTarget(ports.ScanSettings{}, "library/alpine", "sha256:abc")
+	if err == nil || !strings.Contains(err.Error(), "registry_reachable_url") {
+		t.Fatalf("scanTarget() error = %v, want registry_reachable_url validation", err)
+	}
+}
+
+func TestServiceReadyStatusRequiresVersionProbeAndLegacyBridgeKeepsRuntimeUnconfigured(t *testing.T) {
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+	service.SetScanHost("https://registry.example.com")
+	runner, server := newFailingVersionTrivyRunner(t)
+	defer server.Close()
+	service.SetScanRunner(runner)
+
+	legacy, err := service.ImportLegacyFeatureConfigIfMissing(context.Background(), "trivy", ports.FeatureConfigureInput{
+		Enabled:         boolPtr(true),
+		ScheduleEnabled: boolPtr(true),
+		Interval:        durationPtr(3 * time.Hour),
+		Timeout:         durationPtr(17 * time.Minute),
+		MaxConcurrency:  intPtr(4),
+	})
+	if err != nil {
+		t.Fatalf("ImportLegacyFeatureConfigIfMissing() error = %v", err)
+	}
+	if legacy.ServiceURL != "" || legacy.RegistryReachableURL != "" {
+		t.Fatalf("legacy details = %#v, want service contract without inherited binary fields", legacy)
+	}
+
+	if _, err := service.ConfigureFeature(context.Background(), "trivy", ports.FeatureConfigureInput{
+		ServiceURL:           stringPtr(server.URL),
+		RegistryReachableURL: stringPtr("https://registry.internal"),
+		Timeout:              durationPtr(10 * time.Minute),
+		Interval:             durationPtr(6 * time.Hour),
+		MaxConcurrency:       intPtr(2),
+	}); err != nil {
+		t.Fatalf("ConfigureFeature() error = %v", err)
+	}
+
+	status, err := service.GetFeatureStatus(context.Background(), "trivy")
+	if err != nil {
+		t.Fatalf("GetFeatureStatus() error = %v", err)
+	}
+	if status.Runtime.Health != "degraded" {
+		t.Fatalf("status.Runtime = %#v, want version-dependent non-ready runtime", status.Runtime)
+	}
+
+	legacyStatus, err := service.GetFeature(context.Background(), "trivy")
+	if err != nil {
+		t.Fatalf("GetFeature() error = %v", err)
+	}
+	if legacyStatus.Runtime != (ports.FeatureRuntime{}) {
+		t.Fatalf("GetFeature() runtime = %#v, want runtime omitted outside status view", legacyStatus.Runtime)
 	}
 }
 
@@ -293,26 +396,26 @@ func TestServiceImportLegacyFeatureConfigIfMissingPreservesExistingState(t *test
 	defer cleanup()
 
 	initial, err := service.ConfigureFeature(context.Background(), "trivy", ports.FeatureConfigureInput{
-		Enabled:         boolPtr(true),
-		ScheduleEnabled: boolPtr(false),
-		Interval:        durationPtr(24 * time.Hour),
-		Timeout:         durationPtr(15 * time.Minute),
-		CacheDir:        stringPtr(filepath.Join(t.TempDir(), "configured-cache")),
-		BinaryPath:      stringPtr("trivy"),
-		MaxConcurrency:  intPtr(1),
+		Enabled:              boolPtr(true),
+		ScheduleEnabled:      boolPtr(false),
+		Interval:             durationPtr(24 * time.Hour),
+		Timeout:              durationPtr(15 * time.Minute),
+		ServiceURL:           stringPtr("https://scanner.example.com"),
+		RegistryReachableURL: stringPtr("https://registry.internal"),
+		MaxConcurrency:       intPtr(1),
 	})
 	if err != nil {
 		t.Fatalf("ConfigureFeature() error = %v", err)
 	}
 
 	imported, err := service.ImportLegacyFeatureConfigIfMissing(context.Background(), "trivy", ports.FeatureConfigureInput{
-		Enabled:         boolPtr(false),
-		ScheduleEnabled: boolPtr(true),
-		Interval:        durationPtr(3 * time.Hour),
-		Timeout:         durationPtr(20 * time.Minute),
-		CacheDir:        stringPtr(filepath.Join(t.TempDir(), "legacy-cache")),
-		BinaryPath:      stringPtr("trivy-legacy"),
-		MaxConcurrency:  intPtr(4),
+		Enabled:              boolPtr(false),
+		ScheduleEnabled:      boolPtr(true),
+		Interval:             durationPtr(3 * time.Hour),
+		Timeout:              durationPtr(20 * time.Minute),
+		ServiceURL:           stringPtr("https://legacy-scanner.example.com"),
+		RegistryReachableURL: stringPtr("https://legacy-registry.internal"),
+		MaxConcurrency:       intPtr(4),
 	})
 	if err != nil {
 		t.Fatalf("ImportLegacyFeatureConfigIfMissing() error = %v", err)
@@ -324,13 +427,11 @@ func TestServiceImportLegacyFeatureConfigIfMissingPreservesExistingState(t *test
 }
 
 func TestServicePublishRemainsAvailableWhileScanRunsExist(t *testing.T) {
-	t.Parallel()
-
 	service, cleanup := newTestService(t, allowAllAccessController{})
 	defer cleanup()
 
 	seedRepository(t, service, context.Background(), "library/base")
-	if _, err := service.EnsureScanSettings(context.Background(), ports.ScanSettings{Enabled: true, Timeout: time.Minute, Interval: time.Hour, MaxConcurrency: 1, CacheDir: filepath.Join(t.TempDir(), "trivy-cache"), BinaryPath: "trivy"}); err != nil {
+	if _, err := service.EnsureScanSettings(context.Background(), ports.ScanSettings{Enabled: true, Timeout: time.Minute, Interval: time.Hour, ServiceURL: "https://scanner.example.com", RegistryReachableURL: "https://registry.internal", MaxConcurrency: 1}); err != nil {
 		t.Fatalf("EnsureScanSettings() error = %v", err)
 	}
 	if _, err := service.QueueManualScan(context.Background(), "library/base", "latest"); err != nil {
@@ -356,13 +457,11 @@ func TestServicePublishRemainsAvailableWhileScanRunsExist(t *testing.T) {
 }
 
 func TestServiceFailedScanDoesNotHidePublishedContent(t *testing.T) {
-	t.Parallel()
-
 	service, cleanup := newTestService(t, allowAllAccessController{})
 	defer cleanup()
 
 	seedRepository(t, service, context.Background(), "library/base")
-	if _, err := service.EnsureScanSettings(context.Background(), ports.ScanSettings{Enabled: true, Timeout: time.Minute, Interval: time.Hour, MaxConcurrency: 1, CacheDir: filepath.Join(t.TempDir(), "trivy-cache"), BinaryPath: "trivy"}); err != nil {
+	if _, err := service.EnsureScanSettings(context.Background(), ports.ScanSettings{Enabled: true, Timeout: time.Minute, Interval: time.Hour, ServiceURL: "https://scanner.example.com", RegistryReachableURL: "https://registry.internal", MaxConcurrency: 1}); err != nil {
 		t.Fatalf("EnsureScanSettings() error = %v", err)
 	}
 	runner := &fakeScanRunner{started: make(chan struct{}, 1), err: errFakeScan}
@@ -472,14 +571,42 @@ func stringPtr(value string) *string { return &value }
 
 func intPtr(value int) *int { return &value }
 
-func swapTrivyRuntimeProbe(t *testing.T, probe func(string) ports.FeatureRuntime) func() {
+func newTestTrivyRunner(t *testing.T, wantToken string) (*trivy.Runner, *httptest.Server) {
 	t.Helper()
 
-	previous := probeTrivyRuntime
-	probeTrivyRuntime = probe
-	return func() {
-		probeTrivyRuntime = previous
-	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); wantToken != "" && got != "Bearer "+wantToken {
+			http.Error(w, fmt.Sprintf("unexpected auth header %q", got), http.StatusUnauthorized)
+			return
+		}
+		switch r.URL.Path {
+		case "/healthz":
+			w.WriteHeader(http.StatusOK)
+		case "/version":
+			_, _ = w.Write([]byte(`{"Version":"0.57.1"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+
+	return trivy.New(trivy.RunnerConfig{}), server
+}
+
+func newFailingVersionTrivyRunner(t *testing.T) (*trivy.Runner, *httptest.Server) {
+	t.Helper()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/healthz":
+			w.WriteHeader(http.StatusOK)
+		case "/version":
+			http.Error(w, "version probe failed", http.StatusBadGateway)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+
+	return trivy.New(trivy.RunnerConfig{}), server
 }
 
 func principalForGrants(repository string, role domainauth.RepoRole, scopes []domainauth.Scope) domainauth.Principal {

@@ -37,7 +37,7 @@ El setup crea el env file, la unidad systemd, `metadata.db`, `content/`, el reci
 
 The setup-managed env file stays base-only. It records `REGISTRY_ADDR`, `REGISTRY_PUBLIC_URL`, `REGISTRY_STORAGE_ROOT`, `REGISTRY_DATABASE_PATH`, `REGISTRY_SERVICE_NAME`, and optional auth/TLS inputs, but it no longer stores long-term Trivy settings.
 
-For one migration slice, operators may still pass legacy `setup --trivy-*` flags. Setup imports those values into authoritative feature state when no Trivy feature state exists yet, then operators should use `regixtry feature ...` for future changes.
+For one migration slice, operators may still pass legacy `setup --trivy-*` flags. Setup imports only the shared scheduling knobs into authoritative feature state when no Trivy feature state exists yet, then operators should use `regixtry feature ...` for future changes. `service_url` and `registry_reachable_url` are still required before runtime status becomes ready.
 
 Example:
 
@@ -49,9 +49,11 @@ sudo /absolute/path/to/regixtry setup --mode daemon-sqlite \
   --trivy-schedule-enabled \
   --trivy-interval 6h \
   --trivy-timeout 20m \
-  --trivy-cache-dir /var/lib/regixtry/trivy-cache \
-  --trivy-binary-path trivy \
   --trivy-max-concurrency 2
+
+regixtry feature configure trivy \
+  -service-url http://127.0.0.1:4954 \
+  -registry-reachable-url http://regixtry:5000
 
 regixtry feature status trivy
 ```

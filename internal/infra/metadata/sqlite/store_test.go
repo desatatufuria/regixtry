@@ -127,13 +127,16 @@ func TestStorePersistsDefaultDisabledScanSettings(t *testing.T) {
 	defer store.Close()
 
 	settings := ports.ScanSettings{
-		Enabled:         false,
-		ScheduleEnabled: false,
-		Interval:        24 * time.Hour,
-		Timeout:         15 * time.Minute,
-		CacheDir:        "/var/lib/regixtry/trivy-cache",
-		BinaryPath:      "trivy",
-		MaxConcurrency:  1,
+		Enabled:               false,
+		ScheduleEnabled:       false,
+		Interval:              24 * time.Hour,
+		Timeout:               15 * time.Minute,
+		ServiceURL:            "https://scanner.example.com",
+		RegistryReachableURL:  "https://registry.internal:5443",
+		AuthToken:             "secret-token",
+		TLSCACertPath:         "/etc/regixtry/trivy-ca.pem",
+		TLSInsecureSkipVerify: true,
+		MaxConcurrency:        1,
 	}
 	if err := store.UpsertScanSettings(context.Background(), "tenant-a", settings); err != nil {
 		t.Fatalf("UpsertScanSettings() error = %v", err)
@@ -146,8 +149,34 @@ func TestStorePersistsDefaultDisabledScanSettings(t *testing.T) {
 	if stored.Enabled || stored.ScheduleEnabled {
 		t.Fatalf("stored = %#v, want disabled defaults", stored)
 	}
-	if stored.CacheDir != settings.CacheDir || stored.BinaryPath != settings.BinaryPath || stored.MaxConcurrency != settings.MaxConcurrency {
+	if stored.ServiceURL != settings.ServiceURL || stored.RegistryReachableURL != settings.RegistryReachableURL || stored.AuthToken != settings.AuthToken || stored.TLSCACertPath != settings.TLSCACertPath || stored.TLSInsecureSkipVerify != settings.TLSInsecureSkipVerify || stored.MaxConcurrency != settings.MaxConcurrency {
 		t.Fatalf("stored = %#v, want %#v", stored, settings)
+	}
+}
+
+func TestStoreBridgesLegacyBinaryColumnsWhenServiceFieldsAreMissing(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	_, err := store.db.ExecContext(context.Background(), `
+		INSERT INTO scan_settings (tenant, enabled, schedule_enabled, interval, timeout, cache_dir, binary_path, max_concurrency, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, "tenant-a", true, true, (3 * time.Hour).String(), (17 * time.Minute).String(), "/var/cache/trivy", "/tmp/README.sh", 4, time.Now().UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		t.Fatalf("insert legacy row error = %v", err)
+	}
+
+	stored, err := store.GetScanSettings(context.Background(), "tenant-a")
+	if err != nil {
+		t.Fatalf("GetScanSettings() error = %v", err)
+	}
+	if stored.ServiceURL != "" || stored.RegistryReachableURL != "" {
+		t.Fatalf("stored = %#v, want service fields empty for legacy bridge row", stored)
+	}
+	if stored.Interval != 3*time.Hour || stored.Timeout != 17*time.Minute || stored.MaxConcurrency != 4 || !stored.Enabled || !stored.ScheduleEnabled {
+		t.Fatalf("stored = %#v, want shared knobs preserved from legacy row", stored)
 	}
 }
 
