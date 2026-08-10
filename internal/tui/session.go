@@ -43,13 +43,13 @@ const (
 type adminConfirmKind string
 
 const (
-	adminConfirmNone        adminConfirmKind = ""
-	adminConfirmEnableUser  adminConfirmKind = "enable-user"
-	adminConfirmDisableUser adminConfirmKind = "disable-user"
+	adminConfirmNone           adminConfirmKind = ""
+	adminConfirmEnableUser     adminConfirmKind = "enable-user"
+	adminConfirmDisableUser    adminConfirmKind = "disable-user"
 	adminConfirmEnableFeature  adminConfirmKind = "enable-feature"
 	adminConfirmDisableFeature adminConfirmKind = "disable-feature"
-	adminConfirmDeleteGrant adminConfirmKind = "delete-grant"
-	adminConfirmRevokeToken adminConfirmKind = "revoke-token"
+	adminConfirmDeleteGrant    adminConfirmKind = "delete-grant"
+	adminConfirmRevokeToken    adminConfirmKind = "revoke-token"
 )
 
 type adminCreateUserForm struct {
@@ -110,7 +110,7 @@ type AdminViewState struct {
 	SelectedUsername       string
 	UserSearchQuery        string
 	UserSearchActive       bool
-	FeatureStatus          ports.FeatureDetails
+	FeaturePage            ports.FeaturePage
 	Grants                 []ports.AdminRepoGrant
 	SelectedGrant          int
 	AdminTokens            []ports.AdminToken

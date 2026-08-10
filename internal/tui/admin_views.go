@@ -36,7 +36,7 @@ func renderAdminScreen(theme adminTheme, current screen, session AdminSession, v
 	case screenAdminCreateToken:
 		return fmt.Sprintf("Users / %s / Tokens / Create Token", selectedAdminUsername(view)), renderAdminCreateTokenScreen(theme, view), "Enter: create token | Tab: next field | Esc: cancel"
 	case screenAdminFeatures:
-		return "Features", renderAdminFeaturesScreen(theme, session, view, now), featureActionHelp(view.FeatureStatus)
+		return "Features", renderAdminFeaturesScreen(theme, session, view, now), featureActionHelp(view.FeaturePage)
 	default:
 		return "Users", renderAdminUsersScreen(theme, session, view, now), "/: search | Enter/e: edit user | n: create user | f: features | Esc: back | q: quit"
 	}
@@ -93,31 +93,35 @@ func renderAdminFeaturesScreen(theme adminTheme, session AdminSession, view Admi
 		}
 	}
 
-	lines = append(lines, "", theme.subheading.Render("Feature Status"))
-	if strings.TrimSpace(view.FeatureStatus.Name) == "" {
-		lines = append(lines, theme.muted.Render("Select or refresh a feature to load backend-authoritative status."))
+	lines = append(lines, "", theme.subheading.Render("Feature Page"))
+	if strings.TrimSpace(view.FeaturePage.Summary.Name) == "" {
+		lines = append(lines, theme.muted.Render("Select or refresh a feature to load the backend-declared page."))
 	} else {
-		lines = append(lines,
-			fmt.Sprintf("Name: %s", view.FeatureStatus.Name),
-			fmt.Sprintf("Kind: %s", view.FeatureStatus.Kind),
-			fmt.Sprintf("Enabled: %t", view.FeatureStatus.Enabled),
-			fmt.Sprintf("Configured: %t", view.FeatureStatus.Configured),
-			fmt.Sprintf("Schedule Enabled: %t", view.FeatureStatus.ScheduleEnabled),
-			fmt.Sprintf("Interval: %s", view.FeatureStatus.Interval),
-			fmt.Sprintf("Timeout: %s", view.FeatureStatus.Timeout),
-			fmt.Sprintf("Service URL: %s", view.FeatureStatus.ServiceURL),
-			fmt.Sprintf("Registry Reachable URL: %s", view.FeatureStatus.RegistryReachableURL),
-			fmt.Sprintf("TLS CA Cert Path: %s", view.FeatureStatus.TLSCACertPath),
-			fmt.Sprintf("TLS Insecure Skip Verify: %t", view.FeatureStatus.TLSInsecureSkipVerify),
-			fmt.Sprintf("Max Concurrency: %d", view.FeatureStatus.MaxConcurrency),
-			fmt.Sprintf("Runtime Status: %s", adminFirstNonEmpty(strings.TrimSpace(view.FeatureStatus.Runtime.Status), adminFirstNonEmpty(strings.TrimSpace(view.FeatureStatus.Runtime.Health), "unknown"))),
-			fmt.Sprintf("Runtime Health: %s", adminFirstNonEmpty(strings.TrimSpace(view.FeatureStatus.Runtime.Health), "unknown")),
-			fmt.Sprintf("Runtime Version: %s", adminFirstNonEmpty(strings.TrimSpace(view.FeatureStatus.Runtime.Version), "unknown")),
-			fmt.Sprintf("Runtime Latest Version: %s", adminFirstNonEmpty(strings.TrimSpace(view.FeatureStatus.Runtime.LatestVersion), "unknown")),
-			fmt.Sprintf("Runtime Update Status: %s", adminFirstNonEmpty(strings.TrimSpace(view.FeatureStatus.Runtime.UpdateStatus), "unknown")),
-		)
-		if strings.TrimSpace(view.FeatureStatus.Runtime.Detail) != "" {
-			lines = append(lines, fmt.Sprintf("Runtime Detail: %s", view.FeatureStatus.Runtime.Detail))
+		for _, field := range view.FeaturePage.Header {
+			lines = append(lines, fmt.Sprintf("%s: %s", field.Label, adminFirstNonEmpty(field.Value, "unknown")))
+		}
+		if len(view.FeaturePage.Sections) == 0 {
+			lines = append(lines, theme.muted.Render("No additional feature details."))
+		}
+		for _, section := range view.FeaturePage.Sections {
+			lines = append(lines, "", theme.subheading.Render(section.Title))
+			switch section.Kind {
+			case "rows":
+				for _, row := range section.Rows {
+					label := row.Title
+					if strings.TrimSpace(row.Status) != "" {
+						label += fmt.Sprintf(" [%s]", row.Status)
+					}
+					if strings.TrimSpace(row.Detail) != "" {
+						label += fmt.Sprintf(" — %s", row.Detail)
+					}
+					lines = append(lines, label)
+				}
+			default:
+				for _, field := range section.Fields {
+					lines = append(lines, fmt.Sprintf("%s: %s", field.Label, adminFirstNonEmpty(field.Value, "unknown")))
+				}
+			}
 		}
 	}
 

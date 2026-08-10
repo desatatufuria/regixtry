@@ -431,6 +431,69 @@ func TestHTTPAdminClientFeatureRoutes(t *testing.T) {
 	}
 }
 
+func TestHTTPAdminClientFeaturePageAndActionRoutes(t *testing.T) {
+	t.Parallel()
+
+	fixedNow := time.Date(2026, time.August, 4, 23, 5, 0, 0, time.UTC)
+	session := AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: fixedNow.Add(10 * time.Minute)}
+
+	t.Run("get feature page", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if got, want := r.Method, http.MethodGet; got != want {
+				t.Fatalf("method = %q, want %q", got, want)
+			}
+			if got, want := r.URL.Path, "/admin/v1/features/trivy"; got != want {
+				t.Fatalf("path = %q, want %q", got, want)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"summary":{"name":"trivy","kind":"builtin","enabled":true,"configured":true},"header":[{"label":"Enabled","value":"true"}],"sections":[{"id":"config","title":"Configuration","kind":"fields","fields":[{"label":"Registry Reachable URL","value":"https://registry.internal:5443"}]},{"id":"runs","title":"Recent Runs","kind":"rows","rows":[{"title":"library/alpine@latest","status":"completed","detail":"critical=1 high=2"}]}],"actions":[{"id":"refresh","label":"Refresh"},{"id":"disable","label":"Disable","confirm_title":"Confirm Disable","confirm_message":"Confirm disable feature \"trivy\"?"}]}`))
+		}))
+		defer server.Close()
+
+		client, err := NewHTTPAdminClient(server.URL, server.Client())
+		if err != nil {
+			t.Fatalf("NewHTTPAdminClient() error = %v", err)
+		}
+		client.now = func() time.Time { return fixedNow }
+
+		page, err := client.GetFeaturePage(context.Background(), session, "trivy")
+		if err != nil {
+			t.Fatalf("GetFeaturePage() error = %v", err)
+		}
+		if page.Summary.Name != "trivy" || len(page.Sections) != 2 || len(page.Actions) != 2 {
+			t.Fatalf("page = %#v, want decoded feature page", page)
+		}
+	})
+
+	t.Run("execute feature action", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if got, want := r.Method, http.MethodPost; got != want {
+				t.Fatalf("method = %q, want %q", got, want)
+			}
+			if got, want := r.URL.Path, "/admin/v1/features/trivy/actions/disable"; got != want {
+				t.Fatalf("path = %q, want %q", got, want)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"message":"Feature \"trivy\" disabled."}`))
+		}))
+		defer server.Close()
+
+		client, err := NewHTTPAdminClient(server.URL, server.Client())
+		if err != nil {
+			t.Fatalf("NewHTTPAdminClient() error = %v", err)
+		}
+		client.now = func() time.Time { return fixedNow }
+
+		result, err := client.ExecuteFeatureAction(context.Background(), session, "trivy", "disable")
+		if err != nil {
+			t.Fatalf("ExecuteFeatureAction() error = %v", err)
+		}
+		if got, want := result.Message, `Feature "trivy" disabled.`; got != want {
+			t.Fatalf("result.Message = %q, want %q", got, want)
+		}
+	})
+}
+
 func TestHTTPAdminClientMapsInvalidTokenToExpiredSession(t *testing.T) {
 	t.Parallel()
 

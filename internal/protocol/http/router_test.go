@@ -1051,6 +1051,70 @@ func TestRouterAdminFeatureRoutesRequireAuthAndMutateAuthoritativeState(t *testi
 	}
 }
 
+func TestRouterAdminFeaturePageRouteProjectsBackendDeclaredSectionsAndActions(t *testing.T) {
+	t.Parallel()
+
+	handler, cleanup := newTestRouterWithAuth(t, allowAllAccessController{}, fakeAuthService{verify: &domainauth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+	defer cleanup()
+
+	configureReq := httptest.NewRequest(http.MethodPut, "/admin/v1/features/trivy/config", strings.NewReader(`{"enabled":true,"schedule_enabled":true,"interval":"6h","timeout":"20m","registry_reachable_url":"https://registry.internal:5443","max_concurrency":2}`))
+	configureReq.Header.Set("Authorization", "Bearer admin-token")
+	configureReq.Header.Set("Content-Type", "application/json")
+	configureRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(configureRecorder, configureReq)
+	if configureRecorder.Code != http.StatusOK {
+		t.Fatalf("configure status = %d, want %d", configureRecorder.Code, http.StatusOK)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/features/trivy", nil)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+	for _, want := range []string{`"summary":`, `"sections":`, `"actions":`, `"id":"config"`, `"id":"runtime"`, `"id":"refresh"`} {
+		if !strings.Contains(recorder.Body.String(), want) {
+			t.Fatalf("body = %q, want %q", recorder.Body.String(), want)
+		}
+	}
+}
+
+func TestRouterAdminFeatureActionRouteExecutesTypedActionAndRejectsUnknownTargets(t *testing.T) {
+	t.Parallel()
+
+	handler, cleanup := newTestRouterWithAuth(t, allowAllAccessController{}, fakeAuthService{verify: &domainauth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+	defer cleanup()
+
+	postReq := httptest.NewRequest(http.MethodPost, "/admin/v1/features/trivy/actions/disable", nil)
+	postReq.Header.Set("Authorization", "Bearer admin-token")
+	postRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(postRecorder, postReq)
+	if postRecorder.Code != http.StatusOK {
+		t.Fatalf("action status = %d, want %d", postRecorder.Code, http.StatusOK)
+	}
+	if !strings.Contains(postRecorder.Body.String(), `"message":"Feature \"trivy\" disabled."`) {
+		t.Fatalf("action body = %q, want authoritative action message", postRecorder.Body.String())
+	}
+
+	unknownFeatureReq := httptest.NewRequest(http.MethodGet, "/admin/v1/features/future-plugin", nil)
+	unknownFeatureReq.Header.Set("Authorization", "Bearer admin-token")
+	unknownFeatureRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(unknownFeatureRecorder, unknownFeatureReq)
+	if unknownFeatureRecorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("unknown feature status = %d, want %d", unknownFeatureRecorder.Code, http.StatusUnprocessableEntity)
+	}
+
+	unknownActionReq := httptest.NewRequest(http.MethodPost, "/admin/v1/features/trivy/actions/reindex", nil)
+	unknownActionReq.Header.Set("Authorization", "Bearer admin-token")
+	unknownActionRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(unknownActionRecorder, unknownActionReq)
+	if unknownActionRecorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("unknown action status = %d, want %d", unknownActionRecorder.Code, http.StatusUnprocessableEntity)
+	}
+}
+
 func TestRouterKeepsV2PingOpenWhenAuthDisabled(t *testing.T) {
 	t.Parallel()
 
@@ -1476,12 +1540,12 @@ func newRouterWithStores(blobStore *fsblob.Store, metadataStore *metadata.Store,
 		ports.NewInlineJobRunner(),
 	)
 	_, _ = service.EnsureScanSettings(context.Background(), ports.ScanSettings{
-		Enabled:         false,
-		ScheduleEnabled: false,
-		Interval:        24 * time.Hour,
-		Timeout:         15 * time.Minute,
+		Enabled:              false,
+		ScheduleEnabled:      false,
+		Interval:             24 * time.Hour,
+		Timeout:              15 * time.Minute,
 		RegistryReachableURL: "https://registry.internal",
-		MaxConcurrency:  1,
+		MaxConcurrency:       1,
 	})
 	_ = metadataStore.UpsertTrivyRuntimeState(context.Background(), "tenant-a", ports.TrivyRuntimeState{
 		Status:           ports.TrivyRuntimeStatusReady,

@@ -20,6 +20,8 @@ const defaultAdminClientTimeout = 15 * time.Second
 type AdminClient interface {
 	Login(ctx context.Context, username, password string) (AdminSession, error)
 	ListFeatures(ctx context.Context, session AdminSession) ([]ports.FeatureSummary, error)
+	GetFeaturePage(ctx context.Context, session AdminSession, name string) (ports.FeaturePage, error)
+	ExecuteFeatureAction(ctx context.Context, session AdminSession, name string, actionID string) (ports.FeatureActionResult, error)
 	GetFeature(ctx context.Context, session AdminSession, name string) (ports.FeatureDetails, error)
 	GetFeatureStatus(ctx context.Context, session AdminSession, name string) (ports.FeatureDetails, error)
 	InstallFeatureRuntime(ctx context.Context, session AdminSession, name string, version string) (ports.TrivyRuntimeState, error)
@@ -146,6 +148,23 @@ func (c *HTTPAdminClient) ListFeatures(ctx context.Context, session AdminSession
 
 func (c *HTTPAdminClient) GetFeature(ctx context.Context, session AdminSession, name string) (ports.FeatureDetails, error) {
 	return c.getFeatureDetails(ctx, session, "/admin/v1/features/"+url.PathEscape(strings.TrimSpace(name)))
+}
+
+func (c *HTTPAdminClient) GetFeaturePage(ctx context.Context, session AdminSession, name string) (ports.FeaturePage, error) {
+	var page ports.FeaturePage
+	if err := c.getJSON(ctx, session, "/admin/v1/features/"+url.PathEscape(strings.TrimSpace(name)), &page); err != nil {
+		return ports.FeaturePage{}, err
+	}
+	return page, nil
+}
+
+func (c *HTTPAdminClient) ExecuteFeatureAction(ctx context.Context, session AdminSession, name string, actionID string) (ports.FeatureActionResult, error) {
+	var result ports.FeatureActionResult
+	path := "/admin/v1/features/" + url.PathEscape(strings.TrimSpace(name)) + "/actions/" + url.PathEscape(strings.TrimSpace(actionID))
+	if err := c.requestJSON(ctx, stdhttp.MethodPost, session, path, nil, &result, stdhttp.StatusOK); err != nil {
+		return ports.FeatureActionResult{}, err
+	}
+	return result, nil
 }
 
 func (c *HTTPAdminClient) GetFeatureStatus(ctx context.Context, session AdminSession, name string) (ports.FeatureDetails, error) {

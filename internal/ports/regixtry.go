@@ -129,6 +129,43 @@ type FeatureSummary struct {
 	UpdateStatus   string      `json:"update_status,omitempty"`
 }
 
+type FeaturePage struct {
+	Summary  FeatureSummary   `json:"summary"`
+	Header   []FeatureField   `json:"header,omitempty"`
+	Sections []FeatureSection `json:"sections,omitempty"`
+	Actions  []FeatureAction  `json:"actions,omitempty"`
+}
+
+type FeatureField struct {
+	Label string `json:"label"`
+	Value string `json:"value"`
+}
+
+type FeatureSection struct {
+	ID     string         `json:"id"`
+	Title  string         `json:"title"`
+	Kind   string         `json:"kind"`
+	Fields []FeatureField `json:"fields,omitempty"`
+	Rows   []FeatureRow   `json:"rows,omitempty"`
+}
+
+type FeatureRow struct {
+	Title  string `json:"title"`
+	Status string `json:"status,omitempty"`
+	Detail string `json:"detail,omitempty"`
+}
+
+type FeatureAction struct {
+	ID             string `json:"id"`
+	Label          string `json:"label"`
+	ConfirmTitle   string `json:"confirm_title,omitempty"`
+	ConfirmMessage string `json:"confirm_message,omitempty"`
+}
+
+type FeatureActionResult struct {
+	Message string `json:"message"`
+}
+
 type FeatureRuntime struct {
 	Mode              string     `json:"mode,omitempty"`
 	Status            string     `json:"status,omitempty"`

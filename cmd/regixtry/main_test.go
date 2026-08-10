@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -31,6 +32,8 @@ import (
 	"regixtry/internal/infra/storage/fsblob"
 	"regixtry/internal/ports"
 )
+
+var featureRuntimeFactorySwapMu sync.Mutex
 
 func TestDefaultBuildValue(t *testing.T) {
 	t.Parallel()
@@ -2521,12 +2524,14 @@ func swapBootstrapRunner(t *testing.T, runner bootstrapRunner) func() {
 
 func swapFeatureRuntimeManagerFactory(t *testing.T, factory func(appregixtry.FeatureRuntimeManagerConfig) appregixtry.FeatureRuntimeManager) func() {
 	t.Helper()
+	featureRuntimeFactorySwapMu.Lock()
 
 	previous := newFeatureRuntimeManager
 	newFeatureRuntimeManager = factory
 
 	return func() {
 		newFeatureRuntimeManager = previous
+		featureRuntimeFactorySwapMu.Unlock()
 	}
 }
 

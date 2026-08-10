@@ -2,6 +2,7 @@ package regixtry
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -45,15 +46,7 @@ func (s *Service) ListFeatures(ctx context.Context) ([]ports.FeatureSummary, err
 			return nil, err
 		}
 		runtime := s.projectFeatureRuntime(ctx)
-		summaries = append(summaries, ports.FeatureSummary{
-			Name:           details.Name,
-			Kind:           details.Kind,
-			Enabled:        details.Enabled,
-			Configured:     details.Configured,
-			CurrentVersion: strings.TrimSpace(runtime.Version),
-			LatestVersion:  featureRuntimeValueOrUnknown(runtime.LatestVersion),
-			UpdateStatus:   featureRuntimeValueOrUnknown(runtime.UpdateStatus),
-		})
+		summaries = append(summaries, featureSummaryFromDetails(details, runtime))
 	}
 	return summaries, nil
 }
@@ -81,6 +74,57 @@ func (s *Service) GetFeatureStatus(ctx context.Context, name string) (ports.Feat
 	details := featureDetailsFromSettings(feature, settings, configured)
 	details.Runtime = s.projectFeatureRuntime(ctx)
 	return details, nil
+}
+
+func (s *Service) GetFeaturePage(ctx context.Context, name string) (ports.FeaturePage, error) {
+	details, err := s.GetFeatureStatus(ctx, name)
+	if err != nil {
+		return ports.FeaturePage{}, err
+	}
+	runs, err := s.ListScanRuns(ctx, "", 10)
+	if err != nil {
+		return ports.FeaturePage{}, err
+	}
+	return buildFeaturePage(featureSummaryFromDetails(details, details.Runtime), details, runs), nil
+}
+
+func (s *Service) ExecuteFeatureAction(ctx context.Context, name string, actionID string) (ports.FeatureActionResult, error) {
+	actionID = strings.TrimSpace(actionID)
+	if err := ValidateFeatureName(name); err != nil {
+		return ports.FeatureActionResult{}, err
+	}
+	switch actionID {
+	case "enable":
+		if _, err := s.SetFeatureEnabled(ctx, name, true); err != nil {
+			return ports.FeatureActionResult{}, err
+		}
+		return ports.FeatureActionResult{Message: fmt.Sprintf("Feature %q enabled.", name)}, nil
+	case "disable":
+		if _, err := s.SetFeatureEnabled(ctx, name, false); err != nil {
+			return ports.FeatureActionResult{}, err
+		}
+		return ports.FeatureActionResult{Message: fmt.Sprintf("Feature %q disabled.", name)}, nil
+	case "install-runtime":
+		state, err := s.InstallFeatureRuntime(ctx, name, "")
+		if err != nil {
+			return ports.FeatureActionResult{}, err
+		}
+		return ports.FeatureActionResult{Message: fmt.Sprintf("Managed runtime installed for %q at %s.", name, featureRuntimeValueOrUnknown(state.ActiveVersion))}, nil
+	case "upgrade-runtime":
+		state, err := s.UpgradeFeatureRuntime(ctx, name, "")
+		if err != nil {
+			return ports.FeatureActionResult{}, err
+		}
+		return ports.FeatureActionResult{Message: fmt.Sprintf("Managed runtime upgraded for %q at %s.", name, featureRuntimeValueOrUnknown(state.ActiveVersion))}, nil
+	case "rollback-runtime":
+		state, err := s.RollbackFeatureRuntime(ctx, name)
+		if err != nil {
+			return ports.FeatureActionResult{}, err
+		}
+		return ports.FeatureActionResult{Message: fmt.Sprintf("Managed runtime rolled back for %q to %s.", name, featureRuntimeValueOrUnknown(state.ActiveVersion))}, nil
+	default:
+		return ports.FeatureActionResult{}, domain.NewValidationError(fmt.Sprintf("unsupported feature action %q", actionID))
+	}
 }
 
 func (s *Service) projectFeatureRuntime(ctx context.Context) ports.FeatureRuntime {
@@ -254,4 +298,150 @@ func featureDetailsFromSettings(feature featureDescriptor, settings ports.ScanSe
 		RegistryReachableURL: settings.RegistryReachableURL,
 		MaxConcurrency:       settings.MaxConcurrency,
 	}
+}
+
+func featureSummaryFromDetails(details ports.FeatureDetails, runtime ports.FeatureRuntime) ports.FeatureSummary {
+	return ports.FeatureSummary{
+		Name:           details.Name,
+		Kind:           details.Kind,
+		Enabled:        details.Enabled,
+		Configured:     details.Configured,
+		CurrentVersion: strings.TrimSpace(runtime.Version),
+		LatestVersion:  featureRuntimeValueOrUnknown(runtime.LatestVersion),
+		UpdateStatus:   featureRuntimeValueOrUnknown(runtime.UpdateStatus),
+	}
+}
+
+func buildFeaturePage(summary ports.FeatureSummary, details ports.FeatureDetails, runs []ports.ScanRun) ports.FeaturePage {
+	page := ports.FeaturePage{
+		Summary: summary,
+		Header: []ports.FeatureField{
+			{Label: "Kind", Value: string(summary.Kind)},
+			{Label: "Enabled", Value: fmt.Sprintf("%t", summary.Enabled)},
+			{Label: "Configured", Value: fmt.Sprintf("%t", summary.Configured)},
+		},
+	}
+	if summary.Name != trivyFeatureName {
+		return page
+	}
+	page.Sections = []ports.FeatureSection{
+		{
+			ID:    "config",
+			Title: "Configuration",
+			Kind:  "fields",
+			Fields: []ports.FeatureField{
+				{Label: "Schedule Enabled", Value: fmt.Sprintf("%t", details.ScheduleEnabled)},
+				{Label: "Interval", Value: details.Interval.String()},
+				{Label: "Timeout", Value: details.Timeout.String()},
+				{Label: "Registry Reachable URL", Value: details.RegistryReachableURL},
+				{Label: "Max Concurrency", Value: fmt.Sprintf("%d", details.MaxConcurrency)},
+			},
+		},
+		{
+			ID:    "runtime",
+			Title: "Runtime",
+			Kind:  "fields",
+			Fields: []ports.FeatureField{
+				{Label: "Status", Value: featureRuntimeValueOrUnknown(details.Runtime.Status)},
+				{Label: "Health", Value: featureRuntimeValueOrUnknown(details.Runtime.Health)},
+				{Label: "Version", Value: featureRuntimeValueOrUnknown(details.Runtime.Version)},
+				{Label: "Latest Version", Value: featureRuntimeValueOrUnknown(details.Runtime.LatestVersion)},
+				{Label: "Update Status", Value: featureRuntimeValueOrUnknown(details.Runtime.UpdateStatus)},
+			},
+		},
+		{
+			ID:    "runs",
+			Title: "Recent Runs",
+			Kind:  "rows",
+			Rows:  buildFeatureRunRows(runs),
+		},
+		{
+			ID:     "vulnerabilities",
+			Title:  "Vulnerability Summary",
+			Kind:   "fields",
+			Fields: buildFeatureVulnerabilityFields(runs),
+		},
+		{
+			ID:    "repository-alerts",
+			Title: "Repository Alerts",
+			Kind:  "rows",
+			Rows:  buildFeatureRepositoryAlertRows(runs),
+		},
+	}
+	page.Actions = buildFeatureActions(details)
+	return page
+}
+
+func buildFeatureRunRows(runs []ports.ScanRun) []ports.FeatureRow {
+	if len(runs) == 0 {
+		return []ports.FeatureRow{{Title: "No scan runs recorded yet.", Status: "empty"}}
+	}
+	rows := make([]ports.FeatureRow, 0, len(runs))
+	for _, run := range runs {
+		detail := fmt.Sprintf("critical=%d high=%d medium=%d low=%d", run.Critical, run.High, run.Medium, run.Low)
+		if strings.TrimSpace(run.Error) != "" {
+			detail = run.Error
+		}
+		rows = append(rows, ports.FeatureRow{
+			Title:  fmt.Sprintf("%s@%s", run.Repository, run.RequestedRef),
+			Status: run.Status,
+			Detail: detail,
+		})
+	}
+	return rows
+}
+
+func buildFeatureVulnerabilityFields(runs []ports.ScanRun) []ports.FeatureField {
+	for _, run := range runs {
+		if run.Status != ports.ScanRunStatusCompleted {
+			continue
+		}
+		return []ports.FeatureField{
+			{Label: "Critical", Value: fmt.Sprintf("%d", run.Critical)},
+			{Label: "High", Value: fmt.Sprintf("%d", run.High)},
+			{Label: "Medium", Value: fmt.Sprintf("%d", run.Medium)},
+			{Label: "Low", Value: fmt.Sprintf("%d", run.Low)},
+		}
+	}
+	return []ports.FeatureField{{Label: "Status", Value: "No completed scan runs available."}}
+}
+
+func buildFeatureRepositoryAlertRows(runs []ports.ScanRun) []ports.FeatureRow {
+	rows := make([]ports.FeatureRow, 0, len(runs))
+	for _, run := range runs {
+		if run.Status == ports.ScanRunStatusFailed || run.Critical > 0 || run.High > 0 {
+			detail := fmt.Sprintf("critical=%d high=%d medium=%d low=%d", run.Critical, run.High, run.Medium, run.Low)
+			if strings.TrimSpace(run.Error) != "" {
+				detail = run.Error
+			}
+			rows = append(rows, ports.FeatureRow{Title: fmt.Sprintf("%s@%s", run.Repository, run.RequestedRef), Status: run.Status, Detail: detail})
+		}
+	}
+	if len(rows) == 0 {
+		return []ports.FeatureRow{{Title: "No repository alerts detected.", Status: "clear"}}
+	}
+	return rows
+}
+
+func buildFeatureActions(details ports.FeatureDetails) []ports.FeatureAction {
+	actions := []ports.FeatureAction{{ID: "refresh", Label: "Refresh"}}
+	if details.Enabled {
+		actions = append(actions, ports.FeatureAction{ID: "disable", Label: "Disable", ConfirmTitle: "Confirm Disable", ConfirmMessage: fmt.Sprintf("Confirm disable feature %q?", details.Name)})
+	} else {
+		actions = append(actions, ports.FeatureAction{ID: "enable", Label: "Enable", ConfirmTitle: "Confirm Enable", ConfirmMessage: fmt.Sprintf("Confirm enable feature %q?", details.Name)})
+	}
+	status := strings.TrimSpace(details.Runtime.Status)
+	if status == "" {
+		status = strings.TrimSpace(details.Runtime.Health)
+	}
+	if details.Runtime.Mode == ports.FeatureRuntimeModeManaged && (status == string(ports.TrivyRuntimeStatusUninstalled) || status == string(ports.TrivyRuntimeStatusMigrationRequired)) {
+		actions = append(actions, ports.FeatureAction{ID: "install-runtime", Label: "Install Runtime"})
+	}
+	if details.Runtime.Mode == ports.FeatureRuntimeModeManaged && strings.TrimSpace(details.Runtime.Version) != "" && strings.TrimSpace(details.Runtime.UpdateStatus) == "available" {
+		actions = append(actions, ports.FeatureAction{ID: "upgrade-runtime", Label: "Upgrade Runtime"})
+	}
+	if details.Runtime.Mode == ports.FeatureRuntimeModeManaged && details.Runtime.RollbackAvailable {
+		actions = append(actions, ports.FeatureAction{ID: "rollback-runtime", Label: "Rollback Runtime"})
+	}
+	return actions
 }

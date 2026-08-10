@@ -237,6 +237,85 @@ func TestServiceListFeaturesReturnsBuiltinTrivyInventory(t *testing.T) {
 	}
 }
 
+func TestBuildFeaturePageKeepsMinimalNonTrivyPagesLightweight(t *testing.T) {
+	t.Parallel()
+
+	summary := ports.FeatureSummary{Name: "future-plugin", Kind: ports.FeatureKindExternalService, Enabled: true, Configured: true}
+	details := ports.FeatureDetails{Name: "future-plugin", Kind: ports.FeatureKindExternalService, Enabled: true, Configured: true}
+
+	page := buildFeaturePage(summary, details, nil)
+
+	if page.Summary != summary {
+		t.Fatalf("page.Summary = %#v, want %#v", page.Summary, summary)
+	}
+	if len(page.Header) == 0 {
+		t.Fatalf("page.Header = %#v, want lightweight header fields", page.Header)
+	}
+	if len(page.Sections) != 0 {
+		t.Fatalf("page.Sections = %#v, want no Trivy-only sections for minimal feature page", page.Sections)
+	}
+	if len(page.Actions) != 0 {
+		t.Fatalf("page.Actions = %#v, want no implicit actions for minimal feature page", page.Actions)
+	}
+}
+
+func TestServiceGetFeaturePageBuildsOrderedTrivySectionsAndDeclaredActions(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	if _, err := service.ConfigureFeature(context.Background(), "trivy", ports.FeatureConfigureInput{
+		Enabled:              boolPtr(true),
+		ScheduleEnabled:      boolPtr(true),
+		Interval:             durationPtr(6 * time.Hour),
+		Timeout:              durationPtr(10 * time.Minute),
+		RegistryReachableURL: stringPtr("https://registry.internal:5443"),
+		MaxConcurrency:       intPtr(2),
+	}); err != nil {
+		t.Fatalf("ConfigureFeature() error = %v", err)
+	}
+	verifiedAt := time.Now().UTC().Add(-time.Minute)
+	if err := service.metadata.UpsertTrivyRuntimeState(context.Background(), "tenant-a", ports.TrivyRuntimeState{
+		Status:           ports.TrivyRuntimeStatusReady,
+		ActiveVersion:    "0.57.1",
+		PreviousVersion:  "0.56.2",
+		ActiveBinaryPath: "/var/lib/regixtry/features/trivy/bin/active/trivy",
+		ReceiptPath:      "/var/lib/regixtry/features/trivy/receipts/0.57.1.json",
+		LastVerifiedAt:   &verifiedAt,
+		UpdatedAt:        time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("UpsertTrivyRuntimeState() error = %v", err)
+	}
+	for _, run := range []ports.ScanRun{
+		{ID: "run-1", Repository: "library/alpine", RequestedRef: "latest", Digest: digestForTest([]byte("run-1")), Status: ports.ScanRunStatusCompleted, Trigger: ports.ScanTriggerManual, CreatedAt: time.Now().UTC().Add(-2 * time.Minute), UpdatedAt: time.Now().UTC().Add(-2 * time.Minute), Critical: 1, High: 2, Medium: 3, Low: 4, TrivyVersion: "0.57.1"},
+		{ID: "run-2", Repository: "team/api", RequestedRef: "1.0.0", Digest: digestForTest([]byte("run-2")), Status: ports.ScanRunStatusFailed, Trigger: ports.ScanTriggerScheduled, CreatedAt: time.Now().UTC().Add(-time.Minute), UpdatedAt: time.Now().UTC().Add(-time.Minute), Error: "registry unavailable"},
+	} {
+		if err := service.metadata.UpsertScanRun(context.Background(), "tenant-a", run); err != nil {
+			t.Fatalf("UpsertScanRun(%s) error = %v", run.ID, err)
+		}
+	}
+	service.SetFeatureRuntimeManager(fakeFeatureRuntimeManager{statusState: ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusReady, ActiveVersion: "0.57.1", PreviousVersion: "0.56.2"}, latestVersion: "0.58.0"})
+
+	page, err := service.GetFeaturePage(context.Background(), "trivy")
+	if err != nil {
+		t.Fatalf("GetFeaturePage() error = %v", err)
+	}
+
+	if got, want := sectionIDs(page.Sections), []string{"config", "runtime", "runs", "vulnerabilities", "repository-alerts"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("section IDs = %#v, want %#v", got, want)
+	}
+	if got, want := actionIDs(page.Actions), []string{"refresh", "disable", "upgrade-runtime", "rollback-runtime"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("action IDs = %#v, want %#v", got, want)
+	}
+	if len(page.Sections[2].Rows) == 0 || len(page.Sections[4].Rows) == 0 {
+		t.Fatalf("page = %#v, want runs and repository alerts rows", page)
+	}
+	if len(page.Sections[3].Fields) == 0 {
+		t.Fatalf("page = %#v, want vulnerability summary fields", page)
+	}
+}
+
 func TestServiceGetFeatureStatusFallsBackToUnknownLatestVersion(t *testing.T) {
 	t.Parallel()
 
@@ -775,6 +854,22 @@ func durationPtr(value time.Duration) *time.Duration { return &value }
 func stringPtr(value string) *string { return &value }
 
 func intPtr(value int) *int { return &value }
+
+func sectionIDs(sections []ports.FeatureSection) []string {
+	ids := make([]string, 0, len(sections))
+	for _, section := range sections {
+		ids = append(ids, section.ID)
+	}
+	return ids
+}
+
+func actionIDs(actions []ports.FeatureAction) []string {
+	ids := make([]string, 0, len(actions))
+	for _, action := range actions {
+		ids = append(ids, action.ID)
+	}
+	return ids
+}
 
 type capturingScanRunner struct {
 	mu       sync.Mutex

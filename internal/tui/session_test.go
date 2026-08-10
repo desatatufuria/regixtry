@@ -40,7 +40,7 @@ func TestLogoutAdminStateClearsSessionAndViewData(t *testing.T) {
 	if session.ExpiredReason != "" {
 		t.Fatalf("ExpiredReason = %q, want empty", session.ExpiredReason)
 	}
-	if len(view.Users) != 0 || view.SelectedUserID != "" || len(view.Grants) != 0 || len(view.AdminTokens) != 0 || len(view.Features) != 0 || view.SelectedFeature != 0 || view.FeatureStatus.Name != "" {
+	if len(view.Users) != 0 || view.SelectedUserID != "" || len(view.Grants) != 0 || len(view.AdminTokens) != 0 || len(view.Features) != 0 || view.SelectedFeature != 0 || view.FeaturePage.Summary.Name != "" {
 		t.Fatalf("LogoutAdminState() returned populated view state: %#v", view)
 	}
 }
@@ -55,7 +55,7 @@ func TestExpireAdminStateClearsViewDataAndKeepsReason(t *testing.T) {
 	if session.ExpiredReason != "Session expired. Log in again." {
 		t.Fatalf("ExpiredReason = %q, want session expiry message", session.ExpiredReason)
 	}
-	if len(view.Users) != 0 || len(view.Grants) != 0 || len(view.AdminTokens) != 0 || len(view.Features) != 0 || view.FeatureStatus.Name != "" {
+	if len(view.Users) != 0 || len(view.Grants) != 0 || len(view.AdminTokens) != 0 || len(view.Features) != 0 || view.FeaturePage.Summary.Name != "" {
 		t.Fatalf("ExpireAdminState() returned populated view state: %#v", view)
 	}
 }

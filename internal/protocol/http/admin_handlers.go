@@ -65,6 +65,23 @@ func (r *Router) handleAdminFeaturesCollection(w stdhttp.ResponseWriter, req *st
 
 func (r *Router) handleAdminFeatureResource(w stdhttp.ResponseWriter, req *stdhttp.Request, resource string) {
 	switch {
+	case strings.Contains(resource, "/actions/"):
+		name, actionID, ok := adminNestedResource(resource, "/actions/")
+		if !ok || strings.Contains(actionID, "/") {
+			writeAdminError(w, domainauth.NewNotFoundError("route", req.URL.Path), ports.Challenge{})
+			return
+		}
+		if req.Method != stdhttp.MethodPost {
+			w.Header().Set("Allow", stdhttp.MethodPost)
+			w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+			return
+		}
+		result, err := r.service.ExecuteFeatureAction(req.Context(), name, actionID)
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		writeJSON(w, stdhttp.StatusOK, result)
 	case strings.HasSuffix(resource, "/status"):
 		name := strings.TrimSuffix(resource, "/status")
 		details, err := r.service.GetFeatureStatus(req.Context(), name)
@@ -156,12 +173,12 @@ func (r *Router) handleAdminFeatureResource(w stdhttp.ResponseWriter, req *stdht
 			w.WriteHeader(stdhttp.StatusMethodNotAllowed)
 			return
 		}
-		details, err := r.service.GetFeature(req.Context(), resource)
+		page, err := r.service.GetFeaturePage(req.Context(), resource)
 		if err != nil {
 			writeAdminError(w, err, ports.Challenge{})
 			return
 		}
-		writeJSON(w, stdhttp.StatusOK, featureDetailsResponse(details, false))
+		writeJSON(w, stdhttp.StatusOK, page)
 	}
 }
 
