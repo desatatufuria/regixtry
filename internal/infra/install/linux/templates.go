@@ -4,24 +4,32 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type BootstrapPlan struct {
-	Mode            string
-	Addr            string
-	PublicURL       string
-	RuntimeTLSMode  string
-	TLSCertFile     string
-	TLSKeyFile      string
-	AuthPostgresDSN string
-	StorageRoot     string
-	DatabasePath    string
-	ContentPath     string
-	StatePath       string
-	EnvPath         string
-	UnitPath        string
-	BinaryPath      string
-	ServiceName     string
+	Mode                 string
+	Addr                 string
+	PublicURL            string
+	RuntimeTLSMode       string
+	TLSCertFile          string
+	TLSKeyFile           string
+	AuthPostgresDSN      string
+	StorageRoot          string
+	DatabasePath         string
+	ContentPath          string
+	StatePath            string
+	EnvPath              string
+	UnitPath             string
+	BinaryPath           string
+	ServiceName          string
+	TrivyEnabled         bool
+	TrivyScheduleEnabled bool
+	TrivyInterval        time.Duration
+	TrivyTimeout         time.Duration
+	TrivyCacheDir        string
+	TrivyBinaryPath      string
+	TrivyMaxConcurrency  int
 }
 
 func RenderEnvFile(plan BootstrapPlan) string {
@@ -31,6 +39,13 @@ func RenderEnvFile(plan BootstrapPlan) string {
 		fmt.Sprintf("REGISTRY_STORAGE_ROOT=%s", quoteEnvValue(plan.StorageRoot)),
 		fmt.Sprintf("REGISTRY_DATABASE_PATH=%s", quoteEnvValue(plan.DatabasePath)),
 		fmt.Sprintf("REGISTRY_SERVICE_NAME=%s", quoteEnvValue(plan.ServiceName)),
+		fmt.Sprintf("REGISTRY_TRIVY_ENABLED=%s", quoteEnvValue(strconv.FormatBool(plan.TrivyEnabled))),
+		fmt.Sprintf("REGISTRY_TRIVY_SCHEDULE_ENABLED=%s", quoteEnvValue(strconv.FormatBool(plan.TrivyScheduleEnabled))),
+		fmt.Sprintf("REGISTRY_TRIVY_INTERVAL=%s", quoteEnvValue(plan.TrivyInterval.String())),
+		fmt.Sprintf("REGISTRY_TRIVY_TIMEOUT=%s", quoteEnvValue(plan.TrivyTimeout.String())),
+		fmt.Sprintf("REGISTRY_TRIVY_CACHE_DIR=%s", quoteEnvValue(plan.TrivyCacheDir)),
+		fmt.Sprintf("REGISTRY_TRIVY_BINARY_PATH=%s", quoteEnvValue(plan.TrivyBinaryPath)),
+		fmt.Sprintf("REGISTRY_TRIVY_MAX_CONCURRENCY=%s", quoteEnvValue(strconv.Itoa(plan.TrivyMaxConcurrency))),
 	}
 	if strings.TrimSpace(plan.AuthPostgresDSN) != "" {
 		lines = append(lines, fmt.Sprintf("REGISTRY_AUTH_POSTGRES_DSN=%s", quoteEnvValue(plan.AuthPostgresDSN)))

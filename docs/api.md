@@ -30,8 +30,40 @@ Todas estas rutas requieren Bearer de un usuario admin. Los JSON se decodifican 
 | GET | `/admin/v1/users/{id}/admin-tokens` | ninguno | `200`, array sin secretos |
 | POST | `/admin/v1/users/{id}/admin-tokens` | `name`, opcional `ttl_seconds` | `201`, token y secreto |
 | DELETE | `/admin/v1/users/{id}/admin-tokens/{accessor}` | ninguno | `204` |
+| GET | `/admin/v1/scan-settings` | ninguno | `200`, settings actuales |
+| PUT | `/admin/v1/scan-settings` | `enabled`, `schedule_enabled`, `interval`, `timeout`, `cache_dir`, `binary_path`, `max_concurrency` | `200`, settings persistidos |
+| POST | `/admin/v1/scan-runs` | `repository`, `reference` | `202`, run encolado con digest canónico |
+| GET | `/admin/v1/scan-runs?repository=&limit=` | ninguno | `200`, historial de runs |
 
 Errores administrativos: `401`, `403`, `404`, `409`, `422` según auth, existencia, conflicto o validación; el cuerpo es `{ "error": "..." }`.
+
+### Scan settings example
+
+```bash
+curl -X PUT \
+  -H 'Authorization: Bearer <admin-token>' \
+  -H 'Content-Type: application/json' \
+  https://registry.example.com/admin/v1/scan-settings \
+  -d '{
+    "enabled": true,
+    "schedule_enabled": true,
+    "interval": "6h",
+    "timeout": "20m",
+    "cache_dir": "/var/lib/regixtry/trivy-cache",
+    "binary_path": "trivy",
+    "max_concurrency": 2
+  }'
+```
+
+### Manual rescan example
+
+```bash
+curl -X POST \
+  -H 'Authorization: Bearer <admin-token>' \
+  -H 'Content-Type: application/json' \
+  https://registry.example.com/admin/v1/scan-runs \
+  -d '{"repository":"library/alpine","reference":"latest"}'
+```
 
 ## Registry API V2
 

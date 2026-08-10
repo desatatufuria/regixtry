@@ -26,20 +26,27 @@ const (
 )
 
 type BootstrapConfig struct {
-	Mode            string
-	PublicURL       string
-	RuntimeTLSMode  string
-	TLSCertFile     string
-	TLSKeyFile      string
-	AuthPostgresDSN string
-	StorageRoot     string
-	StatePath       string
-	UnitPath        string
-	Addr            string
-	ServiceName     string
-	BinaryPath      string
-	NoStart         bool
-	Rollback        bool
+	Mode                 string
+	PublicURL            string
+	RuntimeTLSMode       string
+	TLSCertFile          string
+	TLSKeyFile           string
+	AuthPostgresDSN      string
+	StorageRoot          string
+	StatePath            string
+	UnitPath             string
+	Addr                 string
+	ServiceName          string
+	BinaryPath           string
+	TrivyEnabled         bool
+	TrivyScheduleEnabled bool
+	TrivyInterval        time.Duration
+	TrivyTimeout         time.Duration
+	TrivyCacheDir        string
+	TrivyBinaryPath      string
+	TrivyMaxConcurrency  int
+	NoStart              bool
+	Rollback             bool
 }
 
 type BootstrapReceipt struct {
@@ -135,6 +142,15 @@ func ValidateConfig(cfg BootstrapConfig) error {
 		if containsWhitespace(check.value) {
 			return fmt.Errorf("%s must not contain whitespace", check.label)
 		}
+	}
+	if cfg.TrivyTimeout < 0 {
+		return errors.New("trivy-timeout must be zero or greater")
+	}
+	if cfg.TrivyInterval < 0 {
+		return errors.New("trivy-interval must be zero or greater")
+	}
+	if cfg.TrivyMaxConcurrency < 0 {
+		return errors.New("trivy-max-concurrency must be zero or greater")
 	}
 
 	return nil
@@ -322,21 +338,28 @@ func (b *Bootstrapper) plan(cfg BootstrapConfig) (BootstrapPlan, BootstrapReceip
 		unitPath = filepath.Join("/etc/systemd/system", serviceName+".service")
 	}
 	plan := BootstrapPlan{
-		Mode:            strings.TrimSpace(cfg.Mode),
-		Addr:            strings.TrimSpace(cfg.Addr),
-		PublicURL:       publicURL,
-		RuntimeTLSMode:  runtimeTLSMode,
-		TLSCertFile:     tlsCertFile,
-		TLSKeyFile:      tlsKeyFile,
-		AuthPostgresDSN: authPostgresDSN,
-		StorageRoot:     storageRoot,
-		DatabasePath:    filepath.Join(storageRoot, "metadata.db"),
-		ContentPath:     filepath.Join(storageRoot, "content"),
-		StatePath:       statePath,
-		EnvPath:         filepath.Join(filepath.Dir(statePath), "regixtry.env"),
-		UnitPath:        unitPath,
-		BinaryPath:      binaryPath,
-		ServiceName:     serviceName,
+		Mode:                 strings.TrimSpace(cfg.Mode),
+		Addr:                 strings.TrimSpace(cfg.Addr),
+		PublicURL:            publicURL,
+		RuntimeTLSMode:       runtimeTLSMode,
+		TLSCertFile:          tlsCertFile,
+		TLSKeyFile:           tlsKeyFile,
+		AuthPostgresDSN:      authPostgresDSN,
+		StorageRoot:          storageRoot,
+		DatabasePath:         filepath.Join(storageRoot, "metadata.db"),
+		ContentPath:          filepath.Join(storageRoot, "content"),
+		StatePath:            statePath,
+		EnvPath:              filepath.Join(filepath.Dir(statePath), "regixtry.env"),
+		UnitPath:             unitPath,
+		BinaryPath:           binaryPath,
+		ServiceName:          serviceName,
+		TrivyEnabled:         cfg.TrivyEnabled,
+		TrivyScheduleEnabled: cfg.TrivyScheduleEnabled,
+		TrivyInterval:        defaultTrivyInterval(cfg.TrivyInterval),
+		TrivyTimeout:         defaultTrivyTimeout(cfg.TrivyTimeout),
+		TrivyCacheDir:        defaultTrivyCacheDir(strings.TrimSpace(cfg.TrivyCacheDir), storageRoot),
+		TrivyBinaryPath:      defaultTrivyBinaryPath(strings.TrimSpace(cfg.TrivyBinaryPath)),
+		TrivyMaxConcurrency:  defaultTrivyMaxConcurrency(cfg.TrivyMaxConcurrency),
 	}
 
 	receipt := bootstrapReceiptFromPlan(plan)
@@ -354,6 +377,7 @@ func bootstrapReceiptFromPlan(plan BootstrapPlan) BootstrapReceipt {
 			plan.UnitPath,
 			plan.DatabasePath,
 			plan.ContentPath,
+			plan.TrivyCacheDir,
 			plan.StatePath,
 		},
 	}
@@ -364,7 +388,10 @@ func (b *Bootstrapper) writeSetupArtifacts(plan BootstrapPlan, receipt Bootstrap
 }
 
 func (b *Bootstrapper) writeManagedArtifacts(plan BootstrapPlan, receipt BootstrapReceipt, createDatabase bool) error {
-	for _, dir := range []string{filepath.Dir(plan.EnvPath), filepath.Dir(plan.UnitPath), plan.StorageRoot, plan.ContentPath} {
+	for _, dir := range []string{filepath.Dir(plan.EnvPath), filepath.Dir(plan.UnitPath), plan.StorageRoot, plan.ContentPath, plan.TrivyCacheDir} {
+		if strings.TrimSpace(dir) == "" {
+			continue
+		}
 		if err := b.mkdirAll(dir, 0o755); err != nil {
 			return err
 		}
@@ -652,4 +679,39 @@ type ioDiscard struct{}
 
 func (ioDiscard) Write(p []byte) (int, error) {
 	return len(p), nil
+}
+
+func defaultTrivyInterval(value time.Duration) time.Duration {
+	if value > 0 {
+		return value
+	}
+	return 24 * time.Hour
+}
+
+func defaultTrivyTimeout(value time.Duration) time.Duration {
+	if value > 0 {
+		return value
+	}
+	return 15 * time.Minute
+}
+
+func defaultTrivyMaxConcurrency(value int) int {
+	if value > 0 {
+		return value
+	}
+	return 1
+}
+
+func defaultTrivyCacheDir(value string, storageRoot string) string {
+	if strings.TrimSpace(value) != "" {
+		return strings.TrimSpace(value)
+	}
+	return filepath.Join(strings.TrimSpace(storageRoot), "trivy-cache")
+}
+
+func defaultTrivyBinaryPath(value string) string {
+	if strings.TrimSpace(value) != "" {
+		return strings.TrimSpace(value)
+	}
+	return "trivy"
 }

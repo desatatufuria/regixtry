@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestReadLifecycleProvenanceAcceptsV1AndV2(t *testing.T) {
@@ -66,22 +67,76 @@ func TestLoadInstalledIntentRecoversFromManagedEnv(t *testing.T) {
 		t.Fatalf("loadInstalledIntent() error = %v", err)
 	}
 	want := InstalledIntent{
-		Mode:               supportedMode,
-		Addr:               "127.0.0.1:5000",
-		PublicURL:          "http://127.0.0.1:5000",
-		RuntimeTLSMode:     RuntimeTLSModeLocalHTTP,
-		AuthPostgresDSN:    envValues["REGISTRY_AUTH_POSTGRES_DSN"],
-		StorageRoot:        "/var/lib/regixtry",
-		DatabasePath:       "/var/lib/regixtry/metadata.db",
-		ContentPath:        "/var/lib/regixtry/content",
-		BootstrapStatePath: "/etc/regixtry/bootstrap-state.json",
-		EnvPath:            "/etc/regixtry/regixtry.env",
-		UnitPath:           "/etc/systemd/system/regixtry.service",
-		BinaryPath:         "/usr/local/bin/regixtry",
-		ServiceName:        "regixtry",
+		Mode:                supportedMode,
+		Addr:                "127.0.0.1:5000",
+		PublicURL:           "http://127.0.0.1:5000",
+		RuntimeTLSMode:      RuntimeTLSModeLocalHTTP,
+		AuthPostgresDSN:     envValues["REGISTRY_AUTH_POSTGRES_DSN"],
+		StorageRoot:         "/var/lib/regixtry",
+		DatabasePath:        "/var/lib/regixtry/metadata.db",
+		ContentPath:         "/var/lib/regixtry/content",
+		BootstrapStatePath:  "/etc/regixtry/bootstrap-state.json",
+		EnvPath:             "/etc/regixtry/regixtry.env",
+		UnitPath:            "/etc/systemd/system/regixtry.service",
+		BinaryPath:          "/usr/local/bin/regixtry",
+		ServiceName:         "regixtry",
+		TrivyCacheDir:       "/var/lib/regixtry/trivy-cache",
+		TrivyBinaryPath:     "trivy",
+		TrivyTimeout:        15 * time.Minute,
+		TrivyInterval:       24 * time.Hour,
+		TrivyMaxConcurrency: 1,
 	}
 	if !reflect.DeepEqual(intent, want) {
 		t.Fatalf("intent = %#v, want %#v", intent, want)
+	}
+}
+
+func TestLoadInstalledIntentRecoversTrivyManagedSettings(t *testing.T) {
+	t.Parallel()
+
+	provenance := LifecycleProvenance{
+		Version:      lifecycleProvenanceVersion,
+		Mode:         supportedMode,
+		InstalledBin: "/usr/local/bin/regixtry",
+		ServiceName:  "regixtry",
+		StatePath:    "/etc/regixtry/regixtry-lifecycle-state.json",
+		ManagedPaths: []string{"/etc/regixtry/regixtry.env"},
+		Intent: LifecycleIntent{
+			TrivyCacheDir:        "/var/lib/regixtry/trivy-cache",
+			TrivyBinaryPath:      "trivy-custom",
+			TrivyEnabled:         true,
+			TrivyScheduleEnabled: true,
+			TrivyTimeout:         "10m0s",
+			TrivyInterval:        "6h0m0s",
+			TrivyMaxConcurrency:  2,
+		},
+	}
+
+	intent, err := loadInstalledIntent(provenance, map[string]string{
+		"REGISTRY_ADDR":                   "127.0.0.1:5000",
+		"REGISTRY_PUBLIC_URL":             "http://127.0.0.1:5000",
+		"REGISTRY_STORAGE_ROOT":           "/var/lib/regixtry",
+		"REGISTRY_DATABASE_PATH":          "/var/lib/regixtry/metadata.db",
+		"REGISTRY_SERVICE_NAME":           "regixtry",
+		"REGISTRY_TRIVY_CACHE_DIR":        "/var/lib/regixtry/trivy-cache",
+		"REGISTRY_TRIVY_BINARY_PATH":      "trivy-custom",
+		"REGISTRY_TRIVY_ENABLED":          "true",
+		"REGISTRY_TRIVY_SCHEDULE_ENABLED": "true",
+		"REGISTRY_TRIVY_TIMEOUT":          "10m0s",
+		"REGISTRY_TRIVY_INTERVAL":         "6h0m0s",
+		"REGISTRY_TRIVY_MAX_CONCURRENCY":  "2",
+	})
+	if err != nil {
+		t.Fatalf("loadInstalledIntent() error = %v", err)
+	}
+	if !intent.TrivyEnabled || !intent.TrivyScheduleEnabled {
+		t.Fatalf("intent = %#v, want trivy flags restored", intent)
+	}
+	if intent.TrivyCacheDir != "/var/lib/regixtry/trivy-cache" || intent.TrivyBinaryPath != "trivy-custom" {
+		t.Fatalf("intent = %#v, want trivy cache/binary restored", intent)
+	}
+	if intent.TrivyTimeout != 10*time.Minute || intent.TrivyInterval != 6*time.Hour || intent.TrivyMaxConcurrency != 2 {
+		t.Fatalf("intent = %#v, want trivy duration/concurrency restored", intent)
 	}
 }
 

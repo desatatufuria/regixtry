@@ -32,12 +32,120 @@ func (r *Router) handleAdmin(w stdhttp.ResponseWriter, req *stdhttp.Request) {
 	}
 
 	switch {
+	case subpath == "scan-settings":
+		r.handleAdminScanSettings(w, req)
+	case subpath == "scan-runs":
+		r.handleAdminScanRuns(w, req)
 	case subpath == "users":
 		r.handleAdminUsersCollection(w, req, *principal)
 	case strings.HasPrefix(subpath, "users/"):
 		r.handleAdminUserResource(w, req, *principal, strings.TrimPrefix(subpath, "users/"))
 	default:
 		writeAdminError(w, domainauth.NewNotFoundError("route", req.URL.Path), ports.Challenge{})
+	}
+}
+
+func (r *Router) handleAdminScanSettings(w stdhttp.ResponseWriter, req *stdhttp.Request) {
+	switch req.Method {
+	case stdhttp.MethodGet:
+		settings, err := r.service.GetScanSettings(req.Context())
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		writeJSON(w, stdhttp.StatusOK, scanSettingsResponse(settings))
+	case stdhttp.MethodPut:
+		settings, err := decodeScanSettings(req)
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		updated, err := r.service.UpdateScanSettings(req.Context(), settings)
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		writeJSON(w, stdhttp.StatusOK, scanSettingsResponse(updated))
+	default:
+		w.Header().Set("Allow", strings.Join([]string{stdhttp.MethodGet, stdhttp.MethodPut}, ", "))
+		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+	}
+}
+
+func (r *Router) handleAdminScanRuns(w stdhttp.ResponseWriter, req *stdhttp.Request) {
+	switch req.Method {
+	case stdhttp.MethodGet:
+		repository := strings.TrimSpace(req.URL.Query().Get("repository"))
+		limit := 20
+		if raw := strings.TrimSpace(req.URL.Query().Get("limit")); raw != "" {
+			parsed, err := strconv.Atoi(raw)
+			if err != nil || parsed <= 0 {
+				writeAdminError(w, domainauth.NewValidationError("limit must be a positive integer"), ports.Challenge{})
+				return
+			}
+			limit = parsed
+		}
+		runs, err := r.service.ListScanRuns(req.Context(), repository, limit)
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		writeJSON(w, stdhttp.StatusOK, runs)
+	case stdhttp.MethodPost:
+		var payload struct {
+			Repository string `json:"repository"`
+			Reference  string `json:"reference"`
+		}
+		if err := decodeAdminJSON(req, &payload); err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		run, err := r.service.QueueManualScan(req.Context(), payload.Repository, payload.Reference)
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		writeJSON(w, stdhttp.StatusAccepted, run)
+	default:
+		w.Header().Set("Allow", strings.Join([]string{stdhttp.MethodGet, stdhttp.MethodPost}, ", "))
+		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+	}
+}
+
+func decodeScanSettings(req *stdhttp.Request) (ports.ScanSettings, error) {
+	var payload struct {
+		Enabled         bool   `json:"enabled"`
+		ScheduleEnabled bool   `json:"schedule_enabled"`
+		Interval        string `json:"interval"`
+		Timeout         string `json:"timeout"`
+		CacheDir        string `json:"cache_dir"`
+		BinaryPath      string `json:"binary_path"`
+		MaxConcurrency  int    `json:"max_concurrency"`
+	}
+	if err := decodeAdminJSON(req, &payload); err != nil {
+		return ports.ScanSettings{}, err
+	}
+	interval, err := time.ParseDuration(strings.TrimSpace(payload.Interval))
+	if err != nil {
+		return ports.ScanSettings{}, domainauth.NewValidationError("interval must be a valid duration")
+	}
+	timeout, err := time.ParseDuration(strings.TrimSpace(payload.Timeout))
+	if err != nil {
+		return ports.ScanSettings{}, domainauth.NewValidationError("timeout must be a valid duration")
+	}
+	return ports.ScanSettings{Enabled: payload.Enabled, ScheduleEnabled: payload.ScheduleEnabled, Interval: interval, Timeout: timeout, CacheDir: payload.CacheDir, BinaryPath: payload.BinaryPath, MaxConcurrency: payload.MaxConcurrency}, nil
+}
+
+func scanSettingsResponse(settings ports.ScanSettings) map[string]any {
+	return map[string]any{
+		"enabled":          settings.Enabled,
+		"schedule_enabled": settings.ScheduleEnabled,
+		"interval":         settings.Interval.String(),
+		"timeout":          settings.Timeout.String(),
+		"cache_dir":        settings.CacheDir,
+		"binary_path":      settings.BinaryPath,
+		"max_concurrency":  settings.MaxConcurrency,
+		"updated_at":       settings.UpdatedAt,
 	}
 }
 

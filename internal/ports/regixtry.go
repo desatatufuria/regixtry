@@ -3,6 +3,7 @@ package ports
 import (
 	"context"
 	"io"
+	"time"
 
 	domainauth "regixtry/internal/domain/auth"
 	domain "regixtry/internal/domain/regixtry"
@@ -28,6 +29,77 @@ type MetadataStore interface {
 	Catalog(ctx context.Context, tenant string, limit int, after string) ([]domain.RepositoryRef, error)
 	ListTags(ctx context.Context, tenant string, repository domain.RepositoryRef, limit int, after string) ([]string, error)
 	ListManifestBlobs(ctx context.Context, tenant string, repository domain.RepositoryRef, manifestDigest domain.Digest) ([]domain.Descriptor, error)
+	GetScanSettings(ctx context.Context, tenant string) (ScanSettings, error)
+	UpsertScanSettings(ctx context.Context, tenant string, settings ScanSettings) error
+	GetActiveScanRunByDigest(ctx context.Context, tenant string, repository string, digest string) (ScanRun, error)
+	GetScanRun(ctx context.Context, tenant string, runID string) (ScanRun, error)
+	UpsertScanRun(ctx context.Context, tenant string, run ScanRun) error
+	ListScanRuns(ctx context.Context, tenant string, repository string, limit int) ([]ScanRun, error)
+	TryAcquireScanSchedulerLease(ctx context.Context, tenant string, owner string, now time.Time, leaseTTL time.Duration) (bool, ScanSchedulerState, error)
+	HeartbeatScanScheduler(ctx context.Context, tenant string, owner string, now time.Time, leaseTTL time.Duration) error
+	GetScanSchedulerState(ctx context.Context, tenant string) (ScanSchedulerState, error)
+	UpsertScanSchedulerState(ctx context.Context, tenant string, state ScanSchedulerState) error
+}
+
+const (
+	ScanRunStatusQueued    = "queued"
+	ScanRunStatusRunning   = "running"
+	ScanRunStatusCompleted = "completed"
+	ScanRunStatusFailed    = "failed"
+
+	ScanTriggerManual    = "manual"
+	ScanTriggerScheduled = "scheduled"
+)
+
+type ScanSettings struct {
+	Enabled         bool          `json:"enabled"`
+	ScheduleEnabled bool          `json:"schedule_enabled"`
+	Interval        time.Duration `json:"-"`
+	Timeout         time.Duration `json:"-"`
+	CacheDir        string        `json:"cache_dir"`
+	BinaryPath      string        `json:"binary_path"`
+	MaxConcurrency  int           `json:"max_concurrency"`
+	UpdatedAt       time.Time     `json:"updated_at,omitempty"`
+}
+
+type ScanResult struct {
+	Critical     int
+	High         int
+	Medium       int
+	Low          int
+	TrivyVersion string
+	DBUpdatedAt  *time.Time
+}
+
+type ScanRun struct {
+	ID           string     `json:"id"`
+	Repository   string     `json:"repository"`
+	RequestedRef string     `json:"requested_ref"`
+	Digest       string     `json:"digest"`
+	Status       string     `json:"status"`
+	Trigger      string     `json:"trigger"`
+	StartedAt    *time.Time `json:"started_at,omitempty"`
+	FinishedAt   *time.Time `json:"finished_at,omitempty"`
+	CreatedAt    time.Time  `json:"created_at,omitempty"`
+	UpdatedAt    time.Time  `json:"updated_at,omitempty"`
+	Critical     int        `json:"critical"`
+	High         int        `json:"high"`
+	Medium       int        `json:"medium"`
+	Low          int        `json:"low"`
+	TrivyVersion string     `json:"trivy_version,omitempty"`
+	DBUpdatedAt  *time.Time `json:"db_updated_at,omitempty"`
+	Error        string     `json:"error,omitempty"`
+}
+
+type ScanSchedulerState struct {
+	OwnerID         string     `json:"owner_id"`
+	LeaseExpiresAt  time.Time  `json:"lease_expires_at"`
+	LastHeartbeatAt time.Time  `json:"last_heartbeat_at"`
+	BatchStartedAt  *time.Time `json:"batch_started_at,omitempty"`
+}
+
+type ScanRunner interface {
+	Run(ctx context.Context, imageRef string, settings ScanSettings) (ScanResult, error)
 }
 
 type ActionVerb string

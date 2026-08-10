@@ -44,6 +44,32 @@ regixtry setup
 
 El script instala el binario; `regixtry setup` gestiona el runtime Linux + systemd. Para procedimientos completos, consultar [`docs/installation.md`](docs/installation.md).
 
+### Optional Trivy rescans
+
+Regixtry now ships an optional Trivy rescan slice for already-published images. The setup/bootstrap lifecycle writes disabled-by-default runtime settings into the managed env file and lifecycle provenance.
+
+Example setup flags:
+
+```bash
+sudo /absolute/path/to/regixtry setup --mode daemon-sqlite \
+  --public-url https://registry.example.com \
+  --runtime-tls-mode reverse-proxy \
+  --trivy-enabled \
+  --trivy-schedule-enabled \
+  --trivy-interval 6h \
+  --trivy-timeout 20m \
+  --trivy-cache-dir /var/lib/regixtry/trivy-cache \
+  --trivy-max-concurrency 2
+```
+
+Admin API endpoints for this slice:
+
+- `GET/PUT /admin/v1/scan-settings`
+- `POST /admin/v1/scan-runs`
+- `GET /admin/v1/scan-runs?repository=&limit=`
+
+The richer TUI management flow for scan settings/history remains deferred.
+
 ## Documentación
 
 - [Inicio rápido](docs/getting-started.md)

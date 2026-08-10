@@ -33,6 +33,20 @@ sudo /absolute/path/to/regixtry setup --mode daemon-sqlite \
 
 El setup crea el env file, la unidad systemd, `metadata.db`, `content/`, el recibo de bootstrap y la provenance de lifecycle. Los defaults son `/var/lib/regixtry`, `/etc/regixtry/bootstrap-state.json` y `/etc/systemd/system/regixtry.service`.
 
+### Optional Trivy rescan defaults
+
+The managed env file now also records the optional Trivy rescan settings used to seed runtime defaults:
+
+- `REGISTRY_TRIVY_ENABLED="false"`
+- `REGISTRY_TRIVY_SCHEDULE_ENABLED="false"`
+- `REGISTRY_TRIVY_INTERVAL="24h0m0s"`
+- `REGISTRY_TRIVY_TIMEOUT="15m0s"`
+- `REGISTRY_TRIVY_CACHE_DIR="<storage-root>/trivy-cache"`
+- `REGISTRY_TRIVY_BINARY_PATH="trivy"`
+- `REGISTRY_TRIVY_MAX_CONCURRENCY="1"`
+
+Operators can override them during setup/bootstrap with `--trivy-*` flags. The admin API becomes the authoritative mutable surface after first boot.
+
 Comandos operativos:
 
 ```bash

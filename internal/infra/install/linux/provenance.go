@@ -33,20 +33,27 @@ type LifecycleProvenance struct {
 }
 
 type LifecycleIntent struct {
-	Addr               string `json:"addr,omitempty"`
-	PublicURL          string `json:"public_url,omitempty"`
-	RuntimeTLSMode     string `json:"runtime_tls_mode,omitempty"`
-	TLSCertFile        string `json:"tls_cert_file,omitempty"`
-	TLSKeyFile         string `json:"tls_key_file,omitempty"`
-	AuthPostgresDSN    string `json:"auth_postgres_dsn,omitempty"`
-	StorageRoot        string `json:"storage_root,omitempty"`
-	DatabasePath       string `json:"database_path,omitempty"`
-	ContentPath        string `json:"content_path,omitempty"`
-	BootstrapStatePath string `json:"bootstrap_state_path,omitempty"`
-	EnvPath            string `json:"env_path,omitempty"`
-	UnitPath           string `json:"unit_path,omitempty"`
-	BinaryPath         string `json:"binary_path,omitempty"`
-	ServiceName        string `json:"service_name,omitempty"`
+	Addr                 string `json:"addr,omitempty"`
+	PublicURL            string `json:"public_url,omitempty"`
+	RuntimeTLSMode       string `json:"runtime_tls_mode,omitempty"`
+	TLSCertFile          string `json:"tls_cert_file,omitempty"`
+	TLSKeyFile           string `json:"tls_key_file,omitempty"`
+	AuthPostgresDSN      string `json:"auth_postgres_dsn,omitempty"`
+	StorageRoot          string `json:"storage_root,omitempty"`
+	DatabasePath         string `json:"database_path,omitempty"`
+	ContentPath          string `json:"content_path,omitempty"`
+	BootstrapStatePath   string `json:"bootstrap_state_path,omitempty"`
+	EnvPath              string `json:"env_path,omitempty"`
+	UnitPath             string `json:"unit_path,omitempty"`
+	BinaryPath           string `json:"binary_path,omitempty"`
+	ServiceName          string `json:"service_name,omitempty"`
+	TrivyEnabled         bool   `json:"trivy_enabled,omitempty"`
+	TrivyScheduleEnabled bool   `json:"trivy_schedule_enabled,omitempty"`
+	TrivyInterval        string `json:"trivy_interval,omitempty"`
+	TrivyTimeout         string `json:"trivy_timeout,omitempty"`
+	TrivyCacheDir        string `json:"trivy_cache_dir,omitempty"`
+	TrivyBinaryPath      string `json:"trivy_binary_path,omitempty"`
+	TrivyMaxConcurrency  int    `json:"trivy_max_concurrency,omitempty"`
 }
 
 type CleanupItem struct {
@@ -83,20 +90,27 @@ func lifecycleProvenanceFromPlan(plan BootstrapPlan, receipt BootstrapReceipt) L
 		StatePath:    lifecycleProvenancePath(plan.StatePath),
 		ManagedPaths: append([]string(nil), receipt.Paths...),
 		Intent: LifecycleIntent{
-			Addr:               plan.Addr,
-			PublicURL:          plan.PublicURL,
-			RuntimeTLSMode:     plan.RuntimeTLSMode,
-			TLSCertFile:        plan.TLSCertFile,
-			TLSKeyFile:         plan.TLSKeyFile,
-			AuthPostgresDSN:    plan.AuthPostgresDSN,
-			StorageRoot:        plan.StorageRoot,
-			DatabasePath:       plan.DatabasePath,
-			ContentPath:        plan.ContentPath,
-			BootstrapStatePath: plan.StatePath,
-			EnvPath:            plan.EnvPath,
-			UnitPath:           plan.UnitPath,
-			BinaryPath:         plan.BinaryPath,
-			ServiceName:        plan.ServiceName,
+			Addr:                 plan.Addr,
+			PublicURL:            plan.PublicURL,
+			RuntimeTLSMode:       plan.RuntimeTLSMode,
+			TLSCertFile:          plan.TLSCertFile,
+			TLSKeyFile:           plan.TLSKeyFile,
+			AuthPostgresDSN:      plan.AuthPostgresDSN,
+			StorageRoot:          plan.StorageRoot,
+			DatabasePath:         plan.DatabasePath,
+			ContentPath:          plan.ContentPath,
+			BootstrapStatePath:   plan.StatePath,
+			EnvPath:              plan.EnvPath,
+			UnitPath:             plan.UnitPath,
+			BinaryPath:           plan.BinaryPath,
+			ServiceName:          plan.ServiceName,
+			TrivyEnabled:         plan.TrivyEnabled,
+			TrivyScheduleEnabled: plan.TrivyScheduleEnabled,
+			TrivyInterval:        plan.TrivyInterval.String(),
+			TrivyTimeout:         plan.TrivyTimeout.String(),
+			TrivyCacheDir:        plan.TrivyCacheDir,
+			TrivyBinaryPath:      plan.TrivyBinaryPath,
+			TrivyMaxConcurrency:  plan.TrivyMaxConcurrency,
 		},
 	}
 }
@@ -194,6 +208,10 @@ func normalizeLifecycleIntent(intent LifecycleIntent) LifecycleIntent {
 	intent.UnitPath = strings.TrimSpace(intent.UnitPath)
 	intent.BinaryPath = strings.TrimSpace(intent.BinaryPath)
 	intent.ServiceName = strings.TrimSpace(intent.ServiceName)
+	intent.TrivyInterval = strings.TrimSpace(intent.TrivyInterval)
+	intent.TrivyTimeout = strings.TrimSpace(intent.TrivyTimeout)
+	intent.TrivyCacheDir = strings.TrimSpace(intent.TrivyCacheDir)
+	intent.TrivyBinaryPath = strings.TrimSpace(intent.TrivyBinaryPath)
 	return intent
 }
 

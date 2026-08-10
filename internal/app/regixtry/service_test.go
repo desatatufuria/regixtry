@@ -2,9 +2,12 @@ package regixtry
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	domainauth "regixtry/internal/domain/auth"
 	domain "regixtry/internal/domain/regixtry"
@@ -148,6 +151,141 @@ func TestServiceAdminBypassesRepositoryChecks(t *testing.T) {
 	}
 }
 
+func TestServiceQueuesDigestCentricManualScansAndDedupesActiveRuns(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	seedRepository(t, service, context.Background(), "library/alpine")
+
+	if _, err := service.EnsureScanSettings(context.Background(), ports.ScanSettings{Enabled: true, Timeout: time.Minute, Interval: time.Hour, MaxConcurrency: 1, CacheDir: filepath.Join(t.TempDir(), "trivy-cache"), BinaryPath: "trivy"}); err != nil {
+		t.Fatalf("EnsureScanSettings() error = %v", err)
+	}
+
+	first, err := service.QueueManualScan(context.Background(), "library/alpine", "latest")
+	if err != nil {
+		t.Fatalf("QueueManualScan(first) error = %v", err)
+	}
+	second, err := service.QueueManualScan(context.Background(), "library/alpine", "latest")
+	if err != nil {
+		t.Fatalf("QueueManualScan(second) error = %v", err)
+	}
+	if first.ID != second.ID {
+		t.Fatalf("second run = %#v, want active run dedupe for %#v", second, first)
+	}
+	if first.Digest == "" {
+		t.Fatalf("first run = %#v, want resolved digest", first)
+	}
+}
+
+func TestServiceRejectsInvalidOrUnpublishedScanTargets(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	if _, err := service.EnsureScanSettings(context.Background(), ports.ScanSettings{Enabled: true, Timeout: time.Minute, Interval: time.Hour, MaxConcurrency: 1, CacheDir: filepath.Join(t.TempDir(), "trivy-cache"), BinaryPath: "trivy"}); err != nil {
+		t.Fatalf("EnsureScanSettings() error = %v", err)
+	}
+
+	if _, err := service.QueueManualScan(context.Background(), "library/alpine", "missing"); err == nil {
+		t.Fatal("QueueManualScan() error = nil, want not found")
+	}
+}
+
+func TestServiceRejectsOutOfBoundsScanSettings(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	_, err := service.UpdateScanSettings(context.Background(), ports.ScanSettings{Enabled: true, Timeout: 0, Interval: 0, MaxConcurrency: 0, CacheDir: " ", BinaryPath: "trivy"})
+	if err == nil {
+		t.Fatal("UpdateScanSettings() error = nil, want validation error")
+	}
+}
+
+func TestServicePublishRemainsAvailableWhileScanRunsExist(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	seedRepository(t, service, context.Background(), "library/base")
+	if _, err := service.EnsureScanSettings(context.Background(), ports.ScanSettings{Enabled: true, Timeout: time.Minute, Interval: time.Hour, MaxConcurrency: 1, CacheDir: filepath.Join(t.TempDir(), "trivy-cache"), BinaryPath: "trivy"}); err != nil {
+		t.Fatalf("EnsureScanSettings() error = %v", err)
+	}
+	if _, err := service.QueueManualScan(context.Background(), "library/base", "latest"); err != nil {
+		t.Fatalf("QueueManualScan() error = %v", err)
+	}
+
+	upload, err := service.BeginUpload(context.Background(), "library/next")
+	if err != nil {
+		t.Fatalf("BeginUpload() error = %v", err)
+	}
+	if _, err := service.AppendUpload(context.Background(), "library/next", upload.ID, strings.NewReader("layer-two")); err != nil {
+		t.Fatalf("AppendUpload() error = %v", err)
+	}
+	payload := []byte("layer-two")
+	blob, err := service.CompleteUpload(context.Background(), "library/next", upload.ID, digestForTest(payload), nil)
+	if err != nil {
+		t.Fatalf("CompleteUpload() error = %v", err)
+	}
+	manifestPayload := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{"mediaType":"application/vnd.oci.image.config.v1+json","digest":"` + blob.Digest + `","size":9},"layers":[{"mediaType":"application/vnd.oci.image.layer.v1.tar","digest":"` + blob.Digest + `","size":9}]}`)
+	if _, err := service.PublishManifest(context.Background(), "library/next", "latest", "application/vnd.oci.image.manifest.v1+json", manifestPayload); err != nil {
+		t.Fatalf("PublishManifest() error = %v", err)
+	}
+}
+
+func TestServiceFailedScanDoesNotHidePublishedContent(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	seedRepository(t, service, context.Background(), "library/base")
+	if _, err := service.EnsureScanSettings(context.Background(), ports.ScanSettings{Enabled: true, Timeout: time.Minute, Interval: time.Hour, MaxConcurrency: 1, CacheDir: filepath.Join(t.TempDir(), "trivy-cache"), BinaryPath: "trivy"}); err != nil {
+		t.Fatalf("EnsureScanSettings() error = %v", err)
+	}
+	runner := &fakeScanRunner{started: make(chan struct{}, 1), err: errFakeScan}
+	service.SetScanRunner(runner)
+
+	queued, err := service.QueueManualScan(context.Background(), "library/base", "latest")
+	if err != nil {
+		t.Fatalf("QueueManualScan() error = %v", err)
+	}
+	select {
+	case <-runner.started:
+	case <-time.After(time.Second):
+		t.Fatal("scan runner did not start")
+	}
+
+	failed := waitForScanRunStatus(t, service, "library/base", queued.ID, ports.ScanRunStatusFailed)
+	if failed.Digest == "" {
+		t.Fatalf("failed run = %#v, want persisted digest", failed)
+	}
+
+	resolved, err := service.ResolveManifest(context.Background(), "library/base", "latest")
+	if err != nil {
+		t.Fatalf("ResolveManifest() error = %v", err)
+	}
+	if resolved.Digest != failed.Digest {
+		t.Fatalf("resolved.Digest = %q, want failed scan digest %q", resolved.Digest, failed.Digest)
+	}
+
+	opened, err := service.OpenManifest(context.Background(), "library/base", "latest")
+	if err != nil {
+		t.Fatalf("OpenManifest() error = %v", err)
+	}
+	if opened.Digest.String() != failed.Digest {
+		t.Fatalf("OpenManifest().Digest = %q, want %q", opened.Digest.String(), failed.Digest)
+	}
+	if got := runner.Calls(); len(got) != 1 {
+		t.Fatalf("runner calls = %v, want exactly one scan execution", got)
+	}
+}
+
 func newTestService(t *testing.T, accessController ports.AccessController) (*Service, func()) {
 	t.Helper()
 
@@ -215,4 +353,68 @@ func principalForGrants(repository string, role domainauth.RepoRole, scopes []do
 
 func digestForTest(payload []byte) string {
 	return domain.DigestFromBytes(payload).String()
+}
+
+type fakeScanRunner struct {
+	started chan struct{}
+	release chan struct{}
+	err     error
+	mu      sync.Mutex
+	calls   []string
+}
+
+func (f *fakeScanRunner) Run(ctx context.Context, imageRef string, settings ports.ScanSettings) (ports.ScanResult, error) {
+	f.mu.Lock()
+	f.calls = append(f.calls, imageRef)
+	f.mu.Unlock()
+	if f.started != nil {
+		select {
+		case f.started <- struct{}{}:
+		default:
+		}
+	}
+	if f.release != nil {
+		select {
+		case <-f.release:
+		case <-ctx.Done():
+			return ports.ScanResult{}, ctx.Err()
+		}
+	}
+	if f.err != nil {
+		return ports.ScanResult{}, f.err
+	}
+	updatedAt := time.Now().UTC()
+	return ports.ScanResult{TrivyVersion: "0.54.0", DBUpdatedAt: &updatedAt, Critical: 1, High: 2, Medium: 3, Low: 4}, nil
+}
+
+func (f *fakeScanRunner) Calls() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.calls...)
+}
+
+var errFakeScan = errors.New("fake scan failure")
+
+func waitForScanRunStatus(t *testing.T, service *Service, repository string, runID string, wantStatus string) ports.ScanRun {
+	t.Helper()
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		runs, err := service.ListScanRuns(context.Background(), repository, 10)
+		if err != nil {
+			if strings.Contains(err.Error(), "database is locked") {
+				time.Sleep(10 * time.Millisecond)
+				continue
+			}
+			t.Fatalf("ListScanRuns() error = %v", err)
+		}
+		for _, run := range runs {
+			if run.ID == runID && run.Status == wantStatus {
+				return run
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("run %q did not reach status %q", runID, wantStatus)
+	return ports.ScanRun{}
 }

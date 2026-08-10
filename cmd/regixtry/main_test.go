@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -985,6 +986,109 @@ func TestRunSetupPassesParsedConfigToRunnerAndWritesProvenance(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "Setup complete:") {
 		t.Fatalf("stdout = %q, want setup success message", stdout.String())
+	}
+}
+
+func TestRunSetupPersistsCustomTrivyFlagsInLifecycleProvenance(t *testing.T) {
+	root := t.TempDir()
+	provenancePath := filepath.Join(root, "etc", "regixtry", "regixtry-lifecycle-state.json")
+	if err := os.MkdirAll(filepath.Dir(provenancePath), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+
+	runner := &stubBootstrapRunner{
+		planProvenanceHook: func(cfg installlinux.BootstrapConfig) (installlinux.LifecycleProvenance, error) {
+			return installlinux.LifecycleProvenance{
+				Version:      2,
+				Mode:         cfg.Mode,
+				InstalledBin: "/usr/local/bin/regixtry",
+				ServiceName:  cfg.ServiceName,
+				StatePath:    provenancePath,
+				ManagedPaths: []string{cfg.StatePath, cfg.UnitPath, filepath.Join(cfg.StorageRoot, "metadata.db"), filepath.Join(cfg.StorageRoot, "content")},
+				Intent: installlinux.LifecycleIntent{
+					Addr:                 cfg.Addr,
+					PublicURL:            cfg.PublicURL,
+					RuntimeTLSMode:       cfg.RuntimeTLSMode,
+					StorageRoot:          cfg.StorageRoot,
+					BootstrapStatePath:   cfg.StatePath,
+					UnitPath:             cfg.UnitPath,
+					ServiceName:          cfg.ServiceName,
+					TrivyEnabled:         cfg.TrivyEnabled,
+					TrivyScheduleEnabled: cfg.TrivyScheduleEnabled,
+					TrivyInterval:        cfg.TrivyInterval.String(),
+					TrivyTimeout:         cfg.TrivyTimeout.String(),
+					TrivyCacheDir:        cfg.TrivyCacheDir,
+					TrivyBinaryPath:      cfg.TrivyBinaryPath,
+					TrivyMaxConcurrency:  cfg.TrivyMaxConcurrency,
+				},
+			}, nil
+		},
+		saveProvenanceHook: func(provenance installlinux.LifecycleProvenance) error {
+			return installlinux.NewBootstrapper().SaveLifecycleProvenance(provenance)
+		},
+	}
+	restore := swapBootstrapRunner(t, runner)
+	defer restore()
+
+	stdout := &bytes.Buffer{}
+	args := []string{
+		"setup",
+		"-mode", "daemon-sqlite",
+		"-public-url", "https://regixtry.example.com",
+		"-runtime-tls-mode", "reverse-proxy",
+		"-addr", "0.0.0.0:5443",
+		"-storage-root", "/var/lib/regixtry-data",
+		"-state-path", filepath.Join(root, "etc", "regixtry", "bootstrap-state.json"),
+		"-unit-path", filepath.Join(root, "etc", "systemd", "system", "registry-custom.service"),
+		"-service", "registry-custom",
+		"-trivy-enabled",
+		"-trivy-schedule-enabled",
+		"-trivy-interval", "3h",
+		"-trivy-timeout", "17m",
+		"-trivy-cache-dir", filepath.Join(root, "var", "cache", "trivy-custom"),
+		"-trivy-binary-path", "/usr/local/bin/trivy-custom",
+		"-trivy-max-concurrency", "4",
+	}
+
+	if err := runWithIO(context.Background(), args, strings.NewReader(""), stdout, io.Discard); err != nil {
+		t.Fatalf("runWithIO(setup) error = %v", err)
+	}
+	if !runner.lastConfig.TrivyEnabled || !runner.lastConfig.TrivyScheduleEnabled {
+		t.Fatalf("lastConfig = %#v, want custom trivy enablement passed through setup", runner.lastConfig)
+	}
+	if runner.lastConfig.TrivyInterval != 3*time.Hour || runner.lastConfig.TrivyTimeout != 17*time.Minute {
+		t.Fatalf("lastConfig = %#v, want explicit trivy durations passed through setup", runner.lastConfig)
+	}
+	if runner.lastConfig.TrivyCacheDir != filepath.Join(root, "var", "cache", "trivy-custom") || runner.lastConfig.TrivyBinaryPath != "/usr/local/bin/trivy-custom" || runner.lastConfig.TrivyMaxConcurrency != 4 {
+		t.Fatalf("lastConfig = %#v, want explicit trivy cache/binary/concurrency passed through setup", runner.lastConfig)
+	}
+
+	body, err := os.ReadFile(provenancePath)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", provenancePath, err)
+	}
+	var persisted installlinux.LifecycleProvenance
+	if err := json.Unmarshal(body, &persisted); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+
+	if !persisted.Intent.TrivyEnabled || !persisted.Intent.TrivyScheduleEnabled {
+		t.Fatalf("persisted intent = %#v, want trivy enabled flags persisted", persisted.Intent)
+	}
+	if persisted.Intent.TrivyInterval != "3h0m0s" || persisted.Intent.TrivyTimeout != "17m0s" {
+		t.Fatalf("persisted intent = %#v, want exact trivy duration values", persisted.Intent)
+	}
+	if persisted.Intent.TrivyCacheDir != filepath.Join(root, "var", "cache", "trivy-custom") {
+		t.Fatalf("persisted.Intent.TrivyCacheDir = %q, want explicit cache dir", persisted.Intent.TrivyCacheDir)
+	}
+	if persisted.Intent.TrivyBinaryPath != "/usr/local/bin/trivy-custom" {
+		t.Fatalf("persisted.Intent.TrivyBinaryPath = %q, want explicit binary path", persisted.Intent.TrivyBinaryPath)
+	}
+	if persisted.Intent.TrivyMaxConcurrency != 4 {
+		t.Fatalf("persisted.Intent.TrivyMaxConcurrency = %d, want 4", persisted.Intent.TrivyMaxConcurrency)
+	}
+	if !strings.Contains(stdout.String(), "Lifecycle provenance recorded at "+provenancePath) {
+		t.Fatalf("stdout = %q, want lifecycle provenance path", stdout.String())
 	}
 }
 
@@ -2116,8 +2220,10 @@ type stubBootstrapRunner struct {
 	uninstallErr        error
 	upgradeErr          error
 	upgradeHook         func(installlinux.UpgradeConfig)
+	planProvenanceHook  func(installlinux.BootstrapConfig) (installlinux.LifecycleProvenance, error)
 	planProvenanceErr   error
 	saveProvenanceErr   error
+	saveProvenanceHook  func(installlinux.LifecycleProvenance) error
 	lastConfig          installlinux.BootstrapConfig
 	upgradeConfig       installlinux.UpgradeConfig
 	plannedProvenance   installlinux.LifecycleProvenance
@@ -2186,6 +2292,9 @@ func (s *stubBootstrapRunner) Upgrade(_ context.Context, cfg installlinux.Upgrad
 
 func (s *stubBootstrapRunner) PlanLifecycleProvenance(cfg installlinux.BootstrapConfig) (installlinux.LifecycleProvenance, error) {
 	s.lastConfig = cfg
+	if s.planProvenanceHook != nil {
+		return s.planProvenanceHook(cfg)
+	}
 	if s.planProvenanceErr != nil {
 		return installlinux.LifecycleProvenance{}, s.planProvenanceErr
 	}
@@ -2195,6 +2304,9 @@ func (s *stubBootstrapRunner) PlanLifecycleProvenance(cfg installlinux.Bootstrap
 func (s *stubBootstrapRunner) SaveLifecycleProvenance(provenance installlinux.LifecycleProvenance) error {
 	s.savedProvenance = provenance
 	s.saveProvenanceCalls++
+	if s.saveProvenanceHook != nil {
+		return s.saveProvenanceHook(provenance)
+	}
 	return s.saveProvenanceErr
 }
 

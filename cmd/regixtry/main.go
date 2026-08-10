@@ -20,10 +20,12 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	appauth "regixtry/internal/app/auth"
 	appregixtry "regixtry/internal/app/regixtry"
+	appscanning "regixtry/internal/app/scanning"
 	domainauth "regixtry/internal/domain/auth"
 	authpostgres "regixtry/internal/infra/auth/postgres"
 	installlinux "regixtry/internal/infra/install/linux"
 	metadata "regixtry/internal/infra/metadata/sqlite"
+	trivyinfra "regixtry/internal/infra/scanning/trivy"
 	"regixtry/internal/infra/storage/fsblob"
 	"regixtry/internal/ports"
 	regixtryhttp "regixtry/internal/protocol/http"
@@ -206,24 +208,31 @@ type tuiConfig struct {
 }
 
 type serveConfig struct {
-	Address            string
-	PublicURL          string
-	TLSCertFile        string
-	TLSKeyFile         string
-	StorageRoot        string
-	DatabasePath       string
-	Tenant             string
-	AllowAnonymousPull bool
-	AllowAnonymousPush bool
-	AuthPostgresDSN    string
-	AuthTokenRealmURL  string
-	Realm              string
-	ServiceName        string
-	ReadHeaderTimeout  time.Duration
-	ReadTimeout        time.Duration
-	WriteTimeout       time.Duration
-	IdleTimeout        time.Duration
-	ShutdownTimeout    time.Duration
+	Address              string
+	PublicURL            string
+	TLSCertFile          string
+	TLSKeyFile           string
+	StorageRoot          string
+	DatabasePath         string
+	Tenant               string
+	AllowAnonymousPull   bool
+	AllowAnonymousPush   bool
+	AuthPostgresDSN      string
+	AuthTokenRealmURL    string
+	Realm                string
+	ServiceName          string
+	ReadHeaderTimeout    time.Duration
+	ReadTimeout          time.Duration
+	WriteTimeout         time.Duration
+	IdleTimeout          time.Duration
+	ShutdownTimeout      time.Duration
+	TrivyEnabled         bool
+	TrivyScheduleEnabled bool
+	TrivyInterval        time.Duration
+	TrivyTimeout         time.Duration
+	TrivyCacheDir        string
+	TrivyBinaryPath      string
+	TrivyMaxConcurrency  int
 }
 
 type bootstrapAdminConfig struct {
@@ -310,6 +319,13 @@ func parseServeConfig(args []string) (serveConfig, error) {
 	flags.DurationVar(&cfg.WriteTimeout, "write-timeout", defaultWriteTimeout, "maximum time to write a response")
 	flags.DurationVar(&cfg.IdleTimeout, "idle-timeout", defaultIdleTimeout, "maximum idle keep-alive wait time")
 	flags.DurationVar(&cfg.ShutdownTimeout, "shutdown-timeout", defaultShutdownTimeout, "maximum graceful shutdown wait time")
+	flags.BoolVar(&cfg.TrivyEnabled, "trivy-enabled", false, "enable persisted trivy rescans")
+	flags.BoolVar(&cfg.TrivyScheduleEnabled, "trivy-schedule-enabled", false, "enable periodic trivy rescans")
+	flags.DurationVar(&cfg.TrivyInterval, "trivy-interval", 0, "interval between periodic trivy rescans")
+	flags.DurationVar(&cfg.TrivyTimeout, "trivy-timeout", 0, "timeout for each trivy run")
+	flags.StringVar(&cfg.TrivyCacheDir, "trivy-cache-dir", "", "shared trivy cache directory")
+	flags.StringVar(&cfg.TrivyBinaryPath, "trivy-binary-path", "", "trivy executable path")
+	flags.IntVar(&cfg.TrivyMaxConcurrency, "trivy-max-concurrency", 0, "maximum concurrent trivy runs")
 
 	if err := flags.Parse(args); err != nil {
 		return serveConfig{}, err
@@ -317,6 +333,9 @@ func parseServeConfig(args []string) (serveConfig, error) {
 
 	if cfg.DatabasePath == "" {
 		cfg.DatabasePath = filepath.Join(cfg.StorageRoot, "metadata.db")
+	}
+	if strings.TrimSpace(cfg.TrivyCacheDir) == "" {
+		cfg.TrivyCacheDir = filepath.Join(cfg.StorageRoot, "trivy-cache")
 	}
 
 	return cfg, nil
@@ -633,6 +652,13 @@ func parseBootstrapConfig(args []string) (BootstrapConfig, error) {
 	flags.StringVar(&cfg.StatePath, "state-path", "/etc/regixtry/bootstrap-state.json", "path to the bootstrap receipt file")
 	flags.StringVar(&cfg.UnitPath, "unit-path", "/etc/systemd/system/regixtry.service", "path to the generated systemd unit")
 	flags.StringVar(&cfg.ServiceName, "service", "regixtry", "systemd service name")
+	flags.BoolVar(&cfg.TrivyEnabled, "trivy-enabled", false, "enable persisted trivy rescans")
+	flags.BoolVar(&cfg.TrivyScheduleEnabled, "trivy-schedule-enabled", false, "enable periodic trivy rescans")
+	flags.DurationVar(&cfg.TrivyInterval, "trivy-interval", 0, "interval between periodic trivy rescans")
+	flags.DurationVar(&cfg.TrivyTimeout, "trivy-timeout", 0, "timeout for each trivy run")
+	flags.StringVar(&cfg.TrivyCacheDir, "trivy-cache-dir", "", "shared trivy cache directory")
+	flags.StringVar(&cfg.TrivyBinaryPath, "trivy-binary-path", "", "trivy executable path")
+	flags.IntVar(&cfg.TrivyMaxConcurrency, "trivy-max-concurrency", 0, "maximum concurrent trivy runs")
 	flags.BoolVar(&cfg.NoStart, "no-start", false, "generate bootstrap artifacts without starting the service")
 	flags.BoolVar(&cfg.Rollback, "rollback", false, "remove generated bootstrap artifacts and stop the service")
 
@@ -681,6 +707,13 @@ func parseSetupConfigWithPromptState(args []string) (setupConfig, setupPromptSta
 	flags.StringVar(&cfg.StatePath, "state-path", "/etc/regixtry/bootstrap-state.json", "path to the bootstrap receipt file")
 	flags.StringVar(&cfg.UnitPath, "unit-path", "/etc/systemd/system/regixtry.service", "path to the generated systemd unit")
 	flags.StringVar(&cfg.ServiceName, "service", "regixtry", "systemd service name")
+	flags.BoolVar(&cfg.TrivyEnabled, "trivy-enabled", parseBoolEnv("REGISTRY_TRIVY_ENABLED", false), "enable persisted trivy rescans")
+	flags.BoolVar(&cfg.TrivyScheduleEnabled, "trivy-schedule-enabled", parseBoolEnv("REGISTRY_TRIVY_SCHEDULE_ENABLED", false), "enable periodic trivy rescans")
+	flags.DurationVar(&cfg.TrivyInterval, "trivy-interval", parseDurationEnv("REGISTRY_TRIVY_INTERVAL", 24*time.Hour), "interval between periodic trivy rescans")
+	flags.DurationVar(&cfg.TrivyTimeout, "trivy-timeout", parseDurationEnv("REGISTRY_TRIVY_TIMEOUT", 15*time.Minute), "timeout for each trivy run")
+	flags.StringVar(&cfg.TrivyCacheDir, "trivy-cache-dir", os.Getenv("REGISTRY_TRIVY_CACHE_DIR"), "shared trivy cache directory")
+	flags.StringVar(&cfg.TrivyBinaryPath, "trivy-binary-path", firstNonEmpty(os.Getenv("REGISTRY_TRIVY_BINARY_PATH"), "trivy"), "trivy executable path")
+	flags.IntVar(&cfg.TrivyMaxConcurrency, "trivy-max-concurrency", parseIntEnv("REGISTRY_TRIVY_MAX_CONCURRENCY", 1), "maximum concurrent trivy runs")
 	flags.BoolVar(&cfg.NoStart, "no-start", false, "generate setup artifacts without starting the service")
 	flags.StringVar(&cfg.Auth.AuthPostgresDSN, "auth-postgres-dsn", defaultAuthPostgresDSN, "Postgres DSN for auth state")
 	flags.StringVar(&cfg.Auth.AdminUsername, "admin-username", "admin", "username for the setup bootstrap admin account")
@@ -699,6 +732,9 @@ func parseSetupConfigWithPromptState(args []string) (setupConfig, setupPromptSta
 	cfg.Auth.AdminPassword = strings.TrimSpace(cfg.Auth.AdminPassword)
 	cfg.Auth.AuthPostgresDSN = strings.TrimSpace(cfg.Auth.AuthPostgresDSN)
 	cfg.BootstrapConfig.AuthPostgresDSN = cfg.Auth.AuthPostgresDSN
+	if strings.TrimSpace(cfg.TrivyCacheDir) == "" {
+		cfg.TrivyCacheDir = filepath.Join(cfg.StorageRoot, "trivy-cache")
+	}
 
 	promptState := setupPromptState{
 		publicURLProvided:       strings.TrimSpace(defaultPublicURL) != "",
@@ -1205,6 +1241,49 @@ func minInt(a int, b int) int {
 	return b
 }
 
+func maxDuration(a time.Duration, b time.Duration) time.Duration {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func parseBoolEnv(key string, fallback bool) bool {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func parseDurationEnv(key string, fallback time.Duration) time.Duration {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := time.ParseDuration(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func parseIntEnv(key string, fallback int) int {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
 func resolveSetupMode(rawMode string, interactive bool, reader *bufio.Reader, stdout io.Writer) (string, bool, error) {
 	mode := strings.TrimSpace(rawMode)
 	if mode != "" {
@@ -1635,8 +1714,47 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 		ports.NewSingleTenantResolver(cfg.Tenant),
 		ports.NewInlineJobRunner(),
 	)
+	service.SetScanHost(cfg.PublicURL)
+	service.SetScanRunner(trivyinfra.New(trivyinfra.RunnerConfig{}))
+	trivyCacheDir := strings.TrimSpace(cfg.TrivyCacheDir)
+	if trivyCacheDir == "" {
+		trivyCacheDir = filepath.Join(cfg.StorageRoot, "trivy-cache")
+	}
+	trivyBinaryPath := firstNonEmpty(cfg.TrivyBinaryPath, "trivy")
+	trivyMaxConcurrency := cfg.TrivyMaxConcurrency
+	if trivyMaxConcurrency <= 0 {
+		trivyMaxConcurrency = 1
+	}
+	trivyTimeout := cfg.TrivyTimeout
+	if trivyTimeout <= 0 {
+		trivyTimeout = 15 * time.Minute
+	}
+	trivyInterval := cfg.TrivyInterval
+	if trivyInterval <= 0 {
+		trivyInterval = 24 * time.Hour
+	}
+	settings, err := service.EnsureScanSettings(context.Background(), ports.ScanSettings{
+		Enabled:         cfg.TrivyEnabled,
+		ScheduleEnabled: cfg.TrivyScheduleEnabled,
+		Interval:        trivyInterval,
+		Timeout:         trivyTimeout,
+		CacheDir:        trivyCacheDir,
+		BinaryPath:      trivyBinaryPath,
+		MaxConcurrency:  trivyMaxConcurrency,
+	})
+	if err != nil {
+		_ = metadataStore.Close()
+		if authStore != nil {
+			_ = authStore.Close()
+		}
+		return nil, nil, err
+	}
+	schedulerCtx, cancelScheduler := context.WithCancel(context.Background())
+	scheduler := appscanning.NewScheduler(metadataStore, service, cfg.Tenant, cfg.ServiceName, settings.Interval, maxDuration(settings.Interval/2, time.Second))
+	go func() { _ = scheduler.Run(schedulerCtx) }()
 
 	return regixtryhttp.NewRouter(service, authService), func() {
+		cancelScheduler()
 		_ = metadataStore.Close()
 		if authStore != nil {
 			_ = authStore.Close()

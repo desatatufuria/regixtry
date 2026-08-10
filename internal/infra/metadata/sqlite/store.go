@@ -10,6 +10,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	domain "regixtry/internal/domain/regixtry"
+	"regixtry/internal/ports"
 )
 
 type Store struct {
@@ -418,6 +419,230 @@ func (s *Store) ListManifestBlobs(ctx context.Context, tenant string, repository
 	return descriptors, rows.Err()
 }
 
+func (s *Store) GetScanSettings(ctx context.Context, tenant string) (ports.ScanSettings, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT enabled, schedule_enabled, interval, timeout, cache_dir, binary_path, max_concurrency, updated_at
+		FROM scan_settings
+		WHERE tenant = ?
+	`, tenant)
+	var (
+		enabled         bool
+		scheduleEnabled bool
+		intervalRaw     string
+		timeoutRaw      string
+		cacheDir        string
+		binaryPath      string
+		maxConcurrency  int
+		updatedAtRaw    string
+	)
+	if err := row.Scan(&enabled, &scheduleEnabled, &intervalRaw, &timeoutRaw, &cacheDir, &binaryPath, &maxConcurrency, &updatedAtRaw); err != nil {
+		if err == sql.ErrNoRows {
+			return ports.ScanSettings{}, domain.NewNotFoundError("scan_settings", tenant)
+		}
+		return ports.ScanSettings{}, err
+	}
+	interval, err := time.ParseDuration(intervalRaw)
+	if err != nil {
+		return ports.ScanSettings{}, err
+	}
+	timeout, err := time.ParseDuration(timeoutRaw)
+	if err != nil {
+		return ports.ScanSettings{}, err
+	}
+	updatedAt, err := time.Parse(time.RFC3339Nano, updatedAtRaw)
+	if err != nil {
+		return ports.ScanSettings{}, err
+	}
+	return ports.ScanSettings{Enabled: enabled, ScheduleEnabled: scheduleEnabled, Interval: interval, Timeout: timeout, CacheDir: cacheDir, BinaryPath: binaryPath, MaxConcurrency: maxConcurrency, UpdatedAt: updatedAt}, nil
+}
+
+func (s *Store) UpsertScanSettings(ctx context.Context, tenant string, settings ports.ScanSettings) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO scan_settings (tenant, enabled, schedule_enabled, interval, timeout, cache_dir, binary_path, max_concurrency, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(tenant) DO UPDATE SET
+			enabled = excluded.enabled,
+			schedule_enabled = excluded.schedule_enabled,
+			interval = excluded.interval,
+			timeout = excluded.timeout,
+			cache_dir = excluded.cache_dir,
+			binary_path = excluded.binary_path,
+			max_concurrency = excluded.max_concurrency,
+			updated_at = excluded.updated_at
+	`, tenant, settings.Enabled, settings.ScheduleEnabled, settings.Interval.String(), settings.Timeout.String(), settings.CacheDir, settings.BinaryPath, settings.MaxConcurrency, settings.UpdatedAt.UTC().Format(time.RFC3339Nano))
+	return err
+}
+
+func (s *Store) GetActiveScanRunByDigest(ctx context.Context, tenant string, repository string, digest string) (ports.ScanRun, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, repository, requested_ref, digest, status, trigger, started_at, finished_at, created_at, updated_at, critical, high, medium, low, trivy_version, db_updated_at, error
+		FROM scan_runs
+		WHERE tenant = ? AND repository = ? AND digest = ? AND status IN (?, ?)
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, tenant, repository, digest, ports.ScanRunStatusQueued, ports.ScanRunStatusRunning)
+	return scanRunRow(row)
+}
+
+func (s *Store) GetScanRun(ctx context.Context, tenant string, runID string) (ports.ScanRun, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, repository, requested_ref, digest, status, trigger, started_at, finished_at, created_at, updated_at, critical, high, medium, low, trivy_version, db_updated_at, error
+		FROM scan_runs
+		WHERE tenant = ? AND id = ?
+	`, tenant, runID)
+	return scanRunRow(row)
+}
+
+func (s *Store) UpsertScanRun(ctx context.Context, tenant string, run ports.ScanRun) error {
+	if run.CreatedAt.IsZero() {
+		run.CreatedAt = time.Now().UTC()
+	}
+	if run.UpdatedAt.IsZero() {
+		run.UpdatedAt = run.CreatedAt
+	}
+	var startedAt any
+	if run.StartedAt != nil {
+		startedAt = run.StartedAt.UTC().Format(time.RFC3339Nano)
+	}
+	var finishedAt any
+	if run.FinishedAt != nil {
+		finishedAt = run.FinishedAt.UTC().Format(time.RFC3339Nano)
+	}
+	var dbUpdatedAt any
+	if run.DBUpdatedAt != nil {
+		dbUpdatedAt = run.DBUpdatedAt.UTC().Format(time.RFC3339Nano)
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO scan_runs (id, tenant, repository, requested_ref, digest, status, trigger, started_at, finished_at, created_at, updated_at, critical, high, medium, low, trivy_version, db_updated_at, error)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			status = excluded.status,
+			started_at = excluded.started_at,
+			finished_at = excluded.finished_at,
+			updated_at = excluded.updated_at,
+			critical = excluded.critical,
+			high = excluded.high,
+			medium = excluded.medium,
+			low = excluded.low,
+			trivy_version = excluded.trivy_version,
+			db_updated_at = excluded.db_updated_at,
+			error = excluded.error
+	`, run.ID, tenant, run.Repository, run.RequestedRef, run.Digest, run.Status, run.Trigger, startedAt, finishedAt, run.CreatedAt.UTC().Format(time.RFC3339Nano), run.UpdatedAt.UTC().Format(time.RFC3339Nano), run.Critical, run.High, run.Medium, run.Low, run.TrivyVersion, dbUpdatedAt, run.Error)
+	return err
+}
+
+func (s *Store) ListScanRuns(ctx context.Context, tenant string, repository string, limit int) ([]ports.ScanRun, error) {
+	query := `
+		SELECT id, repository, requested_ref, digest, status, trigger, started_at, finished_at, created_at, updated_at, critical, high, medium, low, trivy_version, db_updated_at, error
+		FROM scan_runs
+		WHERE tenant = ?
+	`
+	args := []any{tenant}
+	if strings.TrimSpace(repository) != "" {
+		query += ` AND repository = ?`
+		args = append(args, repository)
+	}
+	query += ` ORDER BY created_at DESC`
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT %d", limit)
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	runs := make([]ports.ScanRun, 0)
+	for rows.Next() {
+		run, err := scanRunRows(rows)
+		if err != nil {
+			return nil, err
+		}
+		runs = append(runs, run)
+	}
+	return runs, rows.Err()
+}
+
+func (s *Store) TryAcquireScanSchedulerLease(ctx context.Context, tenant string, owner string, now time.Time, leaseTTL time.Duration) (bool, ports.ScanSchedulerState, error) {
+	current, err := s.GetScanSchedulerState(ctx, tenant)
+	if err != nil && !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		return false, ports.ScanSchedulerState{}, err
+	}
+	if err == nil && current.OwnerID != "" && current.OwnerID != owner && current.LeaseExpiresAt.After(now) {
+		return false, current, nil
+	}
+	state := current
+	state.OwnerID = owner
+	state.LeaseExpiresAt = now.Add(leaseTTL)
+	state.LastHeartbeatAt = now
+	if state.BatchStartedAt == nil || current.LeaseExpiresAt.Before(now) {
+		startedAt := now
+		state.BatchStartedAt = &startedAt
+	}
+	if err := s.UpsertScanSchedulerState(ctx, tenant, state); err != nil {
+		return false, ports.ScanSchedulerState{}, err
+	}
+	return true, state, nil
+}
+
+func (s *Store) HeartbeatScanScheduler(ctx context.Context, tenant string, owner string, now time.Time, leaseTTL time.Duration) error {
+	state, err := s.GetScanSchedulerState(ctx, tenant)
+	if err != nil {
+		return err
+	}
+	state.OwnerID = owner
+	state.LeaseExpiresAt = now.Add(leaseTTL)
+	state.LastHeartbeatAt = now
+	return s.UpsertScanSchedulerState(ctx, tenant, state)
+}
+
+func (s *Store) GetScanSchedulerState(ctx context.Context, tenant string) (ports.ScanSchedulerState, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT owner_id, lease_expires_at, last_heartbeat_at, batch_started_at FROM scan_scheduler_state WHERE tenant = ?`, tenant)
+	var ownerID string
+	var leaseExpiresAt string
+	var lastHeartbeatAt string
+	var batchStartedAt sql.NullString
+	if err := row.Scan(&ownerID, &leaseExpiresAt, &lastHeartbeatAt, &batchStartedAt); err != nil {
+		if err == sql.ErrNoRows {
+			return ports.ScanSchedulerState{}, domain.NewNotFoundError("scan_scheduler_state", tenant)
+		}
+		return ports.ScanSchedulerState{}, err
+	}
+	leaseTime, err := time.Parse(time.RFC3339Nano, leaseExpiresAt)
+	if err != nil {
+		return ports.ScanSchedulerState{}, err
+	}
+	heartbeatTime, err := time.Parse(time.RFC3339Nano, lastHeartbeatAt)
+	if err != nil {
+		return ports.ScanSchedulerState{}, err
+	}
+	state := ports.ScanSchedulerState{OwnerID: ownerID, LeaseExpiresAt: leaseTime, LastHeartbeatAt: heartbeatTime}
+	if batchStartedAt.Valid && strings.TrimSpace(batchStartedAt.String) != "" {
+		parsed, err := time.Parse(time.RFC3339Nano, batchStartedAt.String)
+		if err != nil {
+			return ports.ScanSchedulerState{}, err
+		}
+		state.BatchStartedAt = &parsed
+	}
+	return state, nil
+}
+
+func (s *Store) UpsertScanSchedulerState(ctx context.Context, tenant string, state ports.ScanSchedulerState) error {
+	var batchStartedAt any
+	if state.BatchStartedAt != nil {
+		batchStartedAt = state.BatchStartedAt.UTC().Format(time.RFC3339Nano)
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO scan_scheduler_state (tenant, owner_id, lease_expires_at, last_heartbeat_at, batch_started_at)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(tenant) DO UPDATE SET
+			owner_id = excluded.owner_id,
+			lease_expires_at = excluded.lease_expires_at,
+			last_heartbeat_at = excluded.last_heartbeat_at,
+			batch_started_at = excluded.batch_started_at
+	`, tenant, state.OwnerID, state.LeaseExpiresAt.UTC().Format(time.RFC3339Nano), state.LastHeartbeatAt.UTC().Format(time.RFC3339Nano), batchStartedAt)
+	return err
+}
+
 func (s *Store) init() error {
 	statements := []string{
 		`PRAGMA foreign_keys = ON;`,
@@ -471,6 +696,44 @@ func (s *Store) init() error {
 			updated_at TEXT NOT NULL,
 			location TEXT NOT NULL
 		);`,
+		`CREATE TABLE IF NOT EXISTS scan_settings (
+			tenant TEXT PRIMARY KEY,
+			enabled INTEGER NOT NULL,
+			schedule_enabled INTEGER NOT NULL,
+			interval TEXT NOT NULL,
+			timeout TEXT NOT NULL,
+			cache_dir TEXT NOT NULL,
+			binary_path TEXT NOT NULL,
+			max_concurrency INTEGER NOT NULL,
+			updated_at TEXT NOT NULL
+		);`,
+		`CREATE TABLE IF NOT EXISTS scan_runs (
+			id TEXT PRIMARY KEY,
+			tenant TEXT NOT NULL,
+			repository TEXT NOT NULL,
+			requested_ref TEXT NOT NULL,
+			digest TEXT NOT NULL,
+			status TEXT NOT NULL,
+			trigger TEXT NOT NULL,
+			started_at TEXT,
+			finished_at TEXT,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			critical INTEGER NOT NULL,
+			high INTEGER NOT NULL,
+			medium INTEGER NOT NULL,
+			low INTEGER NOT NULL,
+			trivy_version TEXT NOT NULL,
+			db_updated_at TEXT,
+			error TEXT NOT NULL
+		);`,
+		`CREATE TABLE IF NOT EXISTS scan_scheduler_state (
+			tenant TEXT PRIMARY KEY,
+			owner_id TEXT NOT NULL,
+			lease_expires_at TEXT NOT NULL,
+			last_heartbeat_at TEXT NOT NULL,
+			batch_started_at TEXT
+		);`,
 	}
 
 	for _, statement := range statements {
@@ -499,4 +762,67 @@ func ensureRepository(ctx context.Context, tx *sql.Tx, tenant string, repository
 
 func normalizeReference(reference string) string {
 	return strings.TrimSpace(reference)
+}
+
+type scanRunScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanRunRow(row scanRunScanner) (ports.ScanRun, error) {
+	run, err := scanRunFromScanner(row)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return ports.ScanRun{}, domain.NewNotFoundError("scan_run", "")
+		}
+		return ports.ScanRun{}, err
+	}
+	return run, nil
+}
+
+func scanRunRows(rows *sql.Rows) (ports.ScanRun, error) {
+	return scanRunFromScanner(rows)
+}
+
+func scanRunFromScanner(scanner scanRunScanner) (ports.ScanRun, error) {
+	var run ports.ScanRun
+	var startedAt sql.NullString
+	var finishedAt sql.NullString
+	var dbUpdatedAt sql.NullString
+	var createdAtRaw string
+	var updatedAtRaw string
+	if err := scanner.Scan(&run.ID, &run.Repository, &run.RequestedRef, &run.Digest, &run.Status, &run.Trigger, &startedAt, &finishedAt, &createdAtRaw, &updatedAtRaw, &run.Critical, &run.High, &run.Medium, &run.Low, &run.TrivyVersion, &dbUpdatedAt, &run.Error); err != nil {
+		return ports.ScanRun{}, err
+	}
+	createdAt, err := time.Parse(time.RFC3339Nano, createdAtRaw)
+	if err != nil {
+		return ports.ScanRun{}, err
+	}
+	updatedAt, err := time.Parse(time.RFC3339Nano, updatedAtRaw)
+	if err != nil {
+		return ports.ScanRun{}, err
+	}
+	run.CreatedAt = createdAt
+	run.UpdatedAt = updatedAt
+	if startedAt.Valid && strings.TrimSpace(startedAt.String) != "" {
+		parsed, err := time.Parse(time.RFC3339Nano, startedAt.String)
+		if err != nil {
+			return ports.ScanRun{}, err
+		}
+		run.StartedAt = &parsed
+	}
+	if finishedAt.Valid && strings.TrimSpace(finishedAt.String) != "" {
+		parsed, err := time.Parse(time.RFC3339Nano, finishedAt.String)
+		if err != nil {
+			return ports.ScanRun{}, err
+		}
+		run.FinishedAt = &parsed
+	}
+	if dbUpdatedAt.Valid && strings.TrimSpace(dbUpdatedAt.String) != "" {
+		parsed, err := time.Parse(time.RFC3339Nano, dbUpdatedAt.String)
+		if err != nil {
+			return ports.ScanRun{}, err
+		}
+		run.DBUpdatedAt = &parsed
+	}
+	return run, nil
 }

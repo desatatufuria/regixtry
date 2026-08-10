@@ -83,17 +83,22 @@ func TestTemplateRendering(t *testing.T) {
 	t.Parallel()
 
 	plan := BootstrapPlan{
-		Addr:            "127.0.0.1:5000",
-		PublicURL:       "https://regixtry.example.com",
-		RuntimeTLSMode:  RuntimeTLSModeDirectTLS,
-		TLSCertFile:     "/etc/regixtry/tls/registry.crt",
-		TLSKeyFile:      "/etc/regixtry/tls/registry.key",
-		AuthPostgresDSN: "postgres://registry:registry@db.example.com:5432/regixtry_auth?sslmode=disable",
-		StorageRoot:     "/var/lib/regixtry",
-		DatabasePath:    "/var/lib/regixtry/metadata.db",
-		EnvPath:         "/etc/regixtry/regixtry.env",
-		BinaryPath:      "/usr/local/bin/regixtry",
-		ServiceName:     "regixtry",
+		Addr:                "127.0.0.1:5000",
+		PublicURL:           "https://regixtry.example.com",
+		RuntimeTLSMode:      RuntimeTLSModeDirectTLS,
+		TLSCertFile:         "/etc/regixtry/tls/registry.crt",
+		TLSKeyFile:          "/etc/regixtry/tls/registry.key",
+		AuthPostgresDSN:     "postgres://registry:registry@db.example.com:5432/regixtry_auth?sslmode=disable",
+		StorageRoot:         "/var/lib/regixtry",
+		DatabasePath:        "/var/lib/regixtry/metadata.db",
+		TrivyCacheDir:       "/var/lib/regixtry/trivy-cache",
+		TrivyBinaryPath:     "trivy",
+		TrivyTimeout:        15 * time.Minute,
+		TrivyInterval:       24 * time.Hour,
+		TrivyMaxConcurrency: 1,
+		EnvPath:             "/etc/regixtry/regixtry.env",
+		BinaryPath:          "/usr/local/bin/regixtry",
+		ServiceName:         "regixtry",
 	}
 
 	env := RenderEnvFile(plan)
@@ -105,6 +110,27 @@ func TestTemplateRendering(t *testing.T) {
 	}
 	if !strings.Contains(env, `REGISTRY_AUTH_POSTGRES_DSN="postgres://registry:registry@db.example.com:5432/regixtry_auth?sslmode=disable"`) {
 		t.Fatalf("env = %q, want quoted auth DSN", env)
+	}
+	if !strings.Contains(env, `REGISTRY_TRIVY_ENABLED="false"`) {
+		t.Fatalf("env = %q, want disabled trivy default", env)
+	}
+	if !strings.Contains(env, `REGISTRY_TRIVY_SCHEDULE_ENABLED="false"`) {
+		t.Fatalf("env = %q, want disabled trivy scheduler default", env)
+	}
+	if !strings.Contains(env, `REGISTRY_TRIVY_CACHE_DIR="/var/lib/regixtry/trivy-cache"`) {
+		t.Fatalf("env = %q, want trivy cache dir", env)
+	}
+	if !strings.Contains(env, `REGISTRY_TRIVY_TIMEOUT="15m0s"`) {
+		t.Fatalf("env = %q, want trivy timeout", env)
+	}
+	if !strings.Contains(env, `REGISTRY_TRIVY_INTERVAL="24h0m0s"`) {
+		t.Fatalf("env = %q, want trivy interval", env)
+	}
+	if !strings.Contains(env, `REGISTRY_TRIVY_MAX_CONCURRENCY="1"`) {
+		t.Fatalf("env = %q, want trivy concurrency", env)
+	}
+	if !strings.Contains(env, `REGISTRY_TRIVY_BINARY_PATH="trivy"`) {
+		t.Fatalf("env = %q, want trivy binary path", env)
 	}
 
 	unit := RenderSystemdUnit(plan)
@@ -304,6 +330,12 @@ func TestBootstrapPlanEmitsLifecycleProvenance(t *testing.T) {
 	}
 	if strings.Join(provenance.ManagedPaths, "|") != strings.Join(receipt.Paths, "|") {
 		t.Fatalf("ManagedPaths = %v, want %v", provenance.ManagedPaths, receipt.Paths)
+	}
+	if provenance.Intent.TrivyCacheDir != "/var/lib/regixtry/trivy-cache" {
+		t.Fatalf("TrivyCacheDir = %q, want %q", provenance.Intent.TrivyCacheDir, "/var/lib/regixtry/trivy-cache")
+	}
+	if provenance.Intent.TrivyEnabled {
+		t.Fatal("TrivyEnabled = true, want disabled by default")
 	}
 }
 
