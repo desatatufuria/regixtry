@@ -1123,13 +1123,20 @@ func TestRunFeatureCommandsManageBuiltInTrivyState(t *testing.T) {
 		t.Fatalf("metadata.New() error = %v", err)
 	}
 	defer store.Close()
+	stub := &stubFeatureRuntimeManager{statusState: ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusUninstalled}}
+	restoreRuntimeManager := swapFeatureRuntimeManagerFactory(t, func(appregixtry.FeatureRuntimeManagerConfig) appregixtry.FeatureRuntimeManager {
+		return stub
+	})
+	defer restoreRuntimeManager()
 
 	stdout := &bytes.Buffer{}
 	if err := runWithIO(context.Background(), []string{"feature", "list", "-storage-root", storageRoot, "-db", databasePath}, strings.NewReader(""), stdout, io.Discard); err != nil {
 		t.Fatalf("runWithIO(feature list) error = %v", err)
 	}
-	if !strings.Contains(stdout.String(), "trivy") {
-		t.Fatalf("stdout = %q, want trivy feature inventory", stdout.String())
+	for _, want := range []string{"NAME", "CURRENT", "LATEST", "UPDATE", "trivy"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout = %q, want %q", stdout.String(), want)
+		}
 	}
 
 	stdout.Reset()
@@ -1144,7 +1151,7 @@ func TestRunFeatureCommandsManageBuiltInTrivyState(t *testing.T) {
 	if err := runWithIO(context.Background(), []string{"feature", "status", "trivy", "-storage-root", storageRoot, "-db", databasePath}, strings.NewReader(""), stdout, io.Discard); err != nil {
 		t.Fatalf("runWithIO(feature status) error = %v", err)
 	}
-	for _, want := range []string{"Name: trivy", "Enabled: true", "Schedule Enabled: true", "Registry Reachable URL: https://registry.internal:5443", "Runtime Status: uninstalled", "Runtime Health: uninstalled"} {
+	for _, want := range []string{"Name: trivy", "Enabled: true", "Schedule Enabled: true", "Registry Reachable URL: https://registry.internal:5443", "Runtime Status: uninstalled", "Runtime Health: uninstalled", "Runtime Latest Version: unknown", "Runtime Update Status: unknown"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("stdout = %q, want %q", stdout.String(), want)
 		}
@@ -1187,10 +1194,13 @@ func TestFeatureRuntimeLifecycleCommandsUseManagedRuntimeActions(t *testing.T) {
 	}
 
 	stub := &stubFeatureRuntimeManager{
-		installState:  ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusReady, ActiveVersion: "0.57.1", PreviousVersion: "", ActiveBinaryPath: filepath.Join(storageRoot, "features", "trivy", "bin", "active", "trivy"), CacheDir: filepath.Join(storageRoot, "features", "trivy", "trivy-cache"), ReceiptPath: filepath.Join(storageRoot, "features", "trivy", "receipts", "0.57.1.json")},
-		upgradeState:  ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusReady, ActiveVersion: "0.58.0", PreviousVersion: "0.57.1", ActiveBinaryPath: filepath.Join(storageRoot, "features", "trivy", "bin", "active", "trivy"), CacheDir: filepath.Join(storageRoot, "features", "trivy", "trivy-cache"), ReceiptPath: filepath.Join(storageRoot, "features", "trivy", "receipts", "0.58.0.json")},
-		rollbackState: ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusReady, ActiveVersion: "0.57.1", PreviousVersion: "0.58.0", ActiveBinaryPath: filepath.Join(storageRoot, "features", "trivy", "bin", "active", "trivy"), CacheDir: filepath.Join(storageRoot, "features", "trivy", "trivy-cache"), ReceiptPath: filepath.Join(storageRoot, "features", "trivy", "receipts", "0.57.1.json")},
-		statusState:   ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusMigrationRequired, MigrationHint: `legacy binary_path "/tmp/README.sh" requires managed reinstall and will never be executed`},
+		installState:    ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusReady, ActiveVersion: "0.57.1", PreviousVersion: "", ActiveBinaryPath: filepath.Join(storageRoot, "features", "trivy", "bin", "active", "trivy"), CacheDir: filepath.Join(storageRoot, "features", "trivy", "trivy-cache"), ReceiptPath: filepath.Join(storageRoot, "features", "trivy", "receipts", "0.57.1.json")},
+		upgradeState:    ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusReady, ActiveVersion: "0.58.0", PreviousVersion: "0.57.1", ActiveBinaryPath: filepath.Join(storageRoot, "features", "trivy", "bin", "active", "trivy"), CacheDir: filepath.Join(storageRoot, "features", "trivy", "trivy-cache"), ReceiptPath: filepath.Join(storageRoot, "features", "trivy", "receipts", "0.58.0.json")},
+		rollbackState:   ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusReady, ActiveVersion: "0.57.1", PreviousVersion: "0.58.0", ActiveBinaryPath: filepath.Join(storageRoot, "features", "trivy", "bin", "active", "trivy"), CacheDir: filepath.Join(storageRoot, "features", "trivy", "trivy-cache"), ReceiptPath: filepath.Join(storageRoot, "features", "trivy", "receipts", "0.57.1.json")},
+		statusState:     ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusMigrationRequired, MigrationHint: `legacy binary_path "/tmp/README.sh" requires managed reinstall and will never be executed`},
+		latestVersion:   "0.58.0",
+		installProgress: []ports.FeatureRuntimeProgress{{Stage: "resolve", Detail: "Resolve release"}, {Stage: "download", Detail: "Download archive"}, {Stage: "complete", Detail: "Runtime ready"}},
+		upgradeProgress: []ports.FeatureRuntimeProgress{{Stage: "resolve", Detail: "Resolve release"}, {Stage: "download", Detail: "Download archive"}, {Stage: "complete", Detail: "Runtime ready"}},
 	}
 	restoreRuntimeManager := swapFeatureRuntimeManagerFactory(t, func(appregixtry.FeatureRuntimeManagerConfig) appregixtry.FeatureRuntimeManager {
 		return stub
@@ -1201,7 +1211,12 @@ func TestFeatureRuntimeLifecycleCommandsUseManagedRuntimeActions(t *testing.T) {
 	if err := runWithIO(context.Background(), []string{"feature", "install", "trivy", "-storage-root", storageRoot, "-db", databasePath, "-version", "0.57.1"}, strings.NewReader(""), stdout, io.Discard); err != nil {
 		t.Fatalf("runWithIO(feature install) error = %v", err)
 	}
-	if stub.installCalls != 1 || !strings.Contains(stdout.String(), "Installed managed runtime for trivy at 0.57.1") {
+	for _, want := range []string{"[resolve] Resolve release", "[download] Download archive", "[complete] Runtime ready", "Installed managed runtime for trivy at 0.57.1"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout = %q, want %q", stdout.String(), want)
+		}
+	}
+	if stub.installCalls != 1 {
 		t.Fatalf("install stub/stdout = %#v / %q, want managed install evidence", stub, stdout.String())
 	}
 
@@ -1209,7 +1224,12 @@ func TestFeatureRuntimeLifecycleCommandsUseManagedRuntimeActions(t *testing.T) {
 	if err := runWithIO(context.Background(), []string{"feature", "upgrade", "trivy", "-storage-root", storageRoot, "-db", databasePath, "-version", "0.58.0"}, strings.NewReader(""), stdout, io.Discard); err != nil {
 		t.Fatalf("runWithIO(feature upgrade) error = %v", err)
 	}
-	if stub.upgradeCalls != 1 || !strings.Contains(stdout.String(), "Upgraded managed runtime for trivy to 0.58.0") {
+	for _, want := range []string{"[resolve] Resolve release", "[download] Download archive", "[complete] Runtime ready", "Upgraded managed runtime for trivy to 0.58.0"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout = %q, want %q", stdout.String(), want)
+		}
+	}
+	if stub.upgradeCalls != 1 {
 		t.Fatalf("upgrade stub/stdout = %#v / %q, want managed upgrade evidence", stub, stdout.String())
 	}
 
@@ -1225,10 +1245,44 @@ func TestFeatureRuntimeLifecycleCommandsUseManagedRuntimeActions(t *testing.T) {
 	if err := runWithIO(context.Background(), []string{"feature", "status", "trivy", "-storage-root", storageRoot, "-db", databasePath}, strings.NewReader(""), stdout, io.Discard); err != nil {
 		t.Fatalf("runWithIO(feature status) error = %v", err)
 	}
-	for _, want := range []string{"Runtime Status: migration-required", "Runtime Detail: legacy binary_path \"/tmp/README.sh\" requires managed reinstall and will never be executed"} {
+	for _, want := range []string{"Runtime Status: migration-required", "Runtime Detail: legacy binary_path \"/tmp/README.sh\" requires managed reinstall and will never be executed", "Runtime Latest Version: 0.58.0", "Runtime Update Status: unknown"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("stdout = %q, want %q", stdout.String(), want)
 		}
+	}
+}
+
+func TestFeatureRuntimeLifecycleCommandStopsOnTruthfulFailure(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	storageRoot := filepath.Join(root, "data")
+	databasePath := filepath.Join(storageRoot, "metadata.db")
+	if err := os.MkdirAll(storageRoot, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+
+	stub := &stubFeatureRuntimeManager{
+		err:             errors.New("download failed"),
+		installProgress: []ports.FeatureRuntimeProgress{{Stage: "resolve", Detail: "Resolve release"}, {Stage: "download", Detail: "Download archive"}},
+	}
+	restoreRuntimeManager := swapFeatureRuntimeManagerFactory(t, func(appregixtry.FeatureRuntimeManagerConfig) appregixtry.FeatureRuntimeManager {
+		return stub
+	})
+	defer restoreRuntimeManager()
+
+	stdout := &bytes.Buffer{}
+	err := runWithIO(context.Background(), []string{"feature", "install", "trivy", "-storage-root", storageRoot, "-db", databasePath, "-version", "0.57.1"}, strings.NewReader(""), stdout, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "download failed") {
+		t.Fatalf("runWithIO(feature install) error = %v, want download failure", err)
+	}
+	for _, want := range []string{"[resolve] Resolve release", "[download] Download archive", "Failed managed runtime install for trivy"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout = %q, want %q", stdout.String(), want)
+		}
+	}
+	if strings.Contains(stdout.String(), "Installed managed runtime for trivy") {
+		t.Fatalf("stdout = %q, want no final success on failure", stdout.String())
 	}
 }
 
@@ -2577,24 +2631,37 @@ type stubBootstrapRunner struct {
 }
 
 type stubFeatureRuntimeManager struct {
-	installState  ports.TrivyRuntimeState
-	upgradeState  ports.TrivyRuntimeState
-	rollbackState ports.TrivyRuntimeState
-	statusState   ports.TrivyRuntimeState
-	err           error
-	installCalls  int
-	upgradeCalls  int
-	rollbackCalls int
-	statusCalls   int
+	installState    ports.TrivyRuntimeState
+	upgradeState    ports.TrivyRuntimeState
+	rollbackState   ports.TrivyRuntimeState
+	statusState     ports.TrivyRuntimeState
+	latestVersion   string
+	err             error
+	installProgress []ports.FeatureRuntimeProgress
+	upgradeProgress []ports.FeatureRuntimeProgress
+	installCalls    int
+	upgradeCalls    int
+	rollbackCalls   int
+	statusCalls     int
 }
 
-func (s *stubFeatureRuntimeManager) Install(context.Context, string) (ports.TrivyRuntimeState, error) {
+func (s *stubFeatureRuntimeManager) Install(_ context.Context, _ string, progress func(ports.FeatureRuntimeProgress)) (ports.TrivyRuntimeState, error) {
 	s.installCalls++
+	for _, stage := range s.installProgress {
+		if progress != nil {
+			progress(stage)
+		}
+	}
 	return s.installState, s.err
 }
 
-func (s *stubFeatureRuntimeManager) Upgrade(context.Context, string) (ports.TrivyRuntimeState, error) {
+func (s *stubFeatureRuntimeManager) Upgrade(_ context.Context, _ string, progress func(ports.FeatureRuntimeProgress)) (ports.TrivyRuntimeState, error) {
 	s.upgradeCalls++
+	for _, stage := range s.upgradeProgress {
+		if progress != nil {
+			progress(stage)
+		}
+	}
 	return s.upgradeState, s.err
 }
 
@@ -2606,6 +2673,10 @@ func (s *stubFeatureRuntimeManager) Rollback(context.Context) (ports.TrivyRuntim
 func (s *stubFeatureRuntimeManager) Status(context.Context) (ports.TrivyRuntimeState, error) {
 	s.statusCalls++
 	return s.statusState, s.err
+}
+
+func (s *stubFeatureRuntimeManager) LatestVersion(context.Context) (string, error) {
+	return s.latestVersion, s.err
 }
 
 func (s *stubBootstrapRunner) Run(_ context.Context, cfg installlinux.BootstrapConfig) error {

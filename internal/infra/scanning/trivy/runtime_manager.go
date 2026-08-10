@@ -48,12 +48,20 @@ func NewRuntimeManager(cfg RuntimeManagerConfig) *RuntimeManager {
 	return &RuntimeManager{storageRoot: cfg.StorageRoot, store: cfg.Store, releaseClient: releaseClient, prober: prober, now: now}
 }
 
-func (m *RuntimeManager) Install(ctx context.Context, version string) (ports.TrivyRuntimeState, error) {
-	return m.activate(ctx, version, false)
+func (m *RuntimeManager) Install(ctx context.Context, version string, progress func(ports.FeatureRuntimeProgress)) (ports.TrivyRuntimeState, error) {
+	return m.activate(ctx, version, false, progress)
 }
 
-func (m *RuntimeManager) Upgrade(ctx context.Context, version string) (ports.TrivyRuntimeState, error) {
-	return m.activate(ctx, version, true)
+func (m *RuntimeManager) Upgrade(ctx context.Context, version string, progress func(ports.FeatureRuntimeProgress)) (ports.TrivyRuntimeState, error) {
+	return m.activate(ctx, version, true, progress)
+}
+
+func (m *RuntimeManager) LatestVersion(ctx context.Context) (string, error) {
+	asset, err := m.releaseClient.ResolveRelease(ctx, "")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(asset.Version), nil
 }
 
 func (m *RuntimeManager) Rollback(ctx context.Context) (ports.TrivyRuntimeState, error) {
@@ -94,7 +102,7 @@ func (m *RuntimeManager) Rollback(ctx context.Context) (ports.TrivyRuntimeState,
 		return ports.TrivyRuntimeState{}, err
 	}
 	return state, nil
-	}
+}
 
 func (m *RuntimeManager) Status(ctx context.Context) (ports.TrivyRuntimeState, error) {
 	state, err := m.currentState(ctx)
@@ -123,11 +131,12 @@ func (m *RuntimeManager) Status(ctx context.Context) (ports.TrivyRuntimeState, e
 	return state, nil
 }
 
-func (m *RuntimeManager) activate(ctx context.Context, version string, requireCurrent bool) (ports.TrivyRuntimeState, error) {
+func (m *RuntimeManager) activate(ctx context.Context, version string, requireCurrent bool, progress func(ports.FeatureRuntimeProgress)) (ports.TrivyRuntimeState, error) {
 	current, currentErr := m.currentState(ctx)
 	if requireCurrent && currentErr != nil {
 		return ports.TrivyRuntimeState{}, currentErr
 	}
+	emitFeatureRuntimeProgress(progress, "resolve", "Resolve release")
 	asset, err := m.releaseClient.ResolveRelease(ctx, version)
 	if err != nil {
 		return ports.TrivyRuntimeState{}, err
@@ -140,6 +149,7 @@ func (m *RuntimeManager) activate(ctx context.Context, version string, requireCu
 	if err := m.store.UpsertTrivyRuntimeState(ctx, ports.DefaultTenant, installing); err != nil {
 		return ports.TrivyRuntimeState{}, err
 	}
+	emitFeatureRuntimeProgress(progress, "download", "Download archive")
 	archiveBody, err := m.releaseClient.DownloadReleaseAsset(ctx, asset.ArchiveURL)
 	if err != nil {
 		return ports.TrivyRuntimeState{}, err
@@ -152,6 +162,7 @@ func (m *RuntimeManager) activate(ctx context.Context, version string, requireCu
 	if err := os.WriteFile(archivePath, archiveBody, 0o600); err != nil {
 		return ports.TrivyRuntimeState{}, err
 	}
+	emitFeatureRuntimeProgress(progress, "verify", "Verify checksum")
 	if err := verifyArchiveChecksum(archivePath, asset.ArchiveName, checksumsBody); err != nil {
 		return ports.TrivyRuntimeState{}, err
 	}
@@ -159,6 +170,7 @@ func (m *RuntimeManager) activate(ctx context.Context, version string, requireCu
 	if err := os.MkdirAll(versionDir, 0o755); err != nil {
 		return ports.TrivyRuntimeState{}, err
 	}
+	emitFeatureRuntimeProgress(progress, "extract", "Extract binary")
 	binaryPath, err := extractTrivyBinary(ctx, archivePath, versionDir)
 	if err != nil {
 		return ports.TrivyRuntimeState{}, err
@@ -167,9 +179,11 @@ func (m *RuntimeManager) activate(ctx context.Context, version string, requireCu
 	if err := m.writeReceipt(receiptPath, asset, current.ActiveVersion); err != nil {
 		return ports.TrivyRuntimeState{}, err
 	}
+	emitFeatureRuntimeProgress(progress, "activate", "Activate runtime")
 	if err := m.activateVersionLink(asset.Version); err != nil {
 		return ports.TrivyRuntimeState{}, err
 	}
+	emitFeatureRuntimeProgress(progress, "probe", "Probe runtime")
 	runtime, probeErr := m.prober.Probe(ctx, ports.ScanSettings{BinaryPath: binaryPath, CacheDir: m.cacheDir(), Timeout: 30 * time.Second, MaxConcurrency: 1})
 	if probeErr != nil {
 		if strings.TrimSpace(current.ActiveVersion) != "" {
@@ -193,7 +207,15 @@ func (m *RuntimeManager) activate(ctx context.Context, version string, requireCu
 	if err := m.store.UpsertTrivyRuntimeState(ctx, ports.DefaultTenant, state); err != nil {
 		return ports.TrivyRuntimeState{}, err
 	}
+	emitFeatureRuntimeProgress(progress, "complete", "Runtime ready")
 	return state, nil
+}
+
+func emitFeatureRuntimeProgress(progress func(ports.FeatureRuntimeProgress), stage string, detail string) {
+	if progress == nil {
+		return
+	}
+	progress(ports.FeatureRuntimeProgress{Stage: strings.TrimSpace(stage), Detail: strings.TrimSpace(detail)})
 }
 
 func (m *RuntimeManager) currentState(ctx context.Context) (ports.TrivyRuntimeState, error) {
@@ -245,16 +267,22 @@ func (m *RuntimeManager) writeReceipt(path string, asset releaseAsset, previousV
 	return os.WriteFile(path, body, 0o600)
 }
 
-func (m *RuntimeManager) runtimeRoot() string { return filepath.Join(strings.TrimSpace(m.storageRoot), "features", "trivy") }
-func (m *RuntimeManager) versionsDir() string { return filepath.Join(m.runtimeRoot(), "bin", "versions") }
+func (m *RuntimeManager) runtimeRoot() string {
+	return filepath.Join(strings.TrimSpace(m.storageRoot), "features", "trivy")
+}
+func (m *RuntimeManager) versionsDir() string {
+	return filepath.Join(m.runtimeRoot(), "bin", "versions")
+}
 func (m *RuntimeManager) versionDir(version string) string {
 	return filepath.Join(m.versionsDir(), strings.TrimSpace(version))
 }
-func (m *RuntimeManager) activeLinkPath() string { return filepath.Join(m.runtimeRoot(), "bin", "active") }
+func (m *RuntimeManager) activeLinkPath() string {
+	return filepath.Join(m.runtimeRoot(), "bin", "active")
+}
 func (m *RuntimeManager) activeBinaryPath() string { return filepath.Join(m.activeLinkPath(), "trivy") }
-func (m *RuntimeManager) cacheDir() string       { return filepath.Join(m.runtimeRoot(), "trivy-cache") }
-func (m *RuntimeManager) downloadsDir() string   { return filepath.Join(m.runtimeRoot(), "downloads") }
-func (m *RuntimeManager) receiptsDir() string    { return filepath.Join(m.runtimeRoot(), "receipts") }
+func (m *RuntimeManager) cacheDir() string         { return filepath.Join(m.runtimeRoot(), "trivy-cache") }
+func (m *RuntimeManager) downloadsDir() string     { return filepath.Join(m.runtimeRoot(), "downloads") }
+func (m *RuntimeManager) receiptsDir() string      { return filepath.Join(m.runtimeRoot(), "receipts") }
 func (m *RuntimeManager) receiptPath(version string) string {
 	return filepath.Join(m.receiptsDir(), strings.TrimSpace(version)+".json")
 }

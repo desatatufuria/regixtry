@@ -216,6 +216,7 @@ func TestServiceListFeaturesReturnsBuiltinTrivyInventory(t *testing.T) {
 
 	service, cleanup := newTestService(t, allowAllAccessController{})
 	defer cleanup()
+	service.SetFeatureRuntimeManager(fakeFeatureRuntimeManager{statusState: ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusReady, ActiveVersion: "0.57.1", PreviousVersion: "0.56.2"}, latestVersion: "0.58.0"})
 
 	features, err := service.ListFeatures(context.Background())
 	if err != nil {
@@ -223,13 +224,38 @@ func TestServiceListFeaturesReturnsBuiltinTrivyInventory(t *testing.T) {
 	}
 
 	want := []ports.FeatureSummary{{
-		Name:       "trivy",
-		Kind:       ports.FeatureKindBuiltin,
-		Enabled:    false,
-		Configured: false,
+		Name:           "trivy",
+		Kind:           ports.FeatureKindBuiltin,
+		Enabled:        false,
+		Configured:     false,
+		CurrentVersion: "0.57.1",
+		LatestVersion:  "0.58.0",
+		UpdateStatus:   "available",
 	}}
 	if !reflect.DeepEqual(features, want) {
 		t.Fatalf("ListFeatures() = %#v, want %#v", features, want)
+	}
+}
+
+func TestServiceGetFeatureStatusFallsBackToUnknownLatestVersion(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+	service.SetFeatureRuntimeManager(fakeFeatureRuntimeManager{statusState: ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusReady, ActiveVersion: "0.57.1", PreviousVersion: "0.56.2"}, latestErr: errors.New("lookup failed")})
+
+	status, err := service.GetFeatureStatus(context.Background(), "trivy")
+	if err != nil {
+		t.Fatalf("GetFeatureStatus() error = %v", err)
+	}
+	if got, want := status.Runtime.Version, "0.57.1"; got != want {
+		t.Fatalf("status.Runtime.Version = %q, want %q", got, want)
+	}
+	if got, want := status.Runtime.LatestVersion, "unknown"; got != want {
+		t.Fatalf("status.Runtime.LatestVersion = %q, want %q", got, want)
+	}
+	if got, want := status.Runtime.UpdateStatus, "unknown"; got != want {
+		t.Fatalf("status.Runtime.UpdateStatus = %q, want %q", got, want)
 	}
 }
 
@@ -291,12 +317,12 @@ func TestServiceGetFeatureStatusPreservesIntentWhenManagedRuntimeReady(t *testin
 	defer cleanup()
 
 	if _, err := service.ConfigureFeature(context.Background(), "trivy", ports.FeatureConfigureInput{
-		Enabled:         boolPtr(true),
-		ScheduleEnabled: boolPtr(true),
-		Interval:        durationPtr(6 * time.Hour),
-		Timeout:         durationPtr(10 * time.Minute),
+		Enabled:              boolPtr(true),
+		ScheduleEnabled:      boolPtr(true),
+		Interval:             durationPtr(6 * time.Hour),
+		Timeout:              durationPtr(10 * time.Minute),
 		RegistryReachableURL: stringPtr("https://registry.example.com"),
-		MaxConcurrency:  intPtr(2),
+		MaxConcurrency:       intPtr(2),
 	}); err != nil {
 		t.Fatalf("ConfigureFeature() error = %v", err)
 	}
@@ -440,6 +466,7 @@ func TestServiceGetFeatureStatusReportsLegacyRuntimeMigrationRequired(t *testing
 
 	service, cleanup := newTestService(t, allowAllAccessController{})
 	defer cleanup()
+	service.SetFeatureRuntimeManager(fakeFeatureRuntimeManager{statusState: ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusMigrationRequired, MigrationHint: `legacy binary_path "/tmp/README.sh" requires managed reinstall and will never be executed`}, latestErr: errors.New("lookup failed")})
 
 	if err := service.metadata.UpsertScanSettings(context.Background(), "tenant-a", ports.ScanSettings{
 		Enabled:              true,
@@ -468,6 +495,12 @@ func TestServiceGetFeatureStatusReportsLegacyRuntimeMigrationRequired(t *testing
 	}
 	if status.Runtime.Mode != ports.FeatureRuntimeModeManaged {
 		t.Fatalf("status.Runtime.Mode = %q, want managed runtime truth even for migration", status.Runtime.Mode)
+	}
+	if got, want := status.Runtime.LatestVersion, "unknown"; got != want {
+		t.Fatalf("status.Runtime.LatestVersion = %q, want %q", got, want)
+	}
+	if got, want := status.Runtime.UpdateStatus, "unknown"; got != want {
+		t.Fatalf("status.Runtime.UpdateStatus = %q, want %q", got, want)
 	}
 }
 
@@ -676,6 +709,32 @@ func newTestService(t *testing.T, accessController ports.AccessController) (*Ser
 }
 
 type allowAllAccessController struct{}
+
+type fakeFeatureRuntimeManager struct {
+	statusState   ports.TrivyRuntimeState
+	latestVersion string
+	latestErr     error
+}
+
+func (f fakeFeatureRuntimeManager) Install(context.Context, string, func(ports.FeatureRuntimeProgress)) (ports.TrivyRuntimeState, error) {
+	return ports.TrivyRuntimeState{}, nil
+}
+
+func (f fakeFeatureRuntimeManager) Upgrade(context.Context, string, func(ports.FeatureRuntimeProgress)) (ports.TrivyRuntimeState, error) {
+	return ports.TrivyRuntimeState{}, nil
+}
+
+func (f fakeFeatureRuntimeManager) Rollback(context.Context) (ports.TrivyRuntimeState, error) {
+	return ports.TrivyRuntimeState{}, nil
+}
+
+func (f fakeFeatureRuntimeManager) Status(context.Context) (ports.TrivyRuntimeState, error) {
+	return f.statusState, nil
+}
+
+func (f fakeFeatureRuntimeManager) LatestVersion(context.Context) (string, error) {
+	return f.latestVersion, f.latestErr
+}
 
 func (allowAllAccessController) Authorize(context.Context, ports.Action) error {
 	return nil

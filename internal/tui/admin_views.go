@@ -36,7 +36,7 @@ func renderAdminScreen(theme adminTheme, current screen, session AdminSession, v
 	case screenAdminCreateToken:
 		return fmt.Sprintf("Users / %s / Tokens / Create Token", selectedAdminUsername(view)), renderAdminCreateTokenScreen(theme, view), "Enter: create token | Tab: next field | Esc: cancel"
 	case screenAdminFeatures:
-		return "Features", renderAdminFeaturesScreen(theme, session, view, now), "Enter/r: refresh status | e: enable | x: disable | Esc: back | q: quit"
+		return "Features", renderAdminFeaturesScreen(theme, session, view, now), featureActionHelp(view.FeatureStatus)
 	default:
 		return "Users", renderAdminUsersScreen(theme, session, view, now), "/: search | Enter/e: edit user | n: create user | f: features | Esc: back | q: quit"
 	}
@@ -85,7 +85,7 @@ func renderAdminFeaturesScreen(theme adminTheme, session AdminSession, view Admi
 	} else {
 		selectedIndex := boundedIndex(view.SelectedFeature, len(view.Features))
 		for index, feature := range view.Features {
-			label := fmt.Sprintf("%s [%s] enabled=%t configured=%t", feature.Name, feature.Kind, feature.Enabled, feature.Configured)
+			label := fmt.Sprintf("%s [%s] enabled=%t configured=%t current=%s latest=%s update=%s", feature.Name, feature.Kind, feature.Enabled, feature.Configured, adminFirstNonEmpty(strings.TrimSpace(feature.CurrentVersion), "unknown"), adminFirstNonEmpty(strings.TrimSpace(feature.LatestVersion), "unknown"), adminFirstNonEmpty(strings.TrimSpace(feature.UpdateStatus), "unknown"))
 			if index == selectedIndex {
 				label = theme.selected.Render(label)
 			}
@@ -113,6 +113,8 @@ func renderAdminFeaturesScreen(theme adminTheme, session AdminSession, view Admi
 			fmt.Sprintf("Runtime Status: %s", adminFirstNonEmpty(strings.TrimSpace(view.FeatureStatus.Runtime.Status), adminFirstNonEmpty(strings.TrimSpace(view.FeatureStatus.Runtime.Health), "unknown"))),
 			fmt.Sprintf("Runtime Health: %s", adminFirstNonEmpty(strings.TrimSpace(view.FeatureStatus.Runtime.Health), "unknown")),
 			fmt.Sprintf("Runtime Version: %s", adminFirstNonEmpty(strings.TrimSpace(view.FeatureStatus.Runtime.Version), "unknown")),
+			fmt.Sprintf("Runtime Latest Version: %s", adminFirstNonEmpty(strings.TrimSpace(view.FeatureStatus.Runtime.LatestVersion), "unknown")),
+			fmt.Sprintf("Runtime Update Status: %s", adminFirstNonEmpty(strings.TrimSpace(view.FeatureStatus.Runtime.UpdateStatus), "unknown")),
 		)
 		if strings.TrimSpace(view.FeatureStatus.Runtime.Detail) != "" {
 			lines = append(lines, fmt.Sprintf("Runtime Detail: %s", view.FeatureStatus.Runtime.Detail))

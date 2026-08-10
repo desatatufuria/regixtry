@@ -44,9 +44,25 @@ func (s *Service) ListFeatures(ctx context.Context) ([]ports.FeatureSummary, err
 		if err != nil {
 			return nil, err
 		}
-		summaries = append(summaries, ports.FeatureSummary{Name: details.Name, Kind: details.Kind, Enabled: details.Enabled, Configured: details.Configured})
+		runtime := s.projectFeatureRuntime(ctx)
+		summaries = append(summaries, ports.FeatureSummary{
+			Name:           details.Name,
+			Kind:           details.Kind,
+			Enabled:        details.Enabled,
+			Configured:     details.Configured,
+			CurrentVersion: strings.TrimSpace(runtime.Version),
+			LatestVersion:  featureRuntimeValueOrUnknown(runtime.LatestVersion),
+			UpdateStatus:   featureRuntimeValueOrUnknown(runtime.UpdateStatus),
+		})
 	}
 	return summaries, nil
+}
+
+func featureRuntimeValueOrUnknown(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "unknown"
+	}
+	return strings.TrimSpace(value)
 }
 
 func (s *Service) GetFeature(ctx context.Context, name string) (ports.FeatureDetails, error) {
@@ -67,11 +83,11 @@ func (s *Service) GetFeatureStatus(ctx context.Context, name string) (ports.Feat
 	return details, nil
 }
 
-
 func (s *Service) projectFeatureRuntime(ctx context.Context) ports.FeatureRuntime {
 	var (
-		state ports.TrivyRuntimeState
-		err   error
+		state   ports.TrivyRuntimeState
+		err     error
+		runtime ports.FeatureRuntime
 	)
 	if s.runtime != nil {
 		state, err = s.runtime.Status(ctx)
@@ -80,32 +96,51 @@ func (s *Service) projectFeatureRuntime(ctx context.Context) ports.FeatureRuntim
 	}
 	if err != nil {
 		if domain.IsCode(err, domain.ErrorCodeNotFound) {
-			return ports.FeatureRuntime{Mode: ports.FeatureRuntimeModeManaged, Status: string(ports.TrivyRuntimeStatusUninstalled), Health: string(ports.TrivyRuntimeStatusUninstalled), Detail: "managed runtime is not installed"}
+			runtime = ports.FeatureRuntime{Mode: ports.FeatureRuntimeModeManaged, Status: string(ports.TrivyRuntimeStatusUninstalled), Health: string(ports.TrivyRuntimeStatusUninstalled), Detail: "managed runtime is not installed"}
+		} else {
+			runtime = ports.FeatureRuntime{Mode: ports.FeatureRuntimeModeManaged, Status: string(ports.TrivyRuntimeStatusDegraded), Health: string(ports.TrivyRuntimeStatusDegraded), Detail: err.Error(), LastError: err.Error()}
 		}
-		return ports.FeatureRuntime{Mode: ports.FeatureRuntimeModeManaged, Status: string(ports.TrivyRuntimeStatusDegraded), Health: string(ports.TrivyRuntimeStatusDegraded), Detail: err.Error(), LastError: err.Error()}
+	} else {
+		health := string(state.Status)
+		if health == "" {
+			health = string(ports.TrivyRuntimeStatusUninstalled)
+		}
+		detail := strings.TrimSpace(state.MigrationHint)
+		if detail == "" {
+			detail = strings.TrimSpace(state.LastError)
+		}
+		runtime = ports.FeatureRuntime{
+			Mode:              ports.FeatureRuntimeModeManaged,
+			Status:            string(state.Status),
+			Health:            health,
+			Version:           strings.TrimSpace(state.ActiveVersion),
+			Detail:            detail,
+			RollbackAvailable: strings.TrimSpace(state.PreviousVersion) != "",
+			ActiveBinaryPath:  strings.TrimSpace(state.ActiveBinaryPath),
+			ReceiptPath:       strings.TrimSpace(state.ReceiptPath),
+			LastVerifiedAt:    state.LastVerifiedAt,
+			LastHealthCheckAt: state.LastHealthCheckAt,
+			LastDBUpdatedAt:   state.LastDBUpdatedAt,
+			LastError:         strings.TrimSpace(state.LastError),
+		}
 	}
-	health := string(state.Status)
-	if health == "" {
-		health = string(ports.TrivyRuntimeStatusUninstalled)
+	runtime.LatestVersion = "unknown"
+	runtime.UpdateStatus = "unknown"
+	if s.runtime != nil {
+		latest, latestErr := s.runtime.LatestVersion(ctx)
+		if trimmed := strings.TrimSpace(latest); latestErr == nil && trimmed != "" {
+			runtime.LatestVersion = trimmed
+			switch current := strings.TrimSpace(runtime.Version); {
+			case current == "":
+				runtime.UpdateStatus = "unknown"
+			case current == trimmed:
+				runtime.UpdateStatus = "up-to-date"
+			default:
+				runtime.UpdateStatus = "available"
+			}
+		}
 	}
-	detail := strings.TrimSpace(state.MigrationHint)
-	if detail == "" {
-		detail = strings.TrimSpace(state.LastError)
-	}
-	return ports.FeatureRuntime{
-		Mode:              ports.FeatureRuntimeModeManaged,
-		Status:            string(state.Status),
-		Health:            health,
-		Version:           strings.TrimSpace(state.ActiveVersion),
-		Detail:            detail,
-		RollbackAvailable: strings.TrimSpace(state.PreviousVersion) != "",
-		ActiveBinaryPath:  strings.TrimSpace(state.ActiveBinaryPath),
-		ReceiptPath:       strings.TrimSpace(state.ReceiptPath),
-		LastVerifiedAt:    state.LastVerifiedAt,
-		LastHealthCheckAt: state.LastHealthCheckAt,
-		LastDBUpdatedAt:   state.LastDBUpdatedAt,
-		LastError:         strings.TrimSpace(state.LastError),
-	}
+	return runtime
 }
 
 func (s *Service) ConfigureFeature(ctx context.Context, name string, input ports.FeatureConfigureInput) (ports.FeatureDetails, error) {
@@ -209,14 +244,14 @@ func (s *Service) mergeFeatureSettings(base ports.ScanSettings, configured bool,
 
 func featureDetailsFromSettings(feature featureDescriptor, settings ports.ScanSettings, configured bool) ports.FeatureDetails {
 	return ports.FeatureDetails{
-		Name:                  feature.name,
-		Kind:                  feature.kind,
-		Enabled:               settings.Enabled,
-		Configured:            configured,
-		ScheduleEnabled:       settings.ScheduleEnabled,
-		Interval:              settings.Interval,
-		Timeout:               settings.Timeout,
-		RegistryReachableURL:  settings.RegistryReachableURL,
-		MaxConcurrency:        settings.MaxConcurrency,
+		Name:                 feature.name,
+		Kind:                 feature.kind,
+		Enabled:              settings.Enabled,
+		Configured:           configured,
+		ScheduleEnabled:      settings.ScheduleEnabled,
+		Interval:             settings.Interval,
+		Timeout:              settings.Timeout,
+		RegistryReachableURL: settings.RegistryReachableURL,
+		MaxConcurrency:       settings.MaxConcurrency,
 	}
 }

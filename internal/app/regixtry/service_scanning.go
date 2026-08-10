@@ -145,7 +145,7 @@ func (s *Service) executeScanRun(ctx context.Context, tenant string, run ports.S
 	run.Status = ports.ScanRunStatusRunning
 	run.StartedAt = &now
 	run.UpdatedAt = now
-	_ = s.metadata.UpsertScanRun(ctx, tenant, run)
+	s.persistAsyncScanRun(ctx, tenant, run)
 	target, err := s.scanTarget(settings, run.Repository, run.Digest)
 	if err != nil {
 		finished := s.now()
@@ -153,7 +153,7 @@ func (s *Service) executeScanRun(ctx context.Context, tenant string, run ports.S
 		run.UpdatedAt = finished
 		run.Status = ports.ScanRunStatusFailed
 		run.Error = err.Error()
-		_ = s.metadata.UpsertScanRun(ctx, tenant, run)
+		s.persistAsyncScanRun(ctx, tenant, run)
 		return
 	}
 	result, err := s.scanRunner.Run(ctx, target, settings)
@@ -163,7 +163,7 @@ func (s *Service) executeScanRun(ctx context.Context, tenant string, run ports.S
 	if err != nil {
 		run.Status = ports.ScanRunStatusFailed
 		run.Error = err.Error()
-		_ = s.metadata.UpsertScanRun(ctx, tenant, run)
+		s.persistAsyncScanRun(ctx, tenant, run)
 		return
 	}
 	run.Status = ports.ScanRunStatusCompleted
@@ -174,7 +174,33 @@ func (s *Service) executeScanRun(ctx context.Context, tenant string, run ports.S
 	run.TrivyVersion = result.TrivyVersion
 	run.DBUpdatedAt = result.DBUpdatedAt
 	run.Error = ""
-	_ = s.metadata.UpsertScanRun(ctx, tenant, run)
+	s.persistAsyncScanRun(ctx, tenant, run)
+}
+
+func (s *Service) persistAsyncScanRun(ctx context.Context, tenant string, run ports.ScanRun) {
+	const maxAttempts = 5
+
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if err := s.metadata.UpsertScanRun(ctx, tenant, run); err == nil {
+			return
+		} else if !isTransientScanRunPersistenceError(err) {
+			return
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Duration(attempt+1) * 10 * time.Millisecond):
+		}
+	}
+}
+
+func isTransientScanRunPersistenceError(err error) bool {
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "database is locked") ||
+		strings.Contains(message, "database is busy") ||
+		strings.Contains(message, "sqlite_busy") ||
+		strings.Contains(message, "sqlite_locked")
 }
 
 func (s *Service) scanTarget(settings ports.ScanSettings, repository string, digest string) (string, error) {

@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -901,12 +902,7 @@ func runFeature(ctx context.Context, args []string, stdout io.Writer) error {
 		if err != nil {
 			return err
 		}
-		for _, feature := range features {
-			if _, err := fmt.Fprintf(stdout, "%s\t%s\tenabled=%t\tconfigured=%t\n", feature.Name, feature.Kind, feature.Enabled, feature.Configured); err != nil {
-				return err
-			}
-		}
-		return nil
+		return writeFeatureTable(stdout, features)
 	case "show", "status", "install", "upgrade", "rollback", "enable", "disable":
 		if len(args) < 2 {
 			return fmt.Errorf("feature %s requires a feature name", args[0])
@@ -955,15 +951,17 @@ func runFeature(ctx context.Context, args []string, stdout io.Writer) error {
 			}
 			return writeFeatureDetails(stdout, details, true)
 		case "install":
-			state, err := service.InstallFeatureRuntime(ctx, name, version)
+			state, err := service.InstallFeatureRuntimeWithProgress(ctx, name, version, featureProgressWriter(stdout))
 			if err != nil {
+				_, _ = fmt.Fprintf(stdout, "Failed managed runtime install for %s: %v\n", name, err)
 				return err
 			}
 			_, err = fmt.Fprintf(stdout, "Installed managed runtime for %s at %s\n", name, state.ActiveVersion)
 			return err
 		case "upgrade":
-			state, err := service.UpgradeFeatureRuntime(ctx, name, version)
+			state, err := service.UpgradeFeatureRuntimeWithProgress(ctx, name, version, featureProgressWriter(stdout))
 			if err != nil {
+				_, _ = fmt.Fprintf(stdout, "Failed managed runtime upgrade for %s: %v\n", name, err)
 				return err
 			}
 			_, err = fmt.Fprintf(stdout, "Upgraded managed runtime for %s to %s\n", name, state.ActiveVersion)
@@ -1111,6 +1109,8 @@ func writeFeatureDetails(stdout io.Writer, details ports.FeatureDetails, include
 			fmt.Sprintf("Runtime Status: %s", firstNonEmpty(details.Runtime.Status, details.Runtime.Health, "unknown")),
 			fmt.Sprintf("Runtime Health: %s", firstNonEmpty(details.Runtime.Health, "unknown")),
 			fmt.Sprintf("Runtime Version: %s", firstNonEmpty(details.Runtime.Version, "unknown")),
+			fmt.Sprintf("Runtime Latest Version: %s", firstNonEmpty(details.Runtime.LatestVersion, "unknown")),
+			fmt.Sprintf("Runtime Update Status: %s", firstNonEmpty(details.Runtime.UpdateStatus, "unknown")),
 		)
 		if details.Runtime.RollbackAvailable {
 			lines = append(lines, "Runtime Rollback Available: true")
@@ -1121,6 +1121,36 @@ func writeFeatureDetails(stdout io.Writer, details ports.FeatureDetails, include
 	}
 	_, err := fmt.Fprintln(stdout, strings.Join(lines, "\n"))
 	return err
+}
+
+func writeFeatureTable(stdout io.Writer, features []ports.FeatureSummary) error {
+	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+	if _, err := fmt.Fprintln(tw, "NAME\tKIND\tENABLED\tCONFIGURED\tCURRENT\tLATEST\tUPDATE"); err != nil {
+		return err
+	}
+	for _, feature := range features {
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%t\t%t\t%s\t%s\t%s\n",
+			feature.Name,
+			feature.Kind,
+			feature.Enabled,
+			feature.Configured,
+			firstNonEmpty(feature.CurrentVersion, "unknown"),
+			firstNonEmpty(feature.LatestVersion, "unknown"),
+			firstNonEmpty(feature.UpdateStatus, "unknown"),
+		); err != nil {
+			return err
+		}
+	}
+	return tw.Flush()
+}
+
+func featureProgressWriter(stdout io.Writer) func(ports.FeatureRuntimeProgress) {
+	return func(progress ports.FeatureRuntimeProgress) {
+		if stdout == nil {
+			return
+		}
+		_, _ = fmt.Fprintf(stdout, "[%s] %s\n", firstNonEmpty(strings.TrimSpace(progress.Stage), "unknown"), firstNonEmpty(strings.TrimSpace(progress.Detail), "working"))
+	}
 }
 
 func runSetup(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) error {

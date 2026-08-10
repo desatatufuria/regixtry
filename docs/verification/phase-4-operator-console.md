@@ -31,6 +31,10 @@ This slice closes `registry-foundation` Phase 4.
 ```bash
 GOMODCACHE="/tmp/opencode/gomodcache" GOPATH="/tmp/opencode/gopath" GOSUMDB=off go test ./...
 
+GOMODCACHE="/tmp/opencode/gomodcache" GOPATH="/tmp/opencode/gopath" GOSUMDB=off go run ./cmd/regixtry feature list -storage-root /tmp/registry-foundation-smoke -db /tmp/registry-foundation-smoke/metadata.db
+
+GOMODCACHE="/tmp/opencode/gomodcache" GOPATH="/tmp/opencode/gopath" GOSUMDB=off go run ./cmd/regixtry feature status trivy -storage-root /tmp/registry-foundation-smoke -db /tmp/registry-foundation-smoke/metadata.db
+
 docs/verification/scripts/docker-push-pull-smoke.sh /tmp/registry-foundation-smoke
 
 PORT=5600 docs/verification/scripts/docker-push-pull-smoke.sh /tmp/registry-foundation-smoke
@@ -43,8 +47,10 @@ docs/verification/scripts/tui-smoke.sh /tmp/registry-foundation-smoke
 | Step | Expected result |
 |---|---|
 | Go integration suite | All package tests pass. |
+| `feature list` smoke | Output includes the fixed-width `NAME`, `CURRENT`, `LATEST`, and `UPDATE` columns, and the read succeeds even when latest lookup degrades to `unknown`. |
+| `feature status` smoke | Output includes `Runtime Latest Version` and `Runtime Update Status`, with truthful managed-runtime status/detail lines. |
 | Docker smoke | `docker pull` returns the image pushed into the local registry; the smoke server is started with explicit `-allow-anonymous-push` for this verification flow. |
-| TUI smoke | Snapshot output includes `Regixtry Console` and the seeded `registry-foundation/smoke` repository name. |
+| TUI smoke | Snapshot output includes `Regixtry Console` and the seeded `registry-foundation/smoke` repository name. During an authenticated feature-screen refresh, help text should only advertise valid keys for the selected runtime state (for example `i: install runtime` on migration-required state or `u: upgrade runtime` only when an update is available). |
 
 ## Notes
 

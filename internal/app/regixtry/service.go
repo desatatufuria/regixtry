@@ -27,10 +27,11 @@ type Service struct {
 }
 
 type FeatureRuntimeManager interface {
-	Install(ctx context.Context, version string) (ports.TrivyRuntimeState, error)
-	Upgrade(ctx context.Context, version string) (ports.TrivyRuntimeState, error)
+	Install(ctx context.Context, version string, progress func(ports.FeatureRuntimeProgress)) (ports.TrivyRuntimeState, error)
+	Upgrade(ctx context.Context, version string, progress func(ports.FeatureRuntimeProgress)) (ports.TrivyRuntimeState, error)
 	Rollback(ctx context.Context) (ports.TrivyRuntimeState, error)
 	Status(ctx context.Context) (ports.TrivyRuntimeState, error)
+	LatestVersion(ctx context.Context) (string, error)
 }
 
 type FeatureRuntimeManagerConfig struct {

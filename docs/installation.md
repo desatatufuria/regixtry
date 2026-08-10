@@ -67,6 +67,8 @@ regixtry feature upgrade trivy -version 0.58.0
 regixtry feature rollback trivy
 ```
 
+`feature install` and `feature upgrade` now emit staged progress so long-running managed-runtime work does not look hung. After installation, operators can use `regixtry feature list` for a table view of `CURRENT`, `LATEST`, and `UPDATE`, and `regixtry feature status trivy` for the same request-scoped latest-version awareness with an `unknown` fallback.
+
 Comandos operativos:
 
 ```bash

@@ -120,10 +120,13 @@ const (
 )
 
 type FeatureSummary struct {
-	Name       string      `json:"name"`
-	Kind       FeatureKind `json:"kind"`
-	Enabled    bool        `json:"enabled"`
-	Configured bool        `json:"configured"`
+	Name           string      `json:"name"`
+	Kind           FeatureKind `json:"kind"`
+	Enabled        bool        `json:"enabled"`
+	Configured     bool        `json:"configured"`
+	CurrentVersion string      `json:"current_version,omitempty"`
+	LatestVersion  string      `json:"latest_version,omitempty"`
+	UpdateStatus   string      `json:"update_status,omitempty"`
 }
 
 type FeatureRuntime struct {
@@ -131,6 +134,8 @@ type FeatureRuntime struct {
 	Status            string     `json:"status,omitempty"`
 	Health            string     `json:"health,omitempty"`
 	Version           string     `json:"version,omitempty"`
+	LatestVersion     string     `json:"latest_version,omitempty"`
+	UpdateStatus      string     `json:"update_status,omitempty"`
 	Detail            string     `json:"detail,omitempty"`
 	RollbackAvailable bool       `json:"rollback_available,omitempty"`
 	ActiveBinaryPath  string     `json:"active_binary_path,omitempty"`
@@ -139,6 +144,11 @@ type FeatureRuntime struct {
 	LastHealthCheckAt *time.Time `json:"last_health_check_at,omitempty"`
 	LastDBUpdatedAt   *time.Time `json:"last_db_updated_at,omitempty"`
 	LastError         string     `json:"last_error,omitempty"`
+}
+
+type FeatureRuntimeProgress struct {
+	Stage  string `json:"stage"`
+	Detail string `json:"detail,omitempty"`
 }
 
 type FeatureDetails struct {
