@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -521,6 +522,57 @@ func TestParseTUIConfigEnvAPIBaseURLOverridesSetupManagedRuntime(t *testing.T) {
 	}
 }
 
+func TestParseFeatureConfigAutoDetectsManagedRuntime(t *testing.T) {
+	t.Setenv("REGISTRY_PUBLIC_URL", "")
+	bootstrapStatePath := writeManagedFeatureBootstrapState(t, "/var/lib/regixtry", "/var/lib/regixtry/metadata.db", "https://registry.example.com")
+	restore := swapFeatureBootstrapStatePath(t, bootstrapStatePath)
+	defer restore()
+
+	cfg, err := parseFeatureConfig(nil)
+	if err != nil {
+		t.Fatalf("parseFeatureConfig() error = %v", err)
+	}
+	if cfg.StorageRoot != "/var/lib/regixtry" {
+		t.Fatalf("StorageRoot = %q, want %q", cfg.StorageRoot, "/var/lib/regixtry")
+	}
+	if cfg.DatabasePath != "/var/lib/regixtry/metadata.db" {
+		t.Fatalf("DatabasePath = %q, want %q", cfg.DatabasePath, "/var/lib/regixtry/metadata.db")
+	}
+	if cfg.PublicURL != "https://registry.example.com" {
+		t.Fatalf("PublicURL = %q, want %q", cfg.PublicURL, "https://registry.example.com")
+	}
+}
+
+func TestParseFeatureConfigExplicitFlagsOverrideManagedRuntime(t *testing.T) {
+	t.Parallel()
+
+	bootstrapStatePath := writeManagedFeatureBootstrapState(t, "/var/lib/regixtry", "/var/lib/regixtry/metadata.db", "https://registry.example.com")
+	restore := swapFeatureBootstrapStatePath(t, bootstrapStatePath)
+	defer restore()
+
+	cfg, err := parseFeatureConfig([]string{"-storage-root", "/tmp/override-root", "-public-url", "https://override.example.com"})
+	if err != nil {
+		t.Fatalf("parseFeatureConfig() error = %v", err)
+	}
+	if cfg.StorageRoot != "/tmp/override-root" {
+		t.Fatalf("StorageRoot = %q, want %q", cfg.StorageRoot, "/tmp/override-root")
+	}
+	if cfg.DatabasePath != "/tmp/override-root/metadata.db" {
+		t.Fatalf("DatabasePath = %q, want storage-root-derived default", cfg.DatabasePath)
+	}
+	if cfg.PublicURL != "https://override.example.com" {
+		t.Fatalf("PublicURL = %q, want %q", cfg.PublicURL, "https://override.example.com")
+	}
+
+	cfg, err = parseFeatureConfig([]string{"-db", "/tmp/override.db"})
+	if err != nil {
+		t.Fatalf("parseFeatureConfig() explicit db error = %v", err)
+	}
+	if cfg.DatabasePath != "/tmp/override.db" {
+		t.Fatalf("DatabasePath = %q, want %q", cfg.DatabasePath, "/tmp/override.db")
+	}
+}
+
 func TestParseTUIConfigRejectsRelativeAdminAPIBaseURL(t *testing.T) {
 	t.Parallel()
 
@@ -985,6 +1037,403 @@ func TestRunSetupPassesParsedConfigToRunnerAndWritesProvenance(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "Setup complete:") {
 		t.Fatalf("stdout = %q, want setup success message", stdout.String())
+	}
+}
+
+func TestRunSetupImportsLegacyTrivyFlagsIntoFeatureState(t *testing.T) {
+	root := t.TempDir()
+	storageRoot := filepath.Join(root, "var", "lib", "regixtry")
+	provenancePath := filepath.Join(root, "etc", "regixtry", "regixtry-lifecycle-state.json")
+	if err := os.MkdirAll(filepath.Dir(provenancePath), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+
+	runner := &stubBootstrapRunner{
+		plannedProvenance: installlinux.LifecycleProvenance{
+			Version:      2,
+			Mode:         "daemon-sqlite",
+			InstalledBin: "/usr/local/bin/regixtry",
+			ServiceName:  "registry-custom",
+			StatePath:    provenancePath,
+			ManagedPaths: []string{filepath.Join(root, "etc", "regixtry", "bootstrap-state.json")},
+		},
+		saveProvenanceHook: func(provenance installlinux.LifecycleProvenance) error {
+			return installlinux.NewBootstrapper().SaveLifecycleProvenance(provenance)
+		},
+	}
+	restore := swapBootstrapRunner(t, runner)
+	defer restore()
+
+	stdout := &bytes.Buffer{}
+	args := []string{
+		"setup",
+		"-mode", "daemon-sqlite",
+		"-public-url", "https://regixtry.example.com",
+		"-runtime-tls-mode", "reverse-proxy",
+		"-addr", "0.0.0.0:5443",
+		"-storage-root", storageRoot,
+		"-state-path", filepath.Join(root, "etc", "regixtry", "bootstrap-state.json"),
+		"-unit-path", filepath.Join(root, "etc", "systemd", "system", "registry-custom.service"),
+		"-service", "registry-custom",
+		"-trivy-enabled",
+		"-trivy-schedule-enabled",
+		"-trivy-interval", "3h",
+		"-trivy-timeout", "17m",
+		"-trivy-cache-dir", filepath.Join(root, "var", "cache", "trivy-custom"),
+		"-trivy-binary-path", "/usr/local/bin/trivy-custom",
+		"-trivy-max-concurrency", "4",
+	}
+
+	if err := runWithIO(context.Background(), args, strings.NewReader(""), stdout, io.Discard); err != nil {
+		t.Fatalf("runWithIO(setup) error = %v", err)
+	}
+
+	store, err := metadata.New(filepath.Join(storageRoot, "metadata.db"))
+	if err != nil {
+		t.Fatalf("metadata.New() error = %v", err)
+	}
+	defer store.Close()
+	settings, err := store.GetScanSettings(context.Background(), ports.DefaultTenant)
+	if err != nil {
+		t.Fatalf("GetScanSettings() error = %v", err)
+	}
+	if !settings.Enabled || !settings.ScheduleEnabled || settings.Interval != 3*time.Hour || settings.Timeout != 17*time.Minute || settings.ServiceURL != "" || settings.RegistryReachableURL != "" || settings.MaxConcurrency != 4 {
+		t.Fatalf("settings = %#v, want legacy setup knobs imported without binary-backed runtime", settings)
+	}
+	if !strings.Contains(stdout.String(), "Legacy Trivy setup flags were imported into feature state.") {
+		t.Fatalf("stdout = %q, want legacy import guidance", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "service_url and registry_reachable_url are still required") {
+		t.Fatalf("stdout = %q, want service runtime follow-up guidance", stdout.String())
+	}
+	if runner.savedProvenance.Intent.TrivyBinaryPath != "" || runner.savedProvenance.Intent.TrivyCacheDir != "" || runner.savedProvenance.Intent.TrivyInterval != "" {
+		t.Fatalf("saved provenance intent = %#v, want base-only lifecycle provenance", runner.savedProvenance.Intent)
+	}
+}
+
+func TestRunFeatureCommandsManageBuiltInTrivyState(t *testing.T) {
+	root := t.TempDir()
+	storageRoot := filepath.Join(root, "data")
+	databasePath := filepath.Join(storageRoot, "metadata.db")
+	if err := os.MkdirAll(storageRoot, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	store, err := metadata.New(databasePath)
+	if err != nil {
+		t.Fatalf("metadata.New() error = %v", err)
+	}
+	defer store.Close()
+	stub := &stubFeatureRuntimeManager{statusState: ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusUninstalled}}
+	restoreRuntimeManager := swapFeatureRuntimeManagerFactory(t, func(appregixtry.FeatureRuntimeManagerConfig) appregixtry.FeatureRuntimeManager {
+		return stub
+	})
+	defer restoreRuntimeManager()
+
+	stdout := &bytes.Buffer{}
+	if err := runWithIO(context.Background(), []string{"feature", "list", "-storage-root", storageRoot, "-db", databasePath}, strings.NewReader(""), stdout, io.Discard); err != nil {
+		t.Fatalf("runWithIO(feature list) error = %v", err)
+	}
+	for _, want := range []string{"NAME", "CURRENT", "LATEST", "UPDATE", "trivy"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout = %q, want %q", stdout.String(), want)
+		}
+	}
+
+	stdout.Reset()
+	if err := runWithIO(context.Background(), []string{"feature", "configure", "trivy", "-storage-root", storageRoot, "-db", databasePath, "-enabled", "-schedule-enabled", "-interval", "6h", "-timeout", "10m", "-registry-reachable-url", "https://registry.internal:5443", "-max-concurrency", "2"}, strings.NewReader(""), stdout, io.Discard); err != nil {
+		t.Fatalf("runWithIO(feature configure) error = %v", err)
+	}
+	if !strings.Contains(stdout.String(), "Configured feature trivy") {
+		t.Fatalf("stdout = %q, want configure confirmation", stdout.String())
+	}
+
+	stdout.Reset()
+	if err := runWithIO(context.Background(), []string{"feature", "status", "trivy", "-storage-root", storageRoot, "-db", databasePath}, strings.NewReader(""), stdout, io.Discard); err != nil {
+		t.Fatalf("runWithIO(feature status) error = %v", err)
+	}
+	for _, want := range []string{"Name: trivy", "Enabled: true", "Schedule Enabled: true", "Registry Reachable URL: https://registry.internal:5443", "Runtime Status: uninstalled", "Runtime Health: uninstalled", "Runtime Latest Version: unknown", "Runtime Update Status: unknown"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout = %q, want %q", stdout.String(), want)
+		}
+	}
+
+	stdout.Reset()
+	if err := runWithIO(context.Background(), []string{"feature", "configure", "trivy", "-storage-root", storageRoot, "-db", databasePath, "-enabled", "-schedule-enabled", "-interval", "6h", "-timeout", "10m", "-max-concurrency", "2"}, strings.NewReader(""), stdout, io.Discard); err != nil {
+		t.Fatalf("runWithIO(feature configure fallback) error = %v", err)
+	}
+
+	stdout.Reset()
+	if err := runWithIO(context.Background(), []string{"feature", "status", "trivy", "-storage-root", storageRoot, "-db", databasePath, "-public-url", "https://registry.example.com"}, strings.NewReader(""), stdout, io.Discard); err != nil {
+		t.Fatalf("runWithIO(feature status with public-url fallback) error = %v", err)
+	}
+	for _, want := range []string{"Runtime Status: uninstalled", "Runtime Health: uninstalled"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout = %q, want %q after public-url fallback", stdout.String(), want)
+		}
+	}
+
+	stdout.Reset()
+	if err := runWithIO(context.Background(), []string{"feature", "disable", "trivy", "-storage-root", storageRoot, "-db", databasePath}, strings.NewReader(""), stdout, io.Discard); err != nil {
+		t.Fatalf("runWithIO(feature disable) error = %v", err)
+	}
+	settings, err := store.GetScanSettings(context.Background(), ports.DefaultTenant)
+	if err != nil {
+		t.Fatalf("GetScanSettings() error = %v", err)
+	}
+	if settings.Enabled {
+		t.Fatalf("settings.Enabled = %v, want false after feature disable", settings.Enabled)
+	}
+}
+
+func TestFeatureRuntimeLifecycleCommandsUseManagedRuntimeActions(t *testing.T) {
+	root := t.TempDir()
+	storageRoot := filepath.Join(root, "data")
+	databasePath := filepath.Join(storageRoot, "metadata.db")
+	if err := os.MkdirAll(storageRoot, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+
+	stub := &stubFeatureRuntimeManager{
+		installState:    ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusReady, ActiveVersion: "0.57.1", PreviousVersion: "", ActiveBinaryPath: filepath.Join(storageRoot, "features", "trivy", "bin", "active", "trivy"), CacheDir: filepath.Join(storageRoot, "features", "trivy", "trivy-cache"), ReceiptPath: filepath.Join(storageRoot, "features", "trivy", "receipts", "0.57.1.json")},
+		upgradeState:    ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusReady, ActiveVersion: "0.58.0", PreviousVersion: "0.57.1", ActiveBinaryPath: filepath.Join(storageRoot, "features", "trivy", "bin", "active", "trivy"), CacheDir: filepath.Join(storageRoot, "features", "trivy", "trivy-cache"), ReceiptPath: filepath.Join(storageRoot, "features", "trivy", "receipts", "0.58.0.json")},
+		rollbackState:   ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusReady, ActiveVersion: "0.57.1", PreviousVersion: "0.58.0", ActiveBinaryPath: filepath.Join(storageRoot, "features", "trivy", "bin", "active", "trivy"), CacheDir: filepath.Join(storageRoot, "features", "trivy", "trivy-cache"), ReceiptPath: filepath.Join(storageRoot, "features", "trivy", "receipts", "0.57.1.json")},
+		statusState:     ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusMigrationRequired, MigrationHint: `legacy binary_path "/tmp/README.sh" requires managed reinstall and will never be executed`},
+		latestVersion:   "0.58.0",
+		installProgress: []ports.FeatureRuntimeProgress{{Stage: "resolve", Detail: "Resolve release"}, {Stage: "download", Detail: "Download archive"}, {Stage: "complete", Detail: "Runtime ready"}},
+		upgradeProgress: []ports.FeatureRuntimeProgress{{Stage: "resolve", Detail: "Resolve release"}, {Stage: "download", Detail: "Download archive"}, {Stage: "complete", Detail: "Runtime ready"}},
+	}
+	restoreRuntimeManager := swapFeatureRuntimeManagerFactory(t, func(appregixtry.FeatureRuntimeManagerConfig) appregixtry.FeatureRuntimeManager {
+		return stub
+	})
+	defer restoreRuntimeManager()
+
+	stdout := &bytes.Buffer{}
+	if err := runWithIO(context.Background(), []string{"feature", "install", "trivy", "-storage-root", storageRoot, "-db", databasePath, "-version", "0.57.1"}, strings.NewReader(""), stdout, io.Discard); err != nil {
+		t.Fatalf("runWithIO(feature install) error = %v", err)
+	}
+	for _, want := range []string{"[resolve] Resolve release", "[download] Download archive", "[complete] Runtime ready", "Installed managed runtime for trivy at 0.57.1"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout = %q, want %q", stdout.String(), want)
+		}
+	}
+	if stub.installCalls != 1 {
+		t.Fatalf("install stub/stdout = %#v / %q, want managed install evidence", stub, stdout.String())
+	}
+
+	stdout.Reset()
+	if err := runWithIO(context.Background(), []string{"feature", "upgrade", "trivy", "-storage-root", storageRoot, "-db", databasePath, "-version", "0.58.0"}, strings.NewReader(""), stdout, io.Discard); err != nil {
+		t.Fatalf("runWithIO(feature upgrade) error = %v", err)
+	}
+	for _, want := range []string{"[resolve] Resolve release", "[download] Download archive", "[complete] Runtime ready", "Upgraded managed runtime for trivy to 0.58.0"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout = %q, want %q", stdout.String(), want)
+		}
+	}
+	if stub.upgradeCalls != 1 {
+		t.Fatalf("upgrade stub/stdout = %#v / %q, want managed upgrade evidence", stub, stdout.String())
+	}
+
+	stdout.Reset()
+	if err := runWithIO(context.Background(), []string{"feature", "rollback", "trivy", "-storage-root", storageRoot, "-db", databasePath}, strings.NewReader(""), stdout, io.Discard); err != nil {
+		t.Fatalf("runWithIO(feature rollback) error = %v", err)
+	}
+	if stub.rollbackCalls != 1 || !strings.Contains(stdout.String(), "Rolled back managed runtime for trivy to 0.57.1") {
+		t.Fatalf("rollback stub/stdout = %#v / %q, want managed rollback evidence", stub, stdout.String())
+	}
+
+	stdout.Reset()
+	if err := runWithIO(context.Background(), []string{"feature", "status", "trivy", "-storage-root", storageRoot, "-db", databasePath}, strings.NewReader(""), stdout, io.Discard); err != nil {
+		t.Fatalf("runWithIO(feature status) error = %v", err)
+	}
+	for _, want := range []string{"Runtime Status: migration-required", "Runtime Detail: legacy binary_path \"/tmp/README.sh\" requires managed reinstall and will never be executed", "Runtime Latest Version: 0.58.0", "Runtime Update Status: unknown"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout = %q, want %q", stdout.String(), want)
+		}
+	}
+}
+
+func TestFeatureRuntimeLifecycleCommandStopsOnTruthfulFailure(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	storageRoot := filepath.Join(root, "data")
+	databasePath := filepath.Join(storageRoot, "metadata.db")
+	if err := os.MkdirAll(storageRoot, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+
+	stub := &stubFeatureRuntimeManager{
+		err:             errors.New("download failed"),
+		installProgress: []ports.FeatureRuntimeProgress{{Stage: "resolve", Detail: "Resolve release"}, {Stage: "download", Detail: "Download archive"}},
+	}
+	restoreRuntimeManager := swapFeatureRuntimeManagerFactory(t, func(appregixtry.FeatureRuntimeManagerConfig) appregixtry.FeatureRuntimeManager {
+		return stub
+	})
+	defer restoreRuntimeManager()
+
+	stdout := &bytes.Buffer{}
+	err := runWithIO(context.Background(), []string{"feature", "install", "trivy", "-storage-root", storageRoot, "-db", databasePath, "-version", "0.57.1"}, strings.NewReader(""), stdout, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "download failed") {
+		t.Fatalf("runWithIO(feature install) error = %v, want download failure", err)
+	}
+	for _, want := range []string{"[resolve] Resolve release", "[download] Download archive", "Failed managed runtime install for trivy"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout = %q, want %q", stdout.String(), want)
+		}
+	}
+	if strings.Contains(stdout.String(), "Installed managed runtime for trivy") {
+		t.Fatalf("stdout = %q, want no final success on failure", stdout.String())
+	}
+}
+
+func TestFeatureRuntimeLifecycleCommandsAutoDetectManagedRuntimePaths(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	storageRoot := filepath.Join(root, "managed")
+	databasePath := filepath.Join(storageRoot, "metadata.db")
+	if err := os.MkdirAll(storageRoot, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	store, err := metadata.New(databasePath)
+	if err != nil {
+		t.Fatalf("metadata.New() error = %v", err)
+	}
+	defer store.Close()
+	stub := &stubFeatureRuntimeManager{
+		statusState:   ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusMigrationRequired, MigrationHint: `legacy binary_path "/tmp/README.sh" requires managed reinstall and will never be executed`},
+		installState:  ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusReady, ActiveVersion: "0.57.1"},
+		upgradeState:  ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusReady, ActiveVersion: "0.58.0"},
+		rollbackState: ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusReady, ActiveVersion: "0.57.1"},
+	}
+	restoreRuntimeManager := swapFeatureRuntimeManagerFactory(t, func(appregixtry.FeatureRuntimeManagerConfig) appregixtry.FeatureRuntimeManager {
+		return stub
+	})
+	defer restoreRuntimeManager()
+	bootstrapStatePath := writeManagedFeatureBootstrapState(t, storageRoot, databasePath, "https://registry.example.com")
+	restoreBootstrapPath := swapFeatureBootstrapStatePath(t, bootstrapStatePath)
+	defer restoreBootstrapPath()
+
+	stdout := &bytes.Buffer{}
+	if err := runWithIO(context.Background(), []string{"feature", "status", "trivy"}, strings.NewReader(""), stdout, io.Discard); err != nil {
+		t.Fatalf("runWithIO(feature status) error = %v", err)
+	}
+	if !strings.Contains(stdout.String(), "Runtime Status: migration-required") {
+		t.Fatalf("stdout = %q, want managed runtime status using autodetected paths", stdout.String())
+	}
+
+	stdout.Reset()
+	if err := runWithIO(context.Background(), []string{"feature", "install", "trivy", "-version", "0.57.1"}, strings.NewReader(""), stdout, io.Discard); err != nil {
+		t.Fatalf("runWithIO(feature install) error = %v", err)
+	}
+	if stub.installCalls != 1 {
+		t.Fatalf("installCalls = %d, want 1", stub.installCalls)
+	}
+
+	stdout.Reset()
+	if err := runWithIO(context.Background(), []string{"feature", "upgrade", "trivy", "-version", "0.58.0"}, strings.NewReader(""), stdout, io.Discard); err != nil {
+		t.Fatalf("runWithIO(feature upgrade) error = %v", err)
+	}
+	if stub.upgradeCalls != 1 {
+		t.Fatalf("upgradeCalls = %d, want 1", stub.upgradeCalls)
+	}
+
+	stdout.Reset()
+	if err := runWithIO(context.Background(), []string{"feature", "rollback", "trivy"}, strings.NewReader(""), stdout, io.Discard); err != nil {
+		t.Fatalf("runWithIO(feature rollback) error = %v", err)
+	}
+	if stub.rollbackCalls != 1 {
+		t.Fatalf("rollbackCalls = %d, want 1", stub.rollbackCalls)
+	}
+}
+
+func TestRunFeatureRejectsUnknownBuiltInName(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	stdout := &bytes.Buffer{}
+	err := runWithIO(context.Background(), []string{"feature", "show", "future-plugin"}, strings.NewReader(""), stdout, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "unsupported feature") {
+		t.Fatalf("runWithIO(feature show unknown) error = %v, want unsupported feature rejection", err)
+	}
+	if _, statErr := os.Stat(filepath.Join("data", "metadata.db")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("data/metadata.db stat error = %v, want not exists", statErr)
+	}
+}
+
+func TestRunSetupPersistsCustomTrivyFlagsInLifecycleProvenance(t *testing.T) {
+	root := t.TempDir()
+	storageRoot := filepath.Join(root, "var", "lib", "regixtry-data")
+	provenancePath := filepath.Join(root, "etc", "regixtry", "regixtry-lifecycle-state.json")
+	if err := os.MkdirAll(filepath.Dir(provenancePath), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+
+	runner := &stubBootstrapRunner{
+		planProvenanceHook: func(cfg installlinux.BootstrapConfig) (installlinux.LifecycleProvenance, error) {
+			return installlinux.LifecycleProvenance{
+				Version:      2,
+				Mode:         cfg.Mode,
+				InstalledBin: "/usr/local/bin/regixtry",
+				ServiceName:  cfg.ServiceName,
+				StatePath:    provenancePath,
+				ManagedPaths: []string{cfg.StatePath, cfg.UnitPath, filepath.Join(cfg.StorageRoot, "metadata.db"), filepath.Join(cfg.StorageRoot, "content")},
+				Intent:       installlinux.LifecycleIntent{Addr: cfg.Addr, PublicURL: cfg.PublicURL, RuntimeTLSMode: cfg.RuntimeTLSMode, StorageRoot: cfg.StorageRoot, BootstrapStatePath: cfg.StatePath, UnitPath: cfg.UnitPath, ServiceName: cfg.ServiceName},
+			}, nil
+		},
+		saveProvenanceHook: func(provenance installlinux.LifecycleProvenance) error {
+			return installlinux.NewBootstrapper().SaveLifecycleProvenance(provenance)
+		},
+	}
+	restore := swapBootstrapRunner(t, runner)
+	defer restore()
+
+	stdout := &bytes.Buffer{}
+	args := []string{
+		"setup",
+		"-mode", "daemon-sqlite",
+		"-public-url", "https://regixtry.example.com",
+		"-runtime-tls-mode", "reverse-proxy",
+		"-addr", "0.0.0.0:5443",
+		"-storage-root", storageRoot,
+		"-state-path", filepath.Join(root, "etc", "regixtry", "bootstrap-state.json"),
+		"-unit-path", filepath.Join(root, "etc", "systemd", "system", "registry-custom.service"),
+		"-service", "registry-custom",
+		"-trivy-enabled",
+		"-trivy-schedule-enabled",
+		"-trivy-interval", "3h",
+		"-trivy-timeout", "17m",
+		"-trivy-cache-dir", filepath.Join(root, "var", "cache", "trivy-custom"),
+		"-trivy-binary-path", "/usr/local/bin/trivy-custom",
+		"-trivy-max-concurrency", "4",
+	}
+
+	if err := runWithIO(context.Background(), args, strings.NewReader(""), stdout, io.Discard); err != nil {
+		t.Fatalf("runWithIO(setup) error = %v", err)
+	}
+	if !runner.lastConfig.TrivyEnabled || !runner.lastConfig.TrivyScheduleEnabled {
+		t.Fatalf("lastConfig = %#v, want custom trivy enablement passed through setup", runner.lastConfig)
+	}
+	if runner.lastConfig.TrivyInterval != 3*time.Hour || runner.lastConfig.TrivyTimeout != 17*time.Minute {
+		t.Fatalf("lastConfig = %#v, want explicit trivy durations passed through setup", runner.lastConfig)
+	}
+	if runner.lastConfig.TrivyCacheDir != filepath.Join(root, "var", "cache", "trivy-custom") || runner.lastConfig.TrivyBinaryPath != "/usr/local/bin/trivy-custom" || runner.lastConfig.TrivyMaxConcurrency != 4 {
+		t.Fatalf("lastConfig = %#v, want explicit trivy cache/binary/concurrency passed through setup", runner.lastConfig)
+	}
+
+	body, err := os.ReadFile(provenancePath)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", provenancePath, err)
+	}
+	var persisted installlinux.LifecycleProvenance
+	if err := json.Unmarshal(body, &persisted); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+
+	if persisted.Intent.TrivyEnabled || persisted.Intent.TrivyScheduleEnabled || persisted.Intent.TrivyInterval != "" || persisted.Intent.TrivyTimeout != "" || persisted.Intent.TrivyCacheDir != "" || persisted.Intent.TrivyBinaryPath != "" || persisted.Intent.TrivyMaxConcurrency != 0 {
+		t.Fatalf("persisted intent = %#v, want base-only lifecycle provenance without trivy fields", persisted.Intent)
+	}
+	if !strings.Contains(stdout.String(), "Lifecycle provenance recorded at "+provenancePath) {
+		t.Fatalf("stdout = %q, want lifecycle provenance path", stdout.String())
 	}
 }
 
@@ -2070,6 +2519,28 @@ func swapBootstrapRunner(t *testing.T, runner bootstrapRunner) func() {
 	}
 }
 
+func swapFeatureRuntimeManagerFactory(t *testing.T, factory func(appregixtry.FeatureRuntimeManagerConfig) appregixtry.FeatureRuntimeManager) func() {
+	t.Helper()
+
+	previous := newFeatureRuntimeManager
+	newFeatureRuntimeManager = factory
+
+	return func() {
+		newFeatureRuntimeManager = previous
+	}
+}
+
+func swapFeatureBootstrapStatePath(t *testing.T, path string) func() {
+	t.Helper()
+
+	previous := featureBootstrapStatePath
+	featureBootstrapStatePath = path
+
+	return func() {
+		featureBootstrapStatePath = previous
+	}
+}
+
 func swapCurrentExecutablePath(t *testing.T, path string) func() {
 	t.Helper()
 
@@ -2109,6 +2580,31 @@ func swapInteractiveTTYDetector(t *testing.T, value bool) func() {
 	}
 }
 
+func writeManagedFeatureBootstrapState(t *testing.T, storageRoot string, databasePath string, publicURL string) string {
+	t.Helper()
+
+	root := t.TempDir()
+	bootstrapStatePath := filepath.Join(root, "etc", "regixtry", "bootstrap-state.json")
+	lifecyclePath := installlinux.LifecycleProvenancePath(bootstrapStatePath)
+	envPath := filepath.Join(filepath.Dir(lifecyclePath), "regixtry.env")
+	for _, path := range []string{lifecyclePath, envPath} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("MkdirAll(%q) error = %v", filepath.Dir(path), err)
+		}
+	}
+	if err := os.WriteFile(lifecyclePath, []byte("{}\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(lifecyclePath) error = %v", err)
+	}
+	if err := os.WriteFile(envPath, []byte(strings.Join([]string{
+		fmt.Sprintf(`REGISTRY_STORAGE_ROOT=%q`, storageRoot),
+		fmt.Sprintf(`REGISTRY_DATABASE_PATH=%q`, databasePath),
+		fmt.Sprintf(`REGISTRY_PUBLIC_URL=%q`, publicURL),
+	}, "\n")+"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(envPath) error = %v", err)
+	}
+	return bootstrapStatePath
+}
+
 type stubBootstrapRunner struct {
 	runErr              error
 	runHook             func(installlinux.BootstrapConfig) error
@@ -2116,8 +2612,10 @@ type stubBootstrapRunner struct {
 	uninstallErr        error
 	upgradeErr          error
 	upgradeHook         func(installlinux.UpgradeConfig)
+	planProvenanceHook  func(installlinux.BootstrapConfig) (installlinux.LifecycleProvenance, error)
 	planProvenanceErr   error
 	saveProvenanceErr   error
+	saveProvenanceHook  func(installlinux.LifecycleProvenance) error
 	lastConfig          installlinux.BootstrapConfig
 	upgradeConfig       installlinux.UpgradeConfig
 	plannedProvenance   installlinux.LifecycleProvenance
@@ -2130,6 +2628,55 @@ type stubBootstrapRunner struct {
 	uninstallCalls      int
 	upgradeCalls        int
 	saveProvenanceCalls int
+}
+
+type stubFeatureRuntimeManager struct {
+	installState    ports.TrivyRuntimeState
+	upgradeState    ports.TrivyRuntimeState
+	rollbackState   ports.TrivyRuntimeState
+	statusState     ports.TrivyRuntimeState
+	latestVersion   string
+	err             error
+	installProgress []ports.FeatureRuntimeProgress
+	upgradeProgress []ports.FeatureRuntimeProgress
+	installCalls    int
+	upgradeCalls    int
+	rollbackCalls   int
+	statusCalls     int
+}
+
+func (s *stubFeatureRuntimeManager) Install(_ context.Context, _ string, progress func(ports.FeatureRuntimeProgress)) (ports.TrivyRuntimeState, error) {
+	s.installCalls++
+	for _, stage := range s.installProgress {
+		if progress != nil {
+			progress(stage)
+		}
+	}
+	return s.installState, s.err
+}
+
+func (s *stubFeatureRuntimeManager) Upgrade(_ context.Context, _ string, progress func(ports.FeatureRuntimeProgress)) (ports.TrivyRuntimeState, error) {
+	s.upgradeCalls++
+	for _, stage := range s.upgradeProgress {
+		if progress != nil {
+			progress(stage)
+		}
+	}
+	return s.upgradeState, s.err
+}
+
+func (s *stubFeatureRuntimeManager) Rollback(context.Context) (ports.TrivyRuntimeState, error) {
+	s.rollbackCalls++
+	return s.rollbackState, s.err
+}
+
+func (s *stubFeatureRuntimeManager) Status(context.Context) (ports.TrivyRuntimeState, error) {
+	s.statusCalls++
+	return s.statusState, s.err
+}
+
+func (s *stubFeatureRuntimeManager) LatestVersion(context.Context) (string, error) {
+	return s.latestVersion, s.err
 }
 
 func (s *stubBootstrapRunner) Run(_ context.Context, cfg installlinux.BootstrapConfig) error {
@@ -2186,6 +2733,9 @@ func (s *stubBootstrapRunner) Upgrade(_ context.Context, cfg installlinux.Upgrad
 
 func (s *stubBootstrapRunner) PlanLifecycleProvenance(cfg installlinux.BootstrapConfig) (installlinux.LifecycleProvenance, error) {
 	s.lastConfig = cfg
+	if s.planProvenanceHook != nil {
+		return s.planProvenanceHook(cfg)
+	}
 	if s.planProvenanceErr != nil {
 		return installlinux.LifecycleProvenance{}, s.planProvenanceErr
 	}
@@ -2195,6 +2745,9 @@ func (s *stubBootstrapRunner) PlanLifecycleProvenance(cfg installlinux.Bootstrap
 func (s *stubBootstrapRunner) SaveLifecycleProvenance(provenance installlinux.LifecycleProvenance) error {
 	s.savedProvenance = provenance
 	s.saveProvenanceCalls++
+	if s.saveProvenanceHook != nil {
+		return s.saveProvenanceHook(provenance)
+	}
 	return s.saveProvenanceErr
 }
 

@@ -4,24 +4,37 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type BootstrapPlan struct {
-	Mode            string
-	Addr            string
-	PublicURL       string
-	RuntimeTLSMode  string
-	TLSCertFile     string
-	TLSKeyFile      string
-	AuthPostgresDSN string
-	StorageRoot     string
-	DatabasePath    string
-	ContentPath     string
-	StatePath       string
-	EnvPath         string
-	UnitPath        string
-	BinaryPath      string
-	ServiceName     string
+	Mode                       string
+	Addr                       string
+	PublicURL                  string
+	RuntimeTLSMode             string
+	TLSCertFile                string
+	TLSKeyFile                 string
+	AuthPostgresDSN            string
+	StorageRoot                string
+	DatabasePath               string
+	ContentPath                string
+	StatePath                  string
+	EnvPath                    string
+	UnitPath                   string
+	BinaryPath                 string
+	ServiceName                string
+	TrivyEnabled               bool
+	TrivyScheduleEnabled       bool
+	TrivyInterval              time.Duration
+	TrivyTimeout               time.Duration
+	TrivyServiceURL            string
+	TrivyRegistryReachableURL  string
+	TrivyAuthToken             string
+	TrivyTLSCACertPath         string
+	TrivyTLSInsecureSkipVerify bool
+	TrivyCacheDir              string
+	TrivyBinaryPath            string
+	TrivyMaxConcurrency        int
 }
 
 func RenderEnvFile(plan BootstrapPlan) string {

@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"regixtry/internal/infra/install/releases"
+	metadata "regixtry/internal/infra/metadata/sqlite"
+	"regixtry/internal/ports"
 )
 
 func TestBootstrapperUpgradeStagesBeforeStoppingAndPreservesMetadataDB(t *testing.T) {
@@ -263,6 +265,117 @@ func TestBootstrapperUpgradeRunsPreflightAndConfirmBeforeProgress(t *testing.T) 
 	}
 	if got, wantPrefix := strings.Join(steps, "|"), "resolve-client|preflight|confirm|progress:resolve|progress:download"; !strings.HasPrefix(got, wantPrefix) {
 		t.Fatalf("steps = %s, want preflight and confirm before progress", got)
+	}
+}
+
+func TestBootstrapperUpgradeImportsLegacyTrivySettingsWhenFeatureStateMissing(t *testing.T) {
+	_, provenancePath, plan := writeInstalledRuntimeFixture(t)
+	if err := os.WriteFile(plan.EnvPath, []byte(strings.Join([]string{
+		"REGISTRY_ADDR=\"127.0.0.1:5000\"",
+		"REGISTRY_PUBLIC_URL=\"http://127.0.0.1:5000\"",
+		"REGISTRY_STORAGE_ROOT=\"" + plan.StorageRoot + "\"",
+		"REGISTRY_DATABASE_PATH=\"" + plan.DatabasePath + "\"",
+		"REGISTRY_SERVICE_NAME=\"regixtry\"",
+		"REGISTRY_TRIVY_ENABLED=\"true\"",
+		"REGISTRY_TRIVY_SCHEDULE_ENABLED=\"true\"",
+		"REGISTRY_TRIVY_INTERVAL=\"6h0m0s\"",
+		"REGISTRY_TRIVY_TIMEOUT=\"10m0s\"",
+		"REGISTRY_TRIVY_CACHE_DIR=\"" + filepath.Join(plan.StorageRoot, "trivy-cache") + "\"",
+		"REGISTRY_TRIVY_BINARY_PATH=\"trivy-custom\"",
+		"REGISTRY_TRIVY_MAX_CONCURRENCY=\"2\"",
+	}, "\n")+"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(env) error = %v", err)
+	}
+
+	restoreRelease := swapReleaseClient(t, stubReleaseClient{
+		resolveFn: func(context.Context, string, string, string) (releases.ReleaseAsset, error) {
+			return releases.ReleaseAsset{Tag: "v1.2.3", Version: "1.2.3", ArchiveName: "regixtry_1.2.3_linux_amd64.tar.gz"}, nil
+		},
+		downloadFn: func(_ context.Context, _ releases.ReleaseAsset, dir string, _ func(releases.DownloadProgress)) (string, error) {
+			stagedPath := filepath.Join(dir, "regixtry")
+			return stagedPath, os.WriteFile(stagedPath, []byte("new-binary"), 0o755)
+		},
+	})
+	defer restoreRelease()
+
+	b := newUpgradeTestBootstrapper(nil)
+	if _, err := b.Upgrade(context.Background(), UpgradeConfig{ProvenancePath: provenancePath}); err != nil {
+		t.Fatalf("Upgrade() error = %v", err)
+	}
+
+	store, err := metadata.New(plan.DatabasePath)
+	if err != nil {
+		t.Fatalf("metadata.New() error = %v", err)
+	}
+	defer store.Close()
+	settings, err := store.GetScanSettings(context.Background(), ports.DefaultTenant)
+	if err != nil {
+		t.Fatalf("GetScanSettings() error = %v", err)
+	}
+	if !settings.Enabled || !settings.ScheduleEnabled || settings.Interval != 6*time.Hour || settings.Timeout != 10*time.Minute || settings.ServiceURL != "" || settings.RegistryReachableURL != "" || settings.MaxConcurrency != 2 {
+		t.Fatalf("settings = %#v, want imported legacy trivy state", settings)
+	}
+}
+
+func TestBootstrapperUpgradeKeepsExistingFeatureStateWhenLegacyInputsDiffer(t *testing.T) {
+	_, provenancePath, plan := writeInstalledRuntimeFixture(t)
+	store, err := metadata.New(plan.DatabasePath)
+	if err != nil {
+		t.Fatalf("metadata.New() error = %v", err)
+	}
+	defer store.Close()
+	existing := ports.ScanSettings{
+		Enabled:              true,
+		ScheduleEnabled:      false,
+		Interval:             24 * time.Hour,
+		Timeout:              15 * time.Minute,
+		ServiceURL:           "https://scanner.example.com",
+		RegistryReachableURL: "https://registry.internal",
+		MaxConcurrency:       1,
+		UpdatedAt:            time.Now().UTC(),
+	}
+	if err := store.UpsertScanSettings(context.Background(), ports.DefaultTenant, existing); err != nil {
+		t.Fatalf("UpsertScanSettings() error = %v", err)
+	}
+	if err := os.WriteFile(plan.EnvPath, []byte(strings.Join([]string{
+		"REGISTRY_ADDR=\"127.0.0.1:5000\"",
+		"REGISTRY_PUBLIC_URL=\"http://127.0.0.1:5000\"",
+		"REGISTRY_STORAGE_ROOT=\"" + plan.StorageRoot + "\"",
+		"REGISTRY_DATABASE_PATH=\"" + plan.DatabasePath + "\"",
+		"REGISTRY_SERVICE_NAME=\"regixtry\"",
+		"REGISTRY_TRIVY_ENABLED=\"false\"",
+		"REGISTRY_TRIVY_SCHEDULE_ENABLED=\"true\"",
+		"REGISTRY_TRIVY_INTERVAL=\"3h0m0s\"",
+		"REGISTRY_TRIVY_TIMEOUT=\"20m0s\"",
+		"REGISTRY_TRIVY_CACHE_DIR=\"" + filepath.Join(plan.StorageRoot, "legacy-cache") + "\"",
+		"REGISTRY_TRIVY_BINARY_PATH=\"trivy-legacy\"",
+		"REGISTRY_TRIVY_MAX_CONCURRENCY=\"4\"",
+	}, "\n")+"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(env) error = %v", err)
+	}
+
+	restoreRelease := swapReleaseClient(t, stubReleaseClient{
+		resolveFn: func(context.Context, string, string, string) (releases.ReleaseAsset, error) {
+			return releases.ReleaseAsset{Tag: "v1.2.3", Version: "1.2.3", ArchiveName: "regixtry_1.2.3_linux_amd64.tar.gz"}, nil
+		},
+		downloadFn: func(_ context.Context, _ releases.ReleaseAsset, dir string, _ func(releases.DownloadProgress)) (string, error) {
+			stagedPath := filepath.Join(dir, "regixtry")
+			return stagedPath, os.WriteFile(stagedPath, []byte("new-binary"), 0o755)
+		},
+	})
+	defer restoreRelease()
+
+	b := newUpgradeTestBootstrapper(nil)
+	if _, err := b.Upgrade(context.Background(), UpgradeConfig{ProvenancePath: provenancePath}); err != nil {
+		t.Fatalf("Upgrade() error = %v", err)
+	}
+
+	settings, err := store.GetScanSettings(context.Background(), ports.DefaultTenant)
+	if err != nil {
+		t.Fatalf("GetScanSettings() error = %v", err)
+	}
+	if settings.Enabled != existing.Enabled || settings.ScheduleEnabled != existing.ScheduleEnabled || settings.Interval != existing.Interval || settings.Timeout != existing.Timeout || settings.ServiceURL != existing.ServiceURL || settings.RegistryReachableURL != existing.RegistryReachableURL || settings.MaxConcurrency != existing.MaxConcurrency {
+		t.Fatalf("settings = %#v, want preserved existing feature state %#v", settings, existing)
 	}
 }
 

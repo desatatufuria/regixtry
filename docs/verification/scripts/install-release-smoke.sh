@@ -446,6 +446,8 @@ run_lifecycle_cases() {
   local install_log="${ROOT_DIR}/${scenario}.install.log"
   local setup_log="${ROOT_DIR}/${scenario}.setup.log"
   local unsupported_log="${ROOT_DIR}/${scenario}.unsupported.log"
+  local feature_configure_log="${ROOT_DIR}/${scenario}.feature-configure.log"
+  local feature_status_log="${ROOT_DIR}/${scenario}.feature-status.log"
   local upgrade_latest_log="${ROOT_DIR}/${scenario}.upgrade-latest.log"
   local upgrade_ref_log="${ROOT_DIR}/${scenario}.upgrade-ref.log"
   local uninstall_log="${ROOT_DIR}/${scenario}.uninstall.log"
@@ -512,6 +514,23 @@ EOF
 }
 EOF
 
+  "${install_dir}/regixtry" feature configure trivy \
+    --storage-root "${storage_root}" \
+    --db "${managed_missing}" \
+    --enabled \
+    --schedule-enabled \
+    --interval 6h \
+    --timeout 10m \
+    --max-concurrency 2 >"${feature_configure_log}" 2>&1
+  assert_contains "${feature_configure_log}" "Configured feature trivy"
+
+  "${install_dir}/regixtry" feature status trivy \
+    --storage-root "${storage_root}" \
+    --db "${managed_missing}" >"${feature_status_log}" 2>&1
+  assert_contains "${feature_status_log}" "Name: trivy"
+  assert_contains "${feature_status_log}" "Enabled: true"
+  assert_contains "${feature_status_log}" "Schedule Enabled: true"
+
   set +e
   "${install_dir}/regixtry" upgrade --state-path "${provenance_path}" --yes >"${upgrade_latest_log}" 2>&1
   local upgrade_latest_exit=$?
@@ -543,7 +562,7 @@ EOF
   assert_contains "${uninstall_log}" "Uninstall report:"
   assert_contains_one_of "${uninstall_log}" "- service regixtry.service: failed" "- service regixtry.service: removed"
   assert_contains "${uninstall_log}" "- ${managed_existing}: removed (path removed)"
-  assert_contains "${uninstall_log}" "- ${managed_missing}: missing (path already absent)"
+  assert_contains "${uninstall_log}" "- ${managed_missing}: removed (path removed)"
   assert_contains "${uninstall_log}" "- ${managed_bin}: removed (path removed)"
   assert_not_exists "${managed_existing}"
   assert_not_exists "${bootstrap_state_path}"
@@ -589,6 +608,8 @@ run_real_upgrade_success_case() {
   local unit_path="/etc/systemd/system/${service_name}.service"
   local provenance_path="${state_dir}/regixtry-lifecycle-state.json"
   local setup_log="${ROOT_DIR}/${scenario}.setup.log"
+  local feature_configure_log="${ROOT_DIR}/${scenario}.feature-configure.log"
+  local feature_status_log="${ROOT_DIR}/${scenario}.feature-status.log"
   local upgrade_log="${ROOT_DIR}/${scenario}.upgrade.log"
   local uninstall_log="${ROOT_DIR}/${scenario}.uninstall.log"
   local v2_status=""
@@ -622,6 +643,22 @@ PY
 
   v2_status="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${runtime_port}/v2/")"
   [[ "${v2_status}" == "200" || "${v2_status}" == "401" ]] || fail "expected setup-managed service readiness, got ${v2_status}"
+
+  "${install_dir}/regixtry" feature configure trivy \
+    --storage-root "${storage_root}" \
+    --db "${storage_root}/metadata.db" \
+    --enabled \
+    --schedule-enabled \
+    --interval 6h \
+    --timeout 10m \
+    --max-concurrency 2 >"${feature_configure_log}" 2>&1
+  assert_contains "${feature_configure_log}" "Configured feature trivy"
+
+  "${install_dir}/regixtry" feature status trivy \
+    --storage-root "${storage_root}" \
+    --db "${storage_root}/metadata.db" >"${feature_status_log}" 2>&1
+  assert_contains "${feature_status_log}" "Name: trivy"
+  assert_contains "${feature_status_log}" "Enabled: true"
 
   "${install_dir}/regixtry" upgrade --state-path "${provenance_path}" --ref "${release_tag}" --yes >"${upgrade_log}" 2>&1
 

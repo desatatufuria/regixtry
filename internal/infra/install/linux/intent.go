@@ -7,28 +7,36 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const bootstrapReceiptFileName = "bootstrap-state.json"
 
 type InstalledIntent struct {
-	Mode               string
-	Addr               string
-	PublicURL          string
-	RuntimeTLSMode     string
-	TLSCertFile        string
-	TLSKeyFile         string
-	AuthPostgresDSN    string
-	StorageRoot        string
-	DatabasePath       string
-	ContentPath        string
-	BootstrapStatePath string
-	EnvPath            string
-	UnitPath           string
-	BinaryPath         string
-	ServiceName        string
-	InstalledRef       string
-	InstalledVersion   string
+	Mode                 string
+	Addr                 string
+	PublicURL            string
+	RuntimeTLSMode       string
+	TLSCertFile          string
+	TLSKeyFile           string
+	AuthPostgresDSN      string
+	StorageRoot          string
+	DatabasePath         string
+	ContentPath          string
+	BootstrapStatePath   string
+	EnvPath              string
+	UnitPath             string
+	BinaryPath           string
+	ServiceName          string
+	InstalledRef         string
+	InstalledVersion     string
+	TrivyEnabled         bool
+	TrivyScheduleEnabled bool
+	TrivyInterval        time.Duration
+	TrivyTimeout         time.Duration
+	TrivyCacheDir        string
+	TrivyBinaryPath      string
+	TrivyMaxConcurrency  int
 }
 
 type MissingIntentError struct {
@@ -91,7 +99,7 @@ func loadInstalledIntent(provenance LifecycleProvenance, envValues map[string]st
 		InstalledRef:       strings.TrimSpace(provenance.InstalledRef),
 		InstalledVersion:   strings.TrimSpace(provenance.InstalledVersion),
 		EnvPath:            firstNonBlank(provenance.Intent.EnvPath, managedPathMatch(provenance.ManagedPaths, func(path string) bool { return filepath.Base(path) == "regixtry.env" }), filepath.Join(filepath.Dir(provenance.StatePath), "regixtry.env")),
-		UnitPath:           firstNonBlank(provenance.Intent.UnitPath, managedPathMatch(provenance.ManagedPaths, func(path string) bool { return strings.HasSuffix(path, ".service") })),
+		UnitPath:           firstNonBlank(provenance.Intent.UnitPath, managedPathMatch(provenance.ManagedPaths, func(path string) bool { return strings.HasSuffix(path, ".service") }), filepath.Join("/etc/systemd/system", firstNonBlank(provenance.ServiceName, provenance.Intent.ServiceName, envValues["REGISTRY_SERVICE_NAME"])+".service")),
 		BootstrapStatePath: firstNonBlank(provenance.Intent.BootstrapStatePath, managedPathMatch(provenance.ManagedPaths, func(path string) bool { return filepath.Base(path) == bootstrapReceiptFileName }), filepath.Join(filepath.Dir(provenance.StatePath), bootstrapReceiptFileName)),
 		ContentPath:        firstNonBlank(provenance.Intent.ContentPath, managedPathMatch(provenance.ManagedPaths, func(path string) bool { return filepath.Base(path) == "content" })),
 	}
@@ -107,13 +115,22 @@ func loadInstalledIntent(provenance LifecycleProvenance, envValues map[string]st
 	if intent.ContentPath == "" && intent.StorageRoot != "" {
 		intent.ContentPath = filepath.Join(intent.StorageRoot, "content")
 	}
-
 	intent.Addr = firstNonBlank(provenance.Intent.Addr, envValues["REGISTRY_ADDR"])
 	intent.PublicURL = firstNonBlank(provenance.Intent.PublicURL, envValues["REGISTRY_PUBLIC_URL"])
 	intent.TLSCertFile = firstNonBlank(provenance.Intent.TLSCertFile, envValues["REGISTRY_TLS_CERT_FILE"])
 	intent.TLSKeyFile = firstNonBlank(provenance.Intent.TLSKeyFile, envValues["REGISTRY_TLS_KEY_FILE"])
 	intent.AuthPostgresDSN = firstNonBlank(provenance.Intent.AuthPostgresDSN, envValues["REGISTRY_AUTH_POSTGRES_DSN"])
 	intent.RuntimeTLSMode = firstNonBlank(provenance.Intent.RuntimeTLSMode)
+	intent.TrivyCacheDir = firstNonBlank(provenance.Intent.TrivyCacheDir, envValues["REGISTRY_TRIVY_CACHE_DIR"])
+	intent.TrivyBinaryPath = firstNonBlank(provenance.Intent.TrivyBinaryPath, envValues["REGISTRY_TRIVY_BINARY_PATH"], "trivy")
+	intent.TrivyEnabled = firstNonBlankBool(provenance.Intent.TrivyEnabled, envValues["REGISTRY_TRIVY_ENABLED"])
+	intent.TrivyScheduleEnabled = firstNonBlankBool(provenance.Intent.TrivyScheduleEnabled, envValues["REGISTRY_TRIVY_SCHEDULE_ENABLED"])
+	intent.TrivyTimeout = firstNonBlankDuration(provenance.Intent.TrivyTimeout, envValues["REGISTRY_TRIVY_TIMEOUT"], 15*time.Minute)
+	intent.TrivyInterval = firstNonBlankDuration(provenance.Intent.TrivyInterval, envValues["REGISTRY_TRIVY_INTERVAL"], 24*time.Hour)
+	intent.TrivyMaxConcurrency = firstNonBlankInt(provenance.Intent.TrivyMaxConcurrency, envValues["REGISTRY_TRIVY_MAX_CONCURRENCY"], 1)
+	if intent.TrivyCacheDir == "" && intent.StorageRoot != "" {
+		intent.TrivyCacheDir = filepath.Join(intent.StorageRoot, "trivy-cache")
+	}
 	if intent.RuntimeTLSMode == "" && intent.PublicURL != "" {
 		resolvedMode, normalizedPublicURL, normalizedTLSCertFile, normalizedTLSKeyFile, err := ResolveRuntimeTLSMode("", intent.PublicURL, intent.TLSCertFile, intent.TLSKeyFile)
 		if err != nil {
@@ -135,21 +152,28 @@ func loadInstalledIntent(provenance LifecycleProvenance, envValues map[string]st
 
 func buildPlanFromInstalledIntent(intent InstalledIntent) BootstrapPlan {
 	return BootstrapPlan{
-		Mode:            intent.Mode,
-		Addr:            intent.Addr,
-		PublicURL:       intent.PublicURL,
-		RuntimeTLSMode:  intent.RuntimeTLSMode,
-		TLSCertFile:     intent.TLSCertFile,
-		TLSKeyFile:      intent.TLSKeyFile,
-		AuthPostgresDSN: intent.AuthPostgresDSN,
-		StorageRoot:     intent.StorageRoot,
-		DatabasePath:    intent.DatabasePath,
-		ContentPath:     intent.ContentPath,
-		StatePath:       intent.BootstrapStatePath,
-		EnvPath:         intent.EnvPath,
-		UnitPath:        intent.UnitPath,
-		BinaryPath:      intent.BinaryPath,
-		ServiceName:     intent.ServiceName,
+		Mode:                 intent.Mode,
+		Addr:                 intent.Addr,
+		PublicURL:            intent.PublicURL,
+		RuntimeTLSMode:       intent.RuntimeTLSMode,
+		TLSCertFile:          intent.TLSCertFile,
+		TLSKeyFile:           intent.TLSKeyFile,
+		AuthPostgresDSN:      intent.AuthPostgresDSN,
+		StorageRoot:          intent.StorageRoot,
+		DatabasePath:         intent.DatabasePath,
+		ContentPath:          intent.ContentPath,
+		StatePath:            intent.BootstrapStatePath,
+		EnvPath:              intent.EnvPath,
+		UnitPath:             intent.UnitPath,
+		BinaryPath:           intent.BinaryPath,
+		ServiceName:          intent.ServiceName,
+		TrivyEnabled:         intent.TrivyEnabled,
+		TrivyScheduleEnabled: intent.TrivyScheduleEnabled,
+		TrivyInterval:        intent.TrivyInterval,
+		TrivyTimeout:         intent.TrivyTimeout,
+		TrivyCacheDir:        intent.TrivyCacheDir,
+		TrivyBinaryPath:      intent.TrivyBinaryPath,
+		TrivyMaxConcurrency:  intent.TrivyMaxConcurrency,
 	}
 }
 
@@ -197,4 +221,44 @@ func firstNonBlank(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func firstNonBlankBool(primary bool, raw string) bool {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return primary
+	}
+	parsed, err := strconv.ParseBool(trimmed)
+	if err != nil {
+		return primary
+	}
+	return parsed
+}
+
+func firstNonBlankDuration(primary string, raw string, fallback time.Duration) time.Duration {
+	for _, candidate := range []string{strings.TrimSpace(primary), strings.TrimSpace(raw)} {
+		if candidate == "" {
+			continue
+		}
+		parsed, err := time.ParseDuration(candidate)
+		if err == nil {
+			return parsed
+		}
+	}
+	return fallback
+}
+
+func firstNonBlankInt(primary int, raw string, fallback int) int {
+	if primary > 0 {
+		return primary
+	}
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(trimmed)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
 }

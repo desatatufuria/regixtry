@@ -83,17 +83,22 @@ func TestTemplateRendering(t *testing.T) {
 	t.Parallel()
 
 	plan := BootstrapPlan{
-		Addr:            "127.0.0.1:5000",
-		PublicURL:       "https://regixtry.example.com",
-		RuntimeTLSMode:  RuntimeTLSModeDirectTLS,
-		TLSCertFile:     "/etc/regixtry/tls/registry.crt",
-		TLSKeyFile:      "/etc/regixtry/tls/registry.key",
-		AuthPostgresDSN: "postgres://registry:registry@db.example.com:5432/regixtry_auth?sslmode=disable",
-		StorageRoot:     "/var/lib/regixtry",
-		DatabasePath:    "/var/lib/regixtry/metadata.db",
-		EnvPath:         "/etc/regixtry/regixtry.env",
-		BinaryPath:      "/usr/local/bin/regixtry",
-		ServiceName:     "regixtry",
+		Addr:                      "127.0.0.1:5000",
+		PublicURL:                 "https://regixtry.example.com",
+		RuntimeTLSMode:            RuntimeTLSModeDirectTLS,
+		TLSCertFile:               "/etc/regixtry/tls/registry.crt",
+		TLSKeyFile:                "/etc/regixtry/tls/registry.key",
+		AuthPostgresDSN:           "postgres://registry:registry@db.example.com:5432/regixtry_auth?sslmode=disable",
+		StorageRoot:               "/var/lib/regixtry",
+		DatabasePath:              "/var/lib/regixtry/metadata.db",
+		TrivyServiceURL:           "http://127.0.0.1:4954",
+		TrivyRegistryReachableURL: "http://regixtry:5000",
+		TrivyTimeout:              15 * time.Minute,
+		TrivyInterval:             24 * time.Hour,
+		TrivyMaxConcurrency:       1,
+		EnvPath:                   "/etc/regixtry/regixtry.env",
+		BinaryPath:                "/usr/local/bin/regixtry",
+		ServiceName:               "regixtry",
 	}
 
 	env := RenderEnvFile(plan)
@@ -105,6 +110,11 @@ func TestTemplateRendering(t *testing.T) {
 	}
 	if !strings.Contains(env, `REGISTRY_AUTH_POSTGRES_DSN="postgres://registry:registry@db.example.com:5432/regixtry_auth?sslmode=disable"`) {
 		t.Fatalf("env = %q, want quoted auth DSN", env)
+	}
+	for _, unwanted := range []string{"REGISTRY_TRIVY_"} {
+		if strings.Contains(env, unwanted) {
+			t.Fatalf("env = %q, want base-only env without %s", env, unwanted)
+		}
 	}
 
 	unit := RenderSystemdUnit(plan)
@@ -119,6 +129,27 @@ func TestTemplateRendering(t *testing.T) {
 	}
 	if !strings.Contains(unit, "-tls-cert-file=${REGISTRY_TLS_CERT_FILE} -tls-key-file=${REGISTRY_TLS_KEY_FILE}") {
 		t.Fatalf("unit = %q, want TLS serve flags", unit)
+	}
+}
+
+func TestBootstrapReceiptOmitsFeatureOwnedTrivyArtifacts(t *testing.T) {
+	t.Parallel()
+
+	receipt := bootstrapReceiptFromPlan(BootstrapPlan{
+		Mode:          supportedMode,
+		ServiceName:   "regixtry",
+		EnvPath:       "/etc/regixtry/regixtry.env",
+		UnitPath:      "/etc/systemd/system/regixtry.service",
+		DatabasePath:  "/var/lib/regixtry/metadata.db",
+		ContentPath:   "/var/lib/regixtry/content",
+		TrivyCacheDir: "/var/lib/regixtry/trivy-cache",
+		StatePath:     "/etc/regixtry/bootstrap-state.json",
+	})
+
+	for _, path := range receipt.Paths {
+		if path == "/var/lib/regixtry/trivy-cache" {
+			t.Fatalf("receipt paths = %v, want trivy cache excluded from base lifecycle provenance", receipt.Paths)
+		}
 	}
 }
 
@@ -195,6 +226,38 @@ func TestBootstrapRunRejectsUnsupportedMode(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), `unsupported mode "postgres"`) {
 		t.Fatalf("Run() error = %v, want unsupported mode error", err)
+	}
+}
+
+func TestRollbackWithReceiptRemovesSQLiteWALSidecars(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	databasePath := filepath.Join(root, "var", "lib", "regixtry", "metadata.db")
+	for _, path := range []string{databasePath, databasePath + "-wal", databasePath + "-shm"} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("MkdirAll(%s) error = %v", path, err)
+		}
+		if err := os.WriteFile(path, []byte("fixture"), 0o644); err != nil {
+			t.Fatalf("WriteFile(%s) error = %v", path, err)
+		}
+	}
+
+	b := &Bootstrapper{
+		removeAll: os.RemoveAll,
+		runCommand: func(context.Context, string, ...string) error {
+			return nil
+		},
+	}
+
+	if err := b.rollbackWithReceipt(context.Background(), BootstrapReceipt{ServiceName: "regixtry", Paths: []string{databasePath}}); err != nil {
+		t.Fatalf("rollbackWithReceipt() error = %v", err)
+	}
+
+	for _, path := range []string{databasePath, databasePath + "-wal", databasePath + "-shm"} {
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%s still exists after rollback, stat error = %v", path, err)
+		}
 	}
 }
 
@@ -304,6 +367,12 @@ func TestBootstrapPlanEmitsLifecycleProvenance(t *testing.T) {
 	}
 	if strings.Join(provenance.ManagedPaths, "|") != strings.Join(receipt.Paths, "|") {
 		t.Fatalf("ManagedPaths = %v, want %v", provenance.ManagedPaths, receipt.Paths)
+	}
+	if provenance.Intent.TrivyCacheDir != "" {
+		t.Fatalf("TrivyCacheDir = %q, want omitted feature-owned trivy state", provenance.Intent.TrivyCacheDir)
+	}
+	if provenance.Intent.TrivyEnabled {
+		t.Fatal("TrivyEnabled = true, want omitted feature-owned state")
 	}
 }
 

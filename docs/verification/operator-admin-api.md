@@ -6,7 +6,7 @@ This verification guide covers the shipped `/admin/v1` operator administration s
 
 1. Run repository-wide formatting and static checks.
 2. Run the full Go suite and coverage pass.
-3. Confirm the shipped admin API scope still matches the docs: API-first administration, no local shortcuts, and deferred pagination/delete-user/TUI admin flows.
+3. Confirm the shipped admin API scope still matches the docs: API-first administration, built-in feature projections for `trivy`, optional Trivy rescan settings/history/manual triggers, no local shortcuts, and deferred pagination/delete-user/TUI admin flows.
 
 ## Verification checklist
 
@@ -15,8 +15,9 @@ This verification guide covers the shipped `/admin/v1` operator administration s
 - [ ] `go test -cover ./...` passes and reports per-package coverage.
 - [ ] `go vet ./...` passes.
 - [ ] `README.md`, `docs/architecture.md`, and `docs/roadmap.md` all describe `/admin/v1` as the shipped admin surface.
+- [ ] `README.md`, `docs/api.md`, `docs/cli.md`, and `docs/installation.md` describe the built-in `trivy` feature model, the legacy setup import bridge, and the `/admin/v1/features/...` projections truthfully.
 - [ ] The docs still state that CLI-next and TUI-later must use the authenticated API rather than local mutation shortcuts.
-- [ ] Deferred scope stays explicit: pagination, delete-user, broad profile edits, and break-glass bootstrap flows over `/admin/v1` are not claimed as shipped.
+- [ ] Deferred scope stays explicit: pagination, delete-user, broad profile edits, break-glass bootstrap flows over `/admin/v1`, and rich TUI scan management are not claimed as shipped.
 
 ## Commands
 
@@ -38,10 +39,10 @@ GOMODCACHE="/tmp/opencode/gomodcache" GOPATH="/tmp/opencode/gopath" GOSUMDB=off 
 | Full test suite | All Go packages pass, including `internal/app/auth`, `internal/infra/auth/postgres`, and `internal/protocol/http`. |
 | Coverage run | Coverage is reported successfully for every package; no threshold is enforced for this repository. |
 | Vet | No static analysis issues are reported. |
-| Docs alignment | Reader-facing docs describe the same shipped `/admin/v1` scope as the OpenSpec proposal, specs, design, and tasks. |
+| Docs alignment | Reader-facing docs describe the same shipped `/admin/v1` scope as the OpenSpec proposal, specs, design, and tasks, including the optional Trivy rescan slice. |
 
 ## Scope reminder
 
-- Shipped: authenticated `/admin/v1` user, grant, and admin-token administration.
-- Deferred: pagination, delete-user, broad profile edits, and TUI-native admin workflows.
+- Shipped: authenticated `/admin/v1` user, grant, admin-token, built-in feature, and optional Trivy rescan administration.
+- Deferred: pagination, delete-user, broad profile edits, and TUI-native feature/admin workflows.
 - Forbidden shortcut: any new local auth-state mutation path outside `bootstrap-admin` for initial break-glass setup.

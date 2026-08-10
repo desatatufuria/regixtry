@@ -30,8 +30,57 @@ Todas estas rutas requieren Bearer de un usuario admin. Los JSON se decodifican 
 | GET | `/admin/v1/users/{id}/admin-tokens` | ninguno | `200`, array sin secretos |
 | POST | `/admin/v1/users/{id}/admin-tokens` | `name`, opcional `ttl_seconds` | `201`, token y secreto |
 | DELETE | `/admin/v1/users/{id}/admin-tokens/{accessor}` | ninguno | `204` |
+| GET | `/admin/v1/features` | ninguno | `200`, built-in feature inventory |
+| GET | `/admin/v1/features/{name}` | ninguno | `200`, feature-owned configuration |
+| GET | `/admin/v1/features/{name}/status` | ninguno | `200`, feature configuration plus runtime health |
+| PUT | `/admin/v1/features/{name}/config` | `enabled`, `schedule_enabled`, `interval`, `timeout`, `service_url`, `registry_reachable_url`, optional `auth_token`, `tls_ca_cert_path`, `tls_insecure_skip_verify`, `max_concurrency` | `200`, persisted feature state |
+| POST | `/admin/v1/features/{name}:enable` | ninguno | `200`, enabled feature state |
+| POST | `/admin/v1/features/{name}:disable` | ninguno | `200`, disabled feature state |
+| GET | `/admin/v1/scan-settings` | ninguno | `200`, settings actuales |
+| PUT | `/admin/v1/scan-settings` | `enabled`, `schedule_enabled`, `interval`, `timeout`, `service_url`, `registry_reachable_url`, optional `auth_token`, `tls_ca_cert_path`, `tls_insecure_skip_verify`, `max_concurrency` | `200`, settings persistidos |
+| POST | `/admin/v1/scan-runs` | `repository`, `reference` | `202`, run encolado con digest canónico |
+| GET | `/admin/v1/scan-runs?repository=&limit=` | ninguno | `200`, historial de runs |
 
 Errores administrativos: `401`, `403`, `404`, `409`, `422` según auth, existencia, conflicto o validación; el cuerpo es `{ "error": "..." }`.
+
+### Scan settings example
+
+```bash
+curl -X PUT \
+  -H 'Authorization: Bearer <admin-token>' \
+  -H 'Content-Type: application/json' \
+  https://registry.example.com/admin/v1/scan-settings \
+  -d '{
+    "enabled": true,
+    "schedule_enabled": true,
+    "interval": "6h",
+    "timeout": "20m",
+    "service_url": "https://scanner.example.com",
+    "registry_reachable_url": "https://registry.internal:5443",
+    "tls_ca_cert_path": "/etc/regixtry/trivy-ca.pem",
+    "max_concurrency": 2
+  }'
+```
+
+`auth_token` is write-only. Read/status responses never echo it back.
+
+### Feature status example
+
+```bash
+curl \
+  -H 'Authorization: Bearer <admin-token>' \
+  https://registry.example.com/admin/v1/features/trivy/status
+```
+
+### Manual rescan example
+
+```bash
+curl -X POST \
+  -H 'Authorization: Bearer <admin-token>' \
+  -H 'Content-Type: application/json' \
+  https://registry.example.com/admin/v1/scan-runs \
+  -d '{"repository":"library/alpine","reference":"latest"}'
+```
 
 ## Registry API V2
 

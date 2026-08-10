@@ -3,10 +3,12 @@ package sqlite
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	domain "regixtry/internal/domain/regixtry"
+	"regixtry/internal/ports"
 )
 
 func TestStorePublishResolveCatalogAndTags(t *testing.T) {
@@ -116,6 +118,221 @@ func TestStorePersistsUploadMetadataAcrossReopen(t *testing.T) {
 
 	if storedUpload.Repository.String() != upload.Repository.String() || storedUpload.Size != upload.Size || storedUpload.Location != upload.Location {
 		t.Fatalf("stored upload = %#v, want %#v", storedUpload, upload)
+	}
+}
+
+func TestStoreEnablesSQLiteWALAndBusyTimeout(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	var journalMode string
+	if err := store.db.QueryRowContext(context.Background(), `PRAGMA journal_mode;`).Scan(&journalMode); err != nil {
+		t.Fatalf("PRAGMA journal_mode error = %v", err)
+	}
+	if !strings.EqualFold(journalMode, "wal") {
+		t.Fatalf("journal_mode = %q, want wal", journalMode)
+	}
+
+	var busyTimeout int
+	if err := store.db.QueryRowContext(context.Background(), `PRAGMA busy_timeout;`).Scan(&busyTimeout); err != nil {
+		t.Fatalf("PRAGMA busy_timeout error = %v", err)
+	}
+	if busyTimeout != sqliteBusyTimeoutMillis {
+		t.Fatalf("busy_timeout = %d, want %d", busyTimeout, sqliteBusyTimeoutMillis)
+	}
+}
+
+func TestStorePersistsDefaultDisabledScanSettings(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	settings := ports.ScanSettings{
+		Enabled:               false,
+		ScheduleEnabled:       false,
+		Interval:              24 * time.Hour,
+		Timeout:               15 * time.Minute,
+		ServiceURL:            "https://scanner.example.com",
+		RegistryReachableURL:  "https://registry.internal:5443",
+		AuthToken:             "secret-token",
+		TLSCACertPath:         "/etc/regixtry/trivy-ca.pem",
+		TLSInsecureSkipVerify: true,
+		MaxConcurrency:        1,
+	}
+	if err := store.UpsertScanSettings(context.Background(), "tenant-a", settings); err != nil {
+		t.Fatalf("UpsertScanSettings() error = %v", err)
+	}
+
+	stored, err := store.GetScanSettings(context.Background(), "tenant-a")
+	if err != nil {
+		t.Fatalf("GetScanSettings() error = %v", err)
+	}
+	if stored.Enabled || stored.ScheduleEnabled {
+		t.Fatalf("stored = %#v, want disabled defaults", stored)
+	}
+	if stored.ServiceURL != settings.ServiceURL || stored.RegistryReachableURL != settings.RegistryReachableURL || stored.AuthToken != settings.AuthToken || stored.TLSCACertPath != settings.TLSCACertPath || stored.TLSInsecureSkipVerify != settings.TLSInsecureSkipVerify || stored.MaxConcurrency != settings.MaxConcurrency {
+		t.Fatalf("stored = %#v, want %#v", stored, settings)
+	}
+}
+
+func TestStoreBridgesLegacyBinaryColumnsWhenServiceFieldsAreMissing(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	_, err := store.db.ExecContext(context.Background(), `
+		INSERT INTO scan_settings (tenant, enabled, schedule_enabled, interval, timeout, cache_dir, binary_path, max_concurrency, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, "tenant-a", true, true, (3 * time.Hour).String(), (17 * time.Minute).String(), "/var/cache/trivy", "/tmp/README.sh", 4, time.Now().UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		t.Fatalf("insert legacy row error = %v", err)
+	}
+
+	stored, err := store.GetScanSettings(context.Background(), "tenant-a")
+	if err != nil {
+		t.Fatalf("GetScanSettings() error = %v", err)
+	}
+	if stored.ServiceURL != "" || stored.RegistryReachableURL != "" {
+		t.Fatalf("stored = %#v, want service fields empty for legacy bridge row", stored)
+	}
+	if stored.Interval != 3*time.Hour || stored.Timeout != 17*time.Minute || stored.MaxConcurrency != 4 || !stored.Enabled || !stored.ScheduleEnabled {
+		t.Fatalf("stored = %#v, want shared knobs preserved from legacy row", stored)
+	}
+}
+
+func TestStorePersistsScanRunsAndSchedulerStateAcrossReopen(t *testing.T) {
+	t.Parallel()
+
+	databasePath := filepath.Join(t.TempDir(), "registry.db")
+	store, err := New(databasePath)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	finishedAt := time.Now().UTC()
+	dbUpdatedAt := finishedAt.Add(-time.Hour)
+	runs := []ports.ScanRun{
+		{ID: "run-completed", Repository: "library/alpine", RequestedRef: "latest", Digest: domain.DigestFromBytes([]byte("manifest-1")).String(), Status: ports.ScanRunStatusCompleted, Trigger: ports.ScanTriggerManual, StartedAt: &finishedAt, FinishedAt: &finishedAt, Critical: 1, High: 2, Medium: 3, Low: 4, TrivyVersion: "0.54.0", DBUpdatedAt: &dbUpdatedAt},
+		{ID: "run-failed", Repository: "library/alpine", RequestedRef: "1.0", Digest: domain.DigestFromBytes([]byte("manifest-2")).String(), Status: ports.ScanRunStatusFailed, Trigger: ports.ScanTriggerManual, FinishedAt: &finishedAt, Error: "boom"},
+	}
+	for _, run := range runs {
+		if err := store.UpsertScanRun(context.Background(), "tenant-a", run); err != nil {
+			t.Fatalf("UpsertScanRun(%s) error = %v", run.ID, err)
+		}
+	}
+
+	state := ports.ScanSchedulerState{OwnerID: "node-a", LeaseExpiresAt: finishedAt.Add(time.Minute), LastHeartbeatAt: finishedAt, BatchStartedAt: &finishedAt}
+	if err := store.UpsertScanSchedulerState(context.Background(), "tenant-a", state); err != nil {
+		t.Fatalf("UpsertScanSchedulerState() error = %v", err)
+	}
+
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	reopened, err := New(databasePath)
+	if err != nil {
+		t.Fatalf("New(reopen) error = %v", err)
+	}
+	defer reopened.Close()
+
+	storedRuns, err := reopened.ListScanRuns(context.Background(), "tenant-a", "library/alpine", 10)
+	if err != nil {
+		t.Fatalf("ListScanRuns() error = %v", err)
+	}
+	if len(storedRuns) != 2 {
+		t.Fatalf("len(storedRuns) = %d, want 2", len(storedRuns))
+	}
+	if storedRuns[0].Status != ports.ScanRunStatusFailed || storedRuns[1].Status != ports.ScanRunStatusCompleted {
+		t.Fatalf("storedRuns = %#v, want failed then completed ordering", storedRuns)
+	}
+
+	storedState, err := reopened.GetScanSchedulerState(context.Background(), "tenant-a")
+	if err != nil {
+		t.Fatalf("GetScanSchedulerState() error = %v", err)
+	}
+	if storedState.OwnerID != state.OwnerID || storedState.BatchStartedAt == nil {
+		t.Fatalf("storedState = %#v, want %#v", storedState, state)
+	}
+}
+
+func TestStorePersistsTrivyRuntimeStateAcrossReopenAndDerivesLegacyMigrationState(t *testing.T) {
+	t.Parallel()
+
+	databasePath := filepath.Join(t.TempDir(), "registry.db")
+	store, err := New(databasePath)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	verifiedAt := time.Now().UTC().Add(-2 * time.Minute)
+	healthAt := verifiedAt.Add(time.Minute)
+	dbUpdatedAt := healthAt.Add(-30 * time.Second)
+	state := ports.TrivyRuntimeState{
+		Status:            ports.TrivyRuntimeStatusReady,
+		ActiveVersion:     "0.57.1",
+		PreviousVersion:   "0.56.2",
+		ActiveBinaryPath:  "/var/lib/regixtry/features/trivy/bin/active/trivy",
+		CacheDir:          "/var/lib/regixtry/features/trivy/trivy-cache",
+		ReceiptPath:       "/var/lib/regixtry/features/trivy/receipts/0.57.1.json",
+		LastVerifiedAt:    &verifiedAt,
+		LastHealthCheckAt: &healthAt,
+		LastDBUpdatedAt:   &dbUpdatedAt,
+		UpdatedAt:         healthAt,
+	}
+	if err := store.UpsertTrivyRuntimeState(context.Background(), "tenant-a", state); err != nil {
+		t.Fatalf("UpsertTrivyRuntimeState() error = %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	reopened, err := New(databasePath)
+	if err != nil {
+		t.Fatalf("New(reopen) error = %v", err)
+	}
+	defer reopened.Close()
+
+	stored, err := reopened.GetTrivyRuntimeState(context.Background(), "tenant-a")
+	if err != nil {
+		t.Fatalf("GetTrivyRuntimeState() error = %v", err)
+	}
+	if stored.Status != state.Status || stored.ActiveVersion != state.ActiveVersion || stored.PreviousVersion != state.PreviousVersion {
+		t.Fatalf("stored = %#v, want persisted runtime identity %#v", stored, state)
+	}
+	if stored.ActiveBinaryPath != state.ActiveBinaryPath || stored.CacheDir != state.CacheDir || stored.ReceiptPath != state.ReceiptPath {
+		t.Fatalf("stored = %#v, want persisted managed paths %#v", stored, state)
+	}
+	if stored.LastVerifiedAt == nil || !stored.LastVerifiedAt.Equal(verifiedAt) || stored.LastHealthCheckAt == nil || !stored.LastHealthCheckAt.Equal(healthAt) {
+		t.Fatalf("stored = %#v, want persisted verification timestamps", stored)
+	}
+
+	legacyStore := newTestStore(t)
+	defer legacyStore.Close()
+	_, err = legacyStore.db.ExecContext(context.Background(), `
+		INSERT INTO scan_settings (tenant, enabled, schedule_enabled, interval, timeout, cache_dir, binary_path, service_url, registry_reachable_url, max_concurrency, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, "tenant-b", true, true, (6 * time.Hour).String(), (10 * time.Minute).String(), "/var/cache/trivy", "/tmp/README.sh", "https://scanner.example.com", "https://registry.internal", 2, time.Now().UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		t.Fatalf("insert legacy scan settings error = %v", err)
+	}
+
+	legacyState, err := legacyStore.GetTrivyRuntimeState(context.Background(), "tenant-b")
+	if err != nil {
+		t.Fatalf("GetTrivyRuntimeState(legacy) error = %v", err)
+	}
+	if legacyState.Status != ports.TrivyRuntimeStatusMigrationRequired {
+		t.Fatalf("legacyState.Status = %q, want migration-required", legacyState.Status)
+	}
+	if legacyState.ActiveBinaryPath != "" {
+		t.Fatalf("legacyState.ActiveBinaryPath = %q, want empty because legacy paths must not be executable runtime authority", legacyState.ActiveBinaryPath)
+	}
+	if !strings.Contains(legacyState.MigrationHint, "/tmp/README.sh") {
+		t.Fatalf("legacyState.MigrationHint = %q, want legacy binary evidence", legacyState.MigrationHint)
 	}
 }
 

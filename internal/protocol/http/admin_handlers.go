@@ -32,6 +32,14 @@ func (r *Router) handleAdmin(w stdhttp.ResponseWriter, req *stdhttp.Request) {
 	}
 
 	switch {
+	case subpath == "features":
+		r.handleAdminFeaturesCollection(w, req)
+	case strings.HasPrefix(subpath, "features/"):
+		r.handleAdminFeatureResource(w, req, strings.TrimPrefix(subpath, "features/"))
+	case subpath == "scan-settings":
+		r.handleAdminScanSettings(w, req)
+	case subpath == "scan-runs":
+		r.handleAdminScanRuns(w, req)
 	case subpath == "users":
 		r.handleAdminUsersCollection(w, req, *principal)
 	case strings.HasPrefix(subpath, "users/"):
@@ -39,6 +47,310 @@ func (r *Router) handleAdmin(w stdhttp.ResponseWriter, req *stdhttp.Request) {
 	default:
 		writeAdminError(w, domainauth.NewNotFoundError("route", req.URL.Path), ports.Challenge{})
 	}
+}
+
+func (r *Router) handleAdminFeaturesCollection(w stdhttp.ResponseWriter, req *stdhttp.Request) {
+	if req.Method != stdhttp.MethodGet {
+		w.Header().Set("Allow", stdhttp.MethodGet)
+		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+		return
+	}
+	features, err := r.service.ListFeatures(req.Context())
+	if err != nil {
+		writeAdminError(w, err, ports.Challenge{})
+		return
+	}
+	writeJSON(w, stdhttp.StatusOK, features)
+}
+
+func (r *Router) handleAdminFeatureResource(w stdhttp.ResponseWriter, req *stdhttp.Request, resource string) {
+	switch {
+	case strings.HasSuffix(resource, "/status"):
+		name := strings.TrimSuffix(resource, "/status")
+		details, err := r.service.GetFeatureStatus(req.Context(), name)
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		writeJSON(w, stdhttp.StatusOK, featureDetailsResponse(details, true))
+	case strings.HasSuffix(resource, "/config"):
+		name := strings.TrimSuffix(resource, "/config")
+		if req.Method != stdhttp.MethodPut {
+			w.Header().Set("Allow", stdhttp.MethodPut)
+			w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+			return
+		}
+		input, err := decodeFeatureConfigureInput(req)
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		details, err := r.service.ConfigureFeature(req.Context(), name, input)
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		writeJSON(w, stdhttp.StatusOK, featureDetailsResponse(details, false))
+	case strings.HasSuffix(resource, ":install"):
+		name := strings.TrimSuffix(resource, ":install")
+		state, err := r.mutateFeatureRuntime(req, name, func(version string) (ports.TrivyRuntimeState, error) {
+			return r.service.InstallFeatureRuntime(req.Context(), name, version)
+		})
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		writeJSON(w, stdhttp.StatusOK, state)
+	case strings.HasSuffix(resource, ":upgrade"):
+		name := strings.TrimSuffix(resource, ":upgrade")
+		state, err := r.mutateFeatureRuntime(req, name, func(version string) (ports.TrivyRuntimeState, error) {
+			return r.service.UpgradeFeatureRuntime(req.Context(), name, version)
+		})
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		writeJSON(w, stdhttp.StatusOK, state)
+	case strings.HasSuffix(resource, ":rollback"):
+		name := strings.TrimSuffix(resource, ":rollback")
+		if req.Method != stdhttp.MethodPost {
+			w.Header().Set("Allow", stdhttp.MethodPost)
+			w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+			return
+		}
+		state, err := r.service.RollbackFeatureRuntime(req.Context(), name)
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		writeJSON(w, stdhttp.StatusOK, state)
+	case strings.HasSuffix(resource, ":enable"):
+		name := strings.TrimSuffix(resource, ":enable")
+		if req.Method != stdhttp.MethodPost {
+			w.Header().Set("Allow", stdhttp.MethodPost)
+			w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+			return
+		}
+		details, err := r.service.SetFeatureEnabled(req.Context(), name, true)
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		writeJSON(w, stdhttp.StatusOK, featureDetailsResponse(details, false))
+	case strings.HasSuffix(resource, ":disable"):
+		name := strings.TrimSuffix(resource, ":disable")
+		if req.Method != stdhttp.MethodPost {
+			w.Header().Set("Allow", stdhttp.MethodPost)
+			w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+			return
+		}
+		details, err := r.service.SetFeatureEnabled(req.Context(), name, false)
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		writeJSON(w, stdhttp.StatusOK, featureDetailsResponse(details, false))
+	default:
+		if req.Method != stdhttp.MethodGet {
+			w.Header().Set("Allow", stdhttp.MethodGet)
+			w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+			return
+		}
+		details, err := r.service.GetFeature(req.Context(), resource)
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		writeJSON(w, stdhttp.StatusOK, featureDetailsResponse(details, false))
+	}
+}
+
+func (r *Router) handleAdminScanSettings(w stdhttp.ResponseWriter, req *stdhttp.Request) {
+	switch req.Method {
+	case stdhttp.MethodGet:
+		settings, err := r.service.GetScanSettings(req.Context())
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		writeJSON(w, stdhttp.StatusOK, scanSettingsResponse(settings))
+	case stdhttp.MethodPut:
+		settings, err := decodeScanSettings(req)
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		updated, err := r.service.UpdateScanSettings(req.Context(), settings)
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		writeJSON(w, stdhttp.StatusOK, scanSettingsResponse(updated))
+	default:
+		w.Header().Set("Allow", strings.Join([]string{stdhttp.MethodGet, stdhttp.MethodPut}, ", "))
+		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+	}
+}
+
+func (r *Router) handleAdminScanRuns(w stdhttp.ResponseWriter, req *stdhttp.Request) {
+	switch req.Method {
+	case stdhttp.MethodGet:
+		repository := strings.TrimSpace(req.URL.Query().Get("repository"))
+		limit := 20
+		if raw := strings.TrimSpace(req.URL.Query().Get("limit")); raw != "" {
+			parsed, err := strconv.Atoi(raw)
+			if err != nil || parsed <= 0 {
+				writeAdminError(w, domainauth.NewValidationError("limit must be a positive integer"), ports.Challenge{})
+				return
+			}
+			limit = parsed
+		}
+		runs, err := r.service.ListScanRuns(req.Context(), repository, limit)
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		writeJSON(w, stdhttp.StatusOK, runs)
+	case stdhttp.MethodPost:
+		var payload struct {
+			Repository string `json:"repository"`
+			Reference  string `json:"reference"`
+		}
+		if err := decodeAdminJSON(req, &payload); err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		run, err := r.service.QueueManualScan(req.Context(), payload.Repository, payload.Reference)
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		writeJSON(w, stdhttp.StatusAccepted, run)
+	default:
+		w.Header().Set("Allow", strings.Join([]string{stdhttp.MethodGet, stdhttp.MethodPost}, ", "))
+		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+	}
+}
+
+func decodeScanSettings(req *stdhttp.Request) (ports.ScanSettings, error) {
+	var payload struct {
+		Enabled               bool   `json:"enabled"`
+		ScheduleEnabled       bool   `json:"schedule_enabled"`
+		Interval              string `json:"interval"`
+		Timeout               string `json:"timeout"`
+		ServiceURL            string `json:"service_url"`
+		RegistryReachableURL  string `json:"registry_reachable_url"`
+		AuthToken             string `json:"auth_token"`
+		TLSCACertPath         string `json:"tls_ca_cert_path"`
+		TLSInsecureSkipVerify bool   `json:"tls_insecure_skip_verify"`
+		MaxConcurrency        int    `json:"max_concurrency"`
+	}
+	if err := decodeAdminJSON(req, &payload); err != nil {
+		return ports.ScanSettings{}, err
+	}
+	interval, err := time.ParseDuration(strings.TrimSpace(payload.Interval))
+	if err != nil {
+		return ports.ScanSettings{}, domainauth.NewValidationError("interval must be a valid duration")
+	}
+	timeout, err := time.ParseDuration(strings.TrimSpace(payload.Timeout))
+	if err != nil {
+		return ports.ScanSettings{}, domainauth.NewValidationError("timeout must be a valid duration")
+	}
+	return ports.ScanSettings{Enabled: payload.Enabled, ScheduleEnabled: payload.ScheduleEnabled, Interval: interval, Timeout: timeout, ServiceURL: payload.ServiceURL, RegistryReachableURL: payload.RegistryReachableURL, AuthToken: payload.AuthToken, TLSCACertPath: payload.TLSCACertPath, TLSInsecureSkipVerify: payload.TLSInsecureSkipVerify, MaxConcurrency: payload.MaxConcurrency}, nil
+}
+
+func scanSettingsResponse(settings ports.ScanSettings) map[string]any {
+	return map[string]any{
+		"enabled":                  settings.Enabled,
+		"schedule_enabled":         settings.ScheduleEnabled,
+		"interval":                 settings.Interval.String(),
+		"timeout":                  settings.Timeout.String(),
+		"service_url":              settings.ServiceURL,
+		"registry_reachable_url":   settings.RegistryReachableURL,
+		"tls_ca_cert_path":         settings.TLSCACertPath,
+		"tls_insecure_skip_verify": settings.TLSInsecureSkipVerify,
+		"max_concurrency":          settings.MaxConcurrency,
+		"updated_at":               settings.UpdatedAt,
+	}
+}
+
+func decodeFeatureConfigureInput(req *stdhttp.Request) (ports.FeatureConfigureInput, error) {
+	var payload struct {
+		Enabled               *bool   `json:"enabled"`
+		ScheduleEnabled       *bool   `json:"schedule_enabled"`
+		Interval              string  `json:"interval"`
+		Timeout               string  `json:"timeout"`
+		ServiceURL            *string `json:"service_url"`
+		RegistryReachableURL  *string `json:"registry_reachable_url"`
+		AuthToken             *string `json:"auth_token"`
+		TLSCACertPath         *string `json:"tls_ca_cert_path"`
+		TLSInsecureSkipVerify *bool   `json:"tls_insecure_skip_verify"`
+		MaxConcurrency        *int    `json:"max_concurrency"`
+	}
+	if err := decodeAdminJSON(req, &payload); err != nil {
+		return ports.FeatureConfigureInput{}, err
+	}
+	input := ports.FeatureConfigureInput{
+		Enabled:               payload.Enabled,
+		ScheduleEnabled:       payload.ScheduleEnabled,
+		ServiceURL:            payload.ServiceURL,
+		RegistryReachableURL:  payload.RegistryReachableURL,
+		AuthToken:             payload.AuthToken,
+		TLSCACertPath:         payload.TLSCACertPath,
+		TLSInsecureSkipVerify: payload.TLSInsecureSkipVerify,
+		MaxConcurrency:        payload.MaxConcurrency,
+	}
+	if strings.TrimSpace(payload.Interval) != "" {
+		interval, err := time.ParseDuration(strings.TrimSpace(payload.Interval))
+		if err != nil {
+			return ports.FeatureConfigureInput{}, domainauth.NewValidationError("interval must be a valid duration")
+		}
+		input.Interval = &interval
+	}
+	if strings.TrimSpace(payload.Timeout) != "" {
+		timeout, err := time.ParseDuration(strings.TrimSpace(payload.Timeout))
+		if err != nil {
+			return ports.FeatureConfigureInput{}, domainauth.NewValidationError("timeout must be a valid duration")
+		}
+		input.Timeout = &timeout
+	}
+	return input, nil
+}
+
+func featureDetailsResponse(details ports.FeatureDetails, includeRuntime bool) map[string]any {
+	response := map[string]any{
+		"name":                     details.Name,
+		"kind":                     details.Kind,
+		"enabled":                  details.Enabled,
+		"configured":               details.Configured,
+		"schedule_enabled":         details.ScheduleEnabled,
+		"interval":                 details.Interval.String(),
+		"timeout":                  details.Timeout.String(),
+		"service_url":              details.ServiceURL,
+		"registry_reachable_url":   details.RegistryReachableURL,
+		"tls_ca_cert_path":         details.TLSCACertPath,
+		"tls_insecure_skip_verify": details.TLSInsecureSkipVerify,
+		"max_concurrency":          details.MaxConcurrency,
+	}
+	if includeRuntime {
+		response["runtime"] = details.Runtime
+	}
+	return response
+}
+
+func (r *Router) mutateFeatureRuntime(req *stdhttp.Request, name string, action func(version string) (ports.TrivyRuntimeState, error)) (ports.TrivyRuntimeState, error) {
+	if req.Method != stdhttp.MethodPost {
+		return ports.TrivyRuntimeState{}, domainauth.NewValidationError("runtime mutation requires POST")
+	}
+	var payload struct {
+		Version string `json:"version"`
+	}
+	if req.Body != nil && req.ContentLength != 0 {
+		if err := decodeAdminJSON(req, &payload); err != nil {
+			return ports.TrivyRuntimeState{}, err
+		}
+	}
+	return action(strings.TrimSpace(payload.Version))
 }
 
 func (r *Router) handleAdminUsersCollection(w stdhttp.ResponseWriter, req *stdhttp.Request, principal domainauth.Principal) {

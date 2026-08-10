@@ -6,17 +6,38 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
+	"time"
 
 	domain "regixtry/internal/domain/regixtry"
 	"regixtry/internal/ports"
 )
 
 type Service struct {
-	blobs    ports.BlobStore
-	metadata ports.MetadataStore
-	access   ports.AccessController
-	tenants  ports.TenantResolver
-	jobs     ports.JobRunner
+	blobs      ports.BlobStore
+	metadata   ports.MetadataStore
+	access     ports.AccessController
+	tenants    ports.TenantResolver
+	jobs       ports.JobRunner
+	scanRunner ports.ScanRunner
+	runtime    FeatureRuntimeManager
+	scanHost   string
+	now        func() time.Time
+	scanGate   *scanGate
+}
+
+type FeatureRuntimeManager interface {
+	Install(ctx context.Context, version string, progress func(ports.FeatureRuntimeProgress)) (ports.TrivyRuntimeState, error)
+	Upgrade(ctx context.Context, version string, progress func(ports.FeatureRuntimeProgress)) (ports.TrivyRuntimeState, error)
+	Rollback(ctx context.Context) (ports.TrivyRuntimeState, error)
+	Status(ctx context.Context) (ports.TrivyRuntimeState, error)
+	LatestVersion(ctx context.Context) (string, error)
+}
+
+type FeatureRuntimeManagerConfig struct {
+	StorageRoot string
+	Store       ports.MetadataStore
+	ScanRunner  ports.ScanRunner
 }
 
 func NewService(blobStore ports.BlobStore, metadataStore ports.MetadataStore, accessController ports.AccessController, tenantResolver ports.TenantResolver, jobRunner ports.JobRunner) *Service {
@@ -38,7 +59,21 @@ func NewService(blobStore ports.BlobStore, metadataStore ports.MetadataStore, ac
 		access:   accessController,
 		tenants:  tenantResolver,
 		jobs:     jobRunner,
+		now:      func() time.Time { return time.Now().UTC() },
+		scanGate: newScanGate(),
 	}
+}
+
+func (s *Service) SetScanRunner(runner ports.ScanRunner) {
+	s.scanRunner = runner
+}
+
+func (s *Service) SetFeatureRuntimeManager(manager FeatureRuntimeManager) {
+	s.runtime = manager
+}
+
+func (s *Service) SetScanHost(host string) {
+	s.scanHost = strings.TrimSpace(host)
 }
 
 func (s *Service) Challenge(action ports.Action) ports.Challenge {
@@ -251,6 +286,41 @@ type manifestResource struct {
 	MediaType string `json:"mediaType"`
 	Digest    string `json:"digest"`
 	Size      int64  `json:"size"`
+}
+
+type scanGate struct {
+	mu       sync.Mutex
+	inFlight int
+}
+
+func newScanGate() *scanGate { return &scanGate{} }
+
+func (g *scanGate) acquire(ctx context.Context, max int) error {
+	if max <= 0 {
+		max = 1
+	}
+	for {
+		g.mu.Lock()
+		if g.inFlight < max {
+			g.inFlight++
+			g.mu.Unlock()
+			return nil
+		}
+		g.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+func (g *scanGate) release() {
+	g.mu.Lock()
+	if g.inFlight > 0 {
+		g.inFlight--
+	}
+	g.mu.Unlock()
 }
 
 func (r *manifestResource) toDescriptor() (*domain.Descriptor, error) {

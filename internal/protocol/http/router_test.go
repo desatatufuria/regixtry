@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -802,6 +803,254 @@ func TestRouterAdminTokenRoutesRejectExcessiveTTLAndMismatchedRevoke(t *testing.
 	}
 }
 
+func TestRouterAdminScanSettingsRoutesRequireAuthAndPersistUpdates(t *testing.T) {
+	t.Parallel()
+
+	handler, cleanup := newTestRouterWithAuth(t, allowAllAccessController{}, fakeAuthService{verify: &domainauth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+	defer cleanup()
+
+	unauthReq := httptest.NewRequest(http.MethodGet, "/admin/v1/scan-settings", nil)
+	unauthRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(unauthRecorder, unauthReq)
+	if unauthRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("unauth status = %d, want %d", unauthRecorder.Code, http.StatusUnauthorized)
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/admin/v1/scan-settings", nil)
+	getReq.Header.Set("Authorization", "Bearer admin-token")
+	getRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(getRecorder, getReq)
+	if getRecorder.Code != http.StatusOK {
+		t.Fatalf("get status = %d, want %d", getRecorder.Code, http.StatusOK)
+	}
+	if !strings.Contains(getRecorder.Body.String(), `"enabled":false`) {
+		t.Fatalf("body = %q, want disabled defaults", getRecorder.Body.String())
+	}
+
+	putReq := httptest.NewRequest(http.MethodPut, "/admin/v1/scan-settings", strings.NewReader(`{"enabled":true,"schedule_enabled":true,"interval":"6h","timeout":"20m","service_url":"https://scanner.example.com","registry_reachable_url":"https://registry.internal:5443","max_concurrency":2}`))
+	putReq.Header.Set("Authorization", "Bearer admin-token")
+	putReq.Header.Set("Content-Type", "application/json")
+	putRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(putRecorder, putReq)
+	if putRecorder.Code != http.StatusOK {
+		t.Fatalf("put status = %d, want %d", putRecorder.Code, http.StatusOK)
+	}
+	if !strings.Contains(putRecorder.Body.String(), `"schedule_enabled":true`) || !strings.Contains(putRecorder.Body.String(), `"max_concurrency":2`) {
+		t.Fatalf("body = %q, want persisted scan settings", putRecorder.Body.String())
+	}
+}
+
+func TestRouterAdminScanRoutesQueueAndListRuns(t *testing.T) {
+	t.Parallel()
+
+	handler, cleanup := newTestRouterWithAuth(t, allowAllAccessController{}, fakeAuthService{verify: &domainauth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+	defer cleanup()
+	seedPublishedManifest(t, handler)
+
+	putReq := httptest.NewRequest(http.MethodPut, "/admin/v1/scan-settings", strings.NewReader(`{"enabled":true,"schedule_enabled":false,"interval":"24h","timeout":"15m","service_url":"https://scanner.example.com","registry_reachable_url":"https://registry.internal:5443","max_concurrency":1}`))
+	putReq.Header.Set("Authorization", "Bearer admin-token")
+	putReq.Header.Set("Content-Type", "application/json")
+	putRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(putRecorder, putReq)
+	if putRecorder.Code != http.StatusOK {
+		t.Fatalf("settings status = %d, want %d", putRecorder.Code, http.StatusOK)
+	}
+
+	postReq := httptest.NewRequest(http.MethodPost, "/admin/v1/scan-runs", strings.NewReader(`{"repository":"library/alpine","reference":"latest"}`))
+	postReq.Header.Set("Authorization", "Bearer admin-token")
+	postReq.Header.Set("Content-Type", "application/json")
+	postRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(postRecorder, postReq)
+	if postRecorder.Code != http.StatusAccepted {
+		t.Fatalf("post status = %d, want %d", postRecorder.Code, http.StatusAccepted)
+	}
+	if !strings.Contains(postRecorder.Body.String(), `"digest":"sha256:`) {
+		t.Fatalf("body = %q, want canonical digest", postRecorder.Body.String())
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/admin/v1/scan-runs?repository=library/alpine&limit=5", nil)
+	listReq.Header.Set("Authorization", "Bearer admin-token")
+	listRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(listRecorder, listReq)
+	if listRecorder.Code != http.StatusOK {
+		t.Fatalf("list status = %d, want %d", listRecorder.Code, http.StatusOK)
+	}
+	if !strings.Contains(listRecorder.Body.String(), `"repository":"library/alpine"`) {
+		t.Fatalf("body = %q, want scan run history", listRecorder.Body.String())
+	}
+}
+
+func TestRouterAdminScanRoutesRejectInvalidTargetsAndSettings(t *testing.T) {
+	t.Parallel()
+
+	handler, cleanup := newTestRouterWithAuth(t, allowAllAccessController{}, fakeAuthService{verify: &domainauth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+	defer cleanup()
+
+	settingsReq := httptest.NewRequest(http.MethodPut, "/admin/v1/scan-settings", strings.NewReader(`{"enabled":true,"schedule_enabled":true,"interval":"0s","timeout":"0s","service_url":"ftp://scanner.example.com","registry_reachable_url":"http://127.0.0.1:5000","max_concurrency":0}`))
+	settingsReq.Header.Set("Authorization", "Bearer admin-token")
+	settingsReq.Header.Set("Content-Type", "application/json")
+	settingsRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(settingsRecorder, settingsReq)
+	if settingsRecorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("settings status = %d, want %d", settingsRecorder.Code, http.StatusUnprocessableEntity)
+	}
+
+	validSettingsReq := httptest.NewRequest(http.MethodPut, "/admin/v1/scan-settings", strings.NewReader(`{"enabled":true,"schedule_enabled":false,"interval":"24h","timeout":"15m","service_url":"https://scanner.example.com","registry_reachable_url":"https://registry.internal:5443","max_concurrency":1}`))
+	validSettingsReq.Header.Set("Authorization", "Bearer admin-token")
+	validSettingsReq.Header.Set("Content-Type", "application/json")
+	validSettingsRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(validSettingsRecorder, validSettingsReq)
+	if validSettingsRecorder.Code != http.StatusOK {
+		t.Fatalf("valid settings status = %d, want %d", validSettingsRecorder.Code, http.StatusOK)
+	}
+
+	postReq := httptest.NewRequest(http.MethodPost, "/admin/v1/scan-runs", strings.NewReader(`{"repository":"library/alpine","reference":"missing"}`))
+	postReq.Header.Set("Authorization", "Bearer admin-token")
+	postReq.Header.Set("Content-Type", "application/json")
+	postRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(postRecorder, postReq)
+	if postRecorder.Code != http.StatusNotFound {
+		t.Fatalf("post status = %d, want %d", postRecorder.Code, http.StatusNotFound)
+	}
+}
+
+func TestRouterAdminFeatureRoutesProjectBuiltinTrivyState(t *testing.T) {
+	t.Parallel()
+
+	handler, cleanup := newTestRouterWithAuth(t, allowAllAccessController{}, fakeAuthService{verify: &domainauth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+	defer cleanup()
+
+	configureReq := httptest.NewRequest(http.MethodPut, "/admin/v1/features/trivy/config", strings.NewReader(`{"enabled":true,"schedule_enabled":true,"interval":"6h","timeout":"20m","service_url":"https://scanner.example.com","registry_reachable_url":"https://registry.internal:5443","max_concurrency":2}`))
+	configureReq.Header.Set("Authorization", "Bearer admin-token")
+	configureReq.Header.Set("Content-Type", "application/json")
+	configureRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(configureRecorder, configureReq)
+	if configureRecorder.Code != http.StatusOK {
+		t.Fatalf("configure status = %d, want %d", configureRecorder.Code, http.StatusOK)
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/admin/v1/features", nil)
+	listReq.Header.Set("Authorization", "Bearer admin-token")
+	listRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(listRecorder, listReq)
+	if listRecorder.Code != http.StatusOK {
+		t.Fatalf("list status = %d, want %d", listRecorder.Code, http.StatusOK)
+	}
+	if !strings.Contains(listRecorder.Body.String(), `"name":"trivy"`) {
+		t.Fatalf("list body = %q, want builtin trivy feature", listRecorder.Body.String())
+	}
+
+	statusReq := httptest.NewRequest(http.MethodGet, "/admin/v1/features/trivy/status", nil)
+	statusReq.Header.Set("Authorization", "Bearer admin-token")
+	statusRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(statusRecorder, statusReq)
+	if statusRecorder.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", statusRecorder.Code, http.StatusOK)
+	}
+	for _, want := range []string{`"enabled":true`, `"schedule_enabled":true`, `"name":"trivy"`} {
+		if !strings.Contains(statusRecorder.Body.String(), want) {
+			t.Fatalf("status body = %q, want %q", statusRecorder.Body.String(), want)
+		}
+	}
+}
+
+func TestRouterAdminFeatureRoutesRejectUnknownNames(t *testing.T) {
+	t.Parallel()
+
+	handler, cleanup := newTestRouterWithAuth(t, allowAllAccessController{}, fakeAuthService{verify: &domainauth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/features/future-plugin", nil)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnprocessableEntity)
+	}
+}
+
+func TestRouterAdminFeatureRoutesRequireAuthAndMutateAuthoritativeState(t *testing.T) {
+	t.Parallel()
+
+	handler, cleanup := newTestRouterWithAuth(t, allowAllAccessController{}, fakeAuthService{verify: &domainauth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+	defer cleanup()
+
+	unauthReq := httptest.NewRequest(http.MethodGet, "/admin/v1/features/trivy/status", nil)
+	unauthRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(unauthRecorder, unauthReq)
+	if unauthRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("unauth status = %d, want %d", unauthRecorder.Code, http.StatusUnauthorized)
+	}
+
+	seedReq := httptest.NewRequest(http.MethodPut, "/admin/v1/scan-settings", strings.NewReader(`{"enabled":false,"schedule_enabled":false,"interval":"24h","timeout":"15m","service_url":"https://scanner.example.com","registry_reachable_url":"https://registry.internal:5443","max_concurrency":1}`))
+	seedReq.Header.Set("Authorization", "Bearer admin-token")
+	seedReq.Header.Set("Content-Type", "application/json")
+	seedRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(seedRecorder, seedReq)
+	if seedRecorder.Code != http.StatusOK {
+		t.Fatalf("seed status = %d, want %d", seedRecorder.Code, http.StatusOK)
+	}
+
+	showReq := httptest.NewRequest(http.MethodGet, "/admin/v1/features/trivy", nil)
+	showReq.Header.Set("Authorization", "Bearer admin-token")
+	showRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(showRecorder, showReq)
+	if showRecorder.Code != http.StatusOK {
+		t.Fatalf("show status = %d, want %d", showRecorder.Code, http.StatusOK)
+	}
+	for _, want := range []string{`"name":"trivy"`, `"enabled":false`, `"configured":true`} {
+		if !strings.Contains(showRecorder.Body.String(), want) {
+			t.Fatalf("show body = %q, want %q", showRecorder.Body.String(), want)
+		}
+	}
+
+	enableReq := httptest.NewRequest(http.MethodPost, "/admin/v1/features/trivy:enable", nil)
+	enableReq.Header.Set("Authorization", "Bearer admin-token")
+	enableRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(enableRecorder, enableReq)
+	if enableRecorder.Code != http.StatusOK {
+		t.Fatalf("enable status = %d, want %d", enableRecorder.Code, http.StatusOK)
+	}
+	if !strings.Contains(enableRecorder.Body.String(), `"enabled":true`) {
+		t.Fatalf("enable body = %q, want enabled=true", enableRecorder.Body.String())
+	}
+
+	statusReq := httptest.NewRequest(http.MethodGet, "/admin/v1/features/trivy/status", nil)
+	statusReq.Header.Set("Authorization", "Bearer admin-token")
+	statusRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(statusRecorder, statusReq)
+	if statusRecorder.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", statusRecorder.Code, http.StatusOK)
+	}
+	for _, want := range []string{`"enabled":true`, `"runtime":`, `"name":"trivy"`} {
+		if !strings.Contains(statusRecorder.Body.String(), want) {
+			t.Fatalf("status body = %q, want %q", statusRecorder.Body.String(), want)
+		}
+	}
+
+	disableReq := httptest.NewRequest(http.MethodPost, "/admin/v1/features/trivy:disable", nil)
+	disableReq.Header.Set("Authorization", "Bearer admin-token")
+	disableRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(disableRecorder, disableReq)
+	if disableRecorder.Code != http.StatusOK {
+		t.Fatalf("disable status = %d, want %d", disableRecorder.Code, http.StatusOK)
+	}
+	if !strings.Contains(disableRecorder.Body.String(), `"enabled":false`) {
+		t.Fatalf("disable body = %q, want enabled=false", disableRecorder.Body.String())
+	}
+
+	scanReq := httptest.NewRequest(http.MethodGet, "/admin/v1/scan-settings", nil)
+	scanReq.Header.Set("Authorization", "Bearer admin-token")
+	scanRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(scanRecorder, scanReq)
+	if scanRecorder.Code != http.StatusOK {
+		t.Fatalf("scan-settings status = %d, want %d", scanRecorder.Code, http.StatusOK)
+	}
+	if !strings.Contains(scanRecorder.Body.String(), `"enabled":false`) {
+		t.Fatalf("scan-settings body = %q, want authoritative disabled state", scanRecorder.Body.String())
+	}
+}
+
 func TestRouterKeepsV2PingOpenWhenAuthDisabled(t *testing.T) {
 	t.Parallel()
 
@@ -1101,6 +1350,39 @@ func seedPublishedManifest(t *testing.T, handler *Router) string {
 	return digest
 }
 
+func seedPublishedManifestWithToken(t *testing.T, handler *Router, token string) string {
+	t.Helper()
+
+	uploadStart := httptest.NewRequest(http.MethodPost, "/v2/library/alpine/blobs/uploads/", nil)
+	uploadStart.Header.Set("Authorization", "Bearer "+token)
+	uploadStartRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(uploadStartRecorder, uploadStart)
+	uploadLocation := uploadStartRecorder.Header().Get("Location")
+
+	appendReq := httptest.NewRequest(http.MethodPatch, uploadLocation, bytes.NewBufferString("layer-one"))
+	appendReq.Header.Set("Authorization", "Bearer "+token)
+	appendRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(appendRecorder, appendReq)
+
+	digest := domain.DigestFromBytes([]byte("layer-one")).String()
+	commitReq := httptest.NewRequest(http.MethodPut, uploadLocation+"?digest="+digest, nil)
+	commitReq.Header.Set("Authorization", "Bearer "+token)
+	commitRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(commitRecorder, commitReq)
+
+	manifestPayload := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{"mediaType":"application/vnd.oci.image.config.v1+json","digest":"` + digest + `","size":9},"layers":[{"mediaType":"application/vnd.oci.image.layer.v1.tar","digest":"` + digest + `","size":9}]}`)
+	manifestReq := httptest.NewRequest(http.MethodPut, "/v2/library/alpine/manifests/latest", bytes.NewReader(manifestPayload))
+	manifestReq.Header.Set("Authorization", "Bearer "+token)
+	manifestReq.Header.Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
+	manifestRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(manifestRecorder, manifestReq)
+	if manifestRecorder.Code != http.StatusCreated {
+		t.Fatalf("manifest status = %d, want %d", manifestRecorder.Code, http.StatusCreated)
+	}
+
+	return digest
+}
+
 func newTestRouter(t *testing.T, accessController ports.AccessController) (*Router, func()) {
 	t.Helper()
 
@@ -1193,6 +1475,21 @@ func newRouterWithStores(blobStore *fsblob.Store, metadataStore *metadata.Store,
 		ports.NewSingleTenantResolver("tenant-a"),
 		ports.NewInlineJobRunner(),
 	)
+	_, _ = service.EnsureScanSettings(context.Background(), ports.ScanSettings{
+		Enabled:         false,
+		ScheduleEnabled: false,
+		Interval:        24 * time.Hour,
+		Timeout:         15 * time.Minute,
+		RegistryReachableURL: "https://registry.internal",
+		MaxConcurrency:  1,
+	})
+	_ = metadataStore.UpsertTrivyRuntimeState(context.Background(), "tenant-a", ports.TrivyRuntimeState{
+		Status:           ports.TrivyRuntimeStatusReady,
+		ActiveVersion:    "0.57.1",
+		ActiveBinaryPath: "/var/lib/regixtry/features/trivy/bin/active/trivy",
+		CacheDir:         filepath.Join(os.TempDir(), "regixtry-router-trivy-cache"),
+		UpdatedAt:        time.Now().UTC(),
+	})
 
 	return NewRouter(service, authService, options...)
 }

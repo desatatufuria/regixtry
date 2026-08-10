@@ -261,6 +261,176 @@ func TestHTTPAdminClientMutationRoutes(t *testing.T) {
 	}
 }
 
+func TestHTTPAdminClientFeatureRoutes(t *testing.T) {
+	t.Parallel()
+
+	fixedNow := time.Date(2026, time.August, 4, 23, 5, 0, 0, time.UTC)
+	session := AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: fixedNow.Add(10 * time.Minute)}
+
+	tests := []struct {
+		name       string
+		method     string
+		path       string
+		statusCode int
+		body       string
+		run        func(t *testing.T, client *HTTPAdminClient)
+	}{
+		{
+			name:       "list features",
+			method:     http.MethodGet,
+			path:       "/admin/v1/features",
+			statusCode: http.StatusOK,
+			body:       `[{"name":"trivy","kind":"builtin","enabled":true,"configured":true}]`,
+			run: func(t *testing.T, client *HTTPAdminClient) {
+				features, err := client.ListFeatures(context.Background(), session)
+				if err != nil {
+					t.Fatalf("ListFeatures() error = %v", err)
+				}
+				if len(features) != 1 || features[0].Name != "trivy" {
+					t.Fatalf("features = %#v, want builtin trivy inventory", features)
+				}
+			},
+		},
+		{
+			name:       "feature status",
+			method:     http.MethodGet,
+			path:       "/admin/v1/features/trivy/status",
+			statusCode: http.StatusOK,
+			body:       `{"name":"trivy","kind":"builtin","enabled":true,"configured":true,"schedule_enabled":true,"interval":"6h0m0s","timeout":"10m0s","cache_dir":"/var/lib/regixtry/trivy-cache","binary_path":"trivy","max_concurrency":2,"runtime":{"health":"ready","version":"0.57.1"}}`,
+			run: func(t *testing.T, client *HTTPAdminClient) {
+				status, err := client.GetFeatureStatus(context.Background(), session, "trivy")
+				if err != nil {
+					t.Fatalf("GetFeatureStatus() error = %v", err)
+				}
+				if status.Runtime.Version != "0.57.1" || !status.Enabled {
+					t.Fatalf("status = %#v, want decoded feature status", status)
+				}
+			},
+		},
+		{
+			name:       "show feature",
+			method:     http.MethodGet,
+			path:       "/admin/v1/features/trivy",
+			statusCode: http.StatusOK,
+			body:       `{"name":"trivy","kind":"builtin","enabled":true,"configured":true,"schedule_enabled":false,"interval":"24h0m0s","timeout":"15m0s","cache_dir":"/var/lib/regixtry/trivy-cache","binary_path":"trivy","max_concurrency":1}`,
+			run: func(t *testing.T, client *HTTPAdminClient) {
+				details, err := client.GetFeature(context.Background(), session, "trivy")
+				if err != nil {
+					t.Fatalf("GetFeature() error = %v", err)
+				}
+				if details.Name != "trivy" || !details.Configured {
+					t.Fatalf("details = %#v, want decoded feature details", details)
+				}
+			},
+		},
+		{
+			name:       "configure feature",
+			method:     http.MethodPut,
+			path:       "/admin/v1/features/trivy/config",
+			statusCode: http.StatusOK,
+			body:       `{"name":"trivy","kind":"builtin","enabled":true,"configured":true,"schedule_enabled":true,"interval":"6h0m0s","timeout":"10m0s","cache_dir":"/var/lib/regixtry/trivy-cache","binary_path":"trivy","max_concurrency":2}`,
+			run: func(t *testing.T, client *HTTPAdminClient) {
+				_, err := client.ConfigureFeature(context.Background(), session, "trivy", ports.FeatureConfigureInput{Enabled: boolPtr(true), ScheduleEnabled: boolPtr(true), Interval: durationPtr(6 * time.Hour), Timeout: durationPtr(10 * time.Minute), CacheDir: stringPtr("/var/lib/regixtry/trivy-cache"), BinaryPath: stringPtr("trivy"), MaxConcurrency: intPtr(2)})
+				if err != nil {
+					t.Fatalf("ConfigureFeature() error = %v", err)
+				}
+			},
+		},
+		{
+			name:       "enable feature",
+			method:     http.MethodPost,
+			path:       "/admin/v1/features/trivy:enable",
+			statusCode: http.StatusOK,
+			body:       `{"name":"trivy","kind":"builtin","enabled":true,"configured":true,"schedule_enabled":true,"interval":"6h0m0s","timeout":"10m0s","cache_dir":"/var/lib/regixtry/trivy-cache","binary_path":"trivy","max_concurrency":2}`,
+			run: func(t *testing.T, client *HTTPAdminClient) {
+				details, err := client.EnableFeature(context.Background(), session, "trivy")
+				if err != nil {
+					t.Fatalf("EnableFeature() error = %v", err)
+				}
+				if !details.Enabled {
+					t.Fatalf("details = %#v, want enabled feature state", details)
+				}
+			},
+		},
+		{
+			name:       "disable feature",
+			method:     http.MethodPost,
+			path:       "/admin/v1/features/trivy:disable",
+			statusCode: http.StatusOK,
+			body:       `{"name":"trivy","kind":"builtin","enabled":false,"configured":true,"schedule_enabled":true,"interval":"6h0m0s","timeout":"10m0s","cache_dir":"/var/lib/regixtry/trivy-cache","binary_path":"trivy","max_concurrency":2}`,
+			run: func(t *testing.T, client *HTTPAdminClient) {
+				details, err := client.DisableFeature(context.Background(), session, "trivy")
+				if err != nil {
+					t.Fatalf("DisableFeature() error = %v", err)
+				}
+				if details.Enabled {
+					t.Fatalf("details = %#v, want disabled feature state", details)
+				}
+			},
+		},
+		{
+			name:       "install feature runtime",
+			method:     http.MethodPost,
+			path:       "/admin/v1/features/trivy:install",
+			statusCode: http.StatusOK,
+			body:       `{"status":"ready","active_version":"0.57.1","active_binary_path":"/var/lib/regixtry/features/trivy/bin/active/trivy","cache_dir":"/var/lib/regixtry/features/trivy/trivy-cache","receipt_path":"/var/lib/regixtry/features/trivy/receipts/0.57.1.json"}`,
+			run: func(t *testing.T, client *HTTPAdminClient) {
+				state, err := client.InstallFeatureRuntime(context.Background(), session, "trivy", "0.57.1")
+				if err != nil {
+					t.Fatalf("InstallFeatureRuntime() error = %v", err)
+				}
+				if state.ActiveVersion != "0.57.1" || state.Status != ports.TrivyRuntimeStatusReady {
+					t.Fatalf("state = %#v, want decoded runtime install state", state)
+				}
+			},
+		},
+		{
+			name:       "rollback feature runtime",
+			method:     http.MethodPost,
+			path:       "/admin/v1/features/trivy:rollback",
+			statusCode: http.StatusOK,
+			body:       `{"status":"ready","active_version":"0.57.1","previous_version":"0.58.0"}`,
+			run: func(t *testing.T, client *HTTPAdminClient) {
+				state, err := client.RollbackFeatureRuntime(context.Background(), session, "trivy")
+				if err != nil {
+					t.Fatalf("RollbackFeatureRuntime() error = %v", err)
+				}
+				if state.ActiveVersion != "0.57.1" || state.PreviousVersion != "0.58.0" {
+					t.Fatalf("state = %#v, want decoded runtime rollback state", state)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		tc := tt
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if got, want := r.Method, tc.method; got != want {
+					t.Fatalf("method = %q, want %q", got, want)
+				}
+				if got, want := r.URL.Path, tc.path; got != want {
+					t.Fatalf("path = %q, want %q", got, want)
+				}
+				if got, want := r.Header.Get("Authorization"), "Bearer bearer-token"; got != want {
+					t.Fatalf("Authorization = %q, want %q", got, want)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.statusCode)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+
+			client, err := NewHTTPAdminClient(server.URL, server.Client())
+			if err != nil {
+				t.Fatalf("NewHTTPAdminClient() error = %v", err)
+			}
+			client.now = func() time.Time { return fixedNow }
+			tc.run(t, client)
+		})
+	}
+}
+
 func TestHTTPAdminClientMapsInvalidTokenToExpiredSession(t *testing.T) {
 	t.Parallel()
 
@@ -303,3 +473,11 @@ func TestHTTPAdminClientRejectsLocallyExpiredSession(t *testing.T) {
 		t.Fatalf("ListUsers() error = %v, want expired-session error", err)
 	}
 }
+
+func boolPtr(value bool) *bool { return &value }
+
+func durationPtr(value time.Duration) *time.Duration { return &value }
+
+func stringPtr(value string) *string { return &value }
+
+func intPtr(value int) *int { return &value }

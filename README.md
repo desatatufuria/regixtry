@@ -44,6 +44,62 @@ regixtry setup
 
 El script instala el binario; `regixtry setup` gestiona el runtime Linux + systemd. Para procedimientos completos, consultar [`docs/installation.md`](docs/installation.md).
 
+### Built-in Trivy feature management
+
+Regixtry now ships `trivy` as the first built-in optional feature. Setup and lifecycle commands keep base bootstrap truth only; Trivy configuration lives in authoritative feature state (`scan_settings`).
+
+Example setup flags:
+
+```bash
+sudo /absolute/path/to/regixtry setup --mode daemon-sqlite \
+  --public-url https://registry.example.com \
+  --runtime-tls-mode reverse-proxy \
+  --trivy-enabled \
+  --trivy-schedule-enabled \
+  --trivy-interval 6h \
+  --trivy-timeout 20m \
+  --trivy-max-concurrency 2
+```
+
+Those legacy `setup --trivy-*` flags only bridge shared scheduling knobs into feature state. Operators still need to configure `service_url` plus `registry_reachable_url` before Trivy scans can run.
+
+Use the feature CLI after setup:
+
+```bash
+regixtry feature list
+regixtry feature show trivy
+regixtry feature status trivy
+regixtry feature configure trivy \
+  -enabled \
+  -schedule-enabled \
+  -interval 6h \
+  -timeout 20m \
+  -service-url https://scanner.example.com \
+  -registry-reachable-url https://registry.internal:5443 \
+  -tls-ca-cert-path /etc/regixtry/trivy-ca.pem \
+  -max-concurrency 2
+```
+
+- `service_url` must use `http` or `https`.
+- `registry_reachable_url` is the scanner-facing registry address for localhost-container and remote-scanner deployments.
+- `feature status trivy` reports `/healthz` and `/version` readiness details.
+
+Legacy `setup --trivy-*` flags remain available for one migration slice. When provided, setup imports them into feature state and then points operators to `regixtry feature ...` for future changes.
+
+Admin API endpoints for this slice:
+
+- `GET /admin/v1/features`
+- `GET /admin/v1/features/trivy`
+- `GET /admin/v1/features/trivy/status`
+- `PUT /admin/v1/features/trivy/config`
+- `POST /admin/v1/features/trivy:enable`
+- `POST /admin/v1/features/trivy:disable`
+- `GET/PUT /admin/v1/scan-settings`
+- `POST /admin/v1/scan-runs`
+- `GET /admin/v1/scan-runs?repository=&limit=`
+
+The richer TUI management flow for feature administration remains deferred.
+
 ## Documentación
 
 - [Inicio rápido](docs/getting-started.md)

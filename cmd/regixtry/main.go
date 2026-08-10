@@ -15,15 +15,18 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	appauth "regixtry/internal/app/auth"
 	appregixtry "regixtry/internal/app/regixtry"
+	appscanning "regixtry/internal/app/scanning"
 	domainauth "regixtry/internal/domain/auth"
 	authpostgres "regixtry/internal/infra/auth/postgres"
 	installlinux "regixtry/internal/infra/install/linux"
 	metadata "regixtry/internal/infra/metadata/sqlite"
+	trivyinfra "regixtry/internal/infra/scanning/trivy"
 	"regixtry/internal/infra/storage/fsblob"
 	"regixtry/internal/ports"
 	regixtryhttp "regixtry/internal/protocol/http"
@@ -46,6 +49,16 @@ type bootstrapRunner interface {
 var newBootstrapRunner = func() bootstrapRunner {
 	return installlinux.NewBootstrapper()
 }
+
+var newFeatureRuntimeManager = func(cfg appregixtry.FeatureRuntimeManagerConfig) appregixtry.FeatureRuntimeManager {
+	return trivyinfra.NewRuntimeManager(trivyinfra.RuntimeManagerConfig{
+		StorageRoot: cfg.StorageRoot,
+		Store:       cfg.Store,
+		Prober:      trivyinfra.New(trivyinfra.RunnerConfig{}),
+	})
+}
+
+var featureBootstrapStatePath = "/etc/regixtry/bootstrap-state.json"
 
 var resolveCurrentExecutable = func() string {
 	path, err := os.Executable()
@@ -136,7 +149,7 @@ func runWithIO(ctx context.Context, args []string, stdin io.Reader, stdout io.Wr
 	}
 
 	if len(args) == 0 {
-		return errors.New("expected subcommand: serve, tui, bootstrap, bootstrap-admin, setup, uninstall, or upgrade")
+		return errors.New("expected subcommand: serve, tui, bootstrap, bootstrap-admin, setup, feature, uninstall, or upgrade")
 	}
 
 	switch args[0] {
@@ -187,6 +200,8 @@ func runWithIO(ctx context.Context, args []string, stdin io.Reader, stdout io.Wr
 		return runner.Run(ctx, cfg)
 	case "setup":
 		return runSetup(ctx, args[1:], stdin, stdout)
+	case "feature":
+		return runFeature(ctx, args[1:], stdout)
 	case "uninstall":
 		return runUninstall(ctx, args[1:], stdout)
 	case "upgrade":
@@ -206,24 +221,31 @@ type tuiConfig struct {
 }
 
 type serveConfig struct {
-	Address            string
-	PublicURL          string
-	TLSCertFile        string
-	TLSKeyFile         string
-	StorageRoot        string
-	DatabasePath       string
-	Tenant             string
-	AllowAnonymousPull bool
-	AllowAnonymousPush bool
-	AuthPostgresDSN    string
-	AuthTokenRealmURL  string
-	Realm              string
-	ServiceName        string
-	ReadHeaderTimeout  time.Duration
-	ReadTimeout        time.Duration
-	WriteTimeout       time.Duration
-	IdleTimeout        time.Duration
-	ShutdownTimeout    time.Duration
+	Address              string
+	PublicURL            string
+	TLSCertFile          string
+	TLSKeyFile           string
+	StorageRoot          string
+	DatabasePath         string
+	Tenant               string
+	AllowAnonymousPull   bool
+	AllowAnonymousPush   bool
+	AuthPostgresDSN      string
+	AuthTokenRealmURL    string
+	Realm                string
+	ServiceName          string
+	ReadHeaderTimeout    time.Duration
+	ReadTimeout          time.Duration
+	WriteTimeout         time.Duration
+	IdleTimeout          time.Duration
+	ShutdownTimeout      time.Duration
+	TrivyEnabled         bool
+	TrivyScheduleEnabled bool
+	TrivyInterval        time.Duration
+	TrivyTimeout         time.Duration
+	TrivyCacheDir        string
+	TrivyBinaryPath      string
+	TrivyMaxConcurrency  int
 }
 
 type bootstrapAdminConfig struct {
@@ -263,6 +285,14 @@ type setupPromptState struct {
 	authPostgresDSNProvided bool
 	adminUsernameProvided   bool
 	adminPasswordProvided   bool
+	legacyTrivyProvided     bool
+}
+
+type featureConfig struct {
+	StorageRoot  string
+	DatabasePath string
+	PublicURL    string
+	Tenant       string
 }
 
 type uninstallConfig struct {
@@ -310,6 +340,13 @@ func parseServeConfig(args []string) (serveConfig, error) {
 	flags.DurationVar(&cfg.WriteTimeout, "write-timeout", defaultWriteTimeout, "maximum time to write a response")
 	flags.DurationVar(&cfg.IdleTimeout, "idle-timeout", defaultIdleTimeout, "maximum idle keep-alive wait time")
 	flags.DurationVar(&cfg.ShutdownTimeout, "shutdown-timeout", defaultShutdownTimeout, "maximum graceful shutdown wait time")
+	flags.BoolVar(&cfg.TrivyEnabled, "trivy-enabled", false, "enable persisted trivy rescans")
+	flags.BoolVar(&cfg.TrivyScheduleEnabled, "trivy-schedule-enabled", false, "enable periodic trivy rescans")
+	flags.DurationVar(&cfg.TrivyInterval, "trivy-interval", 0, "interval between periodic trivy rescans")
+	flags.DurationVar(&cfg.TrivyTimeout, "trivy-timeout", 0, "timeout for each trivy run")
+	flags.StringVar(&cfg.TrivyCacheDir, "trivy-cache-dir", "", "shared trivy cache directory")
+	flags.StringVar(&cfg.TrivyBinaryPath, "trivy-binary-path", "", "trivy executable path")
+	flags.IntVar(&cfg.TrivyMaxConcurrency, "trivy-max-concurrency", 0, "maximum concurrent trivy runs")
 
 	if err := flags.Parse(args); err != nil {
 		return serveConfig{}, err
@@ -317,6 +354,9 @@ func parseServeConfig(args []string) (serveConfig, error) {
 
 	if cfg.DatabasePath == "" {
 		cfg.DatabasePath = filepath.Join(cfg.StorageRoot, "metadata.db")
+	}
+	if strings.TrimSpace(cfg.TrivyCacheDir) == "" {
+		cfg.TrivyCacheDir = filepath.Join(cfg.StorageRoot, "trivy-cache")
 	}
 
 	return cfg, nil
@@ -633,6 +673,13 @@ func parseBootstrapConfig(args []string) (BootstrapConfig, error) {
 	flags.StringVar(&cfg.StatePath, "state-path", "/etc/regixtry/bootstrap-state.json", "path to the bootstrap receipt file")
 	flags.StringVar(&cfg.UnitPath, "unit-path", "/etc/systemd/system/regixtry.service", "path to the generated systemd unit")
 	flags.StringVar(&cfg.ServiceName, "service", "regixtry", "systemd service name")
+	flags.BoolVar(&cfg.TrivyEnabled, "trivy-enabled", false, "enable persisted trivy rescans")
+	flags.BoolVar(&cfg.TrivyScheduleEnabled, "trivy-schedule-enabled", false, "enable periodic trivy rescans")
+	flags.DurationVar(&cfg.TrivyInterval, "trivy-interval", 0, "interval between periodic trivy rescans")
+	flags.DurationVar(&cfg.TrivyTimeout, "trivy-timeout", 0, "timeout for each trivy run")
+	flags.StringVar(&cfg.TrivyCacheDir, "trivy-cache-dir", "", "shared trivy cache directory")
+	flags.StringVar(&cfg.TrivyBinaryPath, "trivy-binary-path", "", "trivy executable path")
+	flags.IntVar(&cfg.TrivyMaxConcurrency, "trivy-max-concurrency", 0, "maximum concurrent trivy runs")
 	flags.BoolVar(&cfg.NoStart, "no-start", false, "generate bootstrap artifacts without starting the service")
 	flags.BoolVar(&cfg.Rollback, "rollback", false, "remove generated bootstrap artifacts and stop the service")
 
@@ -681,6 +728,13 @@ func parseSetupConfigWithPromptState(args []string) (setupConfig, setupPromptSta
 	flags.StringVar(&cfg.StatePath, "state-path", "/etc/regixtry/bootstrap-state.json", "path to the bootstrap receipt file")
 	flags.StringVar(&cfg.UnitPath, "unit-path", "/etc/systemd/system/regixtry.service", "path to the generated systemd unit")
 	flags.StringVar(&cfg.ServiceName, "service", "regixtry", "systemd service name")
+	flags.BoolVar(&cfg.TrivyEnabled, "trivy-enabled", parseBoolEnv("REGISTRY_TRIVY_ENABLED", false), "enable persisted trivy rescans")
+	flags.BoolVar(&cfg.TrivyScheduleEnabled, "trivy-schedule-enabled", parseBoolEnv("REGISTRY_TRIVY_SCHEDULE_ENABLED", false), "enable periodic trivy rescans")
+	flags.DurationVar(&cfg.TrivyInterval, "trivy-interval", parseDurationEnv("REGISTRY_TRIVY_INTERVAL", 24*time.Hour), "interval between periodic trivy rescans")
+	flags.DurationVar(&cfg.TrivyTimeout, "trivy-timeout", parseDurationEnv("REGISTRY_TRIVY_TIMEOUT", 15*time.Minute), "timeout for each trivy run")
+	flags.StringVar(&cfg.TrivyCacheDir, "trivy-cache-dir", os.Getenv("REGISTRY_TRIVY_CACHE_DIR"), "shared trivy cache directory")
+	flags.StringVar(&cfg.TrivyBinaryPath, "trivy-binary-path", firstNonEmpty(os.Getenv("REGISTRY_TRIVY_BINARY_PATH"), "trivy"), "trivy executable path")
+	flags.IntVar(&cfg.TrivyMaxConcurrency, "trivy-max-concurrency", parseIntEnv("REGISTRY_TRIVY_MAX_CONCURRENCY", 1), "maximum concurrent trivy runs")
 	flags.BoolVar(&cfg.NoStart, "no-start", false, "generate setup artifacts without starting the service")
 	flags.StringVar(&cfg.Auth.AuthPostgresDSN, "auth-postgres-dsn", defaultAuthPostgresDSN, "Postgres DSN for auth state")
 	flags.StringVar(&cfg.Auth.AdminUsername, "admin-username", "admin", "username for the setup bootstrap admin account")
@@ -699,6 +753,9 @@ func parseSetupConfigWithPromptState(args []string) (setupConfig, setupPromptSta
 	cfg.Auth.AdminPassword = strings.TrimSpace(cfg.Auth.AdminPassword)
 	cfg.Auth.AuthPostgresDSN = strings.TrimSpace(cfg.Auth.AuthPostgresDSN)
 	cfg.BootstrapConfig.AuthPostgresDSN = cfg.Auth.AuthPostgresDSN
+	if strings.TrimSpace(cfg.TrivyCacheDir) == "" {
+		cfg.TrivyCacheDir = filepath.Join(cfg.StorageRoot, "trivy-cache")
+	}
 
 	promptState := setupPromptState{
 		publicURLProvided:       strings.TrimSpace(defaultPublicURL) != "",
@@ -722,6 +779,8 @@ func parseSetupConfigWithPromptState(args []string) (setupConfig, setupPromptSta
 			promptState.adminUsernameProvided = true
 		case "admin-password":
 			promptState.adminPasswordProvided = true
+		case "trivy-enabled", "trivy-schedule-enabled", "trivy-interval", "trivy-timeout", "trivy-cache-dir", "trivy-binary-path", "trivy-max-concurrency":
+			promptState.legacyTrivyProvided = true
 		}
 	})
 
@@ -768,6 +827,330 @@ func parseUpgradeConfig(args []string) (upgradeConfig, error) {
 		return upgradeConfig{}, errors.New("state-path is required")
 	}
 	return cfg, nil
+}
+
+func parseFeatureConfig(args []string) (featureConfig, error) {
+	defaultCfg, err := defaultFeatureConfigWithBootstrapStatePath(featureBootstrapStatePath)
+	if err != nil {
+		return featureConfig{}, err
+	}
+
+	flags := flag.NewFlagSet("feature", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+
+	cfg := defaultCfg
+	flags.StringVar(&cfg.StorageRoot, "storage-root", defaultCfg.StorageRoot, "root directory for registry runtime state")
+	flags.StringVar(&cfg.DatabasePath, "db", defaultCfg.DatabasePath, "path to the SQLite metadata database")
+	flags.StringVar(&cfg.PublicURL, "public-url", defaultCfg.PublicURL, "canonical public URL advertised to registry clients")
+	flags.StringVar(&cfg.Tenant, "tenant", ports.DefaultTenant, "tenant identifier")
+
+	if err := flags.Parse(args); err != nil {
+		return featureConfig{}, err
+	}
+	finalizeFeatureConfigFlags(flags, &cfg)
+	return cfg, nil
+}
+
+func defaultFeatureConfigWithBootstrapStatePath(bootstrapStatePath string) (featureConfig, error) {
+	cfg := featureConfig{
+		StorageRoot: filepath.Join(".", "data"),
+		PublicURL:   os.Getenv("REGISTRY_PUBLIC_URL"),
+	}
+
+	installedCfg, ok, err := loadSetupManagedTUIConfig(bootstrapStatePath)
+	if err != nil {
+		return featureConfig{}, err
+	}
+	if ok {
+		cfg.StorageRoot = installedCfg.StorageRoot
+		cfg.DatabasePath = installedCfg.DatabasePath
+		if strings.TrimSpace(cfg.PublicURL) == "" {
+			cfg.PublicURL = installedCfg.APIBaseURL
+		}
+	}
+
+	return cfg, nil
+}
+
+func finalizeFeatureConfigFlags(flags *flag.FlagSet, cfg *featureConfig) {
+	visited := map[string]bool{}
+	flags.Visit(func(f *flag.Flag) {
+		visited[f.Name] = true
+	})
+	if !visited["db"] && (visited["storage-root"] || strings.TrimSpace(cfg.DatabasePath) == "") {
+		cfg.DatabasePath = filepath.Join(cfg.StorageRoot, "metadata.db")
+	}
+}
+
+func runFeature(ctx context.Context, args []string, stdout io.Writer) error {
+	if len(args) == 0 {
+		return errors.New("expected feature action: list, show, status, install, upgrade, rollback, enable, disable, or configure")
+	}
+
+	switch args[0] {
+	case "list":
+		cfg, err := parseFeatureConfig(args[1:])
+		if err != nil {
+			return err
+		}
+		service, cleanup, err := openFeatureService(cfg)
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+		features, err := service.ListFeatures(ctx)
+		if err != nil {
+			return err
+		}
+		return writeFeatureTable(stdout, features)
+	case "show", "status", "install", "upgrade", "rollback", "enable", "disable":
+		if len(args) < 2 {
+			return fmt.Errorf("feature %s requires a feature name", args[0])
+		}
+		name := args[1]
+		if err := appregixtry.ValidateFeatureName(name); err != nil {
+			return err
+		}
+		flags := flag.NewFlagSet("feature "+args[0], flag.ContinueOnError)
+		flags.SetOutput(io.Discard)
+		var (
+			cfg     featureConfig
+			version string
+		)
+		defaultCfg, err := defaultFeatureConfigWithBootstrapStatePath(featureBootstrapStatePath)
+		if err != nil {
+			return err
+		}
+		cfg = defaultCfg
+		flags.StringVar(&cfg.StorageRoot, "storage-root", defaultCfg.StorageRoot, "root directory for registry runtime state")
+		flags.StringVar(&cfg.DatabasePath, "db", defaultCfg.DatabasePath, "path to the SQLite metadata database")
+		flags.StringVar(&cfg.PublicURL, "public-url", defaultCfg.PublicURL, "canonical public URL advertised to registry clients")
+		flags.StringVar(&cfg.Tenant, "tenant", ports.DefaultTenant, "tenant identifier")
+		flags.StringVar(&version, "version", "", "managed trivy runtime version")
+		if err := flags.Parse(args[2:]); err != nil {
+			return err
+		}
+		finalizeFeatureConfigFlags(flags, &cfg)
+		service, cleanup, err := openFeatureService(cfg)
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+
+		switch args[0] {
+		case "show":
+			details, err := service.GetFeature(ctx, name)
+			if err != nil {
+				return err
+			}
+			return writeFeatureDetails(stdout, details, false)
+		case "status":
+			details, err := service.GetFeatureStatus(ctx, name)
+			if err != nil {
+				return err
+			}
+			return writeFeatureDetails(stdout, details, true)
+		case "install":
+			state, err := service.InstallFeatureRuntimeWithProgress(ctx, name, version, featureProgressWriter(stdout))
+			if err != nil {
+				_, _ = fmt.Fprintf(stdout, "Failed managed runtime install for %s: %v\n", name, err)
+				return err
+			}
+			_, err = fmt.Fprintf(stdout, "Installed managed runtime for %s at %s\n", name, state.ActiveVersion)
+			return err
+		case "upgrade":
+			state, err := service.UpgradeFeatureRuntimeWithProgress(ctx, name, version, featureProgressWriter(stdout))
+			if err != nil {
+				_, _ = fmt.Fprintf(stdout, "Failed managed runtime upgrade for %s: %v\n", name, err)
+				return err
+			}
+			_, err = fmt.Fprintf(stdout, "Upgraded managed runtime for %s to %s\n", name, state.ActiveVersion)
+			return err
+		case "rollback":
+			state, err := service.RollbackFeatureRuntime(ctx, name)
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintf(stdout, "Rolled back managed runtime for %s to %s\n", name, state.ActiveVersion)
+			return err
+		case "enable":
+			details, err := service.SetFeatureEnabled(ctx, name, true)
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintf(stdout, "Enabled feature %s\n", details.Name)
+			return err
+		case "disable":
+			details, err := service.SetFeatureEnabled(ctx, name, false)
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintf(stdout, "Disabled feature %s\n", details.Name)
+			return err
+		}
+	case "configure":
+		if len(args) < 2 {
+			return errors.New("feature configure requires a feature name")
+		}
+		name := args[1]
+		if err := appregixtry.ValidateFeatureName(name); err != nil {
+			return err
+		}
+		flags := flag.NewFlagSet("feature configure", flag.ContinueOnError)
+		flags.SetOutput(io.Discard)
+		var (
+			cfg                   featureConfig
+			enabled               bool
+			scheduleEnabled       bool
+			interval              time.Duration
+			timeout               time.Duration
+			serviceURL            string
+			registryReachableURL  string
+			authToken             string
+			tlsCACertPath         string
+			tlsInsecureSkipVerify bool
+			maxConcurrency        int
+		)
+		defaultCfg, err := defaultFeatureConfigWithBootstrapStatePath(featureBootstrapStatePath)
+		if err != nil {
+			return err
+		}
+		cfg = defaultCfg
+		flags.StringVar(&cfg.StorageRoot, "storage-root", defaultCfg.StorageRoot, "root directory for registry runtime state")
+		flags.StringVar(&cfg.DatabasePath, "db", defaultCfg.DatabasePath, "path to the SQLite metadata database")
+		flags.StringVar(&cfg.Tenant, "tenant", ports.DefaultTenant, "tenant identifier")
+		flags.BoolVar(&enabled, "enabled", false, "enable the feature")
+		flags.BoolVar(&scheduleEnabled, "schedule-enabled", false, "enable scheduled execution")
+		flags.DurationVar(&interval, "interval", 0, "feature interval")
+		flags.DurationVar(&timeout, "timeout", 0, "feature timeout")
+		flags.StringVar(&serviceURL, "service-url", "", "feature service URL")
+		flags.StringVar(&registryReachableURL, "registry-reachable-url", "", "scanner-facing registry URL")
+		flags.StringVar(&authToken, "auth-token", "", "feature bearer token")
+		flags.StringVar(&tlsCACertPath, "tls-ca-cert-path", "", "feature TLS CA certificate path")
+		flags.BoolVar(&tlsInsecureSkipVerify, "tls-insecure-skip-verify", false, "skip feature TLS verification")
+		flags.IntVar(&maxConcurrency, "max-concurrency", 0, "feature max concurrency")
+		if err := flags.Parse(args[2:]); err != nil {
+			return err
+		}
+		finalizeFeatureConfigFlags(flags, &cfg)
+		input := ports.FeatureConfigureInput{}
+		flags.Visit(func(f *flag.Flag) {
+			switch f.Name {
+			case "enabled":
+				input.Enabled = &enabled
+			case "schedule-enabled":
+				input.ScheduleEnabled = &scheduleEnabled
+			case "interval":
+				input.Interval = &interval
+			case "timeout":
+				input.Timeout = &timeout
+			case "service-url":
+				input.ServiceURL = &serviceURL
+			case "registry-reachable-url":
+				input.RegistryReachableURL = &registryReachableURL
+			case "auth-token":
+				input.AuthToken = &authToken
+			case "tls-ca-cert-path":
+				input.TLSCACertPath = &tlsCACertPath
+			case "tls-insecure-skip-verify":
+				input.TLSInsecureSkipVerify = &tlsInsecureSkipVerify
+			case "max-concurrency":
+				input.MaxConcurrency = &maxConcurrency
+			}
+		})
+		service, cleanup, err := openFeatureService(cfg)
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+		details, err := service.ConfigureFeature(ctx, name, input)
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(stdout, "Configured feature %s\n", details.Name)
+		return err
+	}
+
+	return fmt.Errorf("unsupported feature action %q", args[0])
+}
+
+func openFeatureService(cfg featureConfig) (*appregixtry.Service, func(), error) {
+	if err := os.MkdirAll(cfg.StorageRoot, 0o755); err != nil {
+		return nil, nil, err
+	}
+	store, err := metadata.New(cfg.DatabasePath)
+	if err != nil {
+		return nil, nil, err
+	}
+	service := appregixtry.NewService(nil, store, ports.NewConfigurableAccessController(ports.AccessConfig{}), ports.NewSingleTenantResolver(cfg.Tenant), ports.NewInlineJobRunner())
+	service.SetScanHost(cfg.PublicURL)
+	service.SetScanRunner(trivyinfra.New(trivyinfra.RunnerConfig{}))
+	service.SetFeatureRuntimeManager(newFeatureRuntimeManager(appregixtry.FeatureRuntimeManagerConfig{StorageRoot: cfg.StorageRoot, Store: store, ScanRunner: trivyinfra.New(trivyinfra.RunnerConfig{})}))
+	return service, func() { _ = store.Close() }, nil
+}
+
+func writeFeatureDetails(stdout io.Writer, details ports.FeatureDetails, includeRuntime bool) error {
+	lines := []string{
+		fmt.Sprintf("Name: %s", details.Name),
+		fmt.Sprintf("Kind: %s", details.Kind),
+		fmt.Sprintf("Enabled: %t", details.Enabled),
+		fmt.Sprintf("Configured: %t", details.Configured),
+		fmt.Sprintf("Schedule Enabled: %t", details.ScheduleEnabled),
+		fmt.Sprintf("Interval: %s", details.Interval),
+		fmt.Sprintf("Timeout: %s", details.Timeout),
+		fmt.Sprintf("Service URL: %s", details.ServiceURL),
+		fmt.Sprintf("Registry Reachable URL: %s", details.RegistryReachableURL),
+		fmt.Sprintf("TLS CA Cert Path: %s", details.TLSCACertPath),
+		fmt.Sprintf("TLS Insecure Skip Verify: %t", details.TLSInsecureSkipVerify),
+		fmt.Sprintf("Max Concurrency: %d", details.MaxConcurrency),
+	}
+	if includeRuntime {
+		lines = append(lines,
+			fmt.Sprintf("Runtime Status: %s", firstNonEmpty(details.Runtime.Status, details.Runtime.Health, "unknown")),
+			fmt.Sprintf("Runtime Health: %s", firstNonEmpty(details.Runtime.Health, "unknown")),
+			fmt.Sprintf("Runtime Version: %s", firstNonEmpty(details.Runtime.Version, "unknown")),
+			fmt.Sprintf("Runtime Latest Version: %s", firstNonEmpty(details.Runtime.LatestVersion, "unknown")),
+			fmt.Sprintf("Runtime Update Status: %s", firstNonEmpty(details.Runtime.UpdateStatus, "unknown")),
+		)
+		if details.Runtime.RollbackAvailable {
+			lines = append(lines, "Runtime Rollback Available: true")
+		}
+		if strings.TrimSpace(details.Runtime.Detail) != "" {
+			lines = append(lines, fmt.Sprintf("Runtime Detail: %s", details.Runtime.Detail))
+		}
+	}
+	_, err := fmt.Fprintln(stdout, strings.Join(lines, "\n"))
+	return err
+}
+
+func writeFeatureTable(stdout io.Writer, features []ports.FeatureSummary) error {
+	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+	if _, err := fmt.Fprintln(tw, "NAME\tKIND\tENABLED\tCONFIGURED\tCURRENT\tLATEST\tUPDATE"); err != nil {
+		return err
+	}
+	for _, feature := range features {
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%t\t%t\t%s\t%s\t%s\n",
+			feature.Name,
+			feature.Kind,
+			feature.Enabled,
+			feature.Configured,
+			firstNonEmpty(feature.CurrentVersion, "unknown"),
+			firstNonEmpty(feature.LatestVersion, "unknown"),
+			firstNonEmpty(feature.UpdateStatus, "unknown"),
+		); err != nil {
+			return err
+		}
+	}
+	return tw.Flush()
+}
+
+func featureProgressWriter(stdout io.Writer) func(ports.FeatureRuntimeProgress) {
+	return func(progress ports.FeatureRuntimeProgress) {
+		if stdout == nil {
+			return
+		}
+		_, _ = fmt.Fprintf(stdout, "[%s] %s\n", firstNonEmpty(strings.TrimSpace(progress.Stage), "unknown"), firstNonEmpty(strings.TrimSpace(progress.Detail), "working"))
+	}
 }
 
 func runSetup(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) error {
@@ -820,6 +1203,14 @@ func runSetup(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 			return upgradeLifecyclePermissionError(err, "daemon-sqlite setup", formatSetupCommand(cfg.BootstrapConfig, false))
 		}
 
+		legacyImported := false
+		if promptState.legacyTrivyProvided {
+			legacyImported, err = importLegacySetupTrivyFlags(ctx, cfg.BootstrapConfig)
+			if err != nil {
+				return rollbackSetupFailure(ctx, runner, cfg.BootstrapConfig, fmt.Errorf("import legacy trivy setup flags: %w", err))
+			}
+		}
+
 		provenance, err := runner.PlanLifecycleProvenance(cfg.BootstrapConfig)
 		if err != nil {
 			return rollbackSetupFailure(ctx, runner, cfg.BootstrapConfig, fmt.Errorf("plan lifecycle provenance: %w", err))
@@ -835,6 +1226,9 @@ func runSetup(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 		if stdout != nil {
 			_, _ = fmt.Fprintf(stdout, "Setup complete: regixtry is installed, %s.service is running, and %s is reachable.\n", cfg.ServiceName, cfg.PublicURL)
 			_, _ = fmt.Fprintf(stdout, "Lifecycle provenance recorded at %s\n", provenance.StatePath)
+			if legacyImported {
+				_, _ = fmt.Fprintln(stdout, "Legacy Trivy setup flags were imported into feature state. Use `regixtry feature ...` to manage Trivy going forward; service_url and registry_reachable_url are still required.")
+			}
 			printSetupAuthGuidance(stdout, cfg, authOutcome)
 		}
 		return nil
@@ -976,6 +1370,37 @@ func buildSetupAuthPostgresDSN(host string, port string, user string, password s
 	assembled.RawQuery = query.Encode()
 	return assembled.String(), nil
 }
+
+func importLegacySetupTrivyFlags(ctx context.Context, cfg installlinux.BootstrapConfig) (bool, error) {
+	service, cleanup, err := openFeatureService(featureConfig{
+		StorageRoot:  cfg.StorageRoot,
+		DatabasePath: filepath.Join(cfg.StorageRoot, "metadata.db"),
+		Tenant:       ports.DefaultTenant,
+	})
+	if err != nil {
+		return false, err
+	}
+	defer cleanup()
+	details, err := service.ImportLegacyFeatureConfigIfMissing(ctx, "trivy", ports.FeatureConfigureInput{
+		Enabled:         boolPointer(cfg.TrivyEnabled),
+		ScheduleEnabled: boolPointer(cfg.TrivyScheduleEnabled),
+		Interval:        durationPointer(cfg.TrivyInterval),
+		Timeout:         durationPointer(cfg.TrivyTimeout),
+		MaxConcurrency:  intPointer(cfg.TrivyMaxConcurrency),
+	})
+	if err != nil {
+		return false, err
+	}
+	return details.Configured, nil
+}
+
+func boolPointer(value bool) *bool { return &value }
+
+func durationPointer(value time.Duration) *time.Duration { return &value }
+
+func stringPointer(value string) *string { return &value }
+
+func intPointer(value int) *int { return &value }
 
 func runUninstall(ctx context.Context, args []string, stdout io.Writer) error {
 	cfg, err := parseUninstallConfig(args)
@@ -1203,6 +1628,49 @@ func minInt(a int, b int) int {
 		return a
 	}
 	return b
+}
+
+func maxDuration(a time.Duration, b time.Duration) time.Duration {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func parseBoolEnv(key string, fallback bool) bool {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func parseDurationEnv(key string, fallback time.Duration) time.Duration {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := time.ParseDuration(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func parseIntEnv(key string, fallback int) int {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }
 
 func resolveSetupMode(rawMode string, interactive bool, reader *bufio.Reader, stdout io.Writer) (string, bool, error) {
@@ -1635,8 +2103,41 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 		ports.NewSingleTenantResolver(cfg.Tenant),
 		ports.NewInlineJobRunner(),
 	)
+	service.SetScanHost(cfg.PublicURL)
+	service.SetScanRunner(trivyinfra.New(trivyinfra.RunnerConfig{}))
+	service.SetFeatureRuntimeManager(newFeatureRuntimeManager(appregixtry.FeatureRuntimeManagerConfig{StorageRoot: cfg.StorageRoot, Store: metadataStore, ScanRunner: trivyinfra.New(trivyinfra.RunnerConfig{})}))
+	trivyMaxConcurrency := cfg.TrivyMaxConcurrency
+	if trivyMaxConcurrency <= 0 {
+		trivyMaxConcurrency = 1
+	}
+	trivyTimeout := cfg.TrivyTimeout
+	if trivyTimeout <= 0 {
+		trivyTimeout = 15 * time.Minute
+	}
+	trivyInterval := cfg.TrivyInterval
+	if trivyInterval <= 0 {
+		trivyInterval = 24 * time.Hour
+	}
+	settings, err := service.EnsureScanSettings(context.Background(), ports.ScanSettings{
+		Enabled:         cfg.TrivyEnabled,
+		ScheduleEnabled: cfg.TrivyScheduleEnabled,
+		Interval:        trivyInterval,
+		Timeout:         trivyTimeout,
+		MaxConcurrency:  trivyMaxConcurrency,
+	})
+	if err != nil {
+		_ = metadataStore.Close()
+		if authStore != nil {
+			_ = authStore.Close()
+		}
+		return nil, nil, err
+	}
+	schedulerCtx, cancelScheduler := context.WithCancel(context.Background())
+	scheduler := appscanning.NewScheduler(metadataStore, service, cfg.Tenant, cfg.ServiceName, settings.Interval, maxDuration(settings.Interval/2, time.Second))
+	go func() { _ = scheduler.Run(schedulerCtx) }()
 
 	return regixtryhttp.NewRouter(service, authService), func() {
+		cancelScheduler()
 		_ = metadataStore.Close()
 		if authStore != nil {
 			_ = authStore.Close()
@@ -1694,6 +2195,7 @@ func runTUI(cfg tuiConfig, stdin io.Reader, stdout io.Writer) error {
 		ports.NewSingleTenantResolver(cfg.Tenant),
 		ports.NewInlineJobRunner(),
 	)
+	service.SetFeatureRuntimeManager(newFeatureRuntimeManager(appregixtry.FeatureRuntimeManagerConfig{StorageRoot: cfg.StorageRoot, Store: metadataStore, ScanRunner: trivyinfra.New(trivyinfra.RunnerConfig{})}))
 
 	if cfg.Snapshot {
 		model := tui.NewModel(service, modelOpts...)

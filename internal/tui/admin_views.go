@@ -35,8 +35,10 @@ func renderAdminScreen(theme adminTheme, current screen, session AdminSession, v
 		return fmt.Sprintf("Users / %s / Tokens", selectedAdminUsername(view)), renderAdminTokensScreen(theme, view), "n: create token | x: revoke token | g: grants | Esc: back | q: quit"
 	case screenAdminCreateToken:
 		return fmt.Sprintf("Users / %s / Tokens / Create Token", selectedAdminUsername(view)), renderAdminCreateTokenScreen(theme, view), "Enter: create token | Tab: next field | Esc: cancel"
+	case screenAdminFeatures:
+		return "Features", renderAdminFeaturesScreen(theme, session, view, now), featureActionHelp(view.FeatureStatus)
 	default:
-		return "Users", renderAdminUsersScreen(theme, session, view, now), "/: search | Enter/e: edit user | n: create user | Esc: back | q: quit"
+		return "Users", renderAdminUsersScreen(theme, session, view, now), "/: search | Enter/e: edit user | n: create user | f: features | Esc: back | q: quit"
 	}
 }
 
@@ -68,6 +70,57 @@ func renderAdminUsersScreen(theme adminTheme, session AdminSession, view AdminVi
 			lines = append(lines, label)
 		}
 	}
+	lines = append(lines,
+		"",
+		theme.muted.Render(fmt.Sprintf("Operator: %s", session.Username)),
+		theme.muted.Render(fmt.Sprintf("Session remaining: %s", formatRemaining(session.Remaining(now)))),
+	)
+	return theme.section.Render(strings.Join(lines, "\n"))
+}
+
+func renderAdminFeaturesScreen(theme adminTheme, session AdminSession, view AdminViewState, now time.Time) string {
+	lines := []string{theme.subheading.Render("Built-in Features")}
+	if len(view.Features) == 0 {
+		lines = append(lines, theme.muted.Render("No built-in features available."))
+	} else {
+		selectedIndex := boundedIndex(view.SelectedFeature, len(view.Features))
+		for index, feature := range view.Features {
+			label := fmt.Sprintf("%s [%s] enabled=%t configured=%t current=%s latest=%s update=%s", feature.Name, feature.Kind, feature.Enabled, feature.Configured, adminFirstNonEmpty(strings.TrimSpace(feature.CurrentVersion), "unknown"), adminFirstNonEmpty(strings.TrimSpace(feature.LatestVersion), "unknown"), adminFirstNonEmpty(strings.TrimSpace(feature.UpdateStatus), "unknown"))
+			if index == selectedIndex {
+				label = theme.selected.Render(label)
+			}
+			lines = append(lines, label)
+		}
+	}
+
+	lines = append(lines, "", theme.subheading.Render("Feature Status"))
+	if strings.TrimSpace(view.FeatureStatus.Name) == "" {
+		lines = append(lines, theme.muted.Render("Select or refresh a feature to load backend-authoritative status."))
+	} else {
+		lines = append(lines,
+			fmt.Sprintf("Name: %s", view.FeatureStatus.Name),
+			fmt.Sprintf("Kind: %s", view.FeatureStatus.Kind),
+			fmt.Sprintf("Enabled: %t", view.FeatureStatus.Enabled),
+			fmt.Sprintf("Configured: %t", view.FeatureStatus.Configured),
+			fmt.Sprintf("Schedule Enabled: %t", view.FeatureStatus.ScheduleEnabled),
+			fmt.Sprintf("Interval: %s", view.FeatureStatus.Interval),
+			fmt.Sprintf("Timeout: %s", view.FeatureStatus.Timeout),
+			fmt.Sprintf("Service URL: %s", view.FeatureStatus.ServiceURL),
+			fmt.Sprintf("Registry Reachable URL: %s", view.FeatureStatus.RegistryReachableURL),
+			fmt.Sprintf("TLS CA Cert Path: %s", view.FeatureStatus.TLSCACertPath),
+			fmt.Sprintf("TLS Insecure Skip Verify: %t", view.FeatureStatus.TLSInsecureSkipVerify),
+			fmt.Sprintf("Max Concurrency: %d", view.FeatureStatus.MaxConcurrency),
+			fmt.Sprintf("Runtime Status: %s", adminFirstNonEmpty(strings.TrimSpace(view.FeatureStatus.Runtime.Status), adminFirstNonEmpty(strings.TrimSpace(view.FeatureStatus.Runtime.Health), "unknown"))),
+			fmt.Sprintf("Runtime Health: %s", adminFirstNonEmpty(strings.TrimSpace(view.FeatureStatus.Runtime.Health), "unknown")),
+			fmt.Sprintf("Runtime Version: %s", adminFirstNonEmpty(strings.TrimSpace(view.FeatureStatus.Runtime.Version), "unknown")),
+			fmt.Sprintf("Runtime Latest Version: %s", adminFirstNonEmpty(strings.TrimSpace(view.FeatureStatus.Runtime.LatestVersion), "unknown")),
+			fmt.Sprintf("Runtime Update Status: %s", adminFirstNonEmpty(strings.TrimSpace(view.FeatureStatus.Runtime.UpdateStatus), "unknown")),
+		)
+		if strings.TrimSpace(view.FeatureStatus.Runtime.Detail) != "" {
+			lines = append(lines, fmt.Sprintf("Runtime Detail: %s", view.FeatureStatus.Runtime.Detail))
+		}
+	}
+
 	lines = append(lines,
 		"",
 		theme.muted.Render(fmt.Sprintf("Operator: %s", session.Username)),
@@ -318,4 +371,13 @@ func formatAdminUserLabel(user ports.AdminUser) string {
 		state = "enabled"
 	}
 	return fmt.Sprintf("%s [%s, %s]", user.Username, role, state)
+}
+
+func adminFirstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }

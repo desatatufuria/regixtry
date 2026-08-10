@@ -92,6 +92,7 @@ const (
 	screenAdminLogin          screen = "admin-login"
 	screenAdminAuthenticating screen = "admin-authenticating"
 	screenAdminUsers          screen = "admin-users"
+	screenAdminFeatures       screen = "admin-features"
 	screenAdminCreateUser     screen = "admin-create-user"
 	screenAdminEditUser       screen = "admin-edit-user"
 	screenAdminChangePassword screen = "admin-change-password"
@@ -153,6 +154,7 @@ type Model struct {
 	lastRepository     string
 	lastTag            string
 	startupLogin       bool
+	pendingAdminStatus string
 }
 
 type catalogLoadedMsg struct {
@@ -182,6 +184,29 @@ type adminLoginCompletedMsg struct {
 type adminUsersLoadedMsg struct {
 	users []ports.AdminUser
 	err   error
+}
+
+type adminFeaturesLoadedMsg struct {
+	features []ports.FeatureSummary
+	err      error
+}
+
+type adminFeatureStatusLoadedMsg struct {
+	details ports.FeatureDetails
+	err     error
+}
+
+type adminFeatureMutatedMsg struct {
+	details ports.FeatureDetails
+	enabled bool
+	err     error
+}
+
+type adminFeatureRuntimeMutatedMsg struct {
+	name   string
+	action string
+	state  ports.TrivyRuntimeState
+	err    error
 }
 
 type adminUserGrantsLoadedMsg struct {
@@ -368,6 +393,66 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = ""
 		}
 		return m, nil
+	case adminFeaturesLoadedMsg:
+		if msg.err != nil {
+			if IsAdminSessionExpired(msg.err) {
+				return m.expireAdminSession(msg.err.Error()), nil
+			}
+			m.status = msg.err.Error()
+			return m, nil
+		}
+		m.applyLoadedFeatures(msg.features)
+		if len(m.adminView.Features) == 0 {
+			m.status = "No built-in features found."
+			return m, nil
+		}
+		m.status = fmt.Sprintf("Loading feature status for %s...", m.selectedFeatureName())
+		return m, m.loadAdminFeatureStatusCmd(m.selectedFeatureName())
+	case adminFeatureStatusLoadedMsg:
+		if msg.err != nil {
+			if IsAdminSessionExpired(msg.err) {
+				return m.expireAdminSession(msg.err.Error()), nil
+			}
+			m.status = msg.err.Error()
+			return m, nil
+		}
+		m.adminView.FeatureStatus = msg.details
+		if strings.TrimSpace(m.pendingAdminStatus) != "" {
+			m.status = m.pendingAdminStatus
+			m.pendingAdminStatus = ""
+		} else if strings.HasPrefix(strings.ToLower(m.status), "loading") {
+			m.status = ""
+		}
+		return m, nil
+	case adminFeatureMutatedMsg:
+		if msg.err != nil {
+			if IsAdminSessionExpired(msg.err) {
+				return m.expireAdminSession(msg.err.Error()), nil
+			}
+			m.status = msg.err.Error()
+			return m, nil
+		}
+		m.adminView.ConfirmModal = adminConfirmModal{}
+		verb := "disabled"
+		if msg.enabled {
+			verb = "enabled"
+		}
+		m.pendingAdminStatus = fmt.Sprintf("Feature %q %s.", msg.details.Name, verb)
+		m.status = "Loading built-in features..."
+		m.screen = screenAdminFeatures
+		return m, m.loadAdminFeaturesCmd()
+	case adminFeatureRuntimeMutatedMsg:
+		if msg.err != nil {
+			if IsAdminSessionExpired(msg.err) {
+				return m.expireAdminSession(msg.err.Error()), nil
+			}
+			m.status = msg.err.Error()
+			return m, nil
+		}
+		m.pendingAdminStatus = fmt.Sprintf("Managed runtime %s for %q at %s.", msg.action, msg.name, adminFirstNonEmpty(strings.TrimSpace(msg.state.ActiveVersion), adminFirstNonEmpty(strings.TrimSpace(string(msg.state.Status)), "unknown")))
+		m.status = "Loading built-in features..."
+		m.screen = screenAdminFeatures
+		return m, m.loadAdminFeaturesCmd()
 	case adminUserGrantsLoadedMsg:
 		if msg.err != nil {
 			if IsAdminSessionExpired(msg.err) {
@@ -569,7 +654,7 @@ func (m Model) View() string {
 		return renderInspectionWorkspace("Sign In", renderAdminLogin(newAdminTheme(), m.adminLogin), m.status, "Enter: sign in | Tab: switch field | Esc: back | q: quit")
 	case screenAdminAuthenticating:
 		return renderInspectionWorkspace("Sign In", renderConsoleTextSection(m.loadingText), "", "q: quit")
-	case screenAdminUsers, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken:
+	case screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken:
 		return renderAdminWorkspace(m.screen, m.adminSession, m.adminView, m.repositories.Items, m.status, m.now())
 	}
 
@@ -674,6 +759,8 @@ func (m Model) updateAdminKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case screenAdminUsers:
 		return m.updateAdminUsersKey(msg)
+	case screenAdminFeatures:
+		return m.updateAdminFeaturesKey(msg)
 	case screenAdminCreateUser:
 		return m.updateCreateUserFormKey(msg)
 	case screenAdminEditUser:
@@ -754,6 +841,105 @@ func (m Model) updateAdminUsersKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case isRuneKey(msg, 'r'):
 		m.status = "Loading admin users..."
 		return m, m.loadAdminUsersCmd()
+	case isRuneKey(msg, 'f'):
+		return m.openAdminFeatures()
+	}
+
+	return m, nil
+}
+
+func (m Model) updateAdminFeaturesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	availability := featureActionAvailabilityForStatus(m.adminView.FeatureStatus)
+	switch {
+	case isEscKey(msg):
+		m.screen = screenAdminUsers
+		m.status = ""
+		return m, nil
+	case isMoveUpKey(msg):
+		return m.moveAdminFeatureSelection(-1)
+	case isMoveDownKey(msg):
+		return m.moveAdminFeatureSelection(1)
+	case isEnterKey(msg), isRuneKey(msg, 'r'):
+		if strings.TrimSpace(m.selectedFeatureName()) == "" {
+			m.status = "No feature selected."
+			return m, nil
+		}
+		m.status = fmt.Sprintf("Loading feature status for %s...", m.selectedFeatureName())
+		return m, m.loadAdminFeatureStatusCmd(m.selectedFeatureName())
+	case isRuneKey(msg, 'e'):
+		name := m.selectedFeatureName()
+		if name == "" {
+			m.status = "No feature selected."
+			return m, nil
+		}
+		if !availability.Enable {
+			m.status = availability.EnableReason
+			return m, nil
+		}
+		m.adminView.ConfirmModal = adminConfirmModal{
+			Kind:        adminConfirmEnableFeature,
+			Title:       "Confirm Enable",
+			Message:     fmt.Sprintf("Confirm enable feature %q?", name),
+			ConfirmText: "enable",
+			FeatureName: name,
+		}
+		m.status = ""
+		return m, nil
+	case isRuneKey(msg, 'i'):
+		name := m.selectedFeatureName()
+		if name == "" {
+			m.status = "No feature selected."
+			return m, nil
+		}
+		if !availability.Install {
+			m.status = availability.InstallReason
+			return m, nil
+		}
+		m.status = fmt.Sprintf("Installing managed runtime for %s...", name)
+		return m, m.installFeatureRuntimeCmd(name)
+	case isRuneKey(msg, 'u'):
+		name := m.selectedFeatureName()
+		if name == "" {
+			m.status = "No feature selected."
+			return m, nil
+		}
+		if !availability.Upgrade {
+			m.status = availability.UpgradeReason
+			return m, nil
+		}
+		m.status = fmt.Sprintf("Upgrading managed runtime for %s...", name)
+		return m, m.upgradeFeatureRuntimeCmd(name)
+	case isRuneKey(msg, 'b'):
+		name := m.selectedFeatureName()
+		if name == "" {
+			m.status = "No feature selected."
+			return m, nil
+		}
+		if !availability.Rollback {
+			m.status = availability.RollbackReason
+			return m, nil
+		}
+		m.status = fmt.Sprintf("Rolling back managed runtime for %s...", name)
+		return m, m.rollbackFeatureRuntimeCmd(name)
+	case isRuneKey(msg, 'x'):
+		name := m.selectedFeatureName()
+		if name == "" {
+			m.status = "No feature selected."
+			return m, nil
+		}
+		if !availability.Disable {
+			m.status = availability.DisableReason
+			return m, nil
+		}
+		m.adminView.ConfirmModal = adminConfirmModal{
+			Kind:        adminConfirmDisableFeature,
+			Title:       "Confirm Disable",
+			Message:     fmt.Sprintf("Confirm disable feature %q?", name),
+			ConfirmText: "disable",
+			FeatureName: name,
+		}
+		m.status = ""
+		return m, nil
 	}
 
 	return m, nil
@@ -1002,6 +1188,12 @@ func (m Model) updateAdminConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case adminConfirmDisableUser:
 			m.status = fmt.Sprintf("Submitting disable for %s...", modal.Username)
 			return m, m.enableDisableUserCmd(modal.UserID, false)
+		case adminConfirmEnableFeature:
+			m.status = fmt.Sprintf("Submitting enable for %s...", modal.FeatureName)
+			return m, m.enableDisableFeatureCmd(modal.FeatureName, true)
+		case adminConfirmDisableFeature:
+			m.status = fmt.Sprintf("Submitting disable for %s...", modal.FeatureName)
+			return m, m.enableDisableFeatureCmd(modal.FeatureName, false)
 		case adminConfirmDeleteGrant:
 			m.status = fmt.Sprintf("Removing grant %q from %s...", modal.Repository, modal.Username)
 			return m, m.deleteAdminGrantCmd(modal.UserID, modal.Username, modal.Repository)
@@ -1346,6 +1538,26 @@ func (m Model) loadAdminUsersCmd() tea.Cmd {
 	}
 }
 
+func (m Model) loadAdminFeaturesCmd() tea.Cmd {
+	return func() tea.Msg {
+		if m.adminClient == nil {
+			return adminFeaturesLoadedMsg{err: fmt.Errorf("admin API is unavailable for this session")}
+		}
+		features, err := m.adminClient.ListFeatures(m.ctx, m.adminSession)
+		return adminFeaturesLoadedMsg{features: features, err: err}
+	}
+}
+
+func (m Model) loadAdminFeatureStatusCmd(name string) tea.Cmd {
+	return func() tea.Msg {
+		if m.adminClient == nil {
+			return adminFeatureStatusLoadedMsg{err: fmt.Errorf("admin API is unavailable for this session")}
+		}
+		details, err := m.adminClient.GetFeatureStatus(m.ctx, m.adminSession, name)
+		return adminFeatureStatusLoadedMsg{details: details, err: err}
+	}
+}
+
 func (m Model) loadAdminGrantsCmd(userID string, username string) tea.Cmd {
 	return func() tea.Msg {
 		if m.adminClient == nil {
@@ -1444,6 +1656,54 @@ func (m Model) enableDisableUserCmd(userID string, enabled bool) tea.Cmd {
 	}
 }
 
+func (m Model) enableDisableFeatureCmd(name string, enabled bool) tea.Cmd {
+	return func() tea.Msg {
+		if m.adminClient == nil {
+			return adminFeatureMutatedMsg{enabled: enabled, err: fmt.Errorf("admin API is unavailable for this session")}
+		}
+		var (
+			details ports.FeatureDetails
+			err     error
+		)
+		if enabled {
+			details, err = m.adminClient.EnableFeature(m.ctx, m.adminSession, name)
+		} else {
+			details, err = m.adminClient.DisableFeature(m.ctx, m.adminSession, name)
+		}
+		return adminFeatureMutatedMsg{details: details, enabled: enabled, err: err}
+	}
+}
+
+func (m Model) installFeatureRuntimeCmd(name string) tea.Cmd {
+	return func() tea.Msg {
+		if m.adminClient == nil {
+			return adminFeatureRuntimeMutatedMsg{name: name, action: "installed", err: fmt.Errorf("admin API is unavailable for this session")}
+		}
+		state, err := m.adminClient.InstallFeatureRuntime(m.ctx, m.adminSession, name, "")
+		return adminFeatureRuntimeMutatedMsg{name: name, action: "installed", state: state, err: err}
+	}
+}
+
+func (m Model) upgradeFeatureRuntimeCmd(name string) tea.Cmd {
+	return func() tea.Msg {
+		if m.adminClient == nil {
+			return adminFeatureRuntimeMutatedMsg{name: name, action: "upgraded", err: fmt.Errorf("admin API is unavailable for this session")}
+		}
+		state, err := m.adminClient.UpgradeFeatureRuntime(m.ctx, m.adminSession, name, "")
+		return adminFeatureRuntimeMutatedMsg{name: name, action: "upgraded", state: state, err: err}
+	}
+}
+
+func (m Model) rollbackFeatureRuntimeCmd(name string) tea.Cmd {
+	return func() tea.Msg {
+		if m.adminClient == nil {
+			return adminFeatureRuntimeMutatedMsg{name: name, action: "rolled back", err: fmt.Errorf("admin API is unavailable for this session")}
+		}
+		state, err := m.adminClient.RollbackFeatureRuntime(m.ctx, m.adminSession, name)
+		return adminFeatureRuntimeMutatedMsg{name: name, action: "rolled back", state: state, err: err}
+	}
+}
+
 func (m Model) openAdmin() (tea.Model, tea.Cmd) {
 	if m.adminClient == nil {
 		m.status = "Admin API is unavailable for this session."
@@ -1479,6 +1739,13 @@ func (m Model) openAdmin() (tea.Model, tea.Cmd) {
 	}
 	m.screen = screenAdminLogin
 	return m, nil
+}
+
+func (m Model) openAdminFeatures() (tea.Model, tea.Cmd) {
+	m.screen = screenAdminFeatures
+	m.adminView.UserSearchActive = false
+	m.status = "Loading built-in features..."
+	return m, m.loadAdminFeaturesCmd()
 }
 
 func (m Model) logoutAdmin() Model {
@@ -1597,7 +1864,7 @@ func nextGrantRole(current domainauth.RepoRole) domainauth.RepoRole {
 
 func isAdminScreen(current screen) bool {
 	switch current {
-	case screenAdminLogin, screenAdminAuthenticating, screenAdminUsers, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken:
+	case screenAdminLogin, screenAdminAuthenticating, screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken:
 		return true
 	default:
 		return false
@@ -1606,7 +1873,7 @@ func isAdminScreen(current screen) bool {
 
 func isAdminPrincipalScreen(current screen) bool {
 	switch current {
-	case screenAdminLogin, screenAdminUsers, screenAdminCreateUser, screenAdminEditUser, screenAdminEditUserGrants, screenAdminEditUserTokens:
+	case screenAdminLogin, screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminEditUserGrants, screenAdminEditUserTokens:
 		return true
 	default:
 		return false
@@ -1621,7 +1888,7 @@ func (m Model) canLogoutAdminFromCurrentScreen() bool {
 	switch m.screen {
 	case screenAdminUsers:
 		return !m.adminView.UserSearchActive
-	case screenAdminEditUser, screenAdminEditUserGrants, screenAdminEditUserTokens:
+	case screenAdminFeatures, screenAdminEditUser, screenAdminEditUserGrants, screenAdminEditUserTokens:
 		return true
 	default:
 		return false
@@ -1647,6 +1914,99 @@ func grantRepositorySuggestions(form adminGrantForm, repositories []string) []st
 		suggestions = append(suggestions, repository)
 	}
 	return suggestions
+}
+
+type featureActionAvailability struct {
+	Install        bool
+	InstallReason  string
+	Upgrade        bool
+	UpgradeReason  string
+	Rollback       bool
+	RollbackReason string
+	Enable         bool
+	EnableReason   string
+	Disable        bool
+	DisableReason  string
+}
+
+func featureActionAvailabilityForStatus(details ports.FeatureDetails) featureActionAvailability {
+	availability := featureActionAvailability{
+		InstallReason:  "Install unavailable: refresh feature status first.",
+		UpgradeReason:  "Upgrade unavailable: refresh feature status first.",
+		RollbackReason: "Rollback unavailable: refresh feature status first.",
+		EnableReason:   "Enable unavailable: refresh feature status first.",
+		DisableReason:  "Disable unavailable: refresh feature status first.",
+	}
+	if strings.TrimSpace(details.Name) == "" {
+		return availability
+	}
+	availability.Enable = !details.Enabled
+	if availability.Enable {
+		availability.EnableReason = ""
+	} else {
+		availability.EnableReason = fmt.Sprintf("Enable unavailable: feature %q is already enabled.", details.Name)
+	}
+	availability.Disable = details.Enabled
+	if availability.Disable {
+		availability.DisableReason = ""
+	} else {
+		availability.DisableReason = fmt.Sprintf("Disable unavailable: feature %q is already disabled.", details.Name)
+	}
+	runtime := details.Runtime
+	status := strings.TrimSpace(runtime.Status)
+	if status == "" {
+		status = strings.TrimSpace(runtime.Health)
+	}
+	current := strings.TrimSpace(runtime.Version)
+	update := strings.TrimSpace(runtime.UpdateStatus)
+	if runtime.Mode == ports.FeatureRuntimeModeManaged && (status == string(ports.TrivyRuntimeStatusUninstalled) || status == string(ports.TrivyRuntimeStatusMigrationRequired)) {
+		availability.Install = true
+		availability.InstallReason = ""
+	} else {
+		availability.InstallReason = fmt.Sprintf("Install unavailable: feature %q already has an active managed runtime.", details.Name)
+	}
+	if runtime.Mode == ports.FeatureRuntimeModeManaged && current != "" && update == "available" {
+		availability.Upgrade = true
+		availability.UpgradeReason = ""
+	} else {
+		switch update {
+		case "up-to-date":
+			availability.UpgradeReason = fmt.Sprintf("Upgrade unavailable: feature %q is already up to date.", details.Name)
+		case "unknown":
+			availability.UpgradeReason = fmt.Sprintf("Upgrade unavailable: latest version for %q is unknown.", details.Name)
+		default:
+			availability.UpgradeReason = fmt.Sprintf("Upgrade unavailable: feature %q has no upgrade candidate.", details.Name)
+		}
+	}
+	availability.Rollback = runtime.Mode == ports.FeatureRuntimeModeManaged && runtime.RollbackAvailable
+	if availability.Rollback {
+		availability.RollbackReason = ""
+	} else {
+		availability.RollbackReason = fmt.Sprintf("Rollback unavailable: feature %q has no previous managed runtime version.", details.Name)
+	}
+	return availability
+}
+
+func featureActionHelp(details ports.FeatureDetails) string {
+	availability := featureActionAvailabilityForStatus(details)
+	parts := []string{"Enter/r: refresh status"}
+	if availability.Install {
+		parts = append(parts, "i: install runtime")
+	}
+	if availability.Upgrade {
+		parts = append(parts, "u: upgrade runtime")
+	}
+	if availability.Rollback {
+		parts = append(parts, "b: rollback runtime")
+	}
+	if availability.Enable {
+		parts = append(parts, "e: enable")
+	}
+	if availability.Disable {
+		parts = append(parts, "x: disable")
+	}
+	parts = append(parts, "Esc: back", "q: quit")
+	return strings.Join(parts, " | ")
 }
 
 func renderList(items []string, selected int) string {
@@ -1777,7 +2137,10 @@ func (m *Model) applyLoadedUsers(users []ports.AdminUser) {
 func (m *Model) clearSelectedAdminDetails() {
 	m.adminView.Grants = nil
 	m.adminView.AdminTokens = nil
+	m.adminView.Features = nil
+	m.adminView.FeatureStatus = ports.FeatureDetails{}
 	m.adminView.SelectedGrant = 0
+	m.adminView.SelectedFeature = 0
 	m.adminView.SelectedToken = 0
 	m.adminView.ResetPasswordForm = adminResetPasswordForm{}
 	m.adminView.GrantForm = newAdminViewState().GrantForm
@@ -1785,6 +2148,59 @@ func (m *Model) clearSelectedAdminDetails() {
 	m.adminView.RevealedTokenSecret = ""
 	m.adminView.RevealedTokenAccessor = ""
 	m.adminView.RevealedTokenExpiresAt = time.Time{}
+}
+
+func (m *Model) applyLoadedFeatures(features []ports.FeatureSummary) {
+	preferredName := m.selectedFeatureName()
+	m.adminView.Features = append([]ports.FeatureSummary(nil), features...)
+	if len(m.adminView.Features) == 0 {
+		m.adminView.SelectedFeature = 0
+		m.adminView.FeatureStatus = ports.FeatureDetails{}
+		return
+	}
+	selected := 0
+	if preferredName != "" {
+		for index, feature := range m.adminView.Features {
+			if feature.Name == preferredName {
+				selected = index
+				break
+			}
+		}
+	}
+	m.adminView.SelectedFeature = boundedIndex(selected, len(m.adminView.Features))
+	m.adminView.FeatureStatus = ports.FeatureDetails{}
+}
+
+func (m *Model) applyFeatureDetails(details ports.FeatureDetails) {
+	m.adminView.FeatureStatus = details
+	for index, feature := range m.adminView.Features {
+		if feature.Name == details.Name {
+			m.adminView.Features[index].Enabled = details.Enabled
+			m.adminView.Features[index].Configured = details.Configured
+			m.adminView.SelectedFeature = index
+			return
+		}
+	}
+}
+
+func (m Model) selectedFeatureName() string {
+	if len(m.adminView.Features) == 0 {
+		return ""
+	}
+	index := boundedIndex(m.adminView.SelectedFeature, len(m.adminView.Features))
+	return m.adminView.Features[index].Name
+}
+
+func (m Model) moveAdminFeatureSelection(delta int) (tea.Model, tea.Cmd) {
+	if len(m.adminView.Features) == 0 {
+		m.adminView.SelectedFeature = 0
+		m.adminView.FeatureStatus = ports.FeatureDetails{}
+		return m, nil
+	}
+	m.adminView.SelectedFeature = boundedIndex(m.adminView.SelectedFeature+delta, len(m.adminView.Features))
+	m.adminView.FeatureStatus = ports.FeatureDetails{}
+	m.status = fmt.Sprintf("Loading feature status for %s...", m.selectedFeatureName())
+	return m, m.loadAdminFeatureStatusCmd(m.selectedFeatureName())
 }
 
 func (m *Model) clearRevealedAdminToken() {

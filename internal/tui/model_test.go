@@ -456,6 +456,225 @@ func TestModelExpiredSessionForcesRelogin(t *testing.T) {
 	}
 }
 
+func TestModelFeatureViewLoadsBackendStatusAndAllowsDisable(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 8, 14, 0, 0, 0, time.UTC)
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+		users:        []ports.AdminUser{{ID: "u-1", Username: "alice", IsAdmin: true, Enabled: true}},
+		features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
+		featureStatus: ports.FeatureDetails{
+			Name:            "trivy",
+			Kind:            ports.FeatureKindBuiltin,
+			Enabled:         true,
+			Configured:      true,
+			ScheduleEnabled: true,
+			Interval:        6 * time.Hour,
+			Timeout:         10 * time.Minute,
+			CacheDir:        "/var/lib/regixtry/trivy-cache",
+			BinaryPath:      "trivy",
+			MaxConcurrency:  2,
+			Runtime:         ports.FeatureRuntime{Health: "ready", Version: "0.57.1", Detail: "binary reachable at /usr/bin/trivy"},
+		},
+		disableFeature: ports.FeatureDetails{
+			Name:            "trivy",
+			Kind:            ports.FeatureKindBuiltin,
+			Enabled:         false,
+			Configured:      true,
+			ScheduleEnabled: true,
+			Interval:        6 * time.Hour,
+			Timeout:         10 * time.Minute,
+			CacheDir:        "/var/lib/regixtry/trivy-cache",
+			BinaryPath:      "trivy",
+			MaxConcurrency:  2,
+			Runtime:         ports.FeatureRuntime{Health: "ready", Version: "0.57.1", Detail: "binary reachable at /usr/bin/trivy"},
+		},
+	}
+	model := newAdminReadyModel(t, adminClient)
+	updated := runAdminLogin(t, model, "operator", "secret-pass")
+	updated = runKey(t, updated, "f")
+
+	if updated.screen != screenAdminFeatures {
+		t.Fatalf("screen = %q, want %q", updated.screen, screenAdminFeatures)
+	}
+	if adminClient.listFeaturesCalls != 1 || adminClient.getFeatureStatusCalls != 1 {
+		t.Fatalf("feature client calls = %#v, want one feature list + one status read", adminClient)
+	}
+	view := updated.View()
+	for _, want := range []string{"Built-in Features", "trivy", "Runtime Health: ready", "Runtime Version: 0.57.1"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view = %q, want %q", view, want)
+		}
+	}
+
+	updated = runKey(t, updated, "x")
+	if !strings.Contains(updated.View(), `Confirm disable feature "trivy"?`) {
+		t.Fatalf("view = %q, want feature disable confirmation", updated.View())
+	}
+
+	updated = runKey(t, updated, "enter")
+	if adminClient.disableFeatureCalls != 1 {
+		t.Fatalf("disableFeatureCalls = %d, want 1", adminClient.disableFeatureCalls)
+	}
+	if updated.screen != screenAdminFeatures {
+		t.Fatalf("screen = %q, want %q after disable", updated.screen, screenAdminFeatures)
+	}
+	if !strings.Contains(updated.View(), `Feature "trivy" disabled.`) || !strings.Contains(updated.View(), `Enabled: false`) {
+		t.Fatalf("view = %q, want disabled feature status", updated.View())
+	}
+}
+
+func TestModelFeatureViewShowsManagedRuntimeMigrationStateAndInstallAction(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 8, 14, 0, 0, 0, time.UTC)
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+		features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
+		featureStatus: ports.FeatureDetails{
+			Name:            "trivy",
+			Kind:            ports.FeatureKindBuiltin,
+			Enabled:         true,
+			Configured:      true,
+			ScheduleEnabled: true,
+			Interval:        6 * time.Hour,
+			Timeout:         10 * time.Minute,
+			Runtime: ports.FeatureRuntime{
+				Mode:          ports.FeatureRuntimeModeManaged,
+				Status:        "migration-required",
+				Health:        "migration-required",
+				LatestVersion: "unknown",
+				UpdateStatus:  "unknown",
+				Detail:        `legacy binary_path "/tmp/README.sh" requires managed reinstall and will never be executed`,
+			},
+		},
+		installRuntime: ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusReady, ActiveVersion: "0.57.1"},
+	}
+	model := newAdminReadyModel(t, adminClient)
+	updated := runAdminLogin(t, model, "operator", "secret-pass")
+	updated = runKey(t, updated, "f")
+
+	view := updated.View()
+	for _, want := range []string{"Runtime Status: migration-required", `legacy binary_path "/tmp/README.sh" requires managed reinstall`, "i: install runtime", "x: disable", "Runtime Latest Version: unknown", "Runtime Update Status: unknown"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view = %q, want %q", view, want)
+		}
+	}
+	if strings.Contains(view, "u: upgrade runtime") || strings.Contains(view, "b: rollback runtime") {
+		t.Fatalf("view = %q, want no unavailable runtime actions in help", view)
+	}
+
+	updated = runKey(t, updated, "i")
+	if adminClient.installRuntimeCalls != 1 {
+		t.Fatalf("installRuntimeCalls = %d, want 1", adminClient.installRuntimeCalls)
+	}
+	if !strings.Contains(updated.View(), `Managed runtime installed for "trivy" at 0.57.1.`) {
+		t.Fatalf("view = %q, want install confirmation", updated.View())
+	}
+}
+
+func TestModelFeatureViewUnavailableActionShowsGuidance(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 8, 14, 0, 0, 0, time.UTC)
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+		features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true, CurrentVersion: "0.57.1", LatestVersion: "0.57.1", UpdateStatus: "up-to-date"}},
+		featureStatus: ports.FeatureDetails{
+			Name:       "trivy",
+			Kind:       ports.FeatureKindBuiltin,
+			Enabled:    true,
+			Configured: true,
+			Runtime:    ports.FeatureRuntime{Mode: ports.FeatureRuntimeModeManaged, Status: "ready", Health: "ready", Version: "0.57.1", LatestVersion: "0.57.1", UpdateStatus: "up-to-date"},
+		},
+	}
+	model := newAdminReadyModel(t, adminClient)
+	updated := runAdminLogin(t, model, "operator", "secret-pass")
+	updated = runKey(t, updated, "f")
+	updated = runKey(t, updated, "u")
+
+	if adminClient.upgradeRuntimeCalls != 0 {
+		t.Fatalf("upgradeRuntimeCalls = %d, want 0 for unavailable action", adminClient.upgradeRuntimeCalls)
+	}
+	if !strings.Contains(updated.View(), "Upgrade unavailable") {
+		t.Fatalf("view = %q, want unavailable-action guidance", updated.View())
+	}
+}
+
+func TestModelFeatureRuntimeActionRefreshesListAndStatus(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 8, 14, 0, 0, 0, time.UTC)
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+		features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true, CurrentVersion: "0.57.1", LatestVersion: "0.58.0", UpdateStatus: "available"}},
+		featureStatus: ports.FeatureDetails{
+			Name:       "trivy",
+			Kind:       ports.FeatureKindBuiltin,
+			Enabled:    true,
+			Configured: true,
+			Runtime:    ports.FeatureRuntime{Mode: ports.FeatureRuntimeModeManaged, Status: "ready", Health: "ready", Version: "0.57.1", LatestVersion: "0.58.0", UpdateStatus: "available", RollbackAvailable: true},
+		},
+		upgradeRuntime: ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusReady, ActiveVersion: "0.58.0", PreviousVersion: "0.57.1"},
+	}
+	model := newAdminReadyModel(t, adminClient)
+	updated := runAdminLogin(t, model, "operator", "secret-pass")
+	updated = runKey(t, updated, "f")
+	updated = runKey(t, updated, "u")
+
+	if adminClient.upgradeRuntimeCalls != 1 {
+		t.Fatalf("upgradeRuntimeCalls = %d, want 1", adminClient.upgradeRuntimeCalls)
+	}
+	if adminClient.listFeaturesCalls != 2 || adminClient.getFeatureStatusCalls != 2 {
+		t.Fatalf("feature client calls = %#v, want refresh after runtime action", adminClient)
+	}
+	for _, want := range []string{`Managed runtime upgraded for "trivy" at 0.58.0.`, "Runtime Version: 0.58.0", "Runtime Update Status: up-to-date"} {
+		if !strings.Contains(updated.View(), want) {
+			t.Fatalf("view = %q, want %q", updated.View(), want)
+		}
+	}
+}
+
+func TestModelFeatureRuntimeActionFailureStaysOnFeatureScreen(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 8, 14, 0, 0, 0, time.UTC)
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+		features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true, CurrentVersion: "0.57.1", LatestVersion: "0.58.0", UpdateStatus: "available"}},
+		featureStatus: ports.FeatureDetails{
+			Name:       "trivy",
+			Kind:       ports.FeatureKindBuiltin,
+			Enabled:    true,
+			Configured: true,
+			Runtime:    ports.FeatureRuntime{Mode: ports.FeatureRuntimeModeManaged, Status: "ready", Health: "ready", Version: "0.57.1", LatestVersion: "0.58.0", UpdateStatus: "available", RollbackAvailable: true},
+		},
+	}
+	model := newAdminReadyModel(t, adminClient)
+	updated := runAdminLogin(t, model, "operator", "secret-pass")
+	updated = runKey(t, updated, "f")
+	adminClient.featureErr = errors.New("upgrade runtime: registry unavailable")
+
+	updated = runKey(t, updated, "u")
+
+	if adminClient.upgradeRuntimeCalls != 1 {
+		t.Fatalf("upgradeRuntimeCalls = %d, want 1", adminClient.upgradeRuntimeCalls)
+	}
+	if updated.screen != screenAdminFeatures {
+		t.Fatalf("screen = %q, want %q after failed runtime action", updated.screen, screenAdminFeatures)
+	}
+	if adminClient.listFeaturesCalls != 1 || adminClient.getFeatureStatusCalls != 1 {
+		t.Fatalf("feature client calls = %#v, want no refresh flow after failed runtime action", adminClient)
+	}
+	view := updated.View()
+	for _, want := range []string{"upgrade runtime: registry unavailable", "Built-in Features", "Runtime Status: ready", "u: upgrade runtime"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view = %q, want %q", view, want)
+		}
+	}
+}
+
 func TestModelEscWalksBackThroughEditFlow(t *testing.T) {
 	t.Parallel()
 
@@ -756,6 +975,16 @@ type fakeAdminClient struct {
 	loginSession AdminSession
 	loginErr     error
 
+	features        []ports.FeatureSummary
+	feature         ports.FeatureDetails
+	featureStatus   ports.FeatureDetails
+	installRuntime  ports.TrivyRuntimeState
+	upgradeRuntime  ports.TrivyRuntimeState
+	rollbackRuntime ports.TrivyRuntimeState
+	enableFeature   ports.FeatureDetails
+	disableFeature  ports.FeatureDetails
+	featureErr      error
+
 	users            []ports.AdminUser
 	listUsersResults [][]ports.AdminUser
 	usersErr         error
@@ -790,18 +1019,26 @@ type fakeAdminClient struct {
 	disableUser ports.AdminUser
 	disableErr  error
 
-	loginCalls         int
-	listUsersCalls     int
-	listGrantsCalls    int
-	listTokensCalls    int
-	createUserCalls    int
-	resetPasswordCalls int
-	putGrantCalls      int
-	deleteGrantCalls   int
-	createTokenCalls   int
-	revokeTokenCalls   int
-	enableCalls        int
-	disableCalls       int
+	loginCalls            int
+	listFeaturesCalls     int
+	getFeatureCalls       int
+	getFeatureStatusCalls int
+	installRuntimeCalls   int
+	upgradeRuntimeCalls   int
+	rollbackRuntimeCalls  int
+	enableFeatureCalls    int
+	disableFeatureCalls   int
+	listUsersCalls        int
+	listGrantsCalls       int
+	listTokensCalls       int
+	createUserCalls       int
+	resetPasswordCalls    int
+	putGrantCalls         int
+	deleteGrantCalls      int
+	createTokenCalls      int
+	revokeTokenCalls      int
+	enableCalls           int
+	disableCalls          int
 }
 
 func (f *fakeAdminClient) Login(context.Context, string, string) (AdminSession, error) {
@@ -810,6 +1047,117 @@ func (f *fakeAdminClient) Login(context.Context, string, string) (AdminSession, 
 		return AdminSession{}, f.loginErr
 	}
 	return f.loginSession, nil
+}
+
+func (f *fakeAdminClient) ListFeatures(context.Context, AdminSession) ([]ports.FeatureSummary, error) {
+	f.listFeaturesCalls++
+	if f.featureErr != nil {
+		return nil, f.featureErr
+	}
+	return append([]ports.FeatureSummary(nil), f.features...), nil
+}
+
+func (f *fakeAdminClient) GetFeature(context.Context, AdminSession, string) (ports.FeatureDetails, error) {
+	f.getFeatureCalls++
+	if f.featureErr != nil {
+		return ports.FeatureDetails{}, f.featureErr
+	}
+	return f.feature, nil
+}
+
+func (f *fakeAdminClient) GetFeatureStatus(context.Context, AdminSession, string) (ports.FeatureDetails, error) {
+	f.getFeatureStatusCalls++
+	if f.featureErr != nil {
+		return ports.FeatureDetails{}, f.featureErr
+	}
+	return f.featureStatus, nil
+}
+
+func (f *fakeAdminClient) InstallFeatureRuntime(context.Context, AdminSession, string, string) (ports.TrivyRuntimeState, error) {
+	f.installRuntimeCalls++
+	if f.featureErr != nil {
+		return ports.TrivyRuntimeState{}, f.featureErr
+	}
+	if f.installRuntime.ActiveVersion != "" {
+		f.featureStatus.Runtime.Status = string(f.installRuntime.Status)
+		f.featureStatus.Runtime.Health = string(f.installRuntime.Status)
+		f.featureStatus.Runtime.Version = f.installRuntime.ActiveVersion
+		f.featureStatus.Runtime.UpdateStatus = "up-to-date"
+		if len(f.features) > 0 {
+			f.features[0].CurrentVersion = f.installRuntime.ActiveVersion
+			f.features[0].UpdateStatus = "up-to-date"
+		}
+		return f.installRuntime, nil
+	}
+	return ports.TrivyRuntimeState{}, nil
+}
+
+func (f *fakeAdminClient) UpgradeFeatureRuntime(context.Context, AdminSession, string, string) (ports.TrivyRuntimeState, error) {
+	f.upgradeRuntimeCalls++
+	if f.featureErr != nil {
+		return ports.TrivyRuntimeState{}, f.featureErr
+	}
+	if f.upgradeRuntime.ActiveVersion != "" {
+		f.featureStatus.Runtime.Status = string(f.upgradeRuntime.Status)
+		f.featureStatus.Runtime.Health = string(f.upgradeRuntime.Status)
+		f.featureStatus.Runtime.Version = f.upgradeRuntime.ActiveVersion
+		f.featureStatus.Runtime.UpdateStatus = "up-to-date"
+		f.featureStatus.Runtime.RollbackAvailable = strings.TrimSpace(f.upgradeRuntime.PreviousVersion) != ""
+		if len(f.features) > 0 {
+			f.features[0].CurrentVersion = f.upgradeRuntime.ActiveVersion
+			f.features[0].UpdateStatus = "up-to-date"
+		}
+	}
+	return f.upgradeRuntime, nil
+}
+
+func (f *fakeAdminClient) RollbackFeatureRuntime(context.Context, AdminSession, string) (ports.TrivyRuntimeState, error) {
+	f.rollbackRuntimeCalls++
+	if f.featureErr != nil {
+		return ports.TrivyRuntimeState{}, f.featureErr
+	}
+	return f.rollbackRuntime, nil
+}
+
+func (f *fakeAdminClient) ConfigureFeature(context.Context, AdminSession, string, ports.FeatureConfigureInput) (ports.FeatureDetails, error) {
+	if f.featureErr != nil {
+		return ports.FeatureDetails{}, f.featureErr
+	}
+	return f.feature, nil
+}
+
+func (f *fakeAdminClient) EnableFeature(context.Context, AdminSession, string) (ports.FeatureDetails, error) {
+	f.enableFeatureCalls++
+	if f.featureErr != nil {
+		return ports.FeatureDetails{}, f.featureErr
+	}
+	if f.enableFeature.Name != "" {
+		f.feature = f.enableFeature
+		f.featureStatus = f.enableFeature
+		if len(f.features) > 0 {
+			f.features[0].Enabled = f.enableFeature.Enabled
+			f.features[0].Configured = f.enableFeature.Configured
+		}
+		return f.enableFeature, nil
+	}
+	return f.feature, nil
+}
+
+func (f *fakeAdminClient) DisableFeature(context.Context, AdminSession, string) (ports.FeatureDetails, error) {
+	f.disableFeatureCalls++
+	if f.featureErr != nil {
+		return ports.FeatureDetails{}, f.featureErr
+	}
+	if f.disableFeature.Name != "" {
+		f.feature = f.disableFeature
+		f.featureStatus = f.disableFeature
+		if len(f.features) > 0 {
+			f.features[0].Enabled = f.disableFeature.Enabled
+			f.features[0].Configured = f.disableFeature.Configured
+		}
+		return f.disableFeature, nil
+	}
+	return f.feature, nil
 }
 
 func (f *fakeAdminClient) ListUsers(context.Context, AdminSession) ([]ports.AdminUser, error) {

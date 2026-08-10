@@ -1,17 +1,18 @@
 schema: spec-driven
 
 context: |
-  Stack: Go application initialized; the repository contains a single-binary OCI registry, Bubble Tea operator console, and active OpenSpec artifacts under `openspec/changes/registry-foundation/`.
-  Runtime: Docker-based development container with Go 1.26.x, Docker CLI/Compose, Node.js/npm, sqlite3, gopls, dlv, staticcheck, Air, and bootstrap tooling for opencode, codex, gentle-ai, and codegraph.
-  Architecture: Implemented single Go binary with `serve` and `tui` entry modes, layered into application, domain, ports, protocol, infrastructure adapters, and TUI packages; filesystem blob storage and SQLite metadata back the current v1 runtime, while auth, tenant, and job seams remain explicit.
-  Testing: Go module, package tests, protocol/integration tests, and local verification smoke scripts are present; no GitHub Actions workflow is currently checked into the repository.
-  Style: English technical artifacts, minimalistic polished UX, low-resource design, GitFlow workflow, benchmark before implementation, clean commits.
+  Stack: Single-binary Go 1.26 OCI registry with Bubble Tea TUI, filesystem blob storage, SQLite metadata, and optional PostgreSQL-backed auth/admin APIs.
+  Runtime: `cmd/regixtry` exposes `serve`, `tui`, `bootstrap`, `bootstrap-admin`, `setup`, `uninstall`, and `upgrade`; release CI is defined in `.github/workflows/release.yml`.
+  Architecture: Layered `internal/domain`, `internal/app`, `internal/ports`, `internal/infra`, `internal/protocol/http`, and `internal/tui`; current jobs remain inline with no persistent worker/queue.
+  Testing: Go package tests cover domain, app, HTTP router, storage/auth adapters, TUI, and install lifecycle; smoke scripts validate installer, Docker push/pull, and TUI snapshot flows.
+  OpenSpec: `openspec/` is already checked in with main specs (`installation-modes`, `lifecycle-cli`, `operator-admin-tui`) plus active and archived changes.
+  Style: Technical artifacts stay in English; workflow expects strict TDD, hybrid SDD persistence, and clean reviewable changes.
 
-strict_tdd: false
+strict_tdd: true
 
 testing:
-  detected: "2026-06-30"
-  strict_tdd: false
+  detected: "2026-08-09"
+  strict_tdd: true
   runner:
     available: true
     framework: "Go testing"
@@ -19,13 +20,13 @@ testing:
   layers:
     unit:
       available: true
-      tool: "Go testing table-driven package tests"
+      tool: "Go testing package and table-driven tests"
     integration:
       available: true
-      tool: "httptest, temp dirs, disposable SQLite DB, and filesystem adapter tests"
+      tool: "httptest, temp dirs, disposable SQLite/Postgres-backed adapter tests"
     e2e:
       available: true
-      tool: "docs/verification/scripts/docker-push-pull-smoke.sh and docs/verification/scripts/tui-smoke.sh"
+      tool: "docs/verification/scripts/install-release-smoke.sh, docker-push-pull-smoke.sh, and tui-smoke.sh"
   coverage:
     available: true
     command: "go test -cover ./..."
@@ -35,7 +36,7 @@ testing:
       command: "go vet ./..."
     type_checker:
       available: true
-      command: "go test ./... or go build ./..."
+      command: "go build ./..."
     formatter:
       available: true
       command: "gofmt -w ."
@@ -45,6 +46,7 @@ rules:
     - Include rollback plan for risky changes.
     - Benchmark existing OSS and industry registries before proposing implementation details.
     - Keep roadmap and documentation impact explicit from the start.
+    - Keep CI-first image scanning and later registry-driven rescans explicit when proposing supply-chain features.
   specs:
     - Use Given/When/Then for scenarios.
     - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY).
@@ -60,7 +62,7 @@ rules:
     constraints:
       - Follow existing code patterns once they exist.
       - Keep commits clean and aligned with GitFlow.
-    tdd: false
+    tdd: true
     test_command: "go test ./..."
   verify:
     constraints:
