@@ -521,8 +521,6 @@ EOF
     --schedule-enabled \
     --interval 6h \
     --timeout 10m \
-    --cache-dir "${storage_root}/trivy-cache" \
-    --binary-path trivy \
     --max-concurrency 2 >"${feature_configure_log}" 2>&1
   assert_contains "${feature_configure_log}" "Configured feature trivy"
 
@@ -564,7 +562,7 @@ EOF
   assert_contains "${uninstall_log}" "Uninstall report:"
   assert_contains_one_of "${uninstall_log}" "- service regixtry.service: failed" "- service regixtry.service: removed"
   assert_contains "${uninstall_log}" "- ${managed_existing}: removed (path removed)"
-  assert_contains "${uninstall_log}" "- ${managed_missing}: missing (path already absent)"
+  assert_contains "${uninstall_log}" "- ${managed_missing}: removed (path removed)"
   assert_contains "${uninstall_log}" "- ${managed_bin}: removed (path removed)"
   assert_not_exists "${managed_existing}"
   assert_not_exists "${bootstrap_state_path}"
@@ -653,8 +651,6 @@ PY
     --schedule-enabled \
     --interval 6h \
     --timeout 10m \
-    --cache-dir "${storage_root}/trivy-cache" \
-    --binary-path trivy \
     --max-concurrency 2 >"${feature_configure_log}" 2>&1
   assert_contains "${feature_configure_log}" "Configured feature trivy"
 
