@@ -140,6 +140,44 @@ func TestLoadInstalledIntentRecoversTrivyManagedSettings(t *testing.T) {
 	}
 }
 
+func TestLifecycleProvenanceOmitsFeatureOwnedTrivyIntentFields(t *testing.T) {
+	t.Parallel()
+
+	provenance := lifecycleProvenanceFromPlan(BootstrapPlan{
+		Mode:                 supportedMode,
+		Addr:                 "127.0.0.1:5000",
+		PublicURL:            "http://127.0.0.1:5000",
+		RuntimeTLSMode:       RuntimeTLSModeLocalHTTP,
+		StorageRoot:          "/var/lib/regixtry",
+		DatabasePath:         "/var/lib/regixtry/metadata.db",
+		ContentPath:          "/var/lib/regixtry/content",
+		StatePath:            "/etc/regixtry/bootstrap-state.json",
+		EnvPath:              "/etc/regixtry/regixtry.env",
+		UnitPath:             "/etc/systemd/system/regixtry.service",
+		BinaryPath:           "/usr/local/bin/regixtry",
+		ServiceName:          "regixtry",
+		TrivyEnabled:         true,
+		TrivyScheduleEnabled: true,
+		TrivyInterval:        6 * time.Hour,
+		TrivyTimeout:         10 * time.Minute,
+		TrivyCacheDir:        "/var/lib/regixtry/trivy-cache",
+		TrivyBinaryPath:      "trivy-custom",
+		TrivyMaxConcurrency:  2,
+	}, bootstrapReceiptFromPlan(BootstrapPlan{
+		Mode:         supportedMode,
+		ServiceName:  "regixtry",
+		EnvPath:      "/etc/regixtry/regixtry.env",
+		UnitPath:     "/etc/systemd/system/regixtry.service",
+		DatabasePath: "/var/lib/regixtry/metadata.db",
+		ContentPath:  "/var/lib/regixtry/content",
+		StatePath:    "/etc/regixtry/bootstrap-state.json",
+	}))
+
+	if provenance.Intent.TrivyEnabled || provenance.Intent.TrivyScheduleEnabled || provenance.Intent.TrivyInterval != "" || provenance.Intent.TrivyTimeout != "" || provenance.Intent.TrivyCacheDir != "" || provenance.Intent.TrivyBinaryPath != "" || provenance.Intent.TrivyMaxConcurrency != 0 {
+		t.Fatalf("provenance intent = %#v, want feature-owned Trivy fields omitted", provenance.Intent)
+	}
+}
+
 func TestLoadInstalledIntentReportsMissingLifecycleCriticalValues(t *testing.T) {
 	t.Parallel()
 

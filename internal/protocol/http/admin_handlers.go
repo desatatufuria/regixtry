@@ -32,6 +32,10 @@ func (r *Router) handleAdmin(w stdhttp.ResponseWriter, req *stdhttp.Request) {
 	}
 
 	switch {
+	case subpath == "features":
+		r.handleAdminFeaturesCollection(w, req)
+	case strings.HasPrefix(subpath, "features/"):
+		r.handleAdminFeatureResource(w, req, strings.TrimPrefix(subpath, "features/"))
 	case subpath == "scan-settings":
 		r.handleAdminScanSettings(w, req)
 	case subpath == "scan-runs":
@@ -42,6 +46,89 @@ func (r *Router) handleAdmin(w stdhttp.ResponseWriter, req *stdhttp.Request) {
 		r.handleAdminUserResource(w, req, *principal, strings.TrimPrefix(subpath, "users/"))
 	default:
 		writeAdminError(w, domainauth.NewNotFoundError("route", req.URL.Path), ports.Challenge{})
+	}
+}
+
+func (r *Router) handleAdminFeaturesCollection(w stdhttp.ResponseWriter, req *stdhttp.Request) {
+	if req.Method != stdhttp.MethodGet {
+		w.Header().Set("Allow", stdhttp.MethodGet)
+		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+		return
+	}
+	features, err := r.service.ListFeatures(req.Context())
+	if err != nil {
+		writeAdminError(w, err, ports.Challenge{})
+		return
+	}
+	writeJSON(w, stdhttp.StatusOK, features)
+}
+
+func (r *Router) handleAdminFeatureResource(w stdhttp.ResponseWriter, req *stdhttp.Request, resource string) {
+	switch {
+	case strings.HasSuffix(resource, "/status"):
+		name := strings.TrimSuffix(resource, "/status")
+		details, err := r.service.GetFeatureStatus(req.Context(), name)
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		writeJSON(w, stdhttp.StatusOK, featureDetailsResponse(details, true))
+	case strings.HasSuffix(resource, "/config"):
+		name := strings.TrimSuffix(resource, "/config")
+		if req.Method != stdhttp.MethodPut {
+			w.Header().Set("Allow", stdhttp.MethodPut)
+			w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+			return
+		}
+		input, err := decodeFeatureConfigureInput(req)
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		details, err := r.service.ConfigureFeature(req.Context(), name, input)
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		writeJSON(w, stdhttp.StatusOK, featureDetailsResponse(details, false))
+	case strings.HasSuffix(resource, ":enable"):
+		name := strings.TrimSuffix(resource, ":enable")
+		if req.Method != stdhttp.MethodPost {
+			w.Header().Set("Allow", stdhttp.MethodPost)
+			w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+			return
+		}
+		details, err := r.service.SetFeatureEnabled(req.Context(), name, true)
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		writeJSON(w, stdhttp.StatusOK, featureDetailsResponse(details, false))
+	case strings.HasSuffix(resource, ":disable"):
+		name := strings.TrimSuffix(resource, ":disable")
+		if req.Method != stdhttp.MethodPost {
+			w.Header().Set("Allow", stdhttp.MethodPost)
+			w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+			return
+		}
+		details, err := r.service.SetFeatureEnabled(req.Context(), name, false)
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		writeJSON(w, stdhttp.StatusOK, featureDetailsResponse(details, false))
+	default:
+		if req.Method != stdhttp.MethodGet {
+			w.Header().Set("Allow", stdhttp.MethodGet)
+			w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+			return
+		}
+		details, err := r.service.GetFeature(req.Context(), resource)
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		writeJSON(w, stdhttp.StatusOK, featureDetailsResponse(details, false))
 	}
 }
 
@@ -147,6 +234,62 @@ func scanSettingsResponse(settings ports.ScanSettings) map[string]any {
 		"max_concurrency":  settings.MaxConcurrency,
 		"updated_at":       settings.UpdatedAt,
 	}
+}
+
+func decodeFeatureConfigureInput(req *stdhttp.Request) (ports.FeatureConfigureInput, error) {
+	var payload struct {
+		Enabled         *bool   `json:"enabled"`
+		ScheduleEnabled *bool   `json:"schedule_enabled"`
+		Interval        string  `json:"interval"`
+		Timeout         string  `json:"timeout"`
+		CacheDir        *string `json:"cache_dir"`
+		BinaryPath      *string `json:"binary_path"`
+		MaxConcurrency  *int    `json:"max_concurrency"`
+	}
+	if err := decodeAdminJSON(req, &payload); err != nil {
+		return ports.FeatureConfigureInput{}, err
+	}
+	input := ports.FeatureConfigureInput{
+		Enabled:         payload.Enabled,
+		ScheduleEnabled: payload.ScheduleEnabled,
+		CacheDir:        payload.CacheDir,
+		BinaryPath:      payload.BinaryPath,
+		MaxConcurrency:  payload.MaxConcurrency,
+	}
+	if strings.TrimSpace(payload.Interval) != "" {
+		interval, err := time.ParseDuration(strings.TrimSpace(payload.Interval))
+		if err != nil {
+			return ports.FeatureConfigureInput{}, domainauth.NewValidationError("interval must be a valid duration")
+		}
+		input.Interval = &interval
+	}
+	if strings.TrimSpace(payload.Timeout) != "" {
+		timeout, err := time.ParseDuration(strings.TrimSpace(payload.Timeout))
+		if err != nil {
+			return ports.FeatureConfigureInput{}, domainauth.NewValidationError("timeout must be a valid duration")
+		}
+		input.Timeout = &timeout
+	}
+	return input, nil
+}
+
+func featureDetailsResponse(details ports.FeatureDetails, includeRuntime bool) map[string]any {
+	response := map[string]any{
+		"name":             details.Name,
+		"kind":             details.Kind,
+		"enabled":          details.Enabled,
+		"configured":       details.Configured,
+		"schedule_enabled": details.ScheduleEnabled,
+		"interval":         details.Interval.String(),
+		"timeout":          details.Timeout.String(),
+		"cache_dir":        details.CacheDir,
+		"binary_path":      details.BinaryPath,
+		"max_concurrency":  details.MaxConcurrency,
+	}
+	if includeRuntime {
+		response["runtime"] = details.Runtime
+	}
+	return response
 }
 
 func (r *Router) handleAdminUsersCollection(w stdhttp.ResponseWriter, req *stdhttp.Request, principal domainauth.Principal) {

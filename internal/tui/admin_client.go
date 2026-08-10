@@ -19,6 +19,12 @@ const defaultAdminClientTimeout = 15 * time.Second
 
 type AdminClient interface {
 	Login(ctx context.Context, username, password string) (AdminSession, error)
+	ListFeatures(ctx context.Context, session AdminSession) ([]ports.FeatureSummary, error)
+	GetFeature(ctx context.Context, session AdminSession, name string) (ports.FeatureDetails, error)
+	GetFeatureStatus(ctx context.Context, session AdminSession, name string) (ports.FeatureDetails, error)
+	ConfigureFeature(ctx context.Context, session AdminSession, name string, input ports.FeatureConfigureInput) (ports.FeatureDetails, error)
+	EnableFeature(ctx context.Context, session AdminSession, name string) (ports.FeatureDetails, error)
+	DisableFeature(ctx context.Context, session AdminSession, name string) (ports.FeatureDetails, error)
 	ListUsers(ctx context.Context, session AdminSession) ([]ports.AdminUser, error)
 	CreateUser(ctx context.Context, session AdminSession, input ports.AdminCreateUserInput) (ports.AdminUser, error)
 	ResetPassword(ctx context.Context, session AdminSession, input ports.AdminResetPasswordInput) error
@@ -127,6 +133,40 @@ func (c *HTTPAdminClient) ListUsers(ctx context.Context, session AdminSession) (
 	return users, nil
 }
 
+func (c *HTTPAdminClient) ListFeatures(ctx context.Context, session AdminSession) ([]ports.FeatureSummary, error) {
+	var features []ports.FeatureSummary
+	if err := c.getJSON(ctx, session, "/admin/v1/features", &features); err != nil {
+		return nil, err
+	}
+	return features, nil
+}
+
+func (c *HTTPAdminClient) GetFeature(ctx context.Context, session AdminSession, name string) (ports.FeatureDetails, error) {
+	return c.getFeatureDetails(ctx, session, "/admin/v1/features/"+url.PathEscape(strings.TrimSpace(name)))
+}
+
+func (c *HTTPAdminClient) GetFeatureStatus(ctx context.Context, session AdminSession, name string) (ports.FeatureDetails, error) {
+	return c.getFeatureDetails(ctx, session, "/admin/v1/features/"+url.PathEscape(strings.TrimSpace(name))+"/status")
+}
+
+func (c *HTTPAdminClient) ConfigureFeature(ctx context.Context, session AdminSession, name string, input ports.FeatureConfigureInput) (ports.FeatureDetails, error) {
+	var details ports.FeatureDetails
+	body := encodeFeatureConfigureInput(input)
+	path := "/admin/v1/features/" + url.PathEscape(strings.TrimSpace(name)) + "/config"
+	if err := c.requestJSON(ctx, stdhttp.MethodPut, session, path, body, &details, stdhttp.StatusOK); err != nil {
+		return ports.FeatureDetails{}, err
+	}
+	return details, nil
+}
+
+func (c *HTTPAdminClient) EnableFeature(ctx context.Context, session AdminSession, name string) (ports.FeatureDetails, error) {
+	return c.mutateFeature(ctx, session, name, ":enable")
+}
+
+func (c *HTTPAdminClient) DisableFeature(ctx context.Context, session AdminSession, name string) (ports.FeatureDetails, error) {
+	return c.mutateFeature(ctx, session, name, ":disable")
+}
+
 func (c *HTTPAdminClient) CreateUser(ctx context.Context, session AdminSession, input ports.AdminCreateUserInput) (ports.AdminUser, error) {
 	var user ports.AdminUser
 	if err := c.requestJSON(ctx, stdhttp.MethodPost, session, "/admin/v1/users", input, &user, stdhttp.StatusCreated); err != nil {
@@ -208,6 +248,15 @@ func (c *HTTPAdminClient) mutateUser(ctx context.Context, session AdminSession, 
 		return ports.AdminUser{}, err
 	}
 	return user, nil
+}
+
+func (c *HTTPAdminClient) mutateFeature(ctx context.Context, session AdminSession, name string, action string) (ports.FeatureDetails, error) {
+	var details ports.FeatureDetails
+	path := "/admin/v1/features/" + url.PathEscape(strings.TrimSpace(name)) + action
+	if err := c.requestJSON(ctx, stdhttp.MethodPost, session, path, nil, &details, stdhttp.StatusOK); err != nil {
+		return ports.FeatureDetails{}, err
+	}
+	return details, nil
 }
 
 func (c *HTTPAdminClient) getJSON(ctx context.Context, session AdminSession, path string, target any) error {
@@ -293,6 +342,40 @@ func requestActionLabel(method string) string {
 
 func (c *HTTPAdminClient) endpoint(path string) string {
 	return c.baseURL + path
+}
+
+func (c *HTTPAdminClient) getFeatureDetails(ctx context.Context, session AdminSession, path string) (ports.FeatureDetails, error) {
+	var details ports.FeatureDetails
+	if err := c.getJSON(ctx, session, path, &details); err != nil {
+		return ports.FeatureDetails{}, err
+	}
+	return details, nil
+}
+
+func encodeFeatureConfigureInput(input ports.FeatureConfigureInput) map[string]any {
+	body := map[string]any{}
+	if input.Enabled != nil {
+		body["enabled"] = *input.Enabled
+	}
+	if input.ScheduleEnabled != nil {
+		body["schedule_enabled"] = *input.ScheduleEnabled
+	}
+	if input.Interval != nil {
+		body["interval"] = input.Interval.String()
+	}
+	if input.Timeout != nil {
+		body["timeout"] = input.Timeout.String()
+	}
+	if input.CacheDir != nil {
+		body["cache_dir"] = *input.CacheDir
+	}
+	if input.BinaryPath != nil {
+		body["binary_path"] = *input.BinaryPath
+	}
+	if input.MaxConcurrency != nil {
+		body["max_concurrency"] = *input.MaxConcurrency
+	}
+	return body
 }
 
 func decodeAdminAPIError(action string, resp *stdhttp.Response) error {

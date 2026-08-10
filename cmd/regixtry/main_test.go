@@ -989,8 +989,137 @@ func TestRunSetupPassesParsedConfigToRunnerAndWritesProvenance(t *testing.T) {
 	}
 }
 
+func TestRunSetupImportsLegacyTrivyFlagsIntoFeatureState(t *testing.T) {
+	root := t.TempDir()
+	storageRoot := filepath.Join(root, "var", "lib", "regixtry")
+	provenancePath := filepath.Join(root, "etc", "regixtry", "regixtry-lifecycle-state.json")
+	if err := os.MkdirAll(filepath.Dir(provenancePath), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+
+	runner := &stubBootstrapRunner{
+		plannedProvenance: installlinux.LifecycleProvenance{
+			Version:      2,
+			Mode:         "daemon-sqlite",
+			InstalledBin: "/usr/local/bin/regixtry",
+			ServiceName:  "registry-custom",
+			StatePath:    provenancePath,
+			ManagedPaths: []string{filepath.Join(root, "etc", "regixtry", "bootstrap-state.json")},
+		},
+		saveProvenanceHook: func(provenance installlinux.LifecycleProvenance) error {
+			return installlinux.NewBootstrapper().SaveLifecycleProvenance(provenance)
+		},
+	}
+	restore := swapBootstrapRunner(t, runner)
+	defer restore()
+
+	stdout := &bytes.Buffer{}
+	args := []string{
+		"setup",
+		"-mode", "daemon-sqlite",
+		"-public-url", "https://regixtry.example.com",
+		"-runtime-tls-mode", "reverse-proxy",
+		"-addr", "0.0.0.0:5443",
+		"-storage-root", storageRoot,
+		"-state-path", filepath.Join(root, "etc", "regixtry", "bootstrap-state.json"),
+		"-unit-path", filepath.Join(root, "etc", "systemd", "system", "registry-custom.service"),
+		"-service", "registry-custom",
+		"-trivy-enabled",
+		"-trivy-schedule-enabled",
+		"-trivy-interval", "3h",
+		"-trivy-timeout", "17m",
+		"-trivy-cache-dir", filepath.Join(root, "var", "cache", "trivy-custom"),
+		"-trivy-binary-path", "/usr/local/bin/trivy-custom",
+		"-trivy-max-concurrency", "4",
+	}
+
+	if err := runWithIO(context.Background(), args, strings.NewReader(""), stdout, io.Discard); err != nil {
+		t.Fatalf("runWithIO(setup) error = %v", err)
+	}
+
+	store, err := metadata.New(filepath.Join(storageRoot, "metadata.db"))
+	if err != nil {
+		t.Fatalf("metadata.New() error = %v", err)
+	}
+	defer store.Close()
+	settings, err := store.GetScanSettings(context.Background(), ports.DefaultTenant)
+	if err != nil {
+		t.Fatalf("GetScanSettings() error = %v", err)
+	}
+	if !settings.Enabled || !settings.ScheduleEnabled || settings.Interval != 3*time.Hour || settings.Timeout != 17*time.Minute || settings.CacheDir != filepath.Join(root, "var", "cache", "trivy-custom") || settings.BinaryPath != "/usr/local/bin/trivy-custom" || settings.MaxConcurrency != 4 {
+		t.Fatalf("settings = %#v, want imported setup trivy flags", settings)
+	}
+	if !strings.Contains(stdout.String(), "Legacy Trivy setup flags were imported into feature state.") {
+		t.Fatalf("stdout = %q, want legacy import guidance", stdout.String())
+	}
+	if runner.savedProvenance.Intent.TrivyBinaryPath != "" || runner.savedProvenance.Intent.TrivyCacheDir != "" || runner.savedProvenance.Intent.TrivyInterval != "" {
+		t.Fatalf("saved provenance intent = %#v, want base-only lifecycle provenance", runner.savedProvenance.Intent)
+	}
+}
+
+func TestRunFeatureCommandsManageBuiltInTrivyState(t *testing.T) {
+	root := t.TempDir()
+	storageRoot := filepath.Join(root, "data")
+	databasePath := filepath.Join(storageRoot, "metadata.db")
+	if err := os.MkdirAll(storageRoot, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	store, err := metadata.New(databasePath)
+	if err != nil {
+		t.Fatalf("metadata.New() error = %v", err)
+	}
+	defer store.Close()
+
+	stdout := &bytes.Buffer{}
+	if err := runWithIO(context.Background(), []string{"feature", "list", "-storage-root", storageRoot, "-db", databasePath}, strings.NewReader(""), stdout, io.Discard); err != nil {
+		t.Fatalf("runWithIO(feature list) error = %v", err)
+	}
+	if !strings.Contains(stdout.String(), "trivy") {
+		t.Fatalf("stdout = %q, want trivy feature inventory", stdout.String())
+	}
+
+	stdout.Reset()
+	if err := runWithIO(context.Background(), []string{"feature", "configure", "trivy", "-storage-root", storageRoot, "-db", databasePath, "-enabled", "-schedule-enabled", "-interval", "6h", "-timeout", "10m", "-cache-dir", filepath.Join(root, "cache", "trivy"), "-binary-path", "definitely-missing-trivy", "-max-concurrency", "2"}, strings.NewReader(""), stdout, io.Discard); err != nil {
+		t.Fatalf("runWithIO(feature configure) error = %v", err)
+	}
+	if !strings.Contains(stdout.String(), "Configured feature trivy") {
+		t.Fatalf("stdout = %q, want configure confirmation", stdout.String())
+	}
+
+	stdout.Reset()
+	if err := runWithIO(context.Background(), []string{"feature", "status", "trivy", "-storage-root", storageRoot, "-db", databasePath}, strings.NewReader(""), stdout, io.Discard); err != nil {
+		t.Fatalf("runWithIO(feature status) error = %v", err)
+	}
+	for _, want := range []string{"Name: trivy", "Enabled: true", "Schedule Enabled: true", "Runtime Health: unavailable"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout = %q, want %q", stdout.String(), want)
+		}
+	}
+
+	stdout.Reset()
+	if err := runWithIO(context.Background(), []string{"feature", "disable", "trivy", "-storage-root", storageRoot, "-db", databasePath}, strings.NewReader(""), stdout, io.Discard); err != nil {
+		t.Fatalf("runWithIO(feature disable) error = %v", err)
+	}
+	settings, err := store.GetScanSettings(context.Background(), ports.DefaultTenant)
+	if err != nil {
+		t.Fatalf("GetScanSettings() error = %v", err)
+	}
+	if settings.Enabled {
+		t.Fatalf("settings.Enabled = %v, want false after feature disable", settings.Enabled)
+	}
+}
+
+func TestRunFeatureRejectsUnknownBuiltInName(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	err := runWithIO(context.Background(), []string{"feature", "show", "future-plugin"}, strings.NewReader(""), stdout, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "unsupported feature") {
+		t.Fatalf("runWithIO(feature show unknown) error = %v, want unsupported feature rejection", err)
+	}
+}
+
 func TestRunSetupPersistsCustomTrivyFlagsInLifecycleProvenance(t *testing.T) {
 	root := t.TempDir()
+	storageRoot := filepath.Join(root, "var", "lib", "regixtry-data")
 	provenancePath := filepath.Join(root, "etc", "regixtry", "regixtry-lifecycle-state.json")
 	if err := os.MkdirAll(filepath.Dir(provenancePath), 0o755); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
@@ -1005,22 +1134,7 @@ func TestRunSetupPersistsCustomTrivyFlagsInLifecycleProvenance(t *testing.T) {
 				ServiceName:  cfg.ServiceName,
 				StatePath:    provenancePath,
 				ManagedPaths: []string{cfg.StatePath, cfg.UnitPath, filepath.Join(cfg.StorageRoot, "metadata.db"), filepath.Join(cfg.StorageRoot, "content")},
-				Intent: installlinux.LifecycleIntent{
-					Addr:                 cfg.Addr,
-					PublicURL:            cfg.PublicURL,
-					RuntimeTLSMode:       cfg.RuntimeTLSMode,
-					StorageRoot:          cfg.StorageRoot,
-					BootstrapStatePath:   cfg.StatePath,
-					UnitPath:             cfg.UnitPath,
-					ServiceName:          cfg.ServiceName,
-					TrivyEnabled:         cfg.TrivyEnabled,
-					TrivyScheduleEnabled: cfg.TrivyScheduleEnabled,
-					TrivyInterval:        cfg.TrivyInterval.String(),
-					TrivyTimeout:         cfg.TrivyTimeout.String(),
-					TrivyCacheDir:        cfg.TrivyCacheDir,
-					TrivyBinaryPath:      cfg.TrivyBinaryPath,
-					TrivyMaxConcurrency:  cfg.TrivyMaxConcurrency,
-				},
+				Intent:       installlinux.LifecycleIntent{Addr: cfg.Addr, PublicURL: cfg.PublicURL, RuntimeTLSMode: cfg.RuntimeTLSMode, StorageRoot: cfg.StorageRoot, BootstrapStatePath: cfg.StatePath, UnitPath: cfg.UnitPath, ServiceName: cfg.ServiceName},
 			}, nil
 		},
 		saveProvenanceHook: func(provenance installlinux.LifecycleProvenance) error {
@@ -1037,7 +1151,7 @@ func TestRunSetupPersistsCustomTrivyFlagsInLifecycleProvenance(t *testing.T) {
 		"-public-url", "https://regixtry.example.com",
 		"-runtime-tls-mode", "reverse-proxy",
 		"-addr", "0.0.0.0:5443",
-		"-storage-root", "/var/lib/regixtry-data",
+		"-storage-root", storageRoot,
 		"-state-path", filepath.Join(root, "etc", "regixtry", "bootstrap-state.json"),
 		"-unit-path", filepath.Join(root, "etc", "systemd", "system", "registry-custom.service"),
 		"-service", "registry-custom",
@@ -1072,20 +1186,8 @@ func TestRunSetupPersistsCustomTrivyFlagsInLifecycleProvenance(t *testing.T) {
 		t.Fatalf("json.Unmarshal() error = %v", err)
 	}
 
-	if !persisted.Intent.TrivyEnabled || !persisted.Intent.TrivyScheduleEnabled {
-		t.Fatalf("persisted intent = %#v, want trivy enabled flags persisted", persisted.Intent)
-	}
-	if persisted.Intent.TrivyInterval != "3h0m0s" || persisted.Intent.TrivyTimeout != "17m0s" {
-		t.Fatalf("persisted intent = %#v, want exact trivy duration values", persisted.Intent)
-	}
-	if persisted.Intent.TrivyCacheDir != filepath.Join(root, "var", "cache", "trivy-custom") {
-		t.Fatalf("persisted.Intent.TrivyCacheDir = %q, want explicit cache dir", persisted.Intent.TrivyCacheDir)
-	}
-	if persisted.Intent.TrivyBinaryPath != "/usr/local/bin/trivy-custom" {
-		t.Fatalf("persisted.Intent.TrivyBinaryPath = %q, want explicit binary path", persisted.Intent.TrivyBinaryPath)
-	}
-	if persisted.Intent.TrivyMaxConcurrency != 4 {
-		t.Fatalf("persisted.Intent.TrivyMaxConcurrency = %d, want 4", persisted.Intent.TrivyMaxConcurrency)
+	if persisted.Intent.TrivyEnabled || persisted.Intent.TrivyScheduleEnabled || persisted.Intent.TrivyInterval != "" || persisted.Intent.TrivyTimeout != "" || persisted.Intent.TrivyCacheDir != "" || persisted.Intent.TrivyBinaryPath != "" || persisted.Intent.TrivyMaxConcurrency != 0 {
+		t.Fatalf("persisted intent = %#v, want base-only lifecycle provenance without trivy fields", persisted.Intent)
 	}
 	if !strings.Contains(stdout.String(), "Lifecycle provenance recorded at "+provenancePath) {
 		t.Fatalf("stdout = %q, want lifecycle provenance path", stdout.String())

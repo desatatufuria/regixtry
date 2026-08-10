@@ -111,26 +111,18 @@ func TestTemplateRendering(t *testing.T) {
 	if !strings.Contains(env, `REGISTRY_AUTH_POSTGRES_DSN="postgres://registry:registry@db.example.com:5432/regixtry_auth?sslmode=disable"`) {
 		t.Fatalf("env = %q, want quoted auth DSN", env)
 	}
-	if !strings.Contains(env, `REGISTRY_TRIVY_ENABLED="false"`) {
-		t.Fatalf("env = %q, want disabled trivy default", env)
-	}
-	if !strings.Contains(env, `REGISTRY_TRIVY_SCHEDULE_ENABLED="false"`) {
-		t.Fatalf("env = %q, want disabled trivy scheduler default", env)
-	}
-	if !strings.Contains(env, `REGISTRY_TRIVY_CACHE_DIR="/var/lib/regixtry/trivy-cache"`) {
-		t.Fatalf("env = %q, want trivy cache dir", env)
-	}
-	if !strings.Contains(env, `REGISTRY_TRIVY_TIMEOUT="15m0s"`) {
-		t.Fatalf("env = %q, want trivy timeout", env)
-	}
-	if !strings.Contains(env, `REGISTRY_TRIVY_INTERVAL="24h0m0s"`) {
-		t.Fatalf("env = %q, want trivy interval", env)
-	}
-	if !strings.Contains(env, `REGISTRY_TRIVY_MAX_CONCURRENCY="1"`) {
-		t.Fatalf("env = %q, want trivy concurrency", env)
-	}
-	if !strings.Contains(env, `REGISTRY_TRIVY_BINARY_PATH="trivy"`) {
-		t.Fatalf("env = %q, want trivy binary path", env)
+	for _, unwanted := range []string{
+		"REGISTRY_TRIVY_ENABLED",
+		"REGISTRY_TRIVY_SCHEDULE_ENABLED",
+		"REGISTRY_TRIVY_CACHE_DIR",
+		"REGISTRY_TRIVY_TIMEOUT",
+		"REGISTRY_TRIVY_INTERVAL",
+		"REGISTRY_TRIVY_MAX_CONCURRENCY",
+		"REGISTRY_TRIVY_BINARY_PATH",
+	} {
+		if strings.Contains(env, unwanted) {
+			t.Fatalf("env = %q, want base-only env without %s", env, unwanted)
+		}
 	}
 
 	unit := RenderSystemdUnit(plan)
@@ -145,6 +137,27 @@ func TestTemplateRendering(t *testing.T) {
 	}
 	if !strings.Contains(unit, "-tls-cert-file=${REGISTRY_TLS_CERT_FILE} -tls-key-file=${REGISTRY_TLS_KEY_FILE}") {
 		t.Fatalf("unit = %q, want TLS serve flags", unit)
+	}
+}
+
+func TestBootstrapReceiptOmitsFeatureOwnedTrivyArtifacts(t *testing.T) {
+	t.Parallel()
+
+	receipt := bootstrapReceiptFromPlan(BootstrapPlan{
+		Mode:          supportedMode,
+		ServiceName:   "regixtry",
+		EnvPath:       "/etc/regixtry/regixtry.env",
+		UnitPath:      "/etc/systemd/system/regixtry.service",
+		DatabasePath:  "/var/lib/regixtry/metadata.db",
+		ContentPath:   "/var/lib/regixtry/content",
+		TrivyCacheDir: "/var/lib/regixtry/trivy-cache",
+		StatePath:     "/etc/regixtry/bootstrap-state.json",
+	})
+
+	for _, path := range receipt.Paths {
+		if path == "/var/lib/regixtry/trivy-cache" {
+			t.Fatalf("receipt paths = %v, want trivy cache excluded from base lifecycle provenance", receipt.Paths)
+		}
 	}
 }
 
@@ -331,11 +344,11 @@ func TestBootstrapPlanEmitsLifecycleProvenance(t *testing.T) {
 	if strings.Join(provenance.ManagedPaths, "|") != strings.Join(receipt.Paths, "|") {
 		t.Fatalf("ManagedPaths = %v, want %v", provenance.ManagedPaths, receipt.Paths)
 	}
-	if provenance.Intent.TrivyCacheDir != "/var/lib/regixtry/trivy-cache" {
-		t.Fatalf("TrivyCacheDir = %q, want %q", provenance.Intent.TrivyCacheDir, "/var/lib/regixtry/trivy-cache")
+	if provenance.Intent.TrivyCacheDir != "" {
+		t.Fatalf("TrivyCacheDir = %q, want omitted feature-owned trivy state", provenance.Intent.TrivyCacheDir)
 	}
 	if provenance.Intent.TrivyEnabled {
-		t.Fatal("TrivyEnabled = true, want disabled by default")
+		t.Fatal("TrivyEnabled = true, want omitted feature-owned state")
 	}
 }
 

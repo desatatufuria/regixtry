@@ -456,6 +456,75 @@ func TestModelExpiredSessionForcesRelogin(t *testing.T) {
 	}
 }
 
+func TestModelFeatureViewLoadsBackendStatusAndAllowsDisable(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 8, 14, 0, 0, 0, time.UTC)
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+		users:        []ports.AdminUser{{ID: "u-1", Username: "alice", IsAdmin: true, Enabled: true}},
+		features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
+		featureStatus: ports.FeatureDetails{
+			Name:            "trivy",
+			Kind:            ports.FeatureKindBuiltin,
+			Enabled:         true,
+			Configured:      true,
+			ScheduleEnabled: true,
+			Interval:        6 * time.Hour,
+			Timeout:         10 * time.Minute,
+			CacheDir:        "/var/lib/regixtry/trivy-cache",
+			BinaryPath:      "trivy",
+			MaxConcurrency:  2,
+			Runtime:         ports.FeatureRuntime{Health: "ready", Version: "0.57.1", Detail: "binary reachable at /usr/bin/trivy"},
+		},
+		disableFeature: ports.FeatureDetails{
+			Name:            "trivy",
+			Kind:            ports.FeatureKindBuiltin,
+			Enabled:         false,
+			Configured:      true,
+			ScheduleEnabled: true,
+			Interval:        6 * time.Hour,
+			Timeout:         10 * time.Minute,
+			CacheDir:        "/var/lib/regixtry/trivy-cache",
+			BinaryPath:      "trivy",
+			MaxConcurrency:  2,
+			Runtime:         ports.FeatureRuntime{Health: "ready", Version: "0.57.1", Detail: "binary reachable at /usr/bin/trivy"},
+		},
+	}
+	model := newAdminReadyModel(t, adminClient)
+	updated := runAdminLogin(t, model, "operator", "secret-pass")
+	updated = runKey(t, updated, "f")
+
+	if updated.screen != screenAdminFeatures {
+		t.Fatalf("screen = %q, want %q", updated.screen, screenAdminFeatures)
+	}
+	if adminClient.listFeaturesCalls != 1 || adminClient.getFeatureStatusCalls != 1 {
+		t.Fatalf("feature client calls = %#v, want one feature list + one status read", adminClient)
+	}
+	view := updated.View()
+	for _, want := range []string{"Built-in Features", "trivy", "Runtime Health: ready", "Runtime Version: 0.57.1"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view = %q, want %q", view, want)
+		}
+	}
+
+	updated = runKey(t, updated, "x")
+	if !strings.Contains(updated.View(), `Confirm disable feature "trivy"?`) {
+		t.Fatalf("view = %q, want feature disable confirmation", updated.View())
+	}
+
+	updated = runKey(t, updated, "enter")
+	if adminClient.disableFeatureCalls != 1 {
+		t.Fatalf("disableFeatureCalls = %d, want 1", adminClient.disableFeatureCalls)
+	}
+	if updated.screen != screenAdminFeatures {
+		t.Fatalf("screen = %q, want %q after disable", updated.screen, screenAdminFeatures)
+	}
+	if !strings.Contains(updated.View(), `Feature "trivy" disabled.`) || !strings.Contains(updated.View(), `Enabled: false`) {
+		t.Fatalf("view = %q, want disabled feature status", updated.View())
+	}
+}
+
 func TestModelEscWalksBackThroughEditFlow(t *testing.T) {
 	t.Parallel()
 
@@ -756,6 +825,13 @@ type fakeAdminClient struct {
 	loginSession AdminSession
 	loginErr     error
 
+	features      []ports.FeatureSummary
+	feature       ports.FeatureDetails
+	featureStatus ports.FeatureDetails
+	enableFeature  ports.FeatureDetails
+	disableFeature ports.FeatureDetails
+	featureErr    error
+
 	users            []ports.AdminUser
 	listUsersResults [][]ports.AdminUser
 	usersErr         error
@@ -791,6 +867,11 @@ type fakeAdminClient struct {
 	disableErr  error
 
 	loginCalls         int
+	listFeaturesCalls  int
+	getFeatureCalls    int
+	getFeatureStatusCalls int
+	enableFeatureCalls int
+	disableFeatureCalls int
 	listUsersCalls     int
 	listGrantsCalls    int
 	listTokensCalls    int
@@ -810,6 +891,71 @@ func (f *fakeAdminClient) Login(context.Context, string, string) (AdminSession, 
 		return AdminSession{}, f.loginErr
 	}
 	return f.loginSession, nil
+}
+
+func (f *fakeAdminClient) ListFeatures(context.Context, AdminSession) ([]ports.FeatureSummary, error) {
+	f.listFeaturesCalls++
+	if f.featureErr != nil {
+		return nil, f.featureErr
+	}
+	return append([]ports.FeatureSummary(nil), f.features...), nil
+}
+
+func (f *fakeAdminClient) GetFeature(context.Context, AdminSession, string) (ports.FeatureDetails, error) {
+	f.getFeatureCalls++
+	if f.featureErr != nil {
+		return ports.FeatureDetails{}, f.featureErr
+	}
+	return f.feature, nil
+}
+
+func (f *fakeAdminClient) GetFeatureStatus(context.Context, AdminSession, string) (ports.FeatureDetails, error) {
+	f.getFeatureStatusCalls++
+	if f.featureErr != nil {
+		return ports.FeatureDetails{}, f.featureErr
+	}
+	return f.featureStatus, nil
+}
+
+func (f *fakeAdminClient) ConfigureFeature(context.Context, AdminSession, string, ports.FeatureConfigureInput) (ports.FeatureDetails, error) {
+	if f.featureErr != nil {
+		return ports.FeatureDetails{}, f.featureErr
+	}
+	return f.feature, nil
+}
+
+func (f *fakeAdminClient) EnableFeature(context.Context, AdminSession, string) (ports.FeatureDetails, error) {
+	f.enableFeatureCalls++
+	if f.featureErr != nil {
+		return ports.FeatureDetails{}, f.featureErr
+	}
+	if f.enableFeature.Name != "" {
+		f.feature = f.enableFeature
+		f.featureStatus = f.enableFeature
+		if len(f.features) > 0 {
+			f.features[0].Enabled = f.enableFeature.Enabled
+			f.features[0].Configured = f.enableFeature.Configured
+		}
+		return f.enableFeature, nil
+	}
+	return f.feature, nil
+}
+
+func (f *fakeAdminClient) DisableFeature(context.Context, AdminSession, string) (ports.FeatureDetails, error) {
+	f.disableFeatureCalls++
+	if f.featureErr != nil {
+		return ports.FeatureDetails{}, f.featureErr
+	}
+	if f.disableFeature.Name != "" {
+		f.feature = f.disableFeature
+		f.featureStatus = f.disableFeature
+		if len(f.features) > 0 {
+			f.features[0].Enabled = f.disableFeature.Enabled
+			f.features[0].Configured = f.disableFeature.Configured
+		}
+		return f.disableFeature, nil
+	}
+	return f.feature, nil
 }
 
 func (f *fakeAdminClient) ListUsers(context.Context, AdminSession) ([]ports.AdminUser, error) {

@@ -9,8 +9,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
+	domain "regixtry/internal/domain/regixtry"
 	"regixtry/internal/infra/install/releases"
+	metadata "regixtry/internal/infra/metadata/sqlite"
+	"regixtry/internal/ports"
 )
 
 type UpgradeConfig struct {
@@ -89,6 +93,11 @@ func (b *Bootstrapper) Upgrade(ctx context.Context, cfg UpgradeConfig) (UpgradeR
 	intent, err := loadInstalledIntent(provenance, envValues)
 	if err != nil {
 		return UpgradeResult{}, err
+	}
+	if shouldImportLegacyTrivySettings(provenance, envValues) {
+		if err := importLegacyTrivySettingsIfMissing(ctx, intent); err != nil {
+			return UpgradeResult{}, err
+		}
 	}
 	plan := buildPlanFromInstalledIntent(intent)
 	arch, err := releases.CurrentLinuxArch()
@@ -320,6 +329,74 @@ func (b *Bootstrapper) swapInstalledBinary(installedPath string, stagedBinaryPat
 
 	stagedSwapPath = ""
 	return backupPath, nil
+}
+
+func importLegacyTrivySettingsIfMissing(ctx context.Context, intent InstalledIntent) error {
+	store, err := metadata.New(intent.DatabasePath)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+
+	if _, err := store.GetScanSettings(ctx, ports.DefaultTenant); err == nil {
+		return nil
+	} else if !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		return err
+	}
+
+	cacheDir := strings.TrimSpace(intent.TrivyCacheDir)
+	if cacheDir == "" {
+		if strings.TrimSpace(intent.StorageRoot) != "" {
+			cacheDir = filepath.Join(intent.StorageRoot, "trivy-cache")
+		} else {
+			cacheDir = filepath.Join(".", "trivy-cache")
+		}
+	}
+	settings := ports.ScanSettings{
+		Enabled:         intent.TrivyEnabled,
+		ScheduleEnabled: intent.TrivyScheduleEnabled,
+		Interval:        firstPositiveDuration(intent.TrivyInterval, 24*time.Hour),
+		Timeout:         firstPositiveDuration(intent.TrivyTimeout, 15*time.Minute),
+		CacheDir:        cacheDir,
+		BinaryPath:      firstNonBlank(intent.TrivyBinaryPath, "trivy"),
+		MaxConcurrency:  firstPositiveInt(intent.TrivyMaxConcurrency, 1),
+		UpdatedAt:       time.Now().UTC(),
+	}
+	return store.UpsertScanSettings(ctx, ports.DefaultTenant, settings)
+}
+
+func shouldImportLegacyTrivySettings(provenance LifecycleProvenance, envValues map[string]string) bool {
+	if provenance.Intent.TrivyEnabled || provenance.Intent.TrivyScheduleEnabled || strings.TrimSpace(provenance.Intent.TrivyInterval) != "" || strings.TrimSpace(provenance.Intent.TrivyTimeout) != "" || strings.TrimSpace(provenance.Intent.TrivyCacheDir) != "" || strings.TrimSpace(provenance.Intent.TrivyBinaryPath) != "" || provenance.Intent.TrivyMaxConcurrency > 0 {
+		return true
+	}
+	for _, key := range []string{
+		"REGISTRY_TRIVY_ENABLED",
+		"REGISTRY_TRIVY_SCHEDULE_ENABLED",
+		"REGISTRY_TRIVY_INTERVAL",
+		"REGISTRY_TRIVY_TIMEOUT",
+		"REGISTRY_TRIVY_CACHE_DIR",
+		"REGISTRY_TRIVY_BINARY_PATH",
+		"REGISTRY_TRIVY_MAX_CONCURRENCY",
+	} {
+		if strings.TrimSpace(envValues[key]) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func firstPositiveDuration(value time.Duration, fallback time.Duration) time.Duration {
+	if value > 0 {
+		return value
+	}
+	return fallback
+}
+
+func firstPositiveInt(value int, fallback int) int {
+	if value > 0 {
+		return value
+	}
+	return fallback
 }
 
 func intentEnvPath(provenance LifecycleProvenance) string {

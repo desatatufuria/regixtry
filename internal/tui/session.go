@@ -46,6 +46,8 @@ const (
 	adminConfirmNone        adminConfirmKind = ""
 	adminConfirmEnableUser  adminConfirmKind = "enable-user"
 	adminConfirmDisableUser adminConfirmKind = "disable-user"
+	adminConfirmEnableFeature  adminConfirmKind = "enable-feature"
+	adminConfirmDisableFeature adminConfirmKind = "disable-feature"
 	adminConfirmDeleteGrant adminConfirmKind = "delete-grant"
 	adminConfirmRevokeToken adminConfirmKind = "revoke-token"
 )
@@ -83,6 +85,7 @@ type adminConfirmModal struct {
 	ConfirmText string
 	UserID      string
 	Username    string
+	FeatureName string
 	Repository  string
 	Accessor    string
 }
@@ -100,11 +103,14 @@ type AdminSession struct {
 
 type AdminViewState struct {
 	Users                  []ports.AdminUser
+	Features               []ports.FeatureSummary
 	SelectedUser           int
+	SelectedFeature        int
 	SelectedUserID         string
 	SelectedUsername       string
 	UserSearchQuery        string
 	UserSearchActive       bool
+	FeatureStatus          ports.FeatureDetails
 	Grants                 []ports.AdminRepoGrant
 	SelectedGrant          int
 	AdminTokens            []ports.AdminToken

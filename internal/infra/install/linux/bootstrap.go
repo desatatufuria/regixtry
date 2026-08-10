@@ -377,7 +377,6 @@ func bootstrapReceiptFromPlan(plan BootstrapPlan) BootstrapReceipt {
 			plan.UnitPath,
 			plan.DatabasePath,
 			plan.ContentPath,
-			plan.TrivyCacheDir,
 			plan.StatePath,
 		},
 	}
@@ -388,7 +387,7 @@ func (b *Bootstrapper) writeSetupArtifacts(plan BootstrapPlan, receipt Bootstrap
 }
 
 func (b *Bootstrapper) writeManagedArtifacts(plan BootstrapPlan, receipt BootstrapReceipt, createDatabase bool) error {
-	for _, dir := range []string{filepath.Dir(plan.EnvPath), filepath.Dir(plan.UnitPath), plan.StorageRoot, plan.ContentPath, plan.TrivyCacheDir} {
+	for _, dir := range []string{filepath.Dir(plan.EnvPath), filepath.Dir(plan.UnitPath), plan.StorageRoot, plan.ContentPath} {
 		if strings.TrimSpace(dir) == "" {
 			continue
 		}

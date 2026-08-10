@@ -102,6 +102,51 @@ type ScanRunner interface {
 	Run(ctx context.Context, imageRef string, settings ScanSettings) (ScanResult, error)
 }
 
+type FeatureKind string
+
+const (
+	FeatureKindBuiltin         FeatureKind = "builtin"
+	FeatureKindExternalBinary  FeatureKind = "external_binary"
+	FeatureKindExternalService FeatureKind = "external_service"
+)
+
+type FeatureSummary struct {
+	Name       string      `json:"name"`
+	Kind       FeatureKind `json:"kind"`
+	Enabled    bool        `json:"enabled"`
+	Configured bool        `json:"configured"`
+}
+
+type FeatureRuntime struct {
+	Health  string `json:"health,omitempty"`
+	Version string `json:"version,omitempty"`
+	Detail  string `json:"detail,omitempty"`
+}
+
+type FeatureDetails struct {
+	Name            string         `json:"name"`
+	Kind            FeatureKind    `json:"kind"`
+	Enabled         bool           `json:"enabled"`
+	Configured      bool           `json:"configured"`
+	ScheduleEnabled bool           `json:"schedule_enabled"`
+	Interval        time.Duration  `json:"-"`
+	Timeout         time.Duration  `json:"-"`
+	CacheDir        string         `json:"cache_dir"`
+	BinaryPath      string         `json:"binary_path"`
+	MaxConcurrency  int            `json:"max_concurrency"`
+	Runtime         FeatureRuntime `json:"runtime,omitempty"`
+}
+
+type FeatureConfigureInput struct {
+	Enabled         *bool
+	ScheduleEnabled *bool
+	Interval        *time.Duration
+	Timeout         *time.Duration
+	CacheDir        *string
+	BinaryPath      *string
+	MaxConcurrency  *int
+}
+
 type ActionVerb string
 
 const (

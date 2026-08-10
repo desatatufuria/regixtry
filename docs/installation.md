@@ -33,19 +33,28 @@ sudo /absolute/path/to/regixtry setup --mode daemon-sqlite \
 
 El setup crea el env file, la unidad systemd, `metadata.db`, `content/`, el recibo de bootstrap y la provenance de lifecycle. Los defaults son `/var/lib/regixtry`, `/etc/regixtry/bootstrap-state.json` y `/etc/systemd/system/regixtry.service`.
 
-### Optional Trivy rescan defaults
+### Built-in Trivy feature migration
 
-The managed env file now also records the optional Trivy rescan settings used to seed runtime defaults:
+The setup-managed env file stays base-only. It records `REGISTRY_ADDR`, `REGISTRY_PUBLIC_URL`, `REGISTRY_STORAGE_ROOT`, `REGISTRY_DATABASE_PATH`, `REGISTRY_SERVICE_NAME`, and optional auth/TLS inputs, but it no longer stores long-term Trivy settings.
 
-- `REGISTRY_TRIVY_ENABLED="false"`
-- `REGISTRY_TRIVY_SCHEDULE_ENABLED="false"`
-- `REGISTRY_TRIVY_INTERVAL="24h0m0s"`
-- `REGISTRY_TRIVY_TIMEOUT="15m0s"`
-- `REGISTRY_TRIVY_CACHE_DIR="<storage-root>/trivy-cache"`
-- `REGISTRY_TRIVY_BINARY_PATH="trivy"`
-- `REGISTRY_TRIVY_MAX_CONCURRENCY="1"`
+For one migration slice, operators may still pass legacy `setup --trivy-*` flags. Setup imports those values into authoritative feature state when no Trivy feature state exists yet, then operators should use `regixtry feature ...` for future changes.
 
-Operators can override them during setup/bootstrap with `--trivy-*` flags. The admin API becomes the authoritative mutable surface after first boot.
+Example:
+
+```bash
+sudo /absolute/path/to/regixtry setup --mode daemon-sqlite \
+  --public-url https://registry.example.com \
+  --runtime-tls-mode reverse-proxy \
+  --trivy-enabled \
+  --trivy-schedule-enabled \
+  --trivy-interval 6h \
+  --trivy-timeout 20m \
+  --trivy-cache-dir /var/lib/regixtry/trivy-cache \
+  --trivy-binary-path trivy \
+  --trivy-max-concurrency 2
+
+regixtry feature status trivy
+```
 
 Comandos operativos:
 

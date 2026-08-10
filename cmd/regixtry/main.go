@@ -138,7 +138,7 @@ func runWithIO(ctx context.Context, args []string, stdin io.Reader, stdout io.Wr
 	}
 
 	if len(args) == 0 {
-		return errors.New("expected subcommand: serve, tui, bootstrap, bootstrap-admin, setup, uninstall, or upgrade")
+		return errors.New("expected subcommand: serve, tui, bootstrap, bootstrap-admin, setup, feature, uninstall, or upgrade")
 	}
 
 	switch args[0] {
@@ -189,6 +189,8 @@ func runWithIO(ctx context.Context, args []string, stdin io.Reader, stdout io.Wr
 		return runner.Run(ctx, cfg)
 	case "setup":
 		return runSetup(ctx, args[1:], stdin, stdout)
+	case "feature":
+		return runFeature(ctx, args[1:], stdout)
 	case "uninstall":
 		return runUninstall(ctx, args[1:], stdout)
 	case "upgrade":
@@ -272,6 +274,13 @@ type setupPromptState struct {
 	authPostgresDSNProvided bool
 	adminUsernameProvided   bool
 	adminPasswordProvided   bool
+	legacyTrivyProvided     bool
+}
+
+type featureConfig struct {
+	StorageRoot  string
+	DatabasePath string
+	Tenant       string
 }
 
 type uninstallConfig struct {
@@ -758,6 +767,8 @@ func parseSetupConfigWithPromptState(args []string) (setupConfig, setupPromptSta
 			promptState.adminUsernameProvided = true
 		case "admin-password":
 			promptState.adminPasswordProvided = true
+		case "trivy-enabled", "trivy-schedule-enabled", "trivy-interval", "trivy-timeout", "trivy-cache-dir", "trivy-binary-path", "trivy-max-concurrency":
+			promptState.legacyTrivyProvided = true
 		}
 	})
 
@@ -804,6 +815,199 @@ func parseUpgradeConfig(args []string) (upgradeConfig, error) {
 		return upgradeConfig{}, errors.New("state-path is required")
 	}
 	return cfg, nil
+}
+
+func parseFeatureConfig(args []string) (featureConfig, error) {
+	flags := flag.NewFlagSet("feature", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+
+	var cfg featureConfig
+	flags.StringVar(&cfg.StorageRoot, "storage-root", filepath.Join(".", "data"), "root directory for registry runtime state")
+	flags.StringVar(&cfg.DatabasePath, "db", "", "path to the SQLite metadata database")
+	flags.StringVar(&cfg.Tenant, "tenant", ports.DefaultTenant, "tenant identifier")
+
+	if err := flags.Parse(args); err != nil {
+		return featureConfig{}, err
+	}
+	if cfg.DatabasePath == "" {
+		cfg.DatabasePath = filepath.Join(cfg.StorageRoot, "metadata.db")
+	}
+	return cfg, nil
+}
+
+func runFeature(ctx context.Context, args []string, stdout io.Writer) error {
+	if len(args) == 0 {
+		return errors.New("expected feature action: list, show, status, enable, disable, or configure")
+	}
+
+	switch args[0] {
+	case "list":
+		cfg, err := parseFeatureConfig(args[1:])
+		if err != nil {
+			return err
+		}
+		service, cleanup, err := openFeatureService(cfg)
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+		features, err := service.ListFeatures(ctx)
+		if err != nil {
+			return err
+		}
+		for _, feature := range features {
+			if _, err := fmt.Fprintf(stdout, "%s\t%s\tenabled=%t\tconfigured=%t\n", feature.Name, feature.Kind, feature.Enabled, feature.Configured); err != nil {
+				return err
+			}
+		}
+		return nil
+	case "show", "status", "enable", "disable":
+		if len(args) < 2 {
+			return fmt.Errorf("feature %s requires a feature name", args[0])
+		}
+		name := args[1]
+		cfg, err := parseFeatureConfig(args[2:])
+		if err != nil {
+			return err
+		}
+		service, cleanup, err := openFeatureService(cfg)
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+
+		switch args[0] {
+		case "show":
+			details, err := service.GetFeature(ctx, name)
+			if err != nil {
+				return err
+			}
+			return writeFeatureDetails(stdout, details, false)
+		case "status":
+			details, err := service.GetFeatureStatus(ctx, name)
+			if err != nil {
+				return err
+			}
+			return writeFeatureDetails(stdout, details, true)
+		case "enable":
+			details, err := service.SetFeatureEnabled(ctx, name, true)
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintf(stdout, "Enabled feature %s\n", details.Name)
+			return err
+		case "disable":
+			details, err := service.SetFeatureEnabled(ctx, name, false)
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintf(stdout, "Disabled feature %s\n", details.Name)
+			return err
+		}
+	case "configure":
+		if len(args) < 2 {
+			return errors.New("feature configure requires a feature name")
+		}
+		name := args[1]
+		flags := flag.NewFlagSet("feature configure", flag.ContinueOnError)
+		flags.SetOutput(io.Discard)
+		var (
+			cfg             featureConfig
+			enabled         bool
+			scheduleEnabled bool
+			interval        time.Duration
+			timeout         time.Duration
+			cacheDir        string
+			binaryPath      string
+			maxConcurrency  int
+		)
+		flags.StringVar(&cfg.StorageRoot, "storage-root", filepath.Join(".", "data"), "root directory for registry runtime state")
+		flags.StringVar(&cfg.DatabasePath, "db", "", "path to the SQLite metadata database")
+		flags.StringVar(&cfg.Tenant, "tenant", ports.DefaultTenant, "tenant identifier")
+		flags.BoolVar(&enabled, "enabled", false, "enable the feature")
+		flags.BoolVar(&scheduleEnabled, "schedule-enabled", false, "enable scheduled execution")
+		flags.DurationVar(&interval, "interval", 0, "feature interval")
+		flags.DurationVar(&timeout, "timeout", 0, "feature timeout")
+		flags.StringVar(&cacheDir, "cache-dir", "", "feature cache directory")
+		flags.StringVar(&binaryPath, "binary-path", "", "feature binary path")
+		flags.IntVar(&maxConcurrency, "max-concurrency", 0, "feature max concurrency")
+		if err := flags.Parse(args[2:]); err != nil {
+			return err
+		}
+		if cfg.DatabasePath == "" {
+			cfg.DatabasePath = filepath.Join(cfg.StorageRoot, "metadata.db")
+		}
+		input := ports.FeatureConfigureInput{}
+		flags.Visit(func(f *flag.Flag) {
+			switch f.Name {
+			case "enabled":
+				input.Enabled = &enabled
+			case "schedule-enabled":
+				input.ScheduleEnabled = &scheduleEnabled
+			case "interval":
+				input.Interval = &interval
+			case "timeout":
+				input.Timeout = &timeout
+			case "cache-dir":
+				input.CacheDir = &cacheDir
+			case "binary-path":
+				input.BinaryPath = &binaryPath
+			case "max-concurrency":
+				input.MaxConcurrency = &maxConcurrency
+			}
+		})
+		service, cleanup, err := openFeatureService(cfg)
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+		details, err := service.ConfigureFeature(ctx, name, input)
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(stdout, "Configured feature %s\n", details.Name)
+		return err
+	}
+
+	return fmt.Errorf("unsupported feature action %q", args[0])
+}
+
+func openFeatureService(cfg featureConfig) (*appregixtry.Service, func(), error) {
+	if err := os.MkdirAll(cfg.StorageRoot, 0o755); err != nil {
+		return nil, nil, err
+	}
+	store, err := metadata.New(cfg.DatabasePath)
+	if err != nil {
+		return nil, nil, err
+	}
+	service := appregixtry.NewService(nil, store, ports.NewConfigurableAccessController(ports.AccessConfig{}), ports.NewSingleTenantResolver(cfg.Tenant), ports.NewInlineJobRunner())
+	return service, func() { _ = store.Close() }, nil
+}
+
+func writeFeatureDetails(stdout io.Writer, details ports.FeatureDetails, includeRuntime bool) error {
+	lines := []string{
+		fmt.Sprintf("Name: %s", details.Name),
+		fmt.Sprintf("Kind: %s", details.Kind),
+		fmt.Sprintf("Enabled: %t", details.Enabled),
+		fmt.Sprintf("Configured: %t", details.Configured),
+		fmt.Sprintf("Schedule Enabled: %t", details.ScheduleEnabled),
+		fmt.Sprintf("Interval: %s", details.Interval),
+		fmt.Sprintf("Timeout: %s", details.Timeout),
+		fmt.Sprintf("Cache Dir: %s", details.CacheDir),
+		fmt.Sprintf("Binary Path: %s", details.BinaryPath),
+		fmt.Sprintf("Max Concurrency: %d", details.MaxConcurrency),
+	}
+	if includeRuntime {
+		lines = append(lines,
+			fmt.Sprintf("Runtime Health: %s", firstNonEmpty(details.Runtime.Health, "unknown")),
+			fmt.Sprintf("Runtime Version: %s", firstNonEmpty(details.Runtime.Version, "unknown")),
+		)
+		if strings.TrimSpace(details.Runtime.Detail) != "" {
+			lines = append(lines, fmt.Sprintf("Runtime Detail: %s", details.Runtime.Detail))
+		}
+	}
+	_, err := fmt.Fprintln(stdout, strings.Join(lines, "\n"))
+	return err
 }
 
 func runSetup(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) error {
@@ -856,6 +1060,14 @@ func runSetup(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 			return upgradeLifecyclePermissionError(err, "daemon-sqlite setup", formatSetupCommand(cfg.BootstrapConfig, false))
 		}
 
+		legacyImported := false
+		if promptState.legacyTrivyProvided {
+			legacyImported, err = importLegacySetupTrivyFlags(ctx, cfg.BootstrapConfig)
+			if err != nil {
+				return rollbackSetupFailure(ctx, runner, cfg.BootstrapConfig, fmt.Errorf("import legacy trivy setup flags: %w", err))
+			}
+		}
+
 		provenance, err := runner.PlanLifecycleProvenance(cfg.BootstrapConfig)
 		if err != nil {
 			return rollbackSetupFailure(ctx, runner, cfg.BootstrapConfig, fmt.Errorf("plan lifecycle provenance: %w", err))
@@ -871,6 +1083,9 @@ func runSetup(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 		if stdout != nil {
 			_, _ = fmt.Fprintf(stdout, "Setup complete: regixtry is installed, %s.service is running, and %s is reachable.\n", cfg.ServiceName, cfg.PublicURL)
 			_, _ = fmt.Fprintf(stdout, "Lifecycle provenance recorded at %s\n", provenance.StatePath)
+			if legacyImported {
+				_, _ = fmt.Fprintln(stdout, "Legacy Trivy setup flags were imported into feature state. Use `regixtry feature ...` to manage Trivy going forward.")
+			}
 			printSetupAuthGuidance(stdout, cfg, authOutcome)
 		}
 		return nil
@@ -1012,6 +1227,39 @@ func buildSetupAuthPostgresDSN(host string, port string, user string, password s
 	assembled.RawQuery = query.Encode()
 	return assembled.String(), nil
 }
+
+func importLegacySetupTrivyFlags(ctx context.Context, cfg installlinux.BootstrapConfig) (bool, error) {
+	service, cleanup, err := openFeatureService(featureConfig{
+		StorageRoot:  cfg.StorageRoot,
+		DatabasePath: filepath.Join(cfg.StorageRoot, "metadata.db"),
+		Tenant:       ports.DefaultTenant,
+	})
+	if err != nil {
+		return false, err
+	}
+	defer cleanup()
+	details, err := service.ImportLegacyFeatureConfigIfMissing(ctx, "trivy", ports.FeatureConfigureInput{
+		Enabled:         boolPointer(cfg.TrivyEnabled),
+		ScheduleEnabled: boolPointer(cfg.TrivyScheduleEnabled),
+		Interval:        durationPointer(cfg.TrivyInterval),
+		Timeout:         durationPointer(cfg.TrivyTimeout),
+		CacheDir:        stringPointer(cfg.TrivyCacheDir),
+		BinaryPath:      stringPointer(cfg.TrivyBinaryPath),
+		MaxConcurrency:  intPointer(cfg.TrivyMaxConcurrency),
+	})
+	if err != nil {
+		return false, err
+	}
+	return details.Configured, nil
+}
+
+func boolPointer(value bool) *bool { return &value }
+
+func durationPointer(value time.Duration) *time.Duration { return &value }
+
+func stringPointer(value string) *string { return &value }
+
+func intPointer(value int) *int { return &value }
 
 func runUninstall(ctx context.Context, args []string, stdout io.Writer) error {
 	cfg, err := parseUninstallConfig(args)

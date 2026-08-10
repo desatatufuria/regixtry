@@ -44,9 +44,9 @@ regixtry setup
 
 El script instala el binario; `regixtry setup` gestiona el runtime Linux + systemd. Para procedimientos completos, consultar [`docs/installation.md`](docs/installation.md).
 
-### Optional Trivy rescans
+### Built-in Trivy feature management
 
-Regixtry now ships an optional Trivy rescan slice for already-published images. The setup/bootstrap lifecycle writes disabled-by-default runtime settings into the managed env file and lifecycle provenance.
+Regixtry now ships `trivy` as the first built-in optional feature. Setup and lifecycle commands keep base bootstrap truth only; Trivy configuration lives in authoritative feature state (`scan_settings`).
 
 Example setup flags:
 
@@ -62,13 +62,37 @@ sudo /absolute/path/to/regixtry setup --mode daemon-sqlite \
   --trivy-max-concurrency 2
 ```
 
+Use the feature CLI after setup:
+
+```bash
+regixtry feature list
+regixtry feature show trivy
+regixtry feature status trivy
+regixtry feature configure trivy \
+  -enabled \
+  -schedule-enabled \
+  -interval 6h \
+  -timeout 20m \
+  -cache-dir /var/lib/regixtry/trivy-cache \
+  -binary-path trivy \
+  -max-concurrency 2
+```
+
+Legacy `setup --trivy-*` flags remain available for one migration slice. When provided, setup imports them into feature state and then points operators to `regixtry feature ...` for future changes.
+
 Admin API endpoints for this slice:
 
+- `GET /admin/v1/features`
+- `GET /admin/v1/features/trivy`
+- `GET /admin/v1/features/trivy/status`
+- `PUT /admin/v1/features/trivy/config`
+- `POST /admin/v1/features/trivy:enable`
+- `POST /admin/v1/features/trivy:disable`
 - `GET/PUT /admin/v1/scan-settings`
 - `POST /admin/v1/scan-runs`
 - `GET /admin/v1/scan-runs?repository=&limit=`
 
-The richer TUI management flow for scan settings/history remains deferred.
+The richer TUI management flow for feature administration remains deferred.
 
 ## Documentación
 

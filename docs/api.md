@@ -30,6 +30,12 @@ Todas estas rutas requieren Bearer de un usuario admin. Los JSON se decodifican 
 | GET | `/admin/v1/users/{id}/admin-tokens` | ninguno | `200`, array sin secretos |
 | POST | `/admin/v1/users/{id}/admin-tokens` | `name`, opcional `ttl_seconds` | `201`, token y secreto |
 | DELETE | `/admin/v1/users/{id}/admin-tokens/{accessor}` | ninguno | `204` |
+| GET | `/admin/v1/features` | ninguno | `200`, built-in feature inventory |
+| GET | `/admin/v1/features/{name}` | ninguno | `200`, feature-owned configuration |
+| GET | `/admin/v1/features/{name}/status` | ninguno | `200`, feature configuration plus runtime health |
+| PUT | `/admin/v1/features/{name}/config` | `enabled`, `schedule_enabled`, `interval`, `timeout`, `cache_dir`, `binary_path`, `max_concurrency` | `200`, persisted feature state |
+| POST | `/admin/v1/features/{name}:enable` | ninguno | `200`, enabled feature state |
+| POST | `/admin/v1/features/{name}:disable` | ninguno | `200`, disabled feature state |
 | GET | `/admin/v1/scan-settings` | ninguno | `200`, settings actuales |
 | PUT | `/admin/v1/scan-settings` | `enabled`, `schedule_enabled`, `interval`, `timeout`, `cache_dir`, `binary_path`, `max_concurrency` | `200`, settings persistidos |
 | POST | `/admin/v1/scan-runs` | `repository`, `reference` | `202`, run encolado con digest canónico |
@@ -53,6 +59,14 @@ curl -X PUT \
     "binary_path": "trivy",
     "max_concurrency": 2
   }'
+```
+
+### Feature status example
+
+```bash
+curl \
+  -H 'Authorization: Bearer <admin-token>' \
+  https://registry.example.com/admin/v1/features/trivy/status
 ```
 
 ### Manual rescan example

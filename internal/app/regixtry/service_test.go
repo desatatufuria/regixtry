@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -206,6 +207,122 @@ func TestServiceRejectsOutOfBoundsScanSettings(t *testing.T) {
 	}
 }
 
+func TestServiceListFeaturesReturnsBuiltinTrivyInventory(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	features, err := service.ListFeatures(context.Background())
+	if err != nil {
+		t.Fatalf("ListFeatures() error = %v", err)
+	}
+
+	want := []ports.FeatureSummary{{
+		Name:       "trivy",
+		Kind:       ports.FeatureKindBuiltin,
+		Enabled:    false,
+		Configured: false,
+	}}
+	if !reflect.DeepEqual(features, want) {
+		t.Fatalf("ListFeatures() = %#v, want %#v", features, want)
+	}
+}
+
+func TestServiceGetFeatureStatusProjectsTrivyRuntimeDetails(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	settings, err := service.ImportLegacyFeatureConfigIfMissing(context.Background(), "trivy", ports.FeatureConfigureInput{
+		Enabled:         boolPtr(true),
+		ScheduleEnabled: boolPtr(true),
+		Interval:        durationPtr(6 * time.Hour),
+		Timeout:         durationPtr(10 * time.Minute),
+		CacheDir:        stringPtr(filepath.Join(t.TempDir(), "trivy-cache")),
+		BinaryPath:      stringPtr("trivy-custom"),
+		MaxConcurrency:  intPtr(2),
+	})
+	if err != nil {
+		t.Fatalf("ImportLegacyFeatureConfigIfMissing() error = %v", err)
+	}
+
+	restoreProbe := swapTrivyRuntimeProbe(t, func(path string) ports.FeatureRuntime {
+		if path != settings.BinaryPath {
+			t.Fatalf("probe path = %q, want %q", path, settings.BinaryPath)
+		}
+		return ports.FeatureRuntime{Health: "ready", Version: "0.57.1", Detail: "binary reachable"}
+	})
+	defer restoreProbe()
+
+	status, err := service.GetFeatureStatus(context.Background(), "trivy")
+	if err != nil {
+		t.Fatalf("GetFeatureStatus() error = %v", err)
+	}
+	if status.Name != "trivy" || status.Kind != ports.FeatureKindBuiltin {
+		t.Fatalf("status identity = %#v, want trivy builtin", status)
+	}
+	if !status.Enabled || !status.Configured || !status.ScheduleEnabled {
+		t.Fatalf("status flags = %#v, want configured enabled schedule-enabled state", status)
+	}
+	if status.Interval != 6*time.Hour || status.Timeout != 10*time.Minute {
+		t.Fatalf("status timings = %#v, want imported timings", status)
+	}
+	if status.Runtime.Health != "ready" || status.Runtime.Version != "0.57.1" {
+		t.Fatalf("status runtime = %#v, want projected runtime details", status.Runtime)
+	}
+}
+
+func TestServiceRejectsUnknownFeatureNames(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	_, err := service.GetFeature(context.Background(), "future-plugin")
+	if err == nil || !strings.Contains(err.Error(), "unsupported feature") {
+		t.Fatalf("GetFeature() error = %v, want unsupported feature rejection", err)
+	}
+}
+
+func TestServiceImportLegacyFeatureConfigIfMissingPreservesExistingState(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	initial, err := service.ConfigureFeature(context.Background(), "trivy", ports.FeatureConfigureInput{
+		Enabled:         boolPtr(true),
+		ScheduleEnabled: boolPtr(false),
+		Interval:        durationPtr(24 * time.Hour),
+		Timeout:         durationPtr(15 * time.Minute),
+		CacheDir:        stringPtr(filepath.Join(t.TempDir(), "configured-cache")),
+		BinaryPath:      stringPtr("trivy"),
+		MaxConcurrency:  intPtr(1),
+	})
+	if err != nil {
+		t.Fatalf("ConfigureFeature() error = %v", err)
+	}
+
+	imported, err := service.ImportLegacyFeatureConfigIfMissing(context.Background(), "trivy", ports.FeatureConfigureInput{
+		Enabled:         boolPtr(false),
+		ScheduleEnabled: boolPtr(true),
+		Interval:        durationPtr(3 * time.Hour),
+		Timeout:         durationPtr(20 * time.Minute),
+		CacheDir:        stringPtr(filepath.Join(t.TempDir(), "legacy-cache")),
+		BinaryPath:      stringPtr("trivy-legacy"),
+		MaxConcurrency:  intPtr(4),
+	})
+	if err != nil {
+		t.Fatalf("ImportLegacyFeatureConfigIfMissing() error = %v", err)
+	}
+
+	if imported != initial {
+		t.Fatalf("ImportLegacyFeatureConfigIfMissing() = %#v, want preserved existing state %#v", imported, initial)
+	}
+}
+
 func TestServicePublishRemainsAvailableWhileScanRunsExist(t *testing.T) {
 	t.Parallel()
 
@@ -344,6 +461,24 @@ func seedRepository(t *testing.T, service *Service, ctx context.Context, reposit
 	manifestPayload := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{"mediaType":"application/vnd.oci.image.config.v1+json","digest":"` + blob.Digest + `","size":9},"layers":[{"mediaType":"application/vnd.oci.image.layer.v1.tar","digest":"` + blob.Digest + `","size":9}]}`)
 	if _, err := service.PublishManifest(ctx, repository, "latest", "application/vnd.oci.image.manifest.v1+json", manifestPayload); err != nil {
 		t.Fatalf("PublishManifest(%q) error = %v", repository, err)
+	}
+}
+
+func boolPtr(value bool) *bool { return &value }
+
+func durationPtr(value time.Duration) *time.Duration { return &value }
+
+func stringPtr(value string) *string { return &value }
+
+func intPtr(value int) *int { return &value }
+
+func swapTrivyRuntimeProbe(t *testing.T, probe func(string) ports.FeatureRuntime) func() {
+	t.Helper()
+
+	previous := probeTrivyRuntime
+	probeTrivyRuntime = probe
+	return func() {
+		probeTrivyRuntime = previous
 	}
 }
 
