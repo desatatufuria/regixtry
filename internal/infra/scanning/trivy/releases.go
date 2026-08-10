@@ -72,7 +72,7 @@ func (c githubReleaseClient) ResolveRelease(ctx context.Context, version string)
 	for _, candidate := range payload.Assets {
 		name := strings.TrimSpace(candidate.Name)
 		switch {
-		case strings.Contains(name, "Linux-64bit.tar.gz") && strings.HasPrefix(name, "trivy_"):
+		case strings.HasPrefix(name, "trivy_") && strings.HasSuffix(name, "_Linux-64bit.tar.gz"):
 			asset.ArchiveName = name
 			asset.ArchiveURL = strings.TrimSpace(candidate.BrowserDownloadURL)
 		case strings.HasSuffix(name, "checksums.txt"):

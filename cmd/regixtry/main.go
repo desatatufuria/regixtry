@@ -57,6 +57,8 @@ var newFeatureRuntimeManager = func(cfg appregixtry.FeatureRuntimeManagerConfig)
 	})
 }
 
+var featureBootstrapStatePath = "/etc/regixtry/bootstrap-state.json"
+
 var resolveCurrentExecutable = func() string {
 	path, err := os.Executable()
 	if err == nil {
@@ -827,22 +829,56 @@ func parseUpgradeConfig(args []string) (upgradeConfig, error) {
 }
 
 func parseFeatureConfig(args []string) (featureConfig, error) {
+	defaultCfg, err := defaultFeatureConfigWithBootstrapStatePath(featureBootstrapStatePath)
+	if err != nil {
+		return featureConfig{}, err
+	}
+
 	flags := flag.NewFlagSet("feature", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 
-	var cfg featureConfig
-	flags.StringVar(&cfg.StorageRoot, "storage-root", filepath.Join(".", "data"), "root directory for registry runtime state")
-	flags.StringVar(&cfg.DatabasePath, "db", "", "path to the SQLite metadata database")
-	flags.StringVar(&cfg.PublicURL, "public-url", os.Getenv("REGISTRY_PUBLIC_URL"), "canonical public URL advertised to registry clients")
+	cfg := defaultCfg
+	flags.StringVar(&cfg.StorageRoot, "storage-root", defaultCfg.StorageRoot, "root directory for registry runtime state")
+	flags.StringVar(&cfg.DatabasePath, "db", defaultCfg.DatabasePath, "path to the SQLite metadata database")
+	flags.StringVar(&cfg.PublicURL, "public-url", defaultCfg.PublicURL, "canonical public URL advertised to registry clients")
 	flags.StringVar(&cfg.Tenant, "tenant", ports.DefaultTenant, "tenant identifier")
 
 	if err := flags.Parse(args); err != nil {
 		return featureConfig{}, err
 	}
-	if cfg.DatabasePath == "" {
+	finalizeFeatureConfigFlags(flags, &cfg)
+	return cfg, nil
+}
+
+func defaultFeatureConfigWithBootstrapStatePath(bootstrapStatePath string) (featureConfig, error) {
+	cfg := featureConfig{
+		StorageRoot: filepath.Join(".", "data"),
+		PublicURL:   os.Getenv("REGISTRY_PUBLIC_URL"),
+	}
+
+	installedCfg, ok, err := loadSetupManagedTUIConfig(bootstrapStatePath)
+	if err != nil {
+		return featureConfig{}, err
+	}
+	if ok {
+		cfg.StorageRoot = installedCfg.StorageRoot
+		cfg.DatabasePath = installedCfg.DatabasePath
+		if strings.TrimSpace(cfg.PublicURL) == "" {
+			cfg.PublicURL = installedCfg.APIBaseURL
+		}
+	}
+
+	return cfg, nil
+}
+
+func finalizeFeatureConfigFlags(flags *flag.FlagSet, cfg *featureConfig) {
+	visited := map[string]bool{}
+	flags.Visit(func(f *flag.Flag) {
+		visited[f.Name] = true
+	})
+	if !visited["db"] && (visited["storage-root"] || strings.TrimSpace(cfg.DatabasePath) == "") {
 		cfg.DatabasePath = filepath.Join(cfg.StorageRoot, "metadata.db")
 	}
-	return cfg, nil
 }
 
 func runFeature(ctx context.Context, args []string, stdout io.Writer) error {
@@ -885,17 +921,20 @@ func runFeature(ctx context.Context, args []string, stdout io.Writer) error {
 			cfg     featureConfig
 			version string
 		)
-		flags.StringVar(&cfg.StorageRoot, "storage-root", filepath.Join(".", "data"), "root directory for registry runtime state")
-		flags.StringVar(&cfg.DatabasePath, "db", "", "path to the SQLite metadata database")
-		flags.StringVar(&cfg.PublicURL, "public-url", os.Getenv("REGISTRY_PUBLIC_URL"), "canonical public URL advertised to registry clients")
+		defaultCfg, err := defaultFeatureConfigWithBootstrapStatePath(featureBootstrapStatePath)
+		if err != nil {
+			return err
+		}
+		cfg = defaultCfg
+		flags.StringVar(&cfg.StorageRoot, "storage-root", defaultCfg.StorageRoot, "root directory for registry runtime state")
+		flags.StringVar(&cfg.DatabasePath, "db", defaultCfg.DatabasePath, "path to the SQLite metadata database")
+		flags.StringVar(&cfg.PublicURL, "public-url", defaultCfg.PublicURL, "canonical public URL advertised to registry clients")
 		flags.StringVar(&cfg.Tenant, "tenant", ports.DefaultTenant, "tenant identifier")
 		flags.StringVar(&version, "version", "", "managed trivy runtime version")
 		if err := flags.Parse(args[2:]); err != nil {
 			return err
 		}
-		if cfg.DatabasePath == "" {
-			cfg.DatabasePath = filepath.Join(cfg.StorageRoot, "metadata.db")
-		}
+		finalizeFeatureConfigFlags(flags, &cfg)
 		service, cleanup, err := openFeatureService(cfg)
 		if err != nil {
 			return err
@@ -974,8 +1013,13 @@ func runFeature(ctx context.Context, args []string, stdout io.Writer) error {
 			tlsInsecureSkipVerify bool
 			maxConcurrency        int
 		)
-		flags.StringVar(&cfg.StorageRoot, "storage-root", filepath.Join(".", "data"), "root directory for registry runtime state")
-		flags.StringVar(&cfg.DatabasePath, "db", "", "path to the SQLite metadata database")
+		defaultCfg, err := defaultFeatureConfigWithBootstrapStatePath(featureBootstrapStatePath)
+		if err != nil {
+			return err
+		}
+		cfg = defaultCfg
+		flags.StringVar(&cfg.StorageRoot, "storage-root", defaultCfg.StorageRoot, "root directory for registry runtime state")
+		flags.StringVar(&cfg.DatabasePath, "db", defaultCfg.DatabasePath, "path to the SQLite metadata database")
 		flags.StringVar(&cfg.Tenant, "tenant", ports.DefaultTenant, "tenant identifier")
 		flags.BoolVar(&enabled, "enabled", false, "enable the feature")
 		flags.BoolVar(&scheduleEnabled, "schedule-enabled", false, "enable scheduled execution")
@@ -990,9 +1034,7 @@ func runFeature(ctx context.Context, args []string, stdout io.Writer) error {
 		if err := flags.Parse(args[2:]); err != nil {
 			return err
 		}
-		if cfg.DatabasePath == "" {
-			cfg.DatabasePath = filepath.Join(cfg.StorageRoot, "metadata.db")
-		}
+		finalizeFeatureConfigFlags(flags, &cfg)
 		input := ports.FeatureConfigureInput{}
 		flags.Visit(func(f *flag.Flag) {
 			switch f.Name {

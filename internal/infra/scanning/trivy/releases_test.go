@@ -8,11 +8,38 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestResolveReleasePrefersPrimaryArchiveOverSigstoreSidecar(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/tags/v0.73.0" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = fmt.Fprint(w, `{"tag_name":"v0.73.0","assets":[{"name":"trivy_0.73.0_Linux-64bit.tar.gz.sigstore.json","browser_download_url":"https://example.invalid/trivy_0.73.0_Linux-64bit.tar.gz.sigstore.json"},{"name":"trivy_0.73.0_Linux-64bit.tar.gz","browser_download_url":"https://example.invalid/trivy_0.73.0_Linux-64bit.tar.gz"},{"name":"trivy_0.73.0_checksums.txt","browser_download_url":"https://example.invalid/trivy_0.73.0_checksums.txt"}]}`)
+	}))
+	defer server.Close()
+
+	asset, err := githubReleaseClient{baseAPI: server.URL, client: server.Client()}.ResolveRelease(context.Background(), "0.73.0")
+	if err != nil {
+		t.Fatalf("ResolveRelease() error = %v", err)
+	}
+	if asset.ArchiveName != "trivy_0.73.0_Linux-64bit.tar.gz" {
+		t.Fatalf("ArchiveName = %q, want main archive asset", asset.ArchiveName)
+	}
+	if strings.HasSuffix(asset.ArchiveURL, ".sigstore.json") {
+		t.Fatalf("ArchiveURL = %q, want primary archive instead of sidecar", asset.ArchiveURL)
+	}
+}
 
 func TestVerifyArchiveChecksumRejectsMismatchesAndExtractsManagedBinary(t *testing.T) {
 	t.Parallel()
@@ -26,6 +53,13 @@ func TestVerifyArchiveChecksumRejectsMismatchesAndExtractsManagedBinary(t *testi
 	validChecksums := []byte(hex.EncodeToString(checksum[:]) + "  " + filepath.Base(archivePath) + "\n")
 	if err := verifyArchiveChecksum(archivePath, filepath.Base(archivePath), validChecksums); err != nil {
 		t.Fatalf("verifyArchiveChecksum() error = %v", err)
+	}
+	withSidecarEntry := []byte(strings.Join([]string{
+		strings.Repeat("f", 64) + "  " + filepath.Base(archivePath) + ".sigstore.json",
+		hex.EncodeToString(checksum[:]) + "  " + filepath.Base(archivePath),
+	}, "\n") + "\n")
+	if err := verifyArchiveChecksum(archivePath, filepath.Base(archivePath), withSidecarEntry); err != nil {
+		t.Fatalf("verifyArchiveChecksum() with sidecar entry error = %v", err)
 	}
 
 	if err := verifyArchiveChecksum(archivePath, filepath.Base(archivePath), []byte(strings.Repeat("0", 64)+"  "+filepath.Base(archivePath)+"\n")); err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
