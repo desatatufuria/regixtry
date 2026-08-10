@@ -22,6 +22,9 @@ type AdminClient interface {
 	ListFeatures(ctx context.Context, session AdminSession) ([]ports.FeatureSummary, error)
 	GetFeature(ctx context.Context, session AdminSession, name string) (ports.FeatureDetails, error)
 	GetFeatureStatus(ctx context.Context, session AdminSession, name string) (ports.FeatureDetails, error)
+	InstallFeatureRuntime(ctx context.Context, session AdminSession, name string, version string) (ports.TrivyRuntimeState, error)
+	UpgradeFeatureRuntime(ctx context.Context, session AdminSession, name string, version string) (ports.TrivyRuntimeState, error)
+	RollbackFeatureRuntime(ctx context.Context, session AdminSession, name string) (ports.TrivyRuntimeState, error)
 	ConfigureFeature(ctx context.Context, session AdminSession, name string, input ports.FeatureConfigureInput) (ports.FeatureDetails, error)
 	EnableFeature(ctx context.Context, session AdminSession, name string) (ports.FeatureDetails, error)
 	DisableFeature(ctx context.Context, session AdminSession, name string) (ports.FeatureDetails, error)
@@ -149,6 +152,18 @@ func (c *HTTPAdminClient) GetFeatureStatus(ctx context.Context, session AdminSes
 	return c.getFeatureDetails(ctx, session, "/admin/v1/features/"+url.PathEscape(strings.TrimSpace(name))+"/status")
 }
 
+func (c *HTTPAdminClient) InstallFeatureRuntime(ctx context.Context, session AdminSession, name string, version string) (ports.TrivyRuntimeState, error) {
+	return c.mutateFeatureRuntime(ctx, session, name, ":install", version)
+}
+
+func (c *HTTPAdminClient) UpgradeFeatureRuntime(ctx context.Context, session AdminSession, name string, version string) (ports.TrivyRuntimeState, error) {
+	return c.mutateFeatureRuntime(ctx, session, name, ":upgrade", version)
+}
+
+func (c *HTTPAdminClient) RollbackFeatureRuntime(ctx context.Context, session AdminSession, name string) (ports.TrivyRuntimeState, error) {
+	return c.mutateFeatureRuntime(ctx, session, name, ":rollback", "")
+}
+
 func (c *HTTPAdminClient) ConfigureFeature(ctx context.Context, session AdminSession, name string, input ports.FeatureConfigureInput) (ports.FeatureDetails, error) {
 	var details ports.FeatureDetails
 	body := encodeFeatureConfigureInput(input)
@@ -257,6 +272,21 @@ func (c *HTTPAdminClient) mutateFeature(ctx context.Context, session AdminSessio
 		return ports.FeatureDetails{}, err
 	}
 	return details, nil
+}
+
+func (c *HTTPAdminClient) mutateFeatureRuntime(ctx context.Context, session AdminSession, name string, action string, version string) (ports.TrivyRuntimeState, error) {
+	var state ports.TrivyRuntimeState
+	path := "/admin/v1/features/" + url.PathEscape(strings.TrimSpace(name)) + action
+	body := map[string]string{}
+	var payload any
+	if strings.TrimSpace(version) != "" {
+		body["version"] = strings.TrimSpace(version)
+		payload = body
+	}
+	if err := c.requestJSON(ctx, stdhttp.MethodPost, session, path, payload, &state, stdhttp.StatusOK); err != nil {
+		return ports.TrivyRuntimeState{}, err
+	}
+	return state, nil
 }
 
 func (c *HTTPAdminClient) getJSON(ctx context.Context, session AdminSession, path string, target any) error {

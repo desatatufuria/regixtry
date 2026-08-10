@@ -525,6 +525,50 @@ func TestModelFeatureViewLoadsBackendStatusAndAllowsDisable(t *testing.T) {
 	}
 }
 
+func TestModelFeatureViewShowsManagedRuntimeMigrationStateAndInstallAction(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 8, 14, 0, 0, 0, time.UTC)
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+		features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
+		featureStatus: ports.FeatureDetails{
+			Name:            "trivy",
+			Kind:            ports.FeatureKindBuiltin,
+			Enabled:         true,
+			Configured:      true,
+			ScheduleEnabled: true,
+			Interval:        6 * time.Hour,
+			Timeout:         10 * time.Minute,
+			Runtime: ports.FeatureRuntime{
+				Mode:   ports.FeatureRuntimeModeManaged,
+				Status: "migration-required",
+				Health: "migration-required",
+				Detail: `legacy binary_path "/tmp/README.sh" requires managed reinstall and will never be executed`,
+			},
+		},
+		installRuntime: ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusReady, ActiveVersion: "0.57.1"},
+	}
+	model := newAdminReadyModel(t, adminClient)
+	updated := runAdminLogin(t, model, "operator", "secret-pass")
+	updated = runKey(t, updated, "f")
+
+	view := updated.View()
+	for _, want := range []string{"Runtime Status: migration-required", `legacy binary_path "/tmp/README.sh" requires managed reinstall`} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view = %q, want %q", view, want)
+		}
+	}
+
+	updated = runKey(t, updated, "i")
+	if adminClient.installRuntimeCalls != 1 {
+		t.Fatalf("installRuntimeCalls = %d, want 1", adminClient.installRuntimeCalls)
+	}
+	if !strings.Contains(updated.View(), `Managed runtime installed for "trivy" at 0.57.1.`) {
+		t.Fatalf("view = %q, want install confirmation", updated.View())
+	}
+}
+
 func TestModelEscWalksBackThroughEditFlow(t *testing.T) {
 	t.Parallel()
 
@@ -828,6 +872,9 @@ type fakeAdminClient struct {
 	features      []ports.FeatureSummary
 	feature       ports.FeatureDetails
 	featureStatus ports.FeatureDetails
+	installRuntime ports.TrivyRuntimeState
+	upgradeRuntime ports.TrivyRuntimeState
+	rollbackRuntime ports.TrivyRuntimeState
 	enableFeature  ports.FeatureDetails
 	disableFeature ports.FeatureDetails
 	featureErr    error
@@ -870,6 +917,9 @@ type fakeAdminClient struct {
 	listFeaturesCalls  int
 	getFeatureCalls    int
 	getFeatureStatusCalls int
+	installRuntimeCalls int
+	upgradeRuntimeCalls int
+	rollbackRuntimeCalls int
 	enableFeatureCalls int
 	disableFeatureCalls int
 	listUsersCalls     int
@@ -915,6 +965,36 @@ func (f *fakeAdminClient) GetFeatureStatus(context.Context, AdminSession, string
 		return ports.FeatureDetails{}, f.featureErr
 	}
 	return f.featureStatus, nil
+}
+
+func (f *fakeAdminClient) InstallFeatureRuntime(context.Context, AdminSession, string, string) (ports.TrivyRuntimeState, error) {
+	f.installRuntimeCalls++
+	if f.featureErr != nil {
+		return ports.TrivyRuntimeState{}, f.featureErr
+	}
+	if f.installRuntime.ActiveVersion != "" {
+		f.featureStatus.Runtime.Status = string(f.installRuntime.Status)
+		f.featureStatus.Runtime.Health = string(f.installRuntime.Status)
+		f.featureStatus.Runtime.Version = f.installRuntime.ActiveVersion
+		return f.installRuntime, nil
+	}
+	return ports.TrivyRuntimeState{}, nil
+}
+
+func (f *fakeAdminClient) UpgradeFeatureRuntime(context.Context, AdminSession, string, string) (ports.TrivyRuntimeState, error) {
+	f.upgradeRuntimeCalls++
+	if f.featureErr != nil {
+		return ports.TrivyRuntimeState{}, f.featureErr
+	}
+	return f.upgradeRuntime, nil
+}
+
+func (f *fakeAdminClient) RollbackFeatureRuntime(context.Context, AdminSession, string) (ports.TrivyRuntimeState, error) {
+	f.rollbackRuntimeCalls++
+	if f.featureErr != nil {
+		return ports.TrivyRuntimeState{}, f.featureErr
+	}
+	return f.rollbackRuntime, nil
 }
 
 func (f *fakeAdminClient) ConfigureFeature(context.Context, AdminSession, string, ports.FeatureConfigureInput) (ports.FeatureDetails, error) {

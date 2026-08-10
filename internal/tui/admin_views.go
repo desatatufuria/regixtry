@@ -110,6 +110,7 @@ func renderAdminFeaturesScreen(theme adminTheme, session AdminSession, view Admi
 			fmt.Sprintf("TLS CA Cert Path: %s", view.FeatureStatus.TLSCACertPath),
 			fmt.Sprintf("TLS Insecure Skip Verify: %t", view.FeatureStatus.TLSInsecureSkipVerify),
 			fmt.Sprintf("Max Concurrency: %d", view.FeatureStatus.MaxConcurrency),
+			fmt.Sprintf("Runtime Status: %s", adminFirstNonEmpty(strings.TrimSpace(view.FeatureStatus.Runtime.Status), adminFirstNonEmpty(strings.TrimSpace(view.FeatureStatus.Runtime.Health), "unknown"))),
 			fmt.Sprintf("Runtime Health: %s", adminFirstNonEmpty(strings.TrimSpace(view.FeatureStatus.Runtime.Health), "unknown")),
 			fmt.Sprintf("Runtime Version: %s", adminFirstNonEmpty(strings.TrimSpace(view.FeatureStatus.Runtime.Version), "unknown")),
 		)

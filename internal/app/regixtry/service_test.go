@@ -162,9 +162,10 @@ func TestServiceQueuesDigestCentricManualScansAndDedupesActiveRuns(t *testing.T)
 
 	seedRepository(t, service, context.Background(), "library/alpine")
 
-	if _, err := service.EnsureScanSettings(context.Background(), ports.ScanSettings{Enabled: true, Timeout: time.Minute, Interval: time.Hour, ServiceURL: "https://scanner.example.com", RegistryReachableURL: "https://registry.internal", MaxConcurrency: 1}); err != nil {
+	if _, err := service.EnsureScanSettings(context.Background(), ports.ScanSettings{Enabled: true, Timeout: time.Minute, Interval: time.Hour, RegistryReachableURL: "https://registry.internal", MaxConcurrency: 1}); err != nil {
 		t.Fatalf("EnsureScanSettings() error = %v", err)
 	}
+	seedManagedRuntimeState(t, service, "0.57.1")
 
 	first, err := service.QueueManualScan(context.Background(), "library/alpine", "latest")
 	if err != nil {
@@ -188,9 +189,10 @@ func TestServiceRejectsInvalidOrUnpublishedScanTargets(t *testing.T) {
 	service, cleanup := newTestService(t, allowAllAccessController{})
 	defer cleanup()
 
-	if _, err := service.EnsureScanSettings(context.Background(), ports.ScanSettings{Enabled: true, Timeout: time.Minute, Interval: time.Hour, ServiceURL: "https://scanner.example.com", RegistryReachableURL: "https://registry.internal", MaxConcurrency: 1}); err != nil {
+	if _, err := service.EnsureScanSettings(context.Background(), ports.ScanSettings{Enabled: true, Timeout: time.Minute, Interval: time.Hour, RegistryReachableURL: "https://registry.internal", MaxConcurrency: 1}); err != nil {
 		t.Fatalf("EnsureScanSettings() error = %v", err)
 	}
+	seedManagedRuntimeState(t, service, "0.57.1")
 
 	if _, err := service.QueueManualScan(context.Background(), "library/alpine", "missing"); err == nil {
 		t.Fatal("QueueManualScan() error = nil, want not found")
@@ -231,25 +233,33 @@ func TestServiceListFeaturesReturnsBuiltinTrivyInventory(t *testing.T) {
 	}
 }
 
-func TestServiceGetFeatureStatusProjectsExternalServiceRuntimeDetails(t *testing.T) {
+func TestServiceGetFeatureStatusProjectsManagedRuntimeDetails(t *testing.T) {
 	service, cleanup := newTestService(t, allowAllAccessController{})
 	defer cleanup()
-	runner, server := newTestTrivyRunner(t, "secret-token")
-	defer server.Close()
-	service.SetScanRunner(runner)
 
-	settings, err := service.ConfigureFeature(context.Background(), "trivy", ports.FeatureConfigureInput{
+	_, err := service.ConfigureFeature(context.Background(), "trivy", ports.FeatureConfigureInput{
 		Enabled:              boolPtr(true),
 		ScheduleEnabled:      boolPtr(true),
 		Interval:             durationPtr(6 * time.Hour),
 		Timeout:              durationPtr(10 * time.Minute),
-		ServiceURL:           stringPtr(server.URL),
 		RegistryReachableURL: stringPtr("https://registry.internal:5443"),
-		AuthToken:            stringPtr("secret-token"),
 		MaxConcurrency:       intPtr(2),
 	})
 	if err != nil {
-		t.Fatalf("ImportLegacyFeatureConfigIfMissing() error = %v", err)
+		t.Fatalf("ConfigureFeature() error = %v", err)
+	}
+	verifiedAt := time.Now().UTC().Add(-time.Minute)
+	if err := service.metadata.UpsertTrivyRuntimeState(context.Background(), "tenant-a", ports.TrivyRuntimeState{
+		Status:           ports.TrivyRuntimeStatusReady,
+		ActiveVersion:    "0.57.1",
+		PreviousVersion:  "0.56.2",
+		ActiveBinaryPath: "/var/lib/regixtry/features/trivy/bin/active/trivy",
+		CacheDir:         "/var/lib/regixtry/features/trivy/trivy-cache",
+		ReceiptPath:      "/var/lib/regixtry/features/trivy/receipts/0.57.1.json",
+		LastVerifiedAt:   &verifiedAt,
+		UpdatedAt:        time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("UpsertTrivyRuntimeState() error = %v", err)
 	}
 
 	status, err := service.GetFeatureStatus(context.Background(), "trivy")
@@ -265,45 +275,42 @@ func TestServiceGetFeatureStatusProjectsExternalServiceRuntimeDetails(t *testing
 	if status.Interval != 6*time.Hour || status.Timeout != 10*time.Minute {
 		t.Fatalf("status timings = %#v, want imported timings", status)
 	}
-	if status.ServiceURL != settings.ServiceURL || status.RegistryReachableURL != settings.RegistryReachableURL {
-		t.Fatalf("status endpoints = %#v, want configured service endpoints", status)
+	if status.ServiceURL != "" || status.RegistryReachableURL != "https://registry.internal:5443" {
+		t.Fatalf("status endpoints = %#v, want managed intent projection", status)
 	}
 	if status.AuthToken != "" {
 		t.Fatalf("status.AuthToken = %q, want redacted read-only output", status.AuthToken)
 	}
-	if status.Runtime.Mode != string(ports.FeatureKindExternalService) || status.Runtime.Health != "ready" || status.Runtime.Version != "0.57.1" {
-		t.Fatalf("status runtime = %#v, want projected runtime details", status.Runtime)
+	if status.Runtime.Mode != ports.FeatureRuntimeModeManaged || status.Runtime.Health != "ready" || status.Runtime.Version != "0.57.1" || !status.Runtime.RollbackAvailable {
+		t.Fatalf("status runtime = %#v, want projected managed runtime details", status.Runtime)
 	}
 }
 
-func TestServiceGetFeatureStatusFallsBackToNonLoopbackPublicURL(t *testing.T) {
+func TestServiceGetFeatureStatusPreservesIntentWhenManagedRuntimeReady(t *testing.T) {
 	service, cleanup := newTestService(t, allowAllAccessController{})
 	defer cleanup()
-	runner, server := newTestTrivyRunner(t, "")
-	defer server.Close()
-	service.SetScanRunner(runner)
-	service.SetScanHost("https://registry.example.com")
 
 	if _, err := service.ConfigureFeature(context.Background(), "trivy", ports.FeatureConfigureInput{
 		Enabled:         boolPtr(true),
 		ScheduleEnabled: boolPtr(true),
 		Interval:        durationPtr(6 * time.Hour),
 		Timeout:         durationPtr(10 * time.Minute),
-		ServiceURL:      stringPtr(server.URL),
+		RegistryReachableURL: stringPtr("https://registry.example.com"),
 		MaxConcurrency:  intPtr(2),
 	}); err != nil {
 		t.Fatalf("ConfigureFeature() error = %v", err)
 	}
+	seedManagedRuntimeState(t, service, "0.57.1")
 
 	status, err := service.GetFeatureStatus(context.Background(), "trivy")
 	if err != nil {
 		t.Fatalf("GetFeatureStatus() error = %v", err)
 	}
 	if status.Runtime.Health != "ready" || status.Runtime.Version != "0.57.1" {
-		t.Fatalf("status.Runtime = %#v, want ready runtime via public URL fallback", status.Runtime)
+		t.Fatalf("status.Runtime = %#v, want ready managed runtime", status.Runtime)
 	}
-	if status.RegistryReachableURL != "" {
-		t.Fatalf("status.RegistryReachableURL = %q, want persisted field unchanged when fallback is implicit", status.RegistryReachableURL)
+	if status.RegistryReachableURL != "https://registry.example.com" {
+		t.Fatalf("status.RegistryReachableURL = %q, want persisted managed intent", status.RegistryReachableURL)
 	}
 }
 
@@ -331,10 +338,6 @@ func TestServiceBuildsScannerFacingTargetAndRejectsLoopbackFallback(t *testing.T
 func TestServiceReadyStatusRequiresVersionProbeAndLegacyBridgeKeepsRuntimeUnconfigured(t *testing.T) {
 	service, cleanup := newTestService(t, allowAllAccessController{})
 	defer cleanup()
-	service.SetScanHost("https://registry.example.com")
-	runner, server := newFailingVersionTrivyRunner(t)
-	defer server.Close()
-	service.SetScanRunner(runner)
 
 	legacy, err := service.ImportLegacyFeatureConfigIfMissing(context.Background(), "trivy", ports.FeatureConfigureInput{
 		Enabled:         boolPtr(true),
@@ -351,7 +354,7 @@ func TestServiceReadyStatusRequiresVersionProbeAndLegacyBridgeKeepsRuntimeUnconf
 	}
 
 	if _, err := service.ConfigureFeature(context.Background(), "trivy", ports.FeatureConfigureInput{
-		ServiceURL:           stringPtr(server.URL),
+		ServiceURL:           stringPtr("https://scanner.example.com"),
 		RegistryReachableURL: stringPtr("https://registry.internal"),
 		Timeout:              durationPtr(10 * time.Minute),
 		Interval:             durationPtr(6 * time.Hour),
@@ -364,8 +367,8 @@ func TestServiceReadyStatusRequiresVersionProbeAndLegacyBridgeKeepsRuntimeUnconf
 	if err != nil {
 		t.Fatalf("GetFeatureStatus() error = %v", err)
 	}
-	if status.Runtime.Health != "degraded" {
-		t.Fatalf("status.Runtime = %#v, want version-dependent non-ready runtime", status.Runtime)
+	if status.Runtime.Health != "migration-required" {
+		t.Fatalf("status.Runtime = %#v, want migration-required runtime", status.Runtime)
 	}
 
 	legacyStatus, err := service.GetFeature(context.Background(), "trivy")
@@ -374,6 +377,147 @@ func TestServiceReadyStatusRequiresVersionProbeAndLegacyBridgeKeepsRuntimeUnconf
 	}
 	if legacyStatus.Runtime != (ports.FeatureRuntime{}) {
 		t.Fatalf("GetFeature() runtime = %#v, want runtime omitted outside status view", legacyStatus.Runtime)
+	}
+}
+
+func TestServiceGetFeatureStatusSeparatesIntentFromManagedRuntimeState(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	settings, err := service.ConfigureFeature(context.Background(), "trivy", ports.FeatureConfigureInput{
+		Enabled:              boolPtr(true),
+		ScheduleEnabled:      boolPtr(true),
+		Interval:             durationPtr(6 * time.Hour),
+		Timeout:              durationPtr(10 * time.Minute),
+		RegistryReachableURL: stringPtr("https://registry.internal:5443"),
+		MaxConcurrency:       intPtr(2),
+	})
+	if err != nil {
+		t.Fatalf("ConfigureFeature() error = %v", err)
+	}
+	if settings.ServiceURL != "" {
+		t.Fatalf("settings.ServiceURL = %q, want feature intent without runtime service ownership", settings.ServiceURL)
+	}
+
+	verifiedAt := time.Now().UTC().Add(-time.Minute)
+	healthAt := verifiedAt.Add(30 * time.Second)
+	if err := service.metadata.UpsertTrivyRuntimeState(context.Background(), "tenant-a", ports.TrivyRuntimeState{
+		Status:            ports.TrivyRuntimeStatusReady,
+		ActiveVersion:     "0.57.1",
+		PreviousVersion:   "0.56.2",
+		ActiveBinaryPath:  filepath.Join(t.TempDir(), "features", "trivy", "bin", "active", "trivy"),
+		CacheDir:          filepath.Join(t.TempDir(), "features", "trivy", "trivy-cache"),
+		ReceiptPath:       filepath.Join(t.TempDir(), "features", "trivy", "receipts", "0.57.1.json"),
+		LastVerifiedAt:    &verifiedAt,
+		LastHealthCheckAt: &healthAt,
+		UpdatedAt:         healthAt,
+	}); err != nil {
+		t.Fatalf("UpsertTrivyRuntimeState() error = %v", err)
+	}
+
+	status, err := service.GetFeatureStatus(context.Background(), "trivy")
+	if err != nil {
+		t.Fatalf("GetFeatureStatus() error = %v", err)
+	}
+	if status.Runtime.Mode != ports.FeatureRuntimeModeManaged || status.Runtime.Status != string(ports.TrivyRuntimeStatusReady) {
+		t.Fatalf("status.Runtime = %#v, want managed ready runtime projection", status.Runtime)
+	}
+	if status.Runtime.Version != "0.57.1" || !status.Runtime.RollbackAvailable {
+		t.Fatalf("status.Runtime = %#v, want active version and rollback availability", status.Runtime)
+	}
+	if status.ServiceURL != "" || status.BinaryPath != "" || status.CacheDir != "" {
+		t.Fatalf("status = %#v, want runtime lifecycle separated from feature intent fields", status)
+	}
+	if status.RegistryReachableURL != "https://registry.internal:5443" || status.Interval != 6*time.Hour || status.Timeout != 10*time.Minute {
+		t.Fatalf("status = %#v, want operator intent preserved", status)
+	}
+}
+
+func TestServiceGetFeatureStatusReportsLegacyRuntimeMigrationRequired(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	if err := service.metadata.UpsertScanSettings(context.Background(), "tenant-a", ports.ScanSettings{
+		Enabled:              true,
+		ScheduleEnabled:      true,
+		Interval:             3 * time.Hour,
+		Timeout:              17 * time.Minute,
+		RegistryReachableURL: "https://registry.internal",
+		LegacyCacheDir:       "/var/cache/trivy",
+		LegacyBinaryPath:     "/tmp/README.sh",
+		ServiceURL:           "https://scanner.example.com",
+		MaxConcurrency:       2,
+		UpdatedAt:            time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("UpsertScanSettings() error = %v", err)
+	}
+
+	status, err := service.GetFeatureStatus(context.Background(), "trivy")
+	if err != nil {
+		t.Fatalf("GetFeatureStatus() error = %v", err)
+	}
+	if status.Runtime.Status != string(ports.TrivyRuntimeStatusMigrationRequired) || status.Runtime.Health != "migration-required" {
+		t.Fatalf("status.Runtime = %#v, want migration-required runtime", status.Runtime)
+	}
+	if !strings.Contains(status.Runtime.Detail, "/tmp/README.sh") {
+		t.Fatalf("status.Runtime.Detail = %q, want legacy binary evidence", status.Runtime.Detail)
+	}
+	if status.Runtime.Mode != ports.FeatureRuntimeModeManaged {
+		t.Fatalf("status.Runtime.Mode = %q, want managed runtime truth even for migration", status.Runtime.Mode)
+	}
+}
+
+func TestServiceManualAndScheduledScansUseManagedRuntimeStateAndIgnoreLegacyPaths(t *testing.T) {
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	seedRepository(t, service, context.Background(), "library/alpine")
+	if err := service.metadata.UpsertScanSettings(context.Background(), "tenant-a", ports.ScanSettings{
+		Enabled:              true,
+		ScheduleEnabled:      true,
+		Interval:             time.Hour,
+		Timeout:              time.Minute,
+		RegistryReachableURL: "https://registry.internal",
+		LegacyBinaryPath:     "/tmp/README.sh",
+		MaxConcurrency:       1,
+		UpdatedAt:            time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("UpsertScanSettings() error = %v", err)
+	}
+	if err := service.metadata.UpsertTrivyRuntimeState(context.Background(), "tenant-a", ports.TrivyRuntimeState{
+		Status:           ports.TrivyRuntimeStatusReady,
+		ActiveVersion:    "0.57.1",
+		ActiveBinaryPath: "/var/lib/regixtry/features/trivy/bin/active/trivy",
+		CacheDir:         "/var/lib/regixtry/features/trivy/trivy-cache",
+		UpdatedAt:        time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("UpsertTrivyRuntimeState() error = %v", err)
+	}
+	runner := &capturingScanRunner{result: ports.ScanResult{TrivyVersion: "0.57.1"}}
+	service.SetScanRunner(runner)
+
+	manual, err := service.QueueManualScan(context.Background(), "library/alpine", "latest")
+	if err != nil {
+		t.Fatalf("QueueManualScan() error = %v", err)
+	}
+	waitForScanCompletion(t, service, manual.ID)
+	if len(runner.settings) == 0 || runner.settings[0].BinaryPath != "/var/lib/regixtry/features/trivy/bin/active/trivy" {
+		t.Fatalf("runner settings = %#v, want managed binary path", runner.settings)
+	}
+	if runner.settings[0].LegacyBinaryPath != "/tmp/README.sh" {
+		t.Fatalf("runner settings = %#v, want legacy evidence preserved but not executed", runner.settings)
+	}
+
+	if err := service.RunScheduledScans(context.Background()); err != nil {
+		t.Fatalf("RunScheduledScans() error = %v", err)
+	}
+	waitForRunnerTargets(t, runner, 2)
+	if len(runner.targets) < 2 {
+		t.Fatalf("targets = %#v, want manual and scheduled scans through managed runtime", runner.targets)
 	}
 }
 
@@ -431,9 +575,10 @@ func TestServicePublishRemainsAvailableWhileScanRunsExist(t *testing.T) {
 	defer cleanup()
 
 	seedRepository(t, service, context.Background(), "library/base")
-	if _, err := service.EnsureScanSettings(context.Background(), ports.ScanSettings{Enabled: true, Timeout: time.Minute, Interval: time.Hour, ServiceURL: "https://scanner.example.com", RegistryReachableURL: "https://registry.internal", MaxConcurrency: 1}); err != nil {
+	if _, err := service.EnsureScanSettings(context.Background(), ports.ScanSettings{Enabled: true, Timeout: time.Minute, Interval: time.Hour, RegistryReachableURL: "https://registry.internal", MaxConcurrency: 1}); err != nil {
 		t.Fatalf("EnsureScanSettings() error = %v", err)
 	}
+	seedManagedRuntimeState(t, service, "0.57.1")
 	if _, err := service.QueueManualScan(context.Background(), "library/base", "latest"); err != nil {
 		t.Fatalf("QueueManualScan() error = %v", err)
 	}
@@ -461,9 +606,10 @@ func TestServiceFailedScanDoesNotHidePublishedContent(t *testing.T) {
 	defer cleanup()
 
 	seedRepository(t, service, context.Background(), "library/base")
-	if _, err := service.EnsureScanSettings(context.Background(), ports.ScanSettings{Enabled: true, Timeout: time.Minute, Interval: time.Hour, ServiceURL: "https://scanner.example.com", RegistryReachableURL: "https://registry.internal", MaxConcurrency: 1}); err != nil {
+	if _, err := service.EnsureScanSettings(context.Background(), ports.ScanSettings{Enabled: true, Timeout: time.Minute, Interval: time.Hour, RegistryReachableURL: "https://registry.internal", MaxConcurrency: 1}); err != nil {
 		t.Fatalf("EnsureScanSettings() error = %v", err)
 	}
+	seedManagedRuntimeState(t, service, "0.57.1")
 	runner := &fakeScanRunner{started: make(chan struct{}, 1), err: errFakeScan}
 	service.SetScanRunner(runner)
 
@@ -571,6 +717,62 @@ func stringPtr(value string) *string { return &value }
 
 func intPtr(value int) *int { return &value }
 
+type capturingScanRunner struct {
+	mu       sync.Mutex
+	result   ports.ScanResult
+	settings []ports.ScanSettings
+	targets  []string
+}
+
+func (c *capturingScanRunner) Run(_ context.Context, imageRef string, settings ports.ScanSettings) (ports.ScanResult, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.targets = append(c.targets, imageRef)
+	c.settings = append(c.settings, settings)
+	return c.result, nil
+}
+
+func waitForScanCompletion(t *testing.T, service *Service, runID string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		run, err := service.metadata.GetScanRun(context.Background(), "tenant-a", runID)
+		if err == nil && run.Status == ports.ScanRunStatusCompleted {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("scan run %s did not complete before deadline", runID)
+}
+
+func waitForRunnerTargets(t *testing.T, runner *capturingScanRunner, want int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		runner.mu.Lock()
+		count := len(runner.targets)
+		runner.mu.Unlock()
+		if count >= want {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("runner targets did not reach %d before deadline", want)
+}
+
+func seedManagedRuntimeState(t *testing.T, service *Service, version string) {
+	t.Helper()
+	if err := service.metadata.UpsertTrivyRuntimeState(context.Background(), "tenant-a", ports.TrivyRuntimeState{
+		Status:           ports.TrivyRuntimeStatusReady,
+		ActiveVersion:    version,
+		ActiveBinaryPath: "/var/lib/regixtry/features/trivy/bin/active/trivy",
+		CacheDir:         "/var/lib/regixtry/features/trivy/trivy-cache",
+		UpdatedAt:        time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("UpsertTrivyRuntimeState() error = %v", err)
+	}
+}
+
 func newTestTrivyRunner(t *testing.T, wantToken string) (*trivy.Runner, *httptest.Server) {
 	t.Helper()
 
@@ -660,20 +862,18 @@ var errFakeScan = errors.New("fake scan failure")
 func waitForScanRunStatus(t *testing.T, service *Service, repository string, runID string, wantStatus string) ports.ScanRun {
 	t.Helper()
 
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		runs, err := service.ListScanRuns(context.Background(), repository, 10)
+		run, err := service.metadata.GetScanRun(context.Background(), "tenant-a", runID)
 		if err != nil {
 			if strings.Contains(err.Error(), "database is locked") {
 				time.Sleep(10 * time.Millisecond)
 				continue
 			}
-			t.Fatalf("ListScanRuns() error = %v", err)
+			t.Fatalf("GetScanRun() error = %v", err)
 		}
-		for _, run := range runs {
-			if run.ID == runID && run.Status == wantStatus {
-				return run
-			}
+		if run.Repository == repository && run.Status == wantStatus {
+			return run
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

@@ -20,9 +20,23 @@ type Service struct {
 	tenants    ports.TenantResolver
 	jobs       ports.JobRunner
 	scanRunner ports.ScanRunner
+	runtime    FeatureRuntimeManager
 	scanHost   string
 	now        func() time.Time
 	scanGate   *scanGate
+}
+
+type FeatureRuntimeManager interface {
+	Install(ctx context.Context, version string) (ports.TrivyRuntimeState, error)
+	Upgrade(ctx context.Context, version string) (ports.TrivyRuntimeState, error)
+	Rollback(ctx context.Context) (ports.TrivyRuntimeState, error)
+	Status(ctx context.Context) (ports.TrivyRuntimeState, error)
+}
+
+type FeatureRuntimeManagerConfig struct {
+	StorageRoot string
+	Store       ports.MetadataStore
+	ScanRunner  ports.ScanRunner
 }
 
 func NewService(blobStore ports.BlobStore, metadataStore ports.MetadataStore, accessController ports.AccessController, tenantResolver ports.TenantResolver, jobRunner ports.JobRunner) *Service {
@@ -51,6 +65,10 @@ func NewService(blobStore ports.BlobStore, metadataStore ports.MetadataStore, ac
 
 func (s *Service) SetScanRunner(runner ports.ScanRunner) {
 	s.scanRunner = runner
+}
+
+func (s *Service) SetFeatureRuntimeManager(manager FeatureRuntimeManager) {
+	s.runtime = manager
 }
 
 func (s *Service) SetScanHost(host string) {

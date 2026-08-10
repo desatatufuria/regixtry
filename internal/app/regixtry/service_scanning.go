@@ -48,7 +48,7 @@ func (s *Service) UpdateScanSettings(ctx context.Context, input ports.ScanSettin
 }
 
 func (s *Service) QueueManualScan(ctx context.Context, repositoryName string, reference string) (ports.ScanRun, error) {
-	settings, err := s.GetScanSettings(ctx)
+	settings, err := s.resolveManagedScanSettings(ctx)
 	if err != nil {
 		return ports.ScanRun{}, err
 	}
@@ -86,7 +86,7 @@ func (s *Service) ListScanRuns(ctx context.Context, repository string, limit int
 }
 
 func (s *Service) RunScheduledScans(ctx context.Context) error {
-	settings, err := s.GetScanSettings(ctx)
+	settings, err := s.resolveManagedScanSettings(ctx)
 	if err != nil {
 		return err
 	}
@@ -202,17 +202,7 @@ func (s *Service) scannerReachableRegistryBase(settings ports.ScanSettings) (str
 
 func (s *Service) normalizeScanSettings(input ports.ScanSettings) (ports.ScanSettings, error) {
 	settings := input
-	settings.ServiceURL = strings.TrimSpace(settings.ServiceURL)
 	settings.RegistryReachableURL = strings.TrimSpace(settings.RegistryReachableURL)
-	settings.AuthToken = strings.TrimSpace(settings.AuthToken)
-	settings.TLSCACertPath = strings.TrimSpace(settings.TLSCACertPath)
-	if settings.ServiceURL != "" {
-		parsed, err := url.Parse(settings.ServiceURL)
-		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || strings.TrimSpace(parsed.Host) == "" {
-			return ports.ScanSettings{}, domain.NewValidationError("service_url must use http or https")
-		}
-		settings.ServiceURL = strings.TrimRight(parsed.String(), "/")
-	}
 	if settings.RegistryReachableURL != "" {
 		parsed, err := url.Parse(settings.RegistryReachableURL)
 		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || strings.TrimSpace(parsed.Host) == "" {
@@ -230,6 +220,30 @@ func (s *Service) normalizeScanSettings(input ports.ScanSettings) (ports.ScanSet
 		return ports.ScanSettings{}, domain.NewValidationError("max_concurrency must be greater than zero")
 	}
 	settings.UpdatedAt = s.now()
+	return settings, nil
+}
+
+func (s *Service) resolveManagedScanSettings(ctx context.Context) (ports.ScanSettings, error) {
+	settings, err := s.GetScanSettings(ctx)
+	if err != nil {
+		return ports.ScanSettings{}, err
+	}
+	state, err := s.metadata.GetTrivyRuntimeState(ctx, s.tenant(ctx))
+	if err != nil {
+		return ports.ScanSettings{}, err
+	}
+	if state.Status != ports.TrivyRuntimeStatusReady {
+		detail := strings.TrimSpace(state.MigrationHint)
+		if detail == "" {
+			detail = strings.TrimSpace(state.LastError)
+		}
+		if detail == "" {
+			detail = fmt.Sprintf("trivy runtime is %s", state.Status)
+		}
+		return ports.ScanSettings{}, domain.NewValidationError(detail)
+	}
+	settings.BinaryPath = strings.TrimSpace(state.ActiveBinaryPath)
+	settings.CacheDir = strings.TrimSpace(state.CacheDir)
 	return settings, nil
 }
 

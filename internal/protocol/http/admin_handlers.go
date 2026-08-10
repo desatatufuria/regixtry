@@ -91,6 +91,39 @@ func (r *Router) handleAdminFeatureResource(w stdhttp.ResponseWriter, req *stdht
 			return
 		}
 		writeJSON(w, stdhttp.StatusOK, featureDetailsResponse(details, false))
+	case strings.HasSuffix(resource, ":install"):
+		name := strings.TrimSuffix(resource, ":install")
+		state, err := r.mutateFeatureRuntime(req, name, func(version string) (ports.TrivyRuntimeState, error) {
+			return r.service.InstallFeatureRuntime(req.Context(), name, version)
+		})
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		writeJSON(w, stdhttp.StatusOK, state)
+	case strings.HasSuffix(resource, ":upgrade"):
+		name := strings.TrimSuffix(resource, ":upgrade")
+		state, err := r.mutateFeatureRuntime(req, name, func(version string) (ports.TrivyRuntimeState, error) {
+			return r.service.UpgradeFeatureRuntime(req.Context(), name, version)
+		})
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		writeJSON(w, stdhttp.StatusOK, state)
+	case strings.HasSuffix(resource, ":rollback"):
+		name := strings.TrimSuffix(resource, ":rollback")
+		if req.Method != stdhttp.MethodPost {
+			w.Header().Set("Allow", stdhttp.MethodPost)
+			w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+			return
+		}
+		state, err := r.service.RollbackFeatureRuntime(req.Context(), name)
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		writeJSON(w, stdhttp.StatusOK, state)
 	case strings.HasSuffix(resource, ":enable"):
 		name := strings.TrimSuffix(resource, ":enable")
 		if req.Method != stdhttp.MethodPost {
@@ -303,6 +336,21 @@ func featureDetailsResponse(details ports.FeatureDetails, includeRuntime bool) m
 		response["runtime"] = details.Runtime
 	}
 	return response
+}
+
+func (r *Router) mutateFeatureRuntime(req *stdhttp.Request, name string, action func(version string) (ports.TrivyRuntimeState, error)) (ports.TrivyRuntimeState, error) {
+	if req.Method != stdhttp.MethodPost {
+		return ports.TrivyRuntimeState{}, domainauth.NewValidationError("runtime mutation requires POST")
+	}
+	var payload struct {
+		Version string `json:"version"`
+	}
+	if req.Body != nil && req.ContentLength != 0 {
+		if err := decodeAdminJSON(req, &payload); err != nil {
+			return ports.TrivyRuntimeState{}, err
+		}
+	}
+	return action(strings.TrimSpace(payload.Version))
 }
 
 func (r *Router) handleAdminUsersCollection(w stdhttp.ResponseWriter, req *stdhttp.Request, principal domainauth.Principal) {

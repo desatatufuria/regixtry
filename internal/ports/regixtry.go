@@ -31,6 +31,8 @@ type MetadataStore interface {
 	ListManifestBlobs(ctx context.Context, tenant string, repository domain.RepositoryRef, manifestDigest domain.Digest) ([]domain.Descriptor, error)
 	GetScanSettings(ctx context.Context, tenant string) (ScanSettings, error)
 	UpsertScanSettings(ctx context.Context, tenant string, settings ScanSettings) error
+	GetTrivyRuntimeState(ctx context.Context, tenant string) (TrivyRuntimeState, error)
+	UpsertTrivyRuntimeState(ctx context.Context, tenant string, state TrivyRuntimeState) error
 	GetActiveScanRunByDigest(ctx context.Context, tenant string, repository string, digest string) (ScanRun, error)
 	GetScanRun(ctx context.Context, tenant string, runID string) (ScanRun, error)
 	UpsertScanRun(ctx context.Context, tenant string, run ScanRun) error
@@ -125,10 +127,18 @@ type FeatureSummary struct {
 }
 
 type FeatureRuntime struct {
-	Mode    string `json:"mode,omitempty"`
-	Health  string `json:"health,omitempty"`
-	Version string `json:"version,omitempty"`
-	Detail  string `json:"detail,omitempty"`
+	Mode              string     `json:"mode,omitempty"`
+	Status            string     `json:"status,omitempty"`
+	Health            string     `json:"health,omitempty"`
+	Version           string     `json:"version,omitempty"`
+	Detail            string     `json:"detail,omitempty"`
+	RollbackAvailable bool       `json:"rollback_available,omitempty"`
+	ActiveBinaryPath  string     `json:"active_binary_path,omitempty"`
+	ReceiptPath       string     `json:"receipt_path,omitempty"`
+	LastVerifiedAt    *time.Time `json:"last_verified_at,omitempty"`
+	LastHealthCheckAt *time.Time `json:"last_health_check_at,omitempty"`
+	LastDBUpdatedAt   *time.Time `json:"last_db_updated_at,omitempty"`
+	LastError         string     `json:"last_error,omitempty"`
 }
 
 type FeatureDetails struct {
@@ -148,6 +158,33 @@ type FeatureDetails struct {
 	BinaryPath            string         `json:"-"`
 	MaxConcurrency        int            `json:"max_concurrency"`
 	Runtime               FeatureRuntime `json:"runtime,omitempty"`
+}
+
+type TrivyRuntimeStatus string
+
+const (
+	TrivyRuntimeStatusUninstalled       TrivyRuntimeStatus = "uninstalled"
+	TrivyRuntimeStatusInstalling        TrivyRuntimeStatus = "installing"
+	TrivyRuntimeStatusReady             TrivyRuntimeStatus = "ready"
+	TrivyRuntimeStatusDegraded          TrivyRuntimeStatus = "degraded"
+	TrivyRuntimeStatusMigrationRequired TrivyRuntimeStatus = "migration-required"
+)
+
+const FeatureRuntimeModeManaged = "managed"
+
+type TrivyRuntimeState struct {
+	Status            TrivyRuntimeStatus `json:"status"`
+	ActiveVersion     string             `json:"active_version,omitempty"`
+	PreviousVersion   string             `json:"previous_version,omitempty"`
+	ActiveBinaryPath  string             `json:"active_binary_path,omitempty"`
+	CacheDir          string             `json:"cache_dir,omitempty"`
+	ReceiptPath       string             `json:"receipt_path,omitempty"`
+	MigrationHint     string             `json:"migration_hint,omitempty"`
+	LastVerifiedAt    *time.Time         `json:"last_verified_at,omitempty"`
+	LastHealthCheckAt *time.Time         `json:"last_health_check_at,omitempty"`
+	LastDBUpdatedAt   *time.Time         `json:"last_db_updated_at,omitempty"`
+	LastError         string             `json:"last_error,omitempty"`
+	UpdatedAt         time.Time          `json:"updated_at,omitempty"`
 }
 
 type FeatureConfigureInput struct {

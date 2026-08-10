@@ -1,25 +1,39 @@
 # CLI Reference
 
-## Comandos
+## Commands
 
-| Comando | Flags principales | Uso |
+| Command | Main flags | Use |
 | --- | --- | --- |
-| `serve` | ver `configuration.md` | Inicia HTTP/HTTPS |
-| `tui` | `-storage-root`, `-db`, `-tenant`, `-auth-postgres-dsn`, `-api-base-url`, `-snapshot` | Ejecuta consola |
-| `bootstrap-admin` | `-auth-postgres-dsn`, `-username`, `-password`, `-password-stdin`, `-rotate-password` | Crea/rota admin inicial |
-| `bootstrap` | `-mode`, `-public-url`, `-runtime-tls-mode`, `-tls-cert-file`, `-tls-key-file`, `-addr`, `-storage-root`, `-state-path`, `-unit-path`, `-service`, `-no-start`, `-rollback` | Genera setup systemd |
-| `setup` | flags de `bootstrap` más `-admin-username`, `-admin-password`, `-auth-postgres-dsn`, legacy `-trivy-*` import bridge | Setup interactivo/automatizado |
+| `serve` | see `configuration.md` | Starts the HTTP/HTTPS registry runtime |
+| `tui` | `-storage-root`, `-db`, `-tenant`, `-auth-postgres-dsn`, `-api-base-url`, `-snapshot` | Runs the local console |
+| `bootstrap-admin` | `-auth-postgres-dsn`, `-username`, `-password`, `-password-stdin`, `-rotate-password` | Creates or rotates the bootstrap admin |
+| `bootstrap` | `-mode`, `-public-url`, `-runtime-tls-mode`, `-tls-cert-file`, `-tls-key-file`, `-addr`, `-storage-root`, `-state-path`, `-unit-path`, `-service`, `-no-start`, `-rollback` | Builds the systemd-oriented base setup |
+| `setup` | `bootstrap` flags plus `-admin-username`, `-admin-password`, `-auth-postgres-dsn`, and legacy `-trivy-*` import bridge flags | Runs guided or automated setup |
 | `feature list` | `-storage-root`, `-db`, `-tenant` | Lists built-in features |
 | `feature show <name>` | `-storage-root`, `-db`, `-tenant` | Shows feature-owned configuration |
-| `feature status <name>` | `-storage-root`, `-db`, `-tenant` | Shows feature state plus runtime health |
+| `feature status <name>` | `-storage-root`, `-db`, `-tenant` | Shows feature intent plus managed runtime status |
+| `feature install <name>` / `upgrade <name>` | `-storage-root`, `-db`, `-tenant`, optional `-version` | Installs or upgrades the managed Trivy runtime |
+| `feature rollback <name>` | `-storage-root`, `-db`, `-tenant` | Restores the previous managed Trivy runtime |
 | `feature enable <name>` / `disable <name>` | `-storage-root`, `-db`, `-tenant` | Toggles a built-in feature |
-| `feature configure <name>` | `-storage-root`, `-db`, `-tenant`, `-enabled`, `-schedule-enabled`, `-interval`, `-timeout`, `-service-url`, `-registry-reachable-url`, optional `-auth-token`, `-tls-ca-cert-path`, `-tls-insecure-skip-verify`, `-max-concurrency` | Updates feature-owned configuration |
-| `uninstall` | `-state-path` | Elimina artefactos registrados |
-| `upgrade` | `-ref`, `-state-path`, `-yes` | Upgrade con preflight |
+| `feature configure <name>` | `-storage-root`, `-db`, `-tenant`, `-enabled`, `-schedule-enabled`, `-interval`, `-timeout`, `-registry-reachable-url`, `-max-concurrency` | Updates feature-owned intent without taking runtime ownership |
+| `uninstall` | `-state-path` | Removes recorded base-install artifacts |
+| `upgrade` | `-ref`, `-state-path`, `-yes` | Runs the Regixtry binary upgrade preflight |
 
-No hay subcomandos Cobra/urfave; se usa `flag.NewFlagSet` de la biblioteca estándar.
+Regixtry still uses the Go standard library `flag.NewFlagSet`; there is no Cobra or urfave layer.
 
-Ejemplo de snapshot:
+Managed Trivy example:
 
 ```bash
+regixtry feature configure trivy \
+  -enabled \
+  -schedule-enabled \
+  -interval 6h \
+  -timeout 20m \
+  -registry-reachable-url https://registry.internal:5443 \
+  -max-concurrency 2
+
+regixtry feature install trivy -version 0.57.1
+regixtry feature status trivy
+regixtry feature upgrade trivy -version 0.58.0
+regixtry feature rollback trivy
 ```

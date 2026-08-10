@@ -49,6 +49,14 @@ var newBootstrapRunner = func() bootstrapRunner {
 	return installlinux.NewBootstrapper()
 }
 
+var newFeatureRuntimeManager = func(cfg appregixtry.FeatureRuntimeManagerConfig) appregixtry.FeatureRuntimeManager {
+	return trivyinfra.NewRuntimeManager(trivyinfra.RuntimeManagerConfig{
+		StorageRoot: cfg.StorageRoot,
+		Store:       cfg.Store,
+		Prober:      trivyinfra.New(trivyinfra.RunnerConfig{}),
+	})
+}
+
 var resolveCurrentExecutable = func() string {
 	path, err := os.Executable()
 	if err == nil {
@@ -839,7 +847,7 @@ func parseFeatureConfig(args []string) (featureConfig, error) {
 
 func runFeature(ctx context.Context, args []string, stdout io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("expected feature action: list, show, status, enable, disable, or configure")
+		return errors.New("expected feature action: list, show, status, install, upgrade, rollback, enable, disable, or configure")
 	}
 
 	switch args[0] {
@@ -863,7 +871,7 @@ func runFeature(ctx context.Context, args []string, stdout io.Writer) error {
 			}
 		}
 		return nil
-	case "show", "status", "enable", "disable":
+	case "show", "status", "install", "upgrade", "rollback", "enable", "disable":
 		if len(args) < 2 {
 			return fmt.Errorf("feature %s requires a feature name", args[0])
 		}
@@ -871,9 +879,22 @@ func runFeature(ctx context.Context, args []string, stdout io.Writer) error {
 		if err := appregixtry.ValidateFeatureName(name); err != nil {
 			return err
 		}
-		cfg, err := parseFeatureConfig(args[2:])
-		if err != nil {
+		flags := flag.NewFlagSet("feature "+args[0], flag.ContinueOnError)
+		flags.SetOutput(io.Discard)
+		var (
+			cfg     featureConfig
+			version string
+		)
+		flags.StringVar(&cfg.StorageRoot, "storage-root", filepath.Join(".", "data"), "root directory for registry runtime state")
+		flags.StringVar(&cfg.DatabasePath, "db", "", "path to the SQLite metadata database")
+		flags.StringVar(&cfg.PublicURL, "public-url", os.Getenv("REGISTRY_PUBLIC_URL"), "canonical public URL advertised to registry clients")
+		flags.StringVar(&cfg.Tenant, "tenant", ports.DefaultTenant, "tenant identifier")
+		flags.StringVar(&version, "version", "", "managed trivy runtime version")
+		if err := flags.Parse(args[2:]); err != nil {
 			return err
+		}
+		if cfg.DatabasePath == "" {
+			cfg.DatabasePath = filepath.Join(cfg.StorageRoot, "metadata.db")
 		}
 		service, cleanup, err := openFeatureService(cfg)
 		if err != nil {
@@ -894,6 +915,27 @@ func runFeature(ctx context.Context, args []string, stdout io.Writer) error {
 				return err
 			}
 			return writeFeatureDetails(stdout, details, true)
+		case "install":
+			state, err := service.InstallFeatureRuntime(ctx, name, version)
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintf(stdout, "Installed managed runtime for %s at %s\n", name, state.ActiveVersion)
+			return err
+		case "upgrade":
+			state, err := service.UpgradeFeatureRuntime(ctx, name, version)
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintf(stdout, "Upgraded managed runtime for %s to %s\n", name, state.ActiveVersion)
+			return err
+		case "rollback":
+			state, err := service.RollbackFeatureRuntime(ctx, name)
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintf(stdout, "Rolled back managed runtime for %s to %s\n", name, state.ActiveVersion)
+			return err
 		case "enable":
 			details, err := service.SetFeatureEnabled(ctx, name, true)
 			if err != nil {
@@ -1003,6 +1045,7 @@ func openFeatureService(cfg featureConfig) (*appregixtry.Service, func(), error)
 	service := appregixtry.NewService(nil, store, ports.NewConfigurableAccessController(ports.AccessConfig{}), ports.NewSingleTenantResolver(cfg.Tenant), ports.NewInlineJobRunner())
 	service.SetScanHost(cfg.PublicURL)
 	service.SetScanRunner(trivyinfra.New(trivyinfra.RunnerConfig{}))
+	service.SetFeatureRuntimeManager(newFeatureRuntimeManager(appregixtry.FeatureRuntimeManagerConfig{StorageRoot: cfg.StorageRoot, Store: store, ScanRunner: trivyinfra.New(trivyinfra.RunnerConfig{})}))
 	return service, func() { _ = store.Close() }, nil
 }
 
@@ -1023,9 +1066,13 @@ func writeFeatureDetails(stdout io.Writer, details ports.FeatureDetails, include
 	}
 	if includeRuntime {
 		lines = append(lines,
+			fmt.Sprintf("Runtime Status: %s", firstNonEmpty(details.Runtime.Status, details.Runtime.Health, "unknown")),
 			fmt.Sprintf("Runtime Health: %s", firstNonEmpty(details.Runtime.Health, "unknown")),
 			fmt.Sprintf("Runtime Version: %s", firstNonEmpty(details.Runtime.Version, "unknown")),
 		)
+		if details.Runtime.RollbackAvailable {
+			lines = append(lines, "Runtime Rollback Available: true")
+		}
 		if strings.TrimSpace(details.Runtime.Detail) != "" {
 			lines = append(lines, fmt.Sprintf("Runtime Detail: %s", details.Runtime.Detail))
 		}
@@ -1986,6 +2033,7 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 	)
 	service.SetScanHost(cfg.PublicURL)
 	service.SetScanRunner(trivyinfra.New(trivyinfra.RunnerConfig{}))
+	service.SetFeatureRuntimeManager(newFeatureRuntimeManager(appregixtry.FeatureRuntimeManagerConfig{StorageRoot: cfg.StorageRoot, Store: metadataStore, ScanRunner: trivyinfra.New(trivyinfra.RunnerConfig{})}))
 	trivyMaxConcurrency := cfg.TrivyMaxConcurrency
 	if trivyMaxConcurrency <= 0 {
 		trivyMaxConcurrency = 1
@@ -2075,6 +2123,7 @@ func runTUI(cfg tuiConfig, stdin io.Reader, stdout io.Writer) error {
 		ports.NewSingleTenantResolver(cfg.Tenant),
 		ports.NewInlineJobRunner(),
 	)
+	service.SetFeatureRuntimeManager(newFeatureRuntimeManager(appregixtry.FeatureRuntimeManagerConfig{StorageRoot: cfg.StorageRoot, Store: metadataStore, ScanRunner: trivyinfra.New(trivyinfra.RunnerConfig{})}))
 
 	if cfg.Snapshot {
 		model := tui.NewModel(service, modelOpts...)

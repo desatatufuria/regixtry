@@ -63,29 +63,49 @@ func (s *Service) GetFeatureStatus(ctx context.Context, name string) (ports.Feat
 		return ports.FeatureDetails{}, err
 	}
 	details := featureDetailsFromSettings(feature, settings, configured)
-	details.Runtime = s.probeFeatureRuntime(ctx, settings)
+	details.Runtime = s.projectFeatureRuntime(ctx)
 	return details, nil
 }
 
-func (s *Service) probeFeatureRuntime(ctx context.Context, settings ports.ScanSettings) ports.FeatureRuntime {
-	if strings.TrimSpace(settings.ServiceURL) == "" {
-		return ports.FeatureRuntime{Mode: string(ports.FeatureKindExternalService), Health: "unconfigured", Detail: "service_url is required"}
-	}
-	if _, err := s.scannerReachableRegistryBase(settings); err != nil {
-		return ports.FeatureRuntime{Mode: string(ports.FeatureKindExternalService), Health: "degraded", Detail: err.Error()}
-	}
-	prober, ok := s.scanRunner.(trivyRuntimeProber)
-	if !ok || prober == nil {
-		return ports.FeatureRuntime{Mode: string(ports.FeatureKindExternalService), Health: "unknown", Detail: "service probe is not configured"}
-	}
-	runtime, err := prober.Probe(ctx, settings)
-	if runtime.Mode == "" {
-		runtime.Mode = string(ports.FeatureKindExternalService)
+
+func (s *Service) projectFeatureRuntime(ctx context.Context) ports.FeatureRuntime {
+	var (
+		state ports.TrivyRuntimeState
+		err   error
+	)
+	if s.runtime != nil {
+		state, err = s.runtime.Status(ctx)
+	} else {
+		state, err = s.metadata.GetTrivyRuntimeState(ctx, s.tenant(ctx))
 	}
 	if err != nil {
-		return runtime
+		if domain.IsCode(err, domain.ErrorCodeNotFound) {
+			return ports.FeatureRuntime{Mode: ports.FeatureRuntimeModeManaged, Status: string(ports.TrivyRuntimeStatusUninstalled), Health: string(ports.TrivyRuntimeStatusUninstalled), Detail: "managed runtime is not installed"}
+		}
+		return ports.FeatureRuntime{Mode: ports.FeatureRuntimeModeManaged, Status: string(ports.TrivyRuntimeStatusDegraded), Health: string(ports.TrivyRuntimeStatusDegraded), Detail: err.Error(), LastError: err.Error()}
 	}
-	return runtime
+	health := string(state.Status)
+	if health == "" {
+		health = string(ports.TrivyRuntimeStatusUninstalled)
+	}
+	detail := strings.TrimSpace(state.MigrationHint)
+	if detail == "" {
+		detail = strings.TrimSpace(state.LastError)
+	}
+	return ports.FeatureRuntime{
+		Mode:              ports.FeatureRuntimeModeManaged,
+		Status:            string(state.Status),
+		Health:            health,
+		Version:           strings.TrimSpace(state.ActiveVersion),
+		Detail:            detail,
+		RollbackAvailable: strings.TrimSpace(state.PreviousVersion) != "",
+		ActiveBinaryPath:  strings.TrimSpace(state.ActiveBinaryPath),
+		ReceiptPath:       strings.TrimSpace(state.ReceiptPath),
+		LastVerifiedAt:    state.LastVerifiedAt,
+		LastHealthCheckAt: state.LastHealthCheckAt,
+		LastDBUpdatedAt:   state.LastDBUpdatedAt,
+		LastError:         strings.TrimSpace(state.LastError),
+	}
 }
 
 func (s *Service) ConfigureFeature(ctx context.Context, name string, input ports.FeatureConfigureInput) (ports.FeatureDetails, error) {
@@ -196,10 +216,7 @@ func featureDetailsFromSettings(feature featureDescriptor, settings ports.ScanSe
 		ScheduleEnabled:       settings.ScheduleEnabled,
 		Interval:              settings.Interval,
 		Timeout:               settings.Timeout,
-		ServiceURL:            settings.ServiceURL,
 		RegistryReachableURL:  settings.RegistryReachableURL,
-		TLSCACertPath:         settings.TLSCACertPath,
-		TLSInsecureSkipVerify: settings.TLSInsecureSkipVerify,
 		MaxConcurrency:        settings.MaxConcurrency,
 	}
 }

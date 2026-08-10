@@ -53,6 +53,23 @@ func TestSchedulerRespectsConfiguredInterval(t *testing.T) {
 	}
 }
 
+func TestSchedulerTriggersManagedRuntimeBatchesThroughServiceContract(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeLeaseStore{}
+	service := &fakeSchedulerService{settings: ports.ScanSettings{Enabled: true, ScheduleEnabled: true, Interval: 10 * time.Millisecond, Timeout: time.Minute, RegistryReachableURL: "https://registry.internal", MaxConcurrency: 1}}
+	scheduler := NewScheduler(store, service, "tenant-a", "node-a", time.Millisecond, 5*time.Millisecond)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	defer cancel()
+	if err := scheduler.Run(ctx); err != nil && err != context.DeadlineExceeded && err != context.Canceled {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if service.calls != 1 {
+		t.Fatalf("calls = %d, want one managed batch trigger", service.calls)
+	}
+}
+
 type fakeLeaseStore struct {
 	mu    sync.Mutex
 	state ports.ScanSchedulerState

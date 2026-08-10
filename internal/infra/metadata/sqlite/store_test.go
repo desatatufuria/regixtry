@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -233,6 +234,82 @@ func TestStorePersistsScanRunsAndSchedulerStateAcrossReopen(t *testing.T) {
 	}
 	if storedState.OwnerID != state.OwnerID || storedState.BatchStartedAt == nil {
 		t.Fatalf("storedState = %#v, want %#v", storedState, state)
+	}
+}
+
+func TestStorePersistsTrivyRuntimeStateAcrossReopenAndDerivesLegacyMigrationState(t *testing.T) {
+	t.Parallel()
+
+	databasePath := filepath.Join(t.TempDir(), "registry.db")
+	store, err := New(databasePath)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	verifiedAt := time.Now().UTC().Add(-2 * time.Minute)
+	healthAt := verifiedAt.Add(time.Minute)
+	dbUpdatedAt := healthAt.Add(-30 * time.Second)
+	state := ports.TrivyRuntimeState{
+		Status:            ports.TrivyRuntimeStatusReady,
+		ActiveVersion:     "0.57.1",
+		PreviousVersion:   "0.56.2",
+		ActiveBinaryPath:  "/var/lib/regixtry/features/trivy/bin/active/trivy",
+		CacheDir:          "/var/lib/regixtry/features/trivy/trivy-cache",
+		ReceiptPath:       "/var/lib/regixtry/features/trivy/receipts/0.57.1.json",
+		LastVerifiedAt:    &verifiedAt,
+		LastHealthCheckAt: &healthAt,
+		LastDBUpdatedAt:   &dbUpdatedAt,
+		UpdatedAt:         healthAt,
+	}
+	if err := store.UpsertTrivyRuntimeState(context.Background(), "tenant-a", state); err != nil {
+		t.Fatalf("UpsertTrivyRuntimeState() error = %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	reopened, err := New(databasePath)
+	if err != nil {
+		t.Fatalf("New(reopen) error = %v", err)
+	}
+	defer reopened.Close()
+
+	stored, err := reopened.GetTrivyRuntimeState(context.Background(), "tenant-a")
+	if err != nil {
+		t.Fatalf("GetTrivyRuntimeState() error = %v", err)
+	}
+	if stored.Status != state.Status || stored.ActiveVersion != state.ActiveVersion || stored.PreviousVersion != state.PreviousVersion {
+		t.Fatalf("stored = %#v, want persisted runtime identity %#v", stored, state)
+	}
+	if stored.ActiveBinaryPath != state.ActiveBinaryPath || stored.CacheDir != state.CacheDir || stored.ReceiptPath != state.ReceiptPath {
+		t.Fatalf("stored = %#v, want persisted managed paths %#v", stored, state)
+	}
+	if stored.LastVerifiedAt == nil || !stored.LastVerifiedAt.Equal(verifiedAt) || stored.LastHealthCheckAt == nil || !stored.LastHealthCheckAt.Equal(healthAt) {
+		t.Fatalf("stored = %#v, want persisted verification timestamps", stored)
+	}
+
+	legacyStore := newTestStore(t)
+	defer legacyStore.Close()
+	_, err = legacyStore.db.ExecContext(context.Background(), `
+		INSERT INTO scan_settings (tenant, enabled, schedule_enabled, interval, timeout, cache_dir, binary_path, service_url, registry_reachable_url, max_concurrency, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, "tenant-b", true, true, (6 * time.Hour).String(), (10 * time.Minute).String(), "/var/cache/trivy", "/tmp/README.sh", "https://scanner.example.com", "https://registry.internal", 2, time.Now().UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		t.Fatalf("insert legacy scan settings error = %v", err)
+	}
+
+	legacyState, err := legacyStore.GetTrivyRuntimeState(context.Background(), "tenant-b")
+	if err != nil {
+		t.Fatalf("GetTrivyRuntimeState(legacy) error = %v", err)
+	}
+	if legacyState.Status != ports.TrivyRuntimeStatusMigrationRequired {
+		t.Fatalf("legacyState.Status = %q, want migration-required", legacyState.Status)
+	}
+	if legacyState.ActiveBinaryPath != "" {
+		t.Fatalf("legacyState.ActiveBinaryPath = %q, want empty because legacy paths must not be executable runtime authority", legacyState.ActiveBinaryPath)
+	}
+	if !strings.Contains(legacyState.MigrationHint, "/tmp/README.sh") {
+		t.Fatalf("legacyState.MigrationHint = %q, want legacy binary evidence", legacyState.MigrationHint)
 	}
 }
 

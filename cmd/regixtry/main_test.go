@@ -1064,21 +1064,6 @@ func TestRunFeatureCommandsManageBuiltInTrivyState(t *testing.T) {
 	root := t.TempDir()
 	storageRoot := filepath.Join(root, "data")
 	databasePath := filepath.Join(storageRoot, "metadata.db")
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.Header.Get("Authorization"); got != "Bearer secret-token" {
-			http.Error(w, fmt.Sprintf("unexpected auth header %q", got), http.StatusUnauthorized)
-			return
-		}
-		switch r.URL.Path {
-		case "/healthz":
-			w.WriteHeader(http.StatusOK)
-		case "/version":
-			_, _ = w.Write([]byte(`{"Version":"0.57.1"}`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer server.Close()
 	if err := os.MkdirAll(storageRoot, 0o755); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
 	}
@@ -1097,7 +1082,7 @@ func TestRunFeatureCommandsManageBuiltInTrivyState(t *testing.T) {
 	}
 
 	stdout.Reset()
-	if err := runWithIO(context.Background(), []string{"feature", "configure", "trivy", "-storage-root", storageRoot, "-db", databasePath, "-enabled", "-schedule-enabled", "-interval", "6h", "-timeout", "10m", "-service-url", server.URL, "-registry-reachable-url", "https://registry.internal:5443", "-auth-token", "secret-token", "-max-concurrency", "2"}, strings.NewReader(""), stdout, io.Discard); err != nil {
+	if err := runWithIO(context.Background(), []string{"feature", "configure", "trivy", "-storage-root", storageRoot, "-db", databasePath, "-enabled", "-schedule-enabled", "-interval", "6h", "-timeout", "10m", "-registry-reachable-url", "https://registry.internal:5443", "-max-concurrency", "2"}, strings.NewReader(""), stdout, io.Discard); err != nil {
 		t.Fatalf("runWithIO(feature configure) error = %v", err)
 	}
 	if !strings.Contains(stdout.String(), "Configured feature trivy") {
@@ -1108,14 +1093,14 @@ func TestRunFeatureCommandsManageBuiltInTrivyState(t *testing.T) {
 	if err := runWithIO(context.Background(), []string{"feature", "status", "trivy", "-storage-root", storageRoot, "-db", databasePath}, strings.NewReader(""), stdout, io.Discard); err != nil {
 		t.Fatalf("runWithIO(feature status) error = %v", err)
 	}
-	for _, want := range []string{"Name: trivy", "Enabled: true", "Schedule Enabled: true", "Service URL: " + server.URL, "Registry Reachable URL: https://registry.internal:5443", "Runtime Health: ready", "Runtime Version: 0.57.1"} {
+	for _, want := range []string{"Name: trivy", "Enabled: true", "Schedule Enabled: true", "Registry Reachable URL: https://registry.internal:5443", "Runtime Status: uninstalled", "Runtime Health: uninstalled"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("stdout = %q, want %q", stdout.String(), want)
 		}
 	}
 
 	stdout.Reset()
-	if err := runWithIO(context.Background(), []string{"feature", "configure", "trivy", "-storage-root", storageRoot, "-db", databasePath, "-enabled", "-schedule-enabled", "-interval", "6h", "-timeout", "10m", "-service-url", server.URL, "-auth-token", "secret-token", "-max-concurrency", "2"}, strings.NewReader(""), stdout, io.Discard); err != nil {
+	if err := runWithIO(context.Background(), []string{"feature", "configure", "trivy", "-storage-root", storageRoot, "-db", databasePath, "-enabled", "-schedule-enabled", "-interval", "6h", "-timeout", "10m", "-max-concurrency", "2"}, strings.NewReader(""), stdout, io.Discard); err != nil {
 		t.Fatalf("runWithIO(feature configure fallback) error = %v", err)
 	}
 
@@ -1123,7 +1108,7 @@ func TestRunFeatureCommandsManageBuiltInTrivyState(t *testing.T) {
 	if err := runWithIO(context.Background(), []string{"feature", "status", "trivy", "-storage-root", storageRoot, "-db", databasePath, "-public-url", "https://registry.example.com"}, strings.NewReader(""), stdout, io.Discard); err != nil {
 		t.Fatalf("runWithIO(feature status with public-url fallback) error = %v", err)
 	}
-	for _, want := range []string{"Runtime Health: ready", "Runtime Version: 0.57.1"} {
+	for _, want := range []string{"Runtime Status: uninstalled", "Runtime Health: uninstalled"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("stdout = %q, want %q after public-url fallback", stdout.String(), want)
 		}
@@ -1139,6 +1124,60 @@ func TestRunFeatureCommandsManageBuiltInTrivyState(t *testing.T) {
 	}
 	if settings.Enabled {
 		t.Fatalf("settings.Enabled = %v, want false after feature disable", settings.Enabled)
+	}
+}
+
+func TestFeatureRuntimeLifecycleCommandsUseManagedRuntimeActions(t *testing.T) {
+	root := t.TempDir()
+	storageRoot := filepath.Join(root, "data")
+	databasePath := filepath.Join(storageRoot, "metadata.db")
+	if err := os.MkdirAll(storageRoot, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+
+	stub := &stubFeatureRuntimeManager{
+		installState: ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusReady, ActiveVersion: "0.57.1", PreviousVersion: "", ActiveBinaryPath: filepath.Join(storageRoot, "features", "trivy", "bin", "active", "trivy"), CacheDir: filepath.Join(storageRoot, "features", "trivy", "trivy-cache"), ReceiptPath: filepath.Join(storageRoot, "features", "trivy", "receipts", "0.57.1.json")},
+		upgradeState: ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusReady, ActiveVersion: "0.58.0", PreviousVersion: "0.57.1", ActiveBinaryPath: filepath.Join(storageRoot, "features", "trivy", "bin", "active", "trivy"), CacheDir: filepath.Join(storageRoot, "features", "trivy", "trivy-cache"), ReceiptPath: filepath.Join(storageRoot, "features", "trivy", "receipts", "0.58.0.json")},
+		rollbackState: ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusReady, ActiveVersion: "0.57.1", PreviousVersion: "0.58.0", ActiveBinaryPath: filepath.Join(storageRoot, "features", "trivy", "bin", "active", "trivy"), CacheDir: filepath.Join(storageRoot, "features", "trivy", "trivy-cache"), ReceiptPath: filepath.Join(storageRoot, "features", "trivy", "receipts", "0.57.1.json")},
+		statusState: ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusMigrationRequired, MigrationHint: `legacy binary_path "/tmp/README.sh" requires managed reinstall and will never be executed`},
+	}
+	restoreRuntimeManager := swapFeatureRuntimeManagerFactory(t, func(appregixtry.FeatureRuntimeManagerConfig) appregixtry.FeatureRuntimeManager {
+		return stub
+	})
+	defer restoreRuntimeManager()
+
+	stdout := &bytes.Buffer{}
+	if err := runWithIO(context.Background(), []string{"feature", "install", "trivy", "-storage-root", storageRoot, "-db", databasePath, "-version", "0.57.1"}, strings.NewReader(""), stdout, io.Discard); err != nil {
+		t.Fatalf("runWithIO(feature install) error = %v", err)
+	}
+	if stub.installCalls != 1 || !strings.Contains(stdout.String(), "Installed managed runtime for trivy at 0.57.1") {
+		t.Fatalf("install stub/stdout = %#v / %q, want managed install evidence", stub, stdout.String())
+	}
+
+	stdout.Reset()
+	if err := runWithIO(context.Background(), []string{"feature", "upgrade", "trivy", "-storage-root", storageRoot, "-db", databasePath, "-version", "0.58.0"}, strings.NewReader(""), stdout, io.Discard); err != nil {
+		t.Fatalf("runWithIO(feature upgrade) error = %v", err)
+	}
+	if stub.upgradeCalls != 1 || !strings.Contains(stdout.String(), "Upgraded managed runtime for trivy to 0.58.0") {
+		t.Fatalf("upgrade stub/stdout = %#v / %q, want managed upgrade evidence", stub, stdout.String())
+	}
+
+	stdout.Reset()
+	if err := runWithIO(context.Background(), []string{"feature", "rollback", "trivy", "-storage-root", storageRoot, "-db", databasePath}, strings.NewReader(""), stdout, io.Discard); err != nil {
+		t.Fatalf("runWithIO(feature rollback) error = %v", err)
+	}
+	if stub.rollbackCalls != 1 || !strings.Contains(stdout.String(), "Rolled back managed runtime for trivy to 0.57.1") {
+		t.Fatalf("rollback stub/stdout = %#v / %q, want managed rollback evidence", stub, stdout.String())
+	}
+
+	stdout.Reset()
+	if err := runWithIO(context.Background(), []string{"feature", "status", "trivy", "-storage-root", storageRoot, "-db", databasePath}, strings.NewReader(""), stdout, io.Discard); err != nil {
+		t.Fatalf("runWithIO(feature status) error = %v", err)
+	}
+	for _, want := range []string{"Runtime Status: migration-required", "Runtime Detail: legacy binary_path \"/tmp/README.sh\" requires managed reinstall and will never be executed"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout = %q, want %q", stdout.String(), want)
+		}
 	}
 }
 
@@ -2314,6 +2353,17 @@ func swapBootstrapRunner(t *testing.T, runner bootstrapRunner) func() {
 	}
 }
 
+func swapFeatureRuntimeManagerFactory(t *testing.T, factory func(appregixtry.FeatureRuntimeManagerConfig) appregixtry.FeatureRuntimeManager) func() {
+	t.Helper()
+
+	previous := newFeatureRuntimeManager
+	newFeatureRuntimeManager = factory
+
+	return func() {
+		newFeatureRuntimeManager = previous
+	}
+}
+
 func swapCurrentExecutablePath(t *testing.T, path string) func() {
 	t.Helper()
 
@@ -2376,6 +2426,38 @@ type stubBootstrapRunner struct {
 	uninstallCalls      int
 	upgradeCalls        int
 	saveProvenanceCalls int
+}
+
+type stubFeatureRuntimeManager struct {
+	installState  ports.TrivyRuntimeState
+	upgradeState  ports.TrivyRuntimeState
+	rollbackState ports.TrivyRuntimeState
+	statusState   ports.TrivyRuntimeState
+	err           error
+	installCalls  int
+	upgradeCalls  int
+	rollbackCalls int
+	statusCalls   int
+}
+
+func (s *stubFeatureRuntimeManager) Install(context.Context, string) (ports.TrivyRuntimeState, error) {
+	s.installCalls++
+	return s.installState, s.err
+}
+
+func (s *stubFeatureRuntimeManager) Upgrade(context.Context, string) (ports.TrivyRuntimeState, error) {
+	s.upgradeCalls++
+	return s.upgradeState, s.err
+}
+
+func (s *stubFeatureRuntimeManager) Rollback(context.Context) (ports.TrivyRuntimeState, error) {
+	s.rollbackCalls++
+	return s.rollbackState, s.err
+}
+
+func (s *stubFeatureRuntimeManager) Status(context.Context) (ports.TrivyRuntimeState, error) {
+	s.statusCalls++
+	return s.statusState, s.err
 }
 
 func (s *stubBootstrapRunner) Run(_ context.Context, cfg installlinux.BootstrapConfig) error {

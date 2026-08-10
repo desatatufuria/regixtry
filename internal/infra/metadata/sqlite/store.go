@@ -483,6 +483,70 @@ func (s *Store) UpsertScanSettings(ctx context.Context, tenant string, settings 
 	return err
 }
 
+func (s *Store) GetTrivyRuntimeState(ctx context.Context, tenant string) (ports.TrivyRuntimeState, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT status, active_version, previous_version, active_binary_path, cache_dir, receipt_path, migration_hint, last_verified_at, last_health_check_at, last_db_updated_at, last_error, updated_at
+		FROM trivy_runtime_state
+		WHERE tenant = ?
+	`, tenant)
+	state, err := scanTrivyRuntimeStateRow(row)
+	if err == nil {
+		return state, nil
+	}
+	if err != sql.ErrNoRows {
+		return ports.TrivyRuntimeState{}, err
+	}
+	settings, settingsErr := s.GetScanSettings(ctx, tenant)
+	if settingsErr != nil {
+		if domain.IsCode(settingsErr, domain.ErrorCodeNotFound) {
+			return ports.TrivyRuntimeState{}, domain.NewNotFoundError("trivy_runtime_state", tenant)
+		}
+		return ports.TrivyRuntimeState{}, settingsErr
+	}
+	if legacyState, ok := deriveLegacyTrivyRuntimeState(settings); ok {
+		return legacyState, nil
+	}
+	return ports.TrivyRuntimeState{}, domain.NewNotFoundError("trivy_runtime_state", tenant)
+}
+
+func (s *Store) UpsertTrivyRuntimeState(ctx context.Context, tenant string, state ports.TrivyRuntimeState) error {
+	var (
+		lastVerifiedAt any
+		lastHealthAt   any
+		lastDBUpdated  any
+	)
+	if state.LastVerifiedAt != nil {
+		lastVerifiedAt = state.LastVerifiedAt.UTC().Format(time.RFC3339Nano)
+	}
+	if state.LastHealthCheckAt != nil {
+		lastHealthAt = state.LastHealthCheckAt.UTC().Format(time.RFC3339Nano)
+	}
+	if state.LastDBUpdatedAt != nil {
+		lastDBUpdated = state.LastDBUpdatedAt.UTC().Format(time.RFC3339Nano)
+	}
+	if state.UpdatedAt.IsZero() {
+		state.UpdatedAt = time.Now().UTC()
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO trivy_runtime_state (tenant, status, active_version, previous_version, active_binary_path, cache_dir, receipt_path, migration_hint, last_verified_at, last_health_check_at, last_db_updated_at, last_error, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(tenant) DO UPDATE SET
+			status = excluded.status,
+			active_version = excluded.active_version,
+			previous_version = excluded.previous_version,
+			active_binary_path = excluded.active_binary_path,
+			cache_dir = excluded.cache_dir,
+			receipt_path = excluded.receipt_path,
+			migration_hint = excluded.migration_hint,
+			last_verified_at = excluded.last_verified_at,
+			last_health_check_at = excluded.last_health_check_at,
+			last_db_updated_at = excluded.last_db_updated_at,
+			last_error = excluded.last_error,
+			updated_at = excluded.updated_at
+	`, tenant, string(state.Status), state.ActiveVersion, state.PreviousVersion, state.ActiveBinaryPath, state.CacheDir, state.ReceiptPath, state.MigrationHint, lastVerifiedAt, lastHealthAt, lastDBUpdated, state.LastError, state.UpdatedAt.UTC().Format(time.RFC3339Nano))
+	return err
+}
+
 func (s *Store) GetActiveScanRunByDigest(ctx context.Context, tenant string, repository string, digest string) (ports.ScanRun, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, repository, requested_ref, digest, status, trigger, started_at, finished_at, created_at, updated_at, critical, high, medium, low, trivy_version, db_updated_at, error
@@ -754,6 +818,21 @@ func (s *Store) init() error {
 			last_heartbeat_at TEXT NOT NULL,
 			batch_started_at TEXT
 		);`,
+		`CREATE TABLE IF NOT EXISTS trivy_runtime_state (
+			tenant TEXT PRIMARY KEY,
+			status TEXT NOT NULL,
+			active_version TEXT NOT NULL DEFAULT '',
+			previous_version TEXT NOT NULL DEFAULT '',
+			active_binary_path TEXT NOT NULL DEFAULT '',
+			cache_dir TEXT NOT NULL DEFAULT '',
+			receipt_path TEXT NOT NULL DEFAULT '',
+			migration_hint TEXT NOT NULL DEFAULT '',
+			last_verified_at TEXT,
+			last_health_check_at TEXT,
+			last_db_updated_at TEXT,
+			last_error TEXT NOT NULL DEFAULT '',
+			updated_at TEXT NOT NULL
+		);`,
 	}
 
 	for _, statement := range statements {
@@ -767,6 +846,86 @@ func (s *Store) init() error {
 	}
 
 	return nil
+}
+
+func deriveLegacyTrivyRuntimeState(settings ports.ScanSettings) (ports.TrivyRuntimeState, bool) {
+	legacyBinary := strings.TrimSpace(settings.LegacyBinaryPath)
+	legacyCache := strings.TrimSpace(settings.LegacyCacheDir)
+	legacyService := strings.TrimSpace(settings.ServiceURL)
+	if legacyBinary == "" && legacyCache == "" && legacyService == "" {
+		return ports.TrivyRuntimeState{}, false
+	}
+	hintParts := make([]string, 0, 3)
+	if legacyBinary != "" {
+		hintParts = append(hintParts, fmt.Sprintf("legacy binary_path %q requires managed reinstall and will never be executed", legacyBinary))
+	}
+	if legacyCache != "" {
+		hintParts = append(hintParts, fmt.Sprintf("legacy cache_dir %q is migration evidence only", legacyCache))
+	}
+	if legacyService != "" {
+		hintParts = append(hintParts, fmt.Sprintf("legacy service_url %q is superseded by the managed runtime", legacyService))
+	}
+	return ports.TrivyRuntimeState{
+		Status:        ports.TrivyRuntimeStatusMigrationRequired,
+		MigrationHint: strings.Join(hintParts, "; "),
+		UpdatedAt:     settings.UpdatedAt,
+	}, true
+}
+
+func scanTrivyRuntimeStateRow(row scanRunScanner) (ports.TrivyRuntimeState, error) {
+	var (
+		statusRaw         string
+		activeVersion     string
+		previousVersion   string
+		activeBinaryPath  string
+		cacheDir          string
+		receiptPath       string
+		migrationHint     string
+		lastVerifiedRaw   sql.NullString
+		lastHealthRaw     sql.NullString
+		lastDBUpdatedRaw  sql.NullString
+		lastError         string
+		updatedAtRaw      string
+	)
+	if err := row.Scan(&statusRaw, &activeVersion, &previousVersion, &activeBinaryPath, &cacheDir, &receiptPath, &migrationHint, &lastVerifiedRaw, &lastHealthRaw, &lastDBUpdatedRaw, &lastError, &updatedAtRaw); err != nil {
+		return ports.TrivyRuntimeState{}, err
+	}
+	updatedAt, err := time.Parse(time.RFC3339Nano, updatedAtRaw)
+	if err != nil {
+		return ports.TrivyRuntimeState{}, err
+	}
+	state := ports.TrivyRuntimeState{
+		Status:           ports.TrivyRuntimeStatus(statusRaw),
+		ActiveVersion:    activeVersion,
+		PreviousVersion:  previousVersion,
+		ActiveBinaryPath: activeBinaryPath,
+		CacheDir:         cacheDir,
+		ReceiptPath:      receiptPath,
+		MigrationHint:    migrationHint,
+		LastError:        lastError,
+		UpdatedAt:        updatedAt,
+	}
+	if state.LastVerifiedAt, err = parseOptionalTime(lastVerifiedRaw); err != nil {
+		return ports.TrivyRuntimeState{}, err
+	}
+	if state.LastHealthCheckAt, err = parseOptionalTime(lastHealthRaw); err != nil {
+		return ports.TrivyRuntimeState{}, err
+	}
+	if state.LastDBUpdatedAt, err = parseOptionalTime(lastDBUpdatedRaw); err != nil {
+		return ports.TrivyRuntimeState{}, err
+	}
+	return state, nil
+}
+
+func parseOptionalTime(raw sql.NullString) (*time.Time, error) {
+	if !raw.Valid || strings.TrimSpace(raw.String) == "" {
+		return nil, nil
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, raw.String)
+	if err != nil {
+		return nil, err
+	}
+	return &parsed, nil
 }
 
 func ensureRepository(ctx context.Context, tx *sql.Tx, tenant string, repository domain.RepositoryRef) (int64, error) {

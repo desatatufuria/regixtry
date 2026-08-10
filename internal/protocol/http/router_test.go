@@ -1480,9 +1480,15 @@ func newRouterWithStores(blobStore *fsblob.Store, metadataStore *metadata.Store,
 		ScheduleEnabled: false,
 		Interval:        24 * time.Hour,
 		Timeout:         15 * time.Minute,
-		CacheDir:        filepath.Join(os.TempDir(), "regixtry-router-trivy-cache"),
-		BinaryPath:      "trivy",
+		RegistryReachableURL: "https://registry.internal",
 		MaxConcurrency:  1,
+	})
+	_ = metadataStore.UpsertTrivyRuntimeState(context.Background(), "tenant-a", ports.TrivyRuntimeState{
+		Status:           ports.TrivyRuntimeStatusReady,
+		ActiveVersion:    "0.57.1",
+		ActiveBinaryPath: "/var/lib/regixtry/features/trivy/bin/active/trivy",
+		CacheDir:         filepath.Join(os.TempDir(), "regixtry-router-trivy-cache"),
+		UpdatedAt:        time.Now().UTC(),
 	})
 
 	return NewRouter(service, authService, options...)

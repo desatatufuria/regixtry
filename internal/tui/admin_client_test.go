@@ -368,6 +368,38 @@ func TestHTTPAdminClientFeatureRoutes(t *testing.T) {
 				}
 			},
 		},
+		{
+			name:       "install feature runtime",
+			method:     http.MethodPost,
+			path:       "/admin/v1/features/trivy:install",
+			statusCode: http.StatusOK,
+			body:       `{"status":"ready","active_version":"0.57.1","active_binary_path":"/var/lib/regixtry/features/trivy/bin/active/trivy","cache_dir":"/var/lib/regixtry/features/trivy/trivy-cache","receipt_path":"/var/lib/regixtry/features/trivy/receipts/0.57.1.json"}`,
+			run: func(t *testing.T, client *HTTPAdminClient) {
+				state, err := client.InstallFeatureRuntime(context.Background(), session, "trivy", "0.57.1")
+				if err != nil {
+					t.Fatalf("InstallFeatureRuntime() error = %v", err)
+				}
+				if state.ActiveVersion != "0.57.1" || state.Status != ports.TrivyRuntimeStatusReady {
+					t.Fatalf("state = %#v, want decoded runtime install state", state)
+				}
+			},
+		},
+		{
+			name:       "rollback feature runtime",
+			method:     http.MethodPost,
+			path:       "/admin/v1/features/trivy:rollback",
+			statusCode: http.StatusOK,
+			body:       `{"status":"ready","active_version":"0.57.1","previous_version":"0.58.0"}`,
+			run: func(t *testing.T, client *HTTPAdminClient) {
+				state, err := client.RollbackFeatureRuntime(context.Background(), session, "trivy")
+				if err != nil {
+					t.Fatalf("RollbackFeatureRuntime() error = %v", err)
+				}
+				if state.ActiveVersion != "0.57.1" || state.PreviousVersion != "0.58.0" {
+					t.Fatalf("state = %#v, want decoded runtime rollback state", state)
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {

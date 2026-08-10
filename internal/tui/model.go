@@ -201,6 +201,13 @@ type adminFeatureMutatedMsg struct {
 	err     error
 }
 
+type adminFeatureRuntimeMutatedMsg struct {
+	name   string
+	action string
+	state  ports.TrivyRuntimeState
+	err    error
+}
+
 type adminUserGrantsLoadedMsg struct {
 	userID   string
 	username string
@@ -428,6 +435,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			verb = "enabled"
 		}
 		m.status = fmt.Sprintf("Feature %q %s.", msg.details.Name, verb)
+		m.screen = screenAdminFeatures
+		return m, nil
+	case adminFeatureRuntimeMutatedMsg:
+		if msg.err != nil {
+			if IsAdminSessionExpired(msg.err) {
+				return m.expireAdminSession(msg.err.Error()), nil
+			}
+			m.status = msg.err.Error()
+			return m, nil
+		}
+		m.adminView.FeatureStatus.Runtime.Status = string(msg.state.Status)
+		m.adminView.FeatureStatus.Runtime.Health = string(msg.state.Status)
+		m.adminView.FeatureStatus.Runtime.Version = msg.state.ActiveVersion
+		m.adminView.FeatureStatus.Runtime.Detail = msg.state.MigrationHint
+		m.adminView.FeatureStatus.Runtime.RollbackAvailable = strings.TrimSpace(msg.state.PreviousVersion) != ""
+		m.adminView.FeatureStatus.Runtime.ActiveBinaryPath = msg.state.ActiveBinaryPath
+		m.adminView.FeatureStatus.Runtime.ReceiptPath = msg.state.ReceiptPath
+		m.status = fmt.Sprintf("Managed runtime %s for %q at %s.", msg.action, msg.name, adminFirstNonEmpty(strings.TrimSpace(msg.state.ActiveVersion), adminFirstNonEmpty(strings.TrimSpace(string(msg.state.Status)), "unknown")))
 		m.screen = screenAdminFeatures
 		return m, nil
 	case adminUserGrantsLoadedMsg:
@@ -856,6 +881,14 @@ func (m Model) updateAdminFeaturesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.status = ""
 		return m, nil
+	case isRuneKey(msg, 'i'):
+		name := m.selectedFeatureName()
+		if name == "" {
+			m.status = "No feature selected."
+			return m, nil
+		}
+		m.status = fmt.Sprintf("Installing managed runtime for %s...", name)
+		return m, m.installFeatureRuntimeCmd(name)
 	case isRuneKey(msg, 'x'):
 		name := m.selectedFeatureName()
 		if name == "" || !m.adminView.FeatureStatus.Enabled {
@@ -1601,6 +1634,16 @@ func (m Model) enableDisableFeatureCmd(name string, enabled bool) tea.Cmd {
 			details, err = m.adminClient.DisableFeature(m.ctx, m.adminSession, name)
 		}
 		return adminFeatureMutatedMsg{details: details, enabled: enabled, err: err}
+	}
+}
+
+func (m Model) installFeatureRuntimeCmd(name string) tea.Cmd {
+	return func() tea.Msg {
+		if m.adminClient == nil {
+			return adminFeatureRuntimeMutatedMsg{name: name, action: "installed", err: fmt.Errorf("admin API is unavailable for this session")}
+		}
+		state, err := m.adminClient.InstallFeatureRuntime(m.ctx, m.adminSession, name, "")
+		return adminFeatureRuntimeMutatedMsg{name: name, action: "installed", state: state, err: err}
 	}
 }
 
