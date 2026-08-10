@@ -309,6 +309,59 @@ func TestUninstallCleanupTargetsRemovesInstalledBinaryLast(t *testing.T) {
 	}
 }
 
+func TestUninstallRemovesSQLiteWALSidecars(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	databasePath := filepath.Join(root, "var", "lib", "regixtry", "metadata.db")
+	provenancePath := filepath.Join(root, "etc", "regixtry", lifecycleProvenanceFileName)
+	for _, path := range []string{databasePath, databasePath + "-wal", databasePath + "-shm"} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("MkdirAll(%s) error = %v", path, err)
+		}
+		if err := os.WriteFile(path, []byte("fixture"), 0o644); err != nil {
+			t.Fatalf("WriteFile(%s) error = %v", path, err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(provenancePath), 0o755); err != nil {
+		t.Fatalf("MkdirAll(provenance) error = %v", err)
+	}
+
+	provenance := LifecycleProvenance{
+		Version:      lifecycleProvenanceVersion,
+		Mode:         supportedMode,
+		InstalledBin: filepath.Join(root, "usr", "local", "bin", "regixtry"),
+		ServiceName:  "regixtry",
+		StatePath:    provenancePath,
+		ManagedPaths: []string{databasePath},
+	}
+	b := &Bootstrapper{
+		writeFile: os.WriteFile,
+		readFile:  os.ReadFile,
+		stat:      os.Stat,
+		removeAll: os.RemoveAll,
+		runCommand: func(_ context.Context, _ string, _ ...string) error {
+			return nil
+		},
+	}
+	if err := b.writeLifecycleProvenance(provenance); err != nil {
+		t.Fatalf("writeLifecycleProvenance() error = %v", err)
+	}
+
+	report, err := b.Uninstall(context.Background(), provenancePath)
+	if err != nil {
+		t.Fatalf("Uninstall() error = %v", err)
+	}
+	if len(report.Items) != 3 {
+		t.Fatalf("items = %#v, want 3 cleanup items", report.Items)
+	}
+	for _, path := range []string{databasePath, databasePath + "-wal", databasePath + "-shm"} {
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%s still exists after uninstall, stat error = %v", path, err)
+		}
+	}
+}
+
 func TestBootstrapperUninstallReturnsFailuresInReport(t *testing.T) {
 	t.Parallel()
 

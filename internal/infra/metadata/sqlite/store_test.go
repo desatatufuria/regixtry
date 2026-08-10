@@ -121,6 +121,29 @@ func TestStorePersistsUploadMetadataAcrossReopen(t *testing.T) {
 	}
 }
 
+func TestStoreEnablesSQLiteWALAndBusyTimeout(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	var journalMode string
+	if err := store.db.QueryRowContext(context.Background(), `PRAGMA journal_mode;`).Scan(&journalMode); err != nil {
+		t.Fatalf("PRAGMA journal_mode error = %v", err)
+	}
+	if !strings.EqualFold(journalMode, "wal") {
+		t.Fatalf("journal_mode = %q, want wal", journalMode)
+	}
+
+	var busyTimeout int
+	if err := store.db.QueryRowContext(context.Background(), `PRAGMA busy_timeout;`).Scan(&busyTimeout); err != nil {
+		t.Fatalf("PRAGMA busy_timeout error = %v", err)
+	}
+	if busyTimeout != sqliteBusyTimeoutMillis {
+		t.Fatalf("busy_timeout = %d, want %d", busyTimeout, sqliteBusyTimeoutMillis)
+	}
+}
+
 func TestStorePersistsDefaultDisabledScanSettings(t *testing.T) {
 	t.Parallel()
 

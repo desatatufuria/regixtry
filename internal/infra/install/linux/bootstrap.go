@@ -451,8 +451,10 @@ func (b *Bootstrapper) rollbackWithReceipt(ctx context.Context, receipt Bootstra
 	}
 
 	for i := len(receipt.Paths) - 1; i >= 0; i-- {
-		if err := b.removeAll(receipt.Paths[i]); err != nil {
-			errs = append(errs, fmt.Errorf("remove %s: %w", receipt.Paths[i], err))
+		for _, path := range sqliteCleanupPaths(receipt.Paths[i]) {
+			if err := b.removeAll(path); err != nil {
+				errs = append(errs, fmt.Errorf("remove %s: %w", path, err))
+			}
 		}
 	}
 
@@ -494,19 +496,37 @@ func (b *Bootstrapper) cleanupPath(target string) (CleanupItem, error) {
 		return CleanupItem{Status: CleanupStatusSkipped, Detail: "path is empty"}, nil
 	}
 
-	exists, err := b.pathExists(trimmedTarget)
-	if err != nil {
-		return CleanupItem{Path: trimmedTarget, Status: CleanupStatusFailed, Detail: err.Error()}, fmt.Errorf("stat %s: %w", trimmedTarget, err)
+	paths := sqliteCleanupPaths(trimmedTarget)
+	hadExisting := false
+	for _, path := range paths {
+		exists, err := b.pathExists(path)
+		if err != nil {
+			return CleanupItem{Path: trimmedTarget, Status: CleanupStatusFailed, Detail: err.Error()}, fmt.Errorf("stat %s: %w", path, err)
+		}
+		if !exists {
+			continue
+		}
+		hadExisting = true
+		if err := b.removeAll(path); err != nil {
+			return CleanupItem{Path: trimmedTarget, Status: CleanupStatusFailed, Detail: err.Error()}, fmt.Errorf("remove %s: %w", path, err)
+		}
 	}
-	if !exists {
+	if !hadExisting {
 		return CleanupItem{Path: trimmedTarget, Status: CleanupStatusMissing, Detail: "path already absent"}, nil
 	}
 
-	if err := b.removeAll(trimmedTarget); err != nil {
-		return CleanupItem{Path: trimmedTarget, Status: CleanupStatusFailed, Detail: err.Error()}, fmt.Errorf("remove %s: %w", trimmedTarget, err)
-	}
-
 	return CleanupItem{Path: trimmedTarget, Status: CleanupStatusRemoved, Detail: "path removed"}, nil
+}
+
+func sqliteCleanupPaths(target string) []string {
+	trimmedTarget := strings.TrimSpace(target)
+	if trimmedTarget == "" {
+		return nil
+	}
+	if filepath.Ext(trimmedTarget) != ".db" {
+		return []string{trimmedTarget}
+	}
+	return []string{trimmedTarget + "-wal", trimmedTarget + "-shm", trimmedTarget}
 }
 
 func (b *Bootstrapper) pathExists(target string) (bool, error) {

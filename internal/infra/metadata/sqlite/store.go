@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,8 +19,10 @@ type Store struct {
 	db *sql.DB
 }
 
+const sqliteBusyTimeoutMillis = 100
+
 func New(path string) (*Store, error) {
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", sqliteDSN(path))
 	if err != nil {
 		return nil, err
 	}
@@ -30,6 +34,15 @@ func New(path string) (*Store, error) {
 	}
 
 	return store, nil
+}
+
+func sqliteDSN(path string) string {
+	query := url.Values{}
+	query.Add("_pragma", "foreign_keys(1)")
+	query.Add("_pragma", "journal_mode(WAL)")
+	query.Add("_pragma", "busy_timeout("+strconv.Itoa(sqliteBusyTimeoutMillis)+")")
+
+	return (&url.URL{Scheme: "file", Path: path, RawQuery: query.Encode()}).String()
 }
 
 func (s *Store) Close() error {
@@ -719,7 +732,6 @@ func (s *Store) UpsertScanSchedulerState(ctx context.Context, tenant string, sta
 
 func (s *Store) init() error {
 	statements := []string{
-		`PRAGMA foreign_keys = ON;`,
 		`CREATE TABLE IF NOT EXISTS repositories (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			tenant TEXT NOT NULL,
@@ -874,18 +886,18 @@ func deriveLegacyTrivyRuntimeState(settings ports.ScanSettings) (ports.TrivyRunt
 
 func scanTrivyRuntimeStateRow(row scanRunScanner) (ports.TrivyRuntimeState, error) {
 	var (
-		statusRaw         string
-		activeVersion     string
-		previousVersion   string
-		activeBinaryPath  string
-		cacheDir          string
-		receiptPath       string
-		migrationHint     string
-		lastVerifiedRaw   sql.NullString
-		lastHealthRaw     sql.NullString
-		lastDBUpdatedRaw  sql.NullString
-		lastError         string
-		updatedAtRaw      string
+		statusRaw        string
+		activeVersion    string
+		previousVersion  string
+		activeBinaryPath string
+		cacheDir         string
+		receiptPath      string
+		migrationHint    string
+		lastVerifiedRaw  sql.NullString
+		lastHealthRaw    sql.NullString
+		lastDBUpdatedRaw sql.NullString
+		lastError        string
+		updatedAtRaw     string
 	)
 	if err := row.Scan(&statusRaw, &activeVersion, &previousVersion, &activeBinaryPath, &cacheDir, &receiptPath, &migrationHint, &lastVerifiedRaw, &lastHealthRaw, &lastDBUpdatedRaw, &lastError, &updatedAtRaw); err != nil {
 		return ports.TrivyRuntimeState{}, err

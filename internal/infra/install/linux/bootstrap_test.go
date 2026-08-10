@@ -229,6 +229,38 @@ func TestBootstrapRunRejectsUnsupportedMode(t *testing.T) {
 	}
 }
 
+func TestRollbackWithReceiptRemovesSQLiteWALSidecars(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	databasePath := filepath.Join(root, "var", "lib", "regixtry", "metadata.db")
+	for _, path := range []string{databasePath, databasePath + "-wal", databasePath + "-shm"} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("MkdirAll(%s) error = %v", path, err)
+		}
+		if err := os.WriteFile(path, []byte("fixture"), 0o644); err != nil {
+			t.Fatalf("WriteFile(%s) error = %v", path, err)
+		}
+	}
+
+	b := &Bootstrapper{
+		removeAll: os.RemoveAll,
+		runCommand: func(context.Context, string, ...string) error {
+			return nil
+		},
+	}
+
+	if err := b.rollbackWithReceipt(context.Background(), BootstrapReceipt{ServiceName: "regixtry", Paths: []string{databasePath}}); err != nil {
+		t.Fatalf("rollbackWithReceipt() error = %v", err)
+	}
+
+	for _, path := range []string{databasePath, databasePath + "-wal", databasePath + "-shm"} {
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%s still exists after rollback, stat error = %v", path, err)
+		}
+	}
+}
+
 func TestBootstrapRunRejectsUnsupportedHost(t *testing.T) {
 	t.Parallel()
 
