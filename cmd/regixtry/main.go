@@ -866,6 +866,9 @@ func runFeature(ctx context.Context, args []string, stdout io.Writer) error {
 			return fmt.Errorf("feature %s requires a feature name", args[0])
 		}
 		name := args[1]
+		if err := appregixtry.ValidateFeatureName(name); err != nil {
+			return err
+		}
 		cfg, err := parseFeatureConfig(args[2:])
 		if err != nil {
 			return err
@@ -909,6 +912,9 @@ func runFeature(ctx context.Context, args []string, stdout io.Writer) error {
 			return errors.New("feature configure requires a feature name")
 		}
 		name := args[1]
+		if err := appregixtry.ValidateFeatureName(name); err != nil {
+			return err
+		}
 		flags := flag.NewFlagSet("feature configure", flag.ContinueOnError)
 		flags.SetOutput(io.Discard)
 		var (

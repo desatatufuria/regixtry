@@ -43,6 +43,11 @@ func lookupFeature(name string) (featureDescriptor, error) {
 	return featureDescriptor{}, domain.NewValidationError(fmt.Sprintf("unsupported feature %q", trimmed))
 }
 
+func ValidateFeatureName(name string) error {
+	_, err := lookupFeature(name)
+	return err
+}
+
 func (s *Service) ListFeatures(ctx context.Context) ([]ports.FeatureSummary, error) {
 	summaries := make([]ports.FeatureSummary, 0, len(builtInFeatures))
 	for _, feature := range builtInFeatures {

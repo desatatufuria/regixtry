@@ -1110,10 +1110,15 @@ func TestRunFeatureCommandsManageBuiltInTrivyState(t *testing.T) {
 }
 
 func TestRunFeatureRejectsUnknownBuiltInName(t *testing.T) {
+	t.Chdir(t.TempDir())
+
 	stdout := &bytes.Buffer{}
 	err := runWithIO(context.Background(), []string{"feature", "show", "future-plugin"}, strings.NewReader(""), stdout, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "unsupported feature") {
 		t.Fatalf("runWithIO(feature show unknown) error = %v, want unsupported feature rejection", err)
+	}
+	if _, statErr := os.Stat(filepath.Join("data", "metadata.db")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("data/metadata.db stat error = %v, want not exists", statErr)
 	}
 }
 
