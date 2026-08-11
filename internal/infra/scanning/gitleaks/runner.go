@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"regixtry/internal/ports"
@@ -39,9 +40,8 @@ func (r *Runner) Probe(ctx context.Context, settings ports.ScanSettings) (ports.
 	if r == nil || r.exec == nil {
 		return ports.FeatureRuntime{}, fmt.Errorf("gitleaks runner is not configured")
 	}
-	binaryPath := strings.TrimSpace(settings.BinaryPath)
-	if binaryPath == "" {
-		err := fmt.Errorf("managed gitleaks runtime is not installed")
+	binaryPath, err := managedBinaryPath(settings.BinaryPath)
+	if err != nil {
 		return ports.FeatureRuntime{Mode: ports.FeatureRuntimeModeManaged, Status: string(ports.FeatureRuntimeStatusDegraded), Health: string(ports.FeatureRuntimeStatusDegraded), Detail: err.Error(), LastError: err.Error()}, err
 	}
 	output, err := r.exec(ctx, binaryPath, "version")
@@ -57,4 +57,20 @@ func (r *Runner) Probe(ctx context.Context, settings ports.ScanSettings) (ports.
 		return ports.FeatureRuntime{Mode: ports.FeatureRuntimeModeManaged, Status: string(ports.FeatureRuntimeStatusDegraded), Health: string(ports.FeatureRuntimeStatusDegraded), Version: version, Detail: err.Error(), LastError: err.Error()}, err
 	}
 	return ports.FeatureRuntime{Mode: ports.FeatureRuntimeModeManaged, Status: string(ports.FeatureRuntimeStatusReady), Health: string(ports.FeatureRuntimeStatusReady), Version: version, ActiveBinaryPath: binaryPath}, nil
+}
+
+// managedBinaryPath is the binary-provenance execution-path guard: only a
+// path resolving under the Regixtry-owned features/gitleaks layout may ever
+// be executed. This mirrors Trivy's managedBinaryPath guard and rejects any
+// attacker-supplied or misconfigured binary_path before exec is reached.
+func managedBinaryPath(binaryPath string) (string, error) {
+	trimmed := strings.TrimSpace(binaryPath)
+	if trimmed == "" {
+		return "", fmt.Errorf("managed gitleaks runtime is not installed")
+	}
+	clean := filepath.Clean(trimmed)
+	if !strings.Contains(clean, string(filepath.Separator)+"features"+string(filepath.Separator)+"gitleaks"+string(filepath.Separator)) {
+		return "", fmt.Errorf("managed gitleaks runtime must execute only from the Regixtry-owned features/gitleaks layout")
+	}
+	return clean, nil
 }
