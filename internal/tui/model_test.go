@@ -92,6 +92,85 @@ func TestModelLocalStartupLoadsCatalogImmediately(t *testing.T) {
 	}
 }
 
+func TestModelUpdateWindowSizeMsgSetsViewport(t *testing.T) {
+	t.Parallel()
+
+	model := NewModel(&fakeQueryService{})
+	updated, cmd := model.Update(tea.WindowSizeMsg{Width: 120, Height: 45})
+	result := updated.(Model)
+
+	if result.viewport.Width != 120 || result.viewport.Height != 45 {
+		t.Fatalf("viewport = %+v, want 120x45", result.viewport)
+	}
+	if cmd != nil {
+		t.Fatalf("cmd = %v, want nil", cmd)
+	}
+}
+
+func TestModelNewModelDefaultsViewportTo100x40(t *testing.T) {
+	t.Parallel()
+
+	model := NewModel(&fakeQueryService{})
+
+	if model.viewport.Width != defaultViewportWidth || model.viewport.Height != defaultViewportHeight {
+		t.Fatalf("viewport = %+v, want %dx%d (design.md decision #8 default/--snapshot fallback)", model.viewport, defaultViewportWidth, defaultViewportHeight)
+	}
+}
+
+func TestModelViewBelowMinimumSizeShowsTerminalTooSmall(t *testing.T) {
+	t.Parallel()
+
+	model := NewModel(&fakeQueryService{})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 60, Height: 20})
+	view := updated.(Model).View()
+
+	if !strings.Contains(view, "Terminal too small") {
+		t.Fatalf("view = %q, want too-small message", view)
+	}
+	if !strings.Contains(view, "Regixtry needs at least 90x24. Current: 60x20.") {
+		t.Fatalf("view = %q, want current-size detail", view)
+	}
+	if strings.Contains(view, "Regixtry is empty") || strings.Contains(view, model.loadingText) {
+		t.Fatalf("view = %q, want no screen content below minimum size", view)
+	}
+}
+
+func TestModelViewResizeAboveMinimumRestoresRendering(t *testing.T) {
+	t.Parallel()
+
+	model := NewModel(&fakeQueryService{})
+	tooSmall, _ := model.Update(tea.WindowSizeMsg{Width: 60, Height: 20})
+	if !strings.Contains(tooSmall.(Model).View(), "Terminal too small") {
+		t.Fatalf("view = %q, want too-small message before resize", tooSmall.(Model).View())
+	}
+
+	restored, _ := tooSmall.(Model).Update(tea.WindowSizeMsg{Width: minViewportWidth, Height: minViewportHeight})
+	view := restored.(Model).View()
+
+	if strings.Contains(view, "Terminal too small") {
+		t.Fatalf("view = %q, want normal rendering restored after resize above minimum", view)
+	}
+	if !strings.Contains(view, model.loadingText) {
+		t.Fatalf("view = %q, want loading screen content restored", view)
+	}
+}
+
+func TestModelContentBudgetWrapsPackageLevelContentBudgetUsingViewportAndStatus(t *testing.T) {
+	t.Parallel()
+
+	model := NewModel(&fakeQueryService{})
+	model.status = "Loading admin users..."
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	result := updated.(Model)
+
+	got := result.contentBudget()
+	want := contentBudget(result.viewport.Width, result.viewport.Height, result.status, "")
+
+	if got != want {
+		t.Fatalf("contentBudget() = %+v, want %+v (Model.contentBudget must wrap the package-level pure function per design.md)", got, want)
+	}
+}
+
 func TestModelNavigatesRepositoriesManifestBlobsAndUploads(t *testing.T) {
 	t.Parallel()
 
