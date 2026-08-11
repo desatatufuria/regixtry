@@ -52,11 +52,11 @@ Rationale: zero existing `WindowSizeMsg`/`Height`/`Viewport`/`PageSize` test cov
 
 ## Phase 3: Outer-Pane Containment (`model.go`, `admin_theme.go`)
 
-- [ ] 3.1 RED `model_test.go`: catalog/tags list screens at 24/30/50 rows — `lipgloss.Height(View()) <= h` (Req: Internal Table and List Scrolling, "Catalog list scrolls within its section")
-- [ ] 3.2 GREEN `model.go`: `renderConsoleWorkspace`/`renderConsoleListSection`/`renderConsoleTextSection`/`renderInspectionWorkspace` take `consoleLayout`, route body through `renderSection`; update all 11 `View()` switch call sites
-- [ ] 3.3 RED `model_test.go`: PgUp/PgDn/Home/End scroll and clamp a long catalog list within its section
-- [ ] 3.4 GREEN `model.go`: page-key handling drives `bodyScroll`, clamps at bounds
-- [ ] 3.5 `admin_theme.go`: expose `borderColor` field (existing `#4C566A`); no new test here — covered by 5.4
+- [x] 3.1 RED `model_test.go`: catalog/tags list screens at 24/30/50 rows — `lipgloss.Height(View()) <= h` (Req: Internal Table and List Scrolling, "Catalog list scrolls within its section")
+- [x] 3.2 GREEN `model.go`: `renderConsoleListSection`/`renderConsoleTextSection` take `consoleLayout`, route body through `renderSection`; update all 11 `View()` switch call sites (`renderConsoleWorkspace`/`renderInspectionWorkspace` left unchanged — body already fully rendered by the section builders before reaching them; see apply-progress deviations)
+- [x] 3.3 RED `model_test.go`: PgUp/PgDn/Home/End scroll and clamp a long catalog list within its section
+- [x] 3.4 GREEN `model.go`: page-key handling drives `bodyScroll`, clamps at bounds
+- [x] 3.5 `admin_theme.go`: expose `borderColor` field (existing `#4C566A`); no new test here — covered by 5.4
 
 ## Phase 4: Table Height Budget and Roles (`admin_tables.go`, `session.go`, `admin_views.go`)
 
