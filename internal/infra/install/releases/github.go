@@ -4,9 +4,6 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +12,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"regixtry/internal/infra/release"
 )
 
 const defaultReleasesAPIURL = "https://api.github.com/repos/desatatufuria/workspace/releases"
@@ -61,78 +60,29 @@ func CurrentLinuxArch() (string, error) {
 }
 
 func (c *GitHubClient) Resolve(ctx context.Context, ref string, targetOS string, targetArch string) (ReleaseAsset, error) {
-	endpoint := c.baseURL + "/latest"
-	trimmedRef := strings.TrimSpace(ref)
-	if trimmedRef != "" {
-		endpoint = c.baseURL + "/tags/" + trimmedRef
-	}
-
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return ReleaseAsset{}, err
-	}
-	response, err := c.client.Do(request)
-	if err != nil {
-		return ReleaseAsset{}, fmt.Errorf("resolve release metadata: %w", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return ReleaseAsset{}, fmt.Errorf("resolve release metadata: unexpected status %d", response.StatusCode)
-	}
-
-	var payload struct {
-		TagName string `json:"tag_name"`
-		Assets  []struct {
-			BrowserDownloadURL string `json:"browser_download_url"`
-		} `json:"assets"`
-	}
-	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
-		return ReleaseAsset{}, fmt.Errorf("decode release metadata: %w", err)
-	}
-	if strings.TrimSpace(payload.TagName) == "" {
-		return ReleaseAsset{}, errors.New("release metadata did not contain a tag name")
-	}
-
 	archiveSuffix := fmt.Sprintf("_%s_%s.tar.gz", strings.TrimSpace(targetOS), strings.TrimSpace(targetArch))
-	archiveURL, archiveName, err := selectAsset(payload.Assets, archiveSuffix, "release asset")
-	if err != nil {
-		return ReleaseAsset{}, err
-	}
-	checksumsURL, _, err := selectAsset(payload.Assets, "_checksums.txt", "checksum asset")
-	if err != nil {
-		return ReleaseAsset{}, err
+	query := release.AssetQuery{
+		BaseAPI: c.baseURL,
+		Tag:     strings.TrimSpace(ref),
+		MatchArchive: func(name string) bool {
+			return strings.HasSuffix(name, archiveSuffix)
+		},
+		MatchChecksums: func(name string) bool {
+			return strings.HasSuffix(name, "_checksums.txt")
+		},
 	}
 
+	asset, err := release.ResolveAsset(ctx, c.client, query)
+	if err != nil {
+		return ReleaseAsset{}, err
+	}
 	return ReleaseAsset{
-		Tag:          payload.TagName,
-		Version:      strings.TrimPrefix(payload.TagName, "v"),
-		ArchiveURL:   archiveURL,
-		ChecksumsURL: checksumsURL,
-		ArchiveName:  archiveName,
+		Tag:          asset.Tag,
+		Version:      asset.Version,
+		ArchiveURL:   asset.ArchiveURL,
+		ChecksumsURL: asset.ChecksumsURL,
+		ArchiveName:  asset.ArchiveName,
 	}, nil
-}
-
-func selectAsset(assets []struct {
-	BrowserDownloadURL string "json:\"browser_download_url\""
-}, suffix string, label string) (string, string, error) {
-	matches := make([]string, 0, 1)
-	for _, asset := range assets {
-		candidate := strings.TrimSpace(asset.BrowserDownloadURL)
-		if candidate == "" {
-			continue
-		}
-		name := filepath.Base(candidate)
-		if strings.HasSuffix(name, suffix) {
-			matches = append(matches, candidate)
-		}
-	}
-	if len(matches) == 0 {
-		return "", "", fmt.Errorf("%s was not found in the release metadata", label)
-	}
-	if len(matches) > 1 {
-		return "", "", fmt.Errorf("multiple %s files matched the release metadata", label)
-	}
-	return matches[0], filepath.Base(matches[0]), nil
 }
 
 func (c *GitHubClient) DownloadVerifiedBinary(ctx context.Context, asset ReleaseAsset, dir string, progress func(DownloadProgress)) (string, error) {
@@ -146,14 +96,18 @@ func (c *GitHubClient) DownloadVerifiedBinary(ctx context.Context, asset Release
 		return "", err
 	}
 	reportDownloadProgress(progress, "verify", fmt.Sprintf("Verifying %s", asset.ArchiveName))
-	if err := verifyChecksum(archivePath, asset.ArchiveName, checksumsPath); err != nil {
-		return "", err
+	checksumsBody, err := os.ReadFile(checksumsPath)
+	if err != nil {
+		return "", fmt.Errorf("read checksum asset: %w", err)
+	}
+	if err := release.VerifyChecksum(archivePath, asset.ArchiveName, checksumsBody); err != nil {
+		return "", fmt.Errorf("checksum verification failed for %s: %w", asset.ArchiveName, err)
 	}
 	if err := validateArchive(archivePath); err != nil {
 		return "", err
 	}
-	stagedPath := filepath.Join(dir, "regixtry")
-	if err := extractRegixtryBinary(archivePath, stagedPath); err != nil {
+	stagedPath, err := release.ExtractBinary(ctx, archivePath, dir, "regixtry")
+	if err != nil {
 		return "", err
 	}
 	return stagedPath, nil
@@ -190,43 +144,6 @@ func (c *GitHubClient) downloadFile(ctx context.Context, sourceURL string, desti
 	return nil
 }
 
-func verifyChecksum(archivePath string, archiveName string, checksumsPath string) error {
-	body, err := os.ReadFile(checksumsPath)
-	if err != nil {
-		return fmt.Errorf("read checksum asset: %w", err)
-	}
-	checksum := ""
-	for _, line := range strings.Split(string(body), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		parts := strings.SplitN(line, "  ", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		if strings.TrimSpace(parts[1]) == archiveName {
-			checksum = strings.TrimSpace(parts[0])
-			break
-		}
-	}
-	if checksum == "" {
-		return fmt.Errorf("checksum asset does not contain an entry for %s", archiveName)
-	}
-	if len(checksum) != 64 {
-		return fmt.Errorf("checksum entry for %s is malformed", archiveName)
-	}
-	body, err = os.ReadFile(archivePath)
-	if err != nil {
-		return fmt.Errorf("read archive for checksum verification: %w", err)
-	}
-	actual := sha256.Sum256(body)
-	if !strings.EqualFold(checksum, hex.EncodeToString(actual[:])) {
-		return fmt.Errorf("checksum verification failed for %s", archiveName)
-	}
-	return nil
-}
-
 func validateArchive(archivePath string) error {
 	file, err := os.Open(archivePath)
 	if err != nil {
@@ -257,43 +174,4 @@ func validateArchive(archivePath string) error {
 		return errors.New("archive must contain exactly one regixtry entry named regixtry")
 	}
 	return nil
-}
-
-func extractRegixtryBinary(archivePath string, destination string) error {
-	file, err := os.Open(archivePath)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	gzReader, err := gzip.NewReader(file)
-	if err != nil {
-		return err
-	}
-	defer gzReader.Close()
-	tarReader := tar.NewReader(gzReader)
-	for {
-		header, err := tarReader.Next()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return err
-		}
-		if header.Name != "regixtry" || header.Typeflag != tar.TypeReg {
-			continue
-		}
-		output, err := os.OpenFile(destination, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o755)
-		if err != nil {
-			return err
-		}
-		if _, err := io.Copy(output, tarReader); err != nil {
-			_ = output.Close()
-			return err
-		}
-		if err := output.Close(); err != nil {
-			return err
-		}
-		return os.Chmod(destination, 0o755)
-	}
-	return errors.New("archive must contain exactly one regixtry entry named regixtry")
 }
