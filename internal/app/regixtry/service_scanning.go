@@ -15,7 +15,7 @@ import (
 )
 
 func (s *Service) EnsureScanSettings(ctx context.Context, defaults ports.ScanSettings) (ports.ScanSettings, error) {
-	settings, err := s.metadata.GetScanSettings(ctx, s.tenant(ctx))
+	settings, err := s.metadata.GetScanSettings(ctx, s.tenant(ctx), trivyFeatureName)
 	if err == nil {
 		return settings, nil
 	}
@@ -26,14 +26,14 @@ func (s *Service) EnsureScanSettings(ctx context.Context, defaults ports.ScanSet
 	if err != nil {
 		return ports.ScanSettings{}, err
 	}
-	if err := s.metadata.UpsertScanSettings(ctx, s.tenant(ctx), normalized); err != nil {
+	if err := s.metadata.UpsertScanSettings(ctx, s.tenant(ctx), trivyFeatureName, normalized); err != nil {
 		return ports.ScanSettings{}, err
 	}
 	return normalized, nil
 }
 
 func (s *Service) GetScanSettings(ctx context.Context) (ports.ScanSettings, error) {
-	return s.metadata.GetScanSettings(ctx, s.tenant(ctx))
+	return s.metadata.GetScanSettings(ctx, s.tenant(ctx), trivyFeatureName)
 }
 
 func (s *Service) UpdateScanSettings(ctx context.Context, input ports.ScanSettings) (ports.ScanSettings, error) {
@@ -41,7 +41,7 @@ func (s *Service) UpdateScanSettings(ctx context.Context, input ports.ScanSettin
 	if err != nil {
 		return ports.ScanSettings{}, err
 	}
-	if err := s.metadata.UpsertScanSettings(ctx, s.tenant(ctx), normalized); err != nil {
+	if err := s.metadata.UpsertScanSettings(ctx, s.tenant(ctx), trivyFeatureName, normalized); err != nil {
 		return ports.ScanSettings{}, err
 	}
 	return normalized, nil
@@ -305,11 +305,11 @@ func (s *Service) resolveManagedScanSettings(ctx context.Context) (ports.ScanSet
 	if err != nil {
 		return ports.ScanSettings{}, err
 	}
-	state, err := s.metadata.GetTrivyRuntimeState(ctx, s.tenant(ctx))
+	state, err := s.metadata.GetFeatureRuntimeState(ctx, s.tenant(ctx), trivyFeatureName)
 	if err != nil {
 		return ports.ScanSettings{}, err
 	}
-	if state.Status != ports.TrivyRuntimeStatusReady {
+	if state.Status != ports.FeatureRuntimeStatusReady {
 		detail := strings.TrimSpace(state.MigrationHint)
 		if detail == "" {
 			detail = strings.TrimSpace(state.LastError)

@@ -45,7 +45,7 @@ func (s *Service) ListFeatures(ctx context.Context) ([]ports.FeatureSummary, err
 		if err != nil {
 			return nil, err
 		}
-		runtime := s.projectFeatureRuntime(ctx)
+		runtime := s.projectFeatureRuntime(ctx, feature.name)
 		summaries = append(summaries, featureSummaryFromDetails(details, runtime))
 	}
 	return summaries, nil
@@ -72,7 +72,7 @@ func (s *Service) GetFeatureStatus(ctx context.Context, name string) (ports.Feat
 		return ports.FeatureDetails{}, err
 	}
 	details := featureDetailsFromSettings(feature, settings, configured)
-	details.Runtime = s.projectFeatureRuntime(ctx)
+	details.Runtime = s.projectFeatureRuntime(ctx, feature.name)
 	return details, nil
 }
 
@@ -123,27 +123,28 @@ func (s *Service) ExecuteFeatureAction(ctx context.Context, name string, actionI
 	}
 }
 
-func (s *Service) projectFeatureRuntime(ctx context.Context) ports.FeatureRuntime {
+func (s *Service) projectFeatureRuntime(ctx context.Context, feature string) ports.FeatureRuntime {
 	var (
-		state   ports.TrivyRuntimeState
+		state   ports.FeatureRuntimeState
 		err     error
 		runtime ports.FeatureRuntime
 	)
-	if s.runtime != nil {
-		state, err = s.runtime.Status(ctx)
+	manager := s.runtimes[feature]
+	if manager != nil {
+		state, err = manager.Status(ctx)
 	} else {
-		state, err = s.metadata.GetTrivyRuntimeState(ctx, s.tenant(ctx))
+		state, err = s.metadata.GetFeatureRuntimeState(ctx, s.tenant(ctx), feature)
 	}
 	if err != nil {
 		if domain.IsCode(err, domain.ErrorCodeNotFound) {
-			runtime = ports.FeatureRuntime{Mode: ports.FeatureRuntimeModeManaged, Status: string(ports.TrivyRuntimeStatusUninstalled), Health: string(ports.TrivyRuntimeStatusUninstalled), Detail: "managed runtime is not installed"}
+			runtime = ports.FeatureRuntime{Mode: ports.FeatureRuntimeModeManaged, Status: string(ports.FeatureRuntimeStatusUninstalled), Health: string(ports.FeatureRuntimeStatusUninstalled), Detail: "managed runtime is not installed"}
 		} else {
-			runtime = ports.FeatureRuntime{Mode: ports.FeatureRuntimeModeManaged, Status: string(ports.TrivyRuntimeStatusDegraded), Health: string(ports.TrivyRuntimeStatusDegraded), Detail: err.Error(), LastError: err.Error()}
+			runtime = ports.FeatureRuntime{Mode: ports.FeatureRuntimeModeManaged, Status: string(ports.FeatureRuntimeStatusDegraded), Health: string(ports.FeatureRuntimeStatusDegraded), Detail: err.Error(), LastError: err.Error()}
 		}
 	} else {
 		health := string(state.Status)
 		if health == "" {
-			health = string(ports.TrivyRuntimeStatusUninstalled)
+			health = string(ports.FeatureRuntimeStatusUninstalled)
 		}
 		detail := strings.TrimSpace(state.MigrationHint)
 		if detail == "" {
@@ -166,8 +167,8 @@ func (s *Service) projectFeatureRuntime(ctx context.Context) ports.FeatureRuntim
 	}
 	runtime.LatestVersion = "unknown"
 	runtime.UpdateStatus = "unknown"
-	if s.runtime != nil {
-		latest, latestErr := s.runtime.LatestVersion(ctx)
+	if manager != nil {
+		latest, latestErr := manager.LatestVersion(ctx)
 		if trimmed := strings.TrimSpace(latest); latestErr == nil && trimmed != "" {
 			runtime.LatestVersion = trimmed
 			switch current := strings.TrimSpace(runtime.Version); {
@@ -196,7 +197,7 @@ func (s *Service) ConfigureFeature(ctx context.Context, name string, input ports
 	if err != nil {
 		return ports.FeatureDetails{}, err
 	}
-	if err := s.metadata.UpsertScanSettings(ctx, s.tenant(ctx), normalized); err != nil {
+	if err := s.metadata.UpsertScanSettings(ctx, s.tenant(ctx), feature.name, normalized); err != nil {
 		return ports.FeatureDetails{}, err
 	}
 	return featureDetailsFromSettings(feature, normalized, true), nil
@@ -228,7 +229,7 @@ func (s *Service) loadFeatureSettings(ctx context.Context, name string) (feature
 	if err != nil {
 		return featureDescriptor{}, ports.ScanSettings{}, false, err
 	}
-	settings, err := s.metadata.GetScanSettings(ctx, s.tenant(ctx))
+	settings, err := s.metadata.GetScanSettings(ctx, s.tenant(ctx), feature.name)
 	if err == nil {
 		return feature, settings, true, nil
 	}
@@ -412,7 +413,7 @@ func buildFeatureActions(details ports.FeatureDetails) []ports.FeatureAction {
 	if status == "" {
 		status = strings.TrimSpace(details.Runtime.Health)
 	}
-	if details.Runtime.Mode == ports.FeatureRuntimeModeManaged && (status == string(ports.TrivyRuntimeStatusUninstalled) || status == string(ports.TrivyRuntimeStatusMigrationRequired)) {
+	if details.Runtime.Mode == ports.FeatureRuntimeModeManaged && (status == string(ports.FeatureRuntimeStatusUninstalled) || status == string(ports.FeatureRuntimeStatusMigrationRequired)) {
 		actions = append(actions, ports.FeatureAction{ID: "install-runtime", Label: "Install Runtime"})
 	}
 	if details.Runtime.Mode == ports.FeatureRuntimeModeManaged && strings.TrimSpace(details.Runtime.Version) != "" && strings.TrimSpace(details.Runtime.UpdateStatus) == "available" {
