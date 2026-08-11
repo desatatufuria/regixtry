@@ -1100,6 +1100,8 @@ func openFeatureService(cfg featureConfig) (*appregixtry.Service, func(), error)
 	service.SetScanHost(cfg.PublicURL)
 	service.SetScanRunner(trivyinfra.New(trivyinfra.RunnerConfig{}))
 	service.SetFeatureRuntimeManager("trivy", newFeatureRuntimeManager("trivy", appregixtry.FeatureRuntimeManagerConfig{StorageRoot: cfg.StorageRoot, Store: store, ScanRunner: trivyinfra.New(trivyinfra.RunnerConfig{})}))
+	service.SetSecretScanRunner(gitleaksinfra.New(gitleaksinfra.RunnerConfig{}))
+	service.SetFeatureRuntimeManager("gitleaks", newFeatureRuntimeManager("gitleaks", appregixtry.FeatureRuntimeManagerConfig{StorageRoot: cfg.StorageRoot, Store: store}))
 	return service, func() { _ = store.Close() }, nil
 }
 
@@ -2120,6 +2122,8 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 	service.SetScanHost(cfg.PublicURL)
 	service.SetScanRunner(trivyinfra.New(trivyinfra.RunnerConfig{}))
 	service.SetFeatureRuntimeManager("trivy", newFeatureRuntimeManager("trivy", appregixtry.FeatureRuntimeManagerConfig{StorageRoot: cfg.StorageRoot, Store: metadataStore, ScanRunner: trivyinfra.New(trivyinfra.RunnerConfig{})}))
+	service.SetSecretScanRunner(gitleaksinfra.New(gitleaksinfra.RunnerConfig{Blobs: blobStore}))
+	service.SetFeatureRuntimeManager("gitleaks", newFeatureRuntimeManager("gitleaks", appregixtry.FeatureRuntimeManagerConfig{StorageRoot: cfg.StorageRoot, Store: metadataStore}))
 	trivyMaxConcurrency := cfg.TrivyMaxConcurrency
 	if trivyMaxConcurrency <= 0 {
 		trivyMaxConcurrency = 1
@@ -2210,6 +2214,8 @@ func runTUI(cfg tuiConfig, stdin io.Reader, stdout io.Writer) error {
 		ports.NewInlineJobRunner(),
 	)
 	service.SetFeatureRuntimeManager("trivy", newFeatureRuntimeManager("trivy", appregixtry.FeatureRuntimeManagerConfig{StorageRoot: cfg.StorageRoot, Store: metadataStore, ScanRunner: trivyinfra.New(trivyinfra.RunnerConfig{})}))
+	service.SetSecretScanRunner(gitleaksinfra.New(gitleaksinfra.RunnerConfig{Blobs: blobStore}))
+	service.SetFeatureRuntimeManager("gitleaks", newFeatureRuntimeManager("gitleaks", appregixtry.FeatureRuntimeManagerConfig{StorageRoot: cfg.StorageRoot, Store: metadataStore}))
 
 	if cfg.Snapshot {
 		model := tui.NewModel(service, modelOpts...)
