@@ -211,7 +211,7 @@ type adminFeatureConfiguredMsg struct {
 type adminFeatureRuntimeMutatedMsg struct {
 	name   string
 	action string
-	state  ports.TrivyRuntimeState
+	state  ports.FeatureRuntimeState
 	err    error
 }
 

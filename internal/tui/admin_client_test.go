@@ -379,7 +379,7 @@ func TestHTTPAdminClientFeatureRoutes(t *testing.T) {
 				if err != nil {
 					t.Fatalf("InstallFeatureRuntime() error = %v", err)
 				}
-				if state.ActiveVersion != "0.57.1" || state.Status != ports.TrivyRuntimeStatusReady {
+				if state.ActiveVersion != "0.57.1" || state.Status != ports.FeatureRuntimeStatusReady {
 					t.Fatalf("state = %#v, want decoded runtime install state", state)
 				}
 			},

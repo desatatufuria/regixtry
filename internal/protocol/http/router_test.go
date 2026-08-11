@@ -1547,8 +1547,8 @@ func newRouterWithStores(blobStore *fsblob.Store, metadataStore *metadata.Store,
 		RegistryReachableURL: "https://registry.internal",
 		MaxConcurrency:       1,
 	})
-	_ = metadataStore.UpsertTrivyRuntimeState(context.Background(), "tenant-a", ports.TrivyRuntimeState{
-		Status:           ports.TrivyRuntimeStatusReady,
+	_ = metadataStore.UpsertFeatureRuntimeState(context.Background(), "tenant-a", "trivy", ports.FeatureRuntimeState{
+		Status:           ports.FeatureRuntimeStatusReady,
 		ActiveVersion:    "0.57.1",
 		ActiveBinaryPath: "/var/lib/regixtry/features/trivy/bin/active/trivy",
 		CacheDir:         filepath.Join(os.TempDir(), "regixtry-router-trivy-cache"),

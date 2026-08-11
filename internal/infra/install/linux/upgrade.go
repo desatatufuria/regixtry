@@ -338,7 +338,7 @@ func importLegacyTrivySettingsIfMissing(ctx context.Context, intent InstalledInt
 	}
 	defer store.Close()
 
-	if _, err := store.GetScanSettings(ctx, ports.DefaultTenant); err == nil {
+	if _, err := store.GetScanSettings(ctx, ports.DefaultTenant, "trivy"); err == nil {
 		return nil
 	} else if !domain.IsCode(err, domain.ErrorCodeNotFound) {
 		return err
@@ -362,7 +362,7 @@ func importLegacyTrivySettingsIfMissing(ctx context.Context, intent InstalledInt
 		MaxConcurrency:  firstPositiveInt(intent.TrivyMaxConcurrency, 1),
 		UpdatedAt:       time.Now().UTC(),
 	}
-	return store.UpsertScanSettings(ctx, ports.DefaultTenant, settings)
+	return store.UpsertScanSettings(ctx, ports.DefaultTenant, "trivy", settings)
 }
 
 func shouldImportLegacyTrivySettings(provenance LifecycleProvenance, envValues map[string]string) bool {

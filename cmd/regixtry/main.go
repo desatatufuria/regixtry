@@ -1085,7 +1085,7 @@ func openFeatureService(cfg featureConfig) (*appregixtry.Service, func(), error)
 	service := appregixtry.NewService(nil, store, ports.NewConfigurableAccessController(ports.AccessConfig{}), ports.NewSingleTenantResolver(cfg.Tenant), ports.NewInlineJobRunner())
 	service.SetScanHost(cfg.PublicURL)
 	service.SetScanRunner(trivyinfra.New(trivyinfra.RunnerConfig{}))
-	service.SetFeatureRuntimeManager(newFeatureRuntimeManager(appregixtry.FeatureRuntimeManagerConfig{StorageRoot: cfg.StorageRoot, Store: store, ScanRunner: trivyinfra.New(trivyinfra.RunnerConfig{})}))
+	service.SetFeatureRuntimeManager("trivy", newFeatureRuntimeManager(appregixtry.FeatureRuntimeManagerConfig{StorageRoot: cfg.StorageRoot, Store: store, ScanRunner: trivyinfra.New(trivyinfra.RunnerConfig{})}))
 	return service, func() { _ = store.Close() }, nil
 }
 
@@ -2105,7 +2105,7 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 	)
 	service.SetScanHost(cfg.PublicURL)
 	service.SetScanRunner(trivyinfra.New(trivyinfra.RunnerConfig{}))
-	service.SetFeatureRuntimeManager(newFeatureRuntimeManager(appregixtry.FeatureRuntimeManagerConfig{StorageRoot: cfg.StorageRoot, Store: metadataStore, ScanRunner: trivyinfra.New(trivyinfra.RunnerConfig{})}))
+	service.SetFeatureRuntimeManager("trivy", newFeatureRuntimeManager(appregixtry.FeatureRuntimeManagerConfig{StorageRoot: cfg.StorageRoot, Store: metadataStore, ScanRunner: trivyinfra.New(trivyinfra.RunnerConfig{})}))
 	trivyMaxConcurrency := cfg.TrivyMaxConcurrency
 	if trivyMaxConcurrency <= 0 {
 		trivyMaxConcurrency = 1
@@ -2195,7 +2195,7 @@ func runTUI(cfg tuiConfig, stdin io.Reader, stdout io.Writer) error {
 		ports.NewSingleTenantResolver(cfg.Tenant),
 		ports.NewInlineJobRunner(),
 	)
-	service.SetFeatureRuntimeManager(newFeatureRuntimeManager(appregixtry.FeatureRuntimeManagerConfig{StorageRoot: cfg.StorageRoot, Store: metadataStore, ScanRunner: trivyinfra.New(trivyinfra.RunnerConfig{})}))
+	service.SetFeatureRuntimeManager("trivy", newFeatureRuntimeManager(appregixtry.FeatureRuntimeManagerConfig{StorageRoot: cfg.StorageRoot, Store: metadataStore, ScanRunner: trivyinfra.New(trivyinfra.RunnerConfig{})}))
 
 	if cfg.Snapshot {
 		model := tui.NewModel(service, modelOpts...)

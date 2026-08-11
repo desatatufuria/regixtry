@@ -19,11 +19,11 @@ func TestAdminFeatureStatusSeparatesIntentFromManagedRuntimeAndShowsMigrationTru
 	defer cleanup()
 	handler := newRouterWithStores(blobStore, store, allowAllAccessController{}, fakeAuthService{verify: &auth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
 
-	if err := store.UpsertScanSettings(context.Background(), "tenant-a", ports.ScanSettings{Enabled: true, ScheduleEnabled: true, Interval: 6 * time.Hour, Timeout: 10 * time.Minute, RegistryReachableURL: "https://registry.internal", MaxConcurrency: 2, UpdatedAt: time.Now().UTC()}); err != nil {
+	if err := store.UpsertScanSettings(context.Background(), "tenant-a", "trivy", ports.ScanSettings{Enabled: true, ScheduleEnabled: true, Interval: 6 * time.Hour, Timeout: 10 * time.Minute, RegistryReachableURL: "https://registry.internal", MaxConcurrency: 2, UpdatedAt: time.Now().UTC()}); err != nil {
 		t.Fatalf("UpsertScanSettings() error = %v", err)
 	}
-	if err := store.UpsertTrivyRuntimeState(context.Background(), "tenant-a", ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusMigrationRequired, MigrationHint: `legacy binary_path "/tmp/README.sh" requires managed reinstall and will never be executed`, UpdatedAt: time.Now().UTC()}); err != nil {
-		t.Fatalf("UpsertTrivyRuntimeState() error = %v", err)
+	if err := store.UpsertFeatureRuntimeState(context.Background(), "tenant-a", "trivy", ports.FeatureRuntimeState{Status: ports.FeatureRuntimeStatusMigrationRequired, MigrationHint: `legacy binary_path "/tmp/README.sh" requires managed reinstall and will never be executed`, UpdatedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("UpsertFeatureRuntimeState() error = %v", err)
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/v1/features/trivy/status", nil)

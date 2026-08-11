@@ -112,7 +112,7 @@ func (r *Router) handleAdminFeatureResource(w stdhttp.ResponseWriter, req *stdht
 		writeJSON(w, stdhttp.StatusOK, featureDetailsResponse(details, false))
 	case strings.HasSuffix(resource, ":install"):
 		name := strings.TrimSuffix(resource, ":install")
-		state, err := r.mutateFeatureRuntime(req, name, func(version string) (ports.TrivyRuntimeState, error) {
+		state, err := r.mutateFeatureRuntime(req, name, func(version string) (ports.FeatureRuntimeState, error) {
 			return r.service.InstallFeatureRuntime(req.Context(), name, version)
 		})
 		if err != nil {
@@ -122,7 +122,7 @@ func (r *Router) handleAdminFeatureResource(w stdhttp.ResponseWriter, req *stdht
 		writeJSON(w, stdhttp.StatusOK, state)
 	case strings.HasSuffix(resource, ":upgrade"):
 		name := strings.TrimSuffix(resource, ":upgrade")
-		state, err := r.mutateFeatureRuntime(req, name, func(version string) (ports.TrivyRuntimeState, error) {
+		state, err := r.mutateFeatureRuntime(req, name, func(version string) (ports.FeatureRuntimeState, error) {
 			return r.service.UpgradeFeatureRuntime(req.Context(), name, version)
 		})
 		if err != nil {
@@ -371,16 +371,16 @@ func featureDetailsResponse(details ports.FeatureDetails, includeRuntime bool) m
 	return response
 }
 
-func (r *Router) mutateFeatureRuntime(req *stdhttp.Request, name string, action func(version string) (ports.TrivyRuntimeState, error)) (ports.TrivyRuntimeState, error) {
+func (r *Router) mutateFeatureRuntime(req *stdhttp.Request, name string, action func(version string) (ports.FeatureRuntimeState, error)) (ports.FeatureRuntimeState, error) {
 	if req.Method != stdhttp.MethodPost {
-		return ports.TrivyRuntimeState{}, domainauth.NewValidationError("runtime mutation requires POST")
+		return ports.FeatureRuntimeState{}, domainauth.NewValidationError("runtime mutation requires POST")
 	}
 	var payload struct {
 		Version string `json:"version"`
 	}
 	if req.Body != nil && req.ContentLength != 0 {
 		if err := decodeAdminJSON(req, &payload); err != nil {
-			return ports.TrivyRuntimeState{}, err
+			return ports.FeatureRuntimeState{}, err
 		}
 	}
 	return action(strings.TrimSpace(payload.Version))

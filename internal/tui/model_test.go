@@ -1349,9 +1349,9 @@ type fakeAdminClient struct {
 	scanRuns              []ports.ScanRun
 	scanRunDetails        map[string]ports.ScanRunDetail
 	featureAfterConfigure ports.FeatureDetails
-	installRuntime        ports.TrivyRuntimeState
-	upgradeRuntime        ports.TrivyRuntimeState
-	rollbackRuntime       ports.TrivyRuntimeState
+	installRuntime        ports.FeatureRuntimeState
+	upgradeRuntime        ports.FeatureRuntimeState
+	rollbackRuntime       ports.FeatureRuntimeState
 	enableFeature         ports.FeatureDetails
 	disableFeature        ports.FeatureDetails
 	actionResult          ports.FeatureActionResult
@@ -1513,10 +1513,10 @@ func (f *fakeAdminClient) ExecuteFeatureAction(_ context.Context, _ AdminSession
 	return f.actionResult, nil
 }
 
-func (f *fakeAdminClient) InstallFeatureRuntime(context.Context, AdminSession, string, string) (ports.TrivyRuntimeState, error) {
+func (f *fakeAdminClient) InstallFeatureRuntime(context.Context, AdminSession, string, string) (ports.FeatureRuntimeState, error) {
 	f.installRuntimeCalls++
 	if f.featureErr != nil {
-		return ports.TrivyRuntimeState{}, f.featureErr
+		return ports.FeatureRuntimeState{}, f.featureErr
 	}
 	if f.installRuntime.ActiveVersion != "" {
 		f.featureStatus.Runtime.Status = string(f.installRuntime.Status)
@@ -1529,13 +1529,13 @@ func (f *fakeAdminClient) InstallFeatureRuntime(context.Context, AdminSession, s
 		}
 		return f.installRuntime, nil
 	}
-	return ports.TrivyRuntimeState{}, nil
+	return ports.FeatureRuntimeState{}, nil
 }
 
-func (f *fakeAdminClient) UpgradeFeatureRuntime(context.Context, AdminSession, string, string) (ports.TrivyRuntimeState, error) {
+func (f *fakeAdminClient) UpgradeFeatureRuntime(context.Context, AdminSession, string, string) (ports.FeatureRuntimeState, error) {
 	f.upgradeRuntimeCalls++
 	if f.featureErr != nil {
-		return ports.TrivyRuntimeState{}, f.featureErr
+		return ports.FeatureRuntimeState{}, f.featureErr
 	}
 	if f.upgradeRuntime.ActiveVersion != "" {
 		f.featureStatus.Runtime.Status = string(f.upgradeRuntime.Status)
@@ -1551,10 +1551,10 @@ func (f *fakeAdminClient) UpgradeFeatureRuntime(context.Context, AdminSession, s
 	return f.upgradeRuntime, nil
 }
 
-func (f *fakeAdminClient) RollbackFeatureRuntime(context.Context, AdminSession, string) (ports.TrivyRuntimeState, error) {
+func (f *fakeAdminClient) RollbackFeatureRuntime(context.Context, AdminSession, string) (ports.FeatureRuntimeState, error) {
 	f.rollbackRuntimeCalls++
 	if f.featureErr != nil {
-		return ports.TrivyRuntimeState{}, f.featureErr
+		return ports.FeatureRuntimeState{}, f.featureErr
 	}
 	return f.rollbackRuntime, nil
 }

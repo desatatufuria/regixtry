@@ -40,12 +40,12 @@ func (r *Runner) Probe(ctx context.Context, settings ports.ScanSettings) (ports.
 	}
 	info, err := r.fetchVersionInfo(ctx, settings)
 	if err != nil {
-		return ports.FeatureRuntime{Mode: ports.FeatureRuntimeModeManaged, Status: string(ports.TrivyRuntimeStatusDegraded), Health: string(ports.TrivyRuntimeStatusDegraded), Detail: err.Error(), LastError: err.Error()}, err
+		return ports.FeatureRuntime{Mode: ports.FeatureRuntimeModeManaged, Status: string(ports.FeatureRuntimeStatusDegraded), Health: string(ports.FeatureRuntimeStatusDegraded), Detail: err.Error(), LastError: err.Error()}, err
 	}
 	if strings.TrimSpace(info.Version) == "" {
-		return ports.FeatureRuntime{Mode: ports.FeatureRuntimeModeManaged, Status: string(ports.TrivyRuntimeStatusDegraded), Health: string(ports.TrivyRuntimeStatusDegraded), Detail: "version response did not include Version", LastError: "version response did not include Version"}, fmt.Errorf("version response did not include Version")
+		return ports.FeatureRuntime{Mode: ports.FeatureRuntimeModeManaged, Status: string(ports.FeatureRuntimeStatusDegraded), Health: string(ports.FeatureRuntimeStatusDegraded), Detail: "version response did not include Version", LastError: "version response did not include Version"}, fmt.Errorf("version response did not include Version")
 	}
-	return ports.FeatureRuntime{Mode: ports.FeatureRuntimeModeManaged, Status: string(ports.TrivyRuntimeStatusReady), Health: string(ports.TrivyRuntimeStatusReady), Version: info.Version, ActiveBinaryPath: info.BinaryPath}, nil
+	return ports.FeatureRuntime{Mode: ports.FeatureRuntimeModeManaged, Status: string(ports.FeatureRuntimeStatusReady), Health: string(ports.FeatureRuntimeStatusReady), Version: info.Version, ActiveBinaryPath: info.BinaryPath}, nil
 }
 
 func (r *Runner) Run(ctx context.Context, imageRef string, settings ports.ScanSettings) (ports.ScanResult, error) {
