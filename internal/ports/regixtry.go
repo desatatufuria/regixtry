@@ -35,7 +35,9 @@ type MetadataStore interface {
 	UpsertTrivyRuntimeState(ctx context.Context, tenant string, state TrivyRuntimeState) error
 	GetActiveScanRunByDigest(ctx context.Context, tenant string, repository string, digest string) (ScanRun, error)
 	GetScanRun(ctx context.Context, tenant string, runID string) (ScanRun, error)
+	GetScanRunDetail(ctx context.Context, tenant string, runID string) (ScanRunDetail, error)
 	UpsertScanRun(ctx context.Context, tenant string, run ScanRun) error
+	UpsertScanRunDetail(ctx context.Context, tenant string, detail ScanRunDetail) error
 	ListScanRuns(ctx context.Context, tenant string, repository string, limit int) ([]ScanRun, error)
 	TryAcquireScanSchedulerLease(ctx context.Context, tenant string, owner string, now time.Time, leaseTTL time.Duration) (bool, ScanSchedulerState, error)
 	HeartbeatScanScheduler(ctx context.Context, tenant string, owner string, now time.Time, leaseTTL time.Duration) error
@@ -78,6 +80,56 @@ type ScanResult struct {
 	Low          int
 	TrivyVersion string
 	DBUpdatedAt  *time.Time
+	Findings     []ScanRunFinding
+	DBFreshness  ScanRunDBFreshness
+}
+
+const (
+	ScanRunDBFreshnessStateFresh   = "fresh"
+	ScanRunDBFreshnessStateStale   = "stale"
+	ScanRunDBFreshnessStateUnknown = "unknown"
+
+	ScanReferenceFreshnessCurrent = "current"
+	ScanReferenceFreshnessMoved   = "moved"
+	ScanReferenceFreshnessMissing = "missing"
+	ScanReferenceFreshnessUnknown = "unknown"
+)
+
+type ScanRunFinding struct {
+	Target           string     `json:"target,omitempty"`
+	Class            string     `json:"class,omitempty"`
+	Type             string     `json:"type,omitempty"`
+	Severity         string     `json:"severity,omitempty"`
+	VulnerabilityID  string     `json:"vulnerability_id,omitempty"`
+	PackageName      string     `json:"package_name,omitempty"`
+	InstalledVersion string     `json:"installed_version,omitempty"`
+	FixedVersion     string     `json:"fixed_version,omitempty"`
+	Title            string     `json:"title,omitempty"`
+	PrimaryURL       string     `json:"primary_url,omitempty"`
+	Fixable          bool       `json:"fixable"`
+	Status           string     `json:"status,omitempty"`
+	DataSource       string     `json:"data_source,omitempty"`
+	DataSourceURL    string     `json:"data_source_url,omitempty"`
+	PublishedAt      *time.Time `json:"published_at,omitempty"`
+	ModifiedAt       *time.Time `json:"modified_at,omitempty"`
+}
+
+type ScanRunDBFreshness struct {
+	ReportSchemaVersion int        `json:"report_schema_version"`
+	ReportCreatedAt     *time.Time `json:"report_created_at,omitempty"`
+	TrivyVersion        string     `json:"trivy_version,omitempty"`
+	DBVersion           int        `json:"db_version"`
+	DBUpdatedAt         *time.Time `json:"db_updated_at,omitempty"`
+	DBDownloadedAt      *time.Time `json:"db_downloaded_at,omitempty"`
+	DBNextUpdateAt      *time.Time `json:"db_next_update_at,omitempty"`
+	FreshnessState      string     `json:"freshness_state,omitempty"`
+}
+
+type ScanRunDetail struct {
+	Run                ScanRun            `json:"run"`
+	Findings           []ScanRunFinding   `json:"findings,omitempty"`
+	DBFreshness        ScanRunDBFreshness `json:"db_freshness"`
+	ReferenceFreshness string             `json:"reference_freshness,omitempty"`
 }
 
 type ScanRun struct {
@@ -98,6 +150,7 @@ type ScanRun struct {
 	TrivyVersion string     `json:"trivy_version,omitempty"`
 	DBUpdatedAt  *time.Time `json:"db_updated_at,omitempty"`
 	Error        string     `json:"error,omitempty"`
+	HasFixable   bool       `json:"-"`
 }
 
 type ScanSchedulerState struct {

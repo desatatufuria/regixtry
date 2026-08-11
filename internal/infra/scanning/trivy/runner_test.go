@@ -87,6 +87,68 @@ func TestRunnerRejectsMalformedScanJSON(t *testing.T) {
 	}
 }
 
+func TestRunnerExtractsFindingsAndFreshnessMetadata(t *testing.T) {
+	t.Parallel()
+
+	runner := New(RunnerConfig{Exec: func(_ context.Context, binaryPath string, args ...string) ([]byte, error) {
+		if len(args) >= 1 && args[0] == "version" {
+			return []byte(`{"Version":"0.58.1","VulnerabilityDB":{"Version":7,"UpdatedAt":"2026-08-10T10:00:00Z","NextUpdate":"2026-08-10T11:00:00Z","DownloadedAt":"2026-08-10T10:05:00Z"}}`), nil
+		}
+		return []byte(`{"SchemaVersion":2,"CreatedAt":"2026-08-10T12:00:00Z","Metadata":{"DBUpdatedAt":"2026-08-10T10:00:00Z"},"Results":[{"Target":"alpine:3.20","Class":"os-pkgs","Type":"alpine","Vulnerabilities":[{"VulnerabilityID":"CVE-2026-0001","PkgName":"openssl","InstalledVersion":"3.0.0-r0","FixedVersion":"3.0.1-r0","Title":"openssl fix available","PrimaryURL":"https://example.test/CVE-2026-0001","Severity":"CRITICAL","Status":"fixed","PublishedDate":"2026-08-01T10:00:00Z","LastModifiedDate":"2026-08-02T10:00:00Z","DataSource":{"Name":"alpine","URL":"https://example.test/alpine"}},{"VulnerabilityID":"CVE-2026-0002","PkgName":"busybox","InstalledVersion":"1.36.0-r0","Title":"busybox no fix yet","PrimaryURL":"https://example.test/CVE-2026-0002","Severity":"HIGH","Status":"affected","DataSource":{"Name":"alpine","URL":"https://example.test/alpine"}}]}]}`), nil
+	}})
+
+	result, err := runner.Run(context.Background(), "registry.internal/library/alpine@sha256:abc", ports.ScanSettings{BinaryPath: "/var/lib/regixtry/features/trivy/bin/active/trivy", CacheDir: "/var/lib/regixtry/features/trivy/trivy-cache", Timeout: time.Minute})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := len(result.Findings), 2; got != want {
+		t.Fatalf("len(result.Findings) = %d, want %d", got, want)
+	}
+	if result.Findings[0].Target != "alpine:3.20" || result.Findings[0].Class != "os-pkgs" || result.Findings[0].Type != "alpine" {
+		t.Fatalf("first finding = %#v, want target/class/type metadata", result.Findings[0])
+	}
+	if !result.Findings[0].Fixable || result.Findings[1].Fixable {
+		t.Fatalf("findings = %#v, want fixable then non-fixable findings", result.Findings)
+	}
+	if got, want := result.DBFreshness.ReportSchemaVersion, 2; got != want {
+		t.Fatalf("ReportSchemaVersion = %d, want %d", got, want)
+	}
+	if result.DBFreshness.ReportCreatedAt == nil || result.DBFreshness.DBUpdatedAt == nil || result.DBFreshness.DBDownloadedAt == nil || result.DBFreshness.DBNextUpdateAt == nil {
+		t.Fatalf("DBFreshness = %#v, want captured timestamps", result.DBFreshness)
+	}
+	if got, want := result.DBFreshness.DBVersion, 7; got != want {
+		t.Fatalf("DBVersion = %d, want %d", got, want)
+	}
+	if got, want := result.DBFreshness.FreshnessState, ports.ScanRunDBFreshnessStateStale; got != want {
+		t.Fatalf("FreshnessState = %q, want %q", got, want)
+	}
+}
+
+func TestRunnerRetainsPartialFreshnessMetadata(t *testing.T) {
+	t.Parallel()
+
+	runner := New(RunnerConfig{Exec: func(_ context.Context, binaryPath string, args ...string) ([]byte, error) {
+		if len(args) >= 1 && args[0] == "version" {
+			return []byte(`{"Version":"0.58.1"}`), nil
+		}
+		return []byte(`{"SchemaVersion":2,"Results":[{"Target":"alpine:3.20","Vulnerabilities":[{"VulnerabilityID":"CVE-2026-0003","PkgName":"apk-tools","InstalledVersion":"1.0.0-r0","PrimaryURL":"https://example.test/CVE-2026-0003","Severity":"MEDIUM"}]}]}`), nil
+	}})
+
+	result, err := runner.Run(context.Background(), "registry.internal/library/alpine@sha256:abc", ports.ScanSettings{BinaryPath: "/var/lib/regixtry/features/trivy/bin/active/trivy", CacheDir: "/var/lib/regixtry/features/trivy/trivy-cache", Timeout: time.Minute})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := len(result.Findings), 1; got != want {
+		t.Fatalf("len(result.Findings) = %d, want %d", got, want)
+	}
+	if got, want := result.DBFreshness.FreshnessState, ports.ScanRunDBFreshnessStateUnknown; got != want {
+		t.Fatalf("FreshnessState = %q, want %q", got, want)
+	}
+	if result.DBFreshness.DBUpdatedAt != nil || result.DBFreshness.DBDownloadedAt != nil || result.DBFreshness.DBNextUpdateAt != nil {
+		t.Fatalf("DBFreshness = %#v, want omitted optional timestamps to stay nil", result.DBFreshness)
+	}
+}
+
 func containsArgPair(args []string, name string, value string) bool {
 	for i := 0; i < len(args)-1; i++ {
 		if args[i] == name && args[i+1] == value {

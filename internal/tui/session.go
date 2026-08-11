@@ -158,6 +158,7 @@ type AdminViewState struct {
 	TrivySelectedAlert     int
 	TrivyAlertDetailOpen   bool
 	TrivyAlertsLoaded      bool
+	TrivyScanRunDetail     ports.ScanRunDetail
 	RevealedTokenSecret    string
 	RevealedTokenAccessor  string
 	RevealedTokenExpiresAt time.Time

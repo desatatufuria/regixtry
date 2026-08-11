@@ -566,6 +566,39 @@ func TestHTTPAdminClientListScanRuns(t *testing.T) {
 	})
 }
 
+func TestHTTPAdminClientGetScanRunDetail(t *testing.T) {
+	t.Parallel()
+
+	fixedNow := time.Date(2026, time.August, 4, 23, 5, 0, 0, time.UTC)
+	session := AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: fixedNow.Add(10 * time.Minute)}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got, want := r.Method, http.MethodGet; got != want {
+			t.Fatalf("method = %q, want %q", got, want)
+		}
+		if got, want := r.URL.Path, "/admin/v1/scan-runs/run-1"; got != want {
+			t.Fatalf("path = %q, want %q", got, want)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"run":{"id":"run-1","repository":"library/alpine","requested_ref":"latest","digest":"sha256:111","status":"completed","trigger":"manual","created_at":"2026-08-04T22:00:00Z","updated_at":"2026-08-04T22:00:00Z","critical":1,"trivy_version":"0.58.1"},"findings":[{"severity":"CRITICAL","vulnerability_id":"CVE-1","package_name":"openssl","installed_version":"3.0.0","fixed_version":"3.0.1","fixable":true}],"db_freshness":{"freshness_state":"fresh"},"reference_freshness":"current"}`))
+	}))
+	defer server.Close()
+
+	client, err := NewHTTPAdminClient(server.URL, server.Client())
+	if err != nil {
+		t.Fatalf("NewHTTPAdminClient() error = %v", err)
+	}
+	client.now = func() time.Time { return fixedNow }
+
+	detail, err := client.GetScanRunDetail(context.Background(), session, "run-1")
+	if err != nil {
+		t.Fatalf("GetScanRunDetail() error = %v", err)
+	}
+	if detail.Run.ID != "run-1" || detail.ReferenceFreshness != ports.ScanReferenceFreshnessCurrent || len(detail.Findings) != 1 {
+		t.Fatalf("detail = %#v, want decoded scan-run detail payload", detail)
+	}
+}
+
 func TestHTTPAdminClientMapsInvalidTokenToExpiredSession(t *testing.T) {
 	t.Parallel()
 

@@ -85,6 +85,18 @@ func (s *Service) ListScanRuns(ctx context.Context, repository string, limit int
 	return s.metadata.ListScanRuns(ctx, s.tenant(ctx), strings.TrimSpace(repository), limit)
 }
 
+func (s *Service) GetScanRunDetail(ctx context.Context, runID string) (ports.ScanRunDetail, error) {
+	detail, err := s.metadata.GetScanRunDetail(ctx, s.tenant(ctx), strings.TrimSpace(runID))
+	if err != nil {
+		return ports.ScanRunDetail{}, err
+	}
+	detail.ReferenceFreshness = s.referenceFreshness(ctx, detail.Run)
+	if strings.TrimSpace(detail.DBFreshness.FreshnessState) == "" {
+		detail.DBFreshness.FreshnessState = ports.ScanRunDBFreshnessStateUnknown
+	}
+	return detail, nil
+}
+
 func (s *Service) RunScheduledScans(ctx context.Context) error {
 	settings, err := s.resolveManagedScanSettings(ctx)
 	if err != nil {
@@ -174,7 +186,7 @@ func (s *Service) executeScanRun(ctx context.Context, tenant string, run ports.S
 	run.TrivyVersion = result.TrivyVersion
 	run.DBUpdatedAt = result.DBUpdatedAt
 	run.Error = ""
-	s.persistAsyncScanRun(ctx, tenant, run)
+	s.persistAsyncScanRunDetail(ctx, tenant, ports.ScanRunDetail{Run: run, Findings: result.Findings, DBFreshness: result.DBFreshness})
 }
 
 func (s *Service) persistAsyncScanRun(ctx context.Context, tenant string, run ports.ScanRun) {
@@ -193,6 +205,45 @@ func (s *Service) persistAsyncScanRun(ctx context.Context, tenant string, run po
 		case <-time.After(time.Duration(attempt+1) * 10 * time.Millisecond):
 		}
 	}
+}
+
+func (s *Service) persistAsyncScanRunDetail(ctx context.Context, tenant string, detail ports.ScanRunDetail) {
+	const maxAttempts = 5
+
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if err := s.metadata.UpsertScanRunDetail(ctx, tenant, detail); err == nil {
+			return
+		} else if !isTransientScanRunPersistenceError(err) {
+			return
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Duration(attempt+1) * 10 * time.Millisecond):
+		}
+	}
+}
+
+func (s *Service) referenceFreshness(ctx context.Context, run ports.ScanRun) string {
+	if strings.TrimSpace(run.RequestedRef) == "" {
+		return ports.ScanReferenceFreshnessUnknown
+	}
+	repository, err := parseRepository(run.Repository)
+	if err != nil {
+		return ports.ScanReferenceFreshnessUnknown
+	}
+	manifest, err := s.metadata.ResolveManifest(ctx, s.tenant(ctx), repository, run.RequestedRef)
+	if err != nil {
+		if domain.IsCode(err, domain.ErrorCodeNotFound) {
+			return ports.ScanReferenceFreshnessMissing
+		}
+		return ports.ScanReferenceFreshnessUnknown
+	}
+	if manifest.Digest.String() == strings.TrimSpace(run.Digest) {
+		return ports.ScanReferenceFreshnessCurrent
+	}
+	return ports.ScanReferenceFreshnessMoved
 }
 
 func isTransientScanRunPersistenceError(err error) bool {

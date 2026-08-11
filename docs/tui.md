@@ -26,7 +26,8 @@ The admin Features screen is now a thin Bubble Tea shell:
 - Trivy narrows the backend page to runtime-oriented configuration and runtime sections, then adds two TUI-only tabs: `Runtime` and `Repository Alerts`.
 - The `Runtime` tab is the default landing view after load or refresh.
 - Trivy configuration edits happen in a modal that only submits the current settings fields already exposed by the backend page: schedule toggle, interval, timeout, registry reachable URL, and max concurrency.
-- The `Repository Alerts` tab loads existing scan runs from `/admin/v1/scan-runs` and renders same-screen alert drill-down without introducing persisted vulnerability detail, exclusions, or policy systems.
+- The `Repository Alerts` tab loads existing scan runs from `/admin/v1/scan-runs`, keeps rows ordered by highest severity and fix availability, and opens same-screen drill-down from `/admin/v1/scan-runs/{id}`.
+- Alert detail keeps digest-scoped findings visible even when the current tag moved, and it renders reference freshness separately from DB freshness.
 - Non-Trivy features keep the same generic feature shell with no Trivy-specific tab chrome.
 - The shell only handles selection, refresh, tabs, confirmation, modal state, and operator feedback.
 
@@ -36,6 +37,7 @@ The admin Features screen is now a thin Bubble Tea shell:
 - `e`, `x`, `i`, `u`, and `b` only appear in help when the backend declares `enable`, `disable`, `install-runtime`, `upgrade-runtime`, or `rollback-runtime` for the selected page.
 - Confirmation copy for destructive actions is backend-authored.
 - On Trivy, `Tab` switches between `Runtime` and `Repository Alerts`, `c` opens the configuration modal from `Runtime`, and `Enter` opens detail for the selected repository alert.
+- Detail rows show compact vulnerability entries with severity, package, vulnerability ID, installed version, fixed version, and fixability so operators can stay inside the Trivy workflow.
 
 ## Key bindings
 

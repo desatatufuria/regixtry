@@ -40,6 +40,8 @@ func (r *Router) handleAdmin(w stdhttp.ResponseWriter, req *stdhttp.Request) {
 		r.handleAdminScanSettings(w, req)
 	case subpath == "scan-runs":
 		r.handleAdminScanRuns(w, req)
+	case strings.HasPrefix(subpath, "scan-runs/"):
+		r.handleAdminScanRunDetail(w, req, strings.TrimPrefix(subpath, "scan-runs/"))
 	case subpath == "users":
 		r.handleAdminUsersCollection(w, req, *principal)
 	case strings.HasPrefix(subpath, "users/"):
@@ -247,6 +249,20 @@ func (r *Router) handleAdminScanRuns(w stdhttp.ResponseWriter, req *stdhttp.Requ
 		w.Header().Set("Allow", strings.Join([]string{stdhttp.MethodGet, stdhttp.MethodPost}, ", "))
 		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
 	}
+}
+
+func (r *Router) handleAdminScanRunDetail(w stdhttp.ResponseWriter, req *stdhttp.Request, runID string) {
+	if req.Method != stdhttp.MethodGet {
+		w.Header().Set("Allow", stdhttp.MethodGet)
+		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+		return
+	}
+	detail, err := r.service.GetScanRunDetail(req.Context(), strings.TrimSpace(runID))
+	if err != nil {
+		writeAdminError(w, err, ports.Challenge{})
+		return
+	}
+	writeJSON(w, stdhttp.StatusOK, detail)
 }
 
 func decodeScanSettings(req *stdhttp.Request) (ports.ScanSettings, error) {

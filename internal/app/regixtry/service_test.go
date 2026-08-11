@@ -749,6 +749,45 @@ func TestServiceFailedScanDoesNotHidePublishedContent(t *testing.T) {
 	}
 }
 
+func TestServiceGetScanRunDetailPreservesDigestTruthAndDerivesReferenceFreshness(t *testing.T) {
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	seedRepository(t, service, context.Background(), "library/alpine")
+	resolved, err := service.ResolveManifest(context.Background(), "library/alpine", "latest")
+	if err != nil {
+		t.Fatalf("ResolveManifest(initial) error = %v", err)
+	}
+
+	now := time.Date(2026, time.August, 10, 12, 0, 0, 0, time.UTC)
+	if err := service.metadata.UpsertScanRunDetail(context.Background(), "tenant-a", ports.ScanRunDetail{
+		Run:         ports.ScanRun{ID: "run-1", Repository: "library/alpine", RequestedRef: "latest", Digest: resolved.Digest, Status: ports.ScanRunStatusCompleted, Trigger: ports.ScanTriggerManual, CreatedAt: now, UpdatedAt: now, Critical: 1, TrivyVersion: "0.58.1"},
+		Findings:    []ports.ScanRunFinding{{Severity: "CRITICAL", VulnerabilityID: "CVE-2026-0001", PackageName: "openssl", InstalledVersion: "3.0.0", FixedVersion: "3.0.1", Fixable: true}},
+		DBFreshness: ports.ScanRunDBFreshness{FreshnessState: ports.ScanRunDBFreshnessStateFresh},
+	}); err != nil {
+		t.Fatalf("UpsertScanRunDetail() error = %v", err)
+	}
+
+	publishRepositoryTag(t, service, context.Background(), "library/alpine", "latest", "layer-two")
+
+	detail, err := service.GetScanRunDetail(context.Background(), "run-1")
+	if err != nil {
+		t.Fatalf("GetScanRunDetail() error = %v", err)
+	}
+	if got, want := detail.Run.Digest, resolved.Digest; got != want {
+		t.Fatalf("detail.Run.Digest = %q, want %q", got, want)
+	}
+	if got, want := detail.ReferenceFreshness, ports.ScanReferenceFreshnessMoved; got != want {
+		t.Fatalf("ReferenceFreshness = %q, want %q", got, want)
+	}
+	if got, want := len(detail.Findings), 1; got != want {
+		t.Fatalf("len(detail.Findings) = %d, want %d", got, want)
+	}
+	if got, want := detail.Findings[0].VulnerabilityID, "CVE-2026-0001"; got != want {
+		t.Fatalf("finding vulnerability = %q, want %q", got, want)
+	}
+}
+
 func newTestService(t *testing.T, accessController ports.AccessController) (*Service, func()) {
 	t.Helper()
 
@@ -913,6 +952,27 @@ func seedManagedRuntimeState(t *testing.T, service *Service, version string) {
 		UpdatedAt:        time.Now().UTC(),
 	}); err != nil {
 		t.Fatalf("UpsertTrivyRuntimeState() error = %v", err)
+	}
+}
+
+func publishRepositoryTag(t *testing.T, service *Service, ctx context.Context, repository string, tag string, layer string) {
+	t.Helper()
+
+	upload, err := service.BeginUpload(ctx, repository)
+	if err != nil {
+		t.Fatalf("BeginUpload(%q) error = %v", repository, err)
+	}
+	if _, err := service.AppendUpload(ctx, repository, upload.ID, strings.NewReader(layer)); err != nil {
+		t.Fatalf("AppendUpload(%q) error = %v", repository, err)
+	}
+	blobPayload := []byte(layer)
+	blob, err := service.CompleteUpload(ctx, repository, upload.ID, digestForTest(blobPayload), nil)
+	if err != nil {
+		t.Fatalf("CompleteUpload(%q) error = %v", repository, err)
+	}
+	manifestPayload := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{"mediaType":"application/vnd.oci.image.config.v1+json","digest":"` + blob.Digest + `","size":9},"layers":[{"mediaType":"application/vnd.oci.image.layer.v1.tar","digest":"` + blob.Digest + `","size":9}]}`)
+	if _, err := service.PublishManifest(ctx, repository, tag, "application/vnd.oci.image.manifest.v1+json", manifestPayload); err != nil {
+		t.Fatalf("PublishManifest(%q) error = %v", repository, err)
 	}
 }
 

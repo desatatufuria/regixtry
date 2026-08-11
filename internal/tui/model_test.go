@@ -685,8 +685,23 @@ func TestModelTrivyRepositoryAlertsLoadSelectDetailAndRecoverEmptyState(t *testi
 				Sections: []ports.FeatureSection{{ID: "config", Title: "Configuration", Kind: "fields", Fields: []ports.FeatureField{{Label: "Schedule Enabled", Value: "true"}, {Label: "Interval", Value: "6h0m0s"}, {Label: "Timeout", Value: "10m0s"}, {Label: "Registry Reachable URL", Value: "https://registry.internal:5443"}, {Label: "Max Concurrency", Value: "2"}}}, {ID: "runtime", Title: "Runtime", Kind: "fields", Fields: []ports.FeatureField{{Label: "Status", Value: "ready"}, {Label: "Version", Value: "0.57.1"}}}},
 			},
 			scanRuns: []ports.ScanRun{
-				{ID: "run-1", Repository: "library/alpine", RequestedRef: "latest", Digest: "sha256:111", Status: ports.ScanRunStatusCompleted, Critical: 1, High: 2, Medium: 3, Low: 4},
-				{ID: "run-2", Repository: "team/api", RequestedRef: "1.0.0", Digest: "sha256:222", Status: ports.ScanRunStatusFailed, Error: "registry unavailable"},
+				{ID: "run-2", Repository: "team/api", RequestedRef: "1.0.0", Digest: "sha256:222", Status: ports.ScanRunStatusCompleted, Critical: 1, High: 0, Medium: 0, Low: 0, HasFixable: true},
+				{ID: "run-3", Repository: "library/base", RequestedRef: "stable", Digest: "sha256:333", Status: ports.ScanRunStatusCompleted, Critical: 1, High: 0, Medium: 0, Low: 0, HasFixable: false},
+				{ID: "run-1", Repository: "library/alpine", RequestedRef: "latest", Digest: "sha256:111", Status: ports.ScanRunStatusCompleted, Critical: 0, High: 2, Medium: 3, Low: 4, HasFixable: true},
+			},
+			scanRunDetails: map[string]ports.ScanRunDetail{
+				"run-2": {
+					Run:                ports.ScanRun{ID: "run-2", Repository: "team/api", RequestedRef: "1.0.0", Digest: "sha256:222", Status: ports.ScanRunStatusCompleted, Critical: 1},
+					Findings:           []ports.ScanRunFinding{{Severity: "CRITICAL", VulnerabilityID: "CVE-2026-0001", PackageName: "openssl", InstalledVersion: "3.0.0", FixedVersion: "3.0.1", Fixable: true}},
+					DBFreshness:        ports.ScanRunDBFreshness{FreshnessState: ports.ScanRunDBFreshnessStateStale},
+					ReferenceFreshness: ports.ScanReferenceFreshnessMoved,
+				},
+				"run-3": {
+					Run:                ports.ScanRun{ID: "run-3", Repository: "library/base", RequestedRef: "stable", Digest: "sha256:333", Status: ports.ScanRunStatusCompleted, Critical: 1},
+					Findings:           []ports.ScanRunFinding{{Severity: "CRITICAL", VulnerabilityID: "CVE-2026-0002", PackageName: "busybox", InstalledVersion: "1.0.0", Fixable: false}},
+					DBFreshness:        ports.ScanRunDBFreshness{FreshnessState: ports.ScanRunDBFreshnessStateFresh},
+					ReferenceFreshness: ports.ScanReferenceFreshnessCurrent,
+				},
 			},
 		}
 		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
@@ -697,16 +712,21 @@ func TestModelTrivyRepositoryAlertsLoadSelectDetailAndRecoverEmptyState(t *testi
 			t.Fatalf("listScanRunsCalls = %d, want one repository-alert load", adminClient.listScanRunsCalls)
 		}
 		alertsView := updated.View()
-		for _, want := range []string{"Repository Alerts", "library/alpine@latest", "team/api@1.0.0"} {
+		for _, want := range []string{"Repository Alerts", "team/api@1.0.0", "library/base@stable", "library/alpine@latest"} {
 			if !strings.Contains(alertsView, want) {
 				t.Fatalf("view = %q, want %q", alertsView, want)
 			}
 		}
+		if strings.Index(alertsView, "team/api@1.0.0") > strings.Index(alertsView, "library/base@stable") || strings.Index(alertsView, "library/base@stable") > strings.Index(alertsView, "library/alpine@latest") {
+			t.Fatalf("view = %q, want severity/fixability ordering", alertsView)
+		}
 
-		updated = runKey(t, updated, "down")
 		updated = runKey(t, updated, "enter")
+		if adminClient.getScanRunDetailCalls != 1 {
+			t.Fatalf("getScanRunDetailCalls = %d, want detail fetch on enter", adminClient.getScanRunDetailCalls)
+		}
 		detailView := updated.View()
-		for _, want := range []string{"Selected Scan Run", "Repository: team/api", "Digest: sha256:222", "Error: registry unavailable"} {
+		for _, want := range []string{"Selected Scan Run", "Repository: team/api", "Digest: sha256:222", "Reference freshness: moved", "DB freshness: stale", "CVE-2026-0001", "openssl"} {
 			if !strings.Contains(detailView, want) {
 				t.Fatalf("view = %q, want %q", detailView, want)
 			}
@@ -715,6 +735,9 @@ func TestModelTrivyRepositoryAlertsLoadSelectDetailAndRecoverEmptyState(t *testi
 		updated = runKey(t, updated, "esc")
 		if strings.Contains(updated.View(), "Selected Scan Run") {
 			t.Fatalf("view = %q, want esc to close alert detail and return to list", updated.View())
+		}
+		if got, want := updated.adminView.TrivySelectedAlert, 0; got != want {
+			t.Fatalf("TrivySelectedAlert = %d, want %d", got, want)
 		}
 	})
 
@@ -1048,6 +1071,7 @@ type fakeAdminClient struct {
 	featurePages          map[string]ports.FeaturePage
 	pageAfterAction       ports.FeaturePage
 	scanRuns              []ports.ScanRun
+	scanRunDetails        map[string]ports.ScanRunDetail
 	featureAfterConfigure ports.FeatureDetails
 	installRuntime        ports.TrivyRuntimeState
 	upgradeRuntime        ports.TrivyRuntimeState
@@ -1100,6 +1124,7 @@ type fakeAdminClient struct {
 	getFeatureStatusCalls     int
 	getFeaturePageCalls       int
 	listScanRunsCalls         int
+	getScanRunDetailCalls     int
 	executeFeatureActionCalls int
 	lastFeatureAction         string
 	installRuntimeCalls       int
@@ -1170,6 +1195,17 @@ func (f *fakeAdminClient) ListScanRuns(context.Context, AdminSession, string, in
 		return nil, f.featureErr
 	}
 	return append([]ports.ScanRun(nil), f.scanRuns...), nil
+}
+
+func (f *fakeAdminClient) GetScanRunDetail(_ context.Context, _ AdminSession, runID string) (ports.ScanRunDetail, error) {
+	f.getScanRunDetailCalls++
+	if f.featureErr != nil {
+		return ports.ScanRunDetail{}, f.featureErr
+	}
+	if detail, ok := f.scanRunDetails[runID]; ok {
+		return detail, nil
+	}
+	return ports.ScanRunDetail{}, nil
 }
 
 func (f *fakeAdminClient) ExecuteFeatureAction(_ context.Context, _ AdminSession, name string, actionID string) (ports.FeatureActionResult, error) {

@@ -23,6 +23,7 @@ type AdminClient interface {
 	ListFeatures(ctx context.Context, session AdminSession) ([]ports.FeatureSummary, error)
 	GetFeaturePage(ctx context.Context, session AdminSession, name string) (ports.FeaturePage, error)
 	ListScanRuns(ctx context.Context, session AdminSession, repository string, limit int) ([]ports.ScanRun, error)
+	GetScanRunDetail(ctx context.Context, session AdminSession, runID string) (ports.ScanRunDetail, error)
 	ExecuteFeatureAction(ctx context.Context, session AdminSession, name string, actionID string) (ports.FeatureActionResult, error)
 	GetFeature(ctx context.Context, session AdminSession, name string) (ports.FeatureDetails, error)
 	GetFeatureStatus(ctx context.Context, session AdminSession, name string) (ports.FeatureDetails, error)
@@ -177,6 +178,14 @@ func (c *HTTPAdminClient) ListScanRuns(ctx context.Context, session AdminSession
 		return nil, err
 	}
 	return runs, nil
+}
+
+func (c *HTTPAdminClient) GetScanRunDetail(ctx context.Context, session AdminSession, runID string) (ports.ScanRunDetail, error) {
+	var detail ports.ScanRunDetail
+	if err := c.getJSON(ctx, session, "/admin/v1/scan-runs/"+url.PathEscape(strings.TrimSpace(runID)), &detail); err != nil {
+		return ports.ScanRunDetail{}, err
+	}
+	return detail, nil
 }
 
 func (c *HTTPAdminClient) ExecuteFeatureAction(ctx context.Context, session AdminSession, name string, actionID string) (ports.FeatureActionResult, error) {

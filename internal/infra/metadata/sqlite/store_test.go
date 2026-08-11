@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -247,8 +248,8 @@ func TestStorePersistsScanRunsAndSchedulerStateAcrossReopen(t *testing.T) {
 	if len(storedRuns) != 2 {
 		t.Fatalf("len(storedRuns) = %d, want 2", len(storedRuns))
 	}
-	if storedRuns[0].Status != ports.ScanRunStatusFailed || storedRuns[1].Status != ports.ScanRunStatusCompleted {
-		t.Fatalf("storedRuns = %#v, want failed then completed ordering", storedRuns)
+	if storedRuns[0].Status != ports.ScanRunStatusCompleted || storedRuns[1].Status != ports.ScanRunStatusFailed {
+		t.Fatalf("storedRuns = %#v, want severity-first ordering before failed summaries", storedRuns)
 	}
 
 	storedState, err := reopened.GetScanSchedulerState(context.Background(), "tenant-a")
@@ -333,6 +334,70 @@ func TestStorePersistsTrivyRuntimeStateAcrossReopenAndDerivesLegacyMigrationStat
 	}
 	if !strings.Contains(legacyState.MigrationHint, "/tmp/README.sh") {
 		t.Fatalf("legacyState.MigrationHint = %q, want legacy binary evidence", legacyState.MigrationHint)
+	}
+}
+
+func TestStorePersistsScanRunDetailAcrossReopenAndOrdersBySeverityThenFixability(t *testing.T) {
+	t.Parallel()
+
+	databasePath := filepath.Join(t.TempDir(), "registry.db")
+	store, err := New(databasePath)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	now := time.Date(2026, time.August, 10, 12, 0, 0, 0, time.UTC)
+	details := []ports.ScanRunDetail{
+		{
+			Run:         ports.ScanRun{ID: "run-fixable-critical", Repository: "library/alpine", RequestedRef: "latest", Digest: "sha256:111", Status: ports.ScanRunStatusCompleted, Trigger: ports.ScanTriggerManual, CreatedAt: now, UpdatedAt: now, Critical: 1, High: 0, Medium: 0, Low: 0, TrivyVersion: "0.58.1"},
+			Findings:    []ports.ScanRunFinding{{Severity: "CRITICAL", VulnerabilityID: "CVE-1", PackageName: "openssl", InstalledVersion: "3.0.0", FixedVersion: "3.0.1", Fixable: true}},
+			DBFreshness: ports.ScanRunDBFreshness{TrivyVersion: "0.58.1", DBVersion: 7, FreshnessState: ports.ScanRunDBFreshnessStateFresh},
+		},
+		{
+			Run:      ports.ScanRun{ID: "run-unfixable-critical", Repository: "library/alpine", RequestedRef: "1.0", Digest: "sha256:222", Status: ports.ScanRunStatusCompleted, Trigger: ports.ScanTriggerManual, CreatedAt: now.Add(time.Minute), UpdatedAt: now.Add(time.Minute), Critical: 1, High: 0, Medium: 0, Low: 0, TrivyVersion: "0.58.1"},
+			Findings: []ports.ScanRunFinding{{Severity: "CRITICAL", VulnerabilityID: "CVE-2", PackageName: "busybox", InstalledVersion: "1.0.0", Fixable: false}},
+		},
+		{
+			Run:      ports.ScanRun{ID: "run-high-fixable", Repository: "library/alpine", RequestedRef: "2.0", Digest: "sha256:333", Status: ports.ScanRunStatusCompleted, Trigger: ports.ScanTriggerManual, CreatedAt: now.Add(2 * time.Minute), UpdatedAt: now.Add(2 * time.Minute), Critical: 0, High: 1, Medium: 0, Low: 0, TrivyVersion: "0.58.1"},
+			Findings: []ports.ScanRunFinding{{Severity: "HIGH", VulnerabilityID: "CVE-3", PackageName: "curl", InstalledVersion: "8.0.0", FixedVersion: "8.0.1", Fixable: true}},
+		},
+	}
+	for _, detail := range details {
+		if err := store.UpsertScanRunDetail(context.Background(), "tenant-a", detail); err != nil {
+			t.Fatalf("UpsertScanRunDetail(%s) error = %v", detail.Run.ID, err)
+		}
+	}
+
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	reopened, err := New(databasePath)
+	if err != nil {
+		t.Fatalf("New(reopen) error = %v", err)
+	}
+	defer reopened.Close()
+
+	runs, err := reopened.ListScanRuns(context.Background(), "tenant-a", "library/alpine", 10)
+	if err != nil {
+		t.Fatalf("ListScanRuns() error = %v", err)
+	}
+	if got, want := []string{runs[0].ID, runs[1].ID, runs[2].ID}, []string{"run-fixable-critical", "run-unfixable-critical", "run-high-fixable"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("run order = %#v, want %#v", got, want)
+	}
+
+	detail, err := reopened.GetScanRunDetail(context.Background(), "tenant-a", "run-unfixable-critical")
+	if err != nil {
+		t.Fatalf("GetScanRunDetail() error = %v", err)
+	}
+	if got, want := len(detail.Findings), 1; got != want {
+		t.Fatalf("len(detail.Findings) = %d, want %d", got, want)
+	}
+	if detail.Findings[0].Fixable {
+		t.Fatalf("finding = %#v, want non-fixable finding to remain visible", detail.Findings[0])
+	}
+	if got, want := detail.DBFreshness.FreshnessState, ports.ScanRunDBFreshnessStateUnknown; got != want {
+		t.Fatalf("FreshnessState = %q, want %q when no row was stored", got, want)
 	}
 }
 

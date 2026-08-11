@@ -184,20 +184,24 @@ func renderTrivyRepositoryAlerts(theme adminTheme, view AdminViewState) []string
 		lines = append(lines, label)
 	}
 	if view.TrivyAlertDetailOpen {
-		if run, ok := selectedTrivyScanRun(view); ok {
+		if detail := view.TrivyScanRunDetail; strings.TrimSpace(detail.Run.ID) != "" {
 			lines = append(lines, "", theme.subheading.Render("Selected Scan Run"))
 			lines = append(lines,
-				fmt.Sprintf("Repository: %s", run.Repository),
-				fmt.Sprintf("Reference: %s", adminFirstNonEmpty(run.RequestedRef, "unknown")),
-				fmt.Sprintf("Digest: %s", adminFirstNonEmpty(run.Digest, "unknown")),
-				fmt.Sprintf("Status: %s", adminFirstNonEmpty(run.Status, "unknown")),
-				fmt.Sprintf("Critical: %d", run.Critical),
-				fmt.Sprintf("High: %d", run.High),
-				fmt.Sprintf("Medium: %d", run.Medium),
-				fmt.Sprintf("Low: %d", run.Low),
+				fmt.Sprintf("Repository: %s", detail.Run.Repository),
+				fmt.Sprintf("Reference: %s", adminFirstNonEmpty(detail.Run.RequestedRef, "unknown")),
+				fmt.Sprintf("Digest: %s", adminFirstNonEmpty(detail.Run.Digest, "unknown")),
+				fmt.Sprintf("Status: %s", adminFirstNonEmpty(detail.Run.Status, "unknown")),
+				fmt.Sprintf("Reference freshness: %s", adminFirstNonEmpty(detail.ReferenceFreshness, ports.ScanReferenceFreshnessUnknown)),
+				fmt.Sprintf("DB freshness: %s", adminFirstNonEmpty(detail.DBFreshness.FreshnessState, ports.ScanRunDBFreshnessStateUnknown)),
 			)
-			if strings.TrimSpace(run.Error) != "" {
-				lines = append(lines, fmt.Sprintf("Error: %s", run.Error))
+			if strings.TrimSpace(detail.Run.Error) != "" {
+				lines = append(lines, fmt.Sprintf("Error: %s", detail.Run.Error))
+			}
+			if len(detail.Findings) > 0 {
+				lines = append(lines, "", theme.subheading.Render("Findings"))
+				for _, finding := range detail.Findings {
+					lines = append(lines, fmt.Sprintf("%s | %s | %s | installed=%s | fixed=%s | fixable=%t", adminFirstNonEmpty(finding.Severity, "unknown"), adminFirstNonEmpty(finding.PackageName, "unknown"), adminFirstNonEmpty(finding.VulnerabilityID, "unknown"), adminFirstNonEmpty(finding.InstalledVersion, "unknown"), adminFirstNonEmpty(finding.FixedVersion, "n/a"), finding.Fixable))
+				}
 			}
 		}
 	}

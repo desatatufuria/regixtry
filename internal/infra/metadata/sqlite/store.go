@@ -580,6 +580,23 @@ func (s *Store) GetScanRun(ctx context.Context, tenant string, runID string) (po
 	return scanRunRow(row)
 }
 
+func (s *Store) GetScanRunDetail(ctx context.Context, tenant string, runID string) (ports.ScanRunDetail, error) {
+	run, err := s.GetScanRun(ctx, tenant, runID)
+	if err != nil {
+		return ports.ScanRunDetail{}, err
+	}
+	findings, err := s.listScanRunFindings(ctx, runID)
+	if err != nil {
+		return ports.ScanRunDetail{}, err
+	}
+	freshness, err := s.getScanRunDBFreshness(ctx, runID)
+	if err != nil {
+		return ports.ScanRunDetail{}, err
+	}
+	run.HasFixable = scanRunFindingsHaveFixable(findings)
+	return ports.ScanRunDetail{Run: run, Findings: findings, DBFreshness: freshness}, nil
+}
+
 func (s *Store) UpsertScanRun(ctx context.Context, tenant string, run ports.ScanRun) error {
 	if run.CreatedAt.IsZero() {
 		run.CreatedAt = time.Now().UTC()
@@ -618,6 +635,76 @@ func (s *Store) UpsertScanRun(ctx context.Context, tenant string, run ports.Scan
 	return err
 }
 
+func (s *Store) UpsertScanRunDetail(ctx context.Context, tenant string, detail ports.ScanRunDetail) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	if err = upsertScanRunTx(ctx, tx, tenant, detail.Run); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM scan_run_findings WHERE run_id = ?`, detail.Run.ID); err != nil {
+		return err
+	}
+	for index, finding := range detail.Findings {
+		var publishedAt any
+		if finding.PublishedAt != nil {
+			publishedAt = finding.PublishedAt.UTC().Format(time.RFC3339Nano)
+		}
+		var modifiedAt any
+		if finding.ModifiedAt != nil {
+			modifiedAt = finding.ModifiedAt.UTC().Format(time.RFC3339Nano)
+		}
+		if _, err = tx.ExecContext(ctx, `
+			INSERT INTO scan_run_findings (run_id, position, target, class, type, severity, vulnerability_id, package_name, installed_version, fixed_version, title, primary_url, fixable, status, data_source, data_source_url, published_at, modified_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, detail.Run.ID, index, finding.Target, finding.Class, finding.Type, finding.Severity, finding.VulnerabilityID, finding.PackageName, finding.InstalledVersion, finding.FixedVersion, finding.Title, finding.PrimaryURL, finding.Fixable, finding.Status, finding.DataSource, finding.DataSourceURL, publishedAt, modifiedAt); err != nil {
+			return err
+		}
+	}
+	if hasDBFreshness(detail.DBFreshness) {
+		var reportCreatedAt any
+		if detail.DBFreshness.ReportCreatedAt != nil {
+			reportCreatedAt = detail.DBFreshness.ReportCreatedAt.UTC().Format(time.RFC3339Nano)
+		}
+		var dbUpdatedAt any
+		if detail.DBFreshness.DBUpdatedAt != nil {
+			dbUpdatedAt = detail.DBFreshness.DBUpdatedAt.UTC().Format(time.RFC3339Nano)
+		}
+		var dbDownloadedAt any
+		if detail.DBFreshness.DBDownloadedAt != nil {
+			dbDownloadedAt = detail.DBFreshness.DBDownloadedAt.UTC().Format(time.RFC3339Nano)
+		}
+		var dbNextUpdateAt any
+		if detail.DBFreshness.DBNextUpdateAt != nil {
+			dbNextUpdateAt = detail.DBFreshness.DBNextUpdateAt.UTC().Format(time.RFC3339Nano)
+		}
+		if _, err = tx.ExecContext(ctx, `
+			INSERT INTO scan_run_db_freshness (run_id, report_schema_version, report_created_at, trivy_version, db_version, db_updated_at, db_downloaded_at, db_next_update_at, freshness_state)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(run_id) DO UPDATE SET
+				report_schema_version = excluded.report_schema_version,
+				report_created_at = excluded.report_created_at,
+				trivy_version = excluded.trivy_version,
+				db_version = excluded.db_version,
+				db_updated_at = excluded.db_updated_at,
+				db_downloaded_at = excluded.db_downloaded_at,
+				db_next_update_at = excluded.db_next_update_at,
+				freshness_state = excluded.freshness_state
+		`, detail.Run.ID, detail.DBFreshness.ReportSchemaVersion, reportCreatedAt, detail.DBFreshness.TrivyVersion, detail.DBFreshness.DBVersion, dbUpdatedAt, dbDownloadedAt, dbNextUpdateAt, detail.DBFreshness.FreshnessState); err != nil {
+			return err
+		}
+	} else if _, err = tx.ExecContext(ctx, `DELETE FROM scan_run_db_freshness WHERE run_id = ?`, detail.Run.ID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *Store) ListScanRuns(ctx context.Context, tenant string, repository string, limit int) ([]ports.ScanRun, error) {
 	query := `
 		SELECT id, repository, requested_ref, digest, status, trigger, started_at, finished_at, created_at, updated_at, critical, high, medium, low, trivy_version, db_updated_at, error
@@ -629,7 +716,9 @@ func (s *Store) ListScanRuns(ctx context.Context, tenant string, repository stri
 		query += ` AND repository = ?`
 		args = append(args, repository)
 	}
-	query += ` ORDER BY created_at DESC`
+	query += ` ORDER BY CASE WHEN critical > 0 THEN 4 WHEN high > 0 THEN 3 WHEN medium > 0 THEN 2 WHEN low > 0 THEN 1 ELSE 0 END DESC,
+		EXISTS(SELECT 1 FROM scan_run_findings findings WHERE findings.run_id = scan_runs.id AND findings.fixable = 1) DESC,
+		created_at DESC`
 	if limit > 0 {
 		query += fmt.Sprintf(" LIMIT %d", limit)
 	}
@@ -641,6 +730,10 @@ func (s *Store) ListScanRuns(ctx context.Context, tenant string, repository stri
 	runs := make([]ports.ScanRun, 0)
 	for rows.Next() {
 		run, err := scanRunRows(rows)
+		if err != nil {
+			return nil, err
+		}
+		run.HasFixable, err = s.scanRunHasFixable(ctx, run.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -823,6 +916,40 @@ func (s *Store) init() error {
 			db_updated_at TEXT,
 			error TEXT NOT NULL
 		);`,
+		`CREATE TABLE IF NOT EXISTS scan_run_findings (
+			run_id TEXT NOT NULL,
+			position INTEGER NOT NULL,
+			target TEXT NOT NULL DEFAULT '',
+			class TEXT NOT NULL DEFAULT '',
+			type TEXT NOT NULL DEFAULT '',
+			severity TEXT NOT NULL DEFAULT '',
+			vulnerability_id TEXT NOT NULL DEFAULT '',
+			package_name TEXT NOT NULL DEFAULT '',
+			installed_version TEXT NOT NULL DEFAULT '',
+			fixed_version TEXT NOT NULL DEFAULT '',
+			title TEXT NOT NULL DEFAULT '',
+			primary_url TEXT NOT NULL DEFAULT '',
+			fixable INTEGER NOT NULL DEFAULT 0,
+			status TEXT NOT NULL DEFAULT '',
+			data_source TEXT NOT NULL DEFAULT '',
+			data_source_url TEXT NOT NULL DEFAULT '',
+			published_at TEXT,
+			modified_at TEXT,
+			PRIMARY KEY(run_id, position),
+			FOREIGN KEY(run_id) REFERENCES scan_runs(id) ON DELETE CASCADE
+		);`,
+		`CREATE TABLE IF NOT EXISTS scan_run_db_freshness (
+			run_id TEXT PRIMARY KEY,
+			report_schema_version INTEGER NOT NULL DEFAULT 0,
+			report_created_at TEXT,
+			trivy_version TEXT NOT NULL DEFAULT '',
+			db_version INTEGER NOT NULL DEFAULT 0,
+			db_updated_at TEXT,
+			db_downloaded_at TEXT,
+			db_next_update_at TEXT,
+			freshness_state TEXT NOT NULL DEFAULT '',
+			FOREIGN KEY(run_id) REFERENCES scan_runs(id) ON DELETE CASCADE
+		);`,
 		`CREATE TABLE IF NOT EXISTS scan_scheduler_state (
 			tenant TEXT PRIMARY KEY,
 			owner_id TEXT NOT NULL,
@@ -976,6 +1103,147 @@ func scanRunRow(row scanRunScanner) (ports.ScanRun, error) {
 
 func scanRunRows(rows *sql.Rows) (ports.ScanRun, error) {
 	return scanRunFromScanner(rows)
+}
+
+func listScanRunFindings(ctx context.Context, db queryer, runID string) ([]ports.ScanRunFinding, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT target, class, type, severity, vulnerability_id, package_name, installed_version, fixed_version, title, primary_url, fixable, status, data_source, data_source_url, published_at, modified_at
+		FROM scan_run_findings
+		WHERE run_id = ?
+		ORDER BY CASE WHEN severity = 'CRITICAL' THEN 4 WHEN severity = 'HIGH' THEN 3 WHEN severity = 'MEDIUM' THEN 2 WHEN severity = 'LOW' THEN 1 ELSE 0 END DESC,
+			fixable DESC,
+			position ASC
+	`, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	findings := make([]ports.ScanRunFinding, 0)
+	for rows.Next() {
+		finding, scanErr := scanRunFindingRow(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		findings = append(findings, finding)
+	}
+	return findings, rows.Err()
+}
+
+func (s *Store) listScanRunFindings(ctx context.Context, runID string) ([]ports.ScanRunFinding, error) {
+	return listScanRunFindings(ctx, s.db, runID)
+}
+
+func (s *Store) getScanRunDBFreshness(ctx context.Context, runID string) (ports.ScanRunDBFreshness, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT report_schema_version, report_created_at, trivy_version, db_version, db_updated_at, db_downloaded_at, db_next_update_at, freshness_state FROM scan_run_db_freshness WHERE run_id = ?`, runID)
+	var freshness ports.ScanRunDBFreshness
+	var reportCreatedAt sql.NullString
+	var dbUpdatedAt sql.NullString
+	var dbDownloadedAt sql.NullString
+	var dbNextUpdateAt sql.NullString
+	if err := row.Scan(&freshness.ReportSchemaVersion, &reportCreatedAt, &freshness.TrivyVersion, &freshness.DBVersion, &dbUpdatedAt, &dbDownloadedAt, &dbNextUpdateAt, &freshness.FreshnessState); err != nil {
+		if err == sql.ErrNoRows {
+			return ports.ScanRunDBFreshness{FreshnessState: ports.ScanRunDBFreshnessStateUnknown}, nil
+		}
+		return ports.ScanRunDBFreshness{}, err
+	}
+	var err error
+	if freshness.ReportCreatedAt, err = parseOptionalTime(reportCreatedAt); err != nil {
+		return ports.ScanRunDBFreshness{}, err
+	}
+	if freshness.DBUpdatedAt, err = parseOptionalTime(dbUpdatedAt); err != nil {
+		return ports.ScanRunDBFreshness{}, err
+	}
+	if freshness.DBDownloadedAt, err = parseOptionalTime(dbDownloadedAt); err != nil {
+		return ports.ScanRunDBFreshness{}, err
+	}
+	if freshness.DBNextUpdateAt, err = parseOptionalTime(dbNextUpdateAt); err != nil {
+		return ports.ScanRunDBFreshness{}, err
+	}
+	if strings.TrimSpace(freshness.FreshnessState) == "" {
+		freshness.FreshnessState = ports.ScanRunDBFreshnessStateUnknown
+	}
+	return freshness, nil
+}
+
+type queryer interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+func scanRunFindingRow(scanner scanRunScanner) (ports.ScanRunFinding, error) {
+	var finding ports.ScanRunFinding
+	var publishedAt sql.NullString
+	var modifiedAt sql.NullString
+	if err := scanner.Scan(&finding.Target, &finding.Class, &finding.Type, &finding.Severity, &finding.VulnerabilityID, &finding.PackageName, &finding.InstalledVersion, &finding.FixedVersion, &finding.Title, &finding.PrimaryURL, &finding.Fixable, &finding.Status, &finding.DataSource, &finding.DataSourceURL, &publishedAt, &modifiedAt); err != nil {
+		return ports.ScanRunFinding{}, err
+	}
+	var err error
+	if finding.PublishedAt, err = parseOptionalTime(publishedAt); err != nil {
+		return ports.ScanRunFinding{}, err
+	}
+	if finding.ModifiedAt, err = parseOptionalTime(modifiedAt); err != nil {
+		return ports.ScanRunFinding{}, err
+	}
+	return finding, nil
+}
+
+func (s *Store) scanRunHasFixable(ctx context.Context, runID string) (bool, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM scan_run_findings WHERE run_id = ? AND fixable = 1)`, runID)
+	var hasFixable bool
+	if err := row.Scan(&hasFixable); err != nil {
+		return false, err
+	}
+	return hasFixable, nil
+}
+
+func scanRunFindingsHaveFixable(findings []ports.ScanRunFinding) bool {
+	for _, finding := range findings {
+		if finding.Fixable {
+			return true
+		}
+	}
+	return false
+}
+
+func hasDBFreshness(freshness ports.ScanRunDBFreshness) bool {
+	return freshness.ReportSchemaVersion > 0 || freshness.ReportCreatedAt != nil || strings.TrimSpace(freshness.TrivyVersion) != "" || freshness.DBVersion > 0 || freshness.DBUpdatedAt != nil || freshness.DBDownloadedAt != nil || freshness.DBNextUpdateAt != nil || strings.TrimSpace(freshness.FreshnessState) != ""
+}
+
+func upsertScanRunTx(ctx context.Context, tx *sql.Tx, tenant string, run ports.ScanRun) error {
+	if run.CreatedAt.IsZero() {
+		run.CreatedAt = time.Now().UTC()
+	}
+	if run.UpdatedAt.IsZero() {
+		run.UpdatedAt = run.CreatedAt
+	}
+	var startedAt any
+	if run.StartedAt != nil {
+		startedAt = run.StartedAt.UTC().Format(time.RFC3339Nano)
+	}
+	var finishedAt any
+	if run.FinishedAt != nil {
+		finishedAt = run.FinishedAt.UTC().Format(time.RFC3339Nano)
+	}
+	var dbUpdatedAt any
+	if run.DBUpdatedAt != nil {
+		dbUpdatedAt = run.DBUpdatedAt.UTC().Format(time.RFC3339Nano)
+	}
+	_, err := tx.ExecContext(ctx, `
+		INSERT INTO scan_runs (id, tenant, repository, requested_ref, digest, status, trigger, started_at, finished_at, created_at, updated_at, critical, high, medium, low, trivy_version, db_updated_at, error)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			status = excluded.status,
+			started_at = excluded.started_at,
+			finished_at = excluded.finished_at,
+			updated_at = excluded.updated_at,
+			critical = excluded.critical,
+			high = excluded.high,
+			medium = excluded.medium,
+			low = excluded.low,
+			trivy_version = excluded.trivy_version,
+			db_updated_at = excluded.db_updated_at,
+			error = excluded.error
+	`, run.ID, tenant, run.Repository, run.RequestedRef, run.Digest, run.Status, run.Trigger, startedAt, finishedAt, run.CreatedAt.UTC().Format(time.RFC3339Nano), run.UpdatedAt.UTC().Format(time.RFC3339Nano), run.Critical, run.High, run.Medium, run.Low, run.TrivyVersion, dbUpdatedAt, run.Error)
+	return err
 }
 
 func scanRunFromScanner(scanner scanRunScanner) (ports.ScanRun, error) {

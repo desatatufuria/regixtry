@@ -40,6 +40,7 @@ Todas estas rutas requieren Bearer de un usuario admin. Los JSON se decodifican 
 | PUT | `/admin/v1/scan-settings` | `enabled`, `schedule_enabled`, `interval`, `timeout`, `service_url`, `registry_reachable_url`, optional `auth_token`, `tls_ca_cert_path`, `tls_insecure_skip_verify`, `max_concurrency` | `200`, settings persistidos |
 | POST | `/admin/v1/scan-runs` | `repository`, `reference` | `202`, run encolado con digest canónico |
 | GET | `/admin/v1/scan-runs?repository=&limit=` | ninguno | `200`, historial de runs |
+| GET | `/admin/v1/scan-runs/{id}` | ninguno | `200`, detalle de un run con findings persistidos, freshness DB y freshness de la referencia |
 
 Errores administrativos: `401`, `403`, `404`, `409`, `422` según auth, existencia, conflicto o validación; el cuerpo es `{ "error": "..." }`.
 
@@ -81,6 +82,16 @@ curl -X POST \
   https://registry.example.com/admin/v1/scan-runs \
   -d '{"repository":"library/alpine","reference":"latest"}'
 ```
+
+### Scan run detail example
+
+```bash
+curl \
+  -H 'Authorization: Bearer <admin-token>' \
+  https://registry.example.com/admin/v1/scan-runs/run-123
+```
+
+The detail payload keeps the summary `run` object, a compact ordered `findings` table, `db_freshness`, and `reference_freshness`. Summary list payloads stay compact; drill-down data is returned only from the detail endpoint.
 
 ## Registry API V2
 

@@ -11,9 +11,10 @@ This slice verifies the operator console, admin protocol, and backend-driven fea
 ## Verification checklist
 
 - [ ] `go test ./...` passes.
+- [ ] Protocol and TUI tests cover `/admin/v1/scan-runs/{id}`, compact findings drill-down, and distinct reference-vs-DB freshness messaging.
 - [ ] Protocol integration tests cover `/admin/v1/features/{name}` feature pages and `/admin/v1/features/{name}/actions/{actionID}` typed actions.
 - [ ] Service tests cover generic summary pages, minimal pages, ordered Trivy sections, and declared actions.
-- [ ] TUI tests prove backend-authored action help, minimal feature pages, and page refresh on selection changes.
+- [ ] TUI tests prove backend-authored action help, minimal feature pages, page refresh on selection changes, and same-screen repository-alert detail recovery.
 - [ ] Docker CLI push/pull succeeds against the local server.
 - [ ] TUI smoke output shows the snapshot launch plus feature-manager assertions.
 

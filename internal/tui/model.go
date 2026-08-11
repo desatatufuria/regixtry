@@ -220,6 +220,11 @@ type adminScanRunsLoadedMsg struct {
 	err  error
 }
 
+type adminScanRunDetailLoadedMsg struct {
+	detail ports.ScanRunDetail
+	err    error
+}
+
 type adminUserGrantsLoadedMsg struct {
 	userID   string
 	username string
@@ -482,13 +487,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = msg.err.Error()
 			return m, nil
 		}
-		m.adminView.TrivyScanRuns = append([]ports.ScanRun(nil), msg.runs...)
+		runs := append([]ports.ScanRun(nil), msg.runs...)
+		sort.SliceStable(runs, func(i, j int) bool { return compareScanRuns(runs[i], runs[j]) < 0 })
+		m.adminView.TrivyScanRuns = runs
 		m.adminView.TrivySelectedAlert = boundedIndex(0, len(m.adminView.TrivyScanRuns))
 		m.adminView.TrivyAlertDetailOpen = false
 		m.adminView.TrivyAlertsLoaded = true
+		m.adminView.TrivyScanRunDetail = ports.ScanRunDetail{}
 		if len(m.adminView.TrivyScanRuns) == 0 {
 			m.status = "No repository alerts found."
 		} else if strings.HasPrefix(strings.ToLower(m.status), "loading") {
+			m.status = ""
+		}
+		return m, nil
+	case adminScanRunDetailLoadedMsg:
+		if msg.err != nil {
+			if IsAdminSessionExpired(msg.err) {
+				return m.expireAdminSession(msg.err.Error()), nil
+			}
+			m.status = msg.err.Error()
+			return m, nil
+		}
+		m.adminView.TrivyScanRunDetail = msg.detail
+		m.adminView.TrivyAlertDetailOpen = true
+		if strings.HasPrefix(strings.ToLower(m.status), "loading") {
 			m.status = ""
 		}
 		return m, nil
@@ -933,9 +955,9 @@ func (m Model) updateAdminFeaturesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(m.adminView.TrivyScanRuns) == 0 {
 			return m, nil
 		}
-		m.adminView.TrivyAlertDetailOpen = true
-		m.status = ""
-		return m, nil
+		run, _ := selectedTrivyScanRun(m.adminView)
+		m.status = fmt.Sprintf("Loading scan detail for %s...", adminFirstNonEmpty(run.Repository, run.ID))
+		return m, m.loadAdminScanRunDetailCmd(run.ID)
 	case isEnterKey(msg), isRuneKey(msg, 'r'):
 		if m.isSelectedTrivyFeature() && m.adminView.TrivyTab == trivyTabRepositoryAlerts {
 			m.status = "Loading repository alerts..."
@@ -1635,6 +1657,16 @@ func (m Model) loadAdminScanRunsCmd(repository string, limit int) tea.Cmd {
 	}
 }
 
+func (m Model) loadAdminScanRunDetailCmd(runID string) tea.Cmd {
+	return func() tea.Msg {
+		if m.adminClient == nil {
+			return adminScanRunDetailLoadedMsg{err: fmt.Errorf("admin API is unavailable for this session")}
+		}
+		detail, err := m.adminClient.GetScanRunDetail(m.ctx, m.adminSession, runID)
+		return adminScanRunDetailLoadedMsg{detail: detail, err: err}
+	}
+}
+
 func (m Model) loadAdminGrantsCmd(userID string, username string) tea.Cmd {
 	return func() tea.Msg {
 		if m.adminClient == nil {
@@ -2174,6 +2206,7 @@ func (m *Model) clearSelectedAdminDetails() {
 	m.adminView.TrivySelectedAlert = 0
 	m.adminView.TrivyAlertDetailOpen = false
 	m.adminView.TrivyAlertsLoaded = false
+	m.adminView.TrivyScanRunDetail = ports.ScanRunDetail{}
 	m.adminView.SelectedGrant = 0
 	m.adminView.SelectedFeature = 0
 	m.adminView.SelectedToken = 0
@@ -2213,6 +2246,7 @@ func (m *Model) applyFeaturePage(page ports.FeaturePage) {
 	m.adminView.TrivySelectedAlert = 0
 	m.adminView.TrivyAlertDetailOpen = false
 	m.adminView.TrivyAlertsLoaded = false
+	m.adminView.TrivyScanRunDetail = ports.ScanRunDetail{}
 	if page.Summary.Name == trivyFeatureName {
 		m.adminView.TrivyTab = trivyTabRuntime
 	}
@@ -2254,6 +2288,7 @@ func (m Model) toggleTrivyTab() (tea.Model, tea.Cmd) {
 	}
 	m.adminView.TrivyTab = trivyTabRepositoryAlerts
 	m.adminView.TrivyAlertDetailOpen = false
+	m.adminView.TrivyScanRunDetail = ports.ScanRunDetail{}
 	m.status = "Loading repository alerts..."
 	return m, m.loadAdminScanRunsCmd("", 25)
 }
@@ -2264,6 +2299,49 @@ func selectedTrivyScanRun(view AdminViewState) (ports.ScanRun, bool) {
 	}
 	index := boundedIndex(view.TrivySelectedAlert, len(view.TrivyScanRuns))
 	return view.TrivyScanRuns[index], true
+}
+
+func compareScanRuns(left ports.ScanRun, right ports.ScanRun) int {
+	leftSeverity := highestSeverityRank(left)
+	rightSeverity := highestSeverityRank(right)
+	if leftSeverity != rightSeverity {
+		return rightSeverity - leftSeverity
+	}
+	leftFixable := scanRunHasFixable(left)
+	rightFixable := scanRunHasFixable(right)
+	if leftFixable != rightFixable {
+		if leftFixable {
+			return -1
+		}
+		return 1
+	}
+	if left.CreatedAt.Equal(right.CreatedAt) {
+		return strings.Compare(left.ID, right.ID)
+	}
+	if left.CreatedAt.After(right.CreatedAt) {
+		return -1
+	}
+	return 1
+}
+
+func highestSeverityRank(run ports.ScanRun) int {
+	if run.Critical > 0 {
+		return 4
+	}
+	if run.High > 0 {
+		return 3
+	}
+	if run.Medium > 0 {
+		return 2
+	}
+	if run.Low > 0 {
+		return 1
+	}
+	return 0
+}
+
+func scanRunHasFixable(run ports.ScanRun) bool {
+	return run.HasFixable
 }
 
 func trivyConfigModalFromPage(page ports.FeaturePage) (trivyConfigModal, bool) {
