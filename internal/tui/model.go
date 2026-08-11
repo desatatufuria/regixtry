@@ -176,14 +176,17 @@ type viewportSize struct {
 }
 
 // contentBudget wraps the package-level pure contentBudget() (viewport.go)
-// with this Model's captured viewport and status, matching the method
-// signature design.md's "Interfaces / Contracts" section specifies. Phase 1
-// implemented the pure function as package-level because Model had no
-// viewport field yet; this thin wrapper is added now that it does. The
-// per-screen help text is not yet threaded through (that lands in Phase 3/4
-// alongside renderSection call sites), so it is passed as "" here.
-func (m Model) contentBudget() consoleLayout {
-	return contentBudget(m.viewport.Width, m.viewport.Height, m.status, "")
+// with this Model's captured viewport, the status/help text the calling
+// screen actually renders, and this Model's current bodyScroll.
+//
+// Phase 3 deviation from design.md's zero-arg method: several screens
+// render a status other than m.status (e.g. m.notice) plus their own help
+// string. Measuring "" instead would under-count chrome and let the row
+// budget exceed the terminal height once content is clipped.
+func (m Model) contentBudget(status, help string) consoleLayout {
+	layout := contentBudget(m.viewport.Width, m.viewport.Height, status, help)
+	layout.Scroll = m.bodyScroll
+	return layout
 }
 
 type catalogLoadedMsg struct {
@@ -360,6 +363,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.repositories = RepositoriesModel{Items: append([]string(nil), msg.result.Repositories...)}
+		m.bodyScroll = 0
 		if len(m.repositories.Items) == 0 {
 			m.screen = screenEmpty
 			return m, nil
@@ -382,6 +386,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lastRepository = msg.repository
 		m.showMutationNotice = false
 		m.status = ""
+		m.bodyScroll = 0
 		if len(m.tags.Items) == 0 {
 			m.screen = screenEmpty
 			m.empty = EmptyStateModel{Title: "Repository has no tags", Message: fmt.Sprintf("%s has no published tags yet.", msg.repository)}
@@ -728,76 +733,95 @@ func (m Model) View() string {
 
 	switch m.screen {
 	case screenLoading:
-		return renderInspectionWorkspace("Loading", renderConsoleTextSection(m.loadingText), "", "q: quit")
+		help := "q: quit"
+		layout := m.contentBudget("", help)
+		return renderInspectionWorkspace("Loading", renderConsoleTextSection(m.loadingText, layout), "", help)
 	case screenRepositories:
+		status, help, _, _ := m.scrollableBodyContext()
+		layout := m.contentBudget(status, help)
 		return renderInspectionWorkspace(
 			"Repositories",
-			renderConsoleListSection("Repositories", m.repositories.Items, m.repositories.Selected),
-			m.notice,
-			"Enter: open tags | Tab: admin | q: quit",
+			renderConsoleListSection("Repositories", m.repositories.Items, m.repositories.Selected, layout),
+			status,
+			help,
 		)
 	case screenTags:
+		status, help, _, _ := m.scrollableBodyContext()
+		layout := m.contentBudget(status, help)
 		return renderInspectionWorkspace(
 			fmt.Sprintf("Repositories / %s / Tags", m.tags.Repository),
-			renderConsoleListSection("Tags", m.tags.Items, m.tags.Selected),
-			"",
-			"Enter: inspect manifest | Tab: admin | Esc: back | q: quit",
+			renderConsoleListSection("Tags", m.tags.Items, m.tags.Selected, layout),
+			status,
+			help,
 		)
 	case screenManifest:
 		status := ""
 		if m.showMutationNotice {
 			status = fmt.Sprintf("Delete unavailable in v1: %s", m.mutation.Reason)
 		}
+		help := "b: blobs | u: uploads | d: unsupported delete | Tab: admin | Esc: back | q: quit"
+		layout := m.contentBudget(status, help)
 		return renderInspectionWorkspace(
 			fmt.Sprintf("Repositories / %s / %s / Manifest", m.manifest.Details.Repository, m.manifest.Details.Reference),
-			renderConsoleTextSection(renderManifest(m.manifest.Details)),
+			renderConsoleTextSection(renderManifest(m.manifest.Details), layout),
 			status,
-			"b: blobs | u: uploads | d: unsupported delete | Tab: admin | Esc: back | q: quit",
+			help,
 		)
 	case screenBlobs:
 		status := ""
 		if m.showMutationNotice {
 			status = fmt.Sprintf("Delete unavailable in v1: %s", m.mutation.Reason)
 		}
+		help := "Tab: admin | Esc: back | q: quit"
+		layout := m.contentBudget(status, help)
 		return renderInspectionWorkspace(
 			fmt.Sprintf("Repositories / %s / %s / Blobs", m.lastRepository, m.lastTag),
-			renderConsoleTextSection(renderBlobs(m.blobs)),
+			renderConsoleTextSection(renderBlobs(m.blobs), layout),
 			status,
-			"Tab: admin | Esc: back | q: quit",
+			help,
 		)
 	case screenUploads:
 		status := ""
 		if m.showMutationNotice {
 			status = fmt.Sprintf("Delete unavailable in v1: %s", m.mutation.Reason)
 		}
+		help := "Tab: admin | Esc: back | q: quit"
+		layout := m.contentBudget(status, help)
 		return renderInspectionWorkspace(
 			fmt.Sprintf("Repositories / %s / %s / Uploads", m.lastRepository, m.lastTag),
-			renderConsoleTextSection(renderUploads(m.uploads)),
+			renderConsoleTextSection(renderUploads(m.uploads), layout),
 			status,
-			"Tab: admin | Esc: back | q: quit",
+			help,
 		)
 	case screenEmpty:
+		help := "Tab: admin | Esc: back | q: quit"
+		layout := m.contentBudget("", help)
 		return renderInspectionWorkspace(
 			"Empty",
-			renderConsoleTextSection(strings.Join([]string{m.empty.Title, "", m.empty.Message}, "\n")),
+			renderConsoleTextSection(strings.Join([]string{m.empty.Title, "", m.empty.Message}, "\n"), layout),
 			"",
-			"Tab: admin | Esc: back | q: quit",
+			help,
 		)
 	case screenError:
 		errText := "Unknown error"
 		if m.err != nil {
 			errText = m.err.Error()
 		}
-		return renderInspectionWorkspace("Error", renderConsoleTextSection(errText), errText, "q: quit")
+		help := "q: quit"
+		layout := m.contentBudget(errText, help)
+		return renderInspectionWorkspace("Error", renderConsoleTextSection(errText, layout), errText, help)
 	case screenAdminLogin:
 		return renderInspectionWorkspace("Sign In", renderAdminLogin(newAdminTheme(), m.adminLogin), m.status, "Enter: sign in | Tab: switch field | Esc: back | q: quit")
 	case screenAdminAuthenticating:
-		return renderInspectionWorkspace("Sign In", renderConsoleTextSection(m.loadingText), "", "q: quit")
+		help := "q: quit"
+		layout := m.contentBudget("", help)
+		return renderInspectionWorkspace("Sign In", renderConsoleTextSection(m.loadingText, layout), "", help)
 	case screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken:
 		return renderAdminWorkspace(m.screen, m.adminSession, m.adminView, m.repositories.Items, m.status, m.now())
 	}
 
-	return renderInspectionWorkspace("Regixtry", renderConsoleTextSection("Ready."), "", "q: quit")
+	help := "q: quit"
+	return renderInspectionWorkspace("Regixtry", renderConsoleTextSection("Ready.", m.contentBudget("", help)), "", help)
 }
 
 func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -819,6 +843,10 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch {
+	case isPgUpKey(msg), isPgDnKey(msg), isHomeKey(msg), isEndKey(msg):
+		if m.applyBodyPageKey(msg) {
+			return m, nil
+		}
 	case isMoveUpKey(msg):
 		m.moveSelection(-1)
 		return m, nil
@@ -843,6 +871,7 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case isBackKey(msg):
 		m.showMutationNotice = false
 		m.status = ""
+		m.bodyScroll = 0
 		switch m.screen {
 		case screenTags, screenEmpty:
 			if m.lastRepository != "" {
@@ -1587,6 +1616,22 @@ func isBackKey(msg tea.KeyMsg) bool {
 	return isEscKey(msg) || isBackspaceKey(msg)
 }
 
+func isPgUpKey(msg tea.KeyMsg) bool {
+	return msg.Type == tea.KeyPgUp || msg.String() == "pgup"
+}
+
+func isPgDnKey(msg tea.KeyMsg) bool {
+	return msg.Type == tea.KeyPgDown || msg.String() == "pgdown"
+}
+
+func isHomeKey(msg tea.KeyMsg) bool {
+	return msg.Type == tea.KeyHome || msg.String() == "home"
+}
+
+func isEndKey(msg tea.KeyMsg) bool {
+	return msg.Type == tea.KeyEnd || msg.String() == "end"
+}
+
 func isRuneKey(msg tea.KeyMsg, candidates ...rune) bool {
 	if len(msg.Runes) != 1 {
 		return false
@@ -1598,6 +1643,59 @@ func isRuneKey(msg tea.KeyMsg, candidates ...rune) bool {
 		}
 	}
 	return false
+}
+
+// scrollableBodyContext returns the status/help text and total line count
+// for screens whose body scrolls via bodyScroll/renderSection (repository
+// catalog and tags — design.md decision #3). ok is false elsewhere (table
+// screens gain paging in Phase 4). Shared by View() and applyBodyPageKey so
+// the measured status/help text can never drift from what is rendered.
+func (m Model) scrollableBodyContext() (status, help string, total int, ok bool) {
+	switch m.screen {
+	case screenRepositories:
+		return m.notice, "Enter: open tags | Tab: admin | q: quit", len(m.repositories.Items) + 1, true
+	case screenTags:
+		return "", "Enter: inspect manifest | Tab: admin | Esc: back | q: quit", len(m.tags.Items) + 1, true
+	}
+	return "", "", 0, false
+}
+
+// applyBodyPageKey drives bodyScroll from PgUp/PgDn/Home/End, clamping to
+// [0, maxScroll] with the same visible-row math fitLines uses at render
+// time. Returns false (no-op) when the screen has no scrollable body.
+func (m *Model) applyBodyPageKey(msg tea.KeyMsg) bool {
+	status, help, total, ok := m.scrollableBodyContext()
+	if !ok {
+		return false
+	}
+
+	layout := m.contentBudget(status, help)
+	visible := layout.SectionRows - 1
+	if visible < 1 {
+		visible = 1
+	}
+	maxScroll := total - visible
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+
+	switch {
+	case isHomeKey(msg):
+		m.bodyScroll = 0
+	case isEndKey(msg):
+		m.bodyScroll = maxScroll
+	case isPgUpKey(msg):
+		m.bodyScroll -= visible
+	case isPgDnKey(msg):
+		m.bodyScroll += visible
+	}
+	if m.bodyScroll < 0 {
+		m.bodyScroll = 0
+	}
+	if m.bodyScroll > maxScroll {
+		m.bodyScroll = maxScroll
+	}
+	return true
 }
 
 func (m *Model) moveSelection(delta int) {
@@ -2198,11 +2296,16 @@ func renderInspectionWorkspace(context string, body string, status string, help 
 	return renderConsoleWorkspace("Regixtry Console", context, body, status, help)
 }
 
-func renderConsoleTextSection(content string) string {
-	return newAdminTheme().section.Render(content)
+// renderConsoleTextSection wraps content in the themed bordered section,
+// clipped to layout's row budget (design.md decision #3/#4).
+func renderConsoleTextSection(content string, layout consoleLayout) string {
+	return renderSection(newAdminTheme(), content, layout)
 }
 
-func renderConsoleListSection(title string, items []string, selected int) string {
+// renderConsoleListSection builds the plain-list inner content (subheading +
+// items, selection highlighted), clipped/wrapped the same way so long lists
+// scroll within their bordered section instead of growing past the viewport.
+func renderConsoleListSection(title string, items []string, selected int, layout consoleLayout) string {
 	theme := newAdminTheme()
 	lines := []string{theme.subheading.Render(title)}
 	if len(items) == 0 {
@@ -2216,7 +2319,7 @@ func renderConsoleListSection(title string, items []string, selected int) string
 			lines = append(lines, label)
 		}
 	}
-	return theme.section.Render(strings.Join(lines, "\n"))
+	return renderSection(theme, strings.Join(lines, "\n"), layout)
 }
 
 func renderManifest(manifest appregixtry.ManifestDetails) string {

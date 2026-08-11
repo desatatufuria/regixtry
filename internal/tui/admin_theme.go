@@ -6,6 +6,7 @@ type adminTheme struct {
 	app              lipgloss.Style
 	section          lipgloss.Style
 	tableHeader      lipgloss.Style
+	borderColor      lipgloss.Color
 	title            lipgloss.Style
 	context          lipgloss.Style
 	subheading       lipgloss.Style
@@ -40,9 +41,11 @@ func newAdminTheme() adminTheme {
 	errorColor := lipgloss.Color("#BF616A")
 
 	return adminTheme{
-		app:              lipgloss.NewStyle().Padding(0, 1),
-		section:          lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(border).Padding(1).Width(88),
-		tableHeader:      lipgloss.NewStyle().Foreground(accent).Bold(true),
+		app:         lipgloss.NewStyle().Padding(0, 1),
+		section:     lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(border).Padding(1).Width(88),
+		tableHeader: lipgloss.NewStyle().Foreground(accent).Bold(true),
+		// borderColor: same palette as section's border, reused by bubble-table styling (Phase 4).
+		borderColor:      border,
 		title:            lipgloss.NewStyle().Foreground(text).Bold(true),
 		context:          lipgloss.NewStyle().Foreground(accent),
 		subheading:       lipgloss.NewStyle().Foreground(accent).Bold(true),
