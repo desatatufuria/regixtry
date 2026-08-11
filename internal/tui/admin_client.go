@@ -9,6 +9,7 @@ import (
 	"io"
 	stdhttp "net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,11 +21,16 @@ const defaultAdminClientTimeout = 15 * time.Second
 type AdminClient interface {
 	Login(ctx context.Context, username, password string) (AdminSession, error)
 	ListFeatures(ctx context.Context, session AdminSession) ([]ports.FeatureSummary, error)
+	GetFeaturePage(ctx context.Context, session AdminSession, name string) (ports.FeaturePage, error)
+	ListScanRuns(ctx context.Context, session AdminSession, repository string, limit int) ([]ports.ScanRun, error)
+	GetScanRunDetail(ctx context.Context, session AdminSession, runID string) (ports.ScanRunDetail, error)
+	GetSecretScanFindings(ctx context.Context, session AdminSession, repository string, digest string) (ports.SecretScanRunDetail, error)
+	ExecuteFeatureAction(ctx context.Context, session AdminSession, name string, actionID string) (ports.FeatureActionResult, error)
 	GetFeature(ctx context.Context, session AdminSession, name string) (ports.FeatureDetails, error)
 	GetFeatureStatus(ctx context.Context, session AdminSession, name string) (ports.FeatureDetails, error)
-	InstallFeatureRuntime(ctx context.Context, session AdminSession, name string, version string) (ports.TrivyRuntimeState, error)
-	UpgradeFeatureRuntime(ctx context.Context, session AdminSession, name string, version string) (ports.TrivyRuntimeState, error)
-	RollbackFeatureRuntime(ctx context.Context, session AdminSession, name string) (ports.TrivyRuntimeState, error)
+	InstallFeatureRuntime(ctx context.Context, session AdminSession, name string, version string) (ports.FeatureRuntimeState, error)
+	UpgradeFeatureRuntime(ctx context.Context, session AdminSession, name string, version string) (ports.FeatureRuntimeState, error)
+	RollbackFeatureRuntime(ctx context.Context, session AdminSession, name string) (ports.FeatureRuntimeState, error)
 	ConfigureFeature(ctx context.Context, session AdminSession, name string, input ports.FeatureConfigureInput) (ports.FeatureDetails, error)
 	EnableFeature(ctx context.Context, session AdminSession, name string) (ports.FeatureDetails, error)
 	DisableFeature(ctx context.Context, session AdminSession, name string) (ports.FeatureDetails, error)
@@ -148,19 +154,79 @@ func (c *HTTPAdminClient) GetFeature(ctx context.Context, session AdminSession, 
 	return c.getFeatureDetails(ctx, session, "/admin/v1/features/"+url.PathEscape(strings.TrimSpace(name)))
 }
 
+func (c *HTTPAdminClient) GetFeaturePage(ctx context.Context, session AdminSession, name string) (ports.FeaturePage, error) {
+	var page ports.FeaturePage
+	if err := c.getJSON(ctx, session, "/admin/v1/features/"+url.PathEscape(strings.TrimSpace(name)), &page); err != nil {
+		return ports.FeaturePage{}, err
+	}
+	return page, nil
+}
+
+func (c *HTTPAdminClient) ListScanRuns(ctx context.Context, session AdminSession, repository string, limit int) ([]ports.ScanRun, error) {
+	path := "/admin/v1/scan-runs"
+	query := url.Values{}
+	if trimmed := strings.TrimSpace(repository); trimmed != "" {
+		query.Set("repository", trimmed)
+	}
+	if limit > 0 {
+		query.Set("limit", strconv.Itoa(limit))
+	}
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var runs []ports.ScanRun
+	if err := c.getJSON(ctx, session, path, &runs); err != nil {
+		return nil, err
+	}
+	return runs, nil
+}
+
+func (c *HTTPAdminClient) GetScanRunDetail(ctx context.Context, session AdminSession, runID string) (ports.ScanRunDetail, error) {
+	var detail ports.ScanRunDetail
+	if err := c.getJSON(ctx, session, "/admin/v1/scan-runs/"+url.PathEscape(strings.TrimSpace(runID)), &detail); err != nil {
+		return ports.ScanRunDetail{}, err
+	}
+	return detail, nil
+}
+
+// GetSecretScanFindings fetches the redacted secret-scan findings for one
+// image (repository@digest), the same attribution key the Trivy scan-run
+// detail is keyed by since both legs share the same rescan trigger. A
+// caller with no persisted secret scan for that image gets the ordinary
+// admin API error (surfaced as a clean empty state, not a crash).
+func (c *HTTPAdminClient) GetSecretScanFindings(ctx context.Context, session AdminSession, repository string, digest string) (ports.SecretScanRunDetail, error) {
+	query := url.Values{}
+	query.Set("repository", strings.TrimSpace(repository))
+	query.Set("digest", strings.TrimSpace(digest))
+	var detail ports.SecretScanRunDetail
+	if err := c.getJSON(ctx, session, "/admin/v1/secret-scan-findings?"+query.Encode(), &detail); err != nil {
+		return ports.SecretScanRunDetail{}, err
+	}
+	return detail, nil
+}
+
+func (c *HTTPAdminClient) ExecuteFeatureAction(ctx context.Context, session AdminSession, name string, actionID string) (ports.FeatureActionResult, error) {
+	var result ports.FeatureActionResult
+	path := "/admin/v1/features/" + url.PathEscape(strings.TrimSpace(name)) + "/actions/" + url.PathEscape(strings.TrimSpace(actionID))
+	if err := c.requestJSON(ctx, stdhttp.MethodPost, session, path, nil, &result, stdhttp.StatusOK); err != nil {
+		return ports.FeatureActionResult{}, err
+	}
+	return result, nil
+}
+
 func (c *HTTPAdminClient) GetFeatureStatus(ctx context.Context, session AdminSession, name string) (ports.FeatureDetails, error) {
 	return c.getFeatureDetails(ctx, session, "/admin/v1/features/"+url.PathEscape(strings.TrimSpace(name))+"/status")
 }
 
-func (c *HTTPAdminClient) InstallFeatureRuntime(ctx context.Context, session AdminSession, name string, version string) (ports.TrivyRuntimeState, error) {
+func (c *HTTPAdminClient) InstallFeatureRuntime(ctx context.Context, session AdminSession, name string, version string) (ports.FeatureRuntimeState, error) {
 	return c.mutateFeatureRuntime(ctx, session, name, ":install", version)
 }
 
-func (c *HTTPAdminClient) UpgradeFeatureRuntime(ctx context.Context, session AdminSession, name string, version string) (ports.TrivyRuntimeState, error) {
+func (c *HTTPAdminClient) UpgradeFeatureRuntime(ctx context.Context, session AdminSession, name string, version string) (ports.FeatureRuntimeState, error) {
 	return c.mutateFeatureRuntime(ctx, session, name, ":upgrade", version)
 }
 
-func (c *HTTPAdminClient) RollbackFeatureRuntime(ctx context.Context, session AdminSession, name string) (ports.TrivyRuntimeState, error) {
+func (c *HTTPAdminClient) RollbackFeatureRuntime(ctx context.Context, session AdminSession, name string) (ports.FeatureRuntimeState, error) {
 	return c.mutateFeatureRuntime(ctx, session, name, ":rollback", "")
 }
 
@@ -274,8 +340,8 @@ func (c *HTTPAdminClient) mutateFeature(ctx context.Context, session AdminSessio
 	return details, nil
 }
 
-func (c *HTTPAdminClient) mutateFeatureRuntime(ctx context.Context, session AdminSession, name string, action string, version string) (ports.TrivyRuntimeState, error) {
-	var state ports.TrivyRuntimeState
+func (c *HTTPAdminClient) mutateFeatureRuntime(ctx context.Context, session AdminSession, name string, action string, version string) (ports.FeatureRuntimeState, error) {
+	var state ports.FeatureRuntimeState
 	path := "/admin/v1/features/" + url.PathEscape(strings.TrimSpace(name)) + action
 	body := map[string]string{}
 	var payload any
@@ -284,7 +350,7 @@ func (c *HTTPAdminClient) mutateFeatureRuntime(ctx context.Context, session Admi
 		payload = body
 	}
 	if err := c.requestJSON(ctx, stdhttp.MethodPost, session, path, payload, &state, stdhttp.StatusOK); err != nil {
-		return ports.TrivyRuntimeState{}, err
+		return ports.FeatureRuntimeState{}, err
 	}
 	return state, nil
 }

@@ -379,7 +379,7 @@ func TestHTTPAdminClientFeatureRoutes(t *testing.T) {
 				if err != nil {
 					t.Fatalf("InstallFeatureRuntime() error = %v", err)
 				}
-				if state.ActiveVersion != "0.57.1" || state.Status != ports.TrivyRuntimeStatusReady {
+				if state.ActiveVersion != "0.57.1" || state.Status != ports.FeatureRuntimeStatusReady {
 					t.Fatalf("state = %#v, want decoded runtime install state", state)
 				}
 			},
@@ -428,6 +428,213 @@ func TestHTTPAdminClientFeatureRoutes(t *testing.T) {
 			client.now = func() time.Time { return fixedNow }
 			tc.run(t, client)
 		})
+	}
+}
+
+func TestHTTPAdminClientFeaturePageAndActionRoutes(t *testing.T) {
+	t.Parallel()
+
+	fixedNow := time.Date(2026, time.August, 4, 23, 5, 0, 0, time.UTC)
+	session := AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: fixedNow.Add(10 * time.Minute)}
+
+	t.Run("get feature page", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if got, want := r.Method, http.MethodGet; got != want {
+				t.Fatalf("method = %q, want %q", got, want)
+			}
+			if got, want := r.URL.Path, "/admin/v1/features/trivy"; got != want {
+				t.Fatalf("path = %q, want %q", got, want)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"summary":{"name":"trivy","kind":"builtin","enabled":true,"configured":true},"header":[{"label":"Enabled","value":"true"}],"sections":[{"id":"config","title":"Configuration","kind":"fields","fields":[{"label":"Registry Reachable URL","value":"https://registry.internal:5443"}]},{"id":"runs","title":"Recent Runs","kind":"rows","rows":[{"title":"library/alpine@latest","status":"completed","detail":"critical=1 high=2"}]}],"actions":[{"id":"refresh","label":"Refresh"},{"id":"disable","label":"Disable","confirm_title":"Confirm Disable","confirm_message":"Confirm disable feature \"trivy\"?"}]}`))
+		}))
+		defer server.Close()
+
+		client, err := NewHTTPAdminClient(server.URL, server.Client())
+		if err != nil {
+			t.Fatalf("NewHTTPAdminClient() error = %v", err)
+		}
+		client.now = func() time.Time { return fixedNow }
+
+		page, err := client.GetFeaturePage(context.Background(), session, "trivy")
+		if err != nil {
+			t.Fatalf("GetFeaturePage() error = %v", err)
+		}
+		if page.Summary.Name != "trivy" || len(page.Sections) != 2 || len(page.Actions) != 2 {
+			t.Fatalf("page = %#v, want decoded feature page", page)
+		}
+	})
+
+	t.Run("execute feature action", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if got, want := r.Method, http.MethodPost; got != want {
+				t.Fatalf("method = %q, want %q", got, want)
+			}
+			if got, want := r.URL.Path, "/admin/v1/features/trivy/actions/disable"; got != want {
+				t.Fatalf("path = %q, want %q", got, want)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"message":"Feature \"trivy\" disabled."}`))
+		}))
+		defer server.Close()
+
+		client, err := NewHTTPAdminClient(server.URL, server.Client())
+		if err != nil {
+			t.Fatalf("NewHTTPAdminClient() error = %v", err)
+		}
+		client.now = func() time.Time { return fixedNow }
+
+		result, err := client.ExecuteFeatureAction(context.Background(), session, "trivy", "disable")
+		if err != nil {
+			t.Fatalf("ExecuteFeatureAction() error = %v", err)
+		}
+		if got, want := result.Message, `Feature "trivy" disabled.`; got != want {
+			t.Fatalf("result.Message = %q, want %q", got, want)
+		}
+	})
+}
+
+func TestHTTPAdminClientListScanRuns(t *testing.T) {
+	t.Parallel()
+
+	fixedNow := time.Date(2026, time.August, 4, 23, 5, 0, 0, time.UTC)
+	session := AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: fixedNow.Add(10 * time.Minute)}
+
+	t.Run("lists repository-filtered scan runs", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if got, want := r.Method, http.MethodGet; got != want {
+				t.Fatalf("method = %q, want %q", got, want)
+			}
+			if got, want := r.URL.Path, "/admin/v1/scan-runs"; got != want {
+				t.Fatalf("path = %q, want %q", got, want)
+			}
+			if got, want := r.URL.Query().Get("repository"), "library/alpine"; got != want {
+				t.Fatalf("repository query = %q, want %q", got, want)
+			}
+			if got, want := r.URL.Query().Get("limit"), "5"; got != want {
+				t.Fatalf("limit query = %q, want %q", got, want)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[{"id":"run-1","repository":"library/alpine","requested_ref":"latest","digest":"sha256:111","status":"completed","trigger":"manual","created_at":"2026-08-04T22:00:00Z","updated_at":"2026-08-04T22:00:00Z","critical":1,"high":2,"medium":3,"low":4,"trivy_version":"0.57.1"}]`))
+		}))
+		defer server.Close()
+
+		client, err := NewHTTPAdminClient(server.URL, server.Client())
+		if err != nil {
+			t.Fatalf("NewHTTPAdminClient() error = %v", err)
+		}
+		client.now = func() time.Time { return fixedNow }
+
+		runs, err := client.ListScanRuns(context.Background(), session, "library/alpine", 5)
+		if err != nil {
+			t.Fatalf("ListScanRuns() error = %v", err)
+		}
+		if len(runs) != 1 || runs[0].Repository != "library/alpine" || runs[0].Critical != 1 {
+			t.Fatalf("runs = %#v, want decoded scan run payload", runs)
+		}
+	})
+
+	t.Run("omits empty repository filter and zero limit", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if got, want := r.URL.Path, "/admin/v1/scan-runs"; got != want {
+				t.Fatalf("path = %q, want %q", got, want)
+			}
+			if got := r.URL.Query().Get("repository"); got != "" {
+				t.Fatalf("repository query = %q, want omitted", got)
+			}
+			if got := r.URL.Query().Get("limit"); got != "" {
+				t.Fatalf("limit query = %q, want omitted", got)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[]`))
+		}))
+		defer server.Close()
+
+		client, err := NewHTTPAdminClient(server.URL, server.Client())
+		if err != nil {
+			t.Fatalf("NewHTTPAdminClient() error = %v", err)
+		}
+		client.now = func() time.Time { return fixedNow }
+
+		runs, err := client.ListScanRuns(context.Background(), session, "", 0)
+		if err != nil {
+			t.Fatalf("ListScanRuns() error = %v", err)
+		}
+		if len(runs) != 0 {
+			t.Fatalf("runs = %#v, want empty decoded scan-run list", runs)
+		}
+	})
+}
+
+func TestHTTPAdminClientGetScanRunDetail(t *testing.T) {
+	t.Parallel()
+
+	fixedNow := time.Date(2026, time.August, 4, 23, 5, 0, 0, time.UTC)
+	session := AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: fixedNow.Add(10 * time.Minute)}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got, want := r.Method, http.MethodGet; got != want {
+			t.Fatalf("method = %q, want %q", got, want)
+		}
+		if got, want := r.URL.Path, "/admin/v1/scan-runs/run-1"; got != want {
+			t.Fatalf("path = %q, want %q", got, want)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"run":{"id":"run-1","repository":"library/alpine","requested_ref":"latest","digest":"sha256:111","status":"completed","trigger":"manual","created_at":"2026-08-04T22:00:00Z","updated_at":"2026-08-04T22:00:00Z","critical":1,"trivy_version":"0.58.1"},"findings":[{"severity":"CRITICAL","vulnerability_id":"CVE-1","package_name":"openssl","installed_version":"3.0.0","fixed_version":"3.0.1","fixable":true}],"db_freshness":{"freshness_state":"fresh"},"reference_freshness":"current"}`))
+	}))
+	defer server.Close()
+
+	client, err := NewHTTPAdminClient(server.URL, server.Client())
+	if err != nil {
+		t.Fatalf("NewHTTPAdminClient() error = %v", err)
+	}
+	client.now = func() time.Time { return fixedNow }
+
+	detail, err := client.GetScanRunDetail(context.Background(), session, "run-1")
+	if err != nil {
+		t.Fatalf("GetScanRunDetail() error = %v", err)
+	}
+	if detail.Run.ID != "run-1" || detail.ReferenceFreshness != ports.ScanReferenceFreshnessCurrent || len(detail.Findings) != 1 {
+		t.Fatalf("detail = %#v, want decoded scan-run detail payload", detail)
+	}
+}
+
+func TestHTTPAdminClientGetSecretScanFindings(t *testing.T) {
+	t.Parallel()
+
+	fixedNow := time.Date(2026, time.August, 4, 23, 5, 0, 0, time.UTC)
+	session := AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: fixedNow.Add(10 * time.Minute)}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got, want := r.Method, http.MethodGet; got != want {
+			t.Fatalf("method = %q, want %q", got, want)
+		}
+		if got, want := r.URL.Path, "/admin/v1/secret-scan-findings"; got != want {
+			t.Fatalf("path = %q, want %q", got, want)
+		}
+		if got, want := r.URL.Query().Get("repository"), "library/alpine"; got != want {
+			t.Fatalf("repository query = %q, want %q", got, want)
+		}
+		if got, want := r.URL.Query().Get("digest"), "sha256:111"; got != want {
+			t.Fatalf("digest query = %q, want %q", got, want)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"run":{"id":"secret-run-1","repository":"library/alpine","digest":"sha256:111","status":"completed"},"findings":[{"rule_id":"aws-access-token","path":"config.json","start_line":3,"end_line":3}]}`))
+	}))
+	defer server.Close()
+
+	client, err := NewHTTPAdminClient(server.URL, server.Client())
+	if err != nil {
+		t.Fatalf("NewHTTPAdminClient() error = %v", err)
+	}
+	client.now = func() time.Time { return fixedNow }
+
+	detail, err := client.GetSecretScanFindings(context.Background(), session, "library/alpine", "sha256:111")
+	if err != nil {
+		t.Fatalf("GetSecretScanFindings() error = %v", err)
+	}
+	if len(detail.Findings) != 1 || detail.Findings[0].RuleID != "aws-access-token" {
+		t.Fatalf("detail = %#v, want decoded secret scan findings payload", detail)
 	}
 }
 

@@ -914,6 +914,71 @@ func TestRouterAdminScanRoutesRejectInvalidTargetsAndSettings(t *testing.T) {
 	}
 }
 
+// TestRouterAdminSecretScanFindingsRouteReturnsRedactedFindingsByImage wires
+// the secret-findings-by-image endpoint through the full Router (tasks.md
+// 6.6): the "/admin/v1/" prefix mux registration already routes any admin
+// subpath to handleAdmin, so this test proves the new route resolves
+// end-to-end (not just via the admin_handlers_test.go direct-handler path)
+// and rejects non-GET methods and missing required query parameters.
+func TestRouterAdminSecretScanFindingsRouteReturnsRedactedFindingsByImage(t *testing.T) {
+	t.Parallel()
+
+	blobStore, metadataStore, cleanup := newTestStores(t)
+	defer cleanup()
+	handler := newRouterWithStores(blobStore, metadataStore, allowAllAccessController{}, fakeAuthService{verify: &domainauth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+
+	digest := "sha256:" + strings.Repeat("d", 64)
+	if err := metadataStore.UpsertSecretScanRunDetail(context.Background(), "tenant-a", ports.SecretScanRunDetail{
+		Run: ports.SecretScanRun{
+			ID:         "secret-run-router-1",
+			Repository: "library/alpine",
+			Digest:     digest,
+			Status:     ports.SecretScanRunStatusCompleted,
+			Trigger:    ports.ScanTriggerManual,
+			CreatedAt:  time.Now().UTC(),
+			UpdatedAt:  time.Now().UTC(),
+		},
+		Findings: []ports.SecretFinding{{RuleID: "generic-api-key", Path: "layers/000.tar.gz", StartLine: 4, EndLine: 4}},
+	}); err != nil {
+		t.Fatalf("UpsertSecretScanRunDetail() error = %v", err)
+	}
+
+	okReq := httptest.NewRequest(http.MethodGet, "/admin/v1/secret-scan-findings?repository=library/alpine&digest="+digest, nil)
+	okReq.Header.Set("Authorization", "Bearer admin-token")
+	okRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(okRecorder, okReq)
+	if okRecorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", okRecorder.Code, http.StatusOK)
+	}
+	if !strings.Contains(okRecorder.Body.String(), `"rule_id":"generic-api-key"`) {
+		t.Fatalf("body = %q, want the persisted redacted finding", okRecorder.Body.String())
+	}
+
+	missingParamsReq := httptest.NewRequest(http.MethodGet, "/admin/v1/secret-scan-findings", nil)
+	missingParamsReq.Header.Set("Authorization", "Bearer admin-token")
+	missingParamsRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(missingParamsRecorder, missingParamsReq)
+	if missingParamsRecorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("missing-params status = %d, want %d", missingParamsRecorder.Code, http.StatusUnprocessableEntity)
+	}
+
+	postReq := httptest.NewRequest(http.MethodPost, "/admin/v1/secret-scan-findings?repository=library/alpine&digest="+digest, nil)
+	postReq.Header.Set("Authorization", "Bearer admin-token")
+	postRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(postRecorder, postReq)
+	if postRecorder.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("post status = %d, want %d", postRecorder.Code, http.StatusMethodNotAllowed)
+	}
+
+	notFoundReq := httptest.NewRequest(http.MethodGet, "/admin/v1/secret-scan-findings?repository=library/other&digest="+digest, nil)
+	notFoundReq.Header.Set("Authorization", "Bearer admin-token")
+	notFoundRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(notFoundRecorder, notFoundReq)
+	if notFoundRecorder.Code != http.StatusNotFound {
+		t.Fatalf("not-found status = %d, want %d", notFoundRecorder.Code, http.StatusNotFound)
+	}
+}
+
 func TestRouterAdminFeatureRoutesProjectBuiltinTrivyState(t *testing.T) {
 	t.Parallel()
 
@@ -1048,6 +1113,70 @@ func TestRouterAdminFeatureRoutesRequireAuthAndMutateAuthoritativeState(t *testi
 	}
 	if !strings.Contains(scanRecorder.Body.String(), `"enabled":false`) {
 		t.Fatalf("scan-settings body = %q, want authoritative disabled state", scanRecorder.Body.String())
+	}
+}
+
+func TestRouterAdminFeaturePageRouteProjectsBackendDeclaredSectionsAndActions(t *testing.T) {
+	t.Parallel()
+
+	handler, cleanup := newTestRouterWithAuth(t, allowAllAccessController{}, fakeAuthService{verify: &domainauth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+	defer cleanup()
+
+	configureReq := httptest.NewRequest(http.MethodPut, "/admin/v1/features/trivy/config", strings.NewReader(`{"enabled":true,"schedule_enabled":true,"interval":"6h","timeout":"20m","registry_reachable_url":"https://registry.internal:5443","max_concurrency":2}`))
+	configureReq.Header.Set("Authorization", "Bearer admin-token")
+	configureReq.Header.Set("Content-Type", "application/json")
+	configureRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(configureRecorder, configureReq)
+	if configureRecorder.Code != http.StatusOK {
+		t.Fatalf("configure status = %d, want %d", configureRecorder.Code, http.StatusOK)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/features/trivy", nil)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+	for _, want := range []string{`"summary":`, `"sections":`, `"actions":`, `"id":"config"`, `"id":"runtime"`, `"id":"refresh"`} {
+		if !strings.Contains(recorder.Body.String(), want) {
+			t.Fatalf("body = %q, want %q", recorder.Body.String(), want)
+		}
+	}
+}
+
+func TestRouterAdminFeatureActionRouteExecutesTypedActionAndRejectsUnknownTargets(t *testing.T) {
+	t.Parallel()
+
+	handler, cleanup := newTestRouterWithAuth(t, allowAllAccessController{}, fakeAuthService{verify: &domainauth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+	defer cleanup()
+
+	postReq := httptest.NewRequest(http.MethodPost, "/admin/v1/features/trivy/actions/disable", nil)
+	postReq.Header.Set("Authorization", "Bearer admin-token")
+	postRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(postRecorder, postReq)
+	if postRecorder.Code != http.StatusOK {
+		t.Fatalf("action status = %d, want %d", postRecorder.Code, http.StatusOK)
+	}
+	if !strings.Contains(postRecorder.Body.String(), `"message":"Feature \"trivy\" disabled."`) {
+		t.Fatalf("action body = %q, want authoritative action message", postRecorder.Body.String())
+	}
+
+	unknownFeatureReq := httptest.NewRequest(http.MethodGet, "/admin/v1/features/future-plugin", nil)
+	unknownFeatureReq.Header.Set("Authorization", "Bearer admin-token")
+	unknownFeatureRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(unknownFeatureRecorder, unknownFeatureReq)
+	if unknownFeatureRecorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("unknown feature status = %d, want %d", unknownFeatureRecorder.Code, http.StatusUnprocessableEntity)
+	}
+
+	unknownActionReq := httptest.NewRequest(http.MethodPost, "/admin/v1/features/trivy/actions/reindex", nil)
+	unknownActionReq.Header.Set("Authorization", "Bearer admin-token")
+	unknownActionRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(unknownActionRecorder, unknownActionReq)
+	if unknownActionRecorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("unknown action status = %d, want %d", unknownActionRecorder.Code, http.StatusUnprocessableEntity)
 	}
 }
 
@@ -1476,15 +1605,15 @@ func newRouterWithStores(blobStore *fsblob.Store, metadataStore *metadata.Store,
 		ports.NewInlineJobRunner(),
 	)
 	_, _ = service.EnsureScanSettings(context.Background(), ports.ScanSettings{
-		Enabled:         false,
-		ScheduleEnabled: false,
-		Interval:        24 * time.Hour,
-		Timeout:         15 * time.Minute,
+		Enabled:              false,
+		ScheduleEnabled:      false,
+		Interval:             24 * time.Hour,
+		Timeout:              15 * time.Minute,
 		RegistryReachableURL: "https://registry.internal",
-		MaxConcurrency:  1,
+		MaxConcurrency:       1,
 	})
-	_ = metadataStore.UpsertTrivyRuntimeState(context.Background(), "tenant-a", ports.TrivyRuntimeState{
-		Status:           ports.TrivyRuntimeStatusReady,
+	_ = metadataStore.UpsertFeatureRuntimeState(context.Background(), "tenant-a", "trivy", ports.FeatureRuntimeState{
+		Status:           ports.FeatureRuntimeStatusReady,
 		ActiveVersion:    "0.57.1",
 		ActiveBinaryPath: "/var/lib/regixtry/features/trivy/bin/active/trivy",
 		CacheDir:         filepath.Join(os.TempDir(), "regixtry-router-trivy-cache"),

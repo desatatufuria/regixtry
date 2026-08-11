@@ -40,6 +40,10 @@ func (r *Router) handleAdmin(w stdhttp.ResponseWriter, req *stdhttp.Request) {
 		r.handleAdminScanSettings(w, req)
 	case subpath == "scan-runs":
 		r.handleAdminScanRuns(w, req)
+	case strings.HasPrefix(subpath, "scan-runs/"):
+		r.handleAdminScanRunDetail(w, req, strings.TrimPrefix(subpath, "scan-runs/"))
+	case subpath == "secret-scan-findings":
+		r.handleAdminSecretScanFindings(w, req)
 	case subpath == "users":
 		r.handleAdminUsersCollection(w, req, *principal)
 	case strings.HasPrefix(subpath, "users/"):
@@ -65,6 +69,23 @@ func (r *Router) handleAdminFeaturesCollection(w stdhttp.ResponseWriter, req *st
 
 func (r *Router) handleAdminFeatureResource(w stdhttp.ResponseWriter, req *stdhttp.Request, resource string) {
 	switch {
+	case strings.Contains(resource, "/actions/"):
+		name, actionID, ok := adminNestedResource(resource, "/actions/")
+		if !ok || strings.Contains(actionID, "/") {
+			writeAdminError(w, domainauth.NewNotFoundError("route", req.URL.Path), ports.Challenge{})
+			return
+		}
+		if req.Method != stdhttp.MethodPost {
+			w.Header().Set("Allow", stdhttp.MethodPost)
+			w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+			return
+		}
+		result, err := r.service.ExecuteFeatureAction(req.Context(), name, actionID)
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		writeJSON(w, stdhttp.StatusOK, result)
 	case strings.HasSuffix(resource, "/status"):
 		name := strings.TrimSuffix(resource, "/status")
 		details, err := r.service.GetFeatureStatus(req.Context(), name)
@@ -93,7 +114,7 @@ func (r *Router) handleAdminFeatureResource(w stdhttp.ResponseWriter, req *stdht
 		writeJSON(w, stdhttp.StatusOK, featureDetailsResponse(details, false))
 	case strings.HasSuffix(resource, ":install"):
 		name := strings.TrimSuffix(resource, ":install")
-		state, err := r.mutateFeatureRuntime(req, name, func(version string) (ports.TrivyRuntimeState, error) {
+		state, err := r.mutateFeatureRuntime(req, name, func(version string) (ports.FeatureRuntimeState, error) {
 			return r.service.InstallFeatureRuntime(req.Context(), name, version)
 		})
 		if err != nil {
@@ -103,7 +124,7 @@ func (r *Router) handleAdminFeatureResource(w stdhttp.ResponseWriter, req *stdht
 		writeJSON(w, stdhttp.StatusOK, state)
 	case strings.HasSuffix(resource, ":upgrade"):
 		name := strings.TrimSuffix(resource, ":upgrade")
-		state, err := r.mutateFeatureRuntime(req, name, func(version string) (ports.TrivyRuntimeState, error) {
+		state, err := r.mutateFeatureRuntime(req, name, func(version string) (ports.FeatureRuntimeState, error) {
 			return r.service.UpgradeFeatureRuntime(req.Context(), name, version)
 		})
 		if err != nil {
@@ -156,12 +177,12 @@ func (r *Router) handleAdminFeatureResource(w stdhttp.ResponseWriter, req *stdht
 			w.WriteHeader(stdhttp.StatusMethodNotAllowed)
 			return
 		}
-		details, err := r.service.GetFeature(req.Context(), resource)
+		page, err := r.service.GetFeaturePage(req.Context(), resource)
 		if err != nil {
 			writeAdminError(w, err, ports.Challenge{})
 			return
 		}
-		writeJSON(w, stdhttp.StatusOK, featureDetailsResponse(details, false))
+		writeJSON(w, stdhttp.StatusOK, page)
 	}
 }
 
@@ -230,6 +251,47 @@ func (r *Router) handleAdminScanRuns(w stdhttp.ResponseWriter, req *stdhttp.Requ
 		w.Header().Set("Allow", strings.Join([]string{stdhttp.MethodGet, stdhttp.MethodPost}, ", "))
 		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
 	}
+}
+
+func (r *Router) handleAdminScanRunDetail(w stdhttp.ResponseWriter, req *stdhttp.Request, runID string) {
+	if req.Method != stdhttp.MethodGet {
+		w.Header().Set("Allow", stdhttp.MethodGet)
+		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+		return
+	}
+	detail, err := r.service.GetScanRunDetail(req.Context(), strings.TrimSpace(runID))
+	if err != nil {
+		writeAdminError(w, err, ports.Challenge{})
+		return
+	}
+	writeJSON(w, stdhttp.StatusOK, detail)
+}
+
+// handleAdminSecretScanFindings is the secret-findings-by-image endpoint
+// (tasks.md 6.1, spec.md "Operator Visibility of Findings"). An image is
+// identified by repository+digest (the same pair both the Trivy and secret
+// scan legs are triggered with from the same rescan). The response is
+// ports.SecretScanRunDetail, which structurally cannot carry a matched
+// secret value or fingerprint — ports.SecretFinding only declares
+// RuleID/Description/BlobDigest/Path/StartLine/EndLine/Tags.
+func (r *Router) handleAdminSecretScanFindings(w stdhttp.ResponseWriter, req *stdhttp.Request) {
+	if req.Method != stdhttp.MethodGet {
+		w.Header().Set("Allow", stdhttp.MethodGet)
+		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+		return
+	}
+	repository := strings.TrimSpace(req.URL.Query().Get("repository"))
+	digest := strings.TrimSpace(req.URL.Query().Get("digest"))
+	if repository == "" || digest == "" {
+		writeAdminError(w, domainauth.NewValidationError("repository and digest are required"), ports.Challenge{})
+		return
+	}
+	detail, err := r.service.GetSecretScanFindings(req.Context(), repository, digest)
+	if err != nil {
+		writeAdminError(w, err, ports.Challenge{})
+		return
+	}
+	writeJSON(w, stdhttp.StatusOK, detail)
 }
 
 func decodeScanSettings(req *stdhttp.Request) (ports.ScanSettings, error) {
@@ -338,16 +400,16 @@ func featureDetailsResponse(details ports.FeatureDetails, includeRuntime bool) m
 	return response
 }
 
-func (r *Router) mutateFeatureRuntime(req *stdhttp.Request, name string, action func(version string) (ports.TrivyRuntimeState, error)) (ports.TrivyRuntimeState, error) {
+func (r *Router) mutateFeatureRuntime(req *stdhttp.Request, name string, action func(version string) (ports.FeatureRuntimeState, error)) (ports.FeatureRuntimeState, error) {
 	if req.Method != stdhttp.MethodPost {
-		return ports.TrivyRuntimeState{}, domainauth.NewValidationError("runtime mutation requires POST")
+		return ports.FeatureRuntimeState{}, domainauth.NewValidationError("runtime mutation requires POST")
 	}
 	var payload struct {
 		Version string `json:"version"`
 	}
 	if req.Body != nil && req.ContentLength != 0 {
 		if err := decodeAdminJSON(req, &payload); err != nil {
-			return ports.TrivyRuntimeState{}, err
+			return ports.FeatureRuntimeState{}, err
 		}
 	}
 	return action(strings.TrimSpace(payload.Version))

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	bubbletable "github.com/evertras/bubble-table/table"
 	domainauth "regixtry/internal/domain/auth"
 	"regixtry/internal/ports"
 )
@@ -40,16 +41,33 @@ const (
 	adminTokenFieldTTL
 )
 
+type TrivyTab string
+
+const (
+	trivyTabRuntime          TrivyTab = "runtime"
+	trivyTabRepositoryAlerts TrivyTab = "repository-alerts"
+)
+
+type trivyConfigField int
+
+const (
+	trivyConfigFieldScheduleEnabled trivyConfigField = iota
+	trivyConfigFieldInterval
+	trivyConfigFieldTimeout
+	trivyConfigFieldRegistryReachableURL
+	trivyConfigFieldMaxConcurrency
+)
+
 type adminConfirmKind string
 
 const (
-	adminConfirmNone        adminConfirmKind = ""
-	adminConfirmEnableUser  adminConfirmKind = "enable-user"
-	adminConfirmDisableUser adminConfirmKind = "disable-user"
+	adminConfirmNone           adminConfirmKind = ""
+	adminConfirmEnableUser     adminConfirmKind = "enable-user"
+	adminConfirmDisableUser    adminConfirmKind = "disable-user"
 	adminConfirmEnableFeature  adminConfirmKind = "enable-feature"
 	adminConfirmDisableFeature adminConfirmKind = "disable-feature"
-	adminConfirmDeleteGrant adminConfirmKind = "delete-grant"
-	adminConfirmRevokeToken adminConfirmKind = "revoke-token"
+	adminConfirmDeleteGrant    adminConfirmKind = "delete-grant"
+	adminConfirmRevokeToken    adminConfirmKind = "revoke-token"
 )
 
 type adminCreateUserForm struct {
@@ -90,6 +108,21 @@ type adminConfirmModal struct {
 	Accessor    string
 }
 
+type trivyConfigModal struct {
+	Open                 bool
+	Focus                trivyConfigField
+	ScheduleEnabled      bool
+	Interval             string
+	Timeout              string
+	RegistryReachableURL string
+	MaxConcurrency       string
+	Error                string
+}
+
+func (m trivyConfigModal) Active() bool {
+	return m.Open
+}
+
 func (m adminConfirmModal) Active() bool {
 	return m.Kind != adminConfirmNone
 }
@@ -101,28 +134,58 @@ type AdminSession struct {
 	ExpiredReason string
 }
 
+type adminTableSelection struct {
+	FeatureName string
+	ScanRunID   string
+	FindingID   string
+}
+
+type adminTablesState struct {
+	Features       bubbletable.Model
+	FeatureRows    map[string]bubbletable.Model
+	ScanRuns       bubbletable.Model
+	Findings       bubbletable.Model
+	SecretFindings bubbletable.Model
+	Selection      adminTableSelection
+}
+
 type AdminViewState struct {
-	Users                  []ports.AdminUser
-	Features               []ports.FeatureSummary
-	SelectedUser           int
-	SelectedFeature        int
-	SelectedUserID         string
-	SelectedUsername       string
-	UserSearchQuery        string
-	UserSearchActive       bool
-	FeatureStatus          ports.FeatureDetails
-	Grants                 []ports.AdminRepoGrant
-	SelectedGrant          int
-	AdminTokens            []ports.AdminToken
-	SelectedToken          int
-	CreateUserForm         adminCreateUserForm
-	ResetPasswordForm      adminResetPasswordForm
-	GrantForm              adminGrantForm
-	TokenForm              adminTokenForm
-	ConfirmModal           adminConfirmModal
+	Users                []ports.AdminUser
+	Features             []ports.FeatureSummary
+	SelectedUser         int
+	SelectedFeature      int
+	SelectedUserID       string
+	SelectedUsername     string
+	UserSearchQuery      string
+	UserSearchActive     bool
+	FeaturePage          ports.FeaturePage
+	Grants               []ports.AdminRepoGrant
+	SelectedGrant        int
+	AdminTokens          []ports.AdminToken
+	SelectedToken        int
+	CreateUserForm       adminCreateUserForm
+	ResetPasswordForm    adminResetPasswordForm
+	GrantForm            adminGrantForm
+	TokenForm            adminTokenForm
+	ConfirmModal         adminConfirmModal
+	TrivyTab             TrivyTab
+	TrivyConfigModal     trivyConfigModal
+	TrivyScanRuns        []ports.ScanRun
+	TrivySelectedAlert   int
+	TrivyAlertDetailOpen bool
+	TrivyAlertsLoaded    bool
+	TrivyScanRunDetail   ports.ScanRunDetail
+	// SecretFindings holds the redacted secret-scan findings for the image
+	// currently shown in TrivyScanRunDetail (spec.md "Operator Visibility of
+	// Findings" — surfaced alongside vulnerability results). It is
+	// deliberately independent of the vulnerability Findings table: no
+	// severity or gating indicator is ever attached to it (informational
+	// only, spec.md "Informational Findings Only").
+	SecretFindings         []ports.SecretFinding
 	RevealedTokenSecret    string
 	RevealedTokenAccessor  string
 	RevealedTokenExpiresAt time.Time
+	Tables                 adminTablesState
 }
 
 type AdminSessionExpiredError struct {
@@ -177,6 +240,10 @@ func newAdminViewState() AdminViewState {
 		},
 		GrantForm: adminGrantForm{
 			Role: domainauth.RepoRoleReader,
+		},
+		TrivyTab: trivyTabRuntime,
+		Tables: adminTablesState{
+			FeatureRows: make(map[string]bubbletable.Model),
 		},
 	}
 }

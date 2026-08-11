@@ -26,6 +26,7 @@ import (
 	authpostgres "regixtry/internal/infra/auth/postgres"
 	installlinux "regixtry/internal/infra/install/linux"
 	metadata "regixtry/internal/infra/metadata/sqlite"
+	gitleaksinfra "regixtry/internal/infra/scanning/gitleaks"
 	trivyinfra "regixtry/internal/infra/scanning/trivy"
 	"regixtry/internal/infra/storage/fsblob"
 	"regixtry/internal/ports"
@@ -50,12 +51,25 @@ var newBootstrapRunner = func() bootstrapRunner {
 	return installlinux.NewBootstrapper()
 }
 
-var newFeatureRuntimeManager = func(cfg appregixtry.FeatureRuntimeManagerConfig) appregixtry.FeatureRuntimeManager {
-	return trivyinfra.NewRuntimeManager(trivyinfra.RuntimeManagerConfig{
-		StorageRoot: cfg.StorageRoot,
-		Store:       cfg.Store,
-		Prober:      trivyinfra.New(trivyinfra.RunnerConfig{}),
-	})
+// newFeatureRuntimeManager builds the managed runtime manager for one
+// feature identity. It is a single swappable var (rather than one var per
+// feature) so tests that stub it via swapFeatureRuntimeManagerFactory cover
+// every registered feature, not just Trivy.
+var newFeatureRuntimeManager = func(feature string, cfg appregixtry.FeatureRuntimeManagerConfig) appregixtry.FeatureRuntimeManager {
+	switch feature {
+	case "gitleaks":
+		return gitleaksinfra.NewRuntimeManager(gitleaksinfra.RuntimeManagerConfig{
+			StorageRoot: cfg.StorageRoot,
+			Store:       cfg.Store,
+			Prober:      gitleaksinfra.New(gitleaksinfra.RunnerConfig{}),
+		})
+	default:
+		return trivyinfra.NewRuntimeManager(trivyinfra.RuntimeManagerConfig{
+			StorageRoot: cfg.StorageRoot,
+			Store:       cfg.Store,
+			Prober:      trivyinfra.New(trivyinfra.RunnerConfig{}),
+		})
+	}
 }
 
 var featureBootstrapStatePath = "/etc/regixtry/bootstrap-state.json"
@@ -1085,7 +1099,9 @@ func openFeatureService(cfg featureConfig) (*appregixtry.Service, func(), error)
 	service := appregixtry.NewService(nil, store, ports.NewConfigurableAccessController(ports.AccessConfig{}), ports.NewSingleTenantResolver(cfg.Tenant), ports.NewInlineJobRunner())
 	service.SetScanHost(cfg.PublicURL)
 	service.SetScanRunner(trivyinfra.New(trivyinfra.RunnerConfig{}))
-	service.SetFeatureRuntimeManager(newFeatureRuntimeManager(appregixtry.FeatureRuntimeManagerConfig{StorageRoot: cfg.StorageRoot, Store: store, ScanRunner: trivyinfra.New(trivyinfra.RunnerConfig{})}))
+	service.SetFeatureRuntimeManager("trivy", newFeatureRuntimeManager("trivy", appregixtry.FeatureRuntimeManagerConfig{StorageRoot: cfg.StorageRoot, Store: store, ScanRunner: trivyinfra.New(trivyinfra.RunnerConfig{})}))
+	service.SetSecretScanRunner(gitleaksinfra.New(gitleaksinfra.RunnerConfig{}))
+	service.SetFeatureRuntimeManager("gitleaks", newFeatureRuntimeManager("gitleaks", appregixtry.FeatureRuntimeManagerConfig{StorageRoot: cfg.StorageRoot, Store: store}))
 	return service, func() { _ = store.Close() }, nil
 }
 
@@ -2105,7 +2121,9 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 	)
 	service.SetScanHost(cfg.PublicURL)
 	service.SetScanRunner(trivyinfra.New(trivyinfra.RunnerConfig{}))
-	service.SetFeatureRuntimeManager(newFeatureRuntimeManager(appregixtry.FeatureRuntimeManagerConfig{StorageRoot: cfg.StorageRoot, Store: metadataStore, ScanRunner: trivyinfra.New(trivyinfra.RunnerConfig{})}))
+	service.SetFeatureRuntimeManager("trivy", newFeatureRuntimeManager("trivy", appregixtry.FeatureRuntimeManagerConfig{StorageRoot: cfg.StorageRoot, Store: metadataStore, ScanRunner: trivyinfra.New(trivyinfra.RunnerConfig{})}))
+	service.SetSecretScanRunner(gitleaksinfra.New(gitleaksinfra.RunnerConfig{Blobs: blobStore}))
+	service.SetFeatureRuntimeManager("gitleaks", newFeatureRuntimeManager("gitleaks", appregixtry.FeatureRuntimeManagerConfig{StorageRoot: cfg.StorageRoot, Store: metadataStore}))
 	trivyMaxConcurrency := cfg.TrivyMaxConcurrency
 	if trivyMaxConcurrency <= 0 {
 		trivyMaxConcurrency = 1
@@ -2195,7 +2213,9 @@ func runTUI(cfg tuiConfig, stdin io.Reader, stdout io.Writer) error {
 		ports.NewSingleTenantResolver(cfg.Tenant),
 		ports.NewInlineJobRunner(),
 	)
-	service.SetFeatureRuntimeManager(newFeatureRuntimeManager(appregixtry.FeatureRuntimeManagerConfig{StorageRoot: cfg.StorageRoot, Store: metadataStore, ScanRunner: trivyinfra.New(trivyinfra.RunnerConfig{})}))
+	service.SetFeatureRuntimeManager("trivy", newFeatureRuntimeManager("trivy", appregixtry.FeatureRuntimeManagerConfig{StorageRoot: cfg.StorageRoot, Store: metadataStore, ScanRunner: trivyinfra.New(trivyinfra.RunnerConfig{})}))
+	service.SetSecretScanRunner(gitleaksinfra.New(gitleaksinfra.RunnerConfig{Blobs: blobStore}))
+	service.SetFeatureRuntimeManager("gitleaks", newFeatureRuntimeManager("gitleaks", appregixtry.FeatureRuntimeManagerConfig{StorageRoot: cfg.StorageRoot, Store: metadataStore}))
 
 	if cfg.Snapshot {
 		model := tui.NewModel(service, modelOpts...)

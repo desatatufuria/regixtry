@@ -1,60 +1,49 @@
-# Phase 4 verification: operator console and protocol compatibility
+# Phase 4 verification: operator console and feature-manager compatibility
 
-This slice closes `registry-foundation` Phase 4.
+This slice verifies the operator console, admin protocol, and backend-driven feature-manager shell.
 
 ## Quick path
 
-1. Run the Go integration suite for protocol and TUI behavior.
+1. Run the Go suite for protocol, service, and TUI behavior.
 2. Run the Docker push/pull smoke script against a local registry instance.
-3. Run the TUI smoke script against the same storage root and confirm the snapshot includes the seeded repository view, not only the console title.
+3. Run the TUI smoke script and confirm both the snapshot launch and the focused feature-manager tests pass.
 
 ## Verification checklist
 
-- [ ] Protocol integration tests pass for push/pull success.
-- [ ] Protocol integration tests reject digest mismatches.
-- [ ] Protocol integration tests cover anonymous pull on and off.
-- [ ] Protocol integration tests reject manifest publish when a referenced blob is missing.
-- [ ] Protocol integration tests prove incomplete uploads stay out of published catalog state.
-- [ ] TUI smoke output shows repository inspection data without direct storage access.
+- [ ] `go test ./...` passes.
+- [ ] Protocol and TUI tests cover `/admin/v1/scan-runs/{id}`, compact findings drill-down, and distinct reference-vs-DB freshness messaging.
+- [ ] Protocol integration tests cover `/admin/v1/features/{name}` feature pages and `/admin/v1/features/{name}/actions/{actionID}` typed actions.
+- [ ] Service tests cover generic summary pages, minimal pages, ordered Trivy sections, and declared actions.
+- [ ] TUI tests prove backend-authored action help, minimal feature pages, page refresh on selection changes, and same-screen repository-alert detail recovery.
 - [ ] Docker CLI push/pull succeeds against the local server.
-
-## PR work-unit alignment
-
-| Work unit | What to verify first | Out of scope |
-|---|---|---|
-| PR 3 / Unit 3 | `go test ./...` for `internal/protocol/http`, `internal/tui`, and `cmd/regixtry` | Post-v1 mutations such as delete, retention, and GC |
-| Docker smoke | `docs/verification/scripts/docker-push-pull-smoke.sh` | Remote storage backends, auth providers, multi-tenant setups |
-| TUI smoke | `docs/verification/scripts/tui-smoke.sh` | Interactive visual polish beyond inspection flows |
+- [ ] TUI smoke output shows the snapshot launch plus feature-manager assertions.
 
 ## Commands
 
 ```bash
 GOMODCACHE="/tmp/opencode/gomodcache" GOPATH="/tmp/opencode/gopath" GOSUMDB=off go test ./...
 
-GOMODCACHE="/tmp/opencode/gomodcache" GOPATH="/tmp/opencode/gopath" GOSUMDB=off go run ./cmd/regixtry feature list -storage-root /tmp/registry-foundation-smoke -db /tmp/registry-foundation-smoke/metadata.db
+GOMODCACHE="/tmp/opencode/gomodcache" GOPATH="/tmp/opencode/gopath" GOSUMDB=off go run ./cmd/regixtry feature list -storage-root /tmp/tui-feature-manager-smoke -db /tmp/tui-feature-manager-smoke/metadata.db
 
-GOMODCACHE="/tmp/opencode/gomodcache" GOPATH="/tmp/opencode/gopath" GOSUMDB=off go run ./cmd/regixtry feature status trivy -storage-root /tmp/registry-foundation-smoke -db /tmp/registry-foundation-smoke/metadata.db
+GOMODCACHE="/tmp/opencode/gomodcache" GOPATH="/tmp/opencode/gopath" GOSUMDB=off go run ./cmd/regixtry feature status trivy -storage-root /tmp/tui-feature-manager-smoke -db /tmp/tui-feature-manager-smoke/metadata.db
 
-docs/verification/scripts/docker-push-pull-smoke.sh /tmp/registry-foundation-smoke
+docs/verification/scripts/docker-push-pull-smoke.sh /tmp/tui-feature-manager-smoke
 
-PORT=5600 docs/verification/scripts/docker-push-pull-smoke.sh /tmp/registry-foundation-smoke
-
-docs/verification/scripts/tui-smoke.sh /tmp/registry-foundation-smoke
+docs/verification/scripts/tui-smoke.sh /tmp/tui-feature-manager-smoke
 ```
 
 ## Expected results
 
 | Step | Expected result |
-|---|---|
-| Go integration suite | All package tests pass. |
-| `feature list` smoke | Output includes the fixed-width `NAME`, `CURRENT`, `LATEST`, and `UPDATE` columns, and the read succeeds even when latest lookup degrades to `unknown`. |
-| `feature status` smoke | Output includes `Runtime Latest Version` and `Runtime Update Status`, with truthful managed-runtime status/detail lines. |
-| Docker smoke | `docker pull` returns the image pushed into the local registry; the smoke server is started with explicit `-allow-anonymous-push` for this verification flow. |
-| TUI smoke | Snapshot output includes `Regixtry Console` and the seeded `registry-foundation/smoke` repository name. During an authenticated feature-screen refresh, help text should only advertise valid keys for the selected runtime state (for example `i: install runtime` on migration-required state or `u: upgrade runtime` only when an update is available). |
+| --- | --- |
+| Go test suite | All package tests pass. |
+| `feature list` smoke | Output keeps the lightweight summary columns for every feature. |
+| `feature status` smoke | Output still reports truthful runtime details for CLI inspection. |
+| Feature-page protocol tests | `/admin/v1/features/{name}` returns `summary`, `header`, `sections`, and `actions`; typed action routes return backend-authored messages. |
+| TUI smoke | The snapshot still launches, and focused TUI feature-manager tests confirm generic page rendering, minimal pages, and backend-authoritative help text. |
 
 ## Notes
 
-- The environment used for automated apply work requires explicit `GOMODCACHE`, `GOPATH`, and `GOSUMDB=off` values for Go commands.
-- The Docker smoke script assumes a working local Docker daemon and an available loopback port.
-- When a machine requires `sudo` for Docker, running `sudo bash docs/verification/scripts/docker-push-pull-smoke.sh ...` is acceptable; the script now uses a per-run log file to avoid stale `/tmp` permission collisions.
-- Anonymous push is a smoke/dev verification flag for this script, not a statement that anonymous push is generally enabled by product policy.
+- The apply environment requires explicit `GOMODCACHE`, `GOPATH`, and `GOSUMDB=off` values for Go commands.
+- The snapshot mode does not complete an interactive login, so feature-manager smoke coverage is anchored in deterministic focused TUI tests.
+- The feature manager intentionally avoids plugin frameworks; the backend declares only explicit header, field, row, and action payloads.

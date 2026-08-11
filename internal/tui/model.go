@@ -113,6 +113,8 @@ const (
 
 type loginField int
 
+const trivyFeatureName = "trivy"
+
 const (
 	loginFieldUsername loginField = iota
 	loginFieldPassword
@@ -191,22 +193,41 @@ type adminFeaturesLoadedMsg struct {
 	err      error
 }
 
-type adminFeatureStatusLoadedMsg struct {
-	details ports.FeatureDetails
-	err     error
+type adminFeaturePageLoadedMsg struct {
+	page ports.FeaturePage
+	err  error
 }
 
-type adminFeatureMutatedMsg struct {
-	details ports.FeatureDetails
-	enabled bool
-	err     error
+type adminFeatureActionCompletedMsg struct {
+	result ports.FeatureActionResult
+	err    error
+}
+
+type adminFeatureConfiguredMsg struct {
+	name string
+	err  error
 }
 
 type adminFeatureRuntimeMutatedMsg struct {
 	name   string
 	action string
-	state  ports.TrivyRuntimeState
+	state  ports.FeatureRuntimeState
 	err    error
+}
+
+type adminScanRunsLoadedMsg struct {
+	runs []ports.ScanRun
+	err  error
+}
+
+type adminScanRunDetailLoadedMsg struct {
+	detail ports.ScanRunDetail
+	err    error
+}
+
+type adminSecretScanFindingsLoadedMsg struct {
+	findings []ports.SecretFinding
+	err      error
 }
 
 type adminUserGrantsLoadedMsg struct {
@@ -402,13 +423,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.applyLoadedFeatures(msg.features)
+		m.rebuildAdminTables()
 		if len(m.adminView.Features) == 0 {
 			m.status = "No built-in features found."
 			return m, nil
 		}
-		m.status = fmt.Sprintf("Loading feature status for %s...", m.selectedFeatureName())
-		return m, m.loadAdminFeatureStatusCmd(m.selectedFeatureName())
-	case adminFeatureStatusLoadedMsg:
+		m.status = fmt.Sprintf("Loading feature page for %s...", m.selectedFeatureName())
+		return m, m.loadAdminFeaturePageCmd(m.selectedFeatureName())
+	case adminFeaturePageLoadedMsg:
 		if msg.err != nil {
 			if IsAdminSessionExpired(msg.err) {
 				return m.expireAdminSession(msg.err.Error()), nil
@@ -416,7 +438,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = msg.err.Error()
 			return m, nil
 		}
-		m.adminView.FeatureStatus = msg.details
+		m.applyFeaturePage(msg.page)
+		m.rebuildAdminTables()
 		if strings.TrimSpace(m.pendingAdminStatus) != "" {
 			m.status = m.pendingAdminStatus
 			m.pendingAdminStatus = ""
@@ -424,7 +447,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = ""
 		}
 		return m, nil
-	case adminFeatureMutatedMsg:
+	case adminFeatureActionCompletedMsg:
 		if msg.err != nil {
 			if IsAdminSessionExpired(msg.err) {
 				return m.expireAdminSession(msg.err.Error()), nil
@@ -433,11 +456,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.adminView.ConfirmModal = adminConfirmModal{}
-		verb := "disabled"
-		if msg.enabled {
-			verb = "enabled"
+		m.pendingAdminStatus = strings.TrimSpace(msg.result.Message)
+		m.status = "Loading built-in features..."
+		m.screen = screenAdminFeatures
+		return m, m.loadAdminFeaturesCmd()
+	case adminFeatureConfiguredMsg:
+		if msg.err != nil {
+			if IsAdminSessionExpired(msg.err) {
+				return m.expireAdminSession(msg.err.Error()), nil
+			}
+			m.status = msg.err.Error()
+			return m, nil
 		}
-		m.pendingAdminStatus = fmt.Sprintf("Feature %q %s.", msg.details.Name, verb)
+		m.adminView.TrivyConfigModal = trivyConfigModal{}
+		m.adminView.TrivyTab = trivyTabRuntime
+		m.pendingAdminStatus = "Configuration saved."
 		m.status = "Loading built-in features..."
 		m.screen = screenAdminFeatures
 		return m, m.loadAdminFeaturesCmd()
@@ -453,6 +486,66 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = "Loading built-in features..."
 		m.screen = screenAdminFeatures
 		return m, m.loadAdminFeaturesCmd()
+	case adminScanRunsLoadedMsg:
+		if msg.err != nil {
+			if IsAdminSessionExpired(msg.err) {
+				return m.expireAdminSession(msg.err.Error()), nil
+			}
+			m.status = msg.err.Error()
+			return m, nil
+		}
+		runs := append([]ports.ScanRun(nil), msg.runs...)
+		sort.SliceStable(runs, func(i, j int) bool { return compareScanRuns(runs[i], runs[j]) < 0 })
+		m.adminView.TrivyScanRuns = runs
+		m.adminView.TrivySelectedAlert = boundedIndex(0, len(m.adminView.TrivyScanRuns))
+		m.adminView.TrivyAlertDetailOpen = false
+		m.adminView.TrivyAlertsLoaded = true
+		m.adminView.TrivyScanRunDetail = ports.ScanRunDetail{}
+		m.rebuildAdminTables()
+		if len(m.adminView.TrivyScanRuns) == 0 {
+			m.status = "No repository alerts found."
+		} else if strings.HasPrefix(strings.ToLower(m.status), "loading") {
+			m.status = ""
+		}
+		return m, nil
+	case adminScanRunDetailLoadedMsg:
+		if msg.err != nil {
+			if IsAdminSessionExpired(msg.err) {
+				return m.expireAdminSession(msg.err.Error()), nil
+			}
+			m.status = msg.err.Error()
+			return m, nil
+		}
+		m.adminView.TrivyScanRunDetail = msg.detail
+		m.adminView.TrivyAlertDetailOpen = true
+		m.adminView.SecretFindings = nil
+		m.rebuildAdminTables()
+		if strings.HasPrefix(strings.ToLower(m.status), "loading") {
+			m.status = ""
+		}
+		// Secret findings are surfaced alongside the vulnerability scan
+		// detail just loaded above (spec.md "Operator reviews findings for
+		// a selected image"), keyed by the same repository+digest both scan
+		// legs share. Chained as a follow-up Cmd (not tea.Batch) so it
+		// composes with this Update loop's existing single-Cmd-return style.
+		return m, m.loadAdminSecretScanFindingsCmd(msg.detail.Run.Repository, msg.detail.Run.Digest)
+	case adminSecretScanFindingsLoadedMsg:
+		if msg.err != nil {
+			if IsAdminSessionExpired(msg.err) {
+				return m.expireAdminSession(msg.err.Error()), nil
+			}
+			// Informational only (spec.md "Informational Findings Only"): a
+			// failure to load secret findings (including "none persisted
+			// yet") must never override the vulnerability detail already
+			// shown or surface as a blocking error — it just renders as the
+			// clear empty state below.
+			m.adminView.SecretFindings = nil
+			m.rebuildAdminTables()
+			return m, nil
+		}
+		m.adminView.SecretFindings = msg.findings
+		m.rebuildAdminTables()
+		return m, nil
 	case adminUserGrantsLoadedMsg:
 		if msg.err != nil {
 			if IsAdminSessionExpired(msg.err) {
@@ -740,6 +833,10 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateAdminKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.adminView.TrivyConfigModal.Active() {
+		return m.updateTrivyConfigModalKey(msg)
+	}
+
 	if isRuneKey(msg, 'l') && m.canLogoutAdminFromCurrentScreen() {
 		return m.logoutAdmin(), nil
 	}
@@ -849,99 +946,125 @@ func (m Model) updateAdminUsersKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateAdminFeaturesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	availability := featureActionAvailabilityForStatus(m.adminView.FeatureStatus)
 	switch {
 	case isEscKey(msg):
+		if m.isTrivyAlertsDetailOpen() {
+			m.adminView.TrivyAlertDetailOpen = false
+			m.status = ""
+			return m, nil
+		}
 		m.screen = screenAdminUsers
 		m.status = ""
+		return m, nil
+	case m.isSelectedTrivyFeature() && isTabKey(msg):
+		return m.toggleTrivyTab()
+	case m.isSelectedTrivyFeature() && m.adminView.TrivyTab == trivyTabRepositoryAlerts && isMoveUpKey(msg):
+		if len(m.adminView.TrivyScanRuns) == 0 {
+			return m, nil
+		}
+		m.adminView.TrivySelectedAlert = boundedIndex(m.adminView.TrivySelectedAlert-1, len(m.adminView.TrivyScanRuns))
+		m.syncAdminTableHighlights()
+		return m, nil
+	case m.isSelectedTrivyFeature() && m.adminView.TrivyTab == trivyTabRepositoryAlerts && isMoveDownKey(msg):
+		if len(m.adminView.TrivyScanRuns) == 0 {
+			return m, nil
+		}
+		m.adminView.TrivySelectedAlert = boundedIndex(m.adminView.TrivySelectedAlert+1, len(m.adminView.TrivyScanRuns))
+		m.syncAdminTableHighlights()
 		return m, nil
 	case isMoveUpKey(msg):
 		return m.moveAdminFeatureSelection(-1)
 	case isMoveDownKey(msg):
 		return m.moveAdminFeatureSelection(1)
+	case m.isSelectedTrivyFeature() && m.adminView.TrivyTab == trivyTabRuntime && isRuneKey(msg, 'c'):
+		modal, ok := trivyConfigModalFromPage(m.adminView.FeaturePage)
+		if !ok {
+			m.status = "Current Trivy configuration is unavailable."
+			return m, nil
+		}
+		m.adminView.TrivyConfigModal = modal
+		m.status = ""
+		return m, nil
+	case m.isSelectedTrivyFeature() && m.adminView.TrivyTab == trivyTabRepositoryAlerts && isEnterKey(msg):
+		if len(m.adminView.TrivyScanRuns) == 0 {
+			return m, nil
+		}
+		run, _ := selectedTrivyScanRun(m.adminView)
+		m.status = fmt.Sprintf("Loading scan detail for %s...", adminFirstNonEmpty(run.Repository, run.ID))
+		return m, m.loadAdminScanRunDetailCmd(run.ID)
 	case isEnterKey(msg), isRuneKey(msg, 'r'):
+		if m.isSelectedTrivyFeature() && m.adminView.TrivyTab == trivyTabRepositoryAlerts {
+			m.status = "Loading repository alerts..."
+			return m, m.loadAdminScanRunsCmd("", 25)
+		}
 		if strings.TrimSpace(m.selectedFeatureName()) == "" {
 			m.status = "No feature selected."
 			return m, nil
 		}
-		m.status = fmt.Sprintf("Loading feature status for %s...", m.selectedFeatureName())
-		return m, m.loadAdminFeatureStatusCmd(m.selectedFeatureName())
-	case isRuneKey(msg, 'e'):
-		name := m.selectedFeatureName()
-		if name == "" {
-			m.status = "No feature selected."
-			return m, nil
-		}
-		if !availability.Enable {
-			m.status = availability.EnableReason
-			return m, nil
-		}
-		m.adminView.ConfirmModal = adminConfirmModal{
-			Kind:        adminConfirmEnableFeature,
-			Title:       "Confirm Enable",
-			Message:     fmt.Sprintf("Confirm enable feature %q?", name),
-			ConfirmText: "enable",
-			FeatureName: name,
-		}
-		m.status = ""
-		return m, nil
-	case isRuneKey(msg, 'i'):
-		name := m.selectedFeatureName()
-		if name == "" {
-			m.status = "No feature selected."
-			return m, nil
-		}
-		if !availability.Install {
-			m.status = availability.InstallReason
-			return m, nil
-		}
-		m.status = fmt.Sprintf("Installing managed runtime for %s...", name)
-		return m, m.installFeatureRuntimeCmd(name)
-	case isRuneKey(msg, 'u'):
-		name := m.selectedFeatureName()
-		if name == "" {
-			m.status = "No feature selected."
-			return m, nil
-		}
-		if !availability.Upgrade {
-			m.status = availability.UpgradeReason
-			return m, nil
-		}
-		m.status = fmt.Sprintf("Upgrading managed runtime for %s...", name)
-		return m, m.upgradeFeatureRuntimeCmd(name)
-	case isRuneKey(msg, 'b'):
-		name := m.selectedFeatureName()
-		if name == "" {
-			m.status = "No feature selected."
-			return m, nil
-		}
-		if !availability.Rollback {
-			m.status = availability.RollbackReason
-			return m, nil
-		}
-		m.status = fmt.Sprintf("Rolling back managed runtime for %s...", name)
-		return m, m.rollbackFeatureRuntimeCmd(name)
-	case isRuneKey(msg, 'x'):
-		name := m.selectedFeatureName()
-		if name == "" {
-			m.status = "No feature selected."
-			return m, nil
-		}
-		if !availability.Disable {
-			m.status = availability.DisableReason
-			return m, nil
-		}
-		m.adminView.ConfirmModal = adminConfirmModal{
-			Kind:        adminConfirmDisableFeature,
-			Title:       "Confirm Disable",
-			Message:     fmt.Sprintf("Confirm disable feature %q?", name),
-			ConfirmText: "disable",
-			FeatureName: name,
-		}
-		m.status = ""
-		return m, nil
+		m.status = fmt.Sprintf("Loading feature page for %s...", m.selectedFeatureName())
+		return m, m.loadAdminFeaturePageCmd(m.selectedFeatureName())
 	}
 
+	if action, ok := featureActionForKey(msg, m.adminView.FeaturePage); ok {
+		if strings.TrimSpace(action.ConfirmMessage) != "" {
+			kind := adminConfirmKind(action.ID)
+			switch action.ID {
+			case "enable":
+				kind = adminConfirmEnableFeature
+			case "disable":
+				kind = adminConfirmDisableFeature
+			}
+			m.adminView.ConfirmModal = adminConfirmModal{
+				Kind:        kind,
+				Title:       adminFirstNonEmpty(action.ConfirmTitle, action.Label),
+				Message:     action.ConfirmMessage,
+				ConfirmText: strings.ToLower(strings.TrimSpace(action.Label)),
+				FeatureName: m.selectedFeatureName(),
+			}
+			m.status = ""
+			return m, nil
+		}
+		m.status = fmt.Sprintf("Running %s for %s...", strings.ToLower(strings.TrimSpace(action.Label)), m.selectedFeatureName())
+		return m, m.executeFeatureActionCmd(m.selectedFeatureName(), action.ID)
+	}
+
+	return m, nil
+}
+
+func (m Model) updateTrivyConfigModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case isEscKey(msg):
+		m.adminView.TrivyConfigModal = trivyConfigModal{}
+		m.status = ""
+		return m, nil
+	case isTabKey(msg):
+		m.adminView.TrivyConfigModal.Focus = nextTrivyConfigField(m.adminView.TrivyConfigModal.Focus)
+		m.adminView.TrivyConfigModal.Error = ""
+		return m, nil
+	case isRuneKey(msg, ' '):
+		if m.adminView.TrivyConfigModal.Focus == trivyConfigFieldScheduleEnabled {
+			m.adminView.TrivyConfigModal.ScheduleEnabled = !m.adminView.TrivyConfigModal.ScheduleEnabled
+			m.adminView.TrivyConfigModal.Error = ""
+		}
+		return m, nil
+	case isBackspaceKey(msg):
+		m.deleteTrivyConfigModalRune()
+		m.adminView.TrivyConfigModal.Error = ""
+		return m, nil
+	case isEnterKey(msg):
+		input, err := m.trivyConfigInputFromModal()
+		if err != nil {
+			m.adminView.TrivyConfigModal.Error = err.Error()
+			return m, nil
+		}
+		m.status = "Submitting Trivy configuration..."
+		return m, m.configureFeatureCmd(trivyFeatureName, input)
+	}
+	if msg.Type == tea.KeyRunes {
+		m.appendTrivyConfigModalRunes(string(msg.Runes))
+		m.adminView.TrivyConfigModal.Error = ""
+		return m, nil
+	}
 	return m, nil
 }
 
@@ -1190,10 +1313,10 @@ func (m Model) updateAdminConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.enableDisableUserCmd(modal.UserID, false)
 		case adminConfirmEnableFeature:
 			m.status = fmt.Sprintf("Submitting enable for %s...", modal.FeatureName)
-			return m, m.enableDisableFeatureCmd(modal.FeatureName, true)
+			return m, m.executeFeatureActionCmd(modal.FeatureName, "enable")
 		case adminConfirmDisableFeature:
 			m.status = fmt.Sprintf("Submitting disable for %s...", modal.FeatureName)
-			return m, m.enableDisableFeatureCmd(modal.FeatureName, false)
+			return m, m.executeFeatureActionCmd(modal.FeatureName, "disable")
 		case adminConfirmDeleteGrant:
 			m.status = fmt.Sprintf("Removing grant %q from %s...", modal.Repository, modal.Username)
 			return m, m.deleteAdminGrantCmd(modal.UserID, modal.Username, modal.Repository)
@@ -1548,13 +1671,46 @@ func (m Model) loadAdminFeaturesCmd() tea.Cmd {
 	}
 }
 
-func (m Model) loadAdminFeatureStatusCmd(name string) tea.Cmd {
+func (m Model) loadAdminFeaturePageCmd(name string) tea.Cmd {
 	return func() tea.Msg {
 		if m.adminClient == nil {
-			return adminFeatureStatusLoadedMsg{err: fmt.Errorf("admin API is unavailable for this session")}
+			return adminFeaturePageLoadedMsg{err: fmt.Errorf("admin API is unavailable for this session")}
 		}
-		details, err := m.adminClient.GetFeatureStatus(m.ctx, m.adminSession, name)
-		return adminFeatureStatusLoadedMsg{details: details, err: err}
+		page, err := m.adminClient.GetFeaturePage(m.ctx, m.adminSession, name)
+		return adminFeaturePageLoadedMsg{page: page, err: err}
+	}
+}
+
+func (m Model) loadAdminScanRunsCmd(repository string, limit int) tea.Cmd {
+	return func() tea.Msg {
+		if m.adminClient == nil {
+			return adminScanRunsLoadedMsg{err: fmt.Errorf("admin API is unavailable for this session")}
+		}
+		runs, err := m.adminClient.ListScanRuns(m.ctx, m.adminSession, repository, limit)
+		return adminScanRunsLoadedMsg{runs: runs, err: err}
+	}
+}
+
+func (m Model) loadAdminScanRunDetailCmd(runID string) tea.Cmd {
+	return func() tea.Msg {
+		if m.adminClient == nil {
+			return adminScanRunDetailLoadedMsg{err: fmt.Errorf("admin API is unavailable for this session")}
+		}
+		detail, err := m.adminClient.GetScanRunDetail(m.ctx, m.adminSession, runID)
+		return adminScanRunDetailLoadedMsg{detail: detail, err: err}
+	}
+}
+
+func (m Model) loadAdminSecretScanFindingsCmd(repository string, digest string) tea.Cmd {
+	return func() tea.Msg {
+		if m.adminClient == nil {
+			return adminSecretScanFindingsLoadedMsg{err: fmt.Errorf("admin API is unavailable for this session")}
+		}
+		detail, err := m.adminClient.GetSecretScanFindings(m.ctx, m.adminSession, repository, digest)
+		if err != nil {
+			return adminSecretScanFindingsLoadedMsg{err: err}
+		}
+		return adminSecretScanFindingsLoadedMsg{findings: detail.Findings}
 	}
 }
 
@@ -1656,21 +1812,23 @@ func (m Model) enableDisableUserCmd(userID string, enabled bool) tea.Cmd {
 	}
 }
 
-func (m Model) enableDisableFeatureCmd(name string, enabled bool) tea.Cmd {
+func (m Model) executeFeatureActionCmd(name string, actionID string) tea.Cmd {
 	return func() tea.Msg {
 		if m.adminClient == nil {
-			return adminFeatureMutatedMsg{enabled: enabled, err: fmt.Errorf("admin API is unavailable for this session")}
+			return adminFeatureActionCompletedMsg{err: fmt.Errorf("admin API is unavailable for this session")}
 		}
-		var (
-			details ports.FeatureDetails
-			err     error
-		)
-		if enabled {
-			details, err = m.adminClient.EnableFeature(m.ctx, m.adminSession, name)
-		} else {
-			details, err = m.adminClient.DisableFeature(m.ctx, m.adminSession, name)
+		result, err := m.adminClient.ExecuteFeatureAction(m.ctx, m.adminSession, name, actionID)
+		return adminFeatureActionCompletedMsg{result: result, err: err}
+	}
+}
+
+func (m Model) configureFeatureCmd(name string, input ports.FeatureConfigureInput) tea.Cmd {
+	return func() tea.Msg {
+		if m.adminClient == nil {
+			return adminFeatureConfiguredMsg{name: name, err: fmt.Errorf("admin API is unavailable for this session")}
 		}
-		return adminFeatureMutatedMsg{details: details, enabled: enabled, err: err}
+		_, err := m.adminClient.ConfigureFeature(m.ctx, m.adminSession, name, input)
+		return adminFeatureConfiguredMsg{name: name, err: err}
 	}
 }
 
@@ -1916,94 +2074,44 @@ func grantRepositorySuggestions(form adminGrantForm, repositories []string) []st
 	return suggestions
 }
 
-type featureActionAvailability struct {
-	Install        bool
-	InstallReason  string
-	Upgrade        bool
-	UpgradeReason  string
-	Rollback       bool
-	RollbackReason string
-	Enable         bool
-	EnableReason   string
-	Disable        bool
-	DisableReason  string
-}
-
-func featureActionAvailabilityForStatus(details ports.FeatureDetails) featureActionAvailability {
-	availability := featureActionAvailability{
-		InstallReason:  "Install unavailable: refresh feature status first.",
-		UpgradeReason:  "Upgrade unavailable: refresh feature status first.",
-		RollbackReason: "Rollback unavailable: refresh feature status first.",
-		EnableReason:   "Enable unavailable: refresh feature status first.",
-		DisableReason:  "Disable unavailable: refresh feature status first.",
+func featureActionForKey(msg tea.KeyMsg, page ports.FeaturePage) (ports.FeatureAction, bool) {
+	if msg.Type != tea.KeyRunes || len(msg.Runes) == 0 {
+		return ports.FeatureAction{}, false
 	}
-	if strings.TrimSpace(details.Name) == "" {
-		return availability
+	lookup := map[rune]string{
+		'e': "enable",
+		'x': "disable",
+		'i': "install-runtime",
+		'u': "upgrade-runtime",
+		'b': "rollback-runtime",
 	}
-	availability.Enable = !details.Enabled
-	if availability.Enable {
-		availability.EnableReason = ""
-	} else {
-		availability.EnableReason = fmt.Sprintf("Enable unavailable: feature %q is already enabled.", details.Name)
+	actionID, ok := lookup[unicode.ToLower(msg.Runes[0])]
+	if !ok {
+		return ports.FeatureAction{}, false
 	}
-	availability.Disable = details.Enabled
-	if availability.Disable {
-		availability.DisableReason = ""
-	} else {
-		availability.DisableReason = fmt.Sprintf("Disable unavailable: feature %q is already disabled.", details.Name)
-	}
-	runtime := details.Runtime
-	status := strings.TrimSpace(runtime.Status)
-	if status == "" {
-		status = strings.TrimSpace(runtime.Health)
-	}
-	current := strings.TrimSpace(runtime.Version)
-	update := strings.TrimSpace(runtime.UpdateStatus)
-	if runtime.Mode == ports.FeatureRuntimeModeManaged && (status == string(ports.TrivyRuntimeStatusUninstalled) || status == string(ports.TrivyRuntimeStatusMigrationRequired)) {
-		availability.Install = true
-		availability.InstallReason = ""
-	} else {
-		availability.InstallReason = fmt.Sprintf("Install unavailable: feature %q already has an active managed runtime.", details.Name)
-	}
-	if runtime.Mode == ports.FeatureRuntimeModeManaged && current != "" && update == "available" {
-		availability.Upgrade = true
-		availability.UpgradeReason = ""
-	} else {
-		switch update {
-		case "up-to-date":
-			availability.UpgradeReason = fmt.Sprintf("Upgrade unavailable: feature %q is already up to date.", details.Name)
-		case "unknown":
-			availability.UpgradeReason = fmt.Sprintf("Upgrade unavailable: latest version for %q is unknown.", details.Name)
-		default:
-			availability.UpgradeReason = fmt.Sprintf("Upgrade unavailable: feature %q has no upgrade candidate.", details.Name)
+	for _, action := range page.Actions {
+		if action.ID == actionID {
+			return action, true
 		}
 	}
-	availability.Rollback = runtime.Mode == ports.FeatureRuntimeModeManaged && runtime.RollbackAvailable
-	if availability.Rollback {
-		availability.RollbackReason = ""
-	} else {
-		availability.RollbackReason = fmt.Sprintf("Rollback unavailable: feature %q has no previous managed runtime version.", details.Name)
-	}
-	return availability
+	return ports.FeatureAction{}, false
 }
 
-func featureActionHelp(details ports.FeatureDetails) string {
-	availability := featureActionAvailabilityForStatus(details)
-	parts := []string{"Enter/r: refresh status"}
-	if availability.Install {
-		parts = append(parts, "i: install runtime")
-	}
-	if availability.Upgrade {
-		parts = append(parts, "u: upgrade runtime")
-	}
-	if availability.Rollback {
-		parts = append(parts, "b: rollback runtime")
-	}
-	if availability.Enable {
-		parts = append(parts, "e: enable")
-	}
-	if availability.Disable {
-		parts = append(parts, "x: disable")
+func featureActionHelp(page ports.FeaturePage) string {
+	parts := []string{"Enter/r: refresh page"}
+	for _, action := range page.Actions {
+		switch action.ID {
+		case "enable":
+			parts = append(parts, "e: enable")
+		case "disable":
+			parts = append(parts, "x: disable")
+		case "install-runtime":
+			parts = append(parts, "i: install runtime")
+		case "upgrade-runtime":
+			parts = append(parts, "u: upgrade runtime")
+		case "rollback-runtime":
+			parts = append(parts, "b: rollback runtime")
+		}
 	}
 	parts = append(parts, "Esc: back", "q: quit")
 	return strings.Join(parts, " | ")
@@ -2138,7 +2246,15 @@ func (m *Model) clearSelectedAdminDetails() {
 	m.adminView.Grants = nil
 	m.adminView.AdminTokens = nil
 	m.adminView.Features = nil
-	m.adminView.FeatureStatus = ports.FeatureDetails{}
+	m.adminView.FeaturePage = ports.FeaturePage{}
+	m.adminView.TrivyTab = trivyTabRuntime
+	m.adminView.TrivyConfigModal = trivyConfigModal{}
+	m.adminView.TrivyScanRuns = nil
+	m.adminView.TrivySelectedAlert = 0
+	m.adminView.TrivyAlertDetailOpen = false
+	m.adminView.TrivyAlertsLoaded = false
+	m.adminView.TrivyScanRunDetail = ports.ScanRunDetail{}
+	m.adminView.SecretFindings = nil
 	m.adminView.SelectedGrant = 0
 	m.adminView.SelectedFeature = 0
 	m.adminView.SelectedToken = 0
@@ -2148,6 +2264,7 @@ func (m *Model) clearSelectedAdminDetails() {
 	m.adminView.RevealedTokenSecret = ""
 	m.adminView.RevealedTokenAccessor = ""
 	m.adminView.RevealedTokenExpiresAt = time.Time{}
+	m.adminView.Tables = newAdminViewState().Tables
 }
 
 func (m *Model) applyLoadedFeatures(features []ports.FeatureSummary) {
@@ -2155,7 +2272,7 @@ func (m *Model) applyLoadedFeatures(features []ports.FeatureSummary) {
 	m.adminView.Features = append([]ports.FeatureSummary(nil), features...)
 	if len(m.adminView.Features) == 0 {
 		m.adminView.SelectedFeature = 0
-		m.adminView.FeatureStatus = ports.FeatureDetails{}
+		m.adminView.FeaturePage = ports.FeaturePage{}
 		return
 	}
 	selected := 0
@@ -2168,19 +2285,31 @@ func (m *Model) applyLoadedFeatures(features []ports.FeatureSummary) {
 		}
 	}
 	m.adminView.SelectedFeature = boundedIndex(selected, len(m.adminView.Features))
-	m.adminView.FeatureStatus = ports.FeatureDetails{}
+	m.adminView.FeaturePage = ports.FeaturePage{}
+	m.syncAdminTableHighlights()
 }
 
-func (m *Model) applyFeatureDetails(details ports.FeatureDetails) {
-	m.adminView.FeatureStatus = details
+func (m *Model) applyFeaturePage(page ports.FeaturePage) {
+	m.adminView.FeaturePage = page
+	m.adminView.TrivyConfigModal = trivyConfigModal{}
+	m.adminView.TrivyScanRuns = nil
+	m.adminView.TrivySelectedAlert = 0
+	m.adminView.TrivyAlertDetailOpen = false
+	m.adminView.TrivyAlertsLoaded = false
+	m.adminView.TrivyScanRunDetail = ports.ScanRunDetail{}
+	m.adminView.SecretFindings = nil
+	if page.Summary.Name == trivyFeatureName {
+		m.adminView.TrivyTab = trivyTabRuntime
+	}
 	for index, feature := range m.adminView.Features {
-		if feature.Name == details.Name {
-			m.adminView.Features[index].Enabled = details.Enabled
-			m.adminView.Features[index].Configured = details.Configured
+		if feature.Name == page.Summary.Name {
+			m.adminView.Features[index] = page.Summary
 			m.adminView.SelectedFeature = index
+			m.syncAdminTableHighlights()
 			return
 		}
 	}
+	m.syncAdminTableHighlights()
 }
 
 func (m Model) selectedFeatureName() string {
@@ -2191,16 +2320,187 @@ func (m Model) selectedFeatureName() string {
 	return m.adminView.Features[index].Name
 }
 
+func (m Model) isSelectedTrivyFeature() bool {
+	name := strings.TrimSpace(m.adminView.FeaturePage.Summary.Name)
+	if name == "" {
+		name = strings.TrimSpace(m.selectedFeatureName())
+	}
+	return name == trivyFeatureName
+}
+
+func (m Model) isTrivyAlertsDetailOpen() bool {
+	return m.isSelectedTrivyFeature() && m.adminView.TrivyTab == trivyTabRepositoryAlerts && m.adminView.TrivyAlertDetailOpen
+}
+
+func (m Model) toggleTrivyTab() (tea.Model, tea.Cmd) {
+	if m.adminView.TrivyTab == trivyTabRepositoryAlerts {
+		m.adminView.TrivyTab = trivyTabRuntime
+		m.adminView.TrivyAlertDetailOpen = false
+		m.status = ""
+		m.syncAdminTableHighlights()
+		return m, nil
+	}
+	m.adminView.TrivyTab = trivyTabRepositoryAlerts
+	m.adminView.TrivyAlertDetailOpen = false
+	m.adminView.TrivyScanRunDetail = ports.ScanRunDetail{}
+	m.adminView.SecretFindings = nil
+	m.rebuildAdminTables()
+	m.status = "Loading repository alerts..."
+	return m, m.loadAdminScanRunsCmd("", 25)
+}
+
+func selectedTrivyScanRun(view AdminViewState) (ports.ScanRun, bool) {
+	if len(view.TrivyScanRuns) == 0 {
+		return ports.ScanRun{}, false
+	}
+	index := boundedIndex(view.TrivySelectedAlert, len(view.TrivyScanRuns))
+	return view.TrivyScanRuns[index], true
+}
+
+func compareScanRuns(left ports.ScanRun, right ports.ScanRun) int {
+	leftSeverity := highestSeverityRank(left)
+	rightSeverity := highestSeverityRank(right)
+	if leftSeverity != rightSeverity {
+		return rightSeverity - leftSeverity
+	}
+	leftFixable := scanRunHasFixable(left)
+	rightFixable := scanRunHasFixable(right)
+	if leftFixable != rightFixable {
+		if leftFixable {
+			return -1
+		}
+		return 1
+	}
+	if left.CreatedAt.Equal(right.CreatedAt) {
+		return strings.Compare(left.ID, right.ID)
+	}
+	if left.CreatedAt.After(right.CreatedAt) {
+		return -1
+	}
+	return 1
+}
+
+func highestSeverityRank(run ports.ScanRun) int {
+	if run.Critical > 0 {
+		return 4
+	}
+	if run.High > 0 {
+		return 3
+	}
+	if run.Medium > 0 {
+		return 2
+	}
+	if run.Low > 0 {
+		return 1
+	}
+	return 0
+}
+
+func scanRunHasFixable(run ports.ScanRun) bool {
+	return run.HasFixable
+}
+
+func trivyConfigModalFromPage(page ports.FeaturePage) (trivyConfigModal, bool) {
+	if page.Summary.Name != trivyFeatureName {
+		return trivyConfigModal{}, false
+	}
+	modal := trivyConfigModal{Open: true, Focus: trivyConfigFieldScheduleEnabled}
+	for _, section := range page.Sections {
+		if section.ID != "config" {
+			continue
+		}
+		for _, field := range section.Fields {
+			switch field.Label {
+			case "Schedule Enabled":
+				modal.ScheduleEnabled, _ = strconv.ParseBool(strings.TrimSpace(field.Value))
+			case "Interval":
+				modal.Interval = strings.TrimSpace(field.Value)
+			case "Timeout":
+				modal.Timeout = strings.TrimSpace(field.Value)
+			case "Registry Reachable URL":
+				modal.RegistryReachableURL = strings.TrimSpace(field.Value)
+			case "Max Concurrency":
+				modal.MaxConcurrency = strings.TrimSpace(field.Value)
+			}
+		}
+	}
+	if modal.Interval == "" || modal.Timeout == "" || modal.MaxConcurrency == "" {
+		return trivyConfigModal{}, false
+	}
+	return modal, true
+}
+
+func nextTrivyConfigField(field trivyConfigField) trivyConfigField {
+	if field >= trivyConfigFieldMaxConcurrency {
+		return trivyConfigFieldScheduleEnabled
+	}
+	return field + 1
+}
+
+func (m *Model) deleteTrivyConfigModalRune() {
+	switch m.adminView.TrivyConfigModal.Focus {
+	case trivyConfigFieldInterval:
+		m.adminView.TrivyConfigModal.Interval = trimLastRune(m.adminView.TrivyConfigModal.Interval)
+	case trivyConfigFieldTimeout:
+		m.adminView.TrivyConfigModal.Timeout = trimLastRune(m.adminView.TrivyConfigModal.Timeout)
+	case trivyConfigFieldRegistryReachableURL:
+		m.adminView.TrivyConfigModal.RegistryReachableURL = trimLastRune(m.adminView.TrivyConfigModal.RegistryReachableURL)
+	case trivyConfigFieldMaxConcurrency:
+		m.adminView.TrivyConfigModal.MaxConcurrency = trimLastRune(m.adminView.TrivyConfigModal.MaxConcurrency)
+	}
+}
+
+func (m *Model) appendTrivyConfigModalRunes(value string) {
+	if value == "" {
+		return
+	}
+	switch m.adminView.TrivyConfigModal.Focus {
+	case trivyConfigFieldInterval:
+		m.adminView.TrivyConfigModal.Interval += value
+	case trivyConfigFieldTimeout:
+		m.adminView.TrivyConfigModal.Timeout += value
+	case trivyConfigFieldRegistryReachableURL:
+		m.adminView.TrivyConfigModal.RegistryReachableURL += value
+	case trivyConfigFieldMaxConcurrency:
+		m.adminView.TrivyConfigModal.MaxConcurrency += value
+	}
+}
+
+func (m Model) trivyConfigInputFromModal() (ports.FeatureConfigureInput, error) {
+	interval, err := time.ParseDuration(strings.TrimSpace(m.adminView.TrivyConfigModal.Interval))
+	if err != nil {
+		return ports.FeatureConfigureInput{}, fmt.Errorf("invalid interval: %w", err)
+	}
+	timeout, err := time.ParseDuration(strings.TrimSpace(m.adminView.TrivyConfigModal.Timeout))
+	if err != nil {
+		return ports.FeatureConfigureInput{}, fmt.Errorf("invalid timeout: %w", err)
+	}
+	maxConcurrency, err := strconv.Atoi(strings.TrimSpace(m.adminView.TrivyConfigModal.MaxConcurrency))
+	if err != nil {
+		return ports.FeatureConfigureInput{}, fmt.Errorf("invalid max concurrency: %w", err)
+	}
+	registryURL := strings.TrimSpace(m.adminView.TrivyConfigModal.RegistryReachableURL)
+	scheduleEnabled := m.adminView.TrivyConfigModal.ScheduleEnabled
+	return ports.FeatureConfigureInput{
+		ScheduleEnabled:      &scheduleEnabled,
+		Interval:             &interval,
+		Timeout:              &timeout,
+		RegistryReachableURL: &registryURL,
+		MaxConcurrency:       &maxConcurrency,
+	}, nil
+}
+
 func (m Model) moveAdminFeatureSelection(delta int) (tea.Model, tea.Cmd) {
 	if len(m.adminView.Features) == 0 {
 		m.adminView.SelectedFeature = 0
-		m.adminView.FeatureStatus = ports.FeatureDetails{}
+		m.adminView.FeaturePage = ports.FeaturePage{}
 		return m, nil
 	}
 	m.adminView.SelectedFeature = boundedIndex(m.adminView.SelectedFeature+delta, len(m.adminView.Features))
-	m.adminView.FeatureStatus = ports.FeatureDetails{}
-	m.status = fmt.Sprintf("Loading feature status for %s...", m.selectedFeatureName())
-	return m, m.loadAdminFeatureStatusCmd(m.selectedFeatureName())
+	m.adminView.FeaturePage = ports.FeaturePage{}
+	m.syncAdminTableHighlights()
+	m.status = fmt.Sprintf("Loading feature page for %s...", m.selectedFeatureName())
+	return m, m.loadAdminFeaturePageCmd(m.selectedFeatureName())
 }
 
 func (m *Model) clearRevealedAdminToken() {

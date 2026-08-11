@@ -211,12 +211,67 @@ func TestServiceRejectsOutOfBoundsScanSettings(t *testing.T) {
 	}
 }
 
+func TestServiceSetFeatureEnabledDoesNotLeakIntoAnotherFeaturesScanSettingsRow(t *testing.T) {
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	originalFeatures := builtInFeatures
+	builtInFeatures = append(append([]featureDescriptor{}, originalFeatures...), featureDescriptor{name: "gitleaks", kind: ports.FeatureKindBuiltin})
+	defer func() { builtInFeatures = originalFeatures }()
+
+	if _, err := service.SetFeatureEnabled(context.Background(), "trivy", false); err != nil {
+		t.Fatalf("SetFeatureEnabled(trivy) error = %v", err)
+	}
+	if _, err := service.SetFeatureEnabled(context.Background(), "gitleaks", true); err != nil {
+		t.Fatalf("SetFeatureEnabled(gitleaks) error = %v", err)
+	}
+
+	trivySettings, err := service.metadata.GetScanSettings(context.Background(), "tenant-a", "trivy")
+	if err != nil {
+		t.Fatalf("GetScanSettings(trivy) error = %v", err)
+	}
+	if trivySettings.Enabled {
+		t.Fatalf("trivySettings.Enabled = true, want enabling gitleaks to leave trivy's own row untouched")
+	}
+
+	gitleaksSettings, err := service.metadata.GetScanSettings(context.Background(), "tenant-a", "gitleaks")
+	if err != nil {
+		t.Fatalf("GetScanSettings(gitleaks) error = %v", err)
+	}
+	if !gitleaksSettings.Enabled {
+		t.Fatalf("gitleaksSettings.Enabled = false, want gitleaks' own row to reflect its enable call")
+	}
+}
+
+func TestServiceProjectFeatureRuntimeReflectsOnlyEachFeaturesOwnManagerState(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	service.SetFeatureRuntimeManager("trivy", fakeFeatureRuntimeManager{statusState: ports.FeatureRuntimeState{Status: ports.FeatureRuntimeStatusReady, ActiveVersion: "0.57.1"}, latestVersion: "0.58.0"})
+	service.SetFeatureRuntimeManager("gitleaks", fakeFeatureRuntimeManager{statusState: ports.FeatureRuntimeState{Status: ports.FeatureRuntimeStatusInstalling, ActiveVersion: "8.24.0"}, latestVersion: "8.25.0"})
+
+	trivyRuntime := service.projectFeatureRuntime(context.Background(), "trivy")
+	gitleaksRuntime := service.projectFeatureRuntime(context.Background(), "gitleaks")
+
+	if trivyRuntime.Version != "0.57.1" || trivyRuntime.Status != string(ports.FeatureRuntimeStatusReady) {
+		t.Fatalf("trivyRuntime = %#v, want trivy's own reported manager state", trivyRuntime)
+	}
+	if gitleaksRuntime.Version != "8.24.0" || gitleaksRuntime.Status != string(ports.FeatureRuntimeStatusInstalling) {
+		t.Fatalf("gitleaksRuntime = %#v, want gitleaks' own reported manager state", gitleaksRuntime)
+	}
+	if trivyRuntime.Version == gitleaksRuntime.Version || trivyRuntime.Status == gitleaksRuntime.Status {
+		t.Fatalf("trivyRuntime = %#v, gitleaksRuntime = %#v, want each feature's projection independent of the other's manager", trivyRuntime, gitleaksRuntime)
+	}
+}
+
 func TestServiceListFeaturesReturnsBuiltinTrivyInventory(t *testing.T) {
 	t.Parallel()
 
 	service, cleanup := newTestService(t, allowAllAccessController{})
 	defer cleanup()
-	service.SetFeatureRuntimeManager(fakeFeatureRuntimeManager{statusState: ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusReady, ActiveVersion: "0.57.1", PreviousVersion: "0.56.2"}, latestVersion: "0.58.0"})
+	service.SetFeatureRuntimeManager("trivy", fakeFeatureRuntimeManager{statusState: ports.FeatureRuntimeState{Status: ports.FeatureRuntimeStatusReady, ActiveVersion: "0.57.1", PreviousVersion: "0.56.2"}, latestVersion: "0.58.0"})
 
 	features, err := service.ListFeatures(context.Background())
 	if err != nil {
@@ -231,10 +286,156 @@ func TestServiceListFeaturesReturnsBuiltinTrivyInventory(t *testing.T) {
 		CurrentVersion: "0.57.1",
 		LatestVersion:  "0.58.0",
 		UpdateStatus:   "available",
+	}, {
+		Name:           "gitleaks",
+		Kind:           ports.FeatureKindBuiltin,
+		Enabled:        false,
+		Configured:     false,
+		CurrentVersion: "",
+		LatestVersion:  "unknown",
+		UpdateStatus:   "unknown",
 	}}
 	if !reflect.DeepEqual(features, want) {
 		t.Fatalf("ListFeatures() = %#v, want %#v", features, want)
 	}
+}
+
+func TestBuildFeaturePageKeepsMinimalNonTrivyPagesLightweight(t *testing.T) {
+	t.Parallel()
+
+	summary := ports.FeatureSummary{Name: "future-plugin", Kind: ports.FeatureKindExternalService, Enabled: true, Configured: true}
+	details := ports.FeatureDetails{Name: "future-plugin", Kind: ports.FeatureKindExternalService, Enabled: true, Configured: true}
+
+	page := buildFeaturePage(summary, details, nil)
+
+	if page.Summary != summary {
+		t.Fatalf("page.Summary = %#v, want %#v", page.Summary, summary)
+	}
+	if len(page.Header) == 0 {
+		t.Fatalf("page.Header = %#v, want lightweight header fields", page.Header)
+	}
+	if len(page.Sections) != 0 {
+		t.Fatalf("page.Sections = %#v, want no Trivy-only sections for minimal feature page", page.Sections)
+	}
+	if len(page.Actions) != 0 {
+		t.Fatalf("page.Actions = %#v, want no implicit actions for minimal feature page", page.Actions)
+	}
+}
+
+func TestServiceGetFeaturePageBuildsRuntimeOnlyTrivySectionsAndDeclaredActions(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	if _, err := service.ConfigureFeature(context.Background(), "trivy", ports.FeatureConfigureInput{
+		Enabled:              boolPtr(true),
+		ScheduleEnabled:      boolPtr(true),
+		Interval:             durationPtr(6 * time.Hour),
+		Timeout:              durationPtr(10 * time.Minute),
+		RegistryReachableURL: stringPtr("https://registry.internal:5443"),
+		MaxConcurrency:       intPtr(2),
+	}); err != nil {
+		t.Fatalf("ConfigureFeature() error = %v", err)
+	}
+	verifiedAt := time.Now().UTC().Add(-time.Minute)
+	if err := service.metadata.UpsertFeatureRuntimeState(context.Background(), "tenant-a", "trivy", ports.FeatureRuntimeState{
+		Status:           ports.FeatureRuntimeStatusReady,
+		ActiveVersion:    "0.57.1",
+		PreviousVersion:  "0.56.2",
+		ActiveBinaryPath: "/var/lib/regixtry/features/trivy/bin/active/trivy",
+		ReceiptPath:      "/var/lib/regixtry/features/trivy/receipts/0.57.1.json",
+		LastVerifiedAt:   &verifiedAt,
+		UpdatedAt:        time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("UpsertFeatureRuntimeState() error = %v", err)
+	}
+	service.SetFeatureRuntimeManager("trivy", fakeFeatureRuntimeManager{statusState: ports.FeatureRuntimeState{Status: ports.FeatureRuntimeStatusReady, ActiveVersion: "0.57.1", PreviousVersion: "0.56.2"}, latestVersion: "0.58.0"})
+
+	page, err := service.GetFeaturePage(context.Background(), "trivy")
+	if err != nil {
+		t.Fatalf("GetFeaturePage() error = %v", err)
+	}
+
+	if got, want := sectionIDs(page.Sections), []string{"config", "runtime"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("section IDs = %#v, want %#v", got, want)
+	}
+	if got, want := actionIDs(page.Actions), []string{"refresh", "disable", "upgrade-runtime", "rollback-runtime"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("action IDs = %#v, want %#v", got, want)
+	}
+	if len(page.Sections) != 2 {
+		t.Fatalf("page.Sections = %#v, want runtime-only page shape", page.Sections)
+	}
+}
+
+// TestServiceGetFeaturePageBuildsRuntimeSectionsForGitleaksIndependentlyFromTrivy
+// is the Phase 6 RED test (tasks.md 6.2/operator-admin-tui "Per-Feature
+// Runtime Status Surface"): buildFeaturePage must project Config+Runtime
+// sections for gitleaks too (not just Trivy, task 6.1's generalization),
+// and each feature's own (tenant, feature)-keyed runtime state must be
+// shown independently — a Gitleaks page must never leak Trivy's version
+// or vice versa.
+func TestServiceGetFeaturePageBuildsRuntimeSectionsForGitleaksIndependentlyFromTrivy(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	seedManagedRuntimeState(t, service, "0.57.1")
+	if err := service.metadata.UpsertScanSettings(context.Background(), "tenant-a", "gitleaks", ports.ScanSettings{
+		Enabled:        true,
+		Interval:       time.Hour,
+		Timeout:        time.Minute,
+		MaxConcurrency: 1,
+		UpdatedAt:      time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("UpsertScanSettings(gitleaks) error = %v", err)
+	}
+	if err := service.metadata.UpsertFeatureRuntimeState(context.Background(), "tenant-a", "gitleaks", ports.FeatureRuntimeState{
+		Status:           ports.FeatureRuntimeStatusReady,
+		ActiveVersion:    "8.27.0",
+		PreviousVersion:  "8.26.0",
+		ActiveBinaryPath: "/var/lib/regixtry/features/gitleaks/bin/active/gitleaks",
+		UpdatedAt:        time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("UpsertFeatureRuntimeState(gitleaks) error = %v", err)
+	}
+
+	trivyPage, err := service.GetFeaturePage(context.Background(), "trivy")
+	if err != nil {
+		t.Fatalf("GetFeaturePage(trivy) error = %v", err)
+	}
+	gitleaksPage, err := service.GetFeaturePage(context.Background(), "gitleaks")
+	if err != nil {
+		t.Fatalf("GetFeaturePage(gitleaks) error = %v", err)
+	}
+
+	if got, want := sectionIDs(gitleaksPage.Sections), []string{"config", "runtime"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("gitleaks section IDs = %#v, want %#v", got, want)
+	}
+
+	trivyVersion := featureFieldValue(trivyPage.Sections, "runtime", "Version")
+	gitleaksVersion := featureFieldValue(gitleaksPage.Sections, "runtime", "Version")
+	if trivyVersion != "0.57.1" || gitleaksVersion != "8.27.0" {
+		t.Fatalf("trivy version = %q, gitleaks version = %q, want each feature's own independent runtime state", trivyVersion, gitleaksVersion)
+	}
+	if got := featureFieldValue(gitleaksPage.Sections, "runtime", "Rollback Available"); got != "true" {
+		t.Fatalf("gitleaks rollback available = %q, want %q", got, "true")
+	}
+}
+
+func featureFieldValue(sections []ports.FeatureSection, sectionID string, label string) string {
+	for _, section := range sections {
+		if section.ID != sectionID {
+			continue
+		}
+		for _, field := range section.Fields {
+			if field.Label == label {
+				return field.Value
+			}
+		}
+	}
+	return ""
 }
 
 func TestServiceGetFeatureStatusFallsBackToUnknownLatestVersion(t *testing.T) {
@@ -242,7 +443,7 @@ func TestServiceGetFeatureStatusFallsBackToUnknownLatestVersion(t *testing.T) {
 
 	service, cleanup := newTestService(t, allowAllAccessController{})
 	defer cleanup()
-	service.SetFeatureRuntimeManager(fakeFeatureRuntimeManager{statusState: ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusReady, ActiveVersion: "0.57.1", PreviousVersion: "0.56.2"}, latestErr: errors.New("lookup failed")})
+	service.SetFeatureRuntimeManager("trivy", fakeFeatureRuntimeManager{statusState: ports.FeatureRuntimeState{Status: ports.FeatureRuntimeStatusReady, ActiveVersion: "0.57.1", PreviousVersion: "0.56.2"}, latestErr: errors.New("lookup failed")})
 
 	status, err := service.GetFeatureStatus(context.Background(), "trivy")
 	if err != nil {
@@ -275,8 +476,8 @@ func TestServiceGetFeatureStatusProjectsManagedRuntimeDetails(t *testing.T) {
 		t.Fatalf("ConfigureFeature() error = %v", err)
 	}
 	verifiedAt := time.Now().UTC().Add(-time.Minute)
-	if err := service.metadata.UpsertTrivyRuntimeState(context.Background(), "tenant-a", ports.TrivyRuntimeState{
-		Status:           ports.TrivyRuntimeStatusReady,
+	if err := service.metadata.UpsertFeatureRuntimeState(context.Background(), "tenant-a", "trivy", ports.FeatureRuntimeState{
+		Status:           ports.FeatureRuntimeStatusReady,
 		ActiveVersion:    "0.57.1",
 		PreviousVersion:  "0.56.2",
 		ActiveBinaryPath: "/var/lib/regixtry/features/trivy/bin/active/trivy",
@@ -285,7 +486,7 @@ func TestServiceGetFeatureStatusProjectsManagedRuntimeDetails(t *testing.T) {
 		LastVerifiedAt:   &verifiedAt,
 		UpdatedAt:        time.Now().UTC(),
 	}); err != nil {
-		t.Fatalf("UpsertTrivyRuntimeState() error = %v", err)
+		t.Fatalf("UpsertFeatureRuntimeState() error = %v", err)
 	}
 
 	status, err := service.GetFeatureStatus(context.Background(), "trivy")
@@ -429,8 +630,8 @@ func TestServiceGetFeatureStatusSeparatesIntentFromManagedRuntimeState(t *testin
 
 	verifiedAt := time.Now().UTC().Add(-time.Minute)
 	healthAt := verifiedAt.Add(30 * time.Second)
-	if err := service.metadata.UpsertTrivyRuntimeState(context.Background(), "tenant-a", ports.TrivyRuntimeState{
-		Status:            ports.TrivyRuntimeStatusReady,
+	if err := service.metadata.UpsertFeatureRuntimeState(context.Background(), "tenant-a", "trivy", ports.FeatureRuntimeState{
+		Status:            ports.FeatureRuntimeStatusReady,
 		ActiveVersion:     "0.57.1",
 		PreviousVersion:   "0.56.2",
 		ActiveBinaryPath:  filepath.Join(t.TempDir(), "features", "trivy", "bin", "active", "trivy"),
@@ -440,14 +641,14 @@ func TestServiceGetFeatureStatusSeparatesIntentFromManagedRuntimeState(t *testin
 		LastHealthCheckAt: &healthAt,
 		UpdatedAt:         healthAt,
 	}); err != nil {
-		t.Fatalf("UpsertTrivyRuntimeState() error = %v", err)
+		t.Fatalf("UpsertFeatureRuntimeState() error = %v", err)
 	}
 
 	status, err := service.GetFeatureStatus(context.Background(), "trivy")
 	if err != nil {
 		t.Fatalf("GetFeatureStatus() error = %v", err)
 	}
-	if status.Runtime.Mode != ports.FeatureRuntimeModeManaged || status.Runtime.Status != string(ports.TrivyRuntimeStatusReady) {
+	if status.Runtime.Mode != ports.FeatureRuntimeModeManaged || status.Runtime.Status != string(ports.FeatureRuntimeStatusReady) {
 		t.Fatalf("status.Runtime = %#v, want managed ready runtime projection", status.Runtime)
 	}
 	if status.Runtime.Version != "0.57.1" || !status.Runtime.RollbackAvailable {
@@ -466,9 +667,9 @@ func TestServiceGetFeatureStatusReportsLegacyRuntimeMigrationRequired(t *testing
 
 	service, cleanup := newTestService(t, allowAllAccessController{})
 	defer cleanup()
-	service.SetFeatureRuntimeManager(fakeFeatureRuntimeManager{statusState: ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusMigrationRequired, MigrationHint: `legacy binary_path "/tmp/README.sh" requires managed reinstall and will never be executed`}, latestErr: errors.New("lookup failed")})
+	service.SetFeatureRuntimeManager("trivy", fakeFeatureRuntimeManager{statusState: ports.FeatureRuntimeState{Status: ports.FeatureRuntimeStatusMigrationRequired, MigrationHint: `legacy binary_path "/tmp/README.sh" requires managed reinstall and will never be executed`}, latestErr: errors.New("lookup failed")})
 
-	if err := service.metadata.UpsertScanSettings(context.Background(), "tenant-a", ports.ScanSettings{
+	if err := service.metadata.UpsertScanSettings(context.Background(), "tenant-a", "trivy", ports.ScanSettings{
 		Enabled:              true,
 		ScheduleEnabled:      true,
 		Interval:             3 * time.Hour,
@@ -487,7 +688,7 @@ func TestServiceGetFeatureStatusReportsLegacyRuntimeMigrationRequired(t *testing
 	if err != nil {
 		t.Fatalf("GetFeatureStatus() error = %v", err)
 	}
-	if status.Runtime.Status != string(ports.TrivyRuntimeStatusMigrationRequired) || status.Runtime.Health != "migration-required" {
+	if status.Runtime.Status != string(ports.FeatureRuntimeStatusMigrationRequired) || status.Runtime.Health != "migration-required" {
 		t.Fatalf("status.Runtime = %#v, want migration-required runtime", status.Runtime)
 	}
 	if !strings.Contains(status.Runtime.Detail, "/tmp/README.sh") {
@@ -509,7 +710,7 @@ func TestServiceManualAndScheduledScansUseManagedRuntimeStateAndIgnoreLegacyPath
 	defer cleanup()
 
 	seedRepository(t, service, context.Background(), "library/alpine")
-	if err := service.metadata.UpsertScanSettings(context.Background(), "tenant-a", ports.ScanSettings{
+	if err := service.metadata.UpsertScanSettings(context.Background(), "tenant-a", "trivy", ports.ScanSettings{
 		Enabled:              true,
 		ScheduleEnabled:      true,
 		Interval:             time.Hour,
@@ -521,14 +722,14 @@ func TestServiceManualAndScheduledScansUseManagedRuntimeStateAndIgnoreLegacyPath
 	}); err != nil {
 		t.Fatalf("UpsertScanSettings() error = %v", err)
 	}
-	if err := service.metadata.UpsertTrivyRuntimeState(context.Background(), "tenant-a", ports.TrivyRuntimeState{
-		Status:           ports.TrivyRuntimeStatusReady,
+	if err := service.metadata.UpsertFeatureRuntimeState(context.Background(), "tenant-a", "trivy", ports.FeatureRuntimeState{
+		Status:           ports.FeatureRuntimeStatusReady,
 		ActiveVersion:    "0.57.1",
 		ActiveBinaryPath: "/var/lib/regixtry/features/trivy/bin/active/trivy",
 		CacheDir:         "/var/lib/regixtry/features/trivy/trivy-cache",
 		UpdatedAt:        time.Now().UTC(),
 	}); err != nil {
-		t.Fatalf("UpsertTrivyRuntimeState() error = %v", err)
+		t.Fatalf("UpsertFeatureRuntimeState() error = %v", err)
 	}
 	runner := &capturingScanRunner{result: ports.ScanResult{TrivyVersion: "0.57.1"}}
 	service.SetScanRunner(runner)
@@ -551,6 +752,242 @@ func TestServiceManualAndScheduledScansUseManagedRuntimeStateAndIgnoreLegacyPath
 	waitForRunnerTargets(t, runner, 2)
 	if len(runner.targets) < 2 {
 		t.Fatalf("targets = %#v, want manual and scheduled scans through managed runtime", runner.targets)
+	}
+}
+
+func TestServiceExecuteScanRunRunsSecretScanLegAlongsideTrivyLegWhenGitleaksEnabledAndReady(t *testing.T) {
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	seedRepository(t, service, context.Background(), "library/alpine")
+	if err := service.metadata.UpsertScanSettings(context.Background(), "tenant-a", "trivy", ports.ScanSettings{
+		Enabled:              true,
+		Interval:             time.Hour,
+		Timeout:              time.Minute,
+		RegistryReachableURL: "https://registry.internal",
+		MaxConcurrency:       1,
+		UpdatedAt:            time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("UpsertScanSettings(trivy) error = %v", err)
+	}
+	seedManagedRuntimeState(t, service, "0.57.1")
+
+	if err := service.metadata.UpsertScanSettings(context.Background(), "tenant-a", "gitleaks", ports.ScanSettings{
+		Enabled:        true,
+		Interval:       time.Hour,
+		Timeout:        time.Minute,
+		MaxConcurrency: 1,
+		UpdatedAt:      time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("UpsertScanSettings(gitleaks) error = %v", err)
+	}
+	if err := service.metadata.UpsertFeatureRuntimeState(context.Background(), "tenant-a", "gitleaks", ports.FeatureRuntimeState{
+		Status:           ports.FeatureRuntimeStatusReady,
+		ActiveVersion:    "8.27.0",
+		ActiveBinaryPath: "/var/lib/regixtry/features/gitleaks/bin/active/gitleaks",
+		CacheDir:         "/var/lib/regixtry/features/gitleaks/gitleaks-cache",
+		UpdatedAt:        time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("UpsertFeatureRuntimeState(gitleaks) error = %v", err)
+	}
+
+	trivyRunner := &capturingScanRunner{result: ports.ScanResult{TrivyVersion: "0.57.1"}}
+	service.SetScanRunner(trivyRunner)
+	secretRunner := &capturingSecretScanRunner{result: ports.SecretScanResult{
+		GitleaksVersion: "8.27.0",
+		Findings:        []ports.SecretFinding{{RuleID: "aws-access-token", BlobDigest: "sha256:" + strings.Repeat("a", 64), Path: "config.json", StartLine: 1, EndLine: 1}},
+	}}
+	service.SetSecretScanRunner(secretRunner)
+
+	manual, err := service.QueueManualScan(context.Background(), "library/alpine", "latest")
+	if err != nil {
+		t.Fatalf("QueueManualScan() error = %v", err)
+	}
+	waitForScanCompletion(t, service, manual.ID)
+	waitForSecretScanRunnerCalls(t, secretRunner, 1)
+
+	secretRunner.mu.Lock()
+	targets := append([]ports.SecretScanTarget(nil), secretRunner.targets...)
+	settingsSeen := append([]ports.ScanSettings(nil), secretRunner.settings...)
+	secretRunner.mu.Unlock()
+	if len(targets) != 1 {
+		t.Fatalf("secret runner targets = %#v, want exactly one call alongside the Trivy leg", targets)
+	}
+	if targets[0].Repository != "library/alpine" || targets[0].Digest != manual.Digest {
+		t.Fatalf("secret target = %#v, want repository/digest matching the scan run", targets[0])
+	}
+	if len(targets[0].Blobs) == 0 {
+		t.Fatalf("secret target.Blobs = %#v, want manifest config+layer blobs", targets[0].Blobs)
+	}
+	if settingsSeen[0].BinaryPath != "/var/lib/regixtry/features/gitleaks/bin/active/gitleaks" {
+		t.Fatalf("secret settings = %#v, want managed gitleaks binary path", settingsSeen[0])
+	}
+
+	waitForSecretScanRunCompletion(t, service, "library/alpine")
+	runs, err := service.metadata.ListSecretScanRuns(context.Background(), "tenant-a", "library/alpine", 10)
+	if err != nil {
+		t.Fatalf("ListSecretScanRuns() error = %v", err)
+	}
+	if len(runs) != 1 || runs[0].Status != ports.SecretScanRunStatusCompleted {
+		t.Fatalf("secret scan runs = %#v, want exactly one completed run", runs)
+	}
+	detail, err := service.metadata.GetSecretScanRunDetail(context.Background(), "tenant-a", runs[0].ID)
+	if err != nil {
+		t.Fatalf("GetSecretScanRunDetail() error = %v", err)
+	}
+	if len(detail.Findings) != 1 || detail.Findings[0].RuleID != "aws-access-token" {
+		t.Fatalf("secret findings = %#v, want persisted redacted finding", detail.Findings)
+	}
+}
+
+// TestServiceGetSecretScanFindingsReturnsPersistedFindingsForImageAndNotFoundOtherwise
+// is the Phase 6 RED test backing the secret-findings-by-image endpoint
+// (tasks.md 6.1/6.2): findings must be attributable to one image
+// (repository@digest) and a repository with no secret scan run yet must
+// report not-found rather than an empty/misleading success.
+func TestServiceGetSecretScanFindingsReturnsPersistedFindingsForImageAndNotFoundOtherwise(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	if err := service.metadata.UpsertSecretScanRunDetail(context.Background(), "tenant-a", ports.SecretScanRunDetail{
+		Run: ports.SecretScanRun{
+			ID:              "secret-run-1",
+			Repository:      "library/alpine",
+			Digest:          "sha256:" + strings.Repeat("a", 64),
+			Status:          ports.SecretScanRunStatusCompleted,
+			Trigger:         ports.ScanTriggerManual,
+			GitleaksVersion: "8.27.0",
+			CreatedAt:       time.Now().UTC(),
+			UpdatedAt:       time.Now().UTC(),
+		},
+		Findings: []ports.SecretFinding{{RuleID: "aws-access-token", BlobDigest: "sha256:" + strings.Repeat("b", 64), Path: "config.json", StartLine: 3, EndLine: 3}},
+	}); err != nil {
+		t.Fatalf("UpsertSecretScanRunDetail() error = %v", err)
+	}
+
+	detail, err := service.GetSecretScanFindings(context.Background(), "library/alpine", "sha256:"+strings.Repeat("a", 64))
+	if err != nil {
+		t.Fatalf("GetSecretScanFindings() error = %v", err)
+	}
+	if len(detail.Findings) != 1 || detail.Findings[0].RuleID != "aws-access-token" {
+		t.Fatalf("detail.Findings = %#v, want the persisted redacted finding", detail.Findings)
+	}
+
+	if _, err := service.GetSecretScanFindings(context.Background(), "library/alpine", "sha256:"+strings.Repeat("c", 64)); !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("GetSecretScanFindings(unknown digest) error = %v, want not-found", err)
+	}
+	if _, err := service.GetSecretScanFindings(context.Background(), "library/other", "sha256:"+strings.Repeat("a", 64)); !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("GetSecretScanFindings(unknown repository) error = %v, want not-found", err)
+	}
+}
+
+func TestServiceExecuteScanRunSkipsSecretScanLegWithoutBlockingTrivyWhenGitleaksDisabledOrNotReady(t *testing.T) {
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	seedRepository(t, service, context.Background(), "library/alpine")
+	if err := service.metadata.UpsertScanSettings(context.Background(), "tenant-a", "trivy", ports.ScanSettings{
+		Enabled:              true,
+		Interval:             time.Hour,
+		Timeout:              time.Minute,
+		RegistryReachableURL: "https://registry.internal",
+		MaxConcurrency:       1,
+		UpdatedAt:            time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("UpsertScanSettings(trivy) error = %v", err)
+	}
+	seedManagedRuntimeState(t, service, "0.57.1")
+	// gitleaks intentionally left unconfigured (disabled/uninstalled by default).
+
+	trivyRunner := &capturingScanRunner{result: ports.ScanResult{TrivyVersion: "0.57.1"}}
+	service.SetScanRunner(trivyRunner)
+	secretRunner := &capturingSecretScanRunner{}
+	service.SetSecretScanRunner(secretRunner)
+
+	manual, err := service.QueueManualScan(context.Background(), "library/alpine", "latest")
+	if err != nil {
+		t.Fatalf("QueueManualScan() error = %v", err)
+	}
+	waitForScanCompletion(t, service, manual.ID)
+
+	trivyRun, err := service.metadata.GetScanRun(context.Background(), "tenant-a", manual.ID)
+	if err != nil {
+		t.Fatalf("GetScanRun() error = %v", err)
+	}
+	if trivyRun.Status != ports.ScanRunStatusCompleted {
+		t.Fatalf("trivy run status = %q, want completed regardless of gitleaks state", trivyRun.Status)
+	}
+
+	// Give the secret leg goroutine time to run and confirm it did nothing:
+	// an absent/disabled gitleaks feature must never fail or block the Trivy leg.
+	time.Sleep(50 * time.Millisecond)
+	secretRunner.mu.Lock()
+	calls := len(secretRunner.targets)
+	secretRunner.mu.Unlock()
+	if calls != 0 {
+		t.Fatalf("secret runner calls = %d, want 0 when gitleaks is not enabled/ready", calls)
+	}
+	runs, err := service.metadata.ListSecretScanRuns(context.Background(), "tenant-a", "library/alpine", 10)
+	if err != nil {
+		t.Fatalf("ListSecretScanRuns() error = %v", err)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("secret scan runs = %#v, want none persisted when gitleaks is not enabled/ready", runs)
+	}
+}
+
+// TestServicePublishManifestDoesNotTriggerSecretScan is the regression test
+// for spec.md "Reused Rescan Trigger, No Push-Time Path": secret scans MUST
+// only run through the existing manual/scheduled rescan orchestration
+// (executeScanRun), never as a direct consequence of PublishManifest. This
+// verifies the actual code path — PublishManifest never calls
+// executeScanRun, QueueManualScan, or RunScheduledScans — rather than
+// assuming it from the design doc.
+func TestServicePublishManifestDoesNotTriggerSecretScan(t *testing.T) {
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	if err := service.metadata.UpsertScanSettings(context.Background(), "tenant-a", "gitleaks", ports.ScanSettings{
+		Enabled:        true,
+		Interval:       time.Hour,
+		Timeout:        time.Minute,
+		MaxConcurrency: 1,
+		UpdatedAt:      time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("UpsertScanSettings(gitleaks) error = %v", err)
+	}
+	if err := service.metadata.UpsertFeatureRuntimeState(context.Background(), "tenant-a", "gitleaks", ports.FeatureRuntimeState{
+		Status:           ports.FeatureRuntimeStatusReady,
+		ActiveVersion:    "8.27.0",
+		ActiveBinaryPath: "/var/lib/regixtry/features/gitleaks/bin/active/gitleaks",
+		CacheDir:         "/var/lib/regixtry/features/gitleaks/gitleaks-cache",
+		UpdatedAt:        time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("UpsertFeatureRuntimeState(gitleaks) error = %v", err)
+	}
+	secretRunner := &capturingSecretScanRunner{}
+	service.SetSecretScanRunner(secretRunner)
+
+	// Only publish the manifest (the push path) — never call QueueManualScan
+	// or RunScheduledScans.
+	seedRepository(t, service, context.Background(), "library/pushed-only")
+
+	// Give any accidental async trigger time to run before asserting absence.
+	time.Sleep(50 * time.Millisecond)
+	secretRunner.mu.Lock()
+	calls := len(secretRunner.targets)
+	secretRunner.mu.Unlock()
+	if calls != 0 {
+		t.Fatalf("secret runner calls = %d, want 0: an image push MUST NOT trigger a secret scan directly", calls)
+	}
+	runs, err := service.metadata.ListSecretScanRuns(context.Background(), "tenant-a", "library/pushed-only", 10)
+	if err != nil {
+		t.Fatalf("ListSecretScanRuns() error = %v", err)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("secret scan runs = %#v, want none: push alone must not create a secret scan run", runs)
 	}
 }
 
@@ -681,6 +1118,45 @@ func TestServiceFailedScanDoesNotHidePublishedContent(t *testing.T) {
 	}
 }
 
+func TestServiceGetScanRunDetailPreservesDigestTruthAndDerivesReferenceFreshness(t *testing.T) {
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	seedRepository(t, service, context.Background(), "library/alpine")
+	resolved, err := service.ResolveManifest(context.Background(), "library/alpine", "latest")
+	if err != nil {
+		t.Fatalf("ResolveManifest(initial) error = %v", err)
+	}
+
+	now := time.Date(2026, time.August, 10, 12, 0, 0, 0, time.UTC)
+	if err := service.metadata.UpsertScanRunDetail(context.Background(), "tenant-a", ports.ScanRunDetail{
+		Run:         ports.ScanRun{ID: "run-1", Repository: "library/alpine", RequestedRef: "latest", Digest: resolved.Digest, Status: ports.ScanRunStatusCompleted, Trigger: ports.ScanTriggerManual, CreatedAt: now, UpdatedAt: now, Critical: 1, TrivyVersion: "0.58.1"},
+		Findings:    []ports.ScanRunFinding{{Severity: "CRITICAL", VulnerabilityID: "CVE-2026-0001", PackageName: "openssl", InstalledVersion: "3.0.0", FixedVersion: "3.0.1", Fixable: true}},
+		DBFreshness: ports.ScanRunDBFreshness{FreshnessState: ports.ScanRunDBFreshnessStateFresh},
+	}); err != nil {
+		t.Fatalf("UpsertScanRunDetail() error = %v", err)
+	}
+
+	publishRepositoryTag(t, service, context.Background(), "library/alpine", "latest", "layer-two")
+
+	detail, err := service.GetScanRunDetail(context.Background(), "run-1")
+	if err != nil {
+		t.Fatalf("GetScanRunDetail() error = %v", err)
+	}
+	if got, want := detail.Run.Digest, resolved.Digest; got != want {
+		t.Fatalf("detail.Run.Digest = %q, want %q", got, want)
+	}
+	if got, want := detail.ReferenceFreshness, ports.ScanReferenceFreshnessMoved; got != want {
+		t.Fatalf("ReferenceFreshness = %q, want %q", got, want)
+	}
+	if got, want := len(detail.Findings), 1; got != want {
+		t.Fatalf("len(detail.Findings) = %d, want %d", got, want)
+	}
+	if got, want := detail.Findings[0].VulnerabilityID, "CVE-2026-0001"; got != want {
+		t.Fatalf("finding vulnerability = %q, want %q", got, want)
+	}
+}
+
 func newTestService(t *testing.T, accessController ports.AccessController) (*Service, func()) {
 	t.Helper()
 
@@ -711,24 +1187,24 @@ func newTestService(t *testing.T, accessController ports.AccessController) (*Ser
 type allowAllAccessController struct{}
 
 type fakeFeatureRuntimeManager struct {
-	statusState   ports.TrivyRuntimeState
+	statusState   ports.FeatureRuntimeState
 	latestVersion string
 	latestErr     error
 }
 
-func (f fakeFeatureRuntimeManager) Install(context.Context, string, func(ports.FeatureRuntimeProgress)) (ports.TrivyRuntimeState, error) {
-	return ports.TrivyRuntimeState{}, nil
+func (f fakeFeatureRuntimeManager) Install(context.Context, string, func(ports.FeatureRuntimeProgress)) (ports.FeatureRuntimeState, error) {
+	return ports.FeatureRuntimeState{}, nil
 }
 
-func (f fakeFeatureRuntimeManager) Upgrade(context.Context, string, func(ports.FeatureRuntimeProgress)) (ports.TrivyRuntimeState, error) {
-	return ports.TrivyRuntimeState{}, nil
+func (f fakeFeatureRuntimeManager) Upgrade(context.Context, string, func(ports.FeatureRuntimeProgress)) (ports.FeatureRuntimeState, error) {
+	return ports.FeatureRuntimeState{}, nil
 }
 
-func (f fakeFeatureRuntimeManager) Rollback(context.Context) (ports.TrivyRuntimeState, error) {
-	return ports.TrivyRuntimeState{}, nil
+func (f fakeFeatureRuntimeManager) Rollback(context.Context) (ports.FeatureRuntimeState, error) {
+	return ports.FeatureRuntimeState{}, nil
 }
 
-func (f fakeFeatureRuntimeManager) Status(context.Context) (ports.TrivyRuntimeState, error) {
+func (f fakeFeatureRuntimeManager) Status(context.Context) (ports.FeatureRuntimeState, error) {
 	return f.statusState, nil
 }
 
@@ -776,6 +1252,22 @@ func stringPtr(value string) *string { return &value }
 
 func intPtr(value int) *int { return &value }
 
+func sectionIDs(sections []ports.FeatureSection) []string {
+	ids := make([]string, 0, len(sections))
+	for _, section := range sections {
+		ids = append(ids, section.ID)
+	}
+	return ids
+}
+
+func actionIDs(actions []ports.FeatureAction) []string {
+	ids := make([]string, 0, len(actions))
+	for _, action := range actions {
+		ids = append(ids, action.ID)
+	}
+	return ids
+}
+
 type capturingScanRunner struct {
 	mu       sync.Mutex
 	result   ports.ScanResult
@@ -789,6 +1281,54 @@ func (c *capturingScanRunner) Run(_ context.Context, imageRef string, settings p
 	c.targets = append(c.targets, imageRef)
 	c.settings = append(c.settings, settings)
 	return c.result, nil
+}
+
+type capturingSecretScanRunner struct {
+	mu       sync.Mutex
+	result   ports.SecretScanResult
+	err      error
+	settings []ports.ScanSettings
+	targets  []ports.SecretScanTarget
+}
+
+func (c *capturingSecretScanRunner) Run(_ context.Context, target ports.SecretScanTarget, settings ports.ScanSettings) (ports.SecretScanResult, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.targets = append(c.targets, target)
+	c.settings = append(c.settings, settings)
+	return c.result, c.err
+}
+
+func waitForSecretScanRunnerCalls(t *testing.T, runner *capturingSecretScanRunner, want int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		runner.mu.Lock()
+		count := len(runner.targets)
+		runner.mu.Unlock()
+		if count >= want {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("secret scan runner calls did not reach %d before deadline", want)
+}
+
+func waitForSecretScanRunCompletion(t *testing.T, service *Service, repository string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		runs, err := service.metadata.ListSecretScanRuns(context.Background(), "tenant-a", repository, 10)
+		if err == nil {
+			for _, run := range runs {
+				if run.Status == ports.SecretScanRunStatusCompleted || run.Status == ports.SecretScanRunStatusFailed {
+					return
+				}
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("secret scan run for %s did not reach a terminal status before deadline", repository)
 }
 
 func waitForScanCompletion(t *testing.T, service *Service, runID string) {
@@ -821,14 +1361,35 @@ func waitForRunnerTargets(t *testing.T, runner *capturingScanRunner, want int) {
 
 func seedManagedRuntimeState(t *testing.T, service *Service, version string) {
 	t.Helper()
-	if err := service.metadata.UpsertTrivyRuntimeState(context.Background(), "tenant-a", ports.TrivyRuntimeState{
-		Status:           ports.TrivyRuntimeStatusReady,
+	if err := service.metadata.UpsertFeatureRuntimeState(context.Background(), "tenant-a", "trivy", ports.FeatureRuntimeState{
+		Status:           ports.FeatureRuntimeStatusReady,
 		ActiveVersion:    version,
 		ActiveBinaryPath: "/var/lib/regixtry/features/trivy/bin/active/trivy",
 		CacheDir:         "/var/lib/regixtry/features/trivy/trivy-cache",
 		UpdatedAt:        time.Now().UTC(),
 	}); err != nil {
-		t.Fatalf("UpsertTrivyRuntimeState() error = %v", err)
+		t.Fatalf("UpsertFeatureRuntimeState() error = %v", err)
+	}
+}
+
+func publishRepositoryTag(t *testing.T, service *Service, ctx context.Context, repository string, tag string, layer string) {
+	t.Helper()
+
+	upload, err := service.BeginUpload(ctx, repository)
+	if err != nil {
+		t.Fatalf("BeginUpload(%q) error = %v", repository, err)
+	}
+	if _, err := service.AppendUpload(ctx, repository, upload.ID, strings.NewReader(layer)); err != nil {
+		t.Fatalf("AppendUpload(%q) error = %v", repository, err)
+	}
+	blobPayload := []byte(layer)
+	blob, err := service.CompleteUpload(ctx, repository, upload.ID, digestForTest(blobPayload), nil)
+	if err != nil {
+		t.Fatalf("CompleteUpload(%q) error = %v", repository, err)
+	}
+	manifestPayload := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{"mediaType":"application/vnd.oci.image.config.v1+json","digest":"` + blob.Digest + `","size":9},"layers":[{"mediaType":"application/vnd.oci.image.layer.v1.tar","digest":"` + blob.Digest + `","size":9}]}`)
+	if _, err := service.PublishManifest(ctx, repository, tag, "application/vnd.oci.image.manifest.v1+json", manifestPayload); err != nil {
+		t.Fatalf("PublishManifest(%q) error = %v", repository, err)
 	}
 }
 

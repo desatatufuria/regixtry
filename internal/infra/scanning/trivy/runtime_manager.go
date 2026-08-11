@@ -9,8 +9,11 @@ import (
 	"strings"
 	"time"
 
+	"regixtry/internal/infra/release"
 	"regixtry/internal/ports"
 )
+
+const trivyFeatureName = "trivy"
 
 type runtimeProber interface {
 	Probe(ctx context.Context, settings ports.ScanSettings) (ports.FeatureRuntime, error)
@@ -48,11 +51,11 @@ func NewRuntimeManager(cfg RuntimeManagerConfig) *RuntimeManager {
 	return &RuntimeManager{storageRoot: cfg.StorageRoot, store: cfg.Store, releaseClient: releaseClient, prober: prober, now: now}
 }
 
-func (m *RuntimeManager) Install(ctx context.Context, version string, progress func(ports.FeatureRuntimeProgress)) (ports.TrivyRuntimeState, error) {
+func (m *RuntimeManager) Install(ctx context.Context, version string, progress func(ports.FeatureRuntimeProgress)) (ports.FeatureRuntimeState, error) {
 	return m.activate(ctx, version, false, progress)
 }
 
-func (m *RuntimeManager) Upgrade(ctx context.Context, version string, progress func(ports.FeatureRuntimeProgress)) (ports.TrivyRuntimeState, error) {
+func (m *RuntimeManager) Upgrade(ctx context.Context, version string, progress func(ports.FeatureRuntimeProgress)) (ports.FeatureRuntimeState, error) {
 	return m.activate(ctx, version, true, progress)
 }
 
@@ -64,26 +67,26 @@ func (m *RuntimeManager) LatestVersion(ctx context.Context) (string, error) {
 	return strings.TrimSpace(asset.Version), nil
 }
 
-func (m *RuntimeManager) Rollback(ctx context.Context) (ports.TrivyRuntimeState, error) {
+func (m *RuntimeManager) Rollback(ctx context.Context) (ports.FeatureRuntimeState, error) {
 	current, err := m.currentState(ctx)
 	if err != nil {
-		return ports.TrivyRuntimeState{}, err
+		return ports.FeatureRuntimeState{}, err
 	}
 	if strings.TrimSpace(current.PreviousVersion) == "" {
-		return ports.TrivyRuntimeState{}, fmt.Errorf("rollback target is unavailable")
+		return ports.FeatureRuntimeState{}, fmt.Errorf("rollback target is unavailable")
 	}
 	rollbackVersion := current.PreviousVersion
 	previousVersion := current.ActiveVersion
 	if err := m.activateVersionLink(rollbackVersion); err != nil {
-		return ports.TrivyRuntimeState{}, err
+		return ports.FeatureRuntimeState{}, err
 	}
 	runtime, probeErr := m.probeActiveBinary(ctx)
 	if probeErr != nil {
 		_ = m.activateVersionLink(previousVersion)
-		return ports.TrivyRuntimeState{}, probeErr
+		return ports.FeatureRuntimeState{}, probeErr
 	}
-	state := ports.TrivyRuntimeState{
-		Status:            ports.TrivyRuntimeStatusReady,
+	state := ports.FeatureRuntimeState{
+		Status:            ports.FeatureRuntimeStatusReady,
 		ActiveVersion:     rollbackVersion,
 		PreviousVersion:   previousVersion,
 		ActiveBinaryPath:  m.activeBinaryPath(),
@@ -98,90 +101,90 @@ func (m *RuntimeManager) Rollback(ctx context.Context) (ports.TrivyRuntimeState,
 		state.ActiveVersion = runtime.Version
 		state.PreviousVersion = previousVersion
 	}
-	if err := m.store.UpsertTrivyRuntimeState(ctx, ports.DefaultTenant, state); err != nil {
-		return ports.TrivyRuntimeState{}, err
+	if err := m.store.UpsertFeatureRuntimeState(ctx, ports.DefaultTenant, trivyFeatureName, state); err != nil {
+		return ports.FeatureRuntimeState{}, err
 	}
 	return state, nil
 }
 
-func (m *RuntimeManager) Status(ctx context.Context) (ports.TrivyRuntimeState, error) {
+func (m *RuntimeManager) Status(ctx context.Context) (ports.FeatureRuntimeState, error) {
 	state, err := m.currentState(ctx)
 	if err != nil {
-		return ports.TrivyRuntimeState{}, err
+		return ports.FeatureRuntimeState{}, err
 	}
-	if state.Status == ports.TrivyRuntimeStatusReady || state.Status == ports.TrivyRuntimeStatusDegraded {
+	if state.Status == ports.FeatureRuntimeStatusReady || state.Status == ports.FeatureRuntimeStatusDegraded {
 		runtime, probeErr := m.probeActiveBinary(ctx)
 		now := m.now()
 		state.LastHealthCheckAt = &now
 		if probeErr != nil {
-			state.Status = ports.TrivyRuntimeStatusDegraded
+			state.Status = ports.FeatureRuntimeStatusDegraded
 			state.LastError = probeErr.Error()
 		} else {
-			state.Status = ports.TrivyRuntimeStatusReady
+			state.Status = ports.FeatureRuntimeStatusReady
 			state.LastError = ""
 			if strings.TrimSpace(runtime.Version) != "" {
 				state.ActiveVersion = runtime.Version
 			}
 		}
 		state.UpdatedAt = now
-		if err := m.store.UpsertTrivyRuntimeState(ctx, ports.DefaultTenant, state); err != nil {
-			return ports.TrivyRuntimeState{}, err
+		if err := m.store.UpsertFeatureRuntimeState(ctx, ports.DefaultTenant, trivyFeatureName, state); err != nil {
+			return ports.FeatureRuntimeState{}, err
 		}
 	}
 	return state, nil
 }
 
-func (m *RuntimeManager) activate(ctx context.Context, version string, requireCurrent bool, progress func(ports.FeatureRuntimeProgress)) (ports.TrivyRuntimeState, error) {
+func (m *RuntimeManager) activate(ctx context.Context, version string, requireCurrent bool, progress func(ports.FeatureRuntimeProgress)) (ports.FeatureRuntimeState, error) {
 	current, currentErr := m.currentState(ctx)
 	if requireCurrent && currentErr != nil {
-		return ports.TrivyRuntimeState{}, currentErr
+		return ports.FeatureRuntimeState{}, currentErr
 	}
 	emitFeatureRuntimeProgress(progress, "resolve", "Resolve release")
 	asset, err := m.releaseClient.ResolveRelease(ctx, version)
 	if err != nil {
-		return ports.TrivyRuntimeState{}, err
+		return ports.FeatureRuntimeState{}, err
 	}
 	if err := m.ensureLayout(); err != nil {
-		return ports.TrivyRuntimeState{}, err
+		return ports.FeatureRuntimeState{}, err
 	}
 	now := m.now()
-	installing := ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusInstalling, ActiveVersion: current.ActiveVersion, PreviousVersion: current.PreviousVersion, UpdatedAt: now, LastError: ""}
-	if err := m.store.UpsertTrivyRuntimeState(ctx, ports.DefaultTenant, installing); err != nil {
-		return ports.TrivyRuntimeState{}, err
+	installing := ports.FeatureRuntimeState{Status: ports.FeatureRuntimeStatusInstalling, ActiveVersion: current.ActiveVersion, PreviousVersion: current.PreviousVersion, UpdatedAt: now, LastError: ""}
+	if err := m.store.UpsertFeatureRuntimeState(ctx, ports.DefaultTenant, trivyFeatureName, installing); err != nil {
+		return ports.FeatureRuntimeState{}, err
 	}
 	emitFeatureRuntimeProgress(progress, "download", "Download archive")
 	archiveBody, err := m.releaseClient.DownloadReleaseAsset(ctx, asset.ArchiveURL)
 	if err != nil {
-		return ports.TrivyRuntimeState{}, err
+		return ports.FeatureRuntimeState{}, err
 	}
 	checksumsBody, err := m.releaseClient.DownloadChecksums(ctx, asset.ChecksumsURL)
 	if err != nil {
-		return ports.TrivyRuntimeState{}, err
+		return ports.FeatureRuntimeState{}, err
 	}
 	archivePath := filepath.Join(m.downloadsDir(), asset.ArchiveName)
 	if err := os.WriteFile(archivePath, archiveBody, 0o600); err != nil {
-		return ports.TrivyRuntimeState{}, err
+		return ports.FeatureRuntimeState{}, err
 	}
 	emitFeatureRuntimeProgress(progress, "verify", "Verify checksum")
-	if err := verifyArchiveChecksum(archivePath, asset.ArchiveName, checksumsBody); err != nil {
-		return ports.TrivyRuntimeState{}, err
+	if err := release.VerifyChecksum(archivePath, asset.ArchiveName, checksumsBody); err != nil {
+		return ports.FeatureRuntimeState{}, err
 	}
 	versionDir := m.versionDir(asset.Version)
 	if err := os.MkdirAll(versionDir, 0o755); err != nil {
-		return ports.TrivyRuntimeState{}, err
+		return ports.FeatureRuntimeState{}, err
 	}
 	emitFeatureRuntimeProgress(progress, "extract", "Extract binary")
-	binaryPath, err := extractTrivyBinary(ctx, archivePath, versionDir)
+	binaryPath, err := release.ExtractBinary(ctx, archivePath, versionDir, "trivy")
 	if err != nil {
-		return ports.TrivyRuntimeState{}, err
+		return ports.FeatureRuntimeState{}, err
 	}
 	receiptPath := m.receiptPath(asset.Version)
 	if err := m.writeReceipt(receiptPath, asset, current.ActiveVersion); err != nil {
-		return ports.TrivyRuntimeState{}, err
+		return ports.FeatureRuntimeState{}, err
 	}
 	emitFeatureRuntimeProgress(progress, "activate", "Activate runtime")
 	if err := m.activateVersionLink(asset.Version); err != nil {
-		return ports.TrivyRuntimeState{}, err
+		return ports.FeatureRuntimeState{}, err
 	}
 	emitFeatureRuntimeProgress(progress, "probe", "Probe runtime")
 	runtime, probeErr := m.prober.Probe(ctx, ports.ScanSettings{BinaryPath: binaryPath, CacheDir: m.cacheDir(), Timeout: 30 * time.Second, MaxConcurrency: 1})
@@ -189,11 +192,11 @@ func (m *RuntimeManager) activate(ctx context.Context, version string, requireCu
 		if strings.TrimSpace(current.ActiveVersion) != "" {
 			_ = m.activateVersionLink(current.ActiveVersion)
 		}
-		return ports.TrivyRuntimeState{}, probeErr
+		return ports.FeatureRuntimeState{}, probeErr
 	}
 	now = m.now()
-	state := ports.TrivyRuntimeState{
-		Status:            ports.TrivyRuntimeStatusReady,
+	state := ports.FeatureRuntimeState{
+		Status:            ports.FeatureRuntimeStatusReady,
 		ActiveVersion:     firstNonBlank(runtime.Version, asset.Version),
 		PreviousVersion:   strings.TrimSpace(current.ActiveVersion),
 		ActiveBinaryPath:  m.activeBinaryPath(),
@@ -204,8 +207,8 @@ func (m *RuntimeManager) activate(ctx context.Context, version string, requireCu
 		LastError:         "",
 		UpdatedAt:         now,
 	}
-	if err := m.store.UpsertTrivyRuntimeState(ctx, ports.DefaultTenant, state); err != nil {
-		return ports.TrivyRuntimeState{}, err
+	if err := m.store.UpsertFeatureRuntimeState(ctx, ports.DefaultTenant, trivyFeatureName, state); err != nil {
+		return ports.FeatureRuntimeState{}, err
 	}
 	emitFeatureRuntimeProgress(progress, "complete", "Runtime ready")
 	return state, nil
@@ -218,11 +221,11 @@ func emitFeatureRuntimeProgress(progress func(ports.FeatureRuntimeProgress), sta
 	progress(ports.FeatureRuntimeProgress{Stage: strings.TrimSpace(stage), Detail: strings.TrimSpace(detail)})
 }
 
-func (m *RuntimeManager) currentState(ctx context.Context) (ports.TrivyRuntimeState, error) {
+func (m *RuntimeManager) currentState(ctx context.Context) (ports.FeatureRuntimeState, error) {
 	if m == nil || m.store == nil {
-		return ports.TrivyRuntimeState{}, fmt.Errorf("trivy runtime manager is not configured")
+		return ports.FeatureRuntimeState{}, fmt.Errorf("trivy runtime manager is not configured")
 	}
-	return m.store.GetTrivyRuntimeState(ctx, ports.DefaultTenant)
+	return m.store.GetFeatureRuntimeState(ctx, ports.DefaultTenant, trivyFeatureName)
 }
 
 func (m *RuntimeManager) ensureLayout() error {

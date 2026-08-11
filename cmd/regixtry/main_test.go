@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -31,6 +32,8 @@ import (
 	"regixtry/internal/infra/storage/fsblob"
 	"regixtry/internal/ports"
 )
+
+var featureRuntimeFactorySwapMu sync.Mutex
 
 func TestDefaultBuildValue(t *testing.T) {
 	t.Parallel()
@@ -1093,7 +1096,7 @@ func TestRunSetupImportsLegacyTrivyFlagsIntoFeatureState(t *testing.T) {
 		t.Fatalf("metadata.New() error = %v", err)
 	}
 	defer store.Close()
-	settings, err := store.GetScanSettings(context.Background(), ports.DefaultTenant)
+	settings, err := store.GetScanSettings(context.Background(), ports.DefaultTenant, "trivy")
 	if err != nil {
 		t.Fatalf("GetScanSettings() error = %v", err)
 	}
@@ -1123,8 +1126,8 @@ func TestRunFeatureCommandsManageBuiltInTrivyState(t *testing.T) {
 		t.Fatalf("metadata.New() error = %v", err)
 	}
 	defer store.Close()
-	stub := &stubFeatureRuntimeManager{statusState: ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusUninstalled}}
-	restoreRuntimeManager := swapFeatureRuntimeManagerFactory(t, func(appregixtry.FeatureRuntimeManagerConfig) appregixtry.FeatureRuntimeManager {
+	stub := &stubFeatureRuntimeManager{statusState: ports.FeatureRuntimeState{Status: ports.FeatureRuntimeStatusUninstalled}}
+	restoreRuntimeManager := swapFeatureRuntimeManagerFactory(t, func(_ string, _ appregixtry.FeatureRuntimeManagerConfig) appregixtry.FeatureRuntimeManager {
 		return stub
 	})
 	defer restoreRuntimeManager()
@@ -1176,7 +1179,7 @@ func TestRunFeatureCommandsManageBuiltInTrivyState(t *testing.T) {
 	if err := runWithIO(context.Background(), []string{"feature", "disable", "trivy", "-storage-root", storageRoot, "-db", databasePath}, strings.NewReader(""), stdout, io.Discard); err != nil {
 		t.Fatalf("runWithIO(feature disable) error = %v", err)
 	}
-	settings, err := store.GetScanSettings(context.Background(), ports.DefaultTenant)
+	settings, err := store.GetScanSettings(context.Background(), ports.DefaultTenant, "trivy")
 	if err != nil {
 		t.Fatalf("GetScanSettings() error = %v", err)
 	}
@@ -1194,15 +1197,15 @@ func TestFeatureRuntimeLifecycleCommandsUseManagedRuntimeActions(t *testing.T) {
 	}
 
 	stub := &stubFeatureRuntimeManager{
-		installState:    ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusReady, ActiveVersion: "0.57.1", PreviousVersion: "", ActiveBinaryPath: filepath.Join(storageRoot, "features", "trivy", "bin", "active", "trivy"), CacheDir: filepath.Join(storageRoot, "features", "trivy", "trivy-cache"), ReceiptPath: filepath.Join(storageRoot, "features", "trivy", "receipts", "0.57.1.json")},
-		upgradeState:    ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusReady, ActiveVersion: "0.58.0", PreviousVersion: "0.57.1", ActiveBinaryPath: filepath.Join(storageRoot, "features", "trivy", "bin", "active", "trivy"), CacheDir: filepath.Join(storageRoot, "features", "trivy", "trivy-cache"), ReceiptPath: filepath.Join(storageRoot, "features", "trivy", "receipts", "0.58.0.json")},
-		rollbackState:   ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusReady, ActiveVersion: "0.57.1", PreviousVersion: "0.58.0", ActiveBinaryPath: filepath.Join(storageRoot, "features", "trivy", "bin", "active", "trivy"), CacheDir: filepath.Join(storageRoot, "features", "trivy", "trivy-cache"), ReceiptPath: filepath.Join(storageRoot, "features", "trivy", "receipts", "0.57.1.json")},
-		statusState:     ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusMigrationRequired, MigrationHint: `legacy binary_path "/tmp/README.sh" requires managed reinstall and will never be executed`},
+		installState:    ports.FeatureRuntimeState{Status: ports.FeatureRuntimeStatusReady, ActiveVersion: "0.57.1", PreviousVersion: "", ActiveBinaryPath: filepath.Join(storageRoot, "features", "trivy", "bin", "active", "trivy"), CacheDir: filepath.Join(storageRoot, "features", "trivy", "trivy-cache"), ReceiptPath: filepath.Join(storageRoot, "features", "trivy", "receipts", "0.57.1.json")},
+		upgradeState:    ports.FeatureRuntimeState{Status: ports.FeatureRuntimeStatusReady, ActiveVersion: "0.58.0", PreviousVersion: "0.57.1", ActiveBinaryPath: filepath.Join(storageRoot, "features", "trivy", "bin", "active", "trivy"), CacheDir: filepath.Join(storageRoot, "features", "trivy", "trivy-cache"), ReceiptPath: filepath.Join(storageRoot, "features", "trivy", "receipts", "0.58.0.json")},
+		rollbackState:   ports.FeatureRuntimeState{Status: ports.FeatureRuntimeStatusReady, ActiveVersion: "0.57.1", PreviousVersion: "0.58.0", ActiveBinaryPath: filepath.Join(storageRoot, "features", "trivy", "bin", "active", "trivy"), CacheDir: filepath.Join(storageRoot, "features", "trivy", "trivy-cache"), ReceiptPath: filepath.Join(storageRoot, "features", "trivy", "receipts", "0.57.1.json")},
+		statusState:     ports.FeatureRuntimeState{Status: ports.FeatureRuntimeStatusMigrationRequired, MigrationHint: `legacy binary_path "/tmp/README.sh" requires managed reinstall and will never be executed`},
 		latestVersion:   "0.58.0",
 		installProgress: []ports.FeatureRuntimeProgress{{Stage: "resolve", Detail: "Resolve release"}, {Stage: "download", Detail: "Download archive"}, {Stage: "complete", Detail: "Runtime ready"}},
 		upgradeProgress: []ports.FeatureRuntimeProgress{{Stage: "resolve", Detail: "Resolve release"}, {Stage: "download", Detail: "Download archive"}, {Stage: "complete", Detail: "Runtime ready"}},
 	}
-	restoreRuntimeManager := swapFeatureRuntimeManagerFactory(t, func(appregixtry.FeatureRuntimeManagerConfig) appregixtry.FeatureRuntimeManager {
+	restoreRuntimeManager := swapFeatureRuntimeManagerFactory(t, func(_ string, _ appregixtry.FeatureRuntimeManagerConfig) appregixtry.FeatureRuntimeManager {
 		return stub
 	})
 	defer restoreRuntimeManager()
@@ -1266,7 +1269,7 @@ func TestFeatureRuntimeLifecycleCommandStopsOnTruthfulFailure(t *testing.T) {
 		err:             errors.New("download failed"),
 		installProgress: []ports.FeatureRuntimeProgress{{Stage: "resolve", Detail: "Resolve release"}, {Stage: "download", Detail: "Download archive"}},
 	}
-	restoreRuntimeManager := swapFeatureRuntimeManagerFactory(t, func(appregixtry.FeatureRuntimeManagerConfig) appregixtry.FeatureRuntimeManager {
+	restoreRuntimeManager := swapFeatureRuntimeManagerFactory(t, func(_ string, _ appregixtry.FeatureRuntimeManagerConfig) appregixtry.FeatureRuntimeManager {
 		return stub
 	})
 	defer restoreRuntimeManager()
@@ -1301,12 +1304,12 @@ func TestFeatureRuntimeLifecycleCommandsAutoDetectManagedRuntimePaths(t *testing
 	}
 	defer store.Close()
 	stub := &stubFeatureRuntimeManager{
-		statusState:   ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusMigrationRequired, MigrationHint: `legacy binary_path "/tmp/README.sh" requires managed reinstall and will never be executed`},
-		installState:  ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusReady, ActiveVersion: "0.57.1"},
-		upgradeState:  ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusReady, ActiveVersion: "0.58.0"},
-		rollbackState: ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusReady, ActiveVersion: "0.57.1"},
+		statusState:   ports.FeatureRuntimeState{Status: ports.FeatureRuntimeStatusMigrationRequired, MigrationHint: `legacy binary_path "/tmp/README.sh" requires managed reinstall and will never be executed`},
+		installState:  ports.FeatureRuntimeState{Status: ports.FeatureRuntimeStatusReady, ActiveVersion: "0.57.1"},
+		upgradeState:  ports.FeatureRuntimeState{Status: ports.FeatureRuntimeStatusReady, ActiveVersion: "0.58.0"},
+		rollbackState: ports.FeatureRuntimeState{Status: ports.FeatureRuntimeStatusReady, ActiveVersion: "0.57.1"},
 	}
-	restoreRuntimeManager := swapFeatureRuntimeManagerFactory(t, func(appregixtry.FeatureRuntimeManagerConfig) appregixtry.FeatureRuntimeManager {
+	restoreRuntimeManager := swapFeatureRuntimeManagerFactory(t, func(_ string, _ appregixtry.FeatureRuntimeManagerConfig) appregixtry.FeatureRuntimeManager {
 		return stub
 	})
 	defer restoreRuntimeManager()
@@ -1354,6 +1357,25 @@ func TestRunFeatureRejectsUnknownBuiltInName(t *testing.T) {
 	err := runWithIO(context.Background(), []string{"feature", "show", "future-plugin"}, strings.NewReader(""), stdout, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "unsupported feature") {
 		t.Fatalf("runWithIO(feature show unknown) error = %v, want unsupported feature rejection", err)
+	}
+	if _, statErr := os.Stat(filepath.Join("data", "metadata.db")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("data/metadata.db stat error = %v, want not exists", statErr)
+	}
+}
+
+func TestRunFeatureRejectsUnknownFeatureIdentityWithoutDefaultingToTrivyOrGitleaks(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	stdout := &bytes.Buffer{}
+	err := runWithIO(context.Background(), []string{"feature", "show", "bogus"}, strings.NewReader(""), stdout, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "unsupported feature") {
+		t.Fatalf("runWithIO(feature show bogus) error = %v, want unsupported feature rejection", err)
+	}
+	if strings.Contains(err.Error(), "trivy") || strings.Contains(err.Error(), "gitleaks") {
+		t.Fatalf("error = %v, want rejection that never silently names a known feature as a fallback", err)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, want no feature output for an unrecognized identity", stdout.String())
 	}
 	if _, statErr := os.Stat(filepath.Join("data", "metadata.db")); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("data/metadata.db stat error = %v, want not exists", statErr)
@@ -2519,14 +2541,16 @@ func swapBootstrapRunner(t *testing.T, runner bootstrapRunner) func() {
 	}
 }
 
-func swapFeatureRuntimeManagerFactory(t *testing.T, factory func(appregixtry.FeatureRuntimeManagerConfig) appregixtry.FeatureRuntimeManager) func() {
+func swapFeatureRuntimeManagerFactory(t *testing.T, factory func(string, appregixtry.FeatureRuntimeManagerConfig) appregixtry.FeatureRuntimeManager) func() {
 	t.Helper()
+	featureRuntimeFactorySwapMu.Lock()
 
 	previous := newFeatureRuntimeManager
 	newFeatureRuntimeManager = factory
 
 	return func() {
 		newFeatureRuntimeManager = previous
+		featureRuntimeFactorySwapMu.Unlock()
 	}
 }
 
@@ -2631,10 +2655,10 @@ type stubBootstrapRunner struct {
 }
 
 type stubFeatureRuntimeManager struct {
-	installState    ports.TrivyRuntimeState
-	upgradeState    ports.TrivyRuntimeState
-	rollbackState   ports.TrivyRuntimeState
-	statusState     ports.TrivyRuntimeState
+	installState    ports.FeatureRuntimeState
+	upgradeState    ports.FeatureRuntimeState
+	rollbackState   ports.FeatureRuntimeState
+	statusState     ports.FeatureRuntimeState
 	latestVersion   string
 	err             error
 	installProgress []ports.FeatureRuntimeProgress
@@ -2645,7 +2669,7 @@ type stubFeatureRuntimeManager struct {
 	statusCalls     int
 }
 
-func (s *stubFeatureRuntimeManager) Install(_ context.Context, _ string, progress func(ports.FeatureRuntimeProgress)) (ports.TrivyRuntimeState, error) {
+func (s *stubFeatureRuntimeManager) Install(_ context.Context, _ string, progress func(ports.FeatureRuntimeProgress)) (ports.FeatureRuntimeState, error) {
 	s.installCalls++
 	for _, stage := range s.installProgress {
 		if progress != nil {
@@ -2655,7 +2679,7 @@ func (s *stubFeatureRuntimeManager) Install(_ context.Context, _ string, progres
 	return s.installState, s.err
 }
 
-func (s *stubFeatureRuntimeManager) Upgrade(_ context.Context, _ string, progress func(ports.FeatureRuntimeProgress)) (ports.TrivyRuntimeState, error) {
+func (s *stubFeatureRuntimeManager) Upgrade(_ context.Context, _ string, progress func(ports.FeatureRuntimeProgress)) (ports.FeatureRuntimeState, error) {
 	s.upgradeCalls++
 	for _, stage := range s.upgradeProgress {
 		if progress != nil {
@@ -2665,12 +2689,12 @@ func (s *stubFeatureRuntimeManager) Upgrade(_ context.Context, _ string, progres
 	return s.upgradeState, s.err
 }
 
-func (s *stubFeatureRuntimeManager) Rollback(context.Context) (ports.TrivyRuntimeState, error) {
+func (s *stubFeatureRuntimeManager) Rollback(context.Context) (ports.FeatureRuntimeState, error) {
 	s.rollbackCalls++
 	return s.rollbackState, s.err
 }
 
-func (s *stubFeatureRuntimeManager) Status(context.Context) (ports.TrivyRuntimeState, error) {
+func (s *stubFeatureRuntimeManager) Status(context.Context) (ports.FeatureRuntimeState, error) {
 	s.statusCalls++
 	return s.statusState, s.err
 }

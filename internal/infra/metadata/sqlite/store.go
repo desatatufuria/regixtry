@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -432,12 +433,12 @@ func (s *Store) ListManifestBlobs(ctx context.Context, tenant string, repository
 	return descriptors, rows.Err()
 }
 
-func (s *Store) GetScanSettings(ctx context.Context, tenant string) (ports.ScanSettings, error) {
+func (s *Store) GetScanSettings(ctx context.Context, tenant string, feature string) (ports.ScanSettings, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT enabled, schedule_enabled, interval, timeout, cache_dir, binary_path, service_url, registry_reachable_url, auth_token, tls_ca_cert_path, tls_insecure_skip_verify, max_concurrency, updated_at
 		FROM scan_settings
-		WHERE tenant = ?
-	`, tenant)
+		WHERE tenant = ? AND feature = ?
+	`, tenant, feature)
 	var (
 		enabled               bool
 		scheduleEnabled       bool
@@ -474,11 +475,11 @@ func (s *Store) GetScanSettings(ctx context.Context, tenant string) (ports.ScanS
 	return ports.ScanSettings{Enabled: enabled, ScheduleEnabled: scheduleEnabled, Interval: interval, Timeout: timeout, ServiceURL: serviceURL, RegistryReachableURL: registryReachableURL, AuthToken: authToken, TLSCACertPath: tlsCACertPath, TLSInsecureSkipVerify: tlsInsecureSkipVerify, LegacyCacheDir: cacheDir, LegacyBinaryPath: binaryPath, MaxConcurrency: maxConcurrency, UpdatedAt: updatedAt}, nil
 }
 
-func (s *Store) UpsertScanSettings(ctx context.Context, tenant string, settings ports.ScanSettings) error {
+func (s *Store) UpsertScanSettings(ctx context.Context, tenant string, feature string, settings ports.ScanSettings) error {
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO scan_settings (tenant, enabled, schedule_enabled, interval, timeout, cache_dir, binary_path, service_url, registry_reachable_url, auth_token, tls_ca_cert_path, tls_insecure_skip_verify, max_concurrency, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(tenant) DO UPDATE SET
+		INSERT INTO scan_settings (tenant, feature, enabled, schedule_enabled, interval, timeout, cache_dir, binary_path, service_url, registry_reachable_url, auth_token, tls_ca_cert_path, tls_insecure_skip_verify, max_concurrency, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(tenant, feature) DO UPDATE SET
 			enabled = excluded.enabled,
 			schedule_enabled = excluded.schedule_enabled,
 			interval = excluded.interval,
@@ -492,37 +493,37 @@ func (s *Store) UpsertScanSettings(ctx context.Context, tenant string, settings 
 			tls_insecure_skip_verify = excluded.tls_insecure_skip_verify,
 			max_concurrency = excluded.max_concurrency,
 			updated_at = excluded.updated_at
-	`, tenant, settings.Enabled, settings.ScheduleEnabled, settings.Interval.String(), settings.Timeout.String(), settings.LegacyCacheDir, settings.LegacyBinaryPath, settings.ServiceURL, settings.RegistryReachableURL, settings.AuthToken, settings.TLSCACertPath, settings.TLSInsecureSkipVerify, settings.MaxConcurrency, settings.UpdatedAt.UTC().Format(time.RFC3339Nano))
+	`, tenant, feature, settings.Enabled, settings.ScheduleEnabled, settings.Interval.String(), settings.Timeout.String(), settings.LegacyCacheDir, settings.LegacyBinaryPath, settings.ServiceURL, settings.RegistryReachableURL, settings.AuthToken, settings.TLSCACertPath, settings.TLSInsecureSkipVerify, settings.MaxConcurrency, settings.UpdatedAt.UTC().Format(time.RFC3339Nano))
 	return err
 }
 
-func (s *Store) GetTrivyRuntimeState(ctx context.Context, tenant string) (ports.TrivyRuntimeState, error) {
+func (s *Store) GetFeatureRuntimeState(ctx context.Context, tenant string, feature string) (ports.FeatureRuntimeState, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT status, active_version, previous_version, active_binary_path, cache_dir, receipt_path, migration_hint, last_verified_at, last_health_check_at, last_db_updated_at, last_error, updated_at
-		FROM trivy_runtime_state
-		WHERE tenant = ?
-	`, tenant)
-	state, err := scanTrivyRuntimeStateRow(row)
+		FROM feature_runtime_state
+		WHERE tenant = ? AND feature = ?
+	`, tenant, feature)
+	state, err := scanFeatureRuntimeStateRow(row)
 	if err == nil {
 		return state, nil
 	}
 	if err != sql.ErrNoRows {
-		return ports.TrivyRuntimeState{}, err
+		return ports.FeatureRuntimeState{}, err
 	}
-	settings, settingsErr := s.GetScanSettings(ctx, tenant)
+	settings, settingsErr := s.GetScanSettings(ctx, tenant, feature)
 	if settingsErr != nil {
 		if domain.IsCode(settingsErr, domain.ErrorCodeNotFound) {
-			return ports.TrivyRuntimeState{}, domain.NewNotFoundError("trivy_runtime_state", tenant)
+			return ports.FeatureRuntimeState{}, domain.NewNotFoundError("feature_runtime_state", tenant)
 		}
-		return ports.TrivyRuntimeState{}, settingsErr
+		return ports.FeatureRuntimeState{}, settingsErr
 	}
-	if legacyState, ok := deriveLegacyTrivyRuntimeState(settings); ok {
+	if legacyState, ok := deriveLegacyFeatureRuntimeState(settings); ok {
 		return legacyState, nil
 	}
-	return ports.TrivyRuntimeState{}, domain.NewNotFoundError("trivy_runtime_state", tenant)
+	return ports.FeatureRuntimeState{}, domain.NewNotFoundError("feature_runtime_state", tenant)
 }
 
-func (s *Store) UpsertTrivyRuntimeState(ctx context.Context, tenant string, state ports.TrivyRuntimeState) error {
+func (s *Store) UpsertFeatureRuntimeState(ctx context.Context, tenant string, feature string, state ports.FeatureRuntimeState) error {
 	var (
 		lastVerifiedAt any
 		lastHealthAt   any
@@ -541,9 +542,9 @@ func (s *Store) UpsertTrivyRuntimeState(ctx context.Context, tenant string, stat
 		state.UpdatedAt = time.Now().UTC()
 	}
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO trivy_runtime_state (tenant, status, active_version, previous_version, active_binary_path, cache_dir, receipt_path, migration_hint, last_verified_at, last_health_check_at, last_db_updated_at, last_error, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(tenant) DO UPDATE SET
+		INSERT INTO feature_runtime_state (tenant, feature, status, active_version, previous_version, active_binary_path, cache_dir, receipt_path, migration_hint, last_verified_at, last_health_check_at, last_db_updated_at, last_error, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(tenant, feature) DO UPDATE SET
 			status = excluded.status,
 			active_version = excluded.active_version,
 			previous_version = excluded.previous_version,
@@ -556,7 +557,7 @@ func (s *Store) UpsertTrivyRuntimeState(ctx context.Context, tenant string, stat
 			last_db_updated_at = excluded.last_db_updated_at,
 			last_error = excluded.last_error,
 			updated_at = excluded.updated_at
-	`, tenant, string(state.Status), state.ActiveVersion, state.PreviousVersion, state.ActiveBinaryPath, state.CacheDir, state.ReceiptPath, state.MigrationHint, lastVerifiedAt, lastHealthAt, lastDBUpdated, state.LastError, state.UpdatedAt.UTC().Format(time.RFC3339Nano))
+	`, tenant, feature, string(state.Status), state.ActiveVersion, state.PreviousVersion, state.ActiveBinaryPath, state.CacheDir, state.ReceiptPath, state.MigrationHint, lastVerifiedAt, lastHealthAt, lastDBUpdated, state.LastError, state.UpdatedAt.UTC().Format(time.RFC3339Nano))
 	return err
 }
 
@@ -578,6 +579,23 @@ func (s *Store) GetScanRun(ctx context.Context, tenant string, runID string) (po
 		WHERE tenant = ? AND id = ?
 	`, tenant, runID)
 	return scanRunRow(row)
+}
+
+func (s *Store) GetScanRunDetail(ctx context.Context, tenant string, runID string) (ports.ScanRunDetail, error) {
+	run, err := s.GetScanRun(ctx, tenant, runID)
+	if err != nil {
+		return ports.ScanRunDetail{}, err
+	}
+	findings, err := s.listScanRunFindings(ctx, runID)
+	if err != nil {
+		return ports.ScanRunDetail{}, err
+	}
+	freshness, err := s.getScanRunDBFreshness(ctx, runID)
+	if err != nil {
+		return ports.ScanRunDetail{}, err
+	}
+	run.HasFixable = scanRunFindingsHaveFixable(findings)
+	return ports.ScanRunDetail{Run: run, Findings: findings, DBFreshness: freshness}, nil
 }
 
 func (s *Store) UpsertScanRun(ctx context.Context, tenant string, run ports.ScanRun) error {
@@ -618,10 +636,198 @@ func (s *Store) UpsertScanRun(ctx context.Context, tenant string, run ports.Scan
 	return err
 }
 
+func (s *Store) UpsertScanRunDetail(ctx context.Context, tenant string, detail ports.ScanRunDetail) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	if err = upsertScanRunTx(ctx, tx, tenant, detail.Run); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM scan_run_findings WHERE run_id = ?`, detail.Run.ID); err != nil {
+		return err
+	}
+	for index, finding := range detail.Findings {
+		var publishedAt any
+		if finding.PublishedAt != nil {
+			publishedAt = finding.PublishedAt.UTC().Format(time.RFC3339Nano)
+		}
+		var modifiedAt any
+		if finding.ModifiedAt != nil {
+			modifiedAt = finding.ModifiedAt.UTC().Format(time.RFC3339Nano)
+		}
+		if _, err = tx.ExecContext(ctx, `
+			INSERT INTO scan_run_findings (run_id, position, target, class, type, severity, vulnerability_id, package_name, installed_version, fixed_version, title, primary_url, fixable, status, data_source, data_source_url, published_at, modified_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, detail.Run.ID, index, finding.Target, finding.Class, finding.Type, finding.Severity, finding.VulnerabilityID, finding.PackageName, finding.InstalledVersion, finding.FixedVersion, finding.Title, finding.PrimaryURL, finding.Fixable, finding.Status, finding.DataSource, finding.DataSourceURL, publishedAt, modifiedAt); err != nil {
+			return err
+		}
+	}
+	if hasDBFreshness(detail.DBFreshness) {
+		var reportCreatedAt any
+		if detail.DBFreshness.ReportCreatedAt != nil {
+			reportCreatedAt = detail.DBFreshness.ReportCreatedAt.UTC().Format(time.RFC3339Nano)
+		}
+		var dbUpdatedAt any
+		if detail.DBFreshness.DBUpdatedAt != nil {
+			dbUpdatedAt = detail.DBFreshness.DBUpdatedAt.UTC().Format(time.RFC3339Nano)
+		}
+		var dbDownloadedAt any
+		if detail.DBFreshness.DBDownloadedAt != nil {
+			dbDownloadedAt = detail.DBFreshness.DBDownloadedAt.UTC().Format(time.RFC3339Nano)
+		}
+		var dbNextUpdateAt any
+		if detail.DBFreshness.DBNextUpdateAt != nil {
+			dbNextUpdateAt = detail.DBFreshness.DBNextUpdateAt.UTC().Format(time.RFC3339Nano)
+		}
+		if _, err = tx.ExecContext(ctx, `
+			INSERT INTO scan_run_db_freshness (run_id, report_schema_version, report_created_at, trivy_version, db_version, db_updated_at, db_downloaded_at, db_next_update_at, freshness_state)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(run_id) DO UPDATE SET
+				report_schema_version = excluded.report_schema_version,
+				report_created_at = excluded.report_created_at,
+				trivy_version = excluded.trivy_version,
+				db_version = excluded.db_version,
+				db_updated_at = excluded.db_updated_at,
+				db_downloaded_at = excluded.db_downloaded_at,
+				db_next_update_at = excluded.db_next_update_at,
+				freshness_state = excluded.freshness_state
+		`, detail.Run.ID, detail.DBFreshness.ReportSchemaVersion, reportCreatedAt, detail.DBFreshness.TrivyVersion, detail.DBFreshness.DBVersion, dbUpdatedAt, dbDownloadedAt, dbNextUpdateAt, detail.DBFreshness.FreshnessState); err != nil {
+			return err
+		}
+	} else if _, err = tx.ExecContext(ctx, `DELETE FROM scan_run_db_freshness WHERE run_id = ?`, detail.Run.ID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *Store) ListScanRuns(ctx context.Context, tenant string, repository string, limit int) ([]ports.ScanRun, error) {
 	query := `
 		SELECT id, repository, requested_ref, digest, status, trigger, started_at, finished_at, created_at, updated_at, critical, high, medium, low, trivy_version, db_updated_at, error
 		FROM scan_runs
+		WHERE tenant = ?
+	`
+	args := []any{tenant}
+	if strings.TrimSpace(repository) != "" {
+		query += ` AND repository = ?`
+		args = append(args, repository)
+	}
+	query += ` ORDER BY CASE WHEN critical > 0 THEN 4 WHEN high > 0 THEN 3 WHEN medium > 0 THEN 2 WHEN low > 0 THEN 1 ELSE 0 END DESC,
+		EXISTS(SELECT 1 FROM scan_run_findings findings WHERE findings.run_id = scan_runs.id AND findings.fixable = 1) DESC,
+		created_at DESC`
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT %d", limit)
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	runs := make([]ports.ScanRun, 0)
+	for rows.Next() {
+		run, err := scanRunRows(rows)
+		if err != nil {
+			return nil, err
+		}
+		run.HasFixable, err = s.scanRunHasFixable(ctx, run.ID)
+		if err != nil {
+			return nil, err
+		}
+		runs = append(runs, run)
+	}
+	return runs, rows.Err()
+}
+
+func (s *Store) GetActiveSecretScanRunByDigest(ctx context.Context, tenant string, repository string, digest string) (ports.SecretScanRun, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, repository, digest, status, trigger, started_at, finished_at, created_at, updated_at, gitleaks_version, error
+		FROM secret_scan_runs
+		WHERE tenant = ? AND repository = ? AND digest = ? AND status IN (?, ?)
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, tenant, repository, digest, ports.SecretScanRunStatusQueued, ports.SecretScanRunStatusRunning)
+	return secretScanRunRow(row)
+}
+
+func (s *Store) GetSecretScanRun(ctx context.Context, tenant string, runID string) (ports.SecretScanRun, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, repository, digest, status, trigger, started_at, finished_at, created_at, updated_at, gitleaks_version, error
+		FROM secret_scan_runs
+		WHERE tenant = ? AND id = ?
+	`, tenant, runID)
+	return secretScanRunRow(row)
+}
+
+func (s *Store) GetSecretScanRunDetail(ctx context.Context, tenant string, runID string) (ports.SecretScanRunDetail, error) {
+	run, err := s.GetSecretScanRun(ctx, tenant, runID)
+	if err != nil {
+		return ports.SecretScanRunDetail{}, err
+	}
+	findings, err := s.listSecretScanFindings(ctx, runID)
+	if err != nil {
+		return ports.SecretScanRunDetail{}, err
+	}
+	run.FindingCount = len(findings)
+	return ports.SecretScanRunDetail{Run: run, Findings: findings}, nil
+}
+
+func (s *Store) UpsertSecretScanRun(ctx context.Context, tenant string, run ports.SecretScanRun) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	if err = upsertSecretScanRunTx(ctx, tx, tenant, run); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) UpsertSecretScanRunDetail(ctx context.Context, tenant string, detail ports.SecretScanRunDetail) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	if err = upsertSecretScanRunTx(ctx, tx, tenant, detail.Run); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM secret_scan_findings WHERE run_id = ?`, detail.Run.ID); err != nil {
+		return err
+	}
+	for index, finding := range detail.Findings {
+		tagsJSON, marshalErr := json.Marshal(finding.Tags)
+		if marshalErr != nil {
+			err = marshalErr
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, `
+			INSERT INTO secret_scan_findings (run_id, position, rule_id, description, blob_digest, path, start_line, end_line, tags)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, detail.Run.ID, index, finding.RuleID, finding.Description, finding.BlobDigest, finding.Path, finding.StartLine, finding.EndLine, string(tagsJSON)); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) ListSecretScanRuns(ctx context.Context, tenant string, repository string, limit int) ([]ports.SecretScanRun, error) {
+	query := `
+		SELECT id, repository, digest, status, trigger, started_at, finished_at, created_at, updated_at, gitleaks_version, error
+		FROM secret_scan_runs
 		WHERE tenant = ?
 	`
 	args := []any{tenant}
@@ -638,12 +844,17 @@ func (s *Store) ListScanRuns(ctx context.Context, tenant string, repository stri
 		return nil, err
 	}
 	defer rows.Close()
-	runs := make([]ports.ScanRun, 0)
+	runs := make([]ports.SecretScanRun, 0)
 	for rows.Next() {
-		run, err := scanRunRows(rows)
+		run, err := secretScanRunRows(rows)
 		if err != nil {
 			return nil, err
 		}
+		findingCount, err := s.secretScanRunFindingCount(ctx, run.ID)
+		if err != nil {
+			return nil, err
+		}
+		run.FindingCount = findingCount
 		runs = append(runs, run)
 	}
 	return runs, rows.Err()
@@ -783,7 +994,8 @@ func (s *Store) init() error {
 			location TEXT NOT NULL
 		);`,
 		`CREATE TABLE IF NOT EXISTS scan_settings (
-			tenant TEXT PRIMARY KEY,
+			tenant TEXT NOT NULL,
+			feature TEXT NOT NULL DEFAULT 'trivy',
 			enabled INTEGER NOT NULL,
 			schedule_enabled INTEGER NOT NULL,
 			interval TEXT NOT NULL,
@@ -796,13 +1008,15 @@ func (s *Store) init() error {
 			tls_ca_cert_path TEXT NOT NULL DEFAULT '',
 			tls_insecure_skip_verify INTEGER NOT NULL DEFAULT 0,
 			max_concurrency INTEGER NOT NULL,
-			updated_at TEXT NOT NULL
+			updated_at TEXT NOT NULL,
+			PRIMARY KEY(tenant, feature)
 		);`,
 		`ALTER TABLE scan_settings ADD COLUMN service_url TEXT NOT NULL DEFAULT '';`,
 		`ALTER TABLE scan_settings ADD COLUMN registry_reachable_url TEXT NOT NULL DEFAULT '';`,
 		`ALTER TABLE scan_settings ADD COLUMN auth_token TEXT NOT NULL DEFAULT '';`,
 		`ALTER TABLE scan_settings ADD COLUMN tls_ca_cert_path TEXT NOT NULL DEFAULT '';`,
 		`ALTER TABLE scan_settings ADD COLUMN tls_insecure_skip_verify INTEGER NOT NULL DEFAULT 0;`,
+		`ALTER TABLE scan_settings ADD COLUMN feature TEXT NOT NULL DEFAULT 'trivy';`,
 		`CREATE TABLE IF NOT EXISTS scan_runs (
 			id TEXT PRIMARY KEY,
 			tenant TEXT NOT NULL,
@@ -822,6 +1036,40 @@ func (s *Store) init() error {
 			trivy_version TEXT NOT NULL,
 			db_updated_at TEXT,
 			error TEXT NOT NULL
+		);`,
+		`CREATE TABLE IF NOT EXISTS scan_run_findings (
+			run_id TEXT NOT NULL,
+			position INTEGER NOT NULL,
+			target TEXT NOT NULL DEFAULT '',
+			class TEXT NOT NULL DEFAULT '',
+			type TEXT NOT NULL DEFAULT '',
+			severity TEXT NOT NULL DEFAULT '',
+			vulnerability_id TEXT NOT NULL DEFAULT '',
+			package_name TEXT NOT NULL DEFAULT '',
+			installed_version TEXT NOT NULL DEFAULT '',
+			fixed_version TEXT NOT NULL DEFAULT '',
+			title TEXT NOT NULL DEFAULT '',
+			primary_url TEXT NOT NULL DEFAULT '',
+			fixable INTEGER NOT NULL DEFAULT 0,
+			status TEXT NOT NULL DEFAULT '',
+			data_source TEXT NOT NULL DEFAULT '',
+			data_source_url TEXT NOT NULL DEFAULT '',
+			published_at TEXT,
+			modified_at TEXT,
+			PRIMARY KEY(run_id, position),
+			FOREIGN KEY(run_id) REFERENCES scan_runs(id) ON DELETE CASCADE
+		);`,
+		`CREATE TABLE IF NOT EXISTS scan_run_db_freshness (
+			run_id TEXT PRIMARY KEY,
+			report_schema_version INTEGER NOT NULL DEFAULT 0,
+			report_created_at TEXT,
+			trivy_version TEXT NOT NULL DEFAULT '',
+			db_version INTEGER NOT NULL DEFAULT 0,
+			db_updated_at TEXT,
+			db_downloaded_at TEXT,
+			db_next_update_at TEXT,
+			freshness_state TEXT NOT NULL DEFAULT '',
+			FOREIGN KEY(run_id) REFERENCES scan_runs(id) ON DELETE CASCADE
 		);`,
 		`CREATE TABLE IF NOT EXISTS scan_scheduler_state (
 			tenant TEXT PRIMARY KEY,
@@ -845,6 +1093,52 @@ func (s *Store) init() error {
 			last_error TEXT NOT NULL DEFAULT '',
 			updated_at TEXT NOT NULL
 		);`,
+		// trivy_runtime_state is superseded by feature_runtime_state (tenant, feature) below and is
+		// intentionally left in place, unread: no production data and no migration shim in scope.
+		`CREATE TABLE IF NOT EXISTS feature_runtime_state (
+			tenant TEXT NOT NULL,
+			feature TEXT NOT NULL,
+			status TEXT NOT NULL,
+			active_version TEXT NOT NULL DEFAULT '',
+			previous_version TEXT NOT NULL DEFAULT '',
+			active_binary_path TEXT NOT NULL DEFAULT '',
+			cache_dir TEXT NOT NULL DEFAULT '',
+			receipt_path TEXT NOT NULL DEFAULT '',
+			migration_hint TEXT NOT NULL DEFAULT '',
+			last_verified_at TEXT,
+			last_health_check_at TEXT,
+			last_db_updated_at TEXT,
+			last_error TEXT NOT NULL DEFAULT '',
+			updated_at TEXT NOT NULL,
+			PRIMARY KEY(tenant, feature)
+		);`,
+		`CREATE TABLE IF NOT EXISTS secret_scan_runs (
+			id TEXT PRIMARY KEY,
+			tenant TEXT NOT NULL,
+			repository TEXT NOT NULL,
+			digest TEXT NOT NULL,
+			status TEXT NOT NULL,
+			trigger TEXT NOT NULL,
+			started_at TEXT,
+			finished_at TEXT,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			gitleaks_version TEXT NOT NULL DEFAULT '',
+			error TEXT NOT NULL DEFAULT ''
+		);`,
+		`CREATE TABLE IF NOT EXISTS secret_scan_findings (
+			run_id TEXT NOT NULL,
+			position INTEGER NOT NULL,
+			rule_id TEXT NOT NULL DEFAULT '',
+			description TEXT NOT NULL DEFAULT '',
+			blob_digest TEXT NOT NULL DEFAULT '',
+			path TEXT NOT NULL DEFAULT '',
+			start_line INTEGER NOT NULL DEFAULT 0,
+			end_line INTEGER NOT NULL DEFAULT 0,
+			tags TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY(run_id, position),
+			FOREIGN KEY(run_id) REFERENCES secret_scan_runs(id) ON DELETE CASCADE
+		);`,
 	}
 
 	for _, statement := range statements {
@@ -860,12 +1154,12 @@ func (s *Store) init() error {
 	return nil
 }
 
-func deriveLegacyTrivyRuntimeState(settings ports.ScanSettings) (ports.TrivyRuntimeState, bool) {
+func deriveLegacyFeatureRuntimeState(settings ports.ScanSettings) (ports.FeatureRuntimeState, bool) {
 	legacyBinary := strings.TrimSpace(settings.LegacyBinaryPath)
 	legacyCache := strings.TrimSpace(settings.LegacyCacheDir)
 	legacyService := strings.TrimSpace(settings.ServiceURL)
 	if legacyBinary == "" && legacyCache == "" && legacyService == "" {
-		return ports.TrivyRuntimeState{}, false
+		return ports.FeatureRuntimeState{}, false
 	}
 	hintParts := make([]string, 0, 3)
 	if legacyBinary != "" {
@@ -877,14 +1171,14 @@ func deriveLegacyTrivyRuntimeState(settings ports.ScanSettings) (ports.TrivyRunt
 	if legacyService != "" {
 		hintParts = append(hintParts, fmt.Sprintf("legacy service_url %q is superseded by the managed runtime", legacyService))
 	}
-	return ports.TrivyRuntimeState{
-		Status:        ports.TrivyRuntimeStatusMigrationRequired,
+	return ports.FeatureRuntimeState{
+		Status:        ports.FeatureRuntimeStatusMigrationRequired,
 		MigrationHint: strings.Join(hintParts, "; "),
 		UpdatedAt:     settings.UpdatedAt,
 	}, true
 }
 
-func scanTrivyRuntimeStateRow(row scanRunScanner) (ports.TrivyRuntimeState, error) {
+func scanFeatureRuntimeStateRow(row scanRunScanner) (ports.FeatureRuntimeState, error) {
 	var (
 		statusRaw        string
 		activeVersion    string
@@ -900,14 +1194,14 @@ func scanTrivyRuntimeStateRow(row scanRunScanner) (ports.TrivyRuntimeState, erro
 		updatedAtRaw     string
 	)
 	if err := row.Scan(&statusRaw, &activeVersion, &previousVersion, &activeBinaryPath, &cacheDir, &receiptPath, &migrationHint, &lastVerifiedRaw, &lastHealthRaw, &lastDBUpdatedRaw, &lastError, &updatedAtRaw); err != nil {
-		return ports.TrivyRuntimeState{}, err
+		return ports.FeatureRuntimeState{}, err
 	}
 	updatedAt, err := time.Parse(time.RFC3339Nano, updatedAtRaw)
 	if err != nil {
-		return ports.TrivyRuntimeState{}, err
+		return ports.FeatureRuntimeState{}, err
 	}
-	state := ports.TrivyRuntimeState{
-		Status:           ports.TrivyRuntimeStatus(statusRaw),
+	state := ports.FeatureRuntimeState{
+		Status:           ports.FeatureRuntimeStatus(statusRaw),
 		ActiveVersion:    activeVersion,
 		PreviousVersion:  previousVersion,
 		ActiveBinaryPath: activeBinaryPath,
@@ -918,13 +1212,13 @@ func scanTrivyRuntimeStateRow(row scanRunScanner) (ports.TrivyRuntimeState, erro
 		UpdatedAt:        updatedAt,
 	}
 	if state.LastVerifiedAt, err = parseOptionalTime(lastVerifiedRaw); err != nil {
-		return ports.TrivyRuntimeState{}, err
+		return ports.FeatureRuntimeState{}, err
 	}
 	if state.LastHealthCheckAt, err = parseOptionalTime(lastHealthRaw); err != nil {
-		return ports.TrivyRuntimeState{}, err
+		return ports.FeatureRuntimeState{}, err
 	}
 	if state.LastDBUpdatedAt, err = parseOptionalTime(lastDBUpdatedRaw); err != nil {
-		return ports.TrivyRuntimeState{}, err
+		return ports.FeatureRuntimeState{}, err
 	}
 	return state, nil
 }
@@ -976,6 +1270,256 @@ func scanRunRow(row scanRunScanner) (ports.ScanRun, error) {
 
 func scanRunRows(rows *sql.Rows) (ports.ScanRun, error) {
 	return scanRunFromScanner(rows)
+}
+
+func listScanRunFindings(ctx context.Context, db queryer, runID string) ([]ports.ScanRunFinding, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT target, class, type, severity, vulnerability_id, package_name, installed_version, fixed_version, title, primary_url, fixable, status, data_source, data_source_url, published_at, modified_at
+		FROM scan_run_findings
+		WHERE run_id = ?
+		ORDER BY CASE WHEN severity = 'CRITICAL' THEN 4 WHEN severity = 'HIGH' THEN 3 WHEN severity = 'MEDIUM' THEN 2 WHEN severity = 'LOW' THEN 1 ELSE 0 END DESC,
+			fixable DESC,
+			position ASC
+	`, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	findings := make([]ports.ScanRunFinding, 0)
+	for rows.Next() {
+		finding, scanErr := scanRunFindingRow(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		findings = append(findings, finding)
+	}
+	return findings, rows.Err()
+}
+
+func (s *Store) listScanRunFindings(ctx context.Context, runID string) ([]ports.ScanRunFinding, error) {
+	return listScanRunFindings(ctx, s.db, runID)
+}
+
+func (s *Store) getScanRunDBFreshness(ctx context.Context, runID string) (ports.ScanRunDBFreshness, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT report_schema_version, report_created_at, trivy_version, db_version, db_updated_at, db_downloaded_at, db_next_update_at, freshness_state FROM scan_run_db_freshness WHERE run_id = ?`, runID)
+	var freshness ports.ScanRunDBFreshness
+	var reportCreatedAt sql.NullString
+	var dbUpdatedAt sql.NullString
+	var dbDownloadedAt sql.NullString
+	var dbNextUpdateAt sql.NullString
+	if err := row.Scan(&freshness.ReportSchemaVersion, &reportCreatedAt, &freshness.TrivyVersion, &freshness.DBVersion, &dbUpdatedAt, &dbDownloadedAt, &dbNextUpdateAt, &freshness.FreshnessState); err != nil {
+		if err == sql.ErrNoRows {
+			return ports.ScanRunDBFreshness{FreshnessState: ports.ScanRunDBFreshnessStateUnknown}, nil
+		}
+		return ports.ScanRunDBFreshness{}, err
+	}
+	var err error
+	if freshness.ReportCreatedAt, err = parseOptionalTime(reportCreatedAt); err != nil {
+		return ports.ScanRunDBFreshness{}, err
+	}
+	if freshness.DBUpdatedAt, err = parseOptionalTime(dbUpdatedAt); err != nil {
+		return ports.ScanRunDBFreshness{}, err
+	}
+	if freshness.DBDownloadedAt, err = parseOptionalTime(dbDownloadedAt); err != nil {
+		return ports.ScanRunDBFreshness{}, err
+	}
+	if freshness.DBNextUpdateAt, err = parseOptionalTime(dbNextUpdateAt); err != nil {
+		return ports.ScanRunDBFreshness{}, err
+	}
+	if strings.TrimSpace(freshness.FreshnessState) == "" {
+		freshness.FreshnessState = ports.ScanRunDBFreshnessStateUnknown
+	}
+	return freshness, nil
+}
+
+type queryer interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+func scanRunFindingRow(scanner scanRunScanner) (ports.ScanRunFinding, error) {
+	var finding ports.ScanRunFinding
+	var publishedAt sql.NullString
+	var modifiedAt sql.NullString
+	if err := scanner.Scan(&finding.Target, &finding.Class, &finding.Type, &finding.Severity, &finding.VulnerabilityID, &finding.PackageName, &finding.InstalledVersion, &finding.FixedVersion, &finding.Title, &finding.PrimaryURL, &finding.Fixable, &finding.Status, &finding.DataSource, &finding.DataSourceURL, &publishedAt, &modifiedAt); err != nil {
+		return ports.ScanRunFinding{}, err
+	}
+	var err error
+	if finding.PublishedAt, err = parseOptionalTime(publishedAt); err != nil {
+		return ports.ScanRunFinding{}, err
+	}
+	if finding.ModifiedAt, err = parseOptionalTime(modifiedAt); err != nil {
+		return ports.ScanRunFinding{}, err
+	}
+	return finding, nil
+}
+
+func (s *Store) scanRunHasFixable(ctx context.Context, runID string) (bool, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM scan_run_findings WHERE run_id = ? AND fixable = 1)`, runID)
+	var hasFixable bool
+	if err := row.Scan(&hasFixable); err != nil {
+		return false, err
+	}
+	return hasFixable, nil
+}
+
+func scanRunFindingsHaveFixable(findings []ports.ScanRunFinding) bool {
+	for _, finding := range findings {
+		if finding.Fixable {
+			return true
+		}
+	}
+	return false
+}
+
+func hasDBFreshness(freshness ports.ScanRunDBFreshness) bool {
+	return freshness.ReportSchemaVersion > 0 || freshness.ReportCreatedAt != nil || strings.TrimSpace(freshness.TrivyVersion) != "" || freshness.DBVersion > 0 || freshness.DBUpdatedAt != nil || freshness.DBDownloadedAt != nil || freshness.DBNextUpdateAt != nil || strings.TrimSpace(freshness.FreshnessState) != ""
+}
+
+func upsertScanRunTx(ctx context.Context, tx *sql.Tx, tenant string, run ports.ScanRun) error {
+	if run.CreatedAt.IsZero() {
+		run.CreatedAt = time.Now().UTC()
+	}
+	if run.UpdatedAt.IsZero() {
+		run.UpdatedAt = run.CreatedAt
+	}
+	var startedAt any
+	if run.StartedAt != nil {
+		startedAt = run.StartedAt.UTC().Format(time.RFC3339Nano)
+	}
+	var finishedAt any
+	if run.FinishedAt != nil {
+		finishedAt = run.FinishedAt.UTC().Format(time.RFC3339Nano)
+	}
+	var dbUpdatedAt any
+	if run.DBUpdatedAt != nil {
+		dbUpdatedAt = run.DBUpdatedAt.UTC().Format(time.RFC3339Nano)
+	}
+	_, err := tx.ExecContext(ctx, `
+		INSERT INTO scan_runs (id, tenant, repository, requested_ref, digest, status, trigger, started_at, finished_at, created_at, updated_at, critical, high, medium, low, trivy_version, db_updated_at, error)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			status = excluded.status,
+			started_at = excluded.started_at,
+			finished_at = excluded.finished_at,
+			updated_at = excluded.updated_at,
+			critical = excluded.critical,
+			high = excluded.high,
+			medium = excluded.medium,
+			low = excluded.low,
+			trivy_version = excluded.trivy_version,
+			db_updated_at = excluded.db_updated_at,
+			error = excluded.error
+	`, run.ID, tenant, run.Repository, run.RequestedRef, run.Digest, run.Status, run.Trigger, startedAt, finishedAt, run.CreatedAt.UTC().Format(time.RFC3339Nano), run.UpdatedAt.UTC().Format(time.RFC3339Nano), run.Critical, run.High, run.Medium, run.Low, run.TrivyVersion, dbUpdatedAt, run.Error)
+	return err
+}
+
+func secretScanRunRow(row scanRunScanner) (ports.SecretScanRun, error) {
+	run, err := secretScanRunFromScanner(row)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return ports.SecretScanRun{}, domain.NewNotFoundError("secret_scan_run", "")
+		}
+		return ports.SecretScanRun{}, err
+	}
+	return run, nil
+}
+
+func secretScanRunRows(rows *sql.Rows) (ports.SecretScanRun, error) {
+	return secretScanRunFromScanner(rows)
+}
+
+func secretScanRunFromScanner(scanner scanRunScanner) (ports.SecretScanRun, error) {
+	var run ports.SecretScanRun
+	var startedAt sql.NullString
+	var finishedAt sql.NullString
+	var createdAtRaw string
+	var updatedAtRaw string
+	if err := scanner.Scan(&run.ID, &run.Repository, &run.Digest, &run.Status, &run.Trigger, &startedAt, &finishedAt, &createdAtRaw, &updatedAtRaw, &run.GitleaksVersion, &run.Error); err != nil {
+		return ports.SecretScanRun{}, err
+	}
+	createdAt, err := time.Parse(time.RFC3339Nano, createdAtRaw)
+	if err != nil {
+		return ports.SecretScanRun{}, err
+	}
+	updatedAt, err := time.Parse(time.RFC3339Nano, updatedAtRaw)
+	if err != nil {
+		return ports.SecretScanRun{}, err
+	}
+	run.CreatedAt = createdAt
+	run.UpdatedAt = updatedAt
+	if run.StartedAt, err = parseOptionalTime(startedAt); err != nil {
+		return ports.SecretScanRun{}, err
+	}
+	if run.FinishedAt, err = parseOptionalTime(finishedAt); err != nil {
+		return ports.SecretScanRun{}, err
+	}
+	return run, nil
+}
+
+func upsertSecretScanRunTx(ctx context.Context, tx *sql.Tx, tenant string, run ports.SecretScanRun) error {
+	if run.CreatedAt.IsZero() {
+		run.CreatedAt = time.Now().UTC()
+	}
+	if run.UpdatedAt.IsZero() {
+		run.UpdatedAt = run.CreatedAt
+	}
+	var startedAt any
+	if run.StartedAt != nil {
+		startedAt = run.StartedAt.UTC().Format(time.RFC3339Nano)
+	}
+	var finishedAt any
+	if run.FinishedAt != nil {
+		finishedAt = run.FinishedAt.UTC().Format(time.RFC3339Nano)
+	}
+	_, err := tx.ExecContext(ctx, `
+		INSERT INTO secret_scan_runs (id, tenant, repository, digest, status, trigger, started_at, finished_at, created_at, updated_at, gitleaks_version, error)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			status = excluded.status,
+			started_at = excluded.started_at,
+			finished_at = excluded.finished_at,
+			updated_at = excluded.updated_at,
+			gitleaks_version = excluded.gitleaks_version,
+			error = excluded.error
+	`, run.ID, tenant, run.Repository, run.Digest, run.Status, run.Trigger, startedAt, finishedAt, run.CreatedAt.UTC().Format(time.RFC3339Nano), run.UpdatedAt.UTC().Format(time.RFC3339Nano), run.GitleaksVersion, run.Error)
+	return err
+}
+
+func (s *Store) listSecretScanFindings(ctx context.Context, runID string) ([]ports.SecretFinding, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT rule_id, description, blob_digest, path, start_line, end_line, tags
+		FROM secret_scan_findings
+		WHERE run_id = ?
+		ORDER BY position ASC
+	`, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	findings := make([]ports.SecretFinding, 0)
+	for rows.Next() {
+		var finding ports.SecretFinding
+		var tagsJSON string
+		if err := rows.Scan(&finding.RuleID, &finding.Description, &finding.BlobDigest, &finding.Path, &finding.StartLine, &finding.EndLine, &tagsJSON); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(tagsJSON) != "" {
+			if err := json.Unmarshal([]byte(tagsJSON), &finding.Tags); err != nil {
+				return nil, err
+			}
+		}
+		findings = append(findings, finding)
+	}
+	return findings, rows.Err()
+}
+
+func (s *Store) secretScanRunFindingCount(ctx context.Context, runID string) (int, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM secret_scan_findings WHERE run_id = ?`, runID)
+	var count int
+	if err := row.Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 func scanRunFromScanner(scanner scanRunScanner) (ports.ScanRun, error) {

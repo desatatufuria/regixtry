@@ -38,7 +38,7 @@ func TestRuntimeManagerInstallStagesActivationAndRetainsRollbackTarget(t *testin
 	if err != nil {
 		t.Fatalf("Install() error = %v", err)
 	}
-	if installed.Status != ports.TrivyRuntimeStatusReady || installed.ActiveVersion != "0.57.1" {
+	if installed.Status != ports.FeatureRuntimeStatusReady || installed.ActiveVersion != "0.57.1" {
 		t.Fatalf("installed = %#v, want ready active version", installed)
 	}
 	if installed.ActiveBinaryPath == "" || installed.CacheDir == "" || installed.ReceiptPath == "" {
@@ -86,9 +86,9 @@ func TestRuntimeManagerRestoresPreviousRuntimeWhenActivationProbeFails(t *testin
 		t.Fatalf("Upgrade() error = %v, want probe failure", err)
 	}
 
-	state, err := store.GetTrivyRuntimeState(context.Background(), ports.DefaultTenant)
+	state, err := store.GetFeatureRuntimeState(context.Background(), ports.DefaultTenant, "trivy")
 	if err != nil {
-		t.Fatalf("GetTrivyRuntimeState() error = %v", err)
+		t.Fatalf("GetFeatureRuntimeState() error = %v", err)
 	}
 	if state.ActiveVersion != "0.57.1" {
 		t.Fatalf("state = %#v, want previous version restored after failed activation", state)

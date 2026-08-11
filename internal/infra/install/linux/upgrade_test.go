@@ -308,7 +308,7 @@ func TestBootstrapperUpgradeImportsLegacyTrivySettingsWhenFeatureStateMissing(t 
 		t.Fatalf("metadata.New() error = %v", err)
 	}
 	defer store.Close()
-	settings, err := store.GetScanSettings(context.Background(), ports.DefaultTenant)
+	settings, err := store.GetScanSettings(context.Background(), ports.DefaultTenant, "trivy")
 	if err != nil {
 		t.Fatalf("GetScanSettings() error = %v", err)
 	}
@@ -334,7 +334,7 @@ func TestBootstrapperUpgradeKeepsExistingFeatureStateWhenLegacyInputsDiffer(t *t
 		MaxConcurrency:       1,
 		UpdatedAt:            time.Now().UTC(),
 	}
-	if err := store.UpsertScanSettings(context.Background(), ports.DefaultTenant, existing); err != nil {
+	if err := store.UpsertScanSettings(context.Background(), ports.DefaultTenant, "trivy", existing); err != nil {
 		t.Fatalf("UpsertScanSettings() error = %v", err)
 	}
 	if err := os.WriteFile(plan.EnvPath, []byte(strings.Join([]string{
@@ -370,7 +370,7 @@ func TestBootstrapperUpgradeKeepsExistingFeatureStateWhenLegacyInputsDiffer(t *t
 		t.Fatalf("Upgrade() error = %v", err)
 	}
 
-	settings, err := store.GetScanSettings(context.Background(), ports.DefaultTenant)
+	settings, err := store.GetScanSettings(context.Background(), ports.DefaultTenant, "trivy")
 	if err != nil {
 		t.Fatalf("GetScanSettings() error = %v", err)
 	}

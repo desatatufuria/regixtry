@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -162,11 +163,11 @@ func TestStorePersistsDefaultDisabledScanSettings(t *testing.T) {
 		TLSInsecureSkipVerify: true,
 		MaxConcurrency:        1,
 	}
-	if err := store.UpsertScanSettings(context.Background(), "tenant-a", settings); err != nil {
+	if err := store.UpsertScanSettings(context.Background(), "tenant-a", "trivy", settings); err != nil {
 		t.Fatalf("UpsertScanSettings() error = %v", err)
 	}
 
-	stored, err := store.GetScanSettings(context.Background(), "tenant-a")
+	stored, err := store.GetScanSettings(context.Background(), "tenant-a", "trivy")
 	if err != nil {
 		t.Fatalf("GetScanSettings() error = %v", err)
 	}
@@ -192,7 +193,7 @@ func TestStoreBridgesLegacyBinaryColumnsWhenServiceFieldsAreMissing(t *testing.T
 		t.Fatalf("insert legacy row error = %v", err)
 	}
 
-	stored, err := store.GetScanSettings(context.Background(), "tenant-a")
+	stored, err := store.GetScanSettings(context.Background(), "tenant-a", "trivy")
 	if err != nil {
 		t.Fatalf("GetScanSettings() error = %v", err)
 	}
@@ -247,8 +248,8 @@ func TestStorePersistsScanRunsAndSchedulerStateAcrossReopen(t *testing.T) {
 	if len(storedRuns) != 2 {
 		t.Fatalf("len(storedRuns) = %d, want 2", len(storedRuns))
 	}
-	if storedRuns[0].Status != ports.ScanRunStatusFailed || storedRuns[1].Status != ports.ScanRunStatusCompleted {
-		t.Fatalf("storedRuns = %#v, want failed then completed ordering", storedRuns)
+	if storedRuns[0].Status != ports.ScanRunStatusCompleted || storedRuns[1].Status != ports.ScanRunStatusFailed {
+		t.Fatalf("storedRuns = %#v, want severity-first ordering before failed summaries", storedRuns)
 	}
 
 	storedState, err := reopened.GetScanSchedulerState(context.Background(), "tenant-a")
@@ -260,7 +261,7 @@ func TestStorePersistsScanRunsAndSchedulerStateAcrossReopen(t *testing.T) {
 	}
 }
 
-func TestStorePersistsTrivyRuntimeStateAcrossReopenAndDerivesLegacyMigrationState(t *testing.T) {
+func TestStorePersistsFeatureRuntimeStateAcrossReopenAndDerivesLegacyMigrationState(t *testing.T) {
 	t.Parallel()
 
 	databasePath := filepath.Join(t.TempDir(), "registry.db")
@@ -272,8 +273,8 @@ func TestStorePersistsTrivyRuntimeStateAcrossReopenAndDerivesLegacyMigrationStat
 	verifiedAt := time.Now().UTC().Add(-2 * time.Minute)
 	healthAt := verifiedAt.Add(time.Minute)
 	dbUpdatedAt := healthAt.Add(-30 * time.Second)
-	state := ports.TrivyRuntimeState{
-		Status:            ports.TrivyRuntimeStatusReady,
+	state := ports.FeatureRuntimeState{
+		Status:            ports.FeatureRuntimeStatusReady,
 		ActiveVersion:     "0.57.1",
 		PreviousVersion:   "0.56.2",
 		ActiveBinaryPath:  "/var/lib/regixtry/features/trivy/bin/active/trivy",
@@ -284,8 +285,8 @@ func TestStorePersistsTrivyRuntimeStateAcrossReopenAndDerivesLegacyMigrationStat
 		LastDBUpdatedAt:   &dbUpdatedAt,
 		UpdatedAt:         healthAt,
 	}
-	if err := store.UpsertTrivyRuntimeState(context.Background(), "tenant-a", state); err != nil {
-		t.Fatalf("UpsertTrivyRuntimeState() error = %v", err)
+	if err := store.UpsertFeatureRuntimeState(context.Background(), "tenant-a", "trivy", state); err != nil {
+		t.Fatalf("UpsertFeatureRuntimeState() error = %v", err)
 	}
 	if err := store.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
@@ -297,9 +298,9 @@ func TestStorePersistsTrivyRuntimeStateAcrossReopenAndDerivesLegacyMigrationStat
 	}
 	defer reopened.Close()
 
-	stored, err := reopened.GetTrivyRuntimeState(context.Background(), "tenant-a")
+	stored, err := reopened.GetFeatureRuntimeState(context.Background(), "tenant-a", "trivy")
 	if err != nil {
-		t.Fatalf("GetTrivyRuntimeState() error = %v", err)
+		t.Fatalf("GetFeatureRuntimeState() error = %v", err)
 	}
 	if stored.Status != state.Status || stored.ActiveVersion != state.ActiveVersion || stored.PreviousVersion != state.PreviousVersion {
 		t.Fatalf("stored = %#v, want persisted runtime identity %#v", stored, state)
@@ -321,11 +322,11 @@ func TestStorePersistsTrivyRuntimeStateAcrossReopenAndDerivesLegacyMigrationStat
 		t.Fatalf("insert legacy scan settings error = %v", err)
 	}
 
-	legacyState, err := legacyStore.GetTrivyRuntimeState(context.Background(), "tenant-b")
+	legacyState, err := legacyStore.GetFeatureRuntimeState(context.Background(), "tenant-b", "trivy")
 	if err != nil {
-		t.Fatalf("GetTrivyRuntimeState(legacy) error = %v", err)
+		t.Fatalf("GetFeatureRuntimeState(legacy) error = %v", err)
 	}
-	if legacyState.Status != ports.TrivyRuntimeStatusMigrationRequired {
+	if legacyState.Status != ports.FeatureRuntimeStatusMigrationRequired {
 		t.Fatalf("legacyState.Status = %q, want migration-required", legacyState.Status)
 	}
 	if legacyState.ActiveBinaryPath != "" {
@@ -333,6 +334,172 @@ func TestStorePersistsTrivyRuntimeStateAcrossReopenAndDerivesLegacyMigrationStat
 	}
 	if !strings.Contains(legacyState.MigrationHint, "/tmp/README.sh") {
 		t.Fatalf("legacyState.MigrationHint = %q, want legacy binary evidence", legacyState.MigrationHint)
+	}
+}
+
+func TestStoreFeatureRuntimeStateIsolatesEachFeaturesOwnRow(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	trivyState := ports.FeatureRuntimeState{
+		Status:           ports.FeatureRuntimeStatusReady,
+		ActiveVersion:    "0.57.1",
+		ActiveBinaryPath: "/var/lib/regixtry/features/trivy/bin/active/trivy",
+		UpdatedAt:        time.Now().UTC(),
+	}
+	if err := store.UpsertFeatureRuntimeState(context.Background(), "tenant-a", "trivy", trivyState); err != nil {
+		t.Fatalf("UpsertFeatureRuntimeState(trivy) error = %v", err)
+	}
+
+	gitleaksState := ports.FeatureRuntimeState{
+		Status:           ports.FeatureRuntimeStatusInstalling,
+		ActiveVersion:    "8.24.0",
+		ActiveBinaryPath: "/var/lib/regixtry/features/gitleaks/bin/active/gitleaks",
+		UpdatedAt:        time.Now().UTC(),
+	}
+	if err := store.UpsertFeatureRuntimeState(context.Background(), "tenant-a", "gitleaks", gitleaksState); err != nil {
+		t.Fatalf("UpsertFeatureRuntimeState(gitleaks) error = %v", err)
+	}
+
+	storedTrivy, err := store.GetFeatureRuntimeState(context.Background(), "tenant-a", "trivy")
+	if err != nil {
+		t.Fatalf("GetFeatureRuntimeState(trivy) error = %v", err)
+	}
+	if storedTrivy.Status != ports.FeatureRuntimeStatusReady || storedTrivy.ActiveVersion != "0.57.1" || storedTrivy.ActiveBinaryPath != trivyState.ActiveBinaryPath {
+		t.Fatalf("storedTrivy = %#v, want trivy's own row untouched by gitleaks writes", storedTrivy)
+	}
+
+	storedGitleaks, err := store.GetFeatureRuntimeState(context.Background(), "tenant-a", "gitleaks")
+	if err != nil {
+		t.Fatalf("GetFeatureRuntimeState(gitleaks) error = %v", err)
+	}
+	if storedGitleaks.Status != ports.FeatureRuntimeStatusInstalling || storedGitleaks.ActiveVersion != "8.24.0" || storedGitleaks.ActiveBinaryPath != gitleaksState.ActiveBinaryPath {
+		t.Fatalf("storedGitleaks = %#v, want gitleaks' own row untouched by trivy writes", storedGitleaks)
+	}
+}
+
+func TestStorePersistsScanRunDetailAcrossReopenAndOrdersBySeverityThenFixability(t *testing.T) {
+	t.Parallel()
+
+	databasePath := filepath.Join(t.TempDir(), "registry.db")
+	store, err := New(databasePath)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	now := time.Date(2026, time.August, 10, 12, 0, 0, 0, time.UTC)
+	details := []ports.ScanRunDetail{
+		{
+			Run:         ports.ScanRun{ID: "run-fixable-critical", Repository: "library/alpine", RequestedRef: "latest", Digest: "sha256:111", Status: ports.ScanRunStatusCompleted, Trigger: ports.ScanTriggerManual, CreatedAt: now, UpdatedAt: now, Critical: 1, High: 0, Medium: 0, Low: 0, TrivyVersion: "0.58.1"},
+			Findings:    []ports.ScanRunFinding{{Severity: "CRITICAL", VulnerabilityID: "CVE-1", PackageName: "openssl", InstalledVersion: "3.0.0", FixedVersion: "3.0.1", Fixable: true}},
+			DBFreshness: ports.ScanRunDBFreshness{TrivyVersion: "0.58.1", DBVersion: 7, FreshnessState: ports.ScanRunDBFreshnessStateFresh},
+		},
+		{
+			Run:      ports.ScanRun{ID: "run-unfixable-critical", Repository: "library/alpine", RequestedRef: "1.0", Digest: "sha256:222", Status: ports.ScanRunStatusCompleted, Trigger: ports.ScanTriggerManual, CreatedAt: now.Add(time.Minute), UpdatedAt: now.Add(time.Minute), Critical: 1, High: 0, Medium: 0, Low: 0, TrivyVersion: "0.58.1"},
+			Findings: []ports.ScanRunFinding{{Severity: "CRITICAL", VulnerabilityID: "CVE-2", PackageName: "busybox", InstalledVersion: "1.0.0", Fixable: false}},
+		},
+		{
+			Run:      ports.ScanRun{ID: "run-high-fixable", Repository: "library/alpine", RequestedRef: "2.0", Digest: "sha256:333", Status: ports.ScanRunStatusCompleted, Trigger: ports.ScanTriggerManual, CreatedAt: now.Add(2 * time.Minute), UpdatedAt: now.Add(2 * time.Minute), Critical: 0, High: 1, Medium: 0, Low: 0, TrivyVersion: "0.58.1"},
+			Findings: []ports.ScanRunFinding{{Severity: "HIGH", VulnerabilityID: "CVE-3", PackageName: "curl", InstalledVersion: "8.0.0", FixedVersion: "8.0.1", Fixable: true}},
+		},
+	}
+	for _, detail := range details {
+		if err := store.UpsertScanRunDetail(context.Background(), "tenant-a", detail); err != nil {
+			t.Fatalf("UpsertScanRunDetail(%s) error = %v", detail.Run.ID, err)
+		}
+	}
+
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	reopened, err := New(databasePath)
+	if err != nil {
+		t.Fatalf("New(reopen) error = %v", err)
+	}
+	defer reopened.Close()
+
+	runs, err := reopened.ListScanRuns(context.Background(), "tenant-a", "library/alpine", 10)
+	if err != nil {
+		t.Fatalf("ListScanRuns() error = %v", err)
+	}
+	if got, want := []string{runs[0].ID, runs[1].ID, runs[2].ID}, []string{"run-fixable-critical", "run-unfixable-critical", "run-high-fixable"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("run order = %#v, want %#v", got, want)
+	}
+
+	detail, err := reopened.GetScanRunDetail(context.Background(), "tenant-a", "run-unfixable-critical")
+	if err != nil {
+		t.Fatalf("GetScanRunDetail() error = %v", err)
+	}
+	if got, want := len(detail.Findings), 1; got != want {
+		t.Fatalf("len(detail.Findings) = %d, want %d", got, want)
+	}
+	if detail.Findings[0].Fixable {
+		t.Fatalf("finding = %#v, want non-fixable finding to remain visible", detail.Findings[0])
+	}
+	if got, want := detail.DBFreshness.FreshnessState, ports.ScanRunDBFreshnessStateUnknown; got != want {
+		t.Fatalf("FreshnessState = %q, want %q when no row was stored", got, want)
+	}
+}
+
+func TestStorePersistsSecretScanRunDetailAcrossReopenWithoutSecretMaterial(t *testing.T) {
+	t.Parallel()
+
+	databasePath := filepath.Join(t.TempDir(), "registry.db")
+	store, err := New(databasePath)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	now := time.Date(2026, time.August, 11, 12, 0, 0, 0, time.UTC)
+	detail := ports.SecretScanRunDetail{
+		Run: ports.SecretScanRun{ID: "secret-run-1", Repository: "library/alpine", Digest: "sha256:abc", Status: ports.SecretScanRunStatusCompleted, Trigger: ports.ScanTriggerManual, StartedAt: &now, FinishedAt: &now, CreatedAt: now, UpdatedAt: now, GitleaksVersion: "8.27.0"},
+		Findings: []ports.SecretFinding{
+			{RuleID: "aws-access-token", Description: "AWS Access Token", BlobDigest: "sha256:layerdigest", Path: "fake-secrets.txt", StartLine: 1, EndLine: 1, Tags: []string{"aws"}},
+		},
+	}
+	if err := store.UpsertSecretScanRunDetail(context.Background(), "tenant-a", detail); err != nil {
+		t.Fatalf("UpsertSecretScanRunDetail() error = %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	reopened, err := New(databasePath)
+	if err != nil {
+		t.Fatalf("New(reopen) error = %v", err)
+	}
+	defer reopened.Close()
+
+	storedDetail, err := reopened.GetSecretScanRunDetail(context.Background(), "tenant-a", "secret-run-1")
+	if err != nil {
+		t.Fatalf("GetSecretScanRunDetail() error = %v", err)
+	}
+	if storedDetail.Run.Status != ports.SecretScanRunStatusCompleted || storedDetail.Run.GitleaksVersion != "8.27.0" {
+		t.Fatalf("storedDetail.Run = %#v, want persisted run identity", storedDetail.Run)
+	}
+	if storedDetail.Run.FindingCount != 1 {
+		t.Fatalf("storedDetail.Run.FindingCount = %d, want 1", storedDetail.Run.FindingCount)
+	}
+	if got, want := len(storedDetail.Findings), 1; got != want {
+		t.Fatalf("len(storedDetail.Findings) = %d, want %d", got, want)
+	}
+	finding := storedDetail.Findings[0]
+	if finding.RuleID != "aws-access-token" || finding.BlobDigest != "sha256:layerdigest" || finding.Path != "fake-secrets.txt" {
+		t.Fatalf("finding = %#v, want persisted rule/location fields", finding)
+	}
+	if len(finding.Tags) != 1 || finding.Tags[0] != "aws" {
+		t.Fatalf("finding.Tags = %#v, want [aws]", finding.Tags)
+	}
+
+	runs, err := reopened.ListSecretScanRuns(context.Background(), "tenant-a", "library/alpine", 10)
+	if err != nil {
+		t.Fatalf("ListSecretScanRuns() error = %v", err)
+	}
+	if len(runs) != 1 || runs[0].ID != "secret-run-1" || runs[0].FindingCount != 1 {
+		t.Fatalf("runs = %#v, want one listed run with FindingCount 1", runs)
 	}
 }
 

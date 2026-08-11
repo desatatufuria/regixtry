@@ -15,7 +15,7 @@ import (
 )
 
 func (s *Service) EnsureScanSettings(ctx context.Context, defaults ports.ScanSettings) (ports.ScanSettings, error) {
-	settings, err := s.metadata.GetScanSettings(ctx, s.tenant(ctx))
+	settings, err := s.metadata.GetScanSettings(ctx, s.tenant(ctx), trivyFeatureName)
 	if err == nil {
 		return settings, nil
 	}
@@ -26,14 +26,14 @@ func (s *Service) EnsureScanSettings(ctx context.Context, defaults ports.ScanSet
 	if err != nil {
 		return ports.ScanSettings{}, err
 	}
-	if err := s.metadata.UpsertScanSettings(ctx, s.tenant(ctx), normalized); err != nil {
+	if err := s.metadata.UpsertScanSettings(ctx, s.tenant(ctx), trivyFeatureName, normalized); err != nil {
 		return ports.ScanSettings{}, err
 	}
 	return normalized, nil
 }
 
 func (s *Service) GetScanSettings(ctx context.Context) (ports.ScanSettings, error) {
-	return s.metadata.GetScanSettings(ctx, s.tenant(ctx))
+	return s.metadata.GetScanSettings(ctx, s.tenant(ctx), trivyFeatureName)
 }
 
 func (s *Service) UpdateScanSettings(ctx context.Context, input ports.ScanSettings) (ports.ScanSettings, error) {
@@ -41,7 +41,7 @@ func (s *Service) UpdateScanSettings(ctx context.Context, input ports.ScanSettin
 	if err != nil {
 		return ports.ScanSettings{}, err
 	}
-	if err := s.metadata.UpsertScanSettings(ctx, s.tenant(ctx), normalized); err != nil {
+	if err := s.metadata.UpsertScanSettings(ctx, s.tenant(ctx), trivyFeatureName, normalized); err != nil {
 		return ports.ScanSettings{}, err
 	}
 	return normalized, nil
@@ -83,6 +83,40 @@ func (s *Service) QueueManualScan(ctx context.Context, repositoryName string, re
 
 func (s *Service) ListScanRuns(ctx context.Context, repository string, limit int) ([]ports.ScanRun, error) {
 	return s.metadata.ListScanRuns(ctx, s.tenant(ctx), strings.TrimSpace(repository), limit)
+}
+
+func (s *Service) GetScanRunDetail(ctx context.Context, runID string) (ports.ScanRunDetail, error) {
+	detail, err := s.metadata.GetScanRunDetail(ctx, s.tenant(ctx), strings.TrimSpace(runID))
+	if err != nil {
+		return ports.ScanRunDetail{}, err
+	}
+	detail.ReferenceFreshness = s.referenceFreshness(ctx, detail.Run)
+	if strings.TrimSpace(detail.DBFreshness.FreshnessState) == "" {
+		detail.DBFreshness.FreshnessState = ports.ScanRunDBFreshnessStateUnknown
+	}
+	return detail, nil
+}
+
+// GetSecretScanFindings looks up the redacted secret-scan findings for one
+// image (repository@digest), mirroring GetScanRunDetail's role for the
+// Trivy leg. Both legs are triggered from the same executeScanRun call for
+// the same run, so repository+digest is a valid, sufficient attribution key
+// (spec.md "Operator Visibility of Findings" — findings attributed to the
+// image they were found in). Recent runs are scanned newest-first so an
+// image rescanned multiple times resolves to its most recent secret scan.
+func (s *Service) GetSecretScanFindings(ctx context.Context, repository string, digest string) (ports.SecretScanRunDetail, error) {
+	repository = strings.TrimSpace(repository)
+	digest = strings.TrimSpace(digest)
+	runs, err := s.metadata.ListSecretScanRuns(ctx, s.tenant(ctx), repository, 50)
+	if err != nil {
+		return ports.SecretScanRunDetail{}, err
+	}
+	for _, run := range runs {
+		if run.Digest == digest {
+			return s.metadata.GetSecretScanRunDetail(ctx, s.tenant(ctx), run.ID)
+		}
+	}
+	return ports.SecretScanRunDetail{}, domain.NewNotFoundError("secret scan run", repository+"@"+digest)
 }
 
 func (s *Service) RunScheduledScans(ctx context.Context) error {
@@ -137,6 +171,12 @@ func (s *Service) executeScanRun(ctx context.Context, tenant string, run ports.S
 	if s.scanRunner == nil {
 		return
 	}
+	// The secret-scan leg reuses this same manual/scheduled rescan trigger
+	// (spec.md "Reused Rescan Trigger, No Push-Time Path") and runs
+	// alongside the Trivy leg in its own goroutine: it is informational
+	// only, so a gitleaks failure or absence must never fail or block the
+	// Trivy leg or the overall scan run's status/result.
+	go s.executeSecretScanLeg(ctx, tenant, run.Repository, run.Digest, run.Trigger)
 	if err := s.scanGate.acquire(ctx, settings.MaxConcurrency); err != nil {
 		return
 	}
@@ -174,7 +214,74 @@ func (s *Service) executeScanRun(ctx context.Context, tenant string, run ports.S
 	run.TrivyVersion = result.TrivyVersion
 	run.DBUpdatedAt = result.DBUpdatedAt
 	run.Error = ""
-	s.persistAsyncScanRun(ctx, tenant, run)
+	s.persistAsyncScanRunDetail(ctx, tenant, ports.ScanRunDetail{Run: run, Findings: result.Findings, DBFreshness: result.DBFreshness})
+}
+
+// executeSecretScanLeg runs the gitleaks secret scan for the manifest
+// currently being (re)scanned by executeScanRun. It is entirely best-effort:
+// any missing wiring, disabled feature, not-ready runtime, or scan failure
+// simply returns without persisting anything or affecting the Trivy leg —
+// secret findings are informational only (spec.md "Informational Findings
+// Only"), never a gate.
+func (s *Service) executeSecretScanLeg(ctx context.Context, tenant string, repository string, digest string, trigger string) {
+	if s.secretScanRunner == nil {
+		return
+	}
+	settings, err := s.resolveManagedSecretScanSettings(ctx, tenant)
+	if err != nil || !settings.Enabled {
+		return
+	}
+	repo, err := parseRepository(repository)
+	if err != nil {
+		return
+	}
+	manifestDigest, err := domain.ParseDigest(digest)
+	if err != nil {
+		return
+	}
+	if _, err := s.metadata.GetActiveSecretScanRunByDigest(ctx, tenant, repository, digest); err == nil {
+		return
+	} else if !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		return
+	}
+	blobs, err := s.metadata.ListManifestBlobs(ctx, tenant, repo, manifestDigest)
+	if err != nil {
+		return
+	}
+	if err := s.secretScanGate.acquire(ctx, settings.MaxConcurrency); err != nil {
+		return
+	}
+	defer s.secretScanGate.release()
+
+	now := s.now()
+	run := ports.SecretScanRun{
+		ID:         uuid.NewString(),
+		Repository: repository,
+		Digest:     digest,
+		Status:     ports.SecretScanRunStatusRunning,
+		Trigger:    trigger,
+		StartedAt:  &now,
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}
+	s.persistAsyncSecretScanRun(ctx, tenant, run)
+
+	target := ports.SecretScanTarget{Repository: repository, Digest: digest, Blobs: blobs}
+	result, err := s.secretScanRunner.Run(ctx, target, settings)
+	finished := s.now()
+	run.FinishedAt = &finished
+	run.UpdatedAt = finished
+	if err != nil {
+		run.Status = ports.SecretScanRunStatusFailed
+		run.Error = err.Error()
+		s.persistAsyncSecretScanRun(ctx, tenant, run)
+		return
+	}
+	run.Status = ports.SecretScanRunStatusCompleted
+	run.GitleaksVersion = result.GitleaksVersion
+	run.FindingCount = len(result.Findings)
+	run.Error = ""
+	s.persistAsyncSecretScanRunDetail(ctx, tenant, ports.SecretScanRunDetail{Run: run, Findings: result.Findings})
 }
 
 func (s *Service) persistAsyncScanRun(ctx context.Context, tenant string, run ports.ScanRun) {
@@ -193,6 +300,81 @@ func (s *Service) persistAsyncScanRun(ctx context.Context, tenant string, run po
 		case <-time.After(time.Duration(attempt+1) * 10 * time.Millisecond):
 		}
 	}
+}
+
+func (s *Service) persistAsyncScanRunDetail(ctx context.Context, tenant string, detail ports.ScanRunDetail) {
+	const maxAttempts = 5
+
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if err := s.metadata.UpsertScanRunDetail(ctx, tenant, detail); err == nil {
+			return
+		} else if !isTransientScanRunPersistenceError(err) {
+			return
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Duration(attempt+1) * 10 * time.Millisecond):
+		}
+	}
+}
+
+func (s *Service) persistAsyncSecretScanRun(ctx context.Context, tenant string, run ports.SecretScanRun) {
+	const maxAttempts = 5
+
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if err := s.metadata.UpsertSecretScanRun(ctx, tenant, run); err == nil {
+			return
+		} else if !isTransientScanRunPersistenceError(err) {
+			return
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Duration(attempt+1) * 10 * time.Millisecond):
+		}
+	}
+}
+
+func (s *Service) persistAsyncSecretScanRunDetail(ctx context.Context, tenant string, detail ports.SecretScanRunDetail) {
+	const maxAttempts = 5
+
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if err := s.metadata.UpsertSecretScanRunDetail(ctx, tenant, detail); err == nil {
+			return
+		} else if !isTransientScanRunPersistenceError(err) {
+			return
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Duration(attempt+1) * 10 * time.Millisecond):
+		}
+	}
+}
+
+func (s *Service) referenceFreshness(ctx context.Context, run ports.ScanRun) string {
+	if strings.TrimSpace(run.RequestedRef) == "" {
+		return ports.ScanReferenceFreshnessUnknown
+	}
+	repository, err := parseRepository(run.Repository)
+	if err != nil {
+		return ports.ScanReferenceFreshnessUnknown
+	}
+	manifest, err := s.metadata.ResolveManifest(ctx, s.tenant(ctx), repository, run.RequestedRef)
+	if err != nil {
+		if domain.IsCode(err, domain.ErrorCodeNotFound) {
+			return ports.ScanReferenceFreshnessMissing
+		}
+		return ports.ScanReferenceFreshnessUnknown
+	}
+	if manifest.Digest.String() == strings.TrimSpace(run.Digest) {
+		return ports.ScanReferenceFreshnessCurrent
+	}
+	return ports.ScanReferenceFreshnessMoved
 }
 
 func isTransientScanRunPersistenceError(err error) bool {
@@ -254,17 +436,46 @@ func (s *Service) resolveManagedScanSettings(ctx context.Context) (ports.ScanSet
 	if err != nil {
 		return ports.ScanSettings{}, err
 	}
-	state, err := s.metadata.GetTrivyRuntimeState(ctx, s.tenant(ctx))
+	state, err := s.metadata.GetFeatureRuntimeState(ctx, s.tenant(ctx), trivyFeatureName)
 	if err != nil {
 		return ports.ScanSettings{}, err
 	}
-	if state.Status != ports.TrivyRuntimeStatusReady {
+	if state.Status != ports.FeatureRuntimeStatusReady {
 		detail := strings.TrimSpace(state.MigrationHint)
 		if detail == "" {
 			detail = strings.TrimSpace(state.LastError)
 		}
 		if detail == "" {
 			detail = fmt.Sprintf("trivy runtime is %s", state.Status)
+		}
+		return ports.ScanSettings{}, domain.NewValidationError(detail)
+	}
+	settings.BinaryPath = strings.TrimSpace(state.ActiveBinaryPath)
+	settings.CacheDir = strings.TrimSpace(state.CacheDir)
+	return settings, nil
+}
+
+// resolveManagedSecretScanSettings mirrors resolveManagedScanSettings for
+// the gitleaks feature, keyed independently via Phase 2's (tenant, feature)
+// scan_settings/feature_runtime_state rows. It takes tenant explicitly
+// (rather than resolving it again via s.tenant(ctx)) because it is always
+// called from a goroutine already holding the caller's resolved tenant.
+func (s *Service) resolveManagedSecretScanSettings(ctx context.Context, tenant string) (ports.ScanSettings, error) {
+	settings, err := s.metadata.GetScanSettings(ctx, tenant, gitleaksFeatureName)
+	if err != nil {
+		return ports.ScanSettings{}, err
+	}
+	state, err := s.metadata.GetFeatureRuntimeState(ctx, tenant, gitleaksFeatureName)
+	if err != nil {
+		return ports.ScanSettings{}, err
+	}
+	if state.Status != ports.FeatureRuntimeStatusReady {
+		detail := strings.TrimSpace(state.MigrationHint)
+		if detail == "" {
+			detail = strings.TrimSpace(state.LastError)
+		}
+		if detail == "" {
+			detail = fmt.Sprintf("gitleaks runtime is %s", state.Status)
 		}
 		return ports.ScanSettings{}, domain.NewValidationError(detail)
 	}

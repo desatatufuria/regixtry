@@ -15,6 +15,8 @@ func renderAdminWorkspace(current screen, session AdminSession, view AdminViewSt
 	fullBody := body
 	if view.ConfirmModal.Active() {
 		fullBody = lipgloss.JoinVertical(lipgloss.Left, body, renderAdminModal(theme, view.ConfirmModal))
+	} else if view.TrivyConfigModal.Active() {
+		fullBody = lipgloss.JoinVertical(lipgloss.Left, body, renderTrivyConfigModal(theme, view.TrivyConfigModal))
 	}
 	return renderConsoleWorkspace("Regixtry Admin", context, fullBody, status, help)
 }
@@ -36,7 +38,7 @@ func renderAdminScreen(theme adminTheme, current screen, session AdminSession, v
 	case screenAdminCreateToken:
 		return fmt.Sprintf("Users / %s / Tokens / Create Token", selectedAdminUsername(view)), renderAdminCreateTokenScreen(theme, view), "Enter: create token | Tab: next field | Esc: cancel"
 	case screenAdminFeatures:
-		return "Features", renderAdminFeaturesScreen(theme, session, view, now), featureActionHelp(view.FeatureStatus)
+		return "Features", renderAdminFeaturesScreen(theme, session, view, now), adminFeatureHelp(view)
 	default:
 		return "Users", renderAdminUsersScreen(theme, session, view, now), "/: search | Enter/e: edit user | n: create user | f: features | Esc: back | q: quit"
 	}
@@ -83,42 +85,17 @@ func renderAdminFeaturesScreen(theme adminTheme, session AdminSession, view Admi
 	if len(view.Features) == 0 {
 		lines = append(lines, theme.muted.Render("No built-in features available."))
 	} else {
-		selectedIndex := boundedIndex(view.SelectedFeature, len(view.Features))
-		for index, feature := range view.Features {
-			label := fmt.Sprintf("%s [%s] enabled=%t configured=%t current=%s latest=%s update=%s", feature.Name, feature.Kind, feature.Enabled, feature.Configured, adminFirstNonEmpty(strings.TrimSpace(feature.CurrentVersion), "unknown"), adminFirstNonEmpty(strings.TrimSpace(feature.LatestVersion), "unknown"), adminFirstNonEmpty(strings.TrimSpace(feature.UpdateStatus), "unknown"))
-			if index == selectedIndex {
-				label = theme.selected.Render(label)
-			}
-			lines = append(lines, label)
-		}
+		lines = append(lines, view.Tables.Features.View())
 	}
 
-	lines = append(lines, "", theme.subheading.Render("Feature Status"))
-	if strings.TrimSpace(view.FeatureStatus.Name) == "" {
-		lines = append(lines, theme.muted.Render("Select or refresh a feature to load backend-authoritative status."))
+	lines = append(lines, "", theme.subheading.Render("Feature Page"))
+	if strings.TrimSpace(view.FeaturePage.Summary.Name) == "" {
+		lines = append(lines, theme.muted.Render("Select or refresh a feature to load the backend-declared page."))
 	} else {
-		lines = append(lines,
-			fmt.Sprintf("Name: %s", view.FeatureStatus.Name),
-			fmt.Sprintf("Kind: %s", view.FeatureStatus.Kind),
-			fmt.Sprintf("Enabled: %t", view.FeatureStatus.Enabled),
-			fmt.Sprintf("Configured: %t", view.FeatureStatus.Configured),
-			fmt.Sprintf("Schedule Enabled: %t", view.FeatureStatus.ScheduleEnabled),
-			fmt.Sprintf("Interval: %s", view.FeatureStatus.Interval),
-			fmt.Sprintf("Timeout: %s", view.FeatureStatus.Timeout),
-			fmt.Sprintf("Service URL: %s", view.FeatureStatus.ServiceURL),
-			fmt.Sprintf("Registry Reachable URL: %s", view.FeatureStatus.RegistryReachableURL),
-			fmt.Sprintf("TLS CA Cert Path: %s", view.FeatureStatus.TLSCACertPath),
-			fmt.Sprintf("TLS Insecure Skip Verify: %t", view.FeatureStatus.TLSInsecureSkipVerify),
-			fmt.Sprintf("Max Concurrency: %d", view.FeatureStatus.MaxConcurrency),
-			fmt.Sprintf("Runtime Status: %s", adminFirstNonEmpty(strings.TrimSpace(view.FeatureStatus.Runtime.Status), adminFirstNonEmpty(strings.TrimSpace(view.FeatureStatus.Runtime.Health), "unknown"))),
-			fmt.Sprintf("Runtime Health: %s", adminFirstNonEmpty(strings.TrimSpace(view.FeatureStatus.Runtime.Health), "unknown")),
-			fmt.Sprintf("Runtime Version: %s", adminFirstNonEmpty(strings.TrimSpace(view.FeatureStatus.Runtime.Version), "unknown")),
-			fmt.Sprintf("Runtime Latest Version: %s", adminFirstNonEmpty(strings.TrimSpace(view.FeatureStatus.Runtime.LatestVersion), "unknown")),
-			fmt.Sprintf("Runtime Update Status: %s", adminFirstNonEmpty(strings.TrimSpace(view.FeatureStatus.Runtime.UpdateStatus), "unknown")),
-		)
-		if strings.TrimSpace(view.FeatureStatus.Runtime.Detail) != "" {
-			lines = append(lines, fmt.Sprintf("Runtime Detail: %s", view.FeatureStatus.Runtime.Detail))
+		if view.FeaturePage.Summary.Name == trivyFeatureName {
+			lines = append(lines, renderTrivyTabs(theme, view))
 		}
+		lines = append(lines, renderFeaturePageBody(theme, view)...)
 	}
 
 	lines = append(lines,
@@ -127,6 +104,105 @@ func renderAdminFeaturesScreen(theme adminTheme, session AdminSession, view Admi
 		theme.muted.Render(fmt.Sprintf("Session remaining: %s", formatRemaining(session.Remaining(now)))),
 	)
 	return theme.section.Render(strings.Join(lines, "\n"))
+}
+
+func renderFeaturePageBody(theme adminTheme, view AdminViewState) []string {
+	if view.FeaturePage.Summary.Name == trivyFeatureName {
+		if view.TrivyTab == trivyTabRepositoryAlerts {
+			return renderTrivyRepositoryAlerts(theme, view)
+		}
+		return renderGenericFeaturePage(theme, view, view.FeaturePage)
+	}
+	return renderGenericFeaturePage(theme, view, view.FeaturePage)
+}
+
+func renderGenericFeaturePage(theme adminTheme, view AdminViewState, page ports.FeaturePage) []string {
+	lines := make([]string, 0, len(page.Header)+len(page.Sections)*2)
+	for _, field := range page.Header {
+		lines = append(lines, fmt.Sprintf("%s: %s", field.Label, adminFirstNonEmpty(field.Value, "unknown")))
+	}
+	if len(page.Sections) == 0 {
+		lines = append(lines, theme.muted.Render("No additional feature details."))
+		return lines
+	}
+	for _, section := range page.Sections {
+		lines = append(lines, "", theme.subheading.Render(section.Title))
+		switch section.Kind {
+		case "rows":
+			if tableModel, ok := view.Tables.FeatureRows[section.ID]; ok {
+				lines = append(lines, tableModel.View())
+				continue
+			}
+			lines = append(lines, theme.muted.Render("No rows available."))
+		default:
+			for _, field := range section.Fields {
+				lines = append(lines, fmt.Sprintf("%s: %s", field.Label, adminFirstNonEmpty(field.Value, "unknown")))
+			}
+		}
+	}
+	return lines
+}
+
+func renderTrivyTabs(theme adminTheme, view AdminViewState) string {
+	runtimeLabel := "Runtime"
+	alertsLabel := "Repository Alerts"
+	if view.TrivyTab == trivyTabRuntime {
+		runtimeLabel = theme.selected.Render(runtimeLabel)
+	} else {
+		alertsLabel = theme.selected.Render(alertsLabel)
+	}
+	return theme.subheading.Render("Tabs") + "\n" + runtimeLabel + " | " + alertsLabel
+}
+
+func renderTrivyRepositoryAlerts(theme adminTheme, view AdminViewState) []string {
+	lines := []string{}
+	if len(view.TrivyScanRuns) == 0 {
+		message := "No repository alerts found."
+		if !view.TrivyAlertsLoaded {
+			message = "Loading repository alerts requires switching into the tab."
+		}
+		return append(lines, theme.muted.Render(message))
+	}
+	lines = append(lines, theme.subheading.Render("Repository Alerts"))
+	lines = append(lines, view.Tables.ScanRuns.View())
+	if view.TrivyAlertDetailOpen {
+		if detail := view.TrivyScanRunDetail; strings.TrimSpace(detail.Run.ID) != "" {
+			lines = append(lines, "", theme.subheading.Render("Selected Scan Run"))
+			lines = append(lines,
+				fmt.Sprintf("Repository: %s", detail.Run.Repository),
+				fmt.Sprintf("Reference: %s", adminFirstNonEmpty(detail.Run.RequestedRef, "unknown")),
+				fmt.Sprintf("Digest: %s", adminFirstNonEmpty(detail.Run.Digest, "unknown")),
+				fmt.Sprintf("Status: %s", adminFirstNonEmpty(detail.Run.Status, "unknown")),
+				fmt.Sprintf("Reference freshness: %s", adminFirstNonEmpty(detail.ReferenceFreshness, ports.ScanReferenceFreshnessUnknown)),
+				fmt.Sprintf("DB freshness: %s", adminFirstNonEmpty(detail.DBFreshness.FreshnessState, ports.ScanRunDBFreshnessStateUnknown)),
+			)
+			if strings.TrimSpace(detail.Run.Error) != "" {
+				lines = append(lines, fmt.Sprintf("Error: %s", detail.Run.Error))
+			}
+			if len(detail.Findings) > 0 {
+				lines = append(lines, "", theme.subheading.Render("Findings"))
+				lines = append(lines, view.Tables.Findings.View())
+			}
+			lines = append(lines, "", theme.subheading.Render("Secret Findings"))
+			lines = append(lines, renderSecretFindingsBody(theme, view)...)
+		}
+	}
+	return lines
+}
+
+// renderSecretFindingsBody renders the secret-scan findings for the image
+// currently open in the scan detail, alongside the vulnerability findings
+// above (spec.md "Operator reviews findings for a selected image"). It is
+// informational only: rule ID and location are the only columns
+// (buildAdminSecretFindingsTable), and there is deliberately no
+// severity/gating styling anywhere in this block. A selected image with no
+// persisted secret findings gets a clear empty state, never an error
+// (spec.md "Image with no findings shows an empty state").
+func renderSecretFindingsBody(theme adminTheme, view AdminViewState) []string {
+	if len(view.SecretFindings) == 0 {
+		return []string{theme.muted.Render("No secret findings recorded for this image.")}
+	}
+	return []string{view.Tables.SecretFindings.View()}
 }
 
 func renderAdminCreateUserScreen(theme adminTheme, view AdminViewState) string {
@@ -281,6 +357,39 @@ func renderAdminModal(theme adminTheme, modal adminConfirmModal) string {
 		"",
 		theme.muted.Render(fmt.Sprintf("Enter: %s | Esc: cancel", modal.ConfirmText)),
 	}, "\n"))
+}
+
+func renderTrivyConfigModal(theme adminTheme, modal trivyConfigModal) string {
+	lines := []string{
+		theme.subheading.Render("Edit Trivy Configuration"),
+		renderToggleField(theme, "Schedule Enabled", modal.ScheduleEnabled, modal.Focus == trivyConfigFieldScheduleEnabled),
+		renderTextField(theme, "Interval", modal.Interval, modal.Focus == trivyConfigFieldInterval),
+		renderTextField(theme, "Timeout", modal.Timeout, modal.Focus == trivyConfigFieldTimeout),
+		renderTextField(theme, "Registry Reachable URL", modal.RegistryReachableURL, modal.Focus == trivyConfigFieldRegistryReachableURL),
+		renderTextField(theme, "Max Concurrency", modal.MaxConcurrency, modal.Focus == trivyConfigFieldMaxConcurrency),
+	}
+	if strings.TrimSpace(modal.Error) != "" {
+		lines = append(lines, "", theme.error.Render(modal.Error))
+	}
+	lines = append(lines, "", theme.muted.Render("Enter: save | Tab: next field | Space: toggle | Esc: cancel"))
+	return theme.section.Render(strings.Join(lines, "\n"))
+}
+
+func adminFeatureHelp(view AdminViewState) string {
+	parts := []string{"Enter/r: refresh page"}
+	if view.FeaturePage.Summary.Name == trivyFeatureName {
+		parts = append(parts, "Tab: switch tabs")
+		if view.TrivyTab == trivyTabRuntime {
+			parts = append(parts, "c: configure")
+		} else {
+			parts = append(parts, "Up/Down: select alert", "Enter: details")
+			if view.TrivyAlertDetailOpen {
+				parts = append(parts, "Esc: close detail")
+			}
+		}
+	}
+	parts = append(parts, strings.Split(featureActionHelp(view.FeaturePage), " | ")[1:]...)
+	return strings.Join(parts, " | ")
 }
 
 func renderAdminStatus(theme adminTheme, status string) string {
