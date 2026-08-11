@@ -81,11 +81,7 @@ func (s *Service) GetFeaturePage(ctx context.Context, name string) (ports.Featur
 	if err != nil {
 		return ports.FeaturePage{}, err
 	}
-	runs, err := s.ListScanRuns(ctx, "", 10)
-	if err != nil {
-		return ports.FeaturePage{}, err
-	}
-	return buildFeaturePage(featureSummaryFromDetails(details, details.Runtime), details, runs), nil
+	return buildFeaturePage(featureSummaryFromDetails(details, details.Runtime), details, nil), nil
 }
 
 func (s *Service) ExecuteFeatureAction(ctx context.Context, name string, actionID string) (ports.FeatureActionResult, error) {
@@ -348,24 +344,6 @@ func buildFeaturePage(summary ports.FeatureSummary, details ports.FeatureDetails
 				{Label: "Latest Version", Value: featureRuntimeValueOrUnknown(details.Runtime.LatestVersion)},
 				{Label: "Update Status", Value: featureRuntimeValueOrUnknown(details.Runtime.UpdateStatus)},
 			},
-		},
-		{
-			ID:    "runs",
-			Title: "Recent Runs",
-			Kind:  "rows",
-			Rows:  buildFeatureRunRows(runs),
-		},
-		{
-			ID:     "vulnerabilities",
-			Title:  "Vulnerability Summary",
-			Kind:   "fields",
-			Fields: buildFeatureVulnerabilityFields(runs),
-		},
-		{
-			ID:    "repository-alerts",
-			Title: "Repository Alerts",
-			Kind:  "rows",
-			Rows:  buildFeatureRepositoryAlertRows(runs),
 		},
 	}
 	page.Actions = buildFeatureActions(details)

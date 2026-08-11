@@ -15,6 +15,8 @@ func renderAdminWorkspace(current screen, session AdminSession, view AdminViewSt
 	fullBody := body
 	if view.ConfirmModal.Active() {
 		fullBody = lipgloss.JoinVertical(lipgloss.Left, body, renderAdminModal(theme, view.ConfirmModal))
+	} else if view.TrivyConfigModal.Active() {
+		fullBody = lipgloss.JoinVertical(lipgloss.Left, body, renderTrivyConfigModal(theme, view.TrivyConfigModal))
 	}
 	return renderConsoleWorkspace("Regixtry Admin", context, fullBody, status, help)
 }
@@ -36,7 +38,7 @@ func renderAdminScreen(theme adminTheme, current screen, session AdminSession, v
 	case screenAdminCreateToken:
 		return fmt.Sprintf("Users / %s / Tokens / Create Token", selectedAdminUsername(view)), renderAdminCreateTokenScreen(theme, view), "Enter: create token | Tab: next field | Esc: cancel"
 	case screenAdminFeatures:
-		return "Features", renderAdminFeaturesScreen(theme, session, view, now), featureActionHelp(view.FeaturePage)
+		return "Features", renderAdminFeaturesScreen(theme, session, view, now), adminFeatureHelp(view)
 	default:
 		return "Users", renderAdminUsersScreen(theme, session, view, now), "/: search | Enter/e: edit user | n: create user | f: features | Esc: back | q: quit"
 	}
@@ -97,32 +99,10 @@ func renderAdminFeaturesScreen(theme adminTheme, session AdminSession, view Admi
 	if strings.TrimSpace(view.FeaturePage.Summary.Name) == "" {
 		lines = append(lines, theme.muted.Render("Select or refresh a feature to load the backend-declared page."))
 	} else {
-		for _, field := range view.FeaturePage.Header {
-			lines = append(lines, fmt.Sprintf("%s: %s", field.Label, adminFirstNonEmpty(field.Value, "unknown")))
+		if view.FeaturePage.Summary.Name == trivyFeatureName {
+			lines = append(lines, renderTrivyTabs(theme, view))
 		}
-		if len(view.FeaturePage.Sections) == 0 {
-			lines = append(lines, theme.muted.Render("No additional feature details."))
-		}
-		for _, section := range view.FeaturePage.Sections {
-			lines = append(lines, "", theme.subheading.Render(section.Title))
-			switch section.Kind {
-			case "rows":
-				for _, row := range section.Rows {
-					label := row.Title
-					if strings.TrimSpace(row.Status) != "" {
-						label += fmt.Sprintf(" [%s]", row.Status)
-					}
-					if strings.TrimSpace(row.Detail) != "" {
-						label += fmt.Sprintf(" — %s", row.Detail)
-					}
-					lines = append(lines, label)
-				}
-			default:
-				for _, field := range section.Fields {
-					lines = append(lines, fmt.Sprintf("%s: %s", field.Label, adminFirstNonEmpty(field.Value, "unknown")))
-				}
-			}
-		}
+		lines = append(lines, renderFeaturePageBody(theme, view)...)
 	}
 
 	lines = append(lines,
@@ -131,6 +111,97 @@ func renderAdminFeaturesScreen(theme adminTheme, session AdminSession, view Admi
 		theme.muted.Render(fmt.Sprintf("Session remaining: %s", formatRemaining(session.Remaining(now)))),
 	)
 	return theme.section.Render(strings.Join(lines, "\n"))
+}
+
+func renderFeaturePageBody(theme adminTheme, view AdminViewState) []string {
+	if view.FeaturePage.Summary.Name == trivyFeatureName {
+		if view.TrivyTab == trivyTabRepositoryAlerts {
+			return renderTrivyRepositoryAlerts(theme, view)
+		}
+		return renderGenericFeaturePage(theme, view.FeaturePage)
+	}
+	return renderGenericFeaturePage(theme, view.FeaturePage)
+}
+
+func renderGenericFeaturePage(theme adminTheme, page ports.FeaturePage) []string {
+	lines := make([]string, 0, len(page.Header)+len(page.Sections)*2)
+	for _, field := range page.Header {
+		lines = append(lines, fmt.Sprintf("%s: %s", field.Label, adminFirstNonEmpty(field.Value, "unknown")))
+	}
+	if len(page.Sections) == 0 {
+		lines = append(lines, theme.muted.Render("No additional feature details."))
+		return lines
+	}
+	for _, section := range page.Sections {
+		lines = append(lines, "", theme.subheading.Render(section.Title))
+		switch section.Kind {
+		case "rows":
+			for _, row := range section.Rows {
+				label := row.Title
+				if strings.TrimSpace(row.Status) != "" {
+					label += fmt.Sprintf(" [%s]", row.Status)
+				}
+				if strings.TrimSpace(row.Detail) != "" {
+					label += fmt.Sprintf(" — %s", row.Detail)
+				}
+				lines = append(lines, label)
+			}
+		default:
+			for _, field := range section.Fields {
+				lines = append(lines, fmt.Sprintf("%s: %s", field.Label, adminFirstNonEmpty(field.Value, "unknown")))
+			}
+		}
+	}
+	return lines
+}
+
+func renderTrivyTabs(theme adminTheme, view AdminViewState) string {
+	runtimeLabel := "Runtime"
+	alertsLabel := "Repository Alerts"
+	if view.TrivyTab == trivyTabRuntime {
+		runtimeLabel = theme.selected.Render(runtimeLabel)
+	} else {
+		alertsLabel = theme.selected.Render(alertsLabel)
+	}
+	return theme.subheading.Render("Tabs") + "\n" + runtimeLabel + " | " + alertsLabel
+}
+
+func renderTrivyRepositoryAlerts(theme adminTheme, view AdminViewState) []string {
+	lines := []string{}
+	if len(view.TrivyScanRuns) == 0 {
+		message := "No repository alerts found."
+		if !view.TrivyAlertsLoaded {
+			message = "Loading repository alerts requires switching into the tab."
+		}
+		return append(lines, theme.muted.Render(message))
+	}
+	lines = append(lines, theme.subheading.Render("Repository Alerts"))
+	for index, run := range view.TrivyScanRuns {
+		label := fmt.Sprintf("%s@%s [%s] critical=%d high=%d", run.Repository, run.RequestedRef, run.Status, run.Critical, run.High)
+		if index == boundedIndex(view.TrivySelectedAlert, len(view.TrivyScanRuns)) {
+			label = theme.selected.Render(label)
+		}
+		lines = append(lines, label)
+	}
+	if view.TrivyAlertDetailOpen {
+		if run, ok := selectedTrivyScanRun(view); ok {
+			lines = append(lines, "", theme.subheading.Render("Selected Scan Run"))
+			lines = append(lines,
+				fmt.Sprintf("Repository: %s", run.Repository),
+				fmt.Sprintf("Reference: %s", adminFirstNonEmpty(run.RequestedRef, "unknown")),
+				fmt.Sprintf("Digest: %s", adminFirstNonEmpty(run.Digest, "unknown")),
+				fmt.Sprintf("Status: %s", adminFirstNonEmpty(run.Status, "unknown")),
+				fmt.Sprintf("Critical: %d", run.Critical),
+				fmt.Sprintf("High: %d", run.High),
+				fmt.Sprintf("Medium: %d", run.Medium),
+				fmt.Sprintf("Low: %d", run.Low),
+			)
+			if strings.TrimSpace(run.Error) != "" {
+				lines = append(lines, fmt.Sprintf("Error: %s", run.Error))
+			}
+		}
+	}
+	return lines
 }
 
 func renderAdminCreateUserScreen(theme adminTheme, view AdminViewState) string {
@@ -285,6 +356,39 @@ func renderAdminModal(theme adminTheme, modal adminConfirmModal) string {
 		"",
 		theme.muted.Render(fmt.Sprintf("Enter: %s | Esc: cancel", modal.ConfirmText)),
 	}, "\n"))
+}
+
+func renderTrivyConfigModal(theme adminTheme, modal trivyConfigModal) string {
+	lines := []string{
+		theme.subheading.Render("Edit Trivy Configuration"),
+		renderToggleField(theme, "Schedule Enabled", modal.ScheduleEnabled, modal.Focus == trivyConfigFieldScheduleEnabled),
+		renderTextField(theme, "Interval", modal.Interval, modal.Focus == trivyConfigFieldInterval),
+		renderTextField(theme, "Timeout", modal.Timeout, modal.Focus == trivyConfigFieldTimeout),
+		renderTextField(theme, "Registry Reachable URL", modal.RegistryReachableURL, modal.Focus == trivyConfigFieldRegistryReachableURL),
+		renderTextField(theme, "Max Concurrency", modal.MaxConcurrency, modal.Focus == trivyConfigFieldMaxConcurrency),
+	}
+	if strings.TrimSpace(modal.Error) != "" {
+		lines = append(lines, "", theme.error.Render(modal.Error))
+	}
+	lines = append(lines, "", theme.muted.Render("Enter: save | Tab: next field | Space: toggle | Esc: cancel"))
+	return theme.section.Render(strings.Join(lines, "\n"))
+}
+
+func adminFeatureHelp(view AdminViewState) string {
+	parts := []string{"Enter/r: refresh page"}
+	if view.FeaturePage.Summary.Name == trivyFeatureName {
+		parts = append(parts, "Tab: switch tabs")
+		if view.TrivyTab == trivyTabRuntime {
+			parts = append(parts, "c: configure")
+		} else {
+			parts = append(parts, "Up/Down: select alert", "Enter: details")
+			if view.TrivyAlertDetailOpen {
+				parts = append(parts, "Esc: close detail")
+			}
+		}
+	}
+	parts = append(parts, strings.Split(featureActionHelp(view.FeaturePage), " | ")[1:]...)
+	return strings.Join(parts, " | ")
 }
 
 func renderAdminStatus(theme adminTheme, status string) string {

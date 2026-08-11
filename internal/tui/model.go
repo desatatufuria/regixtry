@@ -113,6 +113,8 @@ const (
 
 type loginField int
 
+const trivyFeatureName = "trivy"
+
 const (
 	loginFieldUsername loginField = iota
 	loginFieldPassword
@@ -201,11 +203,21 @@ type adminFeatureActionCompletedMsg struct {
 	err    error
 }
 
+type adminFeatureConfiguredMsg struct {
+	name string
+	err  error
+}
+
 type adminFeatureRuntimeMutatedMsg struct {
 	name   string
 	action string
 	state  ports.TrivyRuntimeState
 	err    error
+}
+
+type adminScanRunsLoadedMsg struct {
+	runs []ports.ScanRun
+	err  error
 }
 
 type adminUserGrantsLoadedMsg struct {
@@ -436,6 +448,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = "Loading built-in features..."
 		m.screen = screenAdminFeatures
 		return m, m.loadAdminFeaturesCmd()
+	case adminFeatureConfiguredMsg:
+		if msg.err != nil {
+			if IsAdminSessionExpired(msg.err) {
+				return m.expireAdminSession(msg.err.Error()), nil
+			}
+			m.status = msg.err.Error()
+			return m, nil
+		}
+		m.adminView.TrivyConfigModal = trivyConfigModal{}
+		m.adminView.TrivyTab = trivyTabRuntime
+		m.pendingAdminStatus = "Configuration saved."
+		m.status = "Loading built-in features..."
+		m.screen = screenAdminFeatures
+		return m, m.loadAdminFeaturesCmd()
 	case adminFeatureRuntimeMutatedMsg:
 		if msg.err != nil {
 			if IsAdminSessionExpired(msg.err) {
@@ -448,6 +474,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = "Loading built-in features..."
 		m.screen = screenAdminFeatures
 		return m, m.loadAdminFeaturesCmd()
+	case adminScanRunsLoadedMsg:
+		if msg.err != nil {
+			if IsAdminSessionExpired(msg.err) {
+				return m.expireAdminSession(msg.err.Error()), nil
+			}
+			m.status = msg.err.Error()
+			return m, nil
+		}
+		m.adminView.TrivyScanRuns = append([]ports.ScanRun(nil), msg.runs...)
+		m.adminView.TrivySelectedAlert = boundedIndex(0, len(m.adminView.TrivyScanRuns))
+		m.adminView.TrivyAlertDetailOpen = false
+		m.adminView.TrivyAlertsLoaded = true
+		if len(m.adminView.TrivyScanRuns) == 0 {
+			m.status = "No repository alerts found."
+		} else if strings.HasPrefix(strings.ToLower(m.status), "loading") {
+			m.status = ""
+		}
+		return m, nil
 	case adminUserGrantsLoadedMsg:
 		if msg.err != nil {
 			if IsAdminSessionExpired(msg.err) {
@@ -735,6 +779,10 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateAdminKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.adminView.TrivyConfigModal.Active() {
+		return m.updateTrivyConfigModalKey(msg)
+	}
+
 	if isRuneKey(msg, 'l') && m.canLogoutAdminFromCurrentScreen() {
 		return m.logoutAdmin(), nil
 	}
@@ -846,14 +894,53 @@ func (m Model) updateAdminUsersKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) updateAdminFeaturesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case isEscKey(msg):
+		if m.isTrivyAlertsDetailOpen() {
+			m.adminView.TrivyAlertDetailOpen = false
+			m.status = ""
+			return m, nil
+		}
 		m.screen = screenAdminUsers
 		m.status = ""
+		return m, nil
+	case m.isSelectedTrivyFeature() && isTabKey(msg):
+		return m.toggleTrivyTab()
+	case m.isSelectedTrivyFeature() && m.adminView.TrivyTab == trivyTabRepositoryAlerts && isMoveUpKey(msg):
+		if len(m.adminView.TrivyScanRuns) == 0 {
+			return m, nil
+		}
+		m.adminView.TrivySelectedAlert = boundedIndex(m.adminView.TrivySelectedAlert-1, len(m.adminView.TrivyScanRuns))
+		return m, nil
+	case m.isSelectedTrivyFeature() && m.adminView.TrivyTab == trivyTabRepositoryAlerts && isMoveDownKey(msg):
+		if len(m.adminView.TrivyScanRuns) == 0 {
+			return m, nil
+		}
+		m.adminView.TrivySelectedAlert = boundedIndex(m.adminView.TrivySelectedAlert+1, len(m.adminView.TrivyScanRuns))
 		return m, nil
 	case isMoveUpKey(msg):
 		return m.moveAdminFeatureSelection(-1)
 	case isMoveDownKey(msg):
 		return m.moveAdminFeatureSelection(1)
+	case m.isSelectedTrivyFeature() && m.adminView.TrivyTab == trivyTabRuntime && isRuneKey(msg, 'c'):
+		modal, ok := trivyConfigModalFromPage(m.adminView.FeaturePage)
+		if !ok {
+			m.status = "Current Trivy configuration is unavailable."
+			return m, nil
+		}
+		m.adminView.TrivyConfigModal = modal
+		m.status = ""
+		return m, nil
+	case m.isSelectedTrivyFeature() && m.adminView.TrivyTab == trivyTabRepositoryAlerts && isEnterKey(msg):
+		if len(m.adminView.TrivyScanRuns) == 0 {
+			return m, nil
+		}
+		m.adminView.TrivyAlertDetailOpen = true
+		m.status = ""
+		return m, nil
 	case isEnterKey(msg), isRuneKey(msg, 'r'):
+		if m.isSelectedTrivyFeature() && m.adminView.TrivyTab == trivyTabRepositoryAlerts {
+			m.status = "Loading repository alerts..."
+			return m, m.loadAdminScanRunsCmd("", 25)
+		}
 		if strings.TrimSpace(m.selectedFeatureName()) == "" {
 			m.status = "No feature selected."
 			return m, nil
@@ -885,6 +972,43 @@ func (m Model) updateAdminFeaturesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.executeFeatureActionCmd(m.selectedFeatureName(), action.ID)
 	}
 
+	return m, nil
+}
+
+func (m Model) updateTrivyConfigModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case isEscKey(msg):
+		m.adminView.TrivyConfigModal = trivyConfigModal{}
+		m.status = ""
+		return m, nil
+	case isTabKey(msg):
+		m.adminView.TrivyConfigModal.Focus = nextTrivyConfigField(m.adminView.TrivyConfigModal.Focus)
+		m.adminView.TrivyConfigModal.Error = ""
+		return m, nil
+	case isRuneKey(msg, ' '):
+		if m.adminView.TrivyConfigModal.Focus == trivyConfigFieldScheduleEnabled {
+			m.adminView.TrivyConfigModal.ScheduleEnabled = !m.adminView.TrivyConfigModal.ScheduleEnabled
+			m.adminView.TrivyConfigModal.Error = ""
+		}
+		return m, nil
+	case isBackspaceKey(msg):
+		m.deleteTrivyConfigModalRune()
+		m.adminView.TrivyConfigModal.Error = ""
+		return m, nil
+	case isEnterKey(msg):
+		input, err := m.trivyConfigInputFromModal()
+		if err != nil {
+			m.adminView.TrivyConfigModal.Error = err.Error()
+			return m, nil
+		}
+		m.status = "Submitting Trivy configuration..."
+		return m, m.configureFeatureCmd(trivyFeatureName, input)
+	}
+	if msg.Type == tea.KeyRunes {
+		m.appendTrivyConfigModalRunes(string(msg.Runes))
+		m.adminView.TrivyConfigModal.Error = ""
+		return m, nil
+	}
 	return m, nil
 }
 
@@ -1501,6 +1625,16 @@ func (m Model) loadAdminFeaturePageCmd(name string) tea.Cmd {
 	}
 }
 
+func (m Model) loadAdminScanRunsCmd(repository string, limit int) tea.Cmd {
+	return func() tea.Msg {
+		if m.adminClient == nil {
+			return adminScanRunsLoadedMsg{err: fmt.Errorf("admin API is unavailable for this session")}
+		}
+		runs, err := m.adminClient.ListScanRuns(m.ctx, m.adminSession, repository, limit)
+		return adminScanRunsLoadedMsg{runs: runs, err: err}
+	}
+}
+
 func (m Model) loadAdminGrantsCmd(userID string, username string) tea.Cmd {
 	return func() tea.Msg {
 		if m.adminClient == nil {
@@ -1606,6 +1740,16 @@ func (m Model) executeFeatureActionCmd(name string, actionID string) tea.Cmd {
 		}
 		result, err := m.adminClient.ExecuteFeatureAction(m.ctx, m.adminSession, name, actionID)
 		return adminFeatureActionCompletedMsg{result: result, err: err}
+	}
+}
+
+func (m Model) configureFeatureCmd(name string, input ports.FeatureConfigureInput) tea.Cmd {
+	return func() tea.Msg {
+		if m.adminClient == nil {
+			return adminFeatureConfiguredMsg{name: name, err: fmt.Errorf("admin API is unavailable for this session")}
+		}
+		_, err := m.adminClient.ConfigureFeature(m.ctx, m.adminSession, name, input)
+		return adminFeatureConfiguredMsg{name: name, err: err}
 	}
 }
 
@@ -2024,6 +2168,12 @@ func (m *Model) clearSelectedAdminDetails() {
 	m.adminView.AdminTokens = nil
 	m.adminView.Features = nil
 	m.adminView.FeaturePage = ports.FeaturePage{}
+	m.adminView.TrivyTab = trivyTabRuntime
+	m.adminView.TrivyConfigModal = trivyConfigModal{}
+	m.adminView.TrivyScanRuns = nil
+	m.adminView.TrivySelectedAlert = 0
+	m.adminView.TrivyAlertDetailOpen = false
+	m.adminView.TrivyAlertsLoaded = false
 	m.adminView.SelectedGrant = 0
 	m.adminView.SelectedFeature = 0
 	m.adminView.SelectedToken = 0
@@ -2058,6 +2208,14 @@ func (m *Model) applyLoadedFeatures(features []ports.FeatureSummary) {
 
 func (m *Model) applyFeaturePage(page ports.FeaturePage) {
 	m.adminView.FeaturePage = page
+	m.adminView.TrivyConfigModal = trivyConfigModal{}
+	m.adminView.TrivyScanRuns = nil
+	m.adminView.TrivySelectedAlert = 0
+	m.adminView.TrivyAlertDetailOpen = false
+	m.adminView.TrivyAlertsLoaded = false
+	if page.Summary.Name == trivyFeatureName {
+		m.adminView.TrivyTab = trivyTabRuntime
+	}
 	for index, feature := range m.adminView.Features {
 		if feature.Name == page.Summary.Name {
 			m.adminView.Features[index] = page.Summary
@@ -2073,6 +2231,129 @@ func (m Model) selectedFeatureName() string {
 	}
 	index := boundedIndex(m.adminView.SelectedFeature, len(m.adminView.Features))
 	return m.adminView.Features[index].Name
+}
+
+func (m Model) isSelectedTrivyFeature() bool {
+	name := strings.TrimSpace(m.adminView.FeaturePage.Summary.Name)
+	if name == "" {
+		name = strings.TrimSpace(m.selectedFeatureName())
+	}
+	return name == trivyFeatureName
+}
+
+func (m Model) isTrivyAlertsDetailOpen() bool {
+	return m.isSelectedTrivyFeature() && m.adminView.TrivyTab == trivyTabRepositoryAlerts && m.adminView.TrivyAlertDetailOpen
+}
+
+func (m Model) toggleTrivyTab() (tea.Model, tea.Cmd) {
+	if m.adminView.TrivyTab == trivyTabRepositoryAlerts {
+		m.adminView.TrivyTab = trivyTabRuntime
+		m.adminView.TrivyAlertDetailOpen = false
+		m.status = ""
+		return m, nil
+	}
+	m.adminView.TrivyTab = trivyTabRepositoryAlerts
+	m.adminView.TrivyAlertDetailOpen = false
+	m.status = "Loading repository alerts..."
+	return m, m.loadAdminScanRunsCmd("", 25)
+}
+
+func selectedTrivyScanRun(view AdminViewState) (ports.ScanRun, bool) {
+	if len(view.TrivyScanRuns) == 0 {
+		return ports.ScanRun{}, false
+	}
+	index := boundedIndex(view.TrivySelectedAlert, len(view.TrivyScanRuns))
+	return view.TrivyScanRuns[index], true
+}
+
+func trivyConfigModalFromPage(page ports.FeaturePage) (trivyConfigModal, bool) {
+	if page.Summary.Name != trivyFeatureName {
+		return trivyConfigModal{}, false
+	}
+	modal := trivyConfigModal{Open: true, Focus: trivyConfigFieldScheduleEnabled}
+	for _, section := range page.Sections {
+		if section.ID != "config" {
+			continue
+		}
+		for _, field := range section.Fields {
+			switch field.Label {
+			case "Schedule Enabled":
+				modal.ScheduleEnabled, _ = strconv.ParseBool(strings.TrimSpace(field.Value))
+			case "Interval":
+				modal.Interval = strings.TrimSpace(field.Value)
+			case "Timeout":
+				modal.Timeout = strings.TrimSpace(field.Value)
+			case "Registry Reachable URL":
+				modal.RegistryReachableURL = strings.TrimSpace(field.Value)
+			case "Max Concurrency":
+				modal.MaxConcurrency = strings.TrimSpace(field.Value)
+			}
+		}
+	}
+	if modal.Interval == "" || modal.Timeout == "" || modal.MaxConcurrency == "" {
+		return trivyConfigModal{}, false
+	}
+	return modal, true
+}
+
+func nextTrivyConfigField(field trivyConfigField) trivyConfigField {
+	if field >= trivyConfigFieldMaxConcurrency {
+		return trivyConfigFieldScheduleEnabled
+	}
+	return field + 1
+}
+
+func (m *Model) deleteTrivyConfigModalRune() {
+	switch m.adminView.TrivyConfigModal.Focus {
+	case trivyConfigFieldInterval:
+		m.adminView.TrivyConfigModal.Interval = trimLastRune(m.adminView.TrivyConfigModal.Interval)
+	case trivyConfigFieldTimeout:
+		m.adminView.TrivyConfigModal.Timeout = trimLastRune(m.adminView.TrivyConfigModal.Timeout)
+	case trivyConfigFieldRegistryReachableURL:
+		m.adminView.TrivyConfigModal.RegistryReachableURL = trimLastRune(m.adminView.TrivyConfigModal.RegistryReachableURL)
+	case trivyConfigFieldMaxConcurrency:
+		m.adminView.TrivyConfigModal.MaxConcurrency = trimLastRune(m.adminView.TrivyConfigModal.MaxConcurrency)
+	}
+}
+
+func (m *Model) appendTrivyConfigModalRunes(value string) {
+	if value == "" {
+		return
+	}
+	switch m.adminView.TrivyConfigModal.Focus {
+	case trivyConfigFieldInterval:
+		m.adminView.TrivyConfigModal.Interval += value
+	case trivyConfigFieldTimeout:
+		m.adminView.TrivyConfigModal.Timeout += value
+	case trivyConfigFieldRegistryReachableURL:
+		m.adminView.TrivyConfigModal.RegistryReachableURL += value
+	case trivyConfigFieldMaxConcurrency:
+		m.adminView.TrivyConfigModal.MaxConcurrency += value
+	}
+}
+
+func (m Model) trivyConfigInputFromModal() (ports.FeatureConfigureInput, error) {
+	interval, err := time.ParseDuration(strings.TrimSpace(m.adminView.TrivyConfigModal.Interval))
+	if err != nil {
+		return ports.FeatureConfigureInput{}, fmt.Errorf("invalid interval: %w", err)
+	}
+	timeout, err := time.ParseDuration(strings.TrimSpace(m.adminView.TrivyConfigModal.Timeout))
+	if err != nil {
+		return ports.FeatureConfigureInput{}, fmt.Errorf("invalid timeout: %w", err)
+	}
+	maxConcurrency, err := strconv.Atoi(strings.TrimSpace(m.adminView.TrivyConfigModal.MaxConcurrency))
+	if err != nil {
+		return ports.FeatureConfigureInput{}, fmt.Errorf("invalid max concurrency: %w", err)
+	}
+	registryURL := strings.TrimSpace(m.adminView.TrivyConfigModal.RegistryReachableURL)
+	scheduleEnabled := m.adminView.TrivyConfigModal.ScheduleEnabled
+	return ports.FeatureConfigureInput{
+		ScheduleEnabled:      &scheduleEnabled,
+		Interval:             &interval,
+		Timeout:              &timeout,
+		RegistryReachableURL: &registryURL,
+		MaxConcurrency:       &maxConcurrency,
+	}, nil
 }
 
 func (m Model) moveAdminFeatureSelection(delta int) (tea.Model, tea.Cmd) {

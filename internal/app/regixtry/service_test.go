@@ -259,7 +259,7 @@ func TestBuildFeaturePageKeepsMinimalNonTrivyPagesLightweight(t *testing.T) {
 	}
 }
 
-func TestServiceGetFeaturePageBuildsOrderedTrivySectionsAndDeclaredActions(t *testing.T) {
+func TestServiceGetFeaturePageBuildsRuntimeOnlyTrivySectionsAndDeclaredActions(t *testing.T) {
 	t.Parallel()
 
 	service, cleanup := newTestService(t, allowAllAccessController{})
@@ -287,14 +287,6 @@ func TestServiceGetFeaturePageBuildsOrderedTrivySectionsAndDeclaredActions(t *te
 	}); err != nil {
 		t.Fatalf("UpsertTrivyRuntimeState() error = %v", err)
 	}
-	for _, run := range []ports.ScanRun{
-		{ID: "run-1", Repository: "library/alpine", RequestedRef: "latest", Digest: digestForTest([]byte("run-1")), Status: ports.ScanRunStatusCompleted, Trigger: ports.ScanTriggerManual, CreatedAt: time.Now().UTC().Add(-2 * time.Minute), UpdatedAt: time.Now().UTC().Add(-2 * time.Minute), Critical: 1, High: 2, Medium: 3, Low: 4, TrivyVersion: "0.57.1"},
-		{ID: "run-2", Repository: "team/api", RequestedRef: "1.0.0", Digest: digestForTest([]byte("run-2")), Status: ports.ScanRunStatusFailed, Trigger: ports.ScanTriggerScheduled, CreatedAt: time.Now().UTC().Add(-time.Minute), UpdatedAt: time.Now().UTC().Add(-time.Minute), Error: "registry unavailable"},
-	} {
-		if err := service.metadata.UpsertScanRun(context.Background(), "tenant-a", run); err != nil {
-			t.Fatalf("UpsertScanRun(%s) error = %v", run.ID, err)
-		}
-	}
 	service.SetFeatureRuntimeManager(fakeFeatureRuntimeManager{statusState: ports.TrivyRuntimeState{Status: ports.TrivyRuntimeStatusReady, ActiveVersion: "0.57.1", PreviousVersion: "0.56.2"}, latestVersion: "0.58.0"})
 
 	page, err := service.GetFeaturePage(context.Background(), "trivy")
@@ -302,17 +294,14 @@ func TestServiceGetFeaturePageBuildsOrderedTrivySectionsAndDeclaredActions(t *te
 		t.Fatalf("GetFeaturePage() error = %v", err)
 	}
 
-	if got, want := sectionIDs(page.Sections), []string{"config", "runtime", "runs", "vulnerabilities", "repository-alerts"}; !reflect.DeepEqual(got, want) {
+	if got, want := sectionIDs(page.Sections), []string{"config", "runtime"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("section IDs = %#v, want %#v", got, want)
 	}
 	if got, want := actionIDs(page.Actions), []string{"refresh", "disable", "upgrade-runtime", "rollback-runtime"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("action IDs = %#v, want %#v", got, want)
 	}
-	if len(page.Sections[2].Rows) == 0 || len(page.Sections[4].Rows) == 0 {
-		t.Fatalf("page = %#v, want runs and repository alerts rows", page)
-	}
-	if len(page.Sections[3].Fields) == 0 {
-		t.Fatalf("page = %#v, want vulnerability summary fields", page)
+	if len(page.Sections) != 2 {
+		t.Fatalf("page.Sections = %#v, want runtime-only page shape", page.Sections)
 	}
 }
 

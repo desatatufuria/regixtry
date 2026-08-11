@@ -40,6 +40,23 @@ const (
 	adminTokenFieldTTL
 )
 
+type TrivyTab string
+
+const (
+	trivyTabRuntime          TrivyTab = "runtime"
+	trivyTabRepositoryAlerts TrivyTab = "repository-alerts"
+)
+
+type trivyConfigField int
+
+const (
+	trivyConfigFieldScheduleEnabled trivyConfigField = iota
+	trivyConfigFieldInterval
+	trivyConfigFieldTimeout
+	trivyConfigFieldRegistryReachableURL
+	trivyConfigFieldMaxConcurrency
+)
+
 type adminConfirmKind string
 
 const (
@@ -90,6 +107,21 @@ type adminConfirmModal struct {
 	Accessor    string
 }
 
+type trivyConfigModal struct {
+	Open                 bool
+	Focus                trivyConfigField
+	ScheduleEnabled      bool
+	Interval             string
+	Timeout              string
+	RegistryReachableURL string
+	MaxConcurrency       string
+	Error                string
+}
+
+func (m trivyConfigModal) Active() bool {
+	return m.Open
+}
+
 func (m adminConfirmModal) Active() bool {
 	return m.Kind != adminConfirmNone
 }
@@ -120,6 +152,12 @@ type AdminViewState struct {
 	GrantForm              adminGrantForm
 	TokenForm              adminTokenForm
 	ConfirmModal           adminConfirmModal
+	TrivyTab               TrivyTab
+	TrivyConfigModal       trivyConfigModal
+	TrivyScanRuns          []ports.ScanRun
+	TrivySelectedAlert     int
+	TrivyAlertDetailOpen   bool
+	TrivyAlertsLoaded      bool
 	RevealedTokenSecret    string
 	RevealedTokenAccessor  string
 	RevealedTokenExpiresAt time.Time
@@ -178,6 +216,7 @@ func newAdminViewState() AdminViewState {
 		GrantForm: adminGrantForm{
 			Role: domainauth.RepoRoleReader,
 		},
+		TrivyTab: trivyTabRuntime,
 	}
 }
 

@@ -23,14 +23,19 @@ The admin Features screen is now a thin Bubble Tea shell:
 - The left side stays a generic feature summary list built from `/admin/v1/features`.
 - The selected feature page comes from `/admin/v1/features/{name}`.
 - The backend declares the page header, ordered sections, and visible actions.
-- Trivy currently exposes richer sections for configuration, runtime, recent runs, vulnerability summary, and repository alerts.
-- The shell only handles selection, refresh, confirmation, and operator feedback.
+- Trivy narrows the backend page to runtime-oriented configuration and runtime sections, then adds two TUI-only tabs: `Runtime` and `Repository Alerts`.
+- The `Runtime` tab is the default landing view after load or refresh.
+- Trivy configuration edits happen in a modal that only submits the current settings fields already exposed by the backend page: schedule toggle, interval, timeout, registry reachable URL, and max concurrency.
+- The `Repository Alerts` tab loads existing scan runs from `/admin/v1/scan-runs` and renders same-screen alert drill-down without introducing persisted vulnerability detail, exclusions, or policy systems.
+- Non-Trivy features keep the same generic feature shell with no Trivy-specific tab chrome.
+- The shell only handles selection, refresh, tabs, confirmation, modal state, and operator feedback.
 
 ### Declared action behavior
 
 - `Enter` or `r` refreshes the selected feature page.
 - `e`, `x`, `i`, `u`, and `b` only appear in help when the backend declares `enable`, `disable`, `install-runtime`, `upgrade-runtime`, or `rollback-runtime` for the selected page.
 - Confirmation copy for destructive actions is backend-authored.
+- On Trivy, `Tab` switches between `Runtime` and `Repository Alerts`, `c` opens the configuration modal from `Runtime`, and `Enter` opens detail for the selected repository alert.
 
 ## Key bindings
 
@@ -47,6 +52,11 @@ The admin Features screen is now a thin Bubble Tea shell:
 | `d`, `x` | manifest / blobs / uploads | show unsupported mutation notice |
 | `l` | authenticated admin | log out |
 | `r` | admin users | reload users |
+| `Tab` | Trivy feature page | switch between `Runtime` and `Repository Alerts` |
+| `c` | Trivy runtime tab | open the configuration modal for current Trivy settings |
+| `↑` / `↓` | Trivy repository alerts tab | move between loaded scan runs |
+| `Enter` | Trivy repository alerts tab | open same-screen detail for the selected scan run |
+| `Esc` | Trivy repository alert detail | close detail and return to the alert list |
 | `e`, `x` | admin feature page | run declared enable / disable when present |
 | `i`, `u`, `b` | admin feature page | run declared install / upgrade / rollback when present |
 | `g` | admin user detail | load grants |
