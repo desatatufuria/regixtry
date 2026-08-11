@@ -24,6 +24,7 @@ type AdminClient interface {
 	GetFeaturePage(ctx context.Context, session AdminSession, name string) (ports.FeaturePage, error)
 	ListScanRuns(ctx context.Context, session AdminSession, repository string, limit int) ([]ports.ScanRun, error)
 	GetScanRunDetail(ctx context.Context, session AdminSession, runID string) (ports.ScanRunDetail, error)
+	GetSecretScanFindings(ctx context.Context, session AdminSession, repository string, digest string) (ports.SecretScanRunDetail, error)
 	ExecuteFeatureAction(ctx context.Context, session AdminSession, name string, actionID string) (ports.FeatureActionResult, error)
 	GetFeature(ctx context.Context, session AdminSession, name string) (ports.FeatureDetails, error)
 	GetFeatureStatus(ctx context.Context, session AdminSession, name string) (ports.FeatureDetails, error)
@@ -184,6 +185,22 @@ func (c *HTTPAdminClient) GetScanRunDetail(ctx context.Context, session AdminSes
 	var detail ports.ScanRunDetail
 	if err := c.getJSON(ctx, session, "/admin/v1/scan-runs/"+url.PathEscape(strings.TrimSpace(runID)), &detail); err != nil {
 		return ports.ScanRunDetail{}, err
+	}
+	return detail, nil
+}
+
+// GetSecretScanFindings fetches the redacted secret-scan findings for one
+// image (repository@digest), the same attribution key the Trivy scan-run
+// detail is keyed by since both legs share the same rescan trigger. A
+// caller with no persisted secret scan for that image gets the ordinary
+// admin API error (surfaced as a clean empty state, not a crash).
+func (c *HTTPAdminClient) GetSecretScanFindings(ctx context.Context, session AdminSession, repository string, digest string) (ports.SecretScanRunDetail, error) {
+	query := url.Values{}
+	query.Set("repository", strings.TrimSpace(repository))
+	query.Set("digest", strings.TrimSpace(digest))
+	var detail ports.SecretScanRunDetail
+	if err := c.getJSON(ctx, session, "/admin/v1/secret-scan-findings?"+query.Encode(), &detail); err != nil {
+		return ports.SecretScanRunDetail{}, err
 	}
 	return detail, nil
 }

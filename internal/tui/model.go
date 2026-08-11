@@ -225,6 +225,11 @@ type adminScanRunDetailLoadedMsg struct {
 	err    error
 }
 
+type adminSecretScanFindingsLoadedMsg struct {
+	findings []ports.SecretFinding
+	err      error
+}
+
 type adminUserGrantsLoadedMsg struct {
 	userID   string
 	username string
@@ -513,10 +518,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.adminView.TrivyScanRunDetail = msg.detail
 		m.adminView.TrivyAlertDetailOpen = true
+		m.adminView.SecretFindings = nil
 		m.rebuildAdminTables()
 		if strings.HasPrefix(strings.ToLower(m.status), "loading") {
 			m.status = ""
 		}
+		// Secret findings are surfaced alongside the vulnerability scan
+		// detail just loaded above (spec.md "Operator reviews findings for
+		// a selected image"), keyed by the same repository+digest both scan
+		// legs share. Chained as a follow-up Cmd (not tea.Batch) so it
+		// composes with this Update loop's existing single-Cmd-return style.
+		return m, m.loadAdminSecretScanFindingsCmd(msg.detail.Run.Repository, msg.detail.Run.Digest)
+	case adminSecretScanFindingsLoadedMsg:
+		if msg.err != nil {
+			if IsAdminSessionExpired(msg.err) {
+				return m.expireAdminSession(msg.err.Error()), nil
+			}
+			// Informational only (spec.md "Informational Findings Only"): a
+			// failure to load secret findings (including "none persisted
+			// yet") must never override the vulnerability detail already
+			// shown or surface as a blocking error — it just renders as the
+			// clear empty state below.
+			m.adminView.SecretFindings = nil
+			m.rebuildAdminTables()
+			return m, nil
+		}
+		m.adminView.SecretFindings = msg.findings
+		m.rebuildAdminTables()
 		return m, nil
 	case adminUserGrantsLoadedMsg:
 		if msg.err != nil {
@@ -1673,6 +1701,19 @@ func (m Model) loadAdminScanRunDetailCmd(runID string) tea.Cmd {
 	}
 }
 
+func (m Model) loadAdminSecretScanFindingsCmd(repository string, digest string) tea.Cmd {
+	return func() tea.Msg {
+		if m.adminClient == nil {
+			return adminSecretScanFindingsLoadedMsg{err: fmt.Errorf("admin API is unavailable for this session")}
+		}
+		detail, err := m.adminClient.GetSecretScanFindings(m.ctx, m.adminSession, repository, digest)
+		if err != nil {
+			return adminSecretScanFindingsLoadedMsg{err: err}
+		}
+		return adminSecretScanFindingsLoadedMsg{findings: detail.Findings}
+	}
+}
+
 func (m Model) loadAdminGrantsCmd(userID string, username string) tea.Cmd {
 	return func() tea.Msg {
 		if m.adminClient == nil {
@@ -2213,6 +2254,7 @@ func (m *Model) clearSelectedAdminDetails() {
 	m.adminView.TrivyAlertDetailOpen = false
 	m.adminView.TrivyAlertsLoaded = false
 	m.adminView.TrivyScanRunDetail = ports.ScanRunDetail{}
+	m.adminView.SecretFindings = nil
 	m.adminView.SelectedGrant = 0
 	m.adminView.SelectedFeature = 0
 	m.adminView.SelectedToken = 0
@@ -2255,6 +2297,7 @@ func (m *Model) applyFeaturePage(page ports.FeaturePage) {
 	m.adminView.TrivyAlertDetailOpen = false
 	m.adminView.TrivyAlertsLoaded = false
 	m.adminView.TrivyScanRunDetail = ports.ScanRunDetail{}
+	m.adminView.SecretFindings = nil
 	if page.Summary.Name == trivyFeatureName {
 		m.adminView.TrivyTab = trivyTabRuntime
 	}
@@ -2300,6 +2343,7 @@ func (m Model) toggleTrivyTab() (tea.Model, tea.Cmd) {
 	m.adminView.TrivyTab = trivyTabRepositoryAlerts
 	m.adminView.TrivyAlertDetailOpen = false
 	m.adminView.TrivyScanRunDetail = ports.ScanRunDetail{}
+	m.adminView.SecretFindings = nil
 	m.rebuildAdminTables()
 	m.status = "Loading repository alerts..."
 	return m, m.loadAdminScanRunsCmd("", 25)

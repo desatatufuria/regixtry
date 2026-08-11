@@ -766,6 +766,78 @@ func TestModelTrivyRepositoryAlertsLoadSelectDetailAndRecoverEmptyState(t *testi
 	})
 }
 
+// TestModelSecretFindingsSurfaceAlongsideVulnerabilityResultsWithoutSeverityOrGatingIndicator
+// is the Phase 6 RED test (tasks.md 6.5, spec.md "Operator reviews findings
+// for a selected image"): opening a Trivy scan run's detail must also load
+// and render that same image's redacted secret-scan findings (keyed by the
+// same repository+digest both scan legs share), and the secret findings
+// table must never carry a severity or gating column/styling — the
+// resolved product decision (proposal.md) is informational-only.
+func TestModelSecretFindingsSurfaceAlongsideVulnerabilityResultsWithoutSeverityOrGatingIndicator(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 11, 16, 0, 0, 0, time.UTC)
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+		features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
+		featurePage: ports.FeaturePage{
+			Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
+			Header:  []ports.FeatureField{{Label: "Enabled", Value: "true"}},
+		},
+		scanRuns: []ports.ScanRun{
+			{ID: "run-1", Repository: "library/alpine", RequestedRef: "latest", Digest: "sha256:111", Status: ports.ScanRunStatusCompleted, Critical: 1, HasFixable: true},
+		},
+		scanRunDetails: map[string]ports.ScanRunDetail{
+			"run-1": {
+				Run:      ports.ScanRun{ID: "run-1", Repository: "library/alpine", RequestedRef: "latest", Digest: "sha256:111", Status: ports.ScanRunStatusCompleted, Critical: 1},
+				Findings: []ports.ScanRunFinding{{Severity: "CRITICAL", VulnerabilityID: "CVE-2026-0099", PackageName: "openssl", InstalledVersion: "3.0.0", FixedVersion: "3.0.1", Fixable: true}},
+			},
+		},
+		secretScanFindings: map[string]ports.SecretScanRunDetail{
+			"library/alpine@sha256:111": {
+				Run:      ports.SecretScanRun{ID: "secret-run-1", Repository: "library/alpine", Digest: "sha256:111", Status: ports.SecretScanRunStatusCompleted},
+				Findings: []ports.SecretFinding{{RuleID: "aws-access-token", Path: "config.json", StartLine: 4, EndLine: 4}},
+			},
+		},
+	}
+
+	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
+	updated = runKey(t, updated, "f")
+	updated = runKey(t, updated, "tab")
+	updated = runKey(t, updated, "enter")
+
+	if adminClient.getSecretScanFindingsCalls != 1 {
+		t.Fatalf("getSecretScanFindingsCalls = %d, want secret findings loaded alongside the vulnerability detail", adminClient.getSecretScanFindingsCalls)
+	}
+	if got, want := adminClient.lastSecretScanFindingsQuery, "library/alpine@sha256:111"; got != want {
+		t.Fatalf("secret findings query = %q, want %q (same repository+digest as the vulnerability scan run)", got, want)
+	}
+
+	view := updated.View()
+	for _, want := range []string{"CVE-2026-0099", "Secret Findings", "aws-access-token", "config.json:4"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view = %q, want %q surfaced alongside vulnerability results", view, want)
+		}
+	}
+
+	// No severity or gating indicator for the secret finding: the secret
+	// findings table only declares rule/location columns, never the
+	// severity/fixable columns the vulnerability findings table has.
+	secretFindingsTable := updated.adminView.Tables.SecretFindings
+	if got, want := secretFindingsTable.TotalRows(), 1; got != want {
+		t.Fatalf("secret findings table rows = %d, want %d", got, want)
+	}
+	row := secretFindingsTable.HighlightedRow().Data
+	for _, bannedKey := range []string{adminTableColumnFindingSeverity, adminTableColumnFindingFixable, "severity", "fixable", "gate", "blocking"} {
+		if _, ok := row[bannedKey]; ok {
+			t.Fatalf("secret finding row = %#v, must not carry a severity/gating column %q", row, bannedKey)
+		}
+	}
+	if _, styled := row[adminTableColumnSecretFindingRule].(bubbletable.StyledCell); styled {
+		t.Fatal("secret finding rule cell must stay neutral text, never severity-derived styling")
+	}
+}
+
 func TestModelFeatureTablesRenderAlignedRowsAndPreserveBackendValues(t *testing.T) {
 	t.Parallel()
 
@@ -1348,6 +1420,8 @@ type fakeAdminClient struct {
 	pageAfterAction       ports.FeaturePage
 	scanRuns              []ports.ScanRun
 	scanRunDetails        map[string]ports.ScanRunDetail
+	secretScanFindings    map[string]ports.SecretScanRunDetail
+	secretScanFindingsErr error
 	featureAfterConfigure ports.FeatureDetails
 	installRuntime        ports.FeatureRuntimeState
 	upgradeRuntime        ports.FeatureRuntimeState
@@ -1394,32 +1468,34 @@ type fakeAdminClient struct {
 	disableUser ports.AdminUser
 	disableErr  error
 
-	loginCalls                int
-	listFeaturesCalls         int
-	getFeatureCalls           int
-	getFeatureStatusCalls     int
-	getFeaturePageCalls       int
-	listScanRunsCalls         int
-	getScanRunDetailCalls     int
-	executeFeatureActionCalls int
-	lastFeatureAction         string
-	installRuntimeCalls       int
-	upgradeRuntimeCalls       int
-	rollbackRuntimeCalls      int
-	enableFeatureCalls        int
-	disableFeatureCalls       int
-	listUsersCalls            int
-	listGrantsCalls           int
-	listTokensCalls           int
-	createUserCalls           int
-	resetPasswordCalls        int
-	configureFeatureCalls     int
-	putGrantCalls             int
-	deleteGrantCalls          int
-	createTokenCalls          int
-	revokeTokenCalls          int
-	enableCalls               int
-	disableCalls              int
+	loginCalls                  int
+	listFeaturesCalls           int
+	getFeatureCalls             int
+	getFeatureStatusCalls       int
+	getFeaturePageCalls         int
+	listScanRunsCalls           int
+	getScanRunDetailCalls       int
+	getSecretScanFindingsCalls  int
+	lastSecretScanFindingsQuery string
+	executeFeatureActionCalls   int
+	lastFeatureAction           string
+	installRuntimeCalls         int
+	upgradeRuntimeCalls         int
+	rollbackRuntimeCalls        int
+	enableFeatureCalls          int
+	disableFeatureCalls         int
+	listUsersCalls              int
+	listGrantsCalls             int
+	listTokensCalls             int
+	createUserCalls             int
+	resetPasswordCalls          int
+	configureFeatureCalls       int
+	putGrantCalls               int
+	deleteGrantCalls            int
+	createTokenCalls            int
+	revokeTokenCalls            int
+	enableCalls                 int
+	disableCalls                int
 }
 
 func (f *fakeAdminClient) Login(context.Context, string, string) (AdminSession, error) {
@@ -1482,6 +1558,18 @@ func (f *fakeAdminClient) GetScanRunDetail(_ context.Context, _ AdminSession, ru
 		return detail, nil
 	}
 	return ports.ScanRunDetail{}, nil
+}
+
+func (f *fakeAdminClient) GetSecretScanFindings(_ context.Context, _ AdminSession, repository string, digest string) (ports.SecretScanRunDetail, error) {
+	f.getSecretScanFindingsCalls++
+	f.lastSecretScanFindingsQuery = repository + "@" + digest
+	if f.secretScanFindingsErr != nil {
+		return ports.SecretScanRunDetail{}, f.secretScanFindingsErr
+	}
+	if detail, ok := f.secretScanFindings[f.lastSecretScanFindingsQuery]; ok {
+		return detail, nil
+	}
+	return ports.SecretScanRunDetail{}, nil
 }
 
 func (f *fakeAdminClient) ExecuteFeatureAction(_ context.Context, _ AdminSession, name string, actionID string) (ports.FeatureActionResult, error) {

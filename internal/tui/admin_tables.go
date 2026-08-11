@@ -39,6 +39,9 @@ const (
 	adminTableColumnFindingInstalled = "finding_installed"
 	adminTableColumnFindingFixed     = "finding_fixed"
 	adminTableColumnFindingFixable   = "finding_fixable"
+
+	adminTableColumnSecretFindingRule     = "secret_finding_rule"
+	adminTableColumnSecretFindingLocation = "secret_finding_location"
 )
 
 func newAdminBubbleTable(columns []bubbletable.Column, rows []bubbletable.Row, highlighted int, theme adminTheme) bubbletable.Model {
@@ -160,6 +163,40 @@ func buildAdminFindingsTable(theme adminTheme, findings []ports.ScanRunFinding, 
 	return newAdminBubbleTable(columns, rows, highlighted, theme)
 }
 
+// buildAdminSecretFindingsTable renders redacted secret-scan findings: rule
+// ID and location only (spec.md "Redacted Secret Findings Model",
+// "Informational Findings Only"). Deliberately no severity/status/fixable
+// column — secret findings carry no severity or gating dimension in this
+// change, unlike buildAdminFindingsTable's vulnerability rows.
+func buildAdminSecretFindingsTable(theme adminTheme, findings []ports.SecretFinding, highlighted int) bubbletable.Model {
+	columns := []bubbletable.Column{
+		bubbletable.NewColumn(adminTableColumnSecretFindingRule, "Rule", 22),
+		bubbletable.NewColumn(adminTableColumnSecretFindingLocation, "Location", 40),
+	}
+	rows := make([]bubbletable.Row, 0, len(findings))
+	for _, finding := range findings {
+		rows = append(rows, bubbletable.NewRow(bubbletable.RowData{
+			adminTableColumnSecretFindingRule:     adminFirstNonEmpty(finding.RuleID, "unknown"),
+			adminTableColumnSecretFindingLocation: secretFindingLocation(finding),
+		}))
+	}
+	return newAdminBubbleTable(columns, rows, highlighted, theme)
+}
+
+func secretFindingLocation(finding ports.SecretFinding) string {
+	location := adminFirstNonEmpty(finding.Path, finding.BlobDigest)
+	if location == "" {
+		return "unknown"
+	}
+	if finding.StartLine <= 0 {
+		return location
+	}
+	if finding.EndLine > finding.StartLine {
+		return fmt.Sprintf("%s:%d-%d", location, finding.StartLine, finding.EndLine)
+	}
+	return fmt.Sprintf("%s:%d", location, finding.StartLine)
+}
+
 func severityStyledCell(theme adminTheme, severity string) bubbletable.StyledCell {
 	value := strings.ToUpper(strings.TrimSpace(severity))
 	style := theme.text
@@ -197,6 +234,7 @@ func (m *Model) rebuildAdminTables() {
 	m.adminView.Tables.FeatureRows = featureRows
 	m.adminView.Tables.ScanRuns = buildAdminScanRunsTable(theme, m.adminView.TrivyScanRuns, m.adminView.TrivySelectedAlert)
 	m.adminView.Tables.Findings = buildAdminFindingsTable(theme, m.adminView.TrivyScanRunDetail.Findings, 0)
+	m.adminView.Tables.SecretFindings = buildAdminSecretFindingsTable(theme, m.adminView.SecretFindings, 0)
 	m.syncAdminTableSelections()
 }
 

@@ -141,39 +141,47 @@ type adminTableSelection struct {
 }
 
 type adminTablesState struct {
-	Features    bubbletable.Model
-	FeatureRows map[string]bubbletable.Model
-	ScanRuns    bubbletable.Model
-	Findings    bubbletable.Model
-	Selection   adminTableSelection
+	Features       bubbletable.Model
+	FeatureRows    map[string]bubbletable.Model
+	ScanRuns       bubbletable.Model
+	Findings       bubbletable.Model
+	SecretFindings bubbletable.Model
+	Selection      adminTableSelection
 }
 
 type AdminViewState struct {
-	Users                  []ports.AdminUser
-	Features               []ports.FeatureSummary
-	SelectedUser           int
-	SelectedFeature        int
-	SelectedUserID         string
-	SelectedUsername       string
-	UserSearchQuery        string
-	UserSearchActive       bool
-	FeaturePage            ports.FeaturePage
-	Grants                 []ports.AdminRepoGrant
-	SelectedGrant          int
-	AdminTokens            []ports.AdminToken
-	SelectedToken          int
-	CreateUserForm         adminCreateUserForm
-	ResetPasswordForm      adminResetPasswordForm
-	GrantForm              adminGrantForm
-	TokenForm              adminTokenForm
-	ConfirmModal           adminConfirmModal
-	TrivyTab               TrivyTab
-	TrivyConfigModal       trivyConfigModal
-	TrivyScanRuns          []ports.ScanRun
-	TrivySelectedAlert     int
-	TrivyAlertDetailOpen   bool
-	TrivyAlertsLoaded      bool
-	TrivyScanRunDetail     ports.ScanRunDetail
+	Users                []ports.AdminUser
+	Features             []ports.FeatureSummary
+	SelectedUser         int
+	SelectedFeature      int
+	SelectedUserID       string
+	SelectedUsername     string
+	UserSearchQuery      string
+	UserSearchActive     bool
+	FeaturePage          ports.FeaturePage
+	Grants               []ports.AdminRepoGrant
+	SelectedGrant        int
+	AdminTokens          []ports.AdminToken
+	SelectedToken        int
+	CreateUserForm       adminCreateUserForm
+	ResetPasswordForm    adminResetPasswordForm
+	GrantForm            adminGrantForm
+	TokenForm            adminTokenForm
+	ConfirmModal         adminConfirmModal
+	TrivyTab             TrivyTab
+	TrivyConfigModal     trivyConfigModal
+	TrivyScanRuns        []ports.ScanRun
+	TrivySelectedAlert   int
+	TrivyAlertDetailOpen bool
+	TrivyAlertsLoaded    bool
+	TrivyScanRunDetail   ports.ScanRunDetail
+	// SecretFindings holds the redacted secret-scan findings for the image
+	// currently shown in TrivyScanRunDetail (spec.md "Operator Visibility of
+	// Findings" — surfaced alongside vulnerability results). It is
+	// deliberately independent of the vulnerability Findings table: no
+	// severity or gating indicator is ever attached to it (informational
+	// only, spec.md "Informational Findings Only").
+	SecretFindings         []ports.SecretFinding
 	RevealedTokenSecret    string
 	RevealedTokenAccessor  string
 	RevealedTokenExpiresAt time.Time

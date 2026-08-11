@@ -183,9 +183,26 @@ func renderTrivyRepositoryAlerts(theme adminTheme, view AdminViewState) []string
 				lines = append(lines, "", theme.subheading.Render("Findings"))
 				lines = append(lines, view.Tables.Findings.View())
 			}
+			lines = append(lines, "", theme.subheading.Render("Secret Findings"))
+			lines = append(lines, renderSecretFindingsBody(theme, view)...)
 		}
 	}
 	return lines
+}
+
+// renderSecretFindingsBody renders the secret-scan findings for the image
+// currently open in the scan detail, alongside the vulnerability findings
+// above (spec.md "Operator reviews findings for a selected image"). It is
+// informational only: rule ID and location are the only columns
+// (buildAdminSecretFindingsTable), and there is deliberately no
+// severity/gating styling anywhere in this block. A selected image with no
+// persisted secret findings gets a clear empty state, never an error
+// (spec.md "Image with no findings shows an empty state").
+func renderSecretFindingsBody(theme adminTheme, view AdminViewState) []string {
+	if len(view.SecretFindings) == 0 {
+		return []string{theme.muted.Render("No secret findings recorded for this image.")}
+	}
+	return []string{view.Tables.SecretFindings.View()}
 }
 
 func renderAdminCreateUserScreen(theme adminTheme, view AdminViewState) string {

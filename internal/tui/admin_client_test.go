@@ -599,6 +599,45 @@ func TestHTTPAdminClientGetScanRunDetail(t *testing.T) {
 	}
 }
 
+func TestHTTPAdminClientGetSecretScanFindings(t *testing.T) {
+	t.Parallel()
+
+	fixedNow := time.Date(2026, time.August, 4, 23, 5, 0, 0, time.UTC)
+	session := AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: fixedNow.Add(10 * time.Minute)}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got, want := r.Method, http.MethodGet; got != want {
+			t.Fatalf("method = %q, want %q", got, want)
+		}
+		if got, want := r.URL.Path, "/admin/v1/secret-scan-findings"; got != want {
+			t.Fatalf("path = %q, want %q", got, want)
+		}
+		if got, want := r.URL.Query().Get("repository"), "library/alpine"; got != want {
+			t.Fatalf("repository query = %q, want %q", got, want)
+		}
+		if got, want := r.URL.Query().Get("digest"), "sha256:111"; got != want {
+			t.Fatalf("digest query = %q, want %q", got, want)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"run":{"id":"secret-run-1","repository":"library/alpine","digest":"sha256:111","status":"completed"},"findings":[{"rule_id":"aws-access-token","path":"config.json","start_line":3,"end_line":3}]}`))
+	}))
+	defer server.Close()
+
+	client, err := NewHTTPAdminClient(server.URL, server.Client())
+	if err != nil {
+		t.Fatalf("NewHTTPAdminClient() error = %v", err)
+	}
+	client.now = func() time.Time { return fixedNow }
+
+	detail, err := client.GetSecretScanFindings(context.Background(), session, "library/alpine", "sha256:111")
+	if err != nil {
+		t.Fatalf("GetSecretScanFindings() error = %v", err)
+	}
+	if len(detail.Findings) != 1 || detail.Findings[0].RuleID != "aws-access-token" {
+		t.Fatalf("detail = %#v, want decoded secret scan findings payload", detail)
+	}
+}
+
 func TestHTTPAdminClientMapsInvalidTokenToExpiredSession(t *testing.T) {
 	t.Parallel()
 
