@@ -163,11 +163,11 @@ func TestStorePersistsDefaultDisabledScanSettings(t *testing.T) {
 		TLSInsecureSkipVerify: true,
 		MaxConcurrency:        1,
 	}
-	if err := store.UpsertScanSettings(context.Background(), "tenant-a", settings); err != nil {
+	if err := store.UpsertScanSettings(context.Background(), "tenant-a", "trivy", settings); err != nil {
 		t.Fatalf("UpsertScanSettings() error = %v", err)
 	}
 
-	stored, err := store.GetScanSettings(context.Background(), "tenant-a")
+	stored, err := store.GetScanSettings(context.Background(), "tenant-a", "trivy")
 	if err != nil {
 		t.Fatalf("GetScanSettings() error = %v", err)
 	}
@@ -193,7 +193,7 @@ func TestStoreBridgesLegacyBinaryColumnsWhenServiceFieldsAreMissing(t *testing.T
 		t.Fatalf("insert legacy row error = %v", err)
 	}
 
-	stored, err := store.GetScanSettings(context.Background(), "tenant-a")
+	stored, err := store.GetScanSettings(context.Background(), "tenant-a", "trivy")
 	if err != nil {
 		t.Fatalf("GetScanSettings() error = %v", err)
 	}
@@ -261,7 +261,7 @@ func TestStorePersistsScanRunsAndSchedulerStateAcrossReopen(t *testing.T) {
 	}
 }
 
-func TestStorePersistsTrivyRuntimeStateAcrossReopenAndDerivesLegacyMigrationState(t *testing.T) {
+func TestStorePersistsFeatureRuntimeStateAcrossReopenAndDerivesLegacyMigrationState(t *testing.T) {
 	t.Parallel()
 
 	databasePath := filepath.Join(t.TempDir(), "registry.db")
@@ -273,8 +273,8 @@ func TestStorePersistsTrivyRuntimeStateAcrossReopenAndDerivesLegacyMigrationStat
 	verifiedAt := time.Now().UTC().Add(-2 * time.Minute)
 	healthAt := verifiedAt.Add(time.Minute)
 	dbUpdatedAt := healthAt.Add(-30 * time.Second)
-	state := ports.TrivyRuntimeState{
-		Status:            ports.TrivyRuntimeStatusReady,
+	state := ports.FeatureRuntimeState{
+		Status:            ports.FeatureRuntimeStatusReady,
 		ActiveVersion:     "0.57.1",
 		PreviousVersion:   "0.56.2",
 		ActiveBinaryPath:  "/var/lib/regixtry/features/trivy/bin/active/trivy",
@@ -285,8 +285,8 @@ func TestStorePersistsTrivyRuntimeStateAcrossReopenAndDerivesLegacyMigrationStat
 		LastDBUpdatedAt:   &dbUpdatedAt,
 		UpdatedAt:         healthAt,
 	}
-	if err := store.UpsertTrivyRuntimeState(context.Background(), "tenant-a", state); err != nil {
-		t.Fatalf("UpsertTrivyRuntimeState() error = %v", err)
+	if err := store.UpsertFeatureRuntimeState(context.Background(), "tenant-a", "trivy", state); err != nil {
+		t.Fatalf("UpsertFeatureRuntimeState() error = %v", err)
 	}
 	if err := store.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
@@ -298,9 +298,9 @@ func TestStorePersistsTrivyRuntimeStateAcrossReopenAndDerivesLegacyMigrationStat
 	}
 	defer reopened.Close()
 
-	stored, err := reopened.GetTrivyRuntimeState(context.Background(), "tenant-a")
+	stored, err := reopened.GetFeatureRuntimeState(context.Background(), "tenant-a", "trivy")
 	if err != nil {
-		t.Fatalf("GetTrivyRuntimeState() error = %v", err)
+		t.Fatalf("GetFeatureRuntimeState() error = %v", err)
 	}
 	if stored.Status != state.Status || stored.ActiveVersion != state.ActiveVersion || stored.PreviousVersion != state.PreviousVersion {
 		t.Fatalf("stored = %#v, want persisted runtime identity %#v", stored, state)
@@ -322,11 +322,11 @@ func TestStorePersistsTrivyRuntimeStateAcrossReopenAndDerivesLegacyMigrationStat
 		t.Fatalf("insert legacy scan settings error = %v", err)
 	}
 
-	legacyState, err := legacyStore.GetTrivyRuntimeState(context.Background(), "tenant-b")
+	legacyState, err := legacyStore.GetFeatureRuntimeState(context.Background(), "tenant-b", "trivy")
 	if err != nil {
-		t.Fatalf("GetTrivyRuntimeState(legacy) error = %v", err)
+		t.Fatalf("GetFeatureRuntimeState(legacy) error = %v", err)
 	}
-	if legacyState.Status != ports.TrivyRuntimeStatusMigrationRequired {
+	if legacyState.Status != ports.FeatureRuntimeStatusMigrationRequired {
 		t.Fatalf("legacyState.Status = %q, want migration-required", legacyState.Status)
 	}
 	if legacyState.ActiveBinaryPath != "" {
@@ -334,6 +334,49 @@ func TestStorePersistsTrivyRuntimeStateAcrossReopenAndDerivesLegacyMigrationStat
 	}
 	if !strings.Contains(legacyState.MigrationHint, "/tmp/README.sh") {
 		t.Fatalf("legacyState.MigrationHint = %q, want legacy binary evidence", legacyState.MigrationHint)
+	}
+}
+
+func TestStoreFeatureRuntimeStateIsolatesEachFeaturesOwnRow(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	trivyState := ports.FeatureRuntimeState{
+		Status:           ports.FeatureRuntimeStatusReady,
+		ActiveVersion:    "0.57.1",
+		ActiveBinaryPath: "/var/lib/regixtry/features/trivy/bin/active/trivy",
+		UpdatedAt:        time.Now().UTC(),
+	}
+	if err := store.UpsertFeatureRuntimeState(context.Background(), "tenant-a", "trivy", trivyState); err != nil {
+		t.Fatalf("UpsertFeatureRuntimeState(trivy) error = %v", err)
+	}
+
+	gitleaksState := ports.FeatureRuntimeState{
+		Status:           ports.FeatureRuntimeStatusInstalling,
+		ActiveVersion:    "8.24.0",
+		ActiveBinaryPath: "/var/lib/regixtry/features/gitleaks/bin/active/gitleaks",
+		UpdatedAt:        time.Now().UTC(),
+	}
+	if err := store.UpsertFeatureRuntimeState(context.Background(), "tenant-a", "gitleaks", gitleaksState); err != nil {
+		t.Fatalf("UpsertFeatureRuntimeState(gitleaks) error = %v", err)
+	}
+
+	storedTrivy, err := store.GetFeatureRuntimeState(context.Background(), "tenant-a", "trivy")
+	if err != nil {
+		t.Fatalf("GetFeatureRuntimeState(trivy) error = %v", err)
+	}
+	if storedTrivy.Status != ports.FeatureRuntimeStatusReady || storedTrivy.ActiveVersion != "0.57.1" || storedTrivy.ActiveBinaryPath != trivyState.ActiveBinaryPath {
+		t.Fatalf("storedTrivy = %#v, want trivy's own row untouched by gitleaks writes", storedTrivy)
+	}
+
+	storedGitleaks, err := store.GetFeatureRuntimeState(context.Background(), "tenant-a", "gitleaks")
+	if err != nil {
+		t.Fatalf("GetFeatureRuntimeState(gitleaks) error = %v", err)
+	}
+	if storedGitleaks.Status != ports.FeatureRuntimeStatusInstalling || storedGitleaks.ActiveVersion != "8.24.0" || storedGitleaks.ActiveBinaryPath != gitleaksState.ActiveBinaryPath {
+		t.Fatalf("storedGitleaks = %#v, want gitleaks' own row untouched by trivy writes", storedGitleaks)
 	}
 }
 

@@ -29,10 +29,10 @@ type MetadataStore interface {
 	Catalog(ctx context.Context, tenant string, limit int, after string) ([]domain.RepositoryRef, error)
 	ListTags(ctx context.Context, tenant string, repository domain.RepositoryRef, limit int, after string) ([]string, error)
 	ListManifestBlobs(ctx context.Context, tenant string, repository domain.RepositoryRef, manifestDigest domain.Digest) ([]domain.Descriptor, error)
-	GetScanSettings(ctx context.Context, tenant string) (ScanSettings, error)
-	UpsertScanSettings(ctx context.Context, tenant string, settings ScanSettings) error
-	GetTrivyRuntimeState(ctx context.Context, tenant string) (TrivyRuntimeState, error)
-	UpsertTrivyRuntimeState(ctx context.Context, tenant string, state TrivyRuntimeState) error
+	GetScanSettings(ctx context.Context, tenant string, feature string) (ScanSettings, error)
+	UpsertScanSettings(ctx context.Context, tenant string, feature string, settings ScanSettings) error
+	GetFeatureRuntimeState(ctx context.Context, tenant string, feature string) (FeatureRuntimeState, error)
+	UpsertFeatureRuntimeState(ctx context.Context, tenant string, feature string, state FeatureRuntimeState) error
 	GetActiveScanRunByDigest(ctx context.Context, tenant string, repository string, digest string) (ScanRun, error)
 	GetScanRun(ctx context.Context, tenant string, runID string) (ScanRun, error)
 	GetScanRunDetail(ctx context.Context, tenant string, runID string) (ScanRunDetail, error)
@@ -260,31 +260,31 @@ type FeatureDetails struct {
 	Runtime               FeatureRuntime `json:"runtime,omitempty"`
 }
 
-type TrivyRuntimeStatus string
+type FeatureRuntimeStatus string
 
 const (
-	TrivyRuntimeStatusUninstalled       TrivyRuntimeStatus = "uninstalled"
-	TrivyRuntimeStatusInstalling        TrivyRuntimeStatus = "installing"
-	TrivyRuntimeStatusReady             TrivyRuntimeStatus = "ready"
-	TrivyRuntimeStatusDegraded          TrivyRuntimeStatus = "degraded"
-	TrivyRuntimeStatusMigrationRequired TrivyRuntimeStatus = "migration-required"
+	FeatureRuntimeStatusUninstalled       FeatureRuntimeStatus = "uninstalled"
+	FeatureRuntimeStatusInstalling        FeatureRuntimeStatus = "installing"
+	FeatureRuntimeStatusReady             FeatureRuntimeStatus = "ready"
+	FeatureRuntimeStatusDegraded          FeatureRuntimeStatus = "degraded"
+	FeatureRuntimeStatusMigrationRequired FeatureRuntimeStatus = "migration-required"
 )
 
 const FeatureRuntimeModeManaged = "managed"
 
-type TrivyRuntimeState struct {
-	Status            TrivyRuntimeStatus `json:"status"`
-	ActiveVersion     string             `json:"active_version,omitempty"`
-	PreviousVersion   string             `json:"previous_version,omitempty"`
-	ActiveBinaryPath  string             `json:"active_binary_path,omitempty"`
-	CacheDir          string             `json:"cache_dir,omitempty"`
-	ReceiptPath       string             `json:"receipt_path,omitempty"`
-	MigrationHint     string             `json:"migration_hint,omitempty"`
-	LastVerifiedAt    *time.Time         `json:"last_verified_at,omitempty"`
-	LastHealthCheckAt *time.Time         `json:"last_health_check_at,omitempty"`
-	LastDBUpdatedAt   *time.Time         `json:"last_db_updated_at,omitempty"`
-	LastError         string             `json:"last_error,omitempty"`
-	UpdatedAt         time.Time          `json:"updated_at,omitempty"`
+type FeatureRuntimeState struct {
+	Status            FeatureRuntimeStatus `json:"status"`
+	ActiveVersion     string               `json:"active_version,omitempty"`
+	PreviousVersion   string               `json:"previous_version,omitempty"`
+	ActiveBinaryPath  string               `json:"active_binary_path,omitempty"`
+	CacheDir          string               `json:"cache_dir,omitempty"`
+	ReceiptPath       string               `json:"receipt_path,omitempty"`
+	MigrationHint     string               `json:"migration_hint,omitempty"`
+	LastVerifiedAt    *time.Time           `json:"last_verified_at,omitempty"`
+	LastHealthCheckAt *time.Time           `json:"last_health_check_at,omitempty"`
+	LastDBUpdatedAt   *time.Time           `json:"last_db_updated_at,omitempty"`
+	LastError         string               `json:"last_error,omitempty"`
+	UpdatedAt         time.Time            `json:"updated_at,omitempty"`
 }
 
 type FeatureConfigureInput struct {

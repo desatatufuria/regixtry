@@ -432,12 +432,12 @@ func (s *Store) ListManifestBlobs(ctx context.Context, tenant string, repository
 	return descriptors, rows.Err()
 }
 
-func (s *Store) GetScanSettings(ctx context.Context, tenant string) (ports.ScanSettings, error) {
+func (s *Store) GetScanSettings(ctx context.Context, tenant string, feature string) (ports.ScanSettings, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT enabled, schedule_enabled, interval, timeout, cache_dir, binary_path, service_url, registry_reachable_url, auth_token, tls_ca_cert_path, tls_insecure_skip_verify, max_concurrency, updated_at
 		FROM scan_settings
-		WHERE tenant = ?
-	`, tenant)
+		WHERE tenant = ? AND feature = ?
+	`, tenant, feature)
 	var (
 		enabled               bool
 		scheduleEnabled       bool
@@ -474,11 +474,11 @@ func (s *Store) GetScanSettings(ctx context.Context, tenant string) (ports.ScanS
 	return ports.ScanSettings{Enabled: enabled, ScheduleEnabled: scheduleEnabled, Interval: interval, Timeout: timeout, ServiceURL: serviceURL, RegistryReachableURL: registryReachableURL, AuthToken: authToken, TLSCACertPath: tlsCACertPath, TLSInsecureSkipVerify: tlsInsecureSkipVerify, LegacyCacheDir: cacheDir, LegacyBinaryPath: binaryPath, MaxConcurrency: maxConcurrency, UpdatedAt: updatedAt}, nil
 }
 
-func (s *Store) UpsertScanSettings(ctx context.Context, tenant string, settings ports.ScanSettings) error {
+func (s *Store) UpsertScanSettings(ctx context.Context, tenant string, feature string, settings ports.ScanSettings) error {
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO scan_settings (tenant, enabled, schedule_enabled, interval, timeout, cache_dir, binary_path, service_url, registry_reachable_url, auth_token, tls_ca_cert_path, tls_insecure_skip_verify, max_concurrency, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(tenant) DO UPDATE SET
+		INSERT INTO scan_settings (tenant, feature, enabled, schedule_enabled, interval, timeout, cache_dir, binary_path, service_url, registry_reachable_url, auth_token, tls_ca_cert_path, tls_insecure_skip_verify, max_concurrency, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(tenant, feature) DO UPDATE SET
 			enabled = excluded.enabled,
 			schedule_enabled = excluded.schedule_enabled,
 			interval = excluded.interval,
@@ -492,37 +492,37 @@ func (s *Store) UpsertScanSettings(ctx context.Context, tenant string, settings 
 			tls_insecure_skip_verify = excluded.tls_insecure_skip_verify,
 			max_concurrency = excluded.max_concurrency,
 			updated_at = excluded.updated_at
-	`, tenant, settings.Enabled, settings.ScheduleEnabled, settings.Interval.String(), settings.Timeout.String(), settings.LegacyCacheDir, settings.LegacyBinaryPath, settings.ServiceURL, settings.RegistryReachableURL, settings.AuthToken, settings.TLSCACertPath, settings.TLSInsecureSkipVerify, settings.MaxConcurrency, settings.UpdatedAt.UTC().Format(time.RFC3339Nano))
+	`, tenant, feature, settings.Enabled, settings.ScheduleEnabled, settings.Interval.String(), settings.Timeout.String(), settings.LegacyCacheDir, settings.LegacyBinaryPath, settings.ServiceURL, settings.RegistryReachableURL, settings.AuthToken, settings.TLSCACertPath, settings.TLSInsecureSkipVerify, settings.MaxConcurrency, settings.UpdatedAt.UTC().Format(time.RFC3339Nano))
 	return err
 }
 
-func (s *Store) GetTrivyRuntimeState(ctx context.Context, tenant string) (ports.TrivyRuntimeState, error) {
+func (s *Store) GetFeatureRuntimeState(ctx context.Context, tenant string, feature string) (ports.FeatureRuntimeState, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT status, active_version, previous_version, active_binary_path, cache_dir, receipt_path, migration_hint, last_verified_at, last_health_check_at, last_db_updated_at, last_error, updated_at
-		FROM trivy_runtime_state
-		WHERE tenant = ?
-	`, tenant)
-	state, err := scanTrivyRuntimeStateRow(row)
+		FROM feature_runtime_state
+		WHERE tenant = ? AND feature = ?
+	`, tenant, feature)
+	state, err := scanFeatureRuntimeStateRow(row)
 	if err == nil {
 		return state, nil
 	}
 	if err != sql.ErrNoRows {
-		return ports.TrivyRuntimeState{}, err
+		return ports.FeatureRuntimeState{}, err
 	}
-	settings, settingsErr := s.GetScanSettings(ctx, tenant)
+	settings, settingsErr := s.GetScanSettings(ctx, tenant, feature)
 	if settingsErr != nil {
 		if domain.IsCode(settingsErr, domain.ErrorCodeNotFound) {
-			return ports.TrivyRuntimeState{}, domain.NewNotFoundError("trivy_runtime_state", tenant)
+			return ports.FeatureRuntimeState{}, domain.NewNotFoundError("feature_runtime_state", tenant)
 		}
-		return ports.TrivyRuntimeState{}, settingsErr
+		return ports.FeatureRuntimeState{}, settingsErr
 	}
-	if legacyState, ok := deriveLegacyTrivyRuntimeState(settings); ok {
+	if legacyState, ok := deriveLegacyFeatureRuntimeState(settings); ok {
 		return legacyState, nil
 	}
-	return ports.TrivyRuntimeState{}, domain.NewNotFoundError("trivy_runtime_state", tenant)
+	return ports.FeatureRuntimeState{}, domain.NewNotFoundError("feature_runtime_state", tenant)
 }
 
-func (s *Store) UpsertTrivyRuntimeState(ctx context.Context, tenant string, state ports.TrivyRuntimeState) error {
+func (s *Store) UpsertFeatureRuntimeState(ctx context.Context, tenant string, feature string, state ports.FeatureRuntimeState) error {
 	var (
 		lastVerifiedAt any
 		lastHealthAt   any
@@ -541,9 +541,9 @@ func (s *Store) UpsertTrivyRuntimeState(ctx context.Context, tenant string, stat
 		state.UpdatedAt = time.Now().UTC()
 	}
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO trivy_runtime_state (tenant, status, active_version, previous_version, active_binary_path, cache_dir, receipt_path, migration_hint, last_verified_at, last_health_check_at, last_db_updated_at, last_error, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(tenant) DO UPDATE SET
+		INSERT INTO feature_runtime_state (tenant, feature, status, active_version, previous_version, active_binary_path, cache_dir, receipt_path, migration_hint, last_verified_at, last_health_check_at, last_db_updated_at, last_error, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(tenant, feature) DO UPDATE SET
 			status = excluded.status,
 			active_version = excluded.active_version,
 			previous_version = excluded.previous_version,
@@ -556,7 +556,7 @@ func (s *Store) UpsertTrivyRuntimeState(ctx context.Context, tenant string, stat
 			last_db_updated_at = excluded.last_db_updated_at,
 			last_error = excluded.last_error,
 			updated_at = excluded.updated_at
-	`, tenant, string(state.Status), state.ActiveVersion, state.PreviousVersion, state.ActiveBinaryPath, state.CacheDir, state.ReceiptPath, state.MigrationHint, lastVerifiedAt, lastHealthAt, lastDBUpdated, state.LastError, state.UpdatedAt.UTC().Format(time.RFC3339Nano))
+	`, tenant, feature, string(state.Status), state.ActiveVersion, state.PreviousVersion, state.ActiveBinaryPath, state.CacheDir, state.ReceiptPath, state.MigrationHint, lastVerifiedAt, lastHealthAt, lastDBUpdated, state.LastError, state.UpdatedAt.UTC().Format(time.RFC3339Nano))
 	return err
 }
 
@@ -876,7 +876,8 @@ func (s *Store) init() error {
 			location TEXT NOT NULL
 		);`,
 		`CREATE TABLE IF NOT EXISTS scan_settings (
-			tenant TEXT PRIMARY KEY,
+			tenant TEXT NOT NULL,
+			feature TEXT NOT NULL DEFAULT 'trivy',
 			enabled INTEGER NOT NULL,
 			schedule_enabled INTEGER NOT NULL,
 			interval TEXT NOT NULL,
@@ -889,13 +890,15 @@ func (s *Store) init() error {
 			tls_ca_cert_path TEXT NOT NULL DEFAULT '',
 			tls_insecure_skip_verify INTEGER NOT NULL DEFAULT 0,
 			max_concurrency INTEGER NOT NULL,
-			updated_at TEXT NOT NULL
+			updated_at TEXT NOT NULL,
+			PRIMARY KEY(tenant, feature)
 		);`,
 		`ALTER TABLE scan_settings ADD COLUMN service_url TEXT NOT NULL DEFAULT '';`,
 		`ALTER TABLE scan_settings ADD COLUMN registry_reachable_url TEXT NOT NULL DEFAULT '';`,
 		`ALTER TABLE scan_settings ADD COLUMN auth_token TEXT NOT NULL DEFAULT '';`,
 		`ALTER TABLE scan_settings ADD COLUMN tls_ca_cert_path TEXT NOT NULL DEFAULT '';`,
 		`ALTER TABLE scan_settings ADD COLUMN tls_insecure_skip_verify INTEGER NOT NULL DEFAULT 0;`,
+		`ALTER TABLE scan_settings ADD COLUMN feature TEXT NOT NULL DEFAULT 'trivy';`,
 		`CREATE TABLE IF NOT EXISTS scan_runs (
 			id TEXT PRIMARY KEY,
 			tenant TEXT NOT NULL,
@@ -972,6 +975,25 @@ func (s *Store) init() error {
 			last_error TEXT NOT NULL DEFAULT '',
 			updated_at TEXT NOT NULL
 		);`,
+		// trivy_runtime_state is superseded by feature_runtime_state (tenant, feature) below and is
+		// intentionally left in place, unread: no production data and no migration shim in scope.
+		`CREATE TABLE IF NOT EXISTS feature_runtime_state (
+			tenant TEXT NOT NULL,
+			feature TEXT NOT NULL,
+			status TEXT NOT NULL,
+			active_version TEXT NOT NULL DEFAULT '',
+			previous_version TEXT NOT NULL DEFAULT '',
+			active_binary_path TEXT NOT NULL DEFAULT '',
+			cache_dir TEXT NOT NULL DEFAULT '',
+			receipt_path TEXT NOT NULL DEFAULT '',
+			migration_hint TEXT NOT NULL DEFAULT '',
+			last_verified_at TEXT,
+			last_health_check_at TEXT,
+			last_db_updated_at TEXT,
+			last_error TEXT NOT NULL DEFAULT '',
+			updated_at TEXT NOT NULL,
+			PRIMARY KEY(tenant, feature)
+		);`,
 	}
 
 	for _, statement := range statements {
@@ -987,12 +1009,12 @@ func (s *Store) init() error {
 	return nil
 }
 
-func deriveLegacyTrivyRuntimeState(settings ports.ScanSettings) (ports.TrivyRuntimeState, bool) {
+func deriveLegacyFeatureRuntimeState(settings ports.ScanSettings) (ports.FeatureRuntimeState, bool) {
 	legacyBinary := strings.TrimSpace(settings.LegacyBinaryPath)
 	legacyCache := strings.TrimSpace(settings.LegacyCacheDir)
 	legacyService := strings.TrimSpace(settings.ServiceURL)
 	if legacyBinary == "" && legacyCache == "" && legacyService == "" {
-		return ports.TrivyRuntimeState{}, false
+		return ports.FeatureRuntimeState{}, false
 	}
 	hintParts := make([]string, 0, 3)
 	if legacyBinary != "" {
@@ -1004,14 +1026,14 @@ func deriveLegacyTrivyRuntimeState(settings ports.ScanSettings) (ports.TrivyRunt
 	if legacyService != "" {
 		hintParts = append(hintParts, fmt.Sprintf("legacy service_url %q is superseded by the managed runtime", legacyService))
 	}
-	return ports.TrivyRuntimeState{
-		Status:        ports.TrivyRuntimeStatusMigrationRequired,
+	return ports.FeatureRuntimeState{
+		Status:        ports.FeatureRuntimeStatusMigrationRequired,
 		MigrationHint: strings.Join(hintParts, "; "),
 		UpdatedAt:     settings.UpdatedAt,
 	}, true
 }
 
-func scanTrivyRuntimeStateRow(row scanRunScanner) (ports.TrivyRuntimeState, error) {
+func scanFeatureRuntimeStateRow(row scanRunScanner) (ports.FeatureRuntimeState, error) {
 	var (
 		statusRaw        string
 		activeVersion    string
@@ -1027,14 +1049,14 @@ func scanTrivyRuntimeStateRow(row scanRunScanner) (ports.TrivyRuntimeState, erro
 		updatedAtRaw     string
 	)
 	if err := row.Scan(&statusRaw, &activeVersion, &previousVersion, &activeBinaryPath, &cacheDir, &receiptPath, &migrationHint, &lastVerifiedRaw, &lastHealthRaw, &lastDBUpdatedRaw, &lastError, &updatedAtRaw); err != nil {
-		return ports.TrivyRuntimeState{}, err
+		return ports.FeatureRuntimeState{}, err
 	}
 	updatedAt, err := time.Parse(time.RFC3339Nano, updatedAtRaw)
 	if err != nil {
-		return ports.TrivyRuntimeState{}, err
+		return ports.FeatureRuntimeState{}, err
 	}
-	state := ports.TrivyRuntimeState{
-		Status:           ports.TrivyRuntimeStatus(statusRaw),
+	state := ports.FeatureRuntimeState{
+		Status:           ports.FeatureRuntimeStatus(statusRaw),
 		ActiveVersion:    activeVersion,
 		PreviousVersion:  previousVersion,
 		ActiveBinaryPath: activeBinaryPath,
@@ -1045,13 +1067,13 @@ func scanTrivyRuntimeStateRow(row scanRunScanner) (ports.TrivyRuntimeState, erro
 		UpdatedAt:        updatedAt,
 	}
 	if state.LastVerifiedAt, err = parseOptionalTime(lastVerifiedRaw); err != nil {
-		return ports.TrivyRuntimeState{}, err
+		return ports.FeatureRuntimeState{}, err
 	}
 	if state.LastHealthCheckAt, err = parseOptionalTime(lastHealthRaw); err != nil {
-		return ports.TrivyRuntimeState{}, err
+		return ports.FeatureRuntimeState{}, err
 	}
 	if state.LastDBUpdatedAt, err = parseOptionalTime(lastDBUpdatedRaw); err != nil {
-		return ports.TrivyRuntimeState{}, err
+		return ports.FeatureRuntimeState{}, err
 	}
 	return state, nil
 }
