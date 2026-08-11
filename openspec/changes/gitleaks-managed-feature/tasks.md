@@ -88,12 +88,12 @@ Honest sizing: even chained, no single unit stays trivial — PR2 and PR6 approa
 
 ## Phase 6: HTTP + TUI Surfaces (PR6)
 
-- [ ] 6.1 `internal/protocol/http/admin_handlers.go` — per-feature runtime status response; secret-findings-by-image endpoint
-- [ ] 6.2 RED: `admin_handlers_test.go` — Gitleaks status independent of Trivy; findings response has no secret/fingerprint field
-- [ ] 6.3 `internal/tui/admin_client.go`, `model.go` — per-feature runtime status view
-- [ ] 6.4 `internal/tui/admin_views.go` / `admin_tables.go` — secret findings list (rule ID + location), empty state for no findings
-- [ ] 6.5 RED: `model_test.go` — findings surfaced alongside vulnerability results, no severity/gating indicator
-- [ ] 6.6 `router.go` + `router_test.go` — wire new endpoints
+- [x] 6.1 `internal/protocol/http/admin_handlers.go` — per-feature runtime status response; secret-findings-by-image endpoint
+- [x] 6.2 RED: `admin_handlers_test.go` — Gitleaks status independent of Trivy; findings response has no secret/fingerprint field
+- [x] 6.3 `internal/tui/admin_client.go`, `model.go` — per-feature runtime status view
+- [x] 6.4 `internal/tui/admin_views.go` / `admin_tables.go` — secret findings list (rule ID + location), empty state for no findings
+- [x] 6.5 RED: `model_test.go` — findings surfaced alongside vulnerability results, no severity/gating indicator
+- [x] 6.6 `router.go` + `router_test.go` — wire new endpoints
 
 ## Requirement Traceability
 
