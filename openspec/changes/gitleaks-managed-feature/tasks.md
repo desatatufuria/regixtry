@@ -79,12 +79,12 @@ Honest sizing: even chained, no single unit stays trivial — PR2 and PR6 approa
 
 ## Phase 5: Wiring (PR5)
 
-- [ ] 5.1 `feature_registry.go` — add `gitleaks` descriptor to `builtInFeatures`; feature-scoped settings resolution
-- [ ] 5.2 RED: `executeScanRun` test — secret-scan leg runs alongside Trivy leg when gitleaks enabled + ready
-- [ ] 5.3 GREEN: `service_scanning.go` — reuse `executeScanRun` trigger for the secret-scan leg; persist to `secret_scan_*` tables
-- [ ] 5.4 `cmd/regixtry/main.go` — register gitleaks runtime manager; wire `SecretScanRunner` with `BlobStore`; `runFeature` accepts `gitleaks`
-- [ ] 5.5 RED: unknown feature identity rejected (not defaulted to Trivy) in `runFeature`
-- [ ] 5.6 Regression: manual rescan triggers both scans; image push does not trigger a secret scan
+- [x] 5.1 `feature_registry.go` — add `gitleaks` descriptor to `builtInFeatures`; feature-scoped settings resolution
+- [x] 5.2 RED: `executeScanRun` test — secret-scan leg runs alongside Trivy leg when gitleaks enabled + ready
+- [x] 5.3 GREEN: `service_scanning.go` — reuse `executeScanRun` trigger for the secret-scan leg; persist to `secret_scan_*` tables
+- [x] 5.4 `cmd/regixtry/main.go` — register gitleaks runtime manager; wire `SecretScanRunner` with `BlobStore`; `runFeature` accepts `gitleaks`
+- [x] 5.5 RED: unknown feature identity rejected (not defaulted to Trivy) in `runFeature`
+- [x] 5.6 Regression: manual rescan triggers both scans; image push does not trigger a secret scan
 
 ## Phase 6: HTTP + TUI Surfaces (PR6)
 
