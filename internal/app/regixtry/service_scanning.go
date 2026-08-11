@@ -97,6 +97,28 @@ func (s *Service) GetScanRunDetail(ctx context.Context, runID string) (ports.Sca
 	return detail, nil
 }
 
+// GetSecretScanFindings looks up the redacted secret-scan findings for one
+// image (repository@digest), mirroring GetScanRunDetail's role for the
+// Trivy leg. Both legs are triggered from the same executeScanRun call for
+// the same run, so repository+digest is a valid, sufficient attribution key
+// (spec.md "Operator Visibility of Findings" — findings attributed to the
+// image they were found in). Recent runs are scanned newest-first so an
+// image rescanned multiple times resolves to its most recent secret scan.
+func (s *Service) GetSecretScanFindings(ctx context.Context, repository string, digest string) (ports.SecretScanRunDetail, error) {
+	repository = strings.TrimSpace(repository)
+	digest = strings.TrimSpace(digest)
+	runs, err := s.metadata.ListSecretScanRuns(ctx, s.tenant(ctx), repository, 50)
+	if err != nil {
+		return ports.SecretScanRunDetail{}, err
+	}
+	for _, run := range runs {
+		if run.Digest == digest {
+			return s.metadata.GetSecretScanRunDetail(ctx, s.tenant(ctx), run.ID)
+		}
+	}
+	return ports.SecretScanRunDetail{}, domain.NewNotFoundError("secret scan run", repository+"@"+digest)
+}
+
 func (s *Service) RunScheduledScans(ctx context.Context) error {
 	settings, err := s.resolveManagedScanSettings(ctx)
 	if err != nil {

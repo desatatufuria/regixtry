@@ -328,7 +328,13 @@ func buildFeaturePage(summary ports.FeatureSummary, details ports.FeatureDetails
 			{Label: "Configured", Value: fmt.Sprintf("%t", summary.Configured)},
 		},
 	}
-	if summary.Name != trivyFeatureName {
+	// Config+Runtime sections are generic to any built-in managed feature
+	// (Trivy and Gitleaks alike): both are driven entirely by the
+	// feature-keyed ScanSettings/FeatureRuntime data Phase 2 made
+	// (tenant, feature) scoped. Non-builtin feature kinds (e.g. a future
+	// external-service plugin) stay on the lightweight minimal page, since
+	// they are not guaranteed to have a managed runtime at all.
+	if summary.Kind != ports.FeatureKindBuiltin {
 		return page
 	}
 	page.Sections = []ports.FeatureSection{
@@ -354,6 +360,7 @@ func buildFeaturePage(summary ports.FeatureSummary, details ports.FeatureDetails
 				{Label: "Version", Value: featureRuntimeValueOrUnknown(details.Runtime.Version)},
 				{Label: "Latest Version", Value: featureRuntimeValueOrUnknown(details.Runtime.LatestVersion)},
 				{Label: "Update Status", Value: featureRuntimeValueOrUnknown(details.Runtime.UpdateStatus)},
+				{Label: "Rollback Available", Value: fmt.Sprintf("%t", details.Runtime.RollbackAvailable)},
 			},
 		},
 	}

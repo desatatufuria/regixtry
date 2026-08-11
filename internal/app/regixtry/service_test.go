@@ -368,6 +368,76 @@ func TestServiceGetFeaturePageBuildsRuntimeOnlyTrivySectionsAndDeclaredActions(t
 	}
 }
 
+// TestServiceGetFeaturePageBuildsRuntimeSectionsForGitleaksIndependentlyFromTrivy
+// is the Phase 6 RED test (tasks.md 6.2/operator-admin-tui "Per-Feature
+// Runtime Status Surface"): buildFeaturePage must project Config+Runtime
+// sections for gitleaks too (not just Trivy, task 6.1's generalization),
+// and each feature's own (tenant, feature)-keyed runtime state must be
+// shown independently — a Gitleaks page must never leak Trivy's version
+// or vice versa.
+func TestServiceGetFeaturePageBuildsRuntimeSectionsForGitleaksIndependentlyFromTrivy(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	seedManagedRuntimeState(t, service, "0.57.1")
+	if err := service.metadata.UpsertScanSettings(context.Background(), "tenant-a", "gitleaks", ports.ScanSettings{
+		Enabled:        true,
+		Interval:       time.Hour,
+		Timeout:        time.Minute,
+		MaxConcurrency: 1,
+		UpdatedAt:      time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("UpsertScanSettings(gitleaks) error = %v", err)
+	}
+	if err := service.metadata.UpsertFeatureRuntimeState(context.Background(), "tenant-a", "gitleaks", ports.FeatureRuntimeState{
+		Status:           ports.FeatureRuntimeStatusReady,
+		ActiveVersion:    "8.27.0",
+		PreviousVersion:  "8.26.0",
+		ActiveBinaryPath: "/var/lib/regixtry/features/gitleaks/bin/active/gitleaks",
+		UpdatedAt:        time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("UpsertFeatureRuntimeState(gitleaks) error = %v", err)
+	}
+
+	trivyPage, err := service.GetFeaturePage(context.Background(), "trivy")
+	if err != nil {
+		t.Fatalf("GetFeaturePage(trivy) error = %v", err)
+	}
+	gitleaksPage, err := service.GetFeaturePage(context.Background(), "gitleaks")
+	if err != nil {
+		t.Fatalf("GetFeaturePage(gitleaks) error = %v", err)
+	}
+
+	if got, want := sectionIDs(gitleaksPage.Sections), []string{"config", "runtime"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("gitleaks section IDs = %#v, want %#v", got, want)
+	}
+
+	trivyVersion := featureFieldValue(trivyPage.Sections, "runtime", "Version")
+	gitleaksVersion := featureFieldValue(gitleaksPage.Sections, "runtime", "Version")
+	if trivyVersion != "0.57.1" || gitleaksVersion != "8.27.0" {
+		t.Fatalf("trivy version = %q, gitleaks version = %q, want each feature's own independent runtime state", trivyVersion, gitleaksVersion)
+	}
+	if got := featureFieldValue(gitleaksPage.Sections, "runtime", "Rollback Available"); got != "true" {
+		t.Fatalf("gitleaks rollback available = %q, want %q", got, "true")
+	}
+}
+
+func featureFieldValue(sections []ports.FeatureSection, sectionID string, label string) string {
+	for _, section := range sections {
+		if section.ID != sectionID {
+			continue
+		}
+		for _, field := range section.Fields {
+			if field.Label == label {
+				return field.Value
+			}
+		}
+	}
+	return ""
+}
+
 func TestServiceGetFeatureStatusFallsBackToUnknownLatestVersion(t *testing.T) {
 	t.Parallel()
 
@@ -767,6 +837,49 @@ func TestServiceExecuteScanRunRunsSecretScanLegAlongsideTrivyLegWhenGitleaksEnab
 	}
 	if len(detail.Findings) != 1 || detail.Findings[0].RuleID != "aws-access-token" {
 		t.Fatalf("secret findings = %#v, want persisted redacted finding", detail.Findings)
+	}
+}
+
+// TestServiceGetSecretScanFindingsReturnsPersistedFindingsForImageAndNotFoundOtherwise
+// is the Phase 6 RED test backing the secret-findings-by-image endpoint
+// (tasks.md 6.1/6.2): findings must be attributable to one image
+// (repository@digest) and a repository with no secret scan run yet must
+// report not-found rather than an empty/misleading success.
+func TestServiceGetSecretScanFindingsReturnsPersistedFindingsForImageAndNotFoundOtherwise(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	if err := service.metadata.UpsertSecretScanRunDetail(context.Background(), "tenant-a", ports.SecretScanRunDetail{
+		Run: ports.SecretScanRun{
+			ID:              "secret-run-1",
+			Repository:      "library/alpine",
+			Digest:          "sha256:" + strings.Repeat("a", 64),
+			Status:          ports.SecretScanRunStatusCompleted,
+			Trigger:         ports.ScanTriggerManual,
+			GitleaksVersion: "8.27.0",
+			CreatedAt:       time.Now().UTC(),
+			UpdatedAt:       time.Now().UTC(),
+		},
+		Findings: []ports.SecretFinding{{RuleID: "aws-access-token", BlobDigest: "sha256:" + strings.Repeat("b", 64), Path: "config.json", StartLine: 3, EndLine: 3}},
+	}); err != nil {
+		t.Fatalf("UpsertSecretScanRunDetail() error = %v", err)
+	}
+
+	detail, err := service.GetSecretScanFindings(context.Background(), "library/alpine", "sha256:"+strings.Repeat("a", 64))
+	if err != nil {
+		t.Fatalf("GetSecretScanFindings() error = %v", err)
+	}
+	if len(detail.Findings) != 1 || detail.Findings[0].RuleID != "aws-access-token" {
+		t.Fatalf("detail.Findings = %#v, want the persisted redacted finding", detail.Findings)
+	}
+
+	if _, err := service.GetSecretScanFindings(context.Background(), "library/alpine", "sha256:"+strings.Repeat("c", 64)); !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("GetSecretScanFindings(unknown digest) error = %v, want not-found", err)
+	}
+	if _, err := service.GetSecretScanFindings(context.Background(), "library/other", "sha256:"+strings.Repeat("a", 64)); !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("GetSecretScanFindings(unknown repository) error = %v, want not-found", err)
 	}
 }
 
