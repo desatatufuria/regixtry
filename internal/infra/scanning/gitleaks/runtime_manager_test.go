@@ -88,6 +88,7 @@ func TestRuntimeManagerInstallStagesActivationAndRetainsRollbackTarget(t *testin
 		t.Fatalf("upgraded = %#v, want retained rollback target", upgraded)
 	}
 
+	manager.prober = fakeRuntimeProber{runtime: ports.FeatureRuntime{Mode: ports.FeatureRuntimeModeManaged, Health: "ready", Version: "8.27.0"}}
 	rolledBack, err := manager.Rollback(context.Background())
 	if err != nil {
 		t.Fatalf("Rollback() error = %v", err)
