@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"regixtry/internal/infra/release"
 	"regixtry/internal/ports"
 )
 
@@ -163,7 +164,7 @@ func (m *RuntimeManager) activate(ctx context.Context, version string, requireCu
 		return ports.TrivyRuntimeState{}, err
 	}
 	emitFeatureRuntimeProgress(progress, "verify", "Verify checksum")
-	if err := verifyArchiveChecksum(archivePath, asset.ArchiveName, checksumsBody); err != nil {
+	if err := release.VerifyChecksum(archivePath, asset.ArchiveName, checksumsBody); err != nil {
 		return ports.TrivyRuntimeState{}, err
 	}
 	versionDir := m.versionDir(asset.Version)
@@ -171,7 +172,7 @@ func (m *RuntimeManager) activate(ctx context.Context, version string, requireCu
 		return ports.TrivyRuntimeState{}, err
 	}
 	emitFeatureRuntimeProgress(progress, "extract", "Extract binary")
-	binaryPath, err := extractTrivyBinary(ctx, archivePath, versionDir)
+	binaryPath, err := release.ExtractBinary(ctx, archivePath, versionDir, "trivy")
 	if err != nil {
 		return ports.TrivyRuntimeState{}, err
 	}
