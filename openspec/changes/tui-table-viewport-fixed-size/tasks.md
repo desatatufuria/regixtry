@@ -60,14 +60,14 @@ Rationale: zero existing `WindowSizeMsg`/`Height`/`Viewport`/`PageSize` test cov
 
 ## Phase 4: Table Height Budget and Roles (`admin_tables.go`, `session.go`, `admin_views.go`)
 
-- [ ] 4.1 RED (new) `admin_tables_test.go`: `newAdminBubbleTable(..., pageSize)` height identity `pageSize+6` (`tableChromeRows`)
-- [ ] 4.2 GREEN `admin_tables.go`: `newAdminBubbleTable` gains trailing `pageSize int` param; `WithNoPagination()`→`WithPageSize(pageSize).WithFooterVisibility(true)`; `WithBaseStyle(...).BorderForeground(theme.borderColor)`
-- [ ] 4.3 GREEN `admin_tables.go`: thread `pageSize` through the 5 build-site callers (`buildAdminFeaturesTable`, `buildAdminFeatureRowsTable`, `buildAdminScanRunsTable`, `buildAdminFindingsTable`, `buildAdminSecretFindingsTable`)
-- [ ] 4.4 RED `admin_tables_test.go`: `rebuildAdminTables` assigns primary (adaptive) vs compact (5 rows, floor 3) budgets per decision #6
-- [ ] 4.5 GREEN `session.go`: add `AdminViewState.Layout consoleLayout`; `admin_tables.go` `rebuildAdminTables(layout)` computes primary/compact split
-- [ ] 4.6 GREEN `admin_views.go`: `renderAdminWorkspace`/`renderAdminScreen` accept layout, thread into `renderSection` wrapping across affected screen renderers
-- [ ] 4.7 RED `model_test.go`: Trivy repository-alerts screen (4 stacked tables + ~20 fixed lines) at 24 rows — `lipgloss.Height(View()) <= 24`, none of the 3 findings tables spill into scrollback (Req: "Stacked Trivy alerts screen fits the viewport")
-- [ ] 4.8 GREEN: verify 4.5/4.6 satisfy 4.7; adjust compact-table floor if not
+- [x] 4.1 RED (new) `admin_tables_test.go`: `newAdminBubbleTable(..., pageSize)` height identity `pageSize+6` (`tableChromeRows`)
+- [x] 4.2 GREEN `admin_tables.go`: `newAdminBubbleTable` gains trailing `pageSize int` param; `WithNoPagination()`→`WithPageSize(pageSize).WithFooterVisibility(true)`; `WithBaseStyle(...).BorderForeground(theme.borderColor)`
+- [x] 4.3 GREEN `admin_tables.go`: thread `pageSize` through the 5 build-site callers (`buildAdminFeaturesTable`, `buildAdminFeatureRowsTable`, `buildAdminScanRunsTable`, `buildAdminFindingsTable`, `buildAdminSecretFindingsTable`)
+- [x] 4.4 RED `admin_tables_test.go`: `rebuildAdminTables` assigns primary (adaptive) vs compact (5 rows, floor 3) budgets per decision #6
+- [x] 4.5 GREEN `session.go`: add `AdminViewState.Layout consoleLayout`; `admin_tables.go` `rebuildAdminTables(layout)` computes primary/compact split
+- [x] 4.6 GREEN `admin_views.go`: `renderAdminWorkspace`/`renderAdminScreen` accept layout, thread into `renderSection` wrapping across affected screen renderers
+- [x] 4.7 RED `model_test.go`: Trivy repository-alerts screen (4 stacked tables + ~20 fixed lines) at 24 rows — `lipgloss.Height(View()) <= 24`, none of the 3 findings tables spill into scrollback (Req: "Stacked Trivy alerts screen fits the viewport")
+- [x] 4.8 GREEN: verify 4.5/4.6 satisfy 4.7; adjust compact-table floor if not (satisfied without adjustment — see apply-progress deviations)
 
 ## Phase 5: Indicator, Theme, Resize-Refit Regression, Non-Regression
 
