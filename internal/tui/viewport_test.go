@@ -216,8 +216,9 @@ func TestViewportChromeInvariantTitleContextHelpAreSingleLine(t *testing.T) {
 	view := newAdminViewState()
 	view.SelectedUserID = "user-1"
 	view.SelectedUsername = "alice"
+	layout := contentBudget(defaultViewportWidth, defaultViewportHeight, "", "")
 	for _, current := range adminScreens {
-		context, _, help := renderAdminScreen(theme, current, AdminSession{}, view, nil, time.Time{})
+		context, _, help := renderAdminScreen(theme, current, AdminSession{}, view, nil, layout, time.Time{})
 		assertSingleLine(t, string(current)+" context", theme.context.Render(context))
 		if strings.TrimSpace(help) != "" {
 			assertSingleLine(t, string(current)+" help", theme.help.Render(help))

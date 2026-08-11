@@ -214,6 +214,64 @@ func TestModelCatalogAndTagsListScreensFitViewportHeight(t *testing.T) {
 	}
 }
 
+// TestModelTrivyRepositoryAlertsScreenFitsViewportHeight is the Phase 4 task
+// 4.7 RED test (spec.md "Stacked Trivy alerts screen fits the viewport"):
+// the Features table, the Trivy ScanRuns table, the vulnerability Findings
+// table and the SecretFindings table can all render simultaneously on this
+// screen, plus roughly 20 fixed detail lines — design.md decision #6 accepts
+// that no per-table budget split can make all of this fit at the minimum
+// 24-row terminal; the outer-pane clip (renderSection, Phase 3's mechanism)
+// is the structural guarantee that the rendered frame still never exceeds
+// the terminal height, so none of the tables spill into scrollback.
+func TestModelTrivyRepositoryAlertsScreenFitsViewportHeight(t *testing.T) {
+	t.Parallel()
+
+	height := minViewportHeight
+	model := NewModel(&fakeQueryService{})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: minViewportWidth, Height: height})
+	result := updated.(Model)
+
+	result.screen = screenAdminFeatures
+	result.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: time.Now().Add(time.Hour)}
+	result.adminView.Features = []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}}
+	result.adminView.FeaturePage = ports.FeaturePage{
+		Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
+	}
+	result.adminView.TrivyTab = trivyTabRepositoryAlerts
+	result.adminView.TrivyAlertsLoaded = true
+	result.adminView.TrivyAlertDetailOpen = true
+
+	scanRuns := make([]ports.ScanRun, 0, 20)
+	for i := 0; i < 20; i++ {
+		scanRuns = append(scanRuns, ports.ScanRun{ID: fmt.Sprintf("run-%d", i), Repository: fmt.Sprintf("team/service-%d", i), RequestedRef: "latest", Status: ports.ScanRunStatusCompleted})
+	}
+	result.adminView.TrivyScanRuns = scanRuns
+	result.adminView.TrivySelectedAlert = 0
+
+	findings := make([]ports.ScanRunFinding, 0, 20)
+	for i := 0; i < 20; i++ {
+		findings = append(findings, ports.ScanRunFinding{Severity: "HIGH", VulnerabilityID: fmt.Sprintf("CVE-2026-%04d", i), PackageName: "openssl"})
+	}
+	result.adminView.TrivyScanRunDetail = ports.ScanRunDetail{Run: scanRuns[0], Findings: findings}
+
+	secretFindings := make([]ports.SecretFinding, 0, 20)
+	for i := 0; i < 20; i++ {
+		secretFindings = append(secretFindings, ports.SecretFinding{RuleID: fmt.Sprintf("rule-%d", i), Path: "config.json", StartLine: i + 1})
+	}
+	result.adminView.SecretFindings = secretFindings
+
+	result.rebuildAdminTables(result.adminTablesLayout())
+
+	// Width is deliberately not asserted here: theme.section's hardcoded
+	// Width(88) is explicitly out of scope for this change (spec.md "Out of
+	// Scope Note"), and the outer help line already renders unwrapped
+	// outside theme.section regardless of this change.
+	view := result.View()
+	if got := lipgloss.Height(view); got > height {
+		t.Fatalf("Trivy repository alerts view height = %d, want <= %d\nview:\n%s", got, height, view)
+	}
+}
+
 func TestModelPageKeysScrollAndClampCatalogList(t *testing.T) {
 	t.Parallel()
 
@@ -1129,7 +1187,7 @@ func TestAdminFindingSeverityStylingScopesOnlyVulnerabilityRows(t *testing.T) {
 	t.Parallel()
 
 	theme := newAdminTheme()
-	findingsTable := buildAdminFindingsTable(theme, []ports.ScanRunFinding{{Severity: "CRITICAL", VulnerabilityID: "CVE-2026-0001", PackageName: "openssl", InstalledVersion: "3.0.0", FixedVersion: "3.0.1", Fixable: true}}, 0)
+	findingsTable := buildAdminFindingsTable(theme, []ports.ScanRunFinding{{Severity: "CRITICAL", VulnerabilityID: "CVE-2026-0001", PackageName: "openssl", InstalledVersion: "3.0.0", FixedVersion: "3.0.1", Fixable: true}}, 0, compactTableRows)
 	severityCell, ok := findingsTable.HighlightedRow().Data[adminTableColumnFindingSeverity].(bubbletable.StyledCell)
 	if !ok {
 		t.Fatalf("finding severity cell type = %T, want bubble-table styled cell", findingsTable.HighlightedRow().Data[adminTableColumnFindingSeverity])
@@ -1138,17 +1196,17 @@ func TestAdminFindingSeverityStylingScopesOnlyVulnerabilityRows(t *testing.T) {
 		t.Fatalf("finding severity data = %#v, want %q", got, want)
 	}
 
-	featuresTable := buildAdminFeaturesTable(theme, []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}}, 0)
+	featuresTable := buildAdminFeaturesTable(theme, []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}}, 0, defaultViewportHeight)
 	if _, styled := featuresTable.HighlightedRow().Data[adminTableColumnFeatureEnabled].(bubbletable.StyledCell); styled {
 		t.Fatal("feature summary cells must stay neutral")
 	}
 
-	rowsTable := buildAdminFeatureRowsTable(theme, ports.FeatureSection{ID: "checks", Title: "Checks", Kind: "rows", Rows: []ports.FeatureRow{{Title: "DB freshness", Status: "stale", Detail: "older than 24h"}}})
+	rowsTable := buildAdminFeatureRowsTable(theme, ports.FeatureSection{ID: "checks", Title: "Checks", Kind: "rows", Rows: []ports.FeatureRow{{Title: "DB freshness", Status: "stale", Detail: "older than 24h"}}}, compactTableRows)
 	if _, styled := rowsTable.HighlightedRow().Data[adminTableColumnRowStatus].(bubbletable.StyledCell); styled {
 		t.Fatal("generic row status cells must stay neutral")
 	}
 
-	scanRunsTable := buildAdminScanRunsTable(theme, []ports.ScanRun{{ID: "run-1", Repository: "team/api", RequestedRef: "1.0.0", Status: ports.ScanRunStatusCompleted, Critical: 1, High: 0, HasFixable: true}}, 0)
+	scanRunsTable := buildAdminScanRunsTable(theme, []ports.ScanRun{{ID: "run-1", Repository: "team/api", RequestedRef: "1.0.0", Status: ports.ScanRunStatusCompleted, Critical: 1, High: 0, HasFixable: true}}, 0, defaultViewportHeight)
 	if _, styled := scanRunsTable.HighlightedRow().Data[adminTableColumnScanRunStatus].(bubbletable.StyledCell); styled {
 		t.Fatal("scan-run cells must stay neutral")
 	}
@@ -2008,15 +2066,25 @@ func runCmd(t *testing.T, model Model, cmd tea.Cmd) Model {
 	return result
 }
 
+// adminTestViewportHeight is deliberately generous (well above the
+// defaultViewportHeight used by --snapshot/NewModel): most admin tests below
+// assert on deeply-nested content (Trivy scan detail, secret findings) that
+// is orthogonal to viewport-bounding — Phase 4's own containment tests
+// (e.g. TestModelTrivyRepositoryAlertsScreenFitsViewportHeight) set their
+// own small viewport explicitly instead of using this helper.
+const adminTestViewportHeight = 200
+
 func newAdminReadyModel(t *testing.T, adminClient AdminClient) Model {
 	t.Helper()
 	model := NewModel(&fakeQueryService{catalog: appregixtry.CatalogResult{Repositories: []string{"library/alpine"}}}, WithAdminClient(adminClient))
+	model.viewport = viewportSize{Width: defaultViewportWidth, Height: adminTestViewportHeight}
 	return runCmd(t, model, model.Init())
 }
 
 func newAdminReadyModelWithCatalog(t *testing.T, repositories []string, adminClient AdminClient) Model {
 	t.Helper()
 	model := NewModel(&fakeQueryService{catalog: appregixtry.CatalogResult{Repositories: append([]string(nil), repositories...)}}, WithAdminClient(adminClient))
+	model.viewport = viewportSize{Width: defaultViewportWidth, Height: adminTestViewportHeight}
 	return runCmd(t, model, model.Init())
 }
 
