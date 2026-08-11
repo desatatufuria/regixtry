@@ -914,6 +914,71 @@ func TestRouterAdminScanRoutesRejectInvalidTargetsAndSettings(t *testing.T) {
 	}
 }
 
+// TestRouterAdminSecretScanFindingsRouteReturnsRedactedFindingsByImage wires
+// the secret-findings-by-image endpoint through the full Router (tasks.md
+// 6.6): the "/admin/v1/" prefix mux registration already routes any admin
+// subpath to handleAdmin, so this test proves the new route resolves
+// end-to-end (not just via the admin_handlers_test.go direct-handler path)
+// and rejects non-GET methods and missing required query parameters.
+func TestRouterAdminSecretScanFindingsRouteReturnsRedactedFindingsByImage(t *testing.T) {
+	t.Parallel()
+
+	blobStore, metadataStore, cleanup := newTestStores(t)
+	defer cleanup()
+	handler := newRouterWithStores(blobStore, metadataStore, allowAllAccessController{}, fakeAuthService{verify: &domainauth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+
+	digest := "sha256:" + strings.Repeat("d", 64)
+	if err := metadataStore.UpsertSecretScanRunDetail(context.Background(), "tenant-a", ports.SecretScanRunDetail{
+		Run: ports.SecretScanRun{
+			ID:         "secret-run-router-1",
+			Repository: "library/alpine",
+			Digest:     digest,
+			Status:     ports.SecretScanRunStatusCompleted,
+			Trigger:    ports.ScanTriggerManual,
+			CreatedAt:  time.Now().UTC(),
+			UpdatedAt:  time.Now().UTC(),
+		},
+		Findings: []ports.SecretFinding{{RuleID: "generic-api-key", Path: "layers/000.tar.gz", StartLine: 4, EndLine: 4}},
+	}); err != nil {
+		t.Fatalf("UpsertSecretScanRunDetail() error = %v", err)
+	}
+
+	okReq := httptest.NewRequest(http.MethodGet, "/admin/v1/secret-scan-findings?repository=library/alpine&digest="+digest, nil)
+	okReq.Header.Set("Authorization", "Bearer admin-token")
+	okRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(okRecorder, okReq)
+	if okRecorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", okRecorder.Code, http.StatusOK)
+	}
+	if !strings.Contains(okRecorder.Body.String(), `"rule_id":"generic-api-key"`) {
+		t.Fatalf("body = %q, want the persisted redacted finding", okRecorder.Body.String())
+	}
+
+	missingParamsReq := httptest.NewRequest(http.MethodGet, "/admin/v1/secret-scan-findings", nil)
+	missingParamsReq.Header.Set("Authorization", "Bearer admin-token")
+	missingParamsRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(missingParamsRecorder, missingParamsReq)
+	if missingParamsRecorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("missing-params status = %d, want %d", missingParamsRecorder.Code, http.StatusUnprocessableEntity)
+	}
+
+	postReq := httptest.NewRequest(http.MethodPost, "/admin/v1/secret-scan-findings?repository=library/alpine&digest="+digest, nil)
+	postReq.Header.Set("Authorization", "Bearer admin-token")
+	postRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(postRecorder, postReq)
+	if postRecorder.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("post status = %d, want %d", postRecorder.Code, http.StatusMethodNotAllowed)
+	}
+
+	notFoundReq := httptest.NewRequest(http.MethodGet, "/admin/v1/secret-scan-findings?repository=library/other&digest="+digest, nil)
+	notFoundReq.Header.Set("Authorization", "Bearer admin-token")
+	notFoundRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(notFoundRecorder, notFoundReq)
+	if notFoundRecorder.Code != http.StatusNotFound {
+		t.Fatalf("not-found status = %d, want %d", notFoundRecorder.Code, http.StatusNotFound)
+	}
+}
+
 func TestRouterAdminFeatureRoutesProjectBuiltinTrivyState(t *testing.T) {
 	t.Parallel()
 

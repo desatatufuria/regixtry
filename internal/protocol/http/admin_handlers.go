@@ -42,6 +42,8 @@ func (r *Router) handleAdmin(w stdhttp.ResponseWriter, req *stdhttp.Request) {
 		r.handleAdminScanRuns(w, req)
 	case strings.HasPrefix(subpath, "scan-runs/"):
 		r.handleAdminScanRunDetail(w, req, strings.TrimPrefix(subpath, "scan-runs/"))
+	case subpath == "secret-scan-findings":
+		r.handleAdminSecretScanFindings(w, req)
 	case subpath == "users":
 		r.handleAdminUsersCollection(w, req, *principal)
 	case strings.HasPrefix(subpath, "users/"):
@@ -258,6 +260,33 @@ func (r *Router) handleAdminScanRunDetail(w stdhttp.ResponseWriter, req *stdhttp
 		return
 	}
 	detail, err := r.service.GetScanRunDetail(req.Context(), strings.TrimSpace(runID))
+	if err != nil {
+		writeAdminError(w, err, ports.Challenge{})
+		return
+	}
+	writeJSON(w, stdhttp.StatusOK, detail)
+}
+
+// handleAdminSecretScanFindings is the secret-findings-by-image endpoint
+// (tasks.md 6.1, spec.md "Operator Visibility of Findings"). An image is
+// identified by repository+digest (the same pair both the Trivy and secret
+// scan legs are triggered with from the same rescan). The response is
+// ports.SecretScanRunDetail, which structurally cannot carry a matched
+// secret value or fingerprint — ports.SecretFinding only declares
+// RuleID/Description/BlobDigest/Path/StartLine/EndLine/Tags.
+func (r *Router) handleAdminSecretScanFindings(w stdhttp.ResponseWriter, req *stdhttp.Request) {
+	if req.Method != stdhttp.MethodGet {
+		w.Header().Set("Allow", stdhttp.MethodGet)
+		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+		return
+	}
+	repository := strings.TrimSpace(req.URL.Query().Get("repository"))
+	digest := strings.TrimSpace(req.URL.Query().Get("digest"))
+	if repository == "" || digest == "" {
+		writeAdminError(w, domainauth.NewValidationError("repository and digest are required"), ports.Challenge{})
+		return
+	}
+	detail, err := r.service.GetSecretScanFindings(req.Context(), repository, digest)
 	if err != nil {
 		writeAdminError(w, err, ports.Challenge{})
 		return
