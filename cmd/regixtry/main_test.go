@@ -1127,7 +1127,7 @@ func TestRunFeatureCommandsManageBuiltInTrivyState(t *testing.T) {
 	}
 	defer store.Close()
 	stub := &stubFeatureRuntimeManager{statusState: ports.FeatureRuntimeState{Status: ports.FeatureRuntimeStatusUninstalled}}
-	restoreRuntimeManager := swapFeatureRuntimeManagerFactory(t, func(appregixtry.FeatureRuntimeManagerConfig) appregixtry.FeatureRuntimeManager {
+	restoreRuntimeManager := swapFeatureRuntimeManagerFactory(t, func(_ string, _ appregixtry.FeatureRuntimeManagerConfig) appregixtry.FeatureRuntimeManager {
 		return stub
 	})
 	defer restoreRuntimeManager()
@@ -1205,7 +1205,7 @@ func TestFeatureRuntimeLifecycleCommandsUseManagedRuntimeActions(t *testing.T) {
 		installProgress: []ports.FeatureRuntimeProgress{{Stage: "resolve", Detail: "Resolve release"}, {Stage: "download", Detail: "Download archive"}, {Stage: "complete", Detail: "Runtime ready"}},
 		upgradeProgress: []ports.FeatureRuntimeProgress{{Stage: "resolve", Detail: "Resolve release"}, {Stage: "download", Detail: "Download archive"}, {Stage: "complete", Detail: "Runtime ready"}},
 	}
-	restoreRuntimeManager := swapFeatureRuntimeManagerFactory(t, func(appregixtry.FeatureRuntimeManagerConfig) appregixtry.FeatureRuntimeManager {
+	restoreRuntimeManager := swapFeatureRuntimeManagerFactory(t, func(_ string, _ appregixtry.FeatureRuntimeManagerConfig) appregixtry.FeatureRuntimeManager {
 		return stub
 	})
 	defer restoreRuntimeManager()
@@ -1269,7 +1269,7 @@ func TestFeatureRuntimeLifecycleCommandStopsOnTruthfulFailure(t *testing.T) {
 		err:             errors.New("download failed"),
 		installProgress: []ports.FeatureRuntimeProgress{{Stage: "resolve", Detail: "Resolve release"}, {Stage: "download", Detail: "Download archive"}},
 	}
-	restoreRuntimeManager := swapFeatureRuntimeManagerFactory(t, func(appregixtry.FeatureRuntimeManagerConfig) appregixtry.FeatureRuntimeManager {
+	restoreRuntimeManager := swapFeatureRuntimeManagerFactory(t, func(_ string, _ appregixtry.FeatureRuntimeManagerConfig) appregixtry.FeatureRuntimeManager {
 		return stub
 	})
 	defer restoreRuntimeManager()
@@ -1309,7 +1309,7 @@ func TestFeatureRuntimeLifecycleCommandsAutoDetectManagedRuntimePaths(t *testing
 		upgradeState:  ports.FeatureRuntimeState{Status: ports.FeatureRuntimeStatusReady, ActiveVersion: "0.58.0"},
 		rollbackState: ports.FeatureRuntimeState{Status: ports.FeatureRuntimeStatusReady, ActiveVersion: "0.57.1"},
 	}
-	restoreRuntimeManager := swapFeatureRuntimeManagerFactory(t, func(appregixtry.FeatureRuntimeManagerConfig) appregixtry.FeatureRuntimeManager {
+	restoreRuntimeManager := swapFeatureRuntimeManagerFactory(t, func(_ string, _ appregixtry.FeatureRuntimeManagerConfig) appregixtry.FeatureRuntimeManager {
 		return stub
 	})
 	defer restoreRuntimeManager()
@@ -1357,6 +1357,25 @@ func TestRunFeatureRejectsUnknownBuiltInName(t *testing.T) {
 	err := runWithIO(context.Background(), []string{"feature", "show", "future-plugin"}, strings.NewReader(""), stdout, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "unsupported feature") {
 		t.Fatalf("runWithIO(feature show unknown) error = %v, want unsupported feature rejection", err)
+	}
+	if _, statErr := os.Stat(filepath.Join("data", "metadata.db")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("data/metadata.db stat error = %v, want not exists", statErr)
+	}
+}
+
+func TestRunFeatureRejectsUnknownFeatureIdentityWithoutDefaultingToTrivyOrGitleaks(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	stdout := &bytes.Buffer{}
+	err := runWithIO(context.Background(), []string{"feature", "show", "bogus"}, strings.NewReader(""), stdout, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "unsupported feature") {
+		t.Fatalf("runWithIO(feature show bogus) error = %v, want unsupported feature rejection", err)
+	}
+	if strings.Contains(err.Error(), "trivy") || strings.Contains(err.Error(), "gitleaks") {
+		t.Fatalf("error = %v, want rejection that never silently names a known feature as a fallback", err)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, want no feature output for an unrecognized identity", stdout.String())
 	}
 	if _, statErr := os.Stat(filepath.Join("data", "metadata.db")); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("data/metadata.db stat error = %v, want not exists", statErr)
@@ -2522,7 +2541,7 @@ func swapBootstrapRunner(t *testing.T, runner bootstrapRunner) func() {
 	}
 }
 
-func swapFeatureRuntimeManagerFactory(t *testing.T, factory func(appregixtry.FeatureRuntimeManagerConfig) appregixtry.FeatureRuntimeManager) func() {
+func swapFeatureRuntimeManagerFactory(t *testing.T, factory func(string, appregixtry.FeatureRuntimeManagerConfig) appregixtry.FeatureRuntimeManager) func() {
 	t.Helper()
 	featureRuntimeFactorySwapMu.Lock()
 

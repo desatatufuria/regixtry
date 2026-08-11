@@ -14,16 +14,18 @@ import (
 )
 
 type Service struct {
-	blobs      ports.BlobStore
-	metadata   ports.MetadataStore
-	access     ports.AccessController
-	tenants    ports.TenantResolver
-	jobs       ports.JobRunner
-	scanRunner ports.ScanRunner
-	runtimes   map[string]FeatureRuntimeManager
-	scanHost   string
-	now        func() time.Time
-	scanGate   *scanGate
+	blobs            ports.BlobStore
+	metadata         ports.MetadataStore
+	access           ports.AccessController
+	tenants          ports.TenantResolver
+	jobs             ports.JobRunner
+	scanRunner       ports.ScanRunner
+	secretScanRunner ports.SecretScanRunner
+	runtimes         map[string]FeatureRuntimeManager
+	scanHost         string
+	now              func() time.Time
+	scanGate         *scanGate
+	secretScanGate   *scanGate
 }
 
 type FeatureRuntimeManager interface {
@@ -54,19 +56,24 @@ func NewService(blobStore ports.BlobStore, metadataStore ports.MetadataStore, ac
 	}
 
 	return &Service{
-		blobs:    blobStore,
-		metadata: metadataStore,
-		access:   accessController,
-		tenants:  tenantResolver,
-		jobs:     jobRunner,
-		runtimes: make(map[string]FeatureRuntimeManager),
-		now:      func() time.Time { return time.Now().UTC() },
-		scanGate: newScanGate(),
+		blobs:          blobStore,
+		metadata:       metadataStore,
+		access:         accessController,
+		tenants:        tenantResolver,
+		jobs:           jobRunner,
+		runtimes:       make(map[string]FeatureRuntimeManager),
+		now:            func() time.Time { return time.Now().UTC() },
+		scanGate:       newScanGate(),
+		secretScanGate: newScanGate(),
 	}
 }
 
 func (s *Service) SetScanRunner(runner ports.ScanRunner) {
 	s.scanRunner = runner
+}
+
+func (s *Service) SetSecretScanRunner(runner ports.SecretScanRunner) {
+	s.secretScanRunner = runner
 }
 
 func (s *Service) SetFeatureRuntimeManager(feature string, manager FeatureRuntimeManager) {

@@ -286,6 +286,14 @@ func TestServiceListFeaturesReturnsBuiltinTrivyInventory(t *testing.T) {
 		CurrentVersion: "0.57.1",
 		LatestVersion:  "0.58.0",
 		UpdateStatus:   "available",
+	}, {
+		Name:           "gitleaks",
+		Kind:           ports.FeatureKindBuiltin,
+		Enabled:        false,
+		Configured:     false,
+		CurrentVersion: "",
+		LatestVersion:  "unknown",
+		UpdateStatus:   "unknown",
 	}}
 	if !reflect.DeepEqual(features, want) {
 		t.Fatalf("ListFeatures() = %#v, want %#v", features, want)
@@ -677,6 +685,199 @@ func TestServiceManualAndScheduledScansUseManagedRuntimeStateAndIgnoreLegacyPath
 	}
 }
 
+func TestServiceExecuteScanRunRunsSecretScanLegAlongsideTrivyLegWhenGitleaksEnabledAndReady(t *testing.T) {
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	seedRepository(t, service, context.Background(), "library/alpine")
+	if err := service.metadata.UpsertScanSettings(context.Background(), "tenant-a", "trivy", ports.ScanSettings{
+		Enabled:              true,
+		Interval:             time.Hour,
+		Timeout:              time.Minute,
+		RegistryReachableURL: "https://registry.internal",
+		MaxConcurrency:       1,
+		UpdatedAt:            time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("UpsertScanSettings(trivy) error = %v", err)
+	}
+	seedManagedRuntimeState(t, service, "0.57.1")
+
+	if err := service.metadata.UpsertScanSettings(context.Background(), "tenant-a", "gitleaks", ports.ScanSettings{
+		Enabled:        true,
+		Interval:       time.Hour,
+		Timeout:        time.Minute,
+		MaxConcurrency: 1,
+		UpdatedAt:      time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("UpsertScanSettings(gitleaks) error = %v", err)
+	}
+	if err := service.metadata.UpsertFeatureRuntimeState(context.Background(), "tenant-a", "gitleaks", ports.FeatureRuntimeState{
+		Status:           ports.FeatureRuntimeStatusReady,
+		ActiveVersion:    "8.27.0",
+		ActiveBinaryPath: "/var/lib/regixtry/features/gitleaks/bin/active/gitleaks",
+		CacheDir:         "/var/lib/regixtry/features/gitleaks/gitleaks-cache",
+		UpdatedAt:        time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("UpsertFeatureRuntimeState(gitleaks) error = %v", err)
+	}
+
+	trivyRunner := &capturingScanRunner{result: ports.ScanResult{TrivyVersion: "0.57.1"}}
+	service.SetScanRunner(trivyRunner)
+	secretRunner := &capturingSecretScanRunner{result: ports.SecretScanResult{
+		GitleaksVersion: "8.27.0",
+		Findings:        []ports.SecretFinding{{RuleID: "aws-access-token", BlobDigest: "sha256:" + strings.Repeat("a", 64), Path: "config.json", StartLine: 1, EndLine: 1}},
+	}}
+	service.SetSecretScanRunner(secretRunner)
+
+	manual, err := service.QueueManualScan(context.Background(), "library/alpine", "latest")
+	if err != nil {
+		t.Fatalf("QueueManualScan() error = %v", err)
+	}
+	waitForScanCompletion(t, service, manual.ID)
+	waitForSecretScanRunnerCalls(t, secretRunner, 1)
+
+	secretRunner.mu.Lock()
+	targets := append([]ports.SecretScanTarget(nil), secretRunner.targets...)
+	settingsSeen := append([]ports.ScanSettings(nil), secretRunner.settings...)
+	secretRunner.mu.Unlock()
+	if len(targets) != 1 {
+		t.Fatalf("secret runner targets = %#v, want exactly one call alongside the Trivy leg", targets)
+	}
+	if targets[0].Repository != "library/alpine" || targets[0].Digest != manual.Digest {
+		t.Fatalf("secret target = %#v, want repository/digest matching the scan run", targets[0])
+	}
+	if len(targets[0].Blobs) == 0 {
+		t.Fatalf("secret target.Blobs = %#v, want manifest config+layer blobs", targets[0].Blobs)
+	}
+	if settingsSeen[0].BinaryPath != "/var/lib/regixtry/features/gitleaks/bin/active/gitleaks" {
+		t.Fatalf("secret settings = %#v, want managed gitleaks binary path", settingsSeen[0])
+	}
+
+	waitForSecretScanRunCompletion(t, service, "library/alpine")
+	runs, err := service.metadata.ListSecretScanRuns(context.Background(), "tenant-a", "library/alpine", 10)
+	if err != nil {
+		t.Fatalf("ListSecretScanRuns() error = %v", err)
+	}
+	if len(runs) != 1 || runs[0].Status != ports.SecretScanRunStatusCompleted {
+		t.Fatalf("secret scan runs = %#v, want exactly one completed run", runs)
+	}
+	detail, err := service.metadata.GetSecretScanRunDetail(context.Background(), "tenant-a", runs[0].ID)
+	if err != nil {
+		t.Fatalf("GetSecretScanRunDetail() error = %v", err)
+	}
+	if len(detail.Findings) != 1 || detail.Findings[0].RuleID != "aws-access-token" {
+		t.Fatalf("secret findings = %#v, want persisted redacted finding", detail.Findings)
+	}
+}
+
+func TestServiceExecuteScanRunSkipsSecretScanLegWithoutBlockingTrivyWhenGitleaksDisabledOrNotReady(t *testing.T) {
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	seedRepository(t, service, context.Background(), "library/alpine")
+	if err := service.metadata.UpsertScanSettings(context.Background(), "tenant-a", "trivy", ports.ScanSettings{
+		Enabled:              true,
+		Interval:             time.Hour,
+		Timeout:              time.Minute,
+		RegistryReachableURL: "https://registry.internal",
+		MaxConcurrency:       1,
+		UpdatedAt:            time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("UpsertScanSettings(trivy) error = %v", err)
+	}
+	seedManagedRuntimeState(t, service, "0.57.1")
+	// gitleaks intentionally left unconfigured (disabled/uninstalled by default).
+
+	trivyRunner := &capturingScanRunner{result: ports.ScanResult{TrivyVersion: "0.57.1"}}
+	service.SetScanRunner(trivyRunner)
+	secretRunner := &capturingSecretScanRunner{}
+	service.SetSecretScanRunner(secretRunner)
+
+	manual, err := service.QueueManualScan(context.Background(), "library/alpine", "latest")
+	if err != nil {
+		t.Fatalf("QueueManualScan() error = %v", err)
+	}
+	waitForScanCompletion(t, service, manual.ID)
+
+	trivyRun, err := service.metadata.GetScanRun(context.Background(), "tenant-a", manual.ID)
+	if err != nil {
+		t.Fatalf("GetScanRun() error = %v", err)
+	}
+	if trivyRun.Status != ports.ScanRunStatusCompleted {
+		t.Fatalf("trivy run status = %q, want completed regardless of gitleaks state", trivyRun.Status)
+	}
+
+	// Give the secret leg goroutine time to run and confirm it did nothing:
+	// an absent/disabled gitleaks feature must never fail or block the Trivy leg.
+	time.Sleep(50 * time.Millisecond)
+	secretRunner.mu.Lock()
+	calls := len(secretRunner.targets)
+	secretRunner.mu.Unlock()
+	if calls != 0 {
+		t.Fatalf("secret runner calls = %d, want 0 when gitleaks is not enabled/ready", calls)
+	}
+	runs, err := service.metadata.ListSecretScanRuns(context.Background(), "tenant-a", "library/alpine", 10)
+	if err != nil {
+		t.Fatalf("ListSecretScanRuns() error = %v", err)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("secret scan runs = %#v, want none persisted when gitleaks is not enabled/ready", runs)
+	}
+}
+
+// TestServicePublishManifestDoesNotTriggerSecretScan is the regression test
+// for spec.md "Reused Rescan Trigger, No Push-Time Path": secret scans MUST
+// only run through the existing manual/scheduled rescan orchestration
+// (executeScanRun), never as a direct consequence of PublishManifest. This
+// verifies the actual code path — PublishManifest never calls
+// executeScanRun, QueueManualScan, or RunScheduledScans — rather than
+// assuming it from the design doc.
+func TestServicePublishManifestDoesNotTriggerSecretScan(t *testing.T) {
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	if err := service.metadata.UpsertScanSettings(context.Background(), "tenant-a", "gitleaks", ports.ScanSettings{
+		Enabled:        true,
+		Interval:       time.Hour,
+		Timeout:        time.Minute,
+		MaxConcurrency: 1,
+		UpdatedAt:      time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("UpsertScanSettings(gitleaks) error = %v", err)
+	}
+	if err := service.metadata.UpsertFeatureRuntimeState(context.Background(), "tenant-a", "gitleaks", ports.FeatureRuntimeState{
+		Status:           ports.FeatureRuntimeStatusReady,
+		ActiveVersion:    "8.27.0",
+		ActiveBinaryPath: "/var/lib/regixtry/features/gitleaks/bin/active/gitleaks",
+		CacheDir:         "/var/lib/regixtry/features/gitleaks/gitleaks-cache",
+		UpdatedAt:        time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("UpsertFeatureRuntimeState(gitleaks) error = %v", err)
+	}
+	secretRunner := &capturingSecretScanRunner{}
+	service.SetSecretScanRunner(secretRunner)
+
+	// Only publish the manifest (the push path) — never call QueueManualScan
+	// or RunScheduledScans.
+	seedRepository(t, service, context.Background(), "library/pushed-only")
+
+	// Give any accidental async trigger time to run before asserting absence.
+	time.Sleep(50 * time.Millisecond)
+	secretRunner.mu.Lock()
+	calls := len(secretRunner.targets)
+	secretRunner.mu.Unlock()
+	if calls != 0 {
+		t.Fatalf("secret runner calls = %d, want 0: an image push MUST NOT trigger a secret scan directly", calls)
+	}
+	runs, err := service.metadata.ListSecretScanRuns(context.Background(), "tenant-a", "library/pushed-only", 10)
+	if err != nil {
+		t.Fatalf("ListSecretScanRuns() error = %v", err)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("secret scan runs = %#v, want none: push alone must not create a secret scan run", runs)
+	}
+}
+
 func TestServiceRejectsUnknownFeatureNames(t *testing.T) {
 	t.Parallel()
 
@@ -967,6 +1168,54 @@ func (c *capturingScanRunner) Run(_ context.Context, imageRef string, settings p
 	c.targets = append(c.targets, imageRef)
 	c.settings = append(c.settings, settings)
 	return c.result, nil
+}
+
+type capturingSecretScanRunner struct {
+	mu       sync.Mutex
+	result   ports.SecretScanResult
+	err      error
+	settings []ports.ScanSettings
+	targets  []ports.SecretScanTarget
+}
+
+func (c *capturingSecretScanRunner) Run(_ context.Context, target ports.SecretScanTarget, settings ports.ScanSettings) (ports.SecretScanResult, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.targets = append(c.targets, target)
+	c.settings = append(c.settings, settings)
+	return c.result, c.err
+}
+
+func waitForSecretScanRunnerCalls(t *testing.T, runner *capturingSecretScanRunner, want int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		runner.mu.Lock()
+		count := len(runner.targets)
+		runner.mu.Unlock()
+		if count >= want {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("secret scan runner calls did not reach %d before deadline", want)
+}
+
+func waitForSecretScanRunCompletion(t *testing.T, service *Service, repository string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		runs, err := service.metadata.ListSecretScanRuns(context.Background(), "tenant-a", repository, 10)
+		if err == nil {
+			for _, run := range runs {
+				if run.Status == ports.SecretScanRunStatusCompleted || run.Status == ports.SecretScanRunStatusFailed {
+					return
+				}
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("secret scan run for %s did not reach a terminal status before deadline", repository)
 }
 
 func waitForScanCompletion(t *testing.T, service *Service, runID string) {

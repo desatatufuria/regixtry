@@ -12,12 +12,22 @@ import (
 
 const trivyFeatureName = "trivy"
 
+// gitleaksFeatureName is regixtry's own identity for the gitleaks feature,
+// distinct from (but equal in value to) internal/infra/scanning/gitleaks's
+// own package-private gitleaksFeatureName constant used for its runtime
+// state row key. Both must stay "gitleaks" since they key the same
+// feature_runtime_state/scan_settings rows.
+const gitleaksFeatureName = "gitleaks"
+
 type featureDescriptor struct {
 	name string
 	kind ports.FeatureKind
 }
 
-var builtInFeatures = []featureDescriptor{{name: trivyFeatureName, kind: ports.FeatureKindBuiltin}}
+var builtInFeatures = []featureDescriptor{
+	{name: trivyFeatureName, kind: ports.FeatureKindBuiltin},
+	{name: gitleaksFeatureName, kind: ports.FeatureKindBuiltin},
+}
 
 type trivyRuntimeProber interface {
 	Probe(context.Context, ports.ScanSettings) (ports.FeatureRuntime, error)
