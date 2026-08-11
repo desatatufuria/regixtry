@@ -155,19 +155,121 @@ func TestModelViewResizeAboveMinimumRestoresRendering(t *testing.T) {
 	}
 }
 
-func TestModelContentBudgetWrapsPackageLevelContentBudgetUsingViewportAndStatus(t *testing.T) {
+func TestModelContentBudgetWrapsPackageLevelContentBudgetUsingViewportAndGivenStatusHelp(t *testing.T) {
 	t.Parallel()
 
+	// Phase 3 deviation from design.md's originally specified zero-arg
+	// method: status/help must be the exact strings the caller is about to
+	// render (some screens show m.notice or a computed status, not
+	// m.status), otherwise the row budget and the actual chrome height
+	// diverge and the viewport invariant breaks. See contentBudget's doc
+	// comment in model.go.
 	model := NewModel(&fakeQueryService{})
 	model.status = "Loading admin users..."
 	updated, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	result := updated.(Model)
 
-	got := result.contentBudget()
-	want := contentBudget(result.viewport.Width, result.viewport.Height, result.status, "")
+	status := "A different status than m.status"
+	help := "q: quit"
+	got := result.contentBudget(status, help)
+	want := contentBudget(result.viewport.Width, result.viewport.Height, status, help)
+	want.Scroll = result.bodyScroll
 
 	if got != want {
-		t.Fatalf("contentBudget() = %+v, want %+v (Model.contentBudget must wrap the package-level pure function per design.md)", got, want)
+		t.Fatalf("contentBudget(%q, %q) = %+v, want %+v (Model.contentBudget must wrap the package-level pure function with the exact given status/help and bodyScroll)", status, help, got, want)
+	}
+}
+
+func TestModelCatalogAndTagsListScreensFitViewportHeight(t *testing.T) {
+	t.Parallel()
+
+	items := make([]string, 0, 60)
+	for i := 0; i < 60; i++ {
+		items = append(items, fmt.Sprintf("library/repo-%02d", i))
+	}
+
+	for _, height := range []int{24, 30, 50} {
+		height := height
+		t.Run(fmt.Sprintf("height=%d", height), func(t *testing.T) {
+			t.Parallel()
+
+			model := NewModel(&fakeQueryService{})
+			updated, _ := model.Update(tea.WindowSizeMsg{Width: minViewportWidth, Height: height})
+			result := updated.(Model)
+
+			result.screen = screenRepositories
+			result.repositories = RepositoriesModel{Items: items}
+			view := result.View()
+			if got := lipgloss.Height(view); got > height {
+				t.Fatalf("repositories view height = %d, want <= %d\nview:\n%s", got, height, view)
+			}
+
+			result.screen = screenTags
+			result.tags = TagsModel{Repository: "library/alpine", Items: items}
+			view = result.View()
+			if got := lipgloss.Height(view); got > height {
+				t.Fatalf("tags view height = %d, want <= %d\nview:\n%s", got, height, view)
+			}
+		})
+	}
+}
+
+func TestModelPageKeysScrollAndClampCatalogList(t *testing.T) {
+	t.Parallel()
+
+	items := make([]string, 0, 60)
+	for i := 0; i < 60; i++ {
+		items = append(items, fmt.Sprintf("library/repo-%02d", i))
+	}
+
+	model := NewModel(&fakeQueryService{})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: minViewportWidth, Height: 24})
+	result := updated.(Model)
+	result.screen = screenRepositories
+	result.repositories = RepositoriesModel{Items: items}
+
+	if !strings.Contains(result.View(), "repo-00") {
+		t.Fatalf("initial view = %q, want first item visible", result.View())
+	}
+
+	scrolled := runKey(t, result, "pgdown")
+	if scrolled.bodyScroll <= result.bodyScroll {
+		t.Fatalf("bodyScroll = %d, want increase after pgdown (was %d)", scrolled.bodyScroll, result.bodyScroll)
+	}
+	if strings.Contains(scrolled.View(), "repo-00") {
+		t.Fatalf("view = %q, want repo-00 scrolled out of view after pgdown", scrolled.View())
+	}
+
+	pastEnd := scrolled
+	for i := 0; i < 30; i++ {
+		pastEnd = runKey(t, pastEnd, "pgdown")
+	}
+	if !strings.Contains(pastEnd.View(), "repo-59") {
+		t.Fatalf("view = %q, want last item visible after paging past the end", pastEnd.View())
+	}
+
+	home := runKey(t, pastEnd, "home")
+	if home.bodyScroll != 0 {
+		t.Fatalf("bodyScroll = %d, want 0 after home", home.bodyScroll)
+	}
+	if !strings.Contains(home.View(), "repo-00") {
+		t.Fatalf("view = %q, want repo-00 visible after home", home.View())
+	}
+
+	endJump := runKey(t, home, "end")
+	if !strings.Contains(endJump.View(), "repo-59") {
+		t.Fatalf("view = %q, want repo-59 visible after end", endJump.View())
+	}
+
+	pastTop := endJump
+	for i := 0; i < 30; i++ {
+		pastTop = runKey(t, pastTop, "pgup")
+	}
+	if pastTop.bodyScroll != 0 {
+		t.Fatalf("bodyScroll = %d, want 0 after paging up past the top", pastTop.bodyScroll)
+	}
+	if !strings.Contains(pastTop.View(), "repo-00") {
+		t.Fatalf("view = %q, want repo-00 visible after paging up past the top", pastTop.View())
 	}
 }
 
@@ -1943,6 +2045,14 @@ func runKey(t *testing.T, model Model, key string) Model {
 		msg = tea.KeyMsg{Type: tea.KeyUp}
 	case "backspace":
 		msg = tea.KeyMsg{Type: tea.KeyBackspace}
+	case "pgup":
+		msg = tea.KeyMsg{Type: tea.KeyPgUp}
+	case "pgdown":
+		msg = tea.KeyMsg{Type: tea.KeyPgDown}
+	case "home":
+		msg = tea.KeyMsg{Type: tea.KeyHome}
+	case "end":
+		msg = tea.KeyMsg{Type: tea.KeyEnd}
 	case " ":
 		msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}}
 	}
