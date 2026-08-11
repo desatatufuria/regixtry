@@ -9,9 +9,9 @@ import (
 	"regixtry/internal/ports"
 )
 
-func renderAdminWorkspace(current screen, session AdminSession, view AdminViewState, knownRepositories []string, status string, now time.Time) string {
+func renderAdminWorkspace(current screen, session AdminSession, view AdminViewState, knownRepositories []string, status string, layout consoleLayout, now time.Time) string {
 	theme := newAdminTheme()
-	context, body, help := renderAdminScreen(theme, current, session, view, knownRepositories, now)
+	context, body, help := renderAdminScreen(theme, current, session, view, knownRepositories, layout, now)
 	fullBody := body
 	if view.ConfirmModal.Active() {
 		fullBody = lipgloss.JoinVertical(lipgloss.Left, body, renderAdminModal(theme, view.ConfirmModal))
@@ -21,30 +21,66 @@ func renderAdminWorkspace(current screen, session AdminSession, view AdminViewSt
 	return renderConsoleWorkspace("Regixtry Admin", context, fullBody, status, help)
 }
 
-func renderAdminScreen(theme adminTheme, current screen, session AdminSession, view AdminViewState, knownRepositories []string, now time.Time) (string, string, string) {
+// adminScreenHelp returns the help line for an admin screen. Extracted from
+// renderAdminScreen so callers can compute the same help text before layout
+// is known (model.go's View() needs it to build the consoleLayout that
+// renderAdminScreen itself then consumes).
+func adminScreenHelp(current screen, view AdminViewState) string {
 	switch current {
 	case screenAdminCreateUser:
-		return "Users / Create User", renderAdminCreateUserScreen(theme, view), "Enter: create user | Tab: next field | Space: toggle | Esc: cancel"
+		return "Enter: create user | Tab: next field | Space: toggle | Esc: cancel"
 	case screenAdminEditUser:
-		return fmt.Sprintf("Users / %s / General", selectedAdminUsername(view)), renderAdminEditUserScreen(theme, session, view, now), "g: grants | t: tokens | p: change password | e: enable | x: disable | Esc: back | q: quit"
+		return "g: grants | t: tokens | p: change password | e: enable | x: disable | Esc: back | q: quit"
 	case screenAdminChangePassword:
-		return fmt.Sprintf("Users / %s / Change Password", selectedAdminUsername(view)), renderAdminChangePasswordScreen(theme, view), "Enter: save password | Esc: cancel"
+		return "Enter: save password | Esc: cancel"
 	case screenAdminEditUserGrants:
-		return fmt.Sprintf("Users / %s / Grants", selectedAdminUsername(view)), renderAdminGrantsScreen(theme, view), "n: add grant | e: edit selected grant | x: remove grant | t: tokens | Esc: back | q: quit"
+		return "n: add grant | e: edit selected grant | x: remove grant | t: tokens | Esc: back | q: quit"
 	case screenAdminAddGrant:
-		return fmt.Sprintf("Users / %s / Grants / Add Grant", selectedAdminUsername(view)), renderAdminAddGrantScreen(theme, view, knownRepositories), "Up/Down: pick repository | Enter: accept or save | Tab: next field | Space: cycle role | Esc: cancel"
+		return "Up/Down: pick repository | Enter: accept or save | Tab: next field | Space: cycle role | Esc: cancel"
 	case screenAdminEditUserTokens:
-		return fmt.Sprintf("Users / %s / Tokens", selectedAdminUsername(view)), renderAdminTokensScreen(theme, view), "n: create token | x: revoke token | g: grants | Esc: back | q: quit"
+		return "n: create token | x: revoke token | g: grants | Esc: back | q: quit"
 	case screenAdminCreateToken:
-		return fmt.Sprintf("Users / %s / Tokens / Create Token", selectedAdminUsername(view)), renderAdminCreateTokenScreen(theme, view), "Enter: create token | Tab: next field | Esc: cancel"
+		return "Enter: create token | Tab: next field | Esc: cancel"
 	case screenAdminFeatures:
-		return "Features", renderAdminFeaturesScreen(theme, session, view, now), adminFeatureHelp(view)
+		return adminFeatureHelp(view)
 	default:
-		return "Users", renderAdminUsersScreen(theme, session, view, now), "/: search | Enter/e: edit user | n: create user | f: features | Esc: back | q: quit"
+		return "/: search | Enter/e: edit user | n: create user | f: features | Esc: back | q: quit"
 	}
 }
 
-func renderAdminUsersScreen(theme adminTheme, session AdminSession, view AdminViewState, now time.Time) string {
+// renderAdminScreen renders the current admin screen's (context, body, help)
+// triple. Only renderAdminUsersScreen/renderAdminFeaturesScreen — the two
+// screens whose body can grow with data (user list, Trivy tables) — take
+// layout and route their content through renderSection's outer-pane clip
+// (design.md decision #4/#6). The remaining screens are short, fixed-size
+// forms that do not scale with data and stay on their existing
+// theme.section.Render path (Phase 3 precedent: narrow scope to what the
+// spec scenarios require).
+func renderAdminScreen(theme adminTheme, current screen, session AdminSession, view AdminViewState, knownRepositories []string, layout consoleLayout, now time.Time) (string, string, string) {
+	help := adminScreenHelp(current, view)
+	switch current {
+	case screenAdminCreateUser:
+		return "Users / Create User", renderAdminCreateUserScreen(theme, view), help
+	case screenAdminEditUser:
+		return fmt.Sprintf("Users / %s / General", selectedAdminUsername(view)), renderAdminEditUserScreen(theme, session, view, now), help
+	case screenAdminChangePassword:
+		return fmt.Sprintf("Users / %s / Change Password", selectedAdminUsername(view)), renderAdminChangePasswordScreen(theme, view), help
+	case screenAdminEditUserGrants:
+		return fmt.Sprintf("Users / %s / Grants", selectedAdminUsername(view)), renderAdminGrantsScreen(theme, view), help
+	case screenAdminAddGrant:
+		return fmt.Sprintf("Users / %s / Grants / Add Grant", selectedAdminUsername(view)), renderAdminAddGrantScreen(theme, view, knownRepositories), help
+	case screenAdminEditUserTokens:
+		return fmt.Sprintf("Users / %s / Tokens", selectedAdminUsername(view)), renderAdminTokensScreen(theme, view), help
+	case screenAdminCreateToken:
+		return fmt.Sprintf("Users / %s / Tokens / Create Token", selectedAdminUsername(view)), renderAdminCreateTokenScreen(theme, view), help
+	case screenAdminFeatures:
+		return "Features", renderAdminFeaturesScreen(theme, session, view, layout, now), help
+	default:
+		return "Users", renderAdminUsersScreen(theme, session, view, layout, now), help
+	}
+}
+
+func renderAdminUsersScreen(theme adminTheme, session AdminSession, view AdminViewState, layout consoleLayout, now time.Time) string {
 	searchHint := "Press / to edit the search"
 	if view.UserSearchActive {
 		searchHint = "Typing updates the user list"
@@ -77,10 +113,10 @@ func renderAdminUsersScreen(theme adminTheme, session AdminSession, view AdminVi
 		theme.muted.Render(fmt.Sprintf("Operator: %s", session.Username)),
 		theme.muted.Render(fmt.Sprintf("Session remaining: %s", formatRemaining(session.Remaining(now)))),
 	)
-	return theme.section.Render(strings.Join(lines, "\n"))
+	return renderSection(theme, strings.Join(lines, "\n"), layout)
 }
 
-func renderAdminFeaturesScreen(theme adminTheme, session AdminSession, view AdminViewState, now time.Time) string {
+func renderAdminFeaturesScreen(theme adminTheme, session AdminSession, view AdminViewState, layout consoleLayout, now time.Time) string {
 	lines := []string{theme.subheading.Render("Built-in Features")}
 	if len(view.Features) == 0 {
 		lines = append(lines, theme.muted.Render("No built-in features available."))
@@ -103,7 +139,7 @@ func renderAdminFeaturesScreen(theme adminTheme, session AdminSession, view Admi
 		theme.muted.Render(fmt.Sprintf("Operator: %s", session.Username)),
 		theme.muted.Render(fmt.Sprintf("Session remaining: %s", formatRemaining(session.Remaining(now)))),
 	)
-	return theme.section.Render(strings.Join(lines, "\n"))
+	return renderSection(theme, strings.Join(lines, "\n"), layout)
 }
 
 func renderFeaturePageBody(theme adminTheme, view AdminViewState) []string {

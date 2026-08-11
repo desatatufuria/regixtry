@@ -186,6 +186,12 @@ type AdminViewState struct {
 	RevealedTokenAccessor  string
 	RevealedTokenExpiresAt time.Time
 	Tables                 adminTablesState
+	// Layout is the consoleLayout used the last time rebuildAdminTables ran,
+	// including the primary/compact table pageSize split (design.md
+	// decision #6). It is a snapshot for table construction, not the live
+	// render-time budget — renderAdminWorkspace/renderAdminScreen receive a
+	// freshly computed layout on every View() call instead.
+	Layout consoleLayout
 }
 
 type AdminSessionExpiredError struct {

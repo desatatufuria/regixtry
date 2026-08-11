@@ -189,6 +189,15 @@ func (m Model) contentBudget(status, help string) consoleLayout {
 	return layout
 }
 
+// adminTablesLayout computes the consoleLayout used to size admin tables at
+// rebuild time (design.md decision #6). It uses the Features screen's help
+// text since that is the only admin screen that renders tables today —
+// callers of rebuildAdminTables run from Update handlers, not View(), so no
+// screen-specific help string is otherwise available.
+func (m Model) adminTablesLayout() consoleLayout {
+	return m.contentBudget(m.status, adminFeatureHelp(m.adminView))
+}
+
 type catalogLoadedMsg struct {
 	result appregixtry.CatalogResult
 	err    error
@@ -463,7 +472,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.applyLoadedFeatures(msg.features)
-		m.rebuildAdminTables()
+		m.rebuildAdminTables(m.adminTablesLayout())
 		if len(m.adminView.Features) == 0 {
 			m.status = "No built-in features found."
 			return m, nil
@@ -479,7 +488,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.applyFeaturePage(msg.page)
-		m.rebuildAdminTables()
+		m.rebuildAdminTables(m.adminTablesLayout())
 		if strings.TrimSpace(m.pendingAdminStatus) != "" {
 			m.status = m.pendingAdminStatus
 			m.pendingAdminStatus = ""
@@ -541,7 +550,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.adminView.TrivyAlertDetailOpen = false
 		m.adminView.TrivyAlertsLoaded = true
 		m.adminView.TrivyScanRunDetail = ports.ScanRunDetail{}
-		m.rebuildAdminTables()
+		m.rebuildAdminTables(m.adminTablesLayout())
 		if len(m.adminView.TrivyScanRuns) == 0 {
 			m.status = "No repository alerts found."
 		} else if strings.HasPrefix(strings.ToLower(m.status), "loading") {
@@ -559,7 +568,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.adminView.TrivyScanRunDetail = msg.detail
 		m.adminView.TrivyAlertDetailOpen = true
 		m.adminView.SecretFindings = nil
-		m.rebuildAdminTables()
+		m.rebuildAdminTables(m.adminTablesLayout())
 		if strings.HasPrefix(strings.ToLower(m.status), "loading") {
 			m.status = ""
 		}
@@ -580,11 +589,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// shown or surface as a blocking error — it just renders as the
 			// clear empty state below.
 			m.adminView.SecretFindings = nil
-			m.rebuildAdminTables()
+			m.rebuildAdminTables(m.adminTablesLayout())
 			return m, nil
 		}
 		m.adminView.SecretFindings = msg.findings
-		m.rebuildAdminTables()
+		m.rebuildAdminTables(m.adminTablesLayout())
 		return m, nil
 	case adminUserGrantsLoadedMsg:
 		if msg.err != nil {
@@ -817,7 +826,8 @@ func (m Model) View() string {
 		layout := m.contentBudget("", help)
 		return renderInspectionWorkspace("Sign In", renderConsoleTextSection(m.loadingText, layout), "", help)
 	case screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken:
-		return renderAdminWorkspace(m.screen, m.adminSession, m.adminView, m.repositories.Items, m.status, m.now())
+		layout := m.contentBudget(m.status, adminScreenHelp(m.screen, m.adminView))
+		return renderAdminWorkspace(m.screen, m.adminSession, m.adminView, m.repositories.Items, m.status, layout, m.now())
 	}
 
 	help := "q: quit"
@@ -2493,7 +2503,7 @@ func (m Model) toggleTrivyTab() (tea.Model, tea.Cmd) {
 	m.adminView.TrivyAlertDetailOpen = false
 	m.adminView.TrivyScanRunDetail = ports.ScanRunDetail{}
 	m.adminView.SecretFindings = nil
-	m.rebuildAdminTables()
+	m.rebuildAdminTables(m.adminTablesLayout())
 	m.status = "Loading repository alerts..."
 	return m, m.loadAdminScanRunsCmd("", 25)
 }

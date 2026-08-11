@@ -44,7 +44,14 @@ const (
 	adminTableColumnSecretFindingLocation = "secret_finding_location"
 )
 
-func newAdminBubbleTable(columns []bubbletable.Column, rows []bubbletable.Row, highlighted int, theme adminTheme) bubbletable.Model {
+// newAdminBubbleTable is the sole construction point for every admin table.
+// pageSize is the number of data rows shown per page (design.md decision #1:
+// we derive this ourselves from the measured terminal budget since
+// WithTargetHeight does not exist at the pinned bubble-table version).
+// Rendered table height is deterministically pageSize+tableChromeRows once a
+// page is filled (viewport.go's tableChromeRows, verified against
+// evertras/bubble-table@v0.19.2).
+func newAdminBubbleTable(columns []bubbletable.Column, rows []bubbletable.Row, highlighted int, theme adminTheme, pageSize int) bubbletable.Model {
 	keys := bubbletable.DefaultKeyMap()
 	keys.RowSelectToggle.SetKeys("ctrl+space")
 	keys.FilterBlur.SetKeys("ctrl+g")
@@ -57,13 +64,13 @@ func newAdminBubbleTable(columns []bubbletable.Column, rows []bubbletable.Row, h
 	model := bubbletable.New(columns).
 		WithRows(rows).
 		WithKeyMap(keys).
-		WithBaseStyle(lipgloss.NewStyle().Align(lipgloss.Left)).
+		WithBaseStyle(lipgloss.NewStyle().Align(lipgloss.Left).BorderForeground(theme.borderColor)).
 		HeaderStyle(theme.tableHeader).
 		HighlightStyle(theme.selected).
 		Focused(true).
 		BorderRounded().
-		WithFooterVisibility(false).
-		WithNoPagination()
+		WithPageSize(pageSize).
+		WithFooterVisibility(true)
 
 	if len(rows) > 0 {
 		model = model.WithHighlightedRow(boundedIndex(highlighted, len(rows)))
@@ -72,7 +79,7 @@ func newAdminBubbleTable(columns []bubbletable.Column, rows []bubbletable.Row, h
 	return model
 }
 
-func buildAdminFeaturesTable(theme adminTheme, features []ports.FeatureSummary, highlighted int) bubbletable.Model {
+func buildAdminFeaturesTable(theme adminTheme, features []ports.FeatureSummary, highlighted int, pageSize int) bubbletable.Model {
 	columns := []bubbletable.Column{
 		bubbletable.NewColumn(adminTableColumnFeatureName, "Name", 18),
 		bubbletable.NewColumn(adminTableColumnFeatureKind, "Kind", 10),
@@ -95,10 +102,10 @@ func buildAdminFeaturesTable(theme adminTheme, features []ports.FeatureSummary, 
 			adminTableMetaFeatureName:         feature.Name,
 		}))
 	}
-	return newAdminBubbleTable(columns, rows, highlighted, theme)
+	return newAdminBubbleTable(columns, rows, highlighted, theme, pageSize)
 }
 
-func buildAdminFeatureRowsTable(theme adminTheme, section ports.FeatureSection) bubbletable.Model {
+func buildAdminFeatureRowsTable(theme adminTheme, section ports.FeatureSection, pageSize int) bubbletable.Model {
 	columns := []bubbletable.Column{
 		bubbletable.NewColumn(adminTableColumnRowTitle, "Title", 22),
 		bubbletable.NewColumn(adminTableColumnRowStatus, "Status", 12),
@@ -112,10 +119,10 @@ func buildAdminFeatureRowsTable(theme adminTheme, section ports.FeatureSection) 
 			adminTableColumnRowDetail: adminFirstNonEmpty(row.Detail, "n/a"),
 		}))
 	}
-	return newAdminBubbleTable(columns, rows, 0, theme)
+	return newAdminBubbleTable(columns, rows, 0, theme, pageSize)
 }
 
-func buildAdminScanRunsTable(theme adminTheme, runs []ports.ScanRun, highlighted int) bubbletable.Model {
+func buildAdminScanRunsTable(theme adminTheme, runs []ports.ScanRun, highlighted int, pageSize int) bubbletable.Model {
 	columns := []bubbletable.Column{
 		bubbletable.NewColumn(adminTableColumnScanRunRepository, "Repository", 18),
 		bubbletable.NewColumn(adminTableColumnScanRunReference, "Reference", 12),
@@ -136,10 +143,10 @@ func buildAdminScanRunsTable(theme adminTheme, runs []ports.ScanRun, highlighted
 			adminTableMetaScanRunID:           run.ID,
 		}))
 	}
-	return newAdminBubbleTable(columns, rows, highlighted, theme)
+	return newAdminBubbleTable(columns, rows, highlighted, theme, pageSize)
 }
 
-func buildAdminFindingsTable(theme adminTheme, findings []ports.ScanRunFinding, highlighted int) bubbletable.Model {
+func buildAdminFindingsTable(theme adminTheme, findings []ports.ScanRunFinding, highlighted int, pageSize int) bubbletable.Model {
 	columns := []bubbletable.Column{
 		bubbletable.NewColumn(adminTableColumnFindingSeverity, "Severity", 10),
 		bubbletable.NewColumn(adminTableColumnFindingID, "Finding", 18),
@@ -160,7 +167,7 @@ func buildAdminFindingsTable(theme adminTheme, findings []ports.ScanRunFinding, 
 			adminTableMetaFindingID:          adminFirstNonEmpty(finding.VulnerabilityID, finding.PackageName),
 		}))
 	}
-	return newAdminBubbleTable(columns, rows, highlighted, theme)
+	return newAdminBubbleTable(columns, rows, highlighted, theme, pageSize)
 }
 
 // buildAdminSecretFindingsTable renders redacted secret-scan findings: rule
@@ -168,7 +175,7 @@ func buildAdminFindingsTable(theme adminTheme, findings []ports.ScanRunFinding, 
 // "Informational Findings Only"). Deliberately no severity/status/fixable
 // column — secret findings carry no severity or gating dimension in this
 // change, unlike buildAdminFindingsTable's vulnerability rows.
-func buildAdminSecretFindingsTable(theme adminTheme, findings []ports.SecretFinding, highlighted int) bubbletable.Model {
+func buildAdminSecretFindingsTable(theme adminTheme, findings []ports.SecretFinding, highlighted int, pageSize int) bubbletable.Model {
 	columns := []bubbletable.Column{
 		bubbletable.NewColumn(adminTableColumnSecretFindingRule, "Rule", 22),
 		bubbletable.NewColumn(adminTableColumnSecretFindingLocation, "Location", 40),
@@ -180,7 +187,7 @@ func buildAdminSecretFindingsTable(theme adminTheme, findings []ports.SecretFind
 			adminTableColumnSecretFindingLocation: secretFindingLocation(finding),
 		}))
 	}
-	return newAdminBubbleTable(columns, rows, highlighted, theme)
+	return newAdminBubbleTable(columns, rows, highlighted, theme, pageSize)
 }
 
 func secretFindingLocation(finding ports.SecretFinding) string {
@@ -221,20 +228,46 @@ func highlightedRowValue(model bubbletable.Model, key string) string {
 	return strings.TrimSpace(value)
 }
 
-func (m *Model) rebuildAdminTables() {
+// tableRoles splits a screen's row budget into two admin-table pageSize
+// roles (design.md decision #6): primary tables (Features, ScanRuns — the
+// operator-navigable top-level lists) get the whole budget available to a
+// standalone table so a single-table screen fits exactly without relying on
+// the outer clip; compact tables (FeatureRows, Findings, SecretFindings —
+// always paired with a primary selection) are capped at compactTableRows,
+// floored at minTableRows. When several tables stack on one screen (the
+// Trivy alerts case), their combined height can still exceed l.SectionRows —
+// renderSection's outer-pane clip (Phase 3) is the structural guarantee
+// against overflow there, not this split; this split is ergonomics only.
+func tableRoles(l consoleLayout) (primary, compact int) {
+	available := l.SectionRows - tableChromeRows
+	if available < minTableRows {
+		available = minTableRows
+	}
+	primary = available
+	compact = compactTableRows
+	if compact > available {
+		compact = available
+	}
+	return primary, compact
+}
+
+func (m *Model) rebuildAdminTables(layout consoleLayout) {
+	layout.Primary, layout.Compact = tableRoles(layout)
+	m.adminView.Layout = layout
+
 	theme := newAdminTheme()
-	m.adminView.Tables.Features = buildAdminFeaturesTable(theme, m.adminView.Features, m.adminView.SelectedFeature)
+	m.adminView.Tables.Features = buildAdminFeaturesTable(theme, m.adminView.Features, m.adminView.SelectedFeature, layout.Primary)
 	featureRows := make(map[string]bubbletable.Model)
 	for _, section := range m.adminView.FeaturePage.Sections {
 		if section.Kind != "rows" {
 			continue
 		}
-		featureRows[section.ID] = buildAdminFeatureRowsTable(theme, section)
+		featureRows[section.ID] = buildAdminFeatureRowsTable(theme, section, layout.Compact)
 	}
 	m.adminView.Tables.FeatureRows = featureRows
-	m.adminView.Tables.ScanRuns = buildAdminScanRunsTable(theme, m.adminView.TrivyScanRuns, m.adminView.TrivySelectedAlert)
-	m.adminView.Tables.Findings = buildAdminFindingsTable(theme, m.adminView.TrivyScanRunDetail.Findings, 0)
-	m.adminView.Tables.SecretFindings = buildAdminSecretFindingsTable(theme, m.adminView.SecretFindings, 0)
+	m.adminView.Tables.ScanRuns = buildAdminScanRunsTable(theme, m.adminView.TrivyScanRuns, m.adminView.TrivySelectedAlert, layout.Primary)
+	m.adminView.Tables.Findings = buildAdminFindingsTable(theme, m.adminView.TrivyScanRunDetail.Findings, 0, layout.Compact)
+	m.adminView.Tables.SecretFindings = buildAdminSecretFindingsTable(theme, m.adminView.SecretFindings, 0, layout.Compact)
 	m.syncAdminTableSelections()
 }
 
