@@ -418,6 +418,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.applyLoadedFeatures(msg.features)
+		m.rebuildAdminTables()
 		if len(m.adminView.Features) == 0 {
 			m.status = "No built-in features found."
 			return m, nil
@@ -433,6 +434,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.applyFeaturePage(msg.page)
+		m.rebuildAdminTables()
 		if strings.TrimSpace(m.pendingAdminStatus) != "" {
 			m.status = m.pendingAdminStatus
 			m.pendingAdminStatus = ""
@@ -494,6 +496,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.adminView.TrivyAlertDetailOpen = false
 		m.adminView.TrivyAlertsLoaded = true
 		m.adminView.TrivyScanRunDetail = ports.ScanRunDetail{}
+		m.rebuildAdminTables()
 		if len(m.adminView.TrivyScanRuns) == 0 {
 			m.status = "No repository alerts found."
 		} else if strings.HasPrefix(strings.ToLower(m.status), "loading") {
@@ -510,6 +513,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.adminView.TrivyScanRunDetail = msg.detail
 		m.adminView.TrivyAlertDetailOpen = true
+		m.rebuildAdminTables()
 		if strings.HasPrefix(strings.ToLower(m.status), "loading") {
 			m.status = ""
 		}
@@ -931,12 +935,14 @@ func (m Model) updateAdminFeaturesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.adminView.TrivySelectedAlert = boundedIndex(m.adminView.TrivySelectedAlert-1, len(m.adminView.TrivyScanRuns))
+		m.syncAdminTableHighlights()
 		return m, nil
 	case m.isSelectedTrivyFeature() && m.adminView.TrivyTab == trivyTabRepositoryAlerts && isMoveDownKey(msg):
 		if len(m.adminView.TrivyScanRuns) == 0 {
 			return m, nil
 		}
 		m.adminView.TrivySelectedAlert = boundedIndex(m.adminView.TrivySelectedAlert+1, len(m.adminView.TrivyScanRuns))
+		m.syncAdminTableHighlights()
 		return m, nil
 	case isMoveUpKey(msg):
 		return m.moveAdminFeatureSelection(-1)
@@ -2216,6 +2222,7 @@ func (m *Model) clearSelectedAdminDetails() {
 	m.adminView.RevealedTokenSecret = ""
 	m.adminView.RevealedTokenAccessor = ""
 	m.adminView.RevealedTokenExpiresAt = time.Time{}
+	m.adminView.Tables = newAdminViewState().Tables
 }
 
 func (m *Model) applyLoadedFeatures(features []ports.FeatureSummary) {
@@ -2237,6 +2244,7 @@ func (m *Model) applyLoadedFeatures(features []ports.FeatureSummary) {
 	}
 	m.adminView.SelectedFeature = boundedIndex(selected, len(m.adminView.Features))
 	m.adminView.FeaturePage = ports.FeaturePage{}
+	m.syncAdminTableHighlights()
 }
 
 func (m *Model) applyFeaturePage(page ports.FeaturePage) {
@@ -2254,9 +2262,11 @@ func (m *Model) applyFeaturePage(page ports.FeaturePage) {
 		if feature.Name == page.Summary.Name {
 			m.adminView.Features[index] = page.Summary
 			m.adminView.SelectedFeature = index
+			m.syncAdminTableHighlights()
 			return
 		}
 	}
+	m.syncAdminTableHighlights()
 }
 
 func (m Model) selectedFeatureName() string {
@@ -2284,11 +2294,13 @@ func (m Model) toggleTrivyTab() (tea.Model, tea.Cmd) {
 		m.adminView.TrivyTab = trivyTabRuntime
 		m.adminView.TrivyAlertDetailOpen = false
 		m.status = ""
+		m.syncAdminTableHighlights()
 		return m, nil
 	}
 	m.adminView.TrivyTab = trivyTabRepositoryAlerts
 	m.adminView.TrivyAlertDetailOpen = false
 	m.adminView.TrivyScanRunDetail = ports.ScanRunDetail{}
+	m.rebuildAdminTables()
 	m.status = "Loading repository alerts..."
 	return m, m.loadAdminScanRunsCmd("", 25)
 }
@@ -2442,6 +2454,7 @@ func (m Model) moveAdminFeatureSelection(delta int) (tea.Model, tea.Cmd) {
 	}
 	m.adminView.SelectedFeature = boundedIndex(m.adminView.SelectedFeature+delta, len(m.adminView.Features))
 	m.adminView.FeaturePage = ports.FeaturePage{}
+	m.syncAdminTableHighlights()
 	m.status = fmt.Sprintf("Loading feature page for %s...", m.selectedFeatureName())
 	return m, m.loadAdminFeaturePageCmd(m.selectedFeatureName())
 }

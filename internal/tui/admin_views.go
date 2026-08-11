@@ -85,14 +85,7 @@ func renderAdminFeaturesScreen(theme adminTheme, session AdminSession, view Admi
 	if len(view.Features) == 0 {
 		lines = append(lines, theme.muted.Render("No built-in features available."))
 	} else {
-		selectedIndex := boundedIndex(view.SelectedFeature, len(view.Features))
-		for index, feature := range view.Features {
-			label := fmt.Sprintf("%s [%s] enabled=%t configured=%t current=%s latest=%s update=%s", feature.Name, feature.Kind, feature.Enabled, feature.Configured, adminFirstNonEmpty(strings.TrimSpace(feature.CurrentVersion), "unknown"), adminFirstNonEmpty(strings.TrimSpace(feature.LatestVersion), "unknown"), adminFirstNonEmpty(strings.TrimSpace(feature.UpdateStatus), "unknown"))
-			if index == selectedIndex {
-				label = theme.selected.Render(label)
-			}
-			lines = append(lines, label)
-		}
+		lines = append(lines, view.Tables.Features.View())
 	}
 
 	lines = append(lines, "", theme.subheading.Render("Feature Page"))
@@ -118,12 +111,12 @@ func renderFeaturePageBody(theme adminTheme, view AdminViewState) []string {
 		if view.TrivyTab == trivyTabRepositoryAlerts {
 			return renderTrivyRepositoryAlerts(theme, view)
 		}
-		return renderGenericFeaturePage(theme, view.FeaturePage)
+		return renderGenericFeaturePage(theme, view, view.FeaturePage)
 	}
-	return renderGenericFeaturePage(theme, view.FeaturePage)
+	return renderGenericFeaturePage(theme, view, view.FeaturePage)
 }
 
-func renderGenericFeaturePage(theme adminTheme, page ports.FeaturePage) []string {
+func renderGenericFeaturePage(theme adminTheme, view AdminViewState, page ports.FeaturePage) []string {
 	lines := make([]string, 0, len(page.Header)+len(page.Sections)*2)
 	for _, field := range page.Header {
 		lines = append(lines, fmt.Sprintf("%s: %s", field.Label, adminFirstNonEmpty(field.Value, "unknown")))
@@ -136,16 +129,11 @@ func renderGenericFeaturePage(theme adminTheme, page ports.FeaturePage) []string
 		lines = append(lines, "", theme.subheading.Render(section.Title))
 		switch section.Kind {
 		case "rows":
-			for _, row := range section.Rows {
-				label := row.Title
-				if strings.TrimSpace(row.Status) != "" {
-					label += fmt.Sprintf(" [%s]", row.Status)
-				}
-				if strings.TrimSpace(row.Detail) != "" {
-					label += fmt.Sprintf(" — %s", row.Detail)
-				}
-				lines = append(lines, label)
+			if tableModel, ok := view.Tables.FeatureRows[section.ID]; ok {
+				lines = append(lines, tableModel.View())
+				continue
 			}
+			lines = append(lines, theme.muted.Render("No rows available."))
 		default:
 			for _, field := range section.Fields {
 				lines = append(lines, fmt.Sprintf("%s: %s", field.Label, adminFirstNonEmpty(field.Value, "unknown")))
@@ -176,13 +164,7 @@ func renderTrivyRepositoryAlerts(theme adminTheme, view AdminViewState) []string
 		return append(lines, theme.muted.Render(message))
 	}
 	lines = append(lines, theme.subheading.Render("Repository Alerts"))
-	for index, run := range view.TrivyScanRuns {
-		label := fmt.Sprintf("%s@%s [%s] critical=%d high=%d", run.Repository, run.RequestedRef, run.Status, run.Critical, run.High)
-		if index == boundedIndex(view.TrivySelectedAlert, len(view.TrivyScanRuns)) {
-			label = theme.selected.Render(label)
-		}
-		lines = append(lines, label)
-	}
+	lines = append(lines, view.Tables.ScanRuns.View())
 	if view.TrivyAlertDetailOpen {
 		if detail := view.TrivyScanRunDetail; strings.TrimSpace(detail.Run.ID) != "" {
 			lines = append(lines, "", theme.subheading.Render("Selected Scan Run"))
@@ -199,9 +181,7 @@ func renderTrivyRepositoryAlerts(theme adminTheme, view AdminViewState) []string
 			}
 			if len(detail.Findings) > 0 {
 				lines = append(lines, "", theme.subheading.Render("Findings"))
-				for _, finding := range detail.Findings {
-					lines = append(lines, fmt.Sprintf("%s | %s | %s | installed=%s | fixed=%s | fixable=%t", adminFirstNonEmpty(finding.Severity, "unknown"), adminFirstNonEmpty(finding.PackageName, "unknown"), adminFirstNonEmpty(finding.VulnerabilityID, "unknown"), adminFirstNonEmpty(finding.InstalledVersion, "unknown"), adminFirstNonEmpty(finding.FixedVersion, "n/a"), finding.Fixable))
-				}
+				lines = append(lines, view.Tables.Findings.View())
 			}
 		}
 	}

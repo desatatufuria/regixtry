@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	bubbletable "github.com/evertras/bubble-table/table"
 	domainauth "regixtry/internal/domain/auth"
 	"regixtry/internal/ports"
 )
@@ -133,6 +134,20 @@ type AdminSession struct {
 	ExpiredReason string
 }
 
+type adminTableSelection struct {
+	FeatureName string
+	ScanRunID   string
+	FindingID   string
+}
+
+type adminTablesState struct {
+	Features    bubbletable.Model
+	FeatureRows map[string]bubbletable.Model
+	ScanRuns    bubbletable.Model
+	Findings    bubbletable.Model
+	Selection   adminTableSelection
+}
+
 type AdminViewState struct {
 	Users                  []ports.AdminUser
 	Features               []ports.FeatureSummary
@@ -162,6 +177,7 @@ type AdminViewState struct {
 	RevealedTokenSecret    string
 	RevealedTokenAccessor  string
 	RevealedTokenExpiresAt time.Time
+	Tables                 adminTablesState
 }
 
 type AdminSessionExpiredError struct {
@@ -218,6 +234,9 @@ func newAdminViewState() AdminViewState {
 			Role: domainauth.RepoRoleReader,
 		},
 		TrivyTab: trivyTabRuntime,
+		Tables: adminTablesState{
+			FeatureRows: make(map[string]bubbletable.Model),
+		},
 	}
 }
 

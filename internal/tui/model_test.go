@@ -9,6 +9,8 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	bubbletable "github.com/evertras/bubble-table/table"
 	appregixtry "regixtry/internal/app/regixtry"
 	domainauth "regixtry/internal/domain/auth"
 	regixtrydomain "regixtry/internal/domain/regixtry"
@@ -712,13 +714,13 @@ func TestModelTrivyRepositoryAlertsLoadSelectDetailAndRecoverEmptyState(t *testi
 			t.Fatalf("listScanRunsCalls = %d, want one repository-alert load", adminClient.listScanRunsCalls)
 		}
 		alertsView := updated.View()
-		for _, want := range []string{"Repository Alerts", "team/api@1.0.0", "library/base@stable", "library/alpine@latest"} {
+		for _, want := range []string{"Repository Alerts", "Repository", "Reference", "team/api", "library/base", "library/alpine", "1.0.0", "stable", "latest"} {
 			if !strings.Contains(alertsView, want) {
 				t.Fatalf("view = %q, want %q", alertsView, want)
 			}
 		}
-		if strings.Index(alertsView, "team/api@1.0.0") > strings.Index(alertsView, "library/base@stable") || strings.Index(alertsView, "library/base@stable") > strings.Index(alertsView, "library/alpine@latest") {
-			t.Fatalf("view = %q, want severity/fixability ordering", alertsView)
+		if got, want := updated.adminView.Tables.ScanRuns.HighlightedRow().Data[adminTableMetaScanRunID], "run-2"; got != want {
+			t.Fatalf("highlighted scan-run metadata = %#v, want %q", got, want)
 		}
 
 		updated = runKey(t, updated, "enter")
@@ -762,6 +764,280 @@ func TestModelTrivyRepositoryAlertsLoadSelectDetailAndRecoverEmptyState(t *testi
 			t.Fatalf("view = %q, want runtime tab still usable after empty alerts", updated.View())
 		}
 	})
+}
+
+func TestModelFeatureTablesRenderAlignedRowsAndPreserveBackendValues(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 10, 10, 0, 0, 0, time.UTC)
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+		features: []ports.FeatureSummary{
+			{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true, CurrentVersion: "0.57.1", LatestVersion: "0.58.0", UpdateStatus: "available"},
+			{Name: "future-plugin", Kind: ports.FeatureKindExternalService, Enabled: false, Configured: false, CurrentVersion: "n/a", LatestVersion: "1.0.0", UpdateStatus: "blocked"},
+		},
+		featurePage: ports.FeaturePage{
+			Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true, CurrentVersion: "0.57.1", LatestVersion: "0.58.0", UpdateStatus: "available"},
+			Header:  []ports.FeatureField{{Label: "Enabled", Value: "true"}},
+			Sections: []ports.FeatureSection{{
+				ID:    "checks",
+				Title: "Runtime Checks",
+				Kind:  "rows",
+				Rows: []ports.FeatureRow{{
+					Title:  "DB freshness",
+					Status: "stale",
+					Detail: "older than 24h",
+				}, {
+					Title:  "Registry reachability",
+					Status: "ready",
+					Detail: "https://registry.internal:5443",
+				}},
+			}},
+		},
+	}
+
+	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
+	updated = runKey(t, updated, "f")
+
+	if got, want := updated.adminView.Tables.Features.TotalRows(), 2; got != want {
+		t.Fatalf("feature table rows = %d, want %d", got, want)
+	}
+	if got, want := updated.adminView.Tables.Features.HighlightedRow().Data[adminTableMetaFeatureName], "trivy"; got != want {
+		t.Fatalf("highlighted feature metadata = %#v, want %q", got, want)
+	}
+	rowsTable, ok := updated.adminView.Tables.FeatureRows["checks"]
+	if !ok {
+		t.Fatal("expected rows table for checks section")
+	}
+	if got, want := rowsTable.TotalRows(), 2; got != want {
+		t.Fatalf("rows table rows = %d, want %d", got, want)
+	}
+	view := updated.View()
+	for _, want := range []string{"Name", "Kind", "Enabled", "Configured", "Current", "Latest", "Update", "Runtime Checks", "Title", "Status", "Detail", "DB freshness", "older than 24h", "Registry reachability", "https://registry.internal:5443", "0.57.1", "0.58.0", "available"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view = %q, want %q", view, want)
+		}
+	}
+}
+
+func TestModelTrivyTablesPreserveEmptyStateAndBackendOrdering(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 10, 11, 0, 0, 0, time.UTC)
+	t.Run("empty state stays explicit", func(t *testing.T) {
+		adminClient := &fakeAdminClient{
+			loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+			features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
+			featurePage:  ports.FeaturePage{Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}, Header: []ports.FeatureField{{Label: "Enabled", Value: "true"}}},
+		}
+		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
+		updated = runKey(t, updated, "f")
+		updated = runKey(t, updated, "tab")
+
+		if got, want := updated.adminView.Tables.ScanRuns.TotalRows(), 0; got != want {
+			t.Fatalf("scan-runs table rows = %d, want %d", got, want)
+		}
+		if !strings.Contains(updated.View(), "No repository alerts found.") {
+			t.Fatalf("view = %q, want empty alerts message", updated.View())
+		}
+	})
+
+	t.Run("scan runs keep sorted backend values in the table", func(t *testing.T) {
+		adminClient := &fakeAdminClient{
+			loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+			features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
+			featurePage:  ports.FeaturePage{Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}, Header: []ports.FeatureField{{Label: "Enabled", Value: "true"}}},
+			scanRuns: []ports.ScanRun{
+				{ID: "run-2", Repository: "team/api", RequestedRef: "1.0.0", Status: ports.ScanRunStatusCompleted, Critical: 1, High: 0, HasFixable: true},
+				{ID: "run-3", Repository: "library/base", RequestedRef: "stable", Status: ports.ScanRunStatusCompleted, Critical: 1, High: 0, HasFixable: false},
+				{ID: "run-1", Repository: "library/alpine", RequestedRef: "latest", Status: ports.ScanRunStatusCompleted, Critical: 0, High: 2, HasFixable: true},
+			},
+		}
+		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
+		updated = runKey(t, updated, "f")
+		updated = runKey(t, updated, "tab")
+
+		if got, want := updated.adminView.Tables.ScanRuns.TotalRows(), 3; got != want {
+			t.Fatalf("scan-runs table rows = %d, want %d", got, want)
+		}
+		if got, want := updated.adminView.Tables.ScanRuns.HighlightedRow().Data[adminTableMetaScanRunID], "run-2"; got != want {
+			t.Fatalf("highlighted scan-run metadata = %#v, want %q", got, want)
+		}
+		view := updated.View()
+		for _, want := range []string{"Repository", "Reference", "Status", "Critical", "High", "Fixable", "team/api", "library/base", "library/alpine", "1.0.0", "stable", "latest"} {
+			if !strings.Contains(view, want) {
+				t.Fatalf("view = %q, want %q", view, want)
+			}
+		}
+	})
+}
+
+func TestAdminFindingSeverityStylingScopesOnlyVulnerabilityRows(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+	findingsTable := buildAdminFindingsTable(theme, []ports.ScanRunFinding{{Severity: "CRITICAL", VulnerabilityID: "CVE-2026-0001", PackageName: "openssl", InstalledVersion: "3.0.0", FixedVersion: "3.0.1", Fixable: true}}, 0)
+	severityCell, ok := findingsTable.HighlightedRow().Data[adminTableColumnFindingSeverity].(bubbletable.StyledCell)
+	if !ok {
+		t.Fatalf("finding severity cell type = %T, want bubble-table styled cell", findingsTable.HighlightedRow().Data[adminTableColumnFindingSeverity])
+	}
+	if got, want := severityCell.Data, "CRITICAL"; got != want {
+		t.Fatalf("finding severity data = %#v, want %q", got, want)
+	}
+
+	featuresTable := buildAdminFeaturesTable(theme, []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}}, 0)
+	if _, styled := featuresTable.HighlightedRow().Data[adminTableColumnFeatureEnabled].(bubbletable.StyledCell); styled {
+		t.Fatal("feature summary cells must stay neutral")
+	}
+
+	rowsTable := buildAdminFeatureRowsTable(theme, ports.FeatureSection{ID: "checks", Title: "Checks", Kind: "rows", Rows: []ports.FeatureRow{{Title: "DB freshness", Status: "stale", Detail: "older than 24h"}}})
+	if _, styled := rowsTable.HighlightedRow().Data[adminTableColumnRowStatus].(bubbletable.StyledCell); styled {
+		t.Fatal("generic row status cells must stay neutral")
+	}
+
+	scanRunsTable := buildAdminScanRunsTable(theme, []ports.ScanRun{{ID: "run-1", Repository: "team/api", RequestedRef: "1.0.0", Status: ports.ScanRunStatusCompleted, Critical: 1, High: 0, HasFixable: true}}, 0)
+	if _, styled := scanRunsTable.HighlightedRow().Data[adminTableColumnScanRunStatus].(bubbletable.StyledCell); styled {
+		t.Fatal("scan-run cells must stay neutral")
+	}
+}
+
+func TestModelTrivyFindingsMixedSeverityRenderPreservesLabelsAndCounts(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 10, 12, 30, 0, 0, time.UTC)
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+		features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
+		featurePage:  ports.FeaturePage{Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}, Header: []ports.FeatureField{{Label: "Enabled", Value: "true"}}},
+		scanRuns: []ports.ScanRun{{
+			ID:           "run-1",
+			Repository:   "team/api",
+			RequestedRef: "1.0.0",
+			Status:       ports.ScanRunStatusCompleted,
+			Critical:     1,
+			High:         2,
+			HasFixable:   true,
+		}},
+		scanRunDetails: map[string]ports.ScanRunDetail{
+			"run-1": {
+				Run: ports.ScanRun{ID: "run-1", Repository: "team/api", RequestedRef: "1.0.0", Status: ports.ScanRunStatusCompleted},
+				Findings: []ports.ScanRunFinding{
+					{Severity: "CRITICAL", VulnerabilityID: "CVE-2026-3000", PackageName: "openssl", InstalledVersion: "3.0.0", FixedVersion: "3.0.1", Fixable: true},
+					{Severity: "HIGH", VulnerabilityID: "CVE-2026-3001", PackageName: "glibc", InstalledVersion: "2.38", FixedVersion: "2.39", Fixable: true},
+					{Severity: "LOW", VulnerabilityID: "CVE-2026-3002", PackageName: "ca-certificates", InstalledVersion: "1.0.0", FixedVersion: "1.0.1", Fixable: false},
+					{Severity: "HIGH", VulnerabilityID: "CVE-2026-3003", PackageName: "busybox", InstalledVersion: "1.36.0", FixedVersion: "1.36.1", Fixable: true},
+				},
+			},
+		},
+	}
+
+	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
+	updated = runKey(t, updated, "f")
+	updated = runKey(t, updated, "tab")
+	updated = runKey(t, updated, "enter")
+
+	if got, want := updated.adminView.Tables.Findings.TotalRows(), 4; got != want {
+		t.Fatalf("findings table rows = %d, want %d", got, want)
+	}
+
+	rows := updated.adminView.Tables.Findings.GetVisibleRows()
+	if got, want := len(rows), 4; got != want {
+		t.Fatalf("visible findings rows = %d, want %d", got, want)
+	}
+
+	theme := newAdminTheme()
+	expectedSeverities := []struct {
+		label string
+		style lipgloss.Style
+	}{
+		{label: "CRITICAL", style: theme.severityCritical},
+		{label: "HIGH", style: theme.severityHigh},
+		{label: "LOW", style: theme.severityLow},
+		{label: "HIGH", style: theme.severityHigh},
+	}
+	for i, want := range expectedSeverities {
+		severityCell, ok := rows[i].Data[adminTableColumnFindingSeverity].(bubbletable.StyledCell)
+		if !ok {
+			t.Fatalf("row %d severity cell type = %T, want bubble-table styled cell", i, rows[i].Data[adminTableColumnFindingSeverity])
+		}
+		if got := severityCell.Data; got != want.label {
+			t.Fatalf("row %d severity label = %#v, want %q", i, got, want.label)
+		}
+		if got, wantRendered := severityCell.Style.Render(want.label), want.style.Render(want.label); got != wantRendered {
+			t.Fatalf("row %d severity style render = %q, want %q", i, got, wantRendered)
+		}
+	}
+
+	view := updated.View()
+	for label, want := range map[string]int{"CRITICAL": 1, "HIGH": 2, "LOW": 1} {
+		if got := strings.Count(view, label); got != want {
+			t.Fatalf("view %q count = %d, want %d", label, got, want)
+		}
+	}
+	for _, want := range []string{"Findings", "CVE-2026-3000", "CVE-2026-3001", "CVE-2026-3002", "CVE-2026-3003", "openssl", "glibc", "ca-certificates", "busybox"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view = %q, want %q", view, want)
+		}
+	}
+}
+
+func TestModelAdminFeatureTablesKeepScreenShortcutsAuthoritative(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 10, 12, 0, 0, 0, time.UTC)
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+		features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
+		featurePage: ports.FeaturePage{
+			Summary:  ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
+			Header:   []ports.FeatureField{{Label: "Enabled", Value: "true"}},
+			Sections: []ports.FeatureSection{{ID: "config", Title: "Configuration", Kind: "fields", Fields: []ports.FeatureField{{Label: "Schedule Enabled", Value: "true"}, {Label: "Interval", Value: "6h0m0s"}, {Label: "Timeout", Value: "10m0s"}, {Label: "Registry Reachable URL", Value: "https://registry.internal:5443"}, {Label: "Max Concurrency", Value: "2"}}}},
+			Actions:  []ports.FeatureAction{{ID: "refresh", Label: "Refresh"}, {ID: "disable", Label: "Disable", ConfirmTitle: "Confirm Disable", ConfirmMessage: `Confirm disable feature "trivy"?`}},
+		},
+		scanRuns: []ports.ScanRun{
+			{ID: "run-1", Repository: "team/api", RequestedRef: "1.0.0", Status: ports.ScanRunStatusCompleted, Critical: 1, High: 0, HasFixable: true},
+			{ID: "run-2", Repository: "library/base", RequestedRef: "stable", Status: ports.ScanRunStatusCompleted, Critical: 0, High: 2, HasFixable: false},
+		},
+		scanRunDetails: map[string]ports.ScanRunDetail{
+			"run-2": {Run: ports.ScanRun{ID: "run-2", Repository: "library/base", RequestedRef: "stable", Status: ports.ScanRunStatusCompleted}, Findings: []ports.ScanRunFinding{{Severity: "HIGH", VulnerabilityID: "CVE-2026-2000", PackageName: "busybox", InstalledVersion: "1.0.0", FixedVersion: "1.0.1", Fixable: true}}},
+		},
+	}
+
+	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
+	updated = runKey(t, updated, "f")
+	updated = runKey(t, updated, "tab")
+	updated = runKey(t, updated, "down")
+
+	if got, want := updated.adminView.Tables.ScanRuns.GetHighlightedRowIndex(), 1; got != want {
+		t.Fatalf("scan-runs highlighted index = %d, want %d", got, want)
+	}
+	if got, want := updated.adminView.Tables.ScanRuns.HighlightedRow().Data[adminTableMetaScanRunID], "run-2"; got != want {
+		t.Fatalf("highlighted scan-run metadata = %#v, want %q", got, want)
+	}
+
+	updated = runKey(t, updated, "enter")
+	if adminClient.getScanRunDetailCalls != 1 {
+		t.Fatalf("getScanRunDetailCalls = %d, want 1", adminClient.getScanRunDetailCalls)
+	}
+	if !strings.Contains(updated.View(), "CVE-2026-2000") {
+		t.Fatalf("view = %q, want loaded detail", updated.View())
+	}
+
+	updated = runKey(t, updated, "esc")
+	if updated.screen != screenAdminFeatures {
+		t.Fatalf("screen = %q, want %q after closing detail", updated.screen, screenAdminFeatures)
+	}
+	updated = runKey(t, updated, "tab")
+	updated = runKey(t, updated, "c")
+	if !updated.adminView.TrivyConfigModal.Active() {
+		t.Fatal("expected config shortcut to stay authoritative on runtime tab")
+	}
+
+	updated = runKey(t, updated, "esc")
+	updated = runKey(t, updated, "r")
+	if adminClient.getFeaturePageCalls < 2 {
+		t.Fatalf("getFeaturePageCalls = %d, want refresh after table interactions", adminClient.getFeaturePageCalls)
+	}
 }
 
 func TestModelEscWalksBackThroughEditFlow(t *testing.T) {
