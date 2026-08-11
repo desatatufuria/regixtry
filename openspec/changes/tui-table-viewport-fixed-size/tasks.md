@@ -39,15 +39,16 @@ Rationale: zero existing `WindowSizeMsg`/`Height`/`Viewport`/`PageSize` test cov
 
 ## Phase 2: Resize Capture, Alt-Screen, Snapshot Default (`model.go`, `main.go`)
 
-- [ ] 2.1 RED `model_test.go`: `Update(tea.WindowSizeMsg{...})` sets `Model.viewport` width/height (Req: Live Terminal Resize Refit)
-- [ ] 2.2 GREEN `model.go`: add `viewport`, `bodyScroll` fields to `Model`; `tea.WindowSizeMsg` case in `Update()`
-- [ ] 2.3 RED `model_test.go`: `NewModel()` default viewport is `100x40` (decision #8, `--snapshot` fallback)
-- [ ] 2.4 GREEN `model.go`: `NewModel()` sets the default
-- [ ] 2.5 RED `model_test.go`: `View()` below `90x24` renders "Terminal too small" / "Regixtry needs at least 90x24..." message, no table/list (Req: Minimum Viable Terminal Size)
-- [ ] 2.6 GREEN `model.go`: size guard at the top of `View()` (design decision #7)
-- [ ] 2.7 RED `model_test.go`: resizing back above minimum restores normal rendering
-- [ ] 2.8 GREEN: confirm 2.6 satisfies 2.7
-- [ ] 2.9 `main.go`: add `tea.WithAltScreen()` to `tea.NewProgram` (line ~2232); mechanical, verified via `scripts/tui-smoke.sh`
+- [x] 2.1 RED `model_test.go`: `Update(tea.WindowSizeMsg{...})` sets `Model.viewport` width/height (Req: Live Terminal Resize Refit)
+- [x] 2.2 GREEN `model.go`: add `viewport`, `bodyScroll` fields to `Model`; `tea.WindowSizeMsg` case in `Update()`
+- [x] 2.3 RED `model_test.go`: `NewModel()` default viewport is `100x40` (decision #8, `--snapshot` fallback)
+- [x] 2.4 GREEN `model.go`: `NewModel()` sets the default
+- [x] 2.5 RED `model_test.go`: `View()` below `90x24` renders "Terminal too small" / "Regixtry needs at least 90x24..." message, no table/list (Req: Minimum Viable Terminal Size)
+- [x] 2.6 GREEN `model.go`: size guard at the top of `View()` (design decision #7)
+- [x] 2.7 RED `model_test.go`: resizing back above minimum restores normal rendering
+- [x] 2.8 GREEN: confirm 2.6 satisfies 2.7 (passed immediately, no additional code needed — guard in 2.6 is stateless/dynamic)
+- [x] 2.9 `main.go`: add `tea.WithAltScreen()` to `tea.NewProgram` (line ~2232); mechanical, verified via `scripts/tui-smoke.sh`
+- [x] 2.10 (unlisted, added per orchestrator instruction) GREEN `model.go`: thin `func (m Model) contentBudget() consoleLayout` wrapper around Phase 1's package-level `contentBudget()`, matching design.md's originally specified method signature now that `Model.viewport` exists
 
 ## Phase 3: Outer-Pane Containment (`model.go`, `admin_theme.go`)
 
