@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -742,6 +743,123 @@ func (s *Store) ListScanRuns(ctx context.Context, tenant string, repository stri
 	return runs, rows.Err()
 }
 
+func (s *Store) GetActiveSecretScanRunByDigest(ctx context.Context, tenant string, repository string, digest string) (ports.SecretScanRun, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, repository, digest, status, trigger, started_at, finished_at, created_at, updated_at, gitleaks_version, error
+		FROM secret_scan_runs
+		WHERE tenant = ? AND repository = ? AND digest = ? AND status IN (?, ?)
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, tenant, repository, digest, ports.SecretScanRunStatusQueued, ports.SecretScanRunStatusRunning)
+	return secretScanRunRow(row)
+}
+
+func (s *Store) GetSecretScanRun(ctx context.Context, tenant string, runID string) (ports.SecretScanRun, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, repository, digest, status, trigger, started_at, finished_at, created_at, updated_at, gitleaks_version, error
+		FROM secret_scan_runs
+		WHERE tenant = ? AND id = ?
+	`, tenant, runID)
+	return secretScanRunRow(row)
+}
+
+func (s *Store) GetSecretScanRunDetail(ctx context.Context, tenant string, runID string) (ports.SecretScanRunDetail, error) {
+	run, err := s.GetSecretScanRun(ctx, tenant, runID)
+	if err != nil {
+		return ports.SecretScanRunDetail{}, err
+	}
+	findings, err := s.listSecretScanFindings(ctx, runID)
+	if err != nil {
+		return ports.SecretScanRunDetail{}, err
+	}
+	run.FindingCount = len(findings)
+	return ports.SecretScanRunDetail{Run: run, Findings: findings}, nil
+}
+
+func (s *Store) UpsertSecretScanRun(ctx context.Context, tenant string, run ports.SecretScanRun) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	if err = upsertSecretScanRunTx(ctx, tx, tenant, run); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) UpsertSecretScanRunDetail(ctx context.Context, tenant string, detail ports.SecretScanRunDetail) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	if err = upsertSecretScanRunTx(ctx, tx, tenant, detail.Run); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM secret_scan_findings WHERE run_id = ?`, detail.Run.ID); err != nil {
+		return err
+	}
+	for index, finding := range detail.Findings {
+		tagsJSON, marshalErr := json.Marshal(finding.Tags)
+		if marshalErr != nil {
+			err = marshalErr
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, `
+			INSERT INTO secret_scan_findings (run_id, position, rule_id, description, blob_digest, path, start_line, end_line, tags)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, detail.Run.ID, index, finding.RuleID, finding.Description, finding.BlobDigest, finding.Path, finding.StartLine, finding.EndLine, string(tagsJSON)); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) ListSecretScanRuns(ctx context.Context, tenant string, repository string, limit int) ([]ports.SecretScanRun, error) {
+	query := `
+		SELECT id, repository, digest, status, trigger, started_at, finished_at, created_at, updated_at, gitleaks_version, error
+		FROM secret_scan_runs
+		WHERE tenant = ?
+	`
+	args := []any{tenant}
+	if strings.TrimSpace(repository) != "" {
+		query += ` AND repository = ?`
+		args = append(args, repository)
+	}
+	query += ` ORDER BY created_at DESC`
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT %d", limit)
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	runs := make([]ports.SecretScanRun, 0)
+	for rows.Next() {
+		run, err := secretScanRunRows(rows)
+		if err != nil {
+			return nil, err
+		}
+		findingCount, err := s.secretScanRunFindingCount(ctx, run.ID)
+		if err != nil {
+			return nil, err
+		}
+		run.FindingCount = findingCount
+		runs = append(runs, run)
+	}
+	return runs, rows.Err()
+}
+
 func (s *Store) TryAcquireScanSchedulerLease(ctx context.Context, tenant string, owner string, now time.Time, leaseTTL time.Duration) (bool, ports.ScanSchedulerState, error) {
 	current, err := s.GetScanSchedulerState(ctx, tenant)
 	if err != nil && !domain.IsCode(err, domain.ErrorCodeNotFound) {
@@ -993,6 +1111,33 @@ func (s *Store) init() error {
 			last_error TEXT NOT NULL DEFAULT '',
 			updated_at TEXT NOT NULL,
 			PRIMARY KEY(tenant, feature)
+		);`,
+		`CREATE TABLE IF NOT EXISTS secret_scan_runs (
+			id TEXT PRIMARY KEY,
+			tenant TEXT NOT NULL,
+			repository TEXT NOT NULL,
+			digest TEXT NOT NULL,
+			status TEXT NOT NULL,
+			trigger TEXT NOT NULL,
+			started_at TEXT,
+			finished_at TEXT,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			gitleaks_version TEXT NOT NULL DEFAULT '',
+			error TEXT NOT NULL DEFAULT ''
+		);`,
+		`CREATE TABLE IF NOT EXISTS secret_scan_findings (
+			run_id TEXT NOT NULL,
+			position INTEGER NOT NULL,
+			rule_id TEXT NOT NULL DEFAULT '',
+			description TEXT NOT NULL DEFAULT '',
+			blob_digest TEXT NOT NULL DEFAULT '',
+			path TEXT NOT NULL DEFAULT '',
+			start_line INTEGER NOT NULL DEFAULT 0,
+			end_line INTEGER NOT NULL DEFAULT 0,
+			tags TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY(run_id, position),
+			FOREIGN KEY(run_id) REFERENCES secret_scan_runs(id) ON DELETE CASCADE
 		);`,
 	}
 
@@ -1266,6 +1411,115 @@ func upsertScanRunTx(ctx context.Context, tx *sql.Tx, tenant string, run ports.S
 			error = excluded.error
 	`, run.ID, tenant, run.Repository, run.RequestedRef, run.Digest, run.Status, run.Trigger, startedAt, finishedAt, run.CreatedAt.UTC().Format(time.RFC3339Nano), run.UpdatedAt.UTC().Format(time.RFC3339Nano), run.Critical, run.High, run.Medium, run.Low, run.TrivyVersion, dbUpdatedAt, run.Error)
 	return err
+}
+
+func secretScanRunRow(row scanRunScanner) (ports.SecretScanRun, error) {
+	run, err := secretScanRunFromScanner(row)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return ports.SecretScanRun{}, domain.NewNotFoundError("secret_scan_run", "")
+		}
+		return ports.SecretScanRun{}, err
+	}
+	return run, nil
+}
+
+func secretScanRunRows(rows *sql.Rows) (ports.SecretScanRun, error) {
+	return secretScanRunFromScanner(rows)
+}
+
+func secretScanRunFromScanner(scanner scanRunScanner) (ports.SecretScanRun, error) {
+	var run ports.SecretScanRun
+	var startedAt sql.NullString
+	var finishedAt sql.NullString
+	var createdAtRaw string
+	var updatedAtRaw string
+	if err := scanner.Scan(&run.ID, &run.Repository, &run.Digest, &run.Status, &run.Trigger, &startedAt, &finishedAt, &createdAtRaw, &updatedAtRaw, &run.GitleaksVersion, &run.Error); err != nil {
+		return ports.SecretScanRun{}, err
+	}
+	createdAt, err := time.Parse(time.RFC3339Nano, createdAtRaw)
+	if err != nil {
+		return ports.SecretScanRun{}, err
+	}
+	updatedAt, err := time.Parse(time.RFC3339Nano, updatedAtRaw)
+	if err != nil {
+		return ports.SecretScanRun{}, err
+	}
+	run.CreatedAt = createdAt
+	run.UpdatedAt = updatedAt
+	if run.StartedAt, err = parseOptionalTime(startedAt); err != nil {
+		return ports.SecretScanRun{}, err
+	}
+	if run.FinishedAt, err = parseOptionalTime(finishedAt); err != nil {
+		return ports.SecretScanRun{}, err
+	}
+	return run, nil
+}
+
+func upsertSecretScanRunTx(ctx context.Context, tx *sql.Tx, tenant string, run ports.SecretScanRun) error {
+	if run.CreatedAt.IsZero() {
+		run.CreatedAt = time.Now().UTC()
+	}
+	if run.UpdatedAt.IsZero() {
+		run.UpdatedAt = run.CreatedAt
+	}
+	var startedAt any
+	if run.StartedAt != nil {
+		startedAt = run.StartedAt.UTC().Format(time.RFC3339Nano)
+	}
+	var finishedAt any
+	if run.FinishedAt != nil {
+		finishedAt = run.FinishedAt.UTC().Format(time.RFC3339Nano)
+	}
+	_, err := tx.ExecContext(ctx, `
+		INSERT INTO secret_scan_runs (id, tenant, repository, digest, status, trigger, started_at, finished_at, created_at, updated_at, gitleaks_version, error)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			status = excluded.status,
+			started_at = excluded.started_at,
+			finished_at = excluded.finished_at,
+			updated_at = excluded.updated_at,
+			gitleaks_version = excluded.gitleaks_version,
+			error = excluded.error
+	`, run.ID, tenant, run.Repository, run.Digest, run.Status, run.Trigger, startedAt, finishedAt, run.CreatedAt.UTC().Format(time.RFC3339Nano), run.UpdatedAt.UTC().Format(time.RFC3339Nano), run.GitleaksVersion, run.Error)
+	return err
+}
+
+func (s *Store) listSecretScanFindings(ctx context.Context, runID string) ([]ports.SecretFinding, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT rule_id, description, blob_digest, path, start_line, end_line, tags
+		FROM secret_scan_findings
+		WHERE run_id = ?
+		ORDER BY position ASC
+	`, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	findings := make([]ports.SecretFinding, 0)
+	for rows.Next() {
+		var finding ports.SecretFinding
+		var tagsJSON string
+		if err := rows.Scan(&finding.RuleID, &finding.Description, &finding.BlobDigest, &finding.Path, &finding.StartLine, &finding.EndLine, &tagsJSON); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(tagsJSON) != "" {
+			if err := json.Unmarshal([]byte(tagsJSON), &finding.Tags); err != nil {
+				return nil, err
+			}
+		}
+		findings = append(findings, finding)
+	}
+	return findings, rows.Err()
+}
+
+func (s *Store) secretScanRunFindingCount(ctx context.Context, runID string) (int, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM secret_scan_findings WHERE run_id = ?`, runID)
+	var count int
+	if err := row.Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 func scanRunFromScanner(scanner scanRunScanner) (ports.ScanRun, error) {

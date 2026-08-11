@@ -444,6 +444,65 @@ func TestStorePersistsScanRunDetailAcrossReopenAndOrdersBySeverityThenFixability
 	}
 }
 
+func TestStorePersistsSecretScanRunDetailAcrossReopenWithoutSecretMaterial(t *testing.T) {
+	t.Parallel()
+
+	databasePath := filepath.Join(t.TempDir(), "registry.db")
+	store, err := New(databasePath)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	now := time.Date(2026, time.August, 11, 12, 0, 0, 0, time.UTC)
+	detail := ports.SecretScanRunDetail{
+		Run: ports.SecretScanRun{ID: "secret-run-1", Repository: "library/alpine", Digest: "sha256:abc", Status: ports.SecretScanRunStatusCompleted, Trigger: ports.ScanTriggerManual, StartedAt: &now, FinishedAt: &now, CreatedAt: now, UpdatedAt: now, GitleaksVersion: "8.27.0"},
+		Findings: []ports.SecretFinding{
+			{RuleID: "aws-access-token", Description: "AWS Access Token", BlobDigest: "sha256:layerdigest", Path: "fake-secrets.txt", StartLine: 1, EndLine: 1, Tags: []string{"aws"}},
+		},
+	}
+	if err := store.UpsertSecretScanRunDetail(context.Background(), "tenant-a", detail); err != nil {
+		t.Fatalf("UpsertSecretScanRunDetail() error = %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	reopened, err := New(databasePath)
+	if err != nil {
+		t.Fatalf("New(reopen) error = %v", err)
+	}
+	defer reopened.Close()
+
+	storedDetail, err := reopened.GetSecretScanRunDetail(context.Background(), "tenant-a", "secret-run-1")
+	if err != nil {
+		t.Fatalf("GetSecretScanRunDetail() error = %v", err)
+	}
+	if storedDetail.Run.Status != ports.SecretScanRunStatusCompleted || storedDetail.Run.GitleaksVersion != "8.27.0" {
+		t.Fatalf("storedDetail.Run = %#v, want persisted run identity", storedDetail.Run)
+	}
+	if storedDetail.Run.FindingCount != 1 {
+		t.Fatalf("storedDetail.Run.FindingCount = %d, want 1", storedDetail.Run.FindingCount)
+	}
+	if got, want := len(storedDetail.Findings), 1; got != want {
+		t.Fatalf("len(storedDetail.Findings) = %d, want %d", got, want)
+	}
+	finding := storedDetail.Findings[0]
+	if finding.RuleID != "aws-access-token" || finding.BlobDigest != "sha256:layerdigest" || finding.Path != "fake-secrets.txt" {
+		t.Fatalf("finding = %#v, want persisted rule/location fields", finding)
+	}
+	if len(finding.Tags) != 1 || finding.Tags[0] != "aws" {
+		t.Fatalf("finding.Tags = %#v, want [aws]", finding.Tags)
+	}
+
+	runs, err := reopened.ListSecretScanRuns(context.Background(), "tenant-a", "library/alpine", 10)
+	if err != nil {
+		t.Fatalf("ListSecretScanRuns() error = %v", err)
+	}
+	if len(runs) != 1 || runs[0].ID != "secret-run-1" || runs[0].FindingCount != 1 {
+		t.Fatalf("runs = %#v, want one listed run with FindingCount 1", runs)
+	}
+}
+
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
 

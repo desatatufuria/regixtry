@@ -43,6 +43,12 @@ type MetadataStore interface {
 	HeartbeatScanScheduler(ctx context.Context, tenant string, owner string, now time.Time, leaseTTL time.Duration) error
 	GetScanSchedulerState(ctx context.Context, tenant string) (ScanSchedulerState, error)
 	UpsertScanSchedulerState(ctx context.Context, tenant string, state ScanSchedulerState) error
+	GetActiveSecretScanRunByDigest(ctx context.Context, tenant string, repository string, digest string) (SecretScanRun, error)
+	GetSecretScanRun(ctx context.Context, tenant string, runID string) (SecretScanRun, error)
+	GetSecretScanRunDetail(ctx context.Context, tenant string, runID string) (SecretScanRunDetail, error)
+	UpsertSecretScanRun(ctx context.Context, tenant string, run SecretScanRun) error
+	UpsertSecretScanRunDetail(ctx context.Context, tenant string, detail SecretScanRunDetail) error
+	ListSecretScanRuns(ctx context.Context, tenant string, repository string, limit int) ([]SecretScanRun, error)
 }
 
 const (
@@ -162,6 +168,68 @@ type ScanSchedulerState struct {
 
 type ScanRunner interface {
 	Run(ctx context.Context, imageRef string, settings ScanSettings) (ScanResult, error)
+}
+
+// SecretScanTarget describes the manifest blobs a SecretScanRunner must
+// stage and scan for one run: the config blob plus every layer referenced by
+// the manifest currently under scan, in manifest order. No file path is
+// carried here — BlobStore exposes no local path, so the runner stages each
+// blob itself (design.md decision 7).
+type SecretScanTarget struct {
+	Repository string
+	Digest     string
+	Blobs      []domain.Descriptor
+}
+
+// SecretFinding is a redacted secret-scan finding: rule ID and location
+// only. It deliberately has no field capable of holding the matched secret
+// text, a match snippet, a fingerprint, or an entropy score (design.md
+// decision 10) — a caller cannot leak what the type cannot represent.
+type SecretFinding struct {
+	RuleID      string   `json:"rule_id"`
+	Description string   `json:"description,omitempty"`
+	BlobDigest  string   `json:"blob_digest"`
+	Path        string   `json:"path,omitempty"`
+	StartLine   int      `json:"start_line"`
+	EndLine     int      `json:"end_line"`
+	Tags        []string `json:"tags,omitempty"`
+}
+
+type SecretScanResult struct {
+	GitleaksVersion string          `json:"gitleaks_version,omitempty"`
+	Findings        []SecretFinding `json:"findings,omitempty"`
+	SkippedBlobs    []string        `json:"skipped_blobs,omitempty"`
+}
+
+type SecretScanRunner interface {
+	Run(ctx context.Context, target SecretScanTarget, settings ScanSettings) (SecretScanResult, error)
+}
+
+const (
+	SecretScanRunStatusQueued    = "queued"
+	SecretScanRunStatusRunning   = "running"
+	SecretScanRunStatusCompleted = "completed"
+	SecretScanRunStatusFailed    = "failed"
+)
+
+type SecretScanRun struct {
+	ID              string     `json:"id"`
+	Repository      string     `json:"repository"`
+	Digest          string     `json:"digest"`
+	Status          string     `json:"status"`
+	Trigger         string     `json:"trigger"`
+	StartedAt       *time.Time `json:"started_at,omitempty"`
+	FinishedAt      *time.Time `json:"finished_at,omitempty"`
+	CreatedAt       time.Time  `json:"created_at,omitempty"`
+	UpdatedAt       time.Time  `json:"updated_at,omitempty"`
+	GitleaksVersion string     `json:"gitleaks_version,omitempty"`
+	FindingCount    int        `json:"finding_count"`
+	Error           string     `json:"error,omitempty"`
+}
+
+type SecretScanRunDetail struct {
+	Run      SecretScanRun   `json:"run"`
+	Findings []SecretFinding `json:"findings,omitempty"`
 }
 
 type FeatureKind string
