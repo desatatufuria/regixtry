@@ -65,17 +65,17 @@ Honest sizing: even chained, no single unit stays trivial — PR2 and PR6 approa
 
 ## Phase 4: Gitleaks Scan Execution (PR4)
 
-- [ ] 4.1 `internal/ports/regixtry.go` — add `SecretScanRunner`, `SecretScanTarget`, `SecretScanResult`, `SecretFinding`
-- [ ] 4.2 RED: staging test — filenames/extensions per mediaType map, unknown-mediaType skip, teardown (`work/<run>` removed)
-- [ ] 4.3 RED: threat-matrix staging test — blob staged `0600`; run dir tree has no entry outside `work/<run>/`
-- [ ] 4.4 GREEN: `internal/infra/scanning/gitleaks/runner.go` — blob-staging adapter, `BlobStore.OpenBlob` → whole-blob `0600` writes, no per-entry extraction
-- [ ] 4.5 RED: threat-matrix docs-like-path test — staged `README.sh` scans as data; execution of any staged path fails
-- [ ] 4.6 RED: argv-snapshot test — fixed literal argv (`dir … --report-format json --report-path … --no-banner --redact --exit-code 0 --max-archive-depth 2`); no finding value in argv or errors
-- [ ] 4.7 GREEN: implement `gitleaks dir` invocation exactly per design's Exec Surface
-- [ ] 4.8 RED: redaction test — decode a report containing `"Secret":"AKIA…"`; assert no `SecretFinding` field contains that substring
-- [ ] 4.9 GREEN: `internal/infra/scanning/gitleaks/report.go` — decoder struct with only `RuleID/Description/File/StartLine/EndLine/Tags`
-- [ ] 4.10 `internal/infra/metadata/sqlite/store.go` — add `secret_scan_runs` + `secret_scan_findings` tables and queries
-- [ ] 4.11 Integration test: tar.gz fixture with a known test secret through fake exec emitting a real report shape
+- [x] 4.1 `internal/ports/regixtry.go` — add `SecretScanRunner`, `SecretScanTarget`, `SecretScanResult`, `SecretFinding`
+- [x] 4.2 RED: staging test — filenames/extensions per mediaType map, unknown-mediaType skip, teardown (`work/<run>` removed)
+- [x] 4.3 RED: threat-matrix staging test — blob staged `0600`; run dir tree has no entry outside `work/<run>/`
+- [x] 4.4 GREEN: `internal/infra/scanning/gitleaks/runner.go` — blob-staging adapter, `BlobStore.OpenBlob` → whole-blob `0600` writes, no per-entry extraction
+- [x] 4.5 RED: threat-matrix docs-like-path test — staged `README.sh` scans as data; execution of any staged path fails
+- [x] 4.6 RED: argv-snapshot test — fixed literal argv (`dir … --report-format json --report-path … --no-banner --redact --exit-code 0 --max-archive-depth 2`); no finding value in argv or errors
+- [x] 4.7 GREEN: implement `gitleaks dir` invocation exactly per design's Exec Surface
+- [x] 4.8 RED: redaction test — decode a report containing `"Secret":"AKIA…"`; assert no `SecretFinding` field contains that substring
+- [x] 4.9 GREEN: `internal/infra/scanning/gitleaks/report.go` — decoder struct with only `RuleID/Description/File/StartLine/EndLine/Tags`
+- [x] 4.10 `internal/infra/metadata/sqlite/store.go` — add `secret_scan_runs` + `secret_scan_findings` tables and queries
+- [x] 4.11 Integration test: tar.gz fixture with a known test secret through fake exec emitting a real report shape
 
 ## Phase 5: Wiring (PR5)
 
