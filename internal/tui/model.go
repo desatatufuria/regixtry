@@ -320,7 +320,7 @@ func NewModel(service QueryService, options ...Option) Model {
 		// first real tea.WindowSizeMsg; stands as-is under the --snapshot
 		// CLI path, which never runs the Bubble Tea program loop and so
 		// never receives a resize event.
-		viewport: viewportSize{Width: defaultViewportWidth, Height: defaultViewportHeight},
+		viewport:    viewportSize{Width: defaultViewportWidth, Height: defaultViewportHeight},
 		adminAuth:   adminAuthStateUnauthenticated,
 		adminReturn: screenLoading,
 		adminView:   newAdminViewState(),
