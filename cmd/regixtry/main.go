@@ -2233,6 +2233,7 @@ func runTUI(cfg tuiConfig, stdin io.Reader, stdout io.Writer) error {
 		tui.NewModel(service, modelOpts...),
 		tea.WithInput(stdin),
 		tea.WithOutput(stdout),
+		tea.WithAltScreen(),
 	)
 
 	_, err = program.Run()

@@ -157,6 +157,33 @@ type Model struct {
 	lastTag            string
 	startupLogin       bool
 	pendingAdminStatus string
+
+	// viewport is the terminal size captured from the most recent
+	// tea.WindowSizeMsg (or the default from NewModel before any resize
+	// event, e.g. under the --snapshot CLI path — design.md decision #8).
+	// bodyScroll is the current scroll offset applied by fitLines() when
+	// rendering a screen's bounded section (wired in Phase 3).
+	viewport   viewportSize
+	bodyScroll int
+}
+
+// viewportSize holds the raw terminal dimensions captured from
+// tea.WindowSizeMsg. contentBudget() derives the per-screen consoleLayout
+// budget from it (see viewport.go).
+type viewportSize struct {
+	Width  int
+	Height int
+}
+
+// contentBudget wraps the package-level pure contentBudget() (viewport.go)
+// with this Model's captured viewport and status, matching the method
+// signature design.md's "Interfaces / Contracts" section specifies. Phase 1
+// implemented the pure function as package-level because Model had no
+// viewport field yet; this thin wrapper is added now that it does. The
+// per-screen help text is not yet threaded through (that lands in Phase 3/4
+// alongside renderSection call sites), so it is passed as "" here.
+func (m Model) contentBudget() consoleLayout {
+	return contentBudget(m.viewport.Width, m.viewport.Height, m.status, "")
 }
 
 type catalogLoadedMsg struct {
@@ -289,6 +316,11 @@ func NewModel(service QueryService, options ...Option) Model {
 		screen:      screenLoading,
 		loadingText: "Loading repositories...",
 		now:         func() time.Time { return time.Now().UTC() },
+		// Default terminal size (design.md decision #8): overwritten by the
+		// first real tea.WindowSizeMsg; stands as-is under the --snapshot
+		// CLI path, which never runs the Bubble Tea program loop and so
+		// never receives a resize event.
+		viewport: viewportSize{Width: defaultViewportWidth, Height: defaultViewportHeight},
 		adminAuth:   adminAuthStateUnauthenticated,
 		adminReturn: screenLoading,
 		adminView:   newAdminViewState(),
@@ -316,6 +348,9 @@ func (m Model) Init() tea.Cmd {
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.viewport = viewportSize{Width: msg.Width, Height: msg.Height}
+		return m, nil
 	case tea.KeyMsg:
 		return m.updateKey(msg)
 	case catalogLoadedMsg:
@@ -679,7 +714,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// Too-small guard message text per design.md's "Interfaces / Contracts"
+// section: plain (not theme.section, which is a fixed 88-wide box).
+const terminalTooSmallTemplate = "Terminal too small\nRegixtry needs at least %dx%d. Current: %dx%d.\nResize, or press q to quit."
+
 func (m Model) View() string {
+	// Guarded here (design decision #7) rather than in Update: View() is the
+	// single funnel both the interactive program loop and the --snapshot
+	// CLI path render through.
+	if m.viewport.Width < minViewportWidth || m.viewport.Height < minViewportHeight {
+		return fmt.Sprintf(terminalTooSmallTemplate, minViewportWidth, minViewportHeight, m.viewport.Width, m.viewport.Height)
+	}
+
 	switch m.screen {
 	case screenLoading:
 		return renderInspectionWorkspace("Loading", renderConsoleTextSection(m.loadingText), "", "q: quit")
