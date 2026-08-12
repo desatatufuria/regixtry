@@ -181,7 +181,7 @@ func renderAdminFeaturesScreen(theme adminTheme, session AdminSession, view Admi
 func renderFeaturePageBody(theme adminTheme, view AdminViewState) []string {
 	if view.FeaturePage.Summary.Name == trivyFeatureName {
 		if view.TrivyTab == trivyTabRepositoryAlerts {
-			return renderTrivyRepositoryAlerts(theme, view)
+			return renderAdminScanSummary(theme, view)
 		}
 		return renderGenericFeaturePage(theme, view, view.FeaturePage)
 	}
@@ -226,49 +226,12 @@ func renderTrivyTabs(theme adminTheme, view AdminViewState) string {
 	return theme.subheading.Render("Tabs") + "\n" + runtimeLabel + " | " + alertsLabel
 }
 
-func renderTrivyRepositoryAlerts(theme adminTheme, view AdminViewState) []string {
-	lines := []string{}
-	if len(view.TrivyScanRuns) == 0 {
-		message := "No repository alerts found."
-		if !view.TrivyAlertsLoaded {
-			message = "Loading repository alerts requires switching into the tab."
-		}
-		return append(lines, theme.muted.Render(message))
-	}
-	lines = append(lines, theme.subheading.Render("Repository Alerts"))
-	lines = append(lines, view.Tables.ScanRuns.View())
-	if view.TrivyAlertDetailOpen {
-		if detail := view.TrivyScanRunDetail; strings.TrimSpace(detail.Run.ID) != "" {
-			lines = append(lines, "", theme.subheading.Render("Selected Scan Run"))
-			lines = append(lines,
-				fmt.Sprintf("Repository: %s", detail.Run.Repository),
-				fmt.Sprintf("Reference: %s", adminFirstNonEmpty(detail.Run.RequestedRef, "unknown")),
-				fmt.Sprintf("Digest: %s", adminFirstNonEmpty(detail.Run.Digest, "unknown")),
-				fmt.Sprintf("Status: %s", adminFirstNonEmpty(detail.Run.Status, "unknown")),
-				fmt.Sprintf("Reference freshness: %s", adminFirstNonEmpty(detail.ReferenceFreshness, ports.ScanReferenceFreshnessUnknown)),
-				fmt.Sprintf("DB freshness: %s", adminFirstNonEmpty(detail.DBFreshness.FreshnessState, ports.ScanRunDBFreshnessStateUnknown)),
-			)
-			if strings.TrimSpace(detail.Run.Error) != "" {
-				lines = append(lines, fmt.Sprintf("Error: %s", detail.Run.Error))
-			}
-			if len(detail.Findings) > 0 {
-				lines = append(lines, "", theme.subheading.Render("Findings"))
-				lines = append(lines, view.Tables.Findings.View())
-			}
-			lines = append(lines, "", theme.subheading.Render("Secret Findings"))
-			lines = append(lines, renderSecretFindingsBody(theme, view)...)
-		}
-	}
-	return lines
-}
-
 // renderAdminScanSummary renders the Repository Alerts tab as one row per
 // repository (spec.md "Repository Alerts Summarized Per Repository With
-// Ordering And Freshness"), replacing the concept of the old per-scan-run
-// list for this screen. It is additive alongside
-// renderTrivyRepositoryAlerts, not yet wired into renderFeaturePageBody —
-// Phase 3 wires Enter-to-open-modal, Phase 4 removes the old per-run inline
-// detail this eventually replaces.
+// Ordering And Freshness"), replacing the old per-scan-run list for this
+// screen. Drill-down into a specific run's findings now happens exclusively
+// through the scan history modal (renderAdminScanHistoryModal), opened by
+// Enter on a summary row.
 func renderAdminScanSummary(theme adminTheme, view AdminViewState) []string {
 	lines := []string{theme.subheading.Render("Repository Alerts")}
 	if len(view.TrivySummaries) == 0 {
@@ -386,21 +349,6 @@ func renderAdminScanHistoryModal(theme adminTheme, modal adminScanHistoryModal, 
 	lines = append(lines, tableBody, footer, help)
 
 	return theme.section.Render(strings.Join(lines, "\n"))
-}
-
-// renderSecretFindingsBody renders the secret-scan findings for the image
-// currently open in the scan detail, alongside the vulnerability findings
-// above (spec.md "Operator reviews findings for a selected image"). It is
-// informational only: rule ID and location are the only columns
-// (buildAdminSecretFindingsTable), and there is deliberately no
-// severity/gating styling anywhere in this block. A selected image with no
-// persisted secret findings gets a clear empty state, never an error
-// (spec.md "Image with no findings shows an empty state").
-func renderSecretFindingsBody(theme adminTheme, view AdminViewState) []string {
-	if len(view.SecretFindings) == 0 {
-		return []string{theme.muted.Render("No secret findings recorded for this image.")}
-	}
-	return []string{view.Tables.SecretFindings.View()}
 }
 
 func renderAdminCreateUserScreen(theme adminTheme, view AdminViewState) string {
@@ -581,9 +529,6 @@ func adminFeatureHelp(view AdminViewState) string {
 			parts = append(parts, "c: configure")
 		} else {
 			parts = append(parts, "Up/Down: select alert", "Enter: details")
-			if view.TrivyAlertDetailOpen {
-				parts = append(parts, "Esc: close detail")
-			}
 		}
 	}
 	parts = append(parts, strings.Split(featureActionHelp(view.FeaturePage), " | ")[1:]...)

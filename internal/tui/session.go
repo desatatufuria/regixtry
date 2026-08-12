@@ -156,10 +156,8 @@ func newAdminScanHistoryTabs() []adminScanHistoryTab {
 
 // adminScanHistoryModal is the state for the Repository Alerts drill-down
 // modal (design.md "Nested budget by row split, not overlay, not
-// stacking"). It replaces the inline scan-run/findings/secret-findings
-// blocks in renderTrivyRepositoryAlerts (spec.md "Repository Alert
-// Drill-Down Opens History Modal") — Phase 3 wires Open/key handling, Phase
-// 4 removes the inline blocks this modal supersedes.
+// stacking"), opened by Enter on a Repository Alerts summary row (spec.md
+// "Repository Alert Drill-Down Opens History Modal").
 type adminScanHistoryModal struct {
 	Open       bool
 	Repository string
@@ -186,70 +184,56 @@ type AdminSession struct {
 
 type adminTableSelection struct {
 	FeatureName string
-	ScanRunID   string
 	FindingID   string
 }
 
 type adminTablesState struct {
 	Features       bubbletable.Model
 	FeatureRows    map[string]bubbletable.Model
-	ScanRuns       bubbletable.Model
 	Findings       bubbletable.Model
 	SecretFindings bubbletable.Model
 	// ScanSummary is the per-repository Repository Alerts summary table
-	// (buildAdminScanSummaryTable), rendered by renderAdminScanSummary.
-	// Added alongside ScanRuns (not replacing it yet) — Phase 4 removes the
-	// old per-scan-run rendering path this eventually supersedes.
+	// (buildAdminScanSummaryTable), rendered by renderAdminScanSummary — the
+	// sole table backing the Repository Alerts tab.
 	ScanSummary bubbletable.Model
 	Selection   adminTableSelection
 }
 
 type AdminViewState struct {
-	Users                []ports.AdminUser
-	Features             []ports.FeatureSummary
-	SelectedUser         int
-	SelectedFeature      int
-	SelectedUserID       string
-	SelectedUsername     string
-	UserSearchQuery      string
-	UserSearchActive     bool
-	FeaturePage          ports.FeaturePage
-	Grants               []ports.AdminRepoGrant
-	SelectedGrant        int
-	AdminTokens          []ports.AdminToken
-	SelectedToken        int
-	CreateUserForm       adminCreateUserForm
-	ResetPasswordForm    adminResetPasswordForm
-	GrantForm            adminGrantForm
-	TokenForm            adminTokenForm
-	ConfirmModal         adminConfirmModal
-	TrivyTab             TrivyTab
-	TrivyConfigModal     trivyConfigModal
-	TrivyScanRuns        []ports.ScanRun
-	TrivySelectedAlert   int
-	TrivyAlertDetailOpen bool
-	TrivyAlertsLoaded    bool
-	TrivyScanRunDetail   ports.ScanRunDetail
-	// SecretFindings holds the redacted secret-scan findings for the image
-	// currently shown in TrivyScanRunDetail (spec.md "Operator Visibility of
-	// Findings" — surfaced alongside vulnerability results). It is
-	// deliberately independent of the vulnerability Findings table: no
-	// severity or gating indicator is ever attached to it (informational
-	// only, spec.md "Informational Findings Only").
-	SecretFindings         []ports.SecretFinding
+	Users                  []ports.AdminUser
+	Features               []ports.FeatureSummary
+	SelectedUser           int
+	SelectedFeature        int
+	SelectedUserID         string
+	SelectedUsername       string
+	UserSearchQuery        string
+	UserSearchActive       bool
+	FeaturePage            ports.FeaturePage
+	Grants                 []ports.AdminRepoGrant
+	SelectedGrant          int
+	AdminTokens            []ports.AdminToken
+	SelectedToken          int
+	CreateUserForm         adminCreateUserForm
+	ResetPasswordForm      adminResetPasswordForm
+	GrantForm              adminGrantForm
+	TokenForm              adminTokenForm
+	ConfirmModal           adminConfirmModal
+	TrivyTab               TrivyTab
+	TrivyConfigModal       trivyConfigModal
+	TrivyScanRuns          []ports.ScanRun
+	TrivySelectedAlert     int
+	TrivyAlertsLoaded      bool
 	RevealedTokenSecret    string
 	RevealedTokenAccessor  string
 	RevealedTokenExpiresAt time.Time
 	// TrivySummaries is the per-repository aggregation
-	// (summarizeScanRunsByRepository) backing the new Repository Alerts
-	// summary table (spec.md "Repository Alerts Summarized Per Repository
-	// With Ordering And Freshness"). Populated alongside TrivyScanRuns,
-	// independent of it — Phase 4 folds TrivyScanRuns' old per-run render
-	// path away once this is wired.
+	// (summarizeScanRunsByRepository) backing the Repository Alerts summary
+	// table (spec.md "Repository Alerts Summarized Per Repository With
+	// Ordering And Freshness"), derived from TrivyScanRuns.
 	TrivySummaries []repositorySummary
 	// ScanHistoryModal is the Repository Alerts drill-down modal state
-	// (spec.md "Repository Alert Drill-Down Opens History Modal"). Unwired
-	// in Phase 2 — Open never becomes true without Phase 3's key handling.
+	// (spec.md "Repository Alert Drill-Down Opens History Modal"), opened by
+	// Enter on a summary row (updateAdminFeaturesKey).
 	ScanHistoryModal adminScanHistoryModal
 	Tables           adminTablesState
 	// Layout is the consoleLayout used the last time rebuildAdminTables ran,

@@ -573,10 +573,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// feeding it the already-sorted runs keeps the summary
 		// severity-ordered too.
 		m.adminView.TrivySummaries = summarizeScanRunsByRepository(runs)
-		m.adminView.TrivySelectedAlert = boundedIndex(0, len(m.adminView.TrivyScanRuns))
-		m.adminView.TrivyAlertDetailOpen = false
+		m.adminView.TrivySelectedAlert = boundedIndex(0, len(m.adminView.TrivySummaries))
 		m.adminView.TrivyAlertsLoaded = true
-		m.adminView.TrivyScanRunDetail = ports.ScanRunDetail{}
 		m.rebuildAdminTables(m.adminTablesLayout())
 		if len(m.adminView.TrivyScanRuns) == 0 {
 			m.status = "No repository alerts found."
@@ -585,6 +583,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case adminScanRunDetailLoadedMsg:
+		// loadAdminScanRunDetailCmd is only ever fired while the scan
+		// history modal is active (Enter opens it, pageAdminScanHistory
+		// re-fires it) — a response arriving after the operator has since
+		// closed the modal (Esc) is stale and discarded.
 		if msg.err != nil {
 			if IsAdminSessionExpired(msg.err) {
 				return m.expireAdminSession(msg.err.Error()), nil
@@ -593,33 +595,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.adminView.ScanHistoryModal.Loading = false
 				m.adminView.ScanHistoryModal.Error = msg.err.Error()
 				m.rebuildAdminTables(m.adminTablesLayout())
-				return m, nil
 			}
-			m.status = msg.err.Error()
 			return m, nil
 		}
-		if m.adminView.ScanHistoryModal.Active() {
-			// Digest-per-run correctness (design.md risk note): discard a
-			// stale response for a run the operator has since paged away
-			// from, so the Vulnerabilities/Leaks tabs never show a mix of
-			// two executions.
-			if !adminScanHistoryDetailMatchesCursor(m.adminView.ScanHistoryModal, msg.detail) {
-				return m, nil
-			}
-			m.adminView.ScanHistoryModal.Detail = msg.detail
-			m.adminView.ScanHistoryModal.Secrets = nil
-			m.adminView.ScanHistoryModal.Error = ""
-			m.rebuildAdminTables(m.adminTablesLayout())
-			m.status = ""
-			return m, m.loadAdminSecretScanFindingsCmd(msg.detail.Run.Repository, msg.detail.Run.Digest)
+		// Digest-per-run correctness (design.md risk note): discard a stale
+		// response for a run the operator has since paged away from, so the
+		// Vulnerabilities/Leaks tabs never show a mix of two executions.
+		if !m.adminView.ScanHistoryModal.Active() || !adminScanHistoryDetailMatchesCursor(m.adminView.ScanHistoryModal, msg.detail) {
+			return m, nil
 		}
-		m.adminView.TrivyScanRunDetail = msg.detail
-		m.adminView.TrivyAlertDetailOpen = true
-		m.adminView.SecretFindings = nil
+		m.adminView.ScanHistoryModal.Detail = msg.detail
+		m.adminView.ScanHistoryModal.Secrets = nil
+		m.adminView.ScanHistoryModal.Error = ""
 		m.rebuildAdminTables(m.adminTablesLayout())
-		if strings.HasPrefix(strings.ToLower(m.status), "loading") {
-			m.status = ""
-		}
+		m.status = ""
 		// Secret findings are surfaced alongside the vulnerability scan
 		// detail just loaded above (spec.md "Operator reviews findings for
 		// a selected image"), keyed by the same repository+digest both scan
@@ -627,38 +616,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// composes with this Update loop's existing single-Cmd-return style.
 		return m, m.loadAdminSecretScanFindingsCmd(msg.detail.Run.Repository, msg.detail.Run.Digest)
 	case adminSecretScanFindingsLoadedMsg:
+		// Informational only (spec.md "Informational Findings Only"): a
+		// failure to load secret findings (including "none persisted yet")
+		// must never override the vulnerability detail already shown or
+		// surface as a blocking error — it just renders as the clear empty
+		// state below.
 		if msg.err != nil {
 			if IsAdminSessionExpired(msg.err) {
 				return m.expireAdminSession(msg.err.Error()), nil
 			}
-			if m.adminView.ScanHistoryModal.Active() {
-				if !adminScanHistorySecretsMatchCursor(m.adminView.ScanHistoryModal, msg.repository, msg.digest) {
-					return m, nil
-				}
-				m.adminView.ScanHistoryModal.Secrets = nil
-				m.adminView.ScanHistoryModal.Loading = false
-				m.rebuildAdminTables(m.adminTablesLayout())
+			if !m.adminView.ScanHistoryModal.Active() || !adminScanHistorySecretsMatchCursor(m.adminView.ScanHistoryModal, msg.repository, msg.digest) {
 				return m, nil
 			}
-			// Informational only (spec.md "Informational Findings Only"): a
-			// failure to load secret findings (including "none persisted
-			// yet") must never override the vulnerability detail already
-			// shown or surface as a blocking error — it just renders as the
-			// clear empty state below.
-			m.adminView.SecretFindings = nil
-			m.rebuildAdminTables(m.adminTablesLayout())
-			return m, nil
-		}
-		if m.adminView.ScanHistoryModal.Active() {
-			if !adminScanHistorySecretsMatchCursor(m.adminView.ScanHistoryModal, msg.repository, msg.digest) {
-				return m, nil
-			}
-			m.adminView.ScanHistoryModal.Secrets = msg.findings
+			m.adminView.ScanHistoryModal.Secrets = nil
 			m.adminView.ScanHistoryModal.Loading = false
 			m.rebuildAdminTables(m.adminTablesLayout())
 			return m, nil
 		}
-		m.adminView.SecretFindings = msg.findings
+		if !m.adminView.ScanHistoryModal.Active() || !adminScanHistorySecretsMatchCursor(m.adminView.ScanHistoryModal, msg.repository, msg.digest) {
+			return m, nil
+		}
+		m.adminView.ScanHistoryModal.Secrets = msg.findings
+		m.adminView.ScanHistoryModal.Loading = false
 		m.rebuildAdminTables(m.adminTablesLayout())
 		return m, nil
 	case adminScanHistoryLoadedMsg:
@@ -1130,28 +1109,23 @@ func (m Model) updateAdminUsersKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) updateAdminFeaturesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case isEscKey(msg):
-		if m.isTrivyAlertsDetailOpen() {
-			m.adminView.TrivyAlertDetailOpen = false
-			m.status = ""
-			return m, nil
-		}
 		m.screen = screenAdminUsers
 		m.status = ""
 		return m, nil
 	case m.isSelectedTrivyFeature() && isTabKey(msg):
 		return m.toggleTrivyTab()
 	case m.isSelectedTrivyFeature() && m.adminView.TrivyTab == trivyTabRepositoryAlerts && isMoveUpKey(msg):
-		if len(m.adminView.TrivyScanRuns) == 0 {
+		if len(m.adminView.TrivySummaries) == 0 {
 			return m, nil
 		}
-		m.adminView.TrivySelectedAlert = boundedIndex(m.adminView.TrivySelectedAlert-1, len(m.adminView.TrivyScanRuns))
+		m.adminView.TrivySelectedAlert = boundedIndex(m.adminView.TrivySelectedAlert-1, len(m.adminView.TrivySummaries))
 		m.syncAdminTableHighlights()
 		return m, nil
 	case m.isSelectedTrivyFeature() && m.adminView.TrivyTab == trivyTabRepositoryAlerts && isMoveDownKey(msg):
-		if len(m.adminView.TrivyScanRuns) == 0 {
+		if len(m.adminView.TrivySummaries) == 0 {
 			return m, nil
 		}
-		m.adminView.TrivySelectedAlert = boundedIndex(m.adminView.TrivySelectedAlert+1, len(m.adminView.TrivyScanRuns))
+		m.adminView.TrivySelectedAlert = boundedIndex(m.adminView.TrivySelectedAlert+1, len(m.adminView.TrivySummaries))
 		m.syncAdminTableHighlights()
 		return m, nil
 	case isMoveUpKey(msg):
@@ -2605,10 +2579,7 @@ func (m *Model) clearSelectedAdminDetails() {
 	m.adminView.TrivyConfigModal = trivyConfigModal{}
 	m.adminView.TrivyScanRuns = nil
 	m.adminView.TrivySelectedAlert = 0
-	m.adminView.TrivyAlertDetailOpen = false
 	m.adminView.TrivyAlertsLoaded = false
-	m.adminView.TrivyScanRunDetail = ports.ScanRunDetail{}
-	m.adminView.SecretFindings = nil
 	m.adminView.TrivySummaries = nil
 	m.adminView.ScanHistoryModal = adminScanHistoryModal{}
 	m.adminView.SelectedGrant = 0
@@ -2650,10 +2621,7 @@ func (m *Model) applyFeaturePage(page ports.FeaturePage) {
 	m.adminView.TrivyConfigModal = trivyConfigModal{}
 	m.adminView.TrivyScanRuns = nil
 	m.adminView.TrivySelectedAlert = 0
-	m.adminView.TrivyAlertDetailOpen = false
 	m.adminView.TrivyAlertsLoaded = false
-	m.adminView.TrivyScanRunDetail = ports.ScanRunDetail{}
-	m.adminView.SecretFindings = nil
 	m.adminView.TrivySummaries = nil
 	m.adminView.ScanHistoryModal = adminScanHistoryModal{}
 	if page.Summary.Name == trivyFeatureName {
@@ -2686,39 +2654,23 @@ func (m Model) isSelectedTrivyFeature() bool {
 	return name == trivyFeatureName
 }
 
-func (m Model) isTrivyAlertsDetailOpen() bool {
-	return m.isSelectedTrivyFeature() && m.adminView.TrivyTab == trivyTabRepositoryAlerts && m.adminView.TrivyAlertDetailOpen
-}
-
 func (m Model) toggleTrivyTab() (tea.Model, tea.Cmd) {
 	if m.adminView.TrivyTab == trivyTabRepositoryAlerts {
 		m.adminView.TrivyTab = trivyTabRuntime
-		m.adminView.TrivyAlertDetailOpen = false
 		m.status = ""
 		m.syncAdminTableHighlights()
 		return m, nil
 	}
 	m.adminView.TrivyTab = trivyTabRepositoryAlerts
-	m.adminView.TrivyAlertDetailOpen = false
-	m.adminView.TrivyScanRunDetail = ports.ScanRunDetail{}
-	m.adminView.SecretFindings = nil
 	m.rebuildAdminTables(m.adminTablesLayout())
 	m.status = "Loading repository alerts..."
 	return m, m.loadAdminScanRunsCmd("", 25)
 }
 
-func selectedTrivyScanRun(view AdminViewState) (ports.ScanRun, bool) {
-	if len(view.TrivyScanRuns) == 0 {
-		return ports.ScanRun{}, false
-	}
-	index := boundedIndex(view.TrivySelectedAlert, len(view.TrivyScanRuns))
-	return view.TrivyScanRuns[index], true
-}
-
 // selectedScanSummary returns the Repository Alerts summary row the
-// operator has highlighted (TrivySelectedAlert, shared with
-// selectedTrivyScanRun), used by Enter to determine which repository's scan
-// history modal to open.
+// operator has highlighted (TrivySelectedAlert, shared with the Up/Down
+// navigation in updateAdminFeaturesKey), used by Enter to determine which
+// repository's scan history modal to open.
 func selectedScanSummary(view AdminViewState) (repositorySummary, bool) {
 	if len(view.TrivySummaries) == 0 {
 		return repositorySummary{}, false
