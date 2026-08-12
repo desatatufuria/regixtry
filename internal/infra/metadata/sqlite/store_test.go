@@ -562,6 +562,45 @@ func TestStorePersistsSecretScanRunDetailAcrossReopenWithoutSecretMaterial(t *te
 	}
 }
 
+func TestStoreGetLatestScanRunByDigestReturnsNewestRunRegardlessOfStatus(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	digest := domain.DigestFromBytes([]byte("manifest-latest")).String()
+	base := time.Now().UTC().Add(-time.Hour)
+	queued := ports.ScanRun{ID: "run-queued", Repository: "library/alpine", RequestedRef: "latest", Digest: digest, Status: ports.ScanRunStatusQueued, Trigger: ports.ScanTriggerManual, CreatedAt: base, UpdatedAt: base}
+	completed := ports.ScanRun{ID: "run-completed", Repository: "library/alpine", RequestedRef: "latest", Digest: digest, Status: ports.ScanRunStatusCompleted, Trigger: ports.ScanTriggerManual, CreatedAt: base.Add(time.Minute), UpdatedAt: base.Add(time.Minute), Critical: 2}
+	failed := ports.ScanRun{ID: "run-failed", Repository: "library/alpine", RequestedRef: "latest", Digest: digest, Status: ports.ScanRunStatusFailed, Trigger: ports.ScanTriggerManual, CreatedAt: base.Add(2 * time.Minute), UpdatedAt: base.Add(2 * time.Minute)}
+
+	for _, run := range []ports.ScanRun{queued, completed, failed} {
+		if err := store.UpsertScanRun(context.Background(), "tenant-a", run); err != nil {
+			t.Fatalf("UpsertScanRun(%s) error = %v", run.ID, err)
+		}
+	}
+
+	latest, err := store.GetLatestScanRunByDigest(context.Background(), "tenant-a", "library/alpine", digest)
+	if err != nil {
+		t.Fatalf("GetLatestScanRunByDigest() error = %v", err)
+	}
+	if latest.ID != failed.ID {
+		t.Fatalf("latest.ID = %q, want %q (newest run regardless of status, including a completed run in between)", latest.ID, failed.ID)
+	}
+}
+
+func TestStoreGetLatestScanRunByDigestReturnsTypedNotFoundWithNoRun(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	_, err := store.GetLatestScanRunByDigest(context.Background(), "tenant-a", "library/alpine", "sha256:0000000000000000000000000000000000000000000000000000000000aa")
+	if !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("GetLatestScanRunByDigest() error = %v, want ErrorCodeNotFound", err)
+	}
+}
+
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
 

@@ -36,6 +36,7 @@ type MetadataStore interface {
 	GetFeatureRuntimeState(ctx context.Context, tenant string, feature string) (FeatureRuntimeState, error)
 	UpsertFeatureRuntimeState(ctx context.Context, tenant string, feature string, state FeatureRuntimeState) error
 	GetActiveScanRunByDigest(ctx context.Context, tenant string, repository string, digest string) (ScanRun, error)
+	GetLatestScanRunByDigest(ctx context.Context, tenant string, repository string, digest string) (ScanRun, error)
 	GetScanRun(ctx context.Context, tenant string, runID string) (ScanRun, error)
 	GetScanRunDetail(ctx context.Context, tenant string, runID string) (ScanRunDetail, error)
 	UpsertScanRun(ctx context.Context, tenant string, run ScanRun) error

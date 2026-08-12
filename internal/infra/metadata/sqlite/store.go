@@ -608,6 +608,22 @@ func (s *Store) GetActiveScanRunByDigest(ctx context.Context, tenant string, rep
 	return scanRunRow(row)
 }
 
+// GetLatestScanRunByDigest returns the newest scan run for a digest
+// regardless of status (design.md Decision 2: GetActiveScanRunByDigest
+// minus the `status IN (?, ?)` predicate). Not-found is always the typed
+// domain.ErrorCodeNotFound error via scanRunRow, never a zero-value
+// ports.ScanRun that could be misread as a clean completed scan.
+func (s *Store) GetLatestScanRunByDigest(ctx context.Context, tenant string, repository string, digest string) (ports.ScanRun, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, repository, requested_ref, digest, status, trigger, started_at, finished_at, created_at, updated_at, critical, high, medium, low, trivy_version, db_updated_at, error
+		FROM scan_runs
+		WHERE tenant = ? AND repository = ? AND digest = ?
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, tenant, repository, digest)
+	return scanRunRow(row)
+}
+
 func (s *Store) GetScanRun(ctx context.Context, tenant string, runID string) (ports.ScanRun, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, repository, requested_ref, digest, status, trigger, started_at, finished_at, created_at, updated_at, critical, high, medium, low, trivy_version, db_updated_at, error
