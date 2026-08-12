@@ -362,6 +362,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.viewport = viewportSize{Width: msg.Width, Height: msg.Height}
+		// Plain-list/text sections re-fit for free: View() recomputes
+		// contentBudget() and renderSection() on every render (Phase 3).
+		// Admin tables do not — their pageSize is baked into the
+		// bubbletable.Model at rebuildAdminTables() time, so a resize must
+		// explicitly rebuild them here too (Req: Live Terminal Resize
+		// Refit). Safe/cheap when no admin tables are loaded yet: builds
+		// harmlessly from empty adminView state.
+		m.rebuildAdminTables(m.adminTablesLayout())
 		return m, nil
 	case tea.KeyMsg:
 		return m.updateKey(msg)
