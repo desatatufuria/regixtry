@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"text/tabwriter"
 	"time"
 
@@ -2152,10 +2153,22 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 	}
 	schedulerCtx, cancelScheduler := context.WithCancel(context.Background())
 	scheduler := appscanning.NewScheduler(metadataStore, service, cfg.Tenant, cfg.ServiceName, settings.Interval, maxDuration(settings.Interval/2, time.Second))
-	go func() { _ = scheduler.Run(schedulerCtx) }()
+	var schedulerDone sync.WaitGroup
+	schedulerDone.Add(1)
+	go func() {
+		defer schedulerDone.Done()
+		_ = scheduler.Run(schedulerCtx)
+	}()
 
 	return regixtryhttp.NewRouter(service, authService), func() {
+		// Wait for the scheduler goroutine to actually stop before closing the
+		// stores it reads/writes: cancelling schedulerCtx only takes effect
+		// between ticks (scheduler.Run checks ctx.Done() after each tick
+		// returns), so an in-flight tick can still touch storageRoot/the
+		// database after this cleanup would otherwise have returned -- racing
+		// callers such as t.TempDir()'s RemoveAll cleanup in tests.
 		cancelScheduler()
+		schedulerDone.Wait()
 		_ = metadataStore.Close()
 		if authStore != nil {
 			_ = authStore.Close()
