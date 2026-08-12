@@ -861,7 +861,7 @@ func (m Model) View() string {
 		layout := m.contentBudget(status, help)
 		return renderInspectionWorkspace(
 			fmt.Sprintf("Repositories / %s / %s / Manifest", m.manifest.Details.Repository, m.manifest.Details.Reference),
-			renderConsoleTextSection(renderManifest(m.manifest.Details), layout),
+			renderConsoleTextSection(renderManifest(newAdminTheme(), m.manifest.Details), layout),
 			status,
 			help,
 		)
@@ -874,7 +874,7 @@ func (m Model) View() string {
 		layout := m.contentBudget(status, help)
 		return renderInspectionWorkspace(
 			fmt.Sprintf("Repositories / %s / %s / Blobs", m.lastRepository, m.lastTag),
-			renderConsoleTextSection(renderBlobs(m.blobs), layout),
+			renderConsoleTextSection(renderBlobs(newAdminTheme(), m.blobs), layout),
 			status,
 			help,
 		)
@@ -887,7 +887,7 @@ func (m Model) View() string {
 		layout := m.contentBudget(status, help)
 		return renderInspectionWorkspace(
 			fmt.Sprintf("Repositories / %s / %s / Uploads", m.lastRepository, m.lastTag),
-			renderConsoleTextSection(renderUploads(m.uploads), layout),
+			renderConsoleTextSection(renderUploads(newAdminTheme(), m.uploads), layout),
 			status,
 			help,
 		)
@@ -2585,13 +2585,19 @@ func renderConsoleListSection(title string, items []string, selected int, layout
 	return renderSection(theme, strings.Join(lines, "\n"), layout)
 }
 
-func renderManifest(manifest appregixtry.ManifestDetails) string {
+// renderManifest, renderBlobs, and renderUploads apply the same admin theme
+// used everywhere else in the TUI (subheading for the section title, text
+// for primary values, muted for secondary detail, selected/accent for the
+// highlighted row) so the plain "Regixtry Console" screens (repositories,
+// tags, manifest, blobs, uploads) read consistently with the admin screens
+// instead of falling back to unstyled plain text.
+func renderManifest(theme adminTheme, manifest appregixtry.ManifestDetails) string {
 	lines := []string{
-		fmt.Sprintf("Manifest · %s:%s", manifest.Repository, manifest.Reference),
-		fmt.Sprintf("Digest: %s", manifest.Digest),
-		fmt.Sprintf("Media Type: %s", manifest.MediaType),
-		fmt.Sprintf("Size: %d bytes", manifest.Size),
-		fmt.Sprintf("Blobs: %d", len(manifest.Blobs)),
+		theme.subheading.Render(fmt.Sprintf("Manifest · %s:%s", manifest.Repository, manifest.Reference)),
+		fmt.Sprintf("%s %s", theme.muted.Render("Digest:"), theme.text.Render(manifest.Digest)),
+		fmt.Sprintf("%s %s", theme.muted.Render("Media Type:"), theme.text.Render(manifest.MediaType)),
+		fmt.Sprintf("%s %s", theme.muted.Render("Size:"), theme.text.Render(fmt.Sprintf("%d bytes", manifest.Size))),
+		fmt.Sprintf("%s %s", theme.muted.Render("Blobs:"), theme.text.Render(fmt.Sprintf("%d", len(manifest.Blobs)))),
 	}
 	if len(manifest.Annotations) > 0 {
 		keys := make([]string, 0, len(manifest.Annotations))
@@ -2600,34 +2606,35 @@ func renderManifest(manifest appregixtry.ManifestDetails) string {
 		}
 		sort.Strings(keys)
 		for _, key := range keys {
-			lines = append(lines, fmt.Sprintf("Annotation %s=%s", key, manifest.Annotations[key]))
+			lines = append(lines, fmt.Sprintf("%s %s", theme.muted.Render("Annotation "+key+"="), theme.text.Render(manifest.Annotations[key])))
 		}
 	}
 	return strings.Join(lines, "\n")
 }
 
-func renderBlobs(blobs BlobsModel) string {
-	lines := []string{"Blobs"}
+func renderBlobs(theme adminTheme, blobs BlobsModel) string {
+	lines := []string{theme.subheading.Render("Blobs")}
 	if len(blobs.Items) == 0 {
-		return strings.Join(append(lines, "No blobs are linked to the selected manifest."), "\n")
+		return strings.Join(append(lines, theme.muted.Render("No blobs are linked to the selected manifest.")), "\n")
 	}
 	for index, blob := range blobs.Items {
-		prefix := "  "
+		row := fmt.Sprintf("%s (%d bytes) [%s]", blob.Digest, blob.Size, blob.MediaType)
 		if index == blobs.Selected {
-			prefix = "> "
+			lines = append(lines, theme.selected.Render(row))
+			continue
 		}
-		lines = append(lines, fmt.Sprintf("%s%s (%d bytes) [%s]", prefix, blob.Digest, blob.Size, blob.MediaType))
+		lines = append(lines, theme.text.Render(row))
 	}
 	return strings.Join(lines, "\n")
 }
 
-func renderUploads(uploads UploadsModel) string {
-	lines := []string{fmt.Sprintf("Uploads · %s", uploads.Repository)}
+func renderUploads(theme adminTheme, uploads UploadsModel) string {
+	lines := []string{theme.subheading.Render(fmt.Sprintf("Uploads · %s", uploads.Repository))}
 	if len(uploads.Items) == 0 {
-		return strings.Join(append(lines, "No in-progress uploads for this repository."), "\n")
+		return strings.Join(append(lines, theme.muted.Render("No in-progress uploads for this repository.")), "\n")
 	}
 	for _, upload := range uploads.Items {
-		lines = append(lines, fmt.Sprintf("- %s · %s · %d bytes", upload.ID, upload.Status, upload.Size))
+		lines = append(lines, theme.text.Render(fmt.Sprintf("%s · %s · %d bytes", upload.ID, upload.Status, upload.Size)))
 	}
 	return strings.Join(lines, "\n")
 }
