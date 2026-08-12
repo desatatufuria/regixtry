@@ -12,6 +12,83 @@ import (
 	"regixtry/internal/ports"
 )
 
+// TestClassifyStatusTextPreservesEveryExistingSubstringCase is the Phase 4
+// task 4.1 RED test (design.md Decision 2): classifyStatusText does not
+// exist yet — it is the current renderAdminStatus substring switch moved
+// out verbatim, so callers that do not carry an explicit kind still get
+// today's behavior via statusKindAuto. Every case ported directly from the
+// pre-Decision-2 switch in admin_views.go.
+func TestClassifyStatusTextPreservesEveryExistingSubstringCase(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		status string
+		want   statusKind
+	}{
+		{name: "expired", status: "Token expired", want: statusKindError},
+		{name: "invalid", status: "Invalid credentials", want: statusKindError},
+		{name: "error", status: "An error occurred", want: statusKindError},
+		{name: "created", status: "User created", want: statusKindSuccess},
+		{name: "enabled", status: "Feature enabled", want: statusKindSuccess},
+		{name: "disabled", status: "Feature disabled", want: statusKindSuccess},
+		{name: "reset", status: "Password reset", want: statusKindSuccess},
+		{name: "saved", status: "Configuration saved", want: statusKindSuccess},
+		{name: "revoked", status: "Token revoked", want: statusKindSuccess},
+		{name: "loading", status: "Loading users...", want: statusKindWarning},
+		{name: "refreshing", status: "Refreshing page...", want: statusKindWarning},
+		{name: "submitting", status: "Submitting form...", want: statusKindWarning},
+		{name: "no match falls to neutral", status: "Ready.", want: statusKindNeutral},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := classifyStatusText(tc.status); got != tc.want {
+				t.Fatalf("classifyStatusText(%q) = %v, want %v", tc.status, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRenderAdminStatusSelectsStyleFromExplicitKindRegardlessOfText is the
+// Phase 4 task 4.2 RED test (design.md Decision 2 / spec.md "Admin Status
+// And Error Styling Uses An Explicit Status Kind"): an explicit kind other
+// than statusKindAuto must select its style directly, bypassing substring
+// classification entirely — including statusKindError for text containing
+// none of "expired"/"invalid"/"error" (the exact bug the substring switch
+// produced).
+func TestRenderAdminStatusSelectsStyleFromExplicitKindRegardlessOfText(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+
+	tests := []struct {
+		name  string
+		kind  statusKind
+		style lipgloss.Style
+	}{
+		{name: "error kind on text with no error substring", kind: statusKindError, style: theme.error},
+		{name: "success kind on text with no success substring", kind: statusKindSuccess, style: theme.success},
+		{name: "warning kind on text with no warning substring", kind: statusKindWarning, style: theme.warning},
+		{name: "neutral kind on text with no matching substring", kind: statusKindNeutral, style: theme.muted},
+	}
+
+	const text = "connection refused"
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := renderAdminStatus(theme, text, tc.kind)
+			want := theme.section.Render(strings.Join([]string{theme.subheading.Render("Status"), tc.style.Render(text)}, "\n"))
+			if got != want {
+				t.Fatalf("renderAdminStatus(%q, kind=%v) = %q, want %q (explicit kind must select style regardless of text)", text, tc.kind, got, want)
+			}
+		})
+	}
+}
+
 // TestRenderAdminModalRendersTitleMessageAndHelp is the Phase 3 task 3.1
 // approval test (design.md Decision 1): renderAdminModal has never had
 // direct coverage of its own — it was only ever exercised indirectly through
@@ -483,7 +560,7 @@ func TestRenderAdminWorkspaceKeepsBaseFullSizeAndLayersModalOnTopWhenOpen(t *tes
 	// base -- proving it is never shrunk via a reduced SectionRows the way
 	// the superseded row-split design did.
 	standaloneContext, standaloneBody, standaloneHelp := renderAdminScreen(theme, screenAdminFeatures, session, view, nil, layout, now)
-	wantBase := renderConsoleWorkspace("Regixtry Admin", standaloneContext, standaloneBody, "", standaloneHelp)
+	wantBase := renderConsoleWorkspace("Regixtry Admin", standaloneContext, standaloneBody, "", standaloneHelp, statusKindAuto)
 
 	got := renderAdminWorkspace(screenAdminFeatures, session, view, nil, "", layout, now)
 
@@ -566,7 +643,7 @@ func TestRenderAdminWorkspaceLeavesVisibleMarginAroundModalWhenOpen(t *testing.T
 	// renderAdminWorkspace does, so this test does not hardcode numbers that
 	// would silently drift out of sync with the production sizing.
 	standaloneContext, standaloneBaseBody, standaloneHelp := renderAdminScreen(theme, screenAdminFeatures, session, view, nil, layout, now)
-	standaloneBaseWorkspace := renderConsoleWorkspace("Regixtry Admin", standaloneContext, standaloneBaseBody, "", standaloneHelp)
+	standaloneBaseWorkspace := renderConsoleWorkspace("Regixtry Admin", standaloneContext, standaloneBaseBody, "", standaloneHelp, statusKindAuto)
 	modalView := renderAdminScanHistoryModal(theme, view.ScanHistoryModal, view, adminScanHistoryModalRows(layout, lipgloss.Height(standaloneBaseBody)))
 	overlayWidth := lipgloss.Width(modalView)
 	overlayHeight := lipgloss.Height(modalView)
@@ -693,7 +770,7 @@ func TestRenderAdminWorkspaceModalNeverExtendsPastBaseBodysOwnBottomBorder(t *te
 			baseContext, baseBody, baseHelp := renderAdminScreen(theme, screenAdminFeatures, session, view, nil, layout, now)
 			baseBodyHeight := lipgloss.Height(baseBody)
 			baseBottomRow := 2 + baseBodyHeight - 1
-			baseWorkspace := renderConsoleWorkspace("Regixtry Admin", baseContext, baseBody, "", baseHelp)
+			baseWorkspace := renderConsoleWorkspace("Regixtry Admin", baseContext, baseBody, "", baseHelp, statusKindAuto)
 
 			modalRows := adminScanHistoryModalRows(layout, baseBodyHeight)
 			modalView := renderAdminScanHistoryModal(theme, view.ScanHistoryModal, view, modalRows)

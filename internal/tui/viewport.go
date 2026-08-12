@@ -112,7 +112,11 @@ func contentBudget(width, height int, status, help string) consoleLayout {
 	// TestViewportChromeInvariantTitleContextHelpAreSingleLine.
 	chrome := 2
 	if strings.TrimSpace(status) != "" {
-		chrome += lipgloss.Height(renderAdminStatus(theme, status))
+		// statusKindNeutral: kind only sets Foreground/Bold, never
+		// lipgloss.Height, so this measurement stays exact regardless of
+		// which kind the real render will end up using (design.md Decision
+		// 2 — contentBudget's own signature is unchanged).
+		chrome += lipgloss.Height(renderAdminStatus(theme, status, statusKindNeutral))
 	}
 	if strings.TrimSpace(help) != "" {
 		chrome += lipgloss.Height(theme.help.Render(help))

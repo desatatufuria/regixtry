@@ -14,7 +14,7 @@ func TestViewportContentBudgetAccountsForChrome(t *testing.T) {
 	const width, height = defaultViewportWidth, defaultViewportHeight
 
 	theme := newAdminTheme()
-	statusHeight := lipgloss.Height(renderAdminStatus(theme, "ready"))
+	statusHeight := lipgloss.Height(renderAdminStatus(theme, "ready", statusKindNeutral))
 	helpHeight := lipgloss.Height(theme.help.Render("q: quit"))
 
 	tests := []struct {

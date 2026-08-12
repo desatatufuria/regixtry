@@ -25,7 +25,11 @@ func renderAdminWorkspace(current screen, session AdminSession, view AdminViewSt
 	theme := newAdminTheme()
 
 	context, body, help := renderAdminScreen(theme, current, session, view, knownRepositories, layout, now)
-	base := renderConsoleWorkspace("Regixtry Admin", context, body, status, help)
+	// statusKindAuto preserves today's substring-classification behavior
+	// (design.md Decision 2: 0 of ~11 renderInspectionWorkspace callers are
+	// touched by the new kind param, and the admin workspace gets the same
+	// treatment — only screenError needs an explicit kind).
+	base := renderConsoleWorkspace("Regixtry Admin", context, body, status, help, statusKindAuto)
 
 	var modalView string
 	switch {
@@ -602,18 +606,67 @@ func adminFeatureHelp(view AdminViewState) string {
 	return strings.Join(parts, " | ")
 }
 
-func renderAdminStatus(theme adminTheme, status string) string {
-	style := theme.muted
+// statusKind is an explicit style selector for renderAdminStatus, carried as
+// a parameter along the render path rather than stored on Model (design.md
+// Decision 2: m.status has 126 assignment sites, so a {Text,Kind} struct or
+// a parallel m.statusKind field would either break all 126 call sites or go
+// stale, since those 126 writers would never reset it). statusKindAuto
+// preserves today's behavior — classify style from a substring match on the
+// status text — for every caller that does not need an explicit kind.
+type statusKind int
+
+const (
+	statusKindAuto statusKind = iota
+	statusKindNeutral
+	statusKindSuccess
+	statusKindWarning
+	statusKindError
+)
+
+// classifyStatusText is today's substring-match style selection, moved out
+// of renderAdminStatus verbatim so it can serve as statusKindAuto's fallback
+// (design.md Decision 2). It survives as the default for the ~126 untyped
+// m.status assignment sites, demoted from sole mechanism to fallback.
+func classifyStatusText(status string) statusKind {
 	lower := strings.ToLower(status)
 	switch {
 	case strings.Contains(lower, "expired"), strings.Contains(lower, "invalid"), strings.Contains(lower, "error"):
-		style = theme.error
+		return statusKindError
 	case strings.Contains(lower, "created"), strings.Contains(lower, "enabled"), strings.Contains(lower, "disabled"), strings.Contains(lower, "reset"), strings.Contains(lower, "saved"), strings.Contains(lower, "revoked"):
-		style = theme.success
+		return statusKindSuccess
 	case strings.Contains(lower, "loading"), strings.Contains(lower, "refreshing"), strings.Contains(lower, "submitting"):
-		style = theme.warning
+		return statusKindWarning
+	default:
+		return statusKindNeutral
 	}
-	return theme.section.Render(strings.Join([]string{theme.subheading.Render("Status"), style.Render(status)}, "\n"))
+}
+
+// statusStyle maps an explicit statusKind to its theme style. statusKindAuto
+// is not a valid input here — callers must resolve it via classifyStatusText
+// first (renderAdminStatus does this).
+func statusStyle(theme adminTheme, kind statusKind) lipgloss.Style {
+	switch kind {
+	case statusKindError:
+		return theme.error
+	case statusKindSuccess:
+		return theme.success
+	case statusKindWarning:
+		return theme.warning
+	default:
+		return theme.muted
+	}
+}
+
+// renderAdminStatus selects its style from an explicit statusKind rather
+// than a substring match on status text (design.md Decision 2, spec.md
+// "Admin Status And Error Styling Uses An Explicit Status Kind").
+// statusKindAuto classifies from the text, preserving today's behavior for
+// callers that carry no explicit kind.
+func renderAdminStatus(theme adminTheme, status string, kind statusKind) string {
+	if kind == statusKindAuto {
+		kind = classifyStatusText(status)
+	}
+	return theme.section.Render(strings.Join([]string{theme.subheading.Render("Status"), statusStyle(theme, kind).Render(status)}, "\n"))
 }
 
 func renderTextField(theme adminTheme, label string, value string, focused bool) string {

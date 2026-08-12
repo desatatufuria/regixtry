@@ -907,7 +907,16 @@ func (m Model) View() string {
 		}
 		help := "q: quit"
 		layout := m.contentBudget(errText, help)
-		return renderInspectionWorkspace("Error", renderConsoleTextSection(errText, layout), errText, help)
+		theme := newAdminTheme()
+		// Bypasses renderInspectionWorkspace (which defaults to
+		// statusKindAuto) and calls renderConsoleWorkspace directly with an
+		// explicit statusKindError: a fatal error must always render with
+		// theme.error, regardless of whether its message happens to contain
+		// "expired"/"invalid"/"error" (design.md Decision 2, spec.md "Fatal
+		// error renders in error styling regardless of wording").
+		return renderConsoleWorkspace("Regixtry Console", "Error",
+			renderConsoleTextSection(theme.error.Render(errText), layout),
+			errText, help, statusKindError)
 	case screenAdminLogin:
 		return renderInspectionWorkspace("Sign In", renderAdminLogin(newAdminTheme(), m.adminLogin), m.status, "Enter: sign in | Tab: switch field | Esc: back | q: quit")
 	case screenAdminAuthenticating:
@@ -2539,7 +2548,7 @@ func renderList(items []string, selected int) string {
 	return strings.Join(lines, "\n")
 }
 
-func renderConsoleWorkspace(title string, context string, body string, status string, help string) string {
+func renderConsoleWorkspace(title string, context string, body string, status string, help string, kind statusKind) string {
 	theme := newAdminTheme()
 	sections := []string{
 		theme.title.Render(title),
@@ -2547,7 +2556,7 @@ func renderConsoleWorkspace(title string, context string, body string, status st
 		body,
 	}
 	if strings.TrimSpace(status) != "" {
-		sections = append(sections, renderAdminStatus(theme, status))
+		sections = append(sections, renderAdminStatus(theme, status, kind))
 	}
 	if strings.TrimSpace(help) != "" {
 		sections = append(sections, theme.help.Render(help))
@@ -2555,8 +2564,12 @@ func renderConsoleWorkspace(title string, context string, body string, status st
 	return theme.app.Render(lipgloss.JoinVertical(lipgloss.Left, sections...))
 }
 
+// renderInspectionWorkspace's signature stays unchanged (design.md Decision
+// 2: 0 of ~11 callers touched) — it always passes statusKindAuto, preserving
+// today's substring-classification behavior for every screen that does not
+// need an explicit kind.
 func renderInspectionWorkspace(context string, body string, status string, help string) string {
-	return renderConsoleWorkspace("Regixtry Console", context, body, status, help)
+	return renderConsoleWorkspace("Regixtry Console", context, body, status, help, statusKindAuto)
 }
 
 // renderConsoleTextSection wraps content in the themed bordered section,

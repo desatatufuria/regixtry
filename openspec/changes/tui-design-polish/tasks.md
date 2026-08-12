@@ -108,17 +108,17 @@ diff).
 
 ## Phase 4: Status Kind Threading (Decision 2, P3) — independent
 
-- [ ] 4.1 RED `admin_views_test.go`: table-driven — `classifyStatusText`
+- [x] 4.1 RED `admin_views_test.go`: table-driven — `classifyStatusText`
       preserves every existing substring case, ported verbatim from the
       current switch.
-- [ ] 4.2 RED `admin_views_test.go`: table-driven over `statusKind` values —
+- [x] 4.2 RED `admin_views_test.go`: table-driven over `statusKind` values —
       `statusStyle`/`renderAdminStatus` selects style from the explicit kind
       regardless of text, including `statusKindError` with the text
       `"connection refused"`.
-- [ ] 4.3 RED `model_test.go`: `screenError` output contains `theme.error`'s
+- [x] 4.3 RED `model_test.go`: `screenError` output contains `theme.error`'s
       hex in both body and status line for a message containing none of
       "expired"/"invalid"/"error".
-- [ ] 4.4 GREEN: add `statusKind` type + constants (`statusKindAuto`,
+- [x] 4.4 GREEN: add `statusKind` type + constants (`statusKindAuto`,
       `statusKindNeutral`, `statusKindSuccess`, `statusKindWarning`,
       `statusKindError`), `classifyStatusText`, `statusStyle` helpers
       (`admin_views.go`); `renderAdminStatus(theme, status, kind)`; thread
@@ -127,7 +127,7 @@ diff).
       `renderInspectionWorkspace` passes `statusKindAuto` unchanged (0 of ~11
       callers touched); `contentBudget` (`viewport.go`) passes
       `statusKindNeutral` unchanged.
-- [ ] 4.5 Confirm 4.1–4.3 GREEN: `go test ./internal/tui/... -run
+- [x] 4.5 Confirm 4.1–4.3 GREEN: `go test ./internal/tui/... -run
       'ClassifyStatusText|StatusKind|ScreenError'`.
 
 ## Phase 5: Status Panel De-boxing (Decision 4, P5) — design-flagged highest risk

@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	bubbletable "github.com/evertras/bubble-table/table"
+	"github.com/muesli/termenv"
 	appregixtry "regixtry/internal/app/regixtry"
 	domainauth "regixtry/internal/domain/auth"
 	regixtrydomain "regixtry/internal/domain/regixtry"
@@ -298,6 +299,53 @@ func TestModelCatalogAndTagsListScreensFitViewportHeight(t *testing.T) {
 //     it) impossible under the new architecture: every bordered block is
 //     clipped exactly once, by its own owner, never by a second fitLines
 //     pass over an already-composed block.
+
+// TestModelScreenErrorRendersWithThemeErrorRegardlessOfMessageWording is the
+// Phase 4 task 4.3 RED test (design.md Decision 2 / spec.md "Fatal error
+// renders in error styling regardless of wording"): screenError currently
+// passes errText as both body and status to renderInspectionWorkspace, which
+// classifies style from a substring match — an error message containing
+// none of "expired"/"invalid"/"error" (e.g. "connection refused") falls
+// through to theme.muted instead of theme.error. Once screenError passes an
+// explicit statusKindError, both the body and status line must render with
+// theme.error's hex regardless of wording.
+func TestModelScreenErrorRendersWithThemeErrorRegardlessOfMessageWording(t *testing.T) {
+	// Not t.Parallel(): forces the global lipgloss color profile so
+	// theme.error actually emits an ANSI sequence to assert on (go test runs
+	// with no tty, so lipgloss otherwise auto-detects "no color").
+	original := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(original)
+
+	model := NewModel(&fakeQueryService{})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: minViewportWidth, Height: 30})
+	result := updated.(Model)
+	result.screen = screenError
+	result.err = errors.New("connection refused")
+
+	view := result.View()
+
+	theme := newAdminTheme()
+	errorHex := theme.error.Render("connection refused")
+	// theme.error.Render on the raw message proves the SGR sequence itself
+	// (extracted below) is what theme.error actually emits, rather than
+	// hardcoding an ANSI escape string.
+	sgrPrefix := errorHex[:strings.Index(errorHex, "connection refused")]
+	if sgrPrefix == "" {
+		t.Fatalf("test setup invalid: theme.error.Render() produced no ANSI prefix: %q", errorHex)
+	}
+
+	bodyIdx := strings.Index(view, "connection refused")
+	if bodyIdx == -1 {
+		t.Fatalf("view = %q, want the error message present", view)
+	}
+	if !strings.Contains(view, sgrPrefix) {
+		t.Fatalf("view = %q, want theme.error's ANSI styling (%q) present on the body/status text — got no error-styled occurrence of %q", view, sgrPrefix, "connection refused")
+	}
+	if got := strings.Count(view, sgrPrefix); got < 2 {
+		t.Fatalf("view contains theme.error's ANSI prefix %d times, want >= 2 (both body and status line styled with theme.error)\n%s", got, view)
+	}
+}
 
 func TestModelPageKeysScrollAndClampCatalogList(t *testing.T) {
 	t.Parallel()
