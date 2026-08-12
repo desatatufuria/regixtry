@@ -69,10 +69,14 @@ func newAdminTheme() adminTheme {
 		error:            lipgloss.NewStyle().Foreground(errorColor).Bold(true),
 		severityCritical: lipgloss.NewStyle().Foreground(errorColor).Bold(true),
 		severityHigh:     lipgloss.NewStyle().Foreground(warning).Bold(true),
-		// severityMedium reuses warning's amber rather than accent: now that
-		// accent is gold, sharing it with a severity level would make ordinary
-		// findings visually compete with the "this is selected/focused" cue.
-		severityMedium: lipgloss.NewStyle().Foreground(warning),
+		// severityMedium gets its own dedicated bronze hex rather than reusing
+		// warning's amber: sharing a hex with severityHigh (differing only by
+		// Bold) made the two indistinguishable with color disabled or bold
+		// ignored (design.md Decision 3). "#C0A16B" is confirmed distinct from
+		// both severityHigh ("#EBCB8B", ~1.6:1 luminance separation) and accent
+		// gold ("#D4AF37", ~1.16:1 luminance but sharply different saturation —
+		// muted bronze vs bright gold — and the two never share a role.
+		severityMedium: lipgloss.NewStyle().Foreground(lipgloss.Color("#C0A16B")),
 		severityLow:    lipgloss.NewStyle().Foreground(muted),
 		input:          lipgloss.NewStyle().Foreground(text).Border(lipgloss.NormalBorder()).BorderForeground(border).Padding(0, 1).Width(30),
 		inputFocus:     lipgloss.NewStyle().Foreground(text).Border(lipgloss.NormalBorder()).BorderForeground(accent).Padding(0, 1).Width(30),
