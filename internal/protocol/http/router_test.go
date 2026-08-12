@@ -1545,14 +1545,27 @@ func newTestRouter(t *testing.T, accessController ports.AccessController) (*Rout
 	t.Helper()
 
 	blobStore, metadataStore, cleanup := newTestStores(t)
-	return newRouterWithStores(blobStore, metadataStore, accessController, nil), cleanup
+	router := newRouterWithStores(blobStore, metadataStore, accessController, nil)
+	return router, drainingCleanup(router, cleanup)
 }
 
 func newTestRouterWithAuth(t *testing.T, accessController ports.AccessController, authService ports.AuthService, options ...RouterOption) (*Router, func()) {
 	t.Helper()
 
 	blobStore, metadataStore, cleanup := newTestStores(t)
-	return newRouterWithStores(blobStore, metadataStore, accessController, authService, options...), cleanup
+	router := newRouterWithStores(blobStore, metadataStore, accessController, authService, options...)
+	return router, drainingCleanup(router, cleanup)
+}
+
+// drainingCleanup waits for the router's service to finish any in-flight
+// push-triggered scan goroutine (queuePushScan, spawned from every
+// PublishManifest) before running the underlying store cleanup — otherwise
+// that goroutine can race t.TempDir()'s removal after the test returns.
+func drainingCleanup(router *Router, cleanup func()) func() {
+	return func() {
+		router.service.WaitForBackgroundWork()
+		cleanup()
+	}
 }
 
 func newTestRouterWithRealAuth(t *testing.T) (*Router, *appauth.Service, domainauth.Principal, string, func()) {

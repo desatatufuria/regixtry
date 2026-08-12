@@ -183,6 +183,138 @@ func TestServiceQueuesDigestCentricManualScansAndDedupesActiveRuns(t *testing.T)
 	}
 }
 
+func TestServiceQueuePushScanCreatesQueuedRunWhenScanSettingsEnabled(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	if _, err := service.EnsureScanSettings(context.Background(), ports.ScanSettings{Enabled: true, Timeout: time.Minute, Interval: time.Hour, RegistryReachableURL: "https://registry.internal", MaxConcurrency: 1}); err != nil {
+		t.Fatalf("EnsureScanSettings() error = %v", err)
+	}
+	seedManagedRuntimeState(t, service, "0.57.1")
+
+	digest := "sha256:" + strings.Repeat("a", 64)
+	service.queuePushScan(context.Background(), "tenant-a", "library/alpine", "latest", digest)
+
+	run, err := service.metadata.GetActiveScanRunByDigest(context.Background(), "tenant-a", "library/alpine", digest)
+	if err != nil {
+		t.Fatalf("GetActiveScanRunByDigest() error = %v", err)
+	}
+	if run.Status != ports.ScanRunStatusQueued || run.Trigger != ports.ScanTriggerPush {
+		t.Fatalf("run = %#v, want queued/push", run)
+	}
+}
+
+func TestServiceQueuePushScanCreatesNothingWhenScanSettingsDisabled(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	if _, err := service.EnsureScanSettings(context.Background(), ports.ScanSettings{Enabled: false, Timeout: time.Minute, Interval: time.Hour, RegistryReachableURL: "https://registry.internal", MaxConcurrency: 1}); err != nil {
+		t.Fatalf("EnsureScanSettings() error = %v", err)
+	}
+	seedManagedRuntimeState(t, service, "0.57.1")
+
+	digest := "sha256:" + strings.Repeat("b", 64)
+	service.queuePushScan(context.Background(), "tenant-a", "library/alpine", "latest", digest)
+
+	if _, err := service.metadata.GetActiveScanRunByDigest(context.Background(), "tenant-a", "library/alpine", digest); !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("GetActiveScanRunByDigest() error = %v, want ErrorCodeNotFound (no run queued)", err)
+	}
+}
+
+func TestServiceQueuePushScanDoesNotDuplicateAnInFlightRun(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	if _, err := service.EnsureScanSettings(context.Background(), ports.ScanSettings{Enabled: true, Timeout: time.Minute, Interval: time.Hour, RegistryReachableURL: "https://registry.internal", MaxConcurrency: 1}); err != nil {
+		t.Fatalf("EnsureScanSettings() error = %v", err)
+	}
+	seedManagedRuntimeState(t, service, "0.57.1")
+
+	digest := "sha256:" + strings.Repeat("c", 64)
+	now := time.Now().UTC()
+	existing := ports.ScanRun{ID: "run-existing", Repository: "library/alpine", RequestedRef: "latest", Digest: digest, Status: ports.ScanRunStatusRunning, Trigger: ports.ScanTriggerManual, CreatedAt: now, UpdatedAt: now}
+	if err := service.metadata.UpsertScanRun(context.Background(), "tenant-a", existing); err != nil {
+		t.Fatalf("UpsertScanRun() error = %v", err)
+	}
+
+	service.queuePushScan(context.Background(), "tenant-a", "library/alpine", "latest", digest)
+
+	run, err := service.metadata.GetActiveScanRunByDigest(context.Background(), "tenant-a", "library/alpine", digest)
+	if err != nil {
+		t.Fatalf("GetActiveScanRunByDigest() error = %v", err)
+	}
+	if run.ID != existing.ID {
+		t.Fatalf("run.ID = %q, want unchanged existing run %q (no duplicate queued)", run.ID, existing.ID)
+	}
+}
+
+func TestServicePublishManifestReturnsBeforeScanCompletes(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	if _, err := service.EnsureScanSettings(context.Background(), ports.ScanSettings{Enabled: true, Timeout: time.Minute, Interval: time.Hour, RegistryReachableURL: "https://registry.internal", MaxConcurrency: 1}); err != nil {
+		t.Fatalf("EnsureScanSettings() error = %v", err)
+	}
+	seedManagedRuntimeState(t, service, "0.57.1")
+
+	slowRunner := &blockingScanRunner{release: make(chan struct{})}
+	defer close(slowRunner.release)
+	service.SetScanRunner(slowRunner)
+
+	upload, err := service.BeginUpload(context.Background(), "library/alpine")
+	if err != nil {
+		t.Fatalf("BeginUpload() error = %v", err)
+	}
+	if _, err := service.AppendUpload(context.Background(), "library/alpine", upload.ID, strings.NewReader("layer-one")); err != nil {
+		t.Fatalf("AppendUpload() error = %v", err)
+	}
+	blob, err := service.CompleteUpload(context.Background(), "library/alpine", upload.ID, digestForTest([]byte("layer-one")), nil)
+	if err != nil {
+		t.Fatalf("CompleteUpload() error = %v", err)
+	}
+	manifestPayload := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{"mediaType":"application/vnd.oci.image.config.v1+json","digest":"` + blob.Digest + `","size":9},"layers":[{"mediaType":"application/vnd.oci.image.layer.v1.tar","digest":"` + blob.Digest + `","size":9}]}`)
+
+	published, err := service.PublishManifest(context.Background(), "library/alpine", "latest", "application/vnd.oci.image.manifest.v1+json", manifestPayload)
+	if err != nil {
+		t.Fatalf("PublishManifest() error = %v", err)
+	}
+	if published.Digest == "" {
+		t.Fatalf("published = %#v, want a resolved digest", published)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := service.metadata.GetActiveScanRunByDigest(context.Background(), "tenant-a", "library/alpine", published.Digest); err == nil {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("expected a queued push scan run to exist for the published digest")
+}
+
+// blockingScanRunner blocks until release is closed, proving PublishManifest
+// does not wait on scan completion — the queued push scan must be
+// observable while the runner is still blocked.
+type blockingScanRunner struct {
+	release chan struct{}
+}
+
+func (b *blockingScanRunner) Run(ctx context.Context, imageRef string, settings ports.ScanSettings) (ports.ScanResult, error) {
+	select {
+	case <-b.release:
+	case <-ctx.Done():
+	}
+	return ports.ScanResult{}, nil
+}
+
 func TestServiceRejectsInvalidOrUnpublishedScanTargets(t *testing.T) {
 	t.Parallel()
 
@@ -1318,6 +1450,10 @@ func newTestService(t *testing.T, accessController ports.AccessController) (*Ser
 	)
 
 	return service, func() {
+		// PublishManifest fires a background queuePushScan goroutine on
+		// every call; draining it here before closing the store avoids a
+		// goroutine racing t.TempDir()'s cleanup after the test returns.
+		service.WaitForBackgroundWork()
 		_ = metadataStore.Close()
 	}
 }
@@ -1380,6 +1516,12 @@ func seedRepository(t *testing.T, service *Service, ctx context.Context, reposit
 	if _, err := service.PublishManifest(ctx, repository, "latest", "application/vnd.oci.image.manifest.v1+json", manifestPayload); err != nil {
 		t.Fatalf("PublishManifest(%q) error = %v", repository, err)
 	}
+	// Drain PublishManifest's fire-and-forget queuePushScan goroutine before
+	// returning: at this point no scan settings are configured yet, so it
+	// resolves to a no-op, but without draining it here its unpredictable
+	// scheduling could otherwise race a caller that configures scan
+	// settings and triggers its own scan immediately afterward.
+	service.WaitForBackgroundWork()
 }
 
 // seededManifestDigest resolves the digest published by seedRepository for
@@ -1573,6 +1715,10 @@ func publishRepositoryTag(t *testing.T, service *Service, ctx context.Context, r
 	if _, err := service.PublishManifest(ctx, repository, tag, "application/vnd.oci.image.manifest.v1+json", manifestPayload); err != nil {
 		t.Fatalf("PublishManifest(%q) error = %v", repository, err)
 	}
+	// See seedRepository: drain the fire-and-forget push-scan goroutine so
+	// its unpredictable scheduling cannot race a caller that configures
+	// scan settings right after publishing.
+	service.WaitForBackgroundWork()
 }
 
 func newTestTrivyRunner(t *testing.T, wantToken string) (*trivy.Runner, *httptest.Server) {

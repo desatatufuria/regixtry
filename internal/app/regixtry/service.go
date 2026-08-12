@@ -19,6 +19,7 @@ type Service struct {
 	access           ports.AccessController
 	tenants          ports.TenantResolver
 	jobs             ports.JobRunner
+	runnerMu         sync.RWMutex
 	scanRunner       ports.ScanRunner
 	secretScanRunner ports.SecretScanRunner
 	runtimes         map[string]FeatureRuntimeManager
@@ -26,6 +27,20 @@ type Service struct {
 	now              func() time.Time
 	scanGate         *scanGate
 	secretScanGate   *scanGate
+	// scanQueueMu guards the check-then-insert dedup step shared by
+	// QueueManualScan, queueScheduledScan, and queuePushScan
+	// (dedupAndQueueScanRun) so a push-triggered scan's own goroutine can
+	// never race a synchronous manual/scheduled scan into inserting two
+	// runs for the same digest.
+	scanQueueMu sync.Mutex
+	// backgroundWork tracks push-triggered scan goroutines (queuePushScan)
+	// so tests can drain them before closing the metadata store; unlike
+	// QueueManualScan/RunScheduledScans, which only spawn goroutines from
+	// dedicated scan tests that already wait for completion, queuePushScan
+	// fires on every successful PublishManifest across the whole suite, so
+	// an undrained goroutine racing a t.TempDir() cleanup is a real hazard,
+	// not merely a hypothetical one.
+	backgroundWork sync.WaitGroup
 }
 
 type FeatureRuntimeManager interface {
@@ -68,12 +83,43 @@ func NewService(blobStore ports.BlobStore, metadataStore ports.MetadataStore, ac
 	}
 }
 
+// WaitForBackgroundWork blocks until every in-flight push-triggered scan
+// goroutine (queuePushScan, spawned from PublishManifest) has returned. It
+// exists for graceful shutdown and for tests that close the metadata store
+// right after exercising the service — without it, a fire-and-forget
+// goroutine can still be querying the store when the caller closes or
+// removes it.
+func (s *Service) WaitForBackgroundWork() {
+	s.backgroundWork.Wait()
+}
+
+// SetScanRunner/SetSecretScanRunner and their getScanRunner/getSecretScanRunner
+// counterparts share a mutex (runnerMu) because queuePushScan's fire-and-
+// forget goroutine (executeScanRun/executeSecretScanLeg) can now read these
+// fields concurrently with a Set* call from arbitrary test or reconfigure
+// timing — a plain field would be a data race under -race.
 func (s *Service) SetScanRunner(runner ports.ScanRunner) {
+	s.runnerMu.Lock()
+	defer s.runnerMu.Unlock()
 	s.scanRunner = runner
 }
 
 func (s *Service) SetSecretScanRunner(runner ports.SecretScanRunner) {
+	s.runnerMu.Lock()
+	defer s.runnerMu.Unlock()
 	s.secretScanRunner = runner
+}
+
+func (s *Service) getScanRunner() ports.ScanRunner {
+	s.runnerMu.RLock()
+	defer s.runnerMu.RUnlock()
+	return s.scanRunner
+}
+
+func (s *Service) getSecretScanRunner() ports.SecretScanRunner {
+	s.runnerMu.RLock()
+	defer s.runnerMu.RUnlock()
+	return s.secretScanRunner
 }
 
 func (s *Service) SetFeatureRuntimeManager(feature string, manager FeatureRuntimeManager) {
@@ -201,6 +247,16 @@ func (s *Service) PublishManifest(ctx context.Context, repositoryName string, re
 	if err := s.metadata.PublishManifest(ctx, s.tenant(ctx), repository, tag, manifest, manifest.References()); err != nil {
 		return ManifestDetails{}, err
 	}
+
+	// Fire-and-forget: push auto-queues a scan but must never fail or wait
+	// on it (design.md Decision 4). Tenant is captured here, before the
+	// goroutine, because the request context is cancelled the moment this
+	// response is written.
+	s.backgroundWork.Add(1)
+	go func() {
+		defer s.backgroundWork.Done()
+		s.queuePushScan(context.Background(), s.tenant(ctx), repository.String(), reference, manifest.Digest.String())
+	}()
 
 	return newManifestDetails(repository.String(), reference, manifest, manifest.References()), nil
 }

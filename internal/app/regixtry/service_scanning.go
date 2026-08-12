@@ -129,18 +129,40 @@ func (s *Service) QueueManualScan(ctx context.Context, repositoryName string, re
 		return ports.ScanRun{}, err
 	}
 	digest := manifest.Digest.String()
-	if active, err := s.metadata.GetActiveScanRunByDigest(ctx, s.tenant(ctx), repository.String(), digest); err == nil {
-		return active, nil
-	} else if !domain.IsCode(err, domain.ErrorCodeNotFound) {
+	run, existed, err := s.dedupAndQueueScanRun(ctx, s.tenant(ctx), repository.String(), strings.TrimSpace(reference), digest, ports.ScanTriggerManual)
+	if err != nil {
 		return ports.ScanRun{}, err
+	}
+	if !existed {
+		go s.executeScanRun(context.Background(), s.tenant(ctx), run, settings)
+	}
+	return run, nil
+}
+
+// dedupAndQueueScanRun is the shared check-then-insert step behind
+// QueueManualScan, queueScheduledScan, and queuePushScan: it returns the
+// already-active run for a digest if one exists (queued|running), otherwise
+// it inserts a new queued run with the given trigger. scanQueueMu makes the
+// check-then-insert atomic across all three callers — without it, a
+// push-triggered scan (queuePushScan's own goroutine) and a synchronous
+// manual/scheduled scan for the same digest could race past the dedup check
+// and both insert a run, defeating "never queue a second scan for an
+// in-flight digest".
+func (s *Service) dedupAndQueueScanRun(ctx context.Context, tenant string, repository string, reference string, digest string, trigger string) (ports.ScanRun, bool, error) {
+	s.scanQueueMu.Lock()
+	defer s.scanQueueMu.Unlock()
+
+	if active, err := s.metadata.GetActiveScanRunByDigest(ctx, tenant, repository, digest); err == nil {
+		return active, true, nil
+	} else if !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		return ports.ScanRun{}, false, err
 	}
 	now := s.now()
-	run := ports.ScanRun{ID: uuid.NewString(), Repository: repository.String(), RequestedRef: strings.TrimSpace(reference), Digest: digest, Status: ports.ScanRunStatusQueued, Trigger: ports.ScanTriggerManual, CreatedAt: now, UpdatedAt: now}
-	if err := s.metadata.UpsertScanRun(ctx, s.tenant(ctx), run); err != nil {
-		return ports.ScanRun{}, err
+	run := ports.ScanRun{ID: uuid.NewString(), Repository: repository, RequestedRef: reference, Digest: digest, Status: ports.ScanRunStatusQueued, Trigger: trigger, CreatedAt: now, UpdatedAt: now}
+	if err := s.metadata.UpsertScanRun(ctx, tenant, run); err != nil {
+		return ports.ScanRun{}, false, err
 	}
-	go s.executeScanRun(context.Background(), s.tenant(ctx), run, settings)
-	return run, nil
+	return run, false, nil
 }
 
 func (s *Service) ListScanRuns(ctx context.Context, repository string, limit int) ([]ports.ScanRun, error) {
@@ -215,22 +237,64 @@ func (s *Service) queueScheduledScan(ctx context.Context, repositoryName string,
 		return ports.ScanRun{}, err
 	}
 	digest := manifest.Digest.String()
-	if active, err := s.metadata.GetActiveScanRunByDigest(ctx, s.tenant(ctx), repository.String(), digest); err == nil {
-		return active, nil
-	} else if !domain.IsCode(err, domain.ErrorCodeNotFound) {
+	run, existed, err := s.dedupAndQueueScanRun(ctx, s.tenant(ctx), repository.String(), strings.TrimSpace(reference), digest, ports.ScanTriggerScheduled)
+	if err != nil {
 		return ports.ScanRun{}, err
 	}
-	now := s.now()
-	run := ports.ScanRun{ID: uuid.NewString(), Repository: repository.String(), RequestedRef: strings.TrimSpace(reference), Digest: digest, Status: ports.ScanRunStatusQueued, Trigger: ports.ScanTriggerScheduled, CreatedAt: now, UpdatedAt: now}
-	if err := s.metadata.UpsertScanRun(ctx, s.tenant(ctx), run); err != nil {
-		return ports.ScanRun{}, err
+	if !existed {
+		go s.executeScanRun(context.Background(), s.tenant(ctx), run, settings)
 	}
-	go s.executeScanRun(context.Background(), s.tenant(ctx), run, settings)
 	return run, nil
 }
 
+// queuePushScan is queueScheduledScan's push-time sibling (design.md
+// Decision 4). It receives the digest directly (already computed by
+// parseManifestPayload, so no ResolveManifest round-trip and no
+// re-resolution race against a concurrent retag) and resolves settings
+// itself, inside the caller's goroutine, rather than before it — unlike
+// QueueManualScan/queueScheduledScan, whose synchronous settings resolution
+// would surface an unready Trivy runtime as a failed push. It gates on
+// settings.Enabled only, not ScheduleEnabled (which governs the periodic
+// sweep, not push), and dedups via the existing GetActiveScanRunByDigest
+// (queued|running) check. Every failure path returns silently: push must
+// never fail or block because of scanning.
+func (s *Service) queuePushScan(ctx context.Context, tenant string, repository string, reference string, digest string) {
+	settings, err := s.resolveManagedScanSettingsForTenant(ctx, tenant)
+	if err != nil || !settings.Enabled {
+		return
+	}
+	run, existed, err := s.dedupAndQueueScanRun(ctx, tenant, repository, strings.TrimSpace(reference), digest, ports.ScanTriggerPush)
+	if err != nil || existed {
+		return
+	}
+	go s.executeScanRun(context.Background(), tenant, run, settings)
+}
+
+// resolveManagedScanSettingsForTenant mirrors resolveManagedScanSettings for
+// the trivy feature, taking tenant explicitly rather than resolving it via
+// s.tenant(ctx) — it is called from queuePushScan, which already holds the
+// caller's resolved tenant from before its own goroutine started (same
+// precedent as resolveManagedSecretScanSettings).
+func (s *Service) resolveManagedScanSettingsForTenant(ctx context.Context, tenant string) (ports.ScanSettings, error) {
+	settings, err := s.metadata.GetScanSettings(ctx, tenant, trivyFeatureName)
+	if err != nil {
+		return ports.ScanSettings{}, err
+	}
+	state, err := s.metadata.GetFeatureRuntimeState(ctx, tenant, trivyFeatureName)
+	if err != nil {
+		return ports.ScanSettings{}, err
+	}
+	if state.Status != ports.FeatureRuntimeStatusReady {
+		return ports.ScanSettings{}, domain.NewValidationError(fmt.Sprintf("trivy runtime is %s", state.Status))
+	}
+	settings.BinaryPath = strings.TrimSpace(state.ActiveBinaryPath)
+	settings.CacheDir = strings.TrimSpace(state.CacheDir)
+	return settings, nil
+}
+
 func (s *Service) executeScanRun(ctx context.Context, tenant string, run ports.ScanRun, settings ports.ScanSettings) {
-	if s.scanRunner == nil {
+	scanRunner := s.getScanRunner()
+	if scanRunner == nil {
 		return
 	}
 	// The secret-scan leg reuses this same manual/scheduled rescan trigger
@@ -258,7 +322,7 @@ func (s *Service) executeScanRun(ctx context.Context, tenant string, run ports.S
 		s.persistAsyncScanRun(ctx, tenant, run)
 		return
 	}
-	result, err := s.scanRunner.Run(ctx, target, settings)
+	result, err := scanRunner.Run(ctx, target, settings)
 	finished := s.now()
 	run.FinishedAt = &finished
 	run.UpdatedAt = finished
@@ -286,7 +350,8 @@ func (s *Service) executeScanRun(ctx context.Context, tenant string, run ports.S
 // secret findings are informational only (spec.md "Informational Findings
 // Only"), never a gate.
 func (s *Service) executeSecretScanLeg(ctx context.Context, tenant string, repository string, digest string, trigger string) {
-	if s.secretScanRunner == nil {
+	secretScanRunner := s.getSecretScanRunner()
+	if secretScanRunner == nil {
 		return
 	}
 	settings, err := s.resolveManagedSecretScanSettings(ctx, tenant)
@@ -329,7 +394,7 @@ func (s *Service) executeSecretScanLeg(ctx context.Context, tenant string, repos
 	s.persistAsyncSecretScanRun(ctx, tenant, run)
 
 	target := ports.SecretScanTarget{Repository: repository, Digest: digest, Blobs: blobs}
-	result, err := s.secretScanRunner.Run(ctx, target, settings)
+	result, err := secretScanRunner.Run(ctx, target, settings)
 	finished := s.now()
 	run.FinishedAt = &finished
 	run.UpdatedAt = finished

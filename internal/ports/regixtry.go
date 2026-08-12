@@ -62,6 +62,7 @@ const (
 
 	ScanTriggerManual    = "manual"
 	ScanTriggerScheduled = "scheduled"
+	ScanTriggerPush      = "push"
 
 	ScanPolicyThresholdCritical     = "critical"
 	ScanPolicyThresholdCriticalHigh = "critical_high"
