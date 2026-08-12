@@ -164,6 +164,46 @@ func TestRenderAdminScanHistoryModalChromeLinesAreSingleLine(t *testing.T) {
 // slices its composed content through fitLines/renderSection. The active
 // tab's own bordered table keeps its own pagination footer untouched, and
 // no outer "Showing " indicator ever appears in the output.
+// TestAdminScanHistoryModalTableBodyShowsEmptyLeaksStateAndKeepsTabVisible is
+// the sdd-verify CRITICAL-1 remediation test (spec.md "Secret Findings
+// Surface" — "No secret scan for the navigated execution stays visible"):
+// when the navigated execution's digest has no secret scan (modal.Secrets is
+// empty) and the operator is on the Leaks tab, the modal MUST show an
+// explicit empty-state message rather than a blank or crashing body, and the
+// Leaks tab MUST stay present in the tab bar rather than being hidden or
+// removed.
+func TestAdminScanHistoryModalTableBodyShowsEmptyLeaksStateAndKeepsTabVisible(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+	modal := adminScanHistoryModal{
+		Open:       true,
+		Repository: "acme/api",
+		Tabs:       newAdminScanHistoryTabs(),
+		ActiveTab:  1, // Leaks tab
+		Runs:       []ports.ScanRun{{ID: "run-1", CreatedAt: time.Now()}},
+		Detail:     ports.ScanRunDetail{Findings: []ports.ScanRunFinding{{VulnerabilityID: "CVE-1"}}},
+		Secrets:    nil, // no secret scan recorded for this execution's digest
+	}
+	view := AdminViewState{}
+
+	body := adminScanHistoryModalTableBody(theme, modal, view, adminScanHistoryModalMinTableBudget)
+	if !strings.Contains(body, "No secret findings recorded for this execution.") {
+		t.Fatalf("adminScanHistoryModalTableBody() = %q, want the explicit empty-state message when modal.Secrets is empty", body)
+	}
+
+	got := renderAdminScanHistoryModal(theme, modal, view, 20)
+	if !strings.Contains(got, "No secret findings recorded for this execution.") {
+		t.Fatalf("renderAdminScanHistoryModal() = %q, want the explicit empty-state message on the Leaks tab", got)
+	}
+	if !strings.Contains(got, "Leaks") {
+		t.Fatalf("renderAdminScanHistoryModal() = %q, want the Leaks tab to stay present in the tab bar, never hidden", got)
+	}
+	if !strings.Contains(got, "Vulnerabilities") {
+		t.Fatalf("renderAdminScanHistoryModal() = %q, want the Vulnerabilities tab to remain in the tab bar alongside Leaks", got)
+	}
+}
+
 func TestRenderAdminScanHistoryModalNeverAppliesFitLinesOverComposite(t *testing.T) {
 	t.Parallel()
 
