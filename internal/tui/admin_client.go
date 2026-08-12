@@ -32,6 +32,8 @@ type AdminClient interface {
 	UpgradeFeatureRuntime(ctx context.Context, session AdminSession, name string, version string) (ports.FeatureRuntimeState, error)
 	RollbackFeatureRuntime(ctx context.Context, session AdminSession, name string) (ports.FeatureRuntimeState, error)
 	ConfigureFeature(ctx context.Context, session AdminSession, name string, input ports.FeatureConfigureInput) (ports.FeatureDetails, error)
+	GetScanPolicy(ctx context.Context, session AdminSession) (ports.ScanPolicySettings, error)
+	UpdateScanPolicy(ctx context.Context, session AdminSession, input ports.ScanPolicySettings) (ports.ScanPolicySettings, error)
 	EnableFeature(ctx context.Context, session AdminSession, name string) (ports.FeatureDetails, error)
 	DisableFeature(ctx context.Context, session AdminSession, name string) (ports.FeatureDetails, error)
 	ListUsers(ctx context.Context, session AdminSession) ([]ports.AdminUser, error)
@@ -238,6 +240,23 @@ func (c *HTTPAdminClient) ConfigureFeature(ctx context.Context, session AdminSes
 		return ports.FeatureDetails{}, err
 	}
 	return details, nil
+}
+
+func (c *HTTPAdminClient) GetScanPolicy(ctx context.Context, session AdminSession) (ports.ScanPolicySettings, error) {
+	var settings ports.ScanPolicySettings
+	if err := c.getJSON(ctx, session, "/admin/v1/scan-policy", &settings); err != nil {
+		return ports.ScanPolicySettings{}, err
+	}
+	return settings, nil
+}
+
+func (c *HTTPAdminClient) UpdateScanPolicy(ctx context.Context, session AdminSession, input ports.ScanPolicySettings) (ports.ScanPolicySettings, error) {
+	var settings ports.ScanPolicySettings
+	body := map[string]any{"enabled": input.Enabled, "severity_threshold": input.SeverityThreshold}
+	if err := c.requestJSON(ctx, stdhttp.MethodPut, session, "/admin/v1/scan-policy", body, &settings, stdhttp.StatusOK); err != nil {
+		return ports.ScanPolicySettings{}, err
+	}
+	return settings, nil
 }
 
 func (c *HTTPAdminClient) EnableFeature(ctx context.Context, session AdminSession, name string) (ports.FeatureDetails, error) {

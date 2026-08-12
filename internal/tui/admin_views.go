@@ -45,6 +45,8 @@ func renderAdminWorkspace(current screen, session AdminSession, view AdminViewSt
 		modalView = renderAdminModal(theme, view.ConfirmModal)
 	case view.TrivyConfigModal.Active():
 		modalView = renderTrivyConfigModal(theme, view.TrivyConfigModal)
+	case view.ScanPolicyModal.Active():
+		modalView = renderScanPolicyModal(theme, view.ScanPolicyModal)
 	}
 	if modalView == "" {
 		return base
@@ -592,6 +594,41 @@ func renderTrivyConfigModal(theme adminTheme, modal trivyConfigModal) string {
 	return theme.section.Render(strings.Join(lines, "\n"))
 }
 
+// renderScanPolicyModal renders the vulnerability policy gate's own modal
+// (design.md Decision 6): heading + 2 fields x 2 rows + blank/help = 7
+// inner rows, +4 rows theme.section chrome = 11 total, 13 with an error
+// present. It is a sibling of renderTrivyConfigModal, not an extension —
+// the two never share fields or output (spec's "separate surface"
+// requirement).
+func renderScanPolicyModal(theme adminTheme, modal scanPolicyModal) string {
+	lines := []string{
+		theme.subheading.Render("Vulnerability Policy"),
+		renderToggleField(theme, "Enabled", modal.Enabled, modal.Focus == scanPolicyFieldEnabled),
+		renderTextField(theme, "Severity Threshold", scanPolicyThresholdLabel(modal.SeverityThreshold), modal.Focus == scanPolicyFieldThreshold),
+	}
+	if strings.TrimSpace(modal.Error) != "" {
+		lines = append(lines, "", theme.error.Render(modal.Error))
+	}
+	lines = append(lines, "", theme.muted.Render("Enter: save | Tab: next field | Space: toggle/cycle | Esc: cancel"))
+	return theme.section.Render(strings.Join(lines, "\n"))
+}
+
+// scanPolicyThresholdLabel renders the severity threshold as the operator-
+// facing text the badge and modal both use (design.md Decision 6): CRITICAL
+// / CRITICAL+HIGH. An unrecognized value renders as-is rather than
+// panicking or hiding state — the admin API already rejects unknown values
+// before they can reach here.
+func scanPolicyThresholdLabel(threshold string) string {
+	switch threshold {
+	case ports.ScanPolicyThresholdCriticalHigh:
+		return "CRITICAL+HIGH"
+	case ports.ScanPolicyThresholdCritical:
+		return "CRITICAL"
+	default:
+		return strings.ToUpper(threshold)
+	}
+}
+
 func adminFeatureHelp(view AdminViewState) string {
 	parts := []string{"Enter/r: refresh page"}
 	if view.FeaturePage.Summary.Name == trivyFeatureName {
@@ -601,6 +638,10 @@ func adminFeatureHelp(view AdminViewState) string {
 		} else {
 			parts = append(parts, "Up/Down: select alert", "Enter: details")
 		}
+		// p: policy is available on both Trivy tabs, matching the policy
+		// badge composed into renderTrivyTabs, which is likewise visible on
+		// both (design.md Decision 6).
+		parts = append(parts, "p: policy")
 	}
 	parts = append(parts, strings.Split(featureActionHelp(view.FeaturePage), " | ")[1:]...)
 	return strings.Join(parts, " | ")

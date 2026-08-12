@@ -239,6 +239,101 @@ func TestRenderTrivyConfigModalHeightIsIdenticalAcrossEveryFocusPosition(t *test
 	}
 }
 
+// TestRenderScanPolicyModalFitsWithinElevenRowBudget is the Phase 8 task 8.2
+// RED test (design.md Decision 6): heading + 2 fields x 2 rows + blank/help
+// = 7 inner rows + 4 rows theme.section chrome = 11 total, 13 with an error
+// present (+1 blank +1 error line) — mirrors
+// TestRenderTrivyConfigModalFitsWithinCompactedRowBudget's pattern at the
+// 11/13-row budget instead of 17/20.
+func TestRenderScanPolicyModalFitsWithinElevenRowBudget(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+
+	tests := []struct {
+		name       string
+		modal      scanPolicyModal
+		wantHeight int
+	}{
+		{
+			name:       "without error",
+			modal:      scanPolicyModal{Open: true, Focus: scanPolicyFieldEnabled, Enabled: true, SeverityThreshold: ports.ScanPolicyThresholdCritical},
+			wantHeight: 11,
+		},
+		{
+			name:       "with error",
+			modal:      scanPolicyModal{Open: true, Focus: scanPolicyFieldThreshold, Enabled: true, SeverityThreshold: ports.ScanPolicyThresholdCriticalHigh, Error: "severity_threshold must be critical or critical_high"},
+			wantHeight: 13,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := renderScanPolicyModal(theme, tc.modal)
+			if h := lipgloss.Height(got); h != tc.wantHeight {
+				t.Fatalf("renderScanPolicyModal() height = %d, want %d (design.md Decision 6's 11/13-row budget)\n%s", h, tc.wantHeight, got)
+			}
+		})
+	}
+}
+
+// TestRenderScanPolicyModalHeightIsIdenticalAcrossEveryFocusPosition mirrors
+// TestRenderTrivyConfigModalHeightIsIdenticalAcrossEveryFocusPosition: the
+// enabled-toggle and threshold-cycle fields cost the same 2 rows each, so
+// total height must not change as focus tabs between them.
+func TestRenderScanPolicyModalHeightIsIdenticalAcrossEveryFocusPosition(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+	base := scanPolicyModal{Open: true, Enabled: true, SeverityThreshold: ports.ScanPolicyThresholdCritical}
+
+	focusPositions := []scanPolicyField{scanPolicyFieldEnabled, scanPolicyFieldThreshold}
+
+	var wantHeight int
+	for i, focus := range focusPositions {
+		modal := base
+		modal.Focus = focus
+		got := lipgloss.Height(renderScanPolicyModal(theme, modal))
+		if i == 0 {
+			wantHeight = got
+			continue
+		}
+		if got != wantHeight {
+			t.Fatalf("renderScanPolicyModal() height at focus %d = %d, want %d (identical across every focus position, no reflow)", focus, got, wantHeight)
+		}
+	}
+}
+
+// TestRenderScanPolicyModalIsASeparateSurfaceFromTrivyConfigModal is the
+// Phase 8 task 8.3 regression guard (spec's explicit "separate surface"
+// scenario): the policy fields must not appear when trivyConfigModal is
+// rendered standalone, and trivyConfigModal's fields must not appear in the
+// policy modal's own output.
+func TestRenderScanPolicyModalIsASeparateSurfaceFromTrivyConfigModal(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+
+	trivyOutput := renderTrivyConfigModal(theme, trivyConfigModal{
+		Open: true, ScheduleEnabled: true, Interval: "1h", Timeout: "30s",
+		RegistryReachableURL: "https://registry.example.com", MaxConcurrency: "4",
+	})
+	for _, forbidden := range []string{"Vulnerability Policy", "Severity Threshold"} {
+		if strings.Contains(trivyOutput, forbidden) {
+			t.Fatalf("renderTrivyConfigModal() output contains %q, want the policy modal to be a separate surface\n%s", forbidden, trivyOutput)
+		}
+	}
+
+	policyOutput := renderScanPolicyModal(theme, scanPolicyModal{Open: true, Enabled: true, SeverityThreshold: ports.ScanPolicyThresholdCritical})
+	for _, forbidden := range []string{"Edit Trivy Configuration", "Registry Reachable URL", "Schedule Enabled"} {
+		if strings.Contains(policyOutput, forbidden) {
+			t.Fatalf("renderScanPolicyModal() output contains %q, want no Trivy config fields\n%s", forbidden, policyOutput)
+		}
+	}
+}
+
 // TestRenderToggleFieldCompactedToTwoRows is the Phase 2 task 2.2
 // characterization test: renderToggleField puts its on/off value inside the
 // same bordered box as text/secret fields today (4 rows total: label + 3-row

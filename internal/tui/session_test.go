@@ -80,6 +80,38 @@ func TestAdminScanHistoryModalActiveReflectsOpenField(t *testing.T) {
 	}
 }
 
+// TestScanPolicyModalActiveReflectsOpenField is the Phase 8 task 8.1 RED
+// test: scanPolicyModal follows the same Active()-gated pattern as
+// trivyConfigModal (design.md Decision 6 — a sibling struct, not an
+// extension of trivyConfigModal).
+func TestScanPolicyModalActiveReflectsOpenField(t *testing.T) {
+	t.Parallel()
+
+	closed := scanPolicyModal{}
+	if closed.Active() {
+		t.Fatal("scanPolicyModal{}.Active() = true, want false when Open is unset")
+	}
+
+	open := scanPolicyModal{Open: true}
+	if !open.Active() {
+		t.Fatal("scanPolicyModal{Open: true}.Active() = false, want true")
+	}
+}
+
+// TestNextScanPolicyFieldCyclesBetweenTheTwoFields mirrors
+// nextTrivyConfigField's wrapping-cursor pattern for the modal's 2 fields
+// (enabled toggle, severity threshold cycle).
+func TestNextScanPolicyFieldCyclesBetweenTheTwoFields(t *testing.T) {
+	t.Parallel()
+
+	if got := nextScanPolicyField(scanPolicyFieldEnabled); got != scanPolicyFieldThreshold {
+		t.Fatalf("nextScanPolicyField(Enabled) = %v, want Threshold", got)
+	}
+	if got := nextScanPolicyField(scanPolicyFieldThreshold); got != scanPolicyFieldEnabled {
+		t.Fatalf("nextScanPolicyField(Threshold) = %v, want Enabled (wraps)", got)
+	}
+}
+
 func TestIsAdminSessionExpired(t *testing.T) {
 	t.Parallel()
 

@@ -247,6 +247,16 @@ type adminFeatureConfiguredMsg struct {
 	err  error
 }
 
+type adminScanPolicyLoadedMsg struct {
+	settings ports.ScanPolicySettings
+	err      error
+}
+
+type adminScanPolicyUpdatedMsg struct {
+	settings ports.ScanPolicySettings
+	err      error
+}
+
 type adminFeatureRuntimeMutatedMsg struct {
 	name   string
 	action string
@@ -515,6 +525,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else if strings.HasPrefix(strings.ToLower(m.status), "loading") {
 			m.status = ""
 		}
+		if msg.page.Summary.Name == trivyFeatureName {
+			// The policy badge (renderTrivyTabs) needs ScanPolicy loaded
+			// before it can render a real state; chained as a follow-up Cmd,
+			// matching this Update loop's existing single-Cmd-return style.
+			return m, m.loadScanPolicyCmd()
+		}
 		return m, nil
 	case adminFeatureActionCompletedMsg:
 		if msg.err != nil {
@@ -543,6 +559,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = "Loading built-in features..."
 		m.screen = screenAdminFeatures
 		return m, m.loadAdminFeaturesCmd()
+	case adminScanPolicyLoadedMsg:
+		if msg.err != nil {
+			if IsAdminSessionExpired(msg.err) {
+				return m.expireAdminSession(msg.err.Error()), nil
+			}
+			// Best-effort, matching the badge/modal's fail-quiet posture:
+			// leave ScanPolicy at its zero value rather than surfacing a
+			// blocking status error over an otherwise-successful feature
+			// page load.
+			return m, nil
+		}
+		m.adminView.ScanPolicy = msg.settings
+		return m, nil
+	case adminScanPolicyUpdatedMsg:
+		if msg.err != nil {
+			if IsAdminSessionExpired(msg.err) {
+				return m.expireAdminSession(msg.err.Error()), nil
+			}
+			m.adminView.ScanPolicyModal.Error = msg.err.Error()
+			return m, nil
+		}
+		m.adminView.ScanPolicy = msg.settings
+		m.adminView.ScanPolicyModal = scanPolicyModal{}
+		m.status = "Vulnerability policy saved."
+		return m, nil
 	case adminFeatureRuntimeMutatedMsg:
 		if msg.err != nil {
 			if IsAdminSessionExpired(msg.err) {
@@ -1020,6 +1061,10 @@ func (m Model) updateAdminKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateTrivyConfigModalKey(msg)
 	}
 
+	if m.adminView.ScanPolicyModal.Active() {
+		return m.updateScanPolicyModalKey(msg)
+	}
+
 	if m.adminView.ScanHistoryModal.Active() {
 		return m.updateAdminScanHistoryModalKey(msg)
 	}
@@ -1140,6 +1185,18 @@ func (m Model) updateAdminFeaturesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case m.isSelectedTrivyFeature() && isTabKey(msg):
 		return m.toggleTrivyTab()
+	case m.isSelectedTrivyFeature() && isRuneKey(msg, 'p'):
+		// Available on both Trivy tabs, matching the policy badge composed
+		// into renderTrivyTabs, which is likewise visible on both
+		// (design.md Decision 6; resolves the design's open question in
+		// favor of both tabs rather than Runtime only).
+		threshold := m.adminView.ScanPolicy.SeverityThreshold
+		if strings.TrimSpace(threshold) == "" {
+			threshold = ports.ScanPolicyThresholdCritical
+		}
+		m.adminView.ScanPolicyModal = scanPolicyModal{Open: true, Focus: scanPolicyFieldEnabled, Enabled: m.adminView.ScanPolicy.Enabled, SeverityThreshold: threshold}
+		m.status = ""
+		return m, nil
 	case m.isSelectedTrivyFeature() && m.adminView.TrivyTab == trivyTabRepositoryAlerts && isMoveUpKey(msg):
 		if len(m.adminView.TrivySummaries) == 0 {
 			return m, nil
@@ -1258,6 +1315,47 @@ func (m Model) updateTrivyConfigModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, nil
+}
+
+// updateScanPolicyModalKey handles keys while the vulnerability policy
+// modal is open, mirroring updateTrivyConfigModalKey's dedicated-handler
+// pattern: Tab cycles the 2 fields (wrapping, via nextScanPolicyField),
+// Space toggles Enabled when it has focus or cycles SeverityThreshold
+// between CRITICAL/CRITICAL+HIGH when Threshold has focus, Enter saves,
+// Esc cancels without persisting.
+func (m Model) updateScanPolicyModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case isEscKey(msg):
+		m.adminView.ScanPolicyModal = scanPolicyModal{}
+		m.status = ""
+		return m, nil
+	case isTabKey(msg):
+		m.adminView.ScanPolicyModal.Focus = nextScanPolicyField(m.adminView.ScanPolicyModal.Focus)
+		m.adminView.ScanPolicyModal.Error = ""
+		return m, nil
+	case isRuneKey(msg, ' '):
+		switch m.adminView.ScanPolicyModal.Focus {
+		case scanPolicyFieldEnabled:
+			m.adminView.ScanPolicyModal.Enabled = !m.adminView.ScanPolicyModal.Enabled
+		case scanPolicyFieldThreshold:
+			m.adminView.ScanPolicyModal.SeverityThreshold = nextScanPolicyThreshold(m.adminView.ScanPolicyModal.SeverityThreshold)
+		}
+		m.adminView.ScanPolicyModal.Error = ""
+		return m, nil
+	case isEnterKey(msg):
+		m.status = "Saving vulnerability policy..."
+		return m, m.updateScanPolicyCmd(ports.ScanPolicySettings{Enabled: m.adminView.ScanPolicyModal.Enabled, SeverityThreshold: m.adminView.ScanPolicyModal.SeverityThreshold})
+	}
+	return m, nil
+}
+
+// nextScanPolicyThreshold cycles the 2-value severity threshold, toggled
+// with Space per design.md Decision 6.
+func nextScanPolicyThreshold(threshold string) string {
+	if threshold == ports.ScanPolicyThresholdCriticalHigh {
+		return ports.ScanPolicyThresholdCritical
+	}
+	return ports.ScanPolicyThresholdCriticalHigh
 }
 
 // updateAdminScanHistoryModalKey handles keys while the scan history modal
@@ -2245,6 +2343,26 @@ func (m Model) configureFeatureCmd(name string, input ports.FeatureConfigureInpu
 		}
 		_, err := m.adminClient.ConfigureFeature(m.ctx, m.adminSession, name, input)
 		return adminFeatureConfiguredMsg{name: name, err: err}
+	}
+}
+
+func (m Model) loadScanPolicyCmd() tea.Cmd {
+	return func() tea.Msg {
+		if m.adminClient == nil {
+			return adminScanPolicyLoadedMsg{err: fmt.Errorf("admin API is unavailable for this session")}
+		}
+		settings, err := m.adminClient.GetScanPolicy(m.ctx, m.adminSession)
+		return adminScanPolicyLoadedMsg{settings: settings, err: err}
+	}
+}
+
+func (m Model) updateScanPolicyCmd(input ports.ScanPolicySettings) tea.Cmd {
+	return func() tea.Msg {
+		if m.adminClient == nil {
+			return adminScanPolicyUpdatedMsg{err: fmt.Errorf("admin API is unavailable for this session")}
+		}
+		settings, err := m.adminClient.UpdateScanPolicy(m.ctx, m.adminSession, input)
+		return adminScanPolicyUpdatedMsg{settings: settings, err: err}
 	}
 }
 

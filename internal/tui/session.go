@@ -123,6 +123,39 @@ func (m trivyConfigModal) Active() bool {
 	return m.Open
 }
 
+// scanPolicyField identifies which of scanPolicyModal's 2 fields has focus.
+type scanPolicyField int
+
+const (
+	scanPolicyFieldEnabled scanPolicyField = iota
+	scanPolicyFieldThreshold
+)
+
+// scanPolicyModal is the vulnerability policy gate's own admin modal
+// (design.md Decision 6 — a sibling struct, deliberately NOT an extension
+// of trivyConfigModal, so the two features stay separately configurable
+// surfaces per spec's "separate surface" requirement).
+type scanPolicyModal struct {
+	Open              bool
+	Focus             scanPolicyField
+	Enabled           bool
+	SeverityThreshold string
+	Error             string
+}
+
+func (m scanPolicyModal) Active() bool {
+	return m.Open
+}
+
+// nextScanPolicyField cycles between the modal's 2 fields with a wrapping
+// cursor, mirroring nextTrivyConfigField.
+func nextScanPolicyField(field scanPolicyField) scanPolicyField {
+	if field >= scanPolicyFieldThreshold {
+		return scanPolicyFieldEnabled
+	}
+	return field + 1
+}
+
 func (m adminConfirmModal) Active() bool {
 	return m.Kind != adminConfirmNone
 }
@@ -206,26 +239,32 @@ type adminTablesState struct {
 }
 
 type AdminViewState struct {
-	Users                  []ports.AdminUser
-	Features               []ports.FeatureSummary
-	SelectedUser           int
-	SelectedFeature        int
-	SelectedUserID         string
-	SelectedUsername       string
-	UserSearchQuery        string
-	UserSearchActive       bool
-	FeaturePage            ports.FeaturePage
-	Grants                 []ports.AdminRepoGrant
-	SelectedGrant          int
-	AdminTokens            []ports.AdminToken
-	SelectedToken          int
-	CreateUserForm         adminCreateUserForm
-	ResetPasswordForm      adminResetPasswordForm
-	GrantForm              adminGrantForm
-	TokenForm              adminTokenForm
-	ConfirmModal           adminConfirmModal
-	TrivyTab               TrivyTab
-	TrivyConfigModal       trivyConfigModal
+	Users             []ports.AdminUser
+	Features          []ports.FeatureSummary
+	SelectedUser      int
+	SelectedFeature   int
+	SelectedUserID    string
+	SelectedUsername  string
+	UserSearchQuery   string
+	UserSearchActive  bool
+	FeaturePage       ports.FeaturePage
+	Grants            []ports.AdminRepoGrant
+	SelectedGrant     int
+	AdminTokens       []ports.AdminToken
+	SelectedToken     int
+	CreateUserForm    adminCreateUserForm
+	ResetPasswordForm adminResetPasswordForm
+	GrantForm         adminGrantForm
+	TokenForm         adminTokenForm
+	ConfirmModal      adminConfirmModal
+	TrivyTab          TrivyTab
+	TrivyConfigModal  trivyConfigModal
+	// ScanPolicy is the vulnerability policy gate's current settings, kept
+	// on AdminViewState alongside FeaturePage/TrivyTab so renderTrivyTabs
+	// can compose its status badge (design.md Decision 6) without a modal
+	// being open.
+	ScanPolicy             ports.ScanPolicySettings
+	ScanPolicyModal        scanPolicyModal
 	TrivyScanRuns          []ports.ScanRun
 	TrivySelectedAlert     int
 	TrivyAlertsLoaded      bool

@@ -2648,6 +2648,12 @@ type fakeAdminClient struct {
 	secretScanFindings    map[string]ports.SecretScanRunDetail
 	secretScanFindingsErr error
 	featureAfterConfigure ports.FeatureDetails
+	scanPolicy            ports.ScanPolicySettings
+	scanPolicyErr         error
+	scanPolicyUpdateErr   error
+	getScanPolicyCalls    int
+	updateScanPolicyCalls int
+	lastScanPolicyInput   ports.ScanPolicySettings
 	installRuntime        ports.FeatureRuntimeState
 	upgradeRuntime        ports.FeatureRuntimeState
 	rollbackRuntime       ports.FeatureRuntimeState
@@ -2899,6 +2905,24 @@ func (f *fakeAdminClient) ConfigureFeature(_ context.Context, _ AdminSession, na
 		return f.featureAfterConfigure, nil
 	}
 	return f.feature, nil
+}
+
+func (f *fakeAdminClient) GetScanPolicy(context.Context, AdminSession) (ports.ScanPolicySettings, error) {
+	f.getScanPolicyCalls++
+	if f.scanPolicyErr != nil {
+		return ports.ScanPolicySettings{}, f.scanPolicyErr
+	}
+	return f.scanPolicy, nil
+}
+
+func (f *fakeAdminClient) UpdateScanPolicy(_ context.Context, _ AdminSession, input ports.ScanPolicySettings) (ports.ScanPolicySettings, error) {
+	f.updateScanPolicyCalls++
+	f.lastScanPolicyInput = input
+	if f.scanPolicyUpdateErr != nil {
+		return ports.ScanPolicySettings{}, f.scanPolicyUpdateErr
+	}
+	f.scanPolicy = input
+	return f.scanPolicy, nil
 }
 
 func (f *fakeAdminClient) EnableFeature(context.Context, AdminSession, string) (ports.FeatureDetails, error) {
