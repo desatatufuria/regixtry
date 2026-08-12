@@ -179,6 +179,65 @@ func TestStorePersistsDefaultDisabledScanSettings(t *testing.T) {
 	}
 }
 
+func TestStoreGetScanPolicySettingsReturnsNotFoundWithNoRow(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	_, err := store.GetScanPolicySettings(context.Background(), "tenant-a")
+	if !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("GetScanPolicySettings() error = %v, want ErrorCodeNotFound", err)
+	}
+}
+
+func TestStoreUpsertScanPolicySettingsRoundTripsEnabledAndThreshold(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		enabled   bool
+		threshold string
+	}{
+		{name: "enabled critical", enabled: true, threshold: ports.ScanPolicyThresholdCritical},
+		{name: "disabled critical_high", enabled: false, threshold: ports.ScanPolicyThresholdCriticalHigh},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			store := newTestStore(t)
+			defer store.Close()
+
+			settings := ports.ScanPolicySettings{Enabled: tt.enabled, SeverityThreshold: tt.threshold, UpdatedAt: time.Now().UTC()}
+			if err := store.UpsertScanPolicySettings(context.Background(), "tenant-a", settings); err != nil {
+				t.Fatalf("UpsertScanPolicySettings() error = %v", err)
+			}
+
+			stored, err := store.GetScanPolicySettings(context.Background(), "tenant-a")
+			if err != nil {
+				t.Fatalf("GetScanPolicySettings() error = %v", err)
+			}
+			if stored.Enabled != tt.enabled || stored.SeverityThreshold != tt.threshold {
+				t.Fatalf("stored = %#v, want enabled=%v threshold=%s", stored, tt.enabled, tt.threshold)
+			}
+
+			settings.Enabled = !tt.enabled
+			if err := store.UpsertScanPolicySettings(context.Background(), "tenant-a", settings); err != nil {
+				t.Fatalf("UpsertScanPolicySettings(update) error = %v", err)
+			}
+			updated, err := store.GetScanPolicySettings(context.Background(), "tenant-a")
+			if err != nil {
+				t.Fatalf("GetScanPolicySettings(update) error = %v", err)
+			}
+			if updated.Enabled == stored.Enabled {
+				t.Fatalf("updated.Enabled = %v, want flipped from %v", updated.Enabled, stored.Enabled)
+			}
+		})
+	}
+}
+
 func TestStoreBridgesLegacyBinaryColumnsWhenServiceFieldsAreMissing(t *testing.T) {
 	t.Parallel()
 

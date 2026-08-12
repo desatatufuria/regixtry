@@ -497,6 +497,42 @@ func (s *Store) UpsertScanSettings(ctx context.Context, tenant string, feature s
 	return err
 }
 
+func (s *Store) GetScanPolicySettings(ctx context.Context, tenant string) (ports.ScanPolicySettings, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT enabled, severity_threshold, updated_at
+		FROM scan_policy_settings
+		WHERE tenant = ?
+	`, tenant)
+	var (
+		enabled           bool
+		severityThreshold string
+		updatedAtRaw      string
+	)
+	if err := row.Scan(&enabled, &severityThreshold, &updatedAtRaw); err != nil {
+		if err == sql.ErrNoRows {
+			return ports.ScanPolicySettings{}, domain.NewNotFoundError("scan_policy_settings", tenant)
+		}
+		return ports.ScanPolicySettings{}, err
+	}
+	updatedAt, err := time.Parse(time.RFC3339Nano, updatedAtRaw)
+	if err != nil {
+		return ports.ScanPolicySettings{}, err
+	}
+	return ports.ScanPolicySettings{Enabled: enabled, SeverityThreshold: severityThreshold, UpdatedAt: updatedAt}, nil
+}
+
+func (s *Store) UpsertScanPolicySettings(ctx context.Context, tenant string, settings ports.ScanPolicySettings) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO scan_policy_settings (tenant, enabled, severity_threshold, updated_at)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(tenant) DO UPDATE SET
+			enabled = excluded.enabled,
+			severity_threshold = excluded.severity_threshold,
+			updated_at = excluded.updated_at
+	`, tenant, settings.Enabled, settings.SeverityThreshold, settings.UpdatedAt.UTC().Format(time.RFC3339Nano))
+	return err
+}
+
 func (s *Store) GetFeatureRuntimeState(ctx context.Context, tenant string, feature string) (ports.FeatureRuntimeState, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT status, active_version, previous_version, active_binary_path, cache_dir, receipt_path, migration_hint, last_verified_at, last_health_check_at, last_db_updated_at, last_error, updated_at
@@ -1125,6 +1161,13 @@ func (s *Store) init() error {
 			updated_at TEXT NOT NULL,
 			gitleaks_version TEXT NOT NULL DEFAULT '',
 			error TEXT NOT NULL DEFAULT ''
+		);`,
+		`CREATE TABLE IF NOT EXISTS scan_policy_settings (
+			tenant TEXT NOT NULL,
+			enabled INTEGER NOT NULL DEFAULT 1,
+			severity_threshold TEXT NOT NULL DEFAULT 'critical',
+			updated_at TEXT NOT NULL,
+			PRIMARY KEY(tenant)
 		);`,
 		`CREATE TABLE IF NOT EXISTS secret_scan_findings (
 			run_id TEXT NOT NULL,

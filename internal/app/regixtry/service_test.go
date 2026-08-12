@@ -199,6 +199,44 @@ func TestServiceRejectsInvalidOrUnpublishedScanTargets(t *testing.T) {
 	}
 }
 
+func TestServiceGetScanPolicySettingsDefaultsToEnabledCriticalWithNoRowWritten(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	settings, err := service.GetScanPolicySettings(context.Background())
+	if err != nil {
+		t.Fatalf("GetScanPolicySettings() error = %v", err)
+	}
+	if !settings.Enabled || settings.SeverityThreshold != ports.ScanPolicyThresholdCritical {
+		t.Fatalf("settings = %#v, want enabled=true threshold=critical with zero rows written", settings)
+	}
+}
+
+func TestServiceUpdateScanPolicySettingsPersistsAndRoundTrips(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	updated, err := service.UpdateScanPolicySettings(context.Background(), ports.ScanPolicySettings{Enabled: false, SeverityThreshold: ports.ScanPolicyThresholdCriticalHigh})
+	if err != nil {
+		t.Fatalf("UpdateScanPolicySettings() error = %v", err)
+	}
+	if updated.Enabled || updated.SeverityThreshold != ports.ScanPolicyThresholdCriticalHigh {
+		t.Fatalf("updated = %#v, want disabled/critical_high", updated)
+	}
+
+	stored, err := service.GetScanPolicySettings(context.Background())
+	if err != nil {
+		t.Fatalf("GetScanPolicySettings() error = %v", err)
+	}
+	if stored.Enabled || stored.SeverityThreshold != ports.ScanPolicyThresholdCriticalHigh {
+		t.Fatalf("stored = %#v, want disabled/critical_high", stored)
+	}
+}
+
 func TestServiceRejectsOutOfBoundsScanSettings(t *testing.T) {
 	t.Parallel()
 

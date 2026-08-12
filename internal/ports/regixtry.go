@@ -31,6 +31,8 @@ type MetadataStore interface {
 	ListManifestBlobs(ctx context.Context, tenant string, repository domain.RepositoryRef, manifestDigest domain.Digest) ([]domain.Descriptor, error)
 	GetScanSettings(ctx context.Context, tenant string, feature string) (ScanSettings, error)
 	UpsertScanSettings(ctx context.Context, tenant string, feature string, settings ScanSettings) error
+	GetScanPolicySettings(ctx context.Context, tenant string) (ScanPolicySettings, error)
+	UpsertScanPolicySettings(ctx context.Context, tenant string, settings ScanPolicySettings) error
 	GetFeatureRuntimeState(ctx context.Context, tenant string, feature string) (FeatureRuntimeState, error)
 	UpsertFeatureRuntimeState(ctx context.Context, tenant string, feature string, state FeatureRuntimeState) error
 	GetActiveScanRunByDigest(ctx context.Context, tenant string, repository string, digest string) (ScanRun, error)
@@ -59,7 +61,20 @@ const (
 
 	ScanTriggerManual    = "manual"
 	ScanTriggerScheduled = "scheduled"
+
+	ScanPolicyThresholdCritical     = "critical"
+	ScanPolicyThresholdCriticalHigh = "critical_high"
 )
+
+// ScanPolicySettings is the global vulnerability policy gate configuration:
+// whether the gate is enforced at all, and the severity threshold a
+// completed scan's findings must meet or exceed to block a pull
+// (design.md Decision 1).
+type ScanPolicySettings struct {
+	Enabled           bool      `json:"enabled"`
+	SeverityThreshold string    `json:"severity_threshold"`
+	UpdatedAt         time.Time `json:"updated_at"`
+}
 
 type ScanSettings struct {
 	Enabled               bool          `json:"enabled"`

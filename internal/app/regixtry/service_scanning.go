@@ -47,6 +47,28 @@ func (s *Service) UpdateScanSettings(ctx context.Context, input ports.ScanSettin
 	return normalized, nil
 }
 
+// GetScanPolicySettings resolves the global vulnerability policy gate
+// settings with a code-level default fallback (design.md Decision 1): a
+// fresh install with zero rows ever written reports enabled/CRITICAL,
+// deliberately not relying on a boot-time Ensure* seed the way
+// GetScanSettings/EnsureScanSettings does — a missed boot path must never
+// silently produce policy-OFF.
+func (s *Service) GetScanPolicySettings(ctx context.Context) (ports.ScanPolicySettings, error) {
+	settings, err := s.metadata.GetScanPolicySettings(ctx, s.tenant(ctx))
+	if domain.IsCode(err, domain.ErrorCodeNotFound) {
+		return ports.ScanPolicySettings{Enabled: true, SeverityThreshold: ports.ScanPolicyThresholdCritical}, nil
+	}
+	return settings, err
+}
+
+func (s *Service) UpdateScanPolicySettings(ctx context.Context, input ports.ScanPolicySettings) (ports.ScanPolicySettings, error) {
+	input.UpdatedAt = s.now()
+	if err := s.metadata.UpsertScanPolicySettings(ctx, s.tenant(ctx), input); err != nil {
+		return ports.ScanPolicySettings{}, err
+	}
+	return input, nil
+}
+
 func (s *Service) QueueManualScan(ctx context.Context, repositoryName string, reference string) (ports.ScanRun, error) {
 	settings, err := s.resolveManagedScanSettings(ctx)
 	if err != nil {
