@@ -46,6 +46,46 @@ const (
 	adminTableColumnScanSummaryLastExecuted = "scan_summary_last_executed"
 )
 
+// Column widths below are measured, not guessed (design.md's recurring
+// discipline): each was sized against the actual longest value it renders --
+// e.g. adminScanSummaryLastExecutedWidth against
+// formatScanSummaryLastExecuted's longest output, "YYYY-MM-DD HH:MM (in
+// progress)" -- and widened for readability per the reported regression
+// (claude-handoff.md: Last Executed values were splitting across what looked
+// like a broken row boundary because the column was narrower than its own
+// longest legitimate value). sectionWidth (viewport.go) and
+// minViewportWidth/defaultViewportWidth were sized to comfortably fit the
+// widest of these tables (Repository Alerts) so the outer bordered section
+// never wraps a table's own rendered lines.
+const (
+	adminFeaturesColumnNameWidth       = 22
+	adminFeaturesColumnKindWidth       = 10
+	adminFeaturesColumnEnabledWidth    = 8
+	adminFeaturesColumnConfiguredWidth = 12
+	adminFeaturesColumnCurrentWidth    = 12
+	adminFeaturesColumnLatestWidth     = 12
+	adminFeaturesColumnUpdateWidth     = 10
+
+	adminFindingsColumnSeverityWidth  = 10
+	adminFindingsColumnFindingWidth   = 22
+	adminFindingsColumnPackageWidth   = 18
+	adminFindingsColumnInstalledWidth = 12
+	adminFindingsColumnFixedWidth     = 12
+	adminFindingsColumnFixableWidth   = 8
+
+	adminSecretColumnRuleWidth     = 24
+	adminSecretColumnLocationWidth = 46
+
+	adminScanSummaryColumnRepositoryWidth   = 26
+	adminScanSummaryColumnReferenceWidth    = 16
+	adminScanSummaryColumnStatusWidth       = 12
+	adminScanSummaryColumnCriticalWidth     = 9
+	adminScanSummaryColumnHighWidth         = 7
+	adminScanSummaryColumnFixableWidth      = 8
+	adminScanSummaryColumnRunsWidth         = 6
+	adminScanSummaryColumnLastExecutedWidth = 34
+)
+
 // newAdminBubbleTable is the sole construction point for every admin table.
 // pageSize is the number of data rows shown per page (design.md decision #1:
 // we derive this ourselves from the measured terminal budget since
@@ -83,13 +123,13 @@ func newAdminBubbleTable(columns []bubbletable.Column, rows []bubbletable.Row, h
 
 func buildAdminFeaturesTable(theme adminTheme, features []ports.FeatureSummary, highlighted int, pageSize int) bubbletable.Model {
 	columns := []bubbletable.Column{
-		bubbletable.NewColumn(adminTableColumnFeatureName, "Name", 18),
-		bubbletable.NewColumn(adminTableColumnFeatureKind, "Kind", 10),
-		bubbletable.NewColumn(adminTableColumnFeatureEnabled, "Enabled", 8),
-		bubbletable.NewColumn(adminTableColumnFeatureConfigured, "Configured", 10),
-		bubbletable.NewColumn(adminTableColumnFeatureCurrent, "Current", 10),
-		bubbletable.NewColumn(adminTableColumnFeatureLatest, "Latest", 10),
-		bubbletable.NewColumn(adminTableColumnFeatureUpdate, "Update", 10),
+		bubbletable.NewColumn(adminTableColumnFeatureName, "Name", adminFeaturesColumnNameWidth),
+		bubbletable.NewColumn(adminTableColumnFeatureKind, "Kind", adminFeaturesColumnKindWidth),
+		bubbletable.NewColumn(adminTableColumnFeatureEnabled, "Enabled", adminFeaturesColumnEnabledWidth),
+		bubbletable.NewColumn(adminTableColumnFeatureConfigured, "Configured", adminFeaturesColumnConfiguredWidth),
+		bubbletable.NewColumn(adminTableColumnFeatureCurrent, "Current", adminFeaturesColumnCurrentWidth),
+		bubbletable.NewColumn(adminTableColumnFeatureLatest, "Latest", adminFeaturesColumnLatestWidth),
+		bubbletable.NewColumn(adminTableColumnFeatureUpdate, "Update", adminFeaturesColumnUpdateWidth),
 	}
 	rows := make([]bubbletable.Row, 0, len(features))
 	for _, feature := range features {
@@ -126,12 +166,12 @@ func buildAdminFeatureRowsTable(theme adminTheme, section ports.FeatureSection, 
 
 func buildAdminFindingsTable(theme adminTheme, findings []ports.ScanRunFinding, highlighted int, pageSize int) bubbletable.Model {
 	columns := []bubbletable.Column{
-		bubbletable.NewColumn(adminTableColumnFindingSeverity, "Severity", 10),
-		bubbletable.NewColumn(adminTableColumnFindingID, "Finding", 18),
-		bubbletable.NewColumn(adminTableColumnFindingPackage, "Package", 16),
-		bubbletable.NewColumn(adminTableColumnFindingInstalled, "Installed", 10),
-		bubbletable.NewColumn(adminTableColumnFindingFixed, "Fixed", 10),
-		bubbletable.NewColumn(adminTableColumnFindingFixable, "Fixable", 8),
+		bubbletable.NewColumn(adminTableColumnFindingSeverity, "Severity", adminFindingsColumnSeverityWidth),
+		bubbletable.NewColumn(adminTableColumnFindingID, "Finding", adminFindingsColumnFindingWidth),
+		bubbletable.NewColumn(adminTableColumnFindingPackage, "Package", adminFindingsColumnPackageWidth),
+		bubbletable.NewColumn(adminTableColumnFindingInstalled, "Installed", adminFindingsColumnInstalledWidth),
+		bubbletable.NewColumn(adminTableColumnFindingFixed, "Fixed", adminFindingsColumnFixedWidth),
+		bubbletable.NewColumn(adminTableColumnFindingFixable, "Fixable", adminFindingsColumnFixableWidth),
 	}
 	rows := make([]bubbletable.Row, 0, len(findings))
 	for _, finding := range findings {
@@ -155,8 +195,8 @@ func buildAdminFindingsTable(theme adminTheme, findings []ports.ScanRunFinding, 
 // change, unlike buildAdminFindingsTable's vulnerability rows.
 func buildAdminSecretFindingsTable(theme adminTheme, findings []ports.SecretFinding, highlighted int, pageSize int) bubbletable.Model {
 	columns := []bubbletable.Column{
-		bubbletable.NewColumn(adminTableColumnSecretFindingRule, "Rule", 22),
-		bubbletable.NewColumn(adminTableColumnSecretFindingLocation, "Location", 40),
+		bubbletable.NewColumn(adminTableColumnSecretFindingRule, "Rule", adminSecretColumnRuleWidth),
+		bubbletable.NewColumn(adminTableColumnSecretFindingLocation, "Location", adminSecretColumnLocationWidth),
 	}
 	rows := make([]bubbletable.Row, 0, len(findings))
 	for _, finding := range findings {
@@ -176,14 +216,14 @@ func buildAdminSecretFindingsTable(theme adminTheme, findings []ports.SecretFind
 // the Repository Alerts tab.
 func buildAdminScanSummaryTable(theme adminTheme, summaries []repositorySummary, highlighted int, pageSize int) bubbletable.Model {
 	columns := []bubbletable.Column{
-		bubbletable.NewColumn(adminTableColumnScanSummaryRepository, "Repository", 18),
-		bubbletable.NewColumn(adminTableColumnScanSummaryReference, "Reference", 12),
-		bubbletable.NewColumn(adminTableColumnScanSummaryStatus, "Status", 10),
-		bubbletable.NewColumn(adminTableColumnScanSummaryCritical, "Critical", 8),
-		bubbletable.NewColumn(adminTableColumnScanSummaryHigh, "High", 6),
-		bubbletable.NewColumn(adminTableColumnScanSummaryFixable, "Fixable", 8),
-		bubbletable.NewColumn(adminTableColumnScanSummaryRuns, "Runs", 6),
-		bubbletable.NewColumn(adminTableColumnScanSummaryLastExecuted, "Last Executed", 22),
+		bubbletable.NewColumn(adminTableColumnScanSummaryRepository, "Repository", adminScanSummaryColumnRepositoryWidth),
+		bubbletable.NewColumn(adminTableColumnScanSummaryReference, "Reference", adminScanSummaryColumnReferenceWidth),
+		bubbletable.NewColumn(adminTableColumnScanSummaryStatus, "Status", adminScanSummaryColumnStatusWidth),
+		bubbletable.NewColumn(adminTableColumnScanSummaryCritical, "Critical", adminScanSummaryColumnCriticalWidth),
+		bubbletable.NewColumn(adminTableColumnScanSummaryHigh, "High", adminScanSummaryColumnHighWidth),
+		bubbletable.NewColumn(adminTableColumnScanSummaryFixable, "Fixable", adminScanSummaryColumnFixableWidth),
+		bubbletable.NewColumn(adminTableColumnScanSummaryRuns, "Runs", adminScanSummaryColumnRunsWidth),
+		bubbletable.NewColumn(adminTableColumnScanSummaryLastExecuted, "Last Executed", adminScanSummaryColumnLastExecutedWidth),
 	}
 	rows := make([]bubbletable.Row, 0, len(summaries))
 	for _, summary := range summaries {

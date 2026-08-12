@@ -41,8 +41,15 @@ func newAdminTheme() adminTheme {
 	errorColor := lipgloss.Color("#BF616A")
 
 	return adminTheme{
-		app:         lipgloss.NewStyle().Padding(0, 1),
-		section:     lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(border).Padding(1).Width(88),
+		app: lipgloss.NewStyle().Padding(0, 1),
+		// section is deliberately left without a fixed Width here: the
+		// historical Width(88) (tui-table-viewport-fixed-size proposal's
+		// deferred Q5) was narrower than the tables it wraps at realistic
+		// terminal sizes, corrupting borders/alignment. Call sites that carry
+		// a consoleLayout apply a real, viewport-derived width via
+		// viewport.go's sectionWidth(); call sites without one (forms that
+		// are not viewport-driven) fall back to auto-sizing to their content.
+		section:     lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(border).Padding(1),
 		tableHeader: lipgloss.NewStyle().Foreground(accent).Bold(true),
 		// borderColor: same palette as section's border, reused by bubble-table styling (Phase 4).
 		borderColor:      border,

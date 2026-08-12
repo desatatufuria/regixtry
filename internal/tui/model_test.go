@@ -127,8 +127,8 @@ func TestModelViewBelowMinimumSizeShowsTerminalTooSmall(t *testing.T) {
 	if !strings.Contains(view, "Terminal too small") {
 		t.Fatalf("view = %q, want too-small message", view)
 	}
-	if !strings.Contains(view, "Regixtry needs at least 90x24. Current: 60x20.") {
-		t.Fatalf("view = %q, want current-size detail", view)
+	if want := fmt.Sprintf("Regixtry needs at least %dx%d. Current: 60x20.", minViewportWidth, minViewportHeight); !strings.Contains(view, want) {
+		t.Fatalf("view = %q, want current-size detail %q", view, want)
 	}
 	if strings.Contains(view, "Regixtry is empty") || strings.Contains(view, model.loadingText) {
 		t.Fatalf("view = %q, want no screen content below minimum size", view)

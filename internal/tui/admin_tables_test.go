@@ -289,6 +289,78 @@ func TestFormatScanSummaryLastExecutedNeverBlank(t *testing.T) {
 	}
 }
 
+// TestScanSummaryLastExecutedColumnFitsLongestFormattedValueWithoutTruncation
+// is a RED test for the reported regression (claude-handoff.md,
+// tmp/features-repositoriy_alerts.png): formatScanSummaryLastExecuted's
+// longest legitimate output -- an in-progress timestamp -- must fit inside
+// its own column, otherwise bubble-table truncates/wraps the value and it
+// looks like a broken row boundary.
+func TestScanSummaryLastExecutedColumnFitsLongestFormattedValueWithoutTruncation(t *testing.T) {
+	t.Parallel()
+
+	longest := formatScanSummaryLastExecuted(repositorySummary{
+		LastExecuted: time.Date(2026, 8, 12, 14, 5, 0, 0, time.UTC),
+		InProgress:   true,
+	})
+
+	if w, col := lipgloss.Width(longest), adminScanSummaryColumnLastExecutedWidth; w >= col {
+		t.Fatalf("longest formatted value %q has width %d, want strictly less than the column width %d (needs padding room, not just an exact fit)", longest, w, col)
+	}
+}
+
+// TestRenderAdminFeaturesScreenFitsSummaryTableWithinItsOwnSectionWidth is
+// the RED test for the reported regression (claude-handoff.md,
+// tmp/features-repositoriy_alerts.png): the Repository Alerts summary table
+// is wider than theme.section's box at realistic terminal sizes when the
+// section width is a hardcoded constant smaller than the table. No rendered
+// line of the composed Features screen (Built-in Features + Repository
+// Alerts, both wrapped by the same renderSection call) may exceed the
+// section's own real, viewport-derived declared width.
+func TestRenderAdminFeaturesScreenFitsSummaryTableWithinItsOwnSectionWidth(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+
+	for _, dims := range []struct {
+		name          string
+		width, height int
+	}{
+		{"minViewport", minViewportWidth, minViewportHeight},
+		{"defaultViewport", defaultViewportWidth, defaultViewportHeight},
+	} {
+		dims := dims
+		t.Run(dims.name, func(t *testing.T) {
+			t.Parallel()
+
+			layout := contentBudget(dims.width, dims.height, "", "")
+
+			summaries := []repositorySummary{{
+				Repository:   "ghcr.io/some-long-organization-name/some-really-long-repository-name",
+				LatestRun:    ports.ScanRun{RequestedRef: "release-candidate-2026-08", Status: "completed", HasFixable: true},
+				LastExecuted: time.Date(2026, 8, 12, 14, 5, 0, 0, time.UTC),
+				InProgress:   true,
+				RunCount:     42,
+			}}
+			view := AdminViewState{
+				Features:          []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
+				TrivyAlertsLoaded: true,
+				TrivySummaries:    summaries,
+			}
+			view.Tables.Features = buildAdminFeaturesTable(theme, view.Features, 0, minTableRows)
+			view.Tables.ScanSummary = buildAdminScanSummaryTable(theme, summaries, 0, minTableRows)
+
+			got := renderAdminFeaturesScreen(theme, AdminSession{Username: "operator"}, view, layout, time.Now())
+
+			declaredWidth := sectionWidth(layout) + 2 // +2: theme.section's own RoundedBorder columns
+			for i, line := range strings.Split(got, "\n") {
+				if w := lipgloss.Width(line); w > declaredWidth {
+					t.Fatalf("line %d width = %d, want <= %d (theme.section's own declared width) -- a table overflowed its bordered box:\n%s", i, w, declaredWidth, got)
+				}
+			}
+		})
+	}
+}
+
 // TestBuildAdminScanSummaryTableRendersOneRowPerRepository is the Phase 2
 // task 2.2 RED test (spec.md "Repository Alerts Summarized Per Repository
 // With Ordering And Freshness"): buildAdminScanSummaryTable renders exactly

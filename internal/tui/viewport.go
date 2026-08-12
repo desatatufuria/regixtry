@@ -20,8 +20,20 @@ import (
 // because Model does not yet carry a viewport field (added in Phase 2).
 // Phase 2 wires a Model.contentBudget() method around this pure logic.
 const (
-	minViewportWidth, minViewportHeight         = 90, 24
-	defaultViewportWidth, defaultViewportHeight = 100, 40
+	// minViewportWidth/minViewportHeight are the floor terminal size the TUI
+	// guarantees correct rendering at (View() shows terminalTooSmallTemplate
+	// below these). minViewportWidth was raised from the historical 90
+	// alongside sectionWidth()'s fix for the hardcoded theme.section
+	// Width(88): 90 columns was already narrower than the Repository Alerts
+	// summary table's own natural rendered width (measured 99 before this
+	// change, wider still after widening its columns for breathing room), so
+	// even a fully responsive section width could not have honored the
+	// contract at the old floor without truncating/wrapping table borders.
+	minViewportWidth, minViewportHeight = 132, 24
+	// defaultViewportWidth/defaultViewportHeight are the initial size used
+	// before the first tea.WindowSizeMsg arrives. Bumped modestly beyond the
+	// new floor so tables and rows have real breathing room out of the box.
+	defaultViewportWidth, defaultViewportHeight = 150, 44
 
 	// tableChromeRows is the fixed row overhead a bubble-table adds around
 	// its rows: border top/bottom + header + separator + footer.
@@ -32,9 +44,36 @@ const (
 	// RoundedBorder (2 rows) plus Padding(1) (2 rows).
 	sectionChromeRows = 4
 
+	// sectionHorizontalOverhead is theme.section's total non-content-area
+	// horizontal overhead once wrapped by theme.app: theme.section's own
+	// RoundedBorder (2 columns; lipgloss.Style.Width already accounts for
+	// Padding internally, see sectionWidth) plus theme.app's outer
+	// Padding(0, 1) (2 columns).
+	sectionHorizontalOverhead = 4
+
+	// minSectionContentWidth floors sectionWidth() so a narrow
+	// consoleLayout.Width passed directly in a unit test never produces a
+	// degenerate or negative lipgloss.Style.Width value.
+	minSectionContentWidth = 40
+
 	minTableRows     = 3
 	compactTableRows = 5
 )
+
+// sectionWidth derives theme.section's content width (the value passed to
+// lipgloss.Style.Width, which already includes the section's own Padding)
+// from the real terminal width carried by consoleLayout, replacing the
+// historical hardcoded Width(88) (tui-table-viewport-fixed-size proposal's
+// deferred Q5, "theme.section's hardcoded Width(88): deferred, out of scope
+// for this change"). This is what makes the section box actually match the
+// terminal instead of a fixed width narrower than the tables it wraps.
+func sectionWidth(l consoleLayout) int {
+	w := l.Width - sectionHorizontalOverhead
+	if w < minSectionContentWidth {
+		w = minSectionContentWidth
+	}
+	return w
+}
 
 // consoleLayout carries the computed row/column budget for the current
 // screen, derived once per terminal size from contentBudget().
@@ -128,5 +167,5 @@ func renderSection(theme adminTheme, inner string, l consoleLayout) string {
 	if indicator != "" {
 		content = fitted + "\n" + theme.muted.Render(indicator)
 	}
-	return theme.section.Render(content)
+	return theme.section.Width(sectionWidth(l)).Render(content)
 }
