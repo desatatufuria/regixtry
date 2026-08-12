@@ -91,3 +91,24 @@ the Repository Alerts table overflowed its own bordered box.
       budget by row split" mechanism with `adminScanHistoryModalRows`
 - [x] 6.5 `go build`/`go vet`/`gofmt -l .`/`go mod tidy` clean; full
       `go test ./...` green; `tui-smoke.sh` passing
+
+## Phase 7: Overlay Margin Fix (real-terminal follow-up to Phase 6)
+
+Phase 6's own tests passed (exact canvas height, base marker present, modal
+title present) but a debug print of the actual rendered output (ANSI-stripped,
+read by eye) showed the modal's own border touching whatever base content
+happened to sit at its footprint's edge -- base text cut with zero buffer,
+base border characters fused directly against the modal's corners.
+
+- [x] 7.1 RED+GREEN: `compositeOverlay` (`admin_overlay.go`) blanks a small
+      `overlayHorizontalMargin` buffer to the immediate left/right of its own
+      footprint before drawing the overlay, so a visible gap always survives
+      between the modal's border and surviving base content
+- [x] 7.2 Verified by direct visual inspection (temporary debug test printing
+      `renderAdminWorkspace`'s ANSI-stripped output, deleted before finishing):
+      confirmed the fix visually, iterated on horizontal-only margin after
+      confirming a vertical margin corrupted real adjacent content (the
+      screen's help line) in a real fixture
+      (`TestRenderAdminWorkspaceLeavesVisibleMarginAroundModalWhenOpen`
+      documents this decision permanently)
+- [x] 7.3 `go build`/`go vet`/`gofmt -l .` clean; full `go test ./...` green

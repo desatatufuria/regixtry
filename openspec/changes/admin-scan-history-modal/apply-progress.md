@@ -139,4 +139,99 @@ parsing cell writer, ANSI-safe by construction), and `cellbuf.Render`
 (compositing one already-rendered lipgloss block onto another at an offset).
 No fallback to manual ANSI slicing was needed — `cellbuf` fit directly.
 
+## Phase 7 (this batch) — Overlay Margin Fix, 3/3
+
+Phase 6's own tests all passed (exact canvas height, base marker present,
+modal title present) but still looked broken when actually rendered and read
+by eye — the same class of gap the Phase 6 investigation itself was created
+to close. The orchestrator wrote a throwaway debug test that built a
+realistic `AdminViewState` (2 repositories in `TrivySummaries`, a
+`ScanHistoryModal` open with 3 findings) at `defaultViewportWidth`/
+`defaultViewportHeight`, called `renderAdminWorkspace`, stripped ANSI via
+`github.com/charmbracelet/x/ansi`'s `Strip`, and printed the result — with
+the modal both closed and open — and found real defects no existing test
+caught.
+
+**Root cause**: `compositeOverlay` (`admin_overlay.go`) wrote the base onto
+the canvas, then wrote the overlay into its own exact centered rectangle,
+overwriting nothing else. Whatever base content (text or border characters)
+happened to sit immediately outside that exact rectangle survived
+unmodified, right up to the overlay's own border — a base table's own
+border character landed flush against the modal's border/corner with zero
+gap, and base text that continued past the modal's left edge was hard-cut
+with nothing separating it visually from the modal. `cellbuf.SetContentRect`
+itself worked exactly as documented (clears its own rect, writes content,
+truncates at bounds) — this was not a `cellbuf` semantics bug, it was a
+missing design requirement: nothing in the Phase 6 design called for a
+margin around the overlay's own footprint.
+
+**Modal-width investigation**: also checked whether the modal's own target
+width (auto-sized to content via `theme.section.Render` with no `.Width()`
+set) was the real problem, per the orchestrator's hypothesis that it might
+be rendering near-full-canvas-width. Measured directly: with the debug
+fixture's 3-finding Findings table as content, the modal auto-sized to ~93
+columns against a 150-column canvas (defaultViewportWidth) — margins of ~28
+columns on each side, genuinely centered, not stretched to fill the canvas.
+The visual "cut mid-word"/"fused border" defects were confirmed via the
+debug print to be a compositing-margin problem, not a modal-oversizing
+problem; the modal's own auto-sizing to content was left unchanged.
+
+**Fix**: `compositeOverlay` now blanks a small `overlayHorizontalMargin`
+(2 columns) buffer immediately left/right of its own footprint — via a
+second `cellbuf.ClearRect` call on a rect expanded by the margin, intersected
+with the canvas bounds — before drawing the overlay content. This guarantees
+a real blank gap always separates the modal's left/right border from
+whatever base content survives beside it.
+
+**Deliberately no vertical margin**: an initial version also blanked a
+1-row margin above/below the overlay's footprint. This immediately broke an
+existing regression test (`TestCompositeOverlayPreservesBaseContentOutsideOverlayFootprint`)
+and, more importantly, corrupted a REAL row in the debug fixture — the
+screen's own help line, which happened to sit exactly one row below the
+modal's bottom edge in that layout, got half-blanked by the vertical margin
+across the modal's own column span. Unlike width (fixed per terminal), the
+row directly above/below the overlay can legitimately hold meaningful base
+content right up to the overlay's edge; blanking it unconditionally risked
+destroying real content instead of empty canvas. Reverted to horizontal-only
+margin after directly observing this regression in the debug print, not
+guessing. The modal already gets a real vertical gap in practice from
+`adminScanHistoryModalRows`'s own margin below most terminal-height floors.
+
+**Blank space below the modal (orchestrator's item 3) — investigated,
+confirmed harmless, not fixed**: the debug print showed a large blank area
+below the modal before the canvas ends. Root cause confirmed directly: with
+the modal open, `compositeOverlay`'s `cellbuf` canvas is always exactly
+`layout.Height` rows (44 in the fixture) because `cellbuf.Render` always
+emits exactly `height` lines. The debug fixture's actual content (2-row
+Repository Alerts table, 3-finding modal) only naturally fills ~31 of those
+44 rows — the same asymmetry the modal-CLOSED render does NOT show, because
+the closed path returns unpadded natural-height content instead of a fixed
+canvas. This is the exact case the orchestrator flagged as possibly
+"expected/harmless (the debug test's tiny fixture doesn't have enough
+content)" — confirmed true by direct measurement, not assumed. A real
+terminal renders this the same way a bubbletea alt-screen program already
+would (unused rows below your `View()` output simply show as blank), so this
+was left as-is.
+
+**TDD Cycle Evidence**:
+| Area | RED | GREEN |
+|---|---|---|
+| `compositeOverlay` margin | New `TestCompositeOverlayLeavesBlankMarginAroundOverlayFootprint` referenced `overlayHorizontalMargin` before it existed → compile failure | Implemented `overlayHorizontalMargin` + the `ClearRect` call → passes |
+| `renderAdminWorkspace` margin (integration) | New `TestRenderAdminWorkspaceLeavesVisibleMarginAroundModalWhenOpen` confirmed RED against the real render by temporarily no-op'ing the `ClearRect` call (`_ = marginRect`): failed with `row 15 col 27 = "e", want a blank margin column left of the modal` — the exact "text cut mid-word at the modal's edge" defect, reproduced by a real assertion, not just eyeballing | Restored the `ClearRect` call → passes |
+| Existing `TestCompositeOverlayPreservesBaseContentOutsideOverlayFootprint` | Broke when a vertical margin was tried (row 1/4 markers partially blanked) | Fixture repositioned so "untouched" markers sit outside the (horizontal-only) margin's column span; passes, and the vertical-margin approach itself was reverted |
+
+**Work Unit Evidence**:
+- Focused test: `go test ./internal/tui/... -run 'TestCompositeOverlay|TestRenderAdminWorkspace'` → all pass; full `go test ./internal/tui/...` → ok
+- Runtime harness: N/A for a pure rendering/compositing fix with no async `Cmd`/`Model.Update()` boundary (consistent with sibling overlay tests' scope); the mandated visual-inspection technique (temporary debug test printing ANSI-stripped `renderAdminWorkspace` output, both modal-closed and modal-open, read by eye) stands in as the closest thing to a runtime harness for a rendering defect that unit assertions alone did not catch previously — deleted before finishing per instruction, replaced by the two permanent tests above
+- Rollback boundary: single commit `fix(tui): keep the scan history modal from fusing into base content`, touching only `admin_overlay.go` (+`overlayHorizontalMargin` const and the margin `ClearRect` call) and two test files; reverts cleanly without touching Phase 6's `sectionWidth`/column-width/overlay-plumbing work
+
+**Full verification (this batch)**: `go build ./...` clean; `go vet ./...`
+clean; `gofmt -l .` empty; `go test -count=1 ./...` — all 16 testable
+packages pass.
+
+**Changed lines this batch**: 3 files (`internal/tui/admin_overlay.go`,
+`internal/tui/admin_overlay_test.go`, `internal/tui/admin_views_test.go`),
+206 insertions / 8 deletions = 214 changed lines (`git diff --shortstat`).
+Well within the 350-line attempt-token budget.
+
 Ready for re-`sdd-verify`.
