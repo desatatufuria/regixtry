@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 )
 
 // srgbLinearize converts one sRGB channel (0-1) to its linear-light value,
@@ -103,5 +104,74 @@ func TestSeverityRampLuminanceOrdering(t *testing.T) {
 	}
 	if !(low < high) {
 		t.Fatalf("luminance(low)=%.4f, luminance(high)=%.4f, want low < high", low, high)
+	}
+}
+
+// TestThemeInputAndInputFocusRenderSingleRowWithNoBorder is the Phase 2 task
+// 2.1 RED test (design.md Decision 5): theme.input and theme.inputFocus
+// currently carry NormalBorder (top+bottom), costing 2 rows per field for
+// content that is a single line. Flattening drops the border entirely, so
+// both styles must render exactly 1 row and contain no border-drawing
+// runes, with focus re-expressed purely through color.
+func TestThemeInputAndInputFocusRenderSingleRowWithNoBorder(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+
+	tests := []struct {
+		name  string
+		style lipgloss.Style
+	}{
+		{name: "input", style: theme.input},
+		{name: "inputFocus", style: theme.inputFocus},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			rendered := tc.style.Render("some-value")
+			if got := lipgloss.Height(rendered); got != 1 {
+				t.Fatalf("%s height = %d, want exactly 1 (border dropped, flattened to a single content row)", tc.name, got)
+			}
+			for _, borderRune := range []rune{'─', '│', '┌', '┐', '└', '┘'} {
+				if strings.ContainsRune(rendered, borderRune) {
+					t.Fatalf("%s rendered = %q, want no border rune %q — theme.input/theme.inputFocus must not carry Border() after flattening", tc.name, rendered, borderRune)
+				}
+			}
+		})
+	}
+}
+
+// TestThemeInputFocusDiffersFromInputWithoutAnyBorderRune is the Phase 2 task
+// 2.1 RED test's companion: since the border can no longer carry the focus
+// signal, the focused and unfocused renders of the same value must still
+// differ (focus re-expressed via theme.selected's gold fill/foreground), and
+// neither may contain a border rune.
+func TestThemeInputFocusDiffersFromInputWithoutAnyBorderRune(t *testing.T) {
+	// Not t.Parallel(): forces the global lipgloss color profile so the
+	// focus/unfocus foreground+background actually emit distinguishable ANSI
+	// sequences (go test runs with no tty, so lipgloss otherwise
+	// auto-detects "no color" and the two renders would be byte-identical),
+	// following TestRenderAdminScanHistoryModalRendersExecutionsColumnWithCursorHighlighted's
+	// precedent in this same package.
+	original := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(original)
+
+	theme := newAdminTheme()
+
+	unfocused := theme.input.Render("some-value")
+	focused := theme.inputFocus.Render("some-value")
+
+	if unfocused == focused {
+		t.Fatalf("theme.input.Render() == theme.inputFocus.Render() = %q, want focus to visibly differ from unfocused", unfocused)
+	}
+	for _, rendered := range []string{unfocused, focused} {
+		for _, borderRune := range []rune{'─', '│', '┌', '┐', '└', '┘'} {
+			if strings.ContainsRune(rendered, borderRune) {
+				t.Fatalf("rendered = %q, want no border rune %q", rendered, borderRune)
+			}
+		}
 	}
 }

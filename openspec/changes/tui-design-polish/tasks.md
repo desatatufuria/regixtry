@@ -63,20 +63,20 @@ diff).
 
 ## Phase 2: Theme Token Flattening (Decision 5, P1a) — foundation for Phase 3
 
-- [ ] 2.1 RED `admin_theme_test.go`: `theme.input`/`theme.inputFocus` each
+- [x] 2.1 RED `admin_theme_test.go`: `theme.input`/`theme.inputFocus` each
       render exactly 1 row (`lipgloss.Height`) and contain no `─`/`│` runes.
-- [ ] 2.2 RED `admin_views_test.go`: `renderTrivyConfigModal` <= 20 rows with
+- [x] 2.2 RED `admin_views_test.go`: `renderTrivyConfigModal` <= 20 rows with
       and without an error present (currently 27/29); modal height identical
       across every `trivyConfigField` focus position (table-driven, no
       reflow); characterizes `renderToggleField` compacted to 2 rows.
-- [ ] 2.3 GREEN: flatten `theme.input`/`theme.inputFocus` in
+- [x] 2.3 GREEN: flatten `theme.input`/`theme.inputFocus` in
       `admin_theme.go` — drop `Border`/`BorderForeground`; focus becomes
       `Foreground(selected)`, `Background(accent)`, `Bold(true)`; keep
       `Width(30)` on both. `renderTextField`/`renderSecretField`/
       `renderToggleField` are not edited.
-- [ ] 2.4 Confirm 2.1–2.2 GREEN: `go test ./internal/tui/... -run
+- [x] 2.4 Confirm 2.1–2.2 GREEN: `go test ./internal/tui/... -run
       'ThemeInput|TrivyConfigModal|ToggleField'`.
-- [ ] 2.5 Live-render verification: throwaway debug test rendering the
+- [x] 2.5 Live-render verification: throwaway debug test rendering the
       compacted `trivyConfigModal` at height 24; `ansi.Strip` +
       `fmt.Println`; confirm bottom border and `Enter: save | Esc: cancel`
       help line both visible, no reflow between focus positions; delete

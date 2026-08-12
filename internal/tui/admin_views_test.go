@@ -12,6 +12,107 @@ import (
 	"regixtry/internal/ports"
 )
 
+// TestRenderTrivyConfigModalFitsWithinCompactedRowBudget is the Phase 2 task
+// 2.2 RED test (design.md Decision 5): the modal is currently 27 rows
+// (29 with an error), well past the 24-row viewport floor. Once
+// theme.input/theme.inputFocus are flattened (Decision 5), it must fit
+// within 20 rows both with and without an error message present.
+func TestRenderTrivyConfigModalFitsWithinCompactedRowBudget(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+
+	tests := []struct {
+		name  string
+		modal trivyConfigModal
+	}{
+		{
+			name: "without error",
+			modal: trivyConfigModal{
+				Open: true, Focus: trivyConfigFieldScheduleEnabled,
+				ScheduleEnabled: true, Interval: "1h", Timeout: "30s",
+				RegistryReachableURL: "https://registry.example.com", MaxConcurrency: "4",
+			},
+		},
+		{
+			name: "with error",
+			modal: trivyConfigModal{
+				Open: true, Focus: trivyConfigFieldInterval,
+				ScheduleEnabled: true, Interval: "bad", Timeout: "30s",
+				RegistryReachableURL: "https://registry.example.com", MaxConcurrency: "4",
+				Error: "Interval must be a valid duration",
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := renderTrivyConfigModal(theme, tc.modal)
+			if h := lipgloss.Height(got); h > 20 {
+				t.Fatalf("renderTrivyConfigModal() height = %d, want <= 20 (design.md Decision 5 compaction)\n%s", h, got)
+			}
+		})
+	}
+}
+
+// TestRenderTrivyConfigModalHeightIsIdenticalAcrossEveryFocusPosition is the
+// Phase 2 task 2.2 RED test: since theme.input/theme.inputFocus render the
+// same number of rows regardless of focus (Decision 5's whole point — focus
+// re-expressed in color, not border), the modal's total height must not
+// change as focus tabs between fields.
+func TestRenderTrivyConfigModalHeightIsIdenticalAcrossEveryFocusPosition(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+	base := trivyConfigModal{
+		Open: true, ScheduleEnabled: true, Interval: "1h", Timeout: "30s",
+		RegistryReachableURL: "https://registry.example.com", MaxConcurrency: "4",
+	}
+
+	focusPositions := []trivyConfigField{
+		trivyConfigFieldScheduleEnabled,
+		trivyConfigFieldInterval,
+		trivyConfigFieldTimeout,
+		trivyConfigFieldRegistryReachableURL,
+		trivyConfigFieldMaxConcurrency,
+	}
+
+	var wantHeight int
+	for i, focus := range focusPositions {
+		modal := base
+		modal.Focus = focus
+		got := lipgloss.Height(renderTrivyConfigModal(theme, modal))
+		if i == 0 {
+			wantHeight = got
+			continue
+		}
+		if got != wantHeight {
+			t.Fatalf("renderTrivyConfigModal() height at focus %d = %d, want %d (identical across every focus position, no reflow)", focus, got, wantHeight)
+		}
+	}
+}
+
+// TestRenderToggleFieldCompactedToTwoRows is the Phase 2 task 2.2
+// characterization test: renderToggleField puts its on/off value inside the
+// same bordered box as text/secret fields today (4 rows total: label + 3-row
+// bordered value). Once theme.input/theme.inputFocus are flattened, its
+// value line collapses to 1 row, so label+value is 2 rows total, identical
+// whether focused or not.
+func TestRenderToggleFieldCompactedToTwoRows(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+
+	for _, focused := range []bool{false, true} {
+		got := renderToggleField(theme, "Schedule Enabled", true, focused)
+		if h := lipgloss.Height(got); h != 2 {
+			t.Fatalf("renderToggleField(focused=%v) height = %d, want exactly 2 (label + flattened single-row value)", focused, h)
+		}
+	}
+}
+
 // TestRenderAdminScanSummaryShowsEmptyStateThenPopulatedTable is the Phase 2
 // task 2.2/2.4 RED test: renderAdminScanSummary shows the same two empty
 // states renderTrivyRepositoryAlerts already established (spec.md

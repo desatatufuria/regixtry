@@ -78,11 +78,23 @@ func newAdminTheme() adminTheme {
 		// muted bronze vs bright gold — and the two never share a role.
 		severityMedium: lipgloss.NewStyle().Foreground(lipgloss.Color("#C0A16B")),
 		severityLow:    lipgloss.NewStyle().Foreground(muted),
-		input:          lipgloss.NewStyle().Foreground(text).Border(lipgloss.NormalBorder()).BorderForeground(border).Padding(0, 1).Width(30),
-		inputFocus:     lipgloss.NewStyle().Foreground(text).Border(lipgloss.NormalBorder()).BorderForeground(accent).Padding(0, 1).Width(30),
-		pill:           lipgloss.NewStyle().Foreground(selected).Background(accent).Bold(true).Padding(0, 1),
-		help:           lipgloss.NewStyle().Foreground(muted),
-		inputWidth:     30,
-		secretWidth:    54,
+		// input/inputFocus are deliberately flattened (no Border): the
+		// NormalBorder's only job was to carry a focus color, since nothing
+		// else differed between the two styles -- 2 rows spent per field to
+		// communicate one bit already expressible in color (design.md
+		// Decision 5). Focus is re-expressed via theme.selected's existing
+		// gold fill, the same cue lists/grants/tokens/suggestions already use
+		// for "this is the active row". Width(30) is kept on both so values
+		// stay column-aligned and the modal's width cannot jitter as focus
+		// moves. renderTextField/renderSecretField/renderToggleField are not
+		// edited -- they already resolve input vs inputFocus and emit
+		// "label\nvalue", so flattening these two style definitions compacts
+		// every form in the app.
+		input:       lipgloss.NewStyle().Foreground(text).Padding(0, 1).Width(30),
+		inputFocus:  lipgloss.NewStyle().Foreground(selected).Background(selectedBG).Bold(true).Padding(0, 1).Width(30),
+		pill:        lipgloss.NewStyle().Foreground(selected).Background(accent).Bold(true).Padding(0, 1),
+		help:        lipgloss.NewStyle().Foreground(muted),
+		inputWidth:  30,
+		secretWidth: 54,
 	}
 }
