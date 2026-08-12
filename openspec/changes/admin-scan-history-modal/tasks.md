@@ -44,14 +44,14 @@ Rationale: new pure logic + property test, new modal render, new nav flow, key r
 
 ## Phase 3: Wiring — Keys & History Navigation
 
-- [ ] 3.1 RED+GREEN `runKey`: Enter on summary row opens modal (`loadAdminScanHistoryCmd`/`adminScanHistoryLoadedMsg`), no inline detail
-- [ ] 3.2 RED+GREEN `runKey`: Tab/Shift+Tab cycles tabs via `updateAdminScanHistoryModalKey`, gated in `updateAdminKey` before `updateAdminFeaturesKey`
-- [ ] 3.3 RED+GREEN `runKey`: Left/Right pages history, re-fires `loadAdminScanRunDetailCmd`→`loadAdminSecretScanFindingsCmd` per cursor
-- [ ] 3.4 RED: scenario — findings never leak across runs when paging (digest scoped to navigated run)
-- [ ] 3.5 GREEN: fix/confirm per-cursor digest binding
-- [ ] 3.6 RED+GREEN `runKey`: Esc closes modal, restores row-list focus, no residual detail
-- [ ] 3.7 RED: boundary — `lipgloss.Height(View()) <= viewport.Height`, heights 24–60, modal open with a full findings page (mirrors `TestModelTrivyRepositoryAlertsScreenFitsViewportHeight`)
-- [ ] 3.8 GREEN: fix sizing until boundary test passes
+- [x] 3.1 RED+GREEN `runKey`: Enter on summary row opens modal (`loadAdminScanHistoryCmd`/`adminScanHistoryLoadedMsg`), no inline detail
+- [x] 3.2 RED+GREEN `runKey`: Tab/Shift+Tab cycles tabs via `updateAdminScanHistoryModalKey`, gated in `updateAdminKey` before `updateAdminFeaturesKey`
+- [x] 3.3 RED+GREEN `runKey`: Left/Right pages history, re-fires `loadAdminScanRunDetailCmd`→`loadAdminSecretScanFindingsCmd` per cursor
+- [x] 3.4 RED: scenario — findings never leak across runs when paging (digest scoped to navigated run)
+- [x] 3.5 GREEN: fix/confirm per-cursor digest binding
+- [x] 3.6 RED+GREEN `runKey`: Esc closes modal, restores row-list focus, no residual detail
+- [x] 3.7 RED: boundary — `lipgloss.Height(View()) <= viewport.Height`, heights 24–60, modal open with a full findings page (mirrors `TestModelTrivyRepositoryAlertsScreenFitsViewportHeight`)
+- [x] 3.8 GREEN: fix sizing until boundary test passes
 
 ## Phase 4: Removal Sweep
 
