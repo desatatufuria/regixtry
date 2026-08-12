@@ -49,13 +49,17 @@ func newAdminTheme() adminTheme {
 		// a consoleLayout apply a real, viewport-derived width via
 		// viewport.go's sectionWidth(); call sites without one (forms that
 		// are not viewport-driven) fall back to auto-sizing to their content.
-		section:     lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(border).Padding(1),
-		tableHeader: lipgloss.NewStyle().Foreground(accent).Bold(true),
+		section: lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(border).Padding(1),
+		// tableHeader/subheading/context deliberately stay off accent: gold is
+		// reserved for interactive/selected state (selected, inputFocus, pill)
+		// so it reads as "this is active" rather than decorating every static
+		// label on screen -- restraint over decoration.
+		tableHeader: lipgloss.NewStyle().Foreground(text).Bold(true),
 		// borderColor: same palette as section's border, reused by bubble-table styling (Phase 4).
 		borderColor:      border,
 		title:            lipgloss.NewStyle().Foreground(text).Bold(true),
-		context:          lipgloss.NewStyle().Foreground(accent),
-		subheading:       lipgloss.NewStyle().Foreground(accent).Bold(true),
+		context:          lipgloss.NewStyle().Foreground(muted),
+		subheading:       lipgloss.NewStyle().Foreground(text).Bold(true),
 		muted:            lipgloss.NewStyle().Foreground(muted),
 		text:             lipgloss.NewStyle().Foreground(text),
 		accent:           lipgloss.NewStyle().Foreground(accent).Bold(true),
@@ -65,13 +69,16 @@ func newAdminTheme() adminTheme {
 		error:            lipgloss.NewStyle().Foreground(errorColor).Bold(true),
 		severityCritical: lipgloss.NewStyle().Foreground(errorColor).Bold(true),
 		severityHigh:     lipgloss.NewStyle().Foreground(warning).Bold(true),
-		severityMedium:   lipgloss.NewStyle().Foreground(accent).Bold(true),
-		severityLow:      lipgloss.NewStyle().Foreground(muted),
-		input:            lipgloss.NewStyle().Foreground(text).Border(lipgloss.NormalBorder()).BorderForeground(border).Padding(0, 1).Width(30),
-		inputFocus:       lipgloss.NewStyle().Foreground(text).Border(lipgloss.NormalBorder()).BorderForeground(accent).Padding(0, 1).Width(30),
-		pill:             lipgloss.NewStyle().Foreground(selected).Background(accent).Bold(true).Padding(0, 1),
-		help:             lipgloss.NewStyle().Foreground(muted),
-		inputWidth:       30,
-		secretWidth:      54,
+		// severityMedium reuses warning's amber rather than accent: now that
+		// accent is gold, sharing it with a severity level would make ordinary
+		// findings visually compete with the "this is selected/focused" cue.
+		severityMedium: lipgloss.NewStyle().Foreground(warning),
+		severityLow:    lipgloss.NewStyle().Foreground(muted),
+		input:          lipgloss.NewStyle().Foreground(text).Border(lipgloss.NormalBorder()).BorderForeground(border).Padding(0, 1).Width(30),
+		inputFocus:     lipgloss.NewStyle().Foreground(text).Border(lipgloss.NormalBorder()).BorderForeground(accent).Padding(0, 1).Width(30),
+		pill:           lipgloss.NewStyle().Foreground(selected).Background(accent).Bold(true).Padding(0, 1),
+		help:           lipgloss.NewStyle().Foreground(muted),
+		inputWidth:     30,
+		secretWidth:    54,
 	}
 }
