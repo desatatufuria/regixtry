@@ -400,6 +400,54 @@ func TestBuildAdminScanSummaryTableRendersOneRowPerRepository(t *testing.T) {
 	}
 }
 
+// TestAdminFindingLinkResolution is the RED test for the shared link
+// resolver (adminFindingLink), the single resolution both
+// openSelectedAdminFindingLink (model.go, the Enter-key opener) uses:
+// PrimaryURL first, else the constructed NVD URL from VulnerabilityID, and
+// "" whenever nothing usable resolves -- including when the resolved value
+// isn't a valid http(s) URL (isHTTPURL), the same defense-in-depth guard
+// openURLInBrowser applies.
+//
+// buildAdminFindingsTable does NOT call this helper to OSC8-wrap the
+// Finding cell -- that was attempted and reverted. evertras/bubble-table
+// v0.19.2 (this repo's pinned version) truncates cell text through
+// muesli/reflow's ansi.PrintableRuneWidth/truncate.StringWithTail, which is
+// unaware of OSC8 hyperlink escapes: it misreads any letter inside the
+// wrapped URL as an ANSI-sequence terminator (its terminator heuristic
+// only knows about single-byte CSI finals, not OSC's ST/BEL), so it starts
+// counting the rest of the URL as literal printable width and truncates the
+// cell mid-escape -- verified by rendering buildAdminFindingsTable with a
+// termenv.Hyperlink-wrapped cell and inspecting the real output, which came
+// back with the Finding column blank/mangled. lipgloss.Width itself has no
+// such bug (confirmed separately) -- only this table library's own,
+// separate width scanner does. Fixing it upstream requires
+// evertras/bubble-table >= v0.20.0, which switched to the OSC8-aware
+// charmbracelet/x/ansi -- but that version also moved to
+// charm.land/bubbletea/v2, a breaking migration out of scope here.
+func TestAdminFindingLinkResolution(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		finding ports.ScanRunFinding
+		want    string
+	}{
+		{"PrimaryURL wins", ports.ScanRunFinding{VulnerabilityID: "CVE-1", PrimaryURL: "https://example.com/1"}, "https://example.com/1"},
+		{"falls back to NVD", ports.ScanRunFinding{VulnerabilityID: "CVE-2"}, nvdVulnerabilityURL("CVE-2")},
+		{"nothing resolves", ports.ScanRunFinding{}, ""},
+		{"non-http PrimaryURL rejected", ports.ScanRunFinding{VulnerabilityID: "CVE-3", PrimaryURL: "javascript:alert(1)"}, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := adminFindingLink(tc.finding); got != tc.want {
+				t.Fatalf("adminFindingLink(%+v) = %q, want %q", tc.finding, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestAdminScanHistoryModalTablePageSizeFloorsAtMinTableRows is the Phase 2
 // task 2.2 RED test: the modal's active-tab table page size is derived from
 // the nested modalRows budget minus fixed/measured chrome, floored at

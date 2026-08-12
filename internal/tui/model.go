@@ -645,8 +645,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// advisory link) already ran inside its Cmd; only the resulting
 		// transient status update happens here in Update, never the exec
 		// itself (Bubble Tea convention).
+		//
+		// Any failure (not just a missing opener binary) falls back to
+		// showing the URL itself rather than the raw Go exec error --
+		// meaningless to a TUI operator on a headless server with no GUI
+		// opener (e.g. `exec: "xdg-open": executable file not found in
+		// $PATH`) -- so the operator can select/copy it from the terminal.
 		if msg.err != nil {
-			m.status = msg.err.Error()
+			m.status = fmt.Sprintf("Could not open automatically — copy this link: %s", msg.url)
 			return m, nil
 		}
 		m.status = ""
@@ -1332,8 +1338,8 @@ func (m Model) openSelectedAdminFindingLink() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	finding := findings[boundedIndex(modal.FindingCursor, len(findings))]
-	link := adminFirstNonEmpty(finding.PrimaryURL, nvdVulnerabilityURL(finding.VulnerabilityID))
-	if strings.TrimSpace(link) == "" {
+	link := adminFindingLink(finding)
+	if link == "" {
 		return m, nil
 	}
 	return m, openAdminURLCmd(link)

@@ -156,7 +156,7 @@ func TestRenderAdminScanHistoryModalChromeLinesAreSingleLine(t *testing.T) {
 	assertSingleLine(t, "title", theme.subheading.Render(fmt.Sprintf("Scan History — %s", adminFirstNonEmpty(modal.Repository, "unknown"))))
 	assertSingleLine(t, "tab bar", adminScanHistoryModalTabBar(theme, modal))
 	assertSingleLine(t, "footer", theme.muted.Render(adminScanHistoryModalFooter(modal)))
-	assertSingleLine(t, "help", theme.help.Render("Tab/Shift+Tab: tabs | Left/Right: history | Up/Down: select | Enter: open | Esc: close"))
+	assertSingleLine(t, "help", theme.help.Render("Tab/Shift+Tab: tabs | Left/Right: history | Up/Down: select | Enter/click: open | Esc: close"))
 }
 
 // TestRenderAdminScanHistoryModalRendersExecutionsColumnWithCursorHighlighted

@@ -377,7 +377,7 @@ func renderAdminScanHistoryModal(theme adminTheme, modal adminScanHistoryModal, 
 	// this line must never become the modal's own widest rendered line, or
 	// it silently drives the executions-side-panel's combined width (measured
 	// empirically against TestModelScanHistoryModalRendersWithinViewportAcrossWidths).
-	help := theme.help.Render("Tab/Shift+Tab: tabs | Left/Right: history | Up/Down: select | Enter: open | Esc: close")
+	help := theme.help.Render("Tab/Shift+Tab: tabs | Left/Right: history | Up/Down: select | Enter/click: open | Esc: close")
 
 	var header string
 	switch {

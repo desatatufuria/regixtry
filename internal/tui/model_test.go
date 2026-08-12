@@ -1311,6 +1311,46 @@ func TestModelScanHistoryModalEnterOpensSelectedFindingLink(t *testing.T) {
 	}
 }
 
+// TestModelScanHistoryModalEnterFailureShowsCopyableURLStatus is the RED
+// test for the headless-server fallback: when openURLInBrowser fails (e.g.
+// no GUI opener installed, such as xdg-open missing on a headless Linux
+// server), the status must never surface the raw Go exec error text --
+// meaningless to a TUI operator -- but instead show the resolved URL itself
+// so the operator can select/copy it from the terminal. Any failure falls
+// back this way, not just a missing-binary one (no error-type sniffing).
+func TestModelScanHistoryModalEnterFailureShowsCopyableURLStatus(t *testing.T) {
+	original := openURLInBrowser
+	defer func() { openURLInBrowser = original }()
+	openURLInBrowser = func(rawURL string) error {
+		return fmt.Errorf(`exec: "xdg-open": executable file not found in $PATH`)
+	}
+
+	now := time.Date(2026, time.August, 12, 9, 0, 0, 0, time.UTC)
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+		features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
+		featurePage:  ports.FeaturePage{Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
+		scanRuns:     []ports.ScanRun{{ID: "run-1", Repository: "acme/api", Digest: "sha256:aaa", Status: ports.ScanRunStatusCompleted}},
+		scanRunDetails: map[string]ports.ScanRunDetail{
+			"run-1": {
+				Run:      ports.ScanRun{ID: "run-1", Repository: "acme/api", Digest: "sha256:aaa"},
+				Findings: []ports.ScanRunFinding{{VulnerabilityID: "CVE-WITH-URL", PrimaryURL: "https://example.com/advisory/1"}},
+			},
+		},
+	}
+
+	opened := newScanHistoryModalReadyModel(t, adminClient)
+	updated := runKey(t, opened, "enter")
+
+	wantStatus := "Could not open automatically — copy this link: https://example.com/advisory/1"
+	if got := updated.status; got != wantStatus {
+		t.Fatalf("status = %q, want %q", got, wantStatus)
+	}
+	if strings.Contains(updated.status, "xdg-open") {
+		t.Fatalf("status = %q, must never leak the raw exec error text", updated.status)
+	}
+}
+
 // TestModelScanHistoryModalEnterOnLeaksTabDoesNotOpenAnyLink is the RED test
 // guarding the Vulnerabilities-only scope: Enter on the Leaks tab must never
 // attempt to open a link (secret findings carry no comparable field).

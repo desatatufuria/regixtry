@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"regixtry/internal/ports"
 )
 
 // openURLInBrowser is a package-level swappable func var -- the same
@@ -70,4 +71,19 @@ func nvdVulnerabilityURL(vulnerabilityID string) string {
 		return ""
 	}
 	return "https://nvd.nist.gov/vuln/detail/" + id
+}
+
+// adminFindingLink resolves the single advisory link for a finding --
+// PrimaryURL when set, else the constructed NVD URL from VulnerabilityID --
+// and returns "" when nothing usable resolves, including when the resolved
+// value isn't a valid http(s) URL (isHTTPURL, the same defense-in-depth
+// guard openURLInBrowser applies). Used by openSelectedAdminFindingLink
+// (model.go, the Enter-key opener) so its link resolution lives in one
+// place instead of being duplicated inline.
+func adminFindingLink(finding ports.ScanRunFinding) string {
+	link := adminFirstNonEmpty(finding.PrimaryURL, nvdVulnerabilityURL(finding.VulnerabilityID))
+	if !isHTTPURL(link) {
+		return ""
+	}
+	return link
 }
