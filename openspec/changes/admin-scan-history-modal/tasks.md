@@ -65,3 +65,29 @@ Rationale: new pure logic + property test, new modal render, new nav flow, key r
 
 - [x] 5.1 `go test ./internal/tui/...` full suite green; `tui-smoke.sh` passing
 - [x] 5.2 State disposition of `TestModelTrivyRepositoryAlertsScreenFitsViewportHeight` and the findings-visibility regression test: pass unchanged or note superseding tests
+
+## Phase 6: Visual Regression Fix (claude-handoff.md)
+
+User-reported, screenshot-documented regression after Phase 1-5 shipped:
+the "modal" stacked below the Feature Page instead of overlaying it, and
+the Repository Alerts table overflowed its own bordered box.
+
+- [x] 6.1 RED+GREEN: `sectionWidth()` (`viewport.go`) derives `theme.section`'s
+      width from `consoleLayout.Width` instead of the hardcoded `Width(88)`
+      (the `tui-table-viewport-fixed-size` proposal's deferred Q5); wired
+      into `renderSection`
+- [x] 6.2 RED+GREEN: widen `buildAdminScanSummaryTable`/`buildAdminFeaturesTable`/
+      `buildAdminFindingsTable`/`buildAdminSecretFindingsTable` column widths
+      (measured against `formatScanSummaryLastExecuted`'s longest output);
+      raise `minViewportWidth`/`defaultViewportWidth`/`defaultViewportHeight`
+      so the floor terminal size can honor the widened Repository Alerts table
+- [x] 6.3 RED+GREEN: `compositeOverlay` (`admin_overlay.go`), an ANSI-safe
+      overlay compositor built on `github.com/charmbracelet/x/cellbuf`
+      (promoted from indirect to direct in `go.mod`)
+- [x] 6.4 RED+GREEN: rewrite `renderAdminWorkspace` to render the base page at
+      its full, unshrunk layout and composite the scan history modal on top
+      via `compositeOverlay`, replacing the superseded
+      `adminScanHistoryRowSplit`/`adminScanHistoryModalRowSplit` "nested
+      budget by row split" mechanism with `adminScanHistoryModalRows`
+- [x] 6.5 `go build`/`go vet`/`gofmt -l .`/`go mod tidy` clean; full
+      `go test ./...` green; `tui-smoke.sh` passing
