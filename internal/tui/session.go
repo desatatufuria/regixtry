@@ -155,9 +155,9 @@ func newAdminScanHistoryTabs() []adminScanHistoryTab {
 }
 
 // adminScanHistoryModal is the state for the Repository Alerts drill-down
-// modal (design.md "Nested budget by row split, not overlay, not
-// stacking"), opened by Enter on a Repository Alerts summary row (spec.md
-// "Repository Alert Drill-Down Opens History Modal").
+// modal, rendered as a true floating overlay via compositeOverlay
+// (claude-handoff.md), opened by Enter on a Repository Alerts summary row
+// (spec.md "Repository Alert Drill-Down Opens History Modal").
 type adminScanHistoryModal struct {
 	Open       bool
 	Repository string

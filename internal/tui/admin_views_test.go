@@ -204,6 +204,80 @@ func TestAdminScanHistoryModalTableBodyShowsEmptyLeaksStateAndKeepsTabVisible(t 
 	}
 }
 
+// TestRenderAdminWorkspaceKeepsBaseFullSizeAndLayersModalOnTopWhenOpen is
+// the RED test for the reported regression (claude-handoff.md: "The modal
+// must be rendered above the Feature Page ... and must not be appended
+// below the page content. The underlying Features page must remain visible
+// behind the modal and must not reflow when it opens"). It proves two
+// distinct properties the pre-existing suite did not cover:
+//
+//  1. The base page renders at its FULL, unshrunk size when the modal is
+//     open -- identical to its own standalone render at the very same
+//     layout, not a row-split-reduced one.
+//  2. The modal is composited ON TOP of the base (result height ==
+//     layout.Height, the canvas), never appended below it as a trailing
+//     block (which would grow the result past the canvas height).
+func TestRenderAdminWorkspaceKeepsBaseFullSizeAndLayersModalOnTopWhenOpen(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+	now := time.Date(2026, time.August, 12, 11, 0, 0, 0, time.UTC)
+	session := AdminSession{Username: "operator", ExpiresAt: now.Add(10 * time.Minute)}
+
+	view := AdminViewState{
+		Features: []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
+		FeaturePage: ports.FeaturePage{
+			Summary: ports.FeatureSummary{Name: trivyFeatureName, Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
+		},
+		TrivyTab: trivyTabRepositoryAlerts,
+		ScanHistoryModal: adminScanHistoryModal{
+			Open:       true,
+			Repository: "acme/api",
+			Tabs:       newAdminScanHistoryTabs(),
+			Runs:       []ports.ScanRun{{ID: "run-1", Repository: "acme/api", CreatedAt: now}},
+			Detail:     ports.ScanRunDetail{Findings: []ports.ScanRunFinding{{VulnerabilityID: "CVE-1"}}},
+		},
+	}
+	view.Tables.Features = buildAdminFeaturesTable(theme, view.Features, 0, minTableRows)
+	view.Tables.Findings = buildAdminFindingsTable(theme, view.ScanHistoryModal.Detail.Findings, 0, minTableRows)
+
+	layout := contentBudget(defaultViewportWidth, defaultViewportHeight, "", adminScreenHelp(screenAdminFeatures, view))
+
+	// Property 1: the base page (rendered independently, at the very same
+	// unreduced layout the modal-open path is given) must be byte-identical
+	// to what renderAdminWorkspace's modal-open branch composites as its
+	// base -- proving it is never shrunk via a reduced SectionRows the way
+	// the superseded row-split design did.
+	standaloneContext, standaloneBody, standaloneHelp := renderAdminScreen(theme, screenAdminFeatures, session, view, nil, layout, now)
+	wantBase := renderConsoleWorkspace("Regixtry Admin", standaloneContext, standaloneBody, "", standaloneHelp)
+
+	got := renderAdminWorkspace(screenAdminFeatures, session, view, nil, "", layout, now)
+
+	// Property 2: layered on top, not appended below -- the composite must
+	// fit exactly within the canvas (layout.Width x layout.Height), never
+	// grow past it the way lipgloss.JoinVertical(base, modal) would once
+	// base is rendered at its full size AND the modal is rendered on top of
+	// it (base+modal stacked would be far taller than one canvas).
+	if h := lipgloss.Height(got); h != layout.Height {
+		t.Fatalf("renderAdminWorkspace() height = %d, want exactly layout.Height(%d) -- the modal must be composited on top of the base, never appended below it", h, layout.Height)
+	}
+
+	// The base's own bottom-of-screen marker (only present once the full,
+	// unshrunk base is rendered) must survive in the composite.
+	if !strings.Contains(wantBase, "Operator: operator") {
+		t.Fatalf("test setup invalid: standalone base render = %q, want it to contain the Operator marker", wantBase)
+	}
+	if !strings.Contains(got, "Operator: operator") {
+		t.Fatalf("renderAdminWorkspace() = %q, want the base page's full content (Operator marker) to survive unshrunk when the modal opens", got)
+	}
+
+	// The modal's own title must be present, proving it was actually
+	// rendered and composited, not silently dropped.
+	if !strings.Contains(got, "Scan History — acme/api") {
+		t.Fatalf("renderAdminWorkspace() = %q, want the modal title present", got)
+	}
+}
+
 func TestRenderAdminScanHistoryModalNeverAppliesFitLinesOverComposite(t *testing.T) {
 	t.Parallel()
 

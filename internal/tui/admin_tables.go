@@ -263,14 +263,11 @@ func formatScanSummaryLastExecuted(summary repositorySummary) string {
 // history footer, and the help line — each guarded to exactly one row by
 // TestRenderAdminScanHistoryModalChromeLinesAreSingleLine.
 //
-// Deviation from design.md's literal `sectionChromeRows + 4`: this is 4, not
-// 8. adminScanHistoryRowSplit (Phase 1) already reserves the modal's own
-// border+padding exactly once via `usable := outer.SectionRows -
-// sectionChromeRows`, so the modalRows it returns is already a border-free
-// content budget — re-subtracting sectionChromeRows here would charge the
-// same border twice and starve the table for no reason. Re-derived from
-// Phase 1's own tested row-split invariant while measuring real modal
-// content for this phase, per the "measured, not guessed" discipline.
+// adminScanHistoryModalRows (admin_scan_history.go) already reserves the
+// modal's own border+padding exactly once via `l.Height - sectionChromeRows`,
+// so the rows it returns are already a border-free content budget —
+// re-subtracting sectionChromeRows here would charge the same border twice
+// and starve the table for no reason.
 const adminScanHistoryModalChromeRows = 4
 
 // adminScanHistoryModalMinTableBudget is the smallest number of rows a
@@ -282,8 +279,8 @@ const adminScanHistoryModalChromeRows = 4
 const adminScanHistoryModalMinTableBudget = tableChromeRows + minTableRows
 
 // adminScanHistoryModalTablePageSize computes the scan history modal's
-// active-tab table pageSize from the modal's own nested content budget
-// (modalRows, from adminScanHistoryRowSplit), the modal's fixed chrome
+// active-tab table pageSize from the modal's own content budget (modalRows,
+// from adminScanHistoryModalRows), the modal's fixed chrome
 // (adminScanHistoryModalChromeRows), and the measured height of any
 // variable header content rendered above the table (an error or loading
 // message) — measured, not guessed. Floored at minTableRows.
@@ -381,7 +378,7 @@ func (m *Model) rebuildAdminTables(layout consoleLayout) {
 	// they are only built while the modal is active; otherwise they stay at
 	// their previous/zero value and are simply not rendered.
 	if m.adminView.ScanHistoryModal.Active() {
-		_, modalRows, _, _, _ := adminScanHistoryModalRowSplit(theme, screenAdminFeatures, m.adminSession, m.adminView, nil, layout, m.now())
+		modalRows := adminScanHistoryModalRows(layout)
 		measuredHeaderHeight := 0
 		if strings.TrimSpace(m.adminView.ScanHistoryModal.Error) != "" || m.adminView.ScanHistoryModal.Loading {
 			measuredHeaderHeight = 1

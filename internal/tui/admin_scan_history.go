@@ -13,15 +13,18 @@ import (
 // rather than a new port/query).
 const adminScanHistoryWindowLimit = 50
 
-// adminScanHistoryModalMinRows is the floor of modal inner rows the row
-// split will always try to preserve: enough to show a tab bar row, at least
-// one table row (with its bordered chrome), and a footer row. When the
-// terminal budget cannot honor both this floor and the measured base inner
-// height, adminScanHistoryRowSplit degrades to giving the modal the entire
-// usable budget and the base section is omitted (baseRows == 0). Phase 2
-// refines the modal's own internal chrome accounting
-// (adminScanHistoryModalChromeRows) on top of this floor.
+// adminScanHistoryModalMinRows is the floor of modal inner rows
+// adminScanHistoryModalRows will always try to preserve: enough to show a
+// tab bar row, at least one table row (with its bordered chrome), and a
+// footer row.
 const adminScanHistoryModalMinRows = 8
+
+// adminScanHistoryModalVerticalMargin reserves rows above/below the modal's
+// own content budget so it visibly floats over the base page
+// (claude-handoff.md: "must be rendered above the Feature Page,
+// centered/bounded in the viewport") instead of consuming the entire
+// terminal height even on a tall terminal.
+const adminScanHistoryModalVerticalMargin = 6
 
 // repositorySummary is one aggregated row for the Repository Alerts summary
 // table: the latest scan run for a repository, plus how many runs exist and
@@ -88,31 +91,29 @@ func summarizeScanRunsByRepository(runs []ports.ScanRun) []repositorySummary {
 	return summaries
 }
 
-// adminScanHistoryRowSplit splits the outer section's row budget between the
-// base repository list (already measured at baseInnerHeight) and the scan
-// history modal, both drawn from the same single-section budget so the
-// total never exceeds the terminal (design.md "Nested budget by row split,
-// not overlay, not stacking").
-//
-// Invariant: (baseRows+sectionChromeRows) + (modalRows+sectionChromeRows) ==
-// outer.SectionRows + sectionChromeRows -- exactly the rows one section of
-// outer.SectionRows occupies today, because baseRows+modalRows always equals
-// usable by construction, regardless of clamping.
-//
-// When usable cannot honor both adminScanHistoryModalMinRows and the
-// measured base content, the split degrades to giving the modal the entire
-// usable budget (baseRows == 0, base omitted, modal renders alone).
-func adminScanHistoryRowSplit(outer consoleLayout, baseInnerHeight int) (baseRows, modalRows int) {
-	usable := outer.SectionRows - sectionChromeRows // the modal's own border+padding
-	modalRows = usable - baseInnerHeight
-	if modalRows < adminScanHistoryModalMinRows {
-		modalRows = adminScanHistoryModalMinRows
+// adminScanHistoryModalRows computes the scan history modal's own content
+// row budget from the terminal's full layout, independent of the base
+// page's row budget now that the modal is a true floating overlay
+// (claude-handoff.md) composited on top of the base via compositeOverlay,
+// rather than the superseded "Nested budget by row split, not overlay, not
+// stacking" design that carved the modal's rows out of the base's own
+// budget. Bounded so the modal always leaves a visible margin around it
+// (adminScanHistoryModalVerticalMargin) and never exceeds what the terminal
+// can hold, floored at adminScanHistoryModalMinRows.
+func adminScanHistoryModalRows(l consoleLayout) int {
+	usable := l.Height - sectionChromeRows
+	if usable < adminScanHistoryModalMinRows {
+		usable = adminScanHistoryModalMinRows
 	}
-	if modalRows > usable {
-		modalRows = usable
+
+	rows := l.Height - adminScanHistoryModalVerticalMargin - sectionChromeRows
+	if rows < adminScanHistoryModalMinRows {
+		rows = adminScanHistoryModalMinRows
 	}
-	baseRows = usable - modalRows // <= 0 -> base omitted, modal renders alone
-	return baseRows, modalRows
+	if rows > usable {
+		rows = usable
+	}
+	return rows
 }
 
 // sortScanRunsChronologically returns a NEW slice of runs ordered newest

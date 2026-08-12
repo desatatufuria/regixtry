@@ -112,63 +112,49 @@ func TestSummarizeScanRunsByRepositoryHandlesMultipleRepositoriesIndependently(t
 	}
 }
 
-// TestAdminScanHistoryRowSplitInvariantHoldsAcrossHeightRange is the Phase 1
-// task 1.3 RED property test: design.md's row-split invariant
-// (baseRows+sectionChromeRows)+(modalRows+sectionChromeRows) ==
-// outer.SectionRows+sectionChromeRows must hold for every terminal height in
-// the design's own risk-note range (10-80) and a spread of measured base
-// inner heights, and baseRows must never go negative.
-func TestAdminScanHistoryRowSplitInvariantHoldsAcrossHeightRange(t *testing.T) {
+// TestAdminScanHistoryModalRowsStaysBoundedAcrossHeightRange is a RED
+// property test for the overlay-compositing rewrite: unlike the superseded
+// row-split, adminScanHistoryModalRows no longer measures or depends on the
+// base page's own rendered height (the modal is a floating overlay,
+// independent of the base's budget) -- it must simply stay within
+// [adminScanHistoryModalMinRows, l.Height-sectionChromeRows] for every
+// terminal height in a wide range.
+func TestAdminScanHistoryModalRowsStaysBoundedAcrossHeightRange(t *testing.T) {
 	t.Parallel()
 
-	baseInnerHeights := []int{0, 1, 3, 8, 20, 50, 120}
-
 	for height := 10; height <= 80; height++ {
-		outer := contentBudget(100, height, "", "")
+		l := contentBudget(140, height, "", "")
 
-		for _, baseInner := range baseInnerHeights {
-			baseRows, modalRows := adminScanHistoryRowSplit(outer, baseInner)
+		rows := adminScanHistoryModalRows(l)
 
-			gotTotal := (baseRows + sectionChromeRows) + (modalRows + sectionChromeRows)
-			wantTotal := outer.SectionRows + sectionChromeRows
-			if gotTotal != wantTotal {
-				t.Fatalf("height=%d baseInner=%d: (baseRows+chrome)+(modalRows+chrome) = %d, want %d (baseRows=%d modalRows=%d outer.SectionRows=%d)",
-					height, baseInner, gotTotal, wantTotal, baseRows, modalRows, outer.SectionRows)
-			}
-			if baseRows < 0 {
-				t.Fatalf("height=%d baseInner=%d: baseRows = %d, want >= 0", height, baseInner, baseRows)
-			}
-			if modalRows < 0 {
-				t.Fatalf("height=%d baseInner=%d: modalRows = %d, want >= 0", height, baseInner, modalRows)
-			}
+		if rows < adminScanHistoryModalMinRows {
+			t.Fatalf("height=%d: adminScanHistoryModalRows() = %d, want >= adminScanHistoryModalMinRows(%d)", height, rows, adminScanHistoryModalMinRows)
+		}
+		maxRows := l.Height - sectionChromeRows
+		if maxRows < adminScanHistoryModalMinRows {
+			maxRows = adminScanHistoryModalMinRows
+		}
+		if rows > maxRows {
+			t.Fatalf("height=%d: adminScanHistoryModalRows() = %d, want <= %d (must never exceed what the terminal can hold)", height, rows, maxRows)
 		}
 	}
 }
 
-// TestAdminScanHistoryRowSplitDegradesToFullModalWhenTooSmall is the Phase 1
-// task 1.3/1.4 RED test for the degenerate collapse design.md calls out:
-// "baseRows = usable - modalRows // <= 0 -> base omitted, modal renders
-// alone". At a small enough terminal, the usable budget cannot honor both
-// the measured base content and adminScanHistoryModalMinRows, so the split
-// hands the entire usable budget to the modal and omits the base.
-func TestAdminScanHistoryRowSplitDegradesToFullModalWhenTooSmall(t *testing.T) {
+// TestAdminScanHistoryModalRowsLeavesAVisibleMarginOnATallTerminal proves the
+// modal does not simply consume the entire terminal height on a generously
+// tall terminal (claude-handoff.md: "centered/bounded in the viewport"): its
+// row budget must be strictly less than the full available height so the
+// base page stays visible around it.
+func TestAdminScanHistoryModalRowsLeavesAVisibleMarginOnATallTerminal(t *testing.T) {
 	t.Parallel()
 
-	// height=14 yields outer.SectionRows small enough that
-	// usable(=SectionRows-sectionChromeRows) < adminScanHistoryModalMinRows.
-	outer := contentBudget(100, 14, "", "")
-	usable := outer.SectionRows - sectionChromeRows
-	if usable >= adminScanHistoryModalMinRows {
-		t.Fatalf("test setup invalid: usable(%d) >= adminScanHistoryModalMinRows(%d), pick a smaller height", usable, adminScanHistoryModalMinRows)
-	}
+	l := contentBudget(140, 60, "", "")
 
-	baseRows, modalRows := adminScanHistoryRowSplit(outer, 0)
+	rows := adminScanHistoryModalRows(l)
+	fullyAvailable := l.Height - sectionChromeRows
 
-	if baseRows != 0 {
-		t.Fatalf("baseRows = %d, want 0 (base omitted, modal renders alone)", baseRows)
-	}
-	if modalRows != usable {
-		t.Fatalf("modalRows = %d, want usable(%d) -- modal takes the entire remaining budget", modalRows, usable)
+	if rows >= fullyAvailable {
+		t.Fatalf("adminScanHistoryModalRows() = %d, want strictly less than %d (a tall terminal must still show a margin around the floating modal)", rows, fullyAvailable)
 	}
 }
 
