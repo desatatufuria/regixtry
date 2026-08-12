@@ -151,7 +151,18 @@ func (r *Router) handleV2(w stdhttp.ResponseWriter, req *stdhttp.Request) {
 	case strings.HasPrefix(suffix, "blobs/"):
 		r.handleBlobRead(w, req, repository, strings.TrimPrefix(suffix, "blobs/"))
 	case strings.HasPrefix(suffix, "manifests/"):
-		r.handleManifest(w, req, repository, strings.TrimPrefix(suffix, "manifests/"))
+		reference := strings.TrimPrefix(suffix, "manifests/")
+		// The suffix match is checked against the trimmed reference, not
+		// against suffix itself: testing suffix would misroute a tag
+		// literally named "scan-status" ("manifests/scan-status" ends with
+		// "/scan-status"), but "scan-status" alone does not end with
+		// "/scan-status". OCI references never contain "/", so
+		// "<ref>/scan-status" is otherwise unambiguous.
+		if strings.HasSuffix(reference, "/scan-status") {
+			r.handleManifestScanStatus(w, req, repository, strings.TrimSuffix(reference, "/scan-status"))
+			return
+		}
+		r.handleManifest(w, req, repository, reference)
 	case suffix == "tags/list":
 		r.handleTags(w, req, repository)
 	default:
@@ -342,6 +353,32 @@ func (r *Router) handleManifest(w stdhttp.ResponseWriter, req *stdhttp.Request, 
 		w.Header().Set("Allow", strings.Join([]string{stdhttp.MethodPut, stdhttp.MethodGet, stdhttp.MethodHead}, ", "))
 		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
 	}
+}
+
+// handleManifestScanStatus is the CI-facing scan verdict read (design.md
+// Decision 5): reachable with ordinary pull credentials, no admin session
+// required. It always answers 200 with the current verdict — it reports a
+// verdict, it is never subject to one, unlike the pull-time gate itself.
+func (r *Router) handleManifestScanStatus(w stdhttp.ResponseWriter, req *stdhttp.Request, repository string, reference string) {
+	action := ports.Action{Verb: ports.ActionPull, Repository: repository}
+	if req.Method != stdhttp.MethodGet {
+		w.Header().Set("Allow", stdhttp.MethodGet)
+		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+		return
+	}
+
+	req, ok := r.withPrincipal(w, req, action)
+	if !ok {
+		return
+	}
+
+	result, err := r.service.ScanStatus(req.Context(), repository, reference)
+	if err != nil {
+		writeError(w, req, err, r.challengeForError(action, err), "MANIFEST_UNKNOWN")
+		return
+	}
+
+	writeJSON(w, stdhttp.StatusOK, result)
 }
 
 func (r *Router) handleTags(w stdhttp.ResponseWriter, req *stdhttp.Request, repository string) {

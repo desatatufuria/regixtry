@@ -148,6 +148,259 @@ func TestRouterUploadAndReadFlow(t *testing.T) {
 	}
 }
 
+// TestRouterManifestScanStatusReturnsAllFiveStates covers design.md Decision
+// 5's five distinct scan-status states, table-driven, asserting the exact
+// response shape: `state`, `would_block_pull`, `policy`, and `scan` (omitted
+// when unscanned).
+func TestRouterManifestScanStatusReturnsAllFiveStates(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name            string
+		seedRun         func(t *testing.T, store *metadata.Store, digest string)
+		wantState       string
+		wantBlocked     bool
+		wantScanPresent bool
+	}{
+		{name: "unscanned", seedRun: func(t *testing.T, store *metadata.Store, digest string) {}, wantState: "unscanned", wantBlocked: false, wantScanPresent: false},
+		{name: "queued is in_progress", seedRun: func(t *testing.T, store *metadata.Store, digest string) {
+			seedRouterScanRun(t, store, digest, ports.ScanRunStatusQueued, 0, 0)
+		}, wantState: "in_progress", wantBlocked: false, wantScanPresent: true},
+		{name: "running is in_progress", seedRun: func(t *testing.T, store *metadata.Store, digest string) {
+			seedRouterScanRun(t, store, digest, ports.ScanRunStatusRunning, 0, 0)
+		}, wantState: "in_progress", wantBlocked: false, wantScanPresent: true},
+		{name: "failed", seedRun: func(t *testing.T, store *metadata.Store, digest string) {
+			seedRouterScanRun(t, store, digest, ports.ScanRunStatusFailed, 0, 0)
+		}, wantState: "failed", wantBlocked: false, wantScanPresent: true},
+		{name: "completed non-violating is clean", seedRun: func(t *testing.T, store *metadata.Store, digest string) {
+			seedRouterScanRun(t, store, digest, ports.ScanRunStatusCompleted, 0, 0)
+		}, wantState: "clean", wantBlocked: false, wantScanPresent: true},
+		{name: "completed violating is blocked", seedRun: func(t *testing.T, store *metadata.Store, digest string) {
+			seedRouterScanRun(t, store, digest, ports.ScanRunStatusCompleted, 3, 0)
+		}, wantState: "blocked", wantBlocked: true, wantScanPresent: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			blobStore, store, cleanup := newTestStores(t)
+			router := newRouterWithStores(blobStore, store, allowAllAccessController{}, nil)
+			defer drainingCleanup(router, cleanup)()
+
+			seedPublishedManifest(t, router)
+			digest := manifestDigestFor(t, router, "library/alpine", "latest")
+			tt.seedRun(t, store, digest)
+
+			req := httptest.NewRequest(http.MethodGet, "/v2/library/alpine/manifests/latest/scan-status", nil)
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, req)
+
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+			}
+
+			var payload struct {
+				Repository     string         `json:"repository"`
+				Reference      string         `json:"reference"`
+				Digest         string         `json:"digest"`
+				State          string         `json:"state"`
+				WouldBlockPull bool           `json:"would_block_pull"`
+				Policy         map[string]any `json:"policy"`
+				Scan           map[string]any `json:"scan"`
+			}
+			if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+				t.Fatalf("decode response error = %v, body = %s", err, recorder.Body.String())
+			}
+			if payload.Repository != "library/alpine" || payload.Reference != "latest" || payload.Digest != digest {
+				t.Fatalf("payload = %#v, want repository/reference/digest to match the published manifest", payload)
+			}
+			if payload.State != tt.wantState {
+				t.Fatalf("payload.State = %q, want %q", payload.State, tt.wantState)
+			}
+			if payload.WouldBlockPull != tt.wantBlocked {
+				t.Fatalf("payload.WouldBlockPull = %v, want %v", payload.WouldBlockPull, tt.wantBlocked)
+			}
+			if payload.Policy == nil {
+				t.Fatal("payload.Policy = nil, want policy always present")
+			}
+			scanPresent := payload.Scan != nil
+			if scanPresent != tt.wantScanPresent {
+				t.Fatalf("scan field present = %v, want %v (body = %s)", scanPresent, tt.wantScanPresent, recorder.Body.String())
+			}
+		})
+	}
+}
+
+// TestRouterManifestScanStatusRouteCollisionWithTagNamedScanStatus is the
+// design.md Decision 5 route-dispatch regression guard: a tag literally
+// named "scan-status" must still route to handleManifest, not
+// handleManifestScanStatus, because the suffix match is checked against the
+// trimmed reference, not against the raw path suffix.
+func TestRouterManifestScanStatusRouteCollisionWithTagNamedScanStatus(t *testing.T) {
+	t.Parallel()
+
+	handler, cleanup := newTestRouter(t, allowAllAccessController{})
+	defer cleanup()
+
+	uploadStart := httptest.NewRequest(http.MethodPost, "/v2/library/alpine/blobs/uploads/", nil)
+	uploadStartRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(uploadStartRecorder, uploadStart)
+	uploadLocation := uploadStartRecorder.Header().Get("Location")
+
+	appendReq := httptest.NewRequest(http.MethodPatch, uploadLocation, bytes.NewBufferString("layer-one"))
+	appendRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(appendRecorder, appendReq)
+
+	digest := domain.DigestFromBytes([]byte("layer-one")).String()
+	commitReq := httptest.NewRequest(http.MethodPut, uploadLocation+"?digest="+digest, nil)
+	commitRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(commitRecorder, commitReq)
+
+	manifestPayload := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{"mediaType":"application/vnd.oci.image.config.v1+json","digest":"` + digest + `","size":9},"layers":[{"mediaType":"application/vnd.oci.image.layer.v1.tar","digest":"` + digest + `","size":9}]}`)
+	manifestReq := httptest.NewRequest(http.MethodPut, "/v2/library/alpine/manifests/scan-status", bytes.NewReader(manifestPayload))
+	manifestReq.Header.Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
+	manifestRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(manifestRecorder, manifestReq)
+	if manifestRecorder.Code != http.StatusCreated {
+		t.Fatalf("push manifest with tag \"scan-status\" status = %d, want %d", manifestRecorder.Code, http.StatusCreated)
+	}
+	manifestDigest := manifestRecorder.Header().Get("Docker-Content-Digest")
+	if manifestDigest == "" {
+		t.Fatal("push manifest response missing Docker-Content-Digest")
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/v2/library/alpine/manifests/scan-status", nil)
+	getRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(getRecorder, getReq)
+
+	if getRecorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", getRecorder.Code, http.StatusOK)
+	}
+	if getRecorder.Header().Get("Docker-Content-Digest") != manifestDigest {
+		t.Fatalf("Docker-Content-Digest = %q, want %q (proves handleManifest served this, not handleManifestScanStatus)", getRecorder.Header().Get("Docker-Content-Digest"), manifestDigest)
+	}
+	if strings.Contains(getRecorder.Body.String(), `"would_block_pull"`) {
+		t.Fatalf("body = %q, want the raw manifest payload, not the scan-status JSON shape", getRecorder.Body.String())
+	}
+}
+
+// TestRouterManifestScanStatusRequiresPullAuthorization covers design.md
+// Decision 5's auth scope: a pull-only credential succeeds, no credential
+// 401s, and a credential scoped to a different repository is refused.
+func TestRouterManifestScanStatusRequiresPullAuthorization(t *testing.T) {
+	t.Parallel()
+
+	accessController := ports.NewPrincipalAccessController(ports.Challenge{Realm: "regixtry", Service: "regixtry"})
+
+	t.Run("pull-only credential succeeds", func(t *testing.T) {
+		t.Parallel()
+
+		blobStore, store, digest, cleanup := seedScanStatusFixture(t)
+		defer cleanup()
+		handler := newRouterWithStores(blobStore, store, accessController, fakeAuthService{
+			verify: &domainauth.Principal{
+				Subject:  "atk_1",
+				Username: "ci",
+				Grants:   []domainauth.RepoGrant{{Repository: domain.MustParseRepositoryRef("library/alpine"), Role: domainauth.RepoRoleReader}},
+				Scopes:   []domainauth.Scope{{Type: "repository", Name: "library/alpine", Actions: []string{"pull"}, Canonical: "repository:library/alpine:pull"}},
+			},
+		})
+
+		req := httptest.NewRequest(http.MethodGet, "/v2/library/alpine/manifests/"+digest+"/scan-status", nil)
+		req.Header.Set("Authorization", "Bearer pull-only-token")
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+		}
+	})
+
+	t.Run("no credential is rejected", func(t *testing.T) {
+		t.Parallel()
+
+		blobStore, store, digest, cleanup := seedScanStatusFixture(t)
+		defer cleanup()
+		handler := newRouterWithStores(blobStore, store, accessController, fakeAuthService{})
+
+		req := httptest.NewRequest(http.MethodGet, "/v2/library/alpine/manifests/"+digest+"/scan-status", nil)
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+
+		if recorder.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
+		}
+	})
+
+	t.Run("credential scoped to a different repository is refused", func(t *testing.T) {
+		t.Parallel()
+
+		blobStore, store, digest, cleanup := seedScanStatusFixture(t)
+		defer cleanup()
+		handler := newRouterWithStores(blobStore, store, accessController, fakeAuthService{
+			verify: &domainauth.Principal{
+				Subject:  "atk_1",
+				Username: "ci",
+				Scopes:   []domainauth.Scope{{Type: "repository", Name: "team/other", Actions: []string{"pull"}, Canonical: "repository:team/other:pull"}},
+			},
+		})
+
+		req := httptest.NewRequest(http.MethodGet, "/v2/library/alpine/manifests/"+digest+"/scan-status", nil)
+		req.Header.Set("Authorization", "Bearer other-repo-token")
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+
+		if recorder.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
+		}
+	})
+}
+
+// seedScanStatusFixture publishes library/alpine:latest through a
+// permissive router (allowAllAccessController, no auth) so the push itself
+// is never gated by the restrictive credentials each subtest exercises
+// afterward, then returns the same underlying stores for a second, auth-
+// restricted router to be built on top of.
+func seedScanStatusFixture(t *testing.T) (*fsblob.Store, *metadata.Store, string, func()) {
+	t.Helper()
+
+	blobStore, store, cleanup := newTestStores(t)
+	seedRouter := newRouterWithStores(blobStore, store, allowAllAccessController{}, nil)
+	seedPublishedManifest(t, seedRouter)
+	digest := manifestDigestFor(t, seedRouter, "library/alpine", "latest")
+	seedRouter.service.WaitForBackgroundWork()
+
+	return blobStore, store, digest, cleanup
+}
+
+// manifestDigestFor reads back the manifest digest via a plain GET, since
+// seedPublishedManifest returns the blob digest (used for its own blob
+// commit/config/layer references), which is a different value from the
+// manifest digest computed over the manifest JSON payload itself.
+func manifestDigestFor(t *testing.T, router *Router, repository string, reference string) string {
+	t.Helper()
+
+	req := httptest.NewRequest(http.MethodGet, "/v2/"+repository+"/manifests/"+reference, nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+	digest := recorder.Header().Get("Docker-Content-Digest")
+	if digest == "" {
+		t.Fatalf("GET manifest %s/%s missing Docker-Content-Digest, status = %d", repository, reference, recorder.Code)
+	}
+	return digest
+}
+
+func seedRouterScanRun(t *testing.T, store *metadata.Store, digest string, status string, critical int, high int) {
+	t.Helper()
+
+	now := time.Now().UTC()
+	run := ports.ScanRun{ID: "run-" + status + "-" + digest, Repository: "library/alpine", RequestedRef: "latest", Digest: digest, Status: status, Trigger: ports.ScanTriggerManual, CreatedAt: now, UpdatedAt: now, Critical: critical, High: high}
+	if err := store.UpsertScanRun(context.Background(), "tenant-a", run); err != nil {
+		t.Fatalf("UpsertScanRun() error = %v", err)
+	}
+}
+
 func TestRouterRejectsDigestMismatchOnBlobCommit(t *testing.T) {
 	t.Parallel()
 

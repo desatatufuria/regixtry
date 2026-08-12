@@ -90,6 +90,102 @@ func (s *Service) OpenManifest(ctx context.Context, repositoryName string, refer
 	return manifest, nil
 }
 
+// ScanStatusResult is the CI-facing scan verdict for one digest
+// (design.md Decision 5). Unlike OpenManifest, this never gates the
+// request — it always returns 200 with the current verdict, one of five
+// distinct states, so a polling caller can distinguish "wait" from "give
+// up" instead of receiving a single boolean.
+type ScanStatusResult struct {
+	Repository     string           `json:"repository"`
+	Reference      string           `json:"reference"`
+	Digest         string           `json:"digest"`
+	State          string           `json:"state"`
+	WouldBlockPull bool             `json:"would_block_pull"`
+	Policy         ScanStatusPolicy `json:"policy"`
+	Scan           *ScanStatusScan  `json:"scan,omitempty"`
+}
+
+type ScanStatusPolicy struct {
+	Enabled           bool   `json:"enabled"`
+	SeverityThreshold string `json:"severity_threshold"`
+}
+
+type ScanStatusScan struct {
+	Status     string     `json:"status"`
+	Critical   int        `json:"critical"`
+	High       int        `json:"high"`
+	Medium     int        `json:"medium"`
+	Low        int        `json:"low"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
+}
+
+const (
+	ScanStatusUnscanned  = "unscanned"
+	ScanStatusInProgress = "in_progress"
+	ScanStatusFailed     = "failed"
+	ScanStatusClean      = "clean"
+	ScanStatusBlocked    = "blocked"
+)
+
+// ScanStatus resolves the same digest and policy the pull gate would
+// (GetScanPolicySettings + GetLatestScanRunByDigest), but always returns a
+// verdict rather than gating the caller — it reports whether a pull would
+// be blocked, it is never subject to the gate itself. Authorization is
+// ActionPull, the same action OpenManifest itself uses: "if you may pull
+// it, you may learn why you cannot."
+func (s *Service) ScanStatus(ctx context.Context, repositoryName string, reference string) (ScanStatusResult, error) {
+	repository, err := parseRepository(repositoryName)
+	if err != nil {
+		return ScanStatusResult{}, err
+	}
+
+	if err := s.authorize(ctx, ports.Action{Verb: ports.ActionPull, Repository: repository.String()}); err != nil {
+		return ScanStatusResult{}, err
+	}
+
+	manifest, err := s.metadata.ResolveManifest(ctx, s.tenant(ctx), repository, reference)
+	if err != nil {
+		return ScanStatusResult{}, err
+	}
+	digest := manifest.Digest.String()
+
+	settings, err := s.GetScanPolicySettings(ctx)
+	if err != nil {
+		return ScanStatusResult{}, err
+	}
+	result := ScanStatusResult{
+		Repository: repository.String(),
+		Reference:  reference,
+		Digest:     digest,
+		Policy:     ScanStatusPolicy{Enabled: settings.Enabled, SeverityThreshold: settings.SeverityThreshold},
+	}
+
+	run, err := s.metadata.GetLatestScanRunByDigest(ctx, s.tenant(ctx), repository.String(), digest)
+	if err != nil {
+		if !domain.IsCode(err, domain.ErrorCodeNotFound) {
+			return ScanStatusResult{}, err
+		}
+		result.State = ScanStatusUnscanned
+		return result, nil
+	}
+
+	result.Scan = &ScanStatusScan{Status: run.Status, Critical: run.Critical, High: run.High, Medium: run.Medium, Low: run.Low, FinishedAt: run.FinishedAt}
+	switch run.Status {
+	case ports.ScanRunStatusQueued, ports.ScanRunStatusRunning:
+		result.State = ScanStatusInProgress
+	case ports.ScanRunStatusFailed:
+		result.State = ScanStatusFailed
+	case ports.ScanRunStatusCompleted:
+		if scanPolicyViolated(settings, run) {
+			result.State = ScanStatusBlocked
+			result.WouldBlockPull = true
+		} else {
+			result.State = ScanStatusClean
+		}
+	}
+	return result, nil
+}
+
 func (s *Service) Catalog(ctx context.Context, limit int, after string) (CatalogResult, error) {
 	action := ports.Action{Verb: ports.ActionCatalog}
 	if err := s.authorize(ctx, action); err != nil {
