@@ -33,9 +33,21 @@ func newAdminTheme() adminTheme {
 	border := lipgloss.Color("#4C566A")
 	text := lipgloss.Color("#ECEFF4")
 	muted := lipgloss.Color("#A7B1C2")
-	accent := lipgloss.Color("#D4AF37")
+	// accent moved off gold ("#D4AF37") onto Nord's own Snow Storm nord4
+	// ("#D8DEE9"): the bright gold fill read poorly as a focus/selection
+	// background against this theme's dark palette, and this cool light
+	// gray already belongs to the same Nord family as border/muted/text
+	// instead of introducing an unrelated hue.
+	accent := lipgloss.Color("#D8DEE9")
 	selected := lipgloss.Color("#2E3440")
-	selectedBG := lipgloss.Color("#D4AF37")
+	selectedBG := lipgloss.Color("#D8DEE9")
+	// fieldBG is a subtle Nord "panel" background (nord1) for unfocused
+	// input/toggle fields: a filled box gives real visual delimitation for
+	// the field without the row cost of a top/bottom border (design.md
+	// Decision 5 removed that border specifically to compact forms; this
+	// restores delimitation through fill, not border, so the row budget
+	// that let the Trivy Config modal fit the 24-row floor stays intact).
+	fieldBG := lipgloss.Color("#3B4252")
 	success := lipgloss.Color("#A3BE8C")
 	warning := lipgloss.Color("#EBCB8B")
 	errorColor := lipgloss.Color("#BF616A")
@@ -72,25 +84,25 @@ func newAdminTheme() adminTheme {
 		// severityMedium gets its own dedicated bronze hex rather than reusing
 		// warning's amber: sharing a hex with severityHigh (differing only by
 		// Bold) made the two indistinguishable with color disabled or bold
-		// ignored (design.md Decision 3). "#C0A16B" is confirmed distinct from
-		// both severityHigh ("#EBCB8B", ~1.6:1 luminance separation) and accent
-		// gold ("#D4AF37", ~1.16:1 luminance but sharply different saturation —
-		// muted bronze vs bright gold — and the two never share a role.
+		// ignored (design.md Decision 3). "#C0A16B" stays distinct from both
+		// severityHigh ("#EBCB8B") and accent, and the two never share a role.
 		severityMedium: lipgloss.NewStyle().Foreground(lipgloss.Color("#C0A16B")),
 		severityLow:    lipgloss.NewStyle().Foreground(muted),
-		// input/inputFocus are deliberately flattened (no Border): the
-		// NormalBorder's only job was to carry a focus color, since nothing
-		// else differed between the two styles -- 2 rows spent per field to
-		// communicate one bit already expressible in color (design.md
-		// Decision 5). Focus is re-expressed via theme.selected's existing
-		// gold fill, the same cue lists/grants/tokens/suggestions already use
-		// for "this is the active row". Width(30) is kept on both so values
-		// stay column-aligned and the modal's width cannot jitter as focus
-		// moves. renderTextField/renderSecretField/renderToggleField are not
-		// edited -- they already resolve input vs inputFocus and emit
-		// "label\nvalue", so flattening these two style definitions compacts
-		// every form in the app.
-		input:       lipgloss.NewStyle().Foreground(text).Padding(0, 1).Width(30),
+		// input/inputFocus stay borderless (design.md Decision 5: a
+		// top/bottom border only ever carried a focus color, so 2 rows per
+		// field were spent to communicate one bit already expressible in
+		// color -- removing it is what let the Trivy Config modal fit the
+		// 24-row floor). Delimitation instead comes from a filled
+		// background on BOTH states, not just focus: unfocused fields get
+		// fieldBG (a visibly boxed, slightly raised panel) so an empty or
+		// unfocused field still reads as "this is a text box" even with no
+		// border rune anywhere -- addressing that gap without spending any
+		// extra rows. Width(30) is kept on both so values stay
+		// column-aligned and the modal's width cannot jitter as focus
+		// moves. renderTextField/renderSecretField/renderToggleField are
+		// not edited -- they already resolve input vs inputFocus and emit
+		// "label\nvalue", so this stays a pure theme-token change.
+		input:       lipgloss.NewStyle().Foreground(text).Background(fieldBG).Padding(0, 1).Width(30),
 		inputFocus:  lipgloss.NewStyle().Foreground(selected).Background(selectedBG).Bold(true).Padding(0, 1).Width(30),
 		pill:        lipgloss.NewStyle().Foreground(selected).Background(accent).Bold(true).Padding(0, 1),
 		help:        lipgloss.NewStyle().Foreground(muted),
