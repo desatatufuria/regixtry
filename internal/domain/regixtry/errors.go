@@ -16,6 +16,7 @@ const (
 	ErrorCodeNotFound          ErrorCode = "NOT_FOUND"
 	ErrorCodeConflict          ErrorCode = "CONFLICT"
 	ErrorCodeUnauthorized      ErrorCode = "UNAUTHORIZED"
+	ErrorCodePolicyViolation   ErrorCode = "POLICY_VIOLATION"
 )
 
 type Error struct {
@@ -75,4 +76,8 @@ func NewConflictError(message string) error {
 
 func NewUnauthorizedError(message string) error {
 	return &Error{Code: ErrorCodeUnauthorized, Message: message}
+}
+
+func NewPolicyViolationError(message string) error {
+	return &Error{Code: ErrorCodePolicyViolation, Message: message}
 }

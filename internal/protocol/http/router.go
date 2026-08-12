@@ -563,6 +563,12 @@ func writeError(w stdhttp.ResponseWriter, req *stdhttp.Request, err error, chall
 			w.Header().Set("WWW-Authenticate", challengeHeader(challenge))
 		case domain.ErrorCodeNotFound:
 			status = stdhttp.StatusNotFound
+		case domain.ErrorCodePolicyViolation:
+			// 403, no WWW-Authenticate: the caller is authenticated and
+			// authorized, but the pull is refused by policy — re-
+			// authenticating cannot resolve a policy violation.
+			status = stdhttp.StatusForbidden
+			code = "DENIED"
 		case domain.ErrorCodeInvalidDigest, domain.ErrorCodeDigestMismatch, domain.ErrorCodeInvalidManifest, domain.ErrorCodeValidation:
 			status = stdhttp.StatusBadRequest
 			if code == "" {

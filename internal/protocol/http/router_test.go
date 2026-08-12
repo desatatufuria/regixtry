@@ -45,6 +45,35 @@ func TestRouterChallengesProtectedPull(t *testing.T) {
 	}
 }
 
+func TestWriteErrorMapsPolicyViolationTo403DeniedWithoutWWWAuthenticate(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodGet, "/v2/library/alpine/manifests/latest", nil)
+	recorder := httptest.NewRecorder()
+
+	writeError(recorder, req, domain.NewPolicyViolationError("blocked by scan policy"), ports.Challenge{Scheme: "Bearer", Realm: "regixtry"}, "MANIFEST_UNKNOWN")
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusForbidden)
+	}
+	if got := recorder.Header().Get("WWW-Authenticate"); got != "" {
+		t.Fatalf("WWW-Authenticate = %q, want empty — re-authenticating cannot resolve a policy violation", got)
+	}
+
+	var payload struct {
+		Errors []struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if err := json.NewDecoder(recorder.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response body error = %v", err)
+	}
+	if len(payload.Errors) != 1 || payload.Errors[0].Code != "DENIED" {
+		t.Fatalf("payload.Errors = %#v, want single DENIED error", payload.Errors)
+	}
+}
+
 func TestRouterUploadAndReadFlow(t *testing.T) {
 	t.Parallel()
 

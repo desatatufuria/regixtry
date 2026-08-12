@@ -237,6 +237,106 @@ func TestServiceUpdateScanPolicySettingsPersistsAndRoundTrips(t *testing.T) {
 	}
 }
 
+func TestServiceOpenManifestBlocksPullOnCompletedViolatingScan(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		threshold string
+		critical  int
+		high      int
+	}{
+		{name: "critical at CRITICAL threshold", threshold: ports.ScanPolicyThresholdCritical, critical: 3, high: 0},
+		{name: "high-only at CRITICAL_HIGH threshold", threshold: ports.ScanPolicyThresholdCriticalHigh, critical: 0, high: 2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			service, cleanup := newTestService(t, allowAllAccessController{})
+			defer cleanup()
+
+			seedRepository(t, service, context.Background(), "library/alpine")
+			digest := seededManifestDigest(t, service, "library/alpine")
+			seedScanPolicyThreshold(t, service, tt.threshold)
+			seedCompletedScanRun(t, service, "library/alpine", digest, tt.critical, tt.high)
+
+			if _, err := service.OpenManifest(context.Background(), "library/alpine", "latest"); err == nil {
+				t.Fatal("OpenManifest() error = nil, want policy violation")
+			} else if !domain.IsCode(err, domain.ErrorCodePolicyViolation) {
+				t.Fatalf("OpenManifest() error = %v, want ErrorCodePolicyViolation", err)
+			}
+		})
+	}
+}
+
+func TestServiceOpenManifestAllowsPullOnNonBlockingScanStates(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		seed    func(t *testing.T, service *Service, digest string)
+		enabled bool
+	}{
+		{name: "no scan run", seed: func(t *testing.T, service *Service, digest string) {}, enabled: true},
+		{name: "queued", seed: func(t *testing.T, service *Service, digest string) {
+			seedScanRunWithStatus(t, service, "library/alpine", digest, ports.ScanRunStatusQueued, 5, 0)
+		}, enabled: true},
+		{name: "running", seed: func(t *testing.T, service *Service, digest string) {
+			seedScanRunWithStatus(t, service, "library/alpine", digest, ports.ScanRunStatusRunning, 5, 0)
+		}, enabled: true},
+		{name: "failed", seed: func(t *testing.T, service *Service, digest string) {
+			seedScanRunWithStatus(t, service, "library/alpine", digest, ports.ScanRunStatusFailed, 5, 0)
+		}, enabled: true},
+		{name: "policy disabled with a completed violating scan", seed: func(t *testing.T, service *Service, digest string) {
+			seedScanRunWithStatus(t, service, "library/alpine", digest, ports.ScanRunStatusCompleted, 5, 0)
+		}, enabled: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			service, cleanup := newTestService(t, allowAllAccessController{})
+			defer cleanup()
+
+			seedRepository(t, service, context.Background(), "library/alpine")
+			digest := seededManifestDigest(t, service, "library/alpine")
+			if !tt.enabled {
+				seedScanPolicyEnabled(t, service, false)
+			}
+			tt.seed(t, service, digest)
+
+			if _, err := service.OpenManifest(context.Background(), "library/alpine", "latest"); err != nil {
+				t.Fatalf("OpenManifest() error = %v, want allowed pull", err)
+			}
+		})
+	}
+}
+
+// TestServiceResolveManifestIgnoresPolicyGate proves the TUI browse path
+// (ResolveManifest) is untouched by the pull gate — the same digest the
+// gate blocks in OpenManifest must still resolve successfully.
+func TestServiceResolveManifestIgnoresPolicyGate(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	seedRepository(t, service, context.Background(), "library/alpine")
+	digest := seededManifestDigest(t, service, "library/alpine")
+	seedCompletedScanRun(t, service, "library/alpine", digest, 4, 0)
+
+	if _, err := service.OpenManifest(context.Background(), "library/alpine", "latest"); !domain.IsCode(err, domain.ErrorCodePolicyViolation) {
+		t.Fatalf("OpenManifest() error = %v, want ErrorCodePolicyViolation", err)
+	}
+
+	if _, err := service.ResolveManifest(context.Background(), "library/alpine", "latest"); err != nil {
+		t.Fatalf("ResolveManifest() error = %v, want the browse path unaffected by the pull gate", err)
+	}
+}
+
 func TestServiceRejectsOutOfBoundsScanSettings(t *testing.T) {
 	t.Parallel()
 
@@ -1279,6 +1379,50 @@ func seedRepository(t *testing.T, service *Service, ctx context.Context, reposit
 	manifestPayload := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{"mediaType":"application/vnd.oci.image.config.v1+json","digest":"` + blob.Digest + `","size":9},"layers":[{"mediaType":"application/vnd.oci.image.layer.v1.tar","digest":"` + blob.Digest + `","size":9}]}`)
 	if _, err := service.PublishManifest(ctx, repository, "latest", "application/vnd.oci.image.manifest.v1+json", manifestPayload); err != nil {
 		t.Fatalf("PublishManifest(%q) error = %v", repository, err)
+	}
+}
+
+// seededManifestDigest resolves the digest published by seedRepository for
+// the "latest" tag, so gate tests can seed scan runs keyed to the exact
+// digest OpenManifest will resolve.
+func seededManifestDigest(t *testing.T, service *Service, repository string) string {
+	t.Helper()
+
+	details, err := service.ResolveManifest(context.Background(), repository, "latest")
+	if err != nil {
+		t.Fatalf("ResolveManifest(%q) error = %v", repository, err)
+	}
+	return details.Digest
+}
+
+func seedScanPolicyThreshold(t *testing.T, service *Service, threshold string) {
+	t.Helper()
+
+	if err := service.metadata.UpsertScanPolicySettings(context.Background(), "tenant-a", ports.ScanPolicySettings{Enabled: true, SeverityThreshold: threshold, UpdatedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("UpsertScanPolicySettings() error = %v", err)
+	}
+}
+
+func seedScanPolicyEnabled(t *testing.T, service *Service, enabled bool) {
+	t.Helper()
+
+	if err := service.metadata.UpsertScanPolicySettings(context.Background(), "tenant-a", ports.ScanPolicySettings{Enabled: enabled, SeverityThreshold: ports.ScanPolicyThresholdCritical, UpdatedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("UpsertScanPolicySettings() error = %v", err)
+	}
+}
+
+func seedCompletedScanRun(t *testing.T, service *Service, repository string, digest string, critical int, high int) {
+	t.Helper()
+	seedScanRunWithStatus(t, service, repository, digest, ports.ScanRunStatusCompleted, critical, high)
+}
+
+func seedScanRunWithStatus(t *testing.T, service *Service, repository string, digest string, status string, critical int, high int) {
+	t.Helper()
+
+	now := time.Now().UTC()
+	run := ports.ScanRun{ID: "run-" + status + "-" + digest, Repository: repository, RequestedRef: "latest", Digest: digest, Status: status, Trigger: ports.ScanTriggerManual, CreatedAt: now, UpdatedAt: now, Critical: critical, High: high}
+	if err := service.metadata.UpsertScanRun(context.Background(), "tenant-a", run); err != nil {
+		t.Fatalf("UpsertScanRun() error = %v", err)
 	}
 }
 

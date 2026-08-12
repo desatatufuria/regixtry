@@ -85,6 +85,30 @@ func scanPolicyViolated(settings ports.ScanPolicySettings, run ports.ScanRun) bo
 	return run.Critical > 0
 }
 
+// enforceScanPolicy is the pull-time vulnerability policy gate
+// (design.md Decision 3), called from OpenManifest after the digest is
+// resolved. A digest with no scan run of any status allows the pull
+// (NotFound is fail-open, not an error); any other store error propagates
+// unchanged so an infrastructure failure is never silently swallowed into
+// "allow".
+func (s *Service) enforceScanPolicy(ctx context.Context, repository string, digest string) error {
+	settings, err := s.GetScanPolicySettings(ctx)
+	if err != nil {
+		return err
+	}
+	run, err := s.metadata.GetLatestScanRunByDigest(ctx, s.tenant(ctx), repository, digest)
+	if err != nil {
+		if domain.IsCode(err, domain.ErrorCodeNotFound) {
+			return nil
+		}
+		return err
+	}
+	if scanPolicyViolated(settings, run) {
+		return domain.NewPolicyViolationError(fmt.Sprintf("pull of %s@%s is blocked by the vulnerability policy", repository, digest))
+	}
+	return nil
+}
+
 func (s *Service) QueueManualScan(ctx context.Context, repositoryName string, reference string) (ports.ScanRun, error) {
 	settings, err := s.resolveManagedScanSettings(ctx)
 	if err != nil {

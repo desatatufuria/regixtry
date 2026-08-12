@@ -78,7 +78,16 @@ func (s *Service) OpenManifest(ctx context.Context, repositoryName string, refer
 		return domain.Manifest{}, err
 	}
 
-	return s.metadata.ResolveManifest(ctx, s.tenant(ctx), repository, reference)
+	manifest, err := s.metadata.ResolveManifest(ctx, s.tenant(ctx), repository, reference)
+	if err != nil {
+		return domain.Manifest{}, err
+	}
+
+	if err := s.enforceScanPolicy(ctx, repository.String(), manifest.Digest.String()); err != nil {
+		return domain.Manifest{}, err
+	}
+
+	return manifest, nil
 }
 
 func (s *Service) Catalog(ctx context.Context, limit int, after string) (CatalogResult, error) {
