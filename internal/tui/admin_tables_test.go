@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	bubbletable "github.com/evertras/bubble-table/table"
+	"github.com/muesli/termenv"
 	"regixtry/internal/ports"
 )
 
@@ -147,4 +148,97 @@ func TestRebuildAdminTablesBakesPrimaryAndCompactPageSizeIntoTables(t *testing.T
 		t.Fatalf("FeatureRows[%q] missing", "rows-section")
 	}
 	assertTableHeight(t, "FeatureRows (compact)", rowsTable, wantCompact)
+}
+
+// TestNewAdminBubbleTableShowsPositionIndicatorWhenRowsExceedPageSize is the
+// Phase 5 task 5.1 RED test (spec.md "Visible Position Indicator for Hidden
+// Rows", "Table shows position when rows are hidden"): a 47-row table with a
+// pageSize below 47 must show a position indicator reflecting the visible
+// range and total row count.
+//
+// Deviation from tasks.md's file suggestion (model_test.go): this asserts
+// directly on table.View() rather than a full Model screen render, matching
+// design.md's Testing Strategy table ("Table height identity...; border
+// color and paged footer present | Assert on table.View()", Unit layer).
+// Routing through a full admin screen would confound this table-local
+// assertion with the outer renderSection clip, which is orthogonal to what
+// this test verifies (same narrow-scope precedent as Phase 3/4's documented
+// file-location deviations).
+func TestNewAdminBubbleTableShowsPositionIndicatorWhenRowsExceedPageSize(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+	columns := []bubbletable.Column{bubbletable.NewColumn("name", "Name", 10)}
+	const totalRows = 47
+	rows := make([]bubbletable.Row, 0, totalRows)
+	for i := 0; i < totalRows; i++ {
+		rows = append(rows, bubbletable.NewRow(bubbletable.RowData{"name": fmt.Sprintf("row-%d", i)}))
+	}
+
+	const pageSize = 3
+	table := newAdminBubbleTable(columns, rows, 0, theme, pageSize)
+
+	wantMaxPages := (totalRows-1)/pageSize + 1
+	wantIndicator := fmt.Sprintf("%d/%d", 1, wantMaxPages)
+	view := table.View()
+	if !strings.Contains(view, wantIndicator) {
+		t.Fatalf("table view = %q, want position indicator %q reflecting visible range/total of %d rows", view, wantIndicator, totalRows)
+	}
+}
+
+// TestNewAdminBubbleTableShowsNoMisleadingIndicatorWhenAllRowsFit is the
+// Phase 5 task 5.2 RED test (spec.md "No indicator when all rows are
+// visible"): when a table's row count fits entirely within its pageSize, the
+// footer MUST NOT imply hidden content that does not exist.
+func TestNewAdminBubbleTableShowsNoMisleadingIndicatorWhenAllRowsFit(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+	columns := []bubbletable.Column{bubbletable.NewColumn("name", "Name", 10)}
+	rows := []bubbletable.Row{
+		bubbletable.NewRow(bubbletable.RowData{"name": "alpha"}),
+		bubbletable.NewRow(bubbletable.RowData{"name": "beta"}),
+		bubbletable.NewRow(bubbletable.RowData{"name": "gamma"}),
+	}
+
+	table := newAdminBubbleTable(columns, rows, 0, theme, 10) // pageSize(10) > len(rows)(3)
+
+	view := table.View()
+	if !strings.Contains(view, "1/1") {
+		t.Fatalf("table view = %q, want a non-misleading full-count indicator (1/1) when all rows fit", view)
+	}
+	if strings.Contains(view, "2/") {
+		t.Fatalf("table view = %q, want no indicator implying a second page when all %d rows fit within pageSize", view, len(rows))
+	}
+}
+
+// TestNewAdminBubbleTableAppliesThemeBorderForegroundColor is the Phase 5
+// task 5.4 RED test (spec.md "Consistent Table Theme Styling", "Table
+// renders with themed border and footer" — the border-color half; the
+// footer-visible half is already guarded by
+// TestNewAdminBubbleTableUsesThemeBorderColorAndVisibleFooter above).
+//
+// Deliberately NOT t.Parallel(): this forces the shared global lipgloss
+// color profile to TrueColor so the border's ANSI color sequence is
+// actually emitted (the default test environment has no TTY and renders
+// plain, uncolored text). Go only starts t.Parallel()-marked tests after
+// every non-parallel test in this package has completed, so running this
+// test serially — set profile, render, restore via defer, all before any
+// parallel test body executes — cannot race with the many other tests in
+// this package that render table/theme output.
+func TestNewAdminBubbleTableAppliesThemeBorderForegroundColor(t *testing.T) {
+	original := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(original)
+
+	theme := newAdminTheme()
+	columns := []bubbletable.Column{bubbletable.NewColumn("name", "Name", 10)}
+	rows := []bubbletable.Row{bubbletable.NewRow(bubbletable.RowData{"name": "alpha"})}
+
+	table := newAdminBubbleTable(columns, rows, 0, theme, minTableRows)
+
+	wantSequence := "\x1b[" + termenv.RGBColor(string(theme.borderColor)).Sequence(false) + "m"
+	if !strings.Contains(table.View(), wantSequence) {
+		t.Fatalf("table view does not contain the theme border-color ANSI sequence %q — border MUST use theme.borderColor", wantSequence)
+	}
 }

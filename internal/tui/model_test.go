@@ -155,6 +155,69 @@ func TestModelViewResizeAboveMinimumRestoresRendering(t *testing.T) {
 	}
 }
 
+// TestModelResizeTallerRebuildsAdminTablesToShowMoreRowsWithoutRestart is the
+// Phase 5 task 5.5 RED test, first scenario (spec.md "Live Terminal Resize
+// Refit", "Growing the terminal shows more rows"): resizing taller while an
+// admin table screen is displayed must recompute the table pageSize and show
+// more rows without the operator restarting or re-navigating.
+func TestModelResizeTallerRebuildsAdminTablesToShowMoreRowsWithoutRestart(t *testing.T) {
+	t.Parallel()
+
+	model := NewModel(&fakeQueryService{})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: minViewportWidth, Height: minViewportHeight})
+	result := updated.(Model)
+	result.screen = screenAdminFeatures
+	result.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: time.Now().Add(time.Hour)}
+	result.adminView.Features = make([]ports.FeatureSummary, 40)
+	for i := range result.adminView.Features {
+		result.adminView.Features[i] = ports.FeatureSummary{Name: fmt.Sprintf("feature-%d", i)}
+	}
+	result.rebuildAdminTables(result.adminTablesLayout())
+	beforePageSize := result.adminView.Layout.Primary
+
+	grown, _ := result.Update(tea.WindowSizeMsg{Width: minViewportWidth, Height: minViewportHeight + 20})
+	afterModel := grown.(Model)
+
+	if got := afterModel.adminView.Layout.Primary; got <= beforePageSize {
+		t.Fatalf("primary pageSize after taller resize = %d, want > %d (before resize) — resize must recompute the table budget without restart", got, beforePageSize)
+	}
+	wantHeight := afterModel.adminView.Layout.Primary + tableChromeRows
+	if got := lipgloss.Height(afterModel.adminView.Tables.Features.View()); got != wantHeight {
+		t.Fatalf("features table height after resize = %d, want pageSize(%d)+tableChromeRows = %d", got, afterModel.adminView.Layout.Primary, wantHeight)
+	}
+}
+
+// TestModelResizeShorterRebuildsAdminTablesWithoutExceedingViewport is the
+// Phase 5 task 5.5 RED test, second scenario (spec.md "Live Terminal Resize
+// Refit", "Shrinking the terminal re-bounds the screen"): resizing shorter
+// while an admin table screen is fully visible must re-fit the table to the
+// new height and must not exceed the new viewport.
+func TestModelResizeShorterRebuildsAdminTablesWithoutExceedingViewport(t *testing.T) {
+	t.Parallel()
+
+	model := NewModel(&fakeQueryService{})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: minViewportWidth, Height: adminTestViewportHeight})
+	result := updated.(Model)
+	result.screen = screenAdminFeatures
+	result.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: time.Now().Add(time.Hour)}
+	result.adminView.Features = make([]ports.FeatureSummary, 40)
+	for i := range result.adminView.Features {
+		result.adminView.Features[i] = ports.FeatureSummary{Name: fmt.Sprintf("feature-%d", i)}
+	}
+	result.rebuildAdminTables(result.adminTablesLayout())
+	beforePageSize := result.adminView.Layout.Primary
+
+	shrunk, _ := result.Update(tea.WindowSizeMsg{Width: minViewportWidth, Height: minViewportHeight})
+	afterModel := shrunk.(Model)
+
+	if got := afterModel.adminView.Layout.Primary; got >= beforePageSize {
+		t.Fatalf("primary pageSize after shorter resize = %d, want < %d (before resize) — resize must re-fit the table to the smaller budget", got, beforePageSize)
+	}
+	if got := lipgloss.Height(afterModel.View()); got > minViewportHeight {
+		t.Fatalf("view height after shorter resize = %d, want <= %d (new viewport)", got, minViewportHeight)
+	}
+}
+
 func TestModelContentBudgetWrapsPackageLevelContentBudgetUsingViewportAndGivenStatusHelp(t *testing.T) {
 	t.Parallel()
 
