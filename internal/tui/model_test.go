@@ -1414,6 +1414,126 @@ func TestModelAdminFeatureTablesKeepScreenShortcutsAuthoritative(t *testing.T) {
 	}
 }
 
+// TestModelAdminScanRunsTablePagesOnArrowKeyNavigationPastPageBoundary closes
+// sdd-verify's CRITICAL-01 finding for the tui-table-viewport-fixed-size
+// change: spec.md "Internal Table and List Scrolling", scenario "Long table
+// pages internally" had zero covering tests. The existing arrow-key admin
+// table test above uses only a 2-row ScanRuns table, which can never cross a
+// page boundary. This test builds a ScanRuns table with more rows than its
+// computed pageSize, presses "down" past the first page boundary, and
+// verifies the mechanism design.md decision #5 describes:
+// syncAdminTableHighlights()'s WithHighlightedRow(...) call auto-pages the
+// live bubble-table (no PgUp/PgDn forwarding into table.Update, which is
+// never called), keeping the highlighted row visible and the surrounding
+// screen chrome (title, table header, help) unchanged.
+func TestModelAdminScanRunsTablePagesOnArrowKeyNavigationPastPageBoundary(t *testing.T) {
+	t.Parallel()
+
+	const totalRuns = 30
+	scanRuns := make([]ports.ScanRun, 0, totalRuns)
+	for i := 0; i < totalRuns; i++ {
+		scanRuns = append(scanRuns, ports.ScanRun{
+			ID:           fmt.Sprintf("run-%02d", i),
+			Repository:   fmt.Sprintf("team/service-%02d", i),
+			RequestedRef: "latest",
+			Status:       ports.ScanRunStatusCompleted,
+		})
+	}
+
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: time.Now().Add(time.Hour)},
+		features:     []ports.FeatureSummary{{Name: trivyFeatureName, Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
+		featurePage: ports.FeaturePage{
+			Summary: ports.FeatureSummary{Name: trivyFeatureName, Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
+		},
+		scanRuns: scanRuns,
+	}
+
+	// A small, realistic viewport (the spec's minimum supported size) keeps
+	// the computed pageSize well below totalRuns so pagination genuinely
+	// activates, instead of a contrived pageSize.
+	model := NewModel(&fakeQueryService{}, WithAdminClient(adminClient))
+	model.viewport = viewportSize{Width: minViewportWidth, Height: minViewportHeight}
+	ready := runCmd(t, model, model.Init())
+
+	updated := runAdminLogin(t, ready, "operator", "secret-pass")
+	updated = runKey(t, updated, "f")
+	updated = runKey(t, updated, "tab")
+
+	if updated.status != "" {
+		t.Fatalf("status = %q, want the repository-alerts load settled (empty) before navigating", updated.status)
+	}
+
+	primaryPageSize := updated.adminView.Layout.Primary
+	if primaryPageSize <= 0 || primaryPageSize >= totalRuns {
+		t.Fatalf("primary pageSize = %d, want a positive size smaller than %d rows so pagination genuinely activates", primaryPageSize, totalRuns)
+	}
+
+	beforeTable := updated.adminView.Tables.ScanRuns
+	if got, want := beforeTable.CurrentPage(), 1; got != want {
+		t.Fatalf("scan-runs table CurrentPage() before navigation = %d, want %d", got, want)
+	}
+	firstPageOnlyRepository, ok := beforeTable.HighlightedRow().Data[adminTableColumnScanRunRepository].(string)
+	if !ok || firstPageOnlyRepository == "" {
+		t.Fatalf("highlighted row repository before navigation = %#v, want a non-empty string", beforeTable.HighlightedRow().Data[adminTableColumnScanRunRepository])
+	}
+	beforeView := updated.View()
+	beforeTableView := beforeTable.View()
+	wantBeforeIndicator := fmt.Sprintf("%d/%d", 1, beforeTable.MaxPages())
+	if !strings.Contains(beforeTableView, wantBeforeIndicator) {
+		t.Fatalf("scan-runs table view before navigation = %q, want position indicator %q", beforeTableView, wantBeforeIndicator)
+	}
+
+	// Press "down" exactly pageSize times: this moves the highlighted row
+	// from index 0 to index pageSize, the first row of the second page.
+	for i := 0; i < primaryPageSize; i++ {
+		updated = runKey(t, updated, "down")
+	}
+
+	afterTable := updated.adminView.Tables.ScanRuns
+	if got, want := afterTable.GetHighlightedRowIndex(), primaryPageSize; got != want {
+		t.Fatalf("highlighted row index after %d downs = %d, want %d", primaryPageSize, got, want)
+	}
+	if got, want := afterTable.CurrentPage(), 2; got != want {
+		t.Fatalf("scan-runs table CurrentPage() after paging past the first page boundary = %d, want %d (design.md decision #5: WithHighlightedRow must auto-page the table)", got, want)
+	}
+
+	afterView := updated.View()
+	afterTableView := afterTable.View()
+	wantAfterIndicator := fmt.Sprintf("%d/%d", 2, afterTable.MaxPages())
+	if !strings.Contains(afterTableView, wantAfterIndicator) {
+		t.Fatalf("scan-runs table view after paging = %q, want position indicator %q reflecting the new page", afterTableView, wantAfterIndicator)
+	}
+
+	highlightedRepository, ok := afterTable.HighlightedRow().Data[adminTableColumnScanRunRepository].(string)
+	if !ok || highlightedRepository == "" {
+		t.Fatalf("highlighted row repository after paging = %#v, want a non-empty string", afterTable.HighlightedRow().Data[adminTableColumnScanRunRepository])
+	}
+	if !strings.Contains(afterTableView, highlightedRepository) {
+		t.Fatalf("scan-runs table view after paging = %q, want the newly highlighted row %q to be genuinely visible on-screen", afterTableView, highlightedRepository)
+	}
+	if strings.Contains(afterTableView, firstPageOnlyRepository) {
+		t.Fatalf("scan-runs table view after paging = %q, want first-page-only row %q to have scrolled off, not still be visible", afterTableView, firstPageOnlyRepository)
+	}
+
+	// The table header and surrounding screen chrome (title, help) must
+	// remain visible and unchanged: same overall height, same title, same
+	// help text, same table column headers, before and after paging.
+	if got, want := lipgloss.Height(afterView), lipgloss.Height(beforeView); got != want {
+		t.Fatalf("full screen height after paging = %d, want unchanged %d", got, want)
+	}
+	help := adminFeatureHelp(updated.adminView)
+	if !strings.Contains(beforeView, help) || !strings.Contains(afterView, help) {
+		t.Fatalf("help text %q must remain present and unchanged before/after paging\nbefore: %q\nafter: %q", help, beforeView, afterView)
+	}
+	if !strings.Contains(beforeView, "Regixtry Admin") || !strings.Contains(afterView, "Regixtry Admin") {
+		t.Fatalf("screen title must remain visible and unchanged before/after paging\nbefore: %q\nafter: %q", beforeView, afterView)
+	}
+	if !strings.Contains(beforeTableView, "Repository") || !strings.Contains(afterTableView, "Repository") {
+		t.Fatalf("table header must remain visible before/after paging\nbefore: %q\nafter: %q", beforeTableView, afterTableView)
+	}
+}
+
 func TestModelEscWalksBackThroughEditFlow(t *testing.T) {
 	t.Parallel()
 
