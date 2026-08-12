@@ -251,6 +251,63 @@ func tableRoles(l consoleLayout) (primary, compact int) {
 	return primary, compact
 }
 
+// trivyDetailFixedLines is the row count of every non-table line
+// renderTrivyRepositoryAlerts (admin_views.go) composes around the
+// ScanRuns/Findings/SecretFindings tables once a scan-run detail is open:
+// the "Repository Alerts" title (1) + blank+"Selected Scan Run" heading (2)
+// + the six fixed detail fields (Repository, Reference, Digest, Status,
+// Reference freshness, DB freshness) (6) + blank+"Findings" heading (2) +
+// blank+"Secret Findings" heading (2) = 13. The optional "Error: ..." line
+// is deliberately not counted here (it is data-dependent); undercounting by
+// one row in that rare case is covered by renderSection's outer-pane clip
+// (viewport.go), which remains the structural overflow guarantee.
+//
+// trivyScreenChromeLines is the row count of the fixed lines
+// renderAdminFeaturesScreen/renderFeaturePageBody (admin_views.go) compose
+// around the whole Feature Page block — the block that itself contains
+// renderTrivyRepositoryAlerts's output — on the only screen that renders
+// this state today (adminTablesLayout's doc comment): "Built-in Features"
+// heading (1) + blank before "Feature Page" (1) + "Feature Page" heading (1)
+// + renderTrivyTabs's two lines (2) + trailing blank+Operator+Session
+// remaining (3) = 8.
+const (
+	trivyDetailFixedLines  = 13
+	trivyScreenChromeLines = 8
+)
+
+// trivyAlertDetailTableRoles computes ScanRuns/Findings pageSizes for the
+// Trivy repository-alerts screen once a scan-run detail is open (post-verify
+// regression fix). tableRoles's default split gives ScanRuns the whole
+// primary budget on the assumption it is the screen's only table, which
+// starves the Findings table when a detail is also being rendered below it
+// — renderSection's outer clip then had to cut through the Findings table
+// entirely, never showing its bordered box at all. Once the operator has
+// drilled into a specific run, browsing the full run list is no longer the
+// point, so ScanRuns collapses to the compact role and the freed budget goes
+// to Findings instead, computed from the other rows actually being rendered
+// on this screen (measured against the real composed structure — the
+// Features table's actual rendered height via lipgloss.Height, same style as
+// contentBudget's own status/help measurement, plus the documented fixed
+// line counts above — rather than guessed) so Findings' own header/rows/
+// footer have room to render before the outer clip has to act.
+func trivyAlertDetailTableRoles(l consoleLayout, featuresTableHeight int, hasSecretFindings bool) (scanRuns, findings int) {
+	_, compact := tableRoles(l)
+	scanRuns = compact
+
+	secretFindingsRows := 1 // empty-state message ("No secret findings...") is a single line
+	if hasSecretFindings {
+		secretFindingsRows = compact + tableChromeRows
+	}
+
+	fixed := trivyScreenChromeLines + featuresTableHeight + trivyDetailFixedLines + (scanRuns + tableChromeRows) + secretFindingsRows
+	available := l.SectionRows - fixed - tableChromeRows
+	if available < minTableRows {
+		available = minTableRows
+	}
+	findings = available
+	return scanRuns, findings
+}
+
 func (m *Model) rebuildAdminTables(layout consoleLayout) {
 	layout.Primary, layout.Compact = tableRoles(layout)
 	m.adminView.Layout = layout
@@ -265,8 +322,14 @@ func (m *Model) rebuildAdminTables(layout consoleLayout) {
 		featureRows[section.ID] = buildAdminFeatureRowsTable(theme, section, layout.Compact)
 	}
 	m.adminView.Tables.FeatureRows = featureRows
-	m.adminView.Tables.ScanRuns = buildAdminScanRunsTable(theme, m.adminView.TrivyScanRuns, m.adminView.TrivySelectedAlert, layout.Primary)
-	m.adminView.Tables.Findings = buildAdminFindingsTable(theme, m.adminView.TrivyScanRunDetail.Findings, 0, layout.Compact)
+
+	scanRunsPageSize, findingsPageSize := layout.Primary, layout.Compact
+	if m.adminView.TrivyAlertDetailOpen {
+		featuresTableHeight := lipgloss.Height(m.adminView.Tables.Features.View())
+		scanRunsPageSize, findingsPageSize = trivyAlertDetailTableRoles(layout, featuresTableHeight, len(m.adminView.SecretFindings) > 0)
+	}
+	m.adminView.Tables.ScanRuns = buildAdminScanRunsTable(theme, m.adminView.TrivyScanRuns, m.adminView.TrivySelectedAlert, scanRunsPageSize)
+	m.adminView.Tables.Findings = buildAdminFindingsTable(theme, m.adminView.TrivyScanRunDetail.Findings, 0, findingsPageSize)
 	m.adminView.Tables.SecretFindings = buildAdminSecretFindingsTable(theme, m.adminView.SecretFindings, 0, layout.Compact)
 	m.syncAdminTableSelections()
 }

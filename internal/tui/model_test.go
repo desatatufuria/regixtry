@@ -335,6 +335,69 @@ func TestModelTrivyRepositoryAlertsScreenFitsViewportHeight(t *testing.T) {
 	}
 }
 
+// TestModelTrivyRepositoryAlertsDetailShowsFindingsTableOnReasonablyTallTerminal
+// is a post-verify regression RED test: real-world RC testing found that on
+// a reasonably tall terminal (not the minimum 24-row floor covered by
+// TestModelTrivyRepositoryAlertsScreenFitsViewportHeight above), opening a
+// Trivy scan-run detail with many findings clipped the vulnerability
+// Findings table out of the rendered View() entirely — the ScanRuns table
+// alone consumed nearly the whole primary budget (tableRoles gave it
+// layout.Primary regardless of the detail view also needing room), pushing
+// renderSection's outer clip (viewport.go fitLines) to cut through the
+// Findings table before it ever appeared. Before the fix, ScanRuns keeps
+// its full layout.Primary pageSize while detail is open, so — with a wide
+// ScanRuns list and a large findings set — the Findings table's own
+// bordered box (column headers, at least one finding row, footer) is absent
+// from the final composed view. After the fix, ScanRuns collapses to a
+// compact pageSize once a detail is open, freeing budget so the Findings
+// table's header/row/footer genuinely render.
+func TestModelTrivyRepositoryAlertsDetailShowsFindingsTableOnReasonablyTallTerminal(t *testing.T) {
+	t.Parallel()
+
+	height := 50 // a reasonably tall terminal (e.g. a full-height terminal window), not the 24-row floor
+	model := NewModel(&fakeQueryService{})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: defaultViewportWidth, Height: height})
+	result := updated.(Model)
+
+	result.screen = screenAdminFeatures
+	result.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: time.Now().Add(time.Hour)}
+	result.adminView.Features = []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}}
+	result.adminView.FeaturePage = ports.FeaturePage{
+		Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
+	}
+	result.adminView.TrivyTab = trivyTabRepositoryAlerts
+	result.adminView.TrivyAlertsLoaded = true
+	result.adminView.TrivyAlertDetailOpen = true
+
+	const scanRunCount = 30
+	scanRuns := make([]ports.ScanRun, 0, scanRunCount)
+	for i := 0; i < scanRunCount; i++ {
+		scanRuns = append(scanRuns, ports.ScanRun{ID: fmt.Sprintf("run-%d", i), Repository: fmt.Sprintf("team/service-%d", i), RequestedRef: "latest", Status: ports.ScanRunStatusCompleted})
+	}
+	result.adminView.TrivyScanRuns = scanRuns
+	result.adminView.TrivySelectedAlert = 0
+
+	const findingCount = 80
+	findings := make([]ports.ScanRunFinding, 0, findingCount)
+	for i := 0; i < findingCount; i++ {
+		findings = append(findings, ports.ScanRunFinding{Severity: "HIGH", VulnerabilityID: fmt.Sprintf("CVE-2026-%04d", i), PackageName: "openssl"})
+	}
+	result.adminView.TrivyScanRunDetail = ports.ScanRunDetail{Run: scanRuns[0], Findings: findings}
+
+	result.rebuildAdminTables(result.adminTablesLayout())
+
+	view := result.View()
+	if got := lipgloss.Height(view); got > height {
+		t.Fatalf("Trivy repository alerts detail view height = %d, want <= %d\nview:\n%s", got, height, view)
+	}
+	if !strings.Contains(view, "Findings") {
+		t.Fatalf("view = %q, want the \"Findings\" section heading to survive the outer clip", view)
+	}
+	if !strings.Contains(view, findings[0].VulnerabilityID) {
+		t.Fatalf("view = %q, want the Findings table's own bordered box (rows like %q) to actually render, not just its section heading", view, findings[0].VulnerabilityID)
+	}
+}
+
 func TestModelPageKeysScrollAndClampCatalogList(t *testing.T) {
 	t.Parallel()
 
