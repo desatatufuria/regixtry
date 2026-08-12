@@ -63,5 +63,5 @@ Rationale: new pure logic + property test, new modal render, new nav flow, key r
 
 ## Phase 5: Non-Regression
 
-- [ ] 5.1 `go test ./internal/tui/...` full suite green; `tui-smoke.sh` passing
-- [ ] 5.2 State disposition of `TestModelTrivyRepositoryAlertsScreenFitsViewportHeight` and the findings-visibility regression test: pass unchanged or note superseding tests
+- [x] 5.1 `go test ./internal/tui/...` full suite green; `tui-smoke.sh` passing
+- [x] 5.2 State disposition of `TestModelTrivyRepositoryAlertsScreenFitsViewportHeight` and the findings-visibility regression test: pass unchanged or note superseding tests
