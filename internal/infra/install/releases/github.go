@@ -27,8 +27,10 @@ type ReleaseAsset struct {
 }
 
 type DownloadProgress struct {
-	Stage  string
-	Detail string
+	Stage      string
+	Detail     string
+	BytesRead  int64
+	TotalBytes int64
 }
 
 type GitHubClient struct {
@@ -89,10 +91,15 @@ func (c *GitHubClient) DownloadVerifiedBinary(ctx context.Context, asset Release
 	archivePath := filepath.Join(dir, asset.ArchiveName)
 	checksumsPath := filepath.Join(dir, filepath.Base(asset.ChecksumsURL))
 	reportDownloadProgress(progress, "download", fmt.Sprintf("Downloading %s", asset.ArchiveName))
-	if err := c.downloadFile(ctx, asset.ArchiveURL, archivePath); err != nil {
+	archiveByteProgress := func(bytesRead int64, totalBytes int64) {
+		reportDownloadByteProgress(progress, bytesRead, totalBytes)
+	}
+	if err := c.downloadFile(ctx, asset.ArchiveURL, archivePath, archiveByteProgress); err != nil {
 		return "", err
 	}
-	if err := c.downloadFile(ctx, asset.ChecksumsURL, checksumsPath); err != nil {
+	// The checksums asset is a few hundred bytes; it only needs the discrete
+	// stage event already sent above, not granular byte reporting.
+	if err := c.downloadFile(ctx, asset.ChecksumsURL, checksumsPath, nil); err != nil {
 		return "", err
 	}
 	reportDownloadProgress(progress, "verify", fmt.Sprintf("Verifying %s", asset.ArchiveName))
@@ -120,7 +127,14 @@ func reportDownloadProgress(progress func(DownloadProgress), stage string, detai
 	progress(DownloadProgress{Stage: stage, Detail: detail})
 }
 
-func (c *GitHubClient) downloadFile(ctx context.Context, sourceURL string, destination string) error {
+func reportDownloadByteProgress(progress func(DownloadProgress), bytesRead int64, totalBytes int64) {
+	if progress == nil {
+		return
+	}
+	progress(DownloadProgress{Stage: "download", BytesRead: bytesRead, TotalBytes: totalBytes})
+}
+
+func (c *GitHubClient) downloadFile(ctx context.Context, sourceURL string, destination string, onByteProgress func(bytesRead int64, totalBytes int64)) error {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, sourceURL, nil)
 	if err != nil {
 		return err
@@ -138,10 +152,37 @@ func (c *GitHubClient) downloadFile(ctx context.Context, sourceURL string, desti
 		return err
 	}
 	defer file.Close()
-	if _, err := io.Copy(file, response.Body); err != nil {
+	var body io.Reader = response.Body
+	if onByteProgress != nil {
+		// response.ContentLength is -1 when the server did not send a
+		// Content-Length header; that sentinel is forwarded as-is (never
+		// coerced to a fake value) so the rendering layer can decide how to
+		// present an unknown total.
+		body = &countingReader{reader: response.Body, total: response.ContentLength, onProgress: onByteProgress}
+	}
+	if _, err := io.Copy(file, body); err != nil {
 		return err
 	}
 	return nil
+}
+
+// countingReader wraps an io.Reader and reports cumulative bytes read after
+// every Read() call, forwarding the total byte count observed on the HTTP
+// response so callers can render byte-level progress.
+type countingReader struct {
+	reader     io.Reader
+	total      int64
+	read       int64
+	onProgress func(bytesRead int64, totalBytes int64)
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.reader.Read(p)
+	if n > 0 {
+		c.read += int64(n)
+		c.onProgress(c.read, c.total)
+	}
+	return n, err
 }
 
 func validateArchive(archivePath string) error {

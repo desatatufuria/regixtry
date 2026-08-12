@@ -1740,6 +1740,9 @@ func TestRunUpgradeRendersProgressStagesWithoutTTY(t *testing.T) {
 			t.Fatalf("stdout = %q, want %q", stdout.String(), want)
 		}
 	}
+	if strings.Contains(stdout.String(), "\x1b[") {
+		t.Fatalf("stdout = %q, want no ANSI escape sequences without a TTY", stdout.String())
+	}
 }
 
 func TestRunUpgradeRejectsUnmanagedTargetTruthfully(t *testing.T) {
@@ -1819,12 +1822,124 @@ func TestRunUpgradeRendersProgressOnlyAfterConfirmation(t *testing.T) {
 	installedIndex := strings.Index(out, "Installed version: v1.2.2 (1.2.2)")
 	availableIndex := strings.Index(out, "Available version: v1.2.3 (1.2.3)")
 	promptIndex := strings.Index(out, "Proceed with upgrade [y/N]: ")
-	progressIndex := strings.Index(out, "[#------] 1/7 Resolve: Resolving target release")
+	progressIndex := strings.Index(out, "▸ Resolve: Resolving target release")
 	if installedIndex == -1 || availableIndex == -1 || promptIndex == -1 || progressIndex == -1 {
 		t.Fatalf("stdout = %q, want preflight, prompt, and progress output", out)
 	}
 	if !(installedIndex < availableIndex && availableIndex < promptIndex && promptIndex < progressIndex) {
 		t.Fatalf("stdout = %q, want preflight and prompt before progress", out)
+	}
+}
+
+func TestRunUpgradeDownloadBarRendersIncreasingPercentageAsBytesArrive(t *testing.T) {
+	runner := &stubBootstrapRunner{
+		upgradeResult: installlinux.UpgradeResult{FromRef: "v1.2.2", FromVersion: "1.2.2", TargetRef: "v1.2.3", ToVersion: "1.2.3", ProvenancePath: "/etc/regixtry/regixtry-lifecycle-state.json"},
+		upgradeHook: func(cfg installlinux.UpgradeConfig) {
+			for _, event := range []installlinux.UpgradeProgress{
+				{Stage: "resolve", Detail: "Upgrading from v1.2.2 (1.2.2) to v1.2.3 (1.2.3)"},
+				{Stage: "download", Detail: "Downloading regixtry_1.2.3_linux_amd64.tar.gz"},
+				{Stage: "download", BytesRead: 1_000_000, TotalBytes: 6_700_000},
+				{Stage: "download", BytesRead: 3_400_000, TotalBytes: 6_700_000},
+				{Stage: "download", BytesRead: 6_700_000, TotalBytes: 6_700_000},
+				{Stage: "verify", Detail: "Verifying regixtry_1.2.3_linux_amd64.tar.gz"},
+			} {
+				if cfg.Progress != nil {
+					cfg.Progress(event)
+				}
+			}
+		},
+	}
+	restore := swapBootstrapRunner(t, runner)
+	defer restore()
+	restoreTTY := swapInteractiveTTYDetector(t, true)
+	defer restoreTTY()
+
+	stdout := &bytes.Buffer{}
+	err := runWithIO(context.Background(), []string{"upgrade", "--yes"}, strings.NewReader(""), stdout, io.Discard)
+	if err != nil {
+		t.Fatalf("runWithIO(upgrade) error = %v", err)
+	}
+	out := stdout.String()
+	// The bar throttles interactive redraws (see cliprogress.Bar), so with
+	// these events fired back-to-back only the first in-flight frame and the
+	// mandatory completion frame are guaranteed to render; that's still
+	// enough to prove the percentage genuinely increases over the transfer.
+	firstIndex := strings.Index(out, "14% Download")
+	completionIndex := strings.Index(out, "100% Download")
+	if firstIndex == -1 || completionIndex == -1 {
+		t.Fatalf("stdout = %q, want an in-flight and a completion download percentage", out)
+	}
+	if !(firstIndex < completionIndex) {
+		t.Fatalf("stdout = %q, want percentages to appear in increasing order", out)
+	}
+}
+
+func TestRunUpgradeChecklistMarksStepsDoneAsTheyAdvance(t *testing.T) {
+	runner := &stubBootstrapRunner{
+		upgradeResult: installlinux.UpgradeResult{FromRef: "v1.2.2", FromVersion: "1.2.2", TargetRef: "v1.2.3", ToVersion: "1.2.3", ProvenancePath: "/etc/regixtry/regixtry-lifecycle-state.json"},
+		upgradeHook: func(cfg installlinux.UpgradeConfig) {
+			for _, event := range []installlinux.UpgradeProgress{
+				{Stage: "resolve", Detail: "Upgrading from v1.2.2 (1.2.2) to v1.2.3 (1.2.3)"},
+				{Stage: "download", Detail: "Downloading regixtry_1.2.3_linux_amd64.tar.gz"},
+				{Stage: "verify", Detail: "Verifying regixtry_1.2.3_linux_amd64.tar.gz"},
+			} {
+				if cfg.Progress != nil {
+					cfg.Progress(event)
+				}
+			}
+		},
+	}
+	restore := swapBootstrapRunner(t, runner)
+	defer restore()
+	restoreTTY := swapInteractiveTTYDetector(t, true)
+	defer restoreTTY()
+
+	stdout := &bytes.Buffer{}
+	err := runWithIO(context.Background(), []string{"upgrade", "--yes"}, strings.NewReader(""), stdout, io.Discard)
+	if err != nil {
+		t.Fatalf("runWithIO(upgrade) error = %v", err)
+	}
+	out := stdout.String()
+	for _, want := range []string{"✓ Resolve", "✓ Download", "▸ Verify"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("stdout = %q, want %q", out, want)
+		}
+	}
+}
+
+func TestRunUpgradeNonInteractiveOutputHasNoAnsiEscapesAndOneLinePerEvent(t *testing.T) {
+	runner := &stubBootstrapRunner{
+		upgradeResult: installlinux.UpgradeResult{FromRef: "v1.2.2", FromVersion: "1.2.2", TargetRef: "v1.2.3", ToVersion: "1.2.3", ProvenancePath: "/etc/regixtry/regixtry-lifecycle-state.json"},
+		upgradeHook: func(cfg installlinux.UpgradeConfig) {
+			for _, event := range []installlinux.UpgradeProgress{
+				{Stage: "resolve", Detail: "Upgrading from v1.2.2 (1.2.2) to v1.2.3 (1.2.3)"},
+				{Stage: "download", Detail: "Downloading regixtry_1.2.3_linux_amd64.tar.gz"},
+				{Stage: "download", BytesRead: 1_000_000, TotalBytes: 6_700_000},
+				{Stage: "verify", Detail: "Verifying regixtry_1.2.3_linux_amd64.tar.gz"},
+			} {
+				if cfg.Progress != nil {
+					cfg.Progress(event)
+				}
+			}
+		},
+	}
+	restore := swapBootstrapRunner(t, runner)
+	defer restore()
+	restoreTTY := swapInteractiveTTYDetector(t, false)
+	defer restoreTTY()
+
+	stdout := &bytes.Buffer{}
+	err := runWithIO(context.Background(), []string{"upgrade"}, strings.NewReader(""), stdout, io.Discard)
+	if err != nil {
+		t.Fatalf("runWithIO(upgrade) error = %v", err)
+	}
+	out := stdout.String()
+	if strings.Contains(out, "\x1b[") {
+		t.Fatalf("stdout = %q, want no ANSI escape sequences without a TTY", out)
+	}
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) < 3 {
+		t.Fatalf("lines = %#v, want one line per reported event", lines)
 	}
 }
 

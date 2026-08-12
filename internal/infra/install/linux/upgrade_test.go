@@ -407,6 +407,54 @@ func TestCaptureManagedRuntimeBackupIncludesManagedArtifacts(t *testing.T) {
 	}
 }
 
+func TestBootstrapperUpgradeForwardsDownloadByteProgress(t *testing.T) {
+	_, provenancePath, plan := writeInstalledRuntimeFixture(t)
+	if err := os.WriteFile(plan.DatabasePath, []byte("metadata-stays\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(metadata) error = %v", err)
+	}
+
+	restoreRelease := swapReleaseClient(t, stubReleaseClient{
+		resolveFn: func(context.Context, string, string, string) (releases.ReleaseAsset, error) {
+			return releases.ReleaseAsset{Tag: "v1.2.3", Version: "1.2.3", ArchiveName: "regixtry_1.2.3_linux_amd64.tar.gz"}, nil
+		},
+		downloadFn: func(_ context.Context, _ releases.ReleaseAsset, dir string, progress func(releases.DownloadProgress)) (string, error) {
+			if progress != nil {
+				progress(releases.DownloadProgress{Stage: "download", Detail: "Downloading regixtry_1.2.3_linux_amd64.tar.gz"})
+				progress(releases.DownloadProgress{Stage: "download", BytesRead: 1000, TotalBytes: 4000})
+				progress(releases.DownloadProgress{Stage: "download", BytesRead: 4000, TotalBytes: 4000})
+				progress(releases.DownloadProgress{Stage: "verify", Detail: "Verifying regixtry_1.2.3_linux_amd64.tar.gz"})
+			}
+			stagedPath := filepath.Join(dir, "regixtry")
+			return stagedPath, os.WriteFile(stagedPath, []byte("new-binary"), 0o755)
+		},
+	})
+	defer restoreRelease()
+
+	b := newUpgradeTestBootstrapper(nil)
+	var captured []UpgradeProgress
+	if _, err := b.Upgrade(context.Background(), UpgradeConfig{ProvenancePath: provenancePath, Progress: func(progress UpgradeProgress) {
+		captured = append(captured, progress)
+	}}); err != nil {
+		t.Fatalf("Upgrade() error = %v", err)
+	}
+
+	var byteEvents []UpgradeProgress
+	for _, progress := range captured {
+		if progress.Stage == "download" && progress.TotalBytes > 0 {
+			byteEvents = append(byteEvents, progress)
+		}
+	}
+	if len(byteEvents) != 2 {
+		t.Fatalf("byteEvents = %#v, want 2 forwarded byte-progress events", byteEvents)
+	}
+	if byteEvents[0].BytesRead != 1000 || byteEvents[0].TotalBytes != 4000 {
+		t.Fatalf("byteEvents[0] = %#v, want BytesRead=1000 TotalBytes=4000", byteEvents[0])
+	}
+	if byteEvents[1].BytesRead != 4000 || byteEvents[1].TotalBytes != 4000 {
+		t.Fatalf("byteEvents[1] = %#v, want BytesRead=4000 TotalBytes=4000", byteEvents[1])
+	}
+}
+
 type stubReleaseClient struct {
 	resolveFn  func(context.Context, string, string, string) (releases.ReleaseAsset, error)
 	downloadFn func(context.Context, releases.ReleaseAsset, string, func(releases.DownloadProgress)) (string, error)

@@ -25,6 +25,7 @@ import (
 	appscanning "regixtry/internal/app/scanning"
 	domainauth "regixtry/internal/domain/auth"
 	authpostgres "regixtry/internal/infra/auth/postgres"
+	"regixtry/internal/infra/cliprogress"
 	installlinux "regixtry/internal/infra/install/linux"
 	metadata "regixtry/internal/infra/metadata/sqlite"
 	gitleaksinfra "regixtry/internal/infra/scanning/gitleaks"
@@ -1518,28 +1519,37 @@ func promptUpgradeConfirmation(reader *bufio.Reader, stdout io.Writer) error {
 	}
 }
 
+// upgradeStageOrder lists the normal (non-rollback) lifecycle stages, in
+// order, driving the cliprogress.Checklist shown for `regixtry upgrade`.
+// "rollback" is deliberately excluded: it is a rare, failure-only stage and
+// showing it upfront as a pending checklist entry during a normal upgrade
+// would be confusing, so it is rendered as a standalone announcement line
+// instead (see upgradeProgressWriter.printRollback).
+var upgradeStageOrder = []string{"resolve", "download", "verify", "stop", "swap", "restart", "health-check"}
+
 type upgradeProgressWriter struct {
 	out         io.Writer
 	interactive bool
-	stageIndex  map[string]int
-	currentStep int
-	lastWidth   int
+	stageKnown  map[string]bool
+	checklist   *cliprogress.Checklist
+	bar         *cliprogress.Bar
+	barActive   bool
+	activeKey   string
 }
 
 func newUpgradeProgressWriter(out io.Writer, interactive bool) *upgradeProgressWriter {
+	steps := make([]cliprogress.Step, 0, len(upgradeStageOrder))
+	stageKnown := make(map[string]bool, len(upgradeStageOrder))
+	for _, key := range upgradeStageOrder {
+		steps = append(steps, cliprogress.Step{Key: key, Label: upgradeStageLabel(key)})
+		stageKnown[key] = true
+	}
 	return &upgradeProgressWriter{
 		out:         out,
 		interactive: interactive,
-		stageIndex: map[string]int{
-			"resolve":      1,
-			"download":     2,
-			"verify":       3,
-			"stop":         4,
-			"swap":         5,
-			"restart":      6,
-			"health-check": 7,
-			"rollback":     8,
-		},
+		stageKnown:  stageKnown,
+		checklist:   cliprogress.NewChecklist(out, interactive, steps),
+		bar:         cliprogress.NewBar(out, interactive),
 	}
 }
 
@@ -1547,21 +1557,49 @@ func (w *upgradeProgressWriter) Advance(event installlinux.UpgradeProgress) {
 	if w == nil || w.out == nil {
 		return
 	}
-	step, ok := w.stageIndex[event.Stage]
-	if !ok {
+	if event.Stage == "rollback" {
+		w.closeBar()
+		w.printRollback(event)
 		return
 	}
-	if step > w.currentStep {
-		w.currentStep = step
+	if !w.stageKnown[event.Stage] {
+		return
 	}
-	line := w.formatLine(event)
+	if event.Stage == "download" && event.TotalBytes > 0 {
+		// The bar draws its own line directly below the checklist's fixed
+		// block; the checklist itself is not touched again until the bar is
+		// closed, so its cursor-up redraw math stays valid.
+		w.activeKey = "download"
+		w.barActive = true
+		w.bar.Update(event.BytesRead, event.TotalBytes, upgradeStageLabel("download"))
+		return
+	}
+	w.closeBar()
+	w.activeKey = event.Stage
+	w.checklist.Activate(event.Stage, event.Detail)
+}
+
+// closeBar clears the bar's transient line (if any) so the checklist's next
+// redraw resumes from the exact row it left off at.
+func (w *upgradeProgressWriter) closeBar() {
+	if !w.barActive {
+		return
+	}
+	w.barActive = false
 	if w.interactive {
-		padding := ""
-		if delta := w.lastWidth - len(line); delta > 0 {
-			padding = strings.Repeat(" ", delta)
-		}
-		_, _ = fmt.Fprintf(w.out, "\r%s%s", line, padding)
-		w.lastWidth = len(line)
+		_, _ = fmt.Fprint(w.out, "\r\x1b[K")
+	}
+}
+
+func (w *upgradeProgressWriter) printRollback(event installlinux.UpgradeProgress) {
+	label := upgradeStageLabel(event.Stage)
+	detail := strings.TrimSpace(event.Detail)
+	line := label
+	if detail != "" {
+		line = label + ": " + detail
+	}
+	if w.interactive {
+		_, _ = fmt.Fprintf(w.out, "  ! %s\n", line)
 		return
 	}
 	_, _ = fmt.Fprintln(w.out, line)
@@ -1570,6 +1608,10 @@ func (w *upgradeProgressWriter) Advance(event installlinux.UpgradeProgress) {
 func (w *upgradeProgressWriter) Finish(result installlinux.UpgradeResult) {
 	if w == nil || w.out == nil {
 		return
+	}
+	w.closeBar()
+	if w.activeKey != "" {
+		w.checklist.Complete(w.activeKey)
 	}
 	if w.interactive {
 		_, _ = fmt.Fprintln(w.out)
@@ -1581,31 +1623,11 @@ func (w *upgradeProgressWriter) Fail() {
 	if w == nil || w.out == nil || !w.interactive {
 		return
 	}
+	w.closeBar()
+	if w.activeKey != "" {
+		w.checklist.Fail(w.activeKey)
+	}
 	_, _ = fmt.Fprintln(w.out)
-}
-
-func (w *upgradeProgressWriter) formatLine(event installlinux.UpgradeProgress) string {
-	label := upgradeStageLabel(event.Stage)
-	detail := strings.TrimSpace(event.Detail)
-	step := minInt(w.currentStep, 7)
-	if w.interactive {
-		if detail == "" {
-			return fmt.Sprintf("%s %d/7 %s", renderUpgradeBar(step, 7), step, label)
-		}
-		return fmt.Sprintf("%s %d/7 %s: %s", renderUpgradeBar(step, 7), step, label, detail)
-	}
-	if detail == "" {
-		return fmt.Sprintf("[%d/7] %s", step, label)
-	}
-	return fmt.Sprintf("[%d/7] %s: %s", step, label, detail)
-}
-
-func renderUpgradeBar(step int, total int) string {
-	filled := minInt(step, total)
-	if filled < 0 {
-		filled = 0
-	}
-	return "[" + strings.Repeat("#", filled) + strings.Repeat("-", total-filled) + "]"
 }
 
 func upgradeStageLabel(stage string) string {
@@ -1638,13 +1660,6 @@ func formatUpgradeSummaryIdentity(ref string, version string) string {
 		return fmt.Sprintf("%s (%s)", trimmedRef, trimmedVersion)
 	}
 	return firstNonEmpty(trimmedRef, trimmedVersion, "unknown version")
-}
-
-func minInt(a int, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 func maxDuration(a time.Duration, b time.Duration) time.Duration {

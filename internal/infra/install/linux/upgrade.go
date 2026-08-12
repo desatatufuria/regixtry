@@ -50,6 +50,8 @@ type UpgradeProgress struct {
 	FromVersion string
 	ToRef       string
 	ToVersion   string
+	BytesRead   int64
+	TotalBytes  int64
 }
 
 type releaseClient interface {
@@ -154,6 +156,8 @@ func (b *Bootstrapper) Upgrade(ctx context.Context, cfg UpgradeConfig) (UpgradeR
 			FromVersion: intent.InstalledVersion,
 			ToRef:       asset.Tag,
 			ToVersion:   asset.Version,
+			BytesRead:   progress.BytesRead,
+			TotalBytes:  progress.TotalBytes,
 		})
 	})
 	if err != nil {
