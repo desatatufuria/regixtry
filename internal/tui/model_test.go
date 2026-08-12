@@ -1088,20 +1088,32 @@ func TestModelTrivyRepositoryAlertsLoadSelectDetailAndRecoverEmptyState(t *testi
 			t.Fatalf("highlighted scan-run metadata = %#v, want %q", got, want)
 		}
 
+		// Enter opens the scan history modal instead of the old inline
+		// detail (spec.md "Repository Alert Drill-Down Opens History
+		// Modal"), scoped to the highlighted summary row's repository.
 		updated = runKey(t, updated, "enter")
 		if adminClient.getScanRunDetailCalls != 1 {
 			t.Fatalf("getScanRunDetailCalls = %d, want detail fetch on enter", adminClient.getScanRunDetailCalls)
 		}
+		if !updated.adminView.ScanHistoryModal.Open {
+			t.Fatal("ScanHistoryModal.Open = false, want true after enter")
+		}
+		if got, want := updated.adminView.ScanHistoryModal.Repository, "team/api"; got != want {
+			t.Fatalf("ScanHistoryModal.Repository = %q, want %q", got, want)
+		}
 		detailView := updated.View()
-		for _, want := range []string{"Selected Scan Run", "Repository: team/api", "Digest: sha256:222", "Reference freshness: moved", "DB freshness: stale", "CVE-2026-0001", "openssl"} {
+		for _, want := range []string{"Scan History — team/api", "CVE-2026-0001", "openssl"} {
 			if !strings.Contains(detailView, want) {
 				t.Fatalf("view = %q, want %q", detailView, want)
 			}
 		}
 
 		updated = runKey(t, updated, "esc")
-		if strings.Contains(updated.View(), "Selected Scan Run") {
-			t.Fatalf("view = %q, want esc to close alert detail and return to list", updated.View())
+		if updated.adminView.ScanHistoryModal.Open {
+			t.Fatal("ScanHistoryModal.Open = true, want false after esc")
+		}
+		if strings.Contains(updated.View(), "Scan History —") {
+			t.Fatalf("view = %q, want esc to close the scan history modal with no residual detail", updated.View())
 		}
 		if got, want := updated.adminView.TrivySelectedAlert, 0; got != want {
 			t.Fatalf("TrivySelectedAlert = %d, want %d", got, want)
@@ -1129,6 +1141,279 @@ func TestModelTrivyRepositoryAlertsLoadSelectDetailAndRecoverEmptyState(t *testi
 			t.Fatalf("view = %q, want runtime tab still usable after empty alerts", updated.View())
 		}
 	})
+}
+
+// newScanHistoryModalReadyModel logs in, opens the Trivy Repository Alerts
+// tab, and presses Enter to open the scan history modal — a real
+// Model.Update()/View() key-press flow (design.md "Keys ... gated in
+// updateAdminKey"), not direct AdminViewState construction, shared by the
+// Phase 3 wiring tests below.
+func newScanHistoryModalReadyModel(t *testing.T, adminClient *fakeAdminClient) Model {
+	t.Helper()
+	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
+	updated = runKey(t, updated, "f")
+	updated = runKey(t, updated, "tab")
+	return runKey(t, updated, "enter")
+}
+
+// TestModelScanHistoryModalTabCyclesForwardAndBackwardWrapping is the Phase
+// 3 task 3.2 RED test (spec.md "Operator cycles between tabs"): Tab/Shift+Tab
+// cycle the modal's ordered tab set via cycleIndex, wrapping past either end
+// instead of clamping — distinct from every other boundedIndex-based
+// selection in this screen.
+func TestModelScanHistoryModalTabCyclesForwardAndBackwardWrapping(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 12, 9, 0, 0, 0, time.UTC)
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+		features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
+		featurePage:  ports.FeaturePage{Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
+		scanRuns:     []ports.ScanRun{{ID: "run-1", Repository: "acme/api", RequestedRef: "latest", Digest: "sha256:aaa", Status: ports.ScanRunStatusCompleted, Critical: 1, HasFixable: true}},
+	}
+
+	opened := newScanHistoryModalReadyModel(t, adminClient)
+	if got, want := opened.adminView.ScanHistoryModal.ActiveTab, 0; got != want {
+		t.Fatalf("ActiveTab = %d, want %d (Vulnerabilities is the default tab)", got, want)
+	}
+
+	next := runKey(t, opened, "tab")
+	if got, want := next.adminView.ScanHistoryModal.ActiveTab, 1; got != want {
+		t.Fatalf("ActiveTab after tab = %d, want %d (Leaks)", got, want)
+	}
+
+	wrapped := runKey(t, next, "tab")
+	if got, want := wrapped.adminView.ScanHistoryModal.ActiveTab, 0; got != want {
+		t.Fatalf("ActiveTab after tab past the last = %d, want %d (wraps to Vulnerabilities)", got, want)
+	}
+
+	back := runKey(t, wrapped, "shift+tab")
+	if got, want := back.adminView.ScanHistoryModal.ActiveTab, 1; got != want {
+		t.Fatalf("ActiveTab after shift+tab before the first = %d, want %d (wraps to Leaks)", got, want)
+	}
+}
+
+// TestModelScanHistoryModalHistoryNavigationRefetchesDetailAndSecretsPerCursor
+// is the Phase 3 task 3.3 RED test (spec.md "Position indicator shows one
+// run's own findings"): Left/Right paging must re-fire the
+// loadAdminScanRunDetailCmd/loadAdminSecretScanFindingsCmd chain for the
+// newly selected run, so both the Vulnerabilities and Leaks tabs reflect
+// whichever run is currently navigated, not the run the modal opened on.
+func TestModelScanHistoryModalHistoryNavigationRefetchesDetailAndSecretsPerCursor(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 12, 9, 30, 0, 0, time.UTC)
+	older := now.Add(-48 * time.Hour)
+	newer := now.Add(-1 * time.Hour)
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+		features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
+		featurePage:  ports.FeaturePage{Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
+		scanRuns: []ports.ScanRun{
+			{ID: "run-old", Repository: "acme/api", RequestedRef: "1.0.0", Digest: "sha256:old", Status: ports.ScanRunStatusCompleted, FinishedAt: &older, CreatedAt: older, Critical: 1, HasFixable: true},
+			{ID: "run-new", Repository: "acme/api", RequestedRef: "2.0.0", Digest: "sha256:new", Status: ports.ScanRunStatusCompleted, FinishedAt: &newer, CreatedAt: newer, Critical: 0, HasFixable: false},
+		},
+		scanRunDetails: map[string]ports.ScanRunDetail{
+			"run-old": {Run: ports.ScanRun{ID: "run-old", Repository: "acme/api", Digest: "sha256:old"}, Findings: []ports.ScanRunFinding{{Severity: "CRITICAL", VulnerabilityID: "CVE-OLD", PackageName: "openssl"}}},
+			"run-new": {Run: ports.ScanRun{ID: "run-new", Repository: "acme/api", Digest: "sha256:new"}, Findings: []ports.ScanRunFinding{{Severity: "LOW", VulnerabilityID: "CVE-NEW", PackageName: "curl"}}},
+		},
+		secretScanFindings: map[string]ports.SecretScanRunDetail{
+			"acme/api@sha256:old": {Findings: []ports.SecretFinding{{RuleID: "rule-old", Path: "old.json"}}},
+			"acme/api@sha256:new": {Findings: []ports.SecretFinding{{RuleID: "rule-new", Path: "new.json"}}},
+		},
+	}
+
+	opened := newScanHistoryModalReadyModel(t, adminClient)
+	if got, want := opened.adminView.ScanHistoryModal.Detail.Run.ID, "run-new"; got != want {
+		t.Fatalf("initial cursor Detail.Run.ID = %q, want %q (newest run first)", got, want)
+	}
+	if adminClient.getScanRunDetailCalls != 1 || adminClient.getSecretScanFindingsCalls != 1 {
+		t.Fatalf("calls after open = detail:%d secrets:%d, want 1/1", adminClient.getScanRunDetailCalls, adminClient.getSecretScanFindingsCalls)
+	}
+
+	paged := runKey(t, opened, "right")
+	if got, want := paged.adminView.ScanHistoryModal.Cursor, 1; got != want {
+		t.Fatalf("Cursor after right = %d, want %d", got, want)
+	}
+	if adminClient.getScanRunDetailCalls != 2 {
+		t.Fatalf("getScanRunDetailCalls after paging = %d, want 2 (re-fired for the new cursor)", adminClient.getScanRunDetailCalls)
+	}
+	if adminClient.getSecretScanFindingsCalls != 2 {
+		t.Fatalf("getSecretScanFindingsCalls after paging = %d, want 2 (re-fired for the new cursor)", adminClient.getSecretScanFindingsCalls)
+	}
+	if got, want := paged.adminView.ScanHistoryModal.Detail.Run.ID, "run-old"; got != want {
+		t.Fatalf("Detail.Run.ID after paging = %q, want %q", got, want)
+	}
+
+	view := paged.View()
+	if !strings.Contains(view, "CVE-OLD") || strings.Contains(view, "CVE-NEW") {
+		t.Fatalf("view = %q, want only the navigated run's (run-old) findings on the Vulnerabilities tab", view)
+	}
+	if !strings.Contains(view, "Execution 2/2") {
+		t.Fatalf("view = %q, want the position indicator to report 2/2 after paging to the oldest (last, newest-first) run", view)
+	}
+
+	leaksView := runKey(t, paged, "tab").View()
+	if !strings.Contains(leaksView, "rule-old") || strings.Contains(leaksView, "rule-new") {
+		t.Fatalf("view = %q, want only run-old's secret finding on the Leaks tab", leaksView)
+	}
+
+	back := runKey(t, paged, "left")
+	if got, want := back.adminView.ScanHistoryModal.Detail.Run.ID, "run-new"; got != want {
+		t.Fatalf("Detail.Run.ID after paging back = %q, want %q", got, want)
+	}
+}
+
+// TestModelScanHistoryModalDigestNeverLeaksAcrossRunsWhenPagingHistory is the
+// Phase 3 task 3.4/3.5 RED test for design.md's flagged risk ("Digest-per-run
+// correctness"): a stale async detail response for a run the operator has
+// already paged away from must be discarded, never overwriting the
+// currently-navigated run's Detail/Leaks state. Constructed with manual,
+// out-of-order Update() calls (not runKey's auto-run-to-completion helper)
+// to reproduce the exact race a real async admin API client can hit.
+func TestModelScanHistoryModalDigestNeverLeaksAcrossRunsWhenPagingHistory(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 12, 10, 0, 0, 0, time.UTC)
+	older := now.Add(-48 * time.Hour)
+	newer := now.Add(-1 * time.Hour)
+	runA := ports.ScanRun{ID: "run-a", Repository: "acme/api", Digest: "sha256:aaa", FinishedAt: &newer, CreatedAt: newer}
+	runB := ports.ScanRun{ID: "run-b", Repository: "acme/api", Digest: "sha256:bbb", FinishedAt: &older, CreatedAt: older}
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+		features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
+		featurePage:  ports.FeaturePage{Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
+		scanRuns:     []ports.ScanRun{runA, runB},
+		scanRunDetails: map[string]ports.ScanRunDetail{
+			"run-a": {Run: runA, Findings: []ports.ScanRunFinding{{Severity: "CRITICAL", VulnerabilityID: "CVE-A"}}},
+			"run-b": {Run: runB, Findings: []ports.ScanRunFinding{{Severity: "LOW", VulnerabilityID: "CVE-B"}}},
+		},
+	}
+
+	model := NewModel(&fakeQueryService{catalog: appregixtry.CatalogResult{Repositories: []string{"library/alpine"}}}, WithAdminClient(adminClient))
+	model.viewport = viewportSize{Width: defaultViewportWidth, Height: adminTestViewportHeight}
+	model = runCmd(t, model, model.Init())
+	model = runAdminLogin(t, model, "operator", "secret-pass")
+	model = runKey(t, model, "f")
+	model = runKey(t, model, "tab")
+
+	// Open the modal (cursor 0 = run-a, newest first) but capture the
+	// history-load Cmd instead of letting runKey auto-run its whole chain,
+	// so the detail fetch it triggers can be interleaved manually below.
+	updatedRaw, historyCmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	afterEnter := updatedRaw.(Model)
+	if historyCmd == nil {
+		t.Fatal("expected loadAdminScanHistoryCmd after enter")
+	}
+	historyLoaded := historyCmd()
+	updatedRaw, detailCmdForA := afterEnter.Update(historyLoaded)
+	afterHistory := updatedRaw.(Model)
+	if got, want := afterHistory.adminView.ScanHistoryModal.Runs[0].ID, "run-a"; got != want {
+		t.Fatalf("cursor 0 run ID = %q, want %q (newest first)", got, want)
+	}
+	if detailCmdForA == nil {
+		t.Fatal("expected loadAdminScanRunDetailCmd(run-a) after history loads")
+	}
+
+	// Before resolving run-a's in-flight detail Cmd, the operator pages to
+	// run-b — this fires a SECOND (newer) detail Cmd for run-b.
+	updatedRaw, detailCmdForB := afterHistory.Update(tea.KeyMsg{Type: tea.KeyRight})
+	afterPage := updatedRaw.(Model)
+	if got, want := afterPage.adminView.ScanHistoryModal.Cursor, 1; got != want {
+		t.Fatalf("Cursor after right = %d, want %d", got, want)
+	}
+	if detailCmdForB == nil {
+		t.Fatal("expected loadAdminScanRunDetailCmd(run-b) after paging")
+	}
+
+	// The STALE run-a response now arrives late (out of order) — it must be
+	// discarded, not overwrite run-b's in-progress navigation.
+	staleMsg := detailCmdForA()
+	updatedRaw, staleFollowUp := afterPage.Update(staleMsg)
+	afterStale := updatedRaw.(Model)
+	if staleFollowUp != nil {
+		t.Fatal("a discarded stale detail response must not chain into loadAdminSecretScanFindingsCmd")
+	}
+	if got := afterStale.adminView.ScanHistoryModal.Detail.Run.ID; got == "run-a" {
+		t.Fatalf("Detail.Run.ID = %q, want the stale run-a response to be discarded (cursor has moved to run-b)", got)
+	}
+
+	// The genuine run-b response arrives next and IS applied.
+	correctMsg := detailCmdForB()
+	updatedRaw, _ = afterStale.Update(correctMsg)
+	final := updatedRaw.(Model)
+	if got, want := final.adminView.ScanHistoryModal.Detail.Run.ID, "run-b"; got != want {
+		t.Fatalf("Detail.Run.ID = %q, want %q", got, want)
+	}
+
+	view := final.View()
+	if !strings.Contains(view, "CVE-B") || strings.Contains(view, "CVE-A") {
+		t.Fatalf("view = %q, want only run-b's findings, never a leaked run-a finding", view)
+	}
+}
+
+// TestModelScanHistoryModalRendersWithinViewportAcrossHeights is the Phase 3
+// task 3.7 RED test (spec.md "Modal fits at minimum height with full
+// content"): the FIRST test that drives the modal open through the real
+// Model.Update()/View() key-press flow (login -> f -> tab -> enter) with a
+// full findings page, and asserts the resulting composite view never exceeds
+// the terminal height — proving the actual wiring respects the viewport, not
+// just renderAdminScanHistoryModal in isolation (Phase 2's tests).
+func TestModelScanHistoryModalRendersWithinViewportAcrossHeights(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 12, 11, 0, 0, 0, time.UTC)
+	findings := make([]ports.ScanRunFinding, 0, 40)
+	for i := 0; i < 40; i++ {
+		findings = append(findings, ports.ScanRunFinding{Severity: "HIGH", VulnerabilityID: fmt.Sprintf("CVE-2026-%04d", i), PackageName: "openssl"})
+	}
+	secrets := make([]ports.SecretFinding, 0, 40)
+	for i := 0; i < 40; i++ {
+		secrets = append(secrets, ports.SecretFinding{RuleID: fmt.Sprintf("rule-%d", i), Path: "config.json", StartLine: i + 1})
+	}
+
+	for _, height := range []int{24, 30, 50} {
+		height := height
+		t.Run(fmt.Sprintf("height=%d", height), func(t *testing.T) {
+			t.Parallel()
+
+			adminClient := &fakeAdminClient{
+				loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+				features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
+				featurePage:  ports.FeaturePage{Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
+				scanRuns:     []ports.ScanRun{{ID: "run-1", Repository: "acme/api", RequestedRef: "latest", Digest: "sha256:aaa", Status: ports.ScanRunStatusCompleted, Critical: 1, HasFixable: true}},
+				scanRunDetails: map[string]ports.ScanRunDetail{
+					"run-1": {Run: ports.ScanRun{ID: "run-1", Repository: "acme/api", Digest: "sha256:aaa"}, Findings: findings},
+				},
+				secretScanFindings: map[string]ports.SecretScanRunDetail{
+					"acme/api@sha256:aaa": {Findings: secrets},
+				},
+			}
+
+			model := NewModel(&fakeQueryService{catalog: appregixtry.CatalogResult{Repositories: []string{"library/alpine"}}}, WithAdminClient(adminClient))
+			updated, _ := model.Update(tea.WindowSizeMsg{Width: minViewportWidth, Height: height})
+			result := updated.(Model)
+			result = runCmd(t, result, result.Init())
+			result = runAdminLogin(t, result, "operator", "secret-pass")
+			result = runKey(t, result, "f")
+			result = runKey(t, result, "tab")
+			result = runKey(t, result, "enter")
+
+			if !result.adminView.ScanHistoryModal.Open {
+				t.Fatal("ScanHistoryModal.Open = false, want true after the real key-press flow opened it")
+			}
+
+			view := result.View()
+			if got := lipgloss.Height(view); got > height {
+				t.Fatalf("view height = %d, want <= %d (modal open with a full findings page)\nview:\n%s", got, height, view)
+			}
+
+			leaksView := runKey(t, result, "tab").View()
+			if got := lipgloss.Height(leaksView); got > height {
+				t.Fatalf("Leaks tab view height = %d, want <= %d\nview:\n%s", got, height, leaksView)
+			}
+		})
+	}
 }
 
 // TestModelSecretFindingsSurfaceAlongsideVulnerabilityResultsWithoutSeverityOrGatingIndicator
@@ -1178,10 +1463,24 @@ func TestModelSecretFindingsSurfaceAlongsideVulnerabilityResultsWithoutSeverityO
 		t.Fatalf("secret findings query = %q, want %q (same repository+digest as the vulnerability scan run)", got, want)
 	}
 
+	// Enter now opens the scan history modal (spec.md "Repository Alert
+	// Drill-Down Opens History Modal"), defaulting to the Vulnerabilities
+	// tab; the secret findings surface on the Leaks tab, reachable via Tab.
 	view := updated.View()
-	for _, want := range []string{"CVE-2026-0099", "Secret Findings", "aws-access-token", "config.json:4"} {
+	for _, want := range []string{"CVE-2026-0099", "Vulnerabilities", "Leaks"} {
 		if !strings.Contains(view, want) {
-			t.Fatalf("view = %q, want %q surfaced alongside vulnerability results", view, want)
+			t.Fatalf("view = %q, want %q on the modal's default Vulnerabilities tab", view, want)
+		}
+	}
+	if strings.Contains(view, "aws-access-token") {
+		t.Fatalf("view = %q, want secret findings hidden while Vulnerabilities is the active tab", view)
+	}
+
+	leaksTab := runKey(t, updated, "tab")
+	leaksView := leaksTab.View()
+	for _, want := range []string{"aws-access-token", "config.json:4"} {
+		if !strings.Contains(leaksView, want) {
+			t.Fatalf("view = %q, want %q on the Leaks tab", leaksView, want)
 		}
 	}
 
@@ -1411,7 +1710,13 @@ func TestModelTrivyFindingsMixedSeverityRenderPreservesLabelsAndCounts(t *testin
 			t.Fatalf("view %q count = %d, want %d", label, got, want)
 		}
 	}
-	for _, want := range []string{"Findings", "CVE-2026-3000", "CVE-2026-3001", "CVE-2026-3002", "CVE-2026-3003", "openssl", "glibc", "ca-certificates", "busybox"} {
+	// "Findings" (the old inline-detail heading) is deliberately not
+	// asserted here: Enter now opens the scan history modal (spec.md
+	// "Repository Alert Drill-Down Opens History Modal"), whose
+	// Vulnerabilities tab renders the findings table directly without that
+	// heading — the CVE/package assertions below still prove the same
+	// severity-styled rows render, just inside the modal.
+	for _, want := range []string{"Scan History", "CVE-2026-3000", "CVE-2026-3001", "CVE-2026-3002", "CVE-2026-3003", "openssl", "glibc", "ca-certificates", "busybox"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view = %q, want %q", view, want)
 		}
@@ -2026,12 +2331,26 @@ func (f *fakeAdminClient) GetFeaturePage(_ context.Context, _ AdminSession, name
 	return f.featurePage, nil
 }
 
-func (f *fakeAdminClient) ListScanRuns(context.Context, AdminSession, string, int) ([]ports.ScanRun, error) {
+// ListScanRuns filters by repository when one is given, mirroring the real
+// backend's ListScanRuns/store.go behavior (`AND repository = ?` only when
+// repository is non-empty) — needed so loadAdminScanHistoryCmd's per-
+// repository history window returns only that repository's runs in tests,
+// same as it would against the real store.
+func (f *fakeAdminClient) ListScanRuns(_ context.Context, _ AdminSession, repository string, _ int) ([]ports.ScanRun, error) {
 	f.listScanRunsCalls++
 	if f.featureErr != nil {
 		return nil, f.featureErr
 	}
-	return append([]ports.ScanRun(nil), f.scanRuns...), nil
+	if strings.TrimSpace(repository) == "" {
+		return append([]ports.ScanRun(nil), f.scanRuns...), nil
+	}
+	filtered := make([]ports.ScanRun, 0, len(f.scanRuns))
+	for _, run := range f.scanRuns {
+		if run.Repository == repository {
+			filtered = append(filtered, run)
+		}
+	}
+	return filtered, nil
 }
 
 func (f *fakeAdminClient) GetScanRunDetail(_ context.Context, _ AdminSession, runID string) (ports.ScanRunDetail, error) {
@@ -2353,6 +2672,12 @@ func runKey(t *testing.T, model Model, key string) Model {
 		msg = tea.KeyMsg{Type: tea.KeyEsc}
 	case "tab":
 		msg = tea.KeyMsg{Type: tea.KeyTab}
+	case "shift+tab":
+		msg = tea.KeyMsg{Type: tea.KeyShiftTab}
+	case "left":
+		msg = tea.KeyMsg{Type: tea.KeyLeft}
+	case "right":
+		msg = tea.KeyMsg{Type: tea.KeyRight}
 	case "down":
 		msg = tea.KeyMsg{Type: tea.KeyDown}
 	case "up":
