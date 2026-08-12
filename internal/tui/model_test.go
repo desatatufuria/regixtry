@@ -277,126 +277,27 @@ func TestModelCatalogAndTagsListScreensFitViewportHeight(t *testing.T) {
 	}
 }
 
-// TestModelTrivyRepositoryAlertsScreenFitsViewportHeight is the Phase 4 task
-// 4.7 RED test (spec.md "Stacked Trivy alerts screen fits the viewport"):
-// the Features table, the Trivy ScanRuns table, the vulnerability Findings
-// table and the SecretFindings table can all render simultaneously on this
-// screen, plus roughly 20 fixed detail lines — design.md decision #6 accepts
-// that no per-table budget split can make all of this fit at the minimum
-// 24-row terminal; the outer-pane clip (renderSection, Phase 3's mechanism)
-// is the structural guarantee that the rendered frame still never exceeds
-// the terminal height, so none of the tables spill into scrollback.
-func TestModelTrivyRepositoryAlertsScreenFitsViewportHeight(t *testing.T) {
-	t.Parallel()
-
-	height := minViewportHeight
-	model := NewModel(&fakeQueryService{})
-	updated, _ := model.Update(tea.WindowSizeMsg{Width: minViewportWidth, Height: height})
-	result := updated.(Model)
-
-	result.screen = screenAdminFeatures
-	result.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: time.Now().Add(time.Hour)}
-	result.adminView.Features = []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}}
-	result.adminView.FeaturePage = ports.FeaturePage{
-		Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
-	}
-	result.adminView.TrivyTab = trivyTabRepositoryAlerts
-	result.adminView.TrivyAlertsLoaded = true
-	result.adminView.TrivyAlertDetailOpen = true
-
-	scanRuns := make([]ports.ScanRun, 0, 20)
-	for i := 0; i < 20; i++ {
-		scanRuns = append(scanRuns, ports.ScanRun{ID: fmt.Sprintf("run-%d", i), Repository: fmt.Sprintf("team/service-%d", i), RequestedRef: "latest", Status: ports.ScanRunStatusCompleted})
-	}
-	result.adminView.TrivyScanRuns = scanRuns
-	result.adminView.TrivySelectedAlert = 0
-
-	findings := make([]ports.ScanRunFinding, 0, 20)
-	for i := 0; i < 20; i++ {
-		findings = append(findings, ports.ScanRunFinding{Severity: "HIGH", VulnerabilityID: fmt.Sprintf("CVE-2026-%04d", i), PackageName: "openssl"})
-	}
-	result.adminView.TrivyScanRunDetail = ports.ScanRunDetail{Run: scanRuns[0], Findings: findings}
-
-	secretFindings := make([]ports.SecretFinding, 0, 20)
-	for i := 0; i < 20; i++ {
-		secretFindings = append(secretFindings, ports.SecretFinding{RuleID: fmt.Sprintf("rule-%d", i), Path: "config.json", StartLine: i + 1})
-	}
-	result.adminView.SecretFindings = secretFindings
-
-	result.rebuildAdminTables(result.adminTablesLayout())
-
-	// Width is deliberately not asserted here: theme.section's hardcoded
-	// Width(88) is explicitly out of scope for this change (spec.md "Out of
-	// Scope Note"), and the outer help line already renders unwrapped
-	// outside theme.section regardless of this change.
-	view := result.View()
-	if got := lipgloss.Height(view); got > height {
-		t.Fatalf("Trivy repository alerts view height = %d, want <= %d\nview:\n%s", got, height, view)
-	}
-}
-
+// Phase 4 disposition note (tasks.md 5.2): the old-architecture regression
+// tests TestModelTrivyRepositoryAlertsScreenFitsViewportHeight and
 // TestModelTrivyRepositoryAlertsDetailShowsFindingsTableOnReasonablyTallTerminal
-// is a post-verify regression RED test: real-world RC testing found that on
-// a reasonably tall terminal (not the minimum 24-row floor covered by
-// TestModelTrivyRepositoryAlertsScreenFitsViewportHeight above), opening a
-// Trivy scan-run detail with many findings clipped the vulnerability
-// Findings table out of the rendered View() entirely — the ScanRuns table
-// alone consumed nearly the whole primary budget (tableRoles gave it
-// layout.Primary regardless of the detail view also needing room), pushing
-// renderSection's outer clip (viewport.go fitLines) to cut through the
-// Findings table before it ever appeared. Before the fix, ScanRuns keeps
-// its full layout.Primary pageSize while detail is open, so — with a wide
-// ScanRuns list and a large findings set — the Findings table's own
-// bordered box (column headers, at least one finding row, footer) is absent
-// from the final composed view. After the fix, ScanRuns collapses to a
-// compact pageSize once a detail is open, freeing budget so the Findings
-// table's header/row/footer genuinely render.
-func TestModelTrivyRepositoryAlertsDetailShowsFindingsTableOnReasonablyTallTerminal(t *testing.T) {
-	t.Parallel()
-
-	height := 50 // a reasonably tall terminal (e.g. a full-height terminal window), not the 24-row floor
-	model := NewModel(&fakeQueryService{})
-	updated, _ := model.Update(tea.WindowSizeMsg{Width: defaultViewportWidth, Height: height})
-	result := updated.(Model)
-
-	result.screen = screenAdminFeatures
-	result.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: time.Now().Add(time.Hour)}
-	result.adminView.Features = []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}}
-	result.adminView.FeaturePage = ports.FeaturePage{
-		Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
-	}
-	result.adminView.TrivyTab = trivyTabRepositoryAlerts
-	result.adminView.TrivyAlertsLoaded = true
-	result.adminView.TrivyAlertDetailOpen = true
-
-	const scanRunCount = 30
-	scanRuns := make([]ports.ScanRun, 0, scanRunCount)
-	for i := 0; i < scanRunCount; i++ {
-		scanRuns = append(scanRuns, ports.ScanRun{ID: fmt.Sprintf("run-%d", i), Repository: fmt.Sprintf("team/service-%d", i), RequestedRef: "latest", Status: ports.ScanRunStatusCompleted})
-	}
-	result.adminView.TrivyScanRuns = scanRuns
-	result.adminView.TrivySelectedAlert = 0
-
-	const findingCount = 80
-	findings := make([]ports.ScanRunFinding, 0, findingCount)
-	for i := 0; i < findingCount; i++ {
-		findings = append(findings, ports.ScanRunFinding{Severity: "HIGH", VulnerabilityID: fmt.Sprintf("CVE-2026-%04d", i), PackageName: "openssl"})
-	}
-	result.adminView.TrivyScanRunDetail = ports.ScanRunDetail{Run: scanRuns[0], Findings: findings}
-
-	result.rebuildAdminTables(result.adminTablesLayout())
-
-	view := result.View()
-	if got := lipgloss.Height(view); got > height {
-		t.Fatalf("Trivy repository alerts detail view height = %d, want <= %d\nview:\n%s", got, height, view)
-	}
-	if !strings.Contains(view, "Findings") {
-		t.Fatalf("view = %q, want the \"Findings\" section heading to survive the outer clip", view)
-	}
-	if !strings.Contains(view, findings[0].VulnerabilityID) {
-		t.Fatalf("view = %q, want the Findings table's own bordered box (rows like %q) to actually render, not just its section heading", view, findings[0].VulnerabilityID)
-	}
-}
+// were removed here, not superseded in place, because they constructed
+// TrivyAlertDetailOpen/TrivyScanRunDetail/SecretFindings state directly —
+// fields this phase deletes along with the inline-detail render path
+// (renderTrivyRepositoryAlerts). Their coverage is superseded by:
+//   - TestModelScanHistoryModalRendersWithinViewportAcrossHeights (heights
+//     24/30/50, including the 24-row floor, with a 40-row findings AND a
+//     40-row secrets page open via the real key-press flow) for the
+//     viewport-fit guarantee the first test proved.
+//   - TestModelSecretFindingsSurfaceAlongsideVulnerabilityResultsWithoutSeverityOrGatingIndicator
+//     for the "Findings content actually survives the render, not just its
+//     heading" guarantee the second test proved (it asserts the specific
+//     CVE ID is present in the rendered view).
+//   - TestRenderAdminScanHistoryModalNeverAppliesFitLinesOverComposite
+//     (admin_views_test.go) for the structural fix that makes the second
+//     test's original bug class (an orphaned indicator with no table above
+//     it) impossible under the new architecture: every bordered block is
+//     clipped exactly once, by its own owner, never by a second fitLines
+//     pass over an already-composed block.
 
 func TestModelPageKeysScrollAndClampCatalogList(t *testing.T) {
 	t.Parallel()
@@ -1084,8 +985,8 @@ func TestModelTrivyRepositoryAlertsLoadSelectDetailAndRecoverEmptyState(t *testi
 				t.Fatalf("view = %q, want %q", alertsView, want)
 			}
 		}
-		if got, want := updated.adminView.Tables.ScanRuns.HighlightedRow().Data[adminTableMetaScanRunID], "run-2"; got != want {
-			t.Fatalf("highlighted scan-run metadata = %#v, want %q", got, want)
+		if got, want := updated.adminView.Tables.ScanSummary.HighlightedRow().Data[adminTableMetaScanRunID], "run-2"; got != want {
+			t.Fatalf("highlighted scan-summary metadata = %#v, want %q", got, want)
 		}
 
 		// Enter opens the scan history modal instead of the old inline
@@ -1141,6 +1042,71 @@ func TestModelTrivyRepositoryAlertsLoadSelectDetailAndRecoverEmptyState(t *testi
 			t.Fatalf("view = %q, want runtime tab still usable after empty alerts", updated.View())
 		}
 	})
+}
+
+// TestModelRepositoryAlertsScreenShowsOneRowPerRepositoryNotPerScanRun is the
+// Phase 4 removal-sweep RED/GREEN test: after renderFeaturePageBody's call
+// site swap (renderTrivyRepositoryAlerts -> renderAdminScanSummary), the
+// Repository Alerts screen an operator actually sees through a real
+// Model.Update()/View() key flow must show exactly one row per repository,
+// with a Runs count reflecting every underlying scan run for that
+// repository — not one row per scan run (spec.md "Repository Alerts
+// Summarized Per Repository With Ordering And Freshness").
+func TestModelRepositoryAlertsScreenShowsOneRowPerRepositoryNotPerScanRun(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 12, 9, 0, 0, 0, time.UTC)
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+		features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
+		featurePage:  ports.FeaturePage{Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
+		// team/api has three underlying scan runs; library/base has one.
+		// Four scan runs total, but only two repositories.
+		scanRuns: []ports.ScanRun{
+			{ID: "run-1", Repository: "team/api", RequestedRef: "1.0.0", Status: ports.ScanRunStatusCompleted, CreatedAt: now.Add(-3 * time.Hour), Critical: 0, High: 1},
+			{ID: "run-2", Repository: "team/api", RequestedRef: "1.0.1", Status: ports.ScanRunStatusCompleted, CreatedAt: now.Add(-2 * time.Hour), Critical: 1, High: 0},
+			{ID: "run-3", Repository: "team/api", RequestedRef: "1.0.2", Status: ports.ScanRunStatusCompleted, CreatedAt: now.Add(-1 * time.Hour), Critical: 2, High: 0, HasFixable: true},
+			{ID: "run-4", Repository: "library/base", RequestedRef: "stable", Status: ports.ScanRunStatusCompleted, CreatedAt: now.Add(-30 * time.Minute), Critical: 0, High: 0},
+		},
+	}
+
+	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
+	updated = runKey(t, updated, "f")
+	updated = runKey(t, updated, "tab")
+
+	summaryTable := updated.adminView.Tables.ScanSummary
+	if got, want := summaryTable.TotalRows(), 2; got != want {
+		t.Fatalf("ScanSummary TotalRows() = %d, want %d (one row per repository, not %d per scan run)", got, want, len(adminClient.scanRuns))
+	}
+
+	view := updated.View()
+	if !strings.Contains(view, "Repository Alerts") {
+		t.Fatalf("view = %q, want the Repository Alerts summary table on screen", view)
+	}
+	// The old per-scan-run rendering path is gone: only one row per
+	// repository is ever shown, so "team/api" appears exactly once even
+	// though it backs three scan runs.
+	if got, want := strings.Count(view, "team/api"), 1; got != want {
+		t.Fatalf("view contains %q %d times, want exactly %d (one summary row, not one per underlying scan run)", "team/api", got, want)
+	}
+	if !strings.Contains(view, "library/base") {
+		t.Fatalf("view = %q, want %q's summary row visible", view, "library/base")
+	}
+	// The Runs column on team/api's single summary row must reflect all
+	// three underlying scan runs.
+	rows := summaryTable.GetVisibleRows()
+	found := false
+	for _, row := range rows {
+		if repo, _ := row.Data[adminTableColumnScanSummaryRepository].(string); repo == "team/api" {
+			found = true
+			if got, want := row.Data[adminTableColumnScanSummaryRuns], 3; got != want {
+				t.Fatalf("team/api Runs column = %#v, want %d", got, want)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("team/api summary row not found in ScanSummary table")
+	}
 }
 
 // newScanHistoryModalReadyModel logs in, opens the Trivy Repository Alerts
@@ -1570,8 +1536,8 @@ func TestModelTrivyTablesPreserveEmptyStateAndBackendOrdering(t *testing.T) {
 		updated = runKey(t, updated, "f")
 		updated = runKey(t, updated, "tab")
 
-		if got, want := updated.adminView.Tables.ScanRuns.TotalRows(), 0; got != want {
-			t.Fatalf("scan-runs table rows = %d, want %d", got, want)
+		if got, want := updated.adminView.Tables.ScanSummary.TotalRows(), 0; got != want {
+			t.Fatalf("scan-summary table rows = %d, want %d", got, want)
 		}
 		if !strings.Contains(updated.View(), "No repository alerts found.") {
 			t.Fatalf("view = %q, want empty alerts message", updated.View())
@@ -1593,11 +1559,11 @@ func TestModelTrivyTablesPreserveEmptyStateAndBackendOrdering(t *testing.T) {
 		updated = runKey(t, updated, "f")
 		updated = runKey(t, updated, "tab")
 
-		if got, want := updated.adminView.Tables.ScanRuns.TotalRows(), 3; got != want {
-			t.Fatalf("scan-runs table rows = %d, want %d", got, want)
+		if got, want := updated.adminView.Tables.ScanSummary.TotalRows(), 3; got != want {
+			t.Fatalf("scan-summary table rows = %d, want %d", got, want)
 		}
-		if got, want := updated.adminView.Tables.ScanRuns.HighlightedRow().Data[adminTableMetaScanRunID], "run-2"; got != want {
-			t.Fatalf("highlighted scan-run metadata = %#v, want %q", got, want)
+		if got, want := updated.adminView.Tables.ScanSummary.HighlightedRow().Data[adminTableMetaScanRunID], "run-2"; got != want {
+			t.Fatalf("highlighted scan-summary metadata = %#v, want %q", got, want)
 		}
 		view := updated.View()
 		for _, want := range []string{"Repository", "Reference", "Status", "Critical", "High", "Fixable", "team/api", "library/base", "library/alpine", "1.0.0", "stable", "latest"} {
@@ -1631,9 +1597,9 @@ func TestAdminFindingSeverityStylingScopesOnlyVulnerabilityRows(t *testing.T) {
 		t.Fatal("generic row status cells must stay neutral")
 	}
 
-	scanRunsTable := buildAdminScanRunsTable(theme, []ports.ScanRun{{ID: "run-1", Repository: "team/api", RequestedRef: "1.0.0", Status: ports.ScanRunStatusCompleted, Critical: 1, High: 0, HasFixable: true}}, 0, defaultViewportHeight)
-	if _, styled := scanRunsTable.HighlightedRow().Data[adminTableColumnScanRunStatus].(bubbletable.StyledCell); styled {
-		t.Fatal("scan-run cells must stay neutral")
+	scanSummaryTable := buildAdminScanSummaryTable(theme, []repositorySummary{{Repository: "team/api", LatestRun: ports.ScanRun{ID: "run-1", Repository: "team/api", RequestedRef: "1.0.0", Status: ports.ScanRunStatusCompleted, Critical: 1, High: 0, HasFixable: true}, RunCount: 1}}, 0, defaultViewportHeight)
+	if _, styled := scanSummaryTable.HighlightedRow().Data[adminTableColumnScanSummaryStatus].(bubbletable.StyledCell); styled {
+		t.Fatal("scan-summary cells must stay neutral")
 	}
 }
 
@@ -1750,11 +1716,11 @@ func TestModelAdminFeatureTablesKeepScreenShortcutsAuthoritative(t *testing.T) {
 	updated = runKey(t, updated, "tab")
 	updated = runKey(t, updated, "down")
 
-	if got, want := updated.adminView.Tables.ScanRuns.GetHighlightedRowIndex(), 1; got != want {
-		t.Fatalf("scan-runs highlighted index = %d, want %d", got, want)
+	if got, want := updated.adminView.Tables.ScanSummary.GetHighlightedRowIndex(), 1; got != want {
+		t.Fatalf("scan-summary highlighted index = %d, want %d", got, want)
 	}
-	if got, want := updated.adminView.Tables.ScanRuns.HighlightedRow().Data[adminTableMetaScanRunID], "run-2"; got != want {
-		t.Fatalf("highlighted scan-run metadata = %#v, want %q", got, want)
+	if got, want := updated.adminView.Tables.ScanSummary.HighlightedRow().Data[adminTableMetaScanRunID], "run-2"; got != want {
+		t.Fatalf("highlighted scan-summary metadata = %#v, want %q", got, want)
 	}
 
 	updated = runKey(t, updated, "enter")
@@ -1786,8 +1752,8 @@ func TestModelAdminFeatureTablesKeepScreenShortcutsAuthoritative(t *testing.T) {
 // sdd-verify's CRITICAL-01 finding for the tui-table-viewport-fixed-size
 // change: spec.md "Internal Table and List Scrolling", scenario "Long table
 // pages internally" had zero covering tests. The existing arrow-key admin
-// table test above uses only a 2-row ScanRuns table, which can never cross a
-// page boundary. This test builds a ScanRuns table with more rows than its
+// table test above uses only a 2-row ScanSummary table, which can never cross
+// a page boundary. This test builds a ScanSummary table with more rows than its
 // computed pageSize, presses "down" past the first page boundary, and
 // verifies the mechanism design.md decision #5 describes:
 // syncAdminTableHighlights()'s WithHighlightedRow(...) call auto-pages the
@@ -1837,19 +1803,19 @@ func TestModelAdminScanRunsTablePagesOnArrowKeyNavigationPastPageBoundary(t *tes
 		t.Fatalf("primary pageSize = %d, want a positive size smaller than %d rows so pagination genuinely activates", primaryPageSize, totalRuns)
 	}
 
-	beforeTable := updated.adminView.Tables.ScanRuns
+	beforeTable := updated.adminView.Tables.ScanSummary
 	if got, want := beforeTable.CurrentPage(), 1; got != want {
-		t.Fatalf("scan-runs table CurrentPage() before navigation = %d, want %d", got, want)
+		t.Fatalf("scan-summary table CurrentPage() before navigation = %d, want %d", got, want)
 	}
-	firstPageOnlyRepository, ok := beforeTable.HighlightedRow().Data[adminTableColumnScanRunRepository].(string)
+	firstPageOnlyRepository, ok := beforeTable.HighlightedRow().Data[adminTableColumnScanSummaryRepository].(string)
 	if !ok || firstPageOnlyRepository == "" {
-		t.Fatalf("highlighted row repository before navigation = %#v, want a non-empty string", beforeTable.HighlightedRow().Data[adminTableColumnScanRunRepository])
+		t.Fatalf("highlighted row repository before navigation = %#v, want a non-empty string", beforeTable.HighlightedRow().Data[adminTableColumnScanSummaryRepository])
 	}
 	beforeView := updated.View()
 	beforeTableView := beforeTable.View()
 	wantBeforeIndicator := fmt.Sprintf("%d/%d", 1, beforeTable.MaxPages())
 	if !strings.Contains(beforeTableView, wantBeforeIndicator) {
-		t.Fatalf("scan-runs table view before navigation = %q, want position indicator %q", beforeTableView, wantBeforeIndicator)
+		t.Fatalf("scan-summary table view before navigation = %q, want position indicator %q", beforeTableView, wantBeforeIndicator)
 	}
 
 	// Press "down" exactly pageSize times: this moves the highlighted row
@@ -1858,30 +1824,30 @@ func TestModelAdminScanRunsTablePagesOnArrowKeyNavigationPastPageBoundary(t *tes
 		updated = runKey(t, updated, "down")
 	}
 
-	afterTable := updated.adminView.Tables.ScanRuns
+	afterTable := updated.adminView.Tables.ScanSummary
 	if got, want := afterTable.GetHighlightedRowIndex(), primaryPageSize; got != want {
 		t.Fatalf("highlighted row index after %d downs = %d, want %d", primaryPageSize, got, want)
 	}
 	if got, want := afterTable.CurrentPage(), 2; got != want {
-		t.Fatalf("scan-runs table CurrentPage() after paging past the first page boundary = %d, want %d (design.md decision #5: WithHighlightedRow must auto-page the table)", got, want)
+		t.Fatalf("scan-summary table CurrentPage() after paging past the first page boundary = %d, want %d (design.md decision #5: WithHighlightedRow must auto-page the table)", got, want)
 	}
 
 	afterView := updated.View()
 	afterTableView := afterTable.View()
 	wantAfterIndicator := fmt.Sprintf("%d/%d", 2, afterTable.MaxPages())
 	if !strings.Contains(afterTableView, wantAfterIndicator) {
-		t.Fatalf("scan-runs table view after paging = %q, want position indicator %q reflecting the new page", afterTableView, wantAfterIndicator)
+		t.Fatalf("scan-summary table view after paging = %q, want position indicator %q reflecting the new page", afterTableView, wantAfterIndicator)
 	}
 
-	highlightedRepository, ok := afterTable.HighlightedRow().Data[adminTableColumnScanRunRepository].(string)
+	highlightedRepository, ok := afterTable.HighlightedRow().Data[adminTableColumnScanSummaryRepository].(string)
 	if !ok || highlightedRepository == "" {
-		t.Fatalf("highlighted row repository after paging = %#v, want a non-empty string", afterTable.HighlightedRow().Data[adminTableColumnScanRunRepository])
+		t.Fatalf("highlighted row repository after paging = %#v, want a non-empty string", afterTable.HighlightedRow().Data[adminTableColumnScanSummaryRepository])
 	}
 	if !strings.Contains(afterTableView, highlightedRepository) {
-		t.Fatalf("scan-runs table view after paging = %q, want the newly highlighted row %q to be genuinely visible on-screen", afterTableView, highlightedRepository)
+		t.Fatalf("scan-summary table view after paging = %q, want the newly highlighted row %q to be genuinely visible on-screen", afterTableView, highlightedRepository)
 	}
 	if strings.Contains(afterTableView, firstPageOnlyRepository) {
-		t.Fatalf("scan-runs table view after paging = %q, want first-page-only row %q to have scrolled off, not still be visible", afterTableView, firstPageOnlyRepository)
+		t.Fatalf("scan-summary table view after paging = %q, want first-page-only row %q to have scrolled off, not still be visible", afterTableView, firstPageOnlyRepository)
 	}
 
 	// The table header and surrounding screen chrome (title, help) must

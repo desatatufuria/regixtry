@@ -96,9 +96,13 @@ func TestTableRolesAssignsPrimaryAdaptiveAndCompactFloorAtThree(t *testing.T) {
 }
 
 // TestRebuildAdminTablesBakesPrimaryAndCompactPageSizeIntoTables integrates
-// tableRoles into rebuildAdminTables: Features/ScanRuns (operator-navigable
-// primary lists) get the primary pageSize, FeatureRows/Findings/
-// SecretFindings (secondary detail tables) get the compact pageSize.
+// tableRoles into rebuildAdminTables: Features/ScanSummary
+// (operator-navigable primary lists) get the primary pageSize, FeatureRows
+// (a secondary detail table) gets the compact pageSize. Findings/
+// SecretFindings are exercised separately (they only build while the scan
+// history modal is active, sized from the modal's own nested row budget,
+// not this primary/compact split — see TestModelScanHistoryModal* in
+// model_test.go).
 func TestRebuildAdminTablesBakesPrimaryAndCompactPageSizeIntoTables(t *testing.T) {
 	t.Parallel()
 
@@ -108,14 +112,11 @@ func TestRebuildAdminTablesBakesPrimaryAndCompactPageSizeIntoTables(t *testing.T
 	rowCount := 40
 	model.adminView.Features = make([]ports.FeatureSummary, rowCount)
 	model.adminView.TrivyScanRuns = make([]ports.ScanRun, rowCount)
-	model.adminView.TrivyScanRunDetail.Findings = make([]ports.ScanRunFinding, rowCount)
-	model.adminView.SecretFindings = make([]ports.SecretFinding, rowCount)
 	for i := 0; i < rowCount; i++ {
 		model.adminView.Features[i] = ports.FeatureSummary{Name: fmt.Sprintf("feature-%d", i)}
-		model.adminView.TrivyScanRuns[i] = ports.ScanRun{ID: fmt.Sprintf("run-%d", i)}
-		model.adminView.TrivyScanRunDetail.Findings[i] = ports.ScanRunFinding{VulnerabilityID: fmt.Sprintf("CVE-%d", i)}
-		model.adminView.SecretFindings[i] = ports.SecretFinding{RuleID: fmt.Sprintf("rule-%d", i)}
+		model.adminView.TrivyScanRuns[i] = ports.ScanRun{ID: fmt.Sprintf("run-%d", i), Repository: fmt.Sprintf("team/service-%d", i)}
 	}
+	model.adminView.TrivySummaries = summarizeScanRunsByRepository(model.adminView.TrivyScanRuns)
 	model.adminView.FeaturePage = ports.FeaturePage{
 		Sections: []ports.FeatureSection{{ID: "rows-section", Kind: "rows", Rows: make([]ports.FeatureRow, rowCount)}},
 	}
@@ -141,9 +142,7 @@ func TestRebuildAdminTablesBakesPrimaryAndCompactPageSizeIntoTables(t *testing.T
 	}
 
 	assertTableHeight(t, "Features (primary)", model.adminView.Tables.Features, wantPrimary)
-	assertTableHeight(t, "ScanRuns (primary)", model.adminView.Tables.ScanRuns, wantPrimary)
-	assertTableHeight(t, "Findings (compact)", model.adminView.Tables.Findings, wantCompact)
-	assertTableHeight(t, "SecretFindings (compact)", model.adminView.Tables.SecretFindings, wantCompact)
+	assertTableHeight(t, "ScanSummary (primary)", model.adminView.Tables.ScanSummary, wantPrimary)
 	rowsTable, ok := model.adminView.Tables.FeatureRows["rows-section"]
 	if !ok {
 		t.Fatalf("FeatureRows[%q] missing", "rows-section")
