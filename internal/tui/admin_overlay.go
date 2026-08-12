@@ -7,6 +7,28 @@ import (
 	"github.com/charmbracelet/x/cellbuf"
 )
 
+// overlayHorizontalMargin blanks a small buffer to the immediate left/right
+// of the overlay's own footprint before its content is drawn
+// (claude-handoff.md follow-up: a real terminal run showed the overlay's
+// left/right border touching whatever base content happened to sit at that
+// column -- e.g. a base table's own border character fused directly against
+// the overlay's corner with zero gap, and base text hard-cut with nothing
+// separating it from the overlay -- which reads as corruption rather than a
+// floating dialog). This guarantees a visible horizontal gap survives
+// between the overlay's border and any surviving base content, independent
+// of how wide the base's own unshrunk content happens to be.
+//
+// There is deliberately no equivalent vertical margin: unlike width (fixed
+// per terminal), the row directly above/below the overlay's footprint can
+// legitimately hold meaningful base content right up to the overlay's own
+// edge (e.g. the screen's help line, one row below a tall modal on a short
+// base render) -- blanking it unconditionally risked destroying real
+// content instead of empty canvas. The vertical gap the modal already gets
+// in practice comes from adminScanHistoryModalRows leaving real margin
+// below the floor most terminal heights (adminScanHistoryModalVerticalMargin),
+// not from this compositor blanking rows it cannot tell are safe to clear.
+const overlayHorizontalMargin = 2
+
 // compositeOverlay draws overlay on top of base within a width x height
 // canvas, centering overlay horizontally and vertically. It never appends
 // overlay below base in the vertical flow (the superseded "Nested budget by
@@ -50,6 +72,14 @@ func compositeOverlay(base, overlay string, width, height int) string {
 	if y < 0 {
 		y = 0
 	}
+
+	marginRect := cellbuf.Rect(
+		x-overlayHorizontalMargin,
+		y,
+		overlayWidth+2*overlayHorizontalMargin,
+		overlayHeight,
+	).Intersect(buf.Bounds())
+	cellbuf.ClearRect(buf, marginRect)
 
 	cellbuf.SetContentRect(buf, overlay, cellbuf.Rect(x, y, overlayWidth, overlayHeight))
 

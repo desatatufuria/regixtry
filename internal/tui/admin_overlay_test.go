@@ -40,27 +40,37 @@ func TestCompositeOverlayFitsExactlyWithinTheGivenCanvas(t *testing.T) {
 }
 
 // TestCompositeOverlayPreservesBaseContentOutsideOverlayFootprint proves the
-// base page's full content survives unshrunk when an overlay is composited
-// on top (claude-handoff.md: "The underlying Features page must remain
-// visible behind the modal"): every base line NOT covered by the overlay's
-// centered footprint must still be present verbatim in the result.
+// base page's content survives unshrunk when an overlay is composited on
+// top (claude-handoff.md: "The underlying Features page must remain visible
+// behind the modal"): every base line far enough from the overlay's centered
+// footprint to fall outside its margin buffer (overlayHorizontalMargin/
+// overlayVerticalMargin -- see TestCompositeOverlayLeavesBlankMarginAroundOverlayFootprint)
+// must still be present verbatim in the result. Rows immediately adjacent to
+// the overlay are positioned OUTSIDE the margin's column span on purpose:
+// the margin intentionally blanks a small buffer immediately touching the
+// overlay's own footprint for a clean visual gap, so a marker placed inside
+// that buffer would not be a meaningful regression signal.
 func TestCompositeOverlayPreservesBaseContentOutsideOverlayFootprint(t *testing.T) {
 	t.Parallel()
 
+	// width=50 with a 7-wide overlay centers it at x=21; the margin buffer
+	// (overlayHorizontalMargin=2) only reaches columns [19,29], so a short
+	// marker starting at column 0 sits safely outside it even on the rows
+	// immediately above/below the overlay's own two rows.
+	const width, height = 50, 6
 	base := strings.Join([]string{
 		"row-0-untouched-marker",
-		"row-1-untouched-marker",
+		"safe-marker-row-1",
 		"row-2-covered-by-overlay",
 		"row-3-covered-by-overlay",
-		"row-4-untouched-marker",
+		"safe-marker-row-4",
 		"row-5-untouched-marker",
 	}, "\n")
 	overlay := strings.Join([]string{"MODAL-A", "MODAL-B"}, "\n")
 
-	const width, height = 30, 6
 	got := compositeOverlay(base, overlay, width, height)
 
-	for _, marker := range []string{"row-0-untouched-marker", "row-1-untouched-marker", "row-4-untouched-marker", "row-5-untouched-marker"} {
+	for _, marker := range []string{"row-0-untouched-marker", "safe-marker-row-1", "safe-marker-row-4", "row-5-untouched-marker"} {
 		if !strings.Contains(got, marker) {
 			t.Fatalf("compositeOverlay() = %q, want untouched base row %q to survive", got, marker)
 		}
@@ -107,6 +117,77 @@ func TestCompositeOverlayCentersOverlayWithinCanvas(t *testing.T) {
 	// the overlay was layered/centered rather than appended at the bottom.
 	if strings.Contains(lines[height-1], "OVERLAY-MARKER") {
 		t.Fatalf("last row = %q, want plain background content (overlay must not be appended below base)", lines[height-1])
+	}
+}
+
+// TestCompositeOverlayLeavesBlankMarginAroundOverlayFootprint is the RED
+// test for a real-terminal visual regression found after
+// TestRenderAdminWorkspaceKeepsBaseFullSizeAndLayersModalOnTopWhenOpen
+// shipped: its assertions (exact canvas height, base marker present, modal
+// title present) all passed even though the actual rendered output looked
+// broken -- the overlay's own left/right border characters directly touched
+// whatever base content happened to sit at its footprint's edge (no visible
+// gap), which reads as corruption rather than a floating dialog, and any
+// base text that continued past the overlay's left edge was hard-cut with
+// zero buffer. compositeOverlay must blank a small horizontal margin around
+// its own footprint before drawing the overlay, so a real gap always
+// separates the overlay's left/right border from surviving base content
+// (see admin_overlay.go's overlayHorizontalMargin doc comment for why there
+// is deliberately no equivalent vertical margin).
+func TestCompositeOverlayLeavesBlankMarginAroundOverlayFootprint(t *testing.T) {
+	t.Parallel()
+
+	const width, height = 40, 12
+	// Base fills the ENTIRE canvas with a repeating marker character on
+	// every row and column, simulating an unshrunk base page (e.g. a
+	// full-width table) that would otherwise touch the overlay's border
+	// directly with zero gap.
+	baseRow := strings.Repeat("X", width)
+	baseLines := make([]string, height)
+	for i := range baseLines {
+		baseLines[i] = baseRow
+	}
+	base := strings.Join(baseLines, "\n")
+
+	overlay := strings.Join([]string{"MODAL", "BODY "}, "\n")
+	got := compositeOverlay(base, overlay, width, height)
+	lines := strings.Split(got, "\n")
+
+	overlayWidth := lipgloss.Width(overlay)
+	overlayHeight := lipgloss.Height(overlay)
+	x := (width - overlayWidth) / 2
+	y := (height - overlayHeight) / 2
+
+	for row := y; row < y+overlayHeight; row++ {
+		runes := []rune(lines[row])
+		for m := 1; m <= overlayHorizontalMargin; m++ {
+			if leftCol := x - m; leftCol >= 0 && leftCol < len(runes) {
+				if runes[leftCol] != ' ' {
+					t.Fatalf("row %d col %d = %q, want blank margin left of the overlay (base content touching the overlay's own edge)", row, leftCol, string(runes[leftCol]))
+				}
+			}
+			if rightCol := x + overlayWidth + m - 1; rightCol >= 0 && rightCol < len(runes) {
+				if runes[rightCol] != ' ' {
+					t.Fatalf("row %d col %d = %q, want blank margin right of the overlay", row, rightCol, string(runes[rightCol]))
+				}
+			}
+		}
+	}
+
+	// No vertical margin is applied (admin_overlay.go's overlayHorizontalMargin
+	// doc comment): the row immediately above/below the overlay's footprint
+	// must survive completely untouched, proving real adjacent content (like
+	// a screen's help line one row below a tall modal) is never blanked just
+	// because it happens to sit next to the overlay.
+	if aboveRow := y - 1; aboveRow >= 0 {
+		if want, got := baseRow, lines[aboveRow]; got != want {
+			t.Fatalf("row above overlay = %q, want untouched base row %q (no vertical margin)", got, want)
+		}
+	}
+	if belowRow := y + overlayHeight; belowRow < height {
+		if want, got := baseRow, lines[belowRow]; got != want {
+			t.Fatalf("row below overlay = %q, want untouched base row %q (no vertical margin)", got, want)
+		}
 	}
 }
 

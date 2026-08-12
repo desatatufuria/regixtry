@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"regixtry/internal/ports"
 )
 
@@ -275,6 +276,92 @@ func TestRenderAdminWorkspaceKeepsBaseFullSizeAndLayersModalOnTopWhenOpen(t *tes
 	// rendered and composited, not silently dropped.
 	if !strings.Contains(got, "Scan History — acme/api") {
 		t.Fatalf("renderAdminWorkspace() = %q, want the modal title present", got)
+	}
+}
+
+// TestRenderAdminWorkspaceLeavesVisibleMarginAroundModalWhenOpen is the
+// permanent, real-render replacement for the throwaway visual-debug test
+// used to find this regression: it proves the actual end-to-end
+// renderAdminWorkspace output -- not just compositeOverlay's synthetic unit
+// tests -- has a real blank gap between the modal's own left/right border
+// and whatever base content survives beside it, at the modal's own
+// vertical midpoint. Without this, a modal that happens to sit beside a
+// wide, unshrunk base table would read as corruption (a base border
+// character fused directly against the modal's edge) rather than a
+// floating dialog.
+func TestRenderAdminWorkspaceLeavesVisibleMarginAroundModalWhenOpen(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+	now := time.Date(2026, time.August, 12, 11, 0, 0, 0, time.UTC)
+	session := AdminSession{Username: "operator", ExpiresAt: now.Add(10 * time.Minute)}
+
+	view := AdminViewState{
+		Features: []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
+		FeaturePage: ports.FeaturePage{
+			Summary: ports.FeatureSummary{Name: trivyFeatureName, Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
+		},
+		TrivyTab: trivyTabRepositoryAlerts,
+		// Two rows (matching a real captured repro), not one, so the
+		// Repository Alerts summary table -- widened to its real production
+		// column widths -- is actually dense enough at the modal's own row
+		// range to make this a genuine regression guard: a sparse
+		// single-row fixture leaves enough natural blank space that the
+		// margin assertions below would pass even without the fix.
+		TrivySummaries: []repositorySummary{
+			{Repository: "web-dvwa", LatestRun: ports.ScanRun{ID: "run-1", Repository: "web-dvwa", CreatedAt: now}, LastExecuted: now, RunCount: 13},
+			{Repository: "alpine-vuln", LatestRun: ports.ScanRun{ID: "run-2", Repository: "alpine-vuln", CreatedAt: now}, LastExecuted: now, RunCount: 12},
+		},
+		ScanHistoryModal: adminScanHistoryModal{
+			Open:       true,
+			Repository: "web-dvwa",
+			Tabs:       newAdminScanHistoryTabs(),
+			Runs:       []ports.ScanRun{{ID: "run-1", Repository: "web-dvwa", CreatedAt: now}},
+			Detail: ports.ScanRunDetail{Findings: []ports.ScanRunFinding{
+				{VulnerabilityID: "CVE-2016-9841", Severity: "CRITICAL", PackageName: "rsync", Fixable: true},
+				{VulnerabilityID: "CVE-2017-12424", Severity: "CRITICAL", PackageName: "login", Fixable: true},
+			}},
+		},
+	}
+	view.Tables.Features = buildAdminFeaturesTable(theme, view.Features, 0, minTableRows)
+	view.Tables.ScanSummary = buildAdminScanSummaryTable(theme, view.TrivySummaries, 0, minTableRows)
+	view.Tables.Findings = buildAdminFindingsTable(theme, view.ScanHistoryModal.Detail.Findings, 0, minTableRows)
+
+	layout := contentBudget(defaultViewportWidth, defaultViewportHeight, "", adminScreenHelp(screenAdminFeatures, view))
+
+	// Compute the modal's own footprint the exact same way
+	// renderAdminWorkspace does, so this test does not hardcode numbers that
+	// would silently drift out of sync with the production sizing.
+	modalView := renderAdminScanHistoryModal(theme, view.ScanHistoryModal, view, adminScanHistoryModalRows(layout))
+	overlayWidth := lipgloss.Width(modalView)
+	overlayHeight := lipgloss.Height(modalView)
+	x := (layout.Width - overlayWidth) / 2
+	y := (layout.Height - overlayHeight) / 2
+
+	got := renderAdminWorkspace(screenAdminFeatures, session, view, nil, "", layout, now)
+	lines := strings.Split(ansi.Strip(got), "\n")
+
+	// Check every row of the modal's own footprint, not just the midpoint:
+	// the real captured regression showed the fused-border defect on
+	// several (not all) of the modal's rows, wherever the base's own
+	// content happened to be dense at that exact row.
+	for row := y; row < y+overlayHeight; row++ {
+		if row < 0 || row >= len(lines) {
+			t.Fatalf("test setup invalid: modal row %d out of range (got %d lines)", row, len(lines))
+		}
+		runes := []rune(lines[row])
+		for m := 1; m <= overlayHorizontalMargin; m++ {
+			if leftCol := x - m; leftCol >= 0 && leftCol < len(runes) {
+				if runes[leftCol] != ' ' {
+					t.Fatalf("renderAdminWorkspace() row %d col %d = %q, want a blank margin column left of the modal (base content directly touching the modal's own edge)", row, leftCol, string(runes[leftCol]))
+				}
+			}
+			if rightCol := x + overlayWidth + m - 1; rightCol >= 0 && rightCol < len(runes) {
+				if runes[rightCol] != ' ' {
+					t.Fatalf("renderAdminWorkspace() row %d col %d = %q, want a blank margin column right of the modal", row, rightCol, string(runes[rightCol]))
+				}
+			}
+		}
 	}
 }
 
