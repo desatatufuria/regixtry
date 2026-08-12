@@ -127,6 +127,56 @@ func (m adminConfirmModal) Active() bool {
 	return m.Kind != adminConfirmNone
 }
 
+// adminScanHistoryTabKind identifies one feature's tab inside the scan
+// history modal (design.md "Ordered tab slice with a wrapping cursor").
+type adminScanHistoryTabKind string
+
+const (
+	adminScanHistoryTabVulnerabilities adminScanHistoryTabKind = "vulnerabilities"
+	adminScanHistoryTabLeaks           adminScanHistoryTabKind = "leaks"
+)
+
+// adminScanHistoryTab is one entry in the scan history modal's ordered,
+// extensible tab set. A third feature's tab is one more slice entry, no
+// restructuring (spec.md "Per-Feature Modal Tabs").
+type adminScanHistoryTab struct {
+	Kind  adminScanHistoryTabKind
+	Label string
+}
+
+// newAdminScanHistoryTabs returns the modal's default ordered tab set.
+// Leaks is always present alongside Vulnerabilities (design.md interface
+// comment on adminScanHistoryModal.Tabs).
+func newAdminScanHistoryTabs() []adminScanHistoryTab {
+	return []adminScanHistoryTab{
+		{Kind: adminScanHistoryTabVulnerabilities, Label: "Vulnerabilities"},
+		{Kind: adminScanHistoryTabLeaks, Label: "Leaks"},
+	}
+}
+
+// adminScanHistoryModal is the state for the Repository Alerts drill-down
+// modal (design.md "Nested budget by row split, not overlay, not
+// stacking"). It replaces the inline scan-run/findings/secret-findings
+// blocks in renderTrivyRepositoryAlerts (spec.md "Repository Alert
+// Drill-Down Opens History Modal") — Phase 3 wires Open/key handling, Phase
+// 4 removes the inline blocks this modal supersedes.
+type adminScanHistoryModal struct {
+	Open       bool
+	Repository string
+	Tabs       []adminScanHistoryTab
+	ActiveTab  int
+	Runs       []ports.ScanRun // newest first
+	Cursor     int
+	Detail     ports.ScanRunDetail
+	Secrets    []ports.SecretFinding
+	Loading    bool
+	Error      string
+}
+
+func (m adminScanHistoryModal) Active() bool {
+	return m.Open
+}
+
 type AdminSession struct {
 	Username      string
 	BearerToken   string
@@ -146,7 +196,12 @@ type adminTablesState struct {
 	ScanRuns       bubbletable.Model
 	Findings       bubbletable.Model
 	SecretFindings bubbletable.Model
-	Selection      adminTableSelection
+	// ScanSummary is the per-repository Repository Alerts summary table
+	// (buildAdminScanSummaryTable), rendered by renderAdminScanSummary.
+	// Added alongside ScanRuns (not replacing it yet) — Phase 4 removes the
+	// old per-scan-run rendering path this eventually supersedes.
+	ScanSummary bubbletable.Model
+	Selection   adminTableSelection
 }
 
 type AdminViewState struct {
@@ -185,7 +240,18 @@ type AdminViewState struct {
 	RevealedTokenSecret    string
 	RevealedTokenAccessor  string
 	RevealedTokenExpiresAt time.Time
-	Tables                 adminTablesState
+	// TrivySummaries is the per-repository aggregation
+	// (summarizeScanRunsByRepository) backing the new Repository Alerts
+	// summary table (spec.md "Repository Alerts Summarized Per Repository
+	// With Ordering And Freshness"). Populated alongside TrivyScanRuns,
+	// independent of it — Phase 4 folds TrivyScanRuns' old per-run render
+	// path away once this is wired.
+	TrivySummaries []repositorySummary
+	// ScanHistoryModal is the Repository Alerts drill-down modal state
+	// (spec.md "Repository Alert Drill-Down Opens History Modal"). Unwired
+	// in Phase 2 — Open never becomes true without Phase 3's key handling.
+	ScanHistoryModal adminScanHistoryModal
+	Tables           adminTablesState
 	// Layout is the consoleLayout used the last time rebuildAdminTables ran,
 	// including the primary/compact table pageSize split (design.md
 	// decision #6). It is a snapshot for table construction, not the live

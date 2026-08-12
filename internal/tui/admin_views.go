@@ -226,6 +226,132 @@ func renderTrivyRepositoryAlerts(theme adminTheme, view AdminViewState) []string
 	return lines
 }
 
+// renderAdminScanSummary renders the Repository Alerts tab as one row per
+// repository (spec.md "Repository Alerts Summarized Per Repository With
+// Ordering And Freshness"), replacing the concept of the old per-scan-run
+// list for this screen. It is additive alongside
+// renderTrivyRepositoryAlerts, not yet wired into renderFeaturePageBody —
+// Phase 3 wires Enter-to-open-modal, Phase 4 removes the old per-run inline
+// detail this eventually replaces.
+func renderAdminScanSummary(theme adminTheme, view AdminViewState) []string {
+	lines := []string{theme.subheading.Render("Repository Alerts")}
+	if len(view.TrivySummaries) == 0 {
+		message := "No repository alerts found."
+		if !view.TrivyAlertsLoaded {
+			message = "Loading repository alerts requires switching into the tab."
+		}
+		return append(lines, theme.muted.Render(message))
+	}
+	return append(lines, view.Tables.ScanSummary.View())
+}
+
+// adminScanHistoryModalTabBar renders the modal's tab strip as a single
+// line, guarded by TestRenderAdminScanHistoryModalChromeLinesAreSingleLine
+// (design.md "Modal chrome accounting").
+func adminScanHistoryModalTabBar(theme adminTheme, modal adminScanHistoryModal) string {
+	if len(modal.Tabs) == 0 {
+		return theme.muted.Render("No tabs available.")
+	}
+	labels := make([]string, 0, len(modal.Tabs))
+	for index, tab := range modal.Tabs {
+		label := tab.Label
+		if index == boundedIndex(modal.ActiveTab, len(modal.Tabs)) {
+			label = theme.selected.Render(label)
+		}
+		labels = append(labels, label)
+	}
+	return strings.Join(labels, " | ")
+}
+
+// adminScanHistoryModalFooter renders the history-position indicator (spec.md
+// "Scan Execution History Navigation": "the TUI SHALL show 2/17, the run's
+// date"), guarded to a single row.
+func adminScanHistoryModalFooter(modal adminScanHistoryModal) string {
+	if len(modal.Runs) == 0 {
+		return "Execution 0/0"
+	}
+	cursor := boundedIndex(modal.Cursor, len(modal.Runs))
+	run := modal.Runs[cursor]
+	effTime, inProgress := effectiveScanRunTime(run)
+	dateLabel := effTime.UTC().Format("2006-01-02 15:04")
+	if inProgress {
+		dateLabel += " (in progress)"
+	}
+	return fmt.Sprintf("Execution %d/%d — %s", cursor+1, len(modal.Runs), dateLabel)
+}
+
+// adminScanHistoryModalTableBody selects the active tab's table (Findings or
+// SecretFindings, reused as-is from view.Tables — design.md interfaces) or a
+// tab-appropriate empty state. When tableBudget cannot hold a bordered table
+// at all, it returns a single-line substitute instead of ever slicing one
+// (design.md "the table is replaced by a single-line substitute, never
+// sliced" — the fix for the historical orphaned "Showing x-y of N" bug).
+func adminScanHistoryModalTableBody(theme adminTheme, modal adminScanHistoryModal, view AdminViewState, tableBudget int) string {
+	if len(modal.Tabs) == 0 {
+		return theme.muted.Render("No tabs available.")
+	}
+	if tableBudget < adminScanHistoryModalMinTableBudget {
+		return theme.muted.Render("Terminal too small to show the table.")
+	}
+
+	active := modal.Tabs[boundedIndex(modal.ActiveTab, len(modal.Tabs))]
+	switch active.Kind {
+	case adminScanHistoryTabLeaks:
+		if len(modal.Secrets) == 0 {
+			return theme.muted.Render("No secret findings recorded for this execution.")
+		}
+		return view.Tables.SecretFindings.View()
+	default:
+		if len(modal.Detail.Findings) == 0 {
+			return theme.muted.Render("No findings recorded for this execution.")
+		}
+		return view.Tables.Findings.View()
+	}
+}
+
+// renderAdminScanHistoryModal composes the scan history modal within its own
+// nested content budget (modalRows, from adminScanHistoryRowSplit): title,
+// tab bar, the active tab's table (or empty/substitute state), and the
+// history-position footer. Every block is measured, not guessed, and the
+// whole composite is wrapped by theme.section.Render directly rather than
+// passed through renderSection/fitLines a second time (design.md "No
+// fitLines over a composite containing a bordered block" — the bug that
+// produced an orphaned "Showing x-y of N" line with no table above it).
+// Each bordered block is clipped exactly once, by its own owner: the base
+// screen body is clipped by the outer renderSection at baseRows; this modal
+// never needs slicing because its table is pre-sized (via
+// adminScanHistoryModalTablePageSize) to fit modalRows exactly, or replaced
+// by a one-line substitute when it cannot.
+func renderAdminScanHistoryModal(theme adminTheme, modal adminScanHistoryModal, view AdminViewState, modalRows int) string {
+	title := theme.subheading.Render(fmt.Sprintf("Scan History — %s", adminFirstNonEmpty(modal.Repository, "unknown")))
+	tabBar := adminScanHistoryModalTabBar(theme, modal)
+	footer := theme.muted.Render(adminScanHistoryModalFooter(modal))
+	help := theme.help.Render("Tab: next tab | Shift+Tab: prev tab | Left/Right: page history | Esc: close")
+
+	var header string
+	switch {
+	case strings.TrimSpace(modal.Error) != "":
+		header = theme.error.Render(fmt.Sprintf("Error: %s", modal.Error))
+	case modal.Loading:
+		header = theme.muted.Render("Loading scan history...")
+	}
+	measuredHeaderHeight := 0
+	if header != "" {
+		measuredHeaderHeight = lipgloss.Height(header)
+	}
+
+	tableBudget := modalRows - adminScanHistoryModalChromeRows - measuredHeaderHeight
+	tableBody := adminScanHistoryModalTableBody(theme, modal, view, tableBudget)
+
+	lines := []string{title, tabBar}
+	if header != "" {
+		lines = append(lines, header)
+	}
+	lines = append(lines, tableBody, footer, help)
+
+	return theme.section.Render(strings.Join(lines, "\n"))
+}
+
 // renderSecretFindingsBody renders the secret-scan findings for the image
 // currently open in the scan detail, alongside the vulnerability findings
 // above (spec.md "Operator reviews findings for a selected image"). It is

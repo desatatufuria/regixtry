@@ -42,6 +42,15 @@ const (
 
 	adminTableColumnSecretFindingRule     = "secret_finding_rule"
 	adminTableColumnSecretFindingLocation = "secret_finding_location"
+
+	adminTableColumnScanSummaryRepository   = "scan_summary_repository"
+	adminTableColumnScanSummaryReference    = "scan_summary_reference"
+	adminTableColumnScanSummaryStatus       = "scan_summary_status"
+	adminTableColumnScanSummaryCritical     = "scan_summary_critical"
+	adminTableColumnScanSummaryHigh         = "scan_summary_high"
+	adminTableColumnScanSummaryFixable      = "scan_summary_fixable"
+	adminTableColumnScanSummaryRuns         = "scan_summary_runs"
+	adminTableColumnScanSummaryLastExecuted = "scan_summary_last_executed"
 )
 
 // newAdminBubbleTable is the sole construction point for every admin table.
@@ -188,6 +197,95 @@ func buildAdminSecretFindingsTable(theme adminTheme, findings []ports.SecretFind
 		}))
 	}
 	return newAdminBubbleTable(columns, rows, highlighted, theme, pageSize)
+}
+
+// buildAdminScanSummaryTable renders one row per repository
+// (summarizeScanRunsByRepository's output) instead of one row per scan run
+// (spec.md "Repository Alerts Summarized Per Repository With Ordering And
+// Freshness"). It adds a last-execution column on top of
+// buildAdminScanRunsTable's latest-run columns; buildAdminScanRunsTable
+// itself is untouched and still used elsewhere (Phase 4 removes that old
+// path once this replaces it on screen).
+func buildAdminScanSummaryTable(theme adminTheme, summaries []repositorySummary, highlighted int, pageSize int) bubbletable.Model {
+	columns := []bubbletable.Column{
+		bubbletable.NewColumn(adminTableColumnScanSummaryRepository, "Repository", 18),
+		bubbletable.NewColumn(adminTableColumnScanSummaryReference, "Reference", 12),
+		bubbletable.NewColumn(adminTableColumnScanSummaryStatus, "Status", 10),
+		bubbletable.NewColumn(adminTableColumnScanSummaryCritical, "Critical", 8),
+		bubbletable.NewColumn(adminTableColumnScanSummaryHigh, "High", 6),
+		bubbletable.NewColumn(adminTableColumnScanSummaryFixable, "Fixable", 8),
+		bubbletable.NewColumn(adminTableColumnScanSummaryRuns, "Runs", 6),
+		bubbletable.NewColumn(adminTableColumnScanSummaryLastExecuted, "Last Executed", 22),
+	}
+	rows := make([]bubbletable.Row, 0, len(summaries))
+	for _, summary := range summaries {
+		rows = append(rows, bubbletable.NewRow(bubbletable.RowData{
+			adminTableColumnScanSummaryRepository:   adminFirstNonEmpty(summary.Repository, "unknown"),
+			adminTableColumnScanSummaryReference:    adminFirstNonEmpty(summary.LatestRun.RequestedRef, "unknown"),
+			adminTableColumnScanSummaryStatus:       adminFirstNonEmpty(summary.LatestRun.Status, "unknown"),
+			adminTableColumnScanSummaryCritical:     summary.LatestRun.Critical,
+			adminTableColumnScanSummaryHigh:         summary.LatestRun.High,
+			adminTableColumnScanSummaryFixable:      fmt.Sprintf("%t", summary.LatestRun.HasFixable),
+			adminTableColumnScanSummaryRuns:         summary.RunCount,
+			adminTableColumnScanSummaryLastExecuted: formatScanSummaryLastExecuted(summary),
+			adminTableMetaScanRunID:                 summary.LatestRun.ID,
+		}))
+	}
+	return newAdminBubbleTable(columns, rows, highlighted, theme, pageSize)
+}
+
+// formatScanSummaryLastExecuted renders a repositorySummary's last-execution
+// column: never blank (spec.md "the date column SHALL show CreatedAt with an
+// in-progress marker, never blank"), following effectiveScanRunTime's
+// FinishedAt->CreatedAt fallback that summarizeScanRunsByRepository already
+// applied when building LastExecuted/InProgress.
+func formatScanSummaryLastExecuted(summary repositorySummary) string {
+	if summary.LastExecuted.IsZero() {
+		return "unknown"
+	}
+	formatted := summary.LastExecuted.UTC().Format("2006-01-02 15:04")
+	if summary.InProgress {
+		return formatted + " (in progress)"
+	}
+	return formatted
+}
+
+// adminScanHistoryModalChromeRows is the scan history modal's own fixed
+// non-table content once open: title, tab bar, the "Execution N/M — date"
+// history footer, and the help line — each guarded to exactly one row by
+// TestRenderAdminScanHistoryModalChromeLinesAreSingleLine.
+//
+// Deviation from design.md's literal `sectionChromeRows + 4`: this is 4, not
+// 8. adminScanHistoryRowSplit (Phase 1) already reserves the modal's own
+// border+padding exactly once via `usable := outer.SectionRows -
+// sectionChromeRows`, so the modalRows it returns is already a border-free
+// content budget — re-subtracting sectionChromeRows here would charge the
+// same border twice and starve the table for no reason. Re-derived from
+// Phase 1's own tested row-split invariant while measuring real modal
+// content for this phase, per the "measured, not guessed" discipline.
+const adminScanHistoryModalChromeRows = 4
+
+// adminScanHistoryModalMinTableBudget is the smallest number of rows a
+// bordered table needs at all: its own fixed chrome (tableChromeRows) plus
+// the smallest usable pageSize (minTableRows). Below this, the modal
+// substitutes a single-line message instead of ever slicing a bordered
+// table (design.md "the table is replaced by a single-line substitute,
+// never sliced").
+const adminScanHistoryModalMinTableBudget = tableChromeRows + minTableRows
+
+// adminScanHistoryModalTablePageSize computes the scan history modal's
+// active-tab table pageSize from the modal's own nested content budget
+// (modalRows, from adminScanHistoryRowSplit), the modal's fixed chrome
+// (adminScanHistoryModalChromeRows), and the measured height of any
+// variable header content rendered above the table (an error or loading
+// message) — same "measure, don't guess" discipline as
+// trivyAlertDetailTableRoles. Floored at minTableRows.
+func adminScanHistoryModalTablePageSize(modalRows, measuredHeaderHeight int) int {
+	available := modalRows - adminScanHistoryModalChromeRows - measuredHeaderHeight - tableChromeRows
+	if available < minTableRows {
+		available = minTableRows
+	}
+	return available
 }
 
 func secretFindingLocation(finding ports.SecretFinding) string {
