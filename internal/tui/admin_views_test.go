@@ -81,11 +81,46 @@ func TestRenderAdminStatusSelectsStyleFromExplicitKindRegardlessOfText(t *testin
 			t.Parallel()
 
 			got := renderAdminStatus(theme, text, tc.kind)
-			want := theme.section.Render(strings.Join([]string{theme.subheading.Render("Status"), tc.style.Render(text)}, "\n"))
+			// Bare styled line (design.md Decision 4: no theme.section wrap,
+			// no "Status" subheading) — updated from Phase 4's boxed
+			// expectation once Phase 5 de-boxed renderAdminStatus.
+			want := tc.style.Render(text)
 			if got != want {
 				t.Fatalf("renderAdminStatus(%q, kind=%v) = %q, want %q (explicit kind must select style regardless of text)", text, tc.kind, got, want)
 			}
 		})
+	}
+}
+
+// TestRenderAdminStatusReturnsSingleRowWithNoBorder is the Phase 5 task 5.1
+// RED test (design.md Decision 4 / spec.md "Viewport-Bounded Screen
+// Rendering"): renderAdminStatus currently wraps its content in
+// theme.section (a RoundedBorder + Padding(1) box) plus a "Status"
+// subheading, costing ~6 rows. It must render as a single bare line with no
+// border rune, matching the help line's own bare decoration, for any status
+// text and any explicit kind.
+func TestRenderAdminStatusReturnsSingleRowWithNoBorder(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+	kinds := []statusKind{statusKindAuto, statusKindNeutral, statusKindSuccess, statusKindWarning, statusKindError}
+	statuses := []string{"ready", "User created", "connection refused"}
+
+	for _, kind := range kinds {
+		for _, status := range statuses {
+			got := renderAdminStatus(theme, status, kind)
+			if h := lipgloss.Height(got); h != 1 {
+				t.Fatalf("renderAdminStatus(%q, kind=%v) height = %d, want exactly 1 (de-boxed, no Status subheading)", status, kind, h)
+			}
+			for _, borderRune := range []rune{'─', '│', '╭', '╮', '╰', '╯'} {
+				if strings.ContainsRune(got, borderRune) {
+					t.Fatalf("renderAdminStatus(%q, kind=%v) = %q, want no border rune %q", status, kind, got, borderRune)
+				}
+			}
+			if strings.Contains(got, "Status") {
+				t.Fatalf("renderAdminStatus(%q, kind=%v) = %q, want no \"Status\" subheading", status, kind, got)
+			}
+		}
 	}
 }
 

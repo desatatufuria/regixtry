@@ -55,6 +55,41 @@ func TestViewportContentBudgetAccountsForChrome(t *testing.T) {
 	}
 }
 
+// TestViewportContentBudgetGainsExactlyFiveRowsAfterStatusDeboxing is the
+// Phase 5 task 5.2 RED test (design.md Decision 4): boxedStatusBaseline
+// independently reconstructs the pre-Decision-4 boxed status render
+// (subheading + text inside theme.section) so this test keeps proving the
+// "before" number even after renderAdminStatus itself no longer produces
+// it. At the real viewport floor (150x24) with status and help both
+// present, contentBudget must free exactly 5 rows once the status box is
+// removed, and the freed rows must be real (not silently reabsorbed by a
+// stale minTableRows clamp).
+func TestViewportContentBudgetGainsExactlyFiveRowsAfterStatusDeboxing(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+	const status = "ready"
+	const help = "q: quit"
+	const width, height = minViewportWidth, minViewportHeight
+
+	boxedStatusBaseline := theme.section.Render(strings.Join([]string{theme.subheading.Render("Status"), theme.muted.Render(status)}, "\n"))
+	helpHeight := lipgloss.Height(theme.help.Render(help))
+	boxedChrome := 2 + lipgloss.Height(boxedStatusBaseline) + helpHeight + sectionChromeRows
+	boxedSectionRows := height - boxedChrome
+	if boxedSectionRows < minTableRows {
+		boxedSectionRows = minTableRows
+	}
+
+	got := contentBudget(width, height, status, help)
+
+	if diff := got.SectionRows - boxedSectionRows; diff != 5 {
+		t.Fatalf("real SectionRows(%d) - boxed-baseline SectionRows(%d) = %d, want exactly 5 (design.md Decision 4: the body gains 5 rows once the status box is removed)", got.SectionRows, boxedSectionRows, diff)
+	}
+	if got.SectionRows == minTableRows {
+		t.Fatalf("SectionRows = %d, want strictly greater than minTableRows(%d) at 150x24 — must not be clamped by a stale bordered-status assumption reserving rows the bare status line no longer needs", got.SectionRows, minTableRows)
+	}
+}
+
 func TestViewportContentBudgetFloorsAtMinimumTableRows(t *testing.T) {
 	t.Parallel()
 

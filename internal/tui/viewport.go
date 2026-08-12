@@ -103,8 +103,9 @@ type consoleLayout struct {
 // section, given the terminal width/height and the status/help chrome that
 // will be rendered around it. status/help are measured via lipgloss.Height
 // on their real rendered form rather than assumed to be a fixed size, since
-// the status panel is a 6-row bordered section when present and 0 rows when
-// absent (design.md decision #2).
+// the status panel is a bare, unboxed 1-row line when present (design.md
+// Decision 4 -- de-boxed from its historical 6-row bordered section) and 0
+// rows when absent (design.md decision #2).
 func contentBudget(width, height int, status, help string) consoleLayout {
 	theme := newAdminTheme()
 

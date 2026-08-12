@@ -132,20 +132,20 @@ diff).
 
 ## Phase 5: Status Panel De-boxing (Decision 4, P5) — design-flagged highest risk
 
-- [ ] 5.1 RED `admin_views_test.go`: `renderAdminStatus` returns exactly 1
+- [x] 5.1 RED `admin_views_test.go`: `renderAdminStatus` returns exactly 1
       row and no border runes for any status/kind.
-- [ ] 5.2 RED `viewport_test.go`: `contentBudget` gains exactly 5 rows vs.
+- [x] 5.2 RED `viewport_test.go`: `contentBudget` gains exactly 5 rows vs.
       the boxed-status baseline at fixed height 150x24; `SectionRows` is not
       clamped to `minTableRows` by the stale bordered-status assumption.
-- [ ] 5.3 GREEN: remove the `theme.section` wrap and "Status" subheading
+- [x] 5.3 GREEN: remove the `theme.section` wrap and "Status" subheading
       from `renderAdminStatus` (`admin_views.go`); make **no** change to
       `sectionChromeRows` or any `contentBudget` arithmetic — the chrome
       measurement at `viewport.go:115` self-adjusts from the de-boxed
       render; update the stale "6-row bordered section" comment at
       `viewport.go:105-107` to say 1 row.
-- [ ] 5.4 Confirm 5.1–5.2 GREEN: `go test ./internal/tui/... -run
+- [x] 5.4 Confirm 5.1–5.2 GREEN: `go test ./internal/tui/... -run
       'AdminStatus|ContentBudget'`.
-- [ ] 5.5 Live-render verification: throwaway debug test rendering the
+- [x] 5.5 Live-render verification: throwaway debug test rendering the
       de-boxed status line next to the help line at height 24; `ansi.Strip`
       + `fmt.Println`; confirm matching bare decoration and no clipped body
       content; delete before finishing.

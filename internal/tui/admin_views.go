@@ -662,11 +662,21 @@ func statusStyle(theme adminTheme, kind statusKind) lipgloss.Style {
 // "Admin Status And Error Styling Uses An Explicit Status Kind").
 // statusKindAuto classifies from the text, preserving today's behavior for
 // callers that carry no explicit kind.
+//
+// Deliberately bare — no theme.section wrap, no "Status" subheading
+// (design.md Decision 4, spec.md "Viewport-Bounded Screen Rendering": the
+// status line MUST use the same bare, unboxed decoration as the help line
+// beneath it). No constant accounts for the status panel's row cost:
+// contentBudget (viewport.go) measures this function's real
+// lipgloss.Height, so removing the box changes the measured chrome
+// automatically -- do NOT decrement sectionChromeRows to "pay for" this;
+// that constant is the BODY section's own border and is unrelated (see
+// viewport.go's contentBudget doc comment).
 func renderAdminStatus(theme adminTheme, status string, kind statusKind) string {
 	if kind == statusKindAuto {
 		kind = classifyStatusText(status)
 	}
-	return theme.section.Render(strings.Join([]string{theme.subheading.Render("Status"), statusStyle(theme, kind).Render(status)}, "\n"))
+	return statusStyle(theme, kind).Render(status)
 }
 
 func renderTextField(theme adminTheme, label string, value string, focused bool) string {
