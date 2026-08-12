@@ -104,6 +104,106 @@ func TestAdminFeatureStatusReportsGitleaksIndependentlyFromTrivy(t *testing.T) {
 // value or fingerprint — mirroring the structural-redaction assertion style
 // from Phase 4's report_test.go (reflecting over the actual response JSON
 // keys, not merely checking that one field is empty).
+func TestAdminScanPolicyGetReturnsCurrentSettings(t *testing.T) {
+	t.Parallel()
+
+	blobStore, store, cleanup := newTestStores(t)
+	defer cleanup()
+	handler := newRouterWithStores(blobStore, store, allowAllAccessController{}, fakeAuthService{verify: &auth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+
+	if err := store.UpsertScanPolicySettings(context.Background(), "tenant-a", ports.ScanPolicySettings{Enabled: false, SeverityThreshold: ports.ScanPolicyThresholdCriticalHigh, UpdatedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("UpsertScanPolicySettings() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/scan-policy", nil)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+	for _, want := range []string{`"enabled":false`, `"severity_threshold":"critical_high"`} {
+		if !strings.Contains(recorder.Body.String(), want) {
+			t.Fatalf("body = %q, want %q", recorder.Body.String(), want)
+		}
+	}
+}
+
+func TestAdminScanPolicyGetRequiresAdminPrincipal(t *testing.T) {
+	t.Parallel()
+
+	blobStore, store, cleanup := newTestStores(t)
+	defer cleanup()
+	handler := newRouterWithStores(blobStore, store, allowAllAccessController{}, fakeAuthService{verify: &auth.Principal{Subject: "atk_1", UserID: "reader-1", Username: "reader", IsAdmin: false}})
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/scan-policy", nil)
+	req.Header.Set("Authorization", "Bearer reader-token")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code == http.StatusOK {
+		t.Fatalf("status = %d, want a non-admin caller to be rejected", recorder.Code)
+	}
+}
+
+func TestAdminScanPolicyPutPersistsAndRoundTrips(t *testing.T) {
+	t.Parallel()
+
+	blobStore, store, cleanup := newTestStores(t)
+	defer cleanup()
+	handler := newRouterWithStores(blobStore, store, allowAllAccessController{}, fakeAuthService{verify: &auth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+
+	req := httptest.NewRequest(http.MethodPut, "/admin/v1/scan-policy", strings.NewReader(`{"enabled":true,"severity_threshold":"critical_high"}`))
+	req.Header.Set("Authorization", "Bearer admin-token")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	for _, want := range []string{`"enabled":true`, `"severity_threshold":"critical_high"`} {
+		if !strings.Contains(recorder.Body.String(), want) {
+			t.Fatalf("body = %q, want %q", recorder.Body.String(), want)
+		}
+	}
+
+	stored, err := store.GetScanPolicySettings(context.Background(), "tenant-a")
+	if err != nil {
+		t.Fatalf("GetScanPolicySettings() error = %v", err)
+	}
+	if !stored.Enabled || stored.SeverityThreshold != ports.ScanPolicyThresholdCriticalHigh {
+		t.Fatalf("stored = %#v, want enabled/critical_high", stored)
+	}
+}
+
+func TestAdminScanPolicyPutRejectsUnknownSeverityThreshold(t *testing.T) {
+	t.Parallel()
+
+	blobStore, store, cleanup := newTestStores(t)
+	defer cleanup()
+	handler := newRouterWithStores(blobStore, store, allowAllAccessController{}, fakeAuthService{verify: &auth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+
+	req := httptest.NewRequest(http.MethodPut, "/admin/v1/scan-policy", strings.NewReader(`{"enabled":true,"severity_threshold":"apocalyptic"}`))
+	req.Header.Set("Authorization", "Bearer admin-token")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	// writeAdminError maps domainauth.ErrorCodeValidation to 422 (the same
+	// mapping every other admin validation rejection uses, e.g. an invalid
+	// scan-settings interval) — the evaluator's permissive default branch
+	// for an unknown threshold must be unreachable from this API.
+	if recorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d for an unknown severity_threshold", recorder.Code, http.StatusUnprocessableEntity)
+	}
+
+	if _, err := store.GetScanPolicySettings(context.Background(), "tenant-a"); err == nil {
+		t.Fatal("GetScanPolicySettings() error = nil, want no row persisted for a rejected PUT")
+	}
+}
+
 func TestAdminSecretScanFindingsResponseStructurallyCannotCarrySecretOrFingerprint(t *testing.T) {
 	t.Parallel()
 

@@ -38,6 +38,8 @@ func (r *Router) handleAdmin(w stdhttp.ResponseWriter, req *stdhttp.Request) {
 		r.handleAdminFeatureResource(w, req, strings.TrimPrefix(subpath, "features/"))
 	case subpath == "scan-settings":
 		r.handleAdminScanSettings(w, req)
+	case subpath == "scan-policy":
+		r.handleAdminScanPolicy(w, req)
 	case subpath == "scan-runs":
 		r.handleAdminScanRuns(w, req)
 	case strings.HasPrefix(subpath, "scan-runs/"):
@@ -210,6 +212,63 @@ func (r *Router) handleAdminScanSettings(w stdhttp.ResponseWriter, req *stdhttp.
 	default:
 		w.Header().Set("Allow", strings.Join([]string{stdhttp.MethodGet, stdhttp.MethodPut}, ", "))
 		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+	}
+}
+
+// handleAdminScanPolicy is the vulnerability policy gate's admin read/write
+// endpoint (design.md Decision 5), modeled line-for-line on
+// handleAdminScanSettings: GET returns the current settings (including the
+// code-level default when no row has ever been written), PUT fully replaces
+// them and requires a known severity_threshold value so the evaluator's
+// permissive default branch (scanPolicyViolated's unknown-threshold case)
+// can never be reached from this API.
+func (r *Router) handleAdminScanPolicy(w stdhttp.ResponseWriter, req *stdhttp.Request) {
+	switch req.Method {
+	case stdhttp.MethodGet:
+		settings, err := r.service.GetScanPolicySettings(req.Context())
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		writeJSON(w, stdhttp.StatusOK, scanPolicySettingsResponse(settings))
+	case stdhttp.MethodPut:
+		settings, err := decodeScanPolicySettings(req)
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		updated, err := r.service.UpdateScanPolicySettings(req.Context(), settings)
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		writeJSON(w, stdhttp.StatusOK, scanPolicySettingsResponse(updated))
+	default:
+		w.Header().Set("Allow", strings.Join([]string{stdhttp.MethodGet, stdhttp.MethodPut}, ", "))
+		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+	}
+}
+
+func decodeScanPolicySettings(req *stdhttp.Request) (ports.ScanPolicySettings, error) {
+	var payload struct {
+		Enabled           bool   `json:"enabled"`
+		SeverityThreshold string `json:"severity_threshold"`
+	}
+	if err := decodeAdminJSON(req, &payload); err != nil {
+		return ports.ScanPolicySettings{}, err
+	}
+	threshold := strings.TrimSpace(payload.SeverityThreshold)
+	if threshold != ports.ScanPolicyThresholdCritical && threshold != ports.ScanPolicyThresholdCriticalHigh {
+		return ports.ScanPolicySettings{}, domainauth.NewValidationError("severity_threshold must be critical or critical_high")
+	}
+	return ports.ScanPolicySettings{Enabled: payload.Enabled, SeverityThreshold: threshold}, nil
+}
+
+func scanPolicySettingsResponse(settings ports.ScanPolicySettings) map[string]any {
+	return map[string]any{
+		"enabled":            settings.Enabled,
+		"severity_threshold": settings.SeverityThreshold,
+		"updated_at":         settings.UpdatedAt,
 	}
 }
 
