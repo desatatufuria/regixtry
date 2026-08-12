@@ -71,10 +71,10 @@ Rationale: zero existing `WindowSizeMsg`/`Height`/`Viewport`/`PageSize` test cov
 
 ## Phase 5: Indicator, Theme, Resize-Refit Regression, Non-Regression
 
-- [ ] 5.1 RED `model_test.go`: 47-row table with budget < 47 shows a position indicator with visible range/total (Req: Visible Position Indicator for Hidden Rows)
-- [ ] 5.2 RED `model_test.go`: table where all rows fit shows no misleading "hidden content" indicator
-- [ ] 5.3 GREEN: confirm native bubble-table footer (`CurrentPage`/`MaxPages`) plus `fitLines` indicator satisfy 5.1/5.2; patch gaps
-- [ ] 5.4 RED `model_test.go`: table border uses `theme.borderColor`; footer visible with page position (Req: Consistent Table Theme Styling)
-- [ ] 5.5 RED `model_test.go`: resize taller mid-session shows more rows without restart; resize shorter re-bounds without exceeding the new viewport (Req: Live Terminal Resize Refit, both scenarios)
-- [ ] 5.6 GREEN: confirm Phase 2 `WindowSizeMsg` wiring is sufficient; patch gaps
-- [ ] 5.7 Non-regression: `go test ./internal/tui/...` full suite + `scripts/tui-smoke.sh`; confirm the 5 pre-existing tables (features, feature-rows, scan-runs, findings, secret-findings) and gitleaks/trivy screens still render through `newAdminBubbleTable` unchanged in behavior
+- [x] 5.1 RED `model_test.go`: 47-row table with budget < 47 shows a position indicator with visible range/total (Req: Visible Position Indicator for Hidden Rows)
+- [x] 5.2 RED `model_test.go`: table where all rows fit shows no misleading "hidden content" indicator
+- [x] 5.3 GREEN: confirm native bubble-table footer (`CurrentPage`/`MaxPages`) plus `fitLines` indicator satisfy 5.1/5.2; patch gaps
+- [x] 5.4 RED `model_test.go`: table border uses `theme.borderColor`; footer visible with page position (Req: Consistent Table Theme Styling)
+- [x] 5.5 RED `model_test.go`: resize taller mid-session shows more rows without restart; resize shorter re-bounds without exceeding the new viewport (Req: Live Terminal Resize Refit, both scenarios)
+- [x] 5.6 GREEN: confirm Phase 2 `WindowSizeMsg` wiring is sufficient; patch gaps
+- [x] 5.7 Non-regression: `go test ./internal/tui/...` full suite + `scripts/tui-smoke.sh`; confirm the 5 pre-existing tables (features, feature-rows, scan-runs, findings, secret-findings) and gitleaks/trivy screens still render through `newAdminBubbleTable` unchanged in behavior
