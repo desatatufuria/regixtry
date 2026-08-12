@@ -1,10 +1,17 @@
 package tui
 
 import (
+	"sort"
 	"time"
 
 	"regixtry/internal/ports"
 )
+
+// adminScanHistoryWindowLimit bounds loadAdminScanHistoryCmd's ListScanRuns
+// call for one repository's drill-down history (design.md "Chronological
+// history by client-side re-sort" — reuses ListScanRuns(repository, 50)
+// rather than a new port/query).
+const adminScanHistoryWindowLimit = 50
 
 // adminScanHistoryModalMinRows is the floor of modal inner rows the row
 // split will always try to preserve: enough to show a tab bar row, at least
@@ -106,6 +113,48 @@ func adminScanHistoryRowSplit(outer consoleLayout, baseInnerHeight int) (baseRow
 	}
 	baseRows = usable - modalRows // <= 0 -> base omitted, modal renders alone
 	return baseRows, modalRows
+}
+
+// sortScanRunsChronologically returns a NEW slice of runs ordered newest
+// first by effectiveScanRunTime (design.md "Chronological history by
+// client-side re-sort"). The scan history modal's prev/next navigation moves
+// through this order one run at a time; it is deliberately independent of
+// the severity/fixability ordering compareScanRuns uses for the Repository
+// Alerts summary table.
+func sortScanRunsChronologically(runs []ports.ScanRun) []ports.ScanRun {
+	sorted := append([]ports.ScanRun(nil), runs...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		left, _ := effectiveScanRunTime(sorted[i])
+		right, _ := effectiveScanRunTime(sorted[j])
+		return left.After(right)
+	})
+	return sorted
+}
+
+// adminScanHistoryDetailMatchesCursor reports whether a loaded scan-run
+// detail still corresponds to the modal's CURRENTLY navigated run (spec.md
+// "Leaks findings SHALL use that run's own digest, not another's"). Guards
+// against a stale async response for a run the operator has since paged away
+// from overwriting the currently-displayed run's data — the exact race
+// design.md flags as "Digest-per-run correctness".
+func adminScanHistoryDetailMatchesCursor(modal adminScanHistoryModal, detail ports.ScanRunDetail) bool {
+	if len(modal.Runs) == 0 {
+		return false
+	}
+	current := modal.Runs[boundedIndex(modal.Cursor, len(modal.Runs))]
+	return detail.Run.ID == current.ID
+}
+
+// adminScanHistorySecretsMatchCursor is adminScanHistoryDetailMatchesCursor's
+// counterpart for the secret-findings leg of the chain: a secret-findings
+// response is only applied when its repository+digest still match the
+// modal's currently navigated run.
+func adminScanHistorySecretsMatchCursor(modal adminScanHistoryModal, repository string, digest string) bool {
+	if len(modal.Runs) == 0 {
+		return false
+	}
+	current := modal.Runs[boundedIndex(modal.Cursor, len(modal.Runs))]
+	return current.Repository == repository && current.Digest == digest
 }
 
 // cycleIndex wraps index into [0, size) by modulo, unlike boundedIndex

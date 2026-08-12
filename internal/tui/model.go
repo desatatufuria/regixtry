@@ -265,8 +265,20 @@ type adminScanRunDetailLoadedMsg struct {
 }
 
 type adminSecretScanFindingsLoadedMsg struct {
-	findings []ports.SecretFinding
-	err      error
+	repository string
+	digest     string
+	findings   []ports.SecretFinding
+	err        error
+}
+
+// adminScanHistoryLoadedMsg carries a repository's chronological scan
+// history (design.md "Chronological history by client-side re-sort"),
+// echoing the queried repository so a stale response for a repository the
+// operator has since closed/switched away from can be discarded.
+type adminScanHistoryLoadedMsg struct {
+	repository string
+	runs       []ports.ScanRun
+	err        error
 }
 
 type adminUserGrantsLoadedMsg struct {
@@ -554,6 +566,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		runs := append([]ports.ScanRun(nil), msg.runs...)
 		sort.SliceStable(runs, func(i, j int) bool { return compareScanRuns(runs[i], runs[j]) < 0 })
 		m.adminView.TrivyScanRuns = runs
+		// TrivySummaries aggregates the same severity/fixability-ordered runs
+		// into one row per repository (spec.md "Repository Alerts
+		// Summarized Per Repository With Ordering And Freshness") —
+		// summarizeScanRunsByRepository preserves first-seen order, so
+		// feeding it the already-sorted runs keeps the summary
+		// severity-ordered too.
+		m.adminView.TrivySummaries = summarizeScanRunsByRepository(runs)
 		m.adminView.TrivySelectedAlert = boundedIndex(0, len(m.adminView.TrivyScanRuns))
 		m.adminView.TrivyAlertDetailOpen = false
 		m.adminView.TrivyAlertsLoaded = true
@@ -570,8 +589,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if IsAdminSessionExpired(msg.err) {
 				return m.expireAdminSession(msg.err.Error()), nil
 			}
+			if m.adminView.ScanHistoryModal.Active() {
+				m.adminView.ScanHistoryModal.Loading = false
+				m.adminView.ScanHistoryModal.Error = msg.err.Error()
+				m.rebuildAdminTables(m.adminTablesLayout())
+				return m, nil
+			}
 			m.status = msg.err.Error()
 			return m, nil
+		}
+		if m.adminView.ScanHistoryModal.Active() {
+			// Digest-per-run correctness (design.md risk note): discard a
+			// stale response for a run the operator has since paged away
+			// from, so the Vulnerabilities/Leaks tabs never show a mix of
+			// two executions.
+			if !adminScanHistoryDetailMatchesCursor(m.adminView.ScanHistoryModal, msg.detail) {
+				return m, nil
+			}
+			m.adminView.ScanHistoryModal.Detail = msg.detail
+			m.adminView.ScanHistoryModal.Secrets = nil
+			m.adminView.ScanHistoryModal.Error = ""
+			m.rebuildAdminTables(m.adminTablesLayout())
+			m.status = ""
+			return m, m.loadAdminSecretScanFindingsCmd(msg.detail.Run.Repository, msg.detail.Run.Digest)
 		}
 		m.adminView.TrivyScanRunDetail = msg.detail
 		m.adminView.TrivyAlertDetailOpen = true
@@ -591,6 +631,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if IsAdminSessionExpired(msg.err) {
 				return m.expireAdminSession(msg.err.Error()), nil
 			}
+			if m.adminView.ScanHistoryModal.Active() {
+				if !adminScanHistorySecretsMatchCursor(m.adminView.ScanHistoryModal, msg.repository, msg.digest) {
+					return m, nil
+				}
+				m.adminView.ScanHistoryModal.Secrets = nil
+				m.adminView.ScanHistoryModal.Loading = false
+				m.rebuildAdminTables(m.adminTablesLayout())
+				return m, nil
+			}
 			// Informational only (spec.md "Informational Findings Only"): a
 			// failure to load secret findings (including "none persisted
 			// yet") must never override the vulnerability detail already
@@ -600,9 +649,45 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.rebuildAdminTables(m.adminTablesLayout())
 			return m, nil
 		}
+		if m.adminView.ScanHistoryModal.Active() {
+			if !adminScanHistorySecretsMatchCursor(m.adminView.ScanHistoryModal, msg.repository, msg.digest) {
+				return m, nil
+			}
+			m.adminView.ScanHistoryModal.Secrets = msg.findings
+			m.adminView.ScanHistoryModal.Loading = false
+			m.rebuildAdminTables(m.adminTablesLayout())
+			return m, nil
+		}
 		m.adminView.SecretFindings = msg.findings
 		m.rebuildAdminTables(m.adminTablesLayout())
 		return m, nil
+	case adminScanHistoryLoadedMsg:
+		if msg.err != nil {
+			if IsAdminSessionExpired(msg.err) {
+				return m.expireAdminSession(msg.err.Error()), nil
+			}
+			if m.adminView.ScanHistoryModal.Active() && msg.repository == m.adminView.ScanHistoryModal.Repository {
+				m.adminView.ScanHistoryModal.Loading = false
+				m.adminView.ScanHistoryModal.Error = msg.err.Error()
+				m.rebuildAdminTables(m.adminTablesLayout())
+			}
+			return m, nil
+		}
+		if !m.adminView.ScanHistoryModal.Active() || msg.repository != m.adminView.ScanHistoryModal.Repository {
+			// Stale response for a modal that has since closed or switched
+			// to a different repository.
+			return m, nil
+		}
+		m.adminView.ScanHistoryModal.Runs = msg.runs
+		m.adminView.ScanHistoryModal.Cursor = 0
+		m.adminView.ScanHistoryModal.Error = ""
+		if len(msg.runs) == 0 {
+			m.adminView.ScanHistoryModal.Loading = false
+			m.rebuildAdminTables(m.adminTablesLayout())
+			return m, nil
+		}
+		m.status = ""
+		return m, m.loadAdminScanRunDetailCmd(msg.runs[0].ID)
 	case adminUserGrantsLoadedMsg:
 		if msg.err != nil {
 			if IsAdminSessionExpired(msg.err) {
@@ -930,6 +1015,10 @@ func (m Model) updateAdminKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateTrivyConfigModalKey(msg)
 	}
 
+	if m.adminView.ScanHistoryModal.Active() {
+		return m.updateAdminScanHistoryModalKey(msg)
+	}
+
 	if isRuneKey(msg, 'l') && m.canLogoutAdminFromCurrentScreen() {
 		return m.logoutAdmin(), nil
 	}
@@ -1079,12 +1168,22 @@ func (m Model) updateAdminFeaturesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status = ""
 		return m, nil
 	case m.isSelectedTrivyFeature() && m.adminView.TrivyTab == trivyTabRepositoryAlerts && isEnterKey(msg):
-		if len(m.adminView.TrivyScanRuns) == 0 {
+		// spec.md "Repository Alert Drill-Down Opens History Modal": Enter
+		// opens the scan history modal, never the old inline detail — the
+		// two never fire together.
+		if len(m.adminView.TrivySummaries) == 0 {
 			return m, nil
 		}
-		run, _ := selectedTrivyScanRun(m.adminView)
-		m.status = fmt.Sprintf("Loading scan detail for %s...", adminFirstNonEmpty(run.Repository, run.ID))
-		return m, m.loadAdminScanRunDetailCmd(run.ID)
+		summary, _ := selectedScanSummary(m.adminView)
+		m.adminView.ScanHistoryModal = adminScanHistoryModal{
+			Open:       true,
+			Repository: summary.Repository,
+			Tabs:       newAdminScanHistoryTabs(),
+			Loading:    true,
+		}
+		m.status = fmt.Sprintf("Loading scan history for %s...", adminFirstNonEmpty(summary.Repository, "repository"))
+		m.rebuildAdminTables(m.adminTablesLayout())
+		return m, m.loadAdminScanHistoryCmd(summary.Repository)
 	case isEnterKey(msg), isRuneKey(msg, 'r'):
 		if m.isSelectedTrivyFeature() && m.adminView.TrivyTab == trivyTabRepositoryAlerts {
 			m.status = "Loading repository alerts..."
@@ -1159,6 +1258,59 @@ func (m Model) updateTrivyConfigModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, nil
+}
+
+// updateAdminScanHistoryModalKey handles keys while the scan history modal
+// is open (design.md "Keys ... gated in updateAdminKey before
+// updateAdminFeaturesKey"), following updateTrivyConfigModalKey's dedicated-
+// handler pattern: Tab/Shift+Tab cycle tabs (wrapping, via cycleIndex),
+// Left/Right page through the repository's chronological history (clamping,
+// via boundedIndex — "paging", unlike the wrapping tab cursor), Esc closes
+// and restores the row-list focus with no residual detail.
+func (m Model) updateAdminScanHistoryModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case isEscKey(msg):
+		m.adminView.ScanHistoryModal = adminScanHistoryModal{}
+		m.status = ""
+		m.rebuildAdminTables(m.adminTablesLayout())
+		return m, nil
+	case isShiftTabKey(msg):
+		m.adminView.ScanHistoryModal.ActiveTab = cycleIndex(m.adminView.ScanHistoryModal.ActiveTab-1, len(m.adminView.ScanHistoryModal.Tabs))
+		return m, nil
+	case isTabKey(msg):
+		m.adminView.ScanHistoryModal.ActiveTab = cycleIndex(m.adminView.ScanHistoryModal.ActiveTab+1, len(m.adminView.ScanHistoryModal.Tabs))
+		return m, nil
+	case isMoveLeftKey(msg):
+		return m.pageAdminScanHistory(-1)
+	case isMoveRightKey(msg):
+		return m.pageAdminScanHistory(1)
+	}
+	return m, nil
+}
+
+// pageAdminScanHistory moves the scan history modal's cursor by delta,
+// clamped (boundedIndex, not cycleIndex — paging stops at the ends rather
+// than wrapping), and re-fires the loadAdminScanRunDetailCmd/
+// loadAdminSecretScanFindingsCmd chain for the newly selected run so both
+// the Vulnerabilities and Leaks tabs stay scoped to whichever run is
+// currently navigated (spec.md "Scan Execution History Navigation").
+func (m Model) pageAdminScanHistory(delta int) (tea.Model, tea.Cmd) {
+	modal := m.adminView.ScanHistoryModal
+	if len(modal.Runs) == 0 {
+		return m, nil
+	}
+	newCursor := boundedIndex(modal.Cursor+delta, len(modal.Runs))
+	if newCursor == modal.Cursor {
+		return m, nil
+	}
+	m.adminView.ScanHistoryModal.Cursor = newCursor
+	m.adminView.ScanHistoryModal.Detail = ports.ScanRunDetail{}
+	m.adminView.ScanHistoryModal.Secrets = nil
+	m.adminView.ScanHistoryModal.Loading = true
+	m.adminView.ScanHistoryModal.Error = ""
+	run := modal.Runs[newCursor]
+	m.rebuildAdminTables(m.adminTablesLayout())
+	return m, m.loadAdminScanRunDetailCmd(run.ID)
 }
 
 func (m Model) updateAdminSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1622,6 +1774,22 @@ func isTabKey(msg tea.KeyMsg) bool {
 	return msg.Type == tea.KeyTab || msg.String() == "tab"
 }
 
+func isShiftTabKey(msg tea.KeyMsg) bool {
+	return msg.Type == tea.KeyShiftTab || msg.String() == "shift+tab"
+}
+
+// isMoveLeftKey/isMoveRightKey back the scan history modal's Left/Right
+// history paging (spec.md "Scan Execution History Navigation"). Deliberately
+// no 'h'/'l' vim-style rune aliases (unlike isMoveUpKey/isMoveDownKey's 'k'/
+// 'j'): 'l' is already the admin logout key.
+func isMoveLeftKey(msg tea.KeyMsg) bool {
+	return msg.Type == tea.KeyLeft || msg.String() == "left"
+}
+
+func isMoveRightKey(msg tea.KeyMsg) bool {
+	return msg.Type == tea.KeyRight || msg.String() == "right"
+}
+
 func isEscKey(msg tea.KeyMsg) bool {
 	return msg.Type == tea.KeyEsc || msg.String() == "esc"
 }
@@ -1866,13 +2034,32 @@ func (m Model) loadAdminScanRunDetailCmd(runID string) tea.Cmd {
 func (m Model) loadAdminSecretScanFindingsCmd(repository string, digest string) tea.Cmd {
 	return func() tea.Msg {
 		if m.adminClient == nil {
-			return adminSecretScanFindingsLoadedMsg{err: fmt.Errorf("admin API is unavailable for this session")}
+			return adminSecretScanFindingsLoadedMsg{repository: repository, digest: digest, err: fmt.Errorf("admin API is unavailable for this session")}
 		}
 		detail, err := m.adminClient.GetSecretScanFindings(m.ctx, m.adminSession, repository, digest)
 		if err != nil {
-			return adminSecretScanFindingsLoadedMsg{err: err}
+			return adminSecretScanFindingsLoadedMsg{repository: repository, digest: digest, err: err}
 		}
-		return adminSecretScanFindingsLoadedMsg{findings: detail.Findings}
+		return adminSecretScanFindingsLoadedMsg{repository: repository, digest: digest, findings: detail.Findings}
+	}
+}
+
+// loadAdminScanHistoryCmd fetches one repository's scan-run history
+// (design.md "Chronological history by client-side re-sort": ListScanRuns's
+// own severity/fixability ordering is presentation-specific to the summary
+// table, so the modal re-sorts the same bounded window chronologically
+// itself instead of a new port/query) and re-sorts it newest-first for the
+// scan history modal.
+func (m Model) loadAdminScanHistoryCmd(repository string) tea.Cmd {
+	return func() tea.Msg {
+		if m.adminClient == nil {
+			return adminScanHistoryLoadedMsg{repository: repository, err: fmt.Errorf("admin API is unavailable for this session")}
+		}
+		runs, err := m.adminClient.ListScanRuns(m.ctx, m.adminSession, repository, adminScanHistoryWindowLimit)
+		if err != nil {
+			return adminScanHistoryLoadedMsg{repository: repository, err: err}
+		}
+		return adminScanHistoryLoadedMsg{repository: repository, runs: sortScanRunsChronologically(runs)}
 	}
 }
 
@@ -2422,6 +2609,8 @@ func (m *Model) clearSelectedAdminDetails() {
 	m.adminView.TrivyAlertsLoaded = false
 	m.adminView.TrivyScanRunDetail = ports.ScanRunDetail{}
 	m.adminView.SecretFindings = nil
+	m.adminView.TrivySummaries = nil
+	m.adminView.ScanHistoryModal = adminScanHistoryModal{}
 	m.adminView.SelectedGrant = 0
 	m.adminView.SelectedFeature = 0
 	m.adminView.SelectedToken = 0
@@ -2465,6 +2654,8 @@ func (m *Model) applyFeaturePage(page ports.FeaturePage) {
 	m.adminView.TrivyAlertsLoaded = false
 	m.adminView.TrivyScanRunDetail = ports.ScanRunDetail{}
 	m.adminView.SecretFindings = nil
+	m.adminView.TrivySummaries = nil
+	m.adminView.ScanHistoryModal = adminScanHistoryModal{}
 	if page.Summary.Name == trivyFeatureName {
 		m.adminView.TrivyTab = trivyTabRuntime
 	}
@@ -2522,6 +2713,18 @@ func selectedTrivyScanRun(view AdminViewState) (ports.ScanRun, bool) {
 	}
 	index := boundedIndex(view.TrivySelectedAlert, len(view.TrivyScanRuns))
 	return view.TrivyScanRuns[index], true
+}
+
+// selectedScanSummary returns the Repository Alerts summary row the
+// operator has highlighted (TrivySelectedAlert, shared with
+// selectedTrivyScanRun), used by Enter to determine which repository's scan
+// history modal to open.
+func selectedScanSummary(view AdminViewState) (repositorySummary, bool) {
+	if len(view.TrivySummaries) == 0 {
+		return repositorySummary{}, false
+	}
+	index := boundedIndex(view.TrivySelectedAlert, len(view.TrivySummaries))
+	return view.TrivySummaries[index], true
 }
 
 func compareScanRuns(left ports.ScanRun, right ports.ScanRun) int {

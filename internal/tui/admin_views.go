@@ -11,6 +11,25 @@ import (
 
 func renderAdminWorkspace(current screen, session AdminSession, view AdminViewState, knownRepositories []string, status string, layout consoleLayout, now time.Time) string {
 	theme := newAdminTheme()
+
+	// The scan history modal owns a nested row budget carved out of the
+	// same single-section budget the base screen already has (design.md
+	// "Nested budget by row split, not overlay, not stacking") instead of
+	// being appended below an already-budgeted body like ConfirmModal/
+	// TrivyConfigModal below — that stacking pattern is exactly what
+	// produced the historical unbudgeted-overflow bug this design avoids.
+	if view.ScanHistoryModal.Active() {
+		baseRows, modalRows, context, body, help := adminScanHistoryModalRowSplit(theme, current, session, view, knownRepositories, layout, now)
+		if baseRows < layout.SectionRows {
+			reducedLayout := layout
+			reducedLayout.SectionRows = baseRows
+			context, body, help = renderAdminScreen(theme, current, session, view, knownRepositories, reducedLayout, now)
+		}
+		modalView := renderAdminScanHistoryModal(theme, view.ScanHistoryModal, view, modalRows)
+		fullBody := lipgloss.JoinVertical(lipgloss.Left, body, modalView)
+		return renderConsoleWorkspace("Regixtry Admin", context, fullBody, status, help)
+	}
+
 	context, body, help := renderAdminScreen(theme, current, session, view, knownRepositories, layout, now)
 	fullBody := body
 	if view.ConfirmModal.Active() {
@@ -19,6 +38,23 @@ func renderAdminWorkspace(current screen, session AdminSession, view AdminViewSt
 		fullBody = lipgloss.JoinVertical(lipgloss.Left, body, renderTrivyConfigModal(theme, view.TrivyConfigModal))
 	}
 	return renderConsoleWorkspace("Regixtry Admin", context, fullBody, status, help)
+}
+
+// adminScanHistoryModalRowSplit measures the actual rendered admin screen
+// body (the same content renderAdminScreen produces for the given layout) to
+// compute the scan history modal's nested row split (design.md "Nested
+// budget by row split, not overlay, not stacking" — "measure, don't guess").
+// Shared by renderAdminWorkspace (to clip and compose the base body + modal)
+// and rebuildAdminTables (to pre-size the modal's Findings/SecretFindings
+// tables to the SAME modalRows), so both sites agree on one budget split.
+func adminScanHistoryModalRowSplit(theme adminTheme, current screen, session AdminSession, view AdminViewState, knownRepositories []string, layout consoleLayout, now time.Time) (baseRows, modalRows int, context, body, help string) {
+	context, body, help = renderAdminScreen(theme, current, session, view, knownRepositories, layout, now)
+	baseInnerHeight := lipgloss.Height(body) - sectionChromeRows
+	if baseInnerHeight < 0 {
+		baseInnerHeight = 0
+	}
+	baseRows, modalRows = adminScanHistoryRowSplit(layout, baseInnerHeight)
+	return baseRows, modalRows, context, body, help
 }
 
 // adminScreenHelp returns the help line for an admin screen. Extracted from

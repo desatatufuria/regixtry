@@ -421,14 +421,39 @@ func (m *Model) rebuildAdminTables(layout consoleLayout) {
 	}
 	m.adminView.Tables.FeatureRows = featureRows
 
+	// ScanSummary is the per-repository Repository Alerts summary table
+	// (spec.md "Repository Alerts Summarized Per Repository With Ordering
+	// And Freshness"). Built alongside ScanRuns (not replacing it yet) —
+	// Phase 4 removes the old per-scan-run rendering path this eventually
+	// supersedes on screen.
+	m.adminView.Tables.ScanSummary = buildAdminScanSummaryTable(theme, m.adminView.TrivySummaries, m.adminView.TrivySelectedAlert, layout.Primary)
+
 	scanRunsPageSize, findingsPageSize := layout.Primary, layout.Compact
 	if m.adminView.TrivyAlertDetailOpen {
 		featuresTableHeight := lipgloss.Height(m.adminView.Tables.Features.View())
 		scanRunsPageSize, findingsPageSize = trivyAlertDetailTableRoles(layout, featuresTableHeight, len(m.adminView.SecretFindings) > 0)
 	}
 	m.adminView.Tables.ScanRuns = buildAdminScanRunsTable(theme, m.adminView.TrivyScanRuns, m.adminView.TrivySelectedAlert, scanRunsPageSize)
-	m.adminView.Tables.Findings = buildAdminFindingsTable(theme, m.adminView.TrivyScanRunDetail.Findings, 0, findingsPageSize)
-	m.adminView.Tables.SecretFindings = buildAdminSecretFindingsTable(theme, m.adminView.SecretFindings, 0, layout.Compact)
+
+	// The scan history modal's Findings/SecretFindings tables share the same
+	// Tables.Findings/Tables.SecretFindings fields the old inline-detail flow
+	// uses (design.md interfaces: adminScanHistoryModalTableBody reuses them
+	// as-is). Only one of {TrivyAlertDetailOpen, ScanHistoryModal.Active()}
+	// is ever true at a time (Enter routes to exactly one — no conflict), so
+	// branching on which is active is safe.
+	if m.adminView.ScanHistoryModal.Active() {
+		_, modalRows, _, _, _ := adminScanHistoryModalRowSplit(theme, screenAdminFeatures, m.adminSession, m.adminView, nil, layout, m.now())
+		measuredHeaderHeight := 0
+		if strings.TrimSpace(m.adminView.ScanHistoryModal.Error) != "" || m.adminView.ScanHistoryModal.Loading {
+			measuredHeaderHeight = 1
+		}
+		modalTablePageSize := adminScanHistoryModalTablePageSize(modalRows, measuredHeaderHeight)
+		m.adminView.Tables.Findings = buildAdminFindingsTable(theme, m.adminView.ScanHistoryModal.Detail.Findings, 0, modalTablePageSize)
+		m.adminView.Tables.SecretFindings = buildAdminSecretFindingsTable(theme, m.adminView.ScanHistoryModal.Secrets, 0, modalTablePageSize)
+	} else {
+		m.adminView.Tables.Findings = buildAdminFindingsTable(theme, m.adminView.TrivyScanRunDetail.Findings, 0, findingsPageSize)
+		m.adminView.Tables.SecretFindings = buildAdminSecretFindingsTable(theme, m.adminView.SecretFindings, 0, layout.Compact)
+	}
 	m.syncAdminTableSelections()
 }
 
@@ -438,6 +463,9 @@ func (m *Model) syncAdminTableHighlights() {
 	}
 	if m.adminView.Tables.ScanRuns.TotalRows() > 0 {
 		m.adminView.Tables.ScanRuns = m.adminView.Tables.ScanRuns.WithHighlightedRow(boundedIndex(m.adminView.TrivySelectedAlert, len(m.adminView.TrivyScanRuns)))
+	}
+	if m.adminView.Tables.ScanSummary.TotalRows() > 0 {
+		m.adminView.Tables.ScanSummary = m.adminView.Tables.ScanSummary.WithHighlightedRow(boundedIndex(m.adminView.TrivySelectedAlert, len(m.adminView.TrivySummaries)))
 	}
 	m.syncAdminTableSelections()
 }
