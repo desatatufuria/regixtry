@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	bubbletable "github.com/evertras/bubble-table/table"
@@ -240,5 +241,123 @@ func TestNewAdminBubbleTableAppliesThemeBorderForegroundColor(t *testing.T) {
 	wantSequence := "\x1b[" + termenv.RGBColor(string(theme.borderColor)).Sequence(false) + "m"
 	if !strings.Contains(table.View(), wantSequence) {
 		t.Fatalf("table view does not contain the theme border-color ANSI sequence %q — border MUST use theme.borderColor", wantSequence)
+	}
+}
+
+// TestFormatScanSummaryLastExecutedNeverBlank is the Phase 2 task 2.2 RED
+// test (spec.md "the date column SHALL show CreatedAt with an in-progress
+// marker, never blank"): a completed run renders a bare formatted date, an
+// in-progress run appends the marker, and a zero time (defensive case, not
+// expected from summarizeScanRunsByRepository) still renders non-blank text.
+func TestFormatScanSummaryLastExecutedNeverBlank(t *testing.T) {
+	t.Parallel()
+
+	executed := time.Date(2026, 3, 4, 9, 30, 0, 0, time.UTC)
+
+	tests := []struct {
+		name    string
+		summary repositorySummary
+		want    string
+	}{
+		{
+			name:    "completed run renders bare formatted date",
+			summary: repositorySummary{LastExecuted: executed, InProgress: false},
+			want:    "2026-03-04 09:30",
+		},
+		{
+			name:    "in-progress run appends the marker",
+			summary: repositorySummary{LastExecuted: executed, InProgress: true},
+			want:    "2026-03-04 09:30 (in progress)",
+		},
+		{
+			name:    "zero time still renders non-blank text",
+			summary: repositorySummary{},
+			want:    "unknown",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := formatScanSummaryLastExecuted(tc.summary)
+			if got != tc.want {
+				t.Fatalf("formatScanSummaryLastExecuted() = %q, want %q", got, tc.want)
+			}
+			if strings.TrimSpace(got) == "" {
+				t.Fatalf("formatScanSummaryLastExecuted() returned blank text, want never blank")
+			}
+		})
+	}
+}
+
+// TestBuildAdminScanSummaryTableRendersOneRowPerRepository is the Phase 2
+// task 2.2 RED test (spec.md "Repository Alerts Summarized Per Repository
+// With Ordering And Freshness"): buildAdminScanSummaryTable renders exactly
+// one row per repositorySummary, not one row per underlying scan run.
+func TestBuildAdminScanSummaryTableRendersOneRowPerRepository(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+	executed := time.Date(2026, 5, 6, 14, 0, 0, 0, time.UTC)
+	summaries := []repositorySummary{
+		{
+			Repository:   "acme/api",
+			LatestRun:    ports.ScanRun{ID: "run-9", Repository: "acme/api", RequestedRef: "latest", Status: ports.ScanRunStatusCompleted, Critical: 2, High: 3},
+			LastExecuted: executed,
+			RunCount:     4,
+		},
+		{
+			Repository:   "acme/worker",
+			LatestRun:    ports.ScanRun{ID: "run-10", Repository: "acme/worker", RequestedRef: "v2", Status: ports.ScanRunStatusCompleted},
+			LastExecuted: executed,
+			InProgress:   true,
+			RunCount:     1,
+		},
+	}
+
+	table := buildAdminScanSummaryTable(theme, summaries, 0, minTableRows)
+	if got, want := table.TotalRows(), len(summaries); got != want {
+		t.Fatalf("buildAdminScanSummaryTable() TotalRows() = %d, want %d (one row per repository, not per scan run)", got, want)
+	}
+
+	view := table.View()
+	if !strings.Contains(view, "acme/api") {
+		t.Fatalf("table view = %q, want it to contain repository %q", view, "acme/api")
+	}
+	if !strings.Contains(view, "acme/worker") {
+		t.Fatalf("table view = %q, want it to contain repository %q", view, "acme/worker")
+	}
+}
+
+// TestAdminScanHistoryModalTablePageSizeFloorsAtMinTableRows is the Phase 2
+// task 2.2 RED test: the modal's active-tab table page size is derived from
+// the nested modalRows budget minus fixed/measured chrome, floored at
+// minTableRows rather than going to zero or negative when the budget is
+// tight.
+func TestAdminScanHistoryModalTablePageSizeFloorsAtMinTableRows(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name                 string
+		modalRows            int
+		measuredHeaderHeight int
+		want                 int
+	}{
+		{name: "generous budget computes available rows", modalRows: 20, measuredHeaderHeight: 0, want: 20 - adminScanHistoryModalChromeRows - tableChromeRows},
+		{name: "tight budget floors at minTableRows", modalRows: adminScanHistoryModalMinRows, measuredHeaderHeight: 0, want: minTableRows},
+		{name: "measured header height reduces the remaining table budget", modalRows: 20, measuredHeaderHeight: 3, want: 20 - adminScanHistoryModalChromeRows - 3 - tableChromeRows},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := adminScanHistoryModalTablePageSize(tc.modalRows, tc.measuredHeaderHeight)
+			if got != tc.want {
+				t.Fatalf("adminScanHistoryModalTablePageSize(%d, %d) = %d, want %d", tc.modalRows, tc.measuredHeaderHeight, got, tc.want)
+			}
+			if got < minTableRows {
+				t.Fatalf("adminScanHistoryModalTablePageSize(%d, %d) = %d, want >= minTableRows(%d)", tc.modalRows, tc.measuredHeaderHeight, got, minTableRows)
+			}
+		})
 	}
 }

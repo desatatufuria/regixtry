@@ -60,6 +60,26 @@ func TestExpireAdminStateClearsViewDataAndKeepsReason(t *testing.T) {
 	}
 }
 
+// TestAdminScanHistoryModalActiveReflectsOpenField is the Phase 2 task 2.1
+// RED test: adminScanHistoryModal follows the same Active()-gated pattern as
+// trivyConfigModal/adminConfirmModal — Active() reports exactly the Open
+// field, nothing else, so callers can gate rendering/key-routing on it
+// (design.md "func (m adminScanHistoryModal) Active() bool { return
+// m.Open }").
+func TestAdminScanHistoryModalActiveReflectsOpenField(t *testing.T) {
+	t.Parallel()
+
+	closed := adminScanHistoryModal{}
+	if closed.Active() {
+		t.Fatal("adminScanHistoryModal{}.Active() = true, want false when Open is unset")
+	}
+
+	open := adminScanHistoryModal{Open: true, Repository: "acme/api"}
+	if !open.Active() {
+		t.Fatal("adminScanHistoryModal{Open: true}.Active() = false, want true")
+	}
+}
+
 func TestIsAdminSessionExpired(t *testing.T) {
 	t.Parallel()
 
