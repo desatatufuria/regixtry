@@ -589,6 +589,41 @@ func TestStoreGetLatestScanRunByDigestReturnsNewestRunRegardlessOfStatus(t *test
 	}
 }
 
+// TestStoreGetLatestScanRunByDigestBreaksCreatedAtTiesByInsertOrder is
+// sdd-apply's live-DB confirmation from design.md's Open Questions:
+// ORDER BY created_at DESC alone is not stable when two runs share an
+// identical created_at value to nanosecond precision — SQLite falls back to
+// an implementation-specific tiebreak (observed: the first-inserted row),
+// which can return a stale run instead of the actually-latest one. rowid
+// DESC as a secondary sort key makes "latest insert wins" deterministic and
+// correct, since rowid strictly increases with each insert regardless of
+// timestamp collisions.
+func TestStoreGetLatestScanRunByDigestBreaksCreatedAtTiesByInsertOrder(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	tied := time.Now().UTC()
+	older := ports.ScanRun{ID: "run-tied-older", Repository: "library/alpine", RequestedRef: "latest", Digest: "sha256:tied-digest", Status: ports.ScanRunStatusFailed, Trigger: ports.ScanTriggerManual, CreatedAt: tied, UpdatedAt: tied}
+	newer := ports.ScanRun{ID: "run-tied-newer", Repository: "library/alpine", RequestedRef: "latest", Digest: "sha256:tied-digest", Status: ports.ScanRunStatusCompleted, Trigger: ports.ScanTriggerManual, CreatedAt: tied, UpdatedAt: tied, Critical: 5}
+
+	if err := store.UpsertScanRun(context.Background(), "tenant-a", older); err != nil {
+		t.Fatalf("UpsertScanRun(older) error = %v", err)
+	}
+	if err := store.UpsertScanRun(context.Background(), "tenant-a", newer); err != nil {
+		t.Fatalf("UpsertScanRun(newer) error = %v", err)
+	}
+
+	got, err := store.GetLatestScanRunByDigest(context.Background(), "tenant-a", "library/alpine", "sha256:tied-digest")
+	if err != nil {
+		t.Fatalf("GetLatestScanRunByDigest() error = %v", err)
+	}
+	if got.ID != newer.ID {
+		t.Fatalf("GetLatestScanRunByDigest() = %#v, want the more-recently-inserted run %#v when created_at ties", got, newer)
+	}
+}
+
 func TestStoreGetLatestScanRunByDigestReturnsTypedNotFoundWithNoRun(t *testing.T) {
 	t.Parallel()
 

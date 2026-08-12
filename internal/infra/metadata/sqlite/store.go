@@ -614,11 +614,17 @@ func (s *Store) GetActiveScanRunByDigest(ctx context.Context, tenant string, rep
 // domain.ErrorCodeNotFound error via scanRunRow, never a zero-value
 // ports.ScanRun that could be misread as a clean completed scan.
 func (s *Store) GetLatestScanRunByDigest(ctx context.Context, tenant string, repository string, digest string) (ports.ScanRun, error) {
+	// rowid DESC is a secondary sort key so a created_at tie (two runs
+	// sharing an identical RFC3339Nano string) still resolves to the
+	// actually-latest insert deterministically: rowid strictly increases
+	// with every INSERT regardless of timestamp collisions, unlike id
+	// (a random UUID) or created_at alone (live-DB confirmed unstable —
+	// design.md's Open Questions).
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, repository, requested_ref, digest, status, trigger, started_at, finished_at, created_at, updated_at, critical, high, medium, low, trivy_version, db_updated_at, error
 		FROM scan_runs
 		WHERE tenant = ? AND repository = ? AND digest = ?
-		ORDER BY created_at DESC
+		ORDER BY created_at DESC, rowid DESC
 		LIMIT 1
 	`, tenant, repository, digest)
 	return scanRunRow(row)
