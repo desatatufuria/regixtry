@@ -197,3 +197,64 @@ func TestCycleIndexHandlesZeroSize(t *testing.T) {
 		t.Fatalf("cycleIndex(5, 0) = %d, want 0", got)
 	}
 }
+
+// TestAdminScanHistoryModalExecutionRowLabelIsCompactAndNarrowerThanTheColumn
+// is the RED test for the executions rail's per-row label (point 1 of the
+// executions-side-panel feature): a compact "N. MM-DD HH:MM" format, not the
+// full "2006-01-02 15:04" the footer uses, and it must fit strictly inside
+// adminScanHistoryModalExecutionsColumnWidth with room to spare (the same
+// discipline as adminScanSummaryColumnLastExecutedWidth).
+func TestAdminScanHistoryModalExecutionRowLabelIsCompactAndNarrowerThanTheColumn(t *testing.T) {
+	t.Parallel()
+
+	run := ports.ScanRun{FinishedAt: timePtr(time.Date(2026, 12, 31, 23, 59, 0, 0, time.UTC))}
+	label := adminScanHistoryModalExecutionRowLabel(49, run) // index 49 -> 1-based "50."
+
+	if want := "50. 12-31 23:59"; label != want {
+		t.Fatalf("adminScanHistoryModalExecutionRowLabel(49, run) = %q, want %q", label, want)
+	}
+	if got, want := len([]rune(label)), adminScanHistoryModalExecutionsColumnWidth; got >= want {
+		t.Fatalf("label %q has length %d, want strictly less than the column width %d", label, got, want)
+	}
+}
+
+func timePtr(t time.Time) *time.Time {
+	return &t
+}
+
+// TestAdminScanHistoryModalExecutionsWindowCentersOnCursorWithinBounds is the
+// RED test for the executions rail's scrollable-window sizing: when the
+// window is smaller than the total run count, it stays centered on cursor
+// but clamps at both ends rather than scrolling past the first/last run.
+func TestAdminScanHistoryModalExecutionsWindowCentersOnCursorWithinBounds(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name                string
+		cursor, total, size int
+		wantStart, wantEnd  int
+	}{
+		{name: "window fits everything", cursor: 5, total: 10, size: 20, wantStart: 0, wantEnd: 10},
+		{name: "empty runs", cursor: 0, total: 0, size: 5, wantStart: 0, wantEnd: 0},
+		{name: "zero window size", cursor: 0, total: 10, size: 0, wantStart: 0, wantEnd: 0},
+		{name: "centered in the middle", cursor: 25, total: 50, size: 10, wantStart: 20, wantEnd: 30},
+		{name: "clamped at the start", cursor: 0, total: 50, size: 10, wantStart: 0, wantEnd: 10},
+		{name: "clamped at the end", cursor: 49, total: 50, size: 10, wantStart: 40, wantEnd: 50},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			start, end := adminScanHistoryModalExecutionsWindow(tc.cursor, tc.total, tc.size)
+			if start != tc.wantStart || end != tc.wantEnd {
+				t.Fatalf("adminScanHistoryModalExecutionsWindow(%d, %d, %d) = (%d, %d), want (%d, %d)", tc.cursor, tc.total, tc.size, start, end, tc.wantStart, tc.wantEnd)
+			}
+			if end-start > tc.size && tc.size > 0 {
+				t.Fatalf("window [%d,%d) has %d entries, want <= size %d", start, end, end-start, tc.size)
+			}
+			if tc.cursor >= start && tc.cursor < end == false && end-start < tc.total && tc.size > 0 {
+				t.Fatalf("window [%d,%d) does not contain cursor %d", start, end, tc.cursor)
+			}
+		})
+	}
+}

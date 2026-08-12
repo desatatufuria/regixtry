@@ -640,6 +640,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.adminView.ScanHistoryModal.Loading = false
 		m.rebuildAdminTables(m.adminTablesLayout())
 		return m, nil
+	case adminOpenURLCompletedMsg:
+		// openSelectedAdminFindingLink's side effect (opening a finding's
+		// advisory link) already ran inside its Cmd; only the resulting
+		// transient status update happens here in Update, never the exec
+		// itself (Bubble Tea convention).
+		if msg.err != nil {
+			m.status = msg.err.Error()
+			return m, nil
+		}
+		m.status = ""
+		return m, nil
 	case adminScanHistoryLoadedMsg:
 		if msg.err != nil {
 			if IsAdminSessionExpired(msg.err) {
@@ -1250,16 +1261,82 @@ func (m Model) updateAdminScanHistoryModalKey(msg tea.KeyMsg) (tea.Model, tea.Cm
 		return m, nil
 	case isShiftTabKey(msg):
 		m.adminView.ScanHistoryModal.ActiveTab = cycleIndex(m.adminView.ScanHistoryModal.ActiveTab-1, len(m.adminView.ScanHistoryModal.Tabs))
+		m.adminView.ScanHistoryModal.FindingCursor = 0
+		m.rebuildAdminTables(m.adminTablesLayout())
 		return m, nil
 	case isTabKey(msg):
 		m.adminView.ScanHistoryModal.ActiveTab = cycleIndex(m.adminView.ScanHistoryModal.ActiveTab+1, len(m.adminView.ScanHistoryModal.Tabs))
+		m.adminView.ScanHistoryModal.FindingCursor = 0
+		m.rebuildAdminTables(m.adminTablesLayout())
 		return m, nil
 	case isMoveLeftKey(msg):
 		return m.pageAdminScanHistory(-1)
 	case isMoveRightKey(msg):
 		return m.pageAdminScanHistory(1)
+	case isMoveUpKey(msg):
+		return m.moveAdminFindingCursor(-1)
+	case isMoveDownKey(msg):
+		return m.moveAdminFindingCursor(1)
+	case isEnterKey(msg):
+		return m.openSelectedAdminFindingLink()
 	}
 	return m, nil
+}
+
+// moveAdminFindingCursor moves the scan history modal's FindingCursor by
+// delta, bounded (boundedIndex, never wrapping) within the CURRENTLY ACTIVE
+// tab's own list length -- len(Detail.Findings) for Vulnerabilities,
+// len(Secrets) for Leaks -- distinct from Cursor (Left/Right, which
+// execution), the same "clamp, don't wrap" navigation pageAdminScanHistory
+// already uses.
+func (m Model) moveAdminFindingCursor(delta int) (tea.Model, tea.Cmd) {
+	modal := m.adminView.ScanHistoryModal
+	if len(modal.Tabs) == 0 {
+		return m, nil
+	}
+	active := modal.Tabs[boundedIndex(modal.ActiveTab, len(modal.Tabs))]
+	length := len(modal.Detail.Findings)
+	if active.Kind == adminScanHistoryTabLeaks {
+		length = len(modal.Secrets)
+	}
+	if length == 0 {
+		return m, nil
+	}
+	newCursor := boundedIndex(modal.FindingCursor+delta, length)
+	if newCursor == modal.FindingCursor {
+		return m, nil
+	}
+	m.adminView.ScanHistoryModal.FindingCursor = newCursor
+	m.rebuildAdminTables(m.adminTablesLayout())
+	return m, nil
+}
+
+// openSelectedAdminFindingLink resolves the finding at FindingCursor (only
+// on the Vulnerabilities tab -- secret findings carry no comparable external
+// link) and returns the tea.Cmd that opens its advisory link in the OS
+// default browser: ports.ScanRunFinding.PrimaryURL when set, else the
+// constructed NVD URL from VulnerabilityID. The side effect lives in the
+// returned Cmd (openAdminURLCmd), never here in the key handler itself
+// (Bubble Tea convention).
+func (m Model) openSelectedAdminFindingLink() (tea.Model, tea.Cmd) {
+	modal := m.adminView.ScanHistoryModal
+	if len(modal.Tabs) == 0 {
+		return m, nil
+	}
+	active := modal.Tabs[boundedIndex(modal.ActiveTab, len(modal.Tabs))]
+	if active.Kind != adminScanHistoryTabVulnerabilities {
+		return m, nil
+	}
+	findings := modal.Detail.Findings
+	if len(findings) == 0 {
+		return m, nil
+	}
+	finding := findings[boundedIndex(modal.FindingCursor, len(findings))]
+	link := adminFirstNonEmpty(finding.PrimaryURL, nvdVulnerabilityURL(finding.VulnerabilityID))
+	if strings.TrimSpace(link) == "" {
+		return m, nil
+	}
+	return m, openAdminURLCmd(link)
 }
 
 // pageAdminScanHistory moves the scan history modal's cursor by delta,
@@ -1282,6 +1359,7 @@ func (m Model) pageAdminScanHistory(delta int) (tea.Model, tea.Cmd) {
 	m.adminView.ScanHistoryModal.Secrets = nil
 	m.adminView.ScanHistoryModal.Loading = true
 	m.adminView.ScanHistoryModal.Error = ""
+	m.adminView.ScanHistoryModal.FindingCursor = 0
 	run := modal.Runs[newCursor]
 	m.rebuildAdminTables(m.adminTablesLayout())
 	return m, m.loadAdminScanRunDetailCmd(run.ID)

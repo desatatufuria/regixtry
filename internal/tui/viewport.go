@@ -29,11 +29,24 @@ const (
 	// change, wider still after widening its columns for breathing room), so
 	// even a fully responsive section width could not have honored the
 	// contract at the old floor without truncating/wrapping table borders.
-	minViewportWidth, minViewportHeight = 132, 24
+	//
+	// Raised a second time, from 132 to 150, for the scan history modal's
+	// executions side panel (adminScanHistoryModalExecutionsColumnStyle):
+	// measured against the modal's own worst case (Leaks tab, the 4-column
+	// secret findings table at 99 columns wide, plus the executions rail's
+	// ~19 columns, plus the modal's own border+padding overhead) the
+	// composited modal reaches ~122 columns. At the old 132 floor that left
+	// only ~5 columns of margin around the overlay -- not corrupted, but
+	// tight enough that base content near the terminal's edges (e.g. the
+	// "Operator: <name>" status line, TestRenderAdminWorkspace*MarginAround*)
+	// could end up partially covered by the overlay's own footprint at
+	// realistic viewport widths. 150 restores a comfortable real margin.
+	minViewportWidth, minViewportHeight = 150, 24
 	// defaultViewportWidth/defaultViewportHeight are the initial size used
-	// before the first tea.WindowSizeMsg arrives. Bumped modestly beyond the
-	// new floor so tables and rows have real breathing room out of the box.
-	defaultViewportWidth, defaultViewportHeight = 150, 44
+	// before the first tea.WindowSizeMsg arrives. Kept the same ~18-20
+	// column gap above the floor as before the floor was raised, so tables
+	// and rows still have real breathing room out of the box.
+	defaultViewportWidth, defaultViewportHeight = 170, 44
 
 	// tableChromeRows is the fixed row overhead a bubble-table adds around
 	// its rows: border top/bottom + header + separator + footer.

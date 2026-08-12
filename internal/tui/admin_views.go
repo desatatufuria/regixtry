@@ -244,6 +244,44 @@ func adminScanHistoryModalTabBar(theme adminTheme, modal adminScanHistoryModal) 
 	return strings.Join(labels, " | ")
 }
 
+// adminScanHistoryModalExecutionsColumnStyle is the fixed-width container for
+// the modal's left-hand executions rail: a right-only border (no top/bottom,
+// so it never adds extra rows) draws the vertical divider between the rail
+// and the existing right column, matching theme.section's own border color.
+func adminScanHistoryModalExecutionsColumnStyle(theme adminTheme) lipgloss.Style {
+	return lipgloss.NewStyle().
+		Width(adminScanHistoryModalExecutionsColumnWidth).
+		Border(lipgloss.NormalBorder(), false, true, false, false).
+		BorderForeground(theme.borderColor)
+}
+
+// adminScanHistoryModalExecutionsColumn renders the modal's left-hand
+// executions rail: a heading followed by a scrollable window
+// (adminScanHistoryModalExecutionsWindow) of at most windowSize run rows, so
+// the rail never unconditionally renders the full adminScanHistoryWindowLimit
+// (50) history. The currently navigated run (modal.Cursor, via boundedIndex)
+// is highlighted the same way adminScanHistoryModalTabBar highlights the
+// active tab.
+func adminScanHistoryModalExecutionsColumn(theme adminTheme, modal adminScanHistoryModal, windowSize int) string {
+	heading := theme.subheading.Render("Executions")
+	if len(modal.Runs) == 0 {
+		return heading
+	}
+
+	cursor := boundedIndex(modal.Cursor, len(modal.Runs))
+	start, end := adminScanHistoryModalExecutionsWindow(cursor, len(modal.Runs), windowSize)
+
+	lines := []string{heading}
+	for index := start; index < end; index++ {
+		label := adminScanHistoryModalExecutionRowLabel(index, modal.Runs[index])
+		if index == cursor {
+			label = theme.selected.Render(label)
+		}
+		lines = append(lines, label)
+	}
+	return strings.Join(lines, "\n")
+}
+
 // adminScanHistoryModalFooter renders the history-position indicator (spec.md
 // "Scan Execution History Navigation": "the TUI SHALL show 2/17, the run's
 // date"), guarded to a single row.
@@ -293,21 +331,29 @@ func adminScanHistoryModalTableBody(theme adminTheme, modal adminScanHistoryModa
 // renderAdminScanHistoryModal composes the scan history modal within its own
 // content budget (modalRows, from adminScanHistoryModalRows): title,
 // tab bar, the active tab's table (or empty/substitute state), and the
-// history-position footer. Every block is measured, not guessed, and the
-// whole composite is wrapped by theme.section.Render directly rather than
-// passed through renderSection/fitLines a second time (design.md "No
-// fitLines over a composite containing a bordered block" — the bug that
-// produced an orphaned "Showing x-y of N" line with no table above it).
-// Each bordered block is clipped exactly once, by its own owner: the base
-// screen body is clipped by the outer renderSection at baseRows; this modal
-// never needs slicing because its table is pre-sized (via
-// adminScanHistoryModalTablePageSize) to fit modalRows exactly, or replaced
-// by a one-line substitute when it cannot.
+// history-position footer, forming the right column, alongside a left-hand
+// executions rail (adminScanHistoryModalExecutionsColumn) joined via
+// lipgloss.JoinHorizontal -- which auto-pads the shorter column with blank
+// lines, so the two need not be hand-matched in line count. Every block is
+// measured, not guessed, and the whole composite is wrapped by
+// theme.section.Render directly rather than passed through
+// renderSection/fitLines a second time (design.md "No fitLines over a
+// composite containing a bordered block" — the bug that produced an orphaned
+// "Showing x-y of N" line with no table above it). Each bordered block is
+// clipped exactly once, by its own owner: the base screen body is clipped by
+// the outer renderSection at baseRows; this modal never needs slicing
+// because its table is pre-sized (via adminScanHistoryModalTablePageSize) to
+// fit modalRows exactly, or replaced by a one-line substitute when it
+// cannot.
 func renderAdminScanHistoryModal(theme adminTheme, modal adminScanHistoryModal, view AdminViewState, modalRows int) string {
 	title := theme.subheading.Render(fmt.Sprintf("Scan History — %s", adminFirstNonEmpty(modal.Repository, "unknown")))
 	tabBar := adminScanHistoryModalTabBar(theme, modal)
 	footer := theme.muted.Render(adminScanHistoryModalFooter(modal))
-	help := theme.help.Render("Tab: next tab | Shift+Tab: prev tab | Left/Right: page history | Esc: close")
+	// Kept deliberately terse (unlike some other screens' longer help lines):
+	// this line must never become the modal's own widest rendered line, or
+	// it silently drives the executions-side-panel's combined width (measured
+	// empirically against TestModelScanHistoryModalRendersWithinViewportAcrossWidths).
+	help := theme.help.Render("Tab/Shift+Tab: tabs | Left/Right: history | Up/Down: select | Enter: open | Esc: close")
 
 	var header string
 	switch {
@@ -329,8 +375,23 @@ func renderAdminScanHistoryModal(theme adminTheme, modal adminScanHistoryModal, 
 		lines = append(lines, header)
 	}
 	lines = append(lines, tableBody, footer, help)
+	rightColumn := strings.Join(lines, "\n")
 
-	return theme.section.Render(strings.Join(lines, "\n"))
+	// The executions rail's window size is derived from the right column's
+	// own measured height (title+tabBar+optional header+tableBody+footer+
+	// help), minus one row for the rail's own "Executions" heading, so the
+	// two columns stay close in height without hand-matching line counts
+	// (lipgloss.JoinHorizontal below pads whichever column ends up shorter).
+	executionsWindowSize := lipgloss.Height(rightColumn) - 1
+	if executionsWindowSize < 1 {
+		executionsWindowSize = 1
+	}
+	executionsColumn := adminScanHistoryModalExecutionsColumnStyle(theme).
+		Render(adminScanHistoryModalExecutionsColumn(theme, modal, executionsWindowSize))
+
+	combined := lipgloss.JoinHorizontal(lipgloss.Top, executionsColumn, rightColumn)
+
+	return theme.section.Render(combined)
 }
 
 func renderAdminCreateUserScreen(theme adminTheme, view AdminViewState) string {

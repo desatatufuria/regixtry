@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"sort"
 	"time"
 
@@ -25,6 +26,51 @@ const adminScanHistoryModalMinRows = 8
 // centered/bounded in the viewport") instead of consuming the entire
 // terminal height even on a tall terminal.
 const adminScanHistoryModalVerticalMargin = 6
+
+// adminScanHistoryModalExecutionsColumnWidth is the fixed content width
+// (before its own trailing border column) of the modal's left-hand
+// executions rail (renderAdminScanHistoryModal). Measured against the
+// longest legitimate row label -- "50. 12-31 23:59" (adminScanHistoryWindowLimit's
+// worst case, 2-digit index + ". " + "MM-DD HH:MM") is 15 runes -- with
+// headroom for the "Executions" heading itself (10 runes) and padding, the
+// same "strictly less than the longest value" discipline as
+// adminScanSummaryColumnLastExecutedWidth.
+const adminScanHistoryModalExecutionsColumnWidth = 18
+
+// adminScanHistoryModalExecutionRowLabel renders one executions-rail row: the
+// run's 1-based index and a compact date, deliberately narrower than
+// adminScanHistoryModalFooter's full "2006-01-02 15:04" (too wide for a
+// fixed narrow rail column).
+func adminScanHistoryModalExecutionRowLabel(index int, run ports.ScanRun) string {
+	effTime, _ := effectiveScanRunTime(run)
+	return fmt.Sprintf("%d. %s", index+1, effTime.UTC().Format("01-02 15:04"))
+}
+
+// adminScanHistoryModalExecutionsWindow computes the [start, end) bounds of a
+// scrollable window over `total` runs, holding at most windowSize entries and
+// anchored so `cursor` stays visible -- centered on the cursor when the
+// window is smaller than total, clamped at both ends so it never scrolls
+// past the first/last run. Runs can number up to adminScanHistoryWindowLimit
+// (50) while the modal's own row budget is tight, so the executions rail
+// must never unconditionally render the full list (claude-handoff.md's
+// "never sliced" discipline extended to this new column: a WINDOW, not a
+// clip of an already-bordered block).
+func adminScanHistoryModalExecutionsWindow(cursor, total, windowSize int) (start, end int) {
+	if windowSize <= 0 || total <= 0 {
+		return 0, 0
+	}
+	if windowSize >= total {
+		return 0, total
+	}
+	start = cursor - windowSize/2
+	if start < 0 {
+		start = 0
+	}
+	if start+windowSize > total {
+		start = total - windowSize
+	}
+	return start, start + windowSize
+}
 
 // repositorySummary is one aggregated row for the Repository Alerts summary
 // table: the latest scan run for a repository, plus how many runs exist and

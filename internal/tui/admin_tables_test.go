@@ -432,3 +432,74 @@ func TestAdminScanHistoryModalTablePageSizeFloorsAtMinTableRows(t *testing.T) {
 		})
 	}
 }
+
+// TestBuildAdminSecretFindingsTableRendersDescriptionAndTagsColumns is the
+// RED test for the Leaks tab's missing Description/Tags columns
+// (ports.SecretFinding already carries both fields, unused until now). Tags
+// join with ", "; a finding with no tags renders an empty cell rather than a
+// placeholder, since Description/Tags are optional supplementary metadata,
+// unlike Rule/Location's "unknown" fallback which guards the row's identity
+// columns.
+func TestBuildAdminSecretFindingsTableRendersDescriptionAndTagsColumns(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+	findings := []ports.SecretFinding{
+		{RuleID: "aws-access-token", Path: "config.json", StartLine: 4, Description: "AWS access token detected", Tags: []string{"aws", "credentials"}},
+		{RuleID: "generic-api-key", Path: "app.env", StartLine: 1, Description: "", Tags: nil},
+	}
+	table := buildAdminSecretFindingsTable(theme, findings, 0, 5)
+
+	if got, want := table.TotalRows(), 2; got != want {
+		t.Fatalf("TotalRows() = %d, want %d", got, want)
+	}
+
+	rows := table.GetVisibleRows()
+	first := rows[0].Data
+	if got, want := first[adminTableColumnSecretFindingDescription], "AWS access token detected"; got != want {
+		t.Fatalf("Description cell = %q, want %q", got, want)
+	}
+	if got, want := first[adminTableColumnSecretFindingTags], "aws, credentials"; got != want {
+		t.Fatalf("Tags cell = %q, want %q", got, want)
+	}
+
+	second := rows[1].Data
+	if got, want := second[adminTableColumnSecretFindingDescription], ""; got != want {
+		t.Fatalf("Description cell for empty description = %q, want empty %q", got, want)
+	}
+	if got, want := second[adminTableColumnSecretFindingTags], ""; got != want {
+		t.Fatalf("Tags cell for nil tags = %q, want empty %q (no placeholder for optional metadata)", got, want)
+	}
+
+	view := table.View()
+	for _, want := range []string{"AWS access token detected", "aws, credentials", "Description", "Tags"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view = %q, want it to contain %q", view, want)
+		}
+	}
+}
+
+// TestBuildAdminSecretFindingsTableColumnsFitWithoutOverflow verifies the
+// widened 4-column secret findings table (Rule, Location, Description, Tags)
+// still fits within the modal's own auto-sized section width at realistic
+// terminal sizes — measured, not guessed, the same discipline as
+// TestScanSummaryLastExecutedColumnFitsLongestFormattedValueWithoutTruncation.
+// Realistic (not pathological) values must render without any rendered line
+// exceeding the declared column-derived table width.
+func TestBuildAdminSecretFindingsTableColumnsFitWithoutOverflow(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+	findings := []ports.SecretFinding{
+		{RuleID: "aws-access-token", Path: "some/nested/path/config.json", StartLine: 4, EndLine: 8, Description: "AWS access token detected in configuration file", Tags: []string{"aws", "credentials", "critical"}},
+	}
+	table := buildAdminSecretFindingsTable(theme, findings, 0, 5)
+	view := table.View()
+
+	wantWidth := adminSecretColumnRuleWidth + adminSecretColumnLocationWidth + adminSecretColumnDescriptionWidth + adminSecretColumnTagsWidth + 5 // +5: 4 columns' own border/separator characters (cols+1)
+	for i, line := range strings.Split(view, "\n") {
+		if w := lipgloss.Width(line); w > wantWidth {
+			t.Fatalf("line %d width = %d, want <= %d (table overflowed its own declared column widths):\n%s", i, w, wantWidth, view)
+		}
+	}
+}

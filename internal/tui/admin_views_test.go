@@ -8,6 +8,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 	"regixtry/internal/ports"
 )
 
@@ -155,7 +156,105 @@ func TestRenderAdminScanHistoryModalChromeLinesAreSingleLine(t *testing.T) {
 	assertSingleLine(t, "title", theme.subheading.Render(fmt.Sprintf("Scan History — %s", adminFirstNonEmpty(modal.Repository, "unknown"))))
 	assertSingleLine(t, "tab bar", adminScanHistoryModalTabBar(theme, modal))
 	assertSingleLine(t, "footer", theme.muted.Render(adminScanHistoryModalFooter(modal)))
-	assertSingleLine(t, "help", theme.help.Render("Tab: next tab | Shift+Tab: prev tab | Left/Right: page history | Esc: close"))
+	assertSingleLine(t, "help", theme.help.Render("Tab/Shift+Tab: tabs | Left/Right: history | Up/Down: select | Enter: open | Esc: close"))
+}
+
+// TestRenderAdminScanHistoryModalRendersExecutionsColumnWithCursorHighlighted
+// is the RED test for the executions side panel (executions side panel
+// feature): the modal renders a left-hand executions rail alongside the
+// existing right column, listing compact per-run labels with the currently
+// navigated run (modal.Cursor) highlighted the same way
+// adminScanHistoryModalTabBar highlights the active tab.
+func TestRenderAdminScanHistoryModalRendersExecutionsColumnWithCursorHighlighted(t *testing.T) {
+	// Not t.Parallel(): forces the global lipgloss color profile so
+	// theme.selected actually emits an ANSI sequence to assert on, following
+	// TestNewAdminBubbleTableAppliesThemeBorderForegroundColor's precedent
+	// (go test runs with no tty, so lipgloss otherwise auto-detects "no
+	// color" and theme.selected.Render would differ from plain text only by
+	// its Padding(0,1), which is indistinguishable from this modal's own
+	// unrelated column padding).
+	original := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(original)
+
+	theme := newAdminTheme()
+	base := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
+	runs := make([]ports.ScanRun, 0, 5)
+	for i := 0; i < 5; i++ {
+		finished := base.AddDate(0, 0, i)
+		runs = append(runs, ports.ScanRun{ID: fmt.Sprintf("run-%d", i), FinishedAt: &finished})
+	}
+	modal := adminScanHistoryModal{
+		Open:       true,
+		Repository: "acme/api",
+		Tabs:       newAdminScanHistoryTabs(),
+		Runs:       runs,
+		Cursor:     2,
+		Detail:     ports.ScanRunDetail{Findings: []ports.ScanRunFinding{{VulnerabilityID: "CVE-1"}}},
+	}
+	view := AdminViewState{}
+	view.Tables.Findings = buildAdminFindingsTable(theme, modal.Detail.Findings, 0, minTableRows)
+
+	got := renderAdminScanHistoryModal(theme, modal, view, 30)
+
+	if !strings.Contains(got, "Executions") {
+		t.Fatalf("renderAdminScanHistoryModal() = %q, want the executions rail heading present", got)
+	}
+	for i, run := range runs {
+		label := adminScanHistoryModalExecutionRowLabel(i, run)
+		if !strings.Contains(got, label) {
+			t.Fatalf("renderAdminScanHistoryModal() = %q, want it to contain run label %q", got, label)
+		}
+	}
+
+	cursorLabel := adminScanHistoryModalExecutionRowLabel(modal.Cursor, runs[modal.Cursor])
+	highlighted := theme.selected.Render(cursorLabel)
+	if !strings.Contains(got, highlighted) {
+		t.Fatalf("renderAdminScanHistoryModal() = %q, want the cursor run label %q styled with theme.selected", got, cursorLabel)
+	}
+	otherLabel := adminScanHistoryModalExecutionRowLabel(0, runs[0])
+	otherHighlighted := theme.selected.Render(otherLabel)
+	if strings.Contains(got, otherHighlighted) {
+		t.Fatalf("renderAdminScanHistoryModal() = %q, want only the cursor run styled with theme.selected", got)
+	}
+}
+
+// TestRenderAdminScanHistoryModalExecutionsColumnIsAScrollableWindowNotFullList
+// is the RED test guarding against unconditionally rendering all
+// adminScanHistoryWindowLimit (50) runs in the executions rail: with a tight
+// modal row budget and the cursor near the start, a run label far past the
+// visible window (near the end of 50) must not appear.
+func TestRenderAdminScanHistoryModalExecutionsColumnIsAScrollableWindowNotFullList(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	runs := make([]ports.ScanRun, 0, adminScanHistoryWindowLimit)
+	for i := 0; i < adminScanHistoryWindowLimit; i++ {
+		finished := base.AddDate(0, 0, i)
+		runs = append(runs, ports.ScanRun{ID: fmt.Sprintf("run-%d", i), FinishedAt: &finished})
+	}
+	modal := adminScanHistoryModal{
+		Open:       true,
+		Repository: "acme/api",
+		Tabs:       newAdminScanHistoryTabs(),
+		Runs:       runs,
+		Cursor:     0,
+		Detail:     ports.ScanRunDetail{Findings: []ports.ScanRunFinding{{VulnerabilityID: "CVE-1"}}},
+	}
+	view := AdminViewState{}
+	view.Tables.Findings = buildAdminFindingsTable(theme, modal.Detail.Findings, 0, minTableRows)
+
+	got := renderAdminScanHistoryModal(theme, modal, view, adminScanHistoryModalMinRows)
+
+	lastLabel := adminScanHistoryModalExecutionRowLabel(adminScanHistoryWindowLimit-1, runs[adminScanHistoryWindowLimit-1])
+	if strings.Contains(got, lastLabel) {
+		t.Fatalf("renderAdminScanHistoryModal() = %q, want the executions rail to be a bounded scrollable window, not the full %d-run list (last run's label %q should not be visible while cursor is at 0 with a tight row budget)", got, adminScanHistoryWindowLimit, lastLabel)
+	}
+	firstLabel := adminScanHistoryModalExecutionRowLabel(0, runs[0])
+	if !strings.Contains(got, firstLabel) {
+		t.Fatalf("renderAdminScanHistoryModal() = %q, want the first run's label %q visible since cursor is at 0", got, firstLabel)
+	}
 }
 
 // TestRenderAdminScanHistoryModalNeverAppliesFitLinesOverComposite is the

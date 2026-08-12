@@ -164,11 +164,17 @@ type adminScanHistoryModal struct {
 	Tabs       []adminScanHistoryTab
 	ActiveTab  int
 	Runs       []ports.ScanRun // newest first
-	Cursor     int
+	Cursor     int             // which execution in history (Left/Right)
 	Detail     ports.ScanRunDetail
 	Secrets    []ports.SecretFinding
 	Loading    bool
 	Error      string
+	// FindingCursor is which row is selected WITHIN the currently active
+	// tab's own table (Up/Down) -- distinct from Cursor, which navigates
+	// between executions (Left/Right). Reset to 0 on every tab switch and
+	// every execution page so it never points past the end of a freshly
+	// loaded, possibly shorter list.
+	FindingCursor int
 }
 
 func (m adminScanHistoryModal) Active() bool {
