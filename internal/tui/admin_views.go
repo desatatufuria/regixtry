@@ -9,43 +9,43 @@ import (
 	"regixtry/internal/ports"
 )
 
+// renderAdminWorkspace renders the base admin workspace exactly once, then
+// composites at most one active modal on top of it via a single
+// compositeOverlay tail (design.md Decision 1: "One overlay tail, no modal
+// budget arithmetic"). The base page always renders at its full, unshrunk
+// layout -- exactly as if no modal were open -- and compositeOverlay
+// (admin_overlay.go:63-110) already clamps overlayWidth/overlayHeight to the
+// canvas, so a modal mathematically cannot grow page height; there is no
+// per-modal budget function to keep in sync (the superseded design, still
+// used only by the scan history modal below, needed real arithmetic because
+// its table page size must be pre-built to match its own budget -- Confirm
+// and Trivy render fixed content with no page sizing, so the compositor's
+// own clamp is the only bound they need).
 func renderAdminWorkspace(current screen, session AdminSession, view AdminViewState, knownRepositories []string, status string, layout consoleLayout, now time.Time) string {
 	theme := newAdminTheme()
 
-	// The scan history modal is a true floating overlay (claude-handoff.md:
-	// "must be rendered above the Feature Page, centered/bounded in the
-	// viewport, and must not be appended below the page content"),
-	// superseding the historical "Nested budget by row split, not overlay,
-	// not stacking" design that shrank the base page to make room for a
-	// second stacked panel. The base page now always renders at its full,
-	// unshrunk layout -- exactly as if the modal were closed -- and the
-	// modal is composited on top of it via compositeOverlay, which never
-	// appends content below the base in the vertical flow.
-	if view.ScanHistoryModal.Active() {
-		context, body, help := renderAdminScreen(theme, current, session, view, knownRepositories, layout, now)
-		baseWorkspace := renderConsoleWorkspace("Regixtry Admin", context, body, status, help)
-
-		// baseBodyHeight is the base Feature Page body's ACTUAL rendered
-		// height (body is already in scope from the renderAdminScreen call
-		// just above) -- adminScanHistoryModalRows caps the modal's budget
-		// against it so the modal never renders past where the base box's
-		// own bordered section closes (see adminScanHistoryModalRows'
-		// doc comment). rebuildAdminTables (admin_tables.go) must measure
-		// this the same way so the modal's pre-built table page size stays
-		// consistent with the budget used here.
-		baseBodyHeight := lipgloss.Height(body)
-		modalView := renderAdminScanHistoryModal(theme, view.ScanHistoryModal, view, adminScanHistoryModalRows(layout, baseBodyHeight))
-		return compositeOverlay(baseWorkspace, modalView, layout.Width, layout.Height)
-	}
-
 	context, body, help := renderAdminScreen(theme, current, session, view, knownRepositories, layout, now)
-	fullBody := body
-	if view.ConfirmModal.Active() {
-		fullBody = lipgloss.JoinVertical(lipgloss.Left, body, renderAdminModal(theme, view.ConfirmModal))
-	} else if view.TrivyConfigModal.Active() {
-		fullBody = lipgloss.JoinVertical(lipgloss.Left, body, renderTrivyConfigModal(theme, view.TrivyConfigModal))
+	base := renderConsoleWorkspace("Regixtry Admin", context, body, status, help)
+
+	var modalView string
+	switch {
+	case view.ScanHistoryModal.Active():
+		// The scan history modal keeps its own nested budget
+		// (adminScanHistoryModalRows): its table page size must be
+		// pre-built to match this budget, since its content is
+		// data-scrollable and cannot simply be clamped after the fact the
+		// way compositeOverlay clamps fixed-content modals.
+		baseBodyHeight := lipgloss.Height(body)
+		modalView = renderAdminScanHistoryModal(theme, view.ScanHistoryModal, view, adminScanHistoryModalRows(layout, baseBodyHeight))
+	case view.ConfirmModal.Active():
+		modalView = renderAdminModal(theme, view.ConfirmModal)
+	case view.TrivyConfigModal.Active():
+		modalView = renderTrivyConfigModal(theme, view.TrivyConfigModal)
 	}
-	return renderConsoleWorkspace("Regixtry Admin", context, fullBody, status, help)
+	if modalView == "" {
+		return base
+	}
+	return compositeOverlay(base, modalView, layout.Width, layout.Height)
 }
 
 // adminBaseBodyHeight measures the base Feature Page body's ACTUAL rendered

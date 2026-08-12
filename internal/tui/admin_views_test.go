@@ -12,6 +12,39 @@ import (
 	"regixtry/internal/ports"
 )
 
+// TestRenderAdminModalRendersTitleMessageAndHelp is the Phase 3 task 3.1
+// approval test (design.md Decision 1): renderAdminModal has never had
+// direct coverage of its own — it was only ever exercised indirectly through
+// renderAdminWorkspace's stacked composition. This captures its standalone
+// rendered content and measured height (title+message+blank+help = 4 inner
+// rows + 4 rows of theme.section chrome = 8, per design.md's measured-height
+// table) as a safety net before Phase 3 rewrites renderAdminWorkspace to
+// composite this same function's output via compositeOverlay instead of
+// lipgloss.JoinVertical.
+func TestRenderAdminModalRendersTitleMessageAndHelp(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+	modal := adminConfirmModal{
+		Kind: adminConfirmEnableUser, Title: "Enable User", Message: "Enable alice?", ConfirmText: "enable",
+	}
+
+	got := renderAdminModal(theme, modal)
+
+	if !strings.Contains(got, "Enable User") {
+		t.Fatalf("renderAdminModal() = %q, want the title present", got)
+	}
+	if !strings.Contains(got, "Enable alice?") {
+		t.Fatalf("renderAdminModal() = %q, want the message present", got)
+	}
+	if !strings.Contains(got, "Enter: enable | Esc: cancel") {
+		t.Fatalf("renderAdminModal() = %q, want the confirm/cancel help line present", got)
+	}
+	if h := lipgloss.Height(got); h != 8 {
+		t.Fatalf("renderAdminModal() height = %d, want 8 (title+message+blank+help = 4 inner rows + 4 rows theme.section chrome, design.md Decision 1)", h)
+	}
+}
+
 // TestRenderTrivyConfigModalFitsWithinCompactedRowBudget is the Phase 2 task
 // 2.2 RED test (design.md Decision 5): the modal is currently 27 rows
 // (29 with an error), well past the 24-row viewport floor. Once

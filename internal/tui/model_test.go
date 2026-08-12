@@ -1612,6 +1612,99 @@ func TestModelScanHistoryModalRendersWithinViewportAcrossHeights(t *testing.T) {
 	}
 }
 
+// newModelForModalOverlayTest builds a minimally-populated, logged-in-shaped
+// admin Users screen at the given viewport height, for the Phase 3 modal
+// overlay unification tests below. Users (not Features) so the Confirm and
+// Trivy modal cases share one small, realistic base screen.
+func newModelForModalOverlayTest(t *testing.T, height int) Model {
+	t.Helper()
+	model := NewModel(&fakeQueryService{})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: minViewportWidth, Height: height})
+	result := updated.(Model)
+	result.screen = screenAdminUsers
+	result.adminSession = AdminSession{Username: "operator", ExpiresAt: time.Now().Add(time.Hour)}
+	result.adminView.Users = []ports.AdminUser{{ID: "u-1", Username: "alice", IsAdmin: true, Enabled: true}}
+	return result
+}
+
+// TestModelConfirmAndTrivyConfigModalOverlayFitsViewportAndDoesNotGrowPageHeight
+// is the Phase 3 task 3.2 RED test (design.md Decision 1): under the
+// pre-Decision-1 architecture, renderAdminWorkspace appends the Confirm/Trivy
+// modal BELOW the already-full-size base body via lipgloss.JoinVertical, so
+// opening either modal grows total page height past the viewport. Once
+// composited via compositeOverlay, the result is always clamped to exactly
+// the canvas (layout.Width x layout.Height) — the same invariant
+// TestRenderAdminWorkspaceKeepsBaseFullSizeAndLayersModalOnTopWhenOpen
+// already established for the scan history modal, extended here to
+// Confirm/Trivy.
+func TestModelConfirmAndTrivyConfigModalOverlayFitsViewportAndDoesNotGrowPageHeight(t *testing.T) {
+	t.Parallel()
+
+	for _, height := range []int{24, 30, 40, 50, 60} {
+		height := height
+
+		t.Run(fmt.Sprintf("height=%d/confirm", height), func(t *testing.T) {
+			t.Parallel()
+
+			model := newModelForModalOverlayTest(t, height)
+			model.adminView.ConfirmModal = adminConfirmModal{
+				Kind: adminConfirmEnableUser, Title: "Enable User", Message: "Enable alice?", ConfirmText: "enable",
+			}
+			openView := model.View()
+			if got := lipgloss.Height(openView); got > height {
+				t.Fatalf("view height with Confirm modal open = %d, want <= %d (viewport height)\n%s", got, height, openView)
+			}
+			if got := lipgloss.Height(openView); got != height {
+				t.Fatalf("view height with Confirm modal open = %d, want exactly %d (compositeOverlay clamps to the canvas — no unbudgeted page-height growth)", got, height)
+			}
+		})
+
+		t.Run(fmt.Sprintf("height=%d/trivy", height), func(t *testing.T) {
+			t.Parallel()
+
+			model := newModelForModalOverlayTest(t, height)
+			model.adminView.TrivyConfigModal = trivyConfigModal{
+				Open: true, ScheduleEnabled: true, Interval: "1h", Timeout: "30s",
+				RegistryReachableURL: "https://registry.example.com", MaxConcurrency: "4",
+			}
+			openView := model.View()
+			if got := lipgloss.Height(openView); got > height {
+				t.Fatalf("view height with Trivy config modal open = %d, want <= %d (viewport height)\n%s", got, height, openView)
+			}
+			if got := lipgloss.Height(openView); got != height {
+				t.Fatalf("view height with Trivy config modal open = %d, want exactly %d (compositeOverlay clamps to the canvas — no unbudgeted page-height growth)", got, height)
+			}
+		})
+	}
+}
+
+// TestModelTrivyConfigModalRendersFullBottomBorderAndHelpLineAtViewportFloor
+// is the Phase 3 task 3.3 RED test: at the 24-row viewport floor, the
+// composited Trivy config modal must still show its own closing border and
+// its "Enter: save | ... | Esc: cancel" help line — proof the modal is never
+// silently clipped by the viewport-height guard now that it is a floating
+// overlay rather than appended body content.
+func TestModelTrivyConfigModalRendersFullBottomBorderAndHelpLineAtViewportFloor(t *testing.T) {
+	t.Parallel()
+
+	model := newModelForModalOverlayTest(t, minViewportHeight)
+	model.adminView.TrivyConfigModal = trivyConfigModal{
+		Open: true, ScheduleEnabled: true, Interval: "1h", Timeout: "30s",
+		RegistryReachableURL: "https://registry.example.com", MaxConcurrency: "4",
+	}
+
+	view := model.View()
+	if got := lipgloss.Height(view); got > minViewportHeight {
+		t.Fatalf("view height = %d, want <= %d (viewport floor)\n%s", got, minViewportHeight, view)
+	}
+	if !strings.Contains(view, "╰") {
+		t.Fatalf("view = %q, want the Trivy config modal's own closing border rune present at the viewport floor", view)
+	}
+	if !strings.Contains(view, "Enter: save | Tab: next field | Space: toggle | Esc: cancel") {
+		t.Fatalf("view = %q, want the modal's help line present at the viewport floor", view)
+	}
+}
+
 // assertNoLineExceedsWidthOrCorruptsBorders is the shared width-boundary
 // assertion (mirrors admin_overlay_test.go's
 // TestCompositeOverlayIsANSISafeAcrossSplicedStyledBlocks and

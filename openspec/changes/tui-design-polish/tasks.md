@@ -84,24 +84,24 @@ diff).
 
 ## Phase 3: Modal Overlay Unification (Decision 1, P1) — depends on Phase 2
 
-- [ ] 3.1 RED `admin_views_test.go`: characterization test for
+- [x] 3.1 RED `admin_views_test.go`: characterization test for
       `renderAdminModal` (Confirm) — first coverage this function has ever
       had; asserts standalone rendered content/height.
-- [ ] 3.2 RED `model_test.go` (extends `:216`): `lipgloss.Height(View()) <=
+- [x] 3.2 RED `model_test.go` (extends `:216`): `lipgloss.Height(View()) <=
       viewport.Height` with Confirm **and** Trivy modal open, heights 24–60
       (boundary/table-driven); modal-open height equals modal-closed height
       (no page-height growth).
-- [ ] 3.3 RED: Trivy modal renders full bottom border and
+- [x] 3.3 RED: Trivy modal renders full bottom border and
       `Enter: save | Esc: cancel` help line at height 24 (the floor).
-- [ ] 3.4 GREEN: rewrite `renderAdminWorkspace` (`admin_views.go`) — single
+- [x] 3.4 GREEN: rewrite `renderAdminWorkspace` (`admin_views.go`) — single
       `renderAdminScreen` call, switch selects at most one modal
       (ScanHistory keeps its own `adminScanHistoryModalRows` budget; Confirm
       and Trivy get none), tail is
       `compositeOverlay(base, modalView, layout.Width, layout.Height)`;
       delete the `lipgloss.JoinVertical` stacking at `admin_views.go:43-47`.
-- [ ] 3.5 Confirm 3.1–3.3 GREEN: `go test ./internal/tui/... -run
+- [x] 3.5 Confirm 3.1–3.3 GREEN: `go test ./internal/tui/... -run
       'AdminWorkspace|ConfirmModal|TrivyConfigModal'`.
-- [ ] 3.6 Live-render verification: throwaway debug test rendering the
+- [x] 3.6 Live-render verification: throwaway debug test rendering the
       unified Confirm-modal overlay over the base workspace; `ansi.Strip` +
       `fmt.Println`; confirm floating margin and no unbudgeted page-height
       growth by eye; delete before finishing.
