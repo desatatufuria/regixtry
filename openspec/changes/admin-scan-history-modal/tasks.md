@@ -37,10 +37,10 @@ Rationale: new pure logic + property test, new modal render, new nav flow, key r
 
 ## Phase 2: Modal State & Rendering (unwired)
 
-- [ ] 2.1 `session.go`: `AdminViewState.ScanHistoryModal`, `TrivySummaries`; add `adminScanHistoryTab`/`adminScanHistoryModal` types
-- [ ] 2.2 RED+GREEN: `buildAdminScanSummaryTable` (`admin_tables.go`) with last-execution column; modal page-size helper replacing `pageSize` constants
-- [ ] 2.3 RED: rendered-output test — modal never applies `fitLines` over a composite containing a bordered table
-- [ ] 2.4 GREEN: `renderAdminScanSummary`, `renderAdminScanHistoryModal` (`admin_views.go`), each bordered block clipped once by its owner
+- [x] 2.1 `session.go`: `AdminViewState.ScanHistoryModal`, `TrivySummaries`; add `adminScanHistoryTab`/`adminScanHistoryModal` types
+- [x] 2.2 RED+GREEN: `buildAdminScanSummaryTable` (`admin_tables.go`) with last-execution column; modal page-size helper replacing `pageSize` constants
+- [x] 2.3 RED: rendered-output test — modal never applies `fitLines` over a composite containing a bordered table
+- [x] 2.4 GREEN: `renderAdminScanSummary`, `renderAdminScanHistoryModal` (`admin_views.go`), each bordered block clipped once by its owner
 
 ## Phase 3: Wiring — Keys & History Navigation
 
