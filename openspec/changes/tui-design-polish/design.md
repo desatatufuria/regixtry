@@ -332,11 +332,21 @@ No migration required. No schema, port, or API change.
 - [x] ~~Trivy Config modal is 27–29 rows against a 24-row floor.~~ **Resolved**:
       user chose compaction over raising `minViewportHeight`. Decision 5 flattens
       `input`/`inputFocus` to 17/19 rows, 7 rows under the floor.
-- [ ] Not confirmable without a live terminal: `#C0A16B` vs `#D4AF37`
-      perceptual separation, and `severityMedium` legibility when its cell sits
-      inside a gold-background selected row. The proposal's `--snapshot` pass
-      covers both.
-- [ ] Also for the `--snapshot` pass: whether a 30-wide gold-filled focused
-      input reads as heavier than the border it replaces. If so, the fallback is
-      gold *foreground* on the focused value instead of a fill — 1 row either
-      way, so Decision 5's arithmetic is unaffected.
+- [x] ~~`#C0A16B` vs `#D4AF37` perceptual separation, and `severityMedium`
+      legibility inside a gold-background selected row.~~ **Resolved** by
+      Phase 6's live TrueColor debug pass (`internal/tui/zzz_debug_final_combined_test.go`,
+      deleted after inspection): `severityMedium` renders `rgb(192,161,107)`
+      and accent gold renders `rgb(211,175,55)` — the blue channel alone
+      differs by 52 (107 vs 55), giving a clearly distinguishable muted-bronze
+      vs bright-gold read. Inside a `theme.selected` gold-background row,
+      `severityMedium`'s unbolded foreground stayed legible against the fill
+      (confirmed by direct visual inspection of the composed ANSI). No change
+      made.
+- [x] ~~Whether a 30-wide gold-filled focused input reads as heavier than the
+      border it replaces.~~ **Resolved**: it does read as a solid block (the
+      full 30-column width fills with the gold background, not just a 1-cell
+      border outline), but this is consistent with `theme.selected`'s existing
+      gold-fill convention already used for lists, grants, tokens, and
+      suggestions throughout the app (admin_theme.go's own accent-pass
+      rationale). Kept the fill as designed; the gold-foreground fallback was
+      not needed.

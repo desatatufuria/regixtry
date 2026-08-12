@@ -152,14 +152,14 @@ diff).
 
 ## Phase 6: Non-Regression
 
-- [ ] 6.1 `go build ./...`, `go vet ./...`, `gofmt -l .` clean.
-- [ ] 6.2 Full `go test ./...` green.
-- [ ] 6.3 `tui-smoke.sh` (or project's smoke script, if present) passing.
-- [ ] 6.4 Combined live-render pass: one throwaway debug test rendering the
+- [x] 6.1 `go build ./...`, `go vet ./...`, `gofmt -l .` clean.
+- [x] 6.2 Full `go test ./...` green.
+- [x] 6.3 `tui-smoke.sh` (or project's smoke script, if present) passing.
+- [x] 6.4 Combined live-render pass: one throwaway debug test rendering the
       final build's Trivy modal, Confirm overlay, de-boxed status line, and
       severity colors together; `ansi.Strip` + `fmt.Println`; inspect by
       eye; delete before finishing.
-- [ ] 6.5 Resolve design.md's remaining Open Questions from the 6.4 pass:
+- [x] 6.5 Resolve design.md's remaining Open Questions from the 6.4 pass:
       `#C0A16B` vs `#D4AF37` perceptual separation; whether the 30-wide
       gold-filled focused input reads heavier than the border it replaced
       (fallback noted in design.md: gold foreground instead of fill, 1 row
