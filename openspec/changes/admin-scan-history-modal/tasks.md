@@ -55,11 +55,11 @@ Rationale: new pure logic + property test, new modal render, new nav flow, key r
 
 ## Phase 4: Removal Sweep
 
-- [ ] 4.1 `session.go`: remove `TrivyAlertDetailOpen`, `TrivyScanRunDetail`, `SecretFindings`
-- [ ] 4.2 `model.go`: remove `isTrivyAlertsDetailOpen`; strip inline-detail branches from `toggleTrivyTab`, `updateAdminFeaturesKey`
-- [ ] 4.3 `admin_views.go`: remove inline detail from `renderTrivyRepositoryAlerts`; fold `renderSecretFindingsBody` into the Leaks tab
-- [ ] 4.4 `admin_tables.go`: remove `trivyAlertDetailTableRoles`, `trivyDetailFixedLines`, `trivyScreenChromeLines`; update `rebuildAdminTables` call sites
-- [ ] 4.5 Search remaining references to every removed identifier; fix any missed call site
+- [x] 4.1 `session.go`: remove `TrivyAlertDetailOpen`, `TrivyScanRunDetail`, `SecretFindings`
+- [x] 4.2 `model.go`: remove `isTrivyAlertsDetailOpen`; strip inline-detail branches from `toggleTrivyTab`, `updateAdminFeaturesKey`
+- [x] 4.3 `admin_views.go`: remove inline detail from `renderTrivyRepositoryAlerts`; fold `renderSecretFindingsBody` into the Leaks tab
+- [x] 4.4 `admin_tables.go`: remove `trivyAlertDetailTableRoles`, `trivyDetailFixedLines`, `trivyScreenChromeLines`; update `rebuildAdminTables` call sites
+- [x] 4.5 Search remaining references to every removed identifier; fix any missed call site
 
 ## Phase 5: Non-Regression
 
