@@ -334,6 +334,92 @@ func TestRenderScanPolicyModalIsASeparateSurfaceFromTrivyConfigModal(t *testing.
 	}
 }
 
+// TestRenderTrivyTabsComposesPolicyBadgeAtZeroRowCost is the Phase 9 task
+// 9.1 RED test (design.md Decision 6): renderTrivyTabs must still return
+// exactly 2 rows (subheading + composed tab line) once the policy badge is
+// composed onto the existing tab line, for both an enabled and a disabled
+// policy state.
+func TestRenderTrivyTabsComposesPolicyBadgeAtZeroRowCost(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+
+	tests := []struct {
+		name   string
+		policy ports.ScanPolicySettings
+	}{
+		{name: "enabled policy", policy: ports.ScanPolicySettings{Enabled: true, SeverityThreshold: ports.ScanPolicyThresholdCritical}},
+		{name: "disabled policy", policy: ports.ScanPolicySettings{Enabled: false, SeverityThreshold: ports.ScanPolicyThresholdCriticalHigh}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			view := AdminViewState{TrivyTab: trivyTabRuntime, ScanPolicy: tc.policy}
+			got := renderTrivyTabs(theme, view)
+			if h := lipgloss.Height(got); h != 2 {
+				t.Fatalf("renderTrivyTabs() height = %d, want exactly 2 (subheading + composed tab line, +0 rows for the badge)\n%s", h, got)
+			}
+		})
+	}
+}
+
+// TestRenderTrivyTabsComposedWidthStaysWithinSectionWidthFloor is the Phase
+// 9 task 9.2 RED test: the composed tab line must not wrap at the 150-
+// column floor design.md measured (55 of 146 content columns).
+func TestRenderTrivyTabsComposedWidthStaysWithinSectionWidthFloor(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+	view := AdminViewState{TrivyTab: trivyTabRepositoryAlerts, ScanPolicy: ports.ScanPolicySettings{Enabled: true, SeverityThreshold: ports.ScanPolicyThresholdCriticalHigh}}
+	got := renderTrivyTabs(theme, view)
+
+	budget := sectionWidth(consoleLayout{Width: 150, Height: 24})
+	if w := lipgloss.Width(got); w > budget {
+		t.Fatalf("renderTrivyTabs() width = %d, want <= %d (sectionWidth at the 150-column floor)\n%s", w, budget, got)
+	}
+}
+
+// TestRenderTrivyTabsPolicyBadgeTextReflectsStateAndUsesNoIconOrGlyph is the
+// Phase 9 task 9.3 RED test (spec.md "Badge uses text, not an icon or
+// glyph"): badge text reflects enabled/threshold, table-driven, and the
+// regression guard asserts every rune is printable ASCII, not just a
+// string-equality check against known glyphs.
+func TestRenderTrivyTabsPolicyBadgeTextReflectsStateAndUsesNoIconOrGlyph(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+
+	tests := []struct {
+		name   string
+		policy ports.ScanPolicySettings
+		want   string
+	}{
+		{name: "enabled critical", policy: ports.ScanPolicySettings{Enabled: true, SeverityThreshold: ports.ScanPolicyThresholdCritical}, want: "Policy: ON (CRITICAL)"},
+		{name: "enabled critical_high", policy: ports.ScanPolicySettings{Enabled: true, SeverityThreshold: ports.ScanPolicyThresholdCriticalHigh}, want: "Policy: ON (CRITICAL+HIGH)"},
+		{name: "disabled", policy: ports.ScanPolicySettings{Enabled: false, SeverityThreshold: ports.ScanPolicyThresholdCritical}, want: "Policy: OFF"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			view := AdminViewState{TrivyTab: trivyTabRuntime, ScanPolicy: tc.policy}
+			got := renderTrivyTabs(theme, view)
+			if !strings.Contains(ansi.Strip(got), tc.want) {
+				t.Fatalf("renderTrivyTabs() = %q, want it to contain %q", ansi.Strip(got), tc.want)
+			}
+
+			for _, r := range ansi.Strip(got) {
+				if r > 126 {
+					t.Fatalf("renderTrivyTabs() contains non-ASCII rune %q (%U), want text only, no icon or glyph\n%s", r, r, ansi.Strip(got))
+				}
+			}
+		})
+	}
+}
+
 // TestRenderToggleFieldCompactedToTwoRows is the Phase 2 task 2.2
 // characterization test: renderToggleField puts its on/off value inside the
 // same bordered box as text/secret fields today (4 rows total: label + 3-row

@@ -227,6 +227,12 @@ func renderGenericFeaturePage(theme adminTheme, view AdminViewState, page ports.
 	return lines
 }
 
+// renderTrivyTabs composes the persistent policy status badge onto its
+// existing tab line (design.md Decision 6), which returns exactly 2 rows
+// and keeps returning 2 — the badge costs 0 rows because it is appended to
+// the same line, not placed on a line of its own. contentBudget/fitLines/
+// SectionRows need no change (spec's explicit "no arithmetic change"
+// scope note).
 func renderTrivyTabs(theme adminTheme, view AdminViewState) string {
 	runtimeLabel := "Runtime"
 	alertsLabel := "Repository Alerts"
@@ -235,7 +241,16 @@ func renderTrivyTabs(theme adminTheme, view AdminViewState) string {
 	} else {
 		alertsLabel = theme.selected.Render(alertsLabel)
 	}
-	return theme.subheading.Render("Tabs") + "\n" + runtimeLabel + " | " + alertsLabel
+	return theme.subheading.Render("Tabs") + "\n" + runtimeLabel + " | " + alertsLabel + "  " + scanPolicyBadge(theme, view.ScanPolicy)
+}
+
+// scanPolicyBadge renders the persistent, text-only policy status badge
+// (spec.md "Persistent Policy Status Badge" — text, not an icon or glyph).
+func scanPolicyBadge(theme adminTheme, policy ports.ScanPolicySettings) string {
+	if !policy.Enabled {
+		return theme.muted.Render("Policy: OFF")
+	}
+	return theme.selected.Render(fmt.Sprintf("Policy: ON (%s)", scanPolicyThresholdLabel(policy.SeverityThreshold)))
 }
 
 // renderAdminScanSummary renders the Repository Alerts tab as one row per
