@@ -431,11 +431,23 @@ func TestRenderAdminWorkspaceLeavesVisibleMarginAroundModalWhenOpen(t *testing.T
 	// Compute the modal's own footprint the exact same way
 	// renderAdminWorkspace does, so this test does not hardcode numbers that
 	// would silently drift out of sync with the production sizing.
-	modalView := renderAdminScanHistoryModal(theme, view.ScanHistoryModal, view, adminScanHistoryModalRows(layout))
+	standaloneContext, standaloneBaseBody, standaloneHelp := renderAdminScreen(theme, screenAdminFeatures, session, view, nil, layout, now)
+	standaloneBaseWorkspace := renderConsoleWorkspace("Regixtry Admin", standaloneContext, standaloneBaseBody, "", standaloneHelp)
+	modalView := renderAdminScanHistoryModal(theme, view.ScanHistoryModal, view, adminScanHistoryModalRows(layout, lipgloss.Height(standaloneBaseBody)))
 	overlayWidth := lipgloss.Width(modalView)
 	overlayHeight := lipgloss.Height(modalView)
 	x := (layout.Width - overlayWidth) / 2
-	y := (layout.Height - overlayHeight) / 2
+	// y mirrors compositeOverlay's own centering formula exactly: anchored to
+	// the base workspace's own actual rendered height, not the raw
+	// layout.Height canvas (admin_overlay.go's compositeOverlay doc comment).
+	baseHeight := lipgloss.Height(standaloneBaseWorkspace)
+	if baseHeight > layout.Height {
+		baseHeight = layout.Height
+	}
+	y := (baseHeight - overlayHeight) / 2
+	if y < 0 {
+		y = 0
+	}
 
 	got := renderAdminWorkspace(screenAdminFeatures, session, view, nil, "", layout, now)
 	lines := strings.Split(ansi.Strip(got), "\n")
@@ -461,6 +473,121 @@ func TestRenderAdminWorkspaceLeavesVisibleMarginAroundModalWhenOpen(t *testing.T
 				}
 			}
 		}
+	}
+}
+
+// TestRenderAdminWorkspaceModalNeverExtendsPastBaseBodysOwnBottomBorder is the
+// RED regression test for the height-budget bug found by real-render visual
+// inspection at realistic terminal heights (claude-handoff.md follow-up).
+// Two independent defects combined to produce it:
+//
+//  1. adminScanHistoryModalRows derived the modal's row budget purely from
+//     l.Height, with no awareness of how tall the base Feature Page body
+//     ACTUALLY renders. The base body is content-driven
+//     (renderSection/fitLines only ever trims, never pads to fill
+//     l.SectionRows), so it stays roughly constant height regardless of
+//     terminal height, while the modal's budget kept scaling up with
+//     l.Height.
+//  2. Even with the modal's own SIZE correctly capped, compositeOverlay
+//     centered it within the FULL raw terminal canvas rather than within the
+//     base workspace's own actual rendered footprint -- which is
+//     mathematically incapable of keeping ANY overlay (down to 1 row) inside
+//     a ~29-row base footprint once the terminal exceeds roughly 60 rows, no
+//     matter how tightly the budget is capped. This is why the assertion
+//     below spans heights up to 80, not just the height (50) where the bug
+//     was first confirmed by hand: a size-only fix passes at 24/30/40 by
+//     coincidence but is provably unable to pass at 50/80.
+//
+// This asserts, at a realistic range of terminal heights including the one
+// where the bug was confirmed absent-by-coincidence (24) and several where it
+// reproduced (30, 40, 50, 80): the modal's own composited bottom row (its
+// centered offset, anchored to the base workspace's own rendered height, plus
+// its own rendered height) never lands past the base body's own composited
+// bottom row (title + context + the base body's actual measured height) --
+// computed via lipgloss.Height bookkeeping on the real production render
+// functions, not guessed or hardcoded, and not string-scanned for border
+// glyphs (fragile once ANSI styling is involved).
+func TestRenderAdminWorkspaceModalNeverExtendsPastBaseBodysOwnBottomBorder(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+	now := time.Date(2026, time.August, 12, 11, 0, 0, 0, time.UTC)
+	session := AdminSession{Username: "operator", ExpiresAt: now.Add(10 * time.Minute)}
+
+	view := AdminViewState{
+		Features: []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
+		FeaturePage: ports.FeaturePage{
+			Summary: ports.FeatureSummary{Name: trivyFeatureName, Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
+		},
+		TrivyTab: trivyTabRepositoryAlerts,
+		// A handful of repositories -- realistic content, well under 30 rows
+		// total once combined with the Built-in Features table -- so the base
+		// body renders at its natural, short, content-driven height instead of
+		// being clipped/padded to fill the terminal (design.md: renderSection
+		// only ever TRIMS content longer than the budget, never stretches
+		// shorter content to fill it).
+		TrivySummaries: []repositorySummary{
+			{Repository: "web-dvwa", LatestRun: ports.ScanRun{ID: "run-1", Repository: "web-dvwa", CreatedAt: now}, LastExecuted: now, RunCount: 13},
+			{Repository: "alpine-vuln", LatestRun: ports.ScanRun{ID: "run-2", Repository: "alpine-vuln", CreatedAt: now}, LastExecuted: now, RunCount: 12},
+		},
+		ScanHistoryModal: adminScanHistoryModal{
+			Open:       true,
+			Repository: "web-dvwa",
+			Tabs:       newAdminScanHistoryTabs(),
+			Runs:       []ports.ScanRun{{ID: "run-1", Repository: "web-dvwa", CreatedAt: now}},
+			Detail: ports.ScanRunDetail{Findings: []ports.ScanRunFinding{
+				{VulnerabilityID: "CVE-2016-9841", Severity: "CRITICAL", PackageName: "rsync", Fixable: true},
+				{VulnerabilityID: "CVE-2017-12424", Severity: "CRITICAL", PackageName: "login", Fixable: true},
+			}},
+		},
+	}
+	view.Tables.Features = buildAdminFeaturesTable(theme, view.Features, 0, minTableRows)
+	view.Tables.ScanSummary = buildAdminScanSummaryTable(theme, view.TrivySummaries, 0, minTableRows)
+	view.Tables.Findings = buildAdminFindingsTable(theme, view.ScanHistoryModal.Detail.Findings, 0, minTableRows)
+
+	for _, height := range []int{24, 30, 40, 50, 80} {
+		height := height
+		t.Run(fmt.Sprintf("height=%d", height), func(t *testing.T) {
+			t.Parallel()
+
+			layout := contentBudget(minViewportWidth, height, "", adminScreenHelp(screenAdminFeatures, view))
+
+			// The base body's own bottom row within the composited canvas:
+			// title (1 row, guarded invariant) + context (1 row) + the base
+			// body's real measured height, ending at the body's own closing
+			// border row.
+			baseContext, baseBody, baseHelp := renderAdminScreen(theme, screenAdminFeatures, session, view, nil, layout, now)
+			baseBodyHeight := lipgloss.Height(baseBody)
+			baseBottomRow := 2 + baseBodyHeight - 1
+			baseWorkspace := renderConsoleWorkspace("Regixtry Admin", baseContext, baseBody, "", baseHelp)
+
+			modalRows := adminScanHistoryModalRows(layout, baseBodyHeight)
+			modalView := renderAdminScanHistoryModal(theme, view.ScanHistoryModal, view, modalRows)
+
+			overlayHeight := lipgloss.Height(modalView)
+			if overlayHeight > layout.Height {
+				overlayHeight = layout.Height
+			}
+			// Mirrors compositeOverlay's own centering formula exactly (see
+			// admin_overlay.go's compositeOverlay and this codebase's existing
+			// admin_overlay_test.go idiom of recomputing it inline rather than
+			// guessing a number): anchored to the base WORKSPACE's own actual
+			// rendered height, not the raw layout.Height canvas.
+			workspaceHeight := lipgloss.Height(baseWorkspace)
+			if workspaceHeight > layout.Height {
+				workspaceHeight = layout.Height
+			}
+			y := (workspaceHeight - overlayHeight) / 2
+			if y < 0 {
+				y = 0
+			}
+			modalBottomRow := y + overlayHeight - 1
+
+			if modalBottomRow > baseBottomRow {
+				t.Fatalf("height=%d: modal's composited bottom row = %d, want <= %d (the base Feature Page body's own bottom border row) -- the modal renders below where the base page's own bordered box closes, floating in blank canvas instead of over the base page (modalRows=%d, baseBodyHeight=%d, overlayHeight=%d, y=%d)",
+					height, modalBottomRow, baseBottomRow, modalRows, baseBodyHeight, overlayHeight, y)
+			}
+		})
 	}
 }
 

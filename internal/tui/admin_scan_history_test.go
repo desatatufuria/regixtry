@@ -125,7 +125,12 @@ func TestAdminScanHistoryModalRowsStaysBoundedAcrossHeightRange(t *testing.T) {
 	for height := 10; height <= 80; height++ {
 		l := contentBudget(140, height, "", "")
 
-		rows := adminScanHistoryModalRows(l)
+		// baseBodyHeight=0 means "no base-page cap" -- this test is only
+		// about the l.Height bound, independent of the base page's own
+		// rendered height (see
+		// TestRenderAdminWorkspaceModalNeverExtendsPastBaseBodysOwnBottomBorder
+		// in admin_views_test.go for the base-height-aware cap).
+		rows := adminScanHistoryModalRows(l, 0)
 
 		if rows < adminScanHistoryModalMinRows {
 			t.Fatalf("height=%d: adminScanHistoryModalRows() = %d, want >= adminScanHistoryModalMinRows(%d)", height, rows, adminScanHistoryModalMinRows)
@@ -150,7 +155,7 @@ func TestAdminScanHistoryModalRowsLeavesAVisibleMarginOnATallTerminal(t *testing
 
 	l := contentBudget(140, 60, "", "")
 
-	rows := adminScanHistoryModalRows(l)
+	rows := adminScanHistoryModalRows(l, 0)
 	fullyAvailable := l.Height - sectionChromeRows
 
 	if rows >= fullyAvailable {

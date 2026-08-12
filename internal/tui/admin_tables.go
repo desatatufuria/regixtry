@@ -398,7 +398,16 @@ func (m *Model) rebuildAdminTables(layout consoleLayout) {
 	// they are only built while the modal is active; otherwise they stay at
 	// their previous/zero value and are simply not rendered.
 	if m.adminView.ScanHistoryModal.Active() {
-		modalRows := adminScanHistoryModalRows(layout)
+		// baseBodyHeight must be measured the SAME way renderAdminWorkspace
+		// measures it (lipgloss.Height on renderAdminScreen's own body
+		// return) or this table gets pre-built for one page size while
+		// renderAdminWorkspace composites the modal into a differently-sized
+		// budget (adminScanHistoryModalRows' doc comment). Features and
+		// ScanSummary -- the only tables the base Feature Page body itself
+		// renders -- are already built above, so this reflects the real
+		// content the base body will show.
+		baseBodyHeight := adminBaseBodyHeight(m.screen, m.adminSession, m.adminView, m.repositories.Items, layout, m.now())
+		modalRows := adminScanHistoryModalRows(layout, baseBodyHeight)
 		measuredHeaderHeight := 0
 		if strings.TrimSpace(m.adminView.ScanHistoryModal.Error) != "" || m.adminView.ScanHistoryModal.Loading {
 			measuredHeaderHeight = 1

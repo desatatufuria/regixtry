@@ -25,7 +25,16 @@ func renderAdminWorkspace(current screen, session AdminSession, view AdminViewSt
 		context, body, help := renderAdminScreen(theme, current, session, view, knownRepositories, layout, now)
 		baseWorkspace := renderConsoleWorkspace("Regixtry Admin", context, body, status, help)
 
-		modalView := renderAdminScanHistoryModal(theme, view.ScanHistoryModal, view, adminScanHistoryModalRows(layout))
+		// baseBodyHeight is the base Feature Page body's ACTUAL rendered
+		// height (body is already in scope from the renderAdminScreen call
+		// just above) -- adminScanHistoryModalRows caps the modal's budget
+		// against it so the modal never renders past where the base box's
+		// own bordered section closes (see adminScanHistoryModalRows'
+		// doc comment). rebuildAdminTables (admin_tables.go) must measure
+		// this the same way so the modal's pre-built table page size stays
+		// consistent with the budget used here.
+		baseBodyHeight := lipgloss.Height(body)
+		modalView := renderAdminScanHistoryModal(theme, view.ScanHistoryModal, view, adminScanHistoryModalRows(layout, baseBodyHeight))
 		return compositeOverlay(baseWorkspace, modalView, layout.Width, layout.Height)
 	}
 
@@ -37,6 +46,21 @@ func renderAdminWorkspace(current screen, session AdminSession, view AdminViewSt
 		fullBody = lipgloss.JoinVertical(lipgloss.Left, body, renderTrivyConfigModal(theme, view.TrivyConfigModal))
 	}
 	return renderConsoleWorkspace("Regixtry Admin", context, fullBody, status, help)
+}
+
+// adminBaseBodyHeight measures the base Feature Page body's ACTUAL rendered
+// height the same way renderAdminWorkspace's modal-open branch does
+// (lipgloss.Height on renderAdminScreen's own body return), so callers that
+// do not already have `body` in scope -- rebuildAdminTables (admin_tables.go)
+// runs from Update handlers, before View() ever calls renderAdminScreen --
+// can still measure the exact same thing renderAdminWorkspace measures.
+// Both call sites feeding adminScanHistoryModalRows must agree on this value
+// or the modal's table gets pre-built for one page size while
+// renderAdminWorkspace composites the modal into a differently-sized budget.
+func adminBaseBodyHeight(current screen, session AdminSession, view AdminViewState, knownRepositories []string, layout consoleLayout, now time.Time) int {
+	theme := newAdminTheme()
+	_, body, _ := renderAdminScreen(theme, current, session, view, knownRepositories, layout, now)
+	return lipgloss.Height(body)
 }
 
 // adminScreenHelp returns the help line for an admin screen. Extracted from

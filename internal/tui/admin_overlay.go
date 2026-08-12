@@ -38,6 +38,22 @@ const overlayHorizontalMargin = 2
 // Features page must remain visible behind the modal and must not reflow
 // when it opens").
 //
+// Vertical centering is anchored to base's own ACTUAL rendered height
+// (lipgloss.Height(base), clamped to the canvas), not the raw canvas height.
+// base is frequently shorter than height -- a content-driven screen body
+// does not pad/stretch to fill a tall terminal (renderSection/fitLines only
+// ever trim, never pad) -- so centering within the full canvas instead of
+// base's own footprint would drift the overlay further down/away from base's
+// visible content as height grows, independent of overlay's own size: for
+// any base footprint of B rows, centering-in-full-canvas mathematically
+// cannot keep even a 1-row overlay within B once height exceeds roughly 2B,
+// no matter how small overlay is capped to be (a real regression found by
+// real-render inspection at generously tall terminals, tracked alongside
+// adminScanHistoryModalRows' own base-height-aware budget cap -- that cap
+// bounds overlay's SIZE, this bounds its POSITION; both are required, this
+// one categorically cannot be worked around by tightening the budget alone).
+// The returned canvas is still always exactly width x height regardless.
+//
 // Both base and overlay may contain ANSI escape sequences from lipgloss
 // styling. Naive byte/rune slicing to splice one string's lines into
 // another's would corrupt those escape sequences (an incomplete SGR
@@ -64,11 +80,16 @@ func compositeOverlay(base, overlay string, width, height int) string {
 		overlayHeight = height
 	}
 
+	baseHeight := lipgloss.Height(base)
+	if baseHeight > height {
+		baseHeight = height
+	}
+
 	x := (width - overlayWidth) / 2
 	if x < 0 {
 		x = 0
 	}
-	y := (height - overlayHeight) / 2
+	y := (baseHeight - overlayHeight) / 2
 	if y < 0 {
 		y = 0
 	}

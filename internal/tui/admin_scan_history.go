@@ -146,7 +146,28 @@ func summarizeScanRunsByRepository(runs []ports.ScanRun) []repositorySummary {
 // budget. Bounded so the modal always leaves a visible margin around it
 // (adminScanHistoryModalVerticalMargin) and never exceeds what the terminal
 // can hold, floored at adminScanHistoryModalMinRows.
-func adminScanHistoryModalRows(l consoleLayout) int {
+//
+// It IS, however, capped against baseBodyHeight -- the base Feature Page
+// body's ACTUAL measured rendered height (lipgloss.Height on
+// renderAdminScreen's own body return, the same "measured, not guessed"
+// discipline this file already applies elsewhere), not a viewport-derived
+// ceiling like l.SectionRows (which scales with terminal height the same way
+// l.Height does and would not fix the bug this cap exists for). The base
+// body is content-driven, not viewport-filling (renderSection/fitLines only
+// ever TRIM content longer than the budget, never pad shorter content to
+// fill it), so on a real screen its height stays roughly constant regardless
+// of terminal height while an uncapped l.Height-only budget keeps scaling
+// up. Past a certain terminal height that mismatch let the modal's own
+// bottom rows render below where the base page's own bordered box closes --
+// compositeOverlay centers the modal within the FULL terminal canvas, not
+// clamped to the base box's own bounds -- floating in blank canvas instead
+// of over the base page. Capping so the modal's total rendered height (rows
+// plus its own sectionChromeRows border+padding, added once more by
+// theme.section.Render in renderAdminScanHistoryModal) never exceeds
+// baseBodyHeight-adminScanHistoryModalVerticalMargin keeps the modal inside
+// the base box's own footprint. baseBodyHeight<=0 disables the cap (no
+// measurement available yet).
+func adminScanHistoryModalRows(l consoleLayout, baseBodyHeight int) int {
 	usable := l.Height - sectionChromeRows
 	if usable < adminScanHistoryModalMinRows {
 		usable = adminScanHistoryModalMinRows
@@ -159,6 +180,17 @@ func adminScanHistoryModalRows(l consoleLayout) int {
 	if rows > usable {
 		rows = usable
 	}
+
+	if baseBodyHeight > 0 {
+		maxByBase := baseBodyHeight - adminScanHistoryModalVerticalMargin - sectionChromeRows
+		if maxByBase < adminScanHistoryModalMinRows {
+			maxByBase = adminScanHistoryModalMinRows
+		}
+		if rows > maxByBase {
+			rows = maxByBase
+		}
+	}
+
 	return rows
 }
 
