@@ -69,6 +69,22 @@ func (s *Service) UpdateScanPolicySettings(ctx context.Context, input ports.Scan
 	return input, nil
 }
 
+// scanPolicyViolated is the pure vulnerability policy gate evaluator
+// (design.md Decision 2). It is fail-open on scan-state uncertainty: only a
+// completed run whose findings meet or exceed the configured severity
+// threshold blocks. An unknown/empty threshold behaves as CRITICAL — the
+// permissive default branch — but the admin API rejects unknown threshold
+// values before they can ever reach this function (Decision 5).
+func scanPolicyViolated(settings ports.ScanPolicySettings, run ports.ScanRun) bool {
+	if !settings.Enabled || run.Status != ports.ScanRunStatusCompleted {
+		return false
+	}
+	if settings.SeverityThreshold == ports.ScanPolicyThresholdCriticalHigh {
+		return run.Critical > 0 || run.High > 0
+	}
+	return run.Critical > 0
+}
+
 func (s *Service) QueueManualScan(ctx context.Context, repositoryName string, reference string) (ports.ScanRun, error) {
 	settings, err := s.resolveManagedScanSettings(ctx)
 	if err != nil {
