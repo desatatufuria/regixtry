@@ -172,32 +172,32 @@ dependency-ordered slices — recommend chaining rather than a single PR.
 
 ## Phase 6: Runner Argv + Pre-Flight (Decision 5, 6) — depends on Phase 1
 
-- [ ] 6.1 RED `internal/infra/scanning/trivy/runner_test.go`: no override ->
+- [x] 6.1 RED `internal/infra/scanning/trivy/runner_test.go`: no override ->
       byte-identical argv to today (regression pin).
-- [ ] 6.2 RED: `IgnoreFilePath` set -> `--ignorefile` appended before
+- [x] 6.2 RED: `IgnoreFilePath` set -> `--ignorefile` appended before
       `imageRef`; `IgnorePolicyPath` set -> `--ignore-policy` appended; both
       set -> both appended in that order (design Decision 5's exact argv
       shape).
-- [ ] 6.3 RED: an unreadable or missing `IgnoreFilePath` -> the runner returns
+- [x] 6.3 RED: an unreadable or missing `IgnoreFilePath` -> the runner returns
       an error before `exec.CommandContext`/`r.exec` is invoked (fake exec
       asserting it was never called — threat matrix "fail-open scan config").
-- [ ] 6.4 GREEN: add `os` import, `requireReadableFile` helper, and the
+- [x] 6.4 GREEN: add `os` import, `requireReadableFile` helper, and the
       conditional `--ignorefile`/`--ignore-policy` argv appends to
       `trivy/runner.go`, placed between the existing `--cache-dir` block and
       the `imageRef` append (design Decision 5, 6 exact code and placement).
-- [ ] 6.5 RED `internal/infra/scanning/gitleaks/runner_test.go`: no override ->
+- [x] 6.5 RED `internal/infra/scanning/gitleaks/runner_test.go`: no override ->
       byte-identical argv to today's fixed literal slice (regression pin,
       keeps the existing `gitleaks-managed-feature` argv-snapshot test valid
       unchanged).
-- [ ] 6.6 RED: `ConfigPath` set -> `--config` appended after the existing
+- [x] 6.6 RED: `ConfigPath` set -> `--config` appended after the existing
       fixed slice.
-- [ ] 6.7 RED: an unreadable or missing `ConfigPath` -> the runner returns an
+- [x] 6.7 RED: an unreadable or missing `ConfigPath` -> the runner returns an
       error before `r.exec` is invoked.
-- [ ] 6.8 GREEN: add `requireReadableFile` (own copy in this package — the two
+- [x] 6.8 GREEN: add `requireReadableFile` (own copy in this package — the two
       runner packages do not import each other) and the conditional
       `--config` argv append to `gitleaks/runner.go`, after the existing fixed
       slice.
-- [ ] 6.9 Confirm 6.1–6.3, 6.5–6.7 GREEN: `go test ./internal/infra/scanning/... -run Override`.
+- [x] 6.9 Confirm 6.1–6.3, 6.5–6.7 GREEN: `go test ./internal/infra/scanning/... -run Override`.
 
 ## Phase 7: Admin HTTP Resource (Decision 7) — depends on Phase 1, 2, 3
 
