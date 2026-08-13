@@ -308,3 +308,17 @@ dependency-ordered slices — recommend chaining rather than a single PR.
       150x24 the modal's full bottom border/help line (covered by 8.12).
 - [x] 10.5 Update this file's checkboxes as work lands; save `apply-progress`
       to Engram at each phase boundary (for `sdd-apply` to resume from).
+- [x] **10.6 [VERIFY REMEDIATION]** Added retroactively during `sdd-verify`
+      remediation — this requirement was never decomposed into a task in the
+      original Phase 2 pass. RED/GREEN
+      `internal/infra/metadata/sqlite/store_test.go >
+      TestStoreRepositoryFeatureOverrideResolutionIsExactNameOnlyNoOrphanLeakage`:
+      proves `repository-config-overrides/spec.md`'s "Override Rows Are Not
+      Cascade-Deleted On Repository Lifecycle Changes" requirement (both
+      scenarios) via the closest testable proxy given no repository
+      deletion/rename operation exists — an override upserted for one exact
+      repository name must not be observable when querying a different
+      repository name (NotFound, no fuzzy/prefix leakage), while the
+      original row remains present and inert under its exact original name.
+      Confirmed passing against the existing, unmodified implementation — no
+      production code change required.

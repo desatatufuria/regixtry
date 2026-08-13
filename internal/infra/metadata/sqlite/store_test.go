@@ -383,6 +383,60 @@ func TestStoreDeleteRepositoryFeatureOverride(t *testing.T) {
 	}
 }
 
+// TestStoreRepositoryFeatureOverrideResolutionIsExactNameOnlyNoOrphanLeakage
+// covers repository-config-overrides/spec.md's "Override Rows Are Not
+// Cascade-Deleted On Repository Lifecycle Changes" requirement — proxy
+// coverage given no repository deletion/rename operation exists in this
+// codebase yet. Since no delete/rename API exists to directly exercise "the
+// old repository is gone", the closest testable proxy is proving resolution
+// is a strict exact-name lookup: an override upserted for one repository
+// name MUST NOT be observable when querying a different repository name
+// (simulating the old name's row going inert after a hypothetical
+// delete/rename), with no fuzzy/prefix/fallback matching that could leak an
+// old override onto an unrelated or renamed-to repository.
+func TestStoreRepositoryFeatureOverrideResolutionIsExactNameOnlyNoOrphanLeakage(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	oldPayload := []byte(`{"enabled":false}`)
+	if err := store.UpsertRepositoryFeatureOverride(context.Background(), "tenant-a", "library/alpine", "trivy", oldPayload); err != nil {
+		t.Fatalf("UpsertRepositoryFeatureOverride(old name) error = %v", err)
+	}
+
+	// A different repository name — simulating the repository having been
+	// renamed or deleted and replaced — must resolve as NotFound, never as
+	// the old override, even though "library/alpine-new" shares a prefix
+	// with the stored key.
+	_, err := store.GetRepositoryFeatureOverride(context.Background(), "tenant-a", "library/alpine-new", "trivy")
+	if !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("GetRepositoryFeatureOverride(renamed-to name) error = %v, want ErrorCodeNotFound (no orphan leakage)", err)
+	}
+
+	// The old row remains untouched and still resolves under its exact
+	// original name — it is inert, not cleaned up, per the requirement.
+	stored, err := store.GetRepositoryFeatureOverride(context.Background(), "tenant-a", "library/alpine", "trivy")
+	if err != nil {
+		t.Fatalf("GetRepositoryFeatureOverride(old name) error = %v", err)
+	}
+	if !reflect.DeepEqual(stored, oldPayload) {
+		t.Fatalf("stored = %s, want %s (old row must remain inert, not cascade-deleted)", stored, oldPayload)
+	}
+
+	// List is scoped by exact match only — the "renamed" repository must not
+	// appear in the listing derived from the old row.
+	overrides, err := store.ListRepositoryFeatureOverrides(context.Background(), "tenant-a", "trivy")
+	if err != nil {
+		t.Fatalf("ListRepositoryFeatureOverrides() error = %v", err)
+	}
+	for _, o := range overrides {
+		if o.Repository == "library/alpine-new" {
+			t.Fatalf("overrides = %#v, want no entry for the renamed-to repository (orphan leakage)", overrides)
+		}
+	}
+}
+
 func TestStoreBridgesLegacyBinaryColumnsWhenServiceFieldsAreMissing(t *testing.T) {
 	t.Parallel()
 
