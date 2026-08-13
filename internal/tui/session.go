@@ -190,6 +190,52 @@ func (m adminConfirmModal) Active() bool {
 	return m.Kind != adminConfirmNone
 }
 
+// signingPolicyField identifies which of signingPolicyModal's 3 fields has
+// focus. Unlike scanPolicyField's 2-field shape, signing's global policy
+// has a growable list of trusted keys, so the third field (ClearKeys) is an
+// action row rather than an input, mirroring
+// repositoryOverrideFieldClear's shape (design.md Decision 11 piece 1).
+type signingPolicyField int
+
+const (
+	signingPolicyFieldEnabled signingPolicyField = iota
+	signingPolicyFieldAddKey
+	signingPolicyFieldClearKeys // action row, not an input
+)
+
+// signingPolicyModal is the image-signing content-trust gate's own admin
+// modal, a sibling of scanPolicyModal (design.md Decision 11 piece 1 — NOT
+// an extension of it, and NOT an extension of repositoryOverrideModal
+// either). Fingerprints is a read-only, derived projection of the currently
+// stored trusted keys (SHA-256/12, never the raw PEM -- the modal never
+// displays key material) so the operator can confirm what is configured
+// without a multi-line PEM viewport. AddKey is one PEM, entered as a single
+// line (any whitespace arrangement -- signing.NormalizePublicKeyPEM
+// reconstructs canonical PEM either way), submitted with Enter to append it
+// to the stored key set.
+type signingPolicyModal struct {
+	Open         bool
+	Focus        signingPolicyField
+	Enabled      bool
+	AddKey       string   // one PEM, single line -- see type doc comment
+	Fingerprints []string // read-only SHA-256/12 of each stored key
+	Loading      bool
+	Error        string
+}
+
+func (m signingPolicyModal) Active() bool {
+	return m.Open
+}
+
+// nextSigningPolicyField cycles between the modal's 3 fields with a
+// wrapping cursor, mirroring nextScanPolicyField/nextRepositoryOverrideField.
+func nextSigningPolicyField(field signingPolicyField) signingPolicyField {
+	if field >= signingPolicyFieldClearKeys {
+		return signingPolicyFieldEnabled
+	}
+	return field + 1
+}
+
 // repositoryOverrideField identifies which of repositoryOverrideModal's
 // fields has focus (design.md Decision 8 piece 1).
 type repositoryOverrideField int
@@ -224,12 +270,15 @@ func (m repositoryOverrideModal) Active() bool {
 }
 
 // nextRepositoryOverrideField wraps between the modal's 5 fields, skipping
-// repositoryOverrideFieldPathSecondary when feature is gitleaksFeatureName
-// (gitleaks has no second path field), mirroring nextScanPolicyField's
-// wrapping-cursor pattern.
+// repositoryOverrideFieldPathSecondary for every feature except trivy
+// (gitleaks has no second path field, and neither does signing --
+// design.md Decision 11 piece 3 generalizes this condition from
+// "feature == gitleaksFeatureName" to "feature != trivyFeatureName" so a
+// fourth single-path feature needs no further change here), mirroring
+// nextScanPolicyField's wrapping-cursor pattern.
 func nextRepositoryOverrideField(field repositoryOverrideField, feature string) repositoryOverrideField {
 	next := field + 1
-	if next == repositoryOverrideFieldPathSecondary && feature == gitleaksFeatureName {
+	if next == repositoryOverrideFieldPathSecondary && feature != trivyFeatureName {
 		next = repositoryOverrideFieldClear
 	}
 	if next > repositoryOverrideFieldClear {
@@ -345,8 +394,14 @@ type AdminViewState struct {
 	// on AdminViewState alongside FeaturePage/TrivyTab so renderTrivyTabs
 	// can compose its status badge (design.md Decision 6) without a modal
 	// being open.
-	ScanPolicy             ports.ScanPolicySettings
-	ScanPolicyModal        scanPolicyModal
+	ScanPolicy      ports.ScanPolicySettings
+	ScanPolicyModal scanPolicyModal
+	// SigningPolicy is the image-signing content-trust gate's current global
+	// settings, kept on AdminViewState alongside ScanPolicy so the Feature
+	// Page heading can compose signingPolicyBadge (design.md Decision 11
+	// piece 1) without a modal being open.
+	SigningPolicy          ports.SigningPolicySettings
+	SigningPolicyModal     signingPolicyModal
 	TrivyScanRuns          []ports.ScanRun
 	TrivySelectedAlert     int
 	TrivyAlertsLoaded      bool

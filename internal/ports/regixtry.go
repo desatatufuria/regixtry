@@ -172,13 +172,14 @@ type RepositoryFeatureOverride struct {
 // GET/PUT/the list endpoint. Only the fields relevant to Feature are
 // populated by the server.
 type RepositoryOverrideDetails struct {
-	Repository       string    `json:"repository"`
-	Feature          string    `json:"feature"`
-	Enabled          bool      `json:"enabled"`
-	IgnoreFilePath   string    `json:"ignore_file_path,omitempty"`
-	IgnorePolicyPath string    `json:"ignore_policy_path,omitempty"`
-	ConfigPath       string    `json:"config_path,omitempty"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	Repository        string    `json:"repository"`
+	Feature           string    `json:"feature"`
+	Enabled           bool      `json:"enabled"`
+	IgnoreFilePath    string    `json:"ignore_file_path,omitempty"`
+	IgnorePolicyPath  string    `json:"ignore_policy_path,omitempty"`
+	ConfigPath        string    `json:"config_path,omitempty"`
+	TrustedPublicKeys []string  `json:"trusted_public_keys,omitempty"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 type ScanResult struct {

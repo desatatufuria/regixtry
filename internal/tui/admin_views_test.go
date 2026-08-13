@@ -513,6 +513,137 @@ func TestRenderRepositoryOverrideModalIsASeparateSurfaceFromOtherAdminModals(t *
 	}
 }
 
+// TestRenderSigningPolicyModalFitsWithinRowBudget is the Phase 9 task 9.3
+// RED test (design.md Decision 11 piece 1's row-budget table): 14 rows (0
+// keys, no error), 16 rows (3 keys, no error), 20 rows worst case (error,
+// >=4 keys, capped list + "+N more").
+func TestRenderSigningPolicyModalFitsWithinRowBudget(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+
+	tests := []struct {
+		name       string
+		modal      signingPolicyModal
+		wantHeight int
+	}{
+		{
+			name:       "no error, 0 keys",
+			modal:      signingPolicyModal{Open: true, Focus: signingPolicyFieldEnabled, Enabled: false},
+			wantHeight: 14,
+		},
+		{
+			name:       "no error, 3 keys",
+			modal:      signingPolicyModal{Open: true, Focus: signingPolicyFieldEnabled, Enabled: true, Fingerprints: []string{"aaaaaaaaaaaa", "bbbbbbbbbbbb", "cccccccccccc"}},
+			wantHeight: 16,
+		},
+		{
+			name:       "error, >=4 keys (capped at 4 + more)",
+			modal:      signingPolicyModal{Open: true, Focus: signingPolicyFieldAddKey, Enabled: true, Fingerprints: []string{"aaaaaaaaaaaa", "bbbbbbbbbbbb", "cccccccccccc", "dddddddddddd", "eeeeeeeeeeee"}, Error: "trusted_public_keys[0] is invalid"},
+			wantHeight: 20,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := renderSigningPolicyModal(theme, tc.modal)
+			if h := lipgloss.Height(got); h != tc.wantHeight {
+				t.Fatalf("renderSigningPolicyModal() height = %d, want %d (design.md Decision 11's row budget)\n%s", h, tc.wantHeight, got)
+			}
+		})
+	}
+}
+
+// TestRenderSigningPolicyModalNeverRendersRawPEM is the Phase 9 task 9.4 RED
+// test: renderSigningPolicyModal only ever shows truncated SHA-256/12
+// fingerprints for stored keys, never the raw PEM (design.md Decision 11
+// piece 1: "the modal never has to display multi-line text either").
+func TestRenderSigningPolicyModalNeverRendersRawPEM(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+	rawPEM := "-----BEGIN PUBLIC KEY-----"
+	modal := signingPolicyModal{Open: true, Enabled: true, Fingerprints: []string{"deadbeefcafe"}}
+
+	got := renderSigningPolicyModal(theme, modal)
+	if strings.Contains(got, rawPEM) {
+		t.Fatalf("renderSigningPolicyModal() = %q, want no raw PEM markers, only fingerprints", got)
+	}
+	if !strings.Contains(got, "deadbeefcafe") {
+		t.Fatalf("renderSigningPolicyModal() = %q, want the stored fingerprint shown", got)
+	}
+}
+
+// TestRenderSigningPolicyModalIsASeparateSurfaceFromScanPolicyModal mirrors
+// TestRenderRepositoryOverrideModalIsASeparateSurfaceFromOtherAdminModals:
+// signingPolicyModal is its own sibling surface, not an extension of
+// scanPolicyModal.
+func TestRenderSigningPolicyModalIsASeparateSurfaceFromScanPolicyModal(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+
+	signingOutput := renderSigningPolicyModal(theme, signingPolicyModal{Open: true, Enabled: true})
+	for _, forbidden := range []string{"Vulnerability Policy", "Severity Threshold"} {
+		if strings.Contains(signingOutput, forbidden) {
+			t.Fatalf("renderSigningPolicyModal() output contains %q, want a separate surface\n%s", forbidden, signingOutput)
+		}
+	}
+
+	policyOutput := renderScanPolicyModal(theme, scanPolicyModal{Open: true, Enabled: true, SeverityThreshold: ports.ScanPolicyThresholdCritical})
+	if strings.Contains(policyOutput, "Signing Policy") {
+		t.Fatalf("renderScanPolicyModal() output contains %q, want no signing modal fields\n%s", "Signing Policy", policyOutput)
+	}
+}
+
+// TestRenderRepositoryOverrideModalSigningShowsTrustedKeyLabel is the Phase
+// 9 task 9.16 RED test: when Feature is "signing", PathPrimary's rendered
+// label is "Trusted Key (PEM)", not the Trivy/gitleaks path label, and the
+// row budget matches gitleaks' single-path-field shape (15/17).
+func TestRenderRepositoryOverrideModalSigningShowsTrustedKeyLabel(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+
+	tests := []struct {
+		name       string
+		modal      repositoryOverrideModal
+		wantHeight int
+	}{
+		{
+			name:       "signing, no error",
+			modal:      repositoryOverrideModal{Open: true, Repository: "library/alpine", Feature: signingFeatureName, Exists: true, Enabled: true, PathPrimary: "-----BEGIN PUBLIC KEY-----"},
+			wantHeight: 15,
+		},
+		{
+			name:       "signing + error",
+			modal:      repositoryOverrideModal{Open: true, Repository: "library/alpine", Feature: signingFeatureName, Exists: true, Enabled: true, PathPrimary: "-----BEGIN PUBLIC KEY-----", Error: "trusted_public_keys[0] is invalid"},
+			wantHeight: 17,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := renderRepositoryOverrideModal(theme, tc.modal)
+			if h := lipgloss.Height(got); h != tc.wantHeight {
+				t.Fatalf("renderRepositoryOverrideModal() height = %d, want %d\n%s", h, tc.wantHeight, got)
+			}
+			if !strings.Contains(got, "Trusted Key (PEM)") {
+				t.Fatalf("renderRepositoryOverrideModal() = %q, want the signing-specific field label", got)
+			}
+			for _, forbidden := range []string{"Ignore File Path", "Ignore Policy Path", "Config Path"} {
+				if strings.Contains(got, forbidden) {
+					t.Fatalf("renderRepositoryOverrideModal() = %q, want no Trivy/gitleaks field labels for signing", got)
+				}
+			}
+		})
+	}
+}
+
 // TestRenderTrivyTabsComposesPolicyBadgeAtZeroRowCost is the Phase 9 task
 // 9.1 RED test (design.md Decision 6): renderTrivyTabs must still return
 // exactly 2 rows (subheading + composed tab line) once the policy badge is
@@ -596,6 +727,86 @@ func TestRenderTrivyTabsPolicyBadgeTextReflectsStateAndUsesNoIconOrGlyph(t *test
 				}
 			}
 		})
+	}
+}
+
+// TestSigningPolicyBadgeTextReflectsStateAndUsesNoIconOrGlyph is the Phase 9
+// task 9.6 RED test, mirroring
+// TestRenderTrivyTabsPolicyBadgeTextReflectsStateAndUsesNoIconOrGlyph's
+// shape: text-only, no icon/glyph, reflecting enabled/disabled and the
+// trusted-key count.
+func TestSigningPolicyBadgeTextReflectsStateAndUsesNoIconOrGlyph(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+
+	tests := []struct {
+		name   string
+		policy ports.SigningPolicySettings
+		want   string
+	}{
+		{name: "disabled", policy: ports.SigningPolicySettings{Enabled: false}, want: "Signing: OFF"},
+		{name: "enabled, one key", policy: ports.SigningPolicySettings{Enabled: true, TrustedPublicKeys: []string{"key-one"}}, want: "Signing: REQUIRED (1 keys)"},
+		{name: "enabled, two keys", policy: ports.SigningPolicySettings{Enabled: true, TrustedPublicKeys: []string{"key-one", "key-two"}}, want: "Signing: REQUIRED (2 keys)"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := signingPolicyBadge(theme, tc.policy)
+			if !strings.Contains(ansi.Strip(got), tc.want) {
+				t.Fatalf("signingPolicyBadge() = %q, want it to contain %q", ansi.Strip(got), tc.want)
+			}
+			for _, r := range ansi.Strip(got) {
+				if r > 126 {
+					t.Fatalf("signingPolicyBadge() contains non-ASCII rune %q (%U), want text only, no icon or glyph\n%s", r, r, ansi.Strip(got))
+				}
+			}
+		})
+	}
+}
+
+// TestFeaturePageHeadingComposesSigningBadgeAtZeroRowCostForSigningOnly is
+// the Phase 9 task 9.7 RED test (design.md Decision 11 piece 1's exact
+// heading-composition snippet): the badge is composed onto the existing
+// "Feature Page" heading line only when the selected feature is signing,
+// and adds zero rows versus the heading without it.
+func TestFeaturePageHeadingComposesSigningBadgeAtZeroRowCostForSigningOnly(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+	session := AdminSession{Username: "operator"}
+	layout := contentBudget(150, 24, "", "")
+	now := time.Date(2026, time.August, 13, 12, 0, 0, 0, time.UTC)
+
+	// gitleaks is the fair "no badge" baseline: unlike trivy, it does not
+	// trigger renderTrivyTabs' own extra 2-row block, so the only variable
+	// between it and the signing case below is the badge itself.
+	baseline := renderAdminFeaturesScreen(theme, session, AdminViewState{
+		FeaturePage: ports.FeaturePage{Summary: ports.FeatureSummary{Name: gitleaksFeatureName}},
+	}, layout, now)
+
+	signingView := AdminViewState{
+		FeaturePage:   ports.FeaturePage{Summary: ports.FeatureSummary{Name: signingFeatureName}},
+		SigningPolicy: ports.SigningPolicySettings{Enabled: true, TrustedPublicKeys: []string{"key-one"}},
+	}
+	withBadge := renderAdminFeaturesScreen(theme, session, signingView, layout, now)
+
+	if !strings.Contains(ansi.Strip(withBadge), "Signing: REQUIRED (1 keys)") {
+		t.Fatalf("renderAdminFeaturesScreen() = %q, want the signing badge composed onto the heading", ansi.Strip(withBadge))
+	}
+	if lipgloss.Height(withBadge) != lipgloss.Height(baseline) {
+		t.Fatalf("renderAdminFeaturesScreen() height = %d, want %d (badge composed at zero row cost)\n%s", lipgloss.Height(withBadge), lipgloss.Height(baseline), withBadge)
+	}
+
+	nonSigningView := AdminViewState{
+		FeaturePage:   ports.FeaturePage{Summary: ports.FeatureSummary{Name: gitleaksFeatureName}},
+		SigningPolicy: ports.SigningPolicySettings{Enabled: true, TrustedPublicKeys: []string{"key-one"}},
+	}
+	nonSigning := renderAdminFeaturesScreen(theme, session, nonSigningView, layout, now)
+	if strings.Contains(nonSigning, "Signing:") {
+		t.Fatalf("renderAdminFeaturesScreen() = %q, want no signing badge for a non-signing feature", nonSigning)
 	}
 }
 

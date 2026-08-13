@@ -165,6 +165,57 @@ func TestNextRepositoryOverrideFieldSkipsPathSecondaryForGitleaks(t *testing.T) 
 			t.Fatalf("nextRepositoryOverrideField(PathPrimary, gitleaks) = %v, want Clear (PathSecondary skipped)", got)
 		}
 	})
+
+	// Phase 9 task 9.15 RED: signing likewise has no second path field, so
+	// nextRepositoryOverrideField's condition generalizes from
+	// "feature == gitleaksFeatureName" to "feature != trivyFeatureName"
+	// (design.md Decision 11 piece 3) -- signing must skip PathSecondary too.
+	t.Run("signing skips PathSecondary", func(t *testing.T) {
+		t.Parallel()
+
+		got := nextRepositoryOverrideField(repositoryOverrideFieldPathPrimary, signingFeatureName)
+		if got != repositoryOverrideFieldClear {
+			t.Fatalf("nextRepositoryOverrideField(PathPrimary, signing) = %v, want Clear (PathSecondary skipped)", got)
+		}
+	})
+}
+
+// TestSigningPolicyModalActiveReflectsOpenField is the Phase 9 task 9.1 RED
+// test: signingPolicyModal follows the same Active()-gated pattern as
+// scanPolicyModal/repositoryOverrideModal (design.md Decision 11 piece 1 —
+// a sibling struct, not an extension of scanPolicyModal).
+func TestSigningPolicyModalActiveReflectsOpenField(t *testing.T) {
+	t.Parallel()
+
+	closed := signingPolicyModal{}
+	if closed.Active() {
+		t.Fatal("signingPolicyModal{}.Active() = true, want false when Open is unset")
+	}
+
+	open := signingPolicyModal{Open: true}
+	if !open.Active() {
+		t.Fatal("signingPolicyModal{Open: true}.Active() = false, want true")
+	}
+}
+
+// TestNextSigningPolicyFieldCyclesThroughAllThreeFields is the Phase 9 task
+// 9.1 RED test: nextSigningPolicyField wraps
+// Enabled -> AddKey -> ClearKeys -> Enabled (design.md Decision 11 piece 1).
+func TestNextSigningPolicyFieldCyclesThroughAllThreeFields(t *testing.T) {
+	t.Parallel()
+
+	got := signingPolicyFieldEnabled
+	want := []signingPolicyField{
+		signingPolicyFieldAddKey,
+		signingPolicyFieldClearKeys,
+		signingPolicyFieldEnabled,
+	}
+	for i, expect := range want {
+		got = nextSigningPolicyField(got)
+		if got != expect {
+			t.Fatalf("step %d: nextSigningPolicyField() = %v, want %v", i, got, expect)
+		}
+	}
 }
 
 func TestIsAdminSessionExpired(t *testing.T) {

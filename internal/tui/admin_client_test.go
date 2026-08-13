@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 
@@ -325,7 +326,7 @@ func TestHTTPAdminClientRepositoryOverrideRoutes(t *testing.T) {
 		if exists {
 			t.Fatal("exists = true, want false for a 404 response")
 		}
-		if details != (ports.RepositoryOverrideDetails{}) {
+		if !reflect.DeepEqual(details, ports.RepositoryOverrideDetails{}) {
 			t.Fatalf("details = %#v, want zero value on 404", details)
 		}
 	})

@@ -49,6 +49,8 @@ func renderAdminWorkspace(current screen, session AdminSession, view AdminViewSt
 		modalView = renderGitleaksConfigModal(theme, view.GitleaksConfigModal)
 	case view.ScanPolicyModal.Active():
 		modalView = renderScanPolicyModal(theme, view.ScanPolicyModal)
+	case view.SigningPolicyModal.Active():
+		modalView = renderSigningPolicyModal(theme, view.SigningPolicyModal)
 	case view.RepositoryOverrideModal.Active():
 		modalView = renderRepositoryOverrideModal(theme, view.RepositoryOverrideModal)
 	}
@@ -176,7 +178,15 @@ func renderAdminFeaturesScreen(theme adminTheme, session AdminSession, view Admi
 		lines = append(lines, view.Tables.Features.View())
 	}
 
-	lines = append(lines, "", theme.subheading.Render("Feature Page"))
+	// The signing badge is composed onto this existing heading line at zero
+	// row cost -- there is no tab strip on the signing page the way
+	// renderTrivyTabs hosts the scan policy badge, so the heading itself is
+	// the zero-row host (design.md Decision 11 piece 1).
+	featurePageHeading := theme.subheading.Render("Feature Page")
+	if view.FeaturePage.Summary.Name == signingFeatureName {
+		featurePageHeading += "  " + signingPolicyBadge(theme, view.SigningPolicy)
+	}
+	lines = append(lines, "", featurePageHeading)
 	if strings.TrimSpace(view.FeaturePage.Summary.Name) == "" {
 		lines = append(lines, theme.muted.Render("Select or refresh a feature to load the backend-declared page."))
 	} else {
@@ -650,6 +660,92 @@ func renderScanPolicyModal(theme adminTheme, modal scanPolicyModal) string {
 	return theme.section.Render(strings.Join(lines, "\n"))
 }
 
+// signingPolicyBadge renders the image-signing content-trust gate's
+// persistent, text-only policy status badge, mirroring scanPolicyBadge's
+// exact shape (design.md Decision 11 piece 1) -- text, not an icon or
+// glyph.
+func signingPolicyBadge(theme adminTheme, policy ports.SigningPolicySettings) string {
+	if !policy.Enabled {
+		return theme.muted.Render("Signing: OFF")
+	}
+	return theme.selected.Render(fmt.Sprintf("Signing: REQUIRED (%d keys)", len(policy.TrustedPublicKeys)))
+}
+
+// renderSigningPolicyModal renders the image-signing content-trust gate's
+// own modal (design.md Decision 11 piece 1), a sibling of
+// renderScanPolicyModal -- NOT an extension of it. Row arithmetic: heading
+// (1) + status (1) + 2 fields x 2 rows (4) + key list (1 for empty, else
+// min(N,4)+[1 if N>4]) + clear row (1) + blank/help (2, +2 more with an
+// error) + 4 rows theme.section chrome.
+func renderSigningPolicyModal(theme adminTheme, modal signingPolicyModal) string {
+	lines := []string{
+		theme.subheading.Render("Signing Policy"),
+		theme.muted.Render(signingPolicyStatusLine(modal)),
+		renderToggleField(theme, "Enabled", modal.Enabled, modal.Focus == signingPolicyFieldEnabled),
+		renderTextField(theme, "Trusted Key (PEM)", modal.AddKey, modal.Focus == signingPolicyFieldAddKey),
+	}
+	lines = append(lines, renderSigningPolicyKeyList(theme, modal.Fingerprints)...)
+	lines = append(lines, renderSigningPolicyClearKeysRow(theme, modal))
+	if strings.TrimSpace(modal.Error) != "" {
+		lines = append(lines, "", theme.error.Render(modal.Error))
+	}
+	lines = append(lines, "", theme.muted.Render("Enter: save/add key | Tab: next field | Space: toggle | Esc: cancel"))
+	return theme.section.Render(strings.Join(lines, "\n"))
+}
+
+// signingPolicyStatusLine answers "is this modal loading, and how many
+// trusted keys are currently configured", occupying the modal's own fixed
+// Status row regardless of key count (design.md Decision 11's row-budget
+// table lists Status as a constant 1-row cost, distinct from the scaling
+// key list below it).
+func signingPolicyStatusLine(modal signingPolicyModal) string {
+	if modal.Loading {
+		return "Loading…"
+	}
+	return fmt.Sprintf("%d trusted key(s) configured", len(modal.Fingerprints))
+}
+
+// renderSigningPolicyKeyList renders at most 4 fingerprint rows plus one
+// "+N more" row when there are more than 4, or a single empty-state row when
+// there are none (design.md Decision 11's row-budget table: Key list = 1 /
+// N / min(N,4)+1). Stored keys are shown only as truncated SHA-256/12
+// fingerprints, never as raw PEM (renderSigningPolicyModal's own doc
+// comment / spec's redaction requirement).
+func renderSigningPolicyKeyList(theme adminTheme, fingerprints []string) []string {
+	if len(fingerprints) == 0 {
+		return []string{theme.muted.Render("No trusted keys configured.")}
+	}
+	shown := fingerprints
+	more := 0
+	if len(shown) > 4 {
+		more = len(shown) - 4
+		shown = shown[:4]
+	}
+	lines := make([]string, 0, len(shown)+1)
+	for _, fingerprint := range shown {
+		lines = append(lines, theme.text.Render(fmt.Sprintf("Key: %s", fingerprint)))
+	}
+	if more > 0 {
+		lines = append(lines, theme.muted.Render(fmt.Sprintf("+%d more", more)))
+	}
+	return lines
+}
+
+// renderSigningPolicyClearKeysRow renders the modal's ClearKeys action as a
+// single-row line, mirroring renderRepositoryOverrideClearRow's action-row
+// pattern (an action, not an input, so it costs 1 row rather than 2).
+func renderSigningPolicyClearKeysRow(theme adminTheme, modal signingPolicyModal) string {
+	label := "Clear all trusted keys"
+	if len(modal.Fingerprints) == 0 {
+		label = "No trusted keys to clear"
+	}
+	style := theme.muted
+	if modal.Focus == signingPolicyFieldClearKeys {
+		style = theme.inputFocus
+	}
+	return style.Render(label)
+}
+
 // scanPolicyThresholdLabel renders the severity threshold as the operator-
 // facing text the badge and modal both use (design.md Decision 6): CRITICAL
 // / CRITICAL+HIGH. An unrecognized value renders as-is rather than
@@ -680,9 +776,12 @@ func renderRepositoryOverrideModal(theme adminTheme, modal repositoryOverrideMod
 		renderTextField(theme, "Feature", modal.Feature, modal.Focus == repositoryOverrideFieldFeature),
 		renderToggleField(theme, "Enabled", modal.Enabled, modal.Focus == repositoryOverrideFieldEnabled),
 	}
-	if modal.Feature == gitleaksFeatureName {
+	switch modal.Feature {
+	case gitleaksFeatureName:
 		lines = append(lines, renderTextField(theme, "Config Path", modal.PathPrimary, modal.Focus == repositoryOverrideFieldPathPrimary))
-	} else {
+	case signingFeatureName:
+		lines = append(lines, renderTextField(theme, "Trusted Key (PEM)", modal.PathPrimary, modal.Focus == repositoryOverrideFieldPathPrimary))
+	default:
 		lines = append(lines, renderTextField(theme, "Ignore File Path", modal.PathPrimary, modal.Focus == repositoryOverrideFieldPathPrimary))
 		lines = append(lines, renderTextField(theme, "Ignore Policy Path", modal.PathSecondary, modal.Focus == repositoryOverrideFieldPathSecondary))
 	}
@@ -742,6 +841,9 @@ func adminFeatureHelp(view AdminViewState) string {
 	}
 	if view.FeaturePage.Summary.Name == gitleaksFeatureName {
 		parts = append(parts, "s: configure")
+	}
+	if view.FeaturePage.Summary.Name == signingFeatureName {
+		parts = append(parts, "p: policy")
 	}
 	parts = append(parts, strings.Split(featureActionHelp(view.FeaturePage), " | ")[1:]...)
 	return strings.Join(parts, " | ")
