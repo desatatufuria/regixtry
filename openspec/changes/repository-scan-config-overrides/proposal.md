@@ -151,17 +151,23 @@ full-row-replace granularity; (3) Trivy fields `Enabled`/`IgnoreFilePath`/
 `Enabled`/`ConfigPath`, no schedule, no timeout/concurrency; (5) TUI entry via a
 new key on a Repository Alerts row; (6) DELETE clears the override.
 
-### Open product questions for user review
+### Open product questions — resolved
 
-1. **Path semantics and failure mode**: are these paths server-local files
-      readable by the scanner runtime, and when a path is missing/unreadable at
-      scan time does the run FAIL or run without the flag plus a recorded warning?
-      *Assumption if unanswered*: server-local path, validated non-empty on write,
-      scan FAILS loudly rather than silently scanning with weaker rules.
-2. **Authorization**: same admin authz as existing feature config, or narrower?
-      *Assumption*: identical to existing admin feature-config authz.
-3. **Repository lifecycle**: are override rows cleaned up when a repository is
-      deleted/renamed? *Assumption*: rows are inert orphans; no cascade in this slice.
-4. **`Enabled=false` semantics**: does it suppress scheduled scans only, or
-      push-triggered scans too, and how does Repository Alerts show it?
-      *Assumption*: suppresses both; row renders as "scanning disabled", not empty.
+1. **Path semantics and failure mode**: `IgnoreFilePath`/`IgnorePolicyPath`/
+      `ConfigPath` are server-local files, read directly off the regixtry host's
+      own filesystem by the scanner runner — same precedent as `ScanSettings`'s
+      existing `TLSCACertPath` (a local path the process reads itself, nothing to
+      do with content inside a scanned image). If the path is missing or
+      unreadable at scan time, **the run FAILS** with the error surfaced on the
+      `ScanRun` (`Status: Failed`, `Error` populated) rather than silently
+      scanning with weaker rules than the operator believes is configured.
+2. **Authorization**: identical to the existing admin authz that already
+      protects `/admin/v1/scan-settings` — no new permission surface.
+3. **Repository lifecycle**: override rows are NOT cleaned up when a repository
+      is deleted/renamed in this slice. Resolution is a lookup by exact repository
+      name, so an orphaned row after deletion has no effect — it is inert, not
+      dangerous — and is left as later housekeeping, not blocking.
+4. **`Enabled=false` semantics**: suppresses that repository's scans entirely —
+      both the scheduled sweep AND push-triggered scanning. Repository Alerts
+      renders that repository's row as "scanning disabled", not as an empty/missing
+      row, so an operator can tell "disabled on purpose" apart from "never scanned".
