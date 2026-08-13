@@ -2,8 +2,11 @@ package regixtry
 
 import (
 	"context"
+	"strings"
 	"testing"
+	"time"
 
+	domain "regixtry/internal/domain/regixtry"
 	"regixtry/internal/ports"
 )
 
@@ -144,6 +147,169 @@ func TestApplyRepositoryOverrideResolvesRowPresenceBoundary(t *testing.T) {
 		}
 		if got != base {
 			t.Fatalf("applyRepositoryOverride() = %#v, want unchanged %#v", got, base)
+		}
+	})
+}
+
+// seedTrivyOverride stores a trivy repository override row directly, the
+// same shape SetRepositoryOverride will use once Phase 7 wires the HTTP
+// resource — Phase 4/5 wiring is exercised without going through HTTP.
+func seedTrivyOverride(t *testing.T, service *Service, repository string, override ports.TrivyOverride) {
+	t.Helper()
+	payload := marshalOverride(t, override)
+	if err := service.metadata.UpsertRepositoryFeatureOverride(context.Background(), "tenant-a", repository, trivyFeatureName, payload); err != nil {
+		t.Fatalf("UpsertRepositoryFeatureOverride(trivy) error = %v", err)
+	}
+}
+
+// TestQueueScheduledScanSkipsRepositoryWithDisablingOverride is the Phase 4
+// RED test (tasks.md 4.1): a Trivy override with Enabled: false for one
+// repository must suppress the scheduled sweep's queueing for it, even
+// though the global row's Enabled is true.
+func TestQueueScheduledScanSkipsRepositoryWithDisablingOverride(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	seedRepository(t, service, context.Background(), "library/alpine")
+	seedManagedRuntimeState(t, service, "0.57.1")
+	seedTrivyOverride(t, service, "library/alpine", ports.TrivyOverride{Enabled: false})
+
+	globalSettings := ports.ScanSettings{Enabled: true, RegistryReachableURL: "https://registry.internal", MaxConcurrency: 1}
+	run, err := service.queueScheduledScan(context.Background(), "library/alpine", "latest", globalSettings)
+	if err != nil {
+		t.Fatalf("queueScheduledScan() error = %v", err)
+	}
+	if run != (ports.ScanRun{}) {
+		t.Fatalf("queueScheduledScan() run = %#v, want zero value (repository skipped)", run)
+	}
+
+	runs, err := service.metadata.ListScanRuns(context.Background(), "tenant-a", "library/alpine", 10)
+	if err != nil {
+		t.Fatalf("ListScanRuns() error = %v", err)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("scan runs = %#v, want none queued for an overridden-disabled repository", runs)
+	}
+}
+
+// TestQueuePushScanSkipsRepositoryWithDisablingOverride is the Phase 4 RED
+// test (tasks.md 4.2), mirroring 4.1 for the push path.
+func TestQueuePushScanSkipsRepositoryWithDisablingOverride(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	if _, err := service.EnsureScanSettings(context.Background(), ports.ScanSettings{Enabled: true, Timeout: time.Minute, Interval: time.Hour, RegistryReachableURL: "https://registry.internal", MaxConcurrency: 1}); err != nil {
+		t.Fatalf("EnsureScanSettings() error = %v", err)
+	}
+	seedManagedRuntimeState(t, service, "0.57.1")
+	seedTrivyOverride(t, service, "library/alpine", ports.TrivyOverride{Enabled: false})
+
+	digest := "sha256:" + strings.Repeat("d", 64)
+	service.queuePushScan(context.Background(), "tenant-a", "library/alpine", "latest", digest)
+
+	if _, err := service.metadata.GetActiveScanRunByDigest(context.Background(), "tenant-a", "library/alpine", digest); !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("GetActiveScanRunByDigest() error = %v, want ErrorCodeNotFound (no run queued for overridden-disabled repository)", err)
+	}
+}
+
+// TestQueueManualScanRejectsRepositoryWithDisablingOverride is the Phase 4
+// RED test (tasks.md 4.3): a manual scan against a repository with a
+// disabling Trivy override must return the same validation error shape as
+// the existing global-disabled branch.
+func TestQueueManualScanRejectsRepositoryWithDisablingOverride(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	seedRepository(t, service, context.Background(), "library/alpine")
+	if _, err := service.EnsureScanSettings(context.Background(), ports.ScanSettings{Enabled: true, Timeout: time.Minute, Interval: time.Hour, RegistryReachableURL: "https://registry.internal", MaxConcurrency: 1}); err != nil {
+		t.Fatalf("EnsureScanSettings() error = %v", err)
+	}
+	seedManagedRuntimeState(t, service, "0.57.1")
+	seedTrivyOverride(t, service, "library/alpine", ports.TrivyOverride{Enabled: false})
+
+	if _, err := service.QueueManualScan(context.Background(), "library/alpine", "latest"); err == nil {
+		t.Fatal("QueueManualScan() error = nil, want a validation error for a repository-disabled override")
+	} else if !domain.IsCode(err, domain.ErrorCodeValidation) {
+		t.Fatalf("QueueManualScan() error = %v, want ErrorCodeValidation", err)
+	}
+}
+
+// TestRepositoryOverrideReEnablesScanningWhenGlobalRowDisabled is the Phase 4
+// RED test (tasks.md 4.4): an Enabled: true override re-enables scanning for
+// one repository even when the global row's Enabled is false, across all
+// three Trivy trigger paths (proposal's resolved question 4).
+func TestRepositoryOverrideReEnablesScanningWhenGlobalRowDisabled(t *testing.T) {
+	t.Parallel()
+
+	t.Run("scheduled trigger", func(t *testing.T) {
+		t.Parallel()
+
+		service, cleanup := newTestService(t, allowAllAccessController{})
+		defer cleanup()
+
+		seedRepository(t, service, context.Background(), "library/alpine")
+		seedManagedRuntimeState(t, service, "0.57.1")
+		seedTrivyOverride(t, service, "library/alpine", ports.TrivyOverride{Enabled: true})
+
+		globalDisabled := ports.ScanSettings{Enabled: false, RegistryReachableURL: "https://registry.internal", MaxConcurrency: 1}
+		run, err := service.queueScheduledScan(context.Background(), "library/alpine", "latest", globalDisabled)
+		if err != nil {
+			t.Fatalf("queueScheduledScan() error = %v", err)
+		}
+		if run.ID == "" {
+			t.Fatalf("queueScheduledScan() run = %#v, want a queued run (override re-enables)", run)
+		}
+	})
+
+	t.Run("push trigger", func(t *testing.T) {
+		t.Parallel()
+
+		service, cleanup := newTestService(t, allowAllAccessController{})
+		defer cleanup()
+
+		if _, err := service.EnsureScanSettings(context.Background(), ports.ScanSettings{Enabled: false, Timeout: time.Minute, Interval: time.Hour, RegistryReachableURL: "https://registry.internal", MaxConcurrency: 1}); err != nil {
+			t.Fatalf("EnsureScanSettings() error = %v", err)
+		}
+		seedManagedRuntimeState(t, service, "0.57.1")
+		seedTrivyOverride(t, service, "library/alpine", ports.TrivyOverride{Enabled: true})
+
+		digest := "sha256:" + strings.Repeat("e", 64)
+		service.queuePushScan(context.Background(), "tenant-a", "library/alpine", "latest", digest)
+
+		run, err := service.metadata.GetActiveScanRunByDigest(context.Background(), "tenant-a", "library/alpine", digest)
+		if err != nil {
+			t.Fatalf("GetActiveScanRunByDigest() error = %v, want a queued run (override re-enables push scanning)", err)
+		}
+		if run.Trigger != ports.ScanTriggerPush {
+			t.Fatalf("run.Trigger = %q, want push", run.Trigger)
+		}
+	})
+
+	t.Run("manual trigger", func(t *testing.T) {
+		t.Parallel()
+
+		service, cleanup := newTestService(t, allowAllAccessController{})
+		defer cleanup()
+
+		seedRepository(t, service, context.Background(), "library/alpine")
+		if _, err := service.EnsureScanSettings(context.Background(), ports.ScanSettings{Enabled: false, Timeout: time.Minute, Interval: time.Hour, RegistryReachableURL: "https://registry.internal", MaxConcurrency: 1}); err != nil {
+			t.Fatalf("EnsureScanSettings() error = %v", err)
+		}
+		seedManagedRuntimeState(t, service, "0.57.1")
+		seedTrivyOverride(t, service, "library/alpine", ports.TrivyOverride{Enabled: true})
+
+		run, err := service.QueueManualScan(context.Background(), "library/alpine", "latest")
+		if err != nil {
+			t.Fatalf("QueueManualScan() error = %v, want success (override re-enables manual scanning)", err)
+		}
+		if run.ID == "" {
+			t.Fatalf("QueueManualScan() run = %#v, want a queued run", run)
 		}
 	})
 }

@@ -117,24 +117,24 @@ dependency-ordered slices — recommend chaining rather than a single PR.
 
 ## Phase 4: Wire Resolution Into Trivy Queueing (Decision 4 call-site table) — depends on Phase 3
 
-- [ ] 4.1 RED `service_scanning_test.go`: `queueScheduledScan` with a Trivy
+- [x] 4.1 RED `service_scanning_test.go`: `queueScheduledScan` with a Trivy
       override `Enabled: false` for one repository does not queue a run for it
       even though the global row's `Enabled` is `true`.
-- [ ] 4.2 RED: `queuePushScan` with the same override does not queue on push
+- [x] 4.2 RED: `queuePushScan` with the same override does not queue on push
       (mirrors 4.1 for the push path).
-- [ ] 4.3 RED: `QueueManualScan` with the same override returns
+- [x] 4.3 RED: `QueueManualScan` with the same override returns
       `domain.NewValidationError`, matching the existing global-disabled
       branch's error shape.
-- [ ] 4.4 RED: override `Enabled: true` re-enables scanning when the global
+- [x] 4.4 RED: override `Enabled: true` re-enables scanning when the global
       row's `Enabled` is `false`, for scheduled, push, and manual triggers (3
       cases, table-driven — proposal's resolved question 4).
-- [ ] 4.5 GREEN: call `applyRepositoryOverride` for `trivyFeatureName` at all
+- [x] 4.5 GREEN: call `applyRepositoryOverride` for `trivyFeatureName` at all
       three call sites per design Decision 4's table (`queueScheduledScan`,
       `queuePushScan`, `QueueManualScan`), immediately after each site's
       existing global-settings resolution.
-- [ ] 4.6 Confirm 4.1–4.4 GREEN: `go test ./internal/app/regixtry/... -run
+- [x] 4.6 Confirm 4.1–4.4 GREEN: `go test ./internal/app/regixtry/... -run
       'QueueScheduledScan|QueuePushScan|QueueManualScan'`.
-- [ ] **4.7 [SPEC CORRECTION]** Edit
+- [x] **4.7 [SPEC CORRECTION]** Edit
       `openspec/changes/repository-scan-config-overrides/specs/image-secret-scans/spec.md`:
       (a) rewrite the Baseline Note to state that `executeScanRun`
       (`internal/app/regixtry/service_scanning.go:295,305`) unconditionally

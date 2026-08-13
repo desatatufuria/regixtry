@@ -7,9 +7,19 @@ Builds on the merged `image-secret-scans` capability
 This change adds a per-repository gitleaks config-path override; it does not
 change scan scope, the redacted findings model, the informational
 (non-gating) nature of secret findings, or operator visibility, and it does
-not add a schedule/interval concept to gitleaks or a push-time trigger — the
-existing "Reused Rescan Trigger, No Push-Time Path" requirement is
-unaffected and unchanged.
+not add a schedule/interval concept to gitleaks. **Corrected**: the
+originally shipped "Reused Rescan Trigger, No Push-Time Path" requirement's
+*trigger-source* claim still holds — gitleaks has no push-specific trigger
+of its own, it only reuses the manual/scheduled rescan trigger constant —
+but that requirement's practical "push never runs gitleaks" implication no
+longer holds. `executeScanRun`
+(`internal/app/regixtry/service_scanning.go:295,305`) unconditionally
+launches `go s.executeSecretScanLeg(...)` regardless of `run.Trigger`, and
+`executeScanRun` is itself reached by `queuePushScan`
+(`internal/app/regixtry/service_scanning.go:261-270`), shipped by the
+`scan-policy-gate` change after the original gitleaks spec was written.
+Gitleaks therefore already executes on push today, using the same
+trigger-agnostic secret-scan leg as manual and scheduled rescans.
 
 ## ADDED Requirements
 
@@ -78,3 +88,11 @@ introducing any new gitleaks trigger path.
 - WHEN a manual or scheduled rescan is triggered for that repository
 - THEN the system MUST execute a gitleaks secret scan for that repository as
   part of that rescan
+
+#### Scenario: Overridden repository does not scan on push
+
+- GIVEN a repository has a gitleaks override with `Enabled = false`, and the
+  gitleaks global settings have `Enabled = true`
+- WHEN an image is pushed to that repository
+- THEN the system MUST NOT execute a gitleaks secret scan for that
+  repository as a consequence of that push

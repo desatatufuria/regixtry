@@ -114,6 +114,10 @@ func (s *Service) QueueManualScan(ctx context.Context, repositoryName string, re
 	if err != nil {
 		return ports.ScanRun{}, err
 	}
+	settings, err = s.applyRepositoryOverride(ctx, s.tenant(ctx), repositoryName, trivyFeatureName, settings)
+	if err != nil {
+		return ports.ScanRun{}, err
+	}
 	if !settings.Enabled {
 		return ports.ScanRun{}, domain.NewValidationError("scan settings must be enabled")
 	}
@@ -225,6 +229,16 @@ func (s *Service) RunScheduledScans(ctx context.Context) error {
 }
 
 func (s *Service) queueScheduledScan(ctx context.Context, repositoryName string, reference string, settings ports.ScanSettings) (ports.ScanRun, error) {
+	settings, err := s.applyRepositoryOverride(ctx, s.tenant(ctx), repositoryName, trivyFeatureName, settings)
+	if err != nil {
+		return ports.ScanRun{}, err
+	}
+	if !settings.Enabled {
+		// The sweep skips this repository (design.md Decision 4): a
+		// disabling override is not an error, it is the same "nothing to
+		// queue" outcome the caller already treats as a normal skip.
+		return ports.ScanRun{}, nil
+	}
 	if _, err := s.scanTarget(settings, repositoryName, "sha256:placeholder"); err != nil {
 		return ports.ScanRun{}, err
 	}
@@ -260,6 +274,15 @@ func (s *Service) queueScheduledScan(ctx context.Context, repositoryName string,
 // never fail or block because of scanning.
 func (s *Service) queuePushScan(ctx context.Context, tenant string, repository string, reference string, digest string) {
 	settings, err := s.resolveManagedScanSettingsForTenant(ctx, tenant)
+	if err != nil {
+		return
+	}
+	// The repository override is applied before the Enabled check (rather
+	// than after an early return on the global row's Enabled) so an
+	// Enabled: true override can re-enable push scanning for one repository
+	// even while the global row is disabled (design.md Decision 4, proposal
+	// resolved question 4). Every failure path still returns silently.
+	settings, err = s.applyRepositoryOverride(ctx, tenant, repository, trivyFeatureName, settings)
 	if err != nil || !settings.Enabled {
 		return
 	}
