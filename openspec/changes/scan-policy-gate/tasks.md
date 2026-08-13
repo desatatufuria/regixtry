@@ -264,6 +264,18 @@ Decision needed before apply: Yes prompts a running-total check after Phase 6.
       focus positions; delete before finishing.
 - [x] 8.7 Confirm 8.1–8.3 GREEN: `go test ./internal/tui/... -run
       ScanPolicyModal`.
+- [x] 8.8 Remediation (post sdd-verify FAIL): RED/GREEN
+      `internal/tui/model_test.go`
+      `TestModelScanPolicyModalOpenToggleSubmitPersistsAndReflectsCurrentSettings`
+      — a `Model.Update()`-level integration test (mirrors
+      `TestModelTrivyConfigModalOpenCancelAndSubmitCurrentSettingsOnly`)
+      that opens the policy modal via `p`, toggles `Enabled`, cycles
+      `SeverityThreshold` via Tab+Space, submits via Enter, and asserts on
+      `fakeAdminClient.updateScanPolicyCalls`/`lastScanPolicyInput` plus
+      `AdminViewState.ScanPolicy`/`View()` post-submit state. Closes the two
+      UNTESTED scenarios ("Operator toggles policy enabled state",
+      "Operator changes the severity threshold") flagged by the
+      `sdd-verify` CRITICAL finding. Test-only; no production code changed.
 
 ## Phase 9: TUI Policy Badge (Decision 6b) — depends on Phase 8
 

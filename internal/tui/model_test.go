@@ -987,6 +987,62 @@ func TestModelTrivyConfigModalOpenCancelAndSubmitCurrentSettingsOnly(t *testing.
 	}
 }
 
+func TestModelScanPolicyModalOpenToggleSubmitPersistsAndReflectsCurrentSettings(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 8, 14, 0, 0, 0, time.UTC)
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+		features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
+		featurePage: ports.FeaturePage{
+			Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
+			Header:  []ports.FeatureField{{Label: "Enabled", Value: "true"}},
+		},
+		scanPolicy: ports.ScanPolicySettings{Enabled: true, SeverityThreshold: ports.ScanPolicyThresholdCritical},
+	}
+	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
+	updated = runKey(t, updated, "f")
+
+	if got, want := adminClient.getScanPolicyCalls, 1; got != want {
+		t.Fatalf("getScanPolicyCalls = %d, want %d", got, want)
+	}
+	if got, want := updated.adminView.ScanPolicy, (ports.ScanPolicySettings{Enabled: true, SeverityThreshold: ports.ScanPolicyThresholdCritical}); got != want {
+		t.Fatalf("adminView.ScanPolicy = %#v, want %#v", got, want)
+	}
+
+	updated = runKey(t, updated, "p")
+	modalView := updated.View()
+	for _, want := range []string{"Enabled", "Severity Threshold", "CRITICAL"} {
+		if !strings.Contains(modalView, want) {
+			t.Fatalf("view = %q, want %q", modalView, want)
+		}
+	}
+
+	// Toggle Enabled off, then Tab to Threshold and cycle it to
+	// CRITICAL+HIGH before submitting.
+	updated = runKey(t, updated, " ")
+	updated = runKey(t, updated, "tab")
+	updated = runKey(t, updated, " ")
+
+	submitted := runKey(t, updated, "enter")
+
+	if got, want := adminClient.updateScanPolicyCalls, 1; got != want {
+		t.Fatalf("updateScanPolicyCalls = %d, want %d", got, want)
+	}
+	if got, want := adminClient.lastScanPolicyInput, (ports.ScanPolicySettings{Enabled: false, SeverityThreshold: ports.ScanPolicyThresholdCriticalHigh}); got != want {
+		t.Fatalf("lastScanPolicyInput = %#v, want %#v", got, want)
+	}
+	if got, want := submitted.adminView.ScanPolicy, (ports.ScanPolicySettings{Enabled: false, SeverityThreshold: ports.ScanPolicyThresholdCriticalHigh}); got != want {
+		t.Fatalf("adminView.ScanPolicy = %#v, want %#v", got, want)
+	}
+	if submitted.adminView.ScanPolicyModal.Active() {
+		t.Fatalf("ScanPolicyModal = %#v, want closed after submit", submitted.adminView.ScanPolicyModal)
+	}
+	if !strings.Contains(submitted.View(), "Vulnerability policy saved") {
+		t.Fatalf("view = %q, want policy feedback after submit", submitted.View())
+	}
+}
+
 func TestModelTrivyRepositoryAlertsLoadSelectDetailAndRecoverEmptyState(t *testing.T) {
 	t.Parallel()
 
