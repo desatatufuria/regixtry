@@ -252,6 +252,290 @@ func TestAdminSecretScanFindingsResponseStructurallyCannotCarrySecretOrFingerpri
 	assertNoBannedSecretKeys(t, decoded)
 }
 
+// TestAdminRepositoryOverrideGetReturnsNotFoundWhenNoOverrideExists is the
+// Phase 7 RED test (tasks.md 7.1): the row-presence boundary is made
+// explicit on the wire — GET on a repository/feature pair with no stored
+// override row returns 404, mirroring GetScanSettings' NotFound precedent
+// (design.md Decision 7). Rejected alternative: 200 {"override": false}.
+func TestAdminRepositoryOverrideGetReturnsNotFoundWhenNoOverrideExists(t *testing.T) {
+	t.Parallel()
+
+	blobStore, store, cleanup := newTestStores(t)
+	defer cleanup()
+	handler := newRouterWithStores(blobStore, store, allowAllAccessController{}, fakeAuthService{verify: &auth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/features/trivy/repository-overrides/library/alpine", nil)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d for a repository/feature pair with no override row", recorder.Code, http.StatusNotFound)
+	}
+}
+
+// TestAdminRepositoryOverrideGetReturnsCurrentOverride is the Phase 7 RED
+// test (tasks.md 7.2): GET returns 200 with the override's current field
+// values plus updated_at when a row exists.
+func TestAdminRepositoryOverrideGetReturnsCurrentOverride(t *testing.T) {
+	t.Parallel()
+
+	blobStore, store, cleanup := newTestStores(t)
+	defer cleanup()
+	handler := newRouterWithStores(blobStore, store, allowAllAccessController{}, fakeAuthService{verify: &auth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+
+	if err := store.UpsertRepositoryFeatureOverride(context.Background(), "tenant-a", "library/alpine", "trivy", []byte(`{"enabled":true,"ignore_file_path":"/etc/regixtry/ignore/alpine.trivyignore"}`)); err != nil {
+		t.Fatalf("UpsertRepositoryFeatureOverride() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/features/trivy/repository-overrides/library/alpine", nil)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	body := recorder.Body.String()
+	for _, want := range []string{`"enabled":true`, `"ignore_file_path":"/etc/regixtry/ignore/alpine.trivyignore"`, `"updated_at"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("body = %q, want %q", body, want)
+		}
+	}
+}
+
+// TestAdminRepositoryOverridePutPersistsAndRoundTrips is the Phase 7 RED
+// test (tasks.md 7.3): PUT replaces the override in full and the stored row
+// round-trips through the codec-normalized shape.
+func TestAdminRepositoryOverridePutPersistsAndRoundTrips(t *testing.T) {
+	t.Parallel()
+
+	blobStore, store, cleanup := newTestStores(t)
+	defer cleanup()
+	handler := newRouterWithStores(blobStore, store, allowAllAccessController{}, fakeAuthService{verify: &auth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+
+	req := httptest.NewRequest(http.MethodPut, "/admin/v1/features/trivy/repository-overrides/library/alpine", strings.NewReader(`{"enabled":true,"ignore_file_path":"/etc/regixtry/ignore/alpine.trivyignore"}`))
+	req.Header.Set("Authorization", "Bearer admin-token")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	for _, want := range []string{`"enabled":true`, `"ignore_file_path":"/etc/regixtry/ignore/alpine.trivyignore"`} {
+		if !strings.Contains(recorder.Body.String(), want) {
+			t.Fatalf("body = %q, want %q", recorder.Body.String(), want)
+		}
+	}
+
+	stored, err := store.GetRepositoryFeatureOverride(context.Background(), "tenant-a", "library/alpine", "trivy")
+	if err != nil {
+		t.Fatalf("GetRepositoryFeatureOverride() error = %v", err)
+	}
+	if !strings.Contains(string(stored), `"enabled":true`) || !strings.Contains(string(stored), "alpine.trivyignore") {
+		t.Fatalf("stored payload = %s, want the persisted override", stored)
+	}
+}
+
+// TestAdminRepositoryOverridePutRejectsMismatchedFeatureShape is the Phase 7
+// RED test (tasks.md 7.3): a gitleaks-shaped body PUT at the trivy resource
+// is rejected via DisallowUnknownFields (codec.Normalize), and nothing is
+// persisted. This codebase's existing convention maps a validation
+// rejection to 422 (see TestAdminScanPolicyPutRejectsUnknownSeverityThreshold),
+// not a bare 400.
+func TestAdminRepositoryOverridePutRejectsMismatchedFeatureShape(t *testing.T) {
+	t.Parallel()
+
+	blobStore, store, cleanup := newTestStores(t)
+	defer cleanup()
+	handler := newRouterWithStores(blobStore, store, allowAllAccessController{}, fakeAuthService{verify: &auth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+
+	req := httptest.NewRequest(http.MethodPut, "/admin/v1/features/trivy/repository-overrides/library/alpine", strings.NewReader(`{"enabled":true,"config_path":"/etc/regixtry/gitleaks.toml"}`))
+	req.Header.Set("Authorization", "Bearer admin-token")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d for a gitleaks-shaped body at the trivy resource", recorder.Code, http.StatusUnprocessableEntity)
+	}
+	if _, err := store.GetRepositoryFeatureOverride(context.Background(), "tenant-a", "library/alpine", "trivy"); err == nil {
+		t.Fatal("GetRepositoryFeatureOverride() error = nil, want no row persisted for a rejected PUT")
+	}
+}
+
+// TestAdminRepositoryOverrideDeleteRemovesRowThenReturnsNotFound is the
+// Phase 7 RED test (tasks.md 7.4): DELETE returns 204, and a second DELETE
+// on the same resource returns 404 (DeleteUpload precedent).
+func TestAdminRepositoryOverrideDeleteRemovesRowThenReturnsNotFound(t *testing.T) {
+	t.Parallel()
+
+	blobStore, store, cleanup := newTestStores(t)
+	defer cleanup()
+	handler := newRouterWithStores(blobStore, store, allowAllAccessController{}, fakeAuthService{verify: &auth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+
+	if err := store.UpsertRepositoryFeatureOverride(context.Background(), "tenant-a", "library/alpine", "trivy", []byte(`{"enabled":false}`)); err != nil {
+		t.Fatalf("UpsertRepositoryFeatureOverride() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/admin/v1/features/trivy/repository-overrides/library/alpine", nil)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusNoContent)
+	}
+
+	secondReq := httptest.NewRequest(http.MethodDelete, "/admin/v1/features/trivy/repository-overrides/library/alpine", nil)
+	secondReq.Header.Set("Authorization", "Bearer admin-token")
+	secondRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(secondRecorder, secondReq)
+	if secondRecorder.Code != http.StatusNotFound {
+		t.Fatalf("second DELETE status = %d, want %d", secondRecorder.Code, http.StatusNotFound)
+	}
+}
+
+// TestAdminRepositoryOverrideUnknownFeatureReturnsNotFound is the Phase 7
+// RED test (tasks.md 7.5): an unknown feature name in the URL returns 404
+// via the codec-registry lookup, for GET, PUT, and DELETE alike.
+func TestAdminRepositoryOverrideUnknownFeatureReturnsNotFound(t *testing.T) {
+	t.Parallel()
+
+	blobStore, store, cleanup := newTestStores(t)
+	defer cleanup()
+	handler := newRouterWithStores(blobStore, store, allowAllAccessController{}, fakeAuthService{verify: &auth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+
+	getReq := httptest.NewRequest(http.MethodGet, "/admin/v1/features/image-signing/repository-overrides/library/alpine", nil)
+	getReq.Header.Set("Authorization", "Bearer admin-token")
+	getRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(getRecorder, getReq)
+	if getRecorder.Code != http.StatusNotFound {
+		t.Fatalf("GET status = %d, want %d for an unknown feature", getRecorder.Code, http.StatusNotFound)
+	}
+
+	putReq := httptest.NewRequest(http.MethodPut, "/admin/v1/features/image-signing/repository-overrides/library/alpine", strings.NewReader(`{"enabled":true}`))
+	putReq.Header.Set("Authorization", "Bearer admin-token")
+	putReq.Header.Set("Content-Type", "application/json")
+	putRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(putRecorder, putReq)
+	if putRecorder.Code != http.StatusNotFound {
+		t.Fatalf("PUT status = %d, want %d for an unknown feature", putRecorder.Code, http.StatusNotFound)
+	}
+}
+
+// TestAdminRepositoryOverrideRequiresAdminPrincipal is the Phase 7 RED test
+// backing "Override Authorization Matches Existing Admin Scan-Settings
+// Authorization" (repository-config-overrides/spec.md): a non-admin caller
+// is rejected without exposing override data, reusing the exact same admin
+// authz already protecting /admin/v1/scan-settings — no new permission
+// surface.
+func TestAdminRepositoryOverrideRequiresAdminPrincipal(t *testing.T) {
+	t.Parallel()
+
+	blobStore, store, cleanup := newTestStores(t)
+	defer cleanup()
+	handler := newRouterWithStores(blobStore, store, allowAllAccessController{}, fakeAuthService{verify: &auth.Principal{Subject: "atk_1", UserID: "reader-1", Username: "reader", IsAdmin: false}})
+
+	if err := store.UpsertRepositoryFeatureOverride(context.Background(), "tenant-a", "library/alpine", "trivy", []byte(`{"enabled":true,"ignore_file_path":"/etc/regixtry/ignore/alpine.trivyignore"}`)); err != nil {
+		t.Fatalf("UpsertRepositoryFeatureOverride() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/features/trivy/repository-overrides/library/alpine", nil)
+	req.Header.Set("Authorization", "Bearer reader-token")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code == http.StatusOK {
+		t.Fatalf("status = %d, want a non-admin caller to be rejected", recorder.Code)
+	}
+	if strings.Contains(recorder.Body.String(), "alpine.trivyignore") {
+		t.Fatalf("body = %q, want no override data exposed to a rejected caller", recorder.Body.String())
+	}
+}
+
+// TestAdminRepositoryOverridesCollectionListsForFeature exercises the
+// collection route (design.md Decision 7's "List (TUI annotation)" row)
+// that Phase 8's TUI wiring depends on: GET on the feature-scoped collection
+// lists every stored override row for that feature.
+func TestAdminRepositoryOverridesCollectionListsForFeature(t *testing.T) {
+	t.Parallel()
+
+	blobStore, store, cleanup := newTestStores(t)
+	defer cleanup()
+	handler := newRouterWithStores(blobStore, store, allowAllAccessController{}, fakeAuthService{verify: &auth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+
+	if err := store.UpsertRepositoryFeatureOverride(context.Background(), "tenant-a", "library/alpine", "trivy", []byte(`{"enabled":false}`)); err != nil {
+		t.Fatalf("UpsertRepositoryFeatureOverride(alpine) error = %v", err)
+	}
+	if err := store.UpsertRepositoryFeatureOverride(context.Background(), "tenant-a", "library/busybox", "trivy", []byte(`{"enabled":true}`)); err != nil {
+		t.Fatalf("UpsertRepositoryFeatureOverride(busybox) error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/features/trivy/repository-overrides", nil)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	body := recorder.Body.String()
+	for _, want := range []string{`"repository":"library/alpine"`, `"repository":"library/busybox"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("body = %q, want %q", body, want)
+		}
+	}
+}
+
+// TestAdminRepositoryOverrideRoutesRepositoryNamedConfigSegmentCorrectly is
+// the Phase 7 RED test (tasks.md 7.6, threat matrix — HTTP path dispatch):
+// design.md Decision 7's ordering hazard requires the repository-overrides
+// case to be dispatched BEFORE the existing HasSuffix(resource, "/config")
+// branch in handleAdminFeatureResource's switch. A repository literally
+// named "team/config" would otherwise be swallowed by the /config branch
+// (ConfigureFeature), and no override row would ever be persisted. This
+// test proves ordering by round-tripping through the real store row keyed
+// by the exact literal repository name "team/config", not just checking an
+// HTTP status code (which is not reliably distinguishable between the two
+// wrong-routing failure modes).
+func TestAdminRepositoryOverrideRoutesRepositoryNamedConfigSegmentCorrectly(t *testing.T) {
+	t.Parallel()
+
+	blobStore, store, cleanup := newTestStores(t)
+	defer cleanup()
+	handler := newRouterWithStores(blobStore, store, allowAllAccessController{}, fakeAuthService{verify: &auth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+
+	req := httptest.NewRequest(http.MethodPut, "/admin/v1/features/trivy/repository-overrides/team/config", strings.NewReader(`{"enabled":true,"ignore_file_path":"/etc/regixtry/ignore/team-config.trivyignore"}`))
+	req.Header.Set("Authorization", "Bearer admin-token")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("PUT status = %d, want %d, body = %s (naive ordering would route this into the /config branch instead)", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	stored, err := store.GetRepositoryFeatureOverride(context.Background(), "tenant-a", "team/config", "trivy")
+	if err != nil {
+		t.Fatalf("GetRepositoryFeatureOverride(tenant-a, %q, trivy) error = %v, want a row keyed by the exact literal repository name — a naive ordering never reaches UpsertRepositoryFeatureOverride at all", "team/config", err)
+	}
+	if !strings.Contains(string(stored), "team-config.trivyignore") {
+		t.Fatalf("stored payload = %s, want the PUT body's ignore_file_path", stored)
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/admin/v1/features/trivy/repository-overrides/team/config", nil)
+	getReq.Header.Set("Authorization", "Bearer admin-token")
+	getRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(getRecorder, getReq)
+	if getRecorder.Code != http.StatusOK {
+		t.Fatalf("GET status = %d, want %d, body = %s", getRecorder.Code, http.StatusOK, getRecorder.Body.String())
+	}
+	if !strings.Contains(getRecorder.Body.String(), "team-config.trivyignore") {
+		t.Fatalf("GET body = %q, want the stored override for repository \"team/config\"", getRecorder.Body.String())
+	}
+}
+
 func assertNoBannedSecretKeys(t *testing.T, value any) {
 	t.Helper()
 	banned := map[string]bool{"secret": true, "match": true, "fingerprint": true, "entropy": true}

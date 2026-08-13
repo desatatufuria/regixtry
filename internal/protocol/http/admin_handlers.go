@@ -71,6 +71,27 @@ func (r *Router) handleAdminFeaturesCollection(w stdhttp.ResponseWriter, req *st
 
 func (r *Router) handleAdminFeatureResource(w stdhttp.ResponseWriter, req *stdhttp.Request, resource string) {
 	switch {
+	// The repository-overrides case MUST be dispatched first, ahead of the
+	// "/actions/" and HasSuffix families below (design.md Decision 7's
+	// ordering hazard). A repository literally named "team/config" (or
+	// "team/status", "team:enable", ...) would otherwise be swallowed by
+	// one of those branches instead of reaching the override handler;
+	// TestAdminRepositoryOverrideRoutesRepositoryNamedConfigSegmentCorrectly
+	// pins this against the "/config" branch specifically.
+	case strings.HasSuffix(resource, "/repository-overrides"):
+		feature := strings.TrimSuffix(resource, "/repository-overrides")
+		if feature == "" || strings.Contains(feature, "/") {
+			writeAdminError(w, domainauth.NewNotFoundError("route", req.URL.Path), ports.Challenge{})
+			return
+		}
+		r.handleAdminRepositoryOverridesCollection(w, req, feature)
+	case strings.Contains(resource, "/repository-overrides/"):
+		feature, repository, ok := adminNestedResource(resource, "/repository-overrides/")
+		if !ok {
+			writeAdminError(w, domainauth.NewNotFoundError("route", req.URL.Path), ports.Challenge{})
+			return
+		}
+		r.handleAdminRepositoryOverrideResource(w, req, feature, repository)
 	case strings.Contains(resource, "/actions/"):
 		name, actionID, ok := adminNestedResource(resource, "/actions/")
 		if !ok || strings.Contains(actionID, "/") {
@@ -186,6 +207,114 @@ func (r *Router) handleAdminFeatureResource(w stdhttp.ResponseWriter, req *stdht
 		}
 		writeJSON(w, stdhttp.StatusOK, page)
 	}
+}
+
+// handleAdminRepositoryOverridesCollection is the "List (TUI annotation)"
+// row of design.md Decision 7's route table: every stored override row for
+// one feature, used by Phase 8's Repository Alerts row annotation.
+func (r *Router) handleAdminRepositoryOverridesCollection(w stdhttp.ResponseWriter, req *stdhttp.Request, feature string) {
+	if req.Method != stdhttp.MethodGet {
+		w.Header().Set("Allow", stdhttp.MethodGet)
+		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+		return
+	}
+	overrides, err := r.service.ListRepositoryOverrides(req.Context(), feature)
+	if err != nil {
+		writeAdminError(w, err, ports.Challenge{})
+		return
+	}
+	responses := make([]map[string]any, 0, len(overrides))
+	for _, override := range overrides {
+		response, err := repositoryOverrideResponse(override)
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		responses = append(responses, response)
+	}
+	writeJSON(w, stdhttp.StatusOK, responses)
+}
+
+// handleAdminRepositoryOverrideResource is the single-repository admin
+// resource from design.md Decision 7: GET returns the current override or a
+// 404 row-presence boundary when none exists, PUT replaces it in full
+// (codec.Normalize rejects a mismatched feature shape), and DELETE removes
+// it, reverting that repository and feature to the global settings row
+// immediately.
+func (r *Router) handleAdminRepositoryOverrideResource(w stdhttp.ResponseWriter, req *stdhttp.Request, feature string, repository string) {
+	switch req.Method {
+	case stdhttp.MethodGet:
+		override, err := r.service.GetRepositoryOverride(req.Context(), repository, feature)
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		response, err := repositoryOverrideResponse(override)
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		writeJSON(w, stdhttp.StatusOK, response)
+	case stdhttp.MethodPut:
+		raw, err := decodeAdminRawJSON(req)
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		override, err := r.service.SetRepositoryOverride(req.Context(), repository, feature, raw)
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		response, err := repositoryOverrideResponse(override)
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		writeJSON(w, stdhttp.StatusOK, response)
+	case stdhttp.MethodDelete:
+		if err := r.service.ClearRepositoryOverride(req.Context(), repository, feature); err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		w.WriteHeader(stdhttp.StatusNoContent)
+	default:
+		w.Header().Set("Allow", strings.Join([]string{stdhttp.MethodGet, stdhttp.MethodPut, stdhttp.MethodDelete}, ", "))
+		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+	}
+}
+
+// repositoryOverrideResponse projects a stored override row onto the wire:
+// the body is the typed feature object's own fields (already normalized by
+// the codec at write time) plus updated_at appended.
+func repositoryOverrideResponse(override ports.RepositoryFeatureOverride) (map[string]any, error) {
+	response := map[string]any{}
+	if len(override.Payload) > 0 {
+		if err := json.Unmarshal(override.Payload, &response); err != nil {
+			return nil, err
+		}
+	}
+	response["repository"] = override.Repository
+	response["feature"] = override.Feature
+	response["updated_at"] = override.UpdatedAt
+	return response, nil
+}
+
+// decodeAdminRawJSON reads the request body verbatim so the caller can hand
+// it to a repositoryOverrideCodec's Normalize, which performs its own
+// strict decode (DisallowUnknownFields) into the exact typed shape for the
+// resource's feature — this function does no shape validation itself.
+func decodeAdminRawJSON(req *stdhttp.Request) ([]byte, error) {
+	if req.Body == nil {
+		return nil, domainauth.NewValidationError("request body is required")
+	}
+	defer req.Body.Close()
+
+	raw, err := io.ReadAll(req.Body)
+	if err != nil {
+		return nil, domainauth.NewValidationError("request body must be valid JSON")
+	}
+	return raw, nil
 }
 
 func (r *Router) handleAdminScanSettings(w stdhttp.ResponseWriter, req *stdhttp.Request) {
