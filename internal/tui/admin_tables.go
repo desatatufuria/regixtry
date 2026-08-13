@@ -442,7 +442,7 @@ func (m *Model) rebuildAdminTables(layout consoleLayout) {
 		// ScanSummary -- the only tables the base Feature Page body itself
 		// renders -- are already built above, so this reflects the real
 		// content the base body will show.
-		baseBodyHeight := adminBaseBodyHeight(m.screen, m.adminSession, m.adminView, m.repositories.Items, layout, m.now())
+		baseBodyHeight := adminBaseBodyHeight(m.screen, m.adminSession, m.adminView, m.repositories.Names(), layout, m.now())
 		modalRows := adminScanHistoryModalRows(layout, baseBodyHeight)
 		measuredHeaderHeight := 0
 		if strings.TrimSpace(m.adminView.ScanHistoryModal.Error) != "" || m.adminView.ScanHistoryModal.Loading {

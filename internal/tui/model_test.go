@@ -37,7 +37,7 @@ func TestModelShowsEmptyStateWhenCatalogIsEmpty(t *testing.T) {
 func TestModelStartupLoginDefersCatalogUntilLoginSucceeds(t *testing.T) {
 	t.Parallel()
 
-	service := &fakeQueryService{catalog: appregixtry.CatalogResult{Repositories: []string{"library/alpine"}}}
+	service := &fakeQueryService{repositorySummaries: []appregixtry.RepositorySummary{{Name: "library/alpine"}}}
 	model := NewModel(service, WithAdminClient(&fakeAdminClient{loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: time.Date(2099, time.August, 9, 12, 0, 0, 0, time.UTC)}}), WithStartupLogin())
 
 	model = runCmd(t, model, model.Init())
@@ -78,7 +78,7 @@ func TestModelStartupLoginDefersCatalogUntilLoginSucceeds(t *testing.T) {
 func TestModelLocalStartupLoadsCatalogImmediately(t *testing.T) {
 	t.Parallel()
 
-	service := &fakeQueryService{catalog: appregixtry.CatalogResult{Repositories: []string{"library/alpine"}}}
+	service := &fakeQueryService{repositorySummaries: []appregixtry.RepositorySummary{{Name: "library/alpine"}}}
 	model := NewModel(service, WithAdminClient(&fakeAdminClient{}))
 	updated := runCmd(t, model, model.Init())
 
@@ -248,10 +248,10 @@ func TestModelContentBudgetWrapsPackageLevelContentBudgetUsingViewportAndGivenSt
 func TestModelCatalogAndTagsListScreensFitViewportHeight(t *testing.T) {
 	t.Parallel()
 
-	items := make([]string, 0, 60)
+	repoItems := make([]appregixtry.RepositorySummary, 0, 60)
 	tagItems := make([]appregixtry.TagDetails, 0, 60)
 	for i := 0; i < 60; i++ {
-		items = append(items, fmt.Sprintf("library/repo-%02d", i))
+		repoItems = append(repoItems, appregixtry.RepositorySummary{Name: fmt.Sprintf("library/repo-%02d", i), TagCount: i})
 		tagItems = append(tagItems, appregixtry.TagDetails{Name: fmt.Sprintf("v1.0.%02d", i), SignatureState: appregixtry.SignatureStatusUnsigned})
 	}
 
@@ -265,7 +265,8 @@ func TestModelCatalogAndTagsListScreensFitViewportHeight(t *testing.T) {
 			result := updated.(Model)
 
 			result.screen = screenRepositories
-			result.repositories = RepositoriesModel{Items: items}
+			result.repositories = RepositoriesModel{Items: repoItems}
+			result.rebuildRepositoriesTable(result.repositoriesTableLayout())
 			view := result.View()
 			if got := lipgloss.Height(view); got > height {
 				t.Fatalf("repositories view height = %d, want <= %d\nview:\n%s", got, height, view)
@@ -351,62 +352,86 @@ func TestModelScreenErrorRendersWithThemeErrorRegardlessOfMessageWording(t *test
 	}
 }
 
-func TestModelPageKeysScrollAndClampCatalogList(t *testing.T) {
+// Disposition note (console-repositories-table change): the old
+// TestModelPageKeysScrollAndClampCatalogList regression test was removed
+// here, not superseded in place -- it drove the Repositories screen's
+// PgUp/PgDn/Home/End scroll-clamping behavior (applyBodyPageKey /
+// m.bodyScroll), which only ever applied to plain-list screens
+// (design.md decision #3). The Repositories screen is now table-backed
+// (buildConsoleRepositoriesTable), same as the Tags screen already was
+// before this change, so it pages via WithHighlightedRow auto-paging on
+// Up/Down instead -- m.bodyScroll is no longer consulted by
+// renderConsoleRepositoriesSection. Its coverage is superseded by
+// TestModelRepositoriesTableNavigatesUpDownAcrossPagesAndEntersSelectedRepository
+// below, mirroring how the Tags screen's own equivalent migration
+// (TestModelTagsTableNavigatesUpDownAcrossPagesAndEntersSelectedManifest)
+// was covered.
+
+// TestModelRepositoriesTableNavigatesUpDownAcrossPagesAndEntersSelectedRepository
+// is the console-repositories-table change's own navigation RED test,
+// mirroring TestModelTagsTableNavigatesUpDownAcrossPagesAndEntersSelectedManifest
+// one level up: the Repositories screen's table-backed model must keep
+// Up/Down selection and Enter working (spec requirement: "Preserve existing
+// keyboard navigation"), including auto-paging past the first page's
+// boundary via WithHighlightedRow, and Enter must open the Tags screen for
+// whichever repository is currently highlighted -- not always the first
+// one.
+func TestModelRepositoriesTableNavigatesUpDownAcrossPagesAndEntersSelectedRepository(t *testing.T) {
 	t.Parallel()
 
-	items := make([]string, 0, 60)
-	for i := 0; i < 60; i++ {
-		items = append(items, fmt.Sprintf("library/repo-%02d", i))
+	const totalRepositories = 30
+	summaries := make([]appregixtry.RepositorySummary, 0, totalRepositories)
+	tagDetails := make(map[string][]appregixtry.TagDetails, totalRepositories)
+	for i := 0; i < totalRepositories; i++ {
+		name := fmt.Sprintf("library/repo-%02d", i)
+		summaries = append(summaries, appregixtry.RepositorySummary{Name: name, TagCount: i})
+		tagDetails[name] = []appregixtry.TagDetails{{Name: "latest", SignatureState: appregixtry.SignatureStatusUnsigned}}
 	}
 
-	model := NewModel(&fakeQueryService{})
-	updated, _ := model.Update(tea.WindowSizeMsg{Width: minViewportWidth, Height: 24})
-	result := updated.(Model)
-	result.screen = screenRepositories
-	result.repositories = RepositoriesModel{Items: items}
+	service := &fakeQueryService{repositorySummaries: summaries, tagDetails: tagDetails}
 
-	if !strings.Contains(result.View(), "repo-00") {
-		t.Fatalf("initial view = %q, want first item visible", result.View())
-	}
+	model := NewModel(service)
+	model.viewport = viewportSize{Width: minViewportWidth, Height: minViewportHeight}
+	updated := runCmd(t, model, model.Init())
 
-	scrolled := runKey(t, result, "pgdown")
-	if scrolled.bodyScroll <= result.bodyScroll {
-		t.Fatalf("bodyScroll = %d, want increase after pgdown (was %d)", scrolled.bodyScroll, result.bodyScroll)
-	}
-	if strings.Contains(scrolled.View(), "repo-00") {
-		t.Fatalf("view = %q, want repo-00 scrolled out of view after pgdown", scrolled.View())
+	if updated.screen != screenRepositories {
+		t.Fatalf("screen = %q, want %q", updated.screen, screenRepositories)
 	}
 
-	pastEnd := scrolled
-	for i := 0; i < 30; i++ {
-		pastEnd = runKey(t, pastEnd, "pgdown")
+	pageSize := consoleRepositoriesTablePageSize(updated.repositoriesTableLayout())
+	if pageSize <= 0 || pageSize >= totalRepositories {
+		t.Fatalf("repositories table pageSize = %d, want a positive size smaller than %d rows so pagination genuinely activates", pageSize, totalRepositories)
 	}
-	if !strings.Contains(pastEnd.View(), "repo-59") {
-		t.Fatalf("view = %q, want last item visible after paging past the end", pastEnd.View())
-	}
-
-	home := runKey(t, pastEnd, "home")
-	if home.bodyScroll != 0 {
-		t.Fatalf("bodyScroll = %d, want 0 after home", home.bodyScroll)
-	}
-	if !strings.Contains(home.View(), "repo-00") {
-		t.Fatalf("view = %q, want repo-00 visible after home", home.View())
+	if got, want := updated.repositories.Table.CurrentPage(), 1; got != want {
+		t.Fatalf("repositories table CurrentPage() before navigation = %d, want %d", got, want)
 	}
 
-	endJump := runKey(t, home, "end")
-	if !strings.Contains(endJump.View(), "repo-59") {
-		t.Fatalf("view = %q, want repo-59 visible after end", endJump.View())
+	for i := 0; i < pageSize; i++ {
+		updated = runKey(t, updated, "down")
 	}
 
-	pastTop := endJump
-	for i := 0; i < 30; i++ {
-		pastTop = runKey(t, pastTop, "pgup")
+	if got, want := updated.repositories.Selected, pageSize; got != want {
+		t.Fatalf("repositories.Selected after %d downs = %d, want %d", pageSize, got, want)
 	}
-	if pastTop.bodyScroll != 0 {
-		t.Fatalf("bodyScroll = %d, want 0 after paging up past the top", pastTop.bodyScroll)
+	if got, want := updated.repositories.Table.CurrentPage(), 2; got != want {
+		t.Fatalf("repositories table CurrentPage() after paging past the first page boundary = %d, want %d (WithHighlightedRow must auto-page the table)", got, want)
 	}
-	if !strings.Contains(pastTop.View(), "repo-00") {
-		t.Fatalf("view = %q, want repo-00 visible after paging up past the top", pastTop.View())
+	if !strings.Contains(updated.View(), summaries[pageSize].Name) {
+		t.Fatalf("view after paging = %q, want the newly highlighted repository %q genuinely visible on-screen", updated.View(), summaries[pageSize].Name)
+	}
+
+	upOnce := runKey(t, updated, "up")
+	if got, want := upOnce.repositories.Selected, pageSize-1; got != want {
+		t.Fatalf("repositories.Selected after one up = %d, want %d", got, want)
+	}
+
+	entered := runKey(t, upOnce, "enter")
+	if entered.screen != screenTags {
+		t.Fatalf("screen = %q, want %q", entered.screen, screenTags)
+	}
+	wantRepository := summaries[pageSize-1].Name
+	if entered.tags.Repository != wantRepository {
+		t.Fatalf("tags.Repository = %q, want %q (Enter must open the currently highlighted repository, not always the first one)", entered.tags.Repository, wantRepository)
 	}
 }
 
@@ -415,7 +440,7 @@ func TestModelNavigatesRepositoriesManifestBlobsAndUploads(t *testing.T) {
 
 	now := time.Date(2026, time.June, 28, 23, 0, 0, 0, time.UTC)
 	service := &fakeQueryService{
-		catalog: appregixtry.CatalogResult{Repositories: []string{"library/alpine"}},
+		repositorySummaries: []appregixtry.RepositorySummary{{Name: "library/alpine"}},
 		tagDetails: map[string][]appregixtry.TagDetails{
 			"library/alpine": {{Name: "latest", CreatedAt: now, SignatureState: appregixtry.SignatureStatusUnsigned, SigningEnabled: false}},
 		},
@@ -490,9 +515,9 @@ func TestModelTagsTableNavigatesUpDownAcrossPagesAndEntersSelectedManifest(t *te
 	}
 
 	service := &fakeQueryService{
-		catalog:    appregixtry.CatalogResult{Repositories: []string{"library/alpine"}},
-		tagDetails: map[string][]appregixtry.TagDetails{"library/alpine": tags},
-		manifests:  manifests,
+		repositorySummaries: []appregixtry.RepositorySummary{{Name: "library/alpine"}},
+		tagDetails:          map[string][]appregixtry.TagDetails{"library/alpine": tags},
+		manifests:           manifests,
 	}
 
 	model := NewModel(service)
@@ -2205,7 +2230,7 @@ func TestModelScanHistoryModalDigestNeverLeaksAcrossRunsWhenPagingHistory(t *tes
 		},
 	}
 
-	model := NewModel(&fakeQueryService{catalog: appregixtry.CatalogResult{Repositories: []string{"library/alpine"}}}, WithAdminClient(adminClient))
+	model := NewModel(&fakeQueryService{repositorySummaries: []appregixtry.RepositorySummary{{Name: "library/alpine"}}}, WithAdminClient(adminClient))
 	model.viewport = viewportSize{Width: defaultViewportWidth, Height: adminTestViewportHeight}
 	model = runCmd(t, model, model.Init())
 	model = runAdminLogin(t, model, "operator", "secret-pass")
@@ -2305,7 +2330,7 @@ func TestModelScanHistoryModalRendersWithinViewportAcrossHeights(t *testing.T) {
 				},
 			}
 
-			model := NewModel(&fakeQueryService{catalog: appregixtry.CatalogResult{Repositories: []string{"library/alpine"}}}, WithAdminClient(adminClient))
+			model := NewModel(&fakeQueryService{repositorySummaries: []appregixtry.RepositorySummary{{Name: "library/alpine"}}}, WithAdminClient(adminClient))
 			updated, _ := model.Update(tea.WindowSizeMsg{Width: minViewportWidth, Height: height})
 			result := updated.(Model)
 			result = runCmd(t, result, result.Init())
@@ -2491,7 +2516,7 @@ func TestModelScanHistoryModalRendersWithinViewportAcrossWidths(t *testing.T) {
 				},
 			}
 
-			model := NewModel(&fakeQueryService{catalog: appregixtry.CatalogResult{Repositories: []string{"library/alpine"}}}, WithAdminClient(adminClient))
+			model := NewModel(&fakeQueryService{repositorySummaries: []appregixtry.RepositorySummary{{Name: "library/alpine"}}}, WithAdminClient(adminClient))
 			updated, _ := model.Update(tea.WindowSizeMsg{Width: width, Height: defaultViewportHeight})
 			result := updated.(Model)
 			result = runCmd(t, result, result.Init())
@@ -3292,12 +3317,12 @@ func TestModelGrantRepositorySuggestionsFilterAndSelect(t *testing.T) {
 }
 
 type fakeQueryService struct {
-	catalog         appregixtry.CatalogResult
-	tagDetails      map[string][]appregixtry.TagDetails
-	manifests       map[string]appregixtry.ManifestDetails
-	uploads         map[string][]appregixtry.UploadDetails
-	signatureStatus map[string]appregixtry.SignatureStatusResult
-	calls           struct {
+	repositorySummaries []appregixtry.RepositorySummary
+	tagDetails          map[string][]appregixtry.TagDetails
+	manifests           map[string]appregixtry.ManifestDetails
+	uploads             map[string][]appregixtry.UploadDetails
+	signatureStatus     map[string]appregixtry.SignatureStatusResult
+	calls               struct {
 		catalog   int
 		tags      int
 		manifest  int
@@ -3812,9 +3837,9 @@ func (f *fakeAdminClient) DisableUser(_ context.Context, _ AdminSession, _ strin
 	return f.disableUser, nil
 }
 
-func (f *fakeQueryService) Catalog(context.Context, int, string) (appregixtry.CatalogResult, error) {
+func (f *fakeQueryService) RepositorySummaries(context.Context, int, string) ([]appregixtry.RepositorySummary, error) {
 	f.calls.catalog++
-	return f.catalog, nil
+	return append([]appregixtry.RepositorySummary(nil), f.repositorySummaries...), nil
 }
 
 func (f *fakeQueryService) TagDetails(_ context.Context, repository string, _ int, _ string) ([]appregixtry.TagDetails, error) {
@@ -3870,14 +3895,18 @@ const adminTestViewportHeight = 200
 
 func newAdminReadyModel(t *testing.T, adminClient AdminClient) Model {
 	t.Helper()
-	model := NewModel(&fakeQueryService{catalog: appregixtry.CatalogResult{Repositories: []string{"library/alpine"}}}, WithAdminClient(adminClient))
+	model := NewModel(&fakeQueryService{repositorySummaries: []appregixtry.RepositorySummary{{Name: "library/alpine"}}}, WithAdminClient(adminClient))
 	model.viewport = viewportSize{Width: defaultViewportWidth, Height: adminTestViewportHeight}
 	return runCmd(t, model, model.Init())
 }
 
 func newAdminReadyModelWithCatalog(t *testing.T, repositories []string, adminClient AdminClient) Model {
 	t.Helper()
-	model := NewModel(&fakeQueryService{catalog: appregixtry.CatalogResult{Repositories: append([]string(nil), repositories...)}}, WithAdminClient(adminClient))
+	summaries := make([]appregixtry.RepositorySummary, 0, len(repositories))
+	for _, repository := range repositories {
+		summaries = append(summaries, appregixtry.RepositorySummary{Name: repository})
+	}
+	model := NewModel(&fakeQueryService{repositorySummaries: summaries}, WithAdminClient(adminClient))
 	model.viewport = viewportSize{Width: defaultViewportWidth, Height: adminTestViewportHeight}
 	return runCmd(t, model, model.Init())
 }

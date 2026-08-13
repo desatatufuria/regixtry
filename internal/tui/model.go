@@ -40,7 +40,7 @@ func WithStartupLogin() Option {
 }
 
 type QueryService interface {
-	Catalog(ctx context.Context, limit int, after string) (appregixtry.CatalogResult, error)
+	RepositorySummaries(ctx context.Context, limit int, after string) ([]appregixtry.RepositorySummary, error)
 	TagDetails(ctx context.Context, repositoryName string, limit int, after string) ([]appregixtry.TagDetails, error)
 	ResolveManifest(ctx context.Context, repositoryName string, reference string) (appregixtry.ManifestDetails, error)
 	Uploads(ctx context.Context, repositoryName string) ([]appregixtry.UploadDetails, error)
@@ -48,8 +48,24 @@ type QueryService interface {
 }
 
 type RepositoriesModel struct {
-	Items    []string
+	Items    []appregixtry.RepositorySummary
 	Selected int
+	// Table is the Repositories screen's bubbletable.Model, baked from Items
+	// at rebuildRepositoriesTable() time -- mirrors TagsModel.Table's own
+	// baked-not-computed-in-View() pattern (design.md decision #6).
+	Table bubbletable.Model
+}
+
+// Names extracts each repository's name, used by admin-side screens that
+// only need name lookup/suggestions (grantRepositorySuggestions,
+// renderAdminWorkspace, adminBaseBodyHeight), not the Tags/Last Pushed
+// columns this screen's own table renders.
+func (m RepositoriesModel) Names() []string {
+	names := make([]string, 0, len(m.Items))
+	for _, item := range m.Items {
+		names = append(names, item.Name)
+	}
+	return names
 }
 
 type TagsModel struct {
@@ -239,8 +255,27 @@ func (m *Model) rebuildTagsTable(layout consoleLayout) {
 	m.tags.Table = buildConsoleTagsTable(theme, m.tags.Items, m.tags.Selected, consoleTagsTablePageSize(layout))
 }
 
+// repositoriesTableLayout computes the consoleLayout used to size the
+// Repositories table at rebuild time -- mirrors tagsTableLayout's own use of
+// the exact status/help this screen renders (scrollableBodyContext) so the
+// layout used to build the table can never drift from what View() actually
+// shows.
+func (m Model) repositoriesTableLayout() consoleLayout {
+	status, help, _, _ := m.scrollableBodyContext()
+	return m.contentBudget(status, help)
+}
+
+// rebuildRepositoriesTable bakes m.repositories.Items into a fresh
+// bubbletable.Model sized by layout (consoleRepositoriesTablePageSize),
+// mirroring rebuildTagsTable's own bake-at-mutation-time pattern one level
+// up.
+func (m *Model) rebuildRepositoriesTable(layout consoleLayout) {
+	theme := newAdminTheme()
+	m.repositories.Table = buildConsoleRepositoriesTable(theme, m.repositories.Items, m.repositories.Selected, consoleRepositoriesTablePageSize(layout))
+}
+
 type catalogLoadedMsg struct {
-	result appregixtry.CatalogResult
+	result []appregixtry.RepositorySummary
 	err    error
 }
 
@@ -482,6 +517,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// reason (its pageSize is baked in at rebuildTagsTable() time, not
 		// recomputed by View()); harmless/cheap when no tags are loaded yet.
 		m.rebuildTagsTable(m.tagsTableLayout())
+		// The Repositories table needs the same explicit resize-rebuild, for
+		// the same reason.
+		m.rebuildRepositoriesTable(m.repositoriesTableLayout())
 		return m, nil
 	case tea.KeyMsg:
 		return m.updateKey(msg)
@@ -491,13 +529,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = msg.err
 			return m, nil
 		}
-		m.repositories = RepositoriesModel{Items: append([]string(nil), msg.result.Repositories...)}
+		m.repositories = RepositoriesModel{Items: append([]appregixtry.RepositorySummary(nil), msg.result...)}
 		m.bodyScroll = 0
 		if len(m.repositories.Items) == 0 {
 			m.screen = screenEmpty
 			return m, nil
 		}
 		m.screen = screenRepositories
+		m.rebuildRepositoriesTable(m.repositoriesTableLayout())
 		m.loadingText = ""
 		return m, nil
 	case startupLoginMsg:
@@ -1067,7 +1106,7 @@ func (m Model) View() string {
 		layout := m.contentBudget(status, help)
 		return renderInspectionWorkspace(
 			"Repositories",
-			renderConsoleListSection("Repositories", m.repositories.Items, m.repositories.Selected, layout),
+			renderConsoleRepositoriesSection(m.repositories, layout),
 			status,
 			help,
 		)
@@ -1153,7 +1192,7 @@ func (m Model) View() string {
 		return renderInspectionWorkspace("Sign In", renderConsoleTextSection(m.loadingText, layout), "", help)
 	case screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken:
 		layout := m.contentBudget(m.status, adminScreenHelp(m.screen, m.adminView))
-		return renderAdminWorkspace(m.screen, m.adminSession, m.adminView, m.repositories.Items, m.status, layout, m.now())
+		return renderAdminWorkspace(m.screen, m.adminSession, m.adminView, m.repositories.Names(), m.status, layout, m.now())
 	}
 
 	help := "q: quit"
@@ -2304,13 +2343,13 @@ func (m Model) updateGrantFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case isMoveUpKey(msg):
 		if m.adminView.GrantForm.Focus == adminGrantFieldRepository {
-			suggestions := grantRepositorySuggestions(m.adminView.GrantForm, m.repositories.Items)
+			suggestions := grantRepositorySuggestions(m.adminView.GrantForm, m.repositories.Names())
 			m.adminView.GrantForm.RepositorySuggestion = boundedIndex(m.adminView.GrantForm.RepositorySuggestion-1, len(suggestions))
 			return m, nil
 		}
 	case isMoveDownKey(msg):
 		if m.adminView.GrantForm.Focus == adminGrantFieldRepository {
-			suggestions := grantRepositorySuggestions(m.adminView.GrantForm, m.repositories.Items)
+			suggestions := grantRepositorySuggestions(m.adminView.GrantForm, m.repositories.Names())
 			m.adminView.GrantForm.RepositorySuggestion = boundedIndex(m.adminView.GrantForm.RepositorySuggestion+1, len(suggestions))
 			return m, nil
 		}
@@ -2334,7 +2373,7 @@ func (m Model) updateGrantFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case isEnterKey(msg):
 		if m.adminView.GrantForm.Focus == adminGrantFieldRepository {
-			suggestions := grantRepositorySuggestions(m.adminView.GrantForm, m.repositories.Items)
+			suggestions := grantRepositorySuggestions(m.adminView.GrantForm, m.repositories.Names())
 			if len(suggestions) > 0 {
 				m.adminView.GrantForm.Repository = suggestions[boundedIndex(m.adminView.GrantForm.RepositorySuggestion, len(suggestions))]
 			}
@@ -2549,6 +2588,12 @@ func (m *Model) moveSelection(delta int) {
 	switch m.screen {
 	case screenRepositories:
 		m.repositories.Selected = boundedIndex(m.repositories.Selected+delta, len(m.repositories.Items))
+		// WithHighlightedRow auto-pages the live bubble-table to keep the
+		// highlighted row visible -- mirrors the Tags table's own mechanism
+		// below, one level up.
+		if m.repositories.Table.TotalRows() > 0 {
+			m.repositories.Table = m.repositories.Table.WithHighlightedRow(m.repositories.Selected)
+		}
 	case screenTags:
 		m.tags.Selected = boundedIndex(m.tags.Selected+delta, len(m.tags.Items))
 		// WithHighlightedRow auto-pages the live bubble-table to keep the
@@ -2580,7 +2625,7 @@ func (m Model) selectedRepository() (string, bool) {
 	if len(m.repositories.Items) == 0 {
 		return "", false
 	}
-	return m.repositories.Items[m.repositories.Selected], true
+	return m.repositories.Items[m.repositories.Selected].Name, true
 }
 
 func (m Model) selectedTag() (string, bool) {
@@ -2616,7 +2661,7 @@ func filteredAdminUsers(view AdminViewState) []ports.AdminUser {
 
 func (m Model) loadCatalogCmd() tea.Cmd {
 	return func() tea.Msg {
-		result, err := m.service.Catalog(m.ctx, 100, "")
+		result, err := m.service.RepositorySummaries(m.ctx, 100, "")
 		return catalogLoadedMsg{result: result, err: err}
 	}
 }
@@ -3279,26 +3324,6 @@ func renderInspectionWorkspace(context string, body string, status string, help 
 // clipped to layout's row budget (design.md decision #3/#4).
 func renderConsoleTextSection(content string, layout consoleLayout) string {
 	return renderSection(newAdminTheme(), content, layout)
-}
-
-// renderConsoleListSection builds the plain-list inner content (subheading +
-// items, selection highlighted), clipped/wrapped the same way so long lists
-// scroll within their bordered section instead of growing past the viewport.
-func renderConsoleListSection(title string, items []string, selected int, layout consoleLayout) string {
-	theme := newAdminTheme()
-	lines := []string{theme.subheading.Render(title)}
-	if len(items) == 0 {
-		lines = append(lines, theme.muted.Render("No items available."))
-	} else {
-		for index, item := range items {
-			label := item
-			if index == selected {
-				label = theme.selected.Render(item)
-			}
-			lines = append(lines, label)
-		}
-	}
-	return renderSection(theme, strings.Join(lines, "\n"), layout)
 }
 
 // renderManifest, renderBlobs, and renderUploads apply the same admin theme
