@@ -44,6 +44,7 @@ type QueryService interface {
 	TagDetails(ctx context.Context, repositoryName string, limit int, after string) ([]appregixtry.TagDetails, error)
 	ResolveManifest(ctx context.Context, repositoryName string, reference string) (appregixtry.ManifestDetails, error)
 	Uploads(ctx context.Context, repositoryName string) ([]appregixtry.UploadDetails, error)
+	SignatureStatus(ctx context.Context, repositoryName string, reference string) (appregixtry.SignatureStatusResult, error)
 }
 
 type RepositoriesModel struct {
@@ -63,6 +64,11 @@ type TagsModel struct {
 
 type ManifestModel struct {
 	Details appregixtry.ManifestDetails
+	// Signature is the SAME SignatureStatusResult shape the Console Tags
+	// table's Signed column already resolves per tag, fetched fresh for
+	// this reference (loadManifestCmd) rather than threaded through from
+	// the Tags screen -- see loadManifestCmd's own comment for why.
+	Signature appregixtry.SignatureStatusResult
 }
 
 type BlobsModel struct {
@@ -249,6 +255,7 @@ type manifestLoadedMsg struct {
 	tag        string
 	manifest   appregixtry.ManifestDetails
 	uploads    []appregixtry.UploadDetails
+	signature  appregixtry.SignatureStatusResult
 	err        error
 }
 
@@ -525,7 +532,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.lastRepository = msg.repository
 		m.lastTag = msg.tag
-		m.manifest = ManifestModel{Details: msg.manifest}
+		m.manifest = ManifestModel{Details: msg.manifest, Signature: msg.signature}
 		m.blobs = BlobsModel{Items: append([]appregixtry.BlobDetails(nil), msg.manifest.Blobs...)}
 		sort.Slice(msg.uploads, func(i, j int) bool { return msg.uploads[i].StartedAt.Before(msg.uploads[j].StartedAt) })
 		m.uploads = UploadsModel{Repository: msg.repository, Items: append([]appregixtry.UploadDetails(nil), msg.uploads...)}
@@ -1082,7 +1089,7 @@ func (m Model) View() string {
 		layout := m.contentBudget(status, help)
 		return renderInspectionWorkspace(
 			fmt.Sprintf("Repositories / %s / %s / Manifest", m.manifest.Details.Repository, m.manifest.Details.Reference),
-			renderConsoleTextSection(renderManifest(newAdminTheme(), m.manifest.Details), layout),
+			renderConsoleTextSection(renderManifest(newAdminTheme(), m.manifest.Details, m.manifest.Signature), layout),
 			status,
 			help,
 		)
@@ -2628,7 +2635,20 @@ func (m Model) loadManifestCmd(repository string, tag string) tea.Cmd {
 			return manifestLoadedMsg{repository: repository, tag: tag, err: err}
 		}
 		uploads, uploadsErr := m.service.Uploads(m.ctx, repository)
-		return manifestLoadedMsg{repository: repository, tag: tag, manifest: manifest, uploads: uploads, err: uploadsErr}
+		// A fresh SignatureStatus call here, rather than threading the
+		// Console Tags table's already-resolved SignatureStatusResult
+		// through tagsLoadedMsg/TagsModel: this screen's ResolveManifest
+		// call above is already gated on ActionPull, the same
+		// authorization SignatureStatus itself requires, while the Tags
+		// list (TagDetails) is gated on the weaker ActionInspect -- its
+		// resolved status was never computed under this screen's own
+		// access check, so reusing it here would blur that boundary.
+		signature, signatureErr := m.service.SignatureStatus(m.ctx, repository, tag)
+		resultErr := uploadsErr
+		if resultErr == nil {
+			resultErr = signatureErr
+		}
+		return manifestLoadedMsg{repository: repository, tag: tag, manifest: manifest, uploads: uploads, signature: signature, err: resultErr}
 	}
 }
 
@@ -3287,7 +3307,7 @@ func renderConsoleListSection(title string, items []string, selected int, layout
 // highlighted row) so the plain "Regixtry Console" screens (repositories,
 // tags, manifest, blobs, uploads) read consistently with the admin screens
 // instead of falling back to unstyled plain text.
-func renderManifest(theme adminTheme, manifest appregixtry.ManifestDetails) string {
+func renderManifest(theme adminTheme, manifest appregixtry.ManifestDetails, signature appregixtry.SignatureStatusResult) string {
 	lines := []string{
 		theme.subheading.Render(fmt.Sprintf("Manifest · %s:%s", manifest.Repository, manifest.Reference)),
 		fmt.Sprintf("%s %s", theme.muted.Render("Digest:"), theme.text.Render(manifest.Digest)),
@@ -3305,7 +3325,32 @@ func renderManifest(theme adminTheme, manifest appregixtry.ManifestDetails) stri
 			lines = append(lines, fmt.Sprintf("%s %s", theme.muted.Render("Annotation "+key+"="), theme.text.Render(manifest.Annotations[key])))
 		}
 	}
+	lines = append(lines, renderSignatureLines(theme, signature)...)
 	return strings.Join(lines, "\n")
+}
+
+// renderSignatureLines renders the manifest inspection view's Signature
+// section from the SAME SignatureStatusResult/SignatureStatusDetail types
+// Service.SignatureStatus already returns for the Console Tags table's
+// Signed column -- no new fields. It renders only the fixed-vocabulary
+// State, the `.sig` tag name, and the signature count; it never renders
+// SignatureStatusDetail.Reason, key material, raw signature bytes, or trust
+// configuration detail, mirroring the no-key-leakage discipline already
+// enforced for signature-status/signing-policy-violation responses
+// elsewhere in this codebase (internal/protocol/http/signature_status_test.go).
+func renderSignatureLines(theme adminTheme, signature appregixtry.SignatureStatusResult) []string {
+	if signature.Signature == nil {
+		return []string{fmt.Sprintf("%s %s", theme.muted.Render("Signature:"), theme.text.Render("not signed"))}
+	}
+
+	lines := []string{
+		fmt.Sprintf("%s %s", theme.muted.Render("Signature state:"), theme.text.Render(signature.State)),
+	}
+	if signature.Signature.Tag != "" {
+		lines = append(lines, fmt.Sprintf("%s %s", theme.muted.Render("Signature tag:"), theme.text.Render(signature.Signature.Tag)))
+	}
+	lines = append(lines, fmt.Sprintf("%s %s", theme.muted.Render("Signature count:"), theme.text.Render(fmt.Sprintf("%d", signature.Signature.SignatureCount))))
+	return lines
 }
 
 func renderBlobs(theme adminTheme, blobs BlobsModel) string {

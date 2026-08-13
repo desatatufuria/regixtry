@@ -3292,15 +3292,17 @@ func TestModelGrantRepositorySuggestionsFilterAndSelect(t *testing.T) {
 }
 
 type fakeQueryService struct {
-	catalog    appregixtry.CatalogResult
-	tagDetails map[string][]appregixtry.TagDetails
-	manifests  map[string]appregixtry.ManifestDetails
-	uploads    map[string][]appregixtry.UploadDetails
-	calls      struct {
-		catalog  int
-		tags     int
-		manifest int
-		uploads  int
+	catalog         appregixtry.CatalogResult
+	tagDetails      map[string][]appregixtry.TagDetails
+	manifests       map[string]appregixtry.ManifestDetails
+	uploads         map[string][]appregixtry.UploadDetails
+	signatureStatus map[string]appregixtry.SignatureStatusResult
+	calls           struct {
+		catalog   int
+		tags      int
+		manifest  int
+		uploads   int
+		signature int
 	}
 }
 
@@ -3834,6 +3836,14 @@ func (f *fakeQueryService) ResolveManifest(_ context.Context, repository string,
 func (f *fakeQueryService) Uploads(_ context.Context, repository string) ([]appregixtry.UploadDetails, error) {
 	f.calls.uploads++
 	return append([]appregixtry.UploadDetails(nil), f.uploads[repository]...), nil
+}
+
+func (f *fakeQueryService) SignatureStatus(_ context.Context, repository string, reference string) (appregixtry.SignatureStatusResult, error) {
+	f.calls.signature++
+	if result, ok := f.signatureStatus[fmt.Sprintf("%s:%s", repository, reference)]; ok {
+		return result, nil
+	}
+	return appregixtry.SignatureStatusResult{State: appregixtry.SignatureStatusUnsigned}, nil
 }
 
 func runCmd(t *testing.T, model Model, cmd tea.Cmd) Model {
