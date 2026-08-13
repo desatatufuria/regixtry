@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"regixtry/internal/domain/signing"
 	"regixtry/internal/ports"
 )
 
@@ -14,12 +15,13 @@ import (
 // digest -- reusing Service.SignatureStatus rather than reimplementing
 // verification, exactly as the change's scope requires.
 //
-// This also proves (unchanged, pre-existing behavior, not introduced by this
-// change) that a cosign-style "sha256-<hex>.sig" signature-artifact tag is
-// itself a real row in the tags table -- exactly like the existing OCI
-// `_tags/list` endpoint (Tags()/ListTags), which already returns it
-// unfiltered today -- so TagDetails must account for it too rather than
-// silently dropping a row ListTags itself does not drop.
+// It also seeds the fixture's own cosign-style "sha256-<hex>.sig"
+// signature-artifact tag alongside the two real tags, and asserts it is
+// EXCLUDED from the result (the Console-tags-.sig-filter follow-up): unlike
+// the OCI Distribution API's `_tags/list` endpoint (Tags()/ListTags), which
+// must keep returning it unfiltered for docker/cosign/skopeo clients, the
+// human-facing Console Tags table must not show a signature's own accessory
+// artifact as a browsable sibling row.
 func TestServiceTagDetailsReturnsCreatedAtAndSignatureStatePerTag(t *testing.T) {
 	t.Parallel()
 
@@ -29,7 +31,7 @@ func TestServiceTagDetailsReturnsCreatedAtAndSignatureStatePerTag(t *testing.T) 
 	repository := "library/alpine"
 	signedDigest := seedFixtureImageManifest(t, service, repository)
 	tagManifestAtDigest(t, service, repository, "signed-tag", signedDigest)
-	seedFixtureSignatureArtifact(t, service, repository) // also mints its own "sha256-....sig" tag row
+	seedFixtureSignatureArtifact(t, service, repository) // also mints its own "sha256-....sig" tag row, expected to be filtered out below
 
 	unsignedDigest := seedArbitraryImageManifest(t, service, repository, " - unsigned")
 	tagManifestAtDigest(t, service, repository, "unsigned-tag", unsignedDigest)
@@ -40,8 +42,8 @@ func TestServiceTagDetailsReturnsCreatedAtAndSignatureStatePerTag(t *testing.T) 
 	if err != nil {
 		t.Fatalf("TagDetails() error = %v", err)
 	}
-	if len(details) != 3 {
-		t.Fatalf("len(details) = %d, want 3 (signed-tag, unsigned-tag, and the .sig artifact's own tag row): %#v", len(details), details)
+	if len(details) != 2 {
+		t.Fatalf("len(details) = %d, want 2 (signed-tag and unsigned-tag; the .sig artifact's own tag row must be excluded): %#v", len(details), details)
 	}
 
 	byName := make(map[string]TagDetails, len(details))
@@ -72,6 +74,75 @@ func TestServiceTagDetailsReturnsCreatedAtAndSignatureStatePerTag(t *testing.T) 
 	}
 	if !unsigned.SigningEnabled {
 		t.Fatal("unsigned-tag.SigningEnabled = false, want true (policy enabled)")
+	}
+}
+
+// TestServiceTagDetailsExcludesCosignSignatureArtifactTags is the RED test
+// for the Console Tags screen's `.sig`-tag filter: a tag matching cosign's
+// legacy signature-tag format ("sha256-<hex>.sig", produced by
+// signing.SignatureTag) is an accessory artifact of the image it signs, not
+// a version a Console user browses/pulls -- its own "Signed" status is
+// nonsensical, since a signature is not itself signed. TagDetails must
+// exclude it from the human-facing Console Tags table it powers. This is
+// scoped to TagDetails only -- the OCI Distribution API's `_tags/list`
+// endpoint (Tags()/ListTags) is untouched and must keep returning it.
+func TestServiceTagDetailsExcludesCosignSignatureArtifactTags(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	repository := "library/alpine"
+	signedDigest := seedFixtureImageManifest(t, service, repository)
+	tagManifestAtDigest(t, service, repository, "signed-tag", signedDigest)
+	seedFixtureSignatureArtifact(t, service, repository) // mints its own "sha256-<hex>.sig" tag row
+	seedSigningPolicy(t, service, true, []string{fixtureTrustedKeyPEM(t)})
+
+	sigTag, err := signing.SignatureTag(signedDigest)
+	if err != nil {
+		t.Fatalf("signing.SignatureTag(%q) error = %v", signedDigest, err)
+	}
+
+	details, err := service.TagDetails(context.Background(), repository, 10, "")
+	if err != nil {
+		t.Fatalf("TagDetails() error = %v", err)
+	}
+
+	for _, detail := range details {
+		if detail.Name == sigTag {
+			t.Fatalf("details = %#v, want no entry for the cosign signature-artifact tag %q", details, sigTag)
+		}
+	}
+	if len(details) != 1 {
+		t.Fatalf("len(details) = %d, want 1 (only signed-tag, the .sig artifact tag excluded): %#v", len(details), details)
+	}
+	if details[0].Name != "signed-tag" {
+		t.Fatalf("details[0].Name = %q, want %q", details[0].Name, "signed-tag")
+	}
+}
+
+// TestServiceTagDetailsExcludesCosignSignatureArtifactTagsEvenWhenNoRealTagExists
+// proves the filter operates on tag-name shape alone, not "there happens to
+// be another real tag in the result" -- a repository containing only a
+// `.sig` artifact tag (no image tag ever pointed at it in this test) must
+// come back empty, not with the `.sig` tag itself as a lone row.
+func TestServiceTagDetailsExcludesCosignSignatureArtifactTagsEvenWhenNoRealTagExists(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	repository := "library/alpine"
+	seedFixtureImageManifest(t, service, repository)
+	seedFixtureSignatureArtifact(t, service, repository) // mints only "sha256-<hex>.sig", no other tag
+	seedSigningPolicy(t, service, true, []string{fixtureTrustedKeyPEM(t)})
+
+	details, err := service.TagDetails(context.Background(), repository, 10, "")
+	if err != nil {
+		t.Fatalf("TagDetails() error = %v", err)
+	}
+	if len(details) != 0 {
+		t.Fatalf("len(details) = %d, want 0 (the only tag present is the .sig artifact, which must be excluded): %#v", len(details), details)
 	}
 }
 

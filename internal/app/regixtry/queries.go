@@ -400,6 +400,27 @@ type TagDetails struct {
 	SigningEnabled bool      `json:"signing_enabled"`
 }
 
+// isCosignSignatureArtifactTag reports whether name is the cosign legacy
+// signature tag for some digest -- i.e. matches SignatureTag's own
+// "sha256-<hex>.sig" format. It reuses SignatureTag itself for the actual
+// hex/length validation (round-tripping name back through the digest form
+// and confirming SignatureTag reproduces it exactly) rather than hand-
+// rolling a second pattern matcher, per this change's own scope: a
+// signature's accessory `.sig` tag is not a version a Console user
+// browses/pulls, and its own "Signed" status would be nonsensical (a
+// signature isn't itself signed).
+func isCosignSignatureArtifactTag(name string) bool {
+	const prefix = "sha256-"
+	const suffix = ".sig"
+	if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, suffix) {
+		return false
+	}
+
+	hexPart := strings.TrimSuffix(strings.TrimPrefix(name, prefix), suffix)
+	produced, err := signing.SignatureTag("sha256:" + hexPart)
+	return err == nil && produced == name
+}
+
 // TagDetails resolves the same tag list Tags() does, plus each tag's
 // manifest created_at and computed signature state (console-tags-table
 // change) -- authorized identically to Tags() (ActionInspect), which shares
@@ -409,6 +430,13 @@ type TagDetails struct {
 // intent): each tag pays its own ResolveManifest + verifySignature cost,
 // mirroring this codebase's existing per-item lookup pattern rather than a
 // bespoke batch-verification query.
+//
+// Unlike Tags() (the OCI Distribution API's `_tags/list` endpoint, which
+// existing docker/cosign/skopeo clients depend on and must keep seeing
+// every tag including `.sig` artifacts unfiltered), TagDetails excludes
+// cosign `.sig` signature-artifact tags: this is the human-facing Console
+// browsing view, and a signature's own accessory artifact is not a version
+// a user browses or pulls like `latest` or `v1.2.3`.
 func (s *Service) TagDetails(ctx context.Context, repositoryName string, limit int, after string) ([]TagDetails, error) {
 	repository, err := parseRepository(repositoryName)
 	if err != nil {
@@ -426,6 +454,9 @@ func (s *Service) TagDetails(ctx context.Context, repositoryName string, limit i
 
 	details := make([]TagDetails, 0, len(tags))
 	for _, tag := range tags {
+		if isCosignSignatureArtifactTag(tag.Name) {
+			continue
+		}
 		status, err := s.SignatureStatus(ctx, repository.String(), tag.Name)
 		if err != nil {
 			return nil, err
