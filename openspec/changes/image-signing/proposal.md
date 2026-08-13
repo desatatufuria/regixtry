@@ -19,8 +19,9 @@ signs**. Signing happens entirely outside, via `cosign sign --key cosign.key <re
 - **Pull-time verification gate** in `Service.OpenManifest` (`queries.go:71-91`), inserted
   beside `enforceScanPolicy` (`queries.go:86`), same 403 `domain.NewPolicyViolationError`
   convention.
-- **Verification via `sigstore-go` compiled into the regixtry binary** — new `go.mod`
-  dependency, no managed external binary, no subprocess.
+- **Verification via Go's standard library `crypto/ecdsa`/`crypto/ed25519`** — no new `go.mod`
+  dependency, no managed external binary, no subprocess. Revised from an initial `sigstore-go`
+  plan (see Approach) once its dependency weight was checked live against upstream.
 - **Trust model: static public keys only.** An admin configures one or more trusted public
   keys; a signature verifies against any of them.
 - **Global `ports.SigningPolicySettings` row** (`{Enabled, TrustedPublicKeys, ...}` — exact
@@ -85,16 +86,27 @@ async-producer / sync-gate split `scan-policy-gate` already proved: signatures a
 externally and asynchronously; regixtry only enforces at pull. The gate reads the resolved
 policy (global row, replaced in full by a repository override when one exists), fetches the
 signature artifact by the cosign tag convention for the resolved digest, and verifies it with
-`sigstore-go` against the configured trusted public keys.
+Go's standard library crypto packages against the configured trusted public keys.
 
-`sigstore-go` is imported rather than shelling out to `cosign verify`, deliberately breaking
-from the `trivy`/`gitleaks` external-binary precedent: signature verification is stateless
-cryptography over a public key, with no vulnerability-DB-style freshness lifecycle to justify
-install/upgrade/rollback machinery. Its "version" is whatever module regixtry was compiled
-against; upgrading it means shipping a new regixtry release through the existing
-`regixtry upgrade` path. The canonical import path (`github.com/sigstore/sigstore-go`) and its
-current API surface MUST be verified against live upstream documentation in `sdd-design`, not
-assumed.
+**Revised during proposal review**: `sigstore-go` was the initial pick, but its `go.mod` was
+checked live against upstream (github.com/sigstore/sigstore-go, v1.3.0) and carries **21
+direct dependencies** — including `rekor`, `rekor-tiles`, `timestamp-authority`, and
+`go-tuf/v2`, which exist specifically for the keyless/OIDC/transparency-log flow this proposal
+explicitly defers (Out of Scope). Pulling that weight into a 13-direct-dependency module to
+use none of its keyless machinery was judged not worth it. `sigstore-go`'s own docs also state
+it does not itself handle container-image-specific verification (fetching the signature
+artifact from a registry) — that logic is cosign's, and would have to be built here either way.
+
+Static-key verification is standard asymmetric-signature cryptography over a known public key
+— exactly what Go's standard library already provides
+(`crypto/ecdsa`/`crypto/ed25519`/`encoding/pem`, depending on the key type cosign was given).
+**Decision: verify with the standard library, zero new dependencies.** The real work is
+parsing cosign's on-disk signature format correctly (the payload cosign signs and how it
+attaches the result to the pushed `.sig` manifest as an annotation) — `sdd-design` must pin
+this exactly against a real `cosign sign` output, not assume a format. No external binary, no
+subprocess, no library import. If keyless/OIDC support is ever added later, that is the moment
+to reconsider a Sigstore library import — not now, for a feature this proposal explicitly does
+not build.
 
 ### Deliberate divergence: this gate is fail-closed
 
@@ -113,21 +125,21 @@ side by side in `OpenManifest` with opposite defaults, on purpose.
 |---|---|---|
 | `internal/ports/regixtry.go` | Modified | `SigningPolicySettings`, `SigningOverride`, store methods |
 | `internal/infra/metadata/sqlite/store.go` | Modified | Signing policy row; reuses `repository_feature_overrides` |
-| `internal/infra/verification/sigstore/` | New | `sigstore-go` verification adapter |
+| `internal/infra/verification/cosignsig/` | New | stdlib-only signature parsing + verification |
 | `internal/app/regixtry/queries.go` | Modified | Gate in `OpenManifest`; `SignatureStatus` query |
 | `internal/app/regixtry/service_signing.go` | New | Policy resolution + `enforceSigningPolicy` |
 | `internal/app/regixtry/repository_overrides.go` | Modified | Generalized codec `Apply`; `signing` codec |
 | `internal/app/regixtry/feature_registry.go` | Modified | `signing` builtin, no runtime manager |
 | `internal/protocol/http/router.go`, `admin_handlers.go` | Modified | `signature-status` route; admin routes |
 | `internal/tui/session.go`, `model.go`, `admin_views.go` | Modified | Signing modal, badge, override third feature |
-| `go.mod` / `go.sum` | Modified | `sigstore-go` dependency |
+| `go.mod` / `go.sum` | Unchanged | No new dependency — stdlib crypto only |
 
 ## Risks
 
 | Risk | Likelihood | Mitigation |
 |---|---|---|
 | **Fail-closed gate blocks every pull the moment it is enabled** on a repository with no signatures yet | High | Disabled by default; TUI modal states the consequence before enabling; per-repo exemption override exists; `signature-status` lets CI check before rollout |
-| `sigstore-go` drags a large transitive tree into a module with 13 lean direct deps | High | Vendor-audit the tree in `sdd-design`; verify build size/CI impact before committing to the import; the `cosign verify` subprocess remains the documented fallback |
+| Hand-parsing cosign's signature/annotation format via stdlib crypto instead of using cosign's own code risks a subtly wrong implementation | Med | `sdd-design` pins the exact format against real `cosign sign` output; integration test signs with real `cosign` CLI and verifies against regixtry's implementation, not synthetic fixtures only |
 | Generalizing `repositoryOverrideCodec.Apply` regresses shipped Trivy/gitleaks overrides | Med | Existing `repository_overrides_test.go` coverage must stay green unchanged; generalize the signature only, not the semantics |
 | cosign in referrers mode hits the unfixed `BlobExists` rejection (`service.go:243`) | Med | Documented Out of Scope; integration test pins tag-convention mode explicitly and asserts the observed behavior of the other mode |
 | Verification cost on every pull adds latency to the hot path | Med | Verify only when policy is enabled for that repository; caching by digest is a `sdd-design` decision |
@@ -151,8 +163,7 @@ without a deploy.
   codec registry are reused and modified.
 - `scan-policy-gate` (shipped) — read-only precedent for the gate and status endpoint; not
   modified.
-- **New external dependency**: `sigstore-go` (canonical import path and API to be confirmed
-  against upstream in `sdd-design`).
+- No new external dependency — verification uses Go's standard library only.
 - External `cosign` CLI at the operator's side — not shipped, not managed by regixtry.
 
 ## Success Criteria
@@ -180,10 +191,12 @@ re-open them: (1) scope is Approach 1, verification-only, no Referrers API, `Blo
 explicitly deferred; (2) trust model is static public keys only, no keyless/OIDC/Rekor;
 (3) granularity is global default + per-repository override on the existing overrides table,
 both override directions supported, full-row-replace; (4) fail-closed, deliberately opposite
-to `scan-policy-gate`; (5) `sigstore-go` imported, not an external managed binary;
-(6) `FeatureKindBuiltin` with no `FeatureRuntimeManager`; (7) CI endpoint is registry-scoped
-with `ActionPull`; (8) dedicated admin modal, per-repo config via the existing override modal;
-(9) no push-time behavior change.
+to `scan-policy-gate`; (5) verification via Go's standard library crypto packages, no
+`sigstore-go`/cosign dependency — revised after checking `sigstore-go`'s 21-dependency tree
+live against upstream and finding most of it exists for the keyless/OIDC flow this proposal
+explicitly defers; (6) `FeatureKindBuiltin` with no `FeatureRuntimeManager`; (7) CI endpoint is
+registry-scoped with `ActionPull`; (8) dedicated admin modal, per-repo config via the existing
+override modal; (9) no push-time behavior change.
 
 ### Open questions for `sdd-design`
 
@@ -194,6 +207,8 @@ with `ActionPull`; (8) dedicated admin modal, per-repo config via the existing o
 2. Whether verification results are cached by digest, and if so where and with what
    invalidation.
 3. Whether the generalized codec uses Go generics, `any`, or a parallel typed registry.
-4. `sigstore-go`'s current canonical import path, API, and transitive dependency weight —
-   verify against upstream before committing to it.
+4. The exact byte layout of cosign's static-key signature (what payload is actually signed,
+   how the signature is base64-encoded and attached to the pushed manifest as an annotation,
+   which key types — ECDSA P-256, Ed25519, RSA — must be supported) — pin this against a real
+   `cosign sign` output, not the spec alone.
 5. The exact state vocabulary for `signature-status` (mirroring `ScanStatus`'s five states).
