@@ -1,6 +1,7 @@
 package regixtryhttp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -584,5 +585,349 @@ func TestAdminScanRunDetailReturnsOrderedFindingsAndFreshnessPayload(t *testing.
 	}
 	if strings.Index(body, `"vulnerability_id":"CVE-1"`) > strings.Index(body, `"vulnerability_id":"CVE-2"`) {
 		t.Fatalf("body = %q, want findings ordered by severity/fixability", body)
+	}
+}
+
+// TestAdminSigningPolicyGetReturnsDefaultWhenNoRowExists is the Phase 8 RED
+// test (tasks.md 8.1): with no stored row, GET must still return 200 with
+// the code-level {Enabled: false} default — never 404 — mirroring
+// handleAdminScanPolicy's GetScanPolicySettings default-on-NotFound posture
+// (GetSigningPolicySettings, service_signing.go).
+func TestAdminSigningPolicyGetReturnsDefaultWhenNoRowExists(t *testing.T) {
+	t.Parallel()
+
+	blobStore, store, cleanup := newTestStores(t)
+	defer cleanup()
+	handler := newRouterWithStores(blobStore, store, allowAllAccessController{}, fakeAuthService{verify: &auth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/signing-policy", nil)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d for a signing policy with no stored row, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	for _, want := range []string{`"enabled":false`, `"trusted_public_keys":[]`} {
+		if !strings.Contains(recorder.Body.String(), want) {
+			t.Fatalf("body = %q, want %q", recorder.Body.String(), want)
+		}
+	}
+}
+
+// TestAdminSigningPolicyGetReturnsCurrentSettings is the Phase 8 RED test
+// (tasks.md 8.1): GET reflects the stored row, echoing the trusted public
+// keys as canonical PEM — the admin config surface is not the redacted
+// registry-scoped signature-status endpoint (design.md Decision 8, "Public
+// keys are not secret").
+func TestAdminSigningPolicyGetReturnsCurrentSettings(t *testing.T) {
+	t.Parallel()
+
+	blobStore, store, cleanup := newTestStores(t)
+	defer cleanup()
+	handler := newRouterWithStores(blobStore, store, allowAllAccessController{}, fakeAuthService{verify: &auth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+
+	key := generateHTTPTestECDSAP256PublicKeyPEM(t)
+	if err := store.UpsertSigningPolicySettings(context.Background(), "tenant-a", ports.SigningPolicySettings{Enabled: true, TrustedPublicKeys: []string{key}, UpdatedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("UpsertSigningPolicySettings() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/signing-policy", nil)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var decoded struct {
+		Enabled           bool     `json:"enabled"`
+		TrustedPublicKeys []string `json:"trusted_public_keys"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &decoded); err != nil {
+		t.Fatalf("json.Unmarshal(body) error = %v, body = %s", err, recorder.Body.String())
+	}
+	if !decoded.Enabled || len(decoded.TrustedPublicKeys) != 1 || decoded.TrustedPublicKeys[0] != key {
+		t.Fatalf("decoded = %#v, want enabled and the stored trusted key echoed as canonical PEM", decoded)
+	}
+}
+
+// TestAdminSigningPolicyGetRequiresAdminPrincipal is the Phase 8 RED test
+// (tasks.md 8.6): the same admin authorization already protecting
+// /admin/v1/scan-policy protects /admin/v1/signing-policy — no new
+// permission surface.
+func TestAdminSigningPolicyGetRequiresAdminPrincipal(t *testing.T) {
+	t.Parallel()
+
+	blobStore, store, cleanup := newTestStores(t)
+	defer cleanup()
+	handler := newRouterWithStores(blobStore, store, allowAllAccessController{}, fakeAuthService{verify: &auth.Principal{Subject: "atk_1", UserID: "reader-1", Username: "reader", IsAdmin: false}})
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/signing-policy", nil)
+	req.Header.Set("Authorization", "Bearer reader-token")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code == http.StatusOK {
+		t.Fatalf("status = %d, want a non-admin caller to be rejected", recorder.Code)
+	}
+}
+
+// TestAdminSigningPolicyPutPersistsAndRoundTrips is the Phase 8 RED test
+// (tasks.md 8.2): PUT fully replaces the settings and round-trips through
+// the store.
+func TestAdminSigningPolicyPutPersistsAndRoundTrips(t *testing.T) {
+	t.Parallel()
+
+	blobStore, store, cleanup := newTestStores(t)
+	defer cleanup()
+	handler := newRouterWithStores(blobStore, store, allowAllAccessController{}, fakeAuthService{verify: &auth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+
+	key := generateHTTPTestECDSAP256PublicKeyPEM(t)
+	body, err := json.Marshal(map[string]any{"enabled": true, "trusted_public_keys": []string{key}})
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPut, "/admin/v1/signing-policy", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer admin-token")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"enabled":true`) {
+		t.Fatalf("body = %q, want enabled:true", recorder.Body.String())
+	}
+
+	stored, err := store.GetSigningPolicySettings(context.Background(), "tenant-a")
+	if err != nil {
+		t.Fatalf("GetSigningPolicySettings() error = %v", err)
+	}
+	if !stored.Enabled || len(stored.TrustedPublicKeys) != 1 || stored.TrustedPublicKeys[0] != key {
+		t.Fatalf("stored = %#v, want enabled and the normalized trusted key persisted", stored)
+	}
+}
+
+// TestAdminSigningPolicyPutRejectsInvalidKeyNamingIndexNeverEchoingBytes is
+// the Phase 8 RED test (tasks.md 8.3): a key that fails
+// signing.NormalizePublicKeyPEM is a 400/422 naming the offending index and
+// never echoing key bytes.
+func TestAdminSigningPolicyPutRejectsInvalidKeyNamingIndexNeverEchoingBytes(t *testing.T) {
+	t.Parallel()
+
+	blobStore, store, cleanup := newTestStores(t)
+	defer cleanup()
+	handler := newRouterWithStores(blobStore, store, allowAllAccessController{}, fakeAuthService{verify: &auth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+
+	validKey := generateHTTPTestECDSAP256PublicKeyPEM(t)
+	body, err := json.Marshal(map[string]any{"enabled": true, "trusted_public_keys": []string{validKey, "not a pem at all"}})
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPut, "/admin/v1/signing-policy", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer admin-token")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d for an invalid key, body = %s", recorder.Code, http.StatusUnprocessableEntity, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "[1]") {
+		t.Fatalf("body = %q, want the offending index (1) named", recorder.Body.String())
+	}
+	if strings.Contains(recorder.Body.String(), "not a pem at all") {
+		t.Fatalf("body = %q, must never echo the offending key bytes", recorder.Body.String())
+	}
+
+	if _, err := store.GetSigningPolicySettings(context.Background(), "tenant-a"); err == nil {
+		t.Fatal("GetSigningPolicySettings() error = nil, want no row persisted for a rejected PUT")
+	}
+}
+
+// TestAdminSigningPolicyPutRejectsEnabledWithZeroKeys is the Phase 8 RED
+// test (tasks.md 8.4): enabled:true with zero usable keys is the outage
+// rule's 400/422 — the row is NOT stored, confirmed via a subsequent GET
+// showing the prior/default state unchanged.
+func TestAdminSigningPolicyPutRejectsEnabledWithZeroKeys(t *testing.T) {
+	t.Parallel()
+
+	blobStore, store, cleanup := newTestStores(t)
+	defer cleanup()
+	handler := newRouterWithStores(blobStore, store, allowAllAccessController{}, fakeAuthService{verify: &auth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+
+	body, err := json.Marshal(map[string]any{"enabled": true, "trusted_public_keys": []string{}})
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPut, "/admin/v1/signing-policy", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer admin-token")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d for enabled:true with zero keys, body = %s", recorder.Code, http.StatusUnprocessableEntity, recorder.Body.String())
+	}
+
+	if _, err := store.GetSigningPolicySettings(context.Background(), "tenant-a"); err == nil {
+		t.Fatal("GetSigningPolicySettings() error = nil, want no row persisted for a rejected PUT")
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/admin/v1/signing-policy", nil)
+	getReq.Header.Set("Authorization", "Bearer admin-token")
+	getRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(getRecorder, getReq)
+	if getRecorder.Code != http.StatusOK {
+		t.Fatalf("GET status = %d, want %d", getRecorder.Code, http.StatusOK)
+	}
+	if !strings.Contains(getRecorder.Body.String(), `"enabled":false`) {
+		t.Fatalf("GET body = %q, want the code-level default unchanged after the rejected PUT", getRecorder.Body.String())
+	}
+}
+
+// TestAdminSigningPolicyPutRejectsMoreThan16Keys is the Phase 8 RED test
+// (tasks.md 8.5): more than 16 keys is a 400/422, bounding the per-pull
+// verification loop (design.md Decision 8).
+func TestAdminSigningPolicyPutRejectsMoreThan16Keys(t *testing.T) {
+	t.Parallel()
+
+	blobStore, store, cleanup := newTestStores(t)
+	defer cleanup()
+	handler := newRouterWithStores(blobStore, store, allowAllAccessController{}, fakeAuthService{verify: &auth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+
+	keys := make([]string, 0, 17)
+	for i := 0; i < 17; i++ {
+		keys = append(keys, generateHTTPTestECDSAP256PublicKeyPEM(t))
+	}
+	body, err := json.Marshal(map[string]any{"enabled": true, "trusted_public_keys": keys})
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPut, "/admin/v1/signing-policy", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer admin-token")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d for 17 trusted keys, body = %s", recorder.Code, http.StatusUnprocessableEntity, recorder.Body.String())
+	}
+
+	if _, err := store.GetSigningPolicySettings(context.Background(), "tenant-a"); err == nil {
+		t.Fatal("GetSigningPolicySettings() error = nil, want no row persisted for a rejected PUT")
+	}
+}
+
+// TestAdminSigningPolicyPutRequiresAdminPrincipal is the Phase 8 RED test
+// (tasks.md 8.6): PUT requires the same admin authorization as GET.
+func TestAdminSigningPolicyPutRequiresAdminPrincipal(t *testing.T) {
+	t.Parallel()
+
+	blobStore, store, cleanup := newTestStores(t)
+	defer cleanup()
+	handler := newRouterWithStores(blobStore, store, allowAllAccessController{}, fakeAuthService{verify: &auth.Principal{Subject: "atk_1", UserID: "reader-1", Username: "reader", IsAdmin: false}})
+
+	req := httptest.NewRequest(http.MethodPut, "/admin/v1/signing-policy", strings.NewReader(`{"enabled":false}`))
+	req.Header.Set("Authorization", "Bearer reader-token")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code == http.StatusOK {
+		t.Fatalf("status = %d, want a non-admin caller to be rejected", recorder.Code)
+	}
+}
+
+// TestAdminSigningRepositoryOverridePutPersistsAndRoundTrips is the Phase 8
+// RED test (tasks.md 8.9): PUT
+// /admin/v1/features/signing/repository-overrides/<repo> persists and
+// round-trips through the EXISTING generic repository-overrides HTTP
+// resource — Phase 3's codec registration (repositoryOverrideCodecs,
+// signingFeatureName) is what makes this work with zero new HTTP route.
+func TestAdminSigningRepositoryOverridePutPersistsAndRoundTrips(t *testing.T) {
+	t.Parallel()
+
+	blobStore, store, cleanup := newTestStores(t)
+	defer cleanup()
+	handler := newRouterWithStores(blobStore, store, allowAllAccessController{}, fakeAuthService{verify: &auth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+
+	key := generateHTTPTestECDSAP256PublicKeyPEM(t)
+	body, err := json.Marshal(map[string]any{"enabled": true, "trusted_public_keys": []string{key}})
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPut, "/admin/v1/features/signing/repository-overrides/library/alpine", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer admin-token")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"enabled":true`) {
+		t.Fatalf("body = %q, want enabled:true", recorder.Body.String())
+	}
+
+	stored, err := store.GetRepositoryFeatureOverride(context.Background(), "tenant-a", "library/alpine", "signing")
+	if err != nil {
+		t.Fatalf("GetRepositoryFeatureOverride() error = %v", err)
+	}
+	if !strings.Contains(string(stored), `"enabled":true`) {
+		t.Fatalf("stored payload = %s, want the persisted signing override", stored)
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/admin/v1/features/signing/repository-overrides/library/alpine", nil)
+	getReq.Header.Set("Authorization", "Bearer admin-token")
+	getRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(getRecorder, getReq)
+	if getRecorder.Code != http.StatusOK {
+		t.Fatalf("GET status = %d, want %d, body = %s", getRecorder.Code, http.StatusOK, getRecorder.Body.String())
+	}
+	if !strings.Contains(getRecorder.Body.String(), `"enabled":true`) {
+		t.Fatalf("GET body = %q, want the stored signing override", getRecorder.Body.String())
+	}
+}
+
+// TestAdminSigningRepositoryOverridePutRejectsUnknownFieldsAndZeroKeys is
+// the Phase 8 RED test (tasks.md 8.10): a signing override body with
+// unknown fields, or enabled:true with zero keys, is rejected 422 via
+// normalizeSigningOverride through the existing generic PUT handler — no
+// new code path.
+func TestAdminSigningRepositoryOverridePutRejectsUnknownFieldsAndZeroKeys(t *testing.T) {
+	t.Parallel()
+
+	blobStore, store, cleanup := newTestStores(t)
+	defer cleanup()
+	handler := newRouterWithStores(blobStore, store, allowAllAccessController{}, fakeAuthService{verify: &auth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+
+	unknownFieldReq := httptest.NewRequest(http.MethodPut, "/admin/v1/features/signing/repository-overrides/library/alpine", strings.NewReader(`{"enabled":true,"config_path":"/etc/regixtry/gitleaks.toml"}`))
+	unknownFieldReq.Header.Set("Authorization", "Bearer admin-token")
+	unknownFieldReq.Header.Set("Content-Type", "application/json")
+	unknownFieldRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(unknownFieldRecorder, unknownFieldReq)
+	if unknownFieldRecorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("unknown-field status = %d, want %d, body = %s", unknownFieldRecorder.Code, http.StatusUnprocessableEntity, unknownFieldRecorder.Body.String())
+	}
+
+	zeroKeysReq := httptest.NewRequest(http.MethodPut, "/admin/v1/features/signing/repository-overrides/library/alpine", strings.NewReader(`{"enabled":true,"trusted_public_keys":[]}`))
+	zeroKeysReq.Header.Set("Authorization", "Bearer admin-token")
+	zeroKeysReq.Header.Set("Content-Type", "application/json")
+	zeroKeysRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(zeroKeysRecorder, zeroKeysReq)
+	if zeroKeysRecorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("zero-keys status = %d, want %d, body = %s", zeroKeysRecorder.Code, http.StatusUnprocessableEntity, zeroKeysRecorder.Body.String())
+	}
+
+	if _, err := store.GetRepositoryFeatureOverride(context.Background(), "tenant-a", "library/alpine", "signing"); err == nil {
+		t.Fatal("GetRepositoryFeatureOverride() error = nil, want no row persisted for either rejected PUT")
 	}
 }
