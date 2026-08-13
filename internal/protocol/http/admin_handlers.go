@@ -3,6 +3,7 @@ package regixtryhttp
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strconv"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	stdhttp "net/http"
 	domainauth "regixtry/internal/domain/auth"
 	domainregistry "regixtry/internal/domain/regixtry"
+	"regixtry/internal/domain/signing"
 	"regixtry/internal/ports"
 )
 
@@ -40,6 +42,8 @@ func (r *Router) handleAdmin(w stdhttp.ResponseWriter, req *stdhttp.Request) {
 		r.handleAdminScanSettings(w, req)
 	case subpath == "scan-policy":
 		r.handleAdminScanPolicy(w, req)
+	case subpath == "signing-policy":
+		r.handleAdminSigningPolicy(w, req)
 	case subpath == "scan-runs":
 		r.handleAdminScanRuns(w, req)
 	case strings.HasPrefix(subpath, "scan-runs/"):
@@ -398,6 +402,92 @@ func scanPolicySettingsResponse(settings ports.ScanPolicySettings) map[string]an
 		"enabled":            settings.Enabled,
 		"severity_threshold": settings.SeverityThreshold,
 		"updated_at":         settings.UpdatedAt,
+	}
+}
+
+// maxSigningPolicyTrustedKeys bounds the global signing policy's trusted-key
+// list (design.md Decision 8, rule 3): the per-pull verification loop is
+// O(len(TrustedPublicKeys) x len(entries)), so an admin-configurable
+// unbounded list is a hot-path cost hazard, not just a UX concern.
+const maxSigningPolicyTrustedKeys = 16
+
+// handleAdminSigningPolicy is modeled line-for-line on
+// handleAdminScanPolicy: GET returns the current global signing policy
+// settings, including the code-level {Enabled: false} default when no row
+// exists — never 404. PUT fully replaces the settings. Authorization is
+// inherited from handleAdmin's requireAdminPrincipal — no new permission
+// surface (design.md Decision 8).
+func (r *Router) handleAdminSigningPolicy(w stdhttp.ResponseWriter, req *stdhttp.Request) {
+	switch req.Method {
+	case stdhttp.MethodGet:
+		settings, err := r.service.GetSigningPolicySettings(req.Context())
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		writeJSON(w, stdhttp.StatusOK, signingPolicySettingsResponse(settings))
+	case stdhttp.MethodPut:
+		settings, err := decodeSigningPolicySettings(req)
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		updated, err := r.service.UpdateSigningPolicySettings(req.Context(), settings)
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		writeJSON(w, stdhttp.StatusOK, signingPolicySettingsResponse(updated))
+	default:
+		w.Header().Set("Allow", strings.Join([]string{stdhttp.MethodGet, stdhttp.MethodPut}, ", "))
+		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+	}
+}
+
+// decodeSigningPolicySettings mirrors decodeScanPolicySettings and enforces
+// the three rules from design.md Decision 8:
+//  1. Every key goes through signing.NormalizePublicKeyPEM; a parse failure
+//     or a non-ECDSA-P256 key is a validation error naming the offending
+//     index, never echoing key bytes.
+//  2. enabled:true with zero usable keys is a validation error (the outage
+//     rule) — it makes the guaranteed-total-outage configuration
+//     unrepresentable rather than merely discouraged.
+//  3. At most maxSigningPolicyTrustedKeys keys, bounding the per-pull
+//     verification loop.
+func decodeSigningPolicySettings(req *stdhttp.Request) (ports.SigningPolicySettings, error) {
+	var payload struct {
+		Enabled           bool     `json:"enabled"`
+		TrustedPublicKeys []string `json:"trusted_public_keys"`
+	}
+	if err := decodeAdminJSON(req, &payload); err != nil {
+		return ports.SigningPolicySettings{}, err
+	}
+	if len(payload.TrustedPublicKeys) > maxSigningPolicyTrustedKeys {
+		return ports.SigningPolicySettings{}, domainauth.NewValidationError(fmt.Sprintf("trusted_public_keys must contain at most %d entries", maxSigningPolicyTrustedKeys))
+	}
+	normalizedKeys := make([]string, 0, len(payload.TrustedPublicKeys))
+	for index, key := range payload.TrustedPublicKeys {
+		normalized, err := signing.NormalizePublicKeyPEM(key)
+		if err != nil {
+			return ports.SigningPolicySettings{}, domainauth.NewValidationError(fmt.Sprintf("trusted_public_keys[%d] is invalid: %s", index, err.Error()))
+		}
+		normalizedKeys = append(normalizedKeys, normalized)
+	}
+	if payload.Enabled && len(normalizedKeys) == 0 {
+		return ports.SigningPolicySettings{}, domainauth.NewValidationError("enabled requires at least one usable entry in trusted_public_keys")
+	}
+	return ports.SigningPolicySettings{Enabled: payload.Enabled, TrustedPublicKeys: normalizedKeys}, nil
+}
+
+func signingPolicySettingsResponse(settings ports.SigningPolicySettings) map[string]any {
+	trustedKeys := settings.TrustedPublicKeys
+	if trustedKeys == nil {
+		trustedKeys = []string{}
+	}
+	return map[string]any{
+		"enabled":             settings.Enabled,
+		"trusted_public_keys": trustedKeys,
+		"updated_at":          settings.UpdatedAt,
 	}
 }
 
