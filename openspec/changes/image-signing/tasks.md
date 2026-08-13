@@ -612,39 +612,84 @@ existing Trivy/gitleaks test function.
 Proves the proposal's Success Criteria and the spec's explicitly-testable
 claims, exercising the whole stack rather than a single layer.
 
-- [ ] 10.1 Integration test (a): `cosign` legacy tag-convention push
+- [x] 10.1 Integration test (a): `cosign` legacy tag-convention push
       round-trips through the **existing** manifest push path with **zero
       push-path code changes**. Use the real `cosign` binary if Phase 0
       found one available; if not, construct the equivalent manifest PUT at
       tag `sha256-<hex>.sig` directly against the HTTP layer and assert it
       succeeds identically to any other manifest push, with an explicit
       comment noting this substitutes for a genuine `cosign` invocation.
-- [ ] 10.2 Integration test (b), direction 1: a repository override can
+      **Done**: `internal/protocol/http/push_round_trip_test.go` —
+      `TestRouterManifestPushRoundTripsIdenticallyForCosignLegacySignatureTag`.
+      No `cosign` binary available (Phase 0.1), so this pushes the exact
+      same manifest bytes at both an ordinary tag and the legacy
+      `sha256-<hex>.sig` tag through `handleManifest`, table-driven, and
+      asserts identical status/digest/content-type/body for both, plus both
+      tags appear unfiltered in `/tags/list` — explicit comment in the test
+      documents the `cosign`-binary substitution.
+- [x] 10.2 Integration test (b), direction 1: a repository override can
       **require** signing when the global default does not — end-to-end
       `OpenManifest`-level proof (cross-reference Phase 5's coverage; add
       here only if not already exercised at the `OpenManifest` level).
-- [ ] 10.3 Integration test (b), direction 2: a repository override
+      **Done**: confirmed the resolution layer alone
+      (`TestApplySigningOverridePayloadAppliesRoundTripAndTolerance`,
+      `repository_overrides_test.go`) and Phase 5 (`service_test.go`) do NOT
+      exercise this direction through `OpenManifest` — added
+      `internal/app/regixtry/signing_override_direction_test.go`:
+      `TestServiceOpenManifestSigningOverrideDirectionRequiresSigningWhenGlobalDoesNot`,
+      via the real `SetRepositoryOverride` -> `enforceSigningPolicy` ->
+      `OpenManifest` chain, with a same-test sanity check on a sibling
+      unoverridden repository proving the baseline the override changes.
+- [x] 10.3 Integration test (b), direction 2: a repository override
       **exempts** a repository when the global default requires signing —
       end-to-end `OpenManifest`-level proof.
-- [ ] 10.4 Integration test (c) — confirm Phase 5.4's fail-closed/fail-open
+      **Done**: same file,
+      `TestServiceOpenManifestSigningOverrideDirectionExemptsWhenGlobalRequiresSigning`.
+- [x] 10.4 Integration test (c) — confirm Phase 5.4's fail-closed/fail-open
       contrast test satisfies the spec's literal "Contrast with the
       vulnerability gate's fail-open default" scenario at the `OpenManifest`
       level; add a dedicated test only if a gap remains.
-- [ ] 10.5 Confirm Phase 10 GREEN:
+      **Done**: `TestServiceOpenManifestContrastsFailOpenScanGateWithFailClosedSigningGate`
+      (`service_test.go`, written in Work Unit 3) already exercises exactly
+      this scenario at the `OpenManifest` level. Re-ran in isolation and
+      confirmed still PASS — no gap, no new test needed.
+- [x] 10.5 Confirm Phase 10 GREEN:
       `go test ./internal/app/regixtry/... -run 'PushRoundTrip|SigningOverrideDirection|FailClosedContrast' -v`.
+      **Confirmed**: the two new `SigningOverrideDirection` tests PASS. The
+      `FailClosedContrast` alternative in that regex does not literally
+      substring-match `TestServiceOpenManifestContrastsFailOpenScanGateWithFailClosedSigningGate`
+      (its name has "Contrasts...FailClosed", not "FailClosedContrast"
+      contiguous), so it matched 0 tests in that combined run by design of
+      the filter string, not a code issue; it was independently confirmed
+      PASS by name in 10.4. `PushRoundTrip` matched 0 tests in the
+      `internal/app/regixtry` package (by design — that test lives in
+      `internal/protocol/http`) and was independently confirmed PASS above.
 
 ## Phase 11: Non-Regression Close-Out
 
-- [ ] 11.1 `go build ./...`, `go vet ./...`, `gofmt -l .` clean.
-- [ ] 11.2 Full `go test -count=1 ./...` green (not just touched packages).
-- [ ] 11.3 Confirm `git diff go.mod go.sum` is empty — zero new dependency,
+- [x] 11.1 `go build ./...`, `go vet ./...`, `gofmt -l .` clean.
+      **Confirmed**: all three clean across the entire repo.
+- [x] 11.2 Full `go test -count=1 ./...` green (not just touched packages).
+      **Confirmed**: all 18 tested packages PASS (19 packages total, 1
+      no-test-files), including the two new Phase 10 test files.
+- [x] 11.3 Confirm `git diff go.mod go.sum` is empty — zero new dependency,
       the proposal's hard constraint.
-- [ ] 11.4 Confirm rollback inertness: with the migration applied but the
+      **Confirmed**: `git diff 4ae3893 HEAD -- go.mod go.sum` is empty
+      (4ae3893 is the develop merge-base — `git merge-base 4ae3893 HEAD`
+      returns 4ae3893 itself) — zero new dependency across the ENTIRE
+      change, not just individual work units.
+- [x] 11.4 Confirm rollback inertness: with the migration applied but the
       `signing_policy_settings` row absent and zero `signing` override rows,
       `OpenManifest` pull behavior is byte-identical to pre-change
       (Migration/Rollout section) — dedicated test if not already covered
       by Phase 5.1.
-- [ ] 11.5 Resolve design.md's Open Questions flagged for apply/verify:
+      **Confirmed covered**: `TestServiceOpenManifestSigningPolicyDisabledIsByteIdenticalToScanOnlyBehavior`
+      (`service_test.go`, Phase 5.1) seeds no `signing_policy_settings` row
+      and no `signing` override row, exercising exactly the rollback-inert
+      shape (code-level `{Enabled: false}` default) for both a signed and
+      an unsigned digest. Re-ran in isolation: PASS. No dedicated test
+      needed.
+- [x] 11.5 Resolve design.md's Open Questions flagged for apply/verify:
       (a) restate whether a `cosign` binary was available and which fixture
       provenance resulted (Phase 0.3); (b) confirm no shipped count/name
       assertion broke from the third `builtInFeatures` entry (Phase
@@ -653,9 +698,57 @@ claims, exercising the whole stack rather than a single layer.
       `PUT /admin/v1/signing-policy` is left as an inherited open question,
       same posture as the overrides endpoint — explicitly deferred, no new
       task.
-- [ ] 11.6 Update this file's checkboxes as work lands; save
+      **Resolved**: (a) no `cosign` binary was available in the apply
+      environment (Phase 0.1); fixture provenance is SYNTHETIC (hand-
+      constructed offline, `internal/domain/signing/testdata/README.md`),
+      restated in the verify-report as a first-class finding. (b) confirmed
+      by Phase 6.1/6.10: `TestServiceListFeaturesReturnsBuiltinTrivyInventory`
+      DID break from the third `builtInFeatures` entry and was fixed by
+      updating its expected slice; no other count/name assertion broke,
+      confirmed by running (not grepping) the full suite. (c) confirmed by
+      Phase 9.20's live-render debug test: full bottom border and help line
+      rendered with no truncation at 150×24 for the 20-row worst case. (d)
+      the `PUT /admin/v1/signing-policy` request-body size bound remains an
+      explicitly deferred open question, same posture as the existing
+      repository-overrides endpoint — no new task created.
+- [x] 11.6 Update this file's checkboxes as work lands; save
       `apply-progress` to Engram at each phase boundary (for `sdd-apply` to
       resume from).
-- [ ] 11.7 Verify-report: state the fixture provenance (real `cosign` vs.
+      **Done**: this file's Phase 10/11 checkboxes updated; `apply-progress`
+      saved to Engram at the end of this work unit.
+- [x] 11.7 Verify-report: state the fixture provenance (real `cosign` vs.
       synthetic, from Phase 0.3/11.5(a)) as a first-class finding at the top
       of the report, not buried — this must never be silently worked around.
+      **Done**: `openspec/changes/image-signing/verify-report.md` states
+      the synthetic fixture provenance immediately after the bottom-line
+      verdict, before the spec compliance matrix.
+
+### Full-repo verification results (this work unit)
+
+- `go build ./...`, `go vet ./...`, `gofmt -l .` — all clean.
+- `go test -count=1 ./...` — all 18 tested packages PASS.
+- `go test -race -count=1 ./internal/app/regixtry/... ./internal/protocol/http/...`
+  — clean, no races.
+- `go test -race -count=1 ./internal/tui/...` — fails with the same
+  pre-existing `bubble-table` `table.NewRow()` shared-counter data race
+  documented in the Phase 9 apply-progress notes. Re-confirmed definitively
+  for the WHOLE change (not just the TUI work unit) via a disposable git
+  worktree checked out at `4ae3893` (the true pre-image-signing develop
+  merge-base, not just the Phase 9 baseline `ea9b941`): the identical race
+  (same call sites — `buildAdminFindingsTable`/`buildAdminSecretFindingsTable`
+  via `rebuildAdminTables`, same triggering tests —
+  `TestModelScanHistoryModalRendersWithinViewportAcrossHeights`/
+  `AcrossWidths`/`HistoryNavigationRefetchesDetailAndSecretsPerCursor`) is
+  present identically at `4ae3893`, before any image-signing code existed.
+  Confirmed NOT a regression from this change. Worktree removed after
+  confirmation.
+- `git diff 4ae3893 HEAD --stat`: 40 files changed (before this work unit's
+  own 2 new test files), 7317 insertions(+), 80 deletions(-). Including
+  this work unit's Phase 10 additions, see the commit for the final tally.
+- Scan-policy-gate and repository-scan-config-overrides regression check:
+  `go test ./internal/app/regixtry/... -run 'ScanPolicy|Trivy|Gitleaks|RepositoryOverride' -v`
+  (24 top-level tests incl. subtests, all PASS) and
+  `go test ./internal/tui/... -run 'ScanPolicy|TrivyConfig|GitleaksConfig|Badge' -v`
+  (19 top-level tests, all PASS) — no regression in the pull gate,
+  `ScanPolicyModal`, the Policy badge, or the Trivy/gitleaks overrides
+  modal.
