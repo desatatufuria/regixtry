@@ -2,10 +2,13 @@ package regixtry
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	domain "regixtry/internal/domain/regixtry"
+	"regixtry/internal/domain/signing"
 	"regixtry/internal/ports"
 )
 
@@ -187,6 +190,159 @@ func (s *Service) ScanStatus(ctx context.Context, repositoryName string, referen
 		}
 	}
 	return result, nil
+}
+
+// SignatureStatusResult is the CI-facing signature verdict for one digest
+// (design.md Decision 9). Like ScanStatusResult, this never gates the
+// request -- it always returns 200 with the current verdict, one of five
+// distinct states, computed independently of whether the resolved policy is
+// enabled. Only WouldBlockPull reflects the toggle.
+type SignatureStatusResult struct {
+	Repository     string                 `json:"repository"`
+	Reference      string                 `json:"reference"`
+	Digest         string                 `json:"digest"`
+	State          string                 `json:"state"`
+	WouldBlockPull bool                   `json:"would_block_pull"`
+	Policy         SignatureStatusPolicy  `json:"policy"`
+	Signature      *SignatureStatusDetail `json:"signature,omitempty"`
+}
+
+// SignatureStatusPolicy never carries key material -- TrustedKeys is a
+// count only, the registry-scoped counterpart of the admin-only signing
+// policy resource that echoes canonical PEM (design.md Decision 8/9).
+type SignatureStatusPolicy struct {
+	Enabled     bool `json:"enabled"`
+	TrustedKeys int  `json:"trusted_keys"`
+}
+
+// SignatureStatusDetail never carries a raw signature -- Reason is drawn
+// from enforceSigningPolicy's own fixed-vocabulary messages (design.md
+// Decision 6), stripped of its "pull of <repo>@<digest> is blocked by the
+// signing policy: " prefix.
+type SignatureStatusDetail struct {
+	Tag            string `json:"tag"`
+	SignatureCount int    `json:"signature_count"`
+	Reason         string `json:"reason,omitempty"`
+}
+
+const (
+	SignatureStatusUnsigned     = "unsigned"
+	SignatureStatusUnverifiable = "unverifiable"
+	SignatureStatusUntrusted    = "untrusted"
+	SignatureStatusMismatched   = "mismatched"
+	SignatureStatusVerified     = "verified"
+)
+
+// SignatureStatus resolves the same digest and policy the signing gate
+// would (GetSigningPolicySettings + applySigningRepositoryOverride +
+// verifySignature), but always returns a verdict rather than gating the
+// caller -- it reports whether a pull would be blocked, it is never subject
+// to the gate itself. Authorization is ActionPull, the same action
+// OpenManifest itself uses, exactly like ScanStatus: "if you may pull it,
+// you may learn why you cannot." The state is computed unconditionally,
+// even when the resolved policy is disabled (design.md Decision 9) --
+// verifySignature is called directly, bypassing enforceSigningPolicy's
+// `!policy.Enabled` short-circuit.
+func (s *Service) SignatureStatus(ctx context.Context, repositoryName string, reference string) (SignatureStatusResult, error) {
+	repository, err := parseRepository(repositoryName)
+	if err != nil {
+		return SignatureStatusResult{}, err
+	}
+
+	if err := s.authorize(ctx, ports.Action{Verb: ports.ActionPull, Repository: repository.String()}); err != nil {
+		return SignatureStatusResult{}, err
+	}
+
+	manifest, err := s.metadata.ResolveManifest(ctx, s.tenant(ctx), repository, reference)
+	if err != nil {
+		return SignatureStatusResult{}, err
+	}
+	digest := manifest.Digest.String()
+
+	policy, err := s.GetSigningPolicySettings(ctx)
+	if err != nil {
+		return SignatureStatusResult{}, err
+	}
+	policy, err = s.applySigningRepositoryOverride(ctx, s.tenant(ctx), repository.String(), policy)
+	if err != nil {
+		return SignatureStatusResult{}, err
+	}
+
+	result := SignatureStatusResult{
+		Repository: repository.String(),
+		Reference:  reference,
+		Digest:     digest,
+		Policy:     SignatureStatusPolicy{Enabled: policy.Enabled, TrustedKeys: len(policy.TrustedPublicKeys)},
+	}
+
+	state, verifyErr := s.verifySignature(ctx, repository.String(), digest, policy)
+	if verifyErr != nil && !domain.IsCode(verifyErr, domain.ErrorCodePolicyViolation) {
+		return SignatureStatusResult{}, verifyErr // infrastructure error propagates unchanged, same as the gate
+	}
+	result.State = state
+	result.WouldBlockPull = policy.Enabled && state != SignatureStatusVerified
+
+	if state != SignatureStatusUnsigned {
+		tag, entries, resolveErr := s.resolveSignatureManifestEntries(ctx, repository.String(), digest)
+		if resolveErr != nil {
+			return SignatureStatusResult{}, resolveErr
+		}
+		result.Signature = &SignatureStatusDetail{
+			Tag:            tag,
+			SignatureCount: len(entries),
+			Reason:         signatureStatusReason(repository.String(), digest, verifyErr),
+		}
+	}
+
+	return result, nil
+}
+
+// resolveSignatureManifestEntries re-resolves the .sig manifest's parsed
+// entries for SignatureStatusDetail's Tag/SignatureCount fields -- a small,
+// deliberate duplication of verifySignature's own resolution (this is a
+// status read, not the hot pull path, so re-reading is an acceptable cost
+// for keeping verifySignature's signature unchanged from Work Unit 3). A
+// missing or unparseable manifest is reported as zero entries, never an
+// error, mirroring verifySignature's own tolerance for the same conditions.
+func (s *Service) resolveSignatureManifestEntries(ctx context.Context, repository string, digest string) (string, []signing.SignatureEntry, error) {
+	tag, err := signing.SignatureTag(digest)
+	if err != nil {
+		return "", nil, nil
+	}
+
+	repositoryRef, err := parseRepository(repository)
+	if err != nil {
+		return tag, nil, nil
+	}
+
+	sigManifest, err := s.metadata.ResolveManifest(ctx, s.tenant(ctx), repositoryRef, tag)
+	if err != nil {
+		if domain.IsCode(err, domain.ErrorCodeNotFound) {
+			return tag, nil, nil
+		}
+		return tag, nil, err // infrastructure error propagates unchanged
+	}
+
+	entries, err := signing.ParseSignatureManifest(sigManifest.Payload)
+	if err != nil {
+		return tag, nil, nil
+	}
+	return tag, entries, nil
+}
+
+// signatureStatusReason extracts the fixed-vocabulary reason from
+// verifySignature's own error message, trimming the
+// "pull of <repo>@<digest> is blocked by the signing policy: " prefix every
+// verifySignature error carries. Reusing that message (rather than
+// duplicating its vocabulary) keeps the gate and the status report unable
+// to drift apart; none of verifySignature's messages ever embed key,
+// payload, or signature bytes.
+func signatureStatusReason(repository string, digest string, err error) string {
+	if err == nil {
+		return ""
+	}
+	prefix := fmt.Sprintf("pull of %s@%s is blocked by the signing policy: ", repository, digest)
+	return strings.TrimPrefix(err.Error(), prefix)
 }
 
 func (s *Service) Catalog(ctx context.Context, limit int, after string) (CatalogResult, error) {
