@@ -386,6 +386,61 @@ func (s *Service) Tags(ctx context.Context, repositoryName string, limit int, af
 	return TagsResult{Name: repository.String(), Tags: tags}, nil
 }
 
+// TagDetails is one tag's row on the Console TUI's Tags screen: its name,
+// its manifest's created_at, and its computed signature state (design.md
+// intentionally minimal 3-column set: Tag, Created, Signed -- vulnerability
+// and size data already live elsewhere in this app). Kept distinct from
+// TagsResult (the OCI Distribution API's `_tags/list` shape, `{name, tags:
+// []string}`), which existing docker/skopeo clients depend on and must
+// never gain extra fields.
+type TagDetails struct {
+	Name           string    `json:"name"`
+	CreatedAt      time.Time `json:"created_at"`
+	SignatureState string    `json:"signature_state"`
+	SigningEnabled bool      `json:"signing_enabled"`
+}
+
+// TagDetails resolves the same tag list Tags() does, plus each tag's
+// manifest created_at and computed signature state (console-tags-table
+// change) -- authorized identically to Tags() (ActionInspect), which shares
+// ActionPull's scope (Action.Scope()), so the per-tag SignatureStatus call
+// below composes without a second, different authorization boundary.
+// SignatureStatus is reused verbatim rather than reimplemented (design
+// intent): each tag pays its own ResolveManifest + verifySignature cost,
+// mirroring this codebase's existing per-item lookup pattern rather than a
+// bespoke batch-verification query.
+func (s *Service) TagDetails(ctx context.Context, repositoryName string, limit int, after string) ([]TagDetails, error) {
+	repository, err := parseRepository(repositoryName)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.authorize(ctx, ports.Action{Verb: ports.ActionInspect, Repository: repository.String()}); err != nil {
+		return nil, err
+	}
+
+	tags, err := s.metadata.ListTagsWithCreatedAt(ctx, s.tenant(ctx), repository, limit, after)
+	if err != nil {
+		return nil, err
+	}
+
+	details := make([]TagDetails, 0, len(tags))
+	for _, tag := range tags {
+		status, err := s.SignatureStatus(ctx, repository.String(), tag.Name)
+		if err != nil {
+			return nil, err
+		}
+		details = append(details, TagDetails{
+			Name:           tag.Name,
+			CreatedAt:      tag.CreatedAt,
+			SignatureState: status.State,
+			SigningEnabled: status.Policy.Enabled,
+		})
+	}
+
+	return details, nil
+}
+
 func (s *Service) InspectBlob(ctx context.Context, repositoryName string, digestValue string) (BlobDetails, error) {
 	digest, err := domain.ParseDigest(digestValue)
 	if err != nil {
