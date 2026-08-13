@@ -146,6 +146,128 @@ func TestRunnerRunInvokesGitleaksWithExactLiteralArgv(t *testing.T) {
 	}
 }
 
+// TestRunnerRunArgvUnchangedWithoutConfigOverride is the argv regression pin
+// (tasks.md 6.5): with no ConfigPath override set, the argv stays the exact
+// 10-element fixed literal slice from today, with no trailing --config flag.
+func TestRunnerRunArgvUnchangedWithoutConfigOverride(t *testing.T) {
+	t.Parallel()
+
+	configDigest := domain.DigestFromBytes([]byte("config-body"))
+	layerDigest := domain.DigestFromBytes([]byte("layer-body"))
+	store := &fakeBlobStore{blobs: map[domain.Digest][]byte{
+		configDigest: []byte("config-body"),
+		layerDigest:  []byte("layer-body"),
+	}}
+
+	var capturedArgs []string
+	runner := New(RunnerConfig{Blobs: store, Exec: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		capturedArgs = append([]string{}, args...)
+		reportPath := argValue(args, "--report-path")
+		if reportPath == "" {
+			return nil, fmt.Errorf("fake exec: --report-path not found in argv")
+		}
+		return nil, os.WriteFile(reportPath, []byte(`[]`), 0o600)
+	}})
+
+	target := ports.SecretScanTarget{
+		Repository: "library/alpine",
+		Digest:     "sha256:deadbeef",
+		Blobs: []domain.Descriptor{
+			{MediaType: "application/vnd.oci.image.config.v1+json", Digest: configDigest, Size: 11},
+			{MediaType: "application/vnd.oci.image.layer.v1.tar", Digest: layerDigest, Size: 10},
+		},
+	}
+	settings := ports.ScanSettings{BinaryPath: "/var/lib/regixtry/features/gitleaks/bin/active/gitleaks", CacheDir: t.TempDir(), Timeout: time.Minute}
+
+	if _, err := runner.Run(context.Background(), target, settings); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(capturedArgs) != 12 {
+		t.Fatalf("capturedArgs = %#v, want 12 literal elements without a --config override", capturedArgs)
+	}
+	for _, arg := range capturedArgs {
+		if arg == "--config" {
+			t.Fatalf("capturedArgs = %#v, want no --config flag when ConfigPath is empty", capturedArgs)
+		}
+	}
+}
+
+// TestRunnerRunAppendsConfigFlagWhenOverridePathSet covers tasks.md 6.6:
+// ConfigPath appends --config after the existing fixed literal slice
+// (design.md Decision 5's Gitleaks Exec Surface).
+func TestRunnerRunAppendsConfigFlagWhenOverridePathSet(t *testing.T) {
+	t.Parallel()
+
+	configPath := filepath.Join(t.TempDir(), "alpine.toml")
+	if err := os.WriteFile(configPath, []byte(""), 0o600); err != nil {
+		t.Fatalf("WriteFile(configPath) error = %v", err)
+	}
+
+	configDigest := domain.DigestFromBytes([]byte("config-body"))
+	layerDigest := domain.DigestFromBytes([]byte("layer-body"))
+	store := &fakeBlobStore{blobs: map[domain.Digest][]byte{
+		configDigest: []byte("config-body"),
+		layerDigest:  []byte("layer-body"),
+	}}
+
+	var capturedArgs []string
+	runner := New(RunnerConfig{Blobs: store, Exec: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		capturedArgs = append([]string{}, args...)
+		reportPath := argValue(args, "--report-path")
+		if reportPath == "" {
+			return nil, fmt.Errorf("fake exec: --report-path not found in argv")
+		}
+		return nil, os.WriteFile(reportPath, []byte(`[]`), 0o600)
+	}})
+
+	target := ports.SecretScanTarget{
+		Repository: "library/alpine",
+		Digest:     "sha256:deadbeef",
+		Blobs: []domain.Descriptor{
+			{MediaType: "application/vnd.oci.image.config.v1+json", Digest: configDigest, Size: 11},
+			{MediaType: "application/vnd.oci.image.layer.v1.tar", Digest: layerDigest, Size: 10},
+		},
+	}
+	settings := ports.ScanSettings{BinaryPath: "/var/lib/regixtry/features/gitleaks/bin/active/gitleaks", CacheDir: t.TempDir(), Timeout: time.Minute, ConfigPath: configPath}
+
+	if _, err := runner.Run(context.Background(), target, settings); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(capturedArgs) < 2 || capturedArgs[len(capturedArgs)-2] != "--config" || capturedArgs[len(capturedArgs)-1] != configPath {
+		t.Fatalf("capturedArgs = %#v, want --config %q appended after the fixed literal slice", capturedArgs, configPath)
+	}
+}
+
+// TestRunnerRunFailsPreflightOnUnreadableConfigPath is the fail-open
+// threat-matrix RED test (tasks.md 6.7): a missing or unreadable ConfigPath
+// must fail the run before r.exec is ever invoked (design.md Decision 6 —
+// gitleaks fatals on a bad --config, so the pre-flight check must beat it).
+func TestRunnerRunFailsPreflightOnUnreadableConfigPath(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeBlobStore{blobs: map[domain.Digest][]byte{}}
+	executed := false
+	runner := New(RunnerConfig{Blobs: store, Exec: func(context.Context, string, ...string) ([]byte, error) {
+		executed = true
+		return nil, fmt.Errorf("exec should not have been invoked")
+	}})
+
+	target := ports.SecretScanTarget{Repository: "library/alpine", Digest: "sha256:deadbeef"}
+	settings := ports.ScanSettings{
+		BinaryPath: "/var/lib/regixtry/features/gitleaks/bin/active/gitleaks",
+		CacheDir:   t.TempDir(),
+		Timeout:    time.Minute,
+		ConfigPath: filepath.Join(t.TempDir(), "missing.toml"),
+	}
+
+	if _, err := runner.Run(context.Background(), target, settings); err == nil || !strings.Contains(err.Error(), "not readable") {
+		t.Fatalf("Run() error = %v, want config path readability rejection", err)
+	}
+	if executed {
+		t.Fatalf("exec was invoked despite an unreadable/missing config override path")
+	}
+}
+
 // argValue returns the value following the given flag in args, or "" if the
 // flag is absent.
 func argValue(args []string, flag string) string {

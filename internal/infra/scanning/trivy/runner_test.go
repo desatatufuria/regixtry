@@ -3,7 +3,9 @@ package trivy
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -146,6 +148,126 @@ func TestRunnerRetainsPartialFreshnessMetadata(t *testing.T) {
 	}
 	if result.DBFreshness.DBUpdatedAt != nil || result.DBFreshness.DBDownloadedAt != nil || result.DBFreshness.DBNextUpdateAt != nil {
 		t.Fatalf("DBFreshness = %#v, want omitted optional timestamps to stay nil", result.DBFreshness)
+	}
+}
+
+// TestRunnerRunArgvUnchangedWithoutOverridePaths is the argv regression pin
+// (tasks.md 6.1): with no per-repository override paths set, the scan argv
+// must stay byte-identical to today's shape (design.md Decision 5).
+func TestRunnerRunArgvUnchangedWithoutOverridePaths(t *testing.T) {
+	t.Parallel()
+
+	var scanArgs []string
+	runner := New(RunnerConfig{Exec: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		if len(args) >= 1 && args[0] == "version" {
+			return []byte(`{"Version":"0.58.0"}`), nil
+		}
+		scanArgs = append([]string{}, args...)
+		return []byte(`{"Results":[]}`), nil
+	}})
+	settings := ports.ScanSettings{BinaryPath: "/var/lib/regixtry/features/trivy/bin/active/trivy", CacheDir: "/var/lib/regixtry/features/trivy/trivy-cache", Timeout: time.Minute}
+
+	if _, err := runner.Run(context.Background(), "registry.internal/library/alpine@sha256:abc", settings); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	want := []string{"image", "--format", "json", "--cache-dir", settings.CacheDir, "registry.internal/library/alpine@sha256:abc"}
+	if !reflect.DeepEqual(scanArgs, want) {
+		t.Fatalf("scanArgs = %#v, want %#v (byte-identical argv with no override paths set)", scanArgs, want)
+	}
+}
+
+// TestRunnerRunAppendsIgnoreFlagsWhenOverridePathsSet covers tasks.md 6.2:
+// IgnoreFilePath appends --ignorefile, IgnorePolicyPath appends
+// --ignore-policy, and both together append both flags in that order,
+// before the positional imageRef (design.md Decision 5's exact argv shape).
+func TestRunnerRunAppendsIgnoreFlagsWhenOverridePathsSet(t *testing.T) {
+	t.Parallel()
+
+	ignoreFile := filepath.Join(t.TempDir(), "alpine.trivyignore")
+	if err := os.WriteFile(ignoreFile, []byte(""), 0o600); err != nil {
+		t.Fatalf("WriteFile(ignoreFile) error = %v", err)
+	}
+	ignorePolicy := filepath.Join(t.TempDir(), "alpine.rego")
+	if err := os.WriteFile(ignorePolicy, []byte(""), 0o600); err != nil {
+		t.Fatalf("WriteFile(ignorePolicy) error = %v", err)
+	}
+
+	var scanArgs []string
+	runner := New(RunnerConfig{Exec: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		if len(args) >= 1 && args[0] == "version" {
+			return []byte(`{"Version":"0.58.0"}`), nil
+		}
+		scanArgs = append([]string{}, args...)
+		return []byte(`{"Results":[]}`), nil
+	}})
+	settings := ports.ScanSettings{
+		BinaryPath:       "/var/lib/regixtry/features/trivy/bin/active/trivy",
+		CacheDir:         "/var/lib/regixtry/features/trivy/trivy-cache",
+		Timeout:          time.Minute,
+		IgnoreFilePath:   ignoreFile,
+		IgnorePolicyPath: ignorePolicy,
+	}
+
+	if _, err := runner.Run(context.Background(), "registry.internal/library/alpine@sha256:abc", settings); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	want := []string{"image", "--format", "json", "--cache-dir", settings.CacheDir, "--ignorefile", ignoreFile, "--ignore-policy", ignorePolicy, "registry.internal/library/alpine@sha256:abc"}
+	if !reflect.DeepEqual(scanArgs, want) {
+		t.Fatalf("scanArgs = %#v, want %#v", scanArgs, want)
+	}
+}
+
+// TestRunnerRunFailsPreflightOnUnreadableOverridePaths is the fail-open
+// threat-matrix RED test (tasks.md 6.3): a missing or unreadable
+// IgnoreFilePath/IgnorePolicyPath must fail the run before exec is ever
+// invoked, rather than letting Trivy silently scan with no suppressions
+// (design.md Decision 6).
+func TestRunnerRunFailsPreflightOnUnreadableOverridePaths(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		settings func(dir string) ports.ScanSettings
+	}{
+		{
+			name: "missing ignore file",
+			settings: func(dir string) ports.ScanSettings {
+				return ports.ScanSettings{IgnoreFilePath: filepath.Join(dir, "missing.trivyignore")}
+			},
+		},
+		{
+			name: "missing ignore policy",
+			settings: func(dir string) ports.ScanSettings {
+				return ports.ScanSettings{IgnorePolicyPath: filepath.Join(dir, "missing.rego")}
+			},
+		},
+		{
+			name: "ignore file is a directory",
+			settings: func(dir string) ports.ScanSettings {
+				return ports.ScanSettings{IgnoreFilePath: dir}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			executed := false
+			runner := New(RunnerConfig{Exec: func(context.Context, string, ...string) ([]byte, error) {
+				executed = true
+				return nil, fmt.Errorf("exec should not have been invoked")
+			}})
+			settings := tt.settings(t.TempDir())
+			settings.BinaryPath = "/var/lib/regixtry/features/trivy/bin/active/trivy"
+			settings.CacheDir = "/var/lib/regixtry/features/trivy/trivy-cache"
+			settings.Timeout = time.Minute
+
+			if _, err := runner.Run(context.Background(), "registry.internal/library/alpine@sha256:abc", settings); err == nil {
+				t.Fatalf("Run() error = nil, want a readability rejection")
+			}
+			if executed {
+				t.Fatalf("exec was invoked despite an unreadable/missing override path")
+			}
+		})
 	}
 }
 

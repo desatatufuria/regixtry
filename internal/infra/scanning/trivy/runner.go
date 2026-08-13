@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
@@ -52,6 +53,17 @@ func (r *Runner) Run(ctx context.Context, imageRef string, settings ports.ScanSe
 	if r == nil || r.exec == nil {
 		return ports.ScanResult{}, fmt.Errorf("trivy runner is not configured")
 	}
+	// Pre-flight readability check (design.md Decision 6): performed before
+	// exec is invoked at all, including the version probe, so a typo'd
+	// override path fails the run instead of letting Trivy silently scan
+	// with no suppressions (its documented fail-open behavior for a missing
+	// ignore file).
+	if err := requireReadableFile("ignore file", settings.IgnoreFilePath); err != nil {
+		return ports.ScanResult{}, err
+	}
+	if err := requireReadableFile("ignore policy", settings.IgnorePolicyPath); err != nil {
+		return ports.ScanResult{}, err
+	}
 	timeout := settings.Timeout
 	if timeout <= 0 {
 		timeout = 15 * time.Minute
@@ -65,6 +77,12 @@ func (r *Runner) Run(ctx context.Context, imageRef string, settings ports.ScanSe
 	args := []string{"image", "--format", "json"}
 	if cacheDir := strings.TrimSpace(settings.CacheDir); cacheDir != "" {
 		args = append(args, "--cache-dir", cacheDir)
+	}
+	if ignoreFilePath := strings.TrimSpace(settings.IgnoreFilePath); ignoreFilePath != "" {
+		args = append(args, "--ignorefile", ignoreFilePath)
+	}
+	if ignorePolicyPath := strings.TrimSpace(settings.IgnorePolicyPath); ignorePolicyPath != "" {
+		args = append(args, "--ignore-policy", ignorePolicyPath)
 	}
 	args = append(args, strings.TrimSpace(imageRef))
 	output, err := r.exec(runCtx, versionInfo.BinaryPath, args...)
@@ -256,6 +274,27 @@ func severityRank(severity string) int {
 	default:
 		return 0
 	}
+}
+
+// requireReadableFile is the pre-flight readability check from design.md
+// Decision 6: an empty path is not configured and is skipped; a non-empty
+// path is opened (not merely `os.Stat`-ed) to prove it is actually readable,
+// not just present, before argv construction ever runs.
+func requireReadableFile(label string, path string) error {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return nil
+	}
+	file, err := os.Open(trimmed)
+	if err != nil {
+		return fmt.Errorf("%s is not readable: %w", label, err)
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || info.IsDir() {
+		return fmt.Errorf("%s is not a regular file", label)
+	}
+	return nil
 }
 
 func managedBinaryPath(binaryPath string) (string, error) {

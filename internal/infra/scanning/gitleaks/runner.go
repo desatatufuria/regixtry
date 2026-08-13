@@ -53,6 +53,13 @@ func (r *Runner) Run(ctx context.Context, target ports.SecretScanTarget, setting
 	if err != nil {
 		return ports.SecretScanResult{}, err
 	}
+	// Pre-flight readability check (design.md Decision 6): performed before
+	// r.exec is ever invoked, since gitleaks fatals on an unreadable
+	// --config and the run should fail with a clear error rather than the
+	// CLI's own exit-code-driven message.
+	if err := requireReadableFile("config file", settings.ConfigPath); err != nil {
+		return ports.SecretScanResult{}, err
+	}
 
 	timeout := settings.Timeout
 	if timeout <= 0 {
@@ -77,6 +84,9 @@ func (r *Runner) Run(ctx context.Context, target ports.SecretScanTarget, setting
 		"--redact",
 		"--exit-code", "0",
 		"--max-archive-depth", "2",
+	}
+	if configPath := strings.TrimSpace(settings.ConfigPath); configPath != "" {
+		args = append(args, "--config", configPath)
 	}
 	if _, err := r.exec(runCtx, binaryPath, args...); err != nil {
 		return ports.SecretScanResult{}, fmt.Errorf("gitleaks scan execution failed")
@@ -170,6 +180,28 @@ func (r *Runner) Probe(ctx context.Context, settings ports.ScanSettings) (ports.
 		return ports.FeatureRuntime{Mode: ports.FeatureRuntimeModeManaged, Status: string(ports.FeatureRuntimeStatusDegraded), Health: string(ports.FeatureRuntimeStatusDegraded), Version: version, Detail: err.Error(), LastError: err.Error()}, err
 	}
 	return ports.FeatureRuntime{Mode: ports.FeatureRuntimeModeManaged, Status: string(ports.FeatureRuntimeStatusReady), Health: string(ports.FeatureRuntimeStatusReady), Version: version, ActiveBinaryPath: binaryPath}, nil
+}
+
+// requireReadableFile is the pre-flight readability check from design.md
+// Decision 6 (own copy — the trivy and gitleaks runner packages do not
+// import each other): an empty path is not configured and is skipped; a
+// non-empty path is opened (not merely `os.Stat`-ed) to prove it is
+// actually readable, not just present, before argv construction ever runs.
+func requireReadableFile(label string, path string) error {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return nil
+	}
+	file, err := os.Open(trimmed)
+	if err != nil {
+		return fmt.Errorf("%s is not readable: %w", label, err)
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || info.IsDir() {
+		return fmt.Errorf("%s is not a regular file", label)
+	}
+	return nil
 }
 
 // managedBinaryPath is the binary-provenance execution-path guard: only a
