@@ -2,6 +2,7 @@ package ports
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"time"
 
@@ -52,6 +53,21 @@ type MetadataStore interface {
 	UpsertSecretScanRun(ctx context.Context, tenant string, run SecretScanRun) error
 	UpsertSecretScanRunDetail(ctx context.Context, tenant string, detail SecretScanRunDetail) error
 	ListSecretScanRuns(ctx context.Context, tenant string, repository string, limit int) ([]SecretScanRun, error)
+	// GetRepositoryFeatureOverride returns the stored JSON payload for one
+	// (tenant, repository, feature) override row. Row absence is a typed
+	// domain.ErrorCodeNotFound, never a found bool (design.md Decision 2).
+	GetRepositoryFeatureOverride(ctx context.Context, tenant string, repository string, feature string) ([]byte, error)
+	// ListRepositoryFeatureOverrides returns every override row for a
+	// (tenant, feature) pair, used by the list/API projection only — the
+	// resolution path never uses it.
+	ListRepositoryFeatureOverrides(ctx context.Context, tenant string, feature string) ([]RepositoryFeatureOverride, error)
+	// UpsertRepositoryFeatureOverride creates or replaces the payload for one
+	// (tenant, repository, feature) row.
+	UpsertRepositoryFeatureOverride(ctx context.Context, tenant string, repository string, feature string, payload []byte) error
+	// DeleteRepositoryFeatureOverride removes one (tenant, repository,
+	// feature) row. It returns a typed domain.ErrorCodeNotFound when no row
+	// was affected, mirroring DeleteUpload.
+	DeleteRepositoryFeatureOverride(ctx context.Context, tenant string, repository string, feature string) error
 }
 
 const (
@@ -94,6 +110,40 @@ type ScanSettings struct {
 	LegacyBinaryPath      string        `json:"-"`
 	MaxConcurrency        int           `json:"max_concurrency"`
 	UpdatedAt             time.Time     `json:"updated_at,omitempty"`
+
+	// Per-repository override projection (resolved per run, never
+	// persisted): design.md Decision 4. Absent from every SQL statement in
+	// this store, so a stray UpsertScanSettings of a resolved struct cannot
+	// leak them into the global row.
+	IgnoreFilePath   string `json:"-"` // trivy --ignorefile
+	IgnorePolicyPath string `json:"-"` // trivy --ignore-policy
+	ConfigPath       string `json:"-"` // gitleaks --config
+}
+
+// TrivyOverride is one repository's full replacement of the global Trivy
+// scan configuration (full-row-replace: present -> all fields apply).
+type TrivyOverride struct {
+	Enabled          bool   `json:"enabled"`
+	IgnoreFilePath   string `json:"ignore_file_path,omitempty"`
+	IgnorePolicyPath string `json:"ignore_policy_path,omitempty"`
+}
+
+// GitleaksOverride is one repository's full replacement of the global
+// gitleaks scan configuration (full-row-replace: present -> all fields
+// apply).
+type GitleaksOverride struct {
+	Enabled    bool   `json:"enabled"`
+	ConfigPath string `json:"config_path,omitempty"`
+}
+
+// RepositoryFeatureOverride is the list/API projection of one stored
+// override row. The resolution path never uses it — it decodes the raw
+// payload directly via the codec registry (design.md Decision 3).
+type RepositoryFeatureOverride struct {
+	Repository string          `json:"repository"`
+	Feature    string          `json:"feature"`
+	Payload    json.RawMessage `json:"payload"`
+	UpdatedAt  time.Time       `json:"updated_at"`
 }
 
 type ScanResult struct {

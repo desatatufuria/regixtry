@@ -57,14 +57,14 @@ dependency-ordered slices — recommend chaining rather than a single PR.
 
 ## Phase 1: Ports & Types — foundation (Decisions 2, 3, 4)
 
-- [ ] 1.1 Add `ports.TrivyOverride`, `ports.GitleaksOverride`,
+- [x] 1.1 Add `ports.TrivyOverride`, `ports.GitleaksOverride`,
       `ports.RepositoryFeatureOverride` structs to `internal/ports/regixtry.go`
       (design Decision 2, 3 — exact field shapes as specified).
-- [ ] 1.2 Add 3 resolve-time-only fields to `ports.ScanSettings`:
+- [x] 1.2 Add 3 resolve-time-only fields to `ports.ScanSettings`:
       `IgnoreFilePath`, `IgnorePolicyPath`, `ConfigPath`, all `json:"-"`,
       absent from any SQL (design Decision 4 — mirrors `BinaryPath`/`CacheDir`
       precedent exactly).
-- [ ] 1.3 Add 4 methods to the `MetadataStore` interface: `GetRepositoryFeatureOverride`,
+- [x] 1.3 Add 4 methods to the `MetadataStore` interface: `GetRepositoryFeatureOverride`,
       `ListRepositoryFeatureOverrides`, `UpsertRepositoryFeatureOverride`,
       `DeleteRepositoryFeatureOverride` (design Decision 2 — typed `NotFound`,
       no `found bool` return).
