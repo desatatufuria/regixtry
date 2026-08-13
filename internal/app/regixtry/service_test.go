@@ -846,6 +846,19 @@ func TestServiceListFeaturesReturnsBuiltinTrivyInventory(t *testing.T) {
 		CurrentVersion: "",
 		LatestVersion:  "unknown",
 		UpdateStatus:   "unknown",
+	}, {
+		// signing (design.md Decision 10, tasks.md Phase 6): a builtin
+		// feature with no managed runtime at all, not merely an uninstalled
+		// one — CurrentVersion/LatestVersion/UpdateStatus stay at their
+		// unmanaged zero/"unknown" projection, the same shape gitleaks has
+		// here before any manager is registered for it.
+		Name:           "signing",
+		Kind:           ports.FeatureKindBuiltin,
+		Enabled:        false,
+		Configured:     false,
+		CurrentVersion: "",
+		LatestVersion:  "unknown",
+		UpdateStatus:   "unknown",
 	}}
 	if !reflect.DeepEqual(features, want) {
 		t.Fatalf("ListFeatures() = %#v, want %#v", features, want)

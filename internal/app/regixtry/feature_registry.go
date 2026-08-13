@@ -22,11 +22,17 @@ const gitleaksFeatureName = "gitleaks"
 type featureDescriptor struct {
 	name string
 	kind ports.FeatureKind
+	// managedRuntime reports whether this feature has a FeatureRuntimeManager
+	// and therefore an install/upgrade/rollback lifecycle (design.md Decision
+	// 10). False for signing: verification is in-process stdlib crypto —
+	// there is no binary to manage.
+	managedRuntime bool
 }
 
 var builtInFeatures = []featureDescriptor{
-	{name: trivyFeatureName, kind: ports.FeatureKindBuiltin},
-	{name: gitleaksFeatureName, kind: ports.FeatureKindBuiltin},
+	{name: trivyFeatureName, kind: ports.FeatureKindBuiltin, managedRuntime: true},
+	{name: gitleaksFeatureName, kind: ports.FeatureKindBuiltin, managedRuntime: true},
+	{name: signingFeatureName, kind: ports.FeatureKindBuiltin, managedRuntime: false},
 }
 
 type trivyRuntimeProber interface {
@@ -96,44 +102,72 @@ func (s *Service) GetFeaturePage(ctx context.Context, name string) (ports.Featur
 
 func (s *Service) ExecuteFeatureAction(ctx context.Context, name string, actionID string) (ports.FeatureActionResult, error) {
 	actionID = strings.TrimSpace(actionID)
-	if err := ValidateFeatureName(name); err != nil {
+	descriptor, err := lookupFeature(name)
+	if err != nil {
 		return ports.FeatureActionResult{}, err
 	}
 	switch actionID {
 	case "enable":
-		if _, err := s.SetFeatureEnabled(ctx, name, true); err != nil {
+		if _, err := s.SetFeatureEnabled(ctx, descriptor.name, true); err != nil {
 			return ports.FeatureActionResult{}, err
 		}
-		return ports.FeatureActionResult{Message: fmt.Sprintf("Feature %q enabled.", name)}, nil
+		return ports.FeatureActionResult{Message: fmt.Sprintf("Feature %q enabled.", descriptor.name)}, nil
 	case "disable":
-		if _, err := s.SetFeatureEnabled(ctx, name, false); err != nil {
+		if _, err := s.SetFeatureEnabled(ctx, descriptor.name, false); err != nil {
 			return ports.FeatureActionResult{}, err
 		}
-		return ports.FeatureActionResult{Message: fmt.Sprintf("Feature %q disabled.", name)}, nil
-	case "install-runtime":
-		state, err := s.InstallFeatureRuntime(ctx, name, "")
-		if err != nil {
-			return ports.FeatureActionResult{}, err
-		}
-		return ports.FeatureActionResult{Message: fmt.Sprintf("Managed runtime installed for %q at %s.", name, featureRuntimeValueOrUnknown(state.ActiveVersion))}, nil
-	case "upgrade-runtime":
-		state, err := s.UpgradeFeatureRuntime(ctx, name, "")
-		if err != nil {
-			return ports.FeatureActionResult{}, err
-		}
-		return ports.FeatureActionResult{Message: fmt.Sprintf("Managed runtime upgraded for %q at %s.", name, featureRuntimeValueOrUnknown(state.ActiveVersion))}, nil
-	case "rollback-runtime":
-		state, err := s.RollbackFeatureRuntime(ctx, name)
-		if err != nil {
-			return ports.FeatureActionResult{}, err
-		}
-		return ports.FeatureActionResult{Message: fmt.Sprintf("Managed runtime rolled back for %q to %s.", name, featureRuntimeValueOrUnknown(state.ActiveVersion))}, nil
+		return ports.FeatureActionResult{Message: fmt.Sprintf("Feature %q disabled.", descriptor.name)}, nil
+	case "install-runtime", "upgrade-runtime", "rollback-runtime":
+		return s.executeFeatureRuntimeAction(ctx, descriptor, actionID)
 	default:
 		return ports.FeatureActionResult{}, domain.NewValidationError(fmt.Sprintf("unsupported feature action %q", actionID))
 	}
 }
 
+// executeFeatureRuntimeAction is the install/upgrade/rollback dispatch,
+// split out so the managedRuntime guard (design.md Decision 10: a feature
+// with no FeatureRuntimeManager rejects these three actions with a typed
+// validation error, not the untyped 500 featureRuntimeManager would
+// otherwise produce for a nil manager) is checked exactly once, ahead of any
+// manager lookup — defense in depth beyond buildFeatureActions already
+// omitting these actions from the UI once projectFeatureRuntime stops
+// fabricating a managed runtime for such a feature.
+func (s *Service) executeFeatureRuntimeAction(ctx context.Context, descriptor featureDescriptor, actionID string) (ports.FeatureActionResult, error) {
+	if !descriptor.managedRuntime {
+		return ports.FeatureActionResult{}, domain.NewValidationError(fmt.Sprintf("feature %q has no managed runtime", descriptor.name))
+	}
+	switch actionID {
+	case "install-runtime":
+		state, err := s.InstallFeatureRuntime(ctx, descriptor.name, "")
+		if err != nil {
+			return ports.FeatureActionResult{}, err
+		}
+		return ports.FeatureActionResult{Message: fmt.Sprintf("Managed runtime installed for %q at %s.", descriptor.name, featureRuntimeValueOrUnknown(state.ActiveVersion))}, nil
+	case "upgrade-runtime":
+		state, err := s.UpgradeFeatureRuntime(ctx, descriptor.name, "")
+		if err != nil {
+			return ports.FeatureActionResult{}, err
+		}
+		return ports.FeatureActionResult{Message: fmt.Sprintf("Managed runtime upgraded for %q at %s.", descriptor.name, featureRuntimeValueOrUnknown(state.ActiveVersion))}, nil
+	default: // "rollback-runtime"
+		state, err := s.RollbackFeatureRuntime(ctx, descriptor.name)
+		if err != nil {
+			return ports.FeatureActionResult{}, err
+		}
+		return ports.FeatureActionResult{Message: fmt.Sprintf("Managed runtime rolled back for %q to %s.", descriptor.name, featureRuntimeValueOrUnknown(state.ActiveVersion))}, nil
+	}
+}
+
+// projectFeatureRuntime resolves a feature's runtime lifecycle projection.
+// A feature registered with managedRuntime: false (design.md Decision 10,
+// e.g. signing) early-returns the zero ports.FeatureRuntime{} — Mode == "" —
+// rather than falling through to GetFeatureRuntimeState's NotFound path,
+// which would otherwise fabricate {Mode: Managed, Status: uninstalled} for a
+// feature that has no installable engine at all.
 func (s *Service) projectFeatureRuntime(ctx context.Context, feature string) ports.FeatureRuntime {
+	if descriptor, err := lookupFeature(feature); err == nil && !descriptor.managedRuntime {
+		return ports.FeatureRuntime{}
+	}
 	var (
 		state   ports.FeatureRuntimeState
 		err     error
@@ -194,7 +228,16 @@ func (s *Service) projectFeatureRuntime(ctx context.Context, feature string) por
 	return runtime
 }
 
+// ConfigureFeature applies a Schedule/Interval/Timeout/Concurrency-shaped
+// configuration to a feature. signing is rejected outright (design.md
+// Decision 10): its own settings row (signing_policy_settings) is
+// configured only through UpdateSigningPolicySettings / the signing policy
+// endpoint, so nothing can create a stray scan_settings row behind
+// loadFeatureSettings' projection.
 func (s *Service) ConfigureFeature(ctx context.Context, name string, input ports.FeatureConfigureInput) (ports.FeatureDetails, error) {
+	if strings.TrimSpace(name) == signingFeatureName {
+		return ports.FeatureDetails{}, domain.NewValidationError("signing is configured through the signing policy endpoint")
+	}
 	feature, settings, configured, err := s.loadFeatureSettings(ctx, name)
 	if err != nil {
 		return ports.FeatureDetails{}, err
@@ -213,8 +256,40 @@ func (s *Service) ConfigureFeature(ctx context.Context, name string, input ports
 	return featureDetailsFromSettings(feature, normalized, true), nil
 }
 
+// SetFeatureEnabled flips one feature's Enabled bit. signing is routed to
+// setSigningFeatureEnabled instead of ConfigureFeature (which now rejects
+// signing outright) — this is the ONE bit ExecuteFeatureAction's
+// enable/disable cases and the admin :enable/:disable shortcut both funnel
+// through, so both surfaces move the exact same underlying bit
+// UpdateSigningPolicySettings moves (design.md Decision 10's "one bit, one
+// source of truth" invariant).
 func (s *Service) SetFeatureEnabled(ctx context.Context, name string, enabled bool) (ports.FeatureDetails, error) {
+	if strings.TrimSpace(name) == signingFeatureName {
+		return s.setSigningFeatureEnabled(ctx, enabled)
+	}
 	return s.ConfigureFeature(ctx, name, ports.FeatureConfigureInput{Enabled: &enabled})
+}
+
+// setSigningFeatureEnabled flips the signing policy's Enabled bit through
+// UpdateSigningPolicySettings, preserving the currently configured trusted
+// keys. Enabling with zero configured trusted keys is refused — the same
+// outage rule normalizeSigningOverride and the Phase 8 admin decoder enforce
+// at write time (design.md Decision 4's "single most important safety
+// property"), so this shortcut can never silently produce the
+// guaranteed-total-outage configuration either.
+func (s *Service) setSigningFeatureEnabled(ctx context.Context, enabled bool) (ports.FeatureDetails, error) {
+	current, err := s.GetSigningPolicySettings(ctx)
+	if err != nil {
+		return ports.FeatureDetails{}, err
+	}
+	if enabled && len(current.TrustedPublicKeys) == 0 {
+		return ports.FeatureDetails{}, domain.NewValidationError("enabling signing requires at least one configured trusted key")
+	}
+	current.Enabled = enabled
+	if _, err := s.UpdateSigningPolicySettings(ctx, current); err != nil {
+		return ports.FeatureDetails{}, err
+	}
+	return s.GetFeature(ctx, signingFeatureName)
 }
 
 func (s *Service) ImportLegacyFeatureConfigIfMissing(ctx context.Context, name string, input ports.FeatureConfigureInput) (ports.FeatureDetails, error) {
@@ -239,6 +314,9 @@ func (s *Service) loadFeatureSettings(ctx context.Context, name string) (feature
 	if err != nil {
 		return featureDescriptor{}, ports.ScanSettings{}, false, err
 	}
+	if feature.name == signingFeatureName {
+		return s.loadSigningFeatureSettings(ctx, feature)
+	}
 	settings, err := s.metadata.GetScanSettings(ctx, s.tenant(ctx), feature.name)
 	if err == nil {
 		return feature, settings, true, nil
@@ -253,6 +331,24 @@ func (s *Service) loadFeatureSettings(ctx context.Context, name string) (feature
 		Timeout:         15 * time.Minute,
 		MaxConcurrency:  1,
 	}, false, nil
+}
+
+// loadSigningFeatureSettings projects the signing_policy_settings row into
+// the ScanSettings shell the generic featureDetailsFromSettings/
+// buildFeaturePage path expects (design.md Decision 10's "one bit, one
+// source of truth"): signing never reads or writes a
+// scan_settings(feature="signing") row. `configured` reports whether a
+// signing_policy_settings row exists at all, mirroring the scan_settings
+// row-presence boundary the generic path uses for every other feature.
+func (s *Service) loadSigningFeatureSettings(ctx context.Context, feature featureDescriptor) (featureDescriptor, ports.ScanSettings, bool, error) {
+	policy, err := s.metadata.GetSigningPolicySettings(ctx, s.tenant(ctx))
+	if err == nil {
+		return feature, ports.ScanSettings{Enabled: policy.Enabled}, true, nil
+	}
+	if !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		return featureDescriptor{}, ports.ScanSettings{}, false, err
+	}
+	return feature, ports.ScanSettings{Enabled: false}, false, nil
 }
 
 func (s *Service) mergeFeatureSettings(base ports.ScanSettings, configured bool, input ports.FeatureConfigureInput) (ports.ScanSettings, error) {
@@ -337,20 +433,33 @@ func buildFeaturePage(summary ports.FeatureSummary, details ports.FeatureDetails
 	if summary.Kind != ports.FeatureKindBuiltin {
 		return page
 	}
-	page.Sections = []ports.FeatureSection{
-		{
-			ID:    "config",
-			Title: "Configuration",
-			Kind:  "fields",
-			Fields: []ports.FeatureField{
-				{Label: "Schedule Enabled", Value: fmt.Sprintf("%t", details.ScheduleEnabled)},
-				{Label: "Interval", Value: details.Interval.String()},
-				{Label: "Timeout", Value: details.Timeout.String()},
-				{Label: "Registry Reachable URL", Value: details.RegistryReachableURL},
-				{Label: "Max Concurrency", Value: fmt.Sprintf("%d", details.MaxConcurrency)},
+	if summary.Name == signingFeatureName {
+		page.Sections = []ports.FeatureSection{buildSigningPolicySection(details)}
+	} else {
+		page.Sections = []ports.FeatureSection{
+			{
+				ID:    "config",
+				Title: "Configuration",
+				Kind:  "fields",
+				Fields: []ports.FeatureField{
+					{Label: "Schedule Enabled", Value: fmt.Sprintf("%t", details.ScheduleEnabled)},
+					{Label: "Interval", Value: details.Interval.String()},
+					{Label: "Timeout", Value: details.Timeout.String()},
+					{Label: "Registry Reachable URL", Value: details.RegistryReachableURL},
+					{Label: "Max Concurrency", Value: fmt.Sprintf("%d", details.MaxConcurrency)},
+				},
 			},
-		},
-		{
+		}
+	}
+	// The Runtime section only applies to a feature that actually has a
+	// managed runtime (design.md Decision 10): gating on
+	// details.Runtime.Mode == FeatureRuntimeModeManaged, not on
+	// FeatureKindBuiltin alone, means a feature like signing (no
+	// FeatureRuntimeManager, Mode == "" once projectFeatureRuntime stops
+	// fabricating one) renders no Runtime section instead of a meaningless
+	// empty one. Trivy/gitleaks are unaffected: their Mode is always Managed.
+	if details.Runtime.Mode == ports.FeatureRuntimeModeManaged {
+		page.Sections = append(page.Sections, ports.FeatureSection{
 			ID:    "runtime",
 			Title: "Runtime",
 			Kind:  "fields",
@@ -362,10 +471,27 @@ func buildFeaturePage(summary ports.FeatureSummary, details ports.FeatureDetails
 				{Label: "Update Status", Value: featureRuntimeValueOrUnknown(details.Runtime.UpdateStatus)},
 				{Label: "Rollback Available", Value: fmt.Sprintf("%t", details.Runtime.RollbackAvailable)},
 			},
-		},
+		})
 	}
 	page.Actions = buildFeatureActions(details)
 	return page
+}
+
+// buildSigningPolicySection is signing's own Config-slot section (design.md
+// Decision 10): the Schedule/Interval/Timeout/Concurrency fields every other
+// built-in feature shows are meaningless for signing, which has no scan
+// scheduler. It shows the projected policy bit instead. Trusted key material
+// never renders here — the admin-only signing policy endpoint (Phase 8) is
+// the one place that echoes trusted key PEM.
+func buildSigningPolicySection(details ports.FeatureDetails) ports.FeatureSection {
+	return ports.FeatureSection{
+		ID:    "policy",
+		Title: "Policy",
+		Kind:  "fields",
+		Fields: []ports.FeatureField{
+			{Label: "Enabled", Value: fmt.Sprintf("%t", details.Enabled)},
+		},
+	}
 }
 
 func buildFeatureRunRows(runs []ports.ScanRun) []ports.FeatureRow {
