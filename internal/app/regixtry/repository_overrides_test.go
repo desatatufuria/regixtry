@@ -2,8 +2,15 @@ package regixtry
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
+	"reflect"
 	"testing"
+	"time"
 
 	domain "regixtry/internal/domain/regixtry"
 	"regixtry/internal/ports"
@@ -232,6 +239,219 @@ func TestRepositoryOverrideCodecsRegistryHasBothFeatures(t *testing.T) {
 	}
 	if _, ok := repositoryOverrideCodecs["image-signing"]; ok {
 		t.Fatalf("repositoryOverrideCodecs contains an unexpected feature entry")
+	}
+}
+
+// TestResolveRepositoryOverrideNotFoundReturnsSettingsUnchanged is the Phase
+// 3 RED test (tasks.md 3.1): the generic resolveRepositoryOverride[T] must
+// return the passed-in settings unchanged when
+// GetRepositoryFeatureOverride resolves NotFound, exercised for both type
+// instantiations design.md Decision 5 requires: T=ports.ScanSettings
+// (trivy/gitleaks's target type) and T=ports.SigningPolicySettings
+// (signing's own target type).
+func TestResolveRepositoryOverrideNotFoundReturnsSettingsUnchanged(t *testing.T) {
+	t.Parallel()
+
+	t.Run("T=ports.ScanSettings", func(t *testing.T) {
+		t.Parallel()
+
+		service, cleanup := newTestService(t, allowAllAccessController{})
+		defer cleanup()
+
+		settings := ports.ScanSettings{Enabled: true, MaxConcurrency: 4}
+		got, err := resolveRepositoryOverride(context.Background(), service, "tenant-a", "library/alpine", trivyFeatureName, settings, applyTrivyOverride)
+		if err != nil {
+			t.Fatalf("resolveRepositoryOverride() error = %v", err)
+		}
+		if got != settings {
+			t.Fatalf("resolveRepositoryOverride() = %#v, want unchanged %#v", got, settings)
+		}
+	})
+
+	t.Run("T=ports.SigningPolicySettings", func(t *testing.T) {
+		t.Parallel()
+
+		service, cleanup := newTestService(t, allowAllAccessController{})
+		defer cleanup()
+
+		settings := ports.SigningPolicySettings{Enabled: true, TrustedPublicKeys: []string{"pem-1"}}
+		got, err := resolveRepositoryOverride(context.Background(), service, "tenant-a", "library/alpine", "signing", settings, applySigningOverridePayload)
+		if err != nil {
+			t.Fatalf("resolveRepositoryOverride() error = %v", err)
+		}
+		if !reflect.DeepEqual(got, settings) {
+			t.Fatalf("resolveRepositoryOverride() = %#v, want unchanged %#v", got, settings)
+		}
+	})
+}
+
+// TestResolveRepositoryOverrideNilApplyReturnsSettingsUnchanged is the Phase
+// 3 RED test (tasks.md 3.2): when apply is nil, resolveRepositoryOverride
+// returns settings unchanged even though a row exists — reproducing today's
+// `if !ok { return settings, nil }` branch (repository_overrides.go:140-143)
+// for a codec that registers Normalize only (design.md Decision 5).
+func TestResolveRepositoryOverrideNilApplyReturnsSettingsUnchanged(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	payload := marshalOverride(t, ports.TrivyOverride{Enabled: false})
+	if err := service.metadata.UpsertRepositoryFeatureOverride(context.Background(), "tenant-a", "library/alpine", trivyFeatureName, payload); err != nil {
+		t.Fatalf("UpsertRepositoryFeatureOverride() error = %v", err)
+	}
+
+	settings := ports.ScanSettings{Enabled: true, MaxConcurrency: 4}
+	got, err := resolveRepositoryOverride(context.Background(), service, "tenant-a", "library/alpine", trivyFeatureName, settings, nil)
+	if err != nil {
+		t.Fatalf("resolveRepositoryOverride() error = %v", err)
+	}
+	if got != settings {
+		t.Fatalf("resolveRepositoryOverride() = %#v, want unchanged %#v (apply==nil, row present)", got, settings)
+	}
+}
+
+// generateTestECDSAP256PublicKeyPEM produces a fresh, real-newline PEM
+// public key that signing.NormalizePublicKeyPEM (called internally by
+// normalizeSigningOverride) accepts — a distinct key per call, this
+// package's own equivalent of internal/domain/signing's test fixture.
+func generateTestECDSAP256PublicKeyPEM(t *testing.T) string {
+	t.Helper()
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("ecdsa.GenerateKey() error = %v", err)
+	}
+	der, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	if err != nil {
+		t.Fatalf("x509.MarshalPKIXPublicKey() error = %v", err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}))
+}
+
+// TestNormalizeSigningOverrideRejectsUnsafeInput is the Phase 3 RED test
+// (tasks.md 3.6): unknown fields, a key that fails
+// signing.NormalizePublicKeyPEM, and enabled:true with zero usable keys (the
+// outage rule, Decision 7's mitigation applied at write time) must all be
+// rejected before a payload is ever stored — the same argv-safety posture
+// normalizeTrivyOverride/normalizeGitleaksOverride already enforce for their
+// own fields.
+func TestNormalizeSigningOverrideRejectsUnsafeInput(t *testing.T) {
+	t.Parallel()
+
+	validKey := generateTestECDSAP256PublicKeyPEM(t)
+
+	tests := []struct {
+		name    string
+		raw     string
+		wantErr bool
+	}{
+		{
+			name:    "enabled with one valid key normalizes cleanly",
+			raw:     `{"enabled":true,"trusted_public_keys":["` + escapeJSONString(validKey) + `"]}`,
+			wantErr: false,
+		},
+		{
+			name:    "disabled with no keys normalizes cleanly",
+			raw:     `{"enabled":false}`,
+			wantErr: false,
+		},
+		{
+			name:    "unknown field is rejected",
+			raw:     `{"enabled":true,"config_path":"/etc/regixtry/gitleaks.toml"}`,
+			wantErr: true,
+		},
+		{
+			name:    "unparseable key is rejected",
+			raw:     `{"enabled":false,"trusted_public_keys":["not a pem at all"]}`,
+			wantErr: true,
+		},
+		{
+			name:    "enabled true with zero keys is rejected (outage rule)",
+			raw:     `{"enabled":true}`,
+			wantErr: true,
+		},
+		{
+			name:    "enabled true with an empty keys list is rejected (outage rule)",
+			raw:     `{"enabled":true,"trusted_public_keys":[]}`,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := normalizeSigningOverride([]byte(tt.raw))
+			if tt.wantErr && err == nil {
+				t.Fatalf("normalizeSigningOverride(%s) error = nil, want error", tt.raw)
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("normalizeSigningOverride(%s) error = %v, want nil", tt.raw, err)
+			}
+			if tt.wantErr && !domain.IsCode(err, domain.ErrorCodeValidation) {
+				t.Fatalf("normalizeSigningOverride(%s) error = %v, want ErrorCodeValidation", tt.raw, err)
+			}
+		})
+	}
+}
+
+// escapeJSONString is a tiny test helper: a generated PEM contains real
+// newlines, which must be escaped to embed it inside a JSON string literal
+// built by hand in this file's table-driven raw payloads.
+func escapeJSONString(s string) string {
+	escaped, err := json.Marshal(s)
+	if err != nil {
+		panic(err)
+	}
+	// json.Marshal(string) already produces a quoted JSON string literal;
+	// strip the surrounding quotes so callers can splice it inside their own
+	// hand-written `"..."` literal.
+	return string(escaped[1 : len(escaped)-1])
+}
+
+// TestApplySigningOverridePayloadAppliesRoundTripAndTolerance is the Phase 3
+// RED test (tasks.md 3.7): applySigningOverridePayload must round-trip a
+// payload into ports.SigningPolicySettings via plain json.Unmarshal,
+// preserving the base settings' UpdatedAt (untouched by the override, mirrors
+// applyTrivyOverride leaving MaxConcurrency alone) and tolerating an unknown
+// extra field — the same strict-in/lenient-out asymmetry documented at
+// repository_overrides.go:101-106.
+func TestApplySigningOverridePayloadAppliesRoundTripAndTolerance(t *testing.T) {
+	t.Parallel()
+
+	fixedUpdatedAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	base := ports.SigningPolicySettings{Enabled: false, UpdatedAt: fixedUpdatedAt}
+
+	tests := []struct {
+		name string
+		raw  string
+		want ports.SigningPolicySettings
+	}{
+		{
+			name: "round trips enabled and keys",
+			raw:  `{"enabled":true,"trusted_public_keys":["pem-1","pem-2"]}`,
+			want: ports.SigningPolicySettings{Enabled: true, TrustedPublicKeys: []string{"pem-1", "pem-2"}, UpdatedAt: fixedUpdatedAt},
+		},
+		{
+			name: "unknown extra field still applies",
+			raw:  `{"enabled":true,"trusted_public_keys":["pem-1"],"future_field":"unused-by-this-binary"}`,
+			want: ports.SigningPolicySettings{Enabled: true, TrustedPublicKeys: []string{"pem-1"}, UpdatedAt: fixedUpdatedAt},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := applySigningOverridePayload([]byte(tt.raw), base)
+			if err != nil {
+				t.Fatalf("applySigningOverridePayload() error = %v", err)
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("applySigningOverridePayload() = %#v, want %#v", got, tt.want)
+			}
+		})
 	}
 }
 

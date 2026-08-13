@@ -180,48 +180,58 @@ must be byte-unchanged, and the entire shipped
 zero lines changed at the 6 call sites, and zero lines changed inside any
 existing Trivy/gitleaks test function.
 
-- [ ] 3.1 RED `internal/app/regixtry/repository_overrides_test.go` (add new
+- [x] 3.1 RED `internal/app/regixtry/repository_overrides_test.go` (add new
       test functions only, do not touch existing ones):
       `resolveRepositoryOverride[T]` returns `settings` unchanged on
       `NotFound`, exercised for **both** `T=ports.ScanSettings` and
       `T=ports.SigningPolicySettings` — table-driven across both type
       instantiations.
-- [ ] 3.2 RED: `resolveRepositoryOverride` returns `settings` unchanged when
+- [x] 3.2 RED: `resolveRepositoryOverride` returns `settings` unchanged when
       `apply` is `nil` — reproduces today's `if !ok { return settings, nil }`
       branch (`repository_overrides.go:140-143`) for a codec that registers
       `Normalize` only.
-- [ ] 3.3 RED — regression pin: run the EXISTING `repository_overrides_test.go`
+- [x] 3.3 RED — regression pin: run the EXISTING `repository_overrides_test.go`
       suite as-is before any generalization lands, confirm it is green
       against the current unmodified code, and record that baseline (no new
       test code — this is a checkpoint, not an assertion to write).
-- [ ] 3.4 GREEN: implement the generic free function
+      **Baseline recorded: `go test ./internal/app/regixtry/... -run
+      'RepositoryOverride|Normalize|Apply' -v` → 12 top-level tests PASS, 0
+      FAIL, before any Phase 3 code changes.**
+- [x] 3.4 GREEN: implement the generic free function
       `resolveRepositoryOverride[T any]` in `repository_overrides.go`, exact
       code from design Decision 5 (type parameters are illegal on methods —
       this MUST be a free function taking `*Service`, not a method).
-- [ ] 3.5 GREEN: refactor `(s *Service) applyRepositoryOverride` to delegate
+- [x] 3.5 GREEN: refactor `(s *Service) applyRepositoryOverride` to delegate
       to `resolveRepositoryOverride` internally — its signature MUST stay
       **byte-identical**:
       `func (s *Service) applyRepositoryOverride(ctx context.Context, tenant, repository, feature string, settings ports.ScanSettings) (ports.ScanSettings, error)`.
       Confirm via `git diff service_scanning.go` that all 6 call sites are
       untouched.
-- [ ] 3.6 RED: `normalizeSigningOverride` rejects unknown fields
+      **Confirmed: `git diff --stat internal/app/regixtry/service_scanning.go`
+      is empty — zero lines changed in that file.**
+- [x] 3.6 RED: `normalizeSigningOverride` rejects unknown fields
       (`DisallowUnknownFields`), rejects a key that fails
       `signing.NormalizePublicKeyPEM`, and rejects `enabled:true` with zero
       keys (the outage rule, Decision 7's mitigation applied at write time)
       — table-driven.
-- [ ] 3.7 RED: `applySigningOverridePayload` round-trips a payload into
+- [x] 3.7 RED: `applySigningOverridePayload` round-trips a payload into
       `ports.SigningPolicySettings` via plain `json.Unmarshal`, matching the
       strict-in/lenient-out asymmetry documented at
       `repository_overrides.go:101-106`.
-- [ ] 3.8 GREEN: add `signingFeatureName` constant; add
+- [x] 3.8 GREEN: add `signingFeatureName` constant; add
       `normalizeSigningOverride`, `applySigningOverridePayload`; add the
       third `signingFeatureName: {Normalize: normalizeSigningOverride}`
       entry to `repositoryOverrideCodecs` (no `Apply` — signing's override
       targets a different type, per Decision 5); add
       `(s *Service) applySigningRepositoryOverride`.
-- [ ] 3.9 Confirm 3.1–3.2, 3.6–3.7 GREEN, **and** confirm the existing
+- [x] 3.9 Confirm 3.1–3.2, 3.6–3.7 GREEN, **and** confirm the existing
       `repository_overrides_test.go` Trivy/gitleaks tests pass byte-unmodified:
       `go test ./internal/app/regixtry/... -run 'RepositoryOverride|Normalize|Apply' -v`.
+      **Confirmed: after generalization, all 12 baseline tests still PASS
+      (byte-identical test bodies — `git diff` on
+      `repository_overrides_test.go` and `service_scanning_test.go` shows
+      zero removed/modified lines, only additions) plus 4 new Phase 3 test
+      functions PASS. Total 16 top-level tests PASS, 0 FAIL.**
 
 ## Phase 4: Service Signing — Policy Resolution & Fail-Closed Enforcement (Decisions 6, 7) — depends on Phase 1, 2, 3
 

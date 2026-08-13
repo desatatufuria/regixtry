@@ -4,12 +4,22 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"strings"
 
 	domain "regixtry/internal/domain/regixtry"
+	"regixtry/internal/domain/signing"
 	"regixtry/internal/ports"
 )
+
+// signingFeatureName is the feature-name constant image signing's override
+// codec and pull-time gate key against, the same identity space as
+// trivyFeatureName/gitleaksFeatureName (feature_registry.go). Declared here
+// because this file is where it is first needed (repositoryOverrideCodecs);
+// Phase 4's service_signing.go reconciles against this declaration rather
+// than redeclaring it.
+const signingFeatureName = "signing"
 
 // repositoryOverrideCodec is the generic-to-typed boundary for one feature's
 // stored override payload (design.md Decision 3). Normalize is the only
@@ -33,6 +43,11 @@ type repositoryOverrideCodec struct {
 var repositoryOverrideCodecs = map[string]repositoryOverrideCodec{
 	trivyFeatureName:    {Normalize: normalizeTrivyOverride, Apply: applyTrivyOverride},
 	gitleaksFeatureName: {Normalize: normalizeGitleaksOverride, Apply: applyGitleaksOverride},
+	// signing's override targets ports.SigningPolicySettings, not
+	// ScanSettings, so it has no ScanSettings-shaped Apply. Its Apply is
+	// passed explicitly to resolveRepositoryOverride by
+	// applySigningRepositoryOverride (design.md Decision 5).
+	signingFeatureName: {Normalize: normalizeSigningOverride},
 }
 
 // strictDecodeOverride mirrors decodeAdminJSON's DisallowUnknownFields
@@ -98,6 +113,31 @@ func normalizeGitleaksOverride(raw []byte) ([]byte, error) {
 	return json.Marshal(override)
 }
 
+// normalizeSigningOverride runs every key through
+// signing.NormalizePublicKeyPEM and rejects enabled:true with zero usable
+// keys — Decision 7's outage rule applied at write time, so the
+// guaranteed-total-outage configuration is unrepresentable rather than
+// merely discouraged. Errors never echo key bytes, only the offending index.
+func normalizeSigningOverride(raw []byte) ([]byte, error) {
+	var override ports.SigningOverride
+	if err := strictDecodeOverride(raw, &override); err != nil {
+		return nil, err
+	}
+	normalizedKeys := make([]string, 0, len(override.TrustedPublicKeys))
+	for index, key := range override.TrustedPublicKeys {
+		normalized, err := signing.NormalizePublicKeyPEM(key)
+		if err != nil {
+			return nil, domain.NewValidationError(fmt.Sprintf("trusted_public_keys[%d] is invalid: %s", index, err.Error()))
+		}
+		normalizedKeys = append(normalizedKeys, normalized)
+	}
+	if override.Enabled && len(normalizedKeys) == 0 {
+		return nil, domain.NewValidationError("enabled requires at least one usable entry in trusted_public_keys")
+	}
+	override.TrustedPublicKeys = normalizedKeys
+	return json.Marshal(override)
+}
+
 // applyTrivyOverride and applyGitleaksOverride deliberately use plain
 // json.Unmarshal, not strictDecodeOverride's DisallowUnknownFields: a
 // payload written by a newer binary carrying a field this binary does not
@@ -125,23 +165,65 @@ func applyGitleaksOverride(raw []byte, settings ports.ScanSettings) (ports.ScanS
 	return settings, nil
 }
 
-// applyRepositoryOverride is the row-presence boundary: a row for (tenant,
-// repository, feature) replaces the feature's global settings in full;
-// NotFound means "use the global row", never an error (design.md
-// Decision 4).
-func (s *Service) applyRepositoryOverride(ctx context.Context, tenant string, repository string, feature string, settings ports.ScanSettings) (ports.ScanSettings, error) {
+// applySigningOverridePayload is signing's own Apply, targeting
+// ports.SigningPolicySettings rather than ports.ScanSettings — it cannot be
+// registered as repositoryOverrideCodec.Apply (design.md Decision 5) and is
+// instead passed explicitly to resolveRepositoryOverride by
+// applySigningRepositoryOverride. Like applyTrivyOverride/
+// applyGitleaksOverride, it deliberately uses plain json.Unmarshal, not
+// strictDecodeOverride's DisallowUnknownFields: a payload written by a newer
+// binary carrying a field this binary does not know must still resolve
+// instead of hard-failing every pull after a rollback.
+func applySigningOverridePayload(raw []byte, settings ports.SigningPolicySettings) (ports.SigningPolicySettings, error) {
+	var override ports.SigningOverride
+	if err := json.Unmarshal(raw, &override); err != nil {
+		return ports.SigningPolicySettings{}, domain.NewValidationError("stored signing override is unreadable")
+	}
+	settings.Enabled = override.Enabled
+	settings.TrustedPublicKeys = override.TrustedPublicKeys
+	return settings, nil
+}
+
+// resolveRepositoryOverride is the row-presence boundary, generic over the
+// settings type a feature's override targets (design.md Decision 5). A row
+// replaces the feature's global settings in full; NotFound means "use the
+// global row", never an error. Type parameters are illegal on methods, so
+// this is a free function over *Service, and applyRepositoryOverride stays a
+// non-generic method that delegates to it.
+func resolveRepositoryOverride[T any](
+	ctx context.Context, s *Service,
+	tenant, repository, feature string,
+	settings T, apply func([]byte, T) (T, error),
+) (T, error) {
 	raw, err := s.metadata.GetRepositoryFeatureOverride(ctx, tenant, repository, feature)
 	if err != nil {
 		if domain.IsCode(err, domain.ErrorCodeNotFound) {
 			return settings, nil
 		}
-		return ports.ScanSettings{}, err
+		var zero T
+		return zero, err
 	}
-	codec, ok := repositoryOverrideCodecs[feature]
-	if !ok {
+	if apply == nil {
 		return settings, nil
 	}
-	return codec.Apply(raw, settings)
+	return apply(raw, settings)
+}
+
+// applyRepositoryOverride is the row-presence boundary for the Trivy/gitleaks
+// target type: a row for (tenant, repository, feature) replaces the
+// feature's global settings in full; NotFound means "use the global row",
+// never an error (design.md Decision 4). UNCHANGED SIGNATURE — all 6 call
+// sites in service_scanning.go stay untouched (design.md Decision 5).
+func (s *Service) applyRepositoryOverride(ctx context.Context, tenant string, repository string, feature string, settings ports.ScanSettings) (ports.ScanSettings, error) {
+	return resolveRepositoryOverride(ctx, s, tenant, repository, feature, settings, repositoryOverrideCodecs[feature].Apply)
+}
+
+// applySigningRepositoryOverride is resolveRepositoryOverride's sibling for
+// signing's own target type, ports.SigningPolicySettings — not
+// ports.ScanSettings, so it cannot share applyRepositoryOverride's signature
+// (design.md Decision 5).
+func (s *Service) applySigningRepositoryOverride(ctx context.Context, tenant string, repository string, policy ports.SigningPolicySettings) (ports.SigningPolicySettings, error) {
+	return resolveRepositoryOverride(ctx, s, tenant, repository, signingFeatureName, policy, applySigningOverridePayload)
 }
 
 // GetRepositoryOverride, ListRepositoryOverrides, SetRepositoryOverride, and
