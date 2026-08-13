@@ -45,6 +45,8 @@ func renderAdminWorkspace(current screen, session AdminSession, view AdminViewSt
 		modalView = renderAdminModal(theme, view.ConfirmModal)
 	case view.TrivyConfigModal.Active():
 		modalView = renderTrivyConfigModal(theme, view.TrivyConfigModal)
+	case view.GitleaksConfigModal.Active():
+		modalView = renderGitleaksConfigModal(theme, view.GitleaksConfigModal)
 	case view.ScanPolicyModal.Active():
 		modalView = renderScanPolicyModal(theme, view.ScanPolicyModal)
 	case view.RepositoryOverrideModal.Active():
@@ -611,6 +613,24 @@ func renderTrivyConfigModal(theme adminTheme, modal trivyConfigModal) string {
 	return theme.section.Render(strings.Join(lines, "\n"))
 }
 
+// renderGitleaksConfigModal mirrors renderTrivyConfigModal at gitleaks' own
+// narrower 3-field scope (Enabled, Timeout, MaxConcurrency) -- no
+// ScheduleEnabled/Interval (gitleaks scans immutable content once) and no
+// RegistryReachableURL (gitleaks never pulls from the registry over HTTP).
+func renderGitleaksConfigModal(theme adminTheme, modal gitleaksConfigModal) string {
+	lines := []string{
+		theme.subheading.Render("Edit Gitleaks Configuration"),
+		renderToggleField(theme, "Enabled", modal.Enabled, modal.Focus == gitleaksConfigFieldEnabled),
+		renderTextField(theme, "Timeout", modal.Timeout, modal.Focus == gitleaksConfigFieldTimeout),
+		renderTextField(theme, "Max Concurrency", modal.MaxConcurrency, modal.Focus == gitleaksConfigFieldMaxConcurrency),
+	}
+	if strings.TrimSpace(modal.Error) != "" {
+		lines = append(lines, "", theme.error.Render(modal.Error))
+	}
+	lines = append(lines, "", theme.muted.Render("Enter: save | Tab: next field | Space: toggle | Esc: cancel"))
+	return theme.section.Render(strings.Join(lines, "\n"))
+}
+
 // renderScanPolicyModal renders the vulnerability policy gate's own modal
 // (design.md Decision 6): heading + 2 fields x 2 rows + blank/help = 7
 // inner rows, +4 rows theme.section chrome = 11 total, 13 with an error
@@ -719,6 +739,9 @@ func adminFeatureHelp(view AdminViewState) string {
 		// badge composed into renderTrivyTabs, which is likewise visible on
 		// both (design.md Decision 6).
 		parts = append(parts, "p: policy")
+	}
+	if view.FeaturePage.Summary.Name == gitleaksFeatureName {
+		parts = append(parts, "s: configure")
 	}
 	parts = append(parts, strings.Split(featureActionHelp(view.FeaturePage), " | ")[1:]...)
 	return strings.Join(parts, " | ")

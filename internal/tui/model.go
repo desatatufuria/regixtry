@@ -593,6 +593,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.adminView.TrivyConfigModal = trivyConfigModal{}
+		m.adminView.GitleaksConfigModal = gitleaksConfigModal{}
 		m.adminView.TrivyTab = trivyTabRuntime
 		m.pendingAdminStatus = "Configuration saved."
 		m.status = "Loading built-in features..."
@@ -1156,6 +1157,10 @@ func (m Model) updateAdminKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateTrivyConfigModalKey(msg)
 	}
 
+	if m.adminView.GitleaksConfigModal.Active() {
+		return m.updateGitleaksConfigModalKey(msg)
+	}
+
 	if m.adminView.ScanPolicyModal.Active() {
 		return m.updateScanPolicyModalKey(msg)
 	}
@@ -1323,6 +1328,17 @@ func (m Model) updateAdminFeaturesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.adminView.TrivyConfigModal = modal
 		m.status = ""
 		return m, nil
+	case m.isSelectedGitleaksFeature() && isRuneKey(msg, 's'):
+		// gitleaks has no tabs (unlike Trivy), so this opener is scoped only
+		// to "gitleaks is the highlighted feature row" -- no tab check.
+		modal, ok := gitleaksConfigModalFromPage(m.adminView.FeaturePage)
+		if !ok {
+			m.status = "Current gitleaks configuration is unavailable."
+			return m, nil
+		}
+		m.adminView.GitleaksConfigModal = modal
+		m.status = ""
+		return m, nil
 	case m.isSelectedTrivyFeature() && m.adminView.TrivyTab == trivyTabRepositoryAlerts && isRuneKey(msg, 'o'):
 		// design.md Decision 8: opens repositoryOverrideModal bound to the
 		// highlighted Repository Alerts row's repository, always in the
@@ -1429,6 +1445,48 @@ func (m Model) updateTrivyConfigModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyRunes {
 		m.appendTrivyConfigModalRunes(string(msg.Runes))
 		m.adminView.TrivyConfigModal.Error = ""
+		return m, nil
+	}
+	return m, nil
+}
+
+// updateGitleaksConfigModalKey mirrors updateTrivyConfigModalKey's dedicated-
+// handler pattern at gitleaks' narrower 3-field scope: Tab cycles fields
+// (wrapping, via nextGitleaksConfigField), Space toggles Enabled when it has
+// focus, Backspace/rune keys edit the focused text field (Timeout,
+// MaxConcurrency), Enter saves, Esc cancels without persisting.
+func (m Model) updateGitleaksConfigModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case isEscKey(msg):
+		m.adminView.GitleaksConfigModal = gitleaksConfigModal{}
+		m.status = ""
+		return m, nil
+	case isTabKey(msg):
+		m.adminView.GitleaksConfigModal.Focus = nextGitleaksConfigField(m.adminView.GitleaksConfigModal.Focus)
+		m.adminView.GitleaksConfigModal.Error = ""
+		return m, nil
+	case isRuneKey(msg, ' '):
+		if m.adminView.GitleaksConfigModal.Focus == gitleaksConfigFieldEnabled {
+			m.adminView.GitleaksConfigModal.Enabled = !m.adminView.GitleaksConfigModal.Enabled
+			m.adminView.GitleaksConfigModal.Error = ""
+		}
+		return m, nil
+	case isBackspaceKey(msg):
+		m.deleteGitleaksConfigModalRune()
+		m.adminView.GitleaksConfigModal.Error = ""
+		return m, nil
+	case isEnterKey(msg):
+		input, err := m.gitleaksConfigInputFromModal()
+		if err != nil {
+			m.adminView.GitleaksConfigModal.Error = err.Error()
+			return m, nil
+		}
+		m.status = "Submitting gitleaks configuration..."
+		return m, m.configureFeatureCmd(gitleaksFeatureName, input)
+	}
+	if msg.Type == tea.KeyRunes {
+		m.appendGitleaksConfigModalRunes(string(msg.Runes))
+		m.adminView.GitleaksConfigModal.Error = ""
 		return m, nil
 	}
 	return m, nil
@@ -3078,6 +3136,7 @@ func (m *Model) clearSelectedAdminDetails() {
 	m.adminView.FeaturePage = ports.FeaturePage{}
 	m.adminView.TrivyTab = trivyTabRuntime
 	m.adminView.TrivyConfigModal = trivyConfigModal{}
+	m.adminView.GitleaksConfigModal = gitleaksConfigModal{}
 	m.adminView.TrivyScanRuns = nil
 	m.adminView.TrivySelectedAlert = 0
 	m.adminView.TrivyAlertsLoaded = false
@@ -3122,6 +3181,7 @@ func (m *Model) applyLoadedFeatures(features []ports.FeatureSummary) {
 func (m *Model) applyFeaturePage(page ports.FeaturePage) {
 	m.adminView.FeaturePage = page
 	m.adminView.TrivyConfigModal = trivyConfigModal{}
+	m.adminView.GitleaksConfigModal = gitleaksConfigModal{}
 	m.adminView.TrivyScanRuns = nil
 	m.adminView.TrivySelectedAlert = 0
 	m.adminView.TrivyAlertsLoaded = false
@@ -3157,6 +3217,17 @@ func (m Model) isSelectedTrivyFeature() bool {
 		name = strings.TrimSpace(m.selectedFeatureName())
 	}
 	return name == trivyFeatureName
+}
+
+// isSelectedGitleaksFeature mirrors isSelectedTrivyFeature for the gitleaks
+// config modal's own opener, scoped to "gitleaks is the highlighted Built-in
+// Features row" the same way Trivy's `c` is scoped to "trivy is highlighted".
+func (m Model) isSelectedGitleaksFeature() bool {
+	name := strings.TrimSpace(m.adminView.FeaturePage.Summary.Name)
+	if name == "" {
+		name = strings.TrimSpace(m.selectedFeatureName())
+	}
+	return name == gitleaksFeatureName
 }
 
 func (m Model) toggleTrivyTab() (tea.Model, tea.Cmd) {
@@ -3264,6 +3335,48 @@ func nextTrivyConfigField(field trivyConfigField) trivyConfigField {
 	return field + 1
 }
 
+// gitleaksConfigModalFromPage mirrors trivyConfigModalFromPage at gitleaks'
+// narrower 3-field scope: Enabled comes from the page Header (every
+// feature's Header carries it, per buildFeaturePage), Timeout and
+// MaxConcurrency come from the generic "config" section's Fields (shared
+// with Trivy's page shape; ScheduleEnabled/Interval/RegistryReachableURL are
+// present in that same section but deliberately unused here).
+func gitleaksConfigModalFromPage(page ports.FeaturePage) (gitleaksConfigModal, bool) {
+	if page.Summary.Name != gitleaksFeatureName {
+		return gitleaksConfigModal{}, false
+	}
+	modal := gitleaksConfigModal{Open: true, Focus: gitleaksConfigFieldEnabled}
+	for _, field := range page.Header {
+		if field.Label == "Enabled" {
+			modal.Enabled, _ = strconv.ParseBool(strings.TrimSpace(field.Value))
+		}
+	}
+	for _, section := range page.Sections {
+		if section.ID != "config" {
+			continue
+		}
+		for _, field := range section.Fields {
+			switch field.Label {
+			case "Timeout":
+				modal.Timeout = strings.TrimSpace(field.Value)
+			case "Max Concurrency":
+				modal.MaxConcurrency = strings.TrimSpace(field.Value)
+			}
+		}
+	}
+	if modal.Timeout == "" || modal.MaxConcurrency == "" {
+		return gitleaksConfigModal{}, false
+	}
+	return modal, true
+}
+
+func nextGitleaksConfigField(field gitleaksConfigField) gitleaksConfigField {
+	if field >= gitleaksConfigFieldMaxConcurrency {
+		return gitleaksConfigFieldEnabled
+	}
+	return field + 1
+}
+
 func (m *Model) deleteTrivyConfigModalRune() {
 	switch m.adminView.TrivyConfigModal.Focus {
 	case trivyConfigFieldInterval:
@@ -3291,6 +3404,49 @@ func (m *Model) appendTrivyConfigModalRunes(value string) {
 	case trivyConfigFieldMaxConcurrency:
 		m.adminView.TrivyConfigModal.MaxConcurrency += value
 	}
+}
+
+func (m *Model) deleteGitleaksConfigModalRune() {
+	switch m.adminView.GitleaksConfigModal.Focus {
+	case gitleaksConfigFieldTimeout:
+		m.adminView.GitleaksConfigModal.Timeout = trimLastRune(m.adminView.GitleaksConfigModal.Timeout)
+	case gitleaksConfigFieldMaxConcurrency:
+		m.adminView.GitleaksConfigModal.MaxConcurrency = trimLastRune(m.adminView.GitleaksConfigModal.MaxConcurrency)
+	}
+}
+
+func (m *Model) appendGitleaksConfigModalRunes(value string) {
+	if value == "" {
+		return
+	}
+	switch m.adminView.GitleaksConfigModal.Focus {
+	case gitleaksConfigFieldTimeout:
+		m.adminView.GitleaksConfigModal.Timeout += value
+	case gitleaksConfigFieldMaxConcurrency:
+		m.adminView.GitleaksConfigModal.MaxConcurrency += value
+	}
+}
+
+// gitleaksConfigInputFromModal mirrors trivyConfigInputFromModal at
+// gitleaks' narrower 3-field scope: only Enabled/Timeout/MaxConcurrency are
+// set on the returned FeatureConfigureInput, so mergeFeatureSettings leaves
+// ScheduleEnabled/Interval/RegistryReachableURL untouched on the stored row
+// (design.md's nil-pointer-is-a-no-op merge semantics).
+func (m Model) gitleaksConfigInputFromModal() (ports.FeatureConfigureInput, error) {
+	timeout, err := time.ParseDuration(strings.TrimSpace(m.adminView.GitleaksConfigModal.Timeout))
+	if err != nil {
+		return ports.FeatureConfigureInput{}, fmt.Errorf("invalid timeout: %w", err)
+	}
+	maxConcurrency, err := strconv.Atoi(strings.TrimSpace(m.adminView.GitleaksConfigModal.MaxConcurrency))
+	if err != nil {
+		return ports.FeatureConfigureInput{}, fmt.Errorf("invalid max concurrency: %w", err)
+	}
+	enabled := m.adminView.GitleaksConfigModal.Enabled
+	return ports.FeatureConfigureInput{
+		Enabled:        &enabled,
+		Timeout:        &timeout,
+		MaxConcurrency: &maxConcurrency,
+	}, nil
 }
 
 func (m Model) trivyConfigInputFromModal() (ports.FeatureConfigureInput, error) {

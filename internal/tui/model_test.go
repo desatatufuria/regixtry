@@ -987,6 +987,146 @@ func TestModelTrivyConfigModalOpenCancelAndSubmitCurrentSettingsOnly(t *testing.
 	}
 }
 
+// TestModelGitleaksConfigModalOpenCancelAndSubmitCurrentSettingsOnly mirrors
+// TestModelTrivyConfigModalOpenCancelAndSubmitCurrentSettingsOnly for the
+// gitleaks global config modal, opened with `s` (not `c`, which stays
+// Trivy-only) on a highlighted gitleaks feature row. Unlike Trivy's 5-field
+// modal, gitleaks has exactly 3: Enabled, Timeout, MaxConcurrency —
+// ScheduleEnabled/Interval/RegistryReachableURL never apply (gitleaks scans
+// immutable content once and never pulls from the registry over HTTP).
+func TestModelGitleaksConfigModalOpenCancelAndSubmitCurrentSettingsOnly(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 13, 14, 0, 0, 0, time.UTC)
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+		features: []ports.FeatureSummary{
+			{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
+			{Name: "gitleaks", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
+		},
+		featurePages: map[string]ports.FeaturePage{
+			"trivy": {
+				Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
+				Header:  []ports.FeatureField{{Label: "Enabled", Value: "true"}},
+				Actions: []ports.FeatureAction{{ID: "refresh", Label: "Refresh"}},
+			},
+			"gitleaks": {
+				Summary: ports.FeatureSummary{Name: "gitleaks", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
+				Header:  []ports.FeatureField{{Label: "Enabled", Value: "true"}},
+				Sections: []ports.FeatureSection{{ID: "config", Title: "Configuration", Kind: "fields", Fields: []ports.FeatureField{
+					{Label: "Schedule Enabled", Value: "false"},
+					{Label: "Interval", Value: "24h0m0s"},
+					{Label: "Timeout", Value: "5m0s"},
+					{Label: "Registry Reachable URL", Value: ""},
+					{Label: "Max Concurrency", Value: "1"},
+				}}},
+				Actions: []ports.FeatureAction{{ID: "refresh", Label: "Refresh"}, {ID: "disable", Label: "Disable", ConfirmTitle: "Confirm Disable", ConfirmMessage: `Confirm disable feature "gitleaks"?`}},
+			},
+		},
+	}
+	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
+	updated = runKey(t, updated, "f")
+	updated = runKey(t, updated, "down")
+
+	if got, want := updated.selectedFeatureName(), "gitleaks"; got != want {
+		t.Fatalf("selectedFeatureName() = %q, want %q", got, want)
+	}
+
+	updated = runKey(t, updated, "s")
+	modalView := updated.View()
+	for _, want := range []string{"Edit Gitleaks Configuration", "Enabled", "Timeout", "Max Concurrency"} {
+		if !strings.Contains(modalView, want) {
+			t.Fatalf("view = %q, want %q", modalView, want)
+		}
+	}
+	// The Feature Page's own generic "Configuration" section legitimately
+	// shows Schedule Enabled/Interval/Registry Reachable URL underneath the
+	// modal (buildFeaturePage is shared by every builtin feature), so the
+	// modal's own field separation is asserted directly on its render
+	// output rather than the full composited view (covered exhaustively by
+	// TestRenderGitleaksConfigModalIsASeparateSurfaceFromTrivyConfigModal).
+	if got, want := updated.adminView.GitleaksConfigModal, (gitleaksConfigModal{Open: true, Focus: gitleaksConfigFieldEnabled, Enabled: true, Timeout: "5m0s", MaxConcurrency: "1"}); got != want {
+		t.Fatalf("adminView.GitleaksConfigModal = %#v, want %#v", got, want)
+	}
+	modalOnly := renderGitleaksConfigModal(newAdminTheme(), updated.adminView.GitleaksConfigModal)
+	for _, hidden := range []string{"Schedule Enabled", "Interval", "Registry Reachable URL"} {
+		if strings.Contains(modalOnly, hidden) {
+			t.Fatalf("renderGitleaksConfigModal() = %q, want unsupported field %q hidden", modalOnly, hidden)
+		}
+	}
+
+	canceled := runKey(t, updated, "esc")
+	if adminClient.configureFeatureCalls != 0 {
+		t.Fatalf("configureFeatureCalls = %d, want cancel to keep modal client-idle", adminClient.configureFeatureCalls)
+	}
+	if strings.Contains(canceled.View(), "Edit Gitleaks Configuration") {
+		t.Fatalf("view = %q, want modal closed after esc", canceled.View())
+	}
+
+	submitted := runKey(t, updated, "enter")
+	if adminClient.configureFeatureCalls != 1 {
+		t.Fatalf("configureFeatureCalls = %d, want one gitleaks config submit", adminClient.configureFeatureCalls)
+	}
+	if adminClient.lastConfiguredFeature != "gitleaks" {
+		t.Fatalf("lastConfiguredFeature = %q, want gitleaks", adminClient.lastConfiguredFeature)
+	}
+	if adminClient.lastConfigureInput.Enabled == nil || adminClient.lastConfigureInput.Timeout == nil || adminClient.lastConfigureInput.MaxConcurrency == nil {
+		t.Fatalf("lastConfigureInput = %#v, want current gitleaks Enabled/Timeout/MaxConcurrency payload", adminClient.lastConfigureInput)
+	}
+	if adminClient.lastConfigureInput.ScheduleEnabled != nil || adminClient.lastConfigureInput.Interval != nil || adminClient.lastConfigureInput.RegistryReachableURL != nil {
+		t.Fatalf("lastConfigureInput = %#v, want ScheduleEnabled/Interval/RegistryReachableURL omitted (rejected design decision, gitleaks-irrelevant fields)", adminClient.lastConfigureInput)
+	}
+	if !strings.Contains(submitted.View(), "Configuration saved") {
+		t.Fatalf("view = %q, want config feedback after submit", submitted.View())
+	}
+	if submitted.adminView.GitleaksConfigModal.Active() {
+		t.Fatalf("GitleaksConfigModal = %#v, want closed after submit", submitted.adminView.GitleaksConfigModal)
+	}
+}
+
+// TestModelGitleaksConfigModalValidationErrorSurfaced mirrors the Trivy
+// modal's invalid-duration guard: an unparsable Timeout must surface the
+// error in the modal and must not reach the admin API.
+func TestModelGitleaksConfigModalValidationErrorSurfaced(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 13, 14, 0, 0, 0, time.UTC)
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+		features: []ports.FeatureSummary{
+			{Name: "gitleaks", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
+		},
+		featurePage: ports.FeaturePage{
+			Summary: ports.FeatureSummary{Name: "gitleaks", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
+			Header:  []ports.FeatureField{{Label: "Enabled", Value: "true"}},
+			Sections: []ports.FeatureSection{{ID: "config", Title: "Configuration", Kind: "fields", Fields: []ports.FeatureField{
+				{Label: "Timeout", Value: "5m0s"},
+				{Label: "Max Concurrency", Value: "1"},
+			}}},
+		},
+	}
+	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
+	updated = runKey(t, updated, "f")
+	updated = runKey(t, updated, "s")
+
+	// Focus starts on Enabled; Tab once lands on Timeout.
+	updated = runKey(t, updated, "tab")
+	updated = runKey(t, updated, "backspace")
+	updated = runKey(t, updated, "backspace")
+	updated = runKey(t, updated, "backspace")
+	updated = runKey(t, updated, "backspace")
+	updated = runKey(t, updated, "backspace")
+	updated = runKey(t, updated, "x")
+
+	submitted := runKey(t, updated, "enter")
+	if adminClient.configureFeatureCalls != 0 {
+		t.Fatalf("configureFeatureCalls = %d, want validation failure to block the submit", adminClient.configureFeatureCalls)
+	}
+	if !strings.Contains(submitted.View(), "invalid timeout") {
+		t.Fatalf("view = %q, want invalid timeout error surfaced", submitted.View())
+	}
+}
+
 func TestModelScanPolicyModalOpenToggleSubmitPersistsAndReflectsCurrentSettings(t *testing.T) {
 	t.Parallel()
 

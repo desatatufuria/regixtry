@@ -239,6 +239,66 @@ func TestRenderTrivyConfigModalHeightIsIdenticalAcrossEveryFocusPosition(t *test
 	}
 }
 
+// TestRenderGitleaksConfigModalFitsWithinViewportFloor mirrors
+// TestRenderTrivyConfigModalFitsWithinCompactedRowBudget for gitleaks' own
+// 3-field modal (Enabled, Timeout, MaxConcurrency), which must fit
+// comfortably under the 24-row minViewportHeight floor.
+func TestRenderGitleaksConfigModalFitsWithinViewportFloor(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+
+	tests := []struct {
+		name  string
+		modal gitleaksConfigModal
+	}{
+		{
+			name:  "without error",
+			modal: gitleaksConfigModal{Open: true, Focus: gitleaksConfigFieldEnabled, Enabled: true, Timeout: "5m", MaxConcurrency: "1"},
+		},
+		{
+			name:  "with error",
+			modal: gitleaksConfigModal{Open: true, Focus: gitleaksConfigFieldTimeout, Enabled: true, Timeout: "bad", MaxConcurrency: "1", Error: "invalid timeout: time: invalid duration \"bad\""},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := renderGitleaksConfigModal(theme, tc.modal)
+			if h := lipgloss.Height(got); h > 20 {
+				t.Fatalf("renderGitleaksConfigModal() height = %d, want <= 20\n%s", h, got)
+			}
+		})
+	}
+}
+
+// TestRenderGitleaksConfigModalIsASeparateSurfaceFromTrivyConfigModal
+// mirrors TestRenderScanPolicyModalIsASeparateSurfaceFromTrivyConfigModal:
+// gitleaks' 3 fields must never appear in Trivy's modal (and vice versa),
+// keeping the two configuration surfaces independently editable.
+func TestRenderGitleaksConfigModalIsASeparateSurfaceFromTrivyConfigModal(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+
+	trivyOutput := renderTrivyConfigModal(theme, trivyConfigModal{
+		Open: true, ScheduleEnabled: true, Interval: "1h", Timeout: "30s",
+		RegistryReachableURL: "https://registry.example.com", MaxConcurrency: "4",
+	})
+	if strings.Contains(trivyOutput, "Edit Gitleaks Configuration") {
+		t.Fatalf("renderTrivyConfigModal() output contains %q, want the gitleaks modal to be a separate surface\n%s", "Edit Gitleaks Configuration", trivyOutput)
+	}
+
+	gitleaksOutput := renderGitleaksConfigModal(theme, gitleaksConfigModal{Open: true, Enabled: true, Timeout: "5m", MaxConcurrency: "1"})
+	for _, forbidden := range []string{"Edit Trivy Configuration", "Schedule Enabled", "Registry Reachable URL"} {
+		if strings.Contains(gitleaksOutput, forbidden) {
+			t.Fatalf("renderGitleaksConfigModal() output contains %q, want a separate surface from Trivy's modal\n%s", forbidden, gitleaksOutput)
+		}
+	}
+}
+
 // TestRenderScanPolicyModalFitsWithinElevenRowBudget is the Phase 8 task 8.2
 // RED test (design.md Decision 6): heading + 2 fields x 2 rows + blank/help
 // = 7 inner rows + 4 rows theme.section chrome = 11 total, 13 with an error

@@ -123,6 +123,36 @@ func (m trivyConfigModal) Active() bool {
 	return m.Open
 }
 
+// gitleaksConfigField identifies which of gitleaksConfigModal's 3 fields has
+// focus. Unlike trivyConfigField, there is no ScheduleEnabled/Interval pair
+// (gitleaks scans immutable content once and never needs periodic
+// rescanning, unlike Trivy's CVE database) and no
+// RegistryReachableURL/TLS fields (gitleaks scans locally-staged blobs via
+// BlobStore, it never pulls from the registry over HTTP).
+type gitleaksConfigField int
+
+const (
+	gitleaksConfigFieldEnabled gitleaksConfigField = iota
+	gitleaksConfigFieldTimeout
+	gitleaksConfigFieldMaxConcurrency
+)
+
+// gitleaksConfigModal is gitleaks' own global config editor, a sibling
+// struct to trivyConfigModal (not an extension of it) mirroring its exact
+// shape at a narrower 3-field scope.
+type gitleaksConfigModal struct {
+	Open           bool
+	Focus          gitleaksConfigField
+	Enabled        bool
+	Timeout        string
+	MaxConcurrency string
+	Error          string
+}
+
+func (m gitleaksConfigModal) Active() bool {
+	return m.Open
+}
+
 // scanPolicyField identifies which of scanPolicyModal's 2 fields has focus.
 type scanPolicyField int
 
@@ -307,6 +337,10 @@ type AdminViewState struct {
 	ConfirmModal      adminConfirmModal
 	TrivyTab          TrivyTab
 	TrivyConfigModal  trivyConfigModal
+	// GitleaksConfigModal is gitleaks' own global config editor state
+	// (a sibling of TrivyConfigModal, not an extension), opened with `s` on
+	// a highlighted gitleaks feature row.
+	GitleaksConfigModal gitleaksConfigModal
 	// ScanPolicy is the vulnerability policy gate's current settings, kept
 	// on AdminViewState alongside FeaturePage/TrivyTab so renderTrivyTabs
 	// can compose its status badge (design.md Decision 6) without a modal
