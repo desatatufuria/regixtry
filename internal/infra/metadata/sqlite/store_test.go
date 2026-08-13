@@ -954,6 +954,137 @@ func TestStoreListTagsWithCreatedAtReturnsEachTagsManifestCreatedAt(t *testing.T
 	}
 }
 
+// TestStoreListRepositoriesWithSummaryReturnsTagCountAndMostRecentPush is
+// the RED test for the console-repositories-table change: a single
+// aggregate query (COUNT(tags) / MAX(manifests.created_at) per repository)
+// backs the Console TUI's top-level Repositories table's Tags and Last
+// Pushed columns. Two tags in the same repository point at two DIFFERENT
+// manifests published at different times, proving MAX picks the later push
+// time rather than an arbitrary row, and TagCount reflects both tags.
+func TestStoreListRepositoriesWithSummaryReturnsTagCountAndMostRecentPush(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	repo := domain.MustParseRepositoryRef("library/alpine")
+
+	olderManifest, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", []byte(`{"schemaVersion":2,"v":1}`), nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("NewManifest() error = %v", err)
+	}
+	if err := store.PublishManifest(context.Background(), "tenant-a", repo, "v1", olderManifest, nil); err != nil {
+		t.Fatalf("PublishManifest(v1) error = %v", err)
+	}
+
+	time.Sleep(10 * time.Millisecond)
+
+	newerManifest, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", []byte(`{"schemaVersion":2,"v":2}`), nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("NewManifest() error = %v", err)
+	}
+	before := time.Now().UTC()
+	if err := store.PublishManifest(context.Background(), "tenant-a", repo, "v2", newerManifest, nil); err != nil {
+		t.Fatalf("PublishManifest(v2) error = %v", err)
+	}
+	after := time.Now().UTC()
+
+	summaries, err := store.ListRepositoriesWithSummary(context.Background(), "tenant-a", 10, "")
+	if err != nil {
+		t.Fatalf("ListRepositoriesWithSummary() error = %v", err)
+	}
+	if len(summaries) != 1 {
+		t.Fatalf("len(summaries) = %d, want 1: %#v", len(summaries), summaries)
+	}
+
+	summary := summaries[0]
+	if summary.Name != repo.String() {
+		t.Fatalf("summary.Name = %q, want %q", summary.Name, repo.String())
+	}
+	if summary.TagCount != 2 {
+		t.Fatalf("summary.TagCount = %d, want 2", summary.TagCount)
+	}
+	if summary.LastPushed.Before(before) || summary.LastPushed.After(after) {
+		t.Fatalf("summary.LastPushed = %s, want between %s and %s (the LATER tag's push time, not the first/arbitrary one)", summary.LastPushed, before, after)
+	}
+}
+
+// TestStoreListRepositoriesWithSummaryIncludesZeroTagRepositories proves a
+// repository row with no tags at all (a manifest published with an empty
+// tag, e.g. digest-only push) still comes back with TagCount=0 and a zero
+// LastPushed rather than being silently dropped by the aggregate join.
+func TestStoreListRepositoriesWithSummaryIncludesZeroTagRepositories(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	repo := domain.MustParseRepositoryRef("library/untagged")
+	manifest, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", []byte(`{"schemaVersion":2}`), nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("NewManifest() error = %v", err)
+	}
+	if err := store.PublishManifest(context.Background(), "tenant-a", repo, "", manifest, nil); err != nil {
+		t.Fatalf("PublishManifest(no tag) error = %v", err)
+	}
+
+	summaries, err := store.ListRepositoriesWithSummary(context.Background(), "tenant-a", 10, "")
+	if err != nil {
+		t.Fatalf("ListRepositoriesWithSummary() error = %v", err)
+	}
+	if len(summaries) != 1 {
+		t.Fatalf("len(summaries) = %d, want 1: %#v", len(summaries), summaries)
+	}
+	if summaries[0].TagCount != 0 {
+		t.Fatalf("summaries[0].TagCount = %d, want 0", summaries[0].TagCount)
+	}
+	if !summaries[0].LastPushed.IsZero() {
+		t.Fatalf("summaries[0].LastPushed = %s, want zero (no tags to aggregate over)", summaries[0].LastPushed)
+	}
+}
+
+// TestStoreListRepositoriesWithSummaryOrdersByNameAscAndRespectsLimitAfter
+// mirrors Catalog's own ordering/pagination contract (ORDER BY name ASC,
+// after cursor, limit) -- the aggregate query must not silently drop that
+// contract while adding TagCount/LastPushed.
+func TestStoreListRepositoriesWithSummaryOrdersByNameAscAndRespectsLimitAfter(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	manifest, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", []byte(`{"schemaVersion":2}`), nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("NewManifest() error = %v", err)
+	}
+	for _, name := range []string{"team/charlie", "team/alpha", "team/bravo"} {
+		repo := domain.MustParseRepositoryRef(name)
+		if err := store.PublishManifest(context.Background(), "tenant-a", repo, "", manifest, nil); err != nil {
+			t.Fatalf("PublishManifest(%q) error = %v", name, err)
+		}
+	}
+
+	summaries, err := store.ListRepositoriesWithSummary(context.Background(), "tenant-a", 10, "")
+	if err != nil {
+		t.Fatalf("ListRepositoriesWithSummary() error = %v", err)
+	}
+	if len(summaries) != 3 {
+		t.Fatalf("len(summaries) = %d, want 3: %#v", len(summaries), summaries)
+	}
+	names := []string{summaries[0].Name, summaries[1].Name, summaries[2].Name}
+	if names[0] != "team/alpha" || names[1] != "team/bravo" || names[2] != "team/charlie" {
+		t.Fatalf("names = %#v, want alphabetical order", names)
+	}
+
+	after, err := store.ListRepositoriesWithSummary(context.Background(), "tenant-a", 10, "team/alpha")
+	if err != nil {
+		t.Fatalf("ListRepositoriesWithSummary(after=team/alpha) error = %v", err)
+	}
+	if len(after) != 2 || after[0].Name != "team/bravo" {
+		t.Fatalf("after = %#v, want [team/bravo, team/charlie]", after)
+	}
+}
+
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
 

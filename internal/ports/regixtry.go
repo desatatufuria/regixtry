@@ -35,6 +35,16 @@ type MetadataStore interface {
 	// must still report the manifest's original push time, not when the tag
 	// pointer itself was last written.
 	ListTagsWithCreatedAt(ctx context.Context, tenant string, repository domain.RepositoryRef, limit int, after string) ([]TagSummary, error)
+	// ListRepositoriesWithSummary is Catalog plus each repository's tag
+	// count and most recent manifest created_at across its tags
+	// (console-repositories-table change), aggregated in a single query
+	// (COUNT(tags)/MAX(manifests.created_at) GROUP BY repository) rather
+	// than one round trip per repository -- unlike ListTagsWithCreatedAt's
+	// per-tag consumer (TagDetails), which layers per-item signature
+	// verification that cannot be expressed in SQL, tag-count/last-pushed
+	// is pure aggregation with no per-item business logic, so a single
+	// query scales correctly against a potentially large catalog.
+	ListRepositoriesWithSummary(ctx context.Context, tenant string, limit int, after string) ([]RepositorySummary, error)
 	ListManifestBlobs(ctx context.Context, tenant string, repository domain.RepositoryRef, manifestDigest domain.Digest) ([]domain.Descriptor, error)
 	GetScanSettings(ctx context.Context, tenant string, feature string) (ScanSettings, error)
 	UpsertScanSettings(ctx context.Context, tenant string, feature string, settings ScanSettings) error
@@ -83,6 +93,16 @@ type MetadataStore interface {
 type TagSummary struct {
 	Name      string    `json:"name"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+// RepositorySummary is one repository's name, its tag count, and the most
+// recent manifest created_at across all of its tags (console-repositories-
+// table change's backend shape), returned by ListRepositoriesWithSummary.
+// LastPushed is zero when the repository has no tags.
+type RepositorySummary struct {
+	Name       string    `json:"name"`
+	TagCount   int       `json:"tag_count"`
+	LastPushed time.Time `json:"last_pushed"`
 }
 
 const (

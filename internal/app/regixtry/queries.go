@@ -472,6 +472,50 @@ func (s *Service) TagDetails(ctx context.Context, repositoryName string, limit i
 	return details, nil
 }
 
+// RepositorySummary is the Console TUI's top-level Repositories screen's
+// per-row shape (mirrors TagDetails' own per-tag shape, one level up):
+// deliberately NOT part of the OCI Distribution API's CatalogResult wire
+// format (`{repositories: []string}`), which existing docker/skopeo clients
+// depend on and must never gain extra fields.
+type RepositorySummary struct {
+	Name       string    `json:"name"`
+	TagCount   int       `json:"tag_count"`
+	LastPushed time.Time `json:"last_pushed"`
+}
+
+// RepositorySummaries returns every repository's name, tag count, and most
+// recent push time, backing the Console TUI's Repositories table (Name |
+// Tags | Last Pushed columns). Authorization exactly mirrors Catalog's own
+// (ActionCatalog plus per-repository HasCatalogAccess filtering) -- this is
+// Catalog's own data with two extra aggregate columns, not a different
+// access surface, so it must never be stricter or looser than Catalog.
+func (s *Service) RepositorySummaries(ctx context.Context, limit int, after string) ([]RepositorySummary, error) {
+	action := ports.Action{Verb: ports.ActionCatalog}
+	if err := s.authorize(ctx, action); err != nil {
+		return nil, err
+	}
+
+	summaries, err := s.metadata.ListRepositoriesWithSummary(ctx, s.tenant(ctx), limit, after)
+	if err != nil {
+		return nil, err
+	}
+
+	principal := ports.PrincipalFromContext(ctx)
+	result := make([]RepositorySummary, 0, len(summaries))
+	for _, summary := range summaries {
+		if principal != nil && !principal.HasCatalogAccess(summary.Name) {
+			continue
+		}
+		result = append(result, RepositorySummary{
+			Name:       summary.Name,
+			TagCount:   summary.TagCount,
+			LastPushed: summary.LastPushed,
+		})
+	}
+
+	return result, nil
+}
+
 func (s *Service) InspectBlob(ctx context.Context, repositoryName string, digestValue string) (BlobDetails, error) {
 	digest, err := domain.ParseDigest(digestValue)
 	if err != nil {

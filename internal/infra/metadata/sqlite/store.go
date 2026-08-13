@@ -440,6 +440,62 @@ func (s *Store) ListTagsWithCreatedAt(ctx context.Context, tenant string, reposi
 	return tags, rows.Err()
 }
 
+// ListRepositoriesWithSummary is Catalog plus each repository's tag count
+// and most recent manifest created_at across its tags (console-
+// repositories-table change), computed with a single LEFT JOIN
+// repositories -> tags -> manifests aggregate (COUNT/MAX GROUP BY
+// repository) rather than one ListTagsWithCreatedAt call per repository --
+// see the MetadataStore interface's own comment for why an aggregate query
+// is the right choice here, unlike TagDetails' per-tag resolution. The LEFT
+// JOINs (not INNER) keep a repository with zero tags in the result, with
+// TagCount 0 and a zero LastPushed.
+func (s *Store) ListRepositoriesWithSummary(ctx context.Context, tenant string, limit int, after string) ([]ports.RepositorySummary, error) {
+	query := `
+		SELECT r.name, COUNT(t.id) AS tag_count, MAX(m.created_at) AS last_pushed
+		FROM repositories r
+		LEFT JOIN tags t ON t.repository_id = r.id AND t.tenant = r.tenant
+		LEFT JOIN manifests m ON m.id = t.manifest_id
+		WHERE r.tenant = ?
+	`
+	args := []any{tenant}
+	if after != "" {
+		query += ` AND r.name > ?`
+		args = append(args, after)
+	}
+	query += ` GROUP BY r.id, r.name ORDER BY r.name ASC`
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT %d", limit)
+	}
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var summaries []ports.RepositorySummary
+	for rows.Next() {
+		var name string
+		var tagCount int
+		var lastPushed sql.NullString
+		if err := rows.Scan(&name, &tagCount, &lastPushed); err != nil {
+			return nil, err
+		}
+
+		summary := ports.RepositorySummary{Name: name, TagCount: tagCount}
+		if lastPushed.Valid {
+			pushed, err := time.Parse(time.RFC3339Nano, lastPushed.String)
+			if err != nil {
+				return nil, err
+			}
+			summary.LastPushed = pushed
+		}
+		summaries = append(summaries, summary)
+	}
+
+	return summaries, rows.Err()
+}
+
 func (s *Store) ListManifestBlobs(ctx context.Context, tenant string, repository domain.RepositoryRef, manifestDigest domain.Digest) ([]domain.Descriptor, error) {
 	if err := repository.Validate(); err != nil {
 		return nil, err
