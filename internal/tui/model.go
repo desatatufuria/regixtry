@@ -115,6 +115,11 @@ type loginField int
 
 const trivyFeatureName = "trivy"
 
+// gitleaksFeatureName mirrors internal/app/regixtry's own package-private
+// constant of the same name and value, used by repositoryOverrideModal to
+// tell the two feature codecs apart (design.md Decision 8).
+const gitleaksFeatureName = "gitleaks"
+
 const (
 	loginFieldUsername loginField = iota
 	loginFieldPassword
@@ -255,6 +260,40 @@ type adminScanPolicyLoadedMsg struct {
 type adminScanPolicyUpdatedMsg struct {
 	settings ports.ScanPolicySettings
 	err      error
+}
+
+// adminRepositoryOverrideLoadedMsg carries the result of opening
+// repositoryOverrideModal (design.md Decision 8 piece 2), echoing the
+// queried repository/feature so a stale response for a modal the operator
+// has since closed or switched away from can be discarded, mirroring
+// adminScanHistoryLoadedMsg's own staleness guard.
+type adminRepositoryOverrideLoadedMsg struct {
+	repository string
+	feature    string
+	override   ports.RepositoryOverrideDetails
+	exists     bool
+	err        error
+}
+
+// adminRepositoryOverrideSavedMsg carries the result of a set (submit) or
+// clear action on repositoryOverrideModal. exists distinguishes the two:
+// true after a successful set, false after a successful clear.
+type adminRepositoryOverrideSavedMsg struct {
+	repository string
+	feature    string
+	override   ports.RepositoryOverrideDetails
+	exists     bool
+	err        error
+}
+
+// adminRepositoryOverridesListLoadedMsg carries every stored override row
+// for one feature (design.md Decision 7's "List (TUI annotation)" row),
+// fetched alongside TrivyScanRuns to annotate the Repository Alerts table
+// with a distinct "scanning disabled" state.
+type adminRepositoryOverridesListLoadedMsg struct {
+	feature   string
+	overrides []ports.RepositoryOverrideDetails
+	err       error
 }
 
 type adminFeatureRuntimeMutatedMsg struct {
@@ -584,6 +623,58 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.adminView.ScanPolicyModal = scanPolicyModal{}
 		m.status = "Vulnerability policy saved."
 		return m, nil
+	case adminRepositoryOverrideLoadedMsg:
+		if !m.adminView.RepositoryOverrideModal.Active() || msg.repository != m.adminView.RepositoryOverrideModal.Repository || msg.feature != m.adminView.RepositoryOverrideModal.Feature {
+			// Stale response for a modal the operator has since closed or
+			// switched away from.
+			return m, nil
+		}
+		m.adminView.RepositoryOverrideModal.Loading = false
+		if msg.err != nil {
+			if IsAdminSessionExpired(msg.err) {
+				return m.expireAdminSession(msg.err.Error()), nil
+			}
+			m.adminView.RepositoryOverrideModal.Error = msg.err.Error()
+			return m, nil
+		}
+		m.applyRepositoryOverrideToModal(msg.override, msg.exists)
+		return m, nil
+	case adminRepositoryOverrideSavedMsg:
+		if !m.adminView.RepositoryOverrideModal.Active() || msg.repository != m.adminView.RepositoryOverrideModal.Repository || msg.feature != m.adminView.RepositoryOverrideModal.Feature {
+			return m, nil
+		}
+		if msg.err != nil {
+			if IsAdminSessionExpired(msg.err) {
+				return m.expireAdminSession(msg.err.Error()), nil
+			}
+			m.adminView.RepositoryOverrideModal.Error = msg.err.Error()
+			return m, nil
+		}
+		m.adminView.RepositoryOverrideModal.Error = ""
+		m.applyRepositoryOverrideToModal(msg.override, msg.exists)
+		if msg.exists {
+			m.status = "Repository override saved."
+		} else {
+			m.status = "Repository override cleared."
+		}
+		return m, nil
+	case adminRepositoryOverridesListLoadedMsg:
+		if msg.err != nil {
+			if IsAdminSessionExpired(msg.err) {
+				return m.expireAdminSession(msg.err.Error()), nil
+			}
+			// Best-effort, matching the ScanPolicy load's fail-quiet posture:
+			// the Repository Alerts table just renders without the
+			// "scanning disabled" annotation rather than surfacing a
+			// blocking status error over an otherwise-successful alerts
+			// load.
+			return m, nil
+		}
+		if msg.feature == trivyFeatureName {
+			m.adminView.TrivyOverrides = msg.overrides
+			m.rebuildAdminTables(m.adminTablesLayout())
+		}
+		return m, nil
 	case adminFeatureRuntimeMutatedMsg:
 		if msg.err != nil {
 			if IsAdminSessionExpired(msg.err) {
@@ -622,7 +713,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else if strings.HasPrefix(strings.ToLower(m.status), "loading") {
 			m.status = ""
 		}
-		return m, nil
+		// The disabled-row annotation (buildAdminScanSummaryTable via
+		// annotateDisabledSummaries) needs the override list loaded before it
+		// can render; chained as a follow-up Cmd (not tea.Batch), matching
+		// this Update loop's existing single-Cmd-return style.
+		return m, m.loadRepositoryOverridesListCmd(trivyFeatureName)
 	case adminScanRunDetailLoadedMsg:
 		// loadAdminScanRunDetailCmd is only ever fired while the scan
 		// history modal is active (Enter opens it, pageAdminScanHistory
@@ -1065,6 +1160,10 @@ func (m Model) updateAdminKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateScanPolicyModalKey(msg)
 	}
 
+	if m.adminView.RepositoryOverrideModal.Active() {
+		return m.updateRepositoryOverrideModalKey(msg)
+	}
+
 	if m.adminView.ScanHistoryModal.Active() {
 		return m.updateAdminScanHistoryModalKey(msg)
 	}
@@ -1224,6 +1323,24 @@ func (m Model) updateAdminFeaturesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.adminView.TrivyConfigModal = modal
 		m.status = ""
 		return m, nil
+	case m.isSelectedTrivyFeature() && m.adminView.TrivyTab == trivyTabRepositoryAlerts && isRuneKey(msg, 'o'):
+		// design.md Decision 8: opens repositoryOverrideModal bound to the
+		// highlighted Repository Alerts row's repository, always in the
+		// context of trivyFeatureName -- the only feature with a Repository
+		// Alerts row today. This case sits inside updateAdminFeaturesKey's
+		// switch (ends at :1257 below the featureActionForKey fallback), so
+		// 'o' cannot be stolen by a feature action, and cannot steal one
+		// either.
+		summary, ok := selectedScanSummary(m.adminView)
+		if !ok {
+			return m, nil
+		}
+		m.adminView.RepositoryOverrideModal = repositoryOverrideModal{
+			Open: true, Repository: summary.Repository,
+			Feature: trivyFeatureName, Loading: true,
+		}
+		m.status = ""
+		return m, m.loadRepositoryOverrideCmd(summary.Repository, trivyFeatureName)
 	case m.isSelectedTrivyFeature() && m.adminView.TrivyTab == trivyTabRepositoryAlerts && isEnterKey(msg):
 		// spec.md "Repository Alert Drill-Down Opens History Modal": Enter
 		// opens the scan history modal, never the old inline detail — the
@@ -1356,6 +1473,119 @@ func nextScanPolicyThreshold(threshold string) string {
 		return ports.ScanPolicyThresholdCritical
 	}
 	return ports.ScanPolicyThresholdCriticalHigh
+}
+
+// applyRepositoryOverrideToModal reflects a loaded/saved/cleared override
+// back onto repositoryOverrideModal (spec.md "both actions MUST round-trip
+// through the admin API and be reflected back in the modal"). Unlike
+// scanPolicyModal, the modal stays open after a successful save/clear so the
+// operator can see the reflected state and immediately clear or re-edit --
+// exists=false zeroes the editable fields to show the repository is back to
+// inheriting global settings.
+func (m *Model) applyRepositoryOverrideToModal(override ports.RepositoryOverrideDetails, exists bool) {
+	m.adminView.RepositoryOverrideModal.Exists = exists
+	if !exists {
+		m.adminView.RepositoryOverrideModal.Enabled = false
+		m.adminView.RepositoryOverrideModal.PathPrimary = ""
+		m.adminView.RepositoryOverrideModal.PathSecondary = ""
+		return
+	}
+	m.adminView.RepositoryOverrideModal.Enabled = override.Enabled
+	if m.adminView.RepositoryOverrideModal.Feature == gitleaksFeatureName {
+		m.adminView.RepositoryOverrideModal.PathPrimary = override.ConfigPath
+		return
+	}
+	m.adminView.RepositoryOverrideModal.PathPrimary = override.IgnoreFilePath
+	m.adminView.RepositoryOverrideModal.PathSecondary = override.IgnorePolicyPath
+}
+
+// updateRepositoryOverrideModalKey handles keys while repositoryOverrideModal
+// is open (design.md Decision 8 piece 2): Esc clears, Tab cycles fields,
+// Space toggles Enabled when Enabled has focus or cycles Feature when
+// Feature has focus, runes append to the focused path field
+// (appendTrivyConfigModalRunes pattern), Enter means save on every focus
+// except FieldClear, where it means clear -- inert (no DELETE) when the
+// modal is not currently backed by a stored override.
+func (m Model) updateRepositoryOverrideModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case isEscKey(msg):
+		m.adminView.RepositoryOverrideModal = repositoryOverrideModal{}
+		m.status = ""
+		return m, nil
+	case isTabKey(msg):
+		m.adminView.RepositoryOverrideModal.Focus = nextRepositoryOverrideField(m.adminView.RepositoryOverrideModal.Focus, m.adminView.RepositoryOverrideModal.Feature)
+		m.adminView.RepositoryOverrideModal.Error = ""
+		return m, nil
+	case isRuneKey(msg, ' '):
+		switch m.adminView.RepositoryOverrideModal.Focus {
+		case repositoryOverrideFieldEnabled:
+			m.adminView.RepositoryOverrideModal.Enabled = !m.adminView.RepositoryOverrideModal.Enabled
+		case repositoryOverrideFieldFeature:
+			m.adminView.RepositoryOverrideModal.Feature = nextRepositoryOverrideFeatureName(m.adminView.RepositoryOverrideModal.Feature)
+		}
+		m.adminView.RepositoryOverrideModal.Error = ""
+		return m, nil
+	case isBackspaceKey(msg):
+		m.deleteRepositoryOverrideModalRune()
+		m.adminView.RepositoryOverrideModal.Error = ""
+		return m, nil
+	case isEnterKey(msg):
+		modal := m.adminView.RepositoryOverrideModal
+		if modal.Focus == repositoryOverrideFieldClear {
+			if !modal.Exists {
+				m.status = "Already inheriting global settings."
+				return m, nil
+			}
+			m.status = "Clearing repository override..."
+			return m, m.clearRepositoryOverrideCmd(modal.Repository, modal.Feature)
+		}
+		input := ports.RepositoryOverrideDetails{Enabled: modal.Enabled}
+		if modal.Feature == gitleaksFeatureName {
+			input.ConfigPath = modal.PathPrimary
+		} else {
+			input.IgnoreFilePath = modal.PathPrimary
+			input.IgnorePolicyPath = modal.PathSecondary
+		}
+		m.status = "Saving repository override..."
+		return m, m.saveRepositoryOverrideCmd(modal.Repository, modal.Feature, input)
+	}
+	if msg.Type == tea.KeyRunes {
+		m.appendRepositoryOverrideModalRunes(string(msg.Runes))
+		m.adminView.RepositoryOverrideModal.Error = ""
+		return m, nil
+	}
+	return m, nil
+}
+
+// nextRepositoryOverrideFeatureName cycles the modal's Feature field between
+// the two known feature codecs, mirroring nextScanPolicyThreshold's 2-value
+// cycle.
+func nextRepositoryOverrideFeatureName(feature string) string {
+	if feature == gitleaksFeatureName {
+		return trivyFeatureName
+	}
+	return gitleaksFeatureName
+}
+
+func (m *Model) deleteRepositoryOverrideModalRune() {
+	switch m.adminView.RepositoryOverrideModal.Focus {
+	case repositoryOverrideFieldPathPrimary:
+		m.adminView.RepositoryOverrideModal.PathPrimary = trimLastRune(m.adminView.RepositoryOverrideModal.PathPrimary)
+	case repositoryOverrideFieldPathSecondary:
+		m.adminView.RepositoryOverrideModal.PathSecondary = trimLastRune(m.adminView.RepositoryOverrideModal.PathSecondary)
+	}
+}
+
+func (m *Model) appendRepositoryOverrideModalRunes(value string) {
+	if value == "" {
+		return
+	}
+	switch m.adminView.RepositoryOverrideModal.Focus {
+	case repositoryOverrideFieldPathPrimary:
+		m.adminView.RepositoryOverrideModal.PathPrimary += value
+	case repositoryOverrideFieldPathSecondary:
+		m.adminView.RepositoryOverrideModal.PathSecondary += value
+	}
 }
 
 // updateAdminScanHistoryModalKey handles keys while the scan history modal
@@ -2366,6 +2596,55 @@ func (m Model) updateScanPolicyCmd(input ports.ScanPolicySettings) tea.Cmd {
 	}
 }
 
+// loadRepositoryOverrideCmd fetches one repository's stored override to
+// populate repositoryOverrideModal on open (design.md Decision 8 piece 2).
+func (m Model) loadRepositoryOverrideCmd(repository string, feature string) tea.Cmd {
+	return func() tea.Msg {
+		if m.adminClient == nil {
+			return adminRepositoryOverrideLoadedMsg{repository: repository, feature: feature, err: fmt.Errorf("admin API is unavailable for this session")}
+		}
+		override, exists, err := m.adminClient.GetRepositoryOverride(m.ctx, m.adminSession, repository, feature)
+		return adminRepositoryOverrideLoadedMsg{repository: repository, feature: feature, override: override, exists: exists, err: err}
+	}
+}
+
+// saveRepositoryOverrideCmd submits repositoryOverrideModal's edited fields
+// as a full-row-replace PUT.
+func (m Model) saveRepositoryOverrideCmd(repository string, feature string, input ports.RepositoryOverrideDetails) tea.Cmd {
+	return func() tea.Msg {
+		if m.adminClient == nil {
+			return adminRepositoryOverrideSavedMsg{repository: repository, feature: feature, err: fmt.Errorf("admin API is unavailable for this session")}
+		}
+		override, err := m.adminClient.SetRepositoryOverride(m.ctx, m.adminSession, repository, feature, input)
+		return adminRepositoryOverrideSavedMsg{repository: repository, feature: feature, override: override, exists: true, err: err}
+	}
+}
+
+// clearRepositoryOverrideCmd deletes the stored override for repositoryOverrideModal's Clear row.
+func (m Model) clearRepositoryOverrideCmd(repository string, feature string) tea.Cmd {
+	return func() tea.Msg {
+		if m.adminClient == nil {
+			return adminRepositoryOverrideSavedMsg{repository: repository, feature: feature, err: fmt.Errorf("admin API is unavailable for this session")}
+		}
+		err := m.adminClient.ClearRepositoryOverride(m.ctx, m.adminSession, repository, feature)
+		return adminRepositoryOverrideSavedMsg{repository: repository, feature: feature, exists: false, err: err}
+	}
+}
+
+// loadRepositoryOverridesListCmd fetches every stored override row for one
+// feature, chained after adminScanRunsLoadedMsg so the Repository Alerts
+// table can annotate disabled repositories (design.md Decision 7's "List
+// (TUI annotation)" row).
+func (m Model) loadRepositoryOverridesListCmd(feature string) tea.Cmd {
+	return func() tea.Msg {
+		if m.adminClient == nil {
+			return adminRepositoryOverridesListLoadedMsg{feature: feature, err: fmt.Errorf("admin API is unavailable for this session")}
+		}
+		overrides, err := m.adminClient.ListRepositoryOverrides(m.ctx, m.adminSession, feature)
+		return adminRepositoryOverridesListLoadedMsg{feature: feature, overrides: overrides, err: err}
+	}
+}
+
 func (m Model) installFeatureRuntimeCmd(name string) tea.Cmd {
 	return func() tea.Msg {
 		if m.adminClient == nil {
@@ -2804,6 +3083,8 @@ func (m *Model) clearSelectedAdminDetails() {
 	m.adminView.TrivyAlertsLoaded = false
 	m.adminView.TrivySummaries = nil
 	m.adminView.ScanHistoryModal = adminScanHistoryModal{}
+	m.adminView.RepositoryOverrideModal = repositoryOverrideModal{}
+	m.adminView.TrivyOverrides = nil
 	m.adminView.SelectedGrant = 0
 	m.adminView.SelectedFeature = 0
 	m.adminView.SelectedToken = 0
@@ -2846,6 +3127,8 @@ func (m *Model) applyFeaturePage(page ports.FeaturePage) {
 	m.adminView.TrivyAlertsLoaded = false
 	m.adminView.TrivySummaries = nil
 	m.adminView.ScanHistoryModal = adminScanHistoryModal{}
+	m.adminView.RepositoryOverrideModal = repositoryOverrideModal{}
+	m.adminView.TrivyOverrides = nil
 	if page.Summary.Name == trivyFeatureName {
 		m.adminView.TrivyTab = trivyTabRuntime
 	}

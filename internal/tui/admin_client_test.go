@@ -261,6 +261,170 @@ func TestHTTPAdminClientMutationRoutes(t *testing.T) {
 	}
 }
 
+// TestHTTPAdminClientRepositoryOverrideRoutes is the Phase 8 task 8.8 RED
+// test: Get/List/Set/ClearRepositoryOverride wire to design.md Decision 7's
+// admin resource, GET's absent-row 404 becomes (details, exists=false, nil
+// error) rather than a surfaced error (mirrors the modal's Exists
+// semantics), the repository is NOT PathEscape-d (design.md Decision 8 wire
+// shape -- escaping the slash-bearing repository would defeat the
+// server-side split), and Set builds a feature-shaped body (config_path for
+// gitleaks, ignore_file_path/ignore_policy_path for trivy).
+func TestHTTPAdminClientRepositoryOverrideRoutes(t *testing.T) {
+	t.Parallel()
+
+	fixedNow := time.Date(2026, time.August, 13, 10, 0, 0, 0, time.UTC)
+	session := AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: fixedNow.Add(10 * time.Minute)}
+
+	t.Run("get found", func(t *testing.T) {
+		t.Parallel()
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if got, want := r.URL.Path, "/admin/v1/features/trivy/repository-overrides/library/alpine"; got != want {
+				t.Fatalf("path = %q, want %q", got, want)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"repository":"library/alpine","feature":"trivy","enabled":true,"ignore_file_path":"/etc/trivy/ignore","ignore_policy_path":"/etc/trivy/policy.rego","updated_at":"2026-08-13T09:00:00Z"}`))
+		}))
+		defer server.Close()
+		client, err := NewHTTPAdminClient(server.URL, server.Client())
+		if err != nil {
+			t.Fatalf("NewHTTPAdminClient() error = %v", err)
+		}
+		client.now = func() time.Time { return fixedNow }
+
+		details, exists, err := client.GetRepositoryOverride(context.Background(), session, "library/alpine", "trivy")
+		if err != nil {
+			t.Fatalf("GetRepositoryOverride() error = %v", err)
+		}
+		if !exists {
+			t.Fatal("exists = false, want true for a 200 response")
+		}
+		if !details.Enabled || details.IgnoreFilePath != "/etc/trivy/ignore" || details.IgnorePolicyPath != "/etc/trivy/policy.rego" {
+			t.Fatalf("details = %#v, want decoded override", details)
+		}
+	})
+
+	t.Run("get not found", func(t *testing.T) {
+		t.Parallel()
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not found"}`))
+		}))
+		defer server.Close()
+		client, err := NewHTTPAdminClient(server.URL, server.Client())
+		if err != nil {
+			t.Fatalf("NewHTTPAdminClient() error = %v", err)
+		}
+		client.now = func() time.Time { return fixedNow }
+
+		details, exists, err := client.GetRepositoryOverride(context.Background(), session, "library/alpine", "trivy")
+		if err != nil {
+			t.Fatalf("GetRepositoryOverride() error = %v, want nil (404 is a valid state, not an error)", err)
+		}
+		if exists {
+			t.Fatal("exists = true, want false for a 404 response")
+		}
+		if details != (ports.RepositoryOverrideDetails{}) {
+			t.Fatalf("details = %#v, want zero value on 404", details)
+		}
+	})
+
+	t.Run("set builds feature-shaped body and does not path-escape the repository", func(t *testing.T) {
+		t.Parallel()
+		var receivedPath string
+		var receivedBody map[string]any
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			receivedPath = r.URL.Path
+			if got, want := r.Method, http.MethodPut; got != want {
+				t.Fatalf("method = %q, want %q", got, want)
+			}
+			_ = json.NewDecoder(r.Body).Decode(&receivedBody)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"repository":"team/config","feature":"gitleaks","enabled":false,"config_path":"/etc/gitleaks/config.toml","updated_at":"2026-08-13T09:00:00Z"}`))
+		}))
+		defer server.Close()
+		client, err := NewHTTPAdminClient(server.URL, server.Client())
+		if err != nil {
+			t.Fatalf("NewHTTPAdminClient() error = %v", err)
+		}
+		client.now = func() time.Time { return fixedNow }
+
+		details, err := client.SetRepositoryOverride(context.Background(), session, "team/config", "gitleaks", ports.RepositoryOverrideDetails{Enabled: false, ConfigPath: "/etc/gitleaks/config.toml"})
+		if err != nil {
+			t.Fatalf("SetRepositoryOverride() error = %v", err)
+		}
+		if got, want := receivedPath, "/admin/v1/features/gitleaks/repository-overrides/team/config"; got != want {
+			t.Fatalf("path = %q, want %q (repository must not be PathEscape-d)", got, want)
+		}
+		if _, hasIgnoreFile := receivedBody["ignore_file_path"]; hasIgnoreFile {
+			t.Fatalf("body = %#v, want no trivy-only fields for a gitleaks Set", receivedBody)
+		}
+		if got, want := receivedBody["config_path"], "/etc/gitleaks/config.toml"; got != want {
+			t.Fatalf("body[config_path] = %#v, want %q", got, want)
+		}
+		if details.ConfigPath != "/etc/gitleaks/config.toml" {
+			t.Fatalf("details = %#v, want decoded response", details)
+		}
+	})
+
+	t.Run("clear uses DELETE and StatusNoContent", func(t *testing.T) {
+		t.Parallel()
+		var receivedMethod, receivedPath string
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			receivedMethod = r.Method
+			receivedPath = r.URL.Path
+			w.WriteHeader(http.StatusNoContent)
+		}))
+		defer server.Close()
+		client, err := NewHTTPAdminClient(server.URL, server.Client())
+		if err != nil {
+			t.Fatalf("NewHTTPAdminClient() error = %v", err)
+		}
+		client.now = func() time.Time { return fixedNow }
+
+		if err := client.ClearRepositoryOverride(context.Background(), session, "library/alpine", "trivy"); err != nil {
+			t.Fatalf("ClearRepositoryOverride() error = %v", err)
+		}
+		if receivedMethod != http.MethodDelete {
+			t.Fatalf("method = %q, want DELETE", receivedMethod)
+		}
+		if receivedPath != "/admin/v1/features/trivy/repository-overrides/library/alpine" {
+			t.Fatalf("path = %q, want the unescaped repository resource path", receivedPath)
+		}
+	})
+
+	t.Run("list decodes every stored override row", func(t *testing.T) {
+		t.Parallel()
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if got, want := r.URL.Path, "/admin/v1/features/trivy/repository-overrides"; got != want {
+				t.Fatalf("path = %q, want %q", got, want)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`[{"repository":"library/alpine","feature":"trivy","enabled":false},{"repository":"team/api","feature":"trivy","enabled":true,"ignore_file_path":"/etc/trivy/ignore"}]`))
+		}))
+		defer server.Close()
+		client, err := NewHTTPAdminClient(server.URL, server.Client())
+		if err != nil {
+			t.Fatalf("NewHTTPAdminClient() error = %v", err)
+		}
+		client.now = func() time.Time { return fixedNow }
+
+		overrides, err := client.ListRepositoryOverrides(context.Background(), session, "trivy")
+		if err != nil {
+			t.Fatalf("ListRepositoryOverrides() error = %v", err)
+		}
+		if len(overrides) != 2 {
+			t.Fatalf("len(overrides) = %d, want 2", len(overrides))
+		}
+		if overrides[0].Repository != "library/alpine" || overrides[0].Enabled {
+			t.Fatalf("overrides[0] = %#v, want disabled library/alpine", overrides[0])
+		}
+	})
+}
+
 func TestHTTPAdminClientFeatureRoutes(t *testing.T) {
 	t.Parallel()
 

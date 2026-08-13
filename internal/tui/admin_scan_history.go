@@ -82,6 +82,12 @@ type repositorySummary struct {
 	LastExecuted time.Time // FinishedAt, else CreatedAt
 	InProgress   bool      // FinishedAt nil -> show marker, never blank
 	RunCount     int
+	// Disabled is set by annotateDisabledSummaries (admin_tables.go) when a
+	// stored repository override sets Enabled=false for this repository
+	// (operator-admin-tui spec's "Repository Alerts Renders Override-
+	// Disabled Repositories Distinctly" requirement). Never set by
+	// summarizeScanRunsByRepository itself.
+	Disabled bool
 }
 
 // effectiveScanRunTime returns a scan run's last-execution timestamp:

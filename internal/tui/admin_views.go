@@ -47,6 +47,8 @@ func renderAdminWorkspace(current screen, session AdminSession, view AdminViewSt
 		modalView = renderTrivyConfigModal(theme, view.TrivyConfigModal)
 	case view.ScanPolicyModal.Active():
 		modalView = renderScanPolicyModal(theme, view.ScanPolicyModal)
+	case view.RepositoryOverrideModal.Active():
+		modalView = renderRepositoryOverrideModal(theme, view.RepositoryOverrideModal)
 	}
 	if modalView == "" {
 		return base
@@ -644,6 +646,66 @@ func scanPolicyThresholdLabel(threshold string) string {
 	}
 }
 
+// renderRepositoryOverrideModal renders repositoryOverrideModal, a sibling
+// of renderScanPolicyModal/renderTrivyConfigModal (design.md Decision 8
+// piece 3, spec's "Out of Scope Note": its own small modal, not an
+// extension). Row arithmetic, using the same 2-rows-per-field cost and
+// 4-row theme.section chrome as scan-policy-gate's Decision 6: heading(1) +
+// status(1) + Feature(2) + Enabled(2) + PathPrimary(2) + [PathSecondary(2),
+// trivy only] + Clear row(1) + [blank+error(2)] + blank+help(2).
+func renderRepositoryOverrideModal(theme adminTheme, modal repositoryOverrideModal) string {
+	lines := []string{
+		theme.subheading.Render(fmt.Sprintf("Repository Override — %s", modal.Repository)),
+		theme.muted.Render(repositoryOverrideStatusLine(modal)),
+		renderTextField(theme, "Feature", modal.Feature, modal.Focus == repositoryOverrideFieldFeature),
+		renderToggleField(theme, "Enabled", modal.Enabled, modal.Focus == repositoryOverrideFieldEnabled),
+	}
+	if modal.Feature == gitleaksFeatureName {
+		lines = append(lines, renderTextField(theme, "Config Path", modal.PathPrimary, modal.Focus == repositoryOverrideFieldPathPrimary))
+	} else {
+		lines = append(lines, renderTextField(theme, "Ignore File Path", modal.PathPrimary, modal.Focus == repositoryOverrideFieldPathPrimary))
+		lines = append(lines, renderTextField(theme, "Ignore Policy Path", modal.PathSecondary, modal.Focus == repositoryOverrideFieldPathSecondary))
+	}
+	lines = append(lines, renderRepositoryOverrideClearRow(theme, modal))
+	if strings.TrimSpace(modal.Error) != "" {
+		lines = append(lines, "", theme.error.Render(modal.Error))
+	}
+	lines = append(lines, "", theme.muted.Render("Enter: save/clear | Tab: next field | Space: toggle/cycle | Esc: cancel"))
+	return theme.section.Render(strings.Join(lines, "\n"))
+}
+
+// repositoryOverrideStatusLine answers "which repository, override or
+// inherited" without spending a dedicated 2-row field on either (design.md
+// Decision 8's row-arithmetic table), matching the operator-admin-tui spec's
+// three exact inheritance-state strings.
+func repositoryOverrideStatusLine(modal repositoryOverrideModal) string {
+	if modal.Loading {
+		return "Loading…"
+	}
+	if modal.Exists {
+		return "override active"
+	}
+	return "inheriting global settings"
+}
+
+// renderRepositoryOverrideClearRow renders the modal's Clear action as a
+// single-row line (design.md Decision 8's "Clear row: 1" cost, distinct from
+// every other field's 2-row cost since it is an action, not an input) --
+// inert wording when the repository is already inheriting global settings,
+// since Enter on this row then reports "already inheriting global" instead
+// of issuing a DELETE that would 404.
+func renderRepositoryOverrideClearRow(theme adminTheme, modal repositoryOverrideModal) string {
+	label := "Clear override -> use global settings"
+	if !modal.Exists {
+		label = "Already inheriting global settings"
+	}
+	style := theme.muted
+	if modal.Focus == repositoryOverrideFieldClear {
+		style = theme.inputFocus
+	}
+	return style.Render(label)
+}
+
 func adminFeatureHelp(view AdminViewState) string {
 	parts := []string{"Enter/r: refresh page"}
 	if view.FeaturePage.Summary.Name == trivyFeatureName {
@@ -651,7 +713,7 @@ func adminFeatureHelp(view AdminViewState) string {
 		if view.TrivyTab == trivyTabRuntime {
 			parts = append(parts, "c: configure")
 		} else {
-			parts = append(parts, "Up/Down: select alert", "Enter: details")
+			parts = append(parts, "Up/Down: select alert", "Enter: details", "o: override")
 		}
 		// p: policy is available on both Trivy tabs, matching the policy
 		// badge composed into renderTrivyTabs, which is likewise visible on

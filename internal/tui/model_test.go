@@ -1043,6 +1043,195 @@ func TestModelScanPolicyModalOpenToggleSubmitPersistsAndReflectsCurrentSettings(
 	}
 }
 
+// TestModelRepositoryOverrideModalOpenerKeyIsScopedToRepositoryAlertsRow is
+// the Phase 8 task 8.4/8.5 RED test (operator-admin-tui spec's "The override
+// key is scoped to the Repository Alerts row only" scenario, design.md
+// Decision 8 piece 2): `o` on a highlighted Repository Alerts row opens
+// repositoryOverrideModal bound to that repository and trivyFeatureName and
+// fires a load; `o` on the Runtime tab, or on Repository Alerts with no rows
+// loaded, must not open it and must not collide with featureActionForKey's
+// fallback (the case sits before the `model.go:1257` fallback in the
+// switch).
+func TestModelRepositoryOverrideModalOpenerKeyIsScopedToRepositoryAlertsRow(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 13, 9, 0, 0, 0, time.UTC)
+	baseFeaturePage := ports.FeaturePage{
+		Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
+		Header:  []ports.FeatureField{{Label: "Enabled", Value: "true"}},
+	}
+
+	t.Run("o opens the modal on a highlighted Repository Alerts row", func(t *testing.T) {
+		t.Parallel()
+		adminClient := &fakeAdminClient{
+			loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+			features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
+			featurePage:  baseFeaturePage,
+			scanRuns: []ports.ScanRun{
+				{ID: "run-1", Repository: "team/api", RequestedRef: "1.0.0", Status: ports.ScanRunStatusCompleted, Critical: 1},
+			},
+			repositoryOverrides: map[string]ports.RepositoryOverrideDetails{
+				"trivy/team/api": {Repository: "team/api", Feature: "trivy", Enabled: false, IgnoreFilePath: "/etc/trivy/ignore"},
+			},
+		}
+		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
+		updated = runKey(t, updated, "f")
+		updated = runKey(t, updated, "tab") // switch to Repository Alerts
+
+		updated = runKey(t, updated, "o")
+
+		if !updated.adminView.RepositoryOverrideModal.Open {
+			t.Fatal("RepositoryOverrideModal.Open = false, want true after 'o'")
+		}
+		if got, want := updated.adminView.RepositoryOverrideModal.Repository, "team/api"; got != want {
+			t.Fatalf("RepositoryOverrideModal.Repository = %q, want %q", got, want)
+		}
+		if got, want := updated.adminView.RepositoryOverrideModal.Feature, trivyFeatureName; got != want {
+			t.Fatalf("RepositoryOverrideModal.Feature = %q, want %q", got, want)
+		}
+		if adminClient.getRepositoryOverrideCalls != 1 {
+			t.Fatalf("getRepositoryOverrideCalls = %d, want 1", adminClient.getRepositoryOverrideCalls)
+		}
+		if updated.adminView.RepositoryOverrideModal.Loading {
+			t.Fatal("RepositoryOverrideModal.Loading = true, want false once the load Cmd has resolved")
+		}
+		if !updated.adminView.RepositoryOverrideModal.Exists || !strings.Contains(updated.View(), "team/api") {
+			t.Fatalf("RepositoryOverrideModal = %#v, want the stored override reflected", updated.adminView.RepositoryOverrideModal)
+		}
+
+		closed := runKey(t, updated, "esc")
+		if closed.adminView.RepositoryOverrideModal.Open {
+			t.Fatal("RepositoryOverrideModal.Open = true, want false after esc")
+		}
+	})
+
+	t.Run("o on the Runtime tab does not open the modal or collide with feature actions", func(t *testing.T) {
+		t.Parallel()
+		adminClient := &fakeAdminClient{
+			loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+			features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
+			featurePage:  baseFeaturePage,
+		}
+		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
+		updated = runKey(t, updated, "f")
+
+		updated = runKey(t, updated, "o")
+
+		if updated.adminView.RepositoryOverrideModal.Open {
+			t.Fatal("RepositoryOverrideModal.Open = true, want false on the Runtime tab")
+		}
+		if adminClient.getRepositoryOverrideCalls != 0 {
+			t.Fatalf("getRepositoryOverrideCalls = %d, want 0 (no load fired)", adminClient.getRepositoryOverrideCalls)
+		}
+		if adminClient.executeFeatureActionCalls != 0 {
+			t.Fatalf("executeFeatureActionCalls = %d, want 0 ('o' must not fall through to featureActionForKey)", adminClient.executeFeatureActionCalls)
+		}
+	})
+
+	t.Run("o with no Repository Alerts row highlighted does not open the modal", func(t *testing.T) {
+		t.Parallel()
+		adminClient := &fakeAdminClient{
+			loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+			features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
+			featurePage:  baseFeaturePage,
+		}
+		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
+		updated = runKey(t, updated, "f")
+		updated = runKey(t, updated, "tab") // Repository Alerts, no scan runs loaded
+
+		updated = runKey(t, updated, "o")
+
+		if updated.adminView.RepositoryOverrideModal.Open {
+			t.Fatal("RepositoryOverrideModal.Open = true, want false with no highlighted row")
+		}
+	})
+}
+
+// TestModelRepositoryOverrideModalSetAndClearRoundTripReflectsInModal is the
+// Phase 8 tasks 8.6/8.7 RED test (operator-admin-tui spec's "Operator sets
+// an override from the modal" / "Operator clears an override from the
+// modal" scenarios): submitting new values persists through the admin API
+// and reflects the new values back in the modal (still open, unlike
+// scanPolicyModal); clearing deletes it and reflects the repository using
+// global settings.
+func TestModelRepositoryOverrideModalSetAndClearRoundTripReflectsInModal(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 13, 9, 0, 0, 0, time.UTC)
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+		features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
+		featurePage: ports.FeaturePage{
+			Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
+			Header:  []ports.FeatureField{{Label: "Enabled", Value: "true"}},
+		},
+		scanRuns: []ports.ScanRun{
+			{ID: "run-1", Repository: "team/api", RequestedRef: "1.0.0", Status: ports.ScanRunStatusCompleted, Critical: 1},
+		},
+	}
+	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
+	updated = runKey(t, updated, "f")
+	updated = runKey(t, updated, "tab")
+	updated = runKey(t, updated, "o")
+
+	if !updated.adminView.RepositoryOverrideModal.Open || updated.adminView.RepositoryOverrideModal.Exists {
+		t.Fatalf("RepositoryOverrideModal = %#v, want open with no existing override", updated.adminView.RepositoryOverrideModal)
+	}
+
+	// Tab past Feature to Enabled, toggle it on, Tab to PathPrimary, type a
+	// path, then Enter to submit.
+	updated = runKey(t, updated, "tab")
+	updated = runKey(t, updated, " ")
+	updated = runKey(t, updated, "tab")
+	for _, r := range "/etc/trivy/ignore" {
+		updated = runKey(t, updated, string(r))
+	}
+	submitted := runKey(t, updated, "enter")
+
+	if adminClient.setRepositoryOverrideCalls != 1 {
+		t.Fatalf("setRepositoryOverrideCalls = %d, want 1", adminClient.setRepositoryOverrideCalls)
+	}
+	if !adminClient.lastSetRepositoryOverride.Enabled || adminClient.lastSetRepositoryOverride.IgnoreFilePath != "/etc/trivy/ignore" {
+		t.Fatalf("lastSetRepositoryOverride = %#v, want Enabled true with the typed ignore file path", adminClient.lastSetRepositoryOverride)
+	}
+	if !submitted.adminView.RepositoryOverrideModal.Open {
+		t.Fatal("RepositoryOverrideModal.Open = false, want the modal to stay open after a successful save")
+	}
+	if !submitted.adminView.RepositoryOverrideModal.Exists || submitted.adminView.RepositoryOverrideModal.PathPrimary != "/etc/trivy/ignore" {
+		t.Fatalf("RepositoryOverrideModal = %#v, want the saved override reflected", submitted.adminView.RepositoryOverrideModal)
+	}
+	if !strings.Contains(submitted.View(), "Repository override saved") {
+		t.Fatalf("view = %q, want save feedback", submitted.View())
+	}
+
+	// Tab to the Clear row and press Enter to clear it.
+	cleared := submitted
+	for cleared.adminView.RepositoryOverrideModal.Focus != repositoryOverrideFieldClear {
+		cleared = runKey(t, cleared, "tab")
+	}
+	cleared = runKey(t, cleared, "enter")
+
+	if adminClient.clearRepositoryOverrideCalls != 1 {
+		t.Fatalf("clearRepositoryOverrideCalls = %d, want 1", adminClient.clearRepositoryOverrideCalls)
+	}
+	if cleared.adminView.RepositoryOverrideModal.Exists {
+		t.Fatal("RepositoryOverrideModal.Exists = true, want false after clear")
+	}
+	if !strings.Contains(cleared.View(), "inheriting global settings") {
+		t.Fatalf("view = %q, want the modal to show the repository inheriting global settings after clear", cleared.View())
+	}
+
+	// Pressing Enter on the Clear row again (already inheriting global) must
+	// not issue another DELETE.
+	inert := runKey(t, cleared, "enter")
+	if adminClient.clearRepositoryOverrideCalls != 1 {
+		t.Fatalf("clearRepositoryOverrideCalls = %d, want still 1 (inert when already inheriting global)", adminClient.clearRepositoryOverrideCalls)
+	}
+	if !strings.Contains(inert.status, "Already inheriting global") {
+		t.Fatalf("status = %q, want the inert-clear message", inert.status)
+	}
+}
+
 func TestModelTrivyRepositoryAlertsLoadSelectDetailAndRecoverEmptyState(t *testing.T) {
 	t.Parallel()
 
@@ -2783,6 +2972,20 @@ type fakeAdminClient struct {
 	revokeTokenCalls            int
 	enableCalls                 int
 	disableCalls                int
+
+	repositoryOverrides           map[string]ports.RepositoryOverrideDetails // key: feature+"/"+repository
+	repositoryOverrideList        map[string][]ports.RepositoryOverrideDetails
+	getRepositoryOverrideErr      error
+	setRepositoryOverrideErr      error
+	clearRepositoryOverrideErr    error
+	listRepositoryOverridesErr    error
+	getRepositoryOverrideCalls    int
+	listRepositoryOverridesCalls  int
+	setRepositoryOverrideCalls    int
+	clearRepositoryOverrideCalls  int
+	lastSetRepositoryOverride     ports.RepositoryOverrideDetails
+	lastRepositoryOverrideRepo    string
+	lastRepositoryOverrideFeature string
 }
 
 func (f *fakeAdminClient) Login(context.Context, string, string) (AdminSession, error) {
@@ -3088,6 +3291,56 @@ func (f *fakeAdminClient) RevokeUserAdminToken(_ context.Context, _ AdminSession
 	f.lastRevokeTokenUserID = userID
 	f.lastRevokeTokenID = accessor
 	return f.revokeTokenErr
+}
+
+func (f *fakeAdminClient) GetRepositoryOverride(_ context.Context, _ AdminSession, repository string, feature string) (ports.RepositoryOverrideDetails, bool, error) {
+	f.getRepositoryOverrideCalls++
+	f.lastRepositoryOverrideRepo = repository
+	f.lastRepositoryOverrideFeature = feature
+	if f.getRepositoryOverrideErr != nil {
+		return ports.RepositoryOverrideDetails{}, false, f.getRepositoryOverrideErr
+	}
+	if f.repositoryOverrides == nil {
+		return ports.RepositoryOverrideDetails{}, false, nil
+	}
+	details, ok := f.repositoryOverrides[feature+"/"+repository]
+	return details, ok, nil
+}
+
+func (f *fakeAdminClient) ListRepositoryOverrides(_ context.Context, _ AdminSession, feature string) ([]ports.RepositoryOverrideDetails, error) {
+	f.listRepositoryOverridesCalls++
+	if f.listRepositoryOverridesErr != nil {
+		return nil, f.listRepositoryOverridesErr
+	}
+	return append([]ports.RepositoryOverrideDetails(nil), f.repositoryOverrideList[feature]...), nil
+}
+
+func (f *fakeAdminClient) SetRepositoryOverride(_ context.Context, _ AdminSession, repository string, feature string, input ports.RepositoryOverrideDetails) (ports.RepositoryOverrideDetails, error) {
+	f.setRepositoryOverrideCalls++
+	f.lastSetRepositoryOverride = input
+	f.lastRepositoryOverrideRepo = repository
+	f.lastRepositoryOverrideFeature = feature
+	if f.setRepositoryOverrideErr != nil {
+		return ports.RepositoryOverrideDetails{}, f.setRepositoryOverrideErr
+	}
+	input.Repository = repository
+	input.Feature = feature
+	if f.repositoryOverrides == nil {
+		f.repositoryOverrides = map[string]ports.RepositoryOverrideDetails{}
+	}
+	f.repositoryOverrides[feature+"/"+repository] = input
+	return input, nil
+}
+
+func (f *fakeAdminClient) ClearRepositoryOverride(_ context.Context, _ AdminSession, repository string, feature string) error {
+	f.clearRepositoryOverrideCalls++
+	f.lastRepositoryOverrideRepo = repository
+	f.lastRepositoryOverrideFeature = feature
+	if f.clearRepositoryOverrideErr != nil {
+		return f.clearRepositoryOverrideErr
+	}
+	delete(f.repositoryOverrides, feature+"/"+repository)
+	return nil
 }
 
 func (f *fakeAdminClient) EnableUser(_ context.Context, _ AdminSession, _ string) (ports.AdminUser, error) {

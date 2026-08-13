@@ -112,6 +112,61 @@ func TestNextScanPolicyFieldCyclesBetweenTheTwoFields(t *testing.T) {
 	}
 }
 
+// TestRepositoryOverrideModalActiveReflectsOpenField is the Phase 8 task 8.1
+// RED test: repositoryOverrideModal follows the same Active()-gated pattern
+// as scanPolicyModal/trivyConfigModal (design.md Decision 8 piece 1).
+func TestRepositoryOverrideModalActiveReflectsOpenField(t *testing.T) {
+	t.Parallel()
+
+	closed := repositoryOverrideModal{}
+	if closed.Active() {
+		t.Fatal("repositoryOverrideModal{}.Active() = true, want false when Open is unset")
+	}
+
+	open := repositoryOverrideModal{Open: true, Repository: "library/alpine"}
+	if !open.Active() {
+		t.Fatal("repositoryOverrideModal{Open: true}.Active() = false, want true")
+	}
+}
+
+// TestNextRepositoryOverrideFieldSkipsPathSecondaryForGitleaks is the Phase 8
+// task 8.1 RED test: nextRepositoryOverrideField wraps through all 5 fields
+// for trivy, but skips repositoryOverrideFieldPathSecondary (which gitleaks
+// has no use for -- gitleaks only has ConfigPath) when the modal's Feature is
+// gitleaksFeatureName (design.md Decision 8 piece 1, mirrors
+// nextScanPolicyField's wrapping-cursor pattern).
+func TestNextRepositoryOverrideFieldSkipsPathSecondaryForGitleaks(t *testing.T) {
+	t.Parallel()
+
+	t.Run("trivy visits every field in order and wraps", func(t *testing.T) {
+		t.Parallel()
+
+		got := repositoryOverrideFieldFeature
+		want := []repositoryOverrideField{
+			repositoryOverrideFieldEnabled,
+			repositoryOverrideFieldPathPrimary,
+			repositoryOverrideFieldPathSecondary,
+			repositoryOverrideFieldClear,
+			repositoryOverrideFieldFeature,
+		}
+		for i, expect := range want {
+			got = nextRepositoryOverrideField(got, trivyFeatureName)
+			if got != expect {
+				t.Fatalf("step %d: nextRepositoryOverrideField() = %v, want %v", i, got, expect)
+			}
+		}
+	})
+
+	t.Run("gitleaks skips PathSecondary", func(t *testing.T) {
+		t.Parallel()
+
+		got := nextRepositoryOverrideField(repositoryOverrideFieldPathPrimary, gitleaksFeatureName)
+		if got != repositoryOverrideFieldClear {
+			t.Fatalf("nextRepositoryOverrideField(PathPrimary, gitleaks) = %v, want Clear (PathSecondary skipped)", got)
+		}
+	})
+}
+
 func TestIsAdminSessionExpired(t *testing.T) {
 	t.Parallel()
 

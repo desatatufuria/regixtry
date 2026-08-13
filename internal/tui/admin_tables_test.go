@@ -400,6 +400,87 @@ func TestBuildAdminScanSummaryTableRendersOneRowPerRepository(t *testing.T) {
 	}
 }
 
+// TestBuildAdminScanSummaryTableRendersDisabledRepositoriesDistinctly is the
+// Phase 8 task 8.10 RED test (operator-admin-tui spec's "Repository Alerts
+// Renders Override-Disabled Repositories Distinctly" requirement, both
+// scenarios): a repositorySummary with Disabled=true (an override with
+// Enabled=false) must render an explicit "scanning disabled" Status cell,
+// distinct from both a never-scanned repository's "unknown" Status cell and
+// a normally-scanned repository's own status cell.
+func TestBuildAdminScanSummaryTableRendersDisabledRepositoriesDistinctly(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+	summaries := []repositorySummary{
+		{Repository: "acme/never-scanned"}, // zero-value LatestRun -> "unknown"
+		{Repository: "acme/normal", LatestRun: ports.ScanRun{ID: "run-1", Repository: "acme/normal", Status: ports.ScanRunStatusCompleted}},
+		{Repository: "acme/disabled", LatestRun: ports.ScanRun{ID: "run-2", Repository: "acme/disabled", Status: ports.ScanRunStatusCompleted}, Disabled: true},
+	}
+
+	table := buildAdminScanSummaryTable(theme, summaries, 0, minTableRows)
+	rows := table.GetVisibleRows()
+	if len(rows) != 3 {
+		t.Fatalf("len(rows) = %d, want 3", len(rows))
+	}
+
+	statusOf := func(repository string) string {
+		for _, row := range rows {
+			if row.Data[adminTableColumnScanSummaryRepository] == repository {
+				status, _ := row.Data[adminTableColumnScanSummaryStatus].(string)
+				return status
+			}
+		}
+		t.Fatalf("no row found for repository %q", repository)
+		return ""
+	}
+
+	neverScanned := statusOf("acme/never-scanned")
+	normal := statusOf("acme/normal")
+	disabled := statusOf("acme/disabled")
+
+	if disabled != "scanning disabled" {
+		t.Fatalf("disabled row status = %q, want %q", disabled, "scanning disabled")
+	}
+	if disabled == neverScanned {
+		t.Fatalf("disabled row status = %q, want it distinct from the never-scanned row's %q", disabled, neverScanned)
+	}
+	if disabled == normal {
+		t.Fatalf("disabled row status = %q, want it distinct from the normally-scanned row's %q", disabled, normal)
+	}
+}
+
+// TestAnnotateDisabledSummariesMarksOnlyDisabledOverrideRepositories is the
+// Phase 8 task 8.11 RED test: annotateDisabledSummaries only marks a summary
+// Disabled when a stored override for that repository has Enabled=false; a
+// repository with no override, or an override with Enabled=true, is left
+// unmarked.
+func TestAnnotateDisabledSummariesMarksOnlyDisabledOverrideRepositories(t *testing.T) {
+	t.Parallel()
+
+	summaries := []repositorySummary{
+		{Repository: "acme/no-override"},
+		{Repository: "acme/enabled-override"},
+		{Repository: "acme/disabled-override"},
+	}
+	overrides := []ports.RepositoryOverrideDetails{
+		{Repository: "acme/enabled-override", Feature: "trivy", Enabled: true},
+		{Repository: "acme/disabled-override", Feature: "trivy", Enabled: false},
+	}
+
+	got := annotateDisabledSummaries(summaries, overrides)
+
+	want := map[string]bool{
+		"acme/no-override":       false,
+		"acme/enabled-override":  false,
+		"acme/disabled-override": true,
+	}
+	for _, summary := range got {
+		if summary.Disabled != want[summary.Repository] {
+			t.Fatalf("annotateDisabledSummaries()[%q].Disabled = %v, want %v", summary.Repository, summary.Disabled, want[summary.Repository])
+		}
+	}
+}
+
 // TestAdminFindingLinkResolution is the RED test for the shared link
 // resolver (adminFindingLink), the single resolution both
 // openSelectedAdminFindingLink (model.go, the Enter-key opener) uses:

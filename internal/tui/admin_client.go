@@ -47,6 +47,15 @@ type AdminClient interface {
 	RevokeUserAdminToken(ctx context.Context, session AdminSession, userID string, accessor string) error
 	EnableUser(ctx context.Context, session AdminSession, userID string) (ports.AdminUser, error)
 	DisableUser(ctx context.Context, session AdminSession, userID string) (ports.AdminUser, error)
+	// GetRepositoryOverride returns the stored override for one
+	// (repository, feature) pair. A 404 response (no override row) is a
+	// valid state, not an error: it returns (zero value, false, nil).
+	GetRepositoryOverride(ctx context.Context, session AdminSession, repository string, feature string) (ports.RepositoryOverrideDetails, bool, error)
+	// ListRepositoryOverrides returns every stored override row for one
+	// feature, used only to annotate the Repository Alerts table.
+	ListRepositoryOverrides(ctx context.Context, session AdminSession, feature string) ([]ports.RepositoryOverrideDetails, error)
+	SetRepositoryOverride(ctx context.Context, session AdminSession, repository string, feature string, input ports.RepositoryOverrideDetails) (ports.RepositoryOverrideDetails, error)
+	ClearRepositoryOverride(ctx context.Context, session AdminSession, repository string, feature string) error
 }
 
 type HTTPAdminClient struct {
@@ -331,6 +340,78 @@ func (c *HTTPAdminClient) CreateUserAdminToken(ctx context.Context, session Admi
 func (c *HTTPAdminClient) RevokeUserAdminToken(ctx context.Context, session AdminSession, userID string, accessor string) error {
 	path := "/admin/v1/users/" + url.PathEscape(strings.TrimSpace(userID)) + "/admin-tokens/" + url.PathEscape(strings.TrimSpace(accessor))
 	return c.requestNoContent(ctx, stdhttp.MethodDelete, session, path, nil, stdhttp.StatusNoContent)
+}
+
+// repositoryOverridePath builds the admin resource path for one
+// (feature, repository) pair. repository is deliberately NOT
+// url.PathEscape-d (design.md Decision 8 wire shape): escaping its slashes
+// would defeat the server-side split (adminNestedResource splits on the
+// last "/repository-overrides/" occurrence, expecting a literal slash-
+// bearing repository as the final segment), mirroring PutUserGrant/
+// DeleteUserGrant's own unescaped repository precedent.
+func repositoryOverridePath(feature string, repository string) string {
+	return "/admin/v1/features/" + url.PathEscape(strings.TrimSpace(feature)) + "/repository-overrides/" + strings.TrimSpace(repository)
+}
+
+// GetRepositoryOverride fetches one repository's stored override. A 404
+// (design.md Decision 7's row-presence boundary) is a valid "no override"
+// state, not an error, so the modal can distinguish it from a real failure.
+func (c *HTTPAdminClient) GetRepositoryOverride(ctx context.Context, session AdminSession, repository string, feature string) (ports.RepositoryOverrideDetails, bool, error) {
+	resp, err := c.request(ctx, stdhttp.MethodGet, session, repositoryOverridePath(feature, repository), nil)
+	if err != nil {
+		return ports.RepositoryOverrideDetails{}, false, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == stdhttp.StatusNotFound {
+		return ports.RepositoryOverrideDetails{}, false, nil
+	}
+	if resp.StatusCode != stdhttp.StatusOK {
+		return ports.RepositoryOverrideDetails{}, false, decodeAdminAPIError("read admin resource", resp)
+	}
+	var details ports.RepositoryOverrideDetails
+	if err := json.NewDecoder(resp.Body).Decode(&details); err != nil {
+		return ports.RepositoryOverrideDetails{}, false, err
+	}
+	return details, true, nil
+}
+
+// ListRepositoryOverrides fetches every stored override row for one feature
+// (design.md Decision 7's "List (TUI annotation)" row), used only to
+// annotate the Repository Alerts table.
+func (c *HTTPAdminClient) ListRepositoryOverrides(ctx context.Context, session AdminSession, feature string) ([]ports.RepositoryOverrideDetails, error) {
+	var overrides []ports.RepositoryOverrideDetails
+	path := "/admin/v1/features/" + url.PathEscape(strings.TrimSpace(feature)) + "/repository-overrides"
+	if err := c.getJSON(ctx, session, path, &overrides); err != nil {
+		return nil, err
+	}
+	return overrides, nil
+}
+
+// SetRepositoryOverride PUTs a full replacement of one repository's
+// override. The request body only ever carries the fields the target
+// feature's codec accepts (design.md Decision 3's DisallowUnknownFields) --
+// gitleaks gets config_path, every other feature (currently only trivy)
+// gets ignore_file_path/ignore_policy_path.
+func (c *HTTPAdminClient) SetRepositoryOverride(ctx context.Context, session AdminSession, repository string, feature string, input ports.RepositoryOverrideDetails) (ports.RepositoryOverrideDetails, error) {
+	body := map[string]any{"enabled": input.Enabled}
+	if feature == gitleaksFeatureName {
+		body["config_path"] = input.ConfigPath
+	} else {
+		body["ignore_file_path"] = input.IgnoreFilePath
+		body["ignore_policy_path"] = input.IgnorePolicyPath
+	}
+	var details ports.RepositoryOverrideDetails
+	if err := c.requestJSON(ctx, stdhttp.MethodPut, session, repositoryOverridePath(feature, repository), body, &details, stdhttp.StatusOK); err != nil {
+		return ports.RepositoryOverrideDetails{}, err
+	}
+	return details, nil
+}
+
+// ClearRepositoryOverride deletes one repository's override, exactly like
+// DeleteUserGrant (design.md Decision 8).
+func (c *HTTPAdminClient) ClearRepositoryOverride(ctx context.Context, session AdminSession, repository string, feature string) error {
+	return c.requestNoContent(ctx, stdhttp.MethodDelete, session, repositoryOverridePath(feature, repository), nil, stdhttp.StatusNoContent)
 }
 
 func (c *HTTPAdminClient) EnableUser(ctx context.Context, session AdminSession, userID string) (ports.AdminUser, error) {

@@ -232,52 +232,52 @@ dependency-ordered slices — recommend chaining rather than a single PR.
 
 ## Phase 8: TUI Modal (Decision 8) — depends on Phase 1, 7
 
-- [ ] 8.1 RED `internal/tui/session_test.go`: `repositoryOverrideModal.Active()`
+- [x] 8.1 RED `internal/tui/session_test.go`: `repositoryOverrideModal.Active()`
       open/closed; `nextRepositoryOverrideField` skips
       `…PathSecondary` when `Feature == gitleaksFeatureName` (table-driven).
-- [ ] 8.2 RED `internal/tui/admin_views_test.go`: `renderRepositoryOverrideModal`
+- [x] 8.2 RED `internal/tui/admin_views_test.go`: `renderRepositoryOverrideModal`
       row budgets per design Decision 8's table — <=19 (trivy+error), <=17
       (trivy, no error), <=17 (gitleaks+error), <=15 (gitleaks, no error).
-- [ ] 8.3 RED `admin_views_test.go`: the modal heading shows the repository
+- [x] 8.3 RED `admin_views_test.go`: the modal heading shows the repository
       name; the status line shows `Loading…` / `override active` /
       `inheriting global settings` for the three inheritance states.
-- [ ] 8.4 RED `internal/tui/model_test.go`: pressing `o` on a highlighted
+- [x] 8.4 RED `internal/tui/model_test.go`: pressing `o` on a highlighted
       Repository Alerts row opens the modal bound to that repository and
       `trivyFeatureName`; `o` on a different admin screen or with no row
       highlighted does not open it (operator-admin-tui spec scenario).
-- [ ] 8.5 RED `model_test.go`: `o` does not collide with
+- [x] 8.5 RED `model_test.go`: `o` does not collide with
       `featureActionForKey`'s fallback (regression guard per design Decision
       8's ordering note — the case sits before `model.go:1257`).
-- [ ] 8.6 GREEN: add `repositoryOverrideField`, `repositoryOverrideModal`,
+- [x] 8.6 GREEN: add `repositoryOverrideField`, `repositoryOverrideModal`,
       `Active()`, `AdminViewState.RepositoryOverrideModal` to `session.go`;
       zero it in `clearSelectedAdminDetails` and `applyFeaturePage` (design
       Decision 8 piece 1, exact struct shape).
-- [ ] 8.7 GREEN: add the `o` opener case, the `Active()` branch, the
+- [x] 8.7 GREEN: add the `o` opener case, the `Active()` branch, the
       `updateRepositoryOverrideModalKey` handler, 2 `tea.Msg` types, and 3
       commands to `model.go`, modeled on `scanPolicyModal`'s equivalents
       (design Decision 8 piece 2).
-- [ ] 8.8 GREEN: add `Get/List/Set/ClearRepositoryOverride` to
+- [x] 8.8 GREEN: add `Get/List/Set/ClearRepositoryOverride` to
       `admin_client.go`'s interface + HTTP implementation; `DELETE` via
       `requestNoContent(..., MethodDelete, ..., StatusNoContent)`; **do not**
       `PathEscape` the repository (design Decision 8 wire shape — escaping
       would defeat the server-side split).
-- [ ] 8.9 GREEN: add `renderRepositoryOverrideModal` to `admin_views.go`, a
+- [x] 8.9 GREEN: add `renderRepositoryOverrideModal` to `admin_views.go`, a
       fifth `compositeOverlay` branch on `renderAdminWorkspace`, and `o` in
       `adminFeatureHelp` (design Decision 8 piece 3).
-- [ ] 8.10 RED `internal/tui/admin_tables_test.go`: a Repository Alerts row
+- [x] 8.10 RED `internal/tui/admin_tables_test.go`: a Repository Alerts row
       renders "scanning disabled" distinctly from both a never-scanned
       repository's row and a normally-scanned repository's row, for a
       repository whose override sets `Enabled: false` (operator-admin-tui
       spec, both scenarios).
-- [ ] 8.11 GREEN: annotate Repository Alerts rows in `admin_tables.go` using
+- [x] 8.11 GREEN: annotate Repository Alerts rows in `admin_tables.go` using
       data from the list-overrides endpoint.
-- [ ] 8.12 Live-render verification: throwaway debug test rendering the modal
+- [x] 8.12 Live-render verification: throwaway debug test rendering the modal
       as a floating overlay over the base workspace at height 24;
       `ansi.Strip` + `fmt.Println`; confirm the full bottom border and help
       line at both the 19-row (trivy+error) and 15-row (gitleaks, no error)
       extremes; delete before finishing (resolves design's "Live-render
       confirmation" open question).
-- [ ] 8.13 Confirm 8.1–8.5, 8.10 GREEN: `go test ./internal/tui/... -run RepositoryOverride`.
+- [x] 8.13 Confirm 8.1–8.5, 8.10 GREEN: `go test ./internal/tui/... -run RepositoryOverride`.
 
 ## Phase 9: Gate Coupling Integration (Decision 9) — depends on Phase 4, 6, 7
 

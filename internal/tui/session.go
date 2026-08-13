@@ -160,6 +160,54 @@ func (m adminConfirmModal) Active() bool {
 	return m.Kind != adminConfirmNone
 }
 
+// repositoryOverrideField identifies which of repositoryOverrideModal's
+// fields has focus (design.md Decision 8 piece 1).
+type repositoryOverrideField int
+
+const (
+	repositoryOverrideFieldFeature repositoryOverrideField = iota
+	repositoryOverrideFieldEnabled
+	repositoryOverrideFieldPathPrimary   // trivy: ignore file | gitleaks: config
+	repositoryOverrideFieldPathSecondary // trivy: ignore policy (skipped for gitleaks)
+	repositoryOverrideFieldClear         // action row, not an input
+)
+
+// repositoryOverrideModal is the per-repository override editor opened with
+// `o` on a highlighted Repository Alerts row, mirroring scanPolicyModal's
+// exact 3-piece shape (design.md Decision 8 — a sibling struct, not an
+// extension of trivyConfigModal or scanPolicyModal).
+type repositoryOverrideModal struct {
+	Open          bool
+	Repository    string
+	Feature       string // trivyFeatureName | gitleaksFeatureName
+	Focus         repositoryOverrideField
+	Exists        bool // false => this repository inherits the global row
+	Enabled       bool
+	PathPrimary   string
+	PathSecondary string
+	Loading       bool
+	Error         string
+}
+
+func (m repositoryOverrideModal) Active() bool {
+	return m.Open
+}
+
+// nextRepositoryOverrideField wraps between the modal's 5 fields, skipping
+// repositoryOverrideFieldPathSecondary when feature is gitleaksFeatureName
+// (gitleaks has no second path field), mirroring nextScanPolicyField's
+// wrapping-cursor pattern.
+func nextRepositoryOverrideField(field repositoryOverrideField, feature string) repositoryOverrideField {
+	next := field + 1
+	if next == repositoryOverrideFieldPathSecondary && feature == gitleaksFeatureName {
+		next = repositoryOverrideFieldClear
+	}
+	if next > repositoryOverrideFieldClear {
+		next = repositoryOverrideFieldFeature
+	}
+	return next
+}
+
 // adminScanHistoryTabKind identifies one feature's tab inside the scan
 // history modal (design.md "Ordered tab slice with a wrapping cursor").
 type adminScanHistoryTabKind string
@@ -280,7 +328,18 @@ type AdminViewState struct {
 	// (spec.md "Repository Alert Drill-Down Opens History Modal"), opened by
 	// Enter on a summary row (updateAdminFeaturesKey).
 	ScanHistoryModal adminScanHistoryModal
-	Tables           adminTablesState
+	// RepositoryOverrideModal is the per-repository override editor state
+	// (design.md Decision 8), opened by `o` on a highlighted Repository
+	// Alerts row (updateAdminFeaturesKey), a sibling of ScanHistoryModal, not
+	// an extension.
+	RepositoryOverrideModal repositoryOverrideModal
+	// TrivyOverrides is every stored Trivy repository override row
+	// (fetched alongside TrivyScanRuns), used only to annotate the
+	// Repository Alerts table with a distinct "scanning disabled" state
+	// (design.md Decision 8's Open Question on the list endpoint; the
+	// resolution path itself never uses this field).
+	TrivyOverrides []ports.RepositoryOverrideDetails
+	Tables         adminTablesState
 	// Layout is the consoleLayout used the last time rebuildAdminTables ran,
 	// including the primary/compact table pageSize split (design.md
 	// decision #6). It is a snapshot for table construction, not the live

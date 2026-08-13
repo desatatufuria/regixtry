@@ -146,6 +146,23 @@ type RepositoryFeatureOverride struct {
 	UpdatedAt  time.Time       `json:"updated_at"`
 }
 
+// RepositoryOverrideDetails is the flattened wire projection of one
+// repository override row, used by the TUI admin client (design.md Decision
+// 8): the union of TrivyOverride's and GitleaksOverride's own JSON fields
+// plus the repository/feature identity, matching exactly what
+// repositoryOverrideResponse (admin_handlers.go) puts on the wire for
+// GET/PUT/the list endpoint. Only the fields relevant to Feature are
+// populated by the server.
+type RepositoryOverrideDetails struct {
+	Repository       string    `json:"repository"`
+	Feature          string    `json:"feature"`
+	Enabled          bool      `json:"enabled"`
+	IgnoreFilePath   string    `json:"ignore_file_path,omitempty"`
+	IgnorePolicyPath string    `json:"ignore_policy_path,omitempty"`
+	ConfigPath       string    `json:"config_path,omitempty"`
+	UpdatedAt        time.Time `json:"updated_at"`
+}
+
 type ScanResult struct {
 	Critical     int
 	High         int

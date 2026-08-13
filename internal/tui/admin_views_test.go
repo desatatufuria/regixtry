@@ -334,6 +334,125 @@ func TestRenderScanPolicyModalIsASeparateSurfaceFromTrivyConfigModal(t *testing.
 	}
 }
 
+// TestRenderRepositoryOverrideModalFitsWithinRowBudget is the Phase 8 task
+// 8.2 RED test: renderRepositoryOverrideModal's row budgets exactly match
+// design.md Decision 8's table -- 17 (trivy, no error), 19 (trivy + error),
+// 15 (gitleaks, no error), 17 (gitleaks + error) -- comfortably within the
+// 24-row minViewportHeight floor.
+func TestRenderRepositoryOverrideModalFitsWithinRowBudget(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+
+	tests := []struct {
+		name       string
+		modal      repositoryOverrideModal
+		wantHeight int
+	}{
+		{
+			name:       "trivy, no error",
+			modal:      repositoryOverrideModal{Open: true, Repository: "library/alpine", Feature: trivyFeatureName, Exists: true, Enabled: true, PathPrimary: "/etc/trivy/ignore", PathSecondary: "/etc/trivy/policy.rego"},
+			wantHeight: 17,
+		},
+		{
+			name:       "trivy + error",
+			modal:      repositoryOverrideModal{Open: true, Repository: "library/alpine", Feature: trivyFeatureName, Exists: true, Enabled: true, PathPrimary: "/etc/trivy/ignore", PathSecondary: "/etc/trivy/policy.rego", Error: "ignore_file_path must be absolute"},
+			wantHeight: 19,
+		},
+		{
+			name:       "gitleaks, no error",
+			modal:      repositoryOverrideModal{Open: true, Repository: "team/config", Feature: gitleaksFeatureName, Exists: false, PathPrimary: "/etc/gitleaks/config.toml"},
+			wantHeight: 15,
+		},
+		{
+			name:       "gitleaks + error",
+			modal:      repositoryOverrideModal{Open: true, Repository: "team/config", Feature: gitleaksFeatureName, Exists: false, PathPrimary: "/etc/gitleaks/config.toml", Error: "config_path must be absolute"},
+			wantHeight: 17,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := renderRepositoryOverrideModal(theme, tc.modal)
+			if h := lipgloss.Height(got); h != tc.wantHeight {
+				t.Fatalf("renderRepositoryOverrideModal() height = %d, want %d (design.md Decision 8's row budget)\n%s", h, tc.wantHeight, got)
+			}
+		})
+	}
+}
+
+// TestRenderRepositoryOverrideModalShowsRepositoryAndInheritanceState is the
+// Phase 8 task 8.3 RED test (operator-admin-tui spec's "Opening the modal on
+// a highlighted row shows the effective config" / "Opening the modal shows
+// an existing override" scenarios): the heading carries the repository name,
+// and the status line carries the inheritance state for all three cases --
+// Loading, override active, and inheriting global settings.
+func TestRenderRepositoryOverrideModalShowsRepositoryAndInheritanceState(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+
+	tests := []struct {
+		name       string
+		modal      repositoryOverrideModal
+		wantStatus string
+	}{
+		{
+			name:       "loading",
+			modal:      repositoryOverrideModal{Open: true, Repository: "library/alpine", Feature: trivyFeatureName, Loading: true},
+			wantStatus: "Loading…",
+		},
+		{
+			name:       "override active",
+			modal:      repositoryOverrideModal{Open: true, Repository: "library/alpine", Feature: trivyFeatureName, Exists: true, Enabled: true, PathPrimary: "/etc/trivy/ignore"},
+			wantStatus: "override active",
+		},
+		{
+			name:       "inheriting global settings",
+			modal:      repositoryOverrideModal{Open: true, Repository: "library/alpine", Feature: trivyFeatureName, Exists: false},
+			wantStatus: "inheriting global settings",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := renderRepositoryOverrideModal(theme, tc.modal)
+			if !strings.Contains(got, "library/alpine") {
+				t.Fatalf("renderRepositoryOverrideModal() = %q, want the repository name in the heading", got)
+			}
+			if !strings.Contains(got, tc.wantStatus) {
+				t.Fatalf("renderRepositoryOverrideModal() = %q, want status line %q", got, tc.wantStatus)
+			}
+		})
+	}
+}
+
+// TestRenderRepositoryOverrideModalIsASeparateSurfaceFromOtherAdminModals is
+// the Phase 8 out-of-scope regression guard (spec.md's "Out of Scope Note":
+// the override modal is its own sibling surface, not an extension of
+// scanPolicyModal/trivyConfigModal).
+func TestRenderRepositoryOverrideModalIsASeparateSurfaceFromOtherAdminModals(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+
+	overrideOutput := renderRepositoryOverrideModal(theme, repositoryOverrideModal{Open: true, Repository: "library/alpine", Feature: trivyFeatureName, Exists: true, Enabled: true, PathPrimary: "/etc/trivy/ignore"})
+	for _, forbidden := range []string{"Vulnerability Policy", "Severity Threshold", "Edit Trivy Configuration", "Registry Reachable URL"} {
+		if strings.Contains(overrideOutput, forbidden) {
+			t.Fatalf("renderRepositoryOverrideModal() output contains %q, want a separate surface\n%s", forbidden, overrideOutput)
+		}
+	}
+
+	policyOutput := renderScanPolicyModal(theme, scanPolicyModal{Open: true, Enabled: true, SeverityThreshold: ports.ScanPolicyThresholdCritical})
+	if strings.Contains(policyOutput, "Repository Override") {
+		t.Fatalf("renderScanPolicyModal() output contains %q, want no override modal fields\n%s", "Repository Override", policyOutput)
+	}
+}
+
 // TestRenderTrivyTabsComposesPolicyBadgeAtZeroRowCost is the Phase 9 task
 // 9.1 RED test (design.md Decision 6): renderTrivyTabs must still return
 // exactly 2 rows (subheading + composed tab line) once the policy badge is

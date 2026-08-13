@@ -247,10 +247,18 @@ func buildAdminScanSummaryTable(theme adminTheme, summaries []repositorySummary,
 	}
 	rows := make([]bubbletable.Row, 0, len(summaries))
 	for _, summary := range summaries {
+		status := adminFirstNonEmpty(summary.LatestRun.Status, "unknown")
+		if summary.Disabled {
+			// operator-admin-tui spec's "Repository Alerts Renders Override-
+			// Disabled Repositories Distinctly" requirement: an explicit
+			// state, never confused with "unknown" (never scanned) or the
+			// repository's own last scan status (normally scanned).
+			status = "scanning disabled"
+		}
 		rows = append(rows, bubbletable.NewRow(bubbletable.RowData{
 			adminTableColumnScanSummaryRepository:   adminFirstNonEmpty(summary.Repository, "unknown"),
 			adminTableColumnScanSummaryReference:    adminFirstNonEmpty(summary.LatestRun.RequestedRef, "unknown"),
-			adminTableColumnScanSummaryStatus:       adminFirstNonEmpty(summary.LatestRun.Status, "unknown"),
+			adminTableColumnScanSummaryStatus:       status,
 			adminTableColumnScanSummaryCritical:     summary.LatestRun.Critical,
 			adminTableColumnScanSummaryHigh:         summary.LatestRun.High,
 			adminTableColumnScanSummaryFixable:      fmt.Sprintf("%t", summary.LatestRun.HasFixable),
@@ -260,6 +268,34 @@ func buildAdminScanSummaryTable(theme adminTheme, summaries []repositorySummary,
 		}))
 	}
 	return newAdminBubbleTable(columns, rows, highlighted, theme, pageSize)
+}
+
+// annotateDisabledSummaries marks each summary Disabled when a stored
+// override for that repository has Enabled=false (design.md's Open Question
+// "List endpoint scope" -- resolved by annotating existing rows, per its own
+// listed fallback: a repository that has never been scanned has no summary
+// row to annotate in the first place, so injecting a synthetic row is out of
+// scope). Pure and side-effect free: returns a new slice, never mutates
+// summaries in place.
+func annotateDisabledSummaries(summaries []repositorySummary, overrides []ports.RepositoryOverrideDetails) []repositorySummary {
+	if len(overrides) == 0 {
+		return summaries
+	}
+	disabled := make(map[string]bool, len(overrides))
+	for _, override := range overrides {
+		if !override.Enabled {
+			disabled[override.Repository] = true
+		}
+	}
+	if len(disabled) == 0 {
+		return summaries
+	}
+	annotated := make([]repositorySummary, len(summaries))
+	for i, summary := range summaries {
+		summary.Disabled = disabled[summary.Repository]
+		annotated[i] = summary
+	}
+	return annotated
 }
 
 // formatScanSummaryLastExecuted renders a repositorySummary's last-execution
@@ -391,7 +427,7 @@ func (m *Model) rebuildAdminTables(layout consoleLayout) {
 	// ScanSummary is the per-repository Repository Alerts summary table
 	// (spec.md "Repository Alerts Summarized Per Repository With Ordering
 	// And Freshness") and the sole table backing that tab.
-	m.adminView.Tables.ScanSummary = buildAdminScanSummaryTable(theme, m.adminView.TrivySummaries, m.adminView.TrivySelectedAlert, layout.Primary)
+	m.adminView.Tables.ScanSummary = buildAdminScanSummaryTable(theme, annotateDisabledSummaries(m.adminView.TrivySummaries, m.adminView.TrivyOverrides), m.adminView.TrivySelectedAlert, layout.Primary)
 
 	// The scan history modal's Findings/SecretFindings tables are only ever
 	// rendered from within the modal (adminScanHistoryModalTableBody), so
