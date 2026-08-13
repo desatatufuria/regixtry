@@ -201,34 +201,34 @@ dependency-ordered slices — recommend chaining rather than a single PR.
 
 ## Phase 7: Admin HTTP Resource (Decision 7) — depends on Phase 1, 2, 3
 
-- [ ] 7.1 RED `internal/protocol/http/admin_handlers_test.go`: `GET
+- [x] 7.1 RED `internal/protocol/http/admin_handlers_test.go`: `GET
       /admin/v1/features/trivy/repository-overrides/library/alpine` returns
       404 when no override row exists (row-presence boundary on the wire,
       design Decision 7).
-- [ ] 7.2 RED: `GET` returns 200 with the override object plus `updated_at`
+- [x] 7.2 RED: `GET` returns 200 with the override object plus `updated_at`
       when a row exists.
-- [ ] 7.3 RED: `PUT` persists and round-trips; `PUT` with a gitleaks-shaped
+- [x] 7.3 RED: `PUT` persists and round-trips; `PUT` with a gitleaks-shaped
       body at the trivy resource returns 400 (`DisallowUnknownFields`).
-- [ ] 7.4 RED: `DELETE` returns 204, then a second `DELETE` on the same
+- [x] 7.4 RED: `DELETE` returns 204, then a second `DELETE` on the same
       resource returns 404 (`DeleteUpload` precedent).
-- [ ] 7.5 RED: an unknown feature name in the URL returns 404 via the
+- [x] 7.5 RED: an unknown feature name in the URL returns 404 via the
       codec-registry lookup.
-- [ ] 7.6 RED **[threat matrix — HTTP path dispatch]**: a repository literally
+- [x] 7.6 RED **[threat matrix — HTTP path dispatch]**: a repository literally
       named `team/config` routes to the override handler, not the existing
       `HasSuffix(resource, "/config")` branch (design Decision 7's ordering
       hazard — the new `case` must be first in `handleAdminFeatureResource`'s
       switch, ahead of `/config` and `/status`).
-- [ ] 7.7 GREEN: implement `Service.GetRepositoryOverride`,
+- [x] 7.7 GREEN: implement `Service.GetRepositoryOverride`,
       `ListRepositoryOverrides`, `SetRepositoryOverride(ctx, repository,
       feature string, raw []byte)`, `ClearRepositoryOverride` in
       `repository_overrides.go` — feature-agnostic, call `parseRepository`
       first, then `codec.Normalize`.
-- [ ] 7.8 GREEN: add the `repository-overrides` case **first** in
+- [x] 7.8 GREEN: add the `repository-overrides` case **first** in
       `handleAdminFeatureResource`'s switch (`admin_handlers.go:72-189`),
       using `adminNestedResource(resource, "/repository-overrides/")` and a
       `HasSuffix(resource, "/repository-overrides")` collection branch;
       wire GET/PUT/DELETE handlers.
-- [ ] 7.9 Confirm 7.1–7.6 GREEN: `go test ./internal/protocol/http/... -run RepositoryOverride`.
+- [x] 7.9 Confirm 7.1–7.6 GREEN: `go test ./internal/protocol/http/... -run RepositoryOverride`.
 
 ## Phase 8: TUI Modal (Decision 8) — depends on Phase 1, 7
 
