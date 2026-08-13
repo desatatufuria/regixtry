@@ -306,43 +306,58 @@ existing Trivy/gitleaks test function.
 
 ## Phase 6: Feature Registry — Builtin With No Runtime Manager (Decision 10) — depends on Phase 4
 
-- [ ] 6.1 **Before** any `feature_registry.go` change, run the full existing
+- [x] 6.1 **Before** any `feature_registry.go` change, run the full existing
       suite (`go test ./... -v`) and confirm — by running, not by grep —
       design.md's Open Questions claim that no test today asserts an exact
       `builtInFeatures` count or rejects `"signing"` as unsupported. Record
       the result explicitly; this is the flagged risk from design.md.
-- [ ] 6.2 RED `feature_registry_test.go`: with a `signing` `featureDescriptor
+      **Result: baseline `go test -count=1 ./...` was green before any
+      change. The risk DID materialize:
+      `TestServiceListFeaturesReturnsBuiltinTrivyInventory`
+      (`service_test.go`) asserted `ListFeatures()` via `reflect.DeepEqual`
+      against a hardcoded 2-element `[]ports.FeatureSummary`, which is an
+      exact-count assertion in effect even though it never spells out the
+      literal number 2. No test rejected `"signing"` as unsupported. Fixed
+      by updating that test's `want` slice to include the third `signing`
+      entry — the feature is NOT hidden from `ListFeatures` to work around
+      it.**
+- [x] 6.2 RED `feature_registry_test.go`: with a `signing` `featureDescriptor
       {managedRuntime: false}` entry, `projectFeatureRuntime("signing")`
       returns an empty `ports.FeatureRuntime{}` (`Mode == ""`), not a
       fabricated `{Mode: Managed, Status: uninstalled}`.
-- [ ] 6.3 RED: `buildFeatureActions` for `signing` exposes exactly
+- [x] 6.3 RED: `buildFeatureActions` for `signing` exposes exactly
       Enable/Disable/Configure and omits Install/Upgrade/Rollback — proves
       the existing `Mode == Managed` gates already do the right thing once
       6.2's empty runtime lands (no new gating code needed here, per
       design's "None needed" row).
-- [ ] 6.4 RED: `ExecuteFeatureAction("signing", "install-runtime")` (and
+- [x] 6.4 RED: `ExecuteFeatureAction("signing", "install-runtime")` (and
       `upgrade-runtime`, `rollback-runtime`) returns
       `domain.NewValidationError`, not the untyped 500
       `featureRuntimeManager` would otherwise produce — defense in depth.
-- [ ] 6.5 RED: `buildFeaturePage` for `signing` gates the Runtime section on
+- [x] 6.5 RED: `buildFeaturePage` for `signing` gates the Runtime section on
       `Mode == FeatureRuntimeModeManaged` (renders no Runtime section) and
       shows a signing-specific Policy fields section, not the Trivy/gitleaks
       Schedule/Interval/Timeout/Concurrency Config fields.
-- [ ] 6.6 RED: `loadFeatureSettings` for `signing` projects the
+- [x] 6.6 RED: `loadFeatureSettings` for `signing` projects the
       `signing_policy_settings` row into a `ScanSettings{Enabled:
       policy.Enabled}` shell, with `configured` = "a `signing_policy_settings`
       row exists" — never reads or writes a `scan_settings(feature="signing")`
       row.
-- [ ] 6.7 RED: `ConfigureFeature("signing", ...)` is rejected outright with
+- [x] 6.7 RED: `ConfigureFeature("signing", ...)` is rejected outright with
       `domain.NewValidationError("signing is configured through the signing
       policy endpoint")` — proves nothing can create a stray `scan_settings`
       row behind the projection.
-- [ ] 6.8 RED — **one-bit invariant**: enabling via
+- [x] 6.8 RED — **one-bit invariant**: enabling via
       `ExecuteFeatureAction("signing", "enable")` and enabling via
       `UpdateSigningPolicySettings` move the same underlying bit — both
       paths converge to identical `GetSigningPolicySettings().Enabled` and
       identical `loadFeatureSettings`-projected state.
-- [ ] 6.9 GREEN: add `featureDescriptor.managedRuntime`; convert
+      **Deviation noted below (6.9): the admin `:enable`/`:disable` HTTP
+      shortcut calls `SetFeatureEnabled` directly, not
+      `ExecuteFeatureAction` — `SetFeatureEnabled` itself was special-cased
+      for signing so both surfaces converge on one implementation
+      (`setSigningFeatureEnabled`), not just `ExecuteFeatureAction`.**
+- [x] 6.9 GREEN: add `featureDescriptor.managedRuntime`; convert
       `builtInFeatures` to the data-driven slice (trivy/gitleaks
       `managedRuntime: true`, signing `managedRuntime: false`); add the
       early-return guard in `projectFeatureRuntime`; add the three-action
@@ -350,48 +365,71 @@ existing Trivy/gitleaks test function.
       `buildFeaturePage`; wire `loadFeatureSettings`'s signing projection;
       wire `ConfigureFeature`'s signing rejection — exact guards from design
       Decision 10's table, nothing larger.
-- [ ] 6.10 Confirm 6.2–6.8 GREEN **and** the full suite
+      **Deviation from the literal task list, in scope**: `SetFeatureEnabled`
+      (not just `ExecuteFeatureAction`'s "enable"/"disable" cases) was
+      special-cased for signing, because `admin_handlers.go`'s existing
+      `:enable`/`:disable` HTTP shortcut calls `SetFeatureEnabled` directly,
+      bypassing `ExecuteFeatureAction` entirely; without this,
+      `ConfigureFeature`'s new outright rejection (6.7) would have silently
+      broken that shortcut for `signing`. Also added an outage-rule guard in
+      the new `setSigningFeatureEnabled` (reject enabling with zero
+      configured trusted keys) — the same invariant `normalizeSigningOverride`
+      and the Phase 8 admin decoder enforce at write time, applied
+      consistently at this third entry point too.
+- [x] 6.10 Confirm 6.2–6.8 GREEN **and** the full suite
       (`go test -count=1 ./...`) is still green — explicit check for the
       third-`builtInFeatures`-entry risk design.md flagged, resolved by
       running the suite, not by inspection.
+      **Confirmed: `go test ./internal/app/regixtry/... -run
+      'Feature|ListFeatures|Signing' -v` all PASS, and full-repo
+      `go test -count=1 ./...` green across all 18 packages.**
 
 ## Phase 7: Registry-Scoped Signature-Status Endpoint (Decision 9) — depends on Phase 4
 
-- [ ] 7.1 RED `queries_test.go`: `SignatureStatus` computes each of the five
-      states (`unsigned`, `unverifiable`, `untrusted`, `mismatched`,
+- [x] 7.1 RED `signature_status_test.go`: `SignatureStatus` computes each of
+      the five states (`unsigned`, `unverifiable`, `untrusted`, `mismatched`,
       `verified`) for corresponding fixture/double setups, **independent of
       whether `policy.Enabled` is true or false** — the state is always
       computed.
-- [ ] 7.2 RED: `WouldBlockPull == policy.Enabled && State != verified`,
+- [x] 7.2 RED: `WouldBlockPull == policy.Enabled && State != verified`,
       table-driven across the 5 states × 2 policy-enabled values.
-- [ ] 7.3 RED: `SignatureStatusPolicy.TrustedKeys` is a count only — the
+      **Implemented in the same table-driven test as 7.1** (both properties
+      asserted per case, 5 states × 2 policy-enabled values = 10 subtests).
+- [x] 7.3 RED: `SignatureStatusPolicy.TrustedKeys` is a count only — the
       serialized JSON response never contains PEM bytes.
-- [ ] 7.4 GREEN: add `SignatureStatusResult`, `SignatureStatusPolicy`,
+- [x] 7.4 GREEN: add `SignatureStatusResult`, `SignatureStatusPolicy`,
       `SignatureStatusDetail` types and the 5 state constants to
       `queries.go` beside `ScanStatusResult`; implement
       `(s *Service) SignatureStatus`, exact shape from design Decision 9.
-- [ ] 7.5 RED HTTP handler test: `GET
+- [x] 7.5 RED HTTP handler test: `GET
       /v2/<repo>/manifests/<ref>/signature-status` is reachable with
       ordinary `ActionPull`-only credentials, no admin auth; a tag literally
       named `signature-status` still routes to `handleManifest`, not the
       status handler — suffix matched against the **trimmed reference**,
       mirroring the existing `/scan-status` ordering hazard at
       `router.go:155-160`.
-- [ ] 7.6 RED: `signature-status` is **never** blocked by the gate — even
+- [x] 7.6 RED: `signature-status` is **never** blocked by the gate — even
       when the resolved policy would 403 an actual pull of the same digest,
       the status endpoint still returns 200 with the blocking verdict.
-- [ ] 7.7 RED — **threat matrix, key material disclosure**: the
+- [x] 7.7 RED — **threat matrix, key material disclosure**: the
       `signature-status` response body, and the pull gate's 403
       `PolicyViolation` bodies from Phase 5, never contain `BEGIN PUBLIC
       KEY` or a raw base64 signature — asserted across both endpoints.
-- [ ] 7.8 GREEN: add the `/signature-status` suffix case in `handleV2`'s
+- [x] 7.8 GREEN: add the `/signature-status` suffix case in `handleV2`'s
       `manifests/` branch (`router.go`, beside the existing `/scan-status`
       case) and `handleManifestSignatureStatus`, copied from
       `handleManifestScanStatus`'s shape (GET only, `ActionPull` via
       `withPrincipal`, always 200).
-- [ ] 7.9 Confirm 7.1–7.7 GREEN:
+- [x] 7.9 Confirm 7.1–7.7 GREEN:
       `go test ./internal/app/regixtry/... -run SignatureStatus -v` and
       `go test ./internal/protocol/http/... -run SignatureStatus -v`.
+      **Confirmed: all app-layer SignatureStatus tests PASS (5 states × 2
+      policy-enabled + count-only + non-gating + no-key-leakage +
+      pull-authorization), and all HTTP-layer SignatureStatus tests PASS
+      (verified-state shape, route collision, pull-only auth, non-gating,
+      no-key-leakage across both endpoints). Full-repo
+      `go test -count=1 ./...` green across all 18 packages, `go vet ./...`
+      clean, `gofmt -l .` empty.**
 
 ## Phase 8: Admin HTTP Resource — Global Signing Policy (Decision 8) — depends on Phase 2, 3, 4
 
