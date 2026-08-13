@@ -92,27 +92,27 @@ dependency-ordered slices — recommend chaining rather than a single PR.
 
 ## Phase 3: Codec Registry + Resolution Helper (Decision 3, 4) — depends on Phase 1, 2
 
-- [ ] 3.1 RED `internal/app/regixtry/repository_overrides_test.go` (new):
+- [x] 3.1 RED `internal/app/regixtry/repository_overrides_test.go` (new):
       `normalizeTrivyOverride` rejects unknown fields (`DisallowUnknownFields`),
       a relative path, and a path starting with `-` (threat matrix: subprocess
       argv row), table-driven.
-- [ ] 3.2 RED: `normalizeGitleaksOverride` same table-driven cases for
+- [x] 3.2 RED: `normalizeGitleaksOverride` same table-driven cases for
       `ConfigPath`.
-- [ ] 3.3 RED: `applyTrivyOverride`/`applyGitleaksOverride` round-trip a
+- [x] 3.3 RED: `applyTrivyOverride`/`applyGitleaksOverride` round-trip a
       payload into `ScanSettings`; a payload with an unknown extra field still
       applies (lenient-decode rollback tolerance, design Decision 3's
       documented asymmetry) — table-driven, no store.
-- [ ] 3.4 GREEN: create `internal/app/regixtry/repository_overrides.go` with
+- [x] 3.4 GREEN: create `internal/app/regixtry/repository_overrides.go` with
       `repositoryOverrideCodec`, `repositoryOverrideCodecs` map keyed by
       `trivyFeatureName`/`gitleaksFeatureName`, and the four
       normalize/apply functions, exact code from design Decision 3.
-- [ ] 3.5 RED `service_scanning_test.go`: `applyRepositoryOverride` returns
+- [x] 3.5 RED `service_scanning_test.go`: `applyRepositoryOverride` returns
       `settings` unchanged on `NotFound`; returns `codec.Apply`'s result when
       a row is found; an unrecognized feature name in the registry returns
       `settings` unchanged (defensive branch, design Decision 4).
-- [ ] 3.6 GREEN: implement `Service.applyRepositoryOverride` in
+- [x] 3.6 GREEN: implement `Service.applyRepositoryOverride` in
       `repository_overrides.go`, exact code from design Decision 4.
-- [ ] 3.7 Confirm 3.1–3.3, 3.5 GREEN: `go test ./internal/app/regixtry/... -run
+- [x] 3.7 Confirm 3.1–3.3, 3.5 GREEN: `go test ./internal/app/regixtry/... -run
       'Normalize|ApplyOverride|RepositoryOverride'`.
 
 ## Phase 4: Wire Resolution Into Trivy Queueing (Decision 4 call-site table) — depends on Phase 3

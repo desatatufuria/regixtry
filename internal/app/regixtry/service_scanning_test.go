@@ -1,6 +1,7 @@
 package regixtry
 
 import (
+	"context"
 	"testing"
 
 	"regixtry/internal/ports"
@@ -92,4 +93,57 @@ func TestScanPolicyViolated(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestApplyRepositoryOverrideResolvesRowPresenceBoundary is the Phase 3 RED
+// test (tasks.md 3.5) backing design.md Decision 4's applyRepositoryOverride
+// helper: NotFound means "use the global row" (never an error), a found row
+// resolves through the registered codec's Apply, and an unrecognized feature
+// name is a defensive no-op rather than a crash.
+func TestApplyRepositoryOverrideResolvesRowPresenceBoundary(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	base := ports.ScanSettings{Enabled: true, MaxConcurrency: 4}
+
+	t.Run("NotFound returns settings unchanged", func(t *testing.T) {
+		got, err := service.applyRepositoryOverride(context.Background(), "tenant-a", "library/alpine", trivyFeatureName, base)
+		if err != nil {
+			t.Fatalf("applyRepositoryOverride() error = %v", err)
+		}
+		if got != base {
+			t.Fatalf("applyRepositoryOverride() = %#v, want unchanged %#v", got, base)
+		}
+	})
+
+	t.Run("found row applies codec.Apply", func(t *testing.T) {
+		payload := marshalOverride(t, ports.TrivyOverride{Enabled: false, IgnoreFilePath: "/etc/regixtry/ignore/alpine.trivyignore"})
+		if err := service.metadata.UpsertRepositoryFeatureOverride(context.Background(), "tenant-a", "library/alpine", trivyFeatureName, payload); err != nil {
+			t.Fatalf("UpsertRepositoryFeatureOverride() error = %v", err)
+		}
+		got, err := service.applyRepositoryOverride(context.Background(), "tenant-a", "library/alpine", trivyFeatureName, base)
+		if err != nil {
+			t.Fatalf("applyRepositoryOverride() error = %v", err)
+		}
+		want := ports.ScanSettings{Enabled: false, MaxConcurrency: 4, IgnoreFilePath: "/etc/regixtry/ignore/alpine.trivyignore"}
+		if got != want {
+			t.Fatalf("applyRepositoryOverride() = %#v, want %#v", got, want)
+		}
+	})
+
+	t.Run("unrecognized feature name returns settings unchanged", func(t *testing.T) {
+		payload := marshalOverride(t, map[string]any{"enabled": false})
+		if err := service.metadata.UpsertRepositoryFeatureOverride(context.Background(), "tenant-a", "library/other", "image-signing", payload); err != nil {
+			t.Fatalf("UpsertRepositoryFeatureOverride() error = %v", err)
+		}
+		got, err := service.applyRepositoryOverride(context.Background(), "tenant-a", "library/other", "image-signing", base)
+		if err != nil {
+			t.Fatalf("applyRepositoryOverride() error = %v", err)
+		}
+		if got != base {
+			t.Fatalf("applyRepositoryOverride() = %#v, want unchanged %#v", got, base)
+		}
+	})
 }
