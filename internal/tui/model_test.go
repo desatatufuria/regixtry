@@ -249,8 +249,10 @@ func TestModelCatalogAndTagsListScreensFitViewportHeight(t *testing.T) {
 	t.Parallel()
 
 	items := make([]string, 0, 60)
+	tagItems := make([]appregixtry.TagDetails, 0, 60)
 	for i := 0; i < 60; i++ {
 		items = append(items, fmt.Sprintf("library/repo-%02d", i))
+		tagItems = append(tagItems, appregixtry.TagDetails{Name: fmt.Sprintf("v1.0.%02d", i), SignatureState: appregixtry.SignatureStatusUnsigned})
 	}
 
 	for _, height := range []int{24, 30, 50} {
@@ -270,7 +272,8 @@ func TestModelCatalogAndTagsListScreensFitViewportHeight(t *testing.T) {
 			}
 
 			result.screen = screenTags
-			result.tags = TagsModel{Repository: "library/alpine", Items: items}
+			result.tags = TagsModel{Repository: "library/alpine", Items: tagItems}
+			result.rebuildTagsTable(result.tagsTableLayout())
 			view = result.View()
 			if got := lipgloss.Height(view); got > height {
 				t.Fatalf("tags view height = %d, want <= %d\nview:\n%s", got, height, view)
@@ -413,8 +416,8 @@ func TestModelNavigatesRepositoriesManifestBlobsAndUploads(t *testing.T) {
 	now := time.Date(2026, time.June, 28, 23, 0, 0, 0, time.UTC)
 	service := &fakeQueryService{
 		catalog: appregixtry.CatalogResult{Repositories: []string{"library/alpine"}},
-		tags: map[string]appregixtry.TagsResult{
-			"library/alpine": {Name: "library/alpine", Tags: []string{"latest"}},
+		tagDetails: map[string][]appregixtry.TagDetails{
+			"library/alpine": {{Name: "latest", CreatedAt: now, SignatureState: appregixtry.SignatureStatusUnsigned, SigningEnabled: false}},
 		},
 		manifests: map[string]appregixtry.ManifestDetails{
 			"library/alpine:latest": {
@@ -459,6 +462,82 @@ func TestModelNavigatesRepositoriesManifestBlobsAndUploads(t *testing.T) {
 	}
 	if !strings.Contains(updated.View(), "upload-1") {
 		t.Fatalf("view = %q, want upload id", updated.View())
+	}
+}
+
+// TestModelTagsTableNavigatesUpDownAcrossPagesAndEntersSelectedManifest is
+// the console-tags-table change's own navigation RED test, mirroring
+// TestModelAdminScanRunsTablePagesOnArrowKeyNavigationPastPageBoundary: the
+// Tags screen's table-backed model must keep Up/Down selection and Enter
+// working (spec requirement: "Preserve existing keyboard navigation"),
+// including auto-paging past the first page's boundary via
+// WithHighlightedRow, and Enter must open the manifest for whichever tag is
+// currently highlighted -- not always the first one.
+func TestModelTagsTableNavigatesUpDownAcrossPagesAndEntersSelectedManifest(t *testing.T) {
+	t.Parallel()
+
+	const totalTags = 30
+	tags := make([]appregixtry.TagDetails, 0, totalTags)
+	manifests := make(map[string]appregixtry.ManifestDetails, totalTags)
+	for i := 0; i < totalTags; i++ {
+		name := fmt.Sprintf("v1.0.%02d", i)
+		tags = append(tags, appregixtry.TagDetails{Name: name, SignatureState: appregixtry.SignatureStatusUnsigned})
+		manifests[fmt.Sprintf("library/alpine:%s", name)] = appregixtry.ManifestDetails{
+			Repository: "library/alpine",
+			Reference:  name,
+			Digest:     "sha256:" + name,
+		}
+	}
+
+	service := &fakeQueryService{
+		catalog:    appregixtry.CatalogResult{Repositories: []string{"library/alpine"}},
+		tagDetails: map[string][]appregixtry.TagDetails{"library/alpine": tags},
+		manifests:  manifests,
+	}
+
+	model := NewModel(service)
+	model.viewport = viewportSize{Width: minViewportWidth, Height: minViewportHeight}
+	updated := runCmd(t, model, model.Init())
+	updated = runKey(t, updated, "enter") // open library/alpine's tags
+
+	if updated.screen != screenTags {
+		t.Fatalf("screen = %q, want %q", updated.screen, screenTags)
+	}
+
+	pageSize := consoleTagsTablePageSize(updated.tagsTableLayout())
+	if pageSize <= 0 || pageSize >= totalTags {
+		t.Fatalf("tags table pageSize = %d, want a positive size smaller than %d rows so pagination genuinely activates", pageSize, totalTags)
+	}
+	if got, want := updated.tags.Table.CurrentPage(), 1; got != want {
+		t.Fatalf("tags table CurrentPage() before navigation = %d, want %d", got, want)
+	}
+
+	for i := 0; i < pageSize; i++ {
+		updated = runKey(t, updated, "down")
+	}
+
+	if got, want := updated.tags.Selected, pageSize; got != want {
+		t.Fatalf("tags.Selected after %d downs = %d, want %d", pageSize, got, want)
+	}
+	if got, want := updated.tags.Table.CurrentPage(), 2; got != want {
+		t.Fatalf("tags table CurrentPage() after paging past the first page boundary = %d, want %d (WithHighlightedRow must auto-page the table)", got, want)
+	}
+	if !strings.Contains(updated.View(), tags[pageSize].Name) {
+		t.Fatalf("view after paging = %q, want the newly highlighted tag %q genuinely visible on-screen", updated.View(), tags[pageSize].Name)
+	}
+
+	upOnce := runKey(t, updated, "up")
+	if got, want := upOnce.tags.Selected, pageSize-1; got != want {
+		t.Fatalf("tags.Selected after one up = %d, want %d", got, want)
+	}
+
+	entered := runKey(t, upOnce, "enter")
+	if entered.screen != screenManifest {
+		t.Fatalf("screen = %q, want %q", entered.screen, screenManifest)
+	}
+	wantTag := tags[pageSize-1].Name
+	if entered.manifest.Details.Reference != wantTag {
+		t.Fatalf("manifest.Details.Reference = %q, want %q (Enter must open the currently highlighted tag, not always the first one)", entered.manifest.Details.Reference, wantTag)
 	}
 }
 
@@ -3213,11 +3292,11 @@ func TestModelGrantRepositorySuggestionsFilterAndSelect(t *testing.T) {
 }
 
 type fakeQueryService struct {
-	catalog   appregixtry.CatalogResult
-	tags      map[string]appregixtry.TagsResult
-	manifests map[string]appregixtry.ManifestDetails
-	uploads   map[string][]appregixtry.UploadDetails
-	calls     struct {
+	catalog    appregixtry.CatalogResult
+	tagDetails map[string][]appregixtry.TagDetails
+	manifests  map[string]appregixtry.ManifestDetails
+	uploads    map[string][]appregixtry.UploadDetails
+	calls      struct {
 		catalog  int
 		tags     int
 		manifest int
@@ -3736,12 +3815,12 @@ func (f *fakeQueryService) Catalog(context.Context, int, string) (appregixtry.Ca
 	return f.catalog, nil
 }
 
-func (f *fakeQueryService) Tags(_ context.Context, repository string, _ int, _ string) (appregixtry.TagsResult, error) {
+func (f *fakeQueryService) TagDetails(_ context.Context, repository string, _ int, _ string) ([]appregixtry.TagDetails, error) {
 	f.calls.tags++
-	if result, ok := f.tags[repository]; ok {
-		return result, nil
+	if result, ok := f.tagDetails[repository]; ok {
+		return append([]appregixtry.TagDetails(nil), result...), nil
 	}
-	return appregixtry.TagsResult{Name: repository}, nil
+	return nil, nil
 }
 
 func (f *fakeQueryService) ResolveManifest(_ context.Context, repository string, reference string) (appregixtry.ManifestDetails, error) {

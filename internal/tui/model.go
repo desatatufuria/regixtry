@@ -13,6 +13,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	bubbletable "github.com/evertras/bubble-table/table"
 	appregixtry "regixtry/internal/app/regixtry"
 	domainauth "regixtry/internal/domain/auth"
 	"regixtry/internal/ports"
@@ -40,7 +41,7 @@ func WithStartupLogin() Option {
 
 type QueryService interface {
 	Catalog(ctx context.Context, limit int, after string) (appregixtry.CatalogResult, error)
-	Tags(ctx context.Context, repositoryName string, limit int, after string) (appregixtry.TagsResult, error)
+	TagDetails(ctx context.Context, repositoryName string, limit int, after string) ([]appregixtry.TagDetails, error)
 	ResolveManifest(ctx context.Context, repositoryName string, reference string) (appregixtry.ManifestDetails, error)
 	Uploads(ctx context.Context, repositoryName string) ([]appregixtry.UploadDetails, error)
 }
@@ -52,8 +53,12 @@ type RepositoriesModel struct {
 
 type TagsModel struct {
 	Repository string
-	Items      []string
+	Items      []appregixtry.TagDetails
 	Selected   int
+	// Table is the Tags screen's bubbletable.Model, baked from Items at
+	// rebuildTagsTable() time -- mirrors AdminViewState.Tables' own
+	// baked-not-computed-in-View() pattern (design.md decision #6).
+	Table bubbletable.Model
 }
 
 type ManifestModel struct {
@@ -211,6 +216,23 @@ func (m Model) adminTablesLayout() consoleLayout {
 	return m.contentBudget(m.status, adminFeatureHelp(m.adminView))
 }
 
+// tagsTableLayout computes the consoleLayout used to size the Tags table at
+// rebuild time, mirroring adminTablesLayout()'s own use of the exact
+// status/help this screen renders (scrollableBodyContext) so the layout used
+// to build the table can never drift from what View() actually shows.
+func (m Model) tagsTableLayout() consoleLayout {
+	status, help, _, _ := m.scrollableBodyContext()
+	return m.contentBudget(status, help)
+}
+
+// rebuildTagsTable bakes m.tags.Items into a fresh bubbletable.Model sized
+// by layout (consoleTagsTablePageSize), mirroring rebuildAdminTables' own
+// bake-at-mutation-time pattern rather than computing the table in View().
+func (m *Model) rebuildTagsTable(layout consoleLayout) {
+	theme := newAdminTheme()
+	m.tags.Table = buildConsoleTagsTable(theme, m.tags.Items, m.tags.Selected, consoleTagsTablePageSize(layout))
+}
+
 type catalogLoadedMsg struct {
 	result appregixtry.CatalogResult
 	err    error
@@ -218,7 +240,7 @@ type catalogLoadedMsg struct {
 
 type tagsLoadedMsg struct {
 	repository string
-	result     appregixtry.TagsResult
+	result     []appregixtry.TagDetails
 	err        error
 }
 
@@ -449,6 +471,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Refit). Safe/cheap when no admin tables are loaded yet: builds
 		// harmlessly from empty adminView state.
 		m.rebuildAdminTables(m.adminTablesLayout())
+		// The Tags table needs the same explicit resize-rebuild for the same
+		// reason (its pageSize is baked in at rebuildTagsTable() time, not
+		// recomputed by View()); harmless/cheap when no tags are loaded yet.
+		m.rebuildTagsTable(m.tagsTableLayout())
 		return m, nil
 	case tea.KeyMsg:
 		return m.updateKey(msg)
@@ -478,7 +504,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = msg.err
 			return m, nil
 		}
-		m.tags = TagsModel{Repository: msg.repository, Items: append([]string(nil), msg.result.Tags...)}
+		m.tags = TagsModel{Repository: msg.repository, Items: append([]appregixtry.TagDetails(nil), msg.result...)}
 		m.lastRepository = msg.repository
 		m.showMutationNotice = false
 		m.status = ""
@@ -489,6 +515,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.screen = screenTags
+		m.rebuildTagsTable(m.tagsTableLayout())
 		return m, nil
 	case manifestLoadedMsg:
 		if msg.err != nil {
@@ -1042,7 +1069,7 @@ func (m Model) View() string {
 		layout := m.contentBudget(status, help)
 		return renderInspectionWorkspace(
 			fmt.Sprintf("Repositories / %s / Tags", m.tags.Repository),
-			renderConsoleListSection("Tags", m.tags.Items, m.tags.Selected, layout),
+			renderConsoleTagsSection(m.tags, layout),
 			status,
 			help,
 		)
@@ -2517,6 +2544,13 @@ func (m *Model) moveSelection(delta int) {
 		m.repositories.Selected = boundedIndex(m.repositories.Selected+delta, len(m.repositories.Items))
 	case screenTags:
 		m.tags.Selected = boundedIndex(m.tags.Selected+delta, len(m.tags.Items))
+		// WithHighlightedRow auto-pages the live bubble-table to keep the
+		// highlighted row visible (design.md decision #5's own mechanism,
+		// mirrored from syncAdminTableHighlights) -- no PgUp/PgDn forwarding
+		// into table.Update, which is never called for this table.
+		if m.tags.Table.TotalRows() > 0 {
+			m.tags.Table = m.tags.Table.WithHighlightedRow(m.tags.Selected)
+		}
 	case screenBlobs:
 		m.blobs.Selected = boundedIndex(m.blobs.Selected+delta, len(m.blobs.Items))
 	}
@@ -2546,7 +2580,7 @@ func (m Model) selectedTag() (string, bool) {
 	if len(m.tags.Items) == 0 {
 		return "", false
 	}
-	return m.tags.Items[m.tags.Selected], true
+	return m.tags.Items[m.tags.Selected].Name, true
 }
 
 func (m Model) selectedAdminUser() (ports.AdminUser, bool) {
@@ -2582,7 +2616,7 @@ func (m Model) loadCatalogCmd() tea.Cmd {
 
 func (m Model) loadTagsCmd(repository string) tea.Cmd {
 	return func() tea.Msg {
-		result, err := m.service.Tags(m.ctx, repository, 100, "")
+		result, err := m.service.TagDetails(m.ctx, repository, 100, "")
 		return tagsLoadedMsg{repository: repository, result: result, err: err}
 	}
 }
