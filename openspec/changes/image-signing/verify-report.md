@@ -195,7 +195,7 @@ CRITICAL findings.
 | `scan-policy-gate` (pull gate, `ScanPolicyModal`, badge) | ✅ `go test ./internal/app/regixtry/... -run 'ScanPolicy...' -v` and `./internal/tui/... -run 'ScanPolicy...' -v` — all PASS |
 | `repository-scan-config-overrides` (Trivy/gitleaks overrides, modal) | ✅ `go test ./internal/app/regixtry/... -run 'Trivy\|Gitleaks\|RepositoryOverride' -v` and TUI equivalents — all PASS |
 | `git diff go.mod go.sum` against `4ae3893` | ✅ Empty for the ENTIRE change |
-| Diff size tally | `git diff 4ae3893 HEAD --stat`: 42 files changed (40 from prior work units + 2 new test files this session), **7562 insertions(+), 80 deletions(-)** |
+| Diff size tally | `git diff 4ae3893 HEAD --stat` (measured after this session's test commit, before this report's own commit): 42 files changed (40 from prior work units + 2 new test files this session), **7562 insertions(+), 80 deletions(-)**. Including `tasks.md`'s own Phase 10/11 updates and this report file, the final whole-change tally is **43 files changed, 8063 insertions(+), 80 deletions(-)**. |
 
 ### Issues Found
 
