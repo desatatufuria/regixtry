@@ -60,74 +60,91 @@ close-out last).
 
 ## Phase 0: Cosign Fixture Capture — MUST run first, blocks Phase 1 entirely (Decision 1)
 
-- [ ] 0.1 Check whether a `cosign` binary is available in the apply
+- [x] 0.1 Check whether a `cosign` binary is available in the apply
       environment (`which cosign` / equivalent). Record the result — this
       determines whether 0.2a or 0.2b runs.
-- [ ] 0.2a **IF `cosign` is available**: generate an ECDSA P-256 key pair
-      (`cosign generate-key-pair`), start a regixtry instance, push a small
-      test image manifest to it, run
-      `cosign sign --key cosign.key <repo>@<digest>` against that running
-      instance, and capture as testdata under
-      `internal/domain/signing/testdata/`: (i) the raw `.sig` manifest bytes
-      exactly as pushed, (ii) the raw SimpleSigning payload blob bytes
-      exactly as pushed, (iii) `cosign.pub`. **Do not hand-construct a
-      synthetic fixture when a real capture is possible.**
-- [ ] 0.2b **IF `cosign` is NOT available**: hand-construct a fixture that
-      strictly matches design.md Decision 1a/1b's documented shape (pick one
-      resolution of the `"Docker-manifest-digest"`/`"docker-manifest-digest"`
-      casing ambiguity and record which was chosen and why), saved at the
-      same `internal/domain/signing/testdata/` path, with an explicit
-      `README`/comment marking it `synthetic, unconfirmed against real
-      cosign output` — mirroring the posture
+      **Result: `which cosign` exits non-zero — NOT available in this
+      apply environment (confirmed 2026-08-13).**
+- [ ] 0.2a **N/A — no `cosign` binary was available in this apply
+      environment.** Real capture was not performed. This branch stays
+      unchecked until a future environment with a real `cosign` binary
+      re-runs Phase 0.
+- [x] 0.2b **`cosign` NOT available**: hand-constructed (via a throwaway,
+      offline Go generator — not part of the shipped codebase or any test
+      run) a fixture strictly matching design.md Decision 1a/1b's documented
+      shape: `internal/domain/signing/testdata/payload.json` (SimpleSigning
+      payload bytes), `internal/domain/signing/testdata/signature-manifest.json`
+      (the `.sig` OCI manifest with one annotated simplesigning layer), and
+      `internal/domain/signing/testdata/cosign.pub` (PEM ECDSA P-256 public
+      key). Casing choice recorded: **lowercase**
+      `"docker-manifest-digest"`, matching design.md Decision 1a's own worked
+      JSON literal (the upstream `SIGNATURE_SPEC.md` example capitalizes it;
+      design.md flags this as unresolved without a real capture — see
+      `testdata/README.md` "Casing choice"). Explicitly marked
+      `synthetic, unconfirmed against real cosign output` in
+      `internal/domain/signing/testdata/README.md`, mirroring the posture
       `repository-scan-config-overrides/design.md:630-644` took for its
       unavailable Trivy binary.
-- [ ] 0.3 Record the outcome (cosign available: yes/no; fixture provenance:
+- [x] 0.3 Record the outcome (cosign available: yes/no; fixture provenance:
       real capture vs. synthetic) both in this file's progress notes and
       carried forward verbatim into the verify-report at close-out (task
       11.7). This is a first-class finding, not a footnote.
+      **Outcome: cosign NOT available; fixture provenance is SYNTHETIC
+      (hand-constructed, offline generator), documented in
+      `internal/domain/signing/testdata/README.md`. Must be restated at
+      task 11.7/11.5(a).**
 
 ## Phase 1: Domain Signing Package (Decisions 1, 2) — depends on Phase 0
 
-- [ ] 1.1 RED `internal/domain/signing/cosign_test.go`: `SignatureTag` maps
+- [x] 1.1 RED `internal/domain/signing/cosign_test.go`: `SignatureTag` maps
       `sha256:<hex>` → `sha256-<hex>.sig`; rejects a malformed digest
       (missing `sha256:` prefix, empty hex, non-hex characters) — table-driven.
-- [ ] 1.2 RED: `ParseSignatureManifest` on the Phase 0 captured/synthetic
+- [x] 1.2 RED: `ParseSignatureManifest` on the Phase 0 captured/synthetic
       `.sig` manifest bytes yields the expected `(PayloadDigest, Signature)`
       entries in order; ignores layers with a non-simplesigning media type
       and layers missing the signature annotation; enforces
       `MaxSignatureEntries` against a synthetic 65-layer manifest.
-- [ ] 1.3 GREEN: create `internal/domain/signing/cosign.go` —
+- [x] 1.3 GREEN: create `internal/domain/signing/cosign.go` —
       `SimpleSigningMediaType`, `SignatureAnnotationKey`,
       `SimpleSigningType`, `MaxSignatureManifestBytes`, `MaxPayloadBytes`,
       `MaxSignatureEntries`, `SignatureTag`, `SignatureEntry`,
       `ParseSignatureManifest` — exact signatures from design Decision 2.
-- [ ] 1.4 Confirm 1.1–1.2 GREEN: `go test ./internal/domain/signing/... -run 'SignatureTag|ParseSignatureManifest' -v`.
-- [ ] 1.5 RED `internal/domain/signing/keys_test.go`: `NormalizePublicKeyPEM`
+- [x] 1.4 Confirm 1.1–1.2 GREEN: `go test ./internal/domain/signing/... -run 'SignatureTag|ParseSignatureManifest' -v`.
+- [x] 1.5 RED `internal/domain/signing/keys_test.go`: `NormalizePublicKeyPEM`
       accepts a real-newline PEM block and a space-separated single-line
       form (as the TUI's field would submit), producing byte-identical
       canonical output for both; rejects Ed25519, RSA, P-384, and garbage
       input — table-driven.
-- [ ] 1.6 RED: `ParseTrustedKey` decodes the canonical stored PEM back into
+- [x] 1.6 RED: `ParseTrustedKey` decodes the canonical stored PEM back into
       `*ecdsa.PublicKey`.
-- [ ] 1.7 RED: `Verify` accepts the Phase 0 captured/synthetic
+- [x] 1.7 RED: `Verify` accepts the Phase 0 captured/synthetic
       `(payload, signature, public key)` triple; rejects a one-byte-mutated
       payload, a mutated signature, a wrong key, and non-base64 input —
       golden fixture, table-driven.
-- [ ] 1.8 RED — **deliberate negative test, the Decision 1a pinning test**:
+- [x] 1.8 RED — **deliberate negative test, the Decision 1a pinning test**:
       decode the SimpleSigning payload JSON into a Go struct, re-marshal it,
       and assert the re-marshalled bytes hash differently from the original
       and that `Verify` rejects the re-marshalled version even though it
       round-trips as equivalent JSON. This is the test that proves hashing
       must happen over verbatim stored bytes, never a re-marshalled struct.
-- [ ] 1.9 RED: `CheckClaims` rejects a payload binding a different digest and
+      **Note**: the initial fixture's field order was coincidentally
+      identical to Go's alphabetical-map-key remarshal output, which would
+      have made this test vacuous; the fixture was regenerated with
+      realistic colon/comma spacing (documented in `testdata/README.md`) so
+      the remarshal genuinely produces different bytes.
+- [x] 1.9 RED: `CheckClaims` rejects a payload binding a different digest and
       a wrong `critical.type`; accepts a differing `docker-reference`
       (documented, intentional non-check per Decision 2) — table-driven.
-- [ ] 1.10 GREEN: create `internal/domain/signing/keys.go` —
+- [x] 1.10 GREEN: create `internal/domain/signing/keys.go` —
       `NormalizePublicKeyPEM`, `ParseTrustedKey`, `Verify`, `CheckClaims`,
       using only `crypto/ecdsa`, `crypto/sha256`, `crypto/x509`,
       `encoding/pem`, `encoding/base64` from the standard library.
-- [ ] 1.11 Confirm 1.5–1.9 GREEN: `go test ./internal/domain/signing/... -v`.
-- [ ] 1.12 Confirm `git diff go.mod go.sum` is empty — zero new dependency,
+      (`CheckClaims` and its `simpleSigningPayload` claim-extraction type
+      landed in `cosign.go` alongside the other cosign-format primitives,
+      per design's File Changes table; `keys.go` holds
+      `NormalizePublicKeyPEM`/`ParseTrustedKey`/`Verify`.)
+- [x] 1.11 Confirm 1.5–1.9 GREEN: `go test ./internal/domain/signing/... -v`.
+- [x] 1.12 Confirm `git diff go.mod go.sum` is empty — zero new dependency,
       the proposal's hard constraint.
 
 ## Phase 2: Ports & Storage — Global Signing Policy (Decision 4) — depends on Phase 1 (types only, no fixture dependency)
