@@ -143,3 +143,83 @@ func (s *Service) applyRepositoryOverride(ctx context.Context, tenant string, re
 	}
 	return codec.Apply(raw, settings)
 }
+
+// GetRepositoryOverride, ListRepositoryOverrides, SetRepositoryOverride, and
+// ClearRepositoryOverride are the feature-agnostic Service methods the admin
+// HTTP resource wires onto (design.md Decision 7). Feature knowledge lives
+// only in repositoryOverrideCodecs — an unrecognized feature name is a
+// typed NotFound at every one of these entry points, the same
+// codec-registry lookup applyRepositoryOverride uses defensively.
+
+// GetRepositoryOverride returns one repository's stored override for a
+// feature, or a typed NotFound when no row exists — the row-presence
+// boundary made explicit on the wire (spec.md "Reading indicates no
+// override is set").
+func (s *Service) GetRepositoryOverride(ctx context.Context, repository string, feature string) (ports.RepositoryFeatureOverride, error) {
+	ref, err := parseRepository(repository)
+	if err != nil {
+		return ports.RepositoryFeatureOverride{}, err
+	}
+	if _, ok := repositoryOverrideCodecs[feature]; !ok {
+		return ports.RepositoryFeatureOverride{}, domain.NewNotFoundError("feature", feature)
+	}
+	overrides, err := s.metadata.ListRepositoryFeatureOverrides(ctx, s.tenant(ctx), feature)
+	if err != nil {
+		return ports.RepositoryFeatureOverride{}, err
+	}
+	for _, override := range overrides {
+		if override.Repository == ref.Name {
+			return override, nil
+		}
+	}
+	return ports.RepositoryFeatureOverride{}, domain.NewNotFoundError("repository_feature_override", ref.Name+"/"+feature)
+}
+
+// ListRepositoryOverrides returns every stored override row for a feature —
+// the list/API projection backing the admin collection resource and Phase
+// 8's TUI row annotation.
+func (s *Service) ListRepositoryOverrides(ctx context.Context, feature string) ([]ports.RepositoryFeatureOverride, error) {
+	if _, ok := repositoryOverrideCodecs[feature]; !ok {
+		return nil, domain.NewNotFoundError("feature", feature)
+	}
+	return s.metadata.ListRepositoryFeatureOverrides(ctx, s.tenant(ctx), feature)
+}
+
+// SetRepositoryOverride replaces one repository's override for a feature in
+// full. It normalizes the inbound raw payload through the registered
+// codec's Normalize before persisting — the HTTP resource must never bypass
+// this validation boundary (design.md Decision 3's argv-safety rules).
+func (s *Service) SetRepositoryOverride(ctx context.Context, repository string, feature string, raw []byte) (ports.RepositoryFeatureOverride, error) {
+	ref, err := parseRepository(repository)
+	if err != nil {
+		return ports.RepositoryFeatureOverride{}, err
+	}
+	codec, ok := repositoryOverrideCodecs[feature]
+	if !ok {
+		return ports.RepositoryFeatureOverride{}, domain.NewNotFoundError("feature", feature)
+	}
+	normalized, err := codec.Normalize(raw)
+	if err != nil {
+		return ports.RepositoryFeatureOverride{}, err
+	}
+	if err := s.metadata.UpsertRepositoryFeatureOverride(ctx, s.tenant(ctx), ref.Name, feature, normalized); err != nil {
+		return ports.RepositoryFeatureOverride{}, err
+	}
+	return s.GetRepositoryOverride(ctx, ref.Name, feature)
+}
+
+// ClearRepositoryOverride removes one repository's override for a feature,
+// reverting it to the global settings row immediately: the very next
+// applyRepositoryOverride resolution call for this (repository, feature)
+// pair sees the NotFound row-presence boundary and falls back to the global
+// row in full (spec.md "Deleting reverts to global settings").
+func (s *Service) ClearRepositoryOverride(ctx context.Context, repository string, feature string) error {
+	ref, err := parseRepository(repository)
+	if err != nil {
+		return err
+	}
+	if _, ok := repositoryOverrideCodecs[feature]; !ok {
+		return domain.NewNotFoundError("feature", feature)
+	}
+	return s.metadata.DeleteRepositoryFeatureOverride(ctx, s.tenant(ctx), ref.Name, feature)
+}

@@ -1,6 +1,7 @@
 package regixtry
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -243,4 +244,146 @@ func marshalOverride(t *testing.T, value any) []byte {
 		t.Fatalf("json.Marshal() error = %v", err)
 	}
 	return raw
+}
+
+// TestServiceGetSetClearRepositoryOverrideLifecycle is a Phase 7 RED test
+// (tasks.md 7.7) for the feature-agnostic Service methods the admin HTTP
+// resource wires onto (design.md Decision 7): Get on an absent row is
+// NotFound, Set normalizes through the codec registry before persisting and
+// round-trips through Get, and Clear removes the row so a later Get is
+// NotFound again.
+func TestServiceGetSetClearRepositoryOverrideLifecycle(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	ctx := context.Background()
+
+	if _, err := service.GetRepositoryOverride(ctx, "library/alpine", trivyFeatureName); !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("GetRepositoryOverride() error = %v, want ErrorCodeNotFound before any override is stored", err)
+	}
+
+	raw := marshalOverride(t, ports.TrivyOverride{Enabled: true, IgnoreFilePath: "/etc/regixtry/ignore/alpine.trivyignore"})
+	set, err := service.SetRepositoryOverride(ctx, "library/alpine", trivyFeatureName, raw)
+	if err != nil {
+		t.Fatalf("SetRepositoryOverride() error = %v", err)
+	}
+	if set.Repository != "library/alpine" || set.Feature != trivyFeatureName {
+		t.Fatalf("SetRepositoryOverride() = %#v, want repository/feature echoed", set)
+	}
+	var setPayload ports.TrivyOverride
+	if err := json.Unmarshal(set.Payload, &setPayload); err != nil {
+		t.Fatalf("json.Unmarshal(set.Payload) error = %v", err)
+	}
+	if !setPayload.Enabled || setPayload.IgnoreFilePath != "/etc/regixtry/ignore/alpine.trivyignore" {
+		t.Fatalf("SetRepositoryOverride() payload = %#v, want the normalized override", setPayload)
+	}
+
+	got, err := service.GetRepositoryOverride(ctx, "library/alpine", trivyFeatureName)
+	if err != nil {
+		t.Fatalf("GetRepositoryOverride() error = %v", err)
+	}
+	var gotPayload ports.TrivyOverride
+	if err := json.Unmarshal(got.Payload, &gotPayload); err != nil {
+		t.Fatalf("json.Unmarshal(got.Payload) error = %v", err)
+	}
+	if gotPayload != setPayload {
+		t.Fatalf("GetRepositoryOverride() payload = %#v, want %#v (round trip)", gotPayload, setPayload)
+	}
+
+	if err := service.ClearRepositoryOverride(ctx, "library/alpine", trivyFeatureName); err != nil {
+		t.Fatalf("ClearRepositoryOverride() error = %v", err)
+	}
+	if _, err := service.GetRepositoryOverride(ctx, "library/alpine", trivyFeatureName); !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("GetRepositoryOverride() error = %v, want ErrorCodeNotFound after Clear", err)
+	}
+}
+
+// TestServiceSetRepositoryOverrideAppliesCodecNormalizeBeforeStoring is a
+// Phase 7 RED test (tasks.md 7.7): SetRepositoryOverride MUST run the
+// payload through the registered codec's Normalize before persisting, so an
+// argv-unsafe path (design.md Decision 3's threat matrix) is rejected and
+// never reaches storage — the HTTP resource must not bypass the registry.
+func TestServiceSetRepositoryOverrideAppliesCodecNormalizeBeforeStoring(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	ctx := context.Background()
+
+	raw := marshalOverride(t, ports.TrivyOverride{Enabled: true, IgnoreFilePath: "relative/alpine.trivyignore"})
+	if _, err := service.SetRepositoryOverride(ctx, "library/alpine", trivyFeatureName, raw); !domain.IsCode(err, domain.ErrorCodeValidation) {
+		t.Fatalf("SetRepositoryOverride() error = %v, want ErrorCodeValidation for a relative ignore_file_path", err)
+	}
+	if _, err := service.GetRepositoryOverride(ctx, "library/alpine", trivyFeatureName); !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("GetRepositoryOverride() error = %v, want ErrorCodeNotFound, rejected payload must never be stored", err)
+	}
+}
+
+// TestServiceSetGetClearRepositoryOverrideUnknownFeatureIsNotFound is a
+// Phase 7 RED test (tasks.md 7.5, 7.7): an unrecognized feature name must be
+// rejected via the codec-registry lookup with a typed NotFound, not a panic
+// or a silent no-op, across all three mutating/reading entry points.
+func TestServiceSetGetClearRepositoryOverrideUnknownFeatureIsNotFound(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	ctx := context.Background()
+
+	if _, err := service.GetRepositoryOverride(ctx, "library/alpine", "image-signing"); !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("GetRepositoryOverride() error = %v, want ErrorCodeNotFound for an unknown feature", err)
+	}
+	if _, err := service.SetRepositoryOverride(ctx, "library/alpine", "image-signing", marshalOverride(t, map[string]any{"enabled": true})); !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("SetRepositoryOverride() error = %v, want ErrorCodeNotFound for an unknown feature", err)
+	}
+	if err := service.ClearRepositoryOverride(ctx, "library/alpine", "image-signing"); !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("ClearRepositoryOverride() error = %v, want ErrorCodeNotFound for an unknown feature", err)
+	}
+}
+
+// TestServiceClearRepositoryOverrideRevertsResolutionToGlobalImmediately is
+// the Phase 7 RED test the tasks.md 7.4 evidence note calls for: proving the
+// DELETE effect through the actual resolution call path
+// (applyRepositoryOverride), not merely asserting the row is gone. It seeds
+// a disabling override while the global row stays enabled, confirms
+// resolution honors the override, clears it through the same
+// ClearRepositoryOverride the HTTP DELETE handler calls, and confirms the
+// very next resolution call reverts to the global row in full.
+func TestServiceClearRepositoryOverrideRevertsResolutionToGlobalImmediately(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	ctx := context.Background()
+	global := ports.ScanSettings{Enabled: true, MaxConcurrency: 4}
+
+	raw := marshalOverride(t, ports.TrivyOverride{Enabled: false})
+	if _, err := service.SetRepositoryOverride(ctx, "library/alpine", trivyFeatureName, raw); err != nil {
+		t.Fatalf("SetRepositoryOverride() error = %v", err)
+	}
+
+	overridden, err := service.applyRepositoryOverride(ctx, "tenant-a", "library/alpine", trivyFeatureName, global)
+	if err != nil {
+		t.Fatalf("applyRepositoryOverride() error = %v", err)
+	}
+	if overridden.Enabled {
+		t.Fatalf("applyRepositoryOverride() = %#v, want the override's Enabled=false to apply", overridden)
+	}
+
+	if err := service.ClearRepositoryOverride(ctx, "library/alpine", trivyFeatureName); err != nil {
+		t.Fatalf("ClearRepositoryOverride() error = %v", err)
+	}
+
+	reverted, err := service.applyRepositoryOverride(ctx, "tenant-a", "library/alpine", trivyFeatureName, global)
+	if err != nil {
+		t.Fatalf("applyRepositoryOverride() error = %v", err)
+	}
+	if reverted != global {
+		t.Fatalf("applyRepositoryOverride() after Clear = %#v, want unchanged global %#v", reverted, global)
+	}
 }
