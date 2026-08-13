@@ -283,23 +283,26 @@ existing Trivy/gitleaks test function.
 
 ## Phase 5: Pull-Time Gate Wiring in `OpenManifest` (Decision 6) — depends on Phase 4
 
-- [ ] 5.1 RED: `OpenManifest` with signing policy disabled is byte-identical
+- [x] 5.1 RED: `OpenManifest` with signing policy disabled is byte-identical
       to today for both signed and unsigned digests (proposal Success
       Criterion 2).
-- [ ] 5.2 RED: `OpenManifest` with signing policy enabled and a valid
+- [x] 5.2 RED: `OpenManifest` with signing policy enabled and a valid
       trusted signature → pull succeeds.
-- [ ] 5.3 RED: `OpenManifest` with signing policy enabled and no signature →
+- [x] 5.3 RED: `OpenManifest` with signing policy enabled and no signature →
       403 `PolicyViolation`, proving `enforceSigningPolicy` runs after
       `enforceScanPolicy` without either masking the other.
-- [ ] 5.4 RED — **fail-closed vs. fail-open contrast, the spec's explicit
+- [x] 5.4 RED — **fail-closed vs. fail-open contrast, the spec's explicit
       scenario**: a digest with neither a completed scan nor a verifiable
       signature, both gates enabled — the vulnerability gate allows it
       (fail-open) while the signing gate blocks it (fail-closed), asserted
       in one test exercising `OpenManifest` once.
-- [ ] 5.5 GREEN: insert the `enforceSigningPolicy` call in `OpenManifest`
+- [x] 5.5 GREEN: insert the `enforceSigningPolicy` call in `OpenManifest`
       (`queries.go:71-91`) immediately after the existing `enforceScanPolicy`
       call, exact insertion from design Decision 6.
-- [ ] 5.6 Confirm 5.1–5.4 GREEN: `go test ./internal/app/regixtry/... -run OpenManifest -v`.
+- [x] 5.6 Confirm 5.1–5.4 GREEN: `go test ./internal/app/regixtry/... -run OpenManifest -v`
+      → 6/6 top-level tests PASS (15 incl. subtests), 0 FAIL. Task 4.11's
+      `TestServiceResolveManifestIgnoresSigningPolicyGate` (name does not
+      match the `OpenManifest` filter) confirmed separately: PASS.
 
 ## Phase 6: Feature Registry — Builtin With No Runtime Manager (Decision 10) — depends on Phase 4
 

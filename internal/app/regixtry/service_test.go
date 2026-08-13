@@ -469,6 +469,153 @@ func TestServiceResolveManifestIgnoresPolicyGate(t *testing.T) {
 	}
 }
 
+// TestServiceOpenManifestSigningPolicyDisabledIsByteIdenticalToScanOnlyBehavior
+// is the Phase 5 RED test (tasks.md 5.1): a disabled signing policy must not
+// change OpenManifest's existing behavior for either a signed or an unsigned
+// digest (proposal Success Criterion 2).
+func TestServiceOpenManifestSigningPolicyDisabledIsByteIdenticalToScanOnlyBehavior(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		seed func(t *testing.T, service *Service, repository string)
+	}{
+		{
+			name: "a signed digest",
+			seed: func(t *testing.T, service *Service, repository string) {
+				seedFixtureImageManifest(t, service, repository)
+				seedFixtureSignatureArtifact(t, service, repository)
+			},
+		},
+		{
+			name: "an unsigned digest",
+			seed: func(t *testing.T, service *Service, repository string) {
+				seedFixtureImageManifest(t, service, repository)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			service, cleanup := newTestService(t, allowAllAccessController{})
+			defer cleanup()
+
+			repository := "library/alpine"
+			tt.seed(t, service, repository)
+			// Signing policy left at its default {Enabled: false}.
+
+			manifest, err := service.OpenManifest(context.Background(), repository, fixtureImageDigest)
+			if err != nil {
+				t.Fatalf("OpenManifest() error = %v, want the pull unaffected by a disabled signing policy", err)
+			}
+			if manifest.Digest.String() != fixtureImageDigest {
+				t.Fatalf("OpenManifest().Digest = %s, want %s", manifest.Digest.String(), fixtureImageDigest)
+			}
+		})
+	}
+}
+
+// TestServiceOpenManifestAllowsPullWithSigningPolicyEnabledAndValidSignature
+// is the Phase 5 RED test (tasks.md 5.2).
+func TestServiceOpenManifestAllowsPullWithSigningPolicyEnabledAndValidSignature(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	repository := "library/alpine"
+	seedFixtureImageManifest(t, service, repository)
+	seedFixtureSignatureArtifact(t, service, repository)
+	seedSigningPolicy(t, service, true, []string{fixtureTrustedKeyPEM(t)})
+
+	if _, err := service.OpenManifest(context.Background(), repository, fixtureImageDigest); err != nil {
+		t.Fatalf("OpenManifest() error = %v, want the pull allowed", err)
+	}
+}
+
+// TestServiceOpenManifestBlocksPullWithSigningPolicyEnabledAndNoSignature is
+// the Phase 5 RED test (tasks.md 5.3): proves enforceSigningPolicy runs
+// after enforceScanPolicy without either masking the other — the
+// vulnerability gate has nothing to say here (no scan run at all, its
+// fail-open default), so a block can only come from the signing gate.
+func TestServiceOpenManifestBlocksPullWithSigningPolicyEnabledAndNoSignature(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	repository := "library/alpine"
+	seedFixtureImageManifest(t, service, repository)
+	seedSigningPolicy(t, service, true, []string{fixtureTrustedKeyPEM(t)})
+
+	_, err := service.OpenManifest(context.Background(), repository, fixtureImageDigest)
+	if err == nil {
+		t.Fatal("OpenManifest() error = nil, want a policy violation from the signing gate")
+	}
+	if !domain.IsCode(err, domain.ErrorCodePolicyViolation) {
+		t.Fatalf("OpenManifest() error = %v, want ErrorCodePolicyViolation", err)
+	}
+}
+
+// TestServiceOpenManifestContrastsFailOpenScanGateWithFailClosedSigningGate
+// is the Phase 5 RED test (tasks.md 5.4) — the spec's explicit scenario
+// (image-signature-verification/spec.md "Contrast with the vulnerability
+// gate's fail-open default"): a digest with neither a completed scan nor a
+// verifiable signature, both gates enabled — the vulnerability gate must NOT
+// block (fail-open, existing behavior unchanged) while the signing gate MUST
+// block (fail-closed, the new behavior), exercising OpenManifest once.
+func TestServiceOpenManifestContrastsFailOpenScanGateWithFailClosedSigningGate(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	repository := "library/alpine"
+	seedFixtureImageManifest(t, service, repository)
+	// Vulnerability policy enabled, no scan run of any status seeded for
+	// this digest — enforceScanPolicy's fail-open default (NotFound is not
+	// an error, service_scanning.go:99-104).
+	seedScanPolicyEnabled(t, service, true)
+	// Signing policy enabled, no signature artifact seeded for this
+	// digest — enforceSigningPolicy's fail-closed default.
+	seedSigningPolicy(t, service, true, []string{fixtureTrustedKeyPEM(t)})
+
+	_, err := service.OpenManifest(context.Background(), repository, fixtureImageDigest)
+	if err == nil {
+		t.Fatal("OpenManifest() error = nil, want the signing gate to block despite the vulnerability gate allowing (fail-open vs. fail-closed contrast)")
+	}
+	if !domain.IsCode(err, domain.ErrorCodePolicyViolation) {
+		t.Fatalf("OpenManifest() error = %v, want ErrorCodePolicyViolation from the signing gate", err)
+	}
+}
+
+// TestServiceResolveManifestIgnoresSigningPolicyGate is the Phase 4/5 proof
+// (tasks.md 4.11) that ResolveManifest — the browse path — is never gated by
+// enforceSigningPolicy, mirroring TestServiceResolveManifestIgnoresPolicyGate
+// for the vulnerability gate above. It necessarily lives here rather than in
+// service_signing_test.go: enforceSigningPolicy is unreachable from any call
+// site until this phase wires it into OpenManifest.
+func TestServiceResolveManifestIgnoresSigningPolicyGate(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	repository := "library/alpine"
+	seedFixtureImageManifest(t, service, repository)
+	seedSigningPolicy(t, service, true, []string{fixtureTrustedKeyPEM(t)})
+
+	if _, err := service.OpenManifest(context.Background(), repository, fixtureImageDigest); !domain.IsCode(err, domain.ErrorCodePolicyViolation) {
+		t.Fatalf("OpenManifest() error = %v, want ErrorCodePolicyViolation", err)
+	}
+
+	if _, err := service.ResolveManifest(context.Background(), repository, fixtureImageDigest); err != nil {
+		t.Fatalf("ResolveManifest() error = %v, want the browse path unaffected by the signing gate", err)
+	}
+}
+
 // overrideAwareScanRunner is a ports.ScanRunner test double whose Run()
 // output depends on the settings it is called with, so tests can prove the
 // real chain from a repository override through to the pull gate without a
