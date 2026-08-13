@@ -1,0 +1,1 @@
+{"critical": {"identity": {"docker-reference": "registry.example.com/library/synthetic-fixture:v1"}, "image": {"docker-manifest-digest": "sha256:d1f1ed21dad86b499c874cef225b6e61c4cf1a8684363810e99d723a306a75b4"}, "type": "cosign container image signature"}, "optional": null}
