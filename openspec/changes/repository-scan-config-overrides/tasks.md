@@ -281,16 +281,16 @@ dependency-ordered slices — recommend chaining rather than a single PR.
 
 ## Phase 9: Gate Coupling Integration (Decision 9) — depends on Phase 4, 6, 7
 
-- [ ] 9.1 RED `service_scanning_test.go` (integration): a Trivy ignore-file
+- [x] 9.1 RED `service_scanning_test.go` (integration): a Trivy ignore-file
       override changes `run.Critical` such that `OpenManifest` allows a digest
       it previously blocked, but **only after a rescan**; before that rescan
       completes, the gate still blocks the same digest (proposal's last
       Success Criterion; design Decision 9's two stated consequences).
-- [ ] 9.2 RED: with an override present for one repository, that repository's
+- [x] 9.2 RED: with an override present for one repository, that repository's
       run fails/queues per its `Enabled` value while a second, non-overridden
       repository's run stays byte-identical in argv and outcome (proposal
       Success Criterion 2).
-- [ ] 9.3 Confirm 9.1–9.2 GREEN: `go test ./internal/app/regixtry/... -run
+- [x] 9.3 Confirm 9.1–9.2 GREEN: `go test ./internal/app/regixtry/... -run
       'PullGate|PolicyCoupling' -v`.
 
 ## Phase 10: Non-Regression

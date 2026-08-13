@@ -469,6 +469,141 @@ func TestServiceResolveManifestIgnoresPolicyGate(t *testing.T) {
 	}
 }
 
+// overrideAwareScanRunner is a ports.ScanRunner test double whose Run()
+// output depends on the settings it is called with, so tests can prove the
+// real chain from a repository override through to the pull gate without a
+// real Trivy binary: an IgnoreFilePath set on the settings simulates the
+// ignore file excluding the CVE this fake would otherwise report (design.md
+// Decision 9 steps 3-4, "suppressed vulnerabilities are absent from
+// payload.Results").
+type overrideAwareScanRunner struct {
+	mu    sync.Mutex
+	calls []ports.ScanSettings
+}
+
+func (r *overrideAwareScanRunner) Run(_ context.Context, _ string, settings ports.ScanSettings) (ports.ScanResult, error) {
+	r.mu.Lock()
+	r.calls = append(r.calls, settings)
+	r.mu.Unlock()
+
+	updatedAt := time.Now().UTC()
+	if strings.TrimSpace(settings.IgnoreFilePath) != "" {
+		return ports.ScanResult{TrivyVersion: "0.58.1", DBUpdatedAt: &updatedAt, Critical: 0, High: 0}, nil
+	}
+	return ports.ScanResult{TrivyVersion: "0.58.1", DBUpdatedAt: &updatedAt, Critical: 3, High: 0}, nil
+}
+
+func (r *overrideAwareScanRunner) Calls() []ports.ScanSettings {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]ports.ScanSettings(nil), r.calls...)
+}
+
+// TestServiceRepositoryOverridePolicyCouplingIsolatesGateOutcomePerRepository
+// is the Phase 9 tasks 9.1/9.2 RED/integration test for
+// repository-vulnerability-scans/spec.md's "Per-Repository Trivy Override
+// Changes Are Isolated To That Repository's Pull-Gate Outcome" requirement
+// (proposal's last Success Criterion; design.md Decision 9). It exercises
+// the real chain end to end: SetRepositoryOverride -> applyRepositoryOverride
+// (queue time) -> scanRunner.Run(settings) -> run.Critical/High ->
+// GetLatestScanRunByDigest -> scanPolicyViolated -> OpenManifest — never
+// seeding a ScanRun row directly.
+func TestServiceRepositoryOverridePolicyCouplingIsolatesGateOutcomePerRepository(t *testing.T) {
+	t.Parallel()
+
+	t.Run("an ignore-file override changes the pull-gate outcome only after a rescan (9.1)", func(t *testing.T) {
+		t.Parallel()
+
+		service, cleanup := newTestService(t, allowAllAccessController{})
+		defer cleanup()
+
+		seedRepository(t, service, context.Background(), "library/alpine")
+		if _, err := service.EnsureScanSettings(context.Background(), ports.ScanSettings{Enabled: true, Timeout: time.Minute, Interval: time.Hour, RegistryReachableURL: "https://registry.internal", MaxConcurrency: 1}); err != nil {
+			t.Fatalf("EnsureScanSettings() error = %v", err)
+		}
+		seedManagedRuntimeState(t, service, "0.58.1")
+		runner := &overrideAwareScanRunner{}
+		service.SetScanRunner(runner)
+
+		queued, err := service.QueueManualScan(context.Background(), "library/alpine", "latest")
+		if err != nil {
+			t.Fatalf("QueueManualScan() error = %v", err)
+		}
+		waitForScanRunStatus(t, service, "library/alpine", queued.ID, ports.ScanRunStatusCompleted)
+
+		if _, err := service.OpenManifest(context.Background(), "library/alpine", "latest"); !domain.IsCode(err, domain.ErrorCodePolicyViolation) {
+			t.Fatalf("OpenManifest() before override = %v, want ErrorCodePolicyViolation", err)
+		}
+
+		raw := []byte(`{"enabled":true,"ignore_file_path":"/etc/trivy/ignore-cve.yaml"}`)
+		if _, err := service.SetRepositoryOverride(context.Background(), "library/alpine", "trivy", raw); err != nil {
+			t.Fatalf("SetRepositoryOverride() error = %v", err)
+		}
+
+		// Only after a rescan (design.md Decision 9's first consequence):
+		// setting the override alone does not re-evaluate the
+		// already-completed run, so the digest already blocked stays
+		// blocked.
+		if _, err := service.OpenManifest(context.Background(), "library/alpine", "latest"); !domain.IsCode(err, domain.ErrorCodePolicyViolation) {
+			t.Fatalf("OpenManifest() right after SetRepositoryOverride, before any rescan, = %v, want still ErrorCodePolicyViolation", err)
+		}
+
+		rescanned, err := service.QueueManualScan(context.Background(), "library/alpine", "latest")
+		if err != nil {
+			t.Fatalf("QueueManualScan() rescan error = %v", err)
+		}
+		waitForScanRunStatus(t, service, "library/alpine", rescanned.ID, ports.ScanRunStatusCompleted)
+
+		if _, err := service.OpenManifest(context.Background(), "library/alpine", "latest"); err != nil {
+			t.Fatalf("OpenManifest() after rescan under the override = %v, want the pull allowed (ignored finding no longer counted)", err)
+		}
+	})
+
+	t.Run("the override affects only its own repository, a second repository stays byte-identical (9.2)", func(t *testing.T) {
+		t.Parallel()
+
+		service, cleanup := newTestService(t, allowAllAccessController{})
+		defer cleanup()
+
+		seedRepository(t, service, context.Background(), "library/alpine")
+		seedRepository(t, service, context.Background(), "library/base")
+		if _, err := service.EnsureScanSettings(context.Background(), ports.ScanSettings{Enabled: true, Timeout: time.Minute, Interval: time.Hour, RegistryReachableURL: "https://registry.internal", MaxConcurrency: 1}); err != nil {
+			t.Fatalf("EnsureScanSettings() error = %v", err)
+		}
+		seedManagedRuntimeState(t, service, "0.58.1")
+		runner := &overrideAwareScanRunner{}
+		service.SetScanRunner(runner)
+
+		if _, err := service.SetRepositoryOverride(context.Background(), "library/alpine", "trivy", []byte(`{"enabled":false}`)); err != nil {
+			t.Fatalf("SetRepositoryOverride() error = %v", err)
+		}
+
+		if _, err := service.QueueManualScan(context.Background(), "library/alpine", "latest"); err == nil {
+			t.Fatal("QueueManualScan(overridden, disabled) error = nil, want validation error")
+		} else if !domain.IsCode(err, domain.ErrorCodeValidation) {
+			t.Fatalf("QueueManualScan(overridden, disabled) error = %v, want ErrorCodeValidation", err)
+		}
+
+		queued, err := service.QueueManualScan(context.Background(), "library/base", "latest")
+		if err != nil {
+			t.Fatalf("QueueManualScan(non-overridden) error = %v", err)
+		}
+		waitForScanRunStatus(t, service, "library/base", queued.ID, ports.ScanRunStatusCompleted)
+
+		if _, err := service.OpenManifest(context.Background(), "library/base", "latest"); !domain.IsCode(err, domain.ErrorCodePolicyViolation) {
+			t.Fatalf("OpenManifest(library/base) error = %v, want ErrorCodePolicyViolation -- the other repository's finding counts and pull-gate outcome must remain unaffected by library/alpine's override", err)
+		}
+
+		calls := runner.Calls()
+		if len(calls) != 1 {
+			t.Fatalf("runner calls = %d, want exactly 1 -- the disabled overridden repository must never reach the runner", len(calls))
+		}
+		if calls[0].IgnoreFilePath != "" || calls[0].IgnorePolicyPath != "" {
+			t.Fatalf("runner settings for library/base = %#v, want byte-identical to the no-override case (no override fields populated)", calls[0])
+		}
+	})
+}
+
 func TestServiceRejectsOutOfBoundsScanSettings(t *testing.T) {
 	t.Parallel()
 
