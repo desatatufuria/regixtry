@@ -238,6 +238,75 @@ func TestStoreUpsertScanPolicySettingsRoundTripsEnabledAndThreshold(t *testing.T
 	}
 }
 
+// TestStoreGetSigningPolicySettingsReturnsNotFoundWithNoRow is the Phase 2
+// RED test (tasks.md 2.3): an absent signing_policy_settings row is a typed
+// domain.ErrorCodeNotFound, mirroring GetScanPolicySettings's own row-absence
+// behavior — the fail-closed default itself is applied one layer up, at the
+// service (design.md Decision 4).
+func TestStoreGetSigningPolicySettingsReturnsNotFoundWithNoRow(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	_, err := store.GetSigningPolicySettings(context.Background(), "tenant-a")
+	if !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("GetSigningPolicySettings() error = %v, want ErrorCodeNotFound", err)
+	}
+}
+
+// TestStoreUpsertSigningPolicySettingsRoundTripsEnabledKeysAndUpdatedAt is the
+// Phase 2 RED test (tasks.md 2.4): Enabled, TrustedPublicKeys (order
+// preserved), and UpdatedAt (time.RFC3339Nano) must round-trip through
+// Upsert/Get exactly, mirroring TestStoreUpsertScanPolicySettingsRoundTripsEnabledAndThreshold.
+func TestStoreUpsertSigningPolicySettingsRoundTripsEnabledKeysAndUpdatedAt(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	updatedAt := time.Now().UTC()
+	settings := ports.SigningPolicySettings{
+		Enabled:           true,
+		TrustedPublicKeys: []string{"-----BEGIN PUBLIC KEY-----\nkey-one\n-----END PUBLIC KEY-----", "-----BEGIN PUBLIC KEY-----\nkey-two\n-----END PUBLIC KEY-----"},
+		UpdatedAt:         updatedAt,
+	}
+	if err := store.UpsertSigningPolicySettings(context.Background(), "tenant-a", settings); err != nil {
+		t.Fatalf("UpsertSigningPolicySettings() error = %v", err)
+	}
+
+	stored, err := store.GetSigningPolicySettings(context.Background(), "tenant-a")
+	if err != nil {
+		t.Fatalf("GetSigningPolicySettings() error = %v", err)
+	}
+	if !stored.Enabled {
+		t.Fatalf("stored.Enabled = %v, want true", stored.Enabled)
+	}
+	if !reflect.DeepEqual(stored.TrustedPublicKeys, settings.TrustedPublicKeys) {
+		t.Fatalf("stored.TrustedPublicKeys = %#v, want %#v (order preserved)", stored.TrustedPublicKeys, settings.TrustedPublicKeys)
+	}
+	if !stored.UpdatedAt.Equal(updatedAt) {
+		t.Fatalf("stored.UpdatedAt = %v, want %v", stored.UpdatedAt, updatedAt)
+	}
+
+	settings.Enabled = false
+	settings.TrustedPublicKeys = nil
+	settings.UpdatedAt = time.Now().UTC()
+	if err := store.UpsertSigningPolicySettings(context.Background(), "tenant-a", settings); err != nil {
+		t.Fatalf("UpsertSigningPolicySettings(update) error = %v", err)
+	}
+	updated, err := store.GetSigningPolicySettings(context.Background(), "tenant-a")
+	if err != nil {
+		t.Fatalf("GetSigningPolicySettings(update) error = %v", err)
+	}
+	if updated.Enabled {
+		t.Fatalf("updated.Enabled = %v, want false", updated.Enabled)
+	}
+	if len(updated.TrustedPublicKeys) != 0 {
+		t.Fatalf("updated.TrustedPublicKeys = %#v, want empty", updated.TrustedPublicKeys)
+	}
+}
+
 func TestStoreGetRepositoryFeatureOverrideReturnsNotFoundWithNoRow(t *testing.T) {
 	t.Parallel()
 

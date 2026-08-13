@@ -149,26 +149,26 @@ close-out last).
 
 ## Phase 2: Ports & Storage — Global Signing Policy (Decision 4) — depends on Phase 1 (types only, no fixture dependency)
 
-- [ ] 2.1 Add `ports.SigningPolicySettings` and `ports.SigningOverride`
+- [x] 2.1 Add `ports.SigningPolicySettings` and `ports.SigningOverride`
       structs to `internal/ports/regixtry.go`, beside `ScanPolicySettings`
       (`:91-95`), exact fields from design Decision 4.
-- [ ] 2.2 Add `GetSigningPolicySettings`/`UpsertSigningPolicySettings` to the
+- [x] 2.2 Add `GetSigningPolicySettings`/`UpsertSigningPolicySettings` to the
       `MetadataStore` interface, beside `Get/UpsertScanPolicySettings`
       (`:35-36`).
-- [ ] 2.3 RED `internal/infra/metadata/sqlite/store_test.go`:
+- [x] 2.3 RED `internal/infra/metadata/sqlite/store_test.go`:
       `GetSigningPolicySettings` on an absent row returns typed
       `domain.ErrorCodeNotFound`.
-- [ ] 2.4 RED: `UpsertSigningPolicySettings` then `Get` round-trips
+- [x] 2.4 RED: `UpsertSigningPolicySettings` then `Get` round-trips
       `Enabled`, `TrustedPublicKeys` (order preserved), `UpdatedAt`
       (`time.RFC3339Nano`).
-- [ ] 2.5 GREEN: append the `signing_policy_settings` `CREATE TABLE IF NOT
+- [x] 2.5 GREEN: append the `signing_policy_settings` `CREATE TABLE IF NOT
       EXISTS` to `Store.init()`'s statements slice, exact SQL from design
       Decision 4 — **`enabled INTEGER NOT NULL DEFAULT 0`, the deliberately
       inverted default vs. `scan_policy_settings`' `DEFAULT 1`**.
-- [ ] 2.6 GREEN: implement `Get/UpsertSigningPolicySettings` on `store.go` —
+- [x] 2.6 GREEN: implement `Get/UpsertSigningPolicySettings` on `store.go` —
       `sql.ErrNoRows` → `domain.NewNotFoundError`, mirroring
       `Get/UpsertScanPolicySettings` (`store.go:500-534`).
-- [ ] 2.7 Confirm 2.3–2.4 GREEN: `go test ./internal/infra/metadata/sqlite/... -run SigningPolicySettings`.
+- [x] 2.7 Confirm 2.3–2.4 GREEN: `go test ./internal/infra/metadata/sqlite/... -run SigningPolicySettings`.
 
 ## Phase 3: Codec Generalization — Generic Resolution Helper (Decision 5) — depends on Phase 2
 

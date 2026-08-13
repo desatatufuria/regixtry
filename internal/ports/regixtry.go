@@ -34,6 +34,8 @@ type MetadataStore interface {
 	UpsertScanSettings(ctx context.Context, tenant string, feature string, settings ScanSettings) error
 	GetScanPolicySettings(ctx context.Context, tenant string) (ScanPolicySettings, error)
 	UpsertScanPolicySettings(ctx context.Context, tenant string, settings ScanPolicySettings) error
+	GetSigningPolicySettings(ctx context.Context, tenant string) (SigningPolicySettings, error)
+	UpsertSigningPolicySettings(ctx context.Context, tenant string, settings SigningPolicySettings) error
 	GetFeatureRuntimeState(ctx context.Context, tenant string, feature string) (FeatureRuntimeState, error)
 	UpsertFeatureRuntimeState(ctx context.Context, tenant string, feature string, state FeatureRuntimeState) error
 	GetActiveScanRunByDigest(ctx context.Context, tenant string, repository string, digest string) (ScanRun, error)
@@ -92,6 +94,22 @@ type ScanPolicySettings struct {
 	Enabled           bool      `json:"enabled"`
 	SeverityThreshold string    `json:"severity_threshold"`
 	UpdatedAt         time.Time `json:"updated_at"`
+}
+
+// SigningPolicySettings is the global image-signature verification policy:
+// whether the pull-time content-trust gate is enforced, and the set of
+// public keys a signature may verify against (any one is sufficient).
+type SigningPolicySettings struct {
+	Enabled           bool      `json:"enabled"`
+	TrustedPublicKeys []string  `json:"trusted_public_keys"` // canonical PEM, ECDSA P-256
+	UpdatedAt         time.Time `json:"updated_at"`
+}
+
+// SigningOverride is one repository's full replacement of the global signing
+// policy (full-row-replace: present -> all fields apply).
+type SigningOverride struct {
+	Enabled           bool     `json:"enabled"`
+	TrustedPublicKeys []string `json:"trusted_public_keys,omitempty"`
 }
 
 type ScanSettings struct {

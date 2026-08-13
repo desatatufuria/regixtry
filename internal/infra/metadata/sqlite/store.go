@@ -533,6 +533,62 @@ func (s *Store) UpsertScanPolicySettings(ctx context.Context, tenant string, set
 	return err
 }
 
+// GetSigningPolicySettings mirrors GetScanPolicySettings' row-absence
+// behavior: a missing row is a typed domain.ErrorCodeNotFound, never a
+// silent code-level default (design.md Decision 4). The code-level default
+// applied on NotFound lives one layer up, at the service, and — unlike the
+// scan gate — resolves to disabled, not enabled.
+func (s *Store) GetSigningPolicySettings(ctx context.Context, tenant string) (ports.SigningPolicySettings, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT enabled, trusted_public_keys, updated_at
+		FROM signing_policy_settings
+		WHERE tenant = ?
+	`, tenant)
+	var (
+		enabled         bool
+		trustedKeysJSON string
+		updatedAtRaw    string
+	)
+	if err := row.Scan(&enabled, &trustedKeysJSON, &updatedAtRaw); err != nil {
+		if err == sql.ErrNoRows {
+			return ports.SigningPolicySettings{}, domain.NewNotFoundError("signing_policy_settings", tenant)
+		}
+		return ports.SigningPolicySettings{}, err
+	}
+	updatedAt, err := time.Parse(time.RFC3339Nano, updatedAtRaw)
+	if err != nil {
+		return ports.SigningPolicySettings{}, err
+	}
+	var trustedKeys []string
+	if strings.TrimSpace(trustedKeysJSON) != "" {
+		if err := json.Unmarshal([]byte(trustedKeysJSON), &trustedKeys); err != nil {
+			return ports.SigningPolicySettings{}, err
+		}
+	}
+	return ports.SigningPolicySettings{Enabled: enabled, TrustedPublicKeys: trustedKeys, UpdatedAt: updatedAt}, nil
+}
+
+// UpsertSigningPolicySettings mirrors UpsertScanPolicySettings's
+// insert-or-replace shape, adding trusted_public_keys as the store's second
+// JSON column (design.md Decision 4), the same bounded-blast-radius
+// reasoning as repository_feature_overrides' payload column: no query ever
+// filters, sorts, or joins on a key, every read is by the full (tenant) key.
+func (s *Store) UpsertSigningPolicySettings(ctx context.Context, tenant string, settings ports.SigningPolicySettings) error {
+	trustedKeysJSON, err := json.Marshal(settings.TrustedPublicKeys)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO signing_policy_settings (tenant, enabled, trusted_public_keys, updated_at)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(tenant) DO UPDATE SET
+			enabled = excluded.enabled,
+			trusted_public_keys = excluded.trusted_public_keys,
+			updated_at = excluded.updated_at
+	`, tenant, settings.Enabled, string(trustedKeysJSON), settings.UpdatedAt.UTC().Format(time.RFC3339Nano))
+	return err
+}
+
 func (s *Store) GetRepositoryFeatureOverride(ctx context.Context, tenant string, repository string, feature string) ([]byte, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT payload
@@ -1274,6 +1330,18 @@ func (s *Store) init() error {
 			tenant TEXT NOT NULL,
 			enabled INTEGER NOT NULL DEFAULT 1,
 			severity_threshold TEXT NOT NULL DEFAULT 'critical',
+			updated_at TEXT NOT NULL,
+			PRIMARY KEY(tenant)
+		);`,
+		// enabled defaults to 0 here, deliberately inverted from
+		// scan_policy_settings' DEFAULT 1 (design.md Decision 4): a
+		// fail-closed content-trust gate must never default to ON with zero
+		// trusted keys, or it would 403 every pull the moment this binary
+		// boots on an existing deployment.
+		`CREATE TABLE IF NOT EXISTS signing_policy_settings (
+			tenant TEXT NOT NULL,
+			enabled INTEGER NOT NULL DEFAULT 0,
+			trusted_public_keys TEXT NOT NULL DEFAULT '[]',
 			updated_at TEXT NOT NULL,
 			PRIMARY KEY(tenant)
 		);`,
