@@ -362,6 +362,57 @@ func TestRunnerRunIntegrationAttributesFindingToBlobWithoutSecretMaterial(t *tes
 	}
 }
 
+func TestRunnerRunIntegrationFallsBackToRawFileWhenBlobUnattributable(t *testing.T) {
+	t.Parallel()
+
+	configBody := []byte(`{"config":{"Env":["PATH=/usr/bin"]}}`)
+	configDigest := domain.DigestFromBytes(configBody)
+
+	store := &fakeBlobStore{blobs: map[domain.Digest][]byte{configDigest: configBody}}
+
+	runner := New(RunnerConfig{Blobs: store, Exec: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		reportPath := argValue(args, "--report-path")
+		if reportPath == "" {
+			return nil, fmt.Errorf("fake exec: --report-path not found in argv")
+		}
+		report := `[
+  {
+    "RuleID": "generic-api-key",
+    "Description": "Detected a Generic API Key",
+    "StartLine": 1,
+    "EndLine": 1,
+    "File": "layers/nested.tar!inner-archive.tar!config/secrets.env",
+    "Tags": ["generic"]
+  }
+]`
+		return nil, os.WriteFile(reportPath, []byte(report), 0o600)
+	}})
+
+	target := ports.SecretScanTarget{
+		Repository: "library/alpine",
+		Digest:     "sha256:deadbeef",
+		Blobs: []domain.Descriptor{
+			{MediaType: "application/vnd.oci.image.config.v1+json", Digest: configDigest, Size: int64(len(configBody))},
+		},
+	}
+	settings := ports.ScanSettings{BinaryPath: "/var/lib/regixtry/features/gitleaks/bin/active/gitleaks", CacheDir: t.TempDir(), Timeout: time.Minute}
+
+	result, err := runner.Run(context.Background(), target, settings)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(result.Findings) != 1 {
+		t.Fatalf("len(result.Findings) = %d, want 1", len(result.Findings))
+	}
+	finding := result.Findings[0]
+	if finding.BlobDigest != "" {
+		t.Fatalf("finding.BlobDigest = %q, want empty (no staged blob prefix matched)", finding.BlobDigest)
+	}
+	if finding.Path != "layers/nested.tar!inner-archive.tar!config/secrets.env" {
+		t.Fatalf("finding.Path = %q, want the raw gitleaks File as a usable fallback location", finding.Path)
+	}
+}
+
 func buildTarGzFixture(t *testing.T, filename string, body string) []byte {
 	t.Helper()
 	var raw bytes.Buffer

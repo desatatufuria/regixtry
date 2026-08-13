@@ -120,6 +120,12 @@ func (r *Runner) Run(ctx context.Context, target ports.SecretScanTarget, setting
 // the longest matching staged path (relative to the scanned directory)
 // identifies the source blob, and BlobDigest/Path never carry the matched
 // secret text itself — only rule ID and location, per design.md decision 10.
+//
+// When no staged path matches (e.g. gitleaks reports a member inside a
+// nested archive, per --max-archive-depth, whose prefix does not line up
+// with a staged blob), BlobDigest stays empty but Path still carries the
+// raw File gitleaks reported — an operator can act on that relative path
+// even without a resolved blob, instead of seeing an unattributed "unknown".
 func attributeFinding(entry reportEntry, staged []stagedBlob, scanDir string) ports.SecretFinding {
 	finding := ports.SecretFinding{
 		RuleID:      entry.RuleID,
@@ -144,6 +150,7 @@ func attributeFinding(entry reportEntry, staged []stagedBlob, scanDir string) po
 		}
 	}
 	if bestPrefix == "" {
+		finding.Path = file
 		return finding
 	}
 	finding.BlobDigest = bestBlob.Descriptor.Digest.String()
