@@ -533,6 +533,92 @@ func (s *Store) UpsertScanPolicySettings(ctx context.Context, tenant string, set
 	return err
 }
 
+func (s *Store) GetRepositoryFeatureOverride(ctx context.Context, tenant string, repository string, feature string) ([]byte, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT payload
+		FROM repository_feature_overrides
+		WHERE tenant = ? AND repository = ? AND feature_name = ?
+	`, tenant, repository, feature)
+
+	var payload string
+	if err := row.Scan(&payload); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, domain.NewNotFoundError("repository_feature_override", repository+"/"+feature)
+		}
+		return nil, err
+	}
+
+	return []byte(payload), nil
+}
+
+func (s *Store) ListRepositoryFeatureOverrides(ctx context.Context, tenant string, feature string) ([]ports.RepositoryFeatureOverride, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT repository, payload, updated_at
+		FROM repository_feature_overrides
+		WHERE tenant = ? AND feature_name = ?
+		ORDER BY repository ASC
+	`, tenant, feature)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	overrides := make([]ports.RepositoryFeatureOverride, 0)
+	for rows.Next() {
+		var repository string
+		var payload string
+		var updatedAtRaw string
+		if err := rows.Scan(&repository, &payload, &updatedAtRaw); err != nil {
+			return nil, err
+		}
+
+		updatedAt, err := time.Parse(time.RFC3339Nano, updatedAtRaw)
+		if err != nil {
+			return nil, err
+		}
+
+		overrides = append(overrides, ports.RepositoryFeatureOverride{
+			Repository: repository,
+			Feature:    feature,
+			Payload:    json.RawMessage(payload),
+			UpdatedAt:  updatedAt,
+		})
+	}
+
+	return overrides, rows.Err()
+}
+
+func (s *Store) UpsertRepositoryFeatureOverride(ctx context.Context, tenant string, repository string, feature string, payload []byte) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO repository_feature_overrides (tenant, repository, feature_name, payload, updated_at)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(tenant, repository, feature_name) DO UPDATE SET
+			payload = excluded.payload,
+			updated_at = excluded.updated_at
+	`, tenant, repository, feature, string(payload), time.Now().UTC().Format(time.RFC3339Nano))
+	return err
+}
+
+func (s *Store) DeleteRepositoryFeatureOverride(ctx context.Context, tenant string, repository string, feature string) error {
+	result, err := s.db.ExecContext(ctx, `
+		DELETE FROM repository_feature_overrides WHERE tenant = ? AND repository = ? AND feature_name = ?
+	`, tenant, repository, feature)
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+
+	if rowsAffected == 0 {
+		return domain.NewNotFoundError("repository_feature_override", repository+"/"+feature)
+	}
+
+	return nil
+}
+
 func (s *Store) GetFeatureRuntimeState(ctx context.Context, tenant string, feature string) (ports.FeatureRuntimeState, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT status, active_version, previous_version, active_binary_path, cache_dir, receipt_path, migration_hint, last_verified_at, last_health_check_at, last_db_updated_at, last_error, updated_at
@@ -1203,6 +1289,15 @@ func (s *Store) init() error {
 			tags TEXT NOT NULL DEFAULT '',
 			PRIMARY KEY(run_id, position),
 			FOREIGN KEY(run_id) REFERENCES secret_scan_runs(id) ON DELETE CASCADE
+		);`,
+		`CREATE TABLE IF NOT EXISTS repository_feature_overrides (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			tenant TEXT NOT NULL,
+			repository TEXT NOT NULL,
+			feature_name TEXT NOT NULL,
+			payload TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			UNIQUE(tenant, repository, feature_name)
 		);`,
 	}
 

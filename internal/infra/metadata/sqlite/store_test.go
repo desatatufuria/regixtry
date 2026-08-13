@@ -238,6 +238,151 @@ func TestStoreUpsertScanPolicySettingsRoundTripsEnabledAndThreshold(t *testing.T
 	}
 }
 
+func TestStoreGetRepositoryFeatureOverrideReturnsNotFoundWithNoRow(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	_, err := store.GetRepositoryFeatureOverride(context.Background(), "tenant-a", "library/alpine", "trivy")
+	if !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("GetRepositoryFeatureOverride() error = %v, want ErrorCodeNotFound", err)
+	}
+}
+
+func TestStoreUpsertRepositoryFeatureOverrideRoundTripsPayloadAndUpdatedAt(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	payload := []byte(`{"enabled":false,"ignore_file_path":"/etc/regixtry/ignore.txt"}`)
+	updatedAt := time.Now().UTC()
+
+	if err := store.UpsertRepositoryFeatureOverride(context.Background(), "tenant-a", "library/alpine", "trivy", payload); err != nil {
+		t.Fatalf("UpsertRepositoryFeatureOverride() error = %v", err)
+	}
+
+	stored, err := store.GetRepositoryFeatureOverride(context.Background(), "tenant-a", "library/alpine", "trivy")
+	if err != nil {
+		t.Fatalf("GetRepositoryFeatureOverride() error = %v", err)
+	}
+	if !reflect.DeepEqual(stored, payload) {
+		t.Fatalf("stored payload = %s, want %s", stored, payload)
+	}
+
+	overrides, err := store.ListRepositoryFeatureOverrides(context.Background(), "tenant-a", "trivy")
+	if err != nil {
+		t.Fatalf("ListRepositoryFeatureOverrides() error = %v", err)
+	}
+	if len(overrides) != 1 {
+		t.Fatalf("len(overrides) = %d, want 1", len(overrides))
+	}
+	if overrides[0].Repository != "library/alpine" || overrides[0].Feature != "trivy" {
+		t.Fatalf("overrides[0] = %#v, want repository=library/alpine feature=trivy", overrides[0])
+	}
+	if !reflect.DeepEqual([]byte(overrides[0].Payload), payload) {
+		t.Fatalf("overrides[0].Payload = %s, want %s", overrides[0].Payload, payload)
+	}
+	if overrides[0].UpdatedAt.Before(updatedAt.Add(-time.Minute)) || overrides[0].UpdatedAt.After(updatedAt.Add(time.Minute)) {
+		t.Fatalf("overrides[0].UpdatedAt = %v, want close to %v", overrides[0].UpdatedAt, updatedAt)
+	}
+
+	// Upsert again with a different payload -> same row updates in place.
+	updatedPayload := []byte(`{"enabled":true}`)
+	if err := store.UpsertRepositoryFeatureOverride(context.Background(), "tenant-a", "library/alpine", "trivy", updatedPayload); err != nil {
+		t.Fatalf("UpsertRepositoryFeatureOverride(update) error = %v", err)
+	}
+	updatedStored, err := store.GetRepositoryFeatureOverride(context.Background(), "tenant-a", "library/alpine", "trivy")
+	if err != nil {
+		t.Fatalf("GetRepositoryFeatureOverride(update) error = %v", err)
+	}
+	if !reflect.DeepEqual(updatedStored, updatedPayload) {
+		t.Fatalf("updatedStored = %s, want %s", updatedStored, updatedPayload)
+	}
+}
+
+func TestStoreRepositoryFeatureOverrideIsolatesEachFeatureNameAsIndependentRow(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	trivyPayload := []byte(`{"enabled":false}`)
+	gitleaksPayload := []byte(`{"enabled":true,"config_path":"/etc/regixtry/gitleaks.toml"}`)
+	// A third, entirely fabricated feature name must round-trip with no
+	// migration — the table is feature-agnostic (design.md Decision 1).
+	imageSigningPayload := []byte(`{"enabled":true,"key_path":"/etc/regixtry/cosign.pub"}`)
+
+	if err := store.UpsertRepositoryFeatureOverride(context.Background(), "tenant-a", "library/alpine", "trivy", trivyPayload); err != nil {
+		t.Fatalf("UpsertRepositoryFeatureOverride(trivy) error = %v", err)
+	}
+	if err := store.UpsertRepositoryFeatureOverride(context.Background(), "tenant-a", "library/alpine", "gitleaks", gitleaksPayload); err != nil {
+		t.Fatalf("UpsertRepositoryFeatureOverride(gitleaks) error = %v", err)
+	}
+	if err := store.UpsertRepositoryFeatureOverride(context.Background(), "tenant-a", "library/alpine", "image-signing", imageSigningPayload); err != nil {
+		t.Fatalf("UpsertRepositoryFeatureOverride(image-signing) error = %v", err)
+	}
+
+	storedTrivy, err := store.GetRepositoryFeatureOverride(context.Background(), "tenant-a", "library/alpine", "trivy")
+	if err != nil {
+		t.Fatalf("GetRepositoryFeatureOverride(trivy) error = %v", err)
+	}
+	if !reflect.DeepEqual(storedTrivy, trivyPayload) {
+		t.Fatalf("storedTrivy = %s, want %s", storedTrivy, trivyPayload)
+	}
+
+	storedGitleaks, err := store.GetRepositoryFeatureOverride(context.Background(), "tenant-a", "library/alpine", "gitleaks")
+	if err != nil {
+		t.Fatalf("GetRepositoryFeatureOverride(gitleaks) error = %v", err)
+	}
+	if !reflect.DeepEqual(storedGitleaks, gitleaksPayload) {
+		t.Fatalf("storedGitleaks = %s, want %s", storedGitleaks, gitleaksPayload)
+	}
+
+	storedImageSigning, err := store.GetRepositoryFeatureOverride(context.Background(), "tenant-a", "library/alpine", "image-signing")
+	if err != nil {
+		t.Fatalf("GetRepositoryFeatureOverride(image-signing) error = %v", err)
+	}
+	if !reflect.DeepEqual(storedImageSigning, imageSigningPayload) {
+		t.Fatalf("storedImageSigning = %s, want %s", storedImageSigning, imageSigningPayload)
+	}
+}
+
+func TestStoreDeleteRepositoryFeatureOverride(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	err := store.DeleteRepositoryFeatureOverride(context.Background(), "tenant-a", "library/alpine", "trivy")
+	if !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("DeleteRepositoryFeatureOverride(absent) error = %v, want ErrorCodeNotFound", err)
+	}
+
+	payload := []byte(`{"enabled":false}`)
+	if err := store.UpsertRepositoryFeatureOverride(context.Background(), "tenant-a", "library/alpine", "trivy", payload); err != nil {
+		t.Fatalf("UpsertRepositoryFeatureOverride() error = %v", err)
+	}
+
+	if err := store.DeleteRepositoryFeatureOverride(context.Background(), "tenant-a", "library/alpine", "trivy"); err != nil {
+		t.Fatalf("DeleteRepositoryFeatureOverride() error = %v", err)
+	}
+
+	_, err = store.GetRepositoryFeatureOverride(context.Background(), "tenant-a", "library/alpine", "trivy")
+	if !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("GetRepositoryFeatureOverride(after delete) error = %v, want ErrorCodeNotFound", err)
+	}
+
+	overrides, err := store.ListRepositoryFeatureOverrides(context.Background(), "tenant-a", "trivy")
+	if err != nil {
+		t.Fatalf("ListRepositoryFeatureOverrides(after delete) error = %v", err)
+	}
+	if len(overrides) != 0 {
+		t.Fatalf("overrides = %#v, want empty after delete", overrides)
+	}
+}
+
 func TestStoreBridgesLegacyBinaryColumnsWhenServiceFieldsAreMissing(t *testing.T) {
 	t.Parallel()
 

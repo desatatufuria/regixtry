@@ -71,23 +71,23 @@ dependency-ordered slices — recommend chaining rather than a single PR.
 
 ## Phase 2: Storage (Decision 1, 2) — depends on Phase 1
 
-- [ ] 2.1 RED `internal/infra/metadata/sqlite/store_test.go`: `GetRepositoryFeatureOverride`
+- [x] 2.1 RED `internal/infra/metadata/sqlite/store_test.go`: `GetRepositoryFeatureOverride`
       on an absent row returns typed `domain.ErrorCodeNotFound`.
-- [ ] 2.2 RED `store_test.go`: `UpsertRepositoryFeatureOverride` then `Get`
+- [x] 2.2 RED `store_test.go`: `UpsertRepositoryFeatureOverride` then `Get`
       round-trips `payload` bytes and `updated_at` (RFC3339Nano).
-- [ ] 2.3 RED `store_test.go`: same repository, two feature names -> two
+- [x] 2.3 RED `store_test.go`: same repository, two feature names -> two
       independent rows; a third fabricated feature name round-trips with **no
       migration** (proves the reuse claim from proposal Success Criteria).
-- [ ] 2.4 RED `store_test.go`: `DeleteRepositoryFeatureOverride` on an absent
+- [x] 2.4 RED `store_test.go`: `DeleteRepositoryFeatureOverride` on an absent
       row returns `NotFound`; on a present row removes it and a subsequent
       `List` no longer includes it.
-- [ ] 2.5 GREEN: append the `repository_feature_overrides` `CREATE TABLE IF NOT EXISTS`
+- [x] 2.5 GREEN: append the `repository_feature_overrides` `CREATE TABLE IF NOT EXISTS`
       to `Store.init()`'s `statements` slice, exact SQL from design Decision 1.
-- [ ] 2.6 GREEN: implement Get/List/Upsert/Delete on `store.go` — `sql.ErrNoRows`
+- [x] 2.6 GREEN: implement Get/List/Upsert/Delete on `store.go` — `sql.ErrNoRows`
       -> `domain.NewNotFoundError`, `INSERT ... ON CONFLICT(tenant, repository,
       feature_name) DO UPDATE SET ...`, mirroring `Get/UpsertScanSettings` and
       `DeleteUpload` (design Decision 2).
-- [ ] 2.7 Confirm 2.1–2.4 GREEN: `go test ./internal/infra/metadata/sqlite/...
+- [x] 2.7 Confirm 2.1–2.4 GREEN: `go test ./internal/infra/metadata/sqlite/...
       -run RepositoryFeatureOverride`.
 
 ## Phase 3: Codec Registry + Resolution Helper (Decision 3, 4) — depends on Phase 1, 2
