@@ -362,6 +362,74 @@ func TestRunnerRunIntegrationAttributesFindingToBlobWithoutSecretMaterial(t *tes
 	}
 }
 
+func TestRunnerRunIntegrationAttributesFindingWhenGitleaksReportsAbsoluteScanDirPath(t *testing.T) {
+	t.Parallel()
+
+	const testSecret = "AKIAFAKEFAKEFAKEFAKE"
+	archiveBody := buildTarGzFixture(t, "fake-secrets.txt", "AWS_ACCESS_KEY_ID="+testSecret+"\n")
+	layerDigest := domain.DigestFromBytes(archiveBody)
+	configBody := []byte(`{"config":{"Env":["PATH=/usr/bin"]}}`)
+	configDigest := domain.DigestFromBytes(configBody)
+
+	store := &fakeBlobStore{blobs: map[domain.Digest][]byte{
+		layerDigest:  archiveBody,
+		configDigest: configBody,
+	}}
+
+	runner := New(RunnerConfig{Blobs: store, Exec: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		reportPath := argValue(args, "--report-path")
+		if reportPath == "" {
+			return nil, fmt.Errorf("fake exec: --report-path not found in argv")
+		}
+		if len(args) < 2 || args[0] != "dir" {
+			return nil, fmt.Errorf("fake exec: expected leading `dir <scanDir>` argv, got %v", args)
+		}
+		// Real gitleaks anchors File at the absolute dir argument it was
+		// invoked with, not at a path relative to it — reproduces what a
+		// live scan actually reported (see attributeFinding's doc comment).
+		scanDir := args[1]
+		stagedLayerRelative := filepath.ToSlash(filepath.Join("layers", fmt.Sprintf("001-%s.tar.gz", digest12(layerDigest))))
+		absoluteFile := filepath.ToSlash(scanDir) + "/" + stagedLayerRelative + "!fake-secrets.txt"
+		report := fmt.Sprintf(`[
+  {
+    "RuleID": "aws-access-token",
+    "Description": "AWS Access Token",
+    "StartLine": 1,
+    "EndLine": 1,
+    "File": "%s",
+    "Secret": "%s",
+    "Tags": ["aws"]
+  }
+]`, absoluteFile, testSecret)
+		return nil, os.WriteFile(reportPath, []byte(report), 0o600)
+	}})
+
+	target := ports.SecretScanTarget{
+		Repository: "library/alpine",
+		Digest:     "sha256:deadbeef",
+		Blobs: []domain.Descriptor{
+			{MediaType: "application/vnd.oci.image.config.v1+json", Digest: configDigest, Size: int64(len(configBody))},
+			{MediaType: "application/vnd.oci.image.layer.v1.tar+gzip", Digest: layerDigest, Size: int64(len(archiveBody))},
+		},
+	}
+	settings := ports.ScanSettings{BinaryPath: "/var/lib/regixtry/features/gitleaks/bin/active/gitleaks", CacheDir: t.TempDir(), Timeout: time.Minute}
+
+	result, err := runner.Run(context.Background(), target, settings)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(result.Findings) != 1 {
+		t.Fatalf("len(result.Findings) = %d, want 1", len(result.Findings))
+	}
+	finding := result.Findings[0]
+	if finding.BlobDigest != layerDigest.String() {
+		t.Fatalf("finding.BlobDigest = %q, want %q (attributed despite File being anchored at the absolute scanDir)", finding.BlobDigest, layerDigest.String())
+	}
+	if finding.Path != "fake-secrets.txt" {
+		t.Fatalf("finding.Path = %q, want the inner archive path", finding.Path)
+	}
+}
+
 func TestRunnerRunIntegrationFallsBackToRawFileWhenBlobUnattributable(t *testing.T) {
 	t.Parallel()
 
