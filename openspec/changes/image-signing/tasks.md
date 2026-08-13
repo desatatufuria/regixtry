@@ -235,46 +235,51 @@ existing Trivy/gitleaks test function.
 
 ## Phase 4: Service Signing — Policy Resolution & Fail-Closed Enforcement (Decisions 6, 7) — depends on Phase 1, 2, 3
 
-- [ ] 4.1 RED `internal/app/regixtry/service_signing_test.go` (new):
+- [x] 4.1 RED `internal/app/regixtry/service_signing_test.go` (new):
       `GetSigningPolicySettings` on an empty store returns `{Enabled:
       false}` — the inverted default vs. `enforceScanPolicy`'s fail-open
       default.
-- [ ] 4.2 RED: `enforceSigningPolicy` with the resolved policy `Enabled:
+- [x] 4.2 RED: `enforceSigningPolicy` with the resolved policy `Enabled:
       false` allows the pull without any verification attempt — the only
       allow-without-verify path — for both a signed and an unsigned digest.
-- [ ] 4.3 RED: `enforceSigningPolicy` with policy enabled and **no**
+- [x] 4.3 RED: `enforceSigningPolicy` with policy enabled and **no**
       `sha256-<hex>.sig` tag resolvable → `domain.ErrorCodePolicyViolation`.
-- [ ] 4.4 RED: policy enabled, `.sig` manifest present but malformed / no
+- [x] 4.4 RED: policy enabled, `.sig` manifest present but malformed / no
       simplesigning layer carrying a signature annotation →
       `PolicyViolation`.
-- [ ] 4.5 RED: policy enabled, `.sig` present and parseable, but the payload
+- [x] 4.5 RED: policy enabled, `.sig` present and parseable, but the payload
       blob is absent from the blob store → `PolicyViolation`.
-- [ ] 4.6 RED: policy enabled, zero configured keys parse as ECDSA P-256
+- [x] 4.6 RED: policy enabled, zero configured keys parse as ECDSA P-256
       (store row hand-seeded to bypass the admin-time 400) →
       `PolicyViolation`.
-- [ ] 4.7 RED: policy enabled, every `(key, entry)` pair fails `Verify` →
+- [x] 4.7 RED: policy enabled, every `(key, entry)` pair fails `Verify` →
       `PolicyViolation`.
-- [ ] 4.8 RED: policy enabled, a signature verifies cryptographically but
+- [x] 4.8 RED: policy enabled, a signature verifies cryptographically but
       `CheckClaims` binds a **different** digest → `PolicyViolation`
       (mismatched case; distinguished at the status layer in Phase 7, but
       the gate outcome here is the same 403-shaped error).
-- [ ] 4.9 RED: policy enabled, the Phase 0/1 captured (or synthetic,
+- [x] 4.9 RED: policy enabled, the Phase 0/1 captured (or synthetic,
       explicitly marked) fixture's valid signature by a trusted key → nil
       error, pull allowed — exercised through the service layer with
       store/blob doubles seeded from the fixture bytes.
-- [ ] 4.10 RED: a store/blob **infrastructure** error (not `NotFound`)
+- [x] 4.10 RED: a store/blob **infrastructure** error (not `NotFound`)
       during resolution propagates **unchanged**, not wrapped as
       `PolicyViolation` — service test with a failing store double, per
       Decision 6's table's last row.
-- [ ] 4.11 RED: `ResolveManifest` (the browse path) is never gated by
+- [x] 4.11 RED: `ResolveManifest` (the browse path) is never gated by
       `enforceSigningPolicy`, mirroring the existing scan-gate proof at
-      `service_test.go:467-469`.
-- [ ] 4.12 GREEN: create `internal/app/regixtry/service_signing.go` —
-      `signingFeatureName` (reconcile with 3.8 if already declared there),
+      `service_test.go:467-469`. (Implemented alongside Phase 5's OpenManifest
+      wiring in `service_test.go` — `enforceSigningPolicy` is not reachable
+      from any call site until the gate is wired, so this proof necessarily
+      shares Phase 5's test.)
+- [x] 4.12 GREEN: create `internal/app/regixtry/service_signing.go` —
+      `signingFeatureName` (reconciled with 3.8: reused the existing
+      declaration in `repository_overrides.go`, not redeclared),
       `enforceSigningPolicy`, `verifySignature`,
       `Get/UpdateSigningPolicySettings`, exact shape from design Decision 6.
-- [ ] 4.13 Confirm 4.1–4.11 GREEN:
-      `go test ./internal/app/regixtry/... -run 'SigningPolicy|EnforceSigning|VerifySignature' -v`.
+- [x] 4.13 Confirm 4.1–4.11 GREEN:
+      `go test ./internal/app/regixtry/... -run 'SigningPolicy|EnforceSigning|VerifySignature' -v`
+      → 10/10 top-level tests PASS (12 incl. subtests), 0 FAIL.
 
 ## Phase 5: Pull-Time Gate Wiring in `OpenManifest` (Decision 6) — depends on Phase 4
 
