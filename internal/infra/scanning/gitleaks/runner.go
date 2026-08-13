@@ -111,11 +111,20 @@ func (r *Runner) Run(ctx context.Context, target ports.SecretScanTarget, setting
 // identifies the source blob, and BlobDigest/Path never carry the matched
 // secret text itself — only rule ID and location, per design.md decision 10.
 //
-// When no staged path matches (e.g. gitleaks reports a member inside a
-// nested archive, per --max-archive-depth, whose prefix does not line up
-// with a staged blob), BlobDigest stays empty but Path still carries the
-// raw File gitleaks reported — an operator can act on that relative path
-// even without a resolved blob, instead of seeing an unattributed "unknown".
+// gitleaks is invoked as `dir <scanDir>` with scanDir an absolute path
+// (stage.go), and it reports File anchored at that same absolute path —
+// confirmed against a live scan, not merely assumed — so File must have the
+// scanDir prefix stripped before it can line up with a staged blob's
+// scanDir-relative path. Without this, the relative-path match below never
+// fires for a real gitleaks report and every finding falls through to the
+// raw-File fallback.
+//
+// When no staged path matches even after that (e.g. gitleaks reports a
+// member inside a nested archive, per --max-archive-depth, whose prefix does
+// not line up with a staged blob), BlobDigest stays empty but Path still
+// carries the raw File gitleaks reported — an operator can act on that
+// location even without a resolved blob, instead of seeing an unattributed
+// "unknown".
 func attributeFinding(entry reportEntry, staged []stagedBlob, scanDir string) ports.SecretFinding {
 	finding := ports.SecretFinding{
 		RuleID:      entry.RuleID,
@@ -125,6 +134,13 @@ func attributeFinding(entry reportEntry, staged []stagedBlob, scanDir string) po
 		Tags:        entry.Tags,
 	}
 	file := filepath.ToSlash(strings.TrimSpace(entry.File))
+	if scanDirSlash := strings.TrimSuffix(filepath.ToSlash(scanDir), "/"); scanDirSlash != "" {
+		if file == scanDirSlash {
+			file = ""
+		} else if rest, ok := strings.CutPrefix(file, scanDirSlash+"/"); ok {
+			file = rest
+		}
+	}
 	bestPrefix := ""
 	var bestBlob stagedBlob
 	for _, blob := range staged {
