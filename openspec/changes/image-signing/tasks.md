@@ -433,39 +433,49 @@ existing Trivy/gitleaks test function.
 
 ## Phase 8: Admin HTTP Resource — Global Signing Policy (Decision 8) — depends on Phase 2, 3, 4
 
-- [ ] 8.1 RED `admin_handlers_test.go`: `GET /admin/v1/signing-policy`
+- [x] 8.1 RED `admin_handlers_test.go`: `GET /admin/v1/signing-policy`
       returns the current settings (200), including the code-level
       `{Enabled: false}` default when no row exists — never 404, mirroring
       `handleAdminScanPolicy`.
-- [ ] 8.2 RED: `PUT /admin/v1/signing-policy` fully replaces the settings
+- [x] 8.2 RED: `PUT /admin/v1/signing-policy` fully replaces the settings
       and round-trips.
-- [ ] 8.3 RED: `PUT` with a key that fails `signing.NormalizePublicKeyPEM`
+- [x] 8.3 RED: `PUT` with a key that fails `signing.NormalizePublicKeyPEM`
       (unparseable or non-ECDSA-P256) returns 400 naming the offending
       **index**, never echoing key bytes.
-- [ ] 8.4 RED: `PUT` with `enabled: true` and zero usable keys returns 400
+      **Note**: the codebase's established convention (`writeAdminError`,
+      confirmed by `TestAdminScanPolicyPutRejectsUnknownSeverityThreshold`
+      and `normalizeSigningOverride`'s own HTTP tests) maps every
+      `domainauth`/`domainregistry` validation error to **422**, not a
+      literal 400. The RED/GREEN tests assert 422, matching every other
+      admin validation rejection in this codebase, not a new deviation.
+- [x] 8.4 RED: `PUT` with `enabled: true` and zero usable keys returns 400
       (the outage rule) — the row is **not** stored, confirmed via a
       subsequent `GET` showing the prior/default state unchanged.
-- [ ] 8.5 RED: `PUT` with more than 16 keys returns 400 (hot-path bound).
-- [ ] 8.6 RED: the admin endpoints require `requireAdminPrincipal` — an
+      (422 per the note above.)
+- [x] 8.5 RED: `PUT` with more than 16 keys returns 400 (hot-path bound).
+      (422 per the note above.)
+- [x] 8.6 RED: the admin endpoints require `requireAdminPrincipal` — an
       ordinary pull-scoped credential is rejected, no new permission
       surface.
-- [ ] 8.7 GREEN: add the `signing-policy` case to `handleAdmin`'s dispatch
+- [x] 8.7 GREEN: add the `signing-policy` case to `handleAdmin`'s dispatch
       (`admin_handlers.go`, beside `scan-policy`), `handleAdminSigningPolicy`
       modeled line-for-line on `handleAdminScanPolicy` (GET/PUT),
       `decodeSigningPolicySettings` enforcing the three rules from Decision
       8 (per-key normalize, outage rule, 16-key cap).
-- [ ] 8.8 Confirm 8.1–8.6 GREEN: `go test ./internal/protocol/http/... -run SigningPolicy -v`.
-- [ ] 8.9 RED: `PUT
+- [x] 8.8 Confirm 8.1–8.6 GREEN: `go test ./internal/protocol/http/... -run SigningPolicy -v`.
+- [x] 8.9 RED: `PUT
       /admin/v1/features/signing/repository-overrides/<repo>` persists and
       round-trips through the **existing** generic repository-overrides HTTP
       resource — Phase 3's codec registration is what makes this work with
       **zero new HTTP route**, proving Decision 5's "one map entry" claim on
       the wire.
-- [ ] 8.10 RED: a signing override body with unknown fields, or
+- [x] 8.10 RED: a signing override body with unknown fields, or
       `enabled: true` with zero keys, is rejected 400 via
       `normalizeSigningOverride` through the existing generic PUT handler —
       no new code path.
-- [ ] 8.11 Confirm 8.9–8.10 GREEN:
+      (422 per the note above; confirmed no production code change was
+      needed — the codec was already registered in Work Unit 2/3.)
+- [x] 8.11 Confirm 8.9–8.10 GREEN:
       `go test ./internal/protocol/http/... -run RepositoryOverride -v` —
       explicit proof the existing repository-overrides resource needed
       **zero** handler changes for the third feature.
