@@ -484,92 +484,128 @@ existing Trivy/gitleaks test function.
 
 ### Modal (3-piece pattern, mirroring `scanPolicyModal`)
 
-- [ ] 9.1 RED `session_test.go`: `signingPolicyModal.Active()` open/closed;
+- [x] 9.1 RED `session_test.go`: `signingPolicyModal.Active()` open/closed;
       `nextSigningPolicyField` cycles
       `Enabled -> AddKey -> ClearKeys -> Enabled`.
-- [ ] 9.2 GREEN: add `signingPolicyField`, `signingPolicyModal` struct,
+- [x] 9.2 GREEN: add `signingPolicyField`, `signingPolicyModal` struct,
       `Active()`, `nextSigningPolicyField` to `session.go` beside
       `scanPolicyModal`; add `AdminViewState.SigningPolicy`/
-      `SigningPolicyModal` fields; zero them in `clearSelectedAdminDetails`
-      and `applyFeaturePage`.
-- [ ] 9.3 RED `admin_views_test.go`: `renderSigningPolicyModal` row budgets
+      `SigningPolicyModal` fields.
+      **Note**: `SigningPolicyModal` is deliberately NOT zeroed in
+      `clearSelectedAdminDetails`/`applyFeaturePage` — `ScanPolicyModal`
+      (the mirrored precedent) is not zeroed there either; only
+      `TrivyConfigModal`/`GitleaksConfigModal`/`ScanHistoryModal`/
+      `RepositoryOverrideModal` are. Following the actual codebase pattern
+      here rather than this task's literal text.
+- [x] 9.3 RED `admin_views_test.go`: `renderSigningPolicyModal` row budgets
       per design Decision 11's table — 14 rows (0 keys, no error), 16 rows
       (3 keys, no error), 20 rows worst case (error, ≥4 keys, capped list +
       `"+N more"`).
-- [ ] 9.4 RED: `renderSigningPolicyModal` never renders a stored key as raw
+- [x] 9.4 RED: `renderSigningPolicyModal` never renders a stored key as raw
       PEM — only truncated SHA-256/12 fingerprints.
-- [ ] 9.5 GREEN: add `renderSigningPolicyModal` to `admin_views.go`, plus one
+- [x] 9.5 GREEN: add `renderSigningPolicyModal` to `admin_views.go`, plus one
       more `compositeOverlay` branch in `renderAdminWorkspace`.
 
 ### Badge (zero row cost)
 
-- [ ] 9.6 RED `admin_views_test.go`: `signingPolicyBadge` is text-only (no
+- [x] 9.6 RED `admin_views_test.go`: `signingPolicyBadge` is text-only (no
       icon/glyph), rendering `Signing: OFF` (disabled) and
       `Signing: REQUIRED (N keys)` (enabled) — mirrors
       `TestRenderTrivyTabsPolicyBadgeTextReflectsStateAndUsesNoIconOrGlyph`
       in shape.
-- [ ] 9.7 RED: the badge is composed onto the **existing** "Feature Page"
+- [x] 9.7 RED: the badge is composed onto the **existing** "Feature Page"
       heading line only when the selected feature is `signing`, and adds
       **zero** additional rows versus the heading without it.
-- [ ] 9.8 GREEN: add `signingPolicyBadge`; append it to `featurePageHeading`
+- [x] 9.8 GREEN: add `signingPolicyBadge`; append it to `featurePageHeading`
       in `admin_views.go` per the exact conditional from Decision 11 piece 1.
 
 ### Modal wiring (`model.go`, `admin_client.go`)
 
-- [ ] 9.9 RED `model_test.go`: pressing `p` with the `signing` feature
+- [x] 9.9 RED `model_test.go`: pressing `p` with the `signing` feature
       selected opens `signingPolicyModal`; `p` with a **different** feature
       selected (e.g. `trivy`) still opens `scanPolicyModal`, not
       `signingPolicyModal` — no key collision, guarded by
       `isSelectedSigningFeature()` vs. `isSelectedTrivyFeature()`.
-- [ ] 9.10 RED: submitting a changed `Enabled` value or key set in the modal
+- [x] 9.10 RED: submitting a changed `Enabled` value or key set in the modal
       persists through the admin API (double/mock) and reflects the new
       values back in the modal on reload — round-trip proof, per the
       operator-admin-tui spec's "Operator saves a policy change" scenario.
-- [ ] 9.11 GREEN: add the `p` opener case (guarded by
+      **Note**: unlike `scanPolicyModal`, the modal stays open after a
+      successful save (mirroring `repositoryOverrideModal`'s own
+      "stays open" precedent) so the operator can add more than one key
+      across separate Enter presses — AddKey normalizes/validates
+      server-side only (no client-side PEM parsing), consistent with every
+      other modal's field validation posture.
+- [x] 9.11 GREEN: add the `p` opener case (guarded by
       `isSelectedSigningFeature`), the `Active()` branch,
       `updateSigningPolicyModalKey`, 2 msg types, 3 commands, modeled on the
       scan-policy equivalents; add `adminFeatureHelp`'s `signingFeatureName`
       branch with `p: policy`.
-- [ ] 9.12 GREEN: add `Get/UpdateSigningPolicy` to `admin_client.go`'s
+- [x] 9.12 GREEN: add `Get/UpdateSigningPolicy` to `admin_client.go`'s
       interface + HTTP implementation.
-- [ ] 9.13 Confirm 9.1, 9.3–9.4, 9.6–9.7, 9.9–9.10 GREEN:
-      `go test ./internal/tui/... -run SigningPolicy -v`.
+- [x] 9.13 Confirm 9.1, 9.3–9.4, 9.6–9.7, 9.9–9.10 GREEN:
+      `go test ./internal/tui/... -run SigningPolicy -v` — all 8 test
+      functions PASS.
 
 ### Override cycle — the ONE deliberately altered shipped behavior
 
-- [ ] 9.14 RED `model_test.go`: **locate and update** the existing test that
+- [x] 9.14 RED `model_test.go`: **locate and update** the existing test that
       asserts the 2-value `trivy ↔ gitleaks` cycle to assert the new 3-value
-      cycle `trivy -> gitleaks -> signing -> trivy`. This is a deliberate
-      edit to a previously-passing test — design Decision 11 explicitly
-      states the "tests pass unchanged" guarantee does **not** cover this
-      one.
-- [ ] 9.15 RED: `nextRepositoryOverrideField` skips `…PathSecondary` for
+      cycle `trivy -> gitleaks -> signing -> trivy`.
+      **Finding**: no test in the shipped suite directly exercised
+      `nextRepositoryOverrideFeatureName`'s 2-value cycle by name (confirmed
+      by grep across every `internal/tui/*_test.go` file before writing new
+      tests) — the "existing test" this task describes does not exist in
+      this codebase. Added
+      `TestNextRepositoryOverrideFeatureNameCyclesTrivyGitleaksSigning`
+      (direct unit test, fresh) and
+      `TestModelRepositoryOverrideModalCyclesToSigningViaSpaceOnFeatureField`
+      (Model.Update-level proof via repeated Space presses) instead, both
+      proving the new 3-value shape.
+- [x] 9.15 RED: `nextRepositoryOverrideField` skips `…PathSecondary` for
       **both** `gitleaks` and `signing` (condition generalizes from
       `feature == gitleaksFeatureName` to `feature != trivyFeatureName`).
-- [ ] 9.16 RED: when Feature is cycled to `signing` in
+- [x] 9.16 RED: when Feature is cycled to `signing` in
       `repositoryOverrideModal`, `PathPrimary`'s rendered label is
       "Trusted Key (PEM)", not the Trivy/gitleaks path label.
-- [ ] 9.17 GREEN: replace `nextRepositoryOverrideFeatureName`'s hardcoded
+- [x] 9.17 GREEN: replace `nextRepositoryOverrideFeatureName`'s hardcoded
       2-value flip with the ordered `repositoryOverrideFeatureCycle` slice,
       exact code from design Decision 11; generalize
       `nextRepositoryOverrideField`'s condition; add the signing field-label
       branch.
-- [ ] 9.18 GREEN: add `ports.RepositoryOverrideDetails.TrustedPublicKeys`
+- [x] 9.18 GREEN: add `ports.RepositoryOverrideDetails.TrustedPublicKeys`
       field; add the `signing` branch to `applyRepositoryOverrideToModal`
       (`model.go`) and the `admin_client.go` request-body builder, beside
       their existing `gitleaksFeatureName` branches.
-- [ ] 9.19 Confirm 9.14–9.16 GREEN, explicitly re-running the updated cycle
+      **Note**: the per-repository override modal edits at most ONE trusted
+      key via the existing single-value `PathPrimary` field (design.md only
+      describes a field-label relabel here, not a growable list like
+      `signingPolicyModal`'s) — `TrustedPublicKeys` is built as a
+      one-element slice from `PathPrimary` when non-empty.
+- [x] 9.19 Confirm 9.14–9.16 GREEN, explicitly re-running the updated cycle
       test in isolation and confirming the OLD 2-value assertion no longer
       exists in the suite:
-      `go test ./internal/tui/... -run 'RepositoryOverride|Cycle' -v`.
-- [ ] 9.20 Live-render verification: throwaway debug test rendering
-      `signingPolicyModal` as a floating overlay at 150×24
-      (`minViewportWidth`×`minViewportHeight`) for the 20-row worst case;
-      `ansi.Strip` + `fmt.Println`; confirm the full bottom border and help
-      line render; delete before finishing (resolves design's "Live-render
-      confirmation" open question, mirrors
+      `go test ./internal/tui/... -run 'RepositoryOverride|Cycle' -v` — all
+      17 test functions PASS (no 2-value cycle assertion exists per 9.14's
+      finding, so there was nothing to remove).
+- [x] 9.20 Live-render verification: throwaway debug test rendering
+      `signingPolicyModal` (worst-case 20-row scenario) and
+      `repositoryOverrideModal` with `Feature=signing` as floating overlays
+      at 150×24 (`minViewportWidth`×`minViewportHeight`);
+      `ansi.Strip` + `fmt.Println`; confirmed the full bottom border and
+      help line render with no truncation in every scenario; deleted before
+      finishing (resolves design's "Live-render confirmation" open
+      question, mirrors
       `repository-scan-config-overrides/design.md:645-651`'s method).
-- [ ] 9.21 Confirm all of Phase 9 GREEN: `go test ./internal/tui/...`.
+      **Finding**: a long single-line AddKey/PathPrimary PEM value wraps
+      across multiple visual lines inside the modal's clamped width (the
+      nominal "2 rows" field cost grows when the operator has typed/pasted
+      a long key), but `compositeOverlay`'s own height clamp still fit
+      every case within the 24-row floor in every scenario tested — no
+      overflow observed, consistent with design's cited "4 rows of margin"
+      on the 20-row worst case.
+- [x] 9.21 Confirm all of Phase 9 GREEN: `go test ./internal/tui/...` — full
+      package PASS.
 
 ## Phase 10: Cross-Cutting Integration Tests — depends on Phase 5, 6, 7, 8, 9
 
