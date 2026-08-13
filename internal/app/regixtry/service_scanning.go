@@ -378,6 +378,14 @@ func (s *Service) executeSecretScanLeg(ctx context.Context, tenant string, repos
 		return
 	}
 	settings, err := s.resolveManagedSecretScanSettings(ctx, tenant)
+	if err != nil {
+		return
+	}
+	// Applied before the Enabled check, mirroring queuePushScan's Trivy
+	// wiring: an Enabled: true override can re-enable this repository's
+	// secret scanning even while the global gitleaks row is disabled
+	// (design.md Decision 4, corrected image-secret-scans/spec.md).
+	settings, err = s.applyRepositoryOverride(ctx, tenant, repository, gitleaksFeatureName, settings)
 	if err != nil || !settings.Enabled {
 		return
 	}

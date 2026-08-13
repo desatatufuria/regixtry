@@ -152,22 +152,22 @@ dependency-ordered slices — recommend chaining rather than a single PR.
 
 ## Phase 5: Wire Resolution Into Gitleaks Leg (Decision 4, corrected spec) — depends on Phase 3, 4.7
 
-- [ ] 5.1 RED `service_scanning_test.go`: `executeSecretScanLeg` with a
+- [x] 5.1 RED `service_scanning_test.go`: `executeSecretScanLeg` with a
       gitleaks override `Enabled: false` does not create a `SecretScanRun` for
       a manual/scheduled trigger.
-- [ ] 5.2 RED `service_scanning_test.go`: **the same suppression exercised
+- [x] 5.2 RED `service_scanning_test.go`: **the same suppression exercised
       through the actual push code path** — call `queuePushScan` (not
       `executeSecretScanLeg` directly) for a repository with a gitleaks
       override `Enabled: false`, assert no `SecretScanRun` is created. This
       proves the corrected spec's push-suppression scenario against the real
       call chain, not just the trigger-agnostic function signature.
-- [ ] 5.3 RED: override `Enabled: true` re-enables gitleaks when the global
+- [x] 5.3 RED: override `Enabled: true` re-enables gitleaks when the global
       row's `Enabled` is `false` (mirrors 4.4 for the secret leg).
-- [ ] 5.4 GREEN: call `applyRepositoryOverride` for `gitleaksFeatureName`
+- [x] 5.4 GREEN: call `applyRepositoryOverride` for `gitleaksFeatureName`
       inside `executeSecretScanLeg`, after `resolveManagedSecretScanSettings`
       (`service_scanning.go:357`), `!Enabled` -> silent return matching the
       existing branch (design Decision 4's table).
-- [ ] 5.5 Confirm 5.1–5.3 GREEN, explicitly re-running 5.2 in isolation:
+- [x] 5.5 Confirm 5.1–5.3 GREEN, explicitly re-running 5.2 in isolation:
       `go test ./internal/app/regixtry/... -run 'ExecuteSecretScanLeg|QueuePushScan' -v`.
 
 ## Phase 6: Runner Argv + Pre-Flight (Decision 5, 6) — depends on Phase 1

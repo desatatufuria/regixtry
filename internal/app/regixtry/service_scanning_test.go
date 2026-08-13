@@ -162,6 +162,148 @@ func seedTrivyOverride(t *testing.T, service *Service, repository string, overri
 	}
 }
 
+// seedGitleaksOverride mirrors seedTrivyOverride for the gitleaks feature.
+func seedGitleaksOverride(t *testing.T, service *Service, repository string, override ports.GitleaksOverride) {
+	t.Helper()
+	payload := marshalOverride(t, override)
+	if err := service.metadata.UpsertRepositoryFeatureOverride(context.Background(), "tenant-a", repository, gitleaksFeatureName, payload); err != nil {
+		t.Fatalf("UpsertRepositoryFeatureOverride(gitleaks) error = %v", err)
+	}
+}
+
+// seedManagedGitleaksSettings seeds the global gitleaks scan_settings row and
+// a Ready feature_runtime_state row, mirroring the shape
+// TestServiceExecuteScanRunAlsoRunsGitleaksSecretLegAlongsideTrivy already
+// establishes for the two-leg scan flow.
+func seedManagedGitleaksSettings(t *testing.T, service *Service, enabled bool) {
+	t.Helper()
+	if err := service.metadata.UpsertScanSettings(context.Background(), "tenant-a", gitleaksFeatureName, ports.ScanSettings{
+		Enabled:        enabled,
+		Interval:       time.Hour,
+		Timeout:        time.Minute,
+		MaxConcurrency: 1,
+		UpdatedAt:      time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("UpsertScanSettings(gitleaks) error = %v", err)
+	}
+	if err := service.metadata.UpsertFeatureRuntimeState(context.Background(), "tenant-a", gitleaksFeatureName, ports.FeatureRuntimeState{
+		Status:           ports.FeatureRuntimeStatusReady,
+		ActiveVersion:    "8.27.0",
+		ActiveBinaryPath: "/var/lib/regixtry/features/gitleaks/bin/active/gitleaks",
+		CacheDir:         "/var/lib/regixtry/features/gitleaks/gitleaks-cache",
+		UpdatedAt:        time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("UpsertFeatureRuntimeState(gitleaks) error = %v", err)
+	}
+}
+
+// TestExecuteSecretScanLegSkipsWithDisablingOverride is the Phase 5 RED test
+// (tasks.md 5.1): a gitleaks override with Enabled: false must suppress
+// SecretScanRun creation for a manual/scheduled trigger.
+func TestExecuteSecretScanLegSkipsWithDisablingOverride(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	seedManagedGitleaksSettings(t, service, true)
+	secretRunner := &capturingSecretScanRunner{}
+	service.SetSecretScanRunner(secretRunner)
+	seedGitleaksOverride(t, service, "library/alpine", ports.GitleaksOverride{Enabled: false})
+
+	digest := "sha256:" + strings.Repeat("1", 64)
+	service.executeSecretScanLeg(context.Background(), "tenant-a", "library/alpine", digest, ports.ScanTriggerManual)
+
+	secretRunner.mu.Lock()
+	calls := len(secretRunner.targets)
+	secretRunner.mu.Unlock()
+	if calls != 0 {
+		t.Fatalf("secret runner calls = %d, want 0 for an overridden-disabled repository", calls)
+	}
+	runs, err := service.metadata.ListSecretScanRuns(context.Background(), "tenant-a", "library/alpine", 10)
+	if err != nil {
+		t.Fatalf("ListSecretScanRuns() error = %v", err)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("secret scan runs = %#v, want none for an overridden-disabled repository", runs)
+	}
+}
+
+// TestQueuePushScanSuppressesGitleaksLegWithDisablingOverride is the Phase 5
+// RED test (tasks.md 5.2). Unlike 5.1, this exercises the *actual* push code
+// path — queuePushScan -> executeScanRun -> executeSecretScanLeg — rather
+// than calling executeSecretScanLeg directly, proving the corrected
+// image-secret-scans/spec.md push-suppression scenario against the real
+// call chain, not just the trigger-agnostic function signature.
+func TestQueuePushScanSuppressesGitleaksLegWithDisablingOverride(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	// Trivy must be enabled + ready: queuePushScan only reaches
+	// executeScanRun (which is what actually launches the secret-scan leg
+	// goroutine) when the Trivy leg itself proceeds.
+	if _, err := service.EnsureScanSettings(context.Background(), ports.ScanSettings{Enabled: true, Timeout: time.Minute, Interval: time.Hour, RegistryReachableURL: "https://registry.internal", MaxConcurrency: 1}); err != nil {
+		t.Fatalf("EnsureScanSettings(trivy) error = %v", err)
+	}
+	seedManagedRuntimeState(t, service, "0.57.1")
+	trivyRunner := &capturingScanRunner{result: ports.ScanResult{TrivyVersion: "0.57.1"}}
+	service.SetScanRunner(trivyRunner)
+
+	seedManagedGitleaksSettings(t, service, true)
+	secretRunner := &capturingSecretScanRunner{}
+	service.SetSecretScanRunner(secretRunner)
+	seedGitleaksOverride(t, service, "library/alpine", ports.GitleaksOverride{Enabled: false})
+
+	digest := "sha256:" + strings.Repeat("f", 64)
+	service.queuePushScan(context.Background(), "tenant-a", "library/alpine", "latest", digest)
+
+	waitForRunnerTargets(t, trivyRunner, 1)
+	// Give the secret leg goroutine time to run before asserting suppression.
+	time.Sleep(50 * time.Millisecond)
+	secretRunner.mu.Lock()
+	calls := len(secretRunner.targets)
+	secretRunner.mu.Unlock()
+	if calls != 0 {
+		t.Fatalf("secret runner calls = %d, want 0: the real push code path must suppress gitleaks for an overridden-disabled repository", calls)
+	}
+	runs, err := service.metadata.ListSecretScanRuns(context.Background(), "tenant-a", "library/alpine", 10)
+	if err != nil {
+		t.Fatalf("ListSecretScanRuns() error = %v", err)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("secret scan runs = %#v, want none persisted for an overridden-disabled repository", runs)
+	}
+}
+
+// TestExecuteSecretScanLegReEnabledByOverrideWhenGlobalRowDisabled is the
+// Phase 5 RED test (tasks.md 5.3), mirroring 4.4 for the secret leg: an
+// Enabled: true override re-enables gitleaks even while the global row's
+// Enabled is false.
+func TestExecuteSecretScanLegReEnabledByOverrideWhenGlobalRowDisabled(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	seedRepository(t, service, context.Background(), "library/alpine")
+	seedManagedGitleaksSettings(t, service, false)
+	secretRunner := &capturingSecretScanRunner{}
+	service.SetSecretScanRunner(secretRunner)
+	seedGitleaksOverride(t, service, "library/alpine", ports.GitleaksOverride{Enabled: true})
+
+	digest := seededManifestDigest(t, service, "library/alpine")
+	service.executeSecretScanLeg(context.Background(), "tenant-a", "library/alpine", digest, ports.ScanTriggerScheduled)
+
+	secretRunner.mu.Lock()
+	calls := len(secretRunner.targets)
+	secretRunner.mu.Unlock()
+	if calls != 1 {
+		t.Fatalf("secret runner calls = %d, want 1 (override re-enables secret scanning)", calls)
+	}
+}
+
 // TestQueueScheduledScanSkipsRepositoryWithDisablingOverride is the Phase 4
 // RED test (tasks.md 4.1): a Trivy override with Enabled: false for one
 // repository must suppress the scheduled sweep's queueing for it, even
