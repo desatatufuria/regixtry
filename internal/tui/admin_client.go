@@ -34,6 +34,8 @@ type AdminClient interface {
 	ConfigureFeature(ctx context.Context, session AdminSession, name string, input ports.FeatureConfigureInput) (ports.FeatureDetails, error)
 	GetScanPolicy(ctx context.Context, session AdminSession) (ports.ScanPolicySettings, error)
 	UpdateScanPolicy(ctx context.Context, session AdminSession, input ports.ScanPolicySettings) (ports.ScanPolicySettings, error)
+	GetSigningPolicy(ctx context.Context, session AdminSession) (ports.SigningPolicySettings, error)
+	UpdateSigningPolicy(ctx context.Context, session AdminSession, input ports.SigningPolicySettings) (ports.SigningPolicySettings, error)
 	EnableFeature(ctx context.Context, session AdminSession, name string) (ports.FeatureDetails, error)
 	DisableFeature(ctx context.Context, session AdminSession, name string) (ports.FeatureDetails, error)
 	ListUsers(ctx context.Context, session AdminSession) ([]ports.AdminUser, error)
@@ -268,6 +270,23 @@ func (c *HTTPAdminClient) UpdateScanPolicy(ctx context.Context, session AdminSes
 	return settings, nil
 }
 
+func (c *HTTPAdminClient) GetSigningPolicy(ctx context.Context, session AdminSession) (ports.SigningPolicySettings, error) {
+	var settings ports.SigningPolicySettings
+	if err := c.getJSON(ctx, session, "/admin/v1/signing-policy", &settings); err != nil {
+		return ports.SigningPolicySettings{}, err
+	}
+	return settings, nil
+}
+
+func (c *HTTPAdminClient) UpdateSigningPolicy(ctx context.Context, session AdminSession, input ports.SigningPolicySettings) (ports.SigningPolicySettings, error) {
+	var settings ports.SigningPolicySettings
+	body := map[string]any{"enabled": input.Enabled, "trusted_public_keys": input.TrustedPublicKeys}
+	if err := c.requestJSON(ctx, stdhttp.MethodPut, session, "/admin/v1/signing-policy", body, &settings, stdhttp.StatusOK); err != nil {
+		return ports.SigningPolicySettings{}, err
+	}
+	return settings, nil
+}
+
 func (c *HTTPAdminClient) EnableFeature(ctx context.Context, session AdminSession, name string) (ports.FeatureDetails, error) {
 	return c.mutateFeature(ctx, session, name, ":enable")
 }
@@ -391,13 +410,17 @@ func (c *HTTPAdminClient) ListRepositoryOverrides(ctx context.Context, session A
 // SetRepositoryOverride PUTs a full replacement of one repository's
 // override. The request body only ever carries the fields the target
 // feature's codec accepts (design.md Decision 3's DisallowUnknownFields) --
-// gitleaks gets config_path, every other feature (currently only trivy)
-// gets ignore_file_path/ignore_policy_path.
+// gitleaks gets config_path, signing gets trusted_public_keys, every other
+// feature (currently only trivy) gets ignore_file_path/ignore_policy_path
+// (design.md Decision 11 piece 3).
 func (c *HTTPAdminClient) SetRepositoryOverride(ctx context.Context, session AdminSession, repository string, feature string, input ports.RepositoryOverrideDetails) (ports.RepositoryOverrideDetails, error) {
 	body := map[string]any{"enabled": input.Enabled}
-	if feature == gitleaksFeatureName {
+	switch feature {
+	case gitleaksFeatureName:
 		body["config_path"] = input.ConfigPath
-	} else {
+	case signingFeatureName:
+		body["trusted_public_keys"] = input.TrustedPublicKeys
+	default:
 		body["ignore_file_path"] = input.IgnoreFilePath
 		body["ignore_policy_path"] = input.IgnorePolicyPath
 	}

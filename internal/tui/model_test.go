@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -1183,6 +1184,138 @@ func TestModelScanPolicyModalOpenToggleSubmitPersistsAndReflectsCurrentSettings(
 	}
 }
 
+// TestModelSigningPolicyModalOpenerKeyIsScopedToSigningFeature is the Phase
+// 9 task 9.9 RED test (design.md Decision 11 piece 2): `p` with the signing
+// feature selected opens signingPolicyModal, and `p` with a different
+// feature selected (trivy) still opens scanPolicyModal, not
+// signingPolicyModal -- no key collision, guarded by
+// isSelectedSigningFeature() vs. isSelectedTrivyFeature().
+func TestModelSigningPolicyModalOpenerKeyIsScopedToSigningFeature(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 13, 15, 0, 0, 0, time.UTC)
+
+	t.Run("p opens signingPolicyModal when signing is selected", func(t *testing.T) {
+		t.Parallel()
+		adminClient := &fakeAdminClient{
+			loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+			features:     []ports.FeatureSummary{{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: true}},
+			featurePage: ports.FeaturePage{
+				Summary: ports.FeatureSummary{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: true},
+			},
+			signingPolicy: ports.SigningPolicySettings{Enabled: true, TrustedPublicKeys: []string{"key-one"}},
+		}
+		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
+		updated = runKey(t, updated, "f")
+
+		if got, want := adminClient.getSigningPolicyCalls, 1; got != want {
+			t.Fatalf("getSigningPolicyCalls = %d, want %d", got, want)
+		}
+
+		updated = runKey(t, updated, "p")
+		if !updated.adminView.SigningPolicyModal.Active() {
+			t.Fatal("SigningPolicyModal.Active() = false, want true after 'p' on the signing feature")
+		}
+		if updated.adminView.ScanPolicyModal.Active() {
+			t.Fatal("ScanPolicyModal.Active() = true, want false -- 'p' on signing must not open the trivy modal")
+		}
+		modalView := updated.View()
+		for _, want := range []string{"Signing Policy", "Enabled", "Trusted Key (PEM)"} {
+			if !strings.Contains(modalView, want) {
+				t.Fatalf("view = %q, want %q", modalView, want)
+			}
+		}
+	})
+
+	t.Run("p opens scanPolicyModal, not signingPolicyModal, when trivy is selected", func(t *testing.T) {
+		t.Parallel()
+		adminClient := &fakeAdminClient{
+			loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+			features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
+			featurePage: ports.FeaturePage{
+				Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
+			},
+		}
+		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
+		updated = runKey(t, updated, "f")
+		updated = runKey(t, updated, "p")
+
+		if !updated.adminView.ScanPolicyModal.Active() {
+			t.Fatal("ScanPolicyModal.Active() = false, want true after 'p' on the trivy feature")
+		}
+		if updated.adminView.SigningPolicyModal.Active() {
+			t.Fatal("SigningPolicyModal.Active() = true, want false -- 'p' on trivy must not open the signing modal")
+		}
+	})
+}
+
+// TestModelSigningPolicyModalAddKeySubmitPersistsAndReflectsCurrentSettings
+// is the Phase 9 task 9.10 RED test (operator-admin-tui spec's "Operator
+// saves a policy change" scenario): toggling Enabled and adding a key
+// persists through the admin API and is reflected back into the modal
+// (Fingerprints), the modal stays open (unlike scanPolicyModal) so the
+// operator can keep adding keys, and AddKey is cleared after a successful
+// submit.
+func TestModelSigningPolicyModalAddKeySubmitPersistsAndReflectsCurrentSettings(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 13, 15, 0, 0, 0, time.UTC)
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+		features:     []ports.FeatureSummary{{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: false}},
+		featurePage: ports.FeaturePage{
+			Summary: ports.FeatureSummary{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: false},
+		},
+		signingPolicy: ports.SigningPolicySettings{Enabled: false},
+	}
+	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
+	updated = runKey(t, updated, "f")
+	updated = runKey(t, updated, "p")
+
+	// Focus starts on Enabled; toggle it on, Tab to AddKey, type a key.
+	updated = runKey(t, updated, " ")
+	updated = runKey(t, updated, "tab")
+	updated = runKey(t, updated, "-----BEGIN PUBLIC KEY-----fakekeydata-----END PUBLIC KEY-----")
+
+	submitted := runKey(t, updated, "enter")
+
+	if got, want := adminClient.updateSigningPolicyCalls, 1; got != want {
+		t.Fatalf("updateSigningPolicyCalls = %d, want %d", got, want)
+	}
+	if !adminClient.lastSigningPolicyInput.Enabled {
+		t.Fatalf("lastSigningPolicyInput.Enabled = false, want true")
+	}
+	if got, want := adminClient.lastSigningPolicyInput.TrustedPublicKeys, []string{"-----BEGIN PUBLIC KEY-----fakekeydata-----END PUBLIC KEY-----"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("lastSigningPolicyInput.TrustedPublicKeys = %#v, want %#v", got, want)
+	}
+	if !submitted.adminView.SigningPolicyModal.Active() {
+		t.Fatal("SigningPolicyModal.Active() = false, want the modal to stay open after a successful save (unlike scanPolicyModal)")
+	}
+	if submitted.adminView.SigningPolicyModal.AddKey != "" {
+		t.Fatalf("SigningPolicyModal.AddKey = %q, want cleared after a successful submit", submitted.adminView.SigningPolicyModal.AddKey)
+	}
+	if len(submitted.adminView.SigningPolicyModal.Fingerprints) != 1 {
+		t.Fatalf("SigningPolicyModal.Fingerprints = %#v, want 1 fingerprint reflected from the saved key", submitted.adminView.SigningPolicyModal.Fingerprints)
+	}
+	if !strings.Contains(submitted.View(), "Signing policy saved") {
+		t.Fatalf("view = %q, want signing policy feedback after submit", submitted.View())
+	}
+
+	// ClearKeys: Tab twice more (AddKey -> ClearKeys), Enter clears every
+	// trusted key.
+	cleared := runKey(t, submitted, "tab")
+	cleared = runKey(t, cleared, "enter")
+	if got, want := adminClient.updateSigningPolicyCalls, 2; got != want {
+		t.Fatalf("updateSigningPolicyCalls = %d, want %d after Clear", got, want)
+	}
+	if len(adminClient.lastSigningPolicyInput.TrustedPublicKeys) != 0 {
+		t.Fatalf("lastSigningPolicyInput.TrustedPublicKeys = %#v, want empty after Clear", adminClient.lastSigningPolicyInput.TrustedPublicKeys)
+	}
+	if len(cleared.adminView.SigningPolicyModal.Fingerprints) != 0 {
+		t.Fatalf("SigningPolicyModal.Fingerprints = %#v, want empty after Clear", cleared.adminView.SigningPolicyModal.Fingerprints)
+	}
+}
+
 // TestModelRepositoryOverrideModalOpenerKeyIsScopedToRepositoryAlertsRow is
 // the Phase 8 task 8.4/8.5 RED test (operator-admin-tui spec's "The override
 // key is scoped to the Repository Alerts row only" scenario, design.md
@@ -1285,6 +1418,80 @@ func TestModelRepositoryOverrideModalOpenerKeyIsScopedToRepositoryAlertsRow(t *t
 			t.Fatal("RepositoryOverrideModal.Open = true, want false with no highlighted row")
 		}
 	})
+}
+
+// TestNextRepositoryOverrideFeatureNameCyclesTrivyGitleaksSigning is the
+// Phase 9 task 9.14 RED test (design.md Decision 11 piece 3): the modal's
+// Feature field cycle grows from the shipped 2-value
+// trivy -> gitleaks -> trivy to trivy -> gitleaks -> signing -> trivy. This
+// is the one shipped TUI behavior this change deliberately alters -- no
+// prior test asserted the 2-value cycle by name, so this is a fresh
+// table-driven proof of the new 3-value shape, not an edit to a pre-existing
+// passing test.
+func TestNextRepositoryOverrideFeatureNameCyclesTrivyGitleaksSigning(t *testing.T) {
+	t.Parallel()
+
+	got := trivyFeatureName
+	want := []string{gitleaksFeatureName, signingFeatureName, trivyFeatureName}
+	for i, expect := range want {
+		got = nextRepositoryOverrideFeatureName(got)
+		if got != expect {
+			t.Fatalf("step %d: nextRepositoryOverrideFeatureName() = %q, want %q", i, got, expect)
+		}
+	}
+
+	// An unrecognized feature name falls back to the first entry, mirroring
+	// nextRepositoryOverrideFeatureName's defensive fallback.
+	if got := nextRepositoryOverrideFeatureName("unknown"); got != trivyFeatureName {
+		t.Fatalf("nextRepositoryOverrideFeatureName(unknown) = %q, want %q (fallback)", got, trivyFeatureName)
+	}
+}
+
+// TestModelRepositoryOverrideModalCyclesToSigningViaSpaceOnFeatureField is
+// the Phase 9 task 9.14/9.17 RED test at the Model.Update level: pressing
+// Space twice on the Feature field (starting from trivy, the opener's
+// default) reaches "signing", and a third press wraps back to "trivy".
+func TestModelRepositoryOverrideModalCyclesToSigningViaSpaceOnFeatureField(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 13, 9, 0, 0, 0, time.UTC)
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+		features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
+		featurePage: ports.FeaturePage{
+			Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
+			Header:  []ports.FeatureField{{Label: "Enabled", Value: "true"}},
+		},
+		scanRuns: []ports.ScanRun{
+			{ID: "run-1", Repository: "library/alpine", RequestedRef: "1.0.0", Status: ports.ScanRunStatusCompleted, Critical: 1},
+		},
+	}
+	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
+	updated = runKey(t, updated, "f")
+	updated = runKey(t, updated, "tab") // switch to Repository Alerts
+	updated = runKey(t, updated, "o")
+
+	if got, want := updated.adminView.RepositoryOverrideModal.Feature, trivyFeatureName; got != want {
+		t.Fatalf("RepositoryOverrideModal.Feature = %q, want %q on open", got, want)
+	}
+
+	oneCycle := runKey(t, updated, " ")
+	if got, want := oneCycle.adminView.RepositoryOverrideModal.Feature, gitleaksFeatureName; got != want {
+		t.Fatalf("RepositoryOverrideModal.Feature after 1 Space = %q, want %q", got, want)
+	}
+
+	twoCycles := runKey(t, oneCycle, " ")
+	if got, want := twoCycles.adminView.RepositoryOverrideModal.Feature, signingFeatureName; got != want {
+		t.Fatalf("RepositoryOverrideModal.Feature after 2 Spaces = %q, want %q", got, want)
+	}
+	if !strings.Contains(twoCycles.View(), "Trusted Key (PEM)") {
+		t.Fatalf("view = %q, want the signing-specific field label once cycled to signing", twoCycles.View())
+	}
+
+	threeCycles := runKey(t, twoCycles, " ")
+	if got, want := threeCycles.adminView.RepositoryOverrideModal.Feature, trivyFeatureName; got != want {
+		t.Fatalf("RepositoryOverrideModal.Feature after 3 Spaces = %q, want %q (wraps)", got, want)
+	}
 }
 
 // TestModelRepositoryOverrideModalSetAndClearRoundTripReflectsInModal is the
@@ -3039,14 +3246,21 @@ type fakeAdminClient struct {
 	getScanPolicyCalls    int
 	updateScanPolicyCalls int
 	lastScanPolicyInput   ports.ScanPolicySettings
-	installRuntime        ports.FeatureRuntimeState
-	upgradeRuntime        ports.FeatureRuntimeState
-	rollbackRuntime       ports.FeatureRuntimeState
-	enableFeature         ports.FeatureDetails
-	disableFeature        ports.FeatureDetails
-	actionResult          ports.FeatureActionResult
-	actionResults         map[string]ports.FeatureActionResult
-	featureErr            error
+
+	signingPolicy            ports.SigningPolicySettings
+	signingPolicyErr         error
+	signingPolicyUpdateErr   error
+	getSigningPolicyCalls    int
+	updateSigningPolicyCalls int
+	lastSigningPolicyInput   ports.SigningPolicySettings
+	installRuntime           ports.FeatureRuntimeState
+	upgradeRuntime           ports.FeatureRuntimeState
+	rollbackRuntime          ports.FeatureRuntimeState
+	enableFeature            ports.FeatureDetails
+	disableFeature           ports.FeatureDetails
+	actionResult             ports.FeatureActionResult
+	actionResults            map[string]ports.FeatureActionResult
+	featureErr               error
 
 	users            []ports.AdminUser
 	listUsersResults [][]ports.AdminUser
@@ -3322,6 +3536,24 @@ func (f *fakeAdminClient) UpdateScanPolicy(_ context.Context, _ AdminSession, in
 	}
 	f.scanPolicy = input
 	return f.scanPolicy, nil
+}
+
+func (f *fakeAdminClient) GetSigningPolicy(context.Context, AdminSession) (ports.SigningPolicySettings, error) {
+	f.getSigningPolicyCalls++
+	if f.signingPolicyErr != nil {
+		return ports.SigningPolicySettings{}, f.signingPolicyErr
+	}
+	return f.signingPolicy, nil
+}
+
+func (f *fakeAdminClient) UpdateSigningPolicy(_ context.Context, _ AdminSession, input ports.SigningPolicySettings) (ports.SigningPolicySettings, error) {
+	f.updateSigningPolicyCalls++
+	f.lastSigningPolicyInput = input
+	if f.signingPolicyUpdateErr != nil {
+		return ports.SigningPolicySettings{}, f.signingPolicyUpdateErr
+	}
+	f.signingPolicy = input
+	return f.signingPolicy, nil
 }
 
 func (f *fakeAdminClient) EnableFeature(context.Context, AdminSession, string) (ports.FeatureDetails, error) {

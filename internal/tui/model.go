@@ -2,6 +2,8 @@ package tui
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"sort"
 	"strconv"
@@ -119,6 +121,12 @@ const trivyFeatureName = "trivy"
 // constant of the same name and value, used by repositoryOverrideModal to
 // tell the two feature codecs apart (design.md Decision 8).
 const gitleaksFeatureName = "gitleaks"
+
+// signingFeatureName mirrors internal/app/regixtry's own package-private
+// constant of the same name and value (design.md Decision 11), used both by
+// signingPolicyModal's own opener/badge and as the third value in
+// repositoryOverrideModal's Feature cycle.
+const signingFeatureName = "signing"
 
 const (
 	loginFieldUsername loginField = iota
@@ -259,6 +267,16 @@ type adminScanPolicyLoadedMsg struct {
 
 type adminScanPolicyUpdatedMsg struct {
 	settings ports.ScanPolicySettings
+	err      error
+}
+
+type adminSigningPolicyLoadedMsg struct {
+	settings ports.SigningPolicySettings
+	err      error
+}
+
+type adminSigningPolicyUpdatedMsg struct {
+	settings ports.SigningPolicySettings
 	err      error
 }
 
@@ -570,6 +588,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// matching this Update loop's existing single-Cmd-return style.
 			return m, m.loadScanPolicyCmd()
 		}
+		if msg.page.Summary.Name == signingFeatureName {
+			// The signing badge (composed onto the Feature Page heading)
+			// needs SigningPolicy loaded before it can render a real state,
+			// mirroring the Trivy policy badge's own follow-up Cmd above
+			// (design.md Decision 11 piece 1).
+			return m, m.loadSigningPolicyCmd()
+		}
 		return m, nil
 	case adminFeatureActionCompletedMsg:
 		if msg.err != nil {
@@ -623,6 +648,38 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.adminView.ScanPolicy = msg.settings
 		m.adminView.ScanPolicyModal = scanPolicyModal{}
 		m.status = "Vulnerability policy saved."
+		return m, nil
+	case adminSigningPolicyLoadedMsg:
+		if msg.err != nil {
+			if IsAdminSessionExpired(msg.err) {
+				return m.expireAdminSession(msg.err.Error()), nil
+			}
+			// Best-effort, matching the ScanPolicy load's fail-quiet posture:
+			// leave SigningPolicy at its zero value rather than surfacing a
+			// blocking status error over an otherwise-successful feature
+			// page load.
+			return m, nil
+		}
+		m.adminView.SigningPolicy = msg.settings
+		return m, nil
+	case adminSigningPolicyUpdatedMsg:
+		if msg.err != nil {
+			if IsAdminSessionExpired(msg.err) {
+				return m.expireAdminSession(msg.err.Error()), nil
+			}
+			m.adminView.SigningPolicyModal.Error = msg.err.Error()
+			return m, nil
+		}
+		// Unlike scanPolicyModal, the modal stays open after a successful
+		// save (design.md Decision 11 piece 1's growable key list): the
+		// operator can keep adding keys, mirroring
+		// applyRepositoryOverrideToModal's own "stays open" precedent.
+		m.adminView.SigningPolicy = msg.settings
+		m.adminView.SigningPolicyModal.Enabled = msg.settings.Enabled
+		m.adminView.SigningPolicyModal.Fingerprints = signingKeyFingerprints(msg.settings.TrustedPublicKeys)
+		m.adminView.SigningPolicyModal.AddKey = ""
+		m.adminView.SigningPolicyModal.Error = ""
+		m.status = "Signing policy saved."
 		return m, nil
 	case adminRepositoryOverrideLoadedMsg:
 		if !m.adminView.RepositoryOverrideModal.Active() || msg.repository != m.adminView.RepositoryOverrideModal.Repository || msg.feature != m.adminView.RepositoryOverrideModal.Feature {
@@ -1165,6 +1222,10 @@ func (m Model) updateAdminKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateScanPolicyModalKey(msg)
 	}
 
+	if m.adminView.SigningPolicyModal.Active() {
+		return m.updateSigningPolicyModalKey(msg)
+	}
+
 	if m.adminView.RepositoryOverrideModal.Active() {
 		return m.updateRepositoryOverrideModalKey(msg)
 	}
@@ -1299,6 +1360,19 @@ func (m Model) updateAdminFeaturesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			threshold = ports.ScanPolicyThresholdCritical
 		}
 		m.adminView.ScanPolicyModal = scanPolicyModal{Open: true, Focus: scanPolicyFieldEnabled, Enabled: m.adminView.ScanPolicy.Enabled, SeverityThreshold: threshold}
+		m.status = ""
+		return m, nil
+	case m.isSelectedSigningFeature() && isRuneKey(msg, 'p'):
+		// No key collision with the trivy 'p' case above: this branch is
+		// guarded by isSelectedSigningFeature(), the trivy branch by
+		// isSelectedTrivyFeature() -- the two are mutually exclusive
+		// (design.md Decision 11 piece 2).
+		m.adminView.SigningPolicyModal = signingPolicyModal{
+			Open:         true,
+			Focus:        signingPolicyFieldEnabled,
+			Enabled:      m.adminView.SigningPolicy.Enabled,
+			Fingerprints: signingKeyFingerprints(m.adminView.SigningPolicy.TrustedPublicKeys),
+		}
 		m.status = ""
 		return m, nil
 	case m.isSelectedTrivyFeature() && m.adminView.TrivyTab == trivyTabRepositoryAlerts && isMoveUpKey(msg):
@@ -1533,6 +1607,76 @@ func nextScanPolicyThreshold(threshold string) string {
 	return ports.ScanPolicyThresholdCriticalHigh
 }
 
+// updateSigningPolicyModalKey handles keys while the signing policy modal is
+// open, mirroring updateScanPolicyModalKey's dedicated-handler pattern: Tab
+// cycles the 3 fields (wrapping, via nextSigningPolicyField), Space toggles
+// Enabled when it has focus, rune keys append to AddKey when it has focus,
+// Backspace trims AddKey when it has focus, Esc cancels without persisting.
+// Enter's behavior depends on Focus (design.md Decision 11 piece 1):
+//   - ClearKeys focus: submits with an empty trusted-key list.
+//   - Any other focus: submits the currently stored keys, plus AddKey
+//     appended when it is non-empty (the AddKey field is never itself
+//     validated client-side -- the admin API's existing
+//     signing.NormalizePublicKeyPEM validation is the single source of
+//     truth, surfaced back into modal.Error on rejection).
+func (m Model) updateSigningPolicyModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case isEscKey(msg):
+		m.adminView.SigningPolicyModal = signingPolicyModal{}
+		m.status = ""
+		return m, nil
+	case isTabKey(msg):
+		m.adminView.SigningPolicyModal.Focus = nextSigningPolicyField(m.adminView.SigningPolicyModal.Focus)
+		m.adminView.SigningPolicyModal.Error = ""
+		return m, nil
+	case isRuneKey(msg, ' '):
+		if m.adminView.SigningPolicyModal.Focus == signingPolicyFieldEnabled {
+			m.adminView.SigningPolicyModal.Enabled = !m.adminView.SigningPolicyModal.Enabled
+		}
+		m.adminView.SigningPolicyModal.Error = ""
+		return m, nil
+	case isBackspaceKey(msg):
+		if m.adminView.SigningPolicyModal.Focus == signingPolicyFieldAddKey {
+			m.adminView.SigningPolicyModal.AddKey = trimLastRune(m.adminView.SigningPolicyModal.AddKey)
+		}
+		m.adminView.SigningPolicyModal.Error = ""
+		return m, nil
+	case isEnterKey(msg):
+		modal := m.adminView.SigningPolicyModal
+		var keys []string
+		if modal.Focus != signingPolicyFieldClearKeys {
+			keys = append(keys, m.adminView.SigningPolicy.TrustedPublicKeys...)
+			if strings.TrimSpace(modal.AddKey) != "" {
+				keys = append(keys, modal.AddKey)
+			}
+		}
+		m.status = "Saving signing policy..."
+		return m, m.updateSigningPolicyCmd(ports.SigningPolicySettings{Enabled: modal.Enabled, TrustedPublicKeys: keys})
+	}
+	if msg.Type == tea.KeyRunes && m.adminView.SigningPolicyModal.Focus == signingPolicyFieldAddKey {
+		m.adminView.SigningPolicyModal.AddKey += string(msg.Runes)
+		m.adminView.SigningPolicyModal.Error = ""
+		return m, nil
+	}
+	return m, nil
+}
+
+// signingKeyFingerprints derives a read-only SHA-256/12 fingerprint for each
+// stored trusted key, so signingPolicyModal/renderSigningPolicyModal never
+// has to hold or render raw PEM key material (design.md Decision 11 piece 1
+// -- "the modal never has to display multi-line text either").
+func signingKeyFingerprints(keys []string) []string {
+	if len(keys) == 0 {
+		return nil
+	}
+	fingerprints := make([]string, 0, len(keys))
+	for _, key := range keys {
+		sum := sha256.Sum256([]byte(strings.TrimSpace(key)))
+		fingerprints = append(fingerprints, hex.EncodeToString(sum[:])[:12])
+	}
+	return fingerprints
+}
+
 // applyRepositoryOverrideToModal reflects a loaded/saved/cleared override
 // back onto repositoryOverrideModal (spec.md "both actions MUST round-trip
 // through the admin API and be reflected back in the modal"). Unlike
@@ -1549,12 +1693,29 @@ func (m *Model) applyRepositoryOverrideToModal(override ports.RepositoryOverride
 		return
 	}
 	m.adminView.RepositoryOverrideModal.Enabled = override.Enabled
-	if m.adminView.RepositoryOverrideModal.Feature == gitleaksFeatureName {
+	switch m.adminView.RepositoryOverrideModal.Feature {
+	case gitleaksFeatureName:
 		m.adminView.RepositoryOverrideModal.PathPrimary = override.ConfigPath
-		return
+	case signingFeatureName:
+		// The override modal edits a single trusted key via PathPrimary
+		// (design.md Decision 11 piece 3) -- unlike signingPolicyModal's
+		// growable list, only the first stored key is shown/edited here.
+		m.adminView.RepositoryOverrideModal.PathPrimary = firstRepositoryOverrideTrustedKey(override.TrustedPublicKeys)
+	default:
+		m.adminView.RepositoryOverrideModal.PathPrimary = override.IgnoreFilePath
+		m.adminView.RepositoryOverrideModal.PathSecondary = override.IgnorePolicyPath
 	}
-	m.adminView.RepositoryOverrideModal.PathPrimary = override.IgnoreFilePath
-	m.adminView.RepositoryOverrideModal.PathSecondary = override.IgnorePolicyPath
+}
+
+// firstRepositoryOverrideTrustedKey returns the first stored trusted key, or
+// "" when none are stored -- repositoryOverrideModal's PathPrimary field
+// edits at most one key per repository override (design.md Decision 11
+// piece 3's single-field reuse, distinct from signingPolicyModal's list).
+func firstRepositoryOverrideTrustedKey(keys []string) string {
+	if len(keys) == 0 {
+		return ""
+	}
+	return keys[0]
 }
 
 // updateRepositoryOverrideModalKey handles keys while repositoryOverrideModal
@@ -1598,9 +1759,14 @@ func (m Model) updateRepositoryOverrideModalKey(msg tea.KeyMsg) (tea.Model, tea.
 			return m, m.clearRepositoryOverrideCmd(modal.Repository, modal.Feature)
 		}
 		input := ports.RepositoryOverrideDetails{Enabled: modal.Enabled}
-		if modal.Feature == gitleaksFeatureName {
+		switch modal.Feature {
+		case gitleaksFeatureName:
 			input.ConfigPath = modal.PathPrimary
-		} else {
+		case signingFeatureName:
+			if strings.TrimSpace(modal.PathPrimary) != "" {
+				input.TrustedPublicKeys = []string{modal.PathPrimary}
+			}
+		default:
 			input.IgnoreFilePath = modal.PathPrimary
 			input.IgnorePolicyPath = modal.PathSecondary
 		}
@@ -1615,14 +1781,22 @@ func (m Model) updateRepositoryOverrideModalKey(msg tea.KeyMsg) (tea.Model, tea.
 	return m, nil
 }
 
-// nextRepositoryOverrideFeatureName cycles the modal's Feature field between
-// the two known feature codecs, mirroring nextScanPolicyThreshold's 2-value
-// cycle.
+// repositoryOverrideFeatureCycle is the modal's Feature field cycle order
+// (design.md Decision 11 piece 3). A fourth feature is one more entry -- no
+// restructuring. This is the one shipped TUI behavior this change
+// deliberately alters: the cycle grows from trivy -> gitleaks -> trivy to
+// trivy -> gitleaks -> signing -> trivy.
+var repositoryOverrideFeatureCycle = []string{trivyFeatureName, gitleaksFeatureName, signingFeatureName}
+
+// nextRepositoryOverrideFeatureName cycles the modal's Feature field through
+// repositoryOverrideFeatureCycle, wrapping back to the first entry.
 func nextRepositoryOverrideFeatureName(feature string) string {
-	if feature == gitleaksFeatureName {
-		return trivyFeatureName
+	for index, candidate := range repositoryOverrideFeatureCycle {
+		if candidate == feature {
+			return repositoryOverrideFeatureCycle[(index+1)%len(repositoryOverrideFeatureCycle)]
+		}
 	}
-	return gitleaksFeatureName
+	return repositoryOverrideFeatureCycle[0]
 }
 
 func (m *Model) deleteRepositoryOverrideModalRune() {
@@ -2654,6 +2828,26 @@ func (m Model) updateScanPolicyCmd(input ports.ScanPolicySettings) tea.Cmd {
 	}
 }
 
+func (m Model) loadSigningPolicyCmd() tea.Cmd {
+	return func() tea.Msg {
+		if m.adminClient == nil {
+			return adminSigningPolicyLoadedMsg{err: fmt.Errorf("admin API is unavailable for this session")}
+		}
+		settings, err := m.adminClient.GetSigningPolicy(m.ctx, m.adminSession)
+		return adminSigningPolicyLoadedMsg{settings: settings, err: err}
+	}
+}
+
+func (m Model) updateSigningPolicyCmd(input ports.SigningPolicySettings) tea.Cmd {
+	return func() tea.Msg {
+		if m.adminClient == nil {
+			return adminSigningPolicyUpdatedMsg{err: fmt.Errorf("admin API is unavailable for this session")}
+		}
+		settings, err := m.adminClient.UpdateSigningPolicy(m.ctx, m.adminSession, input)
+		return adminSigningPolicyUpdatedMsg{settings: settings, err: err}
+	}
+}
+
 // loadRepositoryOverrideCmd fetches one repository's stored override to
 // populate repositoryOverrideModal on open (design.md Decision 8 piece 2).
 func (m Model) loadRepositoryOverrideCmd(repository string, feature string) tea.Cmd {
@@ -3228,6 +3422,18 @@ func (m Model) isSelectedGitleaksFeature() bool {
 		name = strings.TrimSpace(m.selectedFeatureName())
 	}
 	return name == gitleaksFeatureName
+}
+
+// isSelectedSigningFeature mirrors isSelectedTrivyFeature/
+// isSelectedGitleaksFeature for signingPolicyModal's own opener, scoped to
+// "signing is the highlighted Built-in Features row" (design.md
+// Decision 11 piece 2).
+func (m Model) isSelectedSigningFeature() bool {
+	name := strings.TrimSpace(m.adminView.FeaturePage.Summary.Name)
+	if name == "" {
+		name = strings.TrimSpace(m.selectedFeatureName())
+	}
+	return name == signingFeatureName
 }
 
 func (m Model) toggleTrivyTab() (tea.Model, tea.Cmd) {
