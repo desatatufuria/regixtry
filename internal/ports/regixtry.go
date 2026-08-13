@@ -29,6 +29,12 @@ type MetadataStore interface {
 	ResolveManifest(ctx context.Context, tenant string, repository domain.RepositoryRef, reference string) (domain.Manifest, error)
 	Catalog(ctx context.Context, tenant string, limit int, after string) ([]domain.RepositoryRef, error)
 	ListTags(ctx context.Context, tenant string, repository domain.RepositoryRef, limit int, after string) ([]string, error)
+	// ListTagsWithCreatedAt is ListTags plus each tag's manifest created_at
+	// (console-tags-table change), joined from the manifests table rather
+	// than the tags table's own created_at -- a retag of an existing digest
+	// must still report the manifest's original push time, not when the tag
+	// pointer itself was last written.
+	ListTagsWithCreatedAt(ctx context.Context, tenant string, repository domain.RepositoryRef, limit int, after string) ([]TagSummary, error)
 	ListManifestBlobs(ctx context.Context, tenant string, repository domain.RepositoryRef, manifestDigest domain.Digest) ([]domain.Descriptor, error)
 	GetScanSettings(ctx context.Context, tenant string, feature string) (ScanSettings, error)
 	UpsertScanSettings(ctx context.Context, tenant string, feature string, settings ScanSettings) error
@@ -70,6 +76,13 @@ type MetadataStore interface {
 	// feature) row. It returns a typed domain.ErrorCodeNotFound when no row
 	// was affected, mirroring DeleteUpload.
 	DeleteRepositoryFeatureOverride(ctx context.Context, tenant string, repository string, feature string) error
+}
+
+// TagSummary is one tag's name and its manifest's created_at (console-tags-
+// table change's backend shape), returned by ListTagsWithCreatedAt.
+type TagSummary struct {
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 const (

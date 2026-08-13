@@ -904,6 +904,56 @@ func TestStoreGetLatestScanRunByDigestReturnsTypedNotFoundWithNoRun(t *testing.T
 	}
 }
 
+// TestStoreListTagsWithCreatedAtReturnsEachTagsManifestCreatedAt is the RED
+// test for the console-tags-table change: ListTagsWithCreatedAt joins tags
+// to their manifest row and returns each tag's manifest created_at (the
+// timestamp of when that manifest was pushed), not the tag row's own
+// created_at -- retagging an existing digest under a second name must still
+// report the manifest's original push time for both tags.
+func TestStoreListTagsWithCreatedAtReturnsEachTagsManifestCreatedAt(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	repo := domain.MustParseRepositoryRef("library/alpine")
+	manifest, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", []byte(`{"schemaVersion":2}`), nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("NewManifest() error = %v", err)
+	}
+
+	before := time.Now().UTC()
+	if err := store.PublishManifest(context.Background(), "tenant-a", repo, "latest", manifest, nil); err != nil {
+		t.Fatalf("PublishManifest() error = %v", err)
+	}
+	// Retagging the same digest under a second tag must not mint a second
+	// manifest row -- both tags should report the same original created_at.
+	if err := store.PublishManifest(context.Background(), "tenant-a", repo, "stable", manifest, nil); err != nil {
+		t.Fatalf("PublishManifest(second tag) error = %v", err)
+	}
+	after := time.Now().UTC()
+
+	tags, err := store.ListTagsWithCreatedAt(context.Background(), "tenant-a", repo, 10, "")
+	if err != nil {
+		t.Fatalf("ListTagsWithCreatedAt() error = %v", err)
+	}
+
+	if len(tags) != 2 {
+		t.Fatalf("len(tags) = %d, want 2: %#v", len(tags), tags)
+	}
+	if tags[0].Name != "latest" || tags[1].Name != "stable" {
+		t.Fatalf("tag names = [%s, %s], want [latest, stable] (ORDER BY name ASC)", tags[0].Name, tags[1].Name)
+	}
+	for _, tag := range tags {
+		if tag.CreatedAt.Before(before) || tag.CreatedAt.After(after) {
+			t.Fatalf("tag %q CreatedAt = %s, want between %s and %s", tag.Name, tag.CreatedAt, before, after)
+		}
+	}
+	if !tags[0].CreatedAt.Equal(tags[1].CreatedAt) {
+		t.Fatalf("tags[0].CreatedAt = %s, tags[1].CreatedAt = %s, want equal (both tags point at the same manifest)", tags[0].CreatedAt, tags[1].CreatedAt)
+	}
+}
+
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
 

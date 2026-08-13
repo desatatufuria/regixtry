@@ -391,6 +391,55 @@ func (s *Store) ListTags(ctx context.Context, tenant string, repository domain.R
 	return tags, rows.Err()
 }
 
+// ListTagsWithCreatedAt is ListTags plus each tag's manifest created_at,
+// joined from the manifests table (not the tags table's own created_at) so a
+// retag of an existing digest still reports the manifest's original push
+// time for every tag pointing at it (console-tags-table change).
+func (s *Store) ListTagsWithCreatedAt(ctx context.Context, tenant string, repository domain.RepositoryRef, limit int, after string) ([]ports.TagSummary, error) {
+	if err := repository.Validate(); err != nil {
+		return nil, err
+	}
+
+	query := `
+		SELECT t.name, m.created_at
+		FROM tags t
+		JOIN repositories r ON r.id = t.repository_id
+		JOIN manifests m ON m.id = t.manifest_id
+		WHERE t.tenant = ? AND r.tenant = ? AND r.name = ?
+	`
+	args := []any{tenant, tenant, repository.String()}
+	if after != "" {
+		query += ` AND t.name > ?`
+		args = append(args, after)
+	}
+	query += ` ORDER BY t.name ASC`
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT %d", limit)
+	}
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tags []ports.TagSummary
+	for rows.Next() {
+		var name string
+		var createdAt string
+		if err := rows.Scan(&name, &createdAt); err != nil {
+			return nil, err
+		}
+		created, err := time.Parse(time.RFC3339Nano, createdAt)
+		if err != nil {
+			return nil, err
+		}
+		tags = append(tags, ports.TagSummary{Name: name, CreatedAt: created})
+	}
+
+	return tags, rows.Err()
+}
+
 func (s *Store) ListManifestBlobs(ctx context.Context, tenant string, repository domain.RepositoryRef, manifestDigest domain.Digest) ([]domain.Descriptor, error) {
 	if err := repository.Validate(); err != nil {
 		return nil, err
