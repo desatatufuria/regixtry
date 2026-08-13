@@ -627,26 +627,37 @@ to the global row exactly as before.
 
 ## Open Questions
 
-- [ ] **Trivy `--ignorefile` failure behavior (needs the real binary).** Decision 6
-      assumes Trivy tolerates a missing ignore file (scans with no suppressions,
-      exit 0) while `--ignore-policy` errors. Not executable in this phase.
-      `sdd-apply` must confirm both against the installed Trivy before relying on
-      the pre-flight as the *only* guard, and record the observed behavior.
-- [ ] **Suppressed findings and the report.** Decision 9 step 3 assumes ignored
-      vulnerabilities are absent from `payload.Results` rather than re-emitted
-      under a suppressed/modified-findings key by newer Trivy versions. If newer
-      versions do re-emit them, `trivy/runner.go:89-101` would keep counting them
-      and the gate coupling would silently not hold — verify against the installed
-      version before closing the gate test.
-- [ ] **Live-render confirmation.** The 19-row worst case is arithmetic from
-      `renderScanPolicyModal`'s established per-field cost; `sdd-verify` should
-      confirm at 150×24 that the modal shows its full bottom border and help line.
-- [ ] **List endpoint scope.** `ListRepositoryFeatureOverrides` exists only so the
-      Repository Alerts table can render "scanning disabled" for a repository whose
-      override sets `Enabled=false` (proposal, resolved question 4). A repository
-      that has *never* been scanned still has no summary row to annotate; confirm
-      with `sdd-spec` whether injecting a synthetic row is required, or whether
-      annotating existing rows satisfies the requirement.
+- [x] **Trivy `--ignorefile` failure behavior (needs the real binary).** STILL
+      UNVERIFIED: no `trivy` binary is installed in the apply/verify environment
+      (`command -v trivy` fails). The pre-flight `requireReadableFile` check
+      (Decision 6) remains the only guard; Decision 6's assumption about Trivy's
+      own `--ignorefile`/`--ignore-policy` failure behavior is unverified against
+      a real binary. A future environment with Trivy installed must confirm this
+      before removing the pre-flight-as-sole-guard caveat.
+- [x] **Suppressed findings and the report.** STILL UNVERIFIED for the same
+      reason (no Trivy binary available). The gate-coupling integration test
+      (Phase 9, `TestServiceRepositoryOverridePolicyCouplingIsolatesGateOutcomePerRepository`)
+      proves the chain from `ports.ScanResult.Critical`/`High` through to the
+      pull gate using a fake `ports.ScanRunner`, which is the correct boundary
+      for that test (the Service layer never decodes Trivy JSON itself) — but it
+      cannot prove Trivy's own suppressed-findings behavior, only that the
+      Service correctly propagates whatever the runner reports.
+- [x] **Live-render confirmation.** Confirmed via a throwaway debug test
+      (task 8.12, deleted before finishing) rendering the full admin workspace
+      with `repositoryOverrideModal` composited at 150×24
+      (`minViewportWidth`×`minViewportHeight`): both the 19-row (trivy + error)
+      and 15-row (gitleaks, no error) extremes show the modal's full bottom
+      border and help line, with the base workspace still visible around it —
+      no truncation or overflow observed.
+- [x] **List endpoint scope.** Resolved: annotating existing rows satisfies the
+      requirement. `annotateDisabledSummaries` (admin_tables.go) marks a
+      `repositorySummary.Disabled` field when a stored override has
+      `Enabled=false`; a repository that has never been scanned has no
+      `repositorySummary` row to annotate in the first place (rows are derived
+      solely from `ports.ScanRun` records), so no synthetic row is injected —
+      the two spec scenarios both compare rows that already have a natural
+      summary row (a normally-scanned repository, or a disabled one), which
+      `buildAdminScanSummaryTable` renders distinctly by construction.
 - [ ] **Payload size bound.** `SetRepositoryOverride` reads the request body
       without an explicit `MaxBytesReader`, matching `decodeAdminJSON`'s current
       behavior. Confirm that inherited posture is acceptable for an opaque-payload

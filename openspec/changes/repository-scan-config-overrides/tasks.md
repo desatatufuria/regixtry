@@ -295,16 +295,16 @@ dependency-ordered slices — recommend chaining rather than a single PR.
 
 ## Phase 10: Non-Regression
 
-- [ ] 10.1 `go build ./...`, `go vet ./...`, `gofmt -l .` clean.
-- [ ] 10.2 Full `go test -count=1 ./...` green (not just touched packages).
-- [ ] 10.3 Confirm rollback inertness: with the migration applied but zero
+- [x] 10.1 `go build ./...`, `go vet ./...`, `gofmt -l .` clean.
+- [x] 10.2 Full `go test -count=1 ./...` green (not just touched packages).
+- [x] 10.3 Confirm rollback inertness: with the migration applied but zero
       override rows, the existing `scan-policy-gate` and
       `gitleaks-managed-feature` test suites pass unchanged (Migration /
       Rollout section).
-- [ ] 10.4 Resolve design.md's Open Questions flagged for apply/verify: confirm
+- [x] 10.4 Resolve design.md's Open Questions flagged for apply/verify: confirm
       the installed Trivy's actual `--ignorefile`-missing vs.
       `--ignore-policy`-missing behavior if the binary is available in this
       environment (else record as still-unverified, per design); confirm at
       150x24 the modal's full bottom border/help line (covered by 8.12).
-- [ ] 10.5 Update this file's checkboxes as work lands; save `apply-progress`
+- [x] 10.5 Update this file's checkboxes as work lands; save `apply-progress`
       to Engram at each phase boundary (for `sdd-apply` to resume from).
