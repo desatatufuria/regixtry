@@ -1007,6 +1007,225 @@ func TestModelCreateAdminUserRefreshesUsers(t *testing.T) {
 	}
 }
 
+// TestAdminRobotScreensJoinAdminScreenSets is task 5.7's RED test (design.md
+// Decision 7): screenAdminRobots/screenAdminCreateRobot must route through
+// updateKey (isAdminScreen) so the shipped session-expiry/logout plumbing
+// covers them. Only screenAdminRobots -- a list screen, like its
+// screenAdminUsers precedent -- joins isAdminPrincipalScreen (gates the bare
+// 'q' quit key); screenAdminCreateRobot is a free-text Name/Repository form,
+// like screenAdminCreateUser, so it is deliberately excluded (typing "q"
+// into a field must never quit the program).
+func TestAdminRobotScreensJoinAdminScreenSets(t *testing.T) {
+	t.Parallel()
+
+	if !isAdminScreen(screenAdminRobots) {
+		t.Fatalf("isAdminScreen(screenAdminRobots) = false, want true")
+	}
+	if !isAdminScreen(screenAdminCreateRobot) {
+		t.Fatalf("isAdminScreen(screenAdminCreateRobot) = false, want true")
+	}
+	if !isAdminPrincipalScreen(screenAdminRobots) {
+		t.Fatalf("isAdminPrincipalScreen(screenAdminRobots) = false, want true")
+	}
+	if isAdminPrincipalScreen(screenAdminCreateRobot) {
+		t.Fatalf("isAdminPrincipalScreen(screenAdminCreateRobot) = true, want false (free-text form)")
+	}
+}
+
+func TestCanLogoutFromAdminRobotsScreen(t *testing.T) {
+	t.Parallel()
+
+	model := newAdminReadyModel(t, &fakeAdminClient{})
+	model.adminAuth = adminAuthStateAuthenticated
+	model.screen = screenAdminRobots
+
+	if !model.canLogoutAdminFromCurrentScreen() {
+		t.Fatalf("canLogoutAdminFromCurrentScreen() = false, want true on screenAdminRobots")
+	}
+}
+
+// TestModelOpenAdminRobotsFromUsersLoadsRobotList is task 5.7's RED test:
+// pressing "b" on screenAdminUsers opens screenAdminRobots and loads the
+// robot list.
+func TestModelOpenAdminRobotsFromUsersLoadsRobotList(t *testing.T) {
+	t.Parallel()
+
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: time.Date(2026, time.August, 14, 12, 5, 0, 0, time.UTC)},
+		robots:       []ports.AdminRobot{{ID: "u-2", Username: "robot$ci", Repository: "team/app", Role: domainauth.RepoRoleWriter, Enabled: true}},
+	}
+	model := newAdminReadyModel(t, adminClient)
+	updated := runAdminLogin(t, model, "operator", "secret-pass")
+
+	updated = runKey(t, updated, "b")
+
+	if got, want := updated.screen, screenAdminRobots; got != want {
+		t.Fatalf("screen = %q, want %q", got, want)
+	}
+	if adminClient.listRobotsCalls != 1 {
+		t.Fatalf("listRobotsCalls = %d, want 1", adminClient.listRobotsCalls)
+	}
+	if !strings.Contains(updated.View(), "robot$ci") || !strings.Contains(updated.View(), "team/app") {
+		t.Fatalf("view = %q, want robot$ci's row listed", updated.View())
+	}
+}
+
+// TestModelCreateAdminRobotShowsOneTimeSecretOnceOnCreateScreen is task 5.7's
+// CRITICAL RED test (spec.md "Operator manages a robot account end to end"):
+// submitting the create-robot form stays on screenAdminCreateRobot and
+// displays the one-time secret exactly once, with the form cleared.
+func TestModelCreateAdminRobotShowsOneTimeSecretOnceOnCreateScreen(t *testing.T) {
+	t.Parallel()
+
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: time.Date(2026, time.August, 14, 12, 5, 0, 0, time.UTC)},
+		createRobot: ports.AdminCreatedRobot{
+			Robot:    ports.AdminRobot{ID: "u-2", Username: "robot$ci", Repository: "team/app", Role: domainauth.RepoRoleWriter, Enabled: true},
+			Secret:   "robot-secret-value",
+			Accessor: "tok_robot",
+		},
+	}
+	model := newAdminReadyModel(t, adminClient)
+	updated := runAdminLogin(t, model, "operator", "secret-pass")
+
+	updated = runKey(t, updated, "b")
+	updated = runKey(t, updated, "n")
+	if got, want := updated.screen, screenAdminCreateRobot; got != want {
+		t.Fatalf("screen = %q, want %q", got, want)
+	}
+	updated = runKey(t, updated, "ci")
+	updated = runKey(t, updated, "tab")
+	updated = runKey(t, updated, "team/app")
+	updated = runKey(t, updated, "enter")
+
+	if adminClient.createRobotCalls != 1 {
+		t.Fatalf("createRobotCalls = %d, want 1", adminClient.createRobotCalls)
+	}
+	if got, want := adminClient.lastCreateRobotInput.Name, "ci"; got != want {
+		t.Fatalf("input.Name = %q, want %q", got, want)
+	}
+	if got, want := adminClient.lastCreateRobotInput.Repository, "team/app"; got != want {
+		t.Fatalf("input.Repository = %q, want %q", got, want)
+	}
+	if got, want := updated.screen, screenAdminCreateRobot; got != want {
+		t.Fatalf("screen = %q, want %q (stays to show the secret)", got, want)
+	}
+	if got, want := updated.adminView.RevealedTokenSecret, "robot-secret-value"; got != want {
+		t.Fatalf("RevealedTokenSecret = %q, want %q", got, want)
+	}
+	if !strings.Contains(updated.View(), "robot-secret-value") || !strings.Contains(updated.View(), "tok_robot") {
+		t.Fatalf("view = %q, want the one-time secret and accessor rendered", updated.View())
+	}
+	if updated.adminView.CreateRobotForm.Name != "" || updated.adminView.CreateRobotForm.Repository != "" {
+		t.Fatalf("CreateRobotForm = %#v, want cleared after creation", updated.adminView.CreateRobotForm)
+	}
+}
+
+// TestModelAdminRobotTokensKeyClearsAnyPreviouslyRevealedSecretBeforeShowingTokenScreen
+// is task 5.7's CRITICAL defense-in-depth RED test, mirroring PR 3's
+// remediation lesson: RevealedTokenSecret/Accessor are the SAME fields both
+// the robot-creation reveal (screenAdminCreateRobot) and the reused human
+// admin-token reveal (screenAdminEditUserTokens, via "t" on a selected
+// robot) read. If a secret from a just-created robot is still sitting in
+// AdminViewState when the operator presses "t" on ANY robot row, the reused
+// token screen would render that stale secret a second time -- without a
+// fresh token ever being issued. openAdminRobotTokens (the "t" handler) MUST
+// clear it before navigating, exactly like the existing openAdminEditTokens/
+// openAdminEditGrants precedent already does for the human path.
+func TestModelAdminRobotTokensKeyClearsAnyPreviouslyRevealedSecretBeforeShowingTokenScreen(t *testing.T) {
+	t.Parallel()
+
+	adminClient := &fakeAdminClient{
+		tokens: map[string][]ports.AdminToken{"u-2": {{ID: "t-1", UserID: "u-2", Accessor: "tok_new"}}},
+	}
+	model := newAdminReadyModel(t, adminClient)
+	model.adminAuth = adminAuthStateAuthenticated
+	model.screen = screenAdminRobots
+	model.adminView.Robots = []ports.AdminRobot{{ID: "u-2", Username: "robot$ci", Repository: "team/app", Role: domainauth.RepoRoleWriter, Enabled: true}}
+	model.adminView.SelectedRobot = 0
+	// Simulates the state immediately after a DIFFERENT prior creation whose
+	// secret was never explicitly dismissed by the operator -- the exact
+	// "second write path" shape PR 3's remediation caught.
+	model.adminView.RevealedTokenSecret = "stale-secret-from-earlier-creation"
+	model.adminView.RevealedTokenAccessor = "tok_old"
+
+	updated := runKey(t, model, "t")
+
+	if updated.adminView.RevealedTokenSecret != "" {
+		t.Fatalf("RevealedTokenSecret = %q after opening robot tokens, want cleared (must never leak a stale secret onto the reused token screen)", updated.adminView.RevealedTokenSecret)
+	}
+	if updated.adminView.RevealedTokenAccessor != "" {
+		t.Fatalf("RevealedTokenAccessor = %q after opening robot tokens, want cleared", updated.adminView.RevealedTokenAccessor)
+	}
+	if strings.Contains(updated.View(), "stale-secret-from-earlier-creation") {
+		t.Fatalf("view = %q, must never render the stale secret", updated.View())
+	}
+	if got, want := updated.screen, screenAdminEditUserTokens; got != want {
+		t.Fatalf("screen = %q, want %q (reuses the existing token screen)", got, want)
+	}
+	if got, want := updated.adminView.SelectedUserID, "u-2"; got != want {
+		t.Fatalf("SelectedUserID = %q, want the robot's ID %q", got, want)
+	}
+}
+
+// TestModelAdminCreateRobotEscClearsRevealedSecretBeforeReturningToList
+// triangulates the guard above from the other exit path: leaving
+// screenAdminCreateRobot via Esc after a secret was shown must also clear
+// it, so a later "n" (reopening the create form) never renders it again.
+func TestModelCreateAdminRobotEscClearsRevealedSecretBeforeReturningToList(t *testing.T) {
+	t.Parallel()
+
+	model := newAdminReadyModel(t, &fakeAdminClient{})
+	model.adminAuth = adminAuthStateAuthenticated
+	model.screen = screenAdminCreateRobot
+	model.adminView.RevealedTokenSecret = "just-shown-secret"
+	model.adminView.RevealedTokenAccessor = "tok_just_shown"
+
+	updated := runKey(t, model, "esc")
+
+	if got, want := updated.screen, screenAdminRobots; got != want {
+		t.Fatalf("screen = %q, want %q", got, want)
+	}
+	if updated.adminView.RevealedTokenSecret != "" {
+		t.Fatalf("RevealedTokenSecret = %q after Esc, want cleared", updated.adminView.RevealedTokenSecret)
+	}
+}
+
+// TestModelEnableDisableAdminRobotConfirmFlow is task 5.7's RED test for the
+// enable/disable mutation, mirroring the existing human-user enable/disable
+// confirm flow but scoped to screenAdminRobots and reusing
+// EnableUser/DisableUser with the robot's user ID (design.md Decision 6).
+func TestModelEnableDisableAdminRobotConfirmFlow(t *testing.T) {
+	t.Parallel()
+
+	adminClient := &fakeAdminClient{
+		robots:      []ports.AdminRobot{{ID: "u-2", Username: "robot$ci", Repository: "team/app", Role: domainauth.RepoRoleWriter, Enabled: true}},
+		disableUser: ports.AdminUser{ID: "u-2", Username: "robot$ci", Enabled: false},
+	}
+	model := newAdminReadyModel(t, adminClient)
+	model.adminAuth = adminAuthStateAuthenticated
+	model.screen = screenAdminRobots
+	model.adminView.Robots = adminClient.robots
+	model.adminView.SelectedRobot = 0
+
+	updated := runKey(t, model, "x")
+	if !strings.Contains(updated.View(), `Confirm disable robot "robot$ci"?`) {
+		t.Fatalf("view = %q, want a disable-robot confirmation", updated.View())
+	}
+
+	updated = runKey(t, updated, "enter")
+
+	if adminClient.disableCalls != 1 {
+		t.Fatalf("disableCalls = %d, want 1", adminClient.disableCalls)
+	}
+	if adminClient.listRobotsCalls < 1 {
+		t.Fatalf("listRobotsCalls = %d, want at least 1 (refreshed after mutation)", adminClient.listRobotsCalls)
+	}
+	if got, want := updated.screen, screenAdminRobots; got != want {
+		t.Fatalf("screen = %q, want %q", got, want)
+	}
+}
+
 func TestModelUsersScreenShowsOnlyListAndSearch(t *testing.T) {
 	t.Parallel()
 
