@@ -1,8 +1,8 @@
-# Operación
+# Operations
 
-## Servicio
+## Service
 
-Para instalaciones gestionadas:
+For managed installations:
 
 ```bash
 systemctl status regixtry
@@ -10,20 +10,20 @@ systemctl restart regixtry
 journalctl -u regixtry -f
 ```
 
-El servidor registra método, path, status, duración y challenge cuando existe. No hay endpoint de métricas ni health dedicado; la comprobación de readiness usa `/v2/` y acepta `200` o `401`.
+The server logs method, path, status, duration, and the challenge when present. There is no dedicated metrics or health endpoint; readiness checks use `/v2/` and accept `200` or `401`.
 
 ## Backup
 
-El estado de registry requiere conservar conjuntamente `metadata.db` y el directorio `content`. PostgreSQL contiene usuarios, grants y tokens cuando auth está habilitada. ⚠️ No se ha podido confirmar a partir del código actual un comando de backup/restore integrado; use herramientas externas de SQLite/PostgreSQL según su política operativa.
+Registry state requires keeping `metadata.db` and the `content` directory together. PostgreSQL holds users, grants, and tokens when auth is enabled. The current code does not confirm a built-in backup/restore command; use external SQLite/PostgreSQL tooling per your operational policy.
 
 ## TLS
 
-`local-http` no cifra. `reverse-proxy` delega TLS a un proxy. `direct-tls` usa `-tls-cert-file` y `-tls-key-file`. La URL pública debe coincidir con el esquema y el realm derivado.
+`local-http` does not encrypt traffic. `reverse-proxy` delegates TLS to a proxy. `direct-tls` uses `-tls-cert-file` and `-tls-key-file`. The public URL must match the scheme and the derived realm.
 
-## Upgrade y rollback
+## Upgrade and rollback
 
-`upgrade` usa la provenance del setup, ejecuta preflight, soporta `--ref` y `--yes`, y muestra progreso. El rollback de bootstrap elimina artefactos generados y detiene el servicio. Revisar la salida del comando y `journalctl` antes de repetir.
+`upgrade` uses the setup provenance record, runs preflight checks, supports `--ref` and `--yes`, and shows progress. Bootstrap rollback removes generated artifacts and stops the service. Review the command output and `journalctl` before retrying.
 
-## Limpieza
+## Cleanup
 
-No hay garbage collector ni política de retención implementada. No borrar manualmente blobs sin correlacionar metadata: los manifests los referencian por digest.
+There is no garbage collector or retention policy implemented. Do not manually delete blobs without correlating metadata: manifests reference them by digest.

@@ -1,12 +1,12 @@
 # Regixtry
 
-Regixtry es un registry de imágenes de bajo consumo, distribuido como un binario Go único. Expone una superficie HTTP compatible con los flujos Docker Registry/OCI implementados por este repositorio, guarda los blobs en el filesystem y la metadata en SQLite. La autenticación opcional usa PostgreSQL.
+Regixtry is a low-footprint OCI/Docker image registry distributed as a single Go binary. It exposes an HTTP surface compatible with the Docker Registry/OCI push-pull flows this repository implements, stores blobs on the filesystem, and keeps registry metadata in SQLite. Optional authentication and access control run on a separate PostgreSQL database.
 
-No es un reemplazo completo de Harbor: la versión actual es single-tenant, local y deliberadamente limitada.
+It is not a full Harbor replacement: the current scope is single-tenant, single-node, and deliberately narrow — a correct local registry first, platform features later. See [`docs/roadmap.md`](docs/roadmap.md) for what's in and out of scope.
 
-## Quick Start local
+## Quick start (no auth)
 
-Requisitos: Go `1.26.0` o Docker/Compose.
+Requirements: Go `1.26.0`, or Docker/Compose.
 
 ```bash
 go run ./cmd/regixtry serve \
@@ -15,116 +15,108 @@ go run ./cmd/regixtry serve \
   -storage-root ./data
 ```
 
-Comprobar el registry:
+Check it's up:
 
 ```bash
 curl -i http://127.0.0.1:5000/v2/
 ```
 
-Para autenticación y Compose, consultar [`docs/getting-started.md`](docs/getting-started.md).
+Push and pull with a real Docker client:
 
-## Capacidades confirmadas
+```bash
+docker pull alpine:3.20
+docker tag alpine:3.20 127.0.0.1:5000/test/alpine:3.20
+docker push 127.0.0.1:5000/test/alpine:3.20
+docker pull 127.0.0.1:5000/test/alpine:3.20
+```
 
-- Push y pull de manifests y blobs mediante la superficie `/v2/` implementada.
-- Listado de catálogo y tags con paginación `n`/`last`.
-- Uploads por `POST`, `PATCH` y `PUT`, con validación SHA-256 antes de publicar el blob.
-- Metadata de registry en SQLite y contenido en filesystem.
-- Usuarios, grants por repositorio y tokens en PostgreSQL cuando se configura `-auth-postgres-dsn`.
-- Challenge Bearer y emisión de tokens en `/auth/token`.
-- API administrativa autenticada bajo `/admin/v1`.
-- CLI de servicio, setup, bootstrap, uninstall, upgrade y TUI Bubble Tea.
-- Instalador Linux de releases con SHA-256 para `amd64` y `arm64`.
+## Quick start with authentication and access control
 
-## Instalación
+Auth is entirely optional — pass `-auth-postgres-dsn` (or set `REGISTRY_AUTH_POSTGRES_DSN`) and Postgres-backed users, grants, and robot accounts turn on. Without it, the registry runs anonymous.
+
+```bash
+# 1. Postgres for auth state (separate database from the SQLite registry metadata)
+docker network create dtf-netwok   # required once; docker-compose.yml expects this network to already exist
+docker compose up -d postgres
+DSN="postgres://registry:registry@localhost:15432/regixtry_auth?sslmode=disable"
+
+# 2. Bootstrap the first global admin
+regixtry bootstrap-admin -auth-postgres-dsn "$DSN" -username admin -password-stdin <<< 'change-me-now'
+
+# 3. Serve, with auth enabled
+regixtry serve -addr 127.0.0.1:5000 -storage-root ./data -auth-postgres-dsn "$DSN"
+
+# 4. Log in and push
+docker login 127.0.0.1:5000 -u admin -p change-me-now
+docker push 127.0.0.1:5000/test/alpine:3.20
+```
+
+From here, `regixtry tui -api-base-url http://127.0.0.1:5000` gives you an interactive console to create users, grant per-repository roles (`repo-reader`/`repo-writer`/`repo-admin`), delegate grant management to a repo-admin without making them a global admin, mint bounded-TTL robot accounts for CI/CD, or flip a user to registry-wide read-only. Full walkthrough: [`docs/users.md`](docs/users.md) and [`docs/tui.md`](docs/tui.md).
+
+## What's implemented
+
+- Push/pull of manifests and blobs over the real `/v2/` surface — catalog and tag listing with `n`/`last` pagination, chunked uploads (`POST`/`PATCH`/`PUT`) with SHA-256 validation before a blob is published.
+- Registry metadata in SQLite, blob content on the filesystem.
+- Optional PostgreSQL-backed access control: users, per-repository role grants, delegated repo-admin grant management, registry-wide read-only accounts, and bounded-TTL revocable robot accounts for CI — see [`docs/authentication.md`](docs/authentication.md) and [`docs/security.md`](docs/security.md).
+- Bearer challenge and token issuance at `/auth/token`; a large authenticated admin API under `/admin/v1` — see [`docs/api.md`](docs/api.md).
+- Three built-in features with a shared lifecycle (list/show/status/configure/install/upgrade/rollback): **Trivy** vulnerability scanning with an optional pull-blocking policy gate, **Gitleaks** secret scanning, and cosign-based image **signing** verification — see [`docs/features.md`](docs/features.md).
+- CLI for serving, setup/bootstrap/uninstall/upgrade, and a Bubble Tea TUI that doubles as a local read-only console and, when pointed at a running server, a full HTTP admin client.
+- A Linux release installer with SHA-256-verified `amd64`/`arm64` binaries, driven by `regixtry setup`/`upgrade`.
+
+## Install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/desatatufuria/regixtry/main/install.sh | bash
 regixtry setup
 ```
 
-El script instala el binario; `regixtry setup` gestiona el runtime Linux + systemd. Para procedimientos completos, consultar [`docs/installation.md`](docs/installation.md).
+`install.sh` installs the binary; `regixtry setup` provisions the Linux/systemd runtime (or use `regixtry serve` directly for local/manual runs, as above). Full procedures, including reverse-proxy and direct-TLS modes: [`docs/installation.md`](docs/installation.md). To move an existing install to a newer release: `regixtry upgrade` (resolves the latest non-prerelease tag from GitHub Releases automatically, or pass `-ref` to pin one).
 
-### Built-in Trivy feature management
+## Try a feature: vulnerability scanning
 
-Regixtry now ships `trivy` as the first built-in optional feature. Setup and lifecycle commands keep base bootstrap truth only; Trivy configuration lives in authoritative feature state (`scan_settings`).
-
-Example setup flags:
+Trivy is the most complete built-in feature end to end — a good first thing to try after setup:
 
 ```bash
-sudo /absolute/path/to/regixtry setup --mode daemon-sqlite \
-  --public-url https://registry.example.com \
-  --runtime-tls-mode reverse-proxy \
-  --trivy-enabled \
-  --trivy-schedule-enabled \
-  --trivy-interval 6h \
-  --trivy-timeout 20m \
-  --trivy-max-concurrency 2
-```
-
-Those legacy `setup --trivy-*` flags only bridge shared scheduling knobs into feature state. Operators still need to configure `service_url` plus `registry_reachable_url` before Trivy scans can run.
-
-Use the feature CLI after setup:
-
-```bash
-regixtry feature list
-regixtry feature show trivy
-regixtry feature status trivy
 regixtry feature configure trivy \
-  -enabled \
-  -schedule-enabled \
-  -interval 6h \
-  -timeout 20m \
+  -enabled -schedule-enabled -interval 6h -timeout 20m \
   -service-url https://scanner.example.com \
   -registry-reachable-url https://registry.internal:5443 \
-  -tls-ca-cert-path /etc/regixtry/trivy-ca.pem \
   -max-concurrency 2
+
+regixtry feature status trivy
+docker push 127.0.0.1:5000/test/alpine:3.20   # triggers a push-scan once enabled
+curl -s http://127.0.0.1:5000/v2/test/alpine/manifests/3.20/scan-status
 ```
 
-- `service_url` must use `http` or `https`.
-- `registry_reachable_url` is the scanner-facing registry address for localhost-container and remote-scanner deployments.
-- `feature status trivy` reports `/healthz` and `/version` readiness details.
+Gitleaks and signing follow the same `regixtry feature ...` shape — full detail, including each feature's specific quirks (Gitleaks has no independent trigger; signing is fail-closed by default, unlike Trivy), in [`docs/features.md`](docs/features.md).
 
-Legacy `setup --trivy-*` flags remain available for one migration slice. When provided, setup imports them into feature state and then points operators to `regixtry feature ...` for future changes.
+## Documentation
 
-Admin API endpoints for this slice:
-
-- `GET /admin/v1/features`
-- `GET /admin/v1/features/trivy`
-- `GET /admin/v1/features/trivy/status`
-- `PUT /admin/v1/features/trivy/config`
-- `POST /admin/v1/features/trivy:enable`
-- `POST /admin/v1/features/trivy:disable`
-- `GET/PUT /admin/v1/scan-settings`
-- `POST /admin/v1/scan-runs`
-- `GET /admin/v1/scan-runs?repository=&limit=`
-
-The richer TUI management flow for feature administration remains deferred.
-
-## Documentación
-
-- [Inicio rápido](docs/getting-started.md)
-- [Instalación](docs/installation.md)
-- [Configuración](docs/configuration.md)
-- [Arquitectura](docs/architecture.md)
-- [Autenticación y usuarios](docs/authentication.md)
-- [API HTTP](docs/api.md)
-- [Registry y Docker/OCI](docs/registry.md)
-- [CLI](docs/cli.md) y [TUI](docs/tui.md)
+- [Getting started](docs/getting-started.md)
+- [Installation](docs/installation.md)
+- [Configuration](docs/configuration.md)
+- [Architecture](docs/architecture.md)
+- [Authentication and access control](docs/authentication.md)
+- [Users, grants, and robot accounts](docs/users.md)
+- [HTTP API](docs/api.md)
+- [Registry / Docker-OCI protocol](docs/registry.md)
+- [CLI](docs/cli.md) and [TUI](docs/tui.md)
+- [Built-in features (Trivy, Gitleaks, Signing)](docs/features.md)
 - [CI/CD](docs/ci-cd.md)
-- [Operación](docs/operations.md)
-- [Seguridad](docs/security.md)
+- [Operations](docs/operations.md)
+- [Security](docs/security.md)
 - [Troubleshooting](docs/troubleshooting.md)
-- [Desarrollo](docs/development.md)
-- [Referencia de código](docs/code-reference.md)
-- [Auditoría de documentación](docs/documentation-audit.md)
+- [Development](docs/development.md)
+- [Code reference](docs/code-reference.md)
+- [Documentation audit](docs/documentation-audit.md)
+- [Roadmap](docs/roadmap.md)
 
-## Límites actuales
+## Current limits
 
-- Solo existe un resolver de tenant single-tenant; el tenant por defecto es `default`.
-- No se confirmó almacenamiento remoto, replicación, multi-tenant, métricas ni health endpoint dedicado.
-- No hay endpoint de garbage collection ni API de borrado de manifests/blobs.
-- `DELETE` de un upload devuelve `UNSUPPORTED`.
-- La TUI inspecciona el registry y permite una parte de la administración autenticada, pero no implementa todas las mutaciones de `/admin/v1`.
-- ⚠️ No se ha podido confirmar a partir del código actual una certificación de compatibilidad completa con OCI Distribution Specification o multi-arch.
+- Single-tenant only; the default (and only) tenant is `default`.
+- No remote/replicated storage, no metrics or dedicated health endpoint — readiness is `/v2/`.
+- No garbage collection and no manifest/blob delete API; upload cancellation returns `UNSUPPORTED`.
+- The TUI's local Console browsing (repositories/tags/manifests) is **not** access-controlled — it requires no login at all, and any local session can browse everything. The real enforcement boundaries are the Docker registry protocol (`/v2/...`) and the admin API (`/admin/v1/...`). See [`docs/security.md`](docs/security.md).
+- No confirmed full OCI Distribution Specification conformance certification or multi-arch manifest-list handling.
 
-El alcance detallado y las ausencias verificadas están en [`docs/documentation-audit.md`](docs/documentation-audit.md).
+Verified scope and known gaps are tracked in [`docs/documentation-audit.md`](docs/documentation-audit.md).

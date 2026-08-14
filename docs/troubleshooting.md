@@ -1,53 +1,53 @@
 # Troubleshooting
 
-## El servicio no arranca
+## The service does not start
 
-**Síntoma:** `systemctl` muestra fallo.
+**Symptom:** `systemctl` reports a failure.
 
-**Diagnóstico:**
+**Diagnosis:**
 
 ```bash
 systemctl status regixtry
 journalctl -u regixtry -n 100 --no-pager
 ```
 
-Revisar URL pública, paths TLS, DSN, permisos y si existe un admin activo cuando auth está habilitada.
+Check the public URL, TLS paths, DSN, permissions, and whether an admin exists when auth is enabled.
 
-## Puerto ocupado
+## Port already in use
 
-**Síntoma:** setup informa que el bind local está ocupado.
+**Symptom:** setup reports that the local bind address is busy.
 
 ```bash
 ss -ltnp | grep ':5000'
 ```
 
-Cambiar `-addr` o detener el proceso que usa el puerto.
+Change `-addr` or stop the process using the port.
 
-## `docker login` falla
+## `docker login` fails
 
-Confirmar que `REGISTRY_PUBLIC_URL` coincide con la URL usada por Docker y que `/auth/token` es accesible. Verificar que el usuario esté habilitado, la contraseña sea correcta y exista un admin inicial.
+Confirm that `REGISTRY_PUBLIC_URL` matches the URL Docker is using and that `/auth/token` is reachable. Verify the user is enabled, the password is correct, and an initial admin exists.
 
 ```bash
 curl -i https://registry.example.com/v2/
 curl -u USERNAME:PASSWORD 'https://registry.example.com/auth/token?scope=repository:team/image:pull'
 ```
 
-## `push` devuelve `UNAUTHORIZED` o `DENIED`
+## `push` returns `UNAUTHORIZED` or `DENIED`
 
-El token debe tener scope de push y el usuario debe poseer grant writer/admin para ese repository. Revisar `GET /admin/v1/users/{id}/grants`.
+The token must carry push scope, and the user must hold a writer/admin grant for that repository. Check `GET /admin/v1/users/{id}/grants`.
 
-## `push` devuelve digest/manifest inválido
+## `push` returns an invalid digest/manifest
 
-El blob debe completarse con el digest SHA-256 correcto. Un manifest se rechaza si referencia blobs ausentes. Revisar la secuencia `POST`, `PATCH`, `PUT` y el parámetro `digest`.
+The blob must be completed with the correct SHA-256 digest. A manifest is rejected if it references missing blobs. Review the `POST`, `PATCH`, `PUT` sequence and the `digest` parameter.
 
-## Base de datos inaccesible
+## Database unreachable
 
-Revisar `-db`, `REGISTRY_DATABASE_PATH`, permisos del directorio y que el archivo SQLite pertenezca al usuario del servicio. Para auth, validar el DSN y conectividad PostgreSQL.
+Check `-db`, `REGISTRY_DATABASE_PATH`, directory permissions, and that the SQLite file is owned by the service user. For auth, validate the DSN and PostgreSQL connectivity.
 
-## TLS falla
+## TLS fails
 
-Certificado y clave deben existir y ser entregados juntos. `http` no puede combinarse con TLS inputs. En `direct-tls`, usar `https://` en `-public-url` y confiar en la CA desde Docker/curl.
+The certificate and key must both exist and be provided together. `http` cannot be combined with TLS inputs. For `direct-tls`, use `https://` in `-public-url` and trust the CA from Docker/curl.
 
-## El TUI no carga admin
+## The TUI does not load admin data
 
-Usar `-api-base-url` con una URL absoluta HTTP/HTTPS y credenciales válidas. La TUI inspecciona localmente, pero las mutaciones administrativas no implementadas se muestran como no disponibles.
+Use `-api-base-url` with an absolute HTTP/HTTPS URL and valid credentials. The TUI inspects locally, but unimplemented administrative mutations are shown as unavailable.

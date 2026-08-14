@@ -1,8 +1,8 @@
-# Instalación
+# Installation
 
-## Desde release Linux
+## From a Linux release
 
-`install.sh` descarga metadata de GitHub Releases, obtiene el tarball y el archivo de checksums, valida SHA-256, exige que el archivo contenga únicamente `regixtry` y lo instala como ejecutable.
+`install.sh` downloads release metadata from GitHub Releases, fetches the tarball and its checksum file, validates the SHA-256, requires the archive to contain only the `regixtry` binary, and installs it as an executable.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/desatatufuria/regixtry/main/install.sh | bash
@@ -10,9 +10,9 @@ curl -fsSL https://raw.githubusercontent.com/desatatufuria/regixtry/main/install
 curl -fsSL https://raw.githubusercontent.com/desatatufuria/regixtry/main/install.sh | bash -s -- --dir "$HOME/.local/bin"
 ```
 
-Requiere `curl`, `tar`, `sha256sum`, `install` y `mktemp`. La ruta automática es `/usr/local/bin` si es escribible; en otro caso `$HOME/.local/bin`. Solo se resuelven Linux `amd64` y `arm64`.
+Requires `curl`, `tar`, `sha256sum`, `install`, and `mktemp`. The install directory defaults to `/usr/local/bin` when writable, otherwise `$HOME/.local/bin`. Only Linux `amd64` and `arm64` are resolved.
 
-## Desde fuente
+## From source
 
 ```bash
 git clone https://github.com/desatatufuria/regixtry.git
@@ -20,9 +20,9 @@ cd regixtry
 go build -o regixtry ./cmd/regixtry
 ```
 
-La versión Go declarada en `go.mod` es `1.26.0`.
+The Go version declared in `go.mod` is `1.26.0`.
 
-## Setup Linux + systemd
+## Linux + systemd setup
 
 ```bash
 sudo /absolute/path/to/regixtry setup --mode daemon-sqlite \
@@ -31,7 +31,7 @@ sudo /absolute/path/to/regixtry setup --mode daemon-sqlite \
   --addr 127.0.0.1:5000
 ```
 
-El setup crea el env file, la unidad systemd, `metadata.db`, `content/`, el recibo de bootstrap y la provenance de lifecycle. Los defaults son `/var/lib/regixtry`, `/etc/regixtry/bootstrap-state.json` y `/etc/systemd/system/regixtry.service`.
+Setup creates the env file, the systemd unit, `metadata.db`, `content/`, the bootstrap receipt, and the lifecycle provenance record. Defaults are `/var/lib/regixtry`, `/etc/regixtry/bootstrap-state.json`, and `/etc/systemd/system/regixtry.service`.
 
 ### Built-in Trivy feature migration
 
@@ -69,7 +69,7 @@ regixtry feature rollback trivy
 
 `feature install` and `feature upgrade` now emit staged progress so long-running managed-runtime work does not look hung. After installation, operators can use `regixtry feature list` for a table view of `CURRENT`, `LATEST`, and `UPDATE`, and `regixtry feature status trivy` for the same request-scoped latest-version awareness with an `unknown` fallback.
 
-Comandos operativos:
+Operational commands:
 
 ```bash
 sudo systemctl status regixtry
@@ -79,13 +79,13 @@ sudo systemctl restart regixtry
 sudo journalctl -u regixtry
 ```
 
-`reverse-proxy` requiere que el proxy termine TLS y que Regixtry escuche normalmente por HTTP. `direct-tls` requiere ambos archivos PEM de certificado y clave.
+`reverse-proxy` requires the proxy to terminate TLS while Regixtry listens over plain HTTP. `direct-tls` requires both the certificate and key PEM files.
 
-## Uninstall y upgrade
+## Uninstall and upgrade
 
 ```bash
 sudo /absolute/path/to/regixtry uninstall
 sudo /absolute/path/to/regixtry upgrade --yes
 ```
 
-El uninstall utiliza la provenance persistida y reporta elementos eliminados, ausentes, omitidos o fallidos. No elimina drift no registrado.
+Uninstall uses the persisted provenance record and reports removed, missing, skipped, or failed items. It does not remove unrecorded drift.

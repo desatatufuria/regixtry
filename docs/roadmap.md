@@ -21,6 +21,7 @@ Read this document as a sequencing contract, not a wish list.
 | Operator admin API | Narrow `/admin/v1` user/grant/admin-token administration over the shared auth service | Implemented and repo-verified; pagination, delete-user, and richer clients stay deferred |
 | Operator console | Thin Bubble Tea client for inspection plus authenticated, read-only admin browsing | Implemented for login, users, grants, and admin tokens; admin mutations and richer client ergonomics stay deferred |
 | Repository access control completion | Registry-wide read-only role, delegated repo-admin grant management scoped to one repository, and bounded-TTL, revocable robot accounts | Implemented across the auth domain/service, `/admin/v1`, and the operator console |
+| Supply-chain scanning and signing | Trivy vulnerability scanning (fail-open policy gate), Gitleaks secret scanning (no pull gate), and cosign signature verification (fail-closed policy gate), each a managed feature — see [`docs/features.md`](features.md) for each feature's specific gating behavior | Implemented across `internal/domain/signing/`, `internal/infra/scanning/trivy/`, `internal/infra/scanning/gitleaks/`, `/admin/v1/signing-policy`, and the operator console |
 
 ## Approved v1 boundary
 
@@ -52,8 +53,9 @@ These items must stay out of the active auth-v1 review slices unless the approve
 - Multi-tenant isolation and advanced RBAC.
 - Replication or remote-object-store adapters.
 - Deletion/retention platforms and operator-triggered garbage collection controls.
-- Signing, scanning, provenance, and supply-chain automation.
 - Platform-style admin APIs beyond the narrow `/admin/v1` surface and thin operator console.
+
+Note: signing, scanning, and supply-chain automation were listed here as a non-goal in an earlier revision of this roadmap. That is no longer accurate — Trivy scanning, Gitleaks secret scanning, and cosign signature verification have shipped (see the `Supply-chain scanning and signing` row above). Provenance attestation beyond signature verification remains out of scope.
 
 ## Delivery sequence for `registry-foundation`
 
@@ -115,7 +117,7 @@ When roadmap-relevant scope changes:
 | --- | --- |
 | Tenancy and access | Multi-tenant isolation and stronger authorization models |
 | Storage and operations | Replication, retention, garbage collection controls, and remote object storage |
-| Supply chain | Signing, scanning, provenance workflows |
+| Supply chain | Provenance attestation beyond the shipped cosign signature verification, scanning, and signing (see the `Supply-chain scanning and signing` v1 workstream — those are implemented, not deferred) |
 | Platform control plane | Richer admin APIs, automation, and asynchronous job orchestration |
 
 ## Sequencing rule

@@ -15,7 +15,7 @@
 | `feature install <name>` / `upgrade <name>` | `-storage-root`, `-db`, `-tenant`, optional `-version` | Installs or upgrades the managed Trivy runtime with staged progress (`resolve`, `download`, `verify`, `extract`, `activate`, `probe`, `complete`) |
 | `feature rollback <name>` | `-storage-root`, `-db`, `-tenant` | Restores the previous managed Trivy runtime |
 | `feature enable <name>` / `disable <name>` | `-storage-root`, `-db`, `-tenant` | Toggles a built-in feature |
-| `feature configure <name>` | `-storage-root`, `-db`, `-tenant`, `-enabled`, `-schedule-enabled`, `-interval`, `-timeout`, `-registry-reachable-url`, `-max-concurrency` | Updates feature-owned intent without taking runtime ownership |
+| `feature configure <name>` | `-storage-root`, `-db`, `-tenant`, `-enabled`, `-schedule-enabled`, `-interval`, `-timeout`, `-service-url`, `-registry-reachable-url`, `-auth-token`, `-tls-ca-cert-path`, `-tls-insecure-skip-verify`, `-max-concurrency` | Updates feature-owned intent without taking runtime ownership |
 | `uninstall` | `-state-path` | Removes recorded base-install artifacts |
 | `upgrade` | `-ref`, `-state-path`, `-yes` | Runs the Regixtry binary upgrade preflight |
 
