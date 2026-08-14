@@ -460,6 +460,7 @@ func renderAdminCreateUserScreen(theme adminTheme, view AdminViewState) string {
 		renderTextField(theme, "Username", form.Username, form.Focus == adminCreateUserFieldUsername),
 		renderSecretField(theme, "Password", form.Password, form.Focus == adminCreateUserFieldPassword),
 		renderToggleField(theme, "Create as admin", form.IsAdmin, form.Focus == adminCreateUserFieldIsAdmin),
+		renderToggleField(theme, "Read-only", form.IsReadOnly, form.Focus == adminCreateUserFieldIsReadOnly),
 		renderToggleField(theme, "Enabled", form.Enabled, form.Focus == adminCreateUserFieldEnabled),
 	}, "\n"))
 }

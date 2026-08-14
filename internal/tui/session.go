@@ -18,6 +18,7 @@ const (
 	adminCreateUserFieldUsername adminCreateUserField = iota
 	adminCreateUserFieldPassword
 	adminCreateUserFieldIsAdmin
+	adminCreateUserFieldIsReadOnly
 	adminCreateUserFieldEnabled
 )
 
@@ -71,11 +72,12 @@ const (
 )
 
 type adminCreateUserForm struct {
-	Username string
-	Password string
-	IsAdmin  bool
-	Enabled  bool
-	Focus    adminCreateUserField
+	Username   string
+	Password   string
+	IsAdmin    bool
+	IsReadOnly bool
+	Enabled    bool
+	Focus      adminCreateUserField
 }
 
 type adminResetPasswordForm struct {

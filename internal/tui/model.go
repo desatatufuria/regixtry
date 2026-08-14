@@ -2286,10 +2286,11 @@ func (m Model) updateCreateUserFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case isEnterKey(msg):
 		input := ports.AdminCreateUserInput{
-			Username: strings.TrimSpace(m.adminView.CreateUserForm.Username),
-			Password: m.adminView.CreateUserForm.Password,
-			IsAdmin:  m.adminView.CreateUserForm.IsAdmin,
-			Enabled:  m.adminView.CreateUserForm.Enabled,
+			Username:   strings.TrimSpace(m.adminView.CreateUserForm.Username),
+			Password:   m.adminView.CreateUserForm.Password,
+			IsAdmin:    m.adminView.CreateUserForm.IsAdmin,
+			IsReadOnly: m.adminView.CreateUserForm.IsReadOnly,
+			Enabled:    m.adminView.CreateUserForm.Enabled,
 		}
 		if input.Username == "" || input.Password == "" {
 			m.status = "Username and password are required."
@@ -3146,6 +3147,8 @@ func (m *Model) toggleCreateUserField() {
 	switch m.adminView.CreateUserForm.Focus {
 	case adminCreateUserFieldIsAdmin:
 		m.adminView.CreateUserForm.IsAdmin = !m.adminView.CreateUserForm.IsAdmin
+	case adminCreateUserFieldIsReadOnly:
+		m.adminView.CreateUserForm.IsReadOnly = !m.adminView.CreateUserForm.IsReadOnly
 	case adminCreateUserFieldEnabled:
 		m.adminView.CreateUserForm.Enabled = !m.adminView.CreateUserForm.Enabled
 	}
@@ -3172,6 +3175,7 @@ func nextCreateUserField(field adminCreateUserField) adminCreateUserField {
 	}
 	return field + 1
 }
+
 
 func nextGrantRole(current domainauth.RepoRole) domainauth.RepoRole {
 	switch current {
