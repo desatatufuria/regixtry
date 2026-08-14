@@ -44,11 +44,25 @@ type AdminClient interface {
 	ListUserGrants(ctx context.Context, session AdminSession, userID string) ([]ports.AdminRepoGrant, error)
 	PutUserGrant(ctx context.Context, session AdminSession, input ports.AdminPutRepoGrantInput) (ports.AdminRepoGrant, error)
 	DeleteUserGrant(ctx context.Context, session AdminSession, userID string, repository string) error
+	// ListRepositoryGrants/PutRepositoryGrant/DeleteRepositoryGrant back the
+	// repo-admin delegate's own grants view (design.md Decision 7), calling
+	// /admin/v1/repositories/{repo}/grants[/{username}] rather than the
+	// user-centric /admin/v1/users/{id}/grants routes above.
+	ListRepositoryGrants(ctx context.Context, session AdminSession, repository string) ([]ports.AdminRepositoryGrant, error)
+	PutRepositoryGrant(ctx context.Context, session AdminSession, input ports.AdminPutRepositoryGrantInput) (ports.AdminRepositoryGrant, error)
+	DeleteRepositoryGrant(ctx context.Context, session AdminSession, repository string, username string) error
 	ListUserAdminTokens(ctx context.Context, session AdminSession, userID string) ([]ports.AdminToken, error)
 	CreateUserAdminToken(ctx context.Context, session AdminSession, input ports.AdminCreateTokenInput) (ports.AdminCreatedToken, error)
 	RevokeUserAdminToken(ctx context.Context, session AdminSession, userID string, accessor string) error
 	EnableUser(ctx context.Context, session AdminSession, userID string) (ports.AdminUser, error)
 	DisableUser(ctx context.Context, session AdminSession, userID string) (ports.AdminUser, error)
+	// ListRobots/CreateRobot back screenAdminRobots/screenAdminCreateRobot
+	// (design.md Decision 6): two new routes. Enable/disable/delete and
+	// token issue/list/revoke deliberately reuse EnableUser/DisableUser/
+	// CreateUserAdminToken etc. above with the robot's user ID -- no new
+	// client methods for those.
+	ListRobots(ctx context.Context, session AdminSession) ([]ports.AdminRobot, error)
+	CreateRobot(ctx context.Context, session AdminSession, input ports.AdminCreateRobotInput) (ports.AdminCreatedRobot, error)
 	// GetRepositoryOverride returns the stored override for one
 	// (repository, feature) pair. A 404 response (no override row) is a
 	// valid state, not an error: it returns (zero value, false, nil).
@@ -58,6 +72,10 @@ type AdminClient interface {
 	ListRepositoryOverrides(ctx context.Context, session AdminSession, feature string) ([]ports.RepositoryOverrideDetails, error)
 	SetRepositoryOverride(ctx context.Context, session AdminSession, repository string, feature string, input ports.RepositoryOverrideDetails) (ports.RepositoryOverrideDetails, error)
 	ClearRepositoryOverride(ctx context.Context, session AdminSession, repository string, feature string) error
+	// DeleteRobot backs the robot-accounts hard-delete route (registry-acl-v1
+	// follow-up). Added on PR 4 (backend-only) as part of the API contract;
+	// the TUI key/UI wiring lands on PR 5.
+	DeleteRobot(ctx context.Context, session AdminSession, userID string) error
 }
 
 type HTTPAdminClient struct {
@@ -330,6 +348,41 @@ func (c *HTTPAdminClient) DeleteUserGrant(ctx context.Context, session AdminSess
 	return c.requestNoContent(ctx, stdhttp.MethodDelete, session, path, nil, stdhttp.StatusNoContent)
 }
 
+// repositoryGrantsPath/repositoryGrantPath build the delegate-facing
+// repository-grant resource paths (design.md Decision 3 route table).
+// repository is deliberately NOT PathEscape-d -- it can literally contain
+// "/" (mirroring PutUserGrant/DeleteUserGrant's own unescaped-repository
+// precedent above); username can never contain "/" so it is escaped.
+func repositoryGrantsPath(repository string) string {
+	return "/admin/v1/repositories/" + strings.TrimSpace(repository) + "/grants"
+}
+
+func repositoryGrantPath(repository string, username string) string {
+	return repositoryGrantsPath(repository) + "/" + url.PathEscape(strings.TrimSpace(username))
+}
+
+func (c *HTTPAdminClient) ListRepositoryGrants(ctx context.Context, session AdminSession, repository string) ([]ports.AdminRepositoryGrant, error) {
+	var grants []ports.AdminRepositoryGrant
+	if err := c.getJSON(ctx, session, repositoryGrantsPath(repository), &grants); err != nil {
+		return nil, err
+	}
+	return grants, nil
+}
+
+func (c *HTTPAdminClient) PutRepositoryGrant(ctx context.Context, session AdminSession, input ports.AdminPutRepositoryGrantInput) (ports.AdminRepositoryGrant, error) {
+	var grant ports.AdminRepositoryGrant
+	path := repositoryGrantPath(input.Repository, input.Username)
+	if err := c.requestJSON(ctx, stdhttp.MethodPut, session, path, input, &grant, stdhttp.StatusOK); err != nil {
+		return ports.AdminRepositoryGrant{}, err
+	}
+	return grant, nil
+}
+
+func (c *HTTPAdminClient) DeleteRepositoryGrant(ctx context.Context, session AdminSession, repository string, username string) error {
+	path := repositoryGrantPath(repository, username)
+	return c.requestNoContent(ctx, stdhttp.MethodDelete, session, path, nil, stdhttp.StatusNoContent)
+}
+
 func (c *HTTPAdminClient) ListUserAdminTokens(ctx context.Context, session AdminSession, userID string) ([]ports.AdminToken, error) {
 	var tokens []ports.AdminToken
 	if err := c.getJSON(ctx, session, "/admin/v1/users/"+url.PathEscape(strings.TrimSpace(userID))+"/admin-tokens", &tokens); err != nil {
@@ -437,12 +490,52 @@ func (c *HTTPAdminClient) ClearRepositoryOverride(ctx context.Context, session A
 	return c.requestNoContent(ctx, stdhttp.MethodDelete, session, repositoryOverridePath(feature, repository), nil, stdhttp.StatusNoContent)
 }
 
+func (c *HTTPAdminClient) DeleteRobot(ctx context.Context, session AdminSession, userID string) error {
+	path := "/admin/v1/robots/" + url.PathEscape(strings.TrimSpace(userID))
+	return c.requestNoContent(ctx, stdhttp.MethodDelete, session, path, nil, stdhttp.StatusNoContent)
+}
+
 func (c *HTTPAdminClient) EnableUser(ctx context.Context, session AdminSession, userID string) (ports.AdminUser, error) {
 	return c.mutateUser(ctx, session, userID, ":enable")
 }
 
 func (c *HTTPAdminClient) DisableUser(ctx context.Context, session AdminSession, userID string) (ports.AdminUser, error) {
 	return c.mutateUser(ctx, session, userID, ":disable")
+}
+
+// ListRobots fetches every robot account (design.md Decision 6's route
+// table).
+func (c *HTTPAdminClient) ListRobots(ctx context.Context, session AdminSession) ([]ports.AdminRobot, error) {
+	var robots []ports.AdminRobot
+	if err := c.getJSON(ctx, session, "/admin/v1/robots", &robots); err != nil {
+		return nil, err
+	}
+	return robots, nil
+}
+
+// CreateRobot creates a robot account, its single repository grant, and its
+// issued admin-credential token in one call (design.md Decision 6), mirroring
+// CreateUserAdminToken's ttl_seconds wire convention: omitted (zero) means
+// the service's default TTL.
+func (c *HTTPAdminClient) CreateRobot(ctx context.Context, session AdminSession, input ports.AdminCreateRobotInput) (ports.AdminCreatedRobot, error) {
+	var created ports.AdminCreatedRobot
+	body := struct {
+		Name       string `json:"name"`
+		Repository string `json:"repository"`
+		Role       string `json:"role"`
+		TTLSeconds int64  `json:"ttl_seconds,omitempty"`
+	}{
+		Name:       strings.TrimSpace(input.Name),
+		Repository: strings.TrimSpace(input.Repository),
+		Role:       string(input.Role),
+	}
+	if input.TTL > 0 {
+		body.TTLSeconds = int64(input.TTL / time.Second)
+	}
+	if err := c.requestJSON(ctx, stdhttp.MethodPost, session, "/admin/v1/robots", body, &created, stdhttp.StatusCreated); err != nil {
+		return ports.AdminCreatedRobot{}, err
+	}
+	return created, nil
 }
 
 func (c *HTTPAdminClient) mutateUser(ctx context.Context, session AdminSession, userID string, action string) (ports.AdminUser, error) {

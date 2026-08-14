@@ -95,10 +95,18 @@ func adminScreenHelp(current screen, view AdminViewState) string {
 		return "n: create token | x: revoke token | g: grants | Esc: back | q: quit"
 	case screenAdminCreateToken:
 		return "Enter: create token | Tab: next field | Esc: cancel"
+	case screenRepoAdminGrants:
+		return "n: add grant | e: edit selected grant | x: remove grant | Esc: back | q: quit"
+	case screenRepoAdminAddGrant:
+		return "Enter: save | Tab: next field | Space: cycle role | Esc: cancel"
+	case screenAdminRobots:
+		return "n: create robot | e: enable | x: disable | t: tokens | r: refresh | Esc: back | q: quit"
+	case screenAdminCreateRobot:
+		return "Enter: create robot | Tab: next field | Space: cycle role | Esc: cancel"
 	case screenAdminFeatures:
 		return adminFeatureHelp(view)
 	default:
-		return "/: search | Enter/e: edit user | n: create user | f: features | Esc: back | q: quit"
+		return "/: search | Enter/e: edit user | n: create user | f: features | b: robots | Esc: back | q: quit"
 	}
 }
 
@@ -127,6 +135,14 @@ func renderAdminScreen(theme adminTheme, current screen, session AdminSession, v
 		return fmt.Sprintf("Users / %s / Tokens", selectedAdminUsername(view)), renderAdminTokensScreen(theme, view), help
 	case screenAdminCreateToken:
 		return fmt.Sprintf("Users / %s / Tokens / Create Token", selectedAdminUsername(view)), renderAdminCreateTokenScreen(theme, view), help
+	case screenRepoAdminGrants:
+		return fmt.Sprintf("Repositories / %s / Grants", view.RepoAdminRepository), renderRepoAdminGrantsScreen(theme, view), help
+	case screenRepoAdminAddGrant:
+		return fmt.Sprintf("Repositories / %s / Grants / Add Grant", view.RepoAdminRepository), renderRepoAdminAddGrantScreen(theme, view), help
+	case screenAdminRobots:
+		return "Robots", renderAdminRobotsScreen(theme, session, view, layout, now), help
+	case screenAdminCreateRobot:
+		return "Robots / Create Robot", renderAdminCreateRobotScreen(theme, view, knownRepositories), help
 	case screenAdminFeatures:
 		return "Features", renderAdminFeaturesScreen(theme, session, view, layout, now), help
 	default:
@@ -460,6 +476,7 @@ func renderAdminCreateUserScreen(theme adminTheme, view AdminViewState) string {
 		renderTextField(theme, "Username", form.Username, form.Focus == adminCreateUserFieldUsername),
 		renderSecretField(theme, "Password", form.Password, form.Focus == adminCreateUserFieldPassword),
 		renderToggleField(theme, "Create as admin", form.IsAdmin, form.Focus == adminCreateUserFieldIsAdmin),
+		renderToggleField(theme, "Read-only", form.IsReadOnly, form.Focus == adminCreateUserFieldIsReadOnly),
 		renderToggleField(theme, "Enabled", form.Enabled, form.Focus == adminCreateUserFieldEnabled),
 	}, "\n"))
 }
@@ -554,6 +571,48 @@ func renderAdminAddGrantScreen(theme adminTheme, view AdminViewState, knownRepos
 	return theme.section.Render(strings.Join(lines, "\n"))
 }
 
+// renderRepoAdminGrantsScreen renders the repo-admin delegate's own
+// repository's grants (design.md Decision 7 / spec.md "Delegate sees only
+// their own repositories' grants"). A sibling of renderAdminGrantsScreen,
+// not an extension: it is keyed by RepoAdminRepository, not SelectedUserID.
+func renderRepoAdminGrantsScreen(theme adminTheme, view AdminViewState) string {
+	if strings.TrimSpace(view.RepoAdminRepository) == "" {
+		return theme.section.Render(theme.warning.Render("Select a repository before opening grants."))
+	}
+	lines := []string{
+		theme.subheading.Render("Repository Grants"),
+		fmt.Sprintf("Repository: %s", view.RepoAdminRepository),
+		"",
+	}
+	if len(view.RepoAdminGrants) == 0 {
+		lines = append(lines, theme.muted.Render("No grants for this repository."))
+	} else {
+		for index, grant := range view.RepoAdminGrants {
+			label := fmt.Sprintf("%s | %s", grant.Username, grant.Role)
+			if index == view.SelectedRepoAdminGrant {
+				label = theme.selected.Render(label)
+			}
+			lines = append(lines, label)
+		}
+	}
+	return theme.section.Render(strings.Join(lines, "\n"))
+}
+
+// renderRepoAdminAddGrantScreen renders the delegate's username+role form.
+// It never offers a repository field (RepoAdminRepository is fixed context,
+// not editable here) and the Role value it displays can never be
+// domainauth.RepoRoleAdmin -- that guarantee lives in nextDelegateGrantRole,
+// the only function allowed to change this field (spec.md "Delegate cannot
+// select repo-admin in the grant role picker").
+func renderRepoAdminAddGrantScreen(theme adminTheme, view AdminViewState) string {
+	return theme.section.Render(strings.Join([]string{
+		theme.subheading.Render("Grant Details"),
+		fmt.Sprintf("Repository: %s", view.RepoAdminRepository),
+		renderTextField(theme, "Username", view.RepoAdminGrantForm.Username, view.RepoAdminGrantForm.Focus == adminRepoGrantFieldUsername),
+		renderTextField(theme, "Role", string(view.RepoAdminGrantForm.Role), view.RepoAdminGrantForm.Focus == adminRepoGrantFieldRole),
+	}, "\n"))
+}
+
 func renderAdminTokensScreen(theme adminTheme, view AdminViewState) string {
 	if strings.TrimSpace(view.SelectedUserID) == "" {
 		return theme.section.Render(theme.warning.Render("Select a user before opening tokens."))
@@ -581,6 +640,96 @@ func renderAdminTokensScreen(theme adminTheme, view AdminViewState) string {
 			}
 			label := fmt.Sprintf("%s | %s | expires %s", token.Accessor, state, token.ExpiresAt.UTC().Format(time.RFC3339))
 			if index == view.SelectedToken {
+				label = theme.selected.Render(label)
+			}
+			lines = append(lines, label)
+		}
+	}
+	return theme.section.Render(strings.Join(lines, "\n"))
+}
+
+// renderAdminRobotsScreen renders screenAdminRobots (design.md Decision 7),
+// mirroring renderAdminUsersScreen's list shape: one line per robot, the
+// selected row highlighted, an Operator/session-remaining footer. Keyed by
+// repository/role/enabled state instead of admin/read-only flags, since a
+// robot's identity is its single repository grant, not a global role.
+func renderAdminRobotsScreen(theme adminTheme, session AdminSession, view AdminViewState, layout consoleLayout, now time.Time) string {
+	lines := []string{theme.subheading.Render("Robots")}
+	if len(view.Robots) == 0 {
+		lines = append(lines, theme.muted.Render("No robot accounts available."))
+	} else {
+		for index, robot := range view.Robots {
+			label := formatAdminRobotLabel(robot)
+			if index == view.SelectedRobot {
+				label = theme.selected.Render(label)
+			}
+			lines = append(lines, label)
+		}
+	}
+	lines = append(lines,
+		"",
+		theme.muted.Render(fmt.Sprintf("Operator: %s", session.Username)),
+		theme.muted.Render(fmt.Sprintf("Session remaining: %s", formatRemaining(session.Remaining(now)))),
+	)
+	return renderSection(theme, strings.Join(lines, "\n"), layout)
+}
+
+// formatAdminRobotLabel mirrors formatAdminUserLabel's "name [details]"
+// shape, substituting the robot's repository/role/enabled state for the
+// human user's admin/read-only/enabled flags.
+func formatAdminRobotLabel(robot ports.AdminRobot) string {
+	state := "disabled"
+	if robot.Enabled {
+		state = "enabled"
+	}
+	return fmt.Sprintf("%s [%s, %s, %s]", robot.Username, robot.Repository, robot.Role, state)
+}
+
+// renderAdminCreateRobotScreen renders screenAdminCreateRobot (design.md
+// Decision 7). Immediately after a successful creation, RevealedTokenSecret/
+// Accessor are populated (the exact fields renderAdminTokensScreen already
+// reveals once for human admin tokens) and rendered here exactly once, above
+// the (now-cleared) form -- mirroring renderAdminTokensScreen's own
+// conditional block so this reveal follows the one already-audited pattern
+// instead of introducing a new one.
+// renderAdminCreateRobotScreen mirrors renderAdminAddGrantScreen's windowed,
+// highlighted repository-suggestion list (manual RC feedback: Create Robot's
+// Repository field previously had no autocomplete, unlike Add Grant's).
+func renderAdminCreateRobotScreen(theme adminTheme, view AdminViewState, knownRepositories []string) string {
+	lines := []string{theme.subheading.Render("Create Robot")}
+	if strings.TrimSpace(view.RevealedTokenSecret) != "" {
+		lines = append(lines,
+			"",
+			theme.success.Render("One-time secret"),
+			fmt.Sprintf("Accessor: %s", view.RevealedTokenAccessor),
+			theme.text.Render(view.RevealedTokenSecret),
+			"",
+		)
+	}
+	lines = append(lines,
+		renderTextField(theme, "Name", view.CreateRobotForm.Name, view.CreateRobotForm.Focus == adminCreateRobotFieldName),
+		renderTextField(theme, "Repository", view.CreateRobotForm.Repository, view.CreateRobotForm.Focus == adminCreateRobotFieldRepository),
+		renderTextField(theme, "Role", string(view.CreateRobotForm.Role), view.CreateRobotForm.Focus == adminCreateRobotFieldRole),
+		renderTextField(theme, "TTL seconds", view.CreateRobotForm.TTLSeconds, view.CreateRobotForm.Focus == adminCreateRobotFieldTTL),
+	)
+	suggestions := robotRepositorySuggestions(view.CreateRobotForm, knownRepositories)
+	if len(suggestions) == 0 {
+		lines = append(lines, theme.muted.Render("No known repositories match the current filter."))
+	} else {
+		selected := boundedIndex(view.CreateRobotForm.RepositorySuggestion, len(suggestions))
+		start := 0
+		if selected >= 5 {
+			start = selected - 4
+		}
+		end := start + 5
+		if end > len(suggestions) {
+			end = len(suggestions)
+		}
+		lines = append(lines, "", theme.subheading.Render("Known Repositories"))
+		for index := start; index < end; index++ {
+			repository := suggestions[index]
+			label := repository
+			if index == selected {
 				label = theme.selected.Render(label)
 			}
 			lines = append(lines, label)
@@ -976,6 +1125,14 @@ func selectedGrantForView(view AdminViewState) (ports.AdminRepoGrant, bool) {
 	}
 	index := boundedIndex(view.SelectedGrant, len(view.Grants))
 	return view.Grants[index], true
+}
+
+func selectedRepoAdminGrantForView(view AdminViewState) (ports.AdminRepositoryGrant, bool) {
+	if len(view.RepoAdminGrants) == 0 {
+		return ports.AdminRepositoryGrant{}, false
+	}
+	index := boundedIndex(view.SelectedRepoAdminGrant, len(view.RepoAdminGrants))
+	return view.RepoAdminGrants[index], true
 }
 
 func selectedTokenForView(view AdminViewState) (ports.AdminToken, bool) {

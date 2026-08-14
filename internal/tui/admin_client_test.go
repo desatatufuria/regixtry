@@ -173,6 +173,58 @@ func TestHTTPAdminClientMutationRoutes(t *testing.T) {
 			},
 		},
 		{
+			// Phase 3 task 3.7 RED test (design.md Decision 3 route table):
+			// the repository segment ("team/app") contains "/" and is NOT
+			// PathEscape-d, mirroring PutUserGrant/DeleteUserGrant's own
+			// unescaped-repository precedent above.
+			name:       "list repository grants",
+			method:     http.MethodGet,
+			path:       "/admin/v1/repositories/team/app/grants",
+			statusCode: http.StatusOK,
+			body:       `[{"username":"bob","role":"repo-writer","created_at":"2026-08-04T22:00:00Z","updated_at":"2026-08-04T22:10:00Z"}]`,
+			run: func(t *testing.T, client *HTTPAdminClient) {
+				grants, err := client.ListRepositoryGrants(context.Background(), session, "team/app")
+				if err != nil {
+					t.Fatalf("ListRepositoryGrants() error = %v", err)
+				}
+				if len(grants) != 1 || grants[0].Username != "bob" || grants[0].Role != domainauth.RepoRoleWriter {
+					t.Fatalf("grants = %#v, want decoded repository grants", grants)
+				}
+			},
+		},
+		{
+			name:       "put repository grant",
+			method:     http.MethodPut,
+			path:       "/admin/v1/repositories/team/app/grants/carol",
+			statusCode: http.StatusOK,
+			body:       `{"username":"carol","role":"repo-reader","created_at":"2026-08-04T22:00:00Z","updated_at":"2026-08-04T22:10:00Z"}`,
+			run: func(t *testing.T, client *HTTPAdminClient) {
+				grant, err := client.PutRepositoryGrant(context.Background(), session, ports.AdminPutRepositoryGrantInput{Repository: "team/app", Username: "carol", Role: domainauth.RepoRoleReader})
+				if err != nil {
+					t.Fatalf("PutRepositoryGrant() error = %v", err)
+				}
+				if got, want := grant.Role, domainauth.RepoRoleReader; got != want {
+					t.Fatalf("grant.Role = %q, want %q", got, want)
+				}
+			},
+			assertBody: func(t *testing.T, payload map[string]any) {
+				if payload["role"] != string(domainauth.RepoRoleReader) {
+					t.Fatalf("payload = %#v, want repo-reader role", payload)
+				}
+			},
+		},
+		{
+			name:       "delete repository grant",
+			method:     http.MethodDelete,
+			path:       "/admin/v1/repositories/team/app/grants/carol",
+			statusCode: http.StatusNoContent,
+			run: func(t *testing.T, client *HTTPAdminClient) {
+				if err := client.DeleteRepositoryGrant(context.Background(), session, "team/app", "carol"); err != nil {
+					t.Fatalf("DeleteRepositoryGrant() error = %v", err)
+				}
+			},
+		},
+		{
 			name:       "create admin token",
 			method:     http.MethodPost,
 			path:       "/admin/v1/users/u-1/admin-tokens",
@@ -220,6 +272,120 @@ func TestHTTPAdminClientMutationRoutes(t *testing.T) {
 				}
 				if !user.Enabled {
 					t.Fatalf("user = %#v, want enabled user", user)
+				}
+			},
+		},
+		{
+			// registry-acl-v1 robot-deletion follow-up (PR 4, backend-only):
+			// the client method is added here as part of the API contract;
+			// the TUI key/UI wiring is a separate PR 5 follow-up.
+			name:       "delete robot",
+			method:     http.MethodDelete,
+			path:       "/admin/v1/robots/robot-1",
+			statusCode: http.StatusNoContent,
+			run: func(t *testing.T, client *HTTPAdminClient) {
+				if err := client.DeleteRobot(context.Background(), session, "robot-1"); err != nil {
+					t.Fatalf("DeleteRobot() error = %v", err)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		tc := tt
+		t.Run(tc.name, func(t *testing.T) {
+			var receivedBody map[string]any
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if got, want := r.Method, tc.method; got != want {
+					t.Fatalf("method = %q, want %q", got, want)
+				}
+				if got, want := r.URL.Path, tc.path; got != want {
+					t.Fatalf("path = %q, want %q", got, want)
+				}
+				if got, want := r.Header.Get("Authorization"), "Bearer bearer-token"; got != want {
+					t.Fatalf("Authorization = %q, want %q", got, want)
+				}
+				if r.Body != nil && (tc.method == http.MethodPost || tc.method == http.MethodPut) {
+					_ = json.NewDecoder(r.Body).Decode(&receivedBody)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.statusCode)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+
+			client, err := NewHTTPAdminClient(server.URL, server.Client())
+			if err != nil {
+				t.Fatalf("NewHTTPAdminClient() error = %v", err)
+			}
+			client.now = func() time.Time { return fixedNow }
+
+			tc.run(t, client)
+			if tc.assertBody != nil {
+				tc.assertBody(t, receivedBody)
+			}
+		})
+	}
+}
+
+// TestHTTPAdminClientAdminRobotRoutes is task 5.5's RED test (design.md
+// Decision 6's two new robot routes; enable/disable and token issue/list/
+// revoke are deliberately NOT re-tested here -- they are reused unchanged
+// via EnableUser/DisableUser/CreateUserAdminToken etc., already covered by
+// TestHTTPAdminClientMutationRoutes, called with the robot's user ID like
+// any other user ID).
+func TestHTTPAdminClientAdminRobotRoutes(t *testing.T) {
+	t.Parallel()
+
+	fixedNow := time.Date(2026, time.August, 4, 23, 5, 0, 0, time.UTC)
+	session := AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: fixedNow.Add(10 * time.Minute)}
+
+	tests := []struct {
+		name       string
+		method     string
+		path       string
+		statusCode int
+		body       string
+		run        func(t *testing.T, client *HTTPAdminClient)
+		assertBody func(t *testing.T, payload map[string]any)
+	}{
+		{
+			name:       "list robots",
+			method:     http.MethodGet,
+			path:       "/admin/v1/robots",
+			statusCode: http.StatusOK,
+			body:       `[{"id":"u-2","username":"robot$ci","repository":"team/app","role":"repo-writer","enabled":true,"created_at":"2026-08-04T22:00:00Z"}]`,
+			run: func(t *testing.T, client *HTTPAdminClient) {
+				robots, err := client.ListRobots(context.Background(), session)
+				if err != nil {
+					t.Fatalf("ListRobots() error = %v", err)
+				}
+				if len(robots) != 1 || robots[0].Username != "robot$ci" || robots[0].Repository != "team/app" || robots[0].Role != domainauth.RepoRoleWriter {
+					t.Fatalf("robots = %#v, want decoded robot list", robots)
+				}
+			},
+		},
+		{
+			name:       "create robot",
+			method:     http.MethodPost,
+			path:       "/admin/v1/robots",
+			statusCode: http.StatusCreated,
+			body:       `{"robot":{"id":"u-2","username":"robot$ci","repository":"team/app","role":"repo-writer","enabled":true,"created_at":"2026-08-04T22:00:00Z"},"secret":"robot-secret","accessor":"tok_robot","expires_at":"2026-09-04T22:00:00Z"}`,
+			run: func(t *testing.T, client *HTTPAdminClient) {
+				created, err := client.CreateRobot(context.Background(), session, ports.AdminCreateRobotInput{Name: "ci", Repository: "team/app", Role: domainauth.RepoRoleWriter, TTL: 3600 * time.Second})
+				if err != nil {
+					t.Fatalf("CreateRobot() error = %v", err)
+				}
+				if created.Secret != "robot-secret" || created.Robot.Username != "robot$ci" {
+					t.Fatalf("created = %#v, want decoded robot creation payload", created)
+				}
+			},
+			assertBody: func(t *testing.T, payload map[string]any) {
+				if payload["name"] != "ci" || payload["repository"] != "team/app" || payload["role"] != string(domainauth.RepoRoleWriter) {
+					t.Fatalf("payload = %#v, want create-robot body", payload)
+				}
+				if payload["ttl_seconds"] != float64(3600) {
+					t.Fatalf("payload = %#v, want ttl_seconds 3600", payload)
 				}
 			},
 		},

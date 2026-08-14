@@ -627,6 +627,349 @@ func TestModelInvalidCredentialsStayOnLoginScreen(t *testing.T) {
 	}
 }
 
+// TestModelAdminIntentRoutesPostLoginToRepoAdminGrantsWhenSet is the Phase 3
+// task 3.1 RED test (design.md Decision 7): a one-shot adminIntent field set
+// before login routes a successful auth to screenRepoAdminGrants instead of
+// the default screenAdminUsers, and the intent is consumed (reset) so a
+// later plain login does not stick to the repo-grants destination.
+func TestModelAdminIntentRoutesPostLoginToRepoAdminGrantsWhenSet(t *testing.T) {
+	t.Parallel()
+
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "delegate", BearerToken: "bearer-token", ExpiresAt: time.Date(2026, time.August, 14, 12, 5, 0, 0, time.UTC)},
+	}
+	model := newAdminReadyModel(t, adminClient)
+	model.adminIntent = adminIntentRepoGrants
+	model.adminIntentRepository = "team/app"
+
+	updated := runAdminLogin(t, model, "delegate", "secret-pass")
+
+	if got, want := updated.screen, screenRepoAdminGrants; got != want {
+		t.Fatalf("screen = %q, want %q", got, want)
+	}
+	if got, want := updated.adminIntent, adminIntentOperator; got != want {
+		t.Fatalf("adminIntent = %q, want %q (must be consumed exactly once)", got, want)
+	}
+	if got, want := updated.adminView.RepoAdminRepository, "team/app"; got != want {
+		t.Fatalf("RepoAdminRepository = %q, want %q", got, want)
+	}
+}
+
+// TestModelAdminIntentRoutesPostLoginToUsersWhenNotSet triangulates the
+// default (zero-value) adminIntent path: an ordinary operator login without
+// any repo-grants intent keeps routing to screenAdminUsers, unchanged.
+func TestModelAdminIntentRoutesPostLoginToUsersWhenNotSet(t *testing.T) {
+	t.Parallel()
+
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: time.Date(2026, time.August, 14, 12, 5, 0, 0, time.UTC)},
+		users:        []ports.AdminUser{{ID: "u-1", Username: "alice", IsAdmin: true, Enabled: true}},
+	}
+	model := newAdminReadyModel(t, adminClient)
+
+	updated := runAdminLogin(t, model, "operator", "secret-pass")
+
+	if got, want := updated.screen, screenAdminUsers; got != want {
+		t.Fatalf("screen = %q, want %q", got, want)
+	}
+	if got, want := updated.adminIntent, adminIntentOperator; got != want {
+		t.Fatalf("adminIntent = %q, want %q", got, want)
+	}
+}
+
+// TestRepoAdminGrantsScreensJoinAdminScreenSets is the Phase 3 task 3.3 RED
+// test (design.md Decision 7): screenRepoAdminGrants/screenRepoAdminAddGrant
+// must route through updateAdminKey (isAdminScreen) so the shipped
+// session-expiry/logout plumbing covers them. Only screenRepoAdminGrants — a
+// read/list screen, like its screenAdminEditUserGrants precedent — joins
+// isAdminPrincipalScreen and canLogoutAdminFromCurrentScreen;
+// screenRepoAdminAddGrant is a free-text username form, like its
+// screenAdminAddGrant precedent, so it is deliberately excluded from both
+// (isAdminPrincipalScreen gates the bare 'q' quit key — including it would
+// make typing "q" as part of a username quit the whole program).
+func TestRepoAdminGrantsScreensJoinAdminScreenSets(t *testing.T) {
+	t.Parallel()
+
+	if !isAdminScreen(screenRepoAdminGrants) {
+		t.Fatalf("isAdminScreen(screenRepoAdminGrants) = false, want true")
+	}
+	if !isAdminScreen(screenRepoAdminAddGrant) {
+		t.Fatalf("isAdminScreen(screenRepoAdminAddGrant) = false, want true")
+	}
+	if !isAdminPrincipalScreen(screenRepoAdminGrants) {
+		t.Fatalf("isAdminPrincipalScreen(screenRepoAdminGrants) = false, want true")
+	}
+	if isAdminPrincipalScreen(screenRepoAdminAddGrant) {
+		t.Fatalf("isAdminPrincipalScreen(screenRepoAdminAddGrant) = true, want false (free-text username form)")
+	}
+}
+
+func TestCanLogoutFromRepoAdminGrantsScreen(t *testing.T) {
+	t.Parallel()
+
+	model := newAdminReadyModel(t, &fakeAdminClient{})
+	model.adminAuth = adminAuthStateAuthenticated
+	model.screen = screenRepoAdminGrants
+
+	if !model.canLogoutAdminFromCurrentScreen() {
+		t.Fatalf("canLogoutAdminFromCurrentScreen() = false, want true on screenRepoAdminGrants")
+	}
+}
+
+// TestModelConsoleRepositoriesGrantActionSetsAdminIntentAndReachesLogin is
+// the Phase 3 task 3.9 RED test (design.md Decision 7): pressing "g" on the
+// Console Repositories screen, with a repository selected, sets
+// adminIntent/adminIntentRepository and routes to screenAdminLogin exactly
+// like the existing "tab" (operator) entry point, but carries repository
+// context the operator entry point never needs.
+func TestModelConsoleRepositoriesGrantActionSetsAdminIntentAndReachesLogin(t *testing.T) {
+	t.Parallel()
+
+	model := newAdminReadyModelWithCatalog(t, []string{"team/app"}, &fakeAdminClient{})
+
+	updated := runKey(t, model, "g")
+
+	if got, want := updated.screen, screenAdminLogin; got != want {
+		t.Fatalf("screen = %q, want %q", got, want)
+	}
+	if got, want := updated.adminIntent, adminIntentRepoGrants; got != want {
+		t.Fatalf("adminIntent = %q, want %q", got, want)
+	}
+	if got, want := updated.adminIntentRepository, "team/app"; got != want {
+		t.Fatalf("adminIntentRepository = %q, want %q", got, want)
+	}
+}
+
+// TestModelRepoAdminGrantsLoadPutAndDeleteCommandsWired is the Phase 3
+// task 3.9 RED test's second half: from the Console Repositories screen's
+// grant action through login, grants load automatically, the add-grant form
+// submits a PutRepositoryGrant with the default (never repo-admin) role, and
+// the remove-grant confirmation issues a DeleteRepositoryGrant.
+func TestModelRepoAdminGrantsLoadPutAndDeleteCommandsWired(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 14, 12, 10, 0, 0, time.UTC)
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "delegate", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+		repoGrants: map[string][]ports.AdminRepositoryGrant{
+			"team/app": {{Username: "bob", Role: domainauth.RepoRoleWriter}},
+		},
+	}
+	model := newAdminReadyModelWithCatalog(t, []string{"team/app"}, adminClient)
+	model.now = func() time.Time { return now }
+
+	updated := runKey(t, model, "g")
+	updated = runKey(t, updated, "delegate")
+	updated = runKey(t, updated, "tab")
+	updated = runKey(t, updated, "secret-pass")
+	updated = runKey(t, updated, "enter")
+
+	if got, want := updated.screen, screenRepoAdminGrants; got != want {
+		t.Fatalf("screen = %q, want %q", got, want)
+	}
+	if got, want := adminClient.listRepoGrantsCalls, 1; got != want {
+		t.Fatalf("listRepoGrantsCalls = %d, want %d", got, want)
+	}
+	if !strings.Contains(updated.View(), "bob") || !strings.Contains(updated.View(), string(domainauth.RepoRoleWriter)) {
+		t.Fatalf("view = %q, want bob's grant listed", updated.View())
+	}
+
+	updated = runKey(t, updated, "n")
+	updated = runKey(t, updated, "carol")
+	updated = runKey(t, updated, "enter")
+
+	if got, want := adminClient.putRepoGrantCalls, 1; got != want {
+		t.Fatalf("putRepoGrantCalls = %d, want %d", got, want)
+	}
+	if got, want := adminClient.lastRepoGrantInput.Repository, "team/app"; got != want {
+		t.Fatalf("input.Repository = %q, want %q", got, want)
+	}
+	if got, want := adminClient.lastRepoGrantInput.Username, "carol"; got != want {
+		t.Fatalf("input.Username = %q, want %q", got, want)
+	}
+	if got, want := adminClient.lastRepoGrantInput.Role, domainauth.RepoRoleReader; got != want {
+		t.Fatalf("input.Role = %q, want %q (default, never repo-admin)", got, want)
+	}
+
+	updated = runKey(t, updated, "x")
+	if !strings.Contains(updated.View(), `Remove grant for "bob" from "team/app"?`) {
+		t.Fatalf("view = %q, want grant removal confirmation", updated.View())
+	}
+	updated = runKey(t, updated, "enter")
+
+	if got, want := adminClient.deleteRepoGrantCalls, 1; got != want {
+		t.Fatalf("deleteRepoGrantCalls = %d, want %d", got, want)
+	}
+	if got, want := adminClient.lastDeleteRepoGrantRepo, "team/app"; got != want {
+		t.Fatalf("delete repository = %q, want %q", got, want)
+	}
+	if got, want := adminClient.lastDeleteRepoGrantUsername, "bob"; got != want {
+		t.Fatalf("delete username = %q, want %q", got, want)
+	}
+}
+
+// TestUpdateRepoAdminGrantsKeyEditRefusesRepoAdminGrant is a CRITICAL-finding
+// remediation RED test (sdd-verify, PR 3): ListRepositoryGrants returns every
+// grant on a repository unfiltered by role (service.go:570-580), so a
+// delegate's own grants list can legitimately contain a peer's repo-admin
+// grant. Pressing "e" on that row must NOT populate screenRepoAdminAddGrant's
+// Role field with domainauth.RepoRoleAdmin -- renderRepoAdminAddGrantScreen
+// would then render the literal string "repo-admin", contradicting task
+// 3.5's guarantee that the role field never offers repo-admin. This exercises
+// the real "e" key handler (updateRepoAdminGrantsKey) through model.Update(),
+// not just nextDelegateGrantRole in isolation (that function is already
+// proven correct and is not where this bug lives).
+func TestUpdateRepoAdminGrantsKeyEditRefusesRepoAdminGrant(t *testing.T) {
+	t.Parallel()
+
+	model := newAdminReadyModel(t, &fakeAdminClient{})
+	model.adminAuth = adminAuthStateAuthenticated
+	model.screen = screenRepoAdminGrants
+	model.adminView.RepoAdminRepository = "team/app"
+	model.adminView.RepoAdminGrants = []ports.AdminRepositoryGrant{
+		{Username: "alice", Role: domainauth.RepoRoleAdmin},
+	}
+	model.adminView.SelectedRepoAdminGrant = 0
+
+	updated := runKey(t, model, "e")
+
+	if updated.screen == screenRepoAdminAddGrant {
+		t.Fatalf("screen = %q after editing a repo-admin grant, want to stay on %q (edit refused)", updated.screen, screenRepoAdminGrants)
+	}
+	if updated.adminView.RepoAdminGrantForm.Role == domainauth.RepoRoleAdmin {
+		t.Fatalf("RepoAdminGrantForm.Role = %q, want never repo-admin", updated.adminView.RepoAdminGrantForm.Role)
+	}
+	if updated.status == "" {
+		t.Fatalf("status = empty, want a message explaining the edit was refused")
+	}
+}
+
+// TestUpdateRepoAdminGrantsKeyEditAllowsNonRepoAdminGrant is the
+// triangulation companion to TestUpdateRepoAdminGrantsKeyEditRefusesRepoAdminGrant:
+// the refusal guard must be specific to domainauth.RepoRoleAdmin, not an
+// over-broad block that disables editing altogether.
+func TestUpdateRepoAdminGrantsKeyEditAllowsNonRepoAdminGrant(t *testing.T) {
+	t.Parallel()
+
+	model := newAdminReadyModel(t, &fakeAdminClient{})
+	model.adminAuth = adminAuthStateAuthenticated
+	model.screen = screenRepoAdminGrants
+	model.adminView.RepoAdminRepository = "team/app"
+	model.adminView.RepoAdminGrants = []ports.AdminRepositoryGrant{
+		{Username: "bob", Role: domainauth.RepoRoleWriter},
+	}
+	model.adminView.SelectedRepoAdminGrant = 0
+
+	updated := runKey(t, model, "e")
+
+	if got, want := updated.screen, screenRepoAdminAddGrant; got != want {
+		t.Fatalf("screen = %q, want %q (editing a non-repo-admin grant must proceed)", got, want)
+	}
+	if got, want := updated.adminView.RepoAdminGrantForm.Role, domainauth.RepoRoleWriter; got != want {
+		t.Fatalf("RepoAdminGrantForm.Role = %q, want %q", got, want)
+	}
+	if got, want := updated.adminView.RepoAdminGrantForm.Username, "bob"; got != want {
+		t.Fatalf("RepoAdminGrantForm.Username = %q, want %q", got, want)
+	}
+}
+
+// TestUpdateRepoAdminGrantsKeyAddRefusesAfterUnauthorizedLoad is a manual-RC
+// remediation RED test (PR 3): the backend correctly rejects
+// GET .../grants with 403 when the caller lacks repo-admin on that
+// repository (admin_handlers.go), which surfaces here as
+// adminRepoGrantsLoadedMsg.err != nil. Pressing "n" in that state must
+// refuse immediately with a clear status message instead of navigating to
+// screenRepoAdminAddGrant -- letting an unauthorized user fill out an
+// entire admin mutation form before the backend's eventual PUT rejection
+// is poor UX, even though no privilege escalation occurs. This exercises
+// the real load-failure branch of Update() and the real "n" key handler
+// (updateRepoAdminGrantsKey) through model.Update(), not either in
+// isolation.
+func TestUpdateRepoAdminGrantsKeyAddRefusesAfterUnauthorizedLoad(t *testing.T) {
+	t.Parallel()
+
+	model := newAdminReadyModel(t, &fakeAdminClient{})
+	model.adminAuth = adminAuthStateAuthenticated
+	model.screen = screenRepoAdminGrants
+	model.adminView.RepoAdminRepository = "team/app"
+
+	loaded, _ := model.Update(adminRepoGrantsLoadedMsg{
+		repository: "team/app",
+		err:        errors.New("repository administrator privileges are required"),
+	})
+	model = loaded.(Model)
+
+	updated := runKey(t, model, "n")
+
+	if got, want := updated.screen, screenRepoAdminGrants; got != want {
+		t.Fatalf("screen = %q after \"n\" following an unauthorized grants load, want to stay on %q (add refused)", got, want)
+	}
+	if updated.status == "" {
+		t.Fatalf("status = empty, want a message explaining the add was refused")
+	}
+}
+
+// TestUpdateRepoAdminGrantsKeyAddAllowsAfterAuthorizedLoad is the
+// triangulation companion to
+// TestUpdateRepoAdminGrantsKeyAddRefusesAfterUnauthorizedLoad: the refusal
+// guard must be specific to a load that actually failed, not an over-broad
+// block that disables "n" (Add Grant) altogether after any load.
+func TestUpdateRepoAdminGrantsKeyAddAllowsAfterAuthorizedLoad(t *testing.T) {
+	t.Parallel()
+
+	model := newAdminReadyModel(t, &fakeAdminClient{})
+	model.adminAuth = adminAuthStateAuthenticated
+	model.screen = screenRepoAdminGrants
+	model.adminView.RepoAdminRepository = "team/app"
+
+	loaded, _ := model.Update(adminRepoGrantsLoadedMsg{
+		repository: "team/app",
+		grants:     []ports.AdminRepositoryGrant{{Username: "bob", Role: domainauth.RepoRoleWriter}},
+	})
+	model = loaded.(Model)
+
+	updated := runKey(t, model, "n")
+
+	if got, want := updated.screen, screenRepoAdminAddGrant; got != want {
+		t.Fatalf("screen = %q after \"n\" following a successful grants load, want %q (add must still work)", got, want)
+	}
+}
+
+// TestOpenRepoAdminGrantsResetsAuthorizedFlagBeforeNewLoad guards against
+// the same class of "second write path" bug that caused the PR3 CRITICAL
+// finding earlier in this change: a stale "authorized" state from a
+// PREVIOUS repository's successful grants load must not leak into a NEW
+// repository's screen before its own load response arrives. Without a
+// reset, pressing "n" immediately after openRepoAdminGrants (already
+// authenticated, before the fresh adminRepoGrantsLoadedMsg lands) would
+// wrongly be allowed.
+func TestOpenRepoAdminGrantsResetsAuthorizedFlagBeforeNewLoad(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 14, 12, 10, 0, 0, time.UTC)
+	model := newAdminReadyModelWithCatalog(t, []string{"team/app", "team/other"}, &fakeAdminClient{})
+	model.now = func() time.Time { return now }
+	model.adminAuth = adminAuthStateAuthenticated
+	model.adminSession = AdminSession{Username: "delegate", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)}
+	model.screen = screenRepoAdminGrants
+	model.adminView.RepoAdminRepository = "team/app"
+
+	loaded, _ := model.Update(adminRepoGrantsLoadedMsg{
+		repository: "team/app",
+		grants:     []ports.AdminRepositoryGrant{{Username: "bob", Role: domainauth.RepoRoleWriter}},
+	})
+	model = loaded.(Model)
+
+	updated, _ := model.openRepoAdminGrants()
+	fresh := updated.(Model)
+
+	beforeResponse := runKey(t, fresh, "n")
+
+	if got, want := beforeResponse.screen, screenRepoAdminGrants; got != want {
+		t.Fatalf("screen = %q after \"n\" before the new repository's load response arrived, want to stay on %q (stale authorization must not leak)", got, want)
+	}
+}
+
 func TestModelCreateAdminUserRefreshesUsers(t *testing.T) {
 	t.Parallel()
 
@@ -661,6 +1004,356 @@ func TestModelCreateAdminUserRefreshesUsers(t *testing.T) {
 	}
 	if !strings.Contains(updated.View(), `User "bob" created. Refreshing users...`) && !strings.Contains(updated.View(), `User "bob" created.`) {
 		t.Fatalf("view = %q, want create-user status", updated.View())
+	}
+}
+
+// TestAdminRobotScreensJoinAdminScreenSets is task 5.7's RED test (design.md
+// Decision 7): screenAdminRobots/screenAdminCreateRobot must route through
+// updateKey (isAdminScreen) so the shipped session-expiry/logout plumbing
+// covers them. Only screenAdminRobots -- a list screen, like its
+// screenAdminUsers precedent -- joins isAdminPrincipalScreen (gates the bare
+// 'q' quit key); screenAdminCreateRobot is a free-text Name/Repository form,
+// like screenAdminCreateUser, so it is deliberately excluded (typing "q"
+// into a field must never quit the program).
+func TestAdminRobotScreensJoinAdminScreenSets(t *testing.T) {
+	t.Parallel()
+
+	if !isAdminScreen(screenAdminRobots) {
+		t.Fatalf("isAdminScreen(screenAdminRobots) = false, want true")
+	}
+	if !isAdminScreen(screenAdminCreateRobot) {
+		t.Fatalf("isAdminScreen(screenAdminCreateRobot) = false, want true")
+	}
+	if !isAdminPrincipalScreen(screenAdminRobots) {
+		t.Fatalf("isAdminPrincipalScreen(screenAdminRobots) = false, want true")
+	}
+	if isAdminPrincipalScreen(screenAdminCreateRobot) {
+		t.Fatalf("isAdminPrincipalScreen(screenAdminCreateRobot) = true, want false (free-text form)")
+	}
+}
+
+func TestCanLogoutFromAdminRobotsScreen(t *testing.T) {
+	t.Parallel()
+
+	model := newAdminReadyModel(t, &fakeAdminClient{})
+	model.adminAuth = adminAuthStateAuthenticated
+	model.screen = screenAdminRobots
+
+	if !model.canLogoutAdminFromCurrentScreen() {
+		t.Fatalf("canLogoutAdminFromCurrentScreen() = false, want true on screenAdminRobots")
+	}
+}
+
+// TestModelOpenAdminRobotsFromUsersLoadsRobotList is task 5.7's RED test:
+// pressing "b" on screenAdminUsers opens screenAdminRobots and loads the
+// robot list.
+func TestModelOpenAdminRobotsFromUsersLoadsRobotList(t *testing.T) {
+	t.Parallel()
+
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: time.Date(2026, time.August, 14, 12, 5, 0, 0, time.UTC)},
+		robots:       []ports.AdminRobot{{ID: "u-2", Username: "robot$ci", Repository: "team/app", Role: domainauth.RepoRoleWriter, Enabled: true}},
+	}
+	model := newAdminReadyModel(t, adminClient)
+	updated := runAdminLogin(t, model, "operator", "secret-pass")
+
+	updated = runKey(t, updated, "b")
+
+	if got, want := updated.screen, screenAdminRobots; got != want {
+		t.Fatalf("screen = %q, want %q", got, want)
+	}
+	if adminClient.listRobotsCalls != 1 {
+		t.Fatalf("listRobotsCalls = %d, want 1", adminClient.listRobotsCalls)
+	}
+	if !strings.Contains(updated.View(), "robot$ci") || !strings.Contains(updated.View(), "team/app") {
+		t.Fatalf("view = %q, want robot$ci's row listed", updated.View())
+	}
+}
+
+// TestModelCreateAdminRobotShowsOneTimeSecretOnceOnCreateScreen is task 5.7's
+// CRITICAL RED test (spec.md "Operator manages a robot account end to end"):
+// submitting the create-robot form stays on screenAdminCreateRobot and
+// displays the one-time secret exactly once, with the form cleared.
+func TestModelCreateAdminRobotShowsOneTimeSecretOnceOnCreateScreen(t *testing.T) {
+	t.Parallel()
+
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: time.Date(2026, time.August, 14, 12, 5, 0, 0, time.UTC)},
+		createRobot: ports.AdminCreatedRobot{
+			Robot:    ports.AdminRobot{ID: "u-2", Username: "robot$ci", Repository: "team/app", Role: domainauth.RepoRoleWriter, Enabled: true},
+			Secret:   "robot-secret-value",
+			Accessor: "tok_robot",
+		},
+	}
+	model := newAdminReadyModel(t, adminClient)
+	updated := runAdminLogin(t, model, "operator", "secret-pass")
+
+	updated = runKey(t, updated, "b")
+	updated = runKey(t, updated, "n")
+	if got, want := updated.screen, screenAdminCreateRobot; got != want {
+		t.Fatalf("screen = %q, want %q", got, want)
+	}
+	updated = runKey(t, updated, "ci")
+	updated = runKey(t, updated, "tab")
+	updated = runKey(t, updated, "team/app")
+	// First Enter (while focused on Repository) commits the highlighted
+	// suggestion and advances focus to Role -- it does not submit the form,
+	// mirroring updateGrantFormKey's Add Grant behavior.
+	updated = runKey(t, updated, "enter")
+	if got, want := updated.adminView.CreateRobotForm.Focus, adminCreateRobotFieldRole; got != want {
+		t.Fatalf("focus = %v, want %v after first Enter", got, want)
+	}
+	updated = runKey(t, updated, "enter")
+
+	if adminClient.createRobotCalls != 1 {
+		t.Fatalf("createRobotCalls = %d, want 1", adminClient.createRobotCalls)
+	}
+	if got, want := adminClient.lastCreateRobotInput.Name, "ci"; got != want {
+		t.Fatalf("input.Name = %q, want %q", got, want)
+	}
+	if got, want := adminClient.lastCreateRobotInput.Repository, "team/app"; got != want {
+		t.Fatalf("input.Repository = %q, want %q", got, want)
+	}
+	if got, want := updated.screen, screenAdminCreateRobot; got != want {
+		t.Fatalf("screen = %q, want %q (stays to show the secret)", got, want)
+	}
+	if got, want := updated.adminView.RevealedTokenSecret, "robot-secret-value"; got != want {
+		t.Fatalf("RevealedTokenSecret = %q, want %q", got, want)
+	}
+	if !strings.Contains(updated.View(), "robot-secret-value") || !strings.Contains(updated.View(), "tok_robot") {
+		t.Fatalf("view = %q, want the one-time secret and accessor rendered", updated.View())
+	}
+	if updated.adminView.CreateRobotForm.Name != "" || updated.adminView.CreateRobotForm.Repository != "" {
+		t.Fatalf("CreateRobotForm = %#v, want cleared after creation", updated.adminView.CreateRobotForm)
+	}
+}
+
+// TestModelCreateRobotFormRepositorySuggestionsFilterAndSelect is the manual
+// RC follow-up's RED test: screenAdminCreateRobot's Repository field must
+// offer the same autosuggest behavior as screenAdminAddGrant's Repository
+// field (updateGrantFormKey) -- typing filters known repositories, Up/Down
+// cycle the highlighted suggestion, and Enter while focused on Repository
+// commits the highlighted suggestion and advances focus to Role WITHOUT
+// submitting the whole create-robot form.
+func TestModelCreateRobotFormRepositorySuggestionsFilterAndSelect(t *testing.T) {
+	t.Parallel()
+
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: time.Date(2026, time.August, 14, 12, 5, 0, 0, time.UTC)},
+	}
+	model := newAdminReadyModelWithCatalog(t, []string{"library/alpine", "team/demo", "team/backend", "ops/console"}, adminClient)
+	updated := runAdminLogin(t, model, "operator", "secret-pass")
+
+	updated = runKey(t, updated, "b")
+	updated = runKey(t, updated, "n")
+	if got, want := updated.screen, screenAdminCreateRobot; got != want {
+		t.Fatalf("screen = %q, want %q", got, want)
+	}
+
+	updated = runKey(t, updated, "tab")
+	if got, want := updated.adminView.CreateRobotForm.Focus, adminCreateRobotFieldRepository; got != want {
+		t.Fatalf("focus = %v, want %v", got, want)
+	}
+
+	updated = runKey(t, updated, "tea")
+	filteredView := updated.View()
+	if strings.Contains(filteredView, "library/alpine") {
+		t.Fatalf("view = %q, want non-matching repository hidden", filteredView)
+	}
+	if !strings.Contains(filteredView, "team/demo") || !strings.Contains(filteredView, "team/backend") {
+		t.Fatalf("view = %q, want filtered suggestions", filteredView)
+	}
+
+	updated = runKey(t, updated, "down")
+	updated = runKey(t, updated, "enter")
+	if got, want := updated.adminView.CreateRobotForm.Repository, "team/backend"; got != want {
+		t.Fatalf("repository = %q, want %q", got, want)
+	}
+	if got, want := updated.adminView.CreateRobotForm.Focus, adminCreateRobotFieldRole; got != want {
+		t.Fatalf("focus = %v, want %v (Enter must advance focus, not submit)", got, want)
+	}
+	if adminClient.createRobotCalls != 0 {
+		t.Fatalf("createRobotCalls = %d, want 0 (Enter on Repository must not submit the form)", adminClient.createRobotCalls)
+	}
+}
+
+// TestModelAdminRobotTokensKeyClearsAnyPreviouslyRevealedSecretBeforeShowingTokenScreen
+// is task 5.7's CRITICAL defense-in-depth RED test, mirroring PR 3's
+// remediation lesson: RevealedTokenSecret/Accessor are the SAME fields both
+// the robot-creation reveal (screenAdminCreateRobot) and the reused human
+// admin-token reveal (screenAdminEditUserTokens, via "t" on a selected
+// robot) read. If a secret from a just-created robot is still sitting in
+// AdminViewState when the operator presses "t" on ANY robot row, the reused
+// token screen would render that stale secret a second time -- without a
+// fresh token ever being issued. openAdminRobotTokens (the "t" handler) MUST
+// clear it before navigating, exactly like the existing openAdminEditTokens/
+// openAdminEditGrants precedent already does for the human path.
+func TestModelAdminRobotTokensKeyClearsAnyPreviouslyRevealedSecretBeforeShowingTokenScreen(t *testing.T) {
+	t.Parallel()
+
+	adminClient := &fakeAdminClient{
+		tokens: map[string][]ports.AdminToken{"u-2": {{ID: "t-1", UserID: "u-2", Accessor: "tok_new"}}},
+	}
+	model := newAdminReadyModel(t, adminClient)
+	model.adminAuth = adminAuthStateAuthenticated
+	model.screen = screenAdminRobots
+	model.adminView.Robots = []ports.AdminRobot{{ID: "u-2", Username: "robot$ci", Repository: "team/app", Role: domainauth.RepoRoleWriter, Enabled: true}}
+	model.adminView.SelectedRobot = 0
+	// Simulates the state immediately after a DIFFERENT prior creation whose
+	// secret was never explicitly dismissed by the operator -- the exact
+	// "second write path" shape PR 3's remediation caught.
+	model.adminView.RevealedTokenSecret = "stale-secret-from-earlier-creation"
+	model.adminView.RevealedTokenAccessor = "tok_old"
+
+	updated := runKey(t, model, "t")
+
+	if updated.adminView.RevealedTokenSecret != "" {
+		t.Fatalf("RevealedTokenSecret = %q after opening robot tokens, want cleared (must never leak a stale secret onto the reused token screen)", updated.adminView.RevealedTokenSecret)
+	}
+	if updated.adminView.RevealedTokenAccessor != "" {
+		t.Fatalf("RevealedTokenAccessor = %q after opening robot tokens, want cleared", updated.adminView.RevealedTokenAccessor)
+	}
+	if strings.Contains(updated.View(), "stale-secret-from-earlier-creation") {
+		t.Fatalf("view = %q, must never render the stale secret", updated.View())
+	}
+	if got, want := updated.screen, screenAdminEditUserTokens; got != want {
+		t.Fatalf("screen = %q, want %q (reuses the existing token screen)", got, want)
+	}
+	if got, want := updated.adminView.SelectedUserID, "u-2"; got != want {
+		t.Fatalf("SelectedUserID = %q, want the robot's ID %q", got, want)
+	}
+}
+
+// TestModelAdminCreateRobotEscClearsRevealedSecretBeforeReturningToList
+// triangulates the guard above from the other exit path: leaving
+// screenAdminCreateRobot via Esc after a secret was shown must also clear
+// it, so a later "n" (reopening the create form) never renders it again.
+func TestModelCreateAdminRobotEscClearsRevealedSecretBeforeReturningToList(t *testing.T) {
+	t.Parallel()
+
+	model := newAdminReadyModel(t, &fakeAdminClient{})
+	model.adminAuth = adminAuthStateAuthenticated
+	model.screen = screenAdminCreateRobot
+	model.adminView.RevealedTokenSecret = "just-shown-secret"
+	model.adminView.RevealedTokenAccessor = "tok_just_shown"
+
+	updated := runKey(t, model, "esc")
+
+	if got, want := updated.screen, screenAdminRobots; got != want {
+		t.Fatalf("screen = %q, want %q", got, want)
+	}
+	if updated.adminView.RevealedTokenSecret != "" {
+		t.Fatalf("RevealedTokenSecret = %q after Esc, want cleared", updated.adminView.RevealedTokenSecret)
+	}
+}
+
+// TestModelEnableDisableAdminRobotConfirmFlow is task 5.7's RED test for the
+// enable/disable mutation, mirroring the existing human-user enable/disable
+// confirm flow but scoped to screenAdminRobots and reusing
+// EnableUser/DisableUser with the robot's user ID (design.md Decision 6).
+func TestModelEnableDisableAdminRobotConfirmFlow(t *testing.T) {
+	t.Parallel()
+
+	adminClient := &fakeAdminClient{
+		robots:      []ports.AdminRobot{{ID: "u-2", Username: "robot$ci", Repository: "team/app", Role: domainauth.RepoRoleWriter, Enabled: true}},
+		disableUser: ports.AdminUser{ID: "u-2", Username: "robot$ci", Enabled: false},
+	}
+	model := newAdminReadyModel(t, adminClient)
+	model.adminAuth = adminAuthStateAuthenticated
+	model.screen = screenAdminRobots
+	model.adminView.Robots = adminClient.robots
+	model.adminView.SelectedRobot = 0
+
+	updated := runKey(t, model, "x")
+	if !strings.Contains(updated.View(), `Confirm disable robot "robot$ci"?`) {
+		t.Fatalf("view = %q, want a disable-robot confirmation", updated.View())
+	}
+
+	updated = runKey(t, updated, "enter")
+
+	if adminClient.disableCalls != 1 {
+		t.Fatalf("disableCalls = %d, want 1", adminClient.disableCalls)
+	}
+	if adminClient.listRobotsCalls < 1 {
+		t.Fatalf("listRobotsCalls = %d, want at least 1 (refreshed after mutation)", adminClient.listRobotsCalls)
+	}
+	if got, want := updated.screen, screenAdminRobots; got != want {
+		t.Fatalf("screen = %q, want %q", got, want)
+	}
+}
+
+// TestModelAdminRobotDeleteKeyOpensConfirmModal is this task's RED test for
+// the "d" key on screenAdminRobots: unlike screenAdminUsers (no delete key
+// at all) and unlike this same screen's "e"/"x" (enable/disable), "d" opens
+// a destructive, irreversible confirmation -- distinct wording from the
+// reversible disable confirm above, since a deleted robot cannot be
+// recovered the way a disabled one can be re-enabled.
+func TestModelAdminRobotDeleteKeyOpensConfirmModal(t *testing.T) {
+	t.Parallel()
+
+	adminClient := &fakeAdminClient{
+		robots: []ports.AdminRobot{{ID: "u-2", Username: "robot$ci", Repository: "team/app", Role: domainauth.RepoRoleWriter, Enabled: true}},
+	}
+	model := newAdminReadyModel(t, adminClient)
+	model.adminAuth = adminAuthStateAuthenticated
+	model.screen = screenAdminRobots
+	model.adminView.Robots = adminClient.robots
+	model.adminView.SelectedRobot = 0
+
+	updated := runKey(t, model, "d")
+
+	if got, want := updated.adminView.ConfirmModal.Kind, adminConfirmDeleteRobot; got != want {
+		t.Fatalf("ConfirmModal.Kind = %q, want %q", got, want)
+	}
+	if got, want := updated.adminView.ConfirmModal.UserID, "u-2"; got != want {
+		t.Fatalf("ConfirmModal.UserID = %q, want %q", got, want)
+	}
+	view := updated.View()
+	if !strings.Contains(view, `robot$ci`) {
+		t.Fatalf("view = %q, want the robot's username in the confirmation", view)
+	}
+	if !strings.Contains(strings.ToLower(view), "cannot be undone") {
+		t.Fatalf("view = %q, want an irreversibility warning distinguishing this from disable", view)
+	}
+}
+
+// TestModelDeleteAdminRobotConfirmFlow triangulates the RED test above by
+// driving Enter on the opened modal: it must call AdminClient.DeleteRobot
+// with the selected robot's ID and, on success, the robot must disappear
+// from the refreshed list (proving the reload -- not a hardcoded stub --
+// drives the list, the same pattern TestModelEnableDisableAdminRobotConfirmFlow
+// already establishes for enable/disable).
+func TestModelDeleteAdminRobotConfirmFlow(t *testing.T) {
+	t.Parallel()
+
+	adminClient := &fakeAdminClient{
+		robots: []ports.AdminRobot{{ID: "u-2", Username: "robot$ci", Repository: "team/app", Role: domainauth.RepoRoleWriter, Enabled: true}},
+	}
+	model := newAdminReadyModel(t, adminClient)
+	model.adminAuth = adminAuthStateAuthenticated
+	model.screen = screenAdminRobots
+	model.adminView.Robots = adminClient.robots
+	model.adminView.SelectedRobot = 0
+
+	updated := runKey(t, model, "d")
+	updated = runKey(t, updated, "enter")
+
+	if adminClient.lastDeleteRobotUserID != "u-2" {
+		t.Fatalf("lastDeleteRobotUserID = %q, want %q", adminClient.lastDeleteRobotUserID, "u-2")
+	}
+	if adminClient.listRobotsCalls < 1 {
+		t.Fatalf("listRobotsCalls = %d, want at least 1 (refreshed after mutation)", adminClient.listRobotsCalls)
+	}
+	if got, want := updated.screen, screenAdminRobots; got != want {
+		t.Fatalf("screen = %q, want %q", got, want)
+	}
+	if got, want := updated.adminView.ConfirmModal.Kind, adminConfirmNone; got != want {
+		t.Fatalf("ConfirmModal.Kind = %q, want %q (closed after success)", got, want)
+	}
+	for _, robot := range updated.adminView.Robots {
+		if robot.ID == "u-2" {
+			t.Fatalf("Robots = %+v, want %q removed after delete", updated.adminView.Robots, "u-2")
+		}
 	}
 }
 
@@ -3391,6 +4084,15 @@ type fakeAdminClient struct {
 	lastDeleteGrantUserID string
 	lastDeleteGrantRepo   string
 
+	repoGrants         map[string][]ports.AdminRepositoryGrant
+	listRepoGrantsErr  error
+	putRepoGrantErr    error
+	lastRepoGrantInput ports.AdminPutRepositoryGrantInput
+
+	deleteRepoGrantErr          error
+	lastDeleteRepoGrantRepo     string
+	lastDeleteRepoGrantUsername string
+
 	createToken    ports.AdminCreatedToken
 	createTokenErr error
 
@@ -3403,6 +4105,20 @@ type fakeAdminClient struct {
 
 	disableUser ports.AdminUser
 	disableErr  error
+
+	robots               []ports.AdminRobot
+	listRobotsErr        error
+	listRobotsCalls      int
+	createRobot          ports.AdminCreatedRobot
+	createRobotErr       error
+	createRobotCalls     int
+	lastCreateRobotInput ports.AdminCreateRobotInput
+
+	// deleteRobot* backs the registry-acl-v1 robot-deletion "d" key/confirm
+	// flow on screenAdminRobots.
+	deleteRobotErr        error
+	deleteRobotCalls      int
+	lastDeleteRobotUserID string
 
 	loginCalls                  int
 	listFeaturesCalls           int
@@ -3428,6 +4144,9 @@ type fakeAdminClient struct {
 	configureFeatureCalls       int
 	putGrantCalls               int
 	deleteGrantCalls            int
+	listRepoGrantsCalls         int
+	putRepoGrantCalls           int
+	deleteRepoGrantCalls        int
 	createTokenCalls            int
 	revokeTokenCalls            int
 	enableCalls                 int
@@ -3748,6 +4467,46 @@ func (f *fakeAdminClient) DeleteUserGrant(_ context.Context, _ AdminSession, use
 	return f.deleteGrantErr
 }
 
+func (f *fakeAdminClient) DeleteRobot(_ context.Context, _ AdminSession, userID string) error {
+	f.deleteRobotCalls++
+	f.lastDeleteRobotUserID = userID
+	if f.deleteRobotErr != nil {
+		return f.deleteRobotErr
+	}
+	remaining := f.robots[:0:0]
+	for _, robot := range f.robots {
+		if robot.ID != userID {
+			remaining = append(remaining, robot)
+		}
+	}
+	f.robots = remaining
+	return nil
+}
+
+func (f *fakeAdminClient) ListRepositoryGrants(_ context.Context, _ AdminSession, repository string) ([]ports.AdminRepositoryGrant, error) {
+	f.listRepoGrantsCalls++
+	if f.listRepoGrantsErr != nil {
+		return nil, f.listRepoGrantsErr
+	}
+	return append([]ports.AdminRepositoryGrant(nil), f.repoGrants[repository]...), nil
+}
+
+func (f *fakeAdminClient) PutRepositoryGrant(_ context.Context, _ AdminSession, input ports.AdminPutRepositoryGrantInput) (ports.AdminRepositoryGrant, error) {
+	f.putRepoGrantCalls++
+	f.lastRepoGrantInput = input
+	if f.putRepoGrantErr != nil {
+		return ports.AdminRepositoryGrant{}, f.putRepoGrantErr
+	}
+	return ports.AdminRepositoryGrant{Username: input.Username, Role: input.Role}, nil
+}
+
+func (f *fakeAdminClient) DeleteRepositoryGrant(_ context.Context, _ AdminSession, repository string, username string) error {
+	f.deleteRepoGrantCalls++
+	f.lastDeleteRepoGrantRepo = repository
+	f.lastDeleteRepoGrantUsername = username
+	return f.deleteRepoGrantErr
+}
+
 func (f *fakeAdminClient) ListUserAdminTokens(_ context.Context, _ AdminSession, userID string) ([]ports.AdminToken, error) {
 	f.listTokensCalls++
 	if f.tokensErr != nil {
@@ -3835,6 +4594,23 @@ func (f *fakeAdminClient) DisableUser(_ context.Context, _ AdminSession, _ strin
 		return ports.AdminUser{}, f.disableErr
 	}
 	return f.disableUser, nil
+}
+
+func (f *fakeAdminClient) ListRobots(context.Context, AdminSession) ([]ports.AdminRobot, error) {
+	f.listRobotsCalls++
+	if f.listRobotsErr != nil {
+		return nil, f.listRobotsErr
+	}
+	return append([]ports.AdminRobot(nil), f.robots...), nil
+}
+
+func (f *fakeAdminClient) CreateRobot(_ context.Context, _ AdminSession, input ports.AdminCreateRobotInput) (ports.AdminCreatedRobot, error) {
+	f.createRobotCalls++
+	f.lastCreateRobotInput = input
+	if f.createRobotErr != nil {
+		return ports.AdminCreatedRobot{}, f.createRobotErr
+	}
+	return f.createRobot, nil
 }
 
 func (f *fakeQueryService) RepositorySummaries(context.Context, int, string) ([]appregixtry.RepositorySummary, error) {

@@ -41,14 +41,22 @@ func migrationStatements() []string {
 			PRIMARY KEY(user_id, repository),
 			FOREIGN KEY(user_id) REFERENCES auth_users(id) ON DELETE CASCADE
 		);`,
+		`ALTER TABLE auth_users ADD COLUMN is_read_only BOOLEAN NOT NULL DEFAULT FALSE;`,
+		`ALTER TABLE auth_users ADD COLUMN is_robot BOOLEAN NOT NULL DEFAULT FALSE;`,
 	}
 }
+
+// tolerateDuplicateColumns lists additive columns whose re-applied ALTER
+// TABLE statement is expected to fail with a duplicate-column error on a
+// database that already has them (design.md Decision 8). bootstrapSchema
+// swallows exactly these errors so migrationStatements() stays safely
+// re-runnable across both PostgreSQL and modernc SQLite.
+var tolerateDuplicateColumns = []string{"scope", "is_read_only", "is_robot"}
 
 func bootstrapSchema(ctx context.Context, db *sql.DB) error {
 	for _, statement := range migrationStatements() {
 		if _, err := db.ExecContext(ctx, statement); err != nil {
-			message := strings.ToLower(err.Error())
-			if strings.Contains(message, "duplicate column name: scope") || strings.Contains(message, "column \"scope\" of relation \"auth_tokens\" already exists") {
+			if isTolerableDuplicateColumnError(err) {
 				continue
 			}
 			return err
@@ -56,4 +64,21 @@ func bootstrapSchema(ctx context.Context, db *sql.DB) error {
 	}
 
 	return nil
+}
+
+func isTolerableDuplicateColumnError(err error) bool {
+	for _, column := range tolerateDuplicateColumns {
+		if isDuplicateColumnError(err, column) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func isDuplicateColumnError(err error, column string) bool {
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "duplicate column name: "+column) || // modernc SQLite
+		strings.Contains(message, `column "`+column+`" of relation "auth_users" already exists`) || // PostgreSQL (auth_users)
+		strings.Contains(message, `column "`+column+`" of relation "auth_tokens" already exists`) // PostgreSQL (auth_tokens)
 }

@@ -16,7 +16,9 @@ type AuthStore interface {
 	GetUserByID(ctx context.Context, userID string) (domainauth.User, error)
 	UpsertUser(ctx context.Context, user domainauth.User) error
 	DeleteUser(ctx context.Context, userID string) error
+	ListRobots(ctx context.Context) ([]domainauth.User, error)
 	ListRepoGrants(ctx context.Context, userID string) ([]domainauth.RepoGrant, error)
+	ListRepoGrantsByRepository(ctx context.Context, repository regixtrydomain.RepositoryRef) ([]domainauth.RepoGrant, error)
 	PutRepoGrant(ctx context.Context, grant domainauth.RepoGrant) error
 	DeleteRepoGrant(ctx context.Context, userID string, repository regixtrydomain.RepositoryRef) error
 	CreateToken(ctx context.Context, token domainauth.Token) error
@@ -53,17 +55,41 @@ type CreateAdminTokenInput struct {
 }
 
 type CreateUserInput struct {
-	Username string
-	Password string
-	IsAdmin  bool
-	Enabled  bool
+	Username   string
+	Password   string
+	IsAdmin    bool
+	IsReadOnly bool
+	Enabled    bool
 }
 
 type UpdateUserInput struct {
 	UserID        string
 	Username      string
 	IsAdmin       bool
+	IsReadOnly    bool
 	PreserveAdmin bool
+}
+
+// CreateRobotInput is the service-level input for creating a robot account
+// (design.md Decision 2): exactly one repository+role is bound at creation,
+// enforced by the service, not the schema. TTL follows CreateAdminTokenInput's
+// convention: zero means DefaultAdminTokenTTL, reused unchanged.
+type CreateRobotInput struct {
+	Name       string
+	Repository string
+	Role       domainauth.RepoRole
+	TTL        time.Duration
+}
+
+// CreatedRobot is CreateRobot's result: the persisted robot user, its single
+// grant, and its issued admin-credential token (secret shown once, matching
+// CreateAdminToken's shape).
+type CreatedRobot struct {
+	User      domainauth.User
+	Grant     domainauth.RepoGrant
+	Secret    string
+	Accessor  string
+	ExpiresAt time.Time
 }
 
 type CreatedAdminToken struct {
@@ -76,19 +102,21 @@ type CreatedAdminToken struct {
 }
 
 type AdminUser struct {
-	ID        string    `json:"id"`
-	Username  string    `json:"username"`
-	IsAdmin   bool      `json:"is_admin"`
-	Enabled   bool      `json:"enabled"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID         string    `json:"id"`
+	Username   string    `json:"username"`
+	IsAdmin    bool      `json:"is_admin"`
+	IsReadOnly bool      `json:"is_read_only"`
+	Enabled    bool      `json:"enabled"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 type AdminCreateUserInput struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
-	IsAdmin  bool   `json:"is_admin"`
-	Enabled  bool   `json:"enabled"`
+	Username   string `json:"username"`
+	Password   string `json:"password"`
+	IsAdmin    bool   `json:"is_admin"`
+	IsReadOnly bool   `json:"is_read_only"`
+	Enabled    bool   `json:"enabled"`
 }
 
 type AdminResetPasswordInput struct {
@@ -108,6 +136,53 @@ type AdminPutRepoGrantInput struct {
 	UserID     string              `json:"-"`
 	Repository string              `json:"-"`
 	Role       domainauth.RepoRole `json:"role"`
+}
+
+// AdminRepositoryGrant is the delegate-facing grant projection
+// (design.md Decision 3's route table). It deliberately carries no user ID,
+// password hash, admin/read-only flags, or any other repository's grants —
+// a delegate must be able to name a user to grant without ever reading the
+// user directory (threat matrix: identity disclosure).
+type AdminRepositoryGrant struct {
+	Username  string              `json:"username"`
+	Role      domainauth.RepoRole `json:"role"`
+	CreatedAt time.Time           `json:"created_at"`
+	UpdatedAt time.Time           `json:"updated_at"`
+}
+
+type AdminPutRepositoryGrantInput struct {
+	Repository string              `json:"-"`
+	Username   string              `json:"-"`
+	Role       domainauth.RepoRole `json:"role"`
+}
+
+// AdminRobot is the operator-facing robot projection (design.md Decision 6's
+// route table): id/username/repository/role/enabled/created_at, matching
+// GET /admin/v1/robots' documented shape.
+type AdminRobot struct {
+	ID         string              `json:"id"`
+	Username   string              `json:"username"`
+	Repository string              `json:"repository"`
+	Role       domainauth.RepoRole `json:"role"`
+	Enabled    bool                `json:"enabled"`
+	CreatedAt  time.Time           `json:"created_at"`
+}
+
+type AdminCreateRobotInput struct {
+	Name       string              `json:"name"`
+	Repository string              `json:"repository"`
+	Role       domainauth.RepoRole `json:"role"`
+	TTL        time.Duration       `json:"-"`
+}
+
+// AdminCreatedRobot is POST /admin/v1/robots' response shape: the robot
+// projection plus the secret (shown once), matching CreatedAdminToken's
+// precedent.
+type AdminCreatedRobot struct {
+	Robot     AdminRobot `json:"robot"`
+	Secret    string     `json:"secret"`
+	Accessor  string     `json:"accessor"`
+	ExpiresAt time.Time  `json:"expires_at"`
 }
 
 type AdminToken struct {
@@ -144,6 +219,12 @@ type AdminHTTPService interface {
 	ListAdminUserRepoGrants(ctx context.Context, actor domainauth.Principal, userID string) ([]AdminRepoGrant, error)
 	PutAdminUserRepoGrant(ctx context.Context, actor domainauth.Principal, input AdminPutRepoGrantInput) (AdminRepoGrant, error)
 	DeleteAdminUserRepoGrant(ctx context.Context, actor domainauth.Principal, userID string, repository string) error
+	ListAdminRepositoryGrants(ctx context.Context, actor domainauth.Principal, repository string) ([]AdminRepositoryGrant, error)
+	PutAdminRepositoryGrant(ctx context.Context, actor domainauth.Principal, input AdminPutRepositoryGrantInput) (AdminRepositoryGrant, error)
+	DeleteAdminRepositoryGrant(ctx context.Context, actor domainauth.Principal, repository string, username string) error
+	CreateAdminRobot(ctx context.Context, actor domainauth.Principal, input AdminCreateRobotInput) (AdminCreatedRobot, error)
+	ListAdminRobots(ctx context.Context, actor domainauth.Principal) ([]AdminRobot, error)
+	DeleteAdminRobot(ctx context.Context, actor domainauth.Principal, userID string) error
 	ListAdminUserTokens(ctx context.Context, actor domainauth.Principal, userID string) ([]AdminToken, error)
 	CreateAdminUserToken(ctx context.Context, actor domainauth.Principal, input AdminCreateTokenInput) (AdminCreatedToken, error)
 	RevokeAdminUserToken(ctx context.Context, actor domainauth.Principal, userID string, accessor string) error
@@ -167,4 +248,10 @@ type AuthService interface {
 	ResetPassword(ctx context.Context, actor domainauth.Principal, userID string, newPassword string) error
 	PutRepoGrant(ctx context.Context, actor domainauth.Principal, userID string, repository string, role domainauth.RepoRole) (domainauth.RepoGrant, error)
 	DeleteRepoGrant(ctx context.Context, actor domainauth.Principal, userID string, repository string) error
+	ListRepositoryGrants(ctx context.Context, actor domainauth.Principal, repository string) ([]domainauth.RepoGrant, error)
+	PutRepositoryGrant(ctx context.Context, actor domainauth.Principal, repository string, username string, role domainauth.RepoRole) (domainauth.RepoGrant, error)
+	DeleteRepositoryGrant(ctx context.Context, actor domainauth.Principal, repository string, username string) error
+	CreateRobot(ctx context.Context, actor domainauth.Principal, input CreateRobotInput) (CreatedRobot, error)
+	ListRobots(ctx context.Context, actor domainauth.Principal) ([]domainauth.User, error)
+	DeleteRobot(ctx context.Context, actor domainauth.Principal, userID string) error
 }

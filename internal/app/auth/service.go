@@ -157,6 +157,7 @@ func (s *Service) CreateUser(ctx context.Context, actor domainauth.Principal, in
 		Username:     username,
 		PasswordHash: hash,
 		IsAdmin:      input.IsAdmin,
+		IsReadOnly:   input.IsReadOnly,
 		Enabled:      input.Enabled,
 		CreatedAt:    now,
 		UpdatedAt:    now,
@@ -170,10 +171,11 @@ func (s *Service) CreateUser(ctx context.Context, actor domainauth.Principal, in
 
 func (s *Service) CreateAdminUser(ctx context.Context, actor domainauth.Principal, input ports.AdminCreateUserInput) (ports.AdminUser, error) {
 	user, err := s.CreateUser(ctx, actor, ports.CreateUserInput{
-		Username: input.Username,
-		Password: input.Password,
-		IsAdmin:  input.IsAdmin,
-		Enabled:  input.Enabled,
+		Username:   input.Username,
+		Password:   input.Password,
+		IsAdmin:    input.IsAdmin,
+		IsReadOnly: input.IsReadOnly,
+		Enabled:    input.Enabled,
 	})
 	if err != nil {
 		return ports.AdminUser{}, err
@@ -214,6 +216,7 @@ func (s *Service) UpdateUser(ctx context.Context, actor domainauth.Principal, in
 
 	user.Username = nextUsername
 	user.IsAdmin = input.IsAdmin
+	user.IsReadOnly = input.IsReadOnly
 	user.UpdatedAt = s.now()
 	if err := s.store.UpsertUser(ctx, user); err != nil {
 		return domainauth.User{}, err
@@ -286,6 +289,15 @@ func (s *Service) LoginWithPassword(ctx context.Context, username string, passwo
 	user, err := s.getActiveUserByUsername(ctx, username)
 	if err != nil {
 		return ports.LoginResult{}, err
+	}
+	// design.md Decision 6: the guard sits here, immediately after
+	// getActiveUserByUsername, and NOT inside that helper — it is shared
+	// with LoginWithPreissuedToken, the robot's only working credential
+	// path. A robot's RobotPasswordHash sentinel (user.go) independently
+	// blocks bcrypt below, but this per-attempt guard is a second,
+	// permanent layer that does not depend on the stored hash's shape.
+	if user.IsRobot {
+		return ports.LoginResult{}, domainauth.NewInvalidCredentialsError()
 	}
 	if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)) != nil {
 		return ports.LoginResult{}, domainauth.NewInvalidCredentialsError()
@@ -557,14 +569,294 @@ func (s *Service) DeleteAdminUserRepoGrant(ctx context.Context, actor domainauth
 	return s.DeleteRepoGrant(ctx, actor, userID, repository)
 }
 
+// ListRepositoryGrants lists every grant on one repository (design.md
+// Decision 3's delegate route table). Authorization is
+// requireAdminOrRepoAdmin, so a delegate is structurally scoped to their own
+// repository: they can never pass the gate for a repository they do not
+// administer, which is what keeps their listing scoped without any extra
+// filtering (operator-access-administration's delegate-scoped-listing
+// scenario).
+func (s *Service) ListRepositoryGrants(ctx context.Context, actor domainauth.Principal, repository string) ([]domainauth.RepoGrant, error) {
+	repo, err := regixtrydomain.ParseRepositoryRef(strings.TrimSpace(repository))
+	if err != nil {
+		return nil, err
+	}
+	if err := requireAdminOrRepoAdmin(actor, repo.String()); err != nil {
+		return nil, err
+	}
+
+	return s.store.ListRepoGrantsByRepository(ctx, repo)
+}
+
+func (s *Service) ListAdminRepositoryGrants(ctx context.Context, actor domainauth.Principal, repository string) ([]ports.AdminRepositoryGrant, error) {
+	grants, err := s.ListRepositoryGrants(ctx, actor, repository)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]ports.AdminRepositoryGrant, 0, len(grants))
+	for _, grant := range grants {
+		user, err := s.store.GetUserByID(ctx, grant.UserID)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, ports.AdminRepositoryGrant{Username: user.Username, Role: grant.Role, CreatedAt: grant.CreatedAt, UpdatedAt: grant.UpdatedAt})
+	}
+
+	return result, nil
+}
+
+// PutRepositoryGrant is the delegate-eligible sibling of PutRepoGrant
+// (design.md Decision 3): grants are addressed by username, not user ID, so
+// a delegate never needs to read the user directory to name someone. For a
+// non-global-admin actor (necessarily a repo-admin delegate, enforced by
+// requireAdminOrRepoAdmin), design.md Decision 4's escalation bounds apply:
+// the requested role must be repo-reader or repo-writer (repo-admin is
+// rejected outright, which also covers self-assignment — no identity
+// comparison is needed), and the target's existing grant on this repository
+// must not already be repo-admin (a delegate cannot demote or replace a
+// peer repository administrator).
+func (s *Service) PutRepositoryGrant(ctx context.Context, actor domainauth.Principal, repository string, username string, role domainauth.RepoRole) (domainauth.RepoGrant, error) {
+	repo, err := regixtrydomain.ParseRepositoryRef(strings.TrimSpace(repository))
+	if err != nil {
+		return domainauth.RepoGrant{}, err
+	}
+	if err := requireAdminOrRepoAdmin(actor, repo.String()); err != nil {
+		return domainauth.RepoGrant{}, err
+	}
+	if err := role.Validate(); err != nil {
+		return domainauth.RepoGrant{}, err
+	}
+	if !actor.IsAdmin && role == domainauth.RepoRoleAdmin {
+		return domainauth.RepoGrant{}, domainauth.NewForbiddenError("repository administrators cannot grant repo-admin")
+	}
+
+	target, err := s.store.GetUserByUsername(ctx, normalizeUsername(username))
+	if err != nil {
+		return domainauth.RepoGrant{}, err
+	}
+
+	if !actor.IsAdmin {
+		existing, err := s.store.ListRepoGrants(ctx, target.ID)
+		if err != nil {
+			return domainauth.RepoGrant{}, err
+		}
+		for _, grant := range existing {
+			if grant.Repository.String() == repo.String() && grant.Role == domainauth.RepoRoleAdmin {
+				return domainauth.RepoGrant{}, domainauth.NewForbiddenError("repository administrators cannot modify another repository administrator's grant")
+			}
+		}
+	}
+
+	now := s.now()
+	grant := domainauth.RepoGrant{UserID: target.ID, Repository: repo, Role: role, CreatedAt: now, UpdatedAt: now}
+	if err := s.store.PutRepoGrant(ctx, grant); err != nil {
+		return domainauth.RepoGrant{}, err
+	}
+
+	return grant, nil
+}
+
+func (s *Service) PutAdminRepositoryGrant(ctx context.Context, actor domainauth.Principal, input ports.AdminPutRepositoryGrantInput) (ports.AdminRepositoryGrant, error) {
+	grant, err := s.PutRepositoryGrant(ctx, actor, input.Repository, input.Username, input.Role)
+	if err != nil {
+		return ports.AdminRepositoryGrant{}, err
+	}
+
+	return ports.AdminRepositoryGrant{Username: normalizeUsername(input.Username), Role: grant.Role, CreatedAt: grant.CreatedAt, UpdatedAt: grant.UpdatedAt}, nil
+}
+
+// DeleteRepositoryGrant is the delegate-eligible sibling of DeleteRepoGrant.
+// The same existing-role escalation bound as PutRepositoryGrant applies: a
+// non-global-admin actor cannot remove another repository administrator's
+// grant on this repository.
+func (s *Service) DeleteRepositoryGrant(ctx context.Context, actor domainauth.Principal, repository string, username string) error {
+	repo, err := regixtrydomain.ParseRepositoryRef(strings.TrimSpace(repository))
+	if err != nil {
+		return err
+	}
+	if err := requireAdminOrRepoAdmin(actor, repo.String()); err != nil {
+		return err
+	}
+
+	target, err := s.store.GetUserByUsername(ctx, normalizeUsername(username))
+	if err != nil {
+		return err
+	}
+
+	if !actor.IsAdmin {
+		existing, err := s.store.ListRepoGrants(ctx, target.ID)
+		if err != nil {
+			return err
+		}
+		for _, grant := range existing {
+			if grant.Repository.String() == repo.String() && grant.Role == domainauth.RepoRoleAdmin {
+				return domainauth.NewForbiddenError("repository administrators cannot modify another repository administrator's grant")
+			}
+		}
+	}
+
+	return s.store.DeleteRepoGrant(ctx, target.ID, repo)
+}
+
+func (s *Service) DeleteAdminRepositoryGrant(ctx context.Context, actor domainauth.Principal, repository string, username string) error {
+	return s.DeleteRepositoryGrant(ctx, actor, repository, username)
+}
+
+// CreateRobot creates a robot account, its single repository grant, and its
+// issued admin-credential token (design.md Decision 2 and Decision 6). The
+// TTL ceiling and revocation are inherited unchanged by delegating token
+// issuance to CreateAdminToken.
+func (s *Service) CreateRobot(ctx context.Context, actor domainauth.Principal, input ports.CreateRobotInput) (ports.CreatedRobot, error) {
+	if err := requireAdmin(actor); err != nil {
+		return ports.CreatedRobot{}, err
+	}
+
+	username := normalizeUsername(input.Name)
+	if username == "" {
+		return ports.CreatedRobot{}, domainauth.NewValidationError("robot name is required")
+	}
+	if _, err := s.store.GetUserByUsername(ctx, username); err == nil {
+		return ports.CreatedRobot{}, domainauth.NewConflictError("username already exists")
+	} else if !domainauth.IsCode(err, domainauth.ErrorCodeNotFound) {
+		return ports.CreatedRobot{}, err
+	}
+
+	repo, err := regixtrydomain.ParseRepositoryRef(strings.TrimSpace(input.Repository))
+	if err != nil {
+		return ports.CreatedRobot{}, err
+	}
+	if err := input.Role.Validate(); err != nil {
+		return ports.CreatedRobot{}, err
+	}
+
+	now := s.now()
+	user := domainauth.User{
+		ID:           uuid.NewString(),
+		Username:     username,
+		PasswordHash: domainauth.RobotPasswordHash,
+		IsRobot:      true,
+		Enabled:      true,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	if err := s.store.UpsertUser(ctx, user); err != nil {
+		return ports.CreatedRobot{}, err
+	}
+
+	grant := domainauth.RepoGrant{UserID: user.ID, Repository: repo, Role: input.Role, CreatedAt: now, UpdatedAt: now}
+	if err := s.store.PutRepoGrant(ctx, grant); err != nil {
+		return ports.CreatedRobot{}, err
+	}
+
+	created, err := s.CreateAdminToken(ctx, actor, ports.CreateAdminTokenInput{UserID: user.ID, Name: strings.TrimSpace(input.Name), TTL: input.TTL})
+	if err != nil {
+		return ports.CreatedRobot{}, err
+	}
+
+	return ports.CreatedRobot{User: user, Grant: grant, Secret: created.Secret, Accessor: created.Accessor, ExpiresAt: created.ExpiresAt}, nil
+}
+
+// ListRobots lists every robot account (design.md Decision 6): a dedicated
+// store query, separate from ListUsers, which now excludes robot rows.
+func (s *Service) ListRobots(ctx context.Context, actor domainauth.Principal) ([]domainauth.User, error) {
+	if err := requireAdmin(actor); err != nil {
+		return nil, err
+	}
+
+	return s.store.ListRobots(ctx)
+}
+
+func (s *Service) CreateAdminRobot(ctx context.Context, actor domainauth.Principal, input ports.AdminCreateRobotInput) (ports.AdminCreatedRobot, error) {
+	created, err := s.CreateRobot(ctx, actor, ports.CreateRobotInput{
+		Name:       input.Name,
+		Repository: input.Repository,
+		Role:       input.Role,
+		TTL:        input.TTL,
+	})
+	if err != nil {
+		return ports.AdminCreatedRobot{}, err
+	}
+
+	return ports.AdminCreatedRobot{
+		Robot:     toAdminRobot(created.User, created.Grant),
+		Secret:    created.Secret,
+		Accessor:  created.Accessor,
+		ExpiresAt: created.ExpiresAt,
+	}, nil
+}
+
+func (s *Service) ListAdminRobots(ctx context.Context, actor domainauth.Principal) ([]ports.AdminRobot, error) {
+	robots, err := s.ListRobots(ctx, actor)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]ports.AdminRobot, 0, len(robots))
+	for _, robot := range robots {
+		grants, err := s.store.ListRepoGrants(ctx, robot.ID)
+		if err != nil {
+			return nil, err
+		}
+
+		var grant domainauth.RepoGrant
+		if len(grants) > 0 {
+			grant = grants[0]
+		}
+		result = append(result, toAdminRobot(robot, grant))
+	}
+
+	return result, nil
+}
+
+// DeleteRobot hard-deletes a robot account (design.md robot-accounts
+// deletion follow-up): deliberately breaking from this codebase's
+// no-hard-delete-for-humans precedent, because a robot's only purpose is to
+// hold exactly one (repository, role) grant plus its tokens — nothing is
+// orphaned or historically meaningful by removing it. The IsRobot guard
+// below is the single most important check: it is the boundary that keeps
+// this global-admin-only endpoint from becoming a backdoor around hard
+// deletion for human users.
+func (s *Service) DeleteRobot(ctx context.Context, actor domainauth.Principal, userID string) error {
+	if err := requireAdmin(actor); err != nil {
+		return err
+	}
+
+	user, err := s.store.GetUserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if !user.IsRobot {
+		return domainauth.NewValidationError("target user is not a robot account")
+	}
+
+	return s.store.DeleteUser(ctx, userID)
+}
+
+func (s *Service) DeleteAdminRobot(ctx context.Context, actor domainauth.Principal, userID string) error {
+	return s.DeleteRobot(ctx, actor, userID)
+}
+
+func toAdminRobot(user domainauth.User, grant domainauth.RepoGrant) ports.AdminRobot {
+	return ports.AdminRobot{
+		ID:         user.ID,
+		Username:   user.Username,
+		Repository: grant.Repository.String(),
+		Role:       grant.Role,
+		Enabled:    user.Enabled,
+		CreatedAt:  user.CreatedAt,
+	}
+}
+
 func toAdminUser(user domainauth.User) ports.AdminUser {
 	return ports.AdminUser{
-		ID:        user.ID,
-		Username:  user.Username,
-		IsAdmin:   user.IsAdmin,
-		Enabled:   user.Enabled,
-		CreatedAt: user.CreatedAt,
-		UpdatedAt: user.UpdatedAt,
+		ID:         user.ID,
+		Username:   user.Username,
+		IsAdmin:    user.IsAdmin,
+		IsReadOnly: user.IsReadOnly,
+		Enabled:    user.Enabled,
+		CreatedAt:  user.CreatedAt,
+		UpdatedAt:  user.UpdatedAt,
 	}
 }
 
@@ -663,7 +955,7 @@ func (s *Service) buildPrincipal(ctx context.Context, user domainauth.User, toke
 		return domainauth.Principal{}, err
 	}
 
-	return domainauth.Principal{Subject: token.Accessor, UserID: user.ID, Username: user.Username, IsAdmin: user.IsAdmin, Grants: grants, Scopes: scopes, ExpiresAt: token.ExpiresAt}, nil
+	return domainauth.Principal{Subject: token.Accessor, UserID: user.ID, Username: user.Username, IsAdmin: user.IsAdmin, IsReadOnly: user.IsReadOnly, Grants: grants, Scopes: scopes, ExpiresAt: token.ExpiresAt}, nil
 }
 
 func (s *Service) grantedScopes(ctx context.Context, user domainauth.User, requestedScopes []domainauth.Scope) ([]domainauth.Scope, error) {
@@ -686,7 +978,7 @@ func (s *Service) grantedScopes(ctx context.Context, user domainauth.User, reque
 			continue
 		}
 
-		actions := intersectRequestedActions(user.IsAdmin, grants, requested)
+		actions := intersectRequestedActions(user.IsAdmin, user.IsReadOnly, grants, requested)
 		if len(actions) == 0 {
 			continue
 		}
@@ -697,13 +989,20 @@ func (s *Service) grantedScopes(ctx context.Context, user domainauth.User, reque
 	return granted, nil
 }
 
-func intersectRequestedActions(isAdmin bool, grants []domainauth.RepoGrant, requested domainauth.Scope) []string {
+func intersectRequestedActions(isAdmin bool, isReadOnly bool, grants []domainauth.RepoGrant, requested domainauth.Scope) []string {
 	allowPull := false
 	allowPush := false
 
 	if isAdmin {
 		allowPull = requested.AllowsPull()
 		allowPush = requested.AllowsPush()
+	} else if isReadOnly {
+		// Registry-wide read: the domain-level probe in
+		// hasGrantedRepositoryAccess (design.md Decision 5) already grants
+		// read on every repository, but the token itself carries zero
+		// scopes unless this branch runs — otherwise every pull fails
+		// despite the domain check passing. Never grants push.
+		allowPull = requested.AllowsPull()
 	} else {
 		for _, grant := range grants {
 			if grant.Repository.String() != requested.Repository().String() {
@@ -736,6 +1035,27 @@ func requireAdmin(actor domainauth.Principal) error {
 	}
 
 	return nil
+}
+
+// requireAdminOrRepoAdmin authorizes the delegated repository-grant
+// namespace (design.md Decision 4): a global admin always passes, and a
+// repo-admin grant on the exact target repository also passes. This
+// deliberately reads actor.Grants directly instead of reusing
+// Principal.HasRepoAdminAccess, which additionally requires a push token
+// scope — a TUI/admin-API login requests zero scopes, so that helper would
+// make delegation permanently dead code on exactly the tokens it runs on.
+func requireAdminOrRepoAdmin(actor domainauth.Principal, repository string) error {
+	if actor.IsAdmin {
+		return nil
+	}
+
+	for _, grant := range actor.Grants {
+		if grant.Repository.String() == repository && grant.Role.AllowsAdmin() {
+			return nil
+		}
+	}
+
+	return domainauth.NewForbiddenError("repository administrator privileges are required")
 }
 
 func normalizeUsername(username string) string {

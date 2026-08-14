@@ -166,6 +166,723 @@ func TestServiceRevokeAdminUserTokenRejectsMismatchedOwner(t *testing.T) {
 	}
 }
 
+// TestIntersectRequestedActionsReadOnlyYieldsPullOnly pins design.md
+// Decision 5: a read-only actor's requested repository scope is granted
+// "pull" and never "push", regardless of any stored grant for that
+// repository, while the admin and grant-based paths stay byte-identical.
+func TestIntersectRequestedActionsReadOnlyYieldsPullOnly(t *testing.T) {
+	t.Parallel()
+
+	pullPush := mustParseTestScope(t, "repository:team/app:pull,push")
+	writerGrant := []domainauth.RepoGrant{{Repository: regixtrydomain.MustParseRepositoryRef("team/app"), Role: domainauth.RepoRoleWriter}}
+
+	tests := []struct {
+		name       string
+		isAdmin    bool
+		isReadOnly bool
+		grants     []domainauth.RepoGrant
+		requested  domainauth.Scope
+		want       []string
+	}{
+		{
+			name:       "read-only actor with no grant is granted pull only",
+			isReadOnly: true,
+			requested:  pullPush,
+			want:       []string{"pull"},
+		},
+		{
+			name:       "read-only actor with an existing writer grant is still granted pull only",
+			isReadOnly: true,
+			grants:     writerGrant,
+			requested:  pullPush,
+			want:       []string{"pull"},
+		},
+		{
+			name:      "admin actor is byte-identical: granted both pull and push",
+			isAdmin:   true,
+			requested: pullPush,
+			want:      []string{"pull", "push"},
+		},
+		{
+			name:      "grant-based actor is byte-identical: writer grant yields pull and push",
+			grants:    writerGrant,
+			requested: pullPush,
+			want:      []string{"pull", "push"},
+		},
+		{
+			name:      "unflagged actor with no grant is granted nothing",
+			requested: pullPush,
+			want:      []string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := intersectRequestedActions(tt.isAdmin, tt.isReadOnly, tt.grants, tt.requested)
+			if !equalStringSlices(got, tt.want) {
+				t.Fatalf("intersectRequestedActions() = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestRequireAdminOrRepoAdmin pins design.md Decision 4: requireAdminOrRepoAdmin
+// reads actor.Grants directly (never Principal.HasRepoAdminAccess, which
+// additionally requires a push token scope that a scope-less admin-API login
+// never carries). A global admin always passes; a repo-admin grant on the
+// exact repository passes; a repo-admin grant on a different repository, a
+// repo-writer grant, the registry-wide read-only role, and an actor with an
+// empty Grants slice are all rejected.
+func TestRequireAdminOrRepoAdmin(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		actor      domainauth.Principal
+		repository string
+		wantErr    bool
+	}{
+		{
+			name:       "global admin passes regardless of grants",
+			actor:      domainauth.Principal{IsAdmin: true},
+			repository: "team/app",
+		},
+		{
+			name: "repo-admin on the exact repository passes",
+			actor: domainauth.Principal{Grants: []domainauth.RepoGrant{
+				{Repository: regixtrydomain.MustParseRepositoryRef("team/app"), Role: domainauth.RepoRoleAdmin},
+			}},
+			repository: "team/app",
+		},
+		{
+			name: "repo-admin on a different repository is rejected",
+			actor: domainauth.Principal{Grants: []domainauth.RepoGrant{
+				{Repository: regixtrydomain.MustParseRepositoryRef("team/other"), Role: domainauth.RepoRoleAdmin},
+			}},
+			repository: "team/app",
+			wantErr:    true,
+		},
+		{
+			name: "repo-writer on the exact repository is rejected",
+			actor: domainauth.Principal{Grants: []domainauth.RepoGrant{
+				{Repository: regixtrydomain.MustParseRepositoryRef("team/app"), Role: domainauth.RepoRoleWriter},
+			}},
+			repository: "team/app",
+			wantErr:    true,
+		},
+		{
+			name:       "registry-wide read-only role is rejected",
+			actor:      domainauth.Principal{IsReadOnly: true},
+			repository: "team/app",
+			wantErr:    true,
+		},
+		{
+			name:       "actor with empty Grants is rejected",
+			actor:      domainauth.Principal{},
+			repository: "team/app",
+			wantErr:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := requireAdminOrRepoAdmin(tt.actor, tt.repository)
+			if tt.wantErr && !domainauth.IsCode(err, domainauth.ErrorCodeForbidden) {
+				t.Fatalf("requireAdminOrRepoAdmin() error = %v, want forbidden", err)
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("requireAdminOrRepoAdmin() error = %v, want nil", err)
+			}
+		})
+	}
+}
+
+// TestServicePutRepositoryGrantRejectsDelegateEscalation pins
+// operator-access-administration's delegate-bounded scenarios and design.md
+// Decision 4's escalation bounds (threat matrix: privilege escalation via
+// delegation). A repo-admin delegate on "team/app" is rejected in three
+// separate ways: requesting repo-admin for someone else, self-assigning
+// repo-admin, and touching (demoting) another user's existing repo-admin
+// grant on that same repository. A global admin is unaffected by any of
+// these bounds.
+func TestServicePutRepositoryGrantRejectsDelegateEscalation(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	repo := regixtrydomain.MustParseRepositoryRef("team/app")
+	delegate := domainauth.Principal{UserID: "delegate-1", Username: "delegate", Grants: []domainauth.RepoGrant{
+		{Repository: repo, Role: domainauth.RepoRoleAdmin},
+	}}
+
+	newStoreWithUsers := func() *memoryAuthStore {
+		store := newMemoryAuthStore()
+		delegateUser := domainauth.User{ID: delegate.UserID, Username: delegate.Username, PasswordHash: mustHashPassword(t, "password123"), Enabled: true, CreatedAt: now, UpdatedAt: now}
+		store.usersByID[delegateUser.ID] = delegateUser
+		store.usersByUsername[delegateUser.Username] = delegateUser
+		victim := domainauth.User{ID: "user-victim", Username: "victim", PasswordHash: mustHashPassword(t, "password123"), Enabled: true, CreatedAt: now, UpdatedAt: now}
+		store.usersByID[victim.ID] = victim
+		store.usersByUsername[victim.Username] = victim
+		return store
+	}
+
+	t.Run("delegate is rejected requesting repo-admin for another user", func(t *testing.T) {
+		t.Parallel()
+		store := newStoreWithUsers()
+		service := NewService(store)
+		service.now = func() time.Time { return now }
+
+		_, err := service.PutRepositoryGrant(context.Background(), delegate, repo.String(), "victim", domainauth.RepoRoleAdmin)
+		if !domainauth.IsCode(err, domainauth.ErrorCodeForbidden) {
+			t.Fatalf("PutRepositoryGrant(repo-admin, other user) error = %v, want forbidden", err)
+		}
+	})
+
+	t.Run("delegate is rejected self-assigning repo-admin", func(t *testing.T) {
+		t.Parallel()
+		store := newStoreWithUsers()
+		service := NewService(store)
+		service.now = func() time.Time { return now }
+
+		_, err := service.PutRepositoryGrant(context.Background(), delegate, repo.String(), delegate.Username, domainauth.RepoRoleAdmin)
+		if !domainauth.IsCode(err, domainauth.ErrorCodeForbidden) {
+			t.Fatalf("PutRepositoryGrant(repo-admin, self) error = %v, want forbidden", err)
+		}
+	})
+
+	t.Run("delegate is rejected touching an existing repo-admin grant", func(t *testing.T) {
+		t.Parallel()
+		store := newStoreWithUsers()
+		store.grants["user-victim"] = []domainauth.RepoGrant{{UserID: "user-victim", Repository: repo, Role: domainauth.RepoRoleAdmin, CreatedAt: now, UpdatedAt: now}}
+		service := NewService(store)
+		service.now = func() time.Time { return now }
+
+		_, err := service.PutRepositoryGrant(context.Background(), delegate, repo.String(), "victim", domainauth.RepoRoleWriter)
+		if !domainauth.IsCode(err, domainauth.ErrorCodeForbidden) {
+			t.Fatalf("PutRepositoryGrant(demote existing repo-admin) error = %v, want forbidden", err)
+		}
+	})
+
+	t.Run("global admin is unaffected by the delegate escalation bounds", func(t *testing.T) {
+		t.Parallel()
+		store := newStoreWithUsers()
+		service := NewService(store)
+		service.now = func() time.Time { return now }
+		admin := domainauth.Principal{UserID: "admin-1", Username: "admin", IsAdmin: true}
+
+		grant, err := service.PutRepositoryGrant(context.Background(), admin, repo.String(), "victim", domainauth.RepoRoleAdmin)
+		if err != nil {
+			t.Fatalf("PutRepositoryGrant(admin) error = %v", err)
+		}
+		if grant.Role != domainauth.RepoRoleAdmin {
+			t.Fatalf("PutRepositoryGrant(admin).Role = %q, want repo-admin", grant.Role)
+		}
+	})
+}
+
+// TestServiceListRepositoryGrantsScopedToDelegateOwnRepository pins
+// operator-access-administration's "Delegate's grant listing is scoped to
+// their own repositories" scenario: a delegate holding repo-admin on
+// "team/app" only can list grants for "team/app" but is rejected outright
+// for "team/other" — they never see another repository's grants.
+func TestServiceListRepositoryGrantsScopedToDelegateOwnRepository(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	ownRepo := regixtrydomain.MustParseRepositoryRef("team/app")
+	otherRepo := regixtrydomain.MustParseRepositoryRef("team/other")
+	delegate := domainauth.Principal{UserID: "delegate-1", Username: "delegate", Grants: []domainauth.RepoGrant{
+		{Repository: ownRepo, Role: domainauth.RepoRoleAdmin},
+	}}
+
+	store := newMemoryAuthStore()
+	service := NewService(store)
+	service.now = func() time.Time { return now }
+
+	if _, err := service.ListRepositoryGrants(context.Background(), delegate, ownRepo.String()); err != nil {
+		t.Fatalf("ListRepositoryGrants(own repository) error = %v, want nil", err)
+	}
+
+	if _, err := service.ListRepositoryGrants(context.Background(), delegate, otherRepo.String()); !domainauth.IsCode(err, domainauth.ErrorCodeForbidden) {
+		t.Fatalf("ListRepositoryGrants(other repository) error = %v, want forbidden", err)
+	}
+}
+
+// TestLoginWithPasswordRejectsRobotButPreissuedTokenAccepts pins design.md
+// Decision 6: the IsRobot guard lives in LoginWithPassword, immediately
+// after getActiveUserByUsername, and NOT inside that shared helper — a
+// robot must always be rejected on the password path, even with a
+// password that would otherwise match its stored hash, while
+// LoginWithPreissuedToken (the robot's only working credential path)
+// stays completely unaffected.
+func TestLoginWithPasswordRejectsRobotButPreissuedTokenAccepts(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	store := newMemoryAuthStore()
+	// PasswordHash is deliberately a VALID bcrypt hash of the attempted
+	// password here (not the sentinel), so this specifically exercises the
+	// IsRobot guard: if the guard were missing, bcrypt alone WOULD accept
+	// this login. Layer 2 (the sentinel hash) is proven independently by
+	// TestRobotPasswordHashNeverSatisfiesBcryptComparison and
+	// TestLoginWithPasswordRobotTwoIndependentLayers.
+	robot := domainauth.User{ID: "robot-1", Username: "ci", PasswordHash: mustHashPassword(t, "any-password"), IsRobot: true, Enabled: true, CreatedAt: now, UpdatedAt: now}
+	store.usersByID[robot.ID] = robot
+	store.usersByUsername[robot.Username] = robot
+
+	secret := "robot-secret-1"
+	token := domainauth.Token{ID: "token-1", UserID: robot.ID, Kind: domainauth.TokenKindAdminCredential, Accessor: "act_robot1", SecretHash: hashSecret(secret), CreatedAt: now, ExpiresAt: now.Add(time.Hour)}
+	store.tokensByHash[token.SecretHash] = token
+	store.tokensByAccessor[token.Accessor] = token
+	store.tokensByUser[robot.ID] = []domainauth.Token{token}
+
+	service := NewService(store)
+	service.now = func() time.Time { return now }
+
+	if _, err := service.LoginWithPassword(context.Background(), robot.Username, "any-password", nil); !domainauth.IsCode(err, domainauth.ErrorCodeInvalidCredentials) {
+		t.Fatalf("LoginWithPassword(robot, correct password against a valid hash) error = %v, want invalid credentials", err)
+	}
+
+	if _, err := service.LoginWithPreissuedToken(context.Background(), robot.Username, secret, nil); err != nil {
+		t.Fatalf("LoginWithPreissuedToken(robot) error = %v, want nil", err)
+	}
+}
+
+// TestServiceCreateRobotPersistsGrantEnforcesTTLCeilingAndSupportsRevocation
+// pins design.md Decision 2 (a robot binds to exactly one repository+role
+// at creation, enforced by the service) and Decision 6 (robot tokens reuse
+// CreateAdminToken/RevokeAdminToken unchanged, so the TTL ceiling and
+// immediate revocation are inherited for free). ListRobots is exercised
+// alongside CreateRobot since both land in the same GREEN commit
+// (tasks.md 4.7/4.8).
+func TestServiceCreateRobotPersistsGrantEnforcesTTLCeilingAndSupportsRevocation(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	actor := domainauth.Principal{UserID: "admin-1", Username: "admin", IsAdmin: true}
+
+	t.Run("persists exactly one grant for the requested repository and role", func(t *testing.T) {
+		t.Parallel()
+		store := newMemoryAuthStore()
+		service := NewService(store)
+		service.now = func() time.Time { return now }
+
+		created, err := service.CreateRobot(context.Background(), actor, ports.CreateRobotInput{
+			Name: "ci", Repository: "team/app", Role: domainauth.RepoRoleWriter,
+		})
+		if err != nil {
+			t.Fatalf("CreateRobot() error = %v", err)
+		}
+		if !created.User.IsRobot {
+			t.Fatalf("CreateRobot().User.IsRobot = false, want true")
+		}
+
+		grants, err := store.ListRepoGrants(context.Background(), created.User.ID)
+		if err != nil {
+			t.Fatalf("ListRepoGrants() error = %v", err)
+		}
+		if len(grants) != 1 {
+			t.Fatalf("len(grants) = %d, want 1: %#v", len(grants), grants)
+		}
+		if grants[0].Repository.String() != "team/app" || grants[0].Role != domainauth.RepoRoleWriter {
+			t.Fatalf("grant = %#v, want team/app repo-writer", grants[0])
+		}
+	})
+
+	t.Run("TTL above the ceiling is rejected", func(t *testing.T) {
+		t.Parallel()
+		store := newMemoryAuthStore()
+		service := NewService(store)
+		service.now = func() time.Time { return now }
+
+		_, err := service.CreateRobot(context.Background(), actor, ports.CreateRobotInput{
+			Name: "ci-ttl", Repository: "team/app", Role: domainauth.RepoRoleWriter, TTL: domainauth.DefaultAdminTokenTTL + time.Second,
+		})
+		if !domainauth.IsCode(err, domainauth.ErrorCodeValidation) {
+			t.Fatalf("CreateRobot(excessive ttl) error = %v, want validation", err)
+		}
+	})
+
+	t.Run("revoked robot token is denied immediately", func(t *testing.T) {
+		t.Parallel()
+		store := newMemoryAuthStore()
+		service := NewService(store)
+		service.now = func() time.Time { return now }
+
+		created, err := service.CreateRobot(context.Background(), actor, ports.CreateRobotInput{
+			Name: "ci-revoke", Repository: "team/app", Role: domainauth.RepoRoleWriter,
+		})
+		if err != nil {
+			t.Fatalf("CreateRobot() error = %v", err)
+		}
+
+		if _, err := service.LoginWithPreissuedToken(context.Background(), created.User.Username, created.Secret, nil); err != nil {
+			t.Fatalf("LoginWithPreissuedToken(before revoke) error = %v", err)
+		}
+
+		if err := service.RevokeAdminToken(context.Background(), actor, created.Accessor); err != nil {
+			t.Fatalf("RevokeAdminToken() error = %v", err)
+		}
+
+		if _, err := service.LoginWithPreissuedToken(context.Background(), created.User.Username, created.Secret, nil); err == nil {
+			t.Fatal("LoginWithPreissuedToken(after revoke) error = nil, want rejection")
+		}
+	})
+
+	t.Run("ListRobots requires admin and returns the created robot", func(t *testing.T) {
+		t.Parallel()
+		store := newMemoryAuthStore()
+		service := NewService(store)
+		service.now = func() time.Time { return now }
+
+		created, err := service.CreateRobot(context.Background(), actor, ports.CreateRobotInput{
+			Name: "ci-list", Repository: "team/app", Role: domainauth.RepoRoleReader,
+		})
+		if err != nil {
+			t.Fatalf("CreateRobot() error = %v", err)
+		}
+
+		if _, err := service.ListRobots(context.Background(), domainauth.Principal{}); !domainauth.IsCode(err, domainauth.ErrorCodeForbidden) {
+			t.Fatalf("ListRobots(non-admin) error = %v, want forbidden", err)
+		}
+
+		robots, err := service.ListRobots(context.Background(), actor)
+		if err != nil {
+			t.Fatalf("ListRobots() error = %v", err)
+		}
+		found := false
+		for _, robot := range robots {
+			if robot.ID == created.User.ID {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("ListRobots() = %#v, want to contain %q", robots, created.User.ID)
+		}
+	})
+}
+
+// TestServiceAdminRobotDTOsRoundTripAndTokenFollowsGrant pins the
+// operator-facing AdminRobot*/CreateAdminRobot/ListAdminRobots shapes and
+// robot-accounts spec's "Robot pulls and pushes per its granted role" /
+// "Robot token is denied on an ungranted repository" scenarios: the issued
+// token must grant exactly the created repository+role and nothing else.
+func TestServiceAdminRobotDTOsRoundTripAndTokenFollowsGrant(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	store := newMemoryAuthStore()
+	service := NewService(store)
+	service.now = func() time.Time { return now }
+	actor := domainauth.Principal{UserID: "admin-1", Username: "admin", IsAdmin: true}
+
+	created, err := service.CreateAdminRobot(context.Background(), actor, ports.AdminCreateRobotInput{
+		Name: "ci", Repository: "team/app", Role: domainauth.RepoRoleWriter,
+	})
+	if err != nil {
+		t.Fatalf("CreateAdminRobot() error = %v", err)
+	}
+	if created.Robot.Username != "ci" || created.Robot.Repository != "team/app" || created.Robot.Role != domainauth.RepoRoleWriter || !created.Robot.Enabled {
+		t.Fatalf("created.Robot = %#v, want username=ci repository=team/app role=repo-writer enabled=true", created.Robot)
+	}
+	if created.Secret == "" || created.Accessor == "" {
+		t.Fatal("CreateAdminRobot() returned empty secret or accessor")
+	}
+
+	listed, err := service.ListAdminRobots(context.Background(), actor)
+	if err != nil {
+		t.Fatalf("ListAdminRobots() error = %v", err)
+	}
+	found := false
+	for _, robot := range listed {
+		if robot.ID != created.Robot.ID {
+			continue
+		}
+		found = true
+		if robot.Repository != "team/app" || robot.Role != domainauth.RepoRoleWriter {
+			t.Fatalf("listed robot = %#v, want repository=team/app role=repo-writer", robot)
+		}
+	}
+	if !found {
+		t.Fatalf("ListAdminRobots() = %#v, want to contain %q", listed, created.Robot.ID)
+	}
+
+	requestedScopes, err := domainauth.ParseScopes([]string{"repository:team/app:pull,push", "repository:team/other:pull,push"})
+	if err != nil {
+		t.Fatalf("ParseScopes() error = %v", err)
+	}
+	loginResult, err := service.LoginWithPreissuedToken(context.Background(), "ci", created.Secret, requestedScopes)
+	if err != nil {
+		t.Fatalf("LoginWithPreissuedToken() error = %v", err)
+	}
+	if !loginResult.Principal.HasWriteAccess("team/app") {
+		t.Fatal("expected robot token to have write access on its granted repository")
+	}
+	if loginResult.Principal.HasReadAccess("team/other") || loginResult.Principal.HasWriteAccess("team/other") {
+		t.Fatal("expected robot token to be denied on an ungranted repository")
+	}
+}
+
+// TestServiceDeleteRobotRequiresAdminRejectsNonRobotsAndCleansUpGrantsAndTokens
+// covers the registry-acl-v1 robot-deletion follow-up (real hard-delete,
+// deliberately breaking from this codebase's no-hard-delete-for-humans
+// precedent — a robot exists only to hold one grant plus its tokens, so
+// nothing is orphaned or historically meaningful by deleting it). The
+// IsRobot guard is the single most important behavior pinned here: it is
+// the boundary that keeps this endpoint from becoming a backdoor around
+// human hard-delete.
+func TestServiceDeleteRobotRequiresAdminRejectsNonRobotsAndCleansUpGrantsAndTokens(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	actor := domainauth.Principal{UserID: "admin-1", Username: "admin", IsAdmin: true}
+
+	t.Run("rejects a non-admin actor", func(t *testing.T) {
+		t.Parallel()
+		store := newMemoryAuthStore()
+		service := NewService(store)
+		service.now = func() time.Time { return now }
+
+		created, err := service.CreateRobot(context.Background(), actor, ports.CreateRobotInput{
+			Name: "ci-nonadmin", Repository: "team/app", Role: domainauth.RepoRoleReader,
+		})
+		if err != nil {
+			t.Fatalf("CreateRobot() error = %v", err)
+		}
+
+		if err := service.DeleteRobot(context.Background(), domainauth.Principal{}, created.User.ID); !domainauth.IsCode(err, domainauth.ErrorCodeForbidden) {
+			t.Fatalf("DeleteRobot(non-admin) error = %v, want forbidden", err)
+		}
+	})
+
+	t.Run("rejects a target user that is not a robot", func(t *testing.T) {
+		t.Parallel()
+		store := newMemoryAuthStore()
+		service := NewService(store)
+		service.now = func() time.Time { return now }
+
+		human, err := service.CreateUser(context.Background(), actor, ports.CreateUserInput{
+			Username: "alice-delete-guard", Password: "password123", Enabled: true,
+		})
+		if err != nil {
+			t.Fatalf("CreateUser() error = %v", err)
+		}
+
+		if err := service.DeleteRobot(context.Background(), actor, human.ID); !domainauth.IsCode(err, domainauth.ErrorCodeValidation) {
+			t.Fatalf("DeleteRobot(non-robot target) error = %v, want validation", err)
+		}
+
+		if _, err := store.GetUserByID(context.Background(), human.ID); err != nil {
+			t.Fatalf("human user was removed by a rejected DeleteRobot call: GetUserByID() error = %v", err)
+		}
+	})
+
+	t.Run("deletes a genuine robot and cleans up its grant and token", func(t *testing.T) {
+		t.Parallel()
+		store := newMemoryAuthStore()
+		service := NewService(store)
+		service.now = func() time.Time { return now }
+
+		created, err := service.CreateRobot(context.Background(), actor, ports.CreateRobotInput{
+			Name: "ci-delete", Repository: "team/app", Role: domainauth.RepoRoleWriter,
+		})
+		if err != nil {
+			t.Fatalf("CreateRobot() error = %v", err)
+		}
+
+		if err := service.DeleteRobot(context.Background(), actor, created.User.ID); err != nil {
+			t.Fatalf("DeleteRobot() error = %v", err)
+		}
+
+		if _, err := store.GetUserByID(context.Background(), created.User.ID); !domainauth.IsCode(err, domainauth.ErrorCodeNotFound) {
+			t.Fatalf("GetUserByID(after delete) error = %v, want not-found", err)
+		}
+
+		grants, err := store.ListRepoGrants(context.Background(), created.User.ID)
+		if err != nil {
+			t.Fatalf("ListRepoGrants() error = %v", err)
+		}
+		if len(grants) != 0 {
+			t.Fatalf("ListRepoGrants(after delete) = %#v, want empty", grants)
+		}
+
+		tokens, err := store.ListTokensByUser(context.Background(), created.User.ID, domainauth.TokenKindAdminCredential)
+		if err != nil {
+			t.Fatalf("ListTokensByUser() error = %v", err)
+		}
+		if len(tokens) != 0 {
+			t.Fatalf("ListTokensByUser(after delete) = %#v, want empty", tokens)
+		}
+	})
+}
+
+// TestLoginWithPasswordRobotTwoIndependentLayers is the Phase 4 threat-matrix
+// pinning test (tasks.md 4.15, design.md Decision 1 and Decision 6): robot
+// password login must fail via TWO layers that are each independently
+// sufficient on their own, not merely as a combined path.
+//
+//   - Layer 1 (IsRobot guard, LoginWithPassword): a robot whose stored hash
+//     IS a valid bcrypt hash of the attempted password — bcrypt alone would
+//     accept it — is still rejected, proving the guard alone is sufficient.
+//   - Layer 2 (sentinel hash, bcrypt): with the guard "notionally removed"
+//     (a user row with IsRobot: false, simulating the guard never firing)
+//     but PasswordHash set to the sentinel, login is still rejected, proving
+//     the sentinel hash alone is sufficient regardless of any flag check.
+//
+// Both scenarios already pass against the code landed by tasks 4.4/4.6 — no
+// further production change is required here (same "exhaustive proof, not a
+// state that must flip" pattern already used for Phase 2 task 2.13's
+// non-grant route enumeration).
+func TestLoginWithPasswordRobotTwoIndependentLayers(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+
+	t.Run("layer 1: IsRobot guard alone rejects, even against a valid matching bcrypt hash", func(t *testing.T) {
+		t.Parallel()
+
+		store := newMemoryAuthStore()
+		robot := domainauth.User{ID: "robot-1", Username: "ci-layer1", PasswordHash: mustHashPassword(t, "correct-password"), IsRobot: true, Enabled: true, CreatedAt: now, UpdatedAt: now}
+		store.usersByID[robot.ID] = robot
+		store.usersByUsername[robot.Username] = robot
+
+		service := NewService(store)
+		service.now = func() time.Time { return now }
+
+		if _, err := service.LoginWithPassword(context.Background(), robot.Username, "correct-password", nil); !domainauth.IsCode(err, domainauth.ErrorCodeInvalidCredentials) {
+			t.Fatalf("LoginWithPassword() error = %v, want invalid credentials (guard alone must reject a would-be-matching hash)", err)
+		}
+	})
+
+	t.Run("layer 2: sentinel hash alone rejects, with the guard notionally removed", func(t *testing.T) {
+		t.Parallel()
+
+		store := newMemoryAuthStore()
+		// IsRobot: false simulates the guard never firing (notionally
+		// removed); only the sentinel hash's bcrypt failure can reject this.
+		notionallyUnguarded := domainauth.User{ID: "robot-2", Username: "ci-layer2", PasswordHash: domainauth.RobotPasswordHash, IsRobot: false, Enabled: true, CreatedAt: now, UpdatedAt: now}
+		store.usersByID[notionallyUnguarded.ID] = notionallyUnguarded
+		store.usersByUsername[notionallyUnguarded.Username] = notionallyUnguarded
+
+		service := NewService(store)
+		service.now = func() time.Time { return now }
+
+		if _, err := service.LoginWithPassword(context.Background(), notionallyUnguarded.Username, "any-password-at-all", nil); !domainauth.IsCode(err, domainauth.ErrorCodeInvalidCredentials) {
+			t.Fatalf("LoginWithPassword() error = %v, want invalid credentials (sentinel hash alone must reject with the guard bypassed)", err)
+		}
+	})
+}
+
+func equalStringSlices(got []string, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func mustParseTestScope(t *testing.T, raw string) domainauth.Scope {
+	t.Helper()
+	scopes, err := domainauth.ParseScopes([]string{raw})
+	if err != nil {
+		t.Fatalf("ParseScopes(%q) error = %v", raw, err)
+	}
+	if len(scopes) != 1 {
+		t.Fatalf("ParseScopes(%q) = %d scopes, want 1", raw, len(scopes))
+	}
+	return scopes[0]
+}
+
+// TestServiceCreateAdminUserPersistsReadOnlyFlagAndListReflectsIt pins
+// operator-user-administration's "Creating a user with the read-only flag
+// persists it" scenario: AdminCreateUserInput.IsReadOnly must flow through
+// CreateAdminUser into the stored User and back out through
+// ListAdminUsers/AdminUser.
+func TestServiceCreateAdminUserPersistsReadOnlyFlagAndListReflectsIt(t *testing.T) {
+	t.Parallel()
+
+	store := newMemoryAuthStore()
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	service := NewService(store)
+	service.now = func() time.Time { return now }
+	actor := domainauth.Principal{UserID: "admin-1", Username: "admin", IsAdmin: true}
+
+	created, err := service.CreateAdminUser(context.Background(), actor, ports.AdminCreateUserInput{
+		Username:   "reader",
+		Password:   "password123",
+		Enabled:    true,
+		IsReadOnly: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateAdminUser() error = %v", err)
+	}
+	if !created.IsReadOnly {
+		t.Fatalf("CreateAdminUser() result IsReadOnly = false, want true")
+	}
+
+	listed, err := service.ListAdminUsers(context.Background(), actor)
+	if err != nil {
+		t.Fatalf("ListAdminUsers() error = %v", err)
+	}
+	found := false
+	for _, user := range listed {
+		if user.ID != created.ID {
+			continue
+		}
+		found = true
+		if !user.IsReadOnly {
+			t.Fatalf("ListAdminUsers() entry IsReadOnly = false, want true")
+		}
+	}
+	if !found {
+		t.Fatalf("ListAdminUsers() = %#v, want to contain created user %q", listed, created.ID)
+	}
+}
+
+// TestServiceUpdateUserSetsReadOnlyFlag pins operator-user-administration's
+// "Updating the read-only flag takes effect" scenario: UpdateUserInput.IsReadOnly
+// must flow through UpdateUser into the stored User.
+func TestServiceUpdateUserSetsReadOnlyFlag(t *testing.T) {
+	t.Parallel()
+
+	store := newMemoryAuthStore()
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	user := domainauth.User{ID: "user-1", Username: "alice", PasswordHash: mustHashPassword(t, "password123"), Enabled: true, CreatedAt: now, UpdatedAt: now}
+	store.usersByID[user.ID] = user
+	store.usersByUsername[user.Username] = user
+
+	service := NewService(store)
+	service.now = func() time.Time { return now }
+	actor := domainauth.Principal{UserID: "admin-1", Username: "admin", IsAdmin: true}
+
+	updated, err := service.UpdateUser(context.Background(), actor, ports.UpdateUserInput{
+		UserID:     user.ID,
+		Username:   user.Username,
+		IsReadOnly: true,
+	})
+	if err != nil {
+		t.Fatalf("UpdateUser() error = %v", err)
+	}
+	if !updated.IsReadOnly {
+		t.Fatalf("UpdateUser() result IsReadOnly = false, want true")
+	}
+
+	reloaded, err := store.GetUserByID(context.Background(), user.ID)
+	if err != nil {
+		t.Fatalf("GetUserByID() error = %v", err)
+	}
+	if !reloaded.IsReadOnly {
+		t.Fatalf("stored user IsReadOnly = false, want true")
+	}
+}
+
 type memoryAuthStore struct {
 	usersByID        map[string]domainauth.User
 	usersByUsername  map[string]domainauth.User
@@ -221,11 +938,56 @@ func (s *memoryAuthStore) UpsertUser(_ context.Context, user domainauth.User) er
 	s.usersByUsername[user.Username] = user
 	return nil
 }
-func (s *memoryAuthStore) DeleteUser(context.Context, string) error { return nil }
+func (s *memoryAuthStore) DeleteUser(_ context.Context, userID string) error {
+	user, ok := s.usersByID[userID]
+	if !ok {
+		return domainauth.NewNotFoundError("user", userID)
+	}
+	delete(s.usersByID, userID)
+	delete(s.usersByUsername, user.Username)
+	delete(s.grants, userID)
+	for _, token := range s.tokensByUser[userID] {
+		delete(s.tokensByHash, token.SecretHash)
+		delete(s.tokensByAccessor, token.Accessor)
+	}
+	delete(s.tokensByUser, userID)
+	return nil
+}
+func (s *memoryAuthStore) ListRobots(context.Context) ([]domainauth.User, error) {
+	robots := make([]domainauth.User, 0)
+	for _, user := range s.usersByID {
+		if user.IsRobot {
+			robots = append(robots, user)
+		}
+	}
+	return robots, nil
+}
 func (s *memoryAuthStore) ListRepoGrants(_ context.Context, userID string) ([]domainauth.RepoGrant, error) {
 	return append([]domainauth.RepoGrant(nil), s.grants[userID]...), nil
 }
-func (s *memoryAuthStore) PutRepoGrant(context.Context, domainauth.RepoGrant) error { return nil }
+func (s *memoryAuthStore) ListRepoGrantsByRepository(_ context.Context, repository regixtrydomain.RepositoryRef) ([]domainauth.RepoGrant, error) {
+	grants := make([]domainauth.RepoGrant, 0)
+	for _, userGrants := range s.grants {
+		for _, grant := range userGrants {
+			if grant.Repository.String() == repository.String() {
+				grants = append(grants, grant)
+			}
+		}
+	}
+	return grants, nil
+}
+func (s *memoryAuthStore) PutRepoGrant(_ context.Context, grant domainauth.RepoGrant) error {
+	existing := s.grants[grant.UserID]
+	for i, current := range existing {
+		if current.Repository.String() == grant.Repository.String() {
+			existing[i] = grant
+			s.grants[grant.UserID] = existing
+			return nil
+		}
+	}
+	s.grants[grant.UserID] = append(existing, grant)
+	return nil
+}
 func (s *memoryAuthStore) DeleteRepoGrant(context.Context, string, regixtrydomain.RepositoryRef) error {
 	return nil
 }

@@ -3,13 +3,14 @@ package auth
 import "time"
 
 type Principal struct {
-	Subject   string
-	UserID    string
-	Username  string
-	IsAdmin   bool
-	Grants    []RepoGrant
-	Scopes    []Scope
-	ExpiresAt time.Time
+	Subject    string
+	UserID     string
+	Username   string
+	IsAdmin    bool
+	IsReadOnly bool
+	Grants     []RepoGrant
+	Scopes     []Scope
+	ExpiresAt  time.Time
 }
 
 func (p Principal) HasReadAccess(repository string) bool {
@@ -52,6 +53,15 @@ func (p Principal) CanAccessCatalog() bool {
 
 func (p Principal) hasGrantedRepositoryAccess(repository string, allows func(RepoRole) bool) bool {
 	if p.IsAdmin {
+		return true
+	}
+
+	// Registry-wide read: probe the caller's own predicate with
+	// RepoRoleReader instead of comparing strings. Of the three call sites'
+	// predicates (grant.go:34-44) only AllowsRead is true for
+	// RepoRoleReader, so this grants read everywhere and can never widen to
+	// write or admin — even if a fourth predicate is added later.
+	if p.IsReadOnly && allows(RepoRoleReader) {
 		return true
 	}
 
