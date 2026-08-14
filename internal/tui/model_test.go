@@ -716,6 +716,98 @@ func TestCanLogoutFromRepoAdminGrantsScreen(t *testing.T) {
 	}
 }
 
+// TestModelConsoleRepositoriesGrantActionSetsAdminIntentAndReachesLogin is
+// the Phase 3 task 3.9 RED test (design.md Decision 7): pressing "g" on the
+// Console Repositories screen, with a repository selected, sets
+// adminIntent/adminIntentRepository and routes to screenAdminLogin exactly
+// like the existing "tab" (operator) entry point, but carries repository
+// context the operator entry point never needs.
+func TestModelConsoleRepositoriesGrantActionSetsAdminIntentAndReachesLogin(t *testing.T) {
+	t.Parallel()
+
+	model := newAdminReadyModelWithCatalog(t, []string{"team/app"}, &fakeAdminClient{})
+
+	updated := runKey(t, model, "g")
+
+	if got, want := updated.screen, screenAdminLogin; got != want {
+		t.Fatalf("screen = %q, want %q", got, want)
+	}
+	if got, want := updated.adminIntent, adminIntentRepoGrants; got != want {
+		t.Fatalf("adminIntent = %q, want %q", got, want)
+	}
+	if got, want := updated.adminIntentRepository, "team/app"; got != want {
+		t.Fatalf("adminIntentRepository = %q, want %q", got, want)
+	}
+}
+
+// TestModelRepoAdminGrantsLoadPutAndDeleteCommandsWired is the Phase 3
+// task 3.9 RED test's second half: from the Console Repositories screen's
+// grant action through login, grants load automatically, the add-grant form
+// submits a PutRepositoryGrant with the default (never repo-admin) role, and
+// the remove-grant confirmation issues a DeleteRepositoryGrant.
+func TestModelRepoAdminGrantsLoadPutAndDeleteCommandsWired(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 14, 12, 10, 0, 0, time.UTC)
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "delegate", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+		repoGrants: map[string][]ports.AdminRepositoryGrant{
+			"team/app": {{Username: "bob", Role: domainauth.RepoRoleWriter}},
+		},
+	}
+	model := newAdminReadyModelWithCatalog(t, []string{"team/app"}, adminClient)
+	model.now = func() time.Time { return now }
+
+	updated := runKey(t, model, "g")
+	updated = runKey(t, updated, "delegate")
+	updated = runKey(t, updated, "tab")
+	updated = runKey(t, updated, "secret-pass")
+	updated = runKey(t, updated, "enter")
+
+	if got, want := updated.screen, screenRepoAdminGrants; got != want {
+		t.Fatalf("screen = %q, want %q", got, want)
+	}
+	if got, want := adminClient.listRepoGrantsCalls, 1; got != want {
+		t.Fatalf("listRepoGrantsCalls = %d, want %d", got, want)
+	}
+	if !strings.Contains(updated.View(), "bob") || !strings.Contains(updated.View(), string(domainauth.RepoRoleWriter)) {
+		t.Fatalf("view = %q, want bob's grant listed", updated.View())
+	}
+
+	updated = runKey(t, updated, "n")
+	updated = runKey(t, updated, "carol")
+	updated = runKey(t, updated, "enter")
+
+	if got, want := adminClient.putRepoGrantCalls, 1; got != want {
+		t.Fatalf("putRepoGrantCalls = %d, want %d", got, want)
+	}
+	if got, want := adminClient.lastRepoGrantInput.Repository, "team/app"; got != want {
+		t.Fatalf("input.Repository = %q, want %q", got, want)
+	}
+	if got, want := adminClient.lastRepoGrantInput.Username, "carol"; got != want {
+		t.Fatalf("input.Username = %q, want %q", got, want)
+	}
+	if got, want := adminClient.lastRepoGrantInput.Role, domainauth.RepoRoleReader; got != want {
+		t.Fatalf("input.Role = %q, want %q (default, never repo-admin)", got, want)
+	}
+
+	updated = runKey(t, updated, "x")
+	if !strings.Contains(updated.View(), `Remove grant for "bob" from "team/app"?`) {
+		t.Fatalf("view = %q, want grant removal confirmation", updated.View())
+	}
+	updated = runKey(t, updated, "enter")
+
+	if got, want := adminClient.deleteRepoGrantCalls, 1; got != want {
+		t.Fatalf("deleteRepoGrantCalls = %d, want %d", got, want)
+	}
+	if got, want := adminClient.lastDeleteRepoGrantRepo, "team/app"; got != want {
+		t.Fatalf("delete repository = %q, want %q", got, want)
+	}
+	if got, want := adminClient.lastDeleteRepoGrantUsername, "bob"; got != want {
+		t.Fatalf("delete username = %q, want %q", got, want)
+	}
+}
+
 func TestModelCreateAdminUserRefreshesUsers(t *testing.T) {
 	t.Parallel()
 
