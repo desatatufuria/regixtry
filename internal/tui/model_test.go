@@ -627,6 +627,56 @@ func TestModelInvalidCredentialsStayOnLoginScreen(t *testing.T) {
 	}
 }
 
+// TestModelAdminIntentRoutesPostLoginToRepoAdminGrantsWhenSet is the Phase 3
+// task 3.1 RED test (design.md Decision 7): a one-shot adminIntent field set
+// before login routes a successful auth to screenRepoAdminGrants instead of
+// the default screenAdminUsers, and the intent is consumed (reset) so a
+// later plain login does not stick to the repo-grants destination.
+func TestModelAdminIntentRoutesPostLoginToRepoAdminGrantsWhenSet(t *testing.T) {
+	t.Parallel()
+
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "delegate", BearerToken: "bearer-token", ExpiresAt: time.Date(2026, time.August, 14, 12, 5, 0, 0, time.UTC)},
+	}
+	model := newAdminReadyModel(t, adminClient)
+	model.adminIntent = adminIntentRepoGrants
+	model.adminIntentRepository = "team/app"
+
+	updated := runAdminLogin(t, model, "delegate", "secret-pass")
+
+	if got, want := updated.screen, screenRepoAdminGrants; got != want {
+		t.Fatalf("screen = %q, want %q", got, want)
+	}
+	if got, want := updated.adminIntent, adminIntentOperator; got != want {
+		t.Fatalf("adminIntent = %q, want %q (must be consumed exactly once)", got, want)
+	}
+	if got, want := updated.adminView.RepoAdminRepository, "team/app"; got != want {
+		t.Fatalf("RepoAdminRepository = %q, want %q", got, want)
+	}
+}
+
+// TestModelAdminIntentRoutesPostLoginToUsersWhenNotSet triangulates the
+// default (zero-value) adminIntent path: an ordinary operator login without
+// any repo-grants intent keeps routing to screenAdminUsers, unchanged.
+func TestModelAdminIntentRoutesPostLoginToUsersWhenNotSet(t *testing.T) {
+	t.Parallel()
+
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: time.Date(2026, time.August, 14, 12, 5, 0, 0, time.UTC)},
+		users:        []ports.AdminUser{{ID: "u-1", Username: "alice", IsAdmin: true, Enabled: true}},
+	}
+	model := newAdminReadyModel(t, adminClient)
+
+	updated := runAdminLogin(t, model, "operator", "secret-pass")
+
+	if got, want := updated.screen, screenAdminUsers; got != want {
+		t.Fatalf("screen = %q, want %q", got, want)
+	}
+	if got, want := updated.adminIntent, adminIntentOperator; got != want {
+		t.Fatalf("adminIntent = %q, want %q", got, want)
+	}
+}
+
 func TestModelCreateAdminUserRefreshesUsers(t *testing.T) {
 	t.Parallel()
 
