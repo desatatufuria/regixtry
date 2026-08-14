@@ -27,3 +27,18 @@ func TestActionCatalogScopeIsAcceptedByScopeValidator(t *testing.T) {
 		t.Fatalf("ParseScope(%q).IsRegixtryCatalog() = false, want true", emitted)
 	}
 }
+
+// TestActionScopeForDeleteAction pins design.md Decision 4: deleting requires
+// no read, so Action{Verb: ActionDelete}.Scope() asks for the minimum —
+// "repository:<name>:delete" — deliberately not "pull,delete" the way
+// ActionPush asks for "pull,push" (manifest-blob-delete tasks.md 1.5).
+func TestActionScopeForDeleteAction(t *testing.T) {
+	t.Parallel()
+
+	action := Action{Verb: ActionDelete, Repository: "team/app"}
+
+	const want = "repository:team/app:delete"
+	if got := action.Scope(); got != want {
+		t.Fatalf("Scope() = %q, want %q", got, want)
+	}
+}
