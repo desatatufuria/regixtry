@@ -451,6 +451,120 @@ func TestLoginWithPasswordRejectsRobotButPreissuedTokenAccepts(t *testing.T) {
 	}
 }
 
+// TestServiceCreateRobotPersistsGrantEnforcesTTLCeilingAndSupportsRevocation
+// pins design.md Decision 2 (a robot binds to exactly one repository+role
+// at creation, enforced by the service) and Decision 6 (robot tokens reuse
+// CreateAdminToken/RevokeAdminToken unchanged, so the TTL ceiling and
+// immediate revocation are inherited for free). ListRobots is exercised
+// alongside CreateRobot since both land in the same GREEN commit
+// (tasks.md 4.7/4.8).
+func TestServiceCreateRobotPersistsGrantEnforcesTTLCeilingAndSupportsRevocation(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	actor := domainauth.Principal{UserID: "admin-1", Username: "admin", IsAdmin: true}
+
+	t.Run("persists exactly one grant for the requested repository and role", func(t *testing.T) {
+		t.Parallel()
+		store := newMemoryAuthStore()
+		service := NewService(store)
+		service.now = func() time.Time { return now }
+
+		created, err := service.CreateRobot(context.Background(), actor, ports.CreateRobotInput{
+			Name: "ci", Repository: "team/app", Role: domainauth.RepoRoleWriter,
+		})
+		if err != nil {
+			t.Fatalf("CreateRobot() error = %v", err)
+		}
+		if !created.User.IsRobot {
+			t.Fatalf("CreateRobot().User.IsRobot = false, want true")
+		}
+
+		grants, err := store.ListRepoGrants(context.Background(), created.User.ID)
+		if err != nil {
+			t.Fatalf("ListRepoGrants() error = %v", err)
+		}
+		if len(grants) != 1 {
+			t.Fatalf("len(grants) = %d, want 1: %#v", len(grants), grants)
+		}
+		if grants[0].Repository.String() != "team/app" || grants[0].Role != domainauth.RepoRoleWriter {
+			t.Fatalf("grant = %#v, want team/app repo-writer", grants[0])
+		}
+	})
+
+	t.Run("TTL above the ceiling is rejected", func(t *testing.T) {
+		t.Parallel()
+		store := newMemoryAuthStore()
+		service := NewService(store)
+		service.now = func() time.Time { return now }
+
+		_, err := service.CreateRobot(context.Background(), actor, ports.CreateRobotInput{
+			Name: "ci-ttl", Repository: "team/app", Role: domainauth.RepoRoleWriter, TTL: domainauth.DefaultAdminTokenTTL + time.Second,
+		})
+		if !domainauth.IsCode(err, domainauth.ErrorCodeValidation) {
+			t.Fatalf("CreateRobot(excessive ttl) error = %v, want validation", err)
+		}
+	})
+
+	t.Run("revoked robot token is denied immediately", func(t *testing.T) {
+		t.Parallel()
+		store := newMemoryAuthStore()
+		service := NewService(store)
+		service.now = func() time.Time { return now }
+
+		created, err := service.CreateRobot(context.Background(), actor, ports.CreateRobotInput{
+			Name: "ci-revoke", Repository: "team/app", Role: domainauth.RepoRoleWriter,
+		})
+		if err != nil {
+			t.Fatalf("CreateRobot() error = %v", err)
+		}
+
+		if _, err := service.LoginWithPreissuedToken(context.Background(), created.User.Username, created.Secret, nil); err != nil {
+			t.Fatalf("LoginWithPreissuedToken(before revoke) error = %v", err)
+		}
+
+		if err := service.RevokeAdminToken(context.Background(), actor, created.Accessor); err != nil {
+			t.Fatalf("RevokeAdminToken() error = %v", err)
+		}
+
+		if _, err := service.LoginWithPreissuedToken(context.Background(), created.User.Username, created.Secret, nil); err == nil {
+			t.Fatal("LoginWithPreissuedToken(after revoke) error = nil, want rejection")
+		}
+	})
+
+	t.Run("ListRobots requires admin and returns the created robot", func(t *testing.T) {
+		t.Parallel()
+		store := newMemoryAuthStore()
+		service := NewService(store)
+		service.now = func() time.Time { return now }
+
+		created, err := service.CreateRobot(context.Background(), actor, ports.CreateRobotInput{
+			Name: "ci-list", Repository: "team/app", Role: domainauth.RepoRoleReader,
+		})
+		if err != nil {
+			t.Fatalf("CreateRobot() error = %v", err)
+		}
+
+		if _, err := service.ListRobots(context.Background(), domainauth.Principal{}); !domainauth.IsCode(err, domainauth.ErrorCodeForbidden) {
+			t.Fatalf("ListRobots(non-admin) error = %v, want forbidden", err)
+		}
+
+		robots, err := service.ListRobots(context.Background(), actor)
+		if err != nil {
+			t.Fatalf("ListRobots() error = %v", err)
+		}
+		found := false
+		for _, robot := range robots {
+			if robot.ID == created.User.ID {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("ListRobots() = %#v, want to contain %q", robots, created.User.ID)
+		}
+	})
+}
+
 func equalStringSlices(got []string, want []string) bool {
 	if len(got) != len(want) {
 		return false

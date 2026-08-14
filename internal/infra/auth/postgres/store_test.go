@@ -241,6 +241,55 @@ func TestStoreListRepoGrantsByRepositoryReturnsGrantsAcrossUsers(t *testing.T) {
 	}
 }
 
+// TestStoreListUsersExcludesRobotsAndListRobotsReturnsOnlyRobots pins
+// design.md Decision 6: the default human user listing must exclude robot
+// rows (WHERE is_robot = FALSE), and the new ListRobots must return only
+// robot rows (WHERE is_robot = TRUE) — the two queries partition
+// auth_users, and neither leaks the other kind.
+func TestStoreListUsersExcludesRobotsAndListRobotsReturnsOnlyRobots(t *testing.T) {
+	t.Parallel()
+
+	store := newSQLiteBackedStore(t)
+	defer store.Close()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	human := domainauth.User{ID: "user-human", Username: "alice", PasswordHash: "hash-1", Enabled: true, CreatedAt: now, UpdatedAt: now}
+	robot := domainauth.User{ID: "user-robot", Username: "ci", PasswordHash: domainauth.RobotPasswordHash, IsRobot: true, Enabled: true, CreatedAt: now, UpdatedAt: now}
+	if err := store.UpsertUser(context.Background(), human); err != nil {
+		t.Fatalf("UpsertUser(human) error = %v", err)
+	}
+	if err := store.UpsertUser(context.Background(), robot); err != nil {
+		t.Fatalf("UpsertUser(robot) error = %v", err)
+	}
+
+	users, err := store.ListUsers(context.Background())
+	if err != nil {
+		t.Fatalf("ListUsers() error = %v", err)
+	}
+	for _, listed := range users {
+		if listed.ID == robot.ID {
+			t.Fatalf("ListUsers() = %#v, must not contain robot %q", users, robot.ID)
+		}
+	}
+	foundHuman := false
+	for _, listed := range users {
+		if listed.ID == human.ID {
+			foundHuman = true
+		}
+	}
+	if !foundHuman {
+		t.Fatalf("ListUsers() = %#v, want to contain human %q", users, human.ID)
+	}
+
+	robots, err := store.ListRobots(context.Background())
+	if err != nil {
+		t.Fatalf("ListRobots() error = %v", err)
+	}
+	if len(robots) != 1 || robots[0].ID != robot.ID || !robots[0].IsRobot {
+		t.Fatalf("ListRobots() = %#v, want single robot %q", robots, robot.ID)
+	}
+}
+
 func TestMigrationsCreateOnlyAuthTables(t *testing.T) {
 	t.Parallel()
 
