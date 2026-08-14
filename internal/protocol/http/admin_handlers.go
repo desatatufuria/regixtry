@@ -76,6 +76,8 @@ func (r *Router) handleAdmin(w stdhttp.ResponseWriter, req *stdhttp.Request) {
 		r.handleAdminUsersCollection(w, req, *principal)
 	case strings.HasPrefix(subpath, "users/"):
 		r.handleAdminUserResource(w, req, *principal, strings.TrimPrefix(subpath, "users/"))
+	case subpath == "robots":
+		r.handleAdminRobotsCollection(w, req, *principal)
 	default:
 		writeAdminError(w, domainauth.NewNotFoundError("route", req.URL.Path), ports.Challenge{})
 	}
@@ -741,6 +743,61 @@ func (r *Router) handleAdminUsersCollection(w stdhttp.ResponseWriter, req *stdht
 		w.Header().Set("Allow", strings.Join([]string{stdhttp.MethodGet, stdhttp.MethodPost}, ", "))
 		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
 	}
+}
+
+// handleAdminRobotsCollection dispatches the two new robot routes
+// (design.md Decision 6): everything else about robot lifecycle (enable/
+// disable/delete, token issue/list/revoke) reuses the existing user routes,
+// which already accept any user ID. This collection stays under
+// handleAdmin's blanket requireAdminPrincipal gate — global admin only.
+func (r *Router) handleAdminRobotsCollection(w stdhttp.ResponseWriter, req *stdhttp.Request, principal domainauth.Principal) {
+	switch req.Method {
+	case stdhttp.MethodGet:
+		robots, err := r.admin.ListAdminRobots(req.Context(), principal)
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		writeJSON(w, stdhttp.StatusOK, robots)
+	case stdhttp.MethodPost:
+		input, err := decodeAdminCreateRobotInput(req)
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+
+		created, err := r.admin.CreateAdminRobot(req.Context(), principal, input)
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		writeJSON(w, stdhttp.StatusCreated, created)
+	default:
+		w.Header().Set("Allow", strings.Join([]string{stdhttp.MethodGet, stdhttp.MethodPost}, ", "))
+		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+	}
+}
+
+func decodeAdminCreateRobotInput(req *stdhttp.Request) (ports.AdminCreateRobotInput, error) {
+	var payload struct {
+		Name       string              `json:"name"`
+		Repository string              `json:"repository"`
+		Role       domainauth.RepoRole `json:"role"`
+		TTLSeconds *int64              `json:"ttl_seconds"`
+	}
+	if err := decodeAdminJSON(req, &payload); err != nil {
+		return ports.AdminCreateRobotInput{}, err
+	}
+	if payload.TTLSeconds != nil && *payload.TTLSeconds < 0 {
+		return ports.AdminCreateRobotInput{}, domainauth.NewValidationError("ttl_seconds must be zero or greater")
+	}
+
+	input := ports.AdminCreateRobotInput{Name: payload.Name, Repository: payload.Repository, Role: payload.Role}
+	if payload.TTLSeconds != nil {
+		input.TTL = time.Duration(*payload.TTLSeconds) * time.Second
+	}
+
+	return input, nil
 }
 
 func (r *Router) handleAdminUserResource(w stdhttp.ResponseWriter, req *stdhttp.Request, principal domainauth.Principal, resource string) {
