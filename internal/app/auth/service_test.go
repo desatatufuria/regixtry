@@ -728,6 +728,15 @@ func (s *memoryAuthStore) UpsertUser(_ context.Context, user domainauth.User) er
 	return nil
 }
 func (s *memoryAuthStore) DeleteUser(context.Context, string) error { return nil }
+func (s *memoryAuthStore) ListRobots(context.Context) ([]domainauth.User, error) {
+	robots := make([]domainauth.User, 0)
+	for _, user := range s.usersByID {
+		if user.IsRobot {
+			robots = append(robots, user)
+		}
+	}
+	return robots, nil
+}
 func (s *memoryAuthStore) ListRepoGrants(_ context.Context, userID string) ([]domainauth.RepoGrant, error) {
 	return append([]domainauth.RepoGrant(nil), s.grants[userID]...), nil
 }
@@ -742,7 +751,18 @@ func (s *memoryAuthStore) ListRepoGrantsByRepository(_ context.Context, reposito
 	}
 	return grants, nil
 }
-func (s *memoryAuthStore) PutRepoGrant(context.Context, domainauth.RepoGrant) error { return nil }
+func (s *memoryAuthStore) PutRepoGrant(_ context.Context, grant domainauth.RepoGrant) error {
+	existing := s.grants[grant.UserID]
+	for i, current := range existing {
+		if current.Repository.String() == grant.Repository.String() {
+			existing[i] = grant
+			s.grants[grant.UserID] = existing
+			return nil
+		}
+	}
+	s.grants[grant.UserID] = append(existing, grant)
+	return nil
+}
 func (s *memoryAuthStore) DeleteRepoGrant(context.Context, string, regixtrydomain.RepositoryRef) error {
 	return nil
 }

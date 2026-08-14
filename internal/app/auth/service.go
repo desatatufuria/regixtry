@@ -703,6 +703,70 @@ func (s *Service) DeleteAdminRepositoryGrant(ctx context.Context, actor domainau
 	return s.DeleteRepositoryGrant(ctx, actor, repository, username)
 }
 
+// CreateRobot creates a robot account, its single repository grant, and its
+// issued admin-credential token (design.md Decision 2 and Decision 6). The
+// TTL ceiling and revocation are inherited unchanged by delegating token
+// issuance to CreateAdminToken.
+func (s *Service) CreateRobot(ctx context.Context, actor domainauth.Principal, input ports.CreateRobotInput) (ports.CreatedRobot, error) {
+	if err := requireAdmin(actor); err != nil {
+		return ports.CreatedRobot{}, err
+	}
+
+	username := normalizeUsername(input.Name)
+	if username == "" {
+		return ports.CreatedRobot{}, domainauth.NewValidationError("robot name is required")
+	}
+	if _, err := s.store.GetUserByUsername(ctx, username); err == nil {
+		return ports.CreatedRobot{}, domainauth.NewConflictError("username already exists")
+	} else if !domainauth.IsCode(err, domainauth.ErrorCodeNotFound) {
+		return ports.CreatedRobot{}, err
+	}
+
+	repo, err := regixtrydomain.ParseRepositoryRef(strings.TrimSpace(input.Repository))
+	if err != nil {
+		return ports.CreatedRobot{}, err
+	}
+	if err := input.Role.Validate(); err != nil {
+		return ports.CreatedRobot{}, err
+	}
+
+	now := s.now()
+	user := domainauth.User{
+		ID:           uuid.NewString(),
+		Username:     username,
+		PasswordHash: domainauth.RobotPasswordHash,
+		IsRobot:      true,
+		Enabled:      true,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	if err := s.store.UpsertUser(ctx, user); err != nil {
+		return ports.CreatedRobot{}, err
+	}
+
+	grant := domainauth.RepoGrant{UserID: user.ID, Repository: repo, Role: input.Role, CreatedAt: now, UpdatedAt: now}
+	if err := s.store.PutRepoGrant(ctx, grant); err != nil {
+		return ports.CreatedRobot{}, err
+	}
+
+	created, err := s.CreateAdminToken(ctx, actor, ports.CreateAdminTokenInput{UserID: user.ID, Name: strings.TrimSpace(input.Name), TTL: input.TTL})
+	if err != nil {
+		return ports.CreatedRobot{}, err
+	}
+
+	return ports.CreatedRobot{User: user, Grant: grant, Secret: created.Secret, Accessor: created.Accessor, ExpiresAt: created.ExpiresAt}, nil
+}
+
+// ListRobots lists every robot account (design.md Decision 6): a dedicated
+// store query, separate from ListUsers, which now excludes robot rows.
+func (s *Service) ListRobots(ctx context.Context, actor domainauth.Principal) ([]domainauth.User, error) {
+	if err := requireAdmin(actor); err != nil {
+		return nil, err
+	}
+
+	return s.store.ListRobots(ctx)
+}
+
 func toAdminUser(user domainauth.User) ports.AdminUser {
 	return ports.AdminUser{
 		ID:         user.ID,

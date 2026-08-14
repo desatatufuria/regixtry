@@ -16,6 +16,7 @@ type AuthStore interface {
 	GetUserByID(ctx context.Context, userID string) (domainauth.User, error)
 	UpsertUser(ctx context.Context, user domainauth.User) error
 	DeleteUser(ctx context.Context, userID string) error
+	ListRobots(ctx context.Context) ([]domainauth.User, error)
 	ListRepoGrants(ctx context.Context, userID string) ([]domainauth.RepoGrant, error)
 	ListRepoGrantsByRepository(ctx context.Context, repository regixtrydomain.RepositoryRef) ([]domainauth.RepoGrant, error)
 	PutRepoGrant(ctx context.Context, grant domainauth.RepoGrant) error
@@ -67,6 +68,28 @@ type UpdateUserInput struct {
 	IsAdmin       bool
 	IsReadOnly    bool
 	PreserveAdmin bool
+}
+
+// CreateRobotInput is the service-level input for creating a robot account
+// (design.md Decision 2): exactly one repository+role is bound at creation,
+// enforced by the service, not the schema. TTL follows CreateAdminTokenInput's
+// convention: zero means DefaultAdminTokenTTL, reused unchanged.
+type CreateRobotInput struct {
+	Name       string
+	Repository string
+	Role       domainauth.RepoRole
+	TTL        time.Duration
+}
+
+// CreatedRobot is CreateRobot's result: the persisted robot user, its single
+// grant, and its issued admin-credential token (secret shown once, matching
+// CreateAdminToken's shape).
+type CreatedRobot struct {
+	User      domainauth.User
+	Grant     domainauth.RepoGrant
+	Secret    string
+	Accessor  string
+	ExpiresAt time.Time
 }
 
 type CreatedAdminToken struct {
