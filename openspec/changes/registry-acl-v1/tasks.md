@@ -50,41 +50,41 @@ Chain strategy: pending
 
 ## Phase 1: Registry-Wide Read-Only Role (Slice 1, smallest — PR 1)
 
-- [ ] 1.1 Migration: add `is_read_only BOOLEAN NOT NULL DEFAULT FALSE` to
+- [x] 1.1 Migration: add `is_read_only BOOLEAN NOT NULL DEFAULT FALSE` to
       `auth_users`; add `"is_read_only"` to `tolerateDuplicateColumns`
       (`migrations.go`, Decision 8).
-- [ ] 1.2 Add `IsReadOnly bool` to `User` (`user.go`) and `Principal`
+- [x] 1.2 Add `IsReadOnly bool` to `User` (`user.go`) and `Principal`
       (`principal.go`).
-- [ ] 1.3 RED `principal_test.go`: `hasGrantedRepositoryAccess` — read-only
+- [x] 1.3 RED `principal_test.go`: `hasGrantedRepositoryAccess` — read-only
       allows read on any repository, denies write/admin, unflagged principal
       unchanged — table-driven (`principal.go:53-65`).
-- [ ] 1.4 GREEN: implement the read-only probe branch in
+- [x] 1.4 GREEN: implement the read-only probe branch in
       `hasGrantedRepositoryAccess` (Decision 5).
-- [ ] 1.5 RED `service_test.go`: `intersectRequestedActions` — read-only
+- [x] 1.5 RED `service_test.go`: `intersectRequestedActions` — read-only
       yields `pull` only; admin/grant paths byte-identical — table-driven
       (`service.go:700-731`).
-- [ ] 1.6 GREEN: add `isReadOnly bool` param and pull-only branch to
+- [x] 1.6 GREEN: add `isReadOnly bool` param and pull-only branch to
       `intersectRequestedActions` and its call sites.
-- [ ] 1.7 RED `store_test.go`: `auth_users` queries round-trip
+- [x] 1.7 RED `store_test.go`: `auth_users` queries round-trip
       `is_read_only` across `UpsertUser`/`ListUsers`/`GetUserByID`/
       `GetUserByUsername`.
-- [ ] 1.8 GREEN: add `is_read_only` to every `auth_users` SELECT/INSERT and
+- [x] 1.8 GREEN: add `is_read_only` to every `auth_users` SELECT/INSERT and
       `scanUserRow` (`store.go`).
-- [ ] 1.9 RED `service_test.go`/handler test: `AdminCreateUserInput`/
+- [x] 1.9 RED `service_test.go`/handler test: `AdminCreateUserInput`/
       `UpdateUserInput`/`AdminUser` carry `is_read_only`; create-then-list
       reflects it (spec: operator-user-administration scenarios).
-- [ ] 1.10 GREEN: add `is_read_only` to `ports.AdminCreateUserInput`/
+- [x] 1.10 GREEN: add `is_read_only` to `ports.AdminCreateUserInput`/
       `UpdateUserInput`/`AdminUser`; wire through `CreateUser`/`UpdateUser`.
-- [ ] 1.11 Integration RED (router test): read-only principal reads
+- [x] 1.11 Integration RED (router test): read-only principal reads
       catalog/tags/manifests on any repository, rejected on push, rejected
       on admin user/grant listings.
-- [ ] 1.12 GREEN: confirm `issueAccessToken`/login populates
+- [x] 1.12 GREEN: confirm `issueAccessToken`/login populates
       `Principal.IsReadOnly` from `User.IsReadOnly`.
-- [ ] 1.13 RED `session_test.go`: create/edit user form exposes a `Read-only`
+- [x] 1.13 RED `session_test.go`: create/edit user form exposes a `Read-only`
       toggle, independent of the `Admin` toggle.
-- [ ] 1.14 GREEN: add the `Read-only` field to TUI create/edit user forms
+- [x] 1.14 GREEN: add the `Read-only` field to TUI create/edit user forms
       (`session.go`, `admin_views.go`, `admin_client.go` request body).
-- [ ] 1.15 Confirm Phase 1 GREEN (see Unit 1 focused test command).
+- [x] 1.15 Confirm Phase 1 GREEN (see Unit 1 focused test command).
 
 ## Phase 2: Delegated Repo-Admin Grants — Backend (Slice 2a — PR 2)
 
