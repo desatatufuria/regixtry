@@ -53,6 +53,19 @@ const (
 	adminTokenFieldTTL
 )
 
+// adminCreateRobotField identifies which of adminCreateRobotForm's 4 fields
+// has focus (design.md Decision 7's robot screens): Name -> Repository ->
+// Role -> TTL, a global-admin-only form so, unlike adminRepositoryGrantForm,
+// Role is not restricted away from RepoRoleAdmin.
+type adminCreateRobotField int
+
+const (
+	adminCreateRobotFieldName adminCreateRobotField = iota
+	adminCreateRobotFieldRepository
+	adminCreateRobotFieldRole
+	adminCreateRobotFieldTTL
+)
+
 type TrivyTab string
 
 const (
@@ -119,6 +132,18 @@ type adminTokenForm struct {
 	Name       string
 	TTLSeconds string
 	Focus      adminTokenField
+}
+
+// adminCreateRobotForm backs screenAdminCreateRobot (design.md Decision 7).
+// Role's zero value is set to domainauth.RepoRoleReader by newAdminViewState
+// (mirroring adminGrantForm/adminRepositoryGrantForm), and TTLSeconds follows
+// adminTokenForm's convention: empty means the service's default TTL.
+type adminCreateRobotForm struct {
+	Name       string
+	Repository string
+	Role       domainauth.RepoRole
+	TTLSeconds string
+	Focus      adminCreateRobotField
 }
 
 type adminConfirmModal struct {
@@ -467,6 +492,16 @@ type AdminViewState struct {
 	RepoAdminGrantsAuthorized bool
 	SelectedRepoAdminGrant    int
 	RepoAdminGrantForm        adminRepositoryGrantForm
+	// Robots/SelectedRobot/CreateRobotForm back screenAdminRobots/
+	// screenAdminCreateRobot (design.md Decision 7): global-admin-only
+	// screens mirroring Users/SelectedUser/CreateUserForm, a sibling data
+	// set rather than an extension -- a robot is never listed in Users
+	// (store.go's ListUsers excludes is_robot rows) and has no
+	// SelectedUserID-keyed edit screen of its own; enable/disable and token
+	// issuance reuse the existing user routes/screens via SelectedUserID.
+	Robots          []ports.AdminRobot
+	SelectedRobot   int
+	CreateRobotForm adminCreateRobotForm
 	// TrivyOverrides is every stored Trivy repository override row
 	// (fetched alongside TrivyScanRuns), used only to annotate the
 	// Repository Alerts table with a distinct "scanning disabled" state
@@ -536,6 +571,9 @@ func newAdminViewState() AdminViewState {
 			Role: domainauth.RepoRoleReader,
 		},
 		RepoAdminGrantForm: adminRepositoryGrantForm{
+			Role: domainauth.RepoRoleReader,
+		},
+		CreateRobotForm: adminCreateRobotForm{
 			Role: domainauth.RepoRoleReader,
 		},
 		TrivyTab: trivyTabRuntime,

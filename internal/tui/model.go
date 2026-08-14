@@ -3482,6 +3482,15 @@ func nextCreateUserField(field adminCreateUserField) adminCreateUserField {
 	return field + 1
 }
 
+// nextCreateRobotField cycles screenAdminCreateRobot's 4 fields with a
+// wrapping cursor: Name -> Repository -> Role -> TTL -> Name.
+func nextCreateRobotField(field adminCreateRobotField) adminCreateRobotField {
+	if field >= adminCreateRobotFieldTTL {
+		return adminCreateRobotFieldName
+	}
+	return field + 1
+}
+
 func nextGrantRole(current domainauth.RepoRole) domainauth.RepoRole {
 	switch current {
 	case domainauth.RepoRoleWriter:
