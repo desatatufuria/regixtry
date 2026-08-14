@@ -565,6 +565,67 @@ func TestServiceCreateRobotPersistsGrantEnforcesTTLCeilingAndSupportsRevocation(
 	})
 }
 
+// TestServiceAdminRobotDTOsRoundTripAndTokenFollowsGrant pins the
+// operator-facing AdminRobot*/CreateAdminRobot/ListAdminRobots shapes and
+// robot-accounts spec's "Robot pulls and pushes per its granted role" /
+// "Robot token is denied on an ungranted repository" scenarios: the issued
+// token must grant exactly the created repository+role and nothing else.
+func TestServiceAdminRobotDTOsRoundTripAndTokenFollowsGrant(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	store := newMemoryAuthStore()
+	service := NewService(store)
+	service.now = func() time.Time { return now }
+	actor := domainauth.Principal{UserID: "admin-1", Username: "admin", IsAdmin: true}
+
+	created, err := service.CreateAdminRobot(context.Background(), actor, ports.AdminCreateRobotInput{
+		Name: "ci", Repository: "team/app", Role: domainauth.RepoRoleWriter,
+	})
+	if err != nil {
+		t.Fatalf("CreateAdminRobot() error = %v", err)
+	}
+	if created.Robot.Username != "ci" || created.Robot.Repository != "team/app" || created.Robot.Role != domainauth.RepoRoleWriter || !created.Robot.Enabled {
+		t.Fatalf("created.Robot = %#v, want username=ci repository=team/app role=repo-writer enabled=true", created.Robot)
+	}
+	if created.Secret == "" || created.Accessor == "" {
+		t.Fatal("CreateAdminRobot() returned empty secret or accessor")
+	}
+
+	listed, err := service.ListAdminRobots(context.Background(), actor)
+	if err != nil {
+		t.Fatalf("ListAdminRobots() error = %v", err)
+	}
+	found := false
+	for _, robot := range listed {
+		if robot.ID != created.Robot.ID {
+			continue
+		}
+		found = true
+		if robot.Repository != "team/app" || robot.Role != domainauth.RepoRoleWriter {
+			t.Fatalf("listed robot = %#v, want repository=team/app role=repo-writer", robot)
+		}
+	}
+	if !found {
+		t.Fatalf("ListAdminRobots() = %#v, want to contain %q", listed, created.Robot.ID)
+	}
+
+	requestedScopes, err := domainauth.ParseScopes([]string{"repository:team/app:pull,push", "repository:team/other:pull,push"})
+	if err != nil {
+		t.Fatalf("ParseScopes() error = %v", err)
+	}
+	loginResult, err := service.LoginWithPreissuedToken(context.Background(), "ci", created.Secret, requestedScopes)
+	if err != nil {
+		t.Fatalf("LoginWithPreissuedToken() error = %v", err)
+	}
+	if !loginResult.Principal.HasWriteAccess("team/app") {
+		t.Fatal("expected robot token to have write access on its granted repository")
+	}
+	if loginResult.Principal.HasReadAccess("team/other") || loginResult.Principal.HasWriteAccess("team/other") {
+		t.Fatal("expected robot token to be denied on an ungranted repository")
+	}
+}
+
 func equalStringSlices(got []string, want []string) bool {
 	if len(got) != len(want) {
 		return false
