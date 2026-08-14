@@ -44,6 +44,13 @@ type AdminClient interface {
 	ListUserGrants(ctx context.Context, session AdminSession, userID string) ([]ports.AdminRepoGrant, error)
 	PutUserGrant(ctx context.Context, session AdminSession, input ports.AdminPutRepoGrantInput) (ports.AdminRepoGrant, error)
 	DeleteUserGrant(ctx context.Context, session AdminSession, userID string, repository string) error
+	// ListRepositoryGrants/PutRepositoryGrant/DeleteRepositoryGrant back the
+	// repo-admin delegate's own grants view (design.md Decision 7), calling
+	// /admin/v1/repositories/{repo}/grants[/{username}] rather than the
+	// user-centric /admin/v1/users/{id}/grants routes above.
+	ListRepositoryGrants(ctx context.Context, session AdminSession, repository string) ([]ports.AdminRepositoryGrant, error)
+	PutRepositoryGrant(ctx context.Context, session AdminSession, input ports.AdminPutRepositoryGrantInput) (ports.AdminRepositoryGrant, error)
+	DeleteRepositoryGrant(ctx context.Context, session AdminSession, repository string, username string) error
 	ListUserAdminTokens(ctx context.Context, session AdminSession, userID string) ([]ports.AdminToken, error)
 	CreateUserAdminToken(ctx context.Context, session AdminSession, input ports.AdminCreateTokenInput) (ports.AdminCreatedToken, error)
 	RevokeUserAdminToken(ctx context.Context, session AdminSession, userID string, accessor string) error
@@ -327,6 +334,41 @@ func (c *HTTPAdminClient) PutUserGrant(ctx context.Context, session AdminSession
 
 func (c *HTTPAdminClient) DeleteUserGrant(ctx context.Context, session AdminSession, userID string, repository string) error {
 	path := "/admin/v1/users/" + url.PathEscape(strings.TrimSpace(userID)) + "/grants/" + strings.TrimSpace(repository)
+	return c.requestNoContent(ctx, stdhttp.MethodDelete, session, path, nil, stdhttp.StatusNoContent)
+}
+
+// repositoryGrantsPath/repositoryGrantPath build the delegate-facing
+// repository-grant resource paths (design.md Decision 3 route table).
+// repository is deliberately NOT PathEscape-d -- it can literally contain
+// "/" (mirroring PutUserGrant/DeleteUserGrant's own unescaped-repository
+// precedent above); username can never contain "/" so it is escaped.
+func repositoryGrantsPath(repository string) string {
+	return "/admin/v1/repositories/" + strings.TrimSpace(repository) + "/grants"
+}
+
+func repositoryGrantPath(repository string, username string) string {
+	return repositoryGrantsPath(repository) + "/" + url.PathEscape(strings.TrimSpace(username))
+}
+
+func (c *HTTPAdminClient) ListRepositoryGrants(ctx context.Context, session AdminSession, repository string) ([]ports.AdminRepositoryGrant, error) {
+	var grants []ports.AdminRepositoryGrant
+	if err := c.getJSON(ctx, session, repositoryGrantsPath(repository), &grants); err != nil {
+		return nil, err
+	}
+	return grants, nil
+}
+
+func (c *HTTPAdminClient) PutRepositoryGrant(ctx context.Context, session AdminSession, input ports.AdminPutRepositoryGrantInput) (ports.AdminRepositoryGrant, error) {
+	var grant ports.AdminRepositoryGrant
+	path := repositoryGrantPath(input.Repository, input.Username)
+	if err := c.requestJSON(ctx, stdhttp.MethodPut, session, path, input, &grant, stdhttp.StatusOK); err != nil {
+		return ports.AdminRepositoryGrant{}, err
+	}
+	return grant, nil
+}
+
+func (c *HTTPAdminClient) DeleteRepositoryGrant(ctx context.Context, session AdminSession, repository string, username string) error {
+	path := repositoryGrantPath(repository, username)
 	return c.requestNoContent(ctx, stdhttp.MethodDelete, session, path, nil, stdhttp.StatusNoContent)
 }
 

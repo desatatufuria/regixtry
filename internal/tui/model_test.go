@@ -3480,6 +3480,15 @@ type fakeAdminClient struct {
 	lastDeleteGrantUserID string
 	lastDeleteGrantRepo   string
 
+	repoGrants         map[string][]ports.AdminRepositoryGrant
+	listRepoGrantsErr  error
+	putRepoGrantErr    error
+	lastRepoGrantInput ports.AdminPutRepositoryGrantInput
+
+	deleteRepoGrantErr          error
+	lastDeleteRepoGrantRepo     string
+	lastDeleteRepoGrantUsername string
+
 	createToken    ports.AdminCreatedToken
 	createTokenErr error
 
@@ -3517,6 +3526,9 @@ type fakeAdminClient struct {
 	configureFeatureCalls       int
 	putGrantCalls               int
 	deleteGrantCalls            int
+	listRepoGrantsCalls         int
+	putRepoGrantCalls           int
+	deleteRepoGrantCalls        int
 	createTokenCalls            int
 	revokeTokenCalls            int
 	enableCalls                 int
@@ -3835,6 +3847,30 @@ func (f *fakeAdminClient) DeleteUserGrant(_ context.Context, _ AdminSession, use
 	f.lastDeleteGrantUserID = userID
 	f.lastDeleteGrantRepo = repository
 	return f.deleteGrantErr
+}
+
+func (f *fakeAdminClient) ListRepositoryGrants(_ context.Context, _ AdminSession, repository string) ([]ports.AdminRepositoryGrant, error) {
+	f.listRepoGrantsCalls++
+	if f.listRepoGrantsErr != nil {
+		return nil, f.listRepoGrantsErr
+	}
+	return append([]ports.AdminRepositoryGrant(nil), f.repoGrants[repository]...), nil
+}
+
+func (f *fakeAdminClient) PutRepositoryGrant(_ context.Context, _ AdminSession, input ports.AdminPutRepositoryGrantInput) (ports.AdminRepositoryGrant, error) {
+	f.putRepoGrantCalls++
+	f.lastRepoGrantInput = input
+	if f.putRepoGrantErr != nil {
+		return ports.AdminRepositoryGrant{}, f.putRepoGrantErr
+	}
+	return ports.AdminRepositoryGrant{Username: input.Username, Role: input.Role}, nil
+}
+
+func (f *fakeAdminClient) DeleteRepositoryGrant(_ context.Context, _ AdminSession, repository string, username string) error {
+	f.deleteRepoGrantCalls++
+	f.lastDeleteRepoGrantRepo = repository
+	f.lastDeleteRepoGrantUsername = username
+	return f.deleteRepoGrantErr
 }
 
 func (f *fakeAdminClient) ListUserAdminTokens(_ context.Context, _ AdminSession, userID string) ([]ports.AdminToken, error) {
