@@ -844,6 +844,35 @@ func TestUpdateRepoAdminGrantsKeyEditRefusesRepoAdminGrant(t *testing.T) {
 	}
 }
 
+// TestUpdateRepoAdminGrantsKeyEditAllowsNonRepoAdminGrant is the
+// triangulation companion to TestUpdateRepoAdminGrantsKeyEditRefusesRepoAdminGrant:
+// the refusal guard must be specific to domainauth.RepoRoleAdmin, not an
+// over-broad block that disables editing altogether.
+func TestUpdateRepoAdminGrantsKeyEditAllowsNonRepoAdminGrant(t *testing.T) {
+	t.Parallel()
+
+	model := newAdminReadyModel(t, &fakeAdminClient{})
+	model.adminAuth = adminAuthStateAuthenticated
+	model.screen = screenRepoAdminGrants
+	model.adminView.RepoAdminRepository = "team/app"
+	model.adminView.RepoAdminGrants = []ports.AdminRepositoryGrant{
+		{Username: "bob", Role: domainauth.RepoRoleWriter},
+	}
+	model.adminView.SelectedRepoAdminGrant = 0
+
+	updated := runKey(t, model, "e")
+
+	if got, want := updated.screen, screenRepoAdminAddGrant; got != want {
+		t.Fatalf("screen = %q, want %q (editing a non-repo-admin grant must proceed)", got, want)
+	}
+	if got, want := updated.adminView.RepoAdminGrantForm.Role, domainauth.RepoRoleWriter; got != want {
+		t.Fatalf("RepoAdminGrantForm.Role = %q, want %q", got, want)
+	}
+	if got, want := updated.adminView.RepoAdminGrantForm.Username, "bob"; got != want {
+		t.Fatalf("RepoAdminGrantForm.Username = %q, want %q", got, want)
+	}
+}
+
 func TestModelCreateAdminUserRefreshesUsers(t *testing.T) {
 	t.Parallel()
 

@@ -2529,6 +2529,18 @@ func (m Model) updateRepoAdminGrantsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = "No grant selected to edit."
 			return m, nil
 		}
+		// A delegate's grants list is scoped to their own repository but not
+		// filtered by role (service.go ListRepositoryGrants), so it can
+		// legitimately contain a peer's repo-admin grant. Editing it through
+		// this form is refused outright, rather than clamped to a different
+		// role, so the form never displays or silently rewrites a row it
+		// didn't create -- mirrors the existing "Already inheriting global
+		// settings." refusal precedent for an action that doesn't apply to
+		// the current row/state.
+		if grant.Role == domainauth.RepoRoleAdmin {
+			m.status = "repo-admin grants cannot be edited here; ask a global admin."
+			return m, nil
+		}
 		m.adminView.RepoAdminGrantForm = adminRepositoryGrantForm{Username: grant.Username, Role: grant.Role, Focus: adminRepoGrantFieldUsername}
 		m.screen = screenRepoAdminAddGrant
 		m.status = ""
