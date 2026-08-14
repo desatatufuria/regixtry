@@ -4,8 +4,8 @@ set -euo pipefail
 
 SCRIPT_NAME="install.sh"
 DEFAULT_BIN_NAME="regixtry"
-DEFAULT_RELEASES_API_URL="https://api.github.com/repos/desatatufuria/workspace/releases"
-DEFAULT_RELEASES_PAGE_URL="https://github.com/desatatufuria/workspace/releases"
+DEFAULT_RELEASES_API_URL="https://api.github.com/repos/desatatufuria/regixtry/releases"
+DEFAULT_RELEASES_PAGE_URL="https://github.com/desatatufuria/regixtry/releases"
 
 INSTALL_DIR="${REGISTRY_INSTALL_DIR:-}"
 REF="${REGISTRY_INSTALL_REF:-}"
@@ -23,7 +23,7 @@ manual_guidance() {
   cat >&2 <<EOF
 [regixtry-install] Manual options:
 [regixtry-install] - Download a verified Linux release from: ${RELEASES_PAGE_URL}
-[regixtry-install] - Or build from source manually with: git clone https://github.com/desatatufuria/workspace.git && cd workspace && go build -o regixtry ./cmd/regixtry
+[regixtry-install] - Or build from source manually with: git clone https://github.com/desatatufuria/regixtry.git && cd regixtry && go build -o regixtry ./cmd/regixtry
 EOF
 }
 
@@ -61,9 +61,9 @@ Environment overrides:
   REGISTRY_INSTALL_RELEASES_PAGE_URL  Override the release downloads page URL.
 
 Examples:
-  curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash
-  curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash -s -- --ref v1.2.3
-  curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash -s -- --dir "${HOME}/.local/bin"
+  curl -fsSL https://raw.githubusercontent.com/desatatufuria/regixtry/main/install.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/desatatufuria/regixtry/main/install.sh | bash -s -- --ref v1.2.3
+  curl -fsSL https://raw.githubusercontent.com/desatatufuria/regixtry/main/install.sh | bash -s -- --dir "${HOME}/.local/bin"
 EOF
 }
 
