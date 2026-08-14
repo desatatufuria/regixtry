@@ -104,7 +104,7 @@ Chain strategy: pending
 - [x] 2.5 RED `store_test.go`: `DeleteTag` removes only the named row;
       manifest and sibling tag still resolve; absent tag returns
       `NotFound` — table-driven.
-- [ ] 2.6 GREEN `store.go`: `DeleteTag` — DELETE by
+- [x] 2.6 GREEN `store.go`: `DeleteTag` — DELETE by
       tenant/repository_id/name; zero rows affected → `NewNotFoundError`.
 - [ ] 2.7 Confirm Phase 2 GREEN (Unit 2 focused test command).
 

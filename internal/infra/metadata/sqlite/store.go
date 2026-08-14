@@ -400,6 +400,38 @@ func (s *Store) DeleteManifestByDigest(ctx context.Context, tenant string, repos
 	return tagNames, nil
 }
 
+// DeleteTag removes one tags row only, leaving its manifest and every other
+// tag on it untouched -- deliberately no CASCADE reasoning here, unlike
+// DeleteManifestByDigest: a tags row has no dependents. Zero rows affected
+// is a typed domain.ErrorCodeNotFound, mirroring DeleteRepositoryFeatureOverride's
+// single-statement, non-transactional shape.
+func (s *Store) DeleteTag(ctx context.Context, tenant string, repository domain.RepositoryRef, tag string) error {
+	if err := repository.Validate(); err != nil {
+		return err
+	}
+
+	result, err := s.db.ExecContext(ctx, `
+		DELETE FROM tags
+		WHERE tenant = ? AND name = ? AND repository_id = (
+			SELECT id FROM repositories WHERE tenant = ? AND name = ?
+		)
+	`, tenant, tag, tenant, repository.String())
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+
+	if rowsAffected == 0 {
+		return domain.NewNotFoundError("tag", tag)
+	}
+
+	return nil
+}
+
 func (s *Store) Catalog(ctx context.Context, tenant string, limit int, after string) ([]domain.RepositoryRef, error) {
 	query := `SELECT name FROM repositories WHERE tenant = ?`
 	args := []any{tenant}
