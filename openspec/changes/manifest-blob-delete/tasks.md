@@ -98,7 +98,7 @@ Chain strategy: pending
       tags removes the manifest, all 3 tags, and `manifest_blobs` rows,
       returns the 3 names; absent digest returns `domain.ErrorCodeNotFound`
       — table-driven, `t.TempDir()`.
-- [ ] 2.4 GREEN `store.go`: `DeleteManifestByDigest` — SELECT tag names
+- [x] 2.4 GREEN `store.go`: `DeleteManifestByDigest` — SELECT tag names
       in-transaction before DELETE; rely on `ON DELETE CASCADE`; zero rows
       affected → `NewNotFoundError`.
 - [ ] 2.5 RED `store_test.go`: `DeleteTag` removes only the named row;
