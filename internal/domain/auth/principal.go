@@ -3,13 +3,14 @@ package auth
 import "time"
 
 type Principal struct {
-	Subject   string
-	UserID    string
-	Username  string
-	IsAdmin   bool
-	Grants    []RepoGrant
-	Scopes    []Scope
-	ExpiresAt time.Time
+	Subject    string
+	UserID     string
+	Username   string
+	IsAdmin    bool
+	IsReadOnly bool
+	Grants     []RepoGrant
+	Scopes     []Scope
+	ExpiresAt  time.Time
 }
 
 func (p Principal) HasReadAccess(repository string) bool {

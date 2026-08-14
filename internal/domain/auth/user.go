@@ -13,6 +13,7 @@ type User struct {
 	Username     string
 	PasswordHash string
 	IsAdmin      bool
+	IsReadOnly   bool
 	Enabled      bool
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
