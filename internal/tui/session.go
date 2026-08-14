@@ -94,6 +94,8 @@ const (
 	adminConfirmDeleteGrant     adminConfirmKind = "delete-grant"
 	adminConfirmRevokeToken     adminConfirmKind = "revoke-token"
 	adminConfirmDeleteRepoGrant adminConfirmKind = "delete-repo-grant"
+	adminConfirmEnableRobot     adminConfirmKind = "enable-robot"
+	adminConfirmDisableRobot    adminConfirmKind = "disable-robot"
 )
 
 type adminCreateUserForm struct {

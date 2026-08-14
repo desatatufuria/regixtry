@@ -99,10 +99,14 @@ func adminScreenHelp(current screen, view AdminViewState) string {
 		return "n: add grant | e: edit selected grant | x: remove grant | Esc: back | q: quit"
 	case screenRepoAdminAddGrant:
 		return "Enter: save | Tab: next field | Space: cycle role | Esc: cancel"
+	case screenAdminRobots:
+		return "n: create robot | e: enable | x: disable | t: tokens | r: refresh | Esc: back | q: quit"
+	case screenAdminCreateRobot:
+		return "Enter: create robot | Tab: next field | Space: cycle role | Esc: cancel"
 	case screenAdminFeatures:
 		return adminFeatureHelp(view)
 	default:
-		return "/: search | Enter/e: edit user | n: create user | f: features | Esc: back | q: quit"
+		return "/: search | Enter/e: edit user | n: create user | f: features | b: robots | Esc: back | q: quit"
 	}
 }
 
@@ -135,6 +139,10 @@ func renderAdminScreen(theme adminTheme, current screen, session AdminSession, v
 		return fmt.Sprintf("Repositories / %s / Grants", view.RepoAdminRepository), renderRepoAdminGrantsScreen(theme, view), help
 	case screenRepoAdminAddGrant:
 		return fmt.Sprintf("Repositories / %s / Grants / Add Grant", view.RepoAdminRepository), renderRepoAdminAddGrantScreen(theme, view), help
+	case screenAdminRobots:
+		return "Robots", renderAdminRobotsScreen(theme, session, view, layout, now), help
+	case screenAdminCreateRobot:
+		return "Robots / Create Robot", renderAdminCreateRobotScreen(theme, view), help
 	case screenAdminFeatures:
 		return "Features", renderAdminFeaturesScreen(theme, session, view, layout, now), help
 	default:
