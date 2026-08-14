@@ -328,6 +328,106 @@ func TestHTTPAdminClientMutationRoutes(t *testing.T) {
 	}
 }
 
+// TestHTTPAdminClientAdminRobotRoutes is task 5.5's RED test (design.md
+// Decision 6's two new robot routes; enable/disable and token issue/list/
+// revoke are deliberately NOT re-tested here -- they are reused unchanged
+// via EnableUser/DisableUser/CreateUserAdminToken etc., already covered by
+// TestHTTPAdminClientMutationRoutes, called with the robot's user ID like
+// any other user ID).
+func TestHTTPAdminClientAdminRobotRoutes(t *testing.T) {
+	t.Parallel()
+
+	fixedNow := time.Date(2026, time.August, 4, 23, 5, 0, 0, time.UTC)
+	session := AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: fixedNow.Add(10 * time.Minute)}
+
+	tests := []struct {
+		name       string
+		method     string
+		path       string
+		statusCode int
+		body       string
+		run        func(t *testing.T, client *HTTPAdminClient)
+		assertBody func(t *testing.T, payload map[string]any)
+	}{
+		{
+			name:       "list robots",
+			method:     http.MethodGet,
+			path:       "/admin/v1/robots",
+			statusCode: http.StatusOK,
+			body:       `[{"id":"u-2","username":"robot$ci","repository":"team/app","role":"repo-writer","enabled":true,"created_at":"2026-08-04T22:00:00Z"}]`,
+			run: func(t *testing.T, client *HTTPAdminClient) {
+				robots, err := client.ListRobots(context.Background(), session)
+				if err != nil {
+					t.Fatalf("ListRobots() error = %v", err)
+				}
+				if len(robots) != 1 || robots[0].Username != "robot$ci" || robots[0].Repository != "team/app" || robots[0].Role != domainauth.RepoRoleWriter {
+					t.Fatalf("robots = %#v, want decoded robot list", robots)
+				}
+			},
+		},
+		{
+			name:       "create robot",
+			method:     http.MethodPost,
+			path:       "/admin/v1/robots",
+			statusCode: http.StatusCreated,
+			body:       `{"robot":{"id":"u-2","username":"robot$ci","repository":"team/app","role":"repo-writer","enabled":true,"created_at":"2026-08-04T22:00:00Z"},"secret":"robot-secret","accessor":"tok_robot","expires_at":"2026-09-04T22:00:00Z"}`,
+			run: func(t *testing.T, client *HTTPAdminClient) {
+				created, err := client.CreateRobot(context.Background(), session, ports.AdminCreateRobotInput{Name: "ci", Repository: "team/app", Role: domainauth.RepoRoleWriter, TTL: 3600 * time.Second})
+				if err != nil {
+					t.Fatalf("CreateRobot() error = %v", err)
+				}
+				if created.Secret != "robot-secret" || created.Robot.Username != "robot$ci" {
+					t.Fatalf("created = %#v, want decoded robot creation payload", created)
+				}
+			},
+			assertBody: func(t *testing.T, payload map[string]any) {
+				if payload["name"] != "ci" || payload["repository"] != "team/app" || payload["role"] != string(domainauth.RepoRoleWriter) {
+					t.Fatalf("payload = %#v, want create-robot body", payload)
+				}
+				if payload["ttl_seconds"] != float64(3600) {
+					t.Fatalf("payload = %#v, want ttl_seconds 3600", payload)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		tc := tt
+		t.Run(tc.name, func(t *testing.T) {
+			var receivedBody map[string]any
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if got, want := r.Method, tc.method; got != want {
+					t.Fatalf("method = %q, want %q", got, want)
+				}
+				if got, want := r.URL.Path, tc.path; got != want {
+					t.Fatalf("path = %q, want %q", got, want)
+				}
+				if got, want := r.Header.Get("Authorization"), "Bearer bearer-token"; got != want {
+					t.Fatalf("Authorization = %q, want %q", got, want)
+				}
+				if r.Body != nil && (tc.method == http.MethodPost || tc.method == http.MethodPut) {
+					_ = json.NewDecoder(r.Body).Decode(&receivedBody)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.statusCode)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+
+			client, err := NewHTTPAdminClient(server.URL, server.Client())
+			if err != nil {
+				t.Fatalf("NewHTTPAdminClient() error = %v", err)
+			}
+			client.now = func() time.Time { return fixedNow }
+
+			tc.run(t, client)
+			if tc.assertBody != nil {
+				tc.assertBody(t, receivedBody)
+			}
+		})
+	}
+}
+
 // TestHTTPAdminClientRepositoryOverrideRoutes is the Phase 8 task 8.8 RED
 // test: Get/List/Set/ClearRepositoryOverride wire to design.md Decision 7's
 // admin resource, GET's absent-row 404 becomes (details, exists=false, nil

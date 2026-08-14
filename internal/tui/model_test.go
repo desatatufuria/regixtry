@@ -3756,6 +3756,14 @@ type fakeAdminClient struct {
 	disableUser ports.AdminUser
 	disableErr  error
 
+	robots               []ports.AdminRobot
+	listRobotsErr        error
+	listRobotsCalls      int
+	createRobot          ports.AdminCreatedRobot
+	createRobotErr       error
+	createRobotCalls     int
+	lastCreateRobotInput ports.AdminCreateRobotInput
+
 	// deleteRobot* backs the registry-acl-v1 robot-deletion follow-up's
 	// AdminClient contract (PR 4, backend-only -- no key/UI wiring calls
 	// this yet, so no dedicated call-count assertions land until PR 5).
@@ -4225,6 +4233,23 @@ func (f *fakeAdminClient) DisableUser(_ context.Context, _ AdminSession, _ strin
 		return ports.AdminUser{}, f.disableErr
 	}
 	return f.disableUser, nil
+}
+
+func (f *fakeAdminClient) ListRobots(context.Context, AdminSession) ([]ports.AdminRobot, error) {
+	f.listRobotsCalls++
+	if f.listRobotsErr != nil {
+		return nil, f.listRobotsErr
+	}
+	return append([]ports.AdminRobot(nil), f.robots...), nil
+}
+
+func (f *fakeAdminClient) CreateRobot(_ context.Context, _ AdminSession, input ports.AdminCreateRobotInput) (ports.AdminCreatedRobot, error) {
+	f.createRobotCalls++
+	f.lastCreateRobotInput = input
+	if f.createRobotErr != nil {
+		return ports.AdminCreatedRobot{}, f.createRobotErr
+	}
+	return f.createRobot, nil
 }
 
 func (f *fakeQueryService) RepositorySummaries(context.Context, int, string) ([]appregixtry.RepositorySummary, error) {
