@@ -532,6 +532,16 @@ type adminRobotEnabledMsg struct {
 	err     error
 }
 
+// adminRobotDeletedMsg carries only the robot's ID/username, the same
+// shape adminRobotEnabledMsg uses: after a successful delete the screen
+// reloads screenAdminRobots' own list rather than reusing a mutation
+// response body.
+type adminRobotDeletedMsg struct {
+	robotID  string
+	username string
+	err      error
+}
+
 type startupLoginMsg struct{}
 
 func NewModel(service QueryService, options ...Option) Model {
@@ -1255,6 +1265,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = fmt.Sprintf("Robot %s. Refreshing robots...", verb)
 		m.screen = screenAdminRobots
 		return m, m.loadAdminRobotsCmd()
+	case adminRobotDeletedMsg:
+		if msg.err != nil {
+			if IsAdminSessionExpired(msg.err) {
+				return m.expireAdminSession(msg.err.Error()), nil
+			}
+			m.status = msg.err.Error()
+			return m, nil
+		}
+		m.adminView.ConfirmModal = adminConfirmModal{}
+		m.status = fmt.Sprintf("Robot %q deleted. Refreshing robots...", msg.username)
+		m.screen = screenAdminRobots
+		return m, m.loadAdminRobotsCmd()
 	}
 
 	return m, nil
@@ -1608,8 +1630,10 @@ func (m Model) updateAdminUsersKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // updateAdminRobotsKey handles screenAdminRobots, a sibling of
 // updateAdminUsersKey (design.md Decision 7): list/select, "n" to create,
-// "e"/"x" to enable/disable via the confirm modal, "t" to reuse the existing
-// token screens for the selected robot, "r" to refresh.
+// "e"/"x" to enable/disable via the confirm modal, "d" to delete (genuinely
+// irreversible -- distinct from "x"/disable, and distinct from every other
+// admin screen in this codebase where "x" itself means delete), "t" to
+// reuse the existing token screens for the selected robot, "r" to refresh.
 func (m Model) updateAdminRobotsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case isEscKey(msg):
@@ -1660,6 +1684,22 @@ func (m Model) updateAdminRobotsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			Title:       fmt.Sprintf("Confirm %s", strings.Title(verb)),
 			Message:     fmt.Sprintf("Confirm %s robot %q?", verb, robot.Username),
 			ConfirmText: verb,
+			UserID:      robot.ID,
+			Username:    robot.Username,
+		}
+		m.status = ""
+		return m, nil
+	case isRuneKey(msg, 'd'):
+		robot, ok := selectedAdminRobot(m.adminView)
+		if !ok {
+			m.status = "No robot selected."
+			return m, nil
+		}
+		m.adminView.ConfirmModal = adminConfirmModal{
+			Kind:        adminConfirmDeleteRobot,
+			Title:       "Confirm Delete",
+			Message:     fmt.Sprintf("Delete robot %q? This action cannot be undone.", robot.Username),
+			ConfirmText: "delete",
 			UserID:      robot.ID,
 			Username:    robot.Username,
 		}
@@ -2626,6 +2666,9 @@ func (m Model) updateAdminConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case adminConfirmDisableRobot:
 			m.status = fmt.Sprintf("Submitting disable for %s...", modal.Username)
 			return m, m.enableDisableRobotCmd(modal.UserID, false)
+		case adminConfirmDeleteRobot:
+			m.status = fmt.Sprintf("Deleting robot %q...", modal.Username)
+			return m, m.deleteRobotCmd(modal.UserID, modal.Username)
 		}
 	}
 	return m, nil
@@ -3426,6 +3469,20 @@ func (m Model) enableDisableRobotCmd(robotID string, enabled bool) tea.Cmd {
 			_, err = m.adminClient.DisableUser(m.ctx, m.adminSession, robotID)
 		}
 		return adminRobotEnabledMsg{robotID: robotID, enabled: enabled, err: err}
+	}
+}
+
+// deleteRobotCmd backs the "d" key on screenAdminRobots (a genuinely
+// destructive, irreversible action, unlike enableDisableRobotCmd above).
+// It calls AdminClient.DeleteRobot, already wired through to the backend's
+// DELETE /admin/v1/robots/{id} route added in PR 4.
+func (m Model) deleteRobotCmd(robotID string, username string) tea.Cmd {
+	return func() tea.Msg {
+		if m.adminClient == nil {
+			return adminRobotDeletedMsg{robotID: robotID, username: username, err: fmt.Errorf("admin API is unavailable for this session")}
+		}
+		err := m.adminClient.DeleteRobot(m.ctx, m.adminSession, robotID)
+		return adminRobotDeletedMsg{robotID: robotID, username: username, err: err}
 	}
 }
 
