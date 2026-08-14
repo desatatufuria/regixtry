@@ -1201,3 +1201,70 @@ func TestAdminRepositoryGrantResponsesCarryNoUserIdentityFields(t *testing.T) {
 		}
 	}
 }
+
+// TestAdminRobotsRoutesCreateAndListGlobalAdminOnly is the Phase 4 RED test
+// (tasks.md 4.13): POST /admin/v1/robots creates a robot, its single grant,
+// and an issued token in one call (global admin only); GET /admin/v1/robots
+// lists robots; a non-admin authenticated principal is rejected on both.
+func TestAdminRobotsRoutesCreateAndListGlobalAdminOnly(t *testing.T) {
+	t.Parallel()
+
+	handler, authService, adminActor, _, cleanup := newTestRouterWithRealAuth(t)
+	defer cleanup()
+
+	plainUser, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
+		Username: "plain", Password: "password123", Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateAdminUser(plain) error = %v", err)
+	}
+	plainLogin, err := authService.LoginWithPassword(context.Background(), plainUser.Username, "password123", nil)
+	if err != nil {
+		t.Fatalf("LoginWithPassword(plain) error = %v", err)
+	}
+	adminLogin, err := authService.LoginWithPassword(context.Background(), adminActor.Username, "password123", nil)
+	if err != nil {
+		t.Fatalf("LoginWithPassword(admin) error = %v", err)
+	}
+
+	nonAdminCreateReq := httptest.NewRequest(http.MethodPost, "/admin/v1/robots", strings.NewReader(`{"name":"ci","repository":"team/app","role":"repo-writer"}`))
+	nonAdminCreateReq.Header.Set("Authorization", "Bearer "+plainLogin.BearerToken)
+	nonAdminCreateReq.Header.Set("Content-Type", "application/json")
+	nonAdminCreateRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(nonAdminCreateRecorder, nonAdminCreateReq)
+	if nonAdminCreateRecorder.Code != http.StatusForbidden {
+		t.Fatalf("non-admin create status = %d, want %d, body = %s", nonAdminCreateRecorder.Code, http.StatusForbidden, nonAdminCreateRecorder.Body.String())
+	}
+
+	createReq := httptest.NewRequest(http.MethodPost, "/admin/v1/robots", strings.NewReader(`{"name":"ci","repository":"team/app","role":"repo-writer"}`))
+	createReq.Header.Set("Authorization", "Bearer "+adminLogin.BearerToken)
+	createReq.Header.Set("Content-Type", "application/json")
+	createRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(createRecorder, createReq)
+	if createRecorder.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, want %d, body = %s", createRecorder.Code, http.StatusCreated, createRecorder.Body.String())
+	}
+	createBody := createRecorder.Body.String()
+	if !strings.Contains(createBody, `"username":"ci"`) || !strings.Contains(createBody, `"repository":"team/app"`) || !strings.Contains(createBody, `"role":"repo-writer"`) || !strings.Contains(createBody, `"secret"`) {
+		t.Fatalf("create body = %q, want robot+grant+secret reflected", createBody)
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/admin/v1/robots", nil)
+	listReq.Header.Set("Authorization", "Bearer "+adminLogin.BearerToken)
+	listRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(listRecorder, listReq)
+	if listRecorder.Code != http.StatusOK {
+		t.Fatalf("list status = %d, want %d, body = %s", listRecorder.Code, http.StatusOK, listRecorder.Body.String())
+	}
+	if !strings.Contains(listRecorder.Body.String(), `"username":"ci"`) {
+		t.Fatalf("list body = %q, want to contain robot ci", listRecorder.Body.String())
+	}
+
+	nonAdminListReq := httptest.NewRequest(http.MethodGet, "/admin/v1/robots", nil)
+	nonAdminListReq.Header.Set("Authorization", "Bearer "+plainLogin.BearerToken)
+	nonAdminListRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(nonAdminListRecorder, nonAdminListReq)
+	if nonAdminListRecorder.Code != http.StatusForbidden {
+		t.Fatalf("non-admin list status = %d, want %d, body = %s", nonAdminListRecorder.Code, http.StatusForbidden, nonAdminListRecorder.Body.String())
+	}
+}
