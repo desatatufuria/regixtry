@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -220,6 +221,96 @@ func TestServiceDeleteManifestRefusesWithValidationErrorWhenFlagOffForAuthorized
 	}
 	if resolved.Digest != published.Digest {
 		t.Fatalf("resolved.Digest = %q, want %q -- store must never be reached when the flag is off", resolved.Digest, published.Digest)
+	}
+}
+
+// TestServiceDeleteManifestByDigestRemovesManifestAndReturnsAllRemovedTags
+// pins design.md's headline scenario: a digest with three tags is deleted,
+// the response names all three removed tags, and every one of them (plus
+// the digest itself) stops resolving.
+func TestServiceDeleteManifestByDigestRemovesManifestAndReturnsAllRemovedTags(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	ctx := context.Background()
+	service.SetDeleteEnabled(true)
+
+	published := publishManifestWithTags(t, service, ctx, "team/app", "latest", "v1", "v2")
+
+	details, err := service.DeleteManifest(ctx, "team/app", published.Digest)
+	if err != nil {
+		t.Fatalf("DeleteManifest(%q) error = %v", published.Digest, err)
+	}
+
+	if !details.ManifestRemoved {
+		t.Fatal("details.ManifestRemoved = false, want true for a digest delete")
+	}
+	if details.Digest != published.Digest {
+		t.Fatalf("details.Digest = %q, want %q", details.Digest, published.Digest)
+	}
+
+	wantTags := []string{"latest", "v1", "v2"}
+	gotTags := append([]string(nil), details.TagsRemoved...)
+	sort.Strings(gotTags)
+	if !reflect.DeepEqual(gotTags, wantTags) {
+		t.Fatalf("details.TagsRemoved = %#v, want %#v", details.TagsRemoved, wantTags)
+	}
+
+	if _, err := service.ResolveManifest(ctx, "team/app", published.Digest); !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("ResolveManifest(%q) after digest delete error = %v, want ErrorCodeNotFound", published.Digest, err)
+	}
+	for _, tag := range wantTags {
+		if _, err := service.ResolveManifest(ctx, "team/app", tag); !domain.IsCode(err, domain.ErrorCodeNotFound) {
+			t.Fatalf("ResolveManifest(%q) after digest delete error = %v, want ErrorCodeNotFound", tag, err)
+		}
+	}
+}
+
+// TestServiceDeleteManifestByTagRemovesOnlyThatTagLeavingSiblingsAndManifestIntact
+// pins design.md's tag-path scenario: deleting one tag leaves the manifest
+// and its sibling tag pullable, and never touches ManifestRemoved.
+func TestServiceDeleteManifestByTagRemovesOnlyThatTagLeavingSiblingsAndManifestIntact(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	ctx := context.Background()
+	service.SetDeleteEnabled(true)
+
+	published := publishManifestWithTags(t, service, ctx, "team/app", "a", "b")
+
+	details, err := service.DeleteManifest(ctx, "team/app", "a")
+	if err != nil {
+		t.Fatalf("DeleteManifest(a) error = %v", err)
+	}
+
+	if details.ManifestRemoved {
+		t.Fatal("details.ManifestRemoved = true, want false for a tag delete")
+	}
+	if details.Digest != "" {
+		t.Fatalf("details.Digest = %q, want empty on the tag path", details.Digest)
+	}
+	if !reflect.DeepEqual(details.TagsRemoved, []string{"a"}) {
+		t.Fatalf("details.TagsRemoved = %#v, want [a]", details.TagsRemoved)
+	}
+
+	if _, err := service.ResolveManifest(ctx, "team/app", "a"); !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("ResolveManifest(a) after tag delete error = %v, want ErrorCodeNotFound", err)
+	}
+
+	resolvedByTag, err := service.ResolveManifest(ctx, "team/app", "b")
+	if err != nil {
+		t.Fatalf("ResolveManifest(b) error = %v, want the sibling tag untouched", err)
+	}
+	resolvedByDigest, err := service.ResolveManifest(ctx, "team/app", published.Digest)
+	if err != nil {
+		t.Fatalf("ResolveManifest(digest) error = %v, want the manifest untouched", err)
+	}
+	if resolvedByTag.Digest != published.Digest || resolvedByDigest.Digest != published.Digest {
+		t.Fatalf("surviving digests = (%q,%q), want both %q", resolvedByTag.Digest, resolvedByDigest.Digest, published.Digest)
 	}
 }
 

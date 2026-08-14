@@ -121,13 +121,18 @@ Chain strategy: pending
       `domain.ParseDigest` (same idiom as `parseManifestPayload`) → store
       call. Add `deleteEnabled bool` field + setter (mirrors `scanHost`
       setter, `service.go:131-134`).
-- [ ] 3.4 RED: digest path — 3 tags on one digest →
+- [x] 3.4 RED: digest path — 3 tags on one digest →
       `DeletionDetails{ManifestRemoved:true, TagsRemoved:[3 names]}`.
-- [ ] 3.5 RED: tag path —
+- [x] 3.5 RED: tag path —
       `DeletionDetails{ManifestRemoved:false, TagsRemoved:[tag]}`; manifest
       and siblings untouched.
-- [ ] 3.6 GREEN `internal/app/regixtry/queries.go`: `DeletionDetails`
-      struct (Decision 1); wire both paths in `DeleteManifest`.
+- [x] 3.6 GREEN `internal/app/regixtry/queries.go`: `DeletionDetails`
+      struct (Decision 1); wire both paths in `DeleteManifest`. (Interleaved
+      into 3.3's commit — Go's whole-function compilation forced
+      `DeletionDetails` and both store-call paths to exist before 3.1/3.2
+      could even compile, mirroring Phase 2 task 2.2's compile-prerequisite
+      interleaving. 3.4/3.5 confirm the already-implemented behavior is
+      correct rather than driving new production code.)
 - [ ] 3.7 RED: absent digest and absent tag each surface
       `domain.ErrorCodeNotFound` through the service.
 - [ ] 3.8 Confirm Phase 3 GREEN (Unit 3 focused test command).
