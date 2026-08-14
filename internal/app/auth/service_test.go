@@ -228,6 +228,73 @@ func TestIntersectRequestedActionsReadOnlyYieldsPullOnly(t *testing.T) {
 	}
 }
 
+// TestIntersectRequestedActionsDeleteDerivation pins design.md Decision 5:
+// delete gets its own statement in intersectRequestedActions, never folded
+// into the push branch. A repo-writer grant honours an explicit delete
+// request; requesting pull,push alone never yields delete; the registry-wide
+// read-only role never yields delete even when requested; a repo-reader
+// grant never yields delete; and an admin actor honours the request
+// (manifest-blob-delete tasks.md 1.9).
+func TestIntersectRequestedActionsDeleteDerivation(t *testing.T) {
+	t.Parallel()
+
+	pullPushDelete := mustParseTestScope(t, "repository:team/app:pull,push,delete")
+	pullPush := mustParseTestScope(t, "repository:team/app:pull,push")
+	writerGrant := []domainauth.RepoGrant{{Repository: regixtrydomain.MustParseRepositoryRef("team/app"), Role: domainauth.RepoRoleWriter}}
+	readerGrant := []domainauth.RepoGrant{{Repository: regixtrydomain.MustParseRepositoryRef("team/app"), Role: domainauth.RepoRoleReader}}
+
+	tests := []struct {
+		name       string
+		isAdmin    bool
+		isReadOnly bool
+		grants     []domainauth.RepoGrant
+		requested  domainauth.Scope
+		want       []string
+	}{
+		{
+			name:      "writer requesting delete gets it",
+			grants:    writerGrant,
+			requested: pullPushDelete,
+			want:      []string{"pull", "push", "delete"},
+		},
+		{
+			name:      "writer requesting pull,push never gets delete",
+			grants:    writerGrant,
+			requested: pullPush,
+			want:      []string{"pull", "push"},
+		},
+		{
+			name:      "reader grant never gets delete even when requested",
+			grants:    readerGrant,
+			requested: pullPushDelete,
+			want:      []string{"pull"},
+		},
+		{
+			name:       "read-only role never gets delete even when requested",
+			isReadOnly: true,
+			requested:  pullPushDelete,
+			want:       []string{"pull"},
+		},
+		{
+			name:      "admin honours a requested delete",
+			isAdmin:   true,
+			requested: pullPushDelete,
+			want:      []string{"pull", "push", "delete"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := intersectRequestedActions(tt.isAdmin, tt.isReadOnly, tt.grants, tt.requested)
+			if !equalStringSlices(got, tt.want) {
+				t.Fatalf("intersectRequestedActions() = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
 // TestRequireAdminOrRepoAdmin pins design.md Decision 4: requireAdminOrRepoAdmin
 // reads actor.Grants directly (never Principal.HasRepoAdminAccess, which
 // additionally requires a push token scope that a scope-less admin-API login
