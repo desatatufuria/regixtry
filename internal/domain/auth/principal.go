@@ -21,6 +21,15 @@ func (p Principal) HasWriteAccess(repository string) bool {
 	return p.hasGrantedRepositoryAccess(repository, RepoRole.AllowsWrite) && p.scopeAllowsRepository(repository, Scope.AllowsPush)
 }
 
+// HasDeleteAccess deliberately does NOT reuse HasWriteAccess: that predicate
+// checks Scope.AllowsPush, which a pull,push-scoped token satisfies and
+// would wrongly let it delete. The role half stays RepoRole.AllowsWrite
+// (the bound repo-writer decision); only the scope half changes to
+// Scope.AllowsDelete (design.md Decision 5).
+func (p Principal) HasDeleteAccess(repository string) bool {
+	return p.hasGrantedRepositoryAccess(repository, RepoRole.AllowsWrite) && p.scopeAllowsRepository(repository, Scope.AllowsDelete)
+}
+
 func (p Principal) HasRepoAdminAccess(repository string) bool {
 	if !p.hasGrantedRepositoryAccess(repository, RepoRole.AllowsAdmin) {
 		return false
