@@ -808,6 +808,42 @@ func TestModelRepoAdminGrantsLoadPutAndDeleteCommandsWired(t *testing.T) {
 	}
 }
 
+// TestUpdateRepoAdminGrantsKeyEditRefusesRepoAdminGrant is a CRITICAL-finding
+// remediation RED test (sdd-verify, PR 3): ListRepositoryGrants returns every
+// grant on a repository unfiltered by role (service.go:570-580), so a
+// delegate's own grants list can legitimately contain a peer's repo-admin
+// grant. Pressing "e" on that row must NOT populate screenRepoAdminAddGrant's
+// Role field with domainauth.RepoRoleAdmin -- renderRepoAdminAddGrantScreen
+// would then render the literal string "repo-admin", contradicting task
+// 3.5's guarantee that the role field never offers repo-admin. This exercises
+// the real "e" key handler (updateRepoAdminGrantsKey) through model.Update(),
+// not just nextDelegateGrantRole in isolation (that function is already
+// proven correct and is not where this bug lives).
+func TestUpdateRepoAdminGrantsKeyEditRefusesRepoAdminGrant(t *testing.T) {
+	t.Parallel()
+
+	model := newAdminReadyModel(t, &fakeAdminClient{})
+	model.adminAuth = adminAuthStateAuthenticated
+	model.screen = screenRepoAdminGrants
+	model.adminView.RepoAdminRepository = "team/app"
+	model.adminView.RepoAdminGrants = []ports.AdminRepositoryGrant{
+		{Username: "alice", Role: domainauth.RepoRoleAdmin},
+	}
+	model.adminView.SelectedRepoAdminGrant = 0
+
+	updated := runKey(t, model, "e")
+
+	if updated.screen == screenRepoAdminAddGrant {
+		t.Fatalf("screen = %q after editing a repo-admin grant, want to stay on %q (edit refused)", updated.screen, screenRepoAdminGrants)
+	}
+	if updated.adminView.RepoAdminGrantForm.Role == domainauth.RepoRoleAdmin {
+		t.Fatalf("RepoAdminGrantForm.Role = %q, want never repo-admin", updated.adminView.RepoAdminGrantForm.Role)
+	}
+	if updated.status == "" {
+		t.Fatalf("status = empty, want a message explaining the edit was refused")
+	}
+}
+
 func TestModelCreateAdminUserRefreshesUsers(t *testing.T) {
 	t.Parallel()
 
