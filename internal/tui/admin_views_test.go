@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
+	domainauth "regixtry/internal/domain/auth"
 	"regixtry/internal/ports"
 )
 
@@ -1437,5 +1438,103 @@ func TestRenderAdminScanHistoryModalNeverAppliesFitLinesOverComposite(t *testing
 	}
 	if !strings.Contains(got, "1/6") {
 		t.Fatalf("renderAdminScanHistoryModal() output = %q, want the Findings table's own pagination footer (1/6) present and untouched", got)
+	}
+}
+
+// TestRenderRepoAdminGrantsScreenShowsOperatorsOwnRepositoryGrants is the
+// Phase 3 task 3.5 RED test (design.md Decision 7 / spec.md "Delegate sees
+// only their own repositories' grants"): the repo-admin delegate's grants
+// screen renders exactly the repository it was opened for, and every
+// username/role pair it was handed — never a user-directory-style listing.
+func TestRenderRepoAdminGrantsScreenShowsOperatorsOwnRepositoryGrants(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+	view := AdminViewState{
+		RepoAdminRepository: "team/app",
+		RepoAdminGrants: []ports.AdminRepositoryGrant{
+			{Username: "bob", Role: domainauth.RepoRoleWriter},
+			{Username: "carol", Role: domainauth.RepoRoleReader},
+		},
+	}
+
+	got := renderRepoAdminGrantsScreen(theme, view)
+
+	if !strings.Contains(got, "team/app") {
+		t.Fatalf("renderRepoAdminGrantsScreen() = %q, want the repository heading", got)
+	}
+	if !strings.Contains(got, "bob") || !strings.Contains(got, string(domainauth.RepoRoleWriter)) {
+		t.Fatalf("renderRepoAdminGrantsScreen() = %q, want bob's repo-writer grant listed", got)
+	}
+	if !strings.Contains(got, "carol") || !strings.Contains(got, string(domainauth.RepoRoleReader)) {
+		t.Fatalf("renderRepoAdminGrantsScreen() = %q, want carol's repo-reader grant listed", got)
+	}
+}
+
+// TestRenderRepoAdminGrantsScreenShowsEmptyStateWithNoGrants triangulates
+// the populated-grants case above with an empty repository.
+func TestRenderRepoAdminGrantsScreenShowsEmptyStateWithNoGrants(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+	view := AdminViewState{RepoAdminRepository: "team/app"}
+
+	got := renderRepoAdminGrantsScreen(theme, view)
+
+	if !strings.Contains(got, "team/app") {
+		t.Fatalf("renderRepoAdminGrantsScreen() = %q, want the repository heading even with no grants", got)
+	}
+	if !strings.Contains(got, "No") {
+		t.Fatalf("renderRepoAdminGrantsScreen() = %q, want an explicit empty-grants message", got)
+	}
+}
+
+// TestRenderRepoAdminAddGrantScreenRoleFieldNeverRendersRepoAdmin is the
+// Phase 3 task 3.5 RED test's second half (spec.md "Delegate cannot select
+// repo-admin in the grant role picker"): whatever role the form currently
+// holds, the rendered field text never shows "repo-admin".
+func TestRenderRepoAdminAddGrantScreenRoleFieldNeverRendersRepoAdmin(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+	for _, role := range []domainauth.RepoRole{domainauth.RepoRoleReader, domainauth.RepoRoleWriter} {
+		view := AdminViewState{RepoAdminRepository: "team/app", RepoAdminGrantForm: adminRepositoryGrantForm{Role: role}}
+		got := renderRepoAdminAddGrantScreen(theme, view)
+		if strings.Contains(got, string(domainauth.RepoRoleAdmin)) {
+			t.Fatalf("renderRepoAdminAddGrantScreen() = %q, role field must never render %q", got, domainauth.RepoRoleAdmin)
+		}
+		if !strings.Contains(got, string(role)) {
+			t.Fatalf("renderRepoAdminAddGrantScreen() = %q, want the current role %q rendered", got, role)
+		}
+	}
+}
+
+// TestNextDelegateGrantRoleNeverProducesRepoAdmin is the pure-function proof
+// behind the UI constraint above: this is the ONLY function allowed to
+// mutate RepoAdminGrantForm.Role from a keypress (Space), so it alone must
+// guarantee repo-admin is structurally unreachable — including from the
+// (otherwise impossible) RepoRoleAdmin starting state.
+func TestNextDelegateGrantRoleNeverProducesRepoAdmin(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		current domainauth.RepoRole
+		want    domainauth.RepoRole
+	}{
+		{"reader cycles to writer", domainauth.RepoRoleReader, domainauth.RepoRoleWriter},
+		{"writer cycles to reader", domainauth.RepoRoleWriter, domainauth.RepoRoleReader},
+		{"admin (structurally unreachable) falls back to reader", domainauth.RepoRoleAdmin, domainauth.RepoRoleReader},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := nextDelegateGrantRole(tt.current); got != tt.want {
+				t.Fatalf("nextDelegateGrantRole(%q) = %q, want %q", tt.current, got, tt.want)
+			}
+			if got := nextDelegateGrantRole(tt.current); got == domainauth.RepoRoleAdmin {
+				t.Fatalf("nextDelegateGrantRole(%q) = %q, must never be repo-admin", tt.current, got)
+			}
+		})
 	}
 }
