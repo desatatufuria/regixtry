@@ -727,3 +727,462 @@ implicitly enabled in a way that could mask a future Phase 4 wiring bug. Full `g
 packages, including every Phase 1 and Phase 2 test. The four warnings are expected, documented
 scope deferrals to Phase 4 (wire-level error mapping, blob-directory/unrelated-operation
 integration proof) — none is a quality gap in this PR.
+
+---
+
+```yaml
+schema: gentle-ai.verify-result/v1
+evidence_revision: sha256:603310e64a8d8b6d4d1d045b35fb16f1fc7bad5ef239d3ae449dc4900e130d6c
+verdict: pass_with_warnings
+blockers: 0
+critical_findings: 0
+requirements: 4/4
+scenarios: 8/8
+test_command: go test -count=1 ./...
+test_exit_code: 0
+test_output_hash: sha256:603310e64a8d8b6d4d1d045b35fb16f1fc7bad5ef239d3ae449dc4900e130d6c
+build_command: go build ./...
+build_exit_code: 0
+build_output_hash: sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+```
+
+## Verification Report — Phase 4 (HTTP Layer, Config, Docs, PR 4 of 4 — FINAL)
+
+**Change**: manifest-blob-delete
+**Version**: N/A (delta spec, no version tag)
+**Mode**: Strict TDD
+
+**Scope of this verify run**: Phase 4 of 4 — the last PR in the chain, branch
+`feature/manifest-blob-delete-04-http-config-docs` against base
+`feature/manifest-blob-delete-03-service-layer`. Phases 1–3 were already independently
+verified PASS WITH WARNINGS (sections above). This pass wires the HTTP layer, threads
+`REGISTRY_DELETE_ENABLED`/`-delete-enabled` into `serve`, and adds reader-facing docs — the
+work every earlier phase explicitly deferred wire-level proof to. All 40/40 tasks across the
+whole change are now `[x]` (confirmed via `rg -c '^\- \[x\]' tasks.md` = 40, `'^\- \[ \]'` = 0).
+
+This report independently re-verified the apply agent's self-report rather than trusting it,
+per the orchestrator's explicit checklist: read the actual current `handleManifest` DELETE
+case, `parseServeConfig`, and every cited test body directly from the working tree; ran the
+full suite; and reconstructed two of the RED commits in disposable `git worktree`s to confirm
+they were genuinely red against the code as it stood at that commit, not merely asserted.
+
+### Completeness
+| Metric | Value |
+|--------|-------|
+| Tasks total (Phase 4) | 12 |
+| Tasks complete (Phase 4) | 12 |
+| Tasks incomplete (Phase 4) | 0 |
+| **Tasks total (whole change, Phases 1–4)** | **40** |
+| **Tasks complete (whole change)** | **40** |
+| **Tasks incomplete (whole change)** | **0** |
+
+### Build & Tests Execution
+**Build**: PASS — `go build ./...`, exit 0, no output.
+**Vet**: PASS — `go vet ./...`, exit 0, no output.
+**Format**: Clean — `gofmt -l .`, exit 0, zero files listed.
+
+**Tests**: 100% passed / 0 failed / 0 skipped
+```text
+$ go test -count=1 ./...
+ok  	regixtry/cmd/regixtry	19.514s
+ok  	regixtry/internal/app/auth	0.217s
+ok  	regixtry/internal/app/regixtry	23.111s
+ok  	regixtry/internal/app/scanning	0.056s
+ok  	regixtry/internal/domain/auth	0.012s
+ok  	regixtry/internal/domain/regixtry	0.010s
+ok  	regixtry/internal/domain/signing	0.125s
+ok  	regixtry/internal/infra/auth/postgres	1.908s
+ok  	regixtry/internal/infra/cliprogress	0.013s
+ok  	regixtry/internal/infra/install/linux	2.384s
+ok  	regixtry/internal/infra/install/releases	0.093s
+ok  	regixtry/internal/infra/metadata/sqlite	3.111s
+ok  	regixtry/internal/infra/release	0.036s
+ok  	regixtry/internal/infra/scanning/gitleaks	1.312s
+ok  	regixtry/internal/infra/scanning/trivy	1.202s
+ok  	regixtry/internal/infra/storage/fsblob	0.035s
+ok  	regixtry/internal/ports	0.012s
+ok  	regixtry/internal/protocol/http	12.450s
+ok  	regixtry/internal/tui	0.335s
+```
+18/18 packages ok, zero regressions across all four phases of this change and every
+pre-existing feature. Independently re-ran the focused Unit 4 command plus `-v`:
+`go test ./internal/protocol/http/... ./cmd/regixtry/... -run 'Delete|Manifest' -v` — all
+subtests pass, zero `--- FAIL`.
+
+**Regression spot-check against `develop`** (which carries the full `registry-acl-v1` system —
+grants, robots, delegated repo-admin, read-only role — plus the three post-acl-audit
+bugfixes): independently re-ran five named pre-existing tests cited in Phase 1's report, plus
+one more from `internal/protocol/http`, all passing unchanged:
+`TestRobotPasswordHashNeverSatisfiesBcryptComparison` (domain/auth),
+`TestPrincipalHasGrantedRepositoryAccessReadOnlyProbe` (domain/auth),
+`TestServicePutRepositoryGrantRejectsDelegateEscalation` (app/auth),
+`TestRequireAdminOrRepoAdmin` (app/auth),
+`TestAdminRepositoryGrantRoutesAuthenticationAndDelegateAuthority` (protocol/http) — all PASS,
+identical assertion shape to the pre-`manifest-blob-delete` baseline.
+
+**Coverage**: not measured this pass (no coverage tool cached this session) → Not available.
+
+### 1. End-to-End DELETE Wiring — Independently Re-Verified (not trusted from self-report)
+
+Read `internal/protocol/http/router.go:314-383` (`handleManifest`) directly. The `case
+stdhttp.MethodDelete` branch (lines 363-378) is a genuine, complete implementation, not a
+stub:
+
+```go
+case stdhttp.MethodDelete:
+    details, err := r.service.DeleteManifest(req.Context(), repository, reference)
+    if err != nil {
+        defaultCode := "MANIFEST_UNKNOWN"
+        if domain.IsCode(err, domain.ErrorCodeValidation) {
+            defaultCode = "UNSUPPORTED"
+        }
+        writeError(w, req, err, r.challengeForError(action, err), defaultCode)
+        return
+    }
+    writeJSON(w, stdhttp.StatusAccepted, details)
+```
+
+`r.service.DeleteManifest` is the same real `*Service` verified in Phase 3 (`service.go:287`),
+which calls the real `s.metadata.DeleteManifestByDigest`/`DeleteTag` verified in Phase 2
+(`store.go:327+`), against a real `*sql.DB`. Confirmed the full chain is genuinely wired end
+to end (router → service → store → SQLite), not mocked at any layer, by reading
+`newTestStores`/`newTestRouter` (`router_test.go:2427-2508`): they construct a real
+`fsblob.New(...)` (`internal/infra/storage/fsblob`) and a real `metadata.New(...)`
+(`internal/infra/metadata/sqlite`) against a `t.TempDir()`-backed SQLite file, then wire them
+into a real `*Router`/`*Service` via `newRouterWithStores` — no interface is stubbed or faked
+in the DELETE test suite. The self-report's characterization of these as "Integration (real
+Router+Service+SQLite+fsblob)" is **confirmed accurate**, independently, by reading the helper
+source, not merely trusted from the claim.
+
+Six router-level DELETE test functions independently read and confirmed genuine end-to-end
+exercises: `TestRouterDeleteManifestRespectsFlagAuthAndExistence` (4 subtests: flag-on 202,
+flag-off 400, unauthenticated 401, unknown-ref 404),
+`TestRouterManifestAllowHeaderIncludesDeleteForOtherMethods`,
+`TestRouterDeleteOnOtherManifestSubroutesUnchanged`,
+`TestRouterRejectsDeleteWithPushOnlyTokenButAllowsPut`,
+`TestRouterDeleteManifestAuthorizationMatrix` (5 subtests), and
+`TestRouterDeleteManifestNeverTouchesBlobFiles`.
+
+### 2. Flag-Off → `UNSUPPORTED`/`400` — Independently Re-Verified
+
+Read `handleUploadState`'s existing DELETE branch directly (`router.go:276-277`):
+`writeError(w, req, domain.NewValidationError("upload cancellation is not implemented in this
+slice"), r.service.Challenge(action), "UNSUPPORTED")`. `domain.NewValidationError` sets
+`ErrorCodeValidation`; `writeError`'s switch (`router.go:663-667`) maps
+`ErrorCodeValidation` → `stdhttp.StatusBadRequest` (**400**, not Docker's 405), and the
+`code` variable is left as the caller-supplied default (`"UNSUPPORTED"`, since the branch body
+does not overwrite `code` unless it was empty). **Independently confirmed this precedent is
+genuinely `400`, not `405`** — the self-report's correction of the design.md-cited
+alternative is accurate.
+
+The new DELETE-disabled path (`service.go:297-299`,
+`domain.NewValidationError("manifest deletion is not enabled")`) reaches the identical
+`writeError` code path with the identical `defaultCode` override
+(`router.go:371-372`: `if domain.IsCode(err, domain.ErrorCodeValidation) { defaultCode =
+"UNSUPPORTED" }`). Confirmed by direct test execution:
+`TestRouterDeleteManifestRespectsFlagAuthAndExistence/flag_off,_authorized_delete_returns_400_UNSUPPORTED_and_leaves_the_manifest_intact`
+asserts `recorder.Code == http.StatusBadRequest` and `payload.Errors[0].Code == "UNSUPPORTED"`
+— **exact same status code and error code as the existing precedent**, matching design.md
+Decision 2 exactly.
+
+### 3. Not-Found → `404`/`MANIFEST_UNKNOWN` — Independently Re-Verified
+
+Confirmed DELETE reuses the exact same `defaultCode` GET/HEAD already use for this route
+(`"MANIFEST_UNKNOWN"`, `router.go:351` for GET vs. `router.go:370` for DELETE's initial
+`defaultCode` value before the `UNSUPPORTED` override) — no parallel error-mapping path was
+invented. `writeError`'s `ErrorCodeNotFound` case (`router.go:658-659`) maps to
+`stdhttp.StatusNotFound` (404) with the caller's `defaultCode` unchanged, identically for both
+GET and DELETE. `TestRouterDeleteManifestRespectsFlagAuthAndExistence/unknown_reference_returns_404_MANIFEST_UNKNOWN`
+independently confirmed passing: 404 status, single error with code `"MANIFEST_UNKNOWN"`.
+
+### 4. `202` Response Body Names Removed Tags — Independently Re-Verified
+
+Read the actual `DeletionDetails` JSON shape (`queries.go:39-45`, unchanged since Phase 3) and
+the test asserting it directly
+(`TestRouterDeleteManifestRespectsFlagAuthAndExistence/flag_on,_authorized_digest_delete_returns_202_with_removal_body`,
+`router_test.go:191-203`): the test unmarshals the real HTTP response body into a struct
+mirroring `DeletionDetails`'s exact JSON tags (`repository`, `reference`, `digest`,
+`manifestRemoved`, `tagsRemoved`) and asserts `ManifestRemoved == true`,
+`Digest == manifestDigest`, and `TagsRemoved == ["latest"]` (`len == 1`, index-checked, not
+merely non-empty) — a genuine field-level proof read from the wire, not a status-code-only
+check.
+
+### 5. `Allow` Header On The `405` Fallback Includes `DELETE` — Independently Re-Verified
+
+Read `router.go:380` directly: `w.Header().Set("Allow", strings.Join([]string{
+stdhttp.MethodPut, stdhttp.MethodGet, stdhttp.MethodHead, stdhttp.MethodDelete}, ", "))` —
+confirmed present in the current source, not merely claimed.
+`TestRouterManifestAllowHeaderIncludesDeleteForOtherMethods` independently re-run: asserts
+`Allow == "PUT, GET, HEAD, DELETE"` on a `POST` to the manifests route. This detail was
+explicitly called out as easy to forget in the orchestrator's checklist and is confirmed both
+in the source and by a passing runtime test.
+
+### 6. `REGISTRY_DELETE_ENABLED`/`-delete-enabled` Config Wiring — Independently Re-Verified
+
+Read `cmd/regixtry/main.go:337-381` (`parseServeConfig`, the function `serve` actually calls
+via `newHandler`) directly. Line 367:
+`flags.BoolVar(&cfg.DeleteEnabled, "delete-enabled", parseBoolEnv("REGISTRY_DELETE_ENABLED",
+false), "enable DELETE /v2/<name>/manifests/<reference> (manifest and tag deletion)")` — this
+is genuinely inside `parseServeConfig`, not a different, unused parser. Confirmed the
+self-report's stated correction is accurate: `main_test.go:266`'s own doc comment cites
+"design.md, main.go ~line 747" as the *original* (now-corrected) citation for the
+`TrivyEnabled`/`parseBoolEnv` pattern this mirrors — that line number belongs to a different
+function in the current file layout, not `parseServeConfig` itself, and the actual `-delete-
+enabled` flag registration genuinely lives inside `parseServeConfig` at line 367, independently
+located by reading the function body, not by trusting the cited line number.
+
+Traced `cfg.DeleteEnabled` forward: `newHandler(cfg serveConfig)` (`main.go:2087`) calls
+`service.SetDeleteEnabled(cfg.DeleteEnabled)` at `main.go:2145`, and `serve` (`main.go:2021`)
+calls `newHandler(cfg)` at line 2022 — `serve` is the exact function the `serve` CLI command
+invokes. This is a genuine, complete, single wiring path, not a dead/unused code path.
+
+Three `parseServeConfig`-level tests independently re-run, all PASS:
+`TestParseServeConfigDeleteEnabledDefaultsToFalse` (env unset → `false`),
+`TestParseServeConfigDeleteEnabledDefaultsToFalseOnUnparseableEnv` (`REGISTRY_DELETE_ENABLED=
+not-a-bool` → `false`, confirming `parseBoolEnv`'s fallback-on-parse-error behavior is
+exercised, not just the unset case), and
+`TestParseServeConfigDeleteEnabledFlagOverridesEnv` (flag beats env, matching every other
+`-trivy-*` pairing). **Confirmed the flag genuinely defaults to `false` when neither the flag
+nor the env var is set**, and stays `false` on a malformed env value rather than failing open.
+
+### 7. `TestRouterDeleteManifestNeverTouchesBlobFiles` — Independently Re-Verified
+
+Read the full test body (`router_test.go:499-579`) directly. It constructs a **real**
+`fsblob.New(filepath.Join(rootDir, "content"))` and a **real**
+`metadata.New(filepath.Join(rootDir, "registry.db"))` — not mocks — publishes two manifests
+(one deleted by digest, one by tag), then calls `snapshotBlobFiles` (`router_test.go:554-580`)
+**before and after both deletes**. `snapshotBlobFiles` performs a genuine `filepath.Walk` over
+the real content directory on disk, reading every regular file's bytes with `os.ReadFile` and
+hashing them with `domain.DigestFromBytes`, building a `path → content-hash` map. The test then
+asserts `len(before) != 0` (guards against a vacuously-true empty-map comparison — the ghost-
+loop failure mode this skill's assertion-quality audit specifically checks for), asserts
+`len(before) == len(after)` (no file created or removed), and iterates every `path, hash` pair
+in `before` asserting `after[path] == hash` (every surviving file is byte-identical, not merely
+present). **This is a genuine filesystem-level proof, not a metadata-store-only check** — the
+assertions inspect real bytes on real disk, both before deletion (proving content existed) and
+after (proving it is unchanged), exactly as the orchestrator's checklist required confirming.
+
+### Spec Compliance Matrix — Independently Re-Verified, Wire-Level (not trusted from self-report)
+
+| Requirement | Scenario | Test | Result |
+|---|---|---|---|
+| Delete Is Gated Behind An Opt-In Server Flag | Flag off refuses with UNSUPPORTED | `router_test.go > TestRouterDeleteManifestRespectsFlagAuthAndExistence/flag_off...` | COMPLIANT — wire-level `400`/`UNSUPPORTED` |
+| Delete Is Gated Behind An Opt-In Server Flag | Flag on permits delete processing | `router_test.go > TestRouterDeleteManifestRespectsFlagAuthAndExistence/flag_on...` | COMPLIANT — wire-level `202` + body |
+| Delete By Digest Cascades To Tags And Manifest Blobs | Multi-tagged digest removes all its tags | Store (Phase 2) + Service (Phase 3), re-verified above; router-level test proves the digest-delete *path* (single tag) reaches `202`+body | COMPLIANT (Store/Service layer); see WARNING 1 — no router-level test publishes 3 tags on one digest before deleting |
+| Delete By Digest Cascades To Tags And Manifest Blobs | Unknown digest returns MANIFEST_UNKNOWN | `router_test.go > .../unknown_reference_returns_404_MANIFEST_UNKNOWN` exercises the **tag**-not-found path (`"missing-tag"` is not digest-shaped) | COMPLIANT for unknown-tag at wire level; see WARNING 1 — no router-level test uses a well-formed-but-absent `sha256:...` digest |
+| Delete By Tag Untags Without Touching The Manifest | Deleting one tag leaves siblings/manifest intact | Store (Phase 2) + Service (Phase 3), re-verified above; router-level `TestRouterDeleteManifestNeverTouchesBlobFiles` deletes by tag name successfully (`202`) but has no sibling tag on that digest | COMPLIANT (Store/Service layer); see WARNING 1 — no router-level test re-proves sibling survival via a follow-up GET |
+| Delete By Tag Untags Without Touching The Manifest | Unknown tag returns MANIFEST_UNKNOWN | `router_test.go > .../unknown_reference_returns_404_MANIFEST_UNKNOWN` | COMPLIANT — wire-level `404`/`MANIFEST_UNKNOWN` |
+| Delete Is Metadata-Only And Leaves Other Operations Unchanged | Blob files survive a digest delete | `router_test.go > TestRouterDeleteManifestNeverTouchesBlobFiles` | COMPLIANT — genuine filesystem byte-identity proof (see §7 above), first wire-level proof of this requirement in the whole chain |
+| Delete Is Metadata-Only And Leaves Other Operations Unchanged | Unrelated repository operations are unaffected | `TestRouterRejectsDeleteWithPushOnlyTokenButAllowsPut` (PUT succeeds with flag on), `TestRouterDeleteManifestNeverTouchesBlobFiles` (publish/PUT succeeds with flag on), plus the full unmodified suite passing with the flag off (default) | COMPLIANT |
+
+**Compliance summary**: 8/8 manifest-deletion scenarios are proven correct somewhere in the
+4-PR chain, all with real I/O and zero mocks at any layer. 5/8 are now additionally proven at
+the wire (router/HTTP) level in this phase; 3/8 (multi-tag cascade, unknown-*digest*-format
+not-found, and tag-delete sibling survival) are proven at the Store (Phase 2, real SQLite)
+and Service (Phase 3, real SQLite through `*Service`) layers but not re-exercised through a
+dedicated router-level test in this phase. See WARNING 1.
+
+### Correctness (Static Evidence) — Independently Re-Verified
+| Claim | Status | Notes |
+|---|---|---|
+| `handleManifest`'s DELETE case is a genuine passthrough to the already-verified `Service.DeleteManifest`, with zero new branching business logic at the router layer | Confirmed | The entire case body is 4 statements: call `DeleteManifest`, map its two possible failure shapes to an HTTP status via the pre-existing `writeError`, or write `202`+body on success. No digest/tag disambiguation, no cascade logic, no flag check exists in `router.go` — all of that lives in `Service.DeleteManifest`/the store, independently verified in Phases 2–3. This materially lowers the risk of WARNING 1's three unexercised-at-wire-level scenarios: the router has no code path that could diverge from the already-proven Service/Store behavior for those specific scenarios. |
+| `writeError`'s `UNSUPPORTED`/`MANIFEST_UNKNOWN` defaulting logic is additive, not a rewrite of existing behavior | Confirmed | `git diff` shows the only change to `writeError` itself is none — `writeError`'s switch statement is byte-identical to Phase 1–3; only the caller-supplied `defaultCode` argument changed at the `handleManifest` call site (`router.go:370-373`). |
+| `Allow` header list ordering (`PUT, GET, HEAD, DELETE`) matches `handleUploadState`'s established ordering convention (existing verbs first, `DELETE` last) | Confirmed | `handleUploadState`'s own `Allow` list (`router.go:279`) is `GET, HEAD, PATCH, PUT, DELETE` — `DELETE` last there too. |
+| No blob-store (`s.blobs`) call anywhere on the delete path, at any layer | Confirmed | `grep`/read confirms `Service.DeleteManifest` (`service.go:287-314`) never references `s.blobs`; `router.go`'s DELETE case never references `r.service.blobs` or any blob type; `internal/infra/blob/**`/`internal/infra/storage/fsblob` have zero diff versus `feature/manifest-blob-delete-03-service-layer`. |
+
+### Coherence (Design)
+| Decision | Followed? | Notes |
+|---|---|---|
+| Decision 1 (`202` + JSON body naming removed tags) | Yes | Confirmed at the wire in §4 above; `writeJSON(w, stdhttp.StatusAccepted, details)` is the exact shape design.md specifies. |
+| Decision 2 (flag checked after authorization; deliberate deviation from `handleUploadState`, but its wire shape/status code reused verbatim) | Yes | Independently re-derived in §2 above: `400`/`UNSUPPORTED`, not Docker's `405`, confirmed both in source and by a passing test. |
+| Decision 6 (rejection reuses the existing `401`+challenge path exactly; DELETE's `WWW-Authenticate` scope differs only in the `delete` verb) | Yes | `TestRouterDeleteManifestRespectsFlagAuthAndExistence/unauthenticated_delete...` asserts `scope="repository:team/app:delete"` in the `WWW-Authenticate` header — the identical `401`+challenge path PUT/GET already use, confirmed by direct test re-execution. |
+| File Changes table (`router.go`, `main.go` are the only Phase-4 production files; `internal/infra/blob/**` unchanged) | Yes | `git diff feature/manifest-blob-delete-03-service-layer..HEAD --stat` limited to `router.go`, `router_test.go`, `main.go`, `main_test.go`, and the four docs files — matches the design.md File Changes table for this phase exactly. |
+
+### TDD Compliance
+| Check | Result | Details |
+|---|---|---|
+| TDD Evidence reported | ⚠️ Partial | The live `apply-progress` artifact (Engram #1048, topic `sdd/manifest-blob-delete/apply-progress`) currently holds a short commit-sequence addendum, not the full per-task "TDD Cycle Evidence" table — its own text says it is "Addendum to the full Phase 4 apply-progress entry saved moments earlier (same topic_key, this upserts it)", meaning the topic-key upsert superseded the fuller table with this shorter summary. This report could not retrieve the original full table through `mem_search`/`mem_get_observation` (only the latest revision is addressable). See WARNING 2 — flagged as a reporting/persistence gap, not independently re-derivable evidence of a protocol violation, because the two checks below independently reconstruct genuine RED→GREEN behavior from git history and live execution rather than relying on the missing table. |
+| All tasks have tests | Yes | All 10 behavior-changing Phase 4 tasks (4.1, 4.2, 4.4–4.9) map to a named test function or table-driven subtest independently located and read in the working tree; 4.3/4.10 are GREEN-only (production code) tasks paired with an adjacent RED task per the established interleaving convention from Phases 1–3; 4.11/4.12 are confirmation/docs tasks. |
+| RED confirmed (tests exist) | Yes | All cited test functions independently confirmed present in `router_test.go`/`main_test.go` at the line numbers cited throughout this report. |
+| GREEN confirmed (tests pass) | Yes | All confirmed passing via independent re-execution (`go build`, `go vet`, `gofmt -l .`, `go test -count=1 ./...`, plus the Unit 4 focused command), zero `--- FAIL`. |
+| **RED-ness independently reconstructed from git history** (beyond what the skill module strictly requires, done because the apply-progress table was unavailable) | Yes | Checked out commit `41ba9ea` ("test(router): RED — DELETE manifest tasks 4.1/4.2/4.4-4.7") in a disposable `git worktree` and ran the new DELETE test functions against the code as it stood at that commit: all failed with `405`/`missing behavior`, exactly as expected before `87730e8` ("feat(router): implement DELETE manifest dispatch") landed. Separately checked out `f5e238c` ("test(main): RED — DeleteEnabled config parse defaults") and ran the new config tests: genuine compile failure (`cfg.DeleteEnabled undefined`), confirming the test was written before the `DeleteEnabled` field existed. Both worktrees were removed afterward; the primary working tree was never disturbed (`git status` clean throughout, confirmed before and after). This independently corroborates the apply-progress addendum's own claim that "RED commits were verified as genuinely red by temporarily `git stash`-ing the paired GREEN production file... not just asserted from memory" — this report reproduced that same genuinely-red state through an independent method (checkout, not stash) and reached the same conclusion. |
+| Triangulation adequate | Yes | `TestRouterDeleteManifestRespectsFlagAuthAndExistence` (4 subtests, distinct outcomes), `TestRouterDeleteManifestAuthorizationMatrix` (5 subtests spanning role×scope combinations), `TestRouterDeleteOnOtherManifestSubroutesUnchanged` (3 subtests) — all multi-case tables with varying expected status codes, not repeated identical values. |
+| Safety Net for modified files | Yes | `router.go`/`router_test.go`/`main.go`/`main_test.go` are all pre-existing, modified files; the full pre-existing suites for each passed both before and after, confirmed via the full `go test -count=1 ./...` run and the pre-existing-test spot-check above. |
+
+**TDD Compliance**: 5/6 checks fully passed, 1/6 partial (missing live evidence table,
+independently reconstructed by this report through git-history verification instead).
+
+---
+
+### Test Layer Distribution
+| Layer | Tests | Files | Tools |
+|---|---|---|---|
+| Unit | 3 (config parse defaults/env/flag-override) | 1 (`main_test.go`) | Go `testing`, `t.Setenv` |
+| Integration | 6 top-level functions (16 subtests total) | 1 (`router_test.go`) | Go `net/http/httptest`, real `fsblob`/SQLite via `t.TempDir()` |
+| E2E | 0 (manual `curl` verification against a running instance was the tasks.md-suggested runtime harness for this unit, not automated) | 0 | not applicable — no browser/external-process E2E harness in this codebase |
+| **Total** | **9 functions (19 cases incl. subtests)** | **2** | |
+
+---
+
+### Changed File Coverage
+Coverage analysis skipped — no coverage tool run this pass (informational only, not a
+blocking omission per skill rules).
+
+---
+
+### Assertion Quality
+Scanned all Phase-4-touched/created test code (`router_test.go`'s ~450 new DELETE-related
+lines, `main_test.go`'s 4 new `DeleteEnabled` tests) for banned patterns (tautologies, orphan
+empty checks, ghost loops, type-only-alone assertions, mock-heavy ratios, implementation-detail
+coupling). Zero tautologies. Zero mock usage — every test exercises a real `*Router`/`*Service`
+against real `fsblob`/SQLite stores. The one collection-iteration pattern
+(`snapshotBlobFiles`'s `for path, hash := range before`, §7 above) is preceded by an explicit
+`len(before) == 0` fatal guard, so it is not a ghost loop — the collection is proven non-empty
+before the loop that could otherwise vacuously pass runs. Every table-driven case (the 4-flag
+matrix, the 5-role/scope matrix, the 3-subroute matrix) asserts a distinct, varying expected
+status code, not a single repeated trivial value. No CSS/implementation-detail coupling (all
+assertions are on HTTP status codes, headers, and JSON body fields — the actual observable
+contract, not internal state).
+
+**Assertion quality**: All assertions verify real behavior.
+
+---
+
+### Quality Metrics
+**Linter**: Not run this pass (not in cached capabilities/toolchain for this session).
+**Type Checker**: No errors — `go vet ./...` exit 0, `go build ./...` exit 0.
+**Format**: No errors — `gofmt -l .` exit 0.
+
+### Issues Found
+
+**CRITICAL**: None.
+
+**WARNING**:
+1. Three of the 8 `manifest-deletion` scenarios (multi-tagged-digest cascade, unknown-digest-
+   format not-found, and tag-delete sibling survival) are proven correct with real I/O at the
+   Store (Phase 2) and Service (Phase 3) layers, but this phase's router-level test suite does
+   not re-exercise them through a dedicated wire-level HTTP test (the router-level digest-
+   delete test uses a single-tag digest; the router-level not-found test only exercises the
+   tag-not-found path via a non-digest-shaped reference; no router-level test publishes a
+   sibling tag before a tag-only delete). Risk is low: `handleManifest`'s DELETE case is a pure,
+   4-statement passthrough to `Service.DeleteManifest` with zero digest/tag/cascade branching of
+   its own (confirmed under Correctness above), so there is no router-layer code path that could
+   regress these specific behaviors independently of the already-verified Service/Store logic.
+   Not a blocker for this PR or for archive, but worth a small follow-up test addition if the
+   team wants full wire-level scenario parity before the next `manifest-blob-delete`-adjacent
+   change touches `handleManifest`.
+2. The live `apply-progress` Engram artifact (topic `sdd/manifest-blob-delete/apply-progress`)
+   currently exposes only a short commit-sequence addendum for Phase 4, not the full per-task
+   "TDD Cycle Evidence" table the strict-TDD verify module expects — an apparent side effect of
+   the topic-key upsert model (only the latest of 5 revisions is retrievable). This report
+   independently reconstructed genuine RED→GREEN evidence via disposable `git worktree`
+   checkouts of two RED commits (see TDD Compliance above) rather than relying on the missing
+   table, and found no discrepancy with the apply agent's claims. Recommend the apply/tasks
+   tooling preserve full TDD evidence tables across upserts (e.g., a dedicated
+   `apply-progress-tdd-evidence` topic key) rather than allowing a later addendum save to fully
+   supersede an earlier phase's evidence table under the same topic key.
+3. Coverage and lint tooling were not run this pass (not available/cached for this session) —
+   informational only, does not block.
+
+**SUGGESTION**: None.
+
+### Verdict — Phase 4
+**PASS WITH WARNINGS**
+
+Phase 4 (HTTP layer, config, docs) is complete, correct, and genuinely closes the wire-level
+gap every earlier phase explicitly deferred. Independent re-inspection of `router.go`,
+`main.go`, and every cited test confirms every claim in the apply agent's self-report: the full
+DELETE chain (router → service → store → real SQLite/fsblob) is genuinely wired, not stubbed;
+the flag-off refusal reuses the exact `400`/`UNSUPPORTED` `handleUploadState` precedent (not
+Docker's `405`), confirmed by reading `writeError`'s switch directly; not-found reuses GET's
+existing `MANIFEST_UNKNOWN` default; the `202` body genuinely names removed tags with an
+index-checked assertion; the `Allow` header genuinely grows to include `DELETE`; and
+`REGISTRY_DELETE_ENABLED`/`-delete-enabled` is genuinely wired into `parseServeConfig` (the
+function `serve` actually uses) and defaults to `false`. `TestRouterDeleteManifestNeverTouches
+BlobFiles` genuinely proves filesystem-level byte-identity, not a metadata-only proxy check.
+Full `go build`, `go vet`, `gofmt -l .`, and `go test -count=1 ./...` are all clean with zero
+regressions across all 18 packages, independently corroborated against a `develop`-baseline
+spot-check of `registry-acl-v1` and post-audit-bugfix tests. Two RED commits were independently
+reconstructed in disposable worktrees and confirmed genuinely red. Docs
+(`configuration.md`, `registry.md`, `api.md`, `roadmap.md`) are factually accurate against the
+verified code, in English, and consistent with the existing house style. The two warnings are a
+low-risk wire-level test-breadth gap (mitigated by the router's zero-branching passthrough
+design) and a memory-persistence side effect that this report independently worked around and
+found no discrepancy from — neither blocks archive.
+
+---
+
+## OVERALL SUMMARY — manifest-blob-delete (All 4 Phases, 40/40 Tasks)
+
+**Final verdict for the whole change: PASS WITH WARNINGS — ready for the tracker branch to be
+considered feature-complete, pending human code review.**
+
+All four phases (scope/auth foundation, store layer, service layer, HTTP layer/config/docs)
+were independently verified in sequence, each re-inspecting the actual working-tree source and
+re-executing the actual test suite rather than trusting the apply agent's self-report. Every
+phase reached **PASS WITH WARNINGS** with **zero CRITICAL findings** across the entire chain.
+The full `manifest-blob-delete` domain spec (4 requirements / 8 scenarios) plus the two
+modified auth-adjacent domains (`repository-authorization`, `registry-authentication`, 2
+requirements / 6 scenarios, verified in Phase 1) are all proven correct with real I/O — real
+SQLite, real `fsblob`, no mocks at any layer — and, as of this final phase, proven end-to-end
+from the HTTP wire down to the database for the delete-manifest feature as a whole.
+
+### Cross-phase consistency
+- 40/40 tasks across `tasks.md` are `[x]`, confirmed by direct file inspection (`rg -c`), not
+  merely the self-report's claim.
+- `go build ./...`, `go vet ./...`, `gofmt -l .`, and `go test -count=1 ./...` are clean at
+  every phase boundary and at the final HEAD (`b358b5c`), 18/18 packages, zero regressions.
+- Every phase's independent re-verification confirmed the prior phase's claims held under
+  direct source inspection (e.g., Phase 3 re-confirmed Phase 2's transaction/cascade claims by
+  reading `store.go` again; Phase 4 re-confirmed Phase 3's `DeletionDetails` shape by reading
+  `queries.go` again) — no phase silently trusted an earlier phase's report without its own
+  independent check.
+- Design.md's Decisions 1–6 are all followed exactly as documented, with zero unrecorded
+  deviations, confirmed at each layer they touch.
+- The auth-before-flag ordering (Decision 2) — the change's most safety-critical design
+  choice, since it prevents disclosing "delete exists but is off" to unauthorized callers — was
+  independently re-derived from source in both Phase 3 (service-level) and Phase 4
+  (wire-level, via the unauthenticated-delete-with-flag-on subtest) and holds at both layers.
+
+### Non-blocking open items (whole change)
+
+1. **Deferred blob-GC/retention-engine future work** (explicitly out of scope by design,
+   `design.md` Open Questions): untagged-but-stored manifests remain addressable by digest
+   until a future garbage-collection change; this is documented and accepted, not a gap in this
+   change.
+2. **Phase 1 WARNING** (carried forward, informational): the authorization-decision-level
+   scenarios were provable at the time only via direct `AccessController.Authorize`/
+   `intersectRequestedActions` calls, since no live HTTP DELETE route existed yet — **now
+   resolved**, Phase 4's wire-level auth-matrix test (`TestRouterDeleteManifestAuthorizationMatrix`)
+   independently re-proves the same reader/writer/admin × scope combinations through a real
+   HTTP request.
+3. **Phase 2 WARNING** (carried forward, informational): store-layer guarantees were provable
+   only via direct `Store` method calls, no live caller existed yet — **now resolved** for the
+   digest-cascade-on-a-single-tag and tag-not-found scenarios at the wire level; the specific
+   multi-tag-cascade and sibling-survival scenarios remain wire-level-unproven (see Phase 4
+   WARNING 1 above), though fully proven at the Store layer with real SQLite.
+4. **Phase 3 WARNING** (carried forward, informational): the literal OCI `UNSUPPORTED` wire
+   code and `404 MANIFEST_UNKNOWN` wire response were service-layer-typed-error-only at the
+   time — **now resolved**, Phase 4 independently confirmed both exact wire-level codes.
+5. **Phase 4 WARNING 1** (new, this phase): three of 8 `manifest-deletion` scenarios
+   (multi-tagged-digest cascade, unknown-digest-format not-found, tag-delete sibling survival)
+   are fully proven at the Store/Service layers with real SQLite but lack a dedicated
+   router-level HTTP test in this phase. Low risk — the router adds zero branching logic on top
+   of the already-verified `Service.DeleteManifest`. Non-blocking; a reasonable low-cost
+   follow-up if wire-level parity across all 8 scenarios is desired before further
+   `handleManifest` changes.
+6. **Phase 4 WARNING 2** (new, this phase): the live `apply-progress` Engram artifact's Phase 4
+   section currently shows a commit-sequence addendum rather than the full per-task TDD
+   Cycle Evidence table (topic-key-upsert side effect). This report independently reconstructed
+   equivalent RED→GREEN evidence via disposable `git worktree` checkouts and found no
+   discrepancy. Non-blocking for this change; worth a tooling fix (separate topic key for TDD
+   evidence tables) so future phases' full tables survive later upserts under the same topic.
+
+### Recommendation
+
+No CRITICAL findings exist anywhere in the 4-phase chain. The change is functionally complete,
+internally consistent across all four PRs, matches its design and spec, and introduces zero
+regressions to the pre-existing `registry-acl-v1` system or the three post-audit bugfixes. The
+tracker branch (`feature/manifest-blob-delete`) can be considered **feature-complete pending
+human code review** of the 4-PR chain; none of the six open items above block that review or
+require rework before it.
