@@ -626,6 +626,63 @@ func TestServiceAdminRobotDTOsRoundTripAndTokenFollowsGrant(t *testing.T) {
 	}
 }
 
+// TestLoginWithPasswordRobotTwoIndependentLayers is the Phase 4 threat-matrix
+// pinning test (tasks.md 4.15, design.md Decision 1 and Decision 6): robot
+// password login must fail via TWO layers that are each independently
+// sufficient on their own, not merely as a combined path.
+//
+//   - Layer 1 (IsRobot guard, LoginWithPassword): a robot whose stored hash
+//     IS a valid bcrypt hash of the attempted password — bcrypt alone would
+//     accept it — is still rejected, proving the guard alone is sufficient.
+//   - Layer 2 (sentinel hash, bcrypt): with the guard "notionally removed"
+//     (a user row with IsRobot: false, simulating the guard never firing)
+//     but PasswordHash set to the sentinel, login is still rejected, proving
+//     the sentinel hash alone is sufficient regardless of any flag check.
+//
+// Both scenarios already pass against the code landed by tasks 4.4/4.6 — no
+// further production change is required here (same "exhaustive proof, not a
+// state that must flip" pattern already used for Phase 2 task 2.13's
+// non-grant route enumeration).
+func TestLoginWithPasswordRobotTwoIndependentLayers(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+
+	t.Run("layer 1: IsRobot guard alone rejects, even against a valid matching bcrypt hash", func(t *testing.T) {
+		t.Parallel()
+
+		store := newMemoryAuthStore()
+		robot := domainauth.User{ID: "robot-1", Username: "ci-layer1", PasswordHash: mustHashPassword(t, "correct-password"), IsRobot: true, Enabled: true, CreatedAt: now, UpdatedAt: now}
+		store.usersByID[robot.ID] = robot
+		store.usersByUsername[robot.Username] = robot
+
+		service := NewService(store)
+		service.now = func() time.Time { return now }
+
+		if _, err := service.LoginWithPassword(context.Background(), robot.Username, "correct-password", nil); !domainauth.IsCode(err, domainauth.ErrorCodeInvalidCredentials) {
+			t.Fatalf("LoginWithPassword() error = %v, want invalid credentials (guard alone must reject a would-be-matching hash)", err)
+		}
+	})
+
+	t.Run("layer 2: sentinel hash alone rejects, with the guard notionally removed", func(t *testing.T) {
+		t.Parallel()
+
+		store := newMemoryAuthStore()
+		// IsRobot: false simulates the guard never firing (notionally
+		// removed); only the sentinel hash's bcrypt failure can reject this.
+		notionallyUnguarded := domainauth.User{ID: "robot-2", Username: "ci-layer2", PasswordHash: domainauth.RobotPasswordHash, IsRobot: false, Enabled: true, CreatedAt: now, UpdatedAt: now}
+		store.usersByID[notionallyUnguarded.ID] = notionallyUnguarded
+		store.usersByUsername[notionallyUnguarded.Username] = notionallyUnguarded
+
+		service := NewService(store)
+		service.now = func() time.Time { return now }
+
+		if _, err := service.LoginWithPassword(context.Background(), notionallyUnguarded.Username, "any-password-at-all", nil); !domainauth.IsCode(err, domainauth.ErrorCodeInvalidCredentials) {
+			t.Fatalf("LoginWithPassword() error = %v, want invalid credentials (sentinel hash alone must reject with the guard bypassed)", err)
+		}
+	})
+}
+
 func equalStringSlices(got []string, want []string) bool {
 	if len(got) != len(want) {
 		return false
