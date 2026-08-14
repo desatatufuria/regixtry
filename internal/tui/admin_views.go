@@ -95,6 +95,10 @@ func adminScreenHelp(current screen, view AdminViewState) string {
 		return "n: create token | x: revoke token | g: grants | Esc: back | q: quit"
 	case screenAdminCreateToken:
 		return "Enter: create token | Tab: next field | Esc: cancel"
+	case screenRepoAdminGrants:
+		return "n: add grant | e: edit selected grant | x: remove grant | Esc: back | q: quit"
+	case screenRepoAdminAddGrant:
+		return "Enter: save | Tab: next field | Space: cycle role | Esc: cancel"
 	case screenAdminFeatures:
 		return adminFeatureHelp(view)
 	default:
@@ -127,6 +131,10 @@ func renderAdminScreen(theme adminTheme, current screen, session AdminSession, v
 		return fmt.Sprintf("Users / %s / Tokens", selectedAdminUsername(view)), renderAdminTokensScreen(theme, view), help
 	case screenAdminCreateToken:
 		return fmt.Sprintf("Users / %s / Tokens / Create Token", selectedAdminUsername(view)), renderAdminCreateTokenScreen(theme, view), help
+	case screenRepoAdminGrants:
+		return fmt.Sprintf("Repositories / %s / Grants", view.RepoAdminRepository), renderRepoAdminGrantsScreen(theme, view), help
+	case screenRepoAdminAddGrant:
+		return fmt.Sprintf("Repositories / %s / Grants / Add Grant", view.RepoAdminRepository), renderRepoAdminAddGrantScreen(theme, view), help
 	case screenAdminFeatures:
 		return "Features", renderAdminFeaturesScreen(theme, session, view, layout, now), help
 	default:
@@ -553,6 +561,48 @@ func renderAdminAddGrantScreen(theme adminTheme, view AdminViewState, knownRepos
 		}
 	}
 	return theme.section.Render(strings.Join(lines, "\n"))
+}
+
+// renderRepoAdminGrantsScreen renders the repo-admin delegate's own
+// repository's grants (design.md Decision 7 / spec.md "Delegate sees only
+// their own repositories' grants"). A sibling of renderAdminGrantsScreen,
+// not an extension: it is keyed by RepoAdminRepository, not SelectedUserID.
+func renderRepoAdminGrantsScreen(theme adminTheme, view AdminViewState) string {
+	if strings.TrimSpace(view.RepoAdminRepository) == "" {
+		return theme.section.Render(theme.warning.Render("Select a repository before opening grants."))
+	}
+	lines := []string{
+		theme.subheading.Render("Repository Grants"),
+		fmt.Sprintf("Repository: %s", view.RepoAdminRepository),
+		"",
+	}
+	if len(view.RepoAdminGrants) == 0 {
+		lines = append(lines, theme.muted.Render("No grants for this repository."))
+	} else {
+		for index, grant := range view.RepoAdminGrants {
+			label := fmt.Sprintf("%s | %s", grant.Username, grant.Role)
+			if index == view.SelectedRepoAdminGrant {
+				label = theme.selected.Render(label)
+			}
+			lines = append(lines, label)
+		}
+	}
+	return theme.section.Render(strings.Join(lines, "\n"))
+}
+
+// renderRepoAdminAddGrantScreen renders the delegate's username+role form.
+// It never offers a repository field (RepoAdminRepository is fixed context,
+// not editable here) and the Role value it displays can never be
+// domainauth.RepoRoleAdmin -- that guarantee lives in nextDelegateGrantRole,
+// the only function allowed to change this field (spec.md "Delegate cannot
+// select repo-admin in the grant role picker").
+func renderRepoAdminAddGrantScreen(theme adminTheme, view AdminViewState) string {
+	return theme.section.Render(strings.Join([]string{
+		theme.subheading.Render("Grant Details"),
+		fmt.Sprintf("Repository: %s", view.RepoAdminRepository),
+		renderTextField(theme, "Username", view.RepoAdminGrantForm.Username, view.RepoAdminGrantForm.Focus == adminRepoGrantFieldUsername),
+		renderTextField(theme, "Role", string(view.RepoAdminGrantForm.Role), view.RepoAdminGrantForm.Focus == adminRepoGrantFieldRole),
+	}, "\n"))
 }
 
 func renderAdminTokensScreen(theme adminTheme, view AdminViewState) string {

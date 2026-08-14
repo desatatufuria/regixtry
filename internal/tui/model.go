@@ -1226,7 +1226,7 @@ func (m Model) View() string {
 		help := "q: quit"
 		layout := m.contentBudget("", help)
 		return renderInspectionWorkspace("Sign In", renderConsoleTextSection(m.loadingText, layout), "", help)
-	case screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken:
+	case screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken, screenRepoAdminGrants, screenRepoAdminAddGrant:
 		layout := m.contentBudget(m.status, adminScreenHelp(m.screen, m.adminView))
 		return renderAdminWorkspace(m.screen, m.adminSession, m.adminView, m.repositories.Names(), m.status, layout, m.now())
 	}
@@ -3232,6 +3232,20 @@ func nextGrantRole(current domainauth.RepoRole) domainauth.RepoRole {
 	default:
 		return domainauth.RepoRoleWriter
 	}
+}
+
+// nextDelegateGrantRole cycles screenRepoAdminAddGrant's role field between
+// exactly RepoRoleReader and RepoRoleWriter (design.md's escalation bounds:
+// a delegate must never be offered repo-admin, whether for a new grant or
+// self-assignment). Unlike nextGrantRole's 3-value cycle, this is a
+// structural guarantee, not a UI convention: every branch, including the
+// otherwise-unreachable RepoRoleAdmin starting value, resolves to Reader or
+// Writer, so repo-admin can never appear regardless of the current state.
+func nextDelegateGrantRole(current domainauth.RepoRole) domainauth.RepoRole {
+	if current == domainauth.RepoRoleReader {
+		return domainauth.RepoRoleWriter
+	}
+	return domainauth.RepoRoleReader
 }
 
 func isAdminScreen(current screen) bool {
