@@ -1268,3 +1268,90 @@ func TestAdminRobotsRoutesCreateAndListGlobalAdminOnly(t *testing.T) {
 		t.Fatalf("non-admin list status = %d, want %d, body = %s", nonAdminListRecorder.Code, http.StatusForbidden, nonAdminListRecorder.Body.String())
 	}
 }
+
+// TestAdminRobotDeleteRouteGlobalAdminOnlyAndRejectsNonRobots is the
+// registry-acl-v1 robot-deletion follow-up's HTTP-boundary defense-in-depth
+// test: the same IsRobot guard enforced by the service layer is confirmed
+// again here (401/403/404 gate, plus a non-robot user ID rejection), and a
+// genuine robot delete is confirmed to remove it from the list afterward.
+func TestAdminRobotDeleteRouteGlobalAdminOnlyAndRejectsNonRobots(t *testing.T) {
+	t.Parallel()
+
+	handler, authService, adminActor, _, cleanup := newTestRouterWithRealAuth(t)
+	defer cleanup()
+
+	plainUser, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
+		Username: "plain-delete-robot", Password: "password123", Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateAdminUser(plain) error = %v", err)
+	}
+	plainLogin, err := authService.LoginWithPassword(context.Background(), plainUser.Username, "password123", nil)
+	if err != nil {
+		t.Fatalf("LoginWithPassword(plain) error = %v", err)
+	}
+	adminLogin, err := authService.LoginWithPassword(context.Background(), adminActor.Username, "password123", nil)
+	if err != nil {
+		t.Fatalf("LoginWithPassword(admin) error = %v", err)
+	}
+
+	created, err := authService.CreateRobot(context.Background(), adminActor, ports.CreateRobotInput{
+		Name: "ci-delete-route", Repository: "team/app", Role: auth.RepoRoleReader,
+	})
+	if err != nil {
+		t.Fatalf("CreateRobot() error = %v", err)
+	}
+
+	unauthenticatedReq := httptest.NewRequest(http.MethodDelete, "/admin/v1/robots/"+created.User.ID, nil)
+	unauthenticatedRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(unauthenticatedRecorder, unauthenticatedReq)
+	if unauthenticatedRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated status = %d, want %d, body = %s", unauthenticatedRecorder.Code, http.StatusUnauthorized, unauthenticatedRecorder.Body.String())
+	}
+
+	nonAdminReq := httptest.NewRequest(http.MethodDelete, "/admin/v1/robots/"+created.User.ID, nil)
+	nonAdminReq.Header.Set("Authorization", "Bearer "+plainLogin.BearerToken)
+	nonAdminRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(nonAdminRecorder, nonAdminReq)
+	if nonAdminRecorder.Code != http.StatusForbidden {
+		t.Fatalf("non-admin status = %d, want %d, body = %s", nonAdminRecorder.Code, http.StatusForbidden, nonAdminRecorder.Body.String())
+	}
+
+	unknownReq := httptest.NewRequest(http.MethodDelete, "/admin/v1/robots/does-not-exist", nil)
+	unknownReq.Header.Set("Authorization", "Bearer "+adminLogin.BearerToken)
+	unknownRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(unknownRecorder, unknownReq)
+	if unknownRecorder.Code != http.StatusNotFound {
+		t.Fatalf("unknown id status = %d, want %d, body = %s", unknownRecorder.Code, http.StatusNotFound, unknownRecorder.Body.String())
+	}
+
+	nonRobotReq := httptest.NewRequest(http.MethodDelete, "/admin/v1/robots/"+plainUser.ID, nil)
+	nonRobotReq.Header.Set("Authorization", "Bearer "+adminLogin.BearerToken)
+	nonRobotRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(nonRobotRecorder, nonRobotReq)
+	if nonRobotRecorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("non-robot target status = %d, want %d, body = %s", nonRobotRecorder.Code, http.StatusUnprocessableEntity, nonRobotRecorder.Body.String())
+	}
+	if _, err := authService.LoginWithPassword(context.Background(), plainUser.Username, "password123", nil); err != nil {
+		t.Fatalf("plain user was removed by a rejected robot-delete call: LoginWithPassword() error = %v", err)
+	}
+
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/admin/v1/robots/"+created.User.ID, nil)
+	deleteReq.Header.Set("Authorization", "Bearer "+adminLogin.BearerToken)
+	deleteRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(deleteRecorder, deleteReq)
+	if deleteRecorder.Code != http.StatusNoContent {
+		t.Fatalf("delete status = %d, want %d, body = %s", deleteRecorder.Code, http.StatusNoContent, deleteRecorder.Body.String())
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/admin/v1/robots", nil)
+	listReq.Header.Set("Authorization", "Bearer "+adminLogin.BearerToken)
+	listRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(listRecorder, listReq)
+	if listRecorder.Code != http.StatusOK {
+		t.Fatalf("list status = %d, want %d, body = %s", listRecorder.Code, http.StatusOK, listRecorder.Body.String())
+	}
+	if strings.Contains(listRecorder.Body.String(), `"username":"ci-delete-route"`) {
+		t.Fatalf("list body = %q, want deleted robot ci-delete-route to be gone", listRecorder.Body.String())
+	}
+}
