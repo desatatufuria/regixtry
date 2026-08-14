@@ -78,6 +78,8 @@ func (r *Router) handleAdmin(w stdhttp.ResponseWriter, req *stdhttp.Request) {
 		r.handleAdminUserResource(w, req, *principal, strings.TrimPrefix(subpath, "users/"))
 	case subpath == "robots":
 		r.handleAdminRobotsCollection(w, req, *principal)
+	case strings.HasPrefix(subpath, "robots/"):
+		r.handleAdminRobotResource(w, req, *principal, strings.TrimPrefix(subpath, "robots/"))
 	default:
 		writeAdminError(w, domainauth.NewNotFoundError("route", req.URL.Path), ports.Challenge{})
 	}
@@ -774,6 +776,31 @@ func (r *Router) handleAdminRobotsCollection(w stdhttp.ResponseWriter, req *stdh
 		writeJSON(w, stdhttp.StatusCreated, created)
 	default:
 		w.Header().Set("Allow", strings.Join([]string{stdhttp.MethodGet, stdhttp.MethodPost}, ", "))
+		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+	}
+}
+
+// handleAdminRobotResource dispatches DELETE /admin/v1/robots/{id}
+// (registry-acl-v1 robot-deletion follow-up): the target's IsRobot flag is
+// re-checked at the service layer (Service.DeleteRobot), so a non-robot
+// user ID is rejected here too, not just for defense-in-depth documentation
+// -- the handler surfaces exactly whatever error the service returns.
+func (r *Router) handleAdminRobotResource(w stdhttp.ResponseWriter, req *stdhttp.Request, principal domainauth.Principal, resource string) {
+	userID, ok := adminResourceID(resource, "")
+	if !ok {
+		writeAdminError(w, domainauth.NewNotFoundError("route", req.URL.Path), ports.Challenge{})
+		return
+	}
+
+	switch req.Method {
+	case stdhttp.MethodDelete:
+		if err := r.admin.DeleteAdminRobot(req.Context(), principal, userID); err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		w.WriteHeader(stdhttp.StatusNoContent)
+	default:
+		w.Header().Set("Allow", stdhttp.MethodDelete)
 		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
 	}
 }
