@@ -855,3 +855,144 @@ correct and non-spec-violating.
 **Recommendation**: return to `sdd-apply` for Phase 3 to close the one
 CRITICAL finding (small, scoped fix — clamp or filter the edit-populated
 role) before archive. Do not proceed to `sdd-archive` for Phase 3 as-is.
+
+---
+
+## Phase 3 Re-Verify — Remediation Follow-up (post CRITICAL fix, PR 3)
+
+**This is a remediation follow-up to the Phase 3 FAIL section above.** The
+CRITICAL finding recorded above (edit-path role-field leak in
+`updateRepoAdminGrantsKey`'s `e` handler) has been independently
+re-verified against the fix the apply agent reports landing on
+`feature/registry-acl-v1-03-delegated-grants-tui` (HEAD `29858fb`).
+
+```yaml
+schema: gentle-ai.verify-result/v1
+evidence_revision: sha256:b8805897dbc58adf2a596a3642f0c7f75253e260be085341bfeceae32886d277  # git HEAD 29858fb
+verdict: pass
+blockers: 0
+critical_findings: 0
+requirements: 6/6
+scenarios: 27/27
+test_command: go test -count=1 ./...
+test_exit_code: 0
+test_output_hash: sha256:5c18fdaf155e7fc71fc778065195bc18b9c59a63c0435e4cdc0fbcba04fb5bd6
+build_command: go build ./...
+build_exit_code: 0
+build_output_hash: sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+```
+
+### Independent code inspection
+
+Read `internal/tui/model.go`'s `updateRepoAdminGrantsKey` (lines 2517-2572)
+directly from disk, not from the self-report:
+
+- `n` (create) case (line 2521-2525): unchanged, sets
+  `RepoAdminGrantForm{Role: domainauth.RepoRoleReader}` — the
+  already-proven-exhaustive `nextDelegateGrantRole` cycles this value and
+  never reaches `RepoRoleAdmin` (unchanged from the original Phase 3 pass).
+- `e` (edit) case (line 2526-2547) — **the fixed path**: now reads the
+  selected grant via `selectedRepoAdminGrantForView`, and if
+  `grant.Role == domainauth.RepoRoleAdmin`, sets a status message
+  (`"repo-admin grants cannot be edited here; ask a global admin."`) and
+  returns immediately — `m.screen` is never assigned, so the screen stays
+  on `screenRepoAdminGrants` and `RepoAdminGrantForm` is never populated
+  with the `repo-admin` role. Only when `grant.Role != domainauth.RepoRoleAdmin`
+  does execution reach the line that sets
+  `RepoAdminGrantForm{Username: grant.Username, Role: grant.Role, ...}`
+  and transitions to `screenRepoAdminAddGrant`.
+
+Confirmed: there is now genuinely no path — create or edit — by which
+`domainauth.RepoRoleAdmin` reaches `screenRepoAdminAddGrant`'s `Role` field.
+
+### Independent test inspection
+
+Read both new tests directly from `internal/tui/model_test.go` (lines
+811-874), not from the self-report:
+
+- `TestUpdateRepoAdminGrantsKeyEditRefusesRepoAdminGrant` (lines 822-845):
+  builds a `Model` with `screen = screenRepoAdminGrants`,
+  `RepoAdminGrants = [{Username: "alice", Role: domainauth.RepoRoleAdmin}]`,
+  `SelectedRepoAdminGrant = 0`, then calls `runKey(t, model, "e")`. Asserts
+  the resulting screen is NOT `screenRepoAdminAddGrant`, the form's `Role`
+  is never `domainauth.RepoRoleAdmin`, and `status` is non-empty.
+- `TestUpdateRepoAdminGrantsKeyEditAllowsNonRepoAdminGrant` (lines
+  851-874): identical shape but with `Role: domainauth.RepoRoleWriter` for
+  user "bob". Asserts the resulting screen IS `screenRepoAdminAddGrant`,
+  `Role` is `RepoRoleWriter`, and `Username` is `"bob"` — i.e. it asserts
+  concrete, non-trivial positive values, not just "no error". This is not
+  a tautology: if the fix had over-blocked all edits (e.g. an unconditional
+  `return m, nil` in the `e` case), this test would fail because the screen
+  would never transition and the form would never populate. Verified this
+  is a real, falsifiable assertion, not a vacuous check.
+
+`runKey` (verified at `model_test.go:4205`) constructs a real
+`tea.KeyMsg` and calls `model.Update(msg)` — the actual Bubbletea entry
+point, not a direct call into `updateRepoAdminGrantsKey`. Traced the full
+dispatch chain independently: `Model.Update()` (gated by `isAdminScreen`,
+`model.go:1302-1303`) → `updateAdminKey()` (`model.go:1380`) → `switch
+m.screen { case screenRepoAdminGrants: return
+m.updateRepoAdminGrantsKey(msg) }` (`model.go:1440-1441`). Both new tests
+genuinely exercise this real key-handler dispatch path end to end; they
+would fail if the switch-case wiring were broken, not just if the guard
+logic were wrong.
+
+### Independent evidence bundle (re-run this session)
+
+| Command | Exit | Result |
+|---|---|---|
+| `go build ./...` | 0 | clean |
+| `go vet ./...` | 0 | clean |
+| `gofmt -l .` | 0 | no files listed (repo-wide clean) |
+| `go test -count=1 ./...` | 0 | 18/18 packages ok, zero regressions |
+| `go test ./internal/tui/... -run 'RepoAdminGrants\|AdminIntent\|EditRefuses\|EditAllows' -v` | 0 | 10/10 named tests PASS, including both new remediation tests |
+
+`git status` confirms a clean working tree (no leftover scratch files).
+`git log` confirms exactly two remediation commits, conventional commit
+style, no AI attribution: `54773a2 test(tui): RED - edit key must refuse
+repo-admin grant rows` then `b61154b fix(tui): refuse editing a
+repo-admin grant in the delegate form`, plus a docs commit `29858fb`
+recording the PR3 verify report/remediation note in `tasks.md`.
+`tasks.md` shows both `3.5r` sub-tasks (RED and GREEN) marked `[x]` under
+a "Remediation: task 3.5 edit-path gap" subsection.
+
+### Regression check against other Phase 1-3 evidence
+
+Full `go test -count=1 ./...` (18/18 packages) covers Phases 1 and 2 as
+well as Phase 3 — no regression introduced by this fix. Diff vs base
+branch (`feature/registry-acl-v1-02-delegated-grants-backend`) is now
+897 insertions / 12 deletions across 7 files in `internal/tui/` (was
+820/12 before remediation; the +77 lines are the two new tests plus the
+guard clause and its comment) — consistent with a small, scoped fix, not
+a broader rewrite. No other Phase 3 requirement, deviation, or task
+regressed.
+
+### Open items carried forward (non-blocking, unchanged from prior pass)
+
+Both previously-recorded SUGGESTIONs remain open — neither was in scope
+for this remediation and neither blocks PASS:
+
+1. `renderRepoAdminAddGrantScreen`'s doc comment (`admin_views.go:593-598`)
+   still states `nextDelegateGrantRole` is "the only function allowed to
+   change this field" — now inaccurate, since the guarded `e`-handler copy
+   is a second, legitimate writer. Cosmetic doc drift only; recommend a
+   follow-up comment update.
+2. `x` (remove grant) on a peer `repo-admin`'s grant (`model.go:2554-2569`)
+   is still unguarded at the TUI layer — only the confirm dialog stands
+   between the keypress and a backend call that will be rejected. Same
+   class of gap as the fixed CRITICAL, lower severity since delete has no
+   data-entry step to mislead. Recommend addressing alongside item 1 in a
+   later slice, not blocking for this PR.
+
+### Verdict: PASS
+
+The CRITICAL finding from the prior Phase 3 verify pass is confirmed
+fixed by direct, independent source and test inspection — not by trusting
+the apply agent's self-report. Both new tests genuinely exercise the real
+`model.Update()` key-dispatch path, and the triangulation test is a real,
+falsifiable positive-behavior assertion. The full independent evidence
+bundle (build, vet, gofmt, full test suite, focused test command) is
+clean with zero regressions across all 18 packages. Two low-severity,
+non-blocking SUGGESTIONs carry forward as informational follow-ups.
+
+Phase 3 (PR 3 of 5) is cleared for `sdd-archive`.
