@@ -37,6 +37,8 @@ Resolution accepts either a tag or a digest. Blobs and manifests respond to `GET
 | GET/HEAD | `/v2/<repo>/blobs/<digest>` | Read a blob |
 | PUT | `/v2/<repo>/manifests/<tag-or-digest>` | Publish a manifest |
 | GET/HEAD | `/v2/<repo>/manifests/<tag-or-digest>` | Read a manifest |
+| DELETE | `/v2/<repo>/manifests/<digest>` | Delete a manifest, cascading to every tag pointing at it; opt-in via `REGISTRY_DELETE_ENABLED`, otherwise `UNSUPPORTED` |
+| DELETE | `/v2/<repo>/manifests/<tag>` | Untag only, leaving the manifest and its other tags intact; opt-in via `REGISTRY_DELETE_ENABLED`, otherwise `UNSUPPORTED` |
 | GET | `/v2/<repo>/manifests/<tag-or-digest>/scan-status` | CI-facing Trivy scan verdict for the resolved digest |
 | GET | `/v2/<repo>/manifests/<tag-or-digest>/signature-status` | CI-facing cosign signature verdict for the resolved digest |
 
@@ -52,7 +54,8 @@ The two verdict routes use the same pull-credential authorization as a manifest 
 | Tags and catalog | Implemented |
 | Upload chunking | Implemented with `PATCH` |
 | Upload cancellation | Not implemented; returns `UNSUPPORTED` |
-| Manifest/blob deletes | No routes registered |
+| Manifest/tag deletes | Implemented, opt-in via `REGISTRY_DELETE_ENABLED` (default `false`); metadata-only, never touches blob files |
+| Blob deletes | Not exposed; blob removal stays garbage-collection-only |
 | Garbage collection | No implementation found |
 | Replication/remote storage | No adapter found |
 | Multi-tenant | No; single-tenant resolver (`ports.NewSingleTenantResolver`) |

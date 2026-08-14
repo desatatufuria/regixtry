@@ -151,10 +151,14 @@ The detail payload keeps the summary `run` object, a compact ordered `findings` 
 | GET/HEAD | `/v2/<repo>/blobs/<digest>` | Blob; `200` |
 | PUT | `/v2/<repo>/manifests/<tag-or-digest>` | Publishes manifest; `201` |
 | GET/HEAD | `/v2/<repo>/manifests/<tag-or-digest>` | Manifest; `200` |
+| DELETE | `/v2/<repo>/manifests/<digest>` | Deletes the manifest, cascading to every tag pointing at it; `202` JSON body naming what was removed; `404` if absent |
+| DELETE | `/v2/<repo>/manifests/<tag>` | Untags only, leaving the manifest and its other tags intact; `202`; `404` if absent |
 | GET | `/v2/<repo>/manifests/<tag-or-digest>/scan-status` | CI-facing scan verdict; pull-credential auth; always `200` |
 | GET | `/v2/<repo>/manifests/<tag-or-digest>/signature-status` | CI-facing signature verdict; pull-credential auth; always `200` |
 
 `_catalog` and `tags/list` accept `n` and `last`. Without `n`, no limit is applied; a negative or non-numeric `n` is `400`. Registry errors follow `{ "errors": [{"code":"...","message":"..."}] }`.
+
+Both `DELETE` routes are gated by the opt-in `-delete-enabled`/`REGISTRY_DELETE_ENABLED` flag (default `false`). When the flag is off, an otherwise-authorized caller gets `UNSUPPORTED` (`400`), the same acknowledged-but-refused shape `blobs/uploads/<id>` DELETE already uses, never a bare `405`. Deletion requires the distinct `delete` scope action (`repository:<name>:delete`) and never removes blob files on disk.
 
 Relevant headers: `Docker-Content-Digest`, `Docker-Upload-UUID`, `Location`, `Range`, `Content-Length`, `Content-Type`, `WWW-Authenticate`.
 

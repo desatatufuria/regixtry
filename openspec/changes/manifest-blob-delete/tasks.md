@@ -169,6 +169,6 @@ Chain strategy: pending
       plumbing end-to-end so 4.1/4.2/4.5–4.8 pass.
 - [x] 4.11 Confirm Phase 4 GREEN (Unit 4 focused test command); then full
       `go test ./...` (zero regressions) and `gofmt -l .` (clean).
-- [ ] 4.12 Docs: `docs/configuration.md` — document `REGISTRY_DELETE_ENABLED`
+- [x] 4.12 Docs: `docs/configuration.md` — document `REGISTRY_DELETE_ENABLED`
       (default `false`); `docs/roadmap.md` — mark manifest/tag deletion
       delivered.
