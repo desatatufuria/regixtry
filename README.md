@@ -38,7 +38,7 @@ Para autenticación y Compose, consultar [`docs/getting-started.md`](docs/gettin
 ## Instalación
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/desatatufuria/regixtry/main/install.sh | bash
 regixtry setup
 ```
 

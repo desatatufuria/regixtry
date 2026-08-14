@@ -16,6 +16,20 @@ import (
 	"testing"
 )
 
+// TestDefaultReleasesAPIURLPointsToRegixtryRepository guards against a
+// pre-rename leftover: this repository's actual GitHub remote is
+// desatatufuria/regixtry (the project used to be called "workspace"), so the
+// installer's default release resolver must resolve releases from
+// desatatufuria/regixtry, not the old desatatufuria/workspace path.
+func TestDefaultReleasesAPIURLPointsToRegixtryRepository(t *testing.T) {
+	t.Parallel()
+
+	want := "https://api.github.com/repos/desatatufuria/regixtry/releases"
+	if defaultReleasesAPIURL != want {
+		t.Fatalf("defaultReleasesAPIURL = %q, want %q", defaultReleasesAPIURL, want)
+	}
+}
+
 func TestGitHubReleaseResolveLatestAndTag(t *testing.T) {
 	t.Parallel()
 

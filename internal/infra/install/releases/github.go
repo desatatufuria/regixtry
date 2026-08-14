@@ -16,7 +16,7 @@ import (
 	"regixtry/internal/infra/release"
 )
 
-const defaultReleasesAPIURL = "https://api.github.com/repos/desatatufuria/workspace/releases"
+const defaultReleasesAPIURL = "https://api.github.com/repos/desatatufuria/regixtry/releases"
 
 type ReleaseAsset struct {
 	Tag          string

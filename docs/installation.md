@@ -5,9 +5,9 @@
 `install.sh` descarga metadata de GitHub Releases, obtiene el tarball y el archivo de checksums, valida SHA-256, exige que el archivo contenga únicamente `regixtry` y lo instala como ejecutable.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash
-curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash -s -- --ref <release-tag>
-curl -fsSL https://raw.githubusercontent.com/desatatufuria/workspace/main/install.sh | bash -s -- --dir "$HOME/.local/bin"
+curl -fsSL https://raw.githubusercontent.com/desatatufuria/regixtry/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/desatatufuria/regixtry/main/install.sh | bash -s -- --ref <release-tag>
+curl -fsSL https://raw.githubusercontent.com/desatatufuria/regixtry/main/install.sh | bash -s -- --dir "$HOME/.local/bin"
 ```
 
 Requiere `curl`, `tar`, `sha256sum`, `install` y `mktemp`. La ruta automática es `/usr/local/bin` si es escribible; en otro caso `$HOME/.local/bin`. Solo se resuelven Linux `amd64` y `arm64`.
@@ -15,8 +15,8 @@ Requiere `curl`, `tar`, `sha256sum`, `install` y `mktemp`. La ruta automática e
 ## Desde fuente
 
 ```bash
-git clone https://github.com/desatatufuria/workspace.git
-cd workspace
+git clone https://github.com/desatatufuria/regixtry.git
+cd regixtry
 go build -o regixtry ./cmd/regixtry
 ```
 
