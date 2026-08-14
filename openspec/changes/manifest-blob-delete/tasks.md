@@ -106,7 +106,7 @@ Chain strategy: pending
       `NotFound` — table-driven.
 - [x] 2.6 GREEN `store.go`: `DeleteTag` — DELETE by
       tenant/repository_id/name; zero rows affected → `NewNotFoundError`.
-- [ ] 2.7 Confirm Phase 2 GREEN (Unit 2 focused test command).
+- [x] 2.7 Confirm Phase 2 GREEN (Unit 2 focused test command).
 
 ## Phase 3: Service Layer (PR 3, depends on Phases 1–2)
 
