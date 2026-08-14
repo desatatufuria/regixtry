@@ -129,6 +129,23 @@ const (
 	screenAdminAddGrant       screen = "admin-add-grant"
 	screenAdminEditUserTokens screen = "admin-edit-user-tokens"
 	screenAdminCreateToken    screen = "admin-create-token"
+	// screenRepoAdminGrants/screenRepoAdminAddGrant are the delegate-facing
+	// entry point (design.md Decision 7): reached from the Console
+	// Repositories screen, not from the global-admin user workspace, and
+	// scoped to exactly one repository via adminIntent/adminIntentRepository.
+	screenRepoAdminGrants   screen = "repo-admin-grants"
+	screenRepoAdminAddGrant screen = "repo-admin-add-grant"
+)
+
+// adminIntent is a one-shot field set before screenAdminLogin and consumed
+// exactly once on successful auth (design.md Decision 7), so the shared
+// login screen can route a repo-admin delegate straight to their own
+// repository's grants instead of the global-admin screenAdminUsers.
+type adminIntent string
+
+const (
+	adminIntentOperator   adminIntent = "operator"
+	adminIntentRepoGrants adminIntent = "repo-grants"
 )
 
 type adminAuthState string
@@ -187,6 +204,12 @@ type Model struct {
 	adminAuth    adminAuthState
 	adminLogin   adminLoginForm
 	adminReturn  screen
+	// adminIntent/adminIntentRepository carry the one-shot repo-admin-grants
+	// destination (design.md Decision 7) from the Console Repositories
+	// screen's grant action through screenAdminLogin to the post-login
+	// routing decision. Both are reset once consumed.
+	adminIntent           adminIntent
+	adminIntentRepository string
 
 	empty    EmptyStateModel
 	mutation MutationUnavailableModel
@@ -479,6 +502,7 @@ func NewModel(service QueryService, options ...Option) Model {
 		adminAuth:   adminAuthStateUnauthenticated,
 		adminReturn: screenLoading,
 		adminView:   newAdminViewState(),
+		adminIntent: adminIntentOperator,
 		empty: EmptyStateModel{
 			Title:   "Regixtry is empty",
 			Message: "No repositories have been published yet.",
@@ -598,6 +622,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.adminLogin.Username = msg.session.Username
 		m.adminLogin.Password = ""
 		m.loadingText = ""
+		if m.adminIntent == adminIntentRepoGrants {
+			// Consumed exactly once (design.md Decision 7): a repo-admin
+			// delegate's successful login routes straight to their own
+			// repository's grants instead of the global-admin users screen.
+			repository := m.adminIntentRepository
+			m.adminIntent = adminIntentOperator
+			m.adminIntentRepository = ""
+			m.adminView.RepoAdminRepository = repository
+			m.screen = screenRepoAdminGrants
+			m.status = ""
+			return m, nil
+		}
 		if m.startupLogin && len(m.repositories.Items) == 0 {
 			m.status = ""
 			m.screen = screenLoading
@@ -3079,6 +3115,11 @@ func (m Model) logoutAdmin() Model {
 	m.screen = screenAdminLogin
 	m.loadingText = ""
 	m.status = "Logged out."
+	// Defensive reset: a stale repo-grants intent must never survive a
+	// logout into a fresh operator login (adminIntent is one-shot per
+	// design.md Decision 7).
+	m.adminIntent = adminIntentOperator
+	m.adminIntentRepository = ""
 	return m
 }
 
@@ -3089,6 +3130,12 @@ func (m Model) returnToInspection() Model {
 	m.adminView.ConfirmModal = adminConfirmModal{}
 	m.adminView.UserSearchActive = false
 	m.clearRevealedAdminToken()
+	// Defensive reset: leaving the login screen (e.g. Esc) without
+	// completing auth must not leave a stale repo-grants intent for a
+	// later, unrelated login (adminIntent is one-shot per design.md
+	// Decision 7).
+	m.adminIntent = adminIntentOperator
+	m.adminIntentRepository = ""
 	return m
 }
 

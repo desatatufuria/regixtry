@@ -35,6 +35,17 @@ const (
 	adminGrantFieldRole
 )
 
+// adminRepoGrantField identifies which of adminRepositoryGrantForm's 2
+// fields has focus. A sibling of adminGrantField, not an extension: the
+// repo-admin delegate's form has no Repository field (it is fixed by
+// RepoAdminRepository, the operator's own repository), only Username+Role.
+type adminRepoGrantField int
+
+const (
+	adminRepoGrantFieldUsername adminRepoGrantField = iota
+	adminRepoGrantFieldRole
+)
+
 type adminTokenField int
 
 const (
@@ -62,13 +73,14 @@ const (
 type adminConfirmKind string
 
 const (
-	adminConfirmNone           adminConfirmKind = ""
-	adminConfirmEnableUser     adminConfirmKind = "enable-user"
-	adminConfirmDisableUser    adminConfirmKind = "disable-user"
-	adminConfirmEnableFeature  adminConfirmKind = "enable-feature"
-	adminConfirmDisableFeature adminConfirmKind = "disable-feature"
-	adminConfirmDeleteGrant    adminConfirmKind = "delete-grant"
-	adminConfirmRevokeToken    adminConfirmKind = "revoke-token"
+	adminConfirmNone            adminConfirmKind = ""
+	adminConfirmEnableUser      adminConfirmKind = "enable-user"
+	adminConfirmDisableUser     adminConfirmKind = "disable-user"
+	adminConfirmEnableFeature   adminConfirmKind = "enable-feature"
+	adminConfirmDisableFeature  adminConfirmKind = "disable-feature"
+	adminConfirmDeleteGrant     adminConfirmKind = "delete-grant"
+	adminConfirmRevokeToken     adminConfirmKind = "revoke-token"
+	adminConfirmDeleteRepoGrant adminConfirmKind = "delete-repo-grant"
 )
 
 type adminCreateUserForm struct {
@@ -90,6 +102,17 @@ type adminGrantForm struct {
 	Role                 domainauth.RepoRole
 	Focus                adminGrantField
 	RepositorySuggestion int
+}
+
+// adminRepositoryGrantForm backs screenRepoAdminAddGrant (design.md
+// Decision 7): a repo-admin delegate names a user by username (no user
+// directory read) and picks a role. Role's zero value is set to
+// domainauth.RepoRoleReader by newAdminViewState, and the field is cycled
+// only by nextDelegateGrantRole, which can never produce RepoRoleAdmin.
+type adminRepositoryGrantForm struct {
+	Username string
+	Role     domainauth.RepoRole
+	Focus    adminRepoGrantField
 }
 
 type adminTokenForm struct {
@@ -424,6 +447,16 @@ type AdminViewState struct {
 	// Alerts row (updateAdminFeaturesKey), a sibling of ScanHistoryModal, not
 	// an extension.
 	RepositoryOverrideModal repositoryOverrideModal
+	// RepoAdminRepository/RepoAdminGrants/SelectedRepoAdminGrant/
+	// RepoAdminGrantForm back screenRepoAdminGrants/screenRepoAdminAddGrant
+	// (design.md Decision 7): the repo-admin delegate's own repository-
+	// centric grants view, a sibling of the global-admin
+	// Grants/SelectedGrant/GrantForm fields above, not an extension of them
+	// — a delegate's Grants view is keyed by repository, not by SelectedUserID.
+	RepoAdminRepository    string
+	RepoAdminGrants        []ports.AdminRepositoryGrant
+	SelectedRepoAdminGrant int
+	RepoAdminGrantForm     adminRepositoryGrantForm
 	// TrivyOverrides is every stored Trivy repository override row
 	// (fetched alongside TrivyScanRuns), used only to annotate the
 	// Repository Alerts table with a distinct "scanning disabled" state
@@ -490,6 +523,9 @@ func newAdminViewState() AdminViewState {
 			Enabled: true,
 		},
 		GrantForm: adminGrantForm{
+			Role: domainauth.RepoRoleReader,
+		},
+		RepoAdminGrantForm: adminRepositoryGrantForm{
 			Role: domainauth.RepoRoleReader,
 		},
 		TrivyTab: trivyTabRuntime,
