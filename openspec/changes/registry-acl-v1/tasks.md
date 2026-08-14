@@ -193,44 +193,51 @@ a UI-trust gap where the interface offered what the backend would refuse.
 
 ## Phase 4: Robot Accounts — Backend (Slice 3a — PR 4)
 
-- [ ] 4.1 Migration: add `is_robot BOOLEAN NOT NULL DEFAULT FALSE` to
+- [x] 4.1 Migration: add `is_robot BOOLEAN NOT NULL DEFAULT FALSE` to
       `auth_users`; add `"is_robot"` to `tolerateDuplicateColumns`.
-- [ ] 4.2 Add `IsRobot bool` to `User`; add sentinel `RobotPasswordHash`
+- [x] 4.2 Add `IsRobot bool` to `User`; add sentinel `RobotPasswordHash`
       constant (`user.go`, Decision 1).
-- [ ] 4.3 RED `user_test.go`: `User.Validate` rejects a robot that is
+- [x] 4.3 RED `user_test.go`: `User.Validate` rejects a robot that is
       `IsAdmin` or `IsReadOnly`; `RobotPasswordHash` never satisfies
       `bcrypt.CompareHashAndPassword` — table-driven.
-- [ ] 4.4 GREEN: implement the robot validation rule in `User.Validate`.
-- [ ] 4.5 RED `service_test.go`: `LoginWithPassword` rejects a robot;
+- [x] 4.4 GREEN: implement the robot validation rule in `User.Validate`.
+- [x] 4.5 RED `service_test.go`: `LoginWithPassword` rejects a robot;
       `LoginWithPreissuedToken` accepts one.
-- [ ] 4.6 GREEN: add the `IsRobot` guard immediately after
+- [x] 4.6 GREEN: add the `IsRobot` guard immediately after
       `getActiveUserByUsername` in `LoginWithPassword`
       (`service.go:285-295`, Decision 6 — NOT inside the shared helper).
-- [ ] 4.7 RED `service_test.go`: `CreateRobot` persists exactly one
+- [x] 4.7 RED `service_test.go`: `CreateRobot` persists exactly one
       `auth_repo_grants` row for the requested repository+role (Decision 2);
       robot token TTL above the ceiling is rejected; revocation takes effect
-      immediately.
-- [ ] 4.8 GREEN: implement `CreateRobot`/`ListRobots` (`service.go`),
+      immediately. (Interleaved with 4.9/4.10 in one RED-then-GREEN commit
+      pair — `Service.ListRobots` requires `AuthStore.ListRobots` to exist on
+      the interface to compile, so it could not be deferred to a later
+      commit; see apply report Deviations, same pattern as Phase 2's
+      task 2.8.)
+- [x] 4.8 GREEN: implement `CreateRobot`/`ListRobots` (`service.go`),
       reusing `CreateAdminToken`/`RevokeAdminToken` unchanged.
-- [ ] 4.9 RED `store_test.go`: `ListUsers` excludes robot rows
+- [x] 4.9 RED `store_test.go`: `ListUsers` excludes robot rows
       (`WHERE is_robot = FALSE`); `ListRobots` returns only robot rows.
-- [ ] 4.10 GREEN: add `is_robot` to `auth_users` queries; implement the
+- [x] 4.10 GREEN: add `is_robot` to `auth_users` queries; implement the
       `ListUsers` filter and `ListRobots` (`store.go`).
-- [ ] 4.11 RED `service_test.go`: `AdminRobot*` DTOs round-trip; robot
+- [x] 4.11 RED `service_test.go`: `AdminRobot*` DTOs round-trip; robot
       pull/push follows its grant, denied on an ungranted repository.
-- [ ] 4.12 GREEN: add `AdminRobot*` DTOs and the new methods to
+- [x] 4.12 GREEN: add `AdminRobot*` DTOs and the new methods to
       `AuthService`/`AdminHTTPService`/`AuthStore` (`ports/auth.go`).
-- [ ] 4.13 RED `admin_handlers_test.go`: `POST /admin/v1/robots` creates a
+- [x] 4.13 RED `admin_handlers_test.go`: `POST /admin/v1/robots` creates a
       robot + its grant + a token (global admin only); `GET /admin/v1/robots`
       lists robots; non-admin rejected.
-- [ ] 4.14 GREEN: add the two robot routes to `handleAdmin`'s dispatch
+- [x] 4.14 GREEN: add the two robot routes to `handleAdmin`'s dispatch
       (`admin_handlers.go`).
-- [ ] 4.15 RED: password login as a robot fails with both layers (`IsRobot`
+- [x] 4.15 RED: password login as a robot fails with both layers (`IsRobot`
       guard, sentinel hash) tested independently — with the guard notionally
       removed, the sentinel hash alone still blocks bcrypt (threat matrix:
-      machine identity authenticating as human).
-- [ ] 4.16 Confirm 4.3, 4.5, 4.7, 4.9, 4.11, 4.13, 4.15 GREEN (see Unit 4
-      focused test command).
+      machine identity authenticating as human). (Both layers already pass
+      against 4.4/4.6's landed code — an exhaustive pinning proof, not a
+      state that must flip, same pattern as Phase 2's task 2.13.)
+- [x] 4.16 Confirm 4.3, 4.5, 4.7, 4.9, 4.11, 4.13, 4.15 GREEN (see Unit 4
+      focused test command). Also ran full `go test ./...` (zero
+      regressions) and `gofmt -l .` (clean).
 
 ## Phase 5: Robot Accounts — TUI + Docs (Slice 3b — PR 5, depends on Phase 4)
 
