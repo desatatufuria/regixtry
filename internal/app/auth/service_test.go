@@ -301,6 +301,116 @@ func TestRequireAdminOrRepoAdmin(t *testing.T) {
 	}
 }
 
+// TestServicePutRepositoryGrantRejectsDelegateEscalation pins
+// operator-access-administration's delegate-bounded scenarios and design.md
+// Decision 4's escalation bounds (threat matrix: privilege escalation via
+// delegation). A repo-admin delegate on "team/app" is rejected in three
+// separate ways: requesting repo-admin for someone else, self-assigning
+// repo-admin, and touching (demoting) another user's existing repo-admin
+// grant on that same repository. A global admin is unaffected by any of
+// these bounds.
+func TestServicePutRepositoryGrantRejectsDelegateEscalation(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	repo := regixtrydomain.MustParseRepositoryRef("team/app")
+	delegate := domainauth.Principal{UserID: "delegate-1", Username: "delegate", Grants: []domainauth.RepoGrant{
+		{Repository: repo, Role: domainauth.RepoRoleAdmin},
+	}}
+
+	newStoreWithUsers := func() *memoryAuthStore {
+		store := newMemoryAuthStore()
+		delegateUser := domainauth.User{ID: delegate.UserID, Username: delegate.Username, PasswordHash: mustHashPassword(t, "password123"), Enabled: true, CreatedAt: now, UpdatedAt: now}
+		store.usersByID[delegateUser.ID] = delegateUser
+		store.usersByUsername[delegateUser.Username] = delegateUser
+		victim := domainauth.User{ID: "user-victim", Username: "victim", PasswordHash: mustHashPassword(t, "password123"), Enabled: true, CreatedAt: now, UpdatedAt: now}
+		store.usersByID[victim.ID] = victim
+		store.usersByUsername[victim.Username] = victim
+		return store
+	}
+
+	t.Run("delegate is rejected requesting repo-admin for another user", func(t *testing.T) {
+		t.Parallel()
+		store := newStoreWithUsers()
+		service := NewService(store)
+		service.now = func() time.Time { return now }
+
+		_, err := service.PutRepositoryGrant(context.Background(), delegate, repo.String(), "victim", domainauth.RepoRoleAdmin)
+		if !domainauth.IsCode(err, domainauth.ErrorCodeForbidden) {
+			t.Fatalf("PutRepositoryGrant(repo-admin, other user) error = %v, want forbidden", err)
+		}
+	})
+
+	t.Run("delegate is rejected self-assigning repo-admin", func(t *testing.T) {
+		t.Parallel()
+		store := newStoreWithUsers()
+		service := NewService(store)
+		service.now = func() time.Time { return now }
+
+		_, err := service.PutRepositoryGrant(context.Background(), delegate, repo.String(), delegate.Username, domainauth.RepoRoleAdmin)
+		if !domainauth.IsCode(err, domainauth.ErrorCodeForbidden) {
+			t.Fatalf("PutRepositoryGrant(repo-admin, self) error = %v, want forbidden", err)
+		}
+	})
+
+	t.Run("delegate is rejected touching an existing repo-admin grant", func(t *testing.T) {
+		t.Parallel()
+		store := newStoreWithUsers()
+		store.grants["user-victim"] = []domainauth.RepoGrant{{UserID: "user-victim", Repository: repo, Role: domainauth.RepoRoleAdmin, CreatedAt: now, UpdatedAt: now}}
+		service := NewService(store)
+		service.now = func() time.Time { return now }
+
+		_, err := service.PutRepositoryGrant(context.Background(), delegate, repo.String(), "victim", domainauth.RepoRoleWriter)
+		if !domainauth.IsCode(err, domainauth.ErrorCodeForbidden) {
+			t.Fatalf("PutRepositoryGrant(demote existing repo-admin) error = %v, want forbidden", err)
+		}
+	})
+
+	t.Run("global admin is unaffected by the delegate escalation bounds", func(t *testing.T) {
+		t.Parallel()
+		store := newStoreWithUsers()
+		service := NewService(store)
+		service.now = func() time.Time { return now }
+		admin := domainauth.Principal{UserID: "admin-1", Username: "admin", IsAdmin: true}
+
+		grant, err := service.PutRepositoryGrant(context.Background(), admin, repo.String(), "victim", domainauth.RepoRoleAdmin)
+		if err != nil {
+			t.Fatalf("PutRepositoryGrant(admin) error = %v", err)
+		}
+		if grant.Role != domainauth.RepoRoleAdmin {
+			t.Fatalf("PutRepositoryGrant(admin).Role = %q, want repo-admin", grant.Role)
+		}
+	})
+}
+
+// TestServiceListRepositoryGrantsScopedToDelegateOwnRepository pins
+// operator-access-administration's "Delegate's grant listing is scoped to
+// their own repositories" scenario: a delegate holding repo-admin on
+// "team/app" only can list grants for "team/app" but is rejected outright
+// for "team/other" — they never see another repository's grants.
+func TestServiceListRepositoryGrantsScopedToDelegateOwnRepository(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	ownRepo := regixtrydomain.MustParseRepositoryRef("team/app")
+	otherRepo := regixtrydomain.MustParseRepositoryRef("team/other")
+	delegate := domainauth.Principal{UserID: "delegate-1", Username: "delegate", Grants: []domainauth.RepoGrant{
+		{Repository: ownRepo, Role: domainauth.RepoRoleAdmin},
+	}}
+
+	store := newMemoryAuthStore()
+	service := NewService(store)
+	service.now = func() time.Time { return now }
+
+	if _, err := service.ListRepositoryGrants(context.Background(), delegate, ownRepo.String()); err != nil {
+		t.Fatalf("ListRepositoryGrants(own repository) error = %v, want nil", err)
+	}
+
+	if _, err := service.ListRepositoryGrants(context.Background(), delegate, otherRepo.String()); !domainauth.IsCode(err, domainauth.ErrorCodeForbidden) {
+		t.Fatalf("ListRepositoryGrants(other repository) error = %v, want forbidden", err)
+	}
+}
+
 func equalStringSlices(got []string, want []string) bool {
 	if len(got) != len(want) {
 		return false
