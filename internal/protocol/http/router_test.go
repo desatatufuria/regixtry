@@ -2151,3 +2151,7 @@ func (f fakeAuthService) CreateAdminRobot(context.Context, domainauth.Principal,
 func (f fakeAuthService) ListAdminRobots(context.Context, domainauth.Principal) ([]ports.AdminRobot, error) {
 	return nil, nil
 }
+func (f fakeAuthService) DeleteRobot(context.Context, domainauth.Principal, string) error { return nil }
+func (f fakeAuthService) DeleteAdminRobot(context.Context, domainauth.Principal, string) error {
+	return nil
+}

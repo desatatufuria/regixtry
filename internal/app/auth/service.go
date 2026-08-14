@@ -809,6 +809,34 @@ func (s *Service) ListAdminRobots(ctx context.Context, actor domainauth.Principa
 	return result, nil
 }
 
+// DeleteRobot hard-deletes a robot account (design.md robot-accounts
+// deletion follow-up): deliberately breaking from this codebase's
+// no-hard-delete-for-humans precedent, because a robot's only purpose is to
+// hold exactly one (repository, role) grant plus its tokens — nothing is
+// orphaned or historically meaningful by removing it. The IsRobot guard
+// below is the single most important check: it is the boundary that keeps
+// this global-admin-only endpoint from becoming a backdoor around hard
+// deletion for human users.
+func (s *Service) DeleteRobot(ctx context.Context, actor domainauth.Principal, userID string) error {
+	if err := requireAdmin(actor); err != nil {
+		return err
+	}
+
+	user, err := s.store.GetUserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if !user.IsRobot {
+		return domainauth.NewValidationError("target user is not a robot account")
+	}
+
+	return s.store.DeleteUser(ctx, userID)
+}
+
+func (s *Service) DeleteAdminRobot(ctx context.Context, actor domainauth.Principal, userID string) error {
+	return s.DeleteRobot(ctx, actor, userID)
+}
+
 func toAdminRobot(user domainauth.User, grant domainauth.RepoGrant) ports.AdminRobot {
 	return ports.AdminRobot{
 		ID:         user.ID,

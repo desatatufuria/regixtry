@@ -224,6 +224,7 @@ type AdminHTTPService interface {
 	DeleteAdminRepositoryGrant(ctx context.Context, actor domainauth.Principal, repository string, username string) error
 	CreateAdminRobot(ctx context.Context, actor domainauth.Principal, input AdminCreateRobotInput) (AdminCreatedRobot, error)
 	ListAdminRobots(ctx context.Context, actor domainauth.Principal) ([]AdminRobot, error)
+	DeleteAdminRobot(ctx context.Context, actor domainauth.Principal, userID string) error
 	ListAdminUserTokens(ctx context.Context, actor domainauth.Principal, userID string) ([]AdminToken, error)
 	CreateAdminUserToken(ctx context.Context, actor domainauth.Principal, input AdminCreateTokenInput) (AdminCreatedToken, error)
 	RevokeAdminUserToken(ctx context.Context, actor domainauth.Principal, userID string, accessor string) error
@@ -252,4 +253,5 @@ type AuthService interface {
 	DeleteRepositoryGrant(ctx context.Context, actor domainauth.Principal, repository string, username string) error
 	CreateRobot(ctx context.Context, actor domainauth.Principal, input CreateRobotInput) (CreatedRobot, error)
 	ListRobots(ctx context.Context, actor domainauth.Principal) ([]domainauth.User, error)
+	DeleteRobot(ctx context.Context, actor domainauth.Principal, userID string) error
 }
