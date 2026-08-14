@@ -324,3 +324,240 @@ for `UpdateUser`, for future-phase awareness only.
 
 **Recommendation**: proceed to PR 1 merge / `sdd-archive` for Phase 1 after
 running `gofmt -w internal/tui/model.go`. No CRITICAL issue exists.
+
+---
+
+## Phase 2 — Delegated Repo-Admin Grants — Backend (PR 2)
+
+**Change**: registry-acl-v1 | **Scope**: Phase 2 only (tasks 2.1–2.16) | **Mode**: hybrid (OpenSpec + Engram) | **Strict TDD**: active
+
+### Completeness
+
+| Check | Result |
+|---|---|
+| Tasks checked | 16/16 Phase 2 tasks (`2.1`–`2.16`) marked `[x]` in `openspec/changes/registry-acl-v1/tasks.md`; confirmed via direct grep, no unchecked `2.x` items found |
+| Phase 3–5 surface leakage | None — repo-wide grep for `screenRepoAdminGrants`, `is_robot`, `CreateRobot` returns zero matches |
+| Diff size vs tracker (`feature/registry-acl-v1-01-readonly-role..HEAD`) | 1000 insertions / 1 deletion across 9 files — matches apply-progress's self-reported figure exactly |
+
+### Build / Test Evidence (independently re-run this session, not trusted from apply-progress)
+
+| Command | Result |
+|---|---|
+| `go build ./...` | exit 0, no output |
+| `go vet ./...` | exit 0, no output |
+| `gofmt -l .` | exit 0, no output (repo-wide clean — confirms Phase 1's WARNING was already fixed) |
+| `go test -count=1 ./...` | exit 0, 18/18 packages `ok`, zero regressions |
+| `go test ./internal/app/auth/... ./internal/protocol/http/... -run 'RepositoryGrant\|RequireAdminOrRepoAdmin\|Delegate' -v` | exit 0, all named tests and subtests PASS |
+
+### Highest-Risk Item — Independent Verification (per orchestrator directive)
+
+**1. All 18 non-grant route shapes for task 2.13 are real, asserted 403 cases.**
+Read `internal/protocol/http/admin_handlers_test.go:1101-1153`
+(`TestAdminNonGrantRoutesStillRequireGlobalAdminForRepoAdminDelegate`). The
+`routes` slice contains exactly 18 distinct paths (features, features/trivy
+×2, scan-settings, scan-policy, signing-policy, scan-runs ×2,
+secret-scan-findings, users ×2, users/{id}:enable, users/{id}:disable,
+users/{id}:reset-password, users/{id}/grants, users/{id}/grants/team/app,
+users/{id}/admin-tokens ×2). Each is driven through a `t.Run(route, ...)`
+subtest with a real `handler.ServeHTTP` call and a `t.Fatalf` on any code
+other than `403`. Verified against the actual `-v` test log: all 18
+sub-tests appear individually and all show `--- PASS`. Confirmed — not a
+claim, a re-run fact.
+
+**2. The delegate identity has no global `IsAdmin`.**
+`delegate` is created via `authService.CreateAdminUser(..., ports.AdminCreateUserInput{Username: "delegate", Password: "password123", Enabled: true})`
+— the `IsAdmin` field is never set, so it is the Go zero value `false`
+(confirmed against the `AdminCreateUserInput` struct definition,
+`internal/ports/auth.go:91-97`). Repo-admin authority comes exclusively
+from an explicit `PutRepoGrant(..., "team/app", auth.RepoRoleAdmin)` call —
+a per-repository grant, not the global flag. This is a genuine delegate,
+not an admin masquerading as one; the test would not pass trivially.
+
+**3. `handleAdmin`'s restructured dispatch cannot be bypassed by any pre-existing route.**
+Read `internal/protocol/http/admin_handlers.go:19-82` line by line. The
+`repositories/` prefix check (line 39) is a hard `if...return` — both the
+`ok` and `!ok` branches of `requireAuthenticatedPrincipal` terminate the
+function; there is no fallthrough to `requireAdminPrincipal`. Conversely,
+every existing route (`features`, `features/`, `scan-settings`,
+`scan-policy`, `signing-policy`, `scan-runs`, `scan-runs/`,
+`secret-scan-findings`, `users`, `users/`) is a string literal that cannot
+match `strings.HasPrefix(subpath, "repositories/")`, so none of them can
+skip `requireAdminPrincipal` (line 48). The prefix check and the switch
+statement are mutually exclusive by construction, not by convention.
+Confirmed by direct code reading, independent of the test suite.
+
+**4. Task 2.5's three escalation cases are independent, not one case doing triple duty.**
+Read `internal/app/auth/service_test.go:304-384`
+(`TestServicePutRepositoryGrantRejectsDelegateEscalation`). Four separate
+`t.Run` subtests, each with its own store setup via `newStoreWithUsers()`:
+(a) "delegate is rejected requesting repo-admin for another user" — puts
+`repo-admin` on `victim`; (b) "delegate is rejected self-assigning
+repo-admin" — puts `repo-admin` on `delegate.Username` itself; (c) "delegate
+is rejected touching an existing repo-admin grant" — pre-seeds `victim`
+with an existing `repo-admin` grant on `team/app`, then delegate attempts to
+downgrade it to `repo-writer`; (d) a control case proving a global admin is
+unaffected by these bounds. Each asserts `domainauth.IsCode(err,
+domainauth.ErrorCodeForbidden)` (or success for the admin control case)
+independently — three genuinely distinct code paths through
+`PutRepositoryGrant`'s escalation-bound logic (`service.go:615-640`), not
+one assertion reused three times.
+
+**5. Task 2.14 identity-disclosure: no user ID, hash, flags, or other-repo data leaks.**
+Read `internal/ports/auth.go:118-128` — `AdminRepositoryGrant` serializes
+only `username`, `role`, `created_at`, `updated_at`; no `UserID`, no
+`PasswordHash`, no `IsAdmin`/`IsReadOnly` fields exist on the struct at all
+(not merely omitted via a JSON tag — the fields are absent from the type).
+Read `internal/protocol/http/admin_handlers_test.go:1161-1201`
+(`TestAdminRepositoryGrantResponsesCarryNoUserIdentityFields`): creates a
+victim user with `IsReadOnly: true`, grants them access to two repositories
+(`team/app`, `team/other`), then asserts the `team/app` grants list response
+body both contains `"username":"victim"` AND does **not** contain any of
+`victim.ID`, `"is_admin"`, `"is_read_only"`, `"password"`, `"hash"`, or
+`"team/other"`. This is a real substring assertion against the actual
+serialized HTTP response body, not a type-only or structural check.
+
+### Spec Compliance Matrix
+
+**`operator-admin-http-api`** (5 scenarios):
+
+| Scenario | Status | Covering Test |
+|---|---|---|
+| Missing or invalid bearer token | ✅ PASS | `TestRouterAdminBoundaryRejectsMissingBearerToken` (pre-existing, unchanged) + `TestAdminRepositoryGrantRoutesAuthenticationAndDelegateAuthority` (unauthenticated case on the new grant route) |
+| Non-admin actor calls a non-grant admin route | ✅ PASS | `TestRouterAdminBoundaryRejectsNonAdminPrincipal` (pre-existing, unchanged) + `TestAdminNonGrantRoutesStillRequireGlobalAdminForRepoAdminDelegate` (delegate-specific, new) |
+| Repo-admin delegate reaches grant sub-routes for their repository | ✅ PASS | `TestAdminRepositoryGrantRoutesAuthenticationAndDelegateAuthority` (list/put/delete all 200/204) |
+| Repo-admin delegate is forbidden on a repository they don't administer | ✅ PASS | `TestAdminRepositoryGrantRoutesAuthenticationAndDelegateAuthority` (`otherRepoReq` → 403) + `TestRequireAdminOrRepoAdmin/repo-admin_on_a_different_repository_is_rejected` |
+| Repo-admin delegate is forbidden on non-grant admin routes | ✅ PASS | `TestAdminNonGrantRoutesStillRequireGlobalAdminForRepoAdminDelegate` (18/18 routes) |
+
+**`operator-access-administration`** (7 scenarios):
+
+| Scenario | Status | Covering Test |
+|---|---|---|
+| Admin replaces a repository grant | ✅ PASS | `TestServicePutRepositoryGrantRejectsDelegateEscalation/global_admin_is_unaffected...` (new endpoint) + pre-existing `router_test.go:856` `replaceReq` (user-centric endpoint, unchanged) |
+| Invalid grant input is rejected | ⚠️ Indirect | Pre-existing `router_test.go:917-919` covers invalid role / invalid repository / missing user on the **user-centric** endpoint only; no dedicated test drives invalid input through the **new** `PutRepositoryGrant`/`DeleteRepositoryGrant` endpoint, though it calls the identical `role.Validate()`/`ParseRepositoryRef`/`GetUserByUsername` validation code (`service.go:611-627`). See SUGGESTION 1. |
+| Delegate grants repo-reader on their own repository | ✅ PASS | `TestAdminRepositoryGrantRoutesAuthenticationAndDelegateAuthority` (`putReq` → 200, body reflects `role":"repo-reader"`) |
+| Delegate is rejected granting repo-admin | ✅ PASS | `TestServicePutRepositoryGrantRejectsDelegateEscalation/delegate_is_rejected_requesting_repo-admin_for_another_user` |
+| Delegate is rejected self-assigning repo-admin | ✅ PASS | `TestServicePutRepositoryGrantRejectsDelegateEscalation/delegate_is_rejected_self-assigning_repo-admin` |
+| Delegate is rejected acting outside their repository | ✅ PASS | `TestAdminRepositoryGrantRoutesAuthenticationAndDelegateAuthority` (`otherRepoReq` → 403) |
+| Delegate's grant listing is scoped to their own repositories | ✅ PASS | `TestServiceListRepositoryGrantsScopedToDelegateOwnRepository` |
+
+12/12 scenarios have a passing covering test (one indirectly, via shared unchanged validation code plus a pre-existing test — see SUGGESTION 1, not CRITICAL since the validation logic is identical and independently proven on the sibling endpoint).
+
+### Design Coherence
+
+| Decision | Check | Result |
+|---|---|---|
+| Decision 3 — early-return `repositories/` prefix strictly above the blanket gate | Read `admin_handlers.go:19-82` line by line | ✅ Matches — mutually exclusive branches, confirmed no bypass path either direction |
+| Decision 3 deviation — `subpath == ""` 404 check kept AFTER `requireAdminPrincipal` (not before, as the design.md snippet shows) | Self-reported deviation; independently assessed | ✅ Correct call — literally following the snippet would return 404 (not 401) for an unauthenticated request to bare `/admin/v1`, which would regress the "Missing or invalid bearer token" scenario. The `repositories/` prefix check still runs before both, so delegate routing is unaffected. No test exercises the literal bare-path case, but the existing `TestRouterAdminBoundaryRejectsMissingBearerToken` proves the general "unauthenticated → 401" behavior on the admin surface generically, and the code reading proves the ordering is sound. |
+| Decision 4 — `requireAdminOrRepoAdmin` reads `actor.Grants` directly, never `Principal.HasRepoAdminAccess` | Read `service.go:570-580,600-649,664-691` and confirmed `requireAdminOrRepoAdmin` is called, not `HasRepoAdminAccess` | ✅ Matches exactly — verified `grant.Role.AllowsAdmin()` walk over `actor.Grants`, no scope dependency |
+| Escalation bounds (Decision 4) — role allow-list + existing-grant check, both service-layer, `!actor.IsAdmin`-gated only | Read `service.go:610-649` | ✅ Matches — `role == domainauth.RepoRoleAdmin` rejected outright (covers both third-party grant and self-assignment with one check, exactly as documented) and the target's existing `repo-admin` grant blocks further mutation |
+| Self-reported deviation — 2.7–2.10 folded into one commit (store interface needed for service layer to compile) | Read `service.go`'s new methods call `s.store.ListRepoGrantsByRepository` | ✅ Justified — Go compilation genuinely requires the interface method to exist before the caller compiles; task-numbering split was aspirational, not enforceable, and the dedicated 2.8 RED test for the store method still exists and independently passes (`store_test.go:193`) |
+| Self-reported deviation — `/grants` collection-suffix check reordered before the `/grants/` `LastIndex` split | Read `admin_handlers.go:857-888` and the route-hazard comment | ✅ Correct and necessary — confirmed by reasoning through `"team/grants/grants"`: `LastIndex(resource, "/grants/")` would match at the wrong position first if checked before the suffix check; the code comment explicitly documents this, matching the existing `handleAdminFeatureResource` precedent at the same file |
+
+### TDD Compliance
+
+| Check | Result | Details |
+|---|---|---|
+| TDD Evidence reported | ✅ | Found in apply-progress, one row per task group (2.1/2.2, 2.3/2.4, 2.5-2.10, 2.11-2.14, 2.15/2.16) |
+| All tasks have tests | ✅ | 16/16 tasks; every RED task names a real test function, independently opened and confirmed present |
+| RED confirmed (tests exist) | ✅ | `service_grants_test.go`, `service_test.go`, `store_test.go`, `admin_handlers_test.go`, `router_test.go` all opened and read this session |
+| GREEN confirmed (tests pass) | ✅ | `go test -count=1 ./...` independently re-run — 18/18 packages `ok` |
+| Triangulation adequate | ✅ | 2.1/2.2: 6 subtests (3 methods × admin/non-admin, confirmed by reading `service_grants_test.go`); 2.3/2.4: 6 cases (`TestRequireAdminOrRepoAdmin`, confirmed in `-v` log); 2.5: 4 subtests (3 escalation + 1 control); 2.6: 2 subtests (own repo / other repo); 2.8: 1 store test with 2-user/2-repo scoping assertion |
+| Safety Net for modified files | ✅ | Full `go test -count=1 ./...` passes with the pre-existing suite unmodified; the characterization test (2.1/2.2) explicitly pins pre-change behavior as its own safety net |
+
+**TDD Compliance**: 6/6 checks passed.
+
+### Assertion Quality Audit
+
+Scanned all 5 new/modified test files (`service_grants_test.go`,
+`service_test.go` new sections, `store_test.go` new section,
+`admin_handlers_test.go` new sections, `router_test.go` new helper) for
+banned patterns (tautologies, empty-collection-without-companion,
+type-only-alone assertions, no-production-call assertions, ghost loops,
+smoke-test-only, implementation-detail coupling, mock-heavy ratio).
+
+- No tautologies found.
+- No assertion-without-production-call found — every assertion follows a
+  real call to `service.PutRepositoryGrant`/`ListRepositoryGrants`/
+  `requireAdminOrRepoAdmin`, `store.ListRepoGrantsByRepository`, or a real
+  `handler.ServeHTTP` over HTTP.
+- No ghost loops — the one `for` loop in the new test code
+  (`admin_handlers_test.go`'s `routes` iteration via `t.Run`) iterates a
+  compile-time 18-element literal slice, never empty; `store_test.go`'s
+  `byUserID` loop iterates a runtime `grants` slice already asserted
+  `len(grants) != 2` → `t.Fatalf` beforehand, so the loop body is
+  guaranteed to run.
+- No smoke-test-only patterns — every HTTP test asserts a specific status
+  code plus, where applicable, response body content (username/role
+  presence or absence).
+- No CSS/implementation-detail coupling (not applicable — Go backend).
+- Mock ratio not applicable — `newTestRouterWithRealAuth` uses a real
+  `appauth.Service` backed by real SQLite, not mocks, specifically so
+  delegate authorization is exercised end-to-end (an explicit,
+  well-reasoned choice per apply-progress).
+
+**Assertion quality**: ✅ 0 CRITICAL, 0 WARNING. All assertions verify real behavior.
+
+### Issues
+
+**CRITICAL**: None.
+
+**WARNING**: None.
+
+**SUGGESTION**:
+1. No dedicated test drives invalid input (bad role, malformed repository,
+   missing target user) through the new `PutRepositoryGrant`/
+   `DeleteRepositoryGrant` endpoint directly — only through the
+   pre-existing user-centric endpoint, which shares the identical
+   validation code path. Low risk (the validation logic is provably
+   shared, not duplicated-and-diverged), but a future regression in the
+   new endpoint's validation wiring specifically would not be caught by
+   the current test suite. Recommend adding 2-3 direct cases in a
+   follow-up.
+2. `router_test.go` gained a second real-auth SQLite test harness
+   (`newTestRouterWithRealAuth`) alongside the existing `fakeAuthService`
+   stub pattern. This is a deliberate and correct choice for this phase
+   (delegate authorization cannot be exercised meaningfully through a
+   stub), but increases per-test setup cost slightly across the 4 new
+   integration tests (each spins up its own SQLite-backed store). Not a
+   defect — informational only.
+
+### Verdict
+
+**PASS**
+
+Independent verification confirms Phase 2 of registry-acl-v1 is correctly
+and completely implemented. All 16 tasks are genuinely done, not just
+checked. All three self-reported deviations from design.md's literal
+wording were independently assessed against the actual code and found
+correct and non-spec-violating: (1) folding 2.7–2.10 was a genuine Go
+compilation necessity, not a shortcut; (2) keeping the `subpath == ""` 404
+check after `requireAdminPrincipal` correctly preserves the unchanged 401
+behavior for missing bearer tokens; (3) the `/grants`-suffix-before-`LastIndex`
+reorder is necessary and correctly prevents the `team/grants` routing
+collision, independently re-derived by reasoning through the exact string
+match, not merely trusted from the RED-test claim.
+
+The highest-risk item — the exhaustive 403 guard (task 2.13) — was verified
+at three independent levels: the delegate identity genuinely lacks global
+`IsAdmin` (confirmed against the DTO and zero-value semantics, not just the
+test's own claim), all 18 route shapes are real distinct `t.Run` subtests
+with real assertions (confirmed by counting the literal slice and matching
+against the `-v` log), and the dispatch code itself was read line by line
+and confirmed to have no bypass path in either direction — not merely
+inferred from the tests passing.
+
+Task 2.5's three escalation cases and task 2.14's identity-disclosure check
+were both confirmed to be genuine, independent, non-trivial test cases, not
+single assertions reused or claimed without backing.
+
+Build, vet, and gofmt are all clean project-wide. The full test suite
+(`go test -count=1 ./...`) passes with zero regressions across all 18
+packages. No Phase 3–5 surface exists yet. The diff size (1000/1 across 9
+files) matches the forecasted ceiling exactly, as flagged in tasks.md.
+
+The two SUGGESTIONs are both low-severity and informational; neither blocks
+archive. No CRITICAL or WARNING issues exist.
+
+**Recommendation**: proceed to PR 2 merge / `sdd-archive` for Phase 2.
+Phase 3 (TUI for this slice) is the next apply batch, out of scope for this
+verify run.
