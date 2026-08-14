@@ -626,6 +626,99 @@ func TestServiceAdminRobotDTOsRoundTripAndTokenFollowsGrant(t *testing.T) {
 	}
 }
 
+// TestServiceDeleteRobotRequiresAdminRejectsNonRobotsAndCleansUpGrantsAndTokens
+// covers the registry-acl-v1 robot-deletion follow-up (real hard-delete,
+// deliberately breaking from this codebase's no-hard-delete-for-humans
+// precedent — a robot exists only to hold one grant plus its tokens, so
+// nothing is orphaned or historically meaningful by deleting it). The
+// IsRobot guard is the single most important behavior pinned here: it is
+// the boundary that keeps this endpoint from becoming a backdoor around
+// human hard-delete.
+func TestServiceDeleteRobotRequiresAdminRejectsNonRobotsAndCleansUpGrantsAndTokens(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	actor := domainauth.Principal{UserID: "admin-1", Username: "admin", IsAdmin: true}
+
+	t.Run("rejects a non-admin actor", func(t *testing.T) {
+		t.Parallel()
+		store := newMemoryAuthStore()
+		service := NewService(store)
+		service.now = func() time.Time { return now }
+
+		created, err := service.CreateRobot(context.Background(), actor, ports.CreateRobotInput{
+			Name: "ci-nonadmin", Repository: "team/app", Role: domainauth.RepoRoleReader,
+		})
+		if err != nil {
+			t.Fatalf("CreateRobot() error = %v", err)
+		}
+
+		if err := service.DeleteRobot(context.Background(), domainauth.Principal{}, created.User.ID); !domainauth.IsCode(err, domainauth.ErrorCodeForbidden) {
+			t.Fatalf("DeleteRobot(non-admin) error = %v, want forbidden", err)
+		}
+	})
+
+	t.Run("rejects a target user that is not a robot", func(t *testing.T) {
+		t.Parallel()
+		store := newMemoryAuthStore()
+		service := NewService(store)
+		service.now = func() time.Time { return now }
+
+		human, err := service.CreateUser(context.Background(), actor, ports.CreateUserInput{
+			Username: "alice-delete-guard", Password: "password123", Enabled: true,
+		})
+		if err != nil {
+			t.Fatalf("CreateUser() error = %v", err)
+		}
+
+		if err := service.DeleteRobot(context.Background(), actor, human.ID); !domainauth.IsCode(err, domainauth.ErrorCodeValidation) {
+			t.Fatalf("DeleteRobot(non-robot target) error = %v, want validation", err)
+		}
+
+		if _, err := store.GetUserByID(context.Background(), human.ID); err != nil {
+			t.Fatalf("human user was removed by a rejected DeleteRobot call: GetUserByID() error = %v", err)
+		}
+	})
+
+	t.Run("deletes a genuine robot and cleans up its grant and token", func(t *testing.T) {
+		t.Parallel()
+		store := newMemoryAuthStore()
+		service := NewService(store)
+		service.now = func() time.Time { return now }
+
+		created, err := service.CreateRobot(context.Background(), actor, ports.CreateRobotInput{
+			Name: "ci-delete", Repository: "team/app", Role: domainauth.RepoRoleWriter,
+		})
+		if err != nil {
+			t.Fatalf("CreateRobot() error = %v", err)
+		}
+
+		if err := service.DeleteRobot(context.Background(), actor, created.User.ID); err != nil {
+			t.Fatalf("DeleteRobot() error = %v", err)
+		}
+
+		if _, err := store.GetUserByID(context.Background(), created.User.ID); !domainauth.IsCode(err, domainauth.ErrorCodeNotFound) {
+			t.Fatalf("GetUserByID(after delete) error = %v, want not-found", err)
+		}
+
+		grants, err := store.ListRepoGrants(context.Background(), created.User.ID)
+		if err != nil {
+			t.Fatalf("ListRepoGrants() error = %v", err)
+		}
+		if len(grants) != 0 {
+			t.Fatalf("ListRepoGrants(after delete) = %#v, want empty", grants)
+		}
+
+		tokens, err := store.ListTokensByUser(context.Background(), created.User.ID, domainauth.TokenKindAdminCredential)
+		if err != nil {
+			t.Fatalf("ListTokensByUser() error = %v", err)
+		}
+		if len(tokens) != 0 {
+			t.Fatalf("ListTokensByUser(after delete) = %#v, want empty", tokens)
+		}
+	})
+}
+
 // TestLoginWithPasswordRobotTwoIndependentLayers is the Phase 4 threat-matrix
 // pinning test (tasks.md 4.15, design.md Decision 1 and Decision 6): robot
 // password login must fail via TWO layers that are each independently
@@ -845,7 +938,21 @@ func (s *memoryAuthStore) UpsertUser(_ context.Context, user domainauth.User) er
 	s.usersByUsername[user.Username] = user
 	return nil
 }
-func (s *memoryAuthStore) DeleteUser(context.Context, string) error { return nil }
+func (s *memoryAuthStore) DeleteUser(_ context.Context, userID string) error {
+	user, ok := s.usersByID[userID]
+	if !ok {
+		return domainauth.NewNotFoundError("user", userID)
+	}
+	delete(s.usersByID, userID)
+	delete(s.usersByUsername, user.Username)
+	delete(s.grants, userID)
+	for _, token := range s.tokensByUser[userID] {
+		delete(s.tokensByHash, token.SecretHash)
+		delete(s.tokensByAccessor, token.Accessor)
+	}
+	delete(s.tokensByUser, userID)
+	return nil
+}
 func (s *memoryAuthStore) ListRobots(context.Context) ([]domainauth.User, error) {
 	robots := make([]domainauth.User, 0)
 	for _, user := range s.usersByID {
