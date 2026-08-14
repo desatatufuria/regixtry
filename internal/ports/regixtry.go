@@ -511,6 +511,7 @@ type ActionVerb string
 const (
 	ActionPull    ActionVerb = "pull"
 	ActionPush    ActionVerb = "push"
+	ActionDelete  ActionVerb = "delete"
 	ActionCatalog ActionVerb = "catalog"
 	ActionInspect ActionVerb = "inspect"
 )
@@ -569,6 +570,11 @@ func (a Action) Scope() string {
 			return ""
 		}
 		return "repository:" + a.Repository + ":pull,push"
+	case ActionDelete:
+		if a.Repository == "" {
+			return ""
+		}
+		return "repository:" + a.Repository + ":delete"
 	default:
 		return ""
 	}
