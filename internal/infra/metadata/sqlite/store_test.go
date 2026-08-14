@@ -145,6 +145,28 @@ func TestStoreEnablesSQLiteWALAndBusyTimeout(t *testing.T) {
 	}
 }
 
+// TestStoreEnablesSQLiteForeignKeyEnforcement pins the cascade-delete premise
+// (design.md's DeleteManifestByDigest/DeleteTag rely on the manifests/tags/
+// manifest_blobs ON DELETE CASCADE FKs actually firing) the same way
+// TestStoreEnablesSQLiteWALAndBusyTimeout pins journal_mode/busy_timeout:
+// `_pragma=foreign_keys(1)` is already set in sqliteDSN (store.go:42), so
+// this is an already-GREEN guard against that premise silently regressing,
+// not a state that must flip.
+func TestStoreEnablesSQLiteForeignKeyEnforcement(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	var foreignKeys int
+	if err := store.db.QueryRowContext(context.Background(), `PRAGMA foreign_keys;`).Scan(&foreignKeys); err != nil {
+		t.Fatalf("PRAGMA foreign_keys error = %v", err)
+	}
+	if foreignKeys != 1 {
+		t.Fatalf("foreign_keys = %d, want 1", foreignKeys)
+	}
+}
+
 func TestStorePersistsDefaultDisabledScanSettings(t *testing.T) {
 	t.Parallel()
 

@@ -88,7 +88,7 @@ Chain strategy: pending
 
 ## Phase 2: Store Layer (PR 2, depends on Phase 1 for `MetadataStore` shape)
 
-- [ ] 2.1 Pin `PRAGMA foreign_keys` == `1` in `store_test.go` (mirrors the
+- [x] 2.1 Pin `PRAGMA foreign_keys` == `1` in `store_test.go` (mirrors the
       `busy_timeout` assertion, `store_test.go:139-145`) — expected
       already-GREEN cascade-premise guard, not a state that must flip.
 - [ ] 2.2 GREEN `internal/ports/regixtry.go`: add `DeleteManifestByDigest`/
