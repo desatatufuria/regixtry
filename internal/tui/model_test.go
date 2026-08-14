@@ -1096,6 +1096,13 @@ func TestModelCreateAdminRobotShowsOneTimeSecretOnceOnCreateScreen(t *testing.T)
 	updated = runKey(t, updated, "ci")
 	updated = runKey(t, updated, "tab")
 	updated = runKey(t, updated, "team/app")
+	// First Enter (while focused on Repository) commits the highlighted
+	// suggestion and advances focus to Role -- it does not submit the form,
+	// mirroring updateGrantFormKey's Add Grant behavior.
+	updated = runKey(t, updated, "enter")
+	if got, want := updated.adminView.CreateRobotForm.Focus, adminCreateRobotFieldRole; got != want {
+		t.Fatalf("focus = %v, want %v after first Enter", got, want)
+	}
 	updated = runKey(t, updated, "enter")
 
 	if adminClient.createRobotCalls != 1 {
@@ -1118,6 +1125,55 @@ func TestModelCreateAdminRobotShowsOneTimeSecretOnceOnCreateScreen(t *testing.T)
 	}
 	if updated.adminView.CreateRobotForm.Name != "" || updated.adminView.CreateRobotForm.Repository != "" {
 		t.Fatalf("CreateRobotForm = %#v, want cleared after creation", updated.adminView.CreateRobotForm)
+	}
+}
+
+// TestModelCreateRobotFormRepositorySuggestionsFilterAndSelect is the manual
+// RC follow-up's RED test: screenAdminCreateRobot's Repository field must
+// offer the same autosuggest behavior as screenAdminAddGrant's Repository
+// field (updateGrantFormKey) -- typing filters known repositories, Up/Down
+// cycle the highlighted suggestion, and Enter while focused on Repository
+// commits the highlighted suggestion and advances focus to Role WITHOUT
+// submitting the whole create-robot form.
+func TestModelCreateRobotFormRepositorySuggestionsFilterAndSelect(t *testing.T) {
+	t.Parallel()
+
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: time.Date(2026, time.August, 14, 12, 5, 0, 0, time.UTC)},
+	}
+	model := newAdminReadyModelWithCatalog(t, []string{"library/alpine", "team/demo", "team/backend", "ops/console"}, adminClient)
+	updated := runAdminLogin(t, model, "operator", "secret-pass")
+
+	updated = runKey(t, updated, "b")
+	updated = runKey(t, updated, "n")
+	if got, want := updated.screen, screenAdminCreateRobot; got != want {
+		t.Fatalf("screen = %q, want %q", got, want)
+	}
+
+	updated = runKey(t, updated, "tab")
+	if got, want := updated.adminView.CreateRobotForm.Focus, adminCreateRobotFieldRepository; got != want {
+		t.Fatalf("focus = %v, want %v", got, want)
+	}
+
+	updated = runKey(t, updated, "tea")
+	filteredView := updated.View()
+	if strings.Contains(filteredView, "library/alpine") {
+		t.Fatalf("view = %q, want non-matching repository hidden", filteredView)
+	}
+	if !strings.Contains(filteredView, "team/demo") || !strings.Contains(filteredView, "team/backend") {
+		t.Fatalf("view = %q, want filtered suggestions", filteredView)
+	}
+
+	updated = runKey(t, updated, "down")
+	updated = runKey(t, updated, "enter")
+	if got, want := updated.adminView.CreateRobotForm.Repository, "team/backend"; got != want {
+		t.Fatalf("repository = %q, want %q", got, want)
+	}
+	if got, want := updated.adminView.CreateRobotForm.Focus, adminCreateRobotFieldRole; got != want {
+		t.Fatalf("focus = %v, want %v (Enter must advance focus, not submit)", got, want)
+	}
+	if adminClient.createRobotCalls != 0 {
+		t.Fatalf("createRobotCalls = %d, want 0 (Enter on Repository must not submit the form)", adminClient.createRobotCalls)
 	}
 }
 

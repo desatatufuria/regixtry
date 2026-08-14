@@ -1577,7 +1577,7 @@ func TestRenderCreateAdminRobotScreenShowsFormFields(t *testing.T) {
 		},
 	}
 
-	got := renderAdminCreateRobotScreen(theme, view)
+	got := renderAdminCreateRobotScreen(theme, view, nil)
 
 	for _, want := range []string{"ci", "team/app", string(domainauth.RepoRoleWriter), "604800"} {
 		if !strings.Contains(got, want) {
@@ -1602,7 +1602,7 @@ func TestRenderCreateAdminRobotScreenShowsOneTimeSecretWhenRevealed(t *testing.T
 		RevealedTokenAccessor: "accessor-123",
 	}
 
-	got := renderAdminCreateRobotScreen(theme, view)
+	got := renderAdminCreateRobotScreen(theme, view, nil)
 
 	if !strings.Contains(got, "s3cr3t-value") {
 		t.Fatalf("renderAdminCreateRobotScreen() = %q, want the one-time secret rendered", got)
@@ -1622,10 +1622,60 @@ func TestRenderCreateAdminRobotScreenNeverShowsSecretBlockWhenNotRevealed(t *tes
 	t.Parallel()
 
 	theme := newAdminTheme()
-	got := renderAdminCreateRobotScreen(theme, AdminViewState{})
+	got := renderAdminCreateRobotScreen(theme, AdminViewState{}, nil)
 
 	if strings.Contains(got, "One-time secret") {
 		t.Fatalf("renderAdminCreateRobotScreen() = %q, must not render the secret block when nothing was revealed", got)
+	}
+}
+
+// TestRenderCreateAdminRobotScreenShowsRepositorySuggestionList is the manual
+// RC follow-up's RED test: screenAdminCreateRobot must render a "Known
+// Repositories" suggestion list, mirroring renderAdminAddGrantScreen's
+// windowed, highlighted-selection rendering for the same filter/select
+// behavior.
+func TestRenderCreateAdminRobotScreenShowsRepositorySuggestionList(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+	view := AdminViewState{
+		CreateRobotForm: adminCreateRobotForm{
+			Repository:           "tea",
+			Focus:                adminCreateRobotFieldRepository,
+			RepositorySuggestion: 1,
+		},
+	}
+	knownRepositories := []string{"library/alpine", "team/demo", "team/backend", "ops/console"}
+
+	got := renderAdminCreateRobotScreen(theme, view, knownRepositories)
+
+	if !strings.Contains(got, "Known Repositories") {
+		t.Fatalf("renderAdminCreateRobotScreen() = %q, want a known-repositories suggestion header", got)
+	}
+	if strings.Contains(got, "library/alpine") {
+		t.Fatalf("renderAdminCreateRobotScreen() = %q, want non-matching repository hidden", got)
+	}
+	if !strings.Contains(got, "team/demo") || !strings.Contains(got, "team/backend") {
+		t.Fatalf("renderAdminCreateRobotScreen() = %q, want filtered suggestions rendered", got)
+	}
+}
+
+// TestRenderCreateAdminRobotScreenShowsEmptySuggestionMessage triangulates
+// the suggestion-list case above: when no known repository matches the
+// current filter, the screen shows an explicit empty-state message instead
+// of an empty "Known Repositories" section.
+func TestRenderCreateAdminRobotScreenShowsEmptySuggestionMessage(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+	view := AdminViewState{
+		CreateRobotForm: adminCreateRobotForm{Repository: "no-match", Focus: adminCreateRobotFieldRepository},
+	}
+
+	got := renderAdminCreateRobotScreen(theme, view, []string{"library/alpine", "team/demo"})
+
+	if !strings.Contains(got, "No known repositories match the current filter.") {
+		t.Fatalf("renderAdminCreateRobotScreen() = %q, want the empty-suggestions message", got)
 	}
 }
 
