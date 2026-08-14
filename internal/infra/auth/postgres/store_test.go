@@ -290,6 +290,65 @@ func TestStoreListUsersExcludesRobotsAndListRobotsReturnsOnlyRobots(t *testing.T
 	}
 }
 
+// TestStoreDeleteUserRemovesUserGrantsAndTokens is a characterization test
+// (registry-acl-v1 robot-deletion follow-up): DeleteUser predates this
+// change and was never covered here. It pins today's behavior — the user
+// row is gone, a subsequent lookup is not-found, and the grant/token rows
+// are genuinely removed too, queried directly rather than trusted from the
+// FK definition alone ("verify, don't trust" discipline used throughout
+// registry-acl-v1).
+func TestStoreDeleteUserRemovesUserGrantsAndTokens(t *testing.T) {
+	t.Parallel()
+
+	store := newSQLiteBackedStore(t)
+	defer store.Close()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	user := domainauth.User{ID: "user-delete", Username: "ci-delete", PasswordHash: domainauth.RobotPasswordHash, IsRobot: true, Enabled: true, CreatedAt: now, UpdatedAt: now}
+	if err := store.UpsertUser(context.Background(), user); err != nil {
+		t.Fatalf("UpsertUser() error = %v", err)
+	}
+
+	repo := regixtrydomain.MustParseRepositoryRef("team/app")
+	grant := domainauth.RepoGrant{UserID: user.ID, Repository: repo, Role: domainauth.RepoRoleWriter, CreatedAt: now, UpdatedAt: now}
+	if err := store.PutRepoGrant(context.Background(), grant); err != nil {
+		t.Fatalf("PutRepoGrant() error = %v", err)
+	}
+
+	token := domainauth.Token{ID: "token-delete", UserID: user.ID, Kind: domainauth.TokenKindAdminCredential, Name: "ci", Accessor: "act_delete", SecretHash: "secret-hash-delete", CreatedAt: now, ExpiresAt: now.Add(domainauth.DefaultAdminTokenTTL)}
+	if err := store.CreateToken(context.Background(), token); err != nil {
+		t.Fatalf("CreateToken() error = %v", err)
+	}
+
+	if err := store.DeleteUser(context.Background(), user.ID); err != nil {
+		t.Fatalf("DeleteUser() error = %v", err)
+	}
+
+	if _, err := store.GetUserByID(context.Background(), user.ID); !domainauth.IsCode(err, domainauth.ErrorCodeNotFound) {
+		t.Fatalf("GetUserByID(after delete) error = %v, want not-found", err)
+	}
+
+	var grantCount int
+	if err := store.db.QueryRowContext(context.Background(), `SELECT COUNT(1) FROM auth_repo_grants WHERE user_id = $1`, user.ID).Scan(&grantCount); err != nil {
+		t.Fatalf("count auth_repo_grants query error = %v", err)
+	}
+	if grantCount != 0 {
+		t.Fatalf("auth_repo_grants rows for %q after delete = %d, want 0", user.ID, grantCount)
+	}
+
+	var tokenCount int
+	if err := store.db.QueryRowContext(context.Background(), `SELECT COUNT(1) FROM auth_tokens WHERE user_id = $1`, user.ID).Scan(&tokenCount); err != nil {
+		t.Fatalf("count auth_tokens query error = %v", err)
+	}
+	if tokenCount != 0 {
+		t.Fatalf("auth_tokens rows for %q after delete = %d, want 0", user.ID, tokenCount)
+	}
+
+	if err := store.DeleteUser(context.Background(), "does-not-exist"); !domainauth.IsCode(err, domainauth.ErrorCodeNotFound) {
+		t.Fatalf("DeleteUser(unknown) error = %v, want not-found", err)
+	}
+}
+
 func TestMigrationsCreateOnlyAuthTables(t *testing.T) {
 	t.Parallel()
 
