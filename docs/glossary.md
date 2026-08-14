@@ -24,6 +24,13 @@
 | Maintenance basics | Small v1-safe operator actions or visibility features that do not expand into a full control plane |
 | Feature tracker branch | The long-lived feature branch that aggregates chained PR slices before merging into `develop` |
 | Chained PR slice | One reviewable work unit in a larger feature sequence |
+| Registry-wide read-only role | A user flag (`is_read_only`) that grants pull access across all repositories independent of per-repository grants |
+| Delegated repo-admin grant | An admin-issued grant that scopes repo-admin authority to exactly one repository, managed via `/admin/v1/repositories/{repo}/grants` |
+| Robot account | A bounded-TTL, revocable non-human account (`is_robot`) permanently excluded from password login and from the default human user listing |
+| Feature runtime kind | The classification of a managed feature as either built-in (runs in-process, e.g. signing) or backed by an external binary/service the feature runtime installs and supervises (e.g. Trivy, Gitleaks) |
+| Scan policy | The stored settings (`scan_settings`) governing whether and how a repository is scanned, including severity thresholds and enablement |
+| Scan run | A single persisted execution of a scanner (Trivy or Gitleaks) against a repository, with its status and result summary |
+| Signing policy | The per-repository fail-closed pull gate configuration requiring a valid cosign signature before a manifest may be pulled, managed via `GET`/`PUT /admin/v1/signing-policy` |
 
 ## Boundary distinctions
 

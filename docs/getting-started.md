@@ -1,6 +1,6 @@
-# Inicio rápido
+# Getting Started
 
-## Ejecución local sin auth
+## Local run without auth
 
 ```bash
 go run ./cmd/regixtry serve \
@@ -9,9 +9,9 @@ go run ./cmd/regixtry serve \
   -storage-root ./data
 ```
 
-`serve` crea `./data/content` para blobs y `./data/metadata.db` para metadata si no se indica `-db`.
+`serve` creates `./data/content` for blobs and `./data/metadata.db` for metadata when `-db` is not given.
 
-## Push y pull
+## Push and pull
 
 ```bash
 docker tag my-image:latest 127.0.0.1:5000/example/my-image:latest
@@ -19,9 +19,9 @@ docker push 127.0.0.1:5000/example/my-image:latest
 docker pull 127.0.0.1:5000/example/my-image:latest
 ```
 
-El daemon Docker debe aceptar el endpoint HTTP local si no se configura TLS. La configuración de esa confianza depende del daemon Docker y no es gestionada por Regixtry.
+The Docker daemon must accept the local HTTP endpoint if TLS is not configured. Configuring that trust is the Docker daemon's responsibility, not something Regixtry manages.
 
-## Verificación
+## Verification
 
 ```bash
 curl -i http://127.0.0.1:5000/v2/
@@ -29,11 +29,11 @@ curl -i 'http://127.0.0.1:5000/v2/_catalog'
 curl -i 'http://127.0.0.1:5000/v2/example/my-image/tags/list'
 ```
 
-Si se habilita auth, `/v2/` normalmente responde `401` hasta completar el challenge Bearer. Ver [authentication.md](authentication.md).
+If auth is enabled, `/v2/` normally responds `401` until the Bearer challenge completes. See [authentication.md](authentication.md).
 
-## Compose local
+## Local Compose
 
-El Compose del repositorio requiere una red externa llamada `dtf-netwok`:
+The repository's Compose setup requires an external network named `dtf-netwok`:
 
 ```bash
 docker network create dtf-netwok
@@ -43,4 +43,4 @@ docker compose up -d regixtry
 printf '%s\n' '<admin-password>' | docker login localhost:${REGISTRY_PORT:-5517} -u admin --password-stdin
 ```
 
-Compose publica el registry en `127.0.0.1:${REGISTRY_PORT:-5517}` y PostgreSQL en `15432`.
+Compose publishes the registry on `127.0.0.1:${REGISTRY_PORT:-5517}` and PostgreSQL on `15432`.

@@ -1,6 +1,8 @@
 # Professional readiness and Trivy roadmap
 
-This document captures the current production-readiness assessment for Regixtry and a proposed optional Trivy integration path.
+> **Historical planning document.** This was written BEFORE Trivy/Gitleaks scanning and cosign signing were implemented. It proposed an env-var-based configuration model (`REGISTRY_TRIVY_ENABLED`, `REGISTRY_TRIVY_MODE=local|server`) and a set of new `scan_settings`/`scan_runs` tables. What actually shipped is different in shape: a SQLite-row-based `scan_settings`/scan-run persistence model driven through the general feature-registry pattern (`internal/app/scanning/`, `internal/infra/scanning/trivy/`, `internal/infra/scanning/gitleaks/`), managed via the `feature` CLI subcommand and `/admin/v1` feature routes rather than dedicated Trivy-only env vars or a `local|server` mode toggle. The catalog scope bug described below has also since been fixed. See `docs/roadmap.md` and `docs/documentation-audit.md` for current status; treat the sections below as historical context, not a live plan. Corrections are inlined where the delta is small; larger proposals are left as-is to preserve the original reasoning, but must not be read as an accurate description of the shipped system.
+
+This document captures the production-readiness assessment for Regixtry *as it stood before the Trivy/Gitleaks/signing feature system was built*, and the proposed optional Trivy integration path that preceded it.
 
 ## Current verified state
 
@@ -13,9 +15,7 @@ This document captures the current production-readiness assessment for Regixtry 
 - The current runtime is single-tenant and single-node.
 - The current job runner is inline only. There is no persistent worker or async queue.
 - `_catalog` visibility is filtered by grants in application code.
-- There is a real catalog scope mismatch bug:
-  - challenge emits `registry:catalog:*`
-  - scope parser expects `regixtry:catalog:*`
+- ~~There is a real catalog scope mismatch bug: challenge emits `registry:catalog:*`, scope parser expects `regixtry:catalog:*`.~~ **Fixed.** `internal/ports/regixtry.go`'s `Action.Scope()` now emits `"regixtry:catalog:*"` for `ActionCatalog` (verified against current source), matching the `scopeTypeRegixtry` constant in `internal/domain/auth/scope.go`. This bug is resolved.
 
 ## What is still missing for professional use
 
@@ -26,7 +26,7 @@ This document captures the current production-readiness assessment for Regixtry 
    - multi-tenant isolation
    - audit trail
    - token lifecycle cleanup
-   - scope/challenge consistency
+   - ~~scope/challenge consistency~~ (fixed — see the corrected note under "Current verified state" above)
 
 2. Operational maturity
    - dedicated health endpoint
@@ -221,12 +221,16 @@ Trivy cache/DB should live under storage root in local mode.
 
 ### Track A — professional readiness first
 
-1. Fix catalog scope mismatch bug
-2. Add health endpoint + metrics baseline
-3. Add PR CI (test/build/lint/smoke)
-4. Add migration discipline and operational backup guidance
+1. ~~Fix catalog scope mismatch bug~~ — done.
+2. Add health endpoint + metrics baseline — still open.
+3. Add PR CI (test/build/lint/smoke) — still open.
+4. Add migration discipline and operational backup guidance — still open.
 
 ### Track B — Trivy MVP
+
+This track shipped, though not through the exact env-var/`local|server` shape proposed below — see the banner at the top of this document. What actually shipped: Trivy and Gitleaks as managed features under `internal/app/scanning/` and `internal/infra/scanning/`, with SQLite-backed `scan_settings`/scan-run persistence, `feature` CLI + `/admin/v1` administration, and TUI scan-history views. Cosign signature verification (`internal/domain/signing/`) shipped alongside it with its own fail-closed `/admin/v1/signing-policy` gate — a track this document did not originally scope.
+
+Original MVP plan (for historical reference):
 
 1. Add optional install/runtime config for Trivy
 2. Add domain/service seam for scan requests/results
