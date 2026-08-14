@@ -156,6 +156,73 @@ func TestStoreDeleteManifestByDigestReturnsNotFoundWithNoManifest(t *testing.T) 
 	}
 }
 
+// TestStoreDeleteTagRemovesOnlyNamedTagLeavingManifestAndSiblingsIntact
+// covers manifest-deletion/spec.md's "Delete By Tag Untags Without Touching
+// The Manifest" requirement: deleting one tag removes only that tags row;
+// the manifest and every other tag pointing at it must still resolve.
+func TestStoreDeleteTagRemovesOnlyNamedTagLeavingManifestAndSiblingsIntact(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+	ctx := context.Background()
+
+	repo := domain.MustParseRepositoryRef("library/alpine")
+	blobs := []domain.Descriptor{
+		{MediaType: "application/vnd.oci.image.layer.v1.tar", Digest: domain.DigestFromBytes([]byte("layer-1")), Size: int64(len("layer-1"))},
+	}
+	manifest, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", []byte(`{"schemaVersion":2}`), nil, blobs, nil, nil)
+	if err != nil {
+		t.Fatalf("NewManifest() error = %v", err)
+	}
+
+	for _, tag := range []string{"a", "b"} {
+		if err := store.PublishManifest(ctx, "tenant-a", repo, tag, manifest, blobs); err != nil {
+			t.Fatalf("PublishManifest(%s) error = %v", tag, err)
+		}
+	}
+
+	if err := store.DeleteTag(ctx, "tenant-a", repo, "a"); err != nil {
+		t.Fatalf("DeleteTag() error = %v", err)
+	}
+
+	if _, err := store.ResolveManifest(ctx, "tenant-a", repo, "a"); !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("ResolveManifest(a, after delete) error = %v, want ErrorCodeNotFound", err)
+	}
+
+	resolvedByTag, err := store.ResolveManifest(ctx, "tenant-a", repo, "b")
+	if err != nil {
+		t.Fatalf("ResolveManifest(b) error = %v, want success (sibling tag survives)", err)
+	}
+	if resolvedByTag.Digest != manifest.Digest {
+		t.Fatalf("resolvedByTag.Digest = %s, want %s", resolvedByTag.Digest, manifest.Digest)
+	}
+
+	resolvedByDigest, err := store.ResolveManifest(ctx, "tenant-a", repo, manifest.Digest.String())
+	if err != nil {
+		t.Fatalf("ResolveManifest(digest) error = %v, want success (manifest survives)", err)
+	}
+	if resolvedByDigest.Digest != manifest.Digest {
+		t.Fatalf("resolvedByDigest.Digest = %s, want %s", resolvedByDigest.Digest, manifest.Digest)
+	}
+}
+
+// TestStoreDeleteTagReturnsNotFoundWithNoSuchTag covers manifest-deletion/
+// spec.md's "Unknown tag returns MANIFEST_UNKNOWN" scenario at the store
+// layer.
+func TestStoreDeleteTagReturnsNotFoundWithNoSuchTag(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	repo := domain.MustParseRepositoryRef("library/alpine")
+	err := store.DeleteTag(context.Background(), "tenant-a", repo, "absent")
+	if !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("DeleteTag(absent) error = %v, want ErrorCodeNotFound", err)
+	}
+}
+
 func TestStorePersistsUploadMetadataAcrossReopen(t *testing.T) {
 	t.Parallel()
 

@@ -101,7 +101,7 @@ Chain strategy: pending
 - [x] 2.4 GREEN `store.go`: `DeleteManifestByDigest` — SELECT tag names
       in-transaction before DELETE; rely on `ON DELETE CASCADE`; zero rows
       affected → `NewNotFoundError`.
-- [ ] 2.5 RED `store_test.go`: `DeleteTag` removes only the named row;
+- [x] 2.5 RED `store_test.go`: `DeleteTag` removes only the named row;
       manifest and sibling tag still resolve; absent tag returns
       `NotFound` — table-driven.
 - [ ] 2.6 GREEN `store.go`: `DeleteTag` — DELETE by
