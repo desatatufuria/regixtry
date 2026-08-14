@@ -85,3 +85,67 @@ func TestPrincipalHasGrantedRepositoryAccessReadOnlyProbe(t *testing.T) {
 		})
 	}
 }
+
+// TestPrincipalHasDeleteAccess pins design.md Decision 5: HasDeleteAccess
+// does NOT reuse HasWriteAccess (which checks Scope.AllowsPush and would
+// wrongly let a pull,push-scoped token pass). It requires both a
+// repo-writer-or-higher role grant AND a scope that explicitly carries the
+// delete action (manifest-blob-delete tasks.md 1.7).
+func TestPrincipalHasDeleteAccess(t *testing.T) {
+	t.Parallel()
+
+	writerGrant := RepoGrant{Repository: regixtrydomain.MustParseRepositoryRef("team/app"), Role: RepoRoleWriter}
+	readerGrant := RepoGrant{Repository: regixtrydomain.MustParseRepositoryRef("team/app"), Role: RepoRoleReader}
+
+	deleteScope := Scope{Type: "repository", Name: "team/app", Actions: []string{"pull", "push", "delete"}, Canonical: "repository:team/app:pull,push,delete"}
+	pushOnlyScope := Scope{Type: "repository", Name: "team/app", Actions: []string{"pull", "push"}, Canonical: "repository:team/app:pull,push"}
+
+	tests := []struct {
+		name       string
+		principal  Principal
+		repository string
+		want       bool
+	}{
+		{
+			name:       "writer with delete scope passes",
+			principal:  Principal{Grants: []RepoGrant{writerGrant}, Scopes: []Scope{deleteScope}},
+			repository: "team/app",
+			want:       true,
+		},
+		{
+			name:       "writer with pull,push scope only fails",
+			principal:  Principal{Grants: []RepoGrant{writerGrant}, Scopes: []Scope{pushOnlyScope}},
+			repository: "team/app",
+			want:       false,
+		},
+		{
+			name:       "reader with delete scope fails",
+			principal:  Principal{Grants: []RepoGrant{readerGrant}, Scopes: []Scope{deleteScope}},
+			repository: "team/app",
+			want:       false,
+		},
+		{
+			name:       "admin with delete scope passes",
+			principal:  Principal{IsAdmin: true, Scopes: []Scope{deleteScope}},
+			repository: "team/app",
+			want:       true,
+		},
+		{
+			name:       "read-only fails even with delete scope",
+			principal:  Principal{IsReadOnly: true, Scopes: []Scope{deleteScope}},
+			repository: "team/app",
+			want:       false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := tt.principal.HasDeleteAccess(tt.repository)
+			if got != tt.want {
+				t.Fatalf("HasDeleteAccess(%q) = %v, want %v", tt.repository, got, tt.want)
+			}
+		})
+	}
+}
