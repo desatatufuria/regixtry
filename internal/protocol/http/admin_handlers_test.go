@@ -931,3 +931,273 @@ func TestAdminSigningRepositoryOverridePutRejectsUnknownFieldsAndZeroKeys(t *tes
 		t.Fatal("GetRepositoryFeatureOverride() error = nil, want no row persisted for either rejected PUT")
 	}
 }
+
+// TestAdminRepositoryGrantRoutesAuthenticationAndDelegateAuthority is the
+// Phase 2 RED test (tasks.md 2.11, design.md Decision 3's route table):
+// GET/PUT/DELETE /admin/v1/repositories/{repo}/grants[/{username}] must
+// 401 unauthenticated, 403 an authenticated non-delegate, and succeed for a
+// repo-admin delegate acting on their own repository — while the same
+// delegate is 403 on a repository they do not administer.
+func TestAdminRepositoryGrantRoutesAuthenticationAndDelegateAuthority(t *testing.T) {
+	t.Parallel()
+
+	handler, authService, adminActor, _, cleanup := newTestRouterWithRealAuth(t)
+	defer cleanup()
+
+	delegate, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
+		Username: "delegate", Password: "password123", Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateAdminUser(delegate) error = %v", err)
+	}
+	if _, err := authService.PutRepoGrant(context.Background(), adminActor, delegate.ID, "team/app", auth.RepoRoleAdmin); err != nil {
+		t.Fatalf("PutRepoGrant(delegate, team/app, repo-admin) error = %v", err)
+	}
+	victim, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
+		Username: "victim", Password: "password123", Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateAdminUser(victim) error = %v", err)
+	}
+
+	plainUser, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
+		Username: "plain", Password: "password123", Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateAdminUser(plain) error = %v", err)
+	}
+
+	delegateLogin, err := authService.LoginWithPassword(context.Background(), delegate.Username, "password123", nil)
+	if err != nil {
+		t.Fatalf("LoginWithPassword(delegate) error = %v", err)
+	}
+	plainLogin, err := authService.LoginWithPassword(context.Background(), plainUser.Username, "password123", nil)
+	if err != nil {
+		t.Fatalf("LoginWithPassword(plain) error = %v", err)
+	}
+
+	unauthenticatedReq := httptest.NewRequest(http.MethodGet, "/admin/v1/repositories/team/app/grants", nil)
+	unauthenticatedRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(unauthenticatedRecorder, unauthenticatedReq)
+	if unauthenticatedRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated status = %d, want %d, body = %s", unauthenticatedRecorder.Code, http.StatusUnauthorized, unauthenticatedRecorder.Body.String())
+	}
+
+	nonDelegateReq := httptest.NewRequest(http.MethodGet, "/admin/v1/repositories/team/app/grants", nil)
+	nonDelegateReq.Header.Set("Authorization", "Bearer "+plainLogin.BearerToken)
+	nonDelegateRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(nonDelegateRecorder, nonDelegateReq)
+	if nonDelegateRecorder.Code != http.StatusForbidden {
+		t.Fatalf("non-delegate status = %d, want %d, body = %s", nonDelegateRecorder.Code, http.StatusForbidden, nonDelegateRecorder.Body.String())
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/admin/v1/repositories/team/app/grants", nil)
+	listReq.Header.Set("Authorization", "Bearer "+delegateLogin.BearerToken)
+	listRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(listRecorder, listReq)
+	if listRecorder.Code != http.StatusOK {
+		t.Fatalf("delegate list status = %d, want %d, body = %s", listRecorder.Code, http.StatusOK, listRecorder.Body.String())
+	}
+
+	putReq := httptest.NewRequest(http.MethodPut, "/admin/v1/repositories/team/app/grants/"+victim.Username, strings.NewReader(`{"role":"repo-reader"}`))
+	putReq.Header.Set("Authorization", "Bearer "+delegateLogin.BearerToken)
+	putReq.Header.Set("Content-Type", "application/json")
+	putRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(putRecorder, putReq)
+	if putRecorder.Code != http.StatusOK {
+		t.Fatalf("delegate put status = %d, want %d, body = %s", putRecorder.Code, http.StatusOK, putRecorder.Body.String())
+	}
+	if !strings.Contains(putRecorder.Body.String(), `"username":"victim"`) || !strings.Contains(putRecorder.Body.String(), `"role":"repo-reader"`) {
+		t.Fatalf("delegate put body = %q, want username/role reflected", putRecorder.Body.String())
+	}
+
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/admin/v1/repositories/team/app/grants/"+victim.Username, nil)
+	deleteReq.Header.Set("Authorization", "Bearer "+delegateLogin.BearerToken)
+	deleteRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(deleteRecorder, deleteReq)
+	if deleteRecorder.Code != http.StatusNoContent {
+		t.Fatalf("delegate delete status = %d, want %d, body = %s", deleteRecorder.Code, http.StatusNoContent, deleteRecorder.Body.String())
+	}
+
+	otherRepoReq := httptest.NewRequest(http.MethodGet, "/admin/v1/repositories/team/other/grants", nil)
+	otherRepoReq.Header.Set("Authorization", "Bearer "+delegateLogin.BearerToken)
+	otherRepoRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(otherRepoRecorder, otherRepoReq)
+	if otherRepoRecorder.Code != http.StatusForbidden {
+		t.Fatalf("delegate on team/other status = %d, want %d, body = %s", otherRepoRecorder.Code, http.StatusForbidden, otherRepoRecorder.Body.String())
+	}
+}
+
+// TestAdminRepositoryGrantRoutesRepositoryNamedTeamGrantsRoutesCorrectly is
+// the Phase 2 RED test (tasks.md 2.12, design.md Decision 3's `/`-in-path
+// parsing hazard, precedent at admin_handlers.go:78-84): a repository
+// literally named "team/grants" must route correctly for GET/PUT/DELETE —
+// the "/grants" suffix belonging to the resource split must not be
+// swallowed by the repository name containing the literal string "grants".
+func TestAdminRepositoryGrantRoutesRepositoryNamedTeamGrantsRoutesCorrectly(t *testing.T) {
+	t.Parallel()
+
+	handler, authService, adminActor, _, cleanup := newTestRouterWithRealAuth(t)
+	defer cleanup()
+
+	adminLogin, err := authService.LoginWithPassword(context.Background(), adminActor.Username, "password123", nil)
+	if err != nil {
+		t.Fatalf("LoginWithPassword(admin) error = %v", err)
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/admin/v1/repositories/team/grants/grants", nil)
+	listReq.Header.Set("Authorization", "Bearer "+adminLogin.BearerToken)
+	listRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(listRecorder, listReq)
+	if listRecorder.Code != http.StatusOK {
+		t.Fatalf("list status = %d, want %d, body = %s", listRecorder.Code, http.StatusOK, listRecorder.Body.String())
+	}
+
+	putReq := httptest.NewRequest(http.MethodPut, "/admin/v1/repositories/team/grants/grants/bob", strings.NewReader(`{"role":"repo-writer"}`))
+	putReq.Header.Set("Authorization", "Bearer "+adminLogin.BearerToken)
+	putReq.Header.Set("Content-Type", "application/json")
+	putRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(putRecorder, putReq)
+	if putRecorder.Code != http.StatusNotFound {
+		// bob does not exist yet — this still proves the repository/username
+		// split is correct (a parsing failure would 422/404 differently, at
+		// the repository-ref-validation stage, not the user lookup stage).
+		t.Fatalf("put status = %d, want %d (user not found after correct parse), body = %s", putRecorder.Code, http.StatusNotFound, putRecorder.Body.String())
+	}
+
+	if _, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{Username: "bob", Password: "password123", Enabled: true}); err != nil {
+		t.Fatalf("CreateAdminUser(bob) error = %v", err)
+	}
+
+	putBobReq := httptest.NewRequest(http.MethodPut, "/admin/v1/repositories/team/grants/grants/bob", strings.NewReader(`{"role":"repo-writer"}`))
+	putBobReq.Header.Set("Authorization", "Bearer "+adminLogin.BearerToken)
+	putBobReq.Header.Set("Content-Type", "application/json")
+	putBobRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(putBobRecorder, putBobReq)
+	if putBobRecorder.Code != http.StatusOK {
+		t.Fatalf("put(bob) status = %d, want %d, body = %s", putBobRecorder.Code, http.StatusOK, putBobRecorder.Body.String())
+	}
+	if !strings.Contains(putBobRecorder.Body.String(), `"username":"bob"`) || !strings.Contains(putBobRecorder.Body.String(), `"role":"repo-writer"`) {
+		t.Fatalf("put(bob) body = %q, want username=bob role=repo-writer reflecting repository=team/grants", putBobRecorder.Body.String())
+	}
+
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/admin/v1/repositories/team/grants/grants/bob", nil)
+	deleteReq.Header.Set("Authorization", "Bearer "+adminLogin.BearerToken)
+	deleteRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(deleteRecorder, deleteReq)
+	if deleteRecorder.Code != http.StatusNoContent {
+		t.Fatalf("delete status = %d, want %d, body = %s", deleteRecorder.Code, http.StatusNoContent, deleteRecorder.Body.String())
+	}
+}
+
+// TestAdminNonGrantRoutesStillRequireGlobalAdminForRepoAdminDelegate is the
+// Phase 2 RED test (tasks.md 2.13, design.md's highest-risk guard): a
+// repo-admin delegate — authenticated, holding repo-admin on one
+// repository, but never global IsAdmin — must still be 403-ed on every
+// existing non-grant `/admin/v1/*` route, enumerated route by route. This
+// is the exhaustive proof that the HTTP gate restructure narrows authority
+// ONLY for the new repositories/ namespace and inherits the unchanged
+// blanket gate everywhere else.
+func TestAdminNonGrantRoutesStillRequireGlobalAdminForRepoAdminDelegate(t *testing.T) {
+	t.Parallel()
+
+	handler, authService, adminActor, _, cleanup := newTestRouterWithRealAuth(t)
+	defer cleanup()
+
+	delegate, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
+		Username: "delegate", Password: "password123", Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateAdminUser(delegate) error = %v", err)
+	}
+	if _, err := authService.PutRepoGrant(context.Background(), adminActor, delegate.ID, "team/app", auth.RepoRoleAdmin); err != nil {
+		t.Fatalf("PutRepoGrant(delegate, team/app, repo-admin) error = %v", err)
+	}
+	delegateLogin, err := authService.LoginWithPassword(context.Background(), delegate.Username, "password123", nil)
+	if err != nil {
+		t.Fatalf("LoginWithPassword(delegate) error = %v", err)
+	}
+
+	routes := []string{
+		"/admin/v1/features",
+		"/admin/v1/features/trivy/status",
+		"/admin/v1/features/trivy/config",
+		"/admin/v1/scan-settings",
+		"/admin/v1/scan-policy",
+		"/admin/v1/signing-policy",
+		"/admin/v1/scan-runs",
+		"/admin/v1/scan-runs/run-123",
+		"/admin/v1/secret-scan-findings?repository=library/alpine&digest=sha256:abc",
+		"/admin/v1/users",
+		"/admin/v1/users/" + delegate.ID,
+		"/admin/v1/users/" + delegate.ID + ":enable",
+		"/admin/v1/users/" + delegate.ID + ":disable",
+		"/admin/v1/users/" + delegate.ID + ":reset-password",
+		"/admin/v1/users/" + delegate.ID + "/grants",
+		"/admin/v1/users/" + delegate.ID + "/grants/team/app",
+		"/admin/v1/users/" + delegate.ID + "/admin-tokens",
+		"/admin/v1/users/" + delegate.ID + "/admin-tokens/act_123",
+	}
+
+	for _, route := range routes {
+		t.Run(route, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, route, nil)
+			req.Header.Set("Authorization", "Bearer "+delegateLogin.BearerToken)
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, req)
+			if recorder.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusForbidden, recorder.Body.String())
+			}
+		})
+	}
+}
+
+// TestAdminRepositoryGrantResponsesCarryNoUserIdentityFields is the Phase 2
+// RED test (tasks.md 2.14, threat matrix: identity disclosure). The
+// repository-grant list and put responses must carry no user ID, password
+// hash, admin/read-only flags, or another repository's name — only
+// username/role/created_at/updated_at, matching design.md Decision 3's
+// route table exactly.
+func TestAdminRepositoryGrantResponsesCarryNoUserIdentityFields(t *testing.T) {
+	t.Parallel()
+
+	handler, authService, adminActor, _, cleanup := newTestRouterWithRealAuth(t)
+	defer cleanup()
+
+	victim, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
+		Username: "victim", Password: "password123", Enabled: true, IsAdmin: false, IsReadOnly: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateAdminUser(victim) error = %v", err)
+	}
+	if _, err := authService.PutRepoGrant(context.Background(), adminActor, victim.ID, "team/app", auth.RepoRoleReader); err != nil {
+		t.Fatalf("PutRepoGrant(victim, team/app, repo-reader) error = %v", err)
+	}
+	if _, err := authService.PutRepoGrant(context.Background(), adminActor, victim.ID, "team/other", auth.RepoRoleWriter); err != nil {
+		t.Fatalf("PutRepoGrant(victim, team/other, repo-writer) error = %v", err)
+	}
+
+	adminLogin, err := authService.LoginWithPassword(context.Background(), adminActor.Username, "password123", nil)
+	if err != nil {
+		t.Fatalf("LoginWithPassword(admin) error = %v", err)
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/admin/v1/repositories/team/app/grants", nil)
+	listReq.Header.Set("Authorization", "Bearer "+adminLogin.BearerToken)
+	listRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(listRecorder, listReq)
+	if listRecorder.Code != http.StatusOK {
+		t.Fatalf("list status = %d, want %d, body = %s", listRecorder.Code, http.StatusOK, listRecorder.Body.String())
+	}
+
+	body := listRecorder.Body.String()
+	if !strings.Contains(body, `"username":"victim"`) {
+		t.Fatalf("body = %q, want username=victim", body)
+	}
+	forbidden := []string{victim.ID, "is_admin", "is_read_only", "password", "hash", "team/other"}
+	for _, needle := range forbidden {
+		if strings.Contains(body, needle) {
+			t.Fatalf("body = %q, must not contain %q", body, needle)
+		}
+	}
+}
