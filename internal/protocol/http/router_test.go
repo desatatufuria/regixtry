@@ -2139,3 +2139,15 @@ func (f fakeAuthService) PutAdminRepositoryGrant(context.Context, domainauth.Pri
 func (f fakeAuthService) DeleteAdminRepositoryGrant(context.Context, domainauth.Principal, string, string) error {
 	return nil
 }
+func (f fakeAuthService) CreateRobot(context.Context, domainauth.Principal, ports.CreateRobotInput) (ports.CreatedRobot, error) {
+	return ports.CreatedRobot{}, nil
+}
+func (f fakeAuthService) ListRobots(context.Context, domainauth.Principal) ([]domainauth.User, error) {
+	return nil, nil
+}
+func (f fakeAuthService) CreateAdminRobot(context.Context, domainauth.Principal, ports.AdminCreateRobotInput) (ports.AdminCreatedRobot, error) {
+	return ports.AdminCreatedRobot{}, nil
+}
+func (f fakeAuthService) ListAdminRobots(context.Context, domainauth.Principal) ([]ports.AdminRobot, error) {
+	return nil, nil
+}

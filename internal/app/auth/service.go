@@ -767,6 +767,59 @@ func (s *Service) ListRobots(ctx context.Context, actor domainauth.Principal) ([
 	return s.store.ListRobots(ctx)
 }
 
+func (s *Service) CreateAdminRobot(ctx context.Context, actor domainauth.Principal, input ports.AdminCreateRobotInput) (ports.AdminCreatedRobot, error) {
+	created, err := s.CreateRobot(ctx, actor, ports.CreateRobotInput{
+		Name:       input.Name,
+		Repository: input.Repository,
+		Role:       input.Role,
+		TTL:        input.TTL,
+	})
+	if err != nil {
+		return ports.AdminCreatedRobot{}, err
+	}
+
+	return ports.AdminCreatedRobot{
+		Robot:     toAdminRobot(created.User, created.Grant),
+		Secret:    created.Secret,
+		Accessor:  created.Accessor,
+		ExpiresAt: created.ExpiresAt,
+	}, nil
+}
+
+func (s *Service) ListAdminRobots(ctx context.Context, actor domainauth.Principal) ([]ports.AdminRobot, error) {
+	robots, err := s.ListRobots(ctx, actor)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]ports.AdminRobot, 0, len(robots))
+	for _, robot := range robots {
+		grants, err := s.store.ListRepoGrants(ctx, robot.ID)
+		if err != nil {
+			return nil, err
+		}
+
+		var grant domainauth.RepoGrant
+		if len(grants) > 0 {
+			grant = grants[0]
+		}
+		result = append(result, toAdminRobot(robot, grant))
+	}
+
+	return result, nil
+}
+
+func toAdminRobot(user domainauth.User, grant domainauth.RepoGrant) ports.AdminRobot {
+	return ports.AdminRobot{
+		ID:         user.ID,
+		Username:   user.Username,
+		Repository: grant.Repository.String(),
+		Role:       grant.Role,
+		Enabled:    user.Enabled,
+		CreatedAt:  user.CreatedAt,
+	}
+}
+
 func toAdminUser(user domainauth.User) ports.AdminUser {
 	return ports.AdminUser{
 		ID:         user.ID,
