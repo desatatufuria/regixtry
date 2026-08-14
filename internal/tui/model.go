@@ -3236,16 +3236,20 @@ func nextGrantRole(current domainauth.RepoRole) domainauth.RepoRole {
 
 func isAdminScreen(current screen) bool {
 	switch current {
-	case screenAdminLogin, screenAdminAuthenticating, screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken:
+	case screenAdminLogin, screenAdminAuthenticating, screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken, screenRepoAdminGrants, screenRepoAdminAddGrant:
 		return true
 	default:
 		return false
 	}
 }
 
+// isAdminPrincipalScreen deliberately excludes screenRepoAdminAddGrant
+// (a free-text username form), mirroring the existing screenAdminAddGrant
+// exclusion: this gates the bare 'q' quit key, and including a free-text
+// form here would make typing "q" as part of a username quit the program.
 func isAdminPrincipalScreen(current screen) bool {
 	switch current {
-	case screenAdminLogin, screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminEditUserGrants, screenAdminEditUserTokens:
+	case screenAdminLogin, screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminEditUserGrants, screenAdminEditUserTokens, screenRepoAdminGrants:
 		return true
 	default:
 		return false
@@ -3260,7 +3264,7 @@ func (m Model) canLogoutAdminFromCurrentScreen() bool {
 	switch m.screen {
 	case screenAdminUsers:
 		return !m.adminView.UserSearchActive
-	case screenAdminFeatures, screenAdminEditUser, screenAdminEditUserGrants, screenAdminEditUserTokens:
+	case screenAdminFeatures, screenAdminEditUser, screenAdminEditUserGrants, screenAdminEditUserTokens, screenRepoAdminGrants:
 		return true
 	default:
 		return false
