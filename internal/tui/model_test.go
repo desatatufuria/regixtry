@@ -3756,6 +3756,12 @@ type fakeAdminClient struct {
 	disableUser ports.AdminUser
 	disableErr  error
 
+	// deleteRobot* backs the registry-acl-v1 robot-deletion follow-up's
+	// AdminClient contract (PR 4, backend-only -- no key/UI wiring calls
+	// this yet, so no dedicated call-count assertions land until PR 5).
+	deleteRobotErr        error
+	lastDeleteRobotUserID string
+
 	loginCalls                  int
 	listFeaturesCalls           int
 	getFeatureCalls             int
@@ -4101,6 +4107,11 @@ func (f *fakeAdminClient) DeleteUserGrant(_ context.Context, _ AdminSession, use
 	f.lastDeleteGrantUserID = userID
 	f.lastDeleteGrantRepo = repository
 	return f.deleteGrantErr
+}
+
+func (f *fakeAdminClient) DeleteRobot(_ context.Context, _ AdminSession, userID string) error {
+	f.lastDeleteRobotUserID = userID
+	return f.deleteRobotErr
 }
 
 func (f *fakeAdminClient) ListRepositoryGrants(_ context.Context, _ AdminSession, repository string) ([]ports.AdminRepositoryGrant, error) {

@@ -65,6 +65,10 @@ type AdminClient interface {
 	ListRepositoryOverrides(ctx context.Context, session AdminSession, feature string) ([]ports.RepositoryOverrideDetails, error)
 	SetRepositoryOverride(ctx context.Context, session AdminSession, repository string, feature string, input ports.RepositoryOverrideDetails) (ports.RepositoryOverrideDetails, error)
 	ClearRepositoryOverride(ctx context.Context, session AdminSession, repository string, feature string) error
+	// DeleteRobot backs the robot-accounts hard-delete route (registry-acl-v1
+	// follow-up). Added on PR 4 (backend-only) as part of the API contract;
+	// the TUI key/UI wiring lands on PR 5.
+	DeleteRobot(ctx context.Context, session AdminSession, userID string) error
 }
 
 type HTTPAdminClient struct {
@@ -477,6 +481,11 @@ func (c *HTTPAdminClient) SetRepositoryOverride(ctx context.Context, session Adm
 // DeleteUserGrant (design.md Decision 8).
 func (c *HTTPAdminClient) ClearRepositoryOverride(ctx context.Context, session AdminSession, repository string, feature string) error {
 	return c.requestNoContent(ctx, stdhttp.MethodDelete, session, repositoryOverridePath(feature, repository), nil, stdhttp.StatusNoContent)
+}
+
+func (c *HTTPAdminClient) DeleteRobot(ctx context.Context, session AdminSession, userID string) error {
+	path := "/admin/v1/robots/" + url.PathEscape(strings.TrimSpace(userID))
+	return c.requestNoContent(ctx, stdhttp.MethodDelete, session, path, nil, stdhttp.StatusNoContent)
 }
 
 func (c *HTTPAdminClient) EnableUser(ctx context.Context, session AdminSession, userID string) (ports.AdminUser, error) {
