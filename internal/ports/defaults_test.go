@@ -98,7 +98,7 @@ func TestActionScope(t *testing.T) {
 		{name: "pull", action: Action{Verb: ActionPull, Repository: "team/app"}, want: "repository:team/app:pull"},
 		{name: "inspect", action: Action{Verb: ActionInspect, Repository: "team/app"}, want: "repository:team/app:pull"},
 		{name: "push includes pull", action: Action{Verb: ActionPush, Repository: "team/app"}, want: "repository:team/app:pull,push"},
-		{name: "catalog", action: Action{Verb: ActionCatalog}, want: "registry:catalog:*"},
+		{name: "catalog", action: Action{Verb: ActionCatalog}, want: "regixtry:catalog:*"},
 	}
 
 	for _, tt := range tests {

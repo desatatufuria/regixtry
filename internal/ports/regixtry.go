@@ -558,7 +558,7 @@ func (a Action) WithPrincipal(principal *domainauth.Principal) Action {
 func (a Action) Scope() string {
 	switch a.Verb {
 	case ActionCatalog:
-		return "registry:catalog:*"
+		return "regixtry:catalog:*"
 	case ActionPull, ActionInspect:
 		if a.Repository == "" {
 			return ""
