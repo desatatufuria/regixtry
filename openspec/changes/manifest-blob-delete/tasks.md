@@ -137,7 +137,7 @@ Chain strategy: pending
       `domain.ErrorCodeNotFound` through the service. (Already GREEN —
       the store's typed NotFound propagates unchanged, `err != nil` returns
       it verbatim.)
-- [ ] 3.8 Confirm Phase 3 GREEN (Unit 3 focused test command).
+- [x] 3.8 Confirm Phase 3 GREEN (Unit 3 focused test command).
 
 ## Phase 4: HTTP Layer, Config, Docs (PR 4, depends on Phases 1–3)
 
