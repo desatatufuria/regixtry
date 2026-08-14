@@ -677,6 +677,45 @@ func TestModelAdminIntentRoutesPostLoginToUsersWhenNotSet(t *testing.T) {
 	}
 }
 
+// TestRepoAdminGrantsScreensJoinAdminScreenSets is the Phase 3 task 3.3 RED
+// test (design.md Decision 7): screenRepoAdminGrants/screenRepoAdminAddGrant
+// must route through updateAdminKey (isAdminScreen) so the shipped
+// session-expiry/logout plumbing covers them. Only screenRepoAdminGrants — a
+// read/list screen, like its screenAdminEditUserGrants precedent — joins
+// isAdminPrincipalScreen and canLogoutAdminFromCurrentScreen;
+// screenRepoAdminAddGrant is a free-text username form, like its
+// screenAdminAddGrant precedent, so it is deliberately excluded from both
+// (isAdminPrincipalScreen gates the bare 'q' quit key — including it would
+// make typing "q" as part of a username quit the whole program).
+func TestRepoAdminGrantsScreensJoinAdminScreenSets(t *testing.T) {
+	t.Parallel()
+
+	if !isAdminScreen(screenRepoAdminGrants) {
+		t.Fatalf("isAdminScreen(screenRepoAdminGrants) = false, want true")
+	}
+	if !isAdminScreen(screenRepoAdminAddGrant) {
+		t.Fatalf("isAdminScreen(screenRepoAdminAddGrant) = false, want true")
+	}
+	if !isAdminPrincipalScreen(screenRepoAdminGrants) {
+		t.Fatalf("isAdminPrincipalScreen(screenRepoAdminGrants) = false, want true")
+	}
+	if isAdminPrincipalScreen(screenRepoAdminAddGrant) {
+		t.Fatalf("isAdminPrincipalScreen(screenRepoAdminAddGrant) = true, want false (free-text username form)")
+	}
+}
+
+func TestCanLogoutFromRepoAdminGrantsScreen(t *testing.T) {
+	t.Parallel()
+
+	model := newAdminReadyModel(t, &fakeAdminClient{})
+	model.adminAuth = adminAuthStateAuthenticated
+	model.screen = screenRepoAdminGrants
+
+	if !model.canLogoutAdminFromCurrentScreen() {
+		t.Fatalf("canLogoutAdminFromCurrentScreen() = false, want true on screenRepoAdminGrants")
+	}
+}
+
 func TestModelCreateAdminUserRefreshesUsers(t *testing.T) {
 	t.Parallel()
 
