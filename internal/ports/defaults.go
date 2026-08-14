@@ -117,6 +117,10 @@ func (c principalAccessController) Authorize(_ context.Context, action Action) e
 		if action.Repository != "" && action.Principal.HasWriteAccess(action.Repository) {
 			return nil
 		}
+	case ActionDelete:
+		if action.Repository != "" && action.Principal.HasDeleteAccess(action.Repository) {
+			return nil
+		}
 	}
 
 	return domain.NewUnauthorizedError("authorization required")
