@@ -290,6 +290,15 @@ func (s *Service) LoginWithPassword(ctx context.Context, username string, passwo
 	if err != nil {
 		return ports.LoginResult{}, err
 	}
+	// design.md Decision 6: the guard sits here, immediately after
+	// getActiveUserByUsername, and NOT inside that helper — it is shared
+	// with LoginWithPreissuedToken, the robot's only working credential
+	// path. A robot's RobotPasswordHash sentinel (user.go) independently
+	// blocks bcrypt below, but this per-attempt guard is a second,
+	// permanent layer that does not depend on the stored hash's shape.
+	if user.IsRobot {
+		return ports.LoginResult{}, domainauth.NewInvalidCredentialsError()
+	}
 	if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)) != nil {
 		return ports.LoginResult{}, domainauth.NewInvalidCredentialsError()
 	}
