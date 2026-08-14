@@ -165,6 +165,32 @@ Chain strategy: pending
 - [x] 3.10 GREEN: wire the key handler and load/mutate commands (`model.go`).
 - [x] 3.11 Confirm Phase 3 GREEN (see Unit 3 focused test command).
 
+### Remediation: task 3.5 edit-path gap (post sdd-verify, CRITICAL)
+
+`nextDelegateGrantRole` (the cycle used by "n" Add Grant) was exhaustive and
+correct, but `updateRepoAdminGrantsKey`'s "e" (edit) handler copied an
+existing grant's `Role` unfiltered into the form. `ListRepositoryGrants` is
+scoped to a repository but not filtered by role, so a delegate's own grants
+list can legitimately contain a peer's `repo-admin` grant — pressing "e" on
+that row populated `screenRepoAdminAddGrant` with `Role: repo-admin`,
+contradicting task 3.5's guarantee. Not a security bypass (backend
+`requireAdminOrRepoAdmin` independently rejected any resulting submission);
+a UI-trust gap where the interface offered what the backend would refuse.
+
+- [x] 3.5r RED `model_test.go`:
+      `TestUpdateRepoAdminGrantsKeyEditRefusesRepoAdminGrant` exercises the
+      real "e" key handler via `model.Update()` against a grants list
+      containing a `repo-admin` row; confirmed failing pre-fix (screen
+      transitioned to `screenRepoAdminAddGrant` with `Role: repo-admin`).
+- [x] 3.5r GREEN: `updateRepoAdminGrantsKey`'s "e" handler now refuses to
+      open the edit form for a `repo-admin` grant row (status message,
+      mirrors the "Already inheriting global settings." refusal precedent
+      for actions that don't apply to the current row/state), instead of
+      clamping the role. Triangulation:
+      `TestUpdateRepoAdminGrantsKeyEditAllowsNonRepoAdminGrant` proves the
+      guard is specific to `repo-admin` and does not block editing
+      Reader/Writer grants.
+
 ## Phase 4: Robot Accounts — Backend (Slice 3a — PR 4)
 
 - [ ] 4.1 Migration: add `is_robot BOOLEAN NOT NULL DEFAULT FALSE` to

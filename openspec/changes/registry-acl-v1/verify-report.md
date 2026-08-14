@@ -561,3 +561,297 @@ archive. No CRITICAL or WARNING issues exist.
 **Recommendation**: proceed to PR 2 merge / `sdd-archive` for Phase 2.
 Phase 3 (TUI for this slice) is the next apply batch, out of scope for this
 verify run.
+
+---
+
+## Phase 3 — Delegated Repo-Admin Grants — TUI (PR 3)
+
+**Change**: registry-acl-v1 | **Scope**: Phase 3 only (tasks 3.1–3.11) | **Mode**: hybrid (OpenSpec + Engram) | **Strict TDD**: active
+
+```yaml
+schema: gentle-ai.verify-result/v1
+evidence_revision: sha256:5a984f00a4845625d1728c4d85844b62b9b7dc7f149fd9f507aaa21c6a05a003
+verdict: fail
+blockers: 1
+critical_findings: 1
+requirements: 1/1
+scenarios: 3/4
+test_command: go test -count=1 ./...
+test_exit_code: 0
+test_output_hash: sha256:1ede3b4507ff96358b9be71f0e55410aa9cc6ac4f2cede68ec725486547eb26f
+build_command: go build ./...
+build_exit_code: 0
+build_output_hash: sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+```
+
+### Scope of This Verification
+
+This session verifies **Phase 3 only** (tasks 3.1–3.11, branch
+`feature/registry-acl-v1-03-delegated-grants-tui`, base
+`feature/registry-acl-v1-02-delegated-grants-backend`). Phases 1–2 were
+already verified PASS in earlier sessions. Phases 4–5 (robot accounts) are
+unimplemented by design and out of scope; confirmed absent by grepping the
+whole repository for `is_robot`, `CreateRobot`, `screenAdminRobots` — zero
+matches.
+
+Requirement/scenario totals are restricted to the `operator-admin-tui`
+capability's **Read-Only Admin Browsing** (MODIFIED) requirement — the only
+requirement whose scenarios are Phase 3 deliverables. `Robot Account
+Screens` (ADDED) belongs to Phase 5, and `Read-Only Role Field On User
+Forms` (ADDED) was already delivered in Phase 1; both are excluded from
+this phase's counted total.
+
+### Completeness
+
+| Check | Result |
+|---|---|
+| Tasks checked | 11/11 Phase 3 tasks (`3.1`–`3.11`) marked `[x]` in `openspec/changes/registry-acl-v1/tasks.md`; confirmed via direct read, no unchecked `3.x` items found |
+| Phase 4–5 surface leakage | None — repo-wide grep for `is_robot`, `CreateRobot`, `screenAdminRobots` returns zero matches |
+| Diff size vs base (`feature/registry-acl-v1-02-delegated-grants-backend..HEAD`) | 820 insertions / 12 deletions across 7 files in `internal/tui/` — matches apply-progress's self-reported figure exactly |
+| TDD Cycle Evidence table present | Yes — 5 RED/GREEN pairs + 1 confirmation row, cross-checked against the actual 10-commit history (`git log --oneline`), which matches exactly |
+
+### Build / Test Evidence (independently re-run this session, not trusted from apply-progress)
+
+| Command | Result |
+|---|---|
+| `go build ./...` | exit 0, no output |
+| `go vet ./...` | exit 0, no output |
+| `gofmt -l .` | exit 0, no output (repo-wide clean) |
+| `go test -count=1 ./...` | exit 0, 18/18 packages `ok`, zero regressions |
+| `go test ./internal/tui/... -run 'RepoAdminGrants\|AdminIntent' -v` | exit 0, 7 named tests, all PASS |
+
+### Highest-Value Item — Independent Verification (per orchestrator directive)
+
+**Task 3.5's claim: "`screenRepoAdminAddGrant`'s role field never offers `repo-admin`" — found FALSE for one reachable path.**
+
+`nextDelegateGrantRole` (`internal/tui/model.go:3483-3488`) is itself a
+genuine, exhaustive structural guarantee:
+
+```go
+func nextDelegateGrantRole(current domainauth.RepoRole) domainauth.RepoRole {
+	if current == domainauth.RepoRoleReader {
+		return domainauth.RepoRoleWriter
+	}
+	return domainauth.RepoRoleReader
+}
+```
+
+Every input (`Reader`, `Writer`, `Admin`, or any other value) maps to only
+`{Reader, Writer}` — this is the ONLY function that mutates
+`RepoAdminGrantForm.Role` from a keypress (Space, `model.go:2586`), and it
+cannot produce `repo-admin` from any starting value. This part of the claim
+is correct and independently confirmed correct (not merely trusted from the
+RED test).
+
+However, the role field's **initial population on edit** is a second,
+un-guarded write path the structural guarantee does not cover.
+`updateRepoAdminGrantsKey`'s `e` (edit) handler (`model.go:2532`) does:
+
+```go
+m.adminView.RepoAdminGrantForm = adminRepositoryGrantForm{Username: grant.Username, Role: grant.Role, Focus: adminRepoGrantFieldUsername}
+```
+
+— i.e. it copies `grant.Role` **directly**, with no filtering. The grant
+list a delegate sees (`ListRepositoryGrants` → `internal/app/auth/service.go:570-580`
+→ `store.ListRepoGrantsByRepository`) returns **every** grant on the
+repository, unfiltered by role — including a peer `repo-admin`'s grant, if
+the repository has more than one repo-administrator (an ordinary
+global-admin action, not a hypothetical edge case). `renderRepoAdminAddGrantScreen`
+(`admin_views.go:599-606`) then renders `string(view.RepoAdminGrantForm.Role)`
+verbatim, with no sanitization, despite its own doc comment's unverified
+claim ("the Role value it displays can never be `domainauth.RepoRoleAdmin`").
+
+**Empirically reproduced this session** (scratch test, removed after
+confirming `git status` was clean again):
+
+```go
+view := AdminViewState{RepoAdminRepository: "team/app", RepoAdminGrantForm: adminRepositoryGrantForm{Username: "alice", Role: domainauth.RepoRoleAdmin}}
+got := renderRepoAdminAddGrantScreen(theme, view)
+// got contains the literal line: " Role                       "
+//                                  "  repo-admin                "
+```
+
+The rendered output does contain the literal string `repo-admin` in the
+Role field.
+
+**Reachability, concretely**: a global admin grants `repo-admin` on
+`team/app` to both `alice` and `bob` (an ordinary, supported action — the
+backend places no cap on the number of repo-admins per repository). `bob`
+opens `screenRepoAdminGrants` for `team/app`, sees `alice`'s row listed with
+role `repo-admin`, presses `e` on it. The form now shows `Role: repo-admin`
+before any keypress touches the Role field.
+
+**Test coverage gap, confirmed by direct search**: `model_test.go` has zero
+matches for `RepoAdminGrantForm` or `updateRepoAdminGrantsKey`'s `e`-key
+path — the edit flow is entirely untested at the `Model.Update()` level.
+`admin_views_test.go`'s `TestRenderRepoAdminAddGrantScreenRoleFieldNeverRendersRepoAdmin`
+only feeds `{Reader, Writer}` into the render function directly — it never
+constructs the form the way the actual edit-key handler does, so it cannot
+catch this.
+
+**Severity assessment — not a security bypass, but a spec-scenario
+failure**: `PutRepositoryGrant`'s backend guard (Phase 2, already verified)
+independently rejects this exact submission twice over — requested role
+`repo-admin` is not `reader`/`writer`, AND the target's existing role is
+already `repo-admin` — so no actual privilege escalation is possible even
+if `bob` submits without touching the Role field. This is precisely the
+class of finding the orchestrator's directive anticipated: *"if a delegate
+could somehow select `repo-admin` here, it would defeat the backend guard's
+purpose from a UX-trust perspective (backend would still reject it, but the
+UI shouldn't offer it)"* — confirmed to actually occur, not merely a
+theoretical risk.
+
+spec.md's own scenario text is explicit that this covers both halves:
+*"GIVEN a repo-admin delegate is creating **or editing** a grant / WHEN the
+operator opens the role field / THEN `repo-admin` MUST NOT **appear** as a
+selectable value."* The word "appear" is failed by the edit path; "select"
+would additionally require the cycle function, which does hold.
+
+### Deviation Assessment (apply-progress self-report, independently checked)
+
+1. **Asymmetric `isAdminPrincipalScreen` inclusion** (`screenRepoAdminGrants`
+   only, not `screenRepoAdminAddGrant`) — confirmed correct by direct code
+   read (`model.go:3499-3512`) and mirrors the pre-existing
+   `screenAdminAddGrant` exclusion exactly. Pinned by
+   `TestRepoAdminGrantsScreensJoinAdminScreenSets`. Not a spec violation —
+   spec.md does not mandate quit-key behavior. Accepted as correct.
+2. **Design.md's stale line citation for "consumed once on successful
+   auth"** — confirmed to be pure line-drift, not a behavioral gap. Read
+   both consumption sites directly: `openRepoAdminGrants()`'s
+   already-authenticated fast path (`model.go:3319-3330`) and the
+   `adminLoginCompletedMsg` handler (`model.go:645-656`) both reset
+   `adminIntent`/`adminIntentRepository` to their zero values exactly once,
+   covering both the "already logged in" and "fresh login round-trip"
+   cases. Correct.
+3. **Defensive reset in `logoutAdmin()`/`returnToInspection()`** — confirmed
+   present (`model.go:3357-3362`, `3372-3378`) and correctly scoped
+   (resets only the one-shot intent fields, nothing else). A genuine
+   robustness improvement beyond the literal task text, does not conflict
+   with any spec requirement. Accepted as a positive addition.
+
+### Spec Compliance Matrix
+
+| Requirement | Scenario | Test | Result |
+|---|---|---|---|
+| Read-Only Admin Browsing (MODIFIED) | Operator browses admin data (grants portion) | `model_test.go > TestModelRepoAdminGrantsLoadPutAndDeleteCommandsWired` | ✅ COMPLIANT |
+| Read-Only Admin Browsing (MODIFIED) | Unauthenticated state blocks admin reads | `model_test.go > TestModelConsoleRepositoriesGrantActionSetsAdminIntentAndReachesLogin` | ✅ COMPLIANT |
+| Read-Only Admin Browsing (MODIFIED) | Delegate sees only their own repositories' grants | `admin_views_test.go > TestRenderRepoAdminGrantsScreenShowsOperatorsOwnRepositoryGrants` (+ Phase 2 backend scoping) | ✅ COMPLIANT |
+| Read-Only Admin Browsing (MODIFIED) | Delegate cannot select repo-admin in the grant role picker | `admin_views_test.go > TestRenderRepoAdminAddGrantScreenRoleFieldNeverRendersRepoAdmin` (create path only) | ❌ PARTIAL / FAILING (edit path untested and, when exercised, fails — see Highest-Value Item above) |
+
+**Compliance summary**: 3/4 scenarios fully compliant; 1/4 partial (create-path compliant, edit-path failing).
+
+### Correctness (Static Evidence)
+
+| Requirement | Status | Notes |
+|---|---|---|
+| `adminIntent` one-shot routing | ✅ Implemented | Consumed in both reachable paths, verified above |
+| Screen-set membership (`isAdminScreen`/`isAdminPrincipalScreen`/`canLogoutAdminFromCurrentScreen`) | ✅ Implemented | Matches precedent, pinned by dedicated test |
+| Repository-grant client methods | ✅ Implemented | Repository segment correctly left unescaped (mirrors `PutUserGrant`/`DeleteUserGrant` precedent), username escaped |
+| Console Repositories `g` key wiring | ✅ Implemented | Sets intent + repository, routes through login |
+| Role field never offers `repo-admin` | ❌ Partially implemented | Cycle function is sound; edit-populated initial value is not |
+
+### Coherence (Design)
+
+| Decision | Followed? | Notes |
+|---|---|---|
+| Decision 7 — delegates get their own TUI entry point | ✅ Yes | `screenRepoAdminGrants`/`screenRepoAdminAddGrant`, reached via Console Repositories, never routes through `screenAdminUsers` |
+| Decision 7 — `adminIntent` one-shot semantics | ✅ Yes | Confirmed at both consumption sites |
+| Decision 4 (backend) — escalation bounds independently re-verified reachable from this screen | ✅ Yes | Backend still rejects the edit-path scenario above; no actual escalation is possible |
+
+### Assertion Quality
+
+Reviewed the full diff of `model_test.go`, `admin_client_test.go`, and
+`admin_views_test.go` added in this phase (820 insertions, 7 files).
+
+✅ All assertions verify real behavior. No tautologies, no ghost loops, no
+ratio issues, no smoke-test-only patterns. Every new test calls production
+code (`Model.Update()`, render functions, or the real HTTP client against
+`httptest`) and asserts specific, varied expected values (not uniformly
+empty/trivial). `TestNextDelegateGrantRoleNeverProducesRepoAdmin` is
+correctly table-driven with 3 distinct cases including the
+structurally-unreachable `RepoRoleAdmin` starting state, but — per the
+Highest-Value Item above — its scope is the cycle function only, not the
+whole role-field guarantee the task text and spec.md scenario actually
+require.
+
+### TDD Compliance
+
+| Check | Result | Details |
+|---|---|---|
+| TDD Evidence reported | ✅ | Found in apply-progress, 6-row table |
+| All tasks have tests | ✅ | 11/11 tasks map to a RED/GREEN commit pair or confirmation step |
+| RED confirmed (tests exist) | ✅ | All 5 named test files/functions exist in the current tree |
+| GREEN confirmed (tests pass) | ✅ | 18/18 packages pass, focused command's 7 named tests pass |
+| Triangulation adequate | ✅ | Each behavior has 2+ distinct test cases (routing set/unset, populated/empty grants, role-cycle table, etc.) |
+| Safety Net for modified files | ✅ | Full suite was green before and after each commit per the reported cycle table |
+
+**TDD Compliance**: 6/6 checks passed on paper — but see Issues below: the
+TDD evidence table's own TRIANGULATE claim for tasks 3.5/3.6 ("role-never-admin
+render check (2 roles)") is accurate as far as it goes, and did not claim to
+cover the edit-population path — the gap is a scope gap in the RED test
+itself, not a false TDD claim.
+
+### Issues
+
+**CRITICAL**:
+1. `screenRepoAdminAddGrant`'s role field DOES render `repo-admin` when
+   opened via the `e` (edit) key on an existing `repo-admin`-role grant —
+   reproduced empirically this session. This fails the literal task 3.5
+   requirement and the "editing" half of spec.md's "Delegate cannot select
+   repo-admin in the grant role picker" scenario. No actual privilege
+   escalation results (the backend independently rejects the submission on
+   two separate grounds), but the UX-trust guarantee the task explicitly
+   called for does not hold. **Fix scope is small**: either filter
+   `repo-admin`-role grants out of the `e`-key target selection, or clamp
+   `Role` to `RepoRoleReader` when populating the edit form, plus a RED
+   test that opens the form via the actual `e`-key handler against a
+   `repo-admin`-role grant (not just direct render-function construction).
+
+**WARNING**: None.
+
+**SUGGESTION**:
+1. `renderRepoAdminAddGrantScreen`'s doc comment states a guarantee
+   ("the Role value it displays can never be `domainauth.RepoRoleAdmin`")
+   that is not actually true given the edit path above. Once the CRITICAL
+   finding is fixed, keep the comment but change "can never be" to
+   accurately describe the mechanism, or add the missing guard so the
+   comment becomes true again.
+2. `x` (remove grant) on a peer `repo-admin`'s grant is also unguarded at
+   the TUI layer (only the confirm dialog stands between the keypress and
+   a backend call that will be rejected). Lower priority than the CRITICAL
+   finding since delete has no data-entry step to mislead, but the same
+   class of gap.
+
+### Verdict
+
+**FAIL**
+
+Independent verification confirms Phase 3 of registry-acl-v1 is 10/11
+tasks genuinely correct, but task 3.5's specific claim — the one the
+orchestrator flagged as highest-value to check — does not fully hold. The
+`nextDelegateGrantRole` cycle function is a genuine, correctly-proven
+structural guarantee, but it is not the only way the role field's displayed
+value is set: the `e` (edit) key path copies an existing grant's role
+directly and unfiltered, and this is empirically reachable whenever a
+repository has more than one `repo-admin` (an ordinary, unrestricted
+global-admin action). Reproduced this session with a scratch test (removed
+before completing this report; `git status` confirmed clean).
+
+This does not create an actual privilege-escalation vulnerability — the
+Phase 2 backend guard independently rejects the resulting submission on two
+separate grounds — but it is a genuine, spec-scenario-level failure exactly
+matching the class of risk the orchestrator's directive called out:
+defeating the backend guard's UX-trust purpose, not its security purpose.
+
+All other Phase 3 work is correct: build, vet, and gofmt are clean
+project-wide; the full test suite (`go test -count=1 ./...`) passes with
+zero regressions across all 18 packages; the focused command
+(`go test ./internal/tui/... -run 'RepoAdminGrants|AdminIntent' -v`) passes
+all 7 named tests; no Phase 4–5 surface exists yet; the diff size (820/12
+across 7 files) matches the self-reported figure exactly; and all three
+self-reported design deviations were independently assessed and found
+correct and non-spec-violating.
+
+**Recommendation**: return to `sdd-apply` for Phase 3 to close the one
+CRITICAL finding (small, scoped fix — clamp or filter the edit-populated
+role) before archive. Do not proceed to `sdd-archive` for Phase 3 as-is.
