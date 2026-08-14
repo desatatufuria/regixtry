@@ -46,13 +46,15 @@ func TestRouterChallengesProtectedPull(t *testing.T) {
 	}
 }
 
-// TestRouterManifestMethodDispatchCharacterizesCurrentBehavior pins
-// handleManifest's current method dispatch (design.md Testing Strategy):
-// PUT/GET/HEAD behave as today, and any other method — including DELETE,
-// which does not exist yet — falls through to the default 405 branch with
-// Allow: PUT, GET, HEAD. This MUST land and pass before any task adds a
-// DELETE case, so the Allow-list edit does not silently change an unasserted
-// response (manifest-blob-delete tasks.md 1.1).
+// TestRouterManifestMethodDispatchCharacterizesCurrentBehavior originally
+// pinned handleManifest's pre-Phase-4 method dispatch, when DELETE did not
+// exist yet and fell through to the default 405 branch (manifest-blob-delete
+// tasks.md 1.1). Phase 4 (tasks.md 4.3) made DELETE a real, flag-gated verb,
+// so this approval test was updated in lockstep with that change: DELETE now
+// reaches handleManifest's own branch and answers 400/UNSUPPORTED (the
+// REGISTRY_DELETE_ENABLED flag defaults to false on this unconfigured test
+// router), never a bare 405. PUT/GET/HEAD are unaffected and still assert
+// their original behavior.
 func TestRouterManifestMethodDispatchCharacterizesCurrentBehavior(t *testing.T) {
 	t.Parallel()
 
@@ -102,10 +104,17 @@ func TestRouterManifestMethodDispatchCharacterizesCurrentBehavior(t *testing.T) 
 	deleteReq := httptest.NewRequest(http.MethodDelete, "/v2/library/alpine/manifests/dispatch", nil)
 	deleteRecorder := httptest.NewRecorder()
 	handler.ServeHTTP(deleteRecorder, deleteReq)
-	if deleteRecorder.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("DELETE status = %d, want %d", deleteRecorder.Code, http.StatusMethodNotAllowed)
+	if deleteRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("DELETE status = %d, want %d", deleteRecorder.Code, http.StatusBadRequest)
 	}
-	if got, want := deleteRecorder.Header().Get("Allow"), "PUT, GET, HEAD"; got != want {
+
+	postReq := httptest.NewRequest(http.MethodPost, "/v2/library/alpine/manifests/dispatch", nil)
+	postRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(postRecorder, postReq)
+	if postRecorder.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST status = %d, want %d", postRecorder.Code, http.StatusMethodNotAllowed)
+	}
+	if got, want := postRecorder.Header().Get("Allow"), "PUT, GET, HEAD, DELETE"; got != want {
 		t.Fatalf("Allow = %q, want %q", got, want)
 	}
 }
