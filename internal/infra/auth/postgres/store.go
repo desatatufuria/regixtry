@@ -50,7 +50,7 @@ func (s *Store) HasActiveGlobalAdmin(ctx context.Context) (bool, error) {
 
 func (s *Store) ListUsers(ctx context.Context) ([]domainauth.User, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, username, password_hash, is_admin, enabled, created_at, updated_at
+		SELECT id, username, password_hash, is_admin, is_read_only, enabled, created_at, updated_at
 		FROM auth_users
 		ORDER BY username ASC
 	`)
@@ -73,7 +73,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]domainauth.User, error) {
 
 func (s *Store) GetUserByUsername(ctx context.Context, username string) (domainauth.User, error) {
 	return s.scanUser(s.db.QueryRowContext(ctx, `
-		SELECT id, username, password_hash, is_admin, enabled, created_at, updated_at
+		SELECT id, username, password_hash, is_admin, is_read_only, enabled, created_at, updated_at
 		FROM auth_users
 		WHERE username = $1
 	`, strings.ToLower(strings.TrimSpace(username))))
@@ -81,7 +81,7 @@ func (s *Store) GetUserByUsername(ctx context.Context, username string) (domaina
 
 func (s *Store) GetUserByID(ctx context.Context, userID string) (domainauth.User, error) {
 	return s.scanUser(s.db.QueryRowContext(ctx, `
-		SELECT id, username, password_hash, is_admin, enabled, created_at, updated_at
+		SELECT id, username, password_hash, is_admin, is_read_only, enabled, created_at, updated_at
 		FROM auth_users
 		WHERE id = $1
 	`, strings.TrimSpace(userID)))
@@ -94,15 +94,16 @@ func (s *Store) UpsertUser(ctx context.Context, user domainauth.User) error {
 	}
 
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO auth_users (id, username, password_hash, is_admin, enabled, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO auth_users (id, username, password_hash, is_admin, is_read_only, enabled, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT(id) DO UPDATE SET
 			username = excluded.username,
 			password_hash = excluded.password_hash,
 			is_admin = excluded.is_admin,
+			is_read_only = excluded.is_read_only,
 			enabled = excluded.enabled,
 			updated_at = excluded.updated_at
-	`, user.ID, user.Username, user.PasswordHash, user.IsAdmin, user.Enabled, formatTime(user.CreatedAt), formatTime(user.UpdatedAt))
+	`, user.ID, user.Username, user.PasswordHash, user.IsAdmin, user.IsReadOnly, user.Enabled, formatTime(user.CreatedAt), formatTime(user.UpdatedAt))
 	return err
 }
 
@@ -307,7 +308,7 @@ func scanUserRow(scanner rowScanner) (domainauth.User, error) {
 	var user domainauth.User
 	var createdAt string
 	var updatedAt string
-	if err := scanner.Scan(&user.ID, &user.Username, &user.PasswordHash, &user.IsAdmin, &user.Enabled, &createdAt, &updatedAt); err != nil {
+	if err := scanner.Scan(&user.ID, &user.Username, &user.PasswordHash, &user.IsAdmin, &user.IsReadOnly, &user.Enabled, &createdAt, &updatedAt); err != nil {
 		return domainauth.User{}, err
 	}
 
