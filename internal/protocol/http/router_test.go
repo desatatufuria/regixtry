@@ -1732,6 +1732,102 @@ func TestRouterKeepsIncompleteUploadsInvisibleFromPublishedContent(t *testing.T)
 	}
 }
 
+// TestRouterReadOnlyPrincipalReadsAnyRepositoryRejectedOnPushAndAdmin pins
+// repository-authorization's "Registry-Wide Read-Only Role Grants Read
+// Everywhere" requirement end to end: a real login-issued token for a
+// read-only user reads tags/manifests on a repository it has no explicit
+// grant for, is rejected on push, and is rejected on the admin user listing.
+func TestRouterReadOnlyPrincipalReadsAnyRepositoryRejectedOnPushAndAdmin(t *testing.T) {
+	t.Parallel()
+
+	handler, authService, adminActor, _, cleanup := newTestRouterWithRealAuth(t)
+	defer cleanup()
+
+	pushScopes, err := domainauth.ParseScopes([]string{"repository:library/alpine:pull,push"})
+	if err != nil {
+		t.Fatalf("ParseScopes(push) error = %v", err)
+	}
+	adminPushLogin, err := authService.LoginWithPassword(context.Background(), "admin", "password123", pushScopes)
+	if err != nil {
+		t.Fatalf("LoginWithPassword(admin push) error = %v", err)
+	}
+	seedPublishedManifestWithToken(t, handler, adminPushLogin.BearerToken)
+
+	created, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
+		Username:   "reader",
+		Password:   "password123",
+		Enabled:    true,
+		IsReadOnly: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateAdminUser() error = %v", err)
+	}
+	if !created.IsReadOnly {
+		t.Fatalf("CreateAdminUser() result IsReadOnly = false, want true")
+	}
+
+	requestedScopes, err := domainauth.ParseScopes([]string{"repository:library/alpine:pull,push", "regixtry:catalog:*"})
+	if err != nil {
+		t.Fatalf("ParseScopes() error = %v", err)
+	}
+	loginResult, err := authService.LoginWithPassword(context.Background(), "reader", "password123", requestedScopes)
+	if err != nil {
+		t.Fatalf("LoginWithPassword() error = %v", err)
+	}
+	if !loginResult.Principal.IsReadOnly {
+		t.Fatalf("LoginWithPassword() Principal.IsReadOnly = false, want true")
+	}
+	readOnlyToken := loginResult.BearerToken
+
+	manifestReq := httptest.NewRequest(http.MethodGet, "/v2/library/alpine/manifests/latest", nil)
+	manifestReq.Header.Set("Authorization", "Bearer "+readOnlyToken)
+	manifestRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(manifestRecorder, manifestReq)
+	if manifestRecorder.Code != http.StatusOK {
+		t.Fatalf("manifest read status = %d, want %d", manifestRecorder.Code, http.StatusOK)
+	}
+
+	tagsReq := httptest.NewRequest(http.MethodGet, "/v2/library/alpine/tags/list", nil)
+	tagsReq.Header.Set("Authorization", "Bearer "+readOnlyToken)
+	tagsRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(tagsRecorder, tagsReq)
+	if tagsRecorder.Code != http.StatusOK {
+		t.Fatalf("tags list status = %d, want %d", tagsRecorder.Code, http.StatusOK)
+	}
+
+	catalogReq := httptest.NewRequest(http.MethodGet, "/v2/_catalog", nil)
+	catalogReq.Header.Set("Authorization", "Bearer "+readOnlyToken)
+	catalogRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(catalogRecorder, catalogReq)
+	if catalogRecorder.Code != http.StatusOK {
+		t.Fatalf("catalog status = %d, want %d", catalogRecorder.Code, http.StatusOK)
+	}
+
+	pushReq := httptest.NewRequest(http.MethodPost, "/v2/library/alpine/blobs/uploads/", nil)
+	pushReq.Header.Set("Authorization", "Bearer "+readOnlyToken)
+	pushRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(pushRecorder, pushReq)
+	if pushRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("push status = %d, want %d", pushRecorder.Code, http.StatusUnauthorized)
+	}
+
+	adminUsersReq := httptest.NewRequest(http.MethodGet, "/admin/v1/users", nil)
+	adminUsersReq.Header.Set("Authorization", "Bearer "+readOnlyToken)
+	adminUsersRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(adminUsersRecorder, adminUsersReq)
+	if adminUsersRecorder.Code != http.StatusForbidden {
+		t.Fatalf("admin users status = %d, want %d", adminUsersRecorder.Code, http.StatusForbidden)
+	}
+
+	adminGrantsReq := httptest.NewRequest(http.MethodGet, "/admin/v1/users/"+created.ID+"/grants", nil)
+	adminGrantsReq.Header.Set("Authorization", "Bearer "+readOnlyToken)
+	adminGrantsRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(adminGrantsRecorder, adminGrantsReq)
+	if adminGrantsRecorder.Code != http.StatusForbidden {
+		t.Fatalf("admin grants status = %d, want %d", adminGrantsRecorder.Code, http.StatusForbidden)
+	}
+}
+
 func seedPublishedManifest(t *testing.T, handler *Router) string {
 	t.Helper()
 
