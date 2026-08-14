@@ -467,6 +467,26 @@ type adminGrantMutatedMsg struct {
 	err        error
 }
 
+// adminRepoGrantsLoadedMsg carries one repository's grants for the
+// repo-admin delegate's own grants screen (design.md Decision 7), a sibling
+// of adminUserGrantsLoadedMsg keyed by repository instead of userID.
+type adminRepoGrantsLoadedMsg struct {
+	repository string
+	grants     []ports.AdminRepositoryGrant
+	err        error
+}
+
+// adminRepoGrantMutatedMsg carries the outcome of a put or delete on the
+// repo-admin delegate's grants screen. deleted distinguishes the two (unlike
+// adminGrantMutatedMsg's repository-emptiness convention above) because
+// username is always present here.
+type adminRepoGrantMutatedMsg struct {
+	repository string
+	username   string
+	deleted    bool
+	err        error
+}
+
 type adminTokenCreatedMsg struct {
 	created ports.AdminCreatedToken
 	err     error
@@ -631,8 +651,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.adminIntentRepository = ""
 			m.adminView.RepoAdminRepository = repository
 			m.screen = screenRepoAdminGrants
-			m.status = ""
-			return m, nil
+			m.status = fmt.Sprintf("Loading grants for %s...", repository)
+			return m, m.loadRepoAdminGrantsCmd(repository)
 		}
 		if m.startupLogin && len(m.repositories.Items) == 0 {
 			m.status = ""
@@ -1066,6 +1086,40 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.screen = screenAdminEditUserGrants
 		return m, m.loadAdminGrantsCmd(msg.userID, msg.username)
+	case adminRepoGrantsLoadedMsg:
+		if msg.err != nil {
+			if IsAdminSessionExpired(msg.err) {
+				return m.expireAdminSession(msg.err.Error()), nil
+			}
+			m.status = msg.err.Error()
+			return m, nil
+		}
+		m.adminView.RepoAdminRepository = msg.repository
+		m.adminView.RepoAdminGrants = msg.grants
+		m.adminView.SelectedRepoAdminGrant = 0
+		if len(msg.grants) == 0 {
+			m.status = fmt.Sprintf("No grants for %q.", msg.repository)
+		} else {
+			m.status = ""
+		}
+		return m, nil
+	case adminRepoGrantMutatedMsg:
+		if msg.err != nil {
+			if IsAdminSessionExpired(msg.err) {
+				return m.expireAdminSession(msg.err.Error()), nil
+			}
+			m.status = msg.err.Error()
+			return m, nil
+		}
+		m.adminView.RepoAdminGrantForm = adminRepositoryGrantForm{Role: domainauth.RepoRoleReader}
+		m.adminView.ConfirmModal = adminConfirmModal{}
+		if msg.deleted {
+			m.status = fmt.Sprintf("Grant removed for %q. Refreshing grants...", msg.username)
+		} else {
+			m.status = fmt.Sprintf("Grant saved for %q. Refreshing grants...", msg.username)
+		}
+		m.screen = screenRepoAdminGrants
+		return m, m.loadRepoAdminGrantsCmd(msg.repository)
 	case adminTokenCreatedMsg:
 		if msg.err != nil {
 			if IsAdminSessionExpired(msg.err) {
@@ -1313,6 +1367,11 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.showMutationNotice = true
 		}
 		return m, nil
+	case isRuneKey(msg, 'g'):
+		if m.screen == screenRepositories {
+			return m.openRepoAdminGrants()
+		}
+		return m, nil
 	}
 
 	return m, nil
@@ -1378,6 +1437,10 @@ func (m Model) updateAdminKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateAdminTokensKey(msg)
 	case screenAdminCreateToken:
 		return m.updateTokenFormKey(msg)
+	case screenRepoAdminGrants:
+		return m.updateRepoAdminGrantsKey(msg)
+	case screenRepoAdminAddGrant:
+		return m.updateRepoAdminAddGrantKey(msg)
 	default:
 		return m, nil
 	}
@@ -2301,6 +2364,9 @@ func (m Model) updateAdminConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case adminConfirmDeleteGrant:
 			m.status = fmt.Sprintf("Removing grant %q from %s...", modal.Repository, modal.Username)
 			return m, m.deleteAdminGrantCmd(modal.UserID, modal.Username, modal.Repository)
+		case adminConfirmDeleteRepoGrant:
+			m.status = fmt.Sprintf("Removing grant for %q from %q...", modal.Username, modal.Repository)
+			return m, m.deleteRepoAdminGrantCmd(modal.Repository, modal.Username)
 		case adminConfirmRevokeToken:
 			m.status = fmt.Sprintf("Revoking token %q for %s...", modal.Accessor, modal.Username)
 			return m, m.revokeAdminTokenCmd(modal.UserID, modal.Username, modal.Accessor)
@@ -2443,6 +2509,105 @@ func (m Model) updateGrantFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// updateRepoAdminGrantsKey handles screenRepoAdminGrants, a sibling of
+// updateAdminGrantsKey scoped to RepoAdminRepository instead of
+// SelectedUserID -- there is no user-selection guard on "n" (Add Grant),
+// unlike the user-centric screen, because the repository context is already
+// fixed by the time this screen is reachable at all.
+func (m Model) updateRepoAdminGrantsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case isEscKey(msg):
+		return m.returnToInspection(), nil
+	case isRuneKey(msg, 'n'):
+		m.adminView.RepoAdminGrantForm = adminRepositoryGrantForm{Role: domainauth.RepoRoleReader}
+		m.screen = screenRepoAdminAddGrant
+		m.status = ""
+		return m, nil
+	case isRuneKey(msg, 'e'):
+		grant, ok := selectedRepoAdminGrantForView(m.adminView)
+		if !ok {
+			m.status = "No grant selected to edit."
+			return m, nil
+		}
+		m.adminView.RepoAdminGrantForm = adminRepositoryGrantForm{Username: grant.Username, Role: grant.Role, Focus: adminRepoGrantFieldUsername}
+		m.screen = screenRepoAdminAddGrant
+		m.status = ""
+		return m, nil
+	case isMoveUpKey(msg):
+		m.adminView.SelectedRepoAdminGrant = boundedIndex(m.adminView.SelectedRepoAdminGrant-1, len(m.adminView.RepoAdminGrants))
+		return m, nil
+	case isMoveDownKey(msg):
+		m.adminView.SelectedRepoAdminGrant = boundedIndex(m.adminView.SelectedRepoAdminGrant+1, len(m.adminView.RepoAdminGrants))
+		return m, nil
+	case isRuneKey(msg, 'x'):
+		grant, ok := selectedRepoAdminGrantForView(m.adminView)
+		if !ok {
+			m.status = "No grant selected to remove."
+			return m, nil
+		}
+		m.adminView.ConfirmModal = adminConfirmModal{
+			Kind:        adminConfirmDeleteRepoGrant,
+			Title:       "Confirm Grant Removal",
+			Message:     fmt.Sprintf("Remove grant for %q from %q?", grant.Username, m.adminView.RepoAdminRepository),
+			ConfirmText: "remove",
+			Repository:  m.adminView.RepoAdminRepository,
+			Username:    grant.Username,
+		}
+		m.status = ""
+		return m, nil
+	}
+	return m, nil
+}
+
+// updateRepoAdminAddGrantKey handles screenRepoAdminAddGrant. Unlike
+// updateGrantFormKey's repository text field with autosuggest, this form has
+// no repository field at all (RepoAdminRepository is fixed context), and its
+// Role field is cycled only by nextDelegateGrantRole -- the structural
+// guarantee that repo-admin can never be offered here.
+func (m Model) updateRepoAdminAddGrantKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case isEscKey(msg):
+		m.screen = screenRepoAdminGrants
+		return m, nil
+	case isTabKey(msg):
+		if m.adminView.RepoAdminGrantForm.Focus == adminRepoGrantFieldUsername {
+			m.adminView.RepoAdminGrantForm.Focus = adminRepoGrantFieldRole
+		} else {
+			m.adminView.RepoAdminGrantForm.Focus = adminRepoGrantFieldUsername
+		}
+		return m, nil
+	case isBackspaceKey(msg):
+		if m.adminView.RepoAdminGrantForm.Focus == adminRepoGrantFieldUsername {
+			m.adminView.RepoAdminGrantForm.Username = trimLastRune(m.adminView.RepoAdminGrantForm.Username)
+		}
+		return m, nil
+	case isRuneKey(msg, ' '):
+		if m.adminView.RepoAdminGrantForm.Focus == adminRepoGrantFieldRole {
+			m.adminView.RepoAdminGrantForm.Role = nextDelegateGrantRole(m.adminView.RepoAdminGrantForm.Role)
+		}
+		return m, nil
+	case isEnterKey(msg):
+		username := strings.TrimSpace(m.adminView.RepoAdminGrantForm.Username)
+		if username == "" {
+			m.status = "Username is required."
+			return m, nil
+		}
+		repository := strings.TrimSpace(m.adminView.RepoAdminRepository)
+		if repository == "" {
+			m.status = "Select a repository before managing grants."
+			return m, nil
+		}
+		input := ports.AdminPutRepositoryGrantInput{Repository: repository, Username: username, Role: m.adminView.RepoAdminGrantForm.Role}
+		m.status = fmt.Sprintf("Saving grant for %s...", username)
+		return m, m.putRepoAdminGrantCmd(input)
+	}
+	if msg.Type == tea.KeyRunes && m.adminView.RepoAdminGrantForm.Focus == adminRepoGrantFieldUsername {
+		m.adminView.RepoAdminGrantForm.Username += string(msg.Runes)
+		return m, nil
+	}
+	return m, nil
+}
+
 func (m Model) updateTokenFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case isEscKey(msg):
@@ -2576,7 +2741,7 @@ func isRuneKey(msg tea.KeyMsg, candidates ...rune) bool {
 func (m Model) scrollableBodyContext() (status, help string, total int, ok bool) {
 	switch m.screen {
 	case screenRepositories:
-		return m.notice, "Enter: open tags | Tab: admin | q: quit", len(m.repositories.Items) + 1, true
+		return m.notice, "Enter: open tags | Tab: admin | q: quit | g: repo grants", len(m.repositories.Items) + 1, true
 	case screenTags:
 		return "", "Enter: inspect manifest | Tab: admin | Esc: back | q: quit", len(m.tags.Items) + 1, true
 	}
@@ -2886,6 +3051,36 @@ func (m Model) deleteAdminGrantCmd(userID string, username string, repository st
 	}
 }
 
+func (m Model) loadRepoAdminGrantsCmd(repository string) tea.Cmd {
+	return func() tea.Msg {
+		if m.adminClient == nil {
+			return adminRepoGrantsLoadedMsg{repository: repository, err: fmt.Errorf("admin API is unavailable for this session")}
+		}
+		grants, err := m.adminClient.ListRepositoryGrants(m.ctx, m.adminSession, repository)
+		return adminRepoGrantsLoadedMsg{repository: repository, grants: grants, err: err}
+	}
+}
+
+func (m Model) putRepoAdminGrantCmd(input ports.AdminPutRepositoryGrantInput) tea.Cmd {
+	return func() tea.Msg {
+		if m.adminClient == nil {
+			return adminRepoGrantMutatedMsg{repository: input.Repository, username: input.Username, err: fmt.Errorf("admin API is unavailable for this session")}
+		}
+		_, err := m.adminClient.PutRepositoryGrant(m.ctx, m.adminSession, input)
+		return adminRepoGrantMutatedMsg{repository: input.Repository, username: input.Username, err: err}
+	}
+}
+
+func (m Model) deleteRepoAdminGrantCmd(repository string, username string) tea.Cmd {
+	return func() tea.Msg {
+		if m.adminClient == nil {
+			return adminRepoGrantMutatedMsg{repository: repository, username: username, deleted: true, err: fmt.Errorf("admin API is unavailable for this session")}
+		}
+		err := m.adminClient.DeleteRepositoryGrant(m.ctx, m.adminSession, repository, username)
+		return adminRepoGrantMutatedMsg{repository: repository, username: username, deleted: true, err: err}
+	}
+}
+
 func (m Model) createAdminTokenCmd(input ports.AdminCreateTokenInput) tea.Cmd {
 	return func() tea.Msg {
 		if m.adminClient == nil {
@@ -3088,6 +3283,50 @@ func (m Model) openAdmin() (tea.Model, tea.Cmd) {
 		}
 		m.adminView.UserSearchActive = false
 		return m, nil
+	}
+	if strings.TrimSpace(m.adminSession.ExpiredReason) != "" {
+		m.adminAuth = adminAuthStateExpired
+		m.status = m.adminSession.ExpiredReason
+	} else {
+		m.adminAuth = adminAuthStateUnauthenticated
+		m.status = ""
+	}
+	m.screen = screenAdminLogin
+	return m, nil
+}
+
+// openRepoAdminGrants is the repo-admin delegate's own entry point
+// (design.md Decision 7), reached from the Console Repositories screen's
+// grant action instead of "tab"'s global-admin openAdmin. It mirrors
+// openAdmin's already-authenticated/expired/unauthenticated branches, but
+// carries adminIntent/adminIntentRepository through screenAdminLogin so the
+// shared login screen can route to screenRepoAdminGrants on success.
+func (m Model) openRepoAdminGrants() (tea.Model, tea.Cmd) {
+	if m.adminClient == nil {
+		m.status = "Admin API is unavailable for this session."
+		return m, nil
+	}
+	repository, ok := m.selectedRepository()
+	if !ok {
+		m.status = "Select a repository to manage grants."
+		return m, nil
+	}
+	m.adminIntent = adminIntentRepoGrants
+	m.adminIntentRepository = repository
+	m.adminReturn = m.screen
+	m.showMutationNotice = false
+	m.err = nil
+	if m.adminSession.IsAuthenticated() {
+		if m.adminSession.IsExpired(m.now()) {
+			return m.expireAdminSession(AdminSessionExpiredReasonExpired), nil
+		}
+		m.adminAuth = adminAuthStateAuthenticated
+		m.adminIntent = adminIntentOperator
+		m.adminIntentRepository = ""
+		m.adminView.RepoAdminRepository = repository
+		m.screen = screenRepoAdminGrants
+		m.status = fmt.Sprintf("Loading grants for %s...", repository)
+		return m, m.loadRepoAdminGrantsCmd(repository)
 	}
 	if strings.TrimSpace(m.adminSession.ExpiredReason) != "" {
 		m.adminAuth = adminAuthStateExpired

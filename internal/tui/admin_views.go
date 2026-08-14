@@ -1029,6 +1029,14 @@ func selectedGrantForView(view AdminViewState) (ports.AdminRepoGrant, bool) {
 	return view.Grants[index], true
 }
 
+func selectedRepoAdminGrantForView(view AdminViewState) (ports.AdminRepositoryGrant, bool) {
+	if len(view.RepoAdminGrants) == 0 {
+		return ports.AdminRepositoryGrant{}, false
+	}
+	index := boundedIndex(view.SelectedRepoAdminGrant, len(view.RepoAdminGrants))
+	return view.RepoAdminGrants[index], true
+}
+
 func selectedTokenForView(view AdminViewState) (ports.AdminToken, bool) {
 	if len(view.AdminTokens) == 0 {
 		return ports.AdminToken{}, false
