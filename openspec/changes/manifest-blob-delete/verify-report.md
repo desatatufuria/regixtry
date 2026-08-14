@@ -425,3 +425,305 @@ every Phase 1 test. The two warnings are that store-layer guarantees are not yet
 any live caller (deferred to Phases 3–4 by explicit, documented design) and that the
 "MANIFEST_UNKNOWN" wire-level scenario name is proven only at its store-layer typed-error
 equivalent — neither is a quality gap in this PR.
+
+---
+
+```yaml
+schema: gentle-ai.verify-result/v1
+evidence_revision: sha256:0a737dcbd644c3eec5b5431f161cd114ef72ad304acebf860b71904a3db3c096
+verdict: pass_with_warnings
+blockers: 0
+critical_findings: 0
+requirements: 3/3
+scenarios: 6/6
+test_command: go test -count=1 ./...
+test_exit_code: 0
+test_output_hash: sha256:9a498ccebd03fee4698eb6121ecbea242a6651bb3b606b530b28e2acab37401b
+build_command: go build ./...
+build_exit_code: 0
+build_output_hash: sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+```
+
+## Verification Report — Phase 3 (Service Layer, PR 3 of 4)
+
+**Change**: manifest-blob-delete
+**Version**: N/A (delta spec, no version tag)
+**Mode**: Strict TDD
+
+**Scope of this verify run**: Phase 3 of 4 only (PR 3 of 4 — service layer, branch
+`feature/manifest-blob-delete-03-service-layer` against base
+`feature/manifest-blob-delete-02-store-layer`). Phases 1 (scope/auth foundation) and 2 (store
+layer) were already verified PASS WITH WARNINGS (sections above). Phase 4 (HTTP layer/config/docs)
+remains unimplemented (`tasks.md` 4.1–4.12 all `[ ]`) and is out of scope here.
+
+Of `manifest-deletion/spec.md`'s 4 requirements / 8 scenarios, this pass newly proves
+"Delete Is Gated Behind An Opt-In Server Flag" (2 scenarios, first tested this phase) and
+re-proves "Delete By Digest Cascades To Tags And Manifest Blobs" / "Delete By Tag Untags Without
+Touching The Manifest" (2+2 scenarios) at the service-orchestration layer — real `*Service` +
+real SQLite store, no mocks — rather than the store-decision layer Phase 2 tested (3
+requirements / 6 scenarios in scope). "Delete Is Metadata-Only And Leaves Other Operations
+Unchanged" is an HTTP/integration-layer requirement (blob-directory byte-identity check) belonging
+to Phase 4 and is out of scope here. `DeleteManifest` calls `s.authorize(ports.ActionDelete, ...)`
+but the repository-authorization/registry-authentication domains' own requirement scenarios
+(repo-writer succeeds, reader rejected, cross-repo rejected, delete scope issuance) were already
+independently verified at the authorization-primitive level in Phase 1 and are not re-counted here.
+
+### Completeness
+| Metric | Value |
+|--------|-------|
+| Tasks total (Phase 3) | 8 |
+| Tasks complete (Phase 3) | 8 |
+| Tasks incomplete (Phase 3) | 0 |
+| Tasks deferred (Phase 4, out of scope this PR) | 12 (4.1–4.12), all correctly `[ ]` |
+
+### Build & Tests Execution
+**Build**: PASS
+```text
+$ go build ./...
+(no output, exit 0)
+```
+
+**Vet**: PASS — `go vet ./...` exit 0, no output.
+**Format**: Clean — `gofmt -l .` exit 0, zero files listed.
+
+**Tests**: 100% passed / 0 failed / 0 skipped
+```text
+$ go test -count=1 ./...
+ok  	regixtry/cmd/regixtry	4.094s
+ok  	regixtry/internal/app/auth	0.231s
+ok  	regixtry/internal/app/regixtry	4.441s
+ok  	regixtry/internal/app/scanning	0.059s
+ok  	regixtry/internal/domain/auth	0.010s
+ok  	regixtry/internal/domain/regixtry	0.010s
+ok  	regixtry/internal/domain/signing	0.136s
+ok  	regixtry/internal/infra/auth/postgres	0.463s
+ok  	regixtry/internal/infra/cliprogress	0.011s
+ok  	regixtry/internal/infra/install/linux	0.617s
+ok  	regixtry/internal/infra/install/releases	0.101s
+ok  	regixtry/internal/infra/metadata/sqlite	0.740s
+ok  	regixtry/internal/infra/release	0.016s
+ok  	regixtry/internal/infra/scanning/gitleaks	0.348s
+ok  	regixtry/internal/infra/scanning/trivy	0.354s
+ok  	regixtry/internal/infra/storage/fsblob	0.030s
+ok  	regixtry/internal/ports	0.017s
+ok  	regixtry/internal/protocol/http	2.565s
+ok  	regixtry/internal/tui	0.410s
+```
+18/18 packages ok, zero regressions to Phase 1/2's work.
+
+**Focused**: `go test ./internal/app/regixtry/... -run DeleteManifest -v` → **6/6 PASS**
+(`TestServiceDeleteManifestRejectsUnauthorizedCallerRegardlessOfFlag` and its 2 subtests,
+`TestServiceDeleteManifestRefusesWithValidationErrorWhenFlagOffForAuthorizedCaller`,
+`TestServiceDeleteManifestByDigestRemovesManifestAndReturnsAllRemovedTags`,
+`TestServiceDeleteManifestByTagRemovesOnlyThatTagLeavingSiblingsAndManifestIntact`,
+`TestServiceDeleteManifestReturnsNotFoundForAbsentDigestAndAbsentTag`).
+
+**Coverage**: not measured this pass. ➖ Not available (no coverage tool cached this session).
+
+### Spec Compliance Matrix — Independently Re-Verified (not trusted from self-report)
+| Requirement | Scenario | Test | Result |
+|-------------|----------|------|--------|
+| Delete Is Gated Behind An Opt-In Server Flag | Flag off refuses (service-level) | `service_test.go > TestServiceDeleteManifestRefusesWithValidationErrorWhenFlagOffForAuthorizedCaller` | COMPLIANT (service-level; wire-level `UNSUPPORTED` string is Phase 4, see WARNING) |
+| Delete Is Gated Behind An Opt-In Server Flag | Flag on permits processing | `service_test.go > TestServiceDeleteManifestByDigestRemovesManifestAndReturnsAllRemovedTags` / `...ByTag...` | COMPLIANT |
+| Delete By Digest Cascades To Tags And Manifest Blobs | Multi-tagged digest removes all tags | `service_test.go > TestServiceDeleteManifestByDigestRemovesManifestAndReturnsAllRemovedTags` | COMPLIANT |
+| Delete By Digest Cascades To Tags And Manifest Blobs | Unknown digest returns NotFound | `service_test.go > TestServiceDeleteManifestReturnsNotFoundForAbsentDigestAndAbsentTag` | COMPLIANT (typed `ErrorCodeNotFound`; wire `404 MANIFEST_UNKNOWN` is Phase 4, see WARNING) |
+| Delete By Tag Untags Without Touching The Manifest | Deleting one tag leaves siblings/manifest intact | `service_test.go > TestServiceDeleteManifestByTagRemovesOnlyThatTagLeavingSiblingsAndManifestIntact` | COMPLIANT |
+| Delete By Tag Untags Without Touching The Manifest | Unknown tag returns NotFound | `service_test.go > TestServiceDeleteManifestReturnsNotFoundForAbsentDigestAndAbsentTag` | COMPLIANT (same typed-error caveat as above) |
+
+**Compliance summary**: 6/6 in-scope scenarios COMPLIANT.
+
+### Auth-Before-Flag Ordering — Independent Re-Verification (headline claim)
+
+Read `service.go:287-314` directly, not trusted from the self-report:
+
+```go
+func (s *Service) DeleteManifest(ctx context.Context, repositoryName string, reference string) (DeletionDetails, error) {
+	repository, err := parseRepository(repositoryName)
+	...
+	if err := s.authorize(ctx, ports.Action{Verb: ports.ActionDelete, Repository: repository.String()}); err != nil {
+		return DeletionDetails{}, err
+	}
+
+	if !s.deleteEnabled {
+		return DeletionDetails{}, domain.NewValidationError("manifest deletion is not enabled")
+	}
+	...
+```
+
+Confirmed: `s.authorize(...)` is called and returns on line 293-295, strictly before the
+`s.deleteEnabled` check on line 297-299. This is genuine control-flow ordering in the actual
+current source, not merely two checks present somewhere in the function.
+
+Both cited tests were read directly (`service_test.go:167-225`):
+
+1. `TestServiceDeleteManifestRejectsUnauthorizedCallerRegardlessOfFlag` (table-driven, `{flag off,
+   flag on}`) uses a real `ports.NewPrincipalAccessController` and a `pull,push`-only writer-role
+   token (missing the `delete` scope). In BOTH sub-cases the call returns
+   `domain.ErrorCodeUnauthorized`. As the apply self-report itself correctly notes, the `flag off`
+   sub-case alone would not discriminate ordering (a flag-first implementation also returns a
+   non-nil error there); the `flag on` sub-case is the actual discriminator, because a flag-first
+   implementation would pass the (now-open) flag gate and still reach the auth check, returning the
+   identical `Unauthorized` result — so this test alone cannot fully prove ordering; test 2 is the
+   real discriminator, and this report agrees with that self-assessment after independently
+   re-deriving it.
+2. `TestServiceDeleteManifestRefusesWithValidationErrorWhenFlagOffForAuthorizedCaller` uses
+   `allowAllAccessController{}` (always authorizes — an authorized caller) with `deleteEnabled`
+   left at its zero-value default (`SetDeleteEnabled` is never called in this test, confirmed by
+   reading lines 202-225 directly). It asserts `domain.ErrorCodeValidation`, THEN calls
+   `service.ResolveManifest(ctx, "team/app", "latest")` immediately afterward and asserts the
+   returned digest still equals the originally published digest. This is a genuine "store never
+   called" proof, not merely a correct-error-code check: `DeleteManifestByDigest`/`DeleteTag`
+   destructively mutate rows, so if the service had reached the store despite `deleteEnabled ==
+   false`, the manifest would be gone and `ResolveManifest` would return `ErrorCodeNotFound`
+   instead of succeeding with the original digest. The test would fail in that case. This
+   independently confirms the self-report's claim — it is not a spy/mock call-count assertion, but
+   an equally valid (arguably stronger, since it exercises the real store) re-resolution proof.
+
+Together, these two tests prove the exact ordering `parseRepository → authorize → deleteEnabled
+check`, matching design.md Decision 2 verbatim and matching the actual current source exactly.
+
+### Flag Default — Independent Re-Verification
+
+`deleteEnabled bool` (service.go:30) has no explicit zero-value override in `NewService` (queries.go
+constructor at service.go:77-88 does not set it), so it defaults to Go's `bool` zero value,
+`false` — matching the "opt-in, default off" product decision, independently confirmed by reading
+the struct literal in `NewService` directly (`deleteEnabled` is absent from the literal).
+
+Checked every `SetDeleteEnabled` call site in the test file (5 call sites, `service_test.go:183,
+238, 281, 328`, plus the deliberate non-call at line 202-225): every test that expects a delete to
+actually reach the store explicitly calls `service.SetDeleteEnabled(true)` first; the one test that
+must prove the flag-off refusal (`TestServiceDeleteManifestRefusesWithValidationErrorWhenFlagOffForAuthorizedCaller`)
+deliberately never calls it, relying on the zero value. No test in this phase constructs a service
+and leaves `deleteEnabled` implicitly `true` — none would silently pass a future wiring bug where
+Phase 4's `main.go` fails to wire `REGISTRY_DELETE_ENABLED` into `SetDeleteEnabled`, because a
+default-disabled `Service` is exactly what every current test already assumes.
+
+### DeletionDetails Population — Independent Re-Verification
+- **Digest path** (`TestServiceDeleteManifestByDigestRemovesManifestAndReturnsAllRemovedTags`,
+  lines 231-269): publishes 3 tags (`latest`, `v1`, `v2`) on one digest via
+  `publishManifestWithTags`, asserts `ManifestRemoved == true`, `Digest == published.Digest`, and
+  `TagsRemoved` (sorted) `== ["latest","v1","v2"]` — all 3 names, not merely a count. Then
+  re-resolves by digest and by each of the 3 individual tag names, asserting `ErrorCodeNotFound`
+  for all 4.
+- **Tag-only path** (`TestServiceDeleteManifestByTagRemovesOnlyThatTagLeavingSiblingsAndManifestIntact`,
+  lines 274-315): publishes 2 tags (`a`, `b`), deletes `a`, asserts `ManifestRemoved == false`,
+  `Digest == ""` (empty, matching design.md Decision 1's `omitempty` intent), and
+  `TagsRemoved == ["a"]` (the single deleted tag name, via `reflect.DeepEqual`). Then re-resolves
+  `a` (NotFound), `b` (still resolves, same digest), and the digest itself (still resolves, same
+  digest) — proving sibling and manifest survival, not just tag removal.
+
+Both match `newDeletionDetailsForDigest`/`newDeletionDetailsForTag` (queries.go:642-661) exactly.
+
+### Not-Found Propagation — Independent Re-Verification
+Read `store.go:391-394` (`DeleteManifestByDigest`) and `store.go:428-430` (`DeleteTag`) directly:
+both return `domain.NewNotFoundError(...)` on zero rows affected, never a generic error. `service.go`
+DeleteManifest returns each store error unwrapped (`if err != nil { return DeletionDetails{}, err
+}`, lines 303-305 and 309-311) — no error-code translation, no masking. Confirmed by
+`TestServiceDeleteManifestReturnsNotFoundForAbsentDigestAndAbsentTag` (lines 321-339), which
+asserts `domain.ErrorCodeNotFound` for both an absent digest and an absent tag name through the
+live service call, not a mocked store.
+
+### Correctness (Static Evidence)
+| Requirement | Status | Notes |
+|------------|--------|-------|
+| `DeleteManifest` orchestration (`parseRepository → authorize → flag → digest/tag disambiguation → store`) | Implemented | `service.go:287-314`, matches design.md Decision 2/3 verbatim |
+| `DeletionDetails` shape | Implemented | `queries.go:39-45`, matches design.md Decision 1 verbatim (`digest,omitempty`) |
+| `SetDeleteEnabled` setter | Implemented | `service.go:143-145`, mirrors `SetScanHost` shape exactly |
+
+### Coherence (Design)
+| Decision | Followed? | Notes |
+|----------|-----------|-------|
+| Decision 1 (`DeletionDetails` shape, digest omitted on tag path) | Yes | Verbatim field names/tags, verbatim omission logic |
+| Decision 2 (flag checked after authorization, deliberate deviation from `handleUploadState`) | Yes | Verified in actual control flow, not just doc comments |
+| Decision 3 (two store methods, digest/tag disambiguation at service layer via `domain.ParseDigest`) | Yes | Same idiom as `parseManifestPayload`, verified verbatim |
+
+### TDD Compliance
+| Check | Result | Details |
+|-------|--------|---------|
+| TDD Evidence reported | Yes | Found in apply-progress, 8-row table (3.1-3.8) |
+| All tasks have tests | Yes | 8/8 tasks have test files or are confirmation-only |
+| RED confirmed (tests exist) | Yes | 6/6 test functions verified present at cited names |
+| GREEN confirmed (tests pass) | Yes | 6/6 tests pass on independent re-execution |
+| Triangulation adequate | Yes | 2 cases (3.1/3.2 auth-before-flag), 2 cases (3.7 not-found), distinct scenarios (3.4/3.5) |
+| Safety Net for modified files | Yes | Full `go test ./...` clean before and after, zero regressions |
+
+**TDD Compliance**: 6/6 checks passed
+
+---
+
+### Test Layer Distribution
+| Layer | Tests | Files | Tools |
+|-------|-------|-------|-------|
+| Unit | 6 (8 incl. subtests) | 1 (`service_test.go`) | Go `testing`, real SQLite via `t.TempDir()` |
+| Integration | 0 | 0 | not applicable this phase (no HTTP caller yet) |
+| E2E | 0 | 0 | not applicable |
+| **Total** | **6 (8 incl. subtests)** | **1** | |
+
+---
+
+### Changed File Coverage
+Coverage analysis skipped — no coverage tool detected/cached for this session.
+
+---
+
+### Assertion Quality
+No violations found across the 6 new/modified test functions (`service_test.go:160-339`): zero
+tautologies, zero mocks (real `*Service` + real SQLite store via `newTestService`), no ghost loops
+(loops iterate static literal slices — `wantTags`, `[]string{"a","b"}` — not possibly-empty query
+results), no orphan empty-checks without a companion non-empty test, no smoke-test-only patterns,
+no CSS/implementation-detail coupling, no mock-heavy ratio (mock count is zero).
+
+**Assertion quality**: All assertions verify real behavior
+
+---
+
+### Quality Metrics
+**Linter**: Not run this pass (not in cached capabilities/toolchain for this session)
+**Type Checker**: No errors — `go vet ./...` exit 0, `go build ./...` exit 0
+**Format**: No errors — `gofmt -l .` exit 0
+
+### Issues Found
+**CRITICAL**: None
+
+**WARNING**:
+1. The "flag off refuses with UNSUPPORTED" scenario is compliant only at the service layer's typed
+   error (`domain.ErrorCodeValidation`, message "manifest deletion is not enabled"); the literal
+   OCI wire code string `"UNSUPPORTED"` is a router-layer mapping deferred to Phase 4 by design
+   (`handleUploadState`'s `writeError(..., "UNSUPPORTED")` precedent at `router.go:277`), matching
+   design.md's own documented scope boundary. Not a defect in this PR.
+2. "Unknown digest/tag returns MANIFEST_UNKNOWN" is compliant only at the typed
+   `domain.ErrorCodeNotFound` granularity; the OCI `404 MANIFEST_UNKNOWN` wire-level response
+   remains Phase 4's `writeError` responsibility, not yet reachable or tested end-to-end. Same
+   caveat carried forward from Phase 1/2's reports.
+3. "Delete Is Metadata-Only And Leaves Other Operations Unchanged" (2 scenarios: blob files
+   survive a digest delete, unrelated operations unaffected) is out of scope for this phase —
+   `DeleteManifest` never calls `s.blobs` at all (confirmed by reading `service.go:287-314`: no
+   `s.blobs.*` call exists in the function), which trivially satisfies the non-goal at the
+   source level, but no test in this phase asserts blob-directory byte-identity or exercises an
+   unrelated push/pull/tag-list/catalog operation alongside a delete. Deferred to Phase 4's
+   integration/threat-matrix tests (design.md Testing Strategy row 5, tasks.md 4.7) by explicit,
+   documented design — not a defect in this PR.
+4. Coverage and lint tooling were not run this pass (not available/cached for this session) —
+   informational only, does not block.
+
+**SUGGESTION**: None
+
+### Verdict
+**PASS WITH WARNINGS**
+
+Phase 3 (service layer) is complete, correct, and matches design.md Decisions 1/2/3 exactly.
+Independent re-inspection of `service.go`, `queries.go`, and `service_test.go` confirms every
+claim in the apply agent's self-report is genuinely true, not merely asserted: the auth-before-flag
+ordering is real control flow in the current source (not just two checks existing somewhere), and
+`TestServiceDeleteManifestRefusesWithValidationErrorWhenFlagOffForAuthorizedCaller` genuinely
+proves the store was never reached via a live re-resolution of the manifest afterward (not a mock
+call-count) — a destructive delete would have made that re-resolution fail. `DeletionDetails` is
+correctly populated on both the digest path (all removed tag names, `ManifestRemoved: true`) and
+the tag path (`Digest` empty, `ManifestRemoved: false`, single tag name). Not-found propagation is
+unmasked and typed on both paths. The `deleteEnabled` flag genuinely defaults to `false`
+(confirmed by reading the `NewService` struct literal), and no test in this phase leaves it
+implicitly enabled in a way that could mask a future Phase 4 wiring bug. Full `go build`, `go vet`,
+`gofmt -l .`, and `go test -count=1 ./...` are all clean with zero regressions across all 18
+packages, including every Phase 1 and Phase 2 test. The four warnings are expected, documented
+scope deferrals to Phase 4 (wire-level error mapping, blob-directory/unrelated-operation
+integration proof) — none is a quality gap in this PR.
