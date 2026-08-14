@@ -686,7 +686,7 @@ func (s *Service) grantedScopes(ctx context.Context, user domainauth.User, reque
 			continue
 		}
 
-		actions := intersectRequestedActions(user.IsAdmin, grants, requested)
+		actions := intersectRequestedActions(user.IsAdmin, user.IsReadOnly, grants, requested)
 		if len(actions) == 0 {
 			continue
 		}
@@ -697,13 +697,20 @@ func (s *Service) grantedScopes(ctx context.Context, user domainauth.User, reque
 	return granted, nil
 }
 
-func intersectRequestedActions(isAdmin bool, grants []domainauth.RepoGrant, requested domainauth.Scope) []string {
+func intersectRequestedActions(isAdmin bool, isReadOnly bool, grants []domainauth.RepoGrant, requested domainauth.Scope) []string {
 	allowPull := false
 	allowPush := false
 
 	if isAdmin {
 		allowPull = requested.AllowsPull()
 		allowPush = requested.AllowsPush()
+	} else if isReadOnly {
+		// Registry-wide read: the domain-level probe in
+		// hasGrantedRepositoryAccess (design.md Decision 5) already grants
+		// read on every repository, but the token itself carries zero
+		// scopes unless this branch runs — otherwise every pull fails
+		// despite the domain check passing. Never grants push.
+		allowPull = requested.AllowsPull()
 	} else {
 		for _, grant := range grants {
 			if grant.Repository.String() != requested.Repository().String() {
