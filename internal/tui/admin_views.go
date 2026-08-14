@@ -142,7 +142,7 @@ func renderAdminScreen(theme adminTheme, current screen, session AdminSession, v
 	case screenAdminRobots:
 		return "Robots", renderAdminRobotsScreen(theme, session, view, layout, now), help
 	case screenAdminCreateRobot:
-		return "Robots / Create Robot", renderAdminCreateRobotScreen(theme, view), help
+		return "Robots / Create Robot", renderAdminCreateRobotScreen(theme, view, knownRepositories), help
 	case screenAdminFeatures:
 		return "Features", renderAdminFeaturesScreen(theme, session, view, layout, now), help
 	default:
@@ -692,7 +692,10 @@ func formatAdminRobotLabel(robot ports.AdminRobot) string {
 // the (now-cleared) form -- mirroring renderAdminTokensScreen's own
 // conditional block so this reveal follows the one already-audited pattern
 // instead of introducing a new one.
-func renderAdminCreateRobotScreen(theme adminTheme, view AdminViewState) string {
+// renderAdminCreateRobotScreen mirrors renderAdminAddGrantScreen's windowed,
+// highlighted repository-suggestion list (manual RC feedback: Create Robot's
+// Repository field previously had no autocomplete, unlike Add Grant's).
+func renderAdminCreateRobotScreen(theme adminTheme, view AdminViewState, knownRepositories []string) string {
 	lines := []string{theme.subheading.Render("Create Robot")}
 	if strings.TrimSpace(view.RevealedTokenSecret) != "" {
 		lines = append(lines,
@@ -709,6 +712,29 @@ func renderAdminCreateRobotScreen(theme adminTheme, view AdminViewState) string 
 		renderTextField(theme, "Role", string(view.CreateRobotForm.Role), view.CreateRobotForm.Focus == adminCreateRobotFieldRole),
 		renderTextField(theme, "TTL seconds", view.CreateRobotForm.TTLSeconds, view.CreateRobotForm.Focus == adminCreateRobotFieldTTL),
 	)
+	suggestions := robotRepositorySuggestions(view.CreateRobotForm, knownRepositories)
+	if len(suggestions) == 0 {
+		lines = append(lines, theme.muted.Render("No known repositories match the current filter."))
+	} else {
+		selected := boundedIndex(view.CreateRobotForm.RepositorySuggestion, len(suggestions))
+		start := 0
+		if selected >= 5 {
+			start = selected - 4
+		}
+		end := start + 5
+		if end > len(suggestions) {
+			end = len(suggestions)
+		}
+		lines = append(lines, "", theme.subheading.Render("Known Repositories"))
+		for index := start; index < end; index++ {
+			repository := suggestions[index]
+			label := repository
+			if index == selected {
+				label = theme.selected.Render(label)
+			}
+			lines = append(lines, label)
+		}
+	}
 	return theme.section.Render(strings.Join(lines, "\n"))
 }
 

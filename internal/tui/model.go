@@ -1686,11 +1686,26 @@ func (m Model) updateCreateRobotFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.screen = screenAdminRobots
 		m.status = ""
 		return m, nil
+	case isMoveUpKey(msg):
+		if m.adminView.CreateRobotForm.Focus == adminCreateRobotFieldRepository {
+			suggestions := robotRepositorySuggestions(m.adminView.CreateRobotForm, m.repositories.Names())
+			m.adminView.CreateRobotForm.RepositorySuggestion = boundedIndex(m.adminView.CreateRobotForm.RepositorySuggestion-1, len(suggestions))
+			return m, nil
+		}
+	case isMoveDownKey(msg):
+		if m.adminView.CreateRobotForm.Focus == adminCreateRobotFieldRepository {
+			suggestions := robotRepositorySuggestions(m.adminView.CreateRobotForm, m.repositories.Names())
+			m.adminView.CreateRobotForm.RepositorySuggestion = boundedIndex(m.adminView.CreateRobotForm.RepositorySuggestion+1, len(suggestions))
+			return m, nil
+		}
 	case isTabKey(msg):
 		m.adminView.CreateRobotForm.Focus = nextCreateRobotField(m.adminView.CreateRobotForm.Focus)
 		return m, nil
 	case isBackspaceKey(msg):
 		m.deleteCreateRobotRune()
+		if m.adminView.CreateRobotForm.Focus == adminCreateRobotFieldRepository {
+			m.adminView.CreateRobotForm.RepositorySuggestion = 0
+		}
 		return m, nil
 	case isRuneKey(msg, ' '):
 		if m.adminView.CreateRobotForm.Focus == adminCreateRobotFieldRole {
@@ -1698,6 +1713,19 @@ func (m Model) updateCreateRobotFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	case isEnterKey(msg):
+		if m.adminView.CreateRobotForm.Focus == adminCreateRobotFieldRepository {
+			suggestions := robotRepositorySuggestions(m.adminView.CreateRobotForm, m.repositories.Names())
+			if len(suggestions) > 0 {
+				m.adminView.CreateRobotForm.Repository = suggestions[boundedIndex(m.adminView.CreateRobotForm.RepositorySuggestion, len(suggestions))]
+			}
+			if strings.TrimSpace(m.adminView.CreateRobotForm.Repository) == "" {
+				m.status = "Repository is required."
+				return m, nil
+			}
+			m.adminView.CreateRobotForm.Focus = adminCreateRobotFieldRole
+			m.adminView.CreateRobotForm.RepositorySuggestion = 0
+			return m, nil
+		}
 		name := strings.TrimSpace(m.adminView.CreateRobotForm.Name)
 		repository := strings.TrimSpace(m.adminView.CreateRobotForm.Repository)
 		if name == "" || repository == "" {
@@ -1722,6 +1750,7 @@ func (m Model) updateCreateRobotFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.adminView.CreateRobotForm.Name += string(msg.Runes)
 		case adminCreateRobotFieldRepository:
 			m.adminView.CreateRobotForm.Repository += string(msg.Runes)
+			m.adminView.CreateRobotForm.RepositorySuggestion = 0
 		case adminCreateRobotFieldTTL:
 			for _, r := range msg.Runes {
 				if !unicode.IsDigit(r) {
@@ -3870,8 +3899,17 @@ func (m Model) canLogoutAdminFromCurrentScreen() bool {
 	}
 }
 
-func grantRepositorySuggestions(form adminGrantForm, repositories []string) []string {
-	query := strings.ToLower(strings.TrimSpace(form.Repository))
+// repositorySuggestionsMatching is the core repository-autosuggest filter:
+// case-insensitive substring match against query, deduplicated, order
+// preserved. It takes a plain query string rather than a specific form type
+// so every form with a Repository autosuggest field (adminGrantForm today,
+// adminCreateRobotForm below) can share this exact filtering/dedupe logic
+// instead of each re-implementing it -- unlike the deliberate "sibling, not
+// shared" pattern used for authorization-scoped structs such as
+// adminGrantForm/adminRepositoryGrantForm, this is pure display filtering
+// with no authorization semantics, so sharing is correct here.
+func repositorySuggestionsMatching(query string, repositories []string) []string {
+	query = strings.ToLower(strings.TrimSpace(query))
 	seen := make(map[string]struct{}, len(repositories))
 	suggestions := make([]string, 0, len(repositories))
 	for _, repository := range repositories {
@@ -3889,6 +3927,18 @@ func grantRepositorySuggestions(form adminGrantForm, repositories []string) []st
 		suggestions = append(suggestions, repository)
 	}
 	return suggestions
+}
+
+func grantRepositorySuggestions(form adminGrantForm, repositories []string) []string {
+	return repositorySuggestionsMatching(form.Repository, repositories)
+}
+
+// robotRepositorySuggestions is screenAdminCreateRobot's counterpart to
+// grantRepositorySuggestions, reusing the same core filter so both forms'
+// Repository field behave identically (manual RC feedback: Create Robot's
+// Repository field had no autocomplete while Add Grant's already did).
+func robotRepositorySuggestions(form adminCreateRobotForm, repositories []string) []string {
+	return repositorySuggestionsMatching(form.Repository, repositories)
 }
 
 func featureActionForKey(msg tea.KeyMsg, page ports.FeaturePage) (ports.FeatureAction, bool) {

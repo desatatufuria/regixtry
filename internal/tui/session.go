@@ -140,12 +140,17 @@ type adminTokenForm struct {
 // Role's zero value is set to domainauth.RepoRoleReader by newAdminViewState
 // (mirroring adminGrantForm/adminRepositoryGrantForm), and TTLSeconds follows
 // adminTokenForm's convention: empty means the service's default TTL.
+// RepositorySuggestion mirrors adminGrantForm.RepositorySuggestion: the
+// screenAdminAddGrant repository autosuggest pattern (filter as you type,
+// Up/Down cycle, Enter commits) reused here so Create Robot behaves
+// consistently with Add Grant instead of being a plain free-text field.
 type adminCreateRobotForm struct {
-	Name       string
-	Repository string
-	Role       domainauth.RepoRole
-	TTLSeconds string
-	Focus      adminCreateRobotField
+	Name                 string
+	Repository           string
+	Role                 domainauth.RepoRole
+	TTLSeconds           string
+	Focus                adminCreateRobotField
+	RepositorySuggestion int
 }
 
 type adminConfirmModal struct {
