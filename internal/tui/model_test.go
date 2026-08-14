@@ -1282,6 +1282,81 @@ func TestModelEnableDisableAdminRobotConfirmFlow(t *testing.T) {
 	}
 }
 
+// TestModelAdminRobotDeleteKeyOpensConfirmModal is this task's RED test for
+// the "d" key on screenAdminRobots: unlike screenAdminUsers (no delete key
+// at all) and unlike this same screen's "e"/"x" (enable/disable), "d" opens
+// a destructive, irreversible confirmation -- distinct wording from the
+// reversible disable confirm above, since a deleted robot cannot be
+// recovered the way a disabled one can be re-enabled.
+func TestModelAdminRobotDeleteKeyOpensConfirmModal(t *testing.T) {
+	t.Parallel()
+
+	adminClient := &fakeAdminClient{
+		robots: []ports.AdminRobot{{ID: "u-2", Username: "robot$ci", Repository: "team/app", Role: domainauth.RepoRoleWriter, Enabled: true}},
+	}
+	model := newAdminReadyModel(t, adminClient)
+	model.adminAuth = adminAuthStateAuthenticated
+	model.screen = screenAdminRobots
+	model.adminView.Robots = adminClient.robots
+	model.adminView.SelectedRobot = 0
+
+	updated := runKey(t, model, "d")
+
+	if got, want := updated.adminView.ConfirmModal.Kind, adminConfirmDeleteRobot; got != want {
+		t.Fatalf("ConfirmModal.Kind = %q, want %q", got, want)
+	}
+	if got, want := updated.adminView.ConfirmModal.UserID, "u-2"; got != want {
+		t.Fatalf("ConfirmModal.UserID = %q, want %q", got, want)
+	}
+	view := updated.View()
+	if !strings.Contains(view, `robot$ci`) {
+		t.Fatalf("view = %q, want the robot's username in the confirmation", view)
+	}
+	if !strings.Contains(strings.ToLower(view), "cannot be undone") {
+		t.Fatalf("view = %q, want an irreversibility warning distinguishing this from disable", view)
+	}
+}
+
+// TestModelDeleteAdminRobotConfirmFlow triangulates the RED test above by
+// driving Enter on the opened modal: it must call AdminClient.DeleteRobot
+// with the selected robot's ID and, on success, the robot must disappear
+// from the refreshed list (proving the reload -- not a hardcoded stub --
+// drives the list, the same pattern TestModelEnableDisableAdminRobotConfirmFlow
+// already establishes for enable/disable).
+func TestModelDeleteAdminRobotConfirmFlow(t *testing.T) {
+	t.Parallel()
+
+	adminClient := &fakeAdminClient{
+		robots: []ports.AdminRobot{{ID: "u-2", Username: "robot$ci", Repository: "team/app", Role: domainauth.RepoRoleWriter, Enabled: true}},
+	}
+	model := newAdminReadyModel(t, adminClient)
+	model.adminAuth = adminAuthStateAuthenticated
+	model.screen = screenAdminRobots
+	model.adminView.Robots = adminClient.robots
+	model.adminView.SelectedRobot = 0
+
+	updated := runKey(t, model, "d")
+	updated = runKey(t, updated, "enter")
+
+	if adminClient.lastDeleteRobotUserID != "u-2" {
+		t.Fatalf("lastDeleteRobotUserID = %q, want %q", adminClient.lastDeleteRobotUserID, "u-2")
+	}
+	if adminClient.listRobotsCalls < 1 {
+		t.Fatalf("listRobotsCalls = %d, want at least 1 (refreshed after mutation)", adminClient.listRobotsCalls)
+	}
+	if got, want := updated.screen, screenAdminRobots; got != want {
+		t.Fatalf("screen = %q, want %q", got, want)
+	}
+	if got, want := updated.adminView.ConfirmModal.Kind, adminConfirmNone; got != want {
+		t.Fatalf("ConfirmModal.Kind = %q, want %q (closed after success)", got, want)
+	}
+	for _, robot := range updated.adminView.Robots {
+		if robot.ID == "u-2" {
+			t.Fatalf("Robots = %+v, want %q removed after delete", updated.adminView.Robots, "u-2")
+		}
+	}
+}
+
 func TestModelUsersScreenShowsOnlyListAndSearch(t *testing.T) {
 	t.Parallel()
 
@@ -4039,10 +4114,10 @@ type fakeAdminClient struct {
 	createRobotCalls     int
 	lastCreateRobotInput ports.AdminCreateRobotInput
 
-	// deleteRobot* backs the registry-acl-v1 robot-deletion follow-up's
-	// AdminClient contract (PR 4, backend-only -- no key/UI wiring calls
-	// this yet, so no dedicated call-count assertions land until PR 5).
+	// deleteRobot* backs the registry-acl-v1 robot-deletion "d" key/confirm
+	// flow on screenAdminRobots.
 	deleteRobotErr        error
+	deleteRobotCalls      int
 	lastDeleteRobotUserID string
 
 	loginCalls                  int
@@ -4393,8 +4468,19 @@ func (f *fakeAdminClient) DeleteUserGrant(_ context.Context, _ AdminSession, use
 }
 
 func (f *fakeAdminClient) DeleteRobot(_ context.Context, _ AdminSession, userID string) error {
+	f.deleteRobotCalls++
 	f.lastDeleteRobotUserID = userID
-	return f.deleteRobotErr
+	if f.deleteRobotErr != nil {
+		return f.deleteRobotErr
+	}
+	remaining := f.robots[:0:0]
+	for _, robot := range f.robots {
+		if robot.ID != userID {
+			remaining = append(remaining, robot)
+		}
+	}
+	f.robots = remaining
+	return nil
 }
 
 func (f *fakeAdminClient) ListRepositoryGrants(_ context.Context, _ AdminSession, repository string) ([]ports.AdminRepositoryGrant, error) {
