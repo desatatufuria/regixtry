@@ -667,7 +667,7 @@ func (s *Service) buildPrincipal(ctx context.Context, user domainauth.User, toke
 		return domainauth.Principal{}, err
 	}
 
-	return domainauth.Principal{Subject: token.Accessor, UserID: user.ID, Username: user.Username, IsAdmin: user.IsAdmin, Grants: grants, Scopes: scopes, ExpiresAt: token.ExpiresAt}, nil
+	return domainauth.Principal{Subject: token.Accessor, UserID: user.ID, Username: user.Username, IsAdmin: user.IsAdmin, IsReadOnly: user.IsReadOnly, Grants: grants, Scopes: scopes, ExpiresAt: token.ExpiresAt}, nil
 }
 
 func (s *Service) grantedScopes(ctx context.Context, user domainauth.User, requestedScopes []domainauth.Scope) ([]domainauth.Scope, error) {
