@@ -992,16 +992,20 @@ func (s *Service) grantedScopes(ctx context.Context, user domainauth.User, reque
 func intersectRequestedActions(isAdmin bool, isReadOnly bool, grants []domainauth.RepoGrant, requested domainauth.Scope) []string {
 	allowPull := false
 	allowPush := false
+	allowDelete := false
 
 	if isAdmin {
 		allowPull = requested.AllowsPull()
 		allowPush = requested.AllowsPush()
+		allowDelete = requested.AllowsDelete()
 	} else if isReadOnly {
 		// Registry-wide read: the domain-level probe in
 		// hasGrantedRepositoryAccess (design.md Decision 5) already grants
 		// read on every repository, but the token itself carries zero
 		// scopes unless this branch runs — otherwise every pull fails
-		// despite the domain check passing. Never grants push.
+		// despite the domain check passing. Never grants push, and now
+		// never grants delete either: the absence of a line here is the
+		// guarantee, not a check.
 		allowPull = requested.AllowsPull()
 	} else {
 		for _, grant := range grants {
@@ -1014,16 +1018,27 @@ func intersectRequestedActions(isAdmin bool, isReadOnly bool, grants []domainaut
 			if grant.Role.AllowsWrite() && requested.AllowsPush() {
 				allowPush = true
 			}
+			// Own statement, own requested.AllowsDelete() guard — never
+			// folded into the push branch as
+			// `AllowsPush() || AllowsDelete()`. A fifth verb must likewise
+			// add its own line, so no future action can inherit writer
+			// derivation by being forgotten (proposal Q4).
+			if grant.Role.AllowsWrite() && requested.AllowsDelete() {
+				allowDelete = true
+			}
 			break
 		}
 	}
 
-	actions := make([]string, 0, 2)
+	actions := make([]string, 0, 3)
 	if allowPull {
 		actions = append(actions, "pull")
 	}
 	if allowPush {
 		actions = append(actions, "push")
+	}
+	if allowDelete {
+		actions = append(actions, "delete")
 	}
 
 	return actions
