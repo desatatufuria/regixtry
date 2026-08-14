@@ -53,6 +53,10 @@ func (u User) Validate() error {
 		return NewValidationError("updated at is required")
 	}
 
+	if u.IsRobot && (u.IsAdmin || u.IsReadOnly) {
+		return NewValidationError("robot accounts cannot be admin or read-only")
+	}
+
 	return nil
 }
 
