@@ -241,19 +241,22 @@ a UI-trust gap where the interface offered what the backend would refuse.
 
 ## Phase 5: Robot Accounts — TUI + Docs (Slice 3b — PR 5, depends on Phase 4)
 
-- [ ] 5.1 RED `session_test.go`: robot create form fields (name, repository,
+- [x] 5.1 RED `session_test.go`: robot create form fields (name, repository,
       role, ttl); robot list view state.
-- [ ] 5.2 GREEN: add robot view state and forms to `session.go`.
-- [ ] 5.3 RED `admin_views_test.go`: `screenAdminRobots` list/enable/
+- [x] 5.2 GREEN: add robot view state and forms to `session.go`.
+- [x] 5.3 RED `admin_views_test.go`: `screenAdminRobots` list/enable/
       disable/delete mirrors `screenAdminUsers`; `screenAdminCreateRobot`
       shows the one-time secret.
-- [ ] 5.4 GREEN: implement `screenAdminRobots`/`screenAdminCreateRobot`
+- [x] 5.4 GREEN: implement `screenAdminRobots`/`screenAdminCreateRobot`
       (`admin_views.go`).
-- [ ] 5.5 RED `admin_client_test.go`: robot client methods (create, list,
+- [x] 5.5 RED `admin_client_test.go`: robot client methods (create, list,
       enable/disable/delete, issue token reusing existing token routes).
-- [ ] 5.6 GREEN: add robot methods to `admin_client.go`.
-- [ ] 5.7 GREEN: wire both screens into `model.go` screen sets and key
+      Deviation: no dedicated "delete" client method — see apply report;
+      no `DeleteAdminUser`/`DELETE /admin/v1/users/{id}` route exists on
+      this branch's backend to call.
+- [x] 5.6 GREEN: add robot methods to `admin_client.go`.
+- [x] 5.7 GREEN: wire both screens into `model.go` screen sets and key
       handlers.
-- [ ] 5.8 Confirm Phase 5 GREEN (see Unit 5 focused test command).
-- [ ] 5.9 Update `docs/` and roadmap for delegation, robots, and the
+- [x] 5.8 Confirm Phase 5 GREEN (see Unit 5 focused test command).
+- [x] 5.9 Update `docs/` and roadmap for delegation, robots, and the
       read-only role.
