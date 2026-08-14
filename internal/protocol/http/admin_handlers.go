@@ -22,12 +22,34 @@ func (r *Router) handleAdmin(w stdhttp.ResponseWriter, req *stdhttp.Request) {
 		return
 	}
 
+	subpath := strings.Trim(strings.TrimPrefix(req.URL.Path, "/admin/v1"), "/")
+
+	// The ONLY delegate-eligible namespace (design.md Decision 3). It is an
+	// explicit opt-in prefix that returns early; authority is decided in the
+	// service layer, which already has the repository argument. Everything
+	// else — including every future case added to the switch below — stays
+	// under requireAdminPrincipal by construction. A new route can only
+	// become delegate-eligible by being added to this allow-list on
+	// purpose. This check deliberately runs BEFORE the subpath == "" 404
+	// below, but AFTER it would have run relative to requireAdminPrincipal
+	// in the naive ordering: putting the empty-subpath 404 first would
+	// return 404 for an unauthenticated call to the bare "/admin/v1" mount,
+	// which would silently break the unchanged "Missing or invalid bearer
+	// token" scenario (operator-admin-http-api spec) that requires 401.
+	if strings.HasPrefix(subpath, "repositories/") {
+		principal, ok := r.requireAuthenticatedPrincipal(w, req)
+		if !ok {
+			return
+		}
+		r.handleAdminRepositoryResource(w, req, *principal, strings.TrimPrefix(subpath, "repositories/"))
+		return
+	}
+
 	principal, ok := r.requireAdminPrincipal(w, req)
 	if !ok {
 		return
 	}
 
-	subpath := strings.Trim(strings.TrimPrefix(req.URL.Path, "/admin/v1"), "/")
 	if subpath == "" {
 		writeAdminError(w, domainauth.NewNotFoundError("route", req.URL.Path), ports.Challenge{})
 		return
@@ -824,6 +846,94 @@ func (r *Router) handleAdminUserGrantResource(w stdhttp.ResponseWriter, req *std
 	}
 }
 
+// handleAdminRepositoryResource dispatches the "repositories/" delegate
+// namespace (design.md Decision 3). resource has already had the
+// "repositories/" prefix trimmed. It splits on strings.LastIndex(resource,
+// "/grants/") and strings.HasSuffix(resource, "/grants") — a username can
+// never contain "/", but a repository can literally be named "team/grants"
+// (the same ordering hazard already documented at handleAdminFeatureResource
+// above); TestAdminRepositoryGrantRoutesRepositoryNamedTeamGrantsRoutesCorrectly
+// pins this.
+func (r *Router) handleAdminRepositoryResource(w stdhttp.ResponseWriter, req *stdhttp.Request, principal domainauth.Principal, resource string) {
+	// The collection suffix MUST be checked first, ahead of the "/grants/"
+	// split below (same ordering hazard as handleAdminFeatureResource's
+	// repository-overrides case above): a repository literally named
+	// "team/grants" produces a resource like "team/grants/grants" for the
+	// collection GET, which also happens to CONTAIN the substring
+	// "/grants/" earlier in the string. Checking the suffix first routes
+	// that case to the collection handler instead of misreading it as a
+	// single-user PUT/DELETE on repository "team" username "grants".
+	if strings.HasSuffix(resource, "/grants") {
+		repository := strings.TrimSuffix(resource, "/grants")
+		if repository == "" {
+			writeAdminError(w, domainauth.NewNotFoundError("route", req.URL.Path), ports.Challenge{})
+			return
+		}
+		r.handleAdminRepositoryGrantsCollection(w, req, principal, repository)
+		return
+	}
+
+	if index := strings.LastIndex(resource, "/grants/"); index >= 0 {
+		repository := resource[:index]
+		username := resource[index+len("/grants/"):]
+		if repository == "" || username == "" || strings.Contains(username, "/") {
+			writeAdminError(w, domainauth.NewNotFoundError("route", req.URL.Path), ports.Challenge{})
+			return
+		}
+		r.handleAdminRepositoryGrantResource(w, req, principal, repository, username)
+		return
+	}
+
+	writeAdminError(w, domainauth.NewNotFoundError("route", req.URL.Path), ports.Challenge{})
+}
+
+func (r *Router) handleAdminRepositoryGrantsCollection(w stdhttp.ResponseWriter, req *stdhttp.Request, principal domainauth.Principal, repository string) {
+	if req.Method != stdhttp.MethodGet {
+		w.Header().Set("Allow", stdhttp.MethodGet)
+		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+		return
+	}
+
+	grants, err := r.admin.ListAdminRepositoryGrants(req.Context(), principal, repository)
+	if err != nil {
+		writeAdminError(w, err, ports.Challenge{})
+		return
+	}
+
+	writeJSON(w, stdhttp.StatusOK, grants)
+}
+
+func (r *Router) handleAdminRepositoryGrantResource(w stdhttp.ResponseWriter, req *stdhttp.Request, principal domainauth.Principal, repository string, username string) {
+	switch req.Method {
+	case stdhttp.MethodPut:
+		var input ports.AdminPutRepositoryGrantInput
+		if err := decodeAdminJSON(req, &input); err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		input.Repository = repository
+		input.Username = username
+
+		grant, err := r.admin.PutAdminRepositoryGrant(req.Context(), principal, input)
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+
+		writeJSON(w, stdhttp.StatusOK, grant)
+	case stdhttp.MethodDelete:
+		if err := r.admin.DeleteAdminRepositoryGrant(req.Context(), principal, repository, username); err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+
+		w.WriteHeader(stdhttp.StatusNoContent)
+	default:
+		w.Header().Set("Allow", strings.Join([]string{stdhttp.MethodPut, stdhttp.MethodDelete}, ", "))
+		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+	}
+}
+
 func (r *Router) handleAdminUserTokensCollection(w stdhttp.ResponseWriter, req *stdhttp.Request, principal domainauth.Principal, userID string) {
 	switch req.Method {
 	case stdhttp.MethodGet:
@@ -998,6 +1108,26 @@ func decodeAdminJSON(req *stdhttp.Request, dst any) error {
 	}
 
 	return nil
+}
+
+// requireAuthenticatedPrincipal is requireAdminPrincipal minus the IsAdmin
+// check (design.md Decision 3): it authenticates the caller and reuses the
+// same adminChallenge/writeAdminError shapes, but leaves the
+// admin-or-repo-admin authority decision to the service layer, which has
+// the repository argument requireAdminPrincipal never sees.
+func (r *Router) requireAuthenticatedPrincipal(w stdhttp.ResponseWriter, req *stdhttp.Request) (*domainauth.Principal, bool) {
+	bearerChallenge := r.adminChallenge(req)
+	principal, err := r.authenticate(req)
+	if err != nil {
+		writeAdminError(w, err, bearerChallenge)
+		return nil, false
+	}
+	if principal == nil {
+		writeAdminError(w, domainauth.NewInvalidCredentialsError(), bearerChallenge)
+		return nil, false
+	}
+
+	return principal, true
 }
 
 func (r *Router) requireAdminPrincipal(w stdhttp.ResponseWriter, req *stdhttp.Request) (*domainauth.Principal, bool) {
