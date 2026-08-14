@@ -640,6 +640,70 @@ func renderAdminTokensScreen(theme adminTheme, view AdminViewState) string {
 	return theme.section.Render(strings.Join(lines, "\n"))
 }
 
+// renderAdminRobotsScreen renders screenAdminRobots (design.md Decision 7),
+// mirroring renderAdminUsersScreen's list shape: one line per robot, the
+// selected row highlighted, an Operator/session-remaining footer. Keyed by
+// repository/role/enabled state instead of admin/read-only flags, since a
+// robot's identity is its single repository grant, not a global role.
+func renderAdminRobotsScreen(theme adminTheme, session AdminSession, view AdminViewState, layout consoleLayout, now time.Time) string {
+	lines := []string{theme.subheading.Render("Robots")}
+	if len(view.Robots) == 0 {
+		lines = append(lines, theme.muted.Render("No robot accounts available."))
+	} else {
+		for index, robot := range view.Robots {
+			label := formatAdminRobotLabel(robot)
+			if index == view.SelectedRobot {
+				label = theme.selected.Render(label)
+			}
+			lines = append(lines, label)
+		}
+	}
+	lines = append(lines,
+		"",
+		theme.muted.Render(fmt.Sprintf("Operator: %s", session.Username)),
+		theme.muted.Render(fmt.Sprintf("Session remaining: %s", formatRemaining(session.Remaining(now)))),
+	)
+	return renderSection(theme, strings.Join(lines, "\n"), layout)
+}
+
+// formatAdminRobotLabel mirrors formatAdminUserLabel's "name [details]"
+// shape, substituting the robot's repository/role/enabled state for the
+// human user's admin/read-only/enabled flags.
+func formatAdminRobotLabel(robot ports.AdminRobot) string {
+	state := "disabled"
+	if robot.Enabled {
+		state = "enabled"
+	}
+	return fmt.Sprintf("%s [%s, %s, %s]", robot.Username, robot.Repository, robot.Role, state)
+}
+
+// renderAdminCreateRobotScreen renders screenAdminCreateRobot (design.md
+// Decision 7). Immediately after a successful creation, RevealedTokenSecret/
+// Accessor are populated (the exact fields renderAdminTokensScreen already
+// reveals once for human admin tokens) and rendered here exactly once, above
+// the (now-cleared) form -- mirroring renderAdminTokensScreen's own
+// conditional block so this reveal follows the one already-audited pattern
+// instead of introducing a new one.
+func renderAdminCreateRobotScreen(theme adminTheme, view AdminViewState) string {
+	lines := []string{theme.subheading.Render("Create Robot")}
+	if strings.TrimSpace(view.RevealedTokenSecret) != "" {
+		lines = append(lines,
+			"",
+			theme.success.Render("One-time secret"),
+			fmt.Sprintf("Accessor: %s", view.RevealedTokenAccessor),
+			theme.text.Render(view.RevealedTokenSecret),
+			"",
+		)
+	}
+	lines = append(lines,
+		renderTextField(theme, "Name", view.CreateRobotForm.Name, view.CreateRobotForm.Focus == adminCreateRobotFieldName),
+		renderTextField(theme, "Repository", view.CreateRobotForm.Repository, view.CreateRobotForm.Focus == adminCreateRobotFieldRepository),
+		renderTextField(theme, "Role", string(view.CreateRobotForm.Role), view.CreateRobotForm.Focus == adminCreateRobotFieldRole),
+		renderTextField(theme, "TTL seconds", view.CreateRobotForm.TTLSeconds, view.CreateRobotForm.Focus == adminCreateRobotFieldTTL),
+	)
+	return theme.section.Render(strings.Join(lines, "\n"))
+}
+
 func renderAdminCreateTokenScreen(theme adminTheme, view AdminViewState) string {
 	return theme.section.Render(strings.Join([]string{
 		theme.subheading.Render("Create Token"),
