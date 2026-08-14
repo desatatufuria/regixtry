@@ -88,50 +88,57 @@ Chain strategy: pending
 
 ## Phase 2: Delegated Repo-Admin Grants — Backend (Slice 2a — PR 2)
 
-- [ ] 2.1 Characterization RED `internal/app/auth/service_grants_test.go`
+- [x] 2.1 Characterization RED `internal/app/auth/service_grants_test.go`
       (new file): `PutRepoGrant`/`DeleteRepoGrant`/`ListRepoGrants` each
       reject a non-admin actor and succeed for an admin — today's behavior,
       table-driven, zero production change.
-- [ ] 2.2 Confirm 2.1 is GREEN against current unmodified code; record the
+- [x] 2.2 Confirm 2.1 is GREEN against current unmodified code; record the
       baseline. **Blocks every task below (Mandatory Ordering Constraint).**
-- [ ] 2.3 RED `service_test.go`: `requireAdminOrRepoAdmin` — admin passes;
+- [x] 2.3 RED `service_test.go`: `requireAdminOrRepoAdmin` — admin passes;
       repo-admin on the exact repository passes; repo-admin on another
       repository, repo-writer, read-only, and empty-`Scopes` principals
       rejected — table-driven.
-- [ ] 2.4 GREEN: implement `requireAdminOrRepoAdmin` beside `requireAdmin`
+- [x] 2.4 GREEN: implement `requireAdminOrRepoAdmin` beside `requireAdmin`
       (`service.go:733-739`, Decision 4 — reads `actor.Grants`, not
       `Principal.HasRepoAdminAccess`).
-- [ ] 2.5 RED: delegate rejected for requesting `repo-admin`, for
+- [x] 2.5 RED: delegate rejected for requesting `repo-admin`, for
       self-assigning `repo-admin`, and for touching an existing repo-admin
       grant — three separate cases (threat matrix: privilege escalation).
-- [ ] 2.6 RED: delegate's `ListRepositoryGrants` is scoped to their own
+- [x] 2.6 RED: delegate's `ListRepositoryGrants` is scoped to their own
       repository only.
-- [ ] 2.7 GREEN: implement `List/Put/DeleteRepositoryGrant` in `service.go`
+- [x] 2.7 GREEN: implement `List/Put/DeleteRepositoryGrant` in `service.go`
       as siblings to `PutRepoGrant` et al. — `requireAdminOrRepoAdmin` gate,
       escalation bounds, username resolution via `GetUserByUsername`.
-- [ ] 2.8 RED `store_test.go`: `ListRepoGrantsByRepository` returns grants
-      for one repository across users.
-- [ ] 2.9 GREEN: implement `ListRepoGrantsByRepository` (`store.go`).
-- [ ] 2.10 GREEN: add repository-grant DTOs and the new methods to
+- [x] 2.8 RED `store_test.go`: `ListRepoGrantsByRepository` returns grants
+      for one repository across users. (Interleaved with 2.7/2.9/2.10 in one
+      commit — `service.go`'s new methods require the store method to exist
+      to compile, so it could not be deferred to a later commit; see apply
+      report Deviations.)
+- [x] 2.9 GREEN: implement `ListRepoGrantsByRepository` (`store.go`).
+- [x] 2.10 GREEN: add repository-grant DTOs and the new methods to
       `AuthService`/`AdminHTTPService`/`AuthStore` (`ports/auth.go`).
-- [ ] 2.11 RED `admin_handlers_test.go`: GET/PUT/DELETE
+- [x] 2.11 RED `admin_handlers_test.go`: GET/PUT/DELETE
       `/admin/v1/repositories/{repo}/grants` — 401 unauthenticated, 403
       non-delegate, 200/204 delegate on own repository, 403 delegate on
       another repository.
-- [ ] 2.12 RED: a repository literally named `team/grants` routes correctly
+- [x] 2.12 RED: a repository literally named `team/grants` routes correctly
       for GET/PUT/DELETE (threat matrix: `/`-in-path parsing hazard,
       `admin_handlers.go:78-84` precedent).
-- [ ] 2.13 RED: every **non-grant** `/admin/v1/*` route still 403s a
+- [x] 2.13 RED: every **non-grant** `/admin/v1/*` route still 403s a
       non-admin authenticated principal, enumerated route by route (threat
-      matrix: HTTP gate narrowing — highest-risk guard).
-- [ ] 2.14 RED: delegate grant responses carry no user ID, hash, flags, or
+      matrix: HTTP gate narrowing — highest-risk guard). (This test passes
+      immediately against unmodified code — those routes are untouched by
+      design — and continues to pass after 2.15; it is the exhaustive
+      regression guard, not a state that must flip.)
+- [x] 2.14 RED: delegate grant responses carry no user ID, hash, flags, or
       other repositories (threat matrix: identity disclosure).
-- [ ] 2.15 GREEN: restructure `handleAdmin` with the early-return
+- [x] 2.15 GREEN: restructure `handleAdmin` with the early-return
       `repositories/` prefix above `requireAdminPrincipal`; add
       `requireAuthenticatedPrincipal`; add `handleAdminRepositoryResource`
       (`admin_handlers.go`, Decision 3).
-- [ ] 2.16 Confirm 2.3, 2.5–2.6, 2.8, 2.11–2.14 GREEN (see Unit 2 focused
-      test command).
+- [x] 2.16 Confirm 2.3, 2.5–2.6, 2.8, 2.11–2.14 GREEN (see Unit 2 focused
+      test command). Also ran full `go test ./...` (zero regressions) and
+      `gofmt -l .` (clean).
 
 ## Phase 3: Delegated Repo-Admin Grants — TUI (Slice 2b — PR 3, depends on Phase 2)
 
