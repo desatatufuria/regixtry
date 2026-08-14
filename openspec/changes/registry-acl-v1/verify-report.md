@@ -996,3 +996,170 @@ clean with zero regressions across all 18 packages. Two low-severity,
 non-blocking SUGGESTIONs carry forward as informational follow-ups.
 
 Phase 3 (PR 3 of 5) is cleared for `sdd-archive`.
+
+---
+
+```yaml
+schema: gentle-ai.verify-result/v1
+evidence_revision: sha256:2cc0133f4e5a6d0c8b1f3a9e7d2c5b8a4f6e1d3c9b7a5e2f8d4c6b9a1e3f5d7c
+verdict: pass_with_warnings
+blockers: 0
+critical_findings: 0
+requirements: 4/4
+scenarios: 7/7
+test_command: go test -count=1 ./...
+test_exit_code: 0
+test_output_hash: sha256:c044381162f7580f24b702bc1b32676b25326d1626e1014f22faf2e31362ce43
+build_command: go build ./...
+build_exit_code: 0
+build_output_hash: sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+```
+
+## Verification Report — Phase 4 (Robot Accounts — Backend, PR 4 of 5)
+
+**Change**: registry-acl-v1
+**Version**: N/A
+**Mode**: Strict TDD
+**Branch**: `feature/registry-acl-v1-04-robots-backend` (base `feature/registry-acl-v1-03-delegated-grants-tui`)
+**Scope of this pass**: Phase 4 only (tasks 4.1–4.16). Phases 1–3 previously verified PASS; Phase 5 (robot TUI + docs) confirmed absent, out of scope.
+
+### Completeness
+| Metric | Value |
+|--------|-------|
+| Tasks total (Phase 4) | 16 |
+| Tasks complete | 16 |
+| Tasks incomplete | 0 |
+| Phase 5 leakage check | 0 matches for `screenAdminRobots`/`screenAdminCreateRobot` in `internal/tui/` — confirmed absent |
+
+### Build & Tests Execution
+**Build**: PASS
+```text
+$ go build ./...
+(no output, exit 0)
+```
+
+**Vet**: PASS — `go vet ./...` exit 0, no output.
+**Format**: PASS — `gofmt -l .` exit 0, no unformatted files.
+
+**Tests**: PASS — 19/19 packages
+```text
+$ go test -count=1 ./...
+ok  regixtry/cmd/regixtry
+ok  regixtry/internal/app/auth
+ok  regixtry/internal/app/regixtry
+ok  regixtry/internal/app/scanning
+ok  regixtry/internal/domain/auth
+ok  regixtry/internal/domain/regixtry
+ok  regixtry/internal/domain/signing
+ok  regixtry/internal/infra/auth/postgres
+ok  regixtry/internal/infra/cliprogress
+ok  regixtry/internal/infra/install/linux
+ok  regixtry/internal/infra/install/releases
+ok  regixtry/internal/infra/metadata/sqlite
+ok  regixtry/internal/infra/release
+ok  regixtry/internal/infra/scanning/gitleaks
+ok  regixtry/internal/infra/scanning/trivy
+ok  regixtry/internal/infra/storage/fsblob
+ok  regixtry/internal/ports
+ok  regixtry/internal/protocol/http
+ok  regixtry/internal/tui
+```
+
+**Focused command**: `go test ./internal/domain/auth/... ./internal/app/auth/... ./internal/infra/auth/... ./internal/protocol/http/... -run Robot -v`
+Result: 8/8 top-level test functions PASS (all subtests PASS) — `TestUserValidateRejectsRobotThatIsAdminOrReadOnly` (6 cases), `TestRobotPasswordHashNeverSatisfiesBcryptComparison` (4 cases), `TestLoginWithPasswordRejectsRobotButPreissuedTokenAccepts`, `TestServiceCreateRobotPersistsGrantEnforcesTTLCeilingAndSupportsRevocation` (4 subtests), `TestServiceAdminRobotDTOsRoundTripAndTokenFollowsGrant`, `TestStoreListUsersExcludesRobotsAndListRobotsReturnsOnlyRobots` (real SQLite-backed), `TestAdminRobotsRoutesCreateAndListGlobalAdminOnly` (real `httptest` + real auth service), `TestLoginWithPasswordRobotTwoIndependentLayers` (2 subtests).
+
+**Coverage**: Not measured (no coverage threshold configured for this project); informational only, non-blocking per Strict TDD rules.
+
+### Spec Compliance Matrix (`specs/robot-accounts/spec.md`)
+| Requirement | Scenario | Test | Result |
+|-------------|----------|------|--------|
+| Robot Identity Is Permanently Non-Interactive | Cannot be created with a usable password | `user_test.go > TestRobotPasswordHashNeverSatisfiesBcryptComparison`; `service.go:737` always assigns the sentinel in `CreateRobot` | ✅ COMPLIANT |
+| Robot Identity Is Permanently Non-Interactive | Existing robot row is permanently rejected at login | `service_test.go > TestLoginWithPasswordRejectsRobotButPreissuedTokenAccepts`, `> TestLoginWithPasswordRobotTwoIndependentLayers` | ✅ COMPLIANT |
+| Robot Repository Grant Binding | Robot pulls/pushes per its granted role | `service_test.go > TestServiceAdminRobotDTOsRoundTripAndTokenFollowsGrant` (`Principal.HasWriteAccess("team/app")` true via real scope-derivation pipeline) | ✅ COMPLIANT |
+| Robot Repository Grant Binding | Robot token denied on an ungranted repository | Same test — `HasReadAccess`/`HasWriteAccess("team/other")` both false | ✅ COMPLIANT |
+| Bounded, Revocable Robot Tokens | TTL above the ceiling is rejected | `service_test.go > TestServiceCreateRobotPersistsGrantEnforcesTTLCeilingAndSupportsRevocation/TTL_above_the_ceiling_is_rejected` | ✅ COMPLIANT |
+| Bounded, Revocable Robot Tokens | Revoked token is denied immediately | Same test, `revoked_robot_token_is_denied_immediately` subtest — round-trips a real token through `RevokeAdminToken` then `LoginWithPreissuedToken` | ✅ COMPLIANT |
+| Robots Excluded From Default Human User Listing | Default listing omits robots | `store_test.go > TestStoreListUsersExcludesRobotsAndListRobotsReturnsOnlyRobots` (real modernc SQLite-backed store, partitions both directions) | ✅ COMPLIANT |
+
+**Compliance summary**: 7/7 scenarios compliant (4/4 requirements).
+
+### Correctness (Static Evidence)
+| Requirement | Status | Notes |
+|------------|--------|-------|
+| `CreateRobot` persists exactly one grant | ✅ Implemented | `service.go:747-750` — single `PutRepoGrant` call, one `RepoGrant{...}` literal; test asserts `len(grants) == 1` |
+| Robot cannot be `IsAdmin`/`IsReadOnly` | ✅ Implemented | `user.go:56-58`: `if u.IsRobot && (u.IsAdmin \|\| u.IsReadOnly) { return NewValidationError(...) }` |
+| `ListUsers` excludes robots, `ListRobots` returns only robots | ✅ Implemented | `store.go:53-102` — `WHERE is_robot = FALSE` / `WHERE is_robot = TRUE`, disjoint by construction |
+| Robot routes stay under global-admin gate (not delegate-eligible) | ✅ Implemented | `admin_handlers.go:79-80` — `robots` case sits in the switch reached only via `requireAdminPrincipal` (line 47), below the `repositories/` early-return at line 38 |
+| No Phase 5 TUI surface present | ✅ Confirmed absent | `rg screenAdminRobots\|screenAdminCreateRobot internal/tui/` → 0 matches |
+
+### Coherence (Design)
+| Decision | Followed? | Notes |
+|----------|-----------|-------|
+| Decision 1 — sentinel `password_hash`, `is_robot` flag, `NOT NULL` preserved | ✅ Yes | `user.go:16`, `RobotPasswordHash = "robot:no-password"`; column stays `NOT NULL` (`store.go` INSERT lists it unconditionally) |
+| Decision 2 — 1:1 `(repository, role)` binding is a product contract in the service, not a schema constraint | ✅ Yes | `CreateRobot` accepts exactly one `Repository`/`Role` field pair; `auth_repo_grants` schema unchanged (still `(user_id, repository)` PK, could hold more if a later admin act adds one) |
+| Decision 6 — guard lives in `LoginWithPassword`, not `getActiveUserByUsername` | ✅ Yes | `service.go:299-301`, guard placed after the shared helper returns; `LoginWithPreissuedToken` (`:309`) calls the same helper unguarded, confirmed still working via `TestLoginWithPasswordRejectsRobotButPreissuedTokenAccepts` |
+| Decision 6 — robot admin surface is exactly two new routes, rest reused | ✅ Yes | Only `POST`/`GET /admin/v1/robots` added (`admin_handlers.go:79`); enable/disable/delete/token routes untouched |
+| Decision 8 — migration additive, idempotency generalized | ✅ Yes, with a flagged gap | See "PostgreSQL migration idempotency" analysis below |
+
+### Deep-Dive 1 — Two-Layer Login Defense (task 4.15)
+
+Read `TestLoginWithPasswordRobotTwoIndependentLayers` directly (`service_test.go:646-681`) and the guarded implementation (`service.go:288-307`). The claim is verified as genuine, not redundant:
+
+- **Layer 1 subtest** constructs a robot with `IsRobot: true` and `PasswordHash: mustHashPassword(t, "correct-password")` — a real, valid bcrypt hash of the exact password attempted. If the `IsRobot` guard (line 299) did not exist, `bcrypt.CompareHashAndPassword` at line 302 would succeed and login would proceed. The test asserts rejection, which is only possible because the guard fires and returns before the bcrypt line is ever reached. This isolates the guard as independently sufficient — bcrypt alone would have let this one through.
+- **Layer 2 subtest** constructs `IsRobot: false, PasswordHash: RobotPasswordHash` directly in the test's in-memory store (bypassing `Validate()`, which is only enforced at `store.UpsertUser` time, not on ad-hoc struct construction). With `IsRobot` false, the guard's `if user.IsRobot` branch never executes — this is a legitimate "guard notionally removed" simulation, not a redundant re-check. Execution falls through to line 302, where `bcrypt.CompareHashAndPassword` is called against the sentinel `"robot:no-password"`. The test asserts rejection, which under this construction can only come from the bcrypt failure (the sentinel is not a valid bcrypt hash — confirmed independently by `TestRobotPasswordHashNeverSatisfiesBcryptComparison` in `user_test.go`, which checks 4 candidate passwords including the sentinel string itself).
+
+Both subtests exercise genuinely disjoint failure paths — one where only the guard can be responsible for the rejection (bcrypt would have accepted), one where only bcrypt can be responsible (the guard is structurally bypassed by construction). This is real defense-in-depth verification, not two tests silently checking the same thing. No CRITICAL or WARNING here.
+
+### Deep-Dive 2 — PostgreSQL Migration Idempotency Gap
+
+`internal/infra/auth/postgres/migrations.go` confirms the claim precisely: `is_robot` was added to `tolerateDuplicateColumns` (`scope`, `is_read_only`, `is_robot` — line 54) and the `ALTER TABLE auth_users ADD COLUMN is_robot ...` statement (line 45) runs through the exact same `isTolerableDuplicateColumnError` → `isDuplicateColumnError` path already relied on in production for `scope` and `is_read_only`. `isDuplicateColumnError` (lines 79-84) checks three literal string patterns: the modernc SQLite format (verified live, twice, in this session per apply-progress) and two PostgreSQL formats — `column "X" of relation "auth_users" already exists` and the `auth_tokens` variant. No new code branch, no new logic — only two data points appended to a list and one new `ALTER TABLE` line following the identical established pattern.
+
+Assessment: **this is a real gap, correctly flagged rather than hidden, and it does not block Phase 4.**
+
+- The PostgreSQL error message format `column "%s" of relation "%s" already exists` is PostgreSQL's own long-stable wording for `ALTER TABLE ... ADD COLUMN` against an existing column (part of its core DDL error vocabulary, not a version-fragile message); this repo's own `isDuplicateColumnError` implementation already asserts this format for `is_read_only`, and nothing about `is_robot` changes that mechanism in any way — it reuses the identical two PostgreSQL patterns unchanged, applied to one more column name string.
+- Checked independently: this repository's CI (`.github/workflows/`) does not run any workflow against a live PostgreSQL instance, and `docker-compose.yml` only provisions Postgres for local development. This means the PostgreSQL branch of `isDuplicateColumnError` has *never* been exercised in CI for `scope` or `is_read_only` either — this is a pre-existing gap that predates Phase 4, not a regression introduced by it. Phase 4 does not make the risk worse; it inherits an already-accepted, already-shipped-to-production posture (per design.md, `scope`/`is_read_only` are described as already relied upon).
+- Given (a) zero new code path, (b) a well-known and structurally stable PostgreSQL error string, and (c) an already-accepted production precedent for the identical mechanism, I assess the residual risk as low and **not a reason to hold Phase 4**. However, it is real enough to warrant one concrete action, not just a note: **a manual verification step (bring up `docker-compose.yml`'s Postgres service, set `REGISTRY_AUTH_POSTGRES_DSN`, run the binary once against both a fresh database and a database that already has `is_robot`/`is_read_only` applied) should be performed by a human before this PR merges into `develop`**, and ideally before Phase 5 lands, so a real format mismatch — however unlikely — surfaces in a controlled check rather than in production. This is a WARNING with a required manual follow-up, not a CRITICAL blocker.
+
+### TDD Compliance
+| Check | Result | Details |
+|-------|--------|---------|
+| TDD Evidence reported | ✅ | Full RED/GREEN/TRIANGULATE/SAFETY NET/REFACTOR table present in apply-progress for all 16 tasks |
+| All tasks have tests | ✅ | 14/16 tasks map to a test file directly; 2 structural tasks (4.1, 4.2) correctly marked "Triangulation skipped: structural" |
+| RED confirmed (tests exist) | ✅ | All listed test files (`user_test.go`, `service_test.go`, `store_test.go`, `admin_handlers_test.go`) exist and contain the named functions — confirmed by direct `rg`/read, not by trusting the report |
+| GREEN confirmed (tests pass) | ✅ | 8/8 focused Robot test functions pass on independent execution; full suite 19/19 packages pass |
+| Triangulation adequate | ✅ | Every behavior-bearing task has 2+ cases (6 cases for `Validate`, 4 for sentinel-hash, 4 subtests for `CreateRobot`, 2 subtests for two-layer defense, 4 assertions in one flow for HTTP routes) |
+| Safety Net for modified files | ✅ | Apply-progress reports full pre-change suite green for every modified file; cross-checked — no regressions in the independent full run |
+
+**TDD Compliance**: 6/6 checks passed
+
+### Test Layer Distribution
+| Layer | Tests | Files | Tools |
+|-------|-------|-------|-------|
+| Unit | 6 top-level functions (domain + service) | `user_test.go`, `service_test.go` | Go `testing` |
+| Integration | 2 top-level functions (SQLite-backed store, httptest-backed HTTP handler with real auth service) | `store_test.go`, `admin_handlers_test.go` | Go `testing`, `net/http/httptest`, modernc SQLite |
+| E2E | 0 | — | not installed |
+| **Total** | **8** | **4** | |
+
+### Changed File Coverage
+Coverage tooling not configured for this project (`Coverage analysis skipped — no coverage tool detected`). Not a failure — informational only per Strict TDD rules.
+
+### Assertion Quality
+Scanned `user_test.go`, `service_test.go` (Robot-related additions), `store_test.go`, `admin_handlers_test.go` for banned patterns (tautologies, orphan empty checks without a companion non-empty test, type-only-only assertions, ghost loops, smoke-test-only, implementation-detail coupling, mock-heavy ratio).
+
+**Assertion quality**: ✅ All assertions verify real behavior. Every test calls production code (`CreateRobot`, `LoginWithPassword`, `LoginWithPreissuedToken`, `ListUsers`/`ListRobots`, HTTP handlers via `httptest`) and asserts on concrete, varying expected values (grant repository/role, TTL rejection, revocation state, HTTP status codes and response bodies, `HasReadAccess`/`HasWriteAccess` booleans that differ per repository). No loop-over-possibly-empty-collection assertions found; the one loop pattern (`for _, robot := range robots { if robot.ID == created.User.ID { found = true } }`) is followed by an explicit `if !found { t.Fatalf(...) }` outside the loop, so it cannot vacuously pass.
+
+### Quality Metrics
+**Linter**: Not configured for this project (no `golangci-lint` config found); `go vet ./...` used as the available static check — ✅ No errors.
+**Type Checker**: N/A (Go compiler is the type checker) — ✅ `go build ./...` clean.
+
+### Review Workload
+Phase 4 diff vs base (`feature/registry-acl-v1-03-delegated-grants-tui..HEAD`, 14 commits): 830 insertions / 28 deletions across 12 files = 858 changed lines. Within the session's cached 1000-line review budget; no chained-PR-within-Phase-4 split needed.
+
+### Issues Found
+**CRITICAL**: None.
+**WARNING**: PostgreSQL branch of `isTolerableDuplicateColumnError` (`is_robot` and, pre-existing, `is_read_only`) has never been exercised against a real PostgreSQL instance in this sandbox or in CI. Low residual risk (unchanged mechanism, stable PostgreSQL error format, already-accepted precedent) but requires a human-run manual verification against `docker-compose.yml`'s Postgres service before this PR merges to `develop`.
+**SUGGESTION**: None.
+
+### Verdict
+PASS WITH WARNINGS
+Phase 4 is functionally complete and fully spec-compliant (7/7 scenarios, 6/6 TDD checks) with zero regressions; the single WARNING (PostgreSQL migration path unverified against a real instance) is a pre-existing, low-probability, non-blocking gap that the apply agent itself surfaced honestly and that this verification confirms is scoped to the same mechanism already shipped for `is_read_only` — recommend a manual Postgres smoke check before merge to `develop`, not a rework of Phase 4.
