@@ -166,6 +166,175 @@ func TestServiceRevokeAdminUserTokenRejectsMismatchedOwner(t *testing.T) {
 	}
 }
 
+// TestIntersectRequestedActionsReadOnlyYieldsPullOnly pins design.md
+// Decision 5: a read-only actor's requested repository scope is granted
+// "pull" and never "push", regardless of any stored grant for that
+// repository, while the admin and grant-based paths stay byte-identical.
+func TestIntersectRequestedActionsReadOnlyYieldsPullOnly(t *testing.T) {
+	t.Parallel()
+
+	pullPush := mustParseTestScope(t, "repository:team/app:pull,push")
+	writerGrant := []domainauth.RepoGrant{{Repository: regixtrydomain.MustParseRepositoryRef("team/app"), Role: domainauth.RepoRoleWriter}}
+
+	tests := []struct {
+		name       string
+		isAdmin    bool
+		isReadOnly bool
+		grants     []domainauth.RepoGrant
+		requested  domainauth.Scope
+		want       []string
+	}{
+		{
+			name:       "read-only actor with no grant is granted pull only",
+			isReadOnly: true,
+			requested:  pullPush,
+			want:       []string{"pull"},
+		},
+		{
+			name:       "read-only actor with an existing writer grant is still granted pull only",
+			isReadOnly: true,
+			grants:     writerGrant,
+			requested:  pullPush,
+			want:       []string{"pull"},
+		},
+		{
+			name:      "admin actor is byte-identical: granted both pull and push",
+			isAdmin:   true,
+			requested: pullPush,
+			want:      []string{"pull", "push"},
+		},
+		{
+			name:      "grant-based actor is byte-identical: writer grant yields pull and push",
+			grants:    writerGrant,
+			requested: pullPush,
+			want:      []string{"pull", "push"},
+		},
+		{
+			name:      "unflagged actor with no grant is granted nothing",
+			requested: pullPush,
+			want:      []string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := intersectRequestedActions(tt.isAdmin, tt.isReadOnly, tt.grants, tt.requested)
+			if !equalStringSlices(got, tt.want) {
+				t.Fatalf("intersectRequestedActions() = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
+func equalStringSlices(got []string, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func mustParseTestScope(t *testing.T, raw string) domainauth.Scope {
+	t.Helper()
+	scopes, err := domainauth.ParseScopes([]string{raw})
+	if err != nil {
+		t.Fatalf("ParseScopes(%q) error = %v", raw, err)
+	}
+	if len(scopes) != 1 {
+		t.Fatalf("ParseScopes(%q) = %d scopes, want 1", raw, len(scopes))
+	}
+	return scopes[0]
+}
+
+// TestServiceCreateAdminUserPersistsReadOnlyFlagAndListReflectsIt pins
+// operator-user-administration's "Creating a user with the read-only flag
+// persists it" scenario: AdminCreateUserInput.IsReadOnly must flow through
+// CreateAdminUser into the stored User and back out through
+// ListAdminUsers/AdminUser.
+func TestServiceCreateAdminUserPersistsReadOnlyFlagAndListReflectsIt(t *testing.T) {
+	t.Parallel()
+
+	store := newMemoryAuthStore()
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	service := NewService(store)
+	service.now = func() time.Time { return now }
+	actor := domainauth.Principal{UserID: "admin-1", Username: "admin", IsAdmin: true}
+
+	created, err := service.CreateAdminUser(context.Background(), actor, ports.AdminCreateUserInput{
+		Username:   "reader",
+		Password:   "password123",
+		Enabled:    true,
+		IsReadOnly: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateAdminUser() error = %v", err)
+	}
+	if !created.IsReadOnly {
+		t.Fatalf("CreateAdminUser() result IsReadOnly = false, want true")
+	}
+
+	listed, err := service.ListAdminUsers(context.Background(), actor)
+	if err != nil {
+		t.Fatalf("ListAdminUsers() error = %v", err)
+	}
+	found := false
+	for _, user := range listed {
+		if user.ID != created.ID {
+			continue
+		}
+		found = true
+		if !user.IsReadOnly {
+			t.Fatalf("ListAdminUsers() entry IsReadOnly = false, want true")
+		}
+	}
+	if !found {
+		t.Fatalf("ListAdminUsers() = %#v, want to contain created user %q", listed, created.ID)
+	}
+}
+
+// TestServiceUpdateUserSetsReadOnlyFlag pins operator-user-administration's
+// "Updating the read-only flag takes effect" scenario: UpdateUserInput.IsReadOnly
+// must flow through UpdateUser into the stored User.
+func TestServiceUpdateUserSetsReadOnlyFlag(t *testing.T) {
+	t.Parallel()
+
+	store := newMemoryAuthStore()
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	user := domainauth.User{ID: "user-1", Username: "alice", PasswordHash: mustHashPassword(t, "password123"), Enabled: true, CreatedAt: now, UpdatedAt: now}
+	store.usersByID[user.ID] = user
+	store.usersByUsername[user.Username] = user
+
+	service := NewService(store)
+	service.now = func() time.Time { return now }
+	actor := domainauth.Principal{UserID: "admin-1", Username: "admin", IsAdmin: true}
+
+	updated, err := service.UpdateUser(context.Background(), actor, ports.UpdateUserInput{
+		UserID:     user.ID,
+		Username:   user.Username,
+		IsReadOnly: true,
+	})
+	if err != nil {
+		t.Fatalf("UpdateUser() error = %v", err)
+	}
+	if !updated.IsReadOnly {
+		t.Fatalf("UpdateUser() result IsReadOnly = false, want true")
+	}
+
+	reloaded, err := store.GetUserByID(context.Background(), user.ID)
+	if err != nil {
+		t.Fatalf("GetUserByID() error = %v", err)
+	}
+	if !reloaded.IsReadOnly {
+		t.Fatalf("stored user IsReadOnly = false, want true")
+	}
+}
+
 type memoryAuthStore struct {
 	usersByID        map[string]domainauth.User
 	usersByUsername  map[string]domainauth.User
