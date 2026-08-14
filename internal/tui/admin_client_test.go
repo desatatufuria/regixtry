@@ -173,6 +173,58 @@ func TestHTTPAdminClientMutationRoutes(t *testing.T) {
 			},
 		},
 		{
+			// Phase 3 task 3.7 RED test (design.md Decision 3 route table):
+			// the repository segment ("team/app") contains "/" and is NOT
+			// PathEscape-d, mirroring PutUserGrant/DeleteUserGrant's own
+			// unescaped-repository precedent above.
+			name:       "list repository grants",
+			method:     http.MethodGet,
+			path:       "/admin/v1/repositories/team/app/grants",
+			statusCode: http.StatusOK,
+			body:       `[{"username":"bob","role":"repo-writer","created_at":"2026-08-04T22:00:00Z","updated_at":"2026-08-04T22:10:00Z"}]`,
+			run: func(t *testing.T, client *HTTPAdminClient) {
+				grants, err := client.ListRepositoryGrants(context.Background(), session, "team/app")
+				if err != nil {
+					t.Fatalf("ListRepositoryGrants() error = %v", err)
+				}
+				if len(grants) != 1 || grants[0].Username != "bob" || grants[0].Role != domainauth.RepoRoleWriter {
+					t.Fatalf("grants = %#v, want decoded repository grants", grants)
+				}
+			},
+		},
+		{
+			name:       "put repository grant",
+			method:     http.MethodPut,
+			path:       "/admin/v1/repositories/team/app/grants/carol",
+			statusCode: http.StatusOK,
+			body:       `{"username":"carol","role":"repo-reader","created_at":"2026-08-04T22:00:00Z","updated_at":"2026-08-04T22:10:00Z"}`,
+			run: func(t *testing.T, client *HTTPAdminClient) {
+				grant, err := client.PutRepositoryGrant(context.Background(), session, ports.AdminPutRepositoryGrantInput{Repository: "team/app", Username: "carol", Role: domainauth.RepoRoleReader})
+				if err != nil {
+					t.Fatalf("PutRepositoryGrant() error = %v", err)
+				}
+				if got, want := grant.Role, domainauth.RepoRoleReader; got != want {
+					t.Fatalf("grant.Role = %q, want %q", got, want)
+				}
+			},
+			assertBody: func(t *testing.T, payload map[string]any) {
+				if payload["role"] != string(domainauth.RepoRoleReader) {
+					t.Fatalf("payload = %#v, want repo-reader role", payload)
+				}
+			},
+		},
+		{
+			name:       "delete repository grant",
+			method:     http.MethodDelete,
+			path:       "/admin/v1/repositories/team/app/grants/carol",
+			statusCode: http.StatusNoContent,
+			run: func(t *testing.T, client *HTTPAdminClient) {
+				if err := client.DeleteRepositoryGrant(context.Background(), session, "team/app", "carol"); err != nil {
+					t.Fatalf("DeleteRepositoryGrant() error = %v", err)
+				}
+			},
+		},
+		{
 			name:       "create admin token",
 			method:     http.MethodPost,
 			path:       "/admin/v1/users/u-1/admin-tokens",
