@@ -20,6 +20,7 @@ Read this document as a sequencing contract, not a wish list.
 | Regixtry auth v1 | Postgres-backed auth state, `/auth/token`, bearer challenge interoperability, and repository enforcement | Implemented and verified |
 | Operator admin API | Narrow `/admin/v1` user/grant/admin-token administration over the shared auth service | Implemented and repo-verified; pagination, delete-user, and richer clients stay deferred |
 | Operator console | Thin Bubble Tea client for inspection plus authenticated, read-only admin browsing | Implemented for login, users, grants, and admin tokens; admin mutations and richer client ergonomics stay deferred |
+| Repository access control completion | Registry-wide read-only role, delegated repo-admin grant management scoped to one repository, and bounded-TTL, revocable robot accounts | Implemented across the auth domain/service, `/admin/v1`, and the operator console |
 
 ## Approved v1 boundary
 
@@ -40,8 +41,9 @@ V1 is complete when ALL of the following are true:
 - `registry-auth-v1` is complete and verified for the shipped auth-enabled registry flow.
 - `registry-operator-admin-api` is complete and verified for authenticated `/admin/v1` user, grant, and admin-token administration.
 - `registry-operator-admin-tui` is now complete for authenticated login plus GET-only admin browsing over the shipped backend API.
+- `registry-acl-v1` is complete: a registry-wide read-only role (`is_read_only`, grant-independent pull access), delegated repo-admin grant management scoped to exactly one repository (`/admin/v1/repositories/{repo}/grants`, reached from the console's Console Repositories screen), and bounded-TTL, revocable robot accounts (`/admin/v1/robots`, the `screenAdminRobots`/`screenAdminCreateRobot` TUI screens) that are permanently excluded from password login and from the default human user listing.
 - Manual checks against the local Compose helper runtime have demonstrated authenticated Docker push with Postgres-backed auth enabled, but that helper runtime is still supporting evidence rather than the primary automated verification contract.
-- Remaining planned work is still real scope: admin mutations in the TUI, optional admin-API pagination, and any future auth-oriented smoke expansion for richer clients.
+- Remaining planned work is still real scope: optional admin-API pagination, and any future auth-oriented smoke expansion for richer clients.
 
 ## Explicit non-goals for the active change
 
@@ -87,6 +89,16 @@ These items must stay out of the active auth-v1 review slices unless the approve
 | PR 2 | Bubble Tea login gate, authenticated admin navigation, and logout/expiry handling | Completed |
 | PR 3 | Admin client integration tests plus Bubble Tea behavior coverage | Completed |
 | PR 4 | Architecture/roadmap close-out for the shipped read-only admin TUI path | Completed |
+
+## Delivery sequence for `registry-acl-v1`
+
+| Work unit | Target outcome | Status |
+| --- | --- | --- |
+| PR 1 | Registry-wide read-only role: domain/service/store plumbing and the TUI toggle | Completed |
+| PR 2 | Delegated repo-admin grants — backend: `/admin/v1/repositories/{repo}/grants` and the `requireAdminOrRepoAdmin` authority gate | Completed |
+| PR 3 | Delegated repo-admin grants — TUI: `screenRepoAdminGrants`/`screenRepoAdminAddGrant`, reached from Console Repositories | Completed |
+| PR 4 | Robot accounts — backend: `is_robot`, `/admin/v1/robots`, and the permanent password-login guard | Completed |
+| PR 5 | Robot accounts — TUI plus this docs/roadmap close-out: `screenAdminRobots`/`screenAdminCreateRobot`, reusing the existing token screens | Completed |
 
 ## Documentation maintenance rule
 

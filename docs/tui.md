@@ -16,6 +16,12 @@ regixtry tui -snapshot
 
 The console shows repositories, tags, manifests, blobs, and uploads. When `-api-base-url` is configured, the admin area can authenticate against `/auth/token` and load users, grants, admin tokens, and the backend-driven feature manager.
 
+The create/edit user forms expose a `Read-only` toggle beside `Admin`, independent of it: a read-only user pulls from every repository without an explicit grant, and never gains any admin-surface access.
+
+A repo-admin delegate (a user holding `repo-admin` on at least one repository, but not global admin) reaches a repository-scoped grants view directly from the Console Repositories screen instead of the global-admin user workspace: `screenRepoAdminGrants`/`screenRepoAdminAddGrant` list and mutate only the delegate's own repository's grants via `/admin/v1/repositories/{repo}/grants`, and the role picker never offers `repo-admin`.
+
+Global admins also get two robot-account screens, reached with `b` from the Users screen: `screenAdminRobots` lists robot accounts (repository, role, enabled state) and lets an admin create one, enable/disable it, or reuse the existing admin-token screens to issue/revoke its token; `screenAdminCreateRobot` collects name/repository/role/TTL and shows the created robot's one-time token secret exactly once, immediately after creation — the same reveal-once pattern already used for human admin tokens.
+
 ## Feature Manager
 
 The admin Features screen is now a thin Bubble Tea shell:
