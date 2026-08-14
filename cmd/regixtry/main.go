@@ -262,6 +262,7 @@ type serveConfig struct {
 	TrivyCacheDir        string
 	TrivyBinaryPath      string
 	TrivyMaxConcurrency  int
+	DeleteEnabled        bool
 }
 
 type bootstrapAdminConfig struct {
@@ -363,6 +364,7 @@ func parseServeConfig(args []string) (serveConfig, error) {
 	flags.StringVar(&cfg.TrivyCacheDir, "trivy-cache-dir", "", "shared trivy cache directory")
 	flags.StringVar(&cfg.TrivyBinaryPath, "trivy-binary-path", "", "trivy executable path")
 	flags.IntVar(&cfg.TrivyMaxConcurrency, "trivy-max-concurrency", 0, "maximum concurrent trivy runs")
+	flags.BoolVar(&cfg.DeleteEnabled, "delete-enabled", parseBoolEnv("REGISTRY_DELETE_ENABLED", false), "enable DELETE /v2/<name>/manifests/<reference> (manifest and tag deletion)")
 
 	if err := flags.Parse(args); err != nil {
 		return serveConfig{}, err
@@ -2140,6 +2142,7 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 	service.SetFeatureRuntimeManager("trivy", newFeatureRuntimeManager("trivy", appregixtry.FeatureRuntimeManagerConfig{StorageRoot: cfg.StorageRoot, Store: metadataStore, ScanRunner: trivyinfra.New(trivyinfra.RunnerConfig{})}))
 	service.SetSecretScanRunner(gitleaksinfra.New(gitleaksinfra.RunnerConfig{Blobs: blobStore}))
 	service.SetFeatureRuntimeManager("gitleaks", newFeatureRuntimeManager("gitleaks", appregixtry.FeatureRuntimeManagerConfig{StorageRoot: cfg.StorageRoot, Store: metadataStore}))
+	service.SetDeleteEnabled(cfg.DeleteEnabled)
 	trivyMaxConcurrency := cfg.TrivyMaxConcurrency
 	if trivyMaxConcurrency <= 0 {
 		trivyMaxConcurrency = 1
