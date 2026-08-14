@@ -3176,7 +3176,6 @@ func nextCreateUserField(field adminCreateUserField) adminCreateUserField {
 	return field + 1
 }
 
-
 func nextGrantRole(current domainauth.RepoRole) domainauth.RepoRole {
 	switch current {
 	case domainauth.RepoRoleWriter:
