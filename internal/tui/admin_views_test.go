@@ -1514,6 +1514,121 @@ func TestRenderRepoAdminAddGrantScreenRoleFieldNeverRendersRepoAdmin(t *testing.
 // mutate RepoAdminGrantForm.Role from a keypress (Space), so it alone must
 // guarantee repo-admin is structurally unreachable — including from the
 // (otherwise impossible) RepoRoleAdmin starting state.
+// TestRenderAdminRobotsScreenListsRobotsWithRepositoryRoleAndState is task
+// 5.3's first RED test (design.md Decision 7): screenAdminRobots mirrors
+// renderAdminUsersScreen's list shape -- one line per robot, the selected
+// row highlighted, an Operator/session-remaining footer -- but keyed by
+// repository/role/enabled state instead of admin/read-only flags.
+func TestRenderAdminRobotsScreenListsRobotsWithRepositoryRoleAndState(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+	session := AdminSession{Username: "operator"}
+	view := AdminViewState{
+		Robots: []ports.AdminRobot{
+			{ID: "1", Username: "robot$ci", Repository: "team/app", Role: domainauth.RepoRoleWriter, Enabled: true},
+			{ID: "2", Username: "robot$audit", Repository: "team/other", Role: domainauth.RepoRoleReader, Enabled: false},
+		},
+		SelectedRobot: 0,
+	}
+	layout := consoleLayout{Width: defaultViewportWidth, Height: defaultViewportHeight, SectionRows: 20}
+
+	got := renderAdminRobotsScreen(theme, session, view, layout, time.Now())
+
+	if !strings.Contains(got, "robot$ci") || !strings.Contains(got, "team/app") || !strings.Contains(got, string(domainauth.RepoRoleWriter)) || !strings.Contains(got, "enabled") {
+		t.Fatalf("renderAdminRobotsScreen() = %q, want robot$ci's repository/role/enabled state listed", got)
+	}
+	if !strings.Contains(got, "robot$audit") || !strings.Contains(got, "team/other") || !strings.Contains(got, string(domainauth.RepoRoleReader)) || !strings.Contains(got, "disabled") {
+		t.Fatalf("renderAdminRobotsScreen() = %q, want robot$audit's repository/role/disabled state listed", got)
+	}
+	if !strings.Contains(got, "operator") {
+		t.Fatalf("renderAdminRobotsScreen() = %q, want the operator footer", got)
+	}
+}
+
+// TestRenderAdminRobotsScreenShowsEmptyStateWithNoRobots triangulates the
+// populated case above with an empty robot list.
+func TestRenderAdminRobotsScreenShowsEmptyStateWithNoRobots(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+	session := AdminSession{Username: "operator"}
+	layout := consoleLayout{Width: defaultViewportWidth, Height: defaultViewportHeight, SectionRows: 20}
+
+	got := renderAdminRobotsScreen(theme, session, AdminViewState{}, layout, time.Now())
+
+	if !strings.Contains(got, "No robot") {
+		t.Fatalf("renderAdminRobotsScreen() = %q, want an explicit empty-robots message", got)
+	}
+}
+
+// TestRenderAdminCreateRobotScreenShowsFormFields is task 5.3's third RED
+// test: screenAdminCreateRobot renders every form field's current value.
+func TestRenderCreateAdminRobotScreenShowsFormFields(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+	view := AdminViewState{
+		CreateRobotForm: adminCreateRobotForm{
+			Name:       "ci",
+			Repository: "team/app",
+			Role:       domainauth.RepoRoleWriter,
+			TTLSeconds: "604800",
+		},
+	}
+
+	got := renderAdminCreateRobotScreen(theme, view)
+
+	for _, want := range []string{"ci", "team/app", string(domainauth.RepoRoleWriter), "604800"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("renderAdminCreateRobotScreen() = %q, want it to contain %q", got, want)
+		}
+	}
+}
+
+// TestRenderAdminCreateRobotScreenShowsOneTimeSecretWhenRevealed is task
+// 5.3's CRITICAL RED test (spec.md "Operator manages a robot account end to
+// end": "the TUI ... shows the one-time token secret"): immediately after a
+// successful creation, RevealedTokenSecret/Accessor are populated on
+// AdminViewState (the exact same fields renderAdminTokensScreen already
+// reveals once for human admin tokens -- design.md Decision 6 reuses the
+// token machinery unchanged), and screenAdminCreateRobot must display them.
+func TestRenderCreateAdminRobotScreenShowsOneTimeSecretWhenRevealed(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+	view := AdminViewState{
+		RevealedTokenSecret:   "s3cr3t-value",
+		RevealedTokenAccessor: "accessor-123",
+	}
+
+	got := renderAdminCreateRobotScreen(theme, view)
+
+	if !strings.Contains(got, "s3cr3t-value") {
+		t.Fatalf("renderAdminCreateRobotScreen() = %q, want the one-time secret rendered", got)
+	}
+	if !strings.Contains(got, "accessor-123") {
+		t.Fatalf("renderAdminCreateRobotScreen() = %q, want the accessor rendered", got)
+	}
+}
+
+// TestRenderAdminCreateRobotScreenNeverShowsSecretBlockWhenNotRevealed
+// triangulates the reveal case above: with no secret populated (the normal
+// state before a creation, and after clearRevealedAdminToken runs), no
+// secret material or accessor placeholder is rendered at all -- proving the
+// block is conditional, not merely blank-value formatting that would leave
+// an empty label lying around.
+func TestRenderCreateAdminRobotScreenNeverShowsSecretBlockWhenNotRevealed(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+	got := renderAdminCreateRobotScreen(theme, AdminViewState{})
+
+	if strings.Contains(got, "One-time secret") {
+		t.Fatalf("renderAdminCreateRobotScreen() = %q, must not render the secret block when nothing was revealed", got)
+	}
+}
+
 func TestNextDelegateGrantRoleNeverProducesRepoAdmin(t *testing.T) {
 	t.Parallel()
 
