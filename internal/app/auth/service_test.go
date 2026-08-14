@@ -411,6 +411,46 @@ func TestServiceListRepositoryGrantsScopedToDelegateOwnRepository(t *testing.T) 
 	}
 }
 
+// TestLoginWithPasswordRejectsRobotButPreissuedTokenAccepts pins design.md
+// Decision 6: the IsRobot guard lives in LoginWithPassword, immediately
+// after getActiveUserByUsername, and NOT inside that shared helper — a
+// robot must always be rejected on the password path, even with a
+// password that would otherwise match its stored hash, while
+// LoginWithPreissuedToken (the robot's only working credential path)
+// stays completely unaffected.
+func TestLoginWithPasswordRejectsRobotButPreissuedTokenAccepts(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	store := newMemoryAuthStore()
+	// PasswordHash is deliberately a VALID bcrypt hash of the attempted
+	// password here (not the sentinel), so this specifically exercises the
+	// IsRobot guard: if the guard were missing, bcrypt alone WOULD accept
+	// this login. Layer 2 (the sentinel hash) is proven independently by
+	// TestRobotPasswordHashNeverSatisfiesBcryptComparison and
+	// TestLoginWithPasswordRobotTwoIndependentLayers.
+	robot := domainauth.User{ID: "robot-1", Username: "ci", PasswordHash: mustHashPassword(t, "any-password"), IsRobot: true, Enabled: true, CreatedAt: now, UpdatedAt: now}
+	store.usersByID[robot.ID] = robot
+	store.usersByUsername[robot.Username] = robot
+
+	secret := "robot-secret-1"
+	token := domainauth.Token{ID: "token-1", UserID: robot.ID, Kind: domainauth.TokenKindAdminCredential, Accessor: "act_robot1", SecretHash: hashSecret(secret), CreatedAt: now, ExpiresAt: now.Add(time.Hour)}
+	store.tokensByHash[token.SecretHash] = token
+	store.tokensByAccessor[token.Accessor] = token
+	store.tokensByUser[robot.ID] = []domainauth.Token{token}
+
+	service := NewService(store)
+	service.now = func() time.Time { return now }
+
+	if _, err := service.LoginWithPassword(context.Background(), robot.Username, "any-password", nil); !domainauth.IsCode(err, domainauth.ErrorCodeInvalidCredentials) {
+		t.Fatalf("LoginWithPassword(robot, correct password against a valid hash) error = %v, want invalid credentials", err)
+	}
+
+	if _, err := service.LoginWithPreissuedToken(context.Background(), robot.Username, secret, nil); err != nil {
+		t.Fatalf("LoginWithPreissuedToken(robot) error = %v, want nil", err)
+	}
+}
+
 func equalStringSlices(got []string, want []string) bool {
 	if len(got) != len(want) {
 		return false
