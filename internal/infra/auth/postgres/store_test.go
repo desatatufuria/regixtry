@@ -186,6 +186,61 @@ func TestStoreRoundTripsIsReadOnlyAcrossAuthUserQueries(t *testing.T) {
 	}
 }
 
+// TestStoreListRepoGrantsByRepositoryReturnsGrantsAcrossUsers pins
+// design.md Decision 3's delegate route table: ListRepoGrantsByRepository
+// must return every grant recorded for one repository across different
+// users, and must not return grants for a different repository.
+func TestStoreListRepoGrantsByRepositoryReturnsGrantsAcrossUsers(t *testing.T) {
+	t.Parallel()
+
+	store := newSQLiteBackedStore(t)
+	defer store.Close()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	alice := domainauth.User{ID: "user-alice", Username: "alice", PasswordHash: "hash-1", Enabled: true, CreatedAt: now, UpdatedAt: now}
+	bob := domainauth.User{ID: "user-bob", Username: "bob", PasswordHash: "hash-2", Enabled: true, CreatedAt: now, UpdatedAt: now}
+	if err := store.UpsertUser(context.Background(), alice); err != nil {
+		t.Fatalf("UpsertUser(alice) error = %v", err)
+	}
+	if err := store.UpsertUser(context.Background(), bob); err != nil {
+		t.Fatalf("UpsertUser(bob) error = %v", err)
+	}
+
+	targetRepo := regixtrydomain.MustParseRepositoryRef("team/app")
+	otherRepo := regixtrydomain.MustParseRepositoryRef("team/other")
+	if err := store.PutRepoGrant(context.Background(), domainauth.RepoGrant{UserID: alice.ID, Repository: targetRepo, Role: domainauth.RepoRoleAdmin, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatalf("PutRepoGrant(alice, team/app) error = %v", err)
+	}
+	if err := store.PutRepoGrant(context.Background(), domainauth.RepoGrant{UserID: bob.ID, Repository: targetRepo, Role: domainauth.RepoRoleReader, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatalf("PutRepoGrant(bob, team/app) error = %v", err)
+	}
+	if err := store.PutRepoGrant(context.Background(), domainauth.RepoGrant{UserID: bob.ID, Repository: otherRepo, Role: domainauth.RepoRoleWriter, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatalf("PutRepoGrant(bob, team/other) error = %v", err)
+	}
+
+	grants, err := store.ListRepoGrantsByRepository(context.Background(), targetRepo)
+	if err != nil {
+		t.Fatalf("ListRepoGrantsByRepository() error = %v", err)
+	}
+	if len(grants) != 2 {
+		t.Fatalf("len(grants) = %d, want 2: %#v", len(grants), grants)
+	}
+
+	byUserID := map[string]domainauth.RepoGrant{}
+	for _, grant := range grants {
+		if grant.Repository.String() != targetRepo.String() {
+			t.Fatalf("grant.Repository = %q, want %q", grant.Repository.String(), targetRepo.String())
+		}
+		byUserID[grant.UserID] = grant
+	}
+	if byUserID[alice.ID].Role != domainauth.RepoRoleAdmin {
+		t.Fatalf("alice's role = %q, want repo-admin", byUserID[alice.ID].Role)
+	}
+	if byUserID[bob.ID].Role != domainauth.RepoRoleReader {
+		t.Fatalf("bob's role = %q, want repo-reader", byUserID[bob.ID].Role)
+	}
+}
+
 func TestMigrationsCreateOnlyAuthTables(t *testing.T) {
 	t.Parallel()
 

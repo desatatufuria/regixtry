@@ -560,6 +560,140 @@ func (s *Service) DeleteAdminUserRepoGrant(ctx context.Context, actor domainauth
 	return s.DeleteRepoGrant(ctx, actor, userID, repository)
 }
 
+// ListRepositoryGrants lists every grant on one repository (design.md
+// Decision 3's delegate route table). Authorization is
+// requireAdminOrRepoAdmin, so a delegate is structurally scoped to their own
+// repository: they can never pass the gate for a repository they do not
+// administer, which is what keeps their listing scoped without any extra
+// filtering (operator-access-administration's delegate-scoped-listing
+// scenario).
+func (s *Service) ListRepositoryGrants(ctx context.Context, actor domainauth.Principal, repository string) ([]domainauth.RepoGrant, error) {
+	repo, err := regixtrydomain.ParseRepositoryRef(strings.TrimSpace(repository))
+	if err != nil {
+		return nil, err
+	}
+	if err := requireAdminOrRepoAdmin(actor, repo.String()); err != nil {
+		return nil, err
+	}
+
+	return s.store.ListRepoGrantsByRepository(ctx, repo)
+}
+
+func (s *Service) ListAdminRepositoryGrants(ctx context.Context, actor domainauth.Principal, repository string) ([]ports.AdminRepositoryGrant, error) {
+	grants, err := s.ListRepositoryGrants(ctx, actor, repository)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]ports.AdminRepositoryGrant, 0, len(grants))
+	for _, grant := range grants {
+		user, err := s.store.GetUserByID(ctx, grant.UserID)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, ports.AdminRepositoryGrant{Username: user.Username, Role: grant.Role, CreatedAt: grant.CreatedAt, UpdatedAt: grant.UpdatedAt})
+	}
+
+	return result, nil
+}
+
+// PutRepositoryGrant is the delegate-eligible sibling of PutRepoGrant
+// (design.md Decision 3): grants are addressed by username, not user ID, so
+// a delegate never needs to read the user directory to name someone. For a
+// non-global-admin actor (necessarily a repo-admin delegate, enforced by
+// requireAdminOrRepoAdmin), design.md Decision 4's escalation bounds apply:
+// the requested role must be repo-reader or repo-writer (repo-admin is
+// rejected outright, which also covers self-assignment — no identity
+// comparison is needed), and the target's existing grant on this repository
+// must not already be repo-admin (a delegate cannot demote or replace a
+// peer repository administrator).
+func (s *Service) PutRepositoryGrant(ctx context.Context, actor domainauth.Principal, repository string, username string, role domainauth.RepoRole) (domainauth.RepoGrant, error) {
+	repo, err := regixtrydomain.ParseRepositoryRef(strings.TrimSpace(repository))
+	if err != nil {
+		return domainauth.RepoGrant{}, err
+	}
+	if err := requireAdminOrRepoAdmin(actor, repo.String()); err != nil {
+		return domainauth.RepoGrant{}, err
+	}
+	if err := role.Validate(); err != nil {
+		return domainauth.RepoGrant{}, err
+	}
+	if !actor.IsAdmin && role == domainauth.RepoRoleAdmin {
+		return domainauth.RepoGrant{}, domainauth.NewForbiddenError("repository administrators cannot grant repo-admin")
+	}
+
+	target, err := s.store.GetUserByUsername(ctx, normalizeUsername(username))
+	if err != nil {
+		return domainauth.RepoGrant{}, err
+	}
+
+	if !actor.IsAdmin {
+		existing, err := s.store.ListRepoGrants(ctx, target.ID)
+		if err != nil {
+			return domainauth.RepoGrant{}, err
+		}
+		for _, grant := range existing {
+			if grant.Repository.String() == repo.String() && grant.Role == domainauth.RepoRoleAdmin {
+				return domainauth.RepoGrant{}, domainauth.NewForbiddenError("repository administrators cannot modify another repository administrator's grant")
+			}
+		}
+	}
+
+	now := s.now()
+	grant := domainauth.RepoGrant{UserID: target.ID, Repository: repo, Role: role, CreatedAt: now, UpdatedAt: now}
+	if err := s.store.PutRepoGrant(ctx, grant); err != nil {
+		return domainauth.RepoGrant{}, err
+	}
+
+	return grant, nil
+}
+
+func (s *Service) PutAdminRepositoryGrant(ctx context.Context, actor domainauth.Principal, input ports.AdminPutRepositoryGrantInput) (ports.AdminRepositoryGrant, error) {
+	grant, err := s.PutRepositoryGrant(ctx, actor, input.Repository, input.Username, input.Role)
+	if err != nil {
+		return ports.AdminRepositoryGrant{}, err
+	}
+
+	return ports.AdminRepositoryGrant{Username: normalizeUsername(input.Username), Role: grant.Role, CreatedAt: grant.CreatedAt, UpdatedAt: grant.UpdatedAt}, nil
+}
+
+// DeleteRepositoryGrant is the delegate-eligible sibling of DeleteRepoGrant.
+// The same existing-role escalation bound as PutRepositoryGrant applies: a
+// non-global-admin actor cannot remove another repository administrator's
+// grant on this repository.
+func (s *Service) DeleteRepositoryGrant(ctx context.Context, actor domainauth.Principal, repository string, username string) error {
+	repo, err := regixtrydomain.ParseRepositoryRef(strings.TrimSpace(repository))
+	if err != nil {
+		return err
+	}
+	if err := requireAdminOrRepoAdmin(actor, repo.String()); err != nil {
+		return err
+	}
+
+	target, err := s.store.GetUserByUsername(ctx, normalizeUsername(username))
+	if err != nil {
+		return err
+	}
+
+	if !actor.IsAdmin {
+		existing, err := s.store.ListRepoGrants(ctx, target.ID)
+		if err != nil {
+			return err
+		}
+		for _, grant := range existing {
+			if grant.Repository.String() == repo.String() && grant.Role == domainauth.RepoRoleAdmin {
+				return domainauth.NewForbiddenError("repository administrators cannot modify another repository administrator's grant")
+			}
+		}
+	}
+
+	return s.store.DeleteRepoGrant(ctx, target.ID, repo)
+}
+
+func (s *Service) DeleteAdminRepositoryGrant(ctx context.Context, actor domainauth.Principal, repository string, username string) error {
+	return s.DeleteRepositoryGrant(ctx, actor, repository, username)
+}
+
 func toAdminUser(user domainauth.User) ports.AdminUser {
 	return ports.AdminUser{
 		ID:         user.ID,

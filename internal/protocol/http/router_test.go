@@ -2121,3 +2121,21 @@ func (f fakeAuthService) PutRepoGrant(context.Context, domainauth.Principal, str
 func (f fakeAuthService) DeleteRepoGrant(context.Context, domainauth.Principal, string, string) error {
 	return nil
 }
+func (f fakeAuthService) ListRepositoryGrants(context.Context, domainauth.Principal, string) ([]domainauth.RepoGrant, error) {
+	return nil, nil
+}
+func (f fakeAuthService) PutRepositoryGrant(context.Context, domainauth.Principal, string, string, domainauth.RepoRole) (domainauth.RepoGrant, error) {
+	return domainauth.RepoGrant{}, nil
+}
+func (f fakeAuthService) DeleteRepositoryGrant(context.Context, domainauth.Principal, string, string) error {
+	return nil
+}
+func (f fakeAuthService) ListAdminRepositoryGrants(context.Context, domainauth.Principal, string) ([]ports.AdminRepositoryGrant, error) {
+	return nil, nil
+}
+func (f fakeAuthService) PutAdminRepositoryGrant(context.Context, domainauth.Principal, ports.AdminPutRepositoryGrantInput) (ports.AdminRepositoryGrant, error) {
+	return ports.AdminRepositoryGrant{}, nil
+}
+func (f fakeAuthService) DeleteAdminRepositoryGrant(context.Context, domainauth.Principal, string, string) error {
+	return nil
+}

@@ -577,6 +577,17 @@ func (s *memoryAuthStore) DeleteUser(context.Context, string) error { return nil
 func (s *memoryAuthStore) ListRepoGrants(_ context.Context, userID string) ([]domainauth.RepoGrant, error) {
 	return append([]domainauth.RepoGrant(nil), s.grants[userID]...), nil
 }
+func (s *memoryAuthStore) ListRepoGrantsByRepository(_ context.Context, repository regixtrydomain.RepositoryRef) ([]domainauth.RepoGrant, error) {
+	grants := make([]domainauth.RepoGrant, 0)
+	for _, userGrants := range s.grants {
+		for _, grant := range userGrants {
+			if grant.Repository.String() == repository.String() {
+				grants = append(grants, grant)
+			}
+		}
+	}
+	return grants, nil
+}
 func (s *memoryAuthStore) PutRepoGrant(context.Context, domainauth.RepoGrant) error { return nil }
 func (s *memoryAuthStore) DeleteRepoGrant(context.Context, string, regixtrydomain.RepositoryRef) error {
 	return nil

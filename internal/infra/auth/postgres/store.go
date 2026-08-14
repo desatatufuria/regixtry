@@ -178,6 +178,44 @@ func (s *Store) ListRepoGrants(ctx context.Context, userID string) ([]domainauth
 	return grants, rows.Err()
 }
 
+// ListRepoGrantsByRepository returns every grant recorded for one
+// repository, across all users (design.md Decision 3's delegate route
+// table). auth_repo_grants' primary key is (user_id, repository), so this
+// is a scan rather than an indexed lookup — acceptable at current scale
+// (design.md Open Questions).
+func (s *Store) ListRepoGrantsByRepository(ctx context.Context, repository regixtrydomain.RepositoryRef) ([]domainauth.RepoGrant, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT user_id, role, created_at, updated_at
+		FROM auth_repo_grants
+		WHERE repository = $1
+		ORDER BY user_id ASC
+	`, repository.String())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	grants := make([]domainauth.RepoGrant, 0)
+	for rows.Next() {
+		var userID string
+		var roleValue string
+		var createdAt string
+		var updatedAt string
+		if err := rows.Scan(&userID, &roleValue, &createdAt, &updatedAt); err != nil {
+			return nil, err
+		}
+
+		grant := domainauth.RepoGrant{UserID: userID, Repository: repository, Role: domainauth.RepoRole(roleValue), CreatedAt: parseTime(createdAt), UpdatedAt: parseTime(updatedAt)}
+		if err := grant.Validate(); err != nil {
+			return nil, err
+		}
+
+		grants = append(grants, grant)
+	}
+
+	return grants, rows.Err()
+}
+
 func (s *Store) PutRepoGrant(ctx context.Context, grant domainauth.RepoGrant) error {
 	if err := grant.Validate(); err != nil {
 		return err

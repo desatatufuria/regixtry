@@ -17,6 +17,7 @@ type AuthStore interface {
 	UpsertUser(ctx context.Context, user domainauth.User) error
 	DeleteUser(ctx context.Context, userID string) error
 	ListRepoGrants(ctx context.Context, userID string) ([]domainauth.RepoGrant, error)
+	ListRepoGrantsByRepository(ctx context.Context, repository regixtrydomain.RepositoryRef) ([]domainauth.RepoGrant, error)
 	PutRepoGrant(ctx context.Context, grant domainauth.RepoGrant) error
 	DeleteRepoGrant(ctx context.Context, userID string, repository regixtrydomain.RepositoryRef) error
 	CreateToken(ctx context.Context, token domainauth.Token) error
@@ -114,6 +115,24 @@ type AdminPutRepoGrantInput struct {
 	Role       domainauth.RepoRole `json:"role"`
 }
 
+// AdminRepositoryGrant is the delegate-facing grant projection
+// (design.md Decision 3's route table). It deliberately carries no user ID,
+// password hash, admin/read-only flags, or any other repository's grants —
+// a delegate must be able to name a user to grant without ever reading the
+// user directory (threat matrix: identity disclosure).
+type AdminRepositoryGrant struct {
+	Username  string              `json:"username"`
+	Role      domainauth.RepoRole `json:"role"`
+	CreatedAt time.Time           `json:"created_at"`
+	UpdatedAt time.Time           `json:"updated_at"`
+}
+
+type AdminPutRepositoryGrantInput struct {
+	Repository string              `json:"-"`
+	Username   string              `json:"-"`
+	Role       domainauth.RepoRole `json:"role"`
+}
+
 type AdminToken struct {
 	ID        string               `json:"id"`
 	UserID    string               `json:"user_id"`
@@ -148,6 +167,9 @@ type AdminHTTPService interface {
 	ListAdminUserRepoGrants(ctx context.Context, actor domainauth.Principal, userID string) ([]AdminRepoGrant, error)
 	PutAdminUserRepoGrant(ctx context.Context, actor domainauth.Principal, input AdminPutRepoGrantInput) (AdminRepoGrant, error)
 	DeleteAdminUserRepoGrant(ctx context.Context, actor domainauth.Principal, userID string, repository string) error
+	ListAdminRepositoryGrants(ctx context.Context, actor domainauth.Principal, repository string) ([]AdminRepositoryGrant, error)
+	PutAdminRepositoryGrant(ctx context.Context, actor domainauth.Principal, input AdminPutRepositoryGrantInput) (AdminRepositoryGrant, error)
+	DeleteAdminRepositoryGrant(ctx context.Context, actor domainauth.Principal, repository string, username string) error
 	ListAdminUserTokens(ctx context.Context, actor domainauth.Principal, userID string) ([]AdminToken, error)
 	CreateAdminUserToken(ctx context.Context, actor domainauth.Principal, input AdminCreateTokenInput) (AdminCreatedToken, error)
 	RevokeAdminUserToken(ctx context.Context, actor domainauth.Principal, userID string, accessor string) error
@@ -171,4 +193,7 @@ type AuthService interface {
 	ResetPassword(ctx context.Context, actor domainauth.Principal, userID string, newPassword string) error
 	PutRepoGrant(ctx context.Context, actor domainauth.Principal, userID string, repository string, role domainauth.RepoRole) (domainauth.RepoGrant, error)
 	DeleteRepoGrant(ctx context.Context, actor domainauth.Principal, userID string, repository string) error
+	ListRepositoryGrants(ctx context.Context, actor domainauth.Principal, repository string) ([]domainauth.RepoGrant, error)
+	PutRepositoryGrant(ctx context.Context, actor domainauth.Principal, repository string, username string, role domainauth.RepoRole) (domainauth.RepoGrant, error)
+	DeleteRepositoryGrant(ctx context.Context, actor domainauth.Principal, repository string, username string) error
 }
