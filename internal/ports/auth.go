@@ -53,16 +53,18 @@ type CreateAdminTokenInput struct {
 }
 
 type CreateUserInput struct {
-	Username string
-	Password string
-	IsAdmin  bool
-	Enabled  bool
+	Username   string
+	Password   string
+	IsAdmin    bool
+	IsReadOnly bool
+	Enabled    bool
 }
 
 type UpdateUserInput struct {
 	UserID        string
 	Username      string
 	IsAdmin       bool
+	IsReadOnly    bool
 	PreserveAdmin bool
 }
 
@@ -76,19 +78,21 @@ type CreatedAdminToken struct {
 }
 
 type AdminUser struct {
-	ID        string    `json:"id"`
-	Username  string    `json:"username"`
-	IsAdmin   bool      `json:"is_admin"`
-	Enabled   bool      `json:"enabled"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID         string    `json:"id"`
+	Username   string    `json:"username"`
+	IsAdmin    bool      `json:"is_admin"`
+	IsReadOnly bool      `json:"is_read_only"`
+	Enabled    bool      `json:"enabled"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 type AdminCreateUserInput struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
-	IsAdmin  bool   `json:"is_admin"`
-	Enabled  bool   `json:"enabled"`
+	Username   string `json:"username"`
+	Password   string `json:"password"`
+	IsAdmin    bool   `json:"is_admin"`
+	IsReadOnly bool   `json:"is_read_only"`
+	Enabled    bool   `json:"enabled"`
 }
 
 type AdminResetPasswordInput struct {

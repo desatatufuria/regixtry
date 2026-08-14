@@ -157,6 +157,7 @@ func (s *Service) CreateUser(ctx context.Context, actor domainauth.Principal, in
 		Username:     username,
 		PasswordHash: hash,
 		IsAdmin:      input.IsAdmin,
+		IsReadOnly:   input.IsReadOnly,
 		Enabled:      input.Enabled,
 		CreatedAt:    now,
 		UpdatedAt:    now,
@@ -170,10 +171,11 @@ func (s *Service) CreateUser(ctx context.Context, actor domainauth.Principal, in
 
 func (s *Service) CreateAdminUser(ctx context.Context, actor domainauth.Principal, input ports.AdminCreateUserInput) (ports.AdminUser, error) {
 	user, err := s.CreateUser(ctx, actor, ports.CreateUserInput{
-		Username: input.Username,
-		Password: input.Password,
-		IsAdmin:  input.IsAdmin,
-		Enabled:  input.Enabled,
+		Username:   input.Username,
+		Password:   input.Password,
+		IsAdmin:    input.IsAdmin,
+		IsReadOnly: input.IsReadOnly,
+		Enabled:    input.Enabled,
 	})
 	if err != nil {
 		return ports.AdminUser{}, err
@@ -214,6 +216,7 @@ func (s *Service) UpdateUser(ctx context.Context, actor domainauth.Principal, in
 
 	user.Username = nextUsername
 	user.IsAdmin = input.IsAdmin
+	user.IsReadOnly = input.IsReadOnly
 	user.UpdatedAt = s.now()
 	if err := s.store.UpsertUser(ctx, user); err != nil {
 		return domainauth.User{}, err
@@ -559,12 +562,13 @@ func (s *Service) DeleteAdminUserRepoGrant(ctx context.Context, actor domainauth
 
 func toAdminUser(user domainauth.User) ports.AdminUser {
 	return ports.AdminUser{
-		ID:        user.ID,
-		Username:  user.Username,
-		IsAdmin:   user.IsAdmin,
-		Enabled:   user.Enabled,
-		CreatedAt: user.CreatedAt,
-		UpdatedAt: user.UpdatedAt,
+		ID:         user.ID,
+		Username:   user.Username,
+		IsAdmin:    user.IsAdmin,
+		IsReadOnly: user.IsReadOnly,
+		Enabled:    user.Enabled,
+		CreatedAt:  user.CreatedAt,
+		UpdatedAt:  user.UpdatedAt,
 	}
 }
 
