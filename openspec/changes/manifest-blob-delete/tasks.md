@@ -91,7 +91,7 @@ Chain strategy: pending
 - [x] 2.1 Pin `PRAGMA foreign_keys` == `1` in `store_test.go` (mirrors the
       `busy_timeout` assertion, `store_test.go:139-145`) — expected
       already-GREEN cascade-premise guard, not a state that must flip.
-- [ ] 2.2 GREEN `internal/ports/regixtry.go`: add `DeleteManifestByDigest`/
+- [x] 2.2 GREEN `internal/ports/regixtry.go`: add `DeleteManifestByDigest`/
       `DeleteTag` signatures to `MetadataStore` (compile prerequisite for
       2.3/2.5, interleaved per Decision 3).
 - [ ] 2.3 RED `store_test.go`: `DeleteManifestByDigest` on a digest with 3
