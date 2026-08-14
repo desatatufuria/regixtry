@@ -141,33 +141,33 @@ Chain strategy: pending
 
 ## Phase 4: HTTP Layer, Config, Docs (PR 4, depends on Phases 1–3)
 
-- [ ] 4.1 RED `router_test.go` (extends 1.1's file): DELETE on
+- [x] 4.1 RED `router_test.go` (extends 1.1's file): DELETE on
       `manifests/<digest>` — flag-on/authorized → `202` + JSON body;
       flag-off/authorized → `400 UNSUPPORTED`; unauthenticated → `401` +
       `WWW-Authenticate scope="...:delete"`; unknown ref → `404
       MANIFEST_UNKNOWN` — table-driven.
-- [ ] 4.2 RED: `Allow` header grows to `PUT, GET, HEAD, DELETE` for any
+- [x] 4.2 RED: `Allow` header grows to `PUT, GET, HEAD, DELETE` for any
       other method against `manifests/<ref>`.
-- [ ] 4.3 GREEN `router.go`: `handleManifest` gains `case
+- [x] 4.3 GREEN `router.go`: `handleManifest` gains `case
       stdhttp.MethodDelete` calling `Service.DeleteManifest`, writes `202`
       via `writeJSON`; `default:` `Allow` list updated.
-- [ ] 4.4 RED: DELETE on `tags/list`, `blobs/<digest>`,
+- [x] 4.4 RED: DELETE on `tags/list`, `blobs/<digest>`,
       `blobs/uploads/<id>` unchanged (threat matrix: HTTP method dispatch —
       no new path-shadowing).
-- [ ] 4.5 RED: a `pull,push` token is rejected on DELETE while still
+- [x] 4.5 RED: a `pull,push` token is rejected on DELETE while still
       succeeding on PUT, one test (threat matrix: privilege reuse).
-- [ ] 4.6 RED: reader `401`, writer `202`, repo-admin `202`; `pull,push`
+- [x] 4.6 RED: reader `401`, writer `202`, repo-admin `202`; `pull,push`
       token `401`, `pull,push,delete` token `202` — integration table.
-- [ ] 4.7 RED: blob directory byte-identical before/after both delete paths
+- [x] 4.7 RED: blob directory byte-identical before/after both delete paths
       (threat matrix: blob-store scope creep, non-goal guard).
-- [ ] 4.8 RED `cmd/regixtry/main_test.go`: config parse defaults
+- [x] 4.8 RED `cmd/regixtry/main_test.go`: config parse defaults
       `DeleteEnabled` to `false` with the env var unset and unparseable.
-- [ ] 4.9 GREEN `cmd/regixtry/main.go`: `DeleteEnabled` field,
+- [x] 4.9 GREEN `cmd/regixtry/main.go`: `DeleteEnabled` field,
       `flags.BoolVar(..., parseBoolEnv("REGISTRY_DELETE_ENABLED", false),
       ...)`, threaded into the service.
-- [ ] 4.10 GREEN: wire the router's `DELETE` case to the flag/service
+- [x] 4.10 GREEN: wire the router's `DELETE` case to the flag/service
       plumbing end-to-end so 4.1/4.2/4.5–4.8 pass.
-- [ ] 4.11 Confirm Phase 4 GREEN (Unit 4 focused test command); then full
+- [x] 4.11 Confirm Phase 4 GREEN (Unit 4 focused test command); then full
       `go test ./...` (zero regressions) and `gofmt -l .` (clean).
 - [ ] 4.12 Docs: `docs/configuration.md` — document `REGISTRY_DELETE_ENABLED`
       (default `false`); `docs/roadmap.md` — mark manifest/tag deletion
