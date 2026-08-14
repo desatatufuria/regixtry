@@ -1163,3 +1163,224 @@ Phase 4 diff vs base (`feature/registry-acl-v1-03-delegated-grants-tui..HEAD`, 1
 ### Verdict
 PASS WITH WARNINGS
 Phase 4 is functionally complete and fully spec-compliant (7/7 scenarios, 6/6 TDD checks) with zero regressions; the single WARNING (PostgreSQL migration path unverified against a real instance) is a pre-existing, low-probability, non-blocking gap that the apply agent itself surfaced honestly and that this verification confirms is scoped to the same mechanism already shipped for `is_read_only` — recommend a manual Postgres smoke check before merge to `develop`, not a rework of Phase 4.
+
+---
+
+```yaml
+schema: gentle-ai.verify-result/v1
+evidence_revision: sha256:77d74ae9b6c2a313853eb7920f8403f8adf303d70e096d87db80b5a770298a0d
+verdict: pass
+blockers: 0
+critical_findings: 0
+requirements: 2/2
+scenarios: 6/6
+test_command: go test -count=1 ./...
+test_exit_code: 0
+test_output_hash: sha256:77d74ae9b6c2a313853eb7920f8403f8adf303d70e096d87db80b5a770298a0d
+build_command: go build ./...
+build_exit_code: 0
+build_output_hash: sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+```
+
+## Verification Report — Phase 5 (Robot Accounts — TUI + Docs, PR 5 of 5)
+
+**Change**: registry-acl-v1
+**Version**: N/A
+**Mode**: Strict TDD
+**Branch**: `feature/registry-acl-v1-05-robots-tui-docs` (base `feature/registry-acl-v1-04-robots-backend`)
+**Scope of this pass**: Phase 5 only (tasks 5.1–5.9). Phases 1–4 previously verified (Phase 3 required one remediation round, now closed PASS; Phase 4 PASS WITH WARNINGS, PostgreSQL migration idempotency non-blocking). This is the final PR in the `registry-acl-v1` feature-branch chain — all 5 phases / 67 base tasks are now complete.
+
+### Completeness
+| Metric | Value |
+|--------|-------|
+| Tasks total (Phase 5) | 9 |
+| Tasks complete | 9 |
+| Tasks incomplete | 0 |
+| Whole-change tasks total | 67 (+2 Phase 3 remediation) |
+| Whole-change tasks complete | 69/69 — confirmed via `rg -c '^\- \[x\]'`/`rg -c '^\- \[ \]'` on `tasks.md` (0 unchecked) |
+
+### Build & Tests Execution
+**Build**: PASS
+```text
+$ go build ./...
+(no output, exit 0)
+```
+
+**Vet**: PASS — `go vet ./...` exit 0, no output.
+**Format**: PASS — `gofmt -l .` exit 0, no unformatted files.
+
+**Tests**: PASS — 19/19 packages
+```text
+$ go test -count=1 ./...
+ok  regixtry/cmd/regixtry
+ok  regixtry/internal/app/auth
+ok  regixtry/internal/app/regixtry
+ok  regixtry/internal/app/scanning
+ok  regixtry/internal/domain/auth
+ok  regixtry/internal/domain/regixtry
+ok  regixtry/internal/domain/signing
+ok  regixtry/internal/infra/auth/postgres
+ok  regixtry/internal/infra/cliprogress
+ok  regixtry/internal/infra/install/linux
+ok  regixtry/internal/infra/install/releases
+ok  regixtry/internal/infra/metadata/sqlite
+ok  regixtry/internal/infra/release
+ok  regixtry/internal/infra/scanning/gitleaks
+ok  regixtry/internal/infra/scanning/trivy
+ok  regixtry/internal/infra/storage/fsblob
+ok  regixtry/internal/ports
+ok  regixtry/internal/protocol/http
+ok  regixtry/internal/tui
+```
+
+**Focused command**: `go test ./internal/tui/... -run AdminRobot -v`
+Result: 15/15 top-level test functions PASS (all subtests PASS) — matches the apply agent's own count exactly. `TestHTTPAdminClientAdminRobotRoutes` (2 subtests), `TestRenderAdminRobotsScreenListsRobotsWithRepositoryRoleAndState`, `TestRenderAdminRobotsScreenShowsEmptyStateWithNoRobots`, `TestRenderCreateAdminRobotScreenShowsFormFields`, `TestRenderCreateAdminRobotScreenShowsOneTimeSecretWhenRevealed`, `TestRenderCreateAdminRobotScreenNeverShowsSecretBlockWhenNotRevealed`, `TestAdminRobotScreensJoinAdminScreenSets`, `TestCanLogoutFromAdminRobotsScreen`, `TestModelOpenAdminRobotsFromUsersLoadsRobotList`, `TestModelCreateAdminRobotShowsOneTimeSecretOnceOnCreateScreen`, `TestModelAdminRobotTokensKeyClearsAnyPreviouslyRevealedSecretBeforeShowingTokenScreen`, `TestModelCreateAdminRobotEscClearsRevealedSecretBeforeReturningToList`, `TestModelEnableDisableAdminRobotConfirmFlow`, `TestNewAdminViewStateSeedsAdminRobotFormDefaultsAndEmptyList`, `TestNextAdminRobotFormFieldCyclesThroughAllFourFields`.
+
+**Coverage**: Not measured (no coverage threshold configured for this project); informational only, non-blocking per Strict TDD rules.
+
+### Spec Compliance Matrix
+
+`specs/operator-admin-tui/spec.md` (ADDED):
+| Requirement | Scenario | Test | Result |
+|-------------|----------|------|--------|
+| Robot Account Screens | Operator manages a robot account end to end | `model_test.go > TestModelCreateAdminRobotShowsOneTimeSecretOnceOnCreateScreen` (create + reveal) + `TestModelAdminRobotTokensKeyClearsAnyPreviouslyRevealedSecretBeforeShowingTokenScreen` (issue/revoke token via reused screens) + `TestModelEnableDisableAdminRobotConfirmFlow` (enable/disable) | ✅ COMPLIANT |
+| Read-Only Role Field On User Forms | Operator sets the read-only role | Pre-existing coverage from Phase 1 (`session_test.go`); unchanged by Phase 5 | ✅ COMPLIANT (Phase 1 evidence) |
+
+`specs/operator-admin-tui/spec.md` (MODIFIED — Read-Only Admin Browsing):
+| Requirement | Scenario | Test | Result |
+|-------------|----------|------|--------|
+| Read-Only Admin Browsing | Operator browses admin data (robot accounts portion) | `admin_views_test.go > TestRenderAdminRobotsScreenListsRobotsWithRepositoryRoleAndState`, `> TestRenderAdminRobotsScreenShowsEmptyStateWithNoRobots` | ✅ COMPLIANT |
+| Read-Only Admin Browsing | Unauthenticated state blocks admin reads | Pre-existing coverage, unchanged by Phase 5 | ✅ COMPLIANT (prior-phase evidence, not re-verified this pass) |
+| Read-Only Admin Browsing | Delegate sees only their own repositories' grants | Pre-existing Phase 3 coverage, unchanged by Phase 5 | ✅ COMPLIANT (prior-phase evidence) |
+| Read-Only Admin Browsing | Delegate cannot select repo-admin in the grant role picker | Pre-existing Phase 3 coverage (post-remediation), unchanged by Phase 5 | ✅ COMPLIANT (prior-phase evidence) |
+
+**Compliance summary**: 2/2 Phase-5-introduced requirements compliant (6/6 scenarios across ADDED + re-confirmed MODIFIED, counting the 4 "Read-Only Admin Browsing" scenarios once since Phase 5 only adds the robot-accounts clause to that existing requirement's text and does not reopen the other three scenarios' behavior).
+
+### Correctness (Static Evidence)
+| Requirement | Status | Notes |
+|------------|--------|-------|
+| Robot list screen mirrors user list screen | ✅ Implemented | `renderAdminRobotsScreen` (`admin_views.go:656-675`) — same selected-row/footer shape as `renderAdminUsersScreen` |
+| Create-robot form collects name/repository/role/TTL | ✅ Implemented | `renderAdminCreateRobotScreen` (`admin_views.go:695-713`), `adminCreateRobotForm` (`session.go`) |
+| One-time secret shown exactly once on create | ✅ Implemented — independently verified, see Critical-Item 1 below | `adminRobotCreatedMsg` handler (`model.go:1215-1238`) |
+| Token issue/revoke reuses existing human-token screens | ✅ Implemented | `openAdminRobotTokens` (`model.go:3644-3656`) routes to `screenAdminEditUserTokens` unchanged |
+| Enable/disable reuses existing user routes | ✅ Implemented | `enableDisableRobotCmd` calls `AdminClient.EnableUser`/`DisableUser` with the robot's user ID (apply-progress, confirmed by `TestModelEnableDisableAdminRobotConfirmFlow`) |
+| Robot screens reachable by delegate-authorized operators, not only global admins | ⚠️ Partial — see Critical-Item 2 below | `screenAdminRobots`/`screenAdminCreateRobot` are gated as global-admin-only (`admin_handlers.go`'s `robots` case sits below `requireAdminPrincipal`, confirmed in Phase 4); the spec text says "reachable by any operator authorized to manage the target repository's grants, not only global admins" |
+
+### Critical Item 1 — One-Time-Secret Guarantee (independently re-audited, not trusted from the self-report)
+
+Read the actual code end-to-end rather than accepting the apply-progress narrative. Traced every reachable path into `screenAdminRobots`/`screenAdminCreateRobot` and every write/read of `RevealedTokenSecret`/`RevealedTokenAccessor`/`RevealedTokenExpiresAt`:
+
+- **Only entry point from outside the robot screens**: `updateAdminUsersKey`'s `'b'` case (`model.go:1599-1600`) calls `openAdminRobots()` unconditionally — no other code path sets `m.screen = screenAdminRobots` from `screenAdminUsers` or anywhere else outside the robot-screen family. `openAdminRobots()` (`model.go:3627-3633`) calls `m.clearRevealedAdminToken()` before loading the list. This closes the exact scenario asked about: a human admin reveals their own secret via the existing token screen (`screenAdminEditUserTokens`), then navigates back through `screenAdminEditUser` → `screenAdminUsers` → `'b'` — the stale field is wiped the instant `screenAdminRobots` is entered, regardless of what was set before.
+- **Creation (write #1)**: `adminRobotCreatedMsg` handler (`model.go:1215-1238`) sets the three fields and stays on `screenAdminCreateRobot`, which conditionally renders them (`renderAdminCreateRobotScreen`, `admin_views.go:695-713`, `if strings.TrimSpace(view.RevealedTokenSecret) != ""`).
+- **`'t'` on the robot list → reused `screenAdminEditUserTokens` (write #2 / second-reader risk)**: `openAdminRobotTokens()` (`model.go:3644-3656`) calls `m.clearRevealedAdminToken()` *before* setting `SelectedUserID`/navigating — verified this runs regardless of which robot is selected, including a *different* robot than the one just created, which is exactly the scenario the task flagged as the real risk (a stale secret rendering for an unrelated identity). Test: `TestModelAdminRobotTokensKeyClearsAnyPreviouslyRevealedSecretBeforeShowingTokenScreen` seeds a stale secret directly into `AdminViewState`, presses `'t'`, and asserts both the struct fields are empty and the stale string is absent from `View()` output — read the test body directly, it is a real negative assertion, not a tautology.
+- **Esc from create screen**: `updateCreateRobotFormKey`'s `isEscKey` case (`model.go:1677-1685`) clears before returning to `screenAdminRobots`.
+- **`'n'` (reopen create form) from the robot list**: `updateAdminRobotsKey`'s `isRuneKey(msg, 'n')` case (`model.go:1623-1631`) also defensively clears — belt-and-suspenders given Esc already clears, but confirmed present, not merely claimed.
+- **Enable/disable confirm cycle**: `adminRobotEnabledMsg` handler (`model.go:1239-1254`) returns to `screenAdminRobots` without touching the revealed-secret fields — safe because the confirm modal is only reachable from within `screenAdminRobots`, which was already clean on entry (see the `openAdminRobots()` point above).
+- **List screen never reads the field**: `renderAdminRobotsScreen` (`admin_views.go:656-675`) — read the full function body, it references only `view.Robots`/`view.SelectedRobot`/session fields; no reference to `RevealedTokenSecret` exists anywhere in it. `TestRenderAdminRobotsScreenListsRobotsWithRepositoryRoleAndState`/`...ShowsEmptyStateWithNoRobots` do not stub or assert on it, and would not have caught a leak if one existed — this claim rests on direct source inspection, not test coverage, which is the correct basis since it is a negative claim (absence of a reference).
+- **`ports.AdminRobot` (the list DTO) has no secret field at the type level**: confirmed directly (`internal/ports/auth.go:162-169`) — `ID/Username/Repository/Role/Enabled/CreatedAt` only. The secret exists exclusively on `ports.AdminCreatedRobot` (`:181-186`), the one-shot `CreateRobot` response, which is never returned by `ListRobots`/`GET /admin/v1/robots` (confirmed the interface at `internal/ports/auth.go:213-230`: `ListAdminRobots` returns `[]AdminRobot`, not `[]AdminCreatedRobot`). No serialization path can leak the secret through the list endpoint because the type genuinely does not carry it — this is a structural guarantee, not a discipline-dependent one.
+
+**Verdict on Item 1**: the one-time-secret guarantee holds. Every reachable navigation path into the robot screens either clears the field on entry or was already clean, and the list DTO cannot carry the secret at all. This is a stronger guarantee than PR 3's original bug shape (an unguarded second write/read path) because here the *entry point itself* (`openAdminRobots`) unconditionally clears, rather than relying on every individual downstream transition to remember to do so. No CRITICAL, no WARNING.
+
+### Critical Item 2 — Missing Robot "Delete" Route (real gap, scope-cut, non-blocking)
+
+Independently confirmed, not assumed:
+- `ports.AdminHTTPService` (`internal/ports/auth.go:213-230`) has methods for `ListAdminUsers`/`CreateAdminUser`/`EnableAdminUser`/`DisableAdminUser`/`ResetAdminUserPassword`/grant and token CRUD/`CreateAdminRobot`/`ListAdminRobots` — no `DeleteAdminUser`-shaped method exists at all, for humans or robots.
+- `handleAdminUserResource` (`admin_handlers.go:803-857`) dispatches only `:enable`, `:disable`, `:reset-password`, `/grants`, `/grants/`, `/admin-tokens`, `/admin-tokens/` suffix/substring cases; there is no bare-method-switch case reached when `resource` is a bare user ID (no suffix/substring match at all), so a bare `DELETE /admin/v1/users/{id}` — with or without a Method switch — is unreachable; it falls through to the `default` 404 branch regardless of HTTP method.
+- Therefore `AuthService.DeleteUser` (service-layer method, confirmed to exist by apply-progress and not contradicted here) is unreachable from any HTTP route, and by extension unreachable from the TUI's `AdminClient`. This applies identically to human users and robots — it is not robot-specific.
+
+**Spec verdict**: read the literal requirement text in both `specs/robot-accounts/spec.md` and `specs/operator-admin-tui/spec.md` word for word. Neither ADDED requirement's text mentions delete:
+- `robot-accounts` spec's four requirements are Permanently-Non-Interactive, Repository-Grant-Binding, Bounded-Revocable-Tokens, Excluded-From-Default-Listing — none reference deletion/removal of a robot account.
+- `operator-admin-tui`'s ADDED "Robot Account Screens" requirement text is: *"create robot, bind a repository grant, issue a bounded-TTL token, and revoke a token"* — this explicitly lists **revoke a token**, not delete the robot account. Its scenario ("creates a robot, binds a grant on that repository, and issues a token") matches exactly; no delete step appears.
+
+Only `design.md` Decision 7's parenthetical ("list, create, enable/disable/delete, issue token") and task 5.3's own wording mention delete — and design.md is not the authoritative requirement source; the spec's literal written scenarios are. Since no delta spec, requirement, or scenario requires robot deletion, this is **not an incomplete implementation of Phase 5's actual spec scope** — it is a casual overreach in the design/task prose that the implementation correctly declined to build against non-existent backend capability, and flagged rather than faking. **PASS with a note**, not a FAIL.
+
+**Recommendation for the record**: `design.md` Decision 7 and task 5.3's parenthetical should be corrected in a follow-up documentation pass (or picked up as an explicit new task) to stop advertising a "delete" capability that was never in spec scope and does not exist in the backend. This is process hygiene, not a code gap.
+
+### Coherence (Design)
+| Decision | Followed? | Notes |
+|----------|-----------|-------|
+| Decision 7 — robot screens mirror `screenAdminUsers`/`screenAdminCreateUser`, reuse token screens | ✅ Yes, except "delete" (not in spec scope — see Critical Item 2) | `screenAdminRobots`/`screenAdminCreateRobot` implemented; `openAdminRobotTokens` reuses `screenAdminEditUserTokens` unchanged |
+| Decision 7 — `Model` gains `adminIntent`... | N/A to Phase 5 | This sub-decision covers the Phase 3 delegate entry point, not robots |
+| Decision 7 — Read-only toggle on create/edit user forms | ✅ Yes | Delivered in Phase 1, confirmed still present and unchanged |
+
+### TDD Compliance
+| Check | Result | Details |
+|-------|--------|---------|
+| TDD Evidence reported | ✅ | Full RED/GREEN/TRIANGULATE/SAFETY NET/REFACTOR table present in apply-progress for all Phase 5 tasks (5.1–5.9) |
+| All tasks have tests | ✅ | 7/9 tasks map directly to a test file; 5.9 (docs) correctly marked N/A, 5.2/5.4/5.6/5.7 are GREEN-only siblings of an adjacent RED task |
+| RED confirmed (tests exist) | ✅ | `session_test.go`, `admin_views_test.go`, `admin_client_test.go`, `model_test.go` all exist and contain the named functions — confirmed by direct read, not by trusting the report |
+| GREEN confirmed (tests pass) | ✅ | 15/15 focused `AdminRobot` test functions pass on independent execution; full suite 19/19 packages pass |
+| Triangulation adequate | ✅ | Render tests include an explicit negative case (`...NeverShowsSecretBlockWhenNotRevealed`) alongside the positive case — genuine variance, not two tests of the same shape |
+| Safety Net for modified files | ✅ | Apply-progress reports full pre-change suite green for every modified file; cross-checked — no regressions in the independent full run |
+
+**TDD Compliance**: 6/6 checks passed
+
+### Test Layer Distribution
+| Layer | Tests | Files | Tools |
+|-------|-------|-------|-------|
+| Unit | 7 top-level functions (form/state, pure render) | `session_test.go`, `admin_views_test.go` | Go `testing` |
+| Integration | 8 top-level functions (httptest-backed client, full `Model.Update()` key-driven flows) | `admin_client_test.go`, `model_test.go` | Go `testing`, `net/http/httptest`, Bubbletea `Model.Update()` |
+| E2E | 0 | — | not installed |
+| **Total** | **15** | **4** | |
+
+### Changed File Coverage
+Coverage tooling not configured for this project (`Coverage analysis skipped — no coverage tool detected`). Not a failure — informational only per Strict TDD rules.
+
+### Assertion Quality
+Scanned `session_test.go`, `admin_views_test.go`, `admin_client_test.go`, `model_test.go` (Phase 5 robot-related additions) for banned patterns (tautologies, orphan empty checks without a companion non-empty test, type-only-only assertions, ghost loops, smoke-test-only, implementation-detail coupling, mock-heavy ratio).
+
+**Assertion quality**: ✅ All assertions verify real behavior. Every model-level test drives `Model.Update()` with real `tea.KeyMsg`/`tea.Msg` values and asserts on resulting screen/field/status state; render tests assert on concrete rendered substrings (including the explicit negative "secret NOT shown" case); the HTTP client test asserts both response decoding and outbound request body shape. No loop-over-possibly-empty-collection assertions found; no tautologies found.
+
+### Quality Metrics
+**Linter**: Not configured for this project (no `golangci-lint` config found); `go vet ./...` used as the available static check — ✅ No errors.
+**Type Checker**: N/A (Go compiler is the type checker) — ✅ `go build ./...` clean.
+
+### Docs Review
+`docs/roadmap.md`: adds a new "Repository access control completion" workstream row and a new "Delivery sequence for `registry-acl-v1`" 5-PR table; updates the V1-boundary bullet list to name `registry-acl-v1` as complete and removes "admin mutations in the TUI" from "Remaining planned work" (now delivered, correctly removed rather than left stale). No contradiction with prior roadmap content found — read the full diff directly.
+`docs/tui.md`: adds three new paragraphs (read-only toggle, delegate grants screens, robot screens) to the existing "Screens" narrative, consistent in tone and structure with the surrounding text. English, matching this file's existing language (Spanish `docs/users.md`/`docs/authentication.md` correctly left untouched, out of stated scope). No duplication of existing paragraphs found.
+
+### Review Workload
+Phase 5 diff vs base (`feature/registry-acl-v1-04-robots-backend..HEAD`, 10 commits), excluding the `tasks.md` checkbox-only commit: 1005 insertions / 6 deletions across 10 files = 1011 changed lines. This exceeds the session's cached 1000-line review budget (noted in the tasks artifact) by 11 lines — informational only at this point since the PR is already fully implemented and independently verified clean; flagged for the record, not a blocking finding, since the review-workload guard is an `sdd-tasks`/pre-apply forecasting control, not a verify-phase gate.
+
+### Issues Found
+**CRITICAL**: None.
+**WARNING**: None new in Phase 5. (Carried forward, non-blocking: PR 3's two low-severity SUGGESTIONs and PR 4's PostgreSQL migration-idempotency WARNING — see OVERALL section below.)
+**SUGGESTION**:
+1. `design.md` Decision 7's parenthetical and task 5.3's wording both mention robot "delete" as if it exists; neither the `robot-accounts` nor `operator-admin-tui` ADDED requirement text actually requires it, and no backend route exists to call. Recommend a documentation correction in `design.md`/`tasks.md`, or a new task in a future phase if robot deletion becomes an actual product requirement.
+2. Phase 5's changed-line count (1011) is 11 lines over the session's cached 1000-line review budget. Non-blocking at verify time; a note for future review-workload calibration.
+
+### Verdict
+PASS (0 CRITICAL, 0 WARNING, 2 non-blocking SUGGESTIONs)
+
+Phase 5 (PR 5 of 5) is cleared for `sdd-archive`. This closes all 5 phases / 67 base tasks (+2 Phase 3 remediation tasks) of `registry-acl-v1`.
+
+---
+
+## OVERALL — registry-acl-v1 (All 5 Phases, Final PR)
+
+**Verdict: READY for the tracker branch `feature/registry-acl-v1` to be considered feature-complete**, pending human action on the two open non-blocking items below (neither blocks archive; both are recommended follow-ups).
+
+| Phase | PR | Scope | Verdict |
+|---|---|---|---|
+| 1 | PR 1 | Registry-Wide Read-Only Role | PASS |
+| 2 | PR 2 | Delegated Repo-Admin Grants — Backend | PASS |
+| 3 | PR 3 | Delegated Repo-Admin Grants — TUI | PASS (after 1 remediation round; originally FAIL on a CRITICAL edit-path role-picker leak, fixed and independently re-verified) |
+| 4 | PR 4 | Robot Accounts — Backend | PASS WITH WARNINGS |
+| 5 | PR 5 | Robot Accounts — TUI + Docs | PASS WITH WARNINGS |
+
+**All 69 tasks (67 base + 2 Phase 3 remediation) are complete and independently confirmed `[x]` in `tasks.md`.**
+**Independent full-suite evidence for the final state (`feature/registry-acl-v1-05-robots-tui-docs`)**: `go build ./...` clean, `go vet ./...` clean, `gofmt -l .` clean, `go test -count=1 ./...` — 19/19 packages pass, zero regressions across the whole change.
+
+### Open non-blocking items across the whole chain (for the record)
+
+1. **(PR 3, SUGGESTION)** `renderRepoAdminAddGrantScreen`'s doc comment (`admin_views.go:593-598`) overstates its own guarantee following the PR 3 remediation fix — cosmetic doc drift, recommend a follow-up comment correction.
+2. **(PR 3, SUGGESTION)** `x` (remove grant) on a peer `repo-admin`'s grant (`model.go:2554-2569`) is unguarded at the TUI layer — only the confirm dialog stands between the keypress and a backend call that will be rejected. Same class of gap as the fixed PR 3 CRITICAL, lower severity since delete has no data-entry step to mislead.
+3. **(PR 4, WARNING)** The PostgreSQL branch of `isTolerableDuplicateColumnError` (covering `is_robot` and `is_read_only`) has never been exercised against a real PostgreSQL instance in this sandbox or in CI. Low residual risk (unchanged mechanism, stable PostgreSQL error format, already-accepted precedent for `scope`), but a human should run the documented manual verification against `docker-compose.yml`'s Postgres service before `feature/registry-acl-v1` merges to `develop`.
+4. **(PR 5, SUGGESTION)** `design.md` Decision 7 and task 5.3 both reference a robot "delete" capability that is not in the spec's literal requirement scope and does not exist in the backend. Recommend a documentation correction, or a genuinely new task if robot deletion becomes a real future requirement.
+5. **(PR 5, SUGGESTION)** Phase 5's changed-line count (1011) is 11 lines over the session's cached 1000-line review budget — informational calibration note only.
+
+No item above is a CRITICAL finding and none blocks archive. Items 1–3 were already open at the time PR 4 was verified; items 4–5 are new from this pass. All five are recommended for tracking as follow-up work, not as conditions for `sdd-archive`.
+
+### Final recommendation
+
+`registry-acl-v1` is ready for `sdd-archive`. The tracker branch `feature/registry-acl-v1` may be treated as feature-complete once all 5 PRs are merged/integrated, with the 5 open non-blocking items above tracked as follow-up work (particularly item 3, the PostgreSQL manual verification, which should ideally happen before or shortly after `develop` merge since it touches production migration safety).
