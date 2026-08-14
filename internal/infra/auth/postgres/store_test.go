@@ -121,6 +121,71 @@ func TestStoreBootstrapsAndPersistsAuthState(t *testing.T) {
 	}
 }
 
+// TestStoreRoundTripsIsReadOnlyAcrossAuthUserQueries pins design.md
+// Decision 5 and Decision 8: the is_read_only column must survive
+// UpsertUser/ListUsers/GetUserByID/GetUserByUsername, and toggling it back
+// off must persist just as reliably as toggling it on.
+func TestStoreRoundTripsIsReadOnlyAcrossAuthUserQueries(t *testing.T) {
+	t.Parallel()
+
+	store := newSQLiteBackedStore(t)
+	defer store.Close()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	user := domainauth.User{ID: "user-ro-1", Username: "reader", PasswordHash: "hash-1", IsReadOnly: true, Enabled: true, CreatedAt: now, UpdatedAt: now}
+	if err := store.UpsertUser(context.Background(), user); err != nil {
+		t.Fatalf("UpsertUser() error = %v", err)
+	}
+
+	byUsername, err := store.GetUserByUsername(context.Background(), user.Username)
+	if err != nil {
+		t.Fatalf("GetUserByUsername() error = %v", err)
+	}
+	if !byUsername.IsReadOnly {
+		t.Fatalf("GetUserByUsername().IsReadOnly = false, want true")
+	}
+
+	byID, err := store.GetUserByID(context.Background(), user.ID)
+	if err != nil {
+		t.Fatalf("GetUserByID() error = %v", err)
+	}
+	if !byID.IsReadOnly {
+		t.Fatalf("GetUserByID().IsReadOnly = false, want true")
+	}
+
+	users, err := store.ListUsers(context.Background())
+	if err != nil {
+		t.Fatalf("ListUsers() error = %v", err)
+	}
+	found := false
+	for _, listed := range users {
+		if listed.ID != user.ID {
+			continue
+		}
+		found = true
+		if !listed.IsReadOnly {
+			t.Fatalf("ListUsers() entry IsReadOnly = false, want true")
+		}
+	}
+	if !found {
+		t.Fatalf("ListUsers() = %#v, want to contain user %q", users, user.ID)
+	}
+
+	user.IsReadOnly = false
+	user.UpdatedAt = now.Add(time.Minute)
+	if err := store.UpsertUser(context.Background(), user); err != nil {
+		t.Fatalf("UpsertUser(clear) error = %v", err)
+	}
+
+	cleared, err := store.GetUserByID(context.Background(), user.ID)
+	if err != nil {
+		t.Fatalf("GetUserByID(after clear) error = %v", err)
+	}
+	if cleared.IsReadOnly {
+		t.Fatalf("GetUserByID(after clear).IsReadOnly = true, want false")
+	}
+}
+
 func TestMigrationsCreateOnlyAuthTables(t *testing.T) {
 	t.Parallel()
 
