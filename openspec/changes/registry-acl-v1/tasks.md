@@ -142,28 +142,28 @@ Chain strategy: pending
 
 ## Phase 3: Delegated Repo-Admin Grants — TUI (Slice 2b — PR 3, depends on Phase 2)
 
-- [ ] 3.1 RED `model_test.go`: `adminIntent` routes post-login to
+- [x] 3.1 RED `model_test.go`: `adminIntent` routes post-login to
       `screenRepoAdminGrants` when set, `screenAdminUsers` otherwise.
-- [ ] 3.2 GREEN: add `adminIntent` (`adminIntentOperator|adminIntentRepoGrants`)
+- [x] 3.2 GREEN: add `adminIntent` (`adminIntentOperator|adminIntentRepoGrants`)
       to `Model`, consumed once on successful auth (`model.go:3029-3063`).
-- [ ] 3.3 RED: `screenRepoAdminGrants`/`screenRepoAdminAddGrant` join
+- [x] 3.3 RED: `screenRepoAdminGrants`/`screenRepoAdminAddGrant` join
       `isAdminScreen`/`isAdminPrincipalScreen`; `screenRepoAdminGrants` joins
       `canLogoutAdminFromCurrentScreen`.
-- [ ] 3.4 GREEN: add both screens to the screen sets
+- [x] 3.4 GREEN: add both screens to the screen sets
       (`model.go:3187-3218`).
-- [ ] 3.5 RED `admin_views_test.go`: `screenRepoAdminGrants` renders the
+- [x] 3.5 RED `admin_views_test.go`: `screenRepoAdminGrants` renders the
       operator's own repository's grants; `screenRepoAdminAddGrant`'s role
       field never offers `repo-admin`.
-- [ ] 3.6 GREEN: implement `screenRepoAdminGrants`/`screenRepoAdminAddGrant`
+- [x] 3.6 GREEN: implement `screenRepoAdminGrants`/`screenRepoAdminAddGrant`
       render functions (`admin_views.go`).
-- [ ] 3.7 RED `admin_client_test.go`: repository-grant client methods call
+- [x] 3.7 RED `admin_client_test.go`: repository-grant client methods call
       `/admin/v1/repositories/{repo}/grants`.
-- [ ] 3.8 GREEN: add repository-grant methods to `admin_client.go`.
-- [ ] 3.9 RED `model_test.go`: the Console Repositories screen's grant action
+- [x] 3.8 GREEN: add repository-grant methods to `admin_client.go`.
+- [x] 3.9 RED `model_test.go`: the Console Repositories screen's grant action
       sets `adminIntent` and reaches `screenAdminLogin`; put/delete grant
       commands wired.
-- [ ] 3.10 GREEN: wire the key handler and load/mutate commands (`model.go`).
-- [ ] 3.11 Confirm Phase 3 GREEN (see Unit 3 focused test command).
+- [x] 3.10 GREEN: wire the key handler and load/mutate commands (`model.go`).
+- [x] 3.11 Confirm Phase 3 GREEN (see Unit 3 focused test command).
 
 ## Phase 4: Robot Accounts — Backend (Slice 3a — PR 4)
 
