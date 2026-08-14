@@ -56,6 +56,13 @@ type AdminClient interface {
 	RevokeUserAdminToken(ctx context.Context, session AdminSession, userID string, accessor string) error
 	EnableUser(ctx context.Context, session AdminSession, userID string) (ports.AdminUser, error)
 	DisableUser(ctx context.Context, session AdminSession, userID string) (ports.AdminUser, error)
+	// ListRobots/CreateRobot back screenAdminRobots/screenAdminCreateRobot
+	// (design.md Decision 6): two new routes. Enable/disable/delete and
+	// token issue/list/revoke deliberately reuse EnableUser/DisableUser/
+	// CreateUserAdminToken etc. above with the robot's user ID -- no new
+	// client methods for those.
+	ListRobots(ctx context.Context, session AdminSession) ([]ports.AdminRobot, error)
+	CreateRobot(ctx context.Context, session AdminSession, input ports.AdminCreateRobotInput) (ports.AdminCreatedRobot, error)
 	// GetRepositoryOverride returns the stored override for one
 	// (repository, feature) pair. A 404 response (no override row) is a
 	// valid state, not an error: it returns (zero value, false, nil).
@@ -494,6 +501,41 @@ func (c *HTTPAdminClient) EnableUser(ctx context.Context, session AdminSession, 
 
 func (c *HTTPAdminClient) DisableUser(ctx context.Context, session AdminSession, userID string) (ports.AdminUser, error) {
 	return c.mutateUser(ctx, session, userID, ":disable")
+}
+
+// ListRobots fetches every robot account (design.md Decision 6's route
+// table).
+func (c *HTTPAdminClient) ListRobots(ctx context.Context, session AdminSession) ([]ports.AdminRobot, error) {
+	var robots []ports.AdminRobot
+	if err := c.getJSON(ctx, session, "/admin/v1/robots", &robots); err != nil {
+		return nil, err
+	}
+	return robots, nil
+}
+
+// CreateRobot creates a robot account, its single repository grant, and its
+// issued admin-credential token in one call (design.md Decision 6), mirroring
+// CreateUserAdminToken's ttl_seconds wire convention: omitted (zero) means
+// the service's default TTL.
+func (c *HTTPAdminClient) CreateRobot(ctx context.Context, session AdminSession, input ports.AdminCreateRobotInput) (ports.AdminCreatedRobot, error) {
+	var created ports.AdminCreatedRobot
+	body := struct {
+		Name       string `json:"name"`
+		Repository string `json:"repository"`
+		Role       string `json:"role"`
+		TTLSeconds int64  `json:"ttl_seconds,omitempty"`
+	}{
+		Name:       strings.TrimSpace(input.Name),
+		Repository: strings.TrimSpace(input.Repository),
+		Role:       string(input.Role),
+	}
+	if input.TTL > 0 {
+		body.TTLSeconds = int64(input.TTL / time.Second)
+	}
+	if err := c.requestJSON(ctx, stdhttp.MethodPost, session, "/admin/v1/robots", body, &created, stdhttp.StatusCreated); err != nil {
+		return ports.AdminCreatedRobot{}, err
+	}
+	return created, nil
 }
 
 func (c *HTTPAdminClient) mutateUser(ctx context.Context, session AdminSession, userID string, action string) (ports.AdminUser, error) {
