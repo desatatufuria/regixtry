@@ -314,6 +314,30 @@ func TestServiceDeleteManifestByTagRemovesOnlyThatTagLeavingSiblingsAndManifestI
 	}
 }
 
+// TestServiceDeleteManifestReturnsNotFoundForAbsentDigestAndAbsentTag pins
+// the store's typed domain.ErrorCodeNotFound (DeleteManifestByDigest and
+// DeleteTag, Phase 2) surfacing unchanged through the service, on both the
+// digest and the tag path.
+func TestServiceDeleteManifestReturnsNotFoundForAbsentDigestAndAbsentTag(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	ctx := context.Background()
+	service.SetDeleteEnabled(true)
+	seedRepository(t, service, ctx, "team/app")
+
+	absentDigest := "sha256:" + strings.Repeat("0", 64)
+	if _, err := service.DeleteManifest(ctx, "team/app", absentDigest); !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("DeleteManifest(%q) error = %v, want ErrorCodeNotFound", absentDigest, err)
+	}
+
+	if _, err := service.DeleteManifest(ctx, "team/app", "does-not-exist"); !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("DeleteManifest(does-not-exist) error = %v, want ErrorCodeNotFound", err)
+	}
+}
+
 func TestServiceQueuesDigestCentricManualScansAndDedupesActiveRuns(t *testing.T) {
 	service, cleanup := newTestService(t, allowAllAccessController{})
 	defer cleanup()

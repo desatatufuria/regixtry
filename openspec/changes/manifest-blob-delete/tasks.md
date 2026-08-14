@@ -133,8 +133,10 @@ Chain strategy: pending
       could even compile, mirroring Phase 2 task 2.2's compile-prerequisite
       interleaving. 3.4/3.5 confirm the already-implemented behavior is
       correct rather than driving new production code.)
-- [ ] 3.7 RED: absent digest and absent tag each surface
-      `domain.ErrorCodeNotFound` through the service.
+- [x] 3.7 RED: absent digest and absent tag each surface
+      `domain.ErrorCodeNotFound` through the service. (Already GREEN —
+      the store's typed NotFound propagates unchanged, `err != nil` returns
+      it verbatim.)
 - [ ] 3.8 Confirm Phase 3 GREEN (Unit 3 focused test command).
 
 ## Phase 4: HTTP Layer, Config, Docs (PR 4, depends on Phases 1–3)
