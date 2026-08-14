@@ -749,6 +749,27 @@ func requireAdmin(actor domainauth.Principal) error {
 	return nil
 }
 
+// requireAdminOrRepoAdmin authorizes the delegated repository-grant
+// namespace (design.md Decision 4): a global admin always passes, and a
+// repo-admin grant on the exact target repository also passes. This
+// deliberately reads actor.Grants directly instead of reusing
+// Principal.HasRepoAdminAccess, which additionally requires a push token
+// scope — a TUI/admin-API login requests zero scopes, so that helper would
+// make delegation permanently dead code on exactly the tokens it runs on.
+func requireAdminOrRepoAdmin(actor domainauth.Principal, repository string) error {
+	if actor.IsAdmin {
+		return nil
+	}
+
+	for _, grant := range actor.Grants {
+		if grant.Repository.String() == repository && grant.Role.AllowsAdmin() {
+			return nil
+		}
+	}
+
+	return domainauth.NewForbiddenError("repository administrator privileges are required")
+}
+
 func normalizeUsername(username string) string {
 	return strings.ToLower(strings.TrimSpace(username))
 }
