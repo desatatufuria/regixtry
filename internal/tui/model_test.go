@@ -873,6 +873,103 @@ func TestUpdateRepoAdminGrantsKeyEditAllowsNonRepoAdminGrant(t *testing.T) {
 	}
 }
 
+// TestUpdateRepoAdminGrantsKeyAddRefusesAfterUnauthorizedLoad is a manual-RC
+// remediation RED test (PR 3): the backend correctly rejects
+// GET .../grants with 403 when the caller lacks repo-admin on that
+// repository (admin_handlers.go), which surfaces here as
+// adminRepoGrantsLoadedMsg.err != nil. Pressing "n" in that state must
+// refuse immediately with a clear status message instead of navigating to
+// screenRepoAdminAddGrant -- letting an unauthorized user fill out an
+// entire admin mutation form before the backend's eventual PUT rejection
+// is poor UX, even though no privilege escalation occurs. This exercises
+// the real load-failure branch of Update() and the real "n" key handler
+// (updateRepoAdminGrantsKey) through model.Update(), not either in
+// isolation.
+func TestUpdateRepoAdminGrantsKeyAddRefusesAfterUnauthorizedLoad(t *testing.T) {
+	t.Parallel()
+
+	model := newAdminReadyModel(t, &fakeAdminClient{})
+	model.adminAuth = adminAuthStateAuthenticated
+	model.screen = screenRepoAdminGrants
+	model.adminView.RepoAdminRepository = "team/app"
+
+	loaded, _ := model.Update(adminRepoGrantsLoadedMsg{
+		repository: "team/app",
+		err:        errors.New("repository administrator privileges are required"),
+	})
+	model = loaded.(Model)
+
+	updated := runKey(t, model, "n")
+
+	if got, want := updated.screen, screenRepoAdminGrants; got != want {
+		t.Fatalf("screen = %q after \"n\" following an unauthorized grants load, want to stay on %q (add refused)", got, want)
+	}
+	if updated.status == "" {
+		t.Fatalf("status = empty, want a message explaining the add was refused")
+	}
+}
+
+// TestUpdateRepoAdminGrantsKeyAddAllowsAfterAuthorizedLoad is the
+// triangulation companion to
+// TestUpdateRepoAdminGrantsKeyAddRefusesAfterUnauthorizedLoad: the refusal
+// guard must be specific to a load that actually failed, not an over-broad
+// block that disables "n" (Add Grant) altogether after any load.
+func TestUpdateRepoAdminGrantsKeyAddAllowsAfterAuthorizedLoad(t *testing.T) {
+	t.Parallel()
+
+	model := newAdminReadyModel(t, &fakeAdminClient{})
+	model.adminAuth = adminAuthStateAuthenticated
+	model.screen = screenRepoAdminGrants
+	model.adminView.RepoAdminRepository = "team/app"
+
+	loaded, _ := model.Update(adminRepoGrantsLoadedMsg{
+		repository: "team/app",
+		grants:     []ports.AdminRepositoryGrant{{Username: "bob", Role: domainauth.RepoRoleWriter}},
+	})
+	model = loaded.(Model)
+
+	updated := runKey(t, model, "n")
+
+	if got, want := updated.screen, screenRepoAdminAddGrant; got != want {
+		t.Fatalf("screen = %q after \"n\" following a successful grants load, want %q (add must still work)", got, want)
+	}
+}
+
+// TestOpenRepoAdminGrantsResetsAuthorizedFlagBeforeNewLoad guards against
+// the same class of "second write path" bug that caused the PR3 CRITICAL
+// finding earlier in this change: a stale "authorized" state from a
+// PREVIOUS repository's successful grants load must not leak into a NEW
+// repository's screen before its own load response arrives. Without a
+// reset, pressing "n" immediately after openRepoAdminGrants (already
+// authenticated, before the fresh adminRepoGrantsLoadedMsg lands) would
+// wrongly be allowed.
+func TestOpenRepoAdminGrantsResetsAuthorizedFlagBeforeNewLoad(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 14, 12, 10, 0, 0, time.UTC)
+	model := newAdminReadyModelWithCatalog(t, []string{"team/app", "team/other"}, &fakeAdminClient{})
+	model.now = func() time.Time { return now }
+	model.adminAuth = adminAuthStateAuthenticated
+	model.adminSession = AdminSession{Username: "delegate", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)}
+	model.screen = screenRepoAdminGrants
+	model.adminView.RepoAdminRepository = "team/app"
+
+	loaded, _ := model.Update(adminRepoGrantsLoadedMsg{
+		repository: "team/app",
+		grants:     []ports.AdminRepositoryGrant{{Username: "bob", Role: domainauth.RepoRoleWriter}},
+	})
+	model = loaded.(Model)
+
+	updated, _ := model.openRepoAdminGrants()
+	fresh := updated.(Model)
+
+	beforeResponse := runKey(t, fresh, "n")
+
+	if got, want := beforeResponse.screen, screenRepoAdminGrants; got != want {
+		t.Fatalf("screen = %q after \"n\" before the new repository's load response arrived, want to stay on %q (stale authorization must not leak)", got, want)
+	}
+}
+
 func TestModelCreateAdminUserRefreshesUsers(t *testing.T) {
 	t.Parallel()
 
