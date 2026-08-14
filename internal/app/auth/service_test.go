@@ -228,6 +228,79 @@ func TestIntersectRequestedActionsReadOnlyYieldsPullOnly(t *testing.T) {
 	}
 }
 
+// TestRequireAdminOrRepoAdmin pins design.md Decision 4: requireAdminOrRepoAdmin
+// reads actor.Grants directly (never Principal.HasRepoAdminAccess, which
+// additionally requires a push token scope that a scope-less admin-API login
+// never carries). A global admin always passes; a repo-admin grant on the
+// exact repository passes; a repo-admin grant on a different repository, a
+// repo-writer grant, the registry-wide read-only role, and an actor with an
+// empty Grants slice are all rejected.
+func TestRequireAdminOrRepoAdmin(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		actor      domainauth.Principal
+		repository string
+		wantErr    bool
+	}{
+		{
+			name:       "global admin passes regardless of grants",
+			actor:      domainauth.Principal{IsAdmin: true},
+			repository: "team/app",
+		},
+		{
+			name: "repo-admin on the exact repository passes",
+			actor: domainauth.Principal{Grants: []domainauth.RepoGrant{
+				{Repository: regixtrydomain.MustParseRepositoryRef("team/app"), Role: domainauth.RepoRoleAdmin},
+			}},
+			repository: "team/app",
+		},
+		{
+			name: "repo-admin on a different repository is rejected",
+			actor: domainauth.Principal{Grants: []domainauth.RepoGrant{
+				{Repository: regixtrydomain.MustParseRepositoryRef("team/other"), Role: domainauth.RepoRoleAdmin},
+			}},
+			repository: "team/app",
+			wantErr:    true,
+		},
+		{
+			name: "repo-writer on the exact repository is rejected",
+			actor: domainauth.Principal{Grants: []domainauth.RepoGrant{
+				{Repository: regixtrydomain.MustParseRepositoryRef("team/app"), Role: domainauth.RepoRoleWriter},
+			}},
+			repository: "team/app",
+			wantErr:    true,
+		},
+		{
+			name:       "registry-wide read-only role is rejected",
+			actor:      domainauth.Principal{IsReadOnly: true},
+			repository: "team/app",
+			wantErr:    true,
+		},
+		{
+			name:       "actor with empty Grants is rejected",
+			actor:      domainauth.Principal{},
+			repository: "team/app",
+			wantErr:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := requireAdminOrRepoAdmin(tt.actor, tt.repository)
+			if tt.wantErr && !domainauth.IsCode(err, domainauth.ErrorCodeForbidden) {
+				t.Fatalf("requireAdminOrRepoAdmin() error = %v, want forbidden", err)
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("requireAdminOrRepoAdmin() error = %v, want nil", err)
+			}
+		})
+	}
+}
+
 func equalStringSlices(got []string, want []string) bool {
 	if len(got) != len(want) {
 		return false
