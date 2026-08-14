@@ -453,10 +453,20 @@ type AdminViewState struct {
 	// centric grants view, a sibling of the global-admin
 	// Grants/SelectedGrant/GrantForm fields above, not an extension of them
 	// — a delegate's Grants view is keyed by repository, not by SelectedUserID.
-	RepoAdminRepository    string
-	RepoAdminGrants        []ports.AdminRepositoryGrant
-	SelectedRepoAdminGrant int
-	RepoAdminGrantForm     adminRepositoryGrantForm
+	RepoAdminRepository string
+	RepoAdminGrants     []ports.AdminRepositoryGrant
+	// RepoAdminGrantsAuthorized is true only after the most recent
+	// screenRepoAdminGrants load actually succeeded (adminRepoGrantsLoadedMsg
+	// with a nil err), distinct from "loaded successfully with zero grants".
+	// A 403 from GET .../grants (repository-administrator privileges
+	// required) leaves this false, following this codebase's existing
+	// TrivyAlertsLoaded naming precedent. Every call site that dispatches
+	// loadRepoAdminGrantsCmd must reset this to false first, so a stale
+	// true from a PREVIOUS repository's successful load can never leak into
+	// a NEW repository's screen before its own load response arrives.
+	RepoAdminGrantsAuthorized bool
+	SelectedRepoAdminGrant    int
+	RepoAdminGrantForm        adminRepositoryGrantForm
 	// TrivyOverrides is every stored Trivy repository override row
 	// (fetched alongside TrivyScanRuns), used only to annotate the
 	// Repository Alerts table with a distinct "scanning disabled" state

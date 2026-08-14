@@ -650,6 +650,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.adminIntent = adminIntentOperator
 			m.adminIntentRepository = ""
 			m.adminView.RepoAdminRepository = repository
+			m.adminView.RepoAdminGrantsAuthorized = false
 			m.screen = screenRepoAdminGrants
 			m.status = fmt.Sprintf("Loading grants for %s...", repository)
 			return m, m.loadRepoAdminGrantsCmd(repository)
@@ -1091,11 +1092,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if IsAdminSessionExpired(msg.err) {
 				return m.expireAdminSession(msg.err.Error()), nil
 			}
+			m.adminView.RepoAdminGrantsAuthorized = false
 			m.status = msg.err.Error()
 			return m, nil
 		}
 		m.adminView.RepoAdminRepository = msg.repository
 		m.adminView.RepoAdminGrants = msg.grants
+		m.adminView.RepoAdminGrantsAuthorized = true
 		m.adminView.SelectedRepoAdminGrant = 0
 		if len(msg.grants) == 0 {
 			m.status = fmt.Sprintf("No grants for %q.", msg.repository)
@@ -2519,6 +2522,10 @@ func (m Model) updateRepoAdminGrantsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case isEscKey(msg):
 		return m.returnToInspection(), nil
 	case isRuneKey(msg, 'n'):
+		if !m.adminView.RepoAdminGrantsAuthorized {
+			m.status = "You don't have repo-admin access to this repository."
+			return m, nil
+		}
 		m.adminView.RepoAdminGrantForm = adminRepositoryGrantForm{Role: domainauth.RepoRoleReader}
 		m.screen = screenRepoAdminAddGrant
 		m.status = ""
@@ -3336,6 +3343,7 @@ func (m Model) openRepoAdminGrants() (tea.Model, tea.Cmd) {
 		m.adminIntent = adminIntentOperator
 		m.adminIntentRepository = ""
 		m.adminView.RepoAdminRepository = repository
+		m.adminView.RepoAdminGrantsAuthorized = false
 		m.screen = screenRepoAdminGrants
 		m.status = fmt.Sprintf("Loading grants for %s...", repository)
 		return m, m.loadRepoAdminGrantsCmd(repository)
