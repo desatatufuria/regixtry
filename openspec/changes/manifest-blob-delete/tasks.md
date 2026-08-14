@@ -50,41 +50,41 @@ Chain strategy: pending
 
 ## Phase 1: Scope/Auth Foundation (PR 1)
 
-- [ ] 1.1 Characterization RED+confirm GREEN `internal/protocol/http/router_test.go`
+- [x] 1.1 Characterization RED+confirm GREEN `internal/protocol/http/router_test.go`
       (new/extend): table-driven — DELETE on `manifests/<ref>` → `405`,
       `Allow: PUT, GET, HEAD`; PUT/GET/HEAD unchanged. Zero prod change.
-- [ ] 1.2 Characterization RED+confirm GREEN `internal/domain/auth/scope_test.go`
+- [x] 1.2 Characterization RED+confirm GREEN `internal/domain/auth/scope_test.go`
       (new): `ParseScope("repository:x:pull,push,delete")` fails today with
       the current rejection message. Zero prod change.
-- [ ] 1.3 RED (same file): target behavior — `pull,push,delete` succeeds and
+- [x] 1.3 RED (same file): target behavior — `pull,push,delete` succeeds and
       canonicalizes in `pull,push,delete` order; an unknown action still
       fails — table-driven.
-- [ ] 1.4 GREEN `internal/domain/auth/scope.go`: `actionDelete` const,
+- [x] 1.4 GREEN `internal/domain/auth/scope.go`: `actionDelete` const,
       `AllowsDelete()`, allow-list + canonical sort-weight edit (Decision 4).
-- [ ] 1.5 RED `internal/ports/action_scope_test.go`: `Action{Verb:
+- [x] 1.5 RED `internal/ports/action_scope_test.go`: `Action{Verb:
       ActionDelete}.Scope()` == `"repository:<name>:delete"` (not
       `pull,delete`).
-- [ ] 1.6 GREEN `internal/ports/regixtry.go`: `ActionDelete ActionVerb`,
+- [x] 1.6 GREEN `internal/ports/regixtry.go`: `ActionDelete ActionVerb`,
       `Action.Scope()` arm.
-- [ ] 1.7 RED `internal/domain/auth/principal_test.go`: `HasDeleteAccess`
+- [x] 1.7 RED `internal/domain/auth/principal_test.go`: `HasDeleteAccess`
       table-driven — writer+`delete` scope passes; writer+`pull,push` only
       fails; reader fails; admin passes; read-only fails.
-- [ ] 1.8 GREEN `internal/domain/auth/principal.go`: `HasDeleteAccess`
+- [x] 1.8 GREEN `internal/domain/auth/principal.go`: `HasDeleteAccess`
       (Decision 5 — does not reuse `HasWriteAccess`).
-- [ ] 1.9 RED `internal/app/auth/service_test.go`: `intersectRequestedActions`
+- [x] 1.9 RED `internal/app/auth/service_test.go`: `intersectRequestedActions`
       — writer requesting `delete` gets it; requesting `pull,push` never
       gets it; read-only never gets it; admin honours the request.
-- [ ] 1.10 GREEN `internal/app/auth/service.go`: add `allowDelete` branch to
+- [x] 1.10 GREEN `internal/app/auth/service.go`: add `allowDelete` branch to
       `intersectRequestedActions`, own statement, never folded into push
       (Decision 5).
-- [ ] 1.11 RED `internal/ports/defaults_test.go`: `principalAccessController
+- [x] 1.11 RED `internal/ports/defaults_test.go`: `principalAccessController
       .Authorize` `case ActionDelete` — writer/admin pass, reader/anonymous
       fail; `configurableAccessController` untouched — anonymous delete
       falls through to `NewUnauthorizedError` even with anonymous-pull
       enabled (threat matrix: anonymous destructive access).
-- [ ] 1.12 GREEN `internal/ports/defaults.go`: add `case ActionDelete` arm to
+- [x] 1.12 GREEN `internal/ports/defaults.go`: add `case ActionDelete` arm to
       `principalAccessController.Authorize` only.
-- [ ] 1.13 Confirm Phase 1 GREEN (Unit 1 focused test command).
+- [x] 1.13 Confirm Phase 1 GREEN (Unit 1 focused test command).
 
 ## Phase 2: Store Layer (PR 2, depends on Phase 1 for `MetadataStore` shape)
 
