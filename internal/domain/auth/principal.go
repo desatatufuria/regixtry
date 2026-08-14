@@ -56,6 +56,15 @@ func (p Principal) hasGrantedRepositoryAccess(repository string, allows func(Rep
 		return true
 	}
 
+	// Registry-wide read: probe the caller's own predicate with
+	// RepoRoleReader instead of comparing strings. Of the three call sites'
+	// predicates (grant.go:34-44) only AllowsRead is true for
+	// RepoRoleReader, so this grants read everywhere and can never widen to
+	// write or admin — even if a fourth predicate is added later.
+	if p.IsReadOnly && allows(RepoRoleReader) {
+		return true
+	}
+
 	for _, grant := range p.Grants {
 		if grant.Repository.String() == repository && allows(grant.Role) {
 			return true
