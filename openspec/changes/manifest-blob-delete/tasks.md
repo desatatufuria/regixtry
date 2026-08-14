@@ -110,12 +110,12 @@ Chain strategy: pending
 
 ## Phase 3: Service Layer (PR 3, depends on Phases 1–2)
 
-- [ ] 3.1 RED `internal/app/regixtry/service_test.go`: `DeleteManifest`
+- [x] 3.1 RED `internal/app/regixtry/service_test.go`: `DeleteManifest`
       refuses an unauthorized caller with `NewUnauthorizedError` even when
       the flag is off (Decision 2 ordering — auth before flag).
-- [ ] 3.2 RED (same file): authorized caller with flag off gets
+- [x] 3.2 RED (same file): authorized caller with flag off gets
       `domain.NewValidationError`/`UNSUPPORTED`, never reaches the store.
-- [ ] 3.3 GREEN `service.go`: `DeleteManifest(ctx, repositoryName,
+- [x] 3.3 GREEN `service.go`: `DeleteManifest(ctx, repositoryName,
       reference)` — `parseRepository` → `authorize(ActionDelete)` →
       `deleteEnabled` check → digest/tag disambiguation via
       `domain.ParseDigest` (same idiom as `parseManifestPayload`) → store

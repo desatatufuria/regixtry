@@ -31,6 +31,19 @@ type ManifestDetails struct {
 	Blobs       []BlobDetails     `json:"blobs"`
 }
 
+// DeletionDetails names what a delete removed (design.md Decision 1).
+// Digest is omitted on the tag path deliberately: resolving it would add a
+// lookup that buys the caller nothing it did not already send.
+// ManifestRemoved distinguishes the two semantics without the caller having
+// to re-parse its own reference.
+type DeletionDetails struct {
+	Repository      string   `json:"repository"`
+	Reference       string   `json:"reference"`
+	Digest          string   `json:"digest,omitempty"`
+	ManifestRemoved bool     `json:"manifestRemoved"`
+	TagsRemoved     []string `json:"tagsRemoved"`
+}
+
 type BlobDetails struct {
 	Repository string `json:"repository,omitempty"`
 	MediaType  string `json:"mediaType,omitempty"`
@@ -620,6 +633,32 @@ func newManifestDetails(repository string, reference string, manifest domain.Man
 	}
 
 	return details
+}
+
+// newDeletionDetailsForDigest builds the digest-path DeletionDetails:
+// ManifestRemoved is always true (the manifests row is gone), and
+// tagsRemoved is the exact cascade blast radius the store selected inside
+// the same transaction, immediately before the delete (design.md Decision 1).
+func newDeletionDetailsForDigest(repository string, reference string, digest string, tagsRemoved []string) DeletionDetails {
+	return DeletionDetails{
+		Repository:      repository,
+		Reference:       reference,
+		Digest:          digest,
+		ManifestRemoved: true,
+		TagsRemoved:     tagsRemoved,
+	}
+}
+
+// newDeletionDetailsForTag builds the tag-path DeletionDetails: the manifest
+// and every other tag on it survive, so ManifestRemoved is always false and
+// TagsRemoved names only the one tag that was untagged.
+func newDeletionDetailsForTag(repository string, reference string) DeletionDetails {
+	return DeletionDetails{
+		Repository:      repository,
+		Reference:       reference,
+		ManifestRemoved: false,
+		TagsRemoved:     []string{reference},
+	}
 }
 
 func newBlobDetails(repository string, descriptor domain.Descriptor) BlobDetails {
