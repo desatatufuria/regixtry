@@ -42,6 +42,7 @@ func migrationStatements() []string {
 			FOREIGN KEY(user_id) REFERENCES auth_users(id) ON DELETE CASCADE
 		);`,
 		`ALTER TABLE auth_users ADD COLUMN is_read_only BOOLEAN NOT NULL DEFAULT FALSE;`,
+		`ALTER TABLE auth_users ADD COLUMN is_robot BOOLEAN NOT NULL DEFAULT FALSE;`,
 	}
 }
 
@@ -50,7 +51,7 @@ func migrationStatements() []string {
 // database that already has them (design.md Decision 8). bootstrapSchema
 // swallows exactly these errors so migrationStatements() stays safely
 // re-runnable across both PostgreSQL and modernc SQLite.
-var tolerateDuplicateColumns = []string{"scope", "is_read_only"}
+var tolerateDuplicateColumns = []string{"scope", "is_read_only", "is_robot"}
 
 func bootstrapSchema(ctx context.Context, db *sql.DB) error {
 	for _, statement := range migrationStatements() {
