@@ -94,7 +94,7 @@ Chain strategy: pending
 - [x] 2.2 GREEN `internal/ports/regixtry.go`: add `DeleteManifestByDigest`/
       `DeleteTag` signatures to `MetadataStore` (compile prerequisite for
       2.3/2.5, interleaved per Decision 3).
-- [ ] 2.3 RED `store_test.go`: `DeleteManifestByDigest` on a digest with 3
+- [x] 2.3 RED `store_test.go`: `DeleteManifestByDigest` on a digest with 3
       tags removes the manifest, all 3 tags, and `manifest_blobs` rows,
       returns the 3 names; absent digest returns `domain.ErrorCodeNotFound`
       — table-driven, `t.TempDir()`.
