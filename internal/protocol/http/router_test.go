@@ -45,6 +45,70 @@ func TestRouterChallengesProtectedPull(t *testing.T) {
 	}
 }
 
+// TestRouterManifestMethodDispatchCharacterizesCurrentBehavior pins
+// handleManifest's current method dispatch (design.md Testing Strategy):
+// PUT/GET/HEAD behave as today, and any other method — including DELETE,
+// which does not exist yet — falls through to the default 405 branch with
+// Allow: PUT, GET, HEAD. This MUST land and pass before any task adds a
+// DELETE case, so the Allow-list edit does not silently change an unasserted
+// response (manifest-blob-delete tasks.md 1.1).
+func TestRouterManifestMethodDispatchCharacterizesCurrentBehavior(t *testing.T) {
+	t.Parallel()
+
+	handler, cleanup := newTestRouter(t, allowAllAccessController{})
+	defer cleanup()
+
+	uploadStart := httptest.NewRequest(http.MethodPost, "/v2/library/alpine/blobs/uploads/", nil)
+	uploadStartRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(uploadStartRecorder, uploadStart)
+	if uploadStartRecorder.Code != http.StatusAccepted {
+		t.Fatalf("upload start status = %d, want %d", uploadStartRecorder.Code, http.StatusAccepted)
+	}
+	uploadLocation := uploadStartRecorder.Header().Get("Location")
+
+	digest := domain.DigestFromBytes([]byte("manifest-dispatch-layer")).String()
+	commitReq := httptest.NewRequest(http.MethodPut, uploadLocation+"?digest="+digest, bytes.NewBufferString("manifest-dispatch-layer"))
+	commitRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(commitRecorder, commitReq)
+	if commitRecorder.Code != http.StatusCreated {
+		t.Fatalf("blob commit status = %d, want %d", commitRecorder.Code, http.StatusCreated)
+	}
+
+	manifestPayload := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{"mediaType":"application/vnd.oci.image.config.v1+json","digest":"` + digest + `","size":24},"layers":[{"mediaType":"application/vnd.oci.image.layer.v1.tar","digest":"` + digest + `","size":24}]}`)
+
+	putReq := httptest.NewRequest(http.MethodPut, "/v2/library/alpine/manifests/dispatch", bytes.NewReader(manifestPayload))
+	putReq.Header.Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
+	putRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(putRecorder, putReq)
+	if putRecorder.Code != http.StatusCreated {
+		t.Fatalf("PUT status = %d, want %d", putRecorder.Code, http.StatusCreated)
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/v2/library/alpine/manifests/dispatch", nil)
+	getRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(getRecorder, getReq)
+	if getRecorder.Code != http.StatusOK {
+		t.Fatalf("GET status = %d, want %d", getRecorder.Code, http.StatusOK)
+	}
+
+	headReq := httptest.NewRequest(http.MethodHead, "/v2/library/alpine/manifests/dispatch", nil)
+	headRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(headRecorder, headReq)
+	if headRecorder.Code != http.StatusOK {
+		t.Fatalf("HEAD status = %d, want %d", headRecorder.Code, http.StatusOK)
+	}
+
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/v2/library/alpine/manifests/dispatch", nil)
+	deleteRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(deleteRecorder, deleteReq)
+	if deleteRecorder.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("DELETE status = %d, want %d", deleteRecorder.Code, http.StatusMethodNotAllowed)
+	}
+	if got, want := deleteRecorder.Header().Get("Allow"), "PUT, GET, HEAD"; got != want {
+		t.Fatalf("Allow = %q, want %q", got, want)
+	}
+}
+
 func TestWriteErrorMapsPolicyViolationTo403DeniedWithoutWWWAuthenticate(t *testing.T) {
 	t.Parallel()
 
