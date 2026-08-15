@@ -245,6 +245,15 @@ func (s *Service) PublishManifest(ctx context.Context, repositoryName string, re
 		return ManifestDetails{}, err
 	}
 
+	// PushedBy records the pushing principal's UserID (stable across
+	// logins/re-issues, unlike Subject) for the opt-in unsigned-self-read
+	// exemption (enforceSigningPolicy). principal should never be nil here --
+	// the authorize() call above already required one -- but this stays
+	// defensive rather than panicking on an unexpected nil.
+	if principal := ports.PrincipalFromContext(ctx); principal != nil {
+		manifest.PushedBy = principal.UserID
+	}
+
 	for _, descriptor := range manifest.BlobReferences() {
 		exists, err := s.blobs.BlobExists(ctx, descriptor.Digest)
 		if err != nil {

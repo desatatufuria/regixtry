@@ -56,7 +56,11 @@ func (s *Service) UpdateSigningPolicySettings(ctx context.Context, input ports.S
 // Unlike enforceScanPolicy, which is deliberately fail-OPEN on uncertainty,
 // this gate is fail-CLOSED: "cannot verify" and "not trustworthy" are the
 // same answer. The two sit side by side with opposite defaults, on purpose.
-func (s *Service) enforceSigningPolicy(ctx context.Context, repository, digest string) error {
+//
+// pushedBy is the digest's manifest.PushedBy (the UserID of whoever pushed
+// it, or "" if unknown/legacy) -- needed only for the opt-in
+// UnsignedSelfRead "pusher" exemption below.
+func (s *Service) enforceSigningPolicy(ctx context.Context, repository, digest, pushedBy string) error {
 	policy, err := s.GetSigningPolicySettings(ctx)
 	if err != nil {
 		return err
@@ -69,6 +73,28 @@ func (s *Service) enforceSigningPolicy(ctx context.Context, repository, digest s
 		return nil // the ONLY allow-without-verify path in this function
 	}
 	if _, err := s.verifySignature(ctx, repository, digest, policy); err != nil {
+		// UnsignedSelfRead is an explicitly opt-in bootstrap exemption
+		// (design discussion: the cosign chicken-and-egg -- cosign must GET
+		// the manifest to know what to sign, but that GET is itself blocked
+		// by this same fail-closed gate before the image is signed). "" and
+		// "off" (and any other value, though write-time validation should
+		// never let one through) fall straight through to the original verify
+		// error, completely unchanged -- today's exact current behavior.
+		if principal := ports.PrincipalFromContext(ctx); principal != nil {
+			switch policy.UnsignedSelfRead {
+			case "pusher":
+				// An empty pushedBy (pre-migration legacy row) must never
+				// match anyone, even a principal whose own UserID also
+				// happens to be empty.
+				if pushedBy != "" && principal.UserID == pushedBy {
+					return nil
+				}
+			case "repo_push":
+				if principal.HasWriteAccess(repository) {
+					return nil
+				}
+			}
+		}
 		return err
 	}
 	return nil

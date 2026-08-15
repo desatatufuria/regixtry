@@ -205,7 +205,7 @@ func TestServiceEnforceSigningPolicyAllowsPullWithoutVerificationWhenDisabled(t 
 			// {Enabled: false} — the default this package resolves with no
 			// row written (task 4.1).
 
-			if err := service.enforceSigningPolicy(context.Background(), repository, fixtureImageDigest); err != nil {
+			if err := service.enforceSigningPolicy(context.Background(), repository, fixtureImageDigest, ""); err != nil {
 				t.Fatalf("enforceSigningPolicy() error = %v, want nil (a disabled policy must never attempt verification)", err)
 			}
 		})
@@ -225,7 +225,7 @@ func TestServiceEnforceSigningPolicyBlocksWhenNoSignatureTagResolves(t *testing.
 	seedFixtureImageManifest(t, service, repository)
 	seedSigningPolicy(t, service, true, []string{fixtureTrustedKeyPEM(t)})
 
-	err := service.enforceSigningPolicy(context.Background(), repository, fixtureImageDigest)
+	err := service.enforceSigningPolicy(context.Background(), repository, fixtureImageDigest, "")
 	if err == nil {
 		t.Fatal("enforceSigningPolicy() error = nil, want a policy violation")
 	}
@@ -261,7 +261,7 @@ func TestServiceEnforceSigningPolicyBlocksWhenSignatureManifestHasNoUsableEntry(
 		t.Fatalf("PublishManifest(.sig) error = %v", err)
 	}
 
-	err = service.enforceSigningPolicy(context.Background(), repository, fixtureImageDigest)
+	err = service.enforceSigningPolicy(context.Background(), repository, fixtureImageDigest, "")
 	if err == nil {
 		t.Fatal("enforceSigningPolicy() error = nil, want a policy violation")
 	}
@@ -304,7 +304,7 @@ func TestServiceEnforceSigningPolicyBlocksWhenPayloadBlobIsAbsent(t *testing.T) 
 		t.Fatalf("metadata.PublishManifest(.sig) error = %v", err)
 	}
 
-	err = service.enforceSigningPolicy(context.Background(), repository, fixtureImageDigest)
+	err = service.enforceSigningPolicy(context.Background(), repository, fixtureImageDigest, "")
 	if err == nil {
 		t.Fatal("enforceSigningPolicy() error = nil, want a policy violation")
 	}
@@ -328,7 +328,7 @@ func TestServiceEnforceSigningPolicyBlocksWhenNoTrustedKeyParses(t *testing.T) {
 	seedFixtureImageManifest(t, service, repository)
 	seedSigningPolicy(t, service, true, []string{"not a valid PEM key"})
 
-	err := service.enforceSigningPolicy(context.Background(), repository, fixtureImageDigest)
+	err := service.enforceSigningPolicy(context.Background(), repository, fixtureImageDigest, "")
 	if err == nil {
 		t.Fatal("enforceSigningPolicy() error = nil, want a policy violation")
 	}
@@ -353,7 +353,7 @@ func TestServiceEnforceSigningPolicyBlocksWhenNoSignatureValidatesAgainstTrusted
 	seedFixtureSignatureArtifact(t, service, repository)
 	seedSigningPolicy(t, service, true, []string{generateTestECDSAP256PublicKeyPEM(t)})
 
-	err := service.enforceSigningPolicy(context.Background(), repository, fixtureImageDigest)
+	err := service.enforceSigningPolicy(context.Background(), repository, fixtureImageDigest, "")
 	if err == nil {
 		t.Fatal("enforceSigningPolicy() error = nil, want a policy violation")
 	}
@@ -380,7 +380,7 @@ func TestServiceEnforceSigningPolicyBlocksTransplantedSignatureBindingADifferent
 	publishFixtureSignatureManifestAt(t, service, repository, transplantTargetDigest)
 	seedSigningPolicy(t, service, true, []string{fixtureTrustedKeyPEM(t)})
 
-	err := service.enforceSigningPolicy(context.Background(), repository, transplantTargetDigest)
+	err := service.enforceSigningPolicy(context.Background(), repository, transplantTargetDigest, "")
 	if err == nil {
 		t.Fatal("enforceSigningPolicy() error = nil, want a policy violation")
 	}
@@ -406,7 +406,7 @@ func TestServiceEnforceSigningPolicyAllowsPullWhenFixtureSignatureVerifies(t *te
 	seedFixtureSignatureArtifact(t, service, repository)
 	seedSigningPolicy(t, service, true, []string{fixtureTrustedKeyPEM(t)})
 
-	if err := service.enforceSigningPolicy(context.Background(), repository, fixtureImageDigest); err != nil {
+	if err := service.enforceSigningPolicy(context.Background(), repository, fixtureImageDigest, ""); err != nil {
 		t.Fatalf("enforceSigningPolicy() error = %v, want nil (the fixture signature must verify)", err)
 	}
 }
@@ -464,7 +464,7 @@ func TestServiceEnforceSigningPolicyPropagatesStoreInfrastructureErrorUnchanged(
 	seedFixtureImageManifest(t, service, repository)
 	seedSigningPolicy(t, service, true, []string{fixtureTrustedKeyPEM(t)})
 
-	err = service.enforceSigningPolicy(context.Background(), repository, fixtureImageDigest)
+	err = service.enforceSigningPolicy(context.Background(), repository, fixtureImageDigest, "")
 	if err == nil {
 		t.Fatal("enforceSigningPolicy() error = nil, want the infrastructure error propagated")
 	}

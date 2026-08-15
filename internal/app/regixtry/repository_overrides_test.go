@@ -396,6 +396,25 @@ func TestNormalizeSigningOverrideRejectsUnsafeInput(t *testing.T) {
 	}
 }
 
+// TestNormalizeSigningOverrideRejectsInvalidUnsignedSelfRead is the write-time
+// validation test for the new opt-in UnsignedSelfRead override field: a
+// value outside its exact allowed set ("", "off", "pusher", "repo_push") is
+// rejected via ports.ValidUnsignedSelfRead, never silently coerced or
+// ignored -- the same posture normalizeSigningOverride already enforces for
+// TrustedPublicKeys and the outage rule above.
+func TestNormalizeSigningOverrideRejectsInvalidUnsignedSelfRead(t *testing.T) {
+	t.Parallel()
+
+	raw := `{"enabled":false,"unsigned_self_read":"nonsense"}`
+	_, err := normalizeSigningOverride([]byte(raw))
+	if err == nil {
+		t.Fatalf("normalizeSigningOverride(%s) error = nil, want error", raw)
+	}
+	if !domain.IsCode(err, domain.ErrorCodeValidation) {
+		t.Fatalf("normalizeSigningOverride(%s) error = %v, want ErrorCodeValidation", raw, err)
+	}
+}
+
 // escapeJSONString is a tiny test helper: a generated PEM contains real
 // newlines, which must be escaped to embed it inside a JSON string literal
 // built by hand in this file's table-driven raw payloads.

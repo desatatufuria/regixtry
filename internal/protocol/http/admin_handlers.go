@@ -484,6 +484,7 @@ func decodeSigningPolicySettings(req *stdhttp.Request) (ports.SigningPolicySetti
 	var payload struct {
 		Enabled           bool     `json:"enabled"`
 		TrustedPublicKeys []string `json:"trusted_public_keys"`
+		UnsignedSelfRead  string   `json:"unsigned_self_read"`
 	}
 	if err := decodeAdminJSON(req, &payload); err != nil {
 		return ports.SigningPolicySettings{}, err
@@ -502,7 +503,10 @@ func decodeSigningPolicySettings(req *stdhttp.Request) (ports.SigningPolicySetti
 	if payload.Enabled && len(normalizedKeys) == 0 {
 		return ports.SigningPolicySettings{}, domainauth.NewValidationError("enabled requires at least one usable entry in trusted_public_keys")
 	}
-	return ports.SigningPolicySettings{Enabled: payload.Enabled, TrustedPublicKeys: normalizedKeys}, nil
+	if !ports.ValidUnsignedSelfRead(payload.UnsignedSelfRead) {
+		return ports.SigningPolicySettings{}, domainauth.NewValidationError(fmt.Sprintf("unsigned_self_read %q is invalid", payload.UnsignedSelfRead))
+	}
+	return ports.SigningPolicySettings{Enabled: payload.Enabled, TrustedPublicKeys: normalizedKeys, UnsignedSelfRead: payload.UnsignedSelfRead}, nil
 }
 
 func signingPolicySettingsResponse(settings ports.SigningPolicySettings) map[string]any {
@@ -513,6 +517,7 @@ func signingPolicySettingsResponse(settings ports.SigningPolicySettings) map[str
 	return map[string]any{
 		"enabled":             settings.Enabled,
 		"trusted_public_keys": trustedKeys,
+		"unsigned_self_read":  settings.UnsignedSelfRead,
 		"updated_at":          settings.UpdatedAt,
 	}
 }

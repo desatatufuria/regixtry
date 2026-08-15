@@ -146,6 +146,16 @@ type SigningPolicySettings struct {
 	Enabled           bool      `json:"enabled"`
 	TrustedPublicKeys []string  `json:"trusted_public_keys"` // canonical PEM, ECDSA P-256
 	UpdatedAt         time.Time `json:"updated_at"`
+
+	// UnsignedSelfRead is an explicitly opt-in exemption from the pull-time
+	// fail-closed gate, letting a principal read back a manifest it cannot
+	// yet prove is signed -- the cosign bootstrap chicken-and-egg (cosign
+	// must GET the manifest to know what to sign). One of "" / "off" (no
+	// exemption, the default -- unchanged current behavior), "pusher" (only
+	// the exact principal who pushed this exact digest, by
+	// domainauth.Principal.UserID), or "repo_push" (any principal with push
+	// access to the repository). See ValidUnsignedSelfRead.
+	UnsignedSelfRead string `json:"unsigned_self_read,omitempty"`
 }
 
 // SigningOverride is one repository's full replacement of the global signing
@@ -153,6 +163,26 @@ type SigningPolicySettings struct {
 type SigningOverride struct {
 	Enabled           bool     `json:"enabled"`
 	TrustedPublicKeys []string `json:"trusted_public_keys,omitempty"`
+
+	// UnsignedSelfRead mirrors SigningPolicySettings.UnsignedSelfRead --
+	// full-row-replace, so an override with UnsignedSelfRead: "" legitimately
+	// forces "off" for this repository, exactly like Enabled: false already
+	// does for that field.
+	UnsignedSelfRead string `json:"unsigned_self_read,omitempty"`
+}
+
+// ValidUnsignedSelfRead reports whether value is one of
+// SigningPolicySettings.UnsignedSelfRead / SigningOverride.UnsignedSelfRead's
+// exact allowed values: "" and "off" both mean no exemption, "pusher" and
+// "repo_push" are the two opt-in exemption modes. Any other value is
+// rejected at write time -- never silently coerced or ignored.
+func ValidUnsignedSelfRead(value string) bool {
+	switch value {
+	case "", "off", "pusher", "repo_push":
+		return true
+	default:
+		return false
+	}
 }
 
 type ScanSettings struct {

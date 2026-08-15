@@ -794,6 +794,40 @@ func TestAdminSigningPolicyPutRejectsEnabledWithZeroKeys(t *testing.T) {
 // TestAdminSigningPolicyPutRejectsMoreThan16Keys is the Phase 8 RED test
 // (tasks.md 8.5): more than 16 keys is a 400/422, bounding the per-pull
 // verification loop (design.md Decision 8).
+// TestAdminSigningPolicyPutRejectsInvalidUnsignedSelfRead is the write-time
+// validation test for the new opt-in unsigned_self_read knob: a value
+// outside its exact allowed set ("", "off", "pusher", "repo_push") is a
+// 422 via ports.ValidUnsignedSelfRead, and the value is never silently
+// coerced or ignored -- confirmed by a subsequent GET showing no row was
+// persisted for the rejected PUT.
+func TestAdminSigningPolicyPutRejectsInvalidUnsignedSelfRead(t *testing.T) {
+	t.Parallel()
+
+	blobStore, store, cleanup := newTestStores(t)
+	defer cleanup()
+	handler := newRouterWithStores(blobStore, store, allowAllAccessController{}, fakeAuthService{verify: &auth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+
+	key := generateHTTPTestECDSAP256PublicKeyPEM(t)
+	body, err := json.Marshal(map[string]any{"enabled": true, "trusted_public_keys": []string{key}, "unsigned_self_read": "nonsense"})
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPut, "/admin/v1/signing-policy", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer admin-token")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d for an invalid unsigned_self_read, body = %s", recorder.Code, http.StatusUnprocessableEntity, recorder.Body.String())
+	}
+
+	if _, err := store.GetSigningPolicySettings(context.Background(), "tenant-a"); err == nil {
+		t.Fatal("GetSigningPolicySettings() error = nil, want no row persisted for a rejected PUT")
+	}
+}
+
 func TestAdminSigningPolicyPutRejectsMoreThan16Keys(t *testing.T) {
 	t.Parallel()
 
@@ -929,6 +963,33 @@ func TestAdminSigningRepositoryOverridePutRejectsUnknownFieldsAndZeroKeys(t *tes
 
 	if _, err := store.GetRepositoryFeatureOverride(context.Background(), "tenant-a", "library/alpine", "signing"); err == nil {
 		t.Fatal("GetRepositoryFeatureOverride() error = nil, want no row persisted for either rejected PUT")
+	}
+}
+
+// TestAdminSigningRepositoryOverridePutRejectsInvalidUnsignedSelfRead mirrors
+// TestAdminSigningPolicyPutRejectsInvalidUnsignedSelfRead for the
+// repository-override PUT path (normalizeSigningOverride, not
+// decodeSigningPolicySettings) -- the same allowed-value check applies at
+// both write-time sites.
+func TestAdminSigningRepositoryOverridePutRejectsInvalidUnsignedSelfRead(t *testing.T) {
+	t.Parallel()
+
+	blobStore, store, cleanup := newTestStores(t)
+	defer cleanup()
+	handler := newRouterWithStores(blobStore, store, allowAllAccessController{}, fakeAuthService{verify: &auth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+
+	req := httptest.NewRequest(http.MethodPut, "/admin/v1/features/signing/repository-overrides/library/alpine", strings.NewReader(`{"enabled":false,"unsigned_self_read":"nonsense"}`))
+	req.Header.Set("Authorization", "Bearer admin-token")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d for an invalid unsigned_self_read, body = %s", recorder.Code, http.StatusUnprocessableEntity, recorder.Body.String())
+	}
+
+	if _, err := store.GetRepositoryFeatureOverride(context.Background(), "tenant-a", "library/alpine", "signing"); err == nil {
+		t.Fatal("GetRepositoryFeatureOverride() error = nil, want no row persisted for a rejected PUT")
 	}
 }
 
