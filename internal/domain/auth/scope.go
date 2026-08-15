@@ -12,6 +12,7 @@ const (
 	scopeTypeRegixtry   = "regixtry"
 	actionPull          = "pull"
 	actionPush          = "push"
+	actionDelete        = "delete"
 	actionCatalog       = "catalog"
 	actionWildcard      = "*"
 )
@@ -133,6 +134,10 @@ func (s Scope) AllowsPush() bool {
 	return s.hasAction(actionPush)
 }
 
+func (s Scope) AllowsDelete() bool {
+	return s.hasAction(actionDelete)
+}
+
 func (s Scope) hasAction(action string) bool {
 	for _, candidate := range s.Actions {
 		if candidate == action {
@@ -158,8 +163,8 @@ func normalizeScopeActions(raw string, repository bool) ([]string, error) {
 		}
 
 		if repository {
-			if action != actionPull && action != actionPush {
-				return nil, NewValidationError("repository scope actions must be pull and/or push")
+			if action != actionPull && action != actionPush && action != actionDelete {
+				return nil, NewValidationError("repository scope actions must be pull, push, and/or delete")
 			}
 		} else if action != actionWildcard {
 			return nil, NewValidationError("registry catalog scopes must use *")
@@ -180,8 +185,10 @@ func normalizeScopeActions(raw string, repository bool) ([]string, error) {
 					return 0
 				case actionPush:
 					return 1
-				default:
+				case actionDelete:
 					return 2
+				default:
+					return 3
 				}
 			}
 			return weight(actions[i]) < weight(actions[j])

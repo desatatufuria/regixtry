@@ -22,6 +22,7 @@ Read this document as a sequencing contract, not a wish list.
 | Operator console | Thin Bubble Tea client for inspection plus authenticated, read-only admin browsing | Implemented for login, users, grants, and admin tokens; admin mutations and richer client ergonomics stay deferred |
 | Repository access control completion | Registry-wide read-only role, delegated repo-admin grant management scoped to one repository, and bounded-TTL, revocable robot accounts | Implemented across the auth domain/service, `/admin/v1`, and the operator console |
 | Supply-chain scanning and signing | Trivy vulnerability scanning (fail-open policy gate), Gitleaks secret scanning (no pull gate), and cosign signature verification (fail-closed policy gate), each a managed feature — see [`docs/features.md`](features.md) for each feature's specific gating behavior | Implemented across `internal/domain/signing/`, `internal/infra/scanning/trivy/`, `internal/infra/scanning/gitleaks/`, `/admin/v1/signing-policy`, and the operator console |
+| Manifest and tag deletion | Opt-in `DELETE /v2/<name>/manifests/<reference>` for withdrawing a bad manifest by digest (cascading to its tags) or untagging a single reference, metadata-only, never touching blob files | Implemented, gated behind `REGISTRY_DELETE_ENABLED`/`-delete-enabled` (default `false`) |
 
 ## Approved v1 boundary
 
@@ -43,6 +44,7 @@ V1 is complete when ALL of the following are true:
 - `registry-operator-admin-api` is complete and verified for authenticated `/admin/v1` user, grant, and admin-token administration.
 - `registry-operator-admin-tui` is now complete for authenticated login plus GET-only admin browsing over the shipped backend API.
 - `registry-acl-v1` is complete: a registry-wide read-only role (`is_read_only`, grant-independent pull access), delegated repo-admin grant management scoped to exactly one repository (`/admin/v1/repositories/{repo}/grants`, reached from the console's Console Repositories screen), and bounded-TTL, revocable robot accounts (`/admin/v1/robots`, the `screenAdminRobots`/`screenAdminCreateRobot` TUI screens) that are permanently excluded from password login and from the default human user listing.
+- `manifest-blob-delete` is complete: `DELETE /v2/<name>/manifests/<digest>` cascades to every tag pointing at that digest and its `manifest_blobs` rows; `DELETE /v2/<name>/manifests/<tag>` untags only, leaving the manifest and its other tags intact. Both are gated behind `REGISTRY_DELETE_ENABLED`/`-delete-enabled` (default `false`; an authorized caller gets `UNSUPPORTED` while off, never a bare `405`), require the distinct `repository:<name>:delete` scope action on top of the `repo-writer` role, and never touch blob files on disk.
 - Manual checks against the local Compose helper runtime have demonstrated authenticated Docker push with Postgres-backed auth enabled, but that helper runtime is still supporting evidence rather than the primary automated verification contract.
 - Remaining planned work is still real scope: optional admin-API pagination, and any future auth-oriented smoke expansion for richer clients.
 
@@ -101,6 +103,15 @@ Note: signing, scanning, and supply-chain automation were listed here as a non-g
 | PR 3 | Delegated repo-admin grants — TUI: `screenRepoAdminGrants`/`screenRepoAdminAddGrant`, reached from Console Repositories | Completed |
 | PR 4 | Robot accounts — backend: `is_robot`, `/admin/v1/robots`, and the permanent password-login guard | Completed |
 | PR 5 | Robot accounts — TUI plus this docs/roadmap close-out: `screenAdminRobots`/`screenAdminCreateRobot`, reusing the existing token screens | Completed |
+
+## Delivery sequence for `manifest-blob-delete`
+
+| Work unit | Target outcome | Status |
+| --- | --- | --- |
+| PR 1 | Scope/auth foundation — `delete` scope action, `HasDeleteAccess`, `intersectRequestedActions` derivation, `principalAccessController` `case ActionDelete` | Completed |
+| PR 2 | Store layer — `DeleteManifestByDigest` (cascade) and `DeleteTag` (untag only), both with typed not-found on zero rows | Completed |
+| PR 3 | Service layer — `Service.DeleteManifest` (auth-before-flag ordering) and `DeletionDetails` | Completed |
+| PR 4 | HTTP layer, config, docs — `handleManifest` `case DELETE`, `REGISTRY_DELETE_ENABLED`/`-delete-enabled`, and this reader-facing doc close-out | Completed |
 
 ## Documentation maintenance rule
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -43,6 +44,539 @@ func TestRouterChallengesProtectedPull(t *testing.T) {
 	if got := recorder.Header().Get("WWW-Authenticate"); got == "" {
 		t.Fatal("expected WWW-Authenticate header")
 	}
+}
+
+// TestRouterManifestMethodDispatchCharacterizesCurrentBehavior originally
+// pinned handleManifest's pre-Phase-4 method dispatch, when DELETE did not
+// exist yet and fell through to the default 405 branch (manifest-blob-delete
+// tasks.md 1.1). Phase 4 (tasks.md 4.3) made DELETE a real, flag-gated verb,
+// so this approval test was updated in lockstep with that change: DELETE now
+// reaches handleManifest's own branch and answers 400/UNSUPPORTED (the
+// REGISTRY_DELETE_ENABLED flag defaults to false on this unconfigured test
+// router), never a bare 405. PUT/GET/HEAD are unaffected and still assert
+// their original behavior.
+func TestRouterManifestMethodDispatchCharacterizesCurrentBehavior(t *testing.T) {
+	t.Parallel()
+
+	handler, cleanup := newTestRouter(t, allowAllAccessController{})
+	defer cleanup()
+
+	uploadStart := httptest.NewRequest(http.MethodPost, "/v2/library/alpine/blobs/uploads/", nil)
+	uploadStartRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(uploadStartRecorder, uploadStart)
+	if uploadStartRecorder.Code != http.StatusAccepted {
+		t.Fatalf("upload start status = %d, want %d", uploadStartRecorder.Code, http.StatusAccepted)
+	}
+	uploadLocation := uploadStartRecorder.Header().Get("Location")
+
+	digest := domain.DigestFromBytes([]byte("manifest-dispatch-layer")).String()
+	commitReq := httptest.NewRequest(http.MethodPut, uploadLocation+"?digest="+digest, bytes.NewBufferString("manifest-dispatch-layer"))
+	commitRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(commitRecorder, commitReq)
+	if commitRecorder.Code != http.StatusCreated {
+		t.Fatalf("blob commit status = %d, want %d", commitRecorder.Code, http.StatusCreated)
+	}
+
+	manifestPayload := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{"mediaType":"application/vnd.oci.image.config.v1+json","digest":"` + digest + `","size":24},"layers":[{"mediaType":"application/vnd.oci.image.layer.v1.tar","digest":"` + digest + `","size":24}]}`)
+
+	putReq := httptest.NewRequest(http.MethodPut, "/v2/library/alpine/manifests/dispatch", bytes.NewReader(manifestPayload))
+	putReq.Header.Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
+	putRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(putRecorder, putReq)
+	if putRecorder.Code != http.StatusCreated {
+		t.Fatalf("PUT status = %d, want %d", putRecorder.Code, http.StatusCreated)
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/v2/library/alpine/manifests/dispatch", nil)
+	getRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(getRecorder, getReq)
+	if getRecorder.Code != http.StatusOK {
+		t.Fatalf("GET status = %d, want %d", getRecorder.Code, http.StatusOK)
+	}
+
+	headReq := httptest.NewRequest(http.MethodHead, "/v2/library/alpine/manifests/dispatch", nil)
+	headRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(headRecorder, headReq)
+	if headRecorder.Code != http.StatusOK {
+		t.Fatalf("HEAD status = %d, want %d", headRecorder.Code, http.StatusOK)
+	}
+
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/v2/library/alpine/manifests/dispatch", nil)
+	deleteRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(deleteRecorder, deleteReq)
+	if deleteRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("DELETE status = %d, want %d", deleteRecorder.Code, http.StatusBadRequest)
+	}
+
+	postReq := httptest.NewRequest(http.MethodPost, "/v2/library/alpine/manifests/dispatch", nil)
+	postRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(postRecorder, postReq)
+	if postRecorder.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST status = %d, want %d", postRecorder.Code, http.StatusMethodNotAllowed)
+	}
+	if got, want := postRecorder.Header().Get("Allow"), "PUT, GET, HEAD, DELETE"; got != want {
+		t.Fatalf("Allow = %q, want %q", got, want)
+	}
+}
+
+// publishRouterManifestTag uploads one blob and publishes a manifest that
+// references it under tag, returning the manifest digest (Docker-Content-
+// Digest from the PUT response) and the blob digest. The two are different
+// values -- the manifest digest covers the JSON envelope, the blob digest
+// covers raw content -- mirroring the inline upload-then-PUT sequence used
+// throughout this file (e.g. TestRouterUploadAndReadFlow), generalized so
+// manifest-blob-delete's DELETE tests have real, removable content.
+func publishRouterManifestTag(t *testing.T, handler *Router, repository string, tag string, content string) (manifestDigest string, blobDigest string) {
+	t.Helper()
+
+	uploadStart := httptest.NewRequest(http.MethodPost, "/v2/"+repository+"/blobs/uploads/", nil)
+	uploadStartRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(uploadStartRecorder, uploadStart)
+	if uploadStartRecorder.Code != http.StatusAccepted {
+		t.Fatalf("upload start status = %d, want %d", uploadStartRecorder.Code, http.StatusAccepted)
+	}
+	uploadLocation := uploadStartRecorder.Header().Get("Location")
+
+	blobDigest = domain.DigestFromBytes([]byte(content)).String()
+	commitReq := httptest.NewRequest(http.MethodPut, uploadLocation+"?digest="+blobDigest, bytes.NewBufferString(content))
+	commitRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(commitRecorder, commitReq)
+	if commitRecorder.Code != http.StatusCreated {
+		t.Fatalf("blob commit status = %d, want %d", commitRecorder.Code, http.StatusCreated)
+	}
+
+	putReq := httptest.NewRequest(http.MethodPut, "/v2/"+repository+"/manifests/"+tag, bytes.NewReader(routerManifestPayload(blobDigest, len(content))))
+	putReq.Header.Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
+	putRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(putRecorder, putReq)
+	if putRecorder.Code != http.StatusCreated {
+		t.Fatalf("PUT manifest status = %d, want %d", putRecorder.Code, http.StatusCreated)
+	}
+
+	return putRecorder.Header().Get("Docker-Content-Digest"), blobDigest
+}
+
+// routerManifestPayload builds a minimal valid OCI image manifest JSON
+// envelope referencing one blob digest for both config and its single layer.
+func routerManifestPayload(blobDigest string, size int) []byte {
+	return []byte(fmt.Sprintf(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{"mediaType":"application/vnd.oci.image.config.v1+json","digest":%q,"size":%d},"layers":[{"mediaType":"application/vnd.oci.image.layer.v1.tar","digest":%q,"size":%d}]}`, blobDigest, size, blobDigest, size))
+}
+
+// TestRouterDeleteManifestRespectsFlagAuthAndExistence covers design.md's
+// Interfaces/Contracts table for DELETE (manifest-blob-delete tasks.md 4.1):
+// flag-on authorized digest delete returns 202 with a removal body, flag-off
+// authorized delete reuses the handleUploadState UNSUPPORTED precedent
+// (never a bare 405), an unauthenticated caller is challenged for the
+// distinct delete scope, and an absent reference answers MANIFEST_UNKNOWN.
+func TestRouterDeleteManifestRespectsFlagAuthAndExistence(t *testing.T) {
+	t.Parallel()
+
+	t.Run("flag on, authorized digest delete returns 202 with removal body", func(t *testing.T) {
+		t.Parallel()
+
+		handler, cleanup := newTestRouter(t, allowAllAccessController{})
+		defer cleanup()
+		handler.service.SetDeleteEnabled(true)
+
+		manifestDigest, _ := publishRouterManifestTag(t, handler, "library/alpine", "latest", "delete-flag-on-content")
+
+		req := httptest.NewRequest(http.MethodDelete, "/v2/library/alpine/manifests/"+manifestDigest, nil)
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+
+		if recorder.Code != http.StatusAccepted {
+			t.Fatalf("status = %d, want %d", recorder.Code, http.StatusAccepted)
+		}
+
+		var body struct {
+			Repository      string   `json:"repository"`
+			Reference       string   `json:"reference"`
+			Digest          string   `json:"digest"`
+			ManifestRemoved bool     `json:"manifestRemoved"`
+			TagsRemoved     []string `json:"tagsRemoved"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+			t.Fatalf("json.Unmarshal() error = %v", err)
+		}
+		if !body.ManifestRemoved || body.Digest != manifestDigest || len(body.TagsRemoved) != 1 || body.TagsRemoved[0] != "latest" {
+			t.Fatalf("body = %#v, want manifestRemoved=true digest=%q tagsRemoved=[latest]", body, manifestDigest)
+		}
+
+		getReq := httptest.NewRequest(http.MethodGet, "/v2/library/alpine/manifests/"+manifestDigest, nil)
+		getRecorder := httptest.NewRecorder()
+		handler.ServeHTTP(getRecorder, getReq)
+		if getRecorder.Code != http.StatusNotFound {
+			t.Fatalf("get after delete status = %d, want %d", getRecorder.Code, http.StatusNotFound)
+		}
+	})
+
+	t.Run("flag off, authorized delete returns 400 UNSUPPORTED and leaves the manifest intact", func(t *testing.T) {
+		t.Parallel()
+
+		handler, cleanup := newTestRouter(t, allowAllAccessController{})
+		defer cleanup()
+
+		manifestDigest, _ := publishRouterManifestTag(t, handler, "library/alpine", "latest", "delete-flag-off-content")
+
+		req := httptest.NewRequest(http.MethodDelete, "/v2/library/alpine/manifests/"+manifestDigest, nil)
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+
+		if recorder.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
+		}
+
+		var payload struct {
+			Errors []struct {
+				Code string `json:"code"`
+			} `json:"errors"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("json.Unmarshal() error = %v", err)
+		}
+		if len(payload.Errors) != 1 || payload.Errors[0].Code != "UNSUPPORTED" {
+			t.Fatalf("payload.Errors = %#v, want single UNSUPPORTED error", payload.Errors)
+		}
+
+		getReq := httptest.NewRequest(http.MethodGet, "/v2/library/alpine/manifests/"+manifestDigest, nil)
+		getRecorder := httptest.NewRecorder()
+		handler.ServeHTTP(getRecorder, getReq)
+		if getRecorder.Code != http.StatusOK {
+			t.Fatalf("get after refused delete status = %d, want %d (manifest must survive)", getRecorder.Code, http.StatusOK)
+		}
+	})
+
+	t.Run("unauthenticated delete is challenged for the delete scope", func(t *testing.T) {
+		t.Parallel()
+
+		handler, cleanup := newTestRouterWithAuth(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "regixtry", Service: "regixtry"}), fakeAuthService{})
+		defer cleanup()
+		handler.service.SetDeleteEnabled(true)
+
+		req := httptest.NewRequest(http.MethodDelete, "/v2/team/app/manifests/latest", nil)
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+
+		if recorder.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
+		}
+		if got := recorder.Header().Get("WWW-Authenticate"); !strings.Contains(got, `scope="repository:team/app:delete"`) {
+			t.Fatalf("WWW-Authenticate = %q, want delete scope challenge", got)
+		}
+	})
+
+	t.Run("unknown reference returns 404 MANIFEST_UNKNOWN", func(t *testing.T) {
+		t.Parallel()
+
+		handler, cleanup := newTestRouter(t, allowAllAccessController{})
+		defer cleanup()
+		handler.service.SetDeleteEnabled(true)
+
+		req := httptest.NewRequest(http.MethodDelete, "/v2/library/alpine/manifests/missing-tag", nil)
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+
+		if recorder.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want %d", recorder.Code, http.StatusNotFound)
+		}
+
+		var payload struct {
+			Errors []struct {
+				Code string `json:"code"`
+			} `json:"errors"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("json.Unmarshal() error = %v", err)
+		}
+		if len(payload.Errors) != 1 || payload.Errors[0].Code != "MANIFEST_UNKNOWN" {
+			t.Fatalf("payload.Errors = %#v, want single MANIFEST_UNKNOWN error", payload.Errors)
+		}
+	})
+}
+
+// TestRouterManifestAllowHeaderIncludesDeleteForOtherMethods pins tasks.md
+// 4.2: once DELETE is a real (flag-gated) verb on this route, the 405
+// fallback for any other method must advertise it in Allow, growing from
+// "PUT, GET, HEAD" (task 1.1's characterization) to "PUT, GET, HEAD, DELETE".
+func TestRouterManifestAllowHeaderIncludesDeleteForOtherMethods(t *testing.T) {
+	t.Parallel()
+
+	handler, cleanup := newTestRouter(t, allowAllAccessController{})
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodPost, "/v2/library/alpine/manifests/allow-header-check", nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusMethodNotAllowed)
+	}
+	if got, want := recorder.Header().Get("Allow"), "PUT, GET, HEAD, DELETE"; got != want {
+		t.Fatalf("Allow = %q, want %q", got, want)
+	}
+}
+
+// TestRouterDeleteOnOtherManifestSubroutesUnchanged pins the threat-matrix
+// "HTTP method dispatch" boundary (tasks.md 4.4): adding a DELETE branch
+// inside handleManifest's switch must not shadow or alter DELETE dispatch on
+// any sibling route -- tags/list, blob reads, and upload state all keep
+// answering exactly as they did before this change.
+func TestRouterDeleteOnOtherManifestSubroutesUnchanged(t *testing.T) {
+	t.Parallel()
+
+	handler, cleanup := newTestRouter(t, allowAllAccessController{})
+	defer cleanup()
+	handler.service.SetDeleteEnabled(true)
+
+	uploadStart := httptest.NewRequest(http.MethodPost, "/v2/library/alpine/blobs/uploads/", nil)
+	uploadStartRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(uploadStartRecorder, uploadStart)
+	uploadID := uploadStartRecorder.Header().Get("Docker-Upload-UUID")
+
+	_, blobDigest := publishRouterManifestTag(t, handler, "library/alpine", "latest", "dispatch-guard-content")
+
+	tests := []struct {
+		name       string
+		method     string
+		path       string
+		wantStatus int
+		wantAllow  string
+	}{
+		{name: "DELETE tags/list stays 405", method: http.MethodDelete, path: "/v2/library/alpine/tags/list", wantStatus: http.StatusMethodNotAllowed, wantAllow: http.MethodGet},
+		{name: "DELETE blob read stays 405", method: http.MethodDelete, path: "/v2/library/alpine/blobs/" + blobDigest, wantStatus: http.StatusMethodNotAllowed, wantAllow: "GET, HEAD"},
+		{name: "DELETE upload state stays 400 UNSUPPORTED (unchanged upload-cancel stub)", method: http.MethodDelete, path: "/v2/library/alpine/blobs/uploads/" + uploadID, wantStatus: http.StatusBadRequest},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, tt.path, nil)
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, req)
+
+			if recorder.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d", recorder.Code, tt.wantStatus)
+			}
+			if tt.wantAllow != "" {
+				if got := recorder.Header().Get("Allow"); got != tt.wantAllow {
+					t.Fatalf("Allow = %q, want %q", got, tt.wantAllow)
+				}
+			}
+		})
+	}
+}
+
+// TestRouterRejectsDeleteWithPushOnlyTokenButAllowsPut pins the threat-matrix
+// "Privilege reuse" boundary (tasks.md 4.5): a pull,push-scoped writer token
+// must not silently gain delete just because HasWriteAccess already passes
+// for push -- it needs the distinct delete scope action, and the same token
+// keeps working for PUT.
+func TestRouterRejectsDeleteWithPushOnlyTokenButAllowsPut(t *testing.T) {
+	t.Parallel()
+
+	blobStore, metadataStore, cleanup := newTestStores(t)
+	defer cleanup()
+
+	seedRouter := newRouterWithStores(blobStore, metadataStore, allowAllAccessController{}, nil)
+	manifestDigest, blobDigest := publishRouterManifestTag(t, seedRouter, "team/app", "reuse-guard", "delete-privilege-reuse-content")
+
+	principal := domainauth.Principal{
+		Subject:  "atk_pushonly",
+		Username: "writer",
+		Grants:   []domainauth.RepoGrant{{Repository: domain.MustParseRepositoryRef("team/app"), Role: domainauth.RepoRoleWriter}},
+		Scopes:   []domainauth.Scope{{Type: "repository", Name: "team/app", Actions: []string{"pull", "push"}, Canonical: "repository:team/app:pull,push"}},
+	}
+	handler := newRouterWithStores(blobStore, metadataStore, ports.NewPrincipalAccessController(ports.Challenge{Realm: "regixtry", Service: "regixtry"}), fakeAuthService{verify: &principal})
+	handler.service.SetDeleteEnabled(true)
+
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/v2/team/app/manifests/"+manifestDigest, nil)
+	deleteReq.Header.Set("Authorization", "Bearer pull-push-token")
+	deleteRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(deleteRecorder, deleteReq)
+	if deleteRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("DELETE status = %d, want %d", deleteRecorder.Code, http.StatusUnauthorized)
+	}
+
+	putReq := httptest.NewRequest(http.MethodPut, "/v2/team/app/manifests/reuse-guard-still-pushable", bytes.NewReader(routerManifestPayload(blobDigest, len("delete-privilege-reuse-content"))))
+	putReq.Header.Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
+	putReq.Header.Set("Authorization", "Bearer pull-push-token")
+	putRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(putRecorder, putReq)
+	if putRecorder.Code != http.StatusCreated {
+		t.Fatalf("PUT status = %d, want %d (same token must still push)", putRecorder.Code, http.StatusCreated)
+	}
+}
+
+// TestRouterDeleteManifestAuthorizationMatrix pins tasks.md 4.6's integration
+// table: role alone is insufficient (reader always fails, even carrying a
+// delete scope) and scope alone is insufficient (a writer/admin missing the
+// delete scope action fails) -- only role AND scope together grant delete.
+func TestRouterDeleteManifestAuthorizationMatrix(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		principal  domainauth.Principal
+		wantStatus int
+	}{
+		{
+			name: "reader role with full delete scope is still unauthorized",
+			principal: domainauth.Principal{
+				Subject: "atk_reader", Username: "reader",
+				Grants: []domainauth.RepoGrant{{Repository: domain.MustParseRepositoryRef("team/app"), Role: domainauth.RepoRoleReader}},
+				Scopes: []domainauth.Scope{{Type: "repository", Name: "team/app", Actions: []string{"pull", "push", "delete"}, Canonical: "repository:team/app:pull,push,delete"}},
+			},
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name: "writer role with delete scope succeeds",
+			principal: domainauth.Principal{
+				Subject: "atk_writer", Username: "writer",
+				Grants: []domainauth.RepoGrant{{Repository: domain.MustParseRepositoryRef("team/app"), Role: domainauth.RepoRoleWriter}},
+				Scopes: []domainauth.Scope{{Type: "repository", Name: "team/app", Actions: []string{"pull", "push", "delete"}, Canonical: "repository:team/app:pull,push,delete"}},
+			},
+			wantStatus: http.StatusAccepted,
+		},
+		{
+			name: "repo-admin role with delete scope succeeds",
+			principal: domainauth.Principal{
+				Subject: "atk_repoadmin", Username: "repo-admin",
+				Grants: []domainauth.RepoGrant{{Repository: domain.MustParseRepositoryRef("team/app"), Role: domainauth.RepoRoleAdmin}},
+				Scopes: []domainauth.Scope{{Type: "repository", Name: "team/app", Actions: []string{"pull", "push", "delete"}, Canonical: "repository:team/app:pull,push,delete"}},
+			},
+			wantStatus: http.StatusAccepted,
+		},
+		{
+			name: "writer role with pull,push token only is unauthorized",
+			principal: domainauth.Principal{
+				Subject: "atk_writer_pp", Username: "writer",
+				Grants: []domainauth.RepoGrant{{Repository: domain.MustParseRepositoryRef("team/app"), Role: domainauth.RepoRoleWriter}},
+				Scopes: []domainauth.Scope{{Type: "repository", Name: "team/app", Actions: []string{"pull", "push"}, Canonical: "repository:team/app:pull,push"}},
+			},
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name: "writer role with pull,push,delete token succeeds",
+			principal: domainauth.Principal{
+				Subject: "atk_writer_ppd", Username: "writer",
+				Grants: []domainauth.RepoGrant{{Repository: domain.MustParseRepositoryRef("team/app"), Role: domainauth.RepoRoleWriter}},
+				Scopes: []domainauth.Scope{{Type: "repository", Name: "team/app", Actions: []string{"pull", "push", "delete"}, Canonical: "repository:team/app:pull,push,delete"}},
+			},
+			wantStatus: http.StatusAccepted,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			blobStore, metadataStore, cleanup := newTestStores(t)
+			defer cleanup()
+
+			seedRouter := newRouterWithStores(blobStore, metadataStore, allowAllAccessController{}, nil)
+			manifestDigest, _ := publishRouterManifestTag(t, seedRouter, "team/app", "matrix-"+tt.principal.Subject, "delete-matrix-content-"+tt.principal.Subject)
+
+			principal := tt.principal
+			handler := newRouterWithStores(blobStore, metadataStore, ports.NewPrincipalAccessController(ports.Challenge{Realm: "regixtry", Service: "regixtry"}), fakeAuthService{verify: &principal})
+			handler.service.SetDeleteEnabled(true)
+
+			req := httptest.NewRequest(http.MethodDelete, "/v2/team/app/manifests/"+manifestDigest, nil)
+			req.Header.Set("Authorization", "Bearer token")
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, req)
+
+			if recorder.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d", recorder.Code, tt.wantStatus)
+			}
+		})
+	}
+}
+
+// TestRouterDeleteManifestNeverTouchesBlobFiles pins the threat-matrix
+// "Blob-store scope creep" boundary (tasks.md 4.7): neither the digest-
+// cascade delete path nor the tag-only delete path opens, stats, or unlinks
+// any blob file -- the content directory's file set and every file's bytes
+// are identical before and after both delete operations.
+func TestRouterDeleteManifestNeverTouchesBlobFiles(t *testing.T) {
+	t.Parallel()
+
+	rootDir := t.TempDir()
+	blobStore, err := fsblob.New(filepath.Join(rootDir, "content"))
+	if err != nil {
+		t.Fatalf("fsblob.New() error = %v", err)
+	}
+	metadataStore, err := metadata.New(filepath.Join(rootDir, "registry.db"))
+	if err != nil {
+		t.Fatalf("sqlite.New() error = %v", err)
+	}
+	defer metadataStore.Close()
+
+	handler := newRouterWithStores(blobStore, metadataStore, allowAllAccessController{}, nil)
+	defer handler.service.WaitForBackgroundWork()
+	handler.service.SetDeleteEnabled(true)
+
+	digestDeleteTarget, _ := publishRouterManifestTag(t, handler, "library/alpine", "digest-target", "delete-blob-guard-digest")
+	publishRouterManifestTag(t, handler, "library/alpine", "tag-target", "delete-blob-guard-tag")
+
+	contentDir := filepath.Join(rootDir, "content")
+	before := snapshotBlobFiles(t, contentDir)
+	if len(before) == 0 {
+		t.Fatal("expected at least one blob file to exist before delete")
+	}
+
+	digestDeleteReq := httptest.NewRequest(http.MethodDelete, "/v2/library/alpine/manifests/"+digestDeleteTarget, nil)
+	digestDeleteRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(digestDeleteRecorder, digestDeleteReq)
+	if digestDeleteRecorder.Code != http.StatusAccepted {
+		t.Fatalf("digest delete status = %d, want %d", digestDeleteRecorder.Code, http.StatusAccepted)
+	}
+
+	tagDeleteReq := httptest.NewRequest(http.MethodDelete, "/v2/library/alpine/manifests/tag-target", nil)
+	tagDeleteRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(tagDeleteRecorder, tagDeleteReq)
+	if tagDeleteRecorder.Code != http.StatusAccepted {
+		t.Fatalf("tag delete status = %d, want %d", tagDeleteRecorder.Code, http.StatusAccepted)
+	}
+
+	after := snapshotBlobFiles(t, contentDir)
+	if len(before) != len(after) {
+		t.Fatalf("blob file count changed by delete: before = %d, after = %d", len(before), len(after))
+	}
+	for path, hash := range before {
+		if after[path] != hash {
+			t.Fatalf("blob file %q changed by delete: before hash = %q, after hash = %q", path, hash, after[path])
+		}
+	}
+}
+
+// snapshotBlobFiles returns a path -> content-hash map covering every
+// regular file under dir, used to assert byte-identical blob storage across
+// an operation that must never touch it.
+func snapshotBlobFiles(t *testing.T, dir string) map[string]string {
+	t.Helper()
+
+	files := map[string]string{}
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if info.IsDir() {
+			return nil
+		}
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		relative, relErr := filepath.Rel(dir, path)
+		if relErr != nil {
+			return relErr
+		}
+		files[relative] = domain.DigestFromBytes(data).String()
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("filepath.Walk(%s) error = %v", dir, err)
+	}
+	return files
 }
 
 func TestWriteErrorMapsPolicyViolationTo403DeniedWithoutWWWAuthenticate(t *testing.T) {

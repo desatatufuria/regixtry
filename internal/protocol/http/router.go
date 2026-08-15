@@ -313,9 +313,12 @@ func (r *Router) handleBlobRead(w stdhttp.ResponseWriter, req *stdhttp.Request, 
 
 func (r *Router) handleManifest(w stdhttp.ResponseWriter, req *stdhttp.Request, repository string, reference string) {
 	action := ports.Action{Repository: repository}
-	if req.Method == stdhttp.MethodPut {
+	switch req.Method {
+	case stdhttp.MethodPut:
 		action.Verb = ports.ActionPush
-	} else {
+	case stdhttp.MethodDelete:
+		action.Verb = ports.ActionDelete
+	default:
 		action.Verb = ports.ActionPull
 	}
 
@@ -357,8 +360,24 @@ func (r *Router) handleManifest(w stdhttp.ResponseWriter, req *stdhttp.Request, 
 
 		w.WriteHeader(stdhttp.StatusOK)
 		_, _ = w.Write(manifest.Payload)
+	case stdhttp.MethodDelete:
+		details, err := r.service.DeleteManifest(req.Context(), repository, reference)
+		if err != nil {
+			// The flag-off refusal (domain.ErrorCodeValidation) reuses the
+			// handleUploadState UNSUPPORTED precedent above; an absent
+			// digest/tag stays MANIFEST_UNKNOWN, matching GET/HEAD's
+			// defaultCode for this same route (design.md Decision 2/6).
+			defaultCode := "MANIFEST_UNKNOWN"
+			if domain.IsCode(err, domain.ErrorCodeValidation) {
+				defaultCode = "UNSUPPORTED"
+			}
+			writeError(w, req, err, r.challengeForError(action, err), defaultCode)
+			return
+		}
+
+		writeJSON(w, stdhttp.StatusAccepted, details)
 	default:
-		w.Header().Set("Allow", strings.Join([]string{stdhttp.MethodPut, stdhttp.MethodGet, stdhttp.MethodHead}, ", "))
+		w.Header().Set("Allow", strings.Join([]string{stdhttp.MethodPut, stdhttp.MethodGet, stdhttp.MethodHead, stdhttp.MethodDelete}, ", "))
 		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
 	}
 }

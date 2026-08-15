@@ -87,6 +87,83 @@ func TestPrincipalAccessControllerEnforcesTokenScope(t *testing.T) {
 	}
 }
 
+// TestPrincipalAccessControllerAuthorizesDeleteForWriterAndAdminOnly pins
+// design.md Decision 5's wiring: principalAccessController.Authorize gains a
+// case ActionDelete arm backed by Principal.HasDeleteAccess, so writer/admin
+// pass and reader (and no principal at all) fail (manifest-blob-delete
+// tasks.md 1.11).
+func TestPrincipalAccessControllerAuthorizesDeleteForWriterAndAdminOnly(t *testing.T) {
+	t.Parallel()
+
+	controller := NewPrincipalAccessController(Challenge{Realm: "regixtry", Service: "regixtry"})
+	deleteScope := domainauth.Scope{Type: "repository", Name: "team/app", Actions: []string{"pull", "push", "delete"}, Canonical: "repository:team/app:pull,push,delete"}
+
+	writerPrincipal := &domainauth.Principal{
+		Grants: []domainauth.RepoGrant{{Repository: domain.MustParseRepositoryRef("team/app"), Role: domainauth.RepoRoleWriter}},
+		Scopes: []domainauth.Scope{deleteScope},
+	}
+	adminPrincipal := &domainauth.Principal{
+		IsAdmin: true,
+		Scopes:  []domainauth.Scope{deleteScope},
+	}
+	readerPrincipal := &domainauth.Principal{
+		Grants: []domainauth.RepoGrant{{Repository: domain.MustParseRepositoryRef("team/app"), Role: domainauth.RepoRoleReader}},
+		Scopes: []domainauth.Scope{deleteScope},
+	}
+
+	tests := []struct {
+		name      string
+		principal *domainauth.Principal
+		wantError bool
+	}{
+		{name: "writer passes", principal: writerPrincipal},
+		{name: "admin passes", principal: adminPrincipal},
+		{name: "reader fails", principal: readerPrincipal, wantError: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := controller.Authorize(context.Background(), Action{Verb: ActionDelete, Repository: "team/app", Principal: tt.principal})
+			if tt.wantError {
+				if err == nil {
+					t.Fatal("expected delete to be rejected")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("Authorize() error = %v", err)
+			}
+		})
+	}
+
+	if err := controller.Authorize(context.Background(), Action{Verb: ActionDelete, Repository: "team/app"}); err == nil {
+		t.Fatal("expected anonymous (nil principal) delete to be rejected")
+	}
+}
+
+// TestConfigurableAccessControllerNeverAuthorizesAnonymousDelete pins the
+// threat-matrix "anonymous destructive access" boundary: configurableAccessController
+// is left untouched, so ActionDelete matches neither its anonymous-pull nor
+// its anonymous-push arm and falls through to NewUnauthorizedError, even on
+// an instance with both anonymous pull and push enabled (manifest-blob-delete
+// tasks.md 1.11).
+func TestConfigurableAccessControllerNeverAuthorizesAnonymousDelete(t *testing.T) {
+	t.Parallel()
+
+	controller := NewConfigurableAccessController(AccessConfig{AllowAnonymousPull: true, AllowAnonymousPush: true})
+
+	err := controller.Authorize(context.Background(), Action{Verb: ActionDelete, Repository: "team/app"})
+	if err == nil {
+		t.Fatal("expected anonymous delete to be rejected even with anonymous pull/push enabled")
+	}
+	if !domain.IsCode(err, domain.ErrorCodeUnauthorized) {
+		t.Fatalf("expected unauthorized error, got %v", err)
+	}
+}
+
 func TestActionScope(t *testing.T) {
 	t.Parallel()
 

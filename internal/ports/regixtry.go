@@ -86,6 +86,16 @@ type MetadataStore interface {
 	// feature) row. It returns a typed domain.ErrorCodeNotFound when no row
 	// was affected, mirroring DeleteUpload.
 	DeleteRepositoryFeatureOverride(ctx context.Context, tenant string, repository string, feature string) error
+	// DeleteManifestByDigest removes one manifests row; the ON DELETE CASCADE FKs
+	// remove its tags and manifest_blobs rows in the same transaction. It returns
+	// the names of the tags that pointed at that digest, selected inside that
+	// transaction before the delete, so the caller can report exactly what the
+	// cascade removed. Zero rows affected is a typed domain.ErrorCodeNotFound,
+	// mirroring DeleteUpload. It never touches blob files on disk.
+	DeleteManifestByDigest(ctx context.Context, tenant string, repository domain.RepositoryRef, digest domain.Digest) ([]string, error)
+	// DeleteTag removes one tags row, leaving the manifest and every other tag on
+	// it intact. Zero rows affected is a typed domain.ErrorCodeNotFound.
+	DeleteTag(ctx context.Context, tenant string, repository domain.RepositoryRef, tag string) error
 }
 
 // TagSummary is one tag's name and its manifest's created_at (console-tags-
@@ -511,6 +521,7 @@ type ActionVerb string
 const (
 	ActionPull    ActionVerb = "pull"
 	ActionPush    ActionVerb = "push"
+	ActionDelete  ActionVerb = "delete"
 	ActionCatalog ActionVerb = "catalog"
 	ActionInspect ActionVerb = "inspect"
 )
@@ -569,6 +580,11 @@ func (a Action) Scope() string {
 			return ""
 		}
 		return "repository:" + a.Repository + ":pull,push"
+	case ActionDelete:
+		if a.Repository == "" {
+			return ""
+		}
+		return "repository:" + a.Repository + ":delete"
 	default:
 		return ""
 	}

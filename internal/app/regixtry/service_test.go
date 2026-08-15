@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -153,6 +154,187 @@ func TestServiceAdminBypassesRepositoryChecks(t *testing.T) {
 
 	if _, err := service.BeginUpload(adminCtx, "team/other"); err != nil {
 		t.Fatalf("BeginUpload() admin error = %v", err)
+	}
+}
+
+// TestServiceDeleteManifestRejectsUnauthorizedCallerRegardlessOfFlag pins
+// design.md Decision 2's ordering: authorization is checked BEFORE the
+// deleteEnabled flag. A caller who lacks delete access (writer scope
+// requesting only pull,push -- TestPrincipalHasDeleteAccess already pins
+// this as a failure) must be rejected with domain.ErrorCodeUnauthorized
+// whether the flag is on or off, so the flag's state never leaks to a
+// caller who was never entitled to delete in the first place.
+func TestServiceDeleteManifestRejectsUnauthorizedCallerRegardlessOfFlag(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name          string
+		deleteEnabled bool
+	}{
+		{name: "flag off", deleteEnabled: false},
+		{name: "flag on", deleteEnabled: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			service, cleanup := newTestService(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "regixtry", Service: "regixtry"}))
+			defer cleanup()
+
+			service.SetDeleteEnabled(tt.deleteEnabled)
+
+			writerCtx := ports.ContextWithPrincipal(context.Background(), principalForGrants("team/app", domainauth.RepoRoleWriter, []domainauth.Scope{{Type: "repository", Name: "team/app", Actions: []string{"pull", "push"}, Canonical: "repository:team/app:pull,push"}}))
+
+			if _, err := service.DeleteManifest(writerCtx, "team/app", "latest"); err == nil {
+				t.Fatal("expected unauthorized error for a pull,push-only token")
+			} else if !domain.IsCode(err, domain.ErrorCodeUnauthorized) {
+				t.Fatalf("DeleteManifest() error = %v, want ErrorCodeUnauthorized", err)
+			}
+		})
+	}
+}
+
+// TestServiceDeleteManifestRefusesWithValidationErrorWhenFlagOffForAuthorizedCaller
+// pins design.md Decision 2: an authorized caller is refused with
+// domain.ErrorCodeValidation when the flag is off (the OCI UNSUPPORTED wire
+// mapping is a router-layer concern, Phase 4, not this service). The store
+// must never be reached: proven here by confirming the manifest is still
+// resolvable afterward.
+func TestServiceDeleteManifestRefusesWithValidationErrorWhenFlagOffForAuthorizedCaller(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	ctx := context.Background()
+	published := publishManifestWithTags(t, service, ctx, "team/app", "latest")
+
+	// deleteEnabled defaults to false -- SetDeleteEnabled is never called.
+	if _, err := service.DeleteManifest(ctx, "team/app", "latest"); err == nil {
+		t.Fatal("expected validation error when the delete flag is off")
+	} else if !domain.IsCode(err, domain.ErrorCodeValidation) {
+		t.Fatalf("DeleteManifest() error = %v, want ErrorCodeValidation", err)
+	}
+
+	resolved, err := service.ResolveManifest(ctx, "team/app", "latest")
+	if err != nil {
+		t.Fatalf("ResolveManifest() after refused delete error = %v, want the manifest untouched", err)
+	}
+	if resolved.Digest != published.Digest {
+		t.Fatalf("resolved.Digest = %q, want %q -- store must never be reached when the flag is off", resolved.Digest, published.Digest)
+	}
+}
+
+// TestServiceDeleteManifestByDigestRemovesManifestAndReturnsAllRemovedTags
+// pins design.md's headline scenario: a digest with three tags is deleted,
+// the response names all three removed tags, and every one of them (plus
+// the digest itself) stops resolving.
+func TestServiceDeleteManifestByDigestRemovesManifestAndReturnsAllRemovedTags(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	ctx := context.Background()
+	service.SetDeleteEnabled(true)
+
+	published := publishManifestWithTags(t, service, ctx, "team/app", "latest", "v1", "v2")
+
+	details, err := service.DeleteManifest(ctx, "team/app", published.Digest)
+	if err != nil {
+		t.Fatalf("DeleteManifest(%q) error = %v", published.Digest, err)
+	}
+
+	if !details.ManifestRemoved {
+		t.Fatal("details.ManifestRemoved = false, want true for a digest delete")
+	}
+	if details.Digest != published.Digest {
+		t.Fatalf("details.Digest = %q, want %q", details.Digest, published.Digest)
+	}
+
+	wantTags := []string{"latest", "v1", "v2"}
+	gotTags := append([]string(nil), details.TagsRemoved...)
+	sort.Strings(gotTags)
+	if !reflect.DeepEqual(gotTags, wantTags) {
+		t.Fatalf("details.TagsRemoved = %#v, want %#v", details.TagsRemoved, wantTags)
+	}
+
+	if _, err := service.ResolveManifest(ctx, "team/app", published.Digest); !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("ResolveManifest(%q) after digest delete error = %v, want ErrorCodeNotFound", published.Digest, err)
+	}
+	for _, tag := range wantTags {
+		if _, err := service.ResolveManifest(ctx, "team/app", tag); !domain.IsCode(err, domain.ErrorCodeNotFound) {
+			t.Fatalf("ResolveManifest(%q) after digest delete error = %v, want ErrorCodeNotFound", tag, err)
+		}
+	}
+}
+
+// TestServiceDeleteManifestByTagRemovesOnlyThatTagLeavingSiblingsAndManifestIntact
+// pins design.md's tag-path scenario: deleting one tag leaves the manifest
+// and its sibling tag pullable, and never touches ManifestRemoved.
+func TestServiceDeleteManifestByTagRemovesOnlyThatTagLeavingSiblingsAndManifestIntact(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	ctx := context.Background()
+	service.SetDeleteEnabled(true)
+
+	published := publishManifestWithTags(t, service, ctx, "team/app", "a", "b")
+
+	details, err := service.DeleteManifest(ctx, "team/app", "a")
+	if err != nil {
+		t.Fatalf("DeleteManifest(a) error = %v", err)
+	}
+
+	if details.ManifestRemoved {
+		t.Fatal("details.ManifestRemoved = true, want false for a tag delete")
+	}
+	if details.Digest != "" {
+		t.Fatalf("details.Digest = %q, want empty on the tag path", details.Digest)
+	}
+	if !reflect.DeepEqual(details.TagsRemoved, []string{"a"}) {
+		t.Fatalf("details.TagsRemoved = %#v, want [a]", details.TagsRemoved)
+	}
+
+	if _, err := service.ResolveManifest(ctx, "team/app", "a"); !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("ResolveManifest(a) after tag delete error = %v, want ErrorCodeNotFound", err)
+	}
+
+	resolvedByTag, err := service.ResolveManifest(ctx, "team/app", "b")
+	if err != nil {
+		t.Fatalf("ResolveManifest(b) error = %v, want the sibling tag untouched", err)
+	}
+	resolvedByDigest, err := service.ResolveManifest(ctx, "team/app", published.Digest)
+	if err != nil {
+		t.Fatalf("ResolveManifest(digest) error = %v, want the manifest untouched", err)
+	}
+	if resolvedByTag.Digest != published.Digest || resolvedByDigest.Digest != published.Digest {
+		t.Fatalf("surviving digests = (%q,%q), want both %q", resolvedByTag.Digest, resolvedByDigest.Digest, published.Digest)
+	}
+}
+
+// TestServiceDeleteManifestReturnsNotFoundForAbsentDigestAndAbsentTag pins
+// the store's typed domain.ErrorCodeNotFound (DeleteManifestByDigest and
+// DeleteTag, Phase 2) surfacing unchanged through the service, on both the
+// digest and the tag path.
+func TestServiceDeleteManifestReturnsNotFoundForAbsentDigestAndAbsentTag(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	ctx := context.Background()
+	service.SetDeleteEnabled(true)
+	seedRepository(t, service, ctx, "team/app")
+
+	absentDigest := "sha256:" + strings.Repeat("0", 64)
+	if _, err := service.DeleteManifest(ctx, "team/app", absentDigest); !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("DeleteManifest(%q) error = %v, want ErrorCodeNotFound", absentDigest, err)
+	}
+
+	if _, err := service.DeleteManifest(ctx, "team/app", "does-not-exist"); !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("DeleteManifest(does-not-exist) error = %v, want ErrorCodeNotFound", err)
 	}
 }
 
@@ -1817,6 +1999,44 @@ func seedRepository(t *testing.T, service *Service, ctx context.Context, reposit
 	// scheduling could otherwise race a caller that configures scan
 	// settings and triggers its own scan immediately afterward.
 	service.WaitForBackgroundWork()
+}
+
+// publishManifestWithTags publishes one manifest and tags it with each name
+// in tags, all pointing at the same digest -- shared by the delete tests:
+// three tags on one digest exercises the digest-delete cascade, two tags on
+// one digest exercises tag-delete sibling isolation. Returns the details
+// from the last PublishManifest call; the digest is identical across calls
+// since every tag reuses the same blob/manifest payload.
+func publishManifestWithTags(t *testing.T, service *Service, ctx context.Context, repository string, tags ...string) ManifestDetails {
+	t.Helper()
+
+	upload, err := service.BeginUpload(ctx, repository)
+	if err != nil {
+		t.Fatalf("BeginUpload(%q) error = %v", repository, err)
+	}
+
+	if _, err := service.AppendUpload(ctx, repository, upload.ID, strings.NewReader("layer-one")); err != nil {
+		t.Fatalf("AppendUpload(%q) error = %v", repository, err)
+	}
+
+	blobPayload := []byte("layer-one")
+	blob, err := service.CompleteUpload(ctx, repository, upload.ID, digestForTest(blobPayload), nil)
+	if err != nil {
+		t.Fatalf("CompleteUpload(%q) error = %v", repository, err)
+	}
+
+	manifestPayload := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{"mediaType":"application/vnd.oci.image.config.v1+json","digest":"` + blob.Digest + `","size":9},"layers":[{"mediaType":"application/vnd.oci.image.layer.v1.tar","digest":"` + blob.Digest + `","size":9}]}`)
+
+	var published ManifestDetails
+	for _, tag := range tags {
+		published, err = service.PublishManifest(ctx, repository, tag, "application/vnd.oci.image.manifest.v1+json", manifestPayload)
+		if err != nil {
+			t.Fatalf("PublishManifest(%q, %q) error = %v", repository, tag, err)
+		}
+	}
+	service.WaitForBackgroundWork()
+
+	return published
 }
 
 // seededManifestDigest resolves the digest published by seedRepository for

@@ -261,6 +261,64 @@ func TestParseServeConfigParsesPublicURLAndTLSInputs(t *testing.T) {
 	}
 }
 
+// TestParseServeConfigDeleteEnabledDefaultsToFalse pins manifest-blob-delete
+// tasks.md 4.8: with the env var unset, -delete-enabled defaults to false,
+// following the exact TrivyEnabled/parseBoolEnv pattern (design.md, main.go
+// ~line 747).
+func TestParseServeConfigDeleteEnabledDefaultsToFalse(t *testing.T) {
+	cfg, err := parseServeConfig(nil)
+	if err != nil {
+		t.Fatalf("parseServeConfig() error = %v", err)
+	}
+	if cfg.DeleteEnabled {
+		t.Fatal("DeleteEnabled = true, want false")
+	}
+}
+
+// TestParseServeConfigDeleteEnabledDefaultsToFalseOnUnparseableEnv pins the
+// parseBoolEnv fallback: an unparseable REGISTRY_DELETE_ENABLED value must
+// not accidentally enable deletion.
+func TestParseServeConfigDeleteEnabledDefaultsToFalseOnUnparseableEnv(t *testing.T) {
+	t.Setenv("REGISTRY_DELETE_ENABLED", "not-a-bool")
+
+	cfg, err := parseServeConfig(nil)
+	if err != nil {
+		t.Fatalf("parseServeConfig() error = %v", err)
+	}
+	if cfg.DeleteEnabled {
+		t.Fatal("DeleteEnabled = true, want false for an unparseable env value")
+	}
+}
+
+// TestParseServeConfigDeleteEnabledFromEnv proves REGISTRY_DELETE_ENABLED
+// actually reaches DeleteEnabled when unset by any flag.
+func TestParseServeConfigDeleteEnabledFromEnv(t *testing.T) {
+	t.Setenv("REGISTRY_DELETE_ENABLED", "true")
+
+	cfg, err := parseServeConfig(nil)
+	if err != nil {
+		t.Fatalf("parseServeConfig() error = %v", err)
+	}
+	if !cfg.DeleteEnabled {
+		t.Fatal("DeleteEnabled = false, want true from REGISTRY_DELETE_ENABLED")
+	}
+}
+
+// TestParseServeConfigDeleteEnabledFlagOverridesEnv proves the -delete-
+// enabled flag takes priority over the env var, matching every other -trivy-*
+// flag/env pairing in this file.
+func TestParseServeConfigDeleteEnabledFlagOverridesEnv(t *testing.T) {
+	t.Setenv("REGISTRY_DELETE_ENABLED", "false")
+
+	cfg, err := parseServeConfig([]string{"-delete-enabled"})
+	if err != nil {
+		t.Fatalf("parseServeConfig() error = %v", err)
+	}
+	if !cfg.DeleteEnabled {
+		t.Fatal("DeleteEnabled = false, want true from -delete-enabled flag")
+	}
+}
+
 func TestNormalizeRuntimeConfig(t *testing.T) {
 	t.Parallel()
 

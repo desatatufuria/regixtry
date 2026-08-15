@@ -24,9 +24,13 @@ type Service struct {
 	secretScanRunner ports.SecretScanRunner
 	runtimes         map[string]FeatureRuntimeManager
 	scanHost         string
-	now              func() time.Time
-	scanGate         *scanGate
-	secretScanGate   *scanGate
+	// deleteEnabled gates DeleteManifest (design.md Decision 2). It defaults
+	// to false (zero value); Phase 4 threads the actual
+	// REGISTRY_DELETE_ENABLED flag value in via SetDeleteEnabled.
+	deleteEnabled  bool
+	now            func() time.Time
+	scanGate       *scanGate
+	secretScanGate *scanGate
 	// scanQueueMu guards the check-then-insert dedup step shared by
 	// QueueManualScan, queueScheduledScan, and queuePushScan
 	// (dedupAndQueueScanRun) so a push-triggered scan's own goroutine can
@@ -131,6 +135,13 @@ func (s *Service) SetFeatureRuntimeManager(feature string, manager FeatureRuntim
 
 func (s *Service) SetScanHost(host string) {
 	s.scanHost = strings.TrimSpace(host)
+}
+
+// SetDeleteEnabled mirrors SetScanHost's low-churn setter shape (design.md
+// Decision 2): NewService has 7 call sites in main.go, so a setter avoids an
+// eighth positional constructor argument.
+func (s *Service) SetDeleteEnabled(enabled bool) {
+	s.deleteEnabled = enabled
 }
 
 func (s *Service) Challenge(action ports.Action) ports.Challenge {
@@ -259,6 +270,47 @@ func (s *Service) PublishManifest(ctx context.Context, repositoryName string, re
 	}()
 
 	return newManifestDetails(repository.String(), reference, manifest, manifest.References()), nil
+}
+
+// DeleteManifest removes a manifest by digest (cascading to every tag that
+// points at it) or a single tag by name, depending on which domain.ParseDigest
+// accepts for reference -- the same digest-vs-tag idiom parseManifestPayload
+// already applies to the same argument on the publish path (design.md
+// Decision 3).
+//
+// Ordering is authorization before the opt-in deleteEnabled flag (design.md
+// Decision 2): an unauthorized caller is refused with
+// domain.NewUnauthorizedError even when deletion is disabled, so the flag's
+// on/off state is never disclosed to a caller who was never entitled to
+// delete in the first place. Only a caller who would otherwise have
+// succeeded learns the capability exists but is off.
+func (s *Service) DeleteManifest(ctx context.Context, repositoryName string, reference string) (DeletionDetails, error) {
+	repository, err := parseRepository(repositoryName)
+	if err != nil {
+		return DeletionDetails{}, err
+	}
+
+	if err := s.authorize(ctx, ports.Action{Verb: ports.ActionDelete, Repository: repository.String()}); err != nil {
+		return DeletionDetails{}, err
+	}
+
+	if !s.deleteEnabled {
+		return DeletionDetails{}, domain.NewValidationError("manifest deletion is not enabled")
+	}
+
+	if digest, err := domain.ParseDigest(reference); err == nil {
+		tagsRemoved, err := s.metadata.DeleteManifestByDigest(ctx, s.tenant(ctx), repository, digest)
+		if err != nil {
+			return DeletionDetails{}, err
+		}
+		return newDeletionDetailsForDigest(repository.String(), reference, digest.String(), tagsRemoved), nil
+	}
+
+	if err := s.metadata.DeleteTag(ctx, s.tenant(ctx), repository, reference); err != nil {
+		return DeletionDetails{}, err
+	}
+
+	return newDeletionDetailsForTag(repository.String(), reference), nil
 }
 
 func parseManifestPayload(reference string, mediaType string, payload []byte) (domain.Manifest, string, error) {

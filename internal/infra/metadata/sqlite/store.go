@@ -316,6 +316,122 @@ func (s *Store) ResolveManifest(ctx context.Context, tenant string, repository d
 	return manifest, nil
 }
 
+// DeleteManifestByDigest removes one manifests row inside a transaction. The
+// ON DELETE CASCADE FKs (init(), manifests/tags/manifest_blobs) remove its
+// tags and manifest_blobs rows as part of the same statement; the tag names
+// are selected immediately before the DELETE, inside the same transaction,
+// so the returned slice is an exact record of what the cascade removed
+// (design.md Decision 1/3), never a second, racy query after commit. Zero
+// rows affected is a typed domain.ErrorCodeNotFound, mirroring DeleteUpload.
+// It never opens, stats, or unlinks a blob file.
+func (s *Store) DeleteManifestByDigest(ctx context.Context, tenant string, repository domain.RepositoryRef, digest domain.Digest) ([]string, error) {
+	if err := repository.Validate(); err != nil {
+		return nil, err
+	}
+
+	if err := digest.Validate(); err != nil {
+		return nil, err
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	var rows *sql.Rows
+	rows, err = tx.QueryContext(ctx, `
+		SELECT t.name
+		FROM tags t
+		JOIN manifests m ON m.id = t.manifest_id
+		JOIN repositories r ON r.id = m.repository_id
+		WHERE m.tenant = ? AND r.tenant = ? AND r.name = ? AND m.digest = ?
+		ORDER BY t.name ASC
+	`, tenant, tenant, repository.String(), digest.String())
+	if err != nil {
+		return nil, err
+	}
+
+	var tagNames []string
+	for rows.Next() {
+		var name string
+		if err = rows.Scan(&name); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		tagNames = append(tagNames, name)
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+
+	var result sql.Result
+	result, err = tx.ExecContext(ctx, `
+		DELETE FROM manifests
+		WHERE tenant = ? AND digest = ? AND repository_id = (
+			SELECT id FROM repositories WHERE tenant = ? AND name = ?
+		)
+	`, tenant, digest.String(), tenant, repository.String())
+	if err != nil {
+		return nil, err
+	}
+
+	var rowsAffected int64
+	rowsAffected, err = result.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+
+	if rowsAffected == 0 {
+		err = domain.NewNotFoundError("manifest", digest.String())
+		return nil, err
+	}
+
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	return tagNames, nil
+}
+
+// DeleteTag removes one tags row only, leaving its manifest and every other
+// tag on it untouched -- deliberately no CASCADE reasoning here, unlike
+// DeleteManifestByDigest: a tags row has no dependents. Zero rows affected
+// is a typed domain.ErrorCodeNotFound, mirroring DeleteRepositoryFeatureOverride's
+// single-statement, non-transactional shape.
+func (s *Store) DeleteTag(ctx context.Context, tenant string, repository domain.RepositoryRef, tag string) error {
+	if err := repository.Validate(); err != nil {
+		return err
+	}
+
+	result, err := s.db.ExecContext(ctx, `
+		DELETE FROM tags
+		WHERE tenant = ? AND name = ? AND repository_id = (
+			SELECT id FROM repositories WHERE tenant = ? AND name = ?
+		)
+	`, tenant, tag, tenant, repository.String())
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+
+	if rowsAffected == 0 {
+		return domain.NewNotFoundError("tag", tag)
+	}
+
+	return nil
+}
+
 func (s *Store) Catalog(ctx context.Context, tenant string, limit int, after string) ([]domain.RepositoryRef, error) {
 	query := `SELECT name FROM repositories WHERE tenant = ?`
 	args := []any{tenant}

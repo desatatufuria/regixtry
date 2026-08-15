@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -79,6 +80,149 @@ func TestStorePublishResolveCatalogAndTags(t *testing.T) {
 	}
 }
 
+// TestStoreDeleteManifestByDigestCascadesTagsAndManifestBlobs covers
+// manifest-deletion/spec.md's "Delete By Digest Cascades To Tags And
+// Manifest Blobs" requirement: deleting a digest with three tags removes the
+// manifest row, all three tags, and its manifest_blobs rows, and returns
+// exactly the three removed tag names (selected inside the same transaction,
+// before the delete, per design.md Decision 1/3).
+func TestStoreDeleteManifestByDigestCascadesTagsAndManifestBlobs(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+	ctx := context.Background()
+
+	repo := domain.MustParseRepositoryRef("library/alpine")
+	blobs := []domain.Descriptor{
+		{MediaType: "application/vnd.oci.image.layer.v1.tar", Digest: domain.DigestFromBytes([]byte("layer-1")), Size: int64(len("layer-1"))},
+	}
+	manifest, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", []byte(`{"schemaVersion":2}`), nil, blobs, nil, nil)
+	if err != nil {
+		t.Fatalf("NewManifest() error = %v", err)
+	}
+
+	tagNames := []string{"latest", "v1", "v2"}
+	for _, tag := range tagNames {
+		if err := store.PublishManifest(ctx, "tenant-a", repo, tag, manifest, blobs); err != nil {
+			t.Fatalf("PublishManifest(%s) error = %v", tag, err)
+		}
+	}
+
+	removedTags, err := store.DeleteManifestByDigest(ctx, "tenant-a", repo, manifest.Digest)
+	if err != nil {
+		t.Fatalf("DeleteManifestByDigest() error = %v", err)
+	}
+
+	sort.Strings(removedTags)
+	if !reflect.DeepEqual(removedTags, tagNames) {
+		t.Fatalf("removedTags = %#v, want %#v", removedTags, tagNames)
+	}
+
+	if _, err := store.ResolveManifest(ctx, "tenant-a", repo, manifest.Digest.String()); !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("ResolveManifest(by digest, after delete) error = %v, want ErrorCodeNotFound", err)
+	}
+
+	for _, tag := range tagNames {
+		if _, err := store.ResolveManifest(ctx, "tenant-a", repo, tag); !domain.IsCode(err, domain.ErrorCodeNotFound) {
+			t.Fatalf("ResolveManifest(tag %s, after delete) error = %v, want ErrorCodeNotFound", tag, err)
+		}
+	}
+
+	remainingBlobs, err := store.ListManifestBlobs(ctx, "tenant-a", repo, manifest.Digest)
+	if err != nil {
+		t.Fatalf("ListManifestBlobs(after delete) error = %v", err)
+	}
+	if len(remainingBlobs) != 0 {
+		t.Fatalf("remainingBlobs = %#v, want empty (manifest_blobs cascade-deleted)", remainingBlobs)
+	}
+}
+
+// TestStoreDeleteManifestByDigestReturnsNotFoundWithNoManifest covers
+// manifest-deletion/spec.md's "Unknown digest returns MANIFEST_UNKNOWN"
+// scenario at the store layer: zero rows affected surfaces as a typed
+// domain.ErrorCodeNotFound, mirroring DeleteUpload/
+// DeleteRepositoryFeatureOverride.
+func TestStoreDeleteManifestByDigestReturnsNotFoundWithNoManifest(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	repo := domain.MustParseRepositoryRef("library/alpine")
+	_, err := store.DeleteManifestByDigest(context.Background(), "tenant-a", repo, domain.DigestFromBytes([]byte("absent-digest")))
+	if !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("DeleteManifestByDigest(absent) error = %v, want ErrorCodeNotFound", err)
+	}
+}
+
+// TestStoreDeleteTagRemovesOnlyNamedTagLeavingManifestAndSiblingsIntact
+// covers manifest-deletion/spec.md's "Delete By Tag Untags Without Touching
+// The Manifest" requirement: deleting one tag removes only that tags row;
+// the manifest and every other tag pointing at it must still resolve.
+func TestStoreDeleteTagRemovesOnlyNamedTagLeavingManifestAndSiblingsIntact(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+	ctx := context.Background()
+
+	repo := domain.MustParseRepositoryRef("library/alpine")
+	blobs := []domain.Descriptor{
+		{MediaType: "application/vnd.oci.image.layer.v1.tar", Digest: domain.DigestFromBytes([]byte("layer-1")), Size: int64(len("layer-1"))},
+	}
+	manifest, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", []byte(`{"schemaVersion":2}`), nil, blobs, nil, nil)
+	if err != nil {
+		t.Fatalf("NewManifest() error = %v", err)
+	}
+
+	for _, tag := range []string{"a", "b"} {
+		if err := store.PublishManifest(ctx, "tenant-a", repo, tag, manifest, blobs); err != nil {
+			t.Fatalf("PublishManifest(%s) error = %v", tag, err)
+		}
+	}
+
+	if err := store.DeleteTag(ctx, "tenant-a", repo, "a"); err != nil {
+		t.Fatalf("DeleteTag() error = %v", err)
+	}
+
+	if _, err := store.ResolveManifest(ctx, "tenant-a", repo, "a"); !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("ResolveManifest(a, after delete) error = %v, want ErrorCodeNotFound", err)
+	}
+
+	resolvedByTag, err := store.ResolveManifest(ctx, "tenant-a", repo, "b")
+	if err != nil {
+		t.Fatalf("ResolveManifest(b) error = %v, want success (sibling tag survives)", err)
+	}
+	if resolvedByTag.Digest != manifest.Digest {
+		t.Fatalf("resolvedByTag.Digest = %s, want %s", resolvedByTag.Digest, manifest.Digest)
+	}
+
+	resolvedByDigest, err := store.ResolveManifest(ctx, "tenant-a", repo, manifest.Digest.String())
+	if err != nil {
+		t.Fatalf("ResolveManifest(digest) error = %v, want success (manifest survives)", err)
+	}
+	if resolvedByDigest.Digest != manifest.Digest {
+		t.Fatalf("resolvedByDigest.Digest = %s, want %s", resolvedByDigest.Digest, manifest.Digest)
+	}
+}
+
+// TestStoreDeleteTagReturnsNotFoundWithNoSuchTag covers manifest-deletion/
+// spec.md's "Unknown tag returns MANIFEST_UNKNOWN" scenario at the store
+// layer.
+func TestStoreDeleteTagReturnsNotFoundWithNoSuchTag(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	repo := domain.MustParseRepositoryRef("library/alpine")
+	err := store.DeleteTag(context.Background(), "tenant-a", repo, "absent")
+	if !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("DeleteTag(absent) error = %v, want ErrorCodeNotFound", err)
+	}
+}
+
 func TestStorePersistsUploadMetadataAcrossReopen(t *testing.T) {
 	t.Parallel()
 
@@ -142,6 +286,28 @@ func TestStoreEnablesSQLiteWALAndBusyTimeout(t *testing.T) {
 	}
 	if busyTimeout != sqliteBusyTimeoutMillis {
 		t.Fatalf("busy_timeout = %d, want %d", busyTimeout, sqliteBusyTimeoutMillis)
+	}
+}
+
+// TestStoreEnablesSQLiteForeignKeyEnforcement pins the cascade-delete premise
+// (design.md's DeleteManifestByDigest/DeleteTag rely on the manifests/tags/
+// manifest_blobs ON DELETE CASCADE FKs actually firing) the same way
+// TestStoreEnablesSQLiteWALAndBusyTimeout pins journal_mode/busy_timeout:
+// `_pragma=foreign_keys(1)` is already set in sqliteDSN (store.go:42), so
+// this is an already-GREEN guard against that premise silently regressing,
+// not a state that must flip.
+func TestStoreEnablesSQLiteForeignKeyEnforcement(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	var foreignKeys int
+	if err := store.db.QueryRowContext(context.Background(), `PRAGMA foreign_keys;`).Scan(&foreignKeys); err != nil {
+		t.Fatalf("PRAGMA foreign_keys error = %v", err)
+	}
+	if foreignKeys != 1 {
+		t.Fatalf("foreign_keys = %d, want 1", foreignKeys)
 	}
 }
 
