@@ -352,9 +352,14 @@ func TestServiceOpenManifestUnsignedSelfReadRepositoryOverridePrecedence(t *test
 // UserID, and re-pushing the identical digest (content-addressed, so
 // re-push means byte-identical content) under a DIFFERENT principal's
 // credentials updates pushed_by to the new pusher -- confirming the
-// ON CONFLICT ... DO UPDATE SET pushed_by = excluded.pushed_by store
-// behavior.
-func TestServicePublishManifestPersistsPushedByAndUpdatesOnRepush(t *testing.T) {
+// ON CONFLICT ... DO UPDATE deliberately excluding pushed_by: a repush by a
+// second push-capable principal reproducing identical content-addressed
+// bytes must never reassign the "pusher" exemption's "exact original
+// pusher" guarantee to themselves (adversarial review finding on
+// feat/signing-unsigned-self-read: the store previously did
+// `pushed_by = excluded.pushed_by`, silently widening "pusher" mode to
+// "last pusher").
+func TestServicePublishManifestPersistsPushedByAndKeepsOriginalPusherOnRepush(t *testing.T) {
 	t.Parallel()
 
 	service, cleanup := newTestService(t, allowAllAccessController{})
@@ -393,7 +398,42 @@ func TestServicePublishManifestPersistsPushedByAndUpdatesOnRepush(t *testing.T) 
 	if err != nil {
 		t.Fatalf("metadata.ResolveManifest() error = %v after re-push", err)
 	}
-	if restored.PushedBy != "user-second-pusher" {
-		t.Fatalf("stored.PushedBy = %q, want %q after re-pushing the identical digest under a different principal", restored.PushedBy, "user-second-pusher")
+	if restored.PushedBy != "user-first-pusher" {
+		t.Fatalf("stored.PushedBy = %q, want %q (the ORIGINAL pusher) to survive a repush by a different principal, got %q", "user-first-pusher", "user-first-pusher", restored.PushedBy)
+	}
+}
+
+// TestServiceOpenManifestUnsignedSelfReadPusherRepushDoesNotGrantSecondPrincipalAccess
+// is the end-to-end version of the store-level guarantee above: repushing
+// identical bytes under a second principal's credentials must not let that
+// second principal read the manifest back unsigned under "pusher" mode --
+// only the original pusher may.
+func TestServiceOpenManifestUnsignedSelfReadPusherRepushDoesNotGrantSecondPrincipalAccess(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	repository := "library/alpine"
+	firstPusherCtx := ports.ContextWithPrincipal(context.Background(), writerPrincipal("user-first-pusher", repository))
+	secondPusherCtx := ports.ContextWithPrincipal(context.Background(), writerPrincipal("user-second-pusher", repository))
+
+	digest := publishUnsignedManifest(t, service, firstPusherCtx, repository, "repush-read-test")
+
+	payload := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","layers":[],"annotations":{"unsigned-self-read-test-tag":"repush-read-test"}}`)
+	if _, err := service.PublishManifest(secondPusherCtx, repository, "repush-read-test", "application/vnd.oci.image.manifest.v1+json", payload); err != nil {
+		t.Fatalf("PublishManifest() re-push error = %v", err)
+	}
+
+	seedSigningPolicyWithSelfRead(t, service, "pusher")
+
+	if _, err := service.OpenManifest(secondPusherCtx, repository, digest); err == nil {
+		t.Fatal("OpenManifest() as the SECOND (repushing) principal error = nil, want the original-pusher-only exemption to still block them")
+	} else if !domain.IsCode(err, domain.ErrorCodePolicyViolation) {
+		t.Fatalf("OpenManifest() as the second principal error = %v, want ErrorCodePolicyViolation", err)
+	}
+
+	if _, err := service.OpenManifest(firstPusherCtx, repository, digest); err != nil {
+		t.Fatalf("OpenManifest() as the original first pusher error = %v, want nil (still exempt)", err)
 	}
 }

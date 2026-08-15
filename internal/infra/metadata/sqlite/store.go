@@ -224,14 +224,20 @@ func (s *Store) PublishManifest(ctx context.Context, tenant string, repository d
 		return err
 	}
 
+	// pushed_by is deliberately excluded from DO UPDATE (unlike
+	// media_type/size/payload): the UnsignedSelfRead "pusher" exemption
+	// (service_signing.go) promises "only the exact principal who
+	// originally pushed this digest" -- if a repush overwrote it, any
+	// second push-capable principal who reproduces the identical
+	// content-addressed bytes could silently reassign that guarantee to
+	// themselves. pushed_by is therefore fixed at first insert only.
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO manifests (tenant, repository_id, digest, media_type, size, payload, created_at, pushed_by)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(tenant, repository_id, digest) DO UPDATE SET
 			media_type = excluded.media_type,
 			size = excluded.size,
-			payload = excluded.payload,
-			pushed_by = excluded.pushed_by
+			payload = excluded.payload
 	`, tenant, repositoryID, manifest.Digest.String(), manifest.MediaType, manifest.Size, manifest.Payload, time.Now().UTC().Format(time.RFC3339Nano), manifest.PushedBy)
 	if err != nil {
 		return err
