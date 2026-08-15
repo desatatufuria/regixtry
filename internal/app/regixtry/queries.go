@@ -573,6 +573,12 @@ type TagDetails struct {
 	CreatedAt      time.Time `json:"created_at"`
 	SignatureState string    `json:"signature_state"`
 	SigningEnabled bool      `json:"signing_enabled"`
+	// PushedBy is the resolved display username of whoever pushed this
+	// tag's manifest (console-tags-pushed-by change), via Service's
+	// optional UsernameResolver -- "" when unknown (a legacy manifest with
+	// no recorded pusher, no resolver configured, or the resolver has no
+	// username for that UserID). Never the raw UserID.
+	PushedBy string `json:"pushed_by,omitempty"`
 }
 
 // isCosignSignatureArtifactTag reports whether name is the cosign legacy
@@ -636,15 +642,31 @@ func (s *Service) TagDetails(ctx context.Context, repositoryName string, limit i
 		if err != nil {
 			return nil, err
 		}
+		pushedBy, err := s.resolvePushedByUsername(ctx, tag.PushedBy)
+		if err != nil {
+			return nil, err
+		}
 		details = append(details, TagDetails{
 			Name:           tag.Name,
 			CreatedAt:      tag.CreatedAt,
 			SignatureState: status.State,
 			SigningEnabled: status.Policy.Enabled,
+			PushedBy:       pushedBy,
 		})
 	}
 
 	return details, nil
+}
+
+// resolvePushedByUsername resolves a manifest's raw pushed_by UserID to a
+// display username via the optional UsernameResolver, returning "" (never
+// an error) when userID is empty or no resolver is configured -- only a
+// genuine resolver error propagates.
+func (s *Service) resolvePushedByUsername(ctx context.Context, userID string) (string, error) {
+	if userID == "" || s.usernames == nil {
+		return "", nil
+	}
+	return s.usernames.ResolveUsername(ctx, userID)
 }
 
 // RepositorySummary is the Console TUI's top-level Repositories screen's

@@ -26,6 +26,7 @@ import (
 	"time"
 
 	appregixtry "regixtry/internal/app/regixtry"
+	domainauth "regixtry/internal/domain/auth"
 	authpostgres "regixtry/internal/infra/auth/postgres"
 	installlinux "regixtry/internal/infra/install/linux"
 	metadata "regixtry/internal/infra/metadata/sqlite"
@@ -2674,6 +2675,73 @@ func seedRegixtryState(t *testing.T, storageRoot string, databasePath string) {
 	if _, err := service.PublishManifest(context.Background(), "library/alpine", "latest", "application/vnd.oci.image.manifest.v1+json", manifest); err != nil {
 		t.Fatalf("PublishManifest() error = %v", err)
 	}
+}
+
+// TestAuthStoreUsernameResolverResolvesTranslatesNotFoundAndPropagatesOtherErrors
+// is the RED test for the console-tags-pushed-by change's auth-store
+// adapter: a known UserID resolves to its username, an unknown UserID
+// translates AuthStore.GetUserByID's typed NotFound error into ("", nil)
+// (never an error -- a deleted/unknown pusher must never fail the whole
+// TagDetails call), and a closed/unreachable store's genuine error
+// propagates unchanged.
+func TestAuthStoreUsernameResolverResolvesTranslatesNotFoundAndPropagatesOtherErrors(t *testing.T) {
+	t.Parallel()
+
+	store, err := authpostgres.NewWithDriver("sqlite", filepath.Join(t.TempDir(), "auth.db"))
+	if err != nil {
+		t.Fatalf("authpostgres.NewWithDriver() error = %v", err)
+	}
+	// t.Cleanup, not defer: the subtests below call t.Parallel(), which
+	// pauses them and returns control to this function immediately -- a
+	// defer here would close the store before any subtest actually runs.
+	// t.Cleanup correctly waits for every parallel subtest to finish first.
+	t.Cleanup(func() { _ = store.Close() })
+
+	now := time.Now().UTC()
+	user := domainauth.User{ID: "user-abc-123", Username: "operator", PasswordHash: "hash", Enabled: true, CreatedAt: now, UpdatedAt: now}
+	if err := store.UpsertUser(context.Background(), user); err != nil {
+		t.Fatalf("UpsertUser() error = %v", err)
+	}
+
+	resolver := authStoreUsernameResolver{store: store}
+
+	t.Run("known user resolves to username", func(t *testing.T) {
+		t.Parallel()
+		got, err := resolver.ResolveUsername(context.Background(), "user-abc-123")
+		if err != nil {
+			t.Fatalf("ResolveUsername() error = %v", err)
+		}
+		if got != "operator" {
+			t.Fatalf("ResolveUsername() = %q, want %q", got, "operator")
+		}
+	})
+
+	t.Run("unknown user translates NotFound to empty, no error", func(t *testing.T) {
+		t.Parallel()
+		got, err := resolver.ResolveUsername(context.Background(), "user-does-not-exist")
+		if err != nil {
+			t.Fatalf("ResolveUsername() error = %v, want nil (NotFound must translate to empty, not an error)", err)
+		}
+		if got != "" {
+			t.Fatalf("ResolveUsername() = %q, want \"\" for an unknown user", got)
+		}
+	})
+
+	t.Run("a genuine store error propagates", func(t *testing.T) {
+		t.Parallel()
+		closedStore, err := authpostgres.NewWithDriver("sqlite", filepath.Join(t.TempDir(), "closed.db"))
+		if err != nil {
+			t.Fatalf("authpostgres.NewWithDriver() error = %v", err)
+		}
+		if err := closedStore.Close(); err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+		closedResolver := authStoreUsernameResolver{store: closedStore}
+
+		if _, err := closedResolver.ResolveUsername(context.Background(), "user-abc-123"); err == nil {
+			t.Fatal("ResolveUsername() error = nil, want the closed store's genuine error propagated")
+		}
+	})
 }
 
 func swapAuthStoreOpener(t *testing.T) func() {

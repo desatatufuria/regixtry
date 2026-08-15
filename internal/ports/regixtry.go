@@ -103,11 +103,17 @@ type MetadataStore interface {
 	DeleteTag(ctx context.Context, tenant string, repository domain.RepositoryRef, tag string) error
 }
 
-// TagSummary is one tag's name and its manifest's created_at (console-tags-
-// table change's backend shape), returned by ListTagsWithCreatedAt.
+// TagSummary is one tag's name, its manifest's created_at, and who pushed
+// that manifest (console-tags-table / console-tags-pushed-by changes'
+// backend shape), returned by ListTagsWithCreatedAt. PushedBy is the raw
+// principal UserID from manifests.pushed_by -- "" for a legacy manifest
+// pushed before that column existed, or one pushed with no principal in
+// context. Resolving it to a human-readable username is the app layer's job
+// (Service.UsernameResolver), not this layer's.
 type TagSummary struct {
 	Name      string    `json:"name"`
 	CreatedAt time.Time `json:"created_at"`
+	PushedBy  string    `json:"pushed_by,omitempty"`
 }
 
 // RepositorySummary is one repository's name, its tag count, and the most

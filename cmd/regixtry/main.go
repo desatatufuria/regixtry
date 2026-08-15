@@ -2247,6 +2247,9 @@ func runTUI(cfg tuiConfig, stdin io.Reader, stdout io.Writer) error {
 	service.SetFeatureRuntimeManager("trivy", newFeatureRuntimeManager("trivy", appregixtry.FeatureRuntimeManagerConfig{StorageRoot: cfg.StorageRoot, Store: metadataStore, ScanRunner: trivyinfra.New(trivyinfra.RunnerConfig{})}))
 	service.SetSecretScanRunner(gitleaksinfra.New(gitleaksinfra.RunnerConfig{Blobs: blobStore}))
 	service.SetFeatureRuntimeManager("gitleaks", newFeatureRuntimeManager("gitleaks", appregixtry.FeatureRuntimeManagerConfig{StorageRoot: cfg.StorageRoot, Store: metadataStore}))
+	if authStore != nil {
+		service.SetUsernameResolver(authStoreUsernameResolver{store: authStore})
+	}
 
 	if cfg.Snapshot {
 		model := tui.NewModel(service, modelOpts...)
@@ -2410,4 +2413,25 @@ func (localOperatorAccessController) Authorize(context.Context, ports.Action) er
 
 func (localOperatorAccessController) Challenge(ports.Action) ports.Challenge {
 	return ports.Challenge{Scheme: "Bearer", Realm: "regixtry", Service: "regixtry"}
+}
+
+// authStoreUsernameResolver adapts ports.AuthStore to
+// appregixtry.UsernameResolver (console-tags-pushed-by change), translating
+// AuthStore.GetUserByID's typed "not found" error into that interface's own
+// contract -- ("", nil), not an error -- so a deleted/unknown user never
+// fails the whole TagDetails call. Any other error (a genuine auth store
+// failure) propagates unchanged.
+type authStoreUsernameResolver struct {
+	store ports.AuthStore
+}
+
+func (r authStoreUsernameResolver) ResolveUsername(ctx context.Context, userID string) (string, error) {
+	user, err := r.store.GetUserByID(ctx, userID)
+	if err != nil {
+		if domainauth.IsCode(err, domainauth.ErrorCodeNotFound) {
+			return "", nil
+		}
+		return "", err
+	}
+	return user.Username, nil
 }

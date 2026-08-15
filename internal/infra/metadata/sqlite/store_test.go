@@ -1307,6 +1307,56 @@ func TestStoreListTagsWithCreatedAtReturnsEachTagsManifestCreatedAt(t *testing.T
 	}
 }
 
+// TestStoreListTagsWithCreatedAtReturnsPushedBy is the RED test for the
+// console-tags-pushed-by change: ListTagsWithCreatedAt carries each tag's
+// manifest.pushed_by column through to ports.TagSummary.PushedBy, and a
+// legacy/unknown manifest (empty pushed_by, the column's own default)
+// reports "" rather than erroring.
+func TestStoreListTagsWithCreatedAtReturnsPushedBy(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	repo := domain.MustParseRepositoryRef("library/alpine")
+
+	pushed, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", []byte(`{"schemaVersion":2}`), nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("NewManifest() error = %v", err)
+	}
+	pushed.PushedBy = "user-abc-123"
+	if err := store.PublishManifest(context.Background(), "tenant-a", repo, "known-pusher", pushed, nil); err != nil {
+		t.Fatalf("PublishManifest(known-pusher) error = %v", err)
+	}
+
+	legacy, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", []byte(`{"schemaVersion":2,"annotations":{"legacy":"true"}}`), nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("NewManifest() error = %v", err)
+	}
+	if err := store.PublishManifest(context.Background(), "tenant-a", repo, "unknown-pusher", legacy, nil); err != nil {
+		t.Fatalf("PublishManifest(unknown-pusher) error = %v", err)
+	}
+
+	tags, err := store.ListTagsWithCreatedAt(context.Background(), "tenant-a", repo, 10, "")
+	if err != nil {
+		t.Fatalf("ListTagsWithCreatedAt() error = %v", err)
+	}
+	if len(tags) != 2 {
+		t.Fatalf("len(tags) = %d, want 2: %#v", len(tags), tags)
+	}
+
+	byName := make(map[string]ports.TagSummary, len(tags))
+	for _, tag := range tags {
+		byName[tag.Name] = tag
+	}
+	if got, want := byName["known-pusher"].PushedBy, "user-abc-123"; got != want {
+		t.Fatalf("known-pusher.PushedBy = %q, want %q", got, want)
+	}
+	if got, want := byName["unknown-pusher"].PushedBy, ""; got != want {
+		t.Fatalf("unknown-pusher.PushedBy = %q, want %q (legacy/unknown default)", got, want)
+	}
+}
+
 // TestStoreListRepositoriesWithSummaryReturnsTagCountAndMostRecentPush is
 // the RED test for the console-repositories-table change: a single
 // aggregate query (COUNT(tags) / MAX(manifests.created_at) per repository)

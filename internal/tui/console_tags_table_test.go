@@ -9,18 +9,20 @@ import (
 	appregixtry "regixtry/internal/app/regixtry"
 )
 
-// TestBuildConsoleTagsTableRendersTagCreatedSignedColumns is the RED test
-// for the console-tags-table change: the Tags screen's table has exactly the
-// three columns the user chose (Tag, Created, Signed), and each row's cells
-// carry the tag name, a formatted created_at, and the mapped Signed value.
-func TestBuildConsoleTagsTableRendersTagCreatedSignedColumns(t *testing.T) {
+// TestBuildConsoleTagsTableRendersTagCreatedPushedBySignedColumns is the RED
+// test for the console-tags-table / console-tags-pushed-by changes: the
+// Tags screen's table has exactly the four columns (Tag, Created, Pushed
+// By, Signed), and each row's cells carry the tag name, a formatted
+// created_at, the resolved pusher username (or "unknown" when unset), and
+// the mapped Signed value.
+func TestBuildConsoleTagsTableRendersTagCreatedPushedBySignedColumns(t *testing.T) {
 	t.Parallel()
 
 	theme := newAdminTheme()
 	created := time.Date(2026, 8, 10, 9, 15, 0, 0, time.UTC)
 	tags := []appregixtry.TagDetails{
-		{Name: "latest", CreatedAt: created, SignatureState: appregixtry.SignatureStatusVerified, SigningEnabled: true},
-		{Name: "v1.2.3-rc1-alpine-slim", CreatedAt: created, SignatureState: appregixtry.SignatureStatusUnsigned, SigningEnabled: true},
+		{Name: "latest", CreatedAt: created, SignatureState: appregixtry.SignatureStatusVerified, SigningEnabled: true, PushedBy: "operator"},
+		{Name: "v1.2.3-rc1-alpine-slim", CreatedAt: created, SignatureState: appregixtry.SignatureStatusUnsigned, SigningEnabled: true, PushedBy: "az-deploy-ci"},
 		{Name: "legacy", CreatedAt: created, SignatureState: appregixtry.SignatureStatusUnsigned, SigningEnabled: false},
 	}
 
@@ -30,7 +32,7 @@ func TestBuildConsoleTagsTableRendersTagCreatedSignedColumns(t *testing.T) {
 	}
 
 	view := table.View()
-	for _, want := range []string{"Tag", "Created", "Signed", "latest", "v1.2.3-rc1-alpine-slim", "legacy", "2026-08-10 09:15", "yes", "no", "n/a"} {
+	for _, want := range []string{"Tag", "Created", "Pushed By", "Signed", "latest", "v1.2.3-rc1-alpine-slim", "legacy", "2026-08-10 09:15", "operator", "az-deploy-ci", "unknown", "yes", "no", "n/a"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("table view = %q, want it to contain %q", view, want)
 		}
@@ -125,12 +127,12 @@ func TestBuildConsoleTagsTableColumnsFitWithoutOverflow(t *testing.T) {
 
 	theme := newAdminTheme()
 	tags := []appregixtry.TagDetails{
-		{Name: "sha256-d1f1ed21dad86b499c874cef225b6e61c4cf1a8684363810e99d723a306a75b4.sig", CreatedAt: time.Now(), SignatureState: appregixtry.SignatureStatusUnsigned, SigningEnabled: true},
+		{Name: "sha256-d1f1ed21dad86b499c874cef225b6e61c4cf1a8684363810e99d723a306a75b4.sig", CreatedAt: time.Now(), SignatureState: appregixtry.SignatureStatusUnsigned, SigningEnabled: true, PushedBy: "a-very-long-username-example"},
 	}
 	table := buildConsoleTagsTable(theme, tags, 0, minTableRows)
 	view := table.View()
 
-	wantWidth := consoleTagsColumnNameWidth + consoleTagsColumnCreatedWidth + consoleTagsColumnSignedWidth + 4 // +4: 3 columns' own border/separator characters (cols+1)
+	wantWidth := consoleTagsColumnNameWidth + consoleTagsColumnCreatedWidth + consoleTagsColumnPushedByWidth + consoleTagsColumnSignedWidth + 5 // +5: 4 columns' own border/separator characters (cols+1)
 	for i, line := range strings.Split(view, "\n") {
 		if w := lipgloss.Width(line); w > wantWidth {
 			t.Fatalf("line %d width = %d, want <= %d (table overflowed its own declared column widths):\n%s", i, w, wantWidth, view)

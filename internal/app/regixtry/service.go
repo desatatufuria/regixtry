@@ -23,7 +23,14 @@ type Service struct {
 	scanRunner       ports.ScanRunner
 	secretScanRunner ports.SecretScanRunner
 	runtimes         map[string]FeatureRuntimeManager
-	scanHost         string
+	// usernames resolves a manifest's pushed_by UserID to a display username
+	// for TagDetails' PushedBy column (console-tags-pushed-by change).
+	// Optional: nil in embedded/no-auth mode, where PushedBy always
+	// resolves to "". Set once at startup (cmd/regixtry/main.go), never
+	// concurrently with a request the way scanRunner/secretScanRunner can
+	// be, so unlike those it needs no mutex.
+	usernames UsernameResolver
+	scanHost  string
 	// deleteEnabled gates DeleteManifest (design.md Decision 2). It defaults
 	// to false (zero value); Phase 4 threads the actual
 	// REGISTRY_DELETE_ENABLED flag value in via SetDeleteEnabled.
@@ -45,6 +52,18 @@ type Service struct {
 	// an undrained goroutine racing a t.TempDir() cleanup is a real hazard,
 	// not merely a hypothetical one.
 	backgroundWork sync.WaitGroup
+}
+
+// UsernameResolver resolves a principal's opaque UserID (auth.User.ID) to
+// their human-readable username, backing TagDetails' PushedBy column
+// (console-tags-pushed-by change). Contract: ("", nil) for "no such user"
+// (a deleted user, or any UserID the resolver simply doesn't recognize) --
+// never an error for that case, since a missing user must never fail the
+// whole TagDetails call. A non-nil error means a genuine infrastructure
+// failure (e.g. the auth store is unreachable), which TagDetails propagates,
+// mirroring its existing SignatureStatus hard-fail policy.
+type UsernameResolver interface {
+	ResolveUsername(ctx context.Context, userID string) (string, error)
 }
 
 type FeatureRuntimeManager interface {
@@ -131,6 +150,10 @@ func (s *Service) SetFeatureRuntimeManager(feature string, manager FeatureRuntim
 		s.runtimes = make(map[string]FeatureRuntimeManager)
 	}
 	s.runtimes[strings.TrimSpace(feature)] = manager
+}
+
+func (s *Service) SetUsernameResolver(resolver UsernameResolver) {
+	s.usernames = resolver
 }
 
 func (s *Service) SetScanHost(host string) {

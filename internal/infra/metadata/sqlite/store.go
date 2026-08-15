@@ -526,7 +526,7 @@ func (s *Store) ListTagsWithCreatedAt(ctx context.Context, tenant string, reposi
 	}
 
 	query := `
-		SELECT t.name, m.created_at
+		SELECT t.name, m.created_at, m.pushed_by
 		FROM tags t
 		JOIN repositories r ON r.id = t.repository_id
 		JOIN manifests m ON m.id = t.manifest_id
@@ -552,14 +552,15 @@ func (s *Store) ListTagsWithCreatedAt(ctx context.Context, tenant string, reposi
 	for rows.Next() {
 		var name string
 		var createdAt string
-		if err := rows.Scan(&name, &createdAt); err != nil {
+		var pushedBy string
+		if err := rows.Scan(&name, &createdAt, &pushedBy); err != nil {
 			return nil, err
 		}
 		created, err := time.Parse(time.RFC3339Nano, createdAt)
 		if err != nil {
 			return nil, err
 		}
-		tags = append(tags, ports.TagSummary{Name: name, CreatedAt: created})
+		tags = append(tags, ports.TagSummary{Name: name, CreatedAt: created, PushedBy: pushedBy})
 	}
 
 	return tags, rows.Err()

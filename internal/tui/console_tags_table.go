@@ -9,9 +9,10 @@ import (
 )
 
 const (
-	consoleTableColumnTagName    = "console_tag_name"
-	consoleTableColumnTagCreated = "console_tag_created"
-	consoleTableColumnTagSigned  = "console_tag_signed"
+	consoleTableColumnTagName     = "console_tag_name"
+	consoleTableColumnTagCreated  = "console_tag_created"
+	consoleTableColumnTagPushedBy = "console_tag_pushed_by"
+	consoleTableColumnTagSigned   = "console_tag_signed"
 )
 
 // Column widths, measured against realistic longest values the same way
@@ -19,19 +20,21 @@ const (
 // consoleTagsColumnNameWidth against a realistic long tag name (semver +
 // variant suffix), consoleTagsColumnCreatedWidth against
 // formatTagCreatedAt's longest output ("YYYY-MM-DD HH:MM"),
-// consoleTagsColumnSignedWidth against the Signed column's longest value
-// ("n/a").
+// consoleTagsColumnPushedByWidth against a realistic username/robot-account
+// name (console-tags-pushed-by change), consoleTagsColumnSignedWidth
+// against the Signed column's longest value ("n/a").
 const (
-	consoleTagsColumnNameWidth    = 34
-	consoleTagsColumnCreatedWidth = 20
-	consoleTagsColumnSignedWidth  = 8
+	consoleTagsColumnNameWidth     = 34
+	consoleTagsColumnCreatedWidth  = 20
+	consoleTagsColumnPushedByWidth = 20
+	consoleTagsColumnSignedWidth   = 8
 )
 
 // buildConsoleTagsTable renders the Console TUI's per-repository Tags screen
-// as a 3-column table (Tag, Created, Signed) -- the user's deliberately
-// minimal column set, cross-checked against Harbor's own richer Tags view
-// and intentionally narrower since vulnerability/size data already live
-// elsewhere in this app. Mirrors admin_tables.go's own
+// as a 4-column table (Tag, Created, Pushed By, Signed) -- the user's
+// deliberately minimal column set, cross-checked against Harbor's own
+// richer Tags view and intentionally narrower since vulnerability/size data
+// already live elsewhere in this app. Mirrors admin_tables.go's own
 // newAdminBubbleTable-based construction pattern (sole construction point,
 // theme-driven, pageSize-driven), on the Console side rather than the admin
 // side.
@@ -39,17 +42,32 @@ func buildConsoleTagsTable(theme adminTheme, tags []appregixtry.TagDetails, high
 	columns := []bubbletable.Column{
 		bubbletable.NewColumn(consoleTableColumnTagName, "Tag", consoleTagsColumnNameWidth),
 		bubbletable.NewColumn(consoleTableColumnTagCreated, "Created", consoleTagsColumnCreatedWidth),
+		bubbletable.NewColumn(consoleTableColumnTagPushedBy, "Pushed By", consoleTagsColumnPushedByWidth),
 		bubbletable.NewColumn(consoleTableColumnTagSigned, "Signed", consoleTagsColumnSignedWidth),
 	}
 	rows := make([]bubbletable.Row, 0, len(tags))
 	for _, tag := range tags {
 		rows = append(rows, bubbletable.NewRow(bubbletable.RowData{
-			consoleTableColumnTagName:    tag.Name,
-			consoleTableColumnTagCreated: formatTagCreatedAt(tag.CreatedAt),
-			consoleTableColumnTagSigned:  tagSignedLabel(tag),
+			consoleTableColumnTagName:     tag.Name,
+			consoleTableColumnTagCreated:  formatTagCreatedAt(tag.CreatedAt),
+			consoleTableColumnTagPushedBy: tagPushedByLabel(tag),
+			consoleTableColumnTagSigned:   tagSignedLabel(tag),
 		}))
 	}
 	return newAdminBubbleTable(columns, rows, highlighted, theme, pageSize)
+}
+
+// tagPushedByLabel renders a tag's resolved pusher username, never blank --
+// mirrors formatTagCreatedAt's own "unknown" fallback, covering a legacy
+// manifest (pushed before pushed_by existed), a manifest pushed with no
+// UsernameResolver configured, or a pusher the resolver has no username for
+// (e.g. since deleted) -- TagDetails.PushedBy is already "" in all three
+// cases, and this label is the only place that turns "" into display text.
+func tagPushedByLabel(tag appregixtry.TagDetails) string {
+	if strings.TrimSpace(tag.PushedBy) == "" {
+		return "unknown"
+	}
+	return tag.PushedBy
 }
 
 // formatTagCreatedAt renders a tag's manifest creation time, never blank --

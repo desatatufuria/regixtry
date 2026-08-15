@@ -2,8 +2,10 @@ package regixtry
 
 import (
 	"context"
+	"errors"
 	"testing"
 
+	domainauth "regixtry/internal/domain/auth"
 	"regixtry/internal/domain/signing"
 	"regixtry/internal/ports"
 )
@@ -171,6 +173,129 @@ func TestServiceTagDetailsSigningEnabledMirrorsPolicyEnabledBit(t *testing.T) {
 	}
 	if details[0].SigningEnabled {
 		t.Fatal("details[0].SigningEnabled = true, want false (policy disabled)")
+	}
+}
+
+// fakeUsernameResolver is a minimal UsernameResolver test double: known maps
+// a UserID to the username it should resolve to; a UserID absent from known
+// mirrors the real adapter's "not found" contract -- ("", nil), never an
+// error -- unless forceErr is set, simulating a genuine infra failure.
+type fakeUsernameResolver struct {
+	known    map[string]string
+	forceErr error
+	calls    []string
+}
+
+func (f *fakeUsernameResolver) ResolveUsername(_ context.Context, userID string) (string, error) {
+	f.calls = append(f.calls, userID)
+	if f.forceErr != nil {
+		return "", f.forceErr
+	}
+	return f.known[userID], nil
+}
+
+// TestServiceTagDetailsResolvesPushedByUsername is the RED test for the
+// console-tags-pushed-by change: TagDetails.PushedBy carries the resolved
+// username (via the optional UsernameResolver), not the raw UserID stored
+// on the manifest.
+func TestServiceTagDetailsResolvesPushedByUsername(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	repository := "library/alpine"
+	ctx := ports.ContextWithPrincipal(context.Background(), domainauth.Principal{UserID: "user-abc-123"})
+	if _, err := service.PublishManifest(ctx, repository, "known-pusher", "application/vnd.oci.image.manifest.v1+json", []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","layers":[]}`)); err != nil {
+		t.Fatalf("PublishManifest(known-pusher) error = %v", err)
+	}
+
+	resolver := &fakeUsernameResolver{known: map[string]string{"user-abc-123": "operator"}}
+	service.SetUsernameResolver(resolver)
+
+	details, err := service.TagDetails(context.Background(), repository, 10, "")
+	if err != nil {
+		t.Fatalf("TagDetails() error = %v", err)
+	}
+	if len(details) != 1 {
+		t.Fatalf("len(details) = %d, want 1: %#v", len(details), details)
+	}
+	if got, want := details[0].PushedBy, "operator"; got != want {
+		t.Fatalf("PushedBy = %q, want %q (resolved username, not the raw UserID)", got, want)
+	}
+	if len(resolver.calls) != 1 || resolver.calls[0] != "user-abc-123" {
+		t.Fatalf("resolver.calls = %#v, want one call with the raw UserID", resolver.calls)
+	}
+}
+
+// TestServiceTagDetailsPushedByEmptyWithoutResolverOrUnknownUser covers two
+// degrade-gracefully cases: no resolver configured at all (embedded/no-auth
+// mode), and a resolver that legitimately has no username for this UserID
+// (e.g. the user was since deleted) -- neither is an error, both leave
+// PushedBy "".
+func TestServiceTagDetailsPushedByEmptyWithoutResolverOrUnknownUser(t *testing.T) {
+	t.Parallel()
+
+	repository := "library/alpine"
+	publish := func(t *testing.T, service *Service) {
+		t.Helper()
+		ctx := ports.ContextWithPrincipal(context.Background(), domainauth.Principal{UserID: "user-ghost"})
+		if _, err := service.PublishManifest(ctx, repository, "tag", "application/vnd.oci.image.manifest.v1+json", []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","layers":[]}`)); err != nil {
+			t.Fatalf("PublishManifest() error = %v", err)
+		}
+	}
+
+	t.Run("no resolver configured", func(t *testing.T) {
+		t.Parallel()
+		service, cleanup := newTestService(t, allowAllAccessController{})
+		defer cleanup()
+		publish(t, service)
+
+		details, err := service.TagDetails(context.Background(), repository, 10, "")
+		if err != nil {
+			t.Fatalf("TagDetails() error = %v", err)
+		}
+		if len(details) != 1 || details[0].PushedBy != "" {
+			t.Fatalf("details = %#v, want PushedBy \"\" with no resolver configured", details)
+		}
+	})
+
+	t.Run("resolver has no username for this user", func(t *testing.T) {
+		t.Parallel()
+		service, cleanup := newTestService(t, allowAllAccessController{})
+		defer cleanup()
+		publish(t, service)
+		service.SetUsernameResolver(&fakeUsernameResolver{known: map[string]string{}})
+
+		details, err := service.TagDetails(context.Background(), repository, 10, "")
+		if err != nil {
+			t.Fatalf("TagDetails() error = %v", err)
+		}
+		if len(details) != 1 || details[0].PushedBy != "" {
+			t.Fatalf("details = %#v, want PushedBy \"\" when the resolver has no username for this user", details)
+		}
+	})
+}
+
+// TestServiceTagDetailsPropagatesUsernameResolverError proves a genuine
+// resolver failure (e.g. the auth store is unreachable) fails the whole
+// TagDetails call, mirroring this method's existing SignatureStatus
+// hard-fail policy -- not silently degraded.
+func TestServiceTagDetailsPropagatesUsernameResolverError(t *testing.T) {
+	t.Parallel()
+
+	repository := "library/alpine"
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	ctx := ports.ContextWithPrincipal(context.Background(), domainauth.Principal{UserID: "user-abc-123"})
+	if _, err := service.PublishManifest(ctx, repository, "tag", "application/vnd.oci.image.manifest.v1+json", []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","layers":[]}`)); err != nil {
+		t.Fatalf("PublishManifest() error = %v", err)
+	}
+	service.SetUsernameResolver(&fakeUsernameResolver{forceErr: errors.New("auth store unreachable")})
+
+	if _, err := service.TagDetails(context.Background(), repository, 10, ""); err == nil {
+		t.Fatal("TagDetails() error = nil, want the resolver's infra error propagated")
 	}
 }
 
