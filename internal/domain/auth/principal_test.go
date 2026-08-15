@@ -86,6 +86,77 @@ func TestPrincipalHasGrantedRepositoryAccessReadOnlyProbe(t *testing.T) {
 	}
 }
 
+// TestPrincipalHasGrantedWriteAccessIgnoresTokenScope is the RED test for
+// the signing UnsignedSelfRead "repo_push" mode bug found live in
+// production: a request whose whole point is a read (e.g. cosign's own GET
+// of the manifest it is about to sign) is issued with a pull-only scoped
+// token even when the same identity has standing push authorization, so
+// HasWriteAccess (which additionally requires Scope.AllowsPush on THIS
+// token) always returns false for exactly that scenario. HasGrantedWriteAccess
+// must return true from the grant alone, regardless of the token's scope.
+func TestPrincipalHasGrantedWriteAccessIgnoresTokenScope(t *testing.T) {
+	t.Parallel()
+
+	writerGrant := RepoGrant{Repository: regixtrydomain.MustParseRepositoryRef("team/app"), Role: RepoRoleWriter}
+	readerGrant := RepoGrant{Repository: regixtrydomain.MustParseRepositoryRef("team/app"), Role: RepoRoleReader}
+	pullOnlyScope := Scope{Type: "repository", Name: "team/app", Actions: []string{"pull"}, Canonical: "repository:team/app:pull"}
+
+	tests := []struct {
+		name       string
+		principal  Principal
+		repository string
+		want       bool
+	}{
+		{
+			name:       "writer grant with a pull-only scoped token still passes",
+			principal:  Principal{Grants: []RepoGrant{writerGrant}, Scopes: []Scope{pullOnlyScope}},
+			repository: "team/app",
+			want:       true,
+		},
+		{
+			name:       "writer grant with no scope at all still passes",
+			principal:  Principal{Grants: []RepoGrant{writerGrant}},
+			repository: "team/app",
+			want:       true,
+		},
+		{
+			name:       "reader grant fails regardless of scope",
+			principal:  Principal{Grants: []RepoGrant{readerGrant}, Scopes: []Scope{pullOnlyScope}},
+			repository: "team/app",
+			want:       false,
+		},
+		{
+			name:       "no grant at all fails",
+			principal:  Principal{Scopes: []Scope{pullOnlyScope}},
+			repository: "team/app",
+			want:       false,
+		},
+		{
+			name:       "admin passes without any explicit grant",
+			principal:  Principal{IsAdmin: true},
+			repository: "team/app",
+			want:       true,
+		},
+		{
+			name:       "read-only with no explicit grant fails",
+			principal:  Principal{IsReadOnly: true, Scopes: []Scope{pullOnlyScope}},
+			repository: "team/app",
+			want:       false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := tt.principal.HasGrantedWriteAccess(tt.repository)
+			if got != tt.want {
+				t.Fatalf("HasGrantedWriteAccess(%q) = %v, want %v", tt.repository, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestPrincipalHasDeleteAccess pins design.md Decision 5: HasDeleteAccess
 // does NOT reuse HasWriteAccess (which checks Scope.AllowsPush and would
 // wrongly let a pull,push-scoped token pass). It requires both a

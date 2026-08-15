@@ -232,6 +232,41 @@ func TestServiceOpenManifestUnsignedSelfReadRepoPushAllowsAnyPrincipalWithPushAc
 	}
 }
 
+// TestServiceOpenManifestUnsignedSelfReadRepoPushAllowsPullScopedTokenWithWriteGrant
+// reproduces the exact live-production failure: repo_push mode was
+// implemented via Principal.HasWriteAccess, which additionally requires
+// Scope.AllowsPush on the CURRENT token -- but the request being blocked is,
+// by definition, a read (cosign's own GET of the manifest it is about to
+// sign), so its token is issued with pull-only scope even when the same
+// identity holds a standing write grant on the repository. Confirmed against
+// the real registry: cosign's GET stayed DENIED with repo_push configured
+// until enforceSigningPolicy switched to Principal.HasGrantedWriteAccess
+// (grant-only, ignores the current token's scope).
+func TestServiceOpenManifestUnsignedSelfReadRepoPushAllowsPullScopedTokenWithWriteGrant(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	repository := "library/alpine"
+	pusherCtx := ports.ContextWithPrincipal(context.Background(), writerPrincipal("user-pusher", repository))
+
+	digest := publishUnsignedManifest(t, service, pusherCtx, repository, "repo-push-pull-scoped-token")
+	seedSigningPolicyWithSelfRead(t, service, "repo_push")
+
+	// Same underlying identity as a real push-capable principal (a write
+	// grant on this repository), but the in-flight token for THIS request
+	// -- exactly like cosign's own manifest GET -- carries only pull scope.
+	pullScopedCtx := ports.ContextWithPrincipal(context.Background(), principalForGrants(
+		repository, domainauth.RepoRoleWriter,
+		[]domainauth.Scope{{Type: "repository", Name: repository, Actions: []string{"pull"}, Canonical: "repository:" + repository + ":pull"}},
+	))
+
+	if _, err := service.OpenManifest(pullScopedCtx, repository, digest); err != nil {
+		t.Fatalf("OpenManifest() error = %v, want nil: repo_push mode must exempt a write-granted principal even when the current request's token is pull-scoped only", err)
+	}
+}
+
 // TestServiceOpenManifestUnsignedSelfReadRepoPushBlocksPullOnlyPrincipal is
 // scenario 7: a principal with only pull access is still blocked under
 // "repo_push" mode.

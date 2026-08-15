@@ -21,6 +21,20 @@ func (p Principal) HasWriteAccess(repository string) bool {
 	return p.hasGrantedRepositoryAccess(repository, RepoRole.AllowsWrite) && p.scopeAllowsRepository(repository, Scope.AllowsPush)
 }
 
+// HasGrantedWriteAccess deliberately checks only the grant half of
+// HasWriteAccess, never the token's current scope. Callers that need "is
+// this principal generally authorized to push here" independent of what a
+// particular in-flight request happened to be scoped for -- e.g. a
+// pull-scoped request checking whether the same underlying identity also
+// holds push authority -- must use this, not HasWriteAccess, for the exact
+// reason HasRepoAdminAccess's callers already read Grants directly instead
+// of coupling to a push-scoped token: a request whose whole point is a read
+// will almost never itself carry push scope, even when the identity behind
+// it unquestionably has standing push authorization.
+func (p Principal) HasGrantedWriteAccess(repository string) bool {
+	return p.hasGrantedRepositoryAccess(repository, RepoRole.AllowsWrite)
+}
+
 // HasDeleteAccess deliberately does NOT reuse HasWriteAccess: that predicate
 // checks Scope.AllowsPush, which a pull,push-scoped token satisfies and
 // would wrongly let it delete. The role half stays RepoRole.AllowsWrite

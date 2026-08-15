@@ -90,7 +90,17 @@ func (s *Service) enforceSigningPolicy(ctx context.Context, repository, digest, 
 					return nil
 				}
 			case "repo_push":
-				if principal.HasWriteAccess(repository) {
+				// HasGrantedWriteAccess, not HasWriteAccess: the request
+				// being blocked here is, by definition, a read (e.g.
+				// cosign's own GET of the manifest it is about to sign),
+				// so its token will essentially never itself carry push
+				// scope even when the identity behind it has standing
+				// push authorization. HasWriteAccess additionally requires
+				// Scope.AllowsPush on THIS token and would make repo_push
+				// mode unreachable for the exact scenario it exists to
+				// unblock (confirmed live: cosign's read stayed DENIED
+				// with repo_push configured until this was fixed).
+				if principal.HasGrantedWriteAccess(repository) {
 					return nil
 				}
 			}
