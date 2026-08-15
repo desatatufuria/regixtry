@@ -159,7 +159,7 @@ func TestServiceSignatureStatusIsNeverGatedByThePolicyItReports(t *testing.T) {
 	digest := seedFixtureImageManifest(t, service, repository)
 	seedSigningPolicy(t, service, true, []string{fixtureTrustedKeyPEM(t)}) // enabled, no .sig published -> would 403 a pull
 
-	if err := service.enforceSigningPolicy(context.Background(), repository, digest); err == nil || !domain.IsCode(err, domain.ErrorCodePolicyViolation) {
+	if err := service.enforceSigningPolicy(context.Background(), repository, digest, ""); err == nil || !domain.IsCode(err, domain.ErrorCodePolicyViolation) {
 		t.Fatalf("enforceSigningPolicy() error = %v, want a policy violation (test setup sanity check)", err)
 	}
 
@@ -189,7 +189,7 @@ func TestSigningPolicyViolationAndSignatureStatusNeverLeakKeyOrSignatureBytes(t 
 	seedFixtureSignatureArtifact(t, service, repository)
 	seedSigningPolicy(t, service, true, []string{generateTestECDSAP256PublicKeyPEM(t)}) // untrusted: unrelated key
 
-	err := service.enforceSigningPolicy(context.Background(), repository, digest)
+	err := service.enforceSigningPolicy(context.Background(), repository, digest, "")
 	if err == nil {
 		t.Fatal("enforceSigningPolicy() error = nil, want a policy violation")
 	}

@@ -134,6 +134,9 @@ func normalizeSigningOverride(raw []byte) ([]byte, error) {
 	if override.Enabled && len(normalizedKeys) == 0 {
 		return nil, domain.NewValidationError("enabled requires at least one usable entry in trusted_public_keys")
 	}
+	if !ports.ValidUnsignedSelfRead(override.UnsignedSelfRead) {
+		return nil, domain.NewValidationError(fmt.Sprintf("unsigned_self_read %q is invalid", override.UnsignedSelfRead))
+	}
 	override.TrustedPublicKeys = normalizedKeys
 	return json.Marshal(override)
 }
@@ -181,6 +184,7 @@ func applySigningOverridePayload(raw []byte, settings ports.SigningPolicySetting
 	}
 	settings.Enabled = override.Enabled
 	settings.TrustedPublicKeys = override.TrustedPublicKeys
+	settings.UnsignedSelfRead = override.UnsignedSelfRead
 	return settings, nil
 }
 

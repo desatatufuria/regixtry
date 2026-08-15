@@ -11,6 +11,14 @@ type Manifest struct {
 	Config      *Descriptor
 	Layers      []Descriptor
 	Annotations map[string]string
+
+	// PushedBy is the UserID (internal/domain/auth.Principal.UserID) of the
+	// principal who pushed this exact digest, or "" when unknown (e.g. a row
+	// written before this field existed). It is provenance metadata, not
+	// content: it deliberately does NOT participate in Digest computation or
+	// Validate(), and is not one of BlobReferences() -- unrelated to blob
+	// storage.
+	PushedBy string
 }
 
 func NewManifest(mediaType string, payload []byte, config *Descriptor, layers []Descriptor, subject *Descriptor, annotations map[string]string) (Manifest, error) {

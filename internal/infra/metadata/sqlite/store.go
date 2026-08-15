@@ -225,13 +225,14 @@ func (s *Store) PublishManifest(ctx context.Context, tenant string, repository d
 	}
 
 	_, err = tx.ExecContext(ctx, `
-		INSERT INTO manifests (tenant, repository_id, digest, media_type, size, payload, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO manifests (tenant, repository_id, digest, media_type, size, payload, created_at, pushed_by)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(tenant, repository_id, digest) DO UPDATE SET
 			media_type = excluded.media_type,
 			size = excluded.size,
-			payload = excluded.payload
-	`, tenant, repositoryID, manifest.Digest.String(), manifest.MediaType, manifest.Size, manifest.Payload, time.Now().UTC().Format(time.RFC3339Nano))
+			payload = excluded.payload,
+			pushed_by = excluded.pushed_by
+	`, tenant, repositoryID, manifest.Digest.String(), manifest.MediaType, manifest.Size, manifest.Payload, time.Now().UTC().Format(time.RFC3339Nano), manifest.PushedBy)
 	if err != nil {
 		return err
 	}
@@ -280,7 +281,7 @@ func (s *Store) ResolveManifest(ctx context.Context, tenant string, repository d
 	}
 
 	query := `
-		SELECT m.media_type, m.payload
+		SELECT m.media_type, m.payload, m.pushed_by
 		FROM manifests m
 		JOIN repositories r ON r.id = m.repository_id
 		WHERE m.tenant = ? AND r.name = ? AND r.tenant = ?
@@ -296,7 +297,8 @@ func (s *Store) ResolveManifest(ctx context.Context, tenant string, repository d
 
 	var mediaType string
 	var payload []byte
-	if err := s.db.QueryRowContext(ctx, query, args...).Scan(&mediaType, &payload); err != nil {
+	var pushedBy string
+	if err := s.db.QueryRowContext(ctx, query, args...).Scan(&mediaType, &payload, &pushedBy); err != nil {
 		if err == sql.ErrNoRows {
 			return domain.Manifest{}, domain.NewNotFoundError("manifest", reference)
 		}
@@ -312,6 +314,7 @@ func (s *Store) ResolveManifest(ctx context.Context, tenant string, repository d
 	if err != nil {
 		return domain.Manifest{}, err
 	}
+	manifest.PushedBy = pushedBy
 
 	return manifest, nil
 }
@@ -761,16 +764,17 @@ func (s *Store) UpsertScanPolicySettings(ctx context.Context, tenant string, set
 // scan gate — resolves to disabled, not enabled.
 func (s *Store) GetSigningPolicySettings(ctx context.Context, tenant string) (ports.SigningPolicySettings, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT enabled, trusted_public_keys, updated_at
+		SELECT enabled, trusted_public_keys, updated_at, unsigned_self_read
 		FROM signing_policy_settings
 		WHERE tenant = ?
 	`, tenant)
 	var (
-		enabled         bool
-		trustedKeysJSON string
-		updatedAtRaw    string
+		enabled          bool
+		trustedKeysJSON  string
+		updatedAtRaw     string
+		unsignedSelfRead string
 	)
-	if err := row.Scan(&enabled, &trustedKeysJSON, &updatedAtRaw); err != nil {
+	if err := row.Scan(&enabled, &trustedKeysJSON, &updatedAtRaw, &unsignedSelfRead); err != nil {
 		if err == sql.ErrNoRows {
 			return ports.SigningPolicySettings{}, domain.NewNotFoundError("signing_policy_settings", tenant)
 		}
@@ -786,7 +790,7 @@ func (s *Store) GetSigningPolicySettings(ctx context.Context, tenant string) (po
 			return ports.SigningPolicySettings{}, err
 		}
 	}
-	return ports.SigningPolicySettings{Enabled: enabled, TrustedPublicKeys: trustedKeys, UpdatedAt: updatedAt}, nil
+	return ports.SigningPolicySettings{Enabled: enabled, TrustedPublicKeys: trustedKeys, UpdatedAt: updatedAt, UnsignedSelfRead: unsignedSelfRead}, nil
 }
 
 // UpsertSigningPolicySettings mirrors UpsertScanPolicySettings's
@@ -800,13 +804,14 @@ func (s *Store) UpsertSigningPolicySettings(ctx context.Context, tenant string, 
 		return err
 	}
 	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO signing_policy_settings (tenant, enabled, trusted_public_keys, updated_at)
-		VALUES (?, ?, ?, ?)
+		INSERT INTO signing_policy_settings (tenant, enabled, trusted_public_keys, updated_at, unsigned_self_read)
+		VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(tenant) DO UPDATE SET
 			enabled = excluded.enabled,
 			trusted_public_keys = excluded.trusted_public_keys,
-			updated_at = excluded.updated_at
-	`, tenant, settings.Enabled, string(trustedKeysJSON), settings.UpdatedAt.UTC().Format(time.RFC3339Nano))
+			updated_at = excluded.updated_at,
+			unsigned_self_read = excluded.unsigned_self_read
+	`, tenant, settings.Enabled, string(trustedKeysJSON), settings.UpdatedAt.UTC().Format(time.RFC3339Nano), settings.UnsignedSelfRead)
 	return err
 }
 
@@ -1380,6 +1385,7 @@ func (s *Store) init() error {
 			size INTEGER NOT NULL,
 			payload BLOB NOT NULL,
 			created_at TEXT NOT NULL,
+			pushed_by TEXT NOT NULL DEFAULT '',
 			UNIQUE(tenant, repository_id, digest),
 			FOREIGN KEY(repository_id) REFERENCES repositories(id) ON DELETE CASCADE
 		);`,
@@ -1564,6 +1570,7 @@ func (s *Store) init() error {
 			enabled INTEGER NOT NULL DEFAULT 0,
 			trusted_public_keys TEXT NOT NULL DEFAULT '[]',
 			updated_at TEXT NOT NULL,
+			unsigned_self_read TEXT NOT NULL DEFAULT '',
 			PRIMARY KEY(tenant)
 		);`,
 		`CREATE TABLE IF NOT EXISTS secret_scan_findings (
@@ -1588,6 +1595,8 @@ func (s *Store) init() error {
 			updated_at TEXT NOT NULL,
 			UNIQUE(tenant, repository, feature_name)
 		);`,
+		`ALTER TABLE manifests ADD COLUMN pushed_by TEXT NOT NULL DEFAULT '';`,
+		`ALTER TABLE signing_policy_settings ADD COLUMN unsigned_self_read TEXT NOT NULL DEFAULT '';`,
 	}
 
 	for _, statement := range statements {

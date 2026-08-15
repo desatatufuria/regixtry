@@ -102,7 +102,7 @@ func (s *Service) OpenManifest(ctx context.Context, repositoryName string, refer
 	if err := s.enforceScanPolicy(ctx, repository.String(), manifest.Digest.String()); err != nil {
 		return domain.Manifest{}, err
 	}
-	if err := s.enforceSigningPolicy(ctx, repository.String(), manifest.Digest.String()); err != nil {
+	if err := s.enforceSigningPolicy(ctx, repository.String(), manifest.Digest.String(), manifest.PushedBy); err != nil {
 		return domain.Manifest{}, err
 	}
 
