@@ -133,7 +133,7 @@ func (s *Service) QueueManualScan(ctx context.Context, repositoryName string, re
 		return ports.ScanRun{}, err
 	}
 	digest := manifest.Digest.String()
-	run, existed, err := s.dedupAndQueueScanRun(ctx, s.tenant(ctx), repository.String(), strings.TrimSpace(reference), digest, ports.ScanTriggerManual)
+	run, existed, err := s.dedupAndQueueScanRun(ctx, s.tenant(ctx), repository.String(), strings.TrimSpace(reference), digest, ports.ScanTriggerManual, settings.Timeout)
 	if err != nil {
 		return ports.ScanRun{}, err
 	}
@@ -143,21 +143,57 @@ func (s *Service) QueueManualScan(ctx context.Context, repositoryName string, re
 	return run, nil
 }
 
+// staleScanRunError explains why an outstanding (queued/running) scan row
+// was force-failed by the staleness guard in dedupAndQueueScanRun and
+// executeSecretScanLeg: the process that should have flipped it to a
+// terminal status died mid-scan (crash, restart, panic), and the row has now
+// been outstanding longer than its own configured Timeout, so it is treated
+// as orphaned rather than "still legitimately in flight".
+const staleScanRunError = "orphaned: exceeded configured scan timeout without a status update"
+
+// scanRunAge is how long an outstanding scan row has been alive: since
+// StartedAt once execution actually began, else CreatedAt for a row still
+// only queued. Shared by dedupAndQueueScanRun (Trivy) and
+// executeSecretScanLeg (gitleaks) — ScanRun and SecretScanRun carry the same
+// StartedAt/CreatedAt shape.
+func scanRunAge(now time.Time, startedAt *time.Time, createdAt time.Time) time.Duration {
+	reference := createdAt
+	if startedAt != nil {
+		reference = *startedAt
+	}
+	return now.Sub(reference)
+}
+
 // dedupAndQueueScanRun is the shared check-then-insert step behind
 // QueueManualScan, queueScheduledScan, and queuePushScan: it returns the
-// already-active run for a digest if one exists (queued|running), otherwise
-// it inserts a new queued run with the given trigger. scanQueueMu makes the
+// already-active run for a digest if one exists (queued|running) and it is
+// still within its own configured timeout, otherwise it inserts a new
+// queued run with the given trigger. An active row older than timeout is
+// orphaned (see staleScanRunError): it is force-failed in place first, then
+// treated as if no active row existed, so a permanently stuck row can never
+// block every future rescan of that digest forever. scanQueueMu makes the
 // check-then-insert atomic across all three callers — without it, a
 // push-triggered scan (queuePushScan's own goroutine) and a synchronous
 // manual/scheduled scan for the same digest could race past the dedup check
 // and both insert a run, defeating "never queue a second scan for an
 // in-flight digest".
-func (s *Service) dedupAndQueueScanRun(ctx context.Context, tenant string, repository string, reference string, digest string, trigger string) (ports.ScanRun, bool, error) {
+func (s *Service) dedupAndQueueScanRun(ctx context.Context, tenant string, repository string, reference string, digest string, trigger string, timeout time.Duration) (ports.ScanRun, bool, error) {
 	s.scanQueueMu.Lock()
 	defer s.scanQueueMu.Unlock()
 
 	if active, err := s.metadata.GetActiveScanRunByDigest(ctx, tenant, repository, digest); err == nil {
-		return active, true, nil
+		if scanRunAge(s.now(), active.StartedAt, active.CreatedAt) <= timeout {
+			return active, true, nil
+		}
+		orphaned := active
+		finished := s.now()
+		orphaned.Status = ports.ScanRunStatusFailed
+		orphaned.FinishedAt = &finished
+		orphaned.UpdatedAt = finished
+		orphaned.Error = staleScanRunError
+		if err := s.metadata.UpsertScanRun(ctx, tenant, orphaned); err != nil {
+			return ports.ScanRun{}, false, err
+		}
 	} else if !domain.IsCode(err, domain.ErrorCodeNotFound) {
 		return ports.ScanRun{}, false, err
 	}
@@ -251,7 +287,7 @@ func (s *Service) queueScheduledScan(ctx context.Context, repositoryName string,
 		return ports.ScanRun{}, err
 	}
 	digest := manifest.Digest.String()
-	run, existed, err := s.dedupAndQueueScanRun(ctx, s.tenant(ctx), repository.String(), strings.TrimSpace(reference), digest, ports.ScanTriggerScheduled)
+	run, existed, err := s.dedupAndQueueScanRun(ctx, s.tenant(ctx), repository.String(), strings.TrimSpace(reference), digest, ports.ScanTriggerScheduled, settings.Timeout)
 	if err != nil {
 		return ports.ScanRun{}, err
 	}
@@ -286,7 +322,7 @@ func (s *Service) queuePushScan(ctx context.Context, tenant string, repository s
 	if err != nil || !settings.Enabled {
 		return
 	}
-	run, existed, err := s.dedupAndQueueScanRun(ctx, tenant, repository, strings.TrimSpace(reference), digest, ports.ScanTriggerPush)
+	run, existed, err := s.dedupAndQueueScanRun(ctx, tenant, repository, strings.TrimSpace(reference), digest, ports.ScanTriggerPush, settings.Timeout)
 	if err != nil || existed {
 		return
 	}
@@ -397,8 +433,25 @@ func (s *Service) executeSecretScanLeg(ctx context.Context, tenant string, repos
 	if err != nil {
 		return
 	}
-	if _, err := s.metadata.GetActiveSecretScanRunByDigest(ctx, tenant, repository, digest); err == nil {
-		return
+	if active, err := s.metadata.GetActiveSecretScanRunByDigest(ctx, tenant, repository, digest); err == nil {
+		if scanRunAge(s.now(), active.StartedAt, active.CreatedAt) <= settings.Timeout {
+			return
+		}
+		// The active row has outlived its own configured Timeout: it is
+		// orphaned (see staleScanRunError), not still legitimately in
+		// flight. Force-fail it and fall through to run a genuinely new
+		// scan, mirroring dedupAndQueueScanRun's Trivy-leg behavior. Every
+		// failure path here stays best-effort, consistent with the rest of
+		// this function: an UpsertSecretScanRun error simply returns.
+		orphaned := active
+		finished := s.now()
+		orphaned.Status = ports.SecretScanRunStatusFailed
+		orphaned.FinishedAt = &finished
+		orphaned.UpdatedAt = finished
+		orphaned.Error = staleScanRunError
+		if err := s.metadata.UpsertSecretScanRun(ctx, tenant, orphaned); err != nil {
+			return
+		}
 	} else if !domain.IsCode(err, domain.ErrorCodeNotFound) {
 		return
 	}
