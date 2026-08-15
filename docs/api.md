@@ -155,6 +155,7 @@ The detail payload keeps the summary `run` object, a compact ordered `findings` 
 | DELETE | `/v2/<repo>/manifests/<tag>` | Untags only, leaving the manifest and its other tags intact; `202`; `404` if absent |
 | GET | `/v2/<repo>/manifests/<tag-or-digest>/scan-status` | CI-facing scan verdict; pull-credential auth; always `200` |
 | GET | `/v2/<repo>/manifests/<tag-or-digest>/signature-status` | CI-facing signature verdict; pull-credential auth; always `200` |
+| GET | `/v2/<repo>/manifests/<tag-or-digest>/secret-scan-status` | CI-facing secret-scan verdict; pull-credential auth; always `200` |
 
 `_catalog` and `tags/list` accept `n` and `last`. Without `n`, no limit is applied; a negative or non-numeric `n` is `400`. Registry errors follow `{ "errors": [{"code":"...","message":"..."}] }`.
 

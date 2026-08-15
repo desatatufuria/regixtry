@@ -358,6 +358,125 @@ func signatureStatusReason(repository string, digest string, err error) string {
 	return strings.TrimPrefix(err.Error(), prefix)
 }
 
+// SecretScanStatusResult is the CI-facing secret-scan verdict for one digest
+// (design.md Decision 1-4). Like ScanStatusResult/SignatureStatusResult, this
+// never gates the request -- gitleaks findings never block a pull or a push
+// (service_scanning.go:324-328), so there is no WouldBlockPull field and no
+// severity-threshold field.
+type SecretScanStatusResult struct {
+	Repository string                 `json:"repository"`
+	Reference  string                 `json:"reference"`
+	Digest     string                 `json:"digest"`
+	State      string                 `json:"state"`
+	Policy     SecretScanStatusPolicy `json:"policy"`
+	Scan       *SecretScanStatusScan  `json:"scan,omitempty"`
+}
+
+// SecretScanStatusPolicy carries only the enabled toggle -- gitleaks has no
+// severity-threshold gate to configure, unlike ScanStatusPolicy's Trivy
+// counterpart (design.md Decision 2).
+type SecretScanStatusPolicy struct {
+	Enabled bool `json:"enabled"`
+}
+
+// SecretScanStatusScan never carries per-finding detail -- ports.SecretFinding
+// is never referenced here (design.md threat matrix, capability/data
+// disclosure boundary).
+type SecretScanStatusScan struct {
+	Status       string     `json:"status"`
+	FindingCount int        `json:"finding_count"`
+	FinishedAt   *time.Time `json:"finished_at,omitempty"`
+}
+
+const (
+	SecretScanStatusUnscanned       = "unscanned"
+	SecretScanStatusInProgress      = "in_progress"
+	SecretScanStatusFailed          = "failed"
+	SecretScanStatusClean           = "clean"
+	SecretScanStatusFindingsPresent = "findings_present"
+)
+
+// SecretScanStatus resolves the verdict via the same query path
+// GetSecretScanFindings uses -- ListSecretScanRuns followed by a digest
+// match -- and deliberately never calls GetActiveSecretScanRunByDigest,
+// which filters to queued/running rows only and would misreport a completed
+// scan as unscanned (design.md Decision 1). Authorization is ActionPull, the
+// same action ScanStatus/SignatureStatus use: "if you may pull it, you may
+// learn why you cannot."
+func (s *Service) SecretScanStatus(ctx context.Context, repositoryName string, reference string) (SecretScanStatusResult, error) {
+	repository, err := parseRepository(repositoryName)
+	if err != nil {
+		return SecretScanStatusResult{}, err
+	}
+
+	if err := s.authorize(ctx, ports.Action{Verb: ports.ActionPull, Repository: repository.String()}); err != nil {
+		return SecretScanStatusResult{}, err
+	}
+
+	manifest, err := s.metadata.ResolveManifest(ctx, s.tenant(ctx), repository, reference)
+	if err != nil {
+		return SecretScanStatusResult{}, err
+	}
+	digest := manifest.Digest.String()
+
+	// GetScanSettings(gitleaks) returns domain.ErrorCodeNotFound on zero
+	// rows -- a real case in fresh installs/tests before EnsureScanSettings
+	// has run for gitleaks. Unlike GetScanPolicySettings's fail-open-to-true
+	// default (a security gate that must never silently turn off), gitleaks
+	// is informational only, so NotFound defaults to Enabled: false: safer
+	// to under-report than to claim scanning is on when no row says so
+	// (design.md Decision 2).
+	settings, err := s.metadata.GetScanSettings(ctx, s.tenant(ctx), gitleaksFeatureName)
+	if err != nil {
+		if !domain.IsCode(err, domain.ErrorCodeNotFound) {
+			return SecretScanStatusResult{}, err
+		}
+		settings = ports.ScanSettings{Enabled: false}
+	}
+	settings, err = s.applyRepositoryOverride(ctx, s.tenant(ctx), repository.String(), gitleaksFeatureName, settings)
+	if err != nil {
+		return SecretScanStatusResult{}, err
+	}
+
+	result := SecretScanStatusResult{
+		Repository: repository.String(),
+		Reference:  reference,
+		Digest:     digest,
+		Policy:     SecretScanStatusPolicy{Enabled: settings.Enabled},
+	}
+
+	// Deliberately ListSecretScanRuns + digest-match, not
+	// GetActiveSecretScanRunByDigest -- the latter filters to queued/running
+	// rows only and would misreport a completed scan as unscanned
+	// (design.md Decision 1). Mirrors GetSecretScanFindings's own lookup.
+	runs, err := s.metadata.ListSecretScanRuns(ctx, s.tenant(ctx), repository.String(), 50)
+	if err != nil {
+		return SecretScanStatusResult{}, err
+	}
+	for _, run := range runs {
+		if run.Digest != digest {
+			continue
+		}
+		result.Scan = &SecretScanStatusScan{Status: run.Status, FindingCount: run.FindingCount, FinishedAt: run.FinishedAt}
+		switch run.Status {
+		case ports.SecretScanRunStatusQueued, ports.SecretScanRunStatusRunning:
+			result.State = SecretScanStatusInProgress
+		case ports.SecretScanRunStatusFailed:
+			result.State = SecretScanStatusFailed
+		case ports.SecretScanRunStatusCompleted:
+			if run.FindingCount > 0 {
+				result.State = SecretScanStatusFindingsPresent
+			} else {
+				result.State = SecretScanStatusClean
+			}
+		}
+		return result, nil
+	}
+
+	result.State = SecretScanStatusUnscanned
+	return result, nil
+}
+
 func (s *Service) Catalog(ctx context.Context, limit int, after string) (CatalogResult, error) {
 	action := ports.Action{Verb: ports.ActionCatalog}
 	if err := s.authorize(ctx, action); err != nil {

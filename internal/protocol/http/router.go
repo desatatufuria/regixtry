@@ -170,6 +170,15 @@ func (r *Router) handleV2(w stdhttp.ResponseWriter, req *stdhttp.Request) {
 			r.handleManifestSignatureStatus(w, req, repository, strings.TrimSuffix(reference, "/signature-status"))
 			return
 		}
+		// Same route-collision-avoidance reasoning as "/scan-status" and
+		// "/signature-status" above (secret-scan-status design.md "Data
+		// Flow"): a tag literally named "secret-scan-status" does not end
+		// with "/secret-scan-status", so it still falls through to
+		// handleManifest.
+		if strings.HasSuffix(reference, "/secret-scan-status") {
+			r.handleManifestSecretScanStatus(w, req, repository, strings.TrimSuffix(reference, "/secret-scan-status"))
+			return
+		}
 		r.handleManifest(w, req, repository, reference)
 	case suffix == "tags/list":
 		r.handleTags(w, req, repository)
@@ -427,6 +436,34 @@ func (r *Router) handleManifestSignatureStatus(w stdhttp.ResponseWriter, req *st
 	}
 
 	result, err := r.service.SignatureStatus(req.Context(), repository, reference)
+	if err != nil {
+		writeError(w, req, err, r.challengeForError(action, err), "MANIFEST_UNKNOWN")
+		return
+	}
+
+	writeJSON(w, stdhttp.StatusOK, result)
+}
+
+// handleManifestSecretScanStatus is the CI-facing secret-scan verdict read
+// (secret-scan-status design.md), mirroring handleManifestScanStatus and
+// handleManifestSignatureStatus: reachable with ordinary pull credentials,
+// no admin session required. Gitleaks findings never gate a pull, so this
+// always answers 200 with the current verdict -- it reports a verdict, it
+// is never subject to one.
+func (r *Router) handleManifestSecretScanStatus(w stdhttp.ResponseWriter, req *stdhttp.Request, repository string, reference string) {
+	action := ports.Action{Verb: ports.ActionPull, Repository: repository}
+	if req.Method != stdhttp.MethodGet {
+		w.Header().Set("Allow", stdhttp.MethodGet)
+		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+		return
+	}
+
+	req, ok := r.withPrincipal(w, req, action)
+	if !ok {
+		return
+	}
+
+	result, err := r.service.SecretScanStatus(req.Context(), repository, reference)
 	if err != nil {
 		writeError(w, req, err, r.challengeForError(action, err), "MANIFEST_UNKNOWN")
 		return
