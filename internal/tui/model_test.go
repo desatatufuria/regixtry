@@ -2046,6 +2046,90 @@ func TestModelSigningPolicyModalOpenerKeyIsScopedToSigningFeature(t *testing.T) 
 	})
 }
 
+// TestModelSigningPolicyModalOpenSeedsUnsignedSelfReadFromLoadedSettings is
+// the RED test for the UnsignedSelfRead TUI surface: opening
+// signingPolicyModal seeds UnsignedSelfRead from the already-loaded
+// SigningPolicy rather than leaving it at its zero value, normalizing a
+// stored "" to the modal's canonical "off".
+func TestModelSigningPolicyModalOpenSeedsUnsignedSelfReadFromLoadedSettings(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 15, 20, 0, 0, 0, time.UTC)
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+		features:     []ports.FeatureSummary{{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: true}},
+		featurePage: ports.FeaturePage{
+			Summary: ports.FeatureSummary{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: true},
+		},
+		signingPolicy: ports.SigningPolicySettings{Enabled: true, UnsignedSelfRead: "repo_push"},
+	}
+	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
+	updated = runKey(t, updated, "f")
+	updated = runKey(t, updated, "p")
+
+	if got, want := updated.adminView.SigningPolicyModal.UnsignedSelfRead, "repo_push"; got != want {
+		t.Fatalf("SigningPolicyModal.UnsignedSelfRead = %q, want %q seeded from the loaded policy", got, want)
+	}
+}
+
+// TestModelSigningPolicyModalSaveIncludesUnsignedSelfRead is the RED test
+// for the bug found while scoping this change: saving the modal after
+// changing an unrelated field (Enabled) used to silently wipe
+// UnsignedSelfRead back to "" because updateSigningPolicyModalKey's Enter
+// handler never included it in the save payload. Also verifies cycling the
+// field itself with Space persists the new value.
+func TestModelSigningPolicyModalSaveIncludesUnsignedSelfRead(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 15, 20, 0, 0, 0, time.UTC)
+	newModel := func() (Model, *fakeAdminClient) {
+		adminClient := &fakeAdminClient{
+			loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+			features:     []ports.FeatureSummary{{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: true}},
+			featurePage: ports.FeaturePage{
+				Summary: ports.FeatureSummary{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: true},
+			},
+			signingPolicy: ports.SigningPolicySettings{Enabled: true, UnsignedSelfRead: "repo_push"},
+		}
+		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
+		updated = runKey(t, updated, "f")
+		updated = runKey(t, updated, "p")
+		return updated, adminClient
+	}
+
+	t.Run("saving after touching an unrelated field preserves the loaded value", func(t *testing.T) {
+		t.Parallel()
+		updated, adminClient := newModel()
+
+		// Focus starts on Enabled; toggle it without touching UnsignedSelfRead.
+		submitted := runKey(t, runKey(t, updated, " "), "enter")
+
+		if got, want := adminClient.lastSigningPolicyInput.UnsignedSelfRead, "repo_push"; got != want {
+			t.Fatalf("lastSigningPolicyInput.UnsignedSelfRead = %q, want %q preserved from the loaded policy", got, want)
+		}
+		if got, want := submitted.adminView.SigningPolicyModal.UnsignedSelfRead, "repo_push"; got != want {
+			t.Fatalf("SigningPolicyModal.UnsignedSelfRead = %q, want %q after save", got, want)
+		}
+	})
+
+	t.Run("cycling the field with Space persists the new value on save", func(t *testing.T) {
+		t.Parallel()
+		updated, adminClient := newModel()
+
+		// Tab from Enabled to UnsignedSelfRead, cycle repo_push -> off.
+		updated = runKey(t, updated, "tab")
+		updated = runKey(t, updated, " ")
+		submitted := runKey(t, updated, "enter")
+
+		if got, want := adminClient.lastSigningPolicyInput.UnsignedSelfRead, "off"; got != want {
+			t.Fatalf("lastSigningPolicyInput.UnsignedSelfRead = %q, want %q after cycling", got, want)
+		}
+		if got, want := submitted.adminView.SigningPolicyModal.UnsignedSelfRead, "off"; got != want {
+			t.Fatalf("SigningPolicyModal.UnsignedSelfRead = %q, want %q after save", got, want)
+		}
+	})
+}
+
 // TestModelSigningPolicyModalAddKeySubmitPersistsAndReflectsCurrentSettings
 // is the Phase 9 task 9.10 RED test (operator-admin-tui spec's "Operator
 // saves a policy change" scenario): toggling Enabled and adding a key
@@ -2069,8 +2153,10 @@ func TestModelSigningPolicyModalAddKeySubmitPersistsAndReflectsCurrentSettings(t
 	updated = runKey(t, updated, "f")
 	updated = runKey(t, updated, "p")
 
-	// Focus starts on Enabled; toggle it on, Tab to AddKey, type a key.
+	// Focus starts on Enabled; toggle it on, Tab past UnsignedSelfRead to
+	// AddKey, type a key.
 	updated = runKey(t, updated, " ")
+	updated = runKey(t, updated, "tab")
 	updated = runKey(t, updated, "tab")
 	updated = runKey(t, updated, "-----BEGIN PUBLIC KEY-----fakekeydata-----END PUBLIC KEY-----")
 
@@ -2373,6 +2459,78 @@ func TestModelRepositoryOverrideModalSetAndClearRoundTripReflectsInModal(t *test
 	}
 	if !strings.Contains(inert.status, "Already inheriting global") {
 		t.Fatalf("status = %q, want the inert-clear message", inert.status)
+	}
+}
+
+// TestModelRepositoryOverrideModalSigningSaveIncludesUnsignedSelfRead is the
+// RED test for the bug found while scoping this change: cycling to the
+// signing feature, saving once establishes UnsignedSelfRead via the modal's
+// own field (round-tripped back by applyRepositoryOverrideToModal, mirroring
+// Enabled/PathPrimary's existing reflected-after-save behavior); a second
+// save that only touches an unrelated field (Enabled) used to silently wipe
+// UnsignedSelfRead back to "" because the Enter handler's signing branch
+// never included it in the save payload.
+func TestModelRepositoryOverrideModalSigningSaveIncludesUnsignedSelfRead(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 15, 21, 0, 0, 0, time.UTC)
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+		features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
+		featurePage: ports.FeaturePage{
+			Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
+			Header:  []ports.FeatureField{{Label: "Enabled", Value: "true"}},
+		},
+		scanRuns: []ports.ScanRun{
+			{ID: "run-1", Repository: "team/az-deploy-demo", RequestedRef: "1.0.0", Status: ports.ScanRunStatusCompleted, Critical: 1},
+		},
+	}
+	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
+	updated = runKey(t, updated, "f")
+	updated = runKey(t, updated, "tab")
+	updated = runKey(t, updated, "o")
+
+	// Cycle Feature (trivy -> gitleaks -> signing) with 2 Spaces, Tab past
+	// Enabled to PathPrimary, type a key, Tab to UnsignedSelfRead and cycle
+	// it off -> pusher, then Enter to save.
+	updated = runKey(t, updated, " ")
+	updated = runKey(t, updated, " ")
+	updated = runKey(t, updated, "tab")
+	updated = runKey(t, updated, "tab")
+	for _, r := range "-----BEGIN PUBLIC KEY-----fakekeydata-----END PUBLIC KEY-----" {
+		updated = runKey(t, updated, string(r))
+	}
+	updated = runKey(t, updated, "tab")
+	updated = runKey(t, updated, " ")
+	firstSave := runKey(t, updated, "enter")
+
+	if got, want := adminClient.lastSetRepositoryOverride.UnsignedSelfRead, "pusher"; got != want {
+		t.Fatalf("lastSetRepositoryOverride.UnsignedSelfRead = %q, want %q", got, want)
+	}
+	if got, want := firstSave.adminView.RepositoryOverrideModal.UnsignedSelfRead, "pusher"; got != want {
+		t.Fatalf("RepositoryOverrideModal.UnsignedSelfRead = %q, want %q reflected after save", got, want)
+	}
+
+	// Navigate from UnsignedSelfRead -> Clear -> Feature -> Enabled (3 Tabs),
+	// toggle Enabled only, then save again without touching UnsignedSelfRead.
+	navigated := firstSave
+	for i := 0; i < 3; i++ {
+		navigated = runKey(t, navigated, "tab")
+	}
+	if got, want := navigated.adminView.RepositoryOverrideModal.Focus, repositoryOverrideFieldEnabled; got != want {
+		t.Fatalf("Focus = %v, want %v (Enabled) after 3 Tabs from UnsignedSelfRead", got, want)
+	}
+	navigated = runKey(t, navigated, " ")
+	secondSave := runKey(t, navigated, "enter")
+
+	if got, want := adminClient.setRepositoryOverrideCalls, 2; got != want {
+		t.Fatalf("setRepositoryOverrideCalls = %d, want %d", got, want)
+	}
+	if got, want := adminClient.lastSetRepositoryOverride.UnsignedSelfRead, "pusher"; got != want {
+		t.Fatalf("lastSetRepositoryOverride.UnsignedSelfRead = %q, want %q preserved from the first save", got, want)
+	}
+	if got, want := secondSave.adminView.RepositoryOverrideModal.UnsignedSelfRead, "pusher"; got != want {
+		t.Fatalf("RepositoryOverrideModal.UnsignedSelfRead = %q, want %q after second save", got, want)
 	}
 }
 

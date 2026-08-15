@@ -843,6 +843,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// applyRepositoryOverrideToModal's own "stays open" precedent.
 		m.adminView.SigningPolicy = msg.settings
 		m.adminView.SigningPolicyModal.Enabled = msg.settings.Enabled
+		m.adminView.SigningPolicyModal.UnsignedSelfRead = normalizeUnsignedSelfRead(msg.settings.UnsignedSelfRead)
 		m.adminView.SigningPolicyModal.Fingerprints = signingKeyFingerprints(msg.settings.TrustedPublicKeys)
 		m.adminView.SigningPolicyModal.AddKey = ""
 		m.adminView.SigningPolicyModal.Error = ""
@@ -1830,10 +1831,11 @@ func (m Model) updateAdminFeaturesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// isSelectedTrivyFeature() -- the two are mutually exclusive
 		// (design.md Decision 11 piece 2).
 		m.adminView.SigningPolicyModal = signingPolicyModal{
-			Open:         true,
-			Focus:        signingPolicyFieldEnabled,
-			Enabled:      m.adminView.SigningPolicy.Enabled,
-			Fingerprints: signingKeyFingerprints(m.adminView.SigningPolicy.TrustedPublicKeys),
+			Open:             true,
+			Focus:            signingPolicyFieldEnabled,
+			Enabled:          m.adminView.SigningPolicy.Enabled,
+			UnsignedSelfRead: normalizeUnsignedSelfRead(m.adminView.SigningPolicy.UnsignedSelfRead),
+			Fingerprints:     signingKeyFingerprints(m.adminView.SigningPolicy.TrustedPublicKeys),
 		}
 		m.status = ""
 		return m, nil
@@ -2092,8 +2094,11 @@ func (m Model) updateSigningPolicyModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 		m.adminView.SigningPolicyModal.Error = ""
 		return m, nil
 	case isRuneKey(msg, ' '):
-		if m.adminView.SigningPolicyModal.Focus == signingPolicyFieldEnabled {
+		switch m.adminView.SigningPolicyModal.Focus {
+		case signingPolicyFieldEnabled:
 			m.adminView.SigningPolicyModal.Enabled = !m.adminView.SigningPolicyModal.Enabled
+		case signingPolicyFieldUnsignedSelfRead:
+			m.adminView.SigningPolicyModal.UnsignedSelfRead = nextUnsignedSelfReadValue(m.adminView.SigningPolicyModal.UnsignedSelfRead)
 		}
 		m.adminView.SigningPolicyModal.Error = ""
 		return m, nil
@@ -2113,7 +2118,7 @@ func (m Model) updateSigningPolicyModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 			}
 		}
 		m.status = "Saving signing policy..."
-		return m, m.updateSigningPolicyCmd(ports.SigningPolicySettings{Enabled: modal.Enabled, TrustedPublicKeys: keys})
+		return m, m.updateSigningPolicyCmd(ports.SigningPolicySettings{Enabled: modal.Enabled, TrustedPublicKeys: keys, UnsignedSelfRead: normalizeUnsignedSelfRead(modal.UnsignedSelfRead)})
 	}
 	if msg.Type == tea.KeyRunes && m.adminView.SigningPolicyModal.Focus == signingPolicyFieldAddKey {
 		m.adminView.SigningPolicyModal.AddKey += string(msg.Runes)
@@ -2152,6 +2157,7 @@ func (m *Model) applyRepositoryOverrideToModal(override ports.RepositoryOverride
 		m.adminView.RepositoryOverrideModal.Enabled = false
 		m.adminView.RepositoryOverrideModal.PathPrimary = ""
 		m.adminView.RepositoryOverrideModal.PathSecondary = ""
+		m.adminView.RepositoryOverrideModal.UnsignedSelfRead = "off"
 		return
 	}
 	m.adminView.RepositoryOverrideModal.Enabled = override.Enabled
@@ -2163,6 +2169,7 @@ func (m *Model) applyRepositoryOverrideToModal(override ports.RepositoryOverride
 		// (design.md Decision 11 piece 3) -- unlike signingPolicyModal's
 		// growable list, only the first stored key is shown/edited here.
 		m.adminView.RepositoryOverrideModal.PathPrimary = firstRepositoryOverrideTrustedKey(override.TrustedPublicKeys)
+		m.adminView.RepositoryOverrideModal.UnsignedSelfRead = normalizeUnsignedSelfRead(override.UnsignedSelfRead)
 	default:
 		m.adminView.RepositoryOverrideModal.PathPrimary = override.IgnoreFilePath
 		m.adminView.RepositoryOverrideModal.PathSecondary = override.IgnorePolicyPath
@@ -2203,6 +2210,8 @@ func (m Model) updateRepositoryOverrideModalKey(msg tea.KeyMsg) (tea.Model, tea.
 			m.adminView.RepositoryOverrideModal.Enabled = !m.adminView.RepositoryOverrideModal.Enabled
 		case repositoryOverrideFieldFeature:
 			m.adminView.RepositoryOverrideModal.Feature = nextRepositoryOverrideFeatureName(m.adminView.RepositoryOverrideModal.Feature)
+		case repositoryOverrideFieldUnsignedSelfRead:
+			m.adminView.RepositoryOverrideModal.UnsignedSelfRead = nextUnsignedSelfReadValue(m.adminView.RepositoryOverrideModal.UnsignedSelfRead)
 		}
 		m.adminView.RepositoryOverrideModal.Error = ""
 		return m, nil
@@ -2228,6 +2237,7 @@ func (m Model) updateRepositoryOverrideModalKey(msg tea.KeyMsg) (tea.Model, tea.
 			if strings.TrimSpace(modal.PathPrimary) != "" {
 				input.TrustedPublicKeys = []string{modal.PathPrimary}
 			}
+			input.UnsignedSelfRead = normalizeUnsignedSelfRead(modal.UnsignedSelfRead)
 		default:
 			input.IgnoreFilePath = modal.PathPrimary
 			input.IgnorePolicyPath = modal.PathSecondary

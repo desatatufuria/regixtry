@@ -159,25 +159,44 @@ func TestNextRepositoryOverrideFieldSkipsPathSecondaryForGitleaks(t *testing.T) 
 		}
 	})
 
-	t.Run("gitleaks skips PathSecondary", func(t *testing.T) {
+	t.Run("gitleaks skips PathSecondary and UnsignedSelfRead", func(t *testing.T) {
 		t.Parallel()
 
 		got := nextRepositoryOverrideField(repositoryOverrideFieldPathPrimary, gitleaksFeatureName)
 		if got != repositoryOverrideFieldClear {
-			t.Fatalf("nextRepositoryOverrideField(PathPrimary, gitleaks) = %v, want Clear (PathSecondary skipped)", got)
+			t.Fatalf("nextRepositoryOverrideField(PathPrimary, gitleaks) = %v, want Clear (PathSecondary+UnsignedSelfRead skipped)", got)
 		}
 	})
 
 	// Phase 9 task 9.15 RED: signing likewise has no second path field, so
 	// nextRepositoryOverrideField's condition generalizes from
 	// "feature == gitleaksFeatureName" to "feature != trivyFeatureName"
-	// (design.md Decision 11 piece 3) -- signing must skip PathSecondary too.
-	t.Run("signing skips PathSecondary", func(t *testing.T) {
+	// (design.md Decision 11 piece 3) -- signing must skip PathSecondary too,
+	// but (unlike gitleaks) visits its own UnsignedSelfRead field before Clear.
+	t.Run("signing skips PathSecondary but visits UnsignedSelfRead", func(t *testing.T) {
 		t.Parallel()
 
 		got := nextRepositoryOverrideField(repositoryOverrideFieldPathPrimary, signingFeatureName)
+		if got != repositoryOverrideFieldUnsignedSelfRead {
+			t.Fatalf("nextRepositoryOverrideField(PathPrimary, signing) = %v, want UnsignedSelfRead (PathSecondary skipped)", got)
+		}
+		got = nextRepositoryOverrideField(got, signingFeatureName)
 		if got != repositoryOverrideFieldClear {
-			t.Fatalf("nextRepositoryOverrideField(PathPrimary, signing) = %v, want Clear (PathSecondary skipped)", got)
+			t.Fatalf("nextRepositoryOverrideField(UnsignedSelfRead, signing) = %v, want Clear", got)
+		}
+	})
+
+	t.Run("trivy and gitleaks never reach UnsignedSelfRead", func(t *testing.T) {
+		t.Parallel()
+
+		for _, feature := range []string{trivyFeatureName, gitleaksFeatureName} {
+			field := repositoryOverrideFieldFeature
+			for i := 0; i < 10; i++ {
+				field = nextRepositoryOverrideField(field, feature)
+				if field == repositoryOverrideFieldUnsignedSelfRead {
+					t.Fatalf("feature %q reached UnsignedSelfRead, want it unreachable outside signing", feature)
+				}
+			}
 		}
 	})
 }
@@ -200,14 +219,15 @@ func TestSigningPolicyModalActiveReflectsOpenField(t *testing.T) {
 	}
 }
 
-// TestNextSigningPolicyFieldCyclesThroughAllThreeFields is the Phase 9 task
-// 9.1 RED test: nextSigningPolicyField wraps
-// Enabled -> AddKey -> ClearKeys -> Enabled (design.md Decision 11 piece 1).
-func TestNextSigningPolicyFieldCyclesThroughAllThreeFields(t *testing.T) {
+// TestNextSigningPolicyFieldCyclesThroughAllFourFields is the RED test for
+// the UnsignedSelfRead TUI surface: nextSigningPolicyField wraps
+// Enabled -> UnsignedSelfRead -> AddKey -> ClearKeys -> Enabled.
+func TestNextSigningPolicyFieldCyclesThroughAllFourFields(t *testing.T) {
 	t.Parallel()
 
 	got := signingPolicyFieldEnabled
 	want := []signingPolicyField{
+		signingPolicyFieldUnsignedSelfRead,
 		signingPolicyFieldAddKey,
 		signingPolicyFieldClearKeys,
 		signingPolicyFieldEnabled,
@@ -216,6 +236,43 @@ func TestNextSigningPolicyFieldCyclesThroughAllThreeFields(t *testing.T) {
 		got = nextSigningPolicyField(got)
 		if got != expect {
 			t.Fatalf("step %d: nextSigningPolicyField() = %v, want %v", i, got, expect)
+		}
+	}
+}
+
+// TestNextUnsignedSelfReadValueCyclesThroughAllModes is the RED test for the
+// UnsignedSelfRead TUI surface: nextUnsignedSelfReadValue wraps
+// off -> pusher -> repo_push -> off, and treats "" (the wire "no exemption"
+// value) the same as "off" when cycling forward from an unseeded modal.
+func TestNextUnsignedSelfReadValueCyclesThroughAllModes(t *testing.T) {
+	t.Parallel()
+
+	got := "off"
+	want := []string{"pusher", "repo_push", "off"}
+	for i, expect := range want {
+		got = nextUnsignedSelfReadValue(got)
+		if got != expect {
+			t.Fatalf("step %d: nextUnsignedSelfReadValue() = %q, want %q", i, got, expect)
+		}
+	}
+
+	if got := nextUnsignedSelfReadValue(""); got != "pusher" {
+		t.Fatalf(`nextUnsignedSelfReadValue("") = %q, want "pusher" (treats "" as "off" before advancing)`, got)
+	}
+}
+
+// TestNormalizeUnsignedSelfReadMapsEmptyToOff is the RED test for the
+// UnsignedSelfRead TUI surface: the wire/storage "no exemption" value ""
+// always displays as the modal's canonical "off".
+func TestNormalizeUnsignedSelfReadMapsEmptyToOff(t *testing.T) {
+	t.Parallel()
+
+	if got := normalizeUnsignedSelfRead(""); got != "off" {
+		t.Fatalf(`normalizeUnsignedSelfRead("") = %q, want "off"`, got)
+	}
+	for _, value := range []string{"off", "pusher", "repo_push"} {
+		if got := normalizeUnsignedSelfRead(value); got != value {
+			t.Fatalf("normalizeUnsignedSelfRead(%q) = %q, want unchanged", value, got)
 		}
 	}
 }

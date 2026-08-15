@@ -823,7 +823,7 @@ func signingPolicyBadge(theme adminTheme, policy ports.SigningPolicySettings) st
 // renderSigningPolicyModal renders the image-signing content-trust gate's
 // own modal (design.md Decision 11 piece 1), a sibling of
 // renderScanPolicyModal -- NOT an extension of it. Row arithmetic: heading
-// (1) + status (1) + 2 fields x 2 rows (4) + key list (1 for empty, else
+// (1) + status (1) + 3 fields x 2 rows (6) + key list (1 for empty, else
 // min(N,4)+[1 if N>4]) + clear row (1) + blank/help (2, +2 more with an
 // error) + 4 rows theme.section chrome.
 func renderSigningPolicyModal(theme adminTheme, modal signingPolicyModal) string {
@@ -831,6 +831,7 @@ func renderSigningPolicyModal(theme adminTheme, modal signingPolicyModal) string
 		theme.subheading.Render("Signing Policy"),
 		theme.muted.Render(signingPolicyStatusLine(modal)),
 		renderToggleField(theme, "Enabled", modal.Enabled, modal.Focus == signingPolicyFieldEnabled),
+		renderTextField(theme, "Unsigned Self-Read", normalizeUnsignedSelfRead(modal.UnsignedSelfRead), modal.Focus == signingPolicyFieldUnsignedSelfRead),
 		renderTextField(theme, "Trusted Key (PEM)", modal.AddKey, modal.Focus == signingPolicyFieldAddKey),
 	}
 	lines = append(lines, renderSigningPolicyKeyList(theme, modal.Fingerprints)...)
@@ -838,7 +839,7 @@ func renderSigningPolicyModal(theme adminTheme, modal signingPolicyModal) string
 	if strings.TrimSpace(modal.Error) != "" {
 		lines = append(lines, "", theme.error.Render(modal.Error))
 	}
-	lines = append(lines, "", theme.muted.Render("Enter: save/add key | Tab: next field | Space: toggle | Esc: cancel"))
+	lines = append(lines, "", theme.muted.Render("Enter: save/add key | Tab: next field | Space: toggle/cycle | Esc: cancel"))
 	return theme.section.Render(strings.Join(lines, "\n"))
 }
 
@@ -917,7 +918,8 @@ func scanPolicyThresholdLabel(threshold string) string {
 // extension). Row arithmetic, using the same 2-rows-per-field cost and
 // 4-row theme.section chrome as scan-policy-gate's Decision 6: heading(1) +
 // status(1) + Feature(2) + Enabled(2) + PathPrimary(2) + [PathSecondary(2),
-// trivy only] + Clear row(1) + [blank+error(2)] + blank+help(2).
+// trivy only] + [UnsignedSelfRead(2), signing only] + Clear row(1) +
+// [blank+error(2)] + blank+help(2).
 func renderRepositoryOverrideModal(theme adminTheme, modal repositoryOverrideModal) string {
 	lines := []string{
 		theme.subheading.Render(fmt.Sprintf("Repository Override — %s", modal.Repository)),
@@ -930,6 +932,7 @@ func renderRepositoryOverrideModal(theme adminTheme, modal repositoryOverrideMod
 		lines = append(lines, renderTextField(theme, "Config Path", modal.PathPrimary, modal.Focus == repositoryOverrideFieldPathPrimary))
 	case signingFeatureName:
 		lines = append(lines, renderTextField(theme, "Trusted Key (PEM)", modal.PathPrimary, modal.Focus == repositoryOverrideFieldPathPrimary))
+		lines = append(lines, renderTextField(theme, "Unsigned Self-Read", normalizeUnsignedSelfRead(modal.UnsignedSelfRead), modal.Focus == repositoryOverrideFieldUnsignedSelfRead))
 	default:
 		lines = append(lines, renderTextField(theme, "Ignore File Path", modal.PathPrimary, modal.Focus == repositoryOverrideFieldPathPrimary))
 		lines = append(lines, renderTextField(theme, "Ignore Policy Path", modal.PathSecondary, modal.Focus == repositoryOverrideFieldPathSecondary))

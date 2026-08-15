@@ -257,6 +257,7 @@ type signingPolicyField int
 
 const (
 	signingPolicyFieldEnabled signingPolicyField = iota
+	signingPolicyFieldUnsignedSelfRead
 	signingPolicyFieldAddKey
 	signingPolicyFieldClearKeys // action row, not an input
 )
@@ -270,28 +271,62 @@ const (
 // without a multi-line PEM viewport. AddKey is one PEM, entered as a single
 // line (any whitespace arrangement -- signing.NormalizePublicKeyPEM
 // reconstructs canonical PEM either way), submitted with Enter to append it
-// to the stored key set.
+// to the stored key set. UnsignedSelfRead mirrors
+// ports.SigningPolicySettings.UnsignedSelfRead, always held here as one of
+// unsignedSelfReadCycle's three canonical values (never ""), cycled with
+// Space like repositoryOverrideModal.Feature.
 type signingPolicyModal struct {
-	Open         bool
-	Focus        signingPolicyField
-	Enabled      bool
-	AddKey       string   // one PEM, single line -- see type doc comment
-	Fingerprints []string // read-only SHA-256/12 of each stored key
-	Loading      bool
-	Error        string
+	Open             bool
+	Focus            signingPolicyField
+	Enabled          bool
+	UnsignedSelfRead string   // "off" | "pusher" | "repo_push" -- see type doc comment
+	AddKey           string   // one PEM, single line -- see type doc comment
+	Fingerprints     []string // read-only SHA-256/12 of each stored key
+	Loading          bool
+	Error            string
 }
 
 func (m signingPolicyModal) Active() bool {
 	return m.Open
 }
 
-// nextSigningPolicyField cycles between the modal's 3 fields with a
+// nextSigningPolicyField cycles between the modal's 4 fields with a
 // wrapping cursor, mirroring nextScanPolicyField/nextRepositoryOverrideField.
 func nextSigningPolicyField(field signingPolicyField) signingPolicyField {
 	if field >= signingPolicyFieldClearKeys {
 		return signingPolicyFieldEnabled
 	}
 	return field + 1
+}
+
+// unsignedSelfReadCycle is signingPolicyModal/repositoryOverrideModal's
+// UnsignedSelfRead field cycle order, mirroring
+// repositoryOverrideFeatureCycle's shape. "" (the wire/storage value for "no
+// exemption") is never a cycle member -- normalizeUnsignedSelfRead maps it
+// to "off" before it ever reaches the modal.
+var unsignedSelfReadCycle = []string{"off", "pusher", "repo_push"}
+
+// normalizeUnsignedSelfRead maps ports.SigningPolicySettings/SigningOverride's
+// wire value "" (no exemption configured) onto the modal's canonical "off",
+// so the modal field is always one of unsignedSelfReadCycle's three values.
+func normalizeUnsignedSelfRead(value string) string {
+	if value == "" {
+		return "off"
+	}
+	return value
+}
+
+// nextUnsignedSelfReadValue cycles the UnsignedSelfRead field through
+// unsignedSelfReadCycle, wrapping back to the first entry, normalizing ""
+// first so cycling from an unseeded modal still lands on a real value.
+func nextUnsignedSelfReadValue(value string) string {
+	normalized := normalizeUnsignedSelfRead(value)
+	for index, candidate := range unsignedSelfReadCycle {
+		if candidate == normalized {
+			return unsignedSelfReadCycle[(index+1)%len(unsignedSelfReadCycle)]
+		}
+	}
+	return unsignedSelfReadCycle[0]
 }
 
 // repositoryOverrideField identifies which of repositoryOverrideModal's
@@ -301,42 +336,51 @@ type repositoryOverrideField int
 const (
 	repositoryOverrideFieldFeature repositoryOverrideField = iota
 	repositoryOverrideFieldEnabled
-	repositoryOverrideFieldPathPrimary   // trivy: ignore file | gitleaks: config
-	repositoryOverrideFieldPathSecondary // trivy: ignore policy (skipped for gitleaks)
-	repositoryOverrideFieldClear         // action row, not an input
+	repositoryOverrideFieldPathPrimary      // trivy: ignore file | gitleaks: config | signing: trusted key
+	repositoryOverrideFieldPathSecondary    // trivy: ignore policy (skipped for gitleaks/signing)
+	repositoryOverrideFieldUnsignedSelfRead // signing only (skipped otherwise)
+	repositoryOverrideFieldClear            // action row, not an input
 )
 
 // repositoryOverrideModal is the per-repository override editor opened with
 // `o` on a highlighted Repository Alerts row, mirroring scanPolicyModal's
 // exact 3-piece shape (design.md Decision 8 — a sibling struct, not an
-// extension of trivyConfigModal or scanPolicyModal).
+// extension of trivyConfigModal or scanPolicyModal). UnsignedSelfRead mirrors
+// signingPolicyModal.UnsignedSelfRead: only meaningful (and only reachable
+// via Tab/Space) when Feature == signingFeatureName, always held here as one
+// of unsignedSelfReadCycle's three canonical values (never "").
 type repositoryOverrideModal struct {
-	Open          bool
-	Repository    string
-	Feature       string // trivyFeatureName | gitleaksFeatureName
-	Focus         repositoryOverrideField
-	Exists        bool // false => this repository inherits the global row
-	Enabled       bool
-	PathPrimary   string
-	PathSecondary string
-	Loading       bool
-	Error         string
+	Open             bool
+	Repository       string
+	Feature          string // trivyFeatureName | gitleaksFeatureName
+	Focus            repositoryOverrideField
+	Exists           bool // false => this repository inherits the global row
+	Enabled          bool
+	PathPrimary      string
+	PathSecondary    string
+	UnsignedSelfRead string // "off" | "pusher" | "repo_push" -- signing only, see type doc comment
+	Loading          bool
+	Error            string
 }
 
 func (m repositoryOverrideModal) Active() bool {
 	return m.Open
 }
 
-// nextRepositoryOverrideField wraps between the modal's 5 fields, skipping
+// nextRepositoryOverrideField wraps between the modal's 6 fields, skipping
 // repositoryOverrideFieldPathSecondary for every feature except trivy
 // (gitleaks has no second path field, and neither does signing --
 // design.md Decision 11 piece 3 generalizes this condition from
 // "feature == gitleaksFeatureName" to "feature != trivyFeatureName" so a
-// fourth single-path feature needs no further change here), mirroring
-// nextScanPolicyField's wrapping-cursor pattern.
+// fourth single-path feature needs no further change here) and skipping
+// repositoryOverrideFieldUnsignedSelfRead for every feature except signing,
+// mirroring nextScanPolicyField's wrapping-cursor pattern.
 func nextRepositoryOverrideField(field repositoryOverrideField, feature string) repositoryOverrideField {
 	next := field + 1
 	if next == repositoryOverrideFieldPathSecondary && feature != trivyFeatureName {
+		next = repositoryOverrideFieldUnsignedSelfRead
+	}
+	if next == repositoryOverrideFieldUnsignedSelfRead && feature != signingFeatureName {
 		next = repositoryOverrideFieldClear
 	}
 	if next > repositoryOverrideFieldClear {

@@ -531,17 +531,17 @@ func TestRenderSigningPolicyModalFitsWithinRowBudget(t *testing.T) {
 		{
 			name:       "no error, 0 keys",
 			modal:      signingPolicyModal{Open: true, Focus: signingPolicyFieldEnabled, Enabled: false},
-			wantHeight: 14,
+			wantHeight: 16,
 		},
 		{
 			name:       "no error, 3 keys",
 			modal:      signingPolicyModal{Open: true, Focus: signingPolicyFieldEnabled, Enabled: true, Fingerprints: []string{"aaaaaaaaaaaa", "bbbbbbbbbbbb", "cccccccccccc"}},
-			wantHeight: 16,
+			wantHeight: 18,
 		},
 		{
 			name:       "error, >=4 keys (capped at 4 + more)",
 			modal:      signingPolicyModal{Open: true, Focus: signingPolicyFieldAddKey, Enabled: true, Fingerprints: []string{"aaaaaaaaaaaa", "bbbbbbbbbbbb", "cccccccccccc", "dddddddddddd", "eeeeeeeeeeee"}, Error: "trusted_public_keys[0] is invalid"},
-			wantHeight: 20,
+			wantHeight: 22,
 		},
 	}
 
@@ -574,6 +574,29 @@ func TestRenderSigningPolicyModalNeverRendersRawPEM(t *testing.T) {
 	}
 	if !strings.Contains(got, "deadbeefcafe") {
 		t.Fatalf("renderSigningPolicyModal() = %q, want the stored fingerprint shown", got)
+	}
+}
+
+// TestRenderSigningPolicyModalShowsUnsignedSelfRead is the RED test for the
+// UnsignedSelfRead TUI surface: the modal renders the field's label and its
+// current cycled value, normalizing an unseeded "" to "off" rather than
+// rendering a blank value row.
+func TestRenderSigningPolicyModalShowsUnsignedSelfRead(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+
+	unseeded := renderSigningPolicyModal(theme, signingPolicyModal{Open: true, Enabled: true})
+	if !strings.Contains(unseeded, "Unsigned Self-Read") {
+		t.Fatalf("renderSigningPolicyModal() = %q, want the Unsigned Self-Read label", unseeded)
+	}
+	if !strings.Contains(unseeded, "off") {
+		t.Fatalf(`renderSigningPolicyModal() = %q, want "" to normalize to "off"`, unseeded)
+	}
+
+	seeded := renderSigningPolicyModal(theme, signingPolicyModal{Open: true, Enabled: true, UnsignedSelfRead: "repo_push"})
+	if !strings.Contains(seeded, "repo_push") {
+		t.Fatalf("renderSigningPolicyModal() = %q, want the current repo_push value shown", seeded)
 	}
 }
 
@@ -616,12 +639,12 @@ func TestRenderRepositoryOverrideModalSigningShowsTrustedKeyLabel(t *testing.T) 
 		{
 			name:       "signing, no error",
 			modal:      repositoryOverrideModal{Open: true, Repository: "library/alpine", Feature: signingFeatureName, Exists: true, Enabled: true, PathPrimary: "-----BEGIN PUBLIC KEY-----"},
-			wantHeight: 15,
+			wantHeight: 17,
 		},
 		{
 			name:       "signing + error",
 			modal:      repositoryOverrideModal{Open: true, Repository: "library/alpine", Feature: signingFeatureName, Exists: true, Enabled: true, PathPrimary: "-----BEGIN PUBLIC KEY-----", Error: "trusted_public_keys[0] is invalid"},
-			wantHeight: 17,
+			wantHeight: 19,
 		},
 	}
 
@@ -642,6 +665,37 @@ func TestRenderRepositoryOverrideModalSigningShowsTrustedKeyLabel(t *testing.T) 
 				}
 			}
 		})
+	}
+}
+
+// TestRenderRepositoryOverrideModalShowsUnsignedSelfReadOnlyForSigning is the
+// RED test for the UnsignedSelfRead TUI surface: the field's label and
+// current value render for the signing feature (normalizing an unseeded ""
+// to "off"), and never render for trivy/gitleaks, mirroring the existing
+// Trusted-Key-label exclusivity test above.
+func TestRenderRepositoryOverrideModalShowsUnsignedSelfReadOnlyForSigning(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+
+	signing := renderRepositoryOverrideModal(theme, repositoryOverrideModal{Open: true, Repository: "team/az-deploy-demo", Feature: signingFeatureName, Exists: true, Enabled: true, PathPrimary: "-----BEGIN PUBLIC KEY-----", UnsignedSelfRead: "repo_push"})
+	if !strings.Contains(signing, "Unsigned Self-Read") {
+		t.Fatalf("renderRepositoryOverrideModal() = %q, want the Unsigned Self-Read label for signing", signing)
+	}
+	if !strings.Contains(signing, "repo_push") {
+		t.Fatalf("renderRepositoryOverrideModal() = %q, want the current repo_push value shown", signing)
+	}
+
+	unseededSigning := renderRepositoryOverrideModal(theme, repositoryOverrideModal{Open: true, Repository: "team/az-deploy-demo", Feature: signingFeatureName, Exists: false})
+	if !strings.Contains(unseededSigning, "off") {
+		t.Fatalf(`renderRepositoryOverrideModal() = %q, want "" to normalize to "off"`, unseededSigning)
+	}
+
+	for _, feature := range []string{trivyFeatureName, gitleaksFeatureName} {
+		got := renderRepositoryOverrideModal(theme, repositoryOverrideModal{Open: true, Repository: "team/az-deploy-demo", Feature: feature, Exists: true, Enabled: true, PathPrimary: "/etc/config"})
+		if strings.Contains(got, "Unsigned Self-Read") {
+			t.Fatalf("renderRepositoryOverrideModal() feature %q = %q, want no Unsigned Self-Read row outside signing", feature, got)
+		}
 	}
 }
 
