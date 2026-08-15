@@ -209,6 +209,14 @@ func (s *Service) ListScanRuns(ctx context.Context, repository string, limit int
 	return s.metadata.ListScanRuns(ctx, s.tenant(ctx), strings.TrimSpace(repository), limit)
 }
 
+// ListLatestScanRunPerRepository is ListScanRuns' per-repository counterpart
+// backing the Repository Alerts table (see ports.RepositoryScanSummary):
+// one row per repository, collapsed before limit so no repository can be
+// crowded out by another's rescans.
+func (s *Service) ListLatestScanRunPerRepository(ctx context.Context, limit int) ([]ports.RepositoryScanSummary, error) {
+	return s.metadata.ListLatestScanRunPerRepository(ctx, s.tenant(ctx), limit)
+}
+
 func (s *Service) GetScanRunDetail(ctx context.Context, runID string) (ports.ScanRunDetail, error) {
 	detail, err := s.metadata.GetScanRunDetail(ctx, s.tenant(ctx), strings.TrimSpace(runID))
 	if err != nil {

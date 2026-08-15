@@ -68,6 +68,8 @@ func (r *Router) handleAdmin(w stdhttp.ResponseWriter, req *stdhttp.Request) {
 		r.handleAdminSigningPolicy(w, req)
 	case subpath == "scan-runs":
 		r.handleAdminScanRuns(w, req)
+	case subpath == "repository-scan-summaries":
+		r.handleAdminRepositoryScanSummaries(w, req)
 	case strings.HasPrefix(subpath, "scan-runs/"):
 		r.handleAdminScanRunDetail(w, req, strings.TrimPrefix(subpath, "scan-runs/"))
 	case subpath == "secret-scan-findings":
@@ -560,6 +562,32 @@ func (r *Router) handleAdminScanRuns(w stdhttp.ResponseWriter, req *stdhttp.Requ
 		w.Header().Set("Allow", strings.Join([]string{stdhttp.MethodGet, stdhttp.MethodPost}, ", "))
 		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
 	}
+}
+
+// handleAdminRepositoryScanSummaries backs the Repository Alerts table's
+// crowd-out fix (ports.RepositoryScanSummary): one row per repository,
+// collapsed before limit, mirroring handleAdminScanRuns' GET shape.
+func (r *Router) handleAdminRepositoryScanSummaries(w stdhttp.ResponseWriter, req *stdhttp.Request) {
+	if req.Method != stdhttp.MethodGet {
+		w.Header().Set("Allow", stdhttp.MethodGet)
+		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+		return
+	}
+	limit := 25
+	if raw := strings.TrimSpace(req.URL.Query().Get("limit")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 {
+			writeAdminError(w, domainauth.NewValidationError("limit must be a positive integer"), ports.Challenge{})
+			return
+		}
+		limit = parsed
+	}
+	summaries, err := r.service.ListLatestScanRunPerRepository(req.Context(), limit)
+	if err != nil {
+		writeAdminError(w, err, ports.Challenge{})
+		return
+	}
+	writeJSON(w, stdhttp.StatusOK, summaries)
 }
 
 func (r *Router) handleAdminScanRunDetail(w stdhttp.ResponseWriter, req *stdhttp.Request, runID string) {

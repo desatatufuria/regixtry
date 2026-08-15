@@ -502,18 +502,23 @@ type AdminViewState struct {
 	// settings, kept on AdminViewState alongside ScanPolicy so the Feature
 	// Page heading can compose signingPolicyBadge (design.md Decision 11
 	// piece 1) without a modal being open.
-	SigningPolicy          ports.SigningPolicySettings
-	SigningPolicyModal     signingPolicyModal
+	SigningPolicy      ports.SigningPolicySettings
+	SigningPolicyModal signingPolicyModal
+	// TrivyScanRuns holds each distinct repository's latest scan run
+	// (scanRunsFromScanSummaries), one entry per TrivySummaries row -- it no
+	// longer holds every raw scan_runs row (see ListLatestScanRunPerRepository,
+	// the repository-alerts-scan-coverage fix).
 	TrivyScanRuns          []ports.ScanRun
 	TrivySelectedAlert     int
 	TrivyAlertsLoaded      bool
 	RevealedTokenSecret    string
 	RevealedTokenAccessor  string
 	RevealedTokenExpiresAt time.Time
-	// TrivySummaries is the per-repository aggregation
-	// (summarizeScanRunsByRepository) backing the Repository Alerts summary
-	// table (spec.md "Repository Alerts Summarized Per Repository With
-	// Ordering And Freshness"), derived from TrivyScanRuns.
+	// TrivySummaries is the per-repository aggregation backing the
+	// Repository Alerts summary table (spec.md "Repository Alerts
+	// Summarized Per Repository With Ordering And Freshness"), mapped
+	// straight through from the server's already-collapsed
+	// ports.RepositoryScanSummary rows (repositorySummariesFromScanSummaries).
 	TrivySummaries []repositorySummary
 	// ScanHistoryModal is the Repository Alerts drill-down modal state
 	// (spec.md "Repository Alert Drill-Down Opens History Modal"), opened by

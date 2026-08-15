@@ -415,9 +415,13 @@ type adminFeatureRuntimeMutatedMsg struct {
 	err    error
 }
 
-type adminScanRunsLoadedMsg struct {
-	runs []ports.ScanRun
-	err  error
+// adminRepositoryScanSummariesLoadedMsg carries the result of loading the
+// Repository Alerts table: one row per repository (ports.RepositoryScanSummary),
+// collapsed server-side before limit so no repository can be crowded out by
+// another's rescans (replaces the old raw-scan_runs adminScanRunsLoadedMsg).
+type adminRepositoryScanSummariesLoadedMsg struct {
+	summaries []ports.RepositoryScanSummary
+	err       error
 }
 
 type adminScanRunDetailLoadedMsg struct {
@@ -913,7 +917,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = "Loading built-in features..."
 		m.screen = screenAdminFeatures
 		return m, m.loadAdminFeaturesCmd()
-	case adminScanRunsLoadedMsg:
+	case adminRepositoryScanSummariesLoadedMsg:
 		if msg.err != nil {
 			if IsAdminSessionExpired(msg.err) {
 				return m.expireAdminSession(msg.err.Error()), nil
@@ -921,20 +925,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = msg.err.Error()
 			return m, nil
 		}
-		runs := append([]ports.ScanRun(nil), msg.runs...)
-		sort.SliceStable(runs, func(i, j int) bool { return compareScanRuns(runs[i], runs[j]) < 0 })
-		m.adminView.TrivyScanRuns = runs
-		// TrivySummaries aggregates the same severity/fixability-ordered runs
-		// into one row per repository (spec.md "Repository Alerts
-		// Summarized Per Repository With Ordering And Freshness") —
-		// summarizeScanRunsByRepository preserves first-seen order, so
-		// feeding it the already-sorted runs keeps the summary
-		// severity-ordered too.
-		m.adminView.TrivySummaries = summarizeScanRunsByRepository(runs)
+		// The backend already collapses to one row per repository, ordered
+		// severity-first, BEFORE applying limit (ports.RepositoryScanSummary)
+		// -- no client-side re-grouping, unlike the old raw-scan_runs path
+		// this replaces (repository-alerts-scan-coverage fix).
+		m.adminView.TrivySummaries = repositorySummariesFromScanSummaries(msg.summaries)
+		m.adminView.TrivyScanRuns = scanRunsFromScanSummaries(msg.summaries)
 		m.adminView.TrivySelectedAlert = boundedIndex(0, len(m.adminView.TrivySummaries))
 		m.adminView.TrivyAlertsLoaded = true
 		m.rebuildAdminTables(m.adminTablesLayout())
-		if len(m.adminView.TrivyScanRuns) == 0 {
+		if len(m.adminView.TrivySummaries) == 0 {
 			m.status = "No repository alerts found."
 		} else if strings.HasPrefix(strings.ToLower(m.status), "loading") {
 			m.status = ""
@@ -1915,7 +1915,7 @@ func (m Model) updateAdminFeaturesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case isEnterKey(msg), isRuneKey(msg, 'r'):
 		if m.isSelectedTrivyFeature() && m.adminView.TrivyTab == trivyTabRepositoryAlerts {
 			m.status = "Loading repository alerts..."
-			return m, m.loadAdminScanRunsCmd("", 25)
+			return m, m.loadAdminRepositoryScanSummariesCmd(25)
 		}
 		if strings.TrimSpace(m.selectedFeatureName()) == "" {
 			m.status = "No feature selected."
@@ -3264,13 +3264,18 @@ func (m Model) loadAdminFeaturePageCmd(name string) tea.Cmd {
 	}
 }
 
-func (m Model) loadAdminScanRunsCmd(repository string, limit int) tea.Cmd {
+// loadAdminRepositoryScanSummariesCmd fetches the Repository Alerts table's
+// data: one row per repository, collapsed server-side before limit
+// (ListRepositoryScanSummaries/ports.RepositoryScanSummary) so a few
+// heavily-rescanned repositories can never crowd every other repository out
+// of the window (the bug loadAdminScanRunsCmd's raw-ListScanRuns had).
+func (m Model) loadAdminRepositoryScanSummariesCmd(limit int) tea.Cmd {
 	return func() tea.Msg {
 		if m.adminClient == nil {
-			return adminScanRunsLoadedMsg{err: fmt.Errorf("admin API is unavailable for this session")}
+			return adminRepositoryScanSummariesLoadedMsg{err: fmt.Errorf("admin API is unavailable for this session")}
 		}
-		runs, err := m.adminClient.ListScanRuns(m.ctx, m.adminSession, repository, limit)
-		return adminScanRunsLoadedMsg{runs: runs, err: err}
+		summaries, err := m.adminClient.ListRepositoryScanSummaries(m.ctx, m.adminSession, limit)
+		return adminRepositoryScanSummariesLoadedMsg{summaries: summaries, err: err}
 	}
 }
 
@@ -3592,9 +3597,9 @@ func (m Model) clearRepositoryOverrideCmd(repository string, feature string) tea
 }
 
 // loadRepositoryOverridesListCmd fetches every stored override row for one
-// feature, chained after adminScanRunsLoadedMsg so the Repository Alerts
-// table can annotate disabled repositories (design.md Decision 7's "List
-// (TUI annotation)" row).
+// feature, chained after adminRepositoryScanSummariesLoadedMsg so the
+// Repository Alerts table can annotate disabled repositories (design.md
+// Decision 7's "List (TUI annotation)" row).
 func (m Model) loadRepositoryOverridesListCmd(feature string) tea.Cmd {
 	return func() tea.Msg {
 		if m.adminClient == nil {
@@ -4320,7 +4325,7 @@ func (m Model) toggleTrivyTab() (tea.Model, tea.Cmd) {
 	m.adminView.TrivyTab = trivyTabRepositoryAlerts
 	m.rebuildAdminTables(m.adminTablesLayout())
 	m.status = "Loading repository alerts..."
-	return m, m.loadAdminScanRunsCmd("", 25)
+	return m, m.loadAdminRepositoryScanSummariesCmd(25)
 }
 
 // selectedScanSummary returns the Repository Alerts summary row the
@@ -4333,49 +4338,6 @@ func selectedScanSummary(view AdminViewState) (repositorySummary, bool) {
 	}
 	index := boundedIndex(view.TrivySelectedAlert, len(view.TrivySummaries))
 	return view.TrivySummaries[index], true
-}
-
-func compareScanRuns(left ports.ScanRun, right ports.ScanRun) int {
-	leftSeverity := highestSeverityRank(left)
-	rightSeverity := highestSeverityRank(right)
-	if leftSeverity != rightSeverity {
-		return rightSeverity - leftSeverity
-	}
-	leftFixable := scanRunHasFixable(left)
-	rightFixable := scanRunHasFixable(right)
-	if leftFixable != rightFixable {
-		if leftFixable {
-			return -1
-		}
-		return 1
-	}
-	if left.CreatedAt.Equal(right.CreatedAt) {
-		return strings.Compare(left.ID, right.ID)
-	}
-	if left.CreatedAt.After(right.CreatedAt) {
-		return -1
-	}
-	return 1
-}
-
-func highestSeverityRank(run ports.ScanRun) int {
-	if run.Critical > 0 {
-		return 4
-	}
-	if run.High > 0 {
-		return 3
-	}
-	if run.Medium > 0 {
-		return 2
-	}
-	if run.Low > 0 {
-		return 1
-	}
-	return 0
-}
-
-func scanRunHasFixable(run ports.ScanRun) bool {
-	return run.HasFixable
 }
 
 func trivyConfigModalFromPage(page ports.FeaturePage) (trivyConfigModal, bool) {

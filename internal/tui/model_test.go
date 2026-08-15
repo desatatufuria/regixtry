@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -2571,8 +2572,8 @@ func TestModelTrivyRepositoryAlertsLoadSelectDetailAndRecoverEmptyState(t *testi
 		updated = runKey(t, updated, "f")
 		updated = runKey(t, updated, "tab")
 
-		if adminClient.listScanRunsCalls != 1 {
-			t.Fatalf("listScanRunsCalls = %d, want one repository-alert load", adminClient.listScanRunsCalls)
+		if adminClient.listRepositoryScanSummariesCalls != 1 {
+			t.Fatalf("listRepositoryScanSummariesCalls = %d, want one repository-alert load", adminClient.listRepositoryScanSummariesCalls)
 		}
 		alertsView := updated.View()
 		for _, want := range []string{"Repository Alerts", "Repository", "Reference", "team/api", "library/base", "library/alpine", "1.0.0", "stable", "latest"} {
@@ -4278,37 +4279,46 @@ type fakeAdminClient struct {
 	deleteRobotCalls      int
 	lastDeleteRobotUserID string
 
-	loginCalls                  int
-	listFeaturesCalls           int
-	getFeatureCalls             int
-	getFeatureStatusCalls       int
-	getFeaturePageCalls         int
-	listScanRunsCalls           int
-	getScanRunDetailCalls       int
-	getSecretScanFindingsCalls  int
-	lastSecretScanFindingsQuery string
-	executeFeatureActionCalls   int
-	lastFeatureAction           string
-	installRuntimeCalls         int
-	upgradeRuntimeCalls         int
-	rollbackRuntimeCalls        int
-	enableFeatureCalls          int
-	disableFeatureCalls         int
-	listUsersCalls              int
-	listGrantsCalls             int
-	listTokensCalls             int
-	createUserCalls             int
-	resetPasswordCalls          int
-	configureFeatureCalls       int
-	putGrantCalls               int
-	deleteGrantCalls            int
-	listRepoGrantsCalls         int
-	putRepoGrantCalls           int
-	deleteRepoGrantCalls        int
-	createTokenCalls            int
-	revokeTokenCalls            int
-	enableCalls                 int
-	disableCalls                int
+	loginCalls            int
+	listFeaturesCalls     int
+	getFeatureCalls       int
+	getFeatureStatusCalls int
+	getFeaturePageCalls   int
+	listScanRunsCalls     int
+	// repositoryScanSummaries, when non-nil, is returned verbatim by
+	// ListRepositoryScanSummaries (limit-truncated) -- lets a test simulate
+	// exactly what the crowd-out-fixed backend would return. When nil, the
+	// default derives summaries from scanRuns via the same
+	// severity/fixability ordering and per-repository grouping the TUI
+	// already used before this fix, so every pre-existing test that only
+	// seeds scanRuns keeps passing unchanged.
+	repositoryScanSummaries          []ports.RepositoryScanSummary
+	listRepositoryScanSummariesCalls int
+	getScanRunDetailCalls            int
+	getSecretScanFindingsCalls       int
+	lastSecretScanFindingsQuery      string
+	executeFeatureActionCalls        int
+	lastFeatureAction                string
+	installRuntimeCalls              int
+	upgradeRuntimeCalls              int
+	rollbackRuntimeCalls             int
+	enableFeatureCalls               int
+	disableFeatureCalls              int
+	listUsersCalls                   int
+	listGrantsCalls                  int
+	listTokensCalls                  int
+	createUserCalls                  int
+	resetPasswordCalls               int
+	configureFeatureCalls            int
+	putGrantCalls                    int
+	deleteGrantCalls                 int
+	listRepoGrantsCalls              int
+	putRepoGrantCalls                int
+	deleteRepoGrantCalls             int
+	createTokenCalls                 int
+	revokeTokenCalls                 int
+	enableCalls                      int
+	disableCalls                     int
 
 	repositoryOverrides           map[string]ports.RepositoryOverrideDetails // key: feature+"/"+repository
 	repositoryOverrideList        map[string][]ports.RepositoryOverrideDetails
@@ -4388,6 +4398,66 @@ func (f *fakeAdminClient) ListScanRuns(_ context.Context, _ AdminSession, reposi
 		}
 	}
 	return filtered, nil
+}
+
+// fakeScanRunSeverityRank/fakeScanRunSortsBefore mirror the severity-first,
+// fixable-then-created_at-tiebroken ordering ListLatestScanRunPerRepository
+// now applies server-side (store.go's ListLatestScanRunPerRepository SQL) --
+// used only so fakeAdminClient's default ListRepositoryScanSummaries
+// derivation (below) matches what the real backend would return for tests
+// that seed raw scanRuns instead of an explicit repositoryScanSummaries
+// override.
+func fakeScanRunSeverityRank(run ports.ScanRun) int {
+	switch {
+	case run.Critical > 0:
+		return 4
+	case run.High > 0:
+		return 3
+	case run.Medium > 0:
+		return 2
+	case run.Low > 0:
+		return 1
+	default:
+		return 0
+	}
+}
+
+func fakeScanRunSortsBefore(left, right ports.ScanRun) bool {
+	leftRank, rightRank := fakeScanRunSeverityRank(left), fakeScanRunSeverityRank(right)
+	if leftRank != rightRank {
+		return leftRank > rightRank
+	}
+	if left.HasFixable != right.HasFixable {
+		return left.HasFixable
+	}
+	if !left.CreatedAt.Equal(right.CreatedAt) {
+		return left.CreatedAt.After(right.CreatedAt)
+	}
+	return left.ID < right.ID
+}
+
+func (f *fakeAdminClient) ListRepositoryScanSummaries(_ context.Context, _ AdminSession, limit int) ([]ports.RepositoryScanSummary, error) {
+	f.listRepositoryScanSummariesCalls++
+	if f.featureErr != nil {
+		return nil, f.featureErr
+	}
+	if f.repositoryScanSummaries != nil {
+		if limit > 0 && limit < len(f.repositoryScanSummaries) {
+			return append([]ports.RepositoryScanSummary(nil), f.repositoryScanSummaries[:limit]...), nil
+		}
+		return append([]ports.RepositoryScanSummary(nil), f.repositoryScanSummaries...), nil
+	}
+	runs := append([]ports.ScanRun(nil), f.scanRuns...)
+	sort.SliceStable(runs, func(i, j int) bool { return fakeScanRunSortsBefore(runs[i], runs[j]) })
+	grouped := summarizeScanRunsByRepository(runs)
+	summaries := make([]ports.RepositoryScanSummary, 0, len(grouped))
+	for _, summary := range grouped {
+		if limit > 0 && len(summaries) >= limit {
+			break
+		}
+		summaries = append(summaries, ports.RepositoryScanSummary{Run: summary.LatestRun, RunCount: summary.RunCount})
+	}
+	return summaries, nil
 }
 
 func (f *fakeAdminClient) GetScanRunDetail(_ context.Context, _ AdminSession, runID string) (ports.ScanRunDetail, error) {

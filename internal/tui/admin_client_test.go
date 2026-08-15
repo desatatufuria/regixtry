@@ -897,6 +897,73 @@ func TestHTTPAdminClientListScanRuns(t *testing.T) {
 	})
 }
 
+// TestHTTPAdminClientListRepositoryScanSummaries is the RED test for the
+// repository-alerts-scan-coverage fix's TUI client leg: the new admin
+// endpoint's one-row-per-repository response decodes straight through, and
+// a zero/omitted limit omits the query param, mirroring ListScanRuns.
+func TestHTTPAdminClientListRepositoryScanSummaries(t *testing.T) {
+	t.Parallel()
+
+	fixedNow := time.Date(2026, time.August, 15, 21, 20, 0, 0, time.UTC)
+	session := AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: fixedNow.Add(10 * time.Minute)}
+
+	t.Run("decodes one row per repository with run_count", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if got, want := r.Method, http.MethodGet; got != want {
+				t.Fatalf("method = %q, want %q", got, want)
+			}
+			if got, want := r.URL.Path, "/admin/v1/repository-scan-summaries"; got != want {
+				t.Fatalf("path = %q, want %q", got, want)
+			}
+			if got, want := r.URL.Query().Get("limit"), "25"; got != want {
+				t.Fatalf("limit query = %q, want %q", got, want)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[{"run":{"id":"run-1","repository":"team/hot","requested_ref":"latest","digest":"sha256:111","status":"completed","trigger":"manual","created_at":"2026-08-15T21:00:00Z","updated_at":"2026-08-15T21:00:00Z","critical":1,"high":0,"medium":0,"low":0},"run_count":5}]`))
+		}))
+		defer server.Close()
+
+		client, err := NewHTTPAdminClient(server.URL, server.Client())
+		if err != nil {
+			t.Fatalf("NewHTTPAdminClient() error = %v", err)
+		}
+		client.now = func() time.Time { return fixedNow }
+
+		summaries, err := client.ListRepositoryScanSummaries(context.Background(), session, 25)
+		if err != nil {
+			t.Fatalf("ListRepositoryScanSummaries() error = %v", err)
+		}
+		if len(summaries) != 1 || summaries[0].Run.Repository != "team/hot" || summaries[0].RunCount != 5 {
+			t.Fatalf("summaries = %#v, want one team/hot summary with run_count 5", summaries)
+		}
+	})
+
+	t.Run("omits zero limit", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if got := r.URL.Query().Get("limit"); got != "" {
+				t.Fatalf("limit query = %q, want omitted", got)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[]`))
+		}))
+		defer server.Close()
+
+		client, err := NewHTTPAdminClient(server.URL, server.Client())
+		if err != nil {
+			t.Fatalf("NewHTTPAdminClient() error = %v", err)
+		}
+		client.now = func() time.Time { return fixedNow }
+
+		summaries, err := client.ListRepositoryScanSummaries(context.Background(), session, 0)
+		if err != nil {
+			t.Fatalf("ListRepositoryScanSummaries() error = %v", err)
+		}
+		if len(summaries) != 0 {
+			t.Fatalf("summaries = %#v, want empty decoded list", summaries)
+		}
+	})
+}
+
 func TestHTTPAdminClientGetScanRunDetail(t *testing.T) {
 	t.Parallel()
 

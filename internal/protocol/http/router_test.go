@@ -1696,6 +1696,63 @@ func TestRouterAdminScanRoutesQueueAndListRuns(t *testing.T) {
 	}
 }
 
+// TestRouterAdminRepositoryScanSummariesCollapsesBeforeLimit is the RED test
+// for the repository-alerts-scan-coverage fix at the HTTP layer: GET
+// /admin/v1/repository-scan-summaries returns one row per repository (with
+// its total run_count), never crowded out by another repository's rescans,
+// mirroring the store-level fix (ListLatestScanRunPerRepository).
+func TestRouterAdminRepositoryScanSummariesCollapsesBeforeLimit(t *testing.T) {
+	t.Parallel()
+
+	blobStore, metadataStore, cleanup := newTestStores(t)
+	defer cleanup()
+	handler := newRouterWithStores(blobStore, metadataStore, allowAllAccessController{}, fakeAuthService{verify: &domainauth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+
+	base := time.Now().UTC()
+	for i := 0; i < 5; i++ {
+		createdAt := base.Add(time.Duration(i) * time.Minute)
+		run := ports.ScanRun{
+			ID: fmt.Sprintf("hot-run-%d", i), Repository: "team/hot", RequestedRef: "latest",
+			Digest: fmt.Sprintf("sha256:%064d", i), Status: ports.ScanRunStatusCompleted, Trigger: ports.ScanTriggerManual,
+			CreatedAt: createdAt, FinishedAt: &createdAt, Critical: 1,
+		}
+		if err := metadataStore.UpsertScanRun(context.Background(), "tenant-a", run); err != nil {
+			t.Fatalf("UpsertScanRun(%s) error = %v", run.ID, err)
+		}
+	}
+	quietCreatedAt := base.Add(time.Hour)
+	quietRun := ports.ScanRun{
+		ID: "quiet-run", Repository: "team/quiet", RequestedRef: "latest",
+		Digest: "sha256:" + strings.Repeat("a", 64), Status: ports.ScanRunStatusCompleted, Trigger: ports.ScanTriggerManual,
+		CreatedAt: quietCreatedAt, FinishedAt: &quietCreatedAt,
+	}
+	if err := metadataStore.UpsertScanRun(context.Background(), "tenant-a", quietRun); err != nil {
+		t.Fatalf("UpsertScanRun(quiet-run) error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/repository-scan-summaries?limit=2", nil)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body = %q", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var summaries []ports.RepositoryScanSummary
+	if err := json.Unmarshal(recorder.Body.Bytes(), &summaries); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v, body = %q", err, recorder.Body.String())
+	}
+	if len(summaries) != 2 {
+		t.Fatalf("len(summaries) = %d, want 2 (limit honored across distinct repositories)", len(summaries))
+	}
+	if summaries[0].Run.Repository != "team/hot" || summaries[0].RunCount != 5 {
+		t.Fatalf("summaries[0] = %#v, want team/hot with run_count 5 (all 5 rescans counted, only its latest run shown)", summaries[0])
+	}
+	if summaries[1].Run.Repository != "team/quiet" || summaries[1].RunCount != 1 {
+		t.Fatalf("summaries[1] = %#v, want team/quiet visible even though it's not the most severe repository, not crowded out", summaries[1])
+	}
+}
+
 func TestRouterAdminScanRoutesRejectInvalidTargetsAndSettings(t *testing.T) {
 	t.Parallel()
 

@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -751,6 +752,159 @@ func TestStorePersistsScanRunsAndSchedulerStateAcrossReopen(t *testing.T) {
 	}
 	if storedState.OwnerID != state.OwnerID || storedState.BatchStartedAt == nil {
 		t.Fatalf("storedState = %#v, want %#v", storedState, state)
+	}
+}
+
+// seedHeavilyRescannedRepository inserts count distinct, strictly increasing
+// (by CreatedAt) completed scan runs for repository, each with a real
+// critical finding so it dominates ListScanRuns' severity-first ordering.
+// Returns the ID of the LAST (most recently created) run inserted.
+func seedHeavilyRescannedRepository(t *testing.T, store *Store, ctx context.Context, repository string, base time.Time, count int) string {
+	t.Helper()
+	var lastID string
+	for i := 0; i < count; i++ {
+		createdAt := base.Add(time.Duration(i) * time.Minute)
+		lastID = fmt.Sprintf("%s-run-%02d", strings.ReplaceAll(repository, "/", "-"), i)
+		run := ports.ScanRun{
+			ID:           lastID,
+			Repository:   repository,
+			RequestedRef: "latest",
+			Digest:       domain.DigestFromBytes([]byte(lastID)).String(),
+			Status:       ports.ScanRunStatusCompleted,
+			Trigger:      ports.ScanTriggerManual,
+			CreatedAt:    createdAt,
+			FinishedAt:   &createdAt,
+			Critical:     1,
+		}
+		if err := store.UpsertScanRun(ctx, "tenant-a", run); err != nil {
+			t.Fatalf("UpsertScanRun(%s) error = %v", lastID, err)
+		}
+	}
+	return lastID
+}
+
+// TestStoreListLatestScanRunPerRepositoryCollapsesBeforeLimitSoNoRepositoryIsCrowdedOut
+// is the RED test reproducing the Repository Alerts crowd-out bug (found
+// live: a 25-row LIMIT on raw scan_runs, ordered severity-first, let 2-3
+// heavily-rescanned high-severity repositories fill the entire window and
+// hide every OTHER repository's rows entirely, even ones with real,
+// completed, 0-critical/0-high scans). ListLatestScanRunPerRepository must
+// collapse to one row per repository BEFORE applying limit, so a quiet
+// repository with a single clean scan can never be crowded out by a hot
+// repository's rescans.
+func TestStoreListLatestScanRunPerRepositoryCollapsesBeforeLimitSoNoRepositoryIsCrowdedOut(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	ctx := context.Background()
+	base := time.Date(2026, time.August, 13, 9, 0, 0, 0, time.UTC)
+
+	// Two "hot" repositories, 5 rescans each (10 raw scan_runs), all
+	// critical -- exactly the shape that used to fill a small LIMIT window
+	// on its own.
+	hotALatestID := seedHeavilyRescannedRepository(t, store, ctx, "team/hot-a", base, 5)
+	hotBLatestID := seedHeavilyRescannedRepository(t, store, ctx, "team/hot-b", base.Add(time.Hour), 5)
+
+	// One "quiet" repository: a single, real, completed, 0-critical/0-high
+	// scan -- created after both hot repositories' runs, so a naive
+	// created_at-DESC LIMIT over raw rows would also have buried it.
+	quietFinishedAt := base.Add(3 * time.Hour)
+	quietRun := ports.ScanRun{
+		ID: "quiet-run", Repository: "team/quiet", RequestedRef: "latest",
+		Digest: domain.DigestFromBytes([]byte("quiet")).String(),
+		Status: ports.ScanRunStatusCompleted, Trigger: ports.ScanTriggerManual,
+		CreatedAt: quietFinishedAt, FinishedAt: &quietFinishedAt,
+	}
+	if err := store.UpsertScanRun(ctx, "tenant-a", quietRun); err != nil {
+		t.Fatalf("UpsertScanRun(quiet-run) error = %v", err)
+	}
+
+	// A LIMIT well below the 10 raw scan_runs rows, but >= the 3 distinct
+	// repositories -- proves collapsing happens before limiting, not after.
+	summaries, err := store.ListLatestScanRunPerRepository(ctx, "tenant-a", 3)
+	if err != nil {
+		t.Fatalf("ListLatestScanRunPerRepository() error = %v", err)
+	}
+	if len(summaries) != 3 {
+		t.Fatalf("len(summaries) = %d, want 3 (one row per repository, none crowded out)", len(summaries))
+	}
+
+	byRepo := make(map[string]ports.RepositoryScanSummary, len(summaries))
+	for _, summary := range summaries {
+		byRepo[summary.Run.Repository] = summary
+	}
+
+	quiet, ok := byRepo["team/quiet"]
+	if !ok {
+		t.Fatalf("summaries = %#v, want team/quiet present despite team/hot-a and team/hot-b's rescans", summaries)
+	}
+	if quiet.Run.ID != "quiet-run" || quiet.RunCount != 1 {
+		t.Fatalf("quiet summary = %#v, want its single run with RunCount 1", quiet)
+	}
+
+	hotA, ok := byRepo["team/hot-a"]
+	if !ok {
+		t.Fatal("summaries missing team/hot-a")
+	}
+	if hotA.RunCount != 5 {
+		t.Fatalf("team/hot-a RunCount = %d, want 5 (every rescan counted, only the latest run shown)", hotA.RunCount)
+	}
+	if hotA.Run.ID != hotALatestID {
+		t.Fatalf("team/hot-a Run.ID = %q, want the most recently created run %q, not an older rescan", hotA.Run.ID, hotALatestID)
+	}
+
+	hotB, ok := byRepo["team/hot-b"]
+	if !ok {
+		t.Fatal("summaries missing team/hot-b")
+	}
+	if hotB.Run.ID != hotBLatestID {
+		t.Fatalf("team/hot-b Run.ID = %q, want the most recently created run %q", hotB.Run.ID, hotBLatestID)
+	}
+
+	// Severity-first ordering survives collapsing: both critical repos sort
+	// ahead of the quiet, 0-critical one.
+	if summaries[len(summaries)-1].Run.Repository != "team/quiet" {
+		t.Fatalf("summaries = %#v, want the 0-critical repository ordered last", summaries)
+	}
+}
+
+// TestStoreListLatestScanRunPerRepositoryHonorsLimitAcrossManyRepositories is
+// a companion RED test: with more distinct repositories than the limit,
+// exactly `limit` distinct repositories come back, worst-severity first.
+func TestStoreListLatestScanRunPerRepositoryHonorsLimitAcrossManyRepositories(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	ctx := context.Background()
+	base := time.Date(2026, time.August, 13, 9, 0, 0, 0, time.UTC)
+
+	for i := 0; i < 5; i++ {
+		createdAt := base.Add(time.Duration(i) * time.Minute)
+		id := fmt.Sprintf("run-%d", i)
+		run := ports.ScanRun{
+			ID: id, Repository: fmt.Sprintf("team/repo-%d", i), RequestedRef: "latest",
+			Digest: domain.DigestFromBytes([]byte(id)).String(),
+			Status: ports.ScanRunStatusCompleted, Trigger: ports.ScanTriggerManual,
+			CreatedAt: createdAt, FinishedAt: &createdAt, Critical: i, // repo-4 most severe
+		}
+		if err := store.UpsertScanRun(ctx, "tenant-a", run); err != nil {
+			t.Fatalf("UpsertScanRun(%s) error = %v", id, err)
+		}
+	}
+
+	summaries, err := store.ListLatestScanRunPerRepository(ctx, "tenant-a", 2)
+	if err != nil {
+		t.Fatalf("ListLatestScanRunPerRepository() error = %v", err)
+	}
+	if len(summaries) != 2 {
+		t.Fatalf("len(summaries) = %d, want 2 (limit honored across distinct repositories)", len(summaries))
+	}
+	if summaries[0].Run.Repository != "team/repo-4" || summaries[1].Run.Repository != "team/repo-3" {
+		t.Fatalf("summaries = %#v, want the two most severe repositories first", summaries)
 	}
 }
 

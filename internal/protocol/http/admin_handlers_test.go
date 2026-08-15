@@ -1188,6 +1188,7 @@ func TestAdminNonGrantRoutesStillRequireGlobalAdminForRepoAdminDelegate(t *testi
 		"/admin/v1/signing-policy",
 		"/admin/v1/scan-runs",
 		"/admin/v1/scan-runs/run-123",
+		"/admin/v1/repository-scan-summaries",
 		"/admin/v1/secret-scan-findings?repository=library/alpine&digest=sha256:abc",
 		"/admin/v1/users",
 		"/admin/v1/users/" + delegate.ID,

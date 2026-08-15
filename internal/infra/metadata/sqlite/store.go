@@ -1996,36 +1996,116 @@ func scanRunFromScanner(scanner scanRunScanner) (ports.ScanRun, error) {
 	if err := scanner.Scan(&run.ID, &run.Repository, &run.RequestedRef, &run.Digest, &run.Status, &run.Trigger, &startedAt, &finishedAt, &createdAtRaw, &updatedAtRaw, &run.Critical, &run.High, &run.Medium, &run.Low, &run.TrivyVersion, &dbUpdatedAt, &run.Error); err != nil {
 		return ports.ScanRun{}, err
 	}
+	if err := populateScanRunTimestamps(&run, createdAtRaw, updatedAtRaw, startedAt, finishedAt, dbUpdatedAt); err != nil {
+		return ports.ScanRun{}, err
+	}
+	return run, nil
+}
+
+// populateScanRunTimestamps parses the raw timestamp columns shared by
+// every scan_runs row shape (ListScanRuns' scanRunFromScanner and
+// ListLatestScanRunPerRepository's scanRunAndRunCountFromScanner alike)
+// onto run, mutating it in place.
+func populateScanRunTimestamps(run *ports.ScanRun, createdAtRaw, updatedAtRaw string, startedAt, finishedAt, dbUpdatedAt sql.NullString) error {
 	createdAt, err := time.Parse(time.RFC3339Nano, createdAtRaw)
 	if err != nil {
-		return ports.ScanRun{}, err
+		return err
 	}
 	updatedAt, err := time.Parse(time.RFC3339Nano, updatedAtRaw)
 	if err != nil {
-		return ports.ScanRun{}, err
+		return err
 	}
 	run.CreatedAt = createdAt
 	run.UpdatedAt = updatedAt
 	if startedAt.Valid && strings.TrimSpace(startedAt.String) != "" {
 		parsed, err := time.Parse(time.RFC3339Nano, startedAt.String)
 		if err != nil {
-			return ports.ScanRun{}, err
+			return err
 		}
 		run.StartedAt = &parsed
 	}
 	if finishedAt.Valid && strings.TrimSpace(finishedAt.String) != "" {
 		parsed, err := time.Parse(time.RFC3339Nano, finishedAt.String)
 		if err != nil {
-			return ports.ScanRun{}, err
+			return err
 		}
 		run.FinishedAt = &parsed
 	}
 	if dbUpdatedAt.Valid && strings.TrimSpace(dbUpdatedAt.String) != "" {
 		parsed, err := time.Parse(time.RFC3339Nano, dbUpdatedAt.String)
 		if err != nil {
-			return ports.ScanRun{}, err
+			return err
 		}
 		run.DBUpdatedAt = &parsed
 	}
-	return run, nil
+	return nil
+}
+
+// scanRunAndRunCountFromScanner scans one row of
+// ListLatestScanRunPerRepository's collapsed-and-reordered result set: the
+// same 17 scan_runs columns as scanRunFromScanner, plus a trailing
+// run_count column carried through the CTE.
+func scanRunAndRunCountFromScanner(scanner scanRunScanner) (ports.RepositoryScanSummary, error) {
+	var run ports.ScanRun
+	var runCount int
+	var startedAt sql.NullString
+	var finishedAt sql.NullString
+	var dbUpdatedAt sql.NullString
+	var createdAtRaw string
+	var updatedAtRaw string
+	if err := scanner.Scan(&run.ID, &run.Repository, &run.RequestedRef, &run.Digest, &run.Status, &run.Trigger, &startedAt, &finishedAt, &createdAtRaw, &updatedAtRaw, &run.Critical, &run.High, &run.Medium, &run.Low, &run.TrivyVersion, &dbUpdatedAt, &run.Error, &runCount); err != nil {
+		return ports.RepositoryScanSummary{}, err
+	}
+	if err := populateScanRunTimestamps(&run, createdAtRaw, updatedAtRaw, startedAt, finishedAt, dbUpdatedAt); err != nil {
+		return ports.RepositoryScanSummary{}, err
+	}
+	return ports.RepositoryScanSummary{Run: run, RunCount: runCount}, nil
+}
+
+// ListLatestScanRunPerRepository collapses scan_runs to one row per
+// repository (the repository's most recently CREATED run, via ROW_NUMBER()
+// partitioned by repository) BEFORE the severity-first ORDER BY/LIMIT that
+// ListScanRuns applies to raw rows -- the fix for the crowd-out bug where a
+// few heavily-rescanned repositories could fill the entire LIMIT window on
+// raw scan_runs and hide every other repository's rows entirely, even ones
+// with real, completed, 0-critical/0-high scans.
+func (s *Store) ListLatestScanRunPerRepository(ctx context.Context, tenant string, limit int) ([]ports.RepositoryScanSummary, error) {
+	query := `
+		WITH latest AS (
+			SELECT id, repository, requested_ref, digest, status, trigger, started_at, finished_at, created_at, updated_at, critical, high, medium, low, trivy_version, db_updated_at, error,
+				ROW_NUMBER() OVER (PARTITION BY repository ORDER BY created_at DESC, rowid DESC) AS rn,
+				COUNT(*) OVER (PARTITION BY repository) AS run_count
+			FROM scan_runs
+			WHERE tenant = ?
+		)
+		SELECT id, repository, requested_ref, digest, status, trigger, started_at, finished_at, created_at, updated_at, critical, high, medium, low, trivy_version, db_updated_at, error, run_count
+		FROM latest
+		WHERE rn = 1
+		ORDER BY CASE WHEN critical > 0 THEN 4 WHEN high > 0 THEN 3 WHEN medium > 0 THEN 2 WHEN low > 0 THEN 1 ELSE 0 END DESC,
+			EXISTS(SELECT 1 FROM scan_run_findings findings WHERE findings.run_id = latest.id AND findings.fixable = 1) DESC,
+			created_at DESC
+	`
+	args := []any{tenant}
+	if limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, limit)
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	summaries := make([]ports.RepositoryScanSummary, 0)
+	for rows.Next() {
+		summary, err := scanRunAndRunCountFromScanner(rows)
+		if err != nil {
+			return nil, err
+		}
+		summary.Run.HasFixable, err = s.scanRunHasFixable(ctx, summary.Run.ID)
+		if err != nil {
+			return nil, err
+		}
+		summaries = append(summaries, summary)
+	}
+	return summaries, rows.Err()
 }

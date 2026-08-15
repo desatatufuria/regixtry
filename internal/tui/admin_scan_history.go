@@ -143,6 +143,39 @@ func summarizeScanRunsByRepository(runs []ports.ScanRun) []repositorySummary {
 	return summaries
 }
 
+// repositorySummariesFromScanSummaries maps ports.RepositoryScanSummary rows
+// (already one row per repository, collapsed and severity-ordered
+// server-side by ListLatestScanRunPerRepository) straight onto the TUI's own
+// repositorySummary shape -- no re-grouping, unlike
+// summarizeScanRunsByRepository, which this replaces on the production load
+// path (repository-alerts-scan-coverage fix).
+func repositorySummariesFromScanSummaries(scanSummaries []ports.RepositoryScanSummary) []repositorySummary {
+	summaries := make([]repositorySummary, 0, len(scanSummaries))
+	for _, scanSummary := range scanSummaries {
+		effTime, inProgress := effectiveScanRunTime(scanSummary.Run)
+		summaries = append(summaries, repositorySummary{
+			Repository:   scanSummary.Run.Repository,
+			LatestRun:    scanSummary.Run,
+			LastExecuted: effTime,
+			InProgress:   inProgress,
+			RunCount:     scanSummary.RunCount,
+		})
+	}
+	return summaries
+}
+
+// scanRunsFromScanSummaries extracts each ports.RepositoryScanSummary's
+// latest run, for AdminViewState.TrivyScanRuns -- which, since this fix, no
+// longer holds every raw scan_runs row, only each repository's single
+// latest one (one entry per TrivySummaries row).
+func scanRunsFromScanSummaries(scanSummaries []ports.RepositoryScanSummary) []ports.ScanRun {
+	runs := make([]ports.ScanRun, 0, len(scanSummaries))
+	for _, scanSummary := range scanSummaries {
+		runs = append(runs, scanSummary.Run)
+	}
+	return runs
+}
+
 // adminScanHistoryModalRows computes the scan history modal's own content
 // row budget from the terminal's full layout, independent of the base
 // page's row budget now that the modal is a true floating overlay

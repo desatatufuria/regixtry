@@ -61,6 +61,11 @@ type MetadataStore interface {
 	UpsertScanRun(ctx context.Context, tenant string, run ScanRun) error
 	UpsertScanRunDetail(ctx context.Context, tenant string, detail ScanRunDetail) error
 	ListScanRuns(ctx context.Context, tenant string, repository string, limit int) ([]ScanRun, error)
+	// ListLatestScanRunPerRepository returns each repository's most recent
+	// scan run plus its total run count, one row per repository, ordered
+	// severity-first -- collapsed BEFORE limit is applied so no repository
+	// can be crowded out by another's rescans (see RepositoryScanSummary).
+	ListLatestScanRunPerRepository(ctx context.Context, tenant string, limit int) ([]RepositoryScanSummary, error)
 	TryAcquireScanSchedulerLease(ctx context.Context, tenant string, owner string, now time.Time, leaseTTL time.Duration) (bool, ScanSchedulerState, error)
 	HeartbeatScanScheduler(ctx context.Context, tenant string, owner string, now time.Time, leaseTTL time.Duration) error
 	GetScanSchedulerState(ctx context.Context, tenant string) (ScanSchedulerState, error)
@@ -336,6 +341,18 @@ type ScanRun struct {
 	DBUpdatedAt  *time.Time `json:"db_updated_at,omitempty"`
 	Error        string     `json:"error,omitempty"`
 	HasFixable   bool       `json:"-"`
+}
+
+// RepositoryScanSummary is one repository's most recent scan run plus its
+// total run count -- exactly one row per repository, returned by
+// ListLatestScanRunPerRepository. Unlike ListScanRuns (whose limit applies
+// to raw scan_runs rows, letting a few heavily-rescanned repositories crowd
+// every other repository out of the window entirely),
+// ListLatestScanRunPerRepository collapses to one row per repository BEFORE
+// applying limit, so no repository can be hidden by another's rescans.
+type RepositoryScanSummary struct {
+	Run      ScanRun `json:"run"`
+	RunCount int     `json:"run_count"`
 }
 
 type ScanSchedulerState struct {
