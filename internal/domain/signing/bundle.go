@@ -28,9 +28,14 @@ const (
 
 	// MaxBundleDocumentBytes bounds how large a pusher-controlled bundle
 	// document (the referrer manifest's layer blob) may be. Enforced by the
-	// caller when reading the blob (this package performs no I/O), mirroring
-	// MaxPayloadBytes's reasoning and bound.
-	MaxBundleDocumentBytes = 1 << 20
+	// caller when reading the blob (this package performs no I/O). Defined
+	// as MaxPayloadBytes, not merely equal to it: openSignaturePayload
+	// (service_signing.go) is one shared helper enforcing that same bound
+	// for both the legacy SimpleSigning payload blob and this bundle
+	// document blob, so the two constants must never be able to drift
+	// apart (adversarial review finding on
+	// feat/signing-sigstore-bundle-support).
+	MaxBundleDocumentBytes = MaxPayloadBytes
 
 	// dsseVersion is the DSSE Pre-Authentication Encoding version string
 	// (https://github.com/secure-systems-lab/dsse/blob/master/protocol.md).
