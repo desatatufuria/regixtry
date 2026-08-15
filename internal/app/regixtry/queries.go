@@ -296,13 +296,13 @@ func (s *Service) SignatureStatus(ctx context.Context, repositoryName string, re
 	result.WouldBlockPull = policy.Enabled && state != SignatureStatusVerified
 
 	if state != SignatureStatusUnsigned {
-		tag, entries, resolveErr := s.resolveSignatureManifestEntries(ctx, repository.String(), digest)
+		tag, count, resolveErr := s.resolveSignatureManifestEntries(ctx, repository.String(), digest)
 		if resolveErr != nil {
 			return SignatureStatusResult{}, resolveErr
 		}
 		result.Signature = &SignatureStatusDetail{
 			Tag:            tag,
-			SignatureCount: len(entries),
+			SignatureCount: count,
 			Reason:         signatureStatusReason(repository.String(), digest, verifyErr),
 		}
 	}
@@ -310,37 +310,80 @@ func (s *Service) SignatureStatus(ctx context.Context, repositoryName string, re
 	return result, nil
 }
 
-// resolveSignatureManifestEntries re-resolves the .sig manifest's parsed
-// entries for SignatureStatusDetail's Tag/SignatureCount fields -- a small,
-// deliberate duplication of verifySignature's own resolution (this is a
-// status read, not the hot pull path, so re-reading is an acceptable cost
-// for keeping verifySignature's signature unchanged from Work Unit 3). A
-// missing or unparseable manifest is reported as zero entries, never an
+// resolveSignatureManifestEntries re-resolves the signature artifact's tag
+// and entry count for SignatureStatusDetail's Tag/SignatureCount fields --
+// a small, deliberate duplication of verifySignature's own resolution (this
+// is a status read, not the hot pull path, so re-reading is an acceptable
+// cost for keeping verifySignature's signature unchanged from Work Unit 3).
+// A missing or unparseable manifest is reported as zero entries, never an
 // error, mirroring verifySignature's own tolerance for the same conditions.
-func (s *Service) resolveSignatureManifestEntries(ctx context.Context, repository string, digest string) (string, []signing.SignatureEntry, error) {
-	tag, err := signing.SignatureTag(digest)
+//
+// Mirrors verifyBundleSignature's (service_signing.go) legacy-NotFound
+// fallback: when the legacy `.sig` tag doesn't resolve, tries the modern
+// bundle index next, so the reported tag/count reflect whichever format
+// verifySignature actually found -- a real bundle-format signature must
+// never be reported back as a nonexistent legacy tag with a zero count
+// (found live: a genuinely verified bundle signature reported
+// "signature_count": 0 against a `.sig` tag that was never created).
+func (s *Service) resolveSignatureManifestEntries(ctx context.Context, repository string, digest string) (string, int, error) {
+	legacyTag, err := signing.SignatureTag(digest)
 	if err != nil {
-		return "", nil, nil
+		return "", 0, nil
 	}
 
 	repositoryRef, err := parseRepository(repository)
 	if err != nil {
-		return tag, nil, nil
+		return legacyTag, 0, nil
 	}
 
-	sigManifest, err := s.metadata.ResolveManifest(ctx, s.tenant(ctx), repositoryRef, tag)
+	sigManifest, err := s.metadata.ResolveManifest(ctx, s.tenant(ctx), repositoryRef, legacyTag)
+	if err == nil {
+		entries, parseErr := signing.ParseSignatureManifest(sigManifest.Payload)
+		if parseErr != nil {
+			return legacyTag, 0, nil
+		}
+		return legacyTag, len(entries), nil
+	}
+	if !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		return legacyTag, 0, err // infrastructure error propagates unchanged
+	}
+
+	bundleTag, err := signing.BundleIndexTag(digest)
+	if err != nil {
+		return legacyTag, 0, nil
+	}
+
+	indexManifest, err := s.metadata.ResolveManifest(ctx, s.tenant(ctx), repositoryRef, bundleTag)
 	if err != nil {
 		if domain.IsCode(err, domain.ErrorCodeNotFound) {
-			return tag, nil, nil
+			return legacyTag, 0, nil // neither format present
 		}
-		return tag, nil, err // infrastructure error propagates unchanged
+		return bundleTag, 0, err // infrastructure error propagates unchanged
 	}
 
-	entries, err := signing.ParseSignatureManifest(sigManifest.Payload)
+	candidates, err := signing.ParseBundleIndex(indexManifest.Payload)
 	if err != nil {
-		return tag, nil, nil
+		return bundleTag, 0, nil
 	}
-	return tag, entries, nil
+
+	count := 0
+	for _, entry := range candidates {
+		referrerManifest, err := s.metadata.ResolveManifest(ctx, s.tenant(ctx), repositoryRef, entry.Digest)
+		if err != nil {
+			if domain.IsCode(err, domain.ErrorCodeNotFound) {
+				continue
+			}
+			return bundleTag, 0, err // infrastructure error propagates unchanged
+		}
+
+		subjectDigest, layerDigest, err := signing.ParseBundleReferrerManifest(referrerManifest.Payload)
+		if err != nil || subjectDigest != digest || layerDigest == "" {
+			continue
+		}
+		count++
+	}
+
+	return bundleTag, count, nil
 }
 
 // signatureStatusReason extracts the fixed-vocabulary reason from

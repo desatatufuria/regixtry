@@ -413,3 +413,55 @@ func seedMalformedBundleIndexManifest(t *testing.T, service *Service, repository
 		t.Fatalf("metadata.PublishManifest(malformed bundle index) error = %v", err)
 	}
 }
+
+// TestServiceSignatureStatusReportsTheBundleIndexTagAndCountForABundleSignature
+// is the RED test for a gap found live in production after this branch
+// merged: SignatureStatus's State comes from verifySignature (already
+// bundle-aware), but its Signature.Tag/SignatureCount come from the
+// separate resolveSignatureManifestEntries, which only ever resolved the
+// legacy `.sig` tag. Confirmed live: a real bundle-verified image reported
+// state "verified" but signature.tag as a `.sig` tag that does not exist
+// and signature_count: 0. resolveSignatureManifestEntries must fall back to
+// the bundle index exactly like verifySignature already does, and report
+// its real tag and a count of the referrer entries that actually match this
+// digest's subject.
+func TestServiceSignatureStatusReportsTheBundleIndexTagAndCountForABundleSignature(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	repository := "library/alpine"
+	imageDigest := seedArbitraryImageManifest(t, service, repository, " - bundle status")
+	key, keyPEM := generateTestECDSAP256KeyPair(t)
+	seedBundleSignatureArtifact(t, service, repository, imageDigest, imageDigest, bareHex(imageDigest), key)
+
+	if _, err := service.UpdateSigningPolicySettings(context.Background(), ports.SigningPolicySettings{
+		Enabled:           true,
+		TrustedPublicKeys: []string{keyPEM},
+	}); err != nil {
+		t.Fatalf("UpdateSigningPolicySettings() error = %v", err)
+	}
+
+	result, err := service.SignatureStatus(context.Background(), repository, imageDigest)
+	if err != nil {
+		t.Fatalf("SignatureStatus() error = %v", err)
+	}
+	if result.State != SignatureStatusVerified {
+		t.Fatalf("SignatureStatus() State = %q, want %q", result.State, SignatureStatusVerified)
+	}
+	if result.Signature == nil {
+		t.Fatal("SignatureStatus() Signature = nil, want a populated detail for a verified bundle signature")
+	}
+
+	wantTag, err := signing.BundleIndexTag(imageDigest)
+	if err != nil {
+		t.Fatalf("signing.BundleIndexTag(%q) error = %v", imageDigest, err)
+	}
+	if result.Signature.Tag != wantTag {
+		t.Fatalf("SignatureStatus() Signature.Tag = %q, want the bundle index tag %q, not a nonexistent legacy .sig tag", result.Signature.Tag, wantTag)
+	}
+	if result.Signature.SignatureCount != 1 {
+		t.Fatalf("SignatureStatus() Signature.SignatureCount = %d, want 1 (the one real bundle referrer bound to this digest)", result.Signature.SignatureCount)
+	}
+}
