@@ -3,6 +3,7 @@ package regixtry
 import (
 	"context"
 	"crypto/ecdsa"
+	"encoding/base64"
 	"fmt"
 	"io"
 
@@ -139,8 +140,11 @@ func (s *Service) verifySignature(ctx context.Context, repository, digest string
 	sigManifest, err := s.metadata.ResolveManifest(ctx, s.tenant(ctx), repositoryRef, tag)
 	if err != nil {
 		if domain.IsCode(err, domain.ErrorCodeNotFound) {
-			return signatureStateUnsigned, domain.NewPolicyViolationError(
-				fmt.Sprintf("pull of %s@%s is blocked by the signing policy: no signature found", repository, digest))
+			// No legacy `.sig` tag: modern cosign (v3+, --key-based signing)
+			// never pushes one -- it pushes an OCI Image Index at the
+			// suffix-less "sha256-<hex>" tag instead (BundleIndexTag). Only
+			// once BOTH lookups miss is this digest genuinely unsigned.
+			return s.verifyBundleSignature(ctx, repositoryRef, repository, digest, keys)
 		}
 		return "", err // infrastructure error propagates unchanged
 	}
@@ -174,6 +178,103 @@ func (s *Service) verifySignature(ctx context.Context, repository, digest string
 
 	return signatureStateUntrusted, domain.NewPolicyViolationError(
 		fmt.Sprintf("pull of %s@%s is blocked by the signing policy: no signature validated against a trusted key", repository, digest))
+}
+
+// verifyBundleSignature is verifySignature's fallback path for modern
+// cosign v3 (--key-based) signatures. It is called ONLY when the legacy
+// `.sig` tag lookup above returned domain.ErrorCodeNotFound, and is
+// structured to preserve that lookup's exact "genuinely unsigned" outcome
+// byte-for-byte when this format is absent too: an image signed in neither
+// format must behave exactly as before this fallback existed.
+//
+// Modern cosign pushes an OCI Image Index tagged signing.BundleIndexTag(digest)
+// (the same hex, no ".sig" suffix) whose manifests[] are referrer entries
+// with artifactType signing.SigstoreBundleMediaType. Each referrer manifest
+// carries subject.digest pointing back at the signed image and one layer of
+// that same media type -- a Sigstore Bundle document holding a DSSE
+// envelope. This loop resolves every candidate referrer, filters to the one
+// (if any) whose subject actually binds this digest, then verifies its DSSE
+// signature exactly like the legacy loop verifies a SimpleSigning payload:
+// PAE-encode, try every signature against every trusted key via the same
+// signing.Verify, and bind claims via signing.CheckBundleClaims.
+func (s *Service) verifyBundleSignature(ctx context.Context, repositoryRef domain.RepositoryRef, repository, digest string, keys []*ecdsa.PublicKey) (string, error) {
+	indexTag, err := signing.BundleIndexTag(digest)
+	if err != nil {
+		return signatureStateUnverifiable, domain.NewPolicyViolationError(
+			fmt.Sprintf("pull of %s@%s is blocked by the signing policy: %s", repository, digest, err.Error()))
+	}
+
+	indexManifest, err := s.metadata.ResolveManifest(ctx, s.tenant(ctx), repositoryRef, indexTag)
+	if err != nil {
+		if domain.IsCode(err, domain.ErrorCodeNotFound) {
+			// Neither the legacy `.sig` tag nor the modern bundle index
+			// resolved: this digest has no signature artifact in either
+			// format. Today's exact existing unsigned outcome, unchanged.
+			return signatureStateUnsigned, domain.NewPolicyViolationError(
+				fmt.Sprintf("pull of %s@%s is blocked by the signing policy: no signature found", repository, digest))
+		}
+		return "", err // infrastructure error propagates unchanged
+	}
+
+	entries, err := signing.ParseBundleIndex(indexManifest.Payload)
+	if err != nil {
+		return signatureStateUnverifiable, domain.NewPolicyViolationError(
+			fmt.Sprintf("pull of %s@%s is blocked by the signing policy: no usable bundle signature entry found", repository, digest))
+	}
+
+	for _, entry := range entries {
+		referrerManifest, err := s.metadata.ResolveManifest(ctx, s.tenant(ctx), repositoryRef, entry.Digest)
+		if err != nil {
+			if domain.IsCode(err, domain.ErrorCodeNotFound) {
+				continue // a listed referrer that no longer resolves; try the next candidate
+			}
+			return "", err // infrastructure error propagates unchanged
+		}
+
+		subjectDigest, layerDigest, err := signing.ParseBundleReferrerManifest(referrerManifest.Payload)
+		if err != nil || subjectDigest == "" || layerDigest == "" {
+			continue // not a usable bundle referrer manifest; try the next candidate
+		}
+		if subjectDigest != digest {
+			continue // a real signature, just not for THIS digest -- the filter must actually filter
+		}
+
+		bundlePayload, err := s.openSignaturePayload(ctx, layerDigest)
+		if err != nil {
+			return "", err // infrastructure error propagates unchanged
+		}
+		if bundlePayload == nil {
+			continue // bundle document blob missing or oversized; try the next candidate
+		}
+
+		bundle, err := signing.ParseBundleDocument(bundlePayload)
+		if err != nil {
+			continue // not a usable bundle document; try the next candidate
+		}
+
+		payload, err := base64.StdEncoding.DecodeString(bundle.Payload)
+		if err != nil {
+			continue // not a usable DSSE payload; try the next candidate
+		}
+
+		paeBytes := signing.PAE(bundle.PayloadType, payload)
+
+		for _, signatureB64 := range bundle.Signatures {
+			for _, key := range keys {
+				if err := signing.Verify(key, paeBytes, signatureB64); err != nil {
+					continue
+				}
+				if err := signing.CheckBundleClaims(payload, digest); err != nil {
+					return signatureStateMismatched, domain.NewPolicyViolationError(
+						fmt.Sprintf("pull of %s@%s is blocked by the signing policy: bundle signature binds a different digest", repository, digest))
+				}
+				return signatureStateVerified, nil
+			}
+		}
+	}
+
+	return signatureStateUntrusted, domain.NewPolicyViolationError(
+		fmt.Sprintf("pull of %s@%s is blocked by the signing policy: no bundle signature validated against a trusted key", repository, digest))
 }
 
 // openSignaturePayload reads one signature entry's payload blob, bounded by

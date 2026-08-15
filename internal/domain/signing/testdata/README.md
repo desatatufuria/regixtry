@@ -64,3 +64,27 @@ literal above (spaced, per the note above) with a deterministic fake image
 digest (`sha256("image-signing synthetic fixture image manifest v1")`),
 signs `SHA-256(payload.json)` with `ecdsa.SignASN1`, base64-encodes the DER
 signature into the manifest's annotation, and writes all three files.
+
+## Sigstore bundle fixtures — `bundle-*` — REAL, captured production data
+
+Unlike everything above, `bundle-index.json`, `bundle-referrer-manifest.json`,
+`bundle-document.json`, and `bundle-trusted-key.pub` are **not synthetic**.
+They were captured verbatim from a real registry: `team/az-deploy-demo`
+signed with modern cosign v3.1.3 (`--key`-based, no Fulcio/keyless) against
+digest `sha256:4a668fd22601acf91adb14ae57c2fe45a61010c709b3c48ff12b0b9187147640`.
+
+| File | Contents |
+|---|---|
+| `bundle-index.json` | The real OCI Image Index found at tag `sha256-4a668fd2...7640` (no `.sig` suffix) — one referrer entry, `artifactType: application/vnd.dev.sigstore.bundle.v0.3+json`. Production actually has two near-identical entries from repeated test signings; this file keeps the one representative entry. |
+| `bundle-referrer-manifest.json` | The real referrer manifest at digest `sha256:8678618790027dc3da5c3716d29379d7a2fb4f37b227985d5520bf183508efec`, `subject.digest` pointing back at the signed image, one `application/vnd.dev.sigstore.bundle.v0.3+json` layer. |
+| `bundle-document.json` | The real bundle document (the referrer manifest's single layer blob, digest `sha256:c887d7a10ad092f21778dca18ac355a346028c8e0e65cb8e31199104e0f0521d`), trimmed to the fields `signing.ParseBundleDocument` reads (`dsseEnvelope.payload`/`payloadType`/`signatures[].sig`) — `verificationMaterial.tlogEntries` and `timestampVerificationData` are intentionally omitted (this package never reads or validates them; see `bundle.go`'s package doc). `dsseEnvelope.payload`/`payloadType`/`signatures` are byte-for-byte the real captured values. |
+| `bundle-trusted-key.pub` | The real ECDSA P-256 public key (PEM, PKIX/SPKI) that actually produced this signature, as registered in the environment's live signing policy. This is a real, currently-trusted key, not a throwaway. |
+
+Independently re-verified before writing `bundle.go`: base64-decoding
+`dsseEnvelope.payload` yields the exact in-toto Statement JSON documented in
+the work-unit's task description; computing `DSSEv1` PAE over
+(`payloadType`, decoded `payload`) and checking the ASN.1 DER signature in
+`dsseEnvelope.signatures[0].sig` against `bundle-trusted-key.pub` with
+`openssl dgst -sha256 -verify` returns `Verified OK`. `TestPAE_GoldenRealSignatureVerifies`
+in `bundle_test.go` is the Go-level version of that same check and is the
+single most important test in this package.
