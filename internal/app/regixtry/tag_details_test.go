@@ -208,7 +208,7 @@ func tagManifestAtDigest(t *testing.T, service *Service, repository string, tag 
 		t.Fatalf("metadata.ResolveManifest(%q) error = %v", digest, err)
 	}
 
-	if err := service.metadata.PublishManifest(context.Background(), "tenant-a", repo, tag, resolved, resolved.References()); err != nil {
+	if err := service.metadata.PublishManifest(context.Background(), "tenant-a", repo, tag, resolved, resolved.BlobReferences()); err != nil {
 		t.Fatalf("metadata.PublishManifest(tag=%q) error = %v", tag, err)
 	}
 }

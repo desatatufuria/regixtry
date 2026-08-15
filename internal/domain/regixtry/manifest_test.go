@@ -17,13 +17,44 @@ func TestNewManifestComputesDigestAndReferences(t *testing.T) {
 		t.Fatalf("Validate() error = %v", err)
 	}
 
-	refs := manifest.References()
+	refs := manifest.BlobReferences()
 	if len(refs) != 2 {
-		t.Fatalf("len(References()) = %d, want 2", len(refs))
+		t.Fatalf("len(BlobReferences()) = %d, want 2", len(refs))
 	}
 
 	if refs[0].Digest != config.Digest || refs[1].Digest != layer.Digest {
 		t.Fatalf("unexpected references order: %#v", refs)
+	}
+}
+
+// TestManifestBlobReferencesExcludesSubject ensures Subject is never folded
+// into BlobReferences: it is a manifest-to-manifest pointer (OCI 1.1), never
+// a blob, so it must not be validated or persisted as one.
+func TestManifestBlobReferencesExcludesSubject(t *testing.T) {
+	t.Parallel()
+
+	config := Descriptor{MediaType: "application/vnd.oci.image.config.v1+json", Digest: DigestFromBytes([]byte("cfg")), Size: 3}
+	layer := Descriptor{MediaType: "application/vnd.oci.image.layer.v1.tar", Digest: DigestFromBytes([]byte("layer")), Size: 5}
+	subject := Descriptor{MediaType: "application/vnd.oci.image.manifest.v1+json", Digest: DigestFromBytes([]byte("subject-manifest")), Size: 7}
+
+	manifest, err := NewManifest("application/vnd.oci.image.manifest.v1+json", []byte(`{"schemaVersion":2}`), &config, []Descriptor{layer}, &subject, nil)
+	if err != nil {
+		t.Fatalf("NewManifest() error = %v", err)
+	}
+
+	if manifest.Subject == nil || manifest.Subject.Digest != subject.Digest {
+		t.Fatalf("manifest.Subject = %#v, want %#v", manifest.Subject, subject)
+	}
+
+	refs := manifest.BlobReferences()
+	if len(refs) != 2 {
+		t.Fatalf("len(BlobReferences()) = %d, want 2 (config + layer only)", len(refs))
+	}
+
+	for _, ref := range refs {
+		if ref.Digest == subject.Digest {
+			t.Fatalf("BlobReferences() = %#v, must not contain subject digest %s", refs, subject.Digest)
+		}
 	}
 }
 

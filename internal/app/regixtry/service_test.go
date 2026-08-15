@@ -109,6 +109,100 @@ func TestServiceRejectsManifestWithMissingBlob(t *testing.T) {
 	}
 }
 
+// TestServiceAcceptsManifestWithExistingSubject reproduces the live bug: an
+// OCI 1.1 subject-referencing manifest (e.g. what `cosign sign` pushes) must
+// publish successfully when its subject digest resolves to an existing
+// sibling manifest in the same repository -- Subject is a manifest-to-
+// manifest pointer, never a blob, so it must not be checked against (or
+// stored in) blob-only bookkeeping.
+func TestServiceAcceptsManifestWithExistingSubject(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	upload, err := service.BeginUpload(context.Background(), "library/subject")
+	if err != nil {
+		t.Fatalf("BeginUpload() error = %v", err)
+	}
+
+	if _, err := service.AppendUpload(context.Background(), "library/subject", upload.ID, strings.NewReader("layer-one")); err != nil {
+		t.Fatalf("AppendUpload() error = %v", err)
+	}
+
+	blobPayload := []byte("layer-one")
+	blob, err := service.CompleteUpload(context.Background(), "library/subject", upload.ID, digestForTest(blobPayload), nil)
+	if err != nil {
+		t.Fatalf("CompleteUpload() error = %v", err)
+	}
+
+	imageManifestPayload := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{"mediaType":"application/vnd.oci.image.config.v1+json","digest":"` + blob.Digest + `","size":9},"layers":[{"mediaType":"application/vnd.oci.image.layer.v1.tar","digest":"` + blob.Digest + `","size":9}]}`)
+
+	image, err := service.PublishManifest(context.Background(), "library/subject", "v1", "application/vnd.oci.image.manifest.v1+json", imageManifestPayload)
+	if err != nil {
+		t.Fatalf("PublishManifest(image) error = %v", err)
+	}
+
+	signaturePayload := []byte(fmt.Sprintf(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","subject":{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":%q,"size":%d},"config":{"mediaType":"application/vnd.oci.image.config.v1+json","digest":%q,"size":9},"layers":[{"mediaType":"application/vnd.oci.image.layer.v1.tar","digest":%q,"size":9}]}`, image.Digest, image.Size, blob.Digest, blob.Digest))
+
+	signature, err := service.PublishManifest(context.Background(), "library/subject", "v1.sig", "application/vnd.oci.image.manifest.v1+json", signaturePayload)
+	if err != nil {
+		t.Fatalf("PublishManifest(signature) error = %v, want nil (subject %s must resolve to sibling manifest, not be checked against blob storage)", err, image.Digest)
+	}
+
+	if len(signature.Blobs) != 2 {
+		t.Fatalf("len(signature.Blobs) = %d, want 2 (config + layer only, subject excluded)", len(signature.Blobs))
+	}
+
+	for _, blobDetail := range signature.Blobs {
+		if blobDetail.Digest == image.Digest {
+			t.Fatalf("signature.Blobs = %#v, must not contain subject digest %s as a blob", signature.Blobs, image.Digest)
+		}
+	}
+}
+
+// TestServiceRejectsManifestWithMissingSubject ensures a subject pointing at
+// a digest that is not an existing manifest in the repository is rejected
+// with a distinct, NotFound-shaped error -- never the "missing blob" message,
+// which would misleadingly imply the digest belongs in blob storage.
+func TestServiceRejectsManifestWithMissingSubject(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	upload, err := service.BeginUpload(context.Background(), "library/subject-missing")
+	if err != nil {
+		t.Fatalf("BeginUpload() error = %v", err)
+	}
+
+	if _, err := service.AppendUpload(context.Background(), "library/subject-missing", upload.ID, strings.NewReader("layer-one")); err != nil {
+		t.Fatalf("AppendUpload() error = %v", err)
+	}
+
+	blobPayload := []byte("layer-one")
+	blob, err := service.CompleteUpload(context.Background(), "library/subject-missing", upload.ID, digestForTest(blobPayload), nil)
+	if err != nil {
+		t.Fatalf("CompleteUpload() error = %v", err)
+	}
+
+	missingSubjectDigest := "sha256:8a5a3d2cfb08cf0c22848f3322a7fd6f1300a0a176c1f907fdbd53f5b5d2e236"
+	signaturePayload := []byte(fmt.Sprintf(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","subject":{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":%q,"size":123},"config":{"mediaType":"application/vnd.oci.image.config.v1+json","digest":%q,"size":9},"layers":[{"mediaType":"application/vnd.oci.image.layer.v1.tar","digest":%q,"size":9}]}`, missingSubjectDigest, blob.Digest, blob.Digest))
+
+	_, err = service.PublishManifest(context.Background(), "library/subject-missing", "v1.sig", "application/vnd.oci.image.manifest.v1+json", signaturePayload)
+	if err == nil {
+		t.Fatal("expected error when subject references a nonexistent manifest")
+	}
+
+	if !domain.IsCode(err, domain.ErrorCodeConflict) {
+		t.Fatalf("PublishManifest() error = %v, want a CONFLICT-coded error", err)
+	}
+
+	if strings.Contains(err.Error(), "missing blob") {
+		t.Fatalf("PublishManifest() error = %v, must not reuse the misleading \"missing blob\" message for a subject lookup failure", err)
+	}
+}
+
 func TestServiceAuthorizesRepositoryActionsAndFiltersCatalog(t *testing.T) {
 	t.Parallel()
 
