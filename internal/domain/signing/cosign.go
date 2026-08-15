@@ -75,6 +75,19 @@ type signatureManifestLayer struct {
 // SignatureTag maps a manifest digest ("sha256:<hex>") to cosign's legacy
 // signature tag ("sha256-<hex>.sig") in the same repository.
 func SignatureTag(digest string) (string, error) {
+	encoded, err := validatedDigestHex(digest)
+	if err != nil {
+		return "", err
+	}
+
+	return "sha256-" + encoded + ".sig", nil
+}
+
+// validatedDigestHex validates a "sha256:<hex>" digest and returns its bare
+// hex encoding. Shared by SignatureTag (this file) and BundleIndexTag
+// (bundle.go), which map the same validated hex onto the legacy ".sig" tag
+// and the modern bundle-index tag respectively.
+func validatedDigestHex(digest string) (string, error) {
 	const prefix = "sha256:"
 
 	if !strings.HasPrefix(digest, prefix) {
@@ -90,7 +103,7 @@ func SignatureTag(digest string) (string, error) {
 		return "", fmt.Errorf("signing: digest %q is not valid hex", digest)
 	}
 
-	return "sha256-" + encoded + ".sig", nil
+	return encoded, nil
 }
 
 // ParseSignatureManifest reads the verbatim `.sig` manifest bytes and
