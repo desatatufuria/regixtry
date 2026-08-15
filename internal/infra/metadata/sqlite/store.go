@@ -968,7 +968,7 @@ func (s *Store) GetActiveScanRunByDigest(ctx context.Context, tenant string, rep
 		ORDER BY created_at DESC
 		LIMIT 1
 	`, tenant, repository, digest, ports.ScanRunStatusQueued, ports.ScanRunStatusRunning)
-	return scanRunRow(row)
+	return scanRunRow(row, repository+"@"+digest)
 }
 
 // GetLatestScanRunByDigest returns the newest scan run for a digest
@@ -990,7 +990,7 @@ func (s *Store) GetLatestScanRunByDigest(ctx context.Context, tenant string, rep
 		ORDER BY created_at DESC, rowid DESC
 		LIMIT 1
 	`, tenant, repository, digest)
-	return scanRunRow(row)
+	return scanRunRow(row, repository+"@"+digest)
 }
 
 func (s *Store) GetScanRun(ctx context.Context, tenant string, runID string) (ports.ScanRun, error) {
@@ -999,7 +999,7 @@ func (s *Store) GetScanRun(ctx context.Context, tenant string, runID string) (po
 		FROM scan_runs
 		WHERE tenant = ? AND id = ?
 	`, tenant, runID)
-	return scanRunRow(row)
+	return scanRunRow(row, runID)
 }
 
 func (s *Store) GetScanRunDetail(ctx context.Context, tenant string, runID string) (ports.ScanRunDetail, error) {
@@ -1172,7 +1172,7 @@ func (s *Store) GetActiveSecretScanRunByDigest(ctx context.Context, tenant strin
 		ORDER BY created_at DESC
 		LIMIT 1
 	`, tenant, repository, digest, ports.SecretScanRunStatusQueued, ports.SecretScanRunStatusRunning)
-	return secretScanRunRow(row)
+	return secretScanRunRow(row, repository+"@"+digest)
 }
 
 func (s *Store) GetSecretScanRun(ctx context.Context, tenant string, runID string) (ports.SecretScanRun, error) {
@@ -1181,7 +1181,7 @@ func (s *Store) GetSecretScanRun(ctx context.Context, tenant string, runID strin
 		FROM secret_scan_runs
 		WHERE tenant = ? AND id = ?
 	`, tenant, runID)
-	return secretScanRunRow(row)
+	return secretScanRunRow(row, runID)
 }
 
 func (s *Store) GetSecretScanRunDetail(ctx context.Context, tenant string, runID string) (ports.SecretScanRunDetail, error) {
@@ -1706,11 +1706,11 @@ type scanRunScanner interface {
 	Scan(dest ...any) error
 }
 
-func scanRunRow(row scanRunScanner) (ports.ScanRun, error) {
+func scanRunRow(row scanRunScanner, lookupKey string) (ports.ScanRun, error) {
 	run, err := scanRunFromScanner(row)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return ports.ScanRun{}, domain.NewNotFoundError("scan_run", "")
+			return ports.ScanRun{}, domain.NewNotFoundError("scan_run", lookupKey)
 		}
 		return ports.ScanRun{}, err
 	}
@@ -1862,11 +1862,11 @@ func upsertScanRunTx(ctx context.Context, tx *sql.Tx, tenant string, run ports.S
 	return err
 }
 
-func secretScanRunRow(row scanRunScanner) (ports.SecretScanRun, error) {
+func secretScanRunRow(row scanRunScanner, lookupKey string) (ports.SecretScanRun, error) {
 	run, err := secretScanRunFromScanner(row)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return ports.SecretScanRun{}, domain.NewNotFoundError("secret_scan_run", "")
+			return ports.SecretScanRun{}, domain.NewNotFoundError("secret_scan_run", lookupKey)
 		}
 		return ports.SecretScanRun{}, err
 	}

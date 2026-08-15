@@ -1070,6 +1070,39 @@ func TestStoreGetLatestScanRunByDigestReturnsTypedNotFoundWithNoRun(t *testing.T
 	}
 }
 
+// TestStoreScanRunNotFoundErrorsIncludeTheLookupKey is the RED test for the
+// scanRunRow/secretScanRunRow not-found message bug found while live-testing
+// the stale-scan-run-dedup fix: both helpers always built
+// domain.NewNotFoundError(kind, "") with a hardcoded empty second argument,
+// so every not-found error read as `scan_run "" was not found` regardless of
+// which run/digest was actually looked up. Each lookup below must surface
+// the key it was actually searched by.
+func TestStoreScanRunNotFoundErrorsIncludeTheLookupKey(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	ctx := context.Background()
+	const missingDigest = "sha256:0000000000000000000000000000000000000000000000000000000000aa"
+
+	if _, err := store.GetScanRun(ctx, "tenant-a", "missing-run-id"); !strings.Contains(err.Error(), "missing-run-id") {
+		t.Fatalf("GetScanRun(missing) error = %v, want it to mention the run ID", err)
+	}
+	if _, err := store.GetActiveScanRunByDigest(ctx, "tenant-a", "library/alpine", missingDigest); !strings.Contains(err.Error(), missingDigest) {
+		t.Fatalf("GetActiveScanRunByDigest(missing) error = %v, want it to mention the digest", err)
+	}
+	if _, err := store.GetLatestScanRunByDigest(ctx, "tenant-a", "library/alpine", missingDigest); !strings.Contains(err.Error(), missingDigest) {
+		t.Fatalf("GetLatestScanRunByDigest(missing) error = %v, want it to mention the digest", err)
+	}
+	if _, err := store.GetSecretScanRun(ctx, "tenant-a", "missing-secret-run-id"); !strings.Contains(err.Error(), "missing-secret-run-id") {
+		t.Fatalf("GetSecretScanRun(missing) error = %v, want it to mention the run ID", err)
+	}
+	if _, err := store.GetActiveSecretScanRunByDigest(ctx, "tenant-a", "library/alpine", missingDigest); !strings.Contains(err.Error(), missingDigest) {
+		t.Fatalf("GetActiveSecretScanRunByDigest(missing) error = %v, want it to mention the digest", err)
+	}
+}
+
 // TestStoreListTagsWithCreatedAtReturnsEachTagsManifestCreatedAt is the RED
 // test for the console-tags-table change: ListTagsWithCreatedAt joins tags
 // to their manifest row and returns each tag's manifest created_at (the
