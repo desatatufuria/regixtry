@@ -245,7 +245,7 @@ func (s *Service) PublishManifest(ctx context.Context, repositoryName string, re
 		return ManifestDetails{}, err
 	}
 
-	for _, descriptor := range manifest.References() {
+	for _, descriptor := range manifest.BlobReferences() {
 		exists, err := s.blobs.BlobExists(ctx, descriptor.Digest)
 		if err != nil {
 			return ManifestDetails{}, err
@@ -255,7 +255,20 @@ func (s *Service) PublishManifest(ctx context.Context, repositoryName string, re
 		}
 	}
 
-	if err := s.metadata.PublishManifest(ctx, s.tenant(ctx), repository, tag, manifest, manifest.References()); err != nil {
+	// Subject (OCI 1.1) points at another manifest by digest -- e.g. what
+	// `cosign sign` pushes when signing an image -- so it is validated
+	// against manifest storage, never blob storage, and kept entirely out of
+	// BlobReferences (design note: fix/manifest-subject-not-blob).
+	if manifest.Subject != nil {
+		if _, err := s.metadata.ResolveManifest(ctx, s.tenant(ctx), repository, manifest.Subject.Digest.String()); err != nil {
+			if domain.IsCode(err, domain.ErrorCodeNotFound) {
+				return ManifestDetails{}, domain.NewConflictError(fmt.Sprintf("manifest subject %s was not found in %s", manifest.Subject.Digest, repository))
+			}
+			return ManifestDetails{}, err
+		}
+	}
+
+	if err := s.metadata.PublishManifest(ctx, s.tenant(ctx), repository, tag, manifest, manifest.BlobReferences()); err != nil {
 		return ManifestDetails{}, err
 	}
 
@@ -269,7 +282,7 @@ func (s *Service) PublishManifest(ctx context.Context, repositoryName string, re
 		s.queuePushScan(context.Background(), s.tenant(ctx), repository.String(), reference, manifest.Digest.String())
 	}()
 
-	return newManifestDetails(repository.String(), reference, manifest, manifest.References()), nil
+	return newManifestDetails(repository.String(), reference, manifest, manifest.BlobReferences()), nil
 }
 
 // DeleteManifest removes a manifest by digest (cascading to every tag that

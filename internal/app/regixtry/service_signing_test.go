@@ -59,7 +59,7 @@ func seedArbitraryImageManifest(t *testing.T, service *Service, repository strin
 		t.Fatalf("parseRepository(%q) error = %v", repository, err)
 	}
 
-	if err := service.metadata.PublishManifest(context.Background(), "tenant-a", repo, "", manifest, manifest.References()); err != nil {
+	if err := service.metadata.PublishManifest(context.Background(), "tenant-a", repo, "", manifest, manifest.BlobReferences()); err != nil {
 		t.Fatalf("metadata.PublishManifest() error = %v", err)
 	}
 
@@ -300,7 +300,7 @@ func TestServiceEnforceSigningPolicyBlocksWhenPayloadBlobIsAbsent(t *testing.T) 
 	if err != nil {
 		t.Fatalf("parseRepository(%q) error = %v", repository, err)
 	}
-	if err := service.metadata.PublishManifest(context.Background(), "tenant-a", repo, tag, manifest, manifest.References()); err != nil {
+	if err := service.metadata.PublishManifest(context.Background(), "tenant-a", repo, tag, manifest, manifest.BlobReferences()); err != nil {
 		t.Fatalf("metadata.PublishManifest(.sig) error = %v", err)
 	}
 

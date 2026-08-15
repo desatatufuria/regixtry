@@ -67,7 +67,7 @@ func seedSignatureStatusFixtureImage(t *testing.T, metadataStore *metadata.Store
 		t.Fatalf("domain.NewManifest() error = %v", err)
 	}
 	repo := domain.MustParseRepositoryRef(repository)
-	if err := metadataStore.PublishManifest(context.Background(), "tenant-a", repo, "", manifest, manifest.References()); err != nil {
+	if err := metadataStore.PublishManifest(context.Background(), "tenant-a", repo, "", manifest, manifest.BlobReferences()); err != nil {
 		t.Fatalf("metadataStore.PublishManifest() error = %v", err)
 	}
 	if manifest.Digest.String() != signatureStatusFixtureImageDigest {

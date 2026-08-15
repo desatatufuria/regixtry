@@ -90,17 +90,19 @@ func (m Manifest) Validate() error {
 	return nil
 }
 
-func (m Manifest) References() []Descriptor {
-	references := make([]Descriptor, 0, len(m.Layers)+2)
+// BlobReferences returns the descriptors this manifest is actually built
+// from -- Config and Layers, the digests that legitimately live in blob
+// storage. Subject is deliberately excluded: it is a pointer to another
+// manifest (by digest), never a blob, so it must not be validated or
+// persisted as one. Callers that need the subject reference it directly via
+// the Subject field.
+func (m Manifest) BlobReferences() []Descriptor {
+	references := make([]Descriptor, 0, len(m.Layers)+1)
 	if m.Config != nil {
 		references = append(references, *m.Config)
 	}
 
 	references = append(references, m.Layers...)
-
-	if m.Subject != nil {
-		references = append(references, *m.Subject)
-	}
 
 	return references
 }
