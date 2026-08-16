@@ -45,6 +45,12 @@ type QueryService interface {
 	ResolveManifest(ctx context.Context, repositoryName string, reference string) (appregixtry.ManifestDetails, error)
 	Uploads(ctx context.Context, repositoryName string) ([]appregixtry.UploadDetails, error)
 	SignatureStatus(ctx context.Context, repositoryName string, reference string) (appregixtry.SignatureStatusResult, error)
+	// DeleteManifest backs the Tags screen's delete-tag "d" key/confirm flow
+	// (blob-garbage-collection change), calling the already-tested
+	// (*appregixtry.Service).DeleteManifest directly in-process -- not
+	// through AdminClient/HTTP, since delete-enablement is Service's own
+	// deleteEnabled gate, not an admin-session concern.
+	DeleteManifest(ctx context.Context, repositoryName string, reference string) (appregixtry.DeletionDetails, error)
 }
 
 type RepositoriesModel struct {
@@ -76,6 +82,13 @@ type TagsModel struct {
 	// rebuildTagsTable() time -- mirrors AdminViewState.Tables' own
 	// baked-not-computed-in-View() pattern (design.md decision #6).
 	Table bubbletable.Model
+	// PendingDelete holds the tag name awaiting an Enter/Esc confirm from
+	// the "d" delete key (blob-garbage-collection change) -- "" means no
+	// delete is pending. screenTags is not an admin screen and only ever
+	// needs this one confirm kind, so a single field is deliberately used
+	// here instead of reusing/extending AdminViewState.ConfirmModal's
+	// generic multi-kind machinery.
+	PendingDelete string
 }
 
 type ManifestModel struct {
@@ -312,6 +325,16 @@ type catalogLoadedMsg struct {
 type tagsLoadedMsg struct {
 	repository string
 	result     []appregixtry.TagDetails
+	err        error
+}
+
+// tagDeletedMsg carries the repository/tag pair a deleteTagCmd targeted,
+// mirroring adminRobotDeletedMsg's own shape: after a successful delete the
+// screen reloads screenTags' own list (loadTagsCmd) rather than reusing a
+// mutation response body.
+type tagDeletedMsg struct {
+	repository string
+	tag        string
 	err        error
 }
 
@@ -648,6 +671,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.screen = screenTags
 		m.rebuildTagsTable(m.tagsTableLayout())
 		return m, nil
+	case tagDeletedMsg:
+		// Not an AdminClient/HTTP call (QueryService.DeleteManifest runs
+		// in-process against *appregixtry.Service directly), so there is no
+		// admin session to expire here -- just surface the error and clear
+		// the pending state so the operator is never stuck on a failed
+		// confirm.
+		if msg.err != nil {
+			m.tags.PendingDelete = ""
+			m.status = msg.err.Error()
+			return m, nil
+		}
+		m.tags.PendingDelete = ""
+		m.status = fmt.Sprintf("Tag %q deleted. Refreshing tags...", msg.tag)
+		return m, m.loadTagsCmd(msg.repository)
 	case manifestLoadedMsg:
 		if msg.err != nil {
 			m.screen = screenError
@@ -1417,6 +1454,18 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch {
+	// The Tags screen's delete-tag pending-confirm check runs first, ahead
+	// of every other case below: while a delete is pending, Enter/Esc must
+	// mean "confirm"/"cancel this confirm", not the screen's ordinary
+	// inspect-manifest/back-to-Repositories behavior those same keys
+	// otherwise trigger further down this switch.
+	case m.screen == screenTags && m.tags.PendingDelete != "" && isEnterKey(msg):
+		repository, tag := m.tags.Repository, m.tags.PendingDelete
+		return m, m.deleteTagCmd(repository, tag)
+	case m.screen == screenTags && m.tags.PendingDelete != "" && isEscKey(msg):
+		m.tags.PendingDelete = ""
+		m.status = ""
+		return m, nil
 	case isPgUpKey(msg), isPgDnKey(msg), isHomeKey(msg), isEndKey(msg):
 		if m.applyBodyPageKey(msg) {
 			return m, nil
@@ -1469,6 +1518,18 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.screen == screenManifest {
 			m.screen = screenUploads
 			m.showMutationNotice = false
+		}
+		return m, nil
+	case isRuneKey(msg, 'd') && m.screen == screenTags:
+		// Only "d" (not "d"/"x", matching robot-delete's own single-key
+		// precedent in updateAdminRobotsKey) -- placed ahead of the
+		// screenManifest/Blobs/Uploads case below so it never falls through
+		// to that unrelated v1 placeholder.
+		if tag, ok := m.selectedTag(); ok {
+			m.tags.PendingDelete = tag
+			m.status = fmt.Sprintf("Delete tag %q from %q? This action cannot be undone. (Enter: delete | Esc: cancel)", tag, m.tags.Repository)
+		} else {
+			m.status = "No tag selected to delete."
 		}
 		return m, nil
 	case isRuneKey(msg, 'd', 'x'):
@@ -3068,7 +3129,12 @@ func (m Model) scrollableBodyContext() (status, help string, total int, ok bool)
 	case screenRepositories:
 		return m.notice, "Enter: open tags | Tab: admin | q: quit | g: repo grants", len(m.repositories.Items) + 1, true
 	case screenTags:
-		return "", "Enter: inspect manifest | Tab: admin | Esc: back | q: quit", len(m.tags.Items) + 1, true
+		// Unlike the hardcoded "" every other branch here used before it,
+		// this returns m.status: the delete-tag pending-confirm message,
+		// its success/error follow-up, and the ordinary "" baseline all
+		// flow through the same field, so View() and the row-budget math
+		// below can never drift apart on what's actually shown.
+		return m.status, "Enter: inspect manifest | d: delete tag | Tab: admin | Esc: back | q: quit", len(m.tags.Items) + 1, true
 	}
 	return "", "", 0, false
 }
@@ -3197,6 +3263,19 @@ func (m Model) loadTagsCmd(repository string) tea.Cmd {
 	return func() tea.Msg {
 		result, err := m.service.TagDetails(m.ctx, repository, 100, "")
 		return tagsLoadedMsg{repository: repository, result: result, err: err}
+	}
+}
+
+// deleteTagCmd fires the Tags screen's pending-delete confirm (Enter),
+// calling QueryService.DeleteManifest with the tag name as reference --
+// per newDeletionDetailsForTag this untags only, leaving the manifest and
+// any other tags intact. Always returns a tagDeletedMsg carrying err, the
+// same always-returns-a-Msg-never-a-bare-error convention deleteRobotCmd
+// uses.
+func (m Model) deleteTagCmd(repository string, tag string) tea.Cmd {
+	return func() tea.Msg {
+		_, err := m.service.DeleteManifest(m.ctx, repository, tag)
+		return tagDeletedMsg{repository: repository, tag: tag, err: err}
 	}
 }
 

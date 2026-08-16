@@ -218,6 +218,8 @@ func TestViewportChromeInvariantTitleContextHelpAreSingleLine(t *testing.T) {
 		"library/alpine",
 		"Delete unavailable in v1: some reason",
 		"a repository manifest could not be resolved: connection refused",
+		`Delete tag "latest" from "library/alpine"? This action cannot be undone. (Enter: delete | Esc: cancel)`,
+		"manifest deletion is not enabled",
 	}
 	for _, context := range inspectionContexts {
 		assertSingleLine(t, "context "+context, theme.context.Render(context))
@@ -226,7 +228,7 @@ func TestViewportChromeInvariantTitleContextHelpAreSingleLine(t *testing.T) {
 	inspectionHelp := []string{
 		"q: quit",
 		"Enter: open tags | Tab: admin | q: quit",
-		"Enter: inspect manifest | Tab: admin | Esc: back | q: quit",
+		"Enter: inspect manifest | d: delete tag | Tab: admin | Esc: back | q: quit",
 		"b: blobs | u: uploads | d: unsupported delete | Tab: admin | Esc: back | q: quit",
 		"Tab: admin | Esc: back | q: quit",
 		"Enter: sign in | Tab: switch field | Esc: back | q: quit",
