@@ -308,11 +308,23 @@ func (s *Service) PublishManifest(ctx context.Context, repositoryName string, re
 	// on it (design.md Decision 4). Tenant is captured here, before the
 	// goroutine, because the request context is cancelled the moment this
 	// response is written.
-	s.backgroundWork.Add(1)
-	go func() {
-		defer s.backgroundWork.Done()
-		s.queuePushScan(context.Background(), s.tenant(ctx), repository.String(), reference, manifest.Digest.String())
-	}()
+	//
+	// manifest.Subject != nil means this manifest is an OCI 1.1 referrer --
+	// a cosign signature bundle, an attestation, an SBOM -- pointing at
+	// another manifest, never a real image with layers. Queueing a scan for
+	// it is not merely wasted work: Trivy cannot scan it as an image at
+	// all, so the scan always fails, permanently polluting Repository
+	// Alerts with an unfixable "failed" row for every signature/attestation
+	// ever pushed (found live: every cosign-signed push run in
+	// team/az-deploy-demo). The manifest this one refers to is unaffected
+	// and keeps getting scanned normally.
+	if manifest.Subject == nil {
+		s.backgroundWork.Add(1)
+		go func() {
+			defer s.backgroundWork.Done()
+			s.queuePushScan(context.Background(), s.tenant(ctx), repository.String(), reference, manifest.Digest.String())
+		}()
+	}
 
 	return newManifestDetails(repository.String(), reference, manifest, manifest.BlobReferences()), nil
 }

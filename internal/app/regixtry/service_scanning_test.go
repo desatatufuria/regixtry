@@ -2,6 +2,7 @@ package regixtry
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -355,6 +356,75 @@ func TestQueuePushScanSkipsRepositoryWithDisablingOverride(t *testing.T) {
 
 	if _, err := service.metadata.GetActiveScanRunByDigest(context.Background(), "tenant-a", "library/alpine", digest); !domain.IsCode(err, domain.ErrorCodeNotFound) {
 		t.Fatalf("GetActiveScanRunByDigest() error = %v, want ErrorCodeNotFound (no run queued for overridden-disabled repository)", err)
+	}
+}
+
+// TestPublishManifestSkipsPushTriggeredScanForSubjectReferencingManifest is
+// the RED test reproducing the live bug found while investigating a
+// production "failed" Repository Alerts row: PublishManifest fires a push-
+// triggered Trivy scan for EVERY manifest, including OCI 1.1
+// subject-referencing ones (cosign signature bundles, attestations, SBOMs)
+// -- which are never a real image with layers Trivy can scan, so the scan
+// always fails with "exit status 1", inflating Runs and polluting
+// Repository Alerts with a permanent failed row for something that can
+// never succeed. A subject-referencing manifest must never queue a
+// push-triggered scan at all, for its own digest -- the manifest it refers
+// to (the real image) is unaffected and keeps getting scanned normally.
+func TestPublishManifestSkipsPushTriggeredScanForSubjectReferencingManifest(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	if _, err := service.EnsureScanSettings(context.Background(), ports.ScanSettings{Enabled: true, Timeout: time.Minute, Interval: time.Hour, RegistryReachableURL: "https://registry.internal", MaxConcurrency: 1}); err != nil {
+		t.Fatalf("EnsureScanSettings() error = %v", err)
+	}
+	seedManagedRuntimeState(t, service, "0.57.1")
+	trivyRunner := &capturingScanRunner{result: ports.ScanResult{TrivyVersion: "0.57.1"}}
+	service.SetScanRunner(trivyRunner)
+
+	upload, err := service.BeginUpload(context.Background(), "library/subject")
+	if err != nil {
+		t.Fatalf("BeginUpload() error = %v", err)
+	}
+	if _, err := service.AppendUpload(context.Background(), "library/subject", upload.ID, strings.NewReader("layer-one")); err != nil {
+		t.Fatalf("AppendUpload() error = %v", err)
+	}
+	blobPayload := []byte("layer-one")
+	blob, err := service.CompleteUpload(context.Background(), "library/subject", upload.ID, digestForTest(blobPayload), nil)
+	if err != nil {
+		t.Fatalf("CompleteUpload() error = %v", err)
+	}
+
+	imageManifestPayload := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{"mediaType":"application/vnd.oci.image.config.v1+json","digest":"` + blob.Digest + `","size":9},"layers":[{"mediaType":"application/vnd.oci.image.layer.v1.tar","digest":"` + blob.Digest + `","size":9}]}`)
+	image, err := service.PublishManifest(context.Background(), "library/subject", "v1", "application/vnd.oci.image.manifest.v1+json", imageManifestPayload)
+	if err != nil {
+		t.Fatalf("PublishManifest(image) error = %v", err)
+	}
+	// The real image must still get its own push-triggered scan -- this
+	// change must not suppress scanning generally, only for
+	// subject-referencing manifests.
+	waitForRunnerTargets(t, trivyRunner, 1)
+
+	signaturePayload := []byte(fmt.Sprintf(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","subject":{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":%q,"size":%d},"config":{"mediaType":"application/vnd.oci.image.config.v1+json","digest":%q,"size":9},"layers":[{"mediaType":"application/vnd.oci.image.layer.v1.tar","digest":%q,"size":9}]}`, image.Digest, image.Size, blob.Digest, blob.Digest))
+	signature, err := service.PublishManifest(context.Background(), "library/subject", "sha256-deadbeef", "application/vnd.oci.image.manifest.v1+json", signaturePayload)
+	if err != nil {
+		t.Fatalf("PublishManifest(signature) error = %v", err)
+	}
+	service.WaitForBackgroundWork()
+
+	// Give any (incorrectly fired) scan goroutine time to reach the runner
+	// before asserting it never did.
+	time.Sleep(100 * time.Millisecond)
+	trivyRunner.mu.Lock()
+	targetCount := len(trivyRunner.targets)
+	trivyRunner.mu.Unlock()
+	if targetCount != 1 {
+		t.Fatalf("trivyRunner.targets = %d, want still 1 (the subject-referencing manifest must never reach the scan runner)", targetCount)
+	}
+
+	if _, err := service.metadata.GetActiveScanRunByDigest(context.Background(), "tenant-a", "library/subject", signature.Digest); !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("GetActiveScanRunByDigest(signature digest) error = %v, want ErrorCodeNotFound (no scan run ever queued for it)", err)
 	}
 }
 
