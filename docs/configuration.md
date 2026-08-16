@@ -48,6 +48,8 @@ The `-trivy-*` flags configure the built-in Trivy feature at process start. For 
 | `-auth-postgres-dsn` | `REGISTRY_AUTH_POSTGRES_DSN` | Auth DSN |
 | `-api-base-url` | `REGISTRY_API_BASE_URL` | Absolute base URL of the admin API |
 | `-snapshot` | `false` | Render the first view and exit |
+| `-delete-enabled` | `REGISTRY_DELETE_ENABLED` | Enable the Tags screen's delete-tag confirm flow (`d` key); same flag/env pairing and default (`false`) as `serve`'s |
+| `-gc-delete-enabled` | `REGISTRY_GC_DELETE_ENABLED` | Same flag/env pairing and default (`false`) as `serve`'s; no TUI action reads it yet |
 
 A managed installation can auto-detect values from `/etc/regixtry/regixtry.env`; explicit flags take priority.
 
