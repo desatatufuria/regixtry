@@ -10,6 +10,7 @@ import (
 	"time"
 
 	domain "regixtry/internal/domain/regixtry"
+	"regixtry/internal/domain/signing"
 	"regixtry/internal/ports"
 )
 
@@ -309,16 +310,17 @@ func (s *Service) PublishManifest(ctx context.Context, repositoryName string, re
 	// goroutine, because the request context is cancelled the moment this
 	// response is written.
 	//
-	// manifest.Subject != nil means this manifest is an OCI 1.1 referrer --
-	// a cosign signature bundle, an attestation, an SBOM -- pointing at
-	// another manifest, never a real image with layers. Queueing a scan for
-	// it is not merely wasted work: Trivy cannot scan it as an image at
-	// all, so the scan always fails, permanently polluting Repository
-	// Alerts with an unfixable "failed" row for every signature/attestation
-	// ever pushed (found live: every cosign-signed push run in
-	// team/az-deploy-demo). The manifest this one refers to is unaffected
-	// and keeps getting scanned normally.
-	if manifest.Subject == nil {
+	// isReferrerArtifactPush means this manifest is a cosign
+	// signature/attestation/SBOM pointing at another manifest, never a real
+	// image with layers. Queueing a scan for it is not merely wasted work:
+	// Trivy cannot scan it as an image at all, so the scan always fails,
+	// permanently polluting Repository Alerts with an unfixable "failed"
+	// row for every signature/attestation ever pushed (found live: every
+	// cosign-signed push run in team/az-deploy-demo -- both the
+	// subject-bearing bundle-referrer manifest AND the subject-less
+	// bundle-index manifest above it). The manifest this one refers to is
+	// unaffected and keeps getting scanned normally.
+	if !isReferrerArtifactPush(manifest, tag) {
 		s.backgroundWork.Add(1)
 		go func() {
 			defer s.backgroundWork.Done()
@@ -417,6 +419,38 @@ func parseManifestPayload(reference string, mediaType string, payload []byte) (d
 	}
 
 	return manifest, reference, nil
+}
+
+// isReferrerArtifactPush reports whether this push is a cosign referrer
+// artifact -- a signature, attestation, or SBOM pointing at another
+// manifest -- never a primary artifact a push-triggered scan should ever
+// attempt against. Two signals, either sufficient on its own, mirror the
+// two real shapes cosign v3 pushes for one signing operation:
+//
+//  1. manifest.Subject != nil: the OCI 1.1-native referrer manifest (the
+//     bundle-referrer manifest itself, and legacy `.sig` manifests).
+//  2. tag matches cosign's own referrer-tag-schema convention
+//     (SignatureTag's "sha256-<hex>.sig", or BundleIndexTag's suffix-less
+//     "sha256-<hex>"): the top-level Sigstore Bundle artifact is an OCI
+//     Image Index at exactly this tag, carrying NO subject of its own --
+//     only a "manifests" array pointing at the referrer manifest above by
+//     digest, so Subject alone misses it entirely.
+func isReferrerArtifactPush(manifest domain.Manifest, tag string) bool {
+	if manifest.Subject != nil {
+		return true
+	}
+	const prefix = "sha256-"
+	if !strings.HasPrefix(tag, prefix) {
+		return false
+	}
+	digest := "sha256:" + strings.TrimSuffix(strings.TrimPrefix(tag, prefix), ".sig")
+	if sigTag, err := signing.SignatureTag(digest); err == nil && sigTag == tag {
+		return true
+	}
+	if bundleTag, err := signing.BundleIndexTag(digest); err == nil && bundleTag == tag {
+		return true
+	}
+	return false
 }
 
 func parseRepository(repositoryName string) (domain.RepositoryRef, error) {

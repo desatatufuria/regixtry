@@ -8,6 +8,7 @@ import (
 	"time"
 
 	domain "regixtry/internal/domain/regixtry"
+	"regixtry/internal/domain/signing"
 	"regixtry/internal/ports"
 )
 
@@ -425,6 +426,77 @@ func TestPublishManifestSkipsPushTriggeredScanForSubjectReferencingManifest(t *t
 
 	if _, err := service.metadata.GetActiveScanRunByDigest(context.Background(), "tenant-a", "library/subject", signature.Digest); !domain.IsCode(err, domain.ErrorCodeNotFound) {
 		t.Fatalf("GetActiveScanRunByDigest(signature digest) error = %v, want ErrorCodeNotFound (no scan run ever queued for it)", err)
+	}
+}
+
+// TestPublishManifestSkipsPushTriggeredScanForBundleIndexManifest is the
+// RED test for the gap found live in team/az-deploy-demo AFTER the Subject
+// fix shipped: cosign v3's top-level Sigstore Bundle artifact is an OCI
+// Image Index tagged "sha256-<hex>" (signing.BundleIndexTag) with NO
+// subject field of its own -- only a "manifests" array pointing at the
+// actual bundle-referrer manifest (which DOES carry subject) by digest.
+// Confirmed against the real payload pulled from production:
+//
+//	{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json",
+//	 "manifests":[{"mediaType":"...","digest":"sha256:...","artifactType":
+//	 "application/vnd.dev.sigstore.bundle.v0.3+json"}]}
+//
+// The Subject-only check missed this index entirely, so its push-triggered
+// scan still failed with "exit status 1" in production even on RC90.
+func TestPublishManifestSkipsPushTriggeredScanForBundleIndexManifest(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	if _, err := service.EnsureScanSettings(context.Background(), ports.ScanSettings{Enabled: true, Timeout: time.Minute, Interval: time.Hour, RegistryReachableURL: "https://registry.internal", MaxConcurrency: 1}); err != nil {
+		t.Fatalf("EnsureScanSettings() error = %v", err)
+	}
+	seedManagedRuntimeState(t, service, "0.57.1")
+	trivyRunner := &capturingScanRunner{result: ports.ScanResult{TrivyVersion: "0.57.1"}}
+	service.SetScanRunner(trivyRunner)
+
+	upload, err := service.BeginUpload(context.Background(), "library/subject")
+	if err != nil {
+		t.Fatalf("BeginUpload() error = %v", err)
+	}
+	if _, err := service.AppendUpload(context.Background(), "library/subject", upload.ID, strings.NewReader("layer-one")); err != nil {
+		t.Fatalf("AppendUpload() error = %v", err)
+	}
+	blobPayload := []byte("layer-one")
+	blob, err := service.CompleteUpload(context.Background(), "library/subject", upload.ID, digestForTest(blobPayload), nil)
+	if err != nil {
+		t.Fatalf("CompleteUpload() error = %v", err)
+	}
+
+	imageManifestPayload := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{"mediaType":"application/vnd.oci.image.config.v1+json","digest":"` + blob.Digest + `","size":9},"layers":[{"mediaType":"application/vnd.oci.image.layer.v1.tar","digest":"` + blob.Digest + `","size":9}]}`)
+	image, err := service.PublishManifest(context.Background(), "library/subject", "v1", "application/vnd.oci.image.manifest.v1+json", imageManifestPayload)
+	if err != nil {
+		t.Fatalf("PublishManifest(image) error = %v", err)
+	}
+	waitForRunnerTargets(t, trivyRunner, 1)
+
+	bundleIndexTag, err := signing.BundleIndexTag(image.Digest)
+	if err != nil {
+		t.Fatalf("signing.BundleIndexTag(%q) error = %v", image.Digest, err)
+	}
+	bundleIndexPayload := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[{"mediaType":"application/vnd.oci.image.manifest.v1+json","size":888,"digest":"` + blob.Digest + `","artifactType":"application/vnd.dev.sigstore.bundle.v0.3+json"}]}`)
+	bundleIndex, err := service.PublishManifest(context.Background(), "library/subject", bundleIndexTag, "application/vnd.oci.image.index.v1+json", bundleIndexPayload)
+	if err != nil {
+		t.Fatalf("PublishManifest(bundle index) error = %v", err)
+	}
+	service.WaitForBackgroundWork()
+
+	time.Sleep(100 * time.Millisecond)
+	trivyRunner.mu.Lock()
+	targetCount := len(trivyRunner.targets)
+	trivyRunner.mu.Unlock()
+	if targetCount != 1 {
+		t.Fatalf("trivyRunner.targets = %d, want still 1 (the subject-less bundle-index manifest must never reach the scan runner)", targetCount)
+	}
+
+	if _, err := service.metadata.GetActiveScanRunByDigest(context.Background(), "tenant-a", "library/subject", bundleIndex.Digest); !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("GetActiveScanRunByDigest(bundle index digest) error = %v, want ErrorCodeNotFound (no scan run ever queued for it)", err)
 	}
 }
 
