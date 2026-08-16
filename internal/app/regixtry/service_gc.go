@@ -212,6 +212,30 @@ func (s *Service) DeleteByGCReport(ctx context.Context, reportID string) (ports.
 			continue
 		}
 
+		// JD-1: freshSet above is a single snapshot taken before this loop
+		// started. For a large batch, a legitimate push can publish a
+		// manifest referencing THIS exact digest after that snapshot but
+		// before this digest's own turn here. Re-verify narrowly,
+		// immediately before the unlink, rather than trusting the
+		// batch-wide snapshot alone.
+		referenced, refErr := s.metadata.IsBlobDigestReferenced(ctx, candidate.Digest)
+		if refErr != nil {
+			failureCount++
+			candidateOutcomes = append(candidateOutcomes, ports.GCCandidateOutcome{
+				Digest:  candidate.Digest,
+				Outcome: ports.GCCandidateOutcomeFailed,
+				Error:   refErr.Error(),
+			})
+			continue
+		}
+		if referenced {
+			candidateOutcomes = append(candidateOutcomes, ports.GCCandidateOutcome{
+				Digest:  candidate.Digest,
+				Outcome: ports.GCCandidateOutcomeRetained,
+			})
+			continue
+		}
+
 		removed, deleteErr := s.blobs.DeleteBlob(ctx, digest)
 		if deleteErr != nil {
 			failureCount++

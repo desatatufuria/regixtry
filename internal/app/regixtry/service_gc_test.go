@@ -377,6 +377,147 @@ func TestGCRespectsBlobsReferencedOnlyByAnotherTenantAtDeleteTime(t *testing.T) 
 	}
 }
 
+// raceInjectingBlobStore wraps a real ports.BlobStore and fires onTrigger
+// immediately after the real unlink of triggerAfterDigest completes -- used
+// to simulate a manifest publish that lands mid-batch, strictly after the
+// pre-loop freshSet snapshot but strictly before the victim digest's own
+// turn in the loop, proving the gap JD-1 identified: recompute-and-intersect
+// runs exactly once before the loop, with no per-digest recheck immediately
+// before each individual unlink.
+type raceInjectingBlobStore struct {
+	ports.BlobStore
+	triggerAfterDigest string
+	onTrigger          func()
+	fired              bool
+}
+
+func (r *raceInjectingBlobStore) DeleteBlob(ctx context.Context, digest domain.Digest) (bool, error) {
+	removed, err := r.BlobStore.DeleteBlob(ctx, digest)
+	if !r.fired && digest.String() == r.triggerAfterDigest {
+		r.fired = true
+		r.onTrigger()
+	}
+	return removed, err
+}
+
+// TestDeleteByGCReportDoesNotUnlinkBlobReferencedDuringBatchProcessing is
+// JD-1: DeleteByGCReport's recompute-and-intersect is documented as "can
+// only under-delete" (gcReportTTL doc comment), but the fresh mark-and-sweep
+// set (freshSet) is computed exactly ONCE before the per-digest delete loop
+// starts, with no re-check immediately before each individual
+// s.blobs.DeleteBlob call. This test proves the consequence directly: while
+// the first candidate's blob is being unlinked, a manifest publish lands
+// referencing the SECOND (not-yet-processed) candidate's digest -- a
+// legitimate push racing the GC batch, not a crafted attack. Without a
+// per-digest recheck, the second candidate still gets deleted despite being
+// referenced at the moment of its own deletion, contradicting the code's
+// own stated invariant.
+func TestDeleteByGCReportDoesNotUnlinkBlobReferencedDuringBatchProcessing(t *testing.T) {
+	t.Parallel()
+
+	rootDir := t.TempDir()
+	blobs, err := fsblob.New(filepath.Join(rootDir, "blobs"))
+	if err != nil {
+		t.Fatalf("fsblob.New() error = %v", err)
+	}
+	metadataStore, err := metadata.New(filepath.Join(rootDir, "registry.db"))
+	if err != nil {
+		t.Fatalf("sqlite.New() error = %v", err)
+	}
+	defer metadataStore.Close()
+
+	racing := &raceInjectingBlobStore{BlobStore: blobs}
+
+	var service *Service
+	service = NewService(racing, metadataStore, allowAllAccessController{}, ports.NewSingleTenantResolver("tenant-a"), ports.NewInlineJobRunner())
+	defer service.WaitForBackgroundWork()
+	service.SetGCDeleteEnabled(true)
+
+	ctx := context.Background()
+
+	payloadA := []byte("race-batch-candidate-a-genuinely-garbage")
+	uploadA, err := service.BeginUpload(ctx, "library/alpine")
+	if err != nil {
+		t.Fatalf("BeginUpload(a) error = %v", err)
+	}
+	if _, err := service.CompleteUpload(ctx, "library/alpine", uploadA.ID, digestForTest(payloadA), strings.NewReader(string(payloadA))); err != nil {
+		t.Fatalf("CompleteUpload(a) error = %v", err)
+	}
+
+	payloadB := []byte("race-batch-candidate-b-genuinely-garbage")
+	uploadB, err := service.BeginUpload(ctx, "library/alpine")
+	if err != nil {
+		t.Fatalf("BeginUpload(b) error = %v", err)
+	}
+	if _, err := service.CompleteUpload(ctx, "library/alpine", uploadB.ID, digestForTest(payloadB), strings.NewReader(string(payloadB))); err != nil {
+		t.Fatalf("CompleteUpload(b) error = %v", err)
+	}
+
+	payloadByDigest := map[string][]byte{
+		digestForTest(payloadA): payloadA,
+		digestForTest(payloadB): payloadB,
+	}
+
+	service.now = func() time.Time { return time.Now().UTC().Add(gcGraceWindow + time.Hour) }
+	service.WaitForBackgroundWork()
+
+	detail, err := service.ComputeGCReport(ctx)
+	if err != nil {
+		t.Fatalf("ComputeGCReport() error = %v", err)
+	}
+	if detail.Report.CandidateCount != 2 {
+		t.Fatalf("CandidateCount = %d, want 2 (both blobs unreferenced, past grace)", detail.Report.CandidateCount)
+	}
+	if len(detail.Candidates) != 2 {
+		t.Fatalf("len(Candidates) = %d, want 2", len(detail.Candidates))
+	}
+
+	// gcCandidates sorts by digest (D1); the loop in DeleteByGCReport walks
+	// detail.Candidates in that same stored order. Whichever candidate sorts
+	// first (index 0) is the one whose DeleteBlob call fires the mid-batch
+	// publish; the SECOND one (index 1, "victim") is what the publish
+	// references and what the delete loop has not yet reached -- decided
+	// dynamically here rather than by literal payload identity, since digest
+	// sort order is content-dependent.
+	triggerDigest := detail.Candidates[0].Digest
+	victimDigest := detail.Candidates[1].Digest
+	victimPayload, ok := payloadByDigest[victimDigest]
+	if !ok {
+		t.Fatalf("victimDigest = %s not among the payloads this test uploaded; candidates = %#v", victimDigest, detail.Candidates)
+	}
+
+	racing.triggerAfterDigest = triggerDigest
+	racing.onTrigger = func() {
+		manifestPayload := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{"mediaType":"application/vnd.oci.image.config.v1+json","digest":"` + victimDigest + `","size":` + strconv.Itoa(len(victimPayload)) + `},"layers":[{"mediaType":"application/vnd.oci.image.layer.v1.tar","digest":"` + victimDigest + `","size":` + strconv.Itoa(len(victimPayload)) + `}]}`)
+		if _, err := service.PublishManifest(ctx, "library/alpine", "latest", "application/vnd.oci.image.manifest.v1+json", manifestPayload); err != nil {
+			t.Fatalf("PublishManifest(mid-batch race) error = %v", err)
+		}
+	}
+
+	result, err := service.DeleteByGCReport(ctx, detail.Report.ID)
+	if err != nil {
+		t.Fatalf("DeleteByGCReport() error = %v", err)
+	}
+
+	var victimOutcome string
+	for _, candidate := range result.Candidates {
+		if candidate.Digest == victimDigest {
+			victimOutcome = candidate.Outcome
+		}
+	}
+	if victimOutcome != ports.GCCandidateOutcomeRetained {
+		t.Fatalf("victim candidate outcome = %q, want %q (became referenced mid-batch, before its own turn in the delete loop)", victimOutcome, ports.GCCandidateOutcomeRetained)
+	}
+
+	exists, err := service.blobs.BlobExists(ctx, domain.MustParseDigest(victimDigest))
+	if err != nil {
+		t.Fatalf("BlobExists(victim) error = %v", err)
+	}
+	if !exists {
+		t.Fatal("victim blob was removed from disk despite becoming referenced by a manifest before its own turn in the delete loop (JD-1)")
+	}
+}
+
 // TestDeleteByGCReportRejectsAlreadyUsedReport is T5's service half: a
 // second delete request against a report already transitioned to "deleted"
 // must be rejected with a conflict, and must not attempt to unlink anything

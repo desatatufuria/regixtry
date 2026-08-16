@@ -434,6 +434,19 @@ func (s *Store) ListReferencedBlobDigests(ctx context.Context) ([]string, error)
 	return digests, rows.Err()
 }
 
+// IsBlobDigestReferenced is ListReferencedBlobDigests narrowed to one
+// digest: SELECT EXISTS(SELECT 1 FROM manifest_blobs WHERE digest = ?), with
+// no tenant predicate for the same reason ListReferencedBlobDigests has
+// none (design.md Decision C -- blob files carry no tenant namespacing).
+func (s *Store) IsBlobDigestReferenced(ctx context.Context, digest string) (bool, error) {
+	var referenced bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM manifest_blobs WHERE digest = ?)`, digest).Scan(&referenced)
+	if err != nil {
+		return false, err
+	}
+	return referenced, nil
+}
+
 // CreateGCReport inserts one gc_reports row plus its gc_report_candidates
 // children in a single transaction (design.md interfaces doc): a partially
 // written report is never observable. GLOBAL -- no tenant column at all.

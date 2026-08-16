@@ -147,6 +147,17 @@ type MetadataStore interface {
 	// with no recovery short of a re-push or a blobsRoot restore.
 	ListReferencedBlobDigests(ctx context.Context) ([]string, error)
 
+	// IsBlobDigestReferenced is a narrow, single-digest counterpart to
+	// ListReferencedBlobDigests: SELECT EXISTS(SELECT 1 FROM manifest_blobs
+	// WHERE digest = ?), with NO tenant predicate for the same reason
+	// ListReferencedBlobDigests has none (design.md Decision C). It exists
+	// so DeleteByGCReport can re-verify one candidate immediately before
+	// unlinking it, without re-running the full global mark query per
+	// digest (JD-1: the batch-wide freshSet snapshot alone leaves a window
+	// between the snapshot and an individual digest's own turn in the
+	// delete loop).
+	IsBlobDigestReferenced(ctx context.Context, digest string) (bool, error)
+
 	// CreateGCReport inserts one gc_reports row plus its
 	// gc_report_candidates children in a single transaction; a partially
 	// written report is never observable. GLOBAL: no tenant argument.
