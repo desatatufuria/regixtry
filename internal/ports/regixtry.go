@@ -18,6 +18,34 @@ type BlobStore interface {
 	CancelUpload(ctx context.Context, uploadID string) error
 	BlobExists(ctx context.Context, digest domain.Digest) (bool, error)
 	OpenBlob(ctx context.Context, digest domain.Digest) (io.ReadSeekCloser, domain.Descriptor, error)
+
+	// ListBlobs returns one entry per committed blob file in the store.
+	// It is GLOBAL by construction: blob files are content-addressed with
+	// zero tenant or repository namespacing (fsblob stores them at
+	// blobsRoot/<algorithm>/<hex>), so one file is shared by every tenant
+	// that pushed that content and there is nothing to scope by.
+	//
+	// Implementations MUST NOT enumerate in-flight uploads. Those live in a
+	// separate tree (uploads/<id>/) and are not blobs until CommitUpload
+	// renames one into blobsRoot; enumerating them would expose a
+	// half-written push to the garbage collector.
+	ListBlobs(ctx context.Context) ([]BlobFileInfo, error)
+
+	// DeleteBlob unlinks exactly one committed blob file. Idempotent: an
+	// already-absent file returns (false, nil), never an error.
+	// Implementations MUST validate the digest before resolving any path and
+	// MUST refuse to touch anything outside their own blob root -- in
+	// particular, never anything under an uploads/ tree.
+	DeleteBlob(ctx context.Context, digest domain.Digest) (removed bool, err error)
+}
+
+// BlobFileInfo is one blob file as it exists on disk right now. ModTime is
+// the file's mtime, which is write time and not commit time -- the 24h grace
+// window (gcGraceWindow) is sized to absorb that difference.
+type BlobFileInfo struct {
+	Digest  domain.Digest
+	Size    int64
+	ModTime time.Time
 }
 
 type MetadataStore interface {
@@ -101,6 +129,123 @@ type MetadataStore interface {
 	// DeleteTag removes one tags row, leaving the manifest and every other tag on
 	// it intact. Zero rows affected is a typed domain.ErrorCodeNotFound.
 	DeleteTag(ctx context.Context, tenant string, repository domain.RepositoryRef, tag string) error
+
+	// ListReferencedBlobDigests returns every distinct digest referenced by
+	// ANY manifest in the deployment: SELECT DISTINCT digest FROM
+	// manifest_blobs, with NO tenant predicate and no join that could
+	// introduce one.
+	//
+	// !!! THIS METHOD TAKES NO tenant ARGUMENT, AND THAT IS DELIBERATE !!!
+	// Every other method on this interface is tenant-scoped. This one must
+	// never be. It is the mark set of a mark-and-sweep over the blob store,
+	// and blob files carry no tenant namespacing at all: one file is shared
+	// by every tenant that pushed that content. The manifest_blobs table has
+	// no tenant column. Scoping this query -- directly, or by joining
+	// manifests to reach a tenant -- shrinks the mark set, so blobs that
+	// another tenant still references are reported as garbage and unlinked.
+	// The result is silent, irreversible, cross-tenant registry corruption
+	// with no recovery short of a re-push or a blobsRoot restore.
+	ListReferencedBlobDigests(ctx context.Context) ([]string, error)
+
+	// CreateGCReport inserts one gc_reports row plus its
+	// gc_report_candidates children in a single transaction; a partially
+	// written report is never observable. GLOBAL: no tenant argument.
+	// report.TriggeredInTenant is provenance only and is never a predicate.
+	CreateGCReport(ctx context.Context, report GCReport, candidates []GCReportCandidate) error
+
+	// GetGCReport returns one report with its candidates in stored position
+	// order. GLOBAL: a report created under one tenant's request context is
+	// readable and usable from any other. An absent row is a typed
+	// domain.ErrorCodeNotFound, mirroring DeleteUpload.
+	GetGCReport(ctx context.Context, reportID string) (GCReportDetail, error)
+
+	// PruneExpiredGCReports deletes gc_reports rows still in "reported"
+	// state whose expires_at <= now; children go with the ON DELETE CASCADE.
+	// "deleted"-state rows are the audit trail of irreversible deletions and
+	// are NEVER pruned. This is hygiene, not safety (D8) -- correctness is
+	// the recompute-and-intersect in DeleteByGCReport.
+	PruneExpiredGCReports(ctx context.Context, now time.Time) (int, error)
+
+	// MarkGCReportDeleted transitions one report row from "reported" to
+	// "deleted" and records its terminal outcome (design.md Decision E):
+	// UPDATE gc_reports ... WHERE id = ? AND status = 'reported', plus one
+	// per-candidate outcome UPDATE. Zero rows affected by the report UPDATE
+	// is a typed domain.ErrorCodeConflict -- the SQL WHERE clause is the
+	// actual single-use guard, settling the two-concurrent-deletes race, not
+	// just a Go status check made in advance.
+	MarkGCReportDeleted(ctx context.Context, reportID string, outcome GCDeleteOutcome) error
+}
+
+type GCReportStatus string
+
+const (
+	GCReportStatusReported GCReportStatus = "reported" // preview; usable once
+	GCReportStatusDeleted  GCReportStatus = "deleted"  // terminal, frozen, never replayable
+)
+
+type GCReport struct {
+	ID             string         `json:"id"`
+	Status         GCReportStatus `json:"status"`
+	ComputedAt     time.Time      `json:"computed_at"`
+	ExpiresAt      time.Time      `json:"expires_at"`
+	GraceCutoff    time.Time      `json:"grace_cutoff"`
+	CandidateCount int            `json:"candidate_count"`
+	CandidateBytes int64          `json:"candidate_bytes"`
+	DurationMillis int64          `json:"duration_ms"`
+	RequestedBy    string         `json:"requested_by,omitempty"`
+	// TriggeredInTenant is PROVENANCE ONLY. It is deliberately not named
+	// "tenant": reports are global, and no query may ever filter on it.
+	TriggeredInTenant string     `json:"triggered_in_tenant,omitempty"`
+	DeletedAt         *time.Time `json:"deleted_at,omitempty"`
+	DeletedBy         string     `json:"deleted_by,omitempty"`
+	DeletedCount      int        `json:"deleted_count"`
+	BytesReclaimed    int64      `json:"bytes_reclaimed"`
+	Error             string     `json:"error,omitempty"`
+}
+
+type GCReportCandidate struct {
+	Digest  string    `json:"digest"`
+	Size    int64     `json:"size"`
+	ModTime time.Time `json:"mtime"`
+	Outcome string    `json:"outcome,omitempty"`
+	Error   string    `json:"error,omitempty"`
+}
+
+type GCReportDetail struct {
+	Report     GCReport            `json:"report"`
+	Candidates []GCReportCandidate `json:"candidates"`
+}
+
+// GC candidate/outcome constants. "" (GCCandidateOutcomePending) is a
+// candidate row's outcome before any delete has run against its report.
+const (
+	GCCandidateOutcomePending  = ""
+	GCCandidateOutcomeDeleted  = "deleted"
+	GCCandidateOutcomeRetained = "retained"
+	GCCandidateOutcomeMissing  = "missing"
+	GCCandidateOutcomeFailed   = "failed"
+)
+
+// GCCandidateOutcome is one digest's terminal delete-time result, part of
+// GCDeleteOutcome.
+type GCCandidateOutcome struct {
+	Digest  string `json:"digest"`
+	Outcome string `json:"outcome"`
+	Error   string `json:"error,omitempty"`
+}
+
+// GCDeleteOutcome is the result of one DeleteByGCReport call, passed to
+// MarkGCReportDeleted to freeze the terminal report row. Unlink failures are
+// per-digest and never abort the whole delete (design.md Testing Strategy
+// T10): the report still reaches "deleted" with Error summarizing how many
+// of the candidates failed.
+type GCDeleteOutcome struct {
+	DeletedAt      time.Time            `json:"deleted_at"`
+	DeletedBy      string               `json:"deleted_by,omitempty"`
+	DeletedCount   int                  `json:"deleted_count"`
+	BytesReclaimed int64                `json:"bytes_reclaimed"`
+	Error          string               `json:"error,omitempty"`
+	Candidates     []GCCandidateOutcome `json:"candidates"`
 }
 
 // TagSummary is one tag's name, its manifest's created_at, and who pushed

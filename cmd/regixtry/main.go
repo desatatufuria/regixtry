@@ -263,6 +263,12 @@ type serveConfig struct {
 	TrivyBinaryPath      string
 	TrivyMaxConcurrency  int
 	DeleteEnabled        bool
+	// GCDeleteEnabled gates POST /admin/v1/gc/reports/{id}/delete
+	// (design.md Decision F / proposal.md D1a). It is DELIBERATELY a
+	// separate flag from DeleteEnabled and must never read
+	// REGISTRY_DELETE_ENABLED: that flag is metadata-only and never touches
+	// blob files.
+	GCDeleteEnabled bool
 }
 
 type bootstrapAdminConfig struct {
@@ -365,6 +371,7 @@ func parseServeConfig(args []string) (serveConfig, error) {
 	flags.StringVar(&cfg.TrivyBinaryPath, "trivy-binary-path", "", "trivy executable path")
 	flags.IntVar(&cfg.TrivyMaxConcurrency, "trivy-max-concurrency", 0, "maximum concurrent trivy runs")
 	flags.BoolVar(&cfg.DeleteEnabled, "delete-enabled", parseBoolEnv("REGISTRY_DELETE_ENABLED", false), "enable DELETE /v2/<name>/manifests/<reference> (manifest and tag deletion)")
+	flags.BoolVar(&cfg.GCDeleteEnabled, "gc-delete-enabled", parseBoolEnv("REGISTRY_GC_DELETE_ENABLED", false), "enable POST /admin/v1/gc/reports/{id}/delete (irreversibly unlinks unreferenced blob files; distinct from -delete-enabled, which is metadata-only)")
 
 	if err := flags.Parse(args); err != nil {
 		return serveConfig{}, err
@@ -2143,6 +2150,7 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 	service.SetSecretScanRunner(gitleaksinfra.New(gitleaksinfra.RunnerConfig{Blobs: blobStore}))
 	service.SetFeatureRuntimeManager("gitleaks", newFeatureRuntimeManager("gitleaks", appregixtry.FeatureRuntimeManagerConfig{StorageRoot: cfg.StorageRoot, Store: metadataStore}))
 	service.SetDeleteEnabled(cfg.DeleteEnabled)
+	service.SetGCDeleteEnabled(cfg.GCDeleteEnabled)
 	trivyMaxConcurrency := cfg.TrivyMaxConcurrency
 	if trivyMaxConcurrency <= 0 {
 		trivyMaxConcurrency = 1

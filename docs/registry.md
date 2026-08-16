@@ -44,6 +44,24 @@ Resolution accepts either a tag or a digest. Blobs and manifests respond to `GET
 
 The two verdict routes use the same pull-credential authorization as a manifest read (no admin session required), and they always answer `200` with the current verdict — they report a gate outcome, they are never themselves subject to one. `scan-status` returns one of `unscanned`, `in_progress`, `failed`, `clean`, `blocked`; `signature-status` returns one of `unsigned`, `unverifiable`, `untrusted`, `mismatched`, `verified`. Both include whether a pull would currently be blocked by policy.
 
+## Blob garbage collection
+
+Manifest and tag deletes (`REGISTRY_DELETE_ENABLED`) remove metadata rows only; they never unlink the underlying blob files under `blobsRoot`. Reclaiming that storage is a separate, opt-in, two-step admin flow:
+
+| Route | Method | Purpose |
+| --- | --- | --- |
+| `/admin/v1/gc/reports` | POST | Compute and persist a report of unreferenced, grace-expired blob candidates; always reachable regardless of `REGISTRY_GC_DELETE_ENABLED` |
+| `/admin/v1/gc/reports/{id}` | GET | Fetch a previously computed report by id, with its full candidate list |
+| `/admin/v1/gc/reports/{id}/delete` | POST | Unlink the report's candidates that are still unreferenced and grace-expired at delete time; gated by `REGISTRY_GC_DELETE_ENABLED` (default `false`, returns `UNSUPPORTED`/`501` while disabled) |
+
+**Grace window**: a blob is never a candidate if its file was written within the last 24 hours, regardless of whether anything references it yet. This protects a blob committed by an in-flight push before its manifest has been published — the fixed, non-configurable interval between `CommitUpload` and `PublishManifest`.
+
+**Expiry is hygiene, not safety**: a computed report expires 24 hours after it was computed and is pruned on the next report request. This bounds how long a stale report can be acted on, but it is not what keeps deletion safe — a delete request re-runs the same mark-sweep-grace computation at delete time and only unlinks digests present in *both* the original report and that fresh recomputation. A digest referenced by a manifest published after the report was computed is excluded from the delete, even if the report is still valid.
+
+**Audit trail**: every report row records `computed_at`, `expires_at`, and `requested_by`. On delete, the same row transitions once to a terminal `deleted` state recording `deleted_at`, `deleted_by`, `deleted_count`, `bytes_reclaimed`, and a per-candidate outcome (`deleted`, `retained`, `missing`, or `failed`). Report rows are never deleted by the pruning hygiene above once they reach `deleted` state — they are the only record of what was permanently reclaimed.
+
+**No recovery**: deletion of a blob file is irreversible. There is no undo, no trash, and no backup taken by this feature — a reclaimed blob can only be restored by re-pushing the content that produced it (or from an external `blobsRoot` backup, if one exists). Garbage collection is manual-trigger only in v1; nothing runs on a schedule or in the background.
+
 ## Compatibility and verified limits
 
 | Area | Status |
@@ -55,8 +73,8 @@ The two verdict routes use the same pull-credential authorization as a manifest 
 | Upload chunking | Implemented with `PATCH` |
 | Upload cancellation | Not implemented; returns `UNSUPPORTED` |
 | Manifest/tag deletes | Implemented, opt-in via `REGISTRY_DELETE_ENABLED` (default `false`); metadata-only, never touches blob files |
-| Blob deletes | Not exposed; blob removal stays garbage-collection-only |
-| Garbage collection | No implementation found |
+| Blob deletes | Not exposed directly; blob removal happens only through garbage collection |
+| Garbage collection | Implemented: opt-in, report-then-delete flow gated by `REGISTRY_GC_DELETE_ENABLED` (default `false`); manual admin trigger only, no scheduler |
 | Replication/remote storage | No adapter found |
 | Multi-tenant | No; single-tenant resolver (`ports.NewSingleTenantResolver`) |
 | Multi-arch/indexes | Could not be confirmed from current code |

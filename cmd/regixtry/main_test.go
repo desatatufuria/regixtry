@@ -320,6 +320,25 @@ func TestParseServeConfigDeleteEnabledFlagOverridesEnv(t *testing.T) {
 	}
 }
 
+// TestGCDeleteFlagIsIndependentOfDeleteEnabled is T11 (design.md Testing
+// Strategy): REGISTRY_DELETE_ENABLED and REGISTRY_GC_DELETE_ENABLED must
+// never read each other's env var -- setting the metadata-only delete flag
+// alone must leave GCDeleteEnabled false.
+func TestGCDeleteFlagIsIndependentOfDeleteEnabled(t *testing.T) {
+	t.Setenv("REGISTRY_DELETE_ENABLED", "true")
+
+	cfg, err := parseServeConfig(nil)
+	if err != nil {
+		t.Fatalf("parseServeConfig() error = %v", err)
+	}
+	if !cfg.DeleteEnabled {
+		t.Fatal("DeleteEnabled = false, want true from REGISTRY_DELETE_ENABLED")
+	}
+	if cfg.GCDeleteEnabled {
+		t.Fatal("GCDeleteEnabled = true, want false: REGISTRY_DELETE_ENABLED must not enable blob GC delete")
+	}
+}
+
 func TestNormalizeRuntimeConfig(t *testing.T) {
 	t.Parallel()
 
