@@ -735,105 +735,208 @@ is narrowed from 13 to 12 legacy-screen cases (`screenAdminFeatures` removed
 
 ## Phase 18: Domain Menu + Operations Entry Screens — Slice 3
 
-- [ ] 18.1 RED `internal/tui/model_test.go`: `TestSecurityDomainListsThreePeers`
+- [x] 18.1 RED `internal/tui/model_test.go`: `TestSecurityDomainListsThreePeers`
       (T3.2a) — Security & Compliance domain lists Trivy/Gitleaks/Signing as three
       peer entries.
-- [ ] 18.2 RED `internal/tui/model_test.go`: `TestOperationsListsBothResultsScreens`
+- [x] 18.2 RED `internal/tui/model_test.go`: `TestOperationsListsBothResultsScreens`
       (T3.2b) — Operations domain lists Scan Runs and Secret Scan Findings.
-- [ ] 18.3 GREEN `internal/tui/screen_admin_menu.go` (new): `screenAdminMenu` —
-      post-login landing, 4 domain rows (Browse / Security & Compliance / Identity &
-      Access / Operations); two levels, domain rows → existing screens, per Decision
-      I as confirmed by the user (not a single flat grouped list).
-- [ ] 18.4 GREEN `internal/tui/screen_operations.go` (new): `screenAdminOperations`,
-      2 rows (Scan Runs, Secret Scan Findings).
-- [ ] 18.5 GREEN `internal/tui/model.go`: post-login routing
+- [x] 18.3 GREEN `internal/tui/screen_admin_menu.go` (new): `adminMenuScreen`
+      (`screenAdminMenu` id) — post-login landing, 4 domain rows (Browse / Security &
+      Compliance / Identity & Access / Operations); two levels, domain rows → existing
+      screens, per Decision I as confirmed by the user (not a single flat grouped
+      list). **Naming note**: the struct is `adminMenuScreen` (not `screenAdminMenu`
+      literally) since that identifier is already the screen-id constant — mirrors
+      `securityMenuScreen`'s existing type-name-vs-const-name precedent.
+- [x] 18.4 GREEN `internal/tui/screen_operations.go` (new): `adminOperationsScreen`
+      (`screenAdminOperations` id), 2 rows (Scan Runs, Secret Scan Findings).
+- [x] 18.5 GREEN `internal/tui/model.go`: post-login routing
       `adminIntentOperator` → `screenAdminMenu` instead of `screenAdminUsers`;
-      `adminIntentRepoGrants` untouched; update `screenAdminUsers`' Esc target.
-- [ ] 18.6 Confirm 18.1–18.2 GREEN.
+      `adminIntentRepoGrants` untouched; `screenAdminUsers`' Esc target changed from
+      `m.returnToInspection()` to `navigate(screenAdminMenu)` (the new root now owns
+      "leave the admin panel", via `screen.go`'s new `returnToInspectionMsg`).
+      **Disclosed deviation, discovered fixing the resulting test breakage**: the
+      post-login handler still fires `m.loadAdminUsersCmd()` in the background even
+      though it no longer lands directly on `screenAdminUsers` — nothing else in the
+      legacy Esc-back chain (`screenAdminEditUser`→Users, `securityMenuScreen`→Users)
+      ever re-fires that load, so dropping it silently broke every path that
+      eventually reaches Identity & Access. Also found and fixed: `Model.View()`
+      carries a SECOND, separate admin-screen-id enumeration (a literal `case
+      screenAdminUsers, screenAdminFeatures, ...:` switch, distinct from
+      `isAdminScreen()`) that also needed the four new screen ids added, or the new
+      screens silently fell through to the default "Ready." console view despite
+      routing working correctly.
+- [x] 18.6 Confirm 18.1–18.2 GREEN.
 
 ## Phase 19: Scan Runs + Secret Scan Findings Dual-Entry Sub-Model — Slice 3
 
-- [ ] 19.1 RED `internal/tui/model_test.go`: `TestOperationsEntryReachesSecretFindingsWithoutTrivy`
+- [x] 19.1 RED `internal/tui/model_test.go`: `TestOperationsEntryReachesSecretFindingsWithoutTrivy`
       (T3.0).
-- [ ] 19.2 RED `internal/tui/model_test.go`: `TestTrivyDrillDownStillReachesSecretFindings`
+- [x] 19.2 RED `internal/tui/model_test.go`: `TestTrivyDrillDownStillReachesSecretFindings`
       (T3.1a).
-- [ ] 19.3 RED `internal/tui/model_test.go`: `TestScanHistoryEscReturnsToOpener`
+- [x] 19.3 RED `internal/tui/model_test.go`: `TestScanHistoryEscReturnsToOpener`
       (T3.1b) — both openers (Operations entry, Trivy's Enter drill-down); Esc pops
       back to the correct `returnTo`.
-- [ ] 19.4 GREEN `internal/tui/screen_scan_runs.go` (new): `scanRunsScreen`
-      (`ListRepositoryScanSummaries`).
-- [ ] 19.5 GREEN `internal/tui/screen_scan_history.go` (new): `scanHistoryScreen`
+- [x] 19.4 GREEN `internal/tui/screen_scan_runs.go` (new): `scanRunsScreen`
+      (`ListRepositoryScanSummaries`, via the same `loadAdminRepositoryScanSummariesCmd`
+      Trivy's own repos screen uses). **Disclosed interpretation**: design.md's Slice 3
+      File Changes table lists only ONE new file for both of Operations' rows'
+      repository-picker side (`screen_scan_runs.go`) — no fifth screen file. `scanRunsScreen`
+      is therefore a SHARED type with two named constructors (`newScanRunsScreen()` /
+      `newSecretFindingsRunsScreen()`), mirroring `screen_signing_repos.go`'s own
+      established "one shared type, two named constructors" precedent (Phase 12.4):
+      `id`/`defaultTab` are set once at construction, distinguishing `screenAdminScanRuns`
+      (Vulnerabilities-first) from `screenAdminSecretFindings` (Leaks-first), never
+      mutated afterward.
+- [x] 19.5 GREEN `internal/tui/screen_scan_history.go` (new): `scanHistoryScreen`
       with a `returnTo screen` field — one sub-model reached from Operations ▸ Secret
       Scan Findings AND Trivy ▸ Repository Alerts ▸ `Enter`; carries the
       `Enter`-opens-advisory-link path (`GetSecretScanFindings`,
       `ListRepositoryScanSummaries`, `GetScanRunDetail` — no new backend calls, D9).
-- [ ] 19.6 GREEN `internal/tui/admin_scan_history.go`: render helpers take the
-      sub-model instead of `AdminViewState`; `ScanHistoryModal` migrates off
-      `AdminViewState`.
-- [ ] 19.7 GREEN `internal/tui/model.go`: wire `screenAdminOperations` rows to
-      `scanRunsScreen`/`scanHistoryScreen(returnTo=screenAdminOperations)`; Trivy's
-      Repository Alerts `Enter` now opens
-      `scanHistoryScreen(returnTo=screenSecurityTrivyRepos)`.
-- [ ] 19.8 Confirm 19.1–19.3 GREEN.
+      **Disclosed architectural decision**: `scanHistoryScreen` is deliberately NOT
+      resolved via `slotFor`/`m.screen` — `m.screen` never changes while it is
+      mounted; it composites as a floating overlay over whichever screen opened it,
+      exactly mirroring `slotGitleaksConfig`'s own Slice 1 overlay precedent (the
+      state that changes is which sub-model lives at its own dedicated
+      `screen.go` slot, `slotScanHistory`, not which top-level screen is active).
+      This was chosen over promoting it to a genuine `slotFor`-addressed top-level
+      screen specifically to preserve ~190 pre-existing test-hit references to the
+      modal's own row-budget/overlay-compositing math (`adminScanHistoryModalRows`,
+      `adminBaseBodyHeight`'s removal notwithstanding, `compositeOverlay`,
+      `renderAdminScanHistoryModal`'s internal layout) essentially untouched, rather
+      than rewriting that entire, already-bug-fixed (Phase 11's disclosed
+      `adminScanHistoryModalMinRows` correction) subsystem into a plain full-page
+      render for no functional gain. `renderAdminScanHistoryModal`/
+      `adminScanHistoryModalTableBody`'s only signature change is `view
+      AdminViewState` → `findings, secretFindings bubbletable.Model` (design.md
+      Decision B: a migrated screen owns its own tables).
+- [x] 19.6 GREEN `internal/tui/admin_scan_history.go` / `admin_views.go`: render
+      helpers take the sub-model's own tables instead of `AdminViewState.Tables`;
+      `ScanHistoryModal` migrates off `AdminViewState` onto `scanHistoryScreen.modal`.
+      `AdminViewState.Tables`/`adminTablesState`/`syncAdminTableSelections`/
+      `syncAdminTableHighlights`/`highlightedRowValue` are deleted outright (nothing
+      populated them once `scanHistoryScreen` owns its own `findings`/
+      `secretFindings` fields); `rebuildAdminTables` is simplified to just the
+      `Layout`/`Primary`/`Compact` snapshot a handful of tests still read as a proxy
+      for row budget (unchanged, Phase 11 precedent).
+- [x] 19.7 GREEN `internal/tui/model.go`/`screen.go`: wired `screenAdminOperations`
+      rows to `screenAdminScanRuns`/`screenAdminSecretFindings` (each mounting
+      `scanRunsScreen` via its own named constructor); their own `Enter` opens
+      `scanHistoryScreen` via the new `openScanHistory(repository, returnTo,
+      activeTab)` command (replacing the Slice-1/Phase-11 stopgap
+      `openAdminScanHistoryMsg`/`openAdminScanHistory`, since `scanHistoryScreen`'s
+      own state now needs per-open construction params — repository, returnTo,
+      activeTab — that the generic zero-value `newAdminScreenFor` pattern cannot
+      carry). Trivy's Repository Alerts `Enter` now opens
+      `scanHistoryScreen(returnTo=screenSecurityTrivyRepos, activeTab=Vulnerabilities)`;
+      Scan Runs opens with `activeTab=Vulnerabilities`, Secret Scan Findings with
+      `activeTab=Leaks`. `updateAdminScanHistoryModalKey`/`moveAdminFindingCursor`/
+      `openSelectedAdminFindingLink`/`pageAdminScanHistory` (all `Model` methods)
+      deleted, moved onto `scanHistoryScreen`'s own `Update`/`page`/
+      `moveFindingCursor`/`openSelectedFindingLink`; the central `Update`'s
+      `adminScanHistoryLoadedMsg`/`adminScanRunDetailLoadedMsg`/
+      `adminSecretScanFindingsLoadedMsg` handlers become broadcast-only
+      (`routeAdminMsg` + session-expiry check, design.md Decision H), mirroring the
+      existing `adminRepositoryScanSummariesLoadedMsg` precedent exactly. A new
+      top-of-`updateAdminKey` precedence check (mirroring the pre-existing
+      `Confirm.Active()` wrapper's own position and shape) dispatches keys to
+      `scanHistoryScreen.Update` when mounted, handling `Esc` (un-mount) directly
+      since `scanHistoryScreen` has no `slotFor`-driven close path of its own.
+- [x] 19.8 Confirm 19.1–19.3 GREEN.
 
 ## Phase 20: Subprocess-Path Threat Proof (carried by the move) — Slice 3
 
-- [ ] 20.1 RED `internal/tui/openurl_test.go` / `internal/tui/model_test.go`:
-      `TestFindingLinkOpenUsesExplicitArgvAndHTTPSchemeGuard` (T3.3) — the findings
-      `Enter` opener's `isHTTPURL` scheme guard and explicit-argv `exec.Command`
-      construction (`openurl.go:18-44`), now inside `scanHistoryScreen`'s `tea.Cmd`,
-      asserted unchanged: exact URL, non-`http(s)` link yields no exec at all.
-- [ ] 20.2 GREEN: confirm `scanHistoryScreen` only calls `openAdminURLCmd`, and the
-      `exec.Command` call stays inside a `tea.Cmd`, never in `Update`.
-- [ ] 20.3 Confirm 20.1 (T3.3) GREEN.
+- [x] 20.1 RED `internal/tui/model_test.go`: `TestFindingLinkOpenUsesExplicitArgvAndHTTPSchemeGuard`
+      (T3.3) — the findings `Enter` opener's `isHTTPURL` scheme guard and
+      explicit-argv `exec.Command` construction (`openurl.go:18-44`), now inside
+      `scanHistoryScreen`'s `tea.Cmd`, asserted unchanged: exact URL opened for an
+      http(s) `PrimaryURL`, and a non-`http(s)` `PrimaryURL` yields no exec at all.
+- [x] 20.2 GREEN: confirmed `scanHistoryScreen.openSelectedFindingLink` only calls
+      `openAdminURLCmd`/`adminFindingLink` (unchanged from the retired
+      `Model.openSelectedAdminFindingLink`), and the `exec.Command` call stays inside
+      `openURLInBrowser`, reached only via the returned `tea.Cmd`, never in `Update`.
+- [x] 20.3 Confirm 20.1 (T3.3) GREEN.
 
 ## Phase 21: Identity & Access Naming Tidy (no state migration) — Slice 3
 
-- [ ] 21.1 GREEN: naming/grouping tidy only for Users/Robots/Repository Grants/Tokens
+- [x] 21.1 GREEN: naming/grouping tidy only for Users/Robots/Repository Grants/Tokens
       under the Identity & Access domain label in `screenAdminMenu` — zero
       behavior/state change; the legacy adapter (Decision C) is untouched, D5's
-      boundary holds.
-- [ ] 21.2 Confirm the Identity & Access subset of T1.8 (Phase 1.1) still
-      byte-identical.
+      boundary holds. `adminMenuRows`' "Identity & Access" row carries the label plus
+      a `Help` string ("Users, Robots, Repository Grants, Tokens") naming all four
+      sub-screens; `Enter` on it navigates to the pre-existing, unmigrated
+      `screenAdminUsers` unchanged.
+- [x] 21.2 Confirmed the Identity & Access subset of T1.8 (Phase 1.1) still
+      byte-identical: `TestNonMigratedScreensUnchanged` passes unchanged (full suite
+      green), and Users/Robots/Grants/Tokens' own key handlers/renders were not
+      touched by this batch except `screenAdminUsers`' own Esc target (18.5, an
+      explicit, disclosed, in-scope change, not part of T1.8's regression-guard
+      surface).
 
 ## Phase 22: Documentation — Slice 3
 
-- [ ] 22.1 Update `docs/tui.md`: navigation map (four domains, two-level menu) and
-      full per-screen key table reflecting keymap-derived help.
-- [ ] 22.2 Update `docs/architecture.md`: TUI screen-ownership model (`adminScreen`
-      contract, router, legacy adapter boundary, D5 phasing).
-- [ ] 22.3 Update `docs/code-reference.md`: new files (`screen.go`,
-      `admin_router.go`, `admin_keys.go`, `confirm.go`, `override_editor.go`, all
-      `screen_*.go`) and their exported symbols.
-- [ ] 22.4 Update `docs/roadmap.md`: mark `tui-menu-architecture` delivered across
-      its three slices; note the feature-cycle removal and the new per-feature
+- [x] 22.1 Updated `docs/tui.md`: navigation map (four domains, two-level menu,
+      rendered as a diagram), Security & Compliance/Operations sections, and the full
+      per-screen key table extended with every new binding.
+- [x] 22.2 Updated `docs/architecture.md`: new "TUI screen-ownership model" section
+      (`adminScreen` contract, router/`legacyScreenHandlers` adapter, D5 phasing,
+      `scanHistoryScreen`'s not-`slotFor`-addressed overlay shape, the confirm
+      primitive, domain-grouped navigation), with a Mermaid flowchart mirroring the
+      existing doc's own diagram style.
+- [x] 22.3 Updated `docs/code-reference.md`: added rows for `screen.go`,
+      `admin_router.go`, `admin_keys.go`, `confirm.go`, `override_editor.go`, and all
+      12 `screen_*.go` files, each naming its principal exported symbol(s).
+- [x] 22.4 Updated `docs/roadmap.md`: new "Delivery sequence for
+      `tui-menu-architecture`" table (all 3 slices marked Completed) plus a
+      checkpoint bullet naming the feature-cycle removal and the new per-feature
       override entry points.
 
 ## Phase 23: Snapshot Regeneration — Slice 3
 
-- [ ] 23.1 Regenerate `docs/verification/scripts/tui-smoke.sh` snapshots (T3.4) —
-      deliberate, reviewed as intended output, not silently accepted; diff limited to
-      the navigation/help/layout changes introduced across all three slices.
-- [ ] 23.2 Confirm regenerated snapshots reviewed and committed.
+- [x] 23.1 Re-ran `docs/verification/scripts/tui-smoke.sh` (T3.4). **No diff to
+      regenerate**: the script's only checked-in-adjacent assertions are (a) the
+      `-snapshot` CLI launch renders the pre-login Console inspection screen
+      ("Regixtry Console"/"Empty" — unaffected by the admin domain menu, since that
+      only exists post-login) and (b) three named `go test` cases
+      (`TestModelFeatureViewRendersGenericPageAndAllowsDeclaredAction`,
+      `TestModelFeatureViewKeepsMinimalPagesUsable`,
+      `TestModelFeatureSelectionRefreshesPageAndHelpFromBackendActions`), none of
+      which reference domain-menu/Operations-specific content; the script writes its
+      snapshot to a throwaway temp path, not a checked-in golden file. Ran it directly
+      (`bash docs/verification/scripts/tui-smoke.sh <scratch-dir>`): passes unchanged.
+- [x] 23.2 Confirmed: nothing to review/commit for this task (no committed snapshot
+      artifact exists to diff).
 
 ## Phase 24: Slice 3 Verification Gate — final gate
 
-- [ ] 24.1 Full suite: `go build ./... && go vet ./... && gofmt -l . && go test -count=1 ./...`
-      — all clean.
-- [ ] 24.2 Explicit checklist against `operator-admin-tui` spec scenarios landing in
-      Slice 3: Operations entry reaches secret findings directly; Trivy drill-down
-      still reaches secret findings.
-- [ ] 24.3 Explicit checklist against `tui-navigation-architecture` spec scenarios
-      landing in Slice 3: Security & Compliance lists three peer screens; Operations
-      lists both results screens.
-- [ ] 24.4 Confirm remaining proposal Success Criteria: secret scan findings
-      reachable from an Operations entry point while the Trivy drill-down still
-      works; `go test ./...`, `go vet ./...`, `go build ./...` pass; `tui-smoke.sh`
-      snapshots regenerated and reviewed; no diff outside `internal/tui/`,
-      `go.mod`/`go.sum`, `openspec/`, and `docs/`.
-- [ ] 24.5 Final `reflect`-based check: zero remaining `AdminViewState` fields for
-      every screen in design's full State Migration table, across all three slices
-      combined.
-- [ ] 24.6 Final structural confirmation: all three chained slices complete; each
-      independently revertable per design's Migration/Rollout section, with the two
-      superseded-decision annotations reverting together with Slice 2's code.
+- [x] 24.1 Full suite: `go build ./... && go vet ./... && gofmt -l . && go test -count=1 ./...`
+      — all clean, every package `ok` (18 packages, `internal/tui` included).
+- [x] 24.2 Explicit checklist against `operator-admin-tui` spec scenarios landing in
+      Slice 3: "Operations entry reaches secret findings directly"
+      (`TestOperationsEntryReachesSecretFindingsWithoutTrivy`); "Trivy drill-down
+      still reaches secret findings" (`TestTrivyDrillDownStillReachesSecretFindings`).
+- [x] 24.3 Explicit checklist against `tui-navigation-architecture` spec scenarios
+      landing in Slice 3: "Security & Compliance lists three peer screens"
+      (`TestSecurityDomainListsThreePeers`); "Operations lists both results screens"
+      (`TestOperationsListsBothResultsScreens`).
+- [x] 24.4 Confirmed remaining proposal Success Criteria: secret scan findings
+      reachable from an Operations entry point while the Trivy drill-down still works
+      (Phase 19/20 tests, all green); `go test ./...`, `go vet ./...`,
+      `go build ./...`, `gofmt -l .` all pass/clean; `tui-smoke.sh` re-run and
+      confirmed unchanged (Phase 23, no committed snapshot to regenerate); the only
+      diff outside `internal/tui/`, `openspec/`, and `docs/` is `Dockerfile`/
+      `docker-compose.yml`/`docker-entrypoint.sh`, which were already modified/
+      untracked in the working tree **before** this apply batch started (unrelated,
+      pre-existing changes this batch never touched) — `go.mod`/`go.sum` themselves
+      are untouched by this batch (no new dependency).
+- [x] 24.5 Final `reflect`-based check: `TestMigratedScreensHaveZeroFieldsOnAdminViewState`
+      now asserts all 17 fields design's full State Migration table names absent from
+      `AdminViewState` (the 16 from Slice 1/2 plus `ScanHistoryModal`, this batch) —
+      zero remaining migrated-screen fields, across all three slices combined.
+- [x] 24.6 Final structural confirmation: all three chained slices complete; each
+      independently revertable per design's Migration/Rollout section (Slice 3's own
+      new files — `screen_admin_menu.go`, `screen_operations.go`,
+      `screen_scan_runs.go`, `screen_scan_history.go` — plus its `model.go`/
+      `session.go`/`admin_tables.go`/`admin_views.go` edits revert as one unit,
+      leaving Slice 1's primitive and Slice 2's reversal in place and harmless), with
+      the two superseded-decision annotations (Phase 16) reverting together with
+      Slice 2's code, unchanged by this batch.

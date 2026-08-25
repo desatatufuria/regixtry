@@ -22,16 +22,32 @@
 | Release installer | `install.sh`, `.goreleaser.yaml` | `installation.md` |
 | TUI keys/screens (root model) | `internal/tui/model.go` | `tui.md` |
 | TUI admin HTTP client | `internal/tui/admin_client.go` | `tui.md`, `authentication.md` |
-| TUI admin views (screens for users, grants, robots, features, signing policy) | `internal/tui/admin_views.go` | `tui.md` |
+| TUI admin views (legacy render helpers for users, grants, robots, scan history modal) | `internal/tui/admin_views.go` | `tui.md`, `architecture.md` |
 | TUI admin table rendering helpers | `internal/tui/admin_tables.go` | `tui.md` |
 | TUI Console Repositories table (Name/Tags/Last Pushed) | `internal/tui/console_repositories_table.go` | `tui.md` |
 | TUI Console Tags table (Tag/Created/Signed) | `internal/tui/console_tags_table.go` | `tui.md` |
-| TUI session state | `internal/tui/session.go` | `tui.md` |
+| TUI session state (`AdminViewState`, `AdminSession`) | `internal/tui/session.go` | `tui.md`, `architecture.md` |
 | TUI admin theming | `internal/tui/admin_theme.go` | `tui.md` |
-| TUI admin overlay/modal rendering | `internal/tui/admin_overlay.go` | `tui.md` |
-| TUI scan history views | `internal/tui/admin_scan_history.go` | `tui.md`, `security.md` |
+| TUI admin overlay/modal rendering (`compositeOverlay`) | `internal/tui/admin_overlay.go` | `tui.md`, `architecture.md` |
+| TUI scan history render helpers (`renderAdminScanHistoryModal` and friends) | `internal/tui/admin_scan_history.go` | `tui.md`, `security.md` |
 | TUI scroll viewport helper | `internal/tui/viewport.go` | `tui.md` |
-| TUI open-URL helper | `internal/tui/openurl.go` | `tui.md` |
+| TUI open-URL helper (`openURLInBrowser`, `isHTTPURL`, `openAdminURLCmd`) | `internal/tui/openurl.go` | `tui.md`, `security.md` |
+| TUI per-screen sub-model contract (`adminScreen`, `screenEnv`, `screenFrame`, `adminScreenSet`, `slotFor`, `navigate`, `openScanHistory`, `returnToInspectionCmd`) | `internal/tui/screen.go` | `architecture.md` |
+| TUI admin router (`routeAdminKey`, `routeAdminMsg`, `legacyScreenHandlers` — the D5 adapter) | `internal/tui/admin_router.go` | `architecture.md` |
+| TUI keymap-derived help (`screenKeys`, `shortHelpView`, `matches`) | `internal/tui/admin_keys.go` | `architecture.md`, `tui.md` |
+| TUI confirm-before-destructive-action primitive (`confirmPrompt`) | `internal/tui/confirm.go` | `architecture.md` |
+| TUI per-repository override editor, shared by Trivy/Gitleaks/Signing (`overrideEditor`) | `internal/tui/override_editor.go` | `tui.md`, `architecture.md` |
+| TUI Security & Compliance domain menu (`securityMenuScreen`) | `internal/tui/screen_security_menu.go` | `tui.md` |
+| TUI Trivy Runtime screen (`trivyConfigScreen`) | `internal/tui/screen_trivy_config.go` | `tui.md` |
+| TUI Trivy Repository Alerts screen (`trivyReposScreen`) | `internal/tui/screen_trivy_repos.go` | `tui.md` |
+| TUI Gitleaks config screen (`gitleaksConfigScreen`) | `internal/tui/screen_gitleaks_config.go` | `tui.md` |
+| TUI Gitleaks/Signing repository override list (shared `featureOverridesScreen`) | `internal/tui/screen_gitleaks_repos.go` | `tui.md` |
+| TUI Signing config screen (`signingConfigScreen`) | `internal/tui/screen_signing_config.go` | `tui.md` |
+| TUI Signing repository override list (`newSigningReposScreen`, backed by `featureOverridesScreen`) | `internal/tui/screen_signing_repos.go` | `tui.md` |
+| TUI post-login domain menu (`adminMenuScreen`) | `internal/tui/screen_admin_menu.go` | `tui.md`, `architecture.md` |
+| TUI Operations domain menu (`adminOperationsScreen`) | `internal/tui/screen_operations.go` | `tui.md` |
+| TUI Scan Runs / Secret Scan Findings repository pickers (shared `scanRunsScreen`) | `internal/tui/screen_scan_runs.go` | `tui.md` |
+| TUI scan history sub-model, reached from both Operations and Trivy's drill-down (`scanHistoryScreen`) | `internal/tui/screen_scan_history.go` | `tui.md`, `architecture.md` |
 | Runtime image/Compose | `Dockerfile`, `docker-compose.yml` | `getting-started.md`, `ci-cd.md` |
 | Tests | `**/*_test.go` | `development.md`, `documentation-audit.md` |
 
