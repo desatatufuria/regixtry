@@ -1982,18 +1982,18 @@ func nextScanPolicyThreshold(threshold string) string {
 // updateSigningPolicyModalKey moved to signingConfigScreen.updateKey
 // (screen_signing_config.go, Phase 12.3).
 
-// signingKeyFingerprints derives a read-only SHA-256/12 fingerprint for each
-// stored trusted key, so signingPolicyModal/renderSigningPolicyModal never
-// has to hold or render raw PEM key material (design.md Decision 11 piece 1
-// -- "the modal never has to display multi-line text either").
+// signingKeyFingerprints derives a read-only fingerprint for each stored
+// trusted key via signing.Fingerprint (the ONE canonical implementation of
+// that algorithm), so signingPolicyModal/renderSigningPolicyModal never has
+// to hold or render raw PEM key material (design.md Decision 11 piece 1 --
+// "the modal never has to display multi-line text either").
 func signingKeyFingerprints(keys []string) []string {
 	if len(keys) == 0 {
 		return nil
 	}
 	fingerprints := make([]string, 0, len(keys))
 	for _, key := range keys {
-		sum := sha256.Sum256([]byte(strings.TrimSpace(key)))
-		fingerprints = append(fingerprints, hex.EncodeToString(sum[:])[:12])
+		fingerprints = append(fingerprints, signing.Fingerprint(key))
 	}
 	return fingerprints
 }
@@ -3782,11 +3782,14 @@ func renderManifest(theme adminTheme, manifest appregixtry.ManifestDetails, sign
 // renderSignatureLines renders the manifest inspection view's Signature
 // section from the SAME SignatureStatusResult/SignatureStatusDetail types
 // Service.SignatureStatus already returns for the Console Tags table's
-// Signed column -- no new fields. It renders only the fixed-vocabulary
-// State, the `.sig` tag name, and the signature count; it never renders
-// SignatureStatusDetail.Reason, key material, raw signature bytes, or trust
-// configuration detail, mirroring the no-key-leakage discipline already
-// enforced for signature-status/signing-policy-violation responses
+// Signed column. It renders the fixed-vocabulary State, the `.sig` tag name,
+// the signature count, and -- only when a signature actually verified -- the
+// short fingerprint of the trusted key that verified it
+// (SignatureStatusDetail.VerifiedKeyFingerprint, itself already fingerprint-
+// only per queries.go's no-key-leakage discipline). It never renders
+// SignatureStatusDetail.Reason, raw key material, raw signature bytes, or
+// trust configuration detail, mirroring the no-key-leakage discipline
+// already enforced for signature-status/signing-policy-violation responses
 // elsewhere in this codebase (internal/protocol/http/signature_status_test.go).
 func renderSignatureLines(theme adminTheme, signature appregixtry.SignatureStatusResult) []string {
 	if signature.Signature == nil {
@@ -3800,6 +3803,9 @@ func renderSignatureLines(theme adminTheme, signature appregixtry.SignatureStatu
 		lines = append(lines, fmt.Sprintf("%s %s", theme.muted.Render("Signature tag:"), theme.text.Render(signature.Signature.Tag)))
 	}
 	lines = append(lines, fmt.Sprintf("%s %s", theme.muted.Render("Signature count:"), theme.text.Render(fmt.Sprintf("%d", signature.Signature.SignatureCount))))
+	if signature.Signature.VerifiedKeyFingerprint != "" {
+		lines = append(lines, fmt.Sprintf("%s %s", theme.muted.Render("Signed with:"), theme.text.Render(signature.Signature.VerifiedKeyFingerprint)))
+	}
 	return lines
 }
 

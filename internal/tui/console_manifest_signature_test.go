@@ -31,14 +31,17 @@ func TestRenderManifestSignatureSectionStates(t *testing.T) {
 			signature: appregixtry.SignatureStatusResult{
 				State: appregixtry.SignatureStatusVerified,
 				Signature: &appregixtry.SignatureStatusDetail{
-					Tag:            "sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sig",
-					SignatureCount: 1,
+					Tag:                    "sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sig",
+					SignatureCount:         1,
+					VerifiedKeyFingerprint: "abcdef012345",
 				},
 			},
 			wantAll: []string{
 				appregixtry.SignatureStatusVerified,
 				"sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sig",
 				"1",
+				"Signed with:",
+				"abcdef012345",
 			},
 			wantNone: []string{"not signed"},
 		},
@@ -66,7 +69,7 @@ func TestRenderManifestSignatureSectionStates(t *testing.T) {
 				appregixtry.SignatureStatusUntrusted,
 				"sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.sig",
 			},
-			wantNone: []string{"not signed"},
+			wantNone: []string{"not signed", "Signed with:"},
 		},
 		{
 			name: "mismatched",
@@ -82,7 +85,7 @@ func TestRenderManifestSignatureSectionStates(t *testing.T) {
 				"sha256-cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.sig",
 				"2",
 			},
-			wantNone: []string{"not signed"},
+			wantNone: []string{"not signed", "Signed with:"},
 		},
 	}
 
