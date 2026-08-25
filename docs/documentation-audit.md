@@ -16,7 +16,8 @@ This refresh is part of a parallel doc-rewrite pass across `README.md` and `docs
 - Push/pull, chunked uploads, tags, catalog, and HEAD.
 - Repository access control completion (`registry-acl-v1`): the registry-wide read-only role (`is_read_only`, grant-independent pull access), delegated repo-admin grant management scoped to exactly one repository (`/admin/v1/repositories/{repo}/grants`), and bounded-TTL, revocable robot accounts (`/admin/v1/robots`) permanently excluded from password login and from the default human user listing.
 - Supply-chain scanning and signing as managed features: Trivy vulnerability scanning (`internal/infra/scanning/trivy/`), Gitleaks secret scanning (`internal/infra/scanning/gitleaks/`), and cosign signature verification (`internal/domain/signing/`), each registered through the shared feature-runtime pattern (`internal/app/scanning/scheduler.go`).
-- Signing policy administration: `GET`/`PUT /admin/v1/signing-policy`, with a fail-closed pull gate when a repository's policy requires a valid signature and none is found.
+- Signing policy administration: `GET`/`PUT /admin/v1/signing-policy` (multiple trusted public keys per policy, globally and per repository) and `GET /admin/v1/signing-policy/key-usage`, with a fail-closed pull gate when a repository's policy requires a valid signature and none is found.
+- Blob garbage collection: `POST /admin/v1/gc/reports`, `GET /admin/v1/gc/reports/{id}`, `POST /admin/v1/gc/reports/{id}/delete` (gated by `REGISTRY_GC_DELETE_ENABLED`), and manifest/tag deletion: `DELETE /v2/{repo}/manifests/{ref}` (gated by `REGISTRY_DELETE_ENABLED`).
 - Repository scan overview and history: `GET /admin/v1/scan-runs?repository=&limit=` and `GET /admin/v1/scan-runs/{id}`, the per-manifest `GET /v2/<repo>/manifests/<ref>/scan-status`, and the operator console's scan-history views.
 - Compose local, systemd, CI/CD, TUI, operations, security, and troubleshooting.
 
@@ -44,8 +45,6 @@ This refresh is part of a parallel doc-rewrite pass across `README.md` and `docs
 
 - No health endpoint separate from `/v2/`.
 - No metrics endpoint or confirmed structured logging.
-- No garbage collection.
-- No manifest/blob delete API.
 - No remote storage, replication, or multi-tenancy.
 - No granular authorization independent of the existing grants/scopes/read-only-role/robot-account model.
 - No silent refresh-token flow in the TUI.
@@ -60,7 +59,6 @@ No open contradiction between `docs/roadmap.md` and the codebase remains as of t
 ## Open questions
 
 - Should a formal subset of OCI Distribution be declared and tested against a conformance suite?
-- Should a future retention/garbage-collection policy be implemented?
 - Should the TUI receive the remaining administrative mutations, or stay a deliberately partial client?
 - Is an official backup/restore guide needed for SQLite, blobs, and PostgreSQL?
 - Should scan-on-push (as opposed to on-demand/scheduled rescans) be added, and if so, should it block manifest publication?

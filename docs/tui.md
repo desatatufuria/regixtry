@@ -55,6 +55,7 @@ Trivy, Gitleaks, and Signing are three peer feature screens (`securityMenuScreen
 
 - **Trivy** splits into two peer screens reached via `Tab`: `trivyConfigScreen` (Runtime — config, scan policy, enable/disable/install/upgrade/rollback actions) and `trivyReposScreen` (Repository Alerts — one row per repository, `o` opens the override editor for the highlighted row, `Enter` opens scan history for it, `r` refreshes).
 - **Gitleaks** and **Signing** each have their own config screen (`gitleaksConfigScreen` / `signingConfigScreen`, `s` opens the edit modal) and their own dedicated repository override list (`o` from the config screen; `↑`/`↓` + `o` on a highlighted row opens the override editor, `r` refreshes).
+- **Signing's** configuration modal (and its per-repository override editor) render trusted keys as a navigable list (`trustedKeyList`, shown as short fingerprints, never raw key bytes) rather than a single field: `n` starts adding one key (paste the PEM, `Enter` commits it), `x` deletes the selected key. Deleting first shows a usage-count advisory ("This key currently verifies N tagged image(s)... Delete it anyway?") from `GET /admin/v1/signing-policy/key-usage` — purely informational, it never blocks the deletion. A never-configured per-repository override's key list is pre-filled from the current global trusted keys the first time it loads.
 - Every screen's rendered footer is generated from that screen's own key bindings (`bubbles/key` + `bubbles/help`); a binding that is not in the map cannot be handled, and cannot silently drift out of the rendered help.
 
 ### Declared action behavior (feature config screens)
@@ -82,6 +83,7 @@ Trivy, Gitleaks, and Signing are three peer feature screens (`securityMenuScreen
 | `b` | manifest | view blobs |
 | `u` | manifest | view uploads |
 | `d`, `x` | manifest / blobs / uploads | show unsupported mutation notice |
+| `d` | tags | delete the selected tag (confirm modal); `UNSUPPORTED` unless `-delete-enabled`/`REGISTRY_DELETE_ENABLED` |
 | `l` | authenticated admin | log out |
 | `↑` / `↓` | admin domain menu | move between Browse / Security & Compliance / Identity & Access / Operations |
 | `Enter` | admin domain menu | open the highlighted domain |
@@ -111,6 +113,8 @@ Trivy, Gitleaks, and Signing are three peer feature screens (`securityMenuScreen
 | `c` | Trivy Runtime | open the configuration modal |
 | `p` | Trivy Runtime | open the scan policy modal |
 | `s` | Gitleaks / Signing config | open the configuration modal |
+| `n` | Signing config / override editor trusted-key list | add a trusted key |
+| `x` | Signing config / override editor trusted-key list | delete the selected trusted key (usage-count advisory, never blocking) |
 | `o` | Trivy Repository Alerts / Gitleaks repos / Signing repos | open the override editor for the highlighted repository |
 | `↑` / `↓` | Trivy Repository Alerts / Gitleaks repos / Signing repos | move between repositories |
 | `r` | Trivy Repository Alerts / Gitleaks repos / Signing repos | refresh |

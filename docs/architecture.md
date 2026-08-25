@@ -174,6 +174,15 @@ See [`docs/tui.md`](tui.md) for the full navigation map and key-binding table.
 
 If no Postgres DSN is configured, there is no auth store at all: no admin routes get mounted (`Router.NewRouter`, above), no login, and the registry runs in anonymous-access mode gated only by `AllowAnonymousPull`/`AllowAnonymousPush` (`ports.AccessConfig`, `internal/ports/defaults.go:11-16`). Blob bytes themselves never touch either database — they live under `<storage-root>/content/blobs/sha256/<digest-hex>` on the filesystem (`internal/infra/storage/fsblob/store.go`), written via a temp-then-rename upload lifecycle (`BeginUpload`/`PutUploadChunk`/`CommitUpload`, store.go:32-162).
 
+## Manifest/tag delete and blob garbage collection
+
+Two separate, independently-gated mutation paths reclaim resources, deliberately kept apart because they operate at different layers with different risk profiles:
+
+- **Manifest/tag delete** (`REGISTRY_DELETE_ENABLED`, `Service.DeleteManifest`) removes SQLite metadata rows only — a tag reference untags, a digest reference cascades to every tag pointing at it. It never touches a blob file on disk, so it is cheap and (mistakes aside) low-risk: the content-addressed blob remains, just unreferenced.
+- **Blob garbage collection** (`REGISTRY_GC_DELETE_ENABLED`, `internal/app/regixtry`'s GC service, `internal/infra/storage/fsblob`) is what actually unlinks blob bytes. Because blobs are globally content-addressed with no per-repository namespace (`<storage-root>/content/blobs/sha256/<digest-hex>`), GC is necessarily a global mark-and-sweep over every tenant/repository, not a scoped operation — a blob one repository stops referencing may still be referenced by another. It is a manual, two-step report-then-delete flow (`POST /admin/v1/gc/reports` computes candidates, `POST /admin/v1/gc/reports/{id}/delete` unlinks them) rather than an automatic sweep, with a 24-hour grace window and a delete-time re-recomputation that only unlinks digests still unreferenced at that moment — mitigating the classic GC race against an in-flight upload whose manifest hasn't published yet.
+
+Both flags default to `false`/disabled, and both are wired through the same low-churn setter shape as the rest of `Service`'s runtime configuration (`SetDeleteEnabled`/`SetGCDeleteEnabled`, `service.go`). See [`docs/registry.md`](registry.md#blob-garbage-collection) for the full operator-facing flow, audit trail, and no-recovery caveat.
+
 ## Feature registry
 
 Vulnerability scanning (Trivy) and secret scanning (Gitleaks) are wired through a generic feature-registry pattern in `internal/app/regixtry` (`SetFeatureRuntimeManager`, `ListFeatures`, `GetFeaturePage`, ...) rather than being hard-coded into the router or the TUI. See `docs/features.md` for the registry contract, backend-declared admin pages, and runtime lifecycle (install/upgrade/rollback) — not duplicated here.

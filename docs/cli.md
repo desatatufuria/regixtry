@@ -5,7 +5,7 @@
 | Command | Main flags | Use |
 | --- | --- | --- |
 | `serve` | see `configuration.md` | Starts the HTTP/HTTPS registry runtime |
-| `tui` | `-storage-root`, `-db`, `-tenant`, `-auth-postgres-dsn`, `-api-base-url`, `-snapshot` | Runs the local console |
+| `tui` | `-storage-root`, `-db`, `-tenant`, `-auth-postgres-dsn`, `-api-base-url`, `-snapshot`, `-delete-enabled`, `-gc-delete-enabled` | Runs the local console |
 | `bootstrap-admin` | `-auth-postgres-dsn`, `-username`, `-password`, `-password-stdin`, `-rotate-password` | Creates or rotates the bootstrap admin |
 | `bootstrap` | `-mode`, `-public-url`, `-runtime-tls-mode`, `-tls-cert-file`, `-tls-key-file`, `-addr`, `-storage-root`, `-state-path`, `-unit-path`, `-service`, `-no-start`, `-rollback` | Builds the systemd-oriented base setup |
 | `setup` | `bootstrap` flags plus `-admin-username`, `-admin-password`, `-auth-postgres-dsn`, and legacy `-trivy-*` import bridge flags | Runs guided or automated setup |

@@ -264,7 +264,26 @@ path is the policy being disabled outright.
 `verifySignature` resolves to one of five states, shared between the
 pull-time gate and the read-only status endpoint below: `unsigned`,
 `unverifiable`, `untrusted`, `mismatched`, `verified`. Only `verified`
-allows a pull when the policy is enabled.
+allows a pull when the policy is enabled. On `verified`, it also returns
+*which* trusted key matched, as a short fingerprint (`signing.Fingerprint` —
+SHA-256 of the trimmed PEM, first 12 hex characters) — surfaced as
+`verified_key_fingerprint` on the signature-status endpoint below and as a
+"Signed with: `<fingerprint>`" line on the TUI's manifest inspect screen.
+
+### Unsigned self-read exemption
+
+`unsigned_self_read` (global policy and per-repository override) is an
+explicitly opt-in bootstrap exemption for the cosign chicken-and-egg
+problem: cosign must `GET` the manifest to know what to sign, but that same
+`GET` is blocked by signing's own fail-closed gate before the image has
+been signed yet. It has three valid values — `""`/`"off"` (default, no
+exemption), `"pusher"` (the exact principal who pushed the digest, matched
+by `UserID` against the manifest's recorded pusher, may read it back
+unsigned), and `"repo_push"` (any principal with write access to that
+repository may read it back unsigned). The exemption only ever affects an
+otherwise-blocked *read*; a properly signed digest pulls normally
+regardless of this setting, and it is validated (rejecting any other
+string) at write time.
 
 ### Signature status endpoint
 
@@ -288,7 +307,32 @@ confirm it exists and is wired end to end.
 Per-repository overrides live under
 `/admin/v1/features/signing/repository-overrides/{repo}`, replacing the
 global `Enabled`/`TrustedPublicKeys` pair for one repository (full-row
-replace, not a merge).
+replace, not a merge). The TUI's override editor pre-fills a
+**never-configured** override's key list from the current global trusted
+keys the first time it loads (so a new override starts from something
+sensible instead of empty) — this only ever happens once, and only before
+the operator's first save; once the override exists, its own stored keys
+are used and the prefill never runs again.
+
+### Managing trusted keys
+
+A signing policy holds **up to 16** trusted public keys, not just one — both
+globally and per repository. The TUI's Signing config screen (and the
+per-repository override editor) render this as a navigable list rather
+than a single field: `n` adds one key (paste the PEM, then Enter), `x`
+deletes the selected key. Each key is shown as its short fingerprint
+(`signing.Fingerprint`), never as raw key bytes.
+
+Deleting a key first shows a usage advisory: "This key currently verifies
+N tagged image(s). Delete it anyway?" (or "at least N (stopped counting)"
+once the scan hits its cap). This count comes from
+`GET /admin/v1/signing-policy/key-usage?key=<pem>&repository=<optional>`,
+which scans up to 500 currently-tagged images in the given scope (global,
+or one repository) for a signature that verifies against that specific
+key. It is **best-effort and non-exhaustive** — an unreadable tag is
+skipped rather than aborting the count — and it **never blocks the
+deletion**; the count is purely informational, so an operator with no
+credential-rotation plan cannot be trapped unable to remove a key.
 
 ## Quick comparison
 
