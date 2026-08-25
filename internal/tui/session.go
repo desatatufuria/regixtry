@@ -417,9 +417,14 @@ type AdminViewState struct {
 	// SigningPolicy is the image-signing content-trust gate's current global
 	// settings, kept on AdminViewState alongside ScanPolicy so the Feature
 	// Page heading can compose signingPolicyBadge (design.md Decision 11
-	// piece 1) without a modal being open.
-	SigningPolicy      ports.SigningPolicySettings
-	SigningPolicyModal signingPolicyModal
+	// piece 1) without a modal being open. Deliberately NOT migrated onto
+	// signingConfigScreen in Phase 12.3 (disclosed deviation, see
+	// screen_signing_config.go's doc comment): it has a second, still-legacy
+	// reader (that same badge) screenAdminFeatures still owns.
+	SigningPolicy ports.SigningPolicySettings
+	// SigningPolicyModal's state moved to signingConfigScreen
+	// (Model.adminScreens[slotSigningConfig], Phase 12.3) -- AdminViewState
+	// no longer holds it.
 	// TrivyScanRuns holds each distinct repository's latest scan run
 	// (scanRunsFromScanSummaries), one entry per TrivySummaries row -- it no
 	// longer holds every raw scan_runs row (see ListLatestScanRunPerRepository,

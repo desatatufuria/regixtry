@@ -900,25 +900,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.adminView.SigningPolicy = msg.settings
 		return m, nil
 	case adminSigningPolicyUpdatedMsg:
+		// signingConfigScreen's own Error/cfg-refresh handling is reached via
+		// the routeAdminMsg broadcast below (design.md Decision H) --
+		// AdminViewState keeps only what its still-legacy badge reader
+		// (signingPolicyBadge, screenAdminFeatures) needs.
 		if msg.err != nil {
 			if IsAdminSessionExpired(msg.err) {
 				return m.expireAdminSession(msg.err.Error()), nil
 			}
-			m.adminView.SigningPolicyModal.Error = msg.err.Error()
-			return m, nil
+			var cmd tea.Cmd
+			m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
+			return m, cmd
 		}
-		// Unlike scanPolicyModal, the modal stays open after a successful
-		// save (design.md Decision 11 piece 1's growable key list): the
-		// operator can keep adding keys, mirroring
-		// applyRepositoryOverrideToModal's own "stays open" precedent.
 		m.adminView.SigningPolicy = msg.settings
-		m.adminView.SigningPolicyModal.Enabled = msg.settings.Enabled
-		m.adminView.SigningPolicyModal.UnsignedSelfRead = normalizeUnsignedSelfRead(msg.settings.UnsignedSelfRead)
-		m.adminView.SigningPolicyModal.Fingerprints = signingKeyFingerprints(msg.settings.TrustedPublicKeys)
-		m.adminView.SigningPolicyModal.AddKey = ""
-		m.adminView.SigningPolicyModal.Error = ""
 		m.status = "Signing policy saved."
-		return m, nil
+		var cmd tea.Cmd
+		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
+		return m, cmd
 	case adminRepositoryOverrideLoadedMsg:
 		// The uniform overrideEditor (design.md Decision F) is broadcast to
 		// (design.md Decision H): whichever screen is holding an open
@@ -1629,8 +1627,20 @@ func (m Model) updateAdminKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateScanPolicyModalKey(msg)
 	}
 
-	if m.adminView.SigningPolicyModal.Active() {
-		return m.updateSigningPolicyModalKey(msg)
+	if s, ok := m.adminScreens[slotSigningConfig].(signingConfigScreen); ok {
+		next, cmd, _ := s.Update(m.screenEnv(), msg)
+		m.adminScreens[slotSigningConfig] = next
+		switch {
+		case next == nil:
+			// Esc closed it -- mirrors updateSigningPolicyModalKey's own Esc
+			// branch, which also cleared m.status.
+			m.status = ""
+		case cmd != nil:
+			// Enter validated and dispatched updateSigningPolicyCmd --
+			// mirrors updateSigningPolicyModalKey's own Enter branch.
+			m.status = "Saving signing policy..."
+		}
+		return m, cmd
 	}
 
 	if s, ok := m.adminScreens[slotTrivyOverride].(overrideEditor); ok && s.Active() {
@@ -1942,14 +1952,17 @@ func (m Model) updateAdminFeaturesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// No key collision with the trivy 'p' case above: this branch is
 		// guarded by isSelectedSigningFeature(), the trivy branch by
 		// isSelectedTrivyFeature() -- the two are mutually exclusive
-		// (design.md Decision 11 piece 2).
-		m.adminView.SigningPolicyModal = signingPolicyModal{
+		// (design.md Decision 11 piece 2). Mounted at slotSigningConfig
+		// (Phase 12.3) exactly like slotGitleaksConfig mounts gitleaks'
+		// config screen -- one uniform overlay mechanism.
+		cfg := signingPolicyModal{
 			Open:             true,
 			Focus:            signingPolicyFieldEnabled,
 			Enabled:          m.adminView.SigningPolicy.Enabled,
 			UnsignedSelfRead: normalizeUnsignedSelfRead(m.adminView.SigningPolicy.UnsignedSelfRead),
 			Fingerprints:     signingKeyFingerprints(m.adminView.SigningPolicy.TrustedPublicKeys),
 		}
+		m.adminScreens[slotSigningConfig] = newSigningConfigScreen(cfg, m.adminView.SigningPolicy.TrustedPublicKeys)
 		m.status = ""
 		return m, nil
 	case m.isSelectedTrivyFeature() && m.adminView.TrivyTab == trivyTabRepositoryAlerts && isMoveUpKey(msg):
@@ -2173,62 +2186,8 @@ func nextScanPolicyThreshold(threshold string) string {
 	return ports.ScanPolicyThresholdCriticalHigh
 }
 
-// updateSigningPolicyModalKey handles keys while the signing policy modal is
-// open, mirroring updateScanPolicyModalKey's dedicated-handler pattern: Tab
-// cycles the 3 fields (wrapping, via nextSigningPolicyField), Space toggles
-// Enabled when it has focus, rune keys append to AddKey when it has focus,
-// Backspace trims AddKey when it has focus, Esc cancels without persisting.
-// Enter's behavior depends on Focus (design.md Decision 11 piece 1):
-//   - ClearKeys focus: submits with an empty trusted-key list.
-//   - Any other focus: submits the currently stored keys, plus AddKey
-//     appended when it is non-empty (the AddKey field is never itself
-//     validated client-side -- the admin API's existing
-//     signing.NormalizePublicKeyPEM validation is the single source of
-//     truth, surfaced back into modal.Error on rejection).
-func (m Model) updateSigningPolicyModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch {
-	case isEscKey(msg):
-		m.adminView.SigningPolicyModal = signingPolicyModal{}
-		m.status = ""
-		return m, nil
-	case isTabKey(msg):
-		m.adminView.SigningPolicyModal.Focus = nextSigningPolicyField(m.adminView.SigningPolicyModal.Focus)
-		m.adminView.SigningPolicyModal.Error = ""
-		return m, nil
-	case isRuneKey(msg, ' '):
-		switch m.adminView.SigningPolicyModal.Focus {
-		case signingPolicyFieldEnabled:
-			m.adminView.SigningPolicyModal.Enabled = !m.adminView.SigningPolicyModal.Enabled
-		case signingPolicyFieldUnsignedSelfRead:
-			m.adminView.SigningPolicyModal.UnsignedSelfRead = nextUnsignedSelfReadValue(m.adminView.SigningPolicyModal.UnsignedSelfRead)
-		}
-		m.adminView.SigningPolicyModal.Error = ""
-		return m, nil
-	case isBackspaceKey(msg):
-		if m.adminView.SigningPolicyModal.Focus == signingPolicyFieldAddKey {
-			m.adminView.SigningPolicyModal.AddKey = trimLastRune(m.adminView.SigningPolicyModal.AddKey)
-		}
-		m.adminView.SigningPolicyModal.Error = ""
-		return m, nil
-	case isEnterKey(msg):
-		modal := m.adminView.SigningPolicyModal
-		var keys []string
-		if modal.Focus != signingPolicyFieldClearKeys {
-			keys = append(keys, m.adminView.SigningPolicy.TrustedPublicKeys...)
-			if strings.TrimSpace(modal.AddKey) != "" {
-				keys = append(keys, modal.AddKey)
-			}
-		}
-		m.status = "Saving signing policy..."
-		return m, m.updateSigningPolicyCmd(ports.SigningPolicySettings{Enabled: modal.Enabled, TrustedPublicKeys: keys, UnsignedSelfRead: normalizeUnsignedSelfRead(modal.UnsignedSelfRead)})
-	}
-	if msg.Type == tea.KeyRunes && m.adminView.SigningPolicyModal.Focus == signingPolicyFieldAddKey {
-		m.adminView.SigningPolicyModal.AddKey += string(msg.Runes)
-		m.adminView.SigningPolicyModal.Error = ""
-		return m, nil
-	}
-	return m, nil
-}
+// updateSigningPolicyModalKey moved to signingConfigScreen.updateKey
+// (screen_signing_config.go, Phase 12.3).
 
 // signingKeyFingerprints derives a read-only SHA-256/12 fingerprint for each
 // stored trusted key, so signingPolicyModal/renderSigningPolicyModal never

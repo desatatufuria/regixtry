@@ -84,6 +84,12 @@ const (
 	// genuinely new top-level screens, addressed via slotFor.
 	slotGitleaksRepos
 	slotSigningRepos
+	// slotSigningConfig holds signingConfigScreen (Phase 12.3, design.md's
+	// State Migration table) while open for Signing's own global policy
+	// modal -- an overlay on Trivy/Gitleaks' still-legacy screenAdminFeatures
+	// exactly like slotGitleaksConfig/slotTrivyOverride above, not addressed
+	// via slotFor.
+	slotSigningConfig
 	numScreenSlots
 )
 

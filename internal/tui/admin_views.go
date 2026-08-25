@@ -70,8 +70,11 @@ func renderAdminWorkspace(current screen, session AdminSession, view AdminViewSt
 		modalView = adminScreens[slotTrivyOverride].View(theme, env).Overlay
 	case view.ScanPolicyModal.Active():
 		modalView = renderScanPolicyModal(theme, view.ScanPolicyModal)
-	case view.SigningPolicyModal.Active():
-		modalView = renderSigningPolicyModal(theme, view.SigningPolicyModal)
+	case adminScreens[slotSigningConfig] != nil:
+		// signingConfigScreen (Phase 12.3), mounted as an overlay on
+		// Trivy/Gitleaks' still-legacy screenAdminFeatures exactly like
+		// slotGitleaksConfig/slotTrivyOverride above.
+		modalView = adminScreens[slotSigningConfig].View(theme, env).Overlay
 	case screenOverlay != "":
 		// A migrated top-level screen's own overlay (e.g. Gitleaks'/
 		// Signing's embedded overrideEditor while browsing their own
@@ -820,81 +823,11 @@ func signingPolicyBadge(theme adminTheme, policy ports.SigningPolicySettings) st
 	return theme.selected.Render(fmt.Sprintf("Signing: REQUIRED (%d keys)", len(policy.TrustedPublicKeys)))
 }
 
-// renderSigningPolicyModal renders the image-signing content-trust gate's
-// own modal (design.md Decision 11 piece 1), a sibling of
-// renderScanPolicyModal -- NOT an extension of it. Row arithmetic: heading
-// (1) + status (1) + 3 fields x 2 rows (6) + key list (1 for empty, else
-// min(N,4)+[1 if N>4]) + clear row (1) + blank/help (2, +2 more with an
-// error) + 4 rows theme.section chrome.
-func renderSigningPolicyModal(theme adminTheme, modal signingPolicyModal) string {
-	lines := []string{
-		theme.subheading.Render("Signing Policy"),
-		theme.muted.Render(signingPolicyStatusLine(modal)),
-		renderToggleField(theme, "Enabled", modal.Enabled, modal.Focus == signingPolicyFieldEnabled),
-		renderTextField(theme, "Unsigned Self-Read", normalizeUnsignedSelfRead(modal.UnsignedSelfRead), modal.Focus == signingPolicyFieldUnsignedSelfRead),
-		renderTextField(theme, "Trusted Key (PEM)", modal.AddKey, modal.Focus == signingPolicyFieldAddKey),
-	}
-	lines = append(lines, renderSigningPolicyKeyList(theme, modal.Fingerprints)...)
-	lines = append(lines, renderSigningPolicyClearKeysRow(theme, modal))
-	if strings.TrimSpace(modal.Error) != "" {
-		lines = append(lines, "", theme.error.Render(modal.Error))
-	}
-	lines = append(lines, "", theme.muted.Render("Enter: save/add key | Tab: next field | Space: toggle/cycle | Esc: cancel"))
-	return theme.section.Render(strings.Join(lines, "\n"))
-}
-
-// signingPolicyStatusLine answers "is this modal loading, and how many
-// trusted keys are currently configured", occupying the modal's own fixed
-// Status row regardless of key count (design.md Decision 11's row-budget
-// table lists Status as a constant 1-row cost, distinct from the scaling
-// key list below it).
-func signingPolicyStatusLine(modal signingPolicyModal) string {
-	if modal.Loading {
-		return "Loading…"
-	}
-	return fmt.Sprintf("%d trusted key(s) configured", len(modal.Fingerprints))
-}
-
-// renderSigningPolicyKeyList renders at most 4 fingerprint rows plus one
-// "+N more" row when there are more than 4, or a single empty-state row when
-// there are none (design.md Decision 11's row-budget table: Key list = 1 /
-// N / min(N,4)+1). Stored keys are shown only as truncated SHA-256/12
-// fingerprints, never as raw PEM (renderSigningPolicyModal's own doc
-// comment / spec's redaction requirement).
-func renderSigningPolicyKeyList(theme adminTheme, fingerprints []string) []string {
-	if len(fingerprints) == 0 {
-		return []string{theme.muted.Render("No trusted keys configured.")}
-	}
-	shown := fingerprints
-	more := 0
-	if len(shown) > 4 {
-		more = len(shown) - 4
-		shown = shown[:4]
-	}
-	lines := make([]string, 0, len(shown)+1)
-	for _, fingerprint := range shown {
-		lines = append(lines, theme.text.Render(fmt.Sprintf("Key: %s", fingerprint)))
-	}
-	if more > 0 {
-		lines = append(lines, theme.muted.Render(fmt.Sprintf("+%d more", more)))
-	}
-	return lines
-}
-
-// renderSigningPolicyClearKeysRow renders the modal's ClearKeys action as a
-// single-row line, mirroring renderRepositoryOverrideClearRow's action-row
-// pattern (an action, not an input, so it costs 1 row rather than 2).
-func renderSigningPolicyClearKeysRow(theme adminTheme, modal signingPolicyModal) string {
-	label := "Clear all trusted keys"
-	if len(modal.Fingerprints) == 0 {
-		label = "No trusted keys to clear"
-	}
-	style := theme.muted
-	if modal.Focus == signingPolicyFieldClearKeys {
-		style = theme.inputFocus
-	}
-	return style.Render(label)
-}
+// renderSigningPolicyModal/signingPolicyStatusLine/renderSigningPolicyKeyList/
+// renderSigningPolicyClearKeysRow moved to screen_signing_config.go (Phase
+// 12.3, design.md's State Migration table): signingConfigScreen.View calls
+// renderSigningPolicyModal directly, with the pre-move hand-written footer
+// replaced by shortHelpView's keymap-generated one.
 
 // scanPolicyThresholdLabel renders the severity threshold as the operator-
 // facing text the badge and modal both use (design.md Decision 6): CRITICAL

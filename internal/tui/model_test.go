@@ -2706,8 +2706,9 @@ func TestModelSigningPolicyModalOpenerKeyIsScopedToSigningFeature(t *testing.T) 
 		}
 
 		updated = runKey(t, updated, "p")
-		if !updated.adminView.SigningPolicyModal.Active() {
-			t.Fatal("SigningPolicyModal.Active() = false, want true after 'p' on the signing feature")
+		signingScreen, ok := updated.adminScreens[slotSigningConfig].(signingConfigScreen)
+		if !ok || !signingScreen.cfg.Active() {
+			t.Fatal("adminScreens[slotSigningConfig] cfg.Active() = false, want true after 'p' on the signing feature")
 		}
 		if updated.adminView.ScanPolicyModal.Active() {
 			t.Fatal("ScanPolicyModal.Active() = true, want false -- 'p' on signing must not open the trivy modal")
@@ -2736,8 +2737,8 @@ func TestModelSigningPolicyModalOpenerKeyIsScopedToSigningFeature(t *testing.T) 
 		if !updated.adminView.ScanPolicyModal.Active() {
 			t.Fatal("ScanPolicyModal.Active() = false, want true after 'p' on the trivy feature")
 		}
-		if updated.adminView.SigningPolicyModal.Active() {
-			t.Fatal("SigningPolicyModal.Active() = true, want false -- 'p' on trivy must not open the signing modal")
+		if updated.adminScreens[slotSigningConfig] != nil {
+			t.Fatal("adminScreens[slotSigningConfig] != nil, want unmounted -- 'p' on trivy must not open the signing screen")
 		}
 	})
 }
@@ -2763,8 +2764,12 @@ func TestModelSigningPolicyModalOpenSeedsUnsignedSelfReadFromLoadedSettings(t *t
 	updated = runKey(t, updated, "f")
 	updated = runKey(t, updated, "p")
 
-	if got, want := updated.adminView.SigningPolicyModal.UnsignedSelfRead, "repo_push"; got != want {
-		t.Fatalf("SigningPolicyModal.UnsignedSelfRead = %q, want %q seeded from the loaded policy", got, want)
+	signingScreen, ok := updated.adminScreens[slotSigningConfig].(signingConfigScreen)
+	if !ok {
+		t.Fatal("adminScreens[slotSigningConfig] not mounted after 'p'")
+	}
+	if got, want := signingScreen.cfg.UnsignedSelfRead, "repo_push"; got != want {
+		t.Fatalf("cfg.UnsignedSelfRead = %q, want %q seeded from the loaded policy", got, want)
 	}
 }
 
@@ -2803,8 +2808,12 @@ func TestModelSigningPolicyModalSaveIncludesUnsignedSelfRead(t *testing.T) {
 		if got, want := adminClient.lastSigningPolicyInput.UnsignedSelfRead, "repo_push"; got != want {
 			t.Fatalf("lastSigningPolicyInput.UnsignedSelfRead = %q, want %q preserved from the loaded policy", got, want)
 		}
-		if got, want := submitted.adminView.SigningPolicyModal.UnsignedSelfRead, "repo_push"; got != want {
-			t.Fatalf("SigningPolicyModal.UnsignedSelfRead = %q, want %q after save", got, want)
+		signingScreen, ok := submitted.adminScreens[slotSigningConfig].(signingConfigScreen)
+		if !ok {
+			t.Fatal("adminScreens[slotSigningConfig] not mounted after save")
+		}
+		if got, want := signingScreen.cfg.UnsignedSelfRead, "repo_push"; got != want {
+			t.Fatalf("cfg.UnsignedSelfRead = %q, want %q after save", got, want)
 		}
 	})
 
@@ -2820,8 +2829,12 @@ func TestModelSigningPolicyModalSaveIncludesUnsignedSelfRead(t *testing.T) {
 		if got, want := adminClient.lastSigningPolicyInput.UnsignedSelfRead, "off"; got != want {
 			t.Fatalf("lastSigningPolicyInput.UnsignedSelfRead = %q, want %q after cycling", got, want)
 		}
-		if got, want := submitted.adminView.SigningPolicyModal.UnsignedSelfRead, "off"; got != want {
-			t.Fatalf("SigningPolicyModal.UnsignedSelfRead = %q, want %q after save", got, want)
+		signingScreen, ok := submitted.adminScreens[slotSigningConfig].(signingConfigScreen)
+		if !ok {
+			t.Fatal("adminScreens[slotSigningConfig] not mounted after save")
+		}
+		if got, want := signingScreen.cfg.UnsignedSelfRead, "off"; got != want {
+			t.Fatalf("cfg.UnsignedSelfRead = %q, want %q after save", got, want)
 		}
 	})
 }
@@ -2867,14 +2880,18 @@ func TestModelSigningPolicyModalAddKeySubmitPersistsAndReflectsCurrentSettings(t
 	if got, want := adminClient.lastSigningPolicyInput.TrustedPublicKeys, []string{"-----BEGIN PUBLIC KEY-----fakekeydata-----END PUBLIC KEY-----"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("lastSigningPolicyInput.TrustedPublicKeys = %#v, want %#v", got, want)
 	}
-	if !submitted.adminView.SigningPolicyModal.Active() {
-		t.Fatal("SigningPolicyModal.Active() = false, want the modal to stay open after a successful save (unlike scanPolicyModal)")
+	submittedScreen, ok := submitted.adminScreens[slotSigningConfig].(signingConfigScreen)
+	if !ok {
+		t.Fatal("adminScreens[slotSigningConfig] not mounted after save")
 	}
-	if submitted.adminView.SigningPolicyModal.AddKey != "" {
-		t.Fatalf("SigningPolicyModal.AddKey = %q, want cleared after a successful submit", submitted.adminView.SigningPolicyModal.AddKey)
+	if !submittedScreen.cfg.Active() {
+		t.Fatal("cfg.Active() = false, want the screen to stay mounted/open after a successful save (unlike scanPolicyModal)")
 	}
-	if len(submitted.adminView.SigningPolicyModal.Fingerprints) != 1 {
-		t.Fatalf("SigningPolicyModal.Fingerprints = %#v, want 1 fingerprint reflected from the saved key", submitted.adminView.SigningPolicyModal.Fingerprints)
+	if submittedScreen.cfg.AddKey != "" {
+		t.Fatalf("cfg.AddKey = %q, want cleared after a successful submit", submittedScreen.cfg.AddKey)
+	}
+	if len(submittedScreen.cfg.Fingerprints) != 1 {
+		t.Fatalf("cfg.Fingerprints = %#v, want 1 fingerprint reflected from the saved key", submittedScreen.cfg.Fingerprints)
 	}
 	if !strings.Contains(submitted.View(), "Signing policy saved") {
 		t.Fatalf("view = %q, want signing policy feedback after submit", submitted.View())
@@ -2890,8 +2907,12 @@ func TestModelSigningPolicyModalAddKeySubmitPersistsAndReflectsCurrentSettings(t
 	if len(adminClient.lastSigningPolicyInput.TrustedPublicKeys) != 0 {
 		t.Fatalf("lastSigningPolicyInput.TrustedPublicKeys = %#v, want empty after Clear", adminClient.lastSigningPolicyInput.TrustedPublicKeys)
 	}
-	if len(cleared.adminView.SigningPolicyModal.Fingerprints) != 0 {
-		t.Fatalf("SigningPolicyModal.Fingerprints = %#v, want empty after Clear", cleared.adminView.SigningPolicyModal.Fingerprints)
+	clearedScreen, ok := cleared.adminScreens[slotSigningConfig].(signingConfigScreen)
+	if !ok {
+		t.Fatal("adminScreens[slotSigningConfig] not mounted after Clear")
+	}
+	if len(clearedScreen.cfg.Fingerprints) != 0 {
+		t.Fatalf("cfg.Fingerprints = %#v, want empty after Clear", clearedScreen.cfg.Fingerprints)
 	}
 }
 

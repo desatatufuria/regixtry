@@ -301,15 +301,21 @@ active task** — proceed directly on Rung 1 (`bubbles/help` as designed).
 
 ## Phase 11: Security & Compliance Domain Menu + Trivy Peer Screens — Slice 2
 
-**Not implemented in this apply batch — recorded as a scoped deviation, not
-silently dropped.** See "Slice 2 apply deviations" below for the full reasoning.
-`screenAdminFeatures` (the Built-in Features list + Feature Page detail, Trivy's
-Runtime/Repository Alerts tabs, `TrivyConfigModal`/`ScanPolicyModal`/
-`SigningPolicyModal`) stays on the legacy adapter, unmigrated, rendering exactly as
-it did before this change (proven by `TestNonMigratedScreensUnchanged`'s
-`screenAdminFeatures` case staying GREEN throughout). The literal reported defect
-(Gitleaks/Signing having no override entry point of their own, and the Feature
-cycle) is fixed in full by Phases 9/10/12/13 below without this repurposing.
+**Still not implemented in this apply batch — investigated at full depth in the
+follow-up batch that completed Phase 12.3, and re-recorded as a scoped
+deviation for a genuine, discovered design gap, not silently dropped or
+re-deferred for the same "risk management" reason as before.** See "Slice 2
+apply deviations" below for the full reasoning, including the specific
+design.md gap found. `screenAdminFeatures` (the Built-in Features list +
+Feature Page detail, Trivy's Runtime/Repository Alerts tabs,
+`TrivyConfigModal`/`ScanPolicyModal`) stays on the legacy adapter, unmigrated,
+rendering exactly as it did before this change (proven by
+`TestNonMigratedScreensUnchanged`'s `screenAdminFeatures` case staying GREEN
+throughout). The literal reported defect (Gitleaks/Signing having no override
+entry point of their own, and the Feature cycle) is fixed in full by Phases
+9/10/12/13 below without this repurposing. Signing's own global policy modal
+(`SigningPolicyModal`) **is** now fully migrated, as its own overlay screen —
+see Phase 12.3.
 
 - [ ] 11.1 Not done — no `securityMenuScreen`/`trivyConfigScreen`/`trivyReposScreen`
       RED interface assertions were written.
@@ -328,8 +334,9 @@ cycle) is fixed in full by Phases 9/10/12/13 below without this repurposing.
       slots exist.
 - [x] 11.6 Confirm no regression: `TestNonMigratedScreensUnchanged` (Phase 1.1) still
       passes for every one of its 13 legacy-screen cases, `screenAdminFeatures`
-      included — byte-identical, since 11.1–11.5 were not attempted, there is
-      nothing to regress here beyond what Phase 9/10/13 already prove.
+      included — byte-identical, re-confirmed GREEN after the Phase 12.3 follow-up
+      batch's `screenAdminFeatures`-adjacent edits (the `SigningPolicyModal`
+      overlay-switch replacement in `renderAdminWorkspace`) as well as after 9/10/13.
 
 ## Phase 12: Gitleaks + Signing Peer Screens — Slice 2
 
@@ -349,10 +356,38 @@ cycle) is fixed in full by Phases 9/10/12/13 below without this repurposing.
       `env.KnownRepositories` (catalog ∪ stored overrides, Decision J); empty catalog
       with no stored overrides → zero rows, rendered as an explicit empty state by
       `View()`.
-- [ ] 12.3 Not done — `screen_signing_config.go`/`signingConfigScreen` does not
-      exist; see Phase 11's deviation note. Signing's config/policy modal stays a
-      legacy overlay on `screenAdminFeatures`, reached exactly as it was before this
-      change (`p` while Signing is highlighted).
+- [x] 12.3 DONE (follow-up batch): `internal/tui/screen_signing_config.go` (new):
+      `signingConfigScreen` (`cfg signingPolicyModal`, plus `baselineKeys []string`
+      — the raw trusted-key baseline needed for Enter's save payload, since
+      `screenEnv` deliberately carries no `SigningPolicy`, design.md's Interfaces
+      section), `newSigningConfigScreen`, `ID`/`Keys`/`Init`/`Update`/`View`, moved
+      from `model.go`'s `updateSigningPolicyModalKey`
+      (deleted) and `admin_views.go`'s `renderSigningPolicyModal`/
+      `signingPolicyStatusLine`/`renderSigningPolicyKeyList`/
+      `renderSigningPolicyClearKeysRow` (relocated, footer swapped for
+      `shortHelpView`) — mirrors `gitleaksConfigScreen`'s Slice 1 pattern exactly:
+      mounted at new `slotSigningConfig` (an overlay on the still-legacy
+      `screenAdminFeatures`, not addressed via `slotFor`, exactly like
+      `slotGitleaksConfig`/`slotTrivyOverride`), the `p` keybinding/behavior is
+      byte-identical (verified: all 6 pre-existing `TestModelSigningPolicyModal*`
+      characterization tests in `model_test.go` pass unchanged in intent, adapted
+      only to read `adminScreens[slotSigningConfig].(signingConfigScreen).cfg`
+      instead of the deleted `AdminViewState.SigningPolicyModal` field; all 5
+      `TestRenderSigningPolicyModal*` tests in `admin_views_test.go` pass with ZERO
+      changes, since `renderSigningPolicyModal` kept its exact name/signature).
+      `AdminViewState.SigningPolicyModal` is deleted (session.go).
+      `adminSigningPolicyUpdatedMsg`'s central `Model.Update` handler now keeps only
+      the badge-facing `AdminViewState.SigningPolicy` assignment and `m.status`, and
+      broadcasts via `routeAdminMsg` (design.md Decision H) so
+      `signingConfigScreen.Update` refreshes its own `cfg`/`baselineKeys`.
+      **Deviation, disclosed**: `AdminViewState.SigningPolicy` (the loaded baseline
+      settings, distinct from the modal) is deliberately NOT migrated to a `policy`
+      field on `signingConfigScreen` as design.md's table literally lists — it has a
+      second, still-legacy reader (`signingPolicyBadge`, composed into
+      `renderAdminFeaturesScreen`'s Feature Page heading, part of `screenAdminFeatures`'
+      still-unmigrated rendering, Phase 11). Deleting it here would either break that
+      badge's only data source or force a duplicated, driftable copy across two
+      owners; see `screen_signing_config.go`'s doc comment for the full reasoning.
 - [x] 12.4 GREEN `internal/tui/screen_signing_repos.go` (new): `newSigningReposScreen()`,
       backed by `featureOverridesScreen(feature="signing")` — the file exists per
       the plan even though the underlying type is shared, so Gitleaks and Signing
@@ -386,15 +421,26 @@ cycle) is fixed in full by Phases 9/10/12/13 below without this repurposing.
       (`newOverrideEditor(feature, repository)`); Trivy's own `o` (Repository
       Alerts row, unchanged key/meaning) mounts the same `overrideEditor` type at
       `slotTrivyOverride`.
-- [x] 13.6 GREEN `internal/tui/admin_views.go`: **deviation** — `adminFeatureHelp`
-      was NOT deleted (Phase 11's repurposing that would make it dead code was not
-      done); instead its Gitleaks/Signing branches now advertise
-      `"o: repository overrides"` — this is the literal fix for the defect's own
-      artifact (previously `o` was advertised only under the Trivy branch).
-- [ ] 13.7 Not done — `admin_tables.go`'s existing table builders are unchanged
-      (Phase 11 was not done, so there is no migrated screen reading
-      `AdminViewState` through them that needs to stop). The two new screens build
-      no `bubbletable.Model` at all (12.2's deviation).
+- [ ] 13.6 Still not done (re-checked in the follow-up batch that completed
+      Phase 12.3, at genuinely full scope, not re-disclosed for the old reason):
+      `adminFeatureHelp` was NOT deleted, because it is still genuinely NOT dead
+      code — it remains `adminScreenHelp`'s footer source for the still-legacy,
+      unmigrated `screenAdminFeatures` (Phase 11 not done). Its Gitleaks/Signing
+      branches advertise `"o: repository overrides"` (unchanged this batch) — the
+      literal fix for the defect's own artifact (previously `o` was advertised only
+      under the Trivy branch). Confirmed this batch: `adminFeatureHelp` does not
+      reference `SigningPolicyModal` at all (only `FeaturePage`/`TrivyTab`), so
+      Phase 12.3's `SigningPolicyModal` migration required zero changes to this
+      function — genuinely gated on Phase 11 alone, not on anything Phase 12.3
+      touched.
+- [ ] 13.7 Still not done, re-checked in the follow-up batch: `admin_tables.go`'s
+      existing table builders are unchanged (Phase 11 was not done, so there is no
+      migrated screen reading `AdminViewState` through them that needs to stop).
+      The two Gitleaks/Signing repository-list screens build no `bubbletable.Model`
+      at all (12.2's deviation), and Phase 12.3's `signingConfigScreen` likewise
+      builds no table (plain styled text lines, mirroring
+      `renderSigningPolicyKeyList`'s pre-existing shape) — confirmed no new
+      `admin_tables.go` builder became dead code in this follow-up batch either.
 - [x] 13.8 Confirm 13.1–13.4 GREEN:
       `go test ./internal/tui/... -run 'TestGitleaksOverrideOpensWithoutEnteringTrivy|TestSigningOverrideOpensWithoutEnteringTrivy|TestOverrideKeyIsInertWithoutAHighlightedRow|TestOverrideModalStaysWithinViewport' -v`.
 
@@ -402,19 +448,27 @@ cycle) is fixed in full by Phases 9/10/12/13 below without this repurposing.
 
 - [x] 14.1 RED `internal/tui/admin_view_state_migration_test.go` (new):
       `TestMigratedScreensHaveZeroFieldsOnAdminViewState` (T2.4) — `reflect`
-      field-name set vs. an explicit allowlist. **Deviation, disclosed in the test's
-      own doc comment**: scoped to the field actually migrated in this apply batch
-      (`RepositoryOverrideModal`), not design's full 17-field table — Phase 11's
-      unmigrated fields (`TrivyConfigModal`, `ScanPolicy`, `ScanPolicyModal`,
-      `SigningPolicy`, `SigningPolicyModal`, `Features`, `SelectedFeature`,
-      `Tables.Features`, the Trivy Repository Alerts fields) remain present and are
-      NOT asserted absent by this test. Confirmed RED before `RepositoryOverrideModal`
-      was deleted from `AdminViewState`.
+      field-name set vs. an explicit allowlist. **Expanded in the follow-up batch
+      that completed Phase 12.3** from 1 field to 2:
+      `RepositoryOverrideModal` (Phase 10.3) and `SigningPolicyModal` (Phase 12.3).
+      **Deviation, disclosed in the test's own doc comment, narrowed but not
+      resolved**: still not design's full field table — Phase 11's unmigrated
+      fields (`TrivyConfigModal`, `ScanPolicy`, `ScanPolicyModal`, `FeaturePage`
+      (trivy's), `Tables.FeatureRows["trivy"]`, `TrivyTab`, `TrivySummaries`,
+      `TrivyScanRuns`, `TrivySelectedAlert`, `TrivyAlertsLoaded`, `TrivyOverrides`,
+      `Tables.ScanSummary`, `Features`, `SelectedFeature`, `Tables.Features` — 15
+      fields) remain present and are NOT asserted absent by this test, genuinely
+      gated on Phase 11's unresolved design gap (see "Slice 2 apply deviations").
+      `SigningPolicy` (the loaded baseline settings, distinct from the modal) is
+      ALSO deliberately kept, disclosed in Phase 12.3's own entry above — it is not
+      an oversight, it has a live legacy reader.
 - [x] 14.2 GREEN `internal/tui/session.go`: deleted `RepositoryOverrideModal` from
-      `AdminViewState` (Phase 10.3, done together since the field and its backing
-      type were retired in the same edit). The other 16 fields in design's table
-      were NOT deleted (Phase 11 deviation).
-- [x] 14.3 Confirm 14.1 (T2.4) GREEN, at its disclosed reduced scope.
+      `AdminViewState` (Phase 10.3) and, in the follow-up batch, `SigningPolicyModal`
+      too (Phase 12.3). The 15 Phase-11-gated fields plus `SigningPolicy` were NOT
+      deleted (disclosed deviations above).
+- [x] 14.3 Confirm 14.1 (T2.4) GREEN at its expanded (still not full) scope:
+      `go test ./internal/tui/... -run TestMigratedScreensHaveZeroFieldsOnAdminViewState -v`
+      — PASS.
 
 ## Phase 15: Reachability Re-Proof — Slice 2
 
@@ -456,63 +510,128 @@ cycle) is fixed in full by Phases 9/10/12/13 below without this repurposing.
       (`TestOverrideKeyIsInertWithoutAHighlightedRow`); the editor's `Feature` cannot
       be changed once open (`TestOverrideEditorFeatureIsImmutable`); the editor stays
       within the viewport (`TestOverrideModalStaysWithinViewport`).
-- [x] 17.3 Explicit checklist against `tui-navigation-architecture` spec scenarios
-      landing in this apply batch: "Migrated screen has zero fields on
-      `AdminViewState`" holds for the actually-migrated surface
-      (`TestMigratedScreensHaveZeroFieldsOnAdminViewState`, disclosed reduced scope —
-      Trivy config/repos, Gitleaks config, Signing config, and the security domain
-      menu were NOT migrated in this batch, Phase 11 deviation); "Parent router
-      cannot mutate a child's private state directly" continues to hold for the two
-      new migrated screens (`routeAdminKey`'s slot branch replaces, never writes
-      into, `m.adminScreens[slot]`).
-- [x] 17.4 Confirm proposal Success Criteria items landing in this apply batch:
+- [x] 17.3 Explicit checklist against `tui-navigation-architecture` spec scenarios,
+      re-checked in the follow-up batch that completed Phase 12.3 (full scope, not
+      the prior "disclosed reduced scope" framing — that language described the OLD
+      state and has been rewritten here to reflect what is actually true now):
+      "Migrated screen has zero fields on `AdminViewState`" holds for the two
+      fields actually migrated to date (`TestMigratedScreensHaveZeroFieldsOnAdminViewState`
+      — `RepositoryOverrideModal`, `SigningPolicyModal`). It does NOT yet hold for
+      the remaining Phase-11-gated surface (Trivy config/repos, the security domain
+      menu) — that gap is no longer "deferred for risk management"; it is now
+      "blocked on an unresolved design decision" (see "Slice 2 apply deviations"
+      below for the specific gap). "Parent router cannot mutate a child's private
+      state directly" continues to hold for all three migrated screens
+      (`routeAdminKey`'s slot branch replaces, never writes into,
+      `m.adminScreens[slot]`, now including `slotSigningConfig`).
+- [x] 17.4 Confirm proposal Success Criteria items:
       `repositoryOverrideFeatureCycle`/`nextRepositoryOverrideFeatureName` no longer
       exist (`TestNoFeatureCycleSymbolsRemain`) and no key mutates a modal's
       `Feature` (`TestOverrideEditorFeatureIsImmutable`); every override path
       reachable before is reachable after, asserted per path
       (`TestEveryOverridePathReachableBeforeIsReachableAfter`); Decision 8/Decision
-      11 are annotated as superseded, naming this change (Phase 16). **Not met in
-      this batch**: "Migrated screens hold zero state fields on `AdminViewState`"
-      at its full scope (Phase 11 deviation, disclosed above and in the apply
-      report).
-- [x] 17.5 **STRUCTURAL GATE, met at disclosed reduced scope**: the reversal itself
-      (D1/D2 — the actual reported defect) is complete, tested, and independently
-      revertable; the two superseded design docs revert together with this slice's
-      code. The full D8 domain-repurposing/state-migration (Phase 11,
-      `screen_security_menu.go`/`screen_trivy_config.go`/`screen_trivy_repos.go`/
-      `screen_signing_config.go`) is an explicit, disclosed follow-up — see the
-      apply report's "Deviations from design" for the full reasoning and risk
-      tradeoff. Do not begin Phase 18 until a maintainer has reviewed this
-      deviation; Phase 18's domain menu (`screenAdminMenu`) assumes `screenAdminFeatures`
-      is already the 3-row S&C menu, which is not yet true.
+      11 are annotated as superseded, naming this change (Phase 16). **Still not
+      met**: "Migrated screens hold zero state fields on `AdminViewState`" at its
+      full scope — narrowed from 16 remaining fields to 15 (`SigningPolicyModal`
+      closed this batch; `SigningPolicy` itself is deliberately, permanently kept,
+      not a scope gap), but the Phase 11 gap itself (Trivy's peer screens + the
+      domain menu repurposing) is unresolved, now for a specific documented reason
+      rather than a general risk-budget one.
+- [x] 17.5 **STRUCTURAL GATE, met at its current (narrowed, still not full) scope**:
+      the reversal itself (D1/D2 — the actual reported defect) is complete, tested,
+      and independently revertable; the two superseded design docs revert together
+      with this slice's code; Signing's own global policy modal is now fully
+      migrated (Phase 12.3), independently revertable by reverting
+      `screen_signing_config.go` plus its `model.go`/`session.go`/`admin_views.go`
+      wiring edits. The remaining D8 domain-repurposing/state-migration (Phase 11:
+      `screen_security_menu.go`, `screen_trivy_config.go`, `screen_trivy_repos.go`)
+      is now blocked on an explicit, disclosed design gap — design.md's own State
+      Migration table never assigns an owner for Gitleaks'/Signing's share of the
+      single, feature-agnostic `FeaturePage` field once Trivy's slice is carved out
+      into `trivyConfigScreen`, and "Tab becomes a screen switch" (Decision I) is
+      only specified for Trivy — see "Slice 2 apply deviations" below for the full
+      reasoning. This requires a maintainer design decision before implementation,
+      not another risk-tolerance call; guessing it would mean inventing
+      unreviewed architecture for the codebase's most complex admin dispatcher
+      (`updateAdminFeaturesKey`, ~175 lines, all three features' key handling
+      interleaved) with ~250 pre-existing test references at stake. Do not begin
+      Phase 18 until a maintainer has resolved this design gap; Phase 18's domain
+      menu (`screenAdminMenu`) assumes `screenAdminFeatures` is already the 3-row
+      S&C menu, which is not yet true.
 
 ### Slice 2 apply deviations (recorded, not silent)
 
-- **Phase 11 (in full) / Phase 12 task 12.3**: `screenAdminFeatures` was NOT
-  repurposed into a Security & Compliance domain menu, and Trivy's
-  config/tabs/policy machinery (`TrivyConfigModal`, `ScanPolicy`, `ScanPolicyModal`,
+- **Phase 12 task 12.3 — RESOLVED this follow-up batch.** Previously deferred
+  alongside Phase 11 "for risk management"; that reasoning did not actually apply
+  to Signing's policy modal in isolation (it is not entangled with Trivy's
+  tab-switching or the shared `FeaturePage`/feature-list machinery the way Phase
+  11's remaining scope is — see below). `signingConfigScreen` now exists
+  (`internal/tui/screen_signing_config.go`), mounted at a new `slotSigningConfig`
+  overlay slot exactly mirroring `gitleaksConfigScreen`'s established Slice 1
+  pattern. `AdminViewState.SigningPolicyModal` is deleted.
+  `AdminViewState.SigningPolicy` (the loaded baseline settings, distinct from the
+  modal) is deliberately, permanently kept — it has a second, still-legacy reader
+  (`signingPolicyBadge`, composed into `renderAdminFeaturesScreen`'s Feature Page
+  heading, part of the still-unmigrated `screenAdminFeatures`); this is a narrow,
+  intentional divergence from design.md's literal table (which bundles
+  `SigningPolicy`+`SigningPolicyModal` into one `policy`/`policyModal` pair), not
+  an oversight — deleting it would either break that badge or force a duplicated,
+  driftable copy of the same settings across two owners. Full reasoning in
+  `screen_signing_config.go`'s doc comment.
+- **Phase 11 (in full) — STILL DEFERRED, but now for a specific, investigated
+  design gap rather than a general risk-budget call.** Investigated at full
+  depth in this follow-up batch, reading `updateAdminFeaturesKey` (model.go,
+  ~175 lines) and `renderAdminFeaturesScreen`/`adminFeatureHelp` (admin_views.go)
+  in full. `screenAdminFeatures` was NOT repurposed into a Security & Compliance
+  domain menu, and Trivy's config/tabs/policy machinery (`TrivyConfigModal`,
+  `ScanPolicy`, `ScanPolicyModal`, `FeaturePage`, `Tables.FeatureRows["trivy"]`,
   `TrivySummaries`/`TrivyScanRuns`/`TrivySelectedAlert`/`TrivyAlertsLoaded`/
-  `TrivyOverrides`, `TrivyTab`, `Features`/`SelectedFeature`/`Tables.Features`) and
-  Signing's policy modal (`SigningPolicy`/`SigningPolicyModal`) were NOT migrated
-  off `AdminViewState` onto new sub-model screens in this apply batch. This is a
-  genuine, disclosed scope reduction from design.md's literal plan, made for risk
-  management: the full migration touches ~220 pre-existing test references across
-  `admin_views_test.go`/`model_test.go`/`session_test.go`/`admin_tables_test.go`
-  (the proposal's own risk table already flags this exact blast radius as
-  "High likelihood/High impact"), spans Trivy's tab-switching, feature-action
-  buttons (`e`/`x`/`i`/`u`/`b`), and the scan-policy/signing-policy modals — a
-  large amount of new code with no user-visible behavior change and material risk
-  of a subtle regression that cannot be verified interactively.
-  Instead, this apply batch delivers the **actual reversal** (D1/D2, the reported
-  defect) to full completion: `repositoryOverrideModal`/the Feature cycle are
-  completely deleted; the uniform `overrideEditor` (Decision F) replaces them
-  everywhere, including for Trivy's own override; Gitleaks and Signing each gain a
-  genuinely new, independently reachable, dedicated repository override screen
-  (Decision J's catalog-union row set); every spec scenario for the MODIFIED and
-  ADDED override requirements is met and tested. What is deferred is pure
+  `TrivyOverrides`/`Tables.ScanSummary`, `TrivyTab`) and the top-level features
+  list (`Features`/`SelectedFeature`/`Tables.Features`) were NOT migrated off
+  `AdminViewState` onto new sub-model screens.
+
+  **The specific gap found**: design.md's State Migration table explicitly
+  assigns `FeaturePage` (:479) to `trivyConfigScreen.page`, annotated "trivy's" —
+  but never assigns an owner for Gitleaks' or Signing's share of that SAME,
+  today single, feature-agnostic `AdminViewState.FeaturePage` field. Today, one
+  field serves whichever feature is currently selected; `updateAdminFeaturesKey`
+  is one function that handles Up/Down feature-list navigation, the generic
+  action row (`e`/`x`/`i`/`u`/`b`, `featureActionForKey`), and each feature's
+  own specific branches (Trivy's `Tab`/`'c'`/`'o'`/alerts-nav, Gitleaks'/Signing's
+  `'s'`/`'p'`) all interleaved and sharing `FeaturePage`/`SelectedFeature`/
+  `Features` state via `applyFeaturePage`/`moveAdminFeatureSelection`. Carving
+  Trivy's slice out into `trivyConfigScreen`/`trivyReposScreen` (with `Tab`
+  becoming a screen switch, per Decision I) leaves two plausible, materially
+  different architectures for what remains, and design.md resolves neither:
+  (a) `securityMenuScreen` keeps owning a shared `page`/generic-actions render for
+  whichever of Gitleaks/Signing is "entered" (closer to today's single-select
+  master-detail shape), or (b) `gitleaksConfigScreen`/`signingConfigScreen` each
+  independently gain their own `page ports.FeaturePage` field and become full
+  navigable "config screens" symmetric to `trivyConfigScreen` (matching the
+  phrase "each feature gains a config screen" literally). These are not
+  cosmetically different: they change where `e`/`x`/`i`/`u`/`b` dispatch from,
+  whether Gitleaks/Signing navigate away from the menu or stay on it, and how
+  `Features`/`SelectedFeature` list-navigation composes with per-feature detail
+  state. Guessing between them means inventing unreviewed architecture for the
+  codebase's single most complex admin dispatcher, with ~250 pre-existing test
+  references across `admin_views_test.go`/`model_test.go`/`session_test.go`/
+  `admin_tables_test.go` at stake (confirmed by direct grep count this batch,
+  consistent with the prior batch's ~220 estimate) — this is the class of
+  "design.md detail doesn't match what actually exists in code" ambiguity this
+  apply run's own instructions require stopping and disclosing for, not guessing
+  through. Resolving it needs one explicit maintainer decision (which of the two
+  shapes above, or a third) captured back into design.md before implementation.
+
+  Instead, this follow-up batch delivers everything that IS unambiguously
+  specified and independently safe: Signing's global policy modal is fully
+  migrated (Phase 12.3 above), narrowing the remaining gap by one more field.
+  The literal reported defect (Gitleaks/Signing having no override entry point
+  of their own, and the Feature cycle) remains fixed in full by Phases 9/10/12/13
+  (prior batch) without any of this repurposing. What is deferred is pure
   code-organization (moving already-correct, already-tested legacy behavior into
-  new files) with zero effect on any spec scenario — recommended as this change's
-  own follow-up (or folded into Slice 3, since Slice 3's domain menu already
+  new files) plus one unresolved architectural fork, with zero effect on any spec
+  scenario — recommended as this change's own follow-up once a maintainer has
+  picked a shape (or folded into Slice 3, since Slice 3's domain menu already
   depends on `screenAdminFeatures` being repurposed).
 - **Phase 12 task 12.2**: `featureOverridesScreen` has no `table bubbletable.Model`
   field. Rows render as plain theme-styled text lines (highlighted via
@@ -520,15 +639,18 @@ cycle) is fixed in full by Phases 9/10/12/13 below without this repurposing.
   already uses for its Users list — not a new rendering convention, and it avoids
   building/maintaining a `bubbletable.Model` for a screen whose row count is small
   and whose only interaction is Up/Down + `o`.
-- **Phase 13 task 13.6/13.7**: `adminFeatureHelp` was extended, not deleted (Phase
-  11 was not done, so it is not dead code) — its Gitleaks/Signing branches now
-  advertise `"o: repository overrides"`, which is the literal, minimal fix for the
-  defect this function's own incompleteness caused. `admin_tables.go` is
-  unchanged: there is no migrated screen in this batch that used to read
-  `AdminViewState` through its table builders.
+- **Phase 13 task 13.6/13.7 — still deferred, re-checked this batch**:
+  `adminFeatureHelp` was NOT deleted (Phase 11 is still not done, so it is
+  genuinely still not dead code) — confirmed this batch that it does not
+  reference `SigningPolicyModal` at all, so Phase 12.3's migration required no
+  change to it. `admin_tables.go` is unchanged: confirmed this batch that neither
+  Phase 12.2's nor Phase 12.3's new screens read `AdminViewState` through any of
+  its table builders.
 - **Phase 14 task 14.1's scope**: `TestMigratedScreensHaveZeroFieldsOnAdminViewState`
-  asserts only `RepositoryOverrideModal` absent, not design's full 17-field table
-  — see the Phase 11 deviation above for why the other 16 fields remain.
+  now asserts `RepositoryOverrideModal` and `SigningPolicyModal` absent (2 of the
+  fields design's table lists), not the full table — see the Phase 11 deviation
+  above for why the remaining 15 fields (plus the deliberately-kept `SigningPolicy`)
+  remain.
 
 ## Phase 18: Domain Menu + Operations Entry Screens — Slice 3
 

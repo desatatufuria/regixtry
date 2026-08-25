@@ -76,3 +76,14 @@ var gitleaksConfigKeys = screenKeys{short: []key.Binding{
 	key.NewBinding(key.WithKeys(" "), key.WithHelp("Space", "toggle")),
 	key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "cancel")),
 }}
+
+// signingConfigKeys is signingConfigScreen's key.Map (Phase 12.3), matching
+// admin_views.go's pre-move hand-written signing policy modal footer
+// exactly: "Enter: save/add key | Tab: next field | Space: toggle/cycle |
+// Esc: cancel".
+var signingConfigKeys = screenKeys{short: []key.Binding{
+	key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", "save/add key")),
+	key.NewBinding(key.WithKeys("tab"), key.WithHelp("Tab", "next field")),
+	key.NewBinding(key.WithKeys(" "), key.WithHelp("Space", "toggle/cycle")),
+	key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "cancel")),
+}}
