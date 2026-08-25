@@ -613,6 +613,18 @@ security control.
 
 ### Decision 11: TUI — one badge line, one modal, one cycle entry
 
+> **Superseded by `tui-menu-architecture`** (its third piece, "Signing Is A
+> Third Feature Cycle Option In The Override Modal", is REMOVED — not
+> amended). Cycling `repositoryOverrideModal`'s `Feature` field with Space to
+> reach `signing` is explicitly reversed: the cycle mechanism
+> (`repositoryOverrideFeatureCycle`/`nextRepositoryOverrideFeatureName`) is
+> deleted entirely, and Signing gains its own dedicated, discoverable
+> per-repository override entry point (`overrideEditor`, design.md Decision F
+> of the superseding change), reachable without ever selecting Trivy's
+> screen or cycling through it. The badge (piece 1) and `signingPolicyModal`
+> (piece 2) below are unaffected by this reversal. The original decision
+> text is preserved for history, not deleted.
+
 **1. Badge, zero rows.** `renderTrivyTabs` (`admin_views.go:240-249`) is
 Trivy-specific and is only rendered when the selected feature is trivy
 (`admin_views.go:183-185`), so it is the wrong host. There is no

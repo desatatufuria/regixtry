@@ -394,6 +394,17 @@ repository, feature string, raw []byte)`, `ClearRepositoryOverride`. Each calls
 
 ### Decision 8: New `repositoryOverrideModal`, mirroring `scanPolicyModal`'s exact 3-piece shape
 
+> **Superseded by `tui-menu-architecture`.** This decision — `o` gated to
+> Trivy's Repository Alerts row, opening one shared `repositoryOverrideModal`
+> whose `Feature` field cycles across `trivy`/`gitleaks`/`signing` via
+> Space — is explicitly reversed. `repositoryOverrideModal` is retired onto
+> `overrideEditor` (design.md Decision F of the superseding change):
+> `Feature` becomes an immutable, constructor-only value fixed by whichever
+> screen opens the editor, and Gitleaks/Signing each gain their own
+> discoverable per-repository override entry point, reachable without ever
+> selecting Trivy's screen. The original decision text below is preserved
+> for history, not deleted.
+
 Opened with `o` on a highlighted Repository Alerts row. The template is
 `scanPolicyModal`, followed piece for piece.
 
