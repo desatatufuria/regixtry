@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"regixtry/internal/domain/signing"
@@ -103,6 +104,21 @@ func (l trustedKeyList) update(env screenEnv, msg tea.KeyMsg) (trustedKeyList, t
 			l.err = ""
 			return l, nil, true
 		case isEnterKey(msg):
+			// A raw terminal without bracketed-paste support delivers each
+			// embedded newline byte of a pasted multi-line PEM as its own
+			// tea.KeyEnter event, not accumulated literal '\n' runes. Only
+			// treat Enter as a genuine submit once the accumulated input
+			// already looks like a complete PEM (both markers present);
+			// otherwise this is a mid-paste newline, so append it to input
+			// and keep accumulating. commitAdd's own validation
+			// (signing.NormalizePublicKeyPEM) still runs unconditionally
+			// once Enter IS treated as a submit -- this only changes WHEN
+			// that happens, never what counts as valid.
+			if !looksLikeCompletePEM(l.input) {
+				l.input += "\n"
+				l.err = ""
+				return l, nil, true
+			}
 			l.commitAdd()
 			return l, nil, true
 		case isBackspaceKey(msg):
@@ -159,6 +175,19 @@ func (l *trustedKeyList) commitAdd() {
 	l.adding = false
 	l.input = ""
 	l.err = ""
+}
+
+// looksLikeCompletePEM reports whether input already contains both a PEM
+// BEGIN and END marker -- a cheap, deliberately loose check used only to
+// distinguish an Enter that ends an in-progress multi-line paste (see the
+// l.adding branch of update above) from a genuine submit keystroke. The
+// signing package's own decodePEMBlock (internal/domain/signing/keys.go)
+// does the authoritative marker parsing at commit time via
+// signing.NormalizePublicKeyPEM; pemBlockType there is unexported, so this
+// stays a local, best-effort pre-check rather than a second source of
+// truth for what a valid PEM block looks like.
+func looksLikeCompletePEM(input string) bool {
+	return strings.Contains(input, "-----BEGIN") && strings.Contains(input, "-----END")
 }
 
 // removeAt deletes the key at index (already bounds-checked by the 'x'
