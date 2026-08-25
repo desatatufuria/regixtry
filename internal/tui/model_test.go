@@ -5418,14 +5418,21 @@ type fakeAdminClient struct {
 	getSigningPolicyCalls    int
 	updateSigningPolicyCalls int
 	lastSigningPolicyInput   ports.SigningPolicySettings
-	installRuntime           ports.FeatureRuntimeState
-	upgradeRuntime           ports.FeatureRuntimeState
-	rollbackRuntime          ports.FeatureRuntimeState
-	enableFeature            ports.FeatureDetails
-	disableFeature           ports.FeatureDetails
-	actionResult             ports.FeatureActionResult
-	actionResults            map[string]ports.FeatureActionResult
-	featureErr               error
+
+	signingKeyUsageCount      int
+	signingKeyUsageCapped     bool
+	signingKeyUsageErr        error
+	signingKeyUsageCalls      int
+	lastSigningKeyUsageRepo   string
+	lastSigningKeyUsageKeyPEM string
+	installRuntime            ports.FeatureRuntimeState
+	upgradeRuntime            ports.FeatureRuntimeState
+	rollbackRuntime           ports.FeatureRuntimeState
+	enableFeature             ports.FeatureDetails
+	disableFeature            ports.FeatureDetails
+	actionResult              ports.FeatureActionResult
+	actionResults             map[string]ports.FeatureActionResult
+	featureErr                error
 
 	users            []ports.AdminUser
 	listUsersResults [][]ports.AdminUser
@@ -6013,6 +6020,16 @@ func (f *fakeAdminClient) ClearRepositoryOverride(_ context.Context, _ AdminSess
 	}
 	delete(f.repositoryOverrides, feature+"/"+repository)
 	return nil
+}
+
+func (f *fakeAdminClient) CountSigningKeyUsage(_ context.Context, _ AdminSession, repository string, keyPEM string) (int, bool, error) {
+	f.signingKeyUsageCalls++
+	f.lastSigningKeyUsageRepo = repository
+	f.lastSigningKeyUsageKeyPEM = keyPEM
+	if f.signingKeyUsageErr != nil {
+		return 0, false, f.signingKeyUsageErr
+	}
+	return f.signingKeyUsageCount, f.signingKeyUsageCapped, nil
 }
 
 func (f *fakeAdminClient) EnableUser(_ context.Context, _ AdminSession, _ string) (ports.AdminUser, error) {

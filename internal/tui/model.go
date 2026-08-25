@@ -467,6 +467,20 @@ type adminSigningPolicyUpdatedMsg struct {
 	err      error
 }
 
+// adminSigningKeyUsageLoadedMsg carries the result of a trustedKeyList
+// delete-key usage-count lookup (CountSigningKeyUsage). It carries no
+// requester identity (unlike adminRepositoryOverrideLoadedMsg's
+// repository/feature): only one trustedKeyList is ever mid-delete at a
+// time (signingConfigScreen's modal and overrideEditor's editor are
+// mutually exclusive overlays), and trustedKeyList.applyUsageLoaded itself
+// discards a response that arrives when it is not expecting one
+// (usageLoading already false).
+type adminSigningKeyUsageLoadedMsg struct {
+	count  int
+	capped bool
+	err    error
+}
+
 // adminRepositoryOverrideLoadedMsg carries the result of opening
 // repositoryOverrideModal (design.md Decision 8 piece 2), echoing the
 // queried repository/feature so a stale response for a modal the operator
@@ -3120,6 +3134,24 @@ func (m Model) updateSigningPolicyCmd(input ports.SigningPolicySettings) tea.Cmd
 		}
 		settings, err := m.adminClient.UpdateSigningPolicy(m.ctx, m.adminSession, input)
 		return adminSigningPolicyUpdatedMsg{settings: settings, err: err}
+	}
+}
+
+// signingKeyUsageCmd fetches trustedKeyList's delete-key usage-count
+// advisory (CountSigningKeyUsage), the screenEnv-scoped equivalent of
+// Model's own method below, needed because a sub-model has no Model to call
+// a method on (mirrors loadSigningPolicyCmd's identical wrapper above).
+func signingKeyUsageCmd(env screenEnv, repository string, keyPEM string) tea.Cmd {
+	return env.asModel().signingKeyUsageCmd(repository, keyPEM)
+}
+
+func (m Model) signingKeyUsageCmd(repository string, keyPEM string) tea.Cmd {
+	return func() tea.Msg {
+		if m.adminClient == nil {
+			return adminSigningKeyUsageLoadedMsg{err: fmt.Errorf("admin API is unavailable for this session")}
+		}
+		count, capped, err := m.adminClient.CountSigningKeyUsage(m.ctx, m.adminSession, repository, keyPEM)
+		return adminSigningKeyUsageLoadedMsg{count: count, capped: capped, err: err}
 	}
 }
 

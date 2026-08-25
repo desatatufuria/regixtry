@@ -41,6 +41,13 @@ type AdminClient interface {
 	UpdateScanPolicy(ctx context.Context, session AdminSession, input ports.ScanPolicySettings) (ports.ScanPolicySettings, error)
 	GetSigningPolicy(ctx context.Context, session AdminSession) (ports.SigningPolicySettings, error)
 	UpdateSigningPolicy(ctx context.Context, session AdminSession, input ports.SigningPolicySettings) (ports.SigningPolicySettings, error)
+	// CountSigningKeyUsage is the read-only, best-effort advisory backing
+	// trustedKeyList's delete-key confirm: how many of a scope's
+	// currently-tagged digests verify against keyPEM. repository == ""
+	// means every repository. Never a blocking gate -- see
+	// CountManifestsSignedByKey's own doc comment
+	// (internal/app/regixtry/service_signing_key_usage.go).
+	CountSigningKeyUsage(ctx context.Context, session AdminSession, repository string, keyPEM string) (count int, capped bool, err error)
 	EnableFeature(ctx context.Context, session AdminSession, name string) (ports.FeatureDetails, error)
 	DisableFeature(ctx context.Context, session AdminSession, name string) (ports.FeatureDetails, error)
 	ListUsers(ctx context.Context, session AdminSession) ([]ports.AdminUser, error)
@@ -320,6 +327,25 @@ func (c *HTTPAdminClient) UpdateSigningPolicy(ctx context.Context, session Admin
 		return ports.SigningPolicySettings{}, err
 	}
 	return settings, nil
+}
+
+func (c *HTTPAdminClient) CountSigningKeyUsage(ctx context.Context, session AdminSession, repository string, keyPEM string) (int, bool, error) {
+	path := "/admin/v1/signing-policy/key-usage"
+	query := url.Values{}
+	query.Set("key", keyPEM)
+	if trimmed := strings.TrimSpace(repository); trimmed != "" {
+		query.Set("repository", trimmed)
+	}
+	path += "?" + query.Encode()
+
+	var decoded struct {
+		Count  int  `json:"count"`
+		Capped bool `json:"capped"`
+	}
+	if err := c.getJSON(ctx, session, path, &decoded); err != nil {
+		return 0, false, err
+	}
+	return decoded.Count, decoded.Capped, nil
 }
 
 func (c *HTTPAdminClient) EnableFeature(ctx context.Context, session AdminSession, name string) (ports.FeatureDetails, error) {
