@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -40,6 +41,18 @@ func ParseTrustedKey(pemText string) (*ecdsa.PublicKey, error) {
 	}
 
 	return parseECDSAP256PublicKey(block.Bytes)
+}
+
+// Fingerprint derives a read-only, short display identifier for a trusted
+// public key PEM: SHA-256 of the trimmed PEM text, truncated to its first 12
+// hex characters. This is the ONE canonical implementation of that
+// algorithm -- every caller that needs to display "which key" (the TUI's
+// signing config screens, the manifest inspect screen's verified-key report)
+// must call this instead of reimplementing the hash+truncate logic, so a
+// fingerprint value can never drift between call sites.
+func Fingerprint(pemText string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(pemText)))
+	return hex.EncodeToString(sum[:])[:12]
 }
 
 // Verify returns nil only on a valid signature. It never returns a bool: a

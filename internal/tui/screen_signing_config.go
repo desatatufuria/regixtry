@@ -126,9 +126,11 @@ func (s signingConfigScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, te
 		s.policy = typed.settings
 		s.cfg.Enabled = typed.settings.Enabled
 		s.cfg.UnsignedSelfRead = normalizeUnsignedSelfRead(typed.settings.UnsignedSelfRead)
-		s.cfg.Fingerprints = signingKeyFingerprints(typed.settings.TrustedPublicKeys)
-		s.cfg.AddKey = ""
+		s.cfg.Keys = s.cfg.Keys.SetKeys(typed.settings.TrustedPublicKeys)
 		s.cfg.Error = ""
+		return s, nil, false
+	case adminSigningKeyUsageLoadedMsg:
+		s.cfg.Keys = s.cfg.Keys.applyUsageLoaded(typed)
 		return s, nil, false
 	case adminFeatureActionCompletedMsg:
 		if typed.feature != signingFeatureName {
@@ -182,7 +184,7 @@ func (s signingConfigScreen) updateKey(env screenEnv, msg tea.KeyMsg) (adminScre
 			Focus:            signingPolicyFieldEnabled,
 			Enabled:          s.policy.Enabled,
 			UnsignedSelfRead: normalizeUnsignedSelfRead(s.policy.UnsignedSelfRead),
-			Fingerprints:     signingKeyFingerprints(s.policy.TrustedPublicKeys),
+			Keys:             newTrustedKeyList("", s.policy.TrustedPublicKeys),
 		}
 		return s, nil, true
 	case isRuneKey(msg, 'o'):
@@ -218,6 +220,36 @@ func (s signingConfigScreen) dispatchAction(env screenEnv, action ports.FeatureA
 }
 
 func (s signingConfigScreen) updateConfigKey(env screenEnv, msg tea.KeyMsg) (adminScreen, tea.Cmd, bool) {
+	// The Keys field (trustedKeyList) claims Up/Down/'n'/'x' and every key
+	// while it is mid-add or mid-delete-confirm; only what it does NOT
+	// consume (Tab/Esc/Space/Enter in its own idle navigation state) falls
+	// through to this modal's own bindings below.
+	//
+	// This routing is UNCONDITIONAL (not gated on
+	// s.cfg.Focus == signingPolicyFieldAddKey): the modal opens with
+	// Focus == signingPolicyFieldEnabled (updateKey's 'p' branch), not the
+	// key list's position, so gating on Tab-focus made 'n'/'x'/Up/Down
+	// silent no-ops until the operator tabbed to the exact right field
+	// first -- the "can't add a key" bug. Enabled/UnsignedSelfRead are
+	// Space-toggled/cycled, never rune-typed, so there is no other field in
+	// this modal that could ever claim these keys as literal input; routing
+	// them here first is safe.
+	//
+	// Judgment Day fix-round: unconditional routing alone left the visible
+	// Tab-focus indicator free to disagree with what actually responded to
+	// the keystroke -- pressing 'n' while "Unsigned Self-Read" was
+	// highlighted silently acted on the key list instead, with no on-screen
+	// sign focus had effectively moved. The moment s.cfg.Keys.update
+	// actually CONSUMES a key, snap s.cfg.Focus to signingPolicyFieldAddKey
+	// too, so the rendered highlight (renderSigningPolicyModal's
+	// modal.Focus == signingPolicyFieldAddKey check) is always honest about
+	// what is currently receiving input.
+	next, cmd, consumed := s.cfg.Keys.update(env, msg)
+	if consumed {
+		s.cfg.Keys = next
+		s.cfg.Focus = signingPolicyFieldAddKey
+		return s, cmd, true
+	}
 	switch {
 	case isEscKey(msg):
 		s.cfg = signingPolicyModal{}
@@ -235,19 +267,10 @@ func (s signingConfigScreen) updateConfigKey(env screenEnv, msg tea.KeyMsg) (adm
 		}
 		s.cfg.Error = ""
 		return s, nil, true
-	case isBackspaceKey(msg):
-		if s.cfg.Focus == signingPolicyFieldAddKey {
-			s.cfg.AddKey = trimLastRune(s.cfg.AddKey)
-		}
-		s.cfg.Error = ""
-		return s, nil, true
 	case isEnterKey(msg):
 		var trustedKeys []string
 		if s.cfg.Focus != signingPolicyFieldClearKeys {
-			trustedKeys = append(trustedKeys, s.policy.TrustedPublicKeys...)
-			if strings.TrimSpace(s.cfg.AddKey) != "" {
-				trustedKeys = append(trustedKeys, s.cfg.AddKey)
-			}
+			trustedKeys = s.cfg.Keys.Keys()
 		}
 		input := ports.SigningPolicySettings{
 			Enabled:           s.cfg.Enabled,
@@ -255,11 +278,6 @@ func (s signingConfigScreen) updateConfigKey(env screenEnv, msg tea.KeyMsg) (adm
 			UnsignedSelfRead:  normalizeUnsignedSelfRead(s.cfg.UnsignedSelfRead),
 		}
 		return s, updateSigningPolicyCmd(env, input), true
-	}
-	if msg.Type == tea.KeyRunes && s.cfg.Focus == signingPolicyFieldAddKey {
-		s.cfg.AddKey += string(msg.Runes)
-		s.cfg.Error = ""
-		return s, nil, true
 	}
 	return s, nil, true
 }
@@ -320,9 +338,8 @@ func renderSigningPolicyModal(theme adminTheme, modal signingPolicyModal) string
 		theme.muted.Render(signingPolicyStatusLine(modal)),
 		renderToggleField(theme, "Enabled", modal.Enabled, modal.Focus == signingPolicyFieldEnabled),
 		renderTextField(theme, "Unsigned Self-Read", normalizeUnsignedSelfRead(modal.UnsignedSelfRead), modal.Focus == signingPolicyFieldUnsignedSelfRead),
-		renderTextField(theme, "Trusted Key (PEM)", modal.AddKey, modal.Focus == signingPolicyFieldAddKey),
 	}
-	lines = append(lines, renderSigningPolicyKeyList(theme, modal.Fingerprints)...)
+	lines = append(lines, renderTrustedKeyList(theme, modal.Keys, modal.Focus == signingPolicyFieldAddKey)...)
 	lines = append(lines, renderSigningPolicyClearKeysRow(theme, modal))
 	if strings.TrimSpace(modal.Error) != "" {
 		lines = append(lines, "", theme.error.Render(modal.Error))
@@ -340,40 +357,17 @@ func signingPolicyStatusLine(modal signingPolicyModal) string {
 	if modal.Loading {
 		return "Loading…"
 	}
-	return fmt.Sprintf("%d trusted key(s) configured", len(modal.Fingerprints))
-}
-
-// renderSigningPolicyKeyList renders at most 4 fingerprint rows plus one
-// "+N more" row when there are more than 4, or a single empty-state row when
-// there are none (design.md Decision 11's row-budget table: Key list = 1 /
-// N / min(N,4)+1). Stored keys are shown only as truncated SHA-256/12
-// fingerprints, never as raw PEM.
-func renderSigningPolicyKeyList(theme adminTheme, fingerprints []string) []string {
-	if len(fingerprints) == 0 {
-		return []string{theme.muted.Render("No trusted keys configured.")}
-	}
-	shown := fingerprints
-	more := 0
-	if len(shown) > 4 {
-		more = len(shown) - 4
-		shown = shown[:4]
-	}
-	lines := make([]string, 0, len(shown)+1)
-	for _, fingerprint := range shown {
-		lines = append(lines, theme.text.Render(fmt.Sprintf("Key: %s", fingerprint)))
-	}
-	if more > 0 {
-		lines = append(lines, theme.muted.Render(fmt.Sprintf("+%d more", more)))
-	}
-	return lines
+	return fmt.Sprintf("%d trusted key(s) configured", len(modal.Keys.Keys()))
 }
 
 // renderSigningPolicyClearKeysRow renders the modal's ClearKeys action as a
 // single-row line, mirroring renderRepositoryOverrideClearRow's action-row
-// pattern (an action, not an input, so it costs 1 row rather than 2).
+// pattern (an action, not an input, so it costs 1 row rather than 2). This
+// stays alongside trustedKeyList's own per-key 'x' delete as a bulk
+// convenience -- "clear every key in the list" -- not a replacement for it.
 func renderSigningPolicyClearKeysRow(theme adminTheme, modal signingPolicyModal) string {
 	label := "Clear all trusted keys"
-	if len(modal.Fingerprints) == 0 {
+	if len(modal.Keys.Keys()) == 0 {
 		label = "No trusted keys to clear"
 	}
 	style := theme.muted

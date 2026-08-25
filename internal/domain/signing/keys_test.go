@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"strings"
@@ -55,6 +56,42 @@ func TestNormalizePublicKeyPEM(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestFingerprint is the RED test for the canonical fingerprint helper: it
+// must reproduce, byte-for-byte, the exact algorithm the TUI's
+// signingKeyFingerprints previously implemented directly (sha256 of the
+// trimmed PEM text, first 12 hex characters) -- so this becomes the single
+// source of truth without changing any fingerprint value already displayed
+// anywhere in the TUI.
+func TestFingerprint(t *testing.T) {
+	t.Parallel()
+
+	pemText := string(readTestdataFixture(t, "cosign.pub"))
+	sum := sha256.Sum256([]byte(strings.TrimSpace(pemText)))
+	want := hex.EncodeToString(sum[:])[:12]
+
+	if got := Fingerprint(pemText); got != want {
+		t.Fatalf("Fingerprint() = %q, want %q", got, want)
+	}
+
+	t.Run("trims surrounding whitespace before hashing", func(t *testing.T) {
+		t.Parallel()
+
+		padded := "\n  " + pemText + "  \n"
+		if got := Fingerprint(padded); got != want {
+			t.Fatalf("Fingerprint(padded) = %q, want %q (must trim before hashing)", got, want)
+		}
+	})
+
+	t.Run("returns exactly 12 hex characters", func(t *testing.T) {
+		t.Parallel()
+
+		got := Fingerprint(pemText)
+		if len(got) != 12 {
+			t.Fatalf("len(Fingerprint()) = %d, want 12", len(got))
+		}
+	})
 }
 
 func TestParseTrustedKey(t *testing.T) {

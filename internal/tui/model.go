@@ -2,8 +2,6 @@ package tui
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"sort"
 	"strconv"
@@ -16,6 +14,7 @@ import (
 	bubbletable "github.com/evertras/bubble-table/table"
 	appregixtry "regixtry/internal/app/regixtry"
 	domainauth "regixtry/internal/domain/auth"
+	"regixtry/internal/domain/signing"
 	"regixtry/internal/ports"
 )
 
@@ -465,6 +464,20 @@ type adminSigningPolicyLoadedMsg struct {
 type adminSigningPolicyUpdatedMsg struct {
 	settings ports.SigningPolicySettings
 	err      error
+}
+
+// adminSigningKeyUsageLoadedMsg carries the result of a trustedKeyList
+// delete-key usage-count lookup (CountSigningKeyUsage). It carries no
+// requester identity (unlike adminRepositoryOverrideLoadedMsg's
+// repository/feature): only one trustedKeyList is ever mid-delete at a
+// time (signingConfigScreen's modal and overrideEditor's editor are
+// mutually exclusive overlays), and trustedKeyList.applyUsageLoaded itself
+// discards a response that arrives when it is not expecting one
+// (usageLoading already false).
+type adminSigningKeyUsageLoadedMsg struct {
+	count  int
+	capped bool
+	err    error
 }
 
 // adminRepositoryOverrideLoadedMsg carries the result of opening
@@ -964,6 +977,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = "Signing policy saved."
 		var cmd tea.Cmd
 		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
+		return m, cmd
+	case adminSigningKeyUsageLoadedMsg:
+		// Broadcast like adminSigningPolicyLoadedMsg above (design.md
+		// Decision H): whichever screen holds a trustedKeyList mid-delete
+		// (signingConfigScreen's modal or an open signing overrideEditor)
+		// reflects the usage count and opens its confirm; every other
+		// occupied slot ignores it via its own type switch /
+		// trustedKeyList.applyUsageLoaded's own usageLoading guard.
+		var cmd tea.Cmd
+		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
+		if msg.err != nil && IsAdminSessionExpired(msg.err) {
+			return m.expireAdminSession(msg.err.Error()), nil
+		}
 		return m, cmd
 	case adminRepositoryOverrideLoadedMsg:
 		// The uniform overrideEditor (design.md Decision F) is broadcast to
@@ -1956,18 +1982,18 @@ func nextScanPolicyThreshold(threshold string) string {
 // updateSigningPolicyModalKey moved to signingConfigScreen.updateKey
 // (screen_signing_config.go, Phase 12.3).
 
-// signingKeyFingerprints derives a read-only SHA-256/12 fingerprint for each
-// stored trusted key, so signingPolicyModal/renderSigningPolicyModal never
-// has to hold or render raw PEM key material (design.md Decision 11 piece 1
-// -- "the modal never has to display multi-line text either").
+// signingKeyFingerprints derives a read-only fingerprint for each stored
+// trusted key via signing.Fingerprint (the ONE canonical implementation of
+// that algorithm), so signingPolicyModal/renderSigningPolicyModal never has
+// to hold or render raw PEM key material (design.md Decision 11 piece 1 --
+// "the modal never has to display multi-line text either").
 func signingKeyFingerprints(keys []string) []string {
 	if len(keys) == 0 {
 		return nil
 	}
 	fingerprints := make([]string, 0, len(keys))
 	for _, key := range keys {
-		sum := sha256.Sum256([]byte(strings.TrimSpace(key)))
-		fingerprints = append(fingerprints, hex.EncodeToString(sum[:])[:12])
+		fingerprints = append(fingerprints, signing.Fingerprint(key))
 	}
 	return fingerprints
 }
@@ -3123,6 +3149,24 @@ func (m Model) updateSigningPolicyCmd(input ports.SigningPolicySettings) tea.Cmd
 	}
 }
 
+// signingKeyUsageCmd fetches trustedKeyList's delete-key usage-count
+// advisory (CountSigningKeyUsage), the screenEnv-scoped equivalent of
+// Model's own method below, needed because a sub-model has no Model to call
+// a method on (mirrors loadSigningPolicyCmd's identical wrapper above).
+func signingKeyUsageCmd(env screenEnv, repository string, keyPEM string) tea.Cmd {
+	return env.asModel().signingKeyUsageCmd(repository, keyPEM)
+}
+
+func (m Model) signingKeyUsageCmd(repository string, keyPEM string) tea.Cmd {
+	return func() tea.Msg {
+		if m.adminClient == nil {
+			return adminSigningKeyUsageLoadedMsg{err: fmt.Errorf("admin API is unavailable for this session")}
+		}
+		count, capped, err := m.adminClient.CountSigningKeyUsage(m.ctx, m.adminSession, repository, keyPEM)
+		return adminSigningKeyUsageLoadedMsg{count: count, capped: capped, err: err}
+	}
+}
+
 // loadRepositoryOverrideCmd fetches one repository's stored override to
 // populate repositoryOverrideModal on open (design.md Decision 8 piece 2).
 func (m Model) loadRepositoryOverrideCmd(repository string, feature string) tea.Cmd {
@@ -3738,11 +3782,14 @@ func renderManifest(theme adminTheme, manifest appregixtry.ManifestDetails, sign
 // renderSignatureLines renders the manifest inspection view's Signature
 // section from the SAME SignatureStatusResult/SignatureStatusDetail types
 // Service.SignatureStatus already returns for the Console Tags table's
-// Signed column -- no new fields. It renders only the fixed-vocabulary
-// State, the `.sig` tag name, and the signature count; it never renders
-// SignatureStatusDetail.Reason, key material, raw signature bytes, or trust
-// configuration detail, mirroring the no-key-leakage discipline already
-// enforced for signature-status/signing-policy-violation responses
+// Signed column. It renders the fixed-vocabulary State, the `.sig` tag name,
+// the signature count, and -- only when a signature actually verified -- the
+// short fingerprint of the trusted key that verified it
+// (SignatureStatusDetail.VerifiedKeyFingerprint, itself already fingerprint-
+// only per queries.go's no-key-leakage discipline). It never renders
+// SignatureStatusDetail.Reason, raw key material, raw signature bytes, or
+// trust configuration detail, mirroring the no-key-leakage discipline
+// already enforced for signature-status/signing-policy-violation responses
 // elsewhere in this codebase (internal/protocol/http/signature_status_test.go).
 func renderSignatureLines(theme adminTheme, signature appregixtry.SignatureStatusResult) []string {
 	if signature.Signature == nil {
@@ -3756,6 +3803,9 @@ func renderSignatureLines(theme adminTheme, signature appregixtry.SignatureStatu
 		lines = append(lines, fmt.Sprintf("%s %s", theme.muted.Render("Signature tag:"), theme.text.Render(signature.Signature.Tag)))
 	}
 	lines = append(lines, fmt.Sprintf("%s %s", theme.muted.Render("Signature count:"), theme.text.Render(fmt.Sprintf("%d", signature.Signature.SignatureCount))))
+	if signature.Signature.VerifiedKeyFingerprint != "" {
+		lines = append(lines, fmt.Sprintf("%s %s", theme.muted.Render("Signed with:"), theme.text.Render(signature.Signature.VerifiedKeyFingerprint)))
+	}
 	return lines
 }
 

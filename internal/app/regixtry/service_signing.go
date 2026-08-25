@@ -73,7 +73,7 @@ func (s *Service) enforceSigningPolicy(ctx context.Context, repository, digest, 
 	if !policy.Enabled {
 		return nil // the ONLY allow-without-verify path in this function
 	}
-	if _, err := s.verifySignature(ctx, repository, digest, policy); err != nil {
+	if _, _, err := s.verifySignature(ctx, repository, digest, policy); err != nil {
 		// UnsignedSelfRead is an explicitly opt-in bootstrap exemption
 		// (design discussion: the cosign chicken-and-egg -- cosign must GET
 		// the manifest to know what to sign, but that GET is itself blocked
@@ -119,22 +119,27 @@ func (s *Service) enforceSigningPolicy(ctx context.Context, repository, digest, 
 // infrastructure error, which propagates unchanged (500) — a fault must
 // never be mislabeled a missing or invalid signature (design.md Decision 6's
 // truth table, last row).
-func (s *Service) verifySignature(ctx context.Context, repository, digest string, policy ports.SigningPolicySettings) (string, error) {
+// verifySignature returns (state, matchedFingerprint, err). matchedFingerprint
+// is signing.Fingerprint of the exact trusted-key PEM whose verification
+// succeeded, and is non-empty ONLY on the signatureStateVerified path -- every
+// other return (unverifiable/mismatched/untrusted/unsigned, and every
+// infrastructure-error path) returns "" for it, never a fabricated value.
+func (s *Service) verifySignature(ctx context.Context, repository, digest string, policy ports.SigningPolicySettings) (string, string, error) {
 	keys := parseTrustedKeys(policy.TrustedPublicKeys)
 	if len(keys) == 0 {
-		return signatureStateUnverifiable, domain.NewPolicyViolationError(
+		return signatureStateUnverifiable, "", domain.NewPolicyViolationError(
 			fmt.Sprintf("pull of %s@%s is blocked by the signing policy: no usable trusted key is configured", repository, digest))
 	}
 
 	tag, err := signing.SignatureTag(digest)
 	if err != nil {
-		return signatureStateUnverifiable, domain.NewPolicyViolationError(
+		return signatureStateUnverifiable, "", domain.NewPolicyViolationError(
 			fmt.Sprintf("pull of %s@%s is blocked by the signing policy: %s", repository, digest, err.Error()))
 	}
 
 	repositoryRef, err := parseRepository(repository)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	sigManifest, err := s.metadata.ResolveManifest(ctx, s.tenant(ctx), repositoryRef, tag)
@@ -146,37 +151,37 @@ func (s *Service) verifySignature(ctx context.Context, repository, digest string
 			// once BOTH lookups miss is this digest genuinely unsigned.
 			return s.verifyBundleSignature(ctx, repositoryRef, repository, digest, keys)
 		}
-		return "", err // infrastructure error propagates unchanged
+		return "", "", err // infrastructure error propagates unchanged
 	}
 
 	entries, err := signing.ParseSignatureManifest(sigManifest.Payload)
 	if err != nil || len(entries) == 0 {
-		return signatureStateUnverifiable, domain.NewPolicyViolationError(
+		return signatureStateUnverifiable, "", domain.NewPolicyViolationError(
 			fmt.Sprintf("pull of %s@%s is blocked by the signing policy: no usable signature entry found", repository, digest))
 	}
 
 	for _, entry := range entries {
 		payload, err := s.openSignaturePayload(ctx, entry.PayloadDigest)
 		if err != nil {
-			return "", err // infrastructure error propagates unchanged
+			return "", "", err // infrastructure error propagates unchanged
 		}
 		if payload == nil {
 			continue // payload blob missing or oversized; try the next entry
 		}
 
-		for _, key := range keys {
-			if err := signing.Verify(key, payload, entry.Signature); err != nil {
+		for _, trusted := range keys {
+			if err := signing.Verify(trusted.key, payload, entry.Signature); err != nil {
 				continue
 			}
 			if err := signing.CheckClaims(payload, digest); err != nil {
-				return signatureStateMismatched, domain.NewPolicyViolationError(
+				return signatureStateMismatched, "", domain.NewPolicyViolationError(
 					fmt.Sprintf("pull of %s@%s is blocked by the signing policy: signature binds a different digest", repository, digest))
 			}
-			return signatureStateVerified, nil
+			return signatureStateVerified, signing.Fingerprint(trusted.pemText), nil
 		}
 	}
 
-	return signatureStateUntrusted, domain.NewPolicyViolationError(
+	return signatureStateUntrusted, "", domain.NewPolicyViolationError(
 		fmt.Sprintf("pull of %s@%s is blocked by the signing policy: no signature validated against a trusted key", repository, digest))
 }
 
@@ -197,10 +202,13 @@ func (s *Service) verifySignature(ctx context.Context, repository, digest string
 // signature exactly like the legacy loop verifies a SimpleSigning payload:
 // PAE-encode, try every signature against every trusted key via the same
 // signing.Verify, and bind claims via signing.CheckBundleClaims.
-func (s *Service) verifyBundleSignature(ctx context.Context, repositoryRef domain.RepositoryRef, repository, digest string, keys []*ecdsa.PublicKey) (string, error) {
+// verifyBundleSignature mirrors verifySignature's (state, matchedFingerprint,
+// err) contract: matchedFingerprint is non-empty only on the
+// signatureStateVerified path.
+func (s *Service) verifyBundleSignature(ctx context.Context, repositoryRef domain.RepositoryRef, repository, digest string, keys []trustedKeyEntry) (string, string, error) {
 	indexTag, err := signing.BundleIndexTag(digest)
 	if err != nil {
-		return signatureStateUnverifiable, domain.NewPolicyViolationError(
+		return signatureStateUnverifiable, "", domain.NewPolicyViolationError(
 			fmt.Sprintf("pull of %s@%s is blocked by the signing policy: %s", repository, digest, err.Error()))
 	}
 
@@ -210,15 +218,15 @@ func (s *Service) verifyBundleSignature(ctx context.Context, repositoryRef domai
 			// Neither the legacy `.sig` tag nor the modern bundle index
 			// resolved: this digest has no signature artifact in either
 			// format. Today's exact existing unsigned outcome, unchanged.
-			return signatureStateUnsigned, domain.NewPolicyViolationError(
+			return signatureStateUnsigned, "", domain.NewPolicyViolationError(
 				fmt.Sprintf("pull of %s@%s is blocked by the signing policy: no signature found", repository, digest))
 		}
-		return "", err // infrastructure error propagates unchanged
+		return "", "", err // infrastructure error propagates unchanged
 	}
 
 	entries, err := signing.ParseBundleIndex(indexManifest.Payload)
 	if err != nil {
-		return signatureStateUnverifiable, domain.NewPolicyViolationError(
+		return signatureStateUnverifiable, "", domain.NewPolicyViolationError(
 			fmt.Sprintf("pull of %s@%s is blocked by the signing policy: no usable bundle signature entry found", repository, digest))
 	}
 
@@ -228,7 +236,7 @@ func (s *Service) verifyBundleSignature(ctx context.Context, repositoryRef domai
 			if domain.IsCode(err, domain.ErrorCodeNotFound) {
 				continue // a listed referrer that no longer resolves; try the next candidate
 			}
-			return "", err // infrastructure error propagates unchanged
+			return "", "", err // infrastructure error propagates unchanged
 		}
 
 		subjectDigest, layerDigest, err := signing.ParseBundleReferrerManifest(referrerManifest.Payload)
@@ -241,7 +249,7 @@ func (s *Service) verifyBundleSignature(ctx context.Context, repositoryRef domai
 
 		bundlePayload, err := s.openSignaturePayload(ctx, layerDigest)
 		if err != nil {
-			return "", err // infrastructure error propagates unchanged
+			return "", "", err // infrastructure error propagates unchanged
 		}
 		if bundlePayload == nil {
 			continue // bundle document blob missing or oversized; try the next candidate
@@ -260,20 +268,20 @@ func (s *Service) verifyBundleSignature(ctx context.Context, repositoryRef domai
 		paeBytes := signing.PAE(bundle.PayloadType, payload)
 
 		for _, signatureB64 := range bundle.Signatures {
-			for _, key := range keys {
-				if err := signing.Verify(key, paeBytes, signatureB64); err != nil {
+			for _, trusted := range keys {
+				if err := signing.Verify(trusted.key, paeBytes, signatureB64); err != nil {
 					continue
 				}
 				if err := signing.CheckBundleClaims(payload, digest); err != nil {
-					return signatureStateMismatched, domain.NewPolicyViolationError(
+					return signatureStateMismatched, "", domain.NewPolicyViolationError(
 						fmt.Sprintf("pull of %s@%s is blocked by the signing policy: bundle signature binds a different digest", repository, digest))
 				}
-				return signatureStateVerified, nil
+				return signatureStateVerified, signing.Fingerprint(trusted.pemText), nil
 			}
 		}
 	}
 
-	return signatureStateUntrusted, domain.NewPolicyViolationError(
+	return signatureStateUntrusted, "", domain.NewPolicyViolationError(
 		fmt.Sprintf("pull of %s@%s is blocked by the signing policy: no bundle signature validated against a trusted key", repository, digest))
 }
 
@@ -310,6 +318,16 @@ func (s *Service) openSignaturePayload(ctx context.Context, payloadDigestValue s
 	return payload, nil
 }
 
+// trustedKeyEntry pairs one configured trusted-key PEM with its parsed ECDSA
+// public key, preserving the PEM-to-parsed-key association that
+// parseTrustedKeys' plain []*ecdsa.PublicKey return previously discarded.
+// verifySignature/verifyBundleSignature need this pairing to report WHICH
+// original PEM matched a verified signature, via signing.Fingerprint(pemText).
+type trustedKeyEntry struct {
+	pemText string
+	key     *ecdsa.PublicKey
+}
+
 // parseTrustedKeys parses every configured trusted key, silently skipping
 // any entry that fails to parse. An unreadable/malformed key can reach this
 // point only via a hand-seeded store row (the admin write path rejects it at
@@ -317,14 +335,14 @@ func (s *Service) openSignaturePayload(ctx context.Context, payloadDigestValue s
 // here keeps the gate fail-closed on the remaining, still-unusable set
 // rather than erroring in a way that could be mistaken for a verification
 // outcome.
-func parseTrustedKeys(pemKeys []string) []*ecdsa.PublicKey {
-	keys := make([]*ecdsa.PublicKey, 0, len(pemKeys))
+func parseTrustedKeys(pemKeys []string) []trustedKeyEntry {
+	keys := make([]trustedKeyEntry, 0, len(pemKeys))
 	for _, pemText := range pemKeys {
 		key, err := signing.ParseTrustedKey(pemText)
 		if err != nil {
 			continue
 		}
-		keys = append(keys, key)
+		keys = append(keys, trustedKeyEntry{pemText: pemText, key: key})
 	}
 	return keys
 }

@@ -21,6 +21,17 @@ import (
 // than redeclaring it.
 const signingFeatureName = "signing"
 
+// maxSigningPolicyTrustedKeys mirrors admin_handlers.go's identically-named,
+// identically-valued constant, which already bounds the GLOBAL signing
+// policy's trusted_public_keys at the HTTP decode layer
+// (decodeSigningPolicySettings). The two layers cannot share a single Go
+// identifier across packages, but MUST stay in sync: both bound the same
+// per-pull verification loop (parseTrustedKeys/verifySignature), just for
+// two different rows (the global policy row vs. one repository's override
+// row). Previously normalizeSigningOverride had no cap at all -- this closes
+// that gap for consistency with the global policy's existing cap.
+const maxSigningPolicyTrustedKeys = 16
+
 // repositoryOverrideCodec is the generic-to-typed boundary for one feature's
 // stored override payload (design.md Decision 3). Normalize is the only
 // place an inbound request body becomes the exact bytes persisted; Apply is
@@ -122,6 +133,9 @@ func normalizeSigningOverride(raw []byte) ([]byte, error) {
 	var override ports.SigningOverride
 	if err := strictDecodeOverride(raw, &override); err != nil {
 		return nil, err
+	}
+	if len(override.TrustedPublicKeys) > maxSigningPolicyTrustedKeys {
+		return nil, domain.NewValidationError(fmt.Sprintf("trusted_public_keys must contain at most %d entries", maxSigningPolicyTrustedKeys))
 	}
 	normalizedKeys := make([]string, 0, len(override.TrustedPublicKeys))
 	for index, key := range override.TrustedPublicKeys {

@@ -216,12 +216,15 @@ func TestServiceVerifySignature_BundleFormatVerifiedSignatureAllowsPull(t *testi
 
 	policy := signingPolicyForTest(t, true, []string{keyPEM})
 
-	state, err := service.verifySignature(context.Background(), repository, imageDigest, policy)
+	state, fingerprint, err := service.verifySignature(context.Background(), repository, imageDigest, policy)
 	if err != nil {
 		t.Fatalf("verifySignature() error = %v, want nil (the bundle-format signature must verify)", err)
 	}
 	if state != signatureStateVerified {
 		t.Fatalf("verifySignature() state = %q, want %q", state, signatureStateVerified)
+	}
+	if want := signing.Fingerprint(keyPEM); fingerprint != want {
+		t.Fatalf("verifySignature() fingerprint = %q, want %q (the fingerprint of the trusted key that actually matched)", fingerprint, want)
 	}
 }
 
@@ -240,12 +243,15 @@ func TestServiceVerifySignature_NeitherLegacyNorBundleSignaturePresentIsUnsigned
 	_, keyPEM := generateTestECDSAP256KeyPair(t)
 	policy := signingPolicyForTest(t, true, []string{keyPEM})
 
-	state, err := service.verifySignature(context.Background(), repository, imageDigest, policy)
+	state, fingerprint, err := service.verifySignature(context.Background(), repository, imageDigest, policy)
 	if err == nil {
 		t.Fatal("verifySignature() error = nil, want a policy violation")
 	}
 	if state != signatureStateUnsigned {
 		t.Fatalf("verifySignature() state = %q, want %q", state, signatureStateUnsigned)
+	}
+	if fingerprint != "" {
+		t.Fatalf("verifySignature() fingerprint = %q, want empty for an unsigned digest", fingerprint)
 	}
 	wantMessage := "POLICY_VIOLATION: pull of " + repository + "@" + imageDigest + " is blocked by the signing policy: no signature found"
 	if err.Error() != wantMessage {
@@ -276,7 +282,7 @@ func TestServiceVerifySignature_BundleReferrerSubjectMismatchIsNotAccepted(t *te
 
 	policy := signingPolicyForTest(t, true, []string{keyPEM})
 
-	state, err := service.verifySignature(context.Background(), repository, targetDigest, policy)
+	state, fingerprint, err := service.verifySignature(context.Background(), repository, targetDigest, policy)
 	if err == nil {
 		t.Fatal("verifySignature() error = nil, want a policy violation (pull must stay blocked for targetDigest)")
 	}
@@ -285,6 +291,9 @@ func TestServiceVerifySignature_BundleReferrerSubjectMismatchIsNotAccepted(t *te
 	}
 	if state == signatureStateVerified {
 		t.Fatalf("verifySignature() state = %q, must never be verified for a subject that does not match", state)
+	}
+	if fingerprint != "" {
+		t.Fatalf("verifySignature() fingerprint = %q, want empty when not verified", fingerprint)
 	}
 }
 
@@ -306,7 +315,7 @@ func TestServiceVerifySignature_BundleSignatureNotFromTrustedKeyIsUntrusted(t *t
 	seedBundleSignatureArtifact(t, service, repository, imageDigest, imageDigest, bareHex(imageDigest), signingKey)
 	policy := signingPolicyForTest(t, true, []string{trustedKeyPEM})
 
-	state, err := service.verifySignature(context.Background(), repository, imageDigest, policy)
+	state, fingerprint, err := service.verifySignature(context.Background(), repository, imageDigest, policy)
 	if err == nil {
 		t.Fatal("verifySignature() error = nil, want a policy violation")
 	}
@@ -315,6 +324,9 @@ func TestServiceVerifySignature_BundleSignatureNotFromTrustedKeyIsUntrusted(t *t
 	}
 	if state != signatureStateUntrusted {
 		t.Fatalf("verifySignature() state = %q, want %q", state, signatureStateUntrusted)
+	}
+	if fingerprint != "" {
+		t.Fatalf("verifySignature() fingerprint = %q, want empty for an untrusted signature", fingerprint)
 	}
 }
 
@@ -343,7 +355,7 @@ func TestServiceVerifySignature_BundleSignatureVerifiesButClaimsMismatchIsMismat
 	seedBundleSignatureArtifact(t, service, repository, targetDigest, targetDigest, bareHex(differentDigest), key)
 	policy := signingPolicyForTest(t, true, []string{keyPEM})
 
-	state, err := service.verifySignature(context.Background(), repository, targetDigest, policy)
+	state, fingerprint, err := service.verifySignature(context.Background(), repository, targetDigest, policy)
 	if err == nil {
 		t.Fatal("verifySignature() error = nil, want a policy violation")
 	}
@@ -352,6 +364,9 @@ func TestServiceVerifySignature_BundleSignatureVerifiesButClaimsMismatchIsMismat
 	}
 	if state != signatureStateMismatched {
 		t.Fatalf("verifySignature() state = %q, want %q", state, signatureStateMismatched)
+	}
+	if fingerprint != "" {
+		t.Fatalf("verifySignature() fingerprint = %q, want empty when claims mismatch even though the signature itself verified", fingerprint)
 	}
 }
 
@@ -375,12 +390,86 @@ func TestServiceVerifySignature_LegacySignaturePresentNeverTriesBundleFallback(t
 
 	policy := signingPolicyForTest(t, true, []string{fixtureTrustedKeyPEM(t)})
 
-	state, err := service.verifySignature(context.Background(), repository, fixtureImageDigest, policy)
+	state, fingerprint, err := service.verifySignature(context.Background(), repository, fixtureImageDigest, policy)
 	if err != nil {
 		t.Fatalf("verifySignature() error = %v, want nil (the legacy signature must still verify, bundle fallback must never run)", err)
 	}
 	if state != signatureStateVerified {
 		t.Fatalf("verifySignature() state = %q, want %q", state, signatureStateVerified)
+	}
+	if want := signing.Fingerprint(fixtureTrustedKeyPEM(t)); fingerprint != want {
+		t.Fatalf("verifySignature() fingerprint = %q, want %q (the fingerprint of the trusted key that actually matched)", fingerprint, want)
+	}
+}
+
+// TestServiceVerifySignature_LegacyFormatMultipleTrustedKeysAttributesTheMatchingOneNotTheFirst
+// is the Judgment Day coverage-gap RED test (dual-confirmed): every existing
+// legacy-format test in this package configures exactly one trusted key, so
+// the core new claim of this change -- correct per-key fingerprint
+// attribution among multiple configured keys -- has never actually
+// exercised a non-first matching key. An unrelated key is listed FIRST in
+// TrustedPublicKeys, the fixture's own signing key SECOND: verification must
+// still succeed, and the returned fingerprint must be the signing key's, not
+// the first (unrelated) key's.
+func TestServiceVerifySignature_LegacyFormatMultipleTrustedKeysAttributesTheMatchingOneNotTheFirst(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	repository := "library/alpine"
+	seedFixtureImageManifest(t, service, repository)
+	seedFixtureSignatureArtifact(t, service, repository)
+
+	unrelatedKeyPEM := generateTestECDSAP256PublicKeyPEM(t)
+	signingKeyPEM := fixtureTrustedKeyPEM(t)
+	policy := signingPolicyForTest(t, true, []string{unrelatedKeyPEM, signingKeyPEM})
+
+	state, fingerprint, err := service.verifySignature(context.Background(), repository, fixtureImageDigest, policy)
+	if err != nil {
+		t.Fatalf("verifySignature() error = %v, want nil (the fixture signature must verify against its own key, wherever it sits in the trusted list)", err)
+	}
+	if state != signatureStateVerified {
+		t.Fatalf("verifySignature() state = %q, want %q", state, signatureStateVerified)
+	}
+	if want := signing.Fingerprint(signingKeyPEM); fingerprint != want {
+		t.Fatalf("verifySignature() fingerprint = %q, want %q (the actual signing key's fingerprint, not the first/unrelated key's)", fingerprint, want)
+	}
+	if unwanted := signing.Fingerprint(unrelatedKeyPEM); fingerprint == unwanted {
+		t.Fatal("verifySignature() attributed the fingerprint to the first (unrelated) key, not the one that actually signed")
+	}
+}
+
+// TestServiceVerifySignature_BundleFormatMultipleTrustedKeysAttributesTheMatchingOneNotTheFirst
+// is the bundle-format sibling of the legacy-format coverage-gap test above:
+// the signing key sits SECOND in TrustedPublicKeys, behind an unrelated
+// first key -- attribution must still point at the actual signer.
+func TestServiceVerifySignature_BundleFormatMultipleTrustedKeysAttributesTheMatchingOneNotTheFirst(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	repository := "library/alpine"
+	imageDigest := seedArbitraryImageManifest(t, service, repository, " - bundle multi-key attribution")
+	signingKey, signingKeyPEM := generateTestECDSAP256KeyPair(t)
+	_, unrelatedKeyPEM := generateTestECDSAP256KeyPair(t)
+	seedBundleSignatureArtifact(t, service, repository, imageDigest, imageDigest, bareHex(imageDigest), signingKey)
+
+	policy := signingPolicyForTest(t, true, []string{unrelatedKeyPEM, signingKeyPEM})
+
+	state, fingerprint, err := service.verifySignature(context.Background(), repository, imageDigest, policy)
+	if err != nil {
+		t.Fatalf("verifySignature() error = %v, want nil (the bundle-format signature must verify against its own key, wherever it sits in the trusted list)", err)
+	}
+	if state != signatureStateVerified {
+		t.Fatalf("verifySignature() state = %q, want %q", state, signatureStateVerified)
+	}
+	if want := signing.Fingerprint(signingKeyPEM); fingerprint != want {
+		t.Fatalf("verifySignature() fingerprint = %q, want %q (the actual signing key's fingerprint, not the first/unrelated key's)", fingerprint, want)
+	}
+	if unwanted := signing.Fingerprint(unrelatedKeyPEM); fingerprint == unwanted {
+		t.Fatal("verifySignature() attributed the fingerprint to the first (unrelated) key, not the one that actually signed")
 	}
 }
 

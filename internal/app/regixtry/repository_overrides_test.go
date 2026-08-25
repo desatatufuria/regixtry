@@ -8,7 +8,9 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -393,6 +395,53 @@ func TestNormalizeSigningOverrideRejectsUnsafeInput(t *testing.T) {
 				t.Fatalf("normalizeSigningOverride(%s) error = %v, want ErrorCodeValidation", tt.raw, err)
 			}
 		})
+	}
+}
+
+// TestNormalizeSigningOverrideRejectsTooManyTrustedKeys pins the backend gap
+// disclosed for the signing-key-management change: unlike
+// decodeSigningPolicySettings (admin_handlers.go), which already caps the
+// global policy's trusted_public_keys at maxSigningPolicyTrustedKeys,
+// normalizeSigningOverride previously had no cap at all. This mirrors that
+// same cap (same value, same error-message shape) at the per-repository
+// override codec.
+func TestNormalizeSigningOverrideRejectsTooManyTrustedKeys(t *testing.T) {
+	t.Parallel()
+
+	keys := make([]string, 0, maxSigningPolicyTrustedKeys+1)
+	for i := 0; i < maxSigningPolicyTrustedKeys+1; i++ {
+		keys = append(keys, escapeJSONString(generateTestECDSAP256PublicKeyPEM(t)))
+	}
+	raw := `{"enabled":false,"trusted_public_keys":["` + strings.Join(keys, `","`) + `"]}`
+
+	_, err := normalizeSigningOverride([]byte(raw))
+	if err == nil {
+		t.Fatalf("normalizeSigningOverride() error = nil, want a validation error for %d keys (cap is %d)", len(keys), maxSigningPolicyTrustedKeys)
+	}
+	if !domain.IsCode(err, domain.ErrorCodeValidation) {
+		t.Fatalf("normalizeSigningOverride() error = %v, want ErrorCodeValidation", err)
+	}
+	wantMessage := fmt.Sprintf("trusted_public_keys must contain at most %d entries", maxSigningPolicyTrustedKeys)
+	if err.Error() != "VALIDATION: "+wantMessage && !strings.Contains(err.Error(), wantMessage) {
+		t.Fatalf("normalizeSigningOverride() error = %q, want it to contain %q", err.Error(), wantMessage)
+	}
+}
+
+// TestNormalizeSigningOverrideAcceptsExactlyTheCap is the boundary
+// companion to the too-many test above: exactly maxSigningPolicyTrustedKeys
+// keys must still normalize cleanly -- only one more than the cap is
+// rejected.
+func TestNormalizeSigningOverrideAcceptsExactlyTheCap(t *testing.T) {
+	t.Parallel()
+
+	keys := make([]string, 0, maxSigningPolicyTrustedKeys)
+	for i := 0; i < maxSigningPolicyTrustedKeys; i++ {
+		keys = append(keys, escapeJSONString(generateTestECDSAP256PublicKeyPEM(t)))
+	}
+	raw := `{"enabled":false,"trusted_public_keys":["` + strings.Join(keys, `","`) + `"]}`
+
+	if _, err := normalizeSigningOverride([]byte(raw)); err != nil {
+		t.Fatalf("normalizeSigningOverride() error = %v, want nil at exactly the cap (%d keys)", err, maxSigningPolicyTrustedKeys)
 	}
 }
 

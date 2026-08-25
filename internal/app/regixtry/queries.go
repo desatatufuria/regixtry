@@ -231,11 +231,17 @@ type SignatureStatusPolicy struct {
 // SignatureStatusDetail never carries a raw signature -- Reason is drawn
 // from enforceSigningPolicy's own fixed-vocabulary messages (design.md
 // Decision 6), stripped of its "pull of <repo>@<digest> is blocked by the
-// signing policy: " prefix.
+// signing policy: " prefix. VerifiedKeyFingerprint follows the same
+// no-key-leakage discipline as SignatureStatusPolicy.TrustedKeys: only the
+// short fingerprint (signing.Fingerprint) of the trusted key that actually
+// verified this signature is ever reported, never its raw PEM, and only
+// when State == SignatureStatusVerified -- every other state leaves it
+// empty.
 type SignatureStatusDetail struct {
-	Tag            string `json:"tag"`
-	SignatureCount int    `json:"signature_count"`
-	Reason         string `json:"reason,omitempty"`
+	Tag                    string `json:"tag"`
+	SignatureCount         int    `json:"signature_count"`
+	Reason                 string `json:"reason,omitempty"`
+	VerifiedKeyFingerprint string `json:"verified_key_fingerprint,omitempty"`
 }
 
 const (
@@ -288,7 +294,7 @@ func (s *Service) SignatureStatus(ctx context.Context, repositoryName string, re
 		Policy:     SignatureStatusPolicy{Enabled: policy.Enabled, TrustedKeys: len(policy.TrustedPublicKeys)},
 	}
 
-	state, verifyErr := s.verifySignature(ctx, repository.String(), digest, policy)
+	state, matchedFingerprint, verifyErr := s.verifySignature(ctx, repository.String(), digest, policy)
 	if verifyErr != nil && !domain.IsCode(verifyErr, domain.ErrorCodePolicyViolation) {
 		return SignatureStatusResult{}, verifyErr // infrastructure error propagates unchanged, same as the gate
 	}
@@ -300,11 +306,15 @@ func (s *Service) SignatureStatus(ctx context.Context, repositoryName string, re
 		if resolveErr != nil {
 			return SignatureStatusResult{}, resolveErr
 		}
-		result.Signature = &SignatureStatusDetail{
+		detail := &SignatureStatusDetail{
 			Tag:            tag,
 			SignatureCount: count,
 			Reason:         signatureStatusReason(repository.String(), digest, verifyErr),
 		}
+		if state == SignatureStatusVerified {
+			detail.VerifiedKeyFingerprint = matchedFingerprint
+		}
+		result.Signature = detail
 	}
 
 	return result, nil

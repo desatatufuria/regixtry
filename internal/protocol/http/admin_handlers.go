@@ -70,6 +70,8 @@ func (r *Router) handleAdmin(w stdhttp.ResponseWriter, req *stdhttp.Request) {
 		r.handleAdminScanPolicy(w, req)
 	case subpath == "signing-policy":
 		r.handleAdminSigningPolicy(w, req)
+	case subpath == "signing-policy/key-usage":
+		r.handleAdminSigningKeyUsage(w, req)
 	case subpath == "scan-runs":
 		r.handleAdminScanRuns(w, req)
 	case subpath == "repository-scan-summaries":
@@ -474,6 +476,41 @@ func (r *Router) handleAdminSigningPolicy(w stdhttp.ResponseWriter, req *stdhttp
 		w.Header().Set("Allow", strings.Join([]string{stdhttp.MethodGet, stdhttp.MethodPut}, ", "))
 		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
 	}
+}
+
+// handleAdminSigningKeyUsage is CountManifestsSignedByKey's HTTP surface: a
+// read-only, best-effort advisory the TUI/console calls right before
+// showing a "delete this key?" confirm, never a blocking gate (design
+// requirement: deletion of a key must never be blocked by this count, only
+// informed by it). key is the URL-encoded PEM to check; repository is
+// optional (global scope when absent).
+func (r *Router) handleAdminSigningKeyUsage(w stdhttp.ResponseWriter, req *stdhttp.Request) {
+	if req.Method != stdhttp.MethodGet {
+		w.Header().Set("Allow", stdhttp.MethodGet)
+		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+		return
+	}
+
+	// Reuses signing.NormalizePublicKeyPEM, the exact same validation
+	// normalizeSigningOverride/decodeSigningPolicySettings already apply to
+	// a trusted key -- a malformed key param must be a validation error at
+	// the HTTP boundary, not a 500 surfaced from the service layer.
+	keyParam := req.URL.Query().Get("key")
+	normalizedKey, err := signing.NormalizePublicKeyPEM(keyParam)
+	if err != nil {
+		writeAdminError(w, domainauth.NewValidationError("key is invalid: "+err.Error()), ports.Challenge{})
+		return
+	}
+
+	repository := strings.TrimSpace(req.URL.Query().Get("repository"))
+
+	count, capped, err := r.service.CountManifestsSignedByKey(req.Context(), repository, normalizedKey)
+	if err != nil {
+		writeAdminError(w, err, ports.Challenge{})
+		return
+	}
+
+	writeJSON(w, stdhttp.StatusOK, map[string]any{"count": count, "capped": capped})
 }
 
 // decodeSigningPolicySettings mirrors decodeScanPolicySettings and enforces
