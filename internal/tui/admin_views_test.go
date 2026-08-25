@@ -518,9 +518,10 @@ func TestRenderOverrideEditorIsASeparateSurfaceFromOtherAdminModals(t *testing.T
 }
 
 // TestRenderSigningPolicyModalFitsWithinRowBudget is the Phase 9 task 9.3
-// RED test (design.md Decision 11 piece 1's row-budget table): 14 rows (0
-// keys, no error), 16 rows (3 keys, no error), 20 rows worst case (error,
-// >=4 keys, capped list + "+N more").
+// RED test (design.md Decision 11 piece 1's row-budget table), updated for
+// the signing-key-management change's trustedKeyList component (own
+// heading row + one row per key + a nav-hint row when focused, replacing
+// the retired single Trusted Key (PEM) input row + capped key-list rows).
 func TestRenderSigningPolicyModalFitsWithinRowBudget(t *testing.T) {
 	t.Parallel()
 
@@ -533,17 +534,17 @@ func TestRenderSigningPolicyModalFitsWithinRowBudget(t *testing.T) {
 	}{
 		{
 			name:       "no error, 0 keys",
-			modal:      signingPolicyModal{Open: true, Focus: signingPolicyFieldEnabled, Enabled: false},
-			wantHeight: 16,
+			modal:      signingPolicyModal{Open: true, Focus: signingPolicyFieldEnabled, Enabled: false, Keys: newTrustedKeyList("", nil)},
+			wantHeight: 15,
 		},
 		{
 			name:       "no error, 3 keys",
-			modal:      signingPolicyModal{Open: true, Focus: signingPolicyFieldEnabled, Enabled: true, Fingerprints: []string{"aaaaaaaaaaaa", "bbbbbbbbbbbb", "cccccccccccc"}},
-			wantHeight: 18,
+			modal:      signingPolicyModal{Open: true, Focus: signingPolicyFieldEnabled, Enabled: true, Keys: newTrustedKeyList("", []string{"aaaaaaaaaaaa", "bbbbbbbbbbbb", "cccccccccccc"})},
+			wantHeight: 17,
 		},
 		{
-			name:       "error, >=4 keys (capped at 4 + more)",
-			modal:      signingPolicyModal{Open: true, Focus: signingPolicyFieldAddKey, Enabled: true, Fingerprints: []string{"aaaaaaaaaaaa", "bbbbbbbbbbbb", "cccccccccccc", "dddddddddddd", "eeeeeeeeeeee"}, Error: "trusted_public_keys[0] is invalid"},
+			name:       "error, 5 keys, focused (shows the add/delete hint row)",
+			modal:      signingPolicyModal{Open: true, Focus: signingPolicyFieldAddKey, Enabled: true, Keys: newTrustedKeyList("", []string{"aaaaaaaaaaaa", "bbbbbbbbbbbb", "cccccccccccc", "dddddddddddd", "eeeeeeeeeeee"}), Error: "trusted_public_keys[0] is invalid"},
 			wantHeight: 22,
 		},
 	}
@@ -569,14 +570,16 @@ func TestRenderSigningPolicyModalNeverRendersRawPEM(t *testing.T) {
 
 	theme := newAdminTheme()
 	rawPEM := "-----BEGIN PUBLIC KEY-----"
-	modal := signingPolicyModal{Open: true, Enabled: true, Fingerprints: []string{"deadbeefcafe"}}
+	storedKey := rawPEM + "\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAErSUZU4IUnh+IonVC8RB3NSN1lQLe\nxnF8AMhBjtuWIOnJjBgfpVuckOjRgdcXwUr/GtUnkVEeSGvmLC4F3sr/Cw==\n-----END PUBLIC KEY-----\n"
+	wantFingerprint := signingKeyFingerprints([]string{storedKey})[0]
+	modal := signingPolicyModal{Open: true, Enabled: true, Keys: newTrustedKeyList("", []string{storedKey})}
 
 	got := renderSigningPolicyModal(theme, modal)
 	if strings.Contains(got, rawPEM) {
 		t.Fatalf("renderSigningPolicyModal() = %q, want no raw PEM markers, only fingerprints", got)
 	}
-	if !strings.Contains(got, "deadbeefcafe") {
-		t.Fatalf("renderSigningPolicyModal() = %q, want the stored fingerprint shown", got)
+	if !strings.Contains(got, wantFingerprint) {
+		t.Fatalf("renderSigningPolicyModal() = %q, want the stored fingerprint %q shown", got, wantFingerprint)
 	}
 }
 
@@ -626,9 +629,10 @@ func TestRenderSigningPolicyModalIsASeparateSurfaceFromScanPolicyModal(t *testin
 }
 
 // TestRenderOverrideEditorSigningShowsTrustedKeyLabel is the Slice 2
-// successor to the retired TestRenderRepositoryOverrideModalSigningShowsTrustedKeyLabel:
-// when feature is "signing", PathPrimary's rendered label is "Trusted Key
-// (PEM)", not the Trivy/gitleaks path label.
+// successor to the retired TestRenderRepositoryOverrideModalSigningShowsTrustedKeyLabel,
+// updated for the signing-key-management change: when feature is "signing",
+// PathPrimary's position renders trustedKeyList's own "Trusted Keys (N)"
+// heading, not the Trivy/gitleaks path label.
 func TestRenderOverrideEditorSigningShowsTrustedKeyLabel(t *testing.T) {
 	t.Parallel()
 
@@ -641,12 +645,12 @@ func TestRenderOverrideEditorSigningShowsTrustedKeyLabel(t *testing.T) {
 	}{
 		{
 			name:       "signing, no error",
-			editor:     overrideEditor{open: true, repository: "library/alpine", feature: signingFeatureName, exists: true, enabled: true, pathPrimary: "-----BEGIN PUBLIC KEY-----"},
+			editor:     overrideEditor{open: true, repository: "library/alpine", feature: signingFeatureName, exists: true, enabled: true, keys: newTrustedKeyList("library/alpine", []string{"-----BEGIN PUBLIC KEY-----\nfake\n-----END PUBLIC KEY-----\n"})},
 			wantHeight: 16,
 		},
 		{
 			name:       "signing + error",
-			editor:     overrideEditor{open: true, repository: "library/alpine", feature: signingFeatureName, exists: true, enabled: true, pathPrimary: "-----BEGIN PUBLIC KEY-----", err: "trusted_public_keys[0] is invalid"},
+			editor:     overrideEditor{open: true, repository: "library/alpine", feature: signingFeatureName, exists: true, enabled: true, keys: newTrustedKeyList("library/alpine", []string{"-----BEGIN PUBLIC KEY-----\nfake\n-----END PUBLIC KEY-----\n"}), err: "trusted_public_keys[0] is invalid"},
 			wantHeight: 18,
 		},
 	}
@@ -659,7 +663,7 @@ func TestRenderOverrideEditorSigningShowsTrustedKeyLabel(t *testing.T) {
 			if h := lipgloss.Height(got); h != tc.wantHeight {
 				t.Fatalf("renderOverrideEditor() height = %d, want %d\n%s", h, tc.wantHeight, got)
 			}
-			if !strings.Contains(got, "Trusted Key (PEM)") {
+			if !strings.Contains(got, "Trusted Keys") {
 				t.Fatalf("renderOverrideEditor() = %q, want the signing-specific field label", got)
 			}
 			for _, forbidden := range []string{"Ignore File Path", "Ignore Policy Path", "Config Path"} {

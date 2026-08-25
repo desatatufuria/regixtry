@@ -18,6 +18,7 @@ import (
 	appregixtry "regixtry/internal/app/regixtry"
 	domainauth "regixtry/internal/domain/auth"
 	regixtrydomain "regixtry/internal/domain/regixtry"
+	"regixtry/internal/domain/signing"
 	"regixtry/internal/ports"
 )
 
@@ -2856,7 +2857,7 @@ func TestModelSigningPolicyModalOpenerKeyIsScopedToSigningFeature(t *testing.T) 
 			t.Fatal("adminScreens[slotTrivyConfig] != nil, want unmounted -- 'p' on signing must not touch the trivy screen")
 		}
 		modalView := updated.View()
-		for _, want := range []string{"Signing Policy", "Enabled", "Trusted Key (PEM)"} {
+		for _, want := range []string{"Signing Policy", "Enabled", "Trusted Keys"} {
 			if !strings.Contains(modalView, want) {
 				t.Fatalf("view = %q, want %q", modalView, want)
 			}
@@ -2990,11 +2991,14 @@ func TestModelSigningPolicyModalSaveIncludesUnsignedSelfRead(t *testing.T) {
 
 // TestModelSigningPolicyModalAddKeySubmitPersistsAndReflectsCurrentSettings
 // is the Phase 9 task 9.10 RED test (operator-admin-tui spec's "Operator
-// saves a policy change" scenario): toggling Enabled and adding a key
-// persists through the admin API and is reflected back into the modal
-// (Fingerprints), the modal stays open (unlike scanPolicyModal) so the
-// operator can keep adding keys, and AddKey is cleared after a successful
-// submit.
+// saves a policy change" scenario), updated for the signing-key-management
+// change: the retired single-line AddKey field is now trustedKeyList's own
+// add flow ('n' to start, type the key, Enter to commit it into the LOCAL
+// list, then Enter again -- now not consumed by the list, since it is back
+// in idle navigation -- to submit the whole policy). Toggling Enabled and
+// adding a key still persists through the admin API and is reflected back
+// into the modal (cfg.Keys), the modal stays open (unlike scanPolicyModal)
+// so the operator can keep adding keys.
 func TestModelSigningPolicyModalAddKeySubmitPersistsAndReflectsCurrentSettings(t *testing.T) {
 	t.Parallel()
 
@@ -3014,13 +3018,23 @@ func TestModelSigningPolicyModalAddKeySubmitPersistsAndReflectsCurrentSettings(t
 	updated = runKey(t, updated, "p")
 
 	// Focus starts on Enabled; toggle it on, Tab past UnsignedSelfRead to
-	// AddKey, type a key.
+	// the Keys field, 'n' to start adding, type a real key, Enter to
+	// commit it into the local list.
 	updated = runKey(t, updated, " ")
 	updated = runKey(t, updated, "tab")
 	updated = runKey(t, updated, "tab")
-	updated = runKey(t, updated, "-----BEGIN PUBLIC KEY-----fakekeydata-----END PUBLIC KEY-----")
+	updated = runKey(t, updated, "n")
+	updated = runKey(t, updated, trustedKeyListTestPEM1)
+	updated = runKey(t, updated, "enter")
 
+	// A second Enter, now that the list is back in idle navigation (not
+	// consumed by trustedKeyList), submits the whole policy.
 	submitted := runKey(t, updated, "enter")
+
+	wantKeyPEM, err := signing.NormalizePublicKeyPEM(trustedKeyListTestPEM1)
+	if err != nil {
+		t.Fatalf("signing.NormalizePublicKeyPEM(trustedKeyListTestPEM1) error = %v", err)
+	}
 
 	if got, want := adminClient.updateSigningPolicyCalls, 1; got != want {
 		t.Fatalf("updateSigningPolicyCalls = %d, want %d", got, want)
@@ -3028,7 +3042,7 @@ func TestModelSigningPolicyModalAddKeySubmitPersistsAndReflectsCurrentSettings(t
 	if !adminClient.lastSigningPolicyInput.Enabled {
 		t.Fatalf("lastSigningPolicyInput.Enabled = false, want true")
 	}
-	if got, want := adminClient.lastSigningPolicyInput.TrustedPublicKeys, []string{"-----BEGIN PUBLIC KEY-----fakekeydata-----END PUBLIC KEY-----"}; !reflect.DeepEqual(got, want) {
+	if got, want := adminClient.lastSigningPolicyInput.TrustedPublicKeys, []string{wantKeyPEM}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("lastSigningPolicyInput.TrustedPublicKeys = %#v, want %#v", got, want)
 	}
 	submittedScreen, ok := submitted.adminScreens[slotSigningConfig].(signingConfigScreen)
@@ -3038,17 +3052,17 @@ func TestModelSigningPolicyModalAddKeySubmitPersistsAndReflectsCurrentSettings(t
 	if !submittedScreen.cfg.Active() {
 		t.Fatal("cfg.Active() = false, want the screen to stay mounted/open after a successful save (unlike scanPolicyModal)")
 	}
-	if submittedScreen.cfg.AddKey != "" {
-		t.Fatalf("cfg.AddKey = %q, want cleared after a successful submit", submittedScreen.cfg.AddKey)
+	if submittedScreen.cfg.Keys.adding {
+		t.Fatal("cfg.Keys.adding = true, want cleared after a successful submit")
 	}
-	if len(submittedScreen.cfg.Fingerprints) != 1 {
-		t.Fatalf("cfg.Fingerprints = %#v, want 1 fingerprint reflected from the saved key", submittedScreen.cfg.Fingerprints)
+	if len(submittedScreen.cfg.Keys.Keys()) != 1 {
+		t.Fatalf("cfg.Keys.Keys() = %#v, want 1 key reflected from the saved policy", submittedScreen.cfg.Keys.Keys())
 	}
 	if !strings.Contains(submitted.View(), "Signing policy saved") {
 		t.Fatalf("view = %q, want signing policy feedback after submit", submitted.View())
 	}
 
-	// ClearKeys: Tab twice more (AddKey -> ClearKeys), Enter clears every
+	// ClearKeys: Tab once more (Keys -> ClearKeys), Enter clears every
 	// trusted key.
 	cleared := runKey(t, submitted, "tab")
 	cleared = runKey(t, cleared, "enter")
@@ -3062,8 +3076,59 @@ func TestModelSigningPolicyModalAddKeySubmitPersistsAndReflectsCurrentSettings(t
 	if !ok {
 		t.Fatal("adminScreens[slotSigningConfig] not mounted after Clear")
 	}
-	if len(clearedScreen.cfg.Fingerprints) != 0 {
-		t.Fatalf("cfg.Fingerprints = %#v, want empty after Clear", clearedScreen.cfg.Fingerprints)
+	if len(clearedScreen.cfg.Keys.Keys()) != 0 {
+		t.Fatalf("cfg.Keys.Keys() = %#v, want empty after Clear", clearedScreen.cfg.Keys.Keys())
+	}
+}
+
+// TestModelSigningPolicyModalDeleteKeyIsUsageInformedAndNeverBlocked mirrors
+// TestFeatureOverridesScreenSigningDeleteKeyIsUsageInformedAndNeverBlocked
+// for the GLOBAL signing policy modal (design requirement (d), global-scope
+// leg): 'x' on a selected key fires the usage-count call scoped globally
+// ("" repository), opens a confirm with the count folded in regardless of
+// how high it is, and Enter removes exactly that key.
+func TestModelSigningPolicyModalDeleteKeyIsUsageInformedAndNeverBlocked(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 25, 12, 0, 0, 0, time.UTC)
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+		features:     []ports.FeatureSummary{{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: true}},
+		featurePage: ports.FeaturePage{
+			Summary: ports.FeatureSummary{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: true},
+		},
+		signingPolicy:         ports.SigningPolicySettings{Enabled: true, TrustedPublicKeys: []string{trustedKeyListTestPEM1}},
+		signingKeyUsageCount:  7,
+		signingKeyUsageCapped: false,
+	}
+	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
+	updated = runKey(t, updated, "down")
+	updated = runKey(t, updated, "enter")
+	updated = runKey(t, updated, "enter")
+	updated = runKey(t, updated, "p") // opens signingPolicyModal
+	updated = runKey(t, updated, "tab")
+	updated = runKey(t, updated, "tab") // Enabled -> UnsignedSelfRead -> Keys
+
+	deleted := runKey(t, updated, "x")
+
+	if got, want := adminClient.signingKeyUsageCalls, 1; got != want {
+		t.Fatalf("signingKeyUsageCalls = %d, want %d", got, want)
+	}
+	if got, want := adminClient.lastSigningKeyUsageRepo, ""; got != want {
+		t.Fatalf("lastSigningKeyUsageRepo = %q, want %q (global scope)", got, want)
+	}
+	screenBeforeConfirm, _ := deleted.adminScreens[slotSigningConfig].(signingConfigScreen)
+	if !screenBeforeConfirm.cfg.Keys.confirm.Active() {
+		t.Fatal("cfg.Keys.confirm.Active() = false, want true")
+	}
+
+	confirmed := runKey(t, deleted, "enter")
+	screenAfterConfirm, _ := confirmed.adminScreens[slotSigningConfig].(signingConfigScreen)
+	if screenAfterConfirm.cfg.Keys.confirm.Active() {
+		t.Fatal("confirm still active after Enter, want closed")
+	}
+	if len(screenAfterConfirm.cfg.Keys.Keys()) != 0 {
+		t.Fatalf("cfg.Keys.Keys() = %#v, want empty -- confirming must remove the key regardless of the reported count", screenAfterConfirm.cfg.Keys.Keys())
 	}
 }
 
@@ -3319,12 +3384,14 @@ func TestFeatureOverridesScreenSigningSaveIncludesUnsignedSelfRead(t *testing.T)
 	}
 	updated = runKey(t, updated, "o") // opens the editor on the highlighted (only) row
 
-	// Focus starts on Enabled: Tab to PathPrimary, type a key, Tab to
-	// UnsignedSelfRead and toggle it off -> pusher, then Enter to save.
+	// Focus starts on Enabled: Tab to the Keys field, 'n' to start adding,
+	// type a real key, Enter to commit it into the local list, Tab to
+	// UnsignedSelfRead and toggle it off -> pusher, then Enter (now not
+	// consumed by the Keys field, back in idle navigation) to save.
 	updated = runKey(t, updated, "tab")
-	for _, r := range "-----BEGIN PUBLIC KEY-----fakekeydata-----END PUBLIC KEY-----" {
-		updated = runKey(t, updated, string(r))
-	}
+	updated = runKey(t, updated, "n")
+	updated = runKey(t, updated, trustedKeyListTestPEM1)
+	updated = runKey(t, updated, "enter")
 	updated = runKey(t, updated, "tab")
 	updated = runKey(t, updated, " ")
 	firstSave := runKey(t, updated, "enter")
@@ -3362,6 +3429,137 @@ func TestFeatureOverridesScreenSigningSaveIncludesUnsignedSelfRead(t *testing.T)
 	screenAfterSecond, _ := secondSave.adminScreens[slotSigningRepos].(featureOverridesScreen)
 	if got, want := screenAfterSecond.editor.unsignedSelfRead, "pusher"; got != want {
 		t.Fatalf("editor.unsignedSelfRead = %q, want %q after second save", got, want)
+	}
+}
+
+// TestFeatureOverridesScreenSigningOpenPrefillsFromGlobalPolicyWhenNeverConfigured
+// is the signing-key-management change's prefill requirement: opening a
+// signing override for a repository with NO stored override row seeds the
+// editor's key list with the CURRENT global signing policy's trusted keys,
+// not an empty list.
+func TestFeatureOverridesScreenSigningOpenPrefillsFromGlobalPolicyWhenNeverConfigured(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 25, 12, 0, 0, 0, time.UTC)
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+		features:     []ports.FeatureSummary{{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: true}},
+		featurePage: ports.FeaturePage{
+			Summary: ports.FeatureSummary{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: true},
+		},
+		signingPolicy: ports.SigningPolicySettings{Enabled: true, TrustedPublicKeys: []string{trustedKeyListTestPEM1, trustedKeyListTestPEM2}},
+		// repositoryOverrides deliberately left nil: no stored override row
+		// for library/alpine -- GetRepositoryOverride reports (zero, false, nil).
+	}
+	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
+	updated = runKey(t, updated, "down")
+	updated = runKey(t, updated, "enter")
+	updated = runKey(t, updated, "enter") // navigate into signingConfigScreen
+	updated = runKey(t, updated, "o")     // opens screenSecuritySigningRepos
+	updated = runKey(t, updated, "o")     // opens the editor on the highlighted (only) row
+
+	screen, ok := updated.adminScreens[slotSigningRepos].(featureOverridesScreen)
+	if !ok {
+		t.Fatal("adminScreens[slotSigningRepos] not mounted")
+	}
+	if screen.editor.exists {
+		t.Fatal("editor.exists = true, want false (no stored override)")
+	}
+	if got, want := len(screen.editor.keys.Keys()), 2; got != want {
+		t.Fatalf("editor.keys.Keys() = %#v, want %d keys prefilled from the global policy", screen.editor.keys.Keys(), want)
+	}
+}
+
+// TestFeatureOverridesScreenSigningOpenDoesNotPrefillWhenOverrideAlreadyExists
+// is the prefill requirement's negative case: an override that already
+// exists uses its OWN stored keys, never the global policy's, even when
+// they differ.
+func TestFeatureOverridesScreenSigningOpenDoesNotPrefillWhenOverrideAlreadyExists(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 25, 12, 0, 0, 0, time.UTC)
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+		features:     []ports.FeatureSummary{{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: true}},
+		featurePage: ports.FeaturePage{
+			Summary: ports.FeatureSummary{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: true},
+		},
+		signingPolicy: ports.SigningPolicySettings{Enabled: true, TrustedPublicKeys: []string{trustedKeyListTestPEM1, trustedKeyListTestPEM2}},
+		repositoryOverrides: map[string]ports.RepositoryOverrideDetails{
+			signingFeatureName + "/library/alpine": {Enabled: true, TrustedPublicKeys: []string{trustedKeyListTestPEM1}},
+		},
+	}
+	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
+	updated = runKey(t, updated, "down")
+	updated = runKey(t, updated, "enter")
+	updated = runKey(t, updated, "enter")
+	updated = runKey(t, updated, "o")
+	updated = runKey(t, updated, "o")
+
+	screen, ok := updated.adminScreens[slotSigningRepos].(featureOverridesScreen)
+	if !ok {
+		t.Fatal("adminScreens[slotSigningRepos] not mounted")
+	}
+	if !screen.editor.exists {
+		t.Fatal("editor.exists = false, want true (a stored override exists)")
+	}
+	if got, want := len(screen.editor.keys.Keys()), 1; got != want {
+		t.Fatalf("editor.keys.Keys() = %#v, want exactly the 1 stored override key, never the global policy's 2", screen.editor.keys.Keys())
+	}
+}
+
+// TestFeatureOverridesScreenSigningDeleteKeyIsUsageInformedAndNeverBlocked
+// is design requirement (d): deleting a key always shows a usage-count-
+// informed confirm, and the count never blocks the deletion -- confirming
+// removes the key regardless of how high the reported count is.
+func TestFeatureOverridesScreenSigningDeleteKeyIsUsageInformedAndNeverBlocked(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 25, 12, 0, 0, 0, time.UTC)
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+		features:     []ports.FeatureSummary{{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: true}},
+		featurePage: ports.FeaturePage{
+			Summary: ports.FeatureSummary{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: true},
+		},
+		repositoryOverrides: map[string]ports.RepositoryOverrideDetails{
+			signingFeatureName + "/library/alpine": {Enabled: true, TrustedPublicKeys: []string{trustedKeyListTestPEM1}},
+		},
+		signingKeyUsageCount:  42,
+		signingKeyUsageCapped: true,
+	}
+	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
+	updated = runKey(t, updated, "down")
+	updated = runKey(t, updated, "enter")
+	updated = runKey(t, updated, "enter")
+	updated = runKey(t, updated, "o")
+	updated = runKey(t, updated, "o")
+	updated = runKey(t, updated, "tab") // Enabled -> Keys field
+
+	deleted := runKey(t, updated, "x")
+
+	if got, want := adminClient.signingKeyUsageCalls, 1; got != want {
+		t.Fatalf("signingKeyUsageCalls = %d, want %d (the delete key must fire the usage-count call)", got, want)
+	}
+	if got, want := adminClient.lastSigningKeyUsageRepo, "library/alpine"; got != want {
+		t.Fatalf("lastSigningKeyUsageRepo = %q, want %q", got, want)
+	}
+
+	screenBeforeConfirm, _ := deleted.adminScreens[slotSigningRepos].(featureOverridesScreen)
+	if !screenBeforeConfirm.editor.keys.confirm.Active() {
+		t.Fatal("editor.keys.confirm.Active() = false, want true -- a high, capped count must still open the confirm, never block silently")
+	}
+	if len(screenBeforeConfirm.editor.keys.Keys()) != 1 {
+		t.Fatal("key removed before confirming -- deletion must wait for Enter")
+	}
+
+	confirmed := runKey(t, deleted, "enter")
+	screenAfterConfirm, _ := confirmed.adminScreens[slotSigningRepos].(featureOverridesScreen)
+	if screenAfterConfirm.editor.keys.confirm.Active() {
+		t.Fatal("confirm still active after Enter, want closed")
+	}
+	if len(screenAfterConfirm.editor.keys.Keys()) != 0 {
+		t.Fatalf("editor.keys.Keys() = %#v, want empty -- confirming must remove the key even though the count (42, capped) was high", screenAfterConfirm.editor.keys.Keys())
 	}
 }
 

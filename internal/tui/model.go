@@ -979,6 +979,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
 		return m, cmd
+	case adminSigningKeyUsageLoadedMsg:
+		// Broadcast like adminSigningPolicyLoadedMsg above (design.md
+		// Decision H): whichever screen holds a trustedKeyList mid-delete
+		// (signingConfigScreen's modal or an open signing overrideEditor)
+		// reflects the usage count and opens its confirm; every other
+		// occupied slot ignores it via its own type switch /
+		// trustedKeyList.applyUsageLoaded's own usageLoading guard.
+		var cmd tea.Cmd
+		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
+		if msg.err != nil && IsAdminSessionExpired(msg.err) {
+			return m.expireAdminSession(msg.err.Error()), nil
+		}
+		return m, cmd
 	case adminRepositoryOverrideLoadedMsg:
 		// The uniform overrideEditor (design.md Decision F) is broadcast to
 		// (design.md Decision H): whichever screen is holding an open

@@ -57,8 +57,9 @@ func (s trivyReposScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.C
 			s.editor = next
 			return s, cmd, consumed
 		case adminRepositoryOverrideLoadedMsg:
-			s.editor = s.editor.applyLoaded(typed)
-			return s, nil, false
+			next, cmd := s.editor.applyLoaded(env, typed)
+			s.editor = next
+			return s, cmd, false
 		case adminRepositoryOverrideSavedMsg:
 			s.editor = s.editor.applySaved(typed)
 			return s, nil, false

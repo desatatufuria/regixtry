@@ -246,11 +246,15 @@ type signingPolicyModal struct {
 	Open             bool
 	Focus            signingPolicyField
 	Enabled          bool
-	UnsignedSelfRead string   // "off" | "pusher" | "repo_push" -- see type doc comment
-	AddKey           string   // one PEM, single line -- see type doc comment
-	Fingerprints     []string // read-only SHA-256/12 of each stored key
-	Loading          bool
-	Error            string
+	UnsignedSelfRead string // "off" | "pusher" | "repo_push" -- see type doc comment
+	// Keys replaces the retired AddKey/Fingerprints pair (signing-key-
+	// management change): trustedKeyList (trusted_key_list.go) owns
+	// add/select/delete for the modal's trusted-key list directly, growing
+	// or shrinking the list live rather than staging one pending AddKey
+	// string that only ever appended.
+	Keys    trustedKeyList
+	Loading bool
+	Error   string
 }
 
 func (m signingPolicyModal) Active() bool {
