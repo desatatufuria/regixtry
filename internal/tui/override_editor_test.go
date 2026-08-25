@@ -43,6 +43,52 @@ func TestOverrideEditorFeatureIsImmutable(t *testing.T) {
 // gets UnsignedSelfRead, gitleaks gets neither -- and there is no
 // representable "Feature" field in any of the three sets (T2.2's other
 // half: Feature is unrepresentable, not merely unreachable).
+// TestOverrideEditorSigningKeyListReachableWithoutTabbingToIt is the RED
+// test for the "can't add a key" bug report: a freshly-opened signing
+// override editor defaults focus to overrideFieldEnabled (not
+// overrideFieldPathPrimary, where e.keys lives), so 'n' must still reach the
+// embedded trustedKeyList and enter adding mode without the operator ever
+// pressing Tab first.
+func TestOverrideEditorSigningKeyListReachableWithoutTabbingToIt(t *testing.T) {
+	t.Parallel()
+
+	env := screenEnv{}
+	editor := newOverrideEditor(signingFeatureName, "team/api")
+	if editor.currentField() == overrideFieldPathPrimary {
+		t.Fatal("test setup invalid: default focus is already overrideFieldPathPrimary")
+	}
+
+	next, cmd, consumed := editor.update(env, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	if !consumed || cmd != nil {
+		t.Fatalf("'n' with focus elsewhere: consumed = %v, cmd = %v, want consumed=true, cmd=nil", consumed, cmd)
+	}
+	if !next.keys.adding {
+		t.Fatal("'n' did not reach the embedded trustedKeyList: adding = false, want true")
+	}
+}
+
+// TestOverrideEditorSigningKeyListDeleteReachableWithoutTabbingToIt covers
+// the same bug for 'x' (delete), which must fire the usage-count Cmd even
+// though Tab-focus is still on overrideFieldEnabled.
+func TestOverrideEditorSigningKeyListDeleteReachableWithoutTabbingToIt(t *testing.T) {
+	t.Parallel()
+
+	env := screenEnv{}
+	editor := newOverrideEditor(signingFeatureName, "team/api")
+	editor.keys = newTrustedKeyList("team/api", []string{trustedKeyListTestPEM1})
+	if editor.currentField() == overrideFieldPathPrimary {
+		t.Fatal("test setup invalid: default focus is already overrideFieldPathPrimary")
+	}
+
+	next, cmd, consumed := editor.update(env, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	if !consumed || cmd == nil {
+		t.Fatalf("'x' with focus elsewhere: consumed = %v, cmd = %v, want consumed=true, cmd != nil", consumed, cmd)
+	}
+	if !next.keys.usageLoading {
+		t.Fatal("'x' did not reach the embedded trustedKeyList: usageLoading = false, want true")
+	}
+}
+
 func TestOverrideEditorFieldsAreImmutableAfterConstruction(t *testing.T) {
 	t.Parallel()
 

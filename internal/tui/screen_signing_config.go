@@ -224,12 +224,20 @@ func (s signingConfigScreen) updateConfigKey(env screenEnv, msg tea.KeyMsg) (adm
 	// while it is mid-add or mid-delete-confirm; only what it does NOT
 	// consume (Tab/Esc/Space/Enter in its own idle navigation state) falls
 	// through to this modal's own bindings below.
-	if s.cfg.Focus == signingPolicyFieldAddKey {
-		next, cmd, consumed := s.cfg.Keys.update(env, msg)
-		if consumed {
-			s.cfg.Keys = next
-			return s, cmd, true
-		}
+	//
+	// This routing is UNCONDITIONAL (not gated on
+	// s.cfg.Focus == signingPolicyFieldAddKey): the modal opens with
+	// Focus == signingPolicyFieldEnabled (updateKey's 'p' branch), not the
+	// key list's position, so gating on Tab-focus made 'n'/'x'/Up/Down
+	// silent no-ops until the operator tabbed to the exact right field
+	// first -- the "can't add a key" bug. Enabled/UnsignedSelfRead are
+	// Space-toggled/cycled, never rune-typed, so there is no other field in
+	// this modal that could ever claim these keys as literal input; routing
+	// them here first is safe.
+	next, cmd, consumed := s.cfg.Keys.update(env, msg)
+	if consumed {
+		s.cfg.Keys = next
+		return s, cmd, true
 	}
 	switch {
 	case isEscKey(msg):

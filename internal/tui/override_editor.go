@@ -119,7 +119,17 @@ func (e overrideEditor) update(env screenEnv, msg tea.KeyMsg) (overrideEditor, t
 	// Esc/Space/Enter in its own idle navigation state) falls through to
 	// this editor's own bindings below -- mirrors
 	// signingConfigScreen.updateConfigKey's identical interception.
-	if e.feature == signingFeatureName && e.currentField() == overrideFieldPathPrimary {
+	//
+	// This routing is UNCONDITIONAL for the signing feature (not gated on
+	// e.currentField() == overrideFieldPathPrimary): a freshly-opened editor
+	// starts focus on overrideFieldEnabled, not the key list's position, so
+	// gating on Tab-focus made 'n'/'x'/Up/Down silent no-ops until the
+	// operator tabbed to the exact right field first -- the "can't add a
+	// key" bug. appendRunes/deleteRune already unconditionally no-op for
+	// every rune when feature == signing (see their own doc comments), so
+	// there is no other field in the signing form that could ever claim
+	// these keys as literal input; routing them here first is safe.
+	if e.feature == signingFeatureName {
 		next, cmd, consumed := e.keys.update(env, msg)
 		if consumed {
 			e.keys = next
