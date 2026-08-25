@@ -23,8 +23,21 @@ import (
 // own clamp is the only bound they need).
 func renderAdminWorkspace(current screen, session AdminSession, view AdminViewState, knownRepositories []string, status string, layout consoleLayout, now time.Time, adminScreens adminScreenSet) string {
 	theme := newAdminTheme()
+	env := screenEnv{Session: session, Layout: layout, KnownRepositories: knownRepositories, Now: func() time.Time { return now }}
 
-	context, body, help := renderAdminScreen(theme, current, session, view, knownRepositories, layout, now)
+	// Migrated top-level screen (design.md Decision I / Data Flow): the
+	// screen's own View() supplies context/body/help/overlay. Every other
+	// screen id still resolves through the legacy renderAdminScreen path
+	// unchanged (design.md D5's adapter boundary).
+	var context, body, help, screenOverlay string
+	if slot, ok := slotFor(current); ok && adminScreens[slot] != nil {
+		frame := adminScreens[slot].View(theme, env)
+		context, body = frame.Context, frame.Body
+		help = shortHelpView(theme, adminScreens[slot].Keys())
+		screenOverlay = frame.Overlay
+	} else {
+		context, body, help = renderAdminScreen(theme, current, session, view, knownRepositories, layout, now)
+	}
 	// statusKindAuto preserves today's substring-classification behavior
 	// (design.md Decision 2: 0 of ~11 renderInspectionWorkspace callers are
 	// touched by the new kind param, and the admin workspace gets the same
@@ -49,14 +62,21 @@ func renderAdminWorkspace(current screen, session AdminSession, view AdminViewSt
 		// gitleaksConfigScreen composites frame.Overlay (design.md Decision
 		// G): the proof that a migrated screen's own render output reaches
 		// the workspace exactly the way its legacy modal counterpart did.
-		env := screenEnv{Session: session, Layout: layout, KnownRepositories: knownRepositories, Now: func() time.Time { return now }}
 		modalView = adminScreens[slotGitleaksConfig].View(theme, env).Overlay
+	case adminScreens[slotTrivyOverride] != nil:
+		// The uniform overrideEditor (design.md Decision F), mounted as an
+		// overlay on Trivy's still-legacy screenAdminFeatures exactly like
+		// slotGitleaksConfig above.
+		modalView = adminScreens[slotTrivyOverride].View(theme, env).Overlay
 	case view.ScanPolicyModal.Active():
 		modalView = renderScanPolicyModal(theme, view.ScanPolicyModal)
 	case view.SigningPolicyModal.Active():
 		modalView = renderSigningPolicyModal(theme, view.SigningPolicyModal)
-	case view.RepositoryOverrideModal.Active():
-		modalView = renderRepositoryOverrideModal(theme, view.RepositoryOverrideModal)
+	case screenOverlay != "":
+		// A migrated top-level screen's own overlay (e.g. Gitleaks'/
+		// Signing's embedded overrideEditor while browsing their own
+		// repository list screen).
+		modalView = screenOverlay
 	}
 	if modalView == "" {
 		return base
@@ -892,70 +912,11 @@ func scanPolicyThresholdLabel(threshold string) string {
 	}
 }
 
-// renderRepositoryOverrideModal renders repositoryOverrideModal, a sibling
-// of renderScanPolicyModal/renderTrivyConfigModal (design.md Decision 8
-// piece 3, spec's "Out of Scope Note": its own small modal, not an
-// extension). Row arithmetic, using the same 2-rows-per-field cost and
-// 4-row theme.section chrome as scan-policy-gate's Decision 6: heading(1) +
-// status(1) + Feature(2) + Enabled(2) + PathPrimary(2) + [PathSecondary(2),
-// trivy only] + [UnsignedSelfRead(2), signing only] + Clear row(1) +
-// [blank+error(2)] + blank+help(2).
-func renderRepositoryOverrideModal(theme adminTheme, modal repositoryOverrideModal) string {
-	lines := []string{
-		theme.subheading.Render(fmt.Sprintf("Repository Override — %s", modal.Repository)),
-		theme.muted.Render(repositoryOverrideStatusLine(modal)),
-		renderTextField(theme, "Feature", modal.Feature, modal.Focus == repositoryOverrideFieldFeature),
-		renderToggleField(theme, "Enabled", modal.Enabled, modal.Focus == repositoryOverrideFieldEnabled),
-	}
-	switch modal.Feature {
-	case gitleaksFeatureName:
-		lines = append(lines, renderTextField(theme, "Config Path", modal.PathPrimary, modal.Focus == repositoryOverrideFieldPathPrimary))
-	case signingFeatureName:
-		lines = append(lines, renderTextField(theme, "Trusted Key (PEM)", modal.PathPrimary, modal.Focus == repositoryOverrideFieldPathPrimary))
-		lines = append(lines, renderTextField(theme, "Unsigned Self-Read", normalizeUnsignedSelfRead(modal.UnsignedSelfRead), modal.Focus == repositoryOverrideFieldUnsignedSelfRead))
-	default:
-		lines = append(lines, renderTextField(theme, "Ignore File Path", modal.PathPrimary, modal.Focus == repositoryOverrideFieldPathPrimary))
-		lines = append(lines, renderTextField(theme, "Ignore Policy Path", modal.PathSecondary, modal.Focus == repositoryOverrideFieldPathSecondary))
-	}
-	lines = append(lines, renderRepositoryOverrideClearRow(theme, modal))
-	if strings.TrimSpace(modal.Error) != "" {
-		lines = append(lines, "", theme.error.Render(modal.Error))
-	}
-	lines = append(lines, "", theme.muted.Render("Enter: save/clear | Tab: next field | Space: toggle/cycle | Esc: cancel"))
-	return theme.section.Render(strings.Join(lines, "\n"))
-}
-
-// repositoryOverrideStatusLine answers "which repository, override or
-// inherited" without spending a dedicated 2-row field on either (design.md
-// Decision 8's row-arithmetic table), matching the operator-admin-tui spec's
-// three exact inheritance-state strings.
-func repositoryOverrideStatusLine(modal repositoryOverrideModal) string {
-	if modal.Loading {
-		return "Loading…"
-	}
-	if modal.Exists {
-		return "override active"
-	}
-	return "inheriting global settings"
-}
-
-// renderRepositoryOverrideClearRow renders the modal's Clear action as a
-// single-row line (design.md Decision 8's "Clear row: 1" cost, distinct from
-// every other field's 2-row cost since it is an action, not an input) --
-// inert wording when the repository is already inheriting global settings,
-// since Enter on this row then reports "already inheriting global" instead
-// of issuing a DELETE that would 404.
-func renderRepositoryOverrideClearRow(theme adminTheme, modal repositoryOverrideModal) string {
-	label := "Clear override -> use global settings"
-	if !modal.Exists {
-		label = "Already inheriting global settings"
-	}
-	style := theme.muted
-	if modal.Focus == repositoryOverrideFieldClear {
-		style = theme.inputFocus
-	}
-	return style.Render(label)
-}
+// renderRepositoryOverrideModal/repositoryOverrideStatusLine/
+// renderRepositoryOverrideClearRow were retired by tui-menu-architecture
+// (design.md Decision F). The uniform per-repository override editor now
+// renders through renderOverrideEditor/overrideStatusLine/
+// renderOverrideClearRow (override_editor.go), with no Feature row.
 
 func adminFeatureHelp(view AdminViewState) string {
 	parts := []string{"Enter/r: refresh page"}
@@ -972,10 +933,17 @@ func adminFeatureHelp(view AdminViewState) string {
 		parts = append(parts, "p: policy")
 	}
 	if view.FeaturePage.Summary.Name == gitleaksFeatureName {
-		parts = append(parts, "s: configure")
+		// "o: repository overrides" is the actual fix for the originally
+		// reported defect (proposal Intent): this branch previously
+		// advertised no override entry point at all, the exact drift class
+		// this change exists to kill (spec.md "Gitleaks Repository-Scoped
+		// Override Entry Point").
+		parts = append(parts, "s: configure", "o: repository overrides")
 	}
 	if view.FeaturePage.Summary.Name == signingFeatureName {
-		parts = append(parts, "p: policy")
+		// Same fix as gitleaks, for signing (spec.md "Signing
+		// Repository-Scoped Override Entry Point").
+		parts = append(parts, "p: policy", "o: repository overrides")
 	}
 	parts = append(parts, strings.Split(featureActionHelp(view.FeaturePage), " | ")[1:]...)
 	return strings.Join(parts, " | ")

@@ -297,65 +297,12 @@ func nextUnsignedSelfReadValue(value string) string {
 	return unsignedSelfReadCycle[0]
 }
 
-// repositoryOverrideField identifies which of repositoryOverrideModal's
-// fields has focus (design.md Decision 8 piece 1).
-type repositoryOverrideField int
-
-const (
-	repositoryOverrideFieldFeature repositoryOverrideField = iota
-	repositoryOverrideFieldEnabled
-	repositoryOverrideFieldPathPrimary      // trivy: ignore file | gitleaks: config | signing: trusted key
-	repositoryOverrideFieldPathSecondary    // trivy: ignore policy (skipped for gitleaks/signing)
-	repositoryOverrideFieldUnsignedSelfRead // signing only (skipped otherwise)
-	repositoryOverrideFieldClear            // action row, not an input
-)
-
-// repositoryOverrideModal is the per-repository override editor opened with
-// `o` on a highlighted Repository Alerts row, mirroring scanPolicyModal's
-// exact 3-piece shape (design.md Decision 8 — a sibling struct, not an
-// extension of trivyConfigModal or scanPolicyModal). UnsignedSelfRead mirrors
-// signingPolicyModal.UnsignedSelfRead: only meaningful (and only reachable
-// via Tab/Space) when Feature == signingFeatureName, always held here as one
-// of unsignedSelfReadCycle's three canonical values (never "").
-type repositoryOverrideModal struct {
-	Open             bool
-	Repository       string
-	Feature          string // trivyFeatureName | gitleaksFeatureName
-	Focus            repositoryOverrideField
-	Exists           bool // false => this repository inherits the global row
-	Enabled          bool
-	PathPrimary      string
-	PathSecondary    string
-	UnsignedSelfRead string // "off" | "pusher" | "repo_push" -- signing only, see type doc comment
-	Loading          bool
-	Error            string
-}
-
-func (m repositoryOverrideModal) Active() bool {
-	return m.Open
-}
-
-// nextRepositoryOverrideField wraps between the modal's 6 fields, skipping
-// repositoryOverrideFieldPathSecondary for every feature except trivy
-// (gitleaks has no second path field, and neither does signing --
-// design.md Decision 11 piece 3 generalizes this condition from
-// "feature == gitleaksFeatureName" to "feature != trivyFeatureName" so a
-// fourth single-path feature needs no further change here) and skipping
-// repositoryOverrideFieldUnsignedSelfRead for every feature except signing,
-// mirroring nextScanPolicyField's wrapping-cursor pattern.
-func nextRepositoryOverrideField(field repositoryOverrideField, feature string) repositoryOverrideField {
-	next := field + 1
-	if next == repositoryOverrideFieldPathSecondary && feature != trivyFeatureName {
-		next = repositoryOverrideFieldUnsignedSelfRead
-	}
-	if next == repositoryOverrideFieldUnsignedSelfRead && feature != signingFeatureName {
-		next = repositoryOverrideFieldClear
-	}
-	if next > repositoryOverrideFieldClear {
-		next = repositoryOverrideFieldFeature
-	}
-	return next
-}
+// repositoryOverrideModal and repositoryOverrideField were retired by
+// tui-menu-architecture (design.md Decision F): the per-repository override
+// editor is now overrideEditor (override_editor.go), whose Feature is
+// unexported and constructor-only rather than a focusable, cycle-driven
+// field. See operator-admin-tui's MODIFIED requirement "Repository-Scoped
+// Override Modal On The Repository Alerts Row".
 
 // adminScanHistoryTabKind identifies one feature's tab inside the scan
 // history modal (design.md "Ordered tab slice with a wrapping cursor").
@@ -493,11 +440,10 @@ type AdminViewState struct {
 	// (spec.md "Repository Alert Drill-Down Opens History Modal"), opened by
 	// Enter on a summary row (updateAdminFeaturesKey).
 	ScanHistoryModal adminScanHistoryModal
-	// RepositoryOverrideModal is the per-repository override editor state
-	// (design.md Decision 8), opened by `o` on a highlighted Repository
-	// Alerts row (updateAdminFeaturesKey), a sibling of ScanHistoryModal, not
-	// an extension.
-	RepositoryOverrideModal repositoryOverrideModal
+	// RepositoryOverrideModal is retired (tui-menu-architecture, design.md
+	// Decision F): the per-repository override editor now lives per-screen
+	// as overrideEditor (Model.adminScreens[slotTrivyOverride] for Trivy;
+	// embedded in featureOverridesScreen for Gitleaks/Signing).
 	// RepoAdminRepository/RepoAdminGrants/SelectedRepoAdminGrant/
 	// RepoAdminGrantForm back screenRepoAdminGrants/screenRepoAdminAddGrant
 	// (design.md Decision 7): the repo-admin delegate's own repository-

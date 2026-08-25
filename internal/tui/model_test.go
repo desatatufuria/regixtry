@@ -2895,16 +2895,18 @@ func TestModelSigningPolicyModalAddKeySubmitPersistsAndReflectsCurrentSettings(t
 	}
 }
 
-// TestModelRepositoryOverrideModalOpenerKeyIsScopedToRepositoryAlertsRow is
-// the Phase 8 task 8.4/8.5 RED test (operator-admin-tui spec's "The override
-// key is scoped to the Repository Alerts row only" scenario, design.md
-// Decision 8 piece 2): `o` on a highlighted Repository Alerts row opens
-// repositoryOverrideModal bound to that repository and trivyFeatureName and
-// fires a load; `o` on the Runtime tab, or on Repository Alerts with no rows
-// loaded, must not open it and must not collide with featureActionForKey's
-// fallback (the case sits before the `model.go:1257` fallback in the
-// switch).
-func TestModelRepositoryOverrideModalOpenerKeyIsScopedToRepositoryAlertsRow(t *testing.T) {
+// TestModelTrivyOverrideEditorOpenerKeyIsScopedToRepositoryAlertsRow is the
+// Slice 2 successor to the retired
+// TestModelRepositoryOverrideModalOpenerKeyIsScopedToRepositoryAlertsRow
+// (operator-admin-tui spec's "The override key is scoped to the opening
+// screen's row only" scenario, design.md Decision F): `o` on a highlighted
+// Repository Alerts row mounts the uniform overrideEditor bound to that
+// repository and trivyFeatureName and fires a load; `o` on the Runtime tab,
+// or on Repository Alerts with no rows loaded, must not open it and must
+// not collide with featureActionForKey's fallback. 'o' keeps its exact
+// current keybinding/meaning on Trivy's own Repository Alerts row
+// (user-confirmed decision).
+func TestModelTrivyOverrideEditorOpenerKeyIsScopedToRepositoryAlertsRow(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.August, 13, 9, 0, 0, 0, time.UTC)
@@ -2913,7 +2915,7 @@ func TestModelRepositoryOverrideModalOpenerKeyIsScopedToRepositoryAlertsRow(t *t
 		Header:  []ports.FeatureField{{Label: "Enabled", Value: "true"}},
 	}
 
-	t.Run("o opens the modal on a highlighted Repository Alerts row", func(t *testing.T) {
+	t.Run("o opens the editor on a highlighted Repository Alerts row", func(t *testing.T) {
 		t.Parallel()
 		adminClient := &fakeAdminClient{
 			loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
@@ -2932,32 +2934,33 @@ func TestModelRepositoryOverrideModalOpenerKeyIsScopedToRepositoryAlertsRow(t *t
 
 		updated = runKey(t, updated, "o")
 
-		if !updated.adminView.RepositoryOverrideModal.Open {
-			t.Fatal("RepositoryOverrideModal.Open = false, want true after 'o'")
+		editor, ok := updated.adminScreens[slotTrivyOverride].(overrideEditor)
+		if !ok || !editor.Active() {
+			t.Fatalf("adminScreens[slotTrivyOverride] = %#v, want an active overrideEditor after 'o'", updated.adminScreens[slotTrivyOverride])
 		}
-		if got, want := updated.adminView.RepositoryOverrideModal.Repository, "team/api"; got != want {
-			t.Fatalf("RepositoryOverrideModal.Repository = %q, want %q", got, want)
+		if got, want := editor.repository, "team/api"; got != want {
+			t.Fatalf("editor.repository = %q, want %q", got, want)
 		}
-		if got, want := updated.adminView.RepositoryOverrideModal.Feature, trivyFeatureName; got != want {
-			t.Fatalf("RepositoryOverrideModal.Feature = %q, want %q", got, want)
+		if got, want := editor.Feature(), trivyFeatureName; got != want {
+			t.Fatalf("editor.Feature() = %q, want %q", got, want)
 		}
 		if adminClient.getRepositoryOverrideCalls != 1 {
 			t.Fatalf("getRepositoryOverrideCalls = %d, want 1", adminClient.getRepositoryOverrideCalls)
 		}
-		if updated.adminView.RepositoryOverrideModal.Loading {
-			t.Fatal("RepositoryOverrideModal.Loading = true, want false once the load Cmd has resolved")
+		if editor.loading {
+			t.Fatal("editor.loading = true, want false once the load Cmd has resolved")
 		}
-		if !updated.adminView.RepositoryOverrideModal.Exists || !strings.Contains(updated.View(), "team/api") {
-			t.Fatalf("RepositoryOverrideModal = %#v, want the stored override reflected", updated.adminView.RepositoryOverrideModal)
+		if !editor.exists || !strings.Contains(updated.View(), "team/api") {
+			t.Fatalf("editor = %#v, want the stored override reflected", editor)
 		}
 
 		closed := runKey(t, updated, "esc")
-		if closed.adminView.RepositoryOverrideModal.Open {
-			t.Fatal("RepositoryOverrideModal.Open = true, want false after esc")
+		if closed.adminScreens[slotTrivyOverride] != nil {
+			t.Fatalf("adminScreens[slotTrivyOverride] = %#v, want nil after esc", closed.adminScreens[slotTrivyOverride])
 		}
 	})
 
-	t.Run("o on the Runtime tab does not open the modal or collide with feature actions", func(t *testing.T) {
+	t.Run("o on the Runtime tab does not open the editor or collide with feature actions", func(t *testing.T) {
 		t.Parallel()
 		adminClient := &fakeAdminClient{
 			loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
@@ -2969,8 +2972,8 @@ func TestModelRepositoryOverrideModalOpenerKeyIsScopedToRepositoryAlertsRow(t *t
 
 		updated = runKey(t, updated, "o")
 
-		if updated.adminView.RepositoryOverrideModal.Open {
-			t.Fatal("RepositoryOverrideModal.Open = true, want false on the Runtime tab")
+		if updated.adminScreens[slotTrivyOverride] != nil {
+			t.Fatal("adminScreens[slotTrivyOverride] != nil, want nil on the Runtime tab")
 		}
 		if adminClient.getRepositoryOverrideCalls != 0 {
 			t.Fatalf("getRepositoryOverrideCalls = %d, want 0 (no load fired)", adminClient.getRepositoryOverrideCalls)
@@ -2980,7 +2983,7 @@ func TestModelRepositoryOverrideModalOpenerKeyIsScopedToRepositoryAlertsRow(t *t
 		}
 	})
 
-	t.Run("o with no Repository Alerts row highlighted does not open the modal", func(t *testing.T) {
+	t.Run("o with no Repository Alerts row highlighted does not open the editor", func(t *testing.T) {
 		t.Parallel()
 		adminClient := &fakeAdminClient{
 			loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
@@ -2993,94 +2996,21 @@ func TestModelRepositoryOverrideModalOpenerKeyIsScopedToRepositoryAlertsRow(t *t
 
 		updated = runKey(t, updated, "o")
 
-		if updated.adminView.RepositoryOverrideModal.Open {
-			t.Fatal("RepositoryOverrideModal.Open = true, want false with no highlighted row")
+		if updated.adminScreens[slotTrivyOverride] != nil {
+			t.Fatal("adminScreens[slotTrivyOverride] != nil, want nil with no highlighted row")
 		}
 	})
 }
 
-// TestNextRepositoryOverrideFeatureNameCyclesTrivyGitleaksSigning is the
-// Phase 9 task 9.14 RED test (design.md Decision 11 piece 3): the modal's
-// Feature field cycle grows from the shipped 2-value
-// trivy -> gitleaks -> trivy to trivy -> gitleaks -> signing -> trivy. This
-// is the one shipped TUI behavior this change deliberately alters -- no
-// prior test asserted the 2-value cycle by name, so this is a fresh
-// table-driven proof of the new 3-value shape, not an edit to a pre-existing
-// passing test.
-func TestNextRepositoryOverrideFeatureNameCyclesTrivyGitleaksSigning(t *testing.T) {
-	t.Parallel()
-
-	got := trivyFeatureName
-	want := []string{gitleaksFeatureName, signingFeatureName, trivyFeatureName}
-	for i, expect := range want {
-		got = nextRepositoryOverrideFeatureName(got)
-		if got != expect {
-			t.Fatalf("step %d: nextRepositoryOverrideFeatureName() = %q, want %q", i, got, expect)
-		}
-	}
-
-	// An unrecognized feature name falls back to the first entry, mirroring
-	// nextRepositoryOverrideFeatureName's defensive fallback.
-	if got := nextRepositoryOverrideFeatureName("unknown"); got != trivyFeatureName {
-		t.Fatalf("nextRepositoryOverrideFeatureName(unknown) = %q, want %q (fallback)", got, trivyFeatureName)
-	}
-}
-
-// TestModelRepositoryOverrideModalCyclesToSigningViaSpaceOnFeatureField is
-// the Phase 9 task 9.14/9.17 RED test at the Model.Update level: pressing
-// Space twice on the Feature field (starting from trivy, the opener's
-// default) reaches "signing", and a third press wraps back to "trivy".
-func TestModelRepositoryOverrideModalCyclesToSigningViaSpaceOnFeatureField(t *testing.T) {
-	t.Parallel()
-
-	now := time.Date(2026, time.August, 13, 9, 0, 0, 0, time.UTC)
-	adminClient := &fakeAdminClient{
-		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-		features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
-		featurePage: ports.FeaturePage{
-			Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
-			Header:  []ports.FeatureField{{Label: "Enabled", Value: "true"}},
-		},
-		scanRuns: []ports.ScanRun{
-			{ID: "run-1", Repository: "library/alpine", RequestedRef: "1.0.0", Status: ports.ScanRunStatusCompleted, Critical: 1},
-		},
-	}
-	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
-	updated = runKey(t, updated, "f")
-	updated = runKey(t, updated, "tab") // switch to Repository Alerts
-	updated = runKey(t, updated, "o")
-
-	if got, want := updated.adminView.RepositoryOverrideModal.Feature, trivyFeatureName; got != want {
-		t.Fatalf("RepositoryOverrideModal.Feature = %q, want %q on open", got, want)
-	}
-
-	oneCycle := runKey(t, updated, " ")
-	if got, want := oneCycle.adminView.RepositoryOverrideModal.Feature, gitleaksFeatureName; got != want {
-		t.Fatalf("RepositoryOverrideModal.Feature after 1 Space = %q, want %q", got, want)
-	}
-
-	twoCycles := runKey(t, oneCycle, " ")
-	if got, want := twoCycles.adminView.RepositoryOverrideModal.Feature, signingFeatureName; got != want {
-		t.Fatalf("RepositoryOverrideModal.Feature after 2 Spaces = %q, want %q", got, want)
-	}
-	if !strings.Contains(twoCycles.View(), "Trusted Key (PEM)") {
-		t.Fatalf("view = %q, want the signing-specific field label once cycled to signing", twoCycles.View())
-	}
-
-	threeCycles := runKey(t, twoCycles, " ")
-	if got, want := threeCycles.adminView.RepositoryOverrideModal.Feature, trivyFeatureName; got != want {
-		t.Fatalf("RepositoryOverrideModal.Feature after 3 Spaces = %q, want %q (wraps)", got, want)
-	}
-}
-
-// TestModelRepositoryOverrideModalSetAndClearRoundTripReflectsInModal is the
-// Phase 8 tasks 8.6/8.7 RED test (operator-admin-tui spec's "Operator sets
-// an override from the modal" / "Operator clears an override from the
-// modal" scenarios): submitting new values persists through the admin API
-// and reflects the new values back in the modal (still open, unlike
-// scanPolicyModal); clearing deletes it and reflects the repository using
-// global settings.
-func TestModelRepositoryOverrideModalSetAndClearRoundTripReflectsInModal(t *testing.T) {
+// TestModelTrivyOverrideEditorSetAndClearRoundTripReflectsInModal is the
+// Slice 2 successor to the retired
+// TestModelRepositoryOverrideModalSetAndClearRoundTripReflectsInModal
+// (operator-admin-tui spec's "Operator sets an override from the modal" /
+// "Operator clears an override from the modal" scenarios): submitting new
+// values persists through the admin API and reflects the new values back in
+// the editor (still open, unlike scanPolicyModal); clearing deletes it and
+// reflects the repository using global settings.
+func TestModelTrivyOverrideEditorSetAndClearRoundTripReflectsInModal(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.August, 13, 9, 0, 0, 0, time.UTC)
@@ -3100,13 +3030,13 @@ func TestModelRepositoryOverrideModalSetAndClearRoundTripReflectsInModal(t *test
 	updated = runKey(t, updated, "tab")
 	updated = runKey(t, updated, "o")
 
-	if !updated.adminView.RepositoryOverrideModal.Open || updated.adminView.RepositoryOverrideModal.Exists {
-		t.Fatalf("RepositoryOverrideModal = %#v, want open with no existing override", updated.adminView.RepositoryOverrideModal)
+	editorAfterOpen, ok := updated.adminScreens[slotTrivyOverride].(overrideEditor)
+	if !ok || !editorAfterOpen.Active() || editorAfterOpen.exists {
+		t.Fatalf("editor = %#v, want open with no existing override", editorAfterOpen)
 	}
 
-	// Tab past Feature to Enabled, toggle it on, Tab to PathPrimary, type a
-	// path, then Enter to submit.
-	updated = runKey(t, updated, "tab")
+	// Focus starts on Enabled (no Feature field, design.md Decision F):
+	// toggle it on, Tab to PathPrimary, type a path, then Enter to submit.
 	updated = runKey(t, updated, " ")
 	updated = runKey(t, updated, "tab")
 	for _, r := range "/etc/trivy/ignore" {
@@ -3120,11 +3050,12 @@ func TestModelRepositoryOverrideModalSetAndClearRoundTripReflectsInModal(t *test
 	if !adminClient.lastSetRepositoryOverride.Enabled || adminClient.lastSetRepositoryOverride.IgnoreFilePath != "/etc/trivy/ignore" {
 		t.Fatalf("lastSetRepositoryOverride = %#v, want Enabled true with the typed ignore file path", adminClient.lastSetRepositoryOverride)
 	}
-	if !submitted.adminView.RepositoryOverrideModal.Open {
-		t.Fatal("RepositoryOverrideModal.Open = false, want the modal to stay open after a successful save")
+	editorAfterSave, ok := submitted.adminScreens[slotTrivyOverride].(overrideEditor)
+	if !ok || !editorAfterSave.Active() {
+		t.Fatal("editor.Active() = false, want the editor to stay open after a successful save")
 	}
-	if !submitted.adminView.RepositoryOverrideModal.Exists || submitted.adminView.RepositoryOverrideModal.PathPrimary != "/etc/trivy/ignore" {
-		t.Fatalf("RepositoryOverrideModal = %#v, want the saved override reflected", submitted.adminView.RepositoryOverrideModal)
+	if !editorAfterSave.exists || editorAfterSave.pathPrimary != "/etc/trivy/ignore" {
+		t.Fatalf("editor = %#v, want the saved override reflected", editorAfterSave)
 	}
 	if !strings.Contains(submitted.View(), "Repository override saved") {
 		t.Fatalf("view = %q, want save feedback", submitted.View())
@@ -3132,7 +3063,11 @@ func TestModelRepositoryOverrideModalSetAndClearRoundTripReflectsInModal(t *test
 
 	// Tab to the Clear row and press Enter to clear it.
 	cleared := submitted
-	for cleared.adminView.RepositoryOverrideModal.Focus != repositoryOverrideFieldClear {
+	for {
+		e, _ := cleared.adminScreens[slotTrivyOverride].(overrideEditor)
+		if e.currentField() == overrideFieldClear {
+			break
+		}
 		cleared = runKey(t, cleared, "tab")
 	}
 	cleared = runKey(t, cleared, "enter")
@@ -3140,11 +3075,12 @@ func TestModelRepositoryOverrideModalSetAndClearRoundTripReflectsInModal(t *test
 	if adminClient.clearRepositoryOverrideCalls != 1 {
 		t.Fatalf("clearRepositoryOverrideCalls = %d, want 1", adminClient.clearRepositoryOverrideCalls)
 	}
-	if cleared.adminView.RepositoryOverrideModal.Exists {
-		t.Fatal("RepositoryOverrideModal.Exists = true, want false after clear")
+	editorAfterClear, _ := cleared.adminScreens[slotTrivyOverride].(overrideEditor)
+	if editorAfterClear.exists {
+		t.Fatal("editor.exists = true, want false after clear")
 	}
 	if !strings.Contains(cleared.View(), "inheriting global settings") {
-		t.Fatalf("view = %q, want the modal to show the repository inheriting global settings after clear", cleared.View())
+		t.Fatalf("view = %q, want the editor to show the repository inheriting global settings after clear", cleared.View())
 	}
 
 	// Pressing Enter on the Clear row again (already inheriting global) must
@@ -3153,45 +3089,43 @@ func TestModelRepositoryOverrideModalSetAndClearRoundTripReflectsInModal(t *test
 	if adminClient.clearRepositoryOverrideCalls != 1 {
 		t.Fatalf("clearRepositoryOverrideCalls = %d, want still 1 (inert when already inheriting global)", adminClient.clearRepositoryOverrideCalls)
 	}
-	if !strings.Contains(inert.status, "Already inheriting global") {
-		t.Fatalf("status = %q, want the inert-clear message", inert.status)
+	inertEditor, _ := inert.adminScreens[slotTrivyOverride].(overrideEditor)
+	if !strings.Contains(inertEditor.err, "Already inheriting global") {
+		t.Fatalf("editor.err = %q, want the inert-clear message", inertEditor.err)
 	}
 }
 
-// TestModelRepositoryOverrideModalSigningSaveIncludesUnsignedSelfRead is the
-// RED test for the bug found while scoping this change: cycling to the
-// signing feature, saving once establishes UnsignedSelfRead via the modal's
-// own field (round-tripped back by applyRepositoryOverrideToModal, mirroring
-// Enabled/PathPrimary's existing reflected-after-save behavior); a second
-// save that only touches an unrelated field (Enabled) used to silently wipe
-// UnsignedSelfRead back to "" because the Enter handler's signing branch
-// never included it in the save payload.
-func TestModelRepositoryOverrideModalSigningSaveIncludesUnsignedSelfRead(t *testing.T) {
+// TestFeatureOverridesScreenSigningSaveIncludesUnsignedSelfRead is the Slice
+// 2 successor to the retired
+// TestModelRepositoryOverrideModalSigningSaveIncludesUnsignedSelfRead,
+// re-targeted to Signing's own dedicated repository override screen (the
+// only reachable way to edit a signing override now that the Feature cycle
+// is gone): a first save establishes UnsignedSelfRead via the editor's own
+// field (round-tripped back by applyOverride); a second save that only
+// touches an unrelated field (Enabled) must not silently wipe
+// UnsignedSelfRead back to "".
+func TestFeatureOverridesScreenSigningSaveIncludesUnsignedSelfRead(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.August, 15, 21, 0, 0, 0, time.UTC)
 	adminClient := &fakeAdminClient{
 		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-		features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
+		features:     []ports.FeatureSummary{{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: true}},
 		featurePage: ports.FeaturePage{
-			Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
-			Header:  []ports.FeatureField{{Label: "Enabled", Value: "true"}},
-		},
-		scanRuns: []ports.ScanRun{
-			{ID: "run-1", Repository: "team/az-deploy-demo", RequestedRef: "1.0.0", Status: ports.ScanRunStatusCompleted, Critical: 1},
+			Summary: ports.FeatureSummary{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: true},
 		},
 	}
 	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
 	updated = runKey(t, updated, "f")
-	updated = runKey(t, updated, "tab")
-	updated = runKey(t, updated, "o")
+	updated = runKey(t, updated, "o") // opens screenSecuritySigningRepos
 
-	// Cycle Feature (trivy -> gitleaks -> signing) with 2 Spaces, Tab past
-	// Enabled to PathPrimary, type a key, Tab to UnsignedSelfRead and cycle
-	// it off -> pusher, then Enter to save.
-	updated = runKey(t, updated, " ")
-	updated = runKey(t, updated, " ")
-	updated = runKey(t, updated, "tab")
+	if got, want := updated.screen, screenSecuritySigningRepos; got != want {
+		t.Fatalf("screen = %q, want %q", got, want)
+	}
+	updated = runKey(t, updated, "o") // opens the editor on the highlighted (only) row
+
+	// Focus starts on Enabled: Tab to PathPrimary, type a key, Tab to
+	// UnsignedSelfRead and toggle it off -> pusher, then Enter to save.
 	updated = runKey(t, updated, "tab")
 	for _, r := range "-----BEGIN PUBLIC KEY-----fakekeydata-----END PUBLIC KEY-----" {
 		updated = runKey(t, updated, string(r))
@@ -3203,18 +3137,23 @@ func TestModelRepositoryOverrideModalSigningSaveIncludesUnsignedSelfRead(t *test
 	if got, want := adminClient.lastSetRepositoryOverride.UnsignedSelfRead, "pusher"; got != want {
 		t.Fatalf("lastSetRepositoryOverride.UnsignedSelfRead = %q, want %q", got, want)
 	}
-	if got, want := firstSave.adminView.RepositoryOverrideModal.UnsignedSelfRead, "pusher"; got != want {
-		t.Fatalf("RepositoryOverrideModal.UnsignedSelfRead = %q, want %q reflected after save", got, want)
+	screenAfterFirst, ok := firstSave.adminScreens[slotSigningRepos].(featureOverridesScreen)
+	if !ok {
+		t.Fatalf("adminScreens[slotSigningRepos] = %#v, want featureOverridesScreen", firstSave.adminScreens[slotSigningRepos])
+	}
+	if got, want := screenAfterFirst.editor.unsignedSelfRead, "pusher"; got != want {
+		t.Fatalf("editor.unsignedSelfRead = %q, want %q reflected after save", got, want)
 	}
 
-	// Navigate from UnsignedSelfRead -> Clear -> Feature -> Enabled (3 Tabs),
-	// toggle Enabled only, then save again without touching UnsignedSelfRead.
+	// Navigate from UnsignedSelfRead -> Clear -> Enabled (2 Tabs), toggle
+	// Enabled only, then save again without touching UnsignedSelfRead.
 	navigated := firstSave
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 2; i++ {
 		navigated = runKey(t, navigated, "tab")
 	}
-	if got, want := navigated.adminView.RepositoryOverrideModal.Focus, repositoryOverrideFieldEnabled; got != want {
-		t.Fatalf("Focus = %v, want %v (Enabled) after 3 Tabs from UnsignedSelfRead", got, want)
+	navScreen, _ := navigated.adminScreens[slotSigningRepos].(featureOverridesScreen)
+	if got, want := navScreen.editor.currentField(), overrideFieldEnabled; got != want {
+		t.Fatalf("currentField() = %v, want %v (Enabled) after 2 Tabs from UnsignedSelfRead", got, want)
 	}
 	navigated = runKey(t, navigated, " ")
 	secondSave := runKey(t, navigated, "enter")
@@ -3225,8 +3164,9 @@ func TestModelRepositoryOverrideModalSigningSaveIncludesUnsignedSelfRead(t *test
 	if got, want := adminClient.lastSetRepositoryOverride.UnsignedSelfRead, "pusher"; got != want {
 		t.Fatalf("lastSetRepositoryOverride.UnsignedSelfRead = %q, want %q preserved from the first save", got, want)
 	}
-	if got, want := secondSave.adminView.RepositoryOverrideModal.UnsignedSelfRead, "pusher"; got != want {
-		t.Fatalf("RepositoryOverrideModal.UnsignedSelfRead = %q, want %q after second save", got, want)
+	screenAfterSecond, _ := secondSave.adminScreens[slotSigningRepos].(featureOverridesScreen)
+	if got, want := screenAfterSecond.editor.unsignedSelfRead, "pusher"; got != want {
+		t.Fatalf("editor.unsignedSelfRead = %q, want %q after second save", got, want)
 	}
 }
 

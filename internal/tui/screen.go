@@ -74,6 +74,16 @@ const (
 	// gitleaks' own global config editor, migrated off
 	// AdminViewState.GitleaksConfigModal.
 	slotGitleaksConfig screenSlot = iota
+	// slotTrivyOverride holds the uniform overrideEditor (design.md
+	// Decision F) while open for Trivy's own Repository Alerts row -- an
+	// overlay on screenAdminFeatures, mounted/unmounted exactly like
+	// slotGitleaksConfig, not addressed via slotFor.
+	slotTrivyOverride
+	// slotGitleaksRepos/slotSigningRepos hold Gitleaks' and Signing's own
+	// dedicated per-repository override list screens (design.md D3, D8) --
+	// genuinely new top-level screens, addressed via slotFor.
+	slotGitleaksRepos
+	slotSigningRepos
 	numScreenSlots
 )
 
@@ -82,20 +92,29 @@ const (
 // let a discarded copy observe another copy's mutation.
 type adminScreenSet [numScreenSlots]adminScreen
 
-// slotFor resolves a screen id to its migrated slot, if any. Slice 1
-// migrates no top-level screen (the proof screen, gitleaksConfigScreen, is
-// an overlay mounted directly into adminScreens[slotGitleaksConfig] by the
-// gitleaks row's "s" opener, not addressed by screen identity) — every
-// screen id updateAdminKey resolves still falls through to
-// legacyScreenHandlers until Slice 2 populates this lookup.
+// slotFor resolves a screen id to its migrated slot, if any. Slice 2
+// migrates exactly two top-level screens (design.md D3, D8): Gitleaks' and
+// Signing's own dedicated repository override list screens. Trivy's own
+// override editor and Gitleaks' config editor stay mounted as overlays on
+// the still-legacy screenAdminFeatures (slotTrivyOverride/
+// slotGitleaksConfig), not addressed here — every other screen id
+// updateAdminKey resolves still falls through to legacyScreenHandlers.
 func slotFor(id screen) (screenSlot, bool) {
-	return 0, false
+	switch id {
+	case screenSecurityGitleaksRepos:
+		return slotGitleaksRepos, true
+	case screenSecuritySigningRepos:
+		return slotSigningRepos, true
+	default:
+		return 0, false
+	}
 }
 
-// navigateMsg asks the router to switch the active top-level screen. Not
-// yet emitted by any Slice 1 sub-model (there is only one, and it is an
-// overlay, not a top-level screen) — the type is introduced now so Slice 2's
-// migrated screens have it available without another contract change.
+// navigateMsg asks the router to switch the active top-level screen —
+// Slice 2's first real use (design.md screen.go): a migrated screen's Esc
+// asks the parent to switch m.screen back without ever writing it directly
+// (Decision B: the parent replaces its held value, a child never reaches
+// into the parent).
 type navigateMsg struct {
 	To screen
 }

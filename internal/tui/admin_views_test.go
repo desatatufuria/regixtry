@@ -393,40 +393,42 @@ func TestRenderScanPolicyModalIsASeparateSurfaceFromTrivyConfigModal(t *testing.
 	}
 }
 
-// TestRenderRepositoryOverrideModalFitsWithinRowBudget is the Phase 8 task
-// 8.2 RED test: renderRepositoryOverrideModal's row budgets exactly match
-// design.md Decision 8's table -- 17 (trivy, no error), 19 (trivy + error),
-// 15 (gitleaks, no error), 17 (gitleaks + error) -- comfortably within the
-// 24-row minViewportHeight floor.
-func TestRenderRepositoryOverrideModalFitsWithinRowBudget(t *testing.T) {
+// TestRenderOverrideEditorFitsWithinRowBudget is the Slice 2 successor to
+// the retired TestRenderRepositoryOverrideModalFitsWithinRowBudget: with the
+// Feature row deleted (design.md Decision F) and the Clear row's own text
+// wrapping to 2 rendered lines at this theme.section width, heights are 16
+// (trivy, no error), 18 (trivy + error), 14 (gitleaks, no error), 16
+// (gitleaks + error) -- comfortably within the 24-row minViewportHeight
+// floor.
+func TestRenderOverrideEditorFitsWithinRowBudget(t *testing.T) {
 	t.Parallel()
 
 	theme := newAdminTheme()
 
 	tests := []struct {
 		name       string
-		modal      repositoryOverrideModal
+		editor     overrideEditor
 		wantHeight int
 	}{
 		{
 			name:       "trivy, no error",
-			modal:      repositoryOverrideModal{Open: true, Repository: "library/alpine", Feature: trivyFeatureName, Exists: true, Enabled: true, PathPrimary: "/etc/trivy/ignore", PathSecondary: "/etc/trivy/policy.rego"},
-			wantHeight: 17,
+			editor:     overrideEditor{open: true, repository: "library/alpine", feature: trivyFeatureName, exists: true, enabled: true, pathPrimary: "/etc/trivy/ignore", pathSecondary: "/etc/trivy/policy.rego"},
+			wantHeight: 16,
 		},
 		{
 			name:       "trivy + error",
-			modal:      repositoryOverrideModal{Open: true, Repository: "library/alpine", Feature: trivyFeatureName, Exists: true, Enabled: true, PathPrimary: "/etc/trivy/ignore", PathSecondary: "/etc/trivy/policy.rego", Error: "ignore_file_path must be absolute"},
-			wantHeight: 19,
+			editor:     overrideEditor{open: true, repository: "library/alpine", feature: trivyFeatureName, exists: true, enabled: true, pathPrimary: "/etc/trivy/ignore", pathSecondary: "/etc/trivy/policy.rego", err: "ignore_file_path must be absolute"},
+			wantHeight: 18,
 		},
 		{
 			name:       "gitleaks, no error",
-			modal:      repositoryOverrideModal{Open: true, Repository: "team/config", Feature: gitleaksFeatureName, Exists: false, PathPrimary: "/etc/gitleaks/config.toml"},
-			wantHeight: 15,
+			editor:     overrideEditor{open: true, repository: "team/config", feature: gitleaksFeatureName, exists: false, pathPrimary: "/etc/gitleaks/config.toml"},
+			wantHeight: 14,
 		},
 		{
 			name:       "gitleaks + error",
-			modal:      repositoryOverrideModal{Open: true, Repository: "team/config", Feature: gitleaksFeatureName, Exists: false, PathPrimary: "/etc/gitleaks/config.toml", Error: "config_path must be absolute"},
-			wantHeight: 17,
+			editor:     overrideEditor{open: true, repository: "team/config", feature: gitleaksFeatureName, exists: false, pathPrimary: "/etc/gitleaks/config.toml", err: "config_path must be absolute"},
+			wantHeight: 16,
 		},
 	}
 
@@ -434,43 +436,44 @@ func TestRenderRepositoryOverrideModalFitsWithinRowBudget(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := renderRepositoryOverrideModal(theme, tc.modal)
+			got := renderOverrideEditor(theme, tc.editor)
 			if h := lipgloss.Height(got); h != tc.wantHeight {
-				t.Fatalf("renderRepositoryOverrideModal() height = %d, want %d (design.md Decision 8's row budget)\n%s", h, tc.wantHeight, got)
+				t.Fatalf("renderOverrideEditor() height = %d, want %d\n%s", h, tc.wantHeight, got)
 			}
 		})
 	}
 }
 
-// TestRenderRepositoryOverrideModalShowsRepositoryAndInheritanceState is the
-// Phase 8 task 8.3 RED test (operator-admin-tui spec's "Opening the modal on
-// a highlighted row shows the effective config" / "Opening the modal shows
-// an existing override" scenarios): the heading carries the repository name,
-// and the status line carries the inheritance state for all three cases --
-// Loading, override active, and inheriting global settings.
-func TestRenderRepositoryOverrideModalShowsRepositoryAndInheritanceState(t *testing.T) {
+// TestRenderOverrideEditorShowsRepositoryAndInheritanceState is the Slice 2
+// successor to the retired TestRenderRepositoryOverrideModalShowsRepositoryAndInheritanceState
+// (operator-admin-tui spec's "Opening the modal on a highlighted row shows
+// the effective config" / "Opening the modal shows an existing override"
+// scenarios): the heading carries the repository name, and the status line
+// carries the inheritance state for all three cases -- Loading, override
+// active, and inheriting global settings.
+func TestRenderOverrideEditorShowsRepositoryAndInheritanceState(t *testing.T) {
 	t.Parallel()
 
 	theme := newAdminTheme()
 
 	tests := []struct {
 		name       string
-		modal      repositoryOverrideModal
+		editor     overrideEditor
 		wantStatus string
 	}{
 		{
 			name:       "loading",
-			modal:      repositoryOverrideModal{Open: true, Repository: "library/alpine", Feature: trivyFeatureName, Loading: true},
+			editor:     overrideEditor{open: true, repository: "library/alpine", feature: trivyFeatureName, loading: true},
 			wantStatus: "Loading…",
 		},
 		{
 			name:       "override active",
-			modal:      repositoryOverrideModal{Open: true, Repository: "library/alpine", Feature: trivyFeatureName, Exists: true, Enabled: true, PathPrimary: "/etc/trivy/ignore"},
+			editor:     overrideEditor{open: true, repository: "library/alpine", feature: trivyFeatureName, exists: true, enabled: true, pathPrimary: "/etc/trivy/ignore"},
 			wantStatus: "override active",
 		},
 		{
 			name:       "inheriting global settings",
-			modal:      repositoryOverrideModal{Open: true, Repository: "library/alpine", Feature: trivyFeatureName, Exists: false},
+			editor:     overrideEditor{open: true, repository: "library/alpine", feature: trivyFeatureName, exists: false},
 			wantStatus: "inheriting global settings",
 		},
 	}
@@ -479,30 +482,31 @@ func TestRenderRepositoryOverrideModalShowsRepositoryAndInheritanceState(t *test
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := renderRepositoryOverrideModal(theme, tc.modal)
+			got := renderOverrideEditor(theme, tc.editor)
 			if !strings.Contains(got, "library/alpine") {
-				t.Fatalf("renderRepositoryOverrideModal() = %q, want the repository name in the heading", got)
+				t.Fatalf("renderOverrideEditor() = %q, want the repository name in the heading", got)
 			}
 			if !strings.Contains(got, tc.wantStatus) {
-				t.Fatalf("renderRepositoryOverrideModal() = %q, want status line %q", got, tc.wantStatus)
+				t.Fatalf("renderOverrideEditor() = %q, want status line %q", got, tc.wantStatus)
 			}
 		})
 	}
 }
 
-// TestRenderRepositoryOverrideModalIsASeparateSurfaceFromOtherAdminModals is
-// the Phase 8 out-of-scope regression guard (spec.md's "Out of Scope Note":
-// the override modal is its own sibling surface, not an extension of
-// scanPolicyModal/trivyConfigModal).
-func TestRenderRepositoryOverrideModalIsASeparateSurfaceFromOtherAdminModals(t *testing.T) {
+// TestRenderOverrideEditorIsASeparateSurfaceFromOtherAdminModals is the
+// Slice 2 successor to the retired
+// TestRenderRepositoryOverrideModalIsASeparateSurfaceFromOtherAdminModals
+// (spec.md's "Out of Scope Note": the override editor is its own sibling
+// surface, not an extension of scanPolicyModal/trivyConfigModal).
+func TestRenderOverrideEditorIsASeparateSurfaceFromOtherAdminModals(t *testing.T) {
 	t.Parallel()
 
 	theme := newAdminTheme()
 
-	overrideOutput := renderRepositoryOverrideModal(theme, repositoryOverrideModal{Open: true, Repository: "library/alpine", Feature: trivyFeatureName, Exists: true, Enabled: true, PathPrimary: "/etc/trivy/ignore"})
+	overrideOutput := renderOverrideEditor(theme, overrideEditor{open: true, repository: "library/alpine", feature: trivyFeatureName, exists: true, enabled: true, pathPrimary: "/etc/trivy/ignore"})
 	for _, forbidden := range []string{"Vulnerability Policy", "Severity Threshold", "Edit Trivy Configuration", "Registry Reachable URL"} {
 		if strings.Contains(overrideOutput, forbidden) {
-			t.Fatalf("renderRepositoryOverrideModal() output contains %q, want a separate surface\n%s", forbidden, overrideOutput)
+			t.Fatalf("renderOverrideEditor() output contains %q, want a separate surface\n%s", forbidden, overrideOutput)
 		}
 	}
 
@@ -620,29 +624,29 @@ func TestRenderSigningPolicyModalIsASeparateSurfaceFromScanPolicyModal(t *testin
 	}
 }
 
-// TestRenderRepositoryOverrideModalSigningShowsTrustedKeyLabel is the Phase
-// 9 task 9.16 RED test: when Feature is "signing", PathPrimary's rendered
-// label is "Trusted Key (PEM)", not the Trivy/gitleaks path label, and the
-// row budget matches gitleaks' single-path-field shape (15/17).
-func TestRenderRepositoryOverrideModalSigningShowsTrustedKeyLabel(t *testing.T) {
+// TestRenderOverrideEditorSigningShowsTrustedKeyLabel is the Slice 2
+// successor to the retired TestRenderRepositoryOverrideModalSigningShowsTrustedKeyLabel:
+// when feature is "signing", PathPrimary's rendered label is "Trusted Key
+// (PEM)", not the Trivy/gitleaks path label.
+func TestRenderOverrideEditorSigningShowsTrustedKeyLabel(t *testing.T) {
 	t.Parallel()
 
 	theme := newAdminTheme()
 
 	tests := []struct {
 		name       string
-		modal      repositoryOverrideModal
+		editor     overrideEditor
 		wantHeight int
 	}{
 		{
 			name:       "signing, no error",
-			modal:      repositoryOverrideModal{Open: true, Repository: "library/alpine", Feature: signingFeatureName, Exists: true, Enabled: true, PathPrimary: "-----BEGIN PUBLIC KEY-----"},
-			wantHeight: 17,
+			editor:     overrideEditor{open: true, repository: "library/alpine", feature: signingFeatureName, exists: true, enabled: true, pathPrimary: "-----BEGIN PUBLIC KEY-----"},
+			wantHeight: 16,
 		},
 		{
 			name:       "signing + error",
-			modal:      repositoryOverrideModal{Open: true, Repository: "library/alpine", Feature: signingFeatureName, Exists: true, Enabled: true, PathPrimary: "-----BEGIN PUBLIC KEY-----", Error: "trusted_public_keys[0] is invalid"},
-			wantHeight: 19,
+			editor:     overrideEditor{open: true, repository: "library/alpine", feature: signingFeatureName, exists: true, enabled: true, pathPrimary: "-----BEGIN PUBLIC KEY-----", err: "trusted_public_keys[0] is invalid"},
+			wantHeight: 18,
 		},
 	}
 
@@ -650,49 +654,49 @@ func TestRenderRepositoryOverrideModalSigningShowsTrustedKeyLabel(t *testing.T) 
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := renderRepositoryOverrideModal(theme, tc.modal)
+			got := renderOverrideEditor(theme, tc.editor)
 			if h := lipgloss.Height(got); h != tc.wantHeight {
-				t.Fatalf("renderRepositoryOverrideModal() height = %d, want %d\n%s", h, tc.wantHeight, got)
+				t.Fatalf("renderOverrideEditor() height = %d, want %d\n%s", h, tc.wantHeight, got)
 			}
 			if !strings.Contains(got, "Trusted Key (PEM)") {
-				t.Fatalf("renderRepositoryOverrideModal() = %q, want the signing-specific field label", got)
+				t.Fatalf("renderOverrideEditor() = %q, want the signing-specific field label", got)
 			}
 			for _, forbidden := range []string{"Ignore File Path", "Ignore Policy Path", "Config Path"} {
 				if strings.Contains(got, forbidden) {
-					t.Fatalf("renderRepositoryOverrideModal() = %q, want no Trivy/gitleaks field labels for signing", got)
+					t.Fatalf("renderOverrideEditor() = %q, want no Trivy/gitleaks field labels for signing", got)
 				}
 			}
 		})
 	}
 }
 
-// TestRenderRepositoryOverrideModalShowsUnsignedSelfReadOnlyForSigning is the
-// RED test for the UnsignedSelfRead TUI surface: the field's label and
-// current value render for the signing feature (normalizing an unseeded ""
-// to "off"), and never render for trivy/gitleaks, mirroring the existing
-// Trusted-Key-label exclusivity test above.
-func TestRenderRepositoryOverrideModalShowsUnsignedSelfReadOnlyForSigning(t *testing.T) {
+// TestRenderOverrideEditorShowsUnsignedSelfReadOnlyForSigning is the Slice 2
+// successor to the retired TestRenderRepositoryOverrideModalShowsUnsignedSelfReadOnlyForSigning:
+// the field's label and current value render for the signing feature
+// (normalizing an unseeded "" to "off"), and never render for
+// trivy/gitleaks.
+func TestRenderOverrideEditorShowsUnsignedSelfReadOnlyForSigning(t *testing.T) {
 	t.Parallel()
 
 	theme := newAdminTheme()
 
-	signing := renderRepositoryOverrideModal(theme, repositoryOverrideModal{Open: true, Repository: "team/az-deploy-demo", Feature: signingFeatureName, Exists: true, Enabled: true, PathPrimary: "-----BEGIN PUBLIC KEY-----", UnsignedSelfRead: "repo_push"})
+	signing := renderOverrideEditor(theme, overrideEditor{open: true, repository: "team/az-deploy-demo", feature: signingFeatureName, exists: true, enabled: true, pathPrimary: "-----BEGIN PUBLIC KEY-----", unsignedSelfRead: "repo_push"})
 	if !strings.Contains(signing, "Unsigned Self-Read") {
-		t.Fatalf("renderRepositoryOverrideModal() = %q, want the Unsigned Self-Read label for signing", signing)
+		t.Fatalf("renderOverrideEditor() = %q, want the Unsigned Self-Read label for signing", signing)
 	}
 	if !strings.Contains(signing, "repo_push") {
-		t.Fatalf("renderRepositoryOverrideModal() = %q, want the current repo_push value shown", signing)
+		t.Fatalf("renderOverrideEditor() = %q, want the current repo_push value shown", signing)
 	}
 
-	unseededSigning := renderRepositoryOverrideModal(theme, repositoryOverrideModal{Open: true, Repository: "team/az-deploy-demo", Feature: signingFeatureName, Exists: false})
+	unseededSigning := renderOverrideEditor(theme, overrideEditor{open: true, repository: "team/az-deploy-demo", feature: signingFeatureName, exists: false})
 	if !strings.Contains(unseededSigning, "off") {
-		t.Fatalf(`renderRepositoryOverrideModal() = %q, want "" to normalize to "off"`, unseededSigning)
+		t.Fatalf(`renderOverrideEditor() = %q, want "" to normalize to "off"`, unseededSigning)
 	}
 
 	for _, feature := range []string{trivyFeatureName, gitleaksFeatureName} {
-		got := renderRepositoryOverrideModal(theme, repositoryOverrideModal{Open: true, Repository: "team/az-deploy-demo", Feature: feature, Exists: true, Enabled: true, PathPrimary: "/etc/config"})
+		got := renderOverrideEditor(theme, overrideEditor{open: true, repository: "team/az-deploy-demo", feature: feature, exists: true, enabled: true, pathPrimary: "/etc/config"})
 		if strings.Contains(got, "Unsigned Self-Read") {
-			t.Fatalf("renderRepositoryOverrideModal() feature %q = %q, want no Unsigned Self-Read row outside signing", feature, got)
+			t.Fatalf("renderOverrideEditor() feature %q = %q, want no Unsigned Self-Read row outside signing", feature, got)
 		}
 	}
 }

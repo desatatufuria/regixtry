@@ -37,12 +37,18 @@ var legacyScreenHandlers = map[screen]legacyHandler{
 
 // routeAdminKey resolves m.screen through the migrated slot first, then
 // legacyScreenHandlers (design.md Data Flow), preserving updateAdminKey's
-// prior switch-on-m.screen dispatch exactly — Slice 1 has no migrated
-// top-level screen, so every id currently resolves through the legacy arm.
+// prior switch-on-m.screen dispatch exactly. Slice 2 populates the migrated
+// arm: the parent REPLACES its held sub-model value (m.adminScreens[slot] =
+// next), it never writes into the sub-model's fields directly (Decision B).
 func routeAdminKey(m Model, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if _, ok := slotFor(m.screen); ok {
-		// Slice 2+ wiring point: no top-level screen is migrated in Slice 1.
-		return m, nil
+	if slot, ok := slotFor(m.screen); ok {
+		s := m.adminScreens[slot]
+		if s == nil {
+			return m, nil
+		}
+		next, cmd, _ := s.Update(m.screenEnv(), msg)
+		m.adminScreens[slot] = next
+		return m, cmd
 	}
 	if handler, ok := legacyScreenHandlers[m.screen]; ok {
 		return handler(m, msg)

@@ -154,6 +154,16 @@ const (
 	// SelectedUserID -- there is no separate robot edit screen.
 	screenAdminRobots      screen = "admin-robots"
 	screenAdminCreateRobot screen = "admin-create-robot"
+	// screenSecurityGitleaksRepos/screenSecuritySigningRepos are the two
+	// genuinely new top-level screens this change ships (design.md D8/D3):
+	// Gitleaks' and Signing's own dedicated per-repository override list
+	// screens, symmetric to Trivy's existing Repository Alerts tab, each
+	// reachable from screenAdminFeatures' Built-in Features row via 'o'
+	// without ever entering Trivy's screen. Both are migrated (adminScreen,
+	// routed via slotFor) -- screenAdminFeatures itself stays on the legacy
+	// adapter in this change (see tasks.md "Slice 2 apply deviations").
+	screenSecurityGitleaksRepos screen = "security-gitleaks-repos"
+	screenSecuritySigningRepos  screen = "security-signing-repos"
 )
 
 // adminIntent is a one-shot field set before screenAdminLogin and consumed
@@ -910,39 +920,44 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = "Signing policy saved."
 		return m, nil
 	case adminRepositoryOverrideLoadedMsg:
-		if !m.adminView.RepositoryOverrideModal.Active() || msg.repository != m.adminView.RepositoryOverrideModal.Repository || msg.feature != m.adminView.RepositoryOverrideModal.Feature {
-			// Stale response for a modal the operator has since closed or
-			// switched away from.
-			return m, nil
+		// The uniform overrideEditor (design.md Decision F) is broadcast to
+		// (design.md Decision H): whichever screen is holding an open
+		// editor for this exact repository+feature reflects it; every other
+		// occupied slot ignores it via its own type switch.
+		if msg.err != nil && IsAdminSessionExpired(msg.err) {
+			return m.expireAdminSession(msg.err.Error()), nil
 		}
-		m.adminView.RepositoryOverrideModal.Loading = false
-		if msg.err != nil {
-			if IsAdminSessionExpired(msg.err) {
-				return m.expireAdminSession(msg.err.Error()), nil
-			}
-			m.adminView.RepositoryOverrideModal.Error = msg.err.Error()
-			return m, nil
-		}
-		m.applyRepositoryOverrideToModal(msg.override, msg.exists)
-		return m, nil
+		var cmd tea.Cmd
+		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
+		return m, cmd
 	case adminRepositoryOverrideSavedMsg:
-		if !m.adminView.RepositoryOverrideModal.Active() || msg.repository != m.adminView.RepositoryOverrideModal.Repository || msg.feature != m.adminView.RepositoryOverrideModal.Feature {
-			return m, nil
+		if msg.err != nil && IsAdminSessionExpired(msg.err) {
+			return m.expireAdminSession(msg.err.Error()), nil
 		}
-		if msg.err != nil {
-			if IsAdminSessionExpired(msg.err) {
-				return m.expireAdminSession(msg.err.Error()), nil
+		if msg.err == nil {
+			if msg.exists {
+				m.status = "Repository override saved."
+			} else {
+				m.status = "Repository override cleared."
 			}
-			m.adminView.RepositoryOverrideModal.Error = msg.err.Error()
-			return m, nil
 		}
-		m.adminView.RepositoryOverrideModal.Error = ""
-		m.applyRepositoryOverrideToModal(msg.override, msg.exists)
-		if msg.exists {
-			m.status = "Repository override saved."
-		} else {
-			m.status = "Repository override cleared."
+		var cmd tea.Cmd
+		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
+		return m, cmd
+	case featureOverridesLoadedMsg:
+		if msg.err != nil && IsAdminSessionExpired(msg.err) {
+			return m.expireAdminSession(msg.err.Error()), nil
 		}
+		var cmd tea.Cmd
+		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
+		return m, cmd
+	case navigateMsg:
+		// The router's own navigation channel (design.md screen.go
+		// "navigate"): a migrated screen asks to switch the active
+		// top-level screen (e.g. Esc on a repos screen back to
+		// screenAdminFeatures) without ever writing m.screen itself.
+		m.screen = msg.To
+		m.status = ""
 		return m, nil
 	case adminRepositoryOverridesListLoadedMsg:
 		if msg.err != nil {
@@ -1445,8 +1460,15 @@ func (m Model) View() string {
 		help := "q: quit"
 		layout := m.contentBudget("", help)
 		return renderInspectionWorkspace("Sign In", renderConsoleTextSection(m.loadingText, layout), "", help)
-	case screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken, screenRepoAdminGrants, screenRepoAdminAddGrant, screenAdminRobots, screenAdminCreateRobot:
-		layout := m.contentBudget(m.status, adminScreenHelp(m.screen, m.adminView))
+	case screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken, screenRepoAdminGrants, screenRepoAdminAddGrant, screenAdminRobots, screenAdminCreateRobot, screenSecurityGitleaksRepos, screenSecuritySigningRepos:
+		help := adminScreenHelp(m.screen, m.adminView)
+		if slot, ok := slotFor(m.screen); ok && m.adminScreens[slot] != nil {
+			// Migrated top-level screen: help is derived from the screen's
+			// own Keys(), never a separately hand-written string (spec.md
+			// "Keymap-Derived Help Cannot Drift").
+			help = shortHelpView(newAdminTheme(), m.adminScreens[slot].Keys())
+		}
+		layout := m.contentBudget(m.status, help)
 		return renderAdminWorkspace(m.screen, m.adminSession, m.adminView, m.repositories.Names(), m.status, layout, m.now(), m.adminScreens)
 	}
 
@@ -1611,8 +1633,16 @@ func (m Model) updateAdminKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateSigningPolicyModalKey(msg)
 	}
 
-	if m.adminView.RepositoryOverrideModal.Active() {
-		return m.updateRepositoryOverrideModalKey(msg)
+	if s, ok := m.adminScreens[slotTrivyOverride].(overrideEditor); ok && s.Active() {
+		next, cmd, _ := s.Update(m.screenEnv(), msg)
+		m.adminScreens[slotTrivyOverride] = next
+		switch {
+		case next == nil:
+			m.status = ""
+		case cmd != nil:
+			m.status = "Saving repository override..."
+		}
+		return m, cmd
 	}
 
 	if m.adminView.ScanHistoryModal.Active() {
@@ -1961,23 +1991,42 @@ func (m Model) updateAdminFeaturesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status = ""
 		return m, nil
 	case m.isSelectedTrivyFeature() && m.adminView.TrivyTab == trivyTabRepositoryAlerts && isRuneKey(msg, 'o'):
-		// design.md Decision 8: opens repositoryOverrideModal bound to the
-		// highlighted Repository Alerts row's repository, always in the
-		// context of trivyFeatureName -- the only feature with a Repository
-		// Alerts row today. This case sits inside updateAdminFeaturesKey's
-		// switch (ends at :1257 below the featureActionForKey fallback), so
-		// 'o' cannot be stolen by a feature action, and cannot steal one
-		// either.
+		// design.md Decision F/D2: opens the uniform overrideEditor bound to
+		// the highlighted Repository Alerts row's repository, fixed to
+		// trivyFeatureName at construction -- 'o' keeps its exact current
+		// keybinding/meaning on Trivy's own Repository Alerts row (user
+		// confirmed decision). Mounted at slotTrivyOverride exactly like
+		// gitleaksConfigScreen mounts at slotGitleaksConfig: one uniform
+		// mechanism, selection-driven, for all three features.
 		summary, ok := selectedScanSummary(m.adminView)
 		if !ok {
 			return m, nil
 		}
-		m.adminView.RepositoryOverrideModal = repositoryOverrideModal{
-			Open: true, Repository: summary.Repository,
-			Feature: trivyFeatureName, Loading: true,
-		}
+		editor := newOverrideEditor(trivyFeatureName, summary.Repository)
+		m.adminScreens[slotTrivyOverride] = editor
 		m.status = ""
-		return m, m.loadRepositoryOverrideCmd(summary.Repository, trivyFeatureName)
+		return m, editor.Init(m.screenEnv())
+	case m.isSelectedGitleaksFeature() && isRuneKey(msg, 'o'):
+		// The actual fix for the originally reported defect (proposal
+		// Intent): gitleaks gets its own discoverable override entry point,
+		// a dedicated repository list screen reachable without ever
+		// entering Trivy's screen (spec.md "Gitleaks Repository-Scoped
+		// Override Entry Point").
+		screen := newFeatureOverridesScreen(screenSecurityGitleaksRepos, gitleaksFeatureName)
+		cmd := screen.Init(m.screenEnv())
+		m.adminScreens[slotGitleaksRepos] = screen
+		m.screen = screenSecurityGitleaksRepos
+		m.status = "Loading gitleaks repository overrides..."
+		return m, cmd
+	case m.isSelectedSigningFeature() && isRuneKey(msg, 'o'):
+		// Same fix as gitleaks, for signing (spec.md "Signing
+		// Repository-Scoped Override Entry Point").
+		screen := newSigningReposScreen()
+		cmd := screen.Init(m.screenEnv())
+		m.adminScreens[slotSigningRepos] = screen
+		m.screen = screenSecuritySigningRepos
+		m.status = "Loading signing repository overrides..."
+		return m, cmd
 	case m.isSelectedTrivyFeature() && m.adminView.TrivyTab == trivyTabRepositoryAlerts && isEnterKey(msg):
 		// spec.md "Repository Alert Drill-Down Opens History Modal": Enter
 		// opens the scan history modal, never the old inline detail — the
@@ -2195,154 +2244,6 @@ func signingKeyFingerprints(keys []string) []string {
 		fingerprints = append(fingerprints, hex.EncodeToString(sum[:])[:12])
 	}
 	return fingerprints
-}
-
-// applyRepositoryOverrideToModal reflects a loaded/saved/cleared override
-// back onto repositoryOverrideModal (spec.md "both actions MUST round-trip
-// through the admin API and be reflected back in the modal"). Unlike
-// scanPolicyModal, the modal stays open after a successful save/clear so the
-// operator can see the reflected state and immediately clear or re-edit --
-// exists=false zeroes the editable fields to show the repository is back to
-// inheriting global settings.
-func (m *Model) applyRepositoryOverrideToModal(override ports.RepositoryOverrideDetails, exists bool) {
-	m.adminView.RepositoryOverrideModal.Exists = exists
-	if !exists {
-		m.adminView.RepositoryOverrideModal.Enabled = false
-		m.adminView.RepositoryOverrideModal.PathPrimary = ""
-		m.adminView.RepositoryOverrideModal.PathSecondary = ""
-		m.adminView.RepositoryOverrideModal.UnsignedSelfRead = "off"
-		return
-	}
-	m.adminView.RepositoryOverrideModal.Enabled = override.Enabled
-	switch m.adminView.RepositoryOverrideModal.Feature {
-	case gitleaksFeatureName:
-		m.adminView.RepositoryOverrideModal.PathPrimary = override.ConfigPath
-	case signingFeatureName:
-		// The override modal edits a single trusted key via PathPrimary
-		// (design.md Decision 11 piece 3) -- unlike signingPolicyModal's
-		// growable list, only the first stored key is shown/edited here.
-		m.adminView.RepositoryOverrideModal.PathPrimary = firstRepositoryOverrideTrustedKey(override.TrustedPublicKeys)
-		m.adminView.RepositoryOverrideModal.UnsignedSelfRead = normalizeUnsignedSelfRead(override.UnsignedSelfRead)
-	default:
-		m.adminView.RepositoryOverrideModal.PathPrimary = override.IgnoreFilePath
-		m.adminView.RepositoryOverrideModal.PathSecondary = override.IgnorePolicyPath
-	}
-}
-
-// firstRepositoryOverrideTrustedKey returns the first stored trusted key, or
-// "" when none are stored -- repositoryOverrideModal's PathPrimary field
-// edits at most one key per repository override (design.md Decision 11
-// piece 3's single-field reuse, distinct from signingPolicyModal's list).
-func firstRepositoryOverrideTrustedKey(keys []string) string {
-	if len(keys) == 0 {
-		return ""
-	}
-	return keys[0]
-}
-
-// updateRepositoryOverrideModalKey handles keys while repositoryOverrideModal
-// is open (design.md Decision 8 piece 2): Esc clears, Tab cycles fields,
-// Space toggles Enabled when Enabled has focus or cycles Feature when
-// Feature has focus, runes append to the focused path field
-// (appendTrivyConfigModalRunes pattern), Enter means save on every focus
-// except FieldClear, where it means clear -- inert (no DELETE) when the
-// modal is not currently backed by a stored override.
-func (m Model) updateRepositoryOverrideModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch {
-	case isEscKey(msg):
-		m.adminView.RepositoryOverrideModal = repositoryOverrideModal{}
-		m.status = ""
-		return m, nil
-	case isTabKey(msg):
-		m.adminView.RepositoryOverrideModal.Focus = nextRepositoryOverrideField(m.adminView.RepositoryOverrideModal.Focus, m.adminView.RepositoryOverrideModal.Feature)
-		m.adminView.RepositoryOverrideModal.Error = ""
-		return m, nil
-	case isRuneKey(msg, ' '):
-		switch m.adminView.RepositoryOverrideModal.Focus {
-		case repositoryOverrideFieldEnabled:
-			m.adminView.RepositoryOverrideModal.Enabled = !m.adminView.RepositoryOverrideModal.Enabled
-		case repositoryOverrideFieldFeature:
-			m.adminView.RepositoryOverrideModal.Feature = nextRepositoryOverrideFeatureName(m.adminView.RepositoryOverrideModal.Feature)
-		case repositoryOverrideFieldUnsignedSelfRead:
-			m.adminView.RepositoryOverrideModal.UnsignedSelfRead = nextUnsignedSelfReadValue(m.adminView.RepositoryOverrideModal.UnsignedSelfRead)
-		}
-		m.adminView.RepositoryOverrideModal.Error = ""
-		return m, nil
-	case isBackspaceKey(msg):
-		m.deleteRepositoryOverrideModalRune()
-		m.adminView.RepositoryOverrideModal.Error = ""
-		return m, nil
-	case isEnterKey(msg):
-		modal := m.adminView.RepositoryOverrideModal
-		if modal.Focus == repositoryOverrideFieldClear {
-			if !modal.Exists {
-				m.status = "Already inheriting global settings."
-				return m, nil
-			}
-			m.status = "Clearing repository override..."
-			return m, m.clearRepositoryOverrideCmd(modal.Repository, modal.Feature)
-		}
-		input := ports.RepositoryOverrideDetails{Enabled: modal.Enabled}
-		switch modal.Feature {
-		case gitleaksFeatureName:
-			input.ConfigPath = modal.PathPrimary
-		case signingFeatureName:
-			if strings.TrimSpace(modal.PathPrimary) != "" {
-				input.TrustedPublicKeys = []string{modal.PathPrimary}
-			}
-			input.UnsignedSelfRead = normalizeUnsignedSelfRead(modal.UnsignedSelfRead)
-		default:
-			input.IgnoreFilePath = modal.PathPrimary
-			input.IgnorePolicyPath = modal.PathSecondary
-		}
-		m.status = "Saving repository override..."
-		return m, m.saveRepositoryOverrideCmd(modal.Repository, modal.Feature, input)
-	}
-	if msg.Type == tea.KeyRunes {
-		m.appendRepositoryOverrideModalRunes(string(msg.Runes))
-		m.adminView.RepositoryOverrideModal.Error = ""
-		return m, nil
-	}
-	return m, nil
-}
-
-// repositoryOverrideFeatureCycle is the modal's Feature field cycle order
-// (design.md Decision 11 piece 3). A fourth feature is one more entry -- no
-// restructuring. This is the one shipped TUI behavior this change
-// deliberately alters: the cycle grows from trivy -> gitleaks -> trivy to
-// trivy -> gitleaks -> signing -> trivy.
-var repositoryOverrideFeatureCycle = []string{trivyFeatureName, gitleaksFeatureName, signingFeatureName}
-
-// nextRepositoryOverrideFeatureName cycles the modal's Feature field through
-// repositoryOverrideFeatureCycle, wrapping back to the first entry.
-func nextRepositoryOverrideFeatureName(feature string) string {
-	for index, candidate := range repositoryOverrideFeatureCycle {
-		if candidate == feature {
-			return repositoryOverrideFeatureCycle[(index+1)%len(repositoryOverrideFeatureCycle)]
-		}
-	}
-	return repositoryOverrideFeatureCycle[0]
-}
-
-func (m *Model) deleteRepositoryOverrideModalRune() {
-	switch m.adminView.RepositoryOverrideModal.Focus {
-	case repositoryOverrideFieldPathPrimary:
-		m.adminView.RepositoryOverrideModal.PathPrimary = trimLastRune(m.adminView.RepositoryOverrideModal.PathPrimary)
-	case repositoryOverrideFieldPathSecondary:
-		m.adminView.RepositoryOverrideModal.PathSecondary = trimLastRune(m.adminView.RepositoryOverrideModal.PathSecondary)
-	}
-}
-
-func (m *Model) appendRepositoryOverrideModalRunes(value string) {
-	if value == "" {
-		return
-	}
-	switch m.adminView.RepositoryOverrideModal.Focus {
-	case repositoryOverrideFieldPathPrimary:
-		m.adminView.RepositoryOverrideModal.PathPrimary += value
-	case repositoryOverrideFieldPathSecondary:
-		m.adminView.RepositoryOverrideModal.PathSecondary += value
-	}
 }
 
 // updateAdminScanHistoryModalKey handles keys while the scan history modal
@@ -3960,7 +3861,7 @@ func nextDelegateGrantRole(current domainauth.RepoRole) domainauth.RepoRole {
 
 func isAdminScreen(current screen) bool {
 	switch current {
-	case screenAdminLogin, screenAdminAuthenticating, screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken, screenRepoAdminGrants, screenRepoAdminAddGrant, screenAdminRobots, screenAdminCreateRobot:
+	case screenAdminLogin, screenAdminAuthenticating, screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken, screenRepoAdminGrants, screenRepoAdminAddGrant, screenAdminRobots, screenAdminCreateRobot, screenSecurityGitleaksRepos, screenSecuritySigningRepos:
 		return true
 	default:
 		return false
@@ -4239,7 +4140,7 @@ func (m *Model) clearSelectedAdminDetails() {
 	m.adminView.TrivyAlertsLoaded = false
 	m.adminView.TrivySummaries = nil
 	m.adminView.ScanHistoryModal = adminScanHistoryModal{}
-	m.adminView.RepositoryOverrideModal = repositoryOverrideModal{}
+	m.adminScreens[slotTrivyOverride] = nil
 	m.adminView.TrivyOverrides = nil
 	m.adminView.SelectedGrant = 0
 	m.adminView.SelectedFeature = 0
@@ -4284,7 +4185,7 @@ func (m *Model) applyFeaturePage(page ports.FeaturePage) {
 	m.adminView.TrivyAlertsLoaded = false
 	m.adminView.TrivySummaries = nil
 	m.adminView.ScanHistoryModal = adminScanHistoryModal{}
-	m.adminView.RepositoryOverrideModal = repositoryOverrideModal{}
+	m.adminScreens[slotTrivyOverride] = nil
 	m.adminView.TrivyOverrides = nil
 	if page.Summary.Name == trivyFeatureName {
 		m.adminView.TrivyTab = trivyTabRuntime
