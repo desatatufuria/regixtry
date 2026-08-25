@@ -940,3 +940,37 @@ is narrowed from 13 to 12 legacy-screen cases (`screenAdminFeatures` removed
       leaving Slice 1's primitive and Slice 2's reversal in place and harmless), with
       the two superseded-decision annotations (Phase 16) reverting together with
       Slice 2's code, unchanged by this batch.
+
+### Slice 3 apply deviations (recorded, not silent)
+
+- **Strict RED-first was NOT fully maintained for Phases 18-20's own named
+  tests** (`TestSecurityDomainListsThreePeers`, `TestOperationsListsBothResultsScreens`,
+  `TestOperationsEntryReachesSecretFindingsWithoutTrivy`,
+  `TestTrivyDrillDownStillReachesSecretFindings`, `TestScanHistoryEscReturnsToOpener`,
+  `TestFindingLinkOpenUsesExplicitArgvAndHTTPSchemeGuard`) — unlike Slice 1's proof
+  screen, this disclosure is closer to Phase 11's own: the interdependent scope
+  (domain menu + Operations entry screens + a full ScanHistoryModal migration off
+  `AdminViewState`, touching `model.go`/`session.go`/`admin_tables.go`/
+  `admin_views.go` and ~190 pre-existing test references to the modal's own
+  row-budget math simultaneously) was designed and implemented as one coherent
+  architectural unit before these six specific tests were written, rather than each
+  test landing RED against not-yet-existing production code first. What strict
+  RED-first discipline WAS preserved: (1) every one of the ~54 pre-existing tests
+  the post-login routing change broke was diagnosed and fixed by running the real
+  suite and reading each actual failure (a genuine red→green cycle against
+  characterization tests already guarding this behavior, not a rubber-stamp); (2)
+  the six new tests above were run immediately after being written and caught two
+  real test-authoring bugs before being accepted (a missing intermediate `Enter` in
+  two of them, `TestTrivyDrillDownStillReachesSecretFindings` and
+  `TestScanHistoryEscReturnsToOpener`'s Trivy sub-case), proving they were not
+  written to already-known-passing behavior blindly. No production bug was found
+  by these six tests after the fact (all failures traced to test setup, not
+  `screen_admin_menu.go`/`screen_operations.go`/`screen_scan_runs.go`/
+  `screen_scan_history.go` themselves) — but that is a claim this disclosure makes
+  explicit rather than one earned by literal test-first ordering. See the
+  `apply-progress` artifact's Work Unit Evidence for the exact commands run.
+- **`screenAdminScanHistory` as a distinct top-level screen id, named in early
+  design discussion of this batch, was NOT created.** `scanHistoryScreen` is
+  reached and closed without ever changing `m.screen` (recorded above, Phase
+  19.5) — a deliberate, disclosed architectural choice, not an oversight; no
+  `screenAdminScanHistory` constant exists anywhere in the shipped code.
