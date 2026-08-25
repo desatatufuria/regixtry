@@ -72,7 +72,7 @@ func TestModelStartupLoginDefersCatalogUntilLoginSucceeds(t *testing.T) {
 	}
 
 	updated = runKey(t, updated, "tab")
-	if got, want := updated.screen, screenAdminUsers; got != want {
+	if got, want := updated.screen, screenAdminMenu; got != want {
 		t.Fatalf("screen = %q, want %q after opening admin", got, want)
 	}
 }
@@ -1328,6 +1328,41 @@ func TestCanLogoutFromAdminRobotsScreen(t *testing.T) {
 // TestModelOpenAdminRobotsFromUsersLoadsRobotList is task 5.7's RED test:
 // pressing "b" on screenAdminUsers opens screenAdminRobots and loads the
 // robot list.
+// TestModelReenteringAdminWithActiveSessionLandsOnDomainMenu is the
+// user-reported regression test: pressing Tab while an admin session is
+// already authenticated (e.g. after Esc-ing back to Console inspection, or
+// under REGXITRY's startup-login mode where a fresh login's success handler
+// routes to the repository catalog rather than screenAdminMenu directly)
+// must still land on the Phase 18 domain menu, not skip straight to
+// screenAdminUsers -- openAdmin()'s already-authenticated branch was never
+// updated when Phase 18 introduced screenAdminMenu as the admin panel's own
+// root, unlike the fresh-login-success handler, which was.
+func TestModelReenteringAdminWithActiveSessionLandsOnDomainMenu(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 25, 12, 0, 0, 0, time.UTC)
+	adminClient := &fakeAdminClient{
+		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(15 * time.Minute)},
+	}
+	model := newAdminReadyModel(t, adminClient)
+	model.now = func() time.Time { return now }
+	loggedIn := runAdminLogin(t, model, "operator", "secret-pass")
+	if loggedIn.screen != screenAdminMenu {
+		t.Fatalf("test setup invalid: screen after login = %q, want %q", loggedIn.screen, screenAdminMenu)
+	}
+
+	returnedToInspection := runKey(t, loggedIn, "esc")
+	if returnedToInspection.adminAuth != adminAuthStateAuthenticated {
+		t.Fatalf("test setup invalid: adminAuth = %q, want authenticated (session must still be active)", returnedToInspection.adminAuth)
+	}
+
+	reentered := runKey(t, returnedToInspection, "tab")
+
+	if got, want := reentered.screen, screenAdminMenu; got != want {
+		t.Fatalf("screen after re-entering with an active session = %q, want %q", got, want)
+	}
+}
+
 func TestModelOpenAdminRobotsFromUsersLoadsRobotList(t *testing.T) {
 	t.Parallel()
 

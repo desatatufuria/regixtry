@@ -3216,9 +3216,18 @@ func (m Model) openAdmin() (tea.Model, tea.Cmd) {
 		}
 		m.adminAuth = adminAuthStateAuthenticated
 		m.status = ""
-		m.screen = screenAdminUsers
+		// Phase 18 (design.md Decision I): re-entering an already-
+		// authenticated session must land on the same domain-menu root a
+		// fresh login lands on (model.go's adminLoginCompletedMsg success
+		// handler) -- this branch was the one re-entry path Phase 18 left
+		// pointed at screenAdminUsers directly, confirmed live by an
+		// operator whose deployment forces startup-login (so a fresh
+		// login's own success handler never lands on screenAdminMenu
+		// either -- it routes to the repository catalog instead), making
+		// this branch the ONLY reachable path into the admin panel.
+		m.screen = screenAdminMenu
+		m.adminScreens[slotAdminMenu] = newAdminMenuScreen()
 		if len(m.adminView.Users) == 0 {
-			m.status = "Loading admin users..."
 			return m, m.loadAdminUsersCmd()
 		}
 		m.syncAdminUserSelection(m.adminView.SelectedUserID)
