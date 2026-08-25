@@ -12,6 +12,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	bubbletable "github.com/evertras/bubble-table/table"
 	"github.com/muesli/termenv"
 	appregixtry "regixtry/internal/app/regixtry"
@@ -607,8 +608,8 @@ func TestModelTagsDeleteKeyShowsPendingConfirm(t *testing.T) {
 
 	pending := runKey(t, ready, "d")
 
-	if got, want := pending.tags.PendingDelete, "latest"; got != want {
-		t.Fatalf("tags.PendingDelete = %q, want %q", got, want)
+	if !pending.tags.Confirm.Active() {
+		t.Fatalf("tags.Confirm.Active() = false, want true (delete pending)")
 	}
 	want := `Delete tag "latest" from "library/alpine"? This action cannot be undone. (Enter: delete | Esc: cancel)`
 	if got := pending.status; got != want {
@@ -636,8 +637,8 @@ func TestModelTagsDeleteKeyWithNoTagSelectedIsNoop(t *testing.T) {
 
 	updated := runKey(t, model, "d")
 
-	if updated.tags.PendingDelete != "" {
-		t.Fatalf("tags.PendingDelete = %q, want empty (no tag selected)", updated.tags.PendingDelete)
+	if updated.tags.Confirm.Active() {
+		t.Fatalf("tags.Confirm.Active() = true, want false (no tag selected)")
 	}
 	if service.calls.deleteManifest != 0 {
 		t.Fatalf("DeleteManifest called %d times, want 0", service.calls.deleteManifest)
@@ -655,14 +656,14 @@ func TestModelTagsDeleteEscCancelsPendingWithoutNavigating(t *testing.T) {
 	service := tagsReadyFakeService()
 	ready := newTagsReadyModel(t, service)
 	pending := runKey(t, ready, "d")
-	if pending.tags.PendingDelete == "" {
+	if !pending.tags.Confirm.Active() {
 		t.Fatalf("test setup invalid: want a pending delete before Esc")
 	}
 
 	cancelled := runKey(t, pending, "esc")
 
-	if cancelled.tags.PendingDelete != "" {
-		t.Fatalf("tags.PendingDelete = %q, want empty after Esc", cancelled.tags.PendingDelete)
+	if cancelled.tags.Confirm.Active() {
+		t.Fatalf("tags.Confirm.Active() = true, want false after Esc")
 	}
 	if cancelled.status != "" {
 		t.Fatalf("status = %q, want empty after cancel", cancelled.status)
@@ -707,8 +708,8 @@ func TestModelTagsDeleteEnterConfirmFlowSuccess(t *testing.T) {
 	afterDeleteUpdated, refreshCmd := firedModel.Update(deleteMsg)
 	afterDelete := afterDeleteUpdated.(Model)
 
-	if afterDelete.tags.PendingDelete != "" {
-		t.Fatalf("tags.PendingDelete = %q, want empty after delete completes", afterDelete.tags.PendingDelete)
+	if afterDelete.tags.Confirm.Active() {
+		t.Fatalf("tags.Confirm.Active() = true, want false after delete completes")
 	}
 	wantStatus := `Tag "latest" deleted. Refreshing tags...`
 	if got := afterDelete.status; got != wantStatus {
@@ -752,8 +753,8 @@ func TestModelTagsDeleteEnterConfirmFlowValidationError(t *testing.T) {
 	afterDeleteUpdated, refreshCmd := firedModel.Update(deleteMsg)
 	afterDelete := afterDeleteUpdated.(Model)
 
-	if afterDelete.tags.PendingDelete != "" {
-		t.Fatalf("tags.PendingDelete = %q, want empty after a failed delete (operator must not be stuck)", afterDelete.tags.PendingDelete)
+	if afterDelete.tags.Confirm.Active() {
+		t.Fatalf("tags.Confirm.Active() = true, want false after a failed delete (operator must not be stuck)")
 	}
 	if got, want := afterDelete.status, "manifest deletion is not enabled"; got != want {
 		t.Fatalf("status = %q, want %q", got, want)
@@ -1572,11 +1573,8 @@ func TestModelAdminRobotDeleteKeyOpensConfirmModal(t *testing.T) {
 
 	updated := runKey(t, model, "d")
 
-	if got, want := updated.adminView.ConfirmModal.Kind, adminConfirmDeleteRobot; got != want {
-		t.Fatalf("ConfirmModal.Kind = %q, want %q", got, want)
-	}
-	if got, want := updated.adminView.ConfirmModal.UserID, "u-2"; got != want {
-		t.Fatalf("ConfirmModal.UserID = %q, want %q", got, want)
+	if !updated.adminView.Confirm.Active() {
+		t.Fatalf("adminView.Confirm.Active() = false, want true (delete opens a confirm)")
 	}
 	view := updated.View()
 	if !strings.Contains(view, `robot$ci`) {
@@ -1617,13 +1615,296 @@ func TestModelDeleteAdminRobotConfirmFlow(t *testing.T) {
 	if got, want := updated.screen, screenAdminRobots; got != want {
 		t.Fatalf("screen = %q, want %q", got, want)
 	}
-	if got, want := updated.adminView.ConfirmModal.Kind, adminConfirmNone; got != want {
-		t.Fatalf("ConfirmModal.Kind = %q, want %q (closed after success)", got, want)
+	if updated.adminView.Confirm.Active() {
+		t.Fatalf("adminView.Confirm.Active() = true, want false (closed after success)")
 	}
 	for _, robot := range updated.adminView.Robots {
 		if robot.ID == "u-2" {
 			t.Fatalf("Robots = %+v, want %q removed after delete", updated.adminView.Robots, "u-2")
 		}
+	}
+}
+
+// TestAdminConfirmCharacterization is the tui-menu-architecture change's
+// Phase 1 task 1.3 (T1.1) golden/characterization baseline, captured
+// BEFORE confirm.go exists: for every one of the 10 adminConfirmKind values,
+// opening the confirm and pressing Enter must dispatch the exact right
+// admin API call, and Esc must cancel without dispatching anything. Every
+// assertion is black-box (View() content, status text, and fakeAdminClient
+// call counters) — deliberately never touching
+// updated.adminView.ConfirmModal's fields directly, so this test keeps
+// passing unchanged once Phase 5 retires adminConfirmModal onto
+// confirmPrompt (design.md Decision E) and again once AdminViewState.Confirm
+// itself becomes the only place the state lives.
+func TestAdminConfirmCharacterization(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 20, 10, 0, 0, 0, time.UTC)
+
+	type tc struct {
+		name           string
+		setup          func(t *testing.T) (Model, *fakeAdminClient)
+		openKey        string
+		wantOpenSubstr string
+		callCount      func(*fakeAdminClient) int
+	}
+
+	cases := []tc{
+		{
+			name: "enable-user",
+			setup: func(t *testing.T) (Model, *fakeAdminClient) {
+				adminClient := &fakeAdminClient{
+					loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+					users:        []ports.AdminUser{{ID: "u-1", Username: "alice", Enabled: false}},
+					enableUser:   ports.AdminUser{ID: "u-1", Username: "alice", Enabled: true},
+				}
+				m := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
+				m = runKey(t, m, "enter")
+				return m, adminClient
+			},
+			openKey:        "e",
+			wantOpenSubstr: `Confirm enable user "alice"?`,
+			callCount:      func(f *fakeAdminClient) int { return f.enableCalls },
+		},
+		{
+			name: "disable-user",
+			setup: func(t *testing.T) (Model, *fakeAdminClient) {
+				adminClient := &fakeAdminClient{
+					loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+					users:        []ports.AdminUser{{ID: "u-1", Username: "alice", Enabled: true}},
+					disableUser:  ports.AdminUser{ID: "u-1", Username: "alice", Enabled: false},
+				}
+				m := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
+				m = runKey(t, m, "enter")
+				return m, adminClient
+			},
+			openKey:        "x",
+			wantOpenSubstr: `Confirm disable user "alice"?`,
+			callCount:      func(f *fakeAdminClient) int { return f.disableCalls },
+		},
+		{
+			name: "enable-feature",
+			setup: func(t *testing.T) (Model, *fakeAdminClient) {
+				adminClient := &fakeAdminClient{
+					loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+					features:     []ports.FeatureSummary{{Name: "gitleaks", Kind: ports.FeatureKindBuiltin, Enabled: false}},
+					featurePage: ports.FeaturePage{
+						Summary: ports.FeatureSummary{Name: "gitleaks", Kind: ports.FeatureKindBuiltin, Enabled: false},
+						Actions: []ports.FeatureAction{{ID: "enable", Label: "Enable", ConfirmTitle: "Confirm Enable", ConfirmMessage: `Confirm enable feature "gitleaks"?`}},
+					},
+				}
+				m := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
+				m = runKey(t, m, "f")
+				return m, adminClient
+			},
+			openKey:        "e",
+			wantOpenSubstr: `Confirm enable feature "gitleaks"?`,
+			callCount:      func(f *fakeAdminClient) int { return f.executeFeatureActionCalls },
+		},
+		{
+			name: "disable-feature",
+			setup: func(t *testing.T) (Model, *fakeAdminClient) {
+				adminClient := &fakeAdminClient{
+					loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+					features:     []ports.FeatureSummary{{Name: "gitleaks", Kind: ports.FeatureKindBuiltin, Enabled: true}},
+					featurePage: ports.FeaturePage{
+						Summary: ports.FeatureSummary{Name: "gitleaks", Kind: ports.FeatureKindBuiltin, Enabled: true},
+						Actions: []ports.FeatureAction{{ID: "disable", Label: "Disable", ConfirmTitle: "Confirm Disable", ConfirmMessage: `Confirm disable feature "gitleaks"?`}},
+					},
+				}
+				m := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
+				m = runKey(t, m, "f")
+				return m, adminClient
+			},
+			openKey:        "x",
+			wantOpenSubstr: `Confirm disable feature "gitleaks"?`,
+			callCount:      func(f *fakeAdminClient) int { return f.executeFeatureActionCalls },
+		},
+		{
+			name: "delete-grant",
+			setup: func(t *testing.T) (Model, *fakeAdminClient) {
+				adminClient := &fakeAdminClient{
+					loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+					users:        []ports.AdminUser{{ID: "u-1", Username: "alice", Enabled: true}},
+					grants:       map[string][]ports.AdminRepoGrant{"u-1": {{Repository: regixtrydomain.MustParseRepositoryRef("team/app"), Role: domainauth.RepoRoleWriter}}},
+				}
+				m := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
+				m = runKey(t, m, "enter")
+				m = runKey(t, m, "g")
+				return m, adminClient
+			},
+			openKey:        "x",
+			wantOpenSubstr: `Remove grant "team/app" from "alice"?`,
+			callCount:      func(f *fakeAdminClient) int { return f.deleteGrantCalls },
+		},
+		{
+			name: "revoke-token",
+			setup: func(t *testing.T) (Model, *fakeAdminClient) {
+				adminClient := &fakeAdminClient{
+					loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+					users:        []ports.AdminUser{{ID: "u-1", Username: "alice", Enabled: true}},
+					tokens:       map[string][]ports.AdminToken{"u-1": {{Accessor: "tok-1", ExpiresAt: now.Add(time.Hour)}}},
+				}
+				m := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
+				m = runKey(t, m, "enter")
+				m = runKey(t, m, "t")
+				return m, adminClient
+			},
+			openKey:        "x",
+			wantOpenSubstr: `Revoke admin token "tok-1" for "alice"?`,
+			callCount:      func(f *fakeAdminClient) int { return f.revokeTokenCalls },
+		},
+		{
+			name: "delete-repo-grant",
+			setup: func(t *testing.T) (Model, *fakeAdminClient) {
+				adminClient := &fakeAdminClient{
+					loginSession: AdminSession{Username: "delegate", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+					repoGrants:   map[string][]ports.AdminRepositoryGrant{"team/app": {{Username: "bob", Role: domainauth.RepoRoleWriter}}},
+				}
+				m := newAdminReadyModel(t, adminClient)
+				m.adminIntent = adminIntentRepoGrants
+				m.adminIntentRepository = "team/app"
+				m = runAdminLogin(t, m, "delegate", "secret-pass")
+				return m, adminClient
+			},
+			openKey:        "x",
+			wantOpenSubstr: `Remove grant for "bob" from "team/app"?`,
+			callCount:      func(f *fakeAdminClient) int { return f.deleteRepoGrantCalls },
+		},
+		{
+			name: "enable-robot",
+			setup: func(t *testing.T) (Model, *fakeAdminClient) {
+				adminClient := &fakeAdminClient{
+					robots:     []ports.AdminRobot{{ID: "u-2", Username: "robot$ci", Repository: "team/app", Role: domainauth.RepoRoleWriter, Enabled: false}},
+					enableUser: ports.AdminUser{ID: "u-2", Username: "robot$ci", Enabled: true},
+				}
+				m := newAdminReadyModel(t, adminClient)
+				m.adminAuth = adminAuthStateAuthenticated
+				m.screen = screenAdminRobots
+				m.adminView.Robots = adminClient.robots
+				m.adminView.SelectedRobot = 0
+				return m, adminClient
+			},
+			openKey:        "e",
+			wantOpenSubstr: `Confirm enable robot "robot$ci"?`,
+			callCount:      func(f *fakeAdminClient) int { return f.enableCalls },
+		},
+		{
+			name: "disable-robot",
+			setup: func(t *testing.T) (Model, *fakeAdminClient) {
+				adminClient := &fakeAdminClient{
+					robots:      []ports.AdminRobot{{ID: "u-2", Username: "robot$ci", Repository: "team/app", Role: domainauth.RepoRoleWriter, Enabled: true}},
+					disableUser: ports.AdminUser{ID: "u-2", Username: "robot$ci", Enabled: false},
+				}
+				m := newAdminReadyModel(t, adminClient)
+				m.adminAuth = adminAuthStateAuthenticated
+				m.screen = screenAdminRobots
+				m.adminView.Robots = adminClient.robots
+				m.adminView.SelectedRobot = 0
+				return m, adminClient
+			},
+			openKey:        "x",
+			wantOpenSubstr: `Confirm disable robot "robot$ci"?`,
+			callCount:      func(f *fakeAdminClient) int { return f.disableCalls },
+		},
+		{
+			name: "delete-robot",
+			setup: func(t *testing.T) (Model, *fakeAdminClient) {
+				adminClient := &fakeAdminClient{
+					robots: []ports.AdminRobot{{ID: "u-2", Username: "robot$ci", Repository: "team/app", Role: domainauth.RepoRoleWriter, Enabled: true}},
+				}
+				m := newAdminReadyModel(t, adminClient)
+				m.adminAuth = adminAuthStateAuthenticated
+				m.screen = screenAdminRobots
+				m.adminView.Robots = adminClient.robots
+				m.adminView.SelectedRobot = 0
+				return m, adminClient
+			},
+			openKey:        "d",
+			wantOpenSubstr: `Delete robot "robot$ci"? This action cannot be undone.`,
+			callCount:      func(f *fakeAdminClient) int { return f.deleteRobotCalls },
+		},
+	}
+
+	for _, c := range cases {
+		c := c
+		t.Run(c.name+"/confirm", func(t *testing.T) {
+			t.Parallel()
+			m, client := c.setup(t)
+			opened := runKey(t, m, c.openKey)
+			if !strings.Contains(ansi.Strip(opened.View()), c.wantOpenSubstr) {
+				t.Fatalf("view after %q = %q, want to contain %q", c.openKey, opened.View(), c.wantOpenSubstr)
+			}
+			before := c.callCount(client)
+			confirmed := runKey(t, opened, "enter")
+			_ = confirmed
+			if got, want := c.callCount(client), before+1; got != want {
+				t.Fatalf("call count after enter = %d, want %d", got, want)
+			}
+		})
+		t.Run(c.name+"/cancel", func(t *testing.T) {
+			t.Parallel()
+			m, client := c.setup(t)
+			opened := runKey(t, m, c.openKey)
+			before := c.callCount(client)
+			cancelled := runKey(t, opened, "esc")
+			if strings.Contains(ansi.Strip(cancelled.View()), c.wantOpenSubstr) {
+				t.Fatalf("view after esc = %q, want confirm closed", cancelled.View())
+			}
+			if got := c.callCount(client); got != before {
+				t.Fatalf("call count after esc = %d, want unchanged %d (cancel must not dispatch)", got, before)
+			}
+		})
+	}
+}
+
+// TestDeleteTagConfirmCharacterization is the tui-menu-architecture change's
+// Phase 1 task 1.4 (T1.2) golden/characterization baseline, captured BEFORE
+// confirm.go exists: TagsModel's pending-delete Enter/Esc behavior, asserted
+// black-box via View()/status/service call counters only — never touching
+// tags.PendingDelete directly — so it survives unchanged once Phase 5 moves
+// this state onto TagsModel.Confirm confirmPrompt.
+func TestDeleteTagConfirmCharacterization(t *testing.T) {
+	t.Parallel()
+
+	service := tagsReadyFakeService()
+	ready := newTagsReadyModel(t, service)
+
+	pending := runKey(t, ready, "d")
+	want := `Delete tag "latest" from "library/alpine"? This action cannot be undone. (Enter: delete | Esc: cancel)`
+	if got := pending.status; got != want {
+		t.Fatalf("status = %q, want %q", got, want)
+	}
+	if service.calls.deleteManifest != 0 {
+		t.Fatalf("DeleteManifest called %d times, want 0 before confirm", service.calls.deleteManifest)
+	}
+
+	cancelled := runKey(t, pending, "esc")
+	if cancelled.status != "" {
+		t.Fatalf("status after esc = %q, want empty", cancelled.status)
+	}
+	if service.calls.deleteManifest != 0 {
+		t.Fatalf("DeleteManifest called %d times after esc, want 0", service.calls.deleteManifest)
+	}
+
+	// Manual (non-auto-chained) Update calls here, deliberately not runKey:
+	// runKey auto-chains every returned tea.Cmd to completion, which would
+	// also run the post-delete list refresh and clear m.status back to ""
+	// before this assertion ever sees the intermediate "deleted" status —
+	// mirroring TestModelTagsDeleteEnterConfirmFlowSuccess's own two-step
+	// inspection of the Update chain.
+	enterUpdated, deleteCmd := pending.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	firedModel := enterUpdated.(Model)
+	if deleteCmd == nil {
+		t.Fatalf("Enter while pending returned a nil tea.Cmd, want the delete command")
+	}
+	afterDeleteUpdated, _ := firedModel.Update(deleteCmd())
+	afterDelete := afterDeleteUpdated.(Model)
+	if got, want := service.calls.deleteManifest, 1; got != want {
+		t.Fatalf("DeleteManifest called %d times after enter, want %d", got, want)
+	}
+	if !strings.Contains(afterDelete.status, `"latest" deleted`) {
+		t.Fatalf("status after enter = %q, want the deleted confirmation", afterDelete.status)
 	}
 }
 
@@ -2113,13 +2394,17 @@ func TestModelGitleaksConfigModalOpenCancelAndSubmitCurrentSettingsOnly(t *testi
 	// modal's own field separation is asserted directly on its render
 	// output rather than the full composited view (covered exhaustively by
 	// TestRenderGitleaksConfigModalIsASeparateSurfaceFromTrivyConfigModal).
-	if got, want := updated.adminView.GitleaksConfigModal, (gitleaksConfigModal{Open: true, Focus: gitleaksConfigFieldEnabled, Enabled: true, Timeout: "5m0s", MaxConcurrency: "1"}); got != want {
-		t.Fatalf("adminView.GitleaksConfigModal = %#v, want %#v", got, want)
+	screen, ok := updated.adminScreens[slotGitleaksConfig].(gitleaksConfigScreen)
+	if !ok {
+		t.Fatalf("adminScreens[slotGitleaksConfig] = %#v, want a mounted gitleaksConfigScreen", updated.adminScreens[slotGitleaksConfig])
 	}
-	modalOnly := renderGitleaksConfigModal(newAdminTheme(), updated.adminView.GitleaksConfigModal)
+	if got, want := screen.cfg, (gitleaksConfigModal{Open: true, Focus: gitleaksConfigFieldEnabled, Enabled: true, Timeout: "5m0s", MaxConcurrency: "1"}); got != want {
+		t.Fatalf("adminScreens[slotGitleaksConfig].cfg = %#v, want %#v", got, want)
+	}
+	modalOnly := screen.View(newAdminTheme(), screenEnv{}).Overlay
 	for _, hidden := range []string{"Schedule Enabled", "Interval", "Registry Reachable URL"} {
 		if strings.Contains(modalOnly, hidden) {
-			t.Fatalf("renderGitleaksConfigModal() = %q, want unsupported field %q hidden", modalOnly, hidden)
+			t.Fatalf("gitleaksConfigScreen.View() = %q, want unsupported field %q hidden", modalOnly, hidden)
 		}
 	}
 
@@ -2147,8 +2432,8 @@ func TestModelGitleaksConfigModalOpenCancelAndSubmitCurrentSettingsOnly(t *testi
 	if !strings.Contains(submitted.View(), "Configuration saved") {
 		t.Fatalf("view = %q, want config feedback after submit", submitted.View())
 	}
-	if submitted.adminView.GitleaksConfigModal.Active() {
-		t.Fatalf("GitleaksConfigModal = %#v, want closed after submit", submitted.adminView.GitleaksConfigModal)
+	if submitted.adminScreens[slotGitleaksConfig] != nil {
+		t.Fatalf("adminScreens[slotGitleaksConfig] = %#v, want nil (closed after submit)", submitted.adminScreens[slotGitleaksConfig])
 	}
 }
 
@@ -2193,6 +2478,147 @@ func TestModelGitleaksConfigModalValidationErrorSurfaced(t *testing.T) {
 	if !strings.Contains(submitted.View(), "invalid timeout") {
 		t.Fatalf("view = %q, want invalid timeout error surfaced", submitted.View())
 	}
+}
+
+// TestGitleaksConfigModalCharacterization is the tui-menu-architecture
+// change's Phase 1 task 1.2 (T1.0) golden/characterization baseline,
+// captured BEFORE screen_gitleaks_config.go exists: table-driven over Esc,
+// Tab x4 (the field-wrap cycle), Space, Backspace, Enter, plain rune input,
+// and an unmapped key, every assertion black-box via View()/call-counter
+// content only — never touching updated.adminView.GitleaksConfigModal's
+// fields directly — so this test survives unchanged once Phase 6 moves this
+// state into gitleaksConfigScreen and deletes the AdminViewState field.
+func TestGitleaksConfigModalCharacterization(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 13, 14, 0, 0, 0, time.UTC)
+	newReady := func(t *testing.T) (Model, *fakeAdminClient) {
+		t.Helper()
+		adminClient := &fakeAdminClient{
+			loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+			features:     []ports.FeatureSummary{{Name: "gitleaks", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
+			featurePage: ports.FeaturePage{
+				Summary: ports.FeatureSummary{Name: "gitleaks", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
+				Header:  []ports.FeatureField{{Label: "Enabled", Value: "true"}},
+				Sections: []ports.FeatureSection{{ID: "config", Title: "Configuration", Kind: "fields", Fields: []ports.FeatureField{
+					{Label: "Timeout", Value: "5m0s"},
+					{Label: "Max Concurrency", Value: "1"},
+				}}},
+			},
+		}
+		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
+		updated = runKey(t, updated, "f")
+		updated = runKey(t, updated, "s")
+		if !strings.Contains(updated.View(), "Edit Gitleaks Configuration") {
+			t.Fatalf("test setup invalid: view = %q, want the gitleaks modal open", updated.View())
+		}
+		return updated, adminClient
+	}
+
+	t.Run("esc closes without submitting", func(t *testing.T) {
+		t.Parallel()
+		opened, client := newReady(t)
+		closed := runKey(t, opened, "esc")
+		if strings.Contains(closed.View(), "Edit Gitleaks Configuration") {
+			t.Fatalf("view after esc = %q, want the modal closed", closed.View())
+		}
+		if client.configureFeatureCalls != 0 {
+			t.Fatalf("configureFeatureCalls = %d, want 0 after esc", client.configureFeatureCalls)
+		}
+	})
+
+	t.Run("space toggles enabled while focus is on enabled", func(t *testing.T) {
+		t.Parallel()
+		// Round-trip identity, not exact-text matching: the modal renders
+		// inside compositeOverlay's column-interleaved workspace, where a
+		// literal "Enabled\non" substring search collides with unrelated
+		// base-page content on the same physical row. One toggle must
+		// change the view; two toggles must exactly restore it.
+		opened, _ := newReady(t)
+		toggledOnce := runKey(t, opened, " ")
+		if toggledOnce.View() == opened.View() {
+			t.Fatalf("view after one space = unchanged, want Enabled to visibly flip")
+		}
+		toggledTwice := runKey(t, toggledOnce, " ")
+		if toggledTwice.View() != opened.View() {
+			t.Fatalf("view after two spaces = %q, want it to exactly restore the original %q", toggledTwice.View(), opened.View())
+		}
+	})
+
+	t.Run("tab x4 wraps focus back to timeout", func(t *testing.T) {
+		t.Parallel()
+		opened, _ := newReady(t)
+		afterFourTabs := opened
+		for i := 0; i < 4; i++ {
+			afterFourTabs = runKey(t, afterFourTabs, "tab")
+		}
+		typed := runKey(t, afterFourTabs, "9")
+		if !strings.Contains(typed.View(), "5m0s9") {
+			t.Fatalf("view after tab x4 + rune = %q, want the rune appended to Timeout (0:Enabled -> 1:Timeout -> 2:MaxConcurrency -> 0:Enabled -> 1:Timeout)", typed.View())
+		}
+		if strings.Contains(typed.View(), "19") {
+			t.Fatalf("view after tab x4 + rune = %q, want MaxConcurrency (\"1\") untouched", typed.View())
+		}
+	})
+
+	t.Run("backspace trims the focused field", func(t *testing.T) {
+		t.Parallel()
+		// Round-trip identity again (see the space test's comment above):
+		// removing "s" from "5m0s" must change the view, and typing "s"
+		// back must exactly restore it.
+		opened, _ := newReady(t)
+		onTimeout := runKey(t, opened, "tab")
+		trimmed := runKey(t, onTimeout, "backspace")
+		if trimmed.View() == onTimeout.View() {
+			t.Fatalf("view after backspace = unchanged, want Timeout's trailing rune removed")
+		}
+		restored := runKey(t, trimmed, "s")
+		if restored.View() != onTimeout.View() {
+			t.Fatalf("view after backspace+\"s\" = %q, want it to exactly restore %q", restored.View(), onTimeout.View())
+		}
+	})
+
+	t.Run("enter submits with the current settings", func(t *testing.T) {
+		t.Parallel()
+		opened, client := newReady(t)
+		submitted := runKey(t, opened, "enter")
+		if client.configureFeatureCalls != 1 {
+			t.Fatalf("configureFeatureCalls = %d, want 1 after enter with valid fields", client.configureFeatureCalls)
+		}
+		if client.lastConfiguredFeature != "gitleaks" {
+			t.Fatalf("lastConfiguredFeature = %q, want gitleaks", client.lastConfiguredFeature)
+		}
+		if strings.Contains(submitted.View(), "Edit Gitleaks Configuration") {
+			t.Fatalf("view after successful submit = %q, want the modal closed", submitted.View())
+		}
+	})
+
+	t.Run("plain rune input appends to the focused text field", func(t *testing.T) {
+		t.Parallel()
+		opened, _ := newReady(t)
+		onTimeout := runKey(t, opened, "tab")
+		typed := runKey(t, onTimeout, "9")
+		if !strings.Contains(typed.View(), "5m0s9") {
+			t.Fatalf("view after rune = %q, want \"9\" appended to Timeout", typed.View())
+		}
+	})
+
+	t.Run("unmapped key is a no-op", func(t *testing.T) {
+		t.Parallel()
+		opened, client := newReady(t)
+		before := opened.View()
+		updated, cmd := opened.Update(tea.KeyMsg{Type: tea.KeyLeft})
+		after := updated.(Model)
+		if cmd != nil {
+			t.Fatalf("Update(unmapped key) returned a non-nil cmd, want nil")
+		}
+		if after.View() != before {
+			t.Fatalf("view after an unmapped key = %q, want unchanged %q", after.View(), before)
+		}
+		if client.configureFeatureCalls != 0 {
+			t.Fatalf("configureFeatureCalls = %d, want 0", client.configureFeatureCalls)
+		}
+	})
 }
 
 func TestModelScanPolicyModalOpenToggleSubmitPersistsAndReflectsCurrentSettings(t *testing.T) {
@@ -3512,9 +3938,7 @@ func TestModelConfirmAndTrivyConfigModalOverlayFitsViewportAndDoesNotGrowPageHei
 			t.Parallel()
 
 			model := newModelForModalOverlayTest(t, height)
-			model.adminView.ConfirmModal = adminConfirmModal{
-				Kind: adminConfirmEnableUser, Title: "Enable User", Message: "Enable alice?", ConfirmText: "enable",
-			}
+			model.adminView.Confirm = newConfirmPrompt("Enable User", "Enable alice?", "enable", "", func(screenEnv) tea.Cmd { return nil })
 			openView := model.View()
 			if got := lipgloss.Height(openView); got > height {
 				t.Fatalf("view height with Confirm modal open = %d, want <= %d (viewport height)\n%s", got, height, openView)

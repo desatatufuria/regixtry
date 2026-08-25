@@ -82,13 +82,12 @@ type TagsModel struct {
 	// rebuildTagsTable() time -- mirrors AdminViewState.Tables' own
 	// baked-not-computed-in-View() pattern (design.md decision #6).
 	Table bubbletable.Model
-	// PendingDelete holds the tag name awaiting an Enter/Esc confirm from
-	// the "d" delete key (blob-garbage-collection change) -- "" means no
-	// delete is pending. screenTags is not an admin screen and only ever
-	// needs this one confirm kind, so a single field is deliberately used
-	// here instead of reusing/extending AdminViewState.ConfirmModal's
-	// generic multi-kind machinery.
-	PendingDelete string
+	// Confirm holds the delete-tag pending confirm opened by the "d" key
+	// (design.md Decision E/D7): the same confirmPrompt primitive
+	// AdminViewState.Confirm uses, composed here identically -- this is the
+	// retirement of TagsModel's own former PendingDelete string field, one
+	// of the two confirm patterns D7 requires collapse to exactly one.
+	Confirm confirmPrompt
 }
 
 type ManifestModel struct {
@@ -248,6 +247,12 @@ type Model struct {
 	// rendering a screen's bounded section (wired in Phase 3).
 	viewport   viewportSize
 	bodyScroll int
+
+	// adminScreens holds every migrated screen sub-model (design.md
+	// Decision B), keyed by screenSlot. It is an array of an interface
+	// type, never a slice or map, so Model's ordinary value-copy semantics
+	// hold for it exactly like every other Model field.
+	adminScreens adminScreenSet
 }
 
 // viewportSize holds the raw terminal dimensions captured from
@@ -266,6 +271,20 @@ type viewportSize struct {
 // render a status other than m.status (e.g. m.notice) plus their own help
 // string. Measuring "" instead would under-count chrome and let the row
 // budget exceed the terminal height once content is clipped.
+// screenEnv builds the read-only view of the outside world a migrated
+// sub-model or a legacy model's embedded confirmPrompt may read
+// (design.md's screenEnv). Layout uses adminTablesLayout's own admin-screen
+// budget since, in Slice 1, only admin-side screens/overlays consume it.
+func (m Model) screenEnv() screenEnv {
+	return screenEnv{
+		Client:            m.adminClient,
+		Session:           m.adminSession,
+		Layout:            m.adminTablesLayout(),
+		KnownRepositories: m.repositories.Names(),
+		Now:               m.now,
+	}
+}
+
 func (m Model) contentBudget(status, help string) consoleLayout {
 	layout := contentBudget(m.viewport.Width, m.viewport.Height, status, help)
 	layout.Scroll = m.bodyScroll
@@ -678,11 +697,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// the pending state so the operator is never stuck on a failed
 		// confirm.
 		if msg.err != nil {
-			m.tags.PendingDelete = ""
+			m.tags.Confirm = confirmPrompt{}
 			m.status = msg.err.Error()
 			return m, nil
 		}
-		m.tags.PendingDelete = ""
+		m.tags.Confirm = confirmPrompt{}
 		m.status = fmt.Sprintf("Tag %q deleted. Refreshing tags...", msg.tag)
 		return m, m.loadTagsCmd(msg.repository)
 	case manifestLoadedMsg:
@@ -812,7 +831,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = msg.err.Error()
 			return m, nil
 		}
-		m.adminView.ConfirmModal = adminConfirmModal{}
+		m.adminView.Confirm = confirmPrompt{}
 		m.pendingAdminStatus = strings.TrimSpace(msg.result.Message)
 		m.status = "Loading built-in features..."
 		m.screen = screenAdminFeatures
@@ -826,7 +845,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.adminView.TrivyConfigModal = trivyConfigModal{}
-		m.adminView.GitleaksConfigModal = gitleaksConfigModal{}
+		m.adminScreens[slotGitleaksConfig] = nil
 		m.adminView.TrivyTab = trivyTabRuntime
 		m.pendingAdminStatus = "Configuration saved."
 		m.status = "Loading built-in features..."
@@ -1152,7 +1171,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.adminView.GrantForm = newAdminViewState().GrantForm
-		m.adminView.ConfirmModal = adminConfirmModal{}
+		m.adminView.Confirm = confirmPrompt{}
 		m.adminView.SelectedUserID = msg.userID
 		m.adminView.SelectedUsername = msg.username
 		if msg.repository == "" {
@@ -1190,7 +1209,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.adminView.RepoAdminGrantForm = adminRepositoryGrantForm{Role: domainauth.RepoRoleReader}
-		m.adminView.ConfirmModal = adminConfirmModal{}
+		m.adminView.Confirm = confirmPrompt{}
 		if msg.deleted {
 			m.status = fmt.Sprintf("Grant removed for %q. Refreshing grants...", msg.username)
 		} else {
@@ -1223,7 +1242,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = msg.err.Error()
 			return m, nil
 		}
-		m.adminView.ConfirmModal = adminConfirmModal{}
+		m.adminView.Confirm = confirmPrompt{}
 		m.adminView.RevealedTokenSecret = ""
 		m.adminView.RevealedTokenAccessor = ""
 		m.status = fmt.Sprintf("Admin token revoked for %q. Refreshing tokens...", msg.username)
@@ -1237,7 +1256,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = msg.err.Error()
 			return m, nil
 		}
-		m.adminView.ConfirmModal = adminConfirmModal{}
+		m.adminView.Confirm = confirmPrompt{}
 		m.adminView.SelectedUserID = msg.user.ID
 		m.adminView.SelectedUsername = msg.user.Username
 		verb := "disabled"
@@ -1295,7 +1314,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = msg.err.Error()
 			return m, nil
 		}
-		m.adminView.ConfirmModal = adminConfirmModal{}
+		m.adminView.Confirm = confirmPrompt{}
 		verb := "disabled"
 		if msg.enabled {
 			verb = "enabled"
@@ -1311,7 +1330,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = msg.err.Error()
 			return m, nil
 		}
-		m.adminView.ConfirmModal = adminConfirmModal{}
+		m.adminView.Confirm = confirmPrompt{}
 		m.status = fmt.Sprintf("Robot %q deleted. Refreshing robots...", msg.username)
 		m.screen = screenAdminRobots
 		return m, m.loadAdminRobotsCmd()
@@ -1428,7 +1447,7 @@ func (m Model) View() string {
 		return renderInspectionWorkspace("Sign In", renderConsoleTextSection(m.loadingText, layout), "", help)
 	case screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken, screenRepoAdminGrants, screenRepoAdminAddGrant, screenAdminRobots, screenAdminCreateRobot:
 		layout := m.contentBudget(m.status, adminScreenHelp(m.screen, m.adminView))
-		return renderAdminWorkspace(m.screen, m.adminSession, m.adminView, m.repositories.Names(), m.status, layout, m.now())
+		return renderAdminWorkspace(m.screen, m.adminSession, m.adminView, m.repositories.Names(), m.status, layout, m.now(), m.adminScreens)
 	}
 
 	help := "q: quit"
@@ -1459,11 +1478,13 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// mean "confirm"/"cancel this confirm", not the screen's ordinary
 	// inspect-manifest/back-to-Repositories behavior those same keys
 	// otherwise trigger further down this switch.
-	case m.screen == screenTags && m.tags.PendingDelete != "" && isEnterKey(msg):
-		repository, tag := m.tags.Repository, m.tags.PendingDelete
-		return m, m.deleteTagCmd(repository, tag)
-	case m.screen == screenTags && m.tags.PendingDelete != "" && isEscKey(msg):
-		m.tags.PendingDelete = ""
+	case m.screen == screenTags && m.tags.Confirm.Active() && isEnterKey(msg):
+		next, cmd, _ := m.tags.Confirm.update(m.screenEnv(), msg)
+		m.tags.Confirm = next
+		return m, cmd
+	case m.screen == screenTags && m.tags.Confirm.Active() && isEscKey(msg):
+		next, _, _ := m.tags.Confirm.update(m.screenEnv(), msg)
+		m.tags.Confirm = next
 		m.status = ""
 		return m, nil
 	case isPgUpKey(msg), isPgDnKey(msg), isHomeKey(msg), isEndKey(msg):
@@ -1526,7 +1547,21 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// screenManifest/Blobs/Uploads case below so it never falls through
 		// to that unrelated v1 placeholder.
 		if tag, ok := m.selectedTag(); ok {
-			m.tags.PendingDelete = tag
+			repository := m.tags.Repository
+			service := m.service
+			ctx := m.ctx
+			// onConfirm ignores env and closes over service/ctx/repository/tag
+			// directly instead: QueryService.DeleteManifest runs in-process
+			// (not AdminClient-backed), so there is no session token to go
+			// stale the way design.md's "receive env at confirm time" guard
+			// protects against -- capturing these here is exactly as safe as
+			// capturing them at open time already was in the pre-change code.
+			m.tags.Confirm = newConfirmPrompt("", "", "delete", "", func(screenEnv) tea.Cmd {
+				return func() tea.Msg {
+					_, err := service.DeleteManifest(ctx, repository, tag)
+					return tagDeletedMsg{repository: repository, tag: tag, err: err}
+				}
+			})
 			m.status = fmt.Sprintf("Delete tag %q from %q? This action cannot be undone. (Enter: delete | Esc: cancel)", tag, m.tags.Repository)
 		} else {
 			m.status = "No tag selected to delete."
@@ -1552,8 +1587,20 @@ func (m Model) updateAdminKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateTrivyConfigModalKey(msg)
 	}
 
-	if m.adminView.GitleaksConfigModal.Active() {
-		return m.updateGitleaksConfigModalKey(msg)
+	if s, ok := m.adminScreens[slotGitleaksConfig].(gitleaksConfigScreen); ok {
+		next, cmd, _ := s.Update(m.screenEnv(), msg)
+		m.adminScreens[slotGitleaksConfig] = next
+		switch {
+		case next == nil:
+			// Esc closed it -- mirrors updateGitleaksConfigModalKey's own
+			// Esc branch, which also cleared m.status.
+			m.status = ""
+		case cmd != nil:
+			// Enter validated and dispatched configureFeatureCmd -- mirrors
+			// updateGitleaksConfigModalKey's own Enter-success branch.
+			m.status = "Submitting gitleaks configuration..."
+		}
+		return m, cmd
 	}
 
 	if m.adminView.ScanPolicyModal.Active() {
@@ -1576,48 +1623,24 @@ func (m Model) updateAdminKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.logoutAdmin(), nil
 	}
 
-	if m.adminView.ConfirmModal.Active() {
-		return m.updateAdminConfirmKey(msg)
+	if m.adminView.Confirm.Active() {
+		before := m.adminView.Confirm
+		next, cmd, _ := before.update(m.screenEnv(), msg)
+		m.adminView.Confirm = next
+		switch {
+		case cmd != nil:
+			m.status = before.submitting
+		case isEscKey(msg):
+			m.status = ""
+		}
+		return m, cmd
 	}
 
 	if isRuneKey(msg, 'q') && isAdminPrincipalScreen(m.screen) {
 		return m, tea.Quit
 	}
 
-	switch m.screen {
-	case screenAdminLogin:
-		return m.updateAdminLoginKey(msg)
-	case screenAdminAuthenticating:
-		return m, nil
-	case screenAdminUsers:
-		return m.updateAdminUsersKey(msg)
-	case screenAdminFeatures:
-		return m.updateAdminFeaturesKey(msg)
-	case screenAdminCreateUser:
-		return m.updateCreateUserFormKey(msg)
-	case screenAdminEditUser:
-		return m.updateAdminEditUserKey(msg)
-	case screenAdminChangePassword:
-		return m.updateResetPasswordFormKey(msg)
-	case screenAdminEditUserGrants:
-		return m.updateAdminGrantsKey(msg)
-	case screenAdminAddGrant:
-		return m.updateGrantFormKey(msg)
-	case screenAdminEditUserTokens:
-		return m.updateAdminTokensKey(msg)
-	case screenAdminCreateToken:
-		return m.updateTokenFormKey(msg)
-	case screenRepoAdminGrants:
-		return m.updateRepoAdminGrantsKey(msg)
-	case screenRepoAdminAddGrant:
-		return m.updateRepoAdminAddGrantKey(msg)
-	case screenAdminRobots:
-		return m.updateAdminRobotsKey(msg)
-	case screenAdminCreateRobot:
-		return m.updateCreateRobotFormKey(msg)
-	default:
-		return m, nil
-	}
+	return routeAdminKey(m, msg)
 }
 
 func (m Model) updateAdminLoginKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1735,20 +1758,19 @@ func (m Model) updateAdminRobotsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if isRuneKey(msg, 'x') && !robot.Enabled {
 			return m, nil
 		}
-		kind := adminConfirmDisableRobot
+		enable := isRuneKey(msg, 'e')
 		verb := "disable"
-		if isRuneKey(msg, 'e') {
-			kind = adminConfirmEnableRobot
+		if enable {
 			verb = "enable"
 		}
-		m.adminView.ConfirmModal = adminConfirmModal{
-			Kind:        kind,
-			Title:       fmt.Sprintf("Confirm %s", strings.Title(verb)),
-			Message:     fmt.Sprintf("Confirm %s robot %q?", verb, robot.Username),
-			ConfirmText: verb,
-			UserID:      robot.ID,
-			Username:    robot.Username,
-		}
+		robotID := robot.ID
+		m.adminView.Confirm = newConfirmPrompt(
+			fmt.Sprintf("Confirm %s", strings.Title(verb)),
+			fmt.Sprintf("Confirm %s robot %q?", verb, robot.Username),
+			verb,
+			fmt.Sprintf("Submitting %s for %s...", verb, robot.Username),
+			func(env screenEnv) tea.Cmd { return env.asModel().enableDisableRobotCmd(robotID, enable) },
+		)
 		m.status = ""
 		return m, nil
 	case isRuneKey(msg, 'd'):
@@ -1757,14 +1779,14 @@ func (m Model) updateAdminRobotsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = "No robot selected."
 			return m, nil
 		}
-		m.adminView.ConfirmModal = adminConfirmModal{
-			Kind:        adminConfirmDeleteRobot,
-			Title:       "Confirm Delete",
-			Message:     fmt.Sprintf("Delete robot %q? This action cannot be undone.", robot.Username),
-			ConfirmText: "delete",
-			UserID:      robot.ID,
-			Username:    robot.Username,
-		}
+		robotID, robotUsername := robot.ID, robot.Username
+		m.adminView.Confirm = newConfirmPrompt(
+			"Confirm Delete",
+			fmt.Sprintf("Delete robot %q? This action cannot be undone.", robot.Username),
+			"delete",
+			fmt.Sprintf("Deleting robot %q...", robot.Username),
+			func(env screenEnv) tea.Cmd { return env.asModel().deleteRobotCmd(robotID, robotUsername) },
+		)
 		m.status = ""
 		return m, nil
 	}
@@ -1935,7 +1957,7 @@ func (m Model) updateAdminFeaturesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = "Current gitleaks configuration is unavailable."
 			return m, nil
 		}
-		m.adminView.GitleaksConfigModal = modal
+		m.adminScreens[slotGitleaksConfig] = newGitleaksConfigScreen(modal)
 		m.status = ""
 		return m, nil
 	case m.isSelectedTrivyFeature() && m.adminView.TrivyTab == trivyTabRepositoryAlerts && isRuneKey(msg, 'o'):
@@ -1988,20 +2010,32 @@ func (m Model) updateAdminFeaturesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	if action, ok := featureActionForKey(msg, m.adminView.FeaturePage); ok {
 		if strings.TrimSpace(action.ConfirmMessage) != "" {
-			kind := adminConfirmKind(action.ID)
-			switch action.ID {
-			case "enable":
-				kind = adminConfirmEnableFeature
-			case "disable":
-				kind = adminConfirmDisableFeature
+			// onConfirm/submitting stay zero-valued for any action.ID other
+			// than "enable"/"disable". In the pre-change code this produced
+			// a Kind updateAdminConfirmKey's switch never matched (a silent
+			// Enter no-op with the modal still visible); the feature
+			// registry (feature_registry.go) only ever sets ConfirmMessage
+			// for "enable"/"disable", so this branch is unreachable in
+			// practice either way -- confirmPrompt's Active()==(onConfirm!=nil)
+			// keeps that dead path inert rather than reproducing a
+			// never-exercised visible-but-inert modal.
+			var (
+				submitting string
+				onConfirm  func(screenEnv) tea.Cmd
+			)
+			if action.ID == "enable" || action.ID == "disable" {
+				featureName := m.selectedFeatureName()
+				actionID := action.ID
+				submitting = fmt.Sprintf("Submitting %s for %s...", actionID, featureName)
+				onConfirm = func(env screenEnv) tea.Cmd { return env.asModel().executeFeatureActionCmd(featureName, actionID) }
 			}
-			m.adminView.ConfirmModal = adminConfirmModal{
-				Kind:        kind,
-				Title:       adminFirstNonEmpty(action.ConfirmTitle, action.Label),
-				Message:     action.ConfirmMessage,
-				ConfirmText: strings.ToLower(strings.TrimSpace(action.Label)),
-				FeatureName: m.selectedFeatureName(),
-			}
+			m.adminView.Confirm = newConfirmPrompt(
+				adminFirstNonEmpty(action.ConfirmTitle, action.Label),
+				action.ConfirmMessage,
+				strings.ToLower(strings.TrimSpace(action.Label)),
+				submitting,
+				onConfirm,
+			)
 			m.status = ""
 			return m, nil
 		}
@@ -2044,48 +2078,6 @@ func (m Model) updateTrivyConfigModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyRunes {
 		m.appendTrivyConfigModalRunes(string(msg.Runes))
 		m.adminView.TrivyConfigModal.Error = ""
-		return m, nil
-	}
-	return m, nil
-}
-
-// updateGitleaksConfigModalKey mirrors updateTrivyConfigModalKey's dedicated-
-// handler pattern at gitleaks' narrower 3-field scope: Tab cycles fields
-// (wrapping, via nextGitleaksConfigField), Space toggles Enabled when it has
-// focus, Backspace/rune keys edit the focused text field (Timeout,
-// MaxConcurrency), Enter saves, Esc cancels without persisting.
-func (m Model) updateGitleaksConfigModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch {
-	case isEscKey(msg):
-		m.adminView.GitleaksConfigModal = gitleaksConfigModal{}
-		m.status = ""
-		return m, nil
-	case isTabKey(msg):
-		m.adminView.GitleaksConfigModal.Focus = nextGitleaksConfigField(m.adminView.GitleaksConfigModal.Focus)
-		m.adminView.GitleaksConfigModal.Error = ""
-		return m, nil
-	case isRuneKey(msg, ' '):
-		if m.adminView.GitleaksConfigModal.Focus == gitleaksConfigFieldEnabled {
-			m.adminView.GitleaksConfigModal.Enabled = !m.adminView.GitleaksConfigModal.Enabled
-			m.adminView.GitleaksConfigModal.Error = ""
-		}
-		return m, nil
-	case isBackspaceKey(msg):
-		m.deleteGitleaksConfigModalRune()
-		m.adminView.GitleaksConfigModal.Error = ""
-		return m, nil
-	case isEnterKey(msg):
-		input, err := m.gitleaksConfigInputFromModal()
-		if err != nil {
-			m.adminView.GitleaksConfigModal.Error = err.Error()
-			return m, nil
-		}
-		m.status = "Submitting gitleaks configuration..."
-		return m, m.configureFeatureCmd(gitleaksFeatureName, input)
-	}
-	if msg.Type == tea.KeyRunes {
-		m.appendGitleaksConfigModalRunes(string(msg.Runes))
-		m.adminView.GitleaksConfigModal.Error = ""
 		return m, nil
 	}
 	return m, nil
@@ -2564,20 +2556,19 @@ func (m Model) updateAdminEditUserKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if isRuneKey(msg, 'x') && !user.Enabled {
 			return m, nil
 		}
-		kind := adminConfirmDisableUser
+		enable := isRuneKey(msg, 'e')
 		verb := "disable"
-		if isRuneKey(msg, 'e') {
-			kind = adminConfirmEnableUser
+		if enable {
 			verb = "enable"
 		}
-		m.adminView.ConfirmModal = adminConfirmModal{
-			Kind:        kind,
-			Title:       fmt.Sprintf("Confirm %s", strings.Title(verb)),
-			Message:     fmt.Sprintf("Confirm %s user %q?", verb, user.Username),
-			ConfirmText: verb,
-			UserID:      user.ID,
-			Username:    user.Username,
-		}
+		userID := user.ID
+		m.adminView.Confirm = newConfirmPrompt(
+			fmt.Sprintf("Confirm %s", strings.Title(verb)),
+			fmt.Sprintf("Confirm %s user %q?", verb, user.Username),
+			verb,
+			fmt.Sprintf("Submitting %s for %s...", verb, user.Username),
+			func(env screenEnv) tea.Cmd { return env.asModel().enableDisableUserCmd(userID, enable) },
+		)
 		m.status = ""
 		return m, nil
 	}
@@ -2632,15 +2623,14 @@ func (m Model) updateAdminGrantsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = "No grant selected to remove."
 			return m, nil
 		}
-		m.adminView.ConfirmModal = adminConfirmModal{
-			Kind:        adminConfirmDeleteGrant,
-			Title:       "Confirm Grant Removal",
-			Message:     fmt.Sprintf("Remove grant %q from %q?", grant.Repository.String(), m.adminView.SelectedUsername),
-			ConfirmText: "remove",
-			UserID:      m.adminView.SelectedUserID,
-			Username:    m.adminView.SelectedUsername,
-			Repository:  grant.Repository.String(),
-		}
+		userID, username, repository := m.adminView.SelectedUserID, m.adminView.SelectedUsername, grant.Repository.String()
+		m.adminView.Confirm = newConfirmPrompt(
+			"Confirm Grant Removal",
+			fmt.Sprintf("Remove grant %q from %q?", repository, username),
+			"remove",
+			fmt.Sprintf("Removing grant %q from %s...", repository, username),
+			func(env screenEnv) tea.Cmd { return env.asModel().deleteAdminGrantCmd(userID, username, repository) },
+		)
 		m.status = ""
 		return m, nil
 	}
@@ -2686,61 +2676,16 @@ func (m Model) updateAdminTokensKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = "No admin token selected to revoke."
 			return m, nil
 		}
-		m.adminView.ConfirmModal = adminConfirmModal{
-			Kind:        adminConfirmRevokeToken,
-			Title:       "Confirm Token Revocation",
-			Message:     fmt.Sprintf("Revoke admin token %q for %q?", token.Accessor, m.adminView.SelectedUsername),
-			ConfirmText: "revoke",
-			UserID:      m.adminView.SelectedUserID,
-			Username:    m.adminView.SelectedUsername,
-			Accessor:    token.Accessor,
-		}
+		userID, username, accessor := m.adminView.SelectedUserID, m.adminView.SelectedUsername, token.Accessor
+		m.adminView.Confirm = newConfirmPrompt(
+			"Confirm Token Revocation",
+			fmt.Sprintf("Revoke admin token %q for %q?", accessor, username),
+			"revoke",
+			fmt.Sprintf("Revoking token %q for %s...", accessor, username),
+			func(env screenEnv) tea.Cmd { return env.asModel().revokeAdminTokenCmd(userID, username, accessor) },
+		)
 		m.status = ""
 		return m, nil
-	}
-	return m, nil
-}
-
-func (m Model) updateAdminConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch {
-	case isEscKey(msg):
-		m.adminView.ConfirmModal = adminConfirmModal{}
-		m.status = ""
-		return m, nil
-	case isEnterKey(msg):
-		modal := m.adminView.ConfirmModal
-		switch modal.Kind {
-		case adminConfirmEnableUser:
-			m.status = fmt.Sprintf("Submitting enable for %s...", modal.Username)
-			return m, m.enableDisableUserCmd(modal.UserID, true)
-		case adminConfirmDisableUser:
-			m.status = fmt.Sprintf("Submitting disable for %s...", modal.Username)
-			return m, m.enableDisableUserCmd(modal.UserID, false)
-		case adminConfirmEnableFeature:
-			m.status = fmt.Sprintf("Submitting enable for %s...", modal.FeatureName)
-			return m, m.executeFeatureActionCmd(modal.FeatureName, "enable")
-		case adminConfirmDisableFeature:
-			m.status = fmt.Sprintf("Submitting disable for %s...", modal.FeatureName)
-			return m, m.executeFeatureActionCmd(modal.FeatureName, "disable")
-		case adminConfirmDeleteGrant:
-			m.status = fmt.Sprintf("Removing grant %q from %s...", modal.Repository, modal.Username)
-			return m, m.deleteAdminGrantCmd(modal.UserID, modal.Username, modal.Repository)
-		case adminConfirmDeleteRepoGrant:
-			m.status = fmt.Sprintf("Removing grant for %q from %q...", modal.Username, modal.Repository)
-			return m, m.deleteRepoAdminGrantCmd(modal.Repository, modal.Username)
-		case adminConfirmRevokeToken:
-			m.status = fmt.Sprintf("Revoking token %q for %s...", modal.Accessor, modal.Username)
-			return m, m.revokeAdminTokenCmd(modal.UserID, modal.Username, modal.Accessor)
-		case adminConfirmEnableRobot:
-			m.status = fmt.Sprintf("Submitting enable for %s...", modal.Username)
-			return m, m.enableDisableRobotCmd(modal.UserID, true)
-		case adminConfirmDisableRobot:
-			m.status = fmt.Sprintf("Submitting disable for %s...", modal.Username)
-			return m, m.enableDisableRobotCmd(modal.UserID, false)
-		case adminConfirmDeleteRobot:
-			m.status = fmt.Sprintf("Deleting robot %q...", modal.Username)
-			return m, m.deleteRobotCmd(modal.UserID, modal.Username)
-		}
 	}
 	return m, nil
 }
@@ -2931,14 +2876,14 @@ func (m Model) updateRepoAdminGrantsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = "No grant selected to remove."
 			return m, nil
 		}
-		m.adminView.ConfirmModal = adminConfirmModal{
-			Kind:        adminConfirmDeleteRepoGrant,
-			Title:       "Confirm Grant Removal",
-			Message:     fmt.Sprintf("Remove grant for %q from %q?", grant.Username, m.adminView.RepoAdminRepository),
-			ConfirmText: "remove",
-			Repository:  m.adminView.RepoAdminRepository,
-			Username:    grant.Username,
-		}
+		repository, username := m.adminView.RepoAdminRepository, grant.Username
+		m.adminView.Confirm = newConfirmPrompt(
+			"Confirm Grant Removal",
+			fmt.Sprintf("Remove grant for %q from %q?", username, repository),
+			"remove",
+			fmt.Sprintf("Removing grant for %q from %q...", username, repository),
+			func(env screenEnv) tea.Cmd { return env.asModel().deleteRepoAdminGrantCmd(repository, username) },
+		)
 		m.status = ""
 		return m, nil
 	}
@@ -3872,7 +3817,7 @@ func (m Model) returnToInspection() Model {
 	m.screen = m.adminReturn
 	m.loadingText = ""
 	m.status = ""
-	m.adminView.ConfirmModal = adminConfirmModal{}
+	m.adminView.Confirm = confirmPrompt{}
 	m.adminView.UserSearchActive = false
 	m.clearRevealedAdminToken()
 	// Defensive reset: leaving the login screen (e.g. Esc) without
@@ -4036,7 +3981,7 @@ func isAdminPrincipalScreen(current screen) bool {
 }
 
 func (m Model) canLogoutAdminFromCurrentScreen() bool {
-	if m.adminAuth != adminAuthStateAuthenticated || m.adminView.ConfirmModal.Active() {
+	if m.adminAuth != adminAuthStateAuthenticated || m.adminView.Confirm.Active() {
 		return false
 	}
 
@@ -4288,7 +4233,7 @@ func (m *Model) clearSelectedAdminDetails() {
 	m.adminView.FeaturePage = ports.FeaturePage{}
 	m.adminView.TrivyTab = trivyTabRuntime
 	m.adminView.TrivyConfigModal = trivyConfigModal{}
-	m.adminView.GitleaksConfigModal = gitleaksConfigModal{}
+	m.adminScreens[slotGitleaksConfig] = nil
 	m.adminView.TrivyScanRuns = nil
 	m.adminView.TrivySelectedAlert = 0
 	m.adminView.TrivyAlertsLoaded = false
@@ -4333,7 +4278,7 @@ func (m *Model) applyLoadedFeatures(features []ports.FeatureSummary) {
 func (m *Model) applyFeaturePage(page ports.FeaturePage) {
 	m.adminView.FeaturePage = page
 	m.adminView.TrivyConfigModal = trivyConfigModal{}
-	m.adminView.GitleaksConfigModal = gitleaksConfigModal{}
+	m.adminScreens[slotGitleaksConfig] = nil
 	m.adminView.TrivyScanRuns = nil
 	m.adminView.TrivySelectedAlert = 0
 	m.adminView.TrivyAlertsLoaded = false
@@ -4525,49 +4470,6 @@ func (m *Model) appendTrivyConfigModalRunes(value string) {
 	case trivyConfigFieldMaxConcurrency:
 		m.adminView.TrivyConfigModal.MaxConcurrency += value
 	}
-}
-
-func (m *Model) deleteGitleaksConfigModalRune() {
-	switch m.adminView.GitleaksConfigModal.Focus {
-	case gitleaksConfigFieldTimeout:
-		m.adminView.GitleaksConfigModal.Timeout = trimLastRune(m.adminView.GitleaksConfigModal.Timeout)
-	case gitleaksConfigFieldMaxConcurrency:
-		m.adminView.GitleaksConfigModal.MaxConcurrency = trimLastRune(m.adminView.GitleaksConfigModal.MaxConcurrency)
-	}
-}
-
-func (m *Model) appendGitleaksConfigModalRunes(value string) {
-	if value == "" {
-		return
-	}
-	switch m.adminView.GitleaksConfigModal.Focus {
-	case gitleaksConfigFieldTimeout:
-		m.adminView.GitleaksConfigModal.Timeout += value
-	case gitleaksConfigFieldMaxConcurrency:
-		m.adminView.GitleaksConfigModal.MaxConcurrency += value
-	}
-}
-
-// gitleaksConfigInputFromModal mirrors trivyConfigInputFromModal at
-// gitleaks' narrower 3-field scope: only Enabled/Timeout/MaxConcurrency are
-// set on the returned FeatureConfigureInput, so mergeFeatureSettings leaves
-// ScheduleEnabled/Interval/RegistryReachableURL untouched on the stored row
-// (design.md's nil-pointer-is-a-no-op merge semantics).
-func (m Model) gitleaksConfigInputFromModal() (ports.FeatureConfigureInput, error) {
-	timeout, err := time.ParseDuration(strings.TrimSpace(m.adminView.GitleaksConfigModal.Timeout))
-	if err != nil {
-		return ports.FeatureConfigureInput{}, fmt.Errorf("invalid timeout: %w", err)
-	}
-	maxConcurrency, err := strconv.Atoi(strings.TrimSpace(m.adminView.GitleaksConfigModal.MaxConcurrency))
-	if err != nil {
-		return ports.FeatureConfigureInput{}, fmt.Errorf("invalid max concurrency: %w", err)
-	}
-	enabled := m.adminView.GitleaksConfigModal.Enabled
-	return ports.FeatureConfigureInput{
-		Enabled:        &enabled,
-		Timeout:        &timeout,
-		MaxConcurrency: &maxConcurrency,
-	}, nil
 }
 
 func (m Model) trivyConfigInputFromModal() (ports.FeatureConfigureInput, error) {

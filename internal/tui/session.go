@@ -83,22 +83,6 @@ const (
 	trivyConfigFieldMaxConcurrency
 )
 
-type adminConfirmKind string
-
-const (
-	adminConfirmNone            adminConfirmKind = ""
-	adminConfirmEnableUser      adminConfirmKind = "enable-user"
-	adminConfirmDisableUser     adminConfirmKind = "disable-user"
-	adminConfirmEnableFeature   adminConfirmKind = "enable-feature"
-	adminConfirmDisableFeature  adminConfirmKind = "disable-feature"
-	adminConfirmDeleteGrant     adminConfirmKind = "delete-grant"
-	adminConfirmRevokeToken     adminConfirmKind = "revoke-token"
-	adminConfirmDeleteRepoGrant adminConfirmKind = "delete-repo-grant"
-	adminConfirmEnableRobot     adminConfirmKind = "enable-robot"
-	adminConfirmDisableRobot    adminConfirmKind = "disable-robot"
-	adminConfirmDeleteRobot     adminConfirmKind = "delete-robot"
-)
-
 type adminCreateUserForm struct {
 	Username   string
 	Password   string
@@ -152,18 +136,6 @@ type adminCreateRobotForm struct {
 	TTLSeconds           string
 	Focus                adminCreateRobotField
 	RepositorySuggestion int
-}
-
-type adminConfirmModal struct {
-	Kind        adminConfirmKind
-	Title       string
-	Message     string
-	ConfirmText string
-	UserID      string
-	Username    string
-	FeatureName string
-	Repository  string
-	Accessor    string
 }
 
 type trivyConfigModal struct {
@@ -242,10 +214,6 @@ func nextScanPolicyField(field scanPolicyField) scanPolicyField {
 		return scanPolicyFieldEnabled
 	}
 	return field + 1
-}
-
-func (m adminConfirmModal) Active() bool {
-	return m.Kind != adminConfirmNone
 }
 
 // signingPolicyField identifies which of signingPolicyModal's 3 fields has
@@ -485,13 +453,14 @@ type AdminViewState struct {
 	ResetPasswordForm adminResetPasswordForm
 	GrantForm         adminGrantForm
 	TokenForm         adminTokenForm
-	ConfirmModal      adminConfirmModal
-	TrivyTab          TrivyTab
-	TrivyConfigModal  trivyConfigModal
-	// GitleaksConfigModal is gitleaks' own global config editor state
-	// (a sibling of TrivyConfigModal, not an extension), opened with `s` on
-	// a highlighted gitleaks feature row.
-	GitleaksConfigModal gitleaksConfigModal
+	// Confirm is THE confirm-before-destructive-action primitive
+	// (design.md Decision E, D7), replacing adminConfirmModal's Kind-union.
+	Confirm          confirmPrompt
+	TrivyTab         TrivyTab
+	TrivyConfigModal trivyConfigModal
+	// gitleaksConfigModal's state moved to gitleaksConfigScreen
+	// (Model.adminScreens[slotGitleaksConfig], design.md Decision G) --
+	// AdminViewState no longer holds it.
 	// ScanPolicy is the vulnerability policy gate's current settings, kept
 	// on AdminViewState alongside FeaturePage/TrivyTab so renderTrivyTabs
 	// can compose its status badge (design.md Decision 6) without a modal

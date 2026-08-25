@@ -21,7 +21,7 @@ import (
 // its table page size must be pre-built to match its own budget -- Confirm
 // and Trivy render fixed content with no page sizing, so the compositor's
 // own clamp is the only bound they need).
-func renderAdminWorkspace(current screen, session AdminSession, view AdminViewState, knownRepositories []string, status string, layout consoleLayout, now time.Time) string {
+func renderAdminWorkspace(current screen, session AdminSession, view AdminViewState, knownRepositories []string, status string, layout consoleLayout, now time.Time, adminScreens adminScreenSet) string {
 	theme := newAdminTheme()
 
 	context, body, help := renderAdminScreen(theme, current, session, view, knownRepositories, layout, now)
@@ -41,12 +41,16 @@ func renderAdminWorkspace(current screen, session AdminSession, view AdminViewSt
 		// way compositeOverlay clamps fixed-content modals.
 		baseBodyHeight := lipgloss.Height(body)
 		modalView = renderAdminScanHistoryModal(theme, view.ScanHistoryModal, view, adminScanHistoryModalRows(layout, baseBodyHeight))
-	case view.ConfirmModal.Active():
-		modalView = renderAdminModal(theme, view.ConfirmModal)
+	case view.Confirm.Active():
+		modalView = view.Confirm.view(theme)
 	case view.TrivyConfigModal.Active():
 		modalView = renderTrivyConfigModal(theme, view.TrivyConfigModal)
-	case view.GitleaksConfigModal.Active():
-		modalView = renderGitleaksConfigModal(theme, view.GitleaksConfigModal)
+	case adminScreens[slotGitleaksConfig] != nil:
+		// gitleaksConfigScreen composites frame.Overlay (design.md Decision
+		// G): the proof that a migrated screen's own render output reaches
+		// the workspace exactly the way its legacy modal counterpart did.
+		env := screenEnv{Session: session, Layout: layout, KnownRepositories: knownRepositories, Now: func() time.Time { return now }}
+		modalView = adminScreens[slotGitleaksConfig].View(theme, env).Overlay
 	case view.ScanPolicyModal.Active():
 		modalView = renderScanPolicyModal(theme, view.ScanPolicyModal)
 	case view.SigningPolicyModal.Active():
@@ -747,15 +751,6 @@ func renderAdminCreateTokenScreen(theme adminTheme, view AdminViewState) string 
 	}, "\n"))
 }
 
-func renderAdminModal(theme adminTheme, modal adminConfirmModal) string {
-	return theme.section.Render(strings.Join([]string{
-		theme.subheading.Render(modal.Title),
-		modal.Message,
-		"",
-		theme.muted.Render(fmt.Sprintf("Enter: %s | Esc: cancel", modal.ConfirmText)),
-	}, "\n"))
-}
-
 func renderTrivyConfigModal(theme adminTheme, modal trivyConfigModal) string {
 	lines := []string{
 		theme.subheading.Render("Edit Trivy Configuration"),
@@ -772,23 +767,8 @@ func renderTrivyConfigModal(theme adminTheme, modal trivyConfigModal) string {
 	return theme.section.Render(strings.Join(lines, "\n"))
 }
 
-// renderGitleaksConfigModal mirrors renderTrivyConfigModal at gitleaks' own
-// narrower 3-field scope (Enabled, Timeout, MaxConcurrency) -- no
-// ScheduleEnabled/Interval (gitleaks scans immutable content once) and no
-// RegistryReachableURL (gitleaks never pulls from the registry over HTTP).
-func renderGitleaksConfigModal(theme adminTheme, modal gitleaksConfigModal) string {
-	lines := []string{
-		theme.subheading.Render("Edit Gitleaks Configuration"),
-		renderToggleField(theme, "Enabled", modal.Enabled, modal.Focus == gitleaksConfigFieldEnabled),
-		renderTextField(theme, "Timeout", modal.Timeout, modal.Focus == gitleaksConfigFieldTimeout),
-		renderTextField(theme, "Max Concurrency", modal.MaxConcurrency, modal.Focus == gitleaksConfigFieldMaxConcurrency),
-	}
-	if strings.TrimSpace(modal.Error) != "" {
-		lines = append(lines, "", theme.error.Render(modal.Error))
-	}
-	lines = append(lines, "", theme.muted.Render("Enter: save | Tab: next field | Space: toggle | Esc: cancel"))
-	return theme.section.Render(strings.Join(lines, "\n"))
-}
+// renderGitleaksConfigModal moved to gitleaksConfigScreen.View
+// (screen_gitleaks_config.go, design.md Decision G).
 
 // renderScanPolicyModal renders the vulnerability policy gate's own modal
 // (design.md Decision 6): heading + 2 fields x 2 rows + blank/help = 7

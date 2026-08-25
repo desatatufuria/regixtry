@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
@@ -126,35 +127,32 @@ func TestRenderAdminStatusReturnsSingleRowWithNoBorder(t *testing.T) {
 }
 
 // TestRenderAdminModalRendersTitleMessageAndHelp is the Phase 3 task 3.1
-// approval test (design.md Decision 1): renderAdminModal has never had
-// direct coverage of its own — it was only ever exercised indirectly through
-// renderAdminWorkspace's stacked composition. This captures its standalone
+// approval test (design.md Decision 1), updated for Phase 5's confirmPrompt
+// retirement of adminConfirmModal (design.md Decision E): renderAdminModal
+// moved onto confirmPrompt.view, called here directly instead of through
+// renderAdminWorkspace's stacked composition. Captures its standalone
 // rendered content and measured height (title+message+blank+help = 4 inner
 // rows + 4 rows of theme.section chrome = 8, per design.md's measured-height
-// table) as a safety net before Phase 3 rewrites renderAdminWorkspace to
-// composite this same function's output via compositeOverlay instead of
-// lipgloss.JoinVertical.
+// table).
 func TestRenderAdminModalRendersTitleMessageAndHelp(t *testing.T) {
 	t.Parallel()
 
 	theme := newAdminTheme()
-	modal := adminConfirmModal{
-		Kind: adminConfirmEnableUser, Title: "Enable User", Message: "Enable alice?", ConfirmText: "enable",
-	}
+	modal := newConfirmPrompt("Enable User", "Enable alice?", "enable", "", func(screenEnv) tea.Cmd { return nil })
 
-	got := renderAdminModal(theme, modal)
+	got := modal.view(theme)
 
 	if !strings.Contains(got, "Enable User") {
-		t.Fatalf("renderAdminModal() = %q, want the title present", got)
+		t.Fatalf("confirmPrompt.view() = %q, want the title present", got)
 	}
 	if !strings.Contains(got, "Enable alice?") {
-		t.Fatalf("renderAdminModal() = %q, want the message present", got)
+		t.Fatalf("confirmPrompt.view() = %q, want the message present", got)
 	}
 	if !strings.Contains(got, "Enter: enable | Esc: cancel") {
-		t.Fatalf("renderAdminModal() = %q, want the confirm/cancel help line present", got)
+		t.Fatalf("confirmPrompt.view() = %q, want the confirm/cancel help line present", got)
 	}
 	if h := lipgloss.Height(got); h != 8 {
-		t.Fatalf("renderAdminModal() height = %d, want 8 (title+message+blank+help = 4 inner rows + 4 rows theme.section chrome, design.md Decision 1)", h)
+		t.Fatalf("confirmPrompt.view() height = %d, want 8 (title+message+blank+help = 4 inner rows + 4 rows theme.section chrome, design.md Decision 1)", h)
 	}
 }
 
@@ -267,9 +265,9 @@ func TestRenderGitleaksConfigModalFitsWithinViewportFloor(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := renderGitleaksConfigModal(theme, tc.modal)
+			got := newGitleaksConfigScreen(tc.modal).View(theme, screenEnv{}).Overlay
 			if h := lipgloss.Height(got); h > 20 {
-				t.Fatalf("renderGitleaksConfigModal() height = %d, want <= 20\n%s", h, got)
+				t.Fatalf("gitleaksConfigScreen.View() height = %d, want <= 20\n%s", h, got)
 			}
 		})
 	}
@@ -292,10 +290,10 @@ func TestRenderGitleaksConfigModalIsASeparateSurfaceFromTrivyConfigModal(t *test
 		t.Fatalf("renderTrivyConfigModal() output contains %q, want the gitleaks modal to be a separate surface\n%s", "Edit Gitleaks Configuration", trivyOutput)
 	}
 
-	gitleaksOutput := renderGitleaksConfigModal(theme, gitleaksConfigModal{Open: true, Enabled: true, Timeout: "5m", MaxConcurrency: "1"})
+	gitleaksOutput := newGitleaksConfigScreen(gitleaksConfigModal{Open: true, Enabled: true, Timeout: "5m", MaxConcurrency: "1"}).View(theme, screenEnv{}).Overlay
 	for _, forbidden := range []string{"Edit Trivy Configuration", "Schedule Enabled", "Registry Reachable URL"} {
 		if strings.Contains(gitleaksOutput, forbidden) {
-			t.Fatalf("renderGitleaksConfigModal() output contains %q, want a separate surface from Trivy's modal\n%s", forbidden, gitleaksOutput)
+			t.Fatalf("gitleaksConfigScreen.View() output contains %q, want a separate surface from Trivy's modal\n%s", forbidden, gitleaksOutput)
 		}
 	}
 }
@@ -1223,7 +1221,7 @@ func TestRenderAdminWorkspaceKeepsBaseFullSizeAndLayersModalOnTopWhenOpen(t *tes
 	standaloneContext, standaloneBody, standaloneHelp := renderAdminScreen(theme, screenAdminFeatures, session, view, nil, layout, now)
 	wantBase := renderConsoleWorkspace("Regixtry Admin", standaloneContext, standaloneBody, "", standaloneHelp, statusKindAuto)
 
-	got := renderAdminWorkspace(screenAdminFeatures, session, view, nil, "", layout, now)
+	got := renderAdminWorkspace(screenAdminFeatures, session, view, nil, "", layout, now, adminScreenSet{})
 
 	// Property 2: layered on top, not appended below -- the composite must
 	// fit exactly within the canvas (layout.Width x layout.Height), never
@@ -1321,7 +1319,7 @@ func TestRenderAdminWorkspaceLeavesVisibleMarginAroundModalWhenOpen(t *testing.T
 		y = 0
 	}
 
-	got := renderAdminWorkspace(screenAdminFeatures, session, view, nil, "", layout, now)
+	got := renderAdminWorkspace(screenAdminFeatures, session, view, nil, "", layout, now, adminScreenSet{})
 	lines := strings.Split(ansi.Strip(got), "\n")
 
 	// Check every row of the modal's own footprint, not just the midpoint:
@@ -1753,6 +1751,114 @@ func TestNextDelegateGrantRoleNeverProducesRepoAdmin(t *testing.T) {
 			}
 			if got := nextDelegateGrantRole(tt.current); got == domainauth.RepoRoleAdmin {
 				t.Fatalf("nextDelegateGrantRole(%q) = %q, must never be repo-admin", tt.current, got)
+			}
+		})
+	}
+}
+
+// TestGeneratedFooterMatchesPreviousHandWrittenString is the
+// tui-menu-architecture change's Phase 4 task 4.3 (T1.3) RED test
+// (design.md Decision D's Rung-1 gate): shortHelpView(gitleaksConfigKeys)
+// must equal admin_views.go's pre-change hand-written footer string
+// byte-for-byte — the exact drift class this change exists to kill, proven
+// by generating the same bytes instead of asserting they merely look
+// similar.
+func TestGeneratedFooterMatchesPreviousHandWrittenString(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+	got := shortHelpView(theme, gitleaksConfigKeys)
+	want := "Enter: save | Tab: next field | Space: toggle | Esc: cancel"
+	if got != want {
+		t.Fatalf("shortHelpView(gitleaksConfigKeys) = %q, want %q byte-for-byte", got, want)
+	}
+}
+
+// TestNonMigratedScreensUnchanged is the tui-menu-architecture change's
+// Phase 1 task 1.1 (T1.8) golden/characterization baseline, captured
+// BEFORE screen.go/admin_router.go or any router code exists: for every one
+// of the 13 legacy admin screens dispatched by renderAdminScreen (the
+// screens updateAdminKey's switch still resolves through
+// legacyScreenHandlers once the router lands), Model.View()'s composited
+// output MUST always equal renderAdminScreen's own direct output for that
+// exact screen/session/view/layout/now — the invariant design.md's Data
+// Flow section states holds for every non-migrated screen across all three
+// slices ("legacy id -> renderAdminScreen(...) unchanged"). This must stay
+// green through Slice 1, 2, and 3 without modification: a routing
+// regression that dispatches a legacy screen to the wrong renderer, drops
+// its help text, or diverges its body would fail this test.
+func TestNonMigratedScreensUnchanged(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+	now := time.Date(2026, time.August, 20, 9, 0, 0, 0, time.UTC)
+	session := AdminSession{Username: "operator", ExpiresAt: now.Add(10 * time.Minute)}
+
+	userView := AdminViewState{
+		Users:            []ports.AdminUser{{ID: "u-1", Username: "alice", IsAdmin: true, Enabled: true}},
+		SelectedUserID:   "u-1",
+		SelectedUsername: "alice",
+	}
+	repoAdminView := AdminViewState{RepoAdminRepository: "team/app"}
+
+	screens := []struct {
+		name string
+		view AdminViewState
+	}{
+		{"screenAdminUsers", AdminViewState{}},
+		{"screenAdminFeatures", AdminViewState{}},
+		{"screenAdminCreateUser", AdminViewState{}},
+		{"screenAdminEditUser", userView},
+		{"screenAdminChangePassword", userView},
+		{"screenAdminEditUserGrants", userView},
+		{"screenAdminAddGrant", userView},
+		{"screenAdminEditUserTokens", userView},
+		{"screenAdminCreateToken", userView},
+		{"screenRepoAdminGrants", repoAdminView},
+		{"screenRepoAdminAddGrant", repoAdminView},
+		{"screenAdminRobots", AdminViewState{}},
+		{"screenAdminCreateRobot", AdminViewState{}},
+	}
+	ids := map[string]screen{
+		"screenAdminUsers":          screenAdminUsers,
+		"screenAdminFeatures":       screenAdminFeatures,
+		"screenAdminCreateUser":     screenAdminCreateUser,
+		"screenAdminEditUser":       screenAdminEditUser,
+		"screenAdminChangePassword": screenAdminChangePassword,
+		"screenAdminEditUserGrants": screenAdminEditUserGrants,
+		"screenAdminAddGrant":       screenAdminAddGrant,
+		"screenAdminEditUserTokens": screenAdminEditUserTokens,
+		"screenAdminCreateToken":    screenAdminCreateToken,
+		"screenRepoAdminGrants":     screenRepoAdminGrants,
+		"screenRepoAdminAddGrant":   screenRepoAdminAddGrant,
+		"screenAdminRobots":         screenAdminRobots,
+		"screenAdminCreateRobot":    screenAdminCreateRobot,
+	}
+
+	if got, want := len(screens), 13; got != want {
+		t.Fatalf("test setup invalid: %d screen fixtures, want %d (design.md's 13 legacy screens)", got, want)
+	}
+
+	for _, tc := range screens {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			id := ids[tc.name]
+			m := NewModel(&fakeQueryService{})
+			m.viewport = viewportSize{Width: defaultViewportWidth, Height: adminTestViewportHeight}
+			m.screen = id
+			m.adminSession = session
+			m.adminAuth = adminAuthStateAuthenticated
+			m.adminView = tc.view
+			m.now = func() time.Time { return now }
+
+			layout := m.contentBudget(m.status, adminScreenHelp(id, tc.view))
+			wantContext, wantBody, wantHelp := renderAdminScreen(theme, id, session, tc.view, m.repositories.Names(), layout, now)
+			want := renderConsoleWorkspace("Regixtry Admin", wantContext, wantBody, m.status, wantHelp, statusKindAuto)
+
+			got := m.View()
+			if got != want {
+				t.Fatalf("screen %q: Model.View() diverged from renderAdminScreen's direct output\ngot:\n%s\nwant:\n%s", id, got, want)
 			}
 		})
 	}
