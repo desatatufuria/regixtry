@@ -119,6 +119,19 @@ func (l trustedKeyList) update(env screenEnv, msg tea.KeyMsg) (trustedKeyList, t
 				l.err = ""
 				return l, nil, true
 			}
+			// A paste burst that delivered more than one concatenated PEM
+			// block (or trailing base64) as literal rune content before this
+			// Enter arrived would otherwise hand commitAdd the FULL,
+			// unbounded buffer. Truncate to exactly the first complete block
+			// (BEGIN through its own END marker, inclusive) before
+			// validating: this guarantees only ever a single well-formed key
+			// is committed -- and, on a rejected commit, leaves l.input
+			// holding just that first block rather than the leftover
+			// trailing block/text a later keystroke could otherwise
+			// misroute once adding mode ends.
+			if block, ok := firstCompletePEMBlock(l.input); ok {
+				l.input = block
+			}
 			l.commitAdd()
 			return l, nil, true
 		case isBackspaceKey(msg):
@@ -188,6 +201,31 @@ func (l *trustedKeyList) commitAdd() {
 // truth for what a valid PEM block looks like.
 func looksLikeCompletePEM(input string) bool {
 	return strings.Contains(input, "-----BEGIN") && strings.Contains(input, "-----END")
+}
+
+// trustedKeyListPEMEndMarker mirrors the exact END marker string
+// signing.decodePEMBlock (internal/domain/signing/keys.go) builds from its
+// own unexported pemBlockType ("-----END "+pemBlockType+"-----" with
+// pemBlockType == "PUBLIC KEY"). Duplicated here, rather than imported, only
+// because pemBlockType is unexported -- keep this literal in sync with
+// keys.go's own if that ever changes.
+const trustedKeyListPEMEndMarker = "-----END PUBLIC KEY-----"
+
+// firstCompletePEMBlock returns the substring of input spanning from its
+// start through the end of the FIRST complete END marker (inclusive),
+// discarding anything after it. looksLikeCompletePEM only checks that BOTH
+// markers are present somewhere in the buffer, not that the buffer is
+// exactly one block, so a paste containing more than one concatenated PEM
+// (or trailing base64 after a genuine key) must still commit only the first
+// complete one. ok is false when no END marker is present at all (should
+// not happen once looksLikeCompletePEM(input) is already true, but this
+// stays defensive rather than assuming that invariant).
+func firstCompletePEMBlock(input string) (string, bool) {
+	endIndex := strings.Index(input, trustedKeyListPEMEndMarker)
+	if endIndex == -1 {
+		return "", false
+	}
+	return input[:endIndex+len(trustedKeyListPEMEndMarker)], true
 }
 
 // removeAt deletes the key at index (already bounds-checked by the 'x'

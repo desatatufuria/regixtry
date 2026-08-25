@@ -247,6 +247,118 @@ func TestTrustedKeyListSingleLinePasteStillCommitsOnFirstEnter(t *testing.T) {
 	}
 }
 
+// TestTrustedKeyListConcatenatedPasteCommitsOnlyTheFirstCompleteBlock is the
+// Judgment Day fix-round regression for the "commit a truncated/wrong key on
+// a two-key paste" finding (both judges): once a paste burst delivers BOTH
+// keys' content as literal rune input (embedded newlines included, exactly
+// as a bracketed-paste-aware terminal delivers a multi-line paste -- distinct
+// from TestTrustedKeyListMultilinePasteSurvivesEmbeddedNewlineEnterEvents'
+// per-embedded-newline tea.KeyEnter model, where the very first complete
+// marker pair already ends the paste one line early) followed by ONE real
+// terminal Enter, only key A (the first complete block) must be committed,
+// with key B's trailing content discarded rather than silently folded into
+// -- or corrupting -- the add.
+//
+// Note: signing.decodePEMBlock already isolates the first BEGIN/END pair
+// when validating (it reconstructs the stored PEM from only that span), so
+// this exact happy-path outcome was already reachable before this fix --
+// see TestTrustedKeyListConcatenatedPasteWithAMalformedFirstBlockDiscardsTheTrailingBlockFromInput
+// below for the test that is actually RED against the pre-fix code: this one
+// locks in the same outcome explicitly, at the TUI layer, rather than
+// depending on that validation-layer incidental behavior.
+func TestTrustedKeyListConcatenatedPasteCommitsOnlyTheFirstCompleteBlock(t *testing.T) {
+	t.Parallel()
+
+	env := screenEnv{}
+	list := newTrustedKeyList("", nil)
+	list, _, _ = list.update(env, trustedKeyListTestKey("n"))
+
+	combined := trustedKeyListTestPEM1 + trustedKeyListTestPEM2
+	list = trustedKeyListTestTypeLine(t, env, list, combined)
+
+	list, cmd, consumed := list.update(env, tea.KeyMsg{Type: tea.KeyEnter})
+	if !consumed || cmd != nil {
+		t.Fatalf("Enter (concatenated paste commit): consumed = %v, cmd = %v, want consumed=true, cmd=nil", consumed, cmd)
+	}
+	if list.adding {
+		t.Fatal("adding = true after the commit, want false")
+	}
+	if list.input != "" {
+		t.Fatalf("input = %q after a successful commit, want empty", list.input)
+	}
+	if list.err != "" {
+		t.Fatalf("err = %q, want empty after a successful commit", list.err)
+	}
+	if len(list.keys) != 1 {
+		t.Fatalf("len(keys) = %d, want exactly 1 (only key A, key B's trailing content discarded)", len(list.keys))
+	}
+	wantNormalized, err := signing.NormalizePublicKeyPEM(trustedKeyListTestPEM1)
+	if err != nil {
+		t.Fatalf("test setup: NormalizePublicKeyPEM(trustedKeyListTestPEM1) failed: %v", err)
+	}
+	if list.keys[0] != wantNormalized {
+		t.Fatalf("keys[0] = %q, want %q (key A, the first complete block)", list.keys[0], wantNormalized)
+	}
+
+	// No residual characters from key B's content must be left anywhere that
+	// could misroute a later 'n'/'x' keystroke: adding is already false and
+	// input is already empty above, and the list must still be in the exact
+	// idle-navigation state 'n'/'x' expect (usageLoading false, no confirm
+	// active), never mid-add/mid-delete from something key B's leftover
+	// text might otherwise have triggered.
+	if list.usageLoading {
+		t.Fatal("usageLoading = true after the commit, want false")
+	}
+	if list.confirm.Active() {
+		t.Fatal("confirm active after the commit, want inactive")
+	}
+}
+
+// TestTrustedKeyListConcatenatedPasteWithAMalformedFirstBlockDiscardsTheTrailingBlockFromInput
+// is the actual RED test against the pre-fix code: signing.NormalizePublicKeyPEM
+// validates identically whether or not the trailing block was already
+// stripped (decodePEMBlock only ever looks at the first BEGIN/END span), so
+// the committed-key outcome above is unchanged either way -- but l.input
+// itself (a TUI-layer field decodePEMBlock never touches) is NOT cleared on
+// a failed commit (commitAdd only clears it on success). Before this fix,
+// a rejected commit on a malformed first block left l.input holding the
+// FULL uncut buffer, including key B's entire trailing text, sitting in the
+// text field -- exactly the leftover-content risk both judges flagged. After
+// this fix, a rejected commit leaves l.input holding only the truncated
+// first block, with key B's trailing text already discarded before
+// commitAdd ever ran.
+func TestTrustedKeyListConcatenatedPasteWithAMalformedFirstBlockDiscardsTheTrailingBlockFromInput(t *testing.T) {
+	t.Parallel()
+
+	env := screenEnv{}
+	list := newTrustedKeyList("", nil)
+	list, _, _ = list.update(env, trustedKeyListTestKey("n"))
+
+	malformedFirstBlock := "-----BEGIN PUBLIC KEY----- not valid base64 -----END PUBLIC KEY-----\n"
+	combined := malformedFirstBlock + trustedKeyListTestPEM2
+	list = trustedKeyListTestTypeLine(t, env, list, combined)
+
+	list, _, consumed := list.update(env, tea.KeyMsg{Type: tea.KeyEnter})
+	if !consumed {
+		t.Fatal("Enter (rejected commit): consumed = false, want true")
+	}
+	if !list.adding {
+		t.Fatal("adding = false after a rejected commit, want true (stays in adding mode)")
+	}
+	if list.err == "" {
+		t.Fatal("err = \"\", want a validation error surfaced")
+	}
+	if len(list.keys) != 0 {
+		t.Fatalf("len(keys) = %d, want 0 (nothing appended on a rejected commit)", len(list.keys))
+	}
+	if strings.Contains(list.input, trustedKeyListTestPEM2) {
+		t.Fatalf("input = %q, must not still contain key B's trailing block after a rejected commit on the first block", list.input)
+	}
+	if list.input != strings.TrimSuffix(malformedFirstBlock, "\n") {
+		t.Fatalf("input = %q, want it truncated to just the first (malformed) block %q, discarding key B's trailing text", list.input, strings.TrimSuffix(malformedFirstBlock, "\n"))
+	}
+}
+
 func TestTrustedKeyListEscWhileAddingCancelsWithoutAdding(t *testing.T) {
 	t.Parallel()
 
