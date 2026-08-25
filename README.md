@@ -59,8 +59,8 @@ From here, `regixtry tui -api-base-url http://127.0.0.1:5000` gives you an inter
 - Registry metadata in SQLite, blob content on the filesystem.
 - Optional PostgreSQL-backed access control: users, per-repository role grants, delegated repo-admin grant management, registry-wide read-only accounts, and bounded-TTL revocable robot accounts for CI — see [`docs/authentication.md`](docs/authentication.md) and [`docs/security.md`](docs/security.md).
 - Bearer challenge and token issuance at `/auth/token`; a large authenticated admin API under `/admin/v1` — see [`docs/api.md`](docs/api.md).
-- Three built-in features with a shared lifecycle (list/show/status/configure/install/upgrade/rollback): **Trivy** vulnerability scanning with an optional pull-blocking policy gate, **Gitleaks** secret scanning, and cosign-based image **signing** verification — see [`docs/features.md`](docs/features.md).
-- CLI for serving, setup/bootstrap/uninstall/upgrade, and a Bubble Tea TUI that doubles as a local read-only console and, when pointed at a running server, a full HTTP admin client.
+- Three built-in features with a shared lifecycle (list/show/status/configure/install/upgrade/rollback): **Trivy** vulnerability scanning with an optional pull-blocking policy gate, **Gitleaks** secret scanning, and cosign-based image **signing** verification against one or more trusted public keys, globally or per repository — see [`docs/features.md`](docs/features.md).
+- CLI for serving, setup/bootstrap/uninstall/upgrade, and a Bubble Tea TUI that doubles as a local read-only console and, when pointed at a running server, a full HTTP admin client with a domain-grouped admin menu (Browse / Security & Compliance / Identity & Access / Operations) — see [`docs/tui.md`](docs/tui.md).
 - A Linux release installer with SHA-256-verified `amd64`/`arm64` binaries, driven by `regixtry setup`/`upgrade`.
 
 ## Install
@@ -115,7 +115,7 @@ Gitleaks and signing follow the same `regixtry feature ...` shape — full detai
 
 - Single-tenant only; the default (and only) tenant is `default`.
 - No remote/replicated storage, no metrics or dedicated health endpoint — readiness is `/v2/`.
-- No garbage collection and no manifest/blob delete API; upload cancellation returns `UNSUPPORTED`.
+- Blob garbage collection and manifest/tag delete both exist but are off by default (`REGISTRY_GC_DELETE_ENABLED`, `REGISTRY_DELETE_ENABLED`) — see [`docs/registry.md`](docs/registry.md) and [`docs/operations.md`](docs/operations.md). Upload cancellation returns `UNSUPPORTED`.
 - The TUI's local Console browsing (repositories/tags/manifests) is **not** access-controlled — it requires no login at all, and any local session can browse everything. The real enforcement boundaries are the Docker registry protocol (`/v2/...`) and the admin API (`/admin/v1/...`). See [`docs/security.md`](docs/security.md).
 - No confirmed full OCI Distribution Specification conformance certification or multi-arch manifest-list handling.
 

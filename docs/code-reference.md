@@ -37,6 +37,7 @@
 | TUI keymap-derived help (`screenKeys`, `shortHelpView`, `matches`) | `internal/tui/admin_keys.go` | `architecture.md`, `tui.md` |
 | TUI confirm-before-destructive-action primitive (`confirmPrompt`) | `internal/tui/confirm.go` | `architecture.md` |
 | TUI per-repository override editor, shared by Trivy/Gitleaks/Signing (`overrideEditor`) | `internal/tui/override_editor.go` | `tui.md`, `architecture.md` |
+| TUI navigable trusted-key list, shared by Signing's config screen and its override editor (`trustedKeyList`) | `internal/tui/trusted_key_list.go` | `tui.md`, `features.md` |
 | TUI Security & Compliance domain menu (`securityMenuScreen`) | `internal/tui/screen_security_menu.go` | `tui.md` |
 | TUI Trivy Runtime screen (`trivyConfigScreen`) | `internal/tui/screen_trivy_config.go` | `tui.md` |
 | TUI Trivy Repository Alerts screen (`trivyReposScreen`) | `internal/tui/screen_trivy_repos.go` | `tui.md` |

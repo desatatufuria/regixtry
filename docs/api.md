@@ -54,14 +54,21 @@ JSON bodies are decoded rejecting unknown fields and multiple bodies.
 | GET | `/admin/v1/scan-policy` | none | `200`, current vulnerability-gate policy |
 | PUT | `/admin/v1/scan-policy` | `enabled`, `severity_threshold` (`critical` or `critical_high`) | `200`, persisted policy |
 | GET | `/admin/v1/signing-policy` | none | `200`, current signing-gate policy |
-| PUT | `/admin/v1/signing-policy` | `enabled`, `trusted_public_keys` (up to 16 PEM-encoded ECDSA P-256 keys) | `200`, persisted policy |
+| PUT | `/admin/v1/signing-policy` | `enabled`, `trusted_public_keys` (up to 16 PEM-encoded ECDSA P-256 keys), `unsigned_self_read` (`""`/`"off"`, `"pusher"`, or `"repo_push"`) | `200`, persisted policy |
+| GET | `/admin/v1/signing-policy/key-usage?key=<pem>&repository=<optional>` | none | `200`, `{"count": int, "capped": bool}` — best-effort count of currently-tagged images verifying against `key` (global scope, or one repository), shown before an operator deletes that key; never a blocking gate |
 | POST | `/admin/v1/scan-runs` | `repository`, `reference` | `202`, queued run with canonical digest |
 | GET | `/admin/v1/scan-runs?repository=&limit=` | none | `200`, run history |
 | GET | `/admin/v1/scan-runs/{id}` | none | `200`, run detail with persisted findings, DB freshness, and reference freshness |
+| GET | `/admin/v1/repository-scan-summaries?limit=` | none | `200`, one row per repository with its latest scan run, collapsed before `limit` |
 | GET | `/admin/v1/secret-scan-findings?repository=&digest=` | none | `200`, secret-scan findings for that repository/digest pair |
 | GET | `/admin/v1/repositories/{repo}/grants` | none | `200`, array of grants for that repository |
 | PUT | `/admin/v1/repositories/{repo}/grants/{username}` | `role` | `200`, grant |
 | DELETE | `/admin/v1/repositories/{repo}/grants/{username}` | none | `204` |
+| POST | `/admin/v1/gc/reports` | none | `201`, computed report of unreferenced, grace-expired blob candidates; always reachable regardless of `REGISTRY_GC_DELETE_ENABLED` |
+| GET | `/admin/v1/gc/reports/{id}` | none | `200`, a previously computed report by id, with its full candidate list |
+| POST | `/admin/v1/gc/reports/{id}/delete` | none | `200`, delete outcome (per-candidate `deleted`/`retained`/`missing`/`failed`); gated by `REGISTRY_GC_DELETE_ENABLED` (`UNSUPPORTED`/`501` while disabled) |
+
+See [registry.md](registry.md#blob-garbage-collection) for the full garbage-collection flow, including the grace window and delete-time re-check that keep it safe.
 
 Admin errors: `401`, `403`, `404`, `409`, `422` depending on auth, existence, conflict, or validation; the body is `{ "error": "..." }`.
 
