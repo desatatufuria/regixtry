@@ -2,6 +2,12 @@ package tui
 
 import (
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -42,7 +48,7 @@ func TestLogoutAdminStateClearsSessionAndViewData(t *testing.T) {
 	if session.ExpiredReason != "" {
 		t.Fatalf("ExpiredReason = %q, want empty", session.ExpiredReason)
 	}
-	if len(view.Users) != 0 || view.SelectedUserID != "" || len(view.Grants) != 0 || len(view.AdminTokens) != 0 || len(view.Features) != 0 || view.SelectedFeature != 0 || view.FeaturePage.Summary.Name != "" {
+	if len(view.Users) != 0 || view.SelectedUserID != "" || len(view.Grants) != 0 || len(view.AdminTokens) != 0 {
 		t.Fatalf("LogoutAdminState() returned populated view state: %#v", view)
 	}
 }
@@ -57,7 +63,7 @@ func TestExpireAdminStateClearsViewDataAndKeepsReason(t *testing.T) {
 	if session.ExpiredReason != "Session expired. Log in again." {
 		t.Fatalf("ExpiredReason = %q, want session expiry message", session.ExpiredReason)
 	}
-	if len(view.Users) != 0 || len(view.Grants) != 0 || len(view.AdminTokens) != 0 || len(view.Features) != 0 || view.FeaturePage.Summary.Name != "" {
+	if len(view.Users) != 0 || len(view.Grants) != 0 || len(view.AdminTokens) != 0 {
 		t.Fatalf("ExpireAdminState() returned populated view state: %#v", view)
 	}
 }
@@ -114,47 +120,46 @@ func TestNextScanPolicyFieldCyclesBetweenTheTwoFields(t *testing.T) {
 	}
 }
 
-// TestRepositoryOverrideModalActiveReflectsOpenField is the Phase 8 task 8.1
-// RED test: repositoryOverrideModal follows the same Active()-gated pattern
-// as scanPolicyModal/trivyConfigModal (design.md Decision 8 piece 1).
-func TestRepositoryOverrideModalActiveReflectsOpenField(t *testing.T) {
+// TestOverrideEditorActiveReflectsOpenField is the Slice 2 successor to the
+// retired TestRepositoryOverrideModalActiveReflectsOpenField: overrideEditor
+// follows the same Active()-gated pattern as scanPolicyModal/trivyConfigModal
+// (design.md Decision F).
+func TestOverrideEditorActiveReflectsOpenField(t *testing.T) {
 	t.Parallel()
 
-	closed := repositoryOverrideModal{}
+	closed := overrideEditor{}
 	if closed.Active() {
-		t.Fatal("repositoryOverrideModal{}.Active() = true, want false when Open is unset")
+		t.Fatal("overrideEditor{}.Active() = true, want false when open is unset")
 	}
 
-	open := repositoryOverrideModal{Open: true, Repository: "library/alpine"}
+	open := newOverrideEditor(trivyFeatureName, "library/alpine")
 	if !open.Active() {
-		t.Fatal("repositoryOverrideModal{Open: true}.Active() = false, want true")
+		t.Fatal("newOverrideEditor(...).Active() = false, want true")
 	}
 }
 
-// TestNextRepositoryOverrideFieldSkipsPathSecondaryForGitleaks is the Phase 8
-// task 8.1 RED test: nextRepositoryOverrideField wraps through all 5 fields
-// for trivy, but skips repositoryOverrideFieldPathSecondary (which gitleaks
-// has no use for -- gitleaks only has ConfigPath) when the modal's Feature is
-// gitleaksFeatureName (design.md Decision 8 piece 1, mirrors
-// nextScanPolicyField's wrapping-cursor pattern).
-func TestNextRepositoryOverrideFieldSkipsPathSecondaryForGitleaks(t *testing.T) {
+// TestOverrideFieldsForFeatureSkipsPathSecondaryForGitleaks is the Slice 2
+// successor to the retired
+// TestNextRepositoryOverrideFieldSkipsPathSecondaryForGitleaks:
+// overrideFieldsForFeature builds trivy's 4-field set (with PathSecondary),
+// skips it for gitleaks (3 fields), and skips it for signing while
+// including UnsignedSelfRead instead (4 fields) -- the concrete replacement
+// for the retired nextRepositoryOverrideField's runtime skipping (design.md
+// Decision F).
+func TestOverrideFieldsForFeatureSkipsPathSecondaryForGitleaks(t *testing.T) {
 	t.Parallel()
 
-	t.Run("trivy visits every field in order and wraps", func(t *testing.T) {
+	t.Run("trivy includes PathSecondary", func(t *testing.T) {
 		t.Parallel()
 
-		got := repositoryOverrideFieldFeature
-		want := []repositoryOverrideField{
-			repositoryOverrideFieldEnabled,
-			repositoryOverrideFieldPathPrimary,
-			repositoryOverrideFieldPathSecondary,
-			repositoryOverrideFieldClear,
-			repositoryOverrideFieldFeature,
+		want := []overrideField{overrideFieldEnabled, overrideFieldPathPrimary, overrideFieldPathSecondary, overrideFieldClear}
+		got := overrideFieldsForFeature(trivyFeatureName)
+		if len(got) != len(want) {
+			t.Fatalf("overrideFieldsForFeature(trivy) = %v, want %v", got, want)
 		}
-		for i, expect := range want {
-			got = nextRepositoryOverrideField(got, trivyFeatureName)
-			if got != expect {
-				t.Fatalf("step %d: nextRepositoryOverrideField() = %v, want %v", i, got, expect)
+		for i, field := range want {
+			if got[i] != field {
+				t.Fatalf("overrideFieldsForFeature(trivy)[%d] = %v, want %v", i, got[i], field)
 			}
 		}
 	})
@@ -162,43 +167,88 @@ func TestNextRepositoryOverrideFieldSkipsPathSecondaryForGitleaks(t *testing.T) 
 	t.Run("gitleaks skips PathSecondary and UnsignedSelfRead", func(t *testing.T) {
 		t.Parallel()
 
-		got := nextRepositoryOverrideField(repositoryOverrideFieldPathPrimary, gitleaksFeatureName)
-		if got != repositoryOverrideFieldClear {
-			t.Fatalf("nextRepositoryOverrideField(PathPrimary, gitleaks) = %v, want Clear (PathSecondary+UnsignedSelfRead skipped)", got)
-		}
-	})
-
-	// Phase 9 task 9.15 RED: signing likewise has no second path field, so
-	// nextRepositoryOverrideField's condition generalizes from
-	// "feature == gitleaksFeatureName" to "feature != trivyFeatureName"
-	// (design.md Decision 11 piece 3) -- signing must skip PathSecondary too,
-	// but (unlike gitleaks) visits its own UnsignedSelfRead field before Clear.
-	t.Run("signing skips PathSecondary but visits UnsignedSelfRead", func(t *testing.T) {
-		t.Parallel()
-
-		got := nextRepositoryOverrideField(repositoryOverrideFieldPathPrimary, signingFeatureName)
-		if got != repositoryOverrideFieldUnsignedSelfRead {
-			t.Fatalf("nextRepositoryOverrideField(PathPrimary, signing) = %v, want UnsignedSelfRead (PathSecondary skipped)", got)
-		}
-		got = nextRepositoryOverrideField(got, signingFeatureName)
-		if got != repositoryOverrideFieldClear {
-			t.Fatalf("nextRepositoryOverrideField(UnsignedSelfRead, signing) = %v, want Clear", got)
-		}
-	})
-
-	t.Run("trivy and gitleaks never reach UnsignedSelfRead", func(t *testing.T) {
-		t.Parallel()
-
-		for _, feature := range []string{trivyFeatureName, gitleaksFeatureName} {
-			field := repositoryOverrideFieldFeature
-			for i := 0; i < 10; i++ {
-				field = nextRepositoryOverrideField(field, feature)
-				if field == repositoryOverrideFieldUnsignedSelfRead {
-					t.Fatalf("feature %q reached UnsignedSelfRead, want it unreachable outside signing", feature)
+		got := overrideFieldsForFeature(gitleaksFeatureName)
+		for _, forbidden := range []overrideField{overrideFieldPathSecondary, overrideFieldUnsignedSelfRead} {
+			for _, field := range got {
+				if field == forbidden {
+					t.Fatalf("overrideFieldsForFeature(gitleaks) = %v, want no %v", got, forbidden)
 				}
 			}
 		}
 	})
+
+	// Signing likewise has no second path field (design.md Decision 11
+	// piece 3's condition, generalized), but includes its own
+	// UnsignedSelfRead field.
+	t.Run("signing skips PathSecondary but includes UnsignedSelfRead", func(t *testing.T) {
+		t.Parallel()
+
+		got := overrideFieldsForFeature(signingFeatureName)
+		want := []overrideField{overrideFieldEnabled, overrideFieldPathPrimary, overrideFieldUnsignedSelfRead, overrideFieldClear}
+		if len(got) != len(want) {
+			t.Fatalf("overrideFieldsForFeature(signing) = %v, want %v", got, want)
+		}
+		for i, field := range want {
+			if got[i] != field {
+				t.Fatalf("overrideFieldsForFeature(signing)[%d] = %v, want %v", i, got[i], field)
+			}
+		}
+	})
+
+	t.Run("trivy and gitleaks never include UnsignedSelfRead", func(t *testing.T) {
+		t.Parallel()
+
+		for _, feature := range []string{trivyFeatureName, gitleaksFeatureName} {
+			for _, field := range overrideFieldsForFeature(feature) {
+				if field == overrideFieldUnsignedSelfRead {
+					t.Fatalf("feature %q includes UnsignedSelfRead, want it absent outside signing", feature)
+				}
+			}
+		}
+	})
+}
+
+// TestNoFeatureCycleSymbolsRemain is the Phase 10 task 10.1 RED test (T2.3):
+// a go/parser scan over every non-test .go file in internal/tui confirms
+// repositoryOverrideFeatureCycle and nextRepositoryOverrideFeatureName are
+// absent -- the modal's Feature field and its cycling mechanism are deleted
+// entirely (design.md Decision F, spec.md's REMOVED requirement "Signing Is
+// A Third Feature Cycle Option In The Override Modal").
+func TestNoFeatureCycleSymbolsRemain(t *testing.T) {
+	t.Parallel()
+
+	forbidden := map[string]bool{
+		"repositoryOverrideFeatureCycle":    true,
+		"nextRepositoryOverrideFeatureName": true,
+	}
+
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("os.ReadDir(.) = %v", err)
+	}
+
+	fset := token.NewFileSet()
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		path := filepath.Join(".", name)
+		file, err := parser.ParseFile(fset, path, nil, parser.AllErrors)
+		if err != nil {
+			t.Fatalf("parser.ParseFile(%s) = %v", path, err)
+		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			ident, ok := n.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			if forbidden[ident.Name] {
+				t.Fatalf("%s: found forbidden symbol %q -- the feature cycle must be fully deleted (design.md Decision F)", path, ident.Name)
+			}
+			return true
+		})
+	}
 }
 
 // TestSigningPolicyModalActiveReflectsOpenField is the Phase 9 task 9.1 RED

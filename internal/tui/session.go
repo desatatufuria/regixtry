@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	bubbletable "github.com/evertras/bubble-table/table"
 	domainauth "regixtry/internal/domain/auth"
 	"regixtry/internal/ports"
 )
@@ -83,22 +82,6 @@ const (
 	trivyConfigFieldMaxConcurrency
 )
 
-type adminConfirmKind string
-
-const (
-	adminConfirmNone            adminConfirmKind = ""
-	adminConfirmEnableUser      adminConfirmKind = "enable-user"
-	adminConfirmDisableUser     adminConfirmKind = "disable-user"
-	adminConfirmEnableFeature   adminConfirmKind = "enable-feature"
-	adminConfirmDisableFeature  adminConfirmKind = "disable-feature"
-	adminConfirmDeleteGrant     adminConfirmKind = "delete-grant"
-	adminConfirmRevokeToken     adminConfirmKind = "revoke-token"
-	adminConfirmDeleteRepoGrant adminConfirmKind = "delete-repo-grant"
-	adminConfirmEnableRobot     adminConfirmKind = "enable-robot"
-	adminConfirmDisableRobot    adminConfirmKind = "disable-robot"
-	adminConfirmDeleteRobot     adminConfirmKind = "delete-robot"
-)
-
 type adminCreateUserForm struct {
 	Username   string
 	Password   string
@@ -152,18 +135,6 @@ type adminCreateRobotForm struct {
 	TTLSeconds           string
 	Focus                adminCreateRobotField
 	RepositorySuggestion int
-}
-
-type adminConfirmModal struct {
-	Kind        adminConfirmKind
-	Title       string
-	Message     string
-	ConfirmText string
-	UserID      string
-	Username    string
-	FeatureName string
-	Repository  string
-	Accessor    string
 }
 
 type trivyConfigModal struct {
@@ -242,10 +213,6 @@ func nextScanPolicyField(field scanPolicyField) scanPolicyField {
 		return scanPolicyFieldEnabled
 	}
 	return field + 1
-}
-
-func (m adminConfirmModal) Active() bool {
-	return m.Kind != adminConfirmNone
 }
 
 // signingPolicyField identifies which of signingPolicyModal's 3 fields has
@@ -329,65 +296,12 @@ func nextUnsignedSelfReadValue(value string) string {
 	return unsignedSelfReadCycle[0]
 }
 
-// repositoryOverrideField identifies which of repositoryOverrideModal's
-// fields has focus (design.md Decision 8 piece 1).
-type repositoryOverrideField int
-
-const (
-	repositoryOverrideFieldFeature repositoryOverrideField = iota
-	repositoryOverrideFieldEnabled
-	repositoryOverrideFieldPathPrimary      // trivy: ignore file | gitleaks: config | signing: trusted key
-	repositoryOverrideFieldPathSecondary    // trivy: ignore policy (skipped for gitleaks/signing)
-	repositoryOverrideFieldUnsignedSelfRead // signing only (skipped otherwise)
-	repositoryOverrideFieldClear            // action row, not an input
-)
-
-// repositoryOverrideModal is the per-repository override editor opened with
-// `o` on a highlighted Repository Alerts row, mirroring scanPolicyModal's
-// exact 3-piece shape (design.md Decision 8 — a sibling struct, not an
-// extension of trivyConfigModal or scanPolicyModal). UnsignedSelfRead mirrors
-// signingPolicyModal.UnsignedSelfRead: only meaningful (and only reachable
-// via Tab/Space) when Feature == signingFeatureName, always held here as one
-// of unsignedSelfReadCycle's three canonical values (never "").
-type repositoryOverrideModal struct {
-	Open             bool
-	Repository       string
-	Feature          string // trivyFeatureName | gitleaksFeatureName
-	Focus            repositoryOverrideField
-	Exists           bool // false => this repository inherits the global row
-	Enabled          bool
-	PathPrimary      string
-	PathSecondary    string
-	UnsignedSelfRead string // "off" | "pusher" | "repo_push" -- signing only, see type doc comment
-	Loading          bool
-	Error            string
-}
-
-func (m repositoryOverrideModal) Active() bool {
-	return m.Open
-}
-
-// nextRepositoryOverrideField wraps between the modal's 6 fields, skipping
-// repositoryOverrideFieldPathSecondary for every feature except trivy
-// (gitleaks has no second path field, and neither does signing --
-// design.md Decision 11 piece 3 generalizes this condition from
-// "feature == gitleaksFeatureName" to "feature != trivyFeatureName" so a
-// fourth single-path feature needs no further change here) and skipping
-// repositoryOverrideFieldUnsignedSelfRead for every feature except signing,
-// mirroring nextScanPolicyField's wrapping-cursor pattern.
-func nextRepositoryOverrideField(field repositoryOverrideField, feature string) repositoryOverrideField {
-	next := field + 1
-	if next == repositoryOverrideFieldPathSecondary && feature != trivyFeatureName {
-		next = repositoryOverrideFieldUnsignedSelfRead
-	}
-	if next == repositoryOverrideFieldUnsignedSelfRead && feature != signingFeatureName {
-		next = repositoryOverrideFieldClear
-	}
-	if next > repositoryOverrideFieldClear {
-		next = repositoryOverrideFieldFeature
-	}
-	return next
-}
+// repositoryOverrideModal and repositoryOverrideField were retired by
+// tui-menu-architecture (design.md Decision F): the per-repository override
+// editor is now overrideEditor (override_editor.go), whose Feature is
+// unexported and constructor-only rather than a focusable, cycle-driven
+// field. See operator-admin-tui's MODIFIED requirement "Repository-Scoped
+// Override Modal On The Repository Alerts Row".
 
 // adminScanHistoryTabKind identifies one feature's tab inside the scan
 // history modal (design.md "Ordered tab slice with a wrapping cursor").
@@ -450,33 +364,13 @@ type AdminSession struct {
 	ExpiredReason string
 }
 
-type adminTableSelection struct {
-	FeatureName string
-	FindingID   string
-}
-
-type adminTablesState struct {
-	Features       bubbletable.Model
-	FeatureRows    map[string]bubbletable.Model
-	Findings       bubbletable.Model
-	SecretFindings bubbletable.Model
-	// ScanSummary is the per-repository Repository Alerts summary table
-	// (buildAdminScanSummaryTable), rendered by renderAdminScanSummary — the
-	// sole table backing the Repository Alerts tab.
-	ScanSummary bubbletable.Model
-	Selection   adminTableSelection
-}
-
 type AdminViewState struct {
 	Users             []ports.AdminUser
-	Features          []ports.FeatureSummary
 	SelectedUser      int
-	SelectedFeature   int
 	SelectedUserID    string
 	SelectedUsername  string
 	UserSearchQuery   string
 	UserSearchActive  bool
-	FeaturePage       ports.FeaturePage
 	Grants            []ports.AdminRepoGrant
 	SelectedGrant     int
 	AdminTokens       []ports.AdminToken
@@ -485,50 +379,24 @@ type AdminViewState struct {
 	ResetPasswordForm adminResetPasswordForm
 	GrantForm         adminGrantForm
 	TokenForm         adminTokenForm
-	ConfirmModal      adminConfirmModal
-	TrivyTab          TrivyTab
-	TrivyConfigModal  trivyConfigModal
-	// GitleaksConfigModal is gitleaks' own global config editor state
-	// (a sibling of TrivyConfigModal, not an extension), opened with `s` on
-	// a highlighted gitleaks feature row.
-	GitleaksConfigModal gitleaksConfigModal
-	// ScanPolicy is the vulnerability policy gate's current settings, kept
-	// on AdminViewState alongside FeaturePage/TrivyTab so renderTrivyTabs
-	// can compose its status badge (design.md Decision 6) without a modal
-	// being open.
-	ScanPolicy      ports.ScanPolicySettings
-	ScanPolicyModal scanPolicyModal
-	// SigningPolicy is the image-signing content-trust gate's current global
-	// settings, kept on AdminViewState alongside ScanPolicy so the Feature
-	// Page heading can compose signingPolicyBadge (design.md Decision 11
-	// piece 1) without a modal being open.
-	SigningPolicy      ports.SigningPolicySettings
-	SigningPolicyModal signingPolicyModal
-	// TrivyScanRuns holds each distinct repository's latest scan run
-	// (scanRunsFromScanSummaries), one entry per TrivySummaries row -- it no
-	// longer holds every raw scan_runs row (see ListLatestScanRunPerRepository,
-	// the repository-alerts-scan-coverage fix).
-	TrivyScanRuns          []ports.ScanRun
-	TrivySelectedAlert     int
-	TrivyAlertsLoaded      bool
+	// Confirm is THE confirm-before-destructive-action primitive
+	// (design.md Decision E, D7), replacing adminConfirmModal's Kind-union.
+	// Still shared across every legacy admin screen; the Security &
+	// Compliance domain's own screens (Phase 11) each own their own local
+	// confirm field instead (design.md Decision B: a migrated screen cannot
+	// write to AdminViewState directly).
+	Confirm                confirmPrompt
 	RevealedTokenSecret    string
 	RevealedTokenAccessor  string
 	RevealedTokenExpiresAt time.Time
-	// TrivySummaries is the per-repository aggregation backing the
-	// Repository Alerts summary table (spec.md "Repository Alerts
-	// Summarized Per Repository With Ordering And Freshness"), mapped
-	// straight through from the server's already-collapsed
-	// ports.RepositoryScanSummary rows (repositorySummariesFromScanSummaries).
-	TrivySummaries []repositorySummary
-	// ScanHistoryModal is the Repository Alerts drill-down modal state
-	// (spec.md "Repository Alert Drill-Down Opens History Modal"), opened by
-	// Enter on a summary row (updateAdminFeaturesKey).
-	ScanHistoryModal adminScanHistoryModal
-	// RepositoryOverrideModal is the per-repository override editor state
-	// (design.md Decision 8), opened by `o` on a highlighted Repository
-	// Alerts row (updateAdminFeaturesKey), a sibling of ScanHistoryModal, not
-	// an extension.
-	RepositoryOverrideModal repositoryOverrideModal
+	// ScanHistoryModal is retired (Phase 19, design.md's State Migration
+	// table): its state now lives on scanHistoryScreen
+	// (screen_scan_history.go), reached at its own dedicated slot
+	// (screen.go's slotScanHistory), never as an AdminViewState field.
+	// RepositoryOverrideModal is retired (tui-menu-architecture, design.md
+	// Decision F): the per-repository override editor now lives per-screen
+	// as overrideEditor, embedded directly in trivyReposScreen/
+	// featureOverridesScreen.
 	// RepoAdminRepository/RepoAdminGrants/SelectedRepoAdminGrant/
 	// RepoAdminGrantForm back screenRepoAdminGrants/screenRepoAdminAddGrant
 	// (design.md Decision 7): the repo-admin delegate's own repository-
@@ -541,8 +409,7 @@ type AdminViewState struct {
 	// screenRepoAdminGrants load actually succeeded (adminRepoGrantsLoadedMsg
 	// with a nil err), distinct from "loaded successfully with zero grants".
 	// A 403 from GET .../grants (repository-administrator privileges
-	// required) leaves this false, following this codebase's existing
-	// TrivyAlertsLoaded naming precedent. Every call site that dispatches
+	// required) leaves this false. Every call site that dispatches
 	// loadRepoAdminGrantsCmd must reset this to false first, so a stale
 	// true from a PREVIOUS repository's successful load can never leak into
 	// a NEW repository's screen before its own load response arrives.
@@ -559,13 +426,6 @@ type AdminViewState struct {
 	Robots          []ports.AdminRobot
 	SelectedRobot   int
 	CreateRobotForm adminCreateRobotForm
-	// TrivyOverrides is every stored Trivy repository override row
-	// (fetched alongside TrivyScanRuns), used only to annotate the
-	// Repository Alerts table with a distinct "scanning disabled" state
-	// (design.md Decision 8's Open Question on the list endpoint; the
-	// resolution path itself never uses this field).
-	TrivyOverrides []ports.RepositoryOverrideDetails
-	Tables         adminTablesState
 	// Layout is the consoleLayout used the last time rebuildAdminTables ran,
 	// including the primary/compact table pageSize split (design.md
 	// decision #6). It is a snapshot for table construction, not the live
@@ -632,10 +492,6 @@ func newAdminViewState() AdminViewState {
 		},
 		CreateRobotForm: adminCreateRobotForm{
 			Role: domainauth.RepoRoleReader,
-		},
-		TrivyTab: trivyTabRuntime,
-		Tables: adminTablesState{
-			FeatureRows: make(map[string]bubbletable.Model),
 		},
 	}
 }

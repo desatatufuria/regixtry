@@ -6,8 +6,10 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	bubbletable "github.com/evertras/bubble-table/table"
 	"github.com/muesli/termenv"
 	domainauth "regixtry/internal/domain/auth"
 	"regixtry/internal/ports"
@@ -126,35 +128,32 @@ func TestRenderAdminStatusReturnsSingleRowWithNoBorder(t *testing.T) {
 }
 
 // TestRenderAdminModalRendersTitleMessageAndHelp is the Phase 3 task 3.1
-// approval test (design.md Decision 1): renderAdminModal has never had
-// direct coverage of its own — it was only ever exercised indirectly through
-// renderAdminWorkspace's stacked composition. This captures its standalone
+// approval test (design.md Decision 1), updated for Phase 5's confirmPrompt
+// retirement of adminConfirmModal (design.md Decision E): renderAdminModal
+// moved onto confirmPrompt.view, called here directly instead of through
+// renderAdminWorkspace's stacked composition. Captures its standalone
 // rendered content and measured height (title+message+blank+help = 4 inner
 // rows + 4 rows of theme.section chrome = 8, per design.md's measured-height
-// table) as a safety net before Phase 3 rewrites renderAdminWorkspace to
-// composite this same function's output via compositeOverlay instead of
-// lipgloss.JoinVertical.
+// table).
 func TestRenderAdminModalRendersTitleMessageAndHelp(t *testing.T) {
 	t.Parallel()
 
 	theme := newAdminTheme()
-	modal := adminConfirmModal{
-		Kind: adminConfirmEnableUser, Title: "Enable User", Message: "Enable alice?", ConfirmText: "enable",
-	}
+	modal := newConfirmPrompt("Enable User", "Enable alice?", "enable", "", func(screenEnv) tea.Cmd { return nil })
 
-	got := renderAdminModal(theme, modal)
+	got := modal.view(theme)
 
 	if !strings.Contains(got, "Enable User") {
-		t.Fatalf("renderAdminModal() = %q, want the title present", got)
+		t.Fatalf("confirmPrompt.view() = %q, want the title present", got)
 	}
 	if !strings.Contains(got, "Enable alice?") {
-		t.Fatalf("renderAdminModal() = %q, want the message present", got)
+		t.Fatalf("confirmPrompt.view() = %q, want the message present", got)
 	}
 	if !strings.Contains(got, "Enter: enable | Esc: cancel") {
-		t.Fatalf("renderAdminModal() = %q, want the confirm/cancel help line present", got)
+		t.Fatalf("confirmPrompt.view() = %q, want the confirm/cancel help line present", got)
 	}
 	if h := lipgloss.Height(got); h != 8 {
-		t.Fatalf("renderAdminModal() height = %d, want 8 (title+message+blank+help = 4 inner rows + 4 rows theme.section chrome, design.md Decision 1)", h)
+		t.Fatalf("confirmPrompt.view() height = %d, want 8 (title+message+blank+help = 4 inner rows + 4 rows theme.section chrome, design.md Decision 1)", h)
 	}
 }
 
@@ -267,9 +266,9 @@ func TestRenderGitleaksConfigModalFitsWithinViewportFloor(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := renderGitleaksConfigModal(theme, tc.modal)
+			got := gitleaksConfigScreen{cfg: tc.modal}.View(theme, screenEnv{}).Overlay
 			if h := lipgloss.Height(got); h > 20 {
-				t.Fatalf("renderGitleaksConfigModal() height = %d, want <= 20\n%s", h, got)
+				t.Fatalf("gitleaksConfigScreen.View() height = %d, want <= 20\n%s", h, got)
 			}
 		})
 	}
@@ -292,10 +291,10 @@ func TestRenderGitleaksConfigModalIsASeparateSurfaceFromTrivyConfigModal(t *test
 		t.Fatalf("renderTrivyConfigModal() output contains %q, want the gitleaks modal to be a separate surface\n%s", "Edit Gitleaks Configuration", trivyOutput)
 	}
 
-	gitleaksOutput := renderGitleaksConfigModal(theme, gitleaksConfigModal{Open: true, Enabled: true, Timeout: "5m", MaxConcurrency: "1"})
+	gitleaksOutput := gitleaksConfigScreen{cfg: gitleaksConfigModal{Open: true, Enabled: true, Timeout: "5m", MaxConcurrency: "1"}}.View(theme, screenEnv{}).Overlay
 	for _, forbidden := range []string{"Edit Trivy Configuration", "Schedule Enabled", "Registry Reachable URL"} {
 		if strings.Contains(gitleaksOutput, forbidden) {
-			t.Fatalf("renderGitleaksConfigModal() output contains %q, want a separate surface from Trivy's modal\n%s", forbidden, gitleaksOutput)
+			t.Fatalf("gitleaksConfigScreen.View() output contains %q, want a separate surface from Trivy's modal\n%s", forbidden, gitleaksOutput)
 		}
 	}
 }
@@ -395,40 +394,42 @@ func TestRenderScanPolicyModalIsASeparateSurfaceFromTrivyConfigModal(t *testing.
 	}
 }
 
-// TestRenderRepositoryOverrideModalFitsWithinRowBudget is the Phase 8 task
-// 8.2 RED test: renderRepositoryOverrideModal's row budgets exactly match
-// design.md Decision 8's table -- 17 (trivy, no error), 19 (trivy + error),
-// 15 (gitleaks, no error), 17 (gitleaks + error) -- comfortably within the
-// 24-row minViewportHeight floor.
-func TestRenderRepositoryOverrideModalFitsWithinRowBudget(t *testing.T) {
+// TestRenderOverrideEditorFitsWithinRowBudget is the Slice 2 successor to
+// the retired TestRenderRepositoryOverrideModalFitsWithinRowBudget: with the
+// Feature row deleted (design.md Decision F) and the Clear row's own text
+// wrapping to 2 rendered lines at this theme.section width, heights are 16
+// (trivy, no error), 18 (trivy + error), 14 (gitleaks, no error), 16
+// (gitleaks + error) -- comfortably within the 24-row minViewportHeight
+// floor.
+func TestRenderOverrideEditorFitsWithinRowBudget(t *testing.T) {
 	t.Parallel()
 
 	theme := newAdminTheme()
 
 	tests := []struct {
 		name       string
-		modal      repositoryOverrideModal
+		editor     overrideEditor
 		wantHeight int
 	}{
 		{
 			name:       "trivy, no error",
-			modal:      repositoryOverrideModal{Open: true, Repository: "library/alpine", Feature: trivyFeatureName, Exists: true, Enabled: true, PathPrimary: "/etc/trivy/ignore", PathSecondary: "/etc/trivy/policy.rego"},
-			wantHeight: 17,
+			editor:     overrideEditor{open: true, repository: "library/alpine", feature: trivyFeatureName, exists: true, enabled: true, pathPrimary: "/etc/trivy/ignore", pathSecondary: "/etc/trivy/policy.rego"},
+			wantHeight: 16,
 		},
 		{
 			name:       "trivy + error",
-			modal:      repositoryOverrideModal{Open: true, Repository: "library/alpine", Feature: trivyFeatureName, Exists: true, Enabled: true, PathPrimary: "/etc/trivy/ignore", PathSecondary: "/etc/trivy/policy.rego", Error: "ignore_file_path must be absolute"},
-			wantHeight: 19,
+			editor:     overrideEditor{open: true, repository: "library/alpine", feature: trivyFeatureName, exists: true, enabled: true, pathPrimary: "/etc/trivy/ignore", pathSecondary: "/etc/trivy/policy.rego", err: "ignore_file_path must be absolute"},
+			wantHeight: 18,
 		},
 		{
 			name:       "gitleaks, no error",
-			modal:      repositoryOverrideModal{Open: true, Repository: "team/config", Feature: gitleaksFeatureName, Exists: false, PathPrimary: "/etc/gitleaks/config.toml"},
-			wantHeight: 15,
+			editor:     overrideEditor{open: true, repository: "team/config", feature: gitleaksFeatureName, exists: false, pathPrimary: "/etc/gitleaks/config.toml"},
+			wantHeight: 14,
 		},
 		{
 			name:       "gitleaks + error",
-			modal:      repositoryOverrideModal{Open: true, Repository: "team/config", Feature: gitleaksFeatureName, Exists: false, PathPrimary: "/etc/gitleaks/config.toml", Error: "config_path must be absolute"},
-			wantHeight: 17,
+			editor:     overrideEditor{open: true, repository: "team/config", feature: gitleaksFeatureName, exists: false, pathPrimary: "/etc/gitleaks/config.toml", err: "config_path must be absolute"},
+			wantHeight: 16,
 		},
 	}
 
@@ -436,43 +437,44 @@ func TestRenderRepositoryOverrideModalFitsWithinRowBudget(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := renderRepositoryOverrideModal(theme, tc.modal)
+			got := renderOverrideEditor(theme, tc.editor)
 			if h := lipgloss.Height(got); h != tc.wantHeight {
-				t.Fatalf("renderRepositoryOverrideModal() height = %d, want %d (design.md Decision 8's row budget)\n%s", h, tc.wantHeight, got)
+				t.Fatalf("renderOverrideEditor() height = %d, want %d\n%s", h, tc.wantHeight, got)
 			}
 		})
 	}
 }
 
-// TestRenderRepositoryOverrideModalShowsRepositoryAndInheritanceState is the
-// Phase 8 task 8.3 RED test (operator-admin-tui spec's "Opening the modal on
-// a highlighted row shows the effective config" / "Opening the modal shows
-// an existing override" scenarios): the heading carries the repository name,
-// and the status line carries the inheritance state for all three cases --
-// Loading, override active, and inheriting global settings.
-func TestRenderRepositoryOverrideModalShowsRepositoryAndInheritanceState(t *testing.T) {
+// TestRenderOverrideEditorShowsRepositoryAndInheritanceState is the Slice 2
+// successor to the retired TestRenderRepositoryOverrideModalShowsRepositoryAndInheritanceState
+// (operator-admin-tui spec's "Opening the modal on a highlighted row shows
+// the effective config" / "Opening the modal shows an existing override"
+// scenarios): the heading carries the repository name, and the status line
+// carries the inheritance state for all three cases -- Loading, override
+// active, and inheriting global settings.
+func TestRenderOverrideEditorShowsRepositoryAndInheritanceState(t *testing.T) {
 	t.Parallel()
 
 	theme := newAdminTheme()
 
 	tests := []struct {
 		name       string
-		modal      repositoryOverrideModal
+		editor     overrideEditor
 		wantStatus string
 	}{
 		{
 			name:       "loading",
-			modal:      repositoryOverrideModal{Open: true, Repository: "library/alpine", Feature: trivyFeatureName, Loading: true},
+			editor:     overrideEditor{open: true, repository: "library/alpine", feature: trivyFeatureName, loading: true},
 			wantStatus: "Loading…",
 		},
 		{
 			name:       "override active",
-			modal:      repositoryOverrideModal{Open: true, Repository: "library/alpine", Feature: trivyFeatureName, Exists: true, Enabled: true, PathPrimary: "/etc/trivy/ignore"},
+			editor:     overrideEditor{open: true, repository: "library/alpine", feature: trivyFeatureName, exists: true, enabled: true, pathPrimary: "/etc/trivy/ignore"},
 			wantStatus: "override active",
 		},
 		{
 			name:       "inheriting global settings",
-			modal:      repositoryOverrideModal{Open: true, Repository: "library/alpine", Feature: trivyFeatureName, Exists: false},
+			editor:     overrideEditor{open: true, repository: "library/alpine", feature: trivyFeatureName, exists: false},
 			wantStatus: "inheriting global settings",
 		},
 	}
@@ -481,30 +483,31 @@ func TestRenderRepositoryOverrideModalShowsRepositoryAndInheritanceState(t *test
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := renderRepositoryOverrideModal(theme, tc.modal)
+			got := renderOverrideEditor(theme, tc.editor)
 			if !strings.Contains(got, "library/alpine") {
-				t.Fatalf("renderRepositoryOverrideModal() = %q, want the repository name in the heading", got)
+				t.Fatalf("renderOverrideEditor() = %q, want the repository name in the heading", got)
 			}
 			if !strings.Contains(got, tc.wantStatus) {
-				t.Fatalf("renderRepositoryOverrideModal() = %q, want status line %q", got, tc.wantStatus)
+				t.Fatalf("renderOverrideEditor() = %q, want status line %q", got, tc.wantStatus)
 			}
 		})
 	}
 }
 
-// TestRenderRepositoryOverrideModalIsASeparateSurfaceFromOtherAdminModals is
-// the Phase 8 out-of-scope regression guard (spec.md's "Out of Scope Note":
-// the override modal is its own sibling surface, not an extension of
-// scanPolicyModal/trivyConfigModal).
-func TestRenderRepositoryOverrideModalIsASeparateSurfaceFromOtherAdminModals(t *testing.T) {
+// TestRenderOverrideEditorIsASeparateSurfaceFromOtherAdminModals is the
+// Slice 2 successor to the retired
+// TestRenderRepositoryOverrideModalIsASeparateSurfaceFromOtherAdminModals
+// (spec.md's "Out of Scope Note": the override editor is its own sibling
+// surface, not an extension of scanPolicyModal/trivyConfigModal).
+func TestRenderOverrideEditorIsASeparateSurfaceFromOtherAdminModals(t *testing.T) {
 	t.Parallel()
 
 	theme := newAdminTheme()
 
-	overrideOutput := renderRepositoryOverrideModal(theme, repositoryOverrideModal{Open: true, Repository: "library/alpine", Feature: trivyFeatureName, Exists: true, Enabled: true, PathPrimary: "/etc/trivy/ignore"})
+	overrideOutput := renderOverrideEditor(theme, overrideEditor{open: true, repository: "library/alpine", feature: trivyFeatureName, exists: true, enabled: true, pathPrimary: "/etc/trivy/ignore"})
 	for _, forbidden := range []string{"Vulnerability Policy", "Severity Threshold", "Edit Trivy Configuration", "Registry Reachable URL"} {
 		if strings.Contains(overrideOutput, forbidden) {
-			t.Fatalf("renderRepositoryOverrideModal() output contains %q, want a separate surface\n%s", forbidden, overrideOutput)
+			t.Fatalf("renderOverrideEditor() output contains %q, want a separate surface\n%s", forbidden, overrideOutput)
 		}
 	}
 
@@ -622,29 +625,29 @@ func TestRenderSigningPolicyModalIsASeparateSurfaceFromScanPolicyModal(t *testin
 	}
 }
 
-// TestRenderRepositoryOverrideModalSigningShowsTrustedKeyLabel is the Phase
-// 9 task 9.16 RED test: when Feature is "signing", PathPrimary's rendered
-// label is "Trusted Key (PEM)", not the Trivy/gitleaks path label, and the
-// row budget matches gitleaks' single-path-field shape (15/17).
-func TestRenderRepositoryOverrideModalSigningShowsTrustedKeyLabel(t *testing.T) {
+// TestRenderOverrideEditorSigningShowsTrustedKeyLabel is the Slice 2
+// successor to the retired TestRenderRepositoryOverrideModalSigningShowsTrustedKeyLabel:
+// when feature is "signing", PathPrimary's rendered label is "Trusted Key
+// (PEM)", not the Trivy/gitleaks path label.
+func TestRenderOverrideEditorSigningShowsTrustedKeyLabel(t *testing.T) {
 	t.Parallel()
 
 	theme := newAdminTheme()
 
 	tests := []struct {
 		name       string
-		modal      repositoryOverrideModal
+		editor     overrideEditor
 		wantHeight int
 	}{
 		{
 			name:       "signing, no error",
-			modal:      repositoryOverrideModal{Open: true, Repository: "library/alpine", Feature: signingFeatureName, Exists: true, Enabled: true, PathPrimary: "-----BEGIN PUBLIC KEY-----"},
-			wantHeight: 17,
+			editor:     overrideEditor{open: true, repository: "library/alpine", feature: signingFeatureName, exists: true, enabled: true, pathPrimary: "-----BEGIN PUBLIC KEY-----"},
+			wantHeight: 16,
 		},
 		{
 			name:       "signing + error",
-			modal:      repositoryOverrideModal{Open: true, Repository: "library/alpine", Feature: signingFeatureName, Exists: true, Enabled: true, PathPrimary: "-----BEGIN PUBLIC KEY-----", Error: "trusted_public_keys[0] is invalid"},
-			wantHeight: 19,
+			editor:     overrideEditor{open: true, repository: "library/alpine", feature: signingFeatureName, exists: true, enabled: true, pathPrimary: "-----BEGIN PUBLIC KEY-----", err: "trusted_public_keys[0] is invalid"},
+			wantHeight: 18,
 		},
 	}
 
@@ -652,49 +655,49 @@ func TestRenderRepositoryOverrideModalSigningShowsTrustedKeyLabel(t *testing.T) 
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := renderRepositoryOverrideModal(theme, tc.modal)
+			got := renderOverrideEditor(theme, tc.editor)
 			if h := lipgloss.Height(got); h != tc.wantHeight {
-				t.Fatalf("renderRepositoryOverrideModal() height = %d, want %d\n%s", h, tc.wantHeight, got)
+				t.Fatalf("renderOverrideEditor() height = %d, want %d\n%s", h, tc.wantHeight, got)
 			}
 			if !strings.Contains(got, "Trusted Key (PEM)") {
-				t.Fatalf("renderRepositoryOverrideModal() = %q, want the signing-specific field label", got)
+				t.Fatalf("renderOverrideEditor() = %q, want the signing-specific field label", got)
 			}
 			for _, forbidden := range []string{"Ignore File Path", "Ignore Policy Path", "Config Path"} {
 				if strings.Contains(got, forbidden) {
-					t.Fatalf("renderRepositoryOverrideModal() = %q, want no Trivy/gitleaks field labels for signing", got)
+					t.Fatalf("renderOverrideEditor() = %q, want no Trivy/gitleaks field labels for signing", got)
 				}
 			}
 		})
 	}
 }
 
-// TestRenderRepositoryOverrideModalShowsUnsignedSelfReadOnlyForSigning is the
-// RED test for the UnsignedSelfRead TUI surface: the field's label and
-// current value render for the signing feature (normalizing an unseeded ""
-// to "off"), and never render for trivy/gitleaks, mirroring the existing
-// Trusted-Key-label exclusivity test above.
-func TestRenderRepositoryOverrideModalShowsUnsignedSelfReadOnlyForSigning(t *testing.T) {
+// TestRenderOverrideEditorShowsUnsignedSelfReadOnlyForSigning is the Slice 2
+// successor to the retired TestRenderRepositoryOverrideModalShowsUnsignedSelfReadOnlyForSigning:
+// the field's label and current value render for the signing feature
+// (normalizing an unseeded "" to "off"), and never render for
+// trivy/gitleaks.
+func TestRenderOverrideEditorShowsUnsignedSelfReadOnlyForSigning(t *testing.T) {
 	t.Parallel()
 
 	theme := newAdminTheme()
 
-	signing := renderRepositoryOverrideModal(theme, repositoryOverrideModal{Open: true, Repository: "team/az-deploy-demo", Feature: signingFeatureName, Exists: true, Enabled: true, PathPrimary: "-----BEGIN PUBLIC KEY-----", UnsignedSelfRead: "repo_push"})
+	signing := renderOverrideEditor(theme, overrideEditor{open: true, repository: "team/az-deploy-demo", feature: signingFeatureName, exists: true, enabled: true, pathPrimary: "-----BEGIN PUBLIC KEY-----", unsignedSelfRead: "repo_push"})
 	if !strings.Contains(signing, "Unsigned Self-Read") {
-		t.Fatalf("renderRepositoryOverrideModal() = %q, want the Unsigned Self-Read label for signing", signing)
+		t.Fatalf("renderOverrideEditor() = %q, want the Unsigned Self-Read label for signing", signing)
 	}
 	if !strings.Contains(signing, "repo_push") {
-		t.Fatalf("renderRepositoryOverrideModal() = %q, want the current repo_push value shown", signing)
+		t.Fatalf("renderOverrideEditor() = %q, want the current repo_push value shown", signing)
 	}
 
-	unseededSigning := renderRepositoryOverrideModal(theme, repositoryOverrideModal{Open: true, Repository: "team/az-deploy-demo", Feature: signingFeatureName, Exists: false})
+	unseededSigning := renderOverrideEditor(theme, overrideEditor{open: true, repository: "team/az-deploy-demo", feature: signingFeatureName, exists: false})
 	if !strings.Contains(unseededSigning, "off") {
-		t.Fatalf(`renderRepositoryOverrideModal() = %q, want "" to normalize to "off"`, unseededSigning)
+		t.Fatalf(`renderOverrideEditor() = %q, want "" to normalize to "off"`, unseededSigning)
 	}
 
 	for _, feature := range []string{trivyFeatureName, gitleaksFeatureName} {
-		got := renderRepositoryOverrideModal(theme, repositoryOverrideModal{Open: true, Repository: "team/az-deploy-demo", Feature: feature, Exists: true, Enabled: true, PathPrimary: "/etc/config"})
+		got := renderOverrideEditor(theme, overrideEditor{open: true, repository: "team/az-deploy-demo", feature: feature, exists: true, enabled: true, pathPrimary: "/etc/config"})
 		if strings.Contains(got, "Unsigned Self-Read") {
-			t.Fatalf("renderRepositoryOverrideModal() feature %q = %q, want no Unsigned Self-Read row outside signing", feature, got)
+			t.Fatalf("renderOverrideEditor() feature %q = %q, want no Unsigned Self-Read row outside signing", feature, got)
 		}
 	}
 }
@@ -721,8 +724,7 @@ func TestRenderTrivyTabsComposesPolicyBadgeAtZeroRowCost(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			view := AdminViewState{TrivyTab: trivyTabRuntime, ScanPolicy: tc.policy}
-			got := renderTrivyTabs(theme, view)
+			got := renderTrivyTabs(theme, screenSecurityTrivy, tc.policy)
 			if h := lipgloss.Height(got); h != 2 {
 				t.Fatalf("renderTrivyTabs() height = %d, want exactly 2 (subheading + composed tab line, +0 rows for the badge)\n%s", h, got)
 			}
@@ -737,8 +739,7 @@ func TestRenderTrivyTabsComposedWidthStaysWithinSectionWidthFloor(t *testing.T) 
 	t.Parallel()
 
 	theme := newAdminTheme()
-	view := AdminViewState{TrivyTab: trivyTabRepositoryAlerts, ScanPolicy: ports.ScanPolicySettings{Enabled: true, SeverityThreshold: ports.ScanPolicyThresholdCriticalHigh}}
-	got := renderTrivyTabs(theme, view)
+	got := renderTrivyTabs(theme, screenSecurityTrivyRepos, ports.ScanPolicySettings{Enabled: true, SeverityThreshold: ports.ScanPolicyThresholdCriticalHigh})
 
 	budget := sectionWidth(consoleLayout{Width: 150, Height: 24})
 	if w := lipgloss.Width(got); w > budget {
@@ -770,8 +771,7 @@ func TestRenderTrivyTabsPolicyBadgeTextReflectsStateAndUsesNoIconOrGlyph(t *test
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			view := AdminViewState{TrivyTab: trivyTabRuntime, ScanPolicy: tc.policy}
-			got := renderTrivyTabs(theme, view)
+			got := renderTrivyTabs(theme, screenSecurityTrivy, tc.policy)
 			if !strings.Contains(ansi.Strip(got), tc.want) {
 				t.Fatalf("renderTrivyTabs() = %q, want it to contain %q", ansi.Strip(got), tc.want)
 			}
@@ -831,37 +831,32 @@ func TestFeaturePageHeadingComposesSigningBadgeAtZeroRowCostForSigningOnly(t *te
 	t.Parallel()
 
 	theme := newAdminTheme()
-	session := AdminSession{Username: "operator"}
-	layout := contentBudget(150, 24, "", "")
-	now := time.Date(2026, time.August, 13, 12, 0, 0, 0, time.UTC)
+	env := screenEnv{Layout: contentBudget(150, 24, "", "")}
 
-	// gitleaks is the fair "no badge" baseline: unlike trivy, it does not
-	// trigger renderTrivyTabs' own extra 2-row block, so the only variable
-	// between it and the signing case below is the badge itself.
-	baseline := renderAdminFeaturesScreen(theme, session, AdminViewState{
-		FeaturePage: ports.FeaturePage{Summary: ports.FeatureSummary{Name: gitleaksFeatureName}},
-	}, layout, now)
+	// gitleaksConfigScreen is the fair "no badge" baseline (Phase 11: both
+	// screens now render their own independent "Feature Page" heading, so
+	// the only variable between them is the badge itself).
+	baseline := gitleaksConfigScreen{loaded: true, page: ports.FeaturePage{Summary: ports.FeatureSummary{Name: gitleaksFeatureName}}}.View(theme, env).Body
 
-	signingView := AdminViewState{
-		FeaturePage:   ports.FeaturePage{Summary: ports.FeatureSummary{Name: signingFeatureName}},
-		SigningPolicy: ports.SigningPolicySettings{Enabled: true, TrustedPublicKeys: []string{"key-one"}},
-	}
-	withBadge := renderAdminFeaturesScreen(theme, session, signingView, layout, now)
+	withBadge := signingConfigScreen{
+		loaded: true,
+		page:   ports.FeaturePage{Summary: ports.FeatureSummary{Name: signingFeatureName}},
+		policy: ports.SigningPolicySettings{Enabled: true, TrustedPublicKeys: []string{"key-one"}},
+	}.View(theme, env).Body
 
 	if !strings.Contains(ansi.Strip(withBadge), "Signing: REQUIRED (1 keys)") {
-		t.Fatalf("renderAdminFeaturesScreen() = %q, want the signing badge composed onto the heading", ansi.Strip(withBadge))
+		t.Fatalf("signingConfigScreen.View() = %q, want the signing badge composed onto the heading", ansi.Strip(withBadge))
 	}
 	if lipgloss.Height(withBadge) != lipgloss.Height(baseline) {
-		t.Fatalf("renderAdminFeaturesScreen() height = %d, want %d (badge composed at zero row cost)\n%s", lipgloss.Height(withBadge), lipgloss.Height(baseline), withBadge)
+		t.Fatalf("signingConfigScreen.View() height = %d, want %d (badge composed at zero row cost)\n%s", lipgloss.Height(withBadge), lipgloss.Height(baseline), withBadge)
 	}
 
-	nonSigningView := AdminViewState{
-		FeaturePage:   ports.FeaturePage{Summary: ports.FeatureSummary{Name: gitleaksFeatureName}},
-		SigningPolicy: ports.SigningPolicySettings{Enabled: true, TrustedPublicKeys: []string{"key-one"}},
-	}
-	nonSigning := renderAdminFeaturesScreen(theme, session, nonSigningView, layout, now)
+	nonSigning := gitleaksConfigScreen{
+		loaded: true,
+		page:   ports.FeaturePage{Summary: ports.FeatureSummary{Name: gitleaksFeatureName}},
+	}.View(theme, env).Body
 	if strings.Contains(nonSigning, "Signing:") {
-		t.Fatalf("renderAdminFeaturesScreen() = %q, want no signing badge for a non-signing feature", nonSigning)
+		t.Fatalf("gitleaksConfigScreen.View() = %q, want no signing badge for a non-signing feature", nonSigning)
 	}
 }
 
@@ -895,21 +890,19 @@ func TestRenderAdminScanSummaryShowsEmptyStateThenPopulatedTable(t *testing.T) {
 
 	theme := newAdminTheme()
 
-	view := AdminViewState{}
-	got := strings.Join(renderAdminScanSummary(theme, view), "\n")
-	if !strings.Contains(got, "Loading repository alerts requires switching into the tab.") {
+	got := strings.Join(renderAdminScanSummary(theme, nil, false, bubbletable.Model{}), "\n")
+	if !strings.Contains(got, "Loading repository alerts...") {
 		t.Fatalf("renderAdminScanSummary() = %q, want the not-yet-loaded message", got)
 	}
 
-	view.TrivyAlertsLoaded = true
-	got = strings.Join(renderAdminScanSummary(theme, view), "\n")
+	got = strings.Join(renderAdminScanSummary(theme, nil, true, bubbletable.Model{}), "\n")
 	if !strings.Contains(got, "No repository alerts found.") {
 		t.Fatalf("renderAdminScanSummary() = %q, want the loaded-but-empty message", got)
 	}
 
-	view.TrivySummaries = []repositorySummary{{Repository: "acme/api", RunCount: 1}}
-	view.Tables.ScanSummary = buildAdminScanSummaryTable(theme, view.TrivySummaries, 0, minTableRows)
-	got = strings.Join(renderAdminScanSummary(theme, view), "\n")
+	summaries := []repositorySummary{{Repository: "acme/api", RunCount: 1}}
+	table := buildAdminScanSummaryTable(theme, summaries, 0, minTableRows)
+	got = strings.Join(renderAdminScanSummary(theme, summaries, true, table), "\n")
 	if !strings.Contains(got, "acme/api") {
 		t.Fatalf("renderAdminScanSummary() = %q, want the populated ScanSummary table containing %q", got, "acme/api")
 	}
@@ -988,9 +981,7 @@ func TestAdminScanHistoryModalTableBodySubstitutesSingleLineWhenBudgetTooSmall(t
 		ActiveTab: 0,
 		Detail:    ports.ScanRunDetail{Findings: []ports.ScanRunFinding{{VulnerabilityID: "CVE-1"}}},
 	}
-	view := AdminViewState{}
-
-	got := adminScanHistoryModalTableBody(theme, modal, view, adminScanHistoryModalMinTableBudget-1)
+	got := adminScanHistoryModalTableBody(theme, modal, bubbletable.Model{}, bubbletable.Model{}, adminScanHistoryModalMinTableBudget-1)
 	if lipgloss.Height(got) != 1 {
 		t.Fatalf("adminScanHistoryModalTableBody() height = %d, want exactly 1 (single-line substitute, never a sliced bordered table)", lipgloss.Height(got))
 	}
@@ -1064,10 +1055,9 @@ func TestRenderAdminScanHistoryModalRendersExecutionsColumnWithCursorHighlighted
 		Cursor:     2,
 		Detail:     ports.ScanRunDetail{Findings: []ports.ScanRunFinding{{VulnerabilityID: "CVE-1"}}},
 	}
-	view := AdminViewState{}
-	view.Tables.Findings = buildAdminFindingsTable(theme, modal.Detail.Findings, 0, minTableRows)
+	findingsTable := buildAdminFindingsTable(theme, modal.Detail.Findings, 0, minTableRows)
 
-	got := renderAdminScanHistoryModal(theme, modal, view, 30)
+	got := renderAdminScanHistoryModal(theme, modal, findingsTable, bubbletable.Model{}, 30)
 
 	if !strings.Contains(got, "Executions") {
 		t.Fatalf("renderAdminScanHistoryModal() = %q, want the executions rail heading present", got)
@@ -1114,10 +1104,9 @@ func TestRenderAdminScanHistoryModalExecutionsColumnIsAScrollableWindowNotFullLi
 		Cursor:     0,
 		Detail:     ports.ScanRunDetail{Findings: []ports.ScanRunFinding{{VulnerabilityID: "CVE-1"}}},
 	}
-	view := AdminViewState{}
-	view.Tables.Findings = buildAdminFindingsTable(theme, modal.Detail.Findings, 0, minTableRows)
+	findingsTable := buildAdminFindingsTable(theme, modal.Detail.Findings, 0, minTableRows)
 
-	got := renderAdminScanHistoryModal(theme, modal, view, adminScanHistoryModalMinRows)
+	got := renderAdminScanHistoryModal(theme, modal, findingsTable, bubbletable.Model{}, adminScanHistoryModalMinRows)
 
 	lastLabel := adminScanHistoryModalExecutionRowLabel(adminScanHistoryWindowLimit-1, runs[adminScanHistoryWindowLimit-1])
 	if strings.Contains(got, lastLabel) {
@@ -1157,14 +1146,12 @@ func TestAdminScanHistoryModalTableBodyShowsEmptyLeaksStateAndKeepsTabVisible(t 
 		Detail:     ports.ScanRunDetail{Findings: []ports.ScanRunFinding{{VulnerabilityID: "CVE-1"}}},
 		Secrets:    nil, // no secret scan recorded for this execution's digest
 	}
-	view := AdminViewState{}
-
-	body := adminScanHistoryModalTableBody(theme, modal, view, adminScanHistoryModalMinTableBudget)
+	body := adminScanHistoryModalTableBody(theme, modal, bubbletable.Model{}, bubbletable.Model{}, adminScanHistoryModalMinTableBudget)
 	if !strings.Contains(body, "No secret findings recorded for this execution.") {
 		t.Fatalf("adminScanHistoryModalTableBody() = %q, want the explicit empty-state message when modal.Secrets is empty", body)
 	}
 
-	got := renderAdminScanHistoryModal(theme, modal, view, 20)
+	got := renderAdminScanHistoryModal(theme, modal, bubbletable.Model{}, bubbletable.Model{}, 20)
 	if !strings.Contains(got, "No secret findings recorded for this execution.") {
 		t.Fatalf("renderAdminScanHistoryModal() = %q, want the explicit empty-state message on the Leaks tab", got)
 	}
@@ -1196,22 +1183,17 @@ func TestRenderAdminWorkspaceKeepsBaseFullSizeAndLayersModalOnTopWhenOpen(t *tes
 	now := time.Date(2026, time.August, 12, 11, 0, 0, 0, time.UTC)
 	session := AdminSession{Username: "operator", ExpiresAt: now.Add(10 * time.Minute)}
 
-	view := AdminViewState{
-		Features: []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
-		FeaturePage: ports.FeaturePage{
-			Summary: ports.FeatureSummary{Name: trivyFeatureName, Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
-		},
-		TrivyTab: trivyTabRepositoryAlerts,
-		ScanHistoryModal: adminScanHistoryModal{
-			Open:       true,
-			Repository: "acme/api",
-			Tabs:       newAdminScanHistoryTabs(),
-			Runs:       []ports.ScanRun{{ID: "run-1", Repository: "acme/api", CreatedAt: now}},
-			Detail:     ports.ScanRunDetail{Findings: []ports.ScanRunFinding{{VulnerabilityID: "CVE-1"}}},
-		},
+	view := AdminViewState{}
+	modal := adminScanHistoryModal{
+		Open:       true,
+		Repository: "acme/api",
+		Tabs:       newAdminScanHistoryTabs(),
+		Runs:       []ports.ScanRun{{ID: "run-1", Repository: "acme/api", CreatedAt: now}},
+		Detail:     ports.ScanRunDetail{Findings: []ports.ScanRunFinding{{VulnerabilityID: "CVE-1"}}},
 	}
-	view.Tables.Features = buildAdminFeaturesTable(theme, view.Features, 0, minTableRows)
-	view.Tables.Findings = buildAdminFindingsTable(theme, view.ScanHistoryModal.Detail.Findings, 0, minTableRows)
+	findingsTable := buildAdminFindingsTable(theme, modal.Detail.Findings, 0, minTableRows)
+	screens := adminScreenSet{}
+	screens[slotScanHistory] = scanHistoryScreen{returnTo: screenAdminFeatures, modal: modal, findings: findingsTable}
 
 	layout := contentBudget(defaultViewportWidth, defaultViewportHeight, "", adminScreenHelp(screenAdminFeatures, view))
 
@@ -1223,7 +1205,7 @@ func TestRenderAdminWorkspaceKeepsBaseFullSizeAndLayersModalOnTopWhenOpen(t *tes
 	standaloneContext, standaloneBody, standaloneHelp := renderAdminScreen(theme, screenAdminFeatures, session, view, nil, layout, now)
 	wantBase := renderConsoleWorkspace("Regixtry Admin", standaloneContext, standaloneBody, "", standaloneHelp, statusKindAuto)
 
-	got := renderAdminWorkspace(screenAdminFeatures, session, view, nil, "", layout, now)
+	got := renderAdminWorkspace(screenAdminFeatures, session, view, nil, "", layout, now, screens)
 
 	// Property 2: layered on top, not appended below -- the composite must
 	// fit exactly within the canvas (layout.Width x layout.Height), never
@@ -1267,45 +1249,49 @@ func TestRenderAdminWorkspaceLeavesVisibleMarginAroundModalWhenOpen(t *testing.T
 	now := time.Date(2026, time.August, 12, 11, 0, 0, 0, time.UTC)
 	session := AdminSession{Username: "operator", ExpiresAt: now.Add(10 * time.Minute)}
 
-	view := AdminViewState{
-		Features: []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
-		FeaturePage: ports.FeaturePage{
-			Summary: ports.FeatureSummary{Name: trivyFeatureName, Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
-		},
-		TrivyTab: trivyTabRepositoryAlerts,
-		// Two rows (matching a real captured repro), not one, so the
-		// Repository Alerts summary table -- widened to its real production
-		// column widths -- is actually dense enough at the modal's own row
-		// range to make this a genuine regression guard: a sparse
-		// single-row fixture leaves enough natural blank space that the
-		// margin assertions below would pass even without the fix.
-		TrivySummaries: []repositorySummary{
+	view := AdminViewState{}
+	modal := adminScanHistoryModal{
+		Open:       true,
+		Repository: "web-dvwa",
+		Tabs:       newAdminScanHistoryTabs(),
+		Runs:       []ports.ScanRun{{ID: "run-1", Repository: "web-dvwa", CreatedAt: now}},
+		Detail: ports.ScanRunDetail{Findings: []ports.ScanRunFinding{
+			{VulnerabilityID: "CVE-2016-9841", Severity: "CRITICAL", PackageName: "rsync", Fixable: true},
+			{VulnerabilityID: "CVE-2017-12424", Severity: "CRITICAL", PackageName: "login", Fixable: true},
+		}},
+	}
+	findingsTable := buildAdminFindingsTable(theme, modal.Detail.Findings, 0, minTableRows)
+
+	layout := contentBudget(defaultViewportWidth, defaultViewportHeight, "", "")
+
+	// Phase 11: the Repository Alerts summary table (the wide, dense base
+	// content this test needs to stress-test overlay margins against) now
+	// lives on trivyReposScreen, a migrated top-level screen -- mounted here
+	// exactly like production (renderAdminWorkspace's slotFor branch), with
+	// screenSecurityTrivyRepos as the current screen. Two rows (matching a
+	// real captured repro), not one, so the table is actually dense enough
+	// at the modal's own row range to make this a genuine regression guard:
+	// a sparse single-row fixture leaves enough natural blank space that
+	// the margin assertions below would pass even without the fix.
+	repos := trivyReposScreen{
+		loaded: true,
+		summaries: []repositorySummary{
 			{Repository: "web-dvwa", LatestRun: ports.ScanRun{ID: "run-1", Repository: "web-dvwa", CreatedAt: now}, LastExecuted: now, RunCount: 13},
 			{Repository: "alpine-vuln", LatestRun: ports.ScanRun{ID: "run-2", Repository: "alpine-vuln", CreatedAt: now}, LastExecuted: now, RunCount: 12},
 		},
-		ScanHistoryModal: adminScanHistoryModal{
-			Open:       true,
-			Repository: "web-dvwa",
-			Tabs:       newAdminScanHistoryTabs(),
-			Runs:       []ports.ScanRun{{ID: "run-1", Repository: "web-dvwa", CreatedAt: now}},
-			Detail: ports.ScanRunDetail{Findings: []ports.ScanRunFinding{
-				{VulnerabilityID: "CVE-2016-9841", Severity: "CRITICAL", PackageName: "rsync", Fixable: true},
-				{VulnerabilityID: "CVE-2017-12424", Severity: "CRITICAL", PackageName: "login", Fixable: true},
-			}},
-		},
 	}
-	view.Tables.Features = buildAdminFeaturesTable(theme, view.Features, 0, minTableRows)
-	view.Tables.ScanSummary = buildAdminScanSummaryTable(theme, view.TrivySummaries, 0, minTableRows)
-	view.Tables.Findings = buildAdminFindingsTable(theme, view.ScanHistoryModal.Detail.Findings, 0, minTableRows)
-
-	layout := contentBudget(defaultViewportWidth, defaultViewportHeight, "", adminScreenHelp(screenAdminFeatures, view))
+	repos.rebuildTable(screenEnv{Layout: layout})
+	screens := adminScreenSet{}
+	screens[slotTrivyRepos] = repos
+	screens[slotScanHistory] = scanHistoryScreen{returnTo: screenSecurityTrivyRepos, modal: modal, findings: findingsTable}
 
 	// Compute the modal's own footprint the exact same way
 	// renderAdminWorkspace does, so this test does not hardcode numbers that
 	// would silently drift out of sync with the production sizing.
-	standaloneContext, standaloneBaseBody, standaloneHelp := renderAdminScreen(theme, screenAdminFeatures, session, view, nil, layout, now)
-	standaloneBaseWorkspace := renderConsoleWorkspace("Regixtry Admin", standaloneContext, standaloneBaseBody, "", standaloneHelp, statusKindAuto)
-	modalView := renderAdminScanHistoryModal(theme, view.ScanHistoryModal, view, adminScanHistoryModalRows(layout, lipgloss.Height(standaloneBaseBody)))
+	standaloneFrame := repos.View(theme, screenEnv{Layout: layout})
+	standaloneHelp := shortHelpView(theme, repos.Keys())
+	standaloneBaseWorkspace := renderConsoleWorkspace("Regixtry Admin", standaloneFrame.Context, standaloneFrame.Body, "", standaloneHelp, statusKindAuto)
+	modalView := renderAdminScanHistoryModal(theme, modal, findingsTable, bubbletable.Model{}, adminScanHistoryModalRows(layout, lipgloss.Height(standaloneFrame.Body)))
 	overlayWidth := lipgloss.Width(modalView)
 	overlayHeight := lipgloss.Height(modalView)
 	x := (layout.Width - overlayWidth) / 2
@@ -1321,7 +1307,7 @@ func TestRenderAdminWorkspaceLeavesVisibleMarginAroundModalWhenOpen(t *testing.T
 		y = 0
 	}
 
-	got := renderAdminWorkspace(screenAdminFeatures, session, view, nil, "", layout, now)
+	got := renderAdminWorkspace(screenSecurityTrivyRepos, session, view, nil, "", layout, now, screens)
 	lines := strings.Split(ansi.Strip(got), "\n")
 
 	// Check every row of the modal's own footprint, not just the midpoint:
@@ -1384,57 +1370,53 @@ func TestRenderAdminWorkspaceModalNeverExtendsPastBaseBodysOwnBottomBorder(t *te
 
 	theme := newAdminTheme()
 	now := time.Date(2026, time.August, 12, 11, 0, 0, 0, time.UTC)
-	session := AdminSession{Username: "operator", ExpiresAt: now.Add(10 * time.Minute)}
 
-	view := AdminViewState{
-		Features: []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
-		FeaturePage: ports.FeaturePage{
-			Summary: ports.FeatureSummary{Name: trivyFeatureName, Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
-		},
-		TrivyTab: trivyTabRepositoryAlerts,
-		// A handful of repositories -- realistic content, well under 30 rows
-		// total once combined with the Built-in Features table -- so the base
-		// body renders at its natural, short, content-driven height instead of
-		// being clipped/padded to fill the terminal (design.md: renderSection
-		// only ever TRIMS content longer than the budget, never stretches
-		// shorter content to fill it).
-		TrivySummaries: []repositorySummary{
-			{Repository: "web-dvwa", LatestRun: ports.ScanRun{ID: "run-1", Repository: "web-dvwa", CreatedAt: now}, LastExecuted: now, RunCount: 13},
-			{Repository: "alpine-vuln", LatestRun: ports.ScanRun{ID: "run-2", Repository: "alpine-vuln", CreatedAt: now}, LastExecuted: now, RunCount: 12},
-		},
-		ScanHistoryModal: adminScanHistoryModal{
-			Open:       true,
-			Repository: "web-dvwa",
-			Tabs:       newAdminScanHistoryTabs(),
-			Runs:       []ports.ScanRun{{ID: "run-1", Repository: "web-dvwa", CreatedAt: now}},
-			Detail: ports.ScanRunDetail{Findings: []ports.ScanRunFinding{
-				{VulnerabilityID: "CVE-2016-9841", Severity: "CRITICAL", PackageName: "rsync", Fixable: true},
-				{VulnerabilityID: "CVE-2017-12424", Severity: "CRITICAL", PackageName: "login", Fixable: true},
-			}},
-		},
+	modal := adminScanHistoryModal{
+		Open:       true,
+		Repository: "web-dvwa",
+		Tabs:       newAdminScanHistoryTabs(),
+		Runs:       []ports.ScanRun{{ID: "run-1", Repository: "web-dvwa", CreatedAt: now}},
+		Detail: ports.ScanRunDetail{Findings: []ports.ScanRunFinding{
+			{VulnerabilityID: "CVE-2016-9841", Severity: "CRITICAL", PackageName: "rsync", Fixable: true},
+			{VulnerabilityID: "CVE-2017-12424", Severity: "CRITICAL", PackageName: "login", Fixable: true},
+		}},
 	}
-	view.Tables.Features = buildAdminFeaturesTable(theme, view.Features, 0, minTableRows)
-	view.Tables.ScanSummary = buildAdminScanSummaryTable(theme, view.TrivySummaries, 0, minTableRows)
-	view.Tables.Findings = buildAdminFindingsTable(theme, view.ScanHistoryModal.Detail.Findings, 0, minTableRows)
+	findingsTable := buildAdminFindingsTable(theme, modal.Detail.Findings, 0, minTableRows)
+
+	// Phase 11: the Repository Alerts summary table (realistic content,
+	// well under 30 rows total, so the base body renders at its natural,
+	// short, content-driven height instead of being clipped/padded to fill
+	// the terminal -- design.md: renderSection only ever TRIMS content
+	// longer than the budget, never stretches shorter content to fill it)
+	// now lives on trivyReposScreen, mounted exactly like production.
+	summaries := []repositorySummary{
+		{Repository: "web-dvwa", LatestRun: ports.ScanRun{ID: "run-1", Repository: "web-dvwa", CreatedAt: now}, LastExecuted: now, RunCount: 13},
+		{Repository: "alpine-vuln", LatestRun: ports.ScanRun{ID: "run-2", Repository: "alpine-vuln", CreatedAt: now}, LastExecuted: now, RunCount: 12},
+	}
 
 	for _, height := range []int{24, 30, 40, 50, 80} {
 		height := height
 		t.Run(fmt.Sprintf("height=%d", height), func(t *testing.T) {
 			t.Parallel()
 
-			layout := contentBudget(minViewportWidth, height, "", adminScreenHelp(screenAdminFeatures, view))
+			layout := contentBudget(minViewportWidth, height, "", "")
+
+			repos := trivyReposScreen{loaded: true, summaries: summaries}
+			repos.rebuildTable(screenEnv{Layout: layout})
 
 			// The base body's own bottom row within the composited canvas:
 			// title (1 row, guarded invariant) + context (1 row) + the base
 			// body's real measured height, ending at the body's own closing
 			// border row.
-			baseContext, baseBody, baseHelp := renderAdminScreen(theme, screenAdminFeatures, session, view, nil, layout, now)
+			baseFrame := repos.View(theme, screenEnv{Layout: layout})
+			baseHelp := shortHelpView(theme, repos.Keys())
+			baseBody := baseFrame.Body
 			baseBodyHeight := lipgloss.Height(baseBody)
 			baseBottomRow := 2 + baseBodyHeight - 1
-			baseWorkspace := renderConsoleWorkspace("Regixtry Admin", baseContext, baseBody, "", baseHelp, statusKindAuto)
+			baseWorkspace := renderConsoleWorkspace("Regixtry Admin", baseFrame.Context, baseBody, "", baseHelp, statusKindAuto)
 
 			modalRows := adminScanHistoryModalRows(layout, baseBodyHeight)
-			modalView := renderAdminScanHistoryModal(theme, view.ScanHistoryModal, view, modalRows)
+			modalView := renderAdminScanHistoryModal(theme, modal, findingsTable, bubbletable.Model{}, modalRows)
 
 			overlayHeight := lipgloss.Height(modalView)
 			if overlayHeight > layout.Height {
@@ -1473,8 +1455,7 @@ func TestRenderAdminScanHistoryModalNeverAppliesFitLinesOverComposite(t *testing
 	}
 	const pageSize = 5 // 30 findings over pageSize 5 -> 6 pages, forces the table's own internal pagination
 
-	view := AdminViewState{}
-	view.Tables.Findings = buildAdminFindingsTable(theme, findings, 0, pageSize)
+	findingsTable := buildAdminFindingsTable(theme, findings, 0, pageSize)
 
 	modal := adminScanHistoryModal{
 		Open:       true,
@@ -1485,7 +1466,7 @@ func TestRenderAdminScanHistoryModalNeverAppliesFitLinesOverComposite(t *testing
 		Detail:     ports.ScanRunDetail{Findings: findings},
 	}
 
-	got := renderAdminScanHistoryModal(theme, modal, view, 20)
+	got := renderAdminScanHistoryModal(theme, modal, findingsTable, bubbletable.Model{}, 20)
 
 	if strings.Contains(got, "Showing ") {
 		t.Fatalf("renderAdminScanHistoryModal() output contains an outer fitLines indicator (\"Showing \" substring) — the modal must never apply fitLines over a composite containing a bordered table:\n%s", got)
@@ -1755,5 +1736,147 @@ func TestNextDelegateGrantRoleNeverProducesRepoAdmin(t *testing.T) {
 				t.Fatalf("nextDelegateGrantRole(%q) = %q, must never be repo-admin", tt.current, got)
 			}
 		})
+	}
+}
+
+// TestGeneratedFooterMatchesPreviousHandWrittenString is the
+// tui-menu-architecture change's Phase 4 task 4.3 (T1.3) RED test
+// (design.md Decision D's Rung-1 gate): shortHelpView(gitleaksConfigModalKeys)
+// must equal admin_views.go's pre-change hand-written footer string
+// byte-for-byte — the exact drift class this change exists to kill, proven
+// by generating the same bytes instead of asserting they merely look
+// similar.
+func TestGeneratedFooterMatchesPreviousHandWrittenString(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+	got := shortHelpView(theme, gitleaksConfigModalKeys)
+	want := "Enter: save | Tab: next field | Space: toggle | Esc: cancel"
+	if got != want {
+		t.Fatalf("shortHelpView(gitleaksConfigModalKeys) = %q, want %q byte-for-byte", got, want)
+	}
+}
+
+// TestNonMigratedScreensUnchanged is the tui-menu-architecture change's
+// Phase 1 task 1.1 (T1.8) golden/characterization baseline, captured
+// BEFORE screen.go/admin_router.go or any router code exists: for every one
+// of the legacy admin screens dispatched by renderAdminScreen (the screens
+// updateAdminKey's switch still resolves through legacyScreenHandlers),
+// Model.View()'s composited output MUST always equal renderAdminScreen's
+// own direct output for that exact screen/session/view/layout/now — the
+// invariant design.md's Data Flow section states holds for every
+// non-migrated screen. A routing regression that dispatches a legacy
+// screen to the wrong renderer, drops its help text, or diverges its body
+// would fail this test.
+//
+// Narrowed from 13 to 12 screens in Phase 11: screenAdminFeatures is no
+// longer one of them (design.md Decision I repurposes it as
+// securityMenuScreen, a migrated screen addressed via slotFor) — see
+// TestEveryScreenRoutesExactlyOnce/TestModel* coverage for its own
+// characterization now.
+func TestNonMigratedScreensUnchanged(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+	now := time.Date(2026, time.August, 20, 9, 0, 0, 0, time.UTC)
+	session := AdminSession{Username: "operator", ExpiresAt: now.Add(10 * time.Minute)}
+
+	userView := AdminViewState{
+		Users:            []ports.AdminUser{{ID: "u-1", Username: "alice", IsAdmin: true, Enabled: true}},
+		SelectedUserID:   "u-1",
+		SelectedUsername: "alice",
+	}
+	repoAdminView := AdminViewState{RepoAdminRepository: "team/app"}
+
+	screens := []struct {
+		name string
+		view AdminViewState
+	}{
+		{"screenAdminUsers", AdminViewState{}},
+		{"screenAdminCreateUser", AdminViewState{}},
+		{"screenAdminEditUser", userView},
+		{"screenAdminChangePassword", userView},
+		{"screenAdminEditUserGrants", userView},
+		{"screenAdminAddGrant", userView},
+		{"screenAdminEditUserTokens", userView},
+		{"screenAdminCreateToken", userView},
+		{"screenRepoAdminGrants", repoAdminView},
+		{"screenRepoAdminAddGrant", repoAdminView},
+		{"screenAdminRobots", AdminViewState{}},
+		{"screenAdminCreateRobot", AdminViewState{}},
+	}
+	ids := map[string]screen{
+		"screenAdminUsers":          screenAdminUsers,
+		"screenAdminCreateUser":     screenAdminCreateUser,
+		"screenAdminEditUser":       screenAdminEditUser,
+		"screenAdminChangePassword": screenAdminChangePassword,
+		"screenAdminEditUserGrants": screenAdminEditUserGrants,
+		"screenAdminAddGrant":       screenAdminAddGrant,
+		"screenAdminEditUserTokens": screenAdminEditUserTokens,
+		"screenAdminCreateToken":    screenAdminCreateToken,
+		"screenRepoAdminGrants":     screenRepoAdminGrants,
+		"screenRepoAdminAddGrant":   screenRepoAdminAddGrant,
+		"screenAdminRobots":         screenAdminRobots,
+		"screenAdminCreateRobot":    screenAdminCreateRobot,
+	}
+
+	if got, want := len(screens), 12; got != want {
+		t.Fatalf("test setup invalid: %d screen fixtures, want %d (Phase 11 narrows design.md's 13 legacy screens by one)", got, want)
+	}
+
+	for _, tc := range screens {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			id := ids[tc.name]
+			m := NewModel(&fakeQueryService{})
+			m.viewport = viewportSize{Width: defaultViewportWidth, Height: adminTestViewportHeight}
+			m.screen = id
+			m.adminSession = session
+			m.adminAuth = adminAuthStateAuthenticated
+			m.adminView = tc.view
+			m.now = func() time.Time { return now }
+
+			layout := m.contentBudget(m.status, adminScreenHelp(id, tc.view))
+			wantContext, wantBody, wantHelp := renderAdminScreen(theme, id, session, tc.view, m.repositories.Names(), layout, now)
+			want := renderConsoleWorkspace("Regixtry Admin", wantContext, wantBody, m.status, wantHelp, statusKindAuto)
+
+			got := m.View()
+			if got != want {
+				t.Fatalf("screen %q: Model.View() diverged from renderAdminScreen's direct output\ngot:\n%s\nwant:\n%s", id, got, want)
+			}
+		})
+	}
+}
+
+// TestRenderPeerMenuRowsHighlightsCursorAndAlignsLabelColumn is the visual
+// polish RED test the user asked for on the domain menu / Operations
+// screens: the highlighted row must carry a leading "▸ " cursor (other rows
+// get matching blank padding, not shifted text), and every row's label must
+// be right-padded to the widest label's rendered width so each row's help
+// text starts in the same column.
+func TestRenderPeerMenuRowsHighlightsCursorAndAlignsLabelColumn(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+	lines := renderPeerMenuRows(theme, []peerMenuRow{
+		{Label: "Browse", Help: "Repositories, Tags, Manifests, Blobs & Uploads"},
+		{Label: "Security & Compliance", Help: "Trivy, Gitleaks, Signing"},
+	}, 1)
+
+	if len(lines) != 2 {
+		t.Fatalf("len(lines) = %d, want 2", len(lines))
+	}
+	if strings.Contains(lines[0], "▸") {
+		t.Fatalf("non-highlighted row 0 = %q, must not carry the cursor", lines[0])
+	}
+	if !strings.Contains(lines[1], "▸") {
+		t.Fatalf("highlighted row 1 = %q, must carry the cursor", lines[1])
+	}
+
+	labelColumnWidth := lipgloss.Width(strings.SplitN(lines[0], "Repositories", 2)[0])
+	otherLabelColumnWidth := lipgloss.Width(strings.SplitN(lines[1], "Trivy", 2)[0])
+	if labelColumnWidth != otherLabelColumnWidth {
+		t.Fatalf("label column width = %d and %d, want equal (help text must align across rows)", labelColumnWidth, otherLabelColumnWidth)
 	}
 }

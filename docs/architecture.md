@@ -139,6 +139,30 @@ flowchart LR
 
 Net effect: `regixtry tui` alone is a local read-only console over whatever storage root/database path it's pointed at. Pointing the same binary at a running server's admin API additionally unlocks the full admin surface over real HTTP — the TUI never talks to `infra` on the admin side, only to another process's HTTP API.
 
+## TUI screen-ownership model
+
+`internal/tui`'s admin workspace is built on a per-screen state-ownership primitive (`internal/tui/screen.go`), introduced to stop a class of bug where one screen's key handler silently mutated another screen's state (a shared per-repository override modal that only Trivy could open, later cycled to edit Gitleaks'/Signing's own overrides — see the `tui-menu-architecture` OpenSpec change).
+
+```mermaid
+flowchart TB
+    key["tea.KeyMsg"] --> updateAdminKey
+    updateAdminKey -->|"scanHistoryScreen active?"| scanHistory["scanHistoryScreen.Update<br/>(never slotFor-addressed — floats as an<br/>overlay over whichever screen opened it)"]
+    updateAdminKey -->|"'l' logout / Confirm.Active() / 'q' quit"| globalFallbacks["global fallbacks"]
+    updateAdminKey --> routeAdminKey
+    routeAdminKey -->|"slotFor(m.screen) resolves"| migrated["adminScreens[slot].Update(env, msg)<br/>— parent REPLACES the slot, never<br/>writes into it (Decision B)"]
+    routeAdminKey -->|"slotFor fails"| legacy["legacyScreenHandlers[m.screen](m, msg)<br/>— Model.updateAdminXKey, AdminViewState-backed"]
+```
+
+- **`adminScreen` contract** (`screen.go`) — `ID() screen`, `Keys() screenKeys`, `Init(env screenEnv) tea.Cmd`, `Update(env screenEnv, msg tea.Msg) (next adminScreen, cmd tea.Cmd, consumed bool)`, `View(theme adminTheme, env screenEnv) screenFrame`. `adminScreen` is a **value-typed** interface (`Update` returns a new value, never mutates through a pointer), so `Model.adminScreens` — a fixed-size `[numScreenSlots]adminScreen` array, not a map or slice — keeps ordinary Bubble Tea value-copy semantics: copying `Model` copies the whole screen set. `screenFrame` deliberately has **no `Help` field**; the router renders every migrated screen's footer from `Keys()` via `shortHelpView`, so a screen's rendered help cannot drift from what its own `Update` actually matches against.
+- **Router** (`admin_router.go` / `updateAdminKey` in `model.go`) — one screen id resolves in exactly one place: `slotFor(m.screen)` first (a migrated top-level screen), then `legacyScreenHandlers[m.screen]` (a package-level, stateless function table — the D5 adapter, holding no data of its own). `TestEveryScreenRoutesExactlyOnce`/`TestLegacyAdapterHoldsNoState` (`internal/tui/admin_router_test.go`) keep that boundary honest.
+- **Legacy adapter boundary (D5 phasing)** — Identity & Access (Users, Robots, Repository Grants, Tokens) and Browse (Repositories → Tags → Manifest → Blobs/Uploads) are **deliberately not migrated**: they keep reading/writing `AdminViewState` through `legacyScreenHandlers`, unchanged, behind the same adapter every migrated screen used to sit behind before it graduated. Migrating them is a later, separate change — the adapter's whole purpose is to make that boundary a visible, reviewable line rather than an implied one.
+- **Migrated screens** — every Security & Compliance screen (`securityMenuScreen`, `trivyConfigScreen`, `trivyReposScreen`, `gitleaksConfigScreen`, `signingConfigScreen`, the shared `featureOverridesScreen` behind Gitleaks'/Signing's own repository lists) and every Operations/menu screen (`adminMenuScreen`, `adminOperationsScreen`, `scanRunsScreen`, `scanHistoryScreen`) own their state as struct fields, never as `AdminViewState` siblings. `TestMigratedScreensHaveZeroFieldsOnAdminViewState` (`internal/tui/admin_view_state_migration_test.go`) asserts, by `reflect`, that no migrated screen's state field survives on `AdminViewState`.
+- **`scanHistoryScreen` is the one screen not resolved via `slotFor`/`m.screen`.** It composites as a floating overlay over whichever screen opened it (`m.screen` never changes while it is mounted) — the same shape `gitleaksConfigScreen` used before it was promoted to a full top-level screen. It is reached two ways (Trivy's Repository Alerts `Enter`, and Operations' Scan Runs/Secret Scan Findings pickers' own `Enter`), tracked via its own `returnTo` field so `Esc` un-mounts it and lands back on the correct opener.
+- **One confirm primitive** (`confirm.go`'s `confirmPrompt`) replaces the old `Kind`-discriminated `adminConfirmModal` union and the Tags screen's separate `PendingDelete` pattern. It is composed into a screen's own sub-model (or embedded in a legacy model like `TagsModel`) rather than living on a shared struct, so adding a new confirm never widens a god-object.
+- **Domain-grouped navigation** (`screen_admin_menu.go`, `screen_operations.go`) — post-login lands on a 4-row domain menu (Browse / Security & Compliance / Identity & Access / Operations); each domain row navigates into an existing or newly migrated top-level screen. `navigate(to screen)` (a `tea.Cmd` emitting `navigateMsg`) is the one channel a migrated screen uses to ask the parent to switch `m.screen` — the parent applies the transition centrally and lazily mounts+`Init`s a target screen the first time it is visited, never writing into a sibling's fields directly.
+
+See [`docs/tui.md`](tui.md) for the full navigation map and key-binding table.
+
 ## Storage: two separate databases
 
 `cmd/regixtry/main.go` opens two backing stores with different lifecycles:

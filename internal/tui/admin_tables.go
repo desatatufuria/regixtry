@@ -378,14 +378,6 @@ func severityStyledCell(theme adminTheme, severity string) bubbletable.StyledCel
 	return bubbletable.NewStyledCell(adminFirstNonEmpty(value, "UNKNOWN"), style)
 }
 
-func highlightedRowValue(model bubbletable.Model, key string) string {
-	if model.TotalRows() == 0 {
-		return ""
-	}
-	value, _ := model.HighlightedRow().Data[key].(string)
-	return strings.TrimSpace(value)
-}
-
 // tableRoles splits a screen's row budget into two admin-table pageSize
 // roles (design.md decision #6): primary tables (Features, ScanSummary — the
 // operator-navigable top-level lists) get the whole budget available to a
@@ -409,64 +401,18 @@ func tableRoles(l consoleLayout) (primary, compact int) {
 	return primary, compact
 }
 
+// rebuildAdminTables keeps AdminViewState.Layout's Primary/Compact split
+// fresh (design.md decision #6) -- a handful of tests read it as a proxy
+// for "the row budget this screen was sized against". Every admin table
+// itself is now built by its own owning screen (securityMenuScreen/
+// trivyConfigScreen/trivyReposScreen's own fields since Phase 11;
+// scanHistoryScreen's own findings/secretFindings fields since Phase 19,
+// design.md's State Migration table) from inside its own Update, broadcast
+// the same way every other migrated screen refreshes on tea.WindowSizeMsg
+// (design.md Decision H). Still called unconditionally after almost every
+// admin action -- harmless/cheap, this method itself now does no table
+// construction of its own.
 func (m *Model) rebuildAdminTables(layout consoleLayout) {
 	layout.Primary, layout.Compact = tableRoles(layout)
 	m.adminView.Layout = layout
-
-	theme := newAdminTheme()
-	m.adminView.Tables.Features = buildAdminFeaturesTable(theme, m.adminView.Features, m.adminView.SelectedFeature, layout.Primary)
-	featureRows := make(map[string]bubbletable.Model)
-	for _, section := range m.adminView.FeaturePage.Sections {
-		if section.Kind != "rows" {
-			continue
-		}
-		featureRows[section.ID] = buildAdminFeatureRowsTable(theme, section, layout.Compact)
-	}
-	m.adminView.Tables.FeatureRows = featureRows
-
-	// ScanSummary is the per-repository Repository Alerts summary table
-	// (spec.md "Repository Alerts Summarized Per Repository With Ordering
-	// And Freshness") and the sole table backing that tab.
-	m.adminView.Tables.ScanSummary = buildAdminScanSummaryTable(theme, annotateDisabledSummaries(m.adminView.TrivySummaries, m.adminView.TrivyOverrides), m.adminView.TrivySelectedAlert, layout.Primary)
-
-	// The scan history modal's Findings/SecretFindings tables are only ever
-	// rendered from within the modal (adminScanHistoryModalTableBody), so
-	// they are only built while the modal is active; otherwise they stay at
-	// their previous/zero value and are simply not rendered.
-	if m.adminView.ScanHistoryModal.Active() {
-		// baseBodyHeight must be measured the SAME way renderAdminWorkspace
-		// measures it (lipgloss.Height on renderAdminScreen's own body
-		// return) or this table gets pre-built for one page size while
-		// renderAdminWorkspace composites the modal into a differently-sized
-		// budget (adminScanHistoryModalRows' doc comment). Features and
-		// ScanSummary -- the only tables the base Feature Page body itself
-		// renders -- are already built above, so this reflects the real
-		// content the base body will show.
-		baseBodyHeight := adminBaseBodyHeight(m.screen, m.adminSession, m.adminView, m.repositories.Names(), layout, m.now())
-		modalRows := adminScanHistoryModalRows(layout, baseBodyHeight)
-		measuredHeaderHeight := 0
-		if strings.TrimSpace(m.adminView.ScanHistoryModal.Error) != "" || m.adminView.ScanHistoryModal.Loading {
-			measuredHeaderHeight = 1
-		}
-		modalTablePageSize := adminScanHistoryModalTablePageSize(modalRows, measuredHeaderHeight)
-		findingCursor := m.adminView.ScanHistoryModal.FindingCursor
-		m.adminView.Tables.Findings = buildAdminFindingsTable(theme, m.adminView.ScanHistoryModal.Detail.Findings, findingCursor, modalTablePageSize)
-		m.adminView.Tables.SecretFindings = buildAdminSecretFindingsTable(theme, m.adminView.ScanHistoryModal.Secrets, findingCursor, modalTablePageSize)
-	}
-	m.syncAdminTableSelections()
-}
-
-func (m *Model) syncAdminTableHighlights() {
-	if m.adminView.Tables.Features.TotalRows() > 0 {
-		m.adminView.Tables.Features = m.adminView.Tables.Features.WithHighlightedRow(boundedIndex(m.adminView.SelectedFeature, len(m.adminView.Features)))
-	}
-	if m.adminView.Tables.ScanSummary.TotalRows() > 0 {
-		m.adminView.Tables.ScanSummary = m.adminView.Tables.ScanSummary.WithHighlightedRow(boundedIndex(m.adminView.TrivySelectedAlert, len(m.adminView.TrivySummaries)))
-	}
-	m.syncAdminTableSelections()
-}
-
-func (m *Model) syncAdminTableSelections() {
-	m.adminView.Tables.Selection.FeatureName = highlightedRowValue(m.adminView.Tables.Features, adminTableMetaFeatureName)
-	m.adminView.Tables.Selection.FindingID = highlightedRowValue(m.adminView.Tables.Findings, adminTableMetaFindingID)
 }

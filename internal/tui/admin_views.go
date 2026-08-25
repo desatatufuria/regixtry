@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	bubbletable "github.com/evertras/bubble-table/table"
 	"regixtry/internal/ports"
 )
 
@@ -21,10 +22,23 @@ import (
 // its table page size must be pre-built to match its own budget -- Confirm
 // and Trivy render fixed content with no page sizing, so the compositor's
 // own clamp is the only bound they need).
-func renderAdminWorkspace(current screen, session AdminSession, view AdminViewState, knownRepositories []string, status string, layout consoleLayout, now time.Time) string {
+func renderAdminWorkspace(current screen, session AdminSession, view AdminViewState, knownRepositories []string, status string, layout consoleLayout, now time.Time, adminScreens adminScreenSet) string {
 	theme := newAdminTheme()
+	env := screenEnv{Session: session, Layout: layout, KnownRepositories: knownRepositories, Now: func() time.Time { return now }}
 
-	context, body, help := renderAdminScreen(theme, current, session, view, knownRepositories, layout, now)
+	// Migrated top-level screen (design.md Decision I / Data Flow): the
+	// screen's own View() supplies context/body/help/overlay. Every other
+	// screen id still resolves through the legacy renderAdminScreen path
+	// unchanged (design.md D5's adapter boundary).
+	var context, body, help, screenOverlay string
+	if slot, ok := slotFor(current); ok && adminScreens[slot] != nil {
+		frame := adminScreens[slot].View(theme, env)
+		context, body = frame.Context, frame.Body
+		help = shortHelpView(theme, adminScreens[slot].Keys())
+		screenOverlay = frame.Overlay
+	} else {
+		context, body, help = renderAdminScreen(theme, current, session, view, knownRepositories, layout, now)
+	}
 	// statusKindAuto preserves today's substring-classification behavior
 	// (design.md Decision 2: 0 of ~11 renderInspectionWorkspace callers are
 	// touched by the new kind param, and the admin workspace gets the same
@@ -33,46 +47,37 @@ func renderAdminWorkspace(current screen, session AdminSession, view AdminViewSt
 
 	var modalView string
 	switch {
-	case view.ScanHistoryModal.Active():
-		// The scan history modal keeps its own nested budget
+	case adminScreens[slotScanHistory] != nil:
+		// scanHistoryScreen (Phase 19) is never slotFor(current)-addressed
+		// (screen.go's slotScanHistory doc comment): current/body above
+		// already resolve to whichever screen opened it (m.screen never
+		// changes while it is mounted), so this composites on top exactly
+		// like the pre-migration ScanHistoryModal.Active() branch did. The
+		// scan history overlay keeps its own nested budget
 		// (adminScanHistoryModalRows): its table page size must be
 		// pre-built to match this budget, since its content is
 		// data-scrollable and cannot simply be clamped after the fact the
 		// way compositeOverlay clamps fixed-content modals.
-		baseBodyHeight := lipgloss.Height(body)
-		modalView = renderAdminScanHistoryModal(theme, view.ScanHistoryModal, view, adminScanHistoryModalRows(layout, baseBodyHeight))
-	case view.ConfirmModal.Active():
-		modalView = renderAdminModal(theme, view.ConfirmModal)
-	case view.TrivyConfigModal.Active():
-		modalView = renderTrivyConfigModal(theme, view.TrivyConfigModal)
-	case view.GitleaksConfigModal.Active():
-		modalView = renderGitleaksConfigModal(theme, view.GitleaksConfigModal)
-	case view.ScanPolicyModal.Active():
-		modalView = renderScanPolicyModal(theme, view.ScanPolicyModal)
-	case view.SigningPolicyModal.Active():
-		modalView = renderSigningPolicyModal(theme, view.SigningPolicyModal)
-	case view.RepositoryOverrideModal.Active():
-		modalView = renderRepositoryOverrideModal(theme, view.RepositoryOverrideModal)
+		if scan, ok := adminScreens[slotScanHistory].(scanHistoryScreen); ok {
+			baseBodyHeight := lipgloss.Height(body)
+			modalView = renderAdminScanHistoryModal(theme, scan.modal, scan.findings, scan.secretFindings, adminScanHistoryModalRows(layout, baseBodyHeight))
+		}
+	case view.Confirm.Active():
+		modalView = view.Confirm.view(theme)
+	case screenOverlay != "":
+		// A migrated top-level screen's own overlay (design.md Decision A):
+		// Trivy's/Gitleaks'/Signing's own config/scan-policy modals
+		// (Phase 11, now that those screens are top-level and addressed via
+		// slotFor at the top of this function), and Gitleaks'/Signing's
+		// embedded overrideEditor while browsing their own repository list
+		// screen -- every migrated screen's own overlay reaches the
+		// workspace through the exact same frame.Overlay field.
+		modalView = screenOverlay
 	}
 	if modalView == "" {
 		return base
 	}
 	return compositeOverlay(base, modalView, layout.Width, layout.Height)
-}
-
-// adminBaseBodyHeight measures the base Feature Page body's ACTUAL rendered
-// height the same way renderAdminWorkspace's modal-open branch does
-// (lipgloss.Height on renderAdminScreen's own body return), so callers that
-// do not already have `body` in scope -- rebuildAdminTables (admin_tables.go)
-// runs from Update handlers, before View() ever calls renderAdminScreen --
-// can still measure the exact same thing renderAdminWorkspace measures.
-// Both call sites feeding adminScanHistoryModalRows must agree on this value
-// or the modal's table gets pre-built for one page size while
-// renderAdminWorkspace composites the modal into a differently-sized budget.
-func adminBaseBodyHeight(current screen, session AdminSession, view AdminViewState, knownRepositories []string, layout consoleLayout, now time.Time) int {
-	theme := newAdminTheme()
-	_, body, _ := renderAdminScreen(theme, current, session, view, knownRepositories, layout, now)
-	return lipgloss.Height(body)
 }
 
 // adminScreenHelp returns the help line for an admin screen. Extracted from
@@ -103,8 +108,6 @@ func adminScreenHelp(current screen, view AdminViewState) string {
 		return "n: create robot | e: enable | x: disable | t: tokens | r: refresh | Esc: back | q: quit"
 	case screenAdminCreateRobot:
 		return "Enter: create robot | Tab: next field | Space: cycle role | Esc: cancel"
-	case screenAdminFeatures:
-		return adminFeatureHelp(view)
 	default:
 		return "/: search | Enter/e: edit user | n: create user | f: features | b: robots | Esc: back | q: quit"
 	}
@@ -143,11 +146,67 @@ func renderAdminScreen(theme adminTheme, current screen, session AdminSession, v
 		return "Robots", renderAdminRobotsScreen(theme, session, view, layout, now), help
 	case screenAdminCreateRobot:
 		return "Robots / Create Robot", renderAdminCreateRobotScreen(theme, view, knownRepositories), help
-	case screenAdminFeatures:
-		return "Features", renderAdminFeaturesScreen(theme, session, view, layout, now), help
 	default:
 		return "Users", renderAdminUsersScreen(theme, session, view, layout, now), help
 	}
+}
+
+// renderAdminOperatorFooter is the trailing "Operator: %s" / "Session
+// remaining: %s" pair every legacy admin screen renders (see
+// renderAdminUsersScreen/renderAdminRobotsScreen below). Phase 11's five new
+// migrated screens (securityMenuScreen, trivyConfigScreen, trivyReposScreen,
+// gitleaksConfigScreen, signingConfigScreen) share it via this helper so the
+// operator never loses their session countdown while navigating the
+// Security & Compliance domain.
+func renderAdminOperatorFooter(theme adminTheme, session AdminSession, now time.Time) []string {
+	return []string{
+		"",
+		theme.muted.Render(fmt.Sprintf("Operator: %s", session.Username)),
+		theme.muted.Render(fmt.Sprintf("Session remaining: %s", formatRemaining(session.Remaining(now)))),
+	}
+}
+
+// peerMenuRow is one row of a bare peer-list menu (adminMenuScreen,
+// adminOperationsScreen) -- screens deliberately kept as plain rows rather
+// than a bubbletable (design.md's "no page/action state of its own"
+// screens), which otherwise rendered ragged, unaligned label/help text with
+// no visual cursor beyond the background fill.
+type peerMenuRow struct {
+	Label string
+	Help  string
+}
+
+// renderPeerMenuRows renders peer rows with a leading cursor ("▸ ", matching
+// blank padding on other rows so nothing shifts) and label-column alignment
+// (every row's label right-padded to the widest one, so help text starts in
+// the same column across rows) -- shared by adminMenuScreen and
+// adminOperationsScreen so the two peer-list screens stay visually
+// consistent with each other.
+func renderPeerMenuRows(theme adminTheme, rows []peerMenuRow, highlighted int) []string {
+	labelWidth := 0
+	for _, row := range rows {
+		if w := lipgloss.Width(row.Label); w > labelWidth {
+			labelWidth = w
+		}
+	}
+
+	lines := make([]string, len(rows))
+	for index, row := range rows {
+		padded := row.Label + strings.Repeat(" ", labelWidth-lipgloss.Width(row.Label))
+		cursor := "  "
+		// theme.selected carries its own Padding(0, 1) (1 space each side),
+		// so the non-highlighted branch adds matching plain-space padding --
+		// otherwise the highlighted row's label column would render 2
+		// columns wider than every other row's, breaking the very alignment
+		// this helper exists to guarantee.
+		label := " " + padded + " "
+		if index == highlighted {
+			cursor = "▸ "
+			label = theme.selected.Render(padded)
+		}
+		lines[index] = cursor + label + "  " + theme.muted.Render(row.Help)
+	}
+	return lines
 }
 
 func renderAdminUsersScreen(theme adminTheme, session AdminSession, view AdminViewState, layout consoleLayout, now time.Time) string {
@@ -186,51 +245,21 @@ func renderAdminUsersScreen(theme adminTheme, session AdminSession, view AdminVi
 	return renderSection(theme, strings.Join(lines, "\n"), layout)
 }
 
-func renderAdminFeaturesScreen(theme adminTheme, session AdminSession, view AdminViewState, layout consoleLayout, now time.Time) string {
-	lines := []string{theme.subheading.Render("Built-in Features")}
-	if len(view.Features) == 0 {
-		lines = append(lines, theme.muted.Render("No built-in features available."))
-	} else {
-		lines = append(lines, view.Tables.Features.View())
-	}
+// renderAdminFeaturesScreen/renderFeaturePageBody moved onto
+// securityMenuScreen/trivyConfigScreen/gitleaksConfigScreen/
+// signingConfigScreen's own View methods (Phase 11, design.md Decision I):
+// screenAdminFeatures is repurposed as securityMenuScreen, a bare 3-row
+// peer list with no Feature Page detail of its own.
 
-	// The signing badge is composed onto this existing heading line at zero
-	// row cost -- there is no tab strip on the signing page the way
-	// renderTrivyTabs hosts the scan policy badge, so the heading itself is
-	// the zero-row host (design.md Decision 11 piece 1).
-	featurePageHeading := theme.subheading.Render("Feature Page")
-	if view.FeaturePage.Summary.Name == signingFeatureName {
-		featurePageHeading += "  " + signingPolicyBadge(theme, view.SigningPolicy)
-	}
-	lines = append(lines, "", featurePageHeading)
-	if strings.TrimSpace(view.FeaturePage.Summary.Name) == "" {
-		lines = append(lines, theme.muted.Render("Select or refresh a feature to load the backend-declared page."))
-	} else {
-		if view.FeaturePage.Summary.Name == trivyFeatureName {
-			lines = append(lines, renderTrivyTabs(theme, view))
-		}
-		lines = append(lines, renderFeaturePageBody(theme, view)...)
-	}
-
-	lines = append(lines,
-		"",
-		theme.muted.Render(fmt.Sprintf("Operator: %s", session.Username)),
-		theme.muted.Render(fmt.Sprintf("Session remaining: %s", formatRemaining(session.Remaining(now)))),
-	)
-	return renderSection(theme, strings.Join(lines, "\n"), layout)
-}
-
-func renderFeaturePageBody(theme adminTheme, view AdminViewState) []string {
-	if view.FeaturePage.Summary.Name == trivyFeatureName {
-		if view.TrivyTab == trivyTabRepositoryAlerts {
-			return renderAdminScanSummary(theme, view)
-		}
-		return renderGenericFeaturePage(theme, view, view.FeaturePage)
-	}
-	return renderGenericFeaturePage(theme, view, view.FeaturePage)
-}
-
-func renderGenericFeaturePage(theme adminTheme, view AdminViewState, page ports.FeaturePage) []string {
+// renderGenericFeaturePage renders a backend-declared ports.FeaturePage's
+// generic body: header fields, then each section (a "rows" section renders
+// the caller's already-built bubbletable.Model for that section, keyed by
+// ID; every other kind renders its fields inline). Phase 11 deviation from
+// the pre-change signature: takes rows map[string]bubbletable.Model
+// directly instead of a full AdminViewState, since Tables.FeatureRows moved
+// onto each of trivyConfigScreen/gitleaksConfigScreen/signingConfigScreen's
+// own `rows` field (design.md Decision D4: no shared cross-screen state).
+func renderGenericFeaturePage(theme adminTheme, page ports.FeaturePage, rows map[string]bubbletable.Model) []string {
 	lines := make([]string, 0, len(page.Header)+len(page.Sections)*2)
 	for _, field := range page.Header {
 		lines = append(lines, fmt.Sprintf("%s: %s", field.Label, adminFirstNonEmpty(field.Value, "unknown")))
@@ -243,7 +272,7 @@ func renderGenericFeaturePage(theme adminTheme, view AdminViewState, page ports.
 		lines = append(lines, "", theme.subheading.Render(section.Title))
 		switch section.Kind {
 		case "rows":
-			if tableModel, ok := view.Tables.FeatureRows[section.ID]; ok {
+			if tableModel, ok := rows[section.ID]; ok {
 				lines = append(lines, tableModel.View())
 				continue
 			}
@@ -263,15 +292,24 @@ func renderGenericFeaturePage(theme adminTheme, view AdminViewState, page ports.
 // the same line, not placed on a line of its own. contentBudget/fitLines/
 // SectionRows need no change (spec's explicit "no arithmetic change"
 // scope note).
-func renderTrivyTabs(theme adminTheme, view AdminViewState) string {
+//
+// Phase 11 deviation from the pre-change signature: "Tab becomes a screen
+// switch" (design.md Decision I) means Runtime/Repository Alerts are now
+// two screens (screenSecurityTrivy/screenSecurityTrivyRepos) rather than
+// one AdminViewState.TrivyTab field, so this takes the ACTIVE screen id
+// directly. Called from both trivyConfigScreen and trivyReposScreen's own
+// View (design's "retained as a header on both") -- each passes its own
+// read-only copy of ScanPolicy (Decision D4: no shared cross-screen state;
+// trivyReposScreen's copy is display-only, it owns no policyModal).
+func renderTrivyTabs(theme adminTheme, active screen, policy ports.ScanPolicySettings) string {
 	runtimeLabel := "Runtime"
 	alertsLabel := "Repository Alerts"
-	if view.TrivyTab == trivyTabRuntime {
+	if active == screenSecurityTrivy {
 		runtimeLabel = theme.selected.Render(runtimeLabel)
 	} else {
 		alertsLabel = theme.selected.Render(alertsLabel)
 	}
-	return theme.subheading.Render("Tabs") + "\n" + runtimeLabel + " | " + alertsLabel + "  " + scanPolicyBadge(theme, view.ScanPolicy)
+	return theme.subheading.Render("Tabs") + "\n" + runtimeLabel + " | " + alertsLabel + "  " + scanPolicyBadge(theme, policy)
 }
 
 // scanPolicyBadge renders the persistent, text-only policy status badge
@@ -285,20 +323,24 @@ func scanPolicyBadge(theme adminTheme, policy ports.ScanPolicySettings) string {
 
 // renderAdminScanSummary renders the Repository Alerts tab as one row per
 // repository (spec.md "Repository Alerts Summarized Per Repository With
-// Ordering And Freshness"), replacing the old per-scan-run list for this
-// screen. Drill-down into a specific run's findings now happens exclusively
-// through the scan history modal (renderAdminScanHistoryModal), opened by
-// Enter on a summary row.
-func renderAdminScanSummary(theme adminTheme, view AdminViewState) []string {
+// Ordering And Freshness"). Drill-down into a specific run's findings
+// happens exclusively through the scan history modal
+// (renderAdminScanHistoryModal), opened by Enter on a summary row.
+//
+// Phase 11 deviation from the pre-change signature: takes the already-loaded
+// summaries/loaded flag/table directly instead of a full AdminViewState,
+// mirroring renderGenericFeaturePage's own signature change now that these
+// live on trivyReposScreen's own fields.
+func renderAdminScanSummary(theme adminTheme, summaries []repositorySummary, loaded bool, table bubbletable.Model) []string {
 	lines := []string{theme.subheading.Render("Repository Alerts")}
-	if len(view.TrivySummaries) == 0 {
+	if len(summaries) == 0 {
 		message := "No repository alerts found."
-		if !view.TrivyAlertsLoaded {
-			message = "Loading repository alerts requires switching into the tab."
+		if !loaded {
+			message = "Loading repository alerts..."
 		}
 		return append(lines, theme.muted.Render(message))
 	}
-	return append(lines, view.Tables.ScanSummary.View())
+	return append(lines, table.View())
 }
 
 // adminScanHistoryModalTabBar renders the modal's tab strip as a single
@@ -374,13 +416,14 @@ func adminScanHistoryModalFooter(modal adminScanHistoryModal) string {
 	return fmt.Sprintf("Execution %d/%d — %s", cursor+1, len(modal.Runs), dateLabel)
 }
 
-// adminScanHistoryModalTableBody selects the active tab's table (Findings or
-// SecretFindings, reused as-is from view.Tables — design.md interfaces) or a
-// tab-appropriate empty state. When tableBudget cannot hold a bordered table
-// at all, it returns a single-line substitute instead of ever slicing one
-// (design.md "the table is replaced by a single-line substitute, never
-// sliced" — the fix for the historical orphaned "Showing x-y of N" bug).
-func adminScanHistoryModalTableBody(theme adminTheme, modal adminScanHistoryModal, view AdminViewState, tableBudget int) string {
+// adminScanHistoryModalTableBody selects the active tab's table (findings or
+// secretFindings, owned by scanHistoryScreen itself since Phase 19 -- design.md
+// Decision B) or a tab-appropriate empty state. When tableBudget cannot hold
+// a bordered table at all, it returns a single-line substitute instead of
+// ever slicing one (design.md "the table is replaced by a single-line
+// substitute, never sliced" — the fix for the historical orphaned
+// "Showing x-y of N" bug).
+func adminScanHistoryModalTableBody(theme adminTheme, modal adminScanHistoryModal, findings, secretFindings bubbletable.Model, tableBudget int) string {
 	if len(modal.Tabs) == 0 {
 		return theme.muted.Render("No tabs available.")
 	}
@@ -394,12 +437,12 @@ func adminScanHistoryModalTableBody(theme adminTheme, modal adminScanHistoryModa
 		if len(modal.Secrets) == 0 {
 			return theme.muted.Render("No secret findings recorded for this execution.")
 		}
-		return view.Tables.SecretFindings.View()
+		return secretFindings.View()
 	default:
 		if len(modal.Detail.Findings) == 0 {
 			return theme.muted.Render("No findings recorded for this execution.")
 		}
-		return view.Tables.Findings.View()
+		return findings.View()
 	}
 }
 
@@ -420,7 +463,7 @@ func adminScanHistoryModalTableBody(theme adminTheme, modal adminScanHistoryModa
 // because its table is pre-sized (via adminScanHistoryModalTablePageSize) to
 // fit modalRows exactly, or replaced by a one-line substitute when it
 // cannot.
-func renderAdminScanHistoryModal(theme adminTheme, modal adminScanHistoryModal, view AdminViewState, modalRows int) string {
+func renderAdminScanHistoryModal(theme adminTheme, modal adminScanHistoryModal, findings, secretFindings bubbletable.Model, modalRows int) string {
 	title := theme.subheading.Render(fmt.Sprintf("Scan History — %s", adminFirstNonEmpty(modal.Repository, "unknown")))
 	tabBar := adminScanHistoryModalTabBar(theme, modal)
 	footer := theme.muted.Render(adminScanHistoryModalFooter(modal))
@@ -443,7 +486,7 @@ func renderAdminScanHistoryModal(theme adminTheme, modal adminScanHistoryModal, 
 	}
 
 	tableBudget := modalRows - adminScanHistoryModalChromeRows - measuredHeaderHeight
-	tableBody := adminScanHistoryModalTableBody(theme, modal, view, tableBudget)
+	tableBody := adminScanHistoryModalTableBody(theme, modal, findings, secretFindings, tableBudget)
 
 	lines := []string{title, tabBar}
 	if header != "" {
@@ -747,15 +790,6 @@ func renderAdminCreateTokenScreen(theme adminTheme, view AdminViewState) string 
 	}, "\n"))
 }
 
-func renderAdminModal(theme adminTheme, modal adminConfirmModal) string {
-	return theme.section.Render(strings.Join([]string{
-		theme.subheading.Render(modal.Title),
-		modal.Message,
-		"",
-		theme.muted.Render(fmt.Sprintf("Enter: %s | Esc: cancel", modal.ConfirmText)),
-	}, "\n"))
-}
-
 func renderTrivyConfigModal(theme adminTheme, modal trivyConfigModal) string {
 	lines := []string{
 		theme.subheading.Render("Edit Trivy Configuration"),
@@ -772,23 +806,8 @@ func renderTrivyConfigModal(theme adminTheme, modal trivyConfigModal) string {
 	return theme.section.Render(strings.Join(lines, "\n"))
 }
 
-// renderGitleaksConfigModal mirrors renderTrivyConfigModal at gitleaks' own
-// narrower 3-field scope (Enabled, Timeout, MaxConcurrency) -- no
-// ScheduleEnabled/Interval (gitleaks scans immutable content once) and no
-// RegistryReachableURL (gitleaks never pulls from the registry over HTTP).
-func renderGitleaksConfigModal(theme adminTheme, modal gitleaksConfigModal) string {
-	lines := []string{
-		theme.subheading.Render("Edit Gitleaks Configuration"),
-		renderToggleField(theme, "Enabled", modal.Enabled, modal.Focus == gitleaksConfigFieldEnabled),
-		renderTextField(theme, "Timeout", modal.Timeout, modal.Focus == gitleaksConfigFieldTimeout),
-		renderTextField(theme, "Max Concurrency", modal.MaxConcurrency, modal.Focus == gitleaksConfigFieldMaxConcurrency),
-	}
-	if strings.TrimSpace(modal.Error) != "" {
-		lines = append(lines, "", theme.error.Render(modal.Error))
-	}
-	lines = append(lines, "", theme.muted.Render("Enter: save | Tab: next field | Space: toggle | Esc: cancel"))
-	return theme.section.Render(strings.Join(lines, "\n"))
-}
+// renderGitleaksConfigModal moved to gitleaksConfigScreen.View
+// (screen_gitleaks_config.go, design.md Decision G).
 
 // renderScanPolicyModal renders the vulnerability policy gate's own modal
 // (design.md Decision 6): heading + 2 fields x 2 rows + blank/help = 7
@@ -820,81 +839,11 @@ func signingPolicyBadge(theme adminTheme, policy ports.SigningPolicySettings) st
 	return theme.selected.Render(fmt.Sprintf("Signing: REQUIRED (%d keys)", len(policy.TrustedPublicKeys)))
 }
 
-// renderSigningPolicyModal renders the image-signing content-trust gate's
-// own modal (design.md Decision 11 piece 1), a sibling of
-// renderScanPolicyModal -- NOT an extension of it. Row arithmetic: heading
-// (1) + status (1) + 3 fields x 2 rows (6) + key list (1 for empty, else
-// min(N,4)+[1 if N>4]) + clear row (1) + blank/help (2, +2 more with an
-// error) + 4 rows theme.section chrome.
-func renderSigningPolicyModal(theme adminTheme, modal signingPolicyModal) string {
-	lines := []string{
-		theme.subheading.Render("Signing Policy"),
-		theme.muted.Render(signingPolicyStatusLine(modal)),
-		renderToggleField(theme, "Enabled", modal.Enabled, modal.Focus == signingPolicyFieldEnabled),
-		renderTextField(theme, "Unsigned Self-Read", normalizeUnsignedSelfRead(modal.UnsignedSelfRead), modal.Focus == signingPolicyFieldUnsignedSelfRead),
-		renderTextField(theme, "Trusted Key (PEM)", modal.AddKey, modal.Focus == signingPolicyFieldAddKey),
-	}
-	lines = append(lines, renderSigningPolicyKeyList(theme, modal.Fingerprints)...)
-	lines = append(lines, renderSigningPolicyClearKeysRow(theme, modal))
-	if strings.TrimSpace(modal.Error) != "" {
-		lines = append(lines, "", theme.error.Render(modal.Error))
-	}
-	lines = append(lines, "", theme.muted.Render("Enter: save/add key | Tab: next field | Space: toggle/cycle | Esc: cancel"))
-	return theme.section.Render(strings.Join(lines, "\n"))
-}
-
-// signingPolicyStatusLine answers "is this modal loading, and how many
-// trusted keys are currently configured", occupying the modal's own fixed
-// Status row regardless of key count (design.md Decision 11's row-budget
-// table lists Status as a constant 1-row cost, distinct from the scaling
-// key list below it).
-func signingPolicyStatusLine(modal signingPolicyModal) string {
-	if modal.Loading {
-		return "Loading…"
-	}
-	return fmt.Sprintf("%d trusted key(s) configured", len(modal.Fingerprints))
-}
-
-// renderSigningPolicyKeyList renders at most 4 fingerprint rows plus one
-// "+N more" row when there are more than 4, or a single empty-state row when
-// there are none (design.md Decision 11's row-budget table: Key list = 1 /
-// N / min(N,4)+1). Stored keys are shown only as truncated SHA-256/12
-// fingerprints, never as raw PEM (renderSigningPolicyModal's own doc
-// comment / spec's redaction requirement).
-func renderSigningPolicyKeyList(theme adminTheme, fingerprints []string) []string {
-	if len(fingerprints) == 0 {
-		return []string{theme.muted.Render("No trusted keys configured.")}
-	}
-	shown := fingerprints
-	more := 0
-	if len(shown) > 4 {
-		more = len(shown) - 4
-		shown = shown[:4]
-	}
-	lines := make([]string, 0, len(shown)+1)
-	for _, fingerprint := range shown {
-		lines = append(lines, theme.text.Render(fmt.Sprintf("Key: %s", fingerprint)))
-	}
-	if more > 0 {
-		lines = append(lines, theme.muted.Render(fmt.Sprintf("+%d more", more)))
-	}
-	return lines
-}
-
-// renderSigningPolicyClearKeysRow renders the modal's ClearKeys action as a
-// single-row line, mirroring renderRepositoryOverrideClearRow's action-row
-// pattern (an action, not an input, so it costs 1 row rather than 2).
-func renderSigningPolicyClearKeysRow(theme adminTheme, modal signingPolicyModal) string {
-	label := "Clear all trusted keys"
-	if len(modal.Fingerprints) == 0 {
-		label = "No trusted keys to clear"
-	}
-	style := theme.muted
-	if modal.Focus == signingPolicyFieldClearKeys {
-		style = theme.inputFocus
-	}
-	return style.Render(label)
-}
+// renderSigningPolicyModal/signingPolicyStatusLine/renderSigningPolicyKeyList/
+// renderSigningPolicyClearKeysRow moved to screen_signing_config.go (Phase
+// 12.3, design.md's State Migration table): signingConfigScreen.View calls
+// renderSigningPolicyModal directly, with the pre-move hand-written footer
+// replaced by shortHelpView's keymap-generated one.
 
 // scanPolicyThresholdLabel renders the severity threshold as the operator-
 // facing text the badge and modal both use (design.md Decision 6): CRITICAL
@@ -912,94 +861,19 @@ func scanPolicyThresholdLabel(threshold string) string {
 	}
 }
 
-// renderRepositoryOverrideModal renders repositoryOverrideModal, a sibling
-// of renderScanPolicyModal/renderTrivyConfigModal (design.md Decision 8
-// piece 3, spec's "Out of Scope Note": its own small modal, not an
-// extension). Row arithmetic, using the same 2-rows-per-field cost and
-// 4-row theme.section chrome as scan-policy-gate's Decision 6: heading(1) +
-// status(1) + Feature(2) + Enabled(2) + PathPrimary(2) + [PathSecondary(2),
-// trivy only] + [UnsignedSelfRead(2), signing only] + Clear row(1) +
-// [blank+error(2)] + blank+help(2).
-func renderRepositoryOverrideModal(theme adminTheme, modal repositoryOverrideModal) string {
-	lines := []string{
-		theme.subheading.Render(fmt.Sprintf("Repository Override — %s", modal.Repository)),
-		theme.muted.Render(repositoryOverrideStatusLine(modal)),
-		renderTextField(theme, "Feature", modal.Feature, modal.Focus == repositoryOverrideFieldFeature),
-		renderToggleField(theme, "Enabled", modal.Enabled, modal.Focus == repositoryOverrideFieldEnabled),
-	}
-	switch modal.Feature {
-	case gitleaksFeatureName:
-		lines = append(lines, renderTextField(theme, "Config Path", modal.PathPrimary, modal.Focus == repositoryOverrideFieldPathPrimary))
-	case signingFeatureName:
-		lines = append(lines, renderTextField(theme, "Trusted Key (PEM)", modal.PathPrimary, modal.Focus == repositoryOverrideFieldPathPrimary))
-		lines = append(lines, renderTextField(theme, "Unsigned Self-Read", normalizeUnsignedSelfRead(modal.UnsignedSelfRead), modal.Focus == repositoryOverrideFieldUnsignedSelfRead))
-	default:
-		lines = append(lines, renderTextField(theme, "Ignore File Path", modal.PathPrimary, modal.Focus == repositoryOverrideFieldPathPrimary))
-		lines = append(lines, renderTextField(theme, "Ignore Policy Path", modal.PathSecondary, modal.Focus == repositoryOverrideFieldPathSecondary))
-	}
-	lines = append(lines, renderRepositoryOverrideClearRow(theme, modal))
-	if strings.TrimSpace(modal.Error) != "" {
-		lines = append(lines, "", theme.error.Render(modal.Error))
-	}
-	lines = append(lines, "", theme.muted.Render("Enter: save/clear | Tab: next field | Space: toggle/cycle | Esc: cancel"))
-	return theme.section.Render(strings.Join(lines, "\n"))
-}
+// renderRepositoryOverrideModal/repositoryOverrideStatusLine/
+// renderRepositoryOverrideClearRow were retired by tui-menu-architecture
+// (design.md Decision F). The uniform per-repository override editor now
+// renders through renderOverrideEditor/overrideStatusLine/
+// renderOverrideClearRow (override_editor.go), with no Feature row.
 
-// repositoryOverrideStatusLine answers "which repository, override or
-// inherited" without spending a dedicated 2-row field on either (design.md
-// Decision 8's row-arithmetic table), matching the operator-admin-tui spec's
-// three exact inheritance-state strings.
-func repositoryOverrideStatusLine(modal repositoryOverrideModal) string {
-	if modal.Loading {
-		return "Loading…"
-	}
-	if modal.Exists {
-		return "override active"
-	}
-	return "inheriting global settings"
-}
-
-// renderRepositoryOverrideClearRow renders the modal's Clear action as a
-// single-row line (design.md Decision 8's "Clear row: 1" cost, distinct from
-// every other field's 2-row cost since it is an action, not an input) --
-// inert wording when the repository is already inheriting global settings,
-// since Enter on this row then reports "already inheriting global" instead
-// of issuing a DELETE that would 404.
-func renderRepositoryOverrideClearRow(theme adminTheme, modal repositoryOverrideModal) string {
-	label := "Clear override -> use global settings"
-	if !modal.Exists {
-		label = "Already inheriting global settings"
-	}
-	style := theme.muted
-	if modal.Focus == repositoryOverrideFieldClear {
-		style = theme.inputFocus
-	}
-	return style.Render(label)
-}
-
-func adminFeatureHelp(view AdminViewState) string {
-	parts := []string{"Enter/r: refresh page"}
-	if view.FeaturePage.Summary.Name == trivyFeatureName {
-		parts = append(parts, "Tab: switch tabs")
-		if view.TrivyTab == trivyTabRuntime {
-			parts = append(parts, "c: configure")
-		} else {
-			parts = append(parts, "Up/Down: select alert", "Enter: details", "o: override")
-		}
-		// p: policy is available on both Trivy tabs, matching the policy
-		// badge composed into renderTrivyTabs, which is likewise visible on
-		// both (design.md Decision 6).
-		parts = append(parts, "p: policy")
-	}
-	if view.FeaturePage.Summary.Name == gitleaksFeatureName {
-		parts = append(parts, "s: configure")
-	}
-	if view.FeaturePage.Summary.Name == signingFeatureName {
-		parts = append(parts, "p: policy")
-	}
-	parts = append(parts, strings.Split(featureActionHelp(view.FeaturePage), " | ")[1:]...)
-	return strings.Join(parts, " | ")
-}
+// adminFeatureHelp (Trivy/Gitleaks/Signing's shared Built-in Features help
+// builder) is retired (Phase 11): each of securityMenuScreen/
+// trivyConfigScreen/gitleaksConfigScreen/signingConfigScreen now composes
+// its own Keys() directly (screen_security_menu.go, screen_trivy_config.go,
+// screen_gitleaks_config.go, screen_signing_config.go), rendered through
+// shortHelpView so help can never drift from what a key actually does
+// (design.md Decision A).
 
 // statusKind is an explicit style selector for renderAdminStatus, carried as
 // a parameter along the render path rather than stored on Model (design.md

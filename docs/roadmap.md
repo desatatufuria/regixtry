@@ -46,6 +46,7 @@ V1 is complete when ALL of the following are true:
 - `registry-acl-v1` is complete: a registry-wide read-only role (`is_read_only`, grant-independent pull access), delegated repo-admin grant management scoped to exactly one repository (`/admin/v1/repositories/{repo}/grants`, reached from the console's Console Repositories screen), and bounded-TTL, revocable robot accounts (`/admin/v1/robots`, the `screenAdminRobots`/`screenAdminCreateRobot` TUI screens) that are permanently excluded from password login and from the default human user listing.
 - `manifest-blob-delete` is complete: `DELETE /v2/<name>/manifests/<digest>` cascades to every tag pointing at that digest and its `manifest_blobs` rows; `DELETE /v2/<name>/manifests/<tag>` untags only, leaving the manifest and its other tags intact. Both are gated behind `REGISTRY_DELETE_ENABLED`/`-delete-enabled` (default `false`; an authorized caller gets `UNSUPPORTED` while off, never a bare `405`), require the distinct `repository:<name>:delete` scope action on top of the `repo-writer` role, and never touch blob files on disk.
 - `blob-garbage-collection` is complete: `POST /admin/v1/gc/reports` computes and persists a global, non-tenant-scoped report of unreferenced blob candidates (24h write-time grace window), `GET /admin/v1/gc/reports/{id}` fetches it, and `POST /admin/v1/gc/reports/{id}/delete` recomputes and intersects at delete time before unlinking — the sole delete-safety mechanism, distinct from the report's 24h expiry (hygiene only). Delete is gated behind `REGISTRY_GC_DELETE_ENABLED`/`-gc-delete-enabled` (default `false`, `UNSUPPORTED`/`501` while off), a flag independent of `REGISTRY_DELETE_ENABLED`. Every report transitions once to a terminal, permanently retained `deleted` state recording `deleted_at`/`deleted_by`/`deleted_count`/`bytes_reclaimed` and a per-candidate outcome. Manual admin trigger only — no scheduler or background job.
+- `tui-menu-architecture` is complete: the per-repository override editor for Trivy, Gitleaks, and Signing is now selection-driven and discoverable from each feature's own screen (`o` on a highlighted repository row), replacing a hidden `Feature`-field cycle that only Trivy's screen could reach; Secret Scan Findings is reachable from a new Operations entry point in addition to the pre-existing Trivy drill-down; and the admin panel now opens on a domain-grouped menu (Browse / Security & Compliance / Identity & Access / Operations) instead of landing directly on the Users screen.
 - Manual checks against the local Compose helper runtime have demonstrated authenticated Docker push with Postgres-backed auth enabled, but that helper runtime is still supporting evidence rather than the primary automated verification contract.
 - Remaining planned work is still real scope: optional admin-API pagination, and any future auth-oriented smoke expansion for richer clients.
 
@@ -120,6 +121,14 @@ Note: signing, scanning, and supply-chain automation were listed here as a non-g
 | --- | --- | --- |
 | PR 1 | Report/enumeration/persistence — `BlobStore.ListBlobs`, the global `ListReferencedBlobDigests` mark query, `gc_reports`/`gc_report_candidates` tables, `ComputeGCReport`/`GetGCReport`, `POST`/`GET /admin/v1/gc/reports`; zero unlink-capable code | Completed |
 | PR 2 | Delete/flag/audit/expiry — `BlobStore.DeleteBlob`, `MarkGCReportDeleted`, `DeleteByGCReport` (recompute-and-intersect), `POST /admin/v1/gc/reports/{id}/delete`, `REGISTRY_GC_DELETE_ENABLED`/`-gc-delete-enabled`, and this reader-facing doc close-out | Completed |
+
+## Delivery sequence for `tui-menu-architecture`
+
+| Slice | Target outcome | Status |
+| --- | --- | --- |
+| Slice 1 | Per-screen sub-model contract (`adminScreen`), router, legacy `AdminViewState` adapter, keymap-derived help, one confirm-before-destructive-action primitive, proven on the Gitleaks config screen — zero user-visible behavior change | Completed |
+| Slice 2 | The reversal: Trivy, Gitleaks, and Signing each get their own peer Security & Compliance screen with a discoverable, selection-driven per-repository override entry point; the hidden `Feature`-field cycle (`repositoryOverrideFeatureCycle`) is deleted outright, not migrated | Completed |
+| Slice 3 | Operations entry points for Scan Runs and Secret Scan Findings (the latter reachable independently of Trivy's existing drill-down), the domain-grouped post-login menu, Identity & Access naming/grouping tidy, and this docs close-out | Completed |
 
 ## Documentation maintenance rule
 
