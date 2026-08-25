@@ -35,6 +35,8 @@ type BootstrapPlan struct {
 	TrivyCacheDir              string
 	TrivyBinaryPath            string
 	TrivyMaxConcurrency        int
+	DeleteEnabled              bool
+	GCDeleteEnabled            bool
 }
 
 func RenderEnvFile(plan BootstrapPlan) string {
@@ -53,6 +55,12 @@ func RenderEnvFile(plan BootstrapPlan) string {
 			fmt.Sprintf("REGISTRY_TLS_CERT_FILE=%s", quoteEnvValue(plan.TLSCertFile)),
 			fmt.Sprintf("REGISTRY_TLS_KEY_FILE=%s", quoteEnvValue(plan.TLSKeyFile)),
 		)
+	}
+	if plan.DeleteEnabled {
+		lines = append(lines, fmt.Sprintf("REGISTRY_DELETE_ENABLED=%s", quoteEnvValue("true")))
+	}
+	if plan.GCDeleteEnabled {
+		lines = append(lines, fmt.Sprintf("REGISTRY_GC_DELETE_ENABLED=%s", quoteEnvValue("true")))
 	}
 
 	return strings.Join(lines, "\n") + "\n"

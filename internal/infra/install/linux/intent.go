@@ -37,6 +37,8 @@ type InstalledIntent struct {
 	TrivyCacheDir        string
 	TrivyBinaryPath      string
 	TrivyMaxConcurrency  int
+	DeleteEnabled        bool
+	GCDeleteEnabled      bool
 }
 
 type MissingIntentError struct {
@@ -128,6 +130,8 @@ func loadInstalledIntent(provenance LifecycleProvenance, envValues map[string]st
 	intent.TrivyTimeout = firstNonBlankDuration(provenance.Intent.TrivyTimeout, envValues["REGISTRY_TRIVY_TIMEOUT"], 15*time.Minute)
 	intent.TrivyInterval = firstNonBlankDuration(provenance.Intent.TrivyInterval, envValues["REGISTRY_TRIVY_INTERVAL"], 24*time.Hour)
 	intent.TrivyMaxConcurrency = firstNonBlankInt(provenance.Intent.TrivyMaxConcurrency, envValues["REGISTRY_TRIVY_MAX_CONCURRENCY"], 1)
+	intent.DeleteEnabled = firstNonBlankBool(provenance.Intent.DeleteEnabled, envValues["REGISTRY_DELETE_ENABLED"])
+	intent.GCDeleteEnabled = firstNonBlankBool(provenance.Intent.GCDeleteEnabled, envValues["REGISTRY_GC_DELETE_ENABLED"])
 	if intent.TrivyCacheDir == "" && intent.StorageRoot != "" {
 		intent.TrivyCacheDir = filepath.Join(intent.StorageRoot, "trivy-cache")
 	}
@@ -174,6 +178,8 @@ func buildPlanFromInstalledIntent(intent InstalledIntent) BootstrapPlan {
 		TrivyCacheDir:        intent.TrivyCacheDir,
 		TrivyBinaryPath:      intent.TrivyBinaryPath,
 		TrivyMaxConcurrency:  intent.TrivyMaxConcurrency,
+		DeleteEnabled:        intent.DeleteEnabled,
+		GCDeleteEnabled:      intent.GCDeleteEnabled,
 	}
 }
 

@@ -715,6 +715,8 @@ func parseBootstrapConfig(args []string) (BootstrapConfig, error) {
 	flags.StringVar(&cfg.TrivyCacheDir, "trivy-cache-dir", "", "shared trivy cache directory")
 	flags.StringVar(&cfg.TrivyBinaryPath, "trivy-binary-path", "", "trivy executable path")
 	flags.IntVar(&cfg.TrivyMaxConcurrency, "trivy-max-concurrency", 0, "maximum concurrent trivy runs")
+	flags.BoolVar(&cfg.DeleteEnabled, "delete-enabled", false, "enable DELETE /v2/<name>/manifests/<reference> (manifest and tag deletion)")
+	flags.BoolVar(&cfg.GCDeleteEnabled, "gc-delete-enabled", false, "enable POST /admin/v1/gc/reports/{id}/delete (irreversibly unlinks unreferenced blob files; distinct from -delete-enabled, which is metadata-only)")
 	flags.BoolVar(&cfg.NoStart, "no-start", false, "generate bootstrap artifacts without starting the service")
 	flags.BoolVar(&cfg.Rollback, "rollback", false, "remove generated bootstrap artifacts and stop the service")
 
@@ -770,6 +772,8 @@ func parseSetupConfigWithPromptState(args []string) (setupConfig, setupPromptSta
 	flags.StringVar(&cfg.TrivyCacheDir, "trivy-cache-dir", os.Getenv("REGISTRY_TRIVY_CACHE_DIR"), "shared trivy cache directory")
 	flags.StringVar(&cfg.TrivyBinaryPath, "trivy-binary-path", firstNonEmpty(os.Getenv("REGISTRY_TRIVY_BINARY_PATH"), "trivy"), "trivy executable path")
 	flags.IntVar(&cfg.TrivyMaxConcurrency, "trivy-max-concurrency", parseIntEnv("REGISTRY_TRIVY_MAX_CONCURRENCY", 1), "maximum concurrent trivy runs")
+	flags.BoolVar(&cfg.DeleteEnabled, "delete-enabled", parseBoolEnv("REGISTRY_DELETE_ENABLED", false), "enable DELETE /v2/<name>/manifests/<reference> (manifest and tag deletion)")
+	flags.BoolVar(&cfg.GCDeleteEnabled, "gc-delete-enabled", parseBoolEnv("REGISTRY_GC_DELETE_ENABLED", false), "enable POST /admin/v1/gc/reports/{id}/delete (irreversibly unlinks unreferenced blob files; distinct from -delete-enabled, which is metadata-only)")
 	flags.BoolVar(&cfg.NoStart, "no-start", false, "generate setup artifacts without starting the service")
 	flags.StringVar(&cfg.Auth.AuthPostgresDSN, "auth-postgres-dsn", defaultAuthPostgresDSN, "Postgres DSN for auth state")
 	flags.StringVar(&cfg.Auth.AdminUsername, "admin-username", "admin", "username for the setup bootstrap admin account")

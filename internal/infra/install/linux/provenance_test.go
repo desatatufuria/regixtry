@@ -140,6 +140,44 @@ func TestLoadInstalledIntentRecoversTrivyManagedSettings(t *testing.T) {
 	}
 }
 
+func TestLoadInstalledIntentRecoversDeleteAndGCDeleteSettings(t *testing.T) {
+	t.Parallel()
+
+	provenance := LifecycleProvenance{
+		Version:      lifecycleProvenanceVersion,
+		Mode:         supportedMode,
+		InstalledBin: "/usr/local/bin/regixtry",
+		ServiceName:  "regixtry",
+		StatePath:    "/etc/regixtry/regixtry-lifecycle-state.json",
+		ManagedPaths: []string{"/etc/regixtry/regixtry.env"},
+		Intent: LifecycleIntent{
+			DeleteEnabled:   true,
+			GCDeleteEnabled: true,
+		},
+	}
+
+	intent, err := loadInstalledIntent(provenance, map[string]string{
+		"REGISTRY_ADDR":              "127.0.0.1:5000",
+		"REGISTRY_PUBLIC_URL":        "http://127.0.0.1:5000",
+		"REGISTRY_STORAGE_ROOT":      "/var/lib/regixtry",
+		"REGISTRY_DATABASE_PATH":     "/var/lib/regixtry/metadata.db",
+		"REGISTRY_SERVICE_NAME":      "regixtry",
+		"REGISTRY_DELETE_ENABLED":    "true",
+		"REGISTRY_GC_DELETE_ENABLED": "true",
+	})
+	if err != nil {
+		t.Fatalf("loadInstalledIntent() error = %v", err)
+	}
+	if !intent.DeleteEnabled || !intent.GCDeleteEnabled {
+		t.Fatalf("intent = %#v, want DeleteEnabled and GCDeleteEnabled restored", intent)
+	}
+
+	plan := buildPlanFromInstalledIntent(intent)
+	if !plan.DeleteEnabled || !plan.GCDeleteEnabled {
+		t.Fatalf("plan = %#v, want DeleteEnabled and GCDeleteEnabled carried into rebuilt plan", plan)
+	}
+}
+
 func TestLifecycleProvenanceOmitsFeatureOwnedTrivyIntentFields(t *testing.T) {
 	t.Parallel()
 

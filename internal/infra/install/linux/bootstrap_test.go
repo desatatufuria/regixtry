@@ -132,6 +132,72 @@ func TestTemplateRendering(t *testing.T) {
 	}
 }
 
+func TestRenderEnvFileIncludesDeleteAndGCDeleteWhenEnabled(t *testing.T) {
+	t.Parallel()
+
+	env := RenderEnvFile(BootstrapPlan{
+		Addr:            "127.0.0.1:5000",
+		PublicURL:       "https://regixtry.example.com",
+		StorageRoot:     "/var/lib/regixtry",
+		DatabasePath:    "/var/lib/regixtry/metadata.db",
+		ServiceName:     "regixtry",
+		DeleteEnabled:   true,
+		GCDeleteEnabled: true,
+	})
+	if !strings.Contains(env, `REGISTRY_DELETE_ENABLED="true"`) {
+		t.Fatalf("env = %q, want REGISTRY_DELETE_ENABLED=true", env)
+	}
+	if !strings.Contains(env, `REGISTRY_GC_DELETE_ENABLED="true"`) {
+		t.Fatalf("env = %q, want REGISTRY_GC_DELETE_ENABLED=true", env)
+	}
+}
+
+func TestRenderEnvFileOmitsDeleteAndGCDeleteWhenDisabled(t *testing.T) {
+	t.Parallel()
+
+	env := RenderEnvFile(BootstrapPlan{
+		Addr:         "127.0.0.1:5000",
+		PublicURL:    "https://regixtry.example.com",
+		StorageRoot:  "/var/lib/regixtry",
+		DatabasePath: "/var/lib/regixtry/metadata.db",
+		ServiceName:  "regixtry",
+	})
+	for _, unwanted := range []string{"REGISTRY_DELETE_ENABLED", "REGISTRY_GC_DELETE_ENABLED"} {
+		if strings.Contains(env, unwanted) {
+			t.Fatalf("env = %q, want %s omitted when disabled", env, unwanted)
+		}
+	}
+}
+
+func TestBootstrapPlanAndProvenanceCarryDeleteAndGCDeleteEnabled(t *testing.T) {
+	t.Parallel()
+
+	b := &Bootstrapper{
+		executablePath: func() (string, error) { return "/usr/local/bin/regixtry", nil },
+	}
+
+	plan, _, provenance, err := b.plan(BootstrapConfig{
+		Mode:            supportedMode,
+		PublicURL:       "http://127.0.0.1:5000",
+		Addr:            "127.0.0.1:5000",
+		StorageRoot:     "/var/lib/regixtry",
+		StatePath:       "/etc/regixtry/bootstrap-state.json",
+		UnitPath:        "/etc/systemd/system/regixtry.service",
+		ServiceName:     "regixtry",
+		DeleteEnabled:   true,
+		GCDeleteEnabled: true,
+	})
+	if err != nil {
+		t.Fatalf("plan() error = %v", err)
+	}
+	if !plan.DeleteEnabled || !plan.GCDeleteEnabled {
+		t.Fatalf("plan = %#v, want DeleteEnabled and GCDeleteEnabled carried through", plan)
+	}
+	if !provenance.Intent.DeleteEnabled || !provenance.Intent.GCDeleteEnabled {
+		t.Fatalf("provenance.Intent = %#v, want DeleteEnabled and GCDeleteEnabled persisted", provenance.Intent)
+	}
+}
+
 func TestBootstrapReceiptOmitsFeatureOwnedTrivyArtifacts(t *testing.T) {
 	t.Parallel()
 

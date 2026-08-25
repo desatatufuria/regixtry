@@ -339,6 +339,65 @@ func TestGCDeleteFlagIsIndependentOfDeleteEnabled(t *testing.T) {
 	}
 }
 
+// TestParseBootstrapConfigDeleteAndGCDeleteEnabledDefaultToFalse pins that
+// bootstrap, like serve, never enables deletion unless explicitly asked --
+// bare false default, mirroring -trivy-enabled's own bootstrap default.
+func TestParseBootstrapConfigDeleteAndGCDeleteEnabledDefaultToFalse(t *testing.T) {
+	cfg, err := parseBootstrapConfig([]string{"-mode", "daemon-sqlite", "-public-url", "http://127.0.0.1:5000"})
+	if err != nil {
+		t.Fatalf("parseBootstrapConfig() error = %v", err)
+	}
+	if cfg.DeleteEnabled || cfg.GCDeleteEnabled {
+		t.Fatalf("cfg = %#v, want DeleteEnabled and GCDeleteEnabled false by default", cfg)
+	}
+}
+
+// TestParseBootstrapConfigDeleteAndGCDeleteEnabledFlags proves
+// -delete-enabled/-gc-delete-enabled reach BootstrapConfig, so a systemd
+// install can turn them on without hand-editing the generated env file.
+func TestParseBootstrapConfigDeleteAndGCDeleteEnabledFlags(t *testing.T) {
+	cfg, err := parseBootstrapConfig([]string{"-mode", "daemon-sqlite", "-public-url", "http://127.0.0.1:5000", "-delete-enabled", "-gc-delete-enabled"})
+	if err != nil {
+		t.Fatalf("parseBootstrapConfig() error = %v", err)
+	}
+	if !cfg.DeleteEnabled || !cfg.GCDeleteEnabled {
+		t.Fatalf("cfg = %#v, want DeleteEnabled and GCDeleteEnabled true from flags", cfg)
+	}
+}
+
+// TestParseSetupConfigDeleteAndGCDeleteEnabledFromEnv proves setup's
+// -delete-enabled/-gc-delete-enabled are env-aware like -trivy-enabled,
+// so REGISTRY_DELETE_ENABLED/REGISTRY_GC_DELETE_ENABLED reach BootstrapConfig
+// without an explicit flag.
+func TestParseSetupConfigDeleteAndGCDeleteEnabledFromEnv(t *testing.T) {
+	t.Setenv("REGISTRY_DELETE_ENABLED", "true")
+	t.Setenv("REGISTRY_GC_DELETE_ENABLED", "true")
+
+	cfg, err := parseSetupConfig(nil)
+	if err != nil {
+		t.Fatalf("parseSetupConfig() error = %v", err)
+	}
+	if !cfg.DeleteEnabled || !cfg.GCDeleteEnabled {
+		t.Fatalf("cfg = %#v, want DeleteEnabled and GCDeleteEnabled true from env", cfg)
+	}
+}
+
+// TestParseSetupConfigDeleteAndGCDeleteEnabledFlagsOverrideEnv proves the
+// explicit flags win over the env vars, matching every other -trivy-*
+// flag/env pairing in setup.
+func TestParseSetupConfigDeleteAndGCDeleteEnabledFlagsOverrideEnv(t *testing.T) {
+	t.Setenv("REGISTRY_DELETE_ENABLED", "false")
+	t.Setenv("REGISTRY_GC_DELETE_ENABLED", "false")
+
+	cfg, err := parseSetupConfig([]string{"-delete-enabled", "-gc-delete-enabled"})
+	if err != nil {
+		t.Fatalf("parseSetupConfig() error = %v", err)
+	}
+	if !cfg.DeleteEnabled || !cfg.GCDeleteEnabled {
+		t.Fatalf("cfg = %#v, want DeleteEnabled and GCDeleteEnabled true from flags overriding env", cfg)
+	}
+}
+
 func TestNormalizeRuntimeConfig(t *testing.T) {
 	t.Parallel()
 
