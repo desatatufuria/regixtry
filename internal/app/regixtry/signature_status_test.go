@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	domain "regixtry/internal/domain/regixtry"
+	"regixtry/internal/domain/signing"
 	"regixtry/internal/ports"
 )
 
@@ -112,6 +113,138 @@ func TestServiceSignatureStatusComputesAllFiveStatesIndependentOfPolicyEnabled(t
 			})
 		}
 	}
+}
+
+// TestServiceSignatureStatusReportsVerifiedKeyFingerprintOnlyWhenVerified is
+// the RED test for SignatureStatusDetail.VerifiedKeyFingerprint: a verified
+// signature reports the short fingerprint (signing.Fingerprint) of the exact
+// trusted key that matched it, while every other computed state -- unsigned,
+// unverifiable, untrusted, mismatched -- leaves it empty. Never a raw PEM.
+func TestServiceSignatureStatusReportsVerifiedKeyFingerprintOnlyWhenVerified(t *testing.T) {
+	t.Parallel()
+
+	t.Run("unsigned -- Signature is nil, nothing to leak", func(t *testing.T) {
+		t.Parallel()
+
+		service, cleanup := newTestService(t, allowAllAccessController{})
+		defer cleanup()
+
+		repository := "library/alpine"
+		digest := seedFixtureImageManifest(t, service, repository)
+		seedSigningPolicy(t, service, true, []string{fixtureTrustedKeyPEM(t)})
+
+		result, err := service.SignatureStatus(context.Background(), repository, digest)
+		if err != nil {
+			t.Fatalf("SignatureStatus() error = %v", err)
+		}
+		if result.State != SignatureStatusUnsigned {
+			t.Fatalf("SignatureStatus().State = %q, want %q (test setup sanity check)", result.State, SignatureStatusUnsigned)
+		}
+		if result.Signature != nil {
+			t.Fatalf("SignatureStatus().Signature = %#v, want nil for an unsigned digest", result.Signature)
+		}
+	})
+
+	tests := []struct {
+		name  string
+		seed  func(t *testing.T, service *Service, repository string) string
+		trust func(t *testing.T) []string
+		want  string
+	}{
+		{
+			name: "unverifiable -- zero usable trusted keys",
+			seed: func(t *testing.T, service *Service, repository string) string {
+				digest := seedFixtureImageManifest(t, service, repository)
+				seedFixtureSignatureArtifact(t, service, repository)
+				return digest
+			},
+			trust: func(t *testing.T) []string { return nil },
+			want:  SignatureStatusUnverifiable,
+		},
+		{
+			name: "untrusted",
+			seed: func(t *testing.T, service *Service, repository string) string {
+				digest := seedFixtureImageManifest(t, service, repository)
+				seedFixtureSignatureArtifact(t, service, repository)
+				return digest
+			},
+			trust: func(t *testing.T) []string { return []string{generateTestECDSAP256PublicKeyPEM(t)} },
+			want:  SignatureStatusUntrusted,
+		},
+		{
+			name: "mismatched",
+			seed: func(t *testing.T, service *Service, repository string) string {
+				transplantTarget := seedArbitraryImageManifest(t, service, repository, " - fingerprint transplant target")
+				publishFixtureSignatureManifestAt(t, service, repository, transplantTarget)
+				return transplantTarget
+			},
+			trust: func(t *testing.T) []string { return []string{fixtureTrustedKeyPEM(t)} },
+			want:  SignatureStatusMismatched,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			service, cleanup := newTestService(t, allowAllAccessController{})
+			defer cleanup()
+
+			repository := "library/alpine"
+			digest := tt.seed(t, service, repository)
+			seedSigningPolicy(t, service, true, tt.trust(t))
+
+			result, err := service.SignatureStatus(context.Background(), repository, digest)
+			if err != nil {
+				t.Fatalf("SignatureStatus() error = %v", err)
+			}
+			if result.State != tt.want {
+				t.Fatalf("SignatureStatus().State = %q, want %q (test setup sanity check)", result.State, tt.want)
+			}
+			if result.Signature == nil {
+				t.Fatal("SignatureStatus().Signature = nil, want a populated detail")
+			}
+			if result.Signature.VerifiedKeyFingerprint != "" {
+				t.Fatalf("SignatureStatus().Signature.VerifiedKeyFingerprint = %q, want empty for state %q", result.Signature.VerifiedKeyFingerprint, tt.want)
+			}
+		})
+	}
+
+	t.Run("verified", func(t *testing.T) {
+		t.Parallel()
+
+		service, cleanup := newTestService(t, allowAllAccessController{})
+		defer cleanup()
+
+		repository := "library/alpine"
+		digest := seedFixtureImageManifest(t, service, repository)
+		seedFixtureSignatureArtifact(t, service, repository)
+		keyPEM := fixtureTrustedKeyPEM(t)
+		seedSigningPolicy(t, service, true, []string{keyPEM})
+
+		result, err := service.SignatureStatus(context.Background(), repository, digest)
+		if err != nil {
+			t.Fatalf("SignatureStatus() error = %v", err)
+		}
+		if result.State != SignatureStatusVerified {
+			t.Fatalf("SignatureStatus().State = %q, want %q (test setup sanity check)", result.State, SignatureStatusVerified)
+		}
+		if result.Signature == nil {
+			t.Fatal("SignatureStatus().Signature = nil, want a populated detail for a verified signature")
+		}
+		want := signing.Fingerprint(keyPEM)
+		if result.Signature.VerifiedKeyFingerprint != want {
+			t.Fatalf("SignatureStatus().Signature.VerifiedKeyFingerprint = %q, want %q", result.Signature.VerifiedKeyFingerprint, want)
+		}
+
+		raw, marshalErr := json.Marshal(result)
+		if marshalErr != nil {
+			t.Fatalf("json.Marshal() error = %v", marshalErr)
+		}
+		if strings.Contains(string(raw), "BEGIN PUBLIC KEY") {
+			t.Fatalf("SignatureStatus JSON = %s, must never contain PEM key material even alongside the fingerprint", raw)
+		}
+	})
 }
 
 // TestServiceSignatureStatusPolicyTrustedKeysIsCountOnlyNeverPEM is the
