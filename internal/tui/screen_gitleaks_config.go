@@ -30,7 +30,12 @@ type gitleaksConfigScreen struct {
 	// confirm is this screen's own confirm-before-destructive-action prompt
 	// (mirrors trivyConfigScreen.confirm's doc comment exactly).
 	confirm confirmPrompt
-	err     string
+	// submitting is the transient "Submitting X for Y..." status text shown
+	// while confirm's dispatched command is in flight, surfaced through this
+	// screen's own View (Body) the instant Enter dispatches onConfirm --
+	// mirrors trivyConfigScreen.submitting exactly (design.md Decision B).
+	submitting string
+	err        string
 }
 
 // newGitleaksConfigScreen constructs an unloaded screen; Init issues the
@@ -68,8 +73,15 @@ func (s gitleaksConfigScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, t
 	if key, ok := msg.(tea.KeyMsg); ok {
 		switch {
 		case s.confirm.Active():
+			before := s.confirm
 			next, cmd, consumed := s.confirm.update(env, key)
 			s.confirm = next
+			switch {
+			case cmd != nil:
+				s.submitting = before.submitting
+			case isEscKey(key):
+				s.submitting = ""
+			}
 			return s, cmd, consumed
 		case s.cfg.Active():
 			return s.updateConfigKey(env, key)
@@ -98,6 +110,7 @@ func (s gitleaksConfigScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, t
 			return s, nil, false
 		}
 		s.confirm = confirmPrompt{}
+		s.submitting = ""
 		if typed.err != nil {
 			s.err = typed.err.Error()
 			return s, nil, false
@@ -314,6 +327,9 @@ func (s gitleaksConfigScreen) View(theme adminTheme, env screenEnv) screenFrame 
 	lines := []string{theme.subheading.Render("Feature Page")}
 	if s.err != "" {
 		lines = append(lines, "", theme.error.Render(s.err))
+	}
+	if s.submitting != "" {
+		lines = append(lines, "", theme.muted.Render(s.submitting))
 	}
 	if !s.loaded {
 		lines = append(lines, theme.muted.Render("Select or refresh a feature to load the backend-declared page."))

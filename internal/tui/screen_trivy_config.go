@@ -34,7 +34,14 @@ type trivyConfigScreen struct {
 	// confirm owns one, mirroring featureOverridesScreen's own
 	// self-contained editor field.
 	confirm confirmPrompt
-	err     string
+	// submitting is the transient "Submitting X for Y..." status text shown
+	// while confirm's dispatched command is in flight, surfaced through this
+	// screen's own View (Body) the instant Enter dispatches onConfirm --
+	// mirroring the legacy AdminViewState.Confirm path's
+	// `m.status = before.submitting` (model.go's updateAdminKey), which this
+	// migrated screen cannot reach into per design.md Decision B.
+	submitting string
+	err        string
 }
 
 func newTrivyConfigScreen() trivyConfigScreen { return trivyConfigScreen{} }
@@ -64,8 +71,15 @@ func (s trivyConfigScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.
 	if key, ok := msg.(tea.KeyMsg); ok {
 		switch {
 		case s.confirm.Active():
+			before := s.confirm
 			next, cmd, consumed := s.confirm.update(env, key)
 			s.confirm = next
+			switch {
+			case cmd != nil:
+				s.submitting = before.submitting
+			case isEscKey(key):
+				s.submitting = ""
+			}
 			return s, cmd, consumed
 		case s.cfg.Active():
 			return s.updateConfigKey(env, key)
@@ -96,6 +110,7 @@ func (s trivyConfigScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.
 			return s, nil, false
 		}
 		s.confirm = confirmPrompt{}
+		s.submitting = ""
 		if typed.err != nil {
 			s.err = typed.err.Error()
 			return s, nil, false
@@ -290,6 +305,9 @@ func (s trivyConfigScreen) View(theme adminTheme, env screenEnv) screenFrame {
 	lines := []string{renderTrivyTabs(theme, screenSecurityTrivy, s.policy)}
 	if s.err != "" {
 		lines = append(lines, "", theme.error.Render(s.err))
+	}
+	if s.submitting != "" {
+		lines = append(lines, "", theme.muted.Render(s.submitting))
 	}
 	lines = append(lines, "", theme.subheading.Render("Feature Page"))
 	if !s.loaded {

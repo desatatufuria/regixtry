@@ -1682,7 +1682,7 @@ func (m Model) updateAdminKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
-	if isRuneKey(msg, 'q') && isAdminPrincipalScreen(m.screen) {
+	if isRuneKey(msg, 'q') && isAdminPrincipalScreen(m.screen) && !m.migratedScreenCapturesTextInput() {
 		return m, tea.Quit
 	}
 
@@ -3631,24 +3631,64 @@ func isAdminScreen(current screen) bool {
 // (a free-text username form), mirroring the existing screenAdminAddGrant
 // exclusion: this gates the bare 'q' quit key, and including a free-text
 // form here would make typing "q" as part of a username quit the program.
+//
+// screenSecurityTrivy/screenSecurityGitleaksConfig/screenSecuritySigningConfig
+// join this set because each advertises "q: quit" in its own Keys()-derived
+// footer (trivyConfigScreen.Keys/gitleaksConfigScreen.Keys/
+// signingConfigScreen.Keys). Their sibling repos screens
+// (screenSecurityTrivyRepos/screenSecurityGitleaksRepos/
+// screenSecuritySigningRepos) do not advertise "q: quit" and are
+// deliberately excluded, mirroring the free-text-form exclusion above.
 func isAdminPrincipalScreen(current screen) bool {
 	switch current {
-	case screenAdminLogin, screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminEditUserGrants, screenAdminEditUserTokens, screenRepoAdminGrants, screenAdminRobots:
+	case screenAdminLogin, screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminEditUserGrants, screenAdminEditUserTokens, screenRepoAdminGrants, screenAdminRobots, screenSecurityTrivy, screenSecurityGitleaksConfig, screenSecuritySigningConfig:
 		return true
 	default:
 		return false
 	}
 }
 
+// migratedScreenCapturesTextInput reports whether the currently mounted
+// migrated top-level screen (design.md Decision A/I, resolved via slotFor)
+// has its own local overlay open that captures free-text or key input -- a
+// confirm prompt, a config/policy modal, or the shared overrideEditor. None
+// of these local overlays are visible to the legacy
+// m.adminView.Confirm.Active() guard (design.md Decision B: each migrated
+// screen owns its own state), so the bare 'l' logout / 'q' quit global keys
+// must not intercept keystrokes meant for one of these overlays -- mirrors
+// the existing Confirm.Active() top-of-function guard, scoped to the
+// currently mounted migrated screen's own equivalent state.
+func (m Model) migratedScreenCapturesTextInput() bool {
+	slot, ok := slotFor(m.screen)
+	if !ok {
+		return false
+	}
+	switch s := m.adminScreens[slot].(type) {
+	case trivyConfigScreen:
+		return s.confirm.Active() || s.cfg.Active() || s.policyModal.Active()
+	case trivyReposScreen:
+		return s.editor.Active()
+	case gitleaksConfigScreen:
+		return s.confirm.Active() || s.cfg.Active()
+	case signingConfigScreen:
+		return s.confirm.Active() || s.cfg.Active()
+	case featureOverridesScreen:
+		return s.editor.Active()
+	default:
+		return false
+	}
+}
+
 func (m Model) canLogoutAdminFromCurrentScreen() bool {
-	if m.adminAuth != adminAuthStateAuthenticated || m.adminView.Confirm.Active() {
+	if m.adminAuth != adminAuthStateAuthenticated || m.adminView.Confirm.Active() || m.migratedScreenCapturesTextInput() {
 		return false
 	}
 
 	switch m.screen {
 	case screenAdminUsers:
 		return !m.adminView.UserSearchActive
-	case screenAdminFeatures, screenAdminEditUser, screenAdminEditUserGrants, screenAdminEditUserTokens, screenRepoAdminGrants, screenAdminRobots:
+	case screenAdminFeatures, screenAdminEditUser, screenAdminEditUserGrants, screenAdminEditUserTokens, screenRepoAdminGrants, screenAdminRobots,
+		screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenSecurityGitleaksRepos, screenSecuritySigningRepos:
 		return true
 	default:
 		return false
