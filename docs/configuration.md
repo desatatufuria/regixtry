@@ -30,6 +30,7 @@
 | `-trivy-binary-path` | `REGISTRY_TRIVY_BINARY_PATH` | `trivy` | Trivy executable path |
 | `-trivy-max-concurrency` | `REGISTRY_TRIVY_MAX_CONCURRENCY` | `1` | Maximum concurrent Trivy runs |
 | `-delete-enabled` | `REGISTRY_DELETE_ENABLED` | `false` | Enable `DELETE /v2/<name>/manifests/<reference>` (manifest and tag deletion) |
+| `-gc-delete-enabled` | `REGISTRY_GC_DELETE_ENABLED` | `false` | Enable `POST /admin/v1/gc/reports/{id}/delete` (irreversibly unlinks unreferenced blob files); distinct from `-delete-enabled`, which is metadata-only and never touches blob files |
 
 Implementation: `cmd/regixtry/main.go` (`parseServeConfig`, `normalizeRuntimeConfig`).
 
@@ -47,6 +48,8 @@ The `-trivy-*` flags configure the built-in Trivy feature at process start. For 
 | `-auth-postgres-dsn` | `REGISTRY_AUTH_POSTGRES_DSN` | Auth DSN |
 | `-api-base-url` | `REGISTRY_API_BASE_URL` | Absolute base URL of the admin API |
 | `-snapshot` | `false` | Render the first view and exit |
+| `-delete-enabled` | `REGISTRY_DELETE_ENABLED` | Enable the Tags screen's delete-tag confirm flow (`d` key); same flag/env pairing and default (`false`) as `serve`'s |
+| `-gc-delete-enabled` | `REGISTRY_GC_DELETE_ENABLED` | Same flag/env pairing and default (`false`) as `serve`'s; no TUI action reads it yet |
 
 A managed installation can auto-detect values from `/etc/regixtry/regixtry.env`; explicit flags take priority.
 

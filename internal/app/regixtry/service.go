@@ -35,10 +35,19 @@ type Service struct {
 	// deleteEnabled gates DeleteManifest (design.md Decision 2). It defaults
 	// to false (zero value); Phase 4 threads the actual
 	// REGISTRY_DELETE_ENABLED flag value in via SetDeleteEnabled.
-	deleteEnabled  bool
-	now            func() time.Time
-	scanGate       *scanGate
-	secretScanGate *scanGate
+	deleteEnabled bool
+	// gcDeleteEnabled gates DeleteByGCReport (design.md Decision F / D1a): a
+	// DIFFERENT flag from deleteEnabled -- REGISTRY_DELETE_ENABLED is
+	// metadata-only and never touches blob files. Defaults to false; wired
+	// via SetGCDeleteEnabled from REGISTRY_GC_DELETE_ENABLED.
+	gcDeleteEnabled bool
+	now             func() time.Time
+	scanGate        *scanGate
+	secretScanGate  *scanGate
+	// gcGate bounds ComputeGCReport/DeleteByGCReport to a single in-flight
+	// run at a time (proposal.md D2: "single in-flight run"), the same
+	// scanGate primitive scan queueing already uses.
+	gcGate *scanGate
 	// scanQueueMu guards the check-then-insert dedup step shared by
 	// QueueManualScan, queueScheduledScan, and queuePushScan
 	// (dedupAndQueueScanRun) so a push-triggered scan's own goroutine can
@@ -104,6 +113,7 @@ func NewService(blobStore ports.BlobStore, metadataStore ports.MetadataStore, ac
 		now:            func() time.Time { return time.Now().UTC() },
 		scanGate:       newScanGate(),
 		secretScanGate: newScanGate(),
+		gcGate:         newScanGate(),
 	}
 }
 
@@ -166,6 +176,13 @@ func (s *Service) SetScanHost(host string) {
 // eighth positional constructor argument.
 func (s *Service) SetDeleteEnabled(enabled bool) {
 	s.deleteEnabled = enabled
+}
+
+// SetGCDeleteEnabled mirrors SetDeleteEnabled exactly: a low-churn setter
+// rather than a constructor argument. It gates ONLY DeleteByGCReport and is
+// a DIFFERENT flag from deleteEnabled (design.md Decision F).
+func (s *Service) SetGCDeleteEnabled(enabled bool) {
+	s.gcDeleteEnabled = enabled
 }
 
 func (s *Service) Challenge(action ports.Action) ports.Challenge {

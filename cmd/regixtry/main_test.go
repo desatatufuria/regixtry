@@ -320,6 +320,25 @@ func TestParseServeConfigDeleteEnabledFlagOverridesEnv(t *testing.T) {
 	}
 }
 
+// TestGCDeleteFlagIsIndependentOfDeleteEnabled is T11 (design.md Testing
+// Strategy): REGISTRY_DELETE_ENABLED and REGISTRY_GC_DELETE_ENABLED must
+// never read each other's env var -- setting the metadata-only delete flag
+// alone must leave GCDeleteEnabled false.
+func TestGCDeleteFlagIsIndependentOfDeleteEnabled(t *testing.T) {
+	t.Setenv("REGISTRY_DELETE_ENABLED", "true")
+
+	cfg, err := parseServeConfig(nil)
+	if err != nil {
+		t.Fatalf("parseServeConfig() error = %v", err)
+	}
+	if !cfg.DeleteEnabled {
+		t.Fatal("DeleteEnabled = false, want true from REGISTRY_DELETE_ENABLED")
+	}
+	if cfg.GCDeleteEnabled {
+		t.Fatal("GCDeleteEnabled = true, want false: REGISTRY_DELETE_ENABLED must not enable blob GC delete")
+	}
+}
+
 func TestNormalizeRuntimeConfig(t *testing.T) {
 	t.Parallel()
 
@@ -448,6 +467,71 @@ func TestParseTUIConfigParsesAdminAPIBaseURL(t *testing.T) {
 
 	if cfg.APIBaseURL != "http://127.0.0.1:5000" {
 		t.Fatalf("APIBaseURL = %q, want %q", cfg.APIBaseURL, "http://127.0.0.1:5000")
+	}
+}
+
+// TestParseTUIConfigDeleteEnabledDefaultsToFalse mirrors
+// TestParseServeConfigDeleteEnabledDefaultsToFalse: the tui subcommand must
+// have the same safe-by-default posture as serve.
+func TestParseTUIConfigDeleteEnabledDefaultsToFalse(t *testing.T) {
+	cfg, err := parseTUIConfig(nil)
+	if err != nil {
+		t.Fatalf("parseTUIConfig() error = %v", err)
+	}
+	if cfg.DeleteEnabled {
+		t.Fatal("DeleteEnabled = true, want false")
+	}
+	if cfg.GCDeleteEnabled {
+		t.Fatal("GCDeleteEnabled = true, want false")
+	}
+}
+
+// TestParseTUIConfigDeleteEnabledFromEnv proves REGISTRY_DELETE_ENABLED
+// reaches tuiConfig.DeleteEnabled, mirroring
+// TestParseServeConfigDeleteEnabledFromEnv -- before this, the tui
+// subcommand never read this env var at all, so the Tags screen's
+// delete-tag confirm flow could never succeed no matter how the operator
+// configured their environment.
+func TestParseTUIConfigDeleteEnabledFromEnv(t *testing.T) {
+	t.Setenv("REGISTRY_DELETE_ENABLED", "true")
+
+	cfg, err := parseTUIConfig(nil)
+	if err != nil {
+		t.Fatalf("parseTUIConfig() error = %v", err)
+	}
+	if !cfg.DeleteEnabled {
+		t.Fatal("DeleteEnabled = false, want true from REGISTRY_DELETE_ENABLED")
+	}
+}
+
+// TestParseTUIConfigDeleteEnabledFlagOverridesEnv mirrors
+// TestParseServeConfigDeleteEnabledFlagOverridesEnv.
+func TestParseTUIConfigDeleteEnabledFlagOverridesEnv(t *testing.T) {
+	t.Setenv("REGISTRY_DELETE_ENABLED", "false")
+
+	cfg, err := parseTUIConfig([]string{"-delete-enabled"})
+	if err != nil {
+		t.Fatalf("parseTUIConfig() error = %v", err)
+	}
+	if !cfg.DeleteEnabled {
+		t.Fatal("DeleteEnabled = false, want true from -delete-enabled flag")
+	}
+}
+
+// TestParseTUIConfigGCDeleteFlagIsIndependentOfDeleteEnabled mirrors
+// TestGCDeleteFlagIsIndependentOfDeleteEnabled for the tui subcommand.
+func TestParseTUIConfigGCDeleteFlagIsIndependentOfDeleteEnabled(t *testing.T) {
+	t.Setenv("REGISTRY_DELETE_ENABLED", "true")
+
+	cfg, err := parseTUIConfig(nil)
+	if err != nil {
+		t.Fatalf("parseTUIConfig() error = %v", err)
+	}
+	if !cfg.DeleteEnabled {
+		t.Fatal("DeleteEnabled = false, want true from REGISTRY_DELETE_ENABLED")
+	}
+	if cfg.GCDeleteEnabled {
+		t.Fatal("GCDeleteEnabled = true, want false: REGISTRY_DELETE_ENABLED must not enable blob GC delete")
 	}
 }
 

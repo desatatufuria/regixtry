@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	domain "regixtry/internal/domain/regixtry"
+	"regixtry/internal/ports"
 )
 
 // fakeBlobStore implements ports.BlobStore for staging tests. Only OpenBlob
@@ -42,6 +43,14 @@ func (f *fakeBlobStore) CancelUpload(context.Context, string) error {
 func (f *fakeBlobStore) BlobExists(context.Context, domain.Digest) (bool, error) {
 	_, ok := f.blobs[domain.Digest("")]
 	return ok, nil
+}
+
+func (f *fakeBlobStore) ListBlobs(context.Context) ([]ports.BlobFileInfo, error) {
+	return nil, nil
+}
+
+func (f *fakeBlobStore) DeleteBlob(context.Context, domain.Digest) (bool, error) {
+	return false, fmt.Errorf("DeleteBlob not implemented in fakeBlobStore")
 }
 
 func (f *fakeBlobStore) OpenBlob(_ context.Context, digest domain.Digest) (io.ReadSeekCloser, domain.Descriptor, error) {

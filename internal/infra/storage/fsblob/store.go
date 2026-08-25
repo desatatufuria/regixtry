@@ -12,6 +12,7 @@ import (
 	"time"
 
 	domain "regixtry/internal/domain/regixtry"
+	"regixtry/internal/ports"
 )
 
 type Store struct {
@@ -206,6 +207,83 @@ func (s *Store) OpenBlob(_ context.Context, digest domain.Digest) (io.ReadSeekCl
 	}
 
 	return file, domain.Descriptor{Digest: digest, Size: info.Size()}, nil
+}
+
+// ListBlobs walks s.blobsRoot() only -- uploads/ is a different tree under
+// s.rootDir and is never traversed here (ports.BlobStore.ListBlobs' blocking
+// doc comment: enumerating an in-flight upload would expose a half-written
+// push to the garbage collector).
+func (s *Store) ListBlobs(_ context.Context) ([]ports.BlobFileInfo, error) {
+	root := s.blobsRoot()
+	var blobs []ports.BlobFileInfo
+
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return blobs, nil
+		}
+		return nil, err
+	}
+
+	for _, algorithmEntry := range entries {
+		if !algorithmEntry.IsDir() {
+			continue
+		}
+
+		algorithmDir := filepath.Join(root, algorithmEntry.Name())
+		digestEntries, err := os.ReadDir(algorithmDir)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, digestEntry := range digestEntries {
+			if digestEntry.IsDir() {
+				continue
+			}
+
+			digest, err := domain.ParseDigest(algorithmEntry.Name() + ":" + digestEntry.Name())
+			if err != nil {
+				continue
+			}
+
+			info, err := digestEntry.Info()
+			if err != nil {
+				return nil, err
+			}
+
+			blobs = append(blobs, ports.BlobFileInfo{
+				Digest:  digest,
+				Size:    info.Size(),
+				ModTime: info.ModTime(),
+			})
+		}
+	}
+
+	return blobs, nil
+}
+
+// DeleteBlob unlinks exactly one committed blob file (Phase 8 -- the only
+// phase permitted to add this os.Remove call). The digest is validated via
+// domain.Digest.Validate() BEFORE any path is built, exactly like every
+// other blob method (BlobExists, OpenBlob) -- a traversal-shaped or
+// otherwise malformed digest is rejected without ever touching the
+// filesystem. The path is resolved exclusively through blobPath, which is
+// scoped under s.blobsRoot(); DeleteBlob has no way to construct a path
+// under uploads/ (a different tree entirely -- see ListBlobs' doc comment).
+// Idempotent: an already-absent file is (false, nil), never an error.
+func (s *Store) DeleteBlob(_ context.Context, digest domain.Digest) (bool, error) {
+	if err := digest.Validate(); err != nil {
+		return false, err
+	}
+
+	if err := os.Remove(s.blobPath(digest)); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+
+	return true, nil
 }
 
 func (s *Store) blobsRoot() string {

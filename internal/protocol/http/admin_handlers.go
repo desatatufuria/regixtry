@@ -56,6 +56,10 @@ func (r *Router) handleAdmin(w stdhttp.ResponseWriter, req *stdhttp.Request) {
 	}
 
 	switch {
+	case subpath == "gc/reports":
+		r.handleAdminGCReports(w, req)
+	case strings.HasPrefix(subpath, "gc/reports/"):
+		r.handleAdminGCReportResource(w, req, strings.TrimPrefix(subpath, "gc/reports/"))
 	case subpath == "features":
 		r.handleAdminFeaturesCollection(w, req)
 	case strings.HasPrefix(subpath, "features/"):
@@ -624,6 +628,74 @@ func (r *Router) handleAdminSecretScanFindings(w stdhttp.ResponseWriter, req *st
 		return
 	}
 	detail, err := r.service.GetSecretScanFindings(req.Context(), repository, digest)
+	if err != nil {
+		writeAdminError(w, err, ports.Challenge{})
+		return
+	}
+	writeJSON(w, stdhttp.StatusOK, detail)
+}
+
+// handleAdminGCReports is the report-create route (design.md Data Flow):
+// POST computes and persists a mark-sweep-grace report and returns it with
+// 201 (a durable resource now exists, an executor-level correction from an
+// earlier 202 draft). This endpoint is reachable regardless of
+// REGISTRY_GC_DELETE_ENABLED -- the report path is always available.
+func (r *Router) handleAdminGCReports(w stdhttp.ResponseWriter, req *stdhttp.Request) {
+	if req.Method != stdhttp.MethodPost {
+		w.Header().Set("Allow", stdhttp.MethodPost)
+		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+		return
+	}
+
+	detail, err := r.service.ComputeGCReport(req.Context())
+	if err != nil {
+		writeAdminError(w, err, ports.Challenge{})
+		return
+	}
+	writeJSON(w, stdhttp.StatusCreated, detail)
+}
+
+// handleAdminGCReportResource dispatches gc/reports/{id}[/{action}]
+// (design.md Data Flow): id, action, hasAction := strings.Cut(resource,
+// "/"). Report IDs are opaque UUIDs and cannot contain a slash, so the
+// repository-name ordering hazard documented at handleAdminFeatureResource
+// does NOT apply here. GET-by-id only, for now -- the "delete" action is
+// added once Phase 6's flag/error-code plumbing lands.
+func (r *Router) handleAdminGCReportResource(w stdhttp.ResponseWriter, req *stdhttp.Request, resource string) {
+	id, action, hasAction := strings.Cut(resource, "/")
+	if id == "" {
+		writeAdminError(w, domainauth.NewNotFoundError("route", req.URL.Path), ports.Challenge{})
+		return
+	}
+
+	if hasAction {
+		if action != "delete" {
+			writeAdminError(w, domainauth.NewNotFoundError("route", req.URL.Path), ports.Challenge{})
+			return
+		}
+
+		if req.Method != stdhttp.MethodPost {
+			w.Header().Set("Allow", stdhttp.MethodPost)
+			w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+			return
+		}
+
+		detail, err := r.service.DeleteByGCReport(req.Context(), id)
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		writeJSON(w, stdhttp.StatusOK, detail)
+		return
+	}
+
+	if req.Method != stdhttp.MethodGet {
+		w.Header().Set("Allow", stdhttp.MethodGet)
+		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+		return
+	}
+
+	detail, err := r.service.GetGCReport(req.Context(), id)
 	if err != nil {
 		writeAdminError(w, err, ports.Challenge{})
 		return
@@ -1288,6 +1360,11 @@ func writeAdminError(w stdhttp.ResponseWriter, err error, challenge ports.Challe
 			status = stdhttp.StatusNotFound
 		case domainregistry.ErrorCodeConflict:
 			status = stdhttp.StatusConflict
+		case domainregistry.ErrorCodeUnsupported:
+			// design.md D9: the endpoint exists but the capability is off in
+			// this deployment. Admin-only -- no registry (/v2/) route may
+			// return this code, and writeError's OCI mapping is untouched.
+			status = stdhttp.StatusNotImplemented
 		default:
 			status = stdhttp.StatusInternalServerError
 		}

@@ -17,6 +17,12 @@ const (
 	ErrorCodeConflict          ErrorCode = "CONFLICT"
 	ErrorCodeUnauthorized      ErrorCode = "UNAUTHORIZED"
 	ErrorCodePolicyViolation   ErrorCode = "POLICY_VIOLATION"
+	// ErrorCodeUnsupported (design.md D9) means the endpoint exists but the
+	// capability is off in this deployment -- distinct from
+	// ErrorCodeUnauthorized ("not allowed") and ErrorCodeValidation ("bad
+	// request"). Admin routes (writeAdminError) map it to 501; it must never
+	// be returned from a registry (/v2/) route.
+	ErrorCodeUnsupported ErrorCode = "UNSUPPORTED"
 )
 
 type Error struct {
@@ -80,4 +86,8 @@ func NewUnauthorizedError(message string) error {
 
 func NewPolicyViolationError(message string) error {
 	return &Error{Code: ErrorCodePolicyViolation, Message: message}
+}
+
+func NewUnsupportedError(message string) error {
+	return &Error{Code: ErrorCodeUnsupported, Message: message}
 }

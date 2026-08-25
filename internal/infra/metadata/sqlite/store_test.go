@@ -1488,6 +1488,266 @@ func TestStoreListRepositoriesWithSummaryOrdersByNameAscAndRespectsLimitAfter(t 
 	}
 }
 
+// TestListReferencedBlobDigestsIsGlobalAcrossTenants is T7 (design.md
+// Testing Strategy): the mark query has no tenant argument at all (a
+// compile-time proof by itself) and two tenants sharing the same digest
+// must collapse to exactly one row -- SELECT DISTINCT digest FROM
+// manifest_blobs, Decision C's deliberate asymmetry on MetadataStore.
+func TestListReferencedBlobDigestsIsGlobalAcrossTenants(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	shared := domain.DigestFromBytes([]byte("shared-layer"))
+	blobs := []domain.Descriptor{{MediaType: "application/vnd.oci.image.layer.v1.tar", Digest: shared, Size: int64(len("shared-layer"))}}
+
+	manifestA, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", []byte(`{"schemaVersion":2,"who":"a"}`), nil, blobs, nil, nil)
+	if err != nil {
+		t.Fatalf("NewManifest() error = %v", err)
+	}
+	if err := store.PublishManifest(context.Background(), "tenant-a", domain.MustParseRepositoryRef("library/alpine"), "latest", manifestA, blobs); err != nil {
+		t.Fatalf("PublishManifest(tenant-a) error = %v", err)
+	}
+
+	manifestB, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", []byte(`{"schemaVersion":2,"who":"b"}`), nil, blobs, nil, nil)
+	if err != nil {
+		t.Fatalf("NewManifest() error = %v", err)
+	}
+	if err := store.PublishManifest(context.Background(), "tenant-b", domain.MustParseRepositoryRef("library/alpine"), "latest", manifestB, blobs); err != nil {
+		t.Fatalf("PublishManifest(tenant-b) error = %v", err)
+	}
+
+	digests, err := store.ListReferencedBlobDigests(context.Background())
+	if err != nil {
+		t.Fatalf("ListReferencedBlobDigests() error = %v", err)
+	}
+
+	if len(digests) != 1 {
+		t.Fatalf("ListReferencedBlobDigests() = %#v, want exactly one row for a digest shared by two tenants", digests)
+	}
+	if digests[0] != shared.String() {
+		t.Fatalf("digests[0] = %s, want %s", digests[0], shared)
+	}
+}
+
+// TestCreateGCReportPersistsReportAndCandidatesInOneTransaction pins
+// tasks.md 3.3: a report plus its candidates round-trip through
+// CreateGCReport/GetGCReport with stored position order preserved.
+func TestCreateGCReportPersistsReportAndCandidatesInOneTransaction(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	now := time.Date(2026, 8, 16, 9, 0, 0, 0, time.UTC)
+	report := ports.GCReport{
+		ID:                "report-1",
+		Status:            ports.GCReportStatusReported,
+		ComputedAt:        now,
+		ExpiresAt:         now.Add(24 * time.Hour),
+		GraceCutoff:       now.Add(-24 * time.Hour),
+		CandidateCount:    2,
+		CandidateBytes:    300,
+		DurationMillis:    42,
+		RequestedBy:       "usr_01",
+		TriggeredInTenant: "tenant-a",
+	}
+	candidates := []ports.GCReportCandidate{
+		{Digest: "sha256:bb00000000000000000000000000000000000000000000000000000000000000", Size: 200, ModTime: now.Add(-48 * time.Hour)},
+		{Digest: "sha256:aa00000000000000000000000000000000000000000000000000000000000000", Size: 100, ModTime: now.Add(-72 * time.Hour)},
+	}
+
+	if err := store.CreateGCReport(context.Background(), report, candidates); err != nil {
+		t.Fatalf("CreateGCReport() error = %v", err)
+	}
+
+	detail, err := store.GetGCReport(context.Background(), "report-1")
+	if err != nil {
+		t.Fatalf("GetGCReport() error = %v", err)
+	}
+
+	if detail.Report.ID != "report-1" || detail.Report.CandidateCount != 2 || detail.Report.CandidateBytes != 300 {
+		t.Fatalf("detail.Report = %#v, want ID=report-1 CandidateCount=2 CandidateBytes=300", detail.Report)
+	}
+	if detail.Report.RequestedBy != "usr_01" || detail.Report.TriggeredInTenant != "tenant-a" {
+		t.Fatalf("detail.Report = %#v, want RequestedBy=usr_01 TriggeredInTenant=tenant-a", detail.Report)
+	}
+	if len(detail.Candidates) != 2 {
+		t.Fatalf("len(detail.Candidates) = %d, want 2", len(detail.Candidates))
+	}
+	if detail.Candidates[0].Digest != candidates[0].Digest || detail.Candidates[1].Digest != candidates[1].Digest {
+		t.Fatalf("detail.Candidates = %#v, want stored position order [%s, %s]", detail.Candidates, candidates[0].Digest, candidates[1].Digest)
+	}
+}
+
+// TestGetGCReportReturnsNotFoundForUnknownID pins tasks.md 3.4.
+func TestGetGCReportReturnsNotFoundForUnknownID(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	_, err := store.GetGCReport(context.Background(), "does-not-exist")
+	if !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("GetGCReport(unknown) error = %v, want ErrorCodeNotFound", err)
+	}
+}
+
+// TestPruneExpiredGCReportsRemovesExpiredReportedButKeepsDeleted is T9's
+// prune half: an expired "reported" row is pruned on the next report, while
+// a "deleted"-state row is retained regardless of age (design.md D8 -- this
+// is hygiene, not the delete-safety mechanism).
+func TestPruneExpiredGCReportsRemovesExpiredReportedButKeepsDeleted(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	now := time.Date(2026, 8, 16, 9, 0, 0, 0, time.UTC)
+
+	expiredReported := ports.GCReport{
+		ID:          "expired-reported",
+		Status:      ports.GCReportStatusReported,
+		ComputedAt:  now.Add(-48 * time.Hour),
+		ExpiresAt:   now.Add(-24 * time.Hour),
+		GraceCutoff: now.Add(-72 * time.Hour),
+	}
+	if err := store.CreateGCReport(context.Background(), expiredReported, nil); err != nil {
+		t.Fatalf("CreateGCReport(expiredReported) error = %v", err)
+	}
+
+	stillLive := ports.GCReport{
+		ID:          "still-live",
+		Status:      ports.GCReportStatusReported,
+		ComputedAt:  now,
+		ExpiresAt:   now.Add(24 * time.Hour),
+		GraceCutoff: now.Add(-24 * time.Hour),
+	}
+	if err := store.CreateGCReport(context.Background(), stillLive, nil); err != nil {
+		t.Fatalf("CreateGCReport(stillLive) error = %v", err)
+	}
+
+	expiredDeleted := ports.GCReport{
+		ID:          "expired-deleted",
+		Status:      ports.GCReportStatusDeleted,
+		ComputedAt:  now.Add(-48 * time.Hour),
+		ExpiresAt:   now.Add(-24 * time.Hour),
+		GraceCutoff: now.Add(-72 * time.Hour),
+	}
+	if err := store.CreateGCReport(context.Background(), expiredDeleted, nil); err != nil {
+		t.Fatalf("CreateGCReport(expiredDeleted) error = %v", err)
+	}
+
+	pruned, err := store.PruneExpiredGCReports(context.Background(), now)
+	if err != nil {
+		t.Fatalf("PruneExpiredGCReports() error = %v", err)
+	}
+	if pruned != 1 {
+		t.Fatalf("PruneExpiredGCReports() = %d, want 1", pruned)
+	}
+
+	if _, err := store.GetGCReport(context.Background(), "expired-reported"); !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("GetGCReport(expired-reported) after prune error = %v, want ErrorCodeNotFound", err)
+	}
+	if _, err := store.GetGCReport(context.Background(), "still-live"); err != nil {
+		t.Fatalf("GetGCReport(still-live) after prune error = %v, want it to survive", err)
+	}
+	if _, err := store.GetGCReport(context.Background(), "expired-deleted"); err != nil {
+		t.Fatalf("GetGCReport(expired-deleted) after prune error = %v, want deleted-state rows to be retained indefinitely", err)
+	}
+}
+
+// TestMarkGCReportDeletedRejectsNonReportedRow is T5's store half (design.md
+// Decision E): the SQL WHERE id = ? AND status = 'reported' clause is the
+// actual single-use guard, not just a Go-side status check made in advance.
+// A second UPDATE against an already-"deleted" row affects zero rows and
+// must surface a typed domain.ErrorCodeConflict.
+func TestMarkGCReportDeletedRejectsNonReportedRow(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	now := time.Date(2026, 8, 16, 9, 0, 0, 0, time.UTC)
+	report := ports.GCReport{
+		ID:          "report-single-use",
+		Status:      ports.GCReportStatusReported,
+		ComputedAt:  now,
+		ExpiresAt:   now.Add(24 * time.Hour),
+		GraceCutoff: now.Add(-24 * time.Hour),
+	}
+	candidates := []ports.GCReportCandidate{
+		{Digest: "sha256:cc00000000000000000000000000000000000000000000000000000000000000", Size: 10, ModTime: now.Add(-48 * time.Hour)},
+	}
+	if err := store.CreateGCReport(context.Background(), report, candidates); err != nil {
+		t.Fatalf("CreateGCReport() error = %v", err)
+	}
+
+	firstOutcome := ports.GCDeleteOutcome{
+		DeletedAt:      now,
+		DeletedBy:      "usr_01",
+		DeletedCount:   1,
+		BytesReclaimed: 10,
+		Candidates: []ports.GCCandidateOutcome{
+			{Digest: candidates[0].Digest, Outcome: ports.GCCandidateOutcomeDeleted},
+		},
+	}
+	if err := store.MarkGCReportDeleted(context.Background(), report.ID, firstOutcome); err != nil {
+		t.Fatalf("MarkGCReportDeleted() (first) error = %v", err)
+	}
+
+	secondOutcome := firstOutcome
+	err := store.MarkGCReportDeleted(context.Background(), report.ID, secondOutcome)
+	if !domain.IsCode(err, domain.ErrorCodeConflict) {
+		t.Fatalf("MarkGCReportDeleted() (second) error = %v, want ErrorCodeConflict", err)
+	}
+
+	detail, err := store.GetGCReport(context.Background(), report.ID)
+	if err != nil {
+		t.Fatalf("GetGCReport() error = %v", err)
+	}
+	if detail.Report.DeletedCount != 1 {
+		t.Fatalf("DeletedCount = %d, want 1 (second call must not double-count)", detail.Report.DeletedCount)
+	}
+}
+
+// TestMarkGCReportDeletedCandidateUpdateUsesTheReportDigestIndex confirms
+// tasks.md 10.6's chosen index decision (a): the per-candidate outcome
+// UPDATE inside MarkGCReportDeleted (WHERE report_id = ? AND digest = ?)
+// uses idx_gc_report_candidates_report_digest via EXPLAIN QUERY PLAN,
+// rather than a linear scan of every candidate row for the report.
+func TestMarkGCReportDeletedCandidateUpdateUsesTheReportDigestIndex(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	rows, err := store.db.Query(`EXPLAIN QUERY PLAN UPDATE gc_report_candidates SET outcome = ?, error = ? WHERE report_id = ? AND digest = ?`, "deleted", "", "some-report-id", "sha256:aaaa")
+	if err != nil {
+		t.Fatalf("EXPLAIN QUERY PLAN error = %v", err)
+	}
+	defer rows.Close()
+
+	var plan strings.Builder
+	for rows.Next() {
+		var id, parent, notused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &notused, &detail); err != nil {
+			t.Fatalf("Scan() error = %v", err)
+		}
+		plan.WriteString(detail)
+		plan.WriteString("; ")
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows.Err() = %v", err)
+	}
+
+	if !strings.Contains(plan.String(), "idx_gc_report_candidates_report_digest") {
+		t.Fatalf("query plan = %q, want it to use idx_gc_report_candidates_report_digest", plan.String())
+	}
+}
+
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
 

@@ -409,6 +409,264 @@ func (s *Store) DeleteManifestByDigest(ctx context.Context, tenant string, repos
 	return tagNames, nil
 }
 
+// ListReferencedBlobDigests is the GC mark set (design.md Decision C):
+// SELECT DISTINCT digest FROM manifest_blobs, with NO tenant predicate --
+// manifest_blobs has no tenant column, and this query MUST NEVER gain one,
+// directly or via a join to manifests/repositories. A blob referenced by any
+// tenant must stay marked regardless of which tenant's context triggered the
+// scan.
+func (s *Store) ListReferencedBlobDigests(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT digest FROM manifest_blobs`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	digests := make([]string, 0)
+	for rows.Next() {
+		var digest string
+		if err := rows.Scan(&digest); err != nil {
+			return nil, err
+		}
+		digests = append(digests, digest)
+	}
+
+	return digests, rows.Err()
+}
+
+// IsBlobDigestReferenced is ListReferencedBlobDigests narrowed to one
+// digest: SELECT EXISTS(SELECT 1 FROM manifest_blobs WHERE digest = ?), with
+// no tenant predicate for the same reason ListReferencedBlobDigests has
+// none (design.md Decision C -- blob files carry no tenant namespacing).
+func (s *Store) IsBlobDigestReferenced(ctx context.Context, digest string) (bool, error) {
+	var referenced bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM manifest_blobs WHERE digest = ?)`, digest).Scan(&referenced)
+	if err != nil {
+		return false, err
+	}
+	return referenced, nil
+}
+
+// CreateGCReport inserts one gc_reports row plus its gc_report_candidates
+// children in a single transaction (design.md interfaces doc): a partially
+// written report is never observable. GLOBAL -- no tenant column at all.
+func (s *Store) CreateGCReport(ctx context.Context, report ports.GCReport, candidates []ports.GCReportCandidate) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	var deletedAt any
+	if report.DeletedAt != nil {
+		deletedAt = report.DeletedAt.UTC().Format(time.RFC3339Nano)
+	}
+
+	if _, err = tx.ExecContext(ctx, `
+		INSERT INTO gc_reports (id, status, computed_at, expires_at, grace_cutoff, candidate_count, candidate_bytes, duration_ms, requested_by, triggered_in_tenant, deleted_at, deleted_by, deleted_count, bytes_reclaimed, error)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, report.ID, string(report.Status), report.ComputedAt.UTC().Format(time.RFC3339Nano), report.ExpiresAt.UTC().Format(time.RFC3339Nano), report.GraceCutoff.UTC().Format(time.RFC3339Nano), report.CandidateCount, report.CandidateBytes, report.DurationMillis, report.RequestedBy, report.TriggeredInTenant, deletedAt, report.DeletedBy, report.DeletedCount, report.BytesReclaimed, report.Error); err != nil {
+		return err
+	}
+
+	for position, candidate := range candidates {
+		if _, err = tx.ExecContext(ctx, `
+			INSERT INTO gc_report_candidates (report_id, position, digest, size, mtime, outcome, error)
+			VALUES (?, ?, ?, ?, ?, ?, ?)
+		`, report.ID, position, candidate.Digest, candidate.Size, candidate.ModTime.UTC().Format(time.RFC3339Nano), candidate.Outcome, candidate.Error); err != nil {
+			return err
+		}
+	}
+
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// GetGCReport returns one report with its candidates in stored position
+// order. GLOBAL: no tenant argument, no tenant filter -- a report created
+// under one tenant's request context is readable from any other.
+func (s *Store) GetGCReport(ctx context.Context, reportID string) (ports.GCReportDetail, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT status, computed_at, expires_at, grace_cutoff, candidate_count, candidate_bytes, duration_ms, requested_by, triggered_in_tenant, deleted_at, deleted_by, deleted_count, bytes_reclaimed, error
+		FROM gc_reports
+		WHERE id = ?
+	`, reportID)
+
+	var (
+		status            string
+		computedAtRaw     string
+		expiresAtRaw      string
+		graceCutoffRaw    string
+		candidateCount    int
+		candidateBytes    int64
+		durationMillis    int64
+		requestedBy       string
+		triggeredInTenant string
+		deletedAtRaw      sql.NullString
+		deletedBy         string
+		deletedCount      int
+		bytesReclaimed    int64
+		reportError       string
+	)
+	if err := row.Scan(&status, &computedAtRaw, &expiresAtRaw, &graceCutoffRaw, &candidateCount, &candidateBytes, &durationMillis, &requestedBy, &triggeredInTenant, &deletedAtRaw, &deletedBy, &deletedCount, &bytesReclaimed, &reportError); err != nil {
+		if err == sql.ErrNoRows {
+			return ports.GCReportDetail{}, domain.NewNotFoundError("gc_report", reportID)
+		}
+		return ports.GCReportDetail{}, err
+	}
+
+	computedAt, err := time.Parse(time.RFC3339Nano, computedAtRaw)
+	if err != nil {
+		return ports.GCReportDetail{}, err
+	}
+	expiresAt, err := time.Parse(time.RFC3339Nano, expiresAtRaw)
+	if err != nil {
+		return ports.GCReportDetail{}, err
+	}
+	graceCutoff, err := time.Parse(time.RFC3339Nano, graceCutoffRaw)
+	if err != nil {
+		return ports.GCReportDetail{}, err
+	}
+
+	report := ports.GCReport{
+		ID:                reportID,
+		Status:            ports.GCReportStatus(status),
+		ComputedAt:        computedAt,
+		ExpiresAt:         expiresAt,
+		GraceCutoff:       graceCutoff,
+		CandidateCount:    candidateCount,
+		CandidateBytes:    candidateBytes,
+		DurationMillis:    durationMillis,
+		RequestedBy:       requestedBy,
+		TriggeredInTenant: triggeredInTenant,
+		DeletedBy:         deletedBy,
+		DeletedCount:      deletedCount,
+		BytesReclaimed:    bytesReclaimed,
+		Error:             reportError,
+	}
+	if deletedAtRaw.Valid {
+		deletedAt, err := time.Parse(time.RFC3339Nano, deletedAtRaw.String)
+		if err != nil {
+			return ports.GCReportDetail{}, err
+		}
+		report.DeletedAt = &deletedAt
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT digest, size, mtime, outcome, error
+		FROM gc_report_candidates
+		WHERE report_id = ?
+		ORDER BY position ASC
+	`, reportID)
+	if err != nil {
+		return ports.GCReportDetail{}, err
+	}
+	defer rows.Close()
+
+	candidates := make([]ports.GCReportCandidate, 0)
+	for rows.Next() {
+		var (
+			digest       string
+			size         int64
+			mtimeRaw     string
+			outcome      string
+			candidateErr string
+		)
+		if err := rows.Scan(&digest, &size, &mtimeRaw, &outcome, &candidateErr); err != nil {
+			return ports.GCReportDetail{}, err
+		}
+		mtime, err := time.Parse(time.RFC3339Nano, mtimeRaw)
+		if err != nil {
+			return ports.GCReportDetail{}, err
+		}
+		candidates = append(candidates, ports.GCReportCandidate{Digest: digest, Size: size, ModTime: mtime, Outcome: outcome, Error: candidateErr})
+	}
+	if err := rows.Err(); err != nil {
+		return ports.GCReportDetail{}, err
+	}
+
+	return ports.GCReportDetail{Report: report, Candidates: candidates}, nil
+}
+
+// PruneExpiredGCReports deletes gc_reports rows still in "reported" state
+// whose expires_at <= now; children go with the ON DELETE CASCADE.
+// "deleted"-state rows are the audit trail of irreversible deletions and are
+// NEVER pruned (design.md D8 -- hygiene, not safety).
+func (s *Store) PruneExpiredGCReports(ctx context.Context, now time.Time) (int, error) {
+	result, err := s.db.ExecContext(ctx, `
+		DELETE FROM gc_reports WHERE status = ? AND expires_at <= ?
+	`, string(ports.GCReportStatusReported), now.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return 0, err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+
+	return int(rowsAffected), nil
+}
+
+// MarkGCReportDeleted transitions one report row from "reported" to
+// "deleted" and records its terminal outcome (design.md Decision E). The
+// UPDATE's WHERE id = ? AND status = 'reported' is the actual single-use
+// guard -- zero rows affected is a typed domain.ErrorCodeConflict, not just
+// a Go-side status check performed in advance, so two concurrent deletes
+// against the same report can never both succeed.
+func (s *Store) MarkGCReportDeleted(ctx context.Context, reportID string, outcome ports.GCDeleteOutcome) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	var result sql.Result
+	result, err = tx.ExecContext(ctx, `
+		UPDATE gc_reports
+		SET status = ?, deleted_at = ?, deleted_by = ?, deleted_count = ?, bytes_reclaimed = ?, error = ?
+		WHERE id = ? AND status = ?
+	`, string(ports.GCReportStatusDeleted), outcome.DeletedAt.UTC().Format(time.RFC3339Nano), outcome.DeletedBy, outcome.DeletedCount, outcome.BytesReclaimed, outcome.Error, reportID, string(ports.GCReportStatusReported))
+	if err != nil {
+		return err
+	}
+
+	var rowsAffected int64
+	rowsAffected, err = result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		err = domain.NewConflictError(fmt.Sprintf("gc report %q is not in reported state", reportID))
+		return err
+	}
+
+	for _, candidate := range outcome.Candidates {
+		if _, err = tx.ExecContext(ctx, `
+			UPDATE gc_report_candidates SET outcome = ?, error = ? WHERE report_id = ? AND digest = ?
+		`, candidate.Outcome, candidate.Error, reportID, candidate.Digest); err != nil {
+			return err
+		}
+	}
+
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // DeleteTag removes one tags row only, leaving its manifest and every other
 // tag on it untouched -- deliberately no CASCADE reasoning here, unlike
 // DeleteManifestByDigest: a tags row has no dependents. Zero rows affected
@@ -1604,6 +1862,49 @@ func (s *Store) init() error {
 		);`,
 		`ALTER TABLE manifests ADD COLUMN pushed_by TEXT NOT NULL DEFAULT '';`,
 		`ALTER TABLE signing_policy_settings ADD COLUMN unsigned_self_read TEXT NOT NULL DEFAULT '';`,
+		// gc_reports/gc_report_candidates are brand-new, global tables
+		// (design.md Decision D): gc_reports has NO tenant column at all, so
+		// no "WHERE tenant = ?" predicate can be copy-pasted onto it. A
+		// report describes the deployment's unreferenced blobs, not one
+		// tenant's -- triggered_in_tenant is provenance only, never a
+		// predicate.
+		`CREATE TABLE IF NOT EXISTS gc_reports (
+			id TEXT PRIMARY KEY,
+			status TEXT NOT NULL,
+			computed_at TEXT NOT NULL,
+			expires_at TEXT NOT NULL,
+			grace_cutoff TEXT NOT NULL,
+			candidate_count INTEGER NOT NULL DEFAULT 0,
+			candidate_bytes INTEGER NOT NULL DEFAULT 0,
+			duration_ms INTEGER NOT NULL DEFAULT 0,
+			requested_by TEXT NOT NULL DEFAULT '',
+			triggered_in_tenant TEXT NOT NULL DEFAULT '',
+			deleted_at TEXT,
+			deleted_by TEXT NOT NULL DEFAULT '',
+			deleted_count INTEGER NOT NULL DEFAULT 0,
+			bytes_reclaimed INTEGER NOT NULL DEFAULT 0,
+			error TEXT NOT NULL DEFAULT ''
+		);`,
+		`CREATE TABLE IF NOT EXISTS gc_report_candidates (
+			report_id TEXT NOT NULL,
+			position INTEGER NOT NULL,
+			digest TEXT NOT NULL,
+			size INTEGER NOT NULL DEFAULT 0,
+			mtime TEXT NOT NULL,
+			outcome TEXT NOT NULL DEFAULT '',
+			error TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY(report_id, position),
+			FOREIGN KEY(report_id) REFERENCES gc_reports(id) ON DELETE CASCADE
+		);`,
+		// idx_gc_report_candidates_report_digest (tasks.md 10.6, design.md
+		// index decision): gc_report_candidates' PK is (report_id, position),
+		// so MarkGCReportDeleted's per-candidate UPDATE ... WHERE report_id =
+		// ? AND digest = ? can only use that PK to narrow to one report's
+		// rows, then linear-scans them for a digest match -- O(candidates in
+		// that report) per UPDATE, O(n^2) across a whole delete for a report
+		// with up to the design-cited ~100k candidates. This covering index
+		// makes that lookup a direct point query instead.
+		`CREATE INDEX IF NOT EXISTS idx_gc_report_candidates_report_digest ON gc_report_candidates(report_id, digest);`,
 	}
 
 	for _, statement := range statements {

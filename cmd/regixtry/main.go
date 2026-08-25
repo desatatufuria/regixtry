@@ -234,6 +234,14 @@ type tuiConfig struct {
 	AuthPostgresDSN string
 	APIBaseURL      string
 	Snapshot        bool
+	// DeleteEnabled gates DeleteManifest for the Tags screen's delete-tag
+	// confirm flow, mirroring serveConfig.DeleteEnabled. Without this, the
+	// tui subcommand's Service always had deletion disabled with no way to
+	// override it, regardless of REGISTRY_DELETE_ENABLED.
+	DeleteEnabled bool
+	// GCDeleteEnabled mirrors serveConfig.GCDeleteEnabled -- kept distinct
+	// from DeleteEnabled for the same reason as serve (design.md decision).
+	GCDeleteEnabled bool
 }
 
 type serveConfig struct {
@@ -263,6 +271,12 @@ type serveConfig struct {
 	TrivyBinaryPath      string
 	TrivyMaxConcurrency  int
 	DeleteEnabled        bool
+	// GCDeleteEnabled gates POST /admin/v1/gc/reports/{id}/delete
+	// (design.md Decision F / proposal.md D1a). It is DELIBERATELY a
+	// separate flag from DeleteEnabled and must never read
+	// REGISTRY_DELETE_ENABLED: that flag is metadata-only and never touches
+	// blob files.
+	GCDeleteEnabled bool
 }
 
 type bootstrapAdminConfig struct {
@@ -365,6 +379,7 @@ func parseServeConfig(args []string) (serveConfig, error) {
 	flags.StringVar(&cfg.TrivyBinaryPath, "trivy-binary-path", "", "trivy executable path")
 	flags.IntVar(&cfg.TrivyMaxConcurrency, "trivy-max-concurrency", 0, "maximum concurrent trivy runs")
 	flags.BoolVar(&cfg.DeleteEnabled, "delete-enabled", parseBoolEnv("REGISTRY_DELETE_ENABLED", false), "enable DELETE /v2/<name>/manifests/<reference> (manifest and tag deletion)")
+	flags.BoolVar(&cfg.GCDeleteEnabled, "gc-delete-enabled", parseBoolEnv("REGISTRY_GC_DELETE_ENABLED", false), "enable POST /admin/v1/gc/reports/{id}/delete (irreversibly unlinks unreferenced blob files; distinct from -delete-enabled, which is metadata-only)")
 
 	if err := flags.Parse(args); err != nil {
 		return serveConfig{}, err
@@ -503,6 +518,8 @@ func parseTUIConfigWithBootstrapStatePath(args []string, bootstrapStatePath stri
 	flags.StringVar(&cfg.AuthPostgresDSN, "auth-postgres-dsn", defaultCfg.AuthPostgresDSN, "Postgres DSN for auth state")
 	flags.StringVar(&cfg.APIBaseURL, "api-base-url", defaultCfg.APIBaseURL, "base URL for authenticated admin API")
 	flags.BoolVar(&cfg.Snapshot, "snapshot", false, "render the first inspection view and exit")
+	flags.BoolVar(&cfg.DeleteEnabled, "delete-enabled", parseBoolEnv("REGISTRY_DELETE_ENABLED", false), "enable DELETE /v2/<name>/manifests/<reference> (manifest and tag deletion)")
+	flags.BoolVar(&cfg.GCDeleteEnabled, "gc-delete-enabled", parseBoolEnv("REGISTRY_GC_DELETE_ENABLED", false), "enable POST /admin/v1/gc/reports/{id}/delete (irreversibly unlinks unreferenced blob files; distinct from -delete-enabled, which is metadata-only)")
 
 	if err := flags.Parse(args); err != nil {
 		return tuiConfig{}, err
@@ -2143,6 +2160,7 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 	service.SetSecretScanRunner(gitleaksinfra.New(gitleaksinfra.RunnerConfig{Blobs: blobStore}))
 	service.SetFeatureRuntimeManager("gitleaks", newFeatureRuntimeManager("gitleaks", appregixtry.FeatureRuntimeManagerConfig{StorageRoot: cfg.StorageRoot, Store: metadataStore}))
 	service.SetDeleteEnabled(cfg.DeleteEnabled)
+	service.SetGCDeleteEnabled(cfg.GCDeleteEnabled)
 	trivyMaxConcurrency := cfg.TrivyMaxConcurrency
 	if trivyMaxConcurrency <= 0 {
 		trivyMaxConcurrency = 1
@@ -2247,6 +2265,8 @@ func runTUI(cfg tuiConfig, stdin io.Reader, stdout io.Writer) error {
 	service.SetFeatureRuntimeManager("trivy", newFeatureRuntimeManager("trivy", appregixtry.FeatureRuntimeManagerConfig{StorageRoot: cfg.StorageRoot, Store: metadataStore, ScanRunner: trivyinfra.New(trivyinfra.RunnerConfig{})}))
 	service.SetSecretScanRunner(gitleaksinfra.New(gitleaksinfra.RunnerConfig{Blobs: blobStore}))
 	service.SetFeatureRuntimeManager("gitleaks", newFeatureRuntimeManager("gitleaks", appregixtry.FeatureRuntimeManagerConfig{StorageRoot: cfg.StorageRoot, Store: metadataStore}))
+	service.SetDeleteEnabled(cfg.DeleteEnabled)
+	service.SetGCDeleteEnabled(cfg.GCDeleteEnabled)
 	if authStore != nil {
 		service.SetUsernameResolver(authStoreUsernameResolver{store: authStore})
 	}

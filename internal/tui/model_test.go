@@ -567,6 +567,275 @@ func TestModelTagsTableNavigatesUpDownAcrossPagesAndEntersSelectedManifest(t *te
 	}
 }
 
+// newTagsReadyModel builds a Model already on screenTags for a single
+// repository/tag, mirroring the tag-setup slice other Tags tests above use,
+// factored out since every tag-delete test below needs the same starting
+// point.
+func newTagsReadyModel(t *testing.T, service *fakeQueryService) Model {
+	t.Helper()
+	model := NewModel(service)
+	updated := runCmd(t, model, model.Init())
+	updated = runKey(t, updated, "enter")
+	if updated.screen != screenTags {
+		t.Fatalf("test setup invalid: screen = %q, want %q", updated.screen, screenTags)
+	}
+	return updated
+}
+
+func tagsReadyFakeService() *fakeQueryService {
+	return &fakeQueryService{
+		repositorySummaries: []appregixtry.RepositorySummary{{Name: "library/alpine"}},
+		tagDetails: map[string][]appregixtry.TagDetails{
+			"library/alpine": {{Name: "latest", SignatureState: appregixtry.SignatureStatusUnsigned}},
+		},
+	}
+}
+
+// TestModelTagsDeleteKeyShowsPendingConfirm is the blob-garbage-collection
+// change's RED test for wiring the Tags screen's "d" key to
+// QueryService.DeleteManifest (already fully tested at the Service level):
+// pressing "d" with a tag selected must set the pending-delete confirm
+// state and message, and must NOT call DeleteManifest yet -- mirroring
+// TestModelAdminRobotDeleteKeyOpensConfirmModal's own confirm-before-action
+// shape one level up (screenTags is not an admin screen, so it gets its own
+// minimal TagsModel.PendingDelete field rather than adminView.ConfirmModal).
+func TestModelTagsDeleteKeyShowsPendingConfirm(t *testing.T) {
+	t.Parallel()
+
+	service := tagsReadyFakeService()
+	ready := newTagsReadyModel(t, service)
+
+	pending := runKey(t, ready, "d")
+
+	if got, want := pending.tags.PendingDelete, "latest"; got != want {
+		t.Fatalf("tags.PendingDelete = %q, want %q", got, want)
+	}
+	want := `Delete tag "latest" from "library/alpine"? This action cannot be undone. (Enter: delete | Esc: cancel)`
+	if got := pending.status; got != want {
+		t.Fatalf("status = %q, want %q", got, want)
+	}
+	if pending.screen != screenTags {
+		t.Fatalf("screen = %q, want %q (must stay on Tags while pending)", pending.screen, screenTags)
+	}
+	if service.calls.deleteManifest != 0 {
+		t.Fatalf("DeleteManifest called %d times, want 0 (must not fire before Enter confirms)", service.calls.deleteManifest)
+	}
+}
+
+// TestModelTagsDeleteKeyWithNoTagSelectedIsNoop covers the empty-list case:
+// pressing "d" on screenTags with no tag selected must not panic and must
+// not open a pending confirm for a tag that does not exist.
+func TestModelTagsDeleteKeyWithNoTagSelectedIsNoop(t *testing.T) {
+	t.Parallel()
+
+	service := &fakeQueryService{}
+	model := NewModel(service)
+	model.viewport = viewportSize{Width: defaultViewportWidth, Height: defaultViewportHeight}
+	model.screen = screenTags
+	model.tags = TagsModel{Repository: "library/alpine"}
+
+	updated := runKey(t, model, "d")
+
+	if updated.tags.PendingDelete != "" {
+		t.Fatalf("tags.PendingDelete = %q, want empty (no tag selected)", updated.tags.PendingDelete)
+	}
+	if service.calls.deleteManifest != 0 {
+		t.Fatalf("DeleteManifest called %d times, want 0", service.calls.deleteManifest)
+	}
+	_ = updated.View() // must not panic
+}
+
+// TestModelTagsDeleteEscCancelsPendingWithoutNavigating covers Esc while a
+// delete is pending: it must clear the pending state without also
+// triggering screenTags' ordinary Esc-navigates-to-Repositories behavior --
+// cancelling the confirm must feel like "never happened".
+func TestModelTagsDeleteEscCancelsPendingWithoutNavigating(t *testing.T) {
+	t.Parallel()
+
+	service := tagsReadyFakeService()
+	ready := newTagsReadyModel(t, service)
+	pending := runKey(t, ready, "d")
+	if pending.tags.PendingDelete == "" {
+		t.Fatalf("test setup invalid: want a pending delete before Esc")
+	}
+
+	cancelled := runKey(t, pending, "esc")
+
+	if cancelled.tags.PendingDelete != "" {
+		t.Fatalf("tags.PendingDelete = %q, want empty after Esc", cancelled.tags.PendingDelete)
+	}
+	if cancelled.status != "" {
+		t.Fatalf("status = %q, want empty after cancel", cancelled.status)
+	}
+	if cancelled.screen != screenTags {
+		t.Fatalf("screen = %q, want %q (Esc while pending must not navigate back)", cancelled.screen, screenTags)
+	}
+	if service.calls.deleteManifest != 0 {
+		t.Fatalf("DeleteManifest called %d times, want 0", service.calls.deleteManifest)
+	}
+}
+
+// TestModelTagsDeleteEnterConfirmFlowSuccess drives Enter on the pending
+// confirm and inspects each hop of the Update chain directly (rather than
+// letting runKey auto-chain through the refresh), the same way this task's
+// spec calls for: the delete msg handler must clear PendingDelete, set the
+// success status, and return the Tags-list refresh command as a distinct
+// tea.Cmd -- driving that cmd must actually reload the list via
+// QueryService.TagDetails, not a hardcoded stub.
+func TestModelTagsDeleteEnterConfirmFlowSuccess(t *testing.T) {
+	t.Parallel()
+
+	service := tagsReadyFakeService()
+	ready := newTagsReadyModel(t, service)
+	pending := runKey(t, ready, "d")
+	tagsCallsBeforeEnter := service.calls.tags
+
+	enterUpdated, deleteCmd := pending.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	firedModel := enterUpdated.(Model)
+	if deleteCmd == nil {
+		t.Fatalf("Enter while pending returned a nil tea.Cmd, want the delete command")
+	}
+	if service.lastDeleteManifestRepository != "" || service.lastDeleteManifestReference != "" {
+		t.Fatalf("DeleteManifest called synchronously by Update, want it deferred inside the returned tea.Cmd")
+	}
+
+	deleteMsg := deleteCmd()
+	if service.lastDeleteManifestRepository != "library/alpine" || service.lastDeleteManifestReference != "latest" {
+		t.Fatalf("DeleteManifest called with (%q, %q), want (%q, %q)", service.lastDeleteManifestRepository, service.lastDeleteManifestReference, "library/alpine", "latest")
+	}
+
+	afterDeleteUpdated, refreshCmd := firedModel.Update(deleteMsg)
+	afterDelete := afterDeleteUpdated.(Model)
+
+	if afterDelete.tags.PendingDelete != "" {
+		t.Fatalf("tags.PendingDelete = %q, want empty after delete completes", afterDelete.tags.PendingDelete)
+	}
+	wantStatus := `Tag "latest" deleted. Refreshing tags...`
+	if got := afterDelete.status; got != wantStatus {
+		t.Fatalf("status = %q, want %q", got, wantStatus)
+	}
+	if refreshCmd == nil {
+		t.Fatalf("want a non-nil refresh cmd to re-fire the Tags list load")
+	}
+
+	final := runCmd(t, afterDelete, refreshCmd)
+	if got, want := service.calls.tags, tagsCallsBeforeEnter+1; got != want {
+		t.Fatalf("TagDetails called %d times after refresh, want %d", got, want)
+	}
+	if final.screen != screenTags {
+		t.Fatalf("screen = %q, want %q after refresh", final.screen, screenTags)
+	}
+}
+
+// TestModelTagsDeleteEnterConfirmFlowValidationError covers the
+// delete-disabled backend response (Service.DeleteManifest's
+// domain.ErrorCodeValidation "manifest deletion is not enabled" when
+// REGISTRY_DELETE_ENABLED is off): the TUI must surface it in the status
+// line, clear the pending state so the operator is not stuck, and must NOT
+// refresh the list (nothing changed).
+func TestModelTagsDeleteEnterConfirmFlowValidationError(t *testing.T) {
+	t.Parallel()
+
+	service := tagsReadyFakeService()
+	service.deleteManifestErr = errors.New("manifest deletion is not enabled")
+	ready := newTagsReadyModel(t, service)
+	pending := runKey(t, ready, "d")
+	tagsCallsBeforeEnter := service.calls.tags
+
+	enterUpdated, deleteCmd := pending.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	firedModel := enterUpdated.(Model)
+	if deleteCmd == nil {
+		t.Fatalf("Enter while pending returned a nil tea.Cmd, want the delete command")
+	}
+	deleteMsg := deleteCmd()
+
+	afterDeleteUpdated, refreshCmd := firedModel.Update(deleteMsg)
+	afterDelete := afterDeleteUpdated.(Model)
+
+	if afterDelete.tags.PendingDelete != "" {
+		t.Fatalf("tags.PendingDelete = %q, want empty after a failed delete (operator must not be stuck)", afterDelete.tags.PendingDelete)
+	}
+	if got, want := afterDelete.status, "manifest deletion is not enabled"; got != want {
+		t.Fatalf("status = %q, want %q", got, want)
+	}
+	if refreshCmd != nil {
+		t.Fatalf("want a nil refresh cmd on error (list must not be refreshed)")
+	}
+	if got, want := service.calls.tags, tagsCallsBeforeEnter; got != want {
+		t.Fatalf("TagDetails called %d times after a failed delete, want %d (unchanged)", got, want)
+	}
+}
+
+// TestModelManifestBlobsUploadsDeleteKeyUnaffectedByTagsDeleteWiring is the
+// regression guard for this task's explicit constraint: screenManifest's
+// (and its screenBlobs/screenUploads siblings') existing "d"/"x" ->
+// showMutationNotice "Delete unavailable in v1" placeholder must remain
+// completely unchanged -- it must never call the real DeleteManifest.
+func TestModelManifestBlobsUploadsDeleteKeyUnaffectedByTagsDeleteWiring(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.June, 28, 23, 0, 0, 0, time.UTC)
+	service := &fakeQueryService{
+		repositorySummaries: []appregixtry.RepositorySummary{{Name: "library/alpine"}},
+		tagDetails: map[string][]appregixtry.TagDetails{
+			"library/alpine": {{Name: "latest", CreatedAt: now, SignatureState: appregixtry.SignatureStatusUnsigned}},
+		},
+		manifests: map[string]appregixtry.ManifestDetails{
+			"library/alpine:latest": {Repository: "library/alpine", Reference: "latest", Digest: "sha256:manifest"},
+		},
+	}
+	model := NewModel(service)
+	updated := runCmd(t, model, model.Init())
+	updated = runKey(t, updated, "enter")
+	updated = runKey(t, updated, "enter")
+	if updated.screen != screenManifest {
+		t.Fatalf("test setup invalid: screen = %q, want %q", updated.screen, screenManifest)
+	}
+
+	manifestDeleted := runKey(t, updated, "d")
+	if !manifestDeleted.showMutationNotice {
+		t.Fatalf("showMutationNotice = false on screenManifest after 'd', want true (unchanged v1 placeholder)")
+	}
+	if !strings.Contains(manifestDeleted.View(), "Delete unavailable in v1") {
+		t.Fatalf("view = %q, want the v1 placeholder message", manifestDeleted.View())
+	}
+
+	blobsDeleted := runKey(t, runKey(t, updated, "b"), "x")
+	if !blobsDeleted.showMutationNotice {
+		t.Fatalf("showMutationNotice = false on screenBlobs after 'x', want true (unchanged v1 placeholder)")
+	}
+
+	uploadsDeleted := runKey(t, runKey(t, updated, "u"), "d")
+	if !uploadsDeleted.showMutationNotice {
+		t.Fatalf("showMutationNotice = false on screenUploads after 'd', want true (unchanged v1 placeholder)")
+	}
+
+	if service.calls.deleteManifest != 0 {
+		t.Fatalf("DeleteManifest called %d times, want 0 (screenManifest/Blobs/Uploads must never call the real delete)", service.calls.deleteManifest)
+	}
+}
+
+// TestModelTagsDeleteViewShowsConfirmAndHelpWhenPending is this task's
+// rendering RED test, mirroring how viewport_test.go's inspection-help
+// snapshot list already covers screenManifest's own help line: the pending
+// confirm message must render in the status area and the Tags screen's help
+// line must mention the new delete action.
+func TestModelTagsDeleteViewShowsConfirmAndHelpWhenPending(t *testing.T) {
+	t.Parallel()
+
+	service := tagsReadyFakeService()
+	ready := newTagsReadyModel(t, service)
+	pending := runKey(t, ready, "d")
+
+	view := pending.View()
+	if !strings.Contains(view, `Delete tag "latest" from "library/alpine"? This action cannot be undone.`) {
+		t.Fatalf("view = %q, want the pending-delete confirm message", view)
+	}
+	if !strings.Contains(view, "d: delete tag") {
+		t.Fatalf("view = %q, want the updated Tags help line mentioning delete", view)
+	}
+}
+
 func TestModelBlocksAdminUntilLogin(t *testing.T) {
 	t.Parallel()
 
@@ -4174,12 +4443,19 @@ type fakeQueryService struct {
 	manifests           map[string]appregixtry.ManifestDetails
 	uploads             map[string][]appregixtry.UploadDetails
 	signatureStatus     map[string]appregixtry.SignatureStatusResult
-	calls               struct {
-		catalog   int
-		tags      int
-		manifest  int
-		uploads   int
-		signature int
+	// deleteManifestErr backs the Tags screen's delete-tag "d" key/confirm
+	// flow (blob-garbage-collection change), mirroring fakeAdminClient's own
+	// deleteRobotErr control field.
+	deleteManifestErr            error
+	lastDeleteManifestRepository string
+	lastDeleteManifestReference  string
+	calls                        struct {
+		catalog        int
+		tags           int
+		manifest       int
+		uploads        int
+		signature      int
+		deleteManifest int
 	}
 }
 
@@ -4873,6 +5149,16 @@ func (f *fakeQueryService) SignatureStatus(_ context.Context, repository string,
 		return result, nil
 	}
 	return appregixtry.SignatureStatusResult{State: appregixtry.SignatureStatusUnsigned}, nil
+}
+
+func (f *fakeQueryService) DeleteManifest(_ context.Context, repository string, reference string) (appregixtry.DeletionDetails, error) {
+	f.calls.deleteManifest++
+	f.lastDeleteManifestRepository = repository
+	f.lastDeleteManifestReference = reference
+	if f.deleteManifestErr != nil {
+		return appregixtry.DeletionDetails{}, f.deleteManifestErr
+	}
+	return appregixtry.DeletionDetails{Repository: repository, Reference: reference, TagsRemoved: []string{reference}}, nil
 }
 
 func runCmd(t *testing.T, model Model, cmd tea.Cmd) Model {
