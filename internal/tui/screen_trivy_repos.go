@@ -156,7 +156,7 @@ func (s trivyReposScreen) updateKey(env screenEnv, msg tea.KeyMsg) (adminScreen,
 		if !ok {
 			return s, nil, true
 		}
-		return s, openAdminScanHistory(summary.Repository), true
+		return s, openScanHistory(summary.Repository, screenSecurityTrivyRepos, scanHistoryTabIndexVulnerabilities), true
 	case isRuneKey(msg, 'r'):
 		return s, loadTrivyRepositoryScanSummariesCmd(env, 25), true
 	}

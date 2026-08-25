@@ -27,7 +27,8 @@ func TestGitleaksOverrideOpensWithoutEnteringTrivy(t *testing.T) {
 		},
 	}
 	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
-	updated = runKey(t, updated, "f")
+	updated = runKey(t, updated, "down")
+	updated = runKey(t, updated, "enter")
 	updated = runKey(t, updated, "enter") // navigate into gitleaksConfigScreen
 
 	if strings.Contains(string(updated.screen), "trivy") {
@@ -74,7 +75,8 @@ func TestSigningOverrideOpensWithoutEnteringTrivy(t *testing.T) {
 		},
 	}
 	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
-	updated = runKey(t, updated, "f")
+	updated = runKey(t, updated, "down")
+	updated = runKey(t, updated, "enter")
 	updated = runKey(t, updated, "enter") // navigate into signingConfigScreen
 
 	if strings.Contains(string(updated.screen), "trivy") {
@@ -116,7 +118,8 @@ func TestOverrideKeyIsInertWithoutAHighlightedRow(t *testing.T) {
 	// No repository catalog and no stored overrides -- newAdminReadyModelWithCatalog(nil, ...)
 	// yields an empty row set.
 	updated := runAdminLogin(t, newAdminReadyModelWithCatalog(t, nil, adminClient), "operator", "secret-pass")
-	updated = runKey(t, updated, "f")
+	updated = runKey(t, updated, "down")
+	updated = runKey(t, updated, "enter")
 	updated = runKey(t, updated, "enter") // navigate into gitleaksConfigScreen
 	updated = runKey(t, updated, "o")     // enters screenSecurityGitleaksRepos, zero rows
 

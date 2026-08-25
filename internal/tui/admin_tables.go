@@ -378,14 +378,6 @@ func severityStyledCell(theme adminTheme, severity string) bubbletable.StyledCel
 	return bubbletable.NewStyledCell(adminFirstNonEmpty(value, "UNKNOWN"), style)
 }
 
-func highlightedRowValue(model bubbletable.Model, key string) string {
-	if model.TotalRows() == 0 {
-		return ""
-	}
-	value, _ := model.HighlightedRow().Data[key].(string)
-	return strings.TrimSpace(value)
-}
-
 // tableRoles splits a screen's row budget into two admin-table pageSize
 // roles (design.md decision #6): primary tables (Features, ScanSummary — the
 // operator-navigable top-level lists) get the whole budget available to a
@@ -409,57 +401,18 @@ func tableRoles(l consoleLayout) (primary, compact int) {
 	return primary, compact
 }
 
-// rebuildAdminTables now only rebuilds the still-legacy ScanHistoryModal's
-// own Findings/SecretFindings tables (Slice 3). Features/FeatureRows/
-// ScanSummary moved onto securityMenuScreen/trivyConfigScreen/
-// trivyReposScreen's own fields (Phase 11); each rebuilds its own table
-// from inside its own Update (rebuildTable/rebuildRows), broadcast the same
-// way every other migrated screen refreshes on tea.WindowSizeMsg (design.md
-// Decision H). Still called unconditionally after almost every admin
-// action -- harmless/cheap when ScanHistoryModal is not active.
+// rebuildAdminTables keeps AdminViewState.Layout's Primary/Compact split
+// fresh (design.md decision #6) -- a handful of tests read it as a proxy
+// for "the row budget this screen was sized against". Every admin table
+// itself is now built by its own owning screen (securityMenuScreen/
+// trivyConfigScreen/trivyReposScreen's own fields since Phase 11;
+// scanHistoryScreen's own findings/secretFindings fields since Phase 19,
+// design.md's State Migration table) from inside its own Update, broadcast
+// the same way every other migrated screen refreshes on tea.WindowSizeMsg
+// (design.md Decision H). Still called unconditionally after almost every
+// admin action -- harmless/cheap, this method itself now does no table
+// construction of its own.
 func (m *Model) rebuildAdminTables(layout consoleLayout) {
 	layout.Primary, layout.Compact = tableRoles(layout)
 	m.adminView.Layout = layout
-
-	theme := newAdminTheme()
-
-	// The scan history modal's Findings/SecretFindings tables are only ever
-	// rendered from within the modal (adminScanHistoryModalTableBody), so
-	// they are only built while the modal is active; otherwise they stay at
-	// their previous/zero value and are simply not rendered.
-	if m.adminView.ScanHistoryModal.Active() {
-		// baseBodyHeight must be measured the SAME way renderAdminWorkspace
-		// measures it (lipgloss.Height on renderAdminScreen's own body
-		// return) or this table gets pre-built for one page size while
-		// renderAdminWorkspace composites the modal into a differently-sized
-		// budget (adminScanHistoryModalRows' doc comment). Features and
-		// ScanSummary -- the only tables the base Feature Page body itself
-		// renders -- are already built above, so this reflects the real
-		// content the base body will show.
-		baseBodyHeight := adminBaseBodyHeight(m.screen, m.adminSession, m.adminView, m.repositories.Names(), layout, m.now(), m.adminScreens)
-		modalRows := adminScanHistoryModalRows(layout, baseBodyHeight)
-		measuredHeaderHeight := 0
-		if strings.TrimSpace(m.adminView.ScanHistoryModal.Error) != "" || m.adminView.ScanHistoryModal.Loading {
-			measuredHeaderHeight = 1
-		}
-		modalTablePageSize := adminScanHistoryModalTablePageSize(modalRows, measuredHeaderHeight)
-		findingCursor := m.adminView.ScanHistoryModal.FindingCursor
-		m.adminView.Tables.Findings = buildAdminFindingsTable(theme, m.adminView.ScanHistoryModal.Detail.Findings, findingCursor, modalTablePageSize)
-		m.adminView.Tables.SecretFindings = buildAdminSecretFindingsTable(theme, m.adminView.ScanHistoryModal.Secrets, findingCursor, modalTablePageSize)
-	}
-	m.syncAdminTableSelections()
-}
-
-// syncAdminTableHighlights now only re-syncs the still-legacy
-// ScanHistoryModal's own Selection.FindingID (Slice 3): Features/ScanSummary
-// highlight sync moved onto securityMenuScreen/trivyReposScreen's own
-// Update (Phase 11) -- each rebuilds its own table with the current
-// selection baked in directly (buildAdminFeaturesTable/
-// buildAdminScanSummaryTable already take `highlighted int`).
-func (m *Model) syncAdminTableHighlights() {
-	m.syncAdminTableSelections()
-}
-
-func (m *Model) syncAdminTableSelections() {
-	m.adminView.Tables.Selection.FindingID = highlightedRowValue(m.adminView.Tables.Findings, adminTableMetaFindingID)
 }

@@ -40,12 +40,10 @@ import (
 //     `Tables adminTablesState` struct, not a direct AdminViewState field
 //     this reflect scan can enumerate by name here).
 //
-// Design.md's State Migration table lists ScanHistoryModal as migrating too
-// (to scanHistoryScreen, Operations) -- explicitly Slice 3, not this
-// change's scope, and deliberately NOT included below: trivyReposScreen
-// (Phase 11) still opens it via openAdminScanHistoryMsg (screen.go), a
-// migrated screen cannot write to it directly (design.md Decision B), so it
-// necessarily still exists as an AdminViewState field.
+// ScanHistoryModal -- migrated onto scanHistoryScreen this batch (Phase 19,
+// design.md's State Migration table: "ScanHistoryModal -> scanHistoryScreen
+// (Operations, Slice 3)"), closing the Phase 11 scope note that used to
+// exclude it here.
 func TestMigratedScreensHaveZeroFieldsOnAdminViewState(t *testing.T) {
 	t.Parallel()
 
@@ -66,6 +64,7 @@ func TestMigratedScreensHaveZeroFieldsOnAdminViewState(t *testing.T) {
 		"SigningPolicy":           true,
 		"Features":                true,
 		"SelectedFeature":         true,
+		"ScanHistoryModal":        true,
 	}
 
 	typ := reflect.TypeOf(AdminViewState{})
@@ -77,26 +76,11 @@ func TestMigratedScreensHaveZeroFieldsOnAdminViewState(t *testing.T) {
 	}
 }
 
-// TestAdminTablesStateHoldsOnlyLegacyScanHistoryFields is the Phase 11
-// companion to TestMigratedScreensHaveZeroFieldsOnAdminViewState: verifies
-// design.md's Tables.Features/Tables.FeatureRows/Tables.ScanSummary rows
-// (the third migration target the reflect scan above cannot enumerate,
-// since they are fields of the nested adminTablesState struct, not
-// AdminViewState itself) are also gone, leaving only the still-legacy
-// ScanHistoryModal's own Findings/SecretFindings tables and the Selection
-// projection (Slice 3, unmigrated).
-func TestAdminTablesStateHoldsOnlyLegacyScanHistoryFields(t *testing.T) {
-	t.Parallel()
-
-	want := map[string]bool{"Findings": true, "SecretFindings": true, "Selection": true}
-	typ := reflect.TypeOf(adminTablesState{})
-	if got := typ.NumField(); got != len(want) {
-		t.Fatalf("adminTablesState has %d fields, want exactly %d: %v", got, len(want), want)
-	}
-	for i := 0; i < typ.NumField(); i++ {
-		name := typ.Field(i).Name
-		if !want[name] {
-			t.Fatalf("adminTablesState has unexpected field %q, want only the still-legacy ScanHistoryModal fields %v", name, want)
-		}
-	}
-}
+// TestAdminTablesStateHoldsOnlyLegacyScanHistoryFields was the Phase 11
+// companion to TestMigratedScreensHaveZeroFieldsOnAdminViewState, asserting
+// adminTablesState held only ScanHistoryModal's own Findings/SecretFindings/
+// Selection fields. Phase 19 deletes adminTablesState/AdminViewState.Tables
+// entirely -- scanHistoryScreen owns its own findings/secretFindings tables
+// directly (design.md Decision B), so this test's subject type no longer
+// exists; TestMigratedScreensHaveZeroFieldsOnAdminViewState's ScanHistoryModal
+// entry above is the direct replacement proof.

@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	bubbletable "github.com/evertras/bubble-table/table"
 	domainauth "regixtry/internal/domain/auth"
 	"regixtry/internal/ports"
 )
@@ -365,20 +364,6 @@ type AdminSession struct {
 	ExpiredReason string
 }
 
-type adminTableSelection struct {
-	FindingID string
-}
-
-// adminTablesState now backs only the still-legacy ScanHistoryModal's own
-// Findings/SecretFindings tables (Slice 3). Features/FeatureRows/ScanSummary
-// moved onto securityMenuScreen/trivyConfigScreen/trivyReposScreen's own
-// fields (Phase 11, design.md's State Migration table).
-type adminTablesState struct {
-	Findings       bubbletable.Model
-	SecretFindings bubbletable.Model
-	Selection      adminTableSelection
-}
-
 type AdminViewState struct {
 	Users             []ports.AdminUser
 	SelectedUser      int
@@ -404,13 +389,10 @@ type AdminViewState struct {
 	RevealedTokenSecret    string
 	RevealedTokenAccessor  string
 	RevealedTokenExpiresAt time.Time
-	// ScanHistoryModal is the Repository Alerts drill-down modal state
-	// (spec.md "Repository Alert Drill-Down Opens History Modal"), opened by
-	// Enter on a summary row -- still legacy (Slice 3, design.md's State
-	// Migration table: moves to scanHistoryScreen under Operations).
-	// trivyReposScreen (Phase 11) opens it via openAdminScanHistoryMsg
-	// (screen.go), since a migrated screen cannot write to it directly.
-	ScanHistoryModal adminScanHistoryModal
+	// ScanHistoryModal is retired (Phase 19, design.md's State Migration
+	// table): its state now lives on scanHistoryScreen
+	// (screen_scan_history.go), reached at its own dedicated slot
+	// (screen.go's slotScanHistory), never as an AdminViewState field.
 	// RepositoryOverrideModal is retired (tui-menu-architecture, design.md
 	// Decision F): the per-repository override editor now lives per-screen
 	// as overrideEditor, embedded directly in trivyReposScreen/
@@ -444,7 +426,6 @@ type AdminViewState struct {
 	Robots          []ports.AdminRobot
 	SelectedRobot   int
 	CreateRobotForm adminCreateRobotForm
-	Tables          adminTablesState
 	// Layout is the consoleLayout used the last time rebuildAdminTables ran,
 	// including the primary/compact table pageSize split (design.md
 	// decision #6). It is a snapshot for table construction, not the live

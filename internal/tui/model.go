@@ -176,6 +176,20 @@ const (
 	// screenSecurityTrivy.
 	screenSecurityGitleaksConfig screen = "security-gitleaks-config"
 	screenSecuritySigningConfig  screen = "security-signing-config"
+	// screenAdminMenu is the post-login domain-menu landing screen (Phase
+	// 18, design.md Decision I/D8): 4 domain rows (Browse, Security &
+	// Compliance, Identity & Access, Operations). It replaces
+	// screenAdminUsers as the admin panel's own root.
+	screenAdminMenu screen = "admin-menu"
+	// screenAdminOperations is the Operations domain (Phase 18, D9): 2 rows
+	// (Scan Runs, Secret Scan Findings).
+	screenAdminOperations screen = "admin-operations"
+	// screenAdminScanRuns/screenAdminSecretFindings are the two
+	// scanRunsScreen-backed repository pickers Operations' own rows
+	// navigate to (Phase 19, D9): the only difference between them is which
+	// scanHistoryScreen tab Enter defaults to.
+	screenAdminScanRuns       screen = "admin-scan-runs"
+	screenAdminSecretFindings screen = "admin-secret-findings"
 )
 
 // adminIntent is a one-shot field set before screenAdminLogin and consumed
@@ -801,8 +815,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.startupLogin = false
 			return m, m.loadCatalogCmd()
 		}
-		m.status = "Loading admin users..."
-		m.screen = screenAdminUsers
+		// Phase 18 (design.md Decision I): the operator lands on the
+		// domain-grouped menu, not directly on screenAdminUsers (Identity &
+		// Access is now one domain among four, reached via its own row).
+		// The Users list still loads immediately in the background exactly
+		// as before (design.md's "narrow scope" precedent): no screen along
+		// the legacy screenAdminUsers/screenAdminEditUser/securityMenuScreen
+		// Esc-back chain ever re-fires loadAdminUsersCmd itself, so this
+		// single post-login load remains the only source, just no longer
+		// paired with landing directly on the screen it feeds.
+		m.status = ""
+		m.screen = screenAdminMenu
+		m.adminScreens[slotAdminMenu] = newAdminMenuScreen()
 		return m, m.loadAdminUsersCmd()
 	case adminUsersLoadedMsg:
 		if msg.err != nil {
@@ -993,16 +1017,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
-	case openAdminScanHistoryMsg:
-		// A migrated screen (trivyReposScreen) cannot write to
-		// AdminViewState.ScanHistoryModal directly (design.md Decision B) --
-		// see openAdminScanHistoryMsg's own doc comment (screen.go).
-		m.adminView.ScanHistoryModal = adminScanHistoryModal{
-			Open: true, Repository: msg.repository, Tabs: newAdminScanHistoryTabs(), Loading: true,
+	case openScanHistoryMsg:
+		// scanHistoryScreen is never m.screen-addressed (screen.go's
+		// slotScanHistory doc comment) -- mounted directly at its own
+		// dedicated slot, m.screen left untouched (design.md Decision B: a
+		// migrated screen cannot write to state it does not own, mirrored
+		// here for the parent constructing a fresh sub-model value).
+		next := scanHistoryScreen{
+			returnTo: msg.returnTo,
+			modal: adminScanHistoryModal{
+				Open: true, Repository: msg.repository, Tabs: newAdminScanHistoryTabs(),
+				ActiveTab: msg.activeTab, Loading: true,
+			},
 		}
+		m.adminScreens[slotScanHistory] = next
 		m.status = fmt.Sprintf("Loading scan history for %s...", adminFirstNonEmpty(msg.repository, "repository"))
-		m.rebuildAdminTables(m.adminTablesLayout())
-		return m, m.loadAdminScanHistoryCmd(msg.repository)
+		return m, next.Init(m.screenEnv())
+	case returnToInspectionMsg:
+		return m.returnToInspection(), nil
 	case adminRepositoryOverridesListLoadedMsg:
 		// Best-effort, matching the ScanPolicy load's fail-quiet posture: a
 		// load failure just broadcasts (trivyReposScreen's table renders
@@ -1063,63 +1095,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
 		return m, cmd
 	case adminScanRunDetailLoadedMsg:
-		// loadAdminScanRunDetailCmd is only ever fired while the scan
-		// history modal is active (Enter opens it, pageAdminScanHistory
-		// re-fires it) — a response arriving after the operator has since
-		// closed the modal (Esc) is stale and discarded.
-		if msg.err != nil {
-			if IsAdminSessionExpired(msg.err) {
-				return m.expireAdminSession(msg.err.Error()), nil
-			}
-			if m.adminView.ScanHistoryModal.Active() {
-				m.adminView.ScanHistoryModal.Loading = false
-				m.adminView.ScanHistoryModal.Error = msg.err.Error()
-				m.rebuildAdminTables(m.adminTablesLayout())
-			}
-			return m, nil
+		// Broadcast only (design.md Decision H): scanHistoryScreen owns the
+		// stale-response/digest-per-run-correctness filtering itself now
+		// (screen_scan_history.go), mirroring adminRepositoryScanSummariesLoadedMsg's
+		// own broadcast-only shape above.
+		var cmd tea.Cmd
+		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
+		if msg.err != nil && IsAdminSessionExpired(msg.err) {
+			return m.expireAdminSession(msg.err.Error()), nil
 		}
-		// Digest-per-run correctness (design.md risk note): discard a stale
-		// response for a run the operator has since paged away from, so the
-		// Vulnerabilities/Leaks tabs never show a mix of two executions.
-		if !m.adminView.ScanHistoryModal.Active() || !adminScanHistoryDetailMatchesCursor(m.adminView.ScanHistoryModal, msg.detail) {
-			return m, nil
-		}
-		m.adminView.ScanHistoryModal.Detail = msg.detail
-		m.adminView.ScanHistoryModal.Secrets = nil
-		m.adminView.ScanHistoryModal.Error = ""
-		m.rebuildAdminTables(m.adminTablesLayout())
-		m.status = ""
-		// Secret findings are surfaced alongside the vulnerability scan
-		// detail just loaded above (spec.md "Operator reviews findings for
-		// a selected image"), keyed by the same repository+digest both scan
-		// legs share. Chained as a follow-up Cmd (not tea.Batch) so it
-		// composes with this Update loop's existing single-Cmd-return style.
-		return m, m.loadAdminSecretScanFindingsCmd(msg.detail.Run.Repository, msg.detail.Run.Digest)
+		return m, cmd
 	case adminSecretScanFindingsLoadedMsg:
-		// Informational only (spec.md "Informational Findings Only"): a
-		// failure to load secret findings (including "none persisted yet")
-		// must never override the vulnerability detail already shown or
-		// surface as a blocking error — it just renders as the clear empty
-		// state below.
-		if msg.err != nil {
-			if IsAdminSessionExpired(msg.err) {
-				return m.expireAdminSession(msg.err.Error()), nil
-			}
-			if !m.adminView.ScanHistoryModal.Active() || !adminScanHistorySecretsMatchCursor(m.adminView.ScanHistoryModal, msg.repository, msg.digest) {
-				return m, nil
-			}
-			m.adminView.ScanHistoryModal.Secrets = nil
-			m.adminView.ScanHistoryModal.Loading = false
-			m.rebuildAdminTables(m.adminTablesLayout())
-			return m, nil
+		// Broadcast only (design.md Decision H): informational only (spec.md
+		// "Informational Findings Only"), scanHistoryScreen itself never
+		// treats a load failure as a blocking error (screen_scan_history.go).
+		var cmd tea.Cmd
+		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
+		if msg.err != nil && IsAdminSessionExpired(msg.err) {
+			return m.expireAdminSession(msg.err.Error()), nil
 		}
-		if !m.adminView.ScanHistoryModal.Active() || !adminScanHistorySecretsMatchCursor(m.adminView.ScanHistoryModal, msg.repository, msg.digest) {
-			return m, nil
-		}
-		m.adminView.ScanHistoryModal.Secrets = msg.findings
-		m.adminView.ScanHistoryModal.Loading = false
-		m.rebuildAdminTables(m.adminTablesLayout())
-		return m, nil
+		return m, cmd
 	case adminOpenURLCompletedMsg:
 		// openSelectedAdminFindingLink's side effect (opening a finding's
 		// advisory link) already ran inside its Cmd; only the resulting
@@ -1138,32 +1133,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = ""
 		return m, nil
 	case adminScanHistoryLoadedMsg:
-		if msg.err != nil {
-			if IsAdminSessionExpired(msg.err) {
-				return m.expireAdminSession(msg.err.Error()), nil
-			}
-			if m.adminView.ScanHistoryModal.Active() && msg.repository == m.adminView.ScanHistoryModal.Repository {
-				m.adminView.ScanHistoryModal.Loading = false
-				m.adminView.ScanHistoryModal.Error = msg.err.Error()
-				m.rebuildAdminTables(m.adminTablesLayout())
-			}
-			return m, nil
+		// Broadcast only (design.md Decision H): scanHistoryScreen owns the
+		// stale-response/repository-match filtering and its own
+		// loadScanRunDetailCmd chain-follow-up itself now
+		// (screen_scan_history.go).
+		var cmd tea.Cmd
+		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
+		if msg.err != nil && IsAdminSessionExpired(msg.err) {
+			return m.expireAdminSession(msg.err.Error()), nil
 		}
-		if !m.adminView.ScanHistoryModal.Active() || msg.repository != m.adminView.ScanHistoryModal.Repository {
-			// Stale response for a modal that has since closed or switched
-			// to a different repository.
-			return m, nil
+		if msg.err == nil {
+			m.status = ""
 		}
-		m.adminView.ScanHistoryModal.Runs = msg.runs
-		m.adminView.ScanHistoryModal.Cursor = 0
-		m.adminView.ScanHistoryModal.Error = ""
-		if len(msg.runs) == 0 {
-			m.adminView.ScanHistoryModal.Loading = false
-			m.rebuildAdminTables(m.adminTablesLayout())
-			return m, nil
-		}
-		m.status = ""
-		return m, m.loadAdminScanRunDetailCmd(msg.runs[0].ID)
+		return m, cmd
 	case adminUserGrantsLoadedMsg:
 		if msg.err != nil {
 			if IsAdminSessionExpired(msg.err) {
@@ -1507,7 +1489,7 @@ func (m Model) View() string {
 		help := "q: quit"
 		layout := m.contentBudget("", help)
 		return renderInspectionWorkspace("Sign In", renderConsoleTextSection(m.loadingText, layout), "", help)
-	case screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken, screenRepoAdminGrants, screenRepoAdminAddGrant, screenAdminRobots, screenAdminCreateRobot, screenSecurityGitleaksRepos, screenSecuritySigningRepos, screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig:
+	case screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken, screenRepoAdminGrants, screenRepoAdminAddGrant, screenAdminRobots, screenAdminCreateRobot, screenSecurityGitleaksRepos, screenSecuritySigningRepos, screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminMenu, screenAdminOperations, screenAdminScanRuns, screenAdminSecretFindings:
 		help := adminScreenHelp(m.screen, m.adminView)
 		if slot, ok := slotFor(m.screen); ok && m.adminScreens[slot] != nil {
 			// Migrated top-level screen: help is derived from the screen's
@@ -1661,8 +1643,24 @@ func (m Model) updateAdminKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// editor is likewise now embedded in trivyReposScreen directly (mirrors
 	// featureOverridesScreen), so the former slotTrivyOverride pre-dispatch
 	// branch is also gone.
-	if m.adminView.ScanHistoryModal.Active() {
-		return m.updateAdminScanHistoryModalKey(msg)
+	// scanHistoryScreen (Phase 19) is never m.screen-addressed (screen.go's
+	// slotScanHistory doc comment), so it cannot be reached through
+	// routeAdminKey's ordinary slotFor(m.screen) dispatch below -- this
+	// mirrors the pre-migration ScanHistoryModal.Active() precedence check
+	// exactly (same position: before 'l' logout, before Confirm, before
+	// 'q' quit), just re-pointed at its own dedicated slot. Esc is handled
+	// here directly (un-mount) rather than inside scanHistoryScreen.Update,
+	// mirroring Confirm.Active()'s own existing wrapper shape immediately
+	// below.
+	if scan, ok := m.adminScreens[slotScanHistory].(scanHistoryScreen); ok {
+		if isEscKey(msg) {
+			m.adminScreens[slotScanHistory] = nil
+			m.status = ""
+			return m, nil
+		}
+		next, cmd, _ := scan.Update(m.screenEnv(), msg)
+		m.adminScreens[slotScanHistory] = next
+		return m, cmd
 	}
 
 	if isRuneKey(msg, 'l') && m.canLogoutAdminFromCurrentScreen() {
@@ -1725,7 +1723,11 @@ func (m Model) updateAdminLoginKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) updateAdminUsersKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case isEscKey(msg):
-		return m.returnToInspection(), nil
+		// Phase 18: screenAdminMenu is now the admin panel's own root, not
+		// screenAdminUsers (design.md Decision I) -- Esc here goes back up
+		// to the domain menu; returnToInspection() moved onto
+		// screenAdminMenu's own Esc (screen_admin_menu.go).
+		return m, navigate(screenAdminMenu)
 	case m.adminView.UserSearchActive:
 		return m.updateAdminSearchKey(msg)
 	case isRuneKey(msg, '/'):
@@ -1970,125 +1972,10 @@ func signingKeyFingerprints(keys []string) []string {
 	return fingerprints
 }
 
-// updateAdminScanHistoryModalKey handles keys while the scan history modal
-// is open (design.md "Keys ... gated in updateAdminKey before
-// updateAdminFeaturesKey"), following updateTrivyConfigModalKey's dedicated-
-// handler pattern: Tab/Shift+Tab cycle tabs (wrapping, via cycleIndex),
-// Left/Right page through the repository's chronological history (clamping,
-// via boundedIndex — "paging", unlike the wrapping tab cursor), Esc closes
-// and restores the row-list focus with no residual detail.
-func (m Model) updateAdminScanHistoryModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch {
-	case isEscKey(msg):
-		m.adminView.ScanHistoryModal = adminScanHistoryModal{}
-		m.status = ""
-		m.rebuildAdminTables(m.adminTablesLayout())
-		return m, nil
-	case isShiftTabKey(msg):
-		m.adminView.ScanHistoryModal.ActiveTab = cycleIndex(m.adminView.ScanHistoryModal.ActiveTab-1, len(m.adminView.ScanHistoryModal.Tabs))
-		m.adminView.ScanHistoryModal.FindingCursor = 0
-		m.rebuildAdminTables(m.adminTablesLayout())
-		return m, nil
-	case isTabKey(msg):
-		m.adminView.ScanHistoryModal.ActiveTab = cycleIndex(m.adminView.ScanHistoryModal.ActiveTab+1, len(m.adminView.ScanHistoryModal.Tabs))
-		m.adminView.ScanHistoryModal.FindingCursor = 0
-		m.rebuildAdminTables(m.adminTablesLayout())
-		return m, nil
-	case isMoveLeftKey(msg):
-		return m.pageAdminScanHistory(-1)
-	case isMoveRightKey(msg):
-		return m.pageAdminScanHistory(1)
-	case isMoveUpKey(msg):
-		return m.moveAdminFindingCursor(-1)
-	case isMoveDownKey(msg):
-		return m.moveAdminFindingCursor(1)
-	case isEnterKey(msg):
-		return m.openSelectedAdminFindingLink()
-	}
-	return m, nil
-}
-
-// moveAdminFindingCursor moves the scan history modal's FindingCursor by
-// delta, bounded (boundedIndex, never wrapping) within the CURRENTLY ACTIVE
-// tab's own list length -- len(Detail.Findings) for Vulnerabilities,
-// len(Secrets) for Leaks -- distinct from Cursor (Left/Right, which
-// execution), the same "clamp, don't wrap" navigation pageAdminScanHistory
-// already uses.
-func (m Model) moveAdminFindingCursor(delta int) (tea.Model, tea.Cmd) {
-	modal := m.adminView.ScanHistoryModal
-	if len(modal.Tabs) == 0 {
-		return m, nil
-	}
-	active := modal.Tabs[boundedIndex(modal.ActiveTab, len(modal.Tabs))]
-	length := len(modal.Detail.Findings)
-	if active.Kind == adminScanHistoryTabLeaks {
-		length = len(modal.Secrets)
-	}
-	if length == 0 {
-		return m, nil
-	}
-	newCursor := boundedIndex(modal.FindingCursor+delta, length)
-	if newCursor == modal.FindingCursor {
-		return m, nil
-	}
-	m.adminView.ScanHistoryModal.FindingCursor = newCursor
-	m.rebuildAdminTables(m.adminTablesLayout())
-	return m, nil
-}
-
-// openSelectedAdminFindingLink resolves the finding at FindingCursor (only
-// on the Vulnerabilities tab -- secret findings carry no comparable external
-// link) and returns the tea.Cmd that opens its advisory link in the OS
-// default browser: ports.ScanRunFinding.PrimaryURL when set, else the
-// constructed NVD URL from VulnerabilityID. The side effect lives in the
-// returned Cmd (openAdminURLCmd), never here in the key handler itself
-// (Bubble Tea convention).
-func (m Model) openSelectedAdminFindingLink() (tea.Model, tea.Cmd) {
-	modal := m.adminView.ScanHistoryModal
-	if len(modal.Tabs) == 0 {
-		return m, nil
-	}
-	active := modal.Tabs[boundedIndex(modal.ActiveTab, len(modal.Tabs))]
-	if active.Kind != adminScanHistoryTabVulnerabilities {
-		return m, nil
-	}
-	findings := modal.Detail.Findings
-	if len(findings) == 0 {
-		return m, nil
-	}
-	finding := findings[boundedIndex(modal.FindingCursor, len(findings))]
-	link := adminFindingLink(finding)
-	if link == "" {
-		return m, nil
-	}
-	return m, openAdminURLCmd(link)
-}
-
-// pageAdminScanHistory moves the scan history modal's cursor by delta,
-// clamped (boundedIndex, not cycleIndex — paging stops at the ends rather
-// than wrapping), and re-fires the loadAdminScanRunDetailCmd/
-// loadAdminSecretScanFindingsCmd chain for the newly selected run so both
-// the Vulnerabilities and Leaks tabs stay scoped to whichever run is
-// currently navigated (spec.md "Scan Execution History Navigation").
-func (m Model) pageAdminScanHistory(delta int) (tea.Model, tea.Cmd) {
-	modal := m.adminView.ScanHistoryModal
-	if len(modal.Runs) == 0 {
-		return m, nil
-	}
-	newCursor := boundedIndex(modal.Cursor+delta, len(modal.Runs))
-	if newCursor == modal.Cursor {
-		return m, nil
-	}
-	m.adminView.ScanHistoryModal.Cursor = newCursor
-	m.adminView.ScanHistoryModal.Detail = ports.ScanRunDetail{}
-	m.adminView.ScanHistoryModal.Secrets = nil
-	m.adminView.ScanHistoryModal.Loading = true
-	m.adminView.ScanHistoryModal.Error = ""
-	m.adminView.ScanHistoryModal.FindingCursor = 0
-	run := modal.Runs[newCursor]
-	m.rebuildAdminTables(m.adminTablesLayout())
-	return m, m.loadAdminScanRunDetailCmd(run.ID)
-}
+// updateAdminScanHistoryModalKey/moveAdminFindingCursor/
+// openSelectedAdminFindingLink/pageAdminScanHistory moved onto
+// scanHistoryScreen (Phase 19, screen_scan_history.go): ScanHistoryModal
+// migrates off AdminViewState per design.md's State Migration table.
 
 func (m Model) updateAdminSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
@@ -3620,7 +3507,7 @@ func nextDelegateGrantRole(current domainauth.RepoRole) domainauth.RepoRole {
 
 func isAdminScreen(current screen) bool {
 	switch current {
-	case screenAdminLogin, screenAdminAuthenticating, screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken, screenRepoAdminGrants, screenRepoAdminAddGrant, screenAdminRobots, screenAdminCreateRobot, screenSecurityGitleaksRepos, screenSecuritySigningRepos, screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig:
+	case screenAdminLogin, screenAdminAuthenticating, screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken, screenRepoAdminGrants, screenRepoAdminAddGrant, screenAdminRobots, screenAdminCreateRobot, screenSecurityGitleaksRepos, screenSecuritySigningRepos, screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminMenu, screenAdminOperations, screenAdminScanRuns, screenAdminSecretFindings:
 		return true
 	default:
 		return false
@@ -3641,7 +3528,7 @@ func isAdminScreen(current screen) bool {
 // deliberately excluded, mirroring the free-text-form exclusion above.
 func isAdminPrincipalScreen(current screen) bool {
 	switch current {
-	case screenAdminLogin, screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminEditUserGrants, screenAdminEditUserTokens, screenRepoAdminGrants, screenAdminRobots, screenSecurityTrivy, screenSecurityGitleaksConfig, screenSecuritySigningConfig:
+	case screenAdminLogin, screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminEditUserGrants, screenAdminEditUserTokens, screenRepoAdminGrants, screenAdminRobots, screenSecurityTrivy, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminMenu, screenAdminOperations:
 		return true
 	default:
 		return false
@@ -3688,7 +3575,8 @@ func (m Model) canLogoutAdminFromCurrentScreen() bool {
 	case screenAdminUsers:
 		return !m.adminView.UserSearchActive
 	case screenAdminFeatures, screenAdminEditUser, screenAdminEditUserGrants, screenAdminEditUserTokens, screenRepoAdminGrants, screenAdminRobots,
-		screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenSecurityGitleaksRepos, screenSecuritySigningRepos:
+		screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenSecurityGitleaksRepos, screenSecuritySigningRepos,
+		screenAdminMenu, screenAdminOperations, screenAdminScanRuns, screenAdminSecretFindings:
 		return true
 	default:
 		return false
@@ -3924,7 +3812,10 @@ func (m *Model) clearSelectedAdminDetails() {
 	m.adminScreens[slotTrivyRepos] = nil
 	m.adminScreens[slotGitleaksConfig] = nil
 	m.adminScreens[slotSigningConfig] = nil
-	m.adminView.ScanHistoryModal = adminScanHistoryModal{}
+	// scanHistoryScreen (Phase 19) migrated off AdminViewState.ScanHistoryModal
+	// onto its own dedicated slot (design.md's State Migration table);
+	// un-mounted here exactly like the Security & Compliance screens above.
+	m.adminScreens[slotScanHistory] = nil
 	m.adminView.SelectedGrant = 0
 	m.adminView.SelectedToken = 0
 	m.adminView.ResetPasswordForm = adminResetPasswordForm{}
@@ -3933,7 +3824,6 @@ func (m *Model) clearSelectedAdminDetails() {
 	m.adminView.RevealedTokenSecret = ""
 	m.adminView.RevealedTokenAccessor = ""
 	m.adminView.RevealedTokenExpiresAt = time.Time{}
-	m.adminView.Tables = newAdminViewState().Tables
 }
 
 // applyLoadedFeatures/applyFeaturePage/selectedFeatureName/

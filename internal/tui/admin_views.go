@@ -47,14 +47,21 @@ func renderAdminWorkspace(current screen, session AdminSession, view AdminViewSt
 
 	var modalView string
 	switch {
-	case view.ScanHistoryModal.Active():
-		// The scan history modal keeps its own nested budget
+	case adminScreens[slotScanHistory] != nil:
+		// scanHistoryScreen (Phase 19) is never slotFor(current)-addressed
+		// (screen.go's slotScanHistory doc comment): current/body above
+		// already resolve to whichever screen opened it (m.screen never
+		// changes while it is mounted), so this composites on top exactly
+		// like the pre-migration ScanHistoryModal.Active() branch did. The
+		// scan history overlay keeps its own nested budget
 		// (adminScanHistoryModalRows): its table page size must be
 		// pre-built to match this budget, since its content is
 		// data-scrollable and cannot simply be clamped after the fact the
 		// way compositeOverlay clamps fixed-content modals.
-		baseBodyHeight := lipgloss.Height(body)
-		modalView = renderAdminScanHistoryModal(theme, view.ScanHistoryModal, view, adminScanHistoryModalRows(layout, baseBodyHeight))
+		if scan, ok := adminScreens[slotScanHistory].(scanHistoryScreen); ok {
+			baseBodyHeight := lipgloss.Height(body)
+			modalView = renderAdminScanHistoryModal(theme, scan.modal, scan.findings, scan.secretFindings, adminScanHistoryModalRows(layout, baseBodyHeight))
+		}
 	case view.Confirm.Active():
 		modalView = view.Confirm.view(theme)
 	case screenOverlay != "":
@@ -71,33 +78,6 @@ func renderAdminWorkspace(current screen, session AdminSession, view AdminViewSt
 		return base
 	}
 	return compositeOverlay(base, modalView, layout.Width, layout.Height)
-}
-
-// adminBaseBodyHeight measures the base Feature Page body's ACTUAL rendered
-// height the same way renderAdminWorkspace's modal-open branch does
-// (lipgloss.Height on the same body renderAdminWorkspace itself composites),
-// so callers that do not already have `body` in scope -- rebuildAdminTables
-// (admin_tables.go) runs from Update handlers, before View() ever renders --
-// can still measure the exact same thing renderAdminWorkspace measures.
-// Both call sites feeding adminScanHistoryModalRows must agree on this value
-// or the modal's table gets pre-built for one page size while
-// renderAdminWorkspace composites the modal into a differently-sized budget.
-//
-// Phase 11 deviation: resolves a migrated top-level screen (adminScreens,
-// slotFor) FIRST, mirroring renderAdminWorkspace's own resolution order --
-// trivyReposScreen (the only migrated screen this ever fires for today,
-// since ScanHistoryModal only opens from its Enter key) has a real body
-// height very different from whatever the legacy renderAdminScreen fallback
-// would have measured for the same screen id.
-func adminBaseBodyHeight(current screen, session AdminSession, view AdminViewState, knownRepositories []string, layout consoleLayout, now time.Time, adminScreens adminScreenSet) int {
-	theme := newAdminTheme()
-	if slot, ok := slotFor(current); ok && adminScreens[slot] != nil {
-		env := screenEnv{Session: session, Layout: layout, KnownRepositories: knownRepositories, Now: func() time.Time { return now }}
-		frame := adminScreens[slot].View(theme, env)
-		return lipgloss.Height(frame.Body)
-	}
-	_, body, _ := renderAdminScreen(theme, current, session, view, knownRepositories, layout, now)
-	return lipgloss.Height(body)
 }
 
 // adminScreenHelp returns the help line for an admin screen. Extracted from
@@ -393,13 +373,14 @@ func adminScanHistoryModalFooter(modal adminScanHistoryModal) string {
 	return fmt.Sprintf("Execution %d/%d — %s", cursor+1, len(modal.Runs), dateLabel)
 }
 
-// adminScanHistoryModalTableBody selects the active tab's table (Findings or
-// SecretFindings, reused as-is from view.Tables — design.md interfaces) or a
-// tab-appropriate empty state. When tableBudget cannot hold a bordered table
-// at all, it returns a single-line substitute instead of ever slicing one
-// (design.md "the table is replaced by a single-line substitute, never
-// sliced" — the fix for the historical orphaned "Showing x-y of N" bug).
-func adminScanHistoryModalTableBody(theme adminTheme, modal adminScanHistoryModal, view AdminViewState, tableBudget int) string {
+// adminScanHistoryModalTableBody selects the active tab's table (findings or
+// secretFindings, owned by scanHistoryScreen itself since Phase 19 -- design.md
+// Decision B) or a tab-appropriate empty state. When tableBudget cannot hold
+// a bordered table at all, it returns a single-line substitute instead of
+// ever slicing one (design.md "the table is replaced by a single-line
+// substitute, never sliced" — the fix for the historical orphaned
+// "Showing x-y of N" bug).
+func adminScanHistoryModalTableBody(theme adminTheme, modal adminScanHistoryModal, findings, secretFindings bubbletable.Model, tableBudget int) string {
 	if len(modal.Tabs) == 0 {
 		return theme.muted.Render("No tabs available.")
 	}
@@ -413,12 +394,12 @@ func adminScanHistoryModalTableBody(theme adminTheme, modal adminScanHistoryModa
 		if len(modal.Secrets) == 0 {
 			return theme.muted.Render("No secret findings recorded for this execution.")
 		}
-		return view.Tables.SecretFindings.View()
+		return secretFindings.View()
 	default:
 		if len(modal.Detail.Findings) == 0 {
 			return theme.muted.Render("No findings recorded for this execution.")
 		}
-		return view.Tables.Findings.View()
+		return findings.View()
 	}
 }
 
@@ -439,7 +420,7 @@ func adminScanHistoryModalTableBody(theme adminTheme, modal adminScanHistoryModa
 // because its table is pre-sized (via adminScanHistoryModalTablePageSize) to
 // fit modalRows exactly, or replaced by a one-line substitute when it
 // cannot.
-func renderAdminScanHistoryModal(theme adminTheme, modal adminScanHistoryModal, view AdminViewState, modalRows int) string {
+func renderAdminScanHistoryModal(theme adminTheme, modal adminScanHistoryModal, findings, secretFindings bubbletable.Model, modalRows int) string {
 	title := theme.subheading.Render(fmt.Sprintf("Scan History — %s", adminFirstNonEmpty(modal.Repository, "unknown")))
 	tabBar := adminScanHistoryModalTabBar(theme, modal)
 	footer := theme.muted.Render(adminScanHistoryModalFooter(modal))
@@ -462,7 +443,7 @@ func renderAdminScanHistoryModal(theme adminTheme, modal adminScanHistoryModal, 
 	}
 
 	tableBudget := modalRows - adminScanHistoryModalChromeRows - measuredHeaderHeight
-	tableBody := adminScanHistoryModalTableBody(theme, modal, view, tableBudget)
+	tableBody := adminScanHistoryModalTableBody(theme, modal, findings, secretFindings, tableBudget)
 
 	lines := []string{title, tabBar}
 	if header != "" {

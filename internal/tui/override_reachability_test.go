@@ -32,7 +32,8 @@ func TestEveryOverridePathReachableBeforeIsReachableAfter(t *testing.T) {
 			},
 		}
 		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
-		updated = runKey(t, updated, "f")
+		updated = runKey(t, updated, "down")
+		updated = runKey(t, updated, "enter")
 		updated = runKey(t, updated, "enter") // trivyConfigScreen
 		updated = runKey(t, updated, "tab")   // trivyReposScreen
 		updated = runKey(t, updated, "o")
@@ -54,7 +55,8 @@ func TestEveryOverridePathReachableBeforeIsReachableAfter(t *testing.T) {
 			featurePage:  ports.FeaturePage{Summary: ports.FeatureSummary{Name: "gitleaks", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 		}
 		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
-		updated = runKey(t, updated, "f")
+		updated = runKey(t, updated, "down")
+		updated = runKey(t, updated, "enter")
 		updated = runKey(t, updated, "enter") // gitleaksConfigScreen
 		updated = runKey(t, updated, "o")     // screenSecurityGitleaksRepos
 		updated = runKey(t, updated, "o")     // opens the override editor
@@ -73,7 +75,8 @@ func TestEveryOverridePathReachableBeforeIsReachableAfter(t *testing.T) {
 			featurePage:  ports.FeaturePage{Summary: ports.FeatureSummary{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: true}},
 		}
 		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
-		updated = runKey(t, updated, "f")
+		updated = runKey(t, updated, "down")
+		updated = runKey(t, updated, "enter")
 		updated = runKey(t, updated, "enter") // signingConfigScreen
 		updated = runKey(t, updated, "o")     // screenSecuritySigningRepos
 		updated = runKey(t, updated, "o")     // opens the override editor
@@ -95,13 +98,15 @@ func TestEveryOverridePathReachableBeforeIsReachableAfter(t *testing.T) {
 			},
 		}
 		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
-		updated = runKey(t, updated, "f")
+		updated = runKey(t, updated, "down")
+		updated = runKey(t, updated, "enter")
 		updated = runKey(t, updated, "enter") // trivyConfigScreen
 		updated = runKey(t, updated, "tab")   // trivyReposScreen
 		updated = runKey(t, updated, "enter")
 
-		if !updated.adminView.ScanHistoryModal.Active() {
-			t.Fatalf("ScanHistoryModal.Active() = false, want true -- Trivy's Enter drill-down to secret findings must still work unchanged")
+		scan, ok := updated.adminScreens[slotScanHistory].(scanHistoryScreen)
+		if !ok || !scan.modal.Active() {
+			t.Fatalf("adminScreens[slotScanHistory] = %#v, want an active scanHistoryScreen -- Trivy's Enter drill-down to secret findings must still work unchanged", updated.adminScreens[slotScanHistory])
 		}
 	})
 }

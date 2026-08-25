@@ -981,9 +981,7 @@ func TestAdminScanHistoryModalTableBodySubstitutesSingleLineWhenBudgetTooSmall(t
 		ActiveTab: 0,
 		Detail:    ports.ScanRunDetail{Findings: []ports.ScanRunFinding{{VulnerabilityID: "CVE-1"}}},
 	}
-	view := AdminViewState{}
-
-	got := adminScanHistoryModalTableBody(theme, modal, view, adminScanHistoryModalMinTableBudget-1)
+	got := adminScanHistoryModalTableBody(theme, modal, bubbletable.Model{}, bubbletable.Model{}, adminScanHistoryModalMinTableBudget-1)
 	if lipgloss.Height(got) != 1 {
 		t.Fatalf("adminScanHistoryModalTableBody() height = %d, want exactly 1 (single-line substitute, never a sliced bordered table)", lipgloss.Height(got))
 	}
@@ -1057,10 +1055,9 @@ func TestRenderAdminScanHistoryModalRendersExecutionsColumnWithCursorHighlighted
 		Cursor:     2,
 		Detail:     ports.ScanRunDetail{Findings: []ports.ScanRunFinding{{VulnerabilityID: "CVE-1"}}},
 	}
-	view := AdminViewState{}
-	view.Tables.Findings = buildAdminFindingsTable(theme, modal.Detail.Findings, 0, minTableRows)
+	findingsTable := buildAdminFindingsTable(theme, modal.Detail.Findings, 0, minTableRows)
 
-	got := renderAdminScanHistoryModal(theme, modal, view, 30)
+	got := renderAdminScanHistoryModal(theme, modal, findingsTable, bubbletable.Model{}, 30)
 
 	if !strings.Contains(got, "Executions") {
 		t.Fatalf("renderAdminScanHistoryModal() = %q, want the executions rail heading present", got)
@@ -1107,10 +1104,9 @@ func TestRenderAdminScanHistoryModalExecutionsColumnIsAScrollableWindowNotFullLi
 		Cursor:     0,
 		Detail:     ports.ScanRunDetail{Findings: []ports.ScanRunFinding{{VulnerabilityID: "CVE-1"}}},
 	}
-	view := AdminViewState{}
-	view.Tables.Findings = buildAdminFindingsTable(theme, modal.Detail.Findings, 0, minTableRows)
+	findingsTable := buildAdminFindingsTable(theme, modal.Detail.Findings, 0, minTableRows)
 
-	got := renderAdminScanHistoryModal(theme, modal, view, adminScanHistoryModalMinRows)
+	got := renderAdminScanHistoryModal(theme, modal, findingsTable, bubbletable.Model{}, adminScanHistoryModalMinRows)
 
 	lastLabel := adminScanHistoryModalExecutionRowLabel(adminScanHistoryWindowLimit-1, runs[adminScanHistoryWindowLimit-1])
 	if strings.Contains(got, lastLabel) {
@@ -1150,14 +1146,12 @@ func TestAdminScanHistoryModalTableBodyShowsEmptyLeaksStateAndKeepsTabVisible(t 
 		Detail:     ports.ScanRunDetail{Findings: []ports.ScanRunFinding{{VulnerabilityID: "CVE-1"}}},
 		Secrets:    nil, // no secret scan recorded for this execution's digest
 	}
-	view := AdminViewState{}
-
-	body := adminScanHistoryModalTableBody(theme, modal, view, adminScanHistoryModalMinTableBudget)
+	body := adminScanHistoryModalTableBody(theme, modal, bubbletable.Model{}, bubbletable.Model{}, adminScanHistoryModalMinTableBudget)
 	if !strings.Contains(body, "No secret findings recorded for this execution.") {
 		t.Fatalf("adminScanHistoryModalTableBody() = %q, want the explicit empty-state message when modal.Secrets is empty", body)
 	}
 
-	got := renderAdminScanHistoryModal(theme, modal, view, 20)
+	got := renderAdminScanHistoryModal(theme, modal, bubbletable.Model{}, bubbletable.Model{}, 20)
 	if !strings.Contains(got, "No secret findings recorded for this execution.") {
 		t.Fatalf("renderAdminScanHistoryModal() = %q, want the explicit empty-state message on the Leaks tab", got)
 	}
@@ -1189,16 +1183,17 @@ func TestRenderAdminWorkspaceKeepsBaseFullSizeAndLayersModalOnTopWhenOpen(t *tes
 	now := time.Date(2026, time.August, 12, 11, 0, 0, 0, time.UTC)
 	session := AdminSession{Username: "operator", ExpiresAt: now.Add(10 * time.Minute)}
 
-	view := AdminViewState{
-		ScanHistoryModal: adminScanHistoryModal{
-			Open:       true,
-			Repository: "acme/api",
-			Tabs:       newAdminScanHistoryTabs(),
-			Runs:       []ports.ScanRun{{ID: "run-1", Repository: "acme/api", CreatedAt: now}},
-			Detail:     ports.ScanRunDetail{Findings: []ports.ScanRunFinding{{VulnerabilityID: "CVE-1"}}},
-		},
+	view := AdminViewState{}
+	modal := adminScanHistoryModal{
+		Open:       true,
+		Repository: "acme/api",
+		Tabs:       newAdminScanHistoryTabs(),
+		Runs:       []ports.ScanRun{{ID: "run-1", Repository: "acme/api", CreatedAt: now}},
+		Detail:     ports.ScanRunDetail{Findings: []ports.ScanRunFinding{{VulnerabilityID: "CVE-1"}}},
 	}
-	view.Tables.Findings = buildAdminFindingsTable(theme, view.ScanHistoryModal.Detail.Findings, 0, minTableRows)
+	findingsTable := buildAdminFindingsTable(theme, modal.Detail.Findings, 0, minTableRows)
+	screens := adminScreenSet{}
+	screens[slotScanHistory] = scanHistoryScreen{returnTo: screenAdminFeatures, modal: modal, findings: findingsTable}
 
 	layout := contentBudget(defaultViewportWidth, defaultViewportHeight, "", adminScreenHelp(screenAdminFeatures, view))
 
@@ -1210,7 +1205,7 @@ func TestRenderAdminWorkspaceKeepsBaseFullSizeAndLayersModalOnTopWhenOpen(t *tes
 	standaloneContext, standaloneBody, standaloneHelp := renderAdminScreen(theme, screenAdminFeatures, session, view, nil, layout, now)
 	wantBase := renderConsoleWorkspace("Regixtry Admin", standaloneContext, standaloneBody, "", standaloneHelp, statusKindAuto)
 
-	got := renderAdminWorkspace(screenAdminFeatures, session, view, nil, "", layout, now, adminScreenSet{})
+	got := renderAdminWorkspace(screenAdminFeatures, session, view, nil, "", layout, now, screens)
 
 	// Property 2: layered on top, not appended below -- the composite must
 	// fit exactly within the canvas (layout.Width x layout.Height), never
@@ -1254,19 +1249,18 @@ func TestRenderAdminWorkspaceLeavesVisibleMarginAroundModalWhenOpen(t *testing.T
 	now := time.Date(2026, time.August, 12, 11, 0, 0, 0, time.UTC)
 	session := AdminSession{Username: "operator", ExpiresAt: now.Add(10 * time.Minute)}
 
-	view := AdminViewState{
-		ScanHistoryModal: adminScanHistoryModal{
-			Open:       true,
-			Repository: "web-dvwa",
-			Tabs:       newAdminScanHistoryTabs(),
-			Runs:       []ports.ScanRun{{ID: "run-1", Repository: "web-dvwa", CreatedAt: now}},
-			Detail: ports.ScanRunDetail{Findings: []ports.ScanRunFinding{
-				{VulnerabilityID: "CVE-2016-9841", Severity: "CRITICAL", PackageName: "rsync", Fixable: true},
-				{VulnerabilityID: "CVE-2017-12424", Severity: "CRITICAL", PackageName: "login", Fixable: true},
-			}},
-		},
+	view := AdminViewState{}
+	modal := adminScanHistoryModal{
+		Open:       true,
+		Repository: "web-dvwa",
+		Tabs:       newAdminScanHistoryTabs(),
+		Runs:       []ports.ScanRun{{ID: "run-1", Repository: "web-dvwa", CreatedAt: now}},
+		Detail: ports.ScanRunDetail{Findings: []ports.ScanRunFinding{
+			{VulnerabilityID: "CVE-2016-9841", Severity: "CRITICAL", PackageName: "rsync", Fixable: true},
+			{VulnerabilityID: "CVE-2017-12424", Severity: "CRITICAL", PackageName: "login", Fixable: true},
+		}},
 	}
-	view.Tables.Findings = buildAdminFindingsTable(theme, view.ScanHistoryModal.Detail.Findings, 0, minTableRows)
+	findingsTable := buildAdminFindingsTable(theme, modal.Detail.Findings, 0, minTableRows)
 
 	layout := contentBudget(defaultViewportWidth, defaultViewportHeight, "", "")
 
@@ -1289,6 +1283,7 @@ func TestRenderAdminWorkspaceLeavesVisibleMarginAroundModalWhenOpen(t *testing.T
 	repos.rebuildTable(screenEnv{Layout: layout})
 	screens := adminScreenSet{}
 	screens[slotTrivyRepos] = repos
+	screens[slotScanHistory] = scanHistoryScreen{returnTo: screenSecurityTrivyRepos, modal: modal, findings: findingsTable}
 
 	// Compute the modal's own footprint the exact same way
 	// renderAdminWorkspace does, so this test does not hardcode numbers that
@@ -1296,7 +1291,7 @@ func TestRenderAdminWorkspaceLeavesVisibleMarginAroundModalWhenOpen(t *testing.T
 	standaloneFrame := repos.View(theme, screenEnv{Layout: layout})
 	standaloneHelp := shortHelpView(theme, repos.Keys())
 	standaloneBaseWorkspace := renderConsoleWorkspace("Regixtry Admin", standaloneFrame.Context, standaloneFrame.Body, "", standaloneHelp, statusKindAuto)
-	modalView := renderAdminScanHistoryModal(theme, view.ScanHistoryModal, view, adminScanHistoryModalRows(layout, lipgloss.Height(standaloneFrame.Body)))
+	modalView := renderAdminScanHistoryModal(theme, modal, findingsTable, bubbletable.Model{}, adminScanHistoryModalRows(layout, lipgloss.Height(standaloneFrame.Body)))
 	overlayWidth := lipgloss.Width(modalView)
 	overlayHeight := lipgloss.Height(modalView)
 	x := (layout.Width - overlayWidth) / 2
@@ -1376,19 +1371,17 @@ func TestRenderAdminWorkspaceModalNeverExtendsPastBaseBodysOwnBottomBorder(t *te
 	theme := newAdminTheme()
 	now := time.Date(2026, time.August, 12, 11, 0, 0, 0, time.UTC)
 
-	view := AdminViewState{
-		ScanHistoryModal: adminScanHistoryModal{
-			Open:       true,
-			Repository: "web-dvwa",
-			Tabs:       newAdminScanHistoryTabs(),
-			Runs:       []ports.ScanRun{{ID: "run-1", Repository: "web-dvwa", CreatedAt: now}},
-			Detail: ports.ScanRunDetail{Findings: []ports.ScanRunFinding{
-				{VulnerabilityID: "CVE-2016-9841", Severity: "CRITICAL", PackageName: "rsync", Fixable: true},
-				{VulnerabilityID: "CVE-2017-12424", Severity: "CRITICAL", PackageName: "login", Fixable: true},
-			}},
-		},
+	modal := adminScanHistoryModal{
+		Open:       true,
+		Repository: "web-dvwa",
+		Tabs:       newAdminScanHistoryTabs(),
+		Runs:       []ports.ScanRun{{ID: "run-1", Repository: "web-dvwa", CreatedAt: now}},
+		Detail: ports.ScanRunDetail{Findings: []ports.ScanRunFinding{
+			{VulnerabilityID: "CVE-2016-9841", Severity: "CRITICAL", PackageName: "rsync", Fixable: true},
+			{VulnerabilityID: "CVE-2017-12424", Severity: "CRITICAL", PackageName: "login", Fixable: true},
+		}},
 	}
-	view.Tables.Findings = buildAdminFindingsTable(theme, view.ScanHistoryModal.Detail.Findings, 0, minTableRows)
+	findingsTable := buildAdminFindingsTable(theme, modal.Detail.Findings, 0, minTableRows)
 
 	// Phase 11: the Repository Alerts summary table (realistic content,
 	// well under 30 rows total, so the base body renders at its natural,
@@ -1423,7 +1416,7 @@ func TestRenderAdminWorkspaceModalNeverExtendsPastBaseBodysOwnBottomBorder(t *te
 			baseWorkspace := renderConsoleWorkspace("Regixtry Admin", baseFrame.Context, baseBody, "", baseHelp, statusKindAuto)
 
 			modalRows := adminScanHistoryModalRows(layout, baseBodyHeight)
-			modalView := renderAdminScanHistoryModal(theme, view.ScanHistoryModal, view, modalRows)
+			modalView := renderAdminScanHistoryModal(theme, modal, findingsTable, bubbletable.Model{}, modalRows)
 
 			overlayHeight := lipgloss.Height(modalView)
 			if overlayHeight > layout.Height {
@@ -1462,8 +1455,7 @@ func TestRenderAdminScanHistoryModalNeverAppliesFitLinesOverComposite(t *testing
 	}
 	const pageSize = 5 // 30 findings over pageSize 5 -> 6 pages, forces the table's own internal pagination
 
-	view := AdminViewState{}
-	view.Tables.Findings = buildAdminFindingsTable(theme, findings, 0, pageSize)
+	findingsTable := buildAdminFindingsTable(theme, findings, 0, pageSize)
 
 	modal := adminScanHistoryModal{
 		Open:       true,
@@ -1474,7 +1466,7 @@ func TestRenderAdminScanHistoryModalNeverAppliesFitLinesOverComposite(t *testing
 		Detail:     ports.ScanRunDetail{Findings: findings},
 	}
 
-	got := renderAdminScanHistoryModal(theme, modal, view, 20)
+	got := renderAdminScanHistoryModal(theme, modal, findingsTable, bubbletable.Model{}, 20)
 
 	if strings.Contains(got, "Showing ") {
 		t.Fatalf("renderAdminScanHistoryModal() output contains an outer fitLines indicator (\"Showing \" substring) — the modal must never apply fitLines over a composite containing a bordered table:\n%s", got)
