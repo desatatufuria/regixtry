@@ -376,7 +376,7 @@ fails until it is.
 | `TrivyConfigModal` (:490) | `trivyConfigScreen` (`screenSecurityTrivy`) | `cfg trivyConfigModal` |
 | `ScanPolicy` (:499) | `trivyConfigScreen` | `policy ports.ScanPolicySettings` |
 | `ScanPolicyModal` (:500) | `trivyConfigScreen` | `policyModal scanPolicyModal` |
-| `FeaturePage` (:479), trivy's | `trivyConfigScreen` | `page ports.FeaturePage` |
+| `FeaturePage` (:479), trivy's slice | `trivyConfigScreen` | `page ports.FeaturePage` |
 | `Tables.FeatureRows["trivy"]` (:460) | `trivyConfigScreen` | `rows bubbletable.Model` |
 | `TrivyTab` (:489) | *deleted* — becomes screen identity (Decision I) | — |
 | `TrivySummaries` (:522) | `trivyReposScreen` (`screenSecurityTrivyRepos`) | `summaries []repositorySummary` |
@@ -388,8 +388,35 @@ fails until it is.
 | `RepositoryOverrideModal` (:531) | `trivyReposScreen` | `editor overrideEditor` (feature fixed = `trivy`) |
 | `ScanHistoryModal` (:526) | `scanHistoryScreen` (Operations, Slice 3) | whole struct + `returnTo screen` |
 | `GitleaksConfigModal` (:494) | `gitleaksConfigScreen` (**Slice 1**) | `cfg gitleaksConfigModal` |
+| `FeaturePage` (:479), gitleaks' slice | `gitleaksConfigScreen` | `page ports.FeaturePage` |
 | `SigningPolicy` (:505), `SigningPolicyModal` (:506) | `signingConfigScreen` | `policy`, `policyModal` |
+| `FeaturePage` (:479), signing's slice | `signingConfigScreen` | `page ports.FeaturePage` |
 | `Features`, `SelectedFeature`, `Tables.Features` | `securityMenuScreen` (`screenAdminFeatures`, repurposed) | `features`, `selected`, `table` |
+
+**Resolved gap (addendum, post-Slice-2-batch-1):** `AdminViewState.FeaturePage` was a
+single field shared across all three features today (set generically by
+`loadAdminFeaturePageCmd(m.selectedFeatureName())` for whichever feature was
+selected in the flat list). The rows above were originally written only for
+Trivy's slice, leaving Gitleaks'/Signing's ownership unassigned — flagged and
+correctly stopped-on, not guessed through, by the apply agent that completed
+Phase 12.3. Resolution, consistent with Decision D4 (no shared cross-screen
+state) and Decision F/J's existing symmetric treatment of the three features:
+**each of `trivyConfigScreen`, `gitleaksConfigScreen`, and `signingConfigScreen`
+independently owns its own `page ports.FeaturePage`**, loaded via
+`loadAdminFeaturePageCmd` scoped to that screen's own fixed feature name — never
+a shared field on `securityMenuScreen` or anywhere else. `featureActionForKey`/
+`featureActionHelp` (model.go:3900,3923 — the enable/disable/install/upgrade
+action dispatch, currently reading the shared field) move onto each screen's own
+`Update`/`Keys`, called with that screen's own `page`. `securityMenuScreen`
+itself stays exactly what its own row already says: a bare 3-row peer list
+(`features`, `selected`, `table`) with no page/action state of its
+own — Enter on a row navigates into that feature's own screen, which loads its
+own page independently. `gitleaksConfigScreen`/`signingConfigScreen` (currently
+overlays mounted on the still-legacy `screenAdminFeatures`, per Slice 1/this
+batch) become properly addressable top-level screens via `slotFor` once
+`securityMenuScreen` replaces `screenAdminFeatures` — this was always implied by
+the `Features`/`SelectedFeature`/`Tables.Features` row above, not a new
+architectural change.
 
 **Gitleaks / Signing override screens (new state, modeled on `trivyReposScreen`).**
 
