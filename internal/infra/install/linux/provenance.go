@@ -59,6 +59,8 @@ type LifecycleIntent struct {
 	TrivyCacheDir              string `json:"trivy_cache_dir,omitempty"`
 	TrivyBinaryPath            string `json:"trivy_binary_path,omitempty"`
 	TrivyMaxConcurrency        int    `json:"trivy_max_concurrency,omitempty"`
+	DeleteEnabled              bool   `json:"delete_enabled,omitempty"`
+	GCDeleteEnabled            bool   `json:"gc_delete_enabled,omitempty"`
 }
 
 type CleanupItem struct {
@@ -109,6 +111,8 @@ func lifecycleProvenanceFromPlan(plan BootstrapPlan, receipt BootstrapReceipt) L
 			UnitPath:           plan.UnitPath,
 			BinaryPath:         plan.BinaryPath,
 			ServiceName:        plan.ServiceName,
+			DeleteEnabled:      plan.DeleteEnabled,
+			GCDeleteEnabled:    plan.GCDeleteEnabled,
 		},
 	}
 }

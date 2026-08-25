@@ -50,6 +50,8 @@ type BootstrapConfig struct {
 	TrivyCacheDir              string
 	TrivyBinaryPath            string
 	TrivyMaxConcurrency        int
+	DeleteEnabled              bool
+	GCDeleteEnabled            bool
 	NoStart                    bool
 	Rollback                   bool
 }
@@ -365,6 +367,8 @@ func (b *Bootstrapper) plan(cfg BootstrapConfig) (BootstrapPlan, BootstrapReceip
 		TrivyCacheDir:        defaultTrivyCacheDir(strings.TrimSpace(cfg.TrivyCacheDir), storageRoot),
 		TrivyBinaryPath:      defaultTrivyBinaryPath(strings.TrimSpace(cfg.TrivyBinaryPath)),
 		TrivyMaxConcurrency:  defaultTrivyMaxConcurrency(cfg.TrivyMaxConcurrency),
+		DeleteEnabled:        cfg.DeleteEnabled,
+		GCDeleteEnabled:      cfg.GCDeleteEnabled,
 	}
 
 	receipt := bootstrapReceiptFromPlan(plan)
