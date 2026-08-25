@@ -2,8 +2,6 @@ package tui
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"sort"
 	"strconv"
@@ -16,6 +14,7 @@ import (
 	bubbletable "github.com/evertras/bubble-table/table"
 	appregixtry "regixtry/internal/app/regixtry"
 	domainauth "regixtry/internal/domain/auth"
+	"regixtry/internal/domain/signing"
 	"regixtry/internal/ports"
 )
 
