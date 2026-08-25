@@ -234,9 +234,20 @@ func (s signingConfigScreen) updateConfigKey(env screenEnv, msg tea.KeyMsg) (adm
 	// Space-toggled/cycled, never rune-typed, so there is no other field in
 	// this modal that could ever claim these keys as literal input; routing
 	// them here first is safe.
+	//
+	// Judgment Day fix-round: unconditional routing alone left the visible
+	// Tab-focus indicator free to disagree with what actually responded to
+	// the keystroke -- pressing 'n' while "Unsigned Self-Read" was
+	// highlighted silently acted on the key list instead, with no on-screen
+	// sign focus had effectively moved. The moment s.cfg.Keys.update
+	// actually CONSUMES a key, snap s.cfg.Focus to signingPolicyFieldAddKey
+	// too, so the rendered highlight (renderSigningPolicyModal's
+	// modal.Focus == signingPolicyFieldAddKey check) is always honest about
+	// what is currently receiving input.
 	next, cmd, consumed := s.cfg.Keys.update(env, msg)
 	if consumed {
 		s.cfg.Keys = next
+		s.cfg.Focus = signingPolicyFieldAddKey
 		return s, cmd, true
 	}
 	switch {

@@ -89,6 +89,38 @@ func TestOverrideEditorSigningKeyListDeleteReachableWithoutTabbingToIt(t *testin
 	}
 }
 
+// TestOverrideEditorSigningKeyListInteractionSnapsFocusToTheKeyList is the
+// Judgment Day fix-round RED test for the "invisible focus drift" finding
+// (both judges): TestOverrideEditorSigningKeyListReachableWithoutTabbingToIt
+// already proves 'n' reaches the embedded trustedKeyList even while Tab-focus
+// visually sits elsewhere (e.g. still on overrideFieldEnabled), but never
+// asserted that the editor's OWN focus indicator moves to match -- so the
+// rendered highlight (renderOverrideEditor's e.currentField() ==
+// overrideFieldPathPrimary check) silently disagreed with what was actually
+// responding to input. The moment e.keys.update consumes a key, e.focus must
+// snap to overrideFieldPathPrimary's position so the visible indicator and
+// the actual interaction target stay in sync.
+func TestOverrideEditorSigningKeyListInteractionSnapsFocusToTheKeyList(t *testing.T) {
+	t.Parallel()
+
+	env := screenEnv{}
+	editor := newOverrideEditor(signingFeatureName, "team/api")
+	if editor.currentField() == overrideFieldPathPrimary {
+		t.Fatal("test setup invalid: default focus is already overrideFieldPathPrimary")
+	}
+
+	next, _, consumed := editor.update(env, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	if !consumed {
+		t.Fatal("'n' with focus elsewhere: consumed = false, want true")
+	}
+	if !next.keys.adding {
+		t.Fatal("'n' did not reach the embedded trustedKeyList: adding = false, want true")
+	}
+	if next.currentField() != overrideFieldPathPrimary {
+		t.Fatalf("currentField() = %v after 'n' actually moved focus to the key list, want overrideFieldPathPrimary (the visible focus indicator must match what actually responded to the keystroke)", next.currentField())
+	}
+}
+
 func TestOverrideEditorFieldsAreImmutableAfterConstruction(t *testing.T) {
 	t.Parallel()
 

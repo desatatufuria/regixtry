@@ -97,6 +97,18 @@ func (e overrideEditor) Feature() string { return e.feature }
 // Active reports whether the editor is currently open.
 func (e overrideEditor) Active() bool { return e.open }
 
+// indexOfOverrideField returns the index of target within fields, or -1 if
+// fields does not contain it -- used to snap e.focus to the key list's own
+// position once it has actually consumed a key (see update's doc comment).
+func indexOfOverrideField(fields []overrideField, target overrideField) int {
+	for i, field := range fields {
+		if field == target {
+			return i
+		}
+	}
+	return -1
+}
+
 func (e overrideEditor) currentField() overrideField {
 	if len(e.fields) == 0 {
 		return overrideFieldClear
@@ -129,10 +141,23 @@ func (e overrideEditor) update(env screenEnv, msg tea.KeyMsg) (overrideEditor, t
 	// every rune when feature == signing (see their own doc comments), so
 	// there is no other field in the signing form that could ever claim
 	// these keys as literal input; routing them here first is safe.
+	//
+	// Judgment Day fix-round: unconditional routing alone left the visible
+	// Tab-focus indicator free to disagree with what actually responded to
+	// the keystroke -- pressing 'x' while "Clear override" was highlighted
+	// silently acted on the key list instead, with no on-screen sign focus
+	// had effectively moved. The moment e.keys.update actually CONSUMES a
+	// key, snap e.focus to the key list's own field position too, so the
+	// rendered highlight (renderOverrideEditor's
+	// e.currentField() == overrideFieldPathPrimary check) is always honest
+	// about what is currently receiving input.
 	if e.feature == signingFeatureName {
 		next, cmd, consumed := e.keys.update(env, msg)
 		if consumed {
 			e.keys = next
+			if idx := indexOfOverrideField(e.fields, overrideFieldPathPrimary); idx >= 0 {
+				e.focus = idx
+			}
 			return e, cmd, true
 		}
 	}
