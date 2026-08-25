@@ -164,6 +164,45 @@ func TestOverrideEditorPrefillSeedsNeverConfiguredOverrideWithGlobalKeys(t *test
 	}
 }
 
+// TestOverrideEditorPrefillAppliesWhenGlobalPolicyLoadResolvesBeforeOverrideLoad
+// is Judgment Day round-2's CRITICAL finding: applyGlobalPolicyLoaded is the
+// only call site of maybeApplyGlobalPrefill, but its own guard requires
+// !e.loading -- which is still true until applyLoaded runs. If the global
+// policy's response resolves FIRST (a real reachable ordering: both loads
+// are independent async Cmds, and a signing policy load can already be in
+// flight from a screen the operator recently visited), the prefill silently
+// no-ops here, and applyLoaded itself never re-checks it -- only re-fires a
+// second loadSigningPolicyCmd, which is a fragile, redundant recovery path,
+// not the "order-independent" guarantee maybeApplyGlobalPrefill's own doc
+// comment claims.
+func TestOverrideEditorPrefillAppliesWhenGlobalPolicyLoadResolvesBeforeOverrideLoad(t *testing.T) {
+	t.Parallel()
+
+	env := screenEnv{}
+	editor := newOverrideEditor(signingFeatureName, "team/api")
+
+	globalKeys := []string{trustedKeyListTestPEM1, trustedKeyListTestPEM2}
+	editor = editor.applyGlobalPolicyLoaded(adminSigningPolicyLoadedMsg{
+		settings: ports.SigningPolicySettings{TrustedPublicKeys: globalKeys},
+	})
+	if editor.prefillApplied {
+		t.Fatal("prefillApplied = true before the override's own load resolved, want false (still loading)")
+	}
+
+	editor, _ = editor.applyLoaded(env, adminRepositoryOverrideLoadedMsg{
+		repository: "team/api",
+		feature:    signingFeatureName,
+		exists:     false,
+	})
+
+	if got := editor.keys.Keys(); !reflect.DeepEqual(got, globalKeys) {
+		t.Fatalf("keys = %v after the override load resolved (global policy already arrived), want %v", got, globalKeys)
+	}
+	if !editor.prefillApplied {
+		t.Fatal("prefillApplied = false after both loads resolved, want true")
+	}
+}
+
 // TestOverrideEditorPrefillNeverOverwritesAnExistingOverridesOwnKeys is the
 // other half of Fix 4's own named requirement: an override that already has
 // its own stored keys (exists == true) must never have them replaced by the

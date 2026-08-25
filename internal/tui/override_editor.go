@@ -261,7 +261,20 @@ func (e overrideEditor) applyLoaded(env screenEnv, msg adminRepositoryOverrideLo
 		return e, nil
 	}
 	e.applyOverride(msg.override, msg.exists)
-	if e.feature == signingFeatureName && !e.exists {
+	if e.feature != signingFeatureName {
+		return e, nil
+	}
+	// The global policy load can resolve before this override load does
+	// (both are independent async Cmds; a signing policy load may already
+	// be in flight from a screen the operator recently visited) -- so
+	// applyGlobalPolicyLoaded's own maybeApplyGlobalPrefill call is not
+	// enough on its own: its !e.loading guard blocks it while this load is
+	// still pending. Re-checking here makes the prefill genuinely
+	// order-independent, matching maybeApplyGlobalPrefill's own doc comment,
+	// instead of relying on a second, redundant loadSigningPolicyCmd to
+	// self-heal the case where the global load won the race.
+	e = e.maybeApplyGlobalPrefill()
+	if !e.exists && !e.prefillApplied {
 		return e, loadSigningPolicyCmd(env)
 	}
 	return e, nil
