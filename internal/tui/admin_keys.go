@@ -5,6 +5,7 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"regixtry/internal/ports"
 )
 
 // noOpStyle is lipgloss.Style's zero value: Render(s) returns s unchanged.
@@ -67,23 +68,59 @@ func shortHelpView(theme adminTheme, keys screenKeys) string {
 	return h.ShortHelpView(bindings)
 }
 
-// gitleaksConfigKeys is the Slice 1 proof screen's key.Map (design.md
-// Interfaces section), matching admin_views.go:789's 4 pre-change
-// hand-written bindings exactly.
-var gitleaksConfigKeys = screenKeys{short: []key.Binding{
+// gitleaksConfigModalKeys is gitleaksConfigScreen's OWN global config modal
+// key.Map (design.md Interfaces section), matching admin_views.go:789's 4
+// pre-change hand-written bindings exactly. Renamed from gitleaksConfigKeys
+// in Phase 11 once gitleaksConfigScreen was promoted to a top-level screen
+// (screenSecurityGitleaksConfig) with its own base-page Keys() -- mirrors
+// signingConfigModalKeys' own rename for the identical reason.
+var gitleaksConfigModalKeys = screenKeys{short: []key.Binding{
 	key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", "save")),
 	key.NewBinding(key.WithKeys("tab"), key.WithHelp("Tab", "next field")),
 	key.NewBinding(key.WithKeys(" "), key.WithHelp("Space", "toggle")),
 	key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "cancel")),
 }}
 
-// signingConfigKeys is signingConfigScreen's key.Map (Phase 12.3), matching
-// admin_views.go's pre-move hand-written signing policy modal footer
-// exactly: "Enter: save/add key | Tab: next field | Space: toggle/cycle |
-// Esc: cancel".
-var signingConfigKeys = screenKeys{short: []key.Binding{
+// signingConfigModalKeys is signingConfigScreen's OWN global policy modal
+// key.Map (Phase 12.3), matching admin_views.go's pre-move hand-written
+// signing policy modal footer exactly: "Enter: save/add key | Tab: next
+// field | Space: toggle/cycle | Esc: cancel". Renamed from signingConfigKeys
+// in Phase 11 once signingConfigScreen was promoted to a top-level screen
+// (screenSecuritySigningConfig) with its own base-page Keys(): this var now
+// backs only the MODAL's own overlay keymap, one of several the promoted
+// screen's Keys() method switches between (mirroring trivyConfigScreen's
+// own conditional Keys()).
+var signingConfigModalKeys = screenKeys{short: []key.Binding{
 	key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", "save/add key")),
 	key.NewBinding(key.WithKeys("tab"), key.WithHelp("Tab", "next field")),
 	key.NewBinding(key.WithKeys(" "), key.WithHelp("Space", "toggle/cycle")),
 	key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "cancel")),
 }}
+
+// featureActionKeyBindings returns dynamic key.Binding values for whichever
+// of enable/disable/install-runtime/upgrade-runtime/rollback-runtime
+// page.Actions declares -- mirrors the retired featureActionHelp's switch
+// (model.go) as bindings instead of a formatted string, so a migrated
+// screen's Keys() composes them with shortHelpView and help can never drift
+// from what a key actually does (design.md Decision A). Shared by
+// trivyConfigScreen/gitleaksConfigScreen/signingConfigScreen (the Phase 11
+// resolved-gap addendum: each independently owns this dispatch, but the
+// pure mapping itself is the same for all three).
+func featureActionKeyBindings(page ports.FeaturePage) []key.Binding {
+	var bindings []key.Binding
+	for _, action := range page.Actions {
+		switch action.ID {
+		case "enable":
+			bindings = append(bindings, key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "enable")))
+		case "disable":
+			bindings = append(bindings, key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "disable")))
+		case "install-runtime":
+			bindings = append(bindings, key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "install runtime")))
+		case "upgrade-runtime":
+			bindings = append(bindings, key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "upgrade runtime")))
+		case "rollback-runtime":
+			bindings = append(bindings, key.NewBinding(key.WithKeys("b"), key.WithHelp("b", "rollback runtime")))
+		}
+	}
+	return bindings
+}

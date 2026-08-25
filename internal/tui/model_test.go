@@ -172,10 +172,16 @@ func TestModelResizeTallerRebuildsAdminTablesToShowMoreRowsWithoutRestart(t *tes
 	result := updated.(Model)
 	result.screen = screenAdminFeatures
 	result.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: time.Now().Add(time.Hour)}
-	result.adminView.Features = make([]ports.FeatureSummary, 40)
-	for i := range result.adminView.Features {
-		result.adminView.Features[i] = ports.FeatureSummary{Name: fmt.Sprintf("feature-%d", i)}
+	features := make([]ports.FeatureSummary, 40)
+	for i := range features {
+		features[i] = ports.FeatureSummary{Name: fmt.Sprintf("feature-%d", i)}
 	}
+	// Phase 11: Features/Tables.Features moved off AdminViewState onto
+	// securityMenuScreen (design.md's State Migration table) -- mounted
+	// here exactly like production (openAdminFeatures).
+	menu := securityMenuScreen{features: features, loaded: true}
+	menu.rebuildTable(result.screenEnv())
+	result.adminScreens[slotSecurityMenu] = menu
 	result.rebuildAdminTables(result.adminTablesLayout())
 	beforePageSize := result.adminView.Layout.Primary
 
@@ -185,8 +191,12 @@ func TestModelResizeTallerRebuildsAdminTablesToShowMoreRowsWithoutRestart(t *tes
 	if got := afterModel.adminView.Layout.Primary; got <= beforePageSize {
 		t.Fatalf("primary pageSize after taller resize = %d, want > %d (before resize) — resize must recompute the table budget without restart", got, beforePageSize)
 	}
+	afterMenu, ok := afterModel.adminScreens[slotSecurityMenu].(securityMenuScreen)
+	if !ok {
+		t.Fatal("adminScreens[slotSecurityMenu] not a securityMenuScreen after resize")
+	}
 	wantHeight := afterModel.adminView.Layout.Primary + tableChromeRows
-	if got := lipgloss.Height(afterModel.adminView.Tables.Features.View()); got != wantHeight {
+	if got := lipgloss.Height(afterMenu.table.View()); got != wantHeight {
 		t.Fatalf("features table height after resize = %d, want pageSize(%d)+tableChromeRows = %d", got, afterModel.adminView.Layout.Primary, wantHeight)
 	}
 }
@@ -204,10 +214,6 @@ func TestModelResizeShorterRebuildsAdminTablesWithoutExceedingViewport(t *testin
 	result := updated.(Model)
 	result.screen = screenAdminFeatures
 	result.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: time.Now().Add(time.Hour)}
-	result.adminView.Features = make([]ports.FeatureSummary, 40)
-	for i := range result.adminView.Features {
-		result.adminView.Features[i] = ports.FeatureSummary{Name: fmt.Sprintf("feature-%d", i)}
-	}
 	result.rebuildAdminTables(result.adminTablesLayout())
 	beforePageSize := result.adminView.Layout.Primary
 
@@ -1695,6 +1701,7 @@ func TestAdminConfirmCharacterization(t *testing.T) {
 				}
 				m := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
 				m = runKey(t, m, "f")
+				m = runKey(t, m, "enter")
 				return m, adminClient
 			},
 			openKey:        "e",
@@ -1714,6 +1721,7 @@ func TestAdminConfirmCharacterization(t *testing.T) {
 				}
 				m := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
 				m = runKey(t, m, "f")
+				m = runKey(t, m, "enter")
 				return m, adminClient
 			},
 			openKey:        "x",
@@ -2147,14 +2155,28 @@ func TestModelFeatureViewRendersGenericPageAndAllowsDeclaredAction(t *testing.T)
 	updated := runAdminLogin(t, model, "operator", "secret-pass")
 	updated = runKey(t, updated, "f")
 
+	// Phase 11 (design.md Decision I): 'f' lands on securityMenuScreen, the
+	// bare Security & Compliance peer list -- no Feature Page detail until
+	// Enter navigates into the highlighted feature's own screen.
 	if updated.screen != screenAdminFeatures {
 		t.Fatalf("screen = %q, want %q", updated.screen, screenAdminFeatures)
 	}
-	if adminClient.listFeaturesCalls != 1 || adminClient.getFeaturePageCalls != 1 {
-		t.Fatalf("feature client calls = %#v, want one feature list + one page read", adminClient)
+	if adminClient.listFeaturesCalls != 1 {
+		t.Fatalf("listFeaturesCalls = %d, want 1", adminClient.listFeaturesCalls)
+	}
+	if !strings.Contains(updated.View(), "Built-in Features") || !strings.Contains(updated.View(), "trivy") {
+		t.Fatalf("view = %q, want the Security & Compliance menu listing trivy", updated.View())
+	}
+
+	updated = runKey(t, updated, "enter")
+	if updated.screen != screenSecurityTrivy {
+		t.Fatalf("screen = %q, want %q", updated.screen, screenSecurityTrivy)
+	}
+	if adminClient.getFeaturePageCalls != 1 {
+		t.Fatalf("getFeaturePageCalls = %d, want one page read", adminClient.getFeaturePageCalls)
 	}
 	view := updated.View()
-	for _, want := range []string{"Built-in Features", "trivy", "Configuration", "Runtime", "Version: 0.57.1", "x: disable"} {
+	for _, want := range []string{"Configuration", "Runtime", "Version: 0.57.1", "x: disable"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view = %q, want %q", view, want)
 		}
@@ -2169,8 +2191,8 @@ func TestModelFeatureViewRendersGenericPageAndAllowsDeclaredAction(t *testing.T)
 	if adminClient.executeFeatureActionCalls != 1 || adminClient.lastFeatureAction != "disable" {
 		t.Fatalf("feature action calls = %#v, want one disable action", adminClient)
 	}
-	if updated.screen != screenAdminFeatures {
-		t.Fatalf("screen = %q, want %q after disable", updated.screen, screenAdminFeatures)
+	if updated.screen != screenSecurityTrivy {
+		t.Fatalf("screen = %q, want %q after disable", updated.screen, screenSecurityTrivy)
 	}
 	if !strings.Contains(updated.View(), `Feature "trivy" disabled.`) || !strings.Contains(updated.View(), `Enabled: false`) {
 		t.Fatalf("view = %q, want disabled feature status", updated.View())
@@ -2193,14 +2215,25 @@ func TestModelFeatureViewKeepsMinimalPagesUsable(t *testing.T) {
 	updated := runAdminLogin(t, model, "operator", "secret-pass")
 	updated = runKey(t, updated, "f")
 
+	// Phase 11 (design.md Decision I): securityMenuScreen's own peer list
+	// shows every backend-declared feature by name/state regardless of
+	// kind, even one with no dedicated drill-down screen of its own (only
+	// trivy/gitleaks/signing gain one) -- Enter on such a row is inert,
+	// since Decision I only builds forward-navigation targets for the three
+	// known built-in features.
 	view := updated.View()
-	for _, want := range []string{"future-plugin", "Enabled: true", "No additional feature details.", "Enter/r: refresh page"} {
+	for _, want := range []string{"future-plugin", "true"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view = %q, want %q", view, want)
 		}
 	}
 	if strings.Contains(view, "x: disable") || strings.Contains(view, "e: enable") {
 		t.Fatalf("view = %q, want no undeclared actions in help", view)
+	}
+
+	navigated := runKey(t, updated, "enter")
+	if navigated.screen != screenAdminFeatures {
+		t.Fatalf("screen = %q, want %q (Enter on a non-built-in feature is inert)", navigated.screen, screenAdminFeatures)
 	}
 }
 
@@ -2210,22 +2243,31 @@ func TestModelFeatureSelectionRefreshesPageAndHelpFromBackendActions(t *testing.
 	now := time.Date(2026, time.August, 8, 14, 0, 0, 0, time.UTC)
 	adminClient := &fakeAdminClient{
 		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-		features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}, {Name: "future-plugin", Kind: ports.FeatureKindExternalService, Enabled: false, Configured: true}},
+		features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}, {Name: "gitleaks", Kind: ports.FeatureKindBuiltin, Enabled: false, Configured: true}},
 		featurePages: map[string]ports.FeaturePage{
-			"trivy":         {Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}, Header: []ports.FeatureField{{Label: "Enabled", Value: "true"}}, Actions: []ports.FeatureAction{{ID: "refresh", Label: "Refresh"}, {ID: "disable", Label: "Disable", ConfirmTitle: "Confirm Disable", ConfirmMessage: `Confirm disable feature "trivy"?`}}},
-			"future-plugin": {Summary: ports.FeatureSummary{Name: "future-plugin", Kind: ports.FeatureKindExternalService, Enabled: false, Configured: true}, Header: []ports.FeatureField{{Label: "Enabled", Value: "false"}}, Actions: []ports.FeatureAction{{ID: "refresh", Label: "Refresh"}, {ID: "enable", Label: "Enable", ConfirmTitle: "Confirm Enable", ConfirmMessage: `Confirm enable feature "future-plugin"?`}}},
+			"trivy":    {Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}, Header: []ports.FeatureField{{Label: "Enabled", Value: "true"}}, Actions: []ports.FeatureAction{{ID: "refresh", Label: "Refresh"}, {ID: "disable", Label: "Disable", ConfirmTitle: "Confirm Disable", ConfirmMessage: `Confirm disable feature "trivy"?`}}},
+			"gitleaks": {Summary: ports.FeatureSummary{Name: "gitleaks", Kind: ports.FeatureKindBuiltin, Enabled: false, Configured: true}, Header: []ports.FeatureField{{Label: "Enabled", Value: "false"}}, Actions: []ports.FeatureAction{{ID: "refresh", Label: "Refresh"}, {ID: "enable", Label: "Enable", ConfirmTitle: "Confirm Enable", ConfirmMessage: `Confirm enable feature "gitleaks"?`}}},
 		},
 	}
 	model := newAdminReadyModel(t, adminClient)
 	updated := runAdminLogin(t, model, "operator", "secret-pass")
 	updated = runKey(t, updated, "f")
 	updated = runKey(t, updated, "down")
+	updated = runKey(t, updated, "enter")
 
-	if adminClient.getFeaturePageCalls != 2 {
-		t.Fatalf("getFeaturePageCalls = %d, want page refresh on selection change", adminClient.getFeaturePageCalls)
+	// Phase 11 (design.md Decision I): moving securityMenuScreen's own
+	// selection no longer auto-refreshes any Feature Page (there is none on
+	// that bare peer list) -- navigating into a DIFFERENT feature's own
+	// screen is what triggers its independent page load and
+	// backend-authoritative help.
+	if updated.screen != screenSecurityGitleaksConfig {
+		t.Fatalf("screen = %q, want %q", updated.screen, screenSecurityGitleaksConfig)
+	}
+	if adminClient.getFeaturePageCalls != 1 {
+		t.Fatalf("getFeaturePageCalls = %d, want one page read for gitleaks", adminClient.getFeaturePageCalls)
 	}
 	view := updated.View()
-	for _, want := range []string{"future-plugin", "e: enable"} {
+	for _, want := range []string{"Gitleaks", "e: enable"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view = %q, want %q", view, want)
 		}
@@ -2252,6 +2294,12 @@ func TestModelTrivyFeatureDefaultsToRuntimeTabAndKeepsNonTrivyUntabbed(t *testin
 		}
 		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
 		updated = runKey(t, updated, "f")
+		// Phase 11 (design.md Decision I): Enter navigates from
+		// securityMenuScreen into trivyConfigScreen, the Runtime tab's
+		// successor screen -- this IS the default landing content once
+		// trivy is entered (trivyReposScreen, the Repository Alerts
+		// successor, is reached separately via Tab).
+		updated = runKey(t, updated, "enter")
 
 		view := updated.View()
 		for _, want := range []string{"Runtime", "Repository Alerts", "Configuration", "Version: 0.57.1"} {
@@ -2273,6 +2321,10 @@ func TestModelTrivyFeatureDefaultsToRuntimeTabAndKeepsNonTrivyUntabbed(t *testin
 		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
 		updated = runKey(t, updated, "f")
 
+		// Phase 11: a non-built-in feature has no dedicated screen of its
+		// own (only trivy/gitleaks/signing do), so it is only ever seen on
+		// securityMenuScreen's own bare peer list -- which never shows
+		// trivy-only tab chrome regardless of which feature is highlighted.
 		view := updated.View()
 		if strings.Contains(view, "Repository Alerts") || strings.Contains(view, "Tabs") {
 			t.Fatalf("view = %q, want no trivy-only tab chrome", view)
@@ -2296,6 +2348,7 @@ func TestModelTrivyConfigModalOpenCancelAndSubmitCurrentSettingsOnly(t *testing.
 	}
 	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
 	updated = runKey(t, updated, "f")
+	updated = runKey(t, updated, "enter")
 
 	updated = runKey(t, updated, "c")
 	modalView := updated.View()
@@ -2376,9 +2429,10 @@ func TestModelGitleaksConfigModalOpenCancelAndSubmitCurrentSettingsOnly(t *testi
 	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
 	updated = runKey(t, updated, "f")
 	updated = runKey(t, updated, "down")
+	updated = runKey(t, updated, "enter")
 
-	if got, want := updated.selectedFeatureName(), "gitleaks"; got != want {
-		t.Fatalf("selectedFeatureName() = %q, want %q", got, want)
+	if got, want := updated.screen, screenSecurityGitleaksConfig; got != want {
+		t.Fatalf("screen = %q, want %q", got, want)
 	}
 
 	updated = runKey(t, updated, "s")
@@ -2432,8 +2486,16 @@ func TestModelGitleaksConfigModalOpenCancelAndSubmitCurrentSettingsOnly(t *testi
 	if !strings.Contains(submitted.View(), "Configuration saved") {
 		t.Fatalf("view = %q, want config feedback after submit", submitted.View())
 	}
-	if submitted.adminScreens[slotGitleaksConfig] != nil {
-		t.Fatalf("adminScreens[slotGitleaksConfig] = %#v, want nil (closed after submit)", submitted.adminScreens[slotGitleaksConfig])
+	// Phase 11 deviation from the pre-promotion assertion: gitleaksConfigScreen
+	// is now a persistent top-level screen (screenSecurityGitleaksConfig),
+	// not an ephemeral overlay -- it stays mounted after a successful
+	// submit (its own page reloads in place), only its cfg modal closes.
+	submittedScreen, ok := submitted.adminScreens[slotGitleaksConfig].(gitleaksConfigScreen)
+	if !ok {
+		t.Fatalf("adminScreens[slotGitleaksConfig] = %#v, want a mounted gitleaksConfigScreen", submitted.adminScreens[slotGitleaksConfig])
+	}
+	if submittedScreen.cfg.Active() {
+		t.Fatalf("adminScreens[slotGitleaksConfig].cfg = %#v, want closed (Active()==false) after submit", submittedScreen.cfg)
 	}
 }
 
@@ -2460,6 +2522,7 @@ func TestModelGitleaksConfigModalValidationErrorSurfaced(t *testing.T) {
 	}
 	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
 	updated = runKey(t, updated, "f")
+	updated = runKey(t, updated, "enter")
 	updated = runKey(t, updated, "s")
 
 	// Focus starts on Enabled; Tab once lands on Timeout.
@@ -2508,6 +2571,7 @@ func TestGitleaksConfigModalCharacterization(t *testing.T) {
 		}
 		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
 		updated = runKey(t, updated, "f")
+		updated = runKey(t, updated, "enter")
 		updated = runKey(t, updated, "s")
 		if !strings.Contains(updated.View(), "Edit Gitleaks Configuration") {
 			t.Fatalf("test setup invalid: view = %q, want the gitleaks modal open", updated.View())
@@ -2636,12 +2700,20 @@ func TestModelScanPolicyModalOpenToggleSubmitPersistsAndReflectsCurrentSettings(
 	}
 	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
 	updated = runKey(t, updated, "f")
+	// Phase 11 (design.md Decision I): ScanPolicy now loads chained after
+	// trivyConfigScreen's OWN page load, once navigated into via Enter --
+	// not on 'f' alone (securityMenuScreen never loads any feature's page).
+	updated = runKey(t, updated, "enter")
 
 	if got, want := adminClient.getScanPolicyCalls, 1; got != want {
 		t.Fatalf("getScanPolicyCalls = %d, want %d", got, want)
 	}
-	if got, want := updated.adminView.ScanPolicy, (ports.ScanPolicySettings{Enabled: true, SeverityThreshold: ports.ScanPolicyThresholdCritical}); got != want {
-		t.Fatalf("adminView.ScanPolicy = %#v, want %#v", got, want)
+	trivyScreen, ok := updated.adminScreens[slotTrivyConfig].(trivyConfigScreen)
+	if !ok {
+		t.Fatal("adminScreens[slotTrivyConfig] not a mounted trivyConfigScreen")
+	}
+	if got, want := trivyScreen.policy, (ports.ScanPolicySettings{Enabled: true, SeverityThreshold: ports.ScanPolicyThresholdCritical}); got != want {
+		t.Fatalf("trivyConfigScreen.policy = %#v, want %#v", got, want)
 	}
 
 	updated = runKey(t, updated, "p")
@@ -2666,11 +2738,15 @@ func TestModelScanPolicyModalOpenToggleSubmitPersistsAndReflectsCurrentSettings(
 	if got, want := adminClient.lastScanPolicyInput, (ports.ScanPolicySettings{Enabled: false, SeverityThreshold: ports.ScanPolicyThresholdCriticalHigh}); got != want {
 		t.Fatalf("lastScanPolicyInput = %#v, want %#v", got, want)
 	}
-	if got, want := submitted.adminView.ScanPolicy, (ports.ScanPolicySettings{Enabled: false, SeverityThreshold: ports.ScanPolicyThresholdCriticalHigh}); got != want {
-		t.Fatalf("adminView.ScanPolicy = %#v, want %#v", got, want)
+	submittedScreen, ok := submitted.adminScreens[slotTrivyConfig].(trivyConfigScreen)
+	if !ok {
+		t.Fatal("adminScreens[slotTrivyConfig] not a mounted trivyConfigScreen after submit")
 	}
-	if submitted.adminView.ScanPolicyModal.Active() {
-		t.Fatalf("ScanPolicyModal = %#v, want closed after submit", submitted.adminView.ScanPolicyModal)
+	if got, want := submittedScreen.policy, (ports.ScanPolicySettings{Enabled: false, SeverityThreshold: ports.ScanPolicyThresholdCriticalHigh}); got != want {
+		t.Fatalf("trivyConfigScreen.policy = %#v, want %#v", got, want)
+	}
+	if submittedScreen.policyModal.Active() {
+		t.Fatalf("trivyConfigScreen.policyModal = %#v, want closed after submit", submittedScreen.policyModal)
 	}
 	if !strings.Contains(submitted.View(), "Vulnerability policy saved") {
 		t.Fatalf("view = %q, want policy feedback after submit", submitted.View())
@@ -2700,6 +2776,7 @@ func TestModelSigningPolicyModalOpenerKeyIsScopedToSigningFeature(t *testing.T) 
 		}
 		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
 		updated = runKey(t, updated, "f")
+		updated = runKey(t, updated, "enter")
 
 		if got, want := adminClient.getSigningPolicyCalls, 1; got != want {
 			t.Fatalf("getSigningPolicyCalls = %d, want %d", got, want)
@@ -2710,8 +2787,8 @@ func TestModelSigningPolicyModalOpenerKeyIsScopedToSigningFeature(t *testing.T) 
 		if !ok || !signingScreen.cfg.Active() {
 			t.Fatal("adminScreens[slotSigningConfig] cfg.Active() = false, want true after 'p' on the signing feature")
 		}
-		if updated.adminView.ScanPolicyModal.Active() {
-			t.Fatal("ScanPolicyModal.Active() = true, want false -- 'p' on signing must not open the trivy modal")
+		if updated.adminScreens[slotTrivyConfig] != nil {
+			t.Fatal("adminScreens[slotTrivyConfig] != nil, want unmounted -- 'p' on signing must not touch the trivy screen")
 		}
 		modalView := updated.View()
 		for _, want := range []string{"Signing Policy", "Enabled", "Trusted Key (PEM)"} {
@@ -2732,10 +2809,12 @@ func TestModelSigningPolicyModalOpenerKeyIsScopedToSigningFeature(t *testing.T) 
 		}
 		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
 		updated = runKey(t, updated, "f")
+		updated = runKey(t, updated, "enter")
 		updated = runKey(t, updated, "p")
 
-		if !updated.adminView.ScanPolicyModal.Active() {
-			t.Fatal("ScanPolicyModal.Active() = false, want true after 'p' on the trivy feature")
+		trivyScreen, ok := updated.adminScreens[slotTrivyConfig].(trivyConfigScreen)
+		if !ok || !trivyScreen.policyModal.Active() {
+			t.Fatal("trivyConfigScreen.policyModal.Active() = false, want true after 'p' on the trivy feature")
 		}
 		if updated.adminScreens[slotSigningConfig] != nil {
 			t.Fatal("adminScreens[slotSigningConfig] != nil, want unmounted -- 'p' on trivy must not open the signing screen")
@@ -2762,6 +2841,7 @@ func TestModelSigningPolicyModalOpenSeedsUnsignedSelfReadFromLoadedSettings(t *t
 	}
 	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
 	updated = runKey(t, updated, "f")
+	updated = runKey(t, updated, "enter")
 	updated = runKey(t, updated, "p")
 
 	signingScreen, ok := updated.adminScreens[slotSigningConfig].(signingConfigScreen)
@@ -2794,6 +2874,7 @@ func TestModelSigningPolicyModalSaveIncludesUnsignedSelfRead(t *testing.T) {
 		}
 		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
 		updated = runKey(t, updated, "f")
+		updated = runKey(t, updated, "enter")
 		updated = runKey(t, updated, "p")
 		return updated, adminClient
 	}
@@ -2860,6 +2941,7 @@ func TestModelSigningPolicyModalAddKeySubmitPersistsAndReflectsCurrentSettings(t
 	}
 	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
 	updated = runKey(t, updated, "f")
+	updated = runKey(t, updated, "enter")
 	updated = runKey(t, updated, "p")
 
 	// Focus starts on Enabled; toggle it on, Tab past UnsignedSelfRead to
@@ -2951,14 +3033,20 @@ func TestModelTrivyOverrideEditorOpenerKeyIsScopedToRepositoryAlertsRow(t *testi
 		}
 		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
 		updated = runKey(t, updated, "f")
-		updated = runKey(t, updated, "tab") // switch to Repository Alerts
+		updated = runKey(t, updated, "enter") // navigate into trivyConfigScreen
+		updated = runKey(t, updated, "tab")   // switch to trivyReposScreen (Repository Alerts)
 
 		updated = runKey(t, updated, "o")
 
-		editor, ok := updated.adminScreens[slotTrivyOverride].(overrideEditor)
-		if !ok || !editor.Active() {
-			t.Fatalf("adminScreens[slotTrivyOverride] = %#v, want an active overrideEditor after 'o'", updated.adminScreens[slotTrivyOverride])
+		// Phase 11: the uniform overrideEditor is now embedded directly in
+		// trivyReposScreen (design.md's resolved-gap addendum), mirroring
+		// featureOverridesScreen's own pattern -- the former slotTrivyOverride
+		// overlay slot no longer exists.
+		repos, ok := updated.adminScreens[slotTrivyRepos].(trivyReposScreen)
+		if !ok || !repos.editor.Active() {
+			t.Fatalf("adminScreens[slotTrivyRepos].editor = %#v, want an active overrideEditor after 'o'", repos.editor)
 		}
+		editor := repos.editor
 		if got, want := editor.repository, "team/api"; got != want {
 			t.Fatalf("editor.repository = %q, want %q", got, want)
 		}
@@ -2976,12 +3064,13 @@ func TestModelTrivyOverrideEditorOpenerKeyIsScopedToRepositoryAlertsRow(t *testi
 		}
 
 		closed := runKey(t, updated, "esc")
-		if closed.adminScreens[slotTrivyOverride] != nil {
-			t.Fatalf("adminScreens[slotTrivyOverride] = %#v, want nil after esc", closed.adminScreens[slotTrivyOverride])
+		closedRepos, ok := closed.adminScreens[slotTrivyRepos].(trivyReposScreen)
+		if !ok || closedRepos.editor.Active() {
+			t.Fatalf("adminScreens[slotTrivyRepos].editor = %#v, want inactive after esc", closedRepos.editor)
 		}
 	})
 
-	t.Run("o on the Runtime tab does not open the editor or collide with feature actions", func(t *testing.T) {
+	t.Run("o on trivyConfigScreen does not open the editor or collide with feature actions", func(t *testing.T) {
 		t.Parallel()
 		adminClient := &fakeAdminClient{
 			loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
@@ -2990,11 +3079,12 @@ func TestModelTrivyOverrideEditorOpenerKeyIsScopedToRepositoryAlertsRow(t *testi
 		}
 		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
 		updated = runKey(t, updated, "f")
+		updated = runKey(t, updated, "enter")
 
 		updated = runKey(t, updated, "o")
 
-		if updated.adminScreens[slotTrivyOverride] != nil {
-			t.Fatal("adminScreens[slotTrivyOverride] != nil, want nil on the Runtime tab")
+		if updated.adminScreens[slotTrivyRepos] != nil {
+			t.Fatal("adminScreens[slotTrivyRepos] != nil, want unmounted -- 'o' on trivyConfigScreen (the Runtime tab's successor) does nothing")
 		}
 		if adminClient.getRepositoryOverrideCalls != 0 {
 			t.Fatalf("getRepositoryOverrideCalls = %d, want 0 (no load fired)", adminClient.getRepositoryOverrideCalls)
@@ -3013,12 +3103,14 @@ func TestModelTrivyOverrideEditorOpenerKeyIsScopedToRepositoryAlertsRow(t *testi
 		}
 		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
 		updated = runKey(t, updated, "f")
-		updated = runKey(t, updated, "tab") // Repository Alerts, no scan runs loaded
+		updated = runKey(t, updated, "enter")
+		updated = runKey(t, updated, "tab") // trivyReposScreen, no scan runs loaded
 
 		updated = runKey(t, updated, "o")
 
-		if updated.adminScreens[slotTrivyOverride] != nil {
-			t.Fatal("adminScreens[slotTrivyOverride] != nil, want nil with no highlighted row")
+		repos, ok := updated.adminScreens[slotTrivyRepos].(trivyReposScreen)
+		if !ok || repos.editor.Active() {
+			t.Fatalf("adminScreens[slotTrivyRepos].editor = %#v, want inactive with no highlighted row", repos.editor)
 		}
 	})
 }
@@ -3048,10 +3140,15 @@ func TestModelTrivyOverrideEditorSetAndClearRoundTripReflectsInModal(t *testing.
 	}
 	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
 	updated = runKey(t, updated, "f")
+	updated = runKey(t, updated, "enter")
 	updated = runKey(t, updated, "tab")
 	updated = runKey(t, updated, "o")
 
-	editorAfterOpen, ok := updated.adminScreens[slotTrivyOverride].(overrideEditor)
+	// Phase 11: the uniform overrideEditor is now embedded directly in
+	// trivyReposScreen (mirrors featureOverridesScreen's own pattern), not
+	// a separate slotTrivyOverride slot.
+	reposAfterOpen, ok := updated.adminScreens[slotTrivyRepos].(trivyReposScreen)
+	editorAfterOpen := reposAfterOpen.editor
 	if !ok || !editorAfterOpen.Active() || editorAfterOpen.exists {
 		t.Fatalf("editor = %#v, want open with no existing override", editorAfterOpen)
 	}
@@ -3071,7 +3168,8 @@ func TestModelTrivyOverrideEditorSetAndClearRoundTripReflectsInModal(t *testing.
 	if !adminClient.lastSetRepositoryOverride.Enabled || adminClient.lastSetRepositoryOverride.IgnoreFilePath != "/etc/trivy/ignore" {
 		t.Fatalf("lastSetRepositoryOverride = %#v, want Enabled true with the typed ignore file path", adminClient.lastSetRepositoryOverride)
 	}
-	editorAfterSave, ok := submitted.adminScreens[slotTrivyOverride].(overrideEditor)
+	reposAfterSave, ok := submitted.adminScreens[slotTrivyRepos].(trivyReposScreen)
+	editorAfterSave := reposAfterSave.editor
 	if !ok || !editorAfterSave.Active() {
 		t.Fatal("editor.Active() = false, want the editor to stay open after a successful save")
 	}
@@ -3085,8 +3183,8 @@ func TestModelTrivyOverrideEditorSetAndClearRoundTripReflectsInModal(t *testing.
 	// Tab to the Clear row and press Enter to clear it.
 	cleared := submitted
 	for {
-		e, _ := cleared.adminScreens[slotTrivyOverride].(overrideEditor)
-		if e.currentField() == overrideFieldClear {
+		r, _ := cleared.adminScreens[slotTrivyRepos].(trivyReposScreen)
+		if r.editor.currentField() == overrideFieldClear {
 			break
 		}
 		cleared = runKey(t, cleared, "tab")
@@ -3096,7 +3194,8 @@ func TestModelTrivyOverrideEditorSetAndClearRoundTripReflectsInModal(t *testing.
 	if adminClient.clearRepositoryOverrideCalls != 1 {
 		t.Fatalf("clearRepositoryOverrideCalls = %d, want 1", adminClient.clearRepositoryOverrideCalls)
 	}
-	editorAfterClear, _ := cleared.adminScreens[slotTrivyOverride].(overrideEditor)
+	reposAfterClear, _ := cleared.adminScreens[slotTrivyRepos].(trivyReposScreen)
+	editorAfterClear := reposAfterClear.editor
 	if editorAfterClear.exists {
 		t.Fatal("editor.exists = true, want false after clear")
 	}
@@ -3110,9 +3209,9 @@ func TestModelTrivyOverrideEditorSetAndClearRoundTripReflectsInModal(t *testing.
 	if adminClient.clearRepositoryOverrideCalls != 1 {
 		t.Fatalf("clearRepositoryOverrideCalls = %d, want still 1 (inert when already inheriting global)", adminClient.clearRepositoryOverrideCalls)
 	}
-	inertEditor, _ := inert.adminScreens[slotTrivyOverride].(overrideEditor)
-	if !strings.Contains(inertEditor.err, "Already inheriting global") {
-		t.Fatalf("editor.err = %q, want the inert-clear message", inertEditor.err)
+	inertRepos, _ := inert.adminScreens[slotTrivyRepos].(trivyReposScreen)
+	if !strings.Contains(inertRepos.editor.err, "Already inheriting global") {
+		t.Fatalf("editor.err = %q, want the inert-clear message", inertRepos.editor.err)
 	}
 }
 
@@ -3138,7 +3237,8 @@ func TestFeatureOverridesScreenSigningSaveIncludesUnsignedSelfRead(t *testing.T)
 	}
 	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
 	updated = runKey(t, updated, "f")
-	updated = runKey(t, updated, "o") // opens screenSecuritySigningRepos
+	updated = runKey(t, updated, "enter") // navigate into signingConfigScreen
+	updated = runKey(t, updated, "o")     // opens screenSecuritySigningRepos
 
 	if got, want := updated.screen, screenSecuritySigningRepos; got != want {
 		t.Fatalf("screen = %q, want %q", got, want)
@@ -3226,6 +3326,7 @@ func TestModelTrivyRepositoryAlertsLoadSelectDetailAndRecoverEmptyState(t *testi
 		}
 		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
 		updated = runKey(t, updated, "f")
+		updated = runKey(t, updated, "enter")
 		updated = runKey(t, updated, "tab")
 
 		if adminClient.listRepositoryScanSummariesCalls != 1 {
@@ -3237,7 +3338,11 @@ func TestModelTrivyRepositoryAlertsLoadSelectDetailAndRecoverEmptyState(t *testi
 				t.Fatalf("view = %q, want %q", alertsView, want)
 			}
 		}
-		if got, want := updated.adminView.Tables.ScanSummary.HighlightedRow().Data[adminTableMetaScanRunID], "run-2"; got != want {
+		repos, ok := updated.adminScreens[slotTrivyRepos].(trivyReposScreen)
+		if !ok {
+			t.Fatal("adminScreens[slotTrivyRepos] not a mounted trivyReposScreen")
+		}
+		if got, want := repos.table.HighlightedRow().Data[adminTableMetaScanRunID], "run-2"; got != want {
 			t.Fatalf("highlighted scan-summary metadata = %#v, want %q", got, want)
 		}
 
@@ -3268,8 +3373,12 @@ func TestModelTrivyRepositoryAlertsLoadSelectDetailAndRecoverEmptyState(t *testi
 		if strings.Contains(updated.View(), "Scan History —") {
 			t.Fatalf("view = %q, want esc to close the scan history modal with no residual detail", updated.View())
 		}
-		if got, want := updated.adminView.TrivySelectedAlert, 0; got != want {
-			t.Fatalf("TrivySelectedAlert = %d, want %d", got, want)
+		reposAfterEsc, ok := updated.adminScreens[slotTrivyRepos].(trivyReposScreen)
+		if !ok {
+			t.Fatal("adminScreens[slotTrivyRepos] not a mounted trivyReposScreen")
+		}
+		if got, want := reposAfterEsc.selected, 0; got != want {
+			t.Fatalf("trivyReposScreen.selected = %d, want %d", got, want)
 		}
 	})
 
@@ -3285,13 +3394,14 @@ func TestModelTrivyRepositoryAlertsLoadSelectDetailAndRecoverEmptyState(t *testi
 		}
 		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
 		updated = runKey(t, updated, "f")
+		updated = runKey(t, updated, "enter")
 		updated = runKey(t, updated, "tab")
 		if !strings.Contains(updated.View(), "No repository alerts found.") {
 			t.Fatalf("view = %q, want clear empty-state message", updated.View())
 		}
 		updated = runKey(t, updated, "tab")
 		if !strings.Contains(updated.View(), "Version: 0.57.1") {
-			t.Fatalf("view = %q, want runtime tab still usable after empty alerts", updated.View())
+			t.Fatalf("view = %q, want runtime tab (trivyConfigScreen) still usable after empty alerts", updated.View())
 		}
 	})
 }
@@ -3324,9 +3434,14 @@ func TestModelRepositoryAlertsScreenShowsOneRowPerRepositoryNotPerScanRun(t *tes
 
 	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
 	updated = runKey(t, updated, "f")
+	updated = runKey(t, updated, "enter")
 	updated = runKey(t, updated, "tab")
 
-	summaryTable := updated.adminView.Tables.ScanSummary
+	repos, ok := updated.adminScreens[slotTrivyRepos].(trivyReposScreen)
+	if !ok {
+		t.Fatal("adminScreens[slotTrivyRepos] not a mounted trivyReposScreen")
+	}
+	summaryTable := repos.table
 	if got, want := summaryTable.TotalRows(), 2; got != want {
 		t.Fatalf("ScanSummary TotalRows() = %d, want %d (one row per repository, not %d per scan run)", got, want, len(adminClient.scanRuns))
 	}
@@ -3370,8 +3485,9 @@ func newScanHistoryModalReadyModel(t *testing.T, adminClient *fakeAdminClient) M
 	t.Helper()
 	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
 	updated = runKey(t, updated, "f")
-	updated = runKey(t, updated, "tab")
-	return runKey(t, updated, "enter")
+	updated = runKey(t, updated, "enter") // navigate into trivyConfigScreen
+	updated = runKey(t, updated, "tab")   // switch to trivyReposScreen
+	return runKey(t, updated, "enter")    // open the scan history modal
 }
 
 // TestModelScanHistoryModalTabCyclesForwardAndBackwardWrapping is the Phase
@@ -3743,12 +3859,22 @@ func TestModelScanHistoryModalDigestNeverLeaksAcrossRunsWhenPagingHistory(t *tes
 	model = runCmd(t, model, model.Init())
 	model = runAdminLogin(t, model, "operator", "secret-pass")
 	model = runKey(t, model, "f")
-	model = runKey(t, model, "tab")
+	model = runKey(t, model, "enter") // trivyConfigScreen
+	model = runKey(t, model, "tab")   // trivyReposScreen
 
 	// Open the modal (cursor 0 = run-a, newest first) but capture the
 	// history-load Cmd instead of letting runKey auto-run its whole chain,
 	// so the detail fetch it triggers can be interleaved manually below.
-	updatedRaw, historyCmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	// Phase 11: Enter on trivyReposScreen returns openAdminScanHistory (a
+	// relay Cmd, design.md Decision B -- a migrated screen cannot write to
+	// AdminViewState.ScanHistoryModal directly), one hop before the actual
+	// history load Cmd the pre-change code returned directly.
+	updatedRaw, openCmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	afterOpenRequest := updatedRaw.(Model)
+	if openCmd == nil {
+		t.Fatal("expected openAdminScanHistory after enter")
+	}
+	updatedRaw, historyCmd := afterOpenRequest.Update(openCmd())
 	afterEnter := updatedRaw.(Model)
 	if historyCmd == nil {
 		t.Fatal("expected loadAdminScanHistoryCmd after enter")
@@ -3844,6 +3970,7 @@ func TestModelScanHistoryModalRendersWithinViewportAcrossHeights(t *testing.T) {
 			result = runCmd(t, result, result.Init())
 			result = runAdminLogin(t, result, "operator", "secret-pass")
 			result = runKey(t, result, "f")
+			result = runKey(t, result, "enter") // navigate into trivyConfigScreen
 			result = runKey(t, result, "tab")
 			result = runKey(t, result, "enter")
 
@@ -3913,9 +4040,16 @@ func TestModelConfirmAndTrivyConfigModalOverlayFitsViewportAndDoesNotGrowPageHei
 			t.Parallel()
 
 			model := newModelForModalOverlayTest(t, height)
-			model.adminView.TrivyConfigModal = trivyConfigModal{
-				Open: true, ScheduleEnabled: true, Interval: "1h", Timeout: "30s",
-				RegistryReachableURL: "https://registry.example.com", MaxConcurrency: "4",
+			// Phase 11: TrivyConfigModal moved off AdminViewState onto
+			// trivyConfigScreen (screenSecurityTrivy), mounted here exactly
+			// like a real navigation would.
+			model.screen = screenSecurityTrivy
+			model.adminScreens[slotTrivyConfig] = trivyConfigScreen{
+				loaded: true,
+				cfg: trivyConfigModal{
+					Open: true, ScheduleEnabled: true, Interval: "1h", Timeout: "30s",
+					RegistryReachableURL: "https://registry.example.com", MaxConcurrency: "4",
+				},
 			}
 			openView := model.View()
 			if got := lipgloss.Height(openView); got > height {
@@ -3938,9 +4072,13 @@ func TestModelTrivyConfigModalRendersFullBottomBorderAndHelpLineAtViewportFloor(
 	t.Parallel()
 
 	model := newModelForModalOverlayTest(t, minViewportHeight)
-	model.adminView.TrivyConfigModal = trivyConfigModal{
-		Open: true, ScheduleEnabled: true, Interval: "1h", Timeout: "30s",
-		RegistryReachableURL: "https://registry.example.com", MaxConcurrency: "4",
+	model.screen = screenSecurityTrivy
+	model.adminScreens[slotTrivyConfig] = trivyConfigScreen{
+		loaded: true,
+		cfg: trivyConfigModal{
+			Open: true, ScheduleEnabled: true, Interval: "1h", Timeout: "30s",
+			RegistryReachableURL: "https://registry.example.com", MaxConcurrency: "4",
+		},
 	}
 
 	view := model.View()
@@ -4028,6 +4166,7 @@ func TestModelScanHistoryModalRendersWithinViewportAcrossWidths(t *testing.T) {
 			result = runCmd(t, result, result.Init())
 			result = runAdminLogin(t, result, "operator", "secret-pass")
 			result = runKey(t, result, "f")
+			result = runKey(t, result, "enter") // navigate into trivyConfigScreen
 			result = runKey(t, result, "tab")
 			result = runKey(t, result, "enter")
 
@@ -4090,8 +4229,9 @@ func TestModelSecretFindingsSurfaceAlongsideVulnerabilityResultsWithoutSeverityO
 
 	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
 	updated = runKey(t, updated, "f")
-	updated = runKey(t, updated, "tab")
-	updated = runKey(t, updated, "enter")
+	updated = runKey(t, updated, "enter") // trivyConfigScreen
+	updated = runKey(t, updated, "tab")   // trivyReposScreen
+	updated = runKey(t, updated, "enter") // opens the scan history modal
 
 	if adminClient.getSecretScanFindingsCalls != 1 {
 		t.Fatalf("getSecretScanFindingsCalls = %d, want secret findings loaded alongside the vulnerability detail", adminClient.getSecretScanFindingsCalls)
@@ -4172,13 +4312,32 @@ func TestModelFeatureTablesRenderAlignedRowsAndPreserveBackendValues(t *testing.
 	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
 	updated = runKey(t, updated, "f")
 
-	if got, want := updated.adminView.Tables.Features.TotalRows(), 2; got != want {
+	// Phase 11: the Features table (the peer list itself) lives on
+	// securityMenuScreen, available right after 'f'; the "checks" rows
+	// table lives on trivyConfigScreen, reached only once navigated into.
+	menu, ok := updated.adminScreens[slotSecurityMenu].(securityMenuScreen)
+	if !ok {
+		t.Fatal("adminScreens[slotSecurityMenu] not a mounted securityMenuScreen")
+	}
+	if got, want := menu.table.TotalRows(), 2; got != want {
 		t.Fatalf("feature table rows = %d, want %d", got, want)
 	}
-	if got, want := updated.adminView.Tables.Features.HighlightedRow().Data[adminTableMetaFeatureName], "trivy"; got != want {
+	if got, want := menu.table.HighlightedRow().Data[adminTableMetaFeatureName], "trivy"; got != want {
 		t.Fatalf("highlighted feature metadata = %#v, want %q", got, want)
 	}
-	rowsTable, ok := updated.adminView.Tables.FeatureRows["checks"]
+	menuView := updated.View()
+	for _, want := range []string{"Name", "Kind", "Enabled", "Configured", "Current", "Latest", "Update", "0.57.1", "0.58.0", "available"} {
+		if !strings.Contains(menuView, want) {
+			t.Fatalf("view = %q, want %q", menuView, want)
+		}
+	}
+
+	updated = runKey(t, updated, "enter")
+	trivy, ok := updated.adminScreens[slotTrivyConfig].(trivyConfigScreen)
+	if !ok {
+		t.Fatal("adminScreens[slotTrivyConfig] not a mounted trivyConfigScreen")
+	}
+	rowsTable, ok := trivy.rows["checks"]
 	if !ok {
 		t.Fatal("expected rows table for checks section")
 	}
@@ -4186,7 +4345,7 @@ func TestModelFeatureTablesRenderAlignedRowsAndPreserveBackendValues(t *testing.
 		t.Fatalf("rows table rows = %d, want %d", got, want)
 	}
 	view := updated.View()
-	for _, want := range []string{"Name", "Kind", "Enabled", "Configured", "Current", "Latest", "Update", "Runtime Checks", "Title", "Status", "Detail", "DB freshness", "older than 24h", "Registry reachability", "https://registry.internal:5443", "0.57.1", "0.58.0", "available"} {
+	for _, want := range []string{"Runtime Checks", "Title", "Status", "Detail", "DB freshness", "older than 24h", "Registry reachability", "https://registry.internal:5443"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view = %q, want %q", view, want)
 		}
@@ -4205,9 +4364,14 @@ func TestModelTrivyTablesPreserveEmptyStateAndBackendOrdering(t *testing.T) {
 		}
 		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
 		updated = runKey(t, updated, "f")
+		updated = runKey(t, updated, "enter")
 		updated = runKey(t, updated, "tab")
 
-		if got, want := updated.adminView.Tables.ScanSummary.TotalRows(), 0; got != want {
+		repos, ok := updated.adminScreens[slotTrivyRepos].(trivyReposScreen)
+		if !ok {
+			t.Fatal("adminScreens[slotTrivyRepos] not a mounted trivyReposScreen")
+		}
+		if got, want := repos.table.TotalRows(), 0; got != want {
 			t.Fatalf("scan-summary table rows = %d, want %d", got, want)
 		}
 		if !strings.Contains(updated.View(), "No repository alerts found.") {
@@ -4228,12 +4392,17 @@ func TestModelTrivyTablesPreserveEmptyStateAndBackendOrdering(t *testing.T) {
 		}
 		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
 		updated = runKey(t, updated, "f")
+		updated = runKey(t, updated, "enter")
 		updated = runKey(t, updated, "tab")
 
-		if got, want := updated.adminView.Tables.ScanSummary.TotalRows(), 3; got != want {
+		repos, ok := updated.adminScreens[slotTrivyRepos].(trivyReposScreen)
+		if !ok {
+			t.Fatal("adminScreens[slotTrivyRepos] not a mounted trivyReposScreen")
+		}
+		if got, want := repos.table.TotalRows(), 3; got != want {
 			t.Fatalf("scan-summary table rows = %d, want %d", got, want)
 		}
-		if got, want := updated.adminView.Tables.ScanSummary.HighlightedRow().Data[adminTableMetaScanRunID], "run-2"; got != want {
+		if got, want := repos.table.HighlightedRow().Data[adminTableMetaScanRunID], "run-2"; got != want {
 			t.Fatalf("highlighted scan-summary metadata = %#v, want %q", got, want)
 		}
 		view := updated.View()
@@ -4306,8 +4475,9 @@ func TestModelTrivyFindingsMixedSeverityRenderPreservesLabelsAndCounts(t *testin
 
 	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
 	updated = runKey(t, updated, "f")
-	updated = runKey(t, updated, "tab")
-	updated = runKey(t, updated, "enter")
+	updated = runKey(t, updated, "enter") // trivyConfigScreen
+	updated = runKey(t, updated, "tab")   // trivyReposScreen
+	updated = runKey(t, updated, "enter") // opens the scan history modal
 
 	if got, want := updated.adminView.Tables.Findings.TotalRows(), 4; got != want {
 		t.Fatalf("findings table rows = %d, want %d", got, want)
@@ -4384,13 +4554,18 @@ func TestModelAdminFeatureTablesKeepScreenShortcutsAuthoritative(t *testing.T) {
 
 	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
 	updated = runKey(t, updated, "f")
-	updated = runKey(t, updated, "tab")
+	updated = runKey(t, updated, "enter") // trivyConfigScreen (Runtime tab's successor)
+	updated = runKey(t, updated, "tab")   // trivyReposScreen (Repository Alerts tab's successor)
 	updated = runKey(t, updated, "down")
 
-	if got, want := updated.adminView.Tables.ScanSummary.GetHighlightedRowIndex(), 1; got != want {
+	repos, ok := updated.adminScreens[slotTrivyRepos].(trivyReposScreen)
+	if !ok {
+		t.Fatal("adminScreens[slotTrivyRepos] not a mounted trivyReposScreen")
+	}
+	if got, want := repos.table.GetHighlightedRowIndex(), 1; got != want {
 		t.Fatalf("scan-summary highlighted index = %d, want %d", got, want)
 	}
-	if got, want := updated.adminView.Tables.ScanSummary.HighlightedRow().Data[adminTableMetaScanRunID], "run-2"; got != want {
+	if got, want := repos.table.HighlightedRow().Data[adminTableMetaScanRunID], "run-2"; got != want {
 		t.Fatalf("highlighted scan-summary metadata = %#v, want %q", got, want)
 	}
 
@@ -4403,12 +4578,13 @@ func TestModelAdminFeatureTablesKeepScreenShortcutsAuthoritative(t *testing.T) {
 	}
 
 	updated = runKey(t, updated, "esc")
-	if updated.screen != screenAdminFeatures {
-		t.Fatalf("screen = %q, want %q after closing detail", updated.screen, screenAdminFeatures)
+	if updated.screen != screenSecurityTrivyRepos {
+		t.Fatalf("screen = %q, want %q after closing detail", updated.screen, screenSecurityTrivyRepos)
 	}
-	updated = runKey(t, updated, "tab")
+	updated = runKey(t, updated, "tab") // back to trivyConfigScreen
 	updated = runKey(t, updated, "c")
-	if !updated.adminView.TrivyConfigModal.Active() {
+	trivy, ok := updated.adminScreens[slotTrivyConfig].(trivyConfigScreen)
+	if !ok || !trivy.cfg.Active() {
 		t.Fatal("expected config shortcut to stay authoritative on runtime tab")
 	}
 
@@ -4463,7 +4639,8 @@ func TestModelAdminScanRunsTablePagesOnArrowKeyNavigationPastPageBoundary(t *tes
 
 	updated := runAdminLogin(t, ready, "operator", "secret-pass")
 	updated = runKey(t, updated, "f")
-	updated = runKey(t, updated, "tab")
+	updated = runKey(t, updated, "enter") // trivyConfigScreen
+	updated = runKey(t, updated, "tab")   // trivyReposScreen
 
 	if updated.status != "" {
 		t.Fatalf("status = %q, want the repository-alerts load settled (empty) before navigating", updated.status)
@@ -4474,7 +4651,11 @@ func TestModelAdminScanRunsTablePagesOnArrowKeyNavigationPastPageBoundary(t *tes
 		t.Fatalf("primary pageSize = %d, want a positive size smaller than %d rows so pagination genuinely activates", primaryPageSize, totalRuns)
 	}
 
-	beforeTable := updated.adminView.Tables.ScanSummary
+	reposScreen, ok := updated.adminScreens[slotTrivyRepos].(trivyReposScreen)
+	if !ok {
+		t.Fatal("adminScreens[slotTrivyRepos] not a mounted trivyReposScreen")
+	}
+	beforeTable := reposScreen.table
 	if got, want := beforeTable.CurrentPage(), 1; got != want {
 		t.Fatalf("scan-summary table CurrentPage() before navigation = %d, want %d", got, want)
 	}
@@ -4495,7 +4676,11 @@ func TestModelAdminScanRunsTablePagesOnArrowKeyNavigationPastPageBoundary(t *tes
 		updated = runKey(t, updated, "down")
 	}
 
-	afterTable := updated.adminView.Tables.ScanSummary
+	afterReposScreen, ok := updated.adminScreens[slotTrivyRepos].(trivyReposScreen)
+	if !ok {
+		t.Fatal("adminScreens[slotTrivyRepos] not a mounted trivyReposScreen after paging")
+	}
+	afterTable := afterReposScreen.table
 	if got, want := afterTable.GetHighlightedRowIndex(), primaryPageSize; got != want {
 		t.Fatalf("highlighted row index after %d downs = %d, want %d", primaryPageSize, got, want)
 	}
@@ -4527,7 +4712,7 @@ func TestModelAdminScanRunsTablePagesOnArrowKeyNavigationPastPageBoundary(t *tes
 	if got, want := lipgloss.Height(afterView), lipgloss.Height(beforeView); got != want {
 		t.Fatalf("full screen height after paging = %d, want unchanged %d", got, want)
 	}
-	help := adminFeatureHelp(updated.adminView)
+	help := shortHelpView(newAdminTheme(), afterReposScreen.Keys())
 	if !strings.Contains(beforeView, help) || !strings.Contains(afterView, help) {
 		t.Fatalf("help text %q must remain present and unchanged before/after paging\nbefore: %q\nafter: %q", help, beforeView, afterView)
 	}

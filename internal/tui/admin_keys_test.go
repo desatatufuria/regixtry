@@ -13,16 +13,16 @@ import (
 // discrete action key updateGitleaksConfigModalKey's original switch handled
 // (Esc/Tab/Space/Enter — free-text editing via Backspace/plain runes is
 // deliberately excluded, mirroring the pre-change hand-written help string,
-// which never enumerated them either) must be present in gitleaksConfigKeys,
-// and gitleaksConfigKeys must declare no binding beyond that set — both
+// which never enumerated them either) must be present in gitleaksConfigModalKeys,
+// and gitleaksConfigModalKeys must declare no binding beyond that set — both
 // directions of drift are unrepresentable once matches() is the only
 // key-matching path a migrated screen may use.
 func TestEveryKeyHandledIsInTheKeyMapAndViceVersa(t *testing.T) {
 	t.Parallel()
 
 	want := []string{"Enter", "Tab", "Space", "Esc"}
-	got := make([]string, 0, len(gitleaksConfigKeys.short))
-	for _, b := range gitleaksConfigKeys.short {
+	got := make([]string, 0, len(gitleaksConfigModalKeys.short))
+	for _, b := range gitleaksConfigModalKeys.short {
 		got = append(got, b.Help().Key)
 	}
 
@@ -32,11 +32,11 @@ func TestEveryKeyHandledIsInTheKeyMapAndViceVersa(t *testing.T) {
 	sort.Strings(sortedGot)
 
 	if len(sortedGot) != len(sortedWant) {
-		t.Fatalf("gitleaksConfigKeys.short labels = %v, want exactly %v", got, want)
+		t.Fatalf("gitleaksConfigModalKeys.short labels = %v, want exactly %v", got, want)
 	}
 	for i := range sortedWant {
 		if sortedGot[i] != sortedWant[i] {
-			t.Fatalf("gitleaksConfigKeys.short labels = %v, want exactly %v", got, want)
+			t.Fatalf("gitleaksConfigModalKeys.short labels = %v, want exactly %v", got, want)
 		}
 	}
 }
@@ -51,13 +51,13 @@ func TestRemovingABindingRemovesItFromRenderedHelp(t *testing.T) {
 	t.Parallel()
 
 	theme := newAdminTheme()
-	full := shortHelpView(theme, gitleaksConfigKeys)
+	full := shortHelpView(theme, gitleaksConfigModalKeys)
 	if !strings.Contains(full, "Esc") {
 		t.Fatalf("shortHelpView(full) = %q, want it to contain the Esc binding before removal", full)
 	}
 
-	reduced := screenKeys{short: append([]key.Binding(nil), gitleaksConfigKeys.short[:len(gitleaksConfigKeys.short)-1]...)}
-	removedLabel := gitleaksConfigKeys.short[len(gitleaksConfigKeys.short)-1].Help().Key
+	reduced := screenKeys{short: append([]key.Binding(nil), gitleaksConfigModalKeys.short[:len(gitleaksConfigModalKeys.short)-1]...)}
+	removedLabel := gitleaksConfigModalKeys.short[len(gitleaksConfigModalKeys.short)-1].Help().Key
 
 	got := shortHelpView(theme, reduced)
 	if strings.Contains(got, removedLabel) {

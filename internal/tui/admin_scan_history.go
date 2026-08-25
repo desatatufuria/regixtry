@@ -18,7 +18,26 @@ const adminScanHistoryWindowLimit = 50
 // adminScanHistoryModalRows will always try to preserve: enough to show a
 // tab bar row, at least one table row (with its bordered chrome), and a
 // footer row.
-const adminScanHistoryModalMinRows = 8
+//
+// Derived, not guessed (fixed in the tui-menu-architecture change, Phase
+// 11): adminScanHistoryModalChromeRows(4) + a 1-row Loading/Error header +
+// adminScanHistoryModalMinTableBudget (tableChromeRows(6)+minTableRows(3)=9)
+// = 14 is the smallest value at which adminScanHistoryModalTableBody's own
+// "Terminal too small to show the table." gate (tableBudget <
+// adminScanHistoryModalMinTableBudget) never fires at this floor, even while
+// the modal's own header row (Loading/Error) is present -- the previous
+// value (8) under-counted adminScanHistoryModalChromeRows's own deduction
+// entirely and could never actually deliver a table at the floor it claimed
+// to guarantee, with or without a header row.
+// TestAdminScanHistoryModalTablePageSizeFloorsAtMinTableRows's own "tight
+// budget" case is updated to this value's derived floor (14-4-6=4, still the
+// same clamped-low shape the test guards, no longer coincidentally equal to
+// minTableRows(3) once the true minimum is computed correctly). Previously
+// unreachable in practice: every base screen adminScanHistoryModalRows was
+// ever computed against included the Built-in Features table above it, so
+// the floor was never actually exercised until trivyReposScreen (Phase 11)
+// became its own, sometimes genuinely short, top-level screen.
+const adminScanHistoryModalMinRows = 14
 
 // adminScanHistoryModalVerticalMargin reserves rows above/below the modal's
 // own content budget so it visibly floats over the base page

@@ -96,13 +96,16 @@ func TestTableRolesAssignsPrimaryAdaptiveAndCompactFloorAtThree(t *testing.T) {
 }
 
 // TestRebuildAdminTablesBakesPrimaryAndCompactPageSizeIntoTables integrates
-// tableRoles into rebuildAdminTables: Features/ScanSummary
-// (operator-navigable primary lists) get the primary pageSize, FeatureRows
-// (a secondary detail table) gets the compact pageSize. Findings/
-// SecretFindings are exercised separately (they only build while the scan
-// history modal is active, sized from the modal's own nested row budget,
-// not this primary/compact split — see TestModelScanHistoryModal* in
-// model_test.go).
+// tableRoles into each Security & Compliance screen's own table rebuild
+// (Phase 11: Features/ScanSummary/FeatureRows moved off
+// AdminViewState/rebuildAdminTables onto securityMenuScreen/
+// trivyReposScreen/trivyConfigScreen's own rebuildTable/rebuildRows
+// methods): Features/ScanSummary (operator-navigable primary lists) get the
+// primary pageSize, FeatureRows (a secondary detail table) gets the compact
+// pageSize. Findings/SecretFindings are exercised separately (they only
+// build while the scan history modal is active, sized from the modal's own
+// nested row budget, not this primary/compact split — see
+// TestModelScanHistoryModal* in model_test.go).
 func TestRebuildAdminTablesBakesPrimaryAndCompactPageSizeIntoTables(t *testing.T) {
 	t.Parallel()
 
@@ -110,27 +113,29 @@ func TestRebuildAdminTablesBakesPrimaryAndCompactPageSizeIntoTables(t *testing.T
 	model.viewport = viewportSize{Width: defaultViewportWidth, Height: defaultViewportHeight}
 
 	rowCount := 40
-	model.adminView.Features = make([]ports.FeatureSummary, rowCount)
-	model.adminView.TrivyScanRuns = make([]ports.ScanRun, rowCount)
+	features := make([]ports.FeatureSummary, rowCount)
+	scanRuns := make([]ports.ScanRun, rowCount)
 	for i := 0; i < rowCount; i++ {
-		model.adminView.Features[i] = ports.FeatureSummary{Name: fmt.Sprintf("feature-%d", i)}
-		model.adminView.TrivyScanRuns[i] = ports.ScanRun{ID: fmt.Sprintf("run-%d", i), Repository: fmt.Sprintf("team/service-%d", i)}
+		features[i] = ports.FeatureSummary{Name: fmt.Sprintf("feature-%d", i)}
+		scanRuns[i] = ports.ScanRun{ID: fmt.Sprintf("run-%d", i), Repository: fmt.Sprintf("team/service-%d", i)}
 	}
-	model.adminView.TrivySummaries = summarizeScanRunsByRepository(model.adminView.TrivyScanRuns)
-	model.adminView.FeaturePage = ports.FeaturePage{
+	summaries := summarizeScanRunsByRepository(scanRuns)
+	page := ports.FeaturePage{
 		Sections: []ports.FeatureSection{{ID: "rows-section", Kind: "rows", Rows: make([]ports.FeatureRow, rowCount)}},
 	}
 
 	layout := model.adminTablesLayout()
-	model.rebuildAdminTables(layout)
-
 	wantPrimary, wantCompact := tableRoles(layout)
-	if got, want := model.adminView.Layout.Primary, wantPrimary; got != want {
-		t.Fatalf("adminView.Layout.Primary = %d, want %d", got, want)
-	}
-	if got, want := model.adminView.Layout.Compact, wantCompact; got != want {
-		t.Fatalf("adminView.Layout.Compact = %d, want %d", got, want)
-	}
+	env := model.screenEnv()
+
+	menu := securityMenuScreen{features: features, loaded: true}
+	menu.rebuildTable(env)
+
+	repos := trivyReposScreen{summaries: summaries, loaded: true}
+	repos.rebuildTable(env)
+
+	config := trivyConfigScreen{page: page, loaded: true}
+	config.rebuildRows(env)
 
 	assertTableHeight := func(t *testing.T, label string, table bubbletable.Model, wantPageSize int) {
 		t.Helper()
@@ -141,13 +146,13 @@ func TestRebuildAdminTablesBakesPrimaryAndCompactPageSizeIntoTables(t *testing.T
 		}
 	}
 
-	assertTableHeight(t, "Features (primary)", model.adminView.Tables.Features, wantPrimary)
-	assertTableHeight(t, "ScanSummary (primary)", model.adminView.Tables.ScanSummary, wantPrimary)
-	rowsTable, ok := model.adminView.Tables.FeatureRows["rows-section"]
+	assertTableHeight(t, "securityMenuScreen.table (primary)", menu.table, wantPrimary)
+	assertTableHeight(t, "trivyReposScreen.table (primary)", repos.table, wantPrimary)
+	rowsTable, ok := config.rows["rows-section"]
 	if !ok {
-		t.Fatalf("FeatureRows[%q] missing", "rows-section")
+		t.Fatalf("rows[%q] missing", "rows-section")
 	}
-	assertTableHeight(t, "FeatureRows (compact)", rowsTable, wantCompact)
+	assertTableHeight(t, "trivyConfigScreen.rows (compact)", rowsTable, wantCompact)
 }
 
 // TestNewAdminBubbleTableShowsPositionIndicatorWhenRowsExceedPageSize is the
@@ -313,9 +318,10 @@ func TestScanSummaryLastExecutedColumnFitsLongestFormattedValueWithoutTruncation
 // tmp/features-repositoriy_alerts.png): the Repository Alerts summary table
 // is wider than theme.section's box at realistic terminal sizes when the
 // section width is a hardcoded constant smaller than the table. No rendered
-// line of the composed Features screen (Built-in Features + Repository
-// Alerts, both wrapped by the same renderSection call) may exceed the
-// section's own real, viewport-derived declared width.
+// line of trivyReposScreen's own body (Phase 11: the Repository Alerts tab,
+// promoted off the old combined Features+Repository-Alerts screen this test
+// originally exercised) may exceed the section's own real, viewport-derived
+// declared width.
 func TestRenderAdminFeaturesScreenFitsSummaryTableWithinItsOwnSectionWidth(t *testing.T) {
 	t.Parallel()
 
@@ -333,6 +339,7 @@ func TestRenderAdminFeaturesScreenFitsSummaryTableWithinItsOwnSectionWidth(t *te
 			t.Parallel()
 
 			layout := contentBudget(dims.width, dims.height, "", "")
+			env := screenEnv{Layout: layout}
 
 			summaries := []repositorySummary{{
 				Repository:   "ghcr.io/some-long-organization-name/some-really-long-repository-name",
@@ -341,20 +348,15 @@ func TestRenderAdminFeaturesScreenFitsSummaryTableWithinItsOwnSectionWidth(t *te
 				InProgress:   true,
 				RunCount:     42,
 			}}
-			view := AdminViewState{
-				Features:          []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
-				TrivyAlertsLoaded: true,
-				TrivySummaries:    summaries,
-			}
-			view.Tables.Features = buildAdminFeaturesTable(theme, view.Features, 0, minTableRows)
-			view.Tables.ScanSummary = buildAdminScanSummaryTable(theme, summaries, 0, minTableRows)
+			repos := trivyReposScreen{summaries: summaries, loaded: true}
+			repos.rebuildTable(env)
 
-			got := renderAdminFeaturesScreen(theme, AdminSession{Username: "operator"}, view, layout, time.Now())
+			frame := repos.View(theme, env)
 
 			declaredWidth := sectionWidth(layout) + 2 // +2: theme.section's own RoundedBorder columns
-			for i, line := range strings.Split(got, "\n") {
+			for i, line := range strings.Split(frame.Body, "\n") {
 				if w := lipgloss.Width(line); w > declaredWidth {
-					t.Fatalf("line %d width = %d, want <= %d (theme.section's own declared width) -- a table overflowed its bordered box:\n%s", i, w, declaredWidth, got)
+					t.Fatalf("line %d width = %d, want <= %d (theme.section's own declared width) -- a table overflowed its bordered box:\n%s", i, w, declaredWidth, frame.Body)
 				}
 			}
 		})
@@ -544,7 +546,12 @@ func TestAdminScanHistoryModalTablePageSizeFloorsAtMinTableRows(t *testing.T) {
 		want                 int
 	}{
 		{name: "generous budget computes available rows", modalRows: 20, measuredHeaderHeight: 0, want: 20 - adminScanHistoryModalChromeRows - tableChromeRows},
-		{name: "tight budget floors at minTableRows", modalRows: adminScanHistoryModalMinRows, measuredHeaderHeight: 0, want: minTableRows},
+		{name: "tight budget floors at minTableRows", modalRows: adminScanHistoryModalChromeRows + tableChromeRows, measuredHeaderHeight: 0, want: minTableRows},
+		// adminScanHistoryModalMinRows (Phase 11, tui-menu-architecture) is
+		// itself derived to guarantee a viable table even with a 1-row
+		// Loading/Error header present (see its own doc comment) -- this
+		// case is the regression guard for that exact derivation.
+		{name: "adminScanHistoryModalMinRows floor still clears adminScanHistoryModalMinTableBudget with a header row", modalRows: adminScanHistoryModalMinRows, measuredHeaderHeight: 1, want: adminScanHistoryModalMinRows - adminScanHistoryModalChromeRows - 1 - tableChromeRows},
 		{name: "measured header height reduces the remaining table budget", modalRows: 20, measuredHeaderHeight: 3, want: 20 - adminScanHistoryModalChromeRows - 3 - tableChromeRows},
 	}
 	for _, tc := range tests {

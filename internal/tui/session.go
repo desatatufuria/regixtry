@@ -366,32 +366,26 @@ type AdminSession struct {
 }
 
 type adminTableSelection struct {
-	FeatureName string
-	FindingID   string
+	FindingID string
 }
 
+// adminTablesState now backs only the still-legacy ScanHistoryModal's own
+// Findings/SecretFindings tables (Slice 3). Features/FeatureRows/ScanSummary
+// moved onto securityMenuScreen/trivyConfigScreen/trivyReposScreen's own
+// fields (Phase 11, design.md's State Migration table).
 type adminTablesState struct {
-	Features       bubbletable.Model
-	FeatureRows    map[string]bubbletable.Model
 	Findings       bubbletable.Model
 	SecretFindings bubbletable.Model
-	// ScanSummary is the per-repository Repository Alerts summary table
-	// (buildAdminScanSummaryTable), rendered by renderAdminScanSummary — the
-	// sole table backing the Repository Alerts tab.
-	ScanSummary bubbletable.Model
-	Selection   adminTableSelection
+	Selection      adminTableSelection
 }
 
 type AdminViewState struct {
 	Users             []ports.AdminUser
-	Features          []ports.FeatureSummary
 	SelectedUser      int
-	SelectedFeature   int
 	SelectedUserID    string
 	SelectedUsername  string
 	UserSearchQuery   string
 	UserSearchActive  bool
-	FeaturePage       ports.FeaturePage
 	Grants            []ports.AdminRepoGrant
 	SelectedGrant     int
 	AdminTokens       []ports.AdminToken
@@ -402,53 +396,25 @@ type AdminViewState struct {
 	TokenForm         adminTokenForm
 	// Confirm is THE confirm-before-destructive-action primitive
 	// (design.md Decision E, D7), replacing adminConfirmModal's Kind-union.
-	Confirm          confirmPrompt
-	TrivyTab         TrivyTab
-	TrivyConfigModal trivyConfigModal
-	// gitleaksConfigModal's state moved to gitleaksConfigScreen
-	// (Model.adminScreens[slotGitleaksConfig], design.md Decision G) --
-	// AdminViewState no longer holds it.
-	// ScanPolicy is the vulnerability policy gate's current settings, kept
-	// on AdminViewState alongside FeaturePage/TrivyTab so renderTrivyTabs
-	// can compose its status badge (design.md Decision 6) without a modal
-	// being open.
-	ScanPolicy      ports.ScanPolicySettings
-	ScanPolicyModal scanPolicyModal
-	// SigningPolicy is the image-signing content-trust gate's current global
-	// settings, kept on AdminViewState alongside ScanPolicy so the Feature
-	// Page heading can compose signingPolicyBadge (design.md Decision 11
-	// piece 1) without a modal being open. Deliberately NOT migrated onto
-	// signingConfigScreen in Phase 12.3 (disclosed deviation, see
-	// screen_signing_config.go's doc comment): it has a second, still-legacy
-	// reader (that same badge) screenAdminFeatures still owns.
-	SigningPolicy ports.SigningPolicySettings
-	// SigningPolicyModal's state moved to signingConfigScreen
-	// (Model.adminScreens[slotSigningConfig], Phase 12.3) -- AdminViewState
-	// no longer holds it.
-	// TrivyScanRuns holds each distinct repository's latest scan run
-	// (scanRunsFromScanSummaries), one entry per TrivySummaries row -- it no
-	// longer holds every raw scan_runs row (see ListLatestScanRunPerRepository,
-	// the repository-alerts-scan-coverage fix).
-	TrivyScanRuns          []ports.ScanRun
-	TrivySelectedAlert     int
-	TrivyAlertsLoaded      bool
+	// Still shared across every legacy admin screen; the Security &
+	// Compliance domain's own screens (Phase 11) each own their own local
+	// confirm field instead (design.md Decision B: a migrated screen cannot
+	// write to AdminViewState directly).
+	Confirm                confirmPrompt
 	RevealedTokenSecret    string
 	RevealedTokenAccessor  string
 	RevealedTokenExpiresAt time.Time
-	// TrivySummaries is the per-repository aggregation backing the
-	// Repository Alerts summary table (spec.md "Repository Alerts
-	// Summarized Per Repository With Ordering And Freshness"), mapped
-	// straight through from the server's already-collapsed
-	// ports.RepositoryScanSummary rows (repositorySummariesFromScanSummaries).
-	TrivySummaries []repositorySummary
 	// ScanHistoryModal is the Repository Alerts drill-down modal state
 	// (spec.md "Repository Alert Drill-Down Opens History Modal"), opened by
-	// Enter on a summary row (updateAdminFeaturesKey).
+	// Enter on a summary row -- still legacy (Slice 3, design.md's State
+	// Migration table: moves to scanHistoryScreen under Operations).
+	// trivyReposScreen (Phase 11) opens it via openAdminScanHistoryMsg
+	// (screen.go), since a migrated screen cannot write to it directly.
 	ScanHistoryModal adminScanHistoryModal
 	// RepositoryOverrideModal is retired (tui-menu-architecture, design.md
 	// Decision F): the per-repository override editor now lives per-screen
-	// as overrideEditor (Model.adminScreens[slotTrivyOverride] for Trivy;
-	// embedded in featureOverridesScreen for Gitleaks/Signing).
+	// as overrideEditor, embedded directly in trivyReposScreen/
+	// featureOverridesScreen.
 	// RepoAdminRepository/RepoAdminGrants/SelectedRepoAdminGrant/
 	// RepoAdminGrantForm back screenRepoAdminGrants/screenRepoAdminAddGrant
 	// (design.md Decision 7): the repo-admin delegate's own repository-
@@ -461,8 +427,7 @@ type AdminViewState struct {
 	// screenRepoAdminGrants load actually succeeded (adminRepoGrantsLoadedMsg
 	// with a nil err), distinct from "loaded successfully with zero grants".
 	// A 403 from GET .../grants (repository-administrator privileges
-	// required) leaves this false, following this codebase's existing
-	// TrivyAlertsLoaded naming precedent. Every call site that dispatches
+	// required) leaves this false. Every call site that dispatches
 	// loadRepoAdminGrantsCmd must reset this to false first, so a stale
 	// true from a PREVIOUS repository's successful load can never leak into
 	// a NEW repository's screen before its own load response arrives.
@@ -479,13 +444,7 @@ type AdminViewState struct {
 	Robots          []ports.AdminRobot
 	SelectedRobot   int
 	CreateRobotForm adminCreateRobotForm
-	// TrivyOverrides is every stored Trivy repository override row
-	// (fetched alongside TrivyScanRuns), used only to annotate the
-	// Repository Alerts table with a distinct "scanning disabled" state
-	// (design.md Decision 8's Open Question on the list endpoint; the
-	// resolution path itself never uses this field).
-	TrivyOverrides []ports.RepositoryOverrideDetails
-	Tables         adminTablesState
+	Tables          adminTablesState
 	// Layout is the consoleLayout used the last time rebuildAdminTables ran,
 	// including the primary/compact table pageSize split (design.md
 	// decision #6). It is a snapshot for table construction, not the live
@@ -552,10 +511,6 @@ func newAdminViewState() AdminViewState {
 		},
 		CreateRobotForm: adminCreateRobotForm{
 			Role: domainauth.RepoRoleReader,
-		},
-		TrivyTab: trivyTabRuntime,
-		Tables: adminTablesState{
-			FeatureRows: make(map[string]bubbletable.Model),
 		},
 	}
 }

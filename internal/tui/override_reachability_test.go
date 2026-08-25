@@ -33,12 +33,16 @@ func TestEveryOverridePathReachableBeforeIsReachableAfter(t *testing.T) {
 		}
 		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
 		updated = runKey(t, updated, "f")
-		updated = runKey(t, updated, "tab")
+		updated = runKey(t, updated, "enter") // trivyConfigScreen
+		updated = runKey(t, updated, "tab")   // trivyReposScreen
 		updated = runKey(t, updated, "o")
 
-		editor, ok := updated.adminScreens[slotTrivyOverride].(overrideEditor)
-		if !ok || !editor.Active() || editor.Feature() != trivyFeatureName {
-			t.Fatalf("Trivy override path unreachable: adminScreens[slotTrivyOverride] = %#v", updated.adminScreens[slotTrivyOverride])
+		// Phase 11: the uniform overrideEditor is now embedded directly in
+		// trivyReposScreen (mirrors featureOverridesScreen's own pattern),
+		// not a separate slotTrivyOverride slot.
+		repos, ok := updated.adminScreens[slotTrivyRepos].(trivyReposScreen)
+		if !ok || !repos.editor.Active() || repos.editor.Feature() != trivyFeatureName {
+			t.Fatalf("Trivy override path unreachable: adminScreens[slotTrivyRepos] = %#v", updated.adminScreens[slotTrivyRepos])
 		}
 	})
 
@@ -51,8 +55,9 @@ func TestEveryOverridePathReachableBeforeIsReachableAfter(t *testing.T) {
 		}
 		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
 		updated = runKey(t, updated, "f")
-		updated = runKey(t, updated, "o")
-		updated = runKey(t, updated, "o")
+		updated = runKey(t, updated, "enter") // gitleaksConfigScreen
+		updated = runKey(t, updated, "o")     // screenSecurityGitleaksRepos
+		updated = runKey(t, updated, "o")     // opens the override editor
 
 		screen, ok := updated.adminScreens[slotGitleaksRepos].(featureOverridesScreen)
 		if !ok || !screen.editor.Active() || screen.editor.Feature() != gitleaksFeatureName {
@@ -69,8 +74,9 @@ func TestEveryOverridePathReachableBeforeIsReachableAfter(t *testing.T) {
 		}
 		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
 		updated = runKey(t, updated, "f")
-		updated = runKey(t, updated, "o")
-		updated = runKey(t, updated, "o")
+		updated = runKey(t, updated, "enter") // signingConfigScreen
+		updated = runKey(t, updated, "o")     // screenSecuritySigningRepos
+		updated = runKey(t, updated, "o")     // opens the override editor
 
 		screen, ok := updated.adminScreens[slotSigningRepos].(featureOverridesScreen)
 		if !ok || !screen.editor.Active() || screen.editor.Feature() != signingFeatureName {
@@ -90,7 +96,8 @@ func TestEveryOverridePathReachableBeforeIsReachableAfter(t *testing.T) {
 		}
 		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
 		updated = runKey(t, updated, "f")
-		updated = runKey(t, updated, "tab")
+		updated = runKey(t, updated, "enter") // trivyConfigScreen
+		updated = runKey(t, updated, "tab")   // trivyReposScreen
 		updated = runKey(t, updated, "enter")
 
 		if !updated.adminView.ScanHistoryModal.Active() {

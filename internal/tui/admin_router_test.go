@@ -23,11 +23,15 @@ func TestAdminScreenSetHoldsOnlyInterfaceValues(t *testing.T) {
 	}
 }
 
-// adminScreenIDs is every screen constant updateAdminKey's routing domain
-// covers (isAdminScreen's exact 15), used by TestEveryScreenRoutesExactlyOnce
-// below.
+// adminScreenIDs is every screen constant still routed through the legacy
+// adapter (legacyScreenHandlers), used by both TestEveryScreenRoutesExactlyOnce
+// and TestLegacyAdapterHoldsNoState below. Narrowed from 15 to 14 in Phase 11:
+// screenAdminFeatures is no longer legacy (design.md Decision I repurposes it
+// as securityMenuScreen, addressed via slotFor) -- isAdminScreen's own domain
+// is larger still (it also includes every already-migrated screen, legacy or
+// not), so this list is deliberately narrower than isAdminScreen's full set.
 var adminScreenIDs = []screen{
-	screenAdminLogin, screenAdminAuthenticating, screenAdminUsers, screenAdminFeatures,
+	screenAdminLogin, screenAdminAuthenticating, screenAdminUsers,
 	screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword,
 	screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens,
 	screenAdminCreateToken, screenRepoAdminGrants, screenRepoAdminAddGrant,

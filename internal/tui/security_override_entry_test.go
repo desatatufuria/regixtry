@@ -28,6 +28,7 @@ func TestGitleaksOverrideOpensWithoutEnteringTrivy(t *testing.T) {
 	}
 	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
 	updated = runKey(t, updated, "f")
+	updated = runKey(t, updated, "enter") // navigate into gitleaksConfigScreen
 
 	if strings.Contains(string(updated.screen), "trivy") {
 		t.Fatalf("screen = %q, want no Trivy screen id reached", updated.screen)
@@ -74,6 +75,7 @@ func TestSigningOverrideOpensWithoutEnteringTrivy(t *testing.T) {
 	}
 	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
 	updated = runKey(t, updated, "f")
+	updated = runKey(t, updated, "enter") // navigate into signingConfigScreen
 
 	if strings.Contains(string(updated.screen), "trivy") {
 		t.Fatalf("screen = %q, want no Trivy screen id reached", updated.screen)
@@ -115,7 +117,8 @@ func TestOverrideKeyIsInertWithoutAHighlightedRow(t *testing.T) {
 	// yields an empty row set.
 	updated := runAdminLogin(t, newAdminReadyModelWithCatalog(t, nil, adminClient), "operator", "secret-pass")
 	updated = runKey(t, updated, "f")
-	updated = runKey(t, updated, "o") // enters screenSecurityGitleaksRepos, zero rows
+	updated = runKey(t, updated, "enter") // navigate into gitleaksConfigScreen
+	updated = runKey(t, updated, "o")     // enters screenSecurityGitleaksRepos, zero rows
 
 	screenBefore, ok := updated.adminScreens[slotGitleaksRepos].(featureOverridesScreen)
 	if !ok || len(screenBefore.rows) != 0 {

@@ -21,7 +21,6 @@ var legacyScreenHandlers = map[screen]legacyHandler{
 		return m, nil
 	},
 	screenAdminUsers:          Model.updateAdminUsersKey,
-	screenAdminFeatures:       Model.updateAdminFeaturesKey,
 	screenAdminCreateUser:     Model.updateCreateUserFormKey,
 	screenAdminEditUser:       Model.updateAdminEditUserKey,
 	screenAdminChangePassword: Model.updateResetPasswordFormKey,

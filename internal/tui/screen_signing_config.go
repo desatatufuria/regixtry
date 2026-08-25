@@ -4,74 +4,105 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
+	bubbletable "github.com/evertras/bubble-table/table"
 	"regixtry/internal/ports"
 )
 
-// signingConfigScreen is Phase 12.3's sub-model (design.md's State
-// Migration table: SigningPolicy/SigningPolicyModal -> signingConfigScreen,
-// policy/policyModal). It is the image-signing content-trust gate's own
-// global policy editor, moved off AdminViewState.SigningPolicyModal verbatim
-// in behavior -- updateSigningPolicyModalKey (model.go) and
-// renderSigningPolicyModal (admin_views.go) both move here, mirroring
-// gitleaksConfigScreen's Slice 1 precedent exactly. It is mounted into
-// Model.adminScreens[slotSigningConfig] only while open; the router clears
-// the slot back to nil on close (Esc).
+// signingConfigScreen was Phase 12.3's sub-model, mounted as an overlay on
+// the still-legacy screenAdminFeatures. Phase 11 (the resolved-gap
+// addendum) promotes it to a properly addressable top-level screen
+// (screenSecuritySigningConfig), mirroring gitleaksConfigScreen exactly:
+// it now independently owns its own `page` (loaded via loadFeaturePageCmd
+// scoped to signingFeatureName) and the enable/disable/install/upgrade/
+// rollback action dispatch.
 //
-// Deviation, disclosed rather than silent: design.md's table lists
-// "SigningPolicy" as also migrating to a `policy` field here. That field
-// (the LOADED baseline settings, distinct from the modal's own editable
-// copy) stays on AdminViewState in this apply batch instead, because it has
-// a second, still-legacy reader: renderAdminFeaturesScreen's
-// signingPolicyBadge composed onto the Feature Page heading
-// (admin_views.go), which is part of screenAdminFeatures' still-unmigrated
-// rendering (Phase 11 deviation). Deleting AdminViewState.SigningPolicy here
-// would either break that badge's only data source or force a duplicated,
-// driftable copy across two owners. baselineKeys below carries exactly the
-// one piece of that settings snapshot signingConfigScreen itself needs (the
-// raw trusted-key list for its Enter-submit payload, since screenEnv
-// deliberately carries no SigningPolicy -- it is per-call READ-only state,
-// design.md's Interfaces section), seeded once at construction from the
-// same already-loaded AdminViewState.SigningPolicy the pre-change opener
-// read, and refreshed by adminSigningPolicyUpdatedMsg on every successful
-// save.
+// policy is now the full migrated AdminViewState.SigningPolicy (design.md's
+// State Migration table, closing Phase 12.3's own disclosed deviation): the
+// signing badge's only reader, renderAdminFeaturesScreen's Feature Page
+// heading, no longer exists (Phase 11 deletes it -- securityMenuScreen is a
+// bare peer list with no per-feature badge), so the second-reader conflict
+// that justified keeping SigningPolicy on AdminViewState in the Phase 12.3
+// follow-up batch no longer applies.
 type signingConfigScreen struct {
-	cfg          signingPolicyModal
-	baselineKeys []string // AdminViewState.SigningPolicy.TrustedPublicKeys at open/last-save time
+	page   ports.FeaturePage
+	loaded bool
+	rows   map[string]bubbletable.Model
+	cfg    signingPolicyModal
+	policy ports.SigningPolicySettings
+	// confirm is this screen's own confirm-before-destructive-action prompt
+	// (mirrors trivyConfigScreen.confirm's doc comment exactly).
+	confirm confirmPrompt
+	err     string
 }
 
-// newSigningConfigScreen constructs the screen from an already-seeded
-// signingPolicyModal (mirroring the pre-change opener's own construction at
-// model.go's 'p' branch exactly) plus the loaded policy's raw trusted-key
-// baseline, needed for Enter's save payload.
-func newSigningConfigScreen(cfg signingPolicyModal, baselineKeys []string) signingConfigScreen {
-	return signingConfigScreen{cfg: cfg, baselineKeys: append([]string(nil), baselineKeys...)}
+// newSigningConfigScreen constructs an unloaded screen; Init issues the
+// FeaturePage load. Phase 11 deviation from Phase 12.3's own constructor
+// (which took an already-seeded signingPolicyModal + baseline keys): now
+// top-level and long-lived, it loads its own page/policy independently
+// instead of being pre-seeded by its opener (mirrors
+// newGitleaksConfigScreen's identical Phase 11 change).
+func newSigningConfigScreen() signingConfigScreen { return signingConfigScreen{} }
+
+func (s signingConfigScreen) ID() screen { return screenSecuritySigningConfig }
+
+func (s signingConfigScreen) Keys() screenKeys {
+	if s.cfg.Active() {
+		return signingConfigModalKeys
+	}
+	short := []key.Binding{
+		key.NewBinding(key.WithKeys("enter", "r"), key.WithHelp("Enter/r", "refresh page")),
+		key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "policy")),
+	}
+	short = append(short, featureActionKeyBindings(s.page)...)
+	short = append(short,
+		key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "repository overrides")),
+		key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "back")),
+		key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
+	)
+	return screenKeys{short: short}
 }
 
-// ID identifies the screen this overlay is nested within (mirrors
-// gitleaksConfigScreen.ID's doc comment exactly): signingConfigScreen is not
-// addressed by screen identity via slotFor -- it is an overlay on the still-
-// legacy screenAdminFeatures, not a top-level screen.
-func (s signingConfigScreen) ID() screen { return screenAdminFeatures }
+func (s signingConfigScreen) Init(env screenEnv) tea.Cmd {
+	return loadFeaturePageCmd(env, signingFeatureName)
+}
 
-func (s signingConfigScreen) Keys() screenKeys { return signingConfigKeys }
-
-// Init has nothing to load: the modal is always seeded synchronously from
-// the already-loaded AdminViewState.SigningPolicy at construction time,
-// exactly like the pre-change opener.
-func (s signingConfigScreen) Init(env screenEnv) tea.Cmd { return nil }
-
-// Update reproduces updateSigningPolicyModalKey's exact behavior for keys,
-// plus adminSigningPolicyUpdatedMsg's modal-refresh half (design.md
-// Decision H broadcast arm) -- the central Model.Update handler keeps the
-// badge-facing AdminViewState.SigningPolicy assignment and m.status, and
-// broadcasts the same message here via routeAdminMsg so this screen can
-// refresh its own cfg/baselineKeys, exactly mirroring
-// gitleaksConfigScreen's adminFeatureConfiguredMsg handling.
 func (s signingConfigScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.Cmd, bool) {
+	if key, ok := msg.(tea.KeyMsg); ok {
+		switch {
+		case s.confirm.Active():
+			next, cmd, consumed := s.confirm.update(env, key)
+			s.confirm = next
+			return s, cmd, consumed
+		case s.cfg.Active():
+			return s.updateConfigKey(env, key)
+		}
+		return s.updateKey(env, key)
+	}
 	switch typed := msg.(type) {
-	case tea.KeyMsg:
-		return s.updateKey(env, typed)
+	case tea.WindowSizeMsg:
+		s.rebuildRows(env)
+		return s, nil, false
+	case adminFeaturePageLoadedMsg:
+		if typed.feature != signingFeatureName {
+			return s, nil, false
+		}
+		if typed.err != nil {
+			s.err = typed.err.Error()
+			return s, nil, false
+		}
+		s.page = typed.page
+		s.loaded = true
+		s.err = ""
+		s.rebuildRows(env)
+		return s, loadSigningPolicyCmd(env), false
+	case adminSigningPolicyLoadedMsg:
+		if typed.err != nil {
+			return s, nil, false
+		}
+		s.policy = typed.settings
+		return s, nil, false
 	case adminSigningPolicyUpdatedMsg:
 		if typed.err != nil {
 			s.cfg.Error = typed.err.Error()
@@ -79,29 +110,110 @@ func (s signingConfigScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, te
 		}
 		// Unlike scanPolicyModal, the modal stays open after a successful
 		// save (design.md Decision 11 piece 1's growable key list): the
-		// operator can keep adding keys, mirroring the pre-change central
-		// handler's own "stays open" precedent exactly.
+		// operator can keep adding keys.
+		s.policy = typed.settings
 		s.cfg.Enabled = typed.settings.Enabled
 		s.cfg.UnsignedSelfRead = normalizeUnsignedSelfRead(typed.settings.UnsignedSelfRead)
 		s.cfg.Fingerprints = signingKeyFingerprints(typed.settings.TrustedPublicKeys)
 		s.cfg.AddKey = ""
 		s.cfg.Error = ""
-		s.baselineKeys = append([]string(nil), typed.settings.TrustedPublicKeys...)
 		return s, nil, false
+	case adminFeatureActionCompletedMsg:
+		if typed.feature != signingFeatureName {
+			return s, nil, false
+		}
+		s.confirm = confirmPrompt{}
+		if typed.err != nil {
+			s.err = typed.err.Error()
+			return s, nil, false
+		}
+		s.err = ""
+		return s, loadFeaturePageCmd(env, signingFeatureName), false
+	case adminFeatureConfiguredMsg:
+		if typed.name != signingFeatureName {
+			return s, nil, false
+		}
+		if typed.err != nil {
+			s.err = typed.err.Error()
+			return s, nil, false
+		}
+		return s, loadFeaturePageCmd(env, signingFeatureName), false
+	case adminFeatureRuntimeMutatedMsg:
+		if typed.name != signingFeatureName || typed.err != nil {
+			return s, nil, false
+		}
+		return s, loadFeaturePageCmd(env, signingFeatureName), false
 	}
 	return s, nil, false
 }
 
+func (s *signingConfigScreen) rebuildRows(env screenEnv) {
+	_, compact := tableRoles(env.Layout)
+	rows := make(map[string]bubbletable.Model)
+	for _, section := range s.page.Sections {
+		if section.Kind != "rows" {
+			continue
+		}
+		rows[section.ID] = buildAdminFeatureRowsTable(newAdminTheme(), section, compact)
+	}
+	s.rows = rows
+}
+
 func (s signingConfigScreen) updateKey(env screenEnv, msg tea.KeyMsg) (adminScreen, tea.Cmd, bool) {
-	keys := s.Keys()
 	switch {
-	case keys.matches(msg, "Esc"):
-		return nil, nil, true
-	case keys.matches(msg, "Tab"):
+	case isEscKey(msg):
+		return s, navigate(screenAdminFeatures), true
+	case isRuneKey(msg, 'p'):
+		s.cfg = signingPolicyModal{
+			Open:             true,
+			Focus:            signingPolicyFieldEnabled,
+			Enabled:          s.policy.Enabled,
+			UnsignedSelfRead: normalizeUnsignedSelfRead(s.policy.UnsignedSelfRead),
+			Fingerprints:     signingKeyFingerprints(s.policy.TrustedPublicKeys),
+		}
+		return s, nil, true
+	case isRuneKey(msg, 'o'):
+		// Same fix as gitleaks, for signing (spec.md "Signing
+		// Repository-Scoped Override Entry Point").
+		return s, navigate(screenSecuritySigningRepos), true
+	case isEnterKey(msg), isRuneKey(msg, 'r'):
+		return s, loadFeaturePageCmd(env, signingFeatureName), true
+	}
+	if action, ok := featureActionForKey(msg, s.page); ok {
+		return s.dispatchAction(env, action)
+	}
+	return s, nil, true
+}
+
+// dispatchAction mirrors trivyConfigScreen.dispatchAction exactly, scoped
+// to signingFeatureName.
+func (s signingConfigScreen) dispatchAction(env screenEnv, action ports.FeatureAction) (adminScreen, tea.Cmd, bool) {
+	if strings.TrimSpace(action.ConfirmMessage) != "" {
+		var (
+			submitting string
+			onConfirm  func(screenEnv) tea.Cmd
+		)
+		if action.ID == "enable" || action.ID == "disable" {
+			actionID := action.ID
+			submitting = fmt.Sprintf("Submitting %s for %s...", actionID, signingFeatureName)
+			onConfirm = func(env screenEnv) tea.Cmd { return executeFeatureActionCmd(env, signingFeatureName, actionID) }
+		}
+		s.confirm = newConfirmPrompt(adminFirstNonEmpty(action.ConfirmTitle, action.Label), action.ConfirmMessage, strings.ToLower(strings.TrimSpace(action.Label)), submitting, onConfirm)
+		return s, nil, true
+	}
+	return s, executeFeatureActionCmd(env, signingFeatureName, action.ID), true
+}
+
+func (s signingConfigScreen) updateConfigKey(env screenEnv, msg tea.KeyMsg) (adminScreen, tea.Cmd, bool) {
+	switch {
+	case isEscKey(msg):
+		s.cfg = signingPolicyModal{}
+		return s, nil, true
+	case isTabKey(msg):
 		s.cfg.Focus = nextSigningPolicyField(s.cfg.Focus)
 		s.cfg.Error = ""
 		return s, nil, true
-	case keys.matches(msg, "Space"):
+	case isRuneKey(msg, ' '):
 		switch s.cfg.Focus {
 		case signingPolicyFieldEnabled:
 			s.cfg.Enabled = !s.cfg.Enabled
@@ -116,10 +228,10 @@ func (s signingConfigScreen) updateKey(env screenEnv, msg tea.KeyMsg) (adminScre
 		}
 		s.cfg.Error = ""
 		return s, nil, true
-	case keys.matches(msg, "Enter"):
+	case isEnterKey(msg):
 		var trustedKeys []string
 		if s.cfg.Focus != signingPolicyFieldClearKeys {
-			trustedKeys = append(trustedKeys, s.baselineKeys...)
+			trustedKeys = append(trustedKeys, s.policy.TrustedPublicKeys...)
 			if strings.TrimSpace(s.cfg.AddKey) != "" {
 				trustedKeys = append(trustedKeys, s.cfg.AddKey)
 			}
@@ -143,17 +255,41 @@ func (s signingConfigScreen) updateKey(env screenEnv, msg tea.KeyMsg) (adminScre
 // updateSigningPolicyCmd method, needed because a sub-model has no Model to
 // call a method on -- built from env.asModel() so the exact same
 // AdminClient.UpdateSigningPolicy call/message shape
-// (adminSigningPolicyUpdatedMsg) is reused verbatim (mirrors
-// screen_gitleaks_config.go's configureFeatureCmd wrapper).
+// (adminSigningPolicyUpdatedMsg) is reused verbatim.
 func updateSigningPolicyCmd(env screenEnv, input ports.SigningPolicySettings) tea.Cmd {
 	return env.asModel().updateSigningPolicyCmd(input)
 }
 
-// View reproduces renderSigningPolicyModal's exact layout, with the
-// pre-change hand-written footer replaced by shortHelpView's
-// keymap-generated one.
+// View reproduces renderSigningPolicyModal's exact layout as this screen's
+// Overlay when the modal is open, with the base Feature Page body rendered
+// underneath (mirrors gitleaksConfigScreen.View exactly).
 func (s signingConfigScreen) View(theme adminTheme, env screenEnv) screenFrame {
-	return screenFrame{Overlay: renderSigningPolicyModal(theme, s.cfg)}
+	// The signing badge is composed onto this heading line at zero row
+	// cost -- there is no tab strip on the signing page the way
+	// renderTrivyTabs hosts the scan policy badge, so the heading itself is
+	// the zero-row host (design.md Decision 11 piece 1).
+	heading := theme.subheading.Render("Feature Page") + "  " + signingPolicyBadge(theme, s.policy)
+	lines := []string{heading}
+	if s.err != "" {
+		lines = append(lines, "", theme.error.Render(s.err))
+	}
+	if !s.loaded {
+		lines = append(lines, theme.muted.Render("Select or refresh a feature to load the backend-declared page."))
+	} else {
+		lines = append(lines, renderGenericFeaturePage(theme, s.page, s.rows)...)
+	}
+	lines = append(lines, renderAdminOperatorFooter(theme, env.Session, env.now())...)
+	frame := screenFrame{
+		Context: "Security & Compliance / Signing",
+		Body:    renderSection(theme, strings.Join(lines, "\n"), env.Layout),
+	}
+	switch {
+	case s.confirm.Active():
+		frame.Overlay = s.confirm.view(theme)
+	case s.cfg.Active():
+		frame.Overlay = renderSigningPolicyModal(theme, s.cfg)
+	}
+	return frame
 }
 
 // renderSigningPolicyModal renders the image-signing content-trust gate's
@@ -161,10 +297,7 @@ func (s signingConfigScreen) View(theme adminTheme, env screenEnv) screenFrame {
 // renderScanPolicyModal -- NOT an extension of it. Row arithmetic: heading
 // (1) + status (1) + 3 fields x 2 rows (6) + key list (1 for empty, else
 // min(N,4)+[1 if N>4]) + clear row (1) + blank/help (2, +2 more with an
-// error) + 4 rows theme.section chrome. Moved from admin_views.go (Phase
-// 12.3); the pre-move hand-written footer is now shortHelpView's
-// keymap-generated one (T1.3's byte-identity proof applies to this footer
-// exactly the same way it did for gitleaksConfigScreen's).
+// error) + 4 rows theme.section chrome.
 func renderSigningPolicyModal(theme adminTheme, modal signingPolicyModal) string {
 	lines := []string{
 		theme.subheading.Render("Signing Policy"),
@@ -178,7 +311,7 @@ func renderSigningPolicyModal(theme adminTheme, modal signingPolicyModal) string
 	if strings.TrimSpace(modal.Error) != "" {
 		lines = append(lines, "", theme.error.Render(modal.Error))
 	}
-	lines = append(lines, "", theme.muted.Render(shortHelpView(theme, signingConfigKeys)))
+	lines = append(lines, "", theme.muted.Render(shortHelpView(theme, signingConfigModalKeys)))
 	return theme.section.Render(strings.Join(lines, "\n"))
 }
 
@@ -186,7 +319,7 @@ func renderSigningPolicyModal(theme adminTheme, modal signingPolicyModal) string
 // trusted keys are currently configured", occupying the modal's own fixed
 // Status row regardless of key count (design.md Decision 11's row-budget
 // table lists Status as a constant 1-row cost, distinct from the scaling
-// key list below it). Moved from admin_views.go (Phase 12.3).
+// key list below it).
 func signingPolicyStatusLine(modal signingPolicyModal) string {
 	if modal.Loading {
 		return "Loading…"
@@ -198,9 +331,7 @@ func signingPolicyStatusLine(modal signingPolicyModal) string {
 // "+N more" row when there are more than 4, or a single empty-state row when
 // there are none (design.md Decision 11's row-budget table: Key list = 1 /
 // N / min(N,4)+1). Stored keys are shown only as truncated SHA-256/12
-// fingerprints, never as raw PEM (renderSigningPolicyModal's own doc
-// comment / spec's redaction requirement). Moved from admin_views.go (Phase
-// 12.3).
+// fingerprints, never as raw PEM.
 func renderSigningPolicyKeyList(theme adminTheme, fingerprints []string) []string {
 	if len(fingerprints) == 0 {
 		return []string{theme.muted.Render("No trusted keys configured.")}
@@ -223,8 +354,7 @@ func renderSigningPolicyKeyList(theme adminTheme, fingerprints []string) []strin
 
 // renderSigningPolicyClearKeysRow renders the modal's ClearKeys action as a
 // single-row line, mirroring renderRepositoryOverrideClearRow's action-row
-// pattern (an action, not an input, so it costs 1 row rather than 2). Moved
-// from admin_views.go (Phase 12.3).
+// pattern (an action, not an input, so it costs 1 row rather than 2).
 func renderSigningPolicyClearKeysRow(theme adminTheme, modal signingPolicyModal) string {
 	label := "Clear all trusted keys"
 	if len(modal.Fingerprints) == 0 {
