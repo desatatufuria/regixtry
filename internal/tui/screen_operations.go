@@ -76,13 +76,11 @@ func (s adminOperationsScreen) navigateToSelected() tea.Cmd {
 func (s adminOperationsScreen) View(theme adminTheme, env screenEnv) screenFrame {
 	lines := []string{theme.subheading.Render("Operations")}
 	highlighted := boundedIndex(s.selected, len(adminOperationsRows))
+	peerRows := make([]peerMenuRow, len(adminOperationsRows))
 	for index, row := range adminOperationsRows {
-		label := row.Label + "  " + theme.muted.Render(row.Help)
-		if index == highlighted {
-			label = theme.selected.Render(row.Label) + "  " + theme.muted.Render(row.Help)
-		}
-		lines = append(lines, label)
+		peerRows[index] = peerMenuRow{Label: row.Label, Help: row.Help}
 	}
+	lines = append(lines, renderPeerMenuRows(theme, peerRows, highlighted)...)
 	lines = append(lines, renderAdminOperatorFooter(theme, env.Session, env.now())...)
 	return screenFrame{
 		Context: "Operations",

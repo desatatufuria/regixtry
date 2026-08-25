@@ -166,6 +166,49 @@ func renderAdminOperatorFooter(theme adminTheme, session AdminSession, now time.
 	}
 }
 
+// peerMenuRow is one row of a bare peer-list menu (adminMenuScreen,
+// adminOperationsScreen) -- screens deliberately kept as plain rows rather
+// than a bubbletable (design.md's "no page/action state of its own"
+// screens), which otherwise rendered ragged, unaligned label/help text with
+// no visual cursor beyond the background fill.
+type peerMenuRow struct {
+	Label string
+	Help  string
+}
+
+// renderPeerMenuRows renders peer rows with a leading cursor ("▸ ", matching
+// blank padding on other rows so nothing shifts) and label-column alignment
+// (every row's label right-padded to the widest one, so help text starts in
+// the same column across rows) -- shared by adminMenuScreen and
+// adminOperationsScreen so the two peer-list screens stay visually
+// consistent with each other.
+func renderPeerMenuRows(theme adminTheme, rows []peerMenuRow, highlighted int) []string {
+	labelWidth := 0
+	for _, row := range rows {
+		if w := lipgloss.Width(row.Label); w > labelWidth {
+			labelWidth = w
+		}
+	}
+
+	lines := make([]string, len(rows))
+	for index, row := range rows {
+		padded := row.Label + strings.Repeat(" ", labelWidth-lipgloss.Width(row.Label))
+		cursor := "  "
+		// theme.selected carries its own Padding(0, 1) (1 space each side),
+		// so the non-highlighted branch adds matching plain-space padding --
+		// otherwise the highlighted row's label column would render 2
+		// columns wider than every other row's, breaking the very alignment
+		// this helper exists to guarantee.
+		label := " " + padded + " "
+		if index == highlighted {
+			cursor = "▸ "
+			label = theme.selected.Render(padded)
+		}
+		lines[index] = cursor + label + "  " + theme.muted.Render(row.Help)
+	}
+	return lines
+}
+
 func renderAdminUsersScreen(theme adminTheme, session AdminSession, view AdminViewState, layout consoleLayout, now time.Time) string {
 	searchHint := "Press / to edit the search"
 	if view.UserSearchActive {
