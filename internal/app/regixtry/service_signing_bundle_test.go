@@ -402,6 +402,77 @@ func TestServiceVerifySignature_LegacySignaturePresentNeverTriesBundleFallback(t
 	}
 }
 
+// TestServiceVerifySignature_LegacyFormatMultipleTrustedKeysAttributesTheMatchingOneNotTheFirst
+// is the Judgment Day coverage-gap RED test (dual-confirmed): every existing
+// legacy-format test in this package configures exactly one trusted key, so
+// the core new claim of this change -- correct per-key fingerprint
+// attribution among multiple configured keys -- has never actually
+// exercised a non-first matching key. An unrelated key is listed FIRST in
+// TrustedPublicKeys, the fixture's own signing key SECOND: verification must
+// still succeed, and the returned fingerprint must be the signing key's, not
+// the first (unrelated) key's.
+func TestServiceVerifySignature_LegacyFormatMultipleTrustedKeysAttributesTheMatchingOneNotTheFirst(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	repository := "library/alpine"
+	seedFixtureImageManifest(t, service, repository)
+	seedFixtureSignatureArtifact(t, service, repository)
+
+	unrelatedKeyPEM := generateTestECDSAP256PublicKeyPEM(t)
+	signingKeyPEM := fixtureTrustedKeyPEM(t)
+	policy := signingPolicyForTest(t, true, []string{unrelatedKeyPEM, signingKeyPEM})
+
+	state, fingerprint, err := service.verifySignature(context.Background(), repository, fixtureImageDigest, policy)
+	if err != nil {
+		t.Fatalf("verifySignature() error = %v, want nil (the fixture signature must verify against its own key, wherever it sits in the trusted list)", err)
+	}
+	if state != signatureStateVerified {
+		t.Fatalf("verifySignature() state = %q, want %q", state, signatureStateVerified)
+	}
+	if want := signing.Fingerprint(signingKeyPEM); fingerprint != want {
+		t.Fatalf("verifySignature() fingerprint = %q, want %q (the actual signing key's fingerprint, not the first/unrelated key's)", fingerprint, want)
+	}
+	if unwanted := signing.Fingerprint(unrelatedKeyPEM); fingerprint == unwanted {
+		t.Fatal("verifySignature() attributed the fingerprint to the first (unrelated) key, not the one that actually signed")
+	}
+}
+
+// TestServiceVerifySignature_BundleFormatMultipleTrustedKeysAttributesTheMatchingOneNotTheFirst
+// is the bundle-format sibling of the legacy-format coverage-gap test above:
+// the signing key sits SECOND in TrustedPublicKeys, behind an unrelated
+// first key -- attribution must still point at the actual signer.
+func TestServiceVerifySignature_BundleFormatMultipleTrustedKeysAttributesTheMatchingOneNotTheFirst(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	repository := "library/alpine"
+	imageDigest := seedArbitraryImageManifest(t, service, repository, " - bundle multi-key attribution")
+	signingKey, signingKeyPEM := generateTestECDSAP256KeyPair(t)
+	_, unrelatedKeyPEM := generateTestECDSAP256KeyPair(t)
+	seedBundleSignatureArtifact(t, service, repository, imageDigest, imageDigest, bareHex(imageDigest), signingKey)
+
+	policy := signingPolicyForTest(t, true, []string{unrelatedKeyPEM, signingKeyPEM})
+
+	state, fingerprint, err := service.verifySignature(context.Background(), repository, imageDigest, policy)
+	if err != nil {
+		t.Fatalf("verifySignature() error = %v, want nil (the bundle-format signature must verify against its own key, wherever it sits in the trusted list)", err)
+	}
+	if state != signatureStateVerified {
+		t.Fatalf("verifySignature() state = %q, want %q", state, signatureStateVerified)
+	}
+	if want := signing.Fingerprint(signingKeyPEM); fingerprint != want {
+		t.Fatalf("verifySignature() fingerprint = %q, want %q (the actual signing key's fingerprint, not the first/unrelated key's)", fingerprint, want)
+	}
+	if unwanted := signing.Fingerprint(unrelatedKeyPEM); fingerprint == unwanted {
+		t.Fatal("verifySignature() attributed the fingerprint to the first (unrelated) key, not the one that actually signed")
+	}
+}
+
 // seedMalformedBundleIndexManifest publishes deliberately unparseable bytes
 // directly through the metadata store (bypassing PublishManifest's JSON
 // validation, which would reject this payload) at digest's bundle-index tag

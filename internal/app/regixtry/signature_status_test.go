@@ -247,6 +247,47 @@ func TestServiceSignatureStatusReportsVerifiedKeyFingerprintOnlyWhenVerified(t *
 	})
 }
 
+// TestServiceSignatureStatusAttributesVerifiedKeyFingerprintWithMultipleTrustedKeys
+// is the Judgment Day coverage-gap RED test (dual-confirmed) for
+// SignatureStatusDetail.VerifiedKeyFingerprint end to end: every existing
+// SignatureStatus test in this package configures exactly one trusted key,
+// so correct attribution among 2+ configured keys has never been exercised
+// through this full path (queries.go's SignatureStatus, not just
+// verifySignature directly). The signing key sits SECOND in
+// TrustedPublicKeys, behind an unrelated first key.
+func TestServiceSignatureStatusAttributesVerifiedKeyFingerprintWithMultipleTrustedKeys(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	repository := "library/alpine"
+	digest := seedFixtureImageManifest(t, service, repository)
+	seedFixtureSignatureArtifact(t, service, repository)
+
+	unrelatedKeyPEM := generateTestECDSAP256PublicKeyPEM(t)
+	signingKeyPEM := fixtureTrustedKeyPEM(t)
+	seedSigningPolicy(t, service, true, []string{unrelatedKeyPEM, signingKeyPEM})
+
+	result, err := service.SignatureStatus(context.Background(), repository, digest)
+	if err != nil {
+		t.Fatalf("SignatureStatus() error = %v", err)
+	}
+	if result.State != SignatureStatusVerified {
+		t.Fatalf("SignatureStatus().State = %q, want %q (test setup sanity check)", result.State, SignatureStatusVerified)
+	}
+	if result.Signature == nil {
+		t.Fatal("SignatureStatus().Signature = nil, want a populated detail for a verified signature")
+	}
+	want := signing.Fingerprint(signingKeyPEM)
+	if result.Signature.VerifiedKeyFingerprint != want {
+		t.Fatalf("SignatureStatus().Signature.VerifiedKeyFingerprint = %q, want %q (the actual signing key's fingerprint, not the first/unrelated key's)", result.Signature.VerifiedKeyFingerprint, want)
+	}
+	if unwanted := signing.Fingerprint(unrelatedKeyPEM); result.Signature.VerifiedKeyFingerprint == unwanted {
+		t.Fatal("SignatureStatus().Signature.VerifiedKeyFingerprint attributed to the first (unrelated) key, not the one that actually signed")
+	}
+}
+
 // TestServiceSignatureStatusPolicyTrustedKeysIsCountOnlyNeverPEM is the
 // Phase 7 RED test (tasks.md 7.3): SignatureStatusPolicy.TrustedKeys is a
 // count only -- the serialized JSON response never contains PEM bytes.
