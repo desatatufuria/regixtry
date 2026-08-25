@@ -107,4 +107,5 @@ var adminMenuKeys = screenKeys{short: []key.Binding{
 	key.NewBinding(key.WithKeys("down"), key.WithHelp("Down", "next domain")),
 	key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", "open domain")),
 	key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "back")),
+	key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
 }}

@@ -69,7 +69,7 @@ func (s *securityMenuScreen) rebuildTable(env screenEnv) {
 func (s securityMenuScreen) updateKey(env screenEnv, msg tea.KeyMsg) (adminScreen, tea.Cmd, bool) {
 	switch {
 	case isEscKey(msg):
-		return s, navigate(screenAdminUsers), true
+		return s, navigate(screenAdminMenu), true
 	case isMoveUpKey(msg):
 		if len(s.features) == 0 {
 			return s, nil, true
