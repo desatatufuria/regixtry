@@ -47,6 +47,14 @@ func NewRouter(service *appregixtry.Service, authService ports.AuthService, opti
 	if authService != nil {
 		router.mux.HandleFunc("/auth/token", router.handleToken)
 	}
+	// /update-channel is deliberately a top-level route, a sibling of
+	// /auth/token and /v2/ rather than nested under /admin/v1 -- handleAdmin
+	// (admin_handlers.go) puts every /admin/v1 subpath behind
+	// requireAdminPrincipal by construction, and this GET must stay reachable
+	// pre-login (the TUI's background update-check banner fires from the
+	// login screen, before any operator has authenticated). The admin-gated
+	// write lives at PUT /admin/v1/update-channel instead.
+	router.mux.HandleFunc("/update-channel", router.handleUpdateChannel)
 	if router.admin != nil {
 		router.mux.HandleFunc("/admin/v1", router.handleAdmin)
 		router.mux.HandleFunc("/admin/v1/", router.handleAdmin)

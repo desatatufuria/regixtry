@@ -80,6 +80,15 @@ type MetadataStore interface {
 	UpsertScanPolicySettings(ctx context.Context, tenant string, settings ScanPolicySettings) error
 	GetSigningPolicySettings(ctx context.Context, tenant string) (SigningPolicySettings, error)
 	UpsertSigningPolicySettings(ctx context.Context, tenant string, settings SigningPolicySettings) error
+	// GetUpdateChannel/UpsertUpdateChannel mirror GetScanPolicySettings/
+	// UpsertScanPolicySettings' shape exactly (row absence is a typed
+	// domain.ErrorCodeNotFound; the code-level default lives one layer up,
+	// at the service) even though the setting itself is genuinely global,
+	// not per-repository -- tenant is threaded through only because every
+	// other settings row in this store already is, and this is a
+	// single-tenant deployment today regardless.
+	GetUpdateChannel(ctx context.Context, tenant string) (UpdateChannelSettings, error)
+	UpsertUpdateChannel(ctx context.Context, tenant string, settings UpdateChannelSettings) error
 	GetFeatureRuntimeState(ctx context.Context, tenant string, feature string) (FeatureRuntimeState, error)
 	UpsertFeatureRuntimeState(ctx context.Context, tenant string, feature string, state FeatureRuntimeState) error
 	GetActiveScanRunByDigest(ctx context.Context, tenant string, repository string, digest string) (ScanRun, error)
@@ -336,6 +345,40 @@ type SigningOverride struct {
 	// forces "off" for this repository, exactly like Enabled: false already
 	// does for that field.
 	UnsignedSelfRead string `json:"unsigned_self_read,omitempty"`
+}
+
+// UpdateChannelStable/UpdateChannelInsider mirror
+// internal/infra/release.ChannelStable/ChannelInsider byte-for-byte.
+// internal/ports cannot import internal/infra/release (that direction
+// would invert this codebase's layering: infra depends on ports, never the
+// reverse), so the two literal values are duplicated here rather than
+// imported -- keep them in sync if either changes.
+const (
+	UpdateChannelStable  = "stable"
+	UpdateChannelInsider = "insider"
+)
+
+// UpdateChannelSettings is the global (single-row, no per-tenant/repository
+// concept) setting selecting which released regixtry tags the TUI's
+// background update-check banner considers. Read is always public/
+// unauthenticated (GET /update-channel, outside /admin/v1) so an
+// unauthenticated pre-login TUI session can still know which channel to
+// check against; write is admin-gated (PUT /admin/v1/update-channel).
+type UpdateChannelSettings struct {
+	Channel   string    `json:"channel"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// ValidUpdateChannel reports whether value is exactly UpdateChannelStable or
+// UpdateChannelInsider -- never coerced, never case-insensitive, mirroring
+// ValidUnsignedSelfRead's own exact-match discipline.
+func ValidUpdateChannel(value string) bool {
+	switch value {
+	case UpdateChannelStable, UpdateChannelInsider:
+		return true
+	default:
+		return false
+	}
 }
 
 // ValidUnsignedSelfRead reports whether value is one of

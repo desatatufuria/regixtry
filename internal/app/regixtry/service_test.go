@@ -645,6 +645,50 @@ func TestServiceUpdateScanPolicySettingsPersistsAndRoundTrips(t *testing.T) {
 	}
 }
 
+// TestServiceGetUpdateChannelDefaultsToStableWithNoRowWritten mirrors
+// TestServiceGetScanPolicySettingsDefaultsToEnabledCriticalWithNoRowWritten's
+// own zero-rows-written default-value shape.
+func TestServiceGetUpdateChannelDefaultsToStableWithNoRowWritten(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	channel, err := service.GetUpdateChannel(context.Background())
+	if err != nil {
+		t.Fatalf("GetUpdateChannel() error = %v", err)
+	}
+	if channel != ports.UpdateChannelStable {
+		t.Fatalf("channel = %q, want %q with zero rows written", channel, ports.UpdateChannelStable)
+	}
+}
+
+// TestServiceSetUpdateChannelPersistsAndRoundTrips mirrors
+// TestServiceUpdateScanPolicySettingsPersistsAndRoundTrips' own
+// persist-then-read-back shape.
+func TestServiceSetUpdateChannelPersistsAndRoundTrips(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	updated, err := service.SetUpdateChannel(context.Background(), ports.UpdateChannelInsider)
+	if err != nil {
+		t.Fatalf("SetUpdateChannel() error = %v", err)
+	}
+	if updated != ports.UpdateChannelInsider {
+		t.Fatalf("updated = %q, want %q", updated, ports.UpdateChannelInsider)
+	}
+
+	stored, err := service.GetUpdateChannel(context.Background())
+	if err != nil {
+		t.Fatalf("GetUpdateChannel() error = %v", err)
+	}
+	if stored != ports.UpdateChannelInsider {
+		t.Fatalf("stored = %q, want %q", stored, ports.UpdateChannelInsider)
+	}
+}
+
 func TestServiceOpenManifestBlocksPullOnCompletedViolatingScan(t *testing.T) {
 	t.Parallel()
 
