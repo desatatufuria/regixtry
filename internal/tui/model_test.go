@@ -211,6 +211,82 @@ func TestModelUpdateCheckCompletedMsgUpdatesBannerState(t *testing.T) {
 	})
 }
 
+// TestModelWithUpdateBannerShowsBaselineVersion guards the tui-update-check
+// feature's baseline version line (user-confirmed requirement: an operator
+// should never have to guess which build they're running just because
+// nothing newer happens to exist yet). Renders on every screen (View's
+// funnel through withUpdateBanner), never fabricated when currentVersion is
+// unknown.
+func TestModelWithUpdateBannerShowsBaselineVersion(t *testing.T) {
+	t.Parallel()
+
+	t.Run("shows a standalone baseline line when no update is available", func(t *testing.T) {
+		t.Parallel()
+		model := NewModel(&fakeQueryService{}, WithCurrentVersion("v0.2.0"))
+		view := model.View()
+		if !strings.Contains(view, "regixtry v0.2.0") {
+			t.Fatalf("view = %q, want a baseline \"regixtry v0.2.0\" line", view)
+		}
+		if strings.Contains(view, "newer") {
+			t.Fatalf("view = %q, want no \"newer version\" wording with nothing newer known", view)
+		}
+	})
+
+	t.Run("folds the current version into the update-available banner instead of a second line", func(t *testing.T) {
+		t.Parallel()
+		model := NewModel(&fakeQueryService{}, WithCurrentVersion("v0.2.0"))
+		updated, _ := model.Update(updateCheckCompletedMsg{latestVersion: "v0.3.0"})
+		result := updated.(Model)
+		view := result.View()
+		if !strings.Contains(view, "you're on v0.2.0") {
+			t.Fatalf("view = %q, want the current version folded into the update-available banner", view)
+		}
+		if strings.Count(view, "v0.2.0") != 1 {
+			t.Fatalf("view = %q, want v0.2.0 mentioned exactly once (no separate baseline line once an update is known)", view)
+		}
+	})
+
+	t.Run("shows nothing when the current version is unknown", func(t *testing.T) {
+		t.Parallel()
+		model := NewModel(&fakeQueryService{})
+		view := model.View()
+		if strings.Contains(view, "regixtry v") {
+			t.Fatalf("view = %q, want no fabricated version line when currentVersion is empty", view)
+		}
+	})
+}
+
+// TestCheckForUpdateCmdResolvesChannelFromServiceBeforeFetchingReleases
+// guards the tui-update-check feature's channel resolution: the channel is
+// now a real server-side setting (PUT /admin/v1/update-channel is the only
+// write path, admin-gated), never client-side Model state, so
+// checkForUpdateCmd must resolve it fresh via QueryService.GetUpdateChannel
+// -- called directly in-process, not over HTTP -- before it can even
+// attempt the GitHub fetch. Forcing GetUpdateChannel to fail lets this be
+// verified WITHOUT a real network call: the closure must short-circuit on
+// that error before ever reaching release.LatestForChannel.
+func TestCheckForUpdateCmdResolvesChannelFromServiceBeforeFetchingReleases(t *testing.T) {
+	t.Parallel()
+
+	service := &fakeQueryService{updateChannelErr: errors.New("metadata store unavailable")}
+	model := NewModel(service, WithCurrentVersion("v0.2.0"))
+	cmd := model.checkForUpdateCmd()
+	if cmd == nil {
+		t.Fatal("checkForUpdateCmd() = nil, want a non-nil Cmd when a current version is known")
+	}
+
+	msg, ok := cmd().(updateCheckCompletedMsg)
+	if !ok {
+		t.Fatalf("cmd() = %#v, want an updateCheckCompletedMsg", msg)
+	}
+	if service.calls.updateChannel != 1 {
+		t.Fatalf("GetUpdateChannel call count = %d, want exactly 1 -- checkForUpdateCmd must resolve the channel from the service before anything else", service.calls.updateChannel)
+	}
+	if msg.err == nil {
+		t.Fatal("updateCheckCompletedMsg.err = nil, want the GetUpdateChannel error to short-circuit the check before any GitHub fetch")
+	}
+}
+
 func TestModelUpdateWindowSizeMsgSetsViewport(t *testing.T) {
 	t.Parallel()
 
@@ -4274,6 +4350,37 @@ func TestOperationsListsBothResultsScreens(t *testing.T) {
 	}
 }
 
+// TestOperationsThirdRowReachesUpdateChannelScreen guards the
+// tui-update-check feature's third Operations row: Enter on "Update
+// Channel" navigates to screenAdminUpdateChannel, the sole admin-facing way
+// to change the server-side channel PUT /admin/v1/update-channel writes to.
+func TestOperationsThirdRowReachesUpdateChannelScreen(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 26, 9, 0, 0, 0, time.UTC)
+	adminClient := &fakeAdminClient{
+		loginSession:  AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+		updateChannel: "stable",
+	}
+	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
+
+	updated = runKey(t, updated, "down")
+	updated = runKey(t, updated, "down")
+	updated = runKey(t, updated, "down") // Browse -> S&C -> Identity & Access -> Operations
+	updated = runKey(t, updated, "enter")
+	updated = runKey(t, updated, "down")
+	updated = runKey(t, updated, "down") // highlight "Update Channel"
+	updated = runKey(t, updated, "enter")
+
+	if got, want := updated.screen, screenAdminUpdateChannel; got != want {
+		t.Fatalf("screen = %q, want %q", got, want)
+	}
+	view := updated.View()
+	if !strings.Contains(view, "stable") {
+		t.Fatalf("view = %q, want the loaded channel \"stable\" shown", view)
+	}
+}
+
 // TestOperationsEntryReachesSecretFindingsWithoutTrivy is the Phase 19 task
 // 19.1 RED test (T3.0, proposal Success Criteria/D9): the operator reaches
 // Secret Scan Findings via Operations' own entry point -- selecting a
@@ -5692,13 +5799,19 @@ type fakeQueryService struct {
 	deleteManifestErr            error
 	lastDeleteManifestRepository string
 	lastDeleteManifestReference  string
-	calls                        struct {
+	// updateChannel/updateChannelErr back checkForUpdateCmd's channel
+	// resolution (tui-update-check feature), mirroring deleteManifestErr's
+	// own control-field pattern.
+	updateChannel    string
+	updateChannelErr error
+	calls            struct {
 		catalog        int
 		tags           int
 		manifest       int
 		uploads        int
 		signature      int
 		deleteManifest int
+		updateChannel  int
 	}
 }
 
@@ -5723,6 +5836,16 @@ type fakeAdminClient struct {
 	getScanPolicyCalls    int
 	updateScanPolicyCalls int
 	lastScanPolicyInput   ports.ScanPolicySettings
+
+	// updateChannel/updateChannelErr/updateChannelUpdateErr back the
+	// Operations domain's Update Channel screen (tui-update-check feature),
+	// mirroring scanPolicy's own control-field shape exactly.
+	updateChannel            string
+	updateChannelErr         error
+	updateChannelUpdateErr   error
+	getUpdateChannelCalls    int
+	updateUpdateChannelCalls int
+	lastUpdateChannelInput   string
 
 	signingPolicy            ports.SigningPolicySettings
 	signingPolicyErr         error
@@ -6117,6 +6240,24 @@ func (f *fakeAdminClient) UpdateScanPolicy(_ context.Context, _ AdminSession, in
 	return f.scanPolicy, nil
 }
 
+func (f *fakeAdminClient) GetUpdateChannel(context.Context, AdminSession) (string, error) {
+	f.getUpdateChannelCalls++
+	if f.updateChannelErr != nil {
+		return "", f.updateChannelErr
+	}
+	return f.updateChannel, nil
+}
+
+func (f *fakeAdminClient) SetUpdateChannel(_ context.Context, _ AdminSession, channel string) (string, error) {
+	f.updateUpdateChannelCalls++
+	f.lastUpdateChannelInput = channel
+	if f.updateChannelUpdateErr != nil {
+		return "", f.updateChannelUpdateErr
+	}
+	f.updateChannel = channel
+	return f.updateChannel, nil
+}
+
 func (f *fakeAdminClient) GetSigningPolicy(context.Context, AdminSession) (ports.SigningPolicySettings, error) {
 	f.getSigningPolicyCalls++
 	if f.signingPolicyErr != nil {
@@ -6419,6 +6560,14 @@ func (f *fakeQueryService) DeleteManifest(_ context.Context, repository string, 
 		return appregixtry.DeletionDetails{}, f.deleteManifestErr
 	}
 	return appregixtry.DeletionDetails{Repository: repository, Reference: reference, TagsRemoved: []string{reference}}, nil
+}
+
+func (f *fakeQueryService) GetUpdateChannel(context.Context) (string, error) {
+	f.calls.updateChannel++
+	if f.updateChannelErr != nil {
+		return "", f.updateChannelErr
+	}
+	return f.updateChannel, nil
 }
 
 func runCmd(t *testing.T, model Model, cmd tea.Cmd) Model {

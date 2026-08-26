@@ -39,6 +39,17 @@ type AdminClient interface {
 	ConfigureFeature(ctx context.Context, session AdminSession, name string, input ports.FeatureConfigureInput) (ports.FeatureDetails, error)
 	GetScanPolicy(ctx context.Context, session AdminSession) (ports.ScanPolicySettings, error)
 	UpdateScanPolicy(ctx context.Context, session AdminSession, input ports.ScanPolicySettings) (ports.ScanPolicySettings, error)
+	// GetUpdateChannel/SetUpdateChannel back the Operations domain's Update
+	// Channel screen (tui-update-check feature). GetUpdateChannel hits
+	// GET /update-channel -- a deliberately unauthenticated top-level route,
+	// not under /admin/v1 (see router.go's registration comment) -- reused
+	// as-is here rather than duplicated as an authenticated read: the
+	// session's bearer token is harmlessly attached by the shared request
+	// helper, the server simply never requires it for this route.
+	// SetUpdateChannel is the only write path, PUT /admin/v1/update-channel,
+	// admin-gated like every other admin/v1 route.
+	GetUpdateChannel(ctx context.Context, session AdminSession) (string, error)
+	SetUpdateChannel(ctx context.Context, session AdminSession, channel string) (string, error)
 	GetSigningPolicy(ctx context.Context, session AdminSession) (ports.SigningPolicySettings, error)
 	UpdateSigningPolicy(ctx context.Context, session AdminSession, input ports.SigningPolicySettings) (ports.SigningPolicySettings, error)
 	// CountSigningKeyUsage is the read-only, best-effort advisory backing
@@ -310,6 +321,27 @@ func (c *HTTPAdminClient) UpdateScanPolicy(ctx context.Context, session AdminSes
 		return ports.ScanPolicySettings{}, err
 	}
 	return settings, nil
+}
+
+func (c *HTTPAdminClient) GetUpdateChannel(ctx context.Context, session AdminSession) (string, error) {
+	var payload struct {
+		Channel string `json:"channel"`
+	}
+	if err := c.getJSON(ctx, session, "/update-channel", &payload); err != nil {
+		return "", err
+	}
+	return payload.Channel, nil
+}
+
+func (c *HTTPAdminClient) SetUpdateChannel(ctx context.Context, session AdminSession, channel string) (string, error) {
+	var payload struct {
+		Channel string `json:"channel"`
+	}
+	body := map[string]any{"channel": channel}
+	if err := c.requestJSON(ctx, stdhttp.MethodPut, session, "/admin/v1/update-channel", body, &payload, stdhttp.StatusOK); err != nil {
+		return "", err
+	}
+	return payload.Channel, nil
 }
 
 func (c *HTTPAdminClient) GetSigningPolicy(ctx context.Context, session AdminSession) (ports.SigningPolicySettings, error) {

@@ -52,14 +52,6 @@ func WithCurrentVersion(version string) Option {
 	}
 }
 
-// WithUpdateChannel selects which released tags the background update
-// check considers -- release.ChannelStable or release.ChannelInsider.
-func WithUpdateChannel(channel string) Option {
-	return func(m *Model) {
-		m.updateChannel = strings.TrimSpace(channel)
-	}
-}
-
 type QueryService interface {
 	RepositorySummaries(ctx context.Context, limit int, after string) ([]appregixtry.RepositorySummary, error)
 	TagDetails(ctx context.Context, repositoryName string, limit int, after string) ([]appregixtry.TagDetails, error)
@@ -72,6 +64,13 @@ type QueryService interface {
 	// through AdminClient/HTTP, since delete-enablement is Service's own
 	// deleteEnabled gate, not an admin-session concern.
 	DeleteManifest(ctx context.Context, repositoryName string, reference string) (appregixtry.DeletionDetails, error)
+	// GetUpdateChannel backs checkForUpdateCmd's channel resolution, called
+	// directly in-process exactly like DeleteManifest above -- QueryService
+	// is always a real, local *appregixtry.Service regardless of whether
+	// -api-base-url is set for the separate admin-panel HTTP client, so this
+	// never needs the AdminClient/HTTP path the write side
+	// (AdminClient.SetUpdateChannel) uses.
+	GetUpdateChannel(ctx context.Context) (string, error)
 }
 
 type RepositoriesModel struct {
@@ -211,6 +210,12 @@ const (
 	// scanHistoryScreen tab Enter defaults to.
 	screenAdminScanRuns       screen = "admin-scan-runs"
 	screenAdminSecretFindings screen = "admin-secret-findings"
+	// screenAdminUpdateChannel is Operations' third row (tui-update-check
+	// feature): the admin-only screen that sets the server-side update
+	// channel (GET /update-channel is public and pre-login; PUT
+	// /admin/v1/update-channel is the only write path, admin-gated -- this
+	// screen is the sole caller of the write side).
+	screenAdminUpdateChannel screen = "admin-update-channel"
 )
 
 // adminIntent is a one-shot field set before screenAdminLogin and consumed
@@ -311,14 +316,16 @@ type Model struct {
 	// hold for it exactly like every other Model field.
 	adminScreens adminScreenSet
 
-	// currentVersion/updateChannel/updateAvailable back the background
-	// update-check banner. currentVersion empty means "no version info
-	// available" (an unbuilt dev binary, or the option simply not passed) --
-	// checkForUpdateCmd never fires a request in that case. updateAvailable
+	// currentVersion/updateAvailable back the background update-check
+	// banner. currentVersion empty means "no version info available" (an
+	// unbuilt dev binary, or the option simply not passed) --
+	// checkForUpdateCmd never fires a request in that case. The channel
+	// itself is no longer client-side state (it moved to a server-side
+	// setting, Service.GetUpdateChannel/AdminClient.SetUpdateChannel) --
+	// checkForUpdateCmd resolves it fresh on every check. updateAvailable
 	// is the newer version's tag once a check confirms one exists; empty
 	// means "nothing to show," the default, always-safe state.
 	currentVersion  string
-	updateChannel   string
 	updateAvailable string
 }
 
@@ -486,6 +493,19 @@ type adminScanPolicyLoadedMsg struct {
 type adminScanPolicyUpdatedMsg struct {
 	settings ports.ScanPolicySettings
 	err      error
+}
+
+// adminUpdateChannelLoadedMsg/adminUpdateChannelUpdatedMsg back
+// updateChannelScreen (tui-update-check feature), mirroring
+// adminScanPolicyLoadedMsg/adminScanPolicyUpdatedMsg's own shape.
+type adminUpdateChannelLoadedMsg struct {
+	channel string
+	err     error
+}
+
+type adminUpdateChannelUpdatedMsg struct {
+	channel string
+	err     error
 }
 
 type adminSigningPolicyLoadedMsg struct {
@@ -1483,16 +1503,27 @@ func (m Model) View() string {
 	return m.withUpdateBanner(m.viewScreen())
 }
 
-// withUpdateBanner prepends the "a newer release is available" line above
-// body when checkForUpdateCmd has confirmed one exists; body passes through
-// unchanged otherwise -- the default, always-safe state.
+// withUpdateBanner prepends a version line above body -- either "a newer
+// release is available" (when checkForUpdateCmd has confirmed one exists,
+// already naming the current version via its own "(you're on vA.B.C)"
+// suffix so the two facts never need two separate lines) or, absent that, a
+// standalone baseline "regixtry vX.Y.Z" line whenever the current version
+// is known at all -- an operator should never have to guess which build
+// they're running just because nothing newer happens to exist yet. Neither
+// line renders when currentVersion is empty (an unbuilt dev binary): never
+// fabricate a version string.
 func (m Model) withUpdateBanner(body string) string {
-	if m.updateAvailable == "" {
+	if m.currentVersion == "" {
 		return body
 	}
 	theme := newAdminTheme()
-	banner := theme.success.Render(fmt.Sprintf("A newer regixtry release is available: %s (you're on %s)", m.updateAvailable, m.currentVersion))
-	return lipgloss.JoinVertical(lipgloss.Left, banner, body)
+	var line string
+	if m.updateAvailable != "" {
+		line = fmt.Sprintf("A newer regixtry release is available: %s (you're on %s)", m.updateAvailable, m.currentVersion)
+	} else {
+		line = fmt.Sprintf("regixtry %s", m.currentVersion)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, theme.success.Render(line), body)
 }
 
 func (m Model) viewScreen() string {
@@ -1590,7 +1621,7 @@ func (m Model) viewScreen() string {
 		help := "q: quit"
 		layout := m.contentBudget("", help)
 		return renderInspectionWorkspace("Sign In", renderConsoleTextSection(m.loadingText, layout), "", help)
-	case screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken, screenRepoAdminGrants, screenRepoAdminAddGrant, screenAdminRobots, screenAdminCreateRobot, screenSecurityGitleaksRepos, screenSecuritySigningRepos, screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminMenu, screenAdminOperations, screenAdminScanRuns, screenAdminSecretFindings:
+	case screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken, screenRepoAdminGrants, screenRepoAdminAddGrant, screenAdminRobots, screenAdminCreateRobot, screenSecurityGitleaksRepos, screenSecuritySigningRepos, screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminMenu, screenAdminOperations, screenAdminScanRuns, screenAdminSecretFindings, screenAdminUpdateChannel:
 		help := adminScreenHelp(m.screen, m.adminView)
 		if slot, ok := slotFor(m.screen); ok && m.adminScreens[slot] != nil {
 			// Migrated top-level screen: help is derived from the screen's
@@ -2836,28 +2867,38 @@ const updateCheckTimeout = 10 * time.Second
 // (design.md-established convention: tea.Batch would break --snapshot
 // mode's single Update() call, which cannot unpack a tea.BatchMsg). Returns
 // nil -- fires no request at all -- when there is no current version to
-// compare against or the configured channel is invalid, so a dev build
-// (main.buildVersion's "dev" sentinel, never passed to WithCurrentVersion by
-// runTUI) or a misconfigured channel can never trigger a network call.
+// compare against, so a dev build (main.buildVersion's "dev" sentinel,
+// never passed to WithCurrentVersion by runTUI) can never trigger a network
+// call.
+//
+// The channel is resolved fresh INSIDE the returned closure via
+// m.service.GetUpdateChannel -- a real server-side setting now
+// (PUT /admin/v1/update-channel is the only write path, admin-gated), not
+// client-side Model state -- so a stale/never-updated local value can never
+// drift from what an admin actually configured. GetUpdateChannel is called
+// directly in-process, not over HTTP: QueryService (m.service) is always a
+// real, local *appregixtry.Service regardless of -api-base-url (that flag
+// only affects the separate admin-panel HTTP client). Any error here (a
+// fresh install with the metadata store still initializing, or any other
+// infrastructure fault) is reported through the same updateCheckCompletedMsg
+// error path as a GitHub-fetch failure -- both are silent, best-effort, and
+// never surfaced to the operator (see the Update handler).
 func (m Model) checkForUpdateCmd() tea.Cmd {
 	currentVersion := m.currentVersion
 	if currentVersion == "" {
 		return nil
 	}
-	// An unset updateChannel (WithUpdateChannel never passed) defaults to
-	// the safe/quiet channel -- matches the CLI's own -update-channel
-	// default, so a Model constructed with only WithCurrentVersion still
-	// checks correctly instead of silently disabling itself.
-	channel := release.Channel(m.updateChannel)
-	if channel == "" {
-		channel = release.ChannelStable
-	}
-	if !release.ValidChannel(string(channel)) {
-		return nil
-	}
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(m.ctx, updateCheckTimeout)
 		defer cancel()
+		channelValue, err := m.service.GetUpdateChannel(ctx)
+		if err != nil {
+			return updateCheckCompletedMsg{err: err}
+		}
+		channel := release.Channel(channelValue)
+		if !release.ValidChannel(string(channel)) {
+			return updateCheckCompletedMsg{err: fmt.Errorf("release: unknown update channel %q", channelValue)}
+		}
 		httpClient := &stdhttp.Client{Timeout: updateCheckTimeout}
 		latest, err := release.LatestForChannel(ctx, httpClient, regixtryReleasesAPI, channel)
 		return updateCheckCompletedMsg{latestVersion: latest, err: err}
@@ -3239,6 +3280,26 @@ func (m Model) updateScanPolicyCmd(input ports.ScanPolicySettings) tea.Cmd {
 	}
 }
 
+func (m Model) loadUpdateChannelCmd() tea.Cmd {
+	return func() tea.Msg {
+		if m.adminClient == nil {
+			return adminUpdateChannelLoadedMsg{err: fmt.Errorf("admin API is unavailable for this session")}
+		}
+		channel, err := m.adminClient.GetUpdateChannel(m.ctx, m.adminSession)
+		return adminUpdateChannelLoadedMsg{channel: channel, err: err}
+	}
+}
+
+func (m Model) updateUpdateChannelCmd(channel string) tea.Cmd {
+	return func() tea.Msg {
+		if m.adminClient == nil {
+			return adminUpdateChannelUpdatedMsg{err: fmt.Errorf("admin API is unavailable for this session")}
+		}
+		persisted, err := m.adminClient.SetUpdateChannel(m.ctx, m.adminSession, channel)
+		return adminUpdateChannelUpdatedMsg{channel: persisted, err: err}
+	}
+}
+
 func (m Model) loadSigningPolicyCmd() tea.Cmd {
 	return func() tea.Msg {
 		if m.adminClient == nil {
@@ -3257,6 +3318,15 @@ func loadScanPolicyCmd(env screenEnv) tea.Cmd { return env.asModel().loadScanPol
 
 func updateScanPolicyCmd(env screenEnv, input ports.ScanPolicySettings) tea.Cmd {
 	return env.asModel().updateScanPolicyCmd(input)
+}
+
+// loadUpdateChannelCmd/updateUpdateChannelCmd are updateChannelScreen's own
+// screenEnv-scoped wrappers, mirroring loadScanPolicyCmd/updateScanPolicyCmd
+// exactly.
+func loadUpdateChannelCmd(env screenEnv) tea.Cmd { return env.asModel().loadUpdateChannelCmd() }
+
+func updateUpdateChannelCmd(env screenEnv, channel string) tea.Cmd {
+	return env.asModel().updateUpdateChannelCmd(channel)
 }
 
 func loadSigningPolicyCmd(env screenEnv) tea.Cmd { return env.asModel().loadSigningPolicyCmd() }
@@ -3682,7 +3752,7 @@ func nextDelegateGrantRole(current domainauth.RepoRole) domainauth.RepoRole {
 
 func isAdminScreen(current screen) bool {
 	switch current {
-	case screenAdminLogin, screenAdminAuthenticating, screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken, screenRepoAdminGrants, screenRepoAdminAddGrant, screenAdminRobots, screenAdminCreateRobot, screenSecurityGitleaksRepos, screenSecuritySigningRepos, screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminMenu, screenAdminOperations, screenAdminScanRuns, screenAdminSecretFindings:
+	case screenAdminLogin, screenAdminAuthenticating, screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken, screenRepoAdminGrants, screenRepoAdminAddGrant, screenAdminRobots, screenAdminCreateRobot, screenSecurityGitleaksRepos, screenSecuritySigningRepos, screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminMenu, screenAdminOperations, screenAdminScanRuns, screenAdminSecretFindings, screenAdminUpdateChannel:
 		return true
 	default:
 		return false
@@ -3701,9 +3771,12 @@ func isAdminScreen(current screen) bool {
 // (screenSecurityTrivyRepos/screenSecurityGitleaksRepos/
 // screenSecuritySigningRepos) do not advertise "q: quit" and are
 // deliberately excluded, mirroring the free-text-form exclusion above.
+// screenAdminUpdateChannel (tui-update-check feature) joins the same way:
+// updateChannelKeys advertises "q: quit" exactly like the three config
+// screens above.
 func isAdminPrincipalScreen(current screen) bool {
 	switch current {
-	case screenAdminLogin, screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminEditUserGrants, screenAdminEditUserTokens, screenRepoAdminGrants, screenAdminRobots, screenSecurityTrivy, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminMenu, screenAdminOperations:
+	case screenAdminLogin, screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminEditUserGrants, screenAdminEditUserTokens, screenRepoAdminGrants, screenAdminRobots, screenSecurityTrivy, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminMenu, screenAdminOperations, screenAdminUpdateChannel:
 		return true
 	default:
 		return false
@@ -3751,7 +3824,7 @@ func (m Model) canLogoutAdminFromCurrentScreen() bool {
 		return !m.adminView.UserSearchActive
 	case screenAdminFeatures, screenAdminEditUser, screenAdminEditUserGrants, screenAdminEditUserTokens, screenRepoAdminGrants, screenAdminRobots,
 		screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenSecurityGitleaksRepos, screenSecuritySigningRepos,
-		screenAdminMenu, screenAdminOperations, screenAdminScanRuns, screenAdminSecretFindings:
+		screenAdminMenu, screenAdminOperations, screenAdminScanRuns, screenAdminSecretFindings, screenAdminUpdateChannel:
 		return true
 	default:
 		return false

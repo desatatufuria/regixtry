@@ -119,6 +119,10 @@ const (
 	slotAdminOperations
 	slotScanRuns
 	slotSecretFindings
+	// slotUpdateChannel holds updateChannelScreen (tui-update-check
+	// feature): Operations' third row, the admin-only screen that sets the
+	// server-side update channel PUT /admin/v1/update-channel writes to.
+	slotUpdateChannel
 	// slotScanHistory holds scanHistoryScreen (Phase 19, design.md's State
 	// Migration table: "ScanHistoryModal -> scanHistoryScreen"). It is
 	// deliberately NOT resolved via slotFor: like slotGitleaksConfig's own
@@ -166,6 +170,8 @@ func slotFor(id screen) (screenSlot, bool) {
 		return slotScanRuns, true
 	case screenAdminSecretFindings:
 		return slotSecretFindings, true
+	case screenAdminUpdateChannel:
+		return slotUpdateChannel, true
 	default:
 		return 0, false
 	}
@@ -255,6 +261,8 @@ func newAdminScreenFor(id screen) adminScreen {
 		return newScanRunsScreen()
 	case screenAdminSecretFindings:
 		return newSecretFindingsRunsScreen()
+	case screenAdminUpdateChannel:
+		return newUpdateChannelScreen()
 	default:
 		return nil
 	}
