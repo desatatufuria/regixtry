@@ -536,6 +536,37 @@ func TestHTTPAdminClientRepositoryOverrideRoutes(t *testing.T) {
 		}
 	})
 
+	t.Run("set for signing includes unsigned_self_read in the request body", func(t *testing.T) {
+		t.Parallel()
+		var receivedBody map[string]any
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewDecoder(r.Body).Decode(&receivedBody)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"repository":"team/config","feature":"signing","enabled":true,"unsigned_self_read":"pusher","updated_at":"2026-08-13T09:00:00Z"}`))
+		}))
+		defer server.Close()
+		client, err := NewHTTPAdminClient(server.URL, server.Client())
+		if err != nil {
+			t.Fatalf("NewHTTPAdminClient() error = %v", err)
+		}
+		client.now = func() time.Time { return fixedNow }
+
+		_, err = client.SetRepositoryOverride(context.Background(), session, "team/config", "signing", ports.RepositoryOverrideDetails{Enabled: true, UnsignedSelfRead: "pusher"})
+		if err != nil {
+			t.Fatalf("SetRepositoryOverride() error = %v", err)
+		}
+		// Regression: the request body's signing branch built
+		// trusted_public_keys but never unsigned_self_read, so every
+		// per-repository signing override save silently dropped whatever
+		// value the operator picked in the TUI -- the server always
+		// received a request with no unsigned_self_read key at all,
+		// decoding to "" (functionally "off") regardless of what was sent.
+		if got, want := receivedBody["unsigned_self_read"], "pusher"; got != want {
+			t.Fatalf("body[unsigned_self_read] = %#v, want %q -- the operator's chosen value must reach the server", got, want)
+		}
+	})
+
 	t.Run("clear uses DELETE and StatusNoContent", func(t *testing.T) {
 		t.Parallel()
 		var receivedMethod, receivedPath string
