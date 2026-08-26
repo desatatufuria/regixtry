@@ -474,6 +474,62 @@ func TestStoreUpsertSigningPolicySettingsRoundTripsEnabledKeysAndUpdatedAt(t *te
 	}
 }
 
+// TestStoreGetUpdateChannelReturnsNotFoundWithNoRow mirrors
+// TestStoreGetScanPolicySettingsReturnsNotFoundWithNoRow's own row-absence
+// behavior: the code-level default ("stable") is applied one layer up, at
+// the service, never at the store.
+func TestStoreGetUpdateChannelReturnsNotFoundWithNoRow(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	_, err := store.GetUpdateChannel(context.Background(), "tenant-a")
+	if !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("GetUpdateChannel() error = %v, want ErrorCodeNotFound", err)
+	}
+}
+
+// TestStoreUpsertUpdateChannelRoundTripsChannelAndUpdatedAt mirrors
+// TestStoreUpsertScanPolicySettingsRoundTripsEnabledAndThreshold's
+// round-trip-then-flip shape.
+func TestStoreUpsertUpdateChannelRoundTripsChannelAndUpdatedAt(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	updatedAt := time.Now().UTC()
+	settings := ports.UpdateChannelSettings{Channel: ports.UpdateChannelStable, UpdatedAt: updatedAt}
+	if err := store.UpsertUpdateChannel(context.Background(), "tenant-a", settings); err != nil {
+		t.Fatalf("UpsertUpdateChannel() error = %v", err)
+	}
+
+	stored, err := store.GetUpdateChannel(context.Background(), "tenant-a")
+	if err != nil {
+		t.Fatalf("GetUpdateChannel() error = %v", err)
+	}
+	if stored.Channel != ports.UpdateChannelStable {
+		t.Fatalf("stored.Channel = %q, want %q", stored.Channel, ports.UpdateChannelStable)
+	}
+	if !stored.UpdatedAt.Equal(updatedAt) {
+		t.Fatalf("stored.UpdatedAt = %v, want %v", stored.UpdatedAt, updatedAt)
+	}
+
+	settings.Channel = ports.UpdateChannelInsider
+	settings.UpdatedAt = time.Now().UTC()
+	if err := store.UpsertUpdateChannel(context.Background(), "tenant-a", settings); err != nil {
+		t.Fatalf("UpsertUpdateChannel(update) error = %v", err)
+	}
+	updated, err := store.GetUpdateChannel(context.Background(), "tenant-a")
+	if err != nil {
+		t.Fatalf("GetUpdateChannel(update) error = %v", err)
+	}
+	if updated.Channel != ports.UpdateChannelInsider {
+		t.Fatalf("updated.Channel = %q, want %q", updated.Channel, ports.UpdateChannelInsider)
+	}
+}
+
 func TestStoreGetRepositoryFeatureOverrideReturnsNotFoundWithNoRow(t *testing.T) {
 	t.Parallel()
 

@@ -1079,6 +1079,86 @@ func TestHTTPAdminClientRejectsLocallyExpiredSession(t *testing.T) {
 	}
 }
 
+// TestHTTPAdminClientGetUpdateChannel guards the tui-update-check feature's
+// read path: GET /update-channel, decoded into the bare channel string.
+func TestHTTPAdminClientGetUpdateChannel(t *testing.T) {
+	t.Parallel()
+
+	fixedNow := time.Date(2026, time.August, 4, 23, 5, 0, 0, time.UTC)
+	session := AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: fixedNow.Add(10 * time.Minute)}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got, want := r.Method, http.MethodGet; got != want {
+			t.Fatalf("method = %q, want %q", got, want)
+		}
+		if got, want := r.URL.Path, "/update-channel"; got != want {
+			t.Fatalf("path = %q, want %q", got, want)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"channel":"insider"}`))
+	}))
+	defer server.Close()
+
+	client, err := NewHTTPAdminClient(server.URL, server.Client())
+	if err != nil {
+		t.Fatalf("NewHTTPAdminClient() error = %v", err)
+	}
+	client.now = func() time.Time { return fixedNow }
+
+	channel, err := client.GetUpdateChannel(context.Background(), session)
+	if err != nil {
+		t.Fatalf("GetUpdateChannel() error = %v", err)
+	}
+	if channel != "insider" {
+		t.Fatalf("channel = %q, want %q", channel, "insider")
+	}
+}
+
+// TestHTTPAdminClientSetUpdateChannel guards the tui-update-check feature's
+// write path: PUT /admin/v1/update-channel with the requested channel in
+// the body, decoding the persisted value back from the response.
+func TestHTTPAdminClientSetUpdateChannel(t *testing.T) {
+	t.Parallel()
+
+	fixedNow := time.Date(2026, time.August, 4, 23, 5, 0, 0, time.UTC)
+	session := AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: fixedNow.Add(10 * time.Minute)}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got, want := r.Method, http.MethodPut; got != want {
+			t.Fatalf("method = %q, want %q", got, want)
+		}
+		if got, want := r.URL.Path, "/admin/v1/update-channel"; got != want {
+			t.Fatalf("path = %q, want %q", got, want)
+		}
+		var payload struct {
+			Channel string `json:"channel"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if payload.Channel != "insider" {
+			t.Fatalf("request body channel = %q, want %q", payload.Channel, "insider")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"channel":"insider"}`))
+	}))
+	defer server.Close()
+
+	client, err := NewHTTPAdminClient(server.URL, server.Client())
+	if err != nil {
+		t.Fatalf("NewHTTPAdminClient() error = %v", err)
+	}
+	client.now = func() time.Time { return fixedNow }
+
+	channel, err := client.SetUpdateChannel(context.Background(), session, "insider")
+	if err != nil {
+		t.Fatalf("SetUpdateChannel() error = %v", err)
+	}
+	if channel != "insider" {
+		t.Fatalf("channel = %q, want %q", channel, "insider")
+	}
+}
+
 func boolPtr(value bool) *bool { return &value }
 
 func durationPtr(value time.Duration) *time.Duration { return &value }

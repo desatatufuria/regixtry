@@ -2258,6 +2258,13 @@ func runTUI(cfg tuiConfig, stdin io.Reader, stdout io.Writer) error {
 	if tuiRequiresStartupLogin(cfg) {
 		modelOpts = append(modelOpts, tui.WithStartupLogin())
 	}
+	// buildVersion's "dev" default (an unbuilt/go-run binary, never set via
+	// -ldflags) is deliberately never passed to WithCurrentVersion: an empty
+	// current version is checkForUpdateCmd's own signal to skip the check
+	// entirely, rather than coupling internal/tui to this literal.
+	if buildVersion != "dev" {
+		modelOpts = append(modelOpts, tui.WithCurrentVersion(buildVersion))
+	}
 
 	service := appregixtry.NewService(
 		blobStore,

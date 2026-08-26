@@ -205,6 +205,157 @@ func TestAdminScanPolicyPutRejectsUnknownSeverityThreshold(t *testing.T) {
 	}
 }
 
+// TestUpdateChannelGetSucceedsWithNoAuthorizationHeader is the entire point
+// of GET /update-channel: it must be reachable pre-login, before any
+// operator has authenticated (the TUI's background update-check banner
+// fires from the login screen). No Authorization header is sent at all --
+// this is not an incidental happy-path test, the absence of the header is
+// the assertion.
+func TestUpdateChannelGetSucceedsWithNoAuthorizationHeader(t *testing.T) {
+	t.Parallel()
+
+	blobStore, store, cleanup := newTestStores(t)
+	defer cleanup()
+	handler := newRouterWithStores(blobStore, store, allowAllAccessController{}, fakeAuthService{})
+
+	req := httptest.NewRequest(http.MethodGet, "/update-channel", nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d with no Authorization header", recorder.Code, http.StatusOK)
+	}
+	if !strings.Contains(recorder.Body.String(), `"channel":"stable"`) {
+		t.Fatalf("body = %q, want the default stable channel with zero rows written", recorder.Body.String())
+	}
+}
+
+func TestUpdateChannelGetReflectsAdminWrite(t *testing.T) {
+	t.Parallel()
+
+	blobStore, store, cleanup := newTestStores(t)
+	defer cleanup()
+	handler := newRouterWithStores(blobStore, store, allowAllAccessController{}, fakeAuthService{verify: &auth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+
+	putReq := httptest.NewRequest(http.MethodPut, "/admin/v1/update-channel", strings.NewReader(`{"channel":"insider"}`))
+	putReq.Header.Set("Authorization", "Bearer admin-token")
+	putReq.Header.Set("Content-Type", "application/json")
+	putRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(putRecorder, putReq)
+	if putRecorder.Code != http.StatusOK {
+		t.Fatalf("PUT status = %d, want %d, body = %s", putRecorder.Code, http.StatusOK, putRecorder.Body.String())
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/update-channel", nil)
+	getRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(getRecorder, getReq)
+	if getRecorder.Code != http.StatusOK {
+		t.Fatalf("GET status = %d, want %d", getRecorder.Code, http.StatusOK)
+	}
+	if !strings.Contains(getRecorder.Body.String(), `"channel":"insider"`) {
+		t.Fatalf("GET body = %q, want the admin-written insider channel", getRecorder.Body.String())
+	}
+}
+
+// TestUpdateChannelGetNeverLeaksRawBackendErrorToUnauthenticatedCaller guards
+// the unauthenticated GET /update-channel path specifically: unlike every
+// other writeAdminError call site (reached only after requireAdminPrincipal
+// authenticates), a raw/untyped infrastructure error here (e.g. the store's
+// own *sql.DB failure) must never reach the anonymous caller's response
+// body -- only a fixed, generic message may. Closing the metadata store
+// before the request forces GetUpdateChannel's underlying query to fail
+// with a raw driver error, exactly the class of error this guard covers.
+func TestUpdateChannelGetNeverLeaksRawBackendErrorToUnauthenticatedCaller(t *testing.T) {
+	t.Parallel()
+
+	blobStore, store, cleanup := newTestStores(t)
+	defer cleanup()
+	handler := newRouterWithStores(blobStore, store, allowAllAccessController{}, fakeAuthService{})
+
+	if err := store.Close(); err != nil {
+		t.Fatalf("store.Close() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/update-channel", nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d for a raw backend failure", recorder.Code, http.StatusInternalServerError)
+	}
+	body := recorder.Body.String()
+	for _, leaked := range []string{"sql", "database", "closed", "driver"} {
+		if strings.Contains(strings.ToLower(body), leaked) {
+			t.Fatalf("body = %q, must not leak raw backend error detail (found %q)", body, leaked)
+		}
+	}
+	if !strings.Contains(body, "update channel is temporarily unavailable") {
+		t.Fatalf("body = %q, want the fixed generic message", body)
+	}
+}
+
+func TestAdminUpdateChannelPutRequiresAdminPrincipal(t *testing.T) {
+	t.Parallel()
+
+	blobStore, store, cleanup := newTestStores(t)
+	defer cleanup()
+
+	t.Run("unauthenticated", func(t *testing.T) {
+		t.Parallel()
+
+		handler := newRouterWithStores(blobStore, store, allowAllAccessController{}, fakeAuthService{})
+		req := httptest.NewRequest(http.MethodPut, "/admin/v1/update-channel", strings.NewReader(`{"channel":"insider"}`))
+		req.Header.Set("Content-Type", "application/json")
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+		if recorder.Code == http.StatusOK {
+			t.Fatalf("status = %d, want an unauthenticated caller to be rejected", recorder.Code)
+		}
+	})
+
+	t.Run("authenticated but not admin", func(t *testing.T) {
+		t.Parallel()
+
+		handler := newRouterWithStores(blobStore, store, allowAllAccessController{}, fakeAuthService{verify: &auth.Principal{Subject: "atk_1", UserID: "reader-1", Username: "reader", IsAdmin: false}})
+		req := httptest.NewRequest(http.MethodPut, "/admin/v1/update-channel", strings.NewReader(`{"channel":"insider"}`))
+		req.Header.Set("Authorization", "Bearer reader-token")
+		req.Header.Set("Content-Type", "application/json")
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+		if recorder.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want %d for a non-admin authenticated caller", recorder.Code, http.StatusForbidden)
+		}
+	})
+}
+
+func TestAdminUpdateChannelPutRejectsUnknownChannel(t *testing.T) {
+	t.Parallel()
+
+	blobStore, store, cleanup := newTestStores(t)
+	defer cleanup()
+	handler := newRouterWithStores(blobStore, store, allowAllAccessController{}, fakeAuthService{verify: &auth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+
+	req := httptest.NewRequest(http.MethodPut, "/admin/v1/update-channel", strings.NewReader(`{"channel":"nightly"}`))
+	req.Header.Set("Authorization", "Bearer admin-token")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	// writeAdminError maps domainauth.ErrorCodeValidation to 422, the same
+	// mapping TestAdminScanPolicyPutRejectsUnknownSeverityThreshold asserts
+	// for its own unknown-enum-value rejection.
+	if recorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d for an unknown channel", recorder.Code, http.StatusUnprocessableEntity)
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/update-channel", nil)
+	getRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(getRecorder, getReq)
+	if !strings.Contains(getRecorder.Body.String(), `"channel":"stable"`) {
+		t.Fatalf("GET body after rejected PUT = %q, want the default stable channel unchanged", getRecorder.Body.String())
+	}
+}
+
 func TestAdminSecretScanFindingsResponseStructurallyCannotCarrySecretOrFingerprint(t *testing.T) {
 	t.Parallel()
 

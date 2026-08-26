@@ -70,6 +70,8 @@ func (r *Router) handleAdmin(w stdhttp.ResponseWriter, req *stdhttp.Request) {
 		r.handleAdminScanPolicy(w, req)
 	case subpath == "signing-policy":
 		r.handleAdminSigningPolicy(w, req)
+	case subpath == "update-channel":
+		r.handleAdminUpdateChannel(w, req)
 	case subpath == "signing-policy/key-usage":
 		r.handleAdminSigningKeyUsage(w, req)
 	case subpath == "scan-runs":
@@ -476,6 +478,78 @@ func (r *Router) handleAdminSigningPolicy(w stdhttp.ResponseWriter, req *stdhttp
 		w.Header().Set("Allow", strings.Join([]string{stdhttp.MethodGet, stdhttp.MethodPut}, ", "))
 		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
 	}
+}
+
+// handleUpdateChannel is GET /update-channel: the ONLY read path for the
+// update-check channel, deliberately reachable with no authentication at
+// all (registered as a top-level route in router.go, not under
+// /admin/v1) -- see that registration's comment for why. GET-only; every
+// other method is rejected the same way every admin settings resource
+// rejects an unsupported method.
+func (r *Router) handleUpdateChannel(w stdhttp.ResponseWriter, req *stdhttp.Request) {
+	if req.Method != stdhttp.MethodGet {
+		w.Header().Set("Allow", stdhttp.MethodGet)
+		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+		return
+	}
+	channel, err := r.service.GetUpdateChannel(req.Context())
+	if err != nil {
+		// This route is deliberately unauthenticated (see the doc comment
+		// above), so unlike every other writeAdminError call site -- all
+		// reached only after requireAdminPrincipal has authenticated the
+		// caller -- writeAdminError's raw err.Error() fallback must never
+		// run here: Service.GetUpdateChannel already returns nil error for
+		// the well-understood "not configured yet" case (falling back to
+		// the default channel), so anything reaching this branch is an
+		// unexpected infrastructure failure (e.g. a raw *sql.DB/driver
+		// error, or a corrupted stored value) that could leak internal
+		// detail to a fully anonymous caller.
+		writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "update channel is temporarily unavailable"})
+		return
+	}
+	writeJSON(w, stdhttp.StatusOK, updateChannelResponse(channel))
+}
+
+// handleAdminUpdateChannel is PUT /admin/v1/update-channel: the only write
+// path for the update-check channel, gated by requireAdminPrincipal like
+// every other /admin/v1 route (handleAdmin, above) -- the read counterpart
+// is deliberately NOT duplicated here as an authenticated GET, since
+// GET /update-channel already serves every caller, admin or not.
+func (r *Router) handleAdminUpdateChannel(w stdhttp.ResponseWriter, req *stdhttp.Request) {
+	if req.Method != stdhttp.MethodPut {
+		w.Header().Set("Allow", stdhttp.MethodPut)
+		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+		return
+	}
+	channel, err := decodeUpdateChannel(req)
+	if err != nil {
+		writeAdminError(w, err, ports.Challenge{})
+		return
+	}
+	updated, err := r.service.SetUpdateChannel(req.Context(), channel)
+	if err != nil {
+		writeAdminError(w, err, ports.Challenge{})
+		return
+	}
+	writeJSON(w, stdhttp.StatusOK, updateChannelResponse(updated))
+}
+
+func decodeUpdateChannel(req *stdhttp.Request) (string, error) {
+	var payload struct {
+		Channel string `json:"channel"`
+	}
+	if err := decodeAdminJSON(req, &payload); err != nil {
+		return "", err
+	}
+	channel := strings.TrimSpace(payload.Channel)
+	if !ports.ValidUpdateChannel(channel) {
+		return "", domainauth.NewValidationError(fmt.Sprintf("channel must be %q or %q", ports.UpdateChannelStable, ports.UpdateChannelInsider))
+	}
+	return channel, nil
+}
+
+func updateChannelResponse(channel string) map[string]string {
+	return map[string]string{"channel": channel}
 }
 
 // handleAdminSigningKeyUsage is CountManifestsSignedByKey's HTTP surface: a

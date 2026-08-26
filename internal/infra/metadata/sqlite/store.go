@@ -1022,6 +1022,44 @@ func (s *Store) UpsertScanPolicySettings(ctx context.Context, tenant string, set
 	return err
 }
 
+// GetUpdateChannel mirrors GetScanPolicySettings' row-absence behavior: a
+// missing row is a typed domain.ErrorCodeNotFound, never a silent
+// code-level default -- the default ("stable") is applied one layer up, at
+// the service.
+func (s *Store) GetUpdateChannel(ctx context.Context, tenant string) (ports.UpdateChannelSettings, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT channel, updated_at
+		FROM update_channel_settings
+		WHERE tenant = ?
+	`, tenant)
+	var (
+		channel      string
+		updatedAtRaw string
+	)
+	if err := row.Scan(&channel, &updatedAtRaw); err != nil {
+		if err == sql.ErrNoRows {
+			return ports.UpdateChannelSettings{}, domain.NewNotFoundError("update_channel_settings", tenant)
+		}
+		return ports.UpdateChannelSettings{}, err
+	}
+	updatedAt, err := time.Parse(time.RFC3339Nano, updatedAtRaw)
+	if err != nil {
+		return ports.UpdateChannelSettings{}, err
+	}
+	return ports.UpdateChannelSettings{Channel: channel, UpdatedAt: updatedAt}, nil
+}
+
+func (s *Store) UpsertUpdateChannel(ctx context.Context, tenant string, settings ports.UpdateChannelSettings) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO update_channel_settings (tenant, channel, updated_at)
+		VALUES (?, ?, ?)
+		ON CONFLICT(tenant) DO UPDATE SET
+			channel = excluded.channel,
+			updated_at = excluded.updated_at
+	`, tenant, settings.Channel, settings.UpdatedAt.UTC().Format(time.RFC3339Nano))
+	return err
+}
+
 // GetSigningPolicySettings mirrors GetScanPolicySettings' row-absence
 // behavior: a missing row is a typed domain.ErrorCodeNotFound, never a
 // silent code-level default (design.md Decision 4). The code-level default
@@ -1836,6 +1874,19 @@ func (s *Store) init() error {
 			trusted_public_keys TEXT NOT NULL DEFAULT '[]',
 			updated_at TEXT NOT NULL,
 			unsigned_self_read TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY(tenant)
+		);`,
+		// update_channel_settings backs the TUI's background update-check
+		// banner (feat/tui-update-check): a genuinely global setting, not
+		// per-repository -- tenant-scoped only because every other settings
+		// row in this store already is (single-tenant deployment today
+		// regardless). Missing row defaults to "stable", applied one layer
+		// up at the service, mirroring scan_policy_settings/
+		// signing_policy_settings' own row-absence convention.
+		`CREATE TABLE IF NOT EXISTS update_channel_settings (
+			tenant TEXT NOT NULL,
+			channel TEXT NOT NULL DEFAULT 'stable',
+			updated_at TEXT NOT NULL,
 			PRIMARY KEY(tenant)
 		);`,
 		`CREATE TABLE IF NOT EXISTS secret_scan_findings (

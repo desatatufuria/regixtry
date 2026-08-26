@@ -8,8 +8,12 @@ import (
 )
 
 // adminOperationsRow is one row of the Operations domain (design.md
-// Decision I/D8/D9): Scan Runs and Secret Scan Findings, both results
-// screens (config lives in Security & Compliance instead).
+// Decision I/D8/D9): Scan Runs and Secret Scan Findings are results
+// screens; Update Channel (tui-update-check feature) is Operations' first
+// config-like row, since it governs the registry's own runtime behavior
+// (which released tags the background update-check considers) rather than
+// a Trivy/Gitleaks/Signing security policy, which is why it lives here
+// instead of Security & Compliance.
 type adminOperationsRow struct {
 	Label string
 	Help  string
@@ -18,12 +22,15 @@ type adminOperationsRow struct {
 var adminOperationsRows = []adminOperationsRow{
 	{Label: "Scan Runs", Help: "Repository scan summaries and history"},
 	{Label: "Secret Scan Findings", Help: "Leaked-secret findings across repositories"},
+	{Label: "Update Channel", Help: "Which released tags the background update-check considers"},
 }
 
 // adminOperationsScreen is screenAdminOperations (Phase 18, design.md
-// Decision I): a bare 2-row peer list, mirroring securityMenuScreen's own
-// "no page/action state of its own" shape. Each row navigates into its own
-// scanRunsScreen-backed repository picker (Phase 19).
+// Decision I): a bare peer-row list, mirroring securityMenuScreen's own
+// "no page/action state of its own" shape. Scan Runs/Secret Scan Findings
+// navigate into a scanRunsScreen-backed repository picker (Phase 19); Update
+// Channel (tui-update-check feature) navigates into its own settings
+// screen.
 type adminOperationsScreen struct {
 	selected int
 }
@@ -69,6 +76,8 @@ func (s adminOperationsScreen) navigateToSelected() tea.Cmd {
 		return navigate(screenAdminScanRuns)
 	case "Secret Scan Findings":
 		return navigate(screenAdminSecretFindings)
+	case "Update Channel":
+		return navigate(screenAdminUpdateChannel)
 	}
 	return nil
 }

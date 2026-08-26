@@ -594,6 +594,14 @@ func TestParseTUIConfigGCDeleteFlagIsIndependentOfDeleteEnabled(t *testing.T) {
 	}
 }
 
+// The update channel moved from a per-invocation -update-channel CLI flag
+// to a real server-side setting (GET /update-channel, PUT
+// /admin/v1/update-channel) -- a bare local flag never proved the caller
+// was an admin, which the "only an admin can change the channel"
+// requirement needs. tuiConfig no longer carries UpdateChannel at all; see
+// internal/tui's checkForUpdateCmd for where the channel is now resolved
+// (Service.GetUpdateChannel, called locally, not from CLI config).
+
 func TestParseTUIConfigAutoDetectsSetupManagedRuntime(t *testing.T) {
 	t.Parallel()
 
