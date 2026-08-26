@@ -343,6 +343,24 @@ func renderAdminScanSummary(theme adminTheme, summaries []repositorySummary, loa
 	return append(lines, table.View())
 }
 
+// renderFeatureOverridesTable mirrors renderAdminScanSummary's shape for
+// featureOverridesScreen (screen_gitleaks_repos.go): a bubble-table body in
+// place of the old plain "Repository — status" line list. loaded/empty
+// precedence matches the screen's own pre-existing behavior exactly (a
+// not-yet-loaded screen reports "Loading...", never the empty state, even
+// though rows is naturally empty in both cases).
+func renderFeatureOverridesTable(theme adminTheme, feature string, rows []featureOverrideRow, loaded bool, table bubbletable.Model) []string {
+	lines := []string{theme.subheading.Render(featureDisplayName(feature) + " — Repository Overrides")}
+	switch {
+	case !loaded:
+		return append(lines, theme.muted.Render("Loading repository overrides..."))
+	case len(rows) == 0:
+		return append(lines, theme.muted.Render("No repositories available to override."))
+	default:
+		return append(lines, table.View())
+	}
+}
+
 // adminScanHistoryModalTabBar renders the modal's tab strip as a single
 // line, guarded by TestRenderAdminScanHistoryModalChromeLinesAreSingleLine
 // (design.md "Modal chrome accounting").

@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
+	bubbletable "github.com/evertras/bubble-table/table"
 	"regixtry/internal/ports"
 )
 
@@ -31,6 +32,7 @@ type featureOverridesScreen struct {
 	rows     []featureOverrideRow
 	selected int
 	loaded   bool
+	table    bubbletable.Model
 	editor   overrideEditor
 	err      string
 }
@@ -67,6 +69,7 @@ func (s featureOverridesScreen) Update(env screenEnv, msg tea.Msg) (adminScreen,
 		case adminRepositoryOverrideSavedMsg:
 			s.editor = s.editor.applySaved(typed)
 			s.applySavedToRow(typed)
+			s.rebuildTable(env)
 			return s, nil, false
 		case adminSigningPolicyLoadedMsg:
 			s.editor = s.editor.applyGlobalPolicyLoaded(typed)
@@ -80,6 +83,9 @@ func (s featureOverridesScreen) Update(env screenEnv, msg tea.Msg) (adminScreen,
 	switch typed := msg.(type) {
 	case tea.KeyMsg:
 		return s.updateKey(env, typed)
+	case tea.WindowSizeMsg:
+		s.rebuildTable(env)
+		return s, nil, false
 	case featureOverridesLoadedMsg:
 		if typed.feature != s.feature {
 			return s, nil, false
@@ -92,9 +98,18 @@ func (s featureOverridesScreen) Update(env screenEnv, msg tea.Msg) (adminScreen,
 		s.selected = boundedIndex(s.selected, len(s.rows))
 		s.loaded = true
 		s.err = ""
+		s.rebuildTable(env)
 		return s, nil, false
 	}
 	return s, nil, false
+}
+
+func (s *featureOverridesScreen) rebuildTable(env screenEnv) {
+	if len(s.rows) == 0 {
+		return
+	}
+	primary, _ := tableRoles(env.Layout)
+	s.table = buildFeatureOverridesTable(newAdminTheme(), s.feature, s.rows, s.selected, primary)
 }
 
 func (s featureOverridesScreen) updateKey(env screenEnv, msg tea.KeyMsg) (adminScreen, tea.Cmd, bool) {
@@ -106,12 +121,14 @@ func (s featureOverridesScreen) updateKey(env screenEnv, msg tea.KeyMsg) (adminS
 			return s, nil, true
 		}
 		s.selected = boundedIndex(s.selected-1, len(s.rows))
+		s.rebuildTable(env)
 		return s, nil, true
 	case isMoveDownKey(msg):
 		if len(s.rows) == 0 {
 			return s, nil, true
 		}
 		s.selected = boundedIndex(s.selected+1, len(s.rows))
+		s.rebuildTable(env)
 		return s, nil, true
 	case isRuneKey(msg, 'o'):
 		// spec.md "The override key is scoped to the opening screen's row
@@ -150,27 +167,15 @@ func (s *featureOverridesScreen) applySavedToRow(msg adminRepositoryOverrideSave
 }
 
 func (s featureOverridesScreen) View(theme adminTheme, env screenEnv) screenFrame {
-	lines := []string{theme.subheading.Render(featureDisplayName(s.feature) + " — Repository Overrides")}
-	switch {
-	case s.err != "":
-		lines = append(lines, theme.error.Render(s.err))
-	case !s.loaded:
-		lines = append(lines, theme.muted.Render("Loading repository overrides..."))
-	case len(s.rows) == 0:
-		lines = append(lines, theme.muted.Render("No repositories available to override."))
-	default:
-		highlighted := boundedIndex(s.selected, len(s.rows))
-		for index, row := range s.rows {
-			label := fmt.Sprintf("%s — %s", row.Repository, featureOverrideRowStatus(row))
-			if index == highlighted {
-				label = theme.selected.Render(label)
-			}
-			lines = append(lines, label)
-		}
+	var lines []string
+	if s.err != "" {
+		lines = []string{theme.subheading.Render(featureDisplayName(s.feature) + " — Repository Overrides"), theme.error.Render(s.err)}
+	} else {
+		lines = renderFeatureOverridesTable(theme, s.feature, s.rows, s.loaded, s.table)
 	}
 	frame := screenFrame{
 		Context: "Security & Compliance / " + featureDisplayName(s.feature) + " / Repositories",
-		Body:    theme.section.Render(strings.Join(lines, "\n")),
+		Body:    renderSection(theme, strings.Join(lines, "\n"), env.Layout),
 	}
 	if s.editor.Active() {
 		frame.Overlay = renderOverrideEditor(theme, s.editor)
