@@ -639,3 +639,97 @@ func TestBuildAdminSecretFindingsTableColumnsFitWithoutOverflow(t *testing.T) {
 		}
 	}
 }
+
+// TestBuildFeatureOverridesTableRendersSigningTrustedKeyCount guards the
+// column that would have made today's real misconfiguration visible without
+// opening the editor: a repository with an active Signing override and zero
+// trusted keys reports every pull "unverifiable" no matter how valid the
+// actual signature is, and the old plain-text list never surfaced this.
+func TestBuildFeatureOverridesTableRendersSigningTrustedKeyCount(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+	updated := time.Date(2026, 8, 20, 9, 30, 0, 0, time.UTC)
+	rows := []featureOverrideRow{
+		{
+			Repository:  "dtf-bookmarks-sync-admin-web",
+			HasOverride: true,
+			Detail: ports.RepositoryOverrideDetails{
+				Repository:        "dtf-bookmarks-sync-admin-web",
+				Enabled:           false,
+				TrustedPublicKeys: nil,
+				UpdatedAt:         updated,
+			},
+		},
+		{
+			Repository:  "govault-api",
+			HasOverride: true,
+			Detail: ports.RepositoryOverrideDetails{
+				Repository:        "govault-api",
+				Enabled:           true,
+				TrustedPublicKeys: []string{"key-one", "key-two"},
+				UpdatedAt:         updated,
+			},
+		},
+	}
+
+	table := buildFeatureOverridesTable(theme, signingFeatureName, rows, 0, minTableRows)
+	view := table.View()
+	for _, want := range []string{"Repository", "Status", "Enabled", "Detail", "Updated"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("table view = %q, want header %q", view, want)
+		}
+	}
+	if !strings.Contains(view, "0 trusted key(s)") {
+		t.Fatalf("table view = %q, want the zero-trusted-keys override to read %q -- this is the actual defect this column exists to surface", view, "0 trusted key(s)")
+	}
+	if !strings.Contains(view, "2 trusted key(s)") {
+		t.Fatalf("table view = %q, want %q", view, "2 trusted key(s)")
+	}
+}
+
+// TestBuildFeatureOverridesTableRendersGitleaksConfigPathOrDefault guards
+// Gitleaks' own feature-aware Detail column: an explicit ConfigPath renders
+// as-is, an override with none falls back to "default config" rather than a
+// blank cell.
+func TestBuildFeatureOverridesTableRendersGitleaksConfigPathOrDefault(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+	rows := []featureOverrideRow{
+		{Repository: "team/api", HasOverride: true, Detail: ports.RepositoryOverrideDetails{Repository: "team/api", ConfigPath: "/etc/gitleaks/config.toml"}},
+		{Repository: "team/worker", HasOverride: true, Detail: ports.RepositoryOverrideDetails{Repository: "team/worker"}},
+	}
+
+	table := buildFeatureOverridesTable(theme, gitleaksFeatureName, rows, 0, minTableRows)
+	view := table.View()
+	if !strings.Contains(view, "/etc/gitleaks/config.toml") {
+		t.Fatalf("table view = %q, want the explicit config path", view)
+	}
+	if !strings.Contains(view, "default config") {
+		t.Fatalf("table view = %q, want %q for an override with no ConfigPath", view, "default config")
+	}
+}
+
+// TestBuildFeatureOverridesTableInheritingRowRendersPlaceholders guards a
+// non-override (inheriting) row: Enabled/Detail/Updated must never fabricate
+// a value for state this row does not own -- they render the "—" placeholder.
+func TestBuildFeatureOverridesTableInheritingRowRendersPlaceholders(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+	rows := []featureOverrideRow{{Repository: "alpine", HasOverride: false}}
+
+	table := buildFeatureOverridesTable(theme, signingFeatureName, rows, 0, minTableRows)
+	visible := table.GetVisibleRows()
+	if len(visible) != 1 {
+		t.Fatalf("len(visible) = %d, want 1", len(visible))
+	}
+	row := visible[0].Data
+	for _, column := range []string{adminTableColumnFeatureOverrideEnabled, adminTableColumnFeatureOverrideDetail, adminTableColumnFeatureOverrideUpdated} {
+		value, _ := row[column].(string)
+		if value != "—" {
+			t.Fatalf("inheriting row column %q = %q, want the %q placeholder", column, value, "—")
+		}
+	}
+}

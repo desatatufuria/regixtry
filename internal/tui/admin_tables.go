@@ -46,6 +46,12 @@ const (
 	adminTableColumnScanSummaryFixable      = "scan_summary_fixable"
 	adminTableColumnScanSummaryRuns         = "scan_summary_runs"
 	adminTableColumnScanSummaryLastExecuted = "scan_summary_last_executed"
+
+	adminTableColumnFeatureOverrideRepository = "feature_override_repository"
+	adminTableColumnFeatureOverrideStatus     = "feature_override_status"
+	adminTableColumnFeatureOverrideEnabled    = "feature_override_enabled"
+	adminTableColumnFeatureOverrideDetail     = "feature_override_detail"
+	adminTableColumnFeatureOverrideUpdated    = "feature_override_updated"
 )
 
 // Column widths below are measured, not guessed (design.md's recurring
@@ -96,6 +102,19 @@ const (
 	adminScanSummaryColumnFixableWidth      = 8
 	adminScanSummaryColumnRunsWidth         = 6
 	adminScanSummaryColumnLastExecutedWidth = 34
+
+	adminFeatureOverrideColumnRepositoryWidth = 30
+	// adminFeatureOverrideColumnStatusWidth is measured against
+	// featureOverrideRowStatus's longest value, "inheriting global settings"
+	// (26 chars).
+	adminFeatureOverrideColumnStatusWidth  = 27
+	adminFeatureOverrideColumnEnabledWidth = 8
+	// adminFeatureOverrideColumnDetailWidth is measured against the longer of
+	// Signing's "N trusted key(s)" and Gitleaks' ConfigPath values.
+	adminFeatureOverrideColumnDetailWidth = 30
+	// adminFeatureOverrideColumnUpdatedWidth fits formatFeatureOverrideUpdated's
+	// fixed-width "2006-01-02 15:04" (16 chars) output exactly.
+	adminFeatureOverrideColumnUpdatedWidth = 16
 )
 
 // newAdminBubbleTable is the sole construction point for every admin table.
@@ -268,6 +287,79 @@ func buildAdminScanSummaryTable(theme adminTheme, summaries []repositorySummary,
 		}))
 	}
 	return newAdminBubbleTable(columns, rows, highlighted, theme, pageSize)
+}
+
+// buildFeatureOverridesTable renders one row per repository (the catalog ∪
+// stored-overrides union from mergeFeatureOverrideRows) for
+// featureOverridesScreen (screen_gitleaks_repos.go), shared by both
+// screenSecurityGitleaksRepos and screenSecuritySigningRepos. The Detail
+// column is feature-aware: ports.RepositoryOverrideDetails carries different
+// meaningful fields per feature (TrustedPublicKeys for Signing, ConfigPath
+// for Gitleaks), so this is the one column that branches on feature.
+// Enabled/Detail/Updated all render the "—" placeholder for an inheriting
+// (HasOverride=false) row rather than fabricating a value for state that row
+// does not own.
+//
+// The Signing trusted-key count is not cosmetic: a repository with an active
+// override and zero trusted keys reports every pull "unverifiable" no matter
+// how valid the actual signature is, and that misconfiguration was
+// completely invisible in the old plain-text list -- this column makes it
+// visible without opening the editor.
+func buildFeatureOverridesTable(theme adminTheme, feature string, rows []featureOverrideRow, highlighted int, pageSize int) bubbletable.Model {
+	columns := []bubbletable.Column{
+		bubbletable.NewColumn(adminTableColumnFeatureOverrideRepository, "Repository", adminFeatureOverrideColumnRepositoryWidth),
+		bubbletable.NewColumn(adminTableColumnFeatureOverrideStatus, "Status", adminFeatureOverrideColumnStatusWidth),
+		bubbletable.NewColumn(adminTableColumnFeatureOverrideEnabled, "Enabled", adminFeatureOverrideColumnEnabledWidth),
+		bubbletable.NewColumn(adminTableColumnFeatureOverrideDetail, "Detail", adminFeatureOverrideColumnDetailWidth),
+		bubbletable.NewColumn(adminTableColumnFeatureOverrideUpdated, "Updated", adminFeatureOverrideColumnUpdatedWidth),
+	}
+	tableRows := make([]bubbletable.Row, 0, len(rows))
+	for _, row := range rows {
+		tableRows = append(tableRows, bubbletable.NewRow(bubbletable.RowData{
+			adminTableColumnFeatureOverrideRepository: adminFirstNonEmpty(row.Repository, "unknown"),
+			adminTableColumnFeatureOverrideStatus:     featureOverrideRowStatus(row),
+			adminTableColumnFeatureOverrideEnabled:    featureOverrideEnabledCell(row),
+			adminTableColumnFeatureOverrideDetail:     featureOverrideDetailCell(feature, row),
+			adminTableColumnFeatureOverrideUpdated:    featureOverrideUpdatedCell(row),
+		}))
+	}
+	return newAdminBubbleTable(columns, tableRows, highlighted, theme, pageSize)
+}
+
+// featureOverridePlaceholder is rendered for any column whose value belongs
+// to the override this row does not have (HasOverride=false) -- never a
+// fabricated "off"/"0"/blank, an explicit "this row does not own this state".
+const featureOverridePlaceholder = "—"
+
+func featureOverrideEnabledCell(row featureOverrideRow) string {
+	if !row.HasOverride {
+		return featureOverridePlaceholder
+	}
+	if row.Detail.Enabled {
+		return "on"
+	}
+	return "off"
+}
+
+func featureOverrideDetailCell(feature string, row featureOverrideRow) string {
+	if !row.HasOverride {
+		return featureOverridePlaceholder
+	}
+	switch feature {
+	case signingFeatureName:
+		return fmt.Sprintf("%d trusted key(s)", len(row.Detail.TrustedPublicKeys))
+	case gitleaksFeatureName:
+		return adminFirstNonEmpty(row.Detail.ConfigPath, "default config")
+	default:
+		return featureOverridePlaceholder
+	}
+}
+
+func featureOverrideUpdatedCell(row featureOverrideRow) string {
+	if !row.HasOverride || row.Detail.UpdatedAt.IsZero() {
+		return featureOverridePlaceholder
+	}
+	return row.Detail.UpdatedAt.UTC().Format("2006-01-02 15:04")
 }
 
 // annotateDisabledSummaries marks each summary Disabled when a stored
