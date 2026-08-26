@@ -91,6 +91,18 @@ func (s updateChannelScreen) updateKey(env screenEnv, msg tea.KeyMsg) (adminScre
 		s.err = ""
 		return s, updateUpdateChannelCmd(env, s.selected), true
 	case isRuneKey(msg, 'r'):
+		// Only s.saving is guarded here, deliberately NOT !s.loaded: unlike
+		// Space/Enter (which need a loaded value to toggle or compare
+		// against), a refresh is exactly how the operator recovers from a
+		// failed initial load -- s.loaded is set true only on
+		// adminUpdateChannelLoadedMsg's success branch, and this screen is
+		// never re-Init'd on a later visit (navigateMsg only Inits a slot
+		// the first time it's mounted), so guarding on !s.loaded here would
+		// make a failed first load permanently unrecoverable via 'r' for
+		// the rest of the admin session.
+		if s.saving {
+			return s, nil, true
+		}
 		return s, loadUpdateChannelCmd(env), true
 	}
 	return s, nil, true

@@ -494,7 +494,17 @@ func (r *Router) handleUpdateChannel(w stdhttp.ResponseWriter, req *stdhttp.Requ
 	}
 	channel, err := r.service.GetUpdateChannel(req.Context())
 	if err != nil {
-		writeAdminError(w, err, ports.Challenge{})
+		// This route is deliberately unauthenticated (see the doc comment
+		// above), so unlike every other writeAdminError call site -- all
+		// reached only after requireAdminPrincipal has authenticated the
+		// caller -- writeAdminError's raw err.Error() fallback must never
+		// run here: Service.GetUpdateChannel already returns nil error for
+		// the well-understood "not configured yet" case (falling back to
+		// the default channel), so anything reaching this branch is an
+		// unexpected infrastructure failure (e.g. a raw *sql.DB/driver
+		// error, or a corrupted stored value) that could leak internal
+		// detail to a fully anonymous caller.
+		writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "update channel is temporarily unavailable"})
 		return
 	}
 	writeJSON(w, stdhttp.StatusOK, updateChannelResponse(channel))

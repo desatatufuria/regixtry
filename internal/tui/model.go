@@ -1026,6 +1026,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
 		return m, cmd
+	case adminUpdateChannelLoadedMsg:
+		// Mirrors adminScanPolicyLoadedMsg's own fail-quiet posture: a load
+		// failure just broadcasts (updateChannelScreen shows its own error,
+		// never a blocking status line) rather than being surfaced here.
+		var cmd tea.Cmd
+		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
+		if msg.err != nil && IsAdminSessionExpired(msg.err) {
+			return m.expireAdminSession(msg.err.Error()), nil
+		}
+		return m, cmd
+	case adminUpdateChannelUpdatedMsg:
+		if msg.err != nil {
+			if IsAdminSessionExpired(msg.err) {
+				return m.expireAdminSession(msg.err.Error()), nil
+			}
+			var cmd tea.Cmd
+			m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
+			return m, cmd
+		}
+		m.status = "Update channel saved."
+		var cmd tea.Cmd
+		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
+		return m, cmd
 	case adminSigningPolicyLoadedMsg:
 		var cmd tea.Cmd
 		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
@@ -1523,7 +1546,11 @@ func (m Model) withUpdateBanner(body string) string {
 	} else {
 		line = fmt.Sprintf("regixtry %s", m.currentVersion)
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, theme.success.Render(line), body)
+	// Deliberately theme.muted, not theme.success, and appended below body
+	// rather than prepended above it: this is an ambient status line, not
+	// an alert -- it must never compete with the screen's own title/content
+	// for the operator's attention.
+	return lipgloss.JoinVertical(lipgloss.Left, body, theme.muted.Render(line))
 }
 
 func (m Model) viewScreen() string {

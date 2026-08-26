@@ -4375,9 +4375,28 @@ func TestOperationsThirdRowReachesUpdateChannelScreen(t *testing.T) {
 	if got, want := updated.screen, screenAdminUpdateChannel; got != want {
 		t.Fatalf("screen = %q, want %q", got, want)
 	}
+	// Asserting on the raw view text alone is a false-positive trap here:
+	// the key-bindings footer itself reads "Space: toggle stable/insider"
+	// regardless of whether the load ever actually completed, so a
+	// strings.Contains(view, "stable") check would pass even when the
+	// screen is stuck on "Loading update channel..." forever (the exact
+	// bug this test must catch: Init's loadUpdateChannelCmd result,
+	// adminUpdateChannelLoadedMsg, silently dropped by Model.Update if no
+	// case routes it into m.adminScreens via routeAdminMsg). Assert on the
+	// mounted screen's own loaded state instead.
+	screen, ok := updated.adminScreens[slotUpdateChannel].(updateChannelScreen)
+	if !ok {
+		t.Fatalf("adminScreens[slotUpdateChannel] = %#v, want a mounted updateChannelScreen", updated.adminScreens[slotUpdateChannel])
+	}
+	if !screen.loaded {
+		t.Fatalf("updateChannelScreen.loaded = false, want true -- adminUpdateChannelLoadedMsg never reached the screen")
+	}
+	if got, want := screen.current, "stable"; got != want {
+		t.Fatalf("updateChannelScreen.current = %q, want %q", got, want)
+	}
 	view := updated.View()
-	if !strings.Contains(view, "stable") {
-		t.Fatalf("view = %q, want the loaded channel \"stable\" shown", view)
+	if strings.Contains(view, "Loading update channel...") {
+		t.Fatalf("view = %q, want the loading message gone once the channel is loaded", view)
 	}
 }
 

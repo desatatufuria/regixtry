@@ -257,6 +257,43 @@ func TestUpdateChannelGetReflectsAdminWrite(t *testing.T) {
 	}
 }
 
+// TestUpdateChannelGetNeverLeaksRawBackendErrorToUnauthenticatedCaller guards
+// the unauthenticated GET /update-channel path specifically: unlike every
+// other writeAdminError call site (reached only after requireAdminPrincipal
+// authenticates), a raw/untyped infrastructure error here (e.g. the store's
+// own *sql.DB failure) must never reach the anonymous caller's response
+// body -- only a fixed, generic message may. Closing the metadata store
+// before the request forces GetUpdateChannel's underlying query to fail
+// with a raw driver error, exactly the class of error this guard covers.
+func TestUpdateChannelGetNeverLeaksRawBackendErrorToUnauthenticatedCaller(t *testing.T) {
+	t.Parallel()
+
+	blobStore, store, cleanup := newTestStores(t)
+	defer cleanup()
+	handler := newRouterWithStores(blobStore, store, allowAllAccessController{}, fakeAuthService{})
+
+	if err := store.Close(); err != nil {
+		t.Fatalf("store.Close() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/update-channel", nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d for a raw backend failure", recorder.Code, http.StatusInternalServerError)
+	}
+	body := recorder.Body.String()
+	for _, leaked := range []string{"sql", "database", "closed", "driver"} {
+		if strings.Contains(strings.ToLower(body), leaked) {
+			t.Fatalf("body = %q, must not leak raw backend error detail (found %q)", body, leaked)
+		}
+	}
+	if !strings.Contains(body, "update channel is temporarily unavailable") {
+		t.Fatalf("body = %q, want the fixed generic message", body)
+	}
+}
+
 func TestAdminUpdateChannelPutRequiresAdminPrincipal(t *testing.T) {
 	t.Parallel()
 

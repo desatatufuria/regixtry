@@ -158,6 +158,62 @@ func TestUpdateChannelScreenReflectsSaveError(t *testing.T) {
 	}
 }
 
+// TestUpdateChannelScreenRefreshIsNoopWhileSaving guards against a refresh
+// racing an in-flight save: pressing 'r' while saving must not fire a
+// concurrent load Cmd (which could otherwise clobber a save's own
+// confirmation/error with a stale read, or leave `saving` stuck true with no
+// request left to resolve it) -- mirrors the same !s.loaded || s.saving
+// guard Space and Enter already apply.
+func TestUpdateChannelScreenRefreshIsNoopWhileSaving(t *testing.T) {
+	t.Parallel()
+
+	env := screenEnv{Layout: consoleLayout{SectionRows: 20}}
+	screen := updateChannelScreen{loaded: true, current: "stable", selected: "insider", saving: true}
+
+	updated, cmd, consumed := screen.updateKey(env, keyMsgFor("r"))
+	if !consumed {
+		t.Fatal("'r' was not consumed")
+	}
+	if cmd != nil {
+		t.Fatal("'r' while saving returned a non-nil Cmd, want nil -- refresh must not race an in-flight save")
+	}
+	next := updated.(updateChannelScreen)
+	if !next.saving {
+		t.Fatal("saving = false after 'r' while saving, want true (unchanged)")
+	}
+	if next.current != "stable" || next.selected != "insider" {
+		t.Fatalf("current = %q, selected = %q after 'r' while saving, want unchanged %q/%q", next.current, next.selected, "stable", "insider")
+	}
+}
+
+// TestUpdateChannelScreenRefreshRecoversFromFailedInitialLoad is a regression
+// test for a defect the round-1 fix itself introduced (caught by Judgment
+// Day's scoped re-judgment): guarding 'r' on "!s.loaded || s.saving" instead
+// of "s.saving" alone made a failed INITIAL load permanently unrecoverable
+// via refresh for the rest of the admin session, since s.loaded is set true
+// only on adminUpdateChannelLoadedMsg's success branch (never on failure),
+// and this screen is never re-Init'd on a later visit (navigateMsg only
+// Inits a slot the first time it is mounted). 'r' must still work while
+// s.loaded is false, as long as no save is in flight.
+func TestUpdateChannelScreenRefreshRecoversFromFailedInitialLoad(t *testing.T) {
+	t.Parallel()
+
+	env := screenEnv{Layout: consoleLayout{SectionRows: 20}}
+	screen := updateChannelScreen{loaded: false, err: "admin API is unavailable for this session"}
+
+	updated, cmd, consumed := screen.updateKey(env, keyMsgFor("r"))
+	if !consumed {
+		t.Fatal("'r' was not consumed")
+	}
+	if cmd == nil {
+		t.Fatal("'r' after a failed initial load returned a nil Cmd, want the reload Cmd -- refresh must still be able to retry")
+	}
+	next := updated.(updateChannelScreen)
+	if next.saving {
+		t.Fatal("saving = true after 'r' on a never-loaded screen, want unchanged false")
+	}
+}
+
 // keyMsgFor mirrors runKey's own tea.KeyMsg construction (model_test.go)
 // for the two keys this screen's own tests need, operating directly on a
 // screen struct rather than a full Model.
