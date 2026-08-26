@@ -97,6 +97,120 @@ func TestModelLocalStartupLoadsCatalogImmediately(t *testing.T) {
 	}
 }
 
+// TestModelChecksForUpdatesAfterStartupResolves guards the follow-up-Cmd
+// chaining convention (not tea.Batch, to keep --snapshot mode's single
+// Update call working, model.go's own established convention): once
+// catalogLoadedMsg resolves the initial screen, Update must also return a
+// non-nil Cmd for the background version check, on every branch (error,
+// empty, and normal), so the check fires regardless of what the catalog
+// contained. Deliberately does NOT invoke the returned Cmd (that would
+// perform a real network call) -- only checkForUpdateCmd's own nilness is
+// under test here.
+func TestModelChecksForUpdatesAfterStartupResolves(t *testing.T) {
+	t.Parallel()
+
+	t.Run("normal catalog", func(t *testing.T) {
+		t.Parallel()
+		model := NewModel(&fakeQueryService{repositorySummaries: []appregixtry.RepositorySummary{{Name: "library/alpine"}}}, WithCurrentVersion("v0.2.0"))
+		_, cmd := model.Update(catalogLoadedMsg{result: []appregixtry.RepositorySummary{{Name: "library/alpine"}}})
+		if cmd == nil {
+			t.Fatal("Update(catalogLoadedMsg) returned a nil Cmd, want the chained update-check Cmd")
+		}
+	})
+
+	t.Run("empty catalog", func(t *testing.T) {
+		t.Parallel()
+		model := NewModel(&fakeQueryService{}, WithCurrentVersion("v0.2.0"))
+		_, cmd := model.Update(catalogLoadedMsg{})
+		if cmd == nil {
+			t.Fatal("Update(catalogLoadedMsg{empty}) returned a nil Cmd, want the chained update-check Cmd")
+		}
+	})
+
+	t.Run("catalog load error", func(t *testing.T) {
+		t.Parallel()
+		model := NewModel(&fakeQueryService{}, WithCurrentVersion("v0.2.0"))
+		_, cmd := model.Update(catalogLoadedMsg{err: errors.New("boom")})
+		if cmd == nil {
+			t.Fatal("Update(catalogLoadedMsg{err}) returned a nil Cmd, want the chained update-check Cmd")
+		}
+	})
+
+	t.Run("startup login path", func(t *testing.T) {
+		t.Parallel()
+		model := NewModel(&fakeQueryService{}, WithCurrentVersion("v0.2.0"), WithStartupLogin())
+		_, cmd := model.Update(startupLoginMsg{})
+		if cmd == nil {
+			t.Fatal("Update(startupLoginMsg) returned a nil Cmd, want the chained update-check Cmd")
+		}
+	})
+
+	t.Run("no current version known: never fires a request", func(t *testing.T) {
+		t.Parallel()
+		model := NewModel(&fakeQueryService{repositorySummaries: []appregixtry.RepositorySummary{{Name: "library/alpine"}}})
+		_, cmd := model.Update(catalogLoadedMsg{result: []appregixtry.RepositorySummary{{Name: "library/alpine"}}})
+		if cmd != nil {
+			t.Fatal("Update(catalogLoadedMsg) returned a non-nil Cmd with no current version set, want nil -- nothing to compare against")
+		}
+	})
+}
+
+// TestModelUpdateCheckCompletedMsgUpdatesBannerState covers
+// updateCheckCompletedMsg's handler directly (no real I/O): a genuinely
+// newer version populates the banner text in View(); an error, an
+// unparseable candidate, or an already-up-to-date result must never show a
+// banner or surface an error to the operator.
+func TestModelUpdateCheckCompletedMsgUpdatesBannerState(t *testing.T) {
+	t.Parallel()
+
+	t.Run("newer version shows the banner on every screen", func(t *testing.T) {
+		t.Parallel()
+		model := NewModel(&fakeQueryService{}, WithCurrentVersion("v0.2.0"))
+		updated, cmd := model.Update(updateCheckCompletedMsg{latestVersion: "v0.3.0"})
+		result := updated.(Model)
+		if cmd != nil {
+			t.Fatalf("Update(updateCheckCompletedMsg) returned a non-nil Cmd, want nil (terminal, no further chaining)")
+		}
+		view := result.View()
+		if !strings.Contains(view, "v0.3.0") {
+			t.Fatalf("view = %q, want it to mention the newer version v0.3.0", view)
+		}
+	})
+
+	t.Run("fetch error never shows a banner or surfaces an error", func(t *testing.T) {
+		t.Parallel()
+		model := NewModel(&fakeQueryService{}, WithCurrentVersion("v0.2.0"))
+		updated, _ := model.Update(updateCheckCompletedMsg{err: errors.New("network unreachable")})
+		result := updated.(Model)
+		if result.err != nil {
+			t.Fatalf("model.err = %v, want nil -- a failed update check must never surface as a fatal error", result.err)
+		}
+		if strings.Contains(result.View(), "network unreachable") {
+			t.Fatalf("view leaked the update-check error, want it silently swallowed")
+		}
+	})
+
+	t.Run("already up to date shows no banner", func(t *testing.T) {
+		t.Parallel()
+		model := NewModel(&fakeQueryService{}, WithCurrentVersion("v0.2.0"))
+		updated, _ := model.Update(updateCheckCompletedMsg{latestVersion: "v0.2.0"})
+		result := updated.(Model)
+		if result.updateAvailable != "" {
+			t.Fatalf("updateAvailable = %q, want empty -- already on the latest version", result.updateAvailable)
+		}
+	})
+
+	t.Run("an unparseable candidate never shows a banner", func(t *testing.T) {
+		t.Parallel()
+		model := NewModel(&fakeQueryService{}, WithCurrentVersion("v0.2.0"))
+		updated, _ := model.Update(updateCheckCompletedMsg{latestVersion: "not-a-version"})
+		result := updated.(Model)
+		if result.updateAvailable != "" {
+			t.Fatalf("updateAvailable = %q, want empty for an unparseable candidate", result.updateAvailable)
+		}
+	})
+}
+
 func TestModelUpdateWindowSizeMsgSetsViewport(t *testing.T) {
 	t.Parallel()
 

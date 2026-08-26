@@ -594,6 +594,57 @@ func TestParseTUIConfigGCDeleteFlagIsIndependentOfDeleteEnabled(t *testing.T) {
 	}
 }
 
+// TestParseTUIConfigUpdateChannelDefaultsToStable pins the tui-update-check
+// feature's default: with no flag and no env var, UpdateChannel is "stable"
+// -- an operator who never opts in never gets flagged for an RC.
+func TestParseTUIConfigUpdateChannelDefaultsToStable(t *testing.T) {
+	cfg, err := parseTUIConfig(nil)
+	if err != nil {
+		t.Fatalf("parseTUIConfig() error = %v", err)
+	}
+	if cfg.UpdateChannel != "stable" {
+		t.Fatalf("UpdateChannel = %q, want \"stable\"", cfg.UpdateChannel)
+	}
+}
+
+// TestParseTUIConfigUpdateChannelFromEnv proves REGISTRY_UPDATE_CHANNEL
+// reaches tuiConfig.UpdateChannel, mirroring the -delete-enabled env
+// pairing's own test.
+func TestParseTUIConfigUpdateChannelFromEnv(t *testing.T) {
+	t.Setenv("REGISTRY_UPDATE_CHANNEL", "insider")
+
+	cfg, err := parseTUIConfig(nil)
+	if err != nil {
+		t.Fatalf("parseTUIConfig() error = %v", err)
+	}
+	if cfg.UpdateChannel != "insider" {
+		t.Fatalf("UpdateChannel = %q, want \"insider\" from REGISTRY_UPDATE_CHANNEL", cfg.UpdateChannel)
+	}
+}
+
+// TestParseTUIConfigUpdateChannelFlagOverridesEnv mirrors
+// TestParseTUIConfigDeleteEnabledFlagOverridesEnv.
+func TestParseTUIConfigUpdateChannelFlagOverridesEnv(t *testing.T) {
+	t.Setenv("REGISTRY_UPDATE_CHANNEL", "insider")
+
+	cfg, err := parseTUIConfig([]string{"-update-channel", "stable"})
+	if err != nil {
+		t.Fatalf("parseTUIConfig() error = %v", err)
+	}
+	if cfg.UpdateChannel != "stable" {
+		t.Fatalf("UpdateChannel = %q, want \"stable\" from -update-channel flag", cfg.UpdateChannel)
+	}
+}
+
+// TestParseTUIConfigUpdateChannelRejectsInvalidValue proves an update
+// channel outside the exact {stable, insider} set is a parse error, never
+// silently coerced to the default.
+func TestParseTUIConfigUpdateChannelRejectsInvalidValue(t *testing.T) {
+	if _, err := parseTUIConfig([]string{"-update-channel", "beta"}); err == nil {
+		t.Fatal("parseTUIConfig(-update-channel beta) error = nil, want an error")
+	}
+}
+
 func TestParseTUIConfigAutoDetectsSetupManagedRuntime(t *testing.T) {
 	t.Parallel()
 

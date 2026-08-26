@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	stdhttp "net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	appregixtry "regixtry/internal/app/regixtry"
 	domainauth "regixtry/internal/domain/auth"
 	"regixtry/internal/domain/signing"
+	"regixtry/internal/infra/release"
 	"regixtry/internal/ports"
 )
 
@@ -35,6 +37,26 @@ func WithAdminClient(adminClient AdminClient) Option {
 func WithStartupLogin() Option {
 	return func(m *Model) {
 		m.startupLogin = true
+	}
+}
+
+// WithCurrentVersion sets the running binary's own version (main.buildVersion
+// in cmd/regixtry, which internal/tui cannot import directly), used to
+// decide whether a background update check finds a genuinely newer release.
+// An empty value (the caller's choice, e.g. an unbuilt dev binary) leaves
+// the check permanently disabled -- checkForUpdateCmd never fires a
+// request with nothing to compare against.
+func WithCurrentVersion(version string) Option {
+	return func(m *Model) {
+		m.currentVersion = strings.TrimSpace(version)
+	}
+}
+
+// WithUpdateChannel selects which released tags the background update
+// check considers -- release.ChannelStable or release.ChannelInsider.
+func WithUpdateChannel(channel string) Option {
+	return func(m *Model) {
+		m.updateChannel = strings.TrimSpace(channel)
 	}
 }
 
@@ -288,6 +310,16 @@ type Model struct {
 	// type, never a slice or map, so Model's ordinary value-copy semantics
 	// hold for it exactly like every other Model field.
 	adminScreens adminScreenSet
+
+	// currentVersion/updateChannel/updateAvailable back the background
+	// update-check banner. currentVersion empty means "no version info
+	// available" (an unbuilt dev binary, or the option simply not passed) --
+	// checkForUpdateCmd never fires a request in that case. updateAvailable
+	// is the newer version's tag once a check confirms one exists; empty
+	// means "nothing to show," the default, always-safe state.
+	currentVersion  string
+	updateChannel   string
+	updateAvailable string
 }
 
 // viewportSize holds the raw terminal dimensions captured from
@@ -654,6 +686,15 @@ type adminRobotDeletedMsg struct {
 
 type startupLoginMsg struct{}
 
+// updateCheckCompletedMsg is checkForUpdateCmd's result: a best-effort,
+// silent background check, never surfaced to the operator as an error --
+// see the Update handler for why err is intentionally not folded into
+// model.err.
+type updateCheckCompletedMsg struct {
+	latestVersion string
+	err           error
+}
+
 func NewModel(service QueryService, options ...Option) Model {
 	m := Model{
 		ctx:         context.Background(),
@@ -723,22 +764,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.screen = screenError
 			m.err = msg.err
-			return m, nil
+			return m, m.checkForUpdateCmd()
 		}
 		m.repositories = RepositoriesModel{Items: append([]appregixtry.RepositorySummary(nil), msg.result...)}
 		m.bodyScroll = 0
 		if len(m.repositories.Items) == 0 {
 			m.screen = screenEmpty
-			return m, nil
+			return m, m.checkForUpdateCmd()
 		}
 		m.screen = screenRepositories
 		m.rebuildRepositoriesTable(m.repositoriesTableLayout())
 		m.loadingText = ""
-		return m, nil
+		return m, m.checkForUpdateCmd()
 	case startupLoginMsg:
 		m.screen = screenAdminLogin
 		m.loadingText = ""
 		m.adminReturn = screenRepositories
+		return m, m.checkForUpdateCmd()
+	case updateCheckCompletedMsg:
+		// Best-effort and silent by design: a fetch error, an unparseable
+		// candidate, or "already up to date" all leave updateAvailable empty
+		// -- never surfaced as model.err, never a banner. Only a confirmed
+		// genuinely newer version (release.IsNewerVersion) populates it.
+		if msg.err != nil {
+			return m, nil
+		}
+		if newer, err := release.IsNewerVersion(msg.latestVersion, m.currentVersion); err == nil && newer {
+			m.updateAvailable = msg.latestVersion
+		}
 		return m, nil
 	case tagsLoadedMsg:
 		if msg.err != nil {
@@ -1413,6 +1466,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // section: plain (not theme.section, which is a fixed 88-wide box).
 const terminalTooSmallTemplate = "Terminal too small\nRegixtry needs at least %dx%d. Current: %dx%d.\nResize, or press q to quit."
 
+// View renders the too-small guard as-is (a bespoke plain string, never
+// bannered), then wraps every real screen's render in withUpdateBanner --
+// chrome that must appear regardless of which screen is active, without
+// threading a banner parameter through renderConsoleWorkspace/
+// renderInspectionWorkspace's ~11 existing call sites (design.md Decision 2:
+// "0 of ~11 callers touched" -- this wrapper keeps that true for the banner
+// too).
 func (m Model) View() string {
 	// Guarded here (design decision #7) rather than in Update: View() is the
 	// single funnel both the interactive program loop and the --snapshot
@@ -1420,7 +1480,22 @@ func (m Model) View() string {
 	if m.viewport.Width < minViewportWidth || m.viewport.Height < minViewportHeight {
 		return fmt.Sprintf(terminalTooSmallTemplate, minViewportWidth, minViewportHeight, m.viewport.Width, m.viewport.Height)
 	}
+	return m.withUpdateBanner(m.viewScreen())
+}
 
+// withUpdateBanner prepends the "a newer release is available" line above
+// body when checkForUpdateCmd has confirmed one exists; body passes through
+// unchanged otherwise -- the default, always-safe state.
+func (m Model) withUpdateBanner(body string) string {
+	if m.updateAvailable == "" {
+		return body
+	}
+	theme := newAdminTheme()
+	banner := theme.success.Render(fmt.Sprintf("A newer regixtry release is available: %s (you're on %s)", m.updateAvailable, m.currentVersion))
+	return lipgloss.JoinVertical(lipgloss.Left, banner, body)
+}
+
+func (m Model) viewScreen() string {
 	switch m.screen {
 	case screenLoading:
 		help := "q: quit"
@@ -2739,6 +2814,53 @@ func (m Model) loadCatalogCmd() tea.Cmd {
 	return func() tea.Msg {
 		result, err := m.service.RepositorySummaries(m.ctx, 100, "")
 		return catalogLoadedMsg{result: result, err: err}
+	}
+}
+
+// regixtryReleasesAPI is this repo's own GitHub releases feed -- the same
+// endpoint internal/infra/install/releases.defaultReleasesAPIURL points at
+// for regixtry upgrade, duplicated here rather than imported: that package
+// also pulls in archive extraction (tar/gzip) and systemd-oriented install
+// orchestration entirely irrelevant to a background version-check banner.
+const regixtryReleasesAPI = "https://api.github.com/repos/desatatufuria/regixtry/releases"
+
+// updateCheckTimeout bounds the background update check's own HTTP client,
+// mirroring admin_client.go's defaultAdminClientTimeout precedent for a
+// TUI-adjacent outbound call that must never leave an indefinitely
+// outstanding goroutine.
+const updateCheckTimeout = 10 * time.Second
+
+// checkForUpdateCmd is the background, non-blocking version check: fired as
+// a follow-up Cmd chained from whichever startup message resolves first
+// (catalogLoadedMsg or startupLoginMsg), never batched into Init() itself
+// (design.md-established convention: tea.Batch would break --snapshot
+// mode's single Update() call, which cannot unpack a tea.BatchMsg). Returns
+// nil -- fires no request at all -- when there is no current version to
+// compare against or the configured channel is invalid, so a dev build
+// (main.buildVersion's "dev" sentinel, never passed to WithCurrentVersion by
+// runTUI) or a misconfigured channel can never trigger a network call.
+func (m Model) checkForUpdateCmd() tea.Cmd {
+	currentVersion := m.currentVersion
+	if currentVersion == "" {
+		return nil
+	}
+	// An unset updateChannel (WithUpdateChannel never passed) defaults to
+	// the safe/quiet channel -- matches the CLI's own -update-channel
+	// default, so a Model constructed with only WithCurrentVersion still
+	// checks correctly instead of silently disabling itself.
+	channel := release.Channel(m.updateChannel)
+	if channel == "" {
+		channel = release.ChannelStable
+	}
+	if !release.ValidChannel(string(channel)) {
+		return nil
+	}
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(m.ctx, updateCheckTimeout)
+		defer cancel()
+		httpClient := &stdhttp.Client{Timeout: updateCheckTimeout}
+		latest, err := release.LatestForChannel(ctx, httpClient, regixtryReleasesAPI, channel)
+		return updateCheckCompletedMsg{latestVersion: latest, err: err}
 	}
 }
 

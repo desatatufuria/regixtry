@@ -28,6 +28,7 @@ import (
 	"regixtry/internal/infra/cliprogress"
 	installlinux "regixtry/internal/infra/install/linux"
 	metadata "regixtry/internal/infra/metadata/sqlite"
+	"regixtry/internal/infra/release"
 	gitleaksinfra "regixtry/internal/infra/scanning/gitleaks"
 	trivyinfra "regixtry/internal/infra/scanning/trivy"
 	"regixtry/internal/infra/storage/fsblob"
@@ -242,6 +243,12 @@ type tuiConfig struct {
 	// GCDeleteEnabled mirrors serveConfig.GCDeleteEnabled -- kept distinct
 	// from DeleteEnabled for the same reason as serve (design.md decision).
 	GCDeleteEnabled bool
+	// UpdateChannel selects which released tags the TUI's background
+	// update-check considers: "stable" (default) only ever flags a
+	// genuinely newer non-rc release; "insider" flags the newest tag
+	// regardless of an "-rcN" suffix. Validated against
+	// release.ValidChannel at parse time -- never silently coerced.
+	UpdateChannel string
 }
 
 type serveConfig struct {
@@ -520,6 +527,7 @@ func parseTUIConfigWithBootstrapStatePath(args []string, bootstrapStatePath stri
 	flags.BoolVar(&cfg.Snapshot, "snapshot", false, "render the first inspection view and exit")
 	flags.BoolVar(&cfg.DeleteEnabled, "delete-enabled", parseBoolEnv("REGISTRY_DELETE_ENABLED", false), "enable DELETE /v2/<name>/manifests/<reference> (manifest and tag deletion)")
 	flags.BoolVar(&cfg.GCDeleteEnabled, "gc-delete-enabled", parseBoolEnv("REGISTRY_GC_DELETE_ENABLED", false), "enable POST /admin/v1/gc/reports/{id}/delete (irreversibly unlinks unreferenced blob files; distinct from -delete-enabled, which is metadata-only)")
+	flags.StringVar(&cfg.UpdateChannel, "update-channel", firstNonEmpty(os.Getenv("REGISTRY_UPDATE_CHANNEL"), string(release.ChannelStable)), "which released tags the background update-check considers: \"stable\" or \"insider\" (RC tags too)")
 
 	if err := flags.Parse(args); err != nil {
 		return tuiConfig{}, err
@@ -546,6 +554,9 @@ func parseTUIConfigWithBootstrapStatePath(args []string, bootstrapStatePath stri
 			return tuiConfig{}, errors.New("admin API base URL must use http or https")
 		}
 		cfg.APIBaseURL = strings.TrimRight(parsed.String(), "/")
+	}
+	if !release.ValidChannel(cfg.UpdateChannel) {
+		return tuiConfig{}, fmt.Errorf("update-channel must be %q or %q, got %q", release.ChannelStable, release.ChannelInsider, cfg.UpdateChannel)
 	}
 
 	return cfg, nil
@@ -2258,6 +2269,14 @@ func runTUI(cfg tuiConfig, stdin io.Reader, stdout io.Writer) error {
 	if tuiRequiresStartupLogin(cfg) {
 		modelOpts = append(modelOpts, tui.WithStartupLogin())
 	}
+	// buildVersion's "dev" default (an unbuilt/go-run binary, never set via
+	// -ldflags) is deliberately never passed to WithCurrentVersion: an empty
+	// current version is checkForUpdateCmd's own signal to skip the check
+	// entirely, rather than coupling internal/tui to this literal.
+	if buildVersion != "dev" {
+		modelOpts = append(modelOpts, tui.WithCurrentVersion(buildVersion))
+	}
+	modelOpts = append(modelOpts, tui.WithUpdateChannel(cfg.UpdateChannel))
 
 	service := appregixtry.NewService(
 		blobStore,
