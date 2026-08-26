@@ -157,7 +157,7 @@ func (s *trivyConfigScreen) rebuildRows(env screenEnv) {
 		if section.Kind != "rows" {
 			continue
 		}
-		rows[section.ID] = buildAdminFeatureRowsTable(newAdminTheme(), section, compact)
+		rows[section.ID] = buildAdminFeatureRowsTable(section, compact)
 	}
 	s.rows = rows
 }

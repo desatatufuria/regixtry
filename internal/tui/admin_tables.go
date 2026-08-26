@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
 	bubbletable "github.com/evertras/bubble-table/table"
 	"regixtry/internal/ports"
 )
@@ -124,7 +123,7 @@ const (
 // Rendered table height is deterministically pageSize+tableChromeRows once a
 // page is filled (viewport.go's tableChromeRows, verified against
 // evertras/bubble-table@v0.19.2).
-func newAdminBubbleTable(columns []bubbletable.Column, rows []bubbletable.Row, highlighted int, theme adminTheme, pageSize int) bubbletable.Model {
+func newAdminBubbleTable(columns []bubbletable.Column, rows []bubbletable.Row, highlighted int, pageSize int) bubbletable.Model {
 	keys := bubbletable.DefaultKeyMap()
 	keys.RowSelectToggle.SetKeys("ctrl+space")
 	keys.FilterBlur.SetKeys("ctrl+g")
@@ -137,9 +136,9 @@ func newAdminBubbleTable(columns []bubbletable.Column, rows []bubbletable.Row, h
 	model := bubbletable.New(columns).
 		WithRows(rows).
 		WithKeyMap(keys).
-		WithBaseStyle(lipgloss.NewStyle().Align(lipgloss.Left).BorderForeground(theme.borderColor)).
-		HeaderStyle(theme.tableHeader).
-		HighlightStyle(theme.selected).
+		WithBaseStyle(bubbleTableBaseStyleV2()).
+		HeaderStyle(bubbleTableHeaderStyleV2()).
+		HighlightStyle(bubbleTableHighlightStyleV2()).
 		Focused(true).
 		BorderRounded().
 		WithPageSize(pageSize).
@@ -152,7 +151,7 @@ func newAdminBubbleTable(columns []bubbletable.Column, rows []bubbletable.Row, h
 	return model
 }
 
-func buildAdminFeaturesTable(theme adminTheme, features []ports.FeatureSummary, highlighted int, pageSize int) bubbletable.Model {
+func buildAdminFeaturesTable(features []ports.FeatureSummary, highlighted int, pageSize int) bubbletable.Model {
 	columns := []bubbletable.Column{
 		bubbletable.NewColumn(adminTableColumnFeatureName, "Name", adminFeaturesColumnNameWidth),
 		bubbletable.NewColumn(adminTableColumnFeatureKind, "Kind", adminFeaturesColumnKindWidth),
@@ -175,10 +174,10 @@ func buildAdminFeaturesTable(theme adminTheme, features []ports.FeatureSummary, 
 			adminTableMetaFeatureName:         feature.Name,
 		}))
 	}
-	return newAdminBubbleTable(columns, rows, highlighted, theme, pageSize)
+	return newAdminBubbleTable(columns, rows, highlighted, pageSize)
 }
 
-func buildAdminFeatureRowsTable(theme adminTheme, section ports.FeatureSection, pageSize int) bubbletable.Model {
+func buildAdminFeatureRowsTable(section ports.FeatureSection, pageSize int) bubbletable.Model {
 	columns := []bubbletable.Column{
 		bubbletable.NewColumn(adminTableColumnRowTitle, "Title", 22),
 		bubbletable.NewColumn(adminTableColumnRowStatus, "Status", 12),
@@ -192,10 +191,10 @@ func buildAdminFeatureRowsTable(theme adminTheme, section ports.FeatureSection, 
 			adminTableColumnRowDetail: adminFirstNonEmpty(row.Detail, "n/a"),
 		}))
 	}
-	return newAdminBubbleTable(columns, rows, 0, theme, pageSize)
+	return newAdminBubbleTable(columns, rows, 0, pageSize)
 }
 
-func buildAdminFindingsTable(theme adminTheme, findings []ports.ScanRunFinding, highlighted int, pageSize int) bubbletable.Model {
+func buildAdminFindingsTable(findings []ports.ScanRunFinding, highlighted int, pageSize int) bubbletable.Model {
 	columns := []bubbletable.Column{
 		bubbletable.NewColumn(adminTableColumnFindingSeverity, "Severity", adminFindingsColumnSeverityWidth),
 		bubbletable.NewColumn(adminTableColumnFindingID, "Finding", adminFindingsColumnFindingWidth),
@@ -207,7 +206,7 @@ func buildAdminFindingsTable(theme adminTheme, findings []ports.ScanRunFinding, 
 	rows := make([]bubbletable.Row, 0, len(findings))
 	for _, finding := range findings {
 		rows = append(rows, bubbletable.NewRow(bubbletable.RowData{
-			adminTableColumnFindingSeverity:  severityStyledCell(theme, finding.Severity),
+			adminTableColumnFindingSeverity:  severityStyledCell(finding.Severity),
 			adminTableColumnFindingID:        adminFirstNonEmpty(finding.VulnerabilityID, "unknown"),
 			adminTableColumnFindingPackage:   adminFirstNonEmpty(finding.PackageName, "unknown"),
 			adminTableColumnFindingInstalled: adminFirstNonEmpty(finding.InstalledVersion, "unknown"),
@@ -216,7 +215,7 @@ func buildAdminFindingsTable(theme adminTheme, findings []ports.ScanRunFinding, 
 			adminTableMetaFindingID:          adminFirstNonEmpty(finding.VulnerabilityID, finding.PackageName),
 		}))
 	}
-	return newAdminBubbleTable(columns, rows, highlighted, theme, pageSize)
+	return newAdminBubbleTable(columns, rows, highlighted, pageSize)
 }
 
 // buildAdminSecretFindingsTable renders redacted secret-scan findings: rule
@@ -228,7 +227,7 @@ func buildAdminFindingsTable(theme adminTheme, findings []ports.ScanRunFinding, 
 // with ", " and render as an empty cell when nil/empty rather than a
 // placeholder like Rule/Location's "unknown" fallback — Description/Tags are
 // optional supplementary metadata, not the row's identity.
-func buildAdminSecretFindingsTable(theme adminTheme, findings []ports.SecretFinding, highlighted int, pageSize int) bubbletable.Model {
+func buildAdminSecretFindingsTable(findings []ports.SecretFinding, highlighted int, pageSize int) bubbletable.Model {
 	columns := []bubbletable.Column{
 		bubbletable.NewColumn(adminTableColumnSecretFindingRule, "Rule", adminSecretColumnRuleWidth),
 		bubbletable.NewColumn(adminTableColumnSecretFindingLocation, "Location", adminSecretColumnLocationWidth),
@@ -244,7 +243,7 @@ func buildAdminSecretFindingsTable(theme adminTheme, findings []ports.SecretFind
 			adminTableColumnSecretFindingTags:        strings.Join(finding.Tags, ", "),
 		}))
 	}
-	return newAdminBubbleTable(columns, rows, highlighted, theme, pageSize)
+	return newAdminBubbleTable(columns, rows, highlighted, pageSize)
 }
 
 // buildAdminScanSummaryTable renders one row per repository
@@ -253,7 +252,7 @@ func buildAdminSecretFindingsTable(theme adminTheme, findings []ports.SecretFind
 // Freshness"), with a last-execution column added on top of the latest
 // run's own status/severity/fixable columns. It is the sole table backing
 // the Repository Alerts tab.
-func buildAdminScanSummaryTable(theme adminTheme, summaries []repositorySummary, highlighted int, pageSize int) bubbletable.Model {
+func buildAdminScanSummaryTable(summaries []repositorySummary, highlighted int, pageSize int) bubbletable.Model {
 	columns := []bubbletable.Column{
 		bubbletable.NewColumn(adminTableColumnScanSummaryRepository, "Repository", adminScanSummaryColumnRepositoryWidth),
 		bubbletable.NewColumn(adminTableColumnScanSummaryReference, "Reference", adminScanSummaryColumnReferenceWidth),
@@ -286,7 +285,7 @@ func buildAdminScanSummaryTable(theme adminTheme, summaries []repositorySummary,
 			adminTableMetaScanRunID:                 summary.LatestRun.ID,
 		}))
 	}
-	return newAdminBubbleTable(columns, rows, highlighted, theme, pageSize)
+	return newAdminBubbleTable(columns, rows, highlighted, pageSize)
 }
 
 // buildFeatureOverridesTable renders one row per repository (the catalog ∪
@@ -305,7 +304,7 @@ func buildAdminScanSummaryTable(theme adminTheme, summaries []repositorySummary,
 // how valid the actual signature is, and that misconfiguration was
 // completely invisible in the old plain-text list -- this column makes it
 // visible without opening the editor.
-func buildFeatureOverridesTable(theme adminTheme, feature string, rows []featureOverrideRow, highlighted int, pageSize int) bubbletable.Model {
+func buildFeatureOverridesTable(feature string, rows []featureOverrideRow, highlighted int, pageSize int) bubbletable.Model {
 	columns := []bubbletable.Column{
 		bubbletable.NewColumn(adminTableColumnFeatureOverrideRepository, "Repository", adminFeatureOverrideColumnRepositoryWidth),
 		bubbletable.NewColumn(adminTableColumnFeatureOverrideStatus, "Status", adminFeatureOverrideColumnStatusWidth),
@@ -323,7 +322,7 @@ func buildFeatureOverridesTable(theme adminTheme, feature string, rows []feature
 			adminTableColumnFeatureOverrideUpdated:    featureOverrideUpdatedCell(row),
 		}))
 	}
-	return newAdminBubbleTable(columns, tableRows, highlighted, theme, pageSize)
+	return newAdminBubbleTable(columns, tableRows, highlighted, pageSize)
 }
 
 // featureOverridePlaceholder is rendered for any column whose value belongs
@@ -454,20 +453,9 @@ func secretFindingLocation(finding ports.SecretFinding) string {
 	return fmt.Sprintf("%s:%d", location, finding.StartLine)
 }
 
-func severityStyledCell(theme adminTheme, severity string) bubbletable.StyledCell {
+func severityStyledCell(severity string) bubbletable.StyledCell {
 	value := strings.ToUpper(strings.TrimSpace(severity))
-	style := theme.text
-	switch value {
-	case "CRITICAL":
-		style = theme.severityCritical
-	case "HIGH":
-		style = theme.severityHigh
-	case "MEDIUM":
-		style = theme.severityMedium
-	case "LOW":
-		style = theme.severityLow
-	}
-	return bubbletable.NewStyledCell(adminFirstNonEmpty(value, "UNKNOWN"), style)
+	return bubbletable.NewStyledCell(adminFirstNonEmpty(value, "UNKNOWN"), severityStyleV2(value))
 }
 
 // tableRoles splits a screen's row budget into two admin-table pageSize

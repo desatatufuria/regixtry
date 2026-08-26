@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	lipglossv2 "charm.land/lipgloss/v2"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -5209,8 +5210,7 @@ func TestModelTrivyTablesPreserveEmptyStateAndBackendOrdering(t *testing.T) {
 func TestAdminFindingSeverityStylingScopesOnlyVulnerabilityRows(t *testing.T) {
 	t.Parallel()
 
-	theme := newAdminTheme()
-	findingsTable := buildAdminFindingsTable(theme, []ports.ScanRunFinding{{Severity: "CRITICAL", VulnerabilityID: "CVE-2026-0001", PackageName: "openssl", InstalledVersion: "3.0.0", FixedVersion: "3.0.1", Fixable: true}}, 0, compactTableRows)
+	findingsTable := buildAdminFindingsTable([]ports.ScanRunFinding{{Severity: "CRITICAL", VulnerabilityID: "CVE-2026-0001", PackageName: "openssl", InstalledVersion: "3.0.0", FixedVersion: "3.0.1", Fixable: true}}, 0, compactTableRows)
 	severityCell, ok := findingsTable.HighlightedRow().Data[adminTableColumnFindingSeverity].(bubbletable.StyledCell)
 	if !ok {
 		t.Fatalf("finding severity cell type = %T, want bubble-table styled cell", findingsTable.HighlightedRow().Data[adminTableColumnFindingSeverity])
@@ -5219,17 +5219,17 @@ func TestAdminFindingSeverityStylingScopesOnlyVulnerabilityRows(t *testing.T) {
 		t.Fatalf("finding severity data = %#v, want %q", got, want)
 	}
 
-	featuresTable := buildAdminFeaturesTable(theme, []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}}, 0, defaultViewportHeight)
+	featuresTable := buildAdminFeaturesTable([]ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}}, 0, defaultViewportHeight)
 	if _, styled := featuresTable.HighlightedRow().Data[adminTableColumnFeatureEnabled].(bubbletable.StyledCell); styled {
 		t.Fatal("feature summary cells must stay neutral")
 	}
 
-	rowsTable := buildAdminFeatureRowsTable(theme, ports.FeatureSection{ID: "checks", Title: "Checks", Kind: "rows", Rows: []ports.FeatureRow{{Title: "DB freshness", Status: "stale", Detail: "older than 24h"}}}, compactTableRows)
+	rowsTable := buildAdminFeatureRowsTable(ports.FeatureSection{ID: "checks", Title: "Checks", Kind: "rows", Rows: []ports.FeatureRow{{Title: "DB freshness", Status: "stale", Detail: "older than 24h"}}}, compactTableRows)
 	if _, styled := rowsTable.HighlightedRow().Data[adminTableColumnRowStatus].(bubbletable.StyledCell); styled {
 		t.Fatal("generic row status cells must stay neutral")
 	}
 
-	scanSummaryTable := buildAdminScanSummaryTable(theme, []repositorySummary{{Repository: "team/api", LatestRun: ports.ScanRun{ID: "run-1", Repository: "team/api", RequestedRef: "1.0.0", Status: ports.ScanRunStatusCompleted, Critical: 1, High: 0, HasFixable: true}, RunCount: 1}}, 0, defaultViewportHeight)
+	scanSummaryTable := buildAdminScanSummaryTable([]repositorySummary{{Repository: "team/api", LatestRun: ports.ScanRun{ID: "run-1", Repository: "team/api", RequestedRef: "1.0.0", Status: ports.ScanRunStatusCompleted, Critical: 1, High: 0, HasFixable: true}, RunCount: 1}}, 0, defaultViewportHeight)
 	if _, styled := scanSummaryTable.HighlightedRow().Data[adminTableColumnScanSummaryStatus].(bubbletable.StyledCell); styled {
 		t.Fatal("scan-summary cells must stay neutral")
 	}
@@ -5282,15 +5282,24 @@ func TestModelTrivyFindingsMixedSeverityRenderPreservesLabelsAndCounts(t *testin
 		t.Fatalf("visible findings rows = %d, want %d", got, want)
 	}
 
-	theme := newAdminTheme()
+	// want.style is severityStyleV2 (charm.land/lipgloss/v2), the exact same
+	// v2 style severityStyledCell itself builds -- not adminTheme's own
+	// v1-lipgloss severityCritical/severityHigh/severityLow. Comparing
+	// against a v1 style's Render output is no longer meaningful once
+	// bubble-table's cells render via v2: the two libraries' ANSI encoders
+	// produce byte-different sequences for the same color (confirmed live:
+	// v1's Render degraded to a plain, uncolored string in this no-TTY test
+	// environment with no profile forced, while v2 always emits real ANSI
+	// here), so that comparison would fail for every severity regardless of
+	// whether the cell's actual color is correct.
 	expectedSeverities := []struct {
 		label string
-		style lipgloss.Style
+		style lipglossv2.Style
 	}{
-		{label: "CRITICAL", style: theme.severityCritical},
-		{label: "HIGH", style: theme.severityHigh},
-		{label: "LOW", style: theme.severityLow},
-		{label: "HIGH", style: theme.severityHigh},
+		{label: "CRITICAL", style: severityStyleV2("CRITICAL")},
+		{label: "HIGH", style: severityStyleV2("HIGH")},
+		{label: "LOW", style: severityStyleV2("LOW")},
+		{label: "HIGH", style: severityStyleV2("HIGH")},
 	}
 	for i, want := range expectedSeverities {
 		severityCell, ok := rows[i].Data[adminTableColumnFindingSeverity].(bubbletable.StyledCell)

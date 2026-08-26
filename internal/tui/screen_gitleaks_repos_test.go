@@ -80,7 +80,15 @@ func TestFeatureOverrideRowsAreCatalogUnionStoredOverrides(t *testing.T) {
 func TestFeatureOverridesScreenViewRendersABubbleTable(t *testing.T) {
 	t.Parallel()
 
-	env := screenEnv{Layout: consoleLayout{SectionRows: 20}}
+	// Width/Height must be set to a realistic terminal size (this package's
+	// own established convention, e.g. viewport_test.go), not left at the
+	// zero value: sectionWidth(l) floors an unset Width to
+	// minSectionContentWidth (40), which is narrower than this 5-column
+	// table's natural width -- renderSection's theme.section.Width(...)
+	// would then reflow the already-rendered table into that too-narrow
+	// box, corrupting it, regardless of which lipgloss version rendered
+	// the table itself.
+	env := screenEnv{Layout: consoleLayout{Width: defaultViewportWidth, Height: defaultViewportHeight, SectionRows: 20}}
 	screen := featureOverridesScreen{
 		feature: signingFeatureName,
 		loaded:  true,

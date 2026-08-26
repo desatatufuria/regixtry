@@ -63,7 +63,7 @@ func (s *securityMenuScreen) rebuildTable(env screenEnv) {
 		return
 	}
 	primary, _ := tableRoles(env.Layout)
-	s.table = buildAdminFeaturesTable(newAdminTheme(), s.features, s.selected, primary)
+	s.table = buildAdminFeaturesTable(s.features, s.selected, primary)
 }
 
 func (s securityMenuScreen) updateKey(env screenEnv, msg tea.KeyMsg) (adminScreen, tea.Cmd, bool) {

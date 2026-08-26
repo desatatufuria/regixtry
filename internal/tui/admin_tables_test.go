@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
+	lipglossv2 "charm.land/lipgloss/v2"
 	"github.com/charmbracelet/lipgloss"
 	bubbletable "github.com/evertras/bubble-table/table"
-	"github.com/muesli/termenv"
 	"regixtry/internal/ports"
 )
 
@@ -22,7 +22,6 @@ import (
 func TestNewAdminBubbleTableHeightMatchesPageSizePlusChrome(t *testing.T) {
 	t.Parallel()
 
-	theme := newAdminTheme()
 	columns := []bubbletable.Column{bubbletable.NewColumn("name", "Name", 10)}
 
 	for _, pageSize := range []int{3, 5, 10} {
@@ -35,7 +34,7 @@ func TestNewAdminBubbleTableHeightMatchesPageSizePlusChrome(t *testing.T) {
 				rows = append(rows, bubbletable.NewRow(bubbletable.RowData{"name": fmt.Sprintf("row-%d", i)}))
 			}
 
-			table := newAdminBubbleTable(columns, rows, 0, theme, pageSize)
+			table := newAdminBubbleTable(columns, rows, 0, pageSize)
 			got := lipgloss.Height(table.View())
 			want := pageSize + tableChromeRows
 			if got != want {
@@ -51,11 +50,10 @@ func TestNewAdminBubbleTableHeightMatchesPageSizePlusChrome(t *testing.T) {
 func TestNewAdminBubbleTableUsesThemeBorderColorAndVisibleFooter(t *testing.T) {
 	t.Parallel()
 
-	theme := newAdminTheme()
 	columns := []bubbletable.Column{bubbletable.NewColumn("name", "Name", 10)}
 	rows := []bubbletable.Row{bubbletable.NewRow(bubbletable.RowData{"name": "alpha"})}
 
-	table := newAdminBubbleTable(columns, rows, 0, theme, minTableRows)
+	table := newAdminBubbleTable(columns, rows, 0, minTableRows)
 	if !strings.Contains(table.View(), "1/1") {
 		t.Fatalf("table view = %q, want a visible footer with page position", table.View())
 	}
@@ -172,7 +170,6 @@ func TestRebuildAdminTablesBakesPrimaryAndCompactPageSizeIntoTables(t *testing.T
 func TestNewAdminBubbleTableShowsPositionIndicatorWhenRowsExceedPageSize(t *testing.T) {
 	t.Parallel()
 
-	theme := newAdminTheme()
 	columns := []bubbletable.Column{bubbletable.NewColumn("name", "Name", 10)}
 	const totalRows = 47
 	rows := make([]bubbletable.Row, 0, totalRows)
@@ -181,7 +178,7 @@ func TestNewAdminBubbleTableShowsPositionIndicatorWhenRowsExceedPageSize(t *test
 	}
 
 	const pageSize = 3
-	table := newAdminBubbleTable(columns, rows, 0, theme, pageSize)
+	table := newAdminBubbleTable(columns, rows, 0, pageSize)
 
 	wantMaxPages := (totalRows-1)/pageSize + 1
 	wantIndicator := fmt.Sprintf("%d/%d", 1, wantMaxPages)
@@ -198,7 +195,6 @@ func TestNewAdminBubbleTableShowsPositionIndicatorWhenRowsExceedPageSize(t *test
 func TestNewAdminBubbleTableShowsNoMisleadingIndicatorWhenAllRowsFit(t *testing.T) {
 	t.Parallel()
 
-	theme := newAdminTheme()
 	columns := []bubbletable.Column{bubbletable.NewColumn("name", "Name", 10)}
 	rows := []bubbletable.Row{
 		bubbletable.NewRow(bubbletable.RowData{"name": "alpha"}),
@@ -206,7 +202,7 @@ func TestNewAdminBubbleTableShowsNoMisleadingIndicatorWhenAllRowsFit(t *testing.
 		bubbletable.NewRow(bubbletable.RowData{"name": "gamma"}),
 	}
 
-	table := newAdminBubbleTable(columns, rows, 0, theme, 10) // pageSize(10) > len(rows)(3)
+	table := newAdminBubbleTable(columns, rows, 0, 10) // pageSize(10) > len(rows)(3)
 
 	view := table.View()
 	if !strings.Contains(view, "1/1") {
@@ -223,28 +219,33 @@ func TestNewAdminBubbleTableShowsNoMisleadingIndicatorWhenAllRowsFit(t *testing.
 // footer-visible half is already guarded by
 // TestNewAdminBubbleTableUsesThemeBorderColorAndVisibleFooter above).
 //
-// Deliberately NOT t.Parallel(): this forces the shared global lipgloss
-// color profile to TrueColor so the border's ANSI color sequence is
-// actually emitted (the default test environment has no TTY and renders
-// plain, uncolored text). Go only starts t.Parallel()-marked tests after
-// every non-parallel test in this package has completed, so running this
-// test serially — set profile, render, restore via defer, all before any
-// parallel test body executes — cannot race with the many other tests in
-// this package that render table/theme output.
+// bubble-table's own v2-lipgloss rendering (charm.land/lipgloss/v2, since
+// evertras/bubble-table v0.22.3) emits TrueColor ANSI by default in this
+// non-TTY test environment with no profile forcing needed -- unlike v1
+// lipgloss, whose color profile this test used to force explicitly. The
+// expected sequence is derived by rendering nordBorderHex through the exact
+// same v2 style constructor the table itself uses (bubbleTableBaseStyleV2),
+// not by independently recomputing it via v1's termenv.RGBColor: that path
+// has its own rounding difference from a direct hex-to-decimal conversion
+// (found live: termenv computed blue=105 for #4C566A, whose direct hex
+// value is 106 -- a mismatch that only ever coincidentally cancelled out
+// because both this test and the table's own (pre-migration) rendering
+// went through that exact same v1 termenv path).
 func TestNewAdminBubbleTableAppliesThemeBorderForegroundColor(t *testing.T) {
-	original := lipgloss.ColorProfile()
-	lipgloss.SetColorProfile(termenv.TrueColor)
-	defer lipgloss.SetColorProfile(original)
+	t.Parallel()
 
-	theme := newAdminTheme()
 	columns := []bubbletable.Column{bubbletable.NewColumn("name", "Name", 10)}
 	rows := []bubbletable.Row{bubbletable.NewRow(bubbletable.RowData{"name": "alpha"})}
 
-	table := newAdminBubbleTable(columns, rows, 0, theme, minTableRows)
+	table := newAdminBubbleTable(columns, rows, 0, minTableRows)
 
-	wantSequence := "\x1b[" + termenv.RGBColor(string(theme.borderColor)).Sequence(false) + "m"
-	if !strings.Contains(table.View(), wantSequence) {
-		t.Fatalf("table view does not contain the theme border-color ANSI sequence %q — border MUST use theme.borderColor", wantSequence)
+	rendered := lipglossv2.NewStyle().Foreground(lipglossv2.Color(nordBorderHex)).Render("X")
+	wantPrefix, _, found := strings.Cut(rendered, "X")
+	if !found {
+		t.Fatalf("v2 style rendering of nordBorderHex = %q, want an ANSI prefix before the literal %q", rendered, "X")
+	}
+	if !strings.Contains(table.View(), wantPrefix) {
+		t.Fatalf("table view does not contain the border color's ANSI sequence %q derived from nordBorderHex — border MUST use nordBorderHex", wantPrefix)
 	}
 }
 
@@ -370,7 +371,6 @@ func TestRenderAdminFeaturesScreenFitsSummaryTableWithinItsOwnSectionWidth(t *te
 func TestBuildAdminScanSummaryTableRendersOneRowPerRepository(t *testing.T) {
 	t.Parallel()
 
-	theme := newAdminTheme()
 	executed := time.Date(2026, 5, 6, 14, 0, 0, 0, time.UTC)
 	summaries := []repositorySummary{
 		{
@@ -388,7 +388,7 @@ func TestBuildAdminScanSummaryTableRendersOneRowPerRepository(t *testing.T) {
 		},
 	}
 
-	table := buildAdminScanSummaryTable(theme, summaries, 0, minTableRows)
+	table := buildAdminScanSummaryTable(summaries, 0, minTableRows)
 	if got, want := table.TotalRows(), len(summaries); got != want {
 		t.Fatalf("buildAdminScanSummaryTable() TotalRows() = %d, want %d (one row per repository, not per scan run)", got, want)
 	}
@@ -412,14 +412,13 @@ func TestBuildAdminScanSummaryTableRendersOneRowPerRepository(t *testing.T) {
 func TestBuildAdminScanSummaryTableRendersDisabledRepositoriesDistinctly(t *testing.T) {
 	t.Parallel()
 
-	theme := newAdminTheme()
 	summaries := []repositorySummary{
 		{Repository: "acme/never-scanned"}, // zero-value LatestRun -> "unknown"
 		{Repository: "acme/normal", LatestRun: ports.ScanRun{ID: "run-1", Repository: "acme/normal", Status: ports.ScanRunStatusCompleted}},
 		{Repository: "acme/disabled", LatestRun: ports.ScanRun{ID: "run-2", Repository: "acme/disabled", Status: ports.ScanRunStatusCompleted}, Disabled: true},
 	}
 
-	table := buildAdminScanSummaryTable(theme, summaries, 0, minTableRows)
+	table := buildAdminScanSummaryTable(summaries, 0, minTableRows)
 	rows := table.GetVisibleRows()
 	if len(rows) != 3 {
 		t.Fatalf("len(rows) = %d, want 3", len(rows))
@@ -579,12 +578,11 @@ func TestAdminScanHistoryModalTablePageSizeFloorsAtMinTableRows(t *testing.T) {
 func TestBuildAdminSecretFindingsTableRendersDescriptionAndTagsColumns(t *testing.T) {
 	t.Parallel()
 
-	theme := newAdminTheme()
 	findings := []ports.SecretFinding{
 		{RuleID: "aws-access-token", Path: "config.json", StartLine: 4, Description: "AWS access token detected", Tags: []string{"aws", "credentials"}},
 		{RuleID: "generic-api-key", Path: "app.env", StartLine: 1, Description: "", Tags: nil},
 	}
-	table := buildAdminSecretFindingsTable(theme, findings, 0, 5)
+	table := buildAdminSecretFindingsTable(findings, 0, 5)
 
 	if got, want := table.TotalRows(), 2; got != want {
 		t.Fatalf("TotalRows() = %d, want %d", got, want)
@@ -625,11 +623,10 @@ func TestBuildAdminSecretFindingsTableRendersDescriptionAndTagsColumns(t *testin
 func TestBuildAdminSecretFindingsTableColumnsFitWithoutOverflow(t *testing.T) {
 	t.Parallel()
 
-	theme := newAdminTheme()
 	findings := []ports.SecretFinding{
 		{RuleID: "aws-access-token", Path: "some/nested/path/config.json", StartLine: 4, EndLine: 8, Description: "AWS access token detected in configuration file", Tags: []string{"aws", "credentials", "critical"}},
 	}
-	table := buildAdminSecretFindingsTable(theme, findings, 0, 5)
+	table := buildAdminSecretFindingsTable(findings, 0, 5)
 	view := table.View()
 
 	wantWidth := adminSecretColumnRuleWidth + adminSecretColumnLocationWidth + adminSecretColumnDescriptionWidth + adminSecretColumnTagsWidth + 5 // +5: 4 columns' own border/separator characters (cols+1)
@@ -648,7 +645,6 @@ func TestBuildAdminSecretFindingsTableColumnsFitWithoutOverflow(t *testing.T) {
 func TestBuildFeatureOverridesTableRendersSigningTrustedKeyCount(t *testing.T) {
 	t.Parallel()
 
-	theme := newAdminTheme()
 	updated := time.Date(2026, 8, 20, 9, 30, 0, 0, time.UTC)
 	rows := []featureOverrideRow{
 		{
@@ -673,7 +669,7 @@ func TestBuildFeatureOverridesTableRendersSigningTrustedKeyCount(t *testing.T) {
 		},
 	}
 
-	table := buildFeatureOverridesTable(theme, signingFeatureName, rows, 0, minTableRows)
+	table := buildFeatureOverridesTable(signingFeatureName, rows, 0, minTableRows)
 	view := table.View()
 	for _, want := range []string{"Repository", "Status", "Enabled", "Detail", "Updated"} {
 		if !strings.Contains(view, want) {
@@ -695,13 +691,12 @@ func TestBuildFeatureOverridesTableRendersSigningTrustedKeyCount(t *testing.T) {
 func TestBuildFeatureOverridesTableRendersGitleaksConfigPathOrDefault(t *testing.T) {
 	t.Parallel()
 
-	theme := newAdminTheme()
 	rows := []featureOverrideRow{
 		{Repository: "team/api", HasOverride: true, Detail: ports.RepositoryOverrideDetails{Repository: "team/api", ConfigPath: "/etc/gitleaks/config.toml"}},
 		{Repository: "team/worker", HasOverride: true, Detail: ports.RepositoryOverrideDetails{Repository: "team/worker"}},
 	}
 
-	table := buildFeatureOverridesTable(theme, gitleaksFeatureName, rows, 0, minTableRows)
+	table := buildFeatureOverridesTable(gitleaksFeatureName, rows, 0, minTableRows)
 	view := table.View()
 	if !strings.Contains(view, "/etc/gitleaks/config.toml") {
 		t.Fatalf("table view = %q, want the explicit config path", view)
@@ -717,10 +712,9 @@ func TestBuildFeatureOverridesTableRendersGitleaksConfigPathOrDefault(t *testing
 func TestBuildFeatureOverridesTableInheritingRowRendersPlaceholders(t *testing.T) {
 	t.Parallel()
 
-	theme := newAdminTheme()
 	rows := []featureOverrideRow{{Repository: "alpine", HasOverride: false}}
 
-	table := buildFeatureOverridesTable(theme, signingFeatureName, rows, 0, minTableRows)
+	table := buildFeatureOverridesTable(signingFeatureName, rows, 0, minTableRows)
 	visible := table.GetVisibleRows()
 	if len(visible) != 1 {
 		t.Fatalf("len(visible) = %d, want 1", len(visible))
