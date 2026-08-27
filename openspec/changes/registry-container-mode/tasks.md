@@ -67,8 +67,8 @@ Sum: 580-780 lines, matching the total re-estimate. PR #3 carries the largest bu
 
 ### Phase 3: GoReleaser Multi-Arch Image Publishing
 
-- [ ] 3.1 Add `dockers` block to `.goreleaser.yaml`: amd64/arm64 entries, `use: buildx`, `--target=release`, `--platform`, OCI labels, both arch image templates.
-- [ ] 3.2 Add `docker_manifests` block per design: always-pushed `{{ .Tag }}`, plus `v{{ .Major }}.{{ .Minor }}`, `v{{ .Major }}`, `latest` each `skip_push: auto`.
+- [x] 3.1 Add `dockers` block to `.goreleaser.yaml`: amd64/arm64 entries, `use: buildx`, `--target=release`, `--platform`, OCI labels, both arch image templates.
+- [x] 3.2 Add `docker_manifests` block per design: always-pushed `{{ .Tag }}`, plus `v{{ .Major }}.{{ .Minor }}`, `v{{ .Major }}`, `latest` each `skip_push: auto`.
 
 ### Phase 4: CI Workflow — Permissions, Login, Smoke-Step Wiring
 
