@@ -72,6 +72,38 @@ regixtry setup
 
 `install.sh` installs the binary; `regixtry setup` provisions the Linux/systemd runtime (or use `regixtry serve` directly for local/manual runs, as above). Full procedures, including reverse-proxy and direct-TLS modes: [`docs/installation.md`](docs/installation.md). To move an existing install to a newer release: `regixtry upgrade` (resolves the latest non-prerelease tag from GitHub Releases automatically, or pass `-ref` to pin one).
 
+## Run as a container
+
+Every tagged release also publishes a multi-arch (`linux/amd64`, `linux/arm64`) image to `ghcr.io/desatatufuria/regixtry`. This is a manual, first-class path: run it directly with `docker run`. **`install.sh` and `regixtry setup` do not offer a container-selection branch** — they provision the Linux/systemd host runtime only.
+
+```bash
+docker volume create regixtry-data
+docker run -d --name regixtry \
+  -p 5000:5000 \
+  -v regixtry-data:/var/lib/regixtry \
+  ghcr.io/desatatufuria/regixtry:latest \
+  serve -addr 0.0.0.0:5000 -storage-root /var/lib/regixtry \
+    -public-url http://127.0.0.1:5000 \
+    -allow-anonymous-pull -allow-anonymous-push
+```
+
+Check it's up (the same `/v2/` probe backs the image's built-in `HEALTHCHECK`):
+
+```bash
+curl -i http://127.0.0.1:5000/v2/
+```
+
+Push and pull with a real Docker client, exactly as in [Quick start (no auth)](#quick-start-no-auth) above:
+
+```bash
+docker pull alpine:3.20
+docker tag alpine:3.20 127.0.0.1:5000/test/alpine:3.20
+docker push 127.0.0.1:5000/test/alpine:3.20
+docker pull 127.0.0.1:5000/test/alpine:3.20
+```
+
+The image runs as a non-root user (uid `65532`), and data written to `/var/lib/regixtry` survives a container restart as long as it keeps using the same named volume. Running with Postgres-backed authentication instead of anonymous pull/push follows the same `bootstrap-admin`/`-auth-postgres-dsn` primitives as [Quick start with authentication and access control](#quick-start-with-authentication-and-access-control) above; a container-specific recipe is coming in a follow-up.
+
 ## Try a feature: vulnerability scanning
 
 Trivy is the most complete built-in feature end to end — a good first thing to try after setup:

@@ -78,7 +78,7 @@ Sum: 580-780 lines, matching the total re-estimate. PR #3 carries the largest bu
 
 ### Phase 6.1a: README — Anonymous Container Usage
 
-- [ ] 6.1a Add `## Run as a container` to `README.md` after `## Install`: anonymous `docker run ghcr.io/...` example, `bootstrap-admin -password-stdin` note for the first admin, explicit note that `install.sh`/`regixtry setup` do not offer a container branch. (Postgres-auth recipe deferred to PR #3.)
+- [x] 6.1a Add `## Run as a container` to `README.md` after `## Install`: anonymous `docker run ghcr.io/...` example, explicit note that `install.sh`/`regixtry setup` do not offer a container branch. (Postgres-auth recipe, including `bootstrap-admin -password-stdin`, deferred to PR #3 per 6.1b — see apply-progress for why this PR's section stays anonymous-only.)
 
 ### Phase 6.2/6.4: PR #1 Verification
 
