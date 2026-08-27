@@ -80,9 +80,6 @@ jobs:
         shell: bash
         run: RUN_INTERACTIVE_CHOOSER=0 bash docs/verification/scripts/install-release-smoke.sh --release-dist dist
 
-      # --auth-postgres is not wired in here: the auth scenario and its flag
-      # land in PR #3 (feature/registry-container-mode-03-smoke-auth), which
-      # stacks on top of this branch and extends this same step.
       - name: Run container smoke verification
         shell: bash
-        run: bash docs/verification/scripts/container-release-smoke.sh --image "ghcr.io/desatatufuria/regixtry:${GITHUB_REF_NAME}" --expect-multiarch
+        run: bash docs/verification/scripts/container-release-smoke.sh --image "ghcr.io/desatatufuria/regixtry:${GITHUB_REF_NAME}" --expect-multiarch --auth-postgres
