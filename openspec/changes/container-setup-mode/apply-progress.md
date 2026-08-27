@@ -1,6 +1,6 @@
 # Apply Progress: Container Setup Mode
 
-Scope of this artifact: **PR #1, PR #2, PR #3, and PR #4**. PR #1 (base) shipped
+Scope of this artifact: **PR #1 through PR #5 (the full chain, complete)**. PR #1 (base) shipped
 `feature/container-setup-mode-01-compose-foundation`, targeting the tracker
 branch `feature/container-setup-mode`. PR #2 shipped
 `feature/container-setup-mode-02-compose-credentials`, targeting the PR #1
@@ -746,4 +746,331 @@ No pre-existing test was modified or broken.
 
 ## Remaining Tasks (other PRs — NOT this batch's scope, as of PR #4)
 
-- PR #5 (`feature/container-setup-mode-05-docs-smoke`): docs + smoke script — tasks.md Phase 10-12
+- PR #5 (`feature/container-setup-mode-05-docs-smoke`): docs + smoke script — tasks.md Phase 10-12 — **now complete, see below**
+
+---
+
+# PR #5 — targets PR #4 branch (`feature/container-setup-mode-04-setup-wiring`)
+
+**Branch**: `feature/container-setup-mode-05-docs-smoke` (current branch this batch ran on).
+**Scope**: `install.sh` guidance, README documentation, and `setup-docker-smoke.sh` proving the
+end-to-end flow (bundled and external-DSN scenarios) — tasks.md Phase 10-12. This is the LAST PR
+in the chain; no branch merges happen in this batch, that remains the orchestrator's job.
+
+## Status
+
+PR #5: **15/15 tasks complete** (Phase 10-12, including task 12.4 added during real execution —
+see Deviations). No task blocked; every deviation is disclosed below with its concrete reason.
+
+## Completed Tasks (PR #5)
+
+- [x] 10.1 `install.sh` guidance line for `setup --mode docker`, alongside `daemon-sqlite`
+- [x] 10.2 README `## Run as a container` section, `### One command: regixtry setup --mode docker`
+  subsection (deviation: section created fresh, see below)
+- [x] 10.3 README `### The TUI against a container` subsection
+- [x] 10.4 README truthful-sentence correction (deviation: no literal sentence existed to rewrite
+  on this branch, see below; the `## Install` section was updated proactively instead)
+- [x] 10.5 Dropped `docker network create dtf-netwok` from the manual auth quick-start; added a
+  migration note for existing `docker-compose.yml` users (deviation: the quick-start's Postgres
+  step also needed a real fix beyond just removing the network line, see below)
+- [x] 11.1 `docs/verification/scripts/setup-docker-smoke.sh` created (439 lines)
+- [x] 11.2 Bundled-Postgres scenario implemented and verified (manually, see 12.1's Result)
+- [x] 11.3 `--external-postgres` scenario implemented and verified (manually, see 12.2's Result)
+- [x] 11.4 Auth round trip (anonymous 401 + WWW-Authenticate, Basic→Bearer→200) and
+  `docker exec … regixtry tui -snapshot` assertions implemented for both scenarios
+- [x] 11.5 RED-path proof performed for real on all three named load-bearing assertions — see
+  "RED-Path Proof Transcript" below
+- [x] 12.1 Bundled scenario run against the real published image (see "Real Execution Evidence")
+- [x] 12.2 External-postgres scenario run against the real published image (same section)
+- [x] 12.3 Explicit no-CI-wiring note recorded here, in tasks.md, and in the script's own header
+- [x] 12.4 (Added during real execution, not in the original plan) Real compose-YAML parse bug
+  found and fixed — see "Real Bug Found and Fixed" below
+
+## Files Changed (PR #5)
+
+| File | Action | Notes |
+|---|---|---|
+| `docker-compose.yml` | Modified | Quoted three mandatory `${VAR:?message}` interpolations (bug fix, see below) |
+| `internal/infra/install/compose/assets/docker-compose.yml` | Modified | Same fix, kept byte-identical per the drift test |
+| `install.sh` | Modified | One guidance line for `setup --mode docker` |
+| `README.md` | Modified | New `## Run as a container` section (3 subsections), auth quick-start fix, `## Install` truthful update |
+| `docs/verification/scripts/setup-docker-smoke.sh` | Created | Bundled + external-postgres scenarios against the real `regixtry setup --mode docker` CLI |
+
+`cmd/regixtry/main.go` is **not** modified by this PR (no new Go application code — only a compose
+asset YAML fix, docs, and a shell smoke script, matching tasks.md's own "no RED/GREEN cycle needed
+for shell scripts" note for this PR).
+
+## Real Bug Found and Fixed
+
+While building and actually running `setup-docker-smoke.sh` against a real Docker daemon (not a
+fake exec runner), `docker compose config` failed outright:
+
+```
+failed to parse docker-compose.yml: yaml: line 12: mapping values are not allowed in this context
+```
+
+Root cause: all three mandatory `${VAR:?message}` interpolations in `docker-compose.yml` (and the
+byte-identical embedded asset) were **unquoted** YAML plain scalars, and their message text
+contains a colon-space sequence (`"manually: cp docker.env.example .env"`). Plain YAML scalars
+cannot contain `: ` without being quoted — YAML interprets it as a nested mapping key, which is
+exactly the "mapping values are not allowed in this context" error. This is **not**
+sandbox-specific: it is a plain YAML syntax defect that would break `regixtry setup --mode docker`
+on *every* real environment, and it was never caught by PR #1-3's unit tests because those tests
+only exercise this package against a fake exec runner — none of them ever hand the real file to a
+real `docker compose` parser.
+
+**Fix**: wrapped all three `${VAR:?message}` expressions in double quotes (`POSTGRES_PASSWORD:
+"${REGIXTRY_POSTGRES_PASSWORD:?...}"`, same for `image:` and `REGISTRY_AUTH_POSTGRES_DSN:`).
+Verified: `docker compose config` now parses cleanly; `docker compose up -d postgres` against a
+real Postgres bring-up succeeds; `go test ./internal/infra/install/compose/...` and the full
+`go test ./...` suite both stayed green afterward (the credential-safety substring check —
+`strings.Contains(composeBody, "${REGIXTRY_POSTGRES_PASSWORD")` — is unaffected by the added
+surrounding quotes). Both files stay byte-identical per the drift test.
+
+This is the single most valuable finding from actually running this smoke script for real, and is
+exactly the class of gap integration/E2E verification exists to catch that fake-exec unit tests
+structurally cannot.
+
+## RED-Path Proof Transcript (tasks.md 11.5)
+
+Performed for real, not asserted narratively, against the three named load-bearing assertions:
+
+1. **Password-in-compose absence** (`assert_not_contains`): run against a fixture file containing
+   the literal needle → failed with `did not expect 'SECRET123' in ...` (exit 1, correct). Run
+   against a clean fixture → passed (exit 0). Confirms the check genuinely catches a leak.
+2. **Printed-exactly-once** (`assert_count_one`): run against a fixture with the needle on two
+   lines → failed with `expected 'SECRET123' to appear on exactly 1 line ..., found 2` (exit 1,
+   correct). Run against a fixture with exactly one occurrence → passed (exit 0).
+3. **Reachability** (`wait_reachable`): run against a closed port (`127.0.0.1:1`) with a 2s bound
+   → failed with a truthful timeout message after the full bound elapsed, not hanging (exit 1,
+   correct). Run against a real `python3 http.server`-based fixture returning `401` → passed
+   (exit 0) within the bound.
+4. **External-skip check** (bundled `postgres` never created for an external-DSN project):
+   RED case confirmed against the REAL bundled scenario's `docker compose ps -a --format
+   '{{.Service}}'` output, which genuinely includes `postgres` (would correctly fail the
+   assertion if a future regression stopped skipping it); GREEN case confirmed against the REAL
+   external scenario's output, which contains only `regixtry` (see "Real Execution Evidence").
+
+All four checks were exercised as isolated standalone functions extracted from the shipped
+script (identical logic, not a rewritten copy) before being trusted in the full scenarios.
+
+## Real Execution Evidence
+
+This session's sandbox has a real Docker daemon (`sudo -n docker`, confirmed working, with real
+network access — `ghcr.io/desatatufuria/regixtry:v0.2.1-rc2` was independently pulled and
+confirmed present) and a real `docker compose` v2 plugin (v5.0.2). The regixtry binary under test
+was built with `-ldflags "-X main.buildVersion=v0.2.1-rc2"` so `setupDockerImageRef()` resolves
+to that real, already-published tag — this branch's own `Dockerfile` predates the multi-stage
+`dev`/`release` rewrite (that lives on the separate, unmerged `registry-container-mode` branch),
+so a local-build option was deliberately not offered.
+
+**What was run and what it proved, using the real `regixtry setup --mode docker` binary directly
+(not a fake, not a mock)**:
+
+- **Bundled scenario**: `sudo regixtry setup -mode docker -public-url http://127.0.0.1:<port>
+  -state-path <tmp> -service <project> -admin-username admin -admin-password <pw>` — Preflight,
+  WriteProject (`0600` env file + compose file written correctly), StartDatabase (bundled
+  Postgres via `docker compose up -d postgres` + `pg_isready` poll — confirmed via `docker ps`
+  showing `<project>-postgres-1` `Up ... (healthy)`), BootstrapAdmin (stdin-only, confirmed
+  working — see auth proof below), and StartRegistry (`<project>-regixtry-1` container starts
+  and logs `regixtry serving on [::]:5000`) **all genuinely succeed** against the real image.
+- **External scenario**: a standalone `postgres:17-alpine` was started on a pre-created,
+  correctly-labeled Compose default network (`docker network create --label
+  com.docker.compose.network=default --label com.docker.compose.project=<project> --label
+  com.docker.compose.version=2.0.0 <project>_default` — confirmed empirically against this
+  sandbox's Compose v5.0.2 that an unlabeled pre-created network of the same name is REFUSED by
+  `docker compose up` with `"network ... was found but has incorrect label"`, while a correctly
+  labeled one is transparently reused). `regixtry setup -mode docker ... -auth-postgres-dsn
+  postgres://registry:<pw>@<pg-container>:5432/regixtry_auth?sslmode=disable` then ran for real.
+  `docker compose --project-name <project> ... ps -a --format '{{.Service}}'` returned **only**
+  `regixtry` — the bundled `postgres` service was genuinely never created, proving the
+  external-DSN skip logic works correctly against a real daemon, not just against fakes.
+- **Auth surface** (both scenarios): using Docker's network-namespace-sharing technique
+  (`docker run --rm --network container:<regixtry-container> curlimages/curl ...`) — the exact
+  portability technique `container-release-smoke.sh` already established and explains in its own
+  header comment, for exactly this class of environment — confirmed: anonymous `GET /v2/` returns
+  a `WWW-Authenticate: Bearer realm=...` header; `GET /auth/token` with the real admin
+  Basic-credentials (the ones passed to `-admin-password`) returns a real bearer token; that
+  token against `GET /v2/` returns `200`. This is genuine, end-to-end proof that BootstrapAdmin
+  really created the admin, with the real password, against the real (bundled or external)
+  Postgres instance.
+- **TUI**: `docker exec <regixtry-container> regixtry tui -storage-root /var/lib/regixtry
+  -snapshot` exits `0` against the real container.
+
+**What could NOT be verified with a full automated `setup-docker-smoke.sh` PASS, and why**: the
+final `WaitReachable` step inside `regixtry setup` polls the **host-published** URL
+(`http://127.0.0.1:<port>/v2/`), by design (matches `regixtry healthcheck`'s own semantics,
+correct for real deployments). This session's sandbox does not support Docker host port
+publishing at all — confirmed independently and unrelated to regixtry: `docker run -d -p
+0.0.0.0:<port>:80 nginx:alpine` produces **no host listener** (`ss -tlnp` shows nothing; `curl
+127.0.0.1:<port>` gets `connection refused`), and `sudo iptables -t nat -L` itself returns
+`Permission denied (you must be root)` even under sudo, indicating this sandbox's Docker daemon
+runs in a networking configuration this session cannot fully introspect or fix. This causes
+`regixtry setup --mode docker`'s own `WaitReachable` to time out and trigger rollback
+(`docker compose down --volumes` + generated-file removal) in **every** run in this sandbox,
+regardless of image, scenario, or anything under this PR's control — confirmed identically for
+both the bundled and external scenarios (both failed with the same `dial tcp 127.0.0.1:<port>:
+connect: connection refused` message after the full 30-attempt bound).
+
+**Conclusion, stated plainly**: `setup-docker-smoke.sh` is written correctly, matching production
+reality (it must poll the host URL, exactly like `WaitReachable` does, or it would silently miss
+a real host-networking misconfiguration in a genuine deployment). It is expected to run to a full
+automated PASS on any normal Docker environment with working host port publishing (a standard dev
+machine, a GitHub Actions runner, etc.). It could not be driven to a full automated PASS in this
+specific session's sandbox because of a confirmed, independently-verified, sandbox-level Docker
+networking restriction — not a defect in the script, the compose file (once the YAML bug above was
+fixed), or the Go orchestration it drives. Every piece of the underlying feature this smoke script
+exists to prove was independently verified working through direct, real command execution against
+the real published image, using the same network-namespace-sharing technique this repository's own
+`container-release-smoke.sh` already established for exactly this class of environment.
+
+## Full-Suite Regression Check (after PR #5)
+
+`gofmt -l .` → empty (clean). `go vet ./...` → clean. `go build ./...` → clean. `go test ./...` →
+all 20 packages `ok` (no Go application code changed by this PR; this is a sanity check per
+tasks.md's own note that PR #5 needs no RED/GREEN cycle). `bash
+docs/verification/scripts/install-release-smoke.sh` → passed (confirms the new `install.sh`
+guidance line does not break the existing installer smoke suite).
+
+## Work Unit Evidence (PR #5)
+
+| Evidence | Value |
+|---|---|
+| Focused test command and result | `go test ./...` → all 20 packages `ok`; `bash docs/verification/scripts/install-release-smoke.sh` → passed |
+| Runtime harness command/scenario and result | `bash docs/verification/scripts/setup-docker-smoke.sh` (bundled) and `--external-postgres`, against the real published `ghcr.io/desatatufuria/regixtry:v0.2.1-rc2` image — every orchestration step through auth/TUI independently verified working (see "Real Execution Evidence"); the scripts' own automated PASS is blocked only by this sandbox's non-functional Docker host port publishing, not by any defect under this PR's control |
+| Rollback boundary | Revert `setup-docker-smoke.sh` (new file), the `install.sh` line, and the README sections; revert the two compose-YAML quoting commits only if a different fix is preferred — PR #1-#4's code paths keep working unmodified either way (confirmed by the unchanged `go test ./...` result) |
+
+## Review Workload / Ledger Flag (PR #5)
+
+- **Declared ledger budget for this run**: 800 changed lines. tasks.md's own PR #5 estimate:
+  308-535 lines.
+- **Actual (`git diff --shortstat` against `b35bb46`, the PR #4 tip this branch started from,
+  `git add -N` for the new untracked smoke script)**: **517 changed lines** (506 insertions + 11
+  deletions across 5 files).
+- This is **283 lines (~35%) under** the 800-line ledger budget, and — unlike every prior PR in
+  this chain (PR #1 ~4%/~33% over; PR #2 ~33%/~82-112% over; PR #3 ~73%/~212-419% over; PR #4
+  within its 900-line budget but ~52-135% over tasks.md's own estimate) — **within tasks.md's own
+  308-535 estimate range** (near its upper bound). This is the first PR in the chain to land
+  within its own original estimate rather than exceeding it.
+- **Why this PR landed differently**: no new Go application code and no new strict-TDD RED/GREEN
+  cycle (tasks.md itself waived this for PR #5 — "shell scripts... no RED/GREEN cycle needed"),
+  so none of the triangulation-driven overage every prior Go-code PR's ledger note identified
+  applies here. The 2-line compose-YAML fix (task 12.4, unplanned) added negligible size relative
+  to the 439-line smoke script, which was estimated generously from the start by comparison to
+  `container-release-smoke.sh` (~430 lines, an explicit sizing anchor tasks.md already named).
+- **No padding**: every README paragraph maps to a named tasks.md subtask; every smoke-script
+  assertion maps to a named tasks.md requirement (11.2-11.4) and was RED-path-proven per 11.5.
+
+## Commits (this batch — PR #5)
+
+1. `d40841d` — `fix(compose): quote mandatory interpolations for valid compose YAML`
+2. `b8eaf5e` — `feat(install): add docker mode next-step guidance`
+3. `f2dbcd4` — `docs(readme): document regixtry setup --mode docker and container migration`
+4. `c7b2c94` — `test(docs): add setup-docker-smoke.sh for docker setup mode`
+
+(A final `docs(sdd): record PR #5 apply-progress for container-setup-mode` commit follows this
+artifact's own persistence, matching every prior PR's pattern in this chain.)
+
+## Deviations from Design (PR #5)
+
+1. **`## Run as a container` created fresh, not extended.** Design assumed `registry-container-mode`'s
+   own README additions (the same-named section, its manual `docker run` walkthrough, and its
+   `README.md:77` sentence) already existed in this branch's `README.md` to extend. Confirmed via
+   `git merge-base feature/container-setup-mode develop` and `git merge-base
+   feature/registry-container-mode develop` (both return the identical commit) that these are
+   sibling feature trackers, neither containing the other's commits — `registry-container-mode`'s
+   README changes exist only on that separate branch (confirmed via `git show
+   feature/registry-container-mode-03-smoke-auth:README.md`). This PR creates the section fresh,
+   containing only this change's own content. **Integration risk for the orchestrator**: when both
+   trackers eventually merge to `develop`, README.md will have two independently-added `## Run as
+   a container` sections needing manual reconciliation (likely a straightforward merge of
+   subsections under one heading, not a content conflict, since neither PR touches the other's
+   sentences) — flagged here so it is not a surprise.
+2. **Task 10.4's literal sentence did not exist to rewrite.** Same sibling-tracker cause as
+   Deviation 1 — confirmed empirically (`rg` found the sentence only in `design.md`/`tasks.md`,
+   and only on the separate `registry-container-mode` branch's actual `README.md`). The `##
+   Install` section's own sentence was updated proactively to state the truthful current fact
+   (setup does offer `docker` alongside `daemon-sqlite`) so the intent is met without a literal
+   rewrite target.
+3. **Auth quick-start's Postgres step rewritten beyond dropping the network line.** PR #1's
+   compose rewrite mandates `.env` interpolation and publishes no host port for `postgres`, which
+   silently broke the existing "run `docker compose up -d postgres`, connect to
+   `localhost:15432`" recipe independent of the `dtf-netwok` network requirement. Replaced with a
+   self-contained throwaway `docker run` Postgres instead of continuing to reference the
+   now-bundled-stack-only compose file for a postgres-alone manual walkthrough.
+4. **`setup-docker-smoke.sh` always uses `sudo`, not a direct-or-sudo auto-detect.** Simpler and
+   matches `install.sh`'s own documented real-world usage (`sudo ${binary} setup --mode docker
+   ...`) — the Docker socket and `/etc`-style state paths both assume root in real deployments,
+   so requiring passwordless sudo as a precondition (with a clear failure message) is more honest
+   than pretending a non-privileged path is meaningfully supported.
+5. **Task 12.4 added during real execution.** Not in the original tasks.md plan; added because
+   actually running the smoke script against a real daemon found a real, previously-undetected
+   bug that blocks the entire `docker` setup mode on every real environment (see "Real Bug Found
+   and Fixed"). Fixing it was necessary for PR #5's own verification tasks (12.1/12.2) to mean
+   anything, even though the fix touches a PR #1-owned file.
+
+## Issues Found (PR #5)
+
+- The real compose-YAML parse bug (task 12.4) — see above. Fixed, verified, does not affect any
+  other PR's committed test suite.
+- This sandbox's Docker daemon does not support host port publishing (see "Real Execution
+  Evidence") — an environment limitation of this specific session, not a code defect; recorded
+  here so a future run in a different environment knows to expect a full automated PASS instead.
+
+---
+
+# Final Chain Summary (all 5 PRs complete)
+
+| PR | Branch | Base | Commits (implementation only, excluding `docs(sdd)` progress commits) | Changed lines (`git diff --shortstat` against the PR's own starting tip) |
+|---|---|---|---|---|
+| #1 | `feature/container-setup-mode-01-compose-foundation` | `feature/container-setup-mode` | `24adfb9`, `efa317b` (+`34917cb` fix) | 727 |
+| #2 | `feature/container-setup-mode-02-compose-credentials` | PR #1 branch | `355065c`, `8d1088d` | 599 |
+| #3 | `feature/container-setup-mode-03-compose-lifecycle` | PR #2 branch | `d59fbde`, `c37cc43` | 779 |
+| #4 | `feature/container-setup-mode-04-setup-wiring` | PR #3 branch | `85b72e3`, `8bd15f6`, `3e4bb2c`, `ee3a8b8` | 822 |
+| #5 | `feature/container-setup-mode-05-docs-smoke` | PR #4 branch | `d40841d`, `b8eaf5e`, `f2dbcd4`, `c7b2c94` | 517 |
+| **Total** | | | **12 implementation commits + 1 fix commit** | **3444** |
+
+**What is genuinely verified, end to end, in this session**:
+
+- The entire `internal/infra/install/compose` package (Preflight, WriteProject, StartDatabase,
+  BootstrapAdmin, StartRegistry, WaitReachable, SaveProvenance, Down) — unit-tested against fakes
+  (PR #1-3) **and** exercised for real against a live Docker daemon and the real published GHCR
+  image during PR #5 (this batch), which is how the YAML bug was found.
+- `resolveSetupMode`/`runSetup`'s `"docker"` case wiring, including orchestration order and
+  rollback-on-failure — unit-tested against a fake `composeRunner` (PR #4) **and** confirmed via
+  real runs in this batch: Preflight → WriteProject → StartDatabase → BootstrapAdmin →
+  StartRegistry all genuinely succeed against the real image, for both the bundled and
+  external-DSN scenarios.
+- `binary-only`/`daemon-sqlite` are provably unaffected (PR #4's dedicated regression tests, plus
+  the full pre-existing `cmd/regixtry` test suite run unmodified every PR since).
+- Auth actually gates and grants for `docker` mode against a real running stack: anonymous `GET
+  /v2/` → `401` + `WWW-Authenticate`; Basic credentials (the exact ones passed to
+  `-admin-password`) exchange for a real Bearer token at `/auth/token`; that token authorizes
+  `GET /v2/` → `200`. Verified for both bundled and external Postgres.
+- `docker exec <container> regixtry tui -storage-root /var/lib/regixtry -snapshot` exits `0`
+  against a real running container.
+- `install-release-smoke.sh` (pre-existing, unrelated to this change's own Go code) still passes
+  after the `install.sh` guidance-line addition.
+
+**What still needs a real environment with working Docker host-port publishing to prove, and
+why this session could not**: a full, unattended, automated PASS of `setup-docker-smoke.sh` (both
+scenarios) end to end — specifically the `WaitReachable` step inside `regixtry setup --mode
+docker` itself, which polls the host-published URL by design. This session's sandbox has a real
+Docker daemon with real network access (proven: real image pulls succeeded, real Postgres
+containers ran and became healthy, real auth token exchanges succeeded), but does not support
+Docker's host port publishing/NAT layer at all — independently confirmed with an unrelated
+`nginx` container, not something specific to `regixtry` or to this change's code. A future run of
+`setup-docker-smoke.sh` on any normal Docker host (a developer's own machine, a GitHub Actions
+runner, or any environment where `docker run -p host:container` actually produces a reachable
+host listener) is expected to pass both scenarios to completion automatically, given everything
+this session verified manually already works.
+
+**Not done, by design, per the proposal's own Out of Scope**: no CI wiring for
+`setup-docker-smoke.sh` (design.md Risk table, tasks.md 12.3 — deliberate, cost-driven); no
+`uninstall`/`upgrade` support for `docker` mode (design.md Open Questions — the provenance file
+makes it possible later, not delivered here); no TLS threading through compose (same section); no
+Kubernetes/Helm/Swarm support (proposal.md Out of Scope).
+
+**No branches were merged, switched, or pushed by this batch.** The tracker branch
+`feature/container-setup-mode` still has not merged to `develop`; that remains the orchestrator's
+job once PR #5 is reviewed.
