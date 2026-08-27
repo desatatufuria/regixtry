@@ -95,4 +95,81 @@ tasks.md's per-PR estimate for PR #1 was **180-230 lines**. Actual: **377 insert
 
 ## Status
 
-12/12 PR #1 tasks complete. Not started: PR #2 (6 tasks + 1 shared verification) and PR #3 (7 tasks). Ready for `sdd-verify` on PR #1's scope, or a fresh `sdd-apply` batch for PR #2.
+12/12 PR #1 tasks complete. 7/7 PR #2 tasks complete (see below). Not started: PR #3 (7 tasks). Ready for `sdd-verify` on PR #1+#2 scope, or a fresh `sdd-apply` batch for PR #3.
+
+---
+
+# PR #2 (3a) — targets PR #1 branch: `feature/registry-container-mode-02-smoke-anonymous`
+
+**Scope of this addendum**: PR #2 (3a) only — smoke script shared helpers + `run_anonymous_scenario`, CI smoke-step wiring completion, anonymous local verification. PR #3 (3b, Postgres-auth) is a separate, later apply batch; its tasks (5b.1–5b.6, 6.1b, 6.3b) are **not started** and out of scope for this addendum.
+
+## Mode
+
+Standard mode — this PR adds no Go code (the task list explicitly says "there shouldn't be any new Go code in this PR," and none was needed). Strict TDD's spirit was applied to the bash script itself per the orchestrator's explicit instruction: every load-bearing assertion (non-root, health-poll timeout, blob persistence) was proven to actually fail before being trusted, using isolated RED-path drivers against the real Docker daemon, not just written and assumed correct.
+
+## Completed Tasks — PR #2 (3a)
+
+### Phase 5a: Container Smoke Script — Shared Helpers + Anonymous Scenario
+- [x] 5a.1 Created `docs/verification/scripts/container-release-smoke.sh` with `fail()`, `cleanup()` trap, `wait_healthy()`, `http_status()`. `registry_token()` was **omitted entirely**, not stubbed (see Deviation 1).
+- [x] 5a.2 `--image <ref>` (required) and `--expect-multiarch` (optional) flag parsing; `check_multiarch()` gracefully skips with a clear stderr message when `buildx` is unavailable, and separately when `imagetools inspect` fails (e.g. a local single-arch build).
+- [x] 5a.3 `run_anonymous_scenario()`: named volume, detached run with `-allow-anonymous-pull -allow-anonymous-push`, non-root assertion, health poll, blob upload (POST start → PUT complete → HEAD verify), destroy, restart on the same volume, HEAD again for persistence proof.
+- [x] 5a.4 Cleanup trap: registry container(s) → named volume, in that order, every step `|| true`.
+- [x] 5a.5 CLI dispatch always calls `run_anonymous_scenario`; no `run_auth_scenario` dispatch exists yet (PR #3's job).
+- [x] 4.4 Verified locally: the exact invocation the CI step now uses (`container-release-smoke.sh --image <ref> --expect-multiarch`) runs successfully end-to-end against a `--target=release` build.
+
+### CI Workflow — Smoke-Step Wiring Completion
+- [x] Replaced PR #1's scaffolded/placeholder smoke step in `.github/workflows/release.yml` with the real invocation: `container-release-smoke.sh --image "ghcr.io/desatatufuria/regixtry:${GITHUB_REF_NAME}" --expect-multiarch`. No `--auth-postgres` — that flag does not exist in this script yet (PR #3 adds it); the comment above the step now says so explicitly instead of the old "does not exist yet" placeholder note.
+
+### Phase 6.3a: PR #2 Verification
+- [x] 6.3a Ran `container-release-smoke.sh` locally against a `docker build --target=release .` image, twice (once without `--expect-multiarch`, once with) — both passed end-to-end. See Work Unit Evidence below for exact commands/output.
+
+## Technical Decision: HTTP probing via network-namespace sharing, not host port-publishing
+
+design.md's literal auth-scenario command snippet uses `-p 127.0.0.1:0:5000` (host port publish) and implies host-side `curl`. I deviated from that literal mechanism for **every** HTTP interaction in this script (`http_status()`, the blob POST/PUT calls): instead of publishing a port and curling from the host, every HTTP call runs through a short-lived `curlimages/curl:latest` sidecar started with `docker run --rm --network container:<target>`, which joins the target container's network namespace and reaches it via `127.0.0.1:5000` — exactly as the process inside the container sees itself.
+
+**Why**: This sandbox's Docker daemon is real (no `docker compose`/`docker` mock), but host→container port-forwarding is broken sandbox-wide — confirmed independently in this run (curl to a published port returns immediate "connection refused," and curl to the container's bridge IP hangs indefinitely for 2+ minutes even against a stock `nginx:alpine` control container), matching PR #1's exact prior finding. The network-namespace-sharing technique works identically in this constrained sandbox and in normal CI (it never depends on host-to-container routing at all, only on the daemon's own ability to share a network namespace between two containers it manages directly), so it let me run genuine strict-discipline RED/GREEN proof against the real script instead of writing an untestable assumption. It also avoids host port-allocation/conflict concerns entirely on CI runners.
+
+**This is a deviation from design.md's literal snippet**, flagged for reviewer awareness before PR #3 (which will extend this same file with the auth scenario and should use the same mechanism for consistency, not design's literal `-p` snippet, unless a maintainer overrides this decision).
+
+## Bug found and fixed during script development: curl `-X HEAD` hangs against this server
+
+While proving the blob-persistence assertion's RED path, `http_status()`'s original implementation (`curl -X HEAD ...`) **hung indefinitely** (reproduced, confirmed via `ps aux` showing a live `docker run ... -X HEAD ...` process over a minute old with no progress). Root cause: this server's `handleBlobRead` sets a real `Content-Length` header on HEAD responses (matching what the equivalent GET would send) and correctly writes no body, per RFC 7231 — but curl's `-X HEAD` (as opposed to `--head`/`-I`) does not tell curl's internal state machine to skip body-reading; curl still expects the server to send `Content-Length` bytes and blocks waiting for them, which a compliant server never sends for a HEAD request. Fixed by special-casing `http_status()`: when `method == "HEAD"`, use curl's `--head` flag instead of `-X HEAD`. Also added `--max-time 20` to every curl invocation in the script as defense-in-depth against any future hang blocking CI indefinitely. Verified the fix: re-ran the full anonymous scenario twice after the fix (once plain, once with `--expect-multiarch`), both passed end-to-end with no hang.
+
+## Deviations from Design
+
+1. **`registry_token()` omitted entirely, not stubbed.** The orchestrator's instructions explicitly left this as my call ("leave the function present but unused/minimal ... or omit it entirely if that reads cleaner"). I omitted it: an empty/unused function is dead code with no test coverage until PR #3 actually needs it, and PR #3's own task 5b.4 (Bearer token exchange) is the natural place to design its real signature (it will need to parse a JSON `token` field from an HTTP response, a shape driven entirely by that PR's own `run_auth_scenario` requirements, not guessable usefully today).
+2. **HTTP probing mechanism**: network-namespace-sharing curl sidecar instead of design.md's literal `-p` host-port-publish snippet. See "Technical Decision" section above for full rationale. Functionally equivalent from the registry's point of view (same HTTP requests, same assertions); differs only in how the smoke script's own process reaches the container.
+3. **`--max-time 20` added to every curl call**, not explicitly requested by any task, added as defense-in-depth after discovering the `-X HEAD` hang — a hang anywhere in this script would otherwise block a CI job indefinitely with no timeout.
+4. **CI step's smoke-verification comment rewritten**, not just the `run:` line: PR #1's placeholder comment ("container-release-smoke.sh does not exist yet ... expected to fail until PR #2") is no longer true on this branch, so it was replaced with a comment scoping the *next* gap (`--auth-postgres` wiring belongs to PR #3), keeping the "why is this step shaped this way" trail intact for the next PR's reader.
+
+## Work Unit Evidence
+
+| Evidence | Value |
+|---|---|
+| Focused test command and exact result | `go test ./...` → unaffected, all 18 packages `ok` (no Go code touched by this PR). `go build ./...`, `go vet ./...`, `gofmt -l .` → all clean. |
+| Runtime harness command/scenario and exact result | Built `docker build --target=release -t regixtry-smoke-local:test .` locally (succeeded, using a real amd64 binary built via `go build`). Ran `bash docs/verification/scripts/container-release-smoke.sh --image regixtry-smoke-local:test` → **PASS**: `container-release-smoke: anonymous scenario passed for regixtry-smoke-local:test`, exit 0. Re-ran with `--expect-multiarch` → **PASS**, plus the expected graceful skip: `container-release-smoke: skipping --expect-multiarch check (buildx plugin unavailable)` (this sandbox's Docker client lacks the buildx plugin — see PR #1's identical finding — so this exercises the "buildx unavailable" skip branch; the "buildx present but image is single-arch" skip branch is code-reviewed but could not be executed in this sandbox since buildx itself isn't installed here). Confirmed the trap cleanup removed every container and volume after both successful runs (`docker ps -a` / `docker volume ls` empty of `regixtry-smoke-*` names). |
+| RED-path proof (strict-discipline verification requested by the orchestrator) | **Non-root assertion**: ran a plain root `debian:bookworm-slim` container and called `assert_non_root` against it → correctly failed: `expected Config.User 65532:65532 for red-nonroot-test, got ''`. **Health-poll timeout (unhealthy branch)**: container with `--health-cmd="exit 1"` → correctly failed in ~1s: `red-health-test reported unhealthy before becoming healthy`. **Health-poll timeout (never-reports branch)**: container with `--no-healthcheck` (Health.Status stays empty forever) and a 3s budget → correctly failed at ~3s: `red-health-timeout-test did not become healthy within 3s (last status: '')`. **Blob persistence**: ran the real upload flow against volume A, then deliberately restarted on a *different*, empty volume B instead of A → correctly failed: `blob HEAD after restart on the same volume returned 404, expected 200 (persistence proof)`. All four RED runs used the shipped script's actual functions (sourced from the real file, minus only the trailing `main "$@"` call), not reimplementations. |
+| Environment limitation encountered (documented, not worked around silently) | Host→container port-forwarding is broken sandbox-wide in this environment (independently reproduced: `curl` to a `-p`-published port returns immediate connection-refused; `curl` to the container's bridge IP hangs 2+ minutes even for a stock `nginx:alpine` control image) — this is the same limitation PR #1's agent already found and documented. Rather than fabricate a pass around it, I changed the script's actual HTTP-reaching mechanism (network-namespace sharing, see Technical Decision above) to one that is unaffected by this limitation and equally valid in real CI, so the *shipped* script's real assertions could be genuinely exercised end-to-end here rather than only asserted to work in theory. Docker itself required `sudo -n docker` (passwordless sudo confirmed available) rather than direct socket access for this user; a local `PATH`-shim wrapper (`docker` → `sudo -n docker "$@"`) was used only for local verification and is not part of the shipped script or CI wiring, since GitHub Actions' `ubuntu-latest` runners give the job direct socket access. |
+| Rollback boundary | Revert `docs/verification/scripts/container-release-smoke.sh` (script did not exist before this PR — a clean delete fully reverts it) and revert the CI wiring hunk in `.github/workflows/release.yml` (restores PR #1's placeholder step). Nothing outside those two files is touched. |
+
+## Line Count vs. Estimate
+
+tasks.md's per-PR estimate for PR #2 was **150-200 lines**. Actual: **`docs/verification/scripts/container-release-smoke.sh`** is a new file, 247 lines; **`.github/workflows/release.yml`** changed +4/-6 (10 changed lines) — **257 changed lines total**, moderately over the tasks.md estimate (~1.3x) but well under this run's declared 350-line ledger budget (73% of budget used). The overrun versus tasks.md's own estimate is driven by: (a) generous inline comments documenting two non-obvious decisions (the network-namespace-sharing HTTP mechanism, and the `-X HEAD` hang root cause) that a future PR #3 reader will need, matching PR #1's own precedent of not trimming load-bearing explanatory comments to hit an estimate; (b) the `--max-time 20` defense-in-depth addition; (c) `check_multiarch()`'s two distinct graceful-skip branches (buildx-unavailable vs. imagetools-inspect-failed) each needing their own clear message per task 5a.2's explicit requirement.
+
+## Commits (this branch, in order)
+
+1. `feat(scripts): add container-release-smoke.sh anonymous scenario` — shared helpers + `run_anonymous_scenario`
+2. `ci(release): wire real container-release-smoke.sh into release workflow` — replaces PR #1's placeholder step
+3. `docs(sdd): record PR #2 apply-progress for registry-container-mode` — this addendum
+
+(Exact hashes recorded in the final response after commit.)
+
+## Remaining Tasks (out of scope for this run — future PR #3 batch)
+
+- [ ] 5b.1–5b.6 — `run_auth_scenario`, `--auth-postgres` flag (PR #3)
+- [ ] 6.1b — Postgres-auth README recipe (PR #3)
+- [ ] 6.3b — local auth smoke verification (PR #3)
+
+## Status (PR #2 addendum)
+
+7/7 PR #2 tasks complete (5a.1, 5a.2, 5a.3, 5a.4, 5a.5, 4.4, 6.3a) plus the CI-wiring completion (the `release.yml` step edit itself, tracked as part of Phase 5a's scope, not a separately numbered tasks.md item). Ready for `sdd-verify` on PR #1+PR #2 combined scope, or a fresh `sdd-apply` batch for PR #3.
