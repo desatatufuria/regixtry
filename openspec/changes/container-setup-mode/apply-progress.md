@@ -1,13 +1,19 @@
 # Apply Progress: Container Setup Mode
 
-Scope of this artifact: **PR #1 and PR #2**. PR #1 (base) shipped
+Scope of this artifact: **PR #1, PR #2, and PR #3**. PR #1 (base) shipped
 `feature/container-setup-mode-01-compose-foundation`, targeting the tracker
 branch `feature/container-setup-mode`. PR #2 shipped
 `feature/container-setup-mode-02-compose-credentials`, targeting the PR #1
-branch. PR #3-#5 have not been applied yet; their tasks in `tasks.md` remain
-`[ ]` and are out of scope for this batch. This file exists so later
-`sdd-apply` runs for PR #3-#5 know exactly what already landed and do not
-duplicate or drift from it.
+branch. PR #3 shipped `feature/container-setup-mode-03-compose-lifecycle`,
+targeting the PR #2 branch. PR #4-#5 have not been applied yet; their tasks
+in `tasks.md` remain `[ ]` and are out of scope for this batch. This file
+exists so later `sdd-apply` runs for PR #4-#5 know exactly what already
+landed and do not duplicate or drift from it.
+
+**Naming note carried forward from PR #1**: the shipped env-file example is
+`docker.env.example`, NOT `.env.example` — the sandbox's dotenv-pattern
+write protection hard-denies the latter regardless of tool or content. Later
+PRs (main.go wiring, README) must reference `docker.env.example`.
 
 ## Status
 
@@ -330,6 +336,193 @@ PR #2: **8/8 tasks complete** (all Go/TDD work done and green; no tasks blocked)
 
 ## Remaining Tasks (other PRs — NOT this batch's scope, as of PR #2)
 
-- PR #3 (`feature/container-setup-mode-03-compose-lifecycle`): `StartRegistry`, `WaitReachable`, `SaveProvenance`, `Down` — tasks.md Phase 6-7
+- PR #3 (`feature/container-setup-mode-03-compose-lifecycle`): `StartRegistry`, `WaitReachable`, `SaveProvenance`, `Down` — tasks.md Phase 6-7 — **now complete, see below**
+- PR #4 (`feature/container-setup-mode-04-setup-wiring`): `cmd/regixtry/main.go` wiring — tasks.md Phase 8-9
+- PR #5 (`feature/container-setup-mode-05-docs-smoke`): docs + smoke script — tasks.md Phase 10-12
+
+---
+
+# PR #3 — targets PR #2 branch (`feature/container-setup-mode-02-compose-credentials`)
+
+**Branch**: `feature/container-setup-mode-03-compose-lifecycle` (current branch this batch ran on).
+**Scope**: `StartRegistry`, `WaitReachable`, `SaveProvenance`, `Down` — the remaining
+`composeRunner` methods, plus the `regixtry-compose-state.json` provenance shape
+(tasks.md Phase 6-7).
+
+## Status
+
+PR #3: **9/9 tasks complete** (all Go/TDD work done and green; no tasks blocked).
+
+## Completed Tasks (PR #3)
+
+- [x] 6.1 GREEN: `Provisioner.StartRegistry` implemented (`registry.go`) — bundled `up -d`,
+  external `up -d --no-deps regixtry`. **Amplification**: tasks.md lists no explicit RED
+  subtask for this method, but Strict TDD's non-negotiable rule required one anyway — both
+  `TestStartRegistry*` functions in `registry_test.go` were written and confirmed to fail to
+  compile (`p.StartRegistry undefined`) before the method existed.
+- [x] 6.2 RED: `WaitReachable` bounded-poll tests (`registry_test.go`) — GET `<public-url>/v2/`
+  accepting `200`/`401`, a real multi-attempt retry-until-success case, and a bounded-failure
+  case asserting an installation-failure error, not a healthy-stack claim
+- [x] 6.3 GREEN: `Provisioner.WaitReachable` implemented (`registry.go`)
+- [x] 6.4 RED: `SaveProvenance` structural + no-secret tests (`provenance_test.go`) — asserts
+  every required field, `0600` mode, and (via a real `WriteProject` → `SaveProvenance`
+  round trip) that the generated bundled password never reaches the provenance file
+- [x] 6.5 GREEN: `Provisioner.SaveProvenance` implemented (`provenance.go`), writing
+  `regixtry-compose-state.json` — a filename deliberately distinct from
+  `regixtry-lifecycle-state.json`
+- [x] 6.6 RED: `Down` teardown tests (`down_test.go`) — happy path (`down --volumes` +
+  project directory removal) and a triangulation case proving file removal still happens
+  even when the `docker compose down` subprocess itself fails
+- [x] 6.7 GREEN: `Provisioner.Down` implemented (`down.go`)
+- [x] 6.8 REFACTOR: `go vet ./...` + `gofmt -w .` — clean; full `composeRunner`-shaped method
+  set confirmed against design's exact interface literal via a throwaway, uncommitted
+  compile-only assertion (see Deviations below)
+- [x] 7.1 `go test ./internal/infra/install/compose/...` — all 32 tests pass (22 from
+  PR #1/#2 + 10 new in PR #3), full package suite green end to end against fakes
+
+## Files Changed (PR #3)
+
+| File | Action | Notes |
+|---|---|---|
+| `internal/infra/install/compose/compose.go` | Modified | Added `httpStatusFetcher` seam type, `HTTPStatus` field on `ProvisionerConfig`, corresponding `Provisioner.httpStatus` field and `NewProvisioner` default wiring (real `http.Client` GET with a 5s per-request timeout) |
+| `internal/infra/install/compose/registry.go` | Created | `Provisioner.StartRegistry`, `Provisioner.WaitReachable`, bounded reachability-poll constants |
+| `internal/infra/install/compose/registry_test.go` | Created | RED/GREEN tests: `StartRegistry` bundled/external argv, `WaitReachable` 200/401 acceptance, real multi-attempt retry, bounded-failure error |
+| `internal/infra/install/compose/provenance.go` | Created | `Provenance` struct, `provenanceFromProject`, `Provisioner.SaveProvenance` |
+| `internal/infra/install/compose/provenance_test.go` | Created | RED/GREEN tests: full-field structural assertion + `0600` mode, no-secret round trip through real `WriteProject` |
+| `internal/infra/install/compose/down.go` | Created | `Provisioner.Down` — `docker compose down --volumes` + best-effort project-directory removal, join-errors shape |
+| `internal/infra/install/compose/down_test.go` | Created | RED/GREEN tests: happy-path teardown + files-still-removed-on-compose-failure triangulation |
+
+`cmd/regixtry/main.go` is **not** modified (wiring lands in PR #4, unchanged from PR #1/#2's
+note); confirmed via `rg -n "infra/install/compose" cmd/regixtry/main.go` → no match.
+
+## TDD Cycle Evidence (PR #3)
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|---|---|---|---|---|---|---|---|
+| 6.1 | `registry_test.go` | Unit | 22/22 (PR #1/#2 baseline) | Written (unplanned in tasks.md, added per Strict TDD's non-negotiable rule) | Passed | 2 cases (bundled `up -d`, external `up -d --no-deps regixtry`) | Clean |
+| 6.2/6.3 | `registry_test.go` | Unit | Covered above | Written | Passed | 3 cases (200/401 table-driven, real multi-attempt retry, bounded-failure) | Clean |
+| 6.4/6.5 | `provenance_test.go` | Unit | Covered above | Written | Passed | 2 cases (full-field structural assertion, no-secret round trip) | Clean |
+| 6.6/6.7 | `down_test.go` | Unit | Covered above | Written | Passed | 2 cases (happy-path teardown, files-removed-despite-compose-failure) | Clean |
+| 6.8 | N/A (compile-only check, not committed) | N/A | N/A | N/A | N/A | N/A | Interface-literal compile check confirmed, then removed |
+
+### Test Summary
+
+- **Total tests written (PR #3)**: 10 top-level test functions (1 is table-driven with 2
+  subtests collapsed into one)
+- **Total tests passing**: all 32 in the package (22 from PR #1/#2 + 10 new),
+  `go test ./internal/infra/install/compose/...` → `ok`
+- **Layers used**: Unit only (fake-exec + fake HTTP-status-fetcher, still no Docker daemon and
+  no real network call), matching tasks.md's stated scope for this PR
+- **Approval tests**: None — no refactoring of pre-existing behavior, only additive methods
+- **Pure functions created**: `provenanceFromProject`
+- **RED-path proof performed**: `TestWaitReachableRetriesUntilReachable` and
+  `TestDownStillRemovesFilesWhenComposeDownFails` were written specifically to prove their
+  respective loops/best-effort-cleanup paths actually execute (not a zero-iteration ghost
+  loop) — both assert an exact call/sleep count that would fail if the implementation short-
+  circuited on the first attempt
+
+## Work Unit Evidence (PR #3)
+
+| Evidence | Value |
+|---|---|
+| Focused test command and result | `go test ./internal/infra/install/compose/...` → `ok regixtry/internal/infra/install/compose 0.008s-0.012s`, 32/32 test functions pass |
+| Runtime harness | N/A — per tasks.md, this PR is fake-exec unit tests only; no Docker daemon or real network call needed or used |
+| Rollback boundary | Revert `StartRegistry`/`WaitReachable`/`SaveProvenance`/`Down` (this branch, `feature/container-setup-mode-03-compose-lifecycle`, on top of PR #2); `Preflight`/`WriteProject`/`StartDatabase`/`BootstrapAdmin` from PR #1/#2 keep working unmodified — confirmed by the full-suite regression run below |
+
+## Full-Suite Regression Check (after PR #3)
+
+`go build ./...` → clean. `go vet ./...` → clean. `gofmt -l internal/infra/install/compose/` →
+empty (clean). `go test ./...` → all 19 packages `ok`, including
+`regixtry/internal/infra/install/compose` freshly at `0.008s`-`0.012s`. No pre-existing test was
+modified or broken.
+
+## Deviations from Design (PR #3)
+
+1. **`StartRegistry` (6.1) got a RED test tasks.md never explicitly asked for.** Unlike
+   `WaitReachable` (6.2/6.3), `SaveProvenance` (6.4/6.5), and `Down` (6.6/6.7), tasks.md's 6.1
+   is a bare "GREEN: implement..." with no paired RED item. Strict TDD Mode's Rule 1 ("NEVER
+   write production code before writing its test") is explicitly non-negotiable, so
+   `registry_test.go`'s two `TestStartRegistry*` functions were written first regardless, and
+   confirmed to fail to compile before `StartRegistry` existed. This is an amplification of
+   tasks.md's own instruction, not a deviation from design — the design's own Testing Strategy
+   table requires ordering/argv-shape coverage for every `composeRunner` method.
+2. **`WaitReachable`'s bounded-retry constants (30 attempts / 1s interval) are new, not
+   reused from `waitPostgresReady`.** They are numerically identical to
+   `postgresReadyMaxAttempts`/`postgresReadyPollInterval` (`database.go`, PR #2) but declared
+   as a separate `registryReachableMaxAttempts`/`registryReachablePollInterval` pair in
+   `registry.go` rather than shared constants, because the two polls check semantically
+   different things (Postgres readiness vs. HTTP registry reachability) and tasks.md's Phase 6
+   scope did not ask for a cross-cutting constants refactor. Both mirror the same bounded-retry
+   shape `docs/verification/scripts/docker-push-pull-smoke.sh` already proved, per design's
+   "Postgres readiness" decision.
+3. **6.8's interface-literal compile check is not a committed artifact.** Design notes the
+   `composeRunner` interface itself is declared in PR #4's `main.go`. To honor 6.8's "confirm
+   the full method set compiles against the interface literal" without prematurely declaring
+   that interface in this package (which is PR #4's scope, not PR #3's), the check was written
+   as a throwaway `_test.go` file, run once via `go build`/`go vet`, confirmed to compile
+   (`INTERFACE MATCHES`), then deleted before committing. No trace of it remains in the diff.
+4. **`Down`'s file-removal is best-effort even when `docker compose down` fails**, following
+   `rollbackWithReceipt`'s (`internal/infra/install/linux/bootstrap.go`) established
+   join-errors shape rather than stopping at the first failure — this was judged the safer
+   default so a failed teardown never leaves the project directory behind, and is proven by
+   `TestDownStillRemovesFilesWhenComposeDownFails`.
+
+## Review Workload / Ledger Flag (PR #3)
+
+- **Declared ledger budget for this run**: 450 changed lines.
+- **tasks.md's own PR #3 estimate**: 150-250 lines.
+- **Actual (`git diff --shortstat` against `8d1088d`, the PR #2 tip this branch started from,
+  including untracked new files via `git add -N`)**: **779 changed lines** (751 insertions +
+  28 deletions across 7 files; the 28 deletions are all in `compose.go`'s edit to add the
+  `httpStatusFetcher` seam and its default wiring).
+- This is **329 lines (~73%) over the 450-line ledger budget** and **529-629 lines (~212-419%)
+  over** the tasks.md upper estimate — the largest relative overage of the three PRs applied so
+  far in this chain (PR #1 was ~4%/~33% over; PR #2 was ~33%/~82-112% over). Discovered honestly
+  at the end of the batch, after all four methods and their tests were complete, not caught
+  mid-flight — flagged here transparently rather than silently proceeding to PR #4.
+- **Why**: four factors compounded past both estimates:
+  1. This PR carries **four** distinct methods (`StartRegistry`, `WaitReachable`,
+     `SaveProvenance`, `Down`) in one slice, each with its own seam, argv/JSON shape, and
+     failure mode — tasks.md's own estimate compresses all four into a single 150-250 line
+     range, but PR #1/#2 (which shipped 1-2 methods each) already landed 4-33% and 33-112%
+     over their narrower ranges, so a wider four-method slice compounding the same per-method
+     under-estimate was foreseeable in hindsight.
+  2. `WaitReachable` needed an entirely new seam (`httpStatusFetcher` + `ProvisionerConfig`
+     field + `Provisioner` field + `NewProvisioner` default wiring using `net/http`) — the
+     same "new seam infrastructure, not just two methods" pattern PR #2's ledger note already
+     flagged for `execStdinRunner`, repeating here for HTTP instead of stdin.
+  3. Strict TDD's mandatory triangulation rule, applied honestly, produced 2-3 test cases per
+     method rather than 1: `WaitReachable` needed a real multi-attempt retry case (not just
+     single-shot success/failure) to prove the loop actually executes and doesn't pass on a
+     zero-iteration ghost loop; `Down` needed a compose-down-failure case to prove file removal
+     is genuinely best-effort, not just reachable code.
+  4. Task 6.1's unplanned RED test (see Deviation 1) added a full test function tasks.md's own
+     line estimate could not have accounted for, since tasks.md's bullet list only names a
+     GREEN step there.
+- **No padding**: every test asserts a real, spec-mapped, would-fail-if-wrong behavior; two
+  assertions (`WaitReachableRetriesUntilReachable`'s call-count check and
+  `DownStillRemovesFilesWhenComposeDownFails`'s post-failure `os.Stat` check) exist specifically
+  to catch a trivially-passing "ghost loop" or "early-return" implementation, per Strict TDD's
+  Assertion Quality Rules.
+- **Recommendation**: accept as a well-justified overage — every line traces to either genuine
+  new seam infrastructure (`httpStatusFetcher`, ~40 lines) or a triangulation case an assertion-
+  quality-conscious reviewer would ask for anyway; or, if the reviewer's budget is genuinely
+  hard-capped, a future run could split `SaveProvenance`+`Down` into their own immediately-
+  following PR #3.5 (both are structurally independent of `StartRegistry`/`WaitReachable` and
+  don't share test fixtures beyond `testProject`, which already lives in `database_test.go`
+  from PR #2). No production code needs to change either way. **Pattern across the chain**:
+  every PR applied so far (PR #1, #2, #3) has exceeded its tasks.md estimate and ledger budget,
+  each time for triangulation-driven reasons the estimate did not anticipate — this is now a
+  clear enough pattern that PR #4/#5's own tasks.md estimates (350-540 and 308-535 lines
+  respectively) should be treated as likely-optimistic floors, not ceilings, when planning
+  those batches' delivery strategy.
+
+## Commits (this batch — PR #3)
+
+1. `d59fbde` — `feat(compose): implement StartRegistry and WaitReachable`
+2. `c37cc43` — `feat(compose): add SaveProvenance and Down teardown`
+
+## Remaining Tasks (other PRs — NOT this batch's scope, as of PR #3)
+
 - PR #4 (`feature/container-setup-mode-04-setup-wiring`): `cmd/regixtry/main.go` wiring — tasks.md Phase 8-9
 - PR #5 (`feature/container-setup-mode-05-docs-smoke`): docs + smoke script — tasks.md Phase 10-12

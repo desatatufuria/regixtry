@@ -136,18 +136,18 @@ from how `run_auth_scenario` alone justified its own PR in `registry-container-m
 
 ### Phase 6: Registry Start, Reachability, Provenance & Teardown (Strict TDD)
 
-- [ ] 6.1 GREEN: implement `Provisioner.StartRegistry(ctx context.Context, p compose.Project) error` — `docker compose up -d` when bundled, `docker compose up -d --no-deps regixtry` when external.
-- [ ] 6.2 RED: test for `WaitReachable` polling `GET <public-url>/v2/` for `200` or `401` (same semantics as `regixtry healthcheck`), bounded, and failing with an installation-failure error (not a healthy-stack claim) when the poll never succeeds.
-- [ ] 6.3 GREEN: implement `Provisioner.WaitReachable(ctx context.Context, p compose.Project) error`.
-- [ ] 6.4 RED: test asserting `regixtry-compose-state.json` (`0600`) contains `mode: "docker"`, compose project name/dir/file path, env file path, pinned image, service/volume names, `bundled_postgres`, public URL — and contains no secret.
-- [ ] 6.5 GREEN: implement `Provisioner.SaveProvenance(p compose.Project) error`, writing the file distinct from `regixtry-lifecycle-state.json` so today's `uninstall` never mistakes it for a systemd install.
-- [ ] 6.6 RED: test asserting `Down(ctx, p)` runs `docker compose --project-name <p> down --volumes` and removes the generated project directory/env file, matching `rollbackSetupFailure`'s compose analogue.
-- [ ] 6.7 GREEN: implement `Provisioner.Down(ctx context.Context, p compose.Project) error`.
-- [ ] 6.8 REFACTOR: `go vet ./...` and `gofmt -w .`; confirm the full `composeRunner`-shaped method set on `Provisioner` compiles against the interface literal from design (interface itself is declared in PR #4's `main.go`).
+- [x] 6.1 GREEN: implement `Provisioner.StartRegistry(ctx context.Context, p compose.Project) error` — `docker compose up -d` when bundled, `docker compose up -d --no-deps regixtry` when external. **Amplification**: tasks.md lists no explicit RED subtask here, but Strict TDD's non-negotiable "no production code before a failing test" rule required one anyway — `registry_test.go`'s two `TestStartRegistry*` functions were written and confirmed to fail to compile (`p.StartRegistry undefined`) before this method existed.
+- [x] 6.2 RED: test for `WaitReachable` polling `GET <public-url>/v2/` for `200` or `401` (same semantics as `regixtry healthcheck`), bounded, and failing with an installation-failure error (not a healthy-stack claim) when the poll never succeeds.
+- [x] 6.3 GREEN: implement `Provisioner.WaitReachable(ctx context.Context, p compose.Project) error`.
+- [x] 6.4 RED: test asserting `regixtry-compose-state.json` (`0600`) contains `mode: "docker"`, compose project name/dir/file path, env file path, pinned image, service/volume names, `bundled_postgres`, public URL — and contains no secret.
+- [x] 6.5 GREEN: implement `Provisioner.SaveProvenance(p compose.Project) error`, writing the file distinct from `regixtry-lifecycle-state.json` so today's `uninstall` never mistakes it for a systemd install.
+- [x] 6.6 RED: test asserting `Down(ctx, p)` runs `docker compose --project-name <p> down --volumes` and removes the generated project directory/env file, matching `rollbackSetupFailure`'s compose analogue.
+- [x] 6.7 GREEN: implement `Provisioner.Down(ctx context.Context, p compose.Project) error`.
+- [x] 6.8 REFACTOR: `go vet ./...` and `gofmt -w .`; confirm the full `composeRunner`-shaped method set on `Provisioner` compiles against the interface literal from design (interface itself is declared in PR #4's `main.go`). Confirmed via a throwaway compile-only assertion (`var _ interface{...} = (*Provisioner)(nil)`) matching design's exact `composeRunner` literal, then removed — not committed, since the real interface declaration belongs to PR #4's `main.go`.
 
 ### Phase 7: PR #3 Verification
 
-- [ ] 7.1 Run `go test ./internal/infra/install/compose/...` — confirm the full package suite passes end to end against fakes.
+- [x] 7.1 Run `go test ./internal/infra/install/compose/...` — confirm the full package suite passes end to end against fakes.
 
 ---
 
@@ -210,4 +210,9 @@ smoke script proving the end-to-end flow (bundled and external-DSN paths).
 
 ## Chain Status
 
-Five PRs (Phase totals: 3+8+2 / 7+1 / 8+1 / 10+2 / 5+5+3 = 55 tasks total) are planned but not yet applied. `feature/container-setup-mode` (tracker branch) does not exist yet; `sdd-apply` creates each stacked branch in order. No branch merges happen until PR #5 is reviewed and the tracker merges to `develop`.
+Five PRs (Phase totals: 3+8+2 / 7+1 / 8+1 / 10+2 / 5+5+3 = 55 tasks total) are planned. PR #1
+(`feature/container-setup-mode-01-compose-foundation`, 13/13 tasks) and PR #2
+(`feature/container-setup-mode-02-compose-credentials`, 8/8 tasks) are complete. PR #3
+(`feature/container-setup-mode-03-compose-lifecycle`, 9/9 tasks — Phase 6-7) is now complete: see
+`apply-progress.md` for full evidence. PR #4-#5 remain unapplied. No branch merges happen until
+PR #5 is reviewed and the tracker merges to `develop`.
