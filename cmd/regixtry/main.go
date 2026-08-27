@@ -1757,7 +1757,7 @@ func resolveSetupMode(rawMode string, interactive bool, reader *bufio.Reader, st
 	mode := strings.TrimSpace(rawMode)
 	if mode != "" {
 		switch mode {
-		case "daemon-sqlite", "binary-only":
+		case "daemon-sqlite", "binary-only", "docker":
 			return mode, false, nil
 		default:
 			return "", false, fmt.Errorf("unsupported setup mode %q", mode)
@@ -1765,13 +1765,14 @@ func resolveSetupMode(rawMode string, interactive bool, reader *bufio.Reader, st
 	}
 
 	if !interactive {
-		return "", false, errors.New("setup mode is required without a TTY; rerun with --mode binary-only or --mode daemon-sqlite")
+		return "", false, errors.New("setup mode is required without a TTY; rerun with --mode binary-only, --mode daemon-sqlite, or --mode docker")
 	}
 
 	if stdout != nil {
 		_, _ = fmt.Fprintln(stdout, "Select setup mode:")
 		_, _ = fmt.Fprintln(stdout, "  1) binary-only")
 		_, _ = fmt.Fprintln(stdout, "  2) daemon-sqlite")
+		_, _ = fmt.Fprintln(stdout, "  3) docker")
 		_, _ = fmt.Fprint(stdout, "Choice: ")
 	}
 
@@ -1785,6 +1786,8 @@ func resolveSetupMode(rawMode string, interactive bool, reader *bufio.Reader, st
 		return "binary-only", true, nil
 	case "2", "daemon-sqlite":
 		return "daemon-sqlite", true, nil
+	case "3", "docker":
+		return "docker", true, nil
 	default:
 		return "", false, fmt.Errorf("unsupported setup selection %q", strings.TrimSpace(selection))
 	}
