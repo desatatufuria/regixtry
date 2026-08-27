@@ -32,12 +32,14 @@ docker pull 127.0.0.1:5000/test/alpine:3.20
 
 ## Quick start with authentication and access control
 
-Auth is entirely optional — pass `-auth-postgres-dsn` (or set `REGISTRY_AUTH_POSTGRES_DSN`) and Postgres-backed users, grants, and robot accounts turn on. Without it, the registry runs anonymous.
+Auth is entirely optional — pass `-auth-postgres-dsn` (or set `REGISTRY_AUTH_POSTGRES_DSN`) and Postgres-backed users, grants, and robot accounts turn on. Without it, the registry runs anonymous. The steps below run everything on the host manually; for a fully bundled, one-command authenticated stack in Docker, see [Run as a container](#run-as-a-container).
 
 ```bash
-# 1. Postgres for auth state (separate database from the SQLite registry metadata)
-docker network create dtf-netwok   # required once; docker-compose.yml expects this network to already exist
-docker compose up -d postgres
+# 1. Any reachable Postgres instance for auth state (separate database from
+#    the SQLite registry metadata). For a throwaway local instance:
+docker run -d --name regixtry-auth-pg -p 15432:5432 \
+  -e POSTGRES_DB=regixtry_auth -e POSTGRES_USER=registry -e POSTGRES_PASSWORD=registry \
+  postgres:17-alpine
 DSN="postgres://registry:registry@localhost:15432/regixtry_auth?sslmode=disable"
 
 # 2. Bootstrap the first global admin
@@ -52,6 +54,59 @@ docker push 127.0.0.1:5000/test/alpine:3.20
 ```
 
 From here, `regixtry tui -api-base-url http://127.0.0.1:5000` gives you an interactive console to create users, grant per-repository roles (`repo-reader`/`repo-writer`/`repo-admin`), delegate grant management to a repo-admin without making them a global admin, mint bounded-TTL robot accounts for CI/CD, or flip a user to registry-wide read-only. Full walkthrough: [`docs/users.md`](docs/users.md) and [`docs/tui.md`](docs/tui.md).
+
+## Run as a container
+
+### One command: `regixtry setup --mode docker`
+
+`regixtry setup --mode docker` (or the interactive `3) docker` chooser entry) provisions a complete, self-contained stack with Docker Compose: a bundled Postgres for auth state, the registry itself, and a first admin account — no manual `docker compose`, network, or credential setup required. Both `install.sh` and `regixtry setup` now offer this container-selection branch alongside `daemon-sqlite`.
+
+```bash
+sudo regixtry setup --mode docker --public-url http://127.0.0.1:5000
+```
+
+By default this brings up a bundled Postgres instance for auth state, with a `crypto/rand`-generated password written to a `0600` env file under the compose project directory (derived from `-state-path`, e.g. `/etc/regixtry/compose/regixtry.env` for the default `-state-path`) and printed to the terminal **once** at the end of setup — copy it somewhere safe, it is not shown again. The generated password never appears in `docker-compose.yml`, on the command line, or in the recorded provenance file (`regixtry-compose-state.json`).
+
+To use your own Postgres instance instead of the bundled one, pass `-auth-postgres-dsn` (interactively you're prompted bundled-vs-external whenever it's omitted on a TTY; omitted non-interactively defaults to bundled — a deliberate divergence from `daemon-sqlite`, where omitted means anonymous):
+
+```bash
+sudo regixtry setup --mode docker --public-url http://127.0.0.1:5000 \
+  -auth-postgres-dsn "postgres://user:pass@postgres.example.internal:5432/regixtry_auth?sslmode=disable"
+```
+
+When an external DSN is supplied, the bundled `postgres` service is never started.
+
+On success, setup prints the reachable public URL, the compose env-file path, the generated password (bundled mode only), and the TUI guidance below. Any failure after the compose stack starts rolls back automatically — `docker compose down --volumes` plus removal of the generated project files — so a failed setup never leaves a half-provisioned stack behind.
+
+`regixtry setup --mode docker` requires Docker Engine with the Compose v2 plugin; a missing or too-old Docker/Compose, or an unreachable daemon, fails with a clear message before anything is written.
+
+### The TUI against a container
+
+There is no host-side TUI access to a container's data — reach it with `docker exec` against the running container instead:
+
+```bash
+docker exec -it <container> regixtry tui -storage-root /var/lib/regixtry
+```
+
+Replace `<container>` with the compose project's `regixtry` service container name (`docker compose ps` from the project directory, or `docker ps`).
+
+### Manual `docker compose`
+
+Prefer full manual control? `docker-compose.yml` at the repository root is the same project `regixtry setup --mode docker` generates. Copy `docker.env.example` to `.env`, fill in a value for `REGIXTRY_POSTGRES_PASSWORD` (and `REGIXTRY_AUTH_POSTGRES_DSN` if you're pointing at an external Postgres instead of the bundled one — see the comments in `docker.env.example` for the exact bundled-service DSN shape), then:
+
+```bash
+cp docker.env.example .env
+docker compose up -d
+```
+
+The bundled Postgres service publishes no host port by design (only the `regixtry` service's port is published); bootstrap the first admin manually through the same image:
+
+```bash
+printf '%s\n' 'change-me-now' | docker compose run --rm --no-deps -T regixtry \
+  bootstrap-admin -username admin -password-stdin
+```
+
+**Migration note for existing manual `docker-compose.yml` users**: this file previously required a pre-created external `dtf-netwok` Docker network and shipped a hardcoded `POSTGRES_PASSWORD: registry`. Both are gone. The rewritten file needs no external network and requires `REGIXTRY_POSTGRES_PASSWORD`/`REGIXTRY_AUTH_POSTGRES_DSN`/`REGIXTRY_IMAGE` to come from your environment or a `.env` file (`docker.env.example` documents all four variables), and it now pulls `${REGIXTRY_IMAGE}` instead of building locally. `docker build .` still builds the same repository-root `Dockerfile` unchanged, so a local build still works if you `docker build -t <tag> .` and set `REGIXTRY_IMAGE` to that tag.
 
 ## What's implemented
 
@@ -70,7 +125,7 @@ curl -fsSL https://raw.githubusercontent.com/desatatufuria/regixtry/main/install
 regixtry setup
 ```
 
-`install.sh` installs the binary; `regixtry setup` provisions the Linux/systemd runtime (or use `regixtry serve` directly for local/manual runs, as above). Full procedures, including reverse-proxy and direct-TLS modes: [`docs/installation.md`](docs/installation.md). To move an existing install to a newer release: `regixtry upgrade` (resolves the latest non-prerelease tag from GitHub Releases automatically, or pass `-ref` to pin one).
+`install.sh` installs the binary; `regixtry setup` then provisions the runtime — `daemon-sqlite` for a Linux/systemd host, or `docker` for a self-contained Docker Compose stack (see [Run as a container](#run-as-a-container) above) — or use `regixtry serve` directly for local/manual runs, as above. Full procedures, including reverse-proxy and direct-TLS modes: [`docs/installation.md`](docs/installation.md). To move an existing install to a newer release: `regixtry upgrade` (resolves the latest non-prerelease tag from GitHub Releases automatically, or pass `-ref` to pin one).
 
 ## Try a feature: vulnerability scanning
 
