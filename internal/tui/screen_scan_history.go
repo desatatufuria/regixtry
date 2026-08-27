@@ -106,10 +106,9 @@ func (s scanHistoryScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.
 }
 
 func (s *scanHistoryScreen) rebuildTables(env screenEnv) {
-	theme := newAdminTheme()
 	primary, _ := tableRoles(env.Layout)
-	s.findings = buildAdminFindingsTable(theme, s.modal.Detail.Findings, s.modal.FindingCursor, primary)
-	s.secretFindings = buildAdminSecretFindingsTable(theme, s.modal.Secrets, s.modal.FindingCursor, primary)
+	s.findings = buildAdminFindingsTable(s.modal.Detail.Findings, s.modal.FindingCursor, primary)
+	s.secretFindings = buildAdminSecretFindingsTable(s.modal.Secrets, s.modal.FindingCursor, primary)
 }
 
 func (s scanHistoryScreen) updateKey(env screenEnv, msg tea.KeyMsg) (adminScreen, tea.Cmd, bool) {

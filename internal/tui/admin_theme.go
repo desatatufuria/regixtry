@@ -2,6 +2,23 @@ package tui
 
 import "github.com/charmbracelet/lipgloss"
 
+// The Nord hex values bubble-table's v2-lipgloss styling needs
+// (admin_tables_lipgloss_v2.go) are pulled from these named constants
+// rather than duplicated as separate literals, so the two style
+// definitions -- v1 for everything else in this package, v2 for the four
+// bubble-table integration points that require it -- can never drift onto
+// different colors for what is meant to be the exact same palette.
+const (
+	nordBorderHex         = "#4C566A"
+	nordTextHex           = "#ECEFF4"
+	nordMutedHex          = "#A7B1C2"
+	nordSelectedFGHex     = "#2E3440"
+	nordSelectedBGHex     = "#D8DEE9"
+	nordErrorHex          = "#BF616A"
+	nordWarningHex        = "#EBCB8B"
+	nordSeverityMediumHex = "#C0A16B"
+)
+
 type adminTheme struct {
 	app              lipgloss.Style
 	section          lipgloss.Style
@@ -30,17 +47,17 @@ type adminTheme struct {
 }
 
 func newAdminTheme() adminTheme {
-	border := lipgloss.Color("#4C566A")
-	text := lipgloss.Color("#ECEFF4")
-	muted := lipgloss.Color("#A7B1C2")
+	border := lipgloss.Color(nordBorderHex)
+	text := lipgloss.Color(nordTextHex)
+	muted := lipgloss.Color(nordMutedHex)
 	// accent moved off gold ("#D4AF37") onto Nord's own Snow Storm nord4
 	// ("#D8DEE9"): the bright gold fill read poorly as a focus/selection
 	// background against this theme's dark palette, and this cool light
 	// gray already belongs to the same Nord family as border/muted/text
 	// instead of introducing an unrelated hue.
-	accent := lipgloss.Color("#D8DEE9")
-	selected := lipgloss.Color("#2E3440")
-	selectedBG := lipgloss.Color("#D8DEE9")
+	accent := lipgloss.Color(nordSelectedBGHex)
+	selected := lipgloss.Color(nordSelectedFGHex)
+	selectedBG := lipgloss.Color(nordSelectedBGHex)
 	// fieldBG is a subtle Nord "panel" background (nord1) for unfocused
 	// input/toggle fields: a filled box gives real visual delimitation for
 	// the field without the row cost of a top/bottom border (design.md
@@ -49,8 +66,8 @@ func newAdminTheme() adminTheme {
 	// that let the Trivy Config modal fit the 24-row floor stays intact).
 	fieldBG := lipgloss.Color("#3B4252")
 	success := lipgloss.Color("#A3BE8C")
-	warning := lipgloss.Color("#EBCB8B")
-	errorColor := lipgloss.Color("#BF616A")
+	warning := lipgloss.Color(nordWarningHex)
+	errorColor := lipgloss.Color(nordErrorHex)
 
 	return adminTheme{
 		app: lipgloss.NewStyle().Padding(0, 1),
@@ -86,7 +103,7 @@ func newAdminTheme() adminTheme {
 		// Bold) made the two indistinguishable with color disabled or bold
 		// ignored (design.md Decision 3). "#C0A16B" stays distinct from both
 		// severityHigh ("#EBCB8B") and accent, and the two never share a role.
-		severityMedium: lipgloss.NewStyle().Foreground(lipgloss.Color("#C0A16B")),
+		severityMedium: lipgloss.NewStyle().Foreground(lipgloss.Color(nordSeverityMediumHex)),
 		severityLow:    lipgloss.NewStyle().Foreground(muted),
 		// input/inputFocus stay borderless (design.md Decision 5: a
 		// top/bottom border only ever carried a focus color, so 2 rows per

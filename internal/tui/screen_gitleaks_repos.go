@@ -109,7 +109,7 @@ func (s *featureOverridesScreen) rebuildTable(env screenEnv) {
 		return
 	}
 	primary, _ := tableRoles(env.Layout)
-	s.table = buildFeatureOverridesTable(newAdminTheme(), s.feature, s.rows, s.selected, primary)
+	s.table = buildFeatureOverridesTable(s.feature, s.rows, s.selected, primary)
 }
 
 func (s featureOverridesScreen) updateKey(env screenEnv, msg tea.KeyMsg) (adminScreen, tea.Cmd, bool) {

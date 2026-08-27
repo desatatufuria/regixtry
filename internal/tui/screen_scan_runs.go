@@ -68,7 +68,7 @@ func (s *scanRunsScreen) rebuildTable(env screenEnv) {
 		return
 	}
 	primary, _ := tableRoles(env.Layout)
-	s.table = buildAdminScanSummaryTable(newAdminTheme(), s.summaries, s.selected, primary)
+	s.table = buildAdminScanSummaryTable(s.summaries, s.selected, primary)
 }
 
 func (s scanRunsScreen) updateKey(env screenEnv, msg tea.KeyMsg) (adminScreen, tea.Cmd, bool) {

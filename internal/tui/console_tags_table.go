@@ -54,7 +54,7 @@ func buildConsoleTagsTable(theme adminTheme, tags []appregixtry.TagDetails, high
 			consoleTableColumnTagSigned:   tagSignedLabel(tag),
 		}))
 	}
-	return newAdminBubbleTable(columns, rows, highlighted, theme, pageSize)
+	return newAdminBubbleTable(columns, rows, highlighted, pageSize)
 }
 
 // tagPushedByLabel renders a tag's resolved pusher username, never blank --

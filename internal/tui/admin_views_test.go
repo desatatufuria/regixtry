@@ -905,7 +905,7 @@ func TestRenderAdminScanSummaryShowsEmptyStateThenPopulatedTable(t *testing.T) {
 	}
 
 	summaries := []repositorySummary{{Repository: "acme/api", RunCount: 1}}
-	table := buildAdminScanSummaryTable(theme, summaries, 0, minTableRows)
+	table := buildAdminScanSummaryTable(summaries, 0, minTableRows)
 	got = strings.Join(renderAdminScanSummary(theme, summaries, true, table), "\n")
 	if !strings.Contains(got, "acme/api") {
 		t.Fatalf("renderAdminScanSummary() = %q, want the populated ScanSummary table containing %q", got, "acme/api")
@@ -1059,7 +1059,7 @@ func TestRenderAdminScanHistoryModalRendersExecutionsColumnWithCursorHighlighted
 		Cursor:     2,
 		Detail:     ports.ScanRunDetail{Findings: []ports.ScanRunFinding{{VulnerabilityID: "CVE-1"}}},
 	}
-	findingsTable := buildAdminFindingsTable(theme, modal.Detail.Findings, 0, minTableRows)
+	findingsTable := buildAdminFindingsTable(modal.Detail.Findings, 0, minTableRows)
 
 	got := renderAdminScanHistoryModal(theme, modal, findingsTable, bubbletable.Model{}, 30)
 
@@ -1108,7 +1108,7 @@ func TestRenderAdminScanHistoryModalExecutionsColumnIsAScrollableWindowNotFullLi
 		Cursor:     0,
 		Detail:     ports.ScanRunDetail{Findings: []ports.ScanRunFinding{{VulnerabilityID: "CVE-1"}}},
 	}
-	findingsTable := buildAdminFindingsTable(theme, modal.Detail.Findings, 0, minTableRows)
+	findingsTable := buildAdminFindingsTable(modal.Detail.Findings, 0, minTableRows)
 
 	got := renderAdminScanHistoryModal(theme, modal, findingsTable, bubbletable.Model{}, adminScanHistoryModalMinRows)
 
@@ -1195,7 +1195,7 @@ func TestRenderAdminWorkspaceKeepsBaseFullSizeAndLayersModalOnTopWhenOpen(t *tes
 		Runs:       []ports.ScanRun{{ID: "run-1", Repository: "acme/api", CreatedAt: now}},
 		Detail:     ports.ScanRunDetail{Findings: []ports.ScanRunFinding{{VulnerabilityID: "CVE-1"}}},
 	}
-	findingsTable := buildAdminFindingsTable(theme, modal.Detail.Findings, 0, minTableRows)
+	findingsTable := buildAdminFindingsTable(modal.Detail.Findings, 0, minTableRows)
 	screens := adminScreenSet{}
 	screens[slotScanHistory] = scanHistoryScreen{returnTo: screenAdminFeatures, modal: modal, findings: findingsTable}
 
@@ -1264,7 +1264,7 @@ func TestRenderAdminWorkspaceLeavesVisibleMarginAroundModalWhenOpen(t *testing.T
 			{VulnerabilityID: "CVE-2017-12424", Severity: "CRITICAL", PackageName: "login", Fixable: true},
 		}},
 	}
-	findingsTable := buildAdminFindingsTable(theme, modal.Detail.Findings, 0, minTableRows)
+	findingsTable := buildAdminFindingsTable(modal.Detail.Findings, 0, minTableRows)
 
 	layout := contentBudget(defaultViewportWidth, defaultViewportHeight, "", "")
 
@@ -1385,7 +1385,7 @@ func TestRenderAdminWorkspaceModalNeverExtendsPastBaseBodysOwnBottomBorder(t *te
 			{VulnerabilityID: "CVE-2017-12424", Severity: "CRITICAL", PackageName: "login", Fixable: true},
 		}},
 	}
-	findingsTable := buildAdminFindingsTable(theme, modal.Detail.Findings, 0, minTableRows)
+	findingsTable := buildAdminFindingsTable(modal.Detail.Findings, 0, minTableRows)
 
 	// Phase 11: the Repository Alerts summary table (realistic content,
 	// well under 30 rows total, so the base body renders at its natural,
@@ -1459,7 +1459,7 @@ func TestRenderAdminScanHistoryModalNeverAppliesFitLinesOverComposite(t *testing
 	}
 	const pageSize = 5 // 30 findings over pageSize 5 -> 6 pages, forces the table's own internal pagination
 
-	findingsTable := buildAdminFindingsTable(theme, findings, 0, pageSize)
+	findingsTable := buildAdminFindingsTable(findings, 0, pageSize)
 
 	modal := adminScanHistoryModal{
 		Open:       true,

@@ -121,7 +121,7 @@ func (s *trivyReposScreen) rebuildTable(env screenEnv) {
 		return
 	}
 	primary, _ := tableRoles(env.Layout)
-	s.table = buildAdminScanSummaryTable(newAdminTheme(), annotateDisabledSummaries(s.summaries, s.overrides), s.selected, primary)
+	s.table = buildAdminScanSummaryTable(annotateDisabledSummaries(s.summaries, s.overrides), s.selected, primary)
 }
 
 func (s trivyReposScreen) updateKey(env screenEnv, msg tea.KeyMsg) (adminScreen, tea.Cmd, bool) {

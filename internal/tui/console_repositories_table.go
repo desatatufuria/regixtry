@@ -49,7 +49,7 @@ func buildConsoleRepositoriesTable(theme adminTheme, repositories []appregixtry.
 			consoleTableColumnRepositoryLastPushed: formatRepositoryLastPushed(repository.LastPushed),
 		}))
 	}
-	return newAdminBubbleTable(columns, rows, highlighted, theme, pageSize)
+	return newAdminBubbleTable(columns, rows, highlighted, pageSize)
 }
 
 // formatRepositoryLastPushed renders a repository's most recent push time,
