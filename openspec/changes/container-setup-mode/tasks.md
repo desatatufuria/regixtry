@@ -114,17 +114,17 @@ from how `run_auth_scenario` alone justified its own PR in `registry-container-m
 
 ### Phase 4: Bundled Database & Bootstrap Admin (Strict TDD; threat: secret channel, subprocess argv composition)
 
-- [ ] 4.1 RED: test asserting `StartDatabase(ctx, p)` is a no-op when `p` is external (no `docker compose up` call recorded on the fake exec-runner) and issues `docker compose up -d postgres` only when bundled.
-- [ ] 4.2 RED: test for the bounded `docker compose exec -T postgres pg_isready -U registry -d regixtry_auth` poll — asserts a bounded retry count/timeout, not an unbounded loop.
-- [ ] 4.3 GREEN: implement `Provisioner.StartDatabase(ctx context.Context, p compose.Project) error`.
-- [ ] 4.4 RED: test asserting `BootstrapAdmin` pipes the admin password via stdin into `docker compose run --rm --no-deps -T regixtry bootstrap-admin -password-stdin`, never through argv or an environment variable.
-- [ ] 4.5 RED: test asserting a DSN or username containing `;`, `$(…)`, spaces, or a leading `-` reaches `docker` as one literal argument (argv-slice composition, never `sh -c`).
-- [ ] 4.6 GREEN: implement `Provisioner.BootstrapAdmin(ctx context.Context, p compose.Project, username, password string) error`.
-- [ ] 4.7 REFACTOR: `go vet ./...` and `gofmt -w .`; confirm the stdin-writer path has no leftover buffered copy of the password after the call returns.
+- [x] 4.1 RED: test asserting `StartDatabase(ctx, p)` is a no-op when `p` is external (no `docker compose up` call recorded on the fake exec-runner) and issues `docker compose up -d postgres` only when bundled.
+- [x] 4.2 RED: test for the bounded `docker compose exec -T postgres pg_isready -U registry -d regixtry_auth` poll — asserts a bounded retry count/timeout, not an unbounded loop.
+- [x] 4.3 GREEN: implement `Provisioner.StartDatabase(ctx context.Context, p compose.Project) error`.
+- [x] 4.4 RED: test asserting `BootstrapAdmin` pipes the admin password via stdin into `docker compose run --rm --no-deps -T regixtry bootstrap-admin -password-stdin`, never through argv or an environment variable.
+- [x] 4.5 RED: test asserting a DSN or username containing `;`, `$(…)`, spaces, or a leading `-` reaches `docker` as one literal argument (argv-slice composition, never `sh -c`). **Deviation**: `BootstrapAdmin`'s signature (per design's Interfaces/Contracts) carries no DSN parameter — the container inherits `REGISTRY_AUTH_POSTGRES_DSN` from the compose file's own `environment:` interpolation (set at `WriteProject` time), so this method never touches DSN as an argv value. The RED test instead exercises the two operator-influenced strings this method's argv actually carries: compose project name (the threat matrix's "project name" category) and admin username, both with `;`, `$(…)`, spaces, and a leading `-`.
+- [x] 4.6 GREEN: implement `Provisioner.BootstrapAdmin(ctx context.Context, p compose.Project, username, password string) error`.
+- [x] 4.7 REFACTOR: `go vet ./...` and `gofmt -w .`; confirm the stdin-writer path has no leftover buffered copy of the password after the call returns. **Note**: the password is handed to the exec seam as `strings.NewReader(password)` directly — no intermediate `[]byte` copy is made in this package's code. Go's `os/exec` internally copies stdin through a pipe goroutine when `Stdin` is a non-`*os.File` `io.Reader`; that copy is inherent to the standard library's design and is not something this package's code introduces or can eliminate without a lower-level pipe/zeroing implementation, which was judged out of scope for this PR.
 
 ### Phase 5: PR #2 Verification
 
-- [ ] 5.1 Run `go test ./internal/infra/install/compose/...` — confirm `StartDatabase`/`BootstrapAdmin` suites pass, including every secret-channel and argv-safety assertion.
+- [x] 5.1 Run `go test ./internal/infra/install/compose/...` — confirm `StartDatabase`/`BootstrapAdmin` suites pass, including every secret-channel and argv-safety assertion.
 
 ---
 
