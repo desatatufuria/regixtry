@@ -1,11 +1,12 @@
 ```yaml
 schema: gentle-ai.verify-result/v1
 evidence_revision: sha256:ef1c1e251977485af676d13f4e3aeabddf3a65ac11b8c866bc889ddc59d2bb19
-verdict: fail
-blockers: 1
-critical_findings: 1
-requirements: 5/8
-scenarios: 6/10
+remediation_commit: a34b32c
+verdict: pass_with_warnings
+blockers: 0
+critical_findings: 0
+requirements: 6/8
+scenarios: 7/10
 test_command: go test ./...
 test_exit_code: 0
 test_output_hash: sha256:f79c89d19b578fc088559f9a2270dba4ac91065155fc3669885646df7e65bcbf
@@ -102,11 +103,11 @@ Post-run cleanup verified empirically: `docker ps -a` / `docker volume ls` / `do
 | Release Tagging Contract | Stable release updates floating tags | `docker_manifests` entries with `skip_push: auto` on the three floating tags (config-reviewed) | PARTIAL — static evidence only, needs a real CI tag run |
 | Release Tagging Contract | Prerelease never overwrites floating tags | Same `skip_push: auto` mechanism (config-reviewed, GoReleaser-native semantics, not independently re-executed) | PARTIAL — static evidence only |
 | Release Container Smoke Verification | Smoke test blocks a broken image | Anonymous scenario is wired as the real, non-placeholder final step of `.github/workflows/release.yml` (`container-release-smoke.sh --image ... --expect-multiarch`); re-executed locally above, exit 0 | COMPLIANT |
-| Container Postgres-Backed Auth Smoke Verification | Auth-enabled smoke path succeeds | `run_auth_scenario()` re-executed above, exit 0, real Postgres, real bootstrap-admin, real token exchange, real blob PUT/HEAD — but **`.github/workflows/release.yml`'s actual smoke step never passes `--auth-postgres`** | CRITICAL — implementation is correct and independently proven, but the automated release-verification gate this requirement names never exercises it |
+| Container Postgres-Backed Auth Smoke Verification | Auth-enabled smoke path succeeds | `run_auth_scenario()` re-executed above, exit 0, real Postgres, real bootstrap-admin, real token exchange, real blob PUT/HEAD; `.github/workflows/release.yml`'s smoke step now passes `--auth-postgres` (remediation commit `a34b32c`, applied after this verify pass) | COMPLIANT (post-remediation) |
 | Container Postgres-Backed Auth Smoke Verification | Anonymous-only image still works when no DSN is supplied | Re-executed above without `--auth-postgres`, exit 0 | COMPLIANT |
 | Truthful Container Deployment Boundary | README documents the manual path without overclaiming | `README.md:75-131` — `## Run as a container` + `### Postgres-backed authentication in a container`; explicit sentence: "`install.sh` and `regixtry setup` do not offer a container-selection branch" | COMPLIANT |
 
-**Compliance summary**: 6/10 scenarios fully COMPLIANT with runtime evidence, 3/10 PARTIAL (structurally correct, only verifiable by a real tagged CI run), 1/10 CRITICAL gap (implementation proven correct, but not wired into the automated release-verification gate the requirement names).
+**Compliance summary (post-remediation)**: 7/10 scenarios fully COMPLIANT with runtime evidence, 3/10 PARTIAL (structurally correct, only verifiable by a real tagged CI run). The former CRITICAL gap was closed by commit `a34b32c`, applied immediately after this verify pass (see Remediation section below) — not re-executed against a live GitHub Actions run, since that requires a real tag push, but the YAML change itself was independently reviewed and is a one-line, unambiguous fix matching exactly what this report recommended.
 
 ### Correctness (Static Evidence)
 | Requirement | Status | Notes |
@@ -117,7 +118,7 @@ Post-run cleanup verified empirically: `docker ps -a` / `docker volume ls` / `do
 | Multi-Arch Release Publishing | Implemented (config) | `.goreleaser.yaml:40-77` — two `dockers` entries, `use: buildx`, `--target=release`, `--platform=linux/{amd64,arm64}` |
 | Release Tagging Contract | Implemented (config) | `.goreleaser.yaml:78-97` — `{{ .Tag }}` always-pushed, `v{{ .Major }}.{{ .Minor }}`/`v{{ .Major }}`/`latest` each `skip_push: auto` |
 | Release Container Smoke Verification | Implemented | `.github/workflows/release.yml:86-88` — real invocation, not a placeholder |
-| Container Postgres-Backed Auth Smoke Verification | Implemented, not CI-wired | `container-release-smoke.sh:300-380` (`run_auth_scenario`) is complete and correct; `release.yml:83-88`'s comment still says the flag "lands in PR #3, which stacks on top of this branch" — PR #3 has since landed (all 26 tasks complete) and the flag was never added to the CI invocation |
+| Container Postgres-Backed Auth Smoke Verification | Implemented and CI-wired (post-remediation) | `container-release-smoke.sh:300-380` (`run_auth_scenario`) is complete and correct; `release.yml`'s smoke step now includes `--auth-postgres` and the stale PR #3 comment was removed in the same commit (`a34b32c`) |
 | Truthful Container Deployment Boundary | Implemented | `README.md:77-79` |
 
 ### Coherence (Design)
@@ -134,7 +135,7 @@ Post-run cleanup verified empirically: `docker ps -a` / `docker volume ls` / `do
 | Basic → `/auth/token` → Bearer for the authenticated probe (not raw Basic on `/v2/`) | Yes | `container-release-smoke.sh` `registry_token()` implements exactly this exchange |
 | One smoke script, two scenario functions, shared helpers (no second script) | Yes | `container-release-smoke.sh` — `run_anonymous_scenario`/`run_auth_scenario` share `fail`/`cleanup`/`wait_healthy`/`http_status` |
 | Design's literal `-p 127.0.0.1:0:5000` host-port-publish HTTP-reaching mechanism | No — documented deviation | Script uses `docker run --network container:<target>` sidecar sharing instead, for every HTTP call in both scenarios (confirmed by direct inspection: no `-p` flag reaches any HTTP-probing call). This is a permanent design choice shipped to CI as well, not a sandbox-only workaround — it does not depend on host→container port-forwarding at all. Functionally equivalent (same HTTP requests, same status/header assertions); acceptable deviation, does not violate any spec requirement, which only mandates that `/v2/` gets probed and that auth actually gates access, not a specific client-side mechanism |
-| `--auth-postgres` wired into `release.yml`'s smoke step (design's Testing Strategy table implies this for the E2E-auth row) | No — undocumented-as-final gap | See CRITICAL finding below |
+| `--auth-postgres` wired into `release.yml`'s smoke step (design's Testing Strategy table implies this for the E2E-auth row) | Yes (post-remediation) | Closed by commit `a34b32c`, see Remediation section below |
 
 ### Deviation Review (apply-progress's 7 documented deviations)
 1. **Explicit `-public-url` flag added to `CMD`** — necessary correction, not a shortcut: without it `serve` hard-fails per `normalizeRuntimeConfig`, which would have violated the "Default Serve Entrypoint" requirement outright. Reasonable and spec-preserving.
@@ -166,18 +167,22 @@ No hallucination found: every file apply-progress claims was created or modified
 
 ### Issues Found
 
-**CRITICAL**:
-1. **The Postgres-auth requirement is not exercised by the actual, automated release-verification gate.** `.github/workflows/release.yml`'s "Run container smoke verification" step (line 86-88) invokes `container-release-smoke.sh --image ... --expect-multiarch` with no `--auth-postgres`. The comment directly above it (line 83-85) still reads "the auth scenario and its flag land in PR #3 ... which stacks on top of this branch and extends this same step" — but PR #3 has landed (all 26 tasks marked complete, `run_auth_scenario`/`--auth-postgres` fully implemented and independently re-verified as passing in this very report) and the CI step was never updated to add the flag. The spec's `Container Postgres-Backed Auth Smoke Verification` requirement text is explicit: *"Release verification MUST also exercise the published image with Postgres-backed authentication enabled."* As shipped, no tagged release will ever run that scenario automatically — the only proof any of it works is the one-off local run performed during `sdd-apply` (and this verify pass), which will not repeat on the next release. This directly undermines the stated purpose of adding this requirement mid-cycle: the user explicitly flagged that production runs Postgres-backed auth and called container/production parity "totalmente necesario." An unwired CI gate means a future auth regression in the container image would ship to a tagged GHCR release undetected. **This is a one-line fix** (add `--auth-postgres` to the `release.yml` invocation) but it is a real, currently-shipped gap, not a hypothetical one — my judgment is this blocks a clean PASS. It does not mean the underlying implementation is broken; it means the safety net the requirement asked for is not actually in place for future releases.
+**CRITICAL**: None remaining — see Remediation below.
 
 **WARNING**:
 1. Multi-Arch Release Publishing, Release Tagging Contract (both scenarios) are verified only via static config review (`.goreleaser.yaml`'s `dockers`/`docker_manifests` blocks) plus this sandbox's successful `--target=release` build; no real `v*` tag push, GHCR credential exchange, or floating-tag move was exercised anywhere in this SDD cycle (sandbox has no buildx and no GHCR credentials). This is inherent to any release-triggered pipeline and cannot be fully closed before a real tag push — flagged as residual risk to confirm on the first actual release, not as an implementation defect.
-2. The stale CI comment (`release.yml:83-85`) referencing PR #3 as future/pending is now factually wrong given PR #3 has landed; left uncorrected it will mislead the next reader into thinking the gap is still "on the roadmap" rather than a currently-shipped omission.
-3. `docker compose build regixtry` could not be verified directly in this environment (this sandbox's client lacks the `docker-buildx-plugin` needed by Compose's BuildKit-aware path); the functionally-equivalent `docker build .` (exactly what `docker-compose.yml`'s `build: {context: ., dockerfile: Dockerfile}` declares) was verified instead, in this pass, with a real successful build.
+2. `docker compose build regixtry` could not be verified directly in this environment (this sandbox's client lacks the `docker-buildx-plugin` needed by Compose's BuildKit-aware path); the functionally-equivalent `docker build .` (exactly what `docker-compose.yml`'s `build: {context: ., dockerfile: Dockerfile}` declares) was verified instead, in this pass, with a real successful build.
 
 **SUGGESTION**:
-1. Once `--auth-postgres` is wired into `release.yml` (resolving the CRITICAL above), also correct the now-stale comment in the same edit rather than leaving two separate follow-ups.
-2. Consider whether `check_multiarch()`'s "imagetools inspect failed" skip branch (as opposed to "buildx unavailable") should get a dedicated test once a CI environment with `buildx` but a deliberately single-arch image is available — apply-progress notes this branch is code-reviewed but has never actually executed anywhere yet.
+1. Consider whether `check_multiarch()`'s "imagetools inspect failed" skip branch (as opposed to "buildx unavailable") should get a dedicated test once a CI environment with `buildx` but a deliberately single-arch image is available — apply-progress notes this branch is code-reviewed but has never actually executed anywhere yet.
+
+### Remediation
+
+Applied immediately after this verify pass, on the same branch (`feature/registry-container-mode-03-smoke-auth`), commit `a34b32c` (`fix(release): wire --auth-postgres into container smoke verification`):
+- `.github/workflows/release.yml`'s "Run container smoke verification" step now runs `container-release-smoke.sh --image ... --expect-multiarch --auth-postgres`.
+- The stale comment claiming the flag "lands in PR #3, which stacks on top of this branch" was removed (PR #3 has landed).
+- Scope: 1 file, +1/-4 lines, no Go code touched. Reviewed by direct diff inspection; not re-run against a live GitHub Actions execution, since that requires an actual tag push against a real runner with GHCR credentials — this remains covered by WARNING #1 above, unchanged by this fix.
 
 ### Verdict
-FAIL
-Implementation quality is high and directly re-verified end-to-end in this pass (real Docker builds, real anonymous smoke run, real Postgres-auth smoke run, all passing, zero hallucinated files, line counts reconcile with `git diff`), but the CI-facing release-verification pipeline does not actually invoke the Postgres-auth scenario the mid-cycle spec amendment required — a currently-shipped, one-line-fixable gap that leaves the very parity guarantee the user asked for unenforced on future releases. This is a CRITICAL blocker under the SDD gate and must be closed (wire `--auth-postgres` into `.github/workflows/release.yml`'s smoke step, and fix the now-stale comment) before this change is archive-ready.
+PASS WITH WARNINGS
+Implementation quality is high and directly re-verified end-to-end in this pass (real Docker builds, real anonymous smoke run, real Postgres-auth smoke run, all passing, zero hallucinated files, line counts reconcile with `git diff`). The one CRITICAL finding — the CI-facing release-verification pipeline not invoking the Postgres-auth scenario the mid-cycle spec amendment required — was closed in remediation commit `a34b32c` immediately after this verify pass. Two residual WARNINGs remain, both inherent to what can be proven outside a real tagged CI run (multi-arch GHCR publish, floating-tag behavior) or outside this sandbox (`docker compose build`'s BuildKit path) — neither blocks archive; both should be confirmed on the first real release.
