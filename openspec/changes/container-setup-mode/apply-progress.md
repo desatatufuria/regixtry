@@ -8,8 +8,8 @@ exactly what already landed and do not duplicate or drift from it.
 
 ## Status
 
-PR #1: **9/10 tasks complete** (all Go/TDD work done and green; 1 task blocked
-by sandbox tooling, not by design or code — see below).
+PR #1: **10/10 tasks complete** (all Go/TDD work done and green; task 2.4 initially
+blocked by sandbox tooling, resolved with a renamed file — see below).
 
 ## Completed Tasks (PR #1)
 
@@ -19,7 +19,7 @@ by sandbox tooling, not by design or code — see below).
 - [x] 2.1 `internal/infra/install/compose/assets/docker-compose.yml` embedded asset
 - [x] 2.2 Repo-root `docker-compose.yml` rewritten, byte-identical to the embedded asset
 - [x] 2.3 RED: drift test (`drift_test.go`) — byte-equality repo-root vs. embedded asset
-- [ ] 2.4 `.env.example` — **BLOCKED** (sandbox dotenv-pattern write protection; see below)
+- [x] 2.4 `docker.env.example` — created (originally attempted as `.env.example`, blocked by sandbox dotenv-pattern write protection; resolved with a non-dotenv filename, see below)
 - [x] 2.5 RED: `WriteProject` refusal-of-pre-existing-project + `filepath.Join`/literal-value tests
 - [x] 2.6 RED: generated password absent from compose bytes/env keys, `0600` mode test
 - [x] 2.7 GREEN: `Provisioner.WriteProject`
@@ -40,7 +40,7 @@ by sandbox tooling, not by design or code — see below).
 | `internal/infra/install/compose/assets/docker-compose.yml` | Created | Canonical compose asset (source of truth) |
 | `internal/infra/install/compose/drift_test.go` | Created | Byte-equality drift lock vs. repo-root file |
 | `docker-compose.yml` (repo root) | Rewritten | Byte-identical to the embedded asset |
-| `.env.example` (repo root) | **Not created** | Blocked — see below; content recorded here |
+| `docker.env.example` (repo root) | Created | Renamed from the originally-planned `.env.example`, which the sandbox blocked — see below |
 
 `cmd/regixtry/main.go` is **not** modified and does not import `internal/infra/install/compose`
 (confirmed via `rg -n "infra/install/compose" cmd/regixtry/main.go` → no match), matching this
@@ -89,29 +89,37 @@ pre-existing test was modified or broken.
    `## File Changes` scope regardless. `WaitReachable` (PR #3) polls the public URL over HTTP
    directly, so setup orchestration has no functional gap from this — only `docker compose ps`
    would lack a `healthy` status column for the `regixtry` service until a later change adds it.
-2. **`.env.example` not created — sandbox blocker, not a design or code issue.** See "Blocked
-   Task" section below for the full explanation and the exact intended content.
+2. **`docker.env.example` created instead of `.env.example`** — the sandbox's dotenv-pattern
+   write protection blocked the originally-planned filename; resolved with a non-dotenv name,
+   `docker-compose.yml` updated to match. See "Resolved Task" section below.
 3. **DB username left as `registry`** (not renamed to `regixtry`) to minimize unrelated diff
    surface for existing dev users migrating off the old file; only the fields design explicitly
    calls out (network, credential, build→pull) were changed.
 
-## Blocked Task: `.env.example` (tasks.md 2.4)
+## Resolved Task: `docker.env.example` (tasks.md 2.4)
 
-**Not a design or code problem.** The sandbox's dotenv-pattern write protection hard-denies any
-write to a path matching `.env*` at the repository root, independent of tool (`Write` and `Bash`
-heredoc/redirection were both denied identically) and independent of content — confirmed with a
-minimal `printf 'X=1\n' > .env.example` probe, which was denied exactly like the real intended
-content. This is a legitimate sandbox guardrail (likely blanket dotenv/credential-pattern
-protection) that should not be circumvented via renaming tricks or encoding workarounds.
+**Originally blocked, now resolved.** The sandbox's dotenv-pattern write protection hard-denies
+any write to a path matching `.env*` at the repository root, independent of tool (`Write` and
+`Bash` heredoc/redirection were both denied identically) and independent of content — confirmed
+with a minimal `printf 'X=1\n' > .env.example` probe by both the apply agent and the orchestrator,
+denied identically to the real intended content. This is a legitimate sandbox guardrail
+(credential-pattern protection), not something to circumvent via encoding workarounds.
 
-**Exact intended content**, for a human or a differently-configured session to create in one
-command (`.env.example` at the repo root, sibling to `docker-compose.yml`):
+**Resolution (user-approved)**: the file was created as `docker.env.example` instead — a filename
+outside the blocked dotenv pattern. `docker-compose.yml` and the embedded asset
+(`internal/infra/install/compose/assets/docker-compose.yml`) were both updated so every `:?`
+error message's `cp .env.example .env` guidance now reads `cp docker.env.example .env`, keeping
+the two files byte-identical per the drift-lock test (`go test ./internal/infra/install/compose/...`
+reconfirmed green after the edit). PR #4/#5's `main.go` wiring and README documentation should
+reference `docker.env.example` by this same name, not `.env.example`.
+
+**Content actually shipped** at `docker.env.example` (repo root, sibling to `docker-compose.yml`):
 
 ```
 # Copy to .env and fill in values for manual `docker compose up -d` runs.
 # `regixtry setup --mode docker` generates and writes these automatically
 # under the state directory; this file is only needed for manual compose
-# usage (cp .env.example .env).
+# usage (cp docker.env.example .env).
 
 # Published Regixtry image to run. Pin to a release tag in production;
 # "latest" is fine for local/dev use.

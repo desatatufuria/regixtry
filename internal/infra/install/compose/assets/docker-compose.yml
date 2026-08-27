@@ -9,7 +9,7 @@ services:
     environment:
       POSTGRES_DB: regixtry_auth
       POSTGRES_USER: registry
-      POSTGRES_PASSWORD: ${REGIXTRY_POSTGRES_PASSWORD:?set it in .env (regixtry setup --mode docker generates one; manually: cp .env.example .env)}
+      POSTGRES_PASSWORD: ${REGIXTRY_POSTGRES_PASSWORD:?set it in .env (regixtry setup --mode docker generates one; manually: cp docker.env.example .env)}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U registry -d regixtry_auth"]
       interval: 5s
@@ -19,12 +19,12 @@ services:
       - postgres-data:/var/lib/postgresql/data
 
   regixtry:
-    image: ${REGIXTRY_IMAGE:?set it in .env (e.g. ghcr.io/desatatufuria/regixtry:latest); manually: cp .env.example .env}
+    image: ${REGIXTRY_IMAGE:?set it in .env (e.g. ghcr.io/desatatufuria/regixtry:latest); manually: cp docker.env.example .env}
     depends_on:
       postgres:
         condition: service_healthy
     environment:
-      REGISTRY_AUTH_POSTGRES_DSN: ${REGIXTRY_AUTH_POSTGRES_DSN:?set it in .env (regixtry setup --mode docker generates one; manually: cp .env.example .env)}
+      REGISTRY_AUTH_POSTGRES_DSN: ${REGIXTRY_AUTH_POSTGRES_DSN:?set it in .env (regixtry setup --mode docker generates one; manually: cp docker.env.example .env)}
       REGISTRY_PUBLIC_URL: http://localhost:${REGIXTRY_PORT:-5000}
     ports:
       - "${REGIXTRY_PORT:-5000}:5000"
