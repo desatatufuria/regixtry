@@ -11,7 +11,9 @@ package compose
 import (
 	"context"
 	"errors"
+	"io"
 	"os/exec"
+	"time"
 )
 
 // execRunner is the injectable subprocess seam every composeRunner method
@@ -22,10 +24,23 @@ import (
 // exec_helper_test.go) so the entire package tests without a Docker daemon.
 type execRunner func(ctx context.Context, name string, args ...string) ([]byte, error)
 
-// ProvisionerConfig configures a Provisioner. Exec defaults to real
-// exec.CommandContext invocations of "docker" when nil; tests inject a fake.
+// execStdinRunner is the injectable seam for the one subprocess invocation
+// that must carry secret input on stdin rather than argv or an environment
+// variable: BootstrapAdmin's `-password-stdin` (design.md "Secret channel"
+// threat). Kept as a distinct type from execRunner so every method that
+// never touches a secret (Preflight, StartDatabase's readiness poll) keeps
+// the plain argv-only seam, and so tests can assert stdin content
+// independently of argv.
+type execStdinRunner func(ctx context.Context, stdin io.Reader, name string, args ...string) ([]byte, error)
+
+// ProvisionerConfig configures a Provisioner. Exec/ExecStdin default to real
+// exec.CommandContext invocations of "docker" when nil; Sleep defaults to
+// time.Sleep. Tests inject fakes for all three so the package never needs a
+// Docker daemon or a real clock.
 type ProvisionerConfig struct {
-	Exec execRunner
+	Exec      execRunner
+	ExecStdin execStdinRunner
+	Sleep     func(time.Duration)
 }
 
 // Provisioner implements the composeRunner contract cmd/regixtry/main.go
@@ -36,12 +51,15 @@ type ProvisionerConfig struct {
 // (PR #2) and StartRegistry/WaitReachable/SaveProvenance/Down (PR #3)
 // follow later in the container-setup-mode chain.
 type Provisioner struct {
-	exec execRunner
+	exec      execRunner
+	execStdin execStdinRunner
+	sleep     func(time.Duration)
 }
 
-// NewProvisioner builds a Provisioner. A nil cfg.Exec falls back to real
-// subprocess execution -- the same default-then-inject shape the trivy and
-// gitleaks scanner runners already use in this codebase.
+// NewProvisioner builds a Provisioner. A nil cfg.Exec/cfg.ExecStdin falls
+// back to real subprocess execution and a nil cfg.Sleep falls back to
+// time.Sleep -- the same default-then-inject shape the trivy and gitleaks
+// scanner runners already use in this codebase.
 func NewProvisioner(cfg ProvisionerConfig) *Provisioner {
 	run := cfg.Exec
 	if run == nil {
@@ -50,7 +68,22 @@ func NewProvisioner(cfg ProvisionerConfig) *Provisioner {
 			return cmd.Output()
 		}
 	}
-	return &Provisioner{exec: run}
+
+	runStdin := cfg.ExecStdin
+	if runStdin == nil {
+		runStdin = func(ctx context.Context, stdin io.Reader, name string, args ...string) ([]byte, error) {
+			cmd := exec.CommandContext(ctx, name, args...)
+			cmd.Stdin = stdin
+			return cmd.Output()
+		}
+	}
+
+	sleep := cfg.Sleep
+	if sleep == nil {
+		sleep = time.Sleep
+	}
+
+	return &Provisioner{exec: run, execStdin: runStdin, sleep: sleep}
 }
 
 // Truthful Preflight messages (design.md Interfaces / Contracts): each
