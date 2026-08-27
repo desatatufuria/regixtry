@@ -26,6 +26,7 @@ import (
 	domainauth "regixtry/internal/domain/auth"
 	authpostgres "regixtry/internal/infra/auth/postgres"
 	"regixtry/internal/infra/cliprogress"
+	"regixtry/internal/infra/install/compose"
 	installlinux "regixtry/internal/infra/install/linux"
 	metadata "regixtry/internal/infra/metadata/sqlite"
 	gitleaksinfra "regixtry/internal/infra/scanning/gitleaks"
@@ -51,6 +52,30 @@ type bootstrapRunner interface {
 
 var newBootstrapRunner = func() bootstrapRunner {
 	return installlinux.NewBootstrapper()
+}
+
+// composeRunner is the `docker` setup mode's provisioning seam -- the same
+// shape as bootstrapRunner/newBootstrapRunner above, but reaching
+// internal/infra/install/compose instead of internal/infra/install/linux
+// (design.md "Where docker lives" decision). installlinux.supportedMode is
+// deliberately never widened to accept "docker": doing so would let a
+// compose config reach installlinux.ValidateConfig/runner.Run/systemd
+// rollback, silently breaking the "daemon-sqlite unchanged" guarantee this
+// PR's regression tests exist to prove. The exact method set below mirrors
+// design.md's Interfaces / Contracts Go snippet verbatim.
+type composeRunner interface {
+	Preflight(ctx context.Context) error
+	WriteProject(compose.ProjectConfig) (compose.Project, error)
+	StartDatabase(ctx context.Context, p compose.Project) error
+	BootstrapAdmin(ctx context.Context, p compose.Project, username, password string) error
+	StartRegistry(ctx context.Context, p compose.Project) error
+	WaitReachable(ctx context.Context, p compose.Project) error
+	SaveProvenance(p compose.Project) error
+	Down(ctx context.Context, p compose.Project) error
+}
+
+var newComposeRunner = func() composeRunner {
+	return compose.NewProvisioner(compose.ProvisionerConfig{})
 }
 
 // newFeatureRuntimeManager builds the managed runtime manager for one
