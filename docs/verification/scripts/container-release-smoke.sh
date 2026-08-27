@@ -7,15 +7,19 @@
 # conventions.
 #
 # Usage:
-#   container-release-smoke.sh --image <ref> [--expect-multiarch]
+#   container-release-smoke.sh --image <ref> [--expect-multiarch] [--auth-postgres]
 #
-# `--auth-postgres` (Postgres-backed auth scenario) is added by a later
-# revision of this script; it is not implemented here.
+# `--auth-postgres` runs a second scenario: a sibling `postgres:17-alpine`
+# container on an ephemeral network, `bootstrap-admin -password-stdin`
+# against it, then a `serve` container started with that DSN, proving auth
+# actually gates `/v2/` (anonymous rejected, authenticated Bearer token
+# grants access) rather than only that the flag is accepted.
 
 set -euo pipefail
 
 IMAGE=""
 EXPECT_MULTIARCH=0
+AUTH_POSTGRES=0
 RUN_ID="$$-$(date +%s)"
 
 # CURL_IMAGE runs every HTTP probe joined to the target container's network
@@ -31,6 +35,15 @@ ANON_VOLUME=""
 ANON_CONTAINER=""
 ANON_CONTAINER2=""
 
+# AUTH_* track the --auth-postgres scenario's resources so cleanup() can tear
+# them down in the load-bearing order design.md requires: containers first,
+# then volumes, then the network last (docker network rm fails while any
+# container endpoint is still attached to it).
+AUTH_NETWORK=""
+AUTH_PG_CONTAINER=""
+AUTH_CONTAINER=""
+AUTH_VOLUME=""
+
 fail() {
   printf 'container-release-smoke: %s\n' "$*" >&2
   exit 1
@@ -38,21 +51,30 @@ fail() {
 
 usage() {
   cat <<'EOF'
-Usage: container-release-smoke.sh --image <ref> [--expect-multiarch]
+Usage: container-release-smoke.sh --image <ref> [--expect-multiarch] [--auth-postgres]
 EOF
 }
 
 cleanup() {
   local container=""
+  local volume=""
 
-  for container in "${ANON_CONTAINER2}" "${ANON_CONTAINER}"; do
+  for container in "${ANON_CONTAINER2}" "${ANON_CONTAINER}" "${AUTH_CONTAINER}" "${AUTH_PG_CONTAINER}"; do
     if [[ -n "${container}" ]]; then
       docker rm -f "${container}" >/dev/null 2>&1 || true
     fi
   done
 
-  if [[ -n "${ANON_VOLUME}" ]]; then
-    docker volume rm "${ANON_VOLUME}" >/dev/null 2>&1 || true
+  for volume in "${ANON_VOLUME}" "${AUTH_VOLUME}"; do
+    if [[ -n "${volume}" ]]; then
+      docker volume rm "${volume}" >/dev/null 2>&1 || true
+    fi
+  done
+
+  # Network removal is last and only possible once every attached container
+  # endpoint above has already been removed.
+  if [[ -n "${AUTH_NETWORK}" ]]; then
+    docker network rm "${AUTH_NETWORK}" >/dev/null 2>&1 || true
   fi
 }
 
@@ -112,6 +134,70 @@ http_status() {
     docker run --rm --network "container:${container}" "${CURL_IMAGE}" \
       -s -o /dev/null -w '%{http_code}' --max-time 20 -X "${method}" "$@" "${url}"
   fi
+}
+
+# http_headers issues one HTTP request the same way http_status does, but
+# prints the raw response headers instead of just the status code. Shares
+# http_status's HEAD special-case (curl's `--head`, not `-X HEAD`) for the
+# same reason: this server sets a real Content-Length on HEAD responses and
+# `-X HEAD` alone leaves curl waiting for a body that never arrives.
+http_headers() {
+  local container="$1"
+  local method="$2"
+  local url="$3"
+  shift 3
+
+  if [[ "${method}" == "HEAD" ]]; then
+    docker run --rm --network "container:${container}" "${CURL_IMAGE}" \
+      -sS -D - -o /dev/null --max-time 20 --head "$@" "${url}"
+  else
+    docker run --rm --network "container:${container}" "${CURL_IMAGE}" \
+      -sS -D - -o /dev/null --max-time 20 -X "${method}" "$@" "${url}"
+  fi
+}
+
+# wait_postgres_ready polls `pg_isready` inside the sibling Postgres
+# container until it reports ready or the timeout elapses — the exact check
+# docker-compose.yml's own healthcheck uses, avoiding the bootstrap-admin
+# race where Postgres accepts connections before finishing recovery/init.
+wait_postgres_ready() {
+  local container="$1"
+  local timeout="${2:-60}"
+  local elapsed=0
+
+  while [[ "${elapsed}" -lt "${timeout}" ]]; do
+    if docker exec "${container}" pg_isready -U registry -d regixtry_auth >/dev/null 2>&1; then
+      return 0
+    fi
+
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+
+  fail "${container} did not report pg_isready within ${timeout}s"
+}
+
+# registry_token exchanges Basic credentials for a Bearer access token via
+# GET /auth/token?scope=repository:<repo>:pull,push, per design.md's auth
+# smoke sequence. Basic credentials on /v2/ itself are silently ignored
+# (authenticate() only recognizes Bearer), so this exchange is mandatory,
+# not a shortcut. Prints only the extracted token string on success.
+registry_token() {
+  local container="$1"
+  local username="$2"
+  local password="$3"
+  local repo="$4"
+  local response=""
+  local token=""
+
+  response="$(docker run --rm --network "container:${container}" "${CURL_IMAGE}" \
+    -sS --max-time 20 -u "${username}:${password}" \
+    "http://127.0.0.1:5000/auth/token?service=regixtry&scope=repository:${repo}:pull,push")"
+
+  token="$(printf '%s' "${response}" | grep -o '"token"[[:space:]]*:[[:space:]]*"[^"]*"' | head -n1 | sed -E 's/.*"([^"]*)"$/\1/')"
+  [[ -n "${token}" ]] || fail "registry_token: could not parse a token from the /auth/token response: ${response}"
+
+  printf '%s' "${token}"
 }
 
 assert_non_root() {
@@ -206,6 +292,93 @@ run_anonymous_scenario() {
   [[ "${status}" == "200" ]] || fail "blob HEAD after restart on the same volume returned ${status}, expected 200 (persistence proof)"
 }
 
+# run_auth_scenario: ephemeral network + sibling postgres:17-alpine +
+# bootstrap-admin (must succeed BEFORE serve starts, since serve fails fast
+# with no existing admin) + serve with -auth-postgres-dsn. Asserts anonymous
+# rejection, then an authenticated token exchange followed by a successful
+# blob PUT/HEAD, then confirms the same HEAD is rejected without the token.
+run_auth_scenario() {
+  local repo="smoke/auth"
+  local admin_password="regixtry-smoke-admin-${RUN_ID}"
+  local blob_content="regixtry-auth-smoke-${RUN_ID}"
+  local blob_digest=""
+  local dsn=""
+  local token=""
+  local headers=""
+  local location=""
+  local status=""
+
+  blob_digest="sha256:$(printf '%s' "${blob_content}" | sha256sum | cut -d' ' -f1)"
+
+  AUTH_NETWORK="regixtry-smoke-auth-net-${RUN_ID}"
+  AUTH_PG_CONTAINER="regixtry-smoke-pg-${RUN_ID}"
+  AUTH_CONTAINER="regixtry-smoke-auth-${RUN_ID}"
+  AUTH_VOLUME="regixtry-smoke-auth-vol-${RUN_ID}"
+
+  docker network create "${AUTH_NETWORK}" >/dev/null
+
+  docker run -d --name "${AUTH_PG_CONTAINER}" --network "${AUTH_NETWORK}" \
+    -e POSTGRES_DB=regixtry_auth -e POSTGRES_USER=registry -e POSTGRES_PASSWORD=registry \
+    postgres:17-alpine >/dev/null
+
+  wait_postgres_ready "${AUTH_PG_CONTAINER}" 60
+
+  dsn="postgres://registry:registry@${AUTH_PG_CONTAINER}:5432/regixtry_auth?sslmode=disable"
+
+  # bootstrap-admin MUST complete before the serve container starts: serve
+  # fails fast when auth is enabled and no admin exists yet, so there would
+  # be no running container to exec into afterward.
+  if ! printf '%s\n' "${admin_password}" | docker run --rm -i --network "${AUTH_NETWORK}" \
+    "${IMAGE}" bootstrap-admin -auth-postgres-dsn "${dsn}" -username admin -password-stdin; then
+    fail "bootstrap-admin failed against ${AUTH_PG_CONTAINER} (auth scenario cannot continue)"
+  fi
+
+  docker volume create "${AUTH_VOLUME}" >/dev/null
+
+  docker run -d --name "${AUTH_CONTAINER}" --network "${AUTH_NETWORK}" \
+    -v "${AUTH_VOLUME}:/var/lib/regixtry" \
+    -e REGISTRY_AUTH_POSTGRES_DSN="${dsn}" \
+    "${IMAGE}" >/dev/null
+
+  assert_non_root "${AUTH_CONTAINER}"
+  wait_healthy "${AUTH_CONTAINER}" 60
+
+  # Auth rejects: anonymous GET /v2/ MUST be 401 and carry WWW-Authenticate.
+  # This is the expected, correct outcome — distinct from liveness above,
+  # which goes healthy via 401 and proves nothing about auth by itself.
+  status="$(http_status "${AUTH_CONTAINER}" GET "http://127.0.0.1:5000/v2/")"
+  [[ "${status}" == "401" ]] || fail "anonymous GET /v2/ returned ${status}, expected 401"
+
+  headers="$(http_headers "${AUTH_CONTAINER}" GET "http://127.0.0.1:5000/v2/")"
+  printf '%s' "${headers}" | tr -d '\r' | grep -qi '^www-authenticate:' \
+    || fail "anonymous GET /v2/ response missing WWW-Authenticate header"
+
+  # Auth grants: Basic credentials exchanged for a Bearer token, then that
+  # token authorizes a real blob PUT/HEAD round trip.
+  token="$(registry_token "${AUTH_CONTAINER}" admin "${admin_password}" "${repo}")"
+
+  headers="$(docker run --rm --network "container:${AUTH_CONTAINER}" "${CURL_IMAGE}" \
+    -sS -D - -o /dev/null --max-time 20 -X POST -H "Authorization: Bearer ${token}" \
+    "http://127.0.0.1:5000/v2/${repo}/blobs/uploads/")"
+  location="$(printf '%s' "${headers}" | tr -d '\r' | awk -F': ' 'tolower($1) == "location" {print $2; exit}')"
+  [[ -n "${location}" ]] || fail "authenticated blob upload start did not return a Location header"
+
+  status="$(docker run --rm --network "container:${AUTH_CONTAINER}" "${CURL_IMAGE}" \
+    -s -o /dev/null -w '%{http_code}' --max-time 20 -X PUT -H "Authorization: Bearer ${token}" \
+    --data-raw "${blob_content}" "http://127.0.0.1:5000${location}?digest=${blob_digest}")"
+  [[ "${status}" == "201" ]] || fail "authenticated blob upload PUT returned ${status}, expected 201"
+
+  status="$(docker run --rm --network "container:${AUTH_CONTAINER}" "${CURL_IMAGE}" \
+    -s -o /dev/null -w '%{http_code}' --max-time 20 --head -H "Authorization: Bearer ${token}" \
+    "http://127.0.0.1:5000/v2/${repo}/blobs/${blob_digest}")"
+  [[ "${status}" == "200" ]] || fail "authenticated blob HEAD returned ${status}, expected 200"
+
+  # The same HEAD without the Bearer token MUST be rejected — proves the
+  # 200 above came from the token, not from the endpoint being open.
+  status="$(http_status "${AUTH_CONTAINER}" HEAD "http://127.0.0.1:5000/v2/${repo}/blobs/${blob_digest}")"
+  [[ "${status}" == "401" ]] || fail "unauthenticated blob HEAD returned ${status}, expected 401"
+}
+
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -216,6 +389,10 @@ parse_args() {
         ;;
       --expect-multiarch)
         EXPECT_MULTIARCH=1
+        shift
+        ;;
+      --auth-postgres)
+        AUTH_POSTGRES=1
         shift
         ;;
       -h|--help)
@@ -242,6 +419,11 @@ main() {
   run_anonymous_scenario
 
   printf 'container-release-smoke: anonymous scenario passed for %s\n' "${IMAGE}"
+
+  if [[ "${AUTH_POSTGRES}" -eq 1 ]]; then
+    run_auth_scenario
+    printf 'container-release-smoke: auth scenario passed for %s\n' "${IMAGE}"
+  fi
 }
 
 main "$@"
