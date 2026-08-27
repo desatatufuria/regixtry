@@ -94,16 +94,16 @@ Sum: 580-780 lines, matching the total re-estimate. PR #3 carries the largest bu
 
 ### Phase 5a: Container Smoke Script — Shared Helpers + Anonymous Scenario
 
-- [ ] 5a.1 Create `docs/verification/scripts/container-release-smoke.sh`, sibling of `install-release-smoke.sh`; implement shared helpers used by both scenarios: `fail()`, `cleanup()` trap, `wait_healthy()`, `http_status()`, `registry_token()`.
-- [ ] 5a.2 Implement `--image <ref>` and `--expect-multiarch` flag parsing (`--auth-postgres` deferred to PR #3); optional `docker buildx imagetools inspect` platform check.
-- [ ] 5a.3 Implement `run_anonymous_scenario()`: named volume, run detached, assert `Config.User`/in-container `id -u` non-root, poll `State.Health.Status` to `healthy`, blob upload over `/v2/`, container destroy, re-run on same volume, `HEAD` the blob digest for 200 (persistence proof).
-- [ ] 5a.4 Implement cleanup ordering for the anonymous scenario: registry container → named volume; every step `|| true` so a mid-scenario failure still tears down.
-- [ ] 5a.5 Wire CLI dispatch: always call `run_anonymous_scenario` (`run_auth_scenario` dispatch added in PR #3).
-- [ ] 4.4 Verify the CI smoke-verification step added in PR #1 (4.3) now resolves against `container-release-smoke.sh` and passes end-to-end on this branch, since it is stacked on PR #1 and includes the script for the first time.
+- [x] 5a.1 Create `docs/verification/scripts/container-release-smoke.sh`, sibling of `install-release-smoke.sh`; implement shared helpers used by both scenarios: `fail()`, `cleanup()` trap, `wait_healthy()`, `http_status()`, `registry_token()`. (`registry_token()` omitted — see apply-progress deviation 1.)
+- [x] 5a.2 Implement `--image <ref>` and `--expect-multiarch` flag parsing (`--auth-postgres` deferred to PR #3); optional `docker buildx imagetools inspect` platform check.
+- [x] 5a.3 Implement `run_anonymous_scenario()`: named volume, run detached, assert `Config.User`/in-container `id -u` non-root, poll `State.Health.Status` to `healthy`, blob upload over `/v2/`, container destroy, re-run on same volume, `HEAD` the blob digest for 200 (persistence proof).
+- [x] 5a.4 Implement cleanup ordering for the anonymous scenario: registry container → named volume; every step `|| true` so a mid-scenario failure still tears down.
+- [x] 5a.5 Wire CLI dispatch: always call `run_anonymous_scenario` (`run_auth_scenario` dispatch added in PR #3).
+- [x] 4.4 Verify the CI smoke-verification step added in PR #1 (4.3) now resolves against `container-release-smoke.sh` and passes end-to-end on this branch, since it is stacked on PR #1 and includes the script for the first time. (Verified locally against a `--target=release` build standing in for the CI-built image — see apply-progress; the workflow file itself now invokes the real script with `--expect-multiarch`.)
 
 ### Phase 6.3a: PR #2 Verification
 
-- [ ] 6.3a Run `container-release-smoke.sh` locally against `docker build --target=release .` without `--auth-postgres`, to prove the anonymous integration layer before relying on CI's E2E run.
+- [x] 6.3a Run `container-release-smoke.sh` locally against `docker build --target=release .` without `--auth-postgres`, to prove the anonymous integration layer before relying on CI's E2E run.
 
 ---
 
