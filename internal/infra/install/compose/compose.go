@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/http"
 	"os/exec"
 	"time"
 )
@@ -33,27 +34,37 @@ type execRunner func(ctx context.Context, name string, args ...string) ([]byte, 
 // independently of argv.
 type execStdinRunner func(ctx context.Context, stdin io.Reader, name string, args ...string) ([]byte, error)
 
+// httpStatusFetcher is the injectable seam WaitReachable uses to poll the
+// registry's public URL (design.md Data Flow: "poll GET <public-url>/v2/ ->
+// 200 or 401"). Kept distinct from execRunner since this is a direct HTTP
+// probe, never a subprocess -- PR #1's apply-progress recorded that the
+// current Dockerfile on this branch has no working container healthcheck
+// primitive, so WaitReachable cannot rely on `docker compose ps`'s health
+// status and polls the URL itself instead. Tests inject a fake so the whole
+// package still needs no real network call.
+type httpStatusFetcher func(ctx context.Context, url string) (int, error)
+
 // ProvisionerConfig configures a Provisioner. Exec/ExecStdin default to real
 // exec.CommandContext invocations of "docker" when nil; Sleep defaults to
-// time.Sleep. Tests inject fakes for all three so the package never needs a
-// Docker daemon or a real clock.
+// time.Sleep; HTTPStatus defaults to a real http.Client GET. Tests inject
+// fakes for all four so the package never needs a Docker daemon, a real
+// clock, or a real network call.
 type ProvisionerConfig struct {
-	Exec      execRunner
-	ExecStdin execStdinRunner
-	Sleep     func(time.Duration)
+	Exec       execRunner
+	ExecStdin  execStdinRunner
+	Sleep      func(time.Duration)
+	HTTPStatus httpStatusFetcher
 }
 
 // Provisioner implements the composeRunner contract cmd/regixtry/main.go
 // declares (design.md Interfaces / Contracts) for `docker` setup mode:
 // preflight detection, compose project materialization, staged bring-up,
-// one-shot admin bootstrap, reachability, provenance, teardown. Only
-// Preflight and WriteProject land in this PR; StartDatabase/BootstrapAdmin
-// (PR #2) and StartRegistry/WaitReachable/SaveProvenance/Down (PR #3)
-// follow later in the container-setup-mode chain.
+// one-shot admin bootstrap, reachability, provenance, teardown.
 type Provisioner struct {
-	exec      execRunner
-	execStdin execStdinRunner
-	sleep     func(time.Duration)
+	exec       execRunner
+	execStdin  execStdinRunner
+	sleep      func(time.Duration)
+	httpStatus httpStatusFetcher
 }
 
 // NewProvisioner builds a Provisioner. A nil cfg.Exec/cfg.ExecStdin falls
@@ -83,7 +94,24 @@ func NewProvisioner(cfg ProvisionerConfig) *Provisioner {
 		sleep = time.Sleep
 	}
 
-	return &Provisioner{exec: run, execStdin: runStdin, sleep: sleep}
+	httpStatus := cfg.HTTPStatus
+	if httpStatus == nil {
+		client := &http.Client{Timeout: 5 * time.Second}
+		httpStatus = func(ctx context.Context, url string) (int, error) {
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+			if err != nil {
+				return 0, err
+			}
+			resp, err := client.Do(req)
+			if err != nil {
+				return 0, err
+			}
+			defer resp.Body.Close()
+			return resp.StatusCode, nil
+		}
+	}
+
+	return &Provisioner{exec: run, execStdin: runStdin, sleep: sleep, httpStatus: httpStatus}
 }
 
 // Truthful Preflight messages (design.md Interfaces / Contracts): each
