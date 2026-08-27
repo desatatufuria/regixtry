@@ -82,25 +82,25 @@ healthcheck subcommand before the smoke script that exercised it existed.
 
 ### Phase 1: Compose Package Types & Preflight (Strict TDD; threat: missing/broken tool detection)
 
-- [ ] 1.1 RED: `internal/infra/install/compose/compose_test.go` — table-driven tests for `Preflight(ctx)` covering `docker` absent from `PATH`, `docker compose version` failing while `docker version` succeeds, and `docker version` failing (daemon unreachable); assert the three distinct truthful messages from design and that nothing is written to disk on any failure.
-- [ ] 1.2 GREEN: define `ProjectConfig`/`Project` types and implement `Provisioner.Preflight` in `internal/infra/install/compose/compose.go`, using an injectable exec-runner seam (fake in tests, `exec.CommandContext` argv slices in production — never `sh -c`).
-- [ ] 1.3 REFACTOR: extract the fake exec-runner into a small test helper reusable by PR #2/#3; `go vet ./...` and `gofmt -w .`.
+- [x] 1.1 RED: `internal/infra/install/compose/compose_test.go` — table-driven tests for `Preflight(ctx)` covering `docker` absent from `PATH`, `docker compose version` failing while `docker version` succeeds, and `docker version` failing (daemon unreachable); assert the three distinct truthful messages from design and that nothing is written to disk on any failure.
+- [x] 1.2 GREEN: define `ProjectConfig`/`Project` types and implement `Provisioner.Preflight` in `internal/infra/install/compose/compose.go`, using an injectable exec-runner seam (fake in tests, `exec.CommandContext` argv slices in production — never `sh -c`).
+- [x] 1.3 REFACTOR: extract the fake exec-runner into a small test helper reusable by PR #2/#3; `go vet ./...` and `gofmt -w .`.
 
 ### Phase 2: Compose Artifacts, Env File & WriteProject (Strict TDD; threat: filesystem target selection, secret channel)
 
-- [ ] 2.1 Create `internal/infra/install/compose/assets/docker-compose.yml`: pulls `${REGIXTRY_IMAGE}`, no `build:`, no `networks:`/`external: true`, mandatory `${REGIXTRY_POSTGRES_PASSWORD:?...}` interpolation, `depends_on: condition: service_healthy`, named volumes and healthchecks for both services.
-- [ ] 2.2 Rewrite repo-root `docker-compose.yml` as a byte-identical copy of the embedded asset (removes the `dtf-netwok` external-network requirement and the hardcoded `POSTGRES_PASSWORD: registry` literal).
-- [ ] 2.3 RED: drift test reading `../../../../docker-compose.yml` and asserting byte-equality with the embedded asset, same rule the Dockerfile stages already follow.
-- [ ] 2.4 Create `.env.example` documenting `REGIXTRY_POSTGRES_PASSWORD`, `REGIXTRY_AUTH_POSTGRES_DSN`, `REGIXTRY_IMAGE`, `REGIXTRY_PORT`.
-- [ ] 2.5 RED: test asserting `WriteProject` refuses a pre-existing project at the target path rather than adopting it, and that project/env-file paths are built only via `filepath.Join` (never string concatenation) — DSN/project-name strings containing `;`, `$(…)`, spaces, or a leading `-` must reach `docker` as one literal argument, not shell-interpreted.
-- [ ] 2.6 RED: test asserting the generated `crypto/rand` bundled password is absent from the embedded/repo-root compose bytes and from the env file's own key names, and that the env file is written with mode `0600`.
-- [ ] 2.7 GREEN: implement `Provisioner.WriteProject(compose.ProjectConfig) (compose.Project, error)` — generate the password, render the `0600` env file, copy the embedded compose asset, refuse an existing project.
-- [ ] 2.8 REFACTOR: extract env-file rendering into a small golden-text helper reused by PR #2's secret-channel tests.
+- [x] 2.1 Create `internal/infra/install/compose/assets/docker-compose.yml`: pulls `${REGIXTRY_IMAGE}`, no `build:`, no `networks:`/`external: true`, mandatory `${REGIXTRY_POSTGRES_PASSWORD:?...}` interpolation, `depends_on: condition: service_healthy`, named volumes and healthchecks for both services. **Deviation**: healthcheck is declared only for `postgres` (required for `depends_on: condition: service_healthy`); no compose-level healthcheck is declared for `regixtry` because no `regixtry healthcheck`-equivalent tool exists in the pulled image's minimal `debian:bookworm-slim` runtime on this branch (that hardening landed only on the separate `registry-container-mode` branch, not yet in `develop`), and editing the local Dockerfile is out of this PR's File Changes scope. `WaitReachable` (PR #3) polls the public URL over HTTP directly, so this has no functional gap for setup orchestration.
+- [x] 2.2 Rewrite repo-root `docker-compose.yml` as a byte-identical copy of the embedded asset (removes the `dtf-netwok` external-network requirement and the hardcoded `POSTGRES_PASSWORD: registry` literal).
+- [x] 2.3 RED: drift test reading `../../../../docker-compose.yml` and asserting byte-equality with the embedded asset, same rule the Dockerfile stages already follow.
+- [ ] 2.4 Create `.env.example` documenting `REGIXTRY_POSTGRES_PASSWORD`, `REGIXTRY_AUTH_POSTGRES_DSN`, `REGIXTRY_IMAGE`, `REGIXTRY_PORT`. **BLOCKED**: the sandbox's dotenv-pattern write protection hard-denies any write to a path matching `.env*` at the repo root, for every tool (Write and Bash redirection alike), regardless of content — confirmed via a bare `printf 'X=1\n' > .env.example` probe, denied identically to the real content. The intended content is recorded verbatim in `apply-progress` (`sdd/container-setup-mode/apply-progress`, and `openspec/changes/container-setup-mode/apply-progress.md`) for a human, or a session with relaxed dotenv protection, to create in one command.
+- [x] 2.5 RED: test asserting `WriteProject` refuses a pre-existing project at the target path rather than adopting it, and that project/env-file paths are built only via `filepath.Join` (never string concatenation) — DSN/project-name strings containing `;`, `$(…)`, spaces, or a leading `-` must reach `docker` as one literal argument, not shell-interpreted.
+- [x] 2.6 RED: test asserting the generated `crypto/rand` bundled password is absent from the embedded/repo-root compose bytes and from the env file's own key names, and that the env file is written with mode `0600`.
+- [x] 2.7 GREEN: implement `Provisioner.WriteProject(compose.ProjectConfig) (compose.Project, error)` — generate the password, render the `0600` env file, copy the embedded compose asset, refuse an existing project.
+- [x] 2.8 REFACTOR: extract env-file rendering into a small golden-text helper reused by PR #2's secret-channel tests.
 
 ### Phase 3: PR #1 Verification
 
-- [ ] 3.1 Run `go test ./internal/infra/install/compose/...` — confirm `Preflight`, `WriteProject`, and the drift test all pass.
-- [ ] 3.2 Run `go vet ./...` and `gofmt -l .` — confirm no diagnostics.
+- [x] 3.1 Run `go test ./internal/infra/install/compose/...` — confirm `Preflight`, `WriteProject`, and the drift test all pass.
+- [x] 3.2 Run `go vet ./...` and `gofmt -l .` — confirm no diagnostics.
 
 ---
 
