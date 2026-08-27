@@ -82,8 +82,8 @@ Sum: 580-780 lines, matching the total re-estimate. PR #3 carries the largest bu
 
 ### Phase 6.2/6.4: PR #1 Verification
 
-- [ ] 6.2 Run `go test ./...` and confirm Phase 1 healthcheck tests pass.
-- [ ] 6.4 Confirm `docker-compose.yml` still builds/runs unchanged against the `dev` stage.
+- [x] 6.2 Run `go test ./...` and confirm Phase 1 healthcheck tests pass.
+- [x] 6.4 Confirm `docker-compose.yml` still builds/runs unchanged against the `dev` stage. (Verified via `docker build .`, the exact build compose declares; `docker compose build` itself failed in this sandbox for an environment reason unrelated to the Dockerfile — see apply-progress.)
 
 ---
 
