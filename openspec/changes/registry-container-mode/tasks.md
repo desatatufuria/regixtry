@@ -114,18 +114,24 @@ Sum: 580-780 lines, matching the total re-estimate. PR #3 carries the largest bu
 
 ### Phase 5b: Container Smoke Script — Postgres-Auth Scenario
 
-- [ ] 5b.1 Extend flag parsing in `container-release-smoke.sh` with `--auth-postgres`.
-- [ ] 5b.2 Implement `run_auth_scenario()` (behind `--auth-postgres`): create ephemeral `regixtry-smoke-${RUN_ID}` docker network; start `postgres:17-alpine` (same pin as `docker-compose.yml`) on that network; poll `pg_isready -U registry -d regixtry_auth` before continuing.
-- [ ] 5b.3 In `run_auth_scenario()`, run `docker run --rm -i <image> bootstrap-admin -auth-postgres-dsn "${DSN}" -username admin -password-stdin` (piped password, never argv) and confirm success *before* starting the serve container.
-- [ ] 5b.4 In `run_auth_scenario()`, start `serve` with `-e REGISTRY_AUTH_POSTGRES_DSN="${DSN}"`, then assert: anonymous `GET /v2/` → `401` + `WWW-Authenticate`; `GET /auth/token` with Basic `admin:${ADMIN_PASSWORD}` → `200` + `token` via `registry_token()`; authenticated `Bearer <token>` blob `POST`/`PUT`/`HEAD` → `200`/`202`/`201`/`200`; the same unauthenticated `HEAD` MUST be `401`.
-- [ ] 5b.5 Extend cleanup ordering to include the auth scenario: registry container → Postgres container → named volume → ephemeral network last (endpoints detached first); every step `|| true`.
-- [ ] 5b.6 Extend CLI dispatch: call `run_auth_scenario` only when `--auth-postgres` is passed.
+- [x] 5b.1 Extend flag parsing in `container-release-smoke.sh` with `--auth-postgres`.
+- [x] 5b.2 Implement `run_auth_scenario()` (behind `--auth-postgres`): create ephemeral `regixtry-smoke-${RUN_ID}` docker network; start `postgres:17-alpine` (same pin as `docker-compose.yml`) on that network; poll `pg_isready -U registry -d regixtry_auth` before continuing.
+- [x] 5b.3 In `run_auth_scenario()`, run `docker run --rm -i <image> bootstrap-admin -auth-postgres-dsn "${DSN}" -username admin -password-stdin` (piped password, never argv) and confirm success *before* starting the serve container.
+- [x] 5b.4 In `run_auth_scenario()`, start `serve` with `-e REGISTRY_AUTH_POSTGRES_DSN="${DSN}"`, then assert: anonymous `GET /v2/` → `401` + `WWW-Authenticate`; `GET /auth/token` with Basic `admin:${ADMIN_PASSWORD}` → `200` + `token` via `registry_token()`; authenticated `Bearer <token>` blob `POST`/`PUT`/`HEAD` → `200`/`202`/`201`/`200`; the same unauthenticated `HEAD` MUST be `401`.
+- [x] 5b.5 Extend cleanup ordering to include the auth scenario: registry container → Postgres container → named volume → ephemeral network last (endpoints detached first); every step `|| true`.
+- [x] 5b.6 Extend CLI dispatch: call `run_auth_scenario` only when `--auth-postgres` is passed.
 
 ### Phase 6.1b: README — Postgres-Auth Container Recipe
 
-- [ ] 6.1b Add a Postgres-auth recipe to the `## Run as a container` section, mirroring `## Quick start with authentication and access control` (`README.md:37-52`): same `postgres:17-alpine`, same `regixtry_auth`/`registry` DSN shape, same `bootstrap-admin -password-stdin` → `serve -auth-postgres-dsn` order, expressed with `docker network create` + `docker run` instead of `docker compose`.
+- [x] 6.1b Add a Postgres-auth recipe to the `## Run as a container` section, mirroring `## Quick start with authentication and access control` (`README.md:37-52`): same `postgres:17-alpine`, same `regixtry_auth`/`registry` DSN shape, same `bootstrap-admin -password-stdin` → `serve -auth-postgres-dsn` order, expressed with `docker network create` + `docker run` instead of `docker compose`.
 
 ### Phase 6.3b: PR #3 Verification
 
-- [ ] 6.3b Run `container-release-smoke.sh` locally against `docker build --target=release .` with `--auth-postgres`, to prove the auth integration layer (bootstrap-admin, token exchange, authenticated access) before relying on CI's E2E run.
+- [x] 6.3b Run `container-release-smoke.sh` locally against `docker build --target=release .` with `--auth-postgres`, to prove the auth integration layer (bootstrap-admin, token exchange, authenticated access) before relying on CI's E2E run. (Real end-to-end run, see apply-progress; also RED-path-proved every load-bearing assertion by deliberately breaking each one first.)
+
+---
+
+## Chain Status
+
+All three PRs (12 + 7 + 7 = 26 total tasks) are implementation-complete on their respective branches. `feature/registry-container-mode` (the tracker branch) still needs the orchestrator to open/merge each stacked PR through `develop` — no branch merges were performed by any apply batch. See `apply-progress.md`'s "Final Consolidated Summary" for the full three-PR ledger.
 </content>
