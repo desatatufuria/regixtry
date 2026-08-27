@@ -148,6 +148,17 @@ Independently re-verified consistency across every reference, not just apply-pro
 
 None applied — no CRITICAL findings. Both WARNINGs are real, currently-existing conditions independently reproduced in this pass, but neither violates a spec requirement, breaks `binary-only`/`daemon-sqlite`, or reflects a hallucinated/missing artifact; both are recommended follow-ups, not archive blockers.
 
+### Post-Verify Independent Confirmation (orchestrator, real Docker)
+
+After this report's initial pass, the orchestrator independently re-ran the full flow against a live `sudo -n docker` daemon, building `regixtry` with `-ldflags "-X main.buildVersion=v0.2.1-rc2"` (same technique WARNING #1 used) and pointing at the real published `ghcr.io/desatatufuria/regixtry:v0.2.1-rc2` image:
+
+- `regixtry setup --mode docker` hit the exact swallowed-`"exit status 1"` opacity WARNING #2 describes, at the `StartRegistry` step.
+- Manually reproducing the same `docker compose up -d` invocation outside the CLI surfaced the real underlying error: `failed to bind host port 0.0.0.0:5099/tcp: address already in use` — a transient port conflict from this long-running sandbox's accumulated Docker networking state (confirmed via `ss -tlnp` showing nothing actually bound; resolved cleanly on retry with a different port), not a code defect. This is a *third*, distinct concrete illustration of WARNING #2's cost, beyond the image-tag gap WARNING #1 already covers.
+- With a clean port, the full sequence completed for real: bundled Postgres came up healthy, `bootstrap-admin` succeeded, the `regixtry` container started and reported `regixtry healthcheck` exit 0, an anonymous `GET /v2/` returned **401**, a Basic-credential `/auth/token` exchange succeeded, and the resulting Bearer token against `/v2/` returned **200** — proving `docker` mode's Postgres-auth gating genuinely works end-to-end against the real published image, not just through `BootstrapAdmin`/`StartRegistry` as this report's own WARNING #1 test had confirmed.
+- All test resources (containers, volumes, network) were torn down afterward; no state left behind.
+
+This does not change the verdict — it reinforces it (0 CRITICAL stands) and adds a second, independent data point for WARNING #2's real-world cost.
+
 ### Verdict
 PASS WITH WARNINGS
 All 56/56 tasks are genuinely complete, all 10/10 spec scenarios across all 6 requirements (1 MODIFIED + 5 ADDED) are COMPLIANT with runtime evidence independently re-executed in this pass (not merely trusted from apply-progress), `go build`/`go vet`/`gofmt`/`go test ./...` are all clean, the compose-YAML fix and drift lock are genuinely correct against real Docker Compose, the systemd/compose provenance and orchestration-path separation designed to protect `binary-only`/`daemon-sqlite` is real and regression-tested, and the TUI-via-docker-exec path was independently re-proven end-to-end. Two real WARNINGs were found beyond what apply-progress reported — a dev-build image-tag gap that makes local `go build` verification of `docker` mode fail today for a reason apply-progress's own sandbox-limitation narrative did not surface, and swallowed subprocess stderr that made this gap hard to diagnose — neither blocks archive, both are legitimate follow-up candidates.
