@@ -160,21 +160,21 @@ interface, and the `newComposeRunner` seam.
 
 ### Phase 8: Setup Mode Wiring (Strict TDD)
 
-- [ ] 8.1 RED: table-driven tests in `cmd/regixtry/main_test.go` for `resolveSetupMode` — accepts `"docker"`/`"3"`, rejects unknown modes, non-TTY error text names all three modes (`binary-only`, `daemon-sqlite`, `docker`).
-- [ ] 8.2 GREEN: add the `"docker"` literal branch and `3) docker` menu entry to `resolveSetupMode` (`main.go:1785`).
-- [ ] 8.3 Declare the `composeRunner` interface (`Preflight`, `WriteProject`, `StartDatabase`, `BootstrapAdmin`, `StartRegistry`, `WaitReachable`, `SaveProvenance`, `Down`) and `var newComposeRunner` seam in `main.go`, mirroring `newBootstrapRunner` (`main.go:52`).
-- [ ] 8.4 RED: test for `promptSetupDockerConfig` — bundled-vs-external prompt appears only when `-auth-postgres-dsn` is absent and the session is interactive; absent + non-interactive defaults to bundled (documented divergence from `daemon-sqlite`'s anonymous default).
-- [ ] 8.5 GREEN: implement `promptSetupDockerConfig(reader *bufio.Reader, stdout io.Writer, cfg setupConfig, promptState setupPromptState, selectedInteractively bool) (setupConfig, error)`, mirroring `promptSetupDaemonConfig` (`main.go:1335`).
-- [ ] 8.6 RED: orchestration-order test for `runSetup`'s `case "docker"` using a fake `composeRunner` recording an ordered call log — asserts `Preflight → WriteProject → StartDatabase → BootstrapAdmin → StartRegistry → WaitReachable → SaveProvenance`, matching the design's data-flow ordering (admin created before the registry starts, since `serve` refuses to start with auth on and no admin).
-- [ ] 8.7 RED: rollback tests — a failure at each stage after `WriteProject` triggers `Down` plus generated-file removal, mirroring `rollbackSetupFailure` (`main.go:2073`).
-- [ ] 8.8 GREEN: implement `case "docker"` in `runSetup` (`main.go:1268`), calling `promptSetupDockerConfig` when interactive, `validateSetupAuthConfig`-equivalent DSN handling, and the ordered `composeRunner` calls with rollback on failure.
-- [ ] 8.9 GREEN: on success, print reachability, the env-file path, the generated password once, and `docker exec -it <container> regixtry tui` guidance to stdout.
-- [ ] 8.10 REFACTOR: `go vet ./...` and `gofmt -w .`; confirm `binary-only`/`daemon-sqlite` cases are byte-for-byte unchanged in the diff.
+- [x] 8.1 RED: table-driven tests in `cmd/regixtry/setup_docker_test.go` for `resolveSetupMode` — accepts `"docker"`/`"3"`, rejects unknown modes, non-TTY error text names all three modes (`binary-only`, `daemon-sqlite`, `docker`). **Deviation**: written in a new sibling file (`setup_docker_test.go`), not `main_test.go`, for PR reviewability; same package, same test binary.
+- [x] 8.2 GREEN: add the `"docker"` literal branch and `3) docker` menu entry to `resolveSetupMode` (`main.go`, now at line ~1755 after PR #4's additions).
+- [x] 8.3 Declare the `composeRunner` interface (`Preflight`, `WriteProject`, `StartDatabase`, `BootstrapAdmin`, `StartRegistry`, `WaitReachable`, `SaveProvenance`, `Down`) and `var newComposeRunner` seam in `main.go`, mirroring `newBootstrapRunner` (`main.go:52`).
+- [x] 8.4 RED: test for `promptSetupDockerConfig` — bundled-vs-external prompt appears only when `-auth-postgres-dsn` is absent and the session is interactive; absent + non-interactive defaults to bundled (documented divergence from `daemon-sqlite`'s anonymous default).
+- [x] 8.5 GREEN: implement `promptSetupDockerConfig(reader *bufio.Reader, stdout io.Writer, cfg setupConfig, promptState setupPromptState, selectedInteractively bool) (setupConfig, error)`, mirroring `promptSetupDaemonConfig`.
+- [x] 8.6 RED: orchestration-order test for `runSetup`'s `case "docker"` using a fake `composeRunner` recording an ordered call log — asserts `Preflight → WriteProject → StartDatabase → BootstrapAdmin → StartRegistry → WaitReachable → SaveProvenance`, matching the design's data-flow ordering (admin created before the registry starts, since `serve` refuses to start with auth on and no admin).
+- [x] 8.7 RED: rollback tests — a failure at each stage after `WriteProject` triggers `Down` plus generated-file removal, mirroring `rollbackSetupFailure`; plus negative-case tests proving `Preflight`/`WriteProject` failures never call `Down`.
+- [x] 8.8 GREEN: implement `case "docker"` in `runSetup`, calling `promptSetupDockerConfig` when interactive, `validateSetupDockerConfig` (a docker-mode-specific DSN-optional variant, not `validateSetupAuthConfig` itself — see Deviations), and the ordered `composeRunner` calls with rollback on failure.
+- [x] 8.9 GREEN: on success, print reachability, the env-file path, the generated password once (bundled only, read back from the 0600 env file via a swappable `readComposeBundledPassword` seam), and `docker exec -it <container> regixtry tui` guidance to stdout.
+- [x] 8.10 REFACTOR: `go vet ./...` and `gofmt -w .` — clean; confirmed `binary-only`/`daemon-sqlite` cases are byte-for-byte unchanged via dedicated regression tests (`TestResolveSetupModeRegressionBinaryOnlyAndDaemonSQLiteUnaffected`, `TestExistingSetupModesEndToEndRegression`) plus the full pre-existing `cmd/regixtry` test suite passing unmodified.
 
 ### Phase 9: PR #4 Verification
 
-- [ ] 9.1 Run `go test ./cmd/regixtry/...` — confirm `resolveSetupMode`, `promptSetupDockerConfig`, orchestration-order, and rollback suites all pass.
-- [ ] 9.2 Run `go test ./...` — confirm `binary-only`/`daemon-sqlite` test suites are unaffected.
+- [x] 9.1 Run `go test ./cmd/regixtry/...` — confirm `resolveSetupMode`, `promptSetupDockerConfig`, orchestration-order, and rollback suites all pass. 101/101 top-level tests pass, 0 failures.
+- [x] 9.2 Run `go test ./...` — confirm `binary-only`/`daemon-sqlite` test suites are unaffected. All 20 packages `ok`, no pre-existing test modified or broken.
 
 ---
 
@@ -211,8 +211,9 @@ smoke script proving the end-to-end flow (bundled and external-DSN paths).
 ## Chain Status
 
 Five PRs (Phase totals: 3+8+2 / 7+1 / 8+1 / 10+2 / 5+5+3 = 55 tasks total) are planned. PR #1
-(`feature/container-setup-mode-01-compose-foundation`, 13/13 tasks) and PR #2
-(`feature/container-setup-mode-02-compose-credentials`, 8/8 tasks) are complete. PR #3
-(`feature/container-setup-mode-03-compose-lifecycle`, 9/9 tasks — Phase 6-7) is now complete: see
-`apply-progress.md` for full evidence. PR #4-#5 remain unapplied. No branch merges happen until
+(`feature/container-setup-mode-01-compose-foundation`, 13/13 tasks), PR #2
+(`feature/container-setup-mode-02-compose-credentials`, 8/8 tasks), and PR #3
+(`feature/container-setup-mode-03-compose-lifecycle`, 9/9 tasks) are complete. PR #4
+(`feature/container-setup-mode-04-setup-wiring`, 12/12 tasks — Phase 8-9) is now complete: see
+`apply-progress.md` for full evidence. PR #5 remains unapplied. No branch merges happen until
 PR #5 is reviewed and the tracker merges to `develop`.

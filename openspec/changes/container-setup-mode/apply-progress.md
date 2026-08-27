@@ -1,14 +1,15 @@
 # Apply Progress: Container Setup Mode
 
-Scope of this artifact: **PR #1, PR #2, and PR #3**. PR #1 (base) shipped
+Scope of this artifact: **PR #1, PR #2, PR #3, and PR #4**. PR #1 (base) shipped
 `feature/container-setup-mode-01-compose-foundation`, targeting the tracker
 branch `feature/container-setup-mode`. PR #2 shipped
 `feature/container-setup-mode-02-compose-credentials`, targeting the PR #1
 branch. PR #3 shipped `feature/container-setup-mode-03-compose-lifecycle`,
-targeting the PR #2 branch. PR #4-#5 have not been applied yet; their tasks
+targeting the PR #2 branch. PR #4 shipped `feature/container-setup-mode-04-setup-wiring`,
+targeting the PR #3 branch. PR #5 has not been applied yet; its tasks
 in `tasks.md` remain `[ ]` and are out of scope for this batch. This file
-exists so later `sdd-apply` runs for PR #4-#5 know exactly what already
-landed and do not duplicate or drift from it.
+exists so the later `sdd-apply` run for PR #5 knows exactly what already
+landed and does not duplicate or drift from it.
 
 **Naming note carried forward from PR #1**: the shipped env-file example is
 `docker.env.example`, NOT `.env.example` — the sandbox's dotenv-pattern
@@ -524,5 +525,225 @@ modified or broken.
 
 ## Remaining Tasks (other PRs — NOT this batch's scope, as of PR #3)
 
-- PR #4 (`feature/container-setup-mode-04-setup-wiring`): `cmd/regixtry/main.go` wiring — tasks.md Phase 8-9
+- PR #4 (`feature/container-setup-mode-04-setup-wiring`): `cmd/regixtry/main.go` wiring — tasks.md Phase 8-9 — **now complete, see below**
+- PR #5 (`feature/container-setup-mode-05-docs-smoke`): docs + smoke script — tasks.md Phase 10-12
+
+---
+
+# PR #4 — targets PR #3 branch (`feature/container-setup-mode-03-compose-lifecycle`)
+
+**Branch**: `feature/container-setup-mode-04-setup-wiring` (current branch this batch ran on).
+**Scope**: Wire the `compose` package into `cmd/regixtry/main.go` as the third setup mode —
+`resolveSetupMode`, `runSetup`, `promptSetupDockerConfig`, the `composeRunner` interface, and the
+`newComposeRunner` seam (tasks.md Phase 8-9). This is the highest-blast-radius PR in the chain:
+`resolveSetupMode` and `runSetup` are the same shared dispatch functions the two already-shipped
+setup modes (`binary-only`, `daemon-sqlite`) use, so this batch's primary discipline was proving
+those two modes stay byte-for-byte unaffected, not just adding the third case.
+
+## Status
+
+PR #4: **12/12 tasks complete** (all Go/TDD work done and green; no tasks blocked).
+
+## Completed Tasks (PR #4)
+
+- [x] 8.1 RED: table-driven `resolveSetupMode` tests in a new `setup_docker_test.go` file —
+  flag-literal `docker`, interactive numeric `3`, interactive literal `docker`, unknown-mode
+  rejection, non-TTY error naming all three modes
+- [x] 8.2 GREEN: `"docker"` literal branch + `3) docker` menu entry in `resolveSetupMode`
+- [x] 8.3 `composeRunner` interface (8 methods, matching design.md's Interfaces/Contracts Go
+  snippet verbatim) + `var newComposeRunner` seam, mirroring `newBootstrapRunner`
+- [x] 8.4 RED: `promptSetupDockerConfig` prompt-visibility tests — bundled-vs-external prompt
+  shown only when DSN absent, skipped entirely when DSN already supplied via flag
+- [x] 8.5 GREEN: `promptSetupDockerConfig` implemented, mirroring `promptSetupDaemonConfig`'s
+  shape exactly (same parameter list, including the unused `selectedInteractively` parameter
+  for signature parity)
+- [x] 8.6 RED: orchestration-order test against a fake `composeRunner` — asserts the exact
+  `Preflight → WriteProject → StartDatabase → BootstrapAdmin → StartRegistry → WaitReachable →
+  SaveProvenance` call sequence, admin username/password forwarded correctly, project directory
+  derived under `<state-dir>/compose`, bundled DSN empty by default, generated password printed
+  to stdout exactly once
+- [x] 8.7 RED: rollback tests — one subtest per stage after `WriteProject`
+  (`StartDatabase`/`BootstrapAdmin`/`StartRegistry`/`WaitReachable`/`SaveProvenance`) asserting
+  `Down` runs exactly once as the last call; plus two negative-case tests proving
+  `Preflight`/`WriteProject` failures never call `Down` (nothing was created yet at those stages)
+- [x] 8.8 GREEN: `case "docker"` in `runSetup` — `validateSetupDockerConfig` (DSN-optional,
+  unlike `validateSetupAuthConfig`), the ordered `composeRunner` calls, `rollbackDockerSetupFailure`
+  on any post-`WriteProject` failure
+- [x] 8.9 GREEN: on success, prints reachability, the compose env-file path, the generated
+  bundled password (read back from the 0600 env file via a swappable `readComposeBundledPassword`
+  seam, bundled-only — never printed for external-DSN projects), and the `docker exec -it
+  <container> regixtry tui -storage-root /var/lib/regixtry` guidance line
+- [x] 8.10 REFACTOR: `go vet ./...` + `gofmt -w .` — clean; `binary-only`/`daemon-sqlite`
+  byte-for-byte-unchanged claim proven by dedicated regression tests, not just assumed
+- [x] 9.1 `go test ./cmd/regixtry/...` — 101/101 top-level tests pass, 0 failures
+- [x] 9.2 `go test ./...` — all 20 packages `ok`, `binary-only`/`daemon-sqlite` suites unaffected
+
+## Files Changed (PR #4)
+
+| File | Action | Notes |
+|---|---|---|
+| `cmd/regixtry/main.go` | Modified | Import of `internal/infra/install/compose`; `composeRunner` interface + `newComposeRunner` seam; `resolveSetupMode`'s `"docker"`/`3` case; `runSetup`'s `case "docker"`; `promptSetupDockerConfig`; `validateSetupDockerConfig`; `setupDockerImageRef`/`setupDockerPort` helpers; `readComposeBundledPassword` swappable seam; `rollbackDockerSetupFailure` |
+| `cmd/regixtry/setup_docker_test.go` | Created | `fakeComposeRunner` + `swapComposeRunner` test helpers; `resolveSetupMode` table-driven tests; regression tests for `binary-only`/`daemon-sqlite`; `promptSetupDockerConfig` tests; orchestration-order test; rollback tests (5 post-`WriteProject` stages + 2 negative pre-stage cases); non-interactive admin-password requirement test |
+
+## Regression Proof: `binary-only`/`daemon-sqlite` Unaffected
+
+This was this PR's central risk (shared dispatch functions, widest blast radius in the chain),
+so it is documented explicitly rather than assumed from a passing test run:
+
+1. **`resolveSetupMode`'s existing two modes are covered by a dedicated regression test**
+   (`TestResolveSetupModeRegressionBinaryOnlyAndDaemonSQLiteUnaffected`) asserting the flag-literal
+   path, the interactive numeric/menu path (including the exact unchanged `"  1) binary-only"` /
+   `"  2) daemon-sqlite"` menu lines), and the unsupported-selection error text format are all
+   unchanged after the `docker` case was added.
+2. **End-to-end regression test** (`TestExistingSetupModesEndToEndRegression`) runs `runWithIO`
+   for both `binary-only` and `daemon-sqlite` with a `fakeComposeRunner` installed via
+   `swapComposeRunner`, and asserts `len(composeFake.calls) == 0` — proving the new `composeRunner`
+   seam is never invoked by either existing mode, not just that their own assertions still pass.
+3. **Every pre-existing `cmd/regixtry` test was run unmodified** — `go test ./cmd/regixtry/...`
+   (101/101 top-level tests, 0 failures) includes every `TestRunSetup*ForDaemonSQLite`,
+   `TestRunSetupInteractivePromptSupportsBinaryOnly`, and related pre-existing test verbatim; none
+   was edited to make this PR pass.
+4. **Strict RED-before-GREEN was proven mechanically, not just narratively**: the full
+   `setup_docker_test.go` file was written against the pre-PR-4 `main.go` (saved via `git diff` /
+   `git checkout`), confirmed to fail to compile (`vet: ... undefined: composeRunner`), then the
+   production changes were reapplied and the full suite reconfirmed green — the same discipline
+   PR #3's apply-progress used for its interface-literal compile check, but for the whole PR this
+   time since RED here spans multiple new production symbols at once.
+5. **`installlinux.supportedMode`/`ValidateMode`/`ValidateConfig` were not touched** — confirmed by
+   inspection: `runSetup`'s `case "docker"` never calls `installlinux.ValidateConfig`,
+   `runner.Run`, or any other `bootstrapRunner` method; it uses only the new `composeRunner` seam.
+
+## Deviations from Design (PR #4)
+
+1. **New sibling test file (`setup_docker_test.go`), not `main_test.go`.** `main_test.go` is
+   already 3238 lines before this PR; adding ~590 more lines of docker-mode-only tests to it would
+   hurt reviewability. Go permits multiple `_test.go` files per package, so this is a pure
+   organizational choice with no behavioral difference — `go test ./cmd/regixtry/...` runs both
+   files as one test binary.
+2. **Compose project directory derived from `-state-path`, not hardcoded.** Design's Data Flow
+   diagram shows `/etc/regixtry/compose/regixtry.env` as an illustrative example. This PR derives
+   the project directory as `filepath.Join(filepath.Dir(cfg.StatePath), "compose")` so it responds
+   to `-state-path` overrides (needed for hermetic tests using `t.TempDir()`) while still resolving
+   to exactly `/etc/regixtry/compose` under the real default `-state-path`
+   (`/etc/regixtry/bootstrap-state.json`) — same value the design's example shows, derived rather
+   than hardcoded.
+3. **Image tag and host port are derived, not new CLI flags.** Design's "Image tag" decision says
+   the compose image should pin to "the binary's own release version, latest only for dev builds"
+   — implemented as `setupDockerImageRef()`, reading the existing `buildVersion` var (no new flag).
+   The host port to publish is derived from `-public-url`'s own port via `setupDockerPort()`
+   (falling back to `5000`), since neither design.md nor tasks.md calls for a new `-port`/`-image`
+   flag and the existing `-addr` flag's semantics (local bind address for the in-process listener)
+   don't apply to a mode that never listens in-process.
+4. **`validateSetupDockerConfig` is a new function, not a call to `validateSetupAuthConfig`.**
+   tasks.md 8.8 explicitly calls this "`validateSetupAuthConfig`-equivalent DSN handling", i.e. an
+   equivalent, not a reuse — `validateSetupAuthConfig` requires a non-empty
+   `AuthPostgresDSN` whenever auth is enabled, which is correct for `daemon-sqlite` (DSN is always
+   operator-supplied there) but wrong for `docker` mode's bundled-Postgres default, where the DSN
+   is legitimately empty and generated internally by `WriteProject`. Reusing the original function
+   would have made the bundled-Postgres default (the "easy path" design explicitly calls for)
+   unreachable non-interactively.
+5. **The generated bundled password is read back from the env file, not returned by
+   `WriteProject`.** `compose.Project` (PR #1) structurally carries no password field by design
+   (`provenanceFromProject`'s doc comment in `provenance.go` states this explicitly, to make the
+   provenance file structurally incapable of leaking it), and `WriteProject`'s signature is fixed
+   by design.md's Interfaces/Contracts snippet, which this PR must not change. So `runSetup` reads
+   the just-written 0600 file back via a new swappable `readComposeBundledPassword` var (mirroring
+   `newBootstrapRunner`/`newComposeRunner`'s existing seam pattern) to disclose it once on screen,
+   satisfying the "Bundled Credential Disclosure" spec requirement without widening the
+   `composeRunner` interface beyond design's exact 8 methods.
+
+## TDD Cycle Evidence (PR #4)
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|---|---|---|---|---|---|---|---|
+| 8.1/8.2 | `setup_docker_test.go` | Unit | 101/101 pre-existing `cmd/regixtry` tests | Written (confirmed to fail to compile against pre-PR-4 `main.go`) | Passed | 4 cases (flag literal, numeric `3`, literal `docker`, unknown-mode rejection) + non-TTY error-text case | Clean |
+| 8.3 | N/A (compile-only, proven by 8.6's orchestration test) | N/A | N/A | N/A (interface declaration, not a testable unit alone) | N/A | N/A | Interface matches design.md's Go snippet verbatim |
+| 8.4/8.5 | `setup_docker_test.go` | Unit | Covered above | Written | Passed | 3 cases (DSN absent+declined, DSN absent+accepted, DSN already provided) | Clean |
+| 8.6 | `setup_docker_test.go` | Unit | Covered above | Written | Passed | 2 cases (bundled default order, external-DSN skip-disclosure) | Clean |
+| 8.7 | `setup_docker_test.go` | Unit | Covered above | Written | Passed | 7 cases (5 post-`WriteProject` failure stages + 2 pre-stage no-rollback negatives) | Clean |
+| 8.8/8.9 | `setup_docker_test.go` | Unit | Covered above | Covered by 8.6/8.7 | Passed | Covered above | Clean |
+
+### Test Summary (PR #4)
+
+- **Total tests written**: 12 top-level test functions (several table-driven/subtest-based,
+  ~30 assertions total across subtests)
+- **Total tests passing**: 101/101 top-level tests in `regixtry/cmd/regixtry`, 0 failures
+- **Layers used**: Unit only (fake `composeRunner`, no Docker daemon, no real network call),
+  matching tasks.md's stated scope — "orchestration-order test uses a fake composeRunner, no
+  daemon"
+- **Approval tests**: None — no pre-existing test was edited
+- **RED-path proof performed mechanically**: the entire `setup_docker_test.go` file was confirmed
+  to fail to compile (`vet: ... undefined: composeRunner`) against the pre-PR-4 `main.go` via
+  `git diff` + `git checkout` + `go vet`, before any production code was reapplied — see
+  "Regression Proof" item 4 above
+
+## Work Unit Evidence (PR #4)
+
+| Evidence | Value |
+|---|---|
+| Focused test command and result | `go test ./cmd/regixtry/...` → `ok regixtry/cmd/regixtry 2.5s-4.9s`, 101/101 top-level tests pass, 0 failures |
+| Runtime harness | N/A — per tasks.md, this PR's orchestration-order test uses a fake `composeRunner`; no Docker daemon needed or used |
+| Rollback boundary | Revert `main.go`'s docker-mode additions (3 commits: composeRunner seam, `resolveSetupMode` case, `runSetup` orchestration) and `setup_docker_test.go`; `binary-only`/`daemon-sqlite` cases and every PR #1-#3 `compose` package method keep working unmodified, confirmed by the regression tests above |
+
+## Full-Suite Regression Check (after PR #4)
+
+`go build ./...` → clean. `go vet ./...` → clean. `gofmt -l .` → empty (clean). `go test ./...
+-count=1` (fresh, not cached) → all 20 packages `ok`:
+`cmd/regixtry` (4.9s), `internal/app/auth`, `internal/app/regixtry` (6.3s), `internal/app/scanning`,
+`internal/domain/auth`, `internal/domain/regixtry`, `internal/domain/signing`,
+`internal/infra/auth/postgres`, `internal/infra/cliprogress`, `internal/infra/install/compose`,
+`internal/infra/install/linux`, `internal/infra/install/releases`, `internal/infra/metadata/sqlite`,
+`internal/infra/release`, `internal/infra/scanning/gitleaks`, `internal/infra/scanning/trivy`,
+`internal/infra/storage/fsblob`, `internal/ports`, `internal/protocol/http`, `internal/tui`.
+No pre-existing test was modified or broken.
+
+## Review Workload / Ledger Flag (PR #4)
+
+- **Declared ledger budget for this run**: 900 changed lines. tasks.md's own PR #4 estimate:
+  350-540 lines.
+- **Actual (`git diff --stat` against `06c296a`, the PR #3 tip this branch started from, `git add
+  -N` for the new untracked test file)**: **822 changed lines** (820 insertions + 2 deletions
+  across 2 files — `main.go` 231 insertions/2 deletions, `setup_docker_test.go` 591 insertions, new
+  file).
+- This is **within the 900-line ledger budget** (78 lines / ~9% under) but **282-472 lines
+  (~52-135%) over** tasks.md's own upper estimate — consistent with the chain-wide pattern every
+  prior PR's ledger note already flagged (PR #1 ~4%/~33% over its narrower estimate; PR #2
+  ~33%/~82-112%; PR #3 ~73%/~212-419%). This PR's relative overage against tasks.md is smaller in
+  percentage terms than PR #2/#3's because tasks.md's own PR #4 estimate (350-540) was explicitly
+  flagged in this session's forecast as "likely-optimistic floors, not ceilings" before this batch
+  started.
+- **Why**: three factors, matching the pattern:
+  1. Strict TDD's mandatory triangulation, applied honestly, produced a wider `setup_docker_test.go`
+     than a bullet-per-RED-test count would suggest — the orchestration-order test alone needed
+     two full scenarios (bundled default, external-DSN skip) to prove the design's data-flow
+     ordering *and* the password-disclosure divergence between the two, and the rollback tests
+     needed 7 subtests (5 positive-failure stages + 2 explicit negative pre-`WriteProject` cases)
+     to prove `Down` is called exactly when design says it should be and never otherwise.
+  2. This PR's explicit orchestrator-mandated regression-proof requirement (dedicated
+     `resolveSetupMode` regression test + end-to-end regression test with an installed
+     `fakeComposeRunner` asserting zero calls) added two test functions tasks.md's own bullet list
+     did not itemize, since tasks.md's 8.10 only says "confirm ... byte-for-byte unchanged" without
+     specifying a dedicated test.
+  3. `fakeComposeRunner` needed a configurable `writeProjectFunc` hook (not just static return
+     values) so the orchestration-order test could write a real temp env file for the
+     password-disclosure assertion — this is genuine test-infrastructure weight, the same
+     "new seam infrastructure, not just N methods" pattern PR #2's `execStdinRunner` and PR #3's
+     `httpStatusFetcher` ledger notes already identified, here on the test-double side instead of
+     production code.
+- **No padding**: every test asserts a real, spec-mapped, would-fail-if-wrong behavior; the two
+  explicit negative-case rollback tests (`TestRunSetupDockerPreflightFailureNeverRollsBackOrWritesProject`,
+  `TestRunSetupDockerWriteProjectFailureNeverRollsBack`) exist specifically to catch an
+  over-eager rollback implementation that would call `Down` even when nothing was created yet.
+- **Recommendation**: accept as a well-justified overage against tasks.md's own already-flagged-optimistic
+  estimate, and within the session's 900-line ledger; no production code needs to change either way.
+
+## Commits (this batch — PR #4)
+
+1. `85b72e3` — `feat(compose): add composeRunner interface and newComposeRunner seam`
+2. `8bd15f6` — `feat(setup): add docker case to resolveSetupMode`
+3. `3e4bb2c` — `feat(setup): wire docker orchestration into runSetup`
+4. `ee3a8b8` — `test(setup): cover docker setup mode wiring and prove regression safety`
+
+## Remaining Tasks (other PRs — NOT this batch's scope, as of PR #4)
+
 - PR #5 (`feature/container-setup-mode-05-docs-smoke`): docs + smoke script — tasks.md Phase 10-12
