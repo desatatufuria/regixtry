@@ -53,17 +53,17 @@ Sum: 580-780 lines, matching the total re-estimate. PR #3 carries the largest bu
 
 ### Phase 1: Healthcheck Subcommand (Strict TDD)
 
-- [ ] 1.1 RED: table-driven tests in `cmd/regixtry/main_test.go` (or new `healthcheck_test.go`) covering `httptest` responses 200/401/500, connection-refused, timeout, plus `-url`/`-timeout` flag defaults/overrides.
-- [ ] 1.2 GREEN: implement `healthcheck` subcommand in `cmd/regixtry/main.go` — `-url` default `http://127.0.0.1:5000/v2/`, `-timeout` default `3s`, exit 0 on 200/401, exit 1 otherwise.
-- [ ] 1.3 GREEN: wire `healthcheck` into the `runWithIO` switch and the no-args subcommand list error (`main.go:168`).
-- [ ] 1.4 REFACTOR: `go vet ./...` and `gofmt -w .`; confirm no shared-state leaks between subcommands.
+- [x] 1.1 RED: table-driven tests in `cmd/regixtry/main_test.go` (or new `healthcheck_test.go`) covering `httptest` responses 200/401/500, connection-refused, timeout, plus `-url`/`-timeout` flag defaults/overrides.
+- [x] 1.2 GREEN: implement `healthcheck` subcommand in `cmd/regixtry/main.go` — `-url` default `http://127.0.0.1:5000/v2/`, `-timeout` default `3s`, exit 0 on 200/401, exit 1 otherwise.
+- [x] 1.3 GREEN: wire `healthcheck` into the `runWithIO` switch and the no-args subcommand list error (`main.go:168`).
+- [x] 1.4 REFACTOR: `go vet ./...` and `gofmt -w .`; confirm no shared-state leaks between subcommands.
 
 ### Phase 2: Dockerfile Multi-Stage Rewrite
 
-- [ ] 2.1 Add `runtime-base` stage: `debian:bookworm-slim`, `ca-certificates`, user `65532`, owned `/var/lib/regixtry`, `VOLUME`, `EXPOSE 5000`, `USER`, exec-form `HEALTHCHECK` calling `regixtry healthcheck`, `ENTRYPOINT`/`CMD`.
-- [ ] 2.2 Add `release` stage `FROM runtime-base`, copying the GoReleaser-built binary via build context.
-- [ ] 2.3 Keep Go compile as `build` stage; re-add current dev image as `dev` stage `FROM runtime-base`, staged last so `docker build .` and `docker-compose.yml` keep today's behavior.
-- [ ] 2.4 Locally verify `docker build .` (implicit `dev`) and `docker build --target=release .` (stub binary) both succeed.
+- [x] 2.1 Add `runtime-base` stage: `debian:bookworm-slim`, `ca-certificates`, user `65532`, owned `/var/lib/regixtry`, `VOLUME`, `EXPOSE 5000`, `USER`, exec-form `HEALTHCHECK` calling `regixtry healthcheck`, `ENTRYPOINT`/`CMD`.
+- [x] 2.2 Add `release` stage `FROM runtime-base`, copying the GoReleaser-built binary via build context.
+- [x] 2.3 Keep Go compile as `build` stage; re-add current dev image as `dev` stage `FROM runtime-base`, staged last so `docker build .` and `docker-compose.yml` keep today's behavior.
+- [x] 2.4 Locally verify `docker build .` (implicit `dev`) and `docker build --target=release .` (stub binary) both succeed.
 
 ### Phase 3: GoReleaser Multi-Arch Image Publishing
 
