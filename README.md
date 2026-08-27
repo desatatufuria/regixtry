@@ -102,7 +102,39 @@ docker push 127.0.0.1:5000/test/alpine:3.20
 docker pull 127.0.0.1:5000/test/alpine:3.20
 ```
 
-The image runs as a non-root user (uid `65532`), and data written to `/var/lib/regixtry` survives a container restart as long as it keeps using the same named volume. Running with Postgres-backed authentication instead of anonymous pull/push follows the same `bootstrap-admin`/`-auth-postgres-dsn` primitives as [Quick start with authentication and access control](#quick-start-with-authentication-and-access-control) above; a container-specific recipe is coming in a follow-up.
+The image runs as a non-root user (uid `65532`), and data written to `/var/lib/regixtry` survives a container restart as long as it keeps using the same named volume.
+
+### Postgres-backed authentication in a container
+
+Same primitives as [Quick start with authentication and access control](#quick-start-with-authentication-and-access-control) above — same `postgres:17-alpine` pin, same `regixtry_auth`/`registry` DSN shape, same `bootstrap-admin -password-stdin` → `serve -auth-postgres-dsn` order — expressed with `docker network create` + `docker run` instead of `docker compose`:
+
+```bash
+# 1. Ephemeral network + Postgres for auth state
+docker network create regixtry-net
+docker run -d --name regixtry-postgres --network regixtry-net \
+  -e POSTGRES_DB=regixtry_auth -e POSTGRES_USER=registry -e POSTGRES_PASSWORD=registry \
+  postgres:17-alpine
+DSN="postgres://registry:registry@regixtry-postgres:5432/regixtry_auth?sslmode=disable"
+
+# 2. Bootstrap the first global admin -- MUST run before step 3: serve
+#    refuses to start with auth enabled and no existing admin
+printf '%s\n' 'change-me-now' | docker run --rm -i --network regixtry-net \
+  ghcr.io/desatatufuria/regixtry:latest \
+  bootstrap-admin -auth-postgres-dsn "$DSN" -username admin -password-stdin
+
+# 3. Serve, with auth enabled
+docker volume create regixtry-data
+docker run -d --name regixtry --network regixtry-net -p 5000:5000 \
+  -v regixtry-data:/var/lib/regixtry \
+  -e REGISTRY_AUTH_POSTGRES_DSN="$DSN" \
+  ghcr.io/desatatufuria/regixtry:latest
+
+# 4. Log in and push
+docker login 127.0.0.1:5000 -u admin -p change-me-now
+docker push 127.0.0.1:5000/test/alpine:3.20
+```
+
+The `registry:registry` Postgres credential above is a throwaway local-experimentation default, exactly as in the `docker compose` quick start — use real secrets for anything beyond a scratch environment.
 
 ## Try a feature: vulnerability scanning
 
