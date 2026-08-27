@@ -128,6 +128,9 @@ const (
 	defaultSetupAuthPort     = "5432"
 	defaultSetupAuthUser     = "regixtry"
 	defaultSetupAuthSSLMode  = "disable"
+
+	defaultHealthcheckURL     = "http://127.0.0.1:5000/v2/"
+	defaultHealthcheckTimeout = 3 * time.Second
 )
 
 func releaseMetadata() string {
@@ -165,7 +168,7 @@ func runWithIO(ctx context.Context, args []string, stdin io.Reader, stdout io.Wr
 	}
 
 	if len(args) == 0 {
-		return errors.New("expected subcommand: serve, tui, bootstrap, bootstrap-admin, setup, feature, uninstall, or upgrade")
+		return errors.New("expected subcommand: serve, tui, bootstrap, bootstrap-admin, setup, feature, uninstall, upgrade, or healthcheck")
 	}
 
 	switch args[0] {
@@ -222,6 +225,12 @@ func runWithIO(ctx context.Context, args []string, stdin io.Reader, stdout io.Wr
 		return runUninstall(ctx, args[1:], stdout)
 	case "upgrade":
 		return runUpgrade(ctx, args[1:], stdin, stdout)
+	case "healthcheck":
+		cfg, err := parseHealthcheckConfig(args[1:])
+		if err != nil {
+			return err
+		}
+		return runHealthcheck(ctx, cfg)
 	default:
 		return fmt.Errorf("unknown subcommand %q", args[0])
 	}
@@ -496,6 +505,51 @@ func normalizeURLPath(rawPath string) string {
 		normalized = "/" + normalized
 	}
 	return strings.TrimRight(normalized, "/")
+}
+
+type healthcheckConfig struct {
+	URL     string
+	Timeout time.Duration
+}
+
+func parseHealthcheckConfig(args []string) (healthcheckConfig, error) {
+	flags := flag.NewFlagSet("healthcheck", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+
+	var cfg healthcheckConfig
+	flags.StringVar(&cfg.URL, "url", defaultHealthcheckURL, "registry URL to probe")
+	flags.DurationVar(&cfg.Timeout, "timeout", defaultHealthcheckTimeout, "maximum time to wait for a response")
+
+	if err := flags.Parse(args); err != nil {
+		return healthcheckConfig{}, err
+	}
+
+	return cfg, nil
+}
+
+// runHealthcheck probes cfg.URL and reports whether the registry is healthy.
+// HTTP 200 or 401 are both healthy: /v2/ answers 401 with WWW-Authenticate
+// when auth is enabled, so treating only 200 as healthy would mark every
+// authenticated deployment unhealthy. Any other status, a dial/TLS error, or
+// a timeout is unhealthy.
+func runHealthcheck(ctx context.Context, cfg healthcheckConfig) error {
+	req, err := stdhttp.NewRequestWithContext(ctx, stdhttp.MethodGet, cfg.URL, nil)
+	if err != nil {
+		return fmt.Errorf("healthcheck: build request: %w", err)
+	}
+
+	client := stdhttp.Client{Timeout: cfg.Timeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("healthcheck: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == stdhttp.StatusOK || resp.StatusCode == stdhttp.StatusUnauthorized {
+		return nil
+	}
+
+	return fmt.Errorf("healthcheck: unhealthy status %d", resp.StatusCode)
 }
 
 func parseTUIConfig(args []string) (tuiConfig, error) {
