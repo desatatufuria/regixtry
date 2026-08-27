@@ -72,9 +72,9 @@ Sum: 580-780 lines, matching the total re-estimate. PR #3 carries the largest bu
 
 ### Phase 4: CI Workflow — Permissions, Login, Smoke-Step Wiring
 
-- [ ] 4.1 Add `packages: write` to `permissions` in `.github/workflows/release.yml`.
-- [ ] 4.2 Add `docker/login-action@v3` (GHCR, `GITHUB_TOKEN`), `docker/setup-qemu-action@v3`, `docker/setup-buildx-action@v3` before "Run GoReleaser", login first.
-- [ ] 4.3 Add a final "Run container smoke verification" step invoking `container-release-smoke.sh` against `ghcr.io/desatatufuria/regixtry:${GITHUB_REF_NAME}` (script content lands in PR #2; this step is scaffolding only in PR #1).
+- [x] 4.1 Add `packages: write` to `permissions` in `.github/workflows/release.yml`.
+- [x] 4.2 Add `docker/login-action@v3` (GHCR, `GITHUB_TOKEN`), `docker/setup-qemu-action@v3`, `docker/setup-buildx-action@v3` before "Run GoReleaser", login first.
+- [x] 4.3 Add a final "Run container smoke verification" step invoking `container-release-smoke.sh` against `ghcr.io/desatatufuria/regixtry:${GITHUB_REF_NAME}` (script content lands in PR #2; this step is scaffolding only in PR #1).
 
 ### Phase 6.1a: README — Anonymous Container Usage
 
