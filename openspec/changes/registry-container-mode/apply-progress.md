@@ -253,11 +253,9 @@ tasks.md's per-PR estimate for PR #3 was **250-350 lines** (the largest of the t
 
 ## Commits (this branch, in order)
 
-1. `feat(scripts): add registry_token() and run_auth_scenario() to container-release-smoke.sh` — `--auth-postgres` flag, `wait_postgres_ready()`, `http_headers()`, `registry_token()`, `run_auth_scenario()`, extended `cleanup()` ordering, CLI dispatch
-2. `docs(readme): add Postgres-backed auth container recipe`
-3. `docs(sdd): mark PR #3 tasks complete and record final apply-progress`
-
-(Exact hashes recorded in the final response after commit.)
+1. `b2d27da` — feat(scripts): add registry_token() and run_auth_scenario() to container-release-smoke.sh
+2. `628b1d6` — docs(readme): add Postgres-backed auth container recipe
+3. `91bc806` — docs(sdd): mark PR #3 tasks complete and record final apply-progress
 
 ## Status (PR #3 addendum)
 
