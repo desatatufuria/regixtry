@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -48,19 +49,36 @@ func (p *Provisioner) StartDatabase(ctx context.Context, proj Project) error {
 	return p.waitPostgresReady(ctx, proj)
 }
 
-// waitPostgresReady polls `docker compose exec -T postgres pg_isready` a
-// bounded number of times, sleeping between attempts, and fails loudly
-// rather than looping forever when Postgres never becomes ready (design.md
-// "Postgres readiness" decision; tasks.md 4.2).
+// waitPostgresReady polls `docker compose logs postgres` a bounded number of
+// times, sleeping between attempts, and fails loudly rather than looping
+// forever when Postgres never becomes ready (design.md "Postgres readiness"
+// decision; tasks.md 4.2).
+//
+// This deliberately does NOT use `pg_isready` (found live during v0.2.1-rc4
+// docker-mode validation): on a FRESH volume, the official postgres image
+// starts a temporary, Unix-socket-only server to run initdb, shuts it down,
+// then starts the final server that actually accepts networked, password-
+// authenticated connections. `pg_isready` run inside the postgres container
+// can report success against that temporary server, well before the final
+// one is listening -- BootstrapAdmin's very next step (connecting over the
+// network with the real password) then failed deterministically on every
+// fresh volume, and only succeeded once Postgres had already been running
+// long enough to complete both restarts. The postgres image's own log
+// output is the reliable signal: "PostgreSQL init process complete; ready
+// for start up." appears only when that temporary-then-final handoff is
+// happening, and "database system is ready to accept connections" appears
+// once per server start -- twice on a fresh volume, once on an existing one.
 func (p *Provisioner) waitPostgresReady(ctx context.Context, proj Project) error {
-	args := composeArgs(proj, "exec", "-T", "postgres", "pg_isready", "-U", bundledPostgresUser, "-d", bundledPostgresDB)
+	args := composeArgs(proj, "logs", "--no-color", "postgres")
 
 	var lastErr error
 	for attempt := 0; attempt < postgresReadyMaxAttempts; attempt++ {
-		if _, err := p.exec(ctx, "docker", args...); err == nil {
+		if output, err := p.exec(ctx, "docker", args...); err != nil {
+			lastErr = err
+		} else if postgresLogIndicatesReady(string(output)) {
 			return nil
 		} else {
-			lastErr = err
+			lastErr = errors.New("postgres logs do not yet show the final server accepting connections")
 		}
 		if attempt < postgresReadyMaxAttempts-1 {
 			p.sleep(postgresReadyPollInterval)
@@ -68,4 +86,25 @@ func (p *Provisioner) waitPostgresReady(ctx context.Context, proj Project) error
 	}
 
 	return fmt.Errorf("bundled postgres did not become ready after %d attempts: %w", postgresReadyMaxAttempts, lastErr)
+}
+
+// postgresLogIndicatesReady reports whether the postgres container's log
+// output shows the FINAL server -- not the temporary initdb-only server --
+// is accepting connections. On a fresh volume the official image restarts
+// once (logged as "PostgreSQL init process complete; ready for start up."),
+// so the readiness marker must appear a second time; on an existing volume
+// it never restarts, so the marker's first appearance already is the final
+// server.
+func postgresLogIndicatesReady(log string) bool {
+	const readyMarker = "database system is ready to accept connections"
+	const reinitMarker = "PostgreSQL init process complete; ready for start up."
+
+	readyCount := strings.Count(log, readyMarker)
+	if readyCount == 0 {
+		return false
+	}
+	if strings.Contains(log, reinitMarker) {
+		return readyCount >= 2
+	}
+	return true
 }

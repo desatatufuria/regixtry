@@ -33,6 +33,14 @@ func credentialSafetyFlow(t *testing.T, adminPassword string) (Project, string, 
 	if err != nil {
 		t.Fatalf("WriteProject() error = %v", err)
 	}
+	// waitPostgresReady (database.go) reads compose logs looking for the
+	// real postgres image's own readiness marker, not just a successful
+	// exec -- the blanket "ok" Default above doesn't satisfy that, so this
+	// flow needs its own handler for exactly that call, same as any other
+	// real environment's postgres would eventually log.
+	fake.On("docker "+joinArgs(composeArgs(project, "logs", "--no-color", "postgres")), func([]execCall) ([]byte, error) {
+		return []byte("database system is ready to accept connections"), nil
+	})
 
 	if err := p.StartDatabase(context.Background(), project); err != nil {
 		t.Fatalf("StartDatabase() error = %v", err)
