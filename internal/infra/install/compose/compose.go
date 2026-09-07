@@ -11,9 +11,11 @@ package compose
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os/exec"
+	"strings"
 	"time"
 )
 
@@ -76,7 +78,8 @@ func NewProvisioner(cfg ProvisionerConfig) *Provisioner {
 	if run == nil {
 		run = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			cmd := exec.CommandContext(ctx, name, args...)
-			return cmd.Output()
+			output, err := cmd.Output()
+			return output, wrapExecError(err)
 		}
 	}
 
@@ -85,7 +88,8 @@ func NewProvisioner(cfg ProvisionerConfig) *Provisioner {
 		runStdin = func(ctx context.Context, stdin io.Reader, name string, args ...string) ([]byte, error) {
 			cmd := exec.CommandContext(ctx, name, args...)
 			cmd.Stdin = stdin
-			return cmd.Output()
+			output, err := cmd.Output()
+			return output, wrapExecError(err)
 		}
 	}
 
@@ -149,4 +153,24 @@ func (p *Provisioner) Preflight(ctx context.Context) error {
 
 func isDockerNotFound(err error) bool {
 	return errors.Is(err, exec.ErrNotFound)
+}
+
+// wrapExecError folds a real subprocess's captured stderr into its returned
+// error's text. `cmd.Output()` alone never exposes it -- Go attaches it only
+// to the unexported `*exec.ExitError.Stderr` field, which nothing upstream
+// of this ever read, so every real docker/compose failure through this
+// package surfaced as a bare, content-free "exit status N" (found live
+// during docker-mode release-candidate validation: BootstrapAdmin's actual
+// failure stayed undiagnosable across five RCs because of exactly this).
+func wrapExecError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		if stderr := strings.TrimSpace(string(exitErr.Stderr)); stderr != "" {
+			return fmt.Errorf("%w: %s", err, stderr)
+		}
+	}
+	return err
 }

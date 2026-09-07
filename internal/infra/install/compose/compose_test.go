@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 )
 
@@ -94,5 +95,44 @@ func TestPreflightSucceedsWhenDockerAndComposeAreAvailable(t *testing.T) {
 	}
 	if len(fake.Calls) != 2 {
 		t.Fatalf("calls = %#v, want exactly one docker version probe and one docker compose version probe", fake.Calls)
+	}
+}
+
+// TestDefaultExecSurfacesStderrOnFailure is the RED test proving a real
+// diagnostics gap found live during v0.2.1-rc5's docker-mode validation:
+// every failure through this package's real (non-fake) subprocess wiring
+// surfaced as a bare "exit status N" with zero content, because
+// `cmd.Output()` alone never exposes the command's stderr -- Go only
+// attaches it to the unexported `*exec.ExitError.Stderr` field, which
+// nothing here ever read. BootstrapAdmin's real failure stayed a total
+// mystery across five release candidates because of exactly this. The
+// default exec wiring must fold that Stderr into the returned error's text.
+func TestDefaultExecSurfacesStderrOnFailure(t *testing.T) {
+	t.Parallel()
+
+	p := NewProvisioner(ProvisionerConfig{})
+	_, err := p.exec(context.Background(), "sh", "-c", "echo boom-on-stderr 1>&2; exit 3")
+	if err == nil {
+		t.Fatalf("exec() error = nil, want a non-nil error for a command that exits 3")
+	}
+	if !strings.Contains(err.Error(), "boom-on-stderr") {
+		t.Fatalf("exec() error = %q, want it to contain the command's stderr output", err.Error())
+	}
+}
+
+// TestDefaultExecStdinSurfacesStderrOnFailure is
+// TestDefaultExecSurfacesStderrOnFailure's counterpart for the stdin-piping
+// seam BootstrapAdmin uses -- the exact call site whose swallowed stderr
+// blocked every attempt to diagnose the real docker-mode failure.
+func TestDefaultExecStdinSurfacesStderrOnFailure(t *testing.T) {
+	t.Parallel()
+
+	p := NewProvisioner(ProvisionerConfig{})
+	_, err := p.execStdin(context.Background(), strings.NewReader(""), "sh", "-c", "echo boom-on-stdin-stderr 1>&2; exit 3")
+	if err == nil {
+		t.Fatalf("execStdin() error = nil, want a non-nil error for a command that exits 3")
+	}
+	if !strings.Contains(err.Error(), "boom-on-stdin-stderr") {
+		t.Fatalf("execStdin() error = %q, want it to contain the command's stderr output", err.Error())
 	}
 }
