@@ -589,3 +589,60 @@ func TestRunSetupDockerRequiresAdminPasswordWithoutTTY(t *testing.T) {
 		t.Fatalf("fake.calls = %v, want composeRunner never invoked before validation fails", fake.calls)
 	}
 }
+
+// TestSetupDockerImageRefPrefixesMissingV is the RED test for the real bug
+// found live during v0.2.1-rc6's docker-mode validation (surfaced only once
+// the stderr-swallowing bug in the compose package was independently fixed):
+// GoReleaser's `{{ .Version }}` template (used for this binary's own
+// -ldflags-injected buildVersion, .goreleaser.yaml) omits the leading "v",
+// but every actual GHCR tag this project publishes uses `{{ .Tag }}`, which
+// keeps it (confirmed live: "ghcr.io/desatatufuria/regixtry:v0.2.1-rc6" is
+// what really exists; "ghcr.io/desatatufuria/regixtry:0.2.1-rc6" -- what
+// setupDockerImageRef produced -- does not, and `docker compose run` failed
+// with "not found"). setupDockerImageRef must normalize either input shape
+// to the one tag format that is ever actually published.
+func TestSetupDockerImageRefPrefixesMissingV(t *testing.T) {
+	previousVersion := buildVersion
+	defer func() { buildVersion = previousVersion }()
+
+	tests := []struct {
+		name    string
+		version string
+		want    string
+	}{
+		{
+			name:    "goreleaser's {{ .Version }} shape, missing v",
+			version: "0.2.1-rc6",
+			want:    "ghcr.io/desatatufuria/regixtry:v0.2.1-rc6",
+		},
+		{
+			name:    "already v-prefixed, e.g. a manually set buildVersion",
+			version: "v0.2.1-rc6",
+			want:    "ghcr.io/desatatufuria/regixtry:v0.2.1-rc6",
+		},
+		{
+			name:    "stable release, missing v",
+			version: "1.4.0",
+			want:    "ghcr.io/desatatufuria/regixtry:v1.4.0",
+		},
+		{
+			name:    "unbuilt dev binary falls back to latest, untouched",
+			version: "dev",
+			want:    "ghcr.io/desatatufuria/regixtry:latest",
+		},
+		{
+			name:    "empty version falls back to latest, untouched",
+			version: "",
+			want:    "ghcr.io/desatatufuria/regixtry:latest",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			buildVersion = tt.version
+			if got := setupDockerImageRef(); got != tt.want {
+				t.Fatalf("setupDockerImageRef() with buildVersion=%q = %q, want %q", tt.version, got, tt.want)
+			}
+		})
+	}
+}

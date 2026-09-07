@@ -2568,10 +2568,23 @@ func validateSetupDockerConfig(cfg setupConfig) error {
 // binary's own release version, falling back to "latest" only for dev
 // builds (design.md "Image tag" decision: pinning prevents the container
 // from drifting from the CLI that installed it).
+//
+// The published GHCR tag always carries a leading "v" (.goreleaser.yaml's
+// docker/docker_manifests blocks use {{ .Tag }}), but buildVersion is
+// injected via {{ .Version }} (main.go's own ldflags line), which omits it
+// -- confirmed live during docker-mode validation: `docker compose run`
+// failed with "ghcr.io/desatatufuria/regixtry:0.2.1-rc6: not found" while
+// the real, only-ever-published tag was "...:v0.2.1-rc6". Normalizing here,
+// the same "accept either shape" rule internal/infra/release.parseVersion
+// already applies to buildVersion elsewhere, is cheaper and safer than
+// relying on every future ldflags/template edit to keep both in sync.
 func setupDockerImageRef() string {
 	version := strings.TrimSpace(buildVersion)
 	if version == "" || version == "dev" {
 		return "ghcr.io/desatatufuria/regixtry:latest"
+	}
+	if !strings.HasPrefix(version, "v") {
+		version = "v" + version
 	}
 	return fmt.Sprintf("ghcr.io/desatatufuria/regixtry:%s", version)
 }
