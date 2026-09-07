@@ -127,6 +127,70 @@ regixtry setup
 
 `install.sh` installs the binary; `regixtry setup` then provisions the runtime — `daemon-sqlite` for a Linux/systemd host, or `docker` for a self-contained Docker Compose stack (see [Run as a container](#run-as-a-container) above) — or use `regixtry serve` directly for local/manual runs, as above. Full procedures, including reverse-proxy and direct-TLS modes: [`docs/installation.md`](docs/installation.md). To move an existing install to a newer release: `regixtry upgrade` (resolves the latest non-prerelease tag from GitHub Releases automatically, or pass `-ref` to pin one).
 
+## Run as a container
+
+Every tagged release also publishes a multi-arch (`linux/amd64`, `linux/arm64`) image to `ghcr.io/desatatufuria/regixtry`. This is a manual, first-class path: run it directly with `docker run`. **`install.sh` and `regixtry setup` do not offer a container-selection branch** — they provision the Linux/systemd host runtime only.
+
+```bash
+docker volume create regixtry-data
+docker run -d --name regixtry \
+  -p 5000:5000 \
+  -v regixtry-data:/var/lib/regixtry \
+  ghcr.io/desatatufuria/regixtry:latest \
+  serve -addr 0.0.0.0:5000 -storage-root /var/lib/regixtry \
+    -public-url http://127.0.0.1:5000 \
+    -allow-anonymous-pull -allow-anonymous-push
+```
+
+Check it's up (the same `/v2/` probe backs the image's built-in `HEALTHCHECK`):
+
+```bash
+curl -i http://127.0.0.1:5000/v2/
+```
+
+Push and pull with a real Docker client, exactly as in [Quick start (no auth)](#quick-start-no-auth) above:
+
+```bash
+docker pull alpine:3.20
+docker tag alpine:3.20 127.0.0.1:5000/test/alpine:3.20
+docker push 127.0.0.1:5000/test/alpine:3.20
+docker pull 127.0.0.1:5000/test/alpine:3.20
+```
+
+The image runs as a non-root user (uid `65532`), and data written to `/var/lib/regixtry` survives a container restart as long as it keeps using the same named volume.
+
+### Postgres-backed authentication in a container
+
+Same primitives as [Quick start with authentication and access control](#quick-start-with-authentication-and-access-control) above — same `postgres:17-alpine` pin, same `regixtry_auth`/`registry` DSN shape, same `bootstrap-admin -password-stdin` → `serve -auth-postgres-dsn` order — expressed with `docker network create` + `docker run` instead of `docker compose`:
+
+```bash
+# 1. Ephemeral network + Postgres for auth state
+docker network create regixtry-net
+docker run -d --name regixtry-postgres --network regixtry-net \
+  -e POSTGRES_DB=regixtry_auth -e POSTGRES_USER=registry -e POSTGRES_PASSWORD=registry \
+  postgres:17-alpine
+DSN="postgres://registry:registry@regixtry-postgres:5432/regixtry_auth?sslmode=disable"
+
+# 2. Bootstrap the first global admin -- MUST run before step 3: serve
+#    refuses to start with auth enabled and no existing admin
+printf '%s\n' 'change-me-now' | docker run --rm -i --network regixtry-net \
+  ghcr.io/desatatufuria/regixtry:latest \
+  bootstrap-admin -auth-postgres-dsn "$DSN" -username admin -password-stdin
+
+# 3. Serve, with auth enabled
+docker volume create regixtry-data
+docker run -d --name regixtry --network regixtry-net -p 5000:5000 \
+  -v regixtry-data:/var/lib/regixtry \
+  -e REGISTRY_AUTH_POSTGRES_DSN="$DSN" \
+  ghcr.io/desatatufuria/regixtry:latest
+
+# 4. Log in and push
+docker login 127.0.0.1:5000 -u admin -p change-me-now
+docker push 127.0.0.1:5000/test/alpine:3.20
+```
+
+The `registry:registry` Postgres credential above is a throwaway local-experimentation default, exactly as in the `docker compose` quick start — use real secrets for anything beyond a scratch environment.
+
 ## Try a feature: vulnerability scanning
 
 Trivy is the most complete built-in feature end to end — a good first thing to try after setup:
