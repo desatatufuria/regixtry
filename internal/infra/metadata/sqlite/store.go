@@ -34,7 +34,116 @@ func New(path string) (*Store, error) {
 		return nil, err
 	}
 
+	if err := store.backfillSubjectDigests(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+
 	return store, nil
+}
+
+// subjectDigestBackfillMarker names the schema_backfills row that guards
+// backfillSubjectDigests (oci-referrers-api design.md Decision 1).
+const subjectDigestBackfillMarker = "manifests.subject_digest.v1"
+
+// subjectDigestProbe is a migration-local field probe, NOT an OCI manifest
+// parser: its only contract is the JSON path "subject.digest", fixed by the
+// OCI spec (design.md Decision 1's "Data Flow" note). This is deliberately
+// distinct from manifestEnvelope (internal/app/regixtry), which belongs to
+// the query/push path, not a one-time schema migration.
+type subjectDigestProbe struct {
+	Subject *struct {
+		Digest string `json:"digest"`
+	} `json:"subject"`
+}
+
+// backfillSubjectDigests is the one-time, idempotent migration
+// (oci-referrers-api design.md Decision 1) that populates subject_digest for
+// every manifests row written before that column existed. It is marker-gated
+// (a schema_backfills point lookup), runs at most once per database, and
+// commits its row UPDATEs and the marker INSERT together in ONE transaction
+// so the marker can never drift from the rows it claims to have backfilled.
+//
+// A row whose payload fails to unmarshal, or whose subject.digest fails
+// domain.ParseDigest, is left at an empty string -- exactly the pre-migration value -- and
+// the backfill continues: an unstartable registry is a worse failure than
+// one unindexed row (push-time validation means such a row can only exist
+// through storage corruption).
+func (s *Store) backfillSubjectDigests() error {
+	var marker int
+	err := s.db.QueryRow(`SELECT 1 FROM schema_backfills WHERE name = ?`, subjectDigestBackfillMarker).Scan(&marker)
+	if err == nil {
+		return nil
+	}
+	if err != sql.ErrNoRows {
+		return err
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	type backfillTarget struct {
+		id     int64
+		digest string
+	}
+
+	rows, err := tx.Query(`SELECT id, payload FROM manifests WHERE subject_digest = ''`)
+	if err != nil {
+		return err
+	}
+
+	var targets []backfillTarget
+	for rows.Next() {
+		var (
+			id      int64
+			payload []byte
+		)
+		if err = rows.Scan(&id, &payload); err != nil {
+			_ = rows.Close()
+			return err
+		}
+
+		var probe subjectDigestProbe
+		if unmarshalErr := json.Unmarshal(payload, &probe); unmarshalErr != nil || probe.Subject == nil {
+			continue
+		}
+
+		digest, parseErr := domain.ParseDigest(probe.Subject.Digest)
+		if parseErr != nil {
+			continue
+		}
+
+		targets = append(targets, backfillTarget{id: id, digest: digest.String()})
+	}
+	if err = rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	// The cursor is closed BEFORE any UPDATE -- never UPDATE while iterating
+	// the same table (design.md Decision 1's Data Flow note).
+	if err = rows.Close(); err != nil {
+		return err
+	}
+
+	for _, target := range targets {
+		if _, err = tx.Exec(`UPDATE manifests SET subject_digest = ? WHERE id = ?`, target.digest, target.id); err != nil {
+			return err
+		}
+	}
+
+	if _, err = tx.Exec(`INSERT OR IGNORE INTO schema_backfills (name, completed_at) VALUES (?, ?)`, subjectDigestBackfillMarker, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		return err
+	}
+
+	err = tx.Commit()
+	return err
 }
 
 func sqliteDSN(path string) string {
@@ -224,21 +333,33 @@ func (s *Store) PublishManifest(ctx context.Context, tenant string, repository d
 		return err
 	}
 
+	// subject_digest (oci-referrers-api design.md Decision 2/3): unlike
+	// pushed_by, this IS included in DO UPDATE. A repush that changes the
+	// payload changes the subject, so the two must move together, or
+	// idx_manifests_subject (and ListReferrers, Phase 5) would serve a
+	// stale subject_digest for a manifest whose current content no longer
+	// points at it.
+	subjectDigest := ""
+	if manifest.Subject != nil {
+		subjectDigest = manifest.Subject.Digest.String()
+	}
+
 	// pushed_by is deliberately excluded from DO UPDATE (unlike
-	// media_type/size/payload): the UnsignedSelfRead "pusher" exemption
-	// (service_signing.go) promises "only the exact principal who
+	// media_type/size/payload/subject_digest): the UnsignedSelfRead "pusher"
+	// exemption (service_signing.go) promises "only the exact principal who
 	// originally pushed this digest" -- if a repush overwrote it, any
 	// second push-capable principal who reproduces the identical
 	// content-addressed bytes could silently reassign that guarantee to
 	// themselves. pushed_by is therefore fixed at first insert only.
 	_, err = tx.ExecContext(ctx, `
-		INSERT INTO manifests (tenant, repository_id, digest, media_type, size, payload, created_at, pushed_by)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO manifests (tenant, repository_id, digest, media_type, size, payload, created_at, pushed_by, subject_digest)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(tenant, repository_id, digest) DO UPDATE SET
 			media_type = excluded.media_type,
 			size = excluded.size,
-			payload = excluded.payload
-	`, tenant, repositoryID, manifest.Digest.String(), manifest.MediaType, manifest.Size, manifest.Payload, time.Now().UTC().Format(time.RFC3339Nano), manifest.PushedBy)
+			payload = excluded.payload,
+			subject_digest = excluded.subject_digest
+	`, tenant, repositoryID, manifest.Digest.String(), manifest.MediaType, manifest.Size, manifest.Payload, time.Now().UTC().Format(time.RFC3339Nano), manifest.PushedBy, subjectDigest)
 	if err != nil {
 		return err
 	}
@@ -1693,6 +1814,7 @@ func (s *Store) init() error {
 			payload BLOB NOT NULL,
 			created_at TEXT NOT NULL,
 			pushed_by TEXT NOT NULL DEFAULT '',
+			subject_digest TEXT NOT NULL DEFAULT '',
 			UNIQUE(tenant, repository_id, digest),
 			FOREIGN KEY(repository_id) REFERENCES repositories(id) ON DELETE CASCADE
 		);`,
@@ -1960,6 +2082,31 @@ func (s *Store) init() error {
 		// with up to the design-cited ~100k candidates. This covering index
 		// makes that lookup a direct point query instead.
 		`CREATE INDEX IF NOT EXISTS idx_gc_report_candidates_report_digest ON gc_report_candidates(report_id, digest);`,
+		`ALTER TABLE manifests ADD COLUMN subject_digest TEXT NOT NULL DEFAULT '';`,
+		// idx_manifests_subject (oci-referrers-api design.md Decision 2): a
+		// PARTIAL index over referrer rows only -- ordinary image pushes
+		// (subject_digest == '', the overwhelming majority) pay ~zero write
+		// amplification. digest as the 4th column makes ListReferrers'
+		// ORDER BY m.digest ASC (Decision 4) index-ordered. SQLite only
+		// uses a partial index when the query's WHERE clause provably
+		// implies this one's -- a bound "subject_digest = ?" parameter
+		// alone proves nothing -- so any reader of this index (ListReferrers,
+		// Phase 5) MUST repeat the literal "AND m.subject_digest != ''"
+		// predicate, not merely bind an empty-string check.
+		`CREATE INDEX IF NOT EXISTS idx_manifests_subject
+			ON manifests(tenant, repository_id, subject_digest, digest)
+			WHERE subject_digest != '';`,
+		// schema_backfills (oci-referrers-api design.md Decision 1): a
+		// narrow one-time-migration marker table, not a general schema/config
+		// store. backfillSubjectDigests (called from New(), after init())
+		// point-looks-up this table by name before doing any work; the row
+		// UPDATEs it performs and this table's own INSERT OR IGNORE commit in
+		// ONE transaction, so the marker can never drift from the rows it
+		// claims to have backfilled.
+		`CREATE TABLE IF NOT EXISTS schema_backfills (
+			name TEXT PRIMARY KEY,
+			completed_at TEXT NOT NULL
+		);`,
 	}
 
 	for _, statement := range statements {

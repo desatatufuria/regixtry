@@ -98,35 +98,35 @@ Chain strategy: pending
 
 ## Phase 3: Store — `PublishManifest` Writes `subject_digest` (PR 2)
 
-- [ ] 3.1 RED `internal/infra/metadata/sqlite/store_test.go`:
+- [x] 3.1 RED `internal/infra/metadata/sqlite/store_test.go`:
       `PublishManifest` writes `subject_digest`; a manifest with no subject
       stores `''`; a repush with a different subject updates the stored
       value.
-- [ ] 3.2 GREEN `internal/infra/metadata/sqlite/store.go`: `ALTER TABLE
+- [x] 3.2 GREEN `internal/infra/metadata/sqlite/store.go`: `ALTER TABLE
       manifests ADD COLUMN subject_digest TEXT NOT NULL DEFAULT ''` (+
       matching `CREATE TABLE` column); add `subject_digest` to
       `PublishManifest`'s insert column list and `ON CONFLICT DO UPDATE SET`.
-- [ ] 3.3 GREEN (same file): partial index `idx_manifests_subject ON
+- [x] 3.3 GREEN (same file): partial index `idx_manifests_subject ON
       manifests(tenant, repository_id, subject_digest, digest) WHERE
       subject_digest != ''`; `schema_backfills(name TEXT PRIMARY KEY,
       completed_at TEXT NOT NULL)` table, appended to `init()`.
 
 ## Phase 4: Store — Idempotent Backfill (PR 2)
 
-- [ ] 4.1 RED `internal/infra/metadata/sqlite/store_test.go`: pre-existing
+- [x] 4.1 RED `internal/infra/metadata/sqlite/store_test.go`: pre-existing
       rows are backfilled after `New()`; a second `New()` changes no row and
       writes no second marker (idempotency).
-- [ ] 4.2 RED (same file): an unparseable payload leaves `subject_digest =
+- [x] 4.2 RED (same file): an unparseable payload leaves `subject_digest =
       ''` and `New()` still succeeds (threat matrix: boot-time migration
       availability).
-- [ ] 4.3 RED (same file): row updates and the `schema_backfills` marker
+- [x] 4.3 RED (same file): row updates and the `schema_backfills` marker
       insert commit atomically — assert via a single-transaction probe.
-- [ ] 4.4 GREEN `internal/infra/metadata/sqlite/store.go`:
+- [x] 4.4 GREEN `internal/infra/metadata/sqlite/store.go`:
       `backfillSubjectDigests()` — marker point-lookup guard; one
       transaction; field-probe parse (`struct{ Subject *struct{ Digest
       string } }`); `UPDATE` only successfully-parsed rows; `INSERT OR
       IGNORE` marker; called from `New()` after `init()`.
-- [ ] 4.5 Confirm Phase 3–4 GREEN (Unit 2 focused test command).
+- [x] 4.5 Confirm Phase 3–4 GREEN (Unit 2 focused test command).
 
 ## Phase 5: Store Query — `ListReferrers` (PR 3)
 

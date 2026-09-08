@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"path/filepath"
 	"reflect"
@@ -1802,6 +1803,483 @@ func TestMarkGCReportDeletedCandidateUpdateUsesTheReportDigestIndex(t *testing.T
 	if !strings.Contains(plan.String(), "idx_gc_report_candidates_report_digest") {
 		t.Fatalf("query plan = %q, want it to use idx_gc_report_candidates_report_digest", plan.String())
 	}
+}
+
+// TestStorePublishManifestWritesSubjectDigest covers oci-referrers-api
+// design.md Decision 2/3, Phase 3: PublishManifest persists
+// manifests.subject_digest from manifest.Subject, so ListReferrers (Phase 5,
+// out of scope here) can query it directly without re-parsing payload JSON
+// on every read.
+func TestStorePublishManifestWritesSubjectDigest(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+	ctx := context.Background()
+
+	repo := domain.MustParseRepositoryRef("library/alpine")
+
+	target, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", "", []byte(`{"schemaVersion":2,"target":true}`), nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("NewManifest(target) error = %v", err)
+	}
+	if err := store.PublishManifest(ctx, "tenant-a", repo, "target", target, nil); err != nil {
+		t.Fatalf("PublishManifest(target) error = %v", err)
+	}
+
+	subject := &domain.Descriptor{
+		MediaType: "application/vnd.oci.image.manifest.v1+json",
+		Digest:    target.Digest,
+		Size:      target.Size,
+	}
+	referrer, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", "application/vnd.example.sbom.v1+json", []byte(`{"schemaVersion":2,"referrer":true}`), nil, nil, subject, nil)
+	if err != nil {
+		t.Fatalf("NewManifest(referrer) error = %v", err)
+	}
+	if err := store.PublishManifest(ctx, "tenant-a", repo, "", referrer, nil); err != nil {
+		t.Fatalf("PublishManifest(referrer) error = %v", err)
+	}
+
+	got := querySubjectDigest(t, store, "tenant-a", "library/alpine", referrer.Digest.String())
+	if got != target.Digest.String() {
+		t.Fatalf("subject_digest = %q, want %q", got, target.Digest.String())
+	}
+}
+
+// TestStorePublishManifestNoSubjectStoresEmptyString triangulates the above:
+// an ordinary manifest with no Subject (the overwhelming majority of pushes)
+// must store an empty string -- the value idx_manifests_subject's partial predicate
+// excludes.
+func TestStorePublishManifestNoSubjectStoresEmptyString(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+	ctx := context.Background()
+
+	repo := domain.MustParseRepositoryRef("library/alpine")
+
+	manifest, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", "", []byte(`{"schemaVersion":2}`), nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("NewManifest() error = %v", err)
+	}
+	if err := store.PublishManifest(ctx, "tenant-a", repo, "latest", manifest, nil); err != nil {
+		t.Fatalf("PublishManifest() error = %v", err)
+	}
+
+	got := querySubjectDigest(t, store, "tenant-a", "library/alpine", manifest.Digest.String())
+	if got != "" {
+		t.Fatalf("subject_digest = %q, want empty string", got)
+	}
+}
+
+// TestStorePublishManifestRepushWithDifferentSubjectUpdatesStoredValue
+// covers design.md's risk note: unlike pushed_by (deliberately insert-only),
+// subject_digest IS in DO UPDATE SET. Two domain.Manifest values sharing one
+// byte-identical payload (hence one digest, since Subject/ArtifactType/
+// PushedBy do not participate in digest computation -- manifest.go) but
+// different Subject descriptors model a repush at the store's own API
+// boundary; the second PublishManifest call must overwrite, not preserve,
+// the first subject_digest.
+func TestStorePublishManifestRepushWithDifferentSubjectUpdatesStoredValue(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+	ctx := context.Background()
+
+	repo := domain.MustParseRepositoryRef("library/alpine")
+	payload := []byte(`{"schemaVersion":2,"repush":true}`)
+
+	firstSubject := &domain.Descriptor{
+		MediaType: "application/vnd.oci.image.manifest.v1+json",
+		Digest:    domain.DigestFromBytes([]byte("subject-one")),
+		Size:      int64(len("subject-one")),
+	}
+	firstManifest, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", "", payload, nil, nil, firstSubject, nil)
+	if err != nil {
+		t.Fatalf("NewManifest(first) error = %v", err)
+	}
+	if err := store.PublishManifest(ctx, "tenant-a", repo, "", firstManifest, nil); err != nil {
+		t.Fatalf("PublishManifest(first) error = %v", err)
+	}
+
+	if got := querySubjectDigest(t, store, "tenant-a", "library/alpine", firstManifest.Digest.String()); got != firstSubject.Digest.String() {
+		t.Fatalf("subject_digest (first) = %q, want %q", got, firstSubject.Digest.String())
+	}
+
+	secondSubject := &domain.Descriptor{
+		MediaType: "application/vnd.oci.image.manifest.v1+json",
+		Digest:    domain.DigestFromBytes([]byte("subject-two")),
+		Size:      int64(len("subject-two")),
+	}
+	secondManifest, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", "", payload, nil, nil, secondSubject, nil)
+	if err != nil {
+		t.Fatalf("NewManifest(second) error = %v", err)
+	}
+	if secondManifest.Digest != firstManifest.Digest {
+		t.Fatalf("secondManifest.Digest = %s, want equal to firstManifest.Digest %s (repush requires byte-identical payload)", secondManifest.Digest, firstManifest.Digest)
+	}
+	if err := store.PublishManifest(ctx, "tenant-a", repo, "", secondManifest, nil); err != nil {
+		t.Fatalf("PublishManifest(second/repush) error = %v", err)
+	}
+
+	if got := querySubjectDigest(t, store, "tenant-a", "library/alpine", firstManifest.Digest.String()); got != secondSubject.Digest.String() {
+		t.Fatalf("subject_digest (after repush) = %q, want %q (must update, not stay stale)", got, secondSubject.Digest.String())
+	}
+}
+
+// TestStoreCreatesPartialIndexOnSubjectDigestUsableByLiteralPredicate covers
+// design.md Decision 2's load-bearing detail: SQLite only uses a partial
+// index when the query's WHERE clause provably implies the index's own
+// predicate. ListReferrers itself is Phase 5 (out of scope for this PR), so
+// this issues the equivalent SELECT directly, following
+// TestMarkGCReportDeletedCandidateUpdateUsesTheReportDigestIndex's EXPLAIN
+// QUERY PLAN precedent above.
+func TestStoreCreatesPartialIndexOnSubjectDigestUsableByLiteralPredicate(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	plan := explainQueryPlan(t, store, `
+		SELECT m.digest, m.media_type, m.size, m.payload
+		FROM manifests m
+		JOIN repositories r ON r.id = m.repository_id
+		WHERE m.tenant = ? AND r.tenant = ? AND r.name = ?
+		  AND m.subject_digest = ?
+		  AND m.subject_digest != ''
+		ORDER BY m.digest ASC
+	`, "tenant-a", "tenant-a", "library/alpine", "sha256:aaaa")
+
+	if !strings.Contains(plan, "idx_manifests_subject") {
+		t.Fatalf("query plan = %q, want it to use idx_manifests_subject (literal subject_digest != '' predicate required for SQLite to prove partial-index applicability)", plan)
+	}
+}
+
+// TestStorePartialIndexNotUsedWithoutTheLiteralPredicate triangulates the
+// above: a query with only "subject_digest = ?" (a bound parameter, no
+// literal empty-string comparison) does not provably imply the partial index's own
+// predicate, so SQLite must NOT resolve it to idx_manifests_subject -- this
+// proves Decision 2's literal-predicate requirement is load-bearing, not
+// decorative.
+func TestStorePartialIndexNotUsedWithoutTheLiteralPredicate(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	plan := explainQueryPlan(t, store, `
+		SELECT m.digest, m.media_type, m.size, m.payload
+		FROM manifests m
+		JOIN repositories r ON r.id = m.repository_id
+		WHERE m.tenant = ? AND r.tenant = ? AND r.name = ?
+		  AND m.subject_digest = ?
+		ORDER BY m.digest ASC
+	`, "tenant-a", "tenant-a", "library/alpine", "sha256:aaaa")
+
+	if strings.Contains(plan, "idx_manifests_subject") {
+		t.Fatalf("query plan = %q, must NOT use idx_manifests_subject without the literal subject_digest != '' predicate", plan)
+	}
+}
+
+// TestStoreBackfillsPreExistingRowsSubjectDigestOnNewIdempotently covers
+// oci-referrers-api design.md Decision 1, Phase 4: a row written before this
+// column existed (subject_digest equal to an empty string, simulated here via
+// insertRawManifestRow against a schema-only store, bypassing both
+// PublishManifest and the very first backfill pass) is backfilled the
+// moment New() is called against its database file, and a second New()
+// changes no row and writes no second schema_backfills marker.
+func TestStoreBackfillsPreExistingRowsSubjectDigestOnNewIdempotently(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "registry.db")
+
+	store := newSchemaOnlyStore(t, path)
+
+	subjectDigest := domain.DigestFromBytes([]byte("pre-existing-subject")).String()
+	payload := []byte(fmt.Sprintf(`{"schemaVersion":2,"subject":{"digest":%q}}`, subjectDigest))
+	referrerDigest := domain.DigestFromBytes(payload).String()
+
+	insertRawManifestRow(t, store, "tenant-a", "library/alpine", referrerDigest, payload, "")
+
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	reopened, err := New(path)
+	if err != nil {
+		t.Fatalf("New() (reopen, triggers backfill) error = %v", err)
+	}
+	defer reopened.Close()
+
+	if got := querySubjectDigest(t, reopened, "tenant-a", "library/alpine", referrerDigest); got != subjectDigest {
+		t.Fatalf("subject_digest after backfill = %q, want %q", got, subjectDigest)
+	}
+
+	completedAtFirst := queryBackfillMarker(t, reopened)
+	if completedAtFirst == "" {
+		t.Fatalf("schema_backfills marker missing after backfill")
+	}
+
+	if err := reopened.Close(); err != nil {
+		t.Fatalf("Close() (before idempotency reopen) error = %v", err)
+	}
+
+	secondReopen, err := New(path)
+	if err != nil {
+		t.Fatalf("New() (second reopen, idempotency) error = %v", err)
+	}
+	defer secondReopen.Close()
+
+	if got := querySubjectDigest(t, secondReopen, "tenant-a", "library/alpine", referrerDigest); got != subjectDigest {
+		t.Fatalf("subject_digest after second New() = %q, want unchanged %q", got, subjectDigest)
+	}
+
+	if completedAtSecond := queryBackfillMarker(t, secondReopen); completedAtSecond != completedAtFirst {
+		t.Fatalf("schema_backfills.completed_at changed across idempotent reopen: first=%q second=%q, want unchanged", completedAtFirst, completedAtSecond)
+	}
+
+	if count := queryBackfillMarkerCount(t, secondReopen); count != 1 {
+		t.Fatalf("schema_backfills row count = %d, want exactly 1 (INSERT OR IGNORE must not create a second marker)", count)
+	}
+}
+
+// TestStoreBackfillLeavesUnparseablePayloadEmptyAndNewStillSucceeds covers
+// the threat matrix's "boot-time migration availability" row: a row whose
+// payload is not JSON, and a row whose subject.digest fails
+// domain.ParseDigest, must both be left at subject_digest equal to an empty string -- exactly
+// the pre-change value -- and New() must still succeed rather than fail
+// boot. A third, valid control row is seeded alongside the two corrupt ones
+// and asserted non-empty, proving the backfill actually ran across all three
+// rows rather than this test accidentally passing because no backfill ran
+// at all.
+func TestStoreBackfillLeavesUnparseablePayloadEmptyAndNewStillSucceeds(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "registry.db")
+
+	store := newSchemaOnlyStore(t, path)
+
+	notJSONPayload := []byte("not valid json at all")
+	notJSONDigest := domain.DigestFromBytes(notJSONPayload).String()
+	insertRawManifestRow(t, store, "tenant-a", "library/alpine", notJSONDigest, notJSONPayload, "")
+
+	malformedSubjectPayload := []byte(`{"schemaVersion":2,"subject":{"digest":"not-a-valid-digest"}}`)
+	malformedDigest := domain.DigestFromBytes(malformedSubjectPayload).String()
+	insertRawManifestRow(t, store, "tenant-a", "library/alpine", malformedDigest, malformedSubjectPayload, "")
+
+	validSubjectDigest := domain.DigestFromBytes([]byte("control-row-subject")).String()
+	validPayload := []byte(fmt.Sprintf(`{"schemaVersion":2,"subject":{"digest":%q}}`, validSubjectDigest))
+	validDigest := domain.DigestFromBytes(validPayload).String()
+	insertRawManifestRow(t, store, "tenant-a", "library/alpine", validDigest, validPayload, "")
+
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	reopened, err := New(path)
+	if err != nil {
+		t.Fatalf("New() (reopen, backfill over corrupt rows) error = %v, want success -- a corrupt row must not block boot", err)
+	}
+	defer reopened.Close()
+
+	if got := querySubjectDigest(t, reopened, "tenant-a", "library/alpine", notJSONDigest); got != "" {
+		t.Fatalf("subject_digest (unparseable JSON payload) = %q, want empty string", got)
+	}
+	if got := querySubjectDigest(t, reopened, "tenant-a", "library/alpine", malformedDigest); got != "" {
+		t.Fatalf("subject_digest (malformed subject.digest) = %q, want empty string", got)
+	}
+	if got := querySubjectDigest(t, reopened, "tenant-a", "library/alpine", validDigest); got != validSubjectDigest {
+		t.Fatalf("subject_digest (control row, valid subject) = %q, want %q -- proves the backfill actually ran, not merely that corrupt rows are untouched", got, validSubjectDigest)
+	}
+}
+
+// TestStoreBackfillRowUpdateAndMarkerCommitTogether is the single-transaction
+// probe for design.md Decision 1: the row UPDATE(s) and the schema_backfills
+// INSERT OR IGNORE land in the SAME transaction, so one read joining both
+// tables must see them landed together, never one without the other.
+// Fault-injected mid-transaction atomicity is out of reach for a black-box
+// database/sql test; this proves the observable invariant the atomicity
+// exists to guarantee.
+func TestStoreBackfillRowUpdateAndMarkerCommitTogether(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "registry.db")
+
+	store := newSchemaOnlyStore(t, path)
+
+	subjectDigest := domain.DigestFromBytes([]byte("atomic-probe-subject")).String()
+	payload := []byte(fmt.Sprintf(`{"schemaVersion":2,"subject":{"digest":%q}}`, subjectDigest))
+	referrerDigest := domain.DigestFromBytes(payload).String()
+	insertRawManifestRow(t, store, "tenant-a", "library/alpine", referrerDigest, payload, "")
+
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	reopened, err := New(path)
+	if err != nil {
+		t.Fatalf("New() (reopen, backfill) error = %v", err)
+	}
+	defer reopened.Close()
+
+	var (
+		gotSubjectDigest string
+		markerCount      int
+	)
+	err = reopened.db.QueryRow(`
+		SELECT
+			(SELECT m.subject_digest FROM manifests m
+			 JOIN repositories r ON r.id = m.repository_id
+			 WHERE r.tenant = ? AND r.name = ? AND m.digest = ?),
+			(SELECT COUNT(*) FROM schema_backfills WHERE name = ?)
+	`, "tenant-a", "library/alpine", referrerDigest, "manifests.subject_digest.v1").Scan(&gotSubjectDigest, &markerCount)
+	if err != nil {
+		t.Fatalf("single-transaction probe query error = %v", err)
+	}
+
+	if gotSubjectDigest != subjectDigest || markerCount != 1 {
+		t.Fatalf("probe = (subject_digest=%q, markerCount=%d), want (%q, 1) -- row update and marker must land together", gotSubjectDigest, markerCount, subjectDigest)
+	}
+}
+
+// newSchemaOnlyStore opens a store at path with init() run (so the
+// manifests/schema_backfills tables and subject_digest column all exist)
+// but WITHOUT running backfillSubjectDigests -- letting a test seed
+// "pre-existing" rows before the very first backfill pass ever executes,
+// matching how a real upgrade encounters rows written before this
+// migration shipped. A plain New(path) call always runs both init() and
+// the backfill together, so it cannot be used to seed pre-backfill state.
+func newSchemaOnlyStore(t *testing.T, path string) *Store {
+	t.Helper()
+
+	db, err := sql.Open("sqlite", sqliteDSN(path))
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+
+	store := &Store{db: db}
+	if err := store.init(); err != nil {
+		t.Fatalf("init() error = %v", err)
+	}
+
+	return store
+}
+
+// querySubjectDigest reads manifests.subject_digest directly -- no port
+// exposes it yet (ListReferrers is Phase 5, out of scope for this PR) --
+// using the same tenant/repository join predicates ResolveManifest/ListTags
+// use.
+func querySubjectDigest(t *testing.T, store *Store, tenant string, repository string, digest string) string {
+	t.Helper()
+
+	var subjectDigest string
+	err := store.db.QueryRow(`
+		SELECT m.subject_digest
+		FROM manifests m
+		JOIN repositories r ON r.id = m.repository_id
+		WHERE m.tenant = ? AND r.tenant = ? AND r.name = ? AND m.digest = ?
+	`, tenant, tenant, repository, digest).Scan(&subjectDigest)
+	if err != nil {
+		t.Fatalf("query subject_digest error = %v", err)
+	}
+
+	return subjectDigest
+}
+
+// queryBackfillMarker reads schema_backfills.completed_at for the
+// subject_digest backfill marker, or "" if absent.
+func queryBackfillMarker(t *testing.T, store *Store) string {
+	t.Helper()
+
+	var completedAt string
+	err := store.db.QueryRow(`SELECT completed_at FROM schema_backfills WHERE name = ?`, "manifests.subject_digest.v1").Scan(&completedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return ""
+		}
+		t.Fatalf("query schema_backfills error = %v", err)
+	}
+
+	return completedAt
+}
+
+// queryBackfillMarkerCount reads how many schema_backfills rows carry the
+// subject_digest backfill marker name -- must never exceed 1.
+func queryBackfillMarkerCount(t *testing.T, store *Store) int {
+	t.Helper()
+
+	var count int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM schema_backfills WHERE name = ?`, "manifests.subject_digest.v1").Scan(&count); err != nil {
+		t.Fatalf("count schema_backfills error = %v", err)
+	}
+
+	return count
+}
+
+// insertRawManifestRow directly inserts a manifest row (bypassing
+// PublishManifest/domain.NewManifest validation entirely) to simulate a row
+// written by a build that predates this migration -- exactly what
+// backfillSubjectDigests must repair. subjectDigest is the column's
+// pre-migration value (an empty string for every row before the backfill runs).
+func insertRawManifestRow(t *testing.T, store *Store, tenant string, repository string, digest string, payload []byte, subjectDigest string) {
+	t.Helper()
+
+	var repositoryID int64
+	err := store.db.QueryRow(`SELECT id FROM repositories WHERE tenant = ? AND name = ?`, tenant, repository).Scan(&repositoryID)
+	if err != nil {
+		if err != sql.ErrNoRows {
+			t.Fatalf("lookup repository error = %v", err)
+		}
+
+		result, insertErr := store.db.Exec(`INSERT INTO repositories (tenant, name, created_at) VALUES (?, ?, ?)`, tenant, repository, time.Now().UTC().Format(time.RFC3339Nano))
+		if insertErr != nil {
+			t.Fatalf("insert repository error = %v", insertErr)
+		}
+		repositoryID, err = result.LastInsertId()
+		if err != nil {
+			t.Fatalf("LastInsertId() error = %v", err)
+		}
+	}
+
+	_, err = store.db.Exec(`
+		INSERT INTO manifests (tenant, repository_id, digest, media_type, size, payload, created_at, pushed_by, subject_digest)
+		VALUES (?, ?, ?, ?, ?, ?, ?, '', ?)
+	`, tenant, repositoryID, digest, "application/vnd.oci.image.manifest.v1+json", int64(len(payload)), payload, time.Now().UTC().Format(time.RFC3339Nano), subjectDigest)
+	if err != nil {
+		t.Fatalf("insert manifest row error = %v", err)
+	}
+}
+
+// explainQueryPlan runs EXPLAIN QUERY PLAN for the given query and returns
+// the concatenated "detail" column, following
+// TestMarkGCReportDeletedCandidateUpdateUsesTheReportDigestIndex's pattern
+// above.
+func explainQueryPlan(t *testing.T, store *Store, query string, args ...any) string {
+	t.Helper()
+
+	rows, err := store.db.Query("EXPLAIN QUERY PLAN "+query, args...)
+	if err != nil {
+		t.Fatalf("EXPLAIN QUERY PLAN error = %v", err)
+	}
+	defer rows.Close()
+
+	var plan strings.Builder
+	for rows.Next() {
+		var id, parent, notused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &notused, &detail); err != nil {
+			t.Fatalf("Scan() error = %v", err)
+		}
+		plan.WriteString(detail)
+		plan.WriteString("; ")
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows.Err() = %v", err)
+	}
+
+	return plan.String()
 }
 
 func newTestStore(t *testing.T) *Store {
