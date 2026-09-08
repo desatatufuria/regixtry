@@ -60,15 +60,15 @@ Chain strategy: pending
 
 ## Phase 0: Characterization (PR 1, no behavior change)
 
-- [ ] 0.1 RED+confirm GREEN `internal/protocol/http/router_test.go` (new):
+- [x] 0.1 RED+confirm GREEN `internal/protocol/http/router_test.go` (new):
       table-driven `splitRepositoryPath` test pinning today's five-marker
       outcomes, incl. `library/referrers/manifests/latest` and
       `library/manifests/manifests/latest`.
-- [ ] 0.2 RED+confirm GREEN (same file): `handleV2` dispatch table pinning
+- [x] 0.2 RED+confirm GREEN (same file): `handleV2` dispatch table pinning
       today's routing for `blobs/uploads`, `blobs/`, `manifests/<ref>`,
       `/scan-status`, `/signature-status`, `/secret-scan-status`,
       `tags/list`, `_catalog`, and `referrers/<digest>` → `404 NAME_UNKNOWN`.
-- [ ] 0.3 RED+confirm GREEN (same file): `writeJSON` sets
+- [x] 0.3 RED+confirm GREEN (same file): `writeJSON` sets
       `Content-Type: application/json`, pinned before the `writeJSONAs` split.
 
 ## Phase 1: Domain — `NewManifest` ArtifactType (PR 1)

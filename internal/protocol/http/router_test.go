@@ -2419,6 +2419,292 @@ func TestRouterReadOnlyPrincipalReadsAnyRepositoryRejectedOnPushAndAdmin(t *test
 	}
 }
 
+// TestSplitRepositoryPathCharacterizesCurrentFiveMarkerBehavior is the
+// oci-referrers-api Phase 0 characterization safety net (design.md Testing
+// Strategy phase 0, tasks.md 0.1): splitRepositoryPath had zero covering
+// tests before this change. This approval test pins today's exact
+// five-marker outcomes -- including the two route-shadowing edge cases
+// design.md Decision 6 reasons about -- BEFORE any behavior change, so that
+// a later PR's addition of a "/referrers/" marker can be proven not to
+// regress any of these.
+func TestSplitRepositoryPathCharacterizesCurrentFiveMarkerBehavior(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		path           string
+		wantRepository string
+		wantSuffix     string
+		wantOK         bool
+	}{
+		{name: "blobs upload start with trailing id", path: "library/alpine/blobs/uploads/abc123", wantRepository: "library/alpine", wantSuffix: "blobs/uploads/abc123", wantOK: true},
+		{name: "blobs upload start marker alone with trailing slash", path: "library/alpine/blobs/uploads/", wantRepository: "library/alpine", wantSuffix: "blobs/uploads/", wantOK: true},
+		{name: "blobs upload start marker alone no trailing slash", path: "library/alpine/blobs/uploads", wantRepository: "library/alpine", wantSuffix: "blobs/uploads", wantOK: true},
+		{name: "blob read", path: "library/alpine/blobs/sha256:abc", wantRepository: "library/alpine", wantSuffix: "blobs/sha256:abc", wantOK: true},
+		{name: "manifest reference", path: "library/alpine/manifests/latest", wantRepository: "library/alpine", wantSuffix: "manifests/latest", wantOK: true},
+		{name: "tags list", path: "library/alpine/tags/list", wantRepository: "library/alpine", wantSuffix: "tags/list", wantOK: true},
+		{name: "catalog path never reaches this function -- handleV2 intercepts it first", path: "_catalog", wantRepository: "", wantSuffix: "", wantOK: false},
+		{
+			name: "repository literally named referrers still routes as manifests -- design.md Decision 6's ordering hazard, pre-referrers-marker baseline",
+			path: "library/referrers/manifests/latest", wantRepository: "library/referrers", wantSuffix: "manifests/latest", wantOK: true,
+		},
+		{
+			name: "repository and tag both literally named manifests -- first marker occurrence wins, pre-existing property",
+			path: "library/manifests/manifests/latest", wantRepository: "library", wantSuffix: "manifests/manifests/latest", wantOK: true,
+		},
+		{name: "referrers path with digest has no matching marker today -- unroutable", path: "library/alpine/referrers/sha256:abc", wantRepository: "", wantSuffix: "", wantOK: false},
+		{name: "referrers path with empty digest has no matching marker today -- unroutable", path: "library/alpine/referrers/", wantRepository: "", wantSuffix: "", wantOK: false},
+		{name: "referrers suffix alone has no matching marker today -- unroutable", path: "library/alpine/referrers", wantRepository: "", wantSuffix: "", wantOK: false},
+		{name: "residual double-referrers path also has no matching marker today", path: "library/referrers/referrers/sha256:abc", wantRepository: "", wantSuffix: "", wantOK: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			repository, suffix, ok := splitRepositoryPath(tt.path)
+			if repository != tt.wantRepository || suffix != tt.wantSuffix || ok != tt.wantOK {
+				t.Fatalf("splitRepositoryPath(%q) = (%q, %q, %v), want (%q, %q, %v)", tt.path, repository, suffix, ok, tt.wantRepository, tt.wantSuffix, tt.wantOK)
+			}
+		})
+	}
+}
+
+// TestHandleV2DispatchCharacterizesCurrentRoutingBeforeReferrers is the
+// oci-referrers-api Phase 0 characterization safety net (design.md Testing
+// Strategy phase 0, tasks.md 0.2): handleV2's dispatch switch had zero
+// covering tests before this change. This approval test pins today's routing
+// for every existing suffix branch, plus proves "referrers/<digest>" is NOT
+// dispatched anywhere yet -- it falls through to the default 404
+// NAME_UNKNOWN branch like any other unrecognized suffix, because
+// splitRepositoryPath (see the test above) does not yet know a "/referrers/"
+// marker. Once a later PR adds that marker and its handleV2 case, this last
+// subtest is expected to change and must be updated in lockstep -- see the
+// DELETE dispatch tests earlier in this file for the established pattern of
+// updating an approval test alongside an intentional behavior change.
+func TestHandleV2DispatchCharacterizesCurrentRoutingBeforeReferrers(t *testing.T) {
+	t.Parallel()
+
+	handler, cleanup := newTestRouter(t, allowAllAccessController{})
+	// t.Cleanup, not defer: this test's subtests call t.Parallel(), so the
+	// parent function body returns (and a deferred cleanup would run) before
+	// those subtests actually execute. t.Cleanup runs only after the parent
+	// AND all its subtests finish.
+	t.Cleanup(cleanup)
+
+	seedPublishedManifest(t, handler)
+	unknownBlobDigest := domain.DigestFromBytes([]byte("dispatch-characterization-unseeded-blob")).String()
+	unknownManifestDigest := domain.DigestFromBytes([]byte("dispatch-characterization-unseeded-manifest")).String()
+
+	t.Run("blobs/uploads/ dispatches to handleUploadStart", func(t *testing.T) {
+		t.Parallel()
+
+		req := httptest.NewRequest(http.MethodPost, "/v2/dispatch/blobs-uploads/blobs/uploads/", nil)
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+
+		if recorder.Code != http.StatusAccepted {
+			t.Fatalf("status = %d, want %d", recorder.Code, http.StatusAccepted)
+		}
+		if recorder.Header().Get("Docker-Upload-UUID") == "" {
+			t.Fatal("expected Docker-Upload-UUID header, proving handleUploadStart served this")
+		}
+	})
+
+	t.Run("blobs/ dispatches to handleBlobRead", func(t *testing.T) {
+		t.Parallel()
+
+		req := httptest.NewRequest(http.MethodGet, "/v2/team/blob-read-dispatch/blobs/"+unknownBlobDigest, nil)
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+
+		if recorder.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want %d", recorder.Code, http.StatusNotFound)
+		}
+		var payload struct {
+			Errors []struct {
+				Code string `json:"code"`
+			} `json:"errors"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("json.Unmarshal() error = %v", err)
+		}
+		if len(payload.Errors) != 1 || payload.Errors[0].Code != "BLOB_UNKNOWN" {
+			t.Fatalf("payload.Errors = %#v, want single BLOB_UNKNOWN error, proving handleBlobRead served this", payload.Errors)
+		}
+	})
+
+	t.Run("manifests/<ref> dispatches to handleManifest", func(t *testing.T) {
+		t.Parallel()
+
+		req := httptest.NewRequest(http.MethodGet, "/v2/library/alpine/manifests/dispatch-characterization-missing-ref", nil)
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+
+		if recorder.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want %d", recorder.Code, http.StatusNotFound)
+		}
+		var payload struct {
+			Errors []struct {
+				Code string `json:"code"`
+			} `json:"errors"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("json.Unmarshal() error = %v", err)
+		}
+		if len(payload.Errors) != 1 || payload.Errors[0].Code != "MANIFEST_UNKNOWN" {
+			t.Fatalf("payload.Errors = %#v, want single MANIFEST_UNKNOWN error, proving handleManifest served this", payload.Errors)
+		}
+	})
+
+	t.Run("manifests/<ref>/scan-status dispatches to handleManifestScanStatus", func(t *testing.T) {
+		t.Parallel()
+
+		req := httptest.NewRequest(http.MethodGet, "/v2/library/alpine/manifests/latest/scan-status", nil)
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+		}
+		body := recorder.Body.String()
+		if !strings.Contains(body, `"would_block_pull"`) || strings.Contains(body, `"signature"`) || strings.Contains(body, `"finding_count"`) {
+			t.Fatalf("body = %s, want the scan-status shape only, proving handleManifestScanStatus served this", body)
+		}
+	})
+
+	t.Run("manifests/<ref>/signature-status dispatches to handleManifestSignatureStatus", func(t *testing.T) {
+		t.Parallel()
+
+		req := httptest.NewRequest(http.MethodGet, "/v2/library/alpine/manifests/latest/signature-status", nil)
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+		}
+		body := recorder.Body.String()
+		if !strings.Contains(body, `"signature"`) {
+			t.Fatalf("body = %s, want the signature-status shape, proving handleManifestSignatureStatus served this", body)
+		}
+	})
+
+	t.Run("manifests/<ref>/secret-scan-status dispatches to handleManifestSecretScanStatus", func(t *testing.T) {
+		t.Parallel()
+
+		req := httptest.NewRequest(http.MethodGet, "/v2/library/alpine/manifests/latest/secret-scan-status", nil)
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+		}
+		body := recorder.Body.String()
+		if strings.Contains(body, `"would_block_pull"`) || strings.Contains(body, `"signature"`) {
+			t.Fatalf("body = %s, want the secret-scan-status shape (no would_block_pull, no signature), proving handleManifestSecretScanStatus served this", body)
+		}
+	})
+
+	t.Run("tags/list dispatches to handleTags", func(t *testing.T) {
+		t.Parallel()
+
+		req := httptest.NewRequest(http.MethodGet, "/v2/library/alpine/tags/list", nil)
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+		}
+		var payload struct {
+			Tags []string `json:"tags"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("json.Unmarshal() error = %v", err)
+		}
+		found := false
+		for _, tag := range payload.Tags {
+			if tag == "latest" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("payload.Tags = %#v, want it to include %q, proving handleTags served this", payload.Tags, "latest")
+		}
+	})
+
+	t.Run("_catalog dispatches to handleCatalog", func(t *testing.T) {
+		t.Parallel()
+
+		req := httptest.NewRequest(http.MethodGet, "/v2/_catalog", nil)
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+		}
+		var payload struct {
+			Repositories []string `json:"repositories"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("json.Unmarshal() error = %v", err)
+		}
+		if len(payload.Repositories) == 0 {
+			t.Fatal("expected at least one repository in the catalog, proving handleCatalog served this")
+		}
+	})
+
+	t.Run("referrers/<digest> is NOT dispatched -- falls through to default 404 NAME_UNKNOWN", func(t *testing.T) {
+		t.Parallel()
+
+		req := httptest.NewRequest(http.MethodGet, "/v2/library/alpine/referrers/"+unknownManifestDigest, nil)
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+
+		if recorder.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want %d", recorder.Code, http.StatusNotFound)
+		}
+		var payload struct {
+			Errors []struct {
+				Code string `json:"code"`
+			} `json:"errors"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("json.Unmarshal() error = %v", err)
+		}
+		if len(payload.Errors) != 1 || payload.Errors[0].Code != "NAME_UNKNOWN" {
+			t.Fatalf("payload.Errors = %#v, want single NAME_UNKNOWN error -- no referrers route exists yet", payload.Errors)
+		}
+	})
+}
+
+// TestWriteJSONSetsApplicationJSONContentType is the oci-referrers-api Phase
+// 0 characterization safety net (design.md Testing Strategy phase 0,
+// tasks.md 0.3): writeJSON's Content-Type is pinned as "application/json"
+// BEFORE it is split into writeJSON/writeJSONAs (design.md's Interfaces /
+// Contracts section) so that split can be proven behavior-preserving for
+// every existing caller.
+func TestWriteJSONSetsApplicationJSONContentType(t *testing.T) {
+	t.Parallel()
+
+	recorder := httptest.NewRecorder()
+	writeJSON(recorder, http.StatusTeapot, map[string]string{"hello": "world"})
+
+	if got := recorder.Header().Get("Content-Type"); got != "application/json" {
+		t.Fatalf("Content-Type = %q, want %q", got, "application/json")
+	}
+	if recorder.Code != http.StatusTeapot {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusTeapot)
+	}
+
+	var payload map[string]string
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if payload["hello"] != "world" {
+		t.Fatalf("payload = %#v, want hello=world", payload)
+	}
+}
+
 func seedPublishedManifest(t *testing.T, handler *Router) string {
 	t.Helper()
 
