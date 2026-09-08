@@ -2144,6 +2144,205 @@ func TestStoreBackfillRowUpdateAndMarkerCommitTogether(t *testing.T) {
 	}
 }
 
+// TestStoreListReferrersCrossTenantReturnsEmpty covers the threat matrix's
+// highest-severity row (design.md Decision 3 / Threat Matrix
+// "Cross-tenant / cross-repository leakage"): a referrer seeded under
+// tenant-a must never be visible to tenant-b's identically-named repository,
+// asserted directly against seeded rows -- never inferred from the HTTP
+// layer, which does not exist yet (Phase 7).
+func TestStoreListReferrersCrossTenantReturnsEmpty(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+	ctx := context.Background()
+
+	repo := domain.MustParseRepositoryRef("library/alpine")
+	subject := &domain.Descriptor{
+		MediaType: "application/vnd.oci.image.manifest.v1+json",
+		Digest:    domain.DigestFromBytes([]byte("cross-tenant-subject")),
+		Size:      int64(len("cross-tenant-subject")),
+	}
+	referrer, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", "application/vnd.example.sbom.v1+json", []byte(`{"schemaVersion":2,"crossTenant":true}`), nil, nil, subject, nil)
+	if err != nil {
+		t.Fatalf("NewManifest() error = %v", err)
+	}
+	if err := store.PublishManifest(ctx, "tenant-a", repo, "", referrer, nil); err != nil {
+		t.Fatalf("PublishManifest() error = %v", err)
+	}
+
+	rows, err := store.ListReferrers(ctx, "tenant-b", repo, subject.Digest)
+	if err != nil {
+		t.Fatalf("ListReferrers() error = %v", err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("ListReferrers() rows = %d, want 0 -- tenant-b must never see tenant-a's referrer, even under the identically-named repository %q", len(rows), repo.String())
+	}
+}
+
+// TestStoreListReferrersCrossRepositoryReturnsEmpty triangulates the above:
+// same tenant, but a different repository name -- ListReferrers is scoped
+// exactly like ResolveManifest/ListTags (tenant AND repository), never like
+// ListReferencedBlobDigests' deliberate global scoping (design.md Decision
+// 3's own doc comment names that method as the anti-pattern).
+func TestStoreListReferrersCrossRepositoryReturnsEmpty(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+	ctx := context.Background()
+
+	repo := domain.MustParseRepositoryRef("library/alpine")
+	otherRepo := domain.MustParseRepositoryRef("library/other")
+	subject := &domain.Descriptor{
+		MediaType: "application/vnd.oci.image.manifest.v1+json",
+		Digest:    domain.DigestFromBytes([]byte("cross-repository-subject")),
+		Size:      int64(len("cross-repository-subject")),
+	}
+	referrer, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", "application/vnd.example.sbom.v1+json", []byte(`{"schemaVersion":2,"crossRepository":true}`), nil, nil, subject, nil)
+	if err != nil {
+		t.Fatalf("NewManifest() error = %v", err)
+	}
+	if err := store.PublishManifest(ctx, "tenant-a", repo, "", referrer, nil); err != nil {
+		t.Fatalf("PublishManifest() error = %v", err)
+	}
+
+	rows, err := store.ListReferrers(ctx, "tenant-a", otherRepo, subject.Digest)
+	if err != nil {
+		t.Fatalf("ListReferrers() error = %v", err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("ListReferrers() rows = %d, want 0 -- library/other must never see library/alpine's referrer under the same tenant", len(rows))
+	}
+}
+
+// TestStoreListReferrersMatchesExactSubjectAndOrdersByDigestAscRegardlessOfInsertionOrder
+// covers design.md Decision 4: three referrers of one subject, pushed in an
+// order that is NOT digest-ascending, must come back ORDER BY digest ASC.
+// An ordinary manifest (no Subject, so subject_digest stays an empty
+// string) is seeded alongside them and asserted absent from the matched
+// set -- the "empty string never matches" property from tasks.md 5.2.
+func TestStoreListReferrersMatchesExactSubjectAndOrdersByDigestAscRegardlessOfInsertionOrder(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+	ctx := context.Background()
+
+	repo := domain.MustParseRepositoryRef("library/alpine")
+	subject := &domain.Descriptor{
+		MediaType: "application/vnd.oci.image.manifest.v1+json",
+		Digest:    domain.DigestFromBytes([]byte("ordering-subject")),
+		Size:      int64(len("ordering-subject")),
+	}
+
+	ordinary, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", "", []byte(`{"schemaVersion":2,"ordinary":true}`), nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("NewManifest(ordinary) error = %v", err)
+	}
+	if err := store.PublishManifest(ctx, "tenant-a", repo, "latest", ordinary, nil); err != nil {
+		t.Fatalf("PublishManifest(ordinary) error = %v", err)
+	}
+
+	payloads := [][]byte{
+		[]byte(`{"schemaVersion":2,"referrer":"first-pushed"}`),
+		[]byte(`{"schemaVersion":2,"referrer":"second-pushed"}`),
+		[]byte(`{"schemaVersion":2,"referrer":"third-pushed"}`),
+	}
+	var referrerDigests []string
+	for _, payload := range payloads {
+		referrer, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", "", payload, nil, nil, subject, nil)
+		if err != nil {
+			t.Fatalf("NewManifest(referrer) error = %v", err)
+		}
+		if err := store.PublishManifest(ctx, "tenant-a", repo, "", referrer, nil); err != nil {
+			t.Fatalf("PublishManifest(referrer) error = %v", err)
+		}
+		referrerDigests = append(referrerDigests, referrer.Digest.String())
+	}
+
+	rows, err := store.ListReferrers(ctx, "tenant-a", repo, subject.Digest)
+	if err != nil {
+		t.Fatalf("ListReferrers() error = %v", err)
+	}
+	if len(rows) != len(referrerDigests) {
+		t.Fatalf("ListReferrers() rows = %d, want %d -- must exclude the ordinary manifest, whose subject_digest is ''", len(rows), len(referrerDigests))
+	}
+
+	want := append([]string(nil), referrerDigests...)
+	sort.Strings(want)
+	for i, row := range rows {
+		if row.Digest.String() != want[i] {
+			t.Fatalf("rows[%d].Digest = %q, want %q -- must be ORDER BY digest ASC regardless of insertion order", i, row.Digest.String(), want[i])
+		}
+	}
+}
+
+// TestStoreListReferrersUnknownDigestReturnsEmptySliceNotError covers
+// tasks.md 5.2's third clause: a subject digest that was never pushed as
+// anyone's subject returns an empty slice and a nil error, never a
+// domain.ErrorCodeNotFound -- ListReferrers is a list query, not a
+// single-row lookup like ResolveManifest.
+func TestStoreListReferrersUnknownDigestReturnsEmptySliceNotError(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+	ctx := context.Background()
+
+	repo := domain.MustParseRepositoryRef("library/alpine")
+
+	ordinary, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", "", []byte(`{"schemaVersion":2,"ordinary":true}`), nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("NewManifest(ordinary) error = %v", err)
+	}
+	if err := store.PublishManifest(ctx, "tenant-a", repo, "latest", ordinary, nil); err != nil {
+		t.Fatalf("PublishManifest(ordinary) error = %v", err)
+	}
+
+	neverPushed := domain.DigestFromBytes([]byte("never-pushed-subject"))
+	rows, err := store.ListReferrers(ctx, "tenant-a", repo, neverPushed)
+	if err != nil {
+		t.Fatalf("ListReferrers() error = %v, want nil -- an absent subject digest is an empty slice, never a not-found error (design.md Decision 3)", err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("ListReferrers() rows = %d, want 0", len(rows))
+	}
+}
+
+// TestStoreListReferrersUsesPartialIndexGivenLiteralPredicate re-confirms,
+// against ListReferrers' own shipped query text, what
+// TestStoreCreatesPartialIndexOnSubjectDigestUsableByLiteralPredicate (PR 2,
+// above) already proved against an identical literal query before
+// ListReferrers existed: SQLite only resolves idx_manifests_subject when the
+// WHERE clause literally repeats the "not equal to empty string"
+// subject_digest predicate (design.md Decision 2's load-bearing detail).
+// This literal must be kept in lockstep with
+// ListReferrers' own SQL by hand -- EXPLAIN QUERY PLAN cannot introspect an
+// arbitrary Go method -- following
+// TestMarkGCReportDeletedCandidateUpdateUsesTheReportDigestIndex's
+// precedent.
+func TestStoreListReferrersUsesPartialIndexGivenLiteralPredicate(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	plan := explainQueryPlan(t, store, `
+		SELECT m.digest, m.media_type, m.size, m.payload
+		FROM manifests m
+		JOIN repositories r ON r.id = m.repository_id
+		WHERE m.tenant = ? AND r.tenant = ? AND r.name = ?
+		  AND m.subject_digest = ?
+		  AND m.subject_digest != ''
+		ORDER BY m.digest ASC
+	`, "tenant-a", "tenant-a", "library/alpine", "sha256:aaaa")
+
+	if !strings.Contains(plan, "idx_manifests_subject") {
+		t.Fatalf("query plan = %q, want it to use idx_manifests_subject (ListReferrers' own query must repeat the literal subject_digest != '' predicate)", plan)
+	}
+}
+
 // newSchemaOnlyStore opens a store at path with init() run (so the
 // manifests/schema_backfills tables and subject_digest column all exist)
 // but WITHOUT running backfillSubjectDigests -- letting a test seed

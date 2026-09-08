@@ -899,6 +899,64 @@ func (s *Store) ListTags(ctx context.Context, tenant string, repository domain.R
 	return tags, rows.Err()
 }
 
+// ListReferrers returns every manifest in one tenant's one repository whose
+// subject_digest equals subjectDigest, ordered by digest ASC
+// (oci-referrers-api design.md Decision 3/4). Scoped with ListTags' exact
+// three predicates (m.tenant, r.tenant, r.name) -- never global, unlike
+// ListReferencedBlobDigests. The literal "not equal to empty string"
+// subject_digest predicate is required, not decorative: SQLite only
+// resolves the partial index idx_manifests_subject when the query provably
+// implies its own WHERE clause, and a bound parameter alone proves nothing
+// (Decision 2).
+func (s *Store) ListReferrers(ctx context.Context, tenant string, repository domain.RepositoryRef, subjectDigest domain.Digest) ([]ports.ReferrerRow, error) {
+	if err := repository.Validate(); err != nil {
+		return nil, err
+	}
+
+	if err := subjectDigest.Validate(); err != nil {
+		return nil, err
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT m.digest, m.media_type, m.size, m.payload
+		FROM manifests m
+		JOIN repositories r ON r.id = m.repository_id
+		WHERE m.tenant = ? AND r.tenant = ? AND r.name = ?
+		  AND m.subject_digest = ?
+		  AND m.subject_digest != ''
+		ORDER BY m.digest ASC
+	`, tenant, tenant, repository.String(), subjectDigest.String())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	referrers := make([]ports.ReferrerRow, 0)
+	for rows.Next() {
+		var digestValue string
+		var mediaType string
+		var size int64
+		var payload []byte
+		if err := rows.Scan(&digestValue, &mediaType, &size, &payload); err != nil {
+			return nil, err
+		}
+
+		digest, err := domain.ParseDigest(digestValue)
+		if err != nil {
+			return nil, err
+		}
+
+		referrers = append(referrers, ports.ReferrerRow{
+			Digest:    digest,
+			MediaType: mediaType,
+			Size:      size,
+			Payload:   payload,
+		})
+	}
+
+	return referrers, rows.Err()
+}
+
 // ListTagsWithCreatedAt is ListTags plus each tag's manifest created_at,
 // joined from the manifests table (not the tags table's own created_at) so a
 // retag of an existing digest still reports the manifest's original push

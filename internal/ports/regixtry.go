@@ -74,6 +74,17 @@ type MetadataStore interface {
 	// query scales correctly against a potentially large catalog.
 	ListRepositoriesWithSummary(ctx context.Context, tenant string, limit int, after string) ([]RepositorySummary, error)
 	ListManifestBlobs(ctx context.Context, tenant string, repository domain.RepositoryRef, manifestDigest domain.Digest) ([]domain.Descriptor, error)
+	// ListReferrers returns every manifest in ONE tenant's ONE repository
+	// whose subject.digest equals subjectDigest, ordered by digest ASC
+	// (oci-referrers-api design.md Decision 3/4). It is scoped exactly like
+	// ResolveManifest/ListTags (tenant AND repository) and explicitly NOT
+	// like ListReferencedBlobDigests, which is global by design -- see that
+	// method's doc comment for why cross-tenant scoping is the anti-pattern
+	// here. An absent subject digest is an empty slice, never a
+	// domain.ErrorCodeNotFound: this is a list query, not a single-row
+	// lookup. The adapter never parses the returned Payload as OCI JSON --
+	// that derivation belongs to the app layer (parseManifestPayload).
+	ListReferrers(ctx context.Context, tenant string, repository domain.RepositoryRef, subjectDigest domain.Digest) ([]ReferrerRow, error)
 	GetScanSettings(ctx context.Context, tenant string, feature string) (ScanSettings, error)
 	UpsertScanSettings(ctx context.Context, tenant string, feature string, settings ScanSettings) error
 	GetScanPolicySettings(ctx context.Context, tenant string) (ScanPolicySettings, error)
@@ -289,6 +300,21 @@ type RepositorySummary struct {
 	Name       string    `json:"name"`
 	TagCount   int       `json:"tag_count"`
 	LastPushed time.Time `json:"last_pushed"`
+}
+
+// ReferrerRow is one manifests row matched by subject_digest, returned by
+// ListReferrers (oci-referrers-api design.md Decision 3). It is a row, not a
+// domain object: the SQLite adapter never parses OCI JSON, so Payload is
+// returned verbatim and the app layer derives artifactType/annotations via
+// parseManifestPayload. Digest is domain.Digest, not string, so an
+// unvalidated digest is unrepresentable at this port boundary -- the same
+// reasoning ListReferrers' own subjectDigest parameter follows, matching
+// DeleteManifestByDigest.
+type ReferrerRow struct {
+	Digest    domain.Digest
+	MediaType string
+	Size      int64
+	Payload   []byte
 }
 
 const (
