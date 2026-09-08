@@ -635,10 +635,18 @@ func defaultTUIConfig() (tuiConfig, error) {
 }
 
 func defaultTUIConfigWithBootstrapStatePath(bootstrapStatePath string) (tuiConfig, error) {
+	// APIBaseURL falls back to REGISTRY_PUBLIC_URL when REGISTRY_API_BASE_URL
+	// is unset: found live inside a docker-mode container, which `docker
+	// exec` reaches directly (no provenance file for loadSetupManagedTUIConfig
+	// below to find -- that mechanism is exclusive to daemon-sqlite/systemd
+	// installs) and whose compose service only ever exports
+	// REGISTRY_PUBLIC_URL, the name every other part of this codebase already
+	// uses. Without this, `docker exec -it <container> regixtry tui` had no
+	// admin client wired up at all.
 	cfg := tuiConfig{
 		StorageRoot:     filepath.Join(".", "data"),
 		AuthPostgresDSN: os.Getenv("REGISTRY_AUTH_POSTGRES_DSN"),
-		APIBaseURL:      os.Getenv("REGISTRY_API_BASE_URL"),
+		APIBaseURL:      firstNonEmpty(os.Getenv("REGISTRY_API_BASE_URL"), os.Getenv("REGISTRY_PUBLIC_URL")),
 	}
 
 	installedCfg, ok, err := loadSetupManagedTUIConfig(bootstrapStatePath)
