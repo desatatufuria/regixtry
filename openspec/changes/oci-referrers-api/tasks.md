@@ -73,12 +73,12 @@ Chain strategy: pending
 
 ## Phase 1: Domain — `NewManifest` ArtifactType (PR 1)
 
-- [ ] 1.1 RED `internal/domain/regixtry/manifest_test.go`: `NewManifest`
+- [x] 1.1 RED `internal/domain/regixtry/manifest_test.go`: `NewManifest`
       carries `artifactType`; absent input → `""`, never a fallback at this
       layer.
-- [ ] 1.2 GREEN `internal/domain/regixtry/manifest.go`: add `ArtifactType`
+- [x] 1.2 GREEN `internal/domain/regixtry/manifest.go`: add `ArtifactType`
       field to `Manifest`; add `artifactType` parameter to `NewManifest`.
-- [ ] 1.3 GREEN: update all 41 `NewManifest` call sites so the codebase
+- [x] 1.3 GREEN: update all 41 `NewManifest` call sites so the codebase
       compiles — prod: `internal/infra/metadata/sqlite/store.go`
       (`ResolveManifest` passes `""`), `internal/app/regixtry/service.go`;
       tests: `manifest_test.go`, `store_test.go`, `service_signing_test.go`,

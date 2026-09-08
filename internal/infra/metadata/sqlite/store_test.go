@@ -26,7 +26,7 @@ func TestStorePublishResolveCatalogAndTags(t *testing.T) {
 		{MediaType: "application/vnd.oci.image.layer.v1.tar", Digest: domain.DigestFromBytes([]byte("layer-2")), Size: int64(len("layer-2"))},
 	}
 
-	manifest, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", []byte(`{"schemaVersion":2}`), nil, blobs, nil, nil)
+	manifest, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", "", []byte(`{"schemaVersion":2}`), nil, blobs, nil, nil)
 	if err != nil {
 		t.Fatalf("NewManifest() error = %v", err)
 	}
@@ -98,7 +98,7 @@ func TestStoreDeleteManifestByDigestCascadesTagsAndManifestBlobs(t *testing.T) {
 	blobs := []domain.Descriptor{
 		{MediaType: "application/vnd.oci.image.layer.v1.tar", Digest: domain.DigestFromBytes([]byte("layer-1")), Size: int64(len("layer-1"))},
 	}
-	manifest, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", []byte(`{"schemaVersion":2}`), nil, blobs, nil, nil)
+	manifest, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", "", []byte(`{"schemaVersion":2}`), nil, blobs, nil, nil)
 	if err != nil {
 		t.Fatalf("NewManifest() error = %v", err)
 	}
@@ -172,7 +172,7 @@ func TestStoreDeleteTagRemovesOnlyNamedTagLeavingManifestAndSiblingsIntact(t *te
 	blobs := []domain.Descriptor{
 		{MediaType: "application/vnd.oci.image.layer.v1.tar", Digest: domain.DigestFromBytes([]byte("layer-1")), Size: int64(len("layer-1"))},
 	}
-	manifest, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", []byte(`{"schemaVersion":2}`), nil, blobs, nil, nil)
+	manifest, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", "", []byte(`{"schemaVersion":2}`), nil, blobs, nil, nil)
 	if err != nil {
 		t.Fatalf("NewManifest() error = %v", err)
 	}
@@ -1326,7 +1326,7 @@ func TestStoreListTagsWithCreatedAtReturnsEachTagsManifestCreatedAt(t *testing.T
 	defer store.Close()
 
 	repo := domain.MustParseRepositoryRef("library/alpine")
-	manifest, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", []byte(`{"schemaVersion":2}`), nil, nil, nil, nil)
+	manifest, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", "", []byte(`{"schemaVersion":2}`), nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("NewManifest() error = %v", err)
 	}
@@ -1376,7 +1376,7 @@ func TestStoreListTagsWithCreatedAtReturnsPushedBy(t *testing.T) {
 
 	repo := domain.MustParseRepositoryRef("library/alpine")
 
-	pushed, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", []byte(`{"schemaVersion":2}`), nil, nil, nil, nil)
+	pushed, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", "", []byte(`{"schemaVersion":2}`), nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("NewManifest() error = %v", err)
 	}
@@ -1385,7 +1385,7 @@ func TestStoreListTagsWithCreatedAtReturnsPushedBy(t *testing.T) {
 		t.Fatalf("PublishManifest(known-pusher) error = %v", err)
 	}
 
-	legacy, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", []byte(`{"schemaVersion":2,"annotations":{"legacy":"true"}}`), nil, nil, nil, nil)
+	legacy, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", "", []byte(`{"schemaVersion":2,"annotations":{"legacy":"true"}}`), nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("NewManifest() error = %v", err)
 	}
@@ -1428,7 +1428,7 @@ func TestStoreListRepositoriesWithSummaryReturnsTagCountAndMostRecentPush(t *tes
 
 	repo := domain.MustParseRepositoryRef("library/alpine")
 
-	olderManifest, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", []byte(`{"schemaVersion":2,"v":1}`), nil, nil, nil, nil)
+	olderManifest, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", "", []byte(`{"schemaVersion":2,"v":1}`), nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("NewManifest() error = %v", err)
 	}
@@ -1438,7 +1438,7 @@ func TestStoreListRepositoriesWithSummaryReturnsTagCountAndMostRecentPush(t *tes
 
 	time.Sleep(10 * time.Millisecond)
 
-	newerManifest, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", []byte(`{"schemaVersion":2,"v":2}`), nil, nil, nil, nil)
+	newerManifest, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", "", []byte(`{"schemaVersion":2,"v":2}`), nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("NewManifest() error = %v", err)
 	}
@@ -1479,7 +1479,7 @@ func TestStoreListRepositoriesWithSummaryIncludesZeroTagRepositories(t *testing.
 	defer store.Close()
 
 	repo := domain.MustParseRepositoryRef("library/untagged")
-	manifest, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", []byte(`{"schemaVersion":2}`), nil, nil, nil, nil)
+	manifest, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", "", []byte(`{"schemaVersion":2}`), nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("NewManifest() error = %v", err)
 	}
@@ -1512,7 +1512,7 @@ func TestStoreListRepositoriesWithSummaryOrdersByNameAscAndRespectsLimitAfter(t 
 	store := newTestStore(t)
 	defer store.Close()
 
-	manifest, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", []byte(`{"schemaVersion":2}`), nil, nil, nil, nil)
+	manifest, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", "", []byte(`{"schemaVersion":2}`), nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("NewManifest() error = %v", err)
 	}
@@ -1558,7 +1558,7 @@ func TestListReferencedBlobDigestsIsGlobalAcrossTenants(t *testing.T) {
 	shared := domain.DigestFromBytes([]byte("shared-layer"))
 	blobs := []domain.Descriptor{{MediaType: "application/vnd.oci.image.layer.v1.tar", Digest: shared, Size: int64(len("shared-layer"))}}
 
-	manifestA, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", []byte(`{"schemaVersion":2,"who":"a"}`), nil, blobs, nil, nil)
+	manifestA, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", "", []byte(`{"schemaVersion":2,"who":"a"}`), nil, blobs, nil, nil)
 	if err != nil {
 		t.Fatalf("NewManifest() error = %v", err)
 	}
@@ -1566,7 +1566,7 @@ func TestListReferencedBlobDigestsIsGlobalAcrossTenants(t *testing.T) {
 		t.Fatalf("PublishManifest(tenant-a) error = %v", err)
 	}
 
-	manifestB, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", []byte(`{"schemaVersion":2,"who":"b"}`), nil, blobs, nil, nil)
+	manifestB, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", "", []byte(`{"schemaVersion":2,"who":"b"}`), nil, blobs, nil, nil)
 	if err != nil {
 		t.Fatalf("NewManifest() error = %v", err)
 	}

@@ -62,7 +62,7 @@ func signatureStatusFixtureTrustedKeyPEM(t *testing.T) string {
 func seedSignatureStatusFixtureImage(t *testing.T, metadataStore *metadata.Store, repository string) string {
 	t.Helper()
 
-	manifest, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", []byte(signatureStatusFixtureImagePayload), nil, nil, nil, nil)
+	manifest, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", "", []byte(signatureStatusFixtureImagePayload), nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("domain.NewManifest() error = %v", err)
 	}

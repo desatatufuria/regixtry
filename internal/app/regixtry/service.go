@@ -423,7 +423,10 @@ func parseManifestPayload(reference string, mediaType string, payload []byte) (d
 		return domain.Manifest{}, "", err
 	}
 
-	manifest, err := domain.NewManifest(mediaType, payload, config, layers, subject, envelope.Annotations)
+	// artifactType is threaded from manifestEnvelope in Phase 2
+	// (oci-referrers-api tasks.md 2.2); "" here is Phase 1's compile-fix
+	// placeholder only.
+	manifest, err := domain.NewManifest(mediaType, "", payload, config, layers, subject, envelope.Annotations)
 	if err != nil {
 		return domain.Manifest{}, "", err
 	}

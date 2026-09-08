@@ -12,6 +12,16 @@ type Manifest struct {
 	Layers      []Descriptor
 	Annotations map[string]string
 
+	// ArtifactType is the manifest's own top-level "artifactType" field
+	// (OCI 1.1), stored verbatim -- "" when absent from the payload. This
+	// layer applies NO fallback (e.g. to Config.MediaType): that derivation
+	// belongs to the app-layer query path that builds referrer descriptors
+	// (oci-referrers-api design.md Decision 3's resolveArtifactType), never
+	// to construction. It deliberately does NOT participate in Digest
+	// computation or Validate() -- it is content classification, not a
+	// structural invariant -- and is not one of BlobReferences().
+	ArtifactType string
+
 	// PushedBy is the UserID (internal/domain/auth.Principal.UserID) of the
 	// principal who pushed this exact digest, or "" when unknown (e.g. a row
 	// written before this field existed). It is provenance metadata, not
@@ -21,7 +31,7 @@ type Manifest struct {
 	PushedBy string
 }
 
-func NewManifest(mediaType string, payload []byte, config *Descriptor, layers []Descriptor, subject *Descriptor, annotations map[string]string) (Manifest, error) {
+func NewManifest(mediaType string, artifactType string, payload []byte, config *Descriptor, layers []Descriptor, subject *Descriptor, annotations map[string]string) (Manifest, error) {
 	if mediaType == "" {
 		return Manifest{}, NewInvalidManifestError("media type is required")
 	}
@@ -49,14 +59,15 @@ func NewManifest(mediaType string, payload []byte, config *Descriptor, layers []
 	storedPayload := append([]byte(nil), payload...)
 
 	return Manifest{
-		MediaType:   mediaType,
-		Digest:      DigestFromBytes(storedPayload),
-		Size:        int64(len(storedPayload)),
-		Payload:     storedPayload,
-		Subject:     cloneDescriptor(subject),
-		Config:      cloneDescriptor(config),
-		Layers:      validatedLayers,
-		Annotations: maps.Clone(annotations),
+		MediaType:    mediaType,
+		Digest:       DigestFromBytes(storedPayload),
+		Size:         int64(len(storedPayload)),
+		Payload:      storedPayload,
+		Subject:      cloneDescriptor(subject),
+		Config:       cloneDescriptor(config),
+		Layers:       validatedLayers,
+		Annotations:  maps.Clone(annotations),
+		ArtifactType: artifactType,
 	}, nil
 }
 

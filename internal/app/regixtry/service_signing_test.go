@@ -49,7 +49,7 @@ func seedArbitraryImageManifest(t *testing.T, service *Service, repository strin
 	t.Helper()
 
 	payload := []byte(fixtureImageManifestPayload + suffix)
-	manifest, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", payload, nil, nil, nil, nil)
+	manifest, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", "", payload, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("domain.NewManifest() error = %v", err)
 	}
@@ -288,7 +288,7 @@ func TestServiceEnforceSigningPolicyBlocksWhenPayloadBlobIsAbsent(t *testing.T) 
 	seedSigningPolicy(t, service, true, []string{fixtureTrustedKeyPEM(t)})
 
 	sigManifestPayload := readSigningFixture(t, "signature-manifest.json")
-	manifest, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", sigManifestPayload, nil, nil, nil, nil)
+	manifest, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", "", sigManifestPayload, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("domain.NewManifest(.sig) error = %v", err)
 	}

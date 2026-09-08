@@ -316,7 +316,11 @@ func (s *Store) ResolveManifest(ctx context.Context, tenant string, repository d
 		return domain.Manifest{}, err
 	}
 
-	manifest, err := domain.NewManifest(mediaType, payload, nil, references, nil, nil)
+	// ResolveManifest reconstructs a Manifest from stored bytes without
+	// parsing the payload's own JSON, so it has no source for ArtifactType
+	// here and passes "" -- same reasoning as Subject staying nil on this
+	// hot pull path (oci-referrers-api design.md Decision 5).
+	manifest, err := domain.NewManifest(mediaType, "", payload, nil, references, nil, nil)
 	if err != nil {
 		return domain.Manifest{}, err
 	}

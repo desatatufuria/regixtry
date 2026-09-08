@@ -483,7 +483,7 @@ func seedMalformedBundleIndexManifest(t *testing.T, service *Service, repository
 	t.Helper()
 
 	payload := []byte("not json, deliberately unparseable")
-	manifest, err := domain.NewManifest("application/vnd.oci.image.index.v1+json", payload, nil, nil, nil, nil)
+	manifest, err := domain.NewManifest("application/vnd.oci.image.index.v1+json", "", payload, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("domain.NewManifest(malformed bundle index) error = %v", err)
 	}

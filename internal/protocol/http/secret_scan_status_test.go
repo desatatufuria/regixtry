@@ -26,7 +26,7 @@ const secretScanStatusFixturePayload = "secret-scan-status fixture image manifes
 func seedSecretScanStatusFixtureImage(t *testing.T, metadataStore *metadata.Store, repository string, suffix string) string {
 	t.Helper()
 
-	manifest, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", []byte(secretScanStatusFixturePayload+suffix), nil, nil, nil, nil)
+	manifest, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", "", []byte(secretScanStatusFixturePayload+suffix), nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("domain.NewManifest() error = %v", err)
 	}
