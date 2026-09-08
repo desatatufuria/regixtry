@@ -1066,7 +1066,7 @@ Line-count evidence (`git diff --stat HEAD` on this run's changed/new files):
 
 ## Status
 
-40/40 tasks complete across all four PRs: PR 1 (0.1–2.3), PR 2 (3.1–4.5),
+38/38 tasks complete across all four PRs: PR 1 (0.1–2.3), PR 2 (3.1–4.5),
 PR 3 (5.1–6.5), and PR 4 (7.1–8.3, FINAL). The `oci-referrers-api` change is
 now feature-complete on branch `feature/oci-referrers-api-04-router-docs`.
 `go build ./...`, `go vet ./...`, `gofmt -l .`, and the full `go test
