@@ -571,6 +571,112 @@ func (s *Service) Tags(ctx context.Context, repositoryName string, limit int, af
 	return TagsResult{Name: repository.String(), Tags: tags}, nil
 }
 
+// ociImageIndexMediaType is the OCI 1.1 Image Index media type ReferrersIndex
+// is always encoded as (oci-referrers-api design.md Decision 3).
+const ociImageIndexMediaType = "application/vnd.oci.image.index.v1+json"
+
+// ReferrersIndex is the OCI 1.1 Referrers response body: an OCI Image Index
+// scoped to manifests whose subject.digest matches the requested subject
+// (design.md Decision 3). Manifests is NEVER nil -- built with
+// make([]ReferrerDescriptor, 0, len(rows)) -- because a nil slice encodes as
+// JSON "manifests": null, which fails the referrers-discovery spec's
+// "empty list never 404s" requirement at the wire level even when the Go
+// slice length is correctly zero.
+type ReferrersIndex struct {
+	SchemaVersion int                  `json:"schemaVersion"`
+	MediaType     string               `json:"mediaType"`
+	Manifests     []ReferrerDescriptor `json:"manifests"`
+}
+
+// ReferrerDescriptor is one matched manifest's entry in ReferrersIndex.
+// ArtifactType and Annotations are resolved per response, never persisted
+// (design.md Decision 3 / proposal Decision 4).
+type ReferrerDescriptor struct {
+	MediaType    string            `json:"mediaType"`
+	Digest       string            `json:"digest"`
+	Size         int64             `json:"size"`
+	ArtifactType string            `json:"artifactType,omitempty"`
+	Annotations  map[string]string `json:"annotations,omitempty"`
+}
+
+// resolveArtifactType is the OCI 1.1 fallback, isolated as a pure function so
+// it is unit-testable without a store (design.md Decision 3): the manifest's
+// own artifactType wins; otherwise config.mediaType; otherwise "".
+func resolveArtifactType(manifest domain.Manifest) string {
+	if manifest.ArtifactType != "" {
+		return manifest.ArtifactType
+	}
+	if manifest.Config != nil {
+		return manifest.Config.MediaType
+	}
+	return ""
+}
+
+// Referrers lists the repository's manifests whose subject.digest matches
+// subjectDigest (OCI 1.1 Referrers), ordered exactly as
+// metadata.ListReferrers returns them -- digest ASC (design.md Decision 4).
+// It orders like Tags: parseRepository -> authorize(ActionInspect) ->
+// ParseDigest -> store, so an unauthorized caller cannot use a malformed
+// digest to probe validation (design.md Decision 7, matching
+// manifest-blob-delete's capability-disclosure rule). artifactType is
+// trimmed and, when non-empty, narrows the already-fetched matched set; an
+// empty or whitespace-only value is no filter at all.
+func (s *Service) Referrers(ctx context.Context, repositoryName string, subjectDigest string, artifactType string) (ReferrersIndex, error) {
+	repository, err := parseRepository(repositoryName)
+	if err != nil {
+		return ReferrersIndex{}, err
+	}
+
+	if err := s.authorize(ctx, ports.Action{Verb: ports.ActionInspect, Repository: repository.String()}); err != nil {
+		return ReferrersIndex{}, err
+	}
+
+	digest, err := domain.ParseDigest(subjectDigest)
+	if err != nil {
+		return ReferrersIndex{}, err
+	}
+
+	rows, err := s.metadata.ListReferrers(ctx, s.tenant(ctx), repository, digest)
+	if err != nil {
+		return ReferrersIndex{}, err
+	}
+
+	artifactType = strings.TrimSpace(artifactType)
+
+	// parseManifestPayload(row.Digest, row.MediaType, row.Payload) reuses the
+	// exact same parser PublishManifest/ResolveManifest use (design.md
+	// Decision 3), so the digest-mismatch check between the stored digest and
+	// the payload's own content is free: a row that fails to parse or
+	// mismatches is storage corruption, surfaced as an error here, never a
+	// silently dropped referrer.
+	manifests := make([]ReferrerDescriptor, 0, len(rows))
+	for _, row := range rows {
+		manifest, _, err := parseManifestPayload(row.Digest.String(), row.MediaType, row.Payload)
+		if err != nil {
+			return ReferrersIndex{}, err
+		}
+
+		resolved := resolveArtifactType(manifest)
+		if artifactType != "" && resolved != artifactType {
+			continue
+		}
+
+		manifests = append(manifests, ReferrerDescriptor{
+			MediaType:    row.MediaType,
+			Digest:       row.Digest.String(),
+			Size:         row.Size,
+			ArtifactType: resolved,
+			Annotations:  manifest.Annotations,
+		})
+	}
+
+	return ReferrersIndex{
+		SchemaVersion: 2,
+		MediaType:     ociImageIndexMediaType,
+		Manifests:     manifests,
+	}, nil
+}
+
 // TagDetails is one tag's row on the Console TUI's Tags screen: its name,
 // its manifest's created_at, and its computed signature state (design.md
 // intentionally minimal 3-column set: Tag, Created, Signed -- vulnerability

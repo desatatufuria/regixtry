@@ -130,39 +130,39 @@ Chain strategy: pending
 
 ## Phase 5: Store Query — `ListReferrers` (PR 3)
 
-- [ ] 5.1 RED `internal/infra/metadata/sqlite/store_test.go`: `ListReferrers`
+- [x] 5.1 RED `internal/infra/metadata/sqlite/store_test.go`: `ListReferrers`
       cross-tenant returns empty; cross-repository returns empty — asserted
       directly against seeded rows in both, never inferred from HTTP (threat
       matrix: cross-tenant/cross-repository leakage, highest severity).
-- [ ] 5.2 RED (same file): ordering is `digest ASC` regardless of insertion
+- [x] 5.2 RED (same file): ordering is `digest ASC` regardless of insertion
       order; `''` never matches; unknown digest → empty slice, not an error.
-- [ ] 5.3 RED (same file): `EXPLAIN QUERY PLAN` asserts the partial index is
+- [x] 5.3 RED (same file): `EXPLAIN QUERY PLAN` asserts the partial index is
       used given the literal `AND m.subject_digest != ''` predicate.
-- [ ] 5.4 GREEN `internal/ports/regixtry.go`: `ReferrerRow{Digest,
+- [x] 5.4 GREEN `internal/ports/regixtry.go`: `ReferrerRow{Digest,
       MediaType, Size, Payload}`; `MetadataStore.ListReferrers(ctx, tenant,
       repository, subjectDigest) ([]ReferrerRow, error)`.
-- [ ] 5.5 GREEN `internal/infra/metadata/sqlite/store.go`: `ListReferrers` —
+- [x] 5.5 GREEN `internal/infra/metadata/sqlite/store.go`: `ListReferrers` —
       `ListTags`'s three predicates + `subject_digest = ?` + literal `!=
       ''`; `ORDER BY m.digest ASC`.
 
 ## Phase 6: App Query — `Service.Referrers` (PR 3)
 
-- [ ] 6.1 RED `internal/app/regixtry/queries_test.go`: `resolveArtifactType`
+- [x] 6.1 RED `internal/app/regixtry/queries_test.go`: `resolveArtifactType`
       table test — manifest value wins; absent → `config.mediaType`; absent
       + no config → `""`.
-- [ ] 6.2 RED (same file): `Service.Referrers` authorizes before parsing the
+- [x] 6.2 RED (same file): `Service.Referrers` authorizes before parsing the
       digest — an unauthorized caller sending a malformed digest gets `401`,
       not `400` (threat matrix: capability disclosure).
-- [ ] 6.3 RED (same file): `Manifests` is built with `make([]
+- [x] 6.3 RED (same file): `Manifests` is built with `make([]
       ReferrerDescriptor, 0, len(rows))` — assert never `nil` on zero rows.
-- [ ] 6.4 GREEN `internal/app/regixtry/queries.go`: `ReferrersIndex`,
+- [x] 6.4 GREEN `internal/app/regixtry/queries.go`: `ReferrersIndex`,
       `ReferrerDescriptor`, `ociImageIndexMediaType` const,
       `resolveArtifactType`; `Service.Referrers(ctx, repositoryName,
       subjectDigest, artifactType)` — `parseRepository` → `authorize
       (ActionInspect)` → `domain.ParseDigest` → `store.ListReferrers` → map
       via `parseManifestPayload` + `resolveArtifactType` → filter on
       `artifactType`.
-- [ ] 6.5 Confirm Phase 5–6 GREEN (Unit 3 focused test command).
+- [x] 6.5 Confirm Phase 5–6 GREEN (Unit 3 focused test command).
 
 ## Phase 7: Router / HTTP (PR 4)
 

@@ -329,10 +329,213 @@ design.md/tasks.md for later phases:
 - Phase 7 (router/HTTP wiring) — PR #4.
 - Phase 8 (regression suite, README docs) — PR #4.
 
+## PR 3: Query service — `ListReferrers` store query + `Service.Referrers` mapping/filtering (Phases 5–6)
+
+### Scope of this run (PR 3)
+
+PR #3 of 4 in the Feature Branch Chain — **Phases 5–6 only** (tasks.md), on
+branch `feature/oci-referrers-api-03-query-service`, branched from PR #2's
+branch `feature/oci-referrers-api-02-store-backfill` (Phases 0–4 already
+done and merged into this branch's history; NOT redone here). Phase 7–8
+(router/HTTP wiring, `handleReferrers`, `writeJSONAs` split, README, full
+regression) are explicitly out of scope for this run and deferred to PR #4
+per tasks.md's "Suggested Work Units" table — no `handleReferrers`, no
+`handleV2` change, no README edit was made in this run. There is no HTTP
+route yet that calls `Service.Referrers`; it is tested directly at the
+service layer, matching this codebase's existing `Tags`/`Catalog`
+service-method test pattern.
+
+This run read the merged PR 1 + PR 2 `apply-progress.md` first (above) and
+appends below, per the Merge Protocol; PR 1 and PR 2's own sections are
+preserved verbatim.
+
+### Completed Tasks
+
+#### Phase 5: Store Query — `ListReferrers` (PR 3)
+
+- [x] 5.1 RED `internal/infra/metadata/sqlite/store_test.go`:
+      `TestStoreListReferrersCrossTenantReturnsEmpty`,
+      `TestStoreListReferrersCrossRepositoryReturnsEmpty` — asserted
+      directly against seeded rows in both tenant and repository dimensions
+      (threat matrix's highest-severity row), never inferred from an HTTP
+      layer that does not exist yet.
+- [x] 5.2 RED (same file):
+      `TestStoreListReferrersMatchesExactSubjectAndOrdersByDigestAscRegardlessOfInsertionOrder`
+      (three referrers pushed out of digest order, plus an ordinary
+      no-subject manifest asserted absent from the matched set) and
+      `TestStoreListReferrersUnknownDigestReturnsEmptySliceNotError`
+      (a subject digest that was never pushed as anyone's subject returns
+      `(nil error, 0 rows)`, never `domain.ErrorCodeNotFound`).
+- [x] 5.3 RED (same file):
+      `TestStoreListReferrersUsesPartialIndexGivenLiteralPredicate` —
+      `EXPLAIN QUERY PLAN` against `ListReferrers`' own shipped query text
+      (kept in lockstep by hand with the GREEN implementation, mirroring
+      `TestMarkGCReportDeletedCandidateUpdateUsesTheReportDigestIndex`'s
+      precedent, exactly as PR 2's own two EXPLAIN-QUERY-PLAN tests already
+      established against an identical literal query before `ListReferrers`
+      existed).
+- [x] 5.4 GREEN `internal/ports/regixtry.go`: `ports.ReferrerRow{Digest,
+      MediaType, Size, Payload}` with `Digest domain.Digest` (not `string`)
+      — see Deviations below for the exact reasoning followed; added
+      `MetadataStore.ListReferrers(ctx, tenant, repository,
+      subjectDigest) ([]ReferrerRow, error)` to the interface, doc-commented
+      against `ListReferencedBlobDigests` as the anti-pattern it must never
+      resemble.
+- [x] 5.5 GREEN `internal/infra/metadata/sqlite/store.go`: `ListReferrers`,
+      placed immediately after `ListTags` — `ListTags`' exact three
+      predicates (`m.tenant`, `r.tenant`, `r.name`) plus `subject_digest = ?`
+      and the literal `AND m.subject_digest != ''` (Decision 2); `ORDER BY
+      m.digest ASC`; `make([]ports.ReferrerRow, 0)` so a zero-match query
+      returns an empty slice, never `nil`.
+
+#### Phase 6: App Query — `Service.Referrers` (PR 3)
+
+- [x] 6.1 RED `internal/app/regixtry/queries_test.go`:
+      `TestResolveArtifactTypeManifestValueWins`,
+      `TestResolveArtifactTypeAbsentFallsBackToConfigMediaType`,
+      `TestResolveArtifactTypeAbsentAndNoConfigIsEmpty` — pure-function table
+      test, zero mocks.
+- [x] 6.2 RED (same file):
+      `TestServiceReferrersAuthorizesBeforeParsingDigestUnauthorizedGetsUnauthorizedNotInvalidDigest`
+      — a `denyAccessController` test double plus a syntactically invalid
+      digest string; asserts `domain.ErrorCodeUnauthorized`, and explicitly
+      asserts NOT `domain.ErrorCodeInvalidDigest` (threat matrix: capability
+      disclosure).
+- [x] 6.3 RED (same file): `TestServiceReferrersManifestsIsNeverNilOnZeroRows`
+      — a never-pushed subject digest against an otherwise-empty repository;
+      asserts `result.Manifests != nil` (would encode as JSON `null`
+      otherwise) and `len == 0`, plus `schemaVersion`/`mediaType` are still
+      set on the empty path.
+- [x] 6.4 GREEN `internal/app/regixtry/queries.go`: `ociImageIndexMediaType`
+      const; `ReferrersIndex`, `ReferrerDescriptor`; `resolveArtifactType`
+      (pure function, manifest value wins, else `config.MediaType`, else
+      `""`); `Service.Referrers(ctx, repositoryName, subjectDigest,
+      artifactType)` — `parseRepository` → `authorize(ActionInspect)` →
+      `domain.ParseDigest` → `s.metadata.ListReferrers` → per-row
+      `parseManifestPayload(row.Digest.String(), row.MediaType,
+      row.Payload)` (verbatim reuse, digest-mismatch check free) →
+      `resolveArtifactType` → `artifactType` filter (trimmed; empty/
+      whitespace-only means no filter) → `make([]ReferrerDescriptor, 0,
+      len(rows))`. Also added 3 triangulating happy-path tests beyond
+      6.1–6.3's minimum (`TestServiceReferrersReturnsMatchedReferrerWithArtifactTypeAndAnnotations`,
+      `TestServiceReferrersFallsBackToConfigMediaTypeWhenArtifactTypeAbsent`,
+      `TestServiceReferrersArtifactTypeFilterNarrowsResults`), covering the
+      referrers-discovery spec's "Pushed referrer is listed", "ArtifactType
+      present"/"absent falls back", and "Filtered request narrows results"/
+      "Unfiltered request omits header" scenarios end-to-end through the
+      real parse path (the whitespace-only-filter case is asserted
+      identical to the unfiltered case, in the same test).
+- [x] 6.5 Confirmed Phase 5–6 GREEN via the Unit 3 focused test command (see
+      Work Unit Evidence below); full `go build ./...`, `go vet ./...`,
+      `gofmt -l .`, `go test ./...` all clean.
+
+### TDD Cycle Evidence (PR 3)
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-----------|-------|------------|-----|-------|-------------|----------|
+| 5.1 | `store_test.go` (`TestStoreListReferrersCrossTenantReturnsEmpty`, `...CrossRepositoryReturnsEmpty`) | Unit | ✅ full `sqlite` package suite green before edit | ✅ Written — confirmed RED: `go vet` failed with `store.ListReferrers undefined (type *Store has no field or method ListReferrers)` (compile-level RED, per Strict TDD's "the test MUST reference production code that does NOT exist yet") | ✅ Passed after `ListReferrers` + `ports.ReferrerRow` added | ✅ 2 cases (tenant isolation / repository isolation) | ✅ Clean |
+| 5.2 | `store_test.go` (`TestStoreListReferrersMatchesExactSubjectAndOrdersByDigestAscRegardlessOfInsertionOrder`, `...UnknownDigestReturnsEmptySliceNotError`) | Unit | (same run) | ✅ Written (same RED run) | ✅ Passed | ✅ 2 distinct scenarios plus an embedded "'' never matches" assertion in the ordering test (ordinary manifest excluded) | ✅ Clean |
+| 5.3 | `store_test.go` (`TestStoreListReferrersUsesPartialIndexGivenLiteralPredicate`) | Unit | (same run) | ✅ Written (same RED run — file did not compile until 5.4/5.5 landed) | ✅ Passed: plan contains `idx_manifests_subject` | ➖ Single scenario — see Deviations for why this specific test's "RED" is a compile-level gate, not a schema-level one (PR 2 already proved the schema/index behavior against the identical literal) | ➖ None needed |
+| 6.1 | `queries_test.go` (`TestResolveArtifactTypeManifestValueWins`, `...AbsentFallsBackToConfigMediaType`, `...AbsentAndNoConfigIsEmpty`) | Unit | ✅ full `app/regixtry` package suite green before edit | ✅ Written — confirmed RED via `go vet`: `undefined: resolveArtifactType` | ✅ Passed after `resolveArtifactType` added | ✅ 3 cases (own value wins / config fallback / both absent) | ➖ None needed — already a pure function, zero mocks |
+| 6.2 | `queries_test.go` (`TestServiceReferrersAuthorizesBeforeParsingDigestUnauthorizedGetsUnauthorizedNotInvalidDigest`) | Unit | (same run) | ✅ Written (same RED run) | ✅ Passed | ➖ Single scenario — the negative assertion (`must NOT be ErrorCodeInvalidDigest`) is itself the triangulating half of this test | ➖ None needed |
+| 6.3 | `queries_test.go` (`TestServiceReferrersManifestsIsNeverNilOnZeroRows`) | Unit | (same run) | ✅ Written (same RED run) | ✅ Passed: `make([]ReferrerDescriptor, 0, len(rows))` confirmed non-nil even at `len(rows) == 0` | ➖ Single scenario — the nil-vs-empty distinction has exactly one failure mode | ➖ None needed |
+| 6.4 (triangulation tests) | `queries_test.go` (`TestServiceReferrersReturnsMatchedReferrerWithArtifactTypeAndAnnotations`, `...FallsBackToConfigMediaTypeWhenArtifactTypeAbsent`, `...ArtifactTypeFilterNarrowsResults`) | Unit | (same run) | ✅ Written and run against the real `*sqlite.Store` via `newTestService` — initially FAILED (`ArtifactType = "", want ...`) because the first draft set `domain.Manifest` fields in memory without embedding them in the raw JSON `Payload` bytes `Service.Referrers` actually re-parses; see Deviations | ✅ Passed after fixing the test payloads to real JSON (own artifactType / config fallback / two-artifactType filter, including a whitespace-only-filter case) | ✅ 3 scenarios, no mocks — real sqlite store via `t.TempDir()` | ✅ Clean |
+
+#### Test Summary (PR 3)
+- **Total tests written**: 9 new test functions (`TestStoreListReferrersCrossTenantReturnsEmpty`, `TestStoreListReferrersCrossRepositoryReturnsEmpty`, `TestStoreListReferrersMatchesExactSubjectAndOrdersByDigestAscRegardlessOfInsertionOrder`, `TestStoreListReferrersUnknownDigestReturnsEmptySliceNotError`, `TestStoreListReferrersUsesPartialIndexGivenLiteralPredicate`, `TestResolveArtifactTypeManifestValueWins`, `TestResolveArtifactTypeAbsentFallsBackToConfigMediaType`, `TestResolveArtifactTypeAbsentAndNoConfigIsEmpty`, `TestServiceReferrersAuthorizesBeforeParsingDigestUnauthorizedGetsUnauthorizedNotInvalidDigest`, `TestServiceReferrersManifestsIsNeverNilOnZeroRows`, `TestServiceReferrersReturnsMatchedReferrerWithArtifactTypeAndAnnotations`, `TestServiceReferrersFallsBackToConfigMediaTypeWhenArtifactTypeAbsent`, `TestServiceReferrersArtifactTypeFilterNarrowsResults`) — 13 total, exceeding the 9 listed in tasks.md 5.1–6.3 with 4 extra triangulating/happy-path tests
+- **Total tests passing**: all 13, plus the full pre-existing suite (`go test ./...`, see Verification Evidence)
+- **Layers used**: Unit (13 test functions; store-layer tests against a real on-disk SQLite file via `newTestStore`/`t.TempDir()`, service-layer tests against a real `*sqlite.Store` + `fsblob.Store` via `newTestService` — no mocks anywhere in this PR)
+- **Approval tests**: None — no refactoring tasks in this PR
+- **Pure functions created**: 1 (`resolveArtifactType`)
+- **Test helpers added**: `testManifestResource`, `testManifestEnvelope`, `marshalManifestPayload`, `denyAccessController` (all in `queries_test.go`)
+
+### Files Changed (PR 3)
+
+| File | Action | What Was Done |
+|------|--------|---------------|
+| `internal/ports/regixtry.go` | Modified | `ports.ReferrerRow{Digest domain.Digest, MediaType, Size, Payload}`; `MetadataStore.ListReferrers` added to the interface, doc-commented against `ListReferencedBlobDigests` |
+| `internal/infra/metadata/sqlite/store.go` | Modified | `Store.ListReferrers`, placed after `ListTags` |
+| `internal/infra/metadata/sqlite/store_test.go` | Modified | 5 new test functions for `ListReferrers` (Phase 5) |
+| `internal/app/regixtry/queries.go` | Modified | `ociImageIndexMediaType`, `ReferrersIndex`, `ReferrerDescriptor`, `resolveArtifactType`, `Service.Referrers`, placed after `Tags` |
+| `internal/app/regixtry/queries_test.go` | Created | 8 new test functions for `resolveArtifactType`/`Service.Referrers` (Phase 6) plus 4 test-only helper types/functions |
+| `openspec/changes/oci-referrers-api/tasks.md` | Modified | Marked tasks 5.1–6.5 `[x]` |
+| `openspec/changes/oci-referrers-api/apply-progress.md` | Modified | This document — merged PR 1 + PR 2 + PR 3 progress |
+
+### Deviations from Design (PR 3)
+
+1. **`ports.ReferrerRow.Digest` is `domain.Digest`, not the `string` shown in
+   design.md's own illustrative code block.** design.md Decision 3's code
+   block literally shows `type ReferrerRow struct { Digest string; ... }`,
+   but the prose immediately below the *separate* `ListReferrers` signature
+   block says: "Taking `domain.Digest` (not `string`) makes an unvalidated
+   digest unrepresentable at the port boundary, matching
+   `DeleteManifestByDigest`." Read narrowly, that sentence is about
+   `ListReferrers`' own `subjectDigest domain.Digest` parameter, not the
+   `ReferrerRow.Digest` field. The orchestrator's task instructions for this
+   PR explicitly directed applying that same reasoning to the `Digest`
+   field too. Followed the explicit instruction: `ReferrerRow.Digest` is
+   `domain.Digest`. This is genuinely ambiguous in design.md itself (the
+   code block and the prose sentence do not agree on which field the
+   reasoning binds to), so it is recorded here rather than silently
+   resolved. Consequence: `parseManifestPayload(row.Digest.String(), ...)`
+   needed one explicit `.String()` call in `Service.Referrers` (Go does not
+   implicitly convert a defined string type to `string`) — zero behavioral
+   difference either way, since `domain.Digest`'s underlying type is
+   `string` and every stored digest is already validated at write time.
+2. **`TestStoreListReferrersUsesPartialIndexGivenLiteralPredicate`'s "RED" is
+   a compile-level gate, not a schema-level one — worth being honest about.**
+   PR 2 already added `TestStoreCreatesPartialIndexOnSubjectDigestUsableByLiteralPredicate`
+   against an identical literal `EXPLAIN QUERY PLAN` query, before
+   `ListReferrers` existed, specifically to pre-validate this exact index
+   behavior. This PR's own test (5.3) necessarily uses the same literal SQL
+   text (`EXPLAIN QUERY PLAN` cannot introspect an arbitrary Go method, so
+   the literal must be duplicated by hand — the established
+   `TestMarkGCReportDeletedCandidateUpdateUsesTheReportDigestIndex`
+   precedent). Its RED was real only in the sense that the whole test file
+   failed to compile until `ListReferrers` existed (5.4/5.5); the
+   underlying index-usage behavior itself was already proven GREEN by PR 2.
+   Not a design gap — this is the accepted cost of EXPLAIN-QUERY-PLAN
+   testing in this codebase, recorded per the Rules' "note it, don't
+   silently deviate" guidance, not because anything here was wrong.
+3. **Triangulation tests initially failed for a real reason, caught by
+   actually running them (Strict TDD's GATE doing its job).** The first
+   draft of `TestServiceReferrersReturnsMatchedReferrerWithArtifactTypeAndAnnotations`
+   and `...FallsBackToConfigMediaTypeWhenArtifactTypeAbsent` set
+   `domain.Manifest.ArtifactType`/`.Config` via `domain.NewManifest`'s
+   parameters, but passed an unrelated raw JSON payload (e.g.
+   `{"schemaVersion":2,"referrer":true}`) as `Payload`. Since
+   `Service.Referrers` re-derives `artifactType`/`config` by re-parsing the
+   *stored* `Payload` bytes via `parseManifestPayload` (never trusting an
+   in-memory `domain.Manifest` a test happened to construct), both tests
+   failed with `ArtifactType = "", want ...` even though the "obviously
+   correct" `domain.Manifest` value was right. Fixed by adding
+   `testManifestEnvelope`/`marshalManifestPayload` so payload bytes and the
+   `domain.Manifest` used to seed the row are actually consistent, matching
+   how a real push works. This is exactly the "WATCH OUT for GREEN that
+   passes trivially" / "production code RAN and produced the expected
+   output" principle from the Strict TDD module, applied to a case where
+   the bug was in the test's own data setup, not the production code.
+
+No other deviations. Every production-code decision in this PR (port
+signature shape beyond the digest-type ambiguity above, query predicates,
+`ORDER BY`, `Service.Referrers`' authorize-before-parse ordering, the
+`artifactType` trim-and-filter placement, the `make(..., 0, n)` never-nil
+invariant) matches design.md Decision 3/4/7 and tasks.md 5.1–6.5 exactly.
+
+### Issues Found (PR 3)
+
+None blocking. The design.md ambiguity in Deviation #1 and the test-setup
+bug in Deviation #3 were both caught and resolved within this PR's own TDD
+cycle, not deferred.
+
+Everything else remains out of scope for PR #3 and already tracked by
+design.md/tasks.md for PR #4:
+- Phase 7 (router/HTTP wiring — `handleReferrers`, `/referrers/` marker,
+  `writeJSONAs` split, `OCI-Filters-Applied` header).
+- Phase 8 (full regression suite, README docs).
+
 ## Remaining Tasks
 
-- [ ] Phase 5: Store Query — `ListReferrers` (PR 3)
-- [ ] Phase 6: App Query — `Service.Referrers` (PR 3)
 - [ ] Phase 7: Router / HTTP (PR 4)
 - [ ] Phase 8: Regression (PR 4)
 
@@ -422,8 +625,101 @@ Line-count evidence (`git diff HEAD` on this run's changed files):
  3 files changed, 639 insertions(+), 14 deletions(-)
 ```
 
+## Workload / PR Boundary (PR 3)
+
+- Mode: chained PR slice (Feature Branch Chain, per session preflight —
+  same resolved `feature-branch-chain` strategy as PR 1/PR 2, 800-line
+  session-cached review budget for this chain)
+- Current work unit: Unit 3 — "`ListReferrers` query + `Service.Referrers`
+  mapping/filtering (Phases 5–6)"
+- Boundary: starts from PR #2's merged Phases 0–4 state (clean, all green)
+  and ends with Phases 5–6 fully green; no router/HTTP surface touched — no
+  `handleReferrers`, no `handleV2` case, no `/referrers/` marker, no
+  `writeJSONAs` split, no README edit
+- Estimated review budget impact: **730 changed lines** (`git diff --stat
+  HEAD` on this run's 5 touched files + 1 new file: 106 lines in
+  `queries.go`, 58 lines in `store.go`, 199 lines in `store_test.go`, 26
+  lines in `ports/regixtry.go`, 20 lines in `tasks.md` checkbox deltas =
+  399 insertions+deletions, plus 331 lines in the new `queries_test.go` =
+  730 total), under the 800-line session-cached PR budget for this chain
+
+## Work Unit Evidence (PR 3)
+
+| Evidence | Value |
+|---|---|
+| Focused test command and exact result | `go test ./internal/infra/metadata/sqlite/... ./internal/app/regixtry/... -run 'ListReferrers\|Referrers\|ResolveArtifactType' -v` (tasks.md's own Unit 3 command) → **all PASS** (13 new test functions across both packages, zero failures) |
+| Runtime harness command/scenario and exact result | N/A — per tasks.md's own Unit 3 row: "no route calls `Service.Referrers` yet". Every test in this PR runs against a real on-disk SQLite database via `newTestStore`/`newTestService` (`t.TempDir()`, not mocks) and, for the service-layer tests, a real `fsblob.Store` too — the closest runtime proof available at this boundary. No HTTP or CLI surface exists yet to exercise (Phase 7, PR #4). |
+| Rollback boundary | Revert `ports/regixtry.go`'s `ReferrerRow`/`ListReferrers` interface addition, `store.go`'s `ListReferrers` method, `store_test.go`'s 5 new test functions, `queries.go`'s `ReferrersIndex`/`ReferrerDescriptor`/`resolveArtifactType`/`Service.Referrers` addition, and delete `queries_test.go` entirely. Nothing in this PR is called from any router, CLI, or TUI path yet (`Service.Referrers` and `Store.ListReferrers` are net-new methods with zero existing callers), so a revert is inert to already-running binaries. Phases 0–4 (PR #1/#2) and every other store/service method are untouched. |
+
+## Verification Evidence (PR 3)
+
+```
+$ go build ./...
+(clean, exit 0)
+
+$ go vet ./...
+(clean, exit 0)
+
+$ gofmt -l .
+(clean, no output -- after rewording two doc comments that gofmt's
+ Go 1.26 straight-quote-collapsing behavior would otherwise have mangled,
+ same pre-existing toolchain behavior recorded in PR 2's Deviation #4)
+
+$ go test ./... -count=1
+ok  	regixtry/cmd/regixtry	5.095s
+ok  	regixtry/internal/app/auth	0.274s
+ok  	regixtry/internal/app/regixtry	7.249s
+ok  	regixtry/internal/app/scanning	0.059s
+ok  	regixtry/internal/domain/auth	0.022s
+ok  	regixtry/internal/domain/regixtry	0.019s
+ok  	regixtry/internal/domain/signing	0.210s
+ok  	regixtry/internal/infra/auth/postgres	0.531s
+ok  	regixtry/internal/infra/cliprogress	0.032s
+ok  	regixtry/internal/infra/install/compose	0.056s
+ok  	regixtry/internal/infra/install/linux	0.786s
+ok  	regixtry/internal/infra/install/releases	0.125s
+ok  	regixtry/internal/infra/metadata/sqlite	1.307s
+ok  	regixtry/internal/infra/release	0.127s
+ok  	regixtry/internal/infra/scanning/gitleaks	0.448s
+ok  	regixtry/internal/infra/scanning/trivy	0.469s
+ok  	regixtry/internal/infra/storage/fsblob	0.099s
+ok  	regixtry/internal/ports	0.009s
+ok  	regixtry/internal/protocol/http	3.753s
+ok  	regixtry/internal/tui	0.483s
+```
+
+RED confirmation evidence:
+
+```
+$ go vet ./internal/infra/metadata/sqlite/...
+vet: internal/infra/metadata/sqlite/store_test.go:2174:21: store.ListReferrers
+undefined (type *Store has no field or method ListReferrers)
+
+$ go vet ./internal/app/regixtry/...
+vet: internal/app/regixtry/queries_test.go:38:12: undefined: resolveArtifactType
+```
+(Both compile-level RED, confirmed before any GREEN code was written, per
+Strict TDD's "the test MUST reference production code that does NOT exist
+yet" rule — restored to GREEN immediately after the corresponding
+`ports`/`store.go`/`queries.go` additions landed.)
+
+Line-count evidence (`git diff --stat HEAD` on this run's changed/new files):
+
+```
+ internal/app/regixtry/queries.go             | 106 ++++++++++++++
+ internal/infra/metadata/sqlite/store.go      |  58 ++++++++
+ internal/infra/metadata/sqlite/store_test.go | 199 +++++++++++++++++++++++++++
+ internal/ports/regixtry.go                   |  26 ++++
+ openspec/changes/oci-referrers-api/tasks.md  |  20 +--
+ 5 files changed, 399 insertions(+), 10 deletions(-)
+
+ internal/app/regixtry/queries_test.go | 331 +++++++++++++++++++++++++++++++
+ 1 file changed, 331 insertions(+)  (new file, not tracked by --stat above)
+```
+
 ## Status
 
-18/18 tasks in scope across PR 1 (0.1–2.3) and PR 2 (3.1–4.5) complete.
-Ready for `sdd-verify`, and ready for PR #3 (Phases 5–6, `ListReferrers` +
-`Service.Referrers`) to branch from this leaf once merged/reviewed.
+29/29 tasks in scope across PR 1 (0.1–2.3), PR 2 (3.1–4.5), and PR 3
+(5.1–6.5) complete. Ready for `sdd-verify`, and ready for PR #4 (Phases
+7–8, router/HTTP wiring + full regression + README) to branch from this
+leaf once merged/reviewed.
