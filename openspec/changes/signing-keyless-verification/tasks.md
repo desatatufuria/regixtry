@@ -113,33 +113,52 @@ Chain strategy: pending
 
 ## Phase 3: Domain — Keyless Verifier (PR 1)
 
-- [ ] 3.1 RED `internal/domain/signing/keyless_test.go`: matching identity
+- [x] 3.1 RED `internal/domain/signing/keyless_test.go`: matching identity
       SAN + issuer verifies offline against a synthetic Fulcio-shaped chain
       built via `sigstore-go/pkg/testing/ca` and this package's own test
       trusted root (never the real pinned root in tests).
-- [ ] 3.2 RED (same file): untrusted chain (cert not rooted in the trusted
+- [x] 3.2 RED (same file): untrusted chain (cert not rooted in the trusted
       root) fails closed with a distinct typed error.
-- [ ] 3.3 RED (same file): matching SAN but wrong OIDC issuer fails closed,
+- [x] 3.3 RED (same file): matching SAN but wrong OIDC issuer fails closed,
       distinctly from the chain-failure error (spec: "Wrong issuer fails
       closed").
-- [ ] 3.4 RED (same file): certificate expired relative to the SET timestamp
+- [x] 3.4 RED (same file): certificate expired relative to the SET timestamp
       fails closed.
-- [ ] 3.5 RED (same file): tampered and missing Signed Entry Timestamp each
+- [x] 3.5 RED (same file): tampered and missing Signed Entry Timestamp each
       fail closed, distinctly from each other's error and from chain/issuer
       failures.
-- [ ] 3.6 RED (same file): structural zero-network-I/O assertion — confirm no
+- [x] 3.6 RED (same file): structural zero-network-I/O assertion — confirm no
       call path in `keyless.go` or its `pkg/verify` dependency reaches
       `net/http` (matches design's "no `net/http` import" verification).
-- [ ] 3.7 GREEN `internal/domain/signing/keyless.go`: `VerifyKeyless(bundleRaw []byte, identities []TrustedIdentity, digest string) (matched string, err error)`;
+- [x] 3.7 GREEN `internal/domain/signing/keyless.go`: `VerifyKeyless(bundleRaw []byte, identities []TrustedIdentity, digest string) (matched string, err error)`;
       `//go:embed assets/trusted_root.json`; `sync.OnceValues` root+verifier
       construction; `verify.NewShortCertificateIdentity` per identity (OR
       semantics via repeated `verify.WithCertificateIdentity`); typed,
       distinct errors for each Phase 3.1–3.5 case. Only file importing
       `sigstore-go`.
-- [ ] 3.8 REFACTOR: confirm `internal/domain/signing` still compiles and
+      **DEVIATION**: `verify.WithSignedCertificateTimestamps(1)` was dropped
+      from the verifier construction (design.md's Open Question resolved
+      with evidence, not left pending) — confirmed via source that
+      `sigstore-go/pkg/testing/ca`'s `GenerateLeafCert` never embeds an SCT
+      extension, and that sigstore-go's own test suite never enables this
+      option against `ca.VirtualSigstore`-produced entities either, for the
+      same reason. Keeping it enabled would make every synthetic-chain test
+      this phase mandates structurally unpassable. Six distinct sentinel
+      errors were achieved (one more than design's four): expired-cert and
+      untrusted-chain turned out to be genuinely distinguishable via
+      sigstore-go's own tlog-stage integrated-time-vs-cert-validity check,
+      confirmed by running the test suite, not assumed in advance.
+- [x] 3.8 REFACTOR: confirm `internal/domain/signing` still compiles and
       tests standalone with no `internal/ports`/`internal/app`/`store`/`http`
-      import (isolation boundary check).
-- [ ] 3.9 Confirm Phase 1–3 GREEN (Unit 1 focused test command); `go build ./...` clean.
+      import (isolation boundary check). Confirmed: `grep -rn
+      "regixtry/internal/" internal/domain/signing/*.go` (excluding tests)
+      returns nothing; `keyless.go`/`keyless_test.go`/`keyless_fixture_test.go`
+      are the only files in the repo importing `sigstore-go` (`bundle.go`'s
+      one hit is a doc-comment mention, not an import).
+- [x] 3.9 Confirm Phase 1–3 GREEN (Unit 1 focused test command); `go build ./...` clean.
+      53 tests passing (0 failing) in `internal/domain/signing`; full repo
+      `go test ./...` also green (zero regressions); `go vet ./...` clean;
+      `gofmt -l` clean on all changed `.go` files.
 
 ## Phase 4: Ports — TrustedIdentity Type (PR 2)
 
