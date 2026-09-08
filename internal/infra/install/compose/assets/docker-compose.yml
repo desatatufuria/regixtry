@@ -11,7 +11,15 @@ services:
       POSTGRES_USER: registry
       POSTGRES_PASSWORD: "${REGIXTRY_POSTGRES_PASSWORD:?set it in .env (regixtry setup --mode docker generates one; manually: cp docker.env.example .env)}"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U registry -d regixtry_auth"]
+      # -h 127.0.0.1 forces pg_isready over TCP. On a fresh volume the
+      # official image briefly runs a temporary, Unix-socket-only server to
+      # do initdb before starting the final server that actually accepts
+      # networked connections; without -h, pg_isready defaults to that local
+      # socket and can report healthy against the temporary server (the
+      # exact race fixed in internal/infra/install/compose/database.go and
+      # docs/verification/scripts/container-release-smoke.sh). The temp
+      # server never listens on TCP, so forcing TCP here closes the same gap.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U registry -d regixtry_auth"]
       interval: 5s
       timeout: 5s
       retries: 10

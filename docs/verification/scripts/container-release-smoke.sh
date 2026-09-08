@@ -156,17 +156,26 @@ http_headers() {
   fi
 }
 
-# wait_postgres_ready polls `pg_isready` inside the sibling Postgres
-# container until it reports ready or the timeout elapses — the exact check
-# docker-compose.yml's own healthcheck uses, avoiding the bootstrap-admin
-# race where Postgres accepts connections before finishing recovery/init.
+# wait_postgres_ready polls `docker logs` for the postgres image's own
+# readiness markers, mirroring
+# internal/infra/install/compose/database.go's waitPostgresReady exactly
+# (design.md "Postgres readiness" decision). Deliberately not `pg_isready`:
+# on a FRESH volume, the official postgres image starts a temporary,
+# Unix-socket-only server to run initdb, shuts it down, then starts the
+# final server that actually accepts networked, password-authenticated
+# connections. `docker exec ... pg_isready` (no -h) defaults to that local
+# Unix socket and can report success against the temporary server, well
+# before the final one is listening on the network -- confirmed live in this
+# script during v0.2.1-rc9: bootstrap-admin got "connection refused" against
+# the sibling container's TCP port immediately after pg_isready reported
+# ready. The postgres image's own log output is the reliable signal instead.
 wait_postgres_ready() {
   local container="$1"
   local timeout="${2:-60}"
   local elapsed=0
 
   while [[ "${elapsed}" -lt "${timeout}" ]]; do
-    if docker exec "${container}" pg_isready -U registry -d regixtry_auth >/dev/null 2>&1; then
+    if postgres_log_indicates_ready "$(docker logs "${container}" 2>&1 || true)"; then
       return 0
     fi
 
@@ -174,7 +183,29 @@ wait_postgres_ready() {
     elapsed=$((elapsed + 1))
   done
 
-  fail "${container} did not report pg_isready within ${timeout}s"
+  fail "${container} logs never showed the final server accepting connections within ${timeout}s"
+}
+
+# postgres_log_indicates_ready mirrors database.go's postgresLogIndicatesReady
+# exactly: "database system is ready to accept connections" must appear a
+# second time when "PostgreSQL init process complete; ready for start up."
+# shows the temp-initdb-to-final handoff is in progress (fresh volume); on an
+# existing volume there is no handoff, so the marker's first appearance
+# already is the final server.
+postgres_log_indicates_ready() {
+  local logs="$1"
+  local ready_marker="database system is ready to accept connections"
+  local reinit_marker="PostgreSQL init process complete; ready for start up."
+  local ready_count=0
+
+  ready_count="$(grep -Fc "${ready_marker}" <<<"${logs}" || true)"
+  [[ "${ready_count}" -gt 0 ]] || return 1
+
+  if grep -Fq "${reinit_marker}" <<<"${logs}"; then
+    [[ "${ready_count}" -ge 2 ]]
+  else
+    return 0
+  fi
 }
 
 # registry_token exchanges Basic credentials for a Bearer access token via
