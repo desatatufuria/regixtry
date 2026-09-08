@@ -234,6 +234,80 @@ func ParseBundleDocument(raw []byte) (BundleDSSE, error) {
 	}, nil
 }
 
+// BundleVerificationMaterial is the minimal shape read out of a Sigstore
+// Bundle document's verificationMaterial, needed only to detect whether the
+// document is keyless-shaped (a Fulcio-issued certificate plus a Rekor tlog
+// entry) before the caller decides whether to hand the raw bundle bytes to
+// keyless.VerifyKeyless. It deliberately never models certificate DER bytes
+// or tlog entry content itself -- only sigstore-go (internal/domain/signing/
+// keyless.go, this package's sole sigstore-go importer) ever parses that.
+type BundleVerificationMaterial struct {
+	// HasCertificate is true when verificationMaterial carries either a
+	// single `certificate` or a non-empty `x509CertificateChain` -- the two
+	// shapes a Bundle producer may use to carry a Fulcio-issued leaf
+	// certificate. A `publicKey` hint (the static-key shape) leaves this
+	// false.
+	HasCertificate bool
+
+	// HasTlogEntry is true when verificationMaterial carries at least one
+	// tlogEntries entry.
+	HasTlogEntry bool
+}
+
+// bundleVerificationMaterialEnvelope is the minimal Sigstore Bundle document
+// shape needed to detect keyless-candidate verification material. Unknown
+// sibling fields (timestampVerificationData, a future field a newer Bundle
+// producer adds) are tolerated by encoding/json's default unmarshal
+// behavior -- this envelope simply never models them.
+type bundleVerificationMaterialEnvelope struct {
+	VerificationMaterial struct {
+		Certificate          *bundleRawCertificate `json:"certificate"`
+		X509CertificateChain *struct {
+			Certificates []bundleRawCertificate `json:"certificates"`
+		} `json:"x509CertificateChain"`
+		TlogEntries []json.RawMessage `json:"tlogEntries"`
+	} `json:"verificationMaterial"`
+}
+
+type bundleRawCertificate struct {
+	RawBytes string `json:"rawBytes"`
+}
+
+// ParseBundleVerificationMaterial reads the verbatim bundle document bytes
+// (the same blob ParseBundleDocument reads) and reports which
+// keyless-candidate verification material it carries. This is purely a
+// shape detector, additive to ParseBundleDocument and independent of it --
+// ParseBundleDocument keeps reading the dsseEnvelope payload/signatures for
+// the static-key path exactly as before. Malformed JSON and an oversized
+// document are still hard errors, mirroring ParseBundleDocument's own
+// bounds; a document with no verificationMaterial at all is valid input
+// (both flags false, no error).
+func ParseBundleVerificationMaterial(raw []byte) (BundleVerificationMaterial, error) {
+	if len(raw) > MaxBundleDocumentBytes {
+		return BundleVerificationMaterial{}, fmt.Errorf("signing: bundle document exceeds %d bytes", MaxBundleDocumentBytes)
+	}
+
+	var envelope bundleVerificationMaterialEnvelope
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return BundleVerificationMaterial{}, fmt.Errorf("signing: bundle document is not valid JSON: %w", err)
+	}
+
+	hasCertificate := envelope.VerificationMaterial.Certificate != nil && envelope.VerificationMaterial.Certificate.RawBytes != ""
+	if !hasCertificate && envelope.VerificationMaterial.X509CertificateChain != nil {
+		for _, cert := range envelope.VerificationMaterial.X509CertificateChain.Certificates {
+			if cert.RawBytes != "" {
+				hasCertificate = true
+				break
+			}
+		}
+	}
+
+	return BundleVerificationMaterial{
+		HasCertificate: hasCertificate,
+		HasTlogEntry:   len(envelope.VerificationMaterial.TlogEntries) > 0,
+	}, nil
+}
+
 // PAE computes the DSSE Pre-Authentication Encoding of a (payloadType,
 // payload) pair, exactly as defined by the DSSE spec:
 //

@@ -460,3 +460,177 @@ func TestCheckBundleClaims_EmptySubjectFails(t *testing.T) {
 		t.Fatal("CheckBundleClaims(empty subject) error = nil, want error")
 	}
 }
+
+// TestParseBundleVerificationMaterial_CertificatePresent covers the
+// single-certificate verificationMaterial shape
+// (`verificationMaterial.certificate.rawBytes`), the shape a Fulcio-issued
+// leaf certificate is carried in.
+func TestParseBundleVerificationMaterial_CertificatePresent(t *testing.T) {
+	t.Parallel()
+
+	raw := []byte(`{
+		"mediaType": "application/vnd.dev.sigstore.bundle.v0.3+json",
+		"verificationMaterial": {
+			"certificate": {"rawBytes": "MIIB1TCB..."},
+			"tlogEntries": []
+		}
+	}`)
+
+	got, err := ParseBundleVerificationMaterial(raw)
+	if err != nil {
+		t.Fatalf("ParseBundleVerificationMaterial() error = %v", err)
+	}
+	if !got.HasCertificate {
+		t.Fatal("HasCertificate = false, want true when verificationMaterial.certificate is present")
+	}
+	if got.HasTlogEntry {
+		t.Fatal("HasTlogEntry = true, want false for an empty tlogEntries array")
+	}
+}
+
+// TestParseBundleVerificationMaterial_X509CertificateChainPresent covers the
+// chain-shaped verificationMaterial alternative
+// (`verificationMaterial.x509CertificateChain.certificates`), which some
+// Bundle producers use instead of the single `certificate` field.
+func TestParseBundleVerificationMaterial_X509CertificateChainPresent(t *testing.T) {
+	t.Parallel()
+
+	raw := []byte(`{
+		"mediaType": "application/vnd.dev.sigstore.bundle.v0.3+json",
+		"verificationMaterial": {
+			"x509CertificateChain": {
+				"certificates": [
+					{"rawBytes": "MIIB1TCB..."},
+					{"rawBytes": "MIICGjCC..."}
+				]
+			}
+		}
+	}`)
+
+	got, err := ParseBundleVerificationMaterial(raw)
+	if err != nil {
+		t.Fatalf("ParseBundleVerificationMaterial() error = %v", err)
+	}
+	if !got.HasCertificate {
+		t.Fatal("HasCertificate = false, want true when verificationMaterial.x509CertificateChain has entries")
+	}
+}
+
+// TestParseBundleVerificationMaterial_TlogEntriesPresent covers the
+// tlogEntries-populated shape, independent of certificate presence.
+func TestParseBundleVerificationMaterial_TlogEntriesPresent(t *testing.T) {
+	t.Parallel()
+
+	raw := []byte(`{
+		"mediaType": "application/vnd.dev.sigstore.bundle.v0.3+json",
+		"verificationMaterial": {
+			"certificate": {"rawBytes": "MIIB1TCB..."},
+			"tlogEntries": [
+				{"logIndex": "1", "logId": {"keyId": "AAAA"}}
+			]
+		}
+	}`)
+
+	got, err := ParseBundleVerificationMaterial(raw)
+	if err != nil {
+		t.Fatalf("ParseBundleVerificationMaterial() error = %v", err)
+	}
+	if !got.HasTlogEntry {
+		t.Fatal("HasTlogEntry = false, want true when tlogEntries is non-empty")
+	}
+}
+
+// TestParseBundleVerificationMaterial_RealStaticKeyFixtureHasNoCertificate
+// cross-checks against the real captured static-key bundle document
+// (testdata/README.md): its verificationMaterial carries a publicKey hint,
+// never a certificate or tlog entry, so both flags must report false.
+func TestParseBundleVerificationMaterial_RealStaticKeyFixtureHasNoCertificate(t *testing.T) {
+	t.Parallel()
+
+	raw := readTestdataFixture(t, "bundle-document.json")
+
+	got, err := ParseBundleVerificationMaterial(raw)
+	if err != nil {
+		t.Fatalf("ParseBundleVerificationMaterial() error = %v", err)
+	}
+	if got.HasCertificate {
+		t.Fatal("HasCertificate = true, want false for the real static-key (publicKey hint) fixture")
+	}
+	if got.HasTlogEntry {
+		t.Fatal("HasTlogEntry = true, want false: the real fixture's tlogEntries were intentionally trimmed")
+	}
+}
+
+// TestParseBundleVerificationMaterial_MalformedJSONIsRejected mirrors
+// ParseBundleDocument's hard-error posture on malformed input.
+func TestParseBundleVerificationMaterial_MalformedJSONIsRejected(t *testing.T) {
+	t.Parallel()
+
+	_, err := ParseBundleVerificationMaterial([]byte(`not json`))
+	if err == nil {
+		t.Fatal("ParseBundleVerificationMaterial(malformed) error = nil, want error")
+	}
+}
+
+// TestParseBundleVerificationMaterial_UnknownFieldsAreTolerated confirms
+// fields this function does not model (e.g. timestampVerificationData, or
+// an entirely unrecognized sibling key) do not cause a parse failure --
+// mirrors ParseBundleIndex/ParseBundleReferrerManifest's permissive
+// unknown-shape posture, since a Bundle producer may add fields this
+// package never reads.
+func TestParseBundleVerificationMaterial_UnknownFieldsAreTolerated(t *testing.T) {
+	t.Parallel()
+
+	raw := []byte(`{
+		"mediaType": "application/vnd.dev.sigstore.bundle.v0.3+json",
+		"verificationMaterial": {
+			"certificate": {"rawBytes": "MIIB1TCB..."},
+			"tlogEntries": [{"logIndex": "1"}],
+			"timestampVerificationData": {"rfc3161Timestamps": [{"signedTimestamp": "AAAA"}]},
+			"someFutureField": {"nested": true}
+		},
+		"someOtherTopLevelField": 123
+	}`)
+
+	got, err := ParseBundleVerificationMaterial(raw)
+	if err != nil {
+		t.Fatalf("ParseBundleVerificationMaterial() error = %v, want nil (unknown fields must be tolerated)", err)
+	}
+	if !got.HasCertificate || !got.HasTlogEntry {
+		t.Fatalf("got = %+v, want both flags true despite the unknown sibling fields", got)
+	}
+}
+
+// TestParseBundleVerificationMaterial_ExceedsMaxBundleDocumentBytesIsRejected
+// mirrors ParseBundleDocument's size bound -- both read the same
+// pusher-controlled bundle document blob.
+func TestParseBundleVerificationMaterial_ExceedsMaxBundleDocumentBytesIsRejected(t *testing.T) {
+	t.Parallel()
+
+	oversized := make([]byte, MaxBundleDocumentBytes+1)
+	for i := range oversized {
+		oversized[i] = ' '
+	}
+
+	_, err := ParseBundleVerificationMaterial(oversized)
+	if err == nil {
+		t.Fatal("ParseBundleVerificationMaterial(oversized) error = nil, want error")
+	}
+}
+
+// TestParseBundleVerificationMaterial_NoVerificationMaterialHasNeitherFlag
+// covers a document with no verificationMaterial object at all (still valid
+// JSON) -- both flags report false, no error.
+func TestParseBundleVerificationMaterial_NoVerificationMaterialHasNeitherFlag(t *testing.T) {
+	t.Parallel()
+
+	raw := []byte(`{"mediaType": "application/vnd.dev.sigstore.bundle.v0.3+json"}`)
+
+	got, err := ParseBundleVerificationMaterial(raw)
+	if err != nil {
+		t.Fatalf("ParseBundleVerificationMaterial() error = %v", err)
+	}
+	if got.HasCertificate || got.HasTlogEntry {
+		t.Fatalf("got = %+v, want both flags false when verificationMaterial is absent", got)
+	}
+}

@@ -61,7 +61,7 @@ Chain strategy: pending
 
 ## Phase 0: Real-Artifact Shape Spike (blocks Phase 2+, no PR — pre-implementation)
 
-- [ ] 0.1 **Requires Bash + network (sdd-apply only).** Pull a real keyless
+- [x] 0.1 **Requires Bash + network (sdd-apply only).** Pull a real keyless
       `cosign sign` artifact — e.g. one already pushed by the
       `govault-csi-provider` release pipeline referenced in this change's
       origin context — and inspect its Sigstore Bundle referrer manifest's
@@ -73,24 +73,41 @@ Chain strategy: pending
       and Phase 2's approach (extending the `dsseEnvelope` path) is invalid
       for that shape; a new design decision is required before continuing.
       If `dsseEnvelope`-shaped, record the confirmed shape and proceed.
+      **RESULT (2026-09-08, see apply-progress.md for full detail): NO live
+      keyless Bundle-document artifact found after multiple real registry
+      attempts (GHCR anonymous DENIED as the user also hit; Chainguard/cgr.dev
+      real keyless-signed images pulled successfully but use the LEGACY
+      SimpleSigning `.sig`/`.att` format, never the modern
+      `SigstoreBundleMediaType` bundle-document format, in the cosign version
+      whose source was cross-checked). Proceeding on the `dsseEnvelope`
+      assumption per the fallback instruction, corroborated (not fully
+      confirmed) by: (a) this repo's own real captured
+      `testdata/bundle-document.json` (cosign v3.1.3, `--key`-based, NOT
+      keyless) is `dsseEnvelope`-shaped; (b) cosign v2.5.0 source
+      (`pkg/cosign/bundle/protobundle.go`, `sign_blob.go`) shows
+      `messageSignature` is used exclusively by `cosign sign-blob
+      --new-bundle-format` (raw non-statement bytes) and image-level
+      `cosign sign`/`cosign attest` always DSSE-wrap an in-toto Statement
+      regardless of key type. UNCONFIRMED against a real keyless-specific
+      artifact — flagged for human/CI follow-up before ship.
 
 ## Phase 1: Dependency + Pinned Root Asset (PR 1)
 
-- [ ] 1.1 `go.mod`/`go.sum`: add `github.com/sigstore/sigstore-go v0.7.1`
+- [x] 1.1 `go.mod`/`go.sum`: add `github.com/sigstore/sigstore-go v0.7.1`
       (pinned, confirmed version) and let its transitive tree resolve.
-- [ ] 1.2 Create `internal/domain/signing/assets/trusted_root.json`: the
+- [x] 1.2 Create `internal/domain/signing/assets/trusted_root.json`: the
       pinned Sigstore public-good trusted root, sourced for the confirmed
       `sigstore-go@v0.7.1` root schema version.
 
 ## Phase 2: Domain — Bundle Verification-Material Parser (PR 1)
 
-- [ ] 2.1 RED `internal/domain/signing/bundle_test.go`: table-driven cases for
+- [x] 2.1 RED `internal/domain/signing/bundle_test.go`: table-driven cases for
       a new `ParseBundleVerificationMaterial(raw []byte) (BundleVerificationMaterial, error)` —
       certificate / `x509CertificateChain` present, `tlogEntries` present,
       malformed JSON is a hard error, unknown fields tolerated. Existing
       `ParseBundleDocument`/`BundleDSSE` struct-comparison tests MUST remain
       unmodified (design's zero-risk guarantee).
-- [ ] 2.2 GREEN `internal/domain/signing/bundle.go`: implement
+- [x] 2.2 GREEN `internal/domain/signing/bundle.go`: implement
       `ParseBundleVerificationMaterial` and its envelope structs, additive
       only; `ParseBundleDocument` untouched.
 
