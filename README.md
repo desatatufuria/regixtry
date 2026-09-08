@@ -57,6 +57,8 @@ From here, `regixtry tui -api-base-url http://127.0.0.1:5000` gives you an inter
 
 ## Run as a container
 
+Every tagged release also publishes a multi-arch (`linux/amd64`, `linux/arm64`) image to `ghcr.io/desatatufuria/regixtry`, running as a non-root user (uid `65532`) with a built-in `HEALTHCHECK`. Two ways to run it: the one-command `regixtry setup --mode docker` below (recommended — bundles Postgres, admin bootstrap, and the registry into one Compose stack), or a manual `docker run`/`docker compose` for full control.
+
 ### One command: `regixtry setup --mode docker`
 
 `regixtry setup --mode docker` (or the interactive `3) docker` chooser entry) provisions a complete, self-contained stack with Docker Compose: a bundled Postgres for auth state, the registry itself, and a first admin account — no manual `docker compose`, network, or credential setup required. Both `install.sh` and `regixtry setup` now offer this container-selection branch alongside `daemon-sqlite`.
@@ -108,28 +110,9 @@ printf '%s\n' 'change-me-now' | docker compose run --rm --no-deps -T regixtry \
 
 **Migration note for existing manual `docker-compose.yml` users**: this file previously required a pre-created external `dtf-netwok` Docker network and shipped a hardcoded `POSTGRES_PASSWORD: registry`. Both are gone. The rewritten file needs no external network and requires `REGIXTRY_POSTGRES_PASSWORD`/`REGIXTRY_AUTH_POSTGRES_DSN`/`REGIXTRY_IMAGE` to come from your environment or a `.env` file (`docker.env.example` documents all four variables), and it now pulls `${REGIXTRY_IMAGE}` instead of building locally. `docker build .` still builds the same repository-root `Dockerfile` unchanged, so a local build still works if you `docker build -t <tag> .` and set `REGIXTRY_IMAGE` to that tag.
 
-## What's implemented
+### Manual `docker run` (no Compose)
 
-- Push/pull of manifests and blobs over the real `/v2/` surface — catalog and tag listing with `n`/`last` pagination, chunked uploads (`POST`/`PATCH`/`PUT`) with SHA-256 validation before a blob is published.
-- Registry metadata in SQLite, blob content on the filesystem.
-- Optional PostgreSQL-backed access control: users, per-repository role grants, delegated repo-admin grant management, registry-wide read-only accounts, and bounded-TTL revocable robot accounts for CI — see [`docs/authentication.md`](docs/authentication.md) and [`docs/security.md`](docs/security.md).
-- Bearer challenge and token issuance at `/auth/token`; a large authenticated admin API under `/admin/v1` — see [`docs/api.md`](docs/api.md).
-- Three built-in features with a shared lifecycle (list/show/status/configure/install/upgrade/rollback): **Trivy** vulnerability scanning with an optional pull-blocking policy gate, **Gitleaks** secret scanning, and cosign-based image **signing** verification against one or more trusted public keys, globally or per repository — see [`docs/features.md`](docs/features.md).
-- CLI for serving, setup/bootstrap/uninstall/upgrade, and a Bubble Tea TUI that doubles as a local read-only console and, when pointed at a running server, a full HTTP admin client with a domain-grouped admin menu (Browse / Security & Compliance / Identity & Access / Operations) — see [`docs/tui.md`](docs/tui.md).
-- A Linux release installer with SHA-256-verified `amd64`/`arm64` binaries, driven by `regixtry setup`/`upgrade`.
-
-## Install
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/desatatufuria/regixtry/main/install.sh | bash
-regixtry setup
-```
-
-`install.sh` installs the binary; `regixtry setup` then provisions the runtime — `daemon-sqlite` for a Linux/systemd host, or `docker` for a self-contained Docker Compose stack (see [Run as a container](#run-as-a-container) above) — or use `regixtry serve` directly for local/manual runs, as above. Full procedures, including reverse-proxy and direct-TLS modes: [`docs/installation.md`](docs/installation.md). To move an existing install to a newer release: `regixtry upgrade` (resolves the latest non-prerelease tag from GitHub Releases automatically, or pass `-ref` to pin one).
-
-## Run as a container
-
-Every tagged release also publishes a multi-arch (`linux/amd64`, `linux/arm64`) image to `ghcr.io/desatatufuria/regixtry`. This is a manual, first-class path: run it directly with `docker run`. **`install.sh` and `regixtry setup` do not offer a container-selection branch** — they provision the Linux/systemd host runtime only.
+Prefer to skip Compose entirely and run the published image directly? This is a first-class path, not a fallback — just more manual than `regixtry setup --mode docker` above.
 
 ```bash
 docker volume create regixtry-data
@@ -157,9 +140,9 @@ docker push 127.0.0.1:5000/test/alpine:3.20
 docker pull 127.0.0.1:5000/test/alpine:3.20
 ```
 
-The image runs as a non-root user (uid `65532`), and data written to `/var/lib/regixtry` survives a container restart as long as it keeps using the same named volume.
+Data written to `/var/lib/regixtry` survives a container restart as long as it keeps using the same named volume.
 
-### Postgres-backed authentication in a container
+#### Postgres-backed authentication, without Compose
 
 Same primitives as [Quick start with authentication and access control](#quick-start-with-authentication-and-access-control) above — same `postgres:17-alpine` pin, same `regixtry_auth`/`registry` DSN shape, same `bootstrap-admin -password-stdin` → `serve -auth-postgres-dsn` order — expressed with `docker network create` + `docker run` instead of `docker compose`:
 
@@ -190,6 +173,25 @@ docker push 127.0.0.1:5000/test/alpine:3.20
 ```
 
 The `registry:registry` Postgres credential above is a throwaway local-experimentation default, exactly as in the `docker compose` quick start — use real secrets for anything beyond a scratch environment.
+
+## What's implemented
+
+- Push/pull of manifests and blobs over the real `/v2/` surface — catalog and tag listing with `n`/`last` pagination, chunked uploads (`POST`/`PATCH`/`PUT`) with SHA-256 validation before a blob is published.
+- Registry metadata in SQLite, blob content on the filesystem.
+- Optional PostgreSQL-backed access control: users, per-repository role grants, delegated repo-admin grant management, registry-wide read-only accounts, and bounded-TTL revocable robot accounts for CI — see [`docs/authentication.md`](docs/authentication.md) and [`docs/security.md`](docs/security.md).
+- Bearer challenge and token issuance at `/auth/token`; a large authenticated admin API under `/admin/v1` — see [`docs/api.md`](docs/api.md).
+- Three built-in features with a shared lifecycle (list/show/status/configure/install/upgrade/rollback): **Trivy** vulnerability scanning with an optional pull-blocking policy gate, **Gitleaks** secret scanning, and cosign-based image **signing** verification against one or more trusted public keys, globally or per repository — see [`docs/features.md`](docs/features.md).
+- CLI for serving, setup/bootstrap/uninstall/upgrade, and a Bubble Tea TUI that doubles as a local read-only console and, when pointed at a running server, a full HTTP admin client with a domain-grouped admin menu (Browse / Security & Compliance / Identity & Access / Operations) — see [`docs/tui.md`](docs/tui.md).
+- A Linux release installer with SHA-256-verified `amd64`/`arm64` binaries, driven by `regixtry setup`/`upgrade`.
+
+## Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/desatatufuria/regixtry/main/install.sh | bash
+regixtry setup
+```
+
+`install.sh` installs the binary; `regixtry setup` then provisions the runtime — `daemon-sqlite` for a Linux/systemd host, or `docker` for a self-contained Docker Compose stack (see [Run as a container](#run-as-a-container) above) — or use `regixtry serve` directly for local/manual runs, as above. Full procedures, including reverse-proxy and direct-TLS modes: [`docs/installation.md`](docs/installation.md). To move an existing install to a newer release: `regixtry upgrade` (resolves the latest non-prerelease tag from GitHub Releases automatically, or pass `-ref` to pin one).
 
 ## Try a feature: vulnerability scanning
 
