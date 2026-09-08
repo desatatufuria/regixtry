@@ -597,8 +597,13 @@ func parseTUIConfigWithBootstrapStatePath(args []string, bootstrapStatePath stri
 	flags.StringVar(&cfg.AuthPostgresDSN, "auth-postgres-dsn", defaultCfg.AuthPostgresDSN, "Postgres DSN for auth state")
 	flags.StringVar(&cfg.APIBaseURL, "api-base-url", defaultCfg.APIBaseURL, "base URL for authenticated admin API")
 	flags.BoolVar(&cfg.Snapshot, "snapshot", false, "render the first inspection view and exit")
-	flags.BoolVar(&cfg.DeleteEnabled, "delete-enabled", parseBoolEnv("REGISTRY_DELETE_ENABLED", false), "enable DELETE /v2/<name>/manifests/<reference> (manifest and tag deletion)")
-	flags.BoolVar(&cfg.GCDeleteEnabled, "gc-delete-enabled", parseBoolEnv("REGISTRY_GC_DELETE_ENABLED", false), "enable POST /admin/v1/gc/reports/{id}/delete (irreversibly unlinks unreferenced blob files; distinct from -delete-enabled, which is metadata-only)")
+	// DeleteEnabled/GCDeleteEnabled default to defaultCfg (already resolved
+	// from regixtry.env for setup-managed installs, see
+	// loadSetupManagedTUIConfig), not parseBoolEnv directly -- mirrors how
+	// APIBaseURL above defaults to defaultCfg.APIBaseURL instead of reading
+	// os.Getenv inline.
+	flags.BoolVar(&cfg.DeleteEnabled, "delete-enabled", defaultCfg.DeleteEnabled, "enable DELETE /v2/<name>/manifests/<reference> (manifest and tag deletion)")
+	flags.BoolVar(&cfg.GCDeleteEnabled, "gc-delete-enabled", defaultCfg.GCDeleteEnabled, "enable POST /admin/v1/gc/reports/{id}/delete (irreversibly unlinks unreferenced blob files; distinct from -delete-enabled, which is metadata-only)")
 
 	if err := flags.Parse(args); err != nil {
 		return tuiConfig{}, err
@@ -647,6 +652,8 @@ func defaultTUIConfigWithBootstrapStatePath(bootstrapStatePath string) (tuiConfi
 		StorageRoot:     filepath.Join(".", "data"),
 		AuthPostgresDSN: os.Getenv("REGISTRY_AUTH_POSTGRES_DSN"),
 		APIBaseURL:      firstNonEmpty(os.Getenv("REGISTRY_API_BASE_URL"), os.Getenv("REGISTRY_PUBLIC_URL")),
+		DeleteEnabled:   parseBoolEnv("REGISTRY_DELETE_ENABLED", false),
+		GCDeleteEnabled: parseBoolEnv("REGISTRY_GC_DELETE_ENABLED", false),
 	}
 
 	installedCfg, ok, err := loadSetupManagedTUIConfig(bootstrapStatePath)
@@ -660,6 +667,8 @@ func defaultTUIConfigWithBootstrapStatePath(bootstrapStatePath string) (tuiConfi
 		if strings.TrimSpace(cfg.APIBaseURL) == "" {
 			cfg.APIBaseURL = installedCfg.APIBaseURL
 		}
+		cfg.DeleteEnabled = installedCfg.DeleteEnabled
+		cfg.GCDeleteEnabled = installedCfg.GCDeleteEnabled
 	}
 
 	return cfg, nil
@@ -695,6 +704,13 @@ func loadSetupManagedTUIConfig(bootstrapStatePath string) (tuiConfig, bool, erro
 		DatabasePath:    databasePath,
 		AuthPostgresDSN: strings.TrimSpace(envValues["REGISTRY_AUTH_POSTGRES_DSN"]),
 		APIBaseURL:      strings.TrimSpace(envValues["REGISTRY_PUBLIC_URL"]),
+		// DeleteEnabled/GCDeleteEnabled mirror APIBaseURL's own fallback: an
+		// interactive `regixtry tui` invocation never has the setup-managed
+		// systemd unit's environment, so REGISTRY_DELETE_ENABLED and
+		// REGISTRY_GC_DELETE_ENABLED must come from regixtry.env, not
+		// os.Getenv (which parseBoolEnv below reads).
+		DeleteEnabled:   parseBoolValue(envValues["REGISTRY_DELETE_ENABLED"], false),
+		GCDeleteEnabled: parseBoolValue(envValues["REGISTRY_GC_DELETE_ENABLED"], false),
 	}, true, nil
 }
 
@@ -1903,7 +1919,15 @@ func maxDuration(a time.Duration, b time.Duration) time.Duration {
 }
 
 func parseBoolEnv(key string, fallback bool) bool {
-	value := strings.TrimSpace(os.Getenv(key))
+	return parseBoolValue(os.Getenv(key), fallback)
+}
+
+// parseBoolValue is parseBoolEnv's underlying parse, factored out so
+// loadSetupManagedTUIConfig can apply the same REGISTRY_DELETE_ENABLED /
+// REGISTRY_GC_DELETE_ENABLED semantics to a value read from the
+// setup-managed regixtry.env file instead of the process environment.
+func parseBoolValue(value string, fallback bool) bool {
+	value = strings.TrimSpace(value)
 	if value == "" {
 		return fallback
 	}

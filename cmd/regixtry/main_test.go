@@ -646,6 +646,93 @@ func TestParseTUIConfigAutoDetectsSetupManagedRuntime(t *testing.T) {
 	}
 }
 
+// TestParseTUIConfigAutoDetectsSetupManagedDeleteFlags is the regression test
+// for a real bug: loadSetupManagedTUIConfig read REGISTRY_STORAGE_ROOT,
+// REGISTRY_DATABASE_PATH, REGISTRY_AUTH_POSTGRES_DSN and REGISTRY_PUBLIC_URL
+// from regixtry.env but never REGISTRY_DELETE_ENABLED/
+// REGISTRY_GC_DELETE_ENABLED, and parseTUIConfigWithBootstrapStatePath's own
+// flag defaults read those two keys from os.Getenv, not the env file --
+// exactly the process-env-vs-file gap TestParseTUIConfigAutoDetectsSetupManagedRuntime
+// above already covers for APIBaseURL. An interactive `regixtry tui` run
+// against a systemd-managed install never has these exported in its shell,
+// so -delete-enabled silently stayed off no matter what regixtry.env said.
+func TestParseTUIConfigAutoDetectsSetupManagedDeleteFlags(t *testing.T) {
+	t.Parallel()
+
+	tempDir := t.TempDir()
+	bootstrapStatePath := filepath.Join(tempDir, "etc", "regixtry", "bootstrap-state.json")
+	lifecyclePath := installlinux.LifecycleProvenancePath(bootstrapStatePath)
+	envPath := filepath.Join(filepath.Dir(lifecyclePath), "regixtry.env")
+
+	for _, path := range []string{lifecyclePath, envPath} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("MkdirAll(%q) error = %v", filepath.Dir(path), err)
+		}
+	}
+	if err := os.WriteFile(lifecyclePath, []byte("{}\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(lifecyclePath) error = %v", err)
+	}
+	if err := os.WriteFile(envPath, []byte(strings.Join([]string{
+		`REGISTRY_STORAGE_ROOT="/var/lib/regixtry"`,
+		`REGISTRY_DELETE_ENABLED="true"`,
+		`REGISTRY_GC_DELETE_ENABLED="true"`,
+	}, "\n")+"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(envPath) error = %v", err)
+	}
+
+	cfg, err := parseTUIConfigWithBootstrapStatePath(nil, bootstrapStatePath)
+	if err != nil {
+		t.Fatalf("parseTUIConfig() error = %v", err)
+	}
+
+	if !cfg.DeleteEnabled {
+		t.Fatal("DeleteEnabled = false, want true from setup-managed regixtry.env")
+	}
+	if !cfg.GCDeleteEnabled {
+		t.Fatal("GCDeleteEnabled = false, want true from setup-managed regixtry.env")
+	}
+}
+
+// TestParseTUIConfigDeleteFlagOverridesSetupManagedRuntime proves an explicit
+// -delete-enabled=false still wins over a regixtry.env that enables it,
+// mirroring TestParseTUIConfigExplicitFlagsOverrideSetupManagedRuntime below.
+func TestParseTUIConfigDeleteFlagOverridesSetupManagedRuntime(t *testing.T) {
+	t.Parallel()
+
+	tempDir := t.TempDir()
+	bootstrapStatePath := filepath.Join(tempDir, "etc", "regixtry", "bootstrap-state.json")
+	lifecyclePath := installlinux.LifecycleProvenancePath(bootstrapStatePath)
+	envPath := filepath.Join(filepath.Dir(lifecyclePath), "regixtry.env")
+
+	for _, path := range []string{lifecyclePath, envPath} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("MkdirAll(%q) error = %v", filepath.Dir(path), err)
+		}
+	}
+	if err := os.WriteFile(lifecyclePath, []byte("{}\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(lifecyclePath) error = %v", err)
+	}
+	if err := os.WriteFile(envPath, []byte(strings.Join([]string{
+		`REGISTRY_STORAGE_ROOT="/var/lib/regixtry"`,
+		`REGISTRY_DELETE_ENABLED="true"`,
+		`REGISTRY_GC_DELETE_ENABLED="true"`,
+	}, "\n")+"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(envPath) error = %v", err)
+	}
+
+	cfg, err := parseTUIConfigWithBootstrapStatePath([]string{"-delete-enabled=false", "-gc-delete-enabled=false"}, bootstrapStatePath)
+	if err != nil {
+		t.Fatalf("parseTUIConfig() error = %v", err)
+	}
+
+	if cfg.DeleteEnabled {
+		t.Fatal("DeleteEnabled = true, want false: explicit flag must override regixtry.env")
+	}
+	if cfg.GCDeleteEnabled {
+		t.Fatal("GCDeleteEnabled = true, want false: explicit flag must override regixtry.env")
+	}
+}
+
 func TestParseTUIConfigExplicitFlagsOverrideSetupManagedRuntime(t *testing.T) {
 	t.Parallel()
 
