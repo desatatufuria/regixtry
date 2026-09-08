@@ -1,0 +1,223 @@
+# Tasks: Container Setup Mode
+
+## Review Workload Forecast
+
+| Field | Value |
+|-------|-------|
+| Estimated changed lines (total) | 1400-2050 |
+| 400-line budget risk (skill default, per-PR) | Medium for PR #1/#4; Low-Medium for PR #2/#3/#5 |
+| 800-line budget risk (session budget, per-PR) | Low for every PR when split as below; High for the whole change as a single PR |
+| Chained PRs recommended | Yes |
+| Suggested split | PR #1 (base) → PR #2 → PR #3 → PR #4 → PR #5, Feature Branch Chain |
+| Delivery strategy | single-pr (received) — resolves to a required `size:exception` decision unless chaining is accepted |
+| Chain strategy | feature-branch-chain (proposed) |
+
+Decision needed before apply: Yes
+Chained PRs recommended: Yes
+Chain strategy: feature-branch-chain
+400-line budget risk: Medium
+
+### Why this estimate is High, stated up front (learned from `registry-container-mode`)
+
+That prior change's first estimate for one phase (450-580) proved optimistic once a
+security-sensitive scenario (`run_auth_scenario`) was fully scoped, forcing a
+mid-flight re-estimate to 580-780 and a 3-way PR split discovered only during
+`sdd-apply`. This change has comparably dense pieces from the start — a brand-new
+Go package (`internal/infra/install/compose`) with an 8-method interface doing real
+subprocess orchestration, credential generation/disclosure code, a rewritten
+`docker-compose.yml`, and a new smoke script analogous to
+`container-release-smoke.sh` (itself ~250-430 lines). Summing every file in the
+design's `## File Changes` table honestly, before any implementation surprises,
+already lands at 1400-2050 lines — far over both the skill's 400-line default and
+this session's 800-line budget as a single PR. Splitting is proposed now, not
+discovered later.
+
+### Chain Overview
+
+```text
+develop
+ └── feature/container-setup-mode                          ← tracker (draft, no direct merge until chain completes)
+      ↑ PR #1 base: feature/container-setup-mode
+      └── feature/container-setup-mode-01-compose-foundation
+           ↑ PR #2 base: feature/container-setup-mode-01-compose-foundation
+           └── feature/container-setup-mode-02-compose-credentials
+                ↑ PR #3 base: feature/container-setup-mode-02-compose-credentials
+                └── feature/container-setup-mode-03-compose-lifecycle
+                     ↑ PR #4 base: feature/container-setup-mode-03-compose-lifecycle
+                     └── feature/container-setup-mode-04-setup-wiring
+                          ↑ PR #5 base: feature/container-setup-mode-04-setup-wiring
+                          └── feature/container-setup-mode-05-docs-smoke
+```
+
+Only `feature/container-setup-mode` merges into `develop`, and only after PR #5 is
+reviewed and integrated.
+
+### Suggested Work Units (per PR)
+
+| PR | Branch | Base | Goal | Est. lines | Focused test command | Runtime harness | Rollback boundary |
+|----|--------|------|------|-----------|----------------------|-----------------|-------------------|
+| #1 | `feature/container-setup-mode-01-compose-foundation` | `feature/container-setup-mode` | New `compose` package types + `Preflight` + `WriteProject`; embedded asset + drift-locked repo-root `docker-compose.yml` rewrite + `.env.example` | 395-545 | `go test ./internal/infra/install/compose/...` | N/A — no Docker daemon needed; fake-exec unit tests only | Revert this branch entirely; package is unreferenced by `main.go` until PR #4, so nothing else breaks |
+| #2 | `feature/container-setup-mode-02-compose-credentials` | PR #1 branch | `StartDatabase` + `BootstrapAdmin` (bundled Postgres bring-up, stdin-only admin credential, DSN argv safety) — the security-sensitive cluster | 230-330 | `go test ./internal/infra/install/compose/...` | N/A — fake-exec unit tests; no daemon | Revert `StartDatabase`/`BootstrapAdmin`; `Preflight`/`WriteProject` from PR #1 keep working unmodified |
+| #3 | `feature/container-setup-mode-03-compose-lifecycle` | PR #2 branch | `StartRegistry` + `WaitReachable` + `SaveProvenance` + `Down`; `regixtry-compose-state.json` shape | 150-250 | `go test ./internal/infra/install/compose/...` | N/A — fake-exec unit tests; no daemon | Revert these four methods; earlier compose methods keep working unmodified |
+| #4 | `feature/container-setup-mode-04-setup-wiring` | PR #3 branch | `resolveSetupMode`/`runSetup` `"docker"` case, `promptSetupDockerConfig`, `composeRunner` interface + `newComposeRunner` seam, orchestration-order/rollback tests | 350-540 | `go test ./cmd/regixtry/...` | N/A — orchestration-order test uses a fake `composeRunner`, no daemon | Revert `main.go` docker-mode additions; `binary-only`/`daemon-sqlite` cases untouched |
+| #5 | `feature/container-setup-mode-05-docs-smoke` | PR #4 branch | `install.sh` guidance line, README docker path + TUI + migration note, `setup-docker-smoke.sh` (bundled + external-DSN scenarios) | 308-535 | `go test ./...` (no Go changes here, sanity only) | `bash docs/verification/scripts/setup-docker-smoke.sh` and `... --external-postgres`, against a locally built or published image | Revert `setup-docker-smoke.sh` (new file), `install.sh` line, README sections; PR #1-#4 code paths keep working unmodified |
+
+Sum: 1433-2200 lines depending on implementation friction, consistent with the
+1400-2050 whole-change estimate. PR #4 carries the widest `main.go` blast radius
+(mirrors two existing setup modes' structure) and PR #2 carries the most
+security-sensitive surface (credential generation, stdin-only admin password,
+subprocess argv composition with operator-supplied DSN) — same shape of caution
+`registry-container-mode`'s PR #3 needed for `run_auth_scenario`.
+
+---
+
+## PR #1 (base) — targets `feature/container-setup-mode`
+
+**Branch**: `feature/container-setup-mode-01-compose-foundation`
+**Scope**: New `internal/infra/install/compose` package skeleton (types, `Preflight`,
+`WriteProject`), embedded compose asset, drift-locked repo-root rewrite, `.env.example`.
+**Chain note**: The package is not yet referenced from `cmd/regixtry/main.go` — that
+wiring lands in PR #4. This mirrors how `registry-container-mode` PR #1 shipped the
+healthcheck subcommand before the smoke script that exercised it existed.
+
+### Phase 1: Compose Package Types & Preflight (Strict TDD; threat: missing/broken tool detection)
+
+- [x] 1.1 RED: `internal/infra/install/compose/compose_test.go` — table-driven tests for `Preflight(ctx)` covering `docker` absent from `PATH`, `docker compose version` failing while `docker version` succeeds, and `docker version` failing (daemon unreachable); assert the three distinct truthful messages from design and that nothing is written to disk on any failure.
+- [x] 1.2 GREEN: define `ProjectConfig`/`Project` types and implement `Provisioner.Preflight` in `internal/infra/install/compose/compose.go`, using an injectable exec-runner seam (fake in tests, `exec.CommandContext` argv slices in production — never `sh -c`).
+- [x] 1.3 REFACTOR: extract the fake exec-runner into a small test helper reusable by PR #2/#3; `go vet ./...` and `gofmt -w .`.
+
+### Phase 2: Compose Artifacts, Env File & WriteProject (Strict TDD; threat: filesystem target selection, secret channel)
+
+- [x] 2.1 Create `internal/infra/install/compose/assets/docker-compose.yml`: pulls `${REGIXTRY_IMAGE}`, no `build:`, no `networks:`/`external: true`, mandatory `${REGIXTRY_POSTGRES_PASSWORD:?...}` interpolation, `depends_on: condition: service_healthy`, named volumes and healthchecks for both services. **Deviation**: healthcheck is declared only for `postgres` (required for `depends_on: condition: service_healthy`); no compose-level healthcheck is declared for `regixtry` because no `regixtry healthcheck`-equivalent tool exists in the pulled image's minimal `debian:bookworm-slim` runtime on this branch (that hardening landed only on the separate `registry-container-mode` branch, not yet in `develop`), and editing the local Dockerfile is out of this PR's File Changes scope. `WaitReachable` (PR #3) polls the public URL over HTTP directly, so this has no functional gap for setup orchestration.
+- [x] 2.2 Rewrite repo-root `docker-compose.yml` as a byte-identical copy of the embedded asset (removes the `dtf-netwok` external-network requirement and the hardcoded `POSTGRES_PASSWORD: registry` literal).
+- [x] 2.3 RED: drift test reading `../../../../docker-compose.yml` and asserting byte-equality with the embedded asset, same rule the Dockerfile stages already follow.
+- [x] 2.4 Create `docker.env.example` documenting `REGIXTRY_POSTGRES_PASSWORD`, `REGIXTRY_AUTH_POSTGRES_DSN`, `REGIXTRY_IMAGE`, `REGIXTRY_PORT`. Originally attempted as `.env.example`, which the sandbox's dotenv-pattern write protection hard-denies for any tool regardless of content (confirmed via a bare `printf 'X=1\n' > .env.example` probe). Resolved by using the non-dotenv filename `docker.env.example` instead (user-approved), with `docker-compose.yml` and the embedded asset both updated to reference it in their `:?` error messages.
+- [x] 2.5 RED: test asserting `WriteProject` refuses a pre-existing project at the target path rather than adopting it, and that project/env-file paths are built only via `filepath.Join` (never string concatenation) — DSN/project-name strings containing `;`, `$(…)`, spaces, or a leading `-` must reach `docker` as one literal argument, not shell-interpreted.
+- [x] 2.6 RED: test asserting the generated `crypto/rand` bundled password is absent from the embedded/repo-root compose bytes and from the env file's own key names, and that the env file is written with mode `0600`.
+- [x] 2.7 GREEN: implement `Provisioner.WriteProject(compose.ProjectConfig) (compose.Project, error)` — generate the password, render the `0600` env file, copy the embedded compose asset, refuse an existing project.
+- [x] 2.8 REFACTOR: extract env-file rendering into a small golden-text helper reused by PR #2's secret-channel tests.
+
+### Phase 3: PR #1 Verification
+
+- [x] 3.1 Run `go test ./internal/infra/install/compose/...` — confirm `Preflight`, `WriteProject`, and the drift test all pass.
+- [x] 3.2 Run `go vet ./...` and `gofmt -l .` — confirm no diagnostics.
+
+---
+
+## PR #2 — targets PR #1 branch (`feature/container-setup-mode-01-compose-foundation`)
+
+**Branch**: `feature/container-setup-mode-02-compose-credentials`
+**Scope**: `StartDatabase` (bundled Postgres bring-up + readiness poll) and
+`BootstrapAdmin` (one-shot admin creation) — the most credential-sensitive cluster
+in this change, split out deliberately rather than folded into a larger PR, learning
+from how `run_auth_scenario` alone justified its own PR in `registry-container-mode`.
+
+### Phase 4: Bundled Database & Bootstrap Admin (Strict TDD; threat: secret channel, subprocess argv composition)
+
+- [x] 4.1 RED: test asserting `StartDatabase(ctx, p)` is a no-op when `p` is external (no `docker compose up` call recorded on the fake exec-runner) and issues `docker compose up -d postgres` only when bundled.
+- [x] 4.2 RED: test for the bounded `docker compose exec -T postgres pg_isready -U registry -d regixtry_auth` poll — asserts a bounded retry count/timeout, not an unbounded loop.
+- [x] 4.3 GREEN: implement `Provisioner.StartDatabase(ctx context.Context, p compose.Project) error`.
+- [x] 4.4 RED: test asserting `BootstrapAdmin` pipes the admin password via stdin into `docker compose run --rm --no-deps -T regixtry bootstrap-admin -password-stdin`, never through argv or an environment variable.
+- [x] 4.5 RED: test asserting a DSN or username containing `;`, `$(…)`, spaces, or a leading `-` reaches `docker` as one literal argument (argv-slice composition, never `sh -c`). **Deviation**: `BootstrapAdmin`'s signature (per design's Interfaces/Contracts) carries no DSN parameter — the container inherits `REGISTRY_AUTH_POSTGRES_DSN` from the compose file's own `environment:` interpolation (set at `WriteProject` time), so this method never touches DSN as an argv value. The RED test instead exercises the two operator-influenced strings this method's argv actually carries: compose project name (the threat matrix's "project name" category) and admin username, both with `;`, `$(…)`, spaces, and a leading `-`.
+- [x] 4.6 GREEN: implement `Provisioner.BootstrapAdmin(ctx context.Context, p compose.Project, username, password string) error`.
+- [x] 4.7 REFACTOR: `go vet ./...` and `gofmt -w .`; confirm the stdin-writer path has no leftover buffered copy of the password after the call returns. **Note**: the password is handed to the exec seam as `strings.NewReader(password)` directly — no intermediate `[]byte` copy is made in this package's code. Go's `os/exec` internally copies stdin through a pipe goroutine when `Stdin` is a non-`*os.File` `io.Reader`; that copy is inherent to the standard library's design and is not something this package's code introduces or can eliminate without a lower-level pipe/zeroing implementation, which was judged out of scope for this PR.
+
+### Phase 5: PR #2 Verification
+
+- [x] 5.1 Run `go test ./internal/infra/install/compose/...` — confirm `StartDatabase`/`BootstrapAdmin` suites pass, including every secret-channel and argv-safety assertion.
+
+---
+
+## PR #3 — targets PR #2 branch (`feature/container-setup-mode-02-compose-credentials`)
+
+**Branch**: `feature/container-setup-mode-03-compose-lifecycle`
+**Scope**: `StartRegistry`, `WaitReachable`, `SaveProvenance`, `Down` — the remaining
+`composeRunner` methods, plus the `regixtry-compose-state.json` provenance shape.
+
+### Phase 6: Registry Start, Reachability, Provenance & Teardown (Strict TDD)
+
+- [x] 6.1 GREEN: implement `Provisioner.StartRegistry(ctx context.Context, p compose.Project) error` — `docker compose up -d` when bundled, `docker compose up -d --no-deps regixtry` when external. **Amplification**: tasks.md lists no explicit RED subtask here, but Strict TDD's non-negotiable "no production code before a failing test" rule required one anyway — `registry_test.go`'s two `TestStartRegistry*` functions were written and confirmed to fail to compile (`p.StartRegistry undefined`) before this method existed.
+- [x] 6.2 RED: test for `WaitReachable` polling `GET <public-url>/v2/` for `200` or `401` (same semantics as `regixtry healthcheck`), bounded, and failing with an installation-failure error (not a healthy-stack claim) when the poll never succeeds.
+- [x] 6.3 GREEN: implement `Provisioner.WaitReachable(ctx context.Context, p compose.Project) error`.
+- [x] 6.4 RED: test asserting `regixtry-compose-state.json` (`0600`) contains `mode: "docker"`, compose project name/dir/file path, env file path, pinned image, service/volume names, `bundled_postgres`, public URL — and contains no secret.
+- [x] 6.5 GREEN: implement `Provisioner.SaveProvenance(p compose.Project) error`, writing the file distinct from `regixtry-lifecycle-state.json` so today's `uninstall` never mistakes it for a systemd install.
+- [x] 6.6 RED: test asserting `Down(ctx, p)` runs `docker compose --project-name <p> down --volumes` and removes the generated project directory/env file, matching `rollbackSetupFailure`'s compose analogue.
+- [x] 6.7 GREEN: implement `Provisioner.Down(ctx context.Context, p compose.Project) error`.
+- [x] 6.8 REFACTOR: `go vet ./...` and `gofmt -w .`; confirm the full `composeRunner`-shaped method set on `Provisioner` compiles against the interface literal from design (interface itself is declared in PR #4's `main.go`). Confirmed via a throwaway compile-only assertion (`var _ interface{...} = (*Provisioner)(nil)`) matching design's exact `composeRunner` literal, then removed — not committed, since the real interface declaration belongs to PR #4's `main.go`.
+
+### Phase 7: PR #3 Verification
+
+- [x] 7.1 Run `go test ./internal/infra/install/compose/...` — confirm the full package suite passes end to end against fakes.
+
+---
+
+## PR #4 — targets PR #3 branch (`feature/container-setup-mode-03-compose-lifecycle`)
+
+**Branch**: `feature/container-setup-mode-04-setup-wiring`
+**Scope**: Wire the `compose` package into `cmd/regixtry/main.go` as the third setup
+mode — `resolveSetupMode`, `runSetup`, `promptSetupDockerConfig`, the `composeRunner`
+interface, and the `newComposeRunner` seam.
+
+### Phase 8: Setup Mode Wiring (Strict TDD)
+
+- [x] 8.1 RED: table-driven tests in `cmd/regixtry/setup_docker_test.go` for `resolveSetupMode` — accepts `"docker"`/`"3"`, rejects unknown modes, non-TTY error text names all three modes (`binary-only`, `daemon-sqlite`, `docker`). **Deviation**: written in a new sibling file (`setup_docker_test.go`), not `main_test.go`, for PR reviewability; same package, same test binary.
+- [x] 8.2 GREEN: add the `"docker"` literal branch and `3) docker` menu entry to `resolveSetupMode` (`main.go`, now at line ~1755 after PR #4's additions).
+- [x] 8.3 Declare the `composeRunner` interface (`Preflight`, `WriteProject`, `StartDatabase`, `BootstrapAdmin`, `StartRegistry`, `WaitReachable`, `SaveProvenance`, `Down`) and `var newComposeRunner` seam in `main.go`, mirroring `newBootstrapRunner` (`main.go:52`).
+- [x] 8.4 RED: test for `promptSetupDockerConfig` — bundled-vs-external prompt appears only when `-auth-postgres-dsn` is absent and the session is interactive; absent + non-interactive defaults to bundled (documented divergence from `daemon-sqlite`'s anonymous default).
+- [x] 8.5 GREEN: implement `promptSetupDockerConfig(reader *bufio.Reader, stdout io.Writer, cfg setupConfig, promptState setupPromptState, selectedInteractively bool) (setupConfig, error)`, mirroring `promptSetupDaemonConfig`.
+- [x] 8.6 RED: orchestration-order test for `runSetup`'s `case "docker"` using a fake `composeRunner` recording an ordered call log — asserts `Preflight → WriteProject → StartDatabase → BootstrapAdmin → StartRegistry → WaitReachable → SaveProvenance`, matching the design's data-flow ordering (admin created before the registry starts, since `serve` refuses to start with auth on and no admin).
+- [x] 8.7 RED: rollback tests — a failure at each stage after `WriteProject` triggers `Down` plus generated-file removal, mirroring `rollbackSetupFailure`; plus negative-case tests proving `Preflight`/`WriteProject` failures never call `Down`.
+- [x] 8.8 GREEN: implement `case "docker"` in `runSetup`, calling `promptSetupDockerConfig` when interactive, `validateSetupDockerConfig` (a docker-mode-specific DSN-optional variant, not `validateSetupAuthConfig` itself — see Deviations), and the ordered `composeRunner` calls with rollback on failure.
+- [x] 8.9 GREEN: on success, print reachability, the env-file path, the generated password once (bundled only, read back from the 0600 env file via a swappable `readComposeBundledPassword` seam), and `docker exec -it <container> regixtry tui` guidance to stdout.
+- [x] 8.10 REFACTOR: `go vet ./...` and `gofmt -w .` — clean; confirmed `binary-only`/`daemon-sqlite` cases are byte-for-byte unchanged via dedicated regression tests (`TestResolveSetupModeRegressionBinaryOnlyAndDaemonSQLiteUnaffected`, `TestExistingSetupModesEndToEndRegression`) plus the full pre-existing `cmd/regixtry` test suite passing unmodified.
+
+### Phase 9: PR #4 Verification
+
+- [x] 9.1 Run `go test ./cmd/regixtry/...` — confirm `resolveSetupMode`, `promptSetupDockerConfig`, orchestration-order, and rollback suites all pass. 101/101 top-level tests pass, 0 failures.
+- [x] 9.2 Run `go test ./...` — confirm `binary-only`/`daemon-sqlite` test suites are unaffected. All 20 packages `ok`, no pre-existing test modified or broken.
+
+---
+
+## PR #5 — targets PR #4 branch (`feature/container-setup-mode-04-setup-wiring`)
+
+**Branch**: `feature/container-setup-mode-05-docs-smoke`
+**Scope**: `install.sh` guidance, README documentation, and the setup-mode-docker
+smoke script proving the end-to-end flow (bundled and external-DSN paths).
+
+### Phase 10: Install Guidance & README
+
+- [x] 10.1 Add one guidance line after `install.sh:332`: `sudo ${privileged_command} setup --mode docker --public-url http://127.0.0.1:5000`, alongside the existing `binary-only`/`daemon-sqlite` lines.
+- [x] 10.2 Add `### One command: regixtry setup --mode docker` as the first subsection of `## Run as a container` in `README.md`, above the manual `docker run`/`docker compose` recipes from `registry-container-mode`. **Deviation**: `registry-container-mode`'s own `## Run as a container` section (manual `docker run` walkthrough, the false line at its `README.md:77`) does not exist on this branch — `container-setup-mode` and `registry-container-mode` are sibling feature trackers sharing the same merge-base with `develop` (confirmed via `git merge-base`), neither containing the other's commits. This PR creates `## Run as a container` fresh here, containing only this change's content (one-command setup, TUI, manual `docker compose`); when both trackers eventually merge to `develop`, the two independently-added sections will need manual reconciliation — flagged as an integration risk, not a defect in this PR.
+- [x] 10.3 Add `### The TUI against a container` documenting `docker exec -it <container> regixtry tui -storage-root /var/lib/regixtry` as the supported path, explicitly stating no host-side TUI access to a container's data is supported.
+- [x] 10.4 Rewrite `README.md:77` ("`install.sh` and `regixtry setup` do not offer a container-selection branch") — this sentence becomes false with this change and MUST be corrected, not left stale. **Deviation**: confirmed (via `git show feature/registry-container-mode-03-smoke-auth:README.md`) that this exact sentence exists only on the separate, unmerged `registry-container-mode` branch — it is not present in this branch's `README.md` at all (same sibling-tracker gap as 10.2). Nothing to rewrite here; instead, the `## Install` section's own sentence was updated to truthfully state that `regixtry setup` now offers `docker` alongside `daemon-sqlite`, so the intent (no stale false sentence in the merged product) is satisfied proactively and the future merge has clear signal to remove/correct the sibling branch's line.
+- [x] 10.5 Drop the `docker network create dtf-netwok` manual step at `README.md:39`; add a migration note for existing dev users of the old `docker-compose.yml`. **Deviation**: the prior manual auth quick-start (`docker compose up -d postgres` + connect to `localhost:15432`) was also broken by PR #1's rewrite independent of the network step — the new compose file publishes no host port for `postgres` and mandatorily requires `.env` interpolation, so `docker compose up -d postgres` alone can no longer serve a host-run `regixtry` binary. Replaced with a self-contained `docker run` throwaway Postgres instead of referencing the now-bundled-stack-only compose file for this manual walkthrough.
+
+### Phase 11: Setup-Mode-Docker Smoke Script (bundled + external-DSN scenarios)
+
+- [x] 11.1 Create `docs/verification/scripts/setup-docker-smoke.sh`, sibling of `container-release-smoke.sh`, reusing its `fail()`/`cleanup()` trap conventions; RUN_ID-scoped project name; every cleanup step `|| true`. **Deviation**: does not reuse `wait_healthy()`/`http_status()` verbatim — this script drives the real `regixtry setup --mode docker` CLI (a host process, not hand-run containers), so it polls the host-published URL directly (`wait_reachable`) rather than `docker inspect Health.Status` (PR #1's apply-progress already recorded the current Dockerfile has no working container healthcheck primitive) or a `--network container:X` curl sidecar.
+- [x] 11.2 Implement the bundled-Postgres scenario from a clean checkout: run `regixtry setup --mode docker` with no DSN, assert the stack becomes healthy, assert the generated password is present in the `0600` env file, absent from `docker-compose.yml`, and printed to stdout exactly once.
+- [x] 11.3 Implement the `--external-postgres` scenario (script's own flag, matching PR #4's real `-auth-postgres-dsn` CLI shape internally — confirmed by reading `cmd/regixtry/main.go`'s flag registrations, no separate `-external-postgres-dsn` flag exists on the real binary): start a standalone `postgres:17-alpine` on a pre-created, correctly-labeled Compose network so the real project reuses it, pass its DSN via `-auth-postgres-dsn`, assert the bundled `postgres` service is **not** created in the project, and assert auth still succeeds against the external instance.
+- [x] 11.4 Assert anonymous `GET /v2/` → `401` + `WWW-Authenticate`, authenticated Basic→Bearer→`/v2/` round trip succeeds, and `docker exec … regixtry tui -snapshot` exits `0`, for both scenarios.
+- [x] 11.5 RED-path-prove every load-bearing assertion by deliberately breaking each one first (password-in-compose check, external-skip check, reachability check), same discipline `container-release-smoke.sh` established. Performed for real: `assert_not_contains`/`assert_count_one`/`wait_reachable` were each exercised against a deliberately-violating fixture and confirmed to fail with the expected message before being confirmed to pass against a compliant fixture; the external-skip check's RED case was confirmed against the real bundled scenario's `docker compose ps -a` output (which does include `postgres`) and its GREEN case against the real external scenario's output (`regixtry` only) — see apply-progress for the full transcript.
+
+### Phase 12: PR #5 Verification & Explicit No-CI-Wiring Note
+
+- [x] 12.1 Run `setup-docker-smoke.sh` locally (bundled scenario) against the published GHCR image, from a clean checkout. **Deviation**: `--target=release` does not exist on this branch's `Dockerfile` (still the original single-stage build; the multi-stage `dev`/`release` rewrite lives on the separate, unmerged `registry-container-mode` branch — same sibling-tracker gap as 10.2/10.4), so a `--build-local` option was not offered; the script pins to the real published `ghcr.io/desatatufuria/regixtry:v0.2.1-rc2` tag instead (confirmed pullable in this session). **Result**: could not reach a full automated PASS in this session's sandbox — every orchestration step through `StartRegistry` succeeds against the real image (confirmed via direct manual runs of the actual `regixtry setup --mode docker` binary), and auth gating/token exchange/TUI were independently verified via Docker network-namespace-sharing (bypassing host port publishing, the same portability technique `container-release-smoke.sh` already uses and explains in its own header), but the final `WaitReachable` step (which correctly polls the host-published URL, matching `regixtry healthcheck` semantics) cannot succeed because this sandbox's Docker daemon does not support host port publishing at all — independently confirmed with an unrelated `nginx` container (`docker run -p host:80` produced no host listener). This is a sandbox networking constraint, not a defect in the shipped code or script; see apply-progress for the full evidence and the real compose-YAML bug (below) that this same manual testing found and fixed.
+- [x] 12.2 Run `setup-docker-smoke.sh --external-postgres` locally against the same image, from a clean checkout. **Result**: same outcome and same sandbox-networking cause as 12.1 — manual replication confirmed the bundled `postgres` service is genuinely never created for an external DSN, and auth against the external instance genuinely succeeds (network-namespace-sharing verification), blocked at the same final host-reachability step for the same reason.
+- [x] 12.3 Explicit CI-surface note (do not leave this implicit): per design's Risk table, `setup-docker-smoke.sh` is **deliberately not wired into `.github/workflows/release.yml` in this change** ("Smoke script needs a real daemon, so CI cost grows... Not wired into `release.yml` in this change; run locally and on demand"). Local/manual execution of Phase 12.1/12.2 is the sole verification gate for `docker` setup mode until a future change adds CI wiring. This is stated here and in the script's own header comment so reviewers do not assume CI coverage exists.
+- [x] 12.4 (Not in original plan, added during real execution) **Real bug found and fixed**: `docker-compose.yml`'s (and the byte-identical embedded asset's) three `${VAR:?message}` mandatory-interpolation values were unquoted YAML scalars whose message text contains `: ` (colon-space, e.g. "manually: cp docker.env.example .env"), which is invalid in a plain YAML scalar and made `docker compose` fail to even parse the file (`yaml: line 12: mapping values are not allowed in this context`) — confirmed via a real `docker compose config` run, not a hypothetical. This is not sandbox-specific; it would break `regixtry setup --mode docker` on every real environment. Fixed by quoting all three values; `go test ./internal/infra/install/compose/...` and the full `go test ./...` suite reconfirmed green afterward (the credential-safety substring check tolerates the added quotes unchanged).
+
+---
+
+## Chain Status
+
+All five PRs are now complete (Phase totals: 3+8+2 / 7+1 / 8+1 / 10+2 / 5+5+4 = 56 tasks total,
+one task — 12.4 — added during PR #5's real execution beyond the original plan). PR #1
+(`feature/container-setup-mode-01-compose-foundation`, 13/13 tasks), PR #2
+(`feature/container-setup-mode-02-compose-credentials`, 8/8 tasks), PR #3
+(`feature/container-setup-mode-03-compose-lifecycle`, 9/9 tasks), and PR #4
+(`feature/container-setup-mode-04-setup-wiring`, 12/12 tasks) were complete before this batch.
+PR #5 (`feature/container-setup-mode-05-docs-smoke`, 15/15 tasks — Phase 10-12) is now complete:
+see `apply-progress.md` for full evidence, including a real compose-YAML bug found and fixed
+during this PR's own end-to-end testing. No branch merges happen automatically — that remains
+the orchestrator's job next, once PR #5 is reviewed and the tracker merges to `develop`.

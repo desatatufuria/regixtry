@@ -26,6 +26,7 @@ import (
 	domainauth "regixtry/internal/domain/auth"
 	authpostgres "regixtry/internal/infra/auth/postgres"
 	"regixtry/internal/infra/cliprogress"
+	"regixtry/internal/infra/install/compose"
 	installlinux "regixtry/internal/infra/install/linux"
 	metadata "regixtry/internal/infra/metadata/sqlite"
 	gitleaksinfra "regixtry/internal/infra/scanning/gitleaks"
@@ -51,6 +52,30 @@ type bootstrapRunner interface {
 
 var newBootstrapRunner = func() bootstrapRunner {
 	return installlinux.NewBootstrapper()
+}
+
+// composeRunner is the `docker` setup mode's provisioning seam -- the same
+// shape as bootstrapRunner/newBootstrapRunner above, but reaching
+// internal/infra/install/compose instead of internal/infra/install/linux
+// (design.md "Where docker lives" decision). installlinux.supportedMode is
+// deliberately never widened to accept "docker": doing so would let a
+// compose config reach installlinux.ValidateConfig/runner.Run/systemd
+// rollback, silently breaking the "daemon-sqlite unchanged" guarantee this
+// PR's regression tests exist to prove. The exact method set below mirrors
+// design.md's Interfaces / Contracts Go snippet verbatim.
+type composeRunner interface {
+	Preflight(ctx context.Context) error
+	WriteProject(compose.ProjectConfig) (compose.Project, error)
+	StartDatabase(ctx context.Context, p compose.Project) error
+	BootstrapAdmin(ctx context.Context, p compose.Project, username, password string) error
+	StartRegistry(ctx context.Context, p compose.Project) error
+	WaitReachable(ctx context.Context, p compose.Project) error
+	SaveProvenance(p compose.Project) error
+	Down(ctx context.Context, p compose.Project) error
+}
+
+var newComposeRunner = func() composeRunner {
+	return compose.NewProvisioner(compose.ProvisionerConfig{})
 }
 
 // newFeatureRuntimeManager builds the managed runtime manager for one
@@ -128,6 +153,9 @@ const (
 	defaultSetupAuthPort     = "5432"
 	defaultSetupAuthUser     = "regixtry"
 	defaultSetupAuthSSLMode  = "disable"
+
+	defaultHealthcheckURL     = "http://127.0.0.1:5000/v2/"
+	defaultHealthcheckTimeout = 3 * time.Second
 )
 
 func releaseMetadata() string {
@@ -165,7 +193,7 @@ func runWithIO(ctx context.Context, args []string, stdin io.Reader, stdout io.Wr
 	}
 
 	if len(args) == 0 {
-		return errors.New("expected subcommand: serve, tui, bootstrap, bootstrap-admin, setup, feature, uninstall, or upgrade")
+		return errors.New("expected subcommand: serve, tui, bootstrap, bootstrap-admin, setup, feature, uninstall, upgrade, or healthcheck")
 	}
 
 	switch args[0] {
@@ -222,6 +250,12 @@ func runWithIO(ctx context.Context, args []string, stdin io.Reader, stdout io.Wr
 		return runUninstall(ctx, args[1:], stdout)
 	case "upgrade":
 		return runUpgrade(ctx, args[1:], stdin, stdout)
+	case "healthcheck":
+		cfg, err := parseHealthcheckConfig(args[1:])
+		if err != nil {
+			return err
+		}
+		return runHealthcheck(ctx, cfg)
 	default:
 		return fmt.Errorf("unknown subcommand %q", args[0])
 	}
@@ -498,6 +532,51 @@ func normalizeURLPath(rawPath string) string {
 	return strings.TrimRight(normalized, "/")
 }
 
+type healthcheckConfig struct {
+	URL     string
+	Timeout time.Duration
+}
+
+func parseHealthcheckConfig(args []string) (healthcheckConfig, error) {
+	flags := flag.NewFlagSet("healthcheck", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+
+	var cfg healthcheckConfig
+	flags.StringVar(&cfg.URL, "url", defaultHealthcheckURL, "registry URL to probe")
+	flags.DurationVar(&cfg.Timeout, "timeout", defaultHealthcheckTimeout, "maximum time to wait for a response")
+
+	if err := flags.Parse(args); err != nil {
+		return healthcheckConfig{}, err
+	}
+
+	return cfg, nil
+}
+
+// runHealthcheck probes cfg.URL and reports whether the registry is healthy.
+// HTTP 200 or 401 are both healthy: /v2/ answers 401 with WWW-Authenticate
+// when auth is enabled, so treating only 200 as healthy would mark every
+// authenticated deployment unhealthy. Any other status, a dial/TLS error, or
+// a timeout is unhealthy.
+func runHealthcheck(ctx context.Context, cfg healthcheckConfig) error {
+	req, err := stdhttp.NewRequestWithContext(ctx, stdhttp.MethodGet, cfg.URL, nil)
+	if err != nil {
+		return fmt.Errorf("healthcheck: build request: %w", err)
+	}
+
+	client := stdhttp.Client{Timeout: cfg.Timeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("healthcheck: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == stdhttp.StatusOK || resp.StatusCode == stdhttp.StatusUnauthorized {
+		return nil
+	}
+
+	return fmt.Errorf("healthcheck: unhealthy status %d", resp.StatusCode)
+}
+
 func parseTUIConfig(args []string) (tuiConfig, error) {
 	return parseTUIConfigWithBootstrapStatePath(args, "/etc/regixtry/bootstrap-state.json")
 }
@@ -556,10 +635,18 @@ func defaultTUIConfig() (tuiConfig, error) {
 }
 
 func defaultTUIConfigWithBootstrapStatePath(bootstrapStatePath string) (tuiConfig, error) {
+	// APIBaseURL falls back to REGISTRY_PUBLIC_URL when REGISTRY_API_BASE_URL
+	// is unset: found live inside a docker-mode container, which `docker
+	// exec` reaches directly (no provenance file for loadSetupManagedTUIConfig
+	// below to find -- that mechanism is exclusive to daemon-sqlite/systemd
+	// installs) and whose compose service only ever exports
+	// REGISTRY_PUBLIC_URL, the name every other part of this codebase already
+	// uses. Without this, `docker exec -it <container> regixtry tui` had no
+	// admin client wired up at all.
 	cfg := tuiConfig{
 		StorageRoot:     filepath.Join(".", "data"),
 		AuthPostgresDSN: os.Getenv("REGISTRY_AUTH_POSTGRES_DSN"),
-		APIBaseURL:      os.Getenv("REGISTRY_API_BASE_URL"),
+		APIBaseURL:      firstNonEmpty(os.Getenv("REGISTRY_API_BASE_URL"), os.Getenv("REGISTRY_PUBLIC_URL")),
 	}
 
 	installedCfg, ok, err := loadSetupManagedTUIConfig(bootstrapStatePath)
@@ -1273,6 +1360,69 @@ func runSetup(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 			printSetupAuthGuidance(stdout, cfg, authOutcome)
 		}
 		return nil
+	case "docker":
+		cfg.Mode = mode
+		cfg.Auth.Enabled = true
+		if strings.TrimSpace(cfg.PublicURL) == "" {
+			cfg.PublicURL = defaultSetupPublicURL
+		}
+		if interactive {
+			cfg, err = promptSetupDockerConfig(reader, stdout, cfg, promptState, selectedInteractively)
+			if err != nil {
+				return err
+			}
+		}
+		if err := validateSetupDockerConfig(cfg); err != nil {
+			return err
+		}
+		cfg.BootstrapConfig.AuthPostgresDSN = strings.TrimSpace(cfg.Auth.AuthPostgresDSN)
+
+		runner := newComposeRunner()
+		if err := runner.Preflight(ctx); err != nil {
+			return err
+		}
+
+		projectCfg := compose.ProjectConfig{
+			Dir:                 filepath.Join(filepath.Dir(cfg.StatePath), "compose"),
+			Name:                firstNonEmpty(cfg.ServiceName, "regixtry"),
+			Image:               setupDockerImageRef(),
+			Port:                setupDockerPort(cfg.PublicURL),
+			PublicURL:           strings.TrimSpace(cfg.PublicURL),
+			ExternalPostgresDSN: strings.TrimSpace(cfg.Auth.AuthPostgresDSN),
+		}
+
+		proj, err := runner.WriteProject(projectCfg)
+		if err != nil {
+			return err
+		}
+
+		if err := runner.StartDatabase(ctx, proj); err != nil {
+			return rollbackDockerSetupFailure(ctx, runner, proj, fmt.Errorf("start bundled database: %w", err))
+		}
+		if err := runner.BootstrapAdmin(ctx, proj, strings.TrimSpace(cfg.Auth.AdminUsername), cfg.Auth.AdminPassword); err != nil {
+			return rollbackDockerSetupFailure(ctx, runner, proj, fmt.Errorf("bootstrap admin: %w", err))
+		}
+		if err := runner.StartRegistry(ctx, proj); err != nil {
+			return rollbackDockerSetupFailure(ctx, runner, proj, fmt.Errorf("start registry: %w", err))
+		}
+		if err := runner.WaitReachable(ctx, proj); err != nil {
+			return rollbackDockerSetupFailure(ctx, runner, proj, fmt.Errorf("wait for registry to become reachable: %w", err))
+		}
+		if err := runner.SaveProvenance(proj); err != nil {
+			return rollbackDockerSetupFailure(ctx, runner, proj, fmt.Errorf("save compose provenance: %w", err))
+		}
+
+		if stdout != nil {
+			_, _ = fmt.Fprintf(stdout, "Setup complete: regixtry (docker mode) is reachable at %s.\n", proj.PublicURL)
+			_, _ = fmt.Fprintf(stdout, "Compose env file: %s\n", proj.EnvFilePath)
+			if proj.BundledPostgres {
+				if password, readErr := readComposeBundledPassword(proj.EnvFilePath); readErr == nil && password != "" {
+					_, _ = fmt.Fprintf(stdout, "Generated bundled Postgres password (shown once here; also stored in the env file above): %s\n", password)
+				}
+			}
+			_, _ = fmt.Fprintln(stdout, "TUI access: docker exec -it <container> regixtry tui -storage-root /var/lib/regixtry")
+		}
+		return nil
 	default:
 		return fmt.Errorf("unsupported setup mode %q", mode)
 	}
@@ -1354,6 +1504,66 @@ func promptSetupDaemonConfig(reader *bufio.Reader, stdout io.Writer, cfg setupCo
 		}
 		cfg.Auth.AdminPassword = value
 	}
+	cfg.BootstrapConfig.AuthPostgresDSN = strings.TrimSpace(cfg.Auth.AuthPostgresDSN)
+
+	return cfg, nil
+}
+
+// promptSetupDockerConfig collects the interactive `docker` setup-mode
+// prompts: public URL, bundled-vs-external Postgres choice, and admin
+// credentials. It mirrors promptSetupDaemonConfig's shape (same parameter
+// list, including the currently-unused selectedInteractively parameter kept
+// for signature parity -- design.md "docker" case reuses
+// validateSetupAuthConfig/bootstrapSetupAuth's *contract*, not their
+// in-process implementation, but the prompt shape is deliberately the same
+// one operators already know from daemon-sqlite).
+//
+// The bundled-vs-external prompt appears only when -auth-postgres-dsn is
+// absent (promptState.authPostgresDSNProvided is false); this function is
+// only reached at all when the session is interactive (runSetup only calls
+// it inside `if interactive`), so "absent + non-interactive" naturally
+// defaults to bundled without this function ever running -- documented
+// divergence from daemon-sqlite's anonymous-by-default, per design.md
+// "Bundled vs external selection" decision.
+func promptSetupDockerConfig(reader *bufio.Reader, stdout io.Writer, cfg setupConfig, promptState setupPromptState, selectedInteractively bool) (setupConfig, error) {
+	if !promptState.publicURLProvided {
+		value, err := promptSetupValue(reader, stdout, "Public URL", firstNonEmpty(cfg.PublicURL, defaultSetupPublicURL))
+		if err != nil {
+			return setupConfig{}, err
+		}
+		cfg.PublicURL = value
+	}
+
+	if !promptState.authPostgresDSNProvided {
+		useExternal, err := promptSetupBool(reader, stdout, "Use an external Postgres instance instead of the bundled one", false)
+		if err != nil {
+			return setupConfig{}, err
+		}
+		if useExternal {
+			dsn, err := promptSetupAuthPostgresDSN(reader, stdout, cfg.Auth)
+			if err != nil {
+				return setupConfig{}, err
+			}
+			cfg.Auth.AuthPostgresDSN = dsn
+		}
+	}
+
+	if !promptState.adminUsernameProvided {
+		value, err := promptSetupValue(reader, stdout, "Admin username", firstNonEmpty(cfg.Auth.AdminUsername, "admin"))
+		if err != nil {
+			return setupConfig{}, err
+		}
+		cfg.Auth.AdminUsername = value
+	}
+	if !promptState.adminPasswordProvided {
+		value, err := promptSetupValue(reader, stdout, "Admin password", "")
+		if err != nil {
+			return setupConfig{}, err
+		}
+		cfg.Auth.AdminPassword = value
+	}
+
+	cfg.Auth.Enabled = true
 	cfg.BootstrapConfig.AuthPostgresDSN = strings.TrimSpace(cfg.Auth.AuthPostgresDSN)
 
 	return cfg, nil
@@ -1732,7 +1942,7 @@ func resolveSetupMode(rawMode string, interactive bool, reader *bufio.Reader, st
 	mode := strings.TrimSpace(rawMode)
 	if mode != "" {
 		switch mode {
-		case "daemon-sqlite", "binary-only":
+		case "daemon-sqlite", "binary-only", "docker":
 			return mode, false, nil
 		default:
 			return "", false, fmt.Errorf("unsupported setup mode %q", mode)
@@ -1740,13 +1950,14 @@ func resolveSetupMode(rawMode string, interactive bool, reader *bufio.Reader, st
 	}
 
 	if !interactive {
-		return "", false, errors.New("setup mode is required without a TTY; rerun with --mode binary-only or --mode daemon-sqlite")
+		return "", false, errors.New("setup mode is required without a TTY; rerun with --mode binary-only, --mode daemon-sqlite, or --mode docker")
 	}
 
 	if stdout != nil {
 		_, _ = fmt.Fprintln(stdout, "Select setup mode:")
 		_, _ = fmt.Fprintln(stdout, "  1) binary-only")
 		_, _ = fmt.Fprintln(stdout, "  2) daemon-sqlite")
+		_, _ = fmt.Fprintln(stdout, "  3) docker")
 		_, _ = fmt.Fprint(stdout, "Choice: ")
 	}
 
@@ -1760,6 +1971,8 @@ func resolveSetupMode(rawMode string, interactive bool, reader *bufio.Reader, st
 		return "binary-only", true, nil
 	case "2", "daemon-sqlite":
 		return "daemon-sqlite", true, nil
+	case "3", "docker":
+		return "docker", true, nil
 	default:
 		return "", false, fmt.Errorf("unsupported setup selection %q", strings.TrimSpace(selection))
 	}
@@ -2340,6 +2553,97 @@ func validateSetupAuthConfig(cfg setupAuthConfig) error {
 		return errors.New("admin password is required when auth is enabled")
 	}
 	return nil
+}
+
+// validateSetupDockerConfig is `docker` setup mode's equivalent of
+// validateSetupAuthConfig, deliberately not reusing it: auth is always on in
+// `docker` mode (design.md Technical Approach), but cfg.Auth.AuthPostgresDSN
+// is legitimately empty for the bundled-Postgres default -- WriteProject
+// generates and wires that DSN internally (design.md "Bundled vs external
+// selection" decision) -- so, unlike validateSetupAuthConfig, this never
+// requires a non-empty DSN.
+func validateSetupDockerConfig(cfg setupConfig) error {
+	if strings.TrimSpace(cfg.Auth.AdminUsername) == "" {
+		return errors.New("admin username is required when auth is enabled")
+	}
+	if strings.TrimSpace(cfg.Auth.AdminPassword) == "" {
+		return errors.New("admin password is required when auth is enabled")
+	}
+	return nil
+}
+
+// setupDockerImageRef pins the compose project's image to the setup
+// binary's own release version, falling back to "latest" only for dev
+// builds (design.md "Image tag" decision: pinning prevents the container
+// from drifting from the CLI that installed it).
+//
+// The published GHCR tag always carries a leading "v" (.goreleaser.yaml's
+// docker/docker_manifests blocks use {{ .Tag }}), but buildVersion is
+// injected via {{ .Version }} (main.go's own ldflags line), which omits it
+// -- confirmed live during docker-mode validation: `docker compose run`
+// failed with "ghcr.io/desatatufuria/regixtry:0.2.1-rc6: not found" while
+// the real, only-ever-published tag was "...:v0.2.1-rc6". Normalizing here,
+// the same "accept either shape" rule internal/infra/release.parseVersion
+// already applies to buildVersion elsewhere, is cheaper and safer than
+// relying on every future ldflags/template edit to keep both in sync.
+func setupDockerImageRef() string {
+	version := strings.TrimSpace(buildVersion)
+	if version == "" || version == "dev" {
+		return "ghcr.io/desatatufuria/regixtry:latest"
+	}
+	if !strings.HasPrefix(version, "v") {
+		version = "v" + version
+	}
+	return fmt.Sprintf("ghcr.io/desatatufuria/regixtry:%s", version)
+}
+
+// setupDockerPort derives the host port to publish from the operator's
+// public URL, defaulting to 5000 (the published image's documented port)
+// when the URL carries no explicit port.
+func setupDockerPort(publicURL string) string {
+	parsed, err := url.Parse(strings.TrimSpace(publicURL))
+	if err == nil {
+		if port := parsed.Port(); port != "" {
+			return port
+		}
+		if parsed.Scheme == "https" {
+			return "443"
+		}
+	}
+	return "5000"
+}
+
+// readComposeBundledPassword reads the generated bundled Postgres password
+// back out of the 0600 compose env file WriteProject just wrote, so runSetup
+// can disclose it once on screen (design.md "Secret surface" decision: both
+// the 0600 file and one stdout print, never a second generated secret). Kept
+// as a swappable var, mirroring newBootstrapRunner/newComposeRunner above,
+// so orchestration-order tests can inject a fake without touching a real
+// filesystem path.
+var readComposeBundledPassword = func(envFilePath string) (string, error) {
+	body, err := os.ReadFile(envFilePath)
+	if err != nil {
+		return "", err
+	}
+	for _, line := range strings.Split(string(body), "\n") {
+		if value, ok := strings.CutPrefix(line, "REGIXTRY_POSTGRES_PASSWORD="); ok {
+			return strings.TrimSpace(value), nil
+		}
+	}
+	return "", errors.New("REGIXTRY_POSTGRES_PASSWORD not found in compose env file")
+}
+
+// rollbackDockerSetupFailure is docker setup mode's analogue of
+// rollbackSetupFailure (main.go, systemd path): any failure after
+// WriteProject tears the compose stack down and removes the generated
+// files via Down, joining the rollback error with the original failure if
+// Down itself fails (design.md Data Flow: "Any failure after up runs docker
+// compose down --volumes and removes the generated files").
+func rollbackDockerSetupFailure(ctx context.Context, runner composeRunner, proj compose.Project, runErr error) error {
+	if downErr := runner.Down(ctx, proj); downErr != nil {
+		return errors.Join(runErr, fmt.Errorf("rollback failed: %w", downErr))
+	}
+	return runErr
 }
 
 func bootstrapSetupAuth(ctx context.Context, cfg setupAuthConfig) (setupAuthBootstrapOutcome, error) {

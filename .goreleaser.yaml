@@ -36,3 +36,62 @@ archives:
 checksum:
   name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
   algorithm: sha256
+
+dockers:
+  - use: buildx
+    ids:
+      - regixtry
+    goos: linux
+    goarch: amd64
+    dockerfile: Dockerfile
+    image_templates:
+      - "ghcr.io/desatatufuria/regixtry:{{ .Tag }}-amd64"
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--target=release"
+      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
+      - "--label=org.opencontainers.image.description=Low-footprint OCI/Docker image registry distributed as a single Go binary"
+      - "--label=org.opencontainers.image.url=https://github.com/desatatufuria/regixtry"
+      - "--label=org.opencontainers.image.source=https://github.com/desatatufuria/regixtry"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.created={{ .Date }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+  - use: buildx
+    ids:
+      - regixtry
+    goos: linux
+    goarch: arm64
+    dockerfile: Dockerfile
+    image_templates:
+      - "ghcr.io/desatatufuria/regixtry:{{ .Tag }}-arm64"
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--target=release"
+      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
+      - "--label=org.opencontainers.image.description=Low-footprint OCI/Docker image registry distributed as a single Go binary"
+      - "--label=org.opencontainers.image.url=https://github.com/desatatufuria/regixtry"
+      - "--label=org.opencontainers.image.source=https://github.com/desatatufuria/regixtry"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.created={{ .Date }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+
+docker_manifests:
+  - name_template: "ghcr.io/desatatufuria/regixtry:{{ .Tag }}"
+    image_templates:
+      - "ghcr.io/desatatufuria/regixtry:{{ .Tag }}-amd64"
+      - "ghcr.io/desatatufuria/regixtry:{{ .Tag }}-arm64"
+  - name_template: "ghcr.io/desatatufuria/regixtry:v{{ .Major }}.{{ .Minor }}"
+    image_templates:
+      - "ghcr.io/desatatufuria/regixtry:{{ .Tag }}-amd64"
+      - "ghcr.io/desatatufuria/regixtry:{{ .Tag }}-arm64"
+    skip_push: auto
+  - name_template: "ghcr.io/desatatufuria/regixtry:v{{ .Major }}"
+    image_templates:
+      - "ghcr.io/desatatufuria/regixtry:{{ .Tag }}-amd64"
+      - "ghcr.io/desatatufuria/regixtry:{{ .Tag }}-arm64"
+    skip_push: auto
+  - name_template: "ghcr.io/desatatufuria/regixtry:latest"
+    image_templates:
+      - "ghcr.io/desatatufuria/regixtry:{{ .Tag }}-amd64"
+      - "ghcr.io/desatatufuria/regixtry:{{ .Tag }}-arm64"
+    skip_push: auto

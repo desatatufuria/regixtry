@@ -735,6 +735,29 @@ func TestParseTUIConfigEnvAPIBaseURLOverridesSetupManagedRuntime(t *testing.T) {
 	}
 }
 
+// TestParseTUIConfigFallsBackToPublicURLEnvWithoutProvenance is the RED test
+// for a real bug found live inside a docker-mode container: `docker exec`
+// never writes a provenance file (that mechanism is exclusive to
+// daemon-sqlite/systemd installs), so the TUI's only way to auto-discover
+// the admin API URL there was REGISTRY_API_BASE_URL -- an env var the
+// docker-compose service never sets. It only sets REGISTRY_PUBLIC_URL, the
+// name every other part of this codebase (daemon-sqlite's own env file, the
+// compose service, `serve` itself) already uses. Login inside `docker exec
+// -it <container> regixtry tui` had no admin client wired up at all because
+// of this name mismatch -- confirmed live, contrasted against a
+// daemon-sqlite install where bare `regixtry tui` logs in with zero flags.
+func TestParseTUIConfigFallsBackToPublicURLEnvWithoutProvenance(t *testing.T) {
+	t.Setenv("REGISTRY_PUBLIC_URL", "https://registry.example.com/")
+
+	cfg, err := parseTUIConfig(nil)
+	if err != nil {
+		t.Fatalf("parseTUIConfig() error = %v", err)
+	}
+	if cfg.APIBaseURL != "https://registry.example.com" {
+		t.Fatalf("APIBaseURL = %q, want %q from REGISTRY_PUBLIC_URL when no provenance file and no REGISTRY_API_BASE_URL exist", cfg.APIBaseURL, "https://registry.example.com")
+	}
+}
+
 func TestParseFeatureConfigAutoDetectsManagedRuntime(t *testing.T) {
 	t.Setenv("REGISTRY_PUBLIC_URL", "")
 	bootstrapStatePath := writeManagedFeatureBootstrapState(t, "/var/lib/regixtry", "/var/lib/regixtry/metadata.db", "https://registry.example.com")

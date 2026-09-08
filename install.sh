@@ -330,6 +330,7 @@ print_next_steps() {
   log "Binary placement is complete. Continue with the installed lifecycle commands:"
   log "- ${command_name} setup --mode binary-only"
   log "- sudo ${privileged_command} setup --mode daemon-sqlite --public-url http://127.0.0.1:5000"
+  log "- sudo ${privileged_command} setup --mode docker --public-url http://127.0.0.1:5000"
   log "- sudo ${privileged_command} upgrade"
   log "- sudo ${privileged_command} uninstall"
   log "Linux + systemd lifecycle automation remains limited to the regixtry binary."
