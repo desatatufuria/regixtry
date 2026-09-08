@@ -2321,6 +2321,48 @@ func waitForScanCompletion(t *testing.T, service *Service, runID string) {
 	t.Fatalf("scan run %s did not complete before deadline", runID)
 }
 
+// TestParseManifestPayloadThreadsArtifactType is the oci-referrers-api Phase
+// 2 RED test (design.md steps 1-2, tasks.md 2.1): parseManifestPayload must
+// thread manifestEnvelope's own "artifactType" field into the constructed
+// domain.Manifest, and must leave it "" when the payload carries none --
+// exactly domain.NewManifest's own no-fallback contract (Phase 1), just
+// threaded one layer up.
+func TestParseManifestPayloadThreadsArtifactType(t *testing.T) {
+	t.Parallel()
+
+	payload := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","artifactType":"application/vnd.example.sbom.v1+json","config":{"mediaType":"application/vnd.oci.image.config.v1+json","digest":"` + digestForTest([]byte("cfg")) + `","size":3}}`)
+
+	manifest, tag, err := parseManifestPayload("latest", "", payload)
+	if err != nil {
+		t.Fatalf("parseManifestPayload() error = %v", err)
+	}
+	if tag != "latest" {
+		t.Fatalf("tag = %q, want %q", tag, "latest")
+	}
+	if manifest.ArtifactType != "application/vnd.example.sbom.v1+json" {
+		t.Fatalf("manifest.ArtifactType = %q, want %q", manifest.ArtifactType, "application/vnd.example.sbom.v1+json")
+	}
+}
+
+// TestParseManifestPayloadArtifactTypeAbsentStaysEmpty pins tasks.md 2.1's
+// second half: a payload with no "artifactType" field must produce "",
+// unchanged from Phase 1's placeholder behavior -- no fallback is
+// introduced at this layer either (that lives in the app-layer query path,
+// design.md Decision 3's resolveArtifactType, a later PR).
+func TestParseManifestPayloadArtifactTypeAbsentStaysEmpty(t *testing.T) {
+	t.Parallel()
+
+	payload := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{"mediaType":"application/vnd.oci.image.config.v1+json","digest":"` + digestForTest([]byte("cfg")) + `","size":3}}`)
+
+	manifest, _, err := parseManifestPayload("latest", "", payload)
+	if err != nil {
+		t.Fatalf("parseManifestPayload() error = %v", err)
+	}
+	if manifest.ArtifactType != "" {
+		t.Fatalf("manifest.ArtifactType = %q, want empty when the payload carries no artifactType", manifest.ArtifactType)
+	}
+}
+
 func waitForRunnerTargets(t *testing.T, runner *capturingScanRunner, want int) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)

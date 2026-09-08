@@ -87,13 +87,13 @@ Chain strategy: pending
 
 ## Phase 2: App Parse — `parseManifestPayload` Threading (PR 1)
 
-- [ ] 2.1 RED `internal/app/regixtry/service_test.go`: `parseManifestPayload`
+- [x] 2.1 RED `internal/app/regixtry/service_test.go`: `parseManifestPayload`
       threads `manifestEnvelope.ArtifactType` into the returned
       `domain.Manifest`; unchanged for payloads without it.
-- [ ] 2.2 GREEN `internal/app/regixtry/service.go`: add `ArtifactType` to
+- [x] 2.2 GREEN `internal/app/regixtry/service.go`: add `ArtifactType` to
       `manifestEnvelope`; thread it through `parseManifestPayload` into the
       `NewManifest` call.
-- [ ] 2.3 Confirm Phase 0–2 GREEN (Unit 1 focused test command); `go build
+- [x] 2.3 Confirm Phase 0–2 GREEN (Unit 1 focused test command); `go build
       ./...` clean.
 
 ## Phase 3: Store — `PublishManifest` Writes `subject_digest` (PR 2)

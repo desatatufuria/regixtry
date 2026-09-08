@@ -423,10 +423,7 @@ func parseManifestPayload(reference string, mediaType string, payload []byte) (d
 		return domain.Manifest{}, "", err
 	}
 
-	// artifactType is threaded from manifestEnvelope in Phase 2
-	// (oci-referrers-api tasks.md 2.2); "" here is Phase 1's compile-fix
-	// placeholder only.
-	manifest, err := domain.NewManifest(mediaType, "", payload, config, layers, subject, envelope.Annotations)
+	manifest, err := domain.NewManifest(mediaType, strings.TrimSpace(envelope.ArtifactType), payload, config, layers, subject, envelope.Annotations)
 	if err != nil {
 		return domain.Manifest{}, "", err
 	}
@@ -505,11 +502,12 @@ func (s *Service) ensureUpload(ctx context.Context, repositoryName string, uploa
 }
 
 type manifestEnvelope struct {
-	MediaType   string             `json:"mediaType"`
-	Config      *manifestResource  `json:"config"`
-	Layers      []manifestResource `json:"layers"`
-	Subject     *manifestResource  `json:"subject"`
-	Annotations map[string]string  `json:"annotations"`
+	MediaType    string             `json:"mediaType"`
+	ArtifactType string             `json:"artifactType"`
+	Config       *manifestResource  `json:"config"`
+	Layers       []manifestResource `json:"layers"`
+	Subject      *manifestResource  `json:"subject"`
+	Annotations  map[string]string  `json:"annotations"`
 }
 
 type manifestResource struct {
