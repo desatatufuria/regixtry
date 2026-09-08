@@ -190,6 +190,8 @@ func (r *Router) handleV2(w stdhttp.ResponseWriter, req *stdhttp.Request) {
 		r.handleManifest(w, req, repository, reference)
 	case suffix == "tags/list":
 		r.handleTags(w, req, repository)
+	case strings.HasPrefix(suffix, "referrers/"):
+		r.handleReferrers(w, req, repository, strings.TrimPrefix(suffix, "referrers/"))
 	default:
 		writeError(w, req, domain.NewNotFoundError("route", req.URL.Path), r.service.Challenge(ports.Action{}), "NAME_UNKNOWN")
 	}
@@ -508,6 +510,52 @@ func (r *Router) handleTags(w stdhttp.ResponseWriter, req *stdhttp.Request, repo
 	writeJSON(w, stdhttp.StatusOK, tags)
 }
 
+// handleReferrers is the OCI 1.1 Referrers read (oci-referrers-api
+// design.md Interfaces/Contracts), parallel to handleTags: a list-shaped
+// view of already-stored content, so it authorizes ActionInspect, not
+// ActionPull. Authorization runs BEFORE digest parsing (design.md Decision
+// 7, matching manifest-blob-delete's capability-disclosure rule): an
+// unauthorized caller must not learn whether its digest was even
+// well-formed.
+func (r *Router) handleReferrers(w stdhttp.ResponseWriter, req *stdhttp.Request, repository string, subjectDigest string) {
+	action := ports.Action{Verb: ports.ActionInspect, Repository: repository}
+	if req.Method != stdhttp.MethodGet {
+		w.Header().Set("Allow", stdhttp.MethodGet)
+		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+		return
+	}
+
+	req, ok := r.withPrincipal(w, req, action)
+	if !ok {
+		return
+	}
+
+	artifactType := strings.TrimSpace(req.URL.Query().Get("artifactType"))
+
+	index, err := r.service.Referrers(req.Context(), repository, subjectDigest, artifactType)
+	if err != nil {
+		// Mirrors handleManifest's DELETE arm: an unparseable digest is
+		// DIGEST_INVALID/400, an unknown repository stays NAME_UNKNOWN.
+		defaultCode := "NAME_UNKNOWN"
+		if domain.IsCode(err, domain.ErrorCodeInvalidDigest) {
+			defaultCode = "DIGEST_INVALID"
+		}
+		writeError(w, req, err, r.challengeForError(action, err), defaultCode)
+		return
+	}
+
+	// Set only on the success path: an error response must not claim a
+	// filter was applied (design.md Decision 7 / Risks).
+	if artifactType != "" {
+		w.Header().Set("OCI-Filters-Applied", "artifactType")
+	}
+
+	// index.MediaType is always appregixtry's ociImageIndexMediaType constant
+	// (Service.Referrers sets it unconditionally) -- read from the returned
+	// value rather than duplicating an unexported cross-package constant.
+	writeJSONAs(w, stdhttp.StatusOK, index.MediaType, index)
+}
+
 func (r *Router) handleToken(w stdhttp.ResponseWriter, req *stdhttp.Request) {
 	challenge := ports.Challenge{Scheme: "Basic", Realm: registryRealm(r.service.Challenge(ports.Action{}))}
 	if req.Method != stdhttp.MethodGet && req.Method != stdhttp.MethodPost {
@@ -650,7 +698,14 @@ func parsePagination(req *stdhttp.Request) (int, string, error) {
 }
 
 func splitRepositoryPath(path string) (string, string, bool) {
-	markers := []string{"/blobs/uploads/", "/blobs/uploads", "/blobs/", "/manifests/", "/tags/list"}
+	// "/referrers/" is appended LAST (design.md Decision 6): splitRepositoryPath
+	// returns on the FIRST marker found, so listing it before "/manifests/"
+	// would misroute a repository literally named "library/referrers"
+	// requesting a manifest ("library/referrers/manifests/latest") the same
+	// way "library/manifests/manifests/latest" already misroutes today --
+	// listed last, "/manifests/" (and every other marker) keeps matching
+	// first and a repository named "referrers" keeps working unchanged.
+	markers := []string{"/blobs/uploads/", "/blobs/uploads", "/blobs/", "/manifests/", "/tags/list", "/referrers/"}
 	for _, marker := range markers {
 		if index := strings.Index(path, marker); index > 0 {
 			return path[:index], strings.TrimPrefix(path[index+1:], "/"), true
@@ -745,7 +800,17 @@ func writeError(w stdhttp.ResponseWriter, req *stdhttp.Request, err error, chall
 }
 
 func writeJSON(w stdhttp.ResponseWriter, status int, payload any) {
-	w.Header().Set("Content-Type", "application/json")
+	writeJSONAs(w, status, "application/json", payload)
+}
+
+// writeJSONAs is writeJSON generalized over Content-Type (oci-referrers-api
+// design.md Interfaces/Contracts): handleReferrers needs
+// application/vnd.oci.image.index.v1+json, which writeJSON's hardcoded
+// "application/json" could not serve. writeJSON delegates here unchanged, so
+// every existing caller keeps its exact prior behavior (pinned by
+// TestWriteJSONSetsApplicationJSONContentType before this split existed).
+func writeJSONAs(w stdhttp.ResponseWriter, status int, contentType string, payload any) {
+	w.Header().Set("Content-Type", contentType)
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
 }

@@ -10,6 +10,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +20,7 @@ import (
 	appregixtry "regixtry/internal/app/regixtry"
 	domainauth "regixtry/internal/domain/auth"
 	domain "regixtry/internal/domain/regixtry"
+	"regixtry/internal/domain/signing"
 	authpostgres "regixtry/internal/infra/auth/postgres"
 	metadata "regixtry/internal/infra/metadata/sqlite"
 	"regixtry/internal/infra/storage/fsblob"
@@ -2419,15 +2422,18 @@ func TestRouterReadOnlyPrincipalReadsAnyRepositoryRejectedOnPushAndAdmin(t *test
 	}
 }
 
-// TestSplitRepositoryPathCharacterizesCurrentFiveMarkerBehavior is the
-// oci-referrers-api Phase 0 characterization safety net (design.md Testing
-// Strategy phase 0, tasks.md 0.1): splitRepositoryPath had zero covering
-// tests before this change. This approval test pins today's exact
-// five-marker outcomes -- including the two route-shadowing edge cases
-// design.md Decision 6 reasons about -- BEFORE any behavior change, so that
-// a later PR's addition of a "/referrers/" marker can be proven not to
-// regress any of these.
-func TestSplitRepositoryPathCharacterizesCurrentFiveMarkerBehavior(t *testing.T) {
+// TestSplitRepositoryPathCharacterizesCurrentSixMarkerBehavior is the
+// oci-referrers-api Phase 0/7 characterization safety net (design.md Testing
+// Strategy phase 0, tasks.md 0.1 and 7.1): splitRepositoryPath had zero
+// covering tests before Phase 0. This approval test originally pinned the
+// pre-referrers five-marker outcomes; Phase 7 (design.md Decision 6) appends
+// "/referrers/" LAST to the marker list specifically so it cannot shadow the
+// "/manifests/" marker for a repository literally named "referrers" (see the
+// unchanged case below), and this test is updated in lockstep -- per the
+// Strict TDD "Approval Testing" workflow -- to assert the new six-marker
+// outcomes for every referrers-shaped path, while every non-referrers case
+// stays byte-identical to the five-marker baseline, proving no regression.
+func TestSplitRepositoryPathCharacterizesCurrentSixMarkerBehavior(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -2445,17 +2451,24 @@ func TestSplitRepositoryPathCharacterizesCurrentFiveMarkerBehavior(t *testing.T)
 		{name: "tags list", path: "library/alpine/tags/list", wantRepository: "library/alpine", wantSuffix: "tags/list", wantOK: true},
 		{name: "catalog path never reaches this function -- handleV2 intercepts it first", path: "_catalog", wantRepository: "", wantSuffix: "", wantOK: false},
 		{
-			name: "repository literally named referrers still routes as manifests -- design.md Decision 6's ordering hazard, pre-referrers-marker baseline",
+			name: "repository literally named referrers still routes as manifests -- design.md Decision 6's ordering hazard: /manifests/ is checked before /referrers/ in the marker list, so this is unaffected by the new marker",
 			path: "library/referrers/manifests/latest", wantRepository: "library/referrers", wantSuffix: "manifests/latest", wantOK: true,
 		},
 		{
-			name: "repository and tag both literally named manifests -- first marker occurrence wins, pre-existing property",
+			name: "repository and tag both literally named manifests -- first marker occurrence wins, pre-existing property, unaffected by the referrers marker",
 			path: "library/manifests/manifests/latest", wantRepository: "library", wantSuffix: "manifests/manifests/latest", wantOK: true,
 		},
-		{name: "referrers path with digest has no matching marker today -- unroutable", path: "library/alpine/referrers/sha256:abc", wantRepository: "", wantSuffix: "", wantOK: false},
-		{name: "referrers path with empty digest has no matching marker today -- unroutable", path: "library/alpine/referrers/", wantRepository: "", wantSuffix: "", wantOK: false},
-		{name: "referrers suffix alone has no matching marker today -- unroutable", path: "library/alpine/referrers", wantRepository: "", wantSuffix: "", wantOK: false},
-		{name: "residual double-referrers path also has no matching marker today", path: "library/referrers/referrers/sha256:abc", wantRepository: "", wantSuffix: "", wantOK: false},
+		{name: "referrers path with digest now routes via the new last marker", path: "library/alpine/referrers/sha256:abc", wantRepository: "library/alpine", wantSuffix: "referrers/sha256:abc", wantOK: true},
+		{name: "referrers path with empty digest now routes via the new last marker -- handleReferrers itself rejects the empty digest as 400 DIGEST_INVALID", path: "library/alpine/referrers/", wantRepository: "library/alpine", wantSuffix: "referrers/", wantOK: true},
+		{name: "referrers suffix alone still has no matching marker -- no trailing slash means the marker never matches, matching design.md's stated 404 NAME_UNKNOWN default", path: "library/alpine/referrers", wantRepository: "", wantSuffix: "", wantOK: false},
+		{
+			name: "repository literally named referrers requesting its own referrers route -- legitimate, non-residual: first /referrers/ occurrence is the repository/suffix boundary itself",
+			path: "referrers/referrers/sha256:abc", wantRepository: "referrers", wantSuffix: "referrers/sha256:abc", wantOK: true,
+		},
+		{
+			name: "residual double-referrers path (design.md Decision 6's documented, accepted failure mode) now routes, but with a mangled subject digest that handleReferrers' ParseDigest fails closed on at 400 DIGEST_INVALID -- never cross-repository data",
+			path: "library/referrers/referrers/sha256:abc", wantRepository: "library", wantSuffix: "referrers/referrers/sha256:abc", wantOK: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -2471,17 +2484,19 @@ func TestSplitRepositoryPathCharacterizesCurrentFiveMarkerBehavior(t *testing.T)
 }
 
 // TestHandleV2DispatchCharacterizesCurrentRoutingBeforeReferrers is the
-// oci-referrers-api Phase 0 characterization safety net (design.md Testing
-// Strategy phase 0, tasks.md 0.2): handleV2's dispatch switch had zero
-// covering tests before this change. This approval test pins today's routing
-// for every existing suffix branch, plus proves "referrers/<digest>" is NOT
-// dispatched anywhere yet -- it falls through to the default 404
-// NAME_UNKNOWN branch like any other unrecognized suffix, because
-// splitRepositoryPath (see the test above) does not yet know a "/referrers/"
-// marker. Once a later PR adds that marker and its handleV2 case, this last
-// subtest is expected to change and must be updated in lockstep -- see the
-// DELETE dispatch tests earlier in this file for the established pattern of
-// updating an approval test alongside an intentional behavior change.
+// oci-referrers-api Phase 0/7 characterization safety net (design.md Testing
+// Strategy phase 0/7, tasks.md 0.2 and 7.1): handleV2's dispatch switch had
+// zero covering tests before Phase 0. This approval test pins routing for
+// every existing suffix branch; its last subtest originally proved
+// "referrers/<digest>" was NOT dispatched anywhere (Phase 0 baseline, before
+// splitRepositoryPath knew a "/referrers/" marker). Phase 7 adds that marker
+// and handleReferrers, so -- per the DELETE dispatch tests' established
+// pattern of updating an approval test alongside an intentional behavior
+// change -- that last subtest now asserts the NEW dispatch: a never-pushed
+// digest reaches handleReferrers and gets 200 with an empty manifests[],
+// never 404, proving the route now exists and is wired correctly. Dedicated
+// Phase 7 tests below cover the full referrers/<digest> contract; this
+// approval test's job stays narrow: prove dispatch, not behavior depth.
 func TestHandleV2DispatchCharacterizesCurrentRoutingBeforeReferrers(t *testing.T) {
 	t.Parallel()
 
@@ -2653,26 +2668,27 @@ func TestHandleV2DispatchCharacterizesCurrentRoutingBeforeReferrers(t *testing.T
 		}
 	})
 
-	t.Run("referrers/<digest> is NOT dispatched -- falls through to default 404 NAME_UNKNOWN", func(t *testing.T) {
+	t.Run("referrers/<digest> now dispatches to handleReferrers -- 200 with empty manifests[], never 404", func(t *testing.T) {
 		t.Parallel()
 
 		req := httptest.NewRequest(http.MethodGet, "/v2/library/alpine/referrers/"+unknownManifestDigest, nil)
 		recorder := httptest.NewRecorder()
 		handler.ServeHTTP(recorder, req)
 
-		if recorder.Code != http.StatusNotFound {
-			t.Fatalf("status = %d, want %d", recorder.Code, http.StatusNotFound)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+		}
+		if got := recorder.Header().Get("Content-Type"); got != "application/vnd.oci.image.index.v1+json" {
+			t.Fatalf("Content-Type = %q, want %q, proving handleReferrers served this", got, "application/vnd.oci.image.index.v1+json")
 		}
 		var payload struct {
-			Errors []struct {
-				Code string `json:"code"`
-			} `json:"errors"`
+			Manifests []map[string]any `json:"manifests"`
 		}
 		if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
 			t.Fatalf("json.Unmarshal() error = %v", err)
 		}
-		if len(payload.Errors) != 1 || payload.Errors[0].Code != "NAME_UNKNOWN" {
-			t.Fatalf("payload.Errors = %#v, want single NAME_UNKNOWN error -- no referrers route exists yet", payload.Errors)
+		if payload.Manifests == nil || len(payload.Manifests) != 0 {
+			t.Fatalf("payload.Manifests = %#v, want a non-nil empty slice", payload.Manifests)
 		}
 	})
 }
@@ -2702,6 +2718,580 @@ func TestWriteJSONSetsApplicationJSONContentType(t *testing.T) {
 	}
 	if payload["hello"] != "world" {
 		t.Fatalf("payload = %#v, want hello=world", payload)
+	}
+}
+
+// --- oci-referrers-api Phase 7: GET /v2/<name>/referrers/<digest> ---------
+
+// pushRouterManifestPayload PUTs an arbitrary already-well-formed manifest
+// payload at the given reference (tag or digest), returning the response
+// recorder so callers can assert on status/body/headers themselves --
+// unlike publishRouterManifestTag/routerManifestPayload, which only build the
+// minimal single-blob image shape and always assert 201.
+func pushRouterManifestPayload(t *testing.T, handler *Router, repository string, reference string, payload []byte, headers map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	req := httptest.NewRequest(http.MethodPut, "/v2/"+repository+"/manifests/"+reference, bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+	return recorder
+}
+
+// pushRouterReferrerManifest publishes an OCI 1.1 referrer manifest whose
+// subject.digest is subjectDigest, using a fresh single-layer payload (so
+// distinct referrers of the same subject get distinct digests) and a real,
+// already-uploaded blob so PublishManifest's BlobReferences check passes. It
+// returns the referrer manifest's own digest.
+func pushRouterReferrerManifest(t *testing.T, handler *Router, repository string, subjectDigest string, artifactType string, layerContent string) string {
+	t.Helper()
+
+	uploadBlobViaHTTP(t, handler, repository, []byte(layerContent))
+	blobDigest := domain.DigestFromBytes([]byte(layerContent)).String()
+
+	payload := []byte(fmt.Sprintf(
+		`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","artifactType":%q,"config":{"mediaType":"application/vnd.oci.empty.v1+json","size":2,"digest":"sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"},"layers":[{"mediaType":"application/octet-stream","digest":%q,"size":%d}],"subject":{"mediaType":"application/vnd.oci.image.manifest.v1+json","size":0,"digest":%q}}`,
+		artifactType, blobDigest, len(layerContent), subjectDigest,
+	))
+
+	// The config digest above is the well-known SHA-256 of the two bytes "{}"
+	// -- shared across every call of this helper -- so it must be uploaded
+	// once per repository too; uploadBlobViaHTTP re-uploading it for an
+	// already-present blob is idempotent (PATCH+PUT commit is a no-op write
+	// keyed by content digest).
+	uploadBlobViaHTTP(t, handler, repository, []byte("{}"))
+
+	tag := "referrer-" + domain.DigestFromBytes([]byte(layerContent)).Encoded()[:16]
+	recorder := pushRouterManifestPayload(t, handler, repository, tag, payload, nil)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("push referrer manifest status = %d, want %d, body = %s", recorder.Code, http.StatusCreated, recorder.Body.String())
+	}
+
+	return recorder.Header().Get("Docker-Content-Digest")
+}
+
+// uploadBlobViaHTTP (the ordinary begin/append/commit blob upload flow
+// through the router) is already defined, same package, in
+// signature_status_test.go -- reused here verbatim.
+
+func getReferrers(t *testing.T, handler *Router, repository string, subjectDigest string, query string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	path := "/v2/" + repository + "/referrers/" + subjectDigest
+	if query != "" {
+		path += "?" + query
+	}
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+	return recorder
+}
+
+func decodeReferrersIndexBody(t *testing.T, recorder *httptest.ResponseRecorder) struct {
+	SchemaVersion int `json:"schemaVersion"`
+	MediaType     string
+	Manifests     []struct {
+		MediaType    string            `json:"mediaType"`
+		Digest       string            `json:"digest"`
+		Size         int64             `json:"size"`
+		ArtifactType string            `json:"artifactType"`
+		Annotations  map[string]string `json:"annotations"`
+	} `json:"manifests"`
+} {
+	t.Helper()
+
+	var payload struct {
+		SchemaVersion int `json:"schemaVersion"`
+		MediaType     string
+		Manifests     []struct {
+			MediaType    string            `json:"mediaType"`
+			Digest       string            `json:"digest"`
+			Size         int64             `json:"size"`
+			ArtifactType string            `json:"artifactType"`
+			Annotations  map[string]string `json:"annotations"`
+		} `json:"manifests"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v, body = %s", err, recorder.Body.String())
+	}
+	return payload
+}
+
+// TestRouterReferrersEmptyManifestsNeverPushedAndDeletedSubject is
+// oci-referrers-api tasks.md 7.2: a never-pushed digest and a digest whose
+// manifest was deleted (and never had any referrers) both answer 200 with a
+// raw wire body containing "manifests":[], never "manifests":null and never
+// 404 -- referrers-discovery spec's "Listing Returns Matches, Empty List
+// Never 404s" requirement, asserted at the raw byte level per design.md's
+// explicit warning that a nil Go slice still encodes as null.
+func TestRouterReferrersEmptyManifestsNeverPushedAndDeletedSubject(t *testing.T) {
+	t.Parallel()
+
+	handler, cleanup := newTestRouter(t, allowAllAccessController{})
+	t.Cleanup(cleanup)
+	handler.service.SetDeleteEnabled(true)
+
+	t.Run("never-pushed digest", func(t *testing.T) {
+		t.Parallel()
+
+		unknownDigest := domain.DigestFromBytes([]byte("referrers-http-never-pushed")).String()
+		recorder := getReferrers(t, handler, "library/alpine", unknownDigest, "")
+
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+		}
+		if !strings.Contains(recorder.Body.String(), `"manifests":[]`) {
+			t.Fatalf("body = %s, want raw \"manifests\":[] (never null)", recorder.Body.String())
+		}
+	})
+
+	t.Run("deleted subject with no referrers", func(t *testing.T) {
+		t.Parallel()
+
+		manifestDigest, _ := publishRouterManifestTag(t, handler, "library/alpine", "referrers-deleted-empty", "referrers-http-deleted-empty-content")
+
+		deleteReq := httptest.NewRequest(http.MethodDelete, "/v2/library/alpine/manifests/"+manifestDigest, nil)
+		deleteRecorder := httptest.NewRecorder()
+		handler.ServeHTTP(deleteRecorder, deleteReq)
+		if deleteRecorder.Code != http.StatusAccepted {
+			t.Fatalf("DELETE status = %d, want %d", deleteRecorder.Code, http.StatusAccepted)
+		}
+
+		recorder := getReferrers(t, handler, "library/alpine", manifestDigest, "")
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+		}
+		if !strings.Contains(recorder.Body.String(), `"manifests":[]`) {
+			t.Fatalf("body = %s, want raw \"manifests\":[] (never null)", recorder.Body.String())
+		}
+	})
+
+	// Triangulates the empty-list assertions above: referrers-discovery
+	// spec's "Subject deleted, survivors still list" scenario. Deleting the
+	// SUBJECT manifest must not orphan the already-stored subject_digest
+	// column on its surviving referrer -- ListReferrers matches on the
+	// stored digest string, never on whether that manifest still resolves.
+	t.Run("deleted subject, surviving referrer is still listed, never 5xx", func(t *testing.T) {
+		t.Parallel()
+
+		subjectDigest, _ := publishRouterManifestTag(t, handler, "library/alpine", "referrers-deleted-survivor", "referrers-http-deleted-survivor-content")
+		referrerDigest := pushRouterReferrerManifest(t, handler, "library/alpine", subjectDigest, "application/spdx+json", "referrers-http-survivor-layer")
+
+		deleteReq := httptest.NewRequest(http.MethodDelete, "/v2/library/alpine/manifests/"+subjectDigest, nil)
+		deleteRecorder := httptest.NewRecorder()
+		handler.ServeHTTP(deleteRecorder, deleteReq)
+		if deleteRecorder.Code != http.StatusAccepted {
+			t.Fatalf("DELETE status = %d, want %d", deleteRecorder.Code, http.StatusAccepted)
+		}
+
+		recorder := getReferrers(t, handler, "library/alpine", subjectDigest, "")
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+		}
+		payload := decodeReferrersIndexBody(t, recorder)
+		if len(payload.Manifests) != 1 || payload.Manifests[0].Digest != referrerDigest {
+			t.Fatalf("Manifests = %#v, want exactly [%s]", payload.Manifests, referrerDigest)
+		}
+	})
+}
+
+// TestRouterReferrersContentTypeAndArtifactTypeFilterHeader is
+// oci-referrers-api tasks.md 7.3: the OCI Image Index media type is set via
+// writeJSONAs (not the shared writeJSON default), ?artifactType= narrows
+// results and sets OCI-Filters-Applied only on that success path, and an
+// absent or whitespace-only artifactType sets no header at all.
+func TestRouterReferrersContentTypeAndArtifactTypeFilterHeader(t *testing.T) {
+	t.Parallel()
+
+	handler, cleanup := newTestRouter(t, allowAllAccessController{})
+	t.Cleanup(cleanup)
+
+	subjectDigest, _ := publishRouterManifestTag(t, handler, "library/alpine", "referrers-filter-subject", "referrers-http-filter-subject-content")
+	sbomDigest := pushRouterReferrerManifest(t, handler, "library/alpine", subjectDigest, "application/spdx+json", "referrers-http-filter-sbom-layer")
+	attestationDigest := pushRouterReferrerManifest(t, handler, "library/alpine", subjectDigest, "application/vnd.in-toto+json", "referrers-http-filter-attestation-layer")
+
+	t.Run("unfiltered request: both referrers, Content-Type set, no header", func(t *testing.T) {
+		t.Parallel()
+
+		recorder := getReferrers(t, handler, "library/alpine", subjectDigest, "")
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+		}
+		if got := recorder.Header().Get("Content-Type"); got != "application/vnd.oci.image.index.v1+json" {
+			t.Fatalf("Content-Type = %q, want %q", got, "application/vnd.oci.image.index.v1+json")
+		}
+		if got := recorder.Header().Get("OCI-Filters-Applied"); got != "" {
+			t.Fatalf("OCI-Filters-Applied = %q, want absent for an unfiltered request", got)
+		}
+		payload := decodeReferrersIndexBody(t, recorder)
+		if len(payload.Manifests) != 2 {
+			t.Fatalf("Manifests = %#v, want 2 entries", payload.Manifests)
+		}
+	})
+
+	t.Run("whitespace-only artifactType is treated as unfiltered: identical result, no header", func(t *testing.T) {
+		t.Parallel()
+
+		recorder := getReferrers(t, handler, "library/alpine", subjectDigest, "artifactType=%20%20")
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+		}
+		if got := recorder.Header().Get("OCI-Filters-Applied"); got != "" {
+			t.Fatalf("OCI-Filters-Applied = %q, want absent for a whitespace-only filter", got)
+		}
+		payload := decodeReferrersIndexBody(t, recorder)
+		if len(payload.Manifests) != 2 {
+			t.Fatalf("Manifests = %#v, want 2 entries (unfiltered)", payload.Manifests)
+		}
+	})
+
+	t.Run("filtered request narrows results and sets the header", func(t *testing.T) {
+		t.Parallel()
+
+		recorder := getReferrers(t, handler, "library/alpine", subjectDigest, "artifactType=application%2Fspdx%2Bjson")
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+		}
+		if got := recorder.Header().Get("OCI-Filters-Applied"); got != "artifactType" {
+			t.Fatalf("OCI-Filters-Applied = %q, want %q", got, "artifactType")
+		}
+		payload := decodeReferrersIndexBody(t, recorder)
+		if len(payload.Manifests) != 1 || payload.Manifests[0].Digest != sbomDigest {
+			t.Fatalf("Manifests = %#v, want exactly [%s]", payload.Manifests, sbomDigest)
+		}
+		if payload.Manifests[0].Digest == attestationDigest {
+			t.Fatalf("filtered result unexpectedly includes the attestation referrer")
+		}
+	})
+
+	t.Run("error response never claims a filter was applied", func(t *testing.T) {
+		t.Parallel()
+
+		recorder := getReferrers(t, handler, "library/alpine", "not-a-digest", "artifactType=application%2Fspdx%2Bjson")
+		if recorder.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+		}
+		if got := recorder.Header().Get("OCI-Filters-Applied"); got != "" {
+			t.Fatalf("OCI-Filters-Applied = %q, want absent on an error response", got)
+		}
+	})
+}
+
+// TestRouterReferrersAuthorizationAndMethodDispatch is oci-referrers-api
+// tasks.md 7.4: ActionInspect authorization -- a pull-scoped (reader-role)
+// token succeeds, a principal with no grant on the repository is 401 with a
+// challenge, and any non-GET method is 405 with Allow: GET, checked BEFORE
+// authorization (matching handleTags' own ordering).
+func TestRouterReferrersAuthorizationAndMethodDispatch(t *testing.T) {
+	t.Parallel()
+
+	blobStore, metadataStore, cleanup := newTestStores(t)
+	t.Cleanup(cleanup)
+
+	seedRouter := newRouterWithStores(blobStore, metadataStore, allowAllAccessController{}, nil)
+	subjectDigest, _ := publishRouterManifestTag(t, seedRouter, "team/app", "referrers-auth-subject", "referrers-http-auth-subject-content")
+
+	t.Run("pull-scoped reader token succeeds with 200", func(t *testing.T) {
+		t.Parallel()
+
+		principal := domainauth.Principal{
+			Subject:  "atk_reader",
+			Username: "reader",
+			Grants:   []domainauth.RepoGrant{{Repository: domain.MustParseRepositoryRef("team/app"), Role: domainauth.RepoRoleReader}},
+			Scopes:   []domainauth.Scope{{Type: "repository", Name: "team/app", Actions: []string{"pull"}, Canonical: "repository:team/app:pull"}},
+		}
+		handler := newRouterWithStores(blobStore, metadataStore, ports.NewPrincipalAccessController(ports.Challenge{Realm: "regixtry", Service: "regixtry"}), fakeAuthService{verify: &principal})
+
+		req := httptest.NewRequest(http.MethodGet, "/v2/team/app/referrers/"+subjectDigest, nil)
+		req.Header.Set("Authorization", "Bearer pull-scoped-token")
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+		}
+	})
+
+	t.Run("no-access principal is 401 with a challenge", func(t *testing.T) {
+		t.Parallel()
+
+		principal := domainauth.Principal{
+			Subject:  "atk_noaccess",
+			Username: "noaccess",
+			Grants:   []domainauth.RepoGrant{{Repository: domain.MustParseRepositoryRef("other/repo"), Role: domainauth.RepoRoleReader}},
+			Scopes:   []domainauth.Scope{{Type: "repository", Name: "other/repo", Actions: []string{"pull"}, Canonical: "repository:other/repo:pull"}},
+		}
+		handler := newRouterWithStores(blobStore, metadataStore, ports.NewPrincipalAccessController(ports.Challenge{Realm: "regixtry", Service: "regixtry"}), fakeAuthService{verify: &principal})
+
+		req := httptest.NewRequest(http.MethodGet, "/v2/team/app/referrers/"+subjectDigest, nil)
+		req.Header.Set("Authorization", "Bearer no-access-token")
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+
+		if recorder.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusUnauthorized, recorder.Body.String())
+		}
+		if got := recorder.Header().Get("WWW-Authenticate"); got == "" {
+			t.Fatal("expected WWW-Authenticate challenge header")
+		}
+	})
+
+	t.Run("non-GET is 405 with Allow: GET", func(t *testing.T) {
+		t.Parallel()
+
+		handler, cleanup := newTestRouter(t, allowAllAccessController{})
+		t.Cleanup(cleanup)
+
+		req := httptest.NewRequest(http.MethodPost, "/v2/library/alpine/referrers/"+subjectDigest, nil)
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+
+		if recorder.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("status = %d, want %d", recorder.Code, http.StatusMethodNotAllowed)
+		}
+		if got := recorder.Header().Get("Allow"); got != http.MethodGet {
+			t.Fatalf("Allow = %q, want %q", got, http.MethodGet)
+		}
+	})
+}
+
+// TestRouterReferrersReturnsAllMatchesInDigestOrder is oci-referrers-api
+// tasks.md 7.5: a seeded multi-referrer repository returns every matching
+// referrer, in digest ASC order, in one unpaginated response -- threat
+// matrix's "unbounded response" boundary, bounded by the query's repository
+// scope rather than any page size.
+func TestRouterReferrersReturnsAllMatchesInDigestOrder(t *testing.T) {
+	t.Parallel()
+
+	handler, cleanup := newTestRouter(t, allowAllAccessController{})
+	t.Cleanup(cleanup)
+
+	subjectDigest, _ := publishRouterManifestTag(t, handler, "library/alpine", "referrers-order-subject", "referrers-http-order-subject-content")
+
+	digestC := pushRouterReferrerManifest(t, handler, "library/alpine", subjectDigest, "kind/c", "referrers-http-order-layer-c")
+	digestA := pushRouterReferrerManifest(t, handler, "library/alpine", subjectDigest, "kind/a", "referrers-http-order-layer-a")
+	digestB := pushRouterReferrerManifest(t, handler, "library/alpine", subjectDigest, "kind/b", "referrers-http-order-layer-b")
+
+	recorder := getReferrers(t, handler, "library/alpine", subjectDigest, "")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	payload := decodeReferrersIndexBody(t, recorder)
+	if len(payload.Manifests) != 3 {
+		t.Fatalf("Manifests = %#v, want 3 entries", payload.Manifests)
+	}
+
+	want := []string{digestA, digestB, digestC}
+	sortedWant := append([]string(nil), want...)
+	sort.Strings(sortedWant)
+	got := make([]string, len(payload.Manifests))
+	for i, m := range payload.Manifests {
+		got[i] = m.Digest
+	}
+	if !reflect.DeepEqual(got, sortedWant) {
+		t.Fatalf("Manifests digest order = %#v, want digest ASC order %#v", got, sortedWant)
+	}
+}
+
+// TestRouterReferrersCosignBundleListedLegacySigAbsent is oci-referrers-api
+// tasks.md 7.6: a cosign v3 bundle referrer manifest (carries subject) is
+// discoverable via Referrers; a legacy .sig manifest (no subject, discovered
+// only via SignatureTag convention) is absent from the response and its own
+// tag-based GET keeps resolving unchanged -- referrers-discovery spec's
+// "Legacy Cosign Tag Artifacts Stay Separate" requirement.
+func TestRouterReferrersCosignBundleListedLegacySigAbsent(t *testing.T) {
+	t.Parallel()
+
+	handler, cleanup := newTestRouter(t, allowAllAccessController{})
+	t.Cleanup(cleanup)
+
+	subjectDigest, blobDigest := publishRouterManifestTag(t, handler, "library/alpine", "referrers-cosign-subject", "referrers-http-cosign-subject-content")
+
+	fixture, err := os.ReadFile(filepath.Join("testdata", "bundle-referrer-manifest.json"))
+	if err != nil {
+		t.Fatalf("os.ReadFile(bundle-referrer-manifest.json) error = %v", err)
+	}
+	fixture = bytes.ReplaceAll(fixture, []byte("__SUBJECT_DIGEST__"), []byte(subjectDigest))
+
+	uploadBlobViaHTTP(t, handler, "library/alpine", []byte("{}"))
+	uploadBlobViaHTTP(t, handler, "library/alpine", []byte("cosign-v3-bundle-referrer-fixture-layer-content"))
+
+	bundleRecorder := pushRouterManifestPayload(t, handler, "library/alpine", "referrers-cosign-bundle-tag", fixture, nil)
+	if bundleRecorder.Code != http.StatusCreated {
+		t.Fatalf("push cosign bundle referrer status = %d, want %d, body = %s", bundleRecorder.Code, http.StatusCreated, bundleRecorder.Body.String())
+	}
+	bundleDigest := bundleRecorder.Header().Get("Docker-Content-Digest")
+
+	tag, err := signing.SignatureTag(subjectDigest)
+	if err != nil {
+		t.Fatalf("signing.SignatureTag(%q) error = %v", subjectDigest, err)
+	}
+	legacySigPayload := routerManifestPayload(blobDigest, len("referrers-http-cosign-subject-content"))
+	legacyRecorder := pushRouterManifestPayload(t, handler, "library/alpine", tag, legacySigPayload, nil)
+	if legacyRecorder.Code != http.StatusCreated {
+		t.Fatalf("push legacy .sig manifest status = %d, want %d, body = %s", legacyRecorder.Code, http.StatusCreated, legacyRecorder.Body.String())
+	}
+
+	recorder := getReferrers(t, handler, "library/alpine", subjectDigest, "")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	payload := decodeReferrersIndexBody(t, recorder)
+	if len(payload.Manifests) != 1 || payload.Manifests[0].Digest != bundleDigest {
+		t.Fatalf("Manifests = %#v, want exactly the cosign bundle referrer [%s], never the legacy .sig manifest", payload.Manifests, bundleDigest)
+	}
+
+	tagReq := httptest.NewRequest(http.MethodGet, "/v2/library/alpine/manifests/"+tag, nil)
+	tagRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(tagRecorder, tagReq)
+	if tagRecorder.Code != http.StatusOK {
+		t.Fatalf("legacy .sig tag GET status = %d, want %d -- its tag-based path must keep working unchanged", tagRecorder.Code, http.StatusOK)
+	}
+}
+
+// TestRouterReferrersDoubleReferrersResidualPathFailsClosedAtDigestInvalid is
+// the HTTP-level companion to design.md Decision 6's documented residual
+// route-shadowing case, already proven at the splitRepositoryPath layer
+// above: a repository path containing "referrers/referrers/<digest>" mangles
+// the subject digest into "referrers/sha256:...", which ParseDigest rejects
+// -- 400 DIGEST_INVALID, never a misrouted 200 with cross-repository data.
+func TestRouterReferrersDoubleReferrersResidualPathFailsClosedAtDigestInvalid(t *testing.T) {
+	t.Parallel()
+
+	handler, cleanup := newTestRouter(t, allowAllAccessController{})
+	t.Cleanup(cleanup)
+
+	req := httptest.NewRequest(http.MethodGet, "/v2/library/referrers/referrers/sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+	}
+	var payload struct {
+		Errors []struct {
+			Code string `json:"code"`
+		} `json:"errors"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if len(payload.Errors) != 1 || payload.Errors[0].Code != "DIGEST_INVALID" {
+		t.Fatalf("payload.Errors = %#v, want single DIGEST_INVALID error", payload.Errors)
+	}
+}
+
+// TestRouterFullLifecycleUnaffectedByReferrersRoute is oci-referrers-api
+// tasks.md 8.1: push, pull, tag listing, catalog, delete, scan-status
+// dispatch, and signature-status dispatch all stay byte-identical after the
+// "/referrers/" marker and handleReferrers were added -- proposal's Success
+// Criteria/threat matrix "No Push-Path Or Scan Behavior Change" requirement.
+// This is deliberately an end-to-end walk through the router (not the
+// per-branch Phase 0 dispatch table, which already pins routing in
+// isolation): it proves the six-marker splitRepositoryPath and the new
+// handleV2 case do not perturb any sibling route when exercised together, in
+// sequence, exactly as a real client session would.
+func TestRouterFullLifecycleUnaffectedByReferrersRoute(t *testing.T) {
+	t.Parallel()
+
+	handler, cleanup := newTestRouter(t, allowAllAccessController{})
+	t.Cleanup(cleanup)
+	handler.service.SetDeleteEnabled(true)
+
+	// Push: unaffected -- uses the existing blobs/uploads/ + manifests/<tag>
+	// flow, both markers unchanged and both still checked before /referrers/.
+	manifestDigest, _ := publishRouterManifestTag(t, handler, "library/lifecycle", "regression", "referrers-regression-lifecycle-content")
+
+	// Pull (GET manifest): unaffected.
+	pullReq := httptest.NewRequest(http.MethodGet, "/v2/library/lifecycle/manifests/regression", nil)
+	pullRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(pullRecorder, pullReq)
+	if pullRecorder.Code != http.StatusOK {
+		t.Fatalf("pull status = %d, want %d", pullRecorder.Code, http.StatusOK)
+	}
+
+	// Tag listing: unaffected -- "/tags/list" is still checked before the new
+	// "/referrers/" marker.
+	tagsReq := httptest.NewRequest(http.MethodGet, "/v2/library/lifecycle/tags/list", nil)
+	tagsRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(tagsRecorder, tagsReq)
+	if tagsRecorder.Code != http.StatusOK {
+		t.Fatalf("tags/list status = %d, want %d", tagsRecorder.Code, http.StatusOK)
+	}
+	var tagsPayload struct {
+		Tags []string `json:"tags"`
+	}
+	if err := json.Unmarshal(tagsRecorder.Body.Bytes(), &tagsPayload); err != nil {
+		t.Fatalf("json.Unmarshal(tags) error = %v", err)
+	}
+	if len(tagsPayload.Tags) != 1 || tagsPayload.Tags[0] != "regression" {
+		t.Fatalf("tags = %#v, want [\"regression\"]", tagsPayload.Tags)
+	}
+
+	// Catalog: unaffected -- handleV2 intercepts "_catalog" before
+	// splitRepositoryPath ever runs.
+	catalogReq := httptest.NewRequest(http.MethodGet, "/v2/_catalog", nil)
+	catalogRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(catalogRecorder, catalogReq)
+	if catalogRecorder.Code != http.StatusOK {
+		t.Fatalf("catalog status = %d, want %d", catalogRecorder.Code, http.StatusOK)
+	}
+	if !strings.Contains(catalogRecorder.Body.String(), "library/lifecycle") {
+		t.Fatalf("catalog body = %s, want it to include library/lifecycle", catalogRecorder.Body.String())
+	}
+
+	// Scan-status dispatch: unaffected -- the "/scan-status" suffix check
+	// inside the "manifests/" branch runs before splitRepositoryPath ever
+	// sees "/referrers/".
+	scanStatusReq := httptest.NewRequest(http.MethodGet, "/v2/library/lifecycle/manifests/regression/scan-status", nil)
+	scanStatusRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(scanStatusRecorder, scanStatusReq)
+	if scanStatusRecorder.Code != http.StatusOK {
+		t.Fatalf("scan-status status = %d, want %d, body = %s", scanStatusRecorder.Code, http.StatusOK, scanStatusRecorder.Body.String())
+	}
+	if !strings.Contains(scanStatusRecorder.Body.String(), `"would_block_pull"`) {
+		t.Fatalf("scan-status body = %s, want the would_block_pull shape, proving handleManifestScanStatus still serves this", scanStatusRecorder.Body.String())
+	}
+
+	// Signature-status dispatch: unaffected -- same "manifests/" branch,
+	// same pre-referrers ordering.
+	signatureStatusReq := httptest.NewRequest(http.MethodGet, "/v2/library/lifecycle/manifests/regression/signature-status", nil)
+	signatureStatusRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(signatureStatusRecorder, signatureStatusReq)
+	if signatureStatusRecorder.Code != http.StatusOK {
+		t.Fatalf("signature-status status = %d, want %d, body = %s", signatureStatusRecorder.Code, http.StatusOK, signatureStatusRecorder.Body.String())
+	}
+	if !strings.Contains(signatureStatusRecorder.Body.String(), `"signature"`) {
+		t.Fatalf("signature-status body = %s, want the signature shape, proving handleManifestSignatureStatus still serves this", signatureStatusRecorder.Body.String())
+	}
+
+	// Delete: unaffected -- DELETE still reaches handleManifest exactly as
+	// before, and the removed manifest's own referrers (none pushed here)
+	// are irrelevant to this deletion succeeding.
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/v2/library/lifecycle/manifests/"+manifestDigest, nil)
+	deleteRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(deleteRecorder, deleteReq)
+	if deleteRecorder.Code != http.StatusAccepted {
+		t.Fatalf("delete status = %d, want %d, body = %s", deleteRecorder.Code, http.StatusAccepted, deleteRecorder.Body.String())
+	}
+
+	// Reads never affect scanning (referrers-discovery spec's "No Push-Path
+	// Or Scan Behavior Change" requirement): repeated Referrers requests
+	// against the now-deleted subject must not queue or alter any scan.
+	// scan-status on the now-deleted manifest correctly answers
+	// MANIFEST_UNKNOWN either way -- the assertion here is that issuing
+	// several Referrers reads in between changes nothing about that.
+	for range 3 {
+		getReferrers(t, handler, "library/lifecycle", manifestDigest, "")
+	}
+	postDeleteScanStatusReq := httptest.NewRequest(http.MethodGet, "/v2/library/lifecycle/manifests/regression/scan-status", nil)
+	postDeleteScanStatusRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(postDeleteScanStatusRecorder, postDeleteScanStatusReq)
+	if postDeleteScanStatusRecorder.Code != http.StatusNotFound {
+		t.Fatalf("post-delete scan-status status = %d, want %d (tag removed by delete), body = %s", postDeleteScanStatusRecorder.Code, http.StatusNotFound, postDeleteScanStatusRecorder.Body.String())
 	}
 }
 
