@@ -534,10 +534,357 @@ design.md/tasks.md for PR #4:
   `writeJSONAs` split, `OCI-Filters-Applied` header).
 - Phase 8 (full regression suite, README docs).
 
+## PR 4: Router/HTTP wiring + full regression + docs (Phases 7–8) — FINAL PR
+
+### Scope of this run (PR 4)
+
+PR #4 of 4 in the Feature Branch Chain — **Phases 7–8 only** (tasks.md), the
+LAST PR, on branch `feature/oci-referrers-api-04-router-docs`, branched from
+PR #3's branch `feature/oci-referrers-api-03-query-service` (Phases 0–6
+already done and merged into this branch's history; NOT redone here). This
+run wires the fully-tested `Service.Referrers` (PR 3) into the real HTTP
+route, completing the change end to end.
+
+This run read the merged PR 1 + PR 2 + PR 3 `apply-progress.md` first
+(above) and appends below, per the Merge Protocol; PR 1, PR 2, and PR 3's
+own sections are preserved verbatim.
+
+### Completed Tasks
+
+#### Phase 7: Router / HTTP (PR 4)
+
+- [x] 7.1 RED `internal/protocol/http/router_test.go`:
+      `TestSplitRepositoryPathCharacterizesCurrentSixMarkerBehavior` (renamed
+      from PR 1's `...FiveMarkerBehavior`, per the Strict TDD "Approval
+      Testing" update pattern — see Deviations) — `/referrers/` appended last
+      to `splitRepositoryPath`'s markers; new cases for a digest-bearing
+      referrers path, an empty-digest referrers path, a repository literally
+      named `referrers` requesting its own referrers route (legitimate,
+      non-residual), and the residual `library/referrers/referrers/<digest>`
+      case (now routes, but with a mangled digest that fails closed later).
+- [x] 7.2 RED (same file):
+      `TestRouterReferrersEmptyManifestsNeverPushedAndDeletedSubject` —
+      never-pushed digest and a deleted subject with no referrers both
+      `200` + raw `"manifests":[]` (asserted on raw response bytes, never
+      just Go slice length); a third subtest (triangulating the empty-list
+      cases) proves the referrers-discovery spec's "Subject deleted,
+      survivors still list" scenario: a surviving referrer stays listed
+      after its subject manifest is deleted, never `5xx`.
+- [x] 7.3 RED (same file):
+      `TestRouterReferrersContentTypeAndArtifactTypeFilterHeader` —
+      `Content-Type: application/vnd.oci.image.index.v1+json`;
+      `?artifactType=<v>` narrows results and sets `OCI-Filters-Applied`;
+      unfiltered and whitespace-only `artifactType` both set no header; an
+      error response never sets the header even when a filter was
+      requested.
+- [x] 7.4 RED (same file):
+      `TestRouterReferrersAuthorizationAndMethodDispatch` — a pull-scoped
+      reader-role token succeeds with `200`; a principal with no grant on
+      the repository is `401` with a `WWW-Authenticate` challenge; any
+      non-GET method is `405 Allow: GET`.
+- [x] 7.5 RED (same file):
+      `TestRouterReferrersReturnsAllMatchesInDigestOrder` — three referrers
+      pushed out of digest order are all returned, sorted `digest ASC`, in
+      one unpaginated response.
+- [x] 7.6 RED (same file, new fixture
+      `internal/protocol/http/testdata/bundle-referrer-manifest.json`):
+      `TestRouterReferrersCosignBundleListedLegacySigAbsent` — a cosign v3
+      bundle referrer manifest (`subject` set, pushed from the new fixture)
+      is listed; a legacy `.sig` manifest (no `subject`, pushed at
+      `signing.SignatureTag`) is absent from the Referrers response and its
+      own tag-based GET keeps resolving unchanged.
+- [x] 7.7 GREEN `internal/protocol/http/router.go`: split `writeJSON` into
+      `writeJSON`/`writeJSONAs(w, status, contentType, payload)`, with
+      `writeJSON` delegating unchanged (pinned by PR 1's
+      `TestWriteJSONSetsApplicationJSONContentType`); appended `/referrers/`
+      as the 6th, last marker in `splitRepositoryPath`; added `handleV2`'s
+      `case strings.HasPrefix(suffix, "referrers/")`; added `handleReferrers`
+      (method check → `withPrincipal` (`ActionInspect`) → trim
+      `artifactType` → `Service.Referrers` → `NAME_UNKNOWN`/`DIGEST_INVALID`
+      error mapping → `OCI-Filters-Applied` header on success only →
+      `writeJSONAs` using `index.MediaType` from the service response,
+      avoiding a duplicated unexported cross-package constant).
+- [x] 7.8 Confirmed Phase 7 GREEN via `go test ./internal/protocol/http/...
+      -run Referrers -v` (tasks.md's own Unit 4 focused test command) — all
+      PASS.
+
+#### Phase 8: Regression (PR 4)
+
+- [x] 8.1 RED `internal/protocol/http/router_test.go`:
+      `TestRouterFullLifecycleUnaffectedByReferrersRoute` — an explicit
+      end-to-end walk (push → pull → tag list → catalog → scan-status →
+      signature-status → delete → repeated Referrers reads → post-delete
+      scan-status) through the router with the new six-marker
+      `splitRepositoryPath` and `handleReferrers` case present, proving no
+      sibling route shifted and that Referrers reads never queue or alter a
+      scan. Combined with the full pre-existing suite (hundreds of
+      push/pull/delete/scan/signature tests, all unchanged and green) and
+      PR 1's Phase 0 dispatch/split characterization tests (updated in
+      lockstep for the intentional six-marker/referrers-dispatch change,
+      not silently left stale).
+- [x] 8.2 Confirmed full `go build ./...`, `go vet ./...`, `gofmt -l .`,
+      `go test ./... -count=1` all clean — see Verification Evidence below.
+- [x] 8.3 Docs: `README.md` — added one bullet to "What's implemented"
+      documenting `GET /v2/<name>/referrers/<digest>`, `?artifactType=`
+      filtering, empty-list-never-404 semantics including the backfill, and
+      an explicit sentence that pushing a subject-bearing manifest still
+      requires the subject to already exist in-repository — i.e. the
+      `docker/build-push-action` `provenance: false` workaround is
+      unaffected by this change (proposal's explicit requirement; see
+      Deviations for why this note did not previously exist anywhere in the
+      repo and was added fresh, not merely "retained").
+
+### TDD Cycle Evidence (PR 4)
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-----------|-------|------------|-----|-------|-------------|----------|
+| 7.1 | `router_test.go` (`TestSplitRepositoryPathCharacterizesCurrentSixMarkerBehavior`) | Unit | ✅ full `protocol/http` package suite green before edit | ✅ Written — confirmed RED: 4 of 13 table cases failed (`splitRepositoryPath("library/alpine/referrers/sha256:abc") = ("", "", false), want (...true)`, etc.), 9 pre-existing cases still passed | ✅ Passed after appending the `/referrers/` marker | ✅ 13 total cases incl. 4 new referrers-shaped ones | ➖ None needed |
+| 7.1 (dispatch) | `router_test.go` (`TestHandleV2DispatchCharacterizesCurrentRoutingBeforeReferrers`, last subtest updated) | Integration | (same run) | ✅ Written — confirmed RED: `status = 404, want 200` | ✅ Passed after the `handleV2` case + `handleReferrers` landed | ➖ Single updated subtest — full behavioral depth is Phase 7's dedicated tests below | ➖ None needed |
+| 7.2 | `router_test.go` (`TestRouterReferrersEmptyManifestsNeverPushedAndDeletedSubject`, 3 subtests) | Integration | (same run) | ✅ Written — confirmed RED: all 3 subtests `status = 404, want 200` (`NAME_UNKNOWN`, route did not exist) | ✅ Passed after `handleReferrers` landed | ✅ 3 scenarios (never-pushed / deleted-no-referrers / deleted-with-surviving-referrer) | ➖ None needed |
+| 7.3 | `router_test.go` (`TestRouterReferrersContentTypeAndArtifactTypeFilterHeader`, 4 subtests) | Integration | (same run) | ✅ Written — confirmed RED: all 4 subtests `status = 404` (2) / route-not-found (2) before the route existed | ✅ Passed after `handleReferrers` + `writeJSONAs` landed | ✅ 4 scenarios (unfiltered / whitespace-only / filtered / error-response-no-header) | ➖ None needed |
+| 7.4 | `router_test.go` (`TestRouterReferrersAuthorizationAndMethodDispatch`, 3 subtests) | Integration | (same run) | ✅ Written — confirmed RED: pull-scoped `404≠200`, no-access `404≠401`, non-GET `404≠405` | ✅ Passed after `handleReferrers` landed | ✅ 3 scenarios (pull-scoped success / no-access 401 / method 405) | ➖ None needed |
+| 7.5 | `router_test.go` (`TestRouterReferrersReturnsAllMatchesInDigestOrder`) | Integration | (same run) | ✅ Written — confirmed RED: `status = 404, want 200` | ✅ Passed: 3 referrers pushed out of order, returned sorted `digest ASC` | ✅ Digest-order assertion against `sort.Strings` reference is itself the triangulating check (proves real DB ordering, not incidental insertion order) | ➖ None needed |
+| 7.6 | `router_test.go` (`TestRouterReferrersCosignBundleListedLegacySigAbsent`) + new `testdata/bundle-referrer-manifest.json` | Integration | (same run) | ✅ Written — confirmed RED: `status = 404, want 200` | ✅ Passed: cosign bundle referrer listed, legacy `.sig` absent, legacy tag GET still `200` | ✅ Both positive (bundle listed) and negative (`.sig` absent) assertions in one test, plus the legacy tag-path-still-works assertion | ➖ None needed |
+| 8.1 | `router_test.go` (`TestRouterFullLifecycleUnaffectedByReferrersRoute`) | Integration | ✅ full `go test ./...` green immediately before this test was added | N/A — regression/approval test proving UNCHANGED behavior, not new behavior; Strict TDD's RED gate does not apply the same way here (see Deviations) | ✅ Passed on first run — every sibling route (push/pull/tags/catalog/scan-status/signature-status/delete) answered exactly as before, and 3 interleaved Referrers reads did not perturb post-delete scan-status | ➖ N/A — this test's job is proving invariance, not exercising new logic paths | ➖ None needed |
+
+#### Test Summary (PR 4)
+- **Total tests written**: 8 new/updated test functions
+  (`TestSplitRepositoryPathCharacterizesCurrentSixMarkerBehavior` — renamed
+  and extended, 13 subtests; `TestHandleV2DispatchCharacterizesCurrentRoutingBeforeReferrers`
+  — last subtest updated in place;
+  `TestRouterReferrersEmptyManifestsNeverPushedAndDeletedSubject`, 3
+  subtests; `TestRouterReferrersContentTypeAndArtifactTypeFilterHeader`, 4
+  subtests; `TestRouterReferrersAuthorizationAndMethodDispatch`, 3
+  subtests; `TestRouterReferrersReturnsAllMatchesInDigestOrder`;
+  `TestRouterReferrersCosignBundleListedLegacySigAbsent`;
+  `TestRouterReferrersDoubleReferrersResidualPathFailsClosedAtDigestInvalid`;
+  `TestRouterFullLifecycleUnaffectedByReferrersRoute`) — 9 total test
+  functions, 24 subtests
+- **Total tests passing**: all of the above, plus the full pre-existing
+  suite (`go test ./... -count=1`, see Verification Evidence)
+- **Layers used**: Integration only (every Phase 7/8 test drives the real
+  `*Router` via `httptest`, through real SQLite/filesystem-backed stores —
+  no mocks anywhere in this PR, matching handleReferrers' position as pure
+  HTTP wiring with no new business logic of its own)
+- **Approval tests** (characterization, updated in lockstep):
+  `TestSplitRepositoryPathCharacterizesCurrentSixMarkerBehavior` (renamed
+  from PR 1's five-marker version) and
+  `TestHandleV2DispatchCharacterizesCurrentRoutingBeforeReferrers`'s last
+  subtest — both intentionally updated, not left stale, per the Strict TDD
+  "Approval Testing" workflow
+- **Pure functions created**: 0 new — `handleReferrers` and `writeJSONAs`
+  are both HTTP-bound (write to `stdhttp.ResponseWriter`), same shape as
+  every existing handler in this file
+- **Test helpers added**: `pushRouterManifestPayload`,
+  `pushRouterReferrerManifest`, `getReferrers`, `decodeReferrersIndexBody`
+  (all in `router_test.go`; `uploadBlobViaHTTP` already existed in
+  `signature_status_test.go`, same package, reused verbatim — see
+  Deviations)
+
+### Files Changed (PR 4)
+
+| File | Action | What Was Done |
+|------|--------|---------------|
+| `internal/protocol/http/router.go` | Modified | `writeJSON`/`writeJSONAs` split; `/referrers/` appended as the 6th, last `splitRepositoryPath` marker (with an inline comment recording the Decision 6 ordering reasoning); `handleV2`'s `referrers/` dispatch case; `handleReferrers` handler |
+| `internal/protocol/http/router_test.go` | Modified | Renamed and extended `TestSplitRepositoryPathCharacterizesCurrentFiveMarkerBehavior` → `...SixMarkerBehavior`; updated `TestHandleV2DispatchCharacterizesCurrentRoutingBeforeReferrers`'s last subtest; added 7 new test functions (`TestRouterReferrersEmptyManifestsNeverPushedAndDeletedSubject`, `TestRouterReferrersContentTypeAndArtifactTypeFilterHeader`, `TestRouterReferrersAuthorizationAndMethodDispatch`, `TestRouterReferrersReturnsAllMatchesInDigestOrder`, `TestRouterReferrersCosignBundleListedLegacySigAbsent`, `TestRouterReferrersDoubleReferrersResidualPathFailsClosedAtDigestInvalid`, `TestRouterFullLifecycleUnaffectedByReferrersRoute`) + 4 new test helpers |
+| `internal/protocol/http/testdata/bundle-referrer-manifest.json` | Created | New fixture: a cosign v3 bundle referrer manifest shape with a `__SUBJECT_DIGEST__` placeholder token, substituted at test time with a real, already-pushed subject digest |
+| `README.md` | Modified | Added one bullet to "What's implemented" documenting the Referrers endpoint, filtering, empty-list semantics, and the retained `provenance: false` workaround note |
+| `openspec/changes/oci-referrers-api/tasks.md` | Modified | Marked tasks 7.1–8.3 `[x]` |
+| `openspec/changes/oci-referrers-api/apply-progress.md` | Modified | This document — merged PR 1 + PR 2 + PR 3 + PR 4 progress; change is now complete |
+
+### Deviations from Design (PR 4)
+
+1. **`TestSplitRepositoryPathCharacterizesCurrentFiveMarkerBehavior` was
+   renamed to `...SixMarkerBehavior` and its referrers-shaped table entries
+   were updated in place, rather than left untouched with a new,
+   separately-named test added alongside it.** PR 1's own doc comment on
+   that test said a later PR's marker addition "can be proven not to
+   regress any of these" — read literally, that could mean the test itself
+   should never change. But four of its own entries were pinning the
+   ABSENCE of a `/referrers/` marker (e.g. "referrers path with digest has
+   no matching marker today -- unroutable"), and this PR's whole point is
+   to add that exact marker: those four specific assertions are
+   *necessarily* superseded by an intentional behavior change, not
+   accidentally regressed. tasks.md 7.1 itself says "extends 0.1's table",
+   which this PR read as "update the same table-driven test in place,
+   changing only the entries that describe intentionally-changed behavior,
+   leaving every blobs/manifests/tags entry byte-identical" — exactly the
+   Strict TDD module's own documented "Approval Testing" pattern for
+   refactoring/behavior-changing existing code (write the new expected
+   value, confirm RED against the old implementation, then GREEN). Confirmed
+   this preserved every non-referrers case: the RED run showed exactly the
+   4 referrers-related cases failing and all 9 others still passing, which
+   is the intended signal.
+2. **`ociImageIndexMediaType` is not referenced directly from
+   `router.go`.** design.md's Interfaces/Contracts code block shows
+   `writeJSONAs(w, stdhttp.StatusOK, ociImageIndexMediaType, index)`, but
+   that constant is unexported in `internal/app/regixtry` (package
+   `regixtry`) and `internal/protocol/http` (package `regixtryhttp`) cannot
+   reference an unexported cross-package identifier — this would not
+   compile. Used `index.MediaType` instead (the `ReferrersIndex` value
+   `Service.Referrers` already returns, whose `MediaType` field is always
+   set to that exact same constant, per PR 3's `queries.go`). Zero
+   behavioral difference: the wire bytes are byte-identical either way, and
+   this avoids introducing a second duplicated constant that could drift.
+3. **`TestRouterFullLifecycleUnaffectedByReferrersRoute` (task 8.1) does
+   not follow a literal RED→GREEN cycle, and is recorded as such rather
+   than silently claimed otherwise.** Its job is to prove existing behavior
+   is UNCHANGED, so by construction it is expected to pass immediately
+   against the already-implemented Phase 7 code (there is no "new behavior
+   not yet implemented" for it to fail against) — this mirrors PR 1's own
+   Phase 0 characterization tests, which the Strict TDD module and
+   tasks.md's own "Mandatory Ordering Constraint" section already
+   established as an accepted exception (approval/characterization tests
+   confirm current behavior rather than drive new behavior). What this test
+   DOES add beyond the pre-existing suite (which already proves the same
+   invariance implicitly by staying green): one single, explicit,
+   end-to-end sequential walk through push/pull/tags/catalog/scan-status/
+   signature-status/delete/repeated-Referrers-reads/post-delete-scan-status
+   in the presence of the new marker and handler, specifically targeting
+   the threat this task exists to guard against (a marker-ordering
+   regression), rather than relying on that guarantee being an emergent
+   property of many unrelated tests happening to still pass.
+4. **The `docker/build-push-action` `provenance: false` workaround note did
+   not previously exist anywhere in this repository** (`rg`-confirmed
+   across `README.md` and every file under `docs/`) — despite
+   `proposal.md`'s "Docs/roadmap impact" line stating "the `provenance:
+   false` note MUST stay". Read that as a requirement that the final
+   README, after this change ships, must state the note (i.e. it must not
+   be silently omitted or contradicted by the new Referrers documentation)
+   — not literally that pre-existing README text must be preserved
+   character-for-character, since no such text existed to preserve. Added
+   one sentence to the new README bullet making this explicit: pushing a
+   subject-bearing manifest still requires the subject to already exist
+   in-repository, so the workaround remains necessary. This satisfies the
+   orchestrator's explicit instruction ("MUST stay as-is; do not imply this
+   change removes the push-time subject-must-exist validation") without
+   inventing prior README content that never existed.
+5. **`uploadBlobViaHTTP` is reused verbatim from
+   `signature_status_test.go`, not redefined.** Both files are in package
+   `regixtryhttp`; an initial draft duplicated this helper (needed for the
+   cosign bundle fixture's blob uploads) and would have failed to compile
+   with a redeclaration error. Removed the duplicate and call the existing
+   helper directly — zero behavioral difference, standard same-package
+   reuse.
+
+No other deviations. Every production-code decision in this PR (marker
+position, `handleReferrers`' authorize-before-parse ordering and
+method-check-before-authorize ordering, the `OCI-Filters-Applied`
+success-path-only placement, the `writeJSON`/`writeJSONAs` split shape)
+matches design.md Decision 6/7 and the Interfaces/Contracts section
+exactly.
+
+### Issues Found (PR 4)
+
+None blocking. The design.md ambiguity in Deviation 2 (an
+uncompilable literal in the design doc's own code sample) and the
+proposal.md ambiguity in Deviation 4 (a "MUST stay" instruction for text
+that never existed) were both caught and resolved within this PR's own
+work, not deferred.
+
+This is the FINAL PR in the `oci-referrers-api` Feature Branch Chain. Every
+phase (0 through 8) is now complete. Nothing is deferred to a future PR.
+
+### Verification Evidence (PR 4)
+
+```
+$ go build ./...
+(clean, exit 0)
+
+$ go vet ./...
+(clean, exit 0)
+
+$ gofmt -l .
+(clean, no output)
+
+$ go test ./... -count=1
+ok  	regixtry/cmd/regixtry	5.3s
+ok  	regixtry/internal/app/auth	0.35s
+ok  	regixtry/internal/app/regixtry	7.2s
+ok  	regixtry/internal/app/scanning	0.06s
+ok  	regixtry/internal/domain/auth	0.02s
+ok  	regixtry/internal/domain/regixtry	0.02s
+ok  	regixtry/internal/domain/signing	0.22-0.31s
+ok  	regixtry/internal/infra/auth/postgres	0.56-0.63s
+ok  	regixtry/internal/infra/cliprogress	0.02s
+ok  	regixtry/internal/infra/install/compose	0.05-0.08s
+ok  	regixtry/internal/infra/install/linux	0.82-0.87s
+ok  	regixtry/internal/infra/install/releases	0.08-0.12s
+ok  	regixtry/internal/infra/metadata/sqlite	1.3-1.4s
+ok  	regixtry/internal/infra/release	0.04-0.08s
+ok  	regixtry/internal/infra/scanning/gitleaks	0.45-0.54s
+ok  	regixtry/internal/infra/scanning/trivy	0.44-0.53s
+ok  	regixtry/internal/infra/storage/fsblob	0.03-0.05s
+ok  	regixtry/internal/ports	0.01-0.02s
+ok  	regixtry/internal/protocol/http	4.0-4.2s
+ok  	regixtry/internal/tui	0.6-0.7s
+```
+
+RED confirmation evidence (every Phase 7 test, run before `router.go` was
+touched — all failing with `404 NAME_UNKNOWN`/`route not found`, and the
+`splitRepositoryPath` table failing exactly its 4 referrers-related cases):
+
+```
+$ go test ./internal/protocol/http/... -run 'TestRouterReferrers|TestSplitRepositoryPathCharacterizesCurrentSixMarkerBehavior|TestHandleV2DispatchCharacterizesCurrentRoutingBeforeReferrers' -v
+--- FAIL: TestSplitRepositoryPathCharacterizesCurrentSixMarkerBehavior (4/13 subtests failed, 9 passed)
+--- FAIL: TestHandleV2DispatchCharacterizesCurrentRoutingBeforeReferrers (1/9 subtests failed: "status = 404, want 200")
+--- FAIL: TestRouterReferrersEmptyManifestsNeverPushedAndDeletedSubject (3/3 subtests failed: 404 vs 200)
+--- FAIL: TestRouterReferrersContentTypeAndArtifactTypeFilterHeader (4/4 subtests failed: 404 vs 200/400)
+--- FAIL: TestRouterReferrersAuthorizationAndMethodDispatch (3/3 subtests failed: 404 vs 200/401/405)
+--- FAIL: TestRouterReferrersReturnsAllMatchesInDigestOrder (404 vs 200)
+--- FAIL: TestRouterReferrersCosignBundleListedLegacySigAbsent (404 vs 200)
+--- PASS: TestRouterReferrersDoubleReferrersResidualPathFailsClosedAtDigestInvalid (already 404, coincidentally same status as the pre-implementation default -- confirmed the FAILURE MODE was still wrong: NAME_UNKNOWN, not the required DIGEST_INVALID, via the decoded error-code assertion, not the bare status code)
+FAIL
+```
+
+GREEN confirmation (identical command, after `router.go`'s `handleReferrers`
++ marker + `writeJSONAs` split landed):
+
+```
+$ go test ./internal/protocol/http/... -run 'TestRouterReferrers|TestSplitRepositoryPathCharacterizesCurrentSixMarkerBehavior|TestHandleV2DispatchCharacterizesCurrentRoutingBeforeReferrers|TestWriteJSONSetsApplicationJSONContentType' -v
+PASS
+ok  	regixtry/internal/protocol/http	0.427s
+```
+
+Line-count evidence (`git diff --stat HEAD` on this run's changed/new
+files, excluding the checkbox-only `tasks.md` delta):
+
+```
+ README.md                             |   1 +
+ internal/protocol/http/router.go      |  69 +++-
+ internal/protocol/http/router_test.go | 658 ++++++++++++++++++++++++++++++++--
+ 3 files changed, 692 insertions(+), 36 deletions(-)
+
+ internal/protocol/http/testdata/bundle-referrer-manifest.json | 26 ++  (new file, untracked, not in --stat above)
+```
+
+Total authored diff for this PR: ~718 lines (692 + 26), under the 800-line
+session-cached PR budget for this chain and under tasks.md's own Unit 4
+forecast ("HTTP route wiring + full regression proof").
+
+Commits on this branch:
+```
+(to be created by the apply phase's caller / orchestrator's commit step —
+ see Result Contract; this document records the work, not the commit
+ history, per the other PRs' own convention above)
+```
+
+## Feature Complete
+
+All phases (0 through 8) of `oci-referrers-api` are now implemented, tested,
+and verified. This was the final PR (#4 of 4) in the Feature Branch Chain.
+`sdd-verify` can now confirm the full spec's Success Criteria end to end
+against a complete, merged implementation:
+
+- `GET /v2/<name>/referrers/<digest>` is live, authorized, filtered,
+  empty-list-safe, backfill-aware, and legacy-cosign-separate.
+- Push, pull, tag listing, catalog, delete, scan queueing, and signature
+  verification are all proven unchanged.
+- README documents the new endpoint without implying any push-path change.
+
 ## Remaining Tasks
 
-- [ ] Phase 7: Router / HTTP (PR 4)
-- [ ] Phase 8: Regression (PR 4)
+None. All tasks (0.1 through 8.3) are complete.
 
 ## Workload / PR Boundary (PR 2)
 
@@ -719,7 +1066,9 @@ Line-count evidence (`git diff --stat HEAD` on this run's changed/new files):
 
 ## Status
 
-29/29 tasks in scope across PR 1 (0.1–2.3), PR 2 (3.1–4.5), and PR 3
-(5.1–6.5) complete. Ready for `sdd-verify`, and ready for PR #4 (Phases
-7–8, router/HTTP wiring + full regression + README) to branch from this
-leaf once merged/reviewed.
+40/40 tasks complete across all four PRs: PR 1 (0.1–2.3), PR 2 (3.1–4.5),
+PR 3 (5.1–6.5), and PR 4 (7.1–8.3, FINAL). The `oci-referrers-api` change is
+now feature-complete on branch `feature/oci-referrers-api-04-router-docs`.
+`go build ./...`, `go vet ./...`, `gofmt -l .`, and the full `go test
+./... -count=1` are all clean. Ready for `sdd-verify` to confirm the full
+spec's Success Criteria end to end.

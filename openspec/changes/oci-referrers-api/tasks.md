@@ -166,41 +166,41 @@ Chain strategy: pending
 
 ## Phase 7: Router / HTTP (PR 4)
 
-- [ ] 7.1 RED `internal/protocol/http/router_test.go`: `/referrers/`
+- [x] 7.1 RED `internal/protocol/http/router_test.go`: `/referrers/`
       appended last to `splitRepositoryPath`'s markers, incl. a repository
       literally named `referrers` (threat matrix: route shadowing, extends
       0.1's table).
-- [ ] 7.2 RED (same file): `200` + empty `manifests[]` for never-pushed and
+- [x] 7.2 RED (same file): `200` + empty `manifests[]` for never-pushed and
       for deleted subjects; assert the raw response body contains
       `"manifests":[]`, not `null` (threat matrix: silent wire
       non-conformance).
-- [ ] 7.3 RED (same file): `Content-Type:
+- [x] 7.3 RED (same file): `Content-Type:
       application/vnd.oci.image.index.v1+json`; `?artifactType=<v>` filters
       and sets `OCI-Filters-Applied: artifactType`; unfiltered and
       `?artifactType=` (empty/whitespace) set no header.
-- [ ] 7.4 RED (same file): pull-scoped token → `200`; no-access principal →
+- [x] 7.4 RED (same file): pull-scoped token → `200`; no-access principal →
       `401` + challenge; non-GET → `405 Allow: GET` (threat matrix:
       privilege reuse).
-- [ ] 7.5 RED (same file): a seeded multi-referrer repository returns all
+- [x] 7.5 RED (same file): a seeded multi-referrer repository returns all
       matches in digest order in one response (threat matrix: unbounded
       response, bounded-scope guard).
-- [ ] 7.6 RED (same file; new fixture
+- [x] 7.6 RED (same file; new fixture
       `testdata/bundle-referrer-manifest.json`): a cosign v3 bundle referrer
       (`subject` set) is listed; a legacy `.sig` manifest (no `subject`) is
       absent and its tag path still resolves.
-- [ ] 7.7 GREEN `internal/protocol/http/router.go`: split `writeJSON` into
+- [x] 7.7 GREEN `internal/protocol/http/router.go`: split `writeJSON` into
       `writeJSON`/`writeJSONAs`; add `/referrers/` marker (last); add
       `handleV2` case; add `handleReferrers` (auth → digest parse →
       `Service.Referrers` → header → `writeJSONAs`).
-- [ ] 7.8 Confirm Phase 7 GREEN (Unit 4 focused test command, partial).
+- [x] 7.8 Confirm Phase 7 GREEN (Unit 4 focused test command, partial).
 
 ## Phase 8: Regression (PR 4)
 
-- [ ] 8.1 RED `internal/protocol/http/router_test.go` or existing suites:
+- [x] 8.1 RED `internal/protocol/http/router_test.go` or existing suites:
       push, pull, tag listing, catalog, delete, scan queueing, and
       signature verification are byte-identical before and after (threat
       matrix / spec: no push-path or scan behavior change).
-- [ ] 8.2 Confirm full `go test ./...` zero regressions; `gofmt -l .` clean;
+- [x] 8.2 Confirm full `go test ./...` zero regressions; `gofmt -l .` clean;
       `go vet ./...` clean.
-- [ ] 8.3 Docs: `README.md` — document the Referrers endpoint; retain the
+- [x] 8.3 Docs: `README.md` — document the Referrers endpoint; retain the
       `provenance: false` workaround note verbatim.
