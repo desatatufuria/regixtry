@@ -3578,13 +3578,16 @@ func TestFeatureOverridesScreenSigningSaveIncludesUnsignedSelfRead(t *testing.T)
 	updated = runKey(t, updated, "o") // opens the editor on the highlighted (only) row
 
 	// Focus starts on Enabled: Tab to the Keys field, 'n' to start adding,
-	// type a real key, Enter to commit it into the local list, Tab to
-	// UnsignedSelfRead and toggle it off -> pusher, then Enter (now not
-	// consumed by the Keys field, back in idle navigation) to save.
+	// type a real key, Enter to commit it into the local list, Tab twice
+	// (Keys -> Identities -> UnsignedSelfRead, the new Identities field
+	// inserted by signing-keyless-verification between them) and toggle
+	// UnsignedSelfRead off -> pusher, then Enter (now not consumed by the
+	// Keys field, back in idle navigation) to save.
 	updated = runKey(t, updated, "tab")
 	updated = runKey(t, updated, "n")
 	updated = runKey(t, updated, trustedKeyListTestPEM1)
 	updated = runKey(t, updated, "enter")
+	updated = runKey(t, updated, "tab")
 	updated = runKey(t, updated, "tab")
 	updated = runKey(t, updated, " ")
 	firstSave := runKey(t, updated, "enter")

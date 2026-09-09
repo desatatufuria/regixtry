@@ -2,6 +2,7 @@ package tui
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -273,6 +274,89 @@ func TestOverrideEditorPrefillAppliesOnlyOnce(t *testing.T) {
 	}
 }
 
+// TestOverrideEditorSigningIdentityListReachableOnceTabbedTo is the Phase
+// 8.5 RED test: once focus is on overrideFieldIdentities, 'n' reaches the
+// embedded trustedIdentityList -- unlike Keys' always-reachable shortcut,
+// Identities only claims its keys once explicitly focused (same asymmetric
+// design as signingConfigScreen.updateConfigKey, for the identical reason:
+// two list-shaped fields cannot both claim the same keys ambiguously).
+func TestOverrideEditorSigningIdentityListReachableOnceTabbedTo(t *testing.T) {
+	t.Parallel()
+
+	env := screenEnv{}
+	editor := newOverrideEditor(signingFeatureName, "team/api")
+	idx := indexOfOverrideField(editor.fields, overrideFieldIdentities)
+	if idx < 0 {
+		t.Fatal("test setup invalid: overrideFieldIdentities not present in signing's fields")
+	}
+	editor.focus = idx
+
+	next, cmd, consumed := editor.update(env, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	if !consumed || cmd != nil {
+		t.Fatalf("'n' with identities focused: consumed = %v, cmd = %v, want consumed=true, cmd=nil", consumed, cmd)
+	}
+	if !next.identities.adding {
+		t.Fatal("'n' did not reach the embedded trustedIdentityList: adding = false, want true")
+	}
+}
+
+// TestOverrideEditorSaveIncludesConfiguredIdentities is the Phase 8.5 RED
+// test: submitting the editor (Enter) builds a
+// ports.RepositoryOverrideDetails carrying the currently configured
+// TrustedIdentities, mirroring TrustedPublicKeys.
+func TestOverrideEditorSaveIncludesConfiguredIdentities(t *testing.T) {
+	t.Parallel()
+
+	env := screenEnv{}
+	editor := newOverrideEditor(signingFeatureName, "team/api")
+	editor.identities = newTrustedIdentityList([]ports.TrustedIdentity{{CertificateIdentityRegexp: "^valid$", CertificateOIDCIssuer: "https://token.actions.githubusercontent.com"}})
+
+	_, cmd, consumed := editor.update(env, tea.KeyMsg{Type: tea.KeyEnter})
+	if !consumed || cmd == nil {
+		t.Fatalf("Enter (save): consumed = %v, cmd = %v, want consumed=true, cmd != nil", consumed, cmd)
+	}
+}
+
+// TestOverrideEditorApplyOverrideSeedsIdentitiesFromStoredOverride is the
+// Phase 8.5 RED test: applyOverride (via applyLoaded) seeds e.identities
+// from the stored override's TrustedIdentities, mirroring e.keys' own
+// seeding from TrustedPublicKeys.
+func TestOverrideEditorApplyOverrideSeedsIdentitiesFromStoredOverride(t *testing.T) {
+	t.Parallel()
+
+	env := screenEnv{}
+	editor := newOverrideEditor(signingFeatureName, "team/api")
+
+	ownIdentities := []ports.TrustedIdentity{{CertificateIdentityRegexp: "^valid$", CertificateOIDCIssuer: "https://token.actions.githubusercontent.com"}}
+	editor, _ = editor.applyLoaded(env, adminRepositoryOverrideLoadedMsg{
+		repository: "team/api",
+		feature:    signingFeatureName,
+		exists:     true,
+		override:   ports.RepositoryOverrideDetails{TrustedIdentities: ownIdentities},
+	})
+
+	if got := editor.identities.Identities(); !reflect.DeepEqual(got, ownIdentities) {
+		t.Fatalf("identities = %#v, want %#v (the override's own stored identities)", got, ownIdentities)
+	}
+}
+
+// TestRenderOverrideEditorShowsConfiguredIdentities is the Phase 8.5 RED
+// test: the rendered editor includes the configured trusted identity's
+// regexp and issuer when signing is selected (spec: "Modal fields adapt to
+// signing's settings shape including identities").
+func TestRenderOverrideEditorShowsConfiguredIdentities(t *testing.T) {
+	t.Parallel()
+
+	editor := newOverrideEditor(signingFeatureName, "team/api")
+	editor.identities = newTrustedIdentityList([]ports.TrustedIdentity{{CertificateIdentityRegexp: "^valid$", CertificateOIDCIssuer: "https://token.actions.githubusercontent.com"}})
+
+	theme := newAdminTheme()
+	rendered := renderOverrideEditor(theme, editor)
+	if !strings.Contains(rendered, "^valid$") || !strings.Contains(rendered, "https://token.actions.githubusercontent.com") {
+		t.Fatalf("renderOverrideEditor() = %q, want the configured identity's regexp and issuer shown", rendered)
+	}
+}
+
 func TestOverrideEditorFieldsAreImmutableAfterConstruction(t *testing.T) {
 	t.Parallel()
 
@@ -282,7 +366,7 @@ func TestOverrideEditorFieldsAreImmutableAfterConstruction(t *testing.T) {
 	}{
 		{trivyFeatureName, []overrideField{overrideFieldEnabled, overrideFieldPathPrimary, overrideFieldPathSecondary, overrideFieldClear}},
 		{gitleaksFeatureName, []overrideField{overrideFieldEnabled, overrideFieldPathPrimary, overrideFieldClear}},
-		{signingFeatureName, []overrideField{overrideFieldEnabled, overrideFieldPathPrimary, overrideFieldUnsignedSelfRead, overrideFieldClear}},
+		{signingFeatureName, []overrideField{overrideFieldEnabled, overrideFieldPathPrimary, overrideFieldIdentities, overrideFieldUnsignedSelfRead, overrideFieldClear}},
 	}
 	for _, tc := range cases {
 		editor := newOverrideEditor(tc.feature, "team/api")

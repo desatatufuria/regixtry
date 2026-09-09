@@ -179,12 +179,13 @@ func TestOverrideFieldsForFeatureSkipsPathSecondaryForGitleaks(t *testing.T) {
 
 	// Signing likewise has no second path field (design.md Decision 11
 	// piece 3's condition, generalized), but includes its own
-	// UnsignedSelfRead field.
+	// UnsignedSelfRead field, plus (signing-keyless-verification) its own
+	// Identities field.
 	t.Run("signing skips PathSecondary but includes UnsignedSelfRead", func(t *testing.T) {
 		t.Parallel()
 
 		got := overrideFieldsForFeature(signingFeatureName)
-		want := []overrideField{overrideFieldEnabled, overrideFieldPathPrimary, overrideFieldUnsignedSelfRead, overrideFieldClear}
+		want := []overrideField{overrideFieldEnabled, overrideFieldPathPrimary, overrideFieldIdentities, overrideFieldUnsignedSelfRead, overrideFieldClear}
 		if len(got) != len(want) {
 			t.Fatalf("overrideFieldsForFeature(signing) = %v, want %v", got, want)
 		}

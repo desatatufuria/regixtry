@@ -19,6 +19,7 @@ const (
 	overrideFieldEnabled          overrideField = iota
 	overrideFieldPathPrimary                    // trivy: ignore file | gitleaks: config | signing: trusted key
 	overrideFieldPathSecondary                  // trivy only
+	overrideFieldIdentities                     // signing only: trusted identity list
 	overrideFieldUnsignedSelfRead               // signing only
 	overrideFieldClear                          // action row, not an input
 )
@@ -32,7 +33,7 @@ func overrideFieldsForFeature(feature string) []overrideField {
 	case gitleaksFeatureName:
 		return []overrideField{overrideFieldEnabled, overrideFieldPathPrimary, overrideFieldClear}
 	case signingFeatureName:
-		return []overrideField{overrideFieldEnabled, overrideFieldPathPrimary, overrideFieldUnsignedSelfRead, overrideFieldClear}
+		return []overrideField{overrideFieldEnabled, overrideFieldPathPrimary, overrideFieldIdentities, overrideFieldUnsignedSelfRead, overrideFieldClear}
 	default: // trivy
 		return []overrideField{overrideFieldEnabled, overrideFieldPathPrimary, overrideFieldPathSecondary, overrideFieldClear}
 	}
@@ -63,6 +64,11 @@ type overrideEditor struct {
 	// pathSecondary exactly as before; this field is simply unused for
 	// those two features.
 	keys trustedKeyList
+	// identities is Keys' sibling for keyless (Fulcio/OIDC) trust anchors
+	// (signing-keyless-verification), living at overrideFieldIdentities'
+	// own position -- signing only, unused for gitleaks/trivy exactly like
+	// keys.
+	identities trustedIdentityList
 	// pendingGlobalKeys/pendingGlobalKeysLoaded/prefillApplied back the
 	// "seed a never-configured signing override with the current global
 	// keys" flow. applyLoaded chains a follow-up loadSigningPolicyCmd once
@@ -87,6 +93,7 @@ func newOverrideEditor(feature, repository string) overrideEditor {
 		loading:          true,
 		unsignedSelfRead: "off",
 		keys:             newTrustedKeyList(repository, nil),
+		identities:       newTrustedIdentityList(nil),
 	}
 }
 
@@ -151,14 +158,32 @@ func (e overrideEditor) update(env screenEnv, msg tea.KeyMsg) (overrideEditor, t
 	// rendered highlight (renderOverrideEditor's
 	// e.currentField() == overrideFieldPathPrimary check) is always honest
 	// about what is currently receiving input.
+	//
+	// Identities (signing-keyless-verification) is NOT given the same
+	// unconditional priority as Keys: both widgets would otherwise claim
+	// the identical Up/Down/'n'/'x' keys ambiguously with no way to tell
+	// which list an unfocused keystroke was meant for. Identities only
+	// claims them once the operator has actually tabbed onto
+	// overrideFieldIdentities -- Keys keeps its established
+	// reachable-from-anywhere shortcut (preserving
+	// TestOverrideEditorSigningKeyListReachableWithoutTabbingToIt's pinned
+	// behavior) since it has no competing sibling field ambiguity.
 	if e.feature == signingFeatureName {
-		next, cmd, consumed := e.keys.update(env, msg)
-		if consumed {
-			e.keys = next
-			if idx := indexOfOverrideField(e.fields, overrideFieldPathPrimary); idx >= 0 {
-				e.focus = idx
+		if e.currentField() == overrideFieldIdentities {
+			next, consumed := e.identities.update(msg)
+			if consumed {
+				e.identities = next
+				return e, nil, true
 			}
-			return e, cmd, true
+		} else {
+			next, cmd, consumed := e.keys.update(env, msg)
+			if consumed {
+				e.keys = next
+				if idx := indexOfOverrideField(e.fields, overrideFieldPathPrimary); idx >= 0 {
+					e.focus = idx
+				}
+				return e, cmd, true
+			}
 		}
 	}
 	switch {
@@ -197,6 +222,7 @@ func (e overrideEditor) update(env screenEnv, msg tea.KeyMsg) (overrideEditor, t
 			input.ConfigPath = e.pathPrimary
 		case signingFeatureName:
 			input.TrustedPublicKeys = e.keys.Keys()
+			input.TrustedIdentities = e.identities.Identities()
 			input.UnsignedSelfRead = normalizeUnsignedSelfRead(e.unsignedSelfRead)
 		default:
 			input.IgnoreFilePath = e.pathPrimary
@@ -306,6 +332,7 @@ func (e *overrideEditor) applyOverride(override ports.RepositoryOverrideDetails,
 		e.unsignedSelfRead = "off"
 		if e.feature == signingFeatureName {
 			e.keys = newTrustedKeyList(e.repository, nil)
+			e.identities = newTrustedIdentityList(nil)
 		}
 		return
 	}
@@ -315,6 +342,7 @@ func (e *overrideEditor) applyOverride(override ports.RepositoryOverrideDetails,
 		e.pathPrimary = override.ConfigPath
 	case signingFeatureName:
 		e.keys = newTrustedKeyList(e.repository, override.TrustedPublicKeys)
+		e.identities = newTrustedIdentityList(override.TrustedIdentities)
 		e.unsignedSelfRead = normalizeUnsignedSelfRead(override.UnsignedSelfRead)
 	default:
 		e.pathPrimary = override.IgnoreFilePath
@@ -439,6 +467,7 @@ func renderOverrideEditor(theme adminTheme, e overrideEditor) string {
 		lines = append(lines, renderTextField(theme, "Config Path", e.pathPrimary, e.currentField() == overrideFieldPathPrimary))
 	case signingFeatureName:
 		lines = append(lines, renderTrustedKeyList(theme, e.keys, e.currentField() == overrideFieldPathPrimary)...)
+		lines = append(lines, renderTrustedIdentityList(theme, e.identities, e.currentField() == overrideFieldIdentities)...)
 		lines = append(lines, renderTextField(theme, "Unsigned Self-Read", normalizeUnsignedSelfRead(e.unsignedSelfRead), e.currentField() == overrideFieldUnsignedSelfRead))
 	default:
 		lines = append(lines, renderTextField(theme, "Ignore File Path", e.pathPrimary, e.currentField() == overrideFieldPathPrimary))

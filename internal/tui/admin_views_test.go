@@ -636,7 +636,11 @@ func TestRenderSigningPolicyModalIsASeparateSurfaceFromScanPolicyModal(t *testin
 // successor to the retired TestRenderRepositoryOverrideModalSigningShowsTrustedKeyLabel,
 // updated for the signing-key-management change: when feature is "signing",
 // PathPrimary's position renders trustedKeyList's own "Trusted Keys (N)"
-// heading, not the Trivy/gitleaks path label.
+// heading, not the Trivy/gitleaks path label. Further updated by
+// signing-keyless-verification for the new trustedIdentityList component
+// (own heading row + "No trusted identities configured." row when empty,
+// +2 rows versus the pre-identities budget since both cases below configure
+// zero identities).
 func TestRenderOverrideEditorSigningShowsTrustedKeyLabel(t *testing.T) {
 	t.Parallel()
 
@@ -650,12 +654,12 @@ func TestRenderOverrideEditorSigningShowsTrustedKeyLabel(t *testing.T) {
 		{
 			name:       "signing, no error",
 			editor:     overrideEditor{open: true, repository: "library/alpine", feature: signingFeatureName, exists: true, enabled: true, keys: newTrustedKeyList("library/alpine", []string{"-----BEGIN PUBLIC KEY-----\nfake\n-----END PUBLIC KEY-----\n"})},
-			wantHeight: 16,
+			wantHeight: 18,
 		},
 		{
 			name:       "signing + error",
 			editor:     overrideEditor{open: true, repository: "library/alpine", feature: signingFeatureName, exists: true, enabled: true, keys: newTrustedKeyList("library/alpine", []string{"-----BEGIN PUBLIC KEY-----\nfake\n-----END PUBLIC KEY-----\n"}), err: "trusted_public_keys[0] is invalid"},
-			wantHeight: 18,
+			wantHeight: 20,
 		},
 	}
 
