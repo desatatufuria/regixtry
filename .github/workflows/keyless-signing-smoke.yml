@@ -1,0 +1,76 @@
+name: keyless-signing-smoke
+
+# Deliberately workflow_dispatch-only, never push/pull_request: this job
+# signs a real throwaway image with cosign's keyless (Fulcio/OIDC) flow
+# against Sigstore's public-good infrastructure. Every real signature it
+# creates becomes a PERMANENT PUBLIC Rekor transparency-log entry tied to
+# this repository's real identity, so it must run deliberately, on demand,
+# not on every commit.
+#
+# What this proves that no other test in the repo can (see
+# openspec/changes/signing-keyless-verification/apply-progress.md's "Open
+# items"): every implementation phase for keyless verification
+# (internal/domain/signing/keyless.go's VerifyKeyless) was built in a
+# sandbox with no Docker and no ability to mint a real Fulcio certificate,
+# so only the fail-closed/rejection paths were ever provable there. GitHub
+# Actions is the one environment with Docker, real network access to
+# Sigstore's public Fulcio/Rekor services, and the ability to mint a real
+# short-lived OIDC identity token (via `permissions: id-token: write`) --
+# this job is the only place a genuine "keyless signature verifies
+# successfully" round trip can be proven end to end.
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  # Required for cosign to obtain a real, short-lived GitHub Actions OIDC
+  # identity token (its ambient-credential detector reads this
+  # automatically -- no extra cosign flag is needed for it).
+  id-token: write
+
+jobs:
+  keyless-signing-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # Pinned to the exact v4.1.2 tag (not a floating major/main ref), the
+      # current stable release as of this workflow's authoring -- confirmed
+      # via the sigstore/cosign-installer GitHub releases/tags API, commit
+      # 6f9f17788090df1f26f669e9d70d6ae9567deba6. cosign-release is pinned
+      # explicitly to v3.1.3, the current stable cosign release (the
+      # installer's own default at this tag is the older v3.0.6).
+      #
+      # Deliberately no docker/setup-buildx-action step here: that action
+      # defaults to the "docker-container" buildx driver, which runs
+      # buildkit inside its own container and does NOT inherit the host
+      # dockerd's /etc/docker/daemon.json (so it cannot push to the
+      # loopback-only, plain-HTTP regixtry instance this job starts, without
+      # extra buildkitd registry config). ubuntu-latest runners ship a
+      # modern Docker CLI with the buildx plugin already installed, whose
+      # default builder uses the "docker" driver -- i.e. the host daemon
+      # directly. The smoke script builds with that default driver's
+      # `--load` (the "docker" driver has no registry exporter, so
+      # `buildx build --push` is not an option at all here) and then pushes
+      # with the ordinary `docker push`, which goes through the same host
+      # daemon and honors the insecure-registries entry the script writes
+      # to daemon.json, with no extra setup.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: "v3.1.3"
+
+      - name: Run keyless signing smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          docs/verification/scripts/keyless-signing-smoke.sh
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_WORKFLOW_REF: ${{ github.workflow_ref }}
