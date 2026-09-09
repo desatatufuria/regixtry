@@ -828,3 +828,227 @@ func TestComposeVerifiedIdentity_ReportsMatchingIdentitysIssuer(t *testing.T) {
 		})
 	}
 }
+
+// seedReferrerOnlyBundleSignatureArtifact publishes ONLY the referrer
+// manifest (subject.digest = subjectDigest) and its bundle-document blob --
+// deliberately never publishing the legacy signing.BundleIndexTag(subjectDigest)
+// Image Index seedBundleSignatureArtifact always publishes alongside it. This
+// is exactly what modern cosign actually does today (confirmed live via
+// three real keyless-signing-smoke.yml runs): it pushes the signature as a
+// genuine OCI 1.1 referrer artifact, discoverable only through the real
+// Referrers API (ListReferrers), and writes no "sha256-<hex>" index tag at
+// all. verifyBundleSignature's pre-fix tag-index-only lookup can never find
+// a signature seeded this way; the Referrers API fallback must.
+func seedReferrerOnlyBundleSignatureArtifact(t *testing.T, service *Service, repository string, subjectDigest string, statementDigestHex string, key *ecdsa.PrivateKey) {
+	t.Helper()
+
+	ctx := context.Background()
+
+	payload := bundleInTotoStatementPayload(t, statementDigestHex)
+	bundleDoc := buildBundleDocument(t, key, payload)
+	uploadBlobForTest(t, service, repository, bundleDoc)
+
+	emptyConfig := []byte("{}")
+	uploadBlobForTest(t, service, repository, emptyConfig)
+
+	referrerManifest := map[string]any{
+		"schemaVersion": 2,
+		"mediaType":     "application/vnd.oci.image.manifest.v1+json",
+		"config": map[string]any{
+			"mediaType": "application/vnd.oci.empty.v1+json",
+			"digest":    digestForTest(emptyConfig),
+			"size":      len(emptyConfig),
+		},
+		"layers": []map[string]any{
+			{
+				"mediaType": signing.SigstoreBundleMediaType,
+				"digest":    digestForTest(bundleDoc),
+				"size":      len(bundleDoc),
+			},
+		},
+		"subject": map[string]any{
+			"mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+			"digest":    subjectDigest,
+			"size":      949,
+		},
+		"artifactType": signing.SigstoreBundleMediaType,
+	}
+	referrerBytes, err := json.Marshal(referrerManifest)
+	if err != nil {
+		t.Fatalf("json.Marshal(referrer manifest) error = %v", err)
+	}
+	referrerDigest := digestForTest(referrerBytes)
+
+	if _, err := service.PublishManifest(ctx, repository, referrerDigest, "application/vnd.oci.image.manifest.v1+json", referrerBytes); err != nil {
+		t.Fatalf("PublishManifest(referrer manifest) error = %v", err)
+	}
+	service.WaitForBackgroundWork()
+}
+
+// seedReferrerOnlyKeylessBundleSignatureArtifact mirrors
+// seedReferrerOnlyBundleSignatureArtifact, swapping in
+// buildKeylessBundleDocument (a certificate-carrying bundle document) for
+// buildBundleDocument -- the referrer-only sibling of
+// seedKeylessBundleSignatureArtifact.
+func seedReferrerOnlyKeylessBundleSignatureArtifact(t *testing.T, service *Service, repository string, subjectDigest string, statementDigestHex string, certDER []byte) {
+	t.Helper()
+
+	ctx := context.Background()
+
+	payload := bundleInTotoStatementPayload(t, statementDigestHex)
+	bundleDoc := buildKeylessBundleDocument(t, certDER, payload)
+	uploadBlobForTest(t, service, repository, bundleDoc)
+
+	emptyConfig := []byte("{}")
+	uploadBlobForTest(t, service, repository, emptyConfig)
+
+	referrerManifest := map[string]any{
+		"schemaVersion": 2,
+		"mediaType":     "application/vnd.oci.image.manifest.v1+json",
+		"config": map[string]any{
+			"mediaType": "application/vnd.oci.empty.v1+json",
+			"digest":    digestForTest(emptyConfig),
+			"size":      len(emptyConfig),
+		},
+		"layers": []map[string]any{
+			{
+				"mediaType": signing.SigstoreBundleMediaType,
+				"digest":    digestForTest(bundleDoc),
+				"size":      len(bundleDoc),
+			},
+		},
+		"subject": map[string]any{
+			"mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+			"digest":    subjectDigest,
+			"size":      949,
+		},
+		"artifactType": signing.SigstoreBundleMediaType,
+	}
+	referrerBytes, err := json.Marshal(referrerManifest)
+	if err != nil {
+		t.Fatalf("json.Marshal(referrer manifest) error = %v", err)
+	}
+	referrerDigest := digestForTest(referrerBytes)
+
+	if _, err := service.PublishManifest(ctx, repository, referrerDigest, "application/vnd.oci.image.manifest.v1+json", referrerBytes); err != nil {
+		t.Fatalf("PublishManifest(referrer manifest) error = %v", err)
+	}
+	service.WaitForBackgroundWork()
+}
+
+// TestServiceVerifySignature_ReferrerOnlyBundleSignatureIsDiscoveredAndVerified
+// is the RED characterization test for the real production gap this change
+// fixes: modern cosign (any version defaulting to real OCI 1.1 referrers,
+// confirmed live via keyless-signing-smoke.yml across multiple runs) never
+// writes the legacy signing.BundleIndexTag Image Index at all -- it pushes
+// the signature purely as a real referrer artifact, discoverable only
+// through the Referrers API. Before this change, verifyBundleSignature only
+// ever looked up BundleIndexTag and reported "unsigned" the instant that tag
+// didn't resolve, never querying ListReferrers -- so a signature seeded
+// EXACTLY this way (no index tag, referrer-only) was always rejected even
+// with a valid trusted key configured. After the fix, this must verify.
+func TestServiceVerifySignature_ReferrerOnlyBundleSignatureIsDiscoveredAndVerified(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	repository := "library/alpine"
+	imageDigest := seedArbitraryImageManifest(t, service, repository, " - referrer-only bundle verified")
+	key, keyPEM := generateTestECDSAP256KeyPair(t)
+	seedReferrerOnlyBundleSignatureArtifact(t, service, repository, imageDigest, bareHex(imageDigest), key)
+
+	policy := signingPolicyForTest(t, true, []string{keyPEM})
+
+	state, match, err := service.verifySignature(context.Background(), repository, imageDigest, policy)
+	if err != nil {
+		t.Fatalf("verifySignature() error = %v, want nil (a referrer-only bundle signature, discoverable only via the real Referrers API, must verify)", err)
+	}
+	if state != signatureStateVerified {
+		t.Fatalf("verifySignature() state = %q, want %q", state, signatureStateVerified)
+	}
+	if want := signing.Fingerprint(keyPEM); match.KeyFingerprint != want {
+		t.Fatalf("verifySignature() fingerprint = %q, want %q (the fingerprint of the trusted key that actually matched)", match.KeyFingerprint, want)
+	}
+}
+
+// TestServiceVerifySignature_ReferrerOnlyBundleSignatureNotFromTrustedKeyIsUntrusted
+// is the referrer-only sibling of
+// TestServiceVerifySignature_BundleSignatureNotFromTrustedKeyIsUntrusted: a
+// signature exists ONLY as a real referrer (no index tag), but its DSSE
+// signature does not verify against any configured trusted key -> untrusted,
+// not unsigned (a real candidate WAS found and considered via the Referrers
+// API, it just didn't verify -- preserving the tag-index path's own
+// unsigned/untrusted distinction for this new discovery source too).
+func TestServiceVerifySignature_ReferrerOnlyBundleSignatureNotFromTrustedKeyIsUntrusted(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	repository := "library/alpine"
+	imageDigest := seedArbitraryImageManifest(t, service, repository, " - referrer-only untrusted key")
+
+	signingKey, _ := generateTestECDSAP256KeyPair(t)    // the key that actually signs
+	_, trustedKeyPEM := generateTestECDSAP256KeyPair(t) // an unrelated key configured as trusted
+
+	seedReferrerOnlyBundleSignatureArtifact(t, service, repository, imageDigest, bareHex(imageDigest), signingKey)
+	policy := signingPolicyForTest(t, true, []string{trustedKeyPEM})
+
+	state, match, err := service.verifySignature(context.Background(), repository, imageDigest, policy)
+	if err == nil {
+		t.Fatal("verifySignature() error = nil, want a policy violation")
+	}
+	if !domain.IsCode(err, domain.ErrorCodePolicyViolation) {
+		t.Fatalf("verifySignature() error = %v, want ErrorCodePolicyViolation", err)
+	}
+	if state != signatureStateUntrusted {
+		t.Fatalf("verifySignature() state = %q, want %q (a real referrer candidate was found via the Referrers API but did not verify)", state, signatureStateUntrusted)
+	}
+	if match.KeyFingerprint != "" {
+		t.Fatalf("verifySignature() fingerprint = %q, want empty for an untrusted signature", match.KeyFingerprint)
+	}
+}
+
+// TestServiceVerifySignature_ReferrerOnlyIdentityOnlyPolicyReachesRealKeylessVerification
+// is the referrer-only sibling of
+// TestServiceVerifySignature_IdentityOnlyPolicyReachesRealKeylessVerification:
+// a keyless (certificate-carrying) bundle document, discoverable ONLY via
+// the real Referrers API (no index tag), with zero trusted keys and >=1
+// trusted identity configured. This proves the Referrers API fallback also
+// reaches the identity/keyless verification branch, not just the key branch
+// -- state becomes "untrusted" (a real verification ATTEMPT that failed,
+// since a self-signed test certificate can never chain to the real pinned
+// Sigstore root), never "unverifiable" or "unsigned".
+func TestServiceVerifySignature_ReferrerOnlyIdentityOnlyPolicyReachesRealKeylessVerification(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	repository := "library/alpine"
+	imageDigest := seedArbitraryImageManifest(t, service, repository, " - referrer-only identity only")
+	certDER := selfSignedCertDER(t)
+	seedReferrerOnlyKeylessBundleSignatureArtifact(t, service, repository, imageDigest, bareHex(imageDigest), certDER)
+
+	policy := ports.SigningPolicySettings{
+		Enabled: true,
+		TrustedIdentities: []ports.TrustedIdentity{
+			{CertificateIdentityRegexp: "^.*$", CertificateOIDCIssuer: "https://token.actions.githubusercontent.com"},
+		},
+	}
+
+	state, match, err := service.verifySignature(context.Background(), repository, imageDigest, policy)
+	if err == nil {
+		t.Fatal("verifySignature() error = nil, want a policy violation (a self-signed test certificate can never chain to the real pinned root)")
+	}
+	if !domain.IsCode(err, domain.ErrorCodePolicyViolation) {
+		t.Fatalf("verifySignature() error = %v, want ErrorCodePolicyViolation", err)
+	}
+	if state != signatureStateUntrusted {
+		t.Fatalf("verifySignature() state = %q, want %q (a real verification attempt was made via the Referrers API fallback and failed)", state, signatureStateUntrusted)
+	}
+	if match.KeyFingerprint != "" || match.Identity != "" {
+		t.Fatalf("verifySignature() match = %#v, want the zero value when nothing verified", match)
+	}
+}

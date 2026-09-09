@@ -250,94 +250,169 @@ func (s *Service) verifyBundleSignature(ctx context.Context, repositoryRef domai
 			fmt.Sprintf("pull of %s@%s is blocked by the signing policy: %s", repository, digest, err.Error()))
 	}
 
+	// foundIndexCandidateSource tracks whether the legacy bundle-index tag
+	// itself resolved (regardless of how many, if any, of its entries turn
+	// out usable) -- needed below to preserve the exact existing
+	// unsigned-vs-untrusted distinction: an index that resolved but whose
+	// entries never verified has always reported "untrusted", never
+	// "unsigned" (today's unchanged behavior). Only when NEITHER discovery
+	// source -- this legacy tag-index lookup NOR the real Referrers API
+	// fallback below -- finds any candidate at all is this digest genuinely
+	// unsigned.
+	foundIndexCandidateSource := false
+
 	indexManifest, err := s.metadata.ResolveManifest(ctx, s.tenant(ctx), repositoryRef, indexTag)
-	if err != nil {
-		if domain.IsCode(err, domain.ErrorCodeNotFound) {
-			// Neither the legacy `.sig` tag nor the modern bundle index
-			// resolved: this digest has no signature artifact in either
-			// format. Today's exact existing unsigned outcome, unchanged.
-			return signatureStateUnsigned, signatureMatch{}, domain.NewPolicyViolationError(
-				fmt.Sprintf("pull of %s@%s is blocked by the signing policy: no signature found", repository, digest))
+	switch {
+	case err == nil:
+		foundIndexCandidateSource = true
+
+		entries, parseErr := signing.ParseBundleIndex(indexManifest.Payload)
+		if parseErr != nil {
+			return signatureStateUnverifiable, signatureMatch{}, domain.NewPolicyViolationError(
+				fmt.Sprintf("pull of %s@%s is blocked by the signing policy: no usable bundle signature entry found", repository, digest))
 		}
+
+		for _, entry := range entries {
+			referrerManifest, resolveErr := s.metadata.ResolveManifest(ctx, s.tenant(ctx), repositoryRef, entry.Digest)
+			if resolveErr != nil {
+				if domain.IsCode(resolveErr, domain.ErrorCodeNotFound) {
+					continue // a listed referrer that no longer resolves; try the next candidate
+				}
+				return "", signatureMatch{}, resolveErr // infrastructure error propagates unchanged
+			}
+
+			state, match, terminal, tryErr := s.tryVerifyBundleReferrerCandidate(ctx, repository, digest, referrerManifest.Payload, keys, identities)
+			if terminal {
+				return state, match, tryErr // verified, or mismatched -- either way, terminal
+			}
+			if tryErr != nil {
+				return "", signatureMatch{}, tryErr // infrastructure error propagates unchanged
+			}
+		}
+	case domain.IsCode(err, domain.ErrorCodeNotFound):
+		// No legacy bundle-index tag: fall through and try the real OCI 1.1
+		// Referrers API below instead of immediately reporting unsigned --
+		// modern cosign (confirmed live via keyless-signing-smoke.yml) pushes
+		// the signature as a genuine referrer artifact and writes no index
+		// tag at all.
+	default:
 		return "", signatureMatch{}, err // infrastructure error propagates unchanged
 	}
 
-	entries, err := signing.ParseBundleIndex(indexManifest.Payload)
+	// subjectDigest is unreachable-error-safe: digest already passed the
+	// identical "sha256:<hex>" validation inside BundleIndexTag above.
+	subjectDigest, err := domain.ParseDigest(digest)
 	if err != nil {
-		return signatureStateUnverifiable, signatureMatch{}, domain.NewPolicyViolationError(
-			fmt.Sprintf("pull of %s@%s is blocked by the signing policy: no usable bundle signature entry found", repository, digest))
+		return "", signatureMatch{}, err
 	}
 
-	for _, entry := range entries {
-		referrerManifest, err := s.metadata.ResolveManifest(ctx, s.tenant(ctx), repositoryRef, entry.Digest)
-		if err != nil {
-			if domain.IsCode(err, domain.ErrorCodeNotFound) {
-				continue // a listed referrer that no longer resolves; try the next candidate
-			}
-			return "", signatureMatch{}, err // infrastructure error propagates unchanged
-		}
+	referrerRows, err := s.metadata.ListReferrers(ctx, s.tenant(ctx), repositoryRef, subjectDigest)
+	if err != nil {
+		return "", signatureMatch{}, err // infrastructure error propagates unchanged
+	}
 
-		subjectDigest, layerDigest, err := signing.ParseBundleReferrerManifest(referrerManifest.Payload)
-		if err != nil || subjectDigest == "" || layerDigest == "" {
-			continue // not a usable bundle referrer manifest; try the next candidate
+	for _, row := range referrerRows {
+		state, match, terminal, tryErr := s.tryVerifyBundleReferrerCandidate(ctx, repository, digest, row.Payload, keys, identities)
+		if terminal {
+			return state, match, tryErr // verified, or mismatched -- either way, terminal
 		}
-		if subjectDigest != digest {
-			continue // a real signature, just not for THIS digest -- the filter must actually filter
+		if tryErr != nil {
+			return "", signatureMatch{}, tryErr // infrastructure error propagates unchanged
 		}
+	}
 
-		bundlePayload, err := s.openSignaturePayload(ctx, layerDigest)
-		if err != nil {
-			return "", signatureMatch{}, err // infrastructure error propagates unchanged
-		}
-		if bundlePayload == nil {
-			continue // bundle document blob missing or oversized; try the next candidate
-		}
-
-		bundle, err := signing.ParseBundleDocument(bundlePayload)
-		if err != nil {
-			continue // not a usable bundle document; try the next candidate
-		}
-
-		payload, err := base64.StdEncoding.DecodeString(bundle.Payload)
-		if err != nil {
-			continue // not a usable DSSE payload; try the next candidate
-		}
-
-		paeBytes := signing.PAE(bundle.PayloadType, payload)
-
-		for _, signatureB64 := range bundle.Signatures {
-			for _, trusted := range keys {
-				if err := signing.Verify(trusted.key, paeBytes, signatureB64); err != nil {
-					continue
-				}
-				if err := signing.CheckBundleClaims(payload, digest); err != nil {
-					return signatureStateMismatched, signatureMatch{}, domain.NewPolicyViolationError(
-						fmt.Sprintf("pull of %s@%s is blocked by the signing policy: bundle signature binds a different digest", repository, digest))
-				}
-				return signatureStateVerified, signatureMatch{KeyFingerprint: signing.Fingerprint(trusted.pemText)}, nil
-			}
-		}
-
-		// The key loop above never matched this candidate; try the identity
-		// anchor next, still scoped to this same candidate bundle document
-		// (design.md Data Flow: key loop, then identity branch, OR
-		// semantics, never combined).
-		if len(identities) == 0 {
-			continue // no identity anchors configured; try the next candidate
-		}
-		vm, vmErr := signing.ParseBundleVerificationMaterial(bundlePayload)
-		if vmErr != nil || !vm.HasCertificate {
-			continue // not a keyless-shaped candidate; try the next candidate
-		}
-		matchedSAN, keylessErr := signing.VerifyKeyless(bundlePayload, toSigningIdentities(identities), digest)
-		if keylessErr != nil {
-			continue // this candidate's identity anchor didn't match; try the next one
-		}
-		return signatureStateVerified, signatureMatch{Identity: composeVerifiedIdentity(matchedSAN, identities)}, nil
+	if !foundIndexCandidateSource && len(referrerRows) == 0 {
+		// Neither the legacy `.sig` tag (verifySignature, above this call),
+		// the legacy bundle-index tag, nor the real Referrers API found
+		// anything at all: this digest has no signature artifact in any
+		// known format. Today's exact existing unsigned outcome, unchanged.
+		return signatureStateUnsigned, signatureMatch{}, domain.NewPolicyViolationError(
+			fmt.Sprintf("pull of %s@%s is blocked by the signing policy: no signature found", repository, digest))
 	}
 
 	return signatureStateUntrusted, signatureMatch{}, domain.NewPolicyViolationError(
 		fmt.Sprintf("pull of %s@%s is blocked by the signing policy: no bundle signature validated against a trusted key or trusted identity", repository, digest))
+}
+
+// tryVerifyBundleReferrerCandidate is verifyBundleSignature's shared
+// per-candidate verification logic, factored out so both discovery sources
+// -- the legacy bundle-index tag loop above and the real OCI 1.1 Referrers
+// API fallback -- run the EXACT SAME parsing/crypto logic against a
+// referrer manifest's raw payload, with zero duplication. referrerPayload is
+// the referrer manifest's own raw bytes: for the tag-index path this is a
+// freshly resolved domain.Manifest.Payload; for the Referrers API path it is
+// a ports.ReferrerRow.Payload the store already scoped to subject_digest ==
+// digest, so it can be handed to signing.ParseBundleReferrerManifest
+// directly, with no index-of-referrers indirection.
+//
+// terminal reports whether this candidate reached a final outcome the
+// caller must return immediately: true with a nil err means
+// signatureStateVerified; true with a non-nil err means
+// signatureStateMismatched (a real signature, by a trusted key, over the
+// wrong claims -- security-critical, must never be silently skipped in
+// favor of the next candidate). terminal=false means this candidate was not
+// usable or did not verify; the caller should try the next one -- except
+// when err is ALSO non-nil in that case, which is a genuine infrastructure
+// error (a blob read failure) that must propagate unchanged, never treated
+// as "try the next candidate".
+func (s *Service) tryVerifyBundleReferrerCandidate(ctx context.Context, repository, digest string, referrerPayload []byte, keys []trustedKeyEntry, identities []ports.TrustedIdentity) (state string, match signatureMatch, terminal bool, err error) {
+	subjectDigest, layerDigest, parseErr := signing.ParseBundleReferrerManifest(referrerPayload)
+	if parseErr != nil || subjectDigest == "" || layerDigest == "" {
+		return "", signatureMatch{}, false, nil // not a usable bundle referrer manifest; try the next candidate
+	}
+	if subjectDigest != digest {
+		return "", signatureMatch{}, false, nil // a real signature, just not for THIS digest -- the filter must actually filter
+	}
+
+	bundlePayload, err := s.openSignaturePayload(ctx, layerDigest)
+	if err != nil {
+		return "", signatureMatch{}, false, err // infrastructure error propagates unchanged
+	}
+	if bundlePayload == nil {
+		return "", signatureMatch{}, false, nil // bundle document blob missing or oversized; try the next candidate
+	}
+
+	bundle, err := signing.ParseBundleDocument(bundlePayload)
+	if err != nil {
+		return "", signatureMatch{}, false, nil // not a usable bundle document; try the next candidate
+	}
+
+	payload, err := base64.StdEncoding.DecodeString(bundle.Payload)
+	if err != nil {
+		return "", signatureMatch{}, false, nil // not a usable DSSE payload; try the next candidate
+	}
+
+	paeBytes := signing.PAE(bundle.PayloadType, payload)
+
+	for _, signatureB64 := range bundle.Signatures {
+		for _, trusted := range keys {
+			if err := signing.Verify(trusted.key, paeBytes, signatureB64); err != nil {
+				continue
+			}
+			if err := signing.CheckBundleClaims(payload, digest); err != nil {
+				return signatureStateMismatched, signatureMatch{}, true, domain.NewPolicyViolationError(
+					fmt.Sprintf("pull of %s@%s is blocked by the signing policy: bundle signature binds a different digest", repository, digest))
+			}
+			return signatureStateVerified, signatureMatch{KeyFingerprint: signing.Fingerprint(trusted.pemText)}, true, nil
+		}
+	}
+
+	// The key loop above never matched this candidate; try the identity
+	// anchor next, still scoped to this same candidate bundle document
+	// (design.md Data Flow: key loop, then identity branch, OR semantics,
+	// never combined).
+	if len(identities) == 0 {
+		return "", signatureMatch{}, false, nil // no identity anchors configured; try the next candidate
+	}
+	vm, vmErr := signing.ParseBundleVerificationMaterial(bundlePayload)
+	if vmErr != nil || !vm.HasCertificate {
+		return "", signatureMatch{}, false, nil // not a keyless-shaped candidate; try the next candidate
+	}
+	matchedSAN, keylessErr := signing.VerifyKeyless(bundlePayload, toSigningIdentities(identities), digest)
+	if keylessErr != nil {
+		return "", signatureMatch{}, false, nil // this candidate's identity anchor didn't match; try the next one
+	}
+	return signatureStateVerified, signatureMatch{Identity: composeVerifiedIdentity(matchedSAN, identities)}, true, nil
 }
 
 // toSigningIdentities maps the ports-layer trusted identities to
