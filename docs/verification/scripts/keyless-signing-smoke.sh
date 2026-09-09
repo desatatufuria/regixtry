@@ -450,8 +450,25 @@ main() {
   # job's `permissions: id-token: write` -- no extra cosign flag is needed
   # for that either. --allow-http-registry is required because this
   # registry is plain HTTP on 127.0.0.1.
+  #
+  # --registry-referrers-mode legacy is REQUIRED, confirmed the hard way: the
+  # first real run of this script (cosign v3.1.3's own default,
+  # registry-referrers-mode=oci-1-1) pushed the bundle as a genuine OCI 1.1
+  # referrer (subject field, discoverable only via GET
+  # /v2/<repo>/referrers/<digest>) and wrote NO sha256-<digest> fallback tag
+  # at all -- confirmed via this script's own tags/list diagnostic, which
+  # showed only ["v1"]. internal/app/regixtry/service_signing.go's
+  # verifyBundleSignature exclusively resolves signing.BundleIndexTag(digest)
+  # (the legacy sha256-<hex> tag), never the real Referrers API, so the
+  # keyless identity branch was never even reached -- signature-status
+  # reported "unsigned". Forcing legacy mode here makes cosign write that
+  # tag, matching what verifyBundleSignature actually looks up today. Making
+  # verifyBundleSignature itself fall back to the real Referrers API
+  # (regixtry already implements GET /v2/<repo>/referrers/<digest>, see
+  # openspec/changes/oci-referrers-api/) is tracked as separate follow-up
+  # work, not fixed here.
   printf 'signing keylessly via the real GitHub Actions OIDC identity\n'
-  cosign sign --yes --allow-http-registry \
+  cosign sign --yes --allow-http-registry --registry-referrers-mode legacy \
     "127.0.0.1:${REGISTRY_PORT}/${REPOSITORY}@${digest}"
 
   local identity_san=""
