@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -599,9 +600,10 @@ func (r *Router) handleAdminSigningKeyUsage(w stdhttp.ResponseWriter, req *stdht
 //     verification loop.
 func decodeSigningPolicySettings(req *stdhttp.Request) (ports.SigningPolicySettings, error) {
 	var payload struct {
-		Enabled           bool     `json:"enabled"`
-		TrustedPublicKeys []string `json:"trusted_public_keys"`
-		UnsignedSelfRead  string   `json:"unsigned_self_read"`
+		Enabled           bool                    `json:"enabled"`
+		TrustedPublicKeys []string                `json:"trusted_public_keys"`
+		TrustedIdentities []ports.TrustedIdentity `json:"trusted_identities"`
+		UnsignedSelfRead  string                  `json:"unsigned_self_read"`
 	}
 	if err := decodeAdminJSON(req, &payload); err != nil {
 		return ports.SigningPolicySettings{}, err
@@ -617,13 +619,47 @@ func decodeSigningPolicySettings(req *stdhttp.Request) (ports.SigningPolicySetti
 		}
 		normalizedKeys = append(normalizedKeys, normalized)
 	}
-	if payload.Enabled && len(normalizedKeys) == 0 {
-		return ports.SigningPolicySettings{}, domainauth.NewValidationError("enabled requires at least one usable entry in trusted_public_keys")
+	normalizedIdentities, err := normalizeTrustedIdentities(payload.TrustedIdentities)
+	if err != nil {
+		return ports.SigningPolicySettings{}, err
+	}
+	if payload.Enabled && len(normalizedKeys) == 0 && len(normalizedIdentities) == 0 {
+		return ports.SigningPolicySettings{}, domainauth.NewValidationError("enabled requires at least one usable entry in trusted_public_keys or trusted_identities")
 	}
 	if !ports.ValidUnsignedSelfRead(payload.UnsignedSelfRead) {
 		return ports.SigningPolicySettings{}, domainauth.NewValidationError(fmt.Sprintf("unsigned_self_read %q is invalid", payload.UnsignedSelfRead))
 	}
-	return ports.SigningPolicySettings{Enabled: payload.Enabled, TrustedPublicKeys: normalizedKeys, UnsignedSelfRead: payload.UnsignedSelfRead}, nil
+	return ports.SigningPolicySettings{
+		Enabled:           payload.Enabled,
+		TrustedPublicKeys: normalizedKeys,
+		TrustedIdentities: normalizedIdentities,
+		UnsignedSelfRead:  payload.UnsignedSelfRead,
+	}, nil
+}
+
+// normalizeTrustedIdentities validates every identity's
+// certificate_identity_regexp (must compile, mirroring
+// signing.NormalizePublicKeyPEM's write-time validation posture for keys)
+// and requires a non-empty certificate_oidc_issuer, bounding the set at
+// maxSigningPolicyTrustedKeys -- the same cap trusted_public_keys already
+// has, since both anchor lists bound the identical per-pull verification
+// loop. Errors name the offending index, never echoing caller-supplied
+// content beyond the index (mirrors the key validation error shape).
+func normalizeTrustedIdentities(identities []ports.TrustedIdentity) ([]ports.TrustedIdentity, error) {
+	if len(identities) > maxSigningPolicyTrustedKeys {
+		return nil, domainauth.NewValidationError(fmt.Sprintf("trusted_identities must contain at most %d entries", maxSigningPolicyTrustedKeys))
+	}
+	normalized := make([]ports.TrustedIdentity, 0, len(identities))
+	for index, identity := range identities {
+		if _, err := regexp.Compile(identity.CertificateIdentityRegexp); err != nil {
+			return nil, domainauth.NewValidationError(fmt.Sprintf("trusted_identities[%d].certificate_identity_regexp is invalid: %s", index, err.Error()))
+		}
+		if strings.TrimSpace(identity.CertificateOIDCIssuer) == "" {
+			return nil, domainauth.NewValidationError(fmt.Sprintf("trusted_identities[%d].certificate_oidc_issuer is required", index))
+		}
+		normalized = append(normalized, identity)
+	}
+	return normalized, nil
 }
 
 func signingPolicySettingsResponse(settings ports.SigningPolicySettings) map[string]any {
@@ -631,9 +667,14 @@ func signingPolicySettingsResponse(settings ports.SigningPolicySettings) map[str
 	if trustedKeys == nil {
 		trustedKeys = []string{}
 	}
+	trustedIdentities := settings.TrustedIdentities
+	if trustedIdentities == nil {
+		trustedIdentities = []ports.TrustedIdentity{}
+	}
 	return map[string]any{
 		"enabled":             settings.Enabled,
 		"trusted_public_keys": trustedKeys,
+		"trusted_identities":  trustedIdentities,
 		"unsigned_self_read":  settings.UnsignedSelfRead,
 		"updated_at":          settings.UpdatedAt,
 	}

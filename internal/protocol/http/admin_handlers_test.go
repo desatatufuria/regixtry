@@ -1144,6 +1144,353 @@ func TestAdminSigningRepositoryOverridePutRejectsInvalidUnsignedSelfRead(t *test
 	}
 }
 
+// TestAdminSigningPolicyPutPersistsTrustedIdentitiesAndRoundTrips is the
+// Phase 7.1 RED test (tasks.md 7.1): decodeSigningPolicySettings accepts
+// trusted_identities alongside trusted_public_keys, and an identity-only
+// policy (zero keys, ≥1 identity) is accepted -- signing-keyless-verification
+// spec: "Identity-only policy verifies with no trusted key".
+func TestAdminSigningPolicyPutPersistsTrustedIdentitiesAndRoundTrips(t *testing.T) {
+	t.Parallel()
+
+	blobStore, store, cleanup := newTestStores(t)
+	defer cleanup()
+	handler := newRouterWithStores(blobStore, store, allowAllAccessController{}, fakeAuthService{verify: &auth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+
+	body, err := json.Marshal(map[string]any{
+		"enabled": true,
+		"trusted_identities": []map[string]string{
+			{"certificate_identity_regexp": "^https://github.com/acme/.+$", "certificate_oidc_issuer": "https://token.actions.githubusercontent.com"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPut, "/admin/v1/signing-policy", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer admin-token")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d for an identity-only policy, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"certificate_identity_regexp":"^https://github.com/acme/.+$"`) {
+		t.Fatalf("body = %q, want the stored identity echoed back", recorder.Body.String())
+	}
+
+	stored, err := store.GetSigningPolicySettings(context.Background(), "tenant-a")
+	if err != nil {
+		t.Fatalf("GetSigningPolicySettings() error = %v", err)
+	}
+	if !stored.Enabled || len(stored.TrustedIdentities) != 1 || stored.TrustedIdentities[0].CertificateOIDCIssuer != "https://token.actions.githubusercontent.com" {
+		t.Fatalf("stored = %#v, want enabled and the trusted identity persisted", stored)
+	}
+	if len(stored.TrustedPublicKeys) != 0 {
+		t.Fatalf("stored.TrustedPublicKeys = %#v, want empty for an identity-only policy", stored.TrustedPublicKeys)
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/admin/v1/signing-policy", nil)
+	getReq.Header.Set("Authorization", "Bearer admin-token")
+	getRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(getRecorder, getReq)
+	if getRecorder.Code != http.StatusOK {
+		t.Fatalf("GET status = %d, want %d", getRecorder.Code, http.StatusOK)
+	}
+	if !strings.Contains(getRecorder.Body.String(), `"certificate_oidc_issuer":"https://token.actions.githubusercontent.com"`) {
+		t.Fatalf("GET body = %q, want the stored identity reflected back", getRecorder.Body.String())
+	}
+}
+
+// TestAdminSigningPolicyGetReturnsEmptyTrustedIdentitiesWhenUnset is the
+// Phase 7.1 RED test companion: signingPolicySettingsResponse must never
+// serialize trusted_identities as JSON null, mirroring
+// TestAdminSigningPolicyGetReturnsDefaultWhenNoRowExists' own
+// trusted_public_keys assertion.
+func TestAdminSigningPolicyGetReturnsEmptyTrustedIdentitiesWhenUnset(t *testing.T) {
+	t.Parallel()
+
+	blobStore, store, cleanup := newTestStores(t)
+	defer cleanup()
+	handler := newRouterWithStores(blobStore, store, allowAllAccessController{}, fakeAuthService{verify: &auth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/signing-policy", nil)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+	if !strings.Contains(recorder.Body.String(), `"trusted_identities":[]`) {
+		t.Fatalf("body = %q, want trusted_identities:[] never null", recorder.Body.String())
+	}
+}
+
+// TestAdminSigningPolicyPutRejectsInvalidIdentityRegexpNamingIndex is the
+// Phase 7.1 RED test (tasks.md 7.1): an identity whose
+// certificate_identity_regexp fails regexp.Compile is a 400/422 naming the
+// offending index, mirroring the existing invalid-key index-naming test.
+func TestAdminSigningPolicyPutRejectsInvalidIdentityRegexpNamingIndex(t *testing.T) {
+	t.Parallel()
+
+	blobStore, store, cleanup := newTestStores(t)
+	defer cleanup()
+	handler := newRouterWithStores(blobStore, store, allowAllAccessController{}, fakeAuthService{verify: &auth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+
+	body, err := json.Marshal(map[string]any{
+		"enabled": true,
+		"trusted_identities": []map[string]string{
+			{"certificate_identity_regexp": "^valid$", "certificate_oidc_issuer": "https://token.actions.githubusercontent.com"},
+			{"certificate_identity_regexp": "(unterminated", "certificate_oidc_issuer": "https://token.actions.githubusercontent.com"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPut, "/admin/v1/signing-policy", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer admin-token")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d for an invalid identity regexp, body = %s", recorder.Code, http.StatusUnprocessableEntity, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "[1]") {
+		t.Fatalf("body = %q, want the offending index (1) named", recorder.Body.String())
+	}
+
+	if _, err := store.GetSigningPolicySettings(context.Background(), "tenant-a"); err == nil {
+		t.Fatal("GetSigningPolicySettings() error = nil, want no row persisted for a rejected PUT")
+	}
+}
+
+// TestAdminSigningPolicyPutRejectsIdentityMissingIssuer is the Phase 7.1 RED
+// test: an identity with an empty certificate_oidc_issuer is a 400/422.
+func TestAdminSigningPolicyPutRejectsIdentityMissingIssuer(t *testing.T) {
+	t.Parallel()
+
+	blobStore, store, cleanup := newTestStores(t)
+	defer cleanup()
+	handler := newRouterWithStores(blobStore, store, allowAllAccessController{}, fakeAuthService{verify: &auth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+
+	body, err := json.Marshal(map[string]any{
+		"enabled": true,
+		"trusted_identities": []map[string]string{
+			{"certificate_identity_regexp": "^valid$", "certificate_oidc_issuer": ""},
+		},
+	})
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPut, "/admin/v1/signing-policy", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer admin-token")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d for a missing issuer, body = %s", recorder.Code, http.StatusUnprocessableEntity, recorder.Body.String())
+	}
+
+	if _, err := store.GetSigningPolicySettings(context.Background(), "tenant-a"); err == nil {
+		t.Fatal("GetSigningPolicySettings() error = nil, want no row persisted for a rejected PUT")
+	}
+}
+
+// TestAdminSigningPolicyPutRejectsMoreThan16Identities is the Phase 7.1 RED
+// test: more than 16 identities is a 400/422, bounding the per-pull
+// verification loop the same way trusted_public_keys already is.
+func TestAdminSigningPolicyPutRejectsMoreThan16Identities(t *testing.T) {
+	t.Parallel()
+
+	blobStore, store, cleanup := newTestStores(t)
+	defer cleanup()
+	handler := newRouterWithStores(blobStore, store, allowAllAccessController{}, fakeAuthService{verify: &auth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+
+	identities := make([]map[string]string, 0, 17)
+	for i := 0; i < 17; i++ {
+		identities = append(identities, map[string]string{"certificate_identity_regexp": "^valid$", "certificate_oidc_issuer": "https://token.actions.githubusercontent.com"})
+	}
+	body, err := json.Marshal(map[string]any{"enabled": true, "trusted_identities": identities})
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPut, "/admin/v1/signing-policy", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer admin-token")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d for 17 trusted identities, body = %s", recorder.Code, http.StatusUnprocessableEntity, recorder.Body.String())
+	}
+
+	if _, err := store.GetSigningPolicySettings(context.Background(), "tenant-a"); err == nil {
+		t.Fatal("GetSigningPolicySettings() error = nil, want no row persisted for a rejected PUT")
+	}
+}
+
+// TestAdminSigningPolicyPutRejectsEnabledWithZeroKeysAndZeroIdentities is the
+// Phase 7.1 RED test: the outage rule now requires at least one usable
+// anchor of EITHER kind -- enabled:true with both trusted_public_keys and
+// trusted_identities empty is still rejected (signing-keyless-verification
+// spec: "Global Trusted-Key-Or-Identity Signing Policy").
+func TestAdminSigningPolicyPutRejectsEnabledWithZeroKeysAndZeroIdentities(t *testing.T) {
+	t.Parallel()
+
+	blobStore, store, cleanup := newTestStores(t)
+	defer cleanup()
+	handler := newRouterWithStores(blobStore, store, allowAllAccessController{}, fakeAuthService{verify: &auth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+
+	body, err := json.Marshal(map[string]any{"enabled": true, "trusted_public_keys": []string{}, "trusted_identities": []map[string]string{}})
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPut, "/admin/v1/signing-policy", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer admin-token")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d for enabled:true with zero anchors of either kind, body = %s", recorder.Code, http.StatusUnprocessableEntity, recorder.Body.String())
+	}
+
+	if _, err := store.GetSigningPolicySettings(context.Background(), "tenant-a"); err == nil {
+		t.Fatal("GetSigningPolicySettings() error = nil, want no row persisted for a rejected PUT")
+	}
+}
+
+// TestAdminSigningRepositoryOverridePutPersistsTrustedIdentitiesAndRoundTrips
+// is the Phase 7.3 RED test (tasks.md 7.3): an override PUT with
+// trusted_identities persists and round-trips through the existing generic
+// repository-overrides HTTP resource, confirming the wire-level identity
+// projection (ports.RepositoryOverrideDetails.TrustedIdentities) actually
+// carries the value end to end -- not just the already-generic stored blob.
+func TestAdminSigningRepositoryOverridePutPersistsTrustedIdentitiesAndRoundTrips(t *testing.T) {
+	t.Parallel()
+
+	blobStore, store, cleanup := newTestStores(t)
+	defer cleanup()
+	handler := newRouterWithStores(blobStore, store, allowAllAccessController{}, fakeAuthService{verify: &auth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+
+	body, err := json.Marshal(map[string]any{
+		"enabled": true,
+		"trusted_identities": []map[string]string{
+			{"certificate_identity_regexp": "^https://github.com/acme/.+$", "certificate_oidc_issuer": "https://token.actions.githubusercontent.com"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPut, "/admin/v1/features/signing/repository-overrides/library/alpine", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer admin-token")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"certificate_oidc_issuer":"https://token.actions.githubusercontent.com"`) {
+		t.Fatalf("body = %q, want the stored identity echoed back", recorder.Body.String())
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/admin/v1/features/signing/repository-overrides/library/alpine", nil)
+	getReq.Header.Set("Authorization", "Bearer admin-token")
+	getRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(getRecorder, getReq)
+	if getRecorder.Code != http.StatusOK {
+		t.Fatalf("GET status = %d, want %d, body = %s", getRecorder.Code, http.StatusOK, getRecorder.Body.String())
+	}
+	if !strings.Contains(getRecorder.Body.String(), `"certificate_identity_regexp":"^https://github.com/acme/.+$"`) {
+		t.Fatalf("GET body = %q, want the stored signing override's identity", getRecorder.Body.String())
+	}
+
+	stored, err := store.GetRepositoryFeatureOverride(context.Background(), "tenant-a", "library/alpine", "signing")
+	if err != nil {
+		t.Fatalf("GetRepositoryFeatureOverride() error = %v", err)
+	}
+	if !strings.Contains(string(stored), "certificate_identity_regexp") {
+		t.Fatalf("stored payload = %s, want the persisted identity", stored)
+	}
+}
+
+// TestAdminSigningRepositoryOverrideKeysOnlyClearsInheritedIdentitiesOverHTTP
+// is the Phase 7.3 RED test (tasks.md 7.3): saving an override with keys but
+// no identities over HTTP clears that repository's inherited identities --
+// the HTTP-level confirmation of Phase 6.7/6.8's already-implemented
+// full-row-replace (signing-keyless-verification spec: "Override with keys
+// only clears inherited identities").
+func TestAdminSigningRepositoryOverrideKeysOnlyClearsInheritedIdentitiesOverHTTP(t *testing.T) {
+	t.Parallel()
+
+	blobStore, store, cleanup := newTestStores(t)
+	defer cleanup()
+	handler := newRouterWithStores(blobStore, store, allowAllAccessController{}, fakeAuthService{verify: &auth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+
+	seedBody, err := json.Marshal(map[string]any{
+		"enabled": true,
+		"trusted_identities": []map[string]string{
+			{"certificate_identity_regexp": "^valid$", "certificate_oidc_issuer": "https://token.actions.githubusercontent.com"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	seedReq := httptest.NewRequest(http.MethodPut, "/admin/v1/features/signing/repository-overrides/library/alpine", bytes.NewReader(seedBody))
+	seedReq.Header.Set("Authorization", "Bearer admin-token")
+	seedReq.Header.Set("Content-Type", "application/json")
+	seedRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(seedRecorder, seedReq)
+	if seedRecorder.Code != http.StatusOK {
+		t.Fatalf("seed status = %d, want %d, body = %s", seedRecorder.Code, http.StatusOK, seedRecorder.Body.String())
+	}
+
+	key := generateHTTPTestECDSAP256PublicKeyPEM(t)
+	keysOnlyBody, err := json.Marshal(map[string]any{"enabled": true, "trusted_public_keys": []string{key}})
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	keysOnlyReq := httptest.NewRequest(http.MethodPut, "/admin/v1/features/signing/repository-overrides/library/alpine", bytes.NewReader(keysOnlyBody))
+	keysOnlyReq.Header.Set("Authorization", "Bearer admin-token")
+	keysOnlyReq.Header.Set("Content-Type", "application/json")
+	keysOnlyRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(keysOnlyRecorder, keysOnlyReq)
+	if keysOnlyRecorder.Code != http.StatusOK {
+		t.Fatalf("keys-only status = %d, want %d, body = %s", keysOnlyRecorder.Code, http.StatusOK, keysOnlyRecorder.Body.String())
+	}
+	if strings.Contains(keysOnlyRecorder.Body.String(), "certificate_identity_regexp") {
+		t.Fatalf("keys-only PUT response = %q, must not still contain the previously-configured identity", keysOnlyRecorder.Body.String())
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/admin/v1/features/signing/repository-overrides/library/alpine", nil)
+	getReq.Header.Set("Authorization", "Bearer admin-token")
+	getRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(getRecorder, getReq)
+	if getRecorder.Code != http.StatusOK {
+		t.Fatalf("GET status = %d, want %d, body = %s", getRecorder.Code, http.StatusOK, getRecorder.Body.String())
+	}
+	if strings.Contains(getRecorder.Body.String(), "certificate_identity_regexp") {
+		t.Fatalf("GET body = %q, must not still contain the cleared identity", getRecorder.Body.String())
+	}
+
+	stored, err := store.GetRepositoryFeatureOverride(context.Background(), "tenant-a", "library/alpine", "signing")
+	if err != nil {
+		t.Fatalf("GetRepositoryFeatureOverride() error = %v", err)
+	}
+	if strings.Contains(string(stored), "certificate_identity_regexp") {
+		t.Fatalf("stored payload = %s, must not still contain the cleared identity", stored)
+	}
+}
+
 // TestAdminRepositoryGrantRoutesAuthenticationAndDelegateAuthority is the
 // Phase 2 RED test (tasks.md 2.11, design.md Decision 3's route table):
 // GET/PUT/DELETE /admin/v1/repositories/{repo}/grants[/{username}] must

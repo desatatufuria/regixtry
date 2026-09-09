@@ -505,6 +505,11 @@ type RepositoryOverrideDetails struct {
 	IgnorePolicyPath  string   `json:"ignore_policy_path,omitempty"`
 	ConfigPath        string   `json:"config_path,omitempty"`
 	TrustedPublicKeys []string `json:"trusted_public_keys,omitempty"`
+	// TrustedIdentities mirrors TrustedPublicKeys -- signing feature only,
+	// see SigningOverride's doc comment (signing-keyless-verification
+	// design.md's File Changes table: "TrustedIdentity; field on both
+	// settings types + RepositoryOverrideDetails").
+	TrustedIdentities []TrustedIdentity `json:"trusted_identities,omitempty"`
 	// UnsignedSelfRead mirrors SigningOverride.UnsignedSelfRead -- signing
 	// feature only, see that type's doc comment.
 	UnsignedSelfRead string    `json:"unsigned_self_read,omitempty"`

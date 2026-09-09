@@ -548,6 +548,7 @@ func (c *HTTPAdminClient) SetRepositoryOverride(ctx context.Context, session Adm
 		body["config_path"] = input.ConfigPath
 	case signingFeatureName:
 		body["trusted_public_keys"] = input.TrustedPublicKeys
+		body["trusted_identities"] = input.TrustedIdentities
 		body["unsigned_self_read"] = input.UnsignedSelfRead
 	default:
 		body["ignore_file_path"] = input.IgnoreFilePath
