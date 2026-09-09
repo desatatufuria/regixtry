@@ -594,33 +594,253 @@ PR4/Phase 7 scope.
   — triangulation skipped: no possible output shape other than one
   `signing.TrustedIdentity` per input entry, in order).
 
-## Remaining work (out of scope for this PR/branch)
+## Remaining work as of PR3 (superseded — see the PR4 section below for current status)
 
-- Phase 7: HTTP admin decode/serialize, including `ports.RepositoryOverrideDetails.TrustedIdentities` (PR4)
-- Phase 8: TUI trusted-identity list widget (PR4)
-- Phase 9: E2E smoke test with a real keyless-signed image, full regression, docs (PR4)
+- Phase 7: HTTP admin decode/serialize, including `ports.RepositoryOverrideDetails.TrustedIdentities` (PR4) — done, see below.
+- Phase 8: TUI trusted-identity list widget (PR4) — done, see below.
+- Phase 9: E2E smoke test with a real keyless-signed image, full regression, docs (PR4) — done (with a carried-forward, evidence-based deviation), see below.
 
-## Open items for a human / CI-with-docker environment
+## Scope covered by this batch (PR4 — Unit 4: http+tui+e2e, LAST PR in the chain)
+
+Branch: `feature/signing-keyless-verification-04-http-tui-docs` (based on
+`feature/signing-keyless-verification-03-app-wiring`, which is based on PR2,
+which is based on PR1, which is based on tracker
+`feature/signing-keyless-verification`, based on `develop`).
+
+Phases 7, 8, 9 from `tasks.md` — complete. This is the entire remaining
+scope of the change; the tracker branch aggregates PR1-PR4 to `develop`.
+
+### Files changed
+
+- `internal/protocol/http/admin_handlers.go` — `decodeSigningPolicySettings`
+  gains `TrustedIdentities []ports.TrustedIdentity` decode; new
+  `normalizeTrustedIdentities` (regexp-compile-validate + required-issuer
+  check per index, capped at `maxSigningPolicyTrustedKeys`, mirroring
+  `signing.NormalizePublicKeyPEM`'s write-time validation posture for keys);
+  the outage-rule check becomes keys-OR-identities.
+  `signingPolicySettingsResponse` gains `trusted_identities` (nil-normalized
+  to `[]`, mirroring `trusted_public_keys`'s own convention). No change was
+  needed to `repositoryOverrideResponse` or `normalizeSigningOverride`
+  (already-PR3 work): the per-repository override path already round-trips
+  `TrustedIdentities` end-to-end through the existing generic
+  `map[string]any` passthrough plus PR3's `normalizeSigningOverride`
+  identity validation — confirmed by two new RED tests that turned out to
+  already pass, an accepted characterization outcome, not a scaffolding
+  artifact.
+- `internal/ports/regixtry.go` — `RepositoryOverrideDetails` gains
+  `TrustedIdentities []TrustedIdentity` (`json:"trusted_identities,omitempty"`),
+  the field PR2 deliberately deferred to this PR (see PR2's own "Scope
+  decision, not a deviation" note above).
+- `internal/tui/admin_client.go` — `SetRepositoryOverride`'s signing-feature
+  body gains `trusted_identities`.
+- `internal/tui/trusted_identity_list.go` (new) — `trustedIdentityList`,
+  structurally mirroring `trustedKeyList` (`trusted_key_list.go`) for
+  add/select/delete, but with one deliberate difference: an identity is a
+  regexp+issuer PAIR, not one pasted PEM blob, so `adding` mode cycles
+  between two input fields with Tab (`identityAddFieldRegexp`/
+  `identityAddFieldIssuer`) rather than accumulating one paste buffer. There
+  is also no delete-usage-count lookup (no equivalent advisory endpoint
+  exists for identities), so `'x'` removes the selected entry immediately,
+  with no confirm prompt — a deliberate, documented scope reduction versus
+  `trustedKeyList`'s usage-informed delete flow.
+- `internal/tui/session.go` — `signingPolicyModal` gains `Identities
+  trustedIdentityList`; `signingPolicyField` gains
+  `signingPolicyFieldIdentities`, inserted between `signingPolicyFieldAddKey`
+  and `signingPolicyFieldClearKeys` in the cycle (a real behavior change:
+  every existing Tab-count/field-cycle test referencing a position at or
+  after `AddKey` needed one more Tab — updated, not worked around).
+- `internal/tui/screen_signing_config.go` — the global modal seeds/saves
+  `Identities` alongside `Keys`; `signingPolicyStatusLine` and
+  `signingPolicyBadge` (`admin_views.go`) both report the identity count.
+  **Judgment call, documented**: `Identities` does NOT get `Keys`' own
+  unconditional "reachable from any focus" routing shortcut for `'n'`/`'x'`/
+  arrows — it only claims those keys once `signingPolicyFieldIdentities` is
+  the actual focus. Two list-shaped fields cannot both unconditionally claim
+  the identical keys without ambiguity (which list does `'n'` mean?);
+  `Keys` keeps its existing shortcut (a pinned, tested behavior from an
+  earlier Judgment Day fix-round) since it has no competing sibling, while
+  `Identities` requires an explicit Tab first. This is an intentional
+  asymmetry, not an oversight.
+- `internal/tui/override_editor.go` — mirrors the above for the
+  per-repository editor: new `overrideFieldIdentities` (signing only,
+  inserted between `overrideFieldPathPrimary` and
+  `overrideFieldUnsignedSelfRead`), new `identities trustedIdentityList`
+  field, seeded from/saved into `ports.RepositoryOverrideDetails.TrustedIdentities`
+  with the same full-row-replace semantics `TrustedPublicKeys` already has
+  (spec: "Per-Repository Trusted-Identity Override Is Full-Row-Replace"),
+  same asymmetric routing decision as the global modal.
+- `internal/tui/model.go` — `renderSignatureLines` (the manifest inspection
+  view's Signature section) gains a `"Verified identity: <SAN> (<issuer>)"`
+  line, mutually exclusive with the existing `"Signed with: <fingerprint>"`
+  line, populated from `SignatureStatusDetail.VerifiedIdentity` (already
+  wired at the app layer since PR3).
+- `internal/protocol/http/signing_keyless_e2e_test.go` (new) — see Phase 9
+  below.
+- `README.md`, `docs/api.md`, `docs/features.md`, `docs/tui.md`,
+  `docs/glossary.md`, `docs/code-reference.md`,
+  `docs/documentation-audit.md` — document `trusted_identities` admin API
+  usage (global + per-repository override), the offline-only verification
+  model (pinned root, no TUF auto-update, no live Rekor, no operator root
+  override), the pinned-root-rotation-is-a-release-task note, the TUI's new
+  identity list widget and its key bindings, and the mutually-exclusive
+  `verified_identity`/`verified_key_fingerprint` signature-status fields.
+
+### Phase 9.1 — E2E: evidence-based deviation, same posture as PR1/PR3
+
+tasks.md 9.1 asks for `docs/verification/scripts/docker-push-pull-smoke.sh`
+to push a real keyless `cosign`-signed image and prove matching-identity
+allows / wrong-issuer blocks. This sandbox has **no `docker` binary and no
+network path to a real `cosign sign --new-bundle-format` keyless OIDC
+signing flow** (which itself requires either GitHub Actions OIDC or an
+interactive Fulcio/Rekor round trip) — the identical constraint PR1's Phase
+0 spike and PR3's Phase 6 already confirmed and carried forward, now also
+blocking the literal docker-script task.
+
+Per the batch instructions' explicit fallback guidance, option (a) — a
+synthetic-but-realistic Fulcio-shaped bundle via `sigstore-go/pkg/testing/ca`
+proving a genuinely SUCCESSFUL match — was evaluated and re-confirmed
+infeasible for a true end-to-end (HTTP-through-sqlite-through-verify) proof,
+for the same architectural reason PR1/PR3 already established:
+`keyless.go`'s verifier is permanently bound to the REAL embedded pinned
+Sigstore public-good root via `sync.OnceValues`, with explicitly no operator
+override (design.md, settled). `ca.VirtualSigstore`'s synthetic root can
+only ever produce a chain valid against ITSELF, never against the real
+pinned root the production code path actually uses — so no certificate
+mintable offline, synthetic or otherwise, can ever legitimately verify
+through the full stack. This is a structural property of the settled
+design, not a sandbox limitation option (a) could route around.
+
+**What was built instead** (a stronger, not weaker, proof than a bare
+"documented as open" note): `internal/protocol/http/signing_keyless_e2e_test.go`'s
+`TestE2EKeylessIdentityPolicyRoundTripsThroughHTTPConfigSqlitePersistAndPullTimeVerification`
+proves the entire ACHIEVABLE stack, through ordinary HTTP requests only (no
+service-layer shortcuts):
+
+1. `PUT /admin/v1/signing-policy` with `trusted_identities` (HTTP config
+   write) — the literal admin API surface an operator would use.
+2. `store.GetSigningPolicySettings` confirms the exact persisted row
+   (sqlite persist), independent of the PUT response's own echo.
+3. A full HTTP push (blob uploads, image manifest, keyless bundle document,
+   referrer manifest, `signing.BundleIndexTag` index — all via
+   `httptest`-driven router requests, not `service.PublishManifest`
+   shortcuts) followed by a real pull request. The pull-time gate reads the
+   exact row persisted in step 2 and reaches the REAL `signing.VerifyKeyless`
+   (verify-time read), which fails closed against the self-signed,
+   non-chaining test certificate: `403`/`DENIED`, and
+   `signature-status` reports `state: "untrusted"` (a real verification
+   ATTEMPT that failed) — never `"unverifiable"` (which would mean the
+   persisted identity was never actually read at verify-time at all).
+
+This goes one full layer further than PR3's
+`TestServiceVerifySignature_IdentityOnlyPolicyReachesRealKeylessVerification`
+(service-layer only): it is the same evidence-based "prove the achievable
+real half, do not fabricate the unachievable half" posture PR1/PR3 already
+established, now exercised through the complete HTTP/sqlite/pull-gate
+stack. **A genuinely successful identity match (the literal "wrong-issuer
+policy blocks it, distinctly" ask) remains the open item** requiring a live
+keyless-signed artifact or a docker-capable environment — see "Open items"
+below, carried forward unchanged in substance from PR1/PR3.
+
+### Verification (9.2)
+
+- Focused command:
+  `go test ./internal/protocol/http/... ./internal/tui/... -run 'SigningPolicySettings|Override|TrustedIdentity|Identity|SigningConfig|E2EKeyless' -v`
+  — all matched tests pass.
+- Full package `internal/protocol/http`: all tests pass, zero regressions.
+- Full package `internal/tui`: all tests pass, zero regressions (after
+  updating 4 pre-existing characterization tests for the newly inserted
+  `signingPolicyFieldIdentities`/`overrideFieldIdentities` field positions
+  and the identity-count-aware badge/status-line text — see TDD Cycle
+  Evidence below for exactly which tests and why).
+- Full repo: `go test ./...` — all 19 packages pass, zero regressions.
+- `go build ./...` — clean.
+- `go vet ./...` — clean.
+- `gofmt -l` on every changed `.go` file — clean (no output).
+
+## Work Unit Evidence
+
+| Evidence | Value |
+|---|---|
+| Focused test command and result | `go test ./internal/protocol/http/... ./internal/tui/... -run 'SigningPolicySettings\|Override\|TrustedIdentity\|Identity\|SigningConfig\|E2EKeyless' -v` → all matched tests PASS |
+| Runtime harness | `internal/protocol/http/signing_keyless_e2e_test.go`'s `TestE2EKeylessIdentityPolicyRoundTripsThroughHTTPConfigSqlitePersistAndPullTimeVerification` — a real HTTP round trip (admin config write, blob/manifest push, pull) through the full router stack, not a mock; the docker-script E2E (tasks.md 9.1's literal ask) remains an open item, see above |
+| Rollback boundary | Revert `admin_handlers.go`'s `TrustedIdentities` decode/serialize + `normalizeTrustedIdentities`, `ports.RepositoryOverrideDetails.TrustedIdentities`, `admin_client.go`'s body addition, `trusted_identity_list.go` (new file, delete), `session.go`'s `Identities`/`signingPolicyFieldIdentities`, `screen_signing_config.go`'s/`override_editor.go`'s identity wiring, `model.go`'s `VerifiedIdentity` render line, and `signing_keyless_e2e_test.go` (new file, delete); revert the doc files. PRs 1-3 stay fully inert and functional — nothing in this PR is a prerequisite for anything earlier in the chain. |
+
+## TDD Cycle Evidence
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|---|---|---|---|---|---|---|---|
+| 7.1–7.2 `decodeSigningPolicySettings`/`signingPolicySettingsResponse` identities | `admin_handlers_test.go` | Integration (`httptest`, real sqlite + fsblob) | ✅ existing signing-policy HTTP tests passing before this batch (confirmed via targeted run) | ✅ Written (2 of 7 new tests failed for the right reason pre-GREEN: `TestAdminSigningPolicyPutPersistsTrustedIdentitiesAndRoundTrips` — payload rejected as unknown-field JSON; `TestAdminSigningPolicyGetReturnsEmptyTrustedIdentitiesWhenUnset` — field absent from response. The other 5 "reject" tests happened to already pass for an unrelated reason (DisallowUnknownFields / the pre-existing zero-keys check), confirmed and accepted as valid post-GREEN characterization, not discarded) | ✅ Passed | ✅ 7 cases (persist+round-trip, empty-default, invalid regexp naming index, missing issuer, >16 cap, zero-anchors-of-either-kind outage rule, override full-row-replace clears identities over HTTP) | ➖ None needed |
+| 7.3 override HTTP-level full-row-replace | `admin_handlers_test.go` | Integration (`httptest`) | ✅ (above) | ✅ Written — passed pre-GREEN (characterization: proved the existing generic override codec, PR3's own work, already round-trips identities over HTTP with zero new production code) | ✅ Passed | ➖ Single (the override wire path is already generic; a second case would prove nothing new, mirrors PR2's own Phase 5.3 reasoning) | ➖ None needed |
+| 8.1 `trustedIdentityList` add/select/delete | `trusted_identity_list_test.go` | Unit | N/A (new file) | ✅ Written (compile failure: package did not exist) | ✅ Passed | ✅ 9 cases (bounded nav, unhandled-key passthrough, valid add, invalid-regexp reject, missing-issuer reject, Esc cancel, delete-selected, delete-on-empty no-op, SetIdentities wholesale replace) | ➖ None needed — already minimal, mirrors `trustedKeyList`'s own structure |
+| 8.3 global modal shows/edits identities | `screen_signing_config_test.go` | Unit | ✅ existing signing-config-screen tests passing before this batch | ✅ Written (compile failure: `cfg.Identities`/`signingPolicyFieldIdentities` did not exist) | ✅ Passed | ✅ 4 cases (seed-on-open, reachable-once-tabbed, save-includes-identities, render-shows-identities) | ✅ Clean — `updateConfigKey`'s routing needed the explicit if/else split documented above, not a larger refactor |
+| 8.5 override editor shows/edits identities | `override_editor_test.go` | Unit | ✅ existing override-editor tests passing before this batch | ✅ Written (compile failure: `overrideFieldIdentities`/`e.identities` did not exist) | ✅ Passed | ✅ 4 cases (reachable-once-tabbed, save-includes-identities, apply-seeds-from-stored-override, render-shows-identities) | ➖ None needed |
+| 8.x characterization fallout (pre-existing tests, not new coverage) | `admin_views_test.go`, `session_test.go`, `model_test.go` | Unit | ✅ full `internal/tui` suite green before this batch (confirmed) | N/A — these are updates to already-passing tests whose EXPECTED values changed because production behavior legitimately changed (new field inserted mid-cycle, badge/status text now includes identity counts) | ✅ Passed after updating expected values | N/A | N/A |
+| Manifest inspection view — `VerifiedIdentity` line | `model_test.go` | Unit | ✅ existing `renderSignatureLines`-adjacent tests passing (none existed for this function specifically — confirmed via `rg`, a real coverage gap this batch also closed) | ✅ Written (failed: no identity line rendered) | ✅ Passed | ✅ 2 cases (identity-verified path shows identity not fingerprint; key-verified path shows fingerprint not identity — mutual exclusion proven both directions) | ➖ None needed |
+| 9.1 E2E full-stack proof | `signing_keyless_e2e_test.go` | Integration/E2E (`httptest`, real sqlite + fsblob, real router, real `signing.VerifyKeyless`) | N/A (new file) | ✅ Written (failed twice for real infrastructure reasons before passing: (1) 404 — `newRouterWithStores` needs a real `authService`, not `nil`, to serve `/admin/v1/...`; (2) wrong JSON field path — the admin error envelope is `{"errors":[{"code":...}]}`, not a bare `{"code":...}`, confirmed by reading `router.go`'s actual `writeAdminError`) | ✅ Passed | ➖ Single scenario (the achievable half of the ask; the wrong-issuer-vs-matching-issuer contrast tasks.md 9.1 originally specified needs the still-unobtainable live artifact, see Phase 9.1 section above) | ➖ None needed |
+
+### Test Summary
+- **Total tests written this batch**: 22 top-level (7 `admin_handlers_test.go`
+  + 9 `trusted_identity_list_test.go` + 4 `screen_signing_config_test.go` +
+  4 `override_editor_test.go` + 2 `model_test.go` (`renderSignatureLines`) +
+  1 `signing_keyless_e2e_test.go`), plus 5 pre-existing characterization
+  tests updated for legitimately changed expected values (field-cycle
+  position, row-budget heights, badge/status text, key-sequence Tab counts).
+- **Total tests passing**: full repo `go test ./...` — all 19 packages,
+  zero regressions (cumulative across all 4 PRs in this chain).
+- **Layers used**: Unit (widget + screen wiring), Integration (`httptest` +
+  real sqlite/fsblob for both the admin HTTP tests and the E2E test) — no
+  true "E2E" layer (real `docker`/`cosign`) was available in this sandbox,
+  same constraint carried from Phase 0.
+- **Approval tests**: `admin_views_test.go`'s `TestRenderSigningPolicyModalFitsWithinRowBudget`/
+  `TestSigningPolicyBadgeTextReflectsStateAndUsesNoIconOrGlyph`/
+  `TestRenderOverrideEditorSigningShowsTrustedKeyLabel`, `session_test.go`'s
+  `TestNextSigningPolicyFieldCyclesThroughAllFiveFields`/
+  `TestOverrideFieldsForFeatureSkipsPathSecondaryForGitleaks`, and
+  `model_test.go`'s `TestFeatureOverridesScreenSigningSaveIncludesUnsignedSelfRead`
+  served as this batch's approval/characterization tests for the
+  field-cycle-insertion refactor — confirmed failing for the RIGHT reason
+  (expected values, not behavior, were stale) before being updated, then
+  passing.
+- **Pure functions created**: `normalizeTrustedIdentities` (HTTP layer,
+  pure); `trustedIdentityList.commitAdd`/`removeAt` (TUI widget, pure
+  mutations on a value-typed struct, mirroring `trustedKeyList`'s own
+  style).
+
+## Remaining work
+
+None. Phases 0-9 (all of `tasks.md`) are complete. Every "Remaining work"
+section in every earlier PR section above is now superseded.
+
+## Open items for a human / CI-with-docker environment (unchanged in substance since PR1, carried through PR2/PR3/PR4)
 
 1. **Phase 0 remains UNCONFIRMED against a live keyless-signed Bundle-document
-   artifact.** No publicly reachable registry yielded one during this batch's
-   real attempts (see above). Before this change ships, re-attempt with
-   either: (a) a real `docker`+`cosign` environment able to `cosign sign
-   --new-bundle-format` a test image and push it, or (b) broader registry
-   search access than this sandbox had.
-2. **Informational, not blocking this PR**: the artifactType mismatch noted
-   above (`application/vnd.dev.sigstore.bundle+json;version=0.3` semicolon
-   form vs this repo's dotted `SigstoreBundleMediaType` constant with strict
-   equality) — if real for image-level referrer discovery, would affect
-   `ParseBundleIndex`/`ParseBundleReferrerManifest` (already-merged
-   `image-signing` change, not touched by this PR). Worth a follow-up
-   investigation once a real bundle-format image artifact is available to
-   test against.
-3. **Carried forward from Phase 0, now also blocking a fully end-to-end PR3
-   test**: with a real keyless-signed image (real Fulcio certificate,
-   matching issuer, real Rekor tlog entry), `TestServiceVerifySignature_IdentityOnlyPolicyReachesRealKeylessVerification`
-   (PR3, `service_signing_bundle_test.go`) should be extended/replaced with a
-   case asserting `signatureStateVerified` and a populated
-   `match.Identity`, closing PR3's own Deviation 2 (see the PR3 section
-   above) the same way Phase 0's E2E task (9.1) is meant to close this gap
-   for the whole feature.
+   artifact**, and consequently so does a genuinely successful end-to-end
+   identity match anywhere in this change (PR1's own domain-level synthetic
+   test, PR3's service-level test, and PR4's HTTP-level E2E test above all
+   prove the identical achievable half: a real verification ATTEMPT that
+   fails closed, never a fabricated success). No publicly reachable
+   registry yielded a live artifact during PR1's real attempts (see the
+   Phase 0 section above), and this sandbox has no `docker` binary at all.
+   **Before this change ships**, re-attempt with either: (a) a real
+   `docker`+`cosign` environment able to `cosign sign --new-bundle-format`
+   a test image with real GitHub Actions (or equivalent) OIDC and push it —
+   at which point `docs/verification/scripts/docker-push-pull-smoke.sh`
+   should be extended per tasks.md 9.1's original literal ask (matching
+   identity+issuer pulls; wrong-issuer policy blocks it, distinctly) — or
+   (b) broader registry search access than this sandbox had, to locate an
+   existing live keyless-signed Bundle-document artifact.
+2. **Informational, not blocking any PR in this chain**: the artifactType
+   mismatch PR1 noted (`application/vnd.dev.sigstore.bundle+json;version=0.3`
+   semicolon form vs this repo's dotted `SigstoreBundleMediaType` constant
+   with strict equality) — if real for image-level referrer discovery,
+   would affect `ParseBundleIndex`/`ParseBundleReferrerManifest`
+   (already-merged `image-signing` change, not touched by this change).
+   Worth a follow-up investigation once a real bundle-format image artifact
+   is available to test against.
+3. **The TUI's global-prefill flow does not currently extend to
+   identities**: `overrideEditor.maybeApplyGlobalPrefill` seeds a
+   never-configured override's trusted KEYS from the current global policy,
+   but not trusted identities (documented honestly in `docs/features.md`
+   rather than silently left inconsistent). Extending the prefill to
+   identities was judged out of this PR's scope (not named by any tasks.md
+   7-9 task) but would be a reasonable, small follow-up.
