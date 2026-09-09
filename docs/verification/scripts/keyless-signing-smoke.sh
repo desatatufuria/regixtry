@@ -469,13 +469,27 @@ main() {
   printf 'configuring signing policy with matching identity: %s\n' "${identity_regexp}"
   put_signing_policy "${admin_token}" "${issuer}" "${identity_regexp}"
 
+  # Diagnostics printed UNCONDITIONALLY, before the pass/fail assertion
+  # below: this is the first real run against live Fulcio/Rekor, so if the
+  # positive case fails, the CI log must already carry regixtry's own
+  # signature-status verdict (its "reason" string says WHICH check failed --
+  # no candidate signature found, bad cert chain, tlog/SET invalid, or
+  # identity mismatch) and the actual tags cosign wrote, not just an HTTP
+  # code. Re-running blind would mint another real, permanent Rekor entry
+  # for no new information.
+  printf 'diagnostics -- tags present for %s:\n' "${REPOSITORY}"
+  curl -sS --max-time 20 -H "Authorization: Bearer ${pull_push_token}" \
+    "http://127.0.0.1:${REGISTRY_PORT}/v2/${REPOSITORY}/tags/list" || true
+  printf '\ndiagnostics -- signature-status for %s:\n' "${digest}"
+  signature_status_body "${pull_push_token}" "${digest}" | tee "${ROOT_DIR}/signature-status-match.json" || true
+  printf '\n'
+
   # Positive case: real signed manifest, matching policy -- pull-time gate
   # must accept it.
   local pull_status=""
   pull_status="$(manifest_status "${pull_push_token}" "${digest}")"
-  [[ "${pull_status}" == "200" ]] || fail "pull with a matching identity policy returned ${pull_status}, expected 200"
+  [[ "${pull_status}" == "200" ]] || fail "pull with a matching identity policy returned ${pull_status}, expected 200 -- see the signature-status diagnostic above for regixtry's own verdict/reason"
 
-  signature_status_body "${pull_push_token}" "${digest}" >"${ROOT_DIR}/signature-status-match.json"
   local state=""
   local verified_identity=""
   state="$(json_field "${ROOT_DIR}/signature-status-match.json" state)"
