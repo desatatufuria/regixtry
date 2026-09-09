@@ -1250,7 +1250,7 @@ func (s *Store) UpsertUpdateChannel(ctx context.Context, tenant string, settings
 // scan gate — resolves to disabled, not enabled.
 func (s *Store) GetSigningPolicySettings(ctx context.Context, tenant string) (ports.SigningPolicySettings, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT enabled, trusted_public_keys, updated_at, unsigned_self_read
+		SELECT enabled, trusted_public_keys, updated_at, unsigned_self_read, trusted_identities
 		FROM signing_policy_settings
 		WHERE tenant = ?
 	`, tenant)
@@ -1259,8 +1259,9 @@ func (s *Store) GetSigningPolicySettings(ctx context.Context, tenant string) (po
 		trustedKeysJSON  string
 		updatedAtRaw     string
 		unsignedSelfRead string
+		trustedIdentJSON string
 	)
-	if err := row.Scan(&enabled, &trustedKeysJSON, &updatedAtRaw, &unsignedSelfRead); err != nil {
+	if err := row.Scan(&enabled, &trustedKeysJSON, &updatedAtRaw, &unsignedSelfRead, &trustedIdentJSON); err != nil {
 		if err == sql.ErrNoRows {
 			return ports.SigningPolicySettings{}, domain.NewNotFoundError("signing_policy_settings", tenant)
 		}
@@ -1276,28 +1277,56 @@ func (s *Store) GetSigningPolicySettings(ctx context.Context, tenant string) (po
 			return ports.SigningPolicySettings{}, err
 		}
 	}
-	return ports.SigningPolicySettings{Enabled: enabled, TrustedPublicKeys: trustedKeys, UpdatedAt: updatedAt, UnsignedSelfRead: unsignedSelfRead}, nil
+	// TrustedIdentities must never drift nil vs [] on an unset/legacy row --
+	// mirrors trusted_public_keys' own DEFAULT '[]' column, so an empty
+	// trustedIdentJSON is normalized to a non-nil empty slice, not left nil.
+	trustedIdentities := make([]ports.TrustedIdentity, 0)
+	if strings.TrimSpace(trustedIdentJSON) != "" && trustedIdentJSON != "null" {
+		if err := json.Unmarshal([]byte(trustedIdentJSON), &trustedIdentities); err != nil {
+			return ports.SigningPolicySettings{}, err
+		}
+		if trustedIdentities == nil {
+			trustedIdentities = make([]ports.TrustedIdentity, 0)
+		}
+	}
+	return ports.SigningPolicySettings{
+		Enabled:           enabled,
+		TrustedPublicKeys: trustedKeys,
+		TrustedIdentities: trustedIdentities,
+		UpdatedAt:         updatedAt,
+		UnsignedSelfRead:  unsignedSelfRead,
+	}, nil
 }
 
 // UpsertSigningPolicySettings mirrors UpsertScanPolicySettings's
-// insert-or-replace shape, adding trusted_public_keys as the store's second
-// JSON column (design.md Decision 4), the same bounded-blast-radius
-// reasoning as repository_feature_overrides' payload column: no query ever
-// filters, sorts, or joins on a key, every read is by the full (tenant) key.
+// insert-or-replace shape, adding trusted_public_keys and trusted_identities
+// as the store's JSON columns (design.md Decision 4), the same
+// bounded-blast-radius reasoning as repository_feature_overrides' payload
+// column: no query ever filters, sorts, or joins on a key or identity, every
+// read is by the full (tenant) key.
 func (s *Store) UpsertSigningPolicySettings(ctx context.Context, tenant string, settings ports.SigningPolicySettings) error {
 	trustedKeysJSON, err := json.Marshal(settings.TrustedPublicKeys)
 	if err != nil {
 		return err
 	}
+	trustedIdentities := settings.TrustedIdentities
+	if trustedIdentities == nil {
+		trustedIdentities = []ports.TrustedIdentity{}
+	}
+	trustedIdentJSON, err := json.Marshal(trustedIdentities)
+	if err != nil {
+		return err
+	}
 	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO signing_policy_settings (tenant, enabled, trusted_public_keys, updated_at, unsigned_self_read)
-		VALUES (?, ?, ?, ?, ?)
+		INSERT INTO signing_policy_settings (tenant, enabled, trusted_public_keys, updated_at, unsigned_self_read, trusted_identities)
+		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT(tenant) DO UPDATE SET
 			enabled = excluded.enabled,
 			trusted_public_keys = excluded.trusted_public_keys,
 			updated_at = excluded.updated_at,
-			unsigned_self_read = excluded.unsigned_self_read
-	`, tenant, settings.Enabled, string(trustedKeysJSON), settings.UpdatedAt.UTC().Format(time.RFC3339Nano), settings.UnsignedSelfRead)
+			unsigned_self_read = excluded.unsigned_self_read,
+			trusted_identities = excluded.trusted_identities
+	`, tenant, settings.Enabled, string(trustedKeysJSON), settings.UpdatedAt.UTC().Format(time.RFC3339Nano), settings.UnsignedSelfRead, string(trustedIdentJSON))
 	return err
 }
 
@@ -2058,6 +2087,7 @@ func (s *Store) init() error {
 			trusted_public_keys TEXT NOT NULL DEFAULT '[]',
 			updated_at TEXT NOT NULL,
 			unsigned_self_read TEXT NOT NULL DEFAULT '',
+			trusted_identities TEXT NOT NULL DEFAULT '[]',
 			PRIMARY KEY(tenant)
 		);`,
 		// update_channel_settings backs the TUI's background update-check
@@ -2165,6 +2195,13 @@ func (s *Store) init() error {
 			name TEXT PRIMARY KEY,
 			completed_at TEXT NOT NULL
 		);`,
+		// trusted_identities (signing-keyless-verification design.md
+		// Migration/Rollout): additive column, same idempotent
+		// ALTER-TABLE-ADD-COLUMN pattern as trusted_public_keys/
+		// unsigned_self_read above -- older binaries ignore it, no data
+		// migration. DEFAULT '[]' keeps GetSigningPolicySettings' nil-vs-[]
+		// normalization consistent for every pre-existing row.
+		`ALTER TABLE signing_policy_settings ADD COLUMN trusted_identities TEXT NOT NULL DEFAULT '[]';`,
 	}
 
 	for _, statement := range statements {

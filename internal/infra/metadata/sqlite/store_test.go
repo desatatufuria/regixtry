@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"reflect"
@@ -472,6 +473,103 @@ func TestStoreUpsertSigningPolicySettingsRoundTripsEnabledKeysAndUpdatedAt(t *te
 	}
 	if len(updated.TrustedPublicKeys) != 0 {
 		t.Fatalf("updated.TrustedPublicKeys = %#v, want empty", updated.TrustedPublicKeys)
+	}
+}
+
+// TestStoreUpsertSigningPolicySettingsRoundTripsTrustedIdentities is the
+// Phase 5 RED test (tasks.md 5.1, signing-keyless-verification): the real
+// ports.TrustedIdentity type (from Phase 4, not a mock) round-trips through
+// Upsert/Get exactly, mirroring
+// TestStoreUpsertSigningPolicySettingsRoundTripsEnabledKeysAndUpdatedAt's own
+// shape for TrustedPublicKeys.
+func TestStoreUpsertSigningPolicySettingsRoundTripsTrustedIdentities(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	updatedAt := time.Now().UTC()
+	settings := ports.SigningPolicySettings{
+		Enabled: true,
+		TrustedIdentities: []ports.TrustedIdentity{
+			{CertificateIdentityRegexp: "^https://github.com/acme/.*$", CertificateOIDCIssuer: "https://token.actions.githubusercontent.com"},
+			{CertificateIdentityRegexp: "^https://gitlab.com/acme/.*$", CertificateOIDCIssuer: "https://gitlab.com"},
+		},
+		UpdatedAt: updatedAt,
+	}
+	if err := store.UpsertSigningPolicySettings(context.Background(), "tenant-a", settings); err != nil {
+		t.Fatalf("UpsertSigningPolicySettings() error = %v", err)
+	}
+
+	stored, err := store.GetSigningPolicySettings(context.Background(), "tenant-a")
+	if err != nil {
+		t.Fatalf("GetSigningPolicySettings() error = %v", err)
+	}
+	if !reflect.DeepEqual(stored.TrustedIdentities, settings.TrustedIdentities) {
+		t.Fatalf("stored.TrustedIdentities = %#v, want %#v (order preserved)", stored.TrustedIdentities, settings.TrustedIdentities)
+	}
+
+	// An unset policy (never upserted with identities) must default to an
+	// empty slice, never nil vs [] drift -- mirrors TrustedPublicKeys' own
+	// row-absence-defaults-empty convention.
+	settings.TrustedIdentities = nil
+	settings.UpdatedAt = time.Now().UTC()
+	if err := store.UpsertSigningPolicySettings(context.Background(), "tenant-a", settings); err != nil {
+		t.Fatalf("UpsertSigningPolicySettings(clear) error = %v", err)
+	}
+	cleared, err := store.GetSigningPolicySettings(context.Background(), "tenant-a")
+	if err != nil {
+		t.Fatalf("GetSigningPolicySettings(clear) error = %v", err)
+	}
+	if cleared.TrustedIdentities == nil {
+		t.Fatalf("cleared.TrustedIdentities = nil, want non-nil empty slice")
+	}
+	if len(cleared.TrustedIdentities) != 0 {
+		t.Fatalf("cleared.TrustedIdentities = %#v, want empty", cleared.TrustedIdentities)
+	}
+}
+
+// TestStoreSigningOverridePayloadRoundTripsTrustedIdentities is the Phase 5
+// RED/characterization test (tasks.md 5.3): a per-repository SigningOverride
+// with TrustedIdentities set round-trips through the existing generic
+// repository_feature_overrides JSON blob column unmodified -- proving the
+// override codec is already generic and needs no store.go change for the new
+// field.
+func TestStoreSigningOverridePayloadRoundTripsTrustedIdentities(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	override := ports.SigningOverride{
+		Enabled: true,
+		TrustedIdentities: []ports.TrustedIdentity{
+			{CertificateIdentityRegexp: "^https://github.com/acme/repo-a/.*$", CertificateOIDCIssuer: "https://token.actions.githubusercontent.com"},
+		},
+	}
+	payload, err := json.Marshal(override)
+	if err != nil {
+		t.Fatalf("json.Marshal(override) error = %v", err)
+	}
+
+	if err := store.UpsertRepositoryFeatureOverride(context.Background(), "tenant-a", "library/alpine", "signing", payload); err != nil {
+		t.Fatalf("UpsertRepositoryFeatureOverride() error = %v", err)
+	}
+
+	stored, err := store.GetRepositoryFeatureOverride(context.Background(), "tenant-a", "library/alpine", "signing")
+	if err != nil {
+		t.Fatalf("GetRepositoryFeatureOverride() error = %v", err)
+	}
+
+	var roundTripped ports.SigningOverride
+	if err := json.Unmarshal(stored, &roundTripped); err != nil {
+		t.Fatalf("json.Unmarshal(stored) error = %v", err)
+	}
+	if !reflect.DeepEqual(roundTripped.TrustedIdentities, override.TrustedIdentities) {
+		t.Fatalf("roundTripped.TrustedIdentities = %#v, want %#v", roundTripped.TrustedIdentities, override.TrustedIdentities)
+	}
+	if roundTripped.Enabled != override.Enabled {
+		t.Fatalf("roundTripped.Enabled = %v, want %v", roundTripped.Enabled, override.Enabled)
 	}
 }
 
