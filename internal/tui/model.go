@@ -4028,6 +4028,14 @@ func renderSignatureLines(theme adminTheme, signature appregixtry.SignatureStatu
 	if signature.Signature.VerifiedKeyFingerprint != "" {
 		lines = append(lines, fmt.Sprintf("%s %s", theme.muted.Render("Signed with:"), theme.text.Render(signature.Signature.VerifiedKeyFingerprint)))
 	}
+	// VerifiedIdentity (signing-keyless-verification) is mutually exclusive
+	// with VerifiedKeyFingerprint (queries.go's own discipline: a signature
+	// verifies via exactly one anchor kind, never both), so this renders on
+	// its own distinct line, never folded into "Signed with:" (spec:
+	// "Identity match reports SAN and issuer separately").
+	if signature.Signature.VerifiedIdentity != "" {
+		lines = append(lines, fmt.Sprintf("%s %s", theme.muted.Render("Verified identity:"), theme.text.Render(signature.Signature.VerifiedIdentity)))
+	}
 	return lines
 }
 

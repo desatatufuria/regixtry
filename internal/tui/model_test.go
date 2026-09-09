@@ -6671,6 +6671,59 @@ func openIdentityAccessDomain(t *testing.T, m Model) Model {
 	return runKey(t, m, "enter")
 }
 
+// TestRenderSignatureLinesShowsVerifiedIdentityDistinctlyFromKeyFingerprint
+// is the Phase 8 RED test (signing-keyless-verification spec: "Identity
+// match reports SAN and issuer separately"): the manifest inspection view's
+// Signature section renders VerifiedIdentity on its own line, distinct from
+// VerifiedKeyFingerprint's "Signed with:" line, when a signature verified
+// via the identity path.
+func TestRenderSignatureLinesShowsVerifiedIdentityDistinctlyFromKeyFingerprint(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+	signature := appregixtry.SignatureStatusResult{
+		State: "verified",
+		Signature: &appregixtry.SignatureStatusDetail{
+			SignatureCount:   1,
+			VerifiedIdentity: "https://github.com/acme/repo/.github/workflows/release.yml@refs/heads/main (https://token.actions.githubusercontent.com)",
+		},
+	}
+
+	lines := renderSignatureLines(theme, signature)
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, signature.Signature.VerifiedIdentity) {
+		t.Fatalf("renderSignatureLines() = %q, want the verified identity shown", joined)
+	}
+	if strings.Contains(joined, "Signed with:") {
+		t.Fatalf("renderSignatureLines() = %q, must not render the key-fingerprint line when verified via identity", joined)
+	}
+}
+
+// TestRenderSignatureLinesShowsKeyFingerprintNotIdentityOnKeyVerifiedPath is
+// the companion mutual-exclusion case: the pre-existing key-verified path
+// renders exactly as before, with no identity line at all.
+func TestRenderSignatureLinesShowsKeyFingerprintNotIdentityOnKeyVerifiedPath(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+	signature := appregixtry.SignatureStatusResult{
+		State: "verified",
+		Signature: &appregixtry.SignatureStatusDetail{
+			SignatureCount:         1,
+			VerifiedKeyFingerprint: "aa:bb:cc:dd",
+		},
+	}
+
+	lines := renderSignatureLines(theme, signature)
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "aa:bb:cc:dd") {
+		t.Fatalf("renderSignatureLines() = %q, want the verified key fingerprint shown", joined)
+	}
+	if strings.Contains(joined, "Verified identity:") {
+		t.Fatalf("renderSignatureLines() = %q, must not render an identity line on the key-verified path", joined)
+	}
+}
+
 func runAdminLogin(t *testing.T, model Model, username string, password string) Model {
 	t.Helper()
 	updated := runKey(t, model, "tab")
