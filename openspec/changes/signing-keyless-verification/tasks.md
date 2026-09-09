@@ -162,7 +162,7 @@ Chain strategy: pending
 
 ## Phase 4: Ports — TrustedIdentity Type (PR 2)
 
-- [ ] 4.1 GREEN `internal/ports/regixtry.go`: add
+- [x] 4.1 GREEN `internal/ports/regixtry.go`: add
       `TrustedIdentity{CertificateIdentityRegexp, CertificateOIDCIssuer string}`
       and `TrustedIdentities []TrustedIdentity` fields on
       `SigningPolicySettings` and `SigningOverride`. Pure type addition, no
@@ -170,20 +170,20 @@ Chain strategy: pending
 
 ## Phase 5: Store — trusted_identities Column (PR 2)
 
-- [ ] 5.1 RED `internal/infra/metadata/sqlite/store_test.go`:
+- [x] 5.1 RED `internal/infra/metadata/sqlite/store_test.go`:
       `GetSigningPolicySettings`/`UpsertSigningPolicySettings` round-trip
       `TrustedIdentities` using the real `ports.TrustedIdentity` type; an
       unset policy defaults to an empty slice, never `nil` vs `[]` drift.
-- [ ] 5.2 GREEN `internal/infra/metadata/sqlite/store.go`:
+- [x] 5.2 GREEN `internal/infra/metadata/sqlite/store.go`:
       `ALTER TABLE signing_policy_settings ADD COLUMN trusted_identities TEXT NOT NULL DEFAULT '[]'`
       (+ matching `CREATE TABLE` column); extend `GetSigningPolicySettings`
       scan and the upsert statement's column list.
-- [ ] 5.3 RED (same file): a per-repository `SigningOverride` with
+- [x] 5.3 RED (same file): a per-repository `SigningOverride` with
       `TrustedIdentities` set round-trips through the existing generic
       override-row JSON blob unmodified (characterization — the override
       codec is already generic; this proves no store.go override-path change
       is needed).
-- [ ] 5.4 Confirm Phase 4–5 GREEN (Unit 2 focused test command).
+- [x] 5.4 Confirm Phase 4–5 GREEN (Unit 2 focused test command).
 
 ## Phase 6: App — Identity Branch, Precondition, Override Normalize (PR 3)
 

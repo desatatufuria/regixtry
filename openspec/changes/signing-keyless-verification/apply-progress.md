@@ -273,10 +273,141 @@ design.md's own "Library Verification" table already confirms TUF links
 - **Approval tests**: None — no refactoring of existing production code; Phase 2/3 are purely additive
 - **Pure functions created**: `ParseBundleVerificationMaterial`, `decodeSHA256Digest`, `classifyVerifyError` (all pure); `VerifyKeyless`/`verifyKeylessEntity` are not pure (call into `sigstore-go`'s crypto verification) but perform zero I/O of their own
 
+## Remaining work as of PR1 (superseded — see the PR2 section below for current status)
+
+- Phase 4: `ports.TrustedIdentity` (PR2) — done, see "Scope covered by this batch (PR2 — Unit 2: ports+store)" below.
+- Phase 5: sqlite `trusted_identities` column (PR2) — done, see below.
+- Phase 6: app-layer identity branch, keys-OR-identities precondition, `signatureMatch` (PR3)
+- Phase 7: HTTP admin decode/serialize (PR4)
+- Phase 8: TUI trusted-identity list widget (PR4)
+- Phase 9: E2E smoke test with a real keyless-signed image, full regression, docs (PR4)
+
+## Scope covered by this batch (PR2 — Unit 2: ports+store)
+
+Branch: `feature/signing-keyless-verification-02-ports-store` (based on
+`feature/signing-keyless-verification-01-domain-foundation`, which is based
+on tracker `feature/signing-keyless-verification`, based on `develop`).
+
+Phases 4, 5 from `tasks.md` — complete. Phase 6 (app-layer wiring in
+`service_signing.go`) and later are explicitly OUT of scope for this
+batch/branch (PR3+). `internal/app/regixtry/service_signing.go`,
+`internal/protocol/http/admin_handlers.go`, and the TUI layer were
+deliberately NOT touched in this batch.
+
+## Phase 4 — `ports.TrustedIdentity` type: done
+
+`internal/ports/regixtry.go`:
+
+```go
+type TrustedIdentity struct {
+    CertificateIdentityRegexp string `json:"certificate_identity_regexp"`
+    CertificateOIDCIssuer     string `json:"certificate_oidc_issuer"`
+}
+```
+
+Added `TrustedIdentities []TrustedIdentity` fields to both
+`SigningPolicySettings` (`json:"trusted_identities"`, no `omitempty`,
+mirroring `TrustedPublicKeys`'s own non-omitempty convention on that struct)
+and `SigningOverride` (`json:"trusted_identities,omitempty"`, mirroring
+`TrustedPublicKeys`'s `omitempty` convention on that struct). Pure type
+addition per tasks.md 4.1 — no RED test for this task itself; exercised as a
+real (not mocked) type by Phase 5.1's RED test, per tasks.md's own ordering
+note.
+
+**Scope decision, not a deviation**: `ports.RepositoryOverrideDetails` (the
+HTTP/TUI wire-projection struct at `internal/ports/regixtry.go:483`) was
+deliberately NOT given a `TrustedIdentities` field in this batch. tasks.md
+4.1's literal task text lists only `SigningPolicySettings` and
+`SigningOverride`; `RepositoryOverrideDetails` exists solely to mirror what
+`repositoryOverrideResponse` (`admin_handlers.go`) puts on the wire, which is
+explicitly Phase 7 (PR4) scope per the batch instructions. Adding it now
+would be premature relative to the design's own phase boundary.
+
+## Phase 5 — sqlite `trusted_identities` column: done
+
+`internal/infra/metadata/sqlite/store.go`:
+
+- `CREATE TABLE IF NOT EXISTS signing_policy_settings` gained
+  `trusted_identities TEXT NOT NULL DEFAULT '[]'` as a new column.
+- New idempotent migration statement (same
+  duplicate-column-name-tolerant loop as every other `ALTER TABLE ADD COLUMN`
+  in this file, mirroring `trusted_public_keys`/`unsigned_self_read`'s exact
+  pattern):
+  `ALTER TABLE signing_policy_settings ADD COLUMN trusted_identities TEXT NOT NULL DEFAULT '[]';`
+- `GetSigningPolicySettings`: scan extended with `trusted_identities`;
+  unmarshal normalizes a `nil`/`"null"`/empty-string result to a non-nil
+  empty `[]ports.TrustedIdentity{}` — closes a real nil-vs-`[]` bug caught by
+  the RED test itself (see below), not merely a defensive guess.
+- `UpsertSigningPolicySettings`: marshals `settings.TrustedIdentities`,
+  normalizing a `nil` input slice to `[]ports.TrustedIdentity{}` before
+  marshal so the stored JSON is never the literal `"null"` (Go's
+  `json.Marshal` on a nil slice produces `"null"`, not `"[]"` — this was the
+  root cause the RED test surfaced, see TDD Cycle Evidence below).
+- Per-repository `SigningOverride` storage needed **zero** changes: the
+  generic `repository_feature_overrides` JSON-blob column already round-trips
+  any `SigningOverride` field, `TrustedIdentities` included — confirmed by
+  the Phase 5.3 characterization test, which passed on first run (before any
+  production code change), proving the override codec is already generic
+  exactly as tasks.md predicted.
+
+### Root-cause note (RED test caught a real bug, not a scaffolding gap)
+
+The first Phase 5.1 RED run failed as expected (`TrustedIdentities` field not
+yet scanned). After adding the column/scan/upsert (naive first pass, no nil
+normalization), the test failed a SECOND time on its own "unset defaults to
+empty slice" assertion: `Go`'s `json.Marshal(nil slice)` encodes to the JSON
+literal `null`, which the store then wrote and read back as a `nil` Go slice
+(not `[]ports.TrustedIdentity{}`) — exactly the `nil` vs `[]` drift tasks.md
+5.1 explicitly named as a required assertion, not an incidental one. Fixed by
+normalizing `nil` → `[]ports.TrustedIdentity{}` on both the write side
+(before `json.Marshal`) and the read side (after `json.Unmarshal`, defensive
+against any pre-existing/other-writer row that might still contain a literal
+`null`).
+
+## Verification (5.4)
+
+- Focused command:
+  `go test ./internal/infra/metadata/sqlite/... -run 'SigningPolicySettings|TrustedIdentity' -v`
+  → 3/3 new/relevant tests PASS (`TestStoreGetSigningPolicySettingsReturnsNotFoundWithNoRow`,
+  `TestStoreUpsertSigningPolicySettingsRoundTripsEnabledKeysAndUpdatedAt`,
+  `TestStoreUpsertSigningPolicySettingsRoundTripsTrustedIdentities`; the
+  Phase 5.3 characterization test `TestStoreSigningOverridePayloadRoundTripsTrustedIdentities`
+  is not name-matched by this filter but was run and confirmed passing
+  separately, see below).
+- Full package: `go test ./internal/infra/metadata/sqlite/...` — all tests
+  pass, zero regressions.
+- Full repo: `go test ./...` — all 19 packages pass, zero regressions.
+- `go build ./...` — clean.
+- `go vet ./...` — clean.
+- `gofmt -l` on every changed `.go` file
+  (`internal/ports/regixtry.go`, `internal/infra/metadata/sqlite/store.go`,
+  `internal/infra/metadata/sqlite/store_test.go`) — clean (no output).
+
+## Work Unit Evidence
+
+| Evidence | Value |
+|---|---|
+| Focused test command and result | `go test ./internal/infra/metadata/sqlite/... -run 'SigningPolicySettings\|TrustedIdentity' -v` → 3/3 PASS; `go test ./internal/infra/metadata/sqlite/... -run TestStoreSigningOverridePayloadRoundTripsTrustedIdentities -v` → 1/1 PASS |
+| Runtime harness | N/A — store round-trip only, no HTTP/TUI surface exists yet (Phase 6+ future PRs); matches tasks.md's own Unit 2 "Runtime harness" column |
+| Rollback boundary | Revert `ports.TrustedIdentity`/field additions in `internal/ports/regixtry.go`, and `store.go`'s `ALTER TABLE`/`CREATE TABLE` column, scan, and upsert changes; the column is additive with a `'[]'` default, inert to any binary that reverts to not reading it. Zero other package references either change yet. |
+
+## TDD Cycle Evidence
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|---|---|---|---|---|---|---|---|
+| 4.1 `ports.TrustedIdentity` | N/A (pure type, tasks.md: "no RED here") | N/A | N/A | ➖ N/A per tasks.md | N/A | N/A | N/A |
+| 5.1–5.2 `GetSigningPolicySettings`/`UpsertSigningPolicySettings` identity round-trip | `store_test.go` | Unit (real sqlite, temp-file DB via `newTestStore`) | ✅ existing signing-policy tests passing before this batch (confirmed via targeted run) | ✅ Written (failed: `stored.TrustedIdentities` empty/nil, field not yet scanned) | ✅ Passed after fixing (a) column/scan/upsert wiring, (b) nil-vs-`[]` marshal normalization on both read and write sides, caught by the test's own second assertion | ✅ 2 cases in one test (non-empty round-trip with 2 identities across GitHub+GitLab issuers; explicit clear-to-empty case) | ✅ Clean — normalization logic is the minimal fix, no further extraction needed |
+| 5.3 `SigningOverride` identity round-trip via generic blob | `store_test.go` | Unit (real sqlite, characterization) | N/A (new test, no prior behavior to protect) | ✅ Written — passed on first run with ZERO production code change (confirms the characterization claim itself, not a scaffolding artifact) | ✅ Passed (first run) | ➖ Single case — characterization test's entire purpose is proving the generic codec needs no branching, so a second case would prove nothing new | ➖ None needed |
+
+### Test Summary
+- **Total tests written this batch**: 2 (`TestStoreUpsertSigningPolicySettingsRoundTripsTrustedIdentities`, `TestStoreSigningOverridePayloadRoundTripsTrustedIdentities`)
+- **Total tests passing**: all `internal/infra/metadata/sqlite` package tests pass (cumulative); full repo `go test ./...` also green
+- **Layers used**: Unit only (real sqlite temp-file DB via the package's existing `newTestStore` helper — no mocks)
+- **Approval tests**: None — no refactoring of existing production code; Phase 4/5 are additive except for the pre-existing `GetSigningPolicySettings`/`UpsertSigningPolicySettings` bodies, which were extended in place (their existing behavior is covered by `TestStoreUpsertSigningPolicySettingsRoundTripsEnabledKeysAndUpdatedAt`, confirmed still passing unmodified)
+- **Pure functions created**: None new (the nil-normalization logic is inline in the existing `Get`/`Upsert` methods, consistent with their existing style — not extracted, since it is two lines each and used in exactly one place per method)
+
 ## Remaining work (out of scope for this PR/branch)
 
-- Phase 4: `ports.TrustedIdentity` (PR2)
-- Phase 5: sqlite `trusted_identities` column (PR2)
 - Phase 6: app-layer identity branch, keys-OR-identities precondition, `signatureMatch` (PR3)
 - Phase 7: HTTP admin decode/serialize (PR4)
 - Phase 8: TUI trusted-identity list widget (PR4)
