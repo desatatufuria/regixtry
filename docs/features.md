@@ -204,11 +204,15 @@ ignore-file/ignore-policy pair.
 ## Signing (image signature verification)
 
 Signing verifies cosign-style image signatures against a configured set of
-trusted public keys, and can **block pulls** of images that fail
-verification. It is the one built-in feature with `managedRuntime: false` —
-there is no external binary at all; verification is in-process Go code
-(`internal/domain/signing/`) using cosign's signature-manifest and payload
-conventions plus stdlib `crypto/ecdsa`.
+trusted public keys and/or trusted keyless (Fulcio/OIDC) identities, and can
+**block pulls** of images that fail verification. It is the one built-in
+feature with `managedRuntime: false` — there is no external binary at all;
+verification is in-process Go code (`internal/domain/signing/`) using
+cosign's signature-manifest and payload conventions plus stdlib
+`crypto/ecdsa`, and — for keyless identities — the `sigstore-go` library
+against a pinned, offline trusted root (no TUF auto-update, no live Rekor
+query). A signature verifies if it matches ANY configured trusted key OR ANY
+configured trusted identity; the two anchor kinds never combine with AND.
 
 ### Enable and configure
 
@@ -229,12 +233,46 @@ curl -X PUT https://registry.example.com/admin/v1/signing-policy \
 
 `regixtry feature enable signing` / `disable signing` still work — they flip
 the same `Enabled` bit as `PUT /admin/v1/signing-policy`, preserving whatever
-trusted keys are already configured (`setSigningFeatureEnabled` in
-`internal/app/regixtry/feature_registry.go`). **Enabling signing with zero
-configured trusted keys is refused outright** — the same
+trusted keys and identities are already configured
+(`setSigningFeatureEnabled` in `internal/app/regixtry/feature_registry.go`).
+**Enabling signing with zero configured trusted anchors of EITHER kind
+(keys or identities) is refused outright** — the same
 guaranteed-total-outage guard applies whether you enable through the
 generic feature endpoint, the signing-policy endpoint, or the TUI's policy
 modal.
+
+### Keyless (Fulcio/OIDC) identities
+
+Alongside static trusted keys, the global policy and per-repository
+overrides can hold up to 16 **trusted identities** — each a certificate
+Subject Alternative Name regexp paired with a required OIDC issuer:
+
+```bash
+curl -X PUT https://registry.example.com/admin/v1/signing-policy \
+  -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+  -d '{
+    "enabled": true,
+    "trusted_identities": [
+      {"certificate_identity_regexp": "^https://github.com/acme/.+$", "certificate_oidc_issuer": "https://token.actions.githubusercontent.com"}
+    ]
+  }'
+```
+
+Verification is entirely offline against a pinned Sigstore public-good
+trusted root embedded in the binary (`internal/domain/signing/assets/trusted_root.json`)
+— there is no operator-supplied root override and no TUF auto-update.
+Rotating the pinned root is a release-time task (updating the embedded
+asset and shipping a new binary), not a runtime configuration option. A
+bundle carrying a certificate not rooted in the pinned root, a wrong OIDC
+issuer, an expired certificate, or a tampered/missing Signed Entry
+Timestamp all fail closed, each as its own distinct verification outcome. A
+bundle whose only timestamp proof is a TSA signature with no Rekor
+transparency-log entry is rejected as unverifiable — there is no live Rekor
+fallback query.
+
+`certificate_identity_regexp` is compiled and rejected as a validation
+error at write time if malformed, mirroring how a malformed trusted key is
+rejected at configuration time rather than at the pull-time hot path.
 
 ### Algorithm restriction
 
@@ -257,18 +295,22 @@ can never reach the verification hot path.
 Trivy's fail-open scan-policy gate. When enabled, `enforceSigningPolicy`
 treats "cannot verify" and "not trustworthy" as the same answer — an image
 with no signature, an unparseable signature manifest, a signature that
-doesn't validate against any trusted key, or a signature that validates but
-binds a different digest, all block the pull. The only allow-without-verify
-path is the policy being disabled outright.
+doesn't validate against any trusted key or trusted identity, or a
+signature that validates but binds a different digest, all block the pull.
+The only allow-without-verify path is the policy being disabled outright.
 
 `verifySignature` resolves to one of five states, shared between the
 pull-time gate and the read-only status endpoint below: `unsigned`,
 `unverifiable`, `untrusted`, `mismatched`, `verified`. Only `verified`
 allows a pull when the policy is enabled. On `verified`, it also returns
-*which* trusted key matched, as a short fingerprint (`signing.Fingerprint` —
-SHA-256 of the trimmed PEM, first 12 hex characters) — surfaced as
-`verified_key_fingerprint` on the signature-status endpoint below and as a
-"Signed with: `<fingerprint>`" line on the TUI's manifest inspect screen.
+*which* anchor matched — either a trusted key, as a short fingerprint
+(`signing.Fingerprint` — SHA-256 of the trimmed PEM, first 12 hex
+characters), surfaced as `verified_key_fingerprint`; or, for the keyless
+identity path, the matched certificate Subject Alternative Name and OIDC
+issuer, surfaced as `verified_identity` — the two fields are mutually
+exclusive, never both populated on the same result. The TUI's manifest
+inspect screen renders whichever matched as its own distinct line: "Signed
+with: `<fingerprint>`" or "Verified identity: `<SAN> (<issuer>)`".
 
 ### Unsigned self-read exemption
 
@@ -295,24 +337,28 @@ curl "https://registry.example.com/v2/library/alpine/manifests/latest/signature-
 `GET /v2/<repository>/manifests/<reference>/signature-status` is a CI-facing
 read endpoint reachable with ordinary pull credentials (no admin session
 required). It always answers `200` with the current verification verdict —
-`state`, whether the policy is enabled, how many trusted keys are
-configured, and whether the pull would currently be blocked — because it
-*reports* a verdict rather than being subject to one. This endpoint is
-implemented and live today; some in-code comments elsewhere in the service
-layer still describe it as a "future phase," but that comment predates the
-endpoint actually landing — the router (`internal/protocol/http/router.go`)
-and `Service.SignatureStatus` (`internal/app/regixtry/queries.go`) both
-confirm it exists and is wired end to end.
+`state`, whether the policy is enabled, how many trusted keys and trusted
+identities are configured, and whether the pull would currently be blocked
+— because it *reports* a verdict rather than being subject to one. This
+endpoint is implemented and live today; some in-code comments elsewhere in
+the service layer still describe it as a "future phase," but that comment
+predates the endpoint actually landing — the router
+(`internal/protocol/http/router.go`) and `Service.SignatureStatus`
+(`internal/app/regixtry/queries.go`) both confirm it exists and is wired
+end to end.
 
 Per-repository overrides live under
 `/admin/v1/features/signing/repository-overrides/{repo}`, replacing the
-global `Enabled`/`TrustedPublicKeys` pair for one repository (full-row
-replace, not a merge). The TUI's override editor pre-fills a
-**never-configured** override's key list from the current global trusted
-keys the first time it loads (so a new override starts from something
-sensible instead of empty) — this only ever happens once, and only before
-the operator's first save; once the override exists, its own stored keys
-are used and the prefill never runs again.
+global `Enabled`/`TrustedPublicKeys`/`TrustedIdentities` set for one
+repository (full-row replace, not a merge, for both anchor kinds
+independently — an override saved with keys but no identities clears any
+inherited global identities, and vice versa). The TUI's override editor
+pre-fills a **never-configured** override's key list from the current
+global trusted keys the first time it loads (so a new override starts from
+something sensible instead of empty) — this only ever happens once, and
+only before the operator's first save; once the override exists, its own
+stored keys are used and the prefill never runs again. This prefill
+currently applies to trusted keys only, not trusted identities.
 
 ### Managing trusted keys
 
@@ -333,6 +379,21 @@ key. It is **best-effort and non-exhaustive** — an unreadable tag is
 skipped rather than aborting the count — and it **never blocks the
 deletion**; the count is purely informational, so an operator with no
 credential-rotation plan cannot be trapped unable to remove a key.
+
+### Managing trusted identities
+
+Trusted identities render as their own list, alongside — not merged into —
+the trusted key list, both in the global Signing config screen and the
+per-repository override editor. Each identity's SAN regexp and OIDC issuer
+are entered as two fields: `n` starts adding an identity, Tab switches
+between the regexp and issuer fields, Enter commits the pair (both fields
+are validated client-side before commit — an invalid regexp or empty
+issuer is rejected with an inline error, mirroring the authoritative
+server-side check that always runs again at save time), `x` deletes the
+selected identity. Unlike trusted keys, there is no usage-count advisory
+for identities: a keyless anchor has no equivalent "how many tagged images
+currently verify against this" lookup, so deletion is immediate with no
+confirm prompt.
 
 ## Quick comparison
 

@@ -231,53 +231,62 @@ Chain strategy: pending
 
 ## Phase 7: HTTP — Admin Decode/Validate/Serialize (PR 4)
 
-- [ ] 7.1 RED `internal/protocol/http/admin_handlers_test.go`:
+- [x] 7.1 RED `internal/protocol/http/admin_handlers_test.go`:
       `decodeSigningPolicySettings` accepts `trusted_identities`, rejects
       more than 16 entries, rejects `enabled:true` with zero usable anchors
       of either kind, rejects an invalid regexp with a per-index error
       (mirrors `decodeSigningPolicySettings`'s existing key validation
       shape).
-- [ ] 7.2 GREEN `internal/protocol/http/admin_handlers.go`: extend
+- [x] 7.2 GREEN `internal/protocol/http/admin_handlers.go`: extend
       `decodeSigningPolicySettings` and `signingPolicySettingsResponse` with
       `trusted_identities`; extend the equivalent override decode/response
       path.
-- [ ] 7.3 RED (same file, `httptest`): saving an override with keys but no
+- [x] 7.3 RED (same file, `httptest`): saving an override with keys but no
       identities over HTTP clears that repository's inherited identities
       (full-row-replace, HTTP-level confirmation of Phase 6.7).
-- [ ] 7.4 Confirm Phase 7 GREEN.
+- [x] 7.4 Confirm Phase 7 GREEN.
 
 ## Phase 8: TUI — Trusted Identity List Widget (PR 4)
 
-- [ ] 8.1 RED `internal/tui/trusted_identity_list_test.go`:
+- [x] 8.1 RED `internal/tui/trusted_identity_list_test.go`:
       `newTrustedIdentityList` add/select/delete behavior, mirroring
       `trusted_key_list_test.go`'s existing coverage for `trustedKeyList`.
-- [ ] 8.2 GREEN `internal/tui/trusted_identity_list.go`: widget structurally
+- [x] 8.2 GREEN `internal/tui/trusted_identity_list.go`: widget structurally
       mirroring `trusted_key_list.go` (SAN regexp + issuer pair entry, not a
       single string).
-- [ ] 8.3 RED `internal/tui/screen_signing_config_test.go`: the global
+- [x] 8.3 RED `internal/tui/screen_signing_config_test.go`: the global
       signing modal shows and edits `trusted_identities` alongside
       `trusted_public_keys`, round-tripping through the admin API (spec:
       "Modal shows current global signing policy").
-- [ ] 8.4 GREEN `internal/tui/screen_signing_config.go`: wire
+- [x] 8.4 GREEN `internal/tui/screen_signing_config.go`: wire
       `trustedIdentityList` into the modal alongside the existing `Keys`
       field.
-- [ ] 8.5 RED `internal/tui/override_editor_test.go`: with `signing` selected
+- [x] 8.5 RED `internal/tui/override_editor_test.go`: with `signing` selected
       in the Feature cycle, the modal's fields present trusted identities
       alongside trusted keys, not Trivy/gitleaks fields (spec: "Modal fields
       adapt to signing's settings shape including identities").
-- [ ] 8.6 GREEN `internal/tui/override_editor.go`: wire the identity list
+- [x] 8.6 GREEN `internal/tui/override_editor.go`: wire the identity list
       into the `signing` feature branch (mirrors `e.keys`'s existing wiring
       at lines ~65, ~199, ~308–352).
-- [ ] 8.7 Confirm Phase 8 GREEN (Unit 4 focused test command, partial).
+- [x] 8.7 Confirm Phase 8 GREEN (Unit 4 focused test command, partial).
 
 ## Phase 9: Integration / E2E / Regression (PR 4)
 
-- [ ] 9.1 E2E `docs/verification/scripts/docker-push-pull-smoke.sh`: push a
-      real keyless `cosign`-signed image (shape confirmed by Phase 0);
-      matching identity+issuer policy pulls it; wrong-issuer policy blocks
-      it, distinctly.
-- [ ] 9.2 Confirm full `go test ./...` zero regressions; `gofmt -l .` clean;
+- [x] 9.1 E2E: **deviation, evidence-based** (see apply-progress.md's PR4
+      section) — `docs/verification/scripts/docker-push-pull-smoke.sh`
+      requires `docker` and a real `cosign sign --new-bundle-format` keyless
+      OIDC signing flow, neither reachable in this sandbox (Phase
+      0/PR1/PR3's carried-forward open item, still open). Built instead:
+      `internal/protocol/http/signing_keyless_e2e_test.go`, a Go E2E test
+      proving the full stack through ordinary HTTP requests only (PUT
+      /admin/v1/signing-policy with trusted_identities -> sqlite persist ->
+      a real pull request reaching signing.VerifyKeyless through the
+      complete router stack, failing closed distinctly from the
+      zero-anchor precondition). A genuinely successful identity match
+      remains the open item requiring a live artifact or a docker-capable
+      environment.
+- [x] 9.2 Confirm full `go test ./...` zero regressions; `gofmt -l .` clean;
       `go vet ./...` clean.
-- [ ] 9.3 Docs: document trusted-identity configuration (global + override)
+- [x] 9.3 Docs: document trusted-identity configuration (global + override)
       and the pinned-root rotation-is-a-release-task note in the relevant
       operator docs.

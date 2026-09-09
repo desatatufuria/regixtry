@@ -54,7 +54,7 @@ JSON bodies are decoded rejecting unknown fields and multiple bodies.
 | GET | `/admin/v1/scan-policy` | none | `200`, current vulnerability-gate policy |
 | PUT | `/admin/v1/scan-policy` | `enabled`, `severity_threshold` (`critical` or `critical_high`) | `200`, persisted policy |
 | GET | `/admin/v1/signing-policy` | none | `200`, current signing-gate policy |
-| PUT | `/admin/v1/signing-policy` | `enabled`, `trusted_public_keys` (up to 16 PEM-encoded ECDSA P-256 keys), `unsigned_self_read` (`""`/`"off"`, `"pusher"`, or `"repo_push"`) | `200`, persisted policy |
+| PUT | `/admin/v1/signing-policy` | `enabled`, `trusted_public_keys` (up to 16 PEM-encoded ECDSA P-256 keys), `trusted_identities` (up to 16 keyless/Fulcio identities, each `certificate_identity_regexp` + `certificate_oidc_issuer`), `unsigned_self_read` (`""`/`"off"`, `"pusher"`, or `"repo_push"`) | `200`, persisted policy |
 | GET | `/admin/v1/signing-policy/key-usage?key=<pem>&repository=<optional>` | none | `200`, `{"count": int, "capped": bool}` — best-effort count of currently-tagged images verifying against `key` (global scope, or one repository), shown before an operator deletes that key; never a blocking gate |
 | POST | `/admin/v1/scan-runs` | `repository`, `reference` | `202`, queued run with canonical digest |
 | GET | `/admin/v1/scan-runs?repository=&limit=` | none | `200`, run history |
@@ -113,7 +113,31 @@ curl -X PUT \
   -d '{"enabled": true, "trusted_public_keys": ["-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----"]}'
 ```
 
-Keys must be PEM-encoded ECDSA P-256 public keys; up to 16 entries are accepted. `enabled: true` with zero usable keys is rejected as a validation error.
+Keys must be PEM-encoded ECDSA P-256 public keys; up to 16 entries are accepted. `enabled: true` with zero usable anchors of either kind (keys or identities) is rejected as a validation error — a signature verifies against ANY trusted key OR ANY trusted identity, never both combined with AND.
+
+### Keyless (Fulcio/OIDC) identity example
+
+```bash
+curl -X PUT \
+  -H 'Authorization: Bearer <admin-token>' \
+  -H 'Content-Type: application/json' \
+  https://registry.example.com/admin/v1/signing-policy \
+  -d '{
+    "enabled": true,
+    "trusted_identities": [
+      {
+        "certificate_identity_regexp": "^https://github.com/acme/.+$",
+        "certificate_oidc_issuer": "https://token.actions.githubusercontent.com"
+      }
+    ]
+  }'
+```
+
+`certificate_identity_regexp` matches against the certificate's Subject Alternative Name (a regexp, compiled and rejected as a validation error at write time if malformed); `certificate_oidc_issuer` is the exact required OIDC issuer, both required per entry. Up to 16 identities are accepted, the same cap `trusted_public_keys` already has. Verification is entirely offline: the embedded certificate is checked against a pinned Sigstore public-good trusted root (no TUF auto-update, no operator-supplied root override, no live Rekor query), and the embedded Signed Entry Timestamp is verified against the pinned root rather than querying Rekor live. A bundle whose only timestamp proof is a TSA signature with no Rekor transparency-log entry is rejected as unverifiable, never silently accepted. The pinned root ships with the binary; rotating it is a release-time task, not a runtime configuration option.
+
+Per-repository overrides (`PUT /admin/v1/features/signing/repository-overrides/{repository}`) accept the identical `trusted_identities` field and persist it with the same full-row-replace semantics as `trusted_public_keys`: saving an override with keys but no identities clears any inherited global identities for that repository, and vice versa.
+
+When a pull verifies via the identity path, both the pull-time gate and `GET .../manifests/{reference}/signature-status` report the matched Subject Alternative Name and OIDC issuer as their own distinct value, never folded into the key-fingerprint field a key-verified signature reports.
 
 ### Feature status example
 

@@ -30,9 +30,11 @@
 | Feature runtime kind | The classification of a managed feature as either built-in (runs in-process, e.g. signing) or backed by an external binary/service the feature runtime installs and supervises (e.g. Trivy, Gitleaks) |
 | Scan policy | The stored settings (`scan_settings`) governing whether and how a repository is scanned, including severity thresholds and enablement |
 | Scan run | A single persisted execution of a scanner (Trivy or Gitleaks) against a repository, with its status and result summary |
-| Signing policy | The fail-closed pull gate configuration, global or per-repository, requiring a valid cosign signature from one of one or more trusted public keys before a manifest may be pulled, managed via `GET`/`PUT /admin/v1/signing-policy` |
+| Signing policy | The fail-closed pull gate configuration, global or per-repository, requiring a valid cosign signature from one or more trusted public keys and/or trusted identities before a manifest may be pulled, managed via `GET`/`PUT /admin/v1/signing-policy` |
 | Trusted key | An ECDSA P-256 public key (PEM) a signing policy accepts as valid; a policy may hold several, and a signature verifying against any one of them satisfies the gate |
 | Key fingerprint | A short, read-only display identifier for a trusted key: the first 12 hex characters of the SHA-256 hash of its trimmed PEM text (`signing.Fingerprint`) |
+| Trusted identity | A keyless (Fulcio/OIDC) trust anchor a signing policy accepts as valid: a certificate Subject Alternative Name regexp paired with a required OIDC issuer; a signature verifying against any one configured trusted key OR trusted identity satisfies the gate |
+| Keyless verification | Offline verification of a Sigstore Bundle's embedded Fulcio certificate against a pinned trusted root and a configured trusted identity, with no live Rekor query, no operator-supplied root override, and no TUF auto-update |
 | Blob garbage collection | The report-then-delete admin flow (`/admin/v1/gc/reports`) that finds blobs no manifest references and are past their grace window, then unlinks them from disk when explicitly enabled |
 | GC report | A computed, time-bounded snapshot of garbage-collection candidates that a delete request re-checks against fresh state before acting on it |
 

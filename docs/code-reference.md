@@ -18,6 +18,7 @@
 | Trivy scanning runtime (release fetch, run, runtime manager) | `internal/infra/scanning/trivy/` | `security.md` |
 | Gitleaks secret-scanning runtime (release fetch, run, report parsing, runtime manager) | `internal/infra/scanning/gitleaks/` | `security.md` |
 | Cosign signature parsing, verification, and signing policy | `internal/domain/signing/` | `security.md` |
+| Keyless (Fulcio/OIDC) offline bundle verification against a pinned trusted root (`VerifyKeyless`) | `internal/domain/signing/keyless.go` | `security.md`, `features.md` |
 | Linux bootstrap/systemd | `internal/infra/install/linux/` | `installation.md`, `operations.md` |
 | Release installer | `install.sh`, `.goreleaser.yaml` | `installation.md` |
 | TUI keys/screens (root model) | `internal/tui/model.go` | `tui.md` |
@@ -38,6 +39,7 @@
 | TUI confirm-before-destructive-action primitive (`confirmPrompt`) | `internal/tui/confirm.go` | `architecture.md` |
 | TUI per-repository override editor, shared by Trivy/Gitleaks/Signing (`overrideEditor`) | `internal/tui/override_editor.go` | `tui.md`, `architecture.md` |
 | TUI navigable trusted-key list, shared by Signing's config screen and its override editor (`trustedKeyList`) | `internal/tui/trusted_key_list.go` | `tui.md`, `features.md` |
+| TUI navigable trusted-identity list, shared by Signing's config screen and its override editor (`trustedIdentityList`) | `internal/tui/trusted_identity_list.go` | `tui.md`, `features.md` |
 | TUI Security & Compliance domain menu (`securityMenuScreen`) | `internal/tui/screen_security_menu.go` | `tui.md` |
 | TUI Trivy Runtime screen (`trivyConfigScreen`) | `internal/tui/screen_trivy_config.go` | `tui.md` |
 | TUI Trivy Repository Alerts screen (`trivyReposScreen`) | `internal/tui/screen_trivy_repos.go` | `tui.md` |
