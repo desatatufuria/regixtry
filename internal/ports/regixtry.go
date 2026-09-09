@@ -341,13 +341,25 @@ type ScanPolicySettings struct {
 	UpdatedAt         time.Time `json:"updated_at"`
 }
 
+// TrustedIdentity is one keyless (Fulcio/OIDC) trust anchor: a certificate
+// Subject Alternative Name regexp paired with the required OIDC issuer
+// (signing-keyless-verification design.md Interfaces/Contracts). A signature
+// matches this anchor only when BOTH the SAN regexp and the issuer match --
+// unlike TrustedPublicKeys, which needs no such pairing.
+type TrustedIdentity struct {
+	CertificateIdentityRegexp string `json:"certificate_identity_regexp"`
+	CertificateOIDCIssuer     string `json:"certificate_oidc_issuer"`
+}
+
 // SigningPolicySettings is the global image-signature verification policy:
 // whether the pull-time content-trust gate is enforced, and the set of
-// public keys a signature may verify against (any one is sufficient).
+// public keys and/or trusted identities a signature may verify against (any
+// one anchor of either kind is sufficient -- anchors never combine with AND).
 type SigningPolicySettings struct {
-	Enabled           bool      `json:"enabled"`
-	TrustedPublicKeys []string  `json:"trusted_public_keys"` // canonical PEM, ECDSA P-256
-	UpdatedAt         time.Time `json:"updated_at"`
+	Enabled           bool              `json:"enabled"`
+	TrustedPublicKeys []string          `json:"trusted_public_keys"` // canonical PEM, ECDSA P-256
+	TrustedIdentities []TrustedIdentity `json:"trusted_identities"`
+	UpdatedAt         time.Time         `json:"updated_at"`
 
 	// UnsignedSelfRead is an explicitly opt-in exemption from the pull-time
 	// fail-closed gate, letting a principal read back a manifest it cannot
@@ -361,10 +373,15 @@ type SigningPolicySettings struct {
 }
 
 // SigningOverride is one repository's full replacement of the global signing
-// policy (full-row-replace: present -> all fields apply).
+// policy (full-row-replace: present -> all fields apply). TrustedIdentities
+// mirrors TrustedPublicKeys exactly: an override saved with keys but no
+// identities clears any inherited global identities for that repository
+// (signing-keyless-verification spec: "Per-Repository Trusted-Identity
+// Override Is Full-Row-Replace").
 type SigningOverride struct {
-	Enabled           bool     `json:"enabled"`
-	TrustedPublicKeys []string `json:"trusted_public_keys,omitempty"`
+	Enabled           bool              `json:"enabled"`
+	TrustedPublicKeys []string          `json:"trusted_public_keys,omitempty"`
+	TrustedIdentities []TrustedIdentity `json:"trusted_identities,omitempty"`
 
 	// UnsignedSelfRead mirrors SigningPolicySettings.UnsignedSelfRead --
 	// full-row-replace, so an override with UnsignedSelfRead: "" legitimately
