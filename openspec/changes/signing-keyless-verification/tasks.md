@@ -187,31 +187,31 @@ Chain strategy: pending
 
 ## Phase 6: App — Identity Branch, Precondition, Override Normalize (PR 3)
 
-- [ ] 6.1 RED `internal/app/regixtry/service_signing_bundle_test.go`:
+- [x] 6.1 RED `internal/app/regixtry/service_signing_bundle_test.go`:
       characterization pinning today's `verifySignature`/
       `verifyBundleSignature` static-key-only accept/reject behavior
       byte-for-byte (spec: "Legacy Static-Key Verification Path Is
       Unchanged") — run and confirm GREEN unmodified before any refactor.
-- [ ] 6.2 RED (same file): identity-only policy (zero trusted keys, ≥1
+- [x] 6.2 RED (same file): identity-only policy (zero trusted keys, ≥1
       trusted identity) verifies via a real (not mocked)
       `keyless.VerifyKeyless` call against a bundle fixture carrying
       `verificationMaterial` (spec: "Identity-only policy verifies with no
       trusted key").
-- [ ] 6.3 RED (same file): enabling the policy requires ≥1 usable anchor of
+- [x] 6.3 RED (same file): enabling the policy requires ≥1 usable anchor of
       EITHER kind — zero keys AND zero identities still rejects.
-- [ ] 6.4 RED (same file): a verified identity match reports SAN+issuer as
+- [x] 6.4 RED (same file): a verified identity match reports SAN+issuer as
       its own distinct value, never overloading the key-fingerprint field
       (spec: "Identity match reports SAN and issuer separately").
-- [ ] 6.5 GREEN `internal/app/regixtry/service_signing.go`: replace the bare
+- [x] 6.5 GREEN `internal/app/regixtry/service_signing.go`: replace the bare
       fingerprint return with `signatureMatch{KeyFingerprint, Identity string}`;
       add the identity branch inside `verifyBundleSignature`'s loop, tried
       only after the key loop fails; extend `verifySignature`'s key
       precondition (line ~129) to keys-OR-identities.
-- [ ] 6.6 REFACTOR: propagate `signatureMatch` through all 10
+- [x] 6.6 REFACTOR: propagate `signatureMatch` through all 10
       codegraph-confirmed callers in `service_signing.go` and `queries.go`;
       re-run Phase 6.1's characterization suite and confirm it is still
       GREEN, unmodified.
-- [ ] 6.7 RED `internal/app/regixtry/repository_overrides_test.go`:
+- [x] 6.7 RED `internal/app/regixtry/repository_overrides_test.go`:
       `normalizeSigningOverride` compiles each identity regexp at write
       time, rejects a malformed regexp, caps entries at
       `maxSigningPolicyTrustedKeys` (16, same constant reused for
@@ -219,15 +219,15 @@ Chain strategy: pending
       kind; `applySigningOverridePayload` full-row-replaces identities,
       confirming an override saved with keys-only clears inherited global
       identities (spec: "Override with keys only clears inherited identities").
-- [ ] 6.8 GREEN `internal/app/regixtry/repository_overrides.go`: implement
+- [x] 6.8 GREEN `internal/app/regixtry/repository_overrides.go`: implement
       identity normalize/apply mirroring `normalizeSigningOverride`'s
       existing key logic.
-- [ ] 6.9 RED `internal/app/regixtry/queries_test.go`:
+- [x] 6.9 RED `internal/app/regixtry/queries_test.go`:
       `SignatureStatusDetail.VerifiedIdentity` is populated only on the
       identity-verification path; `SignatureStatusPolicy.TrustedIdentities`
       reports the configured count.
-- [ ] 6.10 GREEN `internal/app/regixtry/queries.go`: add both fields.
-- [ ] 6.11 Confirm Phase 6 GREEN (Unit 3 focused test command).
+- [x] 6.10 GREEN `internal/app/regixtry/queries.go`: add both fields.
+- [x] 6.11 Confirm Phase 6 GREEN (Unit 3 focused test command).
 
 ## Phase 7: HTTP — Admin Decode/Validate/Serialize (PR 4)
 

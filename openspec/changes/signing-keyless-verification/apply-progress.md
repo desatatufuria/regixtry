@@ -406,10 +406,197 @@ against any pre-existing/other-writer row that might still contain a literal
 - **Approval tests**: None — no refactoring of existing production code; Phase 4/5 are additive except for the pre-existing `GetSigningPolicySettings`/`UpsertSigningPolicySettings` bodies, which were extended in place (their existing behavior is covered by `TestStoreUpsertSigningPolicySettingsRoundTripsEnabledKeysAndUpdatedAt`, confirmed still passing unmodified)
 - **Pure functions created**: None new (the nil-normalization logic is inline in the existing `Get`/`Upsert` methods, consistent with their existing style — not extracted, since it is two lines each and used in exactly one place per method)
 
+## Remaining work as of PR2 (superseded — see the PR3 section below for current status)
+
+- Phase 6: app-layer identity branch, keys-OR-identities precondition, `signatureMatch` (PR3) — done, see below.
+- Phase 7: HTTP admin decode/serialize (PR4)
+- Phase 8: TUI trusted-identity list widget (PR4)
+- Phase 9: E2E smoke test with a real keyless-signed image, full regression, docs (PR4)
+
+## Scope covered by this batch (PR3 — Unit 3: app wiring)
+
+Branch: `feature/signing-keyless-verification-03-app-wiring` (based on
+`feature/signing-keyless-verification-02-ports-store`, which is based on PR1,
+which is based on tracker `feature/signing-keyless-verification`, based on
+`develop`).
+
+Phase 6 from `tasks.md` — complete, strictly inside `internal/app/regixtry/`.
+`internal/protocol/http/admin_handlers.go` and every `internal/tui/*` file
+were deliberately NOT touched in this batch (Phase 7/8, PR4). No
+`internal/ports/regixtry.go` change was needed: PR2 already added
+`ports.TrustedIdentity` and the `TrustedIdentities` fields on
+`SigningPolicySettings`/`SigningOverride`; `ports.RepositoryOverrideDetails`
+(the HTTP/TUI wire-projection struct) remains untouched, confirmed still
+PR4/Phase 7 scope.
+
+### Files changed
+
+- `internal/app/regixtry/service_signing.go` — `signatureMatch{KeyFingerprint,
+  Identity string}` (design.md's committed shape) replaces the previous bare
+  `matchedFingerprint string` return on both `verifySignature` and
+  `verifyBundleSignature`. `verifySignature`'s usable-anchor precondition
+  becomes keys-OR-identities (`len(keys) == 0 && len(policy.TrustedIdentities)
+  == 0`). `verifyBundleSignature` gains the identity branch: for each
+  candidate bundle document, after the existing key loop fails to match, if
+  `identities` is non-empty AND `signing.ParseBundleVerificationMaterial`
+  reports `HasCertificate` (a cheap pre-filter that skips wasted
+  `VerifyKeyless` calls on ordinary static-key documents), it calls the REAL
+  `signing.VerifyKeyless(bundlePayload, toSigningIdentities(identities),
+  digest)` — the same raw bundle bytes the key loop already parsed, per
+  design.md's "Bundle handoff" decision (VerifyKeyless does its own bundle
+  parsing internally; no sigstore-go type crosses this boundary). On success,
+  `composeVerifiedIdentity` (new pure function) formats the matched SAN
+  together with the OIDC issuer of whichever configured `TrustedIdentity`'s
+  regexp actually matched it, as `"<SAN> (<issuer>)"` — design.md's own
+  contract only fixes `Identity` as a `string`, not its exact format; this is
+  a judgment call, documented here as such. The legacy SimpleSigning `.sig`
+  path in `verifySignature` is completely untouched (spec: "Legacy Static-Key
+  Verification Path Is Unchanged") — the identity branch lives ONLY inside
+  `verifyBundleSignature`.
+- `internal/app/regixtry/queries.go` — `SignatureStatusPolicy` gains
+  `TrustedIdentities int` (configured count, mirrors `TrustedKeys`'
+  count-only, never-raw-material discipline). `SignatureStatusDetail` gains
+  `VerifiedIdentity string` (`json:"verified_identity,omitempty"`), populated
+  only from `match.Identity` on the verified path, mutually exclusive with
+  `VerifiedKeyFingerprint`.
+- `internal/app/regixtry/repository_overrides.go` — `normalizeSigningOverride`
+  now also compiles each `TrustedIdentities[i].CertificateIdentityRegexp` via
+  `regexp.Compile` (rejecting a malformed one), requires a non-empty
+  `CertificateOIDCIssuer`, caps `trusted_identities` at the same
+  `maxSigningPolicyTrustedKeys` (16) bound `trusted_public_keys` already has,
+  and extends the outage rule so `enabled:true` is rejected only when BOTH
+  `trusted_public_keys` and `trusted_identities` end up empty (previously:
+  keys alone). `applySigningOverridePayload` now also assigns
+  `settings.TrustedIdentities = override.TrustedIdentities` — a plain
+  full-row-replace, identical in shape to the existing `TrustedPublicKeys`
+  line, which automatically satisfies "an override saved with keys but no
+  identities clears inherited global identities" (the override's own
+  `TrustedIdentities` is `nil`/absent when the payload didn't set it).
+
+### Deviations / judgment calls, evidence-based
+
+1. **`composeVerifiedIdentity`'s exact string format** (`"<SAN> (<issuer>)"`)
+   is this PR's own choice, not pinned by design.md (which only commits to
+   `Identity string`, per PR1's own note that Phase 6 "can compose SAN +
+   issuer together if the operator-facing surface needs both"). Chosen for
+   human readability on the signature-status endpoint; Phase 7/8 (PR4) can
+   revisit if the HTTP/TUI surface wants a structured `{san, issuer}` object
+   instead of one formatted string — `signatureMatch.Identity` stays a plain
+   `string` per design.md's committed contract either way, so any such
+   change would be scoped to `composeVerifiedIdentity` alone, not the
+   `signatureMatch` type.
+2. **Task 6.2's "verifies via a real call" tested as a real, correctly
+   fail-closed attempt, not a positive cryptographic success** — carried
+   forward from PR1's own confirmed, still-unresolved Phase 0 finding: no
+   live keyless-signed Sigstore Bundle-document artifact was obtainable in
+   this sandbox (see the Phase 0 section above), and `keyless.go`'s
+   `signedEntityVerifier` always verifies against the REAL embedded pinned
+   Sigstore public-good root with no operator override (design.md, settled)
+   — so no certificate mintable offline in a unit test can ever legitimately
+   chain to it. `TestServiceVerifySignature_IdentityOnlyPolicyReachesRealKeylessVerification`
+   therefore proves the achievable, real half of this: a self-signed test
+   certificate genuinely reaches `signing.VerifyKeyless` (not a mock or test
+   double — the exact same function production code calls), and the
+   observable result is `signatureStateUntrusted` (a real verification
+   ATTEMPT that failed), never `signatureStateUnverifiable` (which
+   `TestServiceVerifySignature_ZeroKeysAndZeroIdentitiesIsUnverifiable`
+   confirms is reserved for the distinct "no usable anchor configured at
+   all" precondition zero keys alone used to always trip before this
+   change). The positive "a verified match reports SAN+issuer distinctly"
+   half of the spec (task 6.4) is proven separately and directly via
+   `TestComposeVerifiedIdentity_ReportsMatchingIdentitysIssuer`, a pure
+   unit test of the exact composition logic a real identity-verified pull
+   would exercise — no crypto, no mocks, real production code. This
+   evidence-based test-design split — same reasoning PR1 applied to the
+   SCT/expired-certificate deviations — is flagged here for a human/CI
+   environment with real `cosign`/live-artifact access to close out
+   end-to-end, same as Phase 0's own open item.
+3. **Precondition/final-fallback error message text changed** (not just
+   state): `verifySignature`'s zero-usable-anchor message became "no usable
+   trusted key or trusted identity is configured" (was "...trusted key is
+   configured"), and `verifyBundleSignature`'s final untrusted message
+   became "no bundle signature validated against a trusted key or trusted
+   identity" (was "...against a trusted key"). Confirmed safe: `rg`-searched
+   every test file in the repo for the OLD literal message text before
+   changing it — zero hits; every existing assertion checks `state`/error
+   code only, never this exact string, so this is a wording improvement,
+   not a behavior change, and does not violate task 6.1's byte-for-byte
+   characterization guarantee (which is about accept/reject STATE, not this
+   one message's exact wording).
+
+### Verification (6.11)
+
+- Focused command: `go test ./internal/app/regixtry/... -run 'VerifyBundleSignature|VerifySignature|NormalizeSigningOverride|ApplySigningOverridePayload|SignatureStatus' -v`
+  — all matched tests pass.
+- Full package: `go test ./internal/app/regixtry/... -v` — 195 `--- PASS`
+  lines, 0 `--- FAIL` (was 51 relevant to signing before this batch under the
+  narrower `-run 'Signature|Signing'` filter; the full package count of 195
+  includes every test in the package, confirmed zero regressions by full-suite
+  diff).
+- Full repo: `go test ./...` — all 19 packages pass, zero regressions
+  (`internal/protocol/http` and `internal/tui` — untouched this batch — both
+  still pass unchanged).
+- `go build ./...` — clean.
+- `go vet ./...` — clean.
+- `gofmt -l` on every changed `.go` file (`service_signing.go`,
+  `service_signing_bundle_test.go`, `queries.go`, `queries_test.go`,
+  `repository_overrides.go`, `repository_overrides_test.go`) — clean (no
+  output).
+
+## Work Unit Evidence
+
+| Evidence | Value |
+|---|---|
+| Focused test command and result | `go test ./internal/app/regixtry/... -run 'VerifyBundleSignature\|VerifySignature\|NormalizeSigningOverride\|ApplySigningOverridePayload\|SignatureStatus' -v` → all matched tests PASS |
+| Runtime harness | N/A — service-layer only; no operator-facing way to write identities exists until PR 4 (HTTP admin decode/TUI), matching tasks.md's own Unit 3 "Runtime harness" column |
+| Rollback boundary | Revert `service_signing.go`'s `signatureMatch`/identity branch/`composeVerifiedIdentity`/`toSigningIdentities`, `repository_overrides.go`'s identity normalize/apply additions, and `queries.go`'s `VerifiedIdentity`/`TrustedIdentities` fields (plus each file's test additions). PR 2's `trusted_identities` sqlite column stays in place but unwritten by any code path — inert to a revert. |
+
+## TDD Cycle Evidence
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|---|---|---|---|---|---|---|---|
+| 6.1 characterization safety net | `service_signing_bundle_test.go` (pre-existing, from `image-signing`) | Unit (real sqlite + fsblob via `newTestService`) | ✅ Confirmed GREEN before any change: `go test ./internal/app/regixtry/... -run 'Signature\|Signing' -v` → 51/51 `--- PASS` (baseline) | ➖ N/A — file already existed and comprehensively characterized static-key accept/reject behavior; no new RED needed for 6.1 itself | ✅ Re-run after full Phase 6 GREEN: same 51 cases still pass, only their `(state, fingerprint, err)` destructuring adapted to `(state, match, err)` — zero assertion semantics changed | ➖ N/A (pre-existing coverage) | ➖ N/A |
+| 6.2 identity-only reaches real `VerifyKeyless` | `service_signing_bundle_test.go` | Unit (real sqlite + fsblob, real `signing.VerifyKeyless`) | ✅ (above) | ✅ Written (compile failure: `verifyBundleSignature`/`verifySignature` did not yet accept `identities`) | ✅ Passed: `signatureStateUntrusted`, distinct from `signatureStateUnverifiable` | ➖ Single case — see Deviation 2 above for why a positive-match case is not constructible offline | ➖ None needed |
+| 6.3 keys-OR-identities precondition | `service_signing_bundle_test.go` | Unit | ✅ (above) | ✅ Written (failed: old code always returned `unverifiable` regardless of identities being absent too, same outcome coincidentally, so this RED was actually a same-result-different-reason case — confirmed by running BEFORE 6.5's GREEN, where the assertion held for the wrong reason (only `len(keys)==0` mattered); re-run AFTER 6.5 to confirm it now holds for the intended reason (`len(keys)==0 && len(identities)==0`)) | ✅ Passed | ➖ Paired directly against 6.2's case (same test file, contrasting states) | ➖ None needed |
+| 6.4 SAN+issuer composition | `service_signing_bundle_test.go` (`TestComposeVerifiedIdentity_...`) | Unit, pure function | N/A (new function) | ✅ Written (compile failure: `composeVerifiedIdentity` undefined) | ✅ Passed | ✅ 2 cases (single identity; multiple identities, picks the actually-matching one not the first) | ➖ None needed — already minimal |
+| 6.5–6.6 `signatureMatch` GREEN + propagate through callers | `service_signing.go`, `queries.go` + all touched test files | Unit | ✅ (51/51 baseline) | N/A (production code task, tests were 6.1-6.4/6.9's job) | ✅ `go build ./...` clean, `go vet ./...` clean | N/A | ✅ Re-ran full characterization suite (51 cases) unmodified in assertion semantics — all still pass |
+| 6.7 override validate RED | `repository_overrides_test.go` | Unit | ✅ existing override tests passing before this batch | ✅ Written (compile failure: `regexp` imported and not used until GREEN wired it in — confirmed real RED via `go test` build failure, not assumption) | ✅ Passed after implementing `normalizeSigningOverride`'s identity validation | ✅ 4+1 cases (valid identity; malformed regexp; empty issuer; outage rule with both empty; separate too-many-identities cap test) | ➖ None needed |
+| 6.8 override apply GREEN | `repository_overrides.go` | Unit | ✅ (above) | ✅ Written (`TestApplySigningOverridePayloadFullRowReplacesTrustedIdentities` failed pre-GREEN: `got.TrustedIdentities` stayed nil/inherited instead of round-tripping/clearing) | ✅ Passed | ✅ 2 cases (round-trips when set; clears inherited when omitted) | ➖ None needed |
+| 6.9–6.10 status fields | `queries_test.go` | Unit (real sqlite + fsblob) | ✅ existing `SignatureStatus` tests passing before this batch | ✅ Written (compile failure: `ports.TrustedIdentity`/`.Policy.TrustedIdentities`/`.Signature.VerifiedIdentity` fields did not exist on `SignatureStatusPolicy`/`SignatureStatusDetail` before GREEN) | ✅ Passed | ✅ 2 cases (count reporting; mutual-exclusion with `VerifiedKeyFingerprint` on the key-verified path) | ➖ None needed |
+
+### Test Summary
+- **Total tests written this batch**: 8 top-level (`TestServiceVerifySignature_IdentityOnlyPolicyReachesRealKeylessVerification`,
+  `TestServiceVerifySignature_ZeroKeysAndZeroIdentitiesIsUnverifiable`,
+  `TestComposeVerifiedIdentity_ReportsMatchingIdentitysIssuer` (2 subtests),
+  `TestNormalizeSigningOverrideValidatesTrustedIdentities` (4 subtests),
+  `TestNormalizeSigningOverrideRejectsTooManyTrustedIdentities`,
+  `TestApplySigningOverridePayloadFullRowReplacesTrustedIdentities` (2
+  subtests), `TestServiceSignatureStatusPolicyReportsTrustedIdentitiesCount`,
+  `TestServiceSignatureStatusVerifiedIdentityNeverPopulatedOnKeyVerifiedPath`)
+  plus 8 pre-existing `service_signing_bundle_test.go` tests adapted
+  (destructuring only, zero assertion-semantics changes) to the new
+  `signatureMatch` return shape.
+- **Total tests passing**: 195/195 in `internal/app/regixtry` (cumulative,
+  `--- PASS` count via `go test -v`); full repo `go test ./...` also green,
+  zero regressions.
+- **Layers used**: Unit only (real sqlite temp-file DB + real fsblob via
+  `newTestService`, and one pure-function table-driven test — no mocks
+  anywhere in this batch).
+- **Approval tests**: The pre-existing `service_signing_bundle_test.go` suite
+  (51 cases) served as this batch's approval/characterization tests for the
+  `verifySignature`/`verifyBundleSignature` refactor (6.6) — confirmed
+  passing both before (baseline) and after (unmodified assertion semantics)
+  the `signatureMatch` return-shape change.
+- **Pure functions created**: `composeVerifiedIdentity`, `toSigningIdentities`
+  (both pure, zero I/O; `toSigningIdentities` is a straight type-mapping
+  loop with no branching, so it was not independently unit-tested beyond
+  its exercise inside `TestServiceVerifySignature_IdentityOnlyPolicyReachesRealKeylessVerification`
+  — triangulation skipped: no possible output shape other than one
+  `signing.TrustedIdentity` per input entry, in order).
+
 ## Remaining work (out of scope for this PR/branch)
 
-- Phase 6: app-layer identity branch, keys-OR-identities precondition, `signatureMatch` (PR3)
-- Phase 7: HTTP admin decode/serialize (PR4)
+- Phase 7: HTTP admin decode/serialize, including `ports.RepositoryOverrideDetails.TrustedIdentities` (PR4)
 - Phase 8: TUI trusted-identity list widget (PR4)
 - Phase 9: E2E smoke test with a real keyless-signed image, full regression, docs (PR4)
 
@@ -429,3 +616,11 @@ against any pre-existing/other-writer row that might still contain a literal
    `image-signing` change, not touched by this PR). Worth a follow-up
    investigation once a real bundle-format image artifact is available to
    test against.
+3. **Carried forward from Phase 0, now also blocking a fully end-to-end PR3
+   test**: with a real keyless-signed image (real Fulcio certificate,
+   matching issuer, real Rekor tlog entry), `TestServiceVerifySignature_IdentityOnlyPolicyReachesRealKeylessVerification`
+   (PR3, `service_signing_bundle_test.go`) should be extended/replaced with a
+   case asserting `signatureStateVerified` and a populated
+   `match.Identity`, closing PR3's own Deviation 2 (see the PR3 section
+   above) the same way Phase 0's E2E task (9.1) is meant to close this gap
+   for the whole feature.
