@@ -854,7 +854,7 @@ func signingPolicyBadge(theme adminTheme, policy ports.SigningPolicySettings) st
 	if !policy.Enabled {
 		return theme.muted.Render("Signing: OFF")
 	}
-	return theme.selected.Render(fmt.Sprintf("Signing: REQUIRED (%d keys)", len(policy.TrustedPublicKeys)))
+	return theme.selected.Render(fmt.Sprintf("Signing: REQUIRED (%d keys, %d identities)", len(policy.TrustedPublicKeys), len(policy.TrustedIdentities)))
 }
 
 // renderSigningPolicyModal/signingPolicyStatusLine/renderSigningPolicyKeyList/

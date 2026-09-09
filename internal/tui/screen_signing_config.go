@@ -122,11 +122,12 @@ func (s signingConfigScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, te
 		}
 		// Unlike scanPolicyModal, the modal stays open after a successful
 		// save (design.md Decision 11 piece 1's growable key list): the
-		// operator can keep adding keys.
+		// operator can keep adding keys/identities.
 		s.policy = typed.settings
 		s.cfg.Enabled = typed.settings.Enabled
 		s.cfg.UnsignedSelfRead = normalizeUnsignedSelfRead(typed.settings.UnsignedSelfRead)
 		s.cfg.Keys = s.cfg.Keys.SetKeys(typed.settings.TrustedPublicKeys)
+		s.cfg.Identities = s.cfg.Identities.SetIdentities(typed.settings.TrustedIdentities)
 		s.cfg.Error = ""
 		return s, nil, false
 	case adminSigningKeyUsageLoadedMsg:
@@ -185,6 +186,7 @@ func (s signingConfigScreen) updateKey(env screenEnv, msg tea.KeyMsg) (adminScre
 			Enabled:          s.policy.Enabled,
 			UnsignedSelfRead: normalizeUnsignedSelfRead(s.policy.UnsignedSelfRead),
 			Keys:             newTrustedKeyList("", s.policy.TrustedPublicKeys),
+			Identities:       newTrustedIdentityList(s.policy.TrustedIdentities),
 		}
 		return s, nil, true
 	case isRuneKey(msg, 'o'):
@@ -244,11 +246,29 @@ func (s signingConfigScreen) updateConfigKey(env screenEnv, msg tea.KeyMsg) (adm
 	// too, so the rendered highlight (renderSigningPolicyModal's
 	// modal.Focus == signingPolicyFieldAddKey check) is always honest about
 	// what is currently receiving input.
-	next, cmd, consumed := s.cfg.Keys.update(env, msg)
-	if consumed {
-		s.cfg.Keys = next
-		s.cfg.Focus = signingPolicyFieldAddKey
-		return s, cmd, true
+	//
+	// Identities (signing-keyless-verification) is NOT given the same
+	// unconditional priority as Keys: both widgets would otherwise claim
+	// the identical Up/Down/'n'/'x' keys ambiguously with no way to tell
+	// which list an unfocused keystroke was meant for. Identities only
+	// claims them once the operator has actually tabbed onto
+	// signingPolicyFieldIdentities -- Keys keeps its established
+	// reachable-from-anywhere shortcut (preserving
+	// TestSigningConfigScreenKeyListReachableWithoutTabbingToIt's pinned
+	// behavior) since it has no competing sibling field ambiguity.
+	if s.cfg.Focus == signingPolicyFieldIdentities {
+		next, consumed := s.cfg.Identities.update(msg)
+		if consumed {
+			s.cfg.Identities = next
+			return s, nil, true
+		}
+	} else {
+		next, cmd, consumed := s.cfg.Keys.update(env, msg)
+		if consumed {
+			s.cfg.Keys = next
+			s.cfg.Focus = signingPolicyFieldAddKey
+			return s, cmd, true
+		}
 	}
 	switch {
 	case isEscKey(msg):
@@ -275,6 +295,7 @@ func (s signingConfigScreen) updateConfigKey(env screenEnv, msg tea.KeyMsg) (adm
 		input := ports.SigningPolicySettings{
 			Enabled:           s.cfg.Enabled,
 			TrustedPublicKeys: trustedKeys,
+			TrustedIdentities: s.cfg.Identities.Identities(),
 			UnsignedSelfRead:  normalizeUnsignedSelfRead(s.cfg.UnsignedSelfRead),
 		}
 		return s, updateSigningPolicyCmd(env, input), true
@@ -340,6 +361,7 @@ func renderSigningPolicyModal(theme adminTheme, modal signingPolicyModal) string
 		renderTextField(theme, "Unsigned Self-Read", normalizeUnsignedSelfRead(modal.UnsignedSelfRead), modal.Focus == signingPolicyFieldUnsignedSelfRead),
 	}
 	lines = append(lines, renderTrustedKeyList(theme, modal.Keys, modal.Focus == signingPolicyFieldAddKey)...)
+	lines = append(lines, renderTrustedIdentityList(theme, modal.Identities, modal.Focus == signingPolicyFieldIdentities)...)
 	lines = append(lines, renderSigningPolicyClearKeysRow(theme, modal))
 	if strings.TrimSpace(modal.Error) != "" {
 		lines = append(lines, "", theme.error.Render(modal.Error))
@@ -357,7 +379,7 @@ func signingPolicyStatusLine(modal signingPolicyModal) string {
 	if modal.Loading {
 		return "Loading…"
 	}
-	return fmt.Sprintf("%d trusted key(s) configured", len(modal.Keys.Keys()))
+	return fmt.Sprintf("%d trusted key(s), %d trusted identity(ies) configured", len(modal.Keys.Keys()), len(modal.Identities.Identities()))
 }
 
 // renderSigningPolicyClearKeysRow renders the modal's ClearKeys action as a

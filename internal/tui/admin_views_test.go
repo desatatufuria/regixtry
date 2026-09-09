@@ -521,7 +521,11 @@ func TestRenderOverrideEditorIsASeparateSurfaceFromOtherAdminModals(t *testing.T
 // RED test (design.md Decision 11 piece 1's row-budget table), updated for
 // the signing-key-management change's trustedKeyList component (own
 // heading row + one row per key + a nav-hint row when focused, replacing
-// the retired single Trusted Key (PEM) input row + capped key-list rows).
+// the retired single Trusted Key (PEM) input row + capped key-list rows),
+// and further updated by signing-keyless-verification for the new
+// trustedIdentityList component (own heading row + "No trusted identities
+// configured." row when empty, +2 rows versus the pre-identities budget in
+// every case below since all three cases configure zero identities).
 func TestRenderSigningPolicyModalFitsWithinRowBudget(t *testing.T) {
 	t.Parallel()
 
@@ -535,17 +539,17 @@ func TestRenderSigningPolicyModalFitsWithinRowBudget(t *testing.T) {
 		{
 			name:       "no error, 0 keys",
 			modal:      signingPolicyModal{Open: true, Focus: signingPolicyFieldEnabled, Enabled: false, Keys: newTrustedKeyList("", nil)},
-			wantHeight: 15,
+			wantHeight: 17,
 		},
 		{
 			name:       "no error, 3 keys",
 			modal:      signingPolicyModal{Open: true, Focus: signingPolicyFieldEnabled, Enabled: true, Keys: newTrustedKeyList("", []string{"aaaaaaaaaaaa", "bbbbbbbbbbbb", "cccccccccccc"})},
-			wantHeight: 17,
+			wantHeight: 19,
 		},
 		{
 			name:       "error, 5 keys, focused (shows the add/delete hint row)",
 			modal:      signingPolicyModal{Open: true, Focus: signingPolicyFieldAddKey, Enabled: true, Keys: newTrustedKeyList("", []string{"aaaaaaaaaaaa", "bbbbbbbbbbbb", "cccccccccccc", "dddddddddddd", "eeeeeeeeeeee"}), Error: "trusted_public_keys[0] is invalid"},
-			wantHeight: 22,
+			wantHeight: 24,
 		},
 	}
 
@@ -805,8 +809,10 @@ func TestSigningPolicyBadgeTextReflectsStateAndUsesNoIconOrGlyph(t *testing.T) {
 		want   string
 	}{
 		{name: "disabled", policy: ports.SigningPolicySettings{Enabled: false}, want: "Signing: OFF"},
-		{name: "enabled, one key", policy: ports.SigningPolicySettings{Enabled: true, TrustedPublicKeys: []string{"key-one"}}, want: "Signing: REQUIRED (1 keys)"},
-		{name: "enabled, two keys", policy: ports.SigningPolicySettings{Enabled: true, TrustedPublicKeys: []string{"key-one", "key-two"}}, want: "Signing: REQUIRED (2 keys)"},
+		{name: "enabled, one key", policy: ports.SigningPolicySettings{Enabled: true, TrustedPublicKeys: []string{"key-one"}}, want: "Signing: REQUIRED (1 keys, 0 identities)"},
+		{name: "enabled, two keys", policy: ports.SigningPolicySettings{Enabled: true, TrustedPublicKeys: []string{"key-one", "key-two"}}, want: "Signing: REQUIRED (2 keys, 0 identities)"},
+		{name: "enabled, one key and one identity", policy: ports.SigningPolicySettings{Enabled: true, TrustedPublicKeys: []string{"key-one"}, TrustedIdentities: []ports.TrustedIdentity{{CertificateIdentityRegexp: "^valid$", CertificateOIDCIssuer: "https://token.actions.githubusercontent.com"}}}, want: "Signing: REQUIRED (1 keys, 1 identities)"},
+		{name: "enabled, identity-only", policy: ports.SigningPolicySettings{Enabled: true, TrustedIdentities: []ports.TrustedIdentity{{CertificateIdentityRegexp: "^valid$", CertificateOIDCIssuer: "https://token.actions.githubusercontent.com"}}}, want: "Signing: REQUIRED (0 keys, 1 identities)"},
 	}
 
 	for _, tc := range tests {
@@ -848,7 +854,7 @@ func TestFeaturePageHeadingComposesSigningBadgeAtZeroRowCostForSigningOnly(t *te
 		policy: ports.SigningPolicySettings{Enabled: true, TrustedPublicKeys: []string{"key-one"}},
 	}.View(theme, env).Body
 
-	if !strings.Contains(ansi.Strip(withBadge), "Signing: REQUIRED (1 keys)") {
+	if !strings.Contains(ansi.Strip(withBadge), "Signing: REQUIRED (1 keys, 0 identities)") {
 		t.Fatalf("signingConfigScreen.View() = %q, want the signing badge composed onto the heading", ansi.Strip(withBadge))
 	}
 	if lipgloss.Height(withBadge) != lipgloss.Height(baseline) {

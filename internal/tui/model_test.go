@@ -3253,9 +3253,11 @@ func TestModelSigningPolicyModalAddKeySubmitPersistsAndReflectsCurrentSettings(t
 		t.Fatalf("view = %q, want signing policy feedback after submit", submitted.View())
 	}
 
-	// ClearKeys: Tab once more (Keys -> ClearKeys), Enter clears every
-	// trusted key.
+	// ClearKeys: Tab twice more (Keys -> Identities -> ClearKeys, the new
+	// Identities field inserted by signing-keyless-verification between
+	// them), Enter clears every trusted key.
 	cleared := runKey(t, submitted, "tab")
+	cleared = runKey(t, cleared, "tab")
 	cleared = runKey(t, cleared, "enter")
 	if got, want := adminClient.updateSigningPolicyCalls, 2; got != want {
 		t.Fatalf("updateSigningPolicyCalls = %d, want %d after Clear", got, want)

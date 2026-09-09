@@ -269,16 +269,18 @@ func TestSigningPolicyModalActiveReflectsOpenField(t *testing.T) {
 	}
 }
 
-// TestNextSigningPolicyFieldCyclesThroughAllFourFields is the RED test for
-// the UnsignedSelfRead TUI surface: nextSigningPolicyField wraps
-// Enabled -> UnsignedSelfRead -> AddKey -> ClearKeys -> Enabled.
-func TestNextSigningPolicyFieldCyclesThroughAllFourFields(t *testing.T) {
+// TestNextSigningPolicyFieldCyclesThroughAllFiveFields is the RED test for
+// the UnsignedSelfRead TUI surface, extended by signing-keyless-verification
+// for the new Identities field: nextSigningPolicyField wraps
+// Enabled -> UnsignedSelfRead -> AddKey -> Identities -> ClearKeys -> Enabled.
+func TestNextSigningPolicyFieldCyclesThroughAllFiveFields(t *testing.T) {
 	t.Parallel()
 
 	got := signingPolicyFieldEnabled
 	want := []signingPolicyField{
 		signingPolicyFieldUnsignedSelfRead,
 		signingPolicyFieldAddKey,
+		signingPolicyFieldIdentities,
 		signingPolicyFieldClearKeys,
 		signingPolicyFieldEnabled,
 	}

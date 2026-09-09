@@ -226,6 +226,12 @@ const (
 	signingPolicyFieldEnabled signingPolicyField = iota
 	signingPolicyFieldUnsignedSelfRead
 	signingPolicyFieldAddKey
+	// signingPolicyFieldIdentities is the trusted-identity list's own focus
+	// position (signing-keyless-verification), a sibling of AddKey rather
+	// than a variant of it: an identity has its own add/select/delete
+	// widget (trustedIdentityList, trusted_identity_list.go), not the
+	// PEM-paste shape trustedKeyList uses.
+	signingPolicyFieldIdentities
 	signingPolicyFieldClearKeys // action row, not an input
 )
 
@@ -252,9 +258,14 @@ type signingPolicyModal struct {
 	// add/select/delete for the modal's trusted-key list directly, growing
 	// or shrinking the list live rather than staging one pending AddKey
 	// string that only ever appended.
-	Keys    trustedKeyList
-	Loading bool
-	Error   string
+	Keys trustedKeyList
+	// Identities is Keys' sibling for keyless (Fulcio/OIDC) trust anchors
+	// (signing-keyless-verification): trustedIdentityList owns add/select/
+	// delete for the modal's trusted-identity list directly, mirroring Keys'
+	// own growable-list shape.
+	Identities trustedIdentityList
+	Loading    bool
+	Error      string
 }
 
 func (m signingPolicyModal) Active() bool {
