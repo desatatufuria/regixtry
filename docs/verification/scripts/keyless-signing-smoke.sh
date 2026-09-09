@@ -456,9 +456,15 @@ main() {
 
   local identity_san=""
   local identity_regexp=""
+  local issuer="https://token.actions.githubusercontent.com"
   identity_san="https://github.com/${workflow_ref}"
   identity_regexp="^$(regex_escape "${identity_san}")\$"
-  local issuer="https://token.actions.githubusercontent.com"
+  # The registry's verified_identity is never the bare SAN alone: service.go's
+  # composeVerifiedIdentity always composes "<SAN> (<issuer>)" once a
+  # TrustedIdentity regexp matches (internal/app/regixtry/service_signing.go).
+  # Comparing against the bare SAN here would make the positive case below
+  # fail deterministically even on a fully correct verification.
+  local expected_verified_identity="${identity_san} (${issuer})"
 
   printf 'configuring signing policy with matching identity: %s\n' "${identity_regexp}"
   put_signing_policy "${admin_token}" "${issuer}" "${identity_regexp}"
@@ -475,7 +481,7 @@ main() {
   state="$(json_field "${ROOT_DIR}/signature-status-match.json" state)"
   verified_identity="$(json_field "${ROOT_DIR}/signature-status-match.json" signature.verified_identity)"
   [[ "${state}" == "verified" ]] || fail "signature-status state = '${state}', want 'verified' (body: $(cat "${ROOT_DIR}/signature-status-match.json"))"
-  [[ "${verified_identity}" == "${identity_san}" ]] || fail "signature-status signature.verified_identity = '${verified_identity}', want '${identity_san}'"
+  [[ "${verified_identity}" == "${expected_verified_identity}" ]] || fail "signature-status signature.verified_identity = '${verified_identity}', want '${expected_verified_identity}'"
 
   printf 'positive case passed: verified identity = %s\n' "${verified_identity}"
 
