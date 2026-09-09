@@ -190,12 +190,21 @@ configure_insecure_registry() {
 }
 
 cleanup() {
-  if [[ "${OVERRIDE_SET}" == "1" ]]; then
-    delete_repository_override || warn "failed to delete the ${REPOSITORY} signing override -- it may still be present on the live registry and needs manual removal: DELETE ${BASE_URL}/admin/v1/features/signing/repository-overrides/${REPOSITORY}"
-  fi
+  if [[ "${KEEP_ARTIFACTS:-false}" == "true" ]]; then
+    if [[ "${OVERRIDE_SET}" == "1" || -n "${PUSHED_DIGEST}" ]]; then
+      warn "KEEP_ARTIFACTS=true -- skipping cleanup on purpose. Left on the live registry for manual inspection:"
+      [[ "${OVERRIDE_SET}" == "1" ]] && warn "  - signing override: DELETE ${BASE_URL}/admin/v1/features/signing/repository-overrides/${REPOSITORY}"
+      [[ -n "${PUSHED_DIGEST}" ]] && warn "  - test image: ${REPOSITORY}:${TAG} (${PUSHED_DIGEST}) -- DELETE ${BASE_URL}/v2/${REPOSITORY}/manifests/${PUSHED_DIGEST}"
+      warn "Remember to clean these up manually (or re-run this workflow with keep_artifacts=false, which reuses the same repository path and will not remove a prior run's differently-tagged image)."
+    fi
+  else
+    if [[ "${OVERRIDE_SET}" == "1" ]]; then
+      delete_repository_override || warn "failed to delete the ${REPOSITORY} signing override -- it may still be present on the live registry and needs manual removal: DELETE ${BASE_URL}/admin/v1/features/signing/repository-overrides/${REPOSITORY}"
+    fi
 
-  if [[ -n "${PUSHED_DIGEST}" ]]; then
-    delete_pushed_manifest
+    if [[ -n "${PUSHED_DIGEST}" ]]; then
+      delete_pushed_manifest
+    fi
   fi
 
   if [[ -n "${LIVE_REGISTRY_HOST:-}" ]]; then

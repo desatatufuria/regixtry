@@ -34,7 +34,12 @@ name: keyless-signing-live-verify
 #
 # See that script's own header comment for the full rationale.
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      keep_artifacts:
+        description: "Skip cleanup so the signing override and test image stay visible on the live registry for manual inspection (e.g. in the TUI). You are responsible for cleaning them up afterward."
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -79,3 +84,4 @@ jobs:
           LIVE_REGISTRY_HOST: ${{ secrets.LIVE_REGISTRY_HOST }}
           LIVE_REGISTRY_USERNAME: ${{ secrets.LIVE_REGISTRY_USERNAME }}
           LIVE_REGISTRY_PASSWORD: ${{ secrets.LIVE_REGISTRY_PASSWORD }}
+          KEEP_ARTIFACTS: ${{ inputs.keep_artifacts }}
