@@ -329,3 +329,68 @@ func TestServiceReferrersArtifactTypeFilterNarrowsResults(t *testing.T) {
 		t.Fatalf("Referrers(whitespace-only artifactType) = %d entries, want 2 -- an empty/whitespace-only filter value is no filter at all", len(whitespaceFiltered.Manifests))
 	}
 }
+
+// TestServiceSignatureStatusPolicyReportsTrustedIdentitiesCount is tasks.md
+// 6.9: SignatureStatusPolicy.TrustedIdentities reports the resolved
+// policy's configured identity count, mirroring TrustedKeys' own
+// count-only, never-raw-material discipline (design.md Decision 8/9).
+func TestServiceSignatureStatusPolicyReportsTrustedIdentitiesCount(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	repository := "library/alpine"
+	digest := seedFixtureImageManifest(t, service, repository)
+	if err := service.metadata.UpsertSigningPolicySettings(context.Background(), "tenant-a", ports.SigningPolicySettings{
+		Enabled: true,
+		TrustedIdentities: []ports.TrustedIdentity{
+			{CertificateIdentityRegexp: "^a$", CertificateOIDCIssuer: "https://issuer-a.example"},
+			{CertificateIdentityRegexp: "^b$", CertificateOIDCIssuer: "https://issuer-b.example"},
+		},
+	}); err != nil {
+		t.Fatalf("UpsertSigningPolicySettings() error = %v", err)
+	}
+
+	result, err := service.SignatureStatus(context.Background(), repository, digest)
+	if err != nil {
+		t.Fatalf("SignatureStatus() error = %v", err)
+	}
+	if result.Policy.TrustedIdentities != 2 {
+		t.Fatalf("SignatureStatus().Policy.TrustedIdentities = %d, want 2", result.Policy.TrustedIdentities)
+	}
+}
+
+// TestServiceSignatureStatusVerifiedIdentityNeverPopulatedOnKeyVerifiedPath
+// is the mutual-exclusion half of tasks.md 6.9 (spec: "Verified State
+// Surfaces Matched Identity Distinctly"): a signature verified via a
+// trusted KEY must report VerifiedIdentity empty and VerifiedKeyFingerprint
+// populated -- the two fields never both carry a value.
+func TestServiceSignatureStatusVerifiedIdentityNeverPopulatedOnKeyVerifiedPath(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	repository := "library/alpine"
+	seedFixtureImageManifest(t, service, repository)
+	seedFixtureSignatureArtifact(t, service, repository)
+	seedSigningPolicy(t, service, true, []string{fixtureTrustedKeyPEM(t)})
+
+	result, err := service.SignatureStatus(context.Background(), repository, fixtureImageDigest)
+	if err != nil {
+		t.Fatalf("SignatureStatus() error = %v", err)
+	}
+	if result.State != SignatureStatusVerified {
+		t.Fatalf("SignatureStatus().State = %q, want %q", result.State, SignatureStatusVerified)
+	}
+	if result.Signature == nil {
+		t.Fatal("SignatureStatus().Signature = nil, want a populated detail")
+	}
+	if result.Signature.VerifiedKeyFingerprint == "" {
+		t.Fatal("SignatureStatus().Signature.VerifiedKeyFingerprint is empty, want the matched key's fingerprint")
+	}
+	if result.Signature.VerifiedIdentity != "" {
+		t.Fatalf("SignatureStatus().Signature.VerifiedIdentity = %q, want empty on the key-verified path", result.Signature.VerifiedIdentity)
+	}
+}

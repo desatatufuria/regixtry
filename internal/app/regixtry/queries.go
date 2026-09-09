@@ -224,8 +224,9 @@ type SignatureStatusResult struct {
 // count only, the registry-scoped counterpart of the admin-only signing
 // policy resource that echoes canonical PEM (design.md Decision 8/9).
 type SignatureStatusPolicy struct {
-	Enabled     bool `json:"enabled"`
-	TrustedKeys int  `json:"trusted_keys"`
+	Enabled           bool `json:"enabled"`
+	TrustedKeys       int  `json:"trusted_keys"`
+	TrustedIdentities int  `json:"trusted_identities"`
 }
 
 // SignatureStatusDetail never carries a raw signature -- Reason is drawn
@@ -236,12 +237,18 @@ type SignatureStatusPolicy struct {
 // short fingerprint (signing.Fingerprint) of the trusted key that actually
 // verified this signature is ever reported, never its raw PEM, and only
 // when State == SignatureStatusVerified -- every other state leaves it
-// empty.
+// empty. VerifiedIdentity follows the same discipline for the keyless
+// (Fulcio/OIDC) identity path: populated only when the signature verified
+// via a trusted identity, never alongside VerifiedKeyFingerprint (spec:
+// "Verified State Surfaces Matched Identity Distinctly" -- the matched
+// identity is its own operator-facing value, never squeezed into the
+// key-fingerprint field).
 type SignatureStatusDetail struct {
 	Tag                    string `json:"tag"`
 	SignatureCount         int    `json:"signature_count"`
 	Reason                 string `json:"reason,omitempty"`
 	VerifiedKeyFingerprint string `json:"verified_key_fingerprint,omitempty"`
+	VerifiedIdentity       string `json:"verified_identity,omitempty"`
 }
 
 const (
@@ -291,10 +298,10 @@ func (s *Service) SignatureStatus(ctx context.Context, repositoryName string, re
 		Repository: repository.String(),
 		Reference:  reference,
 		Digest:     digest,
-		Policy:     SignatureStatusPolicy{Enabled: policy.Enabled, TrustedKeys: len(policy.TrustedPublicKeys)},
+		Policy:     SignatureStatusPolicy{Enabled: policy.Enabled, TrustedKeys: len(policy.TrustedPublicKeys), TrustedIdentities: len(policy.TrustedIdentities)},
 	}
 
-	state, matchedFingerprint, verifyErr := s.verifySignature(ctx, repository.String(), digest, policy)
+	state, match, verifyErr := s.verifySignature(ctx, repository.String(), digest, policy)
 	if verifyErr != nil && !domain.IsCode(verifyErr, domain.ErrorCodePolicyViolation) {
 		return SignatureStatusResult{}, verifyErr // infrastructure error propagates unchanged, same as the gate
 	}
@@ -312,7 +319,8 @@ func (s *Service) SignatureStatus(ctx context.Context, repositoryName string, re
 			Reason:         signatureStatusReason(repository.String(), digest, verifyErr),
 		}
 		if state == SignatureStatusVerified {
-			detail.VerifiedKeyFingerprint = matchedFingerprint
+			detail.VerifiedKeyFingerprint = match.KeyFingerprint
+			detail.VerifiedIdentity = match.Identity
 		}
 		result.Signature = detail
 	}
