@@ -1,0 +1,81 @@
+name: keyless-signing-live-verify
+
+# Deliberately workflow_dispatch-only, never push/pull_request: like its
+# sibling keyless-signing-smoke.yml, this job signs a real throwaway image
+# keylessly using GitHub Actions' real ambient OIDC identity (`cosign sign
+# --yes`, `permissions: id-token: write`), and every real signature it
+# creates becomes a PERMANENT PUBLIC Rekor transparency-log entry tied to
+# this repository's real identity, so it must run deliberately, on demand,
+# not on every commit.
+#
+# UNLIKE keyless-signing-smoke.yml, this job targets the user's REAL,
+# already-running, production regixtry instance
+# (secrets.LIVE_REGISTRY_HOST) instead of an ephemeral in-job instance --
+# that raises the stakes further, not less. It is a live system with real
+# traffic and a real global signing policy, so this workflow's script
+# (docs/verification/scripts/keyless-signing-live-verify.sh) is
+# deliberately far more conservative than the smoke sibling:
+#
+#   - It NEVER reads or writes the global signing policy
+#     (/admin/v1/signing-policy). It exclusively uses the per-repository
+#     override mechanism (PUT/DELETE
+#     /admin/v1/features/signing/repository-overrides/<repository>),
+#     scoped to exactly one throwaway repository path
+#     (smoke/keyless-live-verify) with a run-unique tag, and reverts that
+#     override in an EXIT trap so it fires even on failure -- the live
+#     instance's policy state carries zero trace of this run once it
+#     completes.
+#   - Credentials for the live host come only from GitHub Secrets
+#     (LIVE_REGISTRY_HOST/USERNAME/PASSWORD), flowing through env vars only
+#     -- never printed, never string-interpolated into a command.
+#   - Deleting the pushed test manifest/tag is best-effort: the live
+#     instance's -delete-enabled flag may be off, in which case the script
+#     warns loudly instead of failing the job.
+#
+# See that script's own header comment for the full rationale.
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  # Required for cosign to obtain a real, short-lived GitHub Actions OIDC
+  # identity token (its ambient-credential detector reads this
+  # automatically -- no extra cosign flag is needed for it).
+  id-token: write
+
+env:
+  # Escape hatch for a live host that turns out not to be behind valid TLS.
+  # Left "false" by default: registry.desatatufuria.com is a real .com
+  # production host, almost certainly real TLS, and this workflow has no
+  # way to confirm otherwise ahead of a real run. Flip to "true" here only
+  # after confirming a real run actually needs it -- doing so also makes
+  # the job edit /etc/docker/daemon.json on the runner (reverted in the
+  # script's own cleanup trap) to allow a plain-HTTP registry push.
+  LIVE_REGISTRY_INSECURE: "false"
+
+jobs:
+  keyless-signing-live-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Pinned to the exact same sigstore/cosign-installer commit/version
+      # keyless-signing-smoke.yml already uses -- see that workflow for the
+      # pinning rationale, not re-researched here.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: "v3.1.3"
+
+      - name: Run keyless signing live verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          docs/verification/scripts/keyless-signing-live-verify.sh
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_WORKFLOW_REF: ${{ github.workflow_ref }}
+          LIVE_REGISTRY_HOST: ${{ secrets.LIVE_REGISTRY_HOST }}
+          LIVE_REGISTRY_USERNAME: ${{ secrets.LIVE_REGISTRY_USERNAME }}
+          LIVE_REGISTRY_PASSWORD: ${{ secrets.LIVE_REGISTRY_PASSWORD }}
