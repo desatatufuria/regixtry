@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"regexp"
 
 	domain "regixtry/internal/domain/regixtry"
 	"regixtry/internal/domain/signing"
@@ -111,59 +112,82 @@ func (s *Service) enforceSigningPolicy(ctx context.Context, repository, digest, 
 	return nil
 }
 
+// signatureMatch carries which anchor kind (if either) a verified signature
+// matched: KeyFingerprint is non-empty only when a trusted key matched
+// (signing.Fingerprint of the exact trusted-key PEM), Identity is non-empty
+// only when a trusted identity matched (the certificate's SAN and OIDC
+// issuer, composed by composeVerifiedIdentity). The two never both carry a
+// value: the identity branch is tried only after the key loop has already
+// failed (design.md Data Flow). Replaces the previous bare matchedFingerprint
+// string return -- design.md's "Result shape" decision explicitly rejects a
+// fourth return value ("a matched identity is its own operator value, not
+// squeezed into the key-fingerprint field").
+type signatureMatch struct {
+	KeyFingerprint string
+	Identity       string
+}
+
 // verifySignature resolves and cryptographically verifies the digest's
-// signature artifact against the resolved policy's trusted keys, returning
-// the same (state, error) pair a future signature-status endpoint would
-// report (design.md Decision 9). Every rejection surfaces as
-// domain.NewPolicyViolationError (403) except a genuine store/blob
-// infrastructure error, which propagates unchanged (500) — a fault must
-// never be mislabeled a missing or invalid signature (design.md Decision 6's
-// truth table, last row).
-// verifySignature returns (state, matchedFingerprint, err). matchedFingerprint
-// is signing.Fingerprint of the exact trusted-key PEM whose verification
-// succeeded, and is non-empty ONLY on the signatureStateVerified path -- every
-// other return (unverifiable/mismatched/untrusted/unsigned, and every
-// infrastructure-error path) returns "" for it, never a fabricated value.
-func (s *Service) verifySignature(ctx context.Context, repository, digest string, policy ports.SigningPolicySettings) (string, string, error) {
+// signature artifact against the resolved policy's trusted keys and/or
+// trusted identities, returning the same (state, error) pair a future
+// signature-status endpoint would report (design.md Decision 9). Every
+// rejection surfaces as domain.NewPolicyViolationError (403) except a
+// genuine store/blob infrastructure error, which propagates unchanged (500)
+// -- a fault must never be mislabeled a missing or invalid signature
+// (design.md Decision 6's truth table, last row).
+// verifySignature returns (state, match, err). match is non-zero ONLY on the
+// signatureStateVerified path -- every other return (unverifiable/mismatched/
+// untrusted/unsigned, and every infrastructure-error path) returns a zero
+// signatureMatch, never a fabricated value.
+func (s *Service) verifySignature(ctx context.Context, repository, digest string, policy ports.SigningPolicySettings) (string, signatureMatch, error) {
 	keys := parseTrustedKeys(policy.TrustedPublicKeys)
-	if len(keys) == 0 {
-		return signatureStateUnverifiable, "", domain.NewPolicyViolationError(
-			fmt.Sprintf("pull of %s@%s is blocked by the signing policy: no usable trusted key is configured", repository, digest))
+	// keys-OR-identities: enabling the policy (and reaching this call at
+	// all) requires at least one usable anchor of EITHER kind (spec:
+	// "Enabling with a key or an identity activates verification"). Only
+	// when BOTH sets are empty is there nothing this pull could ever verify
+	// against.
+	if len(keys) == 0 && len(policy.TrustedIdentities) == 0 {
+		return signatureStateUnverifiable, signatureMatch{}, domain.NewPolicyViolationError(
+			fmt.Sprintf("pull of %s@%s is blocked by the signing policy: no usable trusted key or trusted identity is configured", repository, digest))
 	}
 
 	tag, err := signing.SignatureTag(digest)
 	if err != nil {
-		return signatureStateUnverifiable, "", domain.NewPolicyViolationError(
+		return signatureStateUnverifiable, signatureMatch{}, domain.NewPolicyViolationError(
 			fmt.Sprintf("pull of %s@%s is blocked by the signing policy: %s", repository, digest, err.Error()))
 	}
 
 	repositoryRef, err := parseRepository(repository)
 	if err != nil {
-		return "", "", err
+		return "", signatureMatch{}, err
 	}
 
 	sigManifest, err := s.metadata.ResolveManifest(ctx, s.tenant(ctx), repositoryRef, tag)
 	if err != nil {
 		if domain.IsCode(err, domain.ErrorCodeNotFound) {
-			// No legacy `.sig` tag: modern cosign (v3+, --key-based signing)
-			// never pushes one -- it pushes an OCI Image Index at the
-			// suffix-less "sha256-<hex>" tag instead (BundleIndexTag). Only
-			// once BOTH lookups miss is this digest genuinely unsigned.
-			return s.verifyBundleSignature(ctx, repositoryRef, repository, digest, keys)
+			// No legacy `.sig` tag: modern cosign (v3+, --key-based signing,
+			// and keyless Fulcio/OIDC signing) never pushes one -- it pushes
+			// an OCI Image Index at the suffix-less "sha256-<hex>" tag
+			// instead (BundleIndexTag). Only once BOTH lookups miss is this
+			// digest genuinely unsigned. The identity branch lives entirely
+			// inside verifyBundleSignature -- the legacy SimpleSigning `.sig`
+			// path below is never touched by it (spec: "Legacy Static-Key
+			// Verification Path Is Unchanged").
+			return s.verifyBundleSignature(ctx, repositoryRef, repository, digest, keys, policy.TrustedIdentities)
 		}
-		return "", "", err // infrastructure error propagates unchanged
+		return "", signatureMatch{}, err // infrastructure error propagates unchanged
 	}
 
 	entries, err := signing.ParseSignatureManifest(sigManifest.Payload)
 	if err != nil || len(entries) == 0 {
-		return signatureStateUnverifiable, "", domain.NewPolicyViolationError(
+		return signatureStateUnverifiable, signatureMatch{}, domain.NewPolicyViolationError(
 			fmt.Sprintf("pull of %s@%s is blocked by the signing policy: no usable signature entry found", repository, digest))
 	}
 
 	for _, entry := range entries {
 		payload, err := s.openSignaturePayload(ctx, entry.PayloadDigest)
 		if err != nil {
-			return "", "", err // infrastructure error propagates unchanged
+			return "", signatureMatch{}, err // infrastructure error propagates unchanged
 		}
 		if payload == nil {
 			continue // payload blob missing or oversized; try the next entry
@@ -174,14 +198,14 @@ func (s *Service) verifySignature(ctx context.Context, repository, digest string
 				continue
 			}
 			if err := signing.CheckClaims(payload, digest); err != nil {
-				return signatureStateMismatched, "", domain.NewPolicyViolationError(
+				return signatureStateMismatched, signatureMatch{}, domain.NewPolicyViolationError(
 					fmt.Sprintf("pull of %s@%s is blocked by the signing policy: signature binds a different digest", repository, digest))
 			}
-			return signatureStateVerified, signing.Fingerprint(trusted.pemText), nil
+			return signatureStateVerified, signatureMatch{KeyFingerprint: signing.Fingerprint(trusted.pemText)}, nil
 		}
 	}
 
-	return signatureStateUntrusted, "", domain.NewPolicyViolationError(
+	return signatureStateUntrusted, signatureMatch{}, domain.NewPolicyViolationError(
 		fmt.Sprintf("pull of %s@%s is blocked by the signing policy: no signature validated against a trusted key", repository, digest))
 }
 
@@ -202,13 +226,27 @@ func (s *Service) verifySignature(ctx context.Context, repository, digest string
 // signature exactly like the legacy loop verifies a SimpleSigning payload:
 // PAE-encode, try every signature against every trusted key via the same
 // signing.Verify, and bind claims via signing.CheckBundleClaims.
-// verifyBundleSignature mirrors verifySignature's (state, matchedFingerprint,
-// err) contract: matchedFingerprint is non-empty only on the
-// signatureStateVerified path.
-func (s *Service) verifyBundleSignature(ctx context.Context, repositoryRef domain.RepositoryRef, repository, digest string, keys []trustedKeyEntry) (string, string, error) {
+// verifyBundleSignature mirrors verifySignature's (state, match, err)
+// contract: match is non-zero only on the signatureStateVerified path.
+//
+// identities is the resolved policy's TrustedIdentities: after the key loop
+// below fails to match a candidate bundle document against any trusted key,
+// and only if the candidate's own verificationMaterial actually carries a
+// certificate (signing.ParseBundleVerificationMaterial's HasCertificate --
+// cheap to check, avoids a wasted signing.VerifyKeyless call on an ordinary
+// static-key bundle document), this tries the keyless (Fulcio/OIDC) identity
+// path via signing.VerifyKeyless(bundlePayload, identities, digest) -- the
+// SAME raw bundle document bytes the key loop already parsed via
+// signing.ParseBundleDocument, since VerifyKeyless does its own bundle
+// parsing internally (design.md "Bundle handoff" decision: raw bytes in,
+// zero sigstore-go types out). This is the ONLY place the identity anchor is
+// ever tried (spec: "Legacy Static-Key Verification Path Is Unchanged" --
+// the legacy SimpleSigning `.sig` loop in verifySignature above never calls
+// this).
+func (s *Service) verifyBundleSignature(ctx context.Context, repositoryRef domain.RepositoryRef, repository, digest string, keys []trustedKeyEntry, identities []ports.TrustedIdentity) (string, signatureMatch, error) {
 	indexTag, err := signing.BundleIndexTag(digest)
 	if err != nil {
-		return signatureStateUnverifiable, "", domain.NewPolicyViolationError(
+		return signatureStateUnverifiable, signatureMatch{}, domain.NewPolicyViolationError(
 			fmt.Sprintf("pull of %s@%s is blocked by the signing policy: %s", repository, digest, err.Error()))
 	}
 
@@ -218,15 +256,15 @@ func (s *Service) verifyBundleSignature(ctx context.Context, repositoryRef domai
 			// Neither the legacy `.sig` tag nor the modern bundle index
 			// resolved: this digest has no signature artifact in either
 			// format. Today's exact existing unsigned outcome, unchanged.
-			return signatureStateUnsigned, "", domain.NewPolicyViolationError(
+			return signatureStateUnsigned, signatureMatch{}, domain.NewPolicyViolationError(
 				fmt.Sprintf("pull of %s@%s is blocked by the signing policy: no signature found", repository, digest))
 		}
-		return "", "", err // infrastructure error propagates unchanged
+		return "", signatureMatch{}, err // infrastructure error propagates unchanged
 	}
 
 	entries, err := signing.ParseBundleIndex(indexManifest.Payload)
 	if err != nil {
-		return signatureStateUnverifiable, "", domain.NewPolicyViolationError(
+		return signatureStateUnverifiable, signatureMatch{}, domain.NewPolicyViolationError(
 			fmt.Sprintf("pull of %s@%s is blocked by the signing policy: no usable bundle signature entry found", repository, digest))
 	}
 
@@ -236,7 +274,7 @@ func (s *Service) verifyBundleSignature(ctx context.Context, repositoryRef domai
 			if domain.IsCode(err, domain.ErrorCodeNotFound) {
 				continue // a listed referrer that no longer resolves; try the next candidate
 			}
-			return "", "", err // infrastructure error propagates unchanged
+			return "", signatureMatch{}, err // infrastructure error propagates unchanged
 		}
 
 		subjectDigest, layerDigest, err := signing.ParseBundleReferrerManifest(referrerManifest.Payload)
@@ -249,7 +287,7 @@ func (s *Service) verifyBundleSignature(ctx context.Context, repositoryRef domai
 
 		bundlePayload, err := s.openSignaturePayload(ctx, layerDigest)
 		if err != nil {
-			return "", "", err // infrastructure error propagates unchanged
+			return "", signatureMatch{}, err // infrastructure error propagates unchanged
 		}
 		if bundlePayload == nil {
 			continue // bundle document blob missing or oversized; try the next candidate
@@ -273,16 +311,71 @@ func (s *Service) verifyBundleSignature(ctx context.Context, repositoryRef domai
 					continue
 				}
 				if err := signing.CheckBundleClaims(payload, digest); err != nil {
-					return signatureStateMismatched, "", domain.NewPolicyViolationError(
+					return signatureStateMismatched, signatureMatch{}, domain.NewPolicyViolationError(
 						fmt.Sprintf("pull of %s@%s is blocked by the signing policy: bundle signature binds a different digest", repository, digest))
 				}
-				return signatureStateVerified, signing.Fingerprint(trusted.pemText), nil
+				return signatureStateVerified, signatureMatch{KeyFingerprint: signing.Fingerprint(trusted.pemText)}, nil
 			}
 		}
+
+		// The key loop above never matched this candidate; try the identity
+		// anchor next, still scoped to this same candidate bundle document
+		// (design.md Data Flow: key loop, then identity branch, OR
+		// semantics, never combined).
+		if len(identities) == 0 {
+			continue // no identity anchors configured; try the next candidate
+		}
+		vm, vmErr := signing.ParseBundleVerificationMaterial(bundlePayload)
+		if vmErr != nil || !vm.HasCertificate {
+			continue // not a keyless-shaped candidate; try the next candidate
+		}
+		matchedSAN, keylessErr := signing.VerifyKeyless(bundlePayload, toSigningIdentities(identities), digest)
+		if keylessErr != nil {
+			continue // this candidate's identity anchor didn't match; try the next one
+		}
+		return signatureStateVerified, signatureMatch{Identity: composeVerifiedIdentity(matchedSAN, identities)}, nil
 	}
 
-	return signatureStateUntrusted, "", domain.NewPolicyViolationError(
-		fmt.Sprintf("pull of %s@%s is blocked by the signing policy: no bundle signature validated against a trusted key", repository, digest))
+	return signatureStateUntrusted, signatureMatch{}, domain.NewPolicyViolationError(
+		fmt.Sprintf("pull of %s@%s is blocked by the signing policy: no bundle signature validated against a trusted key or trusted identity", repository, digest))
+}
+
+// toSigningIdentities maps the ports-layer trusted identities to
+// signing.TrustedIdentity, the shape keyless.go's VerifyKeyless accepts --
+// mirrors parseTrustedKeys' role for TrustedPublicKeys, minus any parsing
+// step: unlike a PEM key, an identity has nothing to fail to parse here (its
+// regexp was already validated at write time, normalizeSigningOverride).
+func toSigningIdentities(identities []ports.TrustedIdentity) []signing.TrustedIdentity {
+	converted := make([]signing.TrustedIdentity, 0, len(identities))
+	for _, identity := range identities {
+		converted = append(converted, signing.TrustedIdentity{
+			CertificateIdentityRegexp: identity.CertificateIdentityRegexp,
+			CertificateOIDCIssuer:     identity.CertificateOIDCIssuer,
+		})
+	}
+	return converted
+}
+
+// composeVerifiedIdentity reports the matched certificate SAN together with
+// the OIDC issuer of whichever configured TrustedIdentity's regexp actually
+// matched it (spec: "Identity match reports SAN and issuer separately" --
+// the operator-facing value must carry both, never just the bare SAN
+// keyless.VerifyKeyless itself returns). A pure function: no I/O, no
+// sigstore-go type crosses it. Falls back to the bare SAN if -- defensively,
+// should be unreachable -- no configured entry's regexp matches, since
+// VerifyKeyless only ever returns a match after confirming some configured
+// identity's regexp+issuer pair matched.
+func composeVerifiedIdentity(matchedSAN string, identities []ports.TrustedIdentity) string {
+	for _, identity := range identities {
+		matcher, err := regexp.Compile(identity.CertificateIdentityRegexp)
+		if err != nil {
+			continue // an unparseable regexp cannot have been the one that matched
+		}
+		if matcher.MatchString(matchedSAN) {
+			return matchedSAN + " (" + identity.CertificateOIDCIssuer + ")"
+		}
+	}
+	return matchedSAN
 }
 
 // openSignaturePayload reads one signature entry's payload blob, bounded by

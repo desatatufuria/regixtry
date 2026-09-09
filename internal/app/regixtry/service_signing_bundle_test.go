@@ -7,10 +7,13 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"math/big"
 	"testing"
+	"time"
 
 	domain "regixtry/internal/domain/regixtry"
 	"regixtry/internal/domain/signing"
@@ -216,15 +219,15 @@ func TestServiceVerifySignature_BundleFormatVerifiedSignatureAllowsPull(t *testi
 
 	policy := signingPolicyForTest(t, true, []string{keyPEM})
 
-	state, fingerprint, err := service.verifySignature(context.Background(), repository, imageDigest, policy)
+	state, match, err := service.verifySignature(context.Background(), repository, imageDigest, policy)
 	if err != nil {
 		t.Fatalf("verifySignature() error = %v, want nil (the bundle-format signature must verify)", err)
 	}
 	if state != signatureStateVerified {
 		t.Fatalf("verifySignature() state = %q, want %q", state, signatureStateVerified)
 	}
-	if want := signing.Fingerprint(keyPEM); fingerprint != want {
-		t.Fatalf("verifySignature() fingerprint = %q, want %q (the fingerprint of the trusted key that actually matched)", fingerprint, want)
+	if want := signing.Fingerprint(keyPEM); match.KeyFingerprint != want {
+		t.Fatalf("verifySignature() fingerprint = %q, want %q (the fingerprint of the trusted key that actually matched)", match.KeyFingerprint, want)
 	}
 }
 
@@ -243,15 +246,15 @@ func TestServiceVerifySignature_NeitherLegacyNorBundleSignaturePresentIsUnsigned
 	_, keyPEM := generateTestECDSAP256KeyPair(t)
 	policy := signingPolicyForTest(t, true, []string{keyPEM})
 
-	state, fingerprint, err := service.verifySignature(context.Background(), repository, imageDigest, policy)
+	state, match, err := service.verifySignature(context.Background(), repository, imageDigest, policy)
 	if err == nil {
 		t.Fatal("verifySignature() error = nil, want a policy violation")
 	}
 	if state != signatureStateUnsigned {
 		t.Fatalf("verifySignature() state = %q, want %q", state, signatureStateUnsigned)
 	}
-	if fingerprint != "" {
-		t.Fatalf("verifySignature() fingerprint = %q, want empty for an unsigned digest", fingerprint)
+	if match.KeyFingerprint != "" {
+		t.Fatalf("verifySignature() fingerprint = %q, want empty for an unsigned digest", match.KeyFingerprint)
 	}
 	wantMessage := "POLICY_VIOLATION: pull of " + repository + "@" + imageDigest + " is blocked by the signing policy: no signature found"
 	if err.Error() != wantMessage {
@@ -282,7 +285,7 @@ func TestServiceVerifySignature_BundleReferrerSubjectMismatchIsNotAccepted(t *te
 
 	policy := signingPolicyForTest(t, true, []string{keyPEM})
 
-	state, fingerprint, err := service.verifySignature(context.Background(), repository, targetDigest, policy)
+	state, match, err := service.verifySignature(context.Background(), repository, targetDigest, policy)
 	if err == nil {
 		t.Fatal("verifySignature() error = nil, want a policy violation (pull must stay blocked for targetDigest)")
 	}
@@ -292,8 +295,8 @@ func TestServiceVerifySignature_BundleReferrerSubjectMismatchIsNotAccepted(t *te
 	if state == signatureStateVerified {
 		t.Fatalf("verifySignature() state = %q, must never be verified for a subject that does not match", state)
 	}
-	if fingerprint != "" {
-		t.Fatalf("verifySignature() fingerprint = %q, want empty when not verified", fingerprint)
+	if match.KeyFingerprint != "" {
+		t.Fatalf("verifySignature() fingerprint = %q, want empty when not verified", match.KeyFingerprint)
 	}
 }
 
@@ -315,7 +318,7 @@ func TestServiceVerifySignature_BundleSignatureNotFromTrustedKeyIsUntrusted(t *t
 	seedBundleSignatureArtifact(t, service, repository, imageDigest, imageDigest, bareHex(imageDigest), signingKey)
 	policy := signingPolicyForTest(t, true, []string{trustedKeyPEM})
 
-	state, fingerprint, err := service.verifySignature(context.Background(), repository, imageDigest, policy)
+	state, match, err := service.verifySignature(context.Background(), repository, imageDigest, policy)
 	if err == nil {
 		t.Fatal("verifySignature() error = nil, want a policy violation")
 	}
@@ -325,8 +328,8 @@ func TestServiceVerifySignature_BundleSignatureNotFromTrustedKeyIsUntrusted(t *t
 	if state != signatureStateUntrusted {
 		t.Fatalf("verifySignature() state = %q, want %q", state, signatureStateUntrusted)
 	}
-	if fingerprint != "" {
-		t.Fatalf("verifySignature() fingerprint = %q, want empty for an untrusted signature", fingerprint)
+	if match.KeyFingerprint != "" {
+		t.Fatalf("verifySignature() fingerprint = %q, want empty for an untrusted signature", match.KeyFingerprint)
 	}
 }
 
@@ -355,7 +358,7 @@ func TestServiceVerifySignature_BundleSignatureVerifiesButClaimsMismatchIsMismat
 	seedBundleSignatureArtifact(t, service, repository, targetDigest, targetDigest, bareHex(differentDigest), key)
 	policy := signingPolicyForTest(t, true, []string{keyPEM})
 
-	state, fingerprint, err := service.verifySignature(context.Background(), repository, targetDigest, policy)
+	state, match, err := service.verifySignature(context.Background(), repository, targetDigest, policy)
 	if err == nil {
 		t.Fatal("verifySignature() error = nil, want a policy violation")
 	}
@@ -365,8 +368,8 @@ func TestServiceVerifySignature_BundleSignatureVerifiesButClaimsMismatchIsMismat
 	if state != signatureStateMismatched {
 		t.Fatalf("verifySignature() state = %q, want %q", state, signatureStateMismatched)
 	}
-	if fingerprint != "" {
-		t.Fatalf("verifySignature() fingerprint = %q, want empty when claims mismatch even though the signature itself verified", fingerprint)
+	if match.KeyFingerprint != "" {
+		t.Fatalf("verifySignature() fingerprint = %q, want empty when claims mismatch even though the signature itself verified", match.KeyFingerprint)
 	}
 }
 
@@ -390,15 +393,15 @@ func TestServiceVerifySignature_LegacySignaturePresentNeverTriesBundleFallback(t
 
 	policy := signingPolicyForTest(t, true, []string{fixtureTrustedKeyPEM(t)})
 
-	state, fingerprint, err := service.verifySignature(context.Background(), repository, fixtureImageDigest, policy)
+	state, match, err := service.verifySignature(context.Background(), repository, fixtureImageDigest, policy)
 	if err != nil {
 		t.Fatalf("verifySignature() error = %v, want nil (the legacy signature must still verify, bundle fallback must never run)", err)
 	}
 	if state != signatureStateVerified {
 		t.Fatalf("verifySignature() state = %q, want %q", state, signatureStateVerified)
 	}
-	if want := signing.Fingerprint(fixtureTrustedKeyPEM(t)); fingerprint != want {
-		t.Fatalf("verifySignature() fingerprint = %q, want %q (the fingerprint of the trusted key that actually matched)", fingerprint, want)
+	if want := signing.Fingerprint(fixtureTrustedKeyPEM(t)); match.KeyFingerprint != want {
+		t.Fatalf("verifySignature() fingerprint = %q, want %q (the fingerprint of the trusted key that actually matched)", match.KeyFingerprint, want)
 	}
 }
 
@@ -425,17 +428,17 @@ func TestServiceVerifySignature_LegacyFormatMultipleTrustedKeysAttributesTheMatc
 	signingKeyPEM := fixtureTrustedKeyPEM(t)
 	policy := signingPolicyForTest(t, true, []string{unrelatedKeyPEM, signingKeyPEM})
 
-	state, fingerprint, err := service.verifySignature(context.Background(), repository, fixtureImageDigest, policy)
+	state, match, err := service.verifySignature(context.Background(), repository, fixtureImageDigest, policy)
 	if err != nil {
 		t.Fatalf("verifySignature() error = %v, want nil (the fixture signature must verify against its own key, wherever it sits in the trusted list)", err)
 	}
 	if state != signatureStateVerified {
 		t.Fatalf("verifySignature() state = %q, want %q", state, signatureStateVerified)
 	}
-	if want := signing.Fingerprint(signingKeyPEM); fingerprint != want {
-		t.Fatalf("verifySignature() fingerprint = %q, want %q (the actual signing key's fingerprint, not the first/unrelated key's)", fingerprint, want)
+	if want := signing.Fingerprint(signingKeyPEM); match.KeyFingerprint != want {
+		t.Fatalf("verifySignature() fingerprint = %q, want %q (the actual signing key's fingerprint, not the first/unrelated key's)", match.KeyFingerprint, want)
 	}
-	if unwanted := signing.Fingerprint(unrelatedKeyPEM); fingerprint == unwanted {
+	if unwanted := signing.Fingerprint(unrelatedKeyPEM); match.KeyFingerprint == unwanted {
 		t.Fatal("verifySignature() attributed the fingerprint to the first (unrelated) key, not the one that actually signed")
 	}
 }
@@ -458,17 +461,17 @@ func TestServiceVerifySignature_BundleFormatMultipleTrustedKeysAttributesTheMatc
 
 	policy := signingPolicyForTest(t, true, []string{unrelatedKeyPEM, signingKeyPEM})
 
-	state, fingerprint, err := service.verifySignature(context.Background(), repository, imageDigest, policy)
+	state, match, err := service.verifySignature(context.Background(), repository, imageDigest, policy)
 	if err != nil {
 		t.Fatalf("verifySignature() error = %v, want nil (the bundle-format signature must verify against its own key, wherever it sits in the trusted list)", err)
 	}
 	if state != signatureStateVerified {
 		t.Fatalf("verifySignature() state = %q, want %q", state, signatureStateVerified)
 	}
-	if want := signing.Fingerprint(signingKeyPEM); fingerprint != want {
-		t.Fatalf("verifySignature() fingerprint = %q, want %q (the actual signing key's fingerprint, not the first/unrelated key's)", fingerprint, want)
+	if want := signing.Fingerprint(signingKeyPEM); match.KeyFingerprint != want {
+		t.Fatalf("verifySignature() fingerprint = %q, want %q (the actual signing key's fingerprint, not the first/unrelated key's)", match.KeyFingerprint, want)
 	}
-	if unwanted := signing.Fingerprint(unrelatedKeyPEM); fingerprint == unwanted {
+	if unwanted := signing.Fingerprint(unrelatedKeyPEM); match.KeyFingerprint == unwanted {
 		t.Fatal("verifySignature() attributed the fingerprint to the first (unrelated) key, not the one that actually signed")
 	}
 }
@@ -552,5 +555,276 @@ func TestServiceSignatureStatusReportsTheBundleIndexTagAndCountForABundleSignatu
 	}
 	if result.Signature.SignatureCount != 1 {
 		t.Fatalf("SignatureStatus() Signature.SignatureCount = %d, want 1 (the one real bundle referrer bound to this digest)", result.Signature.SignatureCount)
+	}
+}
+
+// selfSignedCertDER mints a throwaway, syntactically valid self-signed X.509
+// certificate -- standing in for a Fulcio leaf certificate structurally
+// (verificationMaterial.certificate.rawBytes only needs to be a parseable
+// certificate for signing.VerifyKeyless to reach real verification logic).
+// It deliberately does NOT chain to any trusted root, least of all the real
+// pinned Sigstore public-good root keyless.go verifies against (design.md:
+// "no operator override", settled) -- no live keyless-signed Bundle-document
+// artifact was obtainable in this sandbox (apply-progress.md's Phase 0
+// note, carried forward unchanged from PR1), so a positive "verified via
+// identity" outcome cannot be constructed offline; see
+// TestServiceVerifySignature_IdentityOnlyPolicyReachesRealKeylessVerification's
+// own doc comment for what this fixture proves instead.
+func selfSignedCertDER(t *testing.T) []byte {
+	t.Helper()
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("ecdsa.GenerateKey() error = %v", err)
+	}
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "test-identity-fixture"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("x509.CreateCertificate() error = %v", err)
+	}
+	return der
+}
+
+// buildKeylessBundleDocument builds a Sigstore Bundle document JSON shaped
+// like buildBundleDocument's dsseEnvelope (payload/payloadType/signatures --
+// the identity branch never inspects bundle.Signatures itself; it hands the
+// whole raw document to signing.VerifyKeyless instead, so the signature
+// bytes here are deliberately arbitrary), PLUS a
+// verificationMaterial.certificate block so
+// signing.ParseBundleVerificationMaterial's HasCertificate reports true and
+// the identity branch is genuinely reached. tlogEntries is intentionally
+// omitted: keyless.VerifyKeyless's own precheck (before ever reaching chain
+// validation) rejects a missing transparency log entry -- a real,
+// deterministic failure mode, not a malformed-JSON short-circuit.
+func buildKeylessBundleDocument(t *testing.T, certDER []byte, payload []byte) []byte {
+	t.Helper()
+
+	const payloadType = "application/vnd.in-toto+json"
+	doc := map[string]any{
+		"mediaType": signing.SigstoreBundleMediaType,
+		"verificationMaterial": map[string]any{
+			"certificate": map[string]any{"rawBytes": base64.StdEncoding.EncodeToString(certDER)},
+		},
+		"dsseEnvelope": map[string]any{
+			"payload":     base64.StdEncoding.EncodeToString(payload),
+			"payloadType": payloadType,
+			"signatures":  []map[string]string{{"sig": base64.StdEncoding.EncodeToString([]byte("not-a-real-signature"))}},
+		},
+	}
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("json.Marshal(keyless bundle document) error = %v", err)
+	}
+	return raw
+}
+
+// seedKeylessBundleSignatureArtifact mirrors seedBundleSignatureArtifact's
+// referrer/index publishing structure exactly, swapping in
+// buildKeylessBundleDocument for buildBundleDocument -- a keyless
+// (certificate-carrying) bundle document instead of a key-signed one.
+func seedKeylessBundleSignatureArtifact(t *testing.T, service *Service, repository string, indexDigest string, subjectDigest string, statementDigestHex string, certDER []byte) {
+	t.Helper()
+
+	ctx := context.Background()
+
+	payload := bundleInTotoStatementPayload(t, statementDigestHex)
+	bundleDoc := buildKeylessBundleDocument(t, certDER, payload)
+	uploadBlobForTest(t, service, repository, bundleDoc)
+
+	emptyConfig := []byte("{}")
+	uploadBlobForTest(t, service, repository, emptyConfig)
+
+	referrerManifest := map[string]any{
+		"schemaVersion": 2,
+		"mediaType":     "application/vnd.oci.image.manifest.v1+json",
+		"config": map[string]any{
+			"mediaType": "application/vnd.oci.empty.v1+json",
+			"digest":    digestForTest(emptyConfig),
+			"size":      len(emptyConfig),
+		},
+		"layers": []map[string]any{
+			{
+				"mediaType": signing.SigstoreBundleMediaType,
+				"digest":    digestForTest(bundleDoc),
+				"size":      len(bundleDoc),
+			},
+		},
+		"subject": map[string]any{
+			"mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+			"digest":    subjectDigest,
+			"size":      949,
+		},
+		"artifactType": signing.SigstoreBundleMediaType,
+	}
+	referrerBytes, err := json.Marshal(referrerManifest)
+	if err != nil {
+		t.Fatalf("json.Marshal(referrer manifest) error = %v", err)
+	}
+	referrerDigest := digestForTest(referrerBytes)
+
+	if _, err := service.PublishManifest(ctx, repository, referrerDigest, "application/vnd.oci.image.manifest.v1+json", referrerBytes); err != nil {
+		t.Fatalf("PublishManifest(referrer manifest) error = %v", err)
+	}
+
+	index := map[string]any{
+		"schemaVersion": 2,
+		"mediaType":     "application/vnd.oci.image.index.v1+json",
+		"manifests": []map[string]any{
+			{
+				"mediaType":    "application/vnd.oci.image.manifest.v1+json",
+				"size":         len(referrerBytes),
+				"digest":       referrerDigest,
+				"artifactType": signing.SigstoreBundleMediaType,
+			},
+		},
+	}
+	indexBytes, err := json.Marshal(index)
+	if err != nil {
+		t.Fatalf("json.Marshal(bundle index) error = %v", err)
+	}
+
+	tag, err := signing.BundleIndexTag(indexDigest)
+	if err != nil {
+		t.Fatalf("signing.BundleIndexTag(%q) error = %v", indexDigest, err)
+	}
+	if _, err := service.PublishManifest(ctx, repository, tag, "application/vnd.oci.image.index.v1+json", indexBytes); err != nil {
+		t.Fatalf("PublishManifest(bundle index at %s) error = %v", tag, err)
+	}
+	service.WaitForBackgroundWork()
+}
+
+// TestServiceVerifySignature_IdentityOnlyPolicyReachesRealKeylessVerification
+// is tasks.md 6.2: with zero trusted keys and >=1 trusted identity
+// configured, verifyBundleSignature's identity branch is reached and calls
+// the REAL (not mocked) signing.VerifyKeyless against a bundle fixture
+// carrying verificationMaterial (spec: "Identity-only policy verifies with
+// no trusted key").
+//
+// signing.VerifyKeyless always verifies against the real embedded pinned
+// Sigstore public-good root (design.md: "no operator override", settled) --
+// a certificate this fixture can mint offline can never legitimately chain
+// to it, and no live keyless-signed Bundle-document artifact was obtainable
+// in this sandbox (apply-progress.md's Phase 0 note, carried forward
+// unchanged from PR1). This test proves the achievable, real half of that
+// constraint: the identity anchor is genuinely exercised -- state becomes
+// "untrusted" (a real verification ATTEMPT that failed), never
+// "unverifiable" (reserved for the "no usable anchor configured at all"
+// precondition zero keys alone used to always trip before this change).
+// TestComposeVerifiedIdentity_ReportsMatchingIdentitysIssuer below
+// separately proves the SAN+issuer composition a genuine match would
+// report, without requiring an unfakeable live artifact.
+func TestServiceVerifySignature_IdentityOnlyPolicyReachesRealKeylessVerification(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	repository := "library/alpine"
+	imageDigest := seedArbitraryImageManifest(t, service, repository, " - identity only")
+	certDER := selfSignedCertDER(t)
+	seedKeylessBundleSignatureArtifact(t, service, repository, imageDigest, imageDigest, bareHex(imageDigest), certDER)
+
+	policy := ports.SigningPolicySettings{
+		Enabled: true,
+		TrustedIdentities: []ports.TrustedIdentity{
+			{CertificateIdentityRegexp: "^.*$", CertificateOIDCIssuer: "https://token.actions.githubusercontent.com"},
+		},
+	}
+
+	state, match, err := service.verifySignature(context.Background(), repository, imageDigest, policy)
+	if err == nil {
+		t.Fatal("verifySignature() error = nil, want a policy violation (a self-signed test certificate can never chain to the real pinned root)")
+	}
+	if !domain.IsCode(err, domain.ErrorCodePolicyViolation) {
+		t.Fatalf("verifySignature() error = %v, want ErrorCodePolicyViolation", err)
+	}
+	if state != signatureStateUntrusted {
+		t.Fatalf("verifySignature() state = %q, want %q (a real verification attempt was made and failed, distinctly from %q which means no usable anchor was even configured)", state, signatureStateUntrusted, signatureStateUnverifiable)
+	}
+	if match.KeyFingerprint != "" || match.Identity != "" {
+		t.Fatalf("verifySignature() match = %#v, want the zero value when nothing verified", match)
+	}
+}
+
+// TestServiceVerifySignature_ZeroKeysAndZeroIdentitiesIsUnverifiable is
+// tasks.md 6.3: enabling the policy requires >=1 usable anchor of EITHER
+// kind -- zero keys AND zero identities still reports "unverifiable",
+// distinctly from the "untrusted" a real (if doomed) identity-only
+// verification attempt reports above.
+func TestServiceVerifySignature_ZeroKeysAndZeroIdentitiesIsUnverifiable(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	repository := "library/alpine"
+	imageDigest := seedArbitraryImageManifest(t, service, repository, " - zero anchors")
+	policy := ports.SigningPolicySettings{Enabled: true}
+
+	state, match, err := service.verifySignature(context.Background(), repository, imageDigest, policy)
+	if err == nil {
+		t.Fatal("verifySignature() error = nil, want a policy violation")
+	}
+	if !domain.IsCode(err, domain.ErrorCodePolicyViolation) {
+		t.Fatalf("verifySignature() error = %v, want ErrorCodePolicyViolation", err)
+	}
+	if state != signatureStateUnverifiable {
+		t.Fatalf("verifySignature() state = %q, want %q", state, signatureStateUnverifiable)
+	}
+	if match.KeyFingerprint != "" || match.Identity != "" {
+		t.Fatalf("verifySignature() match = %#v, want the zero value", match)
+	}
+}
+
+// TestComposeVerifiedIdentity_ReportsMatchingIdentitysIssuer is tasks.md
+// 6.4: a verified identity match reports the matched certificate SAN
+// together with the OIDC issuer of whichever configured TrustedIdentity's
+// regexp actually matched it -- never just the bare SAN, and never
+// overloading the key-fingerprint field (spec: "Identity match reports SAN
+// and issuer separately"). Pure function, no crypto, no mocks: exercises the
+// exact production logic an identity-verified pull composes
+// signatureMatch.Identity with.
+func TestComposeVerifiedIdentity_ReportsMatchingIdentitysIssuer(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		matchedSAN string
+		identities []ports.TrustedIdentity
+		want       string
+	}{
+		{
+			name:       "single configured identity",
+			matchedSAN: "https://github.com/example/repo/.github/workflows/release.yml@refs/heads/main",
+			identities: []ports.TrustedIdentity{
+				{CertificateIdentityRegexp: "^https://github.com/example/.*$", CertificateOIDCIssuer: "https://token.actions.githubusercontent.com"},
+			},
+			want: "https://github.com/example/repo/.github/workflows/release.yml@refs/heads/main (https://token.actions.githubusercontent.com)",
+		},
+		{
+			name:       "multiple configured identities picks the actually-matching one, not the first",
+			matchedSAN: "https://gitlab.com/example/repo//.gitlab-ci.yml@refs/heads/main",
+			identities: []ports.TrustedIdentity{
+				{CertificateIdentityRegexp: "^https://github.com/.*$", CertificateOIDCIssuer: "https://token.actions.githubusercontent.com"},
+				{CertificateIdentityRegexp: "^https://gitlab.com/.*$", CertificateOIDCIssuer: "https://gitlab.com"},
+			},
+			want: "https://gitlab.com/example/repo//.gitlab-ci.yml@refs/heads/main (https://gitlab.com)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := composeVerifiedIdentity(tt.matchedSAN, tt.identities)
+			if got != tt.want {
+				t.Fatalf("composeVerifiedIdentity(%q, %v) = %q, want %q", tt.matchedSAN, tt.identities, got, tt.want)
+			}
+		})
 	}
 }
