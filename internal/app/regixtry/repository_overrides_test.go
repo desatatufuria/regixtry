@@ -523,6 +523,132 @@ func TestApplySigningOverridePayloadAppliesRoundTripAndTolerance(t *testing.T) {
 	}
 }
 
+// TestNormalizeSigningOverrideValidatesTrustedIdentities is the Phase 6 RED
+// test (tasks.md 6.7): normalizeSigningOverride compiles each identity's
+// certificate_identity_regexp at write time (rejecting a malformed one),
+// caps trusted_identities at maxSigningPolicyTrustedKeys (the same constant
+// TrustedPublicKeys already caps against, tasks.md 6.7's own wording), and
+// extends the outage rule (Decision 7) to keys-OR-identities: enabled:true
+// is rejected only when BOTH sets are empty -- zero keys but >=1 identity
+// must normalize cleanly.
+func TestNormalizeSigningOverrideValidatesTrustedIdentities(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		raw     string
+		wantErr bool
+	}{
+		{
+			name:    "enabled with one valid identity and zero keys normalizes cleanly",
+			raw:     `{"enabled":true,"trusted_identities":[{"certificate_identity_regexp":"^https://github.com/example/.*$","certificate_oidc_issuer":"https://token.actions.githubusercontent.com"}]}`,
+			wantErr: false,
+		},
+		{
+			name:    "malformed regexp is rejected",
+			raw:     `{"enabled":false,"trusted_identities":[{"certificate_identity_regexp":"(unterminated","certificate_oidc_issuer":"https://token.actions.githubusercontent.com"}]}`,
+			wantErr: true,
+		},
+		{
+			name:    "empty oidc issuer is rejected",
+			raw:     `{"enabled":false,"trusted_identities":[{"certificate_identity_regexp":"^https://github.com/example/.*$","certificate_oidc_issuer":""}]}`,
+			wantErr: true,
+		},
+		{
+			name:    "enabled true with zero keys and zero identities is rejected (outage rule, either kind)",
+			raw:     `{"enabled":true}`,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := normalizeSigningOverride([]byte(tt.raw))
+			if tt.wantErr && err == nil {
+				t.Fatalf("normalizeSigningOverride(%s) error = nil, want error", tt.raw)
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("normalizeSigningOverride(%s) error = %v, want nil", tt.raw, err)
+			}
+			if tt.wantErr && !domain.IsCode(err, domain.ErrorCodeValidation) {
+				t.Fatalf("normalizeSigningOverride(%s) error = %v, want ErrorCodeValidation", tt.raw, err)
+			}
+		})
+	}
+}
+
+// TestNormalizeSigningOverrideRejectsTooManyTrustedIdentities mirrors
+// TestNormalizeSigningOverrideRejectsTooManyTrustedKeys for the identity
+// anchor set: previously trusted_identities had no cap at all (the field did
+// not exist before this change); this closes that gap with the same
+// maxSigningPolicyTrustedKeys bound TrustedPublicKeys already enforces.
+func TestNormalizeSigningOverrideRejectsTooManyTrustedIdentities(t *testing.T) {
+	t.Parallel()
+
+	identities := make([]string, 0, maxSigningPolicyTrustedKeys+1)
+	for i := 0; i < maxSigningPolicyTrustedKeys+1; i++ {
+		identities = append(identities, fmt.Sprintf(`{"certificate_identity_regexp":"^id-%d$","certificate_oidc_issuer":"https://token.actions.githubusercontent.com"}`, i))
+	}
+	raw := `{"enabled":false,"trusted_identities":[` + strings.Join(identities, ",") + `]}`
+
+	_, err := normalizeSigningOverride([]byte(raw))
+	if err == nil {
+		t.Fatalf("normalizeSigningOverride() error = nil, want a validation error for %d identities (cap is %d)", len(identities), maxSigningPolicyTrustedKeys)
+	}
+	if !domain.IsCode(err, domain.ErrorCodeValidation) {
+		t.Fatalf("normalizeSigningOverride() error = %v, want ErrorCodeValidation", err)
+	}
+}
+
+// TestApplySigningOverridePayloadFullRowReplacesTrustedIdentities is the
+// Phase 6 RED test (tasks.md 6.7's applySigningOverridePayload half, spec:
+// "Override with keys only clears inherited identities"): TrustedIdentities
+// follows the exact same full-row-replace semantics as TrustedPublicKeys --
+// an override payload that sets keys but omits trusted_identities entirely
+// must clear any identities the base (resolved global) settings carried in.
+func TestApplySigningOverridePayloadFullRowReplacesTrustedIdentities(t *testing.T) {
+	t.Parallel()
+
+	fixedUpdatedAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	base := ports.SigningPolicySettings{
+		Enabled:           true,
+		TrustedIdentities: []ports.TrustedIdentity{{CertificateIdentityRegexp: "^inherited$", CertificateOIDCIssuer: "https://inherited.example"}},
+		UpdatedAt:         fixedUpdatedAt,
+	}
+
+	t.Run("override with identities round-trips them", func(t *testing.T) {
+		t.Parallel()
+
+		raw := `{"enabled":true,"trusted_identities":[{"certificate_identity_regexp":"^override$","certificate_oidc_issuer":"https://override.example"}]}`
+		got, err := applySigningOverridePayload([]byte(raw), base)
+		if err != nil {
+			t.Fatalf("applySigningOverridePayload() error = %v", err)
+		}
+		want := []ports.TrustedIdentity{{CertificateIdentityRegexp: "^override$", CertificateOIDCIssuer: "https://override.example"}}
+		if !reflect.DeepEqual(got.TrustedIdentities, want) {
+			t.Fatalf("applySigningOverridePayload().TrustedIdentities = %#v, want %#v", got.TrustedIdentities, want)
+		}
+	})
+
+	t.Run("override with keys only clears inherited global identities", func(t *testing.T) {
+		t.Parallel()
+
+		raw := `{"enabled":true,"trusted_public_keys":["pem-1"]}`
+		got, err := applySigningOverridePayload([]byte(raw), base)
+		if err != nil {
+			t.Fatalf("applySigningOverridePayload() error = %v", err)
+		}
+		if len(got.TrustedIdentities) != 0 {
+			t.Fatalf("applySigningOverridePayload().TrustedIdentities = %#v, want empty (keys-only override must clear inherited identities)", got.TrustedIdentities)
+		}
+		if !reflect.DeepEqual(got.TrustedPublicKeys, []string{"pem-1"}) {
+			t.Fatalf("applySigningOverridePayload().TrustedPublicKeys = %#v, want [pem-1]", got.TrustedPublicKeys)
+		}
+	})
+}
+
 // marshalOverride is a small test helper to avoid repeating json.Marshal
 // error-handling boilerplate across the RED tests in this file.
 func marshalOverride(t *testing.T, value any) []byte {

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	domain "regixtry/internal/domain/regixtry"
@@ -125,8 +126,11 @@ func normalizeGitleaksOverride(raw []byte) ([]byte, error) {
 }
 
 // normalizeSigningOverride runs every key through
-// signing.NormalizePublicKeyPEM and rejects enabled:true with zero usable
-// keys — Decision 7's outage rule applied at write time, so the
+// signing.NormalizePublicKeyPEM and every identity's
+// certificate_identity_regexp through regexp.Compile, and rejects
+// enabled:true with zero usable anchors of EITHER kind — Decision 7's
+// outage rule extended to keys-OR-identities (signing-keyless-verification
+// spec: "Global Trusted-Key-Or-Identity Signing Policy"), so the
 // guaranteed-total-outage configuration is unrepresentable rather than
 // merely discouraged. Errors never echo key bytes, only the offending index.
 func normalizeSigningOverride(raw []byte) ([]byte, error) {
@@ -145,8 +149,19 @@ func normalizeSigningOverride(raw []byte) ([]byte, error) {
 		}
 		normalizedKeys = append(normalizedKeys, normalized)
 	}
-	if override.Enabled && len(normalizedKeys) == 0 {
-		return nil, domain.NewValidationError("enabled requires at least one usable entry in trusted_public_keys")
+	if len(override.TrustedIdentities) > maxSigningPolicyTrustedKeys {
+		return nil, domain.NewValidationError(fmt.Sprintf("trusted_identities must contain at most %d entries", maxSigningPolicyTrustedKeys))
+	}
+	for index, identity := range override.TrustedIdentities {
+		if _, err := regexp.Compile(identity.CertificateIdentityRegexp); err != nil {
+			return nil, domain.NewValidationError(fmt.Sprintf("trusted_identities[%d].certificate_identity_regexp is invalid: %s", index, err.Error()))
+		}
+		if strings.TrimSpace(identity.CertificateOIDCIssuer) == "" {
+			return nil, domain.NewValidationError(fmt.Sprintf("trusted_identities[%d].certificate_oidc_issuer is required", index))
+		}
+	}
+	if override.Enabled && len(normalizedKeys) == 0 && len(override.TrustedIdentities) == 0 {
+		return nil, domain.NewValidationError("enabled requires at least one usable entry in trusted_public_keys or trusted_identities")
 	}
 	if !ports.ValidUnsignedSelfRead(override.UnsignedSelfRead) {
 		return nil, domain.NewValidationError(fmt.Sprintf("unsigned_self_read %q is invalid", override.UnsignedSelfRead))
@@ -198,6 +213,12 @@ func applySigningOverridePayload(raw []byte, settings ports.SigningPolicySetting
 	}
 	settings.Enabled = override.Enabled
 	settings.TrustedPublicKeys = override.TrustedPublicKeys
+	// TrustedIdentities mirrors TrustedPublicKeys' full-row-replace: an
+	// override saved with keys but no identities clears any inherited
+	// global identities for this repository (spec: "Per-Repository
+	// Trusted-Identity Override Is Full-Row-Replace" -- the same accepted
+	// sharp edge TrustedPublicKeys already has, not a defect).
+	settings.TrustedIdentities = override.TrustedIdentities
 	settings.UnsignedSelfRead = override.UnsignedSelfRead
 	return settings, nil
 }
