@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define the first secure admin slice for the TUI: authenticated login, in-memory session handling, and read-only admin browsing over backend APIs.
+Define the first secure admin slice for the TUI: authenticated login, in-memory session handling, read-only admin browsing over backend APIs, and operator configuration of content-trust policies.
 
 ## Current Repository Facts
 
@@ -106,3 +106,63 @@ The system MUST surface recoverable feedback for mutation failures, including ba
 - GIVEN an authenticated operator confirms an enable or disable action
 - WHEN the backend rejects the request as invalid
 - THEN the TUI MUST show a clear recoverable validation message
+
+### Requirement: Dedicated Global Signing Policy Modal
+
+The operator MUST be able to open a dedicated signing policy modal,
+sibling to `scanPolicyModal` and not an extension of it, showing the
+global `Enabled` flag, configured trusted keys, and configured trusted
+identities. The operator MUST be able to change and save all three,
+round-tripping through the admin API and reflected back in the modal.
+
+#### Scenario: Modal shows current global signing policy
+- GIVEN the global signing policy has trusted keys and trusted identities
+  configured
+- WHEN the operator opens the signing modal
+- THEN it SHALL show the current `Enabled` state, trusted keys, and
+  trusted identities
+
+#### Scenario: Operator saves a policy change
+- GIVEN the signing modal is open
+- WHEN the operator submits a changed `Enabled` value, key set, or
+  identity set
+- THEN the TUI SHALL persist it through the admin API and reflect the new
+  values back in the modal
+
+### Requirement: Signing Status Badge Is Text-Only
+
+The system MUST render a persistent, text-only signing status badge,
+following `scanPolicyBadge`'s established precedent of no icon or glyph
+vocabulary.
+
+#### Scenario: Badge reflects enabled and disabled states
+- GIVEN the global signing policy is enabled
+- WHEN the admin view renders the badge
+- THEN it SHALL show a text-only "on" indication, and SHALL show a
+  text-only "off" indication when the policy is disabled
+
+### Requirement: Signing Is A Third Feature Cycle Option In The Override Modal
+
+The existing `repositoryOverrideModal` MUST support `signing` as a third
+value in its Feature field cycle, alongside `trivy` and `gitleaks`. No
+new modal is introduced for per-repository signing configuration; the
+existing modal's fields MUST adapt to signing's settings shape — 
+including trusted identities — when `signing` is selected.
+
+#### Scenario: Operator cycles to the signing feature
+- GIVEN the repository override modal is open with Feature focused
+- WHEN the operator cycles through Feature values
+- THEN `signing` SHALL appear as a third option alongside `trivy` and
+  `gitleaks`
+
+#### Scenario: Modal fields adapt to signing's settings shape including identities
+- GIVEN the operator has selected `signing` in the Feature field
+- WHEN the modal renders its fields
+- THEN it SHALL present signing's override fields — trusted keys and
+  trusted identities — not Trivy/gitleaks' scan-path fields
+
+## Out of Scope Note
+
+No requirement above adds a new modal for per-repository signing
+configuration; that reuses the existing `repositoryOverrideModal`. Only
+the global policy gets a dedicated modal, now showing both anchor types.
