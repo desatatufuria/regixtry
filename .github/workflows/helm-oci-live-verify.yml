@@ -1,0 +1,86 @@
+name: helm-oci-live-verify
+
+# Deliberately workflow_dispatch-only, never push/pull_request: like its
+# keyless-signing-live-verify.yml sibling, this job runs against the user's
+# REAL, already-running production regixtry instance
+# (secrets.LIVE_REGISTRY_HOST) instead of an ephemeral in-job instance, so it
+# runs deliberately, on demand, not on every commit.
+#
+# UNLIKE keyless-signing-live-verify.yml, this job is considerably
+# LOWER-STAKES: there is no keyless signing, no OIDC identity token, and no
+# Rekor transparency log involved at all -- nothing this workflow does
+# creates a permanent public record anywhere. It is a purely local
+# push/pull round trip against the registry's ordinary OCI Distribution API,
+# proving that regixtry can host Helm charts pushed as OCI artifacts
+# (`helm push chart.tgz oci://registry.../helm`) alongside existing
+# container images, with ZERO regixtry-side or Traefik-side configuration
+# changes -- confirmed by direct code reading that this repo's
+# manifest/blob storage path is completely generic over OCI artifact type.
+# See docs/verification/scripts/helm-oci-live-verify.sh's own header comment
+# for the exact file:line evidence.
+#
+#   - It never touches any signing policy, admin API, or per-repository
+#     override -- there is nothing to configure and nothing to revert.
+#   - It targets one fixed, clearly-throwaway repository path
+#     (helm/smoke-test-chart, never a real chart name) with a run-unique
+#     chart version, so repeated runs never collide with each other or with
+#     anything real.
+#   - Credentials for the live host come only from GitHub Secrets
+#     (LIVE_REGISTRY_HOST/USERNAME/PASSWORD), flowing through env vars only
+#     -- never printed, never string-interpolated into a command.
+#   - Cleanup (deleting the pushed test manifest, `helm registry logout`)
+#     runs from an EXIT trap so it fires even on failure, leaving zero trace
+#     on the live registry -- see the script's cleanup() for the exact,
+#     tolerant behavior if -delete-enabled were ever off (confirmed ON for
+#     this instance today).
+#
+# It still runs on-demand rather than on every commit because it is a real
+# write against a real production system, not because of any of the
+# public-transparency-log concerns that shape its keyless sibling.
+on:
+  workflow_dispatch:
+    inputs:
+      keep_artifacts:
+        description: "Skip cleanup so the pushed test chart stays visible on the live registry for manual inspection (e.g. in the TUI). You are responsible for cleaning it up afterward."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  helm-oci-live-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Pinned to the exact v5.0.1 tag's commit (not the floating v5 major
+      # tag), the current stable azure/setup-helm release as of this
+      # workflow's authoring -- confirmed via the Azure/setup-helm GitHub
+      # releases API. The `version` input below pins the actual helm binary
+      # independently (see that input's own comment).
+      - name: Install helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          # Pinned to v3.21.4, the latest Helm 3.x stable release that is
+          # not brand-new (published about a month before this workflow was
+          # authored) -- deliberately not the very latest v3.22.0/v4.3.0
+          # releases, both published within the prior 24 hours at authoring
+          # time, and not the newer v4 major line at all: v4 is still early
+          # in its release cycle, while v3's OCI push/pull support
+          # (`helm push`/`helm pull oci://...`, stable since Helm 3.8) is
+          # long-established and behaves identically for this workflow's
+          # purposes. Re-pin deliberately later if there's a reason to move.
+          version: "v3.21.4"
+
+      - name: Run Helm OCI live verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          docs/verification/scripts/helm-oci-live-verify.sh
+        env:
+          LIVE_REGISTRY_HOST: ${{ secrets.LIVE_REGISTRY_HOST }}
+          LIVE_REGISTRY_USERNAME: ${{ secrets.LIVE_REGISTRY_USERNAME }}
+          LIVE_REGISTRY_PASSWORD: ${{ secrets.LIVE_REGISTRY_PASSWORD }}
+          KEEP_ARTIFACTS: ${{ inputs.keep_artifacts }}
