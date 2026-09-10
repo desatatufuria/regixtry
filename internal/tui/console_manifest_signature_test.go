@@ -93,7 +93,7 @@ func TestRenderManifestSignatureSectionStates(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			rendered := ansi.Strip(renderManifest(theme, manifest, tt.signature))
+			rendered := ansi.Strip(renderManifest(theme, manifest, tt.signature, appregixtry.ReferrersIndex{}))
 			for _, want := range tt.wantAll {
 				if !strings.Contains(rendered, want) {
 					t.Fatalf("renderManifest() = %q, want it to contain %q", rendered, want)
@@ -133,7 +133,7 @@ func TestRenderManifestSignatureSectionNeverLeaksKeyMaterial(t *testing.T) {
 		},
 	}
 
-	rendered := renderManifest(theme, manifest, signature)
+	rendered := renderManifest(theme, manifest, signature, appregixtry.ReferrersIndex{})
 
 	if strings.Contains(rendered, "BEGIN PUBLIC KEY") {
 		t.Fatalf("renderManifest() = %q, must never contain key material", rendered)

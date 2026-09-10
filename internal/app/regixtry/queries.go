@@ -29,6 +29,41 @@ type ManifestDetails struct {
 	Size        int64             `json:"size"`
 	Annotations map[string]string `json:"annotations,omitempty"`
 	Blobs       []BlobDetails     `json:"blobs"`
+	// Platforms is the multi-architecture breakdown of an OCI Image Index /
+	// Docker Manifest List's manifests[] entries (image-index-platform-
+	// breakdown change), one PlatformDetails per child manifest. It is
+	// nil/empty for an ordinary single-image manifest -- populated only when
+	// MediaType is index-shaped (domain.IsImageIndexMediaType).
+	Platforms []PlatformDetails `json:"platforms,omitempty"`
+}
+
+// TotalBlobSize sums every blob's Size (config + every layer) -- the actual
+// image content size a user would pull, distinct from Size above (the
+// manifest JSON document's own byte size). A method rather than a stored
+// field so it can never drift from Blobs (console-manifest-enrichment
+// change). Zero for a manifest with no blobs (e.g. an OCI Image Index,
+// which has no Blobs of its own -- see Platforms instead).
+func (m ManifestDetails) TotalBlobSize() int64 {
+	var total int64
+	for _, blob := range m.Blobs {
+		total += blob.Size
+	}
+	return total
+}
+
+// PlatformDetails is one child manifest entry from a multi-architecture OCI
+// Image Index or Docker Manifest List's manifests[] array
+// (image-index-platform-breakdown change): Digest/MediaType/Size mirror
+// BlobDetails' own descriptor shape, plus the per-platform
+// Architecture/OS/Variant identifying which target this child manifest is
+// built for. Variant is "" when the entry declares none.
+type PlatformDetails struct {
+	Digest       string `json:"digest"`
+	MediaType    string `json:"mediaType,omitempty"`
+	Size         int64  `json:"size"`
+	Architecture string `json:"architecture,omitempty"`
+	OS           string `json:"os,omitempty"`
+	Variant      string `json:"variant,omitempty"`
 }
 
 // DeletionDetails names what a delete removed (design.md Decision 1).
@@ -934,6 +969,7 @@ func newManifestDetails(repository string, reference string, manifest domain.Man
 		Size:        manifest.Size,
 		Annotations: manifest.Annotations,
 		Blobs:       make([]BlobDetails, 0, len(blobs)),
+		Platforms:   newPlatformDetailsList(manifest),
 	}
 
 	for _, blob := range blobs {
@@ -941,6 +977,51 @@ func newManifestDetails(repository string, reference string, manifest domain.Man
 	}
 
 	return details
+}
+
+// newPlatformDetailsList builds ManifestDetails.Platforms for an index-
+// shaped manifest (image-index-platform-breakdown change), parsing
+// manifest.Payload's own manifests[] array via
+// domain.ParseImageIndexEntries -- the raw bytes are always available here
+// on both the push path (PublishManifest's freshly-parsed manifest) and the
+// pull path (metadata.ResolveManifest reconstructs Payload from storage).
+// Returns nil for an ordinary (non-index) manifest without even attempting
+// a parse.
+//
+// A malformed index payload is deliberately swallowed into an empty
+// Platforms list rather than propagated as an error: unlike
+// Service.Referrers (which treats a malformed stored manifest as storage
+// corruption an API caller must see, because the referrer IS the response),
+// this is one purely-informational field on the Console manifest inspection
+// screen -- failing the entire manifest lookup over a rendering-only
+// fallback would make the screen strictly worse for an operator than
+// showing everything else and simply omitting the platform breakdown.
+func newPlatformDetailsList(manifest domain.Manifest) []PlatformDetails {
+	if !domain.IsImageIndexMediaType(manifest.MediaType) {
+		return nil
+	}
+
+	entries, err := domain.ParseImageIndexEntries(manifest.Payload)
+	if err != nil {
+		return nil
+	}
+
+	platforms := make([]PlatformDetails, 0, len(entries))
+	for _, entry := range entries {
+		platform := PlatformDetails{
+			Digest:    entry.Digest,
+			MediaType: entry.MediaType,
+			Size:      entry.Size,
+		}
+		if entry.Platform != nil {
+			platform.Architecture = entry.Platform.Architecture
+			platform.OS = entry.Platform.OS
+			platform.Variant = entry.Platform.Variant
+		}
+		platforms = append(platforms, platform)
+	}
+
+	return platforms
 }
 
 // newDeletionDetailsForDigest builds the digest-path DeletionDetails:

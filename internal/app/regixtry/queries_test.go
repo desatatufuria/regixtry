@@ -394,3 +394,117 @@ func TestServiceSignatureStatusVerifiedIdentityNeverPopulatedOnKeyVerifiedPath(t
 		t.Fatalf("SignatureStatus().Signature.VerifiedIdentity = %q, want empty on the key-verified path", result.Signature.VerifiedIdentity)
 	}
 }
+
+// --- ManifestDetails.TotalBlobSize (console-manifest-enrichment) ----------
+
+// TestManifestDetailsTotalBlobSizeSumsAllBlobSizes is the RED test for the
+// Console manifest screen's "Total Image Size" figure: the sum of every
+// blob's Size (config + every layer) -- distinct from ManifestDetails.Size,
+// which is the manifest JSON document's own byte size.
+func TestManifestDetailsTotalBlobSizeSumsAllBlobSizes(t *testing.T) {
+	t.Parallel()
+
+	details := ManifestDetails{
+		Size: 512,
+		Blobs: []BlobDetails{
+			{Digest: "sha256:config", Size: 100},
+			{Digest: "sha256:layer1", Size: 2000},
+			{Digest: "sha256:layer2", Size: 30000},
+		},
+	}
+
+	if got, want := details.TotalBlobSize(), int64(32100); got != want {
+		t.Fatalf("TotalBlobSize() = %d, want %d", got, want)
+	}
+}
+
+// TestManifestDetailsTotalBlobSizeIsZeroWithNoBlobs proves the helper never
+// panics or returns a garbage value for a manifest with no blobs at all
+// (e.g. an OCI Image Index, whose own Blobs list is always empty).
+func TestManifestDetailsTotalBlobSizeIsZeroWithNoBlobs(t *testing.T) {
+	t.Parallel()
+
+	details := ManifestDetails{Size: 512}
+
+	if got, want := details.TotalBlobSize(), int64(0); got != want {
+		t.Fatalf("TotalBlobSize() = %d, want %d", got, want)
+	}
+}
+
+// --- ManifestDetails.Platforms (image-index-platform-breakdown) -----------
+
+// TestServicePublishManifestPopulatesPlatformsForOCIImageIndex is the RED
+// test for the platform-breakdown wiring: pushing an OCI Image Index whose
+// manifests[] entries each declare a "platform" must come back with
+// ManifestDetails.Platforms populated, one PlatformDetails per child
+// manifest, in payload order -- the same round trip
+// TestResolveArtifactTypeManifestValueWins's siblings already exercise via
+// PublishManifest's own returned ManifestDetails (newManifestDetails is
+// shared by the push and pull paths).
+func TestServicePublishManifestPopulatesPlatformsForOCIImageIndex(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	payload := []byte(`{
+		"schemaVersion": 2,
+		"mediaType": "application/vnd.oci.image.index.v1+json",
+		"manifests": [
+			{
+				"mediaType": "application/vnd.oci.image.manifest.v1+json",
+				"digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+				"size": 100,
+				"platform": {"architecture": "amd64", "os": "linux"}
+			},
+			{
+				"mediaType": "application/vnd.oci.image.manifest.v1+json",
+				"digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+				"size": 200,
+				"platform": {"architecture": "arm64", "os": "linux", "variant": "v8"}
+			}
+		]
+	}`)
+
+	details, err := service.PublishManifest(context.Background(), "library/multiarch", "v1", "application/vnd.oci.image.index.v1+json", payload)
+	if err != nil {
+		t.Fatalf("PublishManifest() error = %v", err)
+	}
+
+	if got, want := len(details.Platforms), 2; got != want {
+		t.Fatalf("len(details.Platforms) = %d, want %d", got, want)
+	}
+	if got, want := details.Platforms[0].Architecture, "amd64"; got != want {
+		t.Fatalf("Platforms[0].Architecture = %q, want %q", got, want)
+	}
+	if got, want := details.Platforms[0].OS, "linux"; got != want {
+		t.Fatalf("Platforms[0].OS = %q, want %q", got, want)
+	}
+	if got, want := details.Platforms[0].Digest, "sha256:1111111111111111111111111111111111111111111111111111111111111111"; got != want {
+		t.Fatalf("Platforms[0].Digest = %q, want %q", got, want)
+	}
+	if got, want := details.Platforms[1].Variant, "v8"; got != want {
+		t.Fatalf("Platforms[1].Variant = %q, want %q", got, want)
+	}
+}
+
+// TestServicePublishManifestLeavesPlatformsEmptyForOrdinaryImageManifest
+// proves an ordinary (non-index) manifest -- the common case -- gets no
+// Platforms at all, never a spurious non-nil slice.
+func TestServicePublishManifestLeavesPlatformsEmptyForOrdinaryImageManifest(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	repository := "library/single-arch"
+	digest := seedFixtureImageManifest(t, service, repository)
+
+	details, err := service.ResolveManifest(context.Background(), repository, digest)
+	if err != nil {
+		t.Fatalf("ResolveManifest() error = %v", err)
+	}
+	if got := len(details.Platforms); got != 0 {
+		t.Fatalf("len(details.Platforms) = %d, want 0 for an ordinary image manifest", got)
+	}
+}

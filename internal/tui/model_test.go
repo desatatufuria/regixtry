@@ -5837,7 +5837,13 @@ type fakeQueryService struct {
 	// own control-field pattern.
 	updateChannel    string
 	updateChannelErr error
-	calls            struct {
+	// referrers/referrersErr back the manifest inspection screen's Referrers
+	// section (console-manifest-enrichment change), keyed exactly like
+	// signatureStatus above but on "repository:subjectDigest" since
+	// Referrers is always looked up by digest, never by tag reference.
+	referrers    map[string]appregixtry.ReferrersIndex
+	referrersErr error
+	calls        struct {
 		catalog        int
 		tags           int
 		manifest       int
@@ -5845,6 +5851,7 @@ type fakeQueryService struct {
 		signature      int
 		deleteManifest int
 		updateChannel  int
+		referrers      int
 	}
 }
 
@@ -6601,6 +6608,17 @@ func (f *fakeQueryService) GetUpdateChannel(context.Context) (string, error) {
 		return "", f.updateChannelErr
 	}
 	return f.updateChannel, nil
+}
+
+func (f *fakeQueryService) Referrers(_ context.Context, repository string, subjectDigest string, _ string) (appregixtry.ReferrersIndex, error) {
+	f.calls.referrers++
+	if f.referrersErr != nil {
+		return appregixtry.ReferrersIndex{}, f.referrersErr
+	}
+	if result, ok := f.referrers[fmt.Sprintf("%s:%s", repository, subjectDigest)]; ok {
+		return result, nil
+	}
+	return appregixtry.ReferrersIndex{}, nil
 }
 
 func runCmd(t *testing.T, model Model, cmd tea.Cmd) Model {

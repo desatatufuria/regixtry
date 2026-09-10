@@ -71,6 +71,15 @@ type QueryService interface {
 	// never needs the AdminClient/HTTP path the write side
 	// (AdminClient.SetUpdateChannel) uses.
 	GetUpdateChannel(ctx context.Context) (string, error)
+	// Referrers backs the Console manifest inspection screen's Referrers
+	// section (console-manifest-enrichment change): manifests whose
+	// subject.digest points at the inspected one -- signatures,
+	// attestations, SBOMs. Called directly in-process against
+	// (*appregixtry.Service).Referrers, exactly like ResolveManifest and
+	// SignatureStatus above, never through AdminClient/HTTP. artifactType is
+	// always "" from this caller -- loadManifestCmd wants every referrer,
+	// never a filtered subset.
+	Referrers(ctx context.Context, repositoryName string, subjectDigest string, artifactType string) (appregixtry.ReferrersIndex, error)
 }
 
 type RepositoriesModel struct {
@@ -117,6 +126,11 @@ type ManifestModel struct {
 	// this reference (loadManifestCmd) rather than threaded through from
 	// the Tags screen -- see loadManifestCmd's own comment for why.
 	Signature appregixtry.SignatureStatusResult
+	// Referrers is the manifest inspection screen's Referrers section
+	// (console-manifest-enrichment change): manifests whose subject.digest
+	// points at Details.Digest, fetched fresh via QueryService.Referrers in
+	// the same loadManifestCmd round trip as Signature above.
+	Referrers appregixtry.ReferrersIndex
 }
 
 type BlobsModel struct {
@@ -441,6 +455,7 @@ type manifestLoadedMsg struct {
 	manifest   appregixtry.ManifestDetails
 	uploads    []appregixtry.UploadDetails
 	signature  appregixtry.SignatureStatusResult
+	referrers  appregixtry.ReferrersIndex
 	err        error
 }
 
@@ -854,7 +869,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.lastRepository = msg.repository
 		m.lastTag = msg.tag
-		m.manifest = ManifestModel{Details: msg.manifest, Signature: msg.signature}
+		m.manifest = ManifestModel{Details: msg.manifest, Signature: msg.signature, Referrers: msg.referrers}
 		m.blobs = BlobsModel{Items: append([]appregixtry.BlobDetails(nil), msg.manifest.Blobs...)}
 		sort.Slice(msg.uploads, func(i, j int) bool { return msg.uploads[i].StartedAt.Before(msg.uploads[j].StartedAt) })
 		m.uploads = UploadsModel{Repository: msg.repository, Items: append([]appregixtry.UploadDetails(nil), msg.uploads...)}
@@ -1586,7 +1601,7 @@ func (m Model) viewScreen() string {
 		layout := m.contentBudget(status, help)
 		return renderInspectionWorkspace(
 			fmt.Sprintf("Repositories / %s / %s / Manifest", m.manifest.Details.Repository, m.manifest.Details.Reference),
-			renderConsoleTextSection(renderManifest(newAdminTheme(), m.manifest.Details, m.manifest.Signature), layout),
+			renderConsoleTextSection(renderManifest(newAdminTheme(), m.manifest.Details, m.manifest.Signature, m.manifest.Referrers), layout),
 			status,
 			help,
 		)
@@ -2968,11 +2983,21 @@ func (m Model) loadManifestCmd(repository string, tag string) tea.Cmd {
 		// resolved status was never computed under this screen's own
 		// access check, so reusing it here would blur that boundary.
 		signature, signatureErr := m.service.SignatureStatus(m.ctx, repository, tag)
+		// subjectDigest is manifest.Digest (the resolved manifest's own
+		// content-addressed digest), never tag/reference: referrers point at
+		// a manifest by digest, and this must find the exact digest being
+		// inspected regardless of which tag reference got us here
+		// (console-manifest-enrichment change). artifactType "" means every
+		// referrer, never a filtered subset.
+		referrers, referrersErr := m.service.Referrers(m.ctx, repository, manifest.Digest, "")
 		resultErr := uploadsErr
 		if resultErr == nil {
 			resultErr = signatureErr
 		}
-		return manifestLoadedMsg{repository: repository, tag: tag, manifest: manifest, uploads: uploads, signature: signature, err: resultErr}
+		if resultErr == nil {
+			resultErr = referrersErr
+		}
+		return manifestLoadedMsg{repository: repository, tag: tag, manifest: manifest, uploads: uploads, signature: signature, referrers: referrers, err: resultErr}
 	}
 }
 
@@ -3979,12 +4004,20 @@ func renderConsoleTextSection(content string, layout consoleLayout) string {
 // highlighted row) so the plain "Regixtry Console" screens (repositories,
 // tags, manifest, blobs, uploads) read consistently with the admin screens
 // instead of falling back to unstyled plain text.
-func renderManifest(theme adminTheme, manifest appregixtry.ManifestDetails, signature appregixtry.SignatureStatusResult) string {
+func renderManifest(theme adminTheme, manifest appregixtry.ManifestDetails, signature appregixtry.SignatureStatusResult, referrers appregixtry.ReferrersIndex) string {
 	lines := []string{
 		theme.subheading.Render(fmt.Sprintf("Manifest · %s:%s", manifest.Repository, manifest.Reference)),
 		fmt.Sprintf("%s %s", theme.muted.Render("Digest:"), theme.text.Render(manifest.Digest)),
 		fmt.Sprintf("%s %s", theme.muted.Render("Media Type:"), theme.text.Render(manifest.MediaType)),
-		fmt.Sprintf("%s %s", theme.muted.Render("Size:"), theme.text.Render(fmt.Sprintf("%d bytes", manifest.Size))),
+		// Manifest Size (the manifest JSON document's own byte size) and
+		// Total Image Size (the sum of every blob's size -- config + every
+		// layer, i.e. what a pull actually transfers) are deliberately two
+		// separate, clearly-labeled lines: they are different numbers and
+		// both are meaningful (console-manifest-enrichment change). Total
+		// Image Size is 0 for an index-shaped manifest, which has no Blobs
+		// of its own -- see the Platforms section below instead.
+		fmt.Sprintf("%s %s", theme.muted.Render("Manifest Size:"), theme.text.Render(fmt.Sprintf("%d bytes", manifest.Size))),
+		fmt.Sprintf("%s %s", theme.muted.Render("Total Image Size:"), theme.text.Render(fmt.Sprintf("%d bytes", manifest.TotalBlobSize()))),
 		fmt.Sprintf("%s %s", theme.muted.Render("Blobs:"), theme.text.Render(fmt.Sprintf("%d", len(manifest.Blobs)))),
 	}
 	if len(manifest.Annotations) > 0 {
@@ -3997,8 +4030,93 @@ func renderManifest(theme adminTheme, manifest appregixtry.ManifestDetails, sign
 			lines = append(lines, fmt.Sprintf("%s %s", theme.muted.Render("Annotation "+key+"="), theme.text.Render(manifest.Annotations[key])))
 		}
 	}
+	lines = append(lines, renderManifestPlatformLines(theme, manifest.Platforms)...)
+	lines = append(lines, renderManifestReferrerLines(theme, referrers)...)
 	lines = append(lines, renderSignatureLines(theme, signature)...)
 	return strings.Join(lines, "\n")
+}
+
+// renderManifestPlatformLines renders the multi-arch platform breakdown
+// (image-index-platform-breakdown change) for an OCI Image Index / Docker
+// Manifest List: each child manifest's platform (os/architecture[/variant])
+// alongside its digest, size, and mediaType. Returns nil (no "Platforms:"
+// header at all) for an ordinary single-image manifest, mirroring the
+// Annotations block's own omit-when-empty convention above.
+func renderManifestPlatformLines(theme adminTheme, platforms []appregixtry.PlatformDetails) []string {
+	if len(platforms) == 0 {
+		return nil
+	}
+
+	lines := []string{theme.muted.Render("Platforms:")}
+	for _, platform := range platforms {
+		// "unknown" mirrors how real-world OCI Image Index entries with no
+		// platform object at all are conventionally surfaced (rather than a
+		// bare "/" from two empty strings) -- distinct from a Platform whose
+		// OS/Architecture are merely both absent from an otherwise-present
+		// object.
+		target := "unknown"
+		if platform.OS != "" || platform.Architecture != "" {
+			target = platform.OS + "/" + platform.Architecture
+			if platform.Variant != "" {
+				target += "/" + platform.Variant
+			}
+		}
+		row := fmt.Sprintf("  %s  %s (%d bytes) [%s]", target, platform.Digest, platform.Size, platform.MediaType)
+		lines = append(lines, theme.text.Render(row))
+	}
+	return lines
+}
+
+// renderManifestReferrerLines renders the Referrers section (console-
+// manifest-enrichment change): manifests whose subject.digest points at the
+// inspected one -- signatures, attestations, SBOMs -- fetched via
+// QueryService.Referrers (loadManifestCmd). Each row shows the referrer's
+// digest, its ArtifactType (falling back to MediaType when ArtifactType is
+// empty, matching the OCI 1.1 fallback resolveArtifactType already applies
+// server-side), and a one-line annotation summary when it has annotations.
+// Returns nil (no "Referrers:" header) when there are none, mirroring the
+// Annotations/Platforms blocks' own omit-when-empty convention.
+func renderManifestReferrerLines(theme adminTheme, referrers appregixtry.ReferrersIndex) []string {
+	if len(referrers.Manifests) == 0 {
+		return nil
+	}
+
+	lines := []string{theme.muted.Render("Referrers:")}
+	for _, referrer := range referrers.Manifests {
+		kind := referrer.ArtifactType
+		if kind == "" {
+			kind = referrer.MediaType
+		}
+		row := fmt.Sprintf("  %s [%s]", referrer.Digest, kind)
+		if summary := summarizeAnnotations(referrer.Annotations); summary != "" {
+			row += "  " + summary
+		}
+		lines = append(lines, theme.text.Render(row))
+	}
+	return lines
+}
+
+// summarizeAnnotations joins a referrer's annotations into a single
+// "key=value, key2=value2" line, sorted keys, mirroring renderManifest's own
+// sorted-keys rendering for the manifest's own Annotations block above.
+// Returns "" for no annotations, so callers can cheaply decide whether to
+// append anything at all.
+func summarizeAnnotations(annotations map[string]string) string {
+	if len(annotations) == 0 {
+		return ""
+	}
+
+	keys := make([]string, 0, len(annotations))
+	for key := range annotations {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	pairs := make([]string, 0, len(keys))
+	for _, key := range keys {
+		pairs = append(pairs, fmt.Sprintf("%s=%s", key, annotations[key]))
+	}
+	return strings.Join(pairs, ", ")
 }
 
 // renderSignatureLines renders the manifest inspection view's Signature
