@@ -149,6 +149,11 @@ type ProjectsModel struct {
 	// SortMode is the "s" key's client-side sort cycle (sortable-tags-and-
 	// projects feature), mirroring TagsModel.SortMode exactly.
 	SortMode sortMode
+	// Confirm holds the delete-project pending confirm opened by the "d" key
+	// (delete-entire-project feature), the same confirmPrompt primitive
+	// RepositoriesModel.Confirm/TagsModel.Confirm use, composed here
+	// identically.
+	Confirm confirmPrompt
 }
 
 // Names extracts each repository's name, used by admin-side screens that
@@ -541,6 +546,23 @@ type tagDeletedMsg struct {
 type repositoryDeletedMsg struct {
 	repository string
 	err        error
+}
+
+// projectDeletionResult holds one repository's outcome inside the
+// delete-entire-project feature's best-effort bulk-delete loop.
+type projectDeletionResult struct {
+	repository string
+	err        error
+}
+
+// projectDeletedMsg is the aggregate result of the Projects screen's "d" key
+// best-effort bulk-delete: Results holds one entry per repository the
+// project contained, in attempt order, so a partial failure can always be
+// reported honestly -- never collapsed into a bare success/failure bool the
+// way repositoryDeletedMsg's single-repository shape can afford to.
+type projectDeletedMsg struct {
+	project string
+	results []projectDeletionResult
 }
 
 type manifestLoadedMsg struct {
@@ -976,6 +998,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.repositories.Confirm = confirmPrompt{}
 		m.status = fmt.Sprintf("Repository %q deleted. Refreshing repositories...", msg.repository)
+		return m, m.loadCatalogCmd()
+	case projectDeletedMsg:
+		// Mirrors repositoryDeletedMsg's own shape one level up: not an
+		// AdminClient/HTTP call, so there is no admin session to expire
+		// here. Unlike repositoryDeletedMsg, Results can mix successes and
+		// failures (best-effort, no cross-repository transaction) --
+		// projectDeletionSummary is the single place that turns that mix
+		// into one honest status line, never a bare success or failure.
+		// The catalog refresh below lands back on screenRepositories via
+		// catalogLoadedMsg's own existing behavior, exactly mirroring the
+		// single-repository delete flow immediately above -- no
+		// special-cased screen transition for this bulk variant.
+		m.projects.Confirm = confirmPrompt{}
+		m.status = projectDeletionSummary(msg.project, msg.results)
 		return m, m.loadCatalogCmd()
 	case manifestLoadedMsg:
 		if msg.err != nil {
@@ -1849,6 +1885,18 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.repositories.Confirm = next
 		m.status = ""
 		return m, nil
+	// The Projects screen's delete-project pending-confirm check mirrors the
+	// Repositories screen's own above exactly, ahead of every other case
+	// below for the same reason.
+	case m.screen == screenProjects && m.projects.Confirm.Active() && isEnterKey(msg):
+		next, cmd, _ := m.projects.Confirm.update(m.screenEnv(), msg)
+		m.projects.Confirm = next
+		return m, cmd
+	case m.screen == screenProjects && m.projects.Confirm.Active() && isEscKey(msg):
+		next, _, _ := m.projects.Confirm.update(m.screenEnv(), msg)
+		m.projects.Confirm = next
+		m.status = ""
+		return m, nil
 	case isPgUpKey(msg), isPgDnKey(msg), isHomeKey(msg), isEndKey(msg):
 		if m.applyBodyPageKey(msg) {
 			return m, nil
@@ -1976,6 +2024,44 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = fmt.Sprintf("Delete repository %q and all %d tag(s)? This action cannot be undone. (Enter: delete | Esc: cancel)", repository, tagCount)
 		} else {
 			m.status = "No repository selected to delete."
+		}
+		return m, nil
+	case isRuneKey(msg, 'd') && m.screen == screenProjects:
+		// Delete-entire-project feature: "project" is purely a client-side
+		// grouping (deriveProjects/repositoryProjectName) with no backend
+		// concept of its own, so this is a best-effort orchestration over
+		// the SAME per-repository Service.DeleteRepository call the
+		// Repositories screen's own "d" key immediately above already uses
+		// -- never a new backend concept, never a new authorization rule.
+		// repositoriesInProject reuses repositoryProjectName (the exact
+		// grouping function deriveProjects itself uses) rather than
+		// re-deriving membership a second way. The confirmation message
+		// names the project, its repository count, AND its aggregate tag
+		// count (already known client-side from projectSummary) so the
+		// operator is never confirming blind. onConfirm's closure attempts
+		// EVERY repository even after an individual failure (best-effort,
+		// like a real bulk-delete tool -- there is no cross-repository
+		// transaction to roll back since each DeleteRepository call is its
+		// own independent transaction), then reports one aggregate
+		// projectDeletedMsg so a partial failure is never misreported as
+		// either a clean success or a clean failure.
+		if project, ok := m.selectedProject(); ok {
+			repositories := repositoriesInProject(m.repositories.Items, project.Name)
+			service := m.service
+			ctx := m.ctx
+			m.projects.Confirm = newConfirmPrompt("", "", "delete", "", func(screenEnv) tea.Cmd {
+				return func() tea.Msg {
+					results := make([]projectDeletionResult, 0, len(repositories))
+					for _, repository := range repositories {
+						_, err := service.DeleteRepository(ctx, repository)
+						results = append(results, projectDeletionResult{repository: repository, err: err})
+					}
+					return projectDeletedMsg{project: project.Name, results: results}
+				}
+			})
+			m.status = fmt.Sprintf("Delete project %q and all %d repository(s) (%d tag(s) total)? This action cannot be undone. (Enter: delete | Esc: cancel)", project.Name, project.RepositoryCount, project.TagCount)
+		} else {
+			m.status = "No project selected to delete."
 		}
 		return m, nil
 	case isRuneKey(msg, 's') && m.screen == screenTags:
@@ -2988,7 +3074,11 @@ func (m Model) scrollableBodyContext() (status, help string, total int, ok bool)
 		}
 		return status, help, len(m.repositories.FilteredItems()) + 1, true
 	case screenProjects:
-		return "", "Enter: open project | s: sort | Tab: admin | Esc: back | q: quit", len(m.projects.Items) + 1, true
+		// m.status carries the delete-project pending-confirm message and its
+		// success/partial-failure/failure follow-up (mirrors screenRepositories'
+		// own use of m.status above); "" is the ordinary baseline otherwise.
+		help := "Enter: open project | d: delete project | s: sort | Tab: admin | Esc: back | q: quit"
+		return m.status, help, len(m.projects.Items) + 1, true
 	case screenTags:
 		// Unlike the hardcoded "" every other branch here used before it,
 		// this returns m.status: the delete-tag pending-confirm message,

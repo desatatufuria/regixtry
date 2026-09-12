@@ -2489,6 +2489,224 @@ func TestModelRepositoriesDeleteKeyWithNoRepositoriesShowsStatusOnly(t *testing.
 	}
 }
 
+// projectDeleteFakeService seeds a "team" project with THREE repositories
+// (not two) plus one ungrouped repository, for the delete-entire-project
+// feature's bulk-delete tests: three gives the mixed-authorization scenario
+// (2 succeeded, 1 failed) a real minority/majority split to characterize,
+// which a two-repository project could not.
+func projectDeleteFakeService() *fakeQueryService {
+	return &fakeQueryService{
+		repositorySummaries: []appregixtry.RepositorySummary{
+			{Name: "team/app", TagCount: 2},
+			{Name: "team/api", TagCount: 1},
+			{Name: "team/web", TagCount: 3},
+			{Name: "solo-repo", TagCount: 4},
+		},
+	}
+}
+
+// teamProjectReadyModel drives newRepositoriesReadyModel through "p" (open
+// Projects) then one "down" to land on "team" -- projects.Items sorts
+// name-ascending by default, and "(ungrouped)" (leading '(' sorts before
+// any letter) is always Items[0], so "team" is always Items[1].
+func teamProjectReadyModel(t *testing.T, service *fakeQueryService) Model {
+	t.Helper()
+	ready := newRepositoriesReadyModel(t, service)
+	onProjects := runKey(t, ready, "p")
+	selected := runKey(t, onProjects, "down")
+	if project, ok := selected.selectedProject(); !ok || project.Name != "team" {
+		t.Fatalf("test setup invalid: selectedProject() = %#v, %v, want \"team\", true", project, ok)
+	}
+	return selected
+}
+
+// TestModelProjectsDeleteKeyShowsPendingConfirm is the delete-entire-project
+// feature's RED test for wiring the Projects screen's "d" key to a
+// best-effort bulk QueryService.DeleteRepository loop, mirroring
+// TestModelRepositoriesDeleteKeyShowsPendingConfirm one screen up: pressing
+// "d" with a project selected must set the pending-delete confirm state and
+// a message naming the project, its repository count, AND its aggregate tag
+// count (already known client-side from projectSummary) so the operator is
+// never confirming blind, and must NOT call DeleteRepository yet.
+func TestModelProjectsDeleteKeyShowsPendingConfirm(t *testing.T) {
+	t.Parallel()
+
+	service := projectDeleteFakeService()
+	onTeam := teamProjectReadyModel(t, service)
+
+	pending := runKey(t, onTeam, "d")
+
+	if !pending.projects.Confirm.Active() {
+		t.Fatalf("projects.Confirm.Active() = false, want true (delete pending)")
+	}
+	want := `Delete project "team" and all 3 repository(s) (6 tag(s) total)? This action cannot be undone. (Enter: delete | Esc: cancel)`
+	if got := pending.status; got != want {
+		t.Fatalf("status = %q, want %q", got, want)
+	}
+	if pending.screen != screenProjects {
+		t.Fatalf("screen = %q, want %q (must stay on Projects while pending)", pending.screen, screenProjects)
+	}
+	if service.calls.deleteRepository != 0 {
+		t.Fatalf("DeleteRepository called %d times, want 0 before confirm", service.calls.deleteRepository)
+	}
+}
+
+// TestModelProjectsDeleteKeyWithNoProjectSelectedShowsStatusOnly mirrors
+// TestModelRepositoriesDeleteKeyWithNoRepositoriesShowsStatusOnly one screen
+// over: the defensive branch through selectedProject's own empty-Items
+// guard.
+func TestModelProjectsDeleteKeyWithNoProjectSelectedShowsStatusOnly(t *testing.T) {
+	t.Parallel()
+
+	service := projectDeleteFakeService()
+	ready := newRepositoriesReadyModel(t, service)
+	onProjects := runKey(t, ready, "p")
+	onProjects.projects.Items = nil
+
+	pending := runKey(t, onProjects, "d")
+	if pending.projects.Confirm.Active() {
+		t.Fatal("projects.Confirm.Active() = true, want false with no project selected")
+	}
+	if got, want := pending.status, "No project selected to delete."; got != want {
+		t.Fatalf("status = %q, want %q", got, want)
+	}
+	if service.calls.deleteRepository != 0 {
+		t.Fatalf("DeleteRepository called %d times, want 0", service.calls.deleteRepository)
+	}
+}
+
+// TestDeleteProjectConfirmCharacterization mirrors
+// TestDeleteRepositoryConfirmCharacterization exactly, one screen up: Esc
+// cancels without calling DeleteRepository, and Enter fires the best-effort
+// bulk loop over every repository in the project, reporting a clean success
+// summary and refreshing the repository catalog (landing back on
+// Repositories, mirroring the single-repository delete flow's own
+// catalogLoadedMsg-driven navigation exactly -- no special-cased screen for
+// this bulk variant).
+func TestDeleteProjectConfirmCharacterization(t *testing.T) {
+	t.Parallel()
+
+	service := projectDeleteFakeService()
+	onTeam := teamProjectReadyModel(t, service)
+
+	pending := runKey(t, onTeam, "d")
+	if service.calls.deleteRepository != 0 {
+		t.Fatalf("DeleteRepository called %d times, want 0 before confirm", service.calls.deleteRepository)
+	}
+
+	cancelled := runKey(t, pending, "esc")
+	if cancelled.status != "" {
+		t.Fatalf("status after esc = %q, want empty", cancelled.status)
+	}
+	if service.calls.deleteRepository != 0 {
+		t.Fatalf("DeleteRepository called %d times after esc, want 0", service.calls.deleteRepository)
+	}
+	if cancelled.projects.Confirm.Active() {
+		t.Fatal("projects.Confirm.Active() = true after esc, want false")
+	}
+
+	// Manual (non-auto-chained) Update calls, deliberately not runKey: runKey
+	// auto-chains every returned tea.Cmd to completion, which would also run
+	// the post-delete catalog refresh and clear m.status before this
+	// assertion ever sees the intermediate "deleted" status -- mirroring
+	// TestDeleteRepositoryConfirmCharacterization's own two-step inspection.
+	enterUpdated, deleteCmd := pending.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	firedModel := enterUpdated.(Model)
+	if deleteCmd == nil {
+		t.Fatalf("Enter while pending returned a nil tea.Cmd, want the delete command")
+	}
+	afterDeleteUpdated, refreshCmd := firedModel.Update(deleteCmd())
+	afterDelete := afterDeleteUpdated.(Model)
+	if got, want := service.calls.deleteRepository, 3; got != want {
+		t.Fatalf("DeleteRepository called %d times after enter, want %d", got, want)
+	}
+	if !strings.Contains(afterDelete.status, `Project "team" deleted: 3 repository(s) removed`) {
+		t.Fatalf("status after enter = %q, want the deleted confirmation", afterDelete.status)
+	}
+	if afterDelete.projects.Confirm.Active() {
+		t.Fatal("projects.Confirm.Active() = true after enter, want false")
+	}
+	if refreshCmd == nil {
+		t.Fatalf("Enter's delete command returned a nil follow-up tea.Cmd, want the catalog-refresh command")
+	}
+	refreshed := runCmd(t, afterDelete, refreshCmd)
+	if got, want := service.calls.catalog, 2; got != want {
+		t.Fatalf("RepositorySummaries called %d times, want %d (initial load + post-delete refresh)", got, want)
+	}
+	if refreshed.screen != screenRepositories {
+		t.Fatalf("screen after refresh = %q, want %q", refreshed.screen, screenRepositories)
+	}
+}
+
+// TestDeleteProjectConfirmMixedAuthorizationPartialFailure is this task's
+// point-5 characterization: a mixed-authorization scenario where the caller
+// has repo-admin rights on 2 of the 3 repositories in "team" (simulated here
+// via the fake QueryService, mirroring how every other TUI delete test
+// exercises authorization failure through a plain returned error rather than
+// re-deriving Service.authorizeDeleteRepository's own already-tested logic).
+// It must attempt every repository (best-effort, no early abort), never
+// crash, and report the correct 2-succeeded/1-failed summary naming the
+// failed repository and its reason -- never misreported as a clean success
+// or a clean failure.
+func TestDeleteProjectConfirmMixedAuthorizationPartialFailure(t *testing.T) {
+	t.Parallel()
+
+	service := projectDeleteFakeService()
+	service.deleteRepositoryErrByRepo = map[string]error{
+		"team/api": errors.New("forbidden: caller lacks repo-admin rights on team/api"),
+	}
+	onTeam := teamProjectReadyModel(t, service)
+	pending := runKey(t, onTeam, "d")
+
+	enterUpdated, deleteCmd := pending.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	firedModel := enterUpdated.(Model)
+	afterDeleteUpdated, _ := firedModel.Update(deleteCmd())
+	afterDelete := afterDeleteUpdated.(Model)
+
+	if got, want := service.calls.deleteRepository, 3; got != want {
+		t.Fatalf("DeleteRepository called %d times, want %d (best-effort must attempt every repository)", got, want)
+	}
+	if !strings.Contains(afterDelete.status, `Project "team" partially deleted: 2 succeeded, 1 failed`) {
+		t.Fatalf("status = %q, want the 2-succeeded/1-failed summary", afterDelete.status)
+	}
+	if !strings.Contains(afterDelete.status, "team/api") {
+		t.Fatalf("status = %q, want it to name the failed repository", afterDelete.status)
+	}
+	if !strings.Contains(afterDelete.status, "forbidden") {
+		t.Fatalf("status = %q, want it to name the failure reason", afterDelete.status)
+	}
+	if afterDelete.projects.Confirm.Active() {
+		t.Fatal("projects.Confirm.Active() = true, want false after result")
+	}
+}
+
+// TestDeleteProjectConfirmAllFail covers the full-failure path: every
+// repository fails (e.g. -delete-enabled got disabled mid-operation), which
+// must be reported honestly as a full failure -- never as a silent success.
+func TestDeleteProjectConfirmAllFail(t *testing.T) {
+	t.Parallel()
+
+	service := projectDeleteFakeService()
+	service.deleteRepositoryErr = errors.New("repository deletion is not enabled")
+	onTeam := teamProjectReadyModel(t, service)
+	pending := runKey(t, onTeam, "d")
+
+	enterUpdated, deleteCmd := pending.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	firedModel := enterUpdated.(Model)
+	afterDeleteUpdated, _ := firedModel.Update(deleteCmd())
+	afterDelete := afterDeleteUpdated.(Model)
+
+	if got, want := service.calls.deleteRepository, 3; got != want {
+		t.Fatalf("DeleteRepository called %d times, want %d (best-effort must attempt every repository)", got, want)
+	}
+	if !strings.Contains(afterDelete.status, `Project "team" delete failed for all 3 repository(s)`) {
+		t.Fatalf("status = %q, want the all-failed summary", afterDelete.status)
+	}
+	if !strings.Contains(afterDelete.status, "repository deletion is not enabled") {
+		t.Fatalf("status = %q, want it to name the failure reason", afterDelete.status)
+	}
+}
+
 func TestModelUsersScreenShowsOnlyListAndSearch(t *testing.T) {
 	t.Parallel()
 
@@ -6170,6 +6388,12 @@ type fakeQueryService struct {
 	// deleteManifestErr's own control-field pattern exactly.
 	deleteRepositoryErr            error
 	lastDeleteRepositoryRepository string
+	// deleteRepositoryErrByRepo backs the delete-entire-project feature's
+	// best-effort bulk-delete tests: a per-repository override checked
+	// before the uniform deleteRepositoryErr above, so a single fake
+	// service can simulate a mixed-authorization scenario (some
+	// repositories succeed, others fail) within one project.
+	deleteRepositoryErrByRepo map[string]error
 	// updateChannel/updateChannelErr back checkForUpdateCmd's channel
 	// resolution (tui-update-check feature), mirroring deleteManifestErr's
 	// own control-field pattern.
@@ -6944,6 +7168,9 @@ func (f *fakeQueryService) DeleteManifest(_ context.Context, repository string, 
 func (f *fakeQueryService) DeleteRepository(_ context.Context, repository string) (appregixtry.RepositoryDeletionDetails, error) {
 	f.calls.deleteRepository++
 	f.lastDeleteRepositoryRepository = repository
+	if err, ok := f.deleteRepositoryErrByRepo[repository]; ok {
+		return appregixtry.RepositoryDeletionDetails{}, err
+	}
 	if f.deleteRepositoryErr != nil {
 		return appregixtry.RepositoryDeletionDetails{}, f.deleteRepositoryErr
 	}

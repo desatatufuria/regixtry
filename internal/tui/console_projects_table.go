@@ -92,6 +92,46 @@ func deriveProjects(repositories []appregixtry.RepositorySummary) []projectSumma
 	return projects
 }
 
+// repositoriesInProject returns the names of every repository belonging to
+// the given project, using repositoryProjectName -- the SAME grouping
+// function deriveProjects itself uses -- so the delete-entire-project bulk
+// action (model.go's "d" key on the Projects screen) can never disagree
+// with the Projects screen about which repositories a project contains.
+func repositoriesInProject(repositories []appregixtry.RepositorySummary, project string) []string {
+	names := make([]string, 0, len(repositories))
+	for _, repository := range repositories {
+		if repositoryProjectName(repository.Name) == project {
+			names = append(names, repository.Name)
+		}
+	}
+	return names
+}
+
+// projectDeletionSummary turns a delete-entire-project best-effort bulk
+// delete's mixed per-repository results into one honest status line -- a
+// partial failure is never collapsed into a bare "succeeded" or "failed",
+// and every failed repository is named alongside its own reason so the
+// operator is never left guessing which repository needs attention.
+func projectDeletionSummary(project string, results []projectDeletionResult) string {
+	var succeeded, failed []string
+	for _, result := range results {
+		if result.err != nil {
+			failed = append(failed, fmt.Sprintf("%s (%s)", result.repository, result.err.Error()))
+			continue
+		}
+		succeeded = append(succeeded, result.repository)
+	}
+
+	switch {
+	case len(failed) == 0:
+		return fmt.Sprintf("Project %q deleted: %d repository(s) removed. Refreshing repositories...", project, len(succeeded))
+	case len(succeeded) == 0:
+		return fmt.Sprintf("Project %q delete failed for all %d repository(s): %s", project, len(failed), strings.Join(failed, "; "))
+	default:
+		return fmt.Sprintf("Project %q partially deleted: %d succeeded, %d failed (%s). Refreshing repositories...", project, len(succeeded), len(failed), strings.Join(failed, "; "))
+	}
+}
+
 // buildConsoleProjectsTable renders the Console TUI's Projects screen as a
 // 4-column table (Project, Repos, Tags, Last Pushed) -- mirrors
 // buildConsoleRepositoriesTable's own construction pattern one screen over,
