@@ -2813,7 +2813,7 @@ func TestRunTUIRendersRepositorySnapshot(t *testing.T) {
 	if !strings.Contains(view, "Regixtry Console") || !strings.Contains(view, "library/alpine") {
 		t.Fatalf("stdout = %q, want rendered repository view", view)
 	}
-	if !strings.Contains(view, "Enter: open tags | d: delete repository | Tab: admin | g: repo grants | q: quit") {
+	if !strings.Contains(view, "Enter: open tags | d: delete repository | p: projects | Tab: admin | g: repo grants | q: quit") {
 		t.Fatalf("stdout = %q, want unified help footer", view)
 	}
 }

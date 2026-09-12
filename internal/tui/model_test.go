@@ -93,7 +93,7 @@ func TestModelLocalStartupLoadsCatalogImmediately(t *testing.T) {
 		t.Fatalf("screen = %q, want %q", got, want)
 	}
 	view := updated.View()
-	if !strings.Contains(view, "Regixtry Console") || !strings.Contains(view, "Enter: open tags | d: delete repository | Tab: admin | g: repo grants | q: quit") {
+	if !strings.Contains(view, "Regixtry Console") || !strings.Contains(view, "Enter: open tags | d: delete repository | p: projects | Tab: admin | g: repo grants | q: quit") {
 		t.Fatalf("view = %q, want unified repository shell", view)
 	}
 }
@@ -2248,6 +2248,133 @@ func newRepositoriesReadyModel(t *testing.T, service *fakeQueryService) Model {
 func repositoriesReadyFakeService() *fakeQueryService {
 	return &fakeQueryService{
 		repositorySummaries: []appregixtry.RepositorySummary{{Name: "library/alpine", TagCount: 3}},
+	}
+}
+
+// multiProjectFakeService seeds a catalog spanning two real projects plus
+// one flat (no "/") repository, for the path-based-project-grouping
+// feature's navigation/filter tests.
+func multiProjectFakeService() *fakeQueryService {
+	return &fakeQueryService{
+		repositorySummaries: []appregixtry.RepositorySummary{
+			{Name: "team/app", TagCount: 2},
+			{Name: "team/other", TagCount: 5},
+			{Name: "smoke/keyless-live-verify", TagCount: 1},
+			{Name: "govault-api", TagCount: 4},
+		},
+	}
+}
+
+// TestModelProjectsKeyNavigatesFromRepositoriesAndEscReturns is the
+// path-based-project-grouping feature's RED test for the "p" key: it
+// derives the Projects screen from the currently-loaded catalog, and Esc
+// returns to Repositories unfiltered.
+func TestModelProjectsKeyNavigatesFromRepositoriesAndEscReturns(t *testing.T) {
+	t.Parallel()
+
+	ready := newRepositoriesReadyModel(t, multiProjectFakeService())
+
+	onProjects := runKey(t, ready, "p")
+	if onProjects.screen != screenProjects {
+		t.Fatalf("screen = %q, want %q", onProjects.screen, screenProjects)
+	}
+	if len(onProjects.projects.Items) != 3 {
+		t.Fatalf("len(projects.Items) = %d, want 3 (team, smoke, ungrouped)", len(onProjects.projects.Items))
+	}
+	view := onProjects.View()
+	for _, want := range []string{"team", "smoke", projectUngroupedLabel} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view = %q, want it to contain %q", view, want)
+		}
+	}
+
+	back := runKey(t, onProjects, "esc")
+	if back.screen != screenRepositories {
+		t.Fatalf("screen after esc = %q, want %q", back.screen, screenRepositories)
+	}
+	if back.repositories.Filter != nil {
+		t.Fatalf("repositories.Filter = %#v, want nil (esc from Projects must not filter)", back.repositories.Filter)
+	}
+	if len(back.repositories.FilteredItems()) != 4 {
+		t.Fatalf("len(FilteredItems()) = %d, want 4 (all repositories still reachable)", len(back.repositories.FilteredItems()))
+	}
+}
+
+// TestModelProjectsEnterFiltersRepositoriesToSelectedProject covers the
+// headline navigation requirement: selecting a project filters the
+// Repositories screen to only that project's repositories, and Esc there
+// clears the filter back to "all repositories".
+func TestModelProjectsEnterFiltersRepositoriesToSelectedProject(t *testing.T) {
+	t.Parallel()
+
+	ready := newRepositoriesReadyModel(t, multiProjectFakeService())
+	onProjects := runKey(t, ready, "p")
+
+	// projects.Items is sorted name-ascending by default: "smoke", "team",
+	// "(ungrouped)" -- '(' (0x28) sorts before letters, so "(ungrouped)"
+	// is actually first; move down once to land on "smoke".
+	filtered := runKey(t, onProjects, "down")
+	filteredView := filtered.View()
+	if !strings.Contains(filteredView, "smoke") {
+		t.Fatalf("view after one down = %q, want the 'smoke' row highlighted next", filteredView)
+	}
+
+	entered := runKey(t, filtered, "enter")
+	if entered.screen != screenRepositories {
+		t.Fatalf("screen = %q, want %q", entered.screen, screenRepositories)
+	}
+	if entered.repositories.Filter == nil || entered.repositories.Filter.Project != "smoke" {
+		t.Fatalf("repositories.Filter = %#v, want project %q", entered.repositories.Filter, "smoke")
+	}
+	items := entered.repositories.FilteredItems()
+	if len(items) != 1 || items[0].Name != "smoke/keyless-live-verify" {
+		t.Fatalf("FilteredItems() = %#v, want only smoke/keyless-live-verify", items)
+	}
+	if !strings.Contains(entered.View(), "Repositories (project: smoke)") {
+		t.Fatalf("view = %q, want the active filter named in the heading", entered.View())
+	}
+
+	cleared := runKey(t, entered, "esc")
+	if cleared.repositories.Filter != nil {
+		t.Fatalf("repositories.Filter = %#v after esc, want nil (show all)", cleared.repositories.Filter)
+	}
+	if len(cleared.repositories.FilteredItems()) != 4 {
+		t.Fatalf("len(FilteredItems()) after esc = %d, want 4", len(cleared.repositories.FilteredItems()))
+	}
+}
+
+// TestModelProjectsSortKeyCyclesNameAscendingToDateDescendingAndBack mirrors
+// TestModelTagsSortKeyCyclesNameAscendingToDateDescendingAndBack exactly,
+// one screen over.
+func TestModelProjectsSortKeyCyclesNameAscendingToDateDescendingAndBack(t *testing.T) {
+	t.Parallel()
+
+	older := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	newer := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	service := &fakeQueryService{
+		repositorySummaries: []appregixtry.RepositorySummary{
+			{Name: "aaa/first", TagCount: 1, LastPushed: older},
+			{Name: "zzz/last", TagCount: 1, LastPushed: newer},
+		},
+	}
+	ready := newRepositoriesReadyModel(t, service)
+	onProjects := runKey(t, ready, "p")
+
+	if got, want := onProjects.projects.Items[0].Name, "aaa"; got != want {
+		t.Fatalf("initial Items[0].Name = %q, want %q (default name-ascending)", got, want)
+	}
+
+	sorted := runKey(t, onProjects, "s")
+	if got, want := sorted.projects.Items[0].Name, "zzz"; got != want {
+		t.Fatalf("after sort Items[0].Name = %q, want %q (date-descending)", got, want)
+	}
+	if !strings.Contains(sorted.View(), "Projects (sort: date)") {
+		t.Fatalf("view after sort = %q, want the sort mode shown", sorted.View())
+	}
+
+	backToName := runKey(t, sorted, "s")
+	if got, want := backToName.projects.Items[0].Name, "aaa"; got != want {
+		t.Fatalf("after 2nd sort Items[0].Name = %q, want %q", got, want)
 	}
 }
 

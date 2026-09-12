@@ -100,6 +100,55 @@ type RepositoriesModel struct {
 	// key (delete-entire-repository feature), the same confirmPrompt
 	// primitive TagsModel.Confirm uses, composed here identically.
 	Confirm confirmPrompt
+	// Filter, when non-nil, narrows FilteredItems()/rendering/selection to
+	// one project's repositories (path-based-project-grouping feature),
+	// set by Enter on the Projects screen and cleared by Esc here. Items
+	// itself always holds the FULL unfiltered catalog -- Filter is purely a
+	// view-layer narrowing, so clearing it (or reloading the catalog) never
+	// loses data.
+	Filter *projectFilter
+}
+
+// projectFilter narrows the Repositories screen to one project's
+// repositories. Project is deriveProjects' own Name (including the
+// ungrouped bucket's projectUngroupedLabel), matched via
+// repositoryProjectName -- a single string is sufficient since that label
+// already uniquely identifies the ungrouped bucket.
+type projectFilter struct {
+	Project string
+}
+
+// FilteredItems returns Items narrowed to Filter's project, or every item
+// unfiltered when Filter is nil -- the single source both rendering
+// (renderConsoleRepositoriesSection) and selection (selectedRepositorySummary,
+// moveSelection) index into, so they can never drift apart on which rows
+// are actually visible.
+func (m RepositoriesModel) FilteredItems() []appregixtry.RepositorySummary {
+	if m.Filter == nil {
+		return m.Items
+	}
+	filtered := make([]appregixtry.RepositorySummary, 0, len(m.Items))
+	for _, item := range m.Items {
+		if repositoryProjectName(item.Name) == m.Filter.Project {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered
+}
+
+// ProjectsModel backs the Projects screen (path-based-project-grouping
+// feature): Items is deriveProjects' own output over the Repositories
+// screen's already-fetched catalog, purely client-side -- there is no
+// separate load step, Init, or Service call for this screen at all.
+type ProjectsModel struct {
+	Items    []projectSummary
+	Selected int
+	// Table mirrors RepositoriesModel.Table's own baked-not-computed-in-
+	// View() pattern.
+	Table bubbletable.Model
+	// SortMode is the "s" key's client-side sort cycle (sortable-tags-and-
+	// projects feature), mirroring TagsModel.SortMode exactly.
+	SortMode sortMode
 }
 
 // Names extracts each repository's name, used by admin-side screens that
@@ -172,8 +221,14 @@ type MutationUnavailableModel struct {
 type screen string
 
 const (
-	screenLoading             screen = "loading"
-	screenRepositories        screen = "repositories"
+	screenLoading      screen = "loading"
+	screenRepositories screen = "repositories"
+	// screenProjects is the path-based-project-grouping feature's Projects
+	// screen: a Console-level screen (like screenRepositories/screenTags,
+	// never behind the admin login/adminScreen sub-model system), reached
+	// via "p" from screenRepositories and purely client-side (deriveProjects
+	// over the already-fetched catalog -- no Init, no Service call).
+	screenProjects            screen = "projects"
 	screenTags                screen = "tags"
 	screenManifest            screen = "manifest"
 	screenBlobs               screen = "blobs"
@@ -304,6 +359,7 @@ type Model struct {
 	now         func() time.Time
 
 	repositories RepositoriesModel
+	projects     ProjectsModel
 	tags         TagsModel
 	manifest     ManifestModel
 	blobs        BlobsModel
@@ -441,7 +497,22 @@ func (m Model) repositoriesTableLayout() consoleLayout {
 // up.
 func (m *Model) rebuildRepositoriesTable(layout consoleLayout) {
 	theme := newAdminTheme()
-	m.repositories.Table = buildConsoleRepositoriesTable(theme, m.repositories.Items, m.repositories.Selected, consoleRepositoriesTablePageSize(layout))
+	m.repositories.Table = buildConsoleRepositoriesTable(theme, m.repositories.FilteredItems(), m.repositories.Selected, consoleRepositoriesTablePageSize(layout))
+}
+
+// projectsTableLayout mirrors repositoriesTableLayout's own use of the
+// exact status/help this screen renders (scrollableBodyContext).
+func (m Model) projectsTableLayout() consoleLayout {
+	status, help, _, _ := m.scrollableBodyContext()
+	return m.contentBudget(status, help)
+}
+
+// rebuildProjectsTable bakes m.projects.Items into a fresh
+// bubbletable.Model, mirroring rebuildRepositoriesTable's own
+// bake-at-mutation-time pattern exactly.
+func (m *Model) rebuildProjectsTable(layout consoleLayout) {
+	theme := newAdminTheme()
+	m.projects.Table = buildConsoleProjectsTable(theme, m.projects.Items, m.projects.Selected, consoleProjectsTablePageSize(layout))
 }
 
 type catalogLoadedMsg struct {
@@ -810,6 +881,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// The Repositories table needs the same explicit resize-rebuild, for
 		// the same reason.
 		m.rebuildRepositoriesTable(m.repositoriesTableLayout())
+		// The Projects table needs the same explicit resize-rebuild, for the
+		// same reason -- harmless/cheap when no projects are derived yet.
+		m.rebuildProjectsTable(m.projectsTableLayout())
 		// Migrated screens with their own baked-in bubbletable.Model
 		// (securityMenuScreen/trivyReposScreen) need the same explicit
 		// resize-rebuild, broadcast like every other non-key message
@@ -824,7 +898,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = msg.err
 			return m, m.checkForUpdateCmd()
 		}
-		m.repositories = RepositoriesModel{Items: append([]appregixtry.RepositorySummary(nil), msg.result...)}
+		// Filter carries over across a reload (e.g. the post-delete-
+		// repository refresh) instead of resetting -- returning to the same
+		// filtered project view the operator was already in.
+		m.repositories = RepositoriesModel{Items: append([]appregixtry.RepositorySummary(nil), msg.result...), Filter: m.repositories.Filter}
 		m.bodyScroll = 0
 		if len(m.repositories.Items) == 0 {
 			m.screen = screenEmpty
@@ -1622,6 +1699,15 @@ func (m Model) viewScreen() string {
 			status,
 			help,
 		)
+	case screenProjects:
+		status, help, _, _ := m.scrollableBodyContext()
+		layout := m.contentBudget(status, help)
+		return renderInspectionWorkspace(
+			"Repositories / Projects",
+			renderConsoleProjectsSection(m.projects, layout),
+			status,
+			help,
+		)
 	case screenTags:
 		status, help, _, _ := m.scrollableBodyContext()
 		layout := m.contentBudget(status, help)
@@ -1787,12 +1873,37 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.loadingText = fmt.Sprintf("Loading manifest %s:%s...", m.tags.Repository, tag)
 				return m, m.loadManifestCmd(m.tags.Repository, tag)
 			}
+		case screenProjects:
+			// Path-based-project-grouping feature: purely client-side, no
+			// screenLoading interstitial needed -- the filtered Repositories
+			// table rebuilds from data already in memory.
+			if project, ok := m.selectedProject(); ok {
+				m.repositories.Filter = &projectFilter{Project: project.Name}
+				m.repositories.Selected = 0
+				m.screen = screenRepositories
+				m.rebuildRepositoriesTable(m.repositoriesTableLayout())
+				return m, nil
+			}
 		}
 	case isBackKey(msg):
 		m.showMutationNotice = false
 		m.status = ""
 		m.bodyScroll = 0
 		switch m.screen {
+		case screenRepositories:
+			// Path-based-project-grouping feature: Esc clears an active
+			// project filter (back to "all repositories"), mirroring the
+			// user's own explicit requirement that every repository stay
+			// reachable unfiltered. A no-op with no filter active, exactly
+			// like this key already was on this screen before this feature.
+			if m.repositories.Filter != nil {
+				m.repositories.Filter = nil
+				m.repositories.Selected = 0
+				m.rebuildRepositoriesTable(m.repositoriesTableLayout())
+			}
+		case screenProjects:
+			m.screen = screenRepositories
+			return m, nil
 		case screenTags, screenEmpty:
 			if m.lastRepository != "" {
 				m.screen = screenRepositories
@@ -1879,6 +1990,22 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.tags.Selected = 0
 		sortTagItems(m.tags.Items, m.tags.SortMode)
 		m.rebuildTagsTable(m.tagsTableLayout())
+		return m, nil
+	case isRuneKey(msg, 's') && m.screen == screenProjects:
+		// Mirrors the Tags screen's own "s" sort-cycle immediately above
+		// exactly, one screen over.
+		m.projects.SortMode = m.projects.SortMode.next()
+		m.projects.Selected = 0
+		sortProjectItems(m.projects.Items, m.projects.SortMode)
+		m.rebuildProjectsTable(m.projectsTableLayout())
+		return m, nil
+	case isRuneKey(msg, 'p') && m.screen == screenRepositories:
+		// Path-based-project-grouping feature: derives the Projects screen
+		// fresh from the currently-loaded (unfiltered) catalog every time --
+		// no independent load step, Init, or cached state across visits.
+		m.projects = ProjectsModel{Items: deriveProjects(m.repositories.Items)}
+		m.screen = screenProjects
+		m.rebuildProjectsTable(m.projectsTableLayout())
 		return m, nil
 	case isRuneKey(msg, 'd', 'x'):
 		if m.screen == screenManifest || m.screen == screenBlobs || m.screen == screenUploads {
@@ -2855,7 +2982,13 @@ func (m Model) scrollableBodyContext() (status, help string, total int, ok bool)
 		if strings.TrimSpace(m.status) != "" {
 			status = m.status
 		}
-		return status, "Enter: open tags | d: delete repository | Tab: admin | g: repo grants | q: quit", len(m.repositories.Items) + 1, true
+		help := "Enter: open tags | d: delete repository | p: projects | Tab: admin | g: repo grants | q: quit"
+		if m.repositories.Filter != nil {
+			help += " | Esc: show all"
+		}
+		return status, help, len(m.repositories.FilteredItems()) + 1, true
+	case screenProjects:
+		return "", "Enter: open project | s: sort | Tab: admin | Esc: back | q: quit", len(m.projects.Items) + 1, true
 	case screenTags:
 		// Unlike the hardcoded "" every other branch here used before it,
 		// this returns m.status: the delete-tag pending-confirm message,
@@ -2908,12 +3041,17 @@ func (m *Model) applyBodyPageKey(msg tea.KeyMsg) bool {
 func (m *Model) moveSelection(delta int) {
 	switch m.screen {
 	case screenRepositories:
-		m.repositories.Selected = boundedIndex(m.repositories.Selected+delta, len(m.repositories.Items))
+		m.repositories.Selected = boundedIndex(m.repositories.Selected+delta, len(m.repositories.FilteredItems()))
 		// WithHighlightedRow auto-pages the live bubble-table to keep the
 		// highlighted row visible -- mirrors the Tags table's own mechanism
 		// below, one level up.
 		if m.repositories.Table.TotalRows() > 0 {
 			m.repositories.Table = m.repositories.Table.WithHighlightedRow(m.repositories.Selected)
+		}
+	case screenProjects:
+		m.projects.Selected = boundedIndex(m.projects.Selected+delta, len(m.projects.Items))
+		if m.projects.Table.TotalRows() > 0 {
+			m.projects.Table = m.projects.Table.WithHighlightedRow(m.projects.Selected)
 		}
 	case screenTags:
 		m.tags.Selected = boundedIndex(m.tags.Selected+delta, len(m.tags.Items))
@@ -2955,10 +3093,19 @@ func (m Model) selectedRepository() (string, bool) {
 // repository confirm needs TagCount to warn the operator how many tags will
 // be lost, which selectedRepository()'s bare name does not carry.
 func (m Model) selectedRepositorySummary() (appregixtry.RepositorySummary, bool) {
-	if len(m.repositories.Items) == 0 {
+	items := m.repositories.FilteredItems()
+	if len(items) == 0 {
 		return appregixtry.RepositorySummary{}, false
 	}
-	return m.repositories.Items[m.repositories.Selected], true
+	return items[m.repositories.Selected], true
+}
+
+// selectedProject returns the Projects screen's currently highlighted row.
+func (m Model) selectedProject() (projectSummary, bool) {
+	if len(m.projects.Items) == 0 {
+		return projectSummary{}, false
+	}
+	return m.projects.Items[m.projects.Selected], true
 }
 
 func (m Model) selectedTag() (string, bool) {

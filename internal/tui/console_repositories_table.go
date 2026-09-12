@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -84,8 +85,16 @@ func consoleRepositoriesTablePageSize(layout consoleLayout) int {
 // renderConsoleTagsSection one level up.
 func renderConsoleRepositoriesSection(repositories RepositoriesModel, layout consoleLayout) string {
 	theme := newAdminTheme()
-	lines := []string{theme.subheading.Render("Repositories")}
-	if len(repositories.Items) == 0 {
+	// An active project filter (path-based-project-grouping feature) is
+	// named in the subheading itself -- the operator must always be able to
+	// tell at a glance whether they are looking at all repositories or one
+	// project's subset.
+	heading := "Repositories"
+	if repositories.Filter != nil {
+		heading = fmt.Sprintf("Repositories (project: %s)", repositories.Filter.Project)
+	}
+	lines := []string{theme.subheading.Render(heading)}
+	if len(repositories.FilteredItems()) == 0 {
 		lines = append(lines, theme.muted.Render("No items available."))
 	} else {
 		lines = append(lines, repositories.Table.View())

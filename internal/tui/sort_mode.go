@@ -52,3 +52,15 @@ func sortTagItems(tags []appregixtry.TagDetails, mode sortMode) {
 		sort.SliceStable(tags, func(i, j int) bool { return tags[i].Name < tags[j].Name })
 	}
 }
+
+// sortProjectItems mirrors sortTagItems exactly, for the Projects screen:
+// by Name ascending, or by aggregate LastPushed descending (most recently
+// pushed project first).
+func sortProjectItems(projects []projectSummary, mode sortMode) {
+	switch mode {
+	case sortByDateDesc:
+		sort.SliceStable(projects, func(i, j int) bool { return projects[j].LastPushed.Before(projects[i].LastPushed) })
+	default:
+		sort.SliceStable(projects, func(i, j int) bool { return projects[i].Name < projects[j].Name })
+	}
+}
