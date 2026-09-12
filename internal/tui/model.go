@@ -64,6 +64,13 @@ type QueryService interface {
 	// through AdminClient/HTTP, since delete-enablement is Service's own
 	// deleteEnabled gate, not an admin-session concern.
 	DeleteManifest(ctx context.Context, repositoryName string, reference string) (appregixtry.DeletionDetails, error)
+	// DeleteRepository backs the Repositories screen's delete-repository "d"
+	// key/confirm flow (delete-entire-repository feature), mirroring
+	// DeleteManifest's own in-process, not-AdminClient/HTTP shape exactly:
+	// QueryService is always a real, local *appregixtry.Service, and
+	// delete-enablement/authorization are Service's own concerns, not an
+	// admin-session concern.
+	DeleteRepository(ctx context.Context, repositoryName string) (appregixtry.RepositoryDeletionDetails, error)
 	// GetUpdateChannel backs checkForUpdateCmd's channel resolution, called
 	// directly in-process exactly like DeleteManifest above -- QueryService
 	// is always a real, local *appregixtry.Service regardless of whether
@@ -89,6 +96,10 @@ type RepositoriesModel struct {
 	// at rebuildRepositoriesTable() time -- mirrors TagsModel.Table's own
 	// baked-not-computed-in-View() pattern (design.md decision #6).
 	Table bubbletable.Model
+	// Confirm holds the delete-repository pending confirm opened by the "d"
+	// key (delete-entire-repository feature), the same confirmPrompt
+	// primitive TagsModel.Confirm uses, composed here identically.
+	Confirm confirmPrompt
 }
 
 // Names extracts each repository's name, used by admin-side screens that
@@ -446,6 +457,13 @@ type tagsLoadedMsg struct {
 type tagDeletedMsg struct {
 	repository string
 	tag        string
+	err        error
+}
+
+// repositoryDeletedMsg mirrors tagDeletedMsg's own shape exactly, for the
+// Repositories screen's delete-entire-repository "d" key/confirm flow.
+type repositoryDeletedMsg struct {
+	repository string
 	err        error
 }
 
@@ -861,6 +879,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.tags.Confirm = confirmPrompt{}
 		m.status = fmt.Sprintf("Tag %q deleted. Refreshing tags...", msg.tag)
 		return m, m.loadTagsCmd(msg.repository)
+	case repositoryDeletedMsg:
+		// Mirrors tagDeletedMsg's own shape exactly: not an AdminClient/HTTP
+		// call, so there is no admin session to expire here.
+		if msg.err != nil {
+			m.repositories.Confirm = confirmPrompt{}
+			m.status = msg.err.Error()
+			return m, nil
+		}
+		m.repositories.Confirm = confirmPrompt{}
+		m.status = fmt.Sprintf("Repository %q deleted. Refreshing repositories...", msg.repository)
+		return m, m.loadCatalogCmd()
 	case manifestLoadedMsg:
 		if msg.err != nil {
 			m.screen = screenError
@@ -1712,6 +1741,18 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.tags.Confirm = next
 		m.status = ""
 		return m, nil
+	// The Repositories screen's delete-repository pending-confirm check
+	// mirrors the Tags screen's own above exactly, ahead of every other
+	// case below for the same reason.
+	case m.screen == screenRepositories && m.repositories.Confirm.Active() && isEnterKey(msg):
+		next, cmd, _ := m.repositories.Confirm.update(m.screenEnv(), msg)
+		m.repositories.Confirm = next
+		return m, cmd
+	case m.screen == screenRepositories && m.repositories.Confirm.Active() && isEscKey(msg):
+		next, _, _ := m.repositories.Confirm.update(m.screenEnv(), msg)
+		m.repositories.Confirm = next
+		m.status = ""
+		return m, nil
 	case isPgUpKey(msg), isPgDnKey(msg), isHomeKey(msg), isEndKey(msg):
 		if m.applyBodyPageKey(msg) {
 			return m, nil
@@ -1790,6 +1831,30 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = fmt.Sprintf("Delete tag %q from %q? This action cannot be undone. (Enter: delete | Esc: cancel)", tag, m.tags.Repository)
 		} else {
 			m.status = "No tag selected to delete."
+		}
+		return m, nil
+	case isRuneKey(msg, 'd') && m.screen == screenRepositories:
+		// Delete-entire-repository feature: mirrors the Tags screen's own
+		// "d" delete-tag flow immediately above exactly, one level up --
+		// same confirm primitive, same in-process (not AdminClient-backed)
+		// capture-at-open-time shape. The confirmation message names the
+		// repository AND its current tag count (already known client-side
+		// from RepositorySummary, no extra round trip) so the operator is
+		// never confirming blind.
+		if summary, ok := m.selectedRepositorySummary(); ok {
+			repository := summary.Name
+			tagCount := summary.TagCount
+			service := m.service
+			ctx := m.ctx
+			m.repositories.Confirm = newConfirmPrompt("", "", "delete", "", func(screenEnv) tea.Cmd {
+				return func() tea.Msg {
+					_, err := service.DeleteRepository(ctx, repository)
+					return repositoryDeletedMsg{repository: repository, err: err}
+				}
+			})
+			m.status = fmt.Sprintf("Delete repository %q and all %d tag(s)? This action cannot be undone. (Enter: delete | Esc: cancel)", repository, tagCount)
+		} else {
+			m.status = "No repository selected to delete."
 		}
 		return m, nil
 	case isRuneKey(msg, 'd', 'x'):
@@ -2758,7 +2823,16 @@ func isRuneKey(msg tea.KeyMsg, candidates ...rune) bool {
 func (m Model) scrollableBodyContext() (status, help string, total int, ok bool) {
 	switch m.screen {
 	case screenRepositories:
-		return m.notice, "Enter: open tags | Tab: admin | q: quit | g: repo grants", len(m.repositories.Items) + 1, true
+		// m.status carries the delete-repository pending-confirm message and
+		// its success/error follow-up (mirrors screenTags' own use of
+		// m.status below); m.notice is this screen's own persistent
+		// startup-time baseline, shown whenever no transient status is
+		// active.
+		status := m.notice
+		if strings.TrimSpace(m.status) != "" {
+			status = m.status
+		}
+		return status, "Enter: open tags | d: delete repository | Tab: admin | g: repo grants | q: quit", len(m.repositories.Items) + 1, true
 	case screenTags:
 		// Unlike the hardcoded "" every other branch here used before it,
 		// this returns m.status: the delete-tag pending-confirm message,
@@ -2846,10 +2920,22 @@ func boundedIndex(index int, size int) int {
 }
 
 func (m Model) selectedRepository() (string, bool) {
-	if len(m.repositories.Items) == 0 {
+	summary, ok := m.selectedRepositorySummary()
+	if !ok {
 		return "", false
 	}
-	return m.repositories.Items[m.repositories.Selected].Name, true
+	return summary.Name, true
+}
+
+// selectedRepositorySummary returns the currently highlighted repository's
+// full RepositorySummary (Name, TagCount, LastPushed) -- the delete-
+// repository confirm needs TagCount to warn the operator how many tags will
+// be lost, which selectedRepository()'s bare name does not carry.
+func (m Model) selectedRepositorySummary() (appregixtry.RepositorySummary, bool) {
+	if len(m.repositories.Items) == 0 {
+		return appregixtry.RepositorySummary{}, false
+	}
+	return m.repositories.Items[m.repositories.Selected], true
 }
 
 func (m Model) selectedTag() (string, bool) {

@@ -93,7 +93,7 @@ func TestModelLocalStartupLoadsCatalogImmediately(t *testing.T) {
 		t.Fatalf("screen = %q, want %q", got, want)
 	}
 	view := updated.View()
-	if !strings.Contains(view, "Regixtry Console") || !strings.Contains(view, "Enter: open tags | Tab: admin | q: quit") {
+	if !strings.Contains(view, "Regixtry Console") || !strings.Contains(view, "Enter: open tags | d: delete repository | Tab: admin | g: repo grants | q: quit") {
 		t.Fatalf("view = %q, want unified repository shell", view)
 	}
 }
@@ -2153,6 +2153,137 @@ func TestDeleteTagConfirmCharacterization(t *testing.T) {
 	}
 	if !strings.Contains(afterDelete.status, `"latest" deleted`) {
 		t.Fatalf("status after enter = %q, want the deleted confirmation", afterDelete.status)
+	}
+}
+
+// newRepositoriesReadyModel builds a Model already on screenRepositories,
+// mirroring newTagsReadyModel's own factored-out setup one level up:
+// screenRepositories is the natural landing screen once the catalog loads,
+// so no extra key press is needed to get there.
+func newRepositoriesReadyModel(t *testing.T, service *fakeQueryService) Model {
+	t.Helper()
+	model := NewModel(service)
+	updated := runCmd(t, model, model.Init())
+	if updated.screen != screenRepositories {
+		t.Fatalf("test setup invalid: screen = %q, want %q", updated.screen, screenRepositories)
+	}
+	return updated
+}
+
+func repositoriesReadyFakeService() *fakeQueryService {
+	return &fakeQueryService{
+		repositorySummaries: []appregixtry.RepositorySummary{{Name: "library/alpine", TagCount: 3}},
+	}
+}
+
+// TestModelRepositoriesDeleteKeyShowsPendingConfirm is the
+// delete-entire-repository feature's RED test for wiring the Repositories
+// screen's "d" key to QueryService.DeleteRepository, mirroring
+// TestModelTagsDeleteKeyShowsPendingConfirm one screen up: pressing "d" with
+// a repository selected must set the pending-delete confirm state and a
+// message naming BOTH the repository and its current tag count (so the
+// operator is never confirming blind), and must NOT call DeleteRepository
+// yet.
+func TestModelRepositoriesDeleteKeyShowsPendingConfirm(t *testing.T) {
+	t.Parallel()
+
+	service := repositoriesReadyFakeService()
+	ready := newRepositoriesReadyModel(t, service)
+
+	pending := runKey(t, ready, "d")
+
+	if !pending.repositories.Confirm.Active() {
+		t.Fatalf("repositories.Confirm.Active() = false, want true (delete pending)")
+	}
+	want := `Delete repository "library/alpine" and all 3 tag(s)? This action cannot be undone. (Enter: delete | Esc: cancel)`
+	if got := pending.status; got != want {
+		t.Fatalf("status = %q, want %q", got, want)
+	}
+	if pending.screen != screenRepositories {
+		t.Fatalf("screen = %q, want %q (must stay on Repositories while pending)", pending.screen, screenRepositories)
+	}
+	if service.calls.deleteRepository != 0 {
+		t.Fatalf("DeleteRepository called %d times, want 0 before confirm", service.calls.deleteRepository)
+	}
+}
+
+// TestDeleteRepositoryConfirmCharacterization mirrors
+// TestDeleteTagConfirmCharacterization exactly, one screen up: Esc cancels
+// without calling DeleteRepository, and Enter fires it, reporting success
+// and refreshing the repository catalog.
+func TestDeleteRepositoryConfirmCharacterization(t *testing.T) {
+	t.Parallel()
+
+	service := repositoriesReadyFakeService()
+	ready := newRepositoriesReadyModel(t, service)
+
+	pending := runKey(t, ready, "d")
+	if service.calls.deleteRepository != 0 {
+		t.Fatalf("DeleteRepository called %d times, want 0 before confirm", service.calls.deleteRepository)
+	}
+
+	cancelled := runKey(t, pending, "esc")
+	if cancelled.status != "" {
+		t.Fatalf("status after esc = %q, want empty", cancelled.status)
+	}
+	if service.calls.deleteRepository != 0 {
+		t.Fatalf("DeleteRepository called %d times after esc, want 0", service.calls.deleteRepository)
+	}
+	if cancelled.repositories.Confirm.Active() {
+		t.Fatal("repositories.Confirm.Active() = true after esc, want false")
+	}
+
+	// Manual (non-auto-chained) Update calls, deliberately not runKey:
+	// runKey auto-chains every returned tea.Cmd to completion, which would
+	// also run the post-delete catalog refresh and clear m.status back to
+	// "" before this assertion ever sees the intermediate "deleted" status.
+	enterUpdated, deleteCmd := pending.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	firedModel := enterUpdated.(Model)
+	if deleteCmd == nil {
+		t.Fatalf("Enter while pending returned a nil tea.Cmd, want the delete command")
+	}
+	afterDeleteUpdated, _ := firedModel.Update(deleteCmd())
+	afterDelete := afterDeleteUpdated.(Model)
+	if got, want := service.calls.deleteRepository, 1; got != want {
+		t.Fatalf("DeleteRepository called %d times after enter, want %d", got, want)
+	}
+	if got, want := service.lastDeleteRepositoryRepository, "library/alpine"; got != want {
+		t.Fatalf("DeleteRepository called with repository %q, want %q", got, want)
+	}
+	if !strings.Contains(afterDelete.status, `"library/alpine" deleted`) {
+		t.Fatalf("status after enter = %q, want the deleted confirmation", afterDelete.status)
+	}
+	// The catalog refresh command must be RepositorySummaries again
+	// (loadCatalogCmd), mirroring the tag-delete flow's own reload-not-
+	// local-mutation convention.
+	refreshed := runCmd(t, afterDelete, afterDelete.loadCatalogCmd())
+	if got, want := service.calls.catalog, 2; got != want {
+		t.Fatalf("RepositorySummaries called %d times, want %d (initial load + post-delete refresh)", got, want)
+	}
+	_ = refreshed
+}
+
+// TestModelRepositoriesDeleteKeyWithNoRepositoriesShowsStatusOnly covers the
+// no-selection guard, mirroring the Tags screen's own "No tag selected"
+// posture -- an empty-catalog Repositories screen never actually renders
+// (it falls to screenEmpty), so this exercises the defensive branch
+// directly via selectedRepositorySummary's own empty-Items guard.
+func TestModelRepositoriesDeleteKeyWithNoRepositoriesShowsStatusOnly(t *testing.T) {
+	t.Parallel()
+
+	service := repositoriesReadyFakeService()
+	ready := newRepositoriesReadyModel(t, service)
+	ready.repositories.Items = nil
+
+	pending := runKey(t, ready, "d")
+	if pending.repositories.Confirm.Active() {
+		t.Fatal("repositories.Confirm.Active() = true, want false with no repository selected")
+	}
+	if got, want := pending.status, "No repository selected to delete."; got != want {
+		t.Fatalf("status = %q, want %q", got, want)
+	}
+	if service.calls.deleteRepository != 0 {
+		t.Fatalf("DeleteRepository called %d times, want 0", service.calls.deleteRepository)
 	}
 }
 
@@ -5832,6 +5963,11 @@ type fakeQueryService struct {
 	deleteManifestErr            error
 	lastDeleteManifestRepository string
 	lastDeleteManifestReference  string
+	// deleteRepositoryErr backs the Repositories screen's delete-repository
+	// "d" key/confirm flow (delete-entire-repository feature), mirroring
+	// deleteManifestErr's own control-field pattern exactly.
+	deleteRepositoryErr            error
+	lastDeleteRepositoryRepository string
 	// updateChannel/updateChannelErr back checkForUpdateCmd's channel
 	// resolution (tui-update-check feature), mirroring deleteManifestErr's
 	// own control-field pattern.
@@ -5844,14 +5980,15 @@ type fakeQueryService struct {
 	referrers    map[string]appregixtry.ReferrersIndex
 	referrersErr error
 	calls        struct {
-		catalog        int
-		tags           int
-		manifest       int
-		uploads        int
-		signature      int
-		deleteManifest int
-		updateChannel  int
-		referrers      int
+		catalog          int
+		tags             int
+		manifest         int
+		uploads          int
+		signature        int
+		deleteManifest   int
+		deleteRepository int
+		updateChannel    int
+		referrers        int
 	}
 }
 
@@ -6600,6 +6737,15 @@ func (f *fakeQueryService) DeleteManifest(_ context.Context, repository string, 
 		return appregixtry.DeletionDetails{}, f.deleteManifestErr
 	}
 	return appregixtry.DeletionDetails{Repository: repository, Reference: reference, TagsRemoved: []string{reference}}, nil
+}
+
+func (f *fakeQueryService) DeleteRepository(_ context.Context, repository string) (appregixtry.RepositoryDeletionDetails, error) {
+	f.calls.deleteRepository++
+	f.lastDeleteRepositoryRepository = repository
+	if f.deleteRepositoryErr != nil {
+		return appregixtry.RepositoryDeletionDetails{}, f.deleteRepositoryErr
+	}
+	return appregixtry.RepositoryDeletionDetails{Repository: repository}, nil
 }
 
 func (f *fakeQueryService) GetUpdateChannel(context.Context) (string, error) {
