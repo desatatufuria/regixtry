@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	domainauth "regixtry/internal/domain/auth"
 	domain "regixtry/internal/domain/regixtry"
 	"regixtry/internal/domain/signing"
 	"regixtry/internal/ports"
@@ -387,6 +388,100 @@ func (s *Service) DeleteManifest(ctx context.Context, repositoryName string, ref
 	}
 
 	return newDeletionDetailsForTag(repository.String(), reference), nil
+}
+
+// DeleteRepository removes an entire repository -- every manifest, tag, and
+// manifest_blobs row it owns, plus the repositories row itself -- in one
+// store-layer transaction (mirrors DeleteManifest's own shape/gating,
+// scaled to the whole repository). It never touches blob files on disk:
+// blobs are globally content-addressed and shared across repositories with
+// no per-repository namespacing (ListReferencedBlobDigests' own doc
+// comment), so only the existing GC mechanism may ever unlink them.
+func (s *Service) DeleteRepository(ctx context.Context, repositoryName string) (RepositoryDeletionDetails, error) {
+	repository, err := parseRepository(repositoryName)
+	if err != nil {
+		return RepositoryDeletionDetails{}, err
+	}
+
+	if err := s.authorizeDeleteRepository(ctx, repository.String()); err != nil {
+		return RepositoryDeletionDetails{}, err
+	}
+
+	if !s.deleteEnabled {
+		return RepositoryDeletionDetails{}, domain.NewValidationError("repository deletion is not enabled")
+	}
+
+	tagsRemoved, manifestsRemoved, err := s.metadata.DeleteRepository(ctx, s.tenant(ctx), repository)
+	if err != nil {
+		return RepositoryDeletionDetails{}, err
+	}
+
+	return RepositoryDeletionDetails{Repository: repository.String(), ManifestsRemoved: manifestsRemoved, TagsRemoved: tagsRemoved}, nil
+}
+
+// authorizeDeleteRepository gates DeleteRepository. It is deliberately
+// stricter than DeleteManifest's own bare s.authorize(ActionDelete) call,
+// because destroying an entire repository in one action is categorically
+// more destructive than removing one manifest/tag.
+//
+// It starts with the exact same ports.ActionDelete authorize call
+// DeleteManifest itself uses, so a real OCI-scoped bearer token and the
+// local trusted-operator TUI/CLI mode's nil principal (under
+// localOperatorAccessController) are evaluated identically to every other
+// delete. But whenever a Principal IS present in ctx, it additionally
+// requires the caller to be a global admin or hold a repo-admin grant on
+// this exact repository -- mirroring internal/app/auth/service.go's
+// requireAdminOrRepoAdmin exactly. That helper is unexported in a different
+// package, so its identical IsAdmin-or-matching-repo-admin-grant logic is
+// reimplemented here (hasRepoAdminGrant below) rather than reusing
+// Principal.HasRepoAdminAccess, for the same reason requireAdminOrRepoAdmin
+// itself exists instead of that method: an admin-session login -- the TUI's
+// own admin panel, or this action's own admin HTTP API route -- always
+// carries zero token scopes, which would make HasDeleteAccess/
+// HasRepoAdminAccess permanently false even for a genuine global admin.
+//
+// This closes a gap the base check alone would leave open: a real bearer
+// token scoped repository:x:pull,push,delete (an ordinary repo-writer, not
+// a repo-admin) already satisfies s.authorize's HasDeleteAccess check --
+// correctly, for deleting one manifest/tag -- but must never also be
+// sufficient to reach this whole-repository action. The four cases:
+//   - nil principal: the base authorize's own answer stands (nil under
+//     local trust, else Unauthorized) -- never additionally restricted.
+//   - present principal, admin or repo-admin: always allowed, regardless of
+//     whether the base check passed (covers the zero-scope admin-session
+//     case).
+//   - present principal, neither, base check failed: the base check's
+//     Unauthorized error stands.
+//   - present principal, neither, base check PASSED (the write+delete-scope
+//     gap): rejected with Forbidden here.
+func (s *Service) authorizeDeleteRepository(ctx context.Context, repository string) error {
+	authorizeErr := s.authorize(ctx, ports.Action{Verb: ports.ActionDelete, Repository: repository})
+
+	principal := ports.PrincipalFromContext(ctx)
+	if principal == nil {
+		return authorizeErr
+	}
+
+	if principal.IsAdmin || hasRepoAdminGrant(principal, repository) {
+		return nil
+	}
+
+	if authorizeErr != nil {
+		return authorizeErr
+	}
+	return domainauth.NewForbiddenError("repository administrator privileges are required")
+}
+
+// hasRepoAdminGrant mirrors internal/app/auth/service.go's
+// requireAdminOrRepoAdmin grant-scan loop exactly (unexported there, in a
+// different package).
+func hasRepoAdminGrant(principal *domainauth.Principal, repository string) bool {
+	for _, grant := range principal.Grants {
+		if grant.Repository.String() == repository && grant.Role.AllowsAdmin() {
+			return true
+		}
+	}
+	return false
 }
 
 func parseManifestPayload(reference string, mediaType string, payload []byte) (domain.Manifest, string, error) {

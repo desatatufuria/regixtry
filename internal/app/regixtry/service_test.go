@@ -432,6 +432,212 @@ func TestServiceDeleteManifestReturnsNotFoundForAbsentDigestAndAbsentTag(t *test
 	}
 }
 
+// TestServiceDeleteRepositoryLocalOperatorNilPrincipalPassesThrough covers
+// the local trusted-operator TUI/CLI path (nil principal, mirroring
+// DeleteManifest's own posture under localOperatorAccessController-shaped
+// deployments): with no Principal in ctx at all, the base ports.ActionDelete
+// authorize call is the only gate, exactly like DeleteManifest.
+func TestServiceDeleteRepositoryLocalOperatorNilPrincipalPassesThrough(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	ctx := context.Background()
+	service.SetDeleteEnabled(true)
+	published := publishManifestWithTags(t, service, ctx, "team/app", "latest", "v1")
+
+	details, err := service.DeleteRepository(ctx, "team/app")
+	if err != nil {
+		t.Fatalf("DeleteRepository() error = %v", err)
+	}
+	if details.Repository != "team/app" {
+		t.Fatalf("details.Repository = %q, want %q", details.Repository, "team/app")
+	}
+	if details.ManifestsRemoved != 1 {
+		t.Fatalf("details.ManifestsRemoved = %d, want 1", details.ManifestsRemoved)
+	}
+	wantTags := []string{"latest", "v1"}
+	gotTags := append([]string(nil), details.TagsRemoved...)
+	sort.Strings(gotTags)
+	if !reflect.DeepEqual(gotTags, wantTags) {
+		t.Fatalf("details.TagsRemoved = %#v, want %#v", details.TagsRemoved, wantTags)
+	}
+
+	if _, err := service.ResolveManifest(ctx, "team/app", published.Digest); !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("ResolveManifest() after DeleteRepository error = %v, want ErrorCodeNotFound", err)
+	}
+}
+
+// TestServiceDeleteRepositoryRefusesWithValidationErrorWhenFlagOffForNilPrincipal
+// mirrors TestServiceDeleteManifestRefusesWithValidationErrorWhenFlagOffForAuthorizedCaller:
+// the store must never be reached when deleteEnabled is off.
+func TestServiceDeleteRepositoryRefusesWithValidationErrorWhenFlagOffForNilPrincipal(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	ctx := context.Background()
+	published := publishManifestWithTags(t, service, ctx, "team/app", "latest")
+
+	// deleteEnabled defaults to false -- SetDeleteEnabled is never called.
+	if _, err := service.DeleteRepository(ctx, "team/app"); err == nil {
+		t.Fatal("expected validation error when the delete flag is off")
+	} else if !domain.IsCode(err, domain.ErrorCodeValidation) {
+		t.Fatalf("DeleteRepository() error = %v, want ErrorCodeValidation", err)
+	}
+
+	resolved, err := service.ResolveManifest(ctx, "team/app", "latest")
+	if err != nil {
+		t.Fatalf("ResolveManifest() after refused delete error = %v, want the manifest untouched", err)
+	}
+	if resolved.Digest != published.Digest {
+		t.Fatalf("resolved.Digest = %q, want %q -- store must never be reached when the flag is off", resolved.Digest, published.Digest)
+	}
+}
+
+// TestServiceDeleteRepositoryReturnsNotFoundForAbsentRepository mirrors the
+// store's own typed domain.ErrorCodeNotFound surfacing unchanged.
+func TestServiceDeleteRepositoryReturnsNotFoundForAbsentRepository(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	ctx := context.Background()
+	service.SetDeleteEnabled(true)
+
+	if _, err := service.DeleteRepository(ctx, "team/absent"); !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("DeleteRepository(absent) error = %v, want ErrorCodeNotFound", err)
+	}
+}
+
+// TestServiceDeleteRepositoryAllowsZeroScopeGlobalAdminPrincipal is the
+// headline escalation case: an admin-session principal (TUI/admin HTTP API
+// login) carries zero token scopes by design, so the base
+// ports.ActionDelete authorize call alone would always fail even for a
+// genuine global admin (Principal.HasDeleteAccess requires a delete scope).
+// DeleteRepository must still succeed for IsAdmin, exactly like
+// requireAdminOrRepoAdmin's own admin bypass.
+func TestServiceDeleteRepositoryAllowsZeroScopeGlobalAdminPrincipal(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "regixtry", Service: "regixtry"}))
+	defer cleanup()
+
+	// Seeding needs a push-scoped context (principalAccessController
+	// requires both a grant AND a token scope for every verb, admin
+	// included -- IsAdmin only bypasses the grant half). The actual
+	// DeleteRepository call below deliberately uses a SEPARATE, genuinely
+	// zero-scope admin context: that's the real-world admin-session shape
+	// this test exists to pin.
+	seedCtx := ports.ContextWithPrincipal(context.Background(), domainauth.Principal{IsAdmin: true, Scopes: []domainauth.Scope{{Type: "repository", Name: "team/app", Actions: []string{"pull", "push"}, Canonical: "repository:team/app:pull,push"}}})
+	adminCtx := ports.ContextWithPrincipal(context.Background(), domainauth.Principal{IsAdmin: true})
+	service.SetDeleteEnabled(true)
+	published := publishManifestWithTags(t, service, seedCtx, "team/app", "latest")
+
+	details, err := service.DeleteRepository(adminCtx, "team/app")
+	if err != nil {
+		t.Fatalf("DeleteRepository() error = %v, want a zero-scope global admin to be allowed", err)
+	}
+	if details.ManifestsRemoved != 1 {
+		t.Fatalf("details.ManifestsRemoved = %d, want 1", details.ManifestsRemoved)
+	}
+
+	if _, err := service.ResolveManifest(seedCtx, "team/app", published.Digest); !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("ResolveManifest() after DeleteRepository error = %v, want ErrorCodeNotFound", err)
+	}
+}
+
+// TestServiceDeleteRepositoryAllowsZeroScopeRepoAdminGrant mirrors the
+// global-admin case above for a repository-scoped repo-admin delegate
+// (also a zero-scope admin-session principal in practice): a matching
+// RepoRoleAdmin grant on this exact repository is sufficient, with no token
+// scope required at all -- requireAdminOrRepoAdmin's own delegate path.
+func TestServiceDeleteRepositoryAllowsZeroScopeRepoAdminGrant(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "regixtry", Service: "regixtry"}))
+	defer cleanup()
+
+	seedCtx := ports.ContextWithPrincipal(context.Background(), principalForGrants("team/app", domainauth.RepoRoleAdmin, []domainauth.Scope{{Type: "repository", Name: "team/app", Actions: []string{"pull", "push"}, Canonical: "repository:team/app:pull,push"}}))
+	repoAdminCtx := ports.ContextWithPrincipal(context.Background(), principalForGrants("team/app", domainauth.RepoRoleAdmin, nil))
+	service.SetDeleteEnabled(true)
+	publishManifestWithTags(t, service, seedCtx, "team/app", "latest")
+
+	if _, err := service.DeleteRepository(repoAdminCtx, "team/app"); err != nil {
+		t.Fatalf("DeleteRepository() error = %v, want a zero-scope repo-admin grant to be allowed", err)
+	}
+}
+
+// TestServiceDeleteRepositoryRejectsRepoWriterWithDeleteScopeButNoRepoAdminGrant
+// is the gap this action's stricter authorization exists to close: a real
+// bearer token scoped repository:team/app:pull,push,delete already
+// satisfies DeleteManifest's own base authorize check (a plain repo-writer
+// CAN delete individual manifests/tags) but must NOT also be sufficient to
+// delete the entire repository in one action -- that requires repo-admin or
+// global admin.
+func TestServiceDeleteRepositoryRejectsRepoWriterWithDeleteScopeButNoRepoAdminGrant(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "regixtry", Service: "regixtry"}))
+	defer cleanup()
+
+	writerCtx := ports.ContextWithPrincipal(context.Background(), principalForGrants("team/app", domainauth.RepoRoleWriter, []domainauth.Scope{
+		{Type: "repository", Name: "team/app", Actions: []string{"pull", "push", "delete"}, Canonical: "repository:team/app:pull,push,delete"},
+	}))
+	service.SetDeleteEnabled(true)
+	publishManifestWithTags(t, service, writerCtx, "team/app", "latest")
+
+	_, err := service.DeleteRepository(writerCtx, "team/app")
+	if err == nil {
+		t.Fatal("expected an error for a repo-writer with delete scope but no repo-admin grant")
+	}
+	if !domainauth.IsCode(err, domainauth.ErrorCodeForbidden) {
+		t.Fatalf("DeleteRepository() error = %v, want ErrorCodeForbidden", err)
+	}
+
+	if _, err := service.ResolveManifest(writerCtx, "team/app", "latest"); err != nil {
+		t.Fatalf("ResolveManifest() after rejected delete error = %v, want the repository untouched", err)
+	}
+}
+
+// TestServiceDeleteRepositoryRejectsUnauthorizedCallerRegardlessOfFlag
+// mirrors TestServiceDeleteManifestRejectsUnauthorizedCallerRegardlessOfFlag:
+// a caller with neither delete scope nor any repo-admin/global-admin
+// standing is rejected whether the flag is on or off, so the flag's state
+// never leaks to a caller who was never entitled to delete in the first
+// place.
+func TestServiceDeleteRepositoryRejectsUnauthorizedCallerRegardlessOfFlag(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name          string
+		deleteEnabled bool
+	}{
+		{name: "flag off", deleteEnabled: false},
+		{name: "flag on", deleteEnabled: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			service, cleanup := newTestService(t, ports.NewPrincipalAccessController(ports.Challenge{Realm: "regixtry", Service: "regixtry"}))
+			defer cleanup()
+
+			service.SetDeleteEnabled(tt.deleteEnabled)
+
+			writerCtx := ports.ContextWithPrincipal(context.Background(), principalForGrants("team/app", domainauth.RepoRoleWriter, []domainauth.Scope{{Type: "repository", Name: "team/app", Actions: []string{"pull", "push"}, Canonical: "repository:team/app:pull,push"}}))
+
+			if _, err := service.DeleteRepository(writerCtx, "team/app"); err == nil {
+				t.Fatal("expected an error for a pull,push-only token with no repo-admin grant")
+			} else if !domain.IsCode(err, domain.ErrorCodeUnauthorized) {
+				t.Fatalf("DeleteRepository() error = %v, want ErrorCodeUnauthorized", err)
+			}
+		})
+	}
+}
+
 func TestServiceQueuesDigestCentricManualScansAndDedupesActiveRuns(t *testing.T) {
 	service, cleanup := newTestService(t, allowAllAccessController{})
 	defer cleanup()

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"regixtry/internal/domain/auth"
+	domain "regixtry/internal/domain/regixtry"
 	"regixtry/internal/ports"
 )
 
@@ -1646,6 +1647,265 @@ func TestAdminRepositoryGrantRoutesRepositoryNamedTeamGrantsRoutesCorrectly(t *t
 	handler.ServeHTTP(deleteRecorder, deleteReq)
 	if deleteRecorder.Code != http.StatusNoContent {
 		t.Fatalf("delete status = %d, want %d, body = %s", deleteRecorder.Code, http.StatusNoContent, deleteRecorder.Body.String())
+	}
+}
+
+// seedRouterRepositoryForDelete publishes one manifest tagged with every
+// name in tags into repository, using a push-scoped admin context directly
+// against the router's own in-process *appregixtry.Service (bypassing HTTP
+// auth entirely for setup) -- mirrors internal/app/regixtry's own
+// publishManifestWithTags helper, adapted to this package's router.service
+// field.
+func seedRouterRepositoryForDelete(t *testing.T, handler *Router, repository string, tags ...string) {
+	t.Helper()
+
+	seedCtx := ports.ContextWithPrincipal(context.Background(), auth.Principal{IsAdmin: true, Scopes: []auth.Scope{{Type: "repository", Name: repository, Actions: []string{"pull", "push"}, Canonical: "repository:" + repository + ":pull,push"}}})
+
+	upload, err := handler.service.BeginUpload(seedCtx, repository)
+	if err != nil {
+		t.Fatalf("BeginUpload(%q) error = %v", repository, err)
+	}
+	if _, err := handler.service.AppendUpload(seedCtx, repository, upload.ID, strings.NewReader("layer-one")); err != nil {
+		t.Fatalf("AppendUpload(%q) error = %v", repository, err)
+	}
+	blobPayload := []byte("layer-one")
+	blobDigest := domain.DigestFromBytes(blobPayload).String()
+	blob, err := handler.service.CompleteUpload(seedCtx, repository, upload.ID, blobDigest, nil)
+	if err != nil {
+		t.Fatalf("CompleteUpload(%q) error = %v", repository, err)
+	}
+
+	manifestPayload := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{"mediaType":"application/vnd.oci.image.config.v1+json","digest":"` + blob.Digest + `","size":9},"layers":[{"mediaType":"application/vnd.oci.image.layer.v1.tar","digest":"` + blob.Digest + `","size":9}]}`)
+	for _, tag := range tags {
+		if _, err := handler.service.PublishManifest(seedCtx, repository, tag, "application/vnd.oci.image.manifest.v1+json", manifestPayload); err != nil {
+			t.Fatalf("PublishManifest(%q, %q) error = %v", repository, tag, err)
+		}
+	}
+	handler.service.WaitForBackgroundWork()
+}
+
+// TestAdminDeleteRepositoryRouteRequiresAuthentication covers the
+// delete-entire-repository feature's HTTP layer: DELETE
+// /admin/v1/repositories/{repo} shares the same "repositories/" prefix as
+// the grants routes above (requireAuthenticatedPrincipal, not
+// requireAdminPrincipal), so an unauthenticated caller is 401, matching the
+// grants routes' own posture exactly.
+func TestAdminDeleteRepositoryRouteRequiresAuthentication(t *testing.T) {
+	t.Parallel()
+
+	handler, _, _, _, cleanup := newTestRouterWithRealAuth(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodDelete, "/admin/v1/repositories/team/app", nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusUnauthorized, recorder.Body.String())
+	}
+}
+
+// TestAdminDeleteRepositoryRouteRejectsAuthenticatedNonAdminNonRepoAdmin
+// covers the escalated authorization requirement (Service.DeleteRepository's
+// stricter-than-DeleteManifest gate): a plain authenticated user with no
+// standing on the repository at all is 403, never merely "not found".
+func TestAdminDeleteRepositoryRouteRejectsAuthenticatedNonAdminNonRepoAdmin(t *testing.T) {
+	t.Parallel()
+
+	handler, authService, adminActor, _, cleanup := newTestRouterWithRealAuth(t)
+	defer cleanup()
+	handler.service.SetDeleteEnabled(true)
+	seedRouterRepositoryForDelete(t, handler, "team/app", "latest")
+
+	plainUser, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
+		Username: "plain", Password: "password123", Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateAdminUser(plain) error = %v", err)
+	}
+	plainLogin, err := authService.LoginWithPassword(context.Background(), plainUser.Username, "password123", nil)
+	if err != nil {
+		t.Fatalf("LoginWithPassword(plain) error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/admin/v1/repositories/team/app", nil)
+	req.Header.Set("Authorization", "Bearer "+plainLogin.BearerToken)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusForbidden, recorder.Body.String())
+	}
+}
+
+// TestAdminDeleteRepositoryRouteSucceedsForGlobalAdminAndReportsCounts covers
+// the headline success path: a zero-token-scope global-admin session (every
+// real admin login, per requireAdminOrRepoAdmin's own documented reason)
+// deletes the whole repository and the response body names exactly what was
+// removed.
+func TestAdminDeleteRepositoryRouteSucceedsForGlobalAdminAndReportsCounts(t *testing.T) {
+	t.Parallel()
+
+	handler, authService, adminActor, _, cleanup := newTestRouterWithRealAuth(t)
+	defer cleanup()
+	handler.service.SetDeleteEnabled(true)
+	seedRouterRepositoryForDelete(t, handler, "team/app", "latest", "v1")
+
+	adminLogin, err := authService.LoginWithPassword(context.Background(), adminActor.Username, "password123", nil)
+	if err != nil {
+		t.Fatalf("LoginWithPassword(admin) error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/admin/v1/repositories/team/app", nil)
+	req.Header.Set("Authorization", "Bearer "+adminLogin.BearerToken)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var details struct {
+		Repository       string   `json:"repository"`
+		ManifestsRemoved int      `json:"manifestsRemoved"`
+		TagsRemoved      []string `json:"tagsRemoved"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &details); err != nil {
+		t.Fatalf("Unmarshal(body) error = %v, body = %s", err, recorder.Body.String())
+	}
+	if details.Repository != "team/app" {
+		t.Fatalf("details.Repository = %q, want %q", details.Repository, "team/app")
+	}
+	if details.ManifestsRemoved != 1 {
+		t.Fatalf("details.ManifestsRemoved = %d, want 1", details.ManifestsRemoved)
+	}
+	if len(details.TagsRemoved) != 2 {
+		t.Fatalf("details.TagsRemoved = %#v, want 2 entries", details.TagsRemoved)
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/admin/v1/repositories/team/app/grants", nil)
+	getReq.Header.Set("Authorization", "Bearer "+adminLogin.BearerToken)
+	getRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(getRecorder, getReq)
+	if getRecorder.Code != http.StatusOK {
+		t.Fatalf("grants list after delete status = %d, want %d (repository row absence must not break the grants route)", getRecorder.Code, http.StatusOK)
+	}
+}
+
+// TestAdminDeleteRepositoryRouteAllowsRepoAdminDelegateButConfinesToOwnRepository
+// mirrors TestAdminRepositoryGrantRoutesAuthenticationAndDelegateAuthority's
+// own delegate-confinement shape for this new destructive action: a
+// repo-admin delegate (never global IsAdmin, zero token scopes) may delete
+// their own repository, but is 403 on a repository they do not administer.
+func TestAdminDeleteRepositoryRouteAllowsRepoAdminDelegateButConfinesToOwnRepository(t *testing.T) {
+	t.Parallel()
+
+	handler, authService, adminActor, _, cleanup := newTestRouterWithRealAuth(t)
+	defer cleanup()
+	handler.service.SetDeleteEnabled(true)
+	seedRouterRepositoryForDelete(t, handler, "team/app", "latest")
+	seedRouterRepositoryForDelete(t, handler, "team/other", "latest")
+
+	delegate, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
+		Username: "delegate", Password: "password123", Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateAdminUser(delegate) error = %v", err)
+	}
+	if _, err := authService.PutRepoGrant(context.Background(), adminActor, delegate.ID, "team/app", auth.RepoRoleAdmin); err != nil {
+		t.Fatalf("PutRepoGrant(delegate, team/app, repo-admin) error = %v", err)
+	}
+	delegateLogin, err := authService.LoginWithPassword(context.Background(), delegate.Username, "password123", nil)
+	if err != nil {
+		t.Fatalf("LoginWithPassword(delegate) error = %v", err)
+	}
+
+	otherReq := httptest.NewRequest(http.MethodDelete, "/admin/v1/repositories/team/other", nil)
+	otherReq.Header.Set("Authorization", "Bearer "+delegateLogin.BearerToken)
+	otherRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(otherRecorder, otherReq)
+	if otherRecorder.Code != http.StatusForbidden {
+		t.Fatalf("delegate on team/other status = %d, want %d, body = %s", otherRecorder.Code, http.StatusForbidden, otherRecorder.Body.String())
+	}
+
+	ownReq := httptest.NewRequest(http.MethodDelete, "/admin/v1/repositories/team/app", nil)
+	ownReq.Header.Set("Authorization", "Bearer "+delegateLogin.BearerToken)
+	ownRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(ownRecorder, ownReq)
+	if ownRecorder.Code != http.StatusOK {
+		t.Fatalf("delegate on own repository status = %d, want %d, body = %s", ownRecorder.Code, http.StatusOK, ownRecorder.Body.String())
+	}
+}
+
+// TestAdminDeleteRepositoryRouteReturnsNotFoundForAbsentRepository mirrors
+// the store's own typed domain.ErrorCodeNotFound surfacing as 404.
+func TestAdminDeleteRepositoryRouteReturnsNotFoundForAbsentRepository(t *testing.T) {
+	t.Parallel()
+
+	handler, authService, adminActor, _, cleanup := newTestRouterWithRealAuth(t)
+	defer cleanup()
+	handler.service.SetDeleteEnabled(true)
+
+	adminLogin, err := authService.LoginWithPassword(context.Background(), adminActor.Username, "password123", nil)
+	if err != nil {
+		t.Fatalf("LoginWithPassword(admin) error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/admin/v1/repositories/team/absent", nil)
+	req.Header.Set("Authorization", "Bearer "+adminLogin.BearerToken)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusNotFound, recorder.Body.String())
+	}
+}
+
+// TestAdminDeleteRepositoryRouteRefusesWhenDeleteDisabled covers the same
+// deleteEnabled gating DeleteManifest's own route already has, mapped the
+// same way (domain.ErrorCodeValidation -> 422).
+func TestAdminDeleteRepositoryRouteRefusesWhenDeleteDisabled(t *testing.T) {
+	t.Parallel()
+
+	handler, authService, adminActor, _, cleanup := newTestRouterWithRealAuth(t)
+	defer cleanup()
+	// deleteEnabled defaults to false -- SetDeleteEnabled is never called.
+	seedRouterRepositoryForDelete(t, handler, "team/app", "latest")
+
+	adminLogin, err := authService.LoginWithPassword(context.Background(), adminActor.Username, "password123", nil)
+	if err != nil {
+		t.Fatalf("LoginWithPassword(admin) error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/admin/v1/repositories/team/app", nil)
+	req.Header.Set("Authorization", "Bearer "+adminLogin.BearerToken)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusUnprocessableEntity, recorder.Body.String())
+	}
+}
+
+// TestAdminDeleteRepositoryRouteMethodNotAllowedAdvertisesDelete covers the
+// bare-repository resource's own Allow header for any other method,
+// mirroring TestRouterManifestAllowHeaderIncludesDeleteForOtherMethods'
+// convention one namespace over.
+func TestAdminDeleteRepositoryRouteMethodNotAllowedAdvertisesDelete(t *testing.T) {
+	t.Parallel()
+
+	handler, authService, adminActor, _, cleanup := newTestRouterWithRealAuth(t)
+	defer cleanup()
+
+	adminLogin, err := authService.LoginWithPassword(context.Background(), adminActor.Username, "password123", nil)
+	if err != nil {
+		t.Fatalf("LoginWithPassword(admin) error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/repositories/team/app", nil)
+	req.Header.Set("Authorization", "Bearer "+adminLogin.BearerToken)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusMethodNotAllowed, recorder.Body.String())
+	}
+	if got, want := recorder.Header().Get("Allow"), http.MethodDelete; got != want {
+		t.Fatalf("Allow = %q, want %q", got, want)
 	}
 }
 

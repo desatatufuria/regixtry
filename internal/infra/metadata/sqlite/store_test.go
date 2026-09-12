@@ -226,6 +226,156 @@ func TestStoreDeleteTagReturnsNotFoundWithNoSuchTag(t *testing.T) {
 	}
 }
 
+// TestStoreDeleteRepositoryCascadesManifestsTagsAndBlobsAndRemovesRepositoryRow
+// covers the delete-entire-repository feature's store layer: deleting a
+// repository with two digests (one with two tags, one with one tag) removes
+// every manifests/tags/manifest_blobs row scoped to it, plus the
+// repositories row itself, and reports the exact removed tag names and
+// manifest count -- mirrors DeleteManifestByDigest's own
+// select-before-delete-in-the-same-transaction shape, scaled to the whole
+// repository via the existing ON DELETE CASCADE foreign keys
+// (manifests.repository_id -> repositories(id)) rather than hand-rolled
+// per-table deletes.
+func TestStoreDeleteRepositoryCascadesManifestsTagsAndBlobsAndRemovesRepositoryRow(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+	ctx := context.Background()
+
+	repo := domain.MustParseRepositoryRef("library/alpine")
+	blobsA := []domain.Descriptor{
+		{MediaType: "application/vnd.oci.image.layer.v1.tar", Digest: domain.DigestFromBytes([]byte("layer-a")), Size: int64(len("layer-a"))},
+	}
+	manifestA, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", "", []byte(`{"schemaVersion":2,"variant":"a"}`), nil, blobsA, nil, nil)
+	if err != nil {
+		t.Fatalf("NewManifest(a) error = %v", err)
+	}
+	blobsB := []domain.Descriptor{
+		{MediaType: "application/vnd.oci.image.layer.v1.tar", Digest: domain.DigestFromBytes([]byte("layer-b")), Size: int64(len("layer-b"))},
+	}
+	manifestB, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", "", []byte(`{"schemaVersion":2,"variant":"b"}`), nil, blobsB, nil, nil)
+	if err != nil {
+		t.Fatalf("NewManifest(b) error = %v", err)
+	}
+
+	for _, tag := range []string{"latest", "v1"} {
+		if err := store.PublishManifest(ctx, "tenant-a", repo, tag, manifestA, blobsA); err != nil {
+			t.Fatalf("PublishManifest(a, %s) error = %v", tag, err)
+		}
+	}
+	if err := store.PublishManifest(ctx, "tenant-a", repo, "v2", manifestB, blobsB); err != nil {
+		t.Fatalf("PublishManifest(b, v2) error = %v", err)
+	}
+
+	// A sibling repository in the same tenant must survive untouched --
+	// otherwise a naive implementation scoped only by tenant (not also by
+	// repository) would be a cross-repository data-loss bug.
+	sibling := domain.MustParseRepositoryRef("library/busybox")
+	if err := store.PublishManifest(ctx, "tenant-a", sibling, "latest", manifestA, blobsA); err != nil {
+		t.Fatalf("PublishManifest(sibling) error = %v", err)
+	}
+
+	tagsRemoved, manifestsRemoved, err := store.DeleteRepository(ctx, "tenant-a", repo)
+	if err != nil {
+		t.Fatalf("DeleteRepository() error = %v", err)
+	}
+
+	sort.Strings(tagsRemoved)
+	wantTags := []string{"latest", "v1", "v2"}
+	if !reflect.DeepEqual(tagsRemoved, wantTags) {
+		t.Fatalf("tagsRemoved = %#v, want %#v", tagsRemoved, wantTags)
+	}
+	if manifestsRemoved != 2 {
+		t.Fatalf("manifestsRemoved = %d, want 2", manifestsRemoved)
+	}
+
+	if _, err := store.Catalog(ctx, "tenant-a", 10, ""); err != nil {
+		t.Fatalf("Catalog() error = %v", err)
+	}
+	catalog, err := store.Catalog(ctx, "tenant-a", 10, "")
+	if err != nil {
+		t.Fatalf("Catalog() error = %v", err)
+	}
+	if len(catalog) != 1 || catalog[0].String() != sibling.String() {
+		t.Fatalf("catalog after delete = %#v, want only the sibling repository", catalog)
+	}
+
+	if _, err := store.ResolveManifest(ctx, "tenant-a", repo, manifestA.Digest.String()); !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("ResolveManifest(deleted repo, a) error = %v, want ErrorCodeNotFound", err)
+	}
+	if _, err := store.ResolveManifest(ctx, "tenant-a", repo, manifestB.Digest.String()); !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("ResolveManifest(deleted repo, b) error = %v, want ErrorCodeNotFound", err)
+	}
+
+	// The sibling repository's manifest/blobs must remain fully intact.
+	siblingManifest, err := store.ResolveManifest(ctx, "tenant-a", sibling, "latest")
+	if err != nil {
+		t.Fatalf("ResolveManifest(sibling) error = %v", err)
+	}
+	if siblingManifest.Digest != manifestA.Digest {
+		t.Fatalf("siblingManifest.Digest = %s, want %s", siblingManifest.Digest, manifestA.Digest)
+	}
+	siblingBlobs, err := store.ListManifestBlobs(ctx, "tenant-a", sibling, manifestA.Digest)
+	if err != nil {
+		t.Fatalf("ListManifestBlobs(sibling) error = %v", err)
+	}
+	if len(siblingBlobs) != len(blobsA) {
+		t.Fatalf("len(siblingBlobs) = %d, want %d", len(siblingBlobs), len(blobsA))
+	}
+}
+
+// TestStoreDeleteRepositoryReturnsNotFoundWithNoRepository mirrors
+// TestStoreDeleteManifestByDigestReturnsNotFoundWithNoManifest's own
+// zero-rows-affected convention.
+func TestStoreDeleteRepositoryReturnsNotFoundWithNoRepository(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	repo := domain.MustParseRepositoryRef("library/absent")
+	if _, _, err := store.DeleteRepository(context.Background(), "tenant-a", repo); !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("DeleteRepository(absent) error = %v, want ErrorCodeNotFound", err)
+	}
+}
+
+// TestStoreDeleteRepositoryScopesToTenant covers the same tenant-isolation
+// requirement DeleteManifestByDigest's own WHERE clause already enforces:
+// deleting "library/alpine" in tenant-a must never remove or affect
+// tenant-b's own repository of the identical name.
+func TestStoreDeleteRepositoryScopesToTenant(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+	ctx := context.Background()
+
+	repo := domain.MustParseRepositoryRef("library/alpine")
+	blobs := []domain.Descriptor{
+		{MediaType: "application/vnd.oci.image.layer.v1.tar", Digest: domain.DigestFromBytes([]byte("layer-1")), Size: int64(len("layer-1"))},
+	}
+	manifest, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", "", []byte(`{"schemaVersion":2}`), nil, blobs, nil, nil)
+	if err != nil {
+		t.Fatalf("NewManifest() error = %v", err)
+	}
+
+	if err := store.PublishManifest(ctx, "tenant-a", repo, "latest", manifest, blobs); err != nil {
+		t.Fatalf("PublishManifest(tenant-a) error = %v", err)
+	}
+	if err := store.PublishManifest(ctx, "tenant-b", repo, "latest", manifest, blobs); err != nil {
+		t.Fatalf("PublishManifest(tenant-b) error = %v", err)
+	}
+
+	if _, _, err := store.DeleteRepository(ctx, "tenant-a", repo); err != nil {
+		t.Fatalf("DeleteRepository(tenant-a) error = %v", err)
+	}
+
+	if _, err := store.ResolveManifest(ctx, "tenant-b", repo, "latest"); err != nil {
+		t.Fatalf("ResolveManifest(tenant-b, after tenant-a delete) error = %v, want no error", err)
+	}
+}
+
 func TestStorePersistsUploadMetadataAcrossReopen(t *testing.T) {
 	t.Parallel()
 

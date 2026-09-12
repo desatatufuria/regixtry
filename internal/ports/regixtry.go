@@ -149,6 +149,14 @@ type MetadataStore interface {
 	// DeleteTag removes one tags row, leaving the manifest and every other tag on
 	// it intact. Zero rows affected is a typed domain.ErrorCodeNotFound.
 	DeleteTag(ctx context.Context, tenant string, repository domain.RepositoryRef, tag string) error
+	// DeleteRepository removes one repositories row; the ON DELETE CASCADE FKs
+	// remove every manifests/tags/manifest_blobs row scoped to it in the same
+	// transaction (delete-entire-repository feature, mirroring
+	// DeleteManifestByDigest's own shape). It returns every removed tag name
+	// and the number of manifests removed, selected inside that transaction
+	// before the delete. Zero rows affected is a typed domain.ErrorCodeNotFound,
+	// mirroring DeleteManifestByDigest. It never touches blob files on disk.
+	DeleteRepository(ctx context.Context, tenant string, repository domain.RepositoryRef) (tagsRemoved []string, manifestsRemoved int, err error)
 
 	// ListReferencedBlobDigests returns every distinct digest referenced by
 	// ANY manifest in the deployment: SELECT DISTINCT digest FROM

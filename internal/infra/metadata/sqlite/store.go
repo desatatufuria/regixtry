@@ -534,6 +534,98 @@ func (s *Store) DeleteManifestByDigest(ctx context.Context, tenant string, repos
 	return tagNames, nil
 }
 
+// DeleteRepository removes one repositories row and, via the existing ON
+// DELETE CASCADE foreign keys (manifests.repository_id ->
+// repositories(id), tags.repository_id/manifest_id ->
+// manifests(id)/repositories(id), manifest_blobs.manifest_id ->
+// manifests(id)), every manifests/tags/manifest_blobs row scoped to it --
+// mirrors DeleteManifestByDigest's own select-before-delete-in-the-same-
+// transaction shape, scaled from one digest to the whole repository. It
+// never opens, stats, or unlinks a blob file: blobs are globally
+// content-addressed and shared across repositories with no per-repository
+// namespacing (ListReferencedBlobDigests' own doc comment), so only the
+// existing GC mechanism may ever unlink them. Returns every removed tag
+// name and the number of manifests removed, selected inside the same
+// transaction before the delete, so the caller can report exactly what the
+// cascade removed. Zero rows affected (repository absent in this tenant) is
+// a typed domain.ErrorCodeNotFound, mirroring DeleteManifestByDigest/
+// DeleteUpload.
+func (s *Store) DeleteRepository(ctx context.Context, tenant string, repository domain.RepositoryRef) ([]string, int, error) {
+	if err := repository.Validate(); err != nil {
+		return nil, 0, err
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	var rows *sql.Rows
+	rows, err = tx.QueryContext(ctx, `
+		SELECT t.name
+		FROM tags t
+		JOIN repositories r ON r.id = t.repository_id
+		WHERE t.tenant = ? AND r.tenant = ? AND r.name = ?
+		ORDER BY t.name ASC
+	`, tenant, tenant, repository.String())
+	if err != nil {
+		return nil, 0, err
+	}
+
+	var tagNames []string
+	for rows.Next() {
+		var name string
+		if err = rows.Scan(&name); err != nil {
+			rows.Close()
+			return nil, 0, err
+		}
+		tagNames = append(tagNames, name)
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return nil, 0, err
+	}
+	rows.Close()
+
+	var manifestCount int
+	if err = tx.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM manifests m
+		JOIN repositories r ON r.id = m.repository_id
+		WHERE m.tenant = ? AND r.tenant = ? AND r.name = ?
+	`, tenant, tenant, repository.String()).Scan(&manifestCount); err != nil {
+		return nil, 0, err
+	}
+
+	var result sql.Result
+	result, err = tx.ExecContext(ctx, `DELETE FROM repositories WHERE tenant = ? AND name = ?`, tenant, repository.String())
+	if err != nil {
+		return nil, 0, err
+	}
+
+	var rowsAffected int64
+	rowsAffected, err = result.RowsAffected()
+	if err != nil {
+		return nil, 0, err
+	}
+
+	if rowsAffected == 0 {
+		err = domain.NewNotFoundError("repository", repository.String())
+		return nil, 0, err
+	}
+
+	if err = tx.Commit(); err != nil {
+		return nil, 0, err
+	}
+
+	return tagNames, manifestCount, nil
+}
+
 // ListReferencedBlobDigests is the GC mark set (design.md Decision C):
 // SELECT DISTINCT digest FROM manifest_blobs, with NO tenant predicate --
 // manifest_blobs has no tenant column, and this query MUST NEVER gain one,

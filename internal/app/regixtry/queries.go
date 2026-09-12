@@ -79,6 +79,17 @@ type DeletionDetails struct {
 	TagsRemoved     []string `json:"tagsRemoved"`
 }
 
+// RepositoryDeletionDetails names what deleting an entire repository removed
+// (delete-entire-repository feature), mirroring DeletionDetails' shape one
+// level up -- ManifestsRemoved is a count rather than a single digest/bool
+// since a repository can hold many manifests, unlike DeleteManifest's
+// single-digest-or-single-tag scope.
+type RepositoryDeletionDetails struct {
+	Repository       string   `json:"repository"`
+	ManifestsRemoved int      `json:"manifestsRemoved"`
+	TagsRemoved      []string `json:"tagsRemoved"`
+}
+
 type BlobDetails struct {
 	Repository string `json:"repository,omitempty"`
 	MediaType  string `json:"mediaType,omitempty"`

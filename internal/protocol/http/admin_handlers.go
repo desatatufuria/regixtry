@@ -1225,7 +1225,47 @@ func (r *Router) handleAdminRepositoryResource(w stdhttp.ResponseWriter, req *st
 		return
 	}
 
-	writeAdminError(w, domainauth.NewNotFoundError("route", req.URL.Path), ports.Challenge{})
+	// Bare "<repository>" (no "/grants" suffix or "/grants/<username>"
+	// split above) is the whole-repository resource itself
+	// (delete-entire-repository feature): DELETE removes it entirely.
+	// Checked last, after both /grants branches above, for the same
+	// ordering reason those branches document -- a repository literally
+	// named e.g. "team/grants" is still routed to the grants collection
+	// handler first, never mistaken for a bare resource named
+	// "team/grants".
+	if resource == "" {
+		writeAdminError(w, domainauth.NewNotFoundError("route", req.URL.Path), ports.Challenge{})
+		return
+	}
+	r.handleAdminRepositoryDeleteResource(w, req, principal, resource)
+}
+
+// handleAdminRepositoryDeleteResource is DELETE /admin/v1/repositories/{repo}
+// (delete-entire-repository feature): removes every manifest, tag, and
+// blob-link row for repository, plus the repositories row itself, in one
+// store-layer transaction (Service.DeleteRepository). It is reached through
+// the same "repositories/" delegate-eligible prefix as the grants routes
+// above (requireAuthenticatedPrincipal, not requireAdminPrincipal) --
+// authority is decided in Service.DeleteRepository itself
+// (authorizeDeleteRepository), which requires global admin or a repo-admin
+// grant on this exact repository, mirroring PutRepositoryGrant/
+// DeleteRepositoryGrant's own admin-or-repo-admin posture for a
+// repository-scoped destructive admin action.
+func (r *Router) handleAdminRepositoryDeleteResource(w stdhttp.ResponseWriter, req *stdhttp.Request, principal domainauth.Principal, repository string) {
+	if req.Method != stdhttp.MethodDelete {
+		w.Header().Set("Allow", stdhttp.MethodDelete)
+		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+		return
+	}
+
+	ctx := ports.ContextWithPrincipal(req.Context(), principal)
+	details, err := r.service.DeleteRepository(ctx, repository)
+	if err != nil {
+		writeAdminError(w, err, ports.Challenge{})
+		return
+	}
+
+	writeJSON(w, stdhttp.StatusOK, details)
 }
 
 func (r *Router) handleAdminRepositoryGrantsCollection(w stdhttp.ResponseWriter, req *stdhttp.Request, principal domainauth.Principal, repository string) {
@@ -1512,6 +1552,17 @@ func writeAdminError(w stdhttp.ResponseWriter, err error, challenge ports.Challe
 			status = stdhttp.StatusNotFound
 		case domainregistry.ErrorCodeConflict:
 			status = stdhttp.StatusConflict
+		case domainregistry.ErrorCodeUnauthorized:
+			// Reached only from Service.DeleteRepository's base
+			// ports.ActionDelete authorize call (delete-entire-repository
+			// feature) for a principal that is neither a global admin nor a
+			// repo-admin on this repository. Every /admin/v1 route is
+			// already behind requireAuthenticatedPrincipal/
+			// requireAdminPrincipal by the time a handler runs, so a
+			// genuinely missing/invalid credential (401) can never reach
+			// here -- this is always "authenticated but not privileged
+			// enough for this specific action," i.e. 403, not 401.
+			status = stdhttp.StatusForbidden
 		case domainregistry.ErrorCodeUnsupported:
 			// design.md D9: the endpoint exists but the capability is off in
 			// this deployment. Admin-only -- no registry (/v2/) route may
