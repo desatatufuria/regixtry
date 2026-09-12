@@ -2,8 +2,11 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	stdhttp "net/http"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -49,6 +52,25 @@ func WithStartupLogin() Option {
 func WithCurrentVersion(version string) Option {
 	return func(m *Model) {
 		m.currentVersion = strings.TrimSpace(version)
+	}
+}
+
+// WithUpdateCheckCachePath sets the local JSON file checkForUpdateCmd uses
+// to throttle its background GitHub release check
+// (throttle-tui-update-check feature). A cache entry younger than its own
+// TTL (updateCheckCacheTTLSuccess for a successful check,
+// updateCheckCacheTTLFailure for a failed one) skips the real network call
+// entirely and reuses the cached result, regardless of how many times the
+// TUI is opened in between -- this is what fixes a confirmed live incident
+// where GitHub's unauthenticated 60-requests/hour-per-IP limit was
+// exhausted purely by this background check firing on every `regixtry tui`
+// session start. An empty path (the default, and every pre-existing
+// caller/test that does not pass this option) disables caching entirely:
+// checkForUpdateCmd always performs a real check, exactly its pre-existing
+// behavior.
+func WithUpdateCheckCachePath(path string) Option {
+	return func(m *Model) {
+		m.updateCheckCachePath = strings.TrimSpace(path)
 	}
 }
 
@@ -418,6 +440,11 @@ type Model struct {
 	// means "nothing to show," the default, always-safe state.
 	currentVersion  string
 	updateAvailable string
+	// updateCheckCachePath is checkForUpdateCmd's throttle cache file
+	// (throttle-tui-update-check feature), set via WithUpdateCheckCachePath.
+	// Empty (the zero value) disables caching entirely -- see that option's
+	// doc comment.
+	updateCheckCachePath string
 }
 
 // viewportSize holds the raw terminal dimensions captured from
@@ -3276,21 +3303,128 @@ func (m Model) checkForUpdateCmd() tea.Cmd {
 	if currentVersion == "" {
 		return nil
 	}
+	cachePath := m.updateCheckCachePath
+	now := m.now
 	return func() tea.Msg {
+		if entry, ok := readUpdateCheckCache(cachePath); ok && entry.fresh(now()) {
+			if entry.Failed {
+				return updateCheckCompletedMsg{err: errUpdateCheckCached}
+			}
+			return updateCheckCompletedMsg{latestVersion: entry.LatestVersion}
+		}
+
 		ctx, cancel := context.WithTimeout(m.ctx, updateCheckTimeout)
 		defer cancel()
 		channelValue, err := m.service.GetUpdateChannel(ctx)
 		if err != nil {
+			writeUpdateCheckCache(cachePath, updateCheckCacheEntry{CheckedAt: now(), Failed: true})
 			return updateCheckCompletedMsg{err: err}
 		}
 		channel := release.Channel(channelValue)
 		if !release.ValidChannel(string(channel)) {
+			writeUpdateCheckCache(cachePath, updateCheckCacheEntry{CheckedAt: now(), Failed: true})
 			return updateCheckCompletedMsg{err: fmt.Errorf("release: unknown update channel %q", channelValue)}
 		}
 		httpClient := &stdhttp.Client{Timeout: updateCheckTimeout}
 		latest, err := release.LatestForChannel(ctx, httpClient, regixtryReleasesAPI, channel)
+		writeUpdateCheckCache(cachePath, updateCheckCacheEntry{CheckedAt: now(), LatestVersion: latest, Failed: err != nil})
 		return updateCheckCompletedMsg{latestVersion: latest, err: err}
 	}
+}
+
+// updateCheckCacheTTLSuccess is how long a successful background update
+// check's result is reused before checkForUpdateCmd performs a real network
+// call again, regardless of how many times the TUI is opened in between --
+// the standard once-a-day interval tools like brew/npm/kubectl use for this
+// same class of background version check, comfortably under GitHub's
+// unauthenticated 60-requests/hour-per-IP limit even across many TUI
+// sessions in a single day.
+const updateCheckCacheTTLSuccess = 24 * time.Hour
+
+// updateCheckCacheTTLFailure is deliberately much shorter than
+// updateCheckCacheTTLSuccess: this is the fix for the confirmed incident
+// where a failed/rate-limited check kept retrying on literally the next TUI
+// open, piling up more requests during an active rate-limit window. One hour
+// is short enough that a since-resolved transient failure (a brief network
+// blip, a metadata store still initializing) is retried within the same
+// working session, while still being long enough that a rate-limit or
+// outage episode is not hammered again and again within that same hour.
+const updateCheckCacheTTLFailure = 1 * time.Hour
+
+// errUpdateCheckCached is the updateCheckCompletedMsg.err sentinel used when
+// a cached failure is still within updateCheckCacheTTLFailure and the real
+// network call is skipped entirely. The Update handler treats any non-nil
+// err identically (silently skip, never surfaced) -- this value only exists
+// so tests can distinguish "cache hit, still failing" from "genuinely
+// unreachable."
+var errUpdateCheckCached = errors.New("release: cached update check failure, skipping retry")
+
+// updateCheckCacheEntry is the on-disk (JSON) shape of checkForUpdateCmd's
+// throttle cache (throttle-tui-update-check feature). CheckedAt is always
+// this Model's own injectable now() clock at write time, never time.Now()
+// directly -- the same seam every other clock-driven behavior in this file
+// already uses (e.g. screenEnv().Now, AdminSession.IsExpired), so tests
+// control it deterministically. LatestVersion is empty on a failed check;
+// Failed distinguishes "checked, nothing newer" from "the check itself
+// failed" so each branch can be throttled by its own TTL (fresh/fresh
+// helper below).
+type updateCheckCacheEntry struct {
+	CheckedAt     time.Time `json:"checked_at"`
+	LatestVersion string    `json:"latest_version,omitempty"`
+	Failed        bool      `json:"failed,omitempty"`
+}
+
+// fresh reports whether e is still within its TTL as of now -- a failed
+// entry uses the shorter updateCheckCacheTTLFailure, a successful one the
+// longer updateCheckCacheTTLSuccess.
+func (e updateCheckCacheEntry) fresh(now time.Time) bool {
+	ttl := updateCheckCacheTTLSuccess
+	if e.Failed {
+		ttl = updateCheckCacheTTLFailure
+	}
+	return now.Sub(e.CheckedAt) < ttl
+}
+
+// readUpdateCheckCache loads path's cache entry, failing open on any error
+// (no path configured, missing file, unreadable, malformed JSON, a
+// zero-value CheckedAt) exactly like
+// loadSetupManagedTUIConfig/readSetupManagedEnvFile's own posture for
+// optional local state (cmd/regixtry/main.go): a missing or corrupt cache
+// must never crash or block the TUI's background update check, only fall
+// back to "no cache, perform a real check."
+func readUpdateCheckCache(path string) (updateCheckCacheEntry, bool) {
+	if strings.TrimSpace(path) == "" {
+		return updateCheckCacheEntry{}, false
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return updateCheckCacheEntry{}, false
+	}
+	var entry updateCheckCacheEntry
+	if err := json.Unmarshal(body, &entry); err != nil {
+		return updateCheckCacheEntry{}, false
+	}
+	if entry.CheckedAt.IsZero() {
+		return updateCheckCacheEntry{}, false
+	}
+	return entry, true
+}
+
+// writeUpdateCheckCache best-effort persists entry to path: a write failure
+// (read-only filesystem, missing parent directory) must never surface to
+// the operator or block the background check's own result -- it only means
+// the next TUI open performs a real check again, the same fail-open posture
+// readUpdateCheckCache uses for reads. A no-op when path is empty (caching
+// disabled).
+func writeUpdateCheckCache(path string, entry updateCheckCacheEntry) {
+	if strings.TrimSpace(path) == "" {
+		return
+	}
+	body, err := json.Marshal(entry)
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(path, body, 0o644)
 }
 
 func (m Model) loadTagsCmd(repository string) tea.Cmd {

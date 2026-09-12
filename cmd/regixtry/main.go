@@ -2471,7 +2471,14 @@ func runTUI(cfg tuiConfig, stdin io.Reader, stdout io.Writer) error {
 
 	var (
 		authStore ports.AuthStore
-		modelOpts []tui.Option
+		// WithUpdateCheckCachePath is set unconditionally: cfg.StorageRoot is
+		// always resolved by this point (defaultTUIConfigWithBootstrapStatePath
+		// defaults it to "./data" and MkdirAll above already ensured it
+		// exists) regardless of install shape (systemd-managed, docker exec,
+		// or plain local dev), and an empty currentVersion (see
+		// WithCurrentVersion below) already disables the check entirely, so
+		// this needs no extra conditional.
+		modelOpts = []tui.Option{tui.WithUpdateCheckCachePath(filepath.Join(cfg.StorageRoot, "update-check-cache.json"))}
 	)
 	if cfg.AuthPostgresDSN != "" {
 		authStore, err = openAuthStore(cfg.AuthPostgresDSN)
