@@ -148,6 +148,50 @@ func TestServiceTagDetailsExcludesCosignSignatureArtifactTagsEvenWhenNoRealTagEx
 	}
 }
 
+// TestServiceTagDetailsExcludesModernBundleIndexArtifactTags is the RED test
+// for the modern-cosign counterpart of the two tests above: a tag matching
+// signing.BundleIndexTag's format ("sha256-<hex>", no ".sig" suffix --
+// modern cosign's own accessory tag for a Sigstore Bundle referrer, confirmed
+// live via keyless-signing-smoke.yml against real Fulcio/Rekor) is exactly
+// as much an accessory artifact as the legacy ".sig" tag
+// TestServiceTagDetailsExcludesCosignSignatureArtifactTags already covers --
+// found live cluttering a real repository's Console Tags screen (govault-csi-provider)
+// alongside genuine version tags. isCosignSignatureArtifactTag was only ever
+// updated for the legacy shape; this pins the fix for the modern one too.
+func TestServiceTagDetailsExcludesModernBundleIndexArtifactTags(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	repository := "library/alpine"
+	imageDigest := seedFixtureImageManifest(t, service, repository)
+	tagManifestAtDigest(t, service, repository, "signed-tag", imageDigest)
+
+	bundleTag, err := signing.BundleIndexTag(imageDigest)
+	if err != nil {
+		t.Fatalf("signing.BundleIndexTag(%q) error = %v", imageDigest, err)
+	}
+	tagManifestAtDigest(t, service, repository, bundleTag, imageDigest)
+
+	details, err := service.TagDetails(context.Background(), repository, 10, "")
+	if err != nil {
+		t.Fatalf("TagDetails() error = %v", err)
+	}
+
+	for _, detail := range details {
+		if detail.Name == bundleTag {
+			t.Fatalf("details = %#v, want no entry for the modern bundle-index artifact tag %q", details, bundleTag)
+		}
+	}
+	if len(details) != 1 {
+		t.Fatalf("len(details) = %d, want 1 (only signed-tag, the bundle-index artifact tag excluded): %#v", len(details), details)
+	}
+	if details[0].Name != "signed-tag" {
+		t.Fatalf("details[0].Name = %q, want %q", details[0].Name, "signed-tag")
+	}
+}
+
 // TestServiceTagDetailsSigningEnabledMirrorsPolicyEnabledBit proves
 // SigningEnabled is exactly SignatureStatus's own Policy.Enabled bit (design
 // decision: the TUI Signed column collapses to "n/a" when the whole signing

@@ -740,24 +740,32 @@ type TagDetails struct {
 	PushedBy string `json:"pushed_by,omitempty"`
 }
 
-// isCosignSignatureArtifactTag reports whether name is the cosign legacy
-// signature tag for some digest -- i.e. matches SignatureTag's own
-// "sha256-<hex>.sig" format. It reuses SignatureTag itself for the actual
-// hex/length validation (round-tripping name back through the digest form
-// and confirming SignatureTag reproduces it exactly) rather than hand-
-// rolling a second pattern matcher, per this change's own scope: a
-// signature's accessory `.sig` tag is not a version a Console user
-// browses/pulls, and its own "Signed" status would be nonsensical (a
-// signature isn't itself signed).
+// isCosignSignatureArtifactTag reports whether name is one of cosign's own
+// accessory tags for some digest -- either the legacy "sha256-<hex>.sig"
+// format (signing.SignatureTag) or the modern, no-suffix "sha256-<hex>"
+// format (signing.BundleIndexTag, what cosign v3+ writes for a Sigstore
+// Bundle referrer -- found live cluttering a real repository's Console Tags
+// screen alongside genuine version tags, since this filter was only ever
+// updated for the legacy shape). Both cases reuse the real tag-producing
+// function itself for the actual hex/length validation (round-tripping name
+// back through the digest form and confirming it reproduces name exactly)
+// rather than hand-rolling a second pattern matcher: neither of these is a
+// version a Console user browses/pulls, and their own "Signed" status would
+// be nonsensical (a signature/bundle isn't itself signed).
 func isCosignSignatureArtifactTag(name string) bool {
 	const prefix = "sha256-"
-	const suffix = ".sig"
-	if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, suffix) {
+	if !strings.HasPrefix(name, prefix) {
 		return false
 	}
 
-	hexPart := strings.TrimSuffix(strings.TrimPrefix(name, prefix), suffix)
-	produced, err := signing.SignatureTag("sha256:" + hexPart)
+	if suffix := ".sig"; strings.HasSuffix(name, suffix) {
+		hexPart := strings.TrimSuffix(strings.TrimPrefix(name, prefix), suffix)
+		produced, err := signing.SignatureTag("sha256:" + hexPart)
+		return err == nil && produced == name
+	}
+
+	hexPart := strings.TrimPrefix(name, prefix)
+	produced, err := signing.BundleIndexTag("sha256:" + hexPart)
 	return err == nil && produced == name
 }
 
