@@ -128,6 +128,11 @@ type TagsModel struct {
 	// retirement of TagsModel's own former PendingDelete string field, one
 	// of the two confirm patterns D7 requires collapse to exactly one.
 	Confirm confirmPrompt
+	// SortMode is the "s" key's client-side sort cycle (sortable-tags-and-
+	// projects feature), defaulting to sortByNameAsc's zero value -- Items
+	// is kept sorted according to it at all times (rebuildTagsTable time),
+	// so Selected always indexes into the currently-displayed order.
+	SortMode sortMode
 }
 
 type ManifestModel struct {
@@ -852,7 +857,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = msg.err
 			return m, nil
 		}
-		m.tags = TagsModel{Repository: msg.repository, Items: append([]appregixtry.TagDetails(nil), msg.result...)}
+		// SortMode carries over across a reload (e.g. the post-delete
+		// refresh) instead of resetting to the default -- the operator's
+		// chosen sort should not silently revert out from under them.
+		items := append([]appregixtry.TagDetails(nil), msg.result...)
+		sortTagItems(items, m.tags.SortMode)
+		m.tags = TagsModel{Repository: msg.repository, Items: items, SortMode: m.tags.SortMode}
 		m.lastRepository = msg.repository
 		m.showMutationNotice = false
 		m.status = ""
@@ -1857,6 +1867,19 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = "No repository selected to delete."
 		}
 		return m, nil
+	case isRuneKey(msg, 's') && m.screen == screenTags:
+		// Sortable-tags-and-projects feature: cycles name-ascending ->
+		// date-descending -> back, entirely client-side (Items is already
+		// the full fetched page -- see console_tags_table.go's own doc
+		// comment). The currently-highlighted tag's identity is not
+		// preserved across a re-sort (Selected resets to 0) -- a deliberate
+		// simplification, since bubble-table's own WithHighlightedRow
+		// re-page happens at rebuildTagsTable time regardless.
+		m.tags.SortMode = m.tags.SortMode.next()
+		m.tags.Selected = 0
+		sortTagItems(m.tags.Items, m.tags.SortMode)
+		m.rebuildTagsTable(m.tagsTableLayout())
+		return m, nil
 	case isRuneKey(msg, 'd', 'x'):
 		if m.screen == screenManifest || m.screen == screenBlobs || m.screen == screenUploads {
 			m.showMutationNotice = true
@@ -2839,7 +2862,7 @@ func (m Model) scrollableBodyContext() (status, help string, total int, ok bool)
 		// its success/error follow-up, and the ordinary "" baseline all
 		// flow through the same field, so View() and the row-budget math
 		// below can never drift apart on what's actually shown.
-		return m.status, "Enter: inspect manifest | d: delete tag | Tab: admin | Esc: back | q: quit", len(m.tags.Items) + 1, true
+		return m.status, "Enter: inspect manifest | d: delete tag | s: sort | Tab: admin | Esc: back | q: quit", len(m.tags.Items) + 1, true
 	}
 	return "", "", 0, false
 }

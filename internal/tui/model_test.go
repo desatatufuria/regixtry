@@ -790,6 +790,81 @@ func tagsReadyFakeService() *fakeQueryService {
 	}
 }
 
+// TestModelTagsSortKeyCyclesNameAscendingToDateDescendingAndBack is the
+// sortable-tags-and-projects feature's RED test for the Tags screen's "s"
+// key: two tags whose Name-ascending and CreatedAt-descending orders
+// disagree ("older" sorts first by name but last by date) prove the cycle
+// actually re-sorts Items, entirely client-side, and cycles back on a
+// second press.
+func TestModelTagsSortKeyCyclesNameAscendingToDateDescendingAndBack(t *testing.T) {
+	t.Parallel()
+
+	older := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	newer := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	service := &fakeQueryService{
+		repositorySummaries: []appregixtry.RepositorySummary{{Name: "library/alpine"}},
+		tagDetails: map[string][]appregixtry.TagDetails{
+			"library/alpine": {
+				{Name: "older", CreatedAt: older},
+				{Name: "zzz-newest", CreatedAt: newer},
+			},
+		},
+	}
+	ready := newTagsReadyModel(t, service)
+
+	if got, want := ready.tags.Items[0].Name, "older"; got != want {
+		t.Fatalf("initial Items[0].Name = %q, want %q (default name-ascending)", got, want)
+	}
+
+	sorted := runKey(t, ready, "s")
+	if got, want := sorted.tags.Items[0].Name, "zzz-newest"; got != want {
+		t.Fatalf("after 1st sort Items[0].Name = %q, want %q (date-descending: most recent first)", got, want)
+	}
+	if !strings.Contains(sorted.View(), "Tags (sort: date)") {
+		t.Fatalf("view after 1st sort = %q, want the sort mode shown in the subheading", sorted.View())
+	}
+
+	backToName := runKey(t, sorted, "s")
+	if got, want := backToName.tags.Items[0].Name, "older"; got != want {
+		t.Fatalf("after 2nd sort Items[0].Name = %q, want %q (cycled back to name-ascending)", got, want)
+	}
+	if !strings.Contains(backToName.View(), "Tags (sort: name)") {
+		t.Fatalf("view after 2nd sort = %q, want the sort mode shown in the subheading", backToName.View())
+	}
+}
+
+// TestModelTagsSortModePersistsAcrossReload covers the tagsLoadedMsg refresh
+// path (e.g. after a tag delete): a chosen sort mode must not silently
+// revert to the default just because the list reloaded.
+func TestModelTagsSortModePersistsAcrossReload(t *testing.T) {
+	t.Parallel()
+
+	older := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	newer := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	service := &fakeQueryService{
+		repositorySummaries: []appregixtry.RepositorySummary{{Name: "library/alpine"}},
+		tagDetails: map[string][]appregixtry.TagDetails{
+			"library/alpine": {
+				{Name: "older", CreatedAt: older},
+				{Name: "zzz-newest", CreatedAt: newer},
+			},
+		},
+	}
+	ready := newTagsReadyModel(t, service)
+	sorted := runKey(t, ready, "s")
+	if sorted.tags.SortMode != sortByDateDesc {
+		t.Fatalf("SortMode = %v, want sortByDateDesc", sorted.tags.SortMode)
+	}
+
+	reloaded := runCmd(t, sorted, sorted.loadTagsCmd("library/alpine"))
+	if reloaded.tags.SortMode != sortByDateDesc {
+		t.Fatalf("SortMode after reload = %v, want sortByDateDesc (must persist)", reloaded.tags.SortMode)
+	}
+	if got, want := reloaded.tags.Items[0].Name, "zzz-newest"; got != want {
+		t.Fatalf("Items[0].Name after reload = %q, want %q (date-descending order preserved)", got, want)
+	}
+}
+
 // TestModelTagsDeleteKeyShowsPendingConfirm is the blob-garbage-collection
 // change's RED test for wiring the Tags screen's "d" key to
 // QueryService.DeleteManifest (already fully tested at the Service level):

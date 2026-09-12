@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -121,7 +122,11 @@ func consoleTagsTablePageSize(layout consoleLayout) int {
 // other screen's bounded section is (renderSection).
 func renderConsoleTagsSection(tags TagsModel, layout consoleLayout) string {
 	theme := newAdminTheme()
-	lines := []string{theme.subheading.Render("Tags")}
+	// The current sort mode is appended to the subheading (sortable-tags-
+	// and-projects feature) -- discoverable at a glance without needing a
+	// separate status line, this codebase's established text-only
+	// convention (no icons/glyphs).
+	lines := []string{theme.subheading.Render(fmt.Sprintf("Tags (sort: %s)", tags.SortMode.label()))}
 	if len(tags.Items) == 0 {
 		lines = append(lines, theme.muted.Render("No items available."))
 	} else {
