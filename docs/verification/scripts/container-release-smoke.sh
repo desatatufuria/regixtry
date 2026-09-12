@@ -208,6 +208,34 @@ postgres_log_indicates_ready() {
   fi
 }
 
+# run_bootstrap_admin_with_retry retries the real bootstrap-admin connection
+# attempt a bounded number of times, short sleep between -- see the call
+# site's comment for why a readiness probe run beforehand (wait_postgres_ready)
+# cannot close this gap to zero by itself. Fails loudly, with the last
+# attempt's own error output, rather than looping forever.
+run_bootstrap_admin_with_retry() {
+  local admin_password="$1"
+  local dsn="$2"
+  local pg_container="$3"
+  local max_attempts=5
+  local attempt=1
+
+  while [[ "${attempt}" -le "${max_attempts}" ]]; do
+    if printf '%s\n' "${admin_password}" | docker run --rm -i --network "${AUTH_NETWORK}" \
+      "${IMAGE}" bootstrap-admin -auth-postgres-dsn "${dsn}" -username admin -password-stdin; then
+      return 0
+    fi
+
+    if [[ "${attempt}" -eq "${max_attempts}" ]]; then
+      fail "bootstrap-admin failed against ${pg_container} after ${max_attempts} attempts (auth scenario cannot continue)"
+    fi
+
+    printf 'container-release-smoke: bootstrap-admin attempt %d/%d failed, retrying in 2s...\n' "${attempt}" "${max_attempts}" >&2
+    sleep 2
+    attempt=$((attempt + 1))
+  done
+}
+
 # registry_token exchanges Basic credentials for a Bearer access token via
 # GET /auth/token?scope=repository:<repo>:pull,push, per design.md's auth
 # smoke sequence. Basic credentials on /v2/ itself are silently ignored
@@ -359,10 +387,20 @@ run_auth_scenario() {
   # bootstrap-admin MUST complete before the serve container starts: serve
   # fails fast when auth is enabled and no admin exists yet, so there would
   # be no running container to exec into afterward.
-  if ! printf '%s\n' "${admin_password}" | docker run --rm -i --network "${AUTH_NETWORK}" \
-    "${IMAGE}" bootstrap-admin -auth-postgres-dsn "${dsn}" -username admin -password-stdin; then
-    fail "bootstrap-admin failed against ${AUTH_PG_CONTAINER} (auth scenario cannot continue)"
-  fi
+  #
+  # Retried, not a single shot: wait_postgres_ready confirms the postgres
+  # image's OWN log output already shows the final server accepting
+  # connections (see that function's doc comment), but bootstrap-admin here
+  # runs in a brand-new, separate `docker run` container -- its very first
+  # TCP dial can still race a residual, sub-second window between "postgres
+  # logged ready" and "a different container's connection actually reaches
+  # accept()" (confirmed live on v0.2.1-rc14: a single "connection refused"
+  # immediately after wait_postgres_ready returned true, no timeout, no
+  # further retries at the time). No readiness probe run BEFORE the real
+  # connection attempt can close that residual gap to zero -- the fix is a
+  # short bounded retry on the connection attempt itself, the standard
+  # pattern for exactly this class of distributed-startup race.
+  run_bootstrap_admin_with_retry "${admin_password}" "${dsn}" "${AUTH_PG_CONTAINER}"
 
   docker volume create "${AUTH_VOLUME}" >/dev/null
 
