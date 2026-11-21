@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -297,17 +299,118 @@ func TestLoginLongMessagesNeverHideTheFormButtonsOrFooter(t *testing.T) {
 
 func TestLoginCapLinesCutsOnARuneBoundary(t *testing.T) {
 	t.Parallel()
-	lines := loginCapLines(strings.Repeat("日本語ü ", 200), 20)
+	original := strings.Repeat("日本語ü ", 200)
+	lines := loginCapLines(original, 20)
 	if len(lines) != loginMaxMessageLines {
 		t.Fatalf("lines = %d, want %d", len(lines), loginMaxMessageLines)
 	}
-	last := lines[len(lines)-1]
-	if !strings.HasSuffix(last, "…") || !strings.EqualFold(string([]rune(last)), last) {
-		t.Fatalf("last line %q", last)
-	}
 	for _, line := range lines {
-		if strings.ContainsRune(line, '\uFFFD') {
+		if !utf8.ValidString(line) || strings.ContainsRune(line, '\uFFFD') {
 			t.Fatalf("a rune was split: %q", line)
+		}
+	}
+	last := lines[len(lines)-1]
+	prefix, cut := strings.CutSuffix(last, "…")
+	if !cut {
+		t.Fatalf("last line %q does not end in an ellipsis", last)
+	}
+	// Every kept word comes from the original, in order, and the cut tail is a
+	// whole-rune prefix of the original word it was taken from.
+	words := strings.Fields(original)
+	kept := strings.Fields(strings.Join(lines[:len(lines)-1], " ") + " " + prefix)
+	for i, word := range kept {
+		if i < len(kept)-1 && word != words[i] {
+			t.Fatalf("word %d = %q, want %q", i, word, words[i])
+		}
+		if i == len(kept)-1 && !strings.HasPrefix(words[i], word) {
+			t.Fatalf("truncated tail %q is not a prefix of the original word %q", word, words[i])
+		}
+	}
+}
+
+// ---- feature confirms through the model ----
+
+func TestFeatureConfirmsUnlockAfterAFailedOrSuccessfulCompletion(t *testing.T) {
+	t.Parallel()
+	features := []struct {
+		name string
+		nav  shellNavID
+		code screen
+	}{
+		{trivyFeatureName, shellNavImageScanning, screenSecurityTrivy},
+		{gitleaksFeatureName, shellNavSecretScanning, screenSecurityGitleaksConfig},
+		{signingFeatureName, shellNavSigningPolicy, screenSecuritySigningConfig},
+	}
+	for _, feature := range features {
+		for _, failed := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/failed=%v", feature.name, failed), func(t *testing.T) {
+				t.Parallel()
+				const confirmMessage = "Confirm disable this feature?"
+				client := &fakeAdminClient{
+					loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: time.Now().Add(time.Hour)},
+					featurePage: ports.FeaturePage{
+						Summary: ports.FeatureSummary{Name: feature.name, Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
+						Actions: []ports.FeatureAction{{ID: "disable", Label: "Disable", ConfirmTitle: "Confirm Disable", ConfirmMessage: confirmMessage}},
+					},
+					actionResults: map[string]ports.FeatureActionResult{"disable": {Message: "Feature disabled."}},
+				}
+				m := runAdminLogin(t, newAdminReadyModel(t, client), "operator", "secret-pass")
+				m = openSidebarItem(t, m, feature.nav)
+				if m.screen != feature.code {
+					t.Fatalf("screen = %q, want %q", m.screen, feature.code)
+				}
+
+				// press sends a key and runs the command it returns, without
+				// following any command the result message returns.
+				press := func(m Model, k keyMsg) (Model, tea.Msg) {
+					updated, cmd := m.Update(k)
+					if cmd == nil {
+						return updated.(Model), nil
+					}
+					return updated.(Model), cmd()
+				}
+				deliver := func(m Model, msg tea.Msg) Model {
+					updated, _ := m.Update(msg)
+					return updated.(Model)
+				}
+				open := func(m Model) Model {
+					m, _ = press(m, testKeyRunes("x"))
+					if !strings.Contains(m.View().Content, confirmMessage) {
+						t.Fatalf("the confirm did not open:\n%s", m.View().Content)
+					}
+					return m
+				}
+
+				if failed {
+					client.featureErr = errors.New("feature backend refused the action")
+				}
+				m = open(m)
+				var result tea.Msg
+				for _, k := range []keyMsg{testKeyEnter(), testKeyEnter(), testKeyRunes("y")} {
+					var msg tea.Msg
+					m, msg = press(m, k)
+					if msg != nil {
+						result = msg
+					}
+				}
+				if client.executeFeatureActionCalls != 1 {
+					t.Fatalf("the action ran %d times, want once", client.executeFeatureActionCalls)
+				}
+				m = deliver(m, result)
+				view := m.View().Content
+				if strings.Contains(view, confirmMessage) {
+					t.Fatalf("the prompt is still open after the completion:\n%s", view)
+				}
+				if failed && !strings.Contains(view, "feature backend refused the action") {
+					t.Fatalf("the error is not shown:\n%s", view)
+				}
+
+				m = open(m)
+				_, again := press(m, testKeyEnter())
+				if again == nil || client.executeFeatureActionCalls != 2 {
+					t.Fatalf("the new prompt did not dispatch (calls = %d)", client.executeFeatureActionCalls)
+				}
+			})
 		}
 	}
 }
