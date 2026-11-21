@@ -88,8 +88,7 @@ func isSpaceKey(msg keyMsg) bool {
 	return isRuneKey(msg, ' ')
 }
 
-// isTextKey reports whether msg carries typed text, even if that text is empty.
-// isTextKey reports whether msg carries typed text.
+// isTextKey reports whether keyText(msg) is non-empty.
 func isTextKey(msg keyMsg) bool {
 	return keyText(msg) != ""
 }
