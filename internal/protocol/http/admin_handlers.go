@@ -1072,14 +1072,13 @@ func decodeAdminCreateRobotInput(req *stdhttp.Request) (ports.AdminCreateRobotIn
 	if err := decodeAdminJSON(req, &payload); err != nil {
 		return ports.AdminCreateRobotInput{}, err
 	}
-	if payload.TTLSeconds != nil && *payload.TTLSeconds < 0 {
-		return ports.AdminCreateRobotInput{}, domainauth.NewValidationError("ttl_seconds must be zero or greater")
+	ttl, err := adminTTLFromSeconds(payload.TTLSeconds)
+	if err != nil {
+		return ports.AdminCreateRobotInput{}, err
 	}
 
 	input := ports.AdminCreateRobotInput{Name: payload.Name, Repository: payload.Repository, Role: payload.Role}
-	if payload.TTLSeconds != nil {
-		input.TTL = time.Duration(*payload.TTLSeconds) * time.Second
-	}
+	input.TTL = ttl
 
 	return input, nil
 }
@@ -1442,16 +1441,32 @@ func decodeAdminCreateTokenInput(req *stdhttp.Request) (ports.AdminCreateTokenIn
 	if err := decodeAdminJSON(req, &payload); err != nil {
 		return ports.AdminCreateTokenInput{}, err
 	}
-	if payload.TTLSeconds != nil && *payload.TTLSeconds < 0 {
-		return ports.AdminCreateTokenInput{}, domainauth.NewValidationError("ttl_seconds must be zero or greater")
+	ttl, err := adminTTLFromSeconds(payload.TTLSeconds)
+	if err != nil {
+		return ports.AdminCreateTokenInput{}, err
 	}
 
 	input := ports.AdminCreateTokenInput{Name: payload.Name}
-	if payload.TTLSeconds != nil {
-		input.TTL = time.Duration(*payload.TTLSeconds) * time.Second
-	}
+	input.TTL = ttl
 
 	return input, nil
+}
+
+// adminTTLFromSeconds converts an optional ttl_seconds payload value to a
+// duration. It validates the seconds BEFORE converting, because multiplying a
+// huge value by time.Second overflows int64 and could wrap to a negative or
+// small positive duration. Omitted and zero mean "use the default".
+func adminTTLFromSeconds(seconds *int64) (time.Duration, error) {
+	if seconds == nil {
+		return 0, nil
+	}
+	if *seconds < 0 {
+		return 0, domainauth.NewValidationError("ttl_seconds must be zero or greater")
+	}
+	if *seconds > int64(domainauth.MaxAdminTokenTTL/time.Second) {
+		return 0, domainauth.NewValidationError("admin token ttl must be 2 years or shorter")
+	}
+	return time.Duration(*seconds) * time.Second, nil
 }
 
 func decodeAdminJSON(req *stdhttp.Request, dst any) error {
