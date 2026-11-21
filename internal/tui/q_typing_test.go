@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func sendKeyCmd(m Model, msg keyMsg) (Model, tea.Cmd) {
@@ -89,7 +90,7 @@ func TestCtrlCQuitsOnLoginAndActiveSearch(t *testing.T) {
 
 func TestLoginSaysEscBackAndActiveSearchSaysEscEndsIt(t *testing.T) {
 	login := kjLoginModel(t).View().Content
-	if strings.Contains(login, "q: quit") || !strings.Contains(login, "Esc: back") {
+	if strings.Contains(login, "q: quit") || !strings.Contains(ansi.Strip(login), "esc back") {
 		t.Fatalf("login footer wrong:\n%s", login)
 	}
 	m := charResize(t, kjSearchModel(t, true), 200, 40)

@@ -205,7 +205,6 @@ func TestViewportChromeInvariantTitleContextHelpAreSingleLine(t *testing.T) {
 		"Repositories / library/alpine / latest / Uploads",
 		"Empty",
 		"Error",
-		"Sign In",
 		"Regixtry",
 		"Regixtry Admin",
 	}
@@ -231,7 +230,6 @@ func TestViewportChromeInvariantTitleContextHelpAreSingleLine(t *testing.T) {
 		"Enter: inspect manifest | d: delete tag | Tab: admin | Esc: back | q: quit",
 		"b: blobs | u: uploads | d: unsupported delete | Tab: admin | Esc: back | q: quit",
 		"Tab: admin | Esc: back | q: quit",
-		"Enter: sign in | Tab: switch field | Esc: back | q: quit",
 	}
 	for _, help := range inspectionHelp {
 		assertSingleLine(t, "help "+help, theme.help.Render(help))

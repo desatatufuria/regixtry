@@ -49,7 +49,7 @@ func TestModelStartupLoginDefersCatalogUntilLoginSucceeds(t *testing.T) {
 	if got, want := model.screen, screenAdminLogin; got != want {
 		t.Fatalf("screen = %q, want %q", got, want)
 	}
-	if !strings.Contains(model.View().Content, "Operator Login") {
+	if !strings.Contains(ansi.Strip(model.View().Content), "operator sign in") {
 		t.Fatalf("view = %q, want login shell", model.View().Content)
 	}
 
@@ -1115,7 +1115,7 @@ func TestModelBlocksAdminUntilLogin(t *testing.T) {
 	if updated.adminAuth != adminAuthStateUnauthenticated {
 		t.Fatalf("adminAuth = %q, want %q", updated.adminAuth, adminAuthStateUnauthenticated)
 	}
-	if !strings.Contains(updated.View().Content, "Operator Login") {
+	if !strings.Contains(ansi.Strip(updated.View().Content), "operator sign in") {
 		t.Fatalf("view = %q, want login screen", updated.View().Content)
 	}
 }

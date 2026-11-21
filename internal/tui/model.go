@@ -1869,17 +1869,13 @@ func (m Model) viewScreen() string {
 			renderConsoleTextSection(theme.error.Render(errText), layout),
 			errText, help, statusKindError)
 	case screenAdminLogin:
-		status := m.status
+		view := loginView{form: m.adminLogin, status: m.status}
 		if m.expiryNoteShown {
-			// The note is long: wrap it to the terminal width so its tail
-			// ("Not applied ... Sign in ...") is never cut off.
-			status = strings.Join(grantWrap(status, max(m.contentBudget("", "").Width-4, 20)), "\n")
+			view = loginView{form: m.adminLogin, note: m.status}
 		}
-		return renderInspectionWorkspace("Sign In", renderAdminLogin(newAdminTheme(), m.adminLogin), status, "Enter: sign in | Tab: switch field | Esc: back")
+		return renderAdminLogin(newAdminTheme(), view, m.viewport.Width, m.viewport.Height)
 	case screenAdminAuthenticating:
-		help := "q: quit"
-		layout := m.contentBudget("", help)
-		return renderInspectionWorkspace("Sign In", renderConsoleTextSection(m.loadingText, layout), "", help)
+		return renderAdminAuthenticating(newAdminTheme(), m.loadingText, m.viewport.Width, m.viewport.Height)
 	case screenAdminUsers, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken, screenRepoAdminGrants, screenRepoAdminAddGrant, screenAdminRobots, screenAdminCreateRobot, screenSecurityGitleaksRepos, screenSecuritySigningRepos, screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminOverview, screenAdminScanRuns, screenAdminSecretFindings, screenAdminUpdateChannel, screenAdminGrantAccess:
 		help := adminScreenHelp(m.screen, m.adminView)
 		if slot, ok := slotFor(m.screen); ok && m.adminScreens[slot] != nil {
@@ -4601,14 +4597,6 @@ func renderUploads(theme adminTheme, uploads UploadsModel) string {
 		lines = append(lines, theme.text.Render(fmt.Sprintf("%s · %s · %d bytes", upload.ID, upload.Status, upload.Size)))
 	}
 	return strings.Join(lines, "\n")
-}
-
-func renderAdminLogin(theme adminTheme, form adminLoginForm) string {
-	return theme.section.Render(strings.Join([]string{
-		theme.subheading.Render("Operator Login"),
-		renderTextField(theme, "Username", form.Username, form.Focus == loginFieldUsername),
-		renderSecretField(theme, "Password", form.Password, form.Focus == loginFieldPassword),
-	}, "\n"))
 }
 
 func formatRemaining(remaining time.Duration) string {

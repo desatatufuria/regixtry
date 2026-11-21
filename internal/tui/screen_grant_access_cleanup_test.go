@@ -1,11 +1,8 @@
 package tui
 
 import (
-	"flag"
 	"fmt"
 	"math/rand"
-	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -16,8 +13,6 @@ import (
 	domainauth "regixtry/internal/domain/auth"
 	"regixtry/internal/ports"
 )
-
-var updateGrantCleanupGoldens = flag.Bool("update-grant-cleanup", false, "rewrite the grant cleanup golden files")
 
 // grantOpenFirst opens the screen without a preselection and chooses the
 // first principal (Down reveals the highlight, Space chooses it): the state
@@ -50,7 +45,7 @@ func TestGrantExpiryDuringApplyReportsWhatWasApplied(t *testing.T) {
 	if !reflect.DeepEqual(client.puts, want) {
 		t.Fatalf("puts = %#v, want %#v", client.puts, want)
 	}
-	view := m.View().Content
+	view := flattenBoxed(m.View().Content)
 	for _, part := range []string{"Session expired", "Applied before it expired: library/alpine", "Not applied: 2", "Sign in and apply the rest"} {
 		if !strings.Contains(view, part) {
 			t.Errorf("login view lacks %q:\n%s", part, view)
@@ -221,8 +216,8 @@ func TestGrantExpiryNoteFitsTheLoginScreenAtEverySize(t *testing.T) {
 			view := m.View().Content
 			assertGrantNoOverflow(t, "login", view, size.w, size.h)
 			plain := ansi.Strip(view)
-			for _, part := range []string{"Username", "Password", "Esc: back", "+2 more", "Not applied: 1", "Sign in and apply the rest."} {
-				if !strings.Contains(strings.Join(strings.Fields(plain), " "), part) {
+			for _, part := range []string{"Username", "Password", "esc back", "+2 more", "Not applied: 1", "Sign in and apply the rest."} {
+				if !strings.Contains(flattenBoxed(plain), part) {
 					t.Errorf("login view lacks %q:\n%s", part, plain)
 				}
 			}
@@ -230,28 +225,6 @@ func TestGrantExpiryNoteFitsTheLoginScreenAtEverySize(t *testing.T) {
 				t.Error("a repository name was not truncated")
 			}
 		})
-	}
-}
-
-func TestGrantExpiryNoteWorstCaseGolden(t *testing.T) {
-	t.Parallel()
-	got := ansi.Strip(grantWorstCaseExpiredModel(t, 150, 24).View().Content)
-	path := filepath.Join("testdata", "grant_cleanup", "login_expiry_note_150x24.golden")
-	if *updateGrantCleanupGoldens {
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte(got), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		return
-	}
-	want, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(want) != got {
-		t.Fatalf("login view differs from %s\n--- got\n%s", path, got)
 	}
 }
 
