@@ -378,35 +378,49 @@ func resolveAdminTokenTTL(requested time.Duration) (time.Duration, error) {
 }
 
 func (s *Service) CreateAdminToken(ctx context.Context, actor domainauth.Principal, input ports.CreateAdminTokenInput) (ports.CreatedAdminToken, error) {
-	if err := requireAdmin(actor); err != nil {
+	created, ttl, err := s.issueAdminToken(ctx, actor, input)
+	if err != nil {
 		return ports.CreatedAdminToken{}, err
+	}
+
+	s.recordTokenIssued(ctx, actor, created.TargetUser, created.Token, ttl)
+
+	return created, nil
+}
+
+// issueAdminToken issues an admin credential token without recording it in
+// the access history, so CreateRobot can record one event for the whole
+// operation. It returns the lifetime that was applied.
+func (s *Service) issueAdminToken(ctx context.Context, actor domainauth.Principal, input ports.CreateAdminTokenInput) (ports.CreatedAdminToken, time.Duration, error) {
+	if err := requireAdmin(actor); err != nil {
+		return ports.CreatedAdminToken{}, 0, err
 	}
 
 	user, err := s.store.GetUserByID(ctx, input.UserID)
 	if err != nil {
-		return ports.CreatedAdminToken{}, err
+		return ports.CreatedAdminToken{}, 0, err
 	}
 	if !user.Enabled {
-		return ports.CreatedAdminToken{}, domainauth.NewDisabledUserError(user.Username)
+		return ports.CreatedAdminToken{}, 0, domainauth.NewDisabledUserError(user.Username)
 	}
 
 	ttl, err := resolveAdminTokenTTL(input.TTL)
 	if err != nil {
-		return ports.CreatedAdminToken{}, err
+		return ports.CreatedAdminToken{}, 0, err
 	}
 
 	secret, err := randomSecret(32)
 	if err != nil {
-		return ports.CreatedAdminToken{}, err
+		return ports.CreatedAdminToken{}, 0, err
 	}
 
 	now := s.now()
 	token := domainauth.Token{ID: uuid.NewString(), UserID: user.ID, Kind: domainauth.TokenKindAdminCredential, Name: strings.TrimSpace(input.Name), Accessor: shortAccessor("act"), SecretHash: hashSecret(secret), CreatedAt: now, ExpiresAt: now.Add(ttl)}
 	if err := s.store.CreateToken(ctx, token); err != nil {
-		return ports.CreatedAdminToken{}, err
+		return ports.CreatedAdminToken{}, 0, err
 	}
 
-	return ports.CreatedAdminToken{Token: token, Secret: secret, Plaintext: secret, Accessor: token.Accessor, ExpiresAt: token.ExpiresAt, TargetUser: user}, nil
+	return ports.CreatedAdminToken{Token: token, Secret: secret, Plaintext: secret, Accessor: token.Accessor, ExpiresAt: token.ExpiresAt, TargetUser: user}, ttl, nil
 }
 
 func (s *Service) CreateAdminUserToken(ctx context.Context, actor domainauth.Principal, input ports.AdminCreateTokenInput) (ports.AdminCreatedToken, error) {
@@ -513,7 +527,22 @@ func (s *Service) RevokeAdminToken(ctx context.Context, actor domainauth.Princip
 		return err
 	}
 
-	return s.store.RevokeTokenByAccessor(ctx, strings.TrimSpace(accessor), s.now())
+	accessor = strings.TrimSpace(accessor)
+	// Resolved only to name the subject in the access history; a failed
+	// lookup never changes the revocation itself.
+	token, tokenErr := s.store.GetTokenByAccessor(ctx, domainauth.TokenKindAdminCredential, accessor)
+
+	if err := s.store.RevokeTokenByAccessor(ctx, accessor, s.now()); err != nil {
+		return err
+	}
+
+	if tokenErr == nil {
+		if subject, err := s.store.GetUserByID(ctx, token.UserID); err == nil {
+			s.recordTokenRevoked(ctx, actor, subject, token)
+		}
+	}
+
+	return nil
 }
 
 func (s *Service) RevokeAdminUserToken(ctx context.Context, actor domainauth.Principal, userID string, accessor string) error {
@@ -534,7 +563,13 @@ func (s *Service) RevokeAdminUserToken(ctx context.Context, actor domainauth.Pri
 		return domainauth.NewNotFoundError("token", strings.TrimSpace(accessor))
 	}
 
-	return s.store.RevokeTokenByAccessor(ctx, token.Accessor, s.now())
+	if err := s.store.RevokeTokenByAccessor(ctx, token.Accessor, s.now()); err != nil {
+		return err
+	}
+
+	s.recordTokenRevoked(ctx, actor, user, token)
+
+	return nil
 }
 
 func (s *Service) ResetPassword(ctx context.Context, actor domainauth.Principal, userID string, newPassword string) error {
@@ -566,7 +601,8 @@ func (s *Service) PutRepoGrant(ctx context.Context, actor domainauth.Principal, 
 	if err := requireAdmin(actor); err != nil {
 		return domainauth.RepoGrant{}, err
 	}
-	if _, err := s.store.GetUserByID(ctx, userID); err != nil {
+	subject, err := s.store.GetUserByID(ctx, userID)
+	if err != nil {
 		return domainauth.RepoGrant{}, err
 	}
 
@@ -578,10 +614,19 @@ func (s *Service) PutRepoGrant(ctx context.Context, actor domainauth.Principal, 
 		return domainauth.RepoGrant{}, err
 	}
 
+	// Read only to word the access history ("Reader to Writer"); a failed
+	// read never blocks the grant.
+	existing, listErr := s.store.ListRepoGrants(ctx, userID)
+	previous, hadPrevious := grantRoleOn(existing, repo.String())
+
 	now := s.now()
 	grant := domainauth.RepoGrant{UserID: userID, Repository: repo, Role: role, CreatedAt: now, UpdatedAt: now}
 	if err := s.store.PutRepoGrant(ctx, grant); err != nil {
 		return domainauth.RepoGrant{}, err
+	}
+
+	if listErr == nil {
+		s.recordGrantPut(ctx, actor, subject, grant, previous, hadPrevious)
 	}
 
 	return grant, nil
@@ -600,7 +645,8 @@ func (s *Service) DeleteRepoGrant(ctx context.Context, actor domainauth.Principa
 	if err := requireAdmin(actor); err != nil {
 		return err
 	}
-	if _, err := s.store.GetUserByID(ctx, userID); err != nil {
+	subject, err := s.store.GetUserByID(ctx, userID)
+	if err != nil {
 		return err
 	}
 
@@ -609,7 +655,13 @@ func (s *Service) DeleteRepoGrant(ctx context.Context, actor domainauth.Principa
 		return err
 	}
 
-	return s.store.DeleteRepoGrant(ctx, userID, repo)
+	if err := s.store.DeleteRepoGrant(ctx, userID, repo); err != nil {
+		return err
+	}
+
+	s.recordGrantDelete(ctx, actor, subject, repo.String())
+
+	return nil
 }
 
 func (s *Service) DeleteAdminUserRepoGrant(ctx context.Context, actor domainauth.Principal, userID string, repository string) error {
@@ -683,10 +735,13 @@ func (s *Service) PutRepositoryGrant(ctx context.Context, actor domainauth.Princ
 		return domainauth.RepoGrant{}, err
 	}
 
+	// The existing grants bound a delegate and word the access history
+	// ("Reader to Writer"). For a global admin a failed read never blocks the
+	// grant; for a delegate it still does.
+	existing, listErr := s.store.ListRepoGrants(ctx, target.ID)
 	if !actor.IsAdmin {
-		existing, err := s.store.ListRepoGrants(ctx, target.ID)
-		if err != nil {
-			return domainauth.RepoGrant{}, err
+		if listErr != nil {
+			return domainauth.RepoGrant{}, listErr
 		}
 		for _, grant := range existing {
 			if grant.Repository.String() == repo.String() && grant.Role == domainauth.RepoRoleAdmin {
@@ -694,11 +749,16 @@ func (s *Service) PutRepositoryGrant(ctx context.Context, actor domainauth.Princ
 			}
 		}
 	}
+	previous, hadPrevious := grantRoleOn(existing, repo.String())
 
 	now := s.now()
 	grant := domainauth.RepoGrant{UserID: target.ID, Repository: repo, Role: role, CreatedAt: now, UpdatedAt: now}
 	if err := s.store.PutRepoGrant(ctx, grant); err != nil {
 		return domainauth.RepoGrant{}, err
+	}
+
+	if listErr == nil {
+		s.recordGrantPut(ctx, actor, target, grant, previous, hadPrevious)
 	}
 
 	return grant, nil
@@ -743,7 +803,13 @@ func (s *Service) DeleteRepositoryGrant(ctx context.Context, actor domainauth.Pr
 		}
 	}
 
-	return s.store.DeleteRepoGrant(ctx, target.ID, repo)
+	if err := s.store.DeleteRepoGrant(ctx, target.ID, repo); err != nil {
+		return err
+	}
+
+	s.recordGrantDelete(ctx, actor, target, repo.String())
+
+	return nil
 }
 
 func (s *Service) DeleteAdminRepositoryGrant(ctx context.Context, actor domainauth.Principal, repository string, username string) error {
@@ -779,7 +845,8 @@ func (s *Service) CreateRobot(ctx context.Context, actor domainauth.Principal, i
 
 	// Validate everything CreateAdminToken will validate before the first
 	// write, so a bad TTL cannot leave an orphan robot behind.
-	if _, err := resolveAdminTokenTTL(input.TTL); err != nil {
+	ttl, err := resolveAdminTokenTTL(input.TTL)
+	if err != nil {
 		return ports.CreatedRobot{}, err
 	}
 
@@ -803,11 +870,13 @@ func (s *Service) CreateRobot(ctx context.Context, actor domainauth.Principal, i
 		return ports.CreatedRobot{}, err
 	}
 
-	created, err := s.CreateAdminToken(ctx, actor, ports.CreateAdminTokenInput{UserID: user.ID, Name: strings.TrimSpace(input.Name), TTL: input.TTL})
+	created, _, err := s.issueAdminToken(ctx, actor, ports.CreateAdminTokenInput{UserID: user.ID, Name: strings.TrimSpace(input.Name), TTL: input.TTL})
 	if err != nil {
 		s.rollbackRobot(ctx, user.ID)
 		return ports.CreatedRobot{}, err
 	}
+
+	s.recordRobotCreated(ctx, actor, user, grant, created.Token.Name, ttl)
 
 	return ports.CreatedRobot{User: user, Grant: grant, Secret: created.Secret, Accessor: created.Accessor, ExpiresAt: created.ExpiresAt}, nil
 }

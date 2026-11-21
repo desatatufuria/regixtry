@@ -3576,6 +3576,9 @@ func (f fakeAuthService) ListRepoGrants(context.Context, domainauth.Principal, s
 func (f fakeAuthService) ListAdminExpiringTokens(context.Context, domainauth.Principal, time.Duration, int) ([]ports.AdminExpiringToken, error) {
 	return nil, nil
 }
+func (f fakeAuthService) ListAdminAccessEvents(context.Context, domainauth.Principal, int) ([]ports.AdminAccessEvent, error) {
+	return nil, nil
+}
 func (f fakeAuthService) ListAdminTokens(context.Context, domainauth.Principal, string) ([]domainauth.Token, error) {
 	return nil, nil
 }

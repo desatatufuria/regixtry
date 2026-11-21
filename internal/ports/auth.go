@@ -217,6 +217,20 @@ type AdminExpiringToken struct {
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
+// AdminAccessEvent is one row of the access change history. It carries names
+// and short human text only: never a secret, hash, accessor or token id.
+type AdminAccessEvent struct {
+	ID         string                  `json:"id"`
+	At         time.Time               `json:"at"`
+	Action     domainauth.AccessAction `json:"action"`
+	Actor      string                  `json:"actor"`
+	Subject    string                  `json:"subject,omitempty"`
+	Repository string                  `json:"repository,omitempty"`
+	Role       string                  `json:"role,omitempty"`
+	TokenName  string                  `json:"token_name,omitempty"`
+	Detail     string                  `json:"detail,omitempty"`
+}
+
 type AdminCreateTokenInput struct {
 	UserID string        `json:"-"`
 	Name   string        `json:"name"`
@@ -248,6 +262,7 @@ type AdminHTTPService interface {
 	DeleteAdminRobot(ctx context.Context, actor domainauth.Principal, userID string) error
 	ListAdminUserTokens(ctx context.Context, actor domainauth.Principal, userID string) ([]AdminToken, error)
 	ListAdminExpiringTokens(ctx context.Context, actor domainauth.Principal, within time.Duration, limit int) ([]AdminExpiringToken, error)
+	ListAdminAccessEvents(ctx context.Context, actor domainauth.Principal, limit int) ([]AdminAccessEvent, error)
 	CreateAdminUserToken(ctx context.Context, actor domainauth.Principal, input AdminCreateTokenInput) (AdminCreatedToken, error)
 	RevokeAdminUserToken(ctx context.Context, actor domainauth.Principal, userID string, accessor string) error
 }
