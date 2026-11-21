@@ -270,25 +270,37 @@ func TestLifetimeCustomTyping(t *testing.T) {
 	}
 }
 
-func TestLifetimeCustomPasteIsFiltered(t *testing.T) {
+// A paste (more than one rune) is all or nothing: it must be a complete valid
+// Custom lifetime after trimming whitespace, and then it REPLACES the input
+// (unit lowercased). Anything else leaves the input exactly as it was.
+func TestLifetimeCustomPasteIsAllOrNothing(t *testing.T) {
 	t.Parallel()
-	l, ceiling := customSelected(t)
-	l = lifetimeKeys(t, l, ceiling, keyMsg{Text: "1a2 b-3"})
-	if l.Custom != "123" {
-		t.Fatalf("input after paste = %q, want 123", l.Custom)
+	ceiling := lifetimeCeiling()
+	paste := func(before, text string) string {
+		l := tokenLifetime{Index: 5, Chosen: true, Custom: before}
+		l, _ = l.handleKey(keyMsg{Text: text}, ceiling)
+		return l.Custom
 	}
-	l = lifetimeKeys(t, tokenLifetime{Index: 5, Chosen: true}, ceiling, keyMsg{Text: "enter"})
-	if l.Custom != "" {
-		t.Fatalf("pasted key name leaked into the input: %q", l.Custom)
+	for _, text := range []string{"1 day", "2 days", "30 days", "12 hours", "1d2h", "1dy", "thirty", "1a2 b-3", "enter", "12 H", "5 d", "-5", "99999999d", strings.Repeat("9", 500) + "d"} {
+		if got := paste("", text); got != "" {
+			t.Errorf("paste %q into empty input = %q, want it ignored", text, got)
+		}
+		if got := paste("7h", text); got != "7h" {
+			t.Errorf("paste %q over 7h = %q, want 7h unchanged", text, got)
+		}
 	}
-	l = lifetimeKeys(t, tokenLifetime{Index: 5, Chosen: true}, ceiling, keyMsg{Text: "12 H"})
-	if l.Custom != "12h" {
-		t.Fatalf("paste of '12 H' = %q, want 12h", l.Custom)
+	for text, want := range map[string]string{"12h": "12h", "2y": "2y", "45": "45", " 30d ": "30d", "12H": "12h", "\t7D\n": "7d"} {
+		if got := paste("", text); got != want {
+			t.Errorf("paste %q into empty input = %q, want %q", text, got, want)
+		}
+		if got := paste("9h", text); got != want {
+			t.Errorf("paste %q over 9h = %q, want %q (replaces)", text, got, want)
+		}
 	}
-	// "30 days" filters to 30 d y: the second unit replaces the first (30y), invalid.
-	l = lifetimeKeys(t, tokenLifetime{Index: 5, Chosen: true}, ceiling, keyMsg{Text: "30 days"})
+	l := tokenLifetime{Index: 5, Chosen: true}
+	l, _ = l.handleKey(keyMsg{Text: "1 day"}, ceiling)
 	if _, ok := l.duration(ceiling); ok {
-		t.Fatalf("a pasted '30 days' must not become a valid lifetime silently: %q", l.Custom)
+		t.Fatalf("an ignored paste must leave an invalid (empty) lifetime")
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	domainauth "regixtry/internal/domain/auth"
 )
@@ -202,6 +203,22 @@ func typeCustom(text string, r rune) string {
 	return text + string(r)
 }
 
+// pasteCustom handles pasted text, which is all or nothing: after trimming
+// whitespace it must be a complete valid Custom lifetime (digits and an
+// optional h, d or y, any case) and then it REPLACES the current input, unit
+// lowercased. Anything else (prose such as "1 day") leaves the input as it was,
+// so a paste can never pick a different unit than the one written.
+func pasteCustom(current, pasted string) string {
+	pasted = strings.ToLower(strings.TrimSpace(pasted))
+	if len(pasted) > maxCustomLifetimeChars {
+		return current
+	}
+	if _, ok := parseCustomLifetime(pasted, time.Duration(1<<62)); !ok {
+		return current
+	}
+	return pasted
+}
+
 // handleKey applies a key to the selector when it has focus and reports
 // whether the selector consumed it. Left/Right (arrow keys only) move between
 // options; with Custom selected, digits and one trailing unit letter (and
@@ -230,7 +247,12 @@ func (l tokenLifetime) handleKey(msg keyMsg, ceiling time.Duration) (tokenLifeti
 		l.Custom = trimLastRune(l.Custom)
 		return l, true
 	case isTextKey(msg):
-		for _, r := range keyText(msg) {
+		text := keyText(msg)
+		if utf8.RuneCountInString(text) > 1 {
+			l.Custom = pasteCustom(l.Custom, text)
+			return l, true
+		}
+		for _, r := range text {
 			l.Custom = typeCustom(l.Custom, r)
 		}
 		return l, true

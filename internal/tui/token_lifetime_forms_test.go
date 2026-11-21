@@ -109,6 +109,10 @@ var lifetimeSubmitCases = []struct {
 	{"Custom 45 means days", withCustom("4", "5"), 45 * day},
 	{"Custom 30d", withCustom("3", "0", "d"), 30 * day},
 	{"Custom 2y", withCustom("2", "y"), 730 * day},
+	{"pasted 12h", append(toCustom(), keyMsg{Text: "12h"}), 12 * time.Hour},
+	{"pasted 2y", append(toCustom(), keyMsg{Text: "2y"}), 730 * day},
+	{"pasted 45", append(toCustom(), keyMsg{Text: "45"}), 45 * day},
+	{"pasted padded 30d", append(toCustom(), keyMsg{Text: " 30d "}), 30 * day},
 	{"Custom 17520h is the ceiling", withCustom("1", "7", "5", "2", "0", "h"), 730 * day},
 }
 
@@ -125,6 +129,11 @@ var lifetimeRejectCases = []struct {
 	{"Custom huge", append(toCustom(), keyMsg{Text: "99999999999999999999"})},
 	{"Custom emptied again", append(withCustom("5"), testKeyBackspace())},
 	{"Custom unit only", withCustom("h")},
+	{"pasted 1 day is ignored", append(toCustom(), keyMsg{Text: "1 day"})},
+	{"pasted 2 days is ignored", append(toCustom(), keyMsg{Text: "2 days"})},
+	{"pasted 30 days is ignored", append(toCustom(), keyMsg{Text: "30 days"})},
+	{"pasted 12 hours is ignored", append(toCustom(), keyMsg{Text: "12 hours"})},
+	{"pasted 1d2h is ignored", append(toCustom(), keyMsg{Text: "1d2h"})},
 }
 
 func TestCreateTokenFormSendsTheChosenLifetime(t *testing.T) {
@@ -311,9 +320,13 @@ func TestLifetimeCustomKeysInTheForm(t *testing.T) {
 	if got() != "1" {
 		t.Fatalf("input after two Backspace = %q, want 1", got())
 	}
-	m = testSendKey(t, m, keyMsg{Text: "4x2d"}) // bracketed paste, filtered
-	if got() != "142d" {
-		t.Fatalf("input after paste = %q, want 142d", got())
+	m = testSendKey(t, m, keyMsg{Text: "4x2d"}) // bracketed paste that is not a lifetime: ignored
+	if got() != "1" {
+		t.Fatalf("input after an invalid paste = %q, want 1", got())
+	}
+	m = testSendKey(t, m, keyMsg{Text: " 30d "}) // a valid paste replaces the input
+	if got() != "30d" {
+		t.Fatalf("input after a valid paste = %q, want 30d", got())
 	}
 }
 
