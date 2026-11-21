@@ -57,6 +57,10 @@ type screenFrame struct {
 	Context string
 	Body    string
 	Overlay string // "" when the screen has no modal/overlay open
+	// Full marks a Body that is the whole screen, already built by
+	// renderShell: the workspace adds no title, context, status or help row
+	// around it (the shell carries its own header and key-hint footer).
+	Full bool
 }
 
 // adminScreen is the per-screen sub-model contract (design.md
@@ -132,6 +136,9 @@ const (
 	// slotGrantAccess holds grantAccessScreen (tui-v2-redesign S4): the
 	// one-screen "Grant repository access" flow, addressed via slotFor.
 	slotGrantAccess
+	// slotOverview holds overviewScreen (tui-v2-redesign S3): the post-login
+	// landing screen, rendered inside the application shell.
+	slotOverview
 	numScreenSlots
 )
 
@@ -173,6 +180,8 @@ func slotFor(id screen) (screenSlot, bool) {
 		return slotUpdateChannel, true
 	case screenAdminGrantAccess:
 		return slotGrantAccess, true
+	case screenAdminOverview:
+		return slotOverview, true
 	default:
 		return 0, false
 	}
@@ -266,6 +275,8 @@ func newAdminScreenFor(id screen) adminScreen {
 		return newUpdateChannelScreen()
 	case screenAdminGrantAccess:
 		return newGrantAccessScreen(screenAdminMenu, "")
+	case screenAdminOverview:
+		return newOverviewScreen()
 	default:
 		return nil
 	}

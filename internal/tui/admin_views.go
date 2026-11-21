@@ -31,11 +31,13 @@ func renderAdminWorkspace(current screen, session AdminSession, view AdminViewSt
 	// screen id still resolves through the legacy renderAdminScreen path
 	// unchanged (design.md D5's adapter boundary).
 	var context, body, help, screenOverlay string
+	var fullScreen bool
 	if slot, ok := slotFor(current); ok && adminScreens[slot] != nil {
 		frame := adminScreens[slot].View(theme, env)
 		context, body = frame.Context, frame.Body
 		help = shortHelpView(theme, adminScreens[slot].Keys())
 		screenOverlay = frame.Overlay
+		fullScreen = frame.Full
 	} else {
 		context, body, help = renderAdminScreen(theme, current, session, view, knownRepositories, layout, now)
 	}
@@ -44,6 +46,11 @@ func renderAdminWorkspace(current screen, session AdminSession, view AdminViewSt
 	// touched by the new kind param, and the admin workspace gets the same
 	// treatment — only screenError needs an explicit kind).
 	base := renderConsoleWorkspace("Regixtry Admin", context, body, status, help, statusKindAuto)
+	if fullScreen {
+		// The screen drew everything itself (renderShell): no workspace
+		// chrome around it.
+		base = body
+	}
 
 	var modalView string
 	switch {

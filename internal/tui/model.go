@@ -312,6 +312,10 @@ const (
 	// Compliance, Identity & Access, Operations). It replaces
 	// screenAdminUsers as the admin panel's own root.
 	screenAdminMenu screen = "admin-menu"
+	// screenAdminOverview is the post-login landing screen (tui-v2-redesign
+	// S3): the application shell around the quick actions and "Needs
+	// attention".
+	screenAdminOverview screen = "admin-overview"
 	// screenAdminOperations is the Operations domain (Phase 18, D9): 2 rows
 	// (Scan Runs, Secret Scan Findings).
 	screenAdminOperations screen = "admin-operations"
@@ -1335,6 +1339,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// navigating back to it never discards its state.
 		m.screen = msg.To
 		m.status = ""
+		if msg.To == screenAdminOverview {
+			// Coming back to the Overview refreshes "Needs attention": the
+			// operator may just have granted access or fixed a robot.
+			if overview, ok := m.adminScreens[slotOverview].(overviewScreen); ok {
+				return m, overview.Init(m.screenEnv())
+			}
+		}
 		if slot, ok := slotFor(msg.To); ok && m.adminScreens[slot] == nil {
 			next := newAdminScreenFor(msg.To)
 			m.adminScreens[slot] = next
@@ -1359,6 +1370,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.adminScreens[slotScanHistory] = next
 		m.status = fmt.Sprintf("Loading scan history for %s...", adminFirstNonEmpty(msg.repository, "repository"))
 		return m, next.Init(m.screenEnv())
+	case overviewLoadedMsg:
+		if reason, expired := msg.expiredReason(); expired {
+			return m.expireAdminSession(reason), nil
+		}
+		var cmd tea.Cmd
+		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
+		return m, cmd
+	case overviewOpenMsg:
+		return m.openFromOverview(msg.action)
 	case openGrantAccessMsg:
 		// An apply in flight owns the slot: never replace it (its result and
 		// the grants it writes must stay with the screen that started it).
@@ -1914,7 +1934,7 @@ func (m Model) viewScreen() string {
 		help := "q: quit"
 		layout := m.contentBudget("", help)
 		return renderInspectionWorkspace("Sign In", renderConsoleTextSection(m.loadingText, layout), "", help)
-	case screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken, screenRepoAdminGrants, screenRepoAdminAddGrant, screenAdminRobots, screenAdminCreateRobot, screenSecurityGitleaksRepos, screenSecuritySigningRepos, screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminMenu, screenAdminOperations, screenAdminScanRuns, screenAdminSecretFindings, screenAdminUpdateChannel, screenAdminGrantAccess:
+	case screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken, screenRepoAdminGrants, screenRepoAdminAddGrant, screenAdminRobots, screenAdminCreateRobot, screenSecurityGitleaksRepos, screenSecuritySigningRepos, screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminMenu, screenAdminOverview, screenAdminOperations, screenAdminScanRuns, screenAdminSecretFindings, screenAdminUpdateChannel, screenAdminGrantAccess:
 		help := adminScreenHelp(m.screen, m.adminView)
 		if slot, ok := slotFor(m.screen); ok && m.adminScreens[slot] != nil {
 			// Migrated top-level screen: help is derived from the screen's
@@ -2345,6 +2365,9 @@ func (m Model) updateAdminUsersKey(msg keyMsg) (tea.Model, tea.Cmd) {
 		return m, m.loadAdminUsersCmd()
 	case isRuneKey(msg, 'f'):
 		return m.openAdminFeatures()
+	case isRuneKey(msg, 't'):
+		// Tokens are per principal: the highlighted user's token list.
+		return m.openAdminEditTokens()
 	case isRuneKey(msg, 'b'):
 		return m.openAdminRobots()
 	case isRuneKey(msg, 'g'):
@@ -4112,6 +4135,30 @@ func (m Model) openAdminFeatures() (tea.Model, tea.Cmd) {
 // Decision 7), mirroring openAdminFeatures. Defensively clears any lingering
 // RevealedTokenSecret on entry (see updateAdminRobotsKey's "n" case for the
 // leak scenario this guards against).
+// openFromOverview opens a destination the Overview asked for that needs
+// Model state: the Robots list (loaded), the Create Robot form (a fresh one,
+// with the robots loaded behind it so Esc lands on a filled list) or the
+// Users list with a one-line pointer to the token key.
+func (m Model) openFromOverview(action overviewOpenAction) (tea.Model, tea.Cmd) {
+	switch action {
+	case overviewOpenRobots:
+		return m.openAdminRobots()
+	case overviewOpenCreateRobot:
+		m.clearRevealedAdminToken()
+		m.adminView.UserSearchActive = false
+		m.adminView.CreateRobotForm = newAdminViewState().CreateRobotForm
+		m.screen = screenAdminCreateRobot
+		m.status = ""
+		return m, m.loadAdminRobotsCmd()
+	case overviewOpenUsersForToken:
+		m.adminView.UserSearchActive = false
+		m.screen = screenAdminUsers
+		m.status = overviewUsersTokenStatus
+		return m, nil
+	}
+	return m, nil
+}
+
 func (m Model) openAdminRobots() (tea.Model, tea.Cmd) {
 	m.screen = screenAdminRobots
 	m.adminView.UserSearchActive = false
@@ -4317,7 +4364,7 @@ func nextDelegateGrantRole(current domainauth.RepoRole) domainauth.RepoRole {
 
 func isAdminScreen(current screen) bool {
 	switch current {
-	case screenAdminLogin, screenAdminAuthenticating, screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken, screenRepoAdminGrants, screenRepoAdminAddGrant, screenAdminRobots, screenAdminCreateRobot, screenSecurityGitleaksRepos, screenSecuritySigningRepos, screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminMenu, screenAdminOperations, screenAdminScanRuns, screenAdminSecretFindings, screenAdminUpdateChannel, screenAdminGrantAccess:
+	case screenAdminLogin, screenAdminAuthenticating, screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken, screenRepoAdminGrants, screenRepoAdminAddGrant, screenAdminRobots, screenAdminCreateRobot, screenSecurityGitleaksRepos, screenSecuritySigningRepos, screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminMenu, screenAdminOverview, screenAdminOperations, screenAdminScanRuns, screenAdminSecretFindings, screenAdminUpdateChannel, screenAdminGrantAccess:
 		return true
 	default:
 		return false
@@ -4341,7 +4388,7 @@ func isAdminScreen(current screen) bool {
 // screens above.
 func isAdminPrincipalScreen(current screen) bool {
 	switch current {
-	case screenAdminLogin, screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminEditUserGrants, screenAdminEditUserTokens, screenRepoAdminGrants, screenAdminRobots, screenSecurityTrivy, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminMenu, screenAdminOperations, screenAdminUpdateChannel:
+	case screenAdminLogin, screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminEditUserGrants, screenAdminEditUserTokens, screenRepoAdminGrants, screenAdminRobots, screenSecurityTrivy, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminMenu, screenAdminOverview, screenAdminOperations, screenAdminUpdateChannel:
 		return true
 	default:
 		return false
@@ -4389,7 +4436,7 @@ func (m Model) canLogoutAdminFromCurrentScreen() bool {
 		return !m.adminView.UserSearchActive
 	case screenAdminFeatures, screenAdminEditUser, screenAdminEditUserGrants, screenAdminEditUserTokens, screenRepoAdminGrants, screenAdminRobots,
 		screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenSecurityGitleaksRepos, screenSecuritySigningRepos,
-		screenAdminMenu, screenAdminOperations, screenAdminScanRuns, screenAdminSecretFindings, screenAdminUpdateChannel:
+		screenAdminMenu, screenAdminOverview, screenAdminOperations, screenAdminScanRuns, screenAdminSecretFindings, screenAdminUpdateChannel:
 		return true
 	default:
 		return false
