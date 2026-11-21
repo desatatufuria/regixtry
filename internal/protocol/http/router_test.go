@@ -1579,7 +1579,7 @@ func TestRouterAdminTokenRoutesRejectExcessiveTTLAndMismatchedRevoke(t *testing.
 		t.Fatalf("CreateAdminUser(other) error = %v", err)
 	}
 
-	createReq := httptest.NewRequest(http.MethodPost, "/admin/v1/users/"+owner.ID+"/admin-tokens", strings.NewReader(`{"name":"ci","ttl_seconds":2592001}`))
+	createReq := httptest.NewRequest(http.MethodPost, "/admin/v1/users/"+owner.ID+"/admin-tokens", strings.NewReader(`{"name":"ci","ttl_seconds":63072001}`))
 	createReq.Header.Set("Authorization", "Bearer "+adminToken)
 	createReq.Header.Set("Content-Type", "application/json")
 	createRecorder := httptest.NewRecorder()
@@ -3621,4 +3621,62 @@ func (f fakeAuthService) ListAdminRobots(context.Context, domainauth.Principal) 
 func (f fakeAuthService) DeleteRobot(context.Context, domainauth.Principal, string) error { return nil }
 func (f fakeAuthService) DeleteAdminRobot(context.Context, domainauth.Principal, string) error {
 	return nil
+}
+
+func TestRouterAdminTokenAndRobotTTLBounds(t *testing.T) {
+	t.Parallel()
+
+	handler, authService, adminActor, adminToken, cleanup := newTestRouterWithRealAuth(t)
+	defer cleanup()
+
+	owner, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
+		Username: "ttl-owner",
+		Password: "password123",
+		Enabled:  true,
+		IsAdmin:  true,
+	})
+	if err != nil {
+		t.Fatalf("CreateAdminUser(owner) error = %v", err)
+	}
+
+	post := func(path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+adminToken)
+		req.Header.Set("Content-Type", "application/json")
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+		return recorder
+	}
+
+	tests := []struct {
+		name       string
+		ttlField   string
+		wantStatus int
+	}{
+		{name: "omitted ttl uses the default", ttlField: ``, wantStatus: http.StatusCreated},
+		{name: "30 days", ttlField: `,"ttl_seconds":2592000`, wantStatus: http.StatusCreated},
+		{name: "exactly 2 years", ttlField: `,"ttl_seconds":63072000`, wantStatus: http.StatusCreated},
+		{name: "2 years plus one second", ttlField: `,"ttl_seconds":63072001`, wantStatus: http.StatusUnprocessableEntity},
+	}
+	for i, tt := range tests {
+		suffix := string(rune('a' + i))
+		t.Run("user token "+tt.name, func(t *testing.T) {
+			rec := post("/admin/v1/users/"+owner.ID+"/admin-tokens", `{"name":"ci-`+suffix+`"`+tt.ttlField+`}`)
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d; body = %s", rec.Code, tt.wantStatus, rec.Body.String())
+			}
+			if tt.wantStatus != http.StatusCreated && !strings.Contains(rec.Body.String(), "2 years") {
+				t.Fatalf("body = %s, want it to name the 2 year maximum", rec.Body.String())
+			}
+		})
+		t.Run("robot "+tt.name, func(t *testing.T) {
+			rec := post("/admin/v1/robots", `{"name":"robot-`+suffix+`","repository":"team/app","role":"repo-writer"`+tt.ttlField+`}`)
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d; body = %s", rec.Code, tt.wantStatus, rec.Body.String())
+			}
+			if tt.wantStatus != http.StatusCreated && !strings.Contains(rec.Body.String(), "2 years") {
+				t.Fatalf("body = %s, want it to name the 2 year maximum", rec.Body.String())
+			}
+		})
+	}
 }
