@@ -6,7 +6,7 @@ It is not a full Harbor replacement: the current scope is single-tenant, single-
 
 ## Quick start (no auth)
 
-Requirements: Go `1.26.0`, or Docker/Compose.
+Requirements: Go `1.27.0`, or Docker/Compose.
 
 ```bash
 go run ./cmd/regixtry serve \

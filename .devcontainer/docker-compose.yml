@@ -7,7 +7,7 @@ services:
         USERNAME: "furia"
         USER_ID: "1000"
         GROUP_ID: "1000"
-        GO_IMAGE_VERSION: "1.26.4-bookworm"
+        GO_IMAGE_VERSION: "1.27.4-bookworm"
         DOCKER_COMPOSE_VERSION: "v5.0.2"
         AIR_VERSION: "latest"
         GO_DELVE_VERSION: "latest"

@@ -20,7 +20,7 @@ cd regixtry
 go build -o regixtry ./cmd/regixtry
 ```
 
-The Go version declared in `go.mod` is `1.26.0`.
+The Go version declared in `go.mod` is `1.27.0`.
 
 ## Linux + systemd setup
 

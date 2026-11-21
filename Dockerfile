@@ -40,7 +40,7 @@ COPY regixtry /usr/local/bin/regixtry
 
 # build compiles the binary for the dev image only. GoReleaser's
 # `--target=release` build never reaches this stage.
-FROM golang:1.26-bookworm AS build
+FROM golang:1.27.4-bookworm AS build
 
 WORKDIR /src
 
