@@ -23,7 +23,7 @@ func (k screenKeys) FullHelp() [][]key.Binding { return k.full }
 // being handled — the drift class this change exists to kill.
 func (k screenKeys) matches(msg keyMsg, id string) bool {
 	for _, b := range k.short {
-		if b.Help().Key == id && key.Matches(msg, b) {
+		if b.Help().Key == id && key.Matches(keyName(keyString(msg)), b) {
 			return true
 		}
 	}

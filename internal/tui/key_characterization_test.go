@@ -109,7 +109,8 @@ func TestKeyHelpersCharacterization(t *testing.T) {
 		{"ctrl+c", testKeyCtrl('c'), nil},
 		{"ctrl+k is not vim up", testKeyCtrl('k'), nil},
 		{"ctrl+j is not vim down", testKeyCtrl('j'), nil},
-		{"pasted text spelling a key name", testKeyRunes("enter"), []string{"isEnterKey"}},
+		// A v1 paste stringifies as "[text]", so pasted "enter" is not Enter.
+		{"pasted text spelling a key name", keyMsg{Text: "enter"}, nil},
 	}
 
 	names := make([]string, 0, len(helpers))

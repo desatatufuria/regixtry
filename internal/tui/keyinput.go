@@ -11,23 +11,23 @@ import (
 type keyMsg = tea.KeyPressMsg
 
 func isMoveUpKey(msg keyMsg) bool {
-	return isCode(msg, tea.KeyUp) || msg.String() == "up" || isRuneKey(msg, 'k')
+	return isCode(msg, tea.KeyUp) || keyString(msg) == "up" || isRuneKey(msg, 'k')
 }
 
 func isMoveDownKey(msg keyMsg) bool {
-	return isCode(msg, tea.KeyDown) || msg.String() == "down" || isRuneKey(msg, 'j')
+	return isCode(msg, tea.KeyDown) || keyString(msg) == "down" || isRuneKey(msg, 'j')
 }
 
 func isEnterKey(msg keyMsg) bool {
-	return isCode(msg, tea.KeyEnter) || msg.String() == "enter"
+	return isCode(msg, tea.KeyEnter) || keyString(msg) == "enter"
 }
 
 func isTabKey(msg keyMsg) bool {
-	return isCode(msg, tea.KeyTab) || msg.String() == "tab"
+	return isCode(msg, tea.KeyTab) || keyString(msg) == "tab"
 }
 
 func isShiftTabKey(msg keyMsg) bool {
-	return msg.String() == "shift+tab"
+	return keyString(msg) == "shift+tab"
 }
 
 // isMoveLeftKey/isMoveRightKey back the scan history modal's Left/Right
@@ -35,19 +35,19 @@ func isShiftTabKey(msg keyMsg) bool {
 // no 'h'/'l' vim-style rune aliases (unlike isMoveUpKey/isMoveDownKey's 'k'/
 // 'j'): 'l' is already the admin logout key.
 func isMoveLeftKey(msg keyMsg) bool {
-	return isCode(msg, tea.KeyLeft) || msg.String() == "left"
+	return isCode(msg, tea.KeyLeft) || keyString(msg) == "left"
 }
 
 func isMoveRightKey(msg keyMsg) bool {
-	return isCode(msg, tea.KeyRight) || msg.String() == "right"
+	return isCode(msg, tea.KeyRight) || keyString(msg) == "right"
 }
 
 func isEscKey(msg keyMsg) bool {
-	return isCode(msg, tea.KeyEscape) || msg.String() == "esc"
+	return isCode(msg, tea.KeyEscape) || keyString(msg) == "esc"
 }
 
 func isBackspaceKey(msg keyMsg) bool {
-	return isCode(msg, tea.KeyBackspace) || msg.String() == "backspace"
+	return isCode(msg, tea.KeyBackspace) || keyString(msg) == "backspace"
 }
 
 func isBackKey(msg keyMsg) bool {
@@ -55,19 +55,19 @@ func isBackKey(msg keyMsg) bool {
 }
 
 func isPgUpKey(msg keyMsg) bool {
-	return isCode(msg, tea.KeyPgUp) || msg.String() == "pgup"
+	return isCode(msg, tea.KeyPgUp) || keyString(msg) == "pgup"
 }
 
 func isPgDnKey(msg keyMsg) bool {
-	return isCode(msg, tea.KeyPgDown) || msg.String() == "pgdown"
+	return isCode(msg, tea.KeyPgDown) || keyString(msg) == "pgdown"
 }
 
 func isHomeKey(msg keyMsg) bool {
-	return isCode(msg, tea.KeyHome) || msg.String() == "home"
+	return isCode(msg, tea.KeyHome) || keyString(msg) == "home"
 }
 
 func isEndKey(msg keyMsg) bool {
-	return isCode(msg, tea.KeyEnd) || msg.String() == "end"
+	return isCode(msg, tea.KeyEnd) || keyString(msg) == "end"
 }
 
 func isRuneKey(msg keyMsg, candidates ...rune) bool {
@@ -113,6 +113,16 @@ func isCode(msg keyMsg, code rune) bool {
 }
 
 // keyString returns the library's canonical key name, such as "ctrl+c".
+// A synthetic paste key (Code 0, Text set) stringifies as "[text]", as a v1
+// paste did, so pasted text never matches a key name.
 func keyString(msg keyMsg) string {
+	if msg.Code == 0 && msg.Text != "" {
+		return "[" + msg.Text + "]"
+	}
 	return msg.String()
 }
+
+// keyName lets key.Matches see the paste-safe string from keyString.
+type keyName string
+
+func (k keyName) String() string { return string(k) }
