@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -135,9 +136,88 @@ func TestServiceCreateAdminUserTokenRejectsDisabledUserAndExcessiveTTL(t *testin
 	store.usersByID[enabled.ID] = enabled
 	store.usersByUsername[enabled.Username] = enabled
 
-	_, err = service.CreateAdminUserToken(context.Background(), actor, ports.AdminCreateTokenInput{UserID: enabled.ID, Name: "ci", TTL: domainauth.DefaultAdminTokenTTL + time.Second})
+	_, err = service.CreateAdminUserToken(context.Background(), actor, ports.AdminCreateTokenInput{UserID: enabled.ID, Name: "ci", TTL: domainauth.MaxAdminTokenTTL + time.Second})
 	if !domainauth.IsCode(err, domainauth.ErrorCodeValidation) {
 		t.Fatalf("CreateAdminUserToken(ttl) error = %v, want validation", err)
+	}
+}
+
+func TestServiceAdminTokenTTLBounds(t *testing.T) {
+	t.Parallel()
+
+	const day = 24 * time.Hour
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	actor := domainauth.Principal{UserID: "admin-1", Username: "admin", IsAdmin: true}
+
+	tests := []struct {
+		name    string
+		ttl     time.Duration
+		want    time.Duration
+		wantErr bool
+	}{
+		{name: "omitted means the 30 day default", ttl: 0, want: 30 * day},
+		{name: "negative means the 30 day default", ttl: -time.Second, want: 30 * day},
+		{name: "30 days", ttl: 30 * day, want: 30 * day},
+		{name: "30 days plus one second", ttl: 30*day + time.Second, want: 30*day + time.Second},
+		{name: "90 days", ttl: 90 * day, want: 90 * day},
+		{name: "365 days", ttl: 365 * day, want: 365 * day},
+		{name: "exactly 2 years", ttl: 730 * day, want: 730 * day},
+		{name: "2 years plus one second", ttl: 730*day + time.Second, wantErr: true},
+		{name: "far above 2 years", ttl: 100 * 365 * day, wantErr: true},
+	}
+
+	assertRejected := func(t *testing.T, err error) {
+		t.Helper()
+		if !domainauth.IsCode(err, domainauth.ErrorCodeValidation) {
+			t.Fatalf("error = %v, want validation", err)
+		}
+		if got, want := err.Error(), "admin token ttl must be 2 years or shorter"; !strings.Contains(got, want) {
+			t.Fatalf("error message = %q, want it to contain %q", got, want)
+		}
+	}
+
+	for _, tt := range tests {
+		t.Run("user token "+tt.name, func(t *testing.T) {
+			t.Parallel()
+			store := newMemoryAuthStore()
+			user := domainauth.User{ID: "user-1", Username: "owner", PasswordHash: mustHashPassword(t, "password123"), Enabled: true, CreatedAt: now, UpdatedAt: now}
+			store.usersByID[user.ID] = user
+			store.usersByUsername[user.Username] = user
+			service := NewService(store)
+			service.now = func() time.Time { return now }
+
+			created, err := service.CreateAdminUserToken(context.Background(), actor, ports.AdminCreateTokenInput{UserID: user.ID, Name: "ci", TTL: tt.ttl})
+			if tt.wantErr {
+				assertRejected(t, err)
+				return
+			}
+			if err != nil {
+				t.Fatalf("CreateAdminUserToken() error = %v", err)
+			}
+			if want := now.Add(tt.want); !created.ExpiresAt.Equal(want) {
+				t.Fatalf("ExpiresAt = %s, want %s", created.ExpiresAt, want)
+			}
+		})
+
+		t.Run("robot "+tt.name, func(t *testing.T) {
+			t.Parallel()
+			service := NewService(newMemoryAuthStore())
+			service.now = func() time.Time { return now }
+
+			created, err := service.CreateRobot(context.Background(), actor, ports.CreateRobotInput{
+				Name: "ci-ttl", Repository: "team/app", Role: domainauth.RepoRoleWriter, TTL: tt.ttl,
+			})
+			if tt.wantErr {
+				assertRejected(t, err)
+				return
+			}
+			if err != nil {
+				t.Fatalf("CreateRobot() error = %v", err)
+			}
+			if want := now.Add(tt.want); !created.ExpiresAt.Equal(want) {
+				t.Fatalf("ExpiresAt = %s, want %s", created.ExpiresAt, want)
+			}
+		})
 	}
 }
 
@@ -566,7 +646,7 @@ func TestServiceCreateRobotPersistsGrantEnforcesTTLCeilingAndSupportsRevocation(
 		service.now = func() time.Time { return now }
 
 		_, err := service.CreateRobot(context.Background(), actor, ports.CreateRobotInput{
-			Name: "ci-ttl", Repository: "team/app", Role: domainauth.RepoRoleWriter, TTL: domainauth.DefaultAdminTokenTTL + time.Second,
+			Name: "ci-ttl", Repository: "team/app", Role: domainauth.RepoRoleWriter, TTL: domainauth.MaxAdminTokenTTL + time.Second,
 		})
 		if !domainauth.IsCode(err, domainauth.ErrorCodeValidation) {
 			t.Fatalf("CreateRobot(excessive ttl) error = %v, want validation", err)

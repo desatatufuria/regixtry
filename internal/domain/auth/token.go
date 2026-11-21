@@ -11,8 +11,13 @@ const (
 	TokenKindAccess          TokenKind = "access"
 	TokenKindAdminCredential TokenKind = "admin-credential"
 
-	AccessTokenTTL       = 15 * time.Minute
+	AccessTokenTTL = 15 * time.Minute
+	// DefaultAdminTokenTTL is the lifetime of an admin credential token when
+	// the request does not ask for one.
 	DefaultAdminTokenTTL = 30 * 24 * time.Hour
+	// MaxAdminTokenTTL is the longest lifetime an admin credential token may
+	// be given. "2 years" is defined as 730 days (2 * 365), ignoring leap days.
+	MaxAdminTokenTTL = 2 * 365 * 24 * time.Hour
 )
 
 type Token struct {

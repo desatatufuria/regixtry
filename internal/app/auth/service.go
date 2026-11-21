@@ -374,8 +374,8 @@ func (s *Service) CreateAdminToken(ctx context.Context, actor domainauth.Princip
 	if ttl <= 0 {
 		ttl = domainauth.DefaultAdminTokenTTL
 	}
-	if ttl > domainauth.DefaultAdminTokenTTL {
-		return ports.CreatedAdminToken{}, domainauth.NewValidationError("admin token ttl must be 30 days or shorter")
+	if ttl > domainauth.MaxAdminTokenTTL {
+		return ports.CreatedAdminToken{}, domainauth.NewValidationError("admin token ttl must be 2 years or shorter")
 	}
 
 	secret, err := randomSecret(32)
