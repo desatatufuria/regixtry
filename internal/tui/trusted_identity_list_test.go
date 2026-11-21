@@ -3,12 +3,11 @@ package tui
 import (
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"regixtry/internal/ports"
 )
 
-func trustedIdentityListTestKey(runes string) tea.KeyMsg {
-	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(runes)}
+func trustedIdentityListTestKey(runes string) keyMsg {
+	return testKeyRunes(runes)
 }
 
 var trustedIdentityListTestGitHub = ports.TrustedIdentity{
@@ -26,7 +25,7 @@ func TestTrustedIdentityListUpDownNavigationIsBounded(t *testing.T) {
 
 	list := newTrustedIdentityList([]ports.TrustedIdentity{trustedIdentityListTestGitHub, trustedIdentityListTestGitLab})
 
-	next, consumed := list.update(tea.KeyMsg{Type: tea.KeyUp})
+	next, consumed := list.update(testKeyUp())
 	if !consumed {
 		t.Fatalf("Up: consumed = %v, want true", consumed)
 	}
@@ -34,11 +33,11 @@ func TestTrustedIdentityListUpDownNavigationIsBounded(t *testing.T) {
 		t.Fatalf("selected = %d, want 0 (bounded at zero)", next.selected)
 	}
 
-	next, _ = next.update(tea.KeyMsg{Type: tea.KeyDown})
+	next, _ = next.update(testKeyDown())
 	if next.selected != 1 {
 		t.Fatalf("selected = %d, want 1", next.selected)
 	}
-	next, _ = next.update(tea.KeyMsg{Type: tea.KeyDown})
+	next, _ = next.update(testKeyDown())
 	if next.selected != 1 {
 		t.Fatalf("selected = %d, want 1 (bounded at len-1)", next.selected)
 	}
@@ -48,7 +47,7 @@ func TestTrustedIdentityListUnhandledKeyIsNotConsumed(t *testing.T) {
 	t.Parallel()
 
 	list := newTrustedIdentityList(nil)
-	next, consumed := list.update(tea.KeyMsg{Type: tea.KeyTab})
+	next, consumed := list.update(testKeyTab())
 	if consumed {
 		t.Fatal("Tab: consumed = true, want false (falls through to the host screen)")
 	}
@@ -71,17 +70,17 @@ func TestTrustedIdentityListAddFlowCommitsAValidIdentity(t *testing.T) {
 	}
 
 	for _, r := range trustedIdentityListTestGitHub.CertificateIdentityRegexp {
-		list, _ = list.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		list, _ = list.update(testKeyRunes(string(r)))
 	}
-	list, consumed = list.update(tea.KeyMsg{Type: tea.KeyTab})
+	list, consumed = list.update(testKeyTab())
 	if !consumed || list.addFocus != identityAddFieldIssuer {
 		t.Fatalf("Tab (switch to issuer field): consumed = %v, addFocus = %v, want consumed=true, addFocus=identityAddFieldIssuer", consumed, list.addFocus)
 	}
 	for _, r := range trustedIdentityListTestGitHub.CertificateOIDCIssuer {
-		list, _ = list.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		list, _ = list.update(testKeyRunes(string(r)))
 	}
 
-	list, consumed = list.update(tea.KeyMsg{Type: tea.KeyEnter})
+	list, consumed = list.update(testKeyEnter())
 	if !consumed {
 		t.Fatalf("Enter (commit add): consumed = %v, want true", consumed)
 	}
@@ -106,7 +105,7 @@ func TestTrustedIdentityListAddFlowRejectsInvalidRegexp(t *testing.T) {
 	list, _ = list.update(trustedIdentityListTestKey("n"))
 	list, _ = list.update(trustedIdentityListTestKey("(unterminated"))
 
-	list, consumed := list.update(tea.KeyMsg{Type: tea.KeyEnter})
+	list, consumed := list.update(testKeyEnter())
 	if !consumed {
 		t.Fatal("Enter (rejected commit): consumed = false, want true")
 	}
@@ -128,7 +127,7 @@ func TestTrustedIdentityListAddFlowRejectsMissingIssuer(t *testing.T) {
 	list, _ = list.update(trustedIdentityListTestKey("n"))
 	list, _ = list.update(trustedIdentityListTestKey("^valid$"))
 
-	list, consumed := list.update(tea.KeyMsg{Type: tea.KeyEnter})
+	list, consumed := list.update(testKeyEnter())
 	if !consumed {
 		t.Fatal("Enter (rejected commit, empty issuer): consumed = false, want true")
 	}
@@ -150,7 +149,7 @@ func TestTrustedIdentityListEscWhileAddingCancelsWithoutAdding(t *testing.T) {
 	list, _ = list.update(trustedIdentityListTestKey("n"))
 	list, _ = list.update(trustedIdentityListTestKey("partial input"))
 
-	list, consumed := list.update(tea.KeyMsg{Type: tea.KeyEsc})
+	list, consumed := list.update(testKeyEsc())
 	if !consumed {
 		t.Fatal("Esc (cancel add): consumed = false, want true")
 	}

@@ -2,8 +2,6 @@ package tui
 
 import (
 	"testing"
-
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 // TestSecurityMenuScreenEscReturnsToAdminMenu is the Judgment Day final-review
@@ -20,7 +18,7 @@ func TestSecurityMenuScreenEscReturnsToAdminMenu(t *testing.T) {
 
 	s := securityMenuScreen{}
 
-	next, cmd, consumed := s.Update(screenEnv{}, tea.KeyMsg{Type: tea.KeyEsc})
+	next, cmd, consumed := s.Update(screenEnv{}, testKeyEsc())
 	if !consumed {
 		t.Fatalf("consumed = false, want true")
 	}

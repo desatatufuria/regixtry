@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"regixtry/internal/ports"
 )
 
@@ -40,7 +39,7 @@ func TestSigningConfigScreenKeyListReachableWithoutTabbingToIt(t *testing.T) {
 		t.Fatal("test setup invalid: default focus is already signingPolicyFieldAddKey")
 	}
 
-	next, cmd, consumed := s.updateConfigKey(env, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	next, cmd, consumed := s.updateConfigKey(env, testKeyRunes("n"))
 	if !consumed || cmd != nil {
 		t.Fatalf("'n' with focus elsewhere: consumed = %v, cmd = %v, want consumed=true, cmd=nil", consumed, cmd)
 	}
@@ -77,7 +76,7 @@ func TestSigningConfigScreenKeyListInteractionSnapsFocusToAddKey(t *testing.T) {
 		t.Fatal("test setup invalid: default focus is already signingPolicyFieldAddKey")
 	}
 
-	next, cmd, consumed := s.updateConfigKey(env, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	next, cmd, consumed := s.updateConfigKey(env, testKeyRunes("n"))
 	if !consumed || cmd != nil {
 		t.Fatalf("'n' with focus elsewhere: consumed = %v, cmd = %v, want consumed=true, cmd=nil", consumed, cmd)
 	}
@@ -105,7 +104,7 @@ func TestSigningConfigScreenOpenModalSeedsIdentitiesFromPolicy(t *testing.T) {
 		TrustedIdentities: []ports.TrustedIdentity{{CertificateIdentityRegexp: "^valid$", CertificateOIDCIssuer: "https://token.actions.githubusercontent.com"}},
 	}}
 
-	next, _, consumed := s.updateKey(env, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	next, _, consumed := s.updateKey(env, testKeyRunes("p"))
 	if !consumed {
 		t.Fatal("'p': consumed = false, want true")
 	}
@@ -134,7 +133,7 @@ func TestSigningConfigScreenIdentityListReachableOnceTabbedTo(t *testing.T) {
 		Identities: newTrustedIdentityList(nil),
 	}}
 
-	next, cmd, consumed := s.updateConfigKey(env, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	next, cmd, consumed := s.updateConfigKey(env, testKeyRunes("n"))
 	if !consumed || cmd != nil {
 		t.Fatalf("'n' with identities focused: consumed = %v, cmd = %v, want consumed=true, cmd=nil", consumed, cmd)
 	}
@@ -163,7 +162,7 @@ func TestSigningConfigScreenSaveIncludesConfiguredIdentities(t *testing.T) {
 		Identities: newTrustedIdentityList([]ports.TrustedIdentity{{CertificateIdentityRegexp: "^valid$", CertificateOIDCIssuer: "https://token.actions.githubusercontent.com"}}),
 	}}
 
-	_, cmd, consumed := s.updateConfigKey(env, tea.KeyMsg{Type: tea.KeyEnter})
+	_, cmd, consumed := s.updateConfigKey(env, testKeyEnter())
 	if !consumed || cmd == nil {
 		t.Fatalf("Enter (save): consumed = %v, cmd = %v, want consumed=true, cmd != nil", consumed, cmd)
 	}

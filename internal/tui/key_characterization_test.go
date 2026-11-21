@@ -5,43 +5,50 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // Every key message in the characterization tests is built only by the
 // testKey* helpers below, so a Bubble Tea major upgrade edits just these bodies.
 
-func testKeyRunes(text string) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(text)} }
-func testKeySpace() tea.KeyMsg            { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}} }
-func testKeyEnter() tea.KeyMsg            { return tea.KeyMsg{Type: tea.KeyEnter} }
-func testKeyEsc() tea.KeyMsg              { return tea.KeyMsg{Type: tea.KeyEsc} }
-func testKeyBackspace() tea.KeyMsg        { return tea.KeyMsg{Type: tea.KeyBackspace} }
-func testKeyTab() tea.KeyMsg              { return tea.KeyMsg{Type: tea.KeyTab} }
-func testKeyShiftTab() tea.KeyMsg         { return tea.KeyMsg{Type: tea.KeyShiftTab} }
-func testKeyUp() tea.KeyMsg               { return tea.KeyMsg{Type: tea.KeyUp} }
-func testKeyDown() tea.KeyMsg             { return tea.KeyMsg{Type: tea.KeyDown} }
-func testKeyLeft() tea.KeyMsg             { return tea.KeyMsg{Type: tea.KeyLeft} }
-func testKeyRight() tea.KeyMsg            { return tea.KeyMsg{Type: tea.KeyRight} }
-func testKeyPgUp() tea.KeyMsg             { return tea.KeyMsg{Type: tea.KeyPgUp} }
-func testKeyPgDown() tea.KeyMsg           { return tea.KeyMsg{Type: tea.KeyPgDown} }
-func testKeyHome() tea.KeyMsg             { return tea.KeyMsg{Type: tea.KeyHome} }
-func testKeyEnd() tea.KeyMsg              { return tea.KeyMsg{Type: tea.KeyEnd} }
-func testKeyAlt(text string) tea.KeyMsg {
-	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(text), Alt: true}
+func testKeyRunes(text string) keyMsg { return keyMsg{Code: firstRune(text), Text: text} }
+func testKeySpace() keyMsg            { return keyMsg{Code: tea.KeySpace, Text: " "} }
+func testKeyEnter() keyMsg            { return keyMsg{Code: tea.KeyEnter} }
+func testKeyEsc() keyMsg              { return keyMsg{Code: tea.KeyEscape} }
+func testKeyBackspace() keyMsg        { return keyMsg{Code: tea.KeyBackspace} }
+func testKeyTab() keyMsg              { return keyMsg{Code: tea.KeyTab} }
+func testKeyShiftTab() keyMsg         { return keyMsg{Code: tea.KeyTab, Mod: tea.ModShift} }
+func testKeyUp() keyMsg               { return keyMsg{Code: tea.KeyUp} }
+func testKeyDown() keyMsg             { return keyMsg{Code: tea.KeyDown} }
+func testKeyLeft() keyMsg             { return keyMsg{Code: tea.KeyLeft} }
+func testKeyRight() keyMsg            { return keyMsg{Code: tea.KeyRight} }
+func testKeyPgUp() keyMsg             { return keyMsg{Code: tea.KeyPgUp} }
+func testKeyPgDown() keyMsg           { return keyMsg{Code: tea.KeyPgDown} }
+func testKeyHome() keyMsg             { return keyMsg{Code: tea.KeyHome} }
+func testKeyEnd() keyMsg              { return keyMsg{Code: tea.KeyEnd} }
+func testKeyAlt(text string) keyMsg {
+	return keyMsg{Code: firstRune(text), Text: "", Mod: tea.ModAlt}
 }
 
-func testKeyCtrl(letter byte) tea.KeyMsg {
-	return tea.KeyMsg{Type: tea.KeyType(letter - 'a' + 1)}
+func testKeyCtrl(letter byte) keyMsg {
+	return keyMsg{Code: rune(letter), Mod: tea.ModCtrl}
+}
+
+func firstRune(text string) rune {
+	for _, r := range text {
+		return r
+	}
+	return 0
 }
 
 // testSendKey feeds one key through Update and drops the returned command.
-func testSendKey(t *testing.T, m Model, msg tea.KeyMsg) Model {
+func testSendKey(t *testing.T, m Model, msg keyMsg) Model {
 	t.Helper()
 	updated, _ := m.Update(msg)
 	return updated.(Model)
 }
 
-func testSendKeys(t *testing.T, m Model, msgs ...tea.KeyMsg) Model {
+func testSendKeys(t *testing.T, m Model, msgs ...keyMsg) Model {
 	t.Helper()
 	for _, msg := range msgs {
 		m = testSendKey(t, m, msg)
@@ -52,7 +59,7 @@ func testSendKeys(t *testing.T, m Model, msgs ...tea.KeyMsg) Model {
 func TestKeyHelpersCharacterization(t *testing.T) {
 	t.Parallel()
 
-	helpers := map[string]func(tea.KeyMsg) bool{
+	helpers := map[string]func(keyMsg) bool{
 		"isMoveUpKey":    isMoveUpKey,
 		"isMoveDownKey":  isMoveDownKey,
 		"isMoveLeftKey":  isMoveLeftKey,
@@ -71,7 +78,7 @@ func TestKeyHelpersCharacterization(t *testing.T) {
 
 	tests := []struct {
 		name string
-		msg  tea.KeyMsg
+		msg  keyMsg
 		want []string // helpers that must return true; every other helper must return false
 	}{
 		{"enter", testKeyEnter(), []string{"isEnterKey"}},
@@ -134,7 +141,7 @@ func TestIsRuneKeyCharacterization(t *testing.T) {
 
 	tests := []struct {
 		name       string
-		msg        tea.KeyMsg
+		msg        keyMsg
 		candidates []rune
 		want       bool
 	}{
@@ -182,7 +189,7 @@ func TestTokenFormTextEntryCharacterization(t *testing.T) {
 	if got, want := m.adminView.TokenForm.Name, "ci bo"; got != want {
 		t.Fatalf("Name after backspace = %q, want %q", got, want)
 	}
-	if !strings.Contains(m.View(), "ci bo") {
+	if !strings.Contains(m.View().Content, "ci bo") {
 		t.Fatalf("view does not show the typed name")
 	}
 
@@ -232,7 +239,7 @@ func TestCreateUserFormPasswordEntryCharacterization(t *testing.T) {
 		t.Fatalf("Password after backspace = %q, want %q", got, want)
 	}
 
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "alice") {
 		t.Fatalf("view does not show the username")
 	}
@@ -268,7 +275,7 @@ func TestResetPasswordFormEntryCharacterization(t *testing.T) {
 	if got, want := m.adminView.ResetPasswordForm.NewPassword, "pa s"; got != want {
 		t.Fatalf("NewPassword after backspace = %q, want %q", got, want)
 	}
-	view := m.View()
+	view := m.View().Content
 	if strings.Contains(view, "pa s") {
 		t.Fatalf("view leaks the new password:\n%s", view)
 	}

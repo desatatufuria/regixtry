@@ -6,11 +6,10 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	bubbletable "github.com/evertras/bubble-table/table"
-	"github.com/muesli/termenv"
 	domainauth "regixtry/internal/domain/auth"
 	"regixtry/internal/ports"
 )
@@ -1043,16 +1042,8 @@ func TestRenderAdminScanHistoryModalChromeLinesAreSingleLine(t *testing.T) {
 // navigated run (modal.Cursor) highlighted the same way
 // adminScanHistoryModalTabBar highlights the active tab.
 func TestRenderAdminScanHistoryModalRendersExecutionsColumnWithCursorHighlighted(t *testing.T) {
-	// Not t.Parallel(): forces the global lipgloss color profile so
-	// theme.selected actually emits an ANSI sequence to assert on, following
-	// TestNewAdminBubbleTableAppliesThemeBorderForegroundColor's precedent
-	// (go test runs with no tty, so lipgloss otherwise auto-detects "no
-	// color" and theme.selected.Render would differ from plain text only by
-	// its Padding(0,1), which is indistinguishable from this modal's own
-	// unrelated column padding).
-	original := lipgloss.ColorProfile()
-	lipgloss.SetColorProfile(termenv.TrueColor)
-	defer lipgloss.SetColorProfile(original)
+	// lipgloss v2 always renders full-fidelity ANSI, so no color profile needs
+	// forcing for the styled output below to be distinguishable from plain text.
 
 	theme := newAdminTheme()
 	base := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
@@ -1855,7 +1846,7 @@ func TestNonMigratedScreensUnchanged(t *testing.T) {
 			wantContext, wantBody, wantHelp := renderAdminScreen(theme, id, session, tc.view, m.repositories.Names(), layout, now)
 			want := renderConsoleWorkspace("Regixtry Admin", wantContext, wantBody, m.status, wantHelp, statusKindAuto)
 
-			got := m.View()
+			got := m.View().Content
 			if got != want {
 				t.Fatalf("screen %q: Model.View() diverged from renderAdminScreen's direct output\ngot:\n%s\nwant:\n%s", id, got, want)
 			}

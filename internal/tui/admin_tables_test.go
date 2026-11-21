@@ -6,8 +6,7 @@ import (
 	"testing"
 	"time"
 
-	lipglossv2 "charm.land/lipgloss/v2"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	bubbletable "github.com/evertras/bubble-table/table"
 	"regixtry/internal/ports"
 )
@@ -224,7 +223,7 @@ func TestNewAdminBubbleTableShowsNoMisleadingIndicatorWhenAllRowsFit(t *testing.
 // non-TTY test environment with no profile forcing needed -- unlike v1
 // lipgloss, whose color profile this test used to force explicitly. The
 // expected sequence is derived by rendering nordBorderHex through the exact
-// same v2 style constructor the table itself uses (bubbleTableBaseStyleV2),
+// same v2 style constructor the table itself uses (bubbleTableBaseStyle),
 // not by independently recomputing it via v1's termenv.RGBColor: that path
 // has its own rounding difference from a direct hex-to-decimal conversion
 // (found live: termenv computed blue=105 for #4C566A, whose direct hex
@@ -239,7 +238,7 @@ func TestNewAdminBubbleTableAppliesThemeBorderForegroundColor(t *testing.T) {
 
 	table := newAdminBubbleTable(columns, rows, 0, minTableRows)
 
-	rendered := lipglossv2.NewStyle().Foreground(lipglossv2.Color(nordBorderHex)).Render("X")
+	rendered := lipgloss.NewStyle().Foreground(lipgloss.Color(nordBorderHex)).Render("X")
 	wantPrefix, _, found := strings.Cut(rendered, "X")
 	if !found {
 		t.Fatalf("v2 style rendering of nordBorderHex = %q, want an ANSI prefix before the literal %q", rendered, "X")

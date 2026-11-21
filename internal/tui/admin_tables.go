@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"charm.land/lipgloss/v2"
 	bubbletable "github.com/evertras/bubble-table/table"
 	"regixtry/internal/ports"
 )
@@ -136,9 +137,9 @@ func newAdminBubbleTable(columns []bubbletable.Column, rows []bubbletable.Row, h
 	model := bubbletable.New(columns).
 		WithRows(rows).
 		WithKeyMap(keys).
-		WithBaseStyle(bubbleTableBaseStyleV2()).
-		HeaderStyle(bubbleTableHeaderStyleV2()).
-		HighlightStyle(bubbleTableHighlightStyleV2()).
+		WithBaseStyle(bubbleTableBaseStyle()).
+		HeaderStyle(bubbleTableHeaderStyle()).
+		HighlightStyle(bubbleTableHighlightStyle()).
 		Focused(true).
 		BorderRounded().
 		WithPageSize(pageSize).
@@ -455,7 +456,7 @@ func secretFindingLocation(finding ports.SecretFinding) string {
 
 func severityStyledCell(severity string) bubbletable.StyledCell {
 	value := strings.ToUpper(strings.TrimSpace(severity))
-	return bubbletable.NewStyledCell(adminFirstNonEmpty(value, "UNKNOWN"), severityStyleV2(value))
+	return bubbletable.NewStyledCell(adminFirstNonEmpty(value, "UNKNOWN"), severityStyle(value))
 }
 
 // tableRoles splits a screen's row budget into two admin-table pageSize
@@ -495,4 +496,56 @@ func tableRoles(l consoleLayout) (primary, compact int) {
 func (m *Model) rebuildAdminTables(layout consoleLayout) {
 	layout.Primary, layout.Compact = tableRoles(layout)
 	m.adminView.Layout = layout
+}
+
+// Table styles are built from admin_theme.go's Nord hex constants so they can
+// never drift from the theme palette.
+
+func bubbleTableBaseStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Align(lipgloss.Left).BorderForeground(lipgloss.Color(nordBorderHex))
+}
+
+func bubbleTableHeaderStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(lipgloss.Color(nordTextHex)).Bold(true)
+}
+
+// bubbleTableHighlightStyle deliberately carries NO Padding, unlike
+// adminTheme.selected (v1)'s own Padding(0, 1): bubble-table only reduces
+// its wrap-width calculation by a COLUMN's own style padding
+// (evertras/bubble-table@v0.22.3 row.go's "Reduce the available text width
+// by any horizontal column padding" comment), never by the separate
+// row-level HighlightStyle's padding -- so padding added here is invisible
+// to bubble-table's own width math but still consumes real character
+// columns once rendered, silently wrapping a cell's content that would
+// otherwise fit exactly (found live: a 28-char repository name wrapped
+// mid-word once this highlight style carried the same Padding(0, 1) as
+// adminTheme.selected, in a 30-wide column). The highlight is a
+// foreground/background recolor of an existing cell, not a
+// pill/badge-shaped UI element the way adminTheme.selected's other,
+// non-table callers use it -- it does not need its own padding.
+func bubbleTableHighlightStyle() lipgloss.Style {
+	return lipgloss.NewStyle().
+		Foreground(lipgloss.Color(nordSelectedFGHex)).
+		Background(lipgloss.Color(nordSelectedBGHex)).
+		Bold(true)
+}
+
+// severityStyle maps an uppercased severity value onto its v2 cell
+// style, mirroring adminTheme's own severityCritical/severityHigh/
+// severityMedium/severityLow/text styles (v1) color-for-color -- the exact
+// same case set and fallback as the old severityStyledCell(theme, ...)
+// switch, before this function replaced it.
+func severityStyle(value string) lipgloss.Style {
+	switch value {
+	case "CRITICAL":
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(nordErrorHex)).Bold(true)
+	case "HIGH":
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(nordWarningHex)).Bold(true)
+	case "MEDIUM":
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(nordSeverityMediumHex))
+	case "LOW":
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(nordMutedHex))
+	default:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(nordTextHex))
+	}
 }

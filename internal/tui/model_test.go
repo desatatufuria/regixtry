@@ -10,12 +10,10 @@ import (
 	"testing"
 	"time"
 
-	lipglossv2 "charm.land/lipgloss/v2"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	bubbletable "github.com/evertras/bubble-table/table"
-	"github.com/muesli/termenv"
 	appregixtry "regixtry/internal/app/regixtry"
 	domainauth "regixtry/internal/domain/auth"
 	regixtrydomain "regixtry/internal/domain/regixtry"
@@ -32,7 +30,7 @@ func TestModelShowsEmptyStateWhenCatalogIsEmpty(t *testing.T) {
 	if updated.screen != screenEmpty {
 		t.Fatalf("screen = %q, want %q", updated.screen, screenEmpty)
 	}
-	view := updated.View()
+	view := updated.View().Content
 	if !strings.Contains(view, "Regixtry is empty") {
 		t.Fatalf("view = %q, want empty-state title", view)
 	}
@@ -51,8 +49,8 @@ func TestModelStartupLoginDefersCatalogUntilLoginSucceeds(t *testing.T) {
 	if got, want := model.screen, screenAdminLogin; got != want {
 		t.Fatalf("screen = %q, want %q", got, want)
 	}
-	if !strings.Contains(model.View(), "Operator Login") {
-		t.Fatalf("view = %q, want login shell", model.View())
+	if !strings.Contains(model.View().Content, "Operator Login") {
+		t.Fatalf("view = %q, want login shell", model.View().Content)
 	}
 
 	updated := runKey(t, model, "operator")
@@ -66,11 +64,11 @@ func TestModelStartupLoginDefersCatalogUntilLoginSucceeds(t *testing.T) {
 	if got, want := updated.screen, screenRepositories; got != want {
 		t.Fatalf("screen = %q, want %q", got, want)
 	}
-	if strings.Contains(updated.View(), "alice [admin, enabled]") {
-		t.Fatalf("view = %q, want repository flow instead of admin users", updated.View())
+	if strings.Contains(updated.View().Content, "alice [admin, enabled]") {
+		t.Fatalf("view = %q, want repository flow instead of admin users", updated.View().Content)
 	}
-	if !strings.Contains(updated.View(), "Repositories") || !strings.Contains(updated.View(), "library/alpine") {
-		t.Fatalf("view = %q, want repositories shell after login", updated.View())
+	if !strings.Contains(updated.View().Content, "Repositories") || !strings.Contains(updated.View().Content, "library/alpine") {
+		t.Fatalf("view = %q, want repositories shell after login", updated.View().Content)
 	}
 
 	updated = runKey(t, updated, "tab")
@@ -92,7 +90,7 @@ func TestModelLocalStartupLoadsCatalogImmediately(t *testing.T) {
 	if got, want := updated.screen, screenRepositories; got != want {
 		t.Fatalf("screen = %q, want %q", got, want)
 	}
-	view := updated.View()
+	view := updated.View().Content
 	if !strings.Contains(view, "Regixtry Console") || !strings.Contains(view, "Enter: open tags | d: delete repository | p: projects | Tab: admin | g: repo grants | q: quit") {
 		t.Fatalf("view = %q, want unified repository shell", view)
 	}
@@ -172,7 +170,7 @@ func TestModelUpdateCheckCompletedMsgUpdatesBannerState(t *testing.T) {
 		if cmd != nil {
 			t.Fatalf("Update(updateCheckCompletedMsg) returned a non-nil Cmd, want nil (terminal, no further chaining)")
 		}
-		view := result.View()
+		view := result.View().Content
 		if !strings.Contains(view, "v0.3.0") {
 			t.Fatalf("view = %q, want it to mention the newer version v0.3.0", view)
 		}
@@ -186,7 +184,7 @@ func TestModelUpdateCheckCompletedMsgUpdatesBannerState(t *testing.T) {
 		if result.err != nil {
 			t.Fatalf("model.err = %v, want nil -- a failed update check must never surface as a fatal error", result.err)
 		}
-		if strings.Contains(result.View(), "network unreachable") {
+		if strings.Contains(result.View().Content, "network unreachable") {
 			t.Fatalf("view leaked the update-check error, want it silently swallowed")
 		}
 	})
@@ -224,7 +222,7 @@ func TestModelWithUpdateBannerShowsBaselineVersion(t *testing.T) {
 	t.Run("shows a standalone baseline line when no update is available", func(t *testing.T) {
 		t.Parallel()
 		model := NewModel(&fakeQueryService{}, WithCurrentVersion("v0.2.0"))
-		view := model.View()
+		view := model.View().Content
 		if !strings.Contains(view, "regixtry v0.2.0") {
 			t.Fatalf("view = %q, want a baseline \"regixtry v0.2.0\" line", view)
 		}
@@ -238,7 +236,7 @@ func TestModelWithUpdateBannerShowsBaselineVersion(t *testing.T) {
 		model := NewModel(&fakeQueryService{}, WithCurrentVersion("v0.2.0"))
 		updated, _ := model.Update(updateCheckCompletedMsg{latestVersion: "v0.3.0"})
 		result := updated.(Model)
-		view := result.View()
+		view := result.View().Content
 		if !strings.Contains(view, "you're on v0.2.0") {
 			t.Fatalf("view = %q, want the current version folded into the update-available banner", view)
 		}
@@ -250,7 +248,7 @@ func TestModelWithUpdateBannerShowsBaselineVersion(t *testing.T) {
 	t.Run("shows nothing when the current version is unknown", func(t *testing.T) {
 		t.Parallel()
 		model := NewModel(&fakeQueryService{})
-		view := model.View()
+		view := model.View().Content
 		if strings.Contains(view, "regixtry v") {
 			t.Fatalf("view = %q, want no fabricated version line when currentVersion is empty", view)
 		}
@@ -318,7 +316,7 @@ func TestModelViewBelowMinimumSizeShowsTerminalTooSmall(t *testing.T) {
 
 	model := NewModel(&fakeQueryService{})
 	updated, _ := model.Update(tea.WindowSizeMsg{Width: 60, Height: 20})
-	view := updated.(Model).View()
+	view := updated.(Model).View().Content
 
 	if !strings.Contains(view, "Terminal too small") {
 		t.Fatalf("view = %q, want too-small message", view)
@@ -336,12 +334,12 @@ func TestModelViewResizeAboveMinimumRestoresRendering(t *testing.T) {
 
 	model := NewModel(&fakeQueryService{})
 	tooSmall, _ := model.Update(tea.WindowSizeMsg{Width: 60, Height: 20})
-	if !strings.Contains(tooSmall.(Model).View(), "Terminal too small") {
-		t.Fatalf("view = %q, want too-small message before resize", tooSmall.(Model).View())
+	if !strings.Contains(tooSmall.(Model).View().Content, "Terminal too small") {
+		t.Fatalf("view = %q, want too-small message before resize", tooSmall.(Model).View().Content)
 	}
 
 	restored, _ := tooSmall.(Model).Update(tea.WindowSizeMsg{Width: minViewportWidth, Height: minViewportHeight})
-	view := restored.(Model).View()
+	view := restored.(Model).View().Content
 
 	if strings.Contains(view, "Terminal too small") {
 		t.Fatalf("view = %q, want normal rendering restored after resize above minimum", view)
@@ -415,7 +413,7 @@ func TestModelResizeShorterRebuildsAdminTablesWithoutExceedingViewport(t *testin
 	if got := afterModel.adminView.Layout.Primary; got >= beforePageSize {
 		t.Fatalf("primary pageSize after shorter resize = %d, want < %d (before resize) — resize must re-fit the table to the smaller budget", got, beforePageSize)
 	}
-	if got := lipgloss.Height(afterModel.View()); got > minViewportHeight {
+	if got := lipgloss.Height(afterModel.View().Content); got > minViewportHeight {
 		t.Fatalf("view height after shorter resize = %d, want <= %d (new viewport)", got, minViewportHeight)
 	}
 }
@@ -467,7 +465,7 @@ func TestModelCatalogAndTagsListScreensFitViewportHeight(t *testing.T) {
 			result.screen = screenRepositories
 			result.repositories = RepositoriesModel{Items: repoItems}
 			result.rebuildRepositoriesTable(result.repositoriesTableLayout())
-			view := result.View()
+			view := result.View().Content
 			if got := lipgloss.Height(view); got > height {
 				t.Fatalf("repositories view height = %d, want <= %d\nview:\n%s", got, height, view)
 			}
@@ -475,7 +473,7 @@ func TestModelCatalogAndTagsListScreensFitViewportHeight(t *testing.T) {
 			result.screen = screenTags
 			result.tags = TagsModel{Repository: "library/alpine", Items: tagItems}
 			result.rebuildTagsTable(result.tagsTableLayout())
-			view = result.View()
+			view = result.View().Content
 			if got := lipgloss.Height(view); got > height {
 				t.Fatalf("tags view height = %d, want <= %d\nview:\n%s", got, height, view)
 			}
@@ -515,12 +513,8 @@ func TestModelCatalogAndTagsListScreensFitViewportHeight(t *testing.T) {
 // explicit statusKindError, both the body and status line must render with
 // theme.error's hex regardless of wording.
 func TestModelScreenErrorRendersWithThemeErrorRegardlessOfMessageWording(t *testing.T) {
-	// Not t.Parallel(): forces the global lipgloss color profile so
-	// theme.error actually emits an ANSI sequence to assert on (go test runs
-	// with no tty, so lipgloss otherwise auto-detects "no color").
-	original := lipgloss.ColorProfile()
-	lipgloss.SetColorProfile(termenv.TrueColor)
-	defer lipgloss.SetColorProfile(original)
+	// lipgloss v2 always renders full-fidelity ANSI, so no color profile needs
+	// forcing for the styled output below to be distinguishable from plain text.
 
 	model := NewModel(&fakeQueryService{})
 	updated, _ := model.Update(tea.WindowSizeMsg{Width: minViewportWidth, Height: 30})
@@ -528,7 +522,7 @@ func TestModelScreenErrorRendersWithThemeErrorRegardlessOfMessageWording(t *test
 	result.screen = screenError
 	result.err = errors.New("connection refused")
 
-	view := result.View()
+	view := result.View().Content
 
 	theme := newAdminTheme()
 	errorHex := theme.error.Render("connection refused")
@@ -616,8 +610,8 @@ func TestModelRepositoriesTableNavigatesUpDownAcrossPagesAndEntersSelectedReposi
 	if got, want := updated.repositories.Table.CurrentPage(), 2; got != want {
 		t.Fatalf("repositories table CurrentPage() after paging past the first page boundary = %d, want %d (WithHighlightedRow must auto-page the table)", got, want)
 	}
-	if !strings.Contains(updated.View(), summaries[pageSize].Name) {
-		t.Fatalf("view after paging = %q, want the newly highlighted repository %q genuinely visible on-screen", updated.View(), summaries[pageSize].Name)
+	if !strings.Contains(updated.View().Content, summaries[pageSize].Name) {
+		t.Fatalf("view after paging = %q, want the newly highlighted repository %q genuinely visible on-screen", updated.View().Content, summaries[pageSize].Name)
 	}
 
 	upOnce := runKey(t, updated, "up")
@@ -672,8 +666,8 @@ func TestModelNavigatesRepositoriesManifestBlobsAndUploads(t *testing.T) {
 	if updated.screen != screenManifest {
 		t.Fatalf("screen = %q, want %q", updated.screen, screenManifest)
 	}
-	if !strings.Contains(updated.View(), "Manifest · library/alpine:latest") {
-		t.Fatalf("view = %q, want manifest header", updated.View())
+	if !strings.Contains(updated.View().Content, "Manifest · library/alpine:latest") {
+		t.Fatalf("view = %q, want manifest header", updated.View().Content)
 	}
 
 	updated = runKey(t, updated, "b")
@@ -685,8 +679,8 @@ func TestModelNavigatesRepositoriesManifestBlobsAndUploads(t *testing.T) {
 	if updated.screen != screenUploads {
 		t.Fatalf("screen = %q, want %q", updated.screen, screenUploads)
 	}
-	if !strings.Contains(updated.View(), "upload-1") {
-		t.Fatalf("view = %q, want upload id", updated.View())
+	if !strings.Contains(updated.View().Content, "upload-1") {
+		t.Fatalf("view = %q, want upload id", updated.View().Content)
 	}
 }
 
@@ -747,8 +741,8 @@ func TestModelTagsTableNavigatesUpDownAcrossPagesAndEntersSelectedManifest(t *te
 	if got, want := updated.tags.Table.CurrentPage(), 2; got != want {
 		t.Fatalf("tags table CurrentPage() after paging past the first page boundary = %d, want %d (WithHighlightedRow must auto-page the table)", got, want)
 	}
-	if !strings.Contains(updated.View(), tags[pageSize].Name) {
-		t.Fatalf("view after paging = %q, want the newly highlighted tag %q genuinely visible on-screen", updated.View(), tags[pageSize].Name)
+	if !strings.Contains(updated.View().Content, tags[pageSize].Name) {
+		t.Fatalf("view after paging = %q, want the newly highlighted tag %q genuinely visible on-screen", updated.View().Content, tags[pageSize].Name)
 	}
 
 	upOnce := runKey(t, updated, "up")
@@ -820,16 +814,16 @@ func TestModelTagsSortKeyCyclesNameAscendingToDateDescendingAndBack(t *testing.T
 	if got, want := sorted.tags.Items[0].Name, "zzz-newest"; got != want {
 		t.Fatalf("after 1st sort Items[0].Name = %q, want %q (date-descending: most recent first)", got, want)
 	}
-	if !strings.Contains(sorted.View(), "Tags (sort: date)") {
-		t.Fatalf("view after 1st sort = %q, want the sort mode shown in the subheading", sorted.View())
+	if !strings.Contains(sorted.View().Content, "Tags (sort: date)") {
+		t.Fatalf("view after 1st sort = %q, want the sort mode shown in the subheading", sorted.View().Content)
 	}
 
 	backToName := runKey(t, sorted, "s")
 	if got, want := backToName.tags.Items[0].Name, "older"; got != want {
 		t.Fatalf("after 2nd sort Items[0].Name = %q, want %q (cycled back to name-ascending)", got, want)
 	}
-	if !strings.Contains(backToName.View(), "Tags (sort: name)") {
-		t.Fatalf("view after 2nd sort = %q, want the sort mode shown in the subheading", backToName.View())
+	if !strings.Contains(backToName.View().Content, "Tags (sort: name)") {
+		t.Fatalf("view after 2nd sort = %q, want the sort mode shown in the subheading", backToName.View().Content)
 	}
 }
 
@@ -964,7 +958,7 @@ func TestModelTagsDeleteEnterConfirmFlowSuccess(t *testing.T) {
 	pending := runKey(t, ready, "d")
 	tagsCallsBeforeEnter := service.calls.tags
 
-	enterUpdated, deleteCmd := pending.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	enterUpdated, deleteCmd := pending.Update(testKeyEnter())
 	firedModel := enterUpdated.(Model)
 	if deleteCmd == nil {
 		t.Fatalf("Enter while pending returned a nil tea.Cmd, want the delete command")
@@ -1016,7 +1010,7 @@ func TestModelTagsDeleteEnterConfirmFlowValidationError(t *testing.T) {
 	pending := runKey(t, ready, "d")
 	tagsCallsBeforeEnter := service.calls.tags
 
-	enterUpdated, deleteCmd := pending.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	enterUpdated, deleteCmd := pending.Update(testKeyEnter())
 	firedModel := enterUpdated.(Model)
 	if deleteCmd == nil {
 		t.Fatalf("Enter while pending returned a nil tea.Cmd, want the delete command")
@@ -1070,8 +1064,8 @@ func TestModelManifestBlobsUploadsDeleteKeyUnaffectedByTagsDeleteWiring(t *testi
 	if !manifestDeleted.showMutationNotice {
 		t.Fatalf("showMutationNotice = false on screenManifest after 'd', want true (unchanged v1 placeholder)")
 	}
-	if !strings.Contains(manifestDeleted.View(), "Delete unavailable in v1") {
-		t.Fatalf("view = %q, want the v1 placeholder message", manifestDeleted.View())
+	if !strings.Contains(manifestDeleted.View().Content, "Delete unavailable in v1") {
+		t.Fatalf("view = %q, want the v1 placeholder message", manifestDeleted.View().Content)
 	}
 
 	blobsDeleted := runKey(t, runKey(t, updated, "b"), "x")
@@ -1101,7 +1095,7 @@ func TestModelTagsDeleteViewShowsConfirmAndHelpWhenPending(t *testing.T) {
 	ready := newTagsReadyModel(t, service)
 	pending := runKey(t, ready, "d")
 
-	view := pending.View()
+	view := pending.View().Content
 	if !strings.Contains(view, `Delete tag "latest" from "library/alpine"? This action cannot be undone.`) {
 		t.Fatalf("view = %q, want the pending-delete confirm message", view)
 	}
@@ -1122,8 +1116,8 @@ func TestModelBlocksAdminUntilLogin(t *testing.T) {
 	if updated.adminAuth != adminAuthStateUnauthenticated {
 		t.Fatalf("adminAuth = %q, want %q", updated.adminAuth, adminAuthStateUnauthenticated)
 	}
-	if !strings.Contains(updated.View(), "Operator Login") {
-		t.Fatalf("view = %q, want login screen", updated.View())
+	if !strings.Contains(updated.View().Content, "Operator Login") {
+		t.Fatalf("view = %q, want login screen", updated.View().Content)
 	}
 }
 
@@ -1139,7 +1133,7 @@ func TestModelSuccessfulLoginRendersPremiumWorkspace(t *testing.T) {
 	model.now = func() time.Time { return now }
 
 	updated := runAdminLogin(t, model, "operator", "secret-pass")
-	view := updated.View()
+	view := updated.View().Content
 
 	// Phase 18: post-login now lands on the domain menu (design.md
 	// Decision I), not directly on screenAdminUsers.
@@ -1168,8 +1162,8 @@ func TestModelInvalidCredentialsStayOnLoginScreen(t *testing.T) {
 	if got, want := updated.status, "login: invalid credentials"; got != want {
 		t.Fatalf("status = %q, want %q", got, want)
 	}
-	if !strings.Contains(updated.View(), "login: invalid credentials") {
-		t.Fatalf("view = %q, want login error", updated.View())
+	if !strings.Contains(updated.View().Content, "login: invalid credentials") {
+		t.Fatalf("view = %q, want login error", updated.View().Content)
 	}
 }
 
@@ -1317,8 +1311,8 @@ func TestModelRepoAdminGrantsLoadPutAndDeleteCommandsWired(t *testing.T) {
 	if got, want := adminClient.listRepoGrantsCalls, 1; got != want {
 		t.Fatalf("listRepoGrantsCalls = %d, want %d", got, want)
 	}
-	if !strings.Contains(updated.View(), "bob") || !strings.Contains(updated.View(), string(domainauth.RepoRoleWriter)) {
-		t.Fatalf("view = %q, want bob's grant listed", updated.View())
+	if !strings.Contains(updated.View().Content, "bob") || !strings.Contains(updated.View().Content, string(domainauth.RepoRoleWriter)) {
+		t.Fatalf("view = %q, want bob's grant listed", updated.View().Content)
 	}
 
 	updated = runKey(t, updated, "n")
@@ -1339,8 +1333,8 @@ func TestModelRepoAdminGrantsLoadPutAndDeleteCommandsWired(t *testing.T) {
 	}
 
 	updated = runKey(t, updated, "x")
-	if !strings.Contains(updated.View(), `Remove grant for "bob" from "team/app"?`) {
-		t.Fatalf("view = %q, want grant removal confirmation", updated.View())
+	if !strings.Contains(updated.View().Content, `Remove grant for "bob" from "team/app"?`) {
+		t.Fatalf("view = %q, want grant removal confirmation", updated.View().Content)
 	}
 	updated = runKey(t, updated, "enter")
 
@@ -1550,8 +1544,8 @@ func TestModelCreateAdminUserRefreshesUsers(t *testing.T) {
 	if got, want := updated.adminView.SelectedUserID, "u-2"; got != want {
 		t.Fatalf("SelectedUserID = %q, want %q", got, want)
 	}
-	if !strings.Contains(updated.View(), `User "bob" created. Refreshing users...`) && !strings.Contains(updated.View(), `User "bob" created.`) {
-		t.Fatalf("view = %q, want create-user status", updated.View())
+	if !strings.Contains(updated.View().Content, `User "bob" created. Refreshing users...`) && !strings.Contains(updated.View().Content, `User "bob" created.`) {
+		t.Fatalf("view = %q, want create-user status", updated.View().Content)
 	}
 }
 
@@ -1649,8 +1643,8 @@ func TestModelOpenAdminRobotsFromUsersLoadsRobotList(t *testing.T) {
 	if adminClient.listRobotsCalls != 1 {
 		t.Fatalf("listRobotsCalls = %d, want 1", adminClient.listRobotsCalls)
 	}
-	if !strings.Contains(updated.View(), "robot$ci") || !strings.Contains(updated.View(), "team/app") {
-		t.Fatalf("view = %q, want robot$ci's row listed", updated.View())
+	if !strings.Contains(updated.View().Content, "robot$ci") || !strings.Contains(updated.View().Content, "team/app") {
+		t.Fatalf("view = %q, want robot$ci's row listed", updated.View().Content)
 	}
 }
 
@@ -1705,8 +1699,8 @@ func TestModelCreateAdminRobotShowsOneTimeSecretOnceOnCreateScreen(t *testing.T)
 	if got, want := updated.adminView.RevealedTokenSecret, "robot-secret-value"; got != want {
 		t.Fatalf("RevealedTokenSecret = %q, want %q", got, want)
 	}
-	if !strings.Contains(updated.View(), "robot-secret-value") || !strings.Contains(updated.View(), "tok_robot") {
-		t.Fatalf("view = %q, want the one-time secret and accessor rendered", updated.View())
+	if !strings.Contains(updated.View().Content, "robot-secret-value") || !strings.Contains(updated.View().Content, "tok_robot") {
+		t.Fatalf("view = %q, want the one-time secret and accessor rendered", updated.View().Content)
 	}
 	if updated.adminView.CreateRobotForm.Name != "" || updated.adminView.CreateRobotForm.Repository != "" {
 		t.Fatalf("CreateRobotForm = %#v, want cleared after creation", updated.adminView.CreateRobotForm)
@@ -1742,7 +1736,7 @@ func TestModelCreateRobotFormRepositorySuggestionsFilterAndSelect(t *testing.T) 
 	}
 
 	updated = runKey(t, updated, "tea")
-	filteredView := updated.View()
+	filteredView := updated.View().Content
 	if strings.Contains(filteredView, "library/alpine") {
 		t.Fatalf("view = %q, want non-matching repository hidden", filteredView)
 	}
@@ -1799,8 +1793,8 @@ func TestModelAdminRobotTokensKeyClearsAnyPreviouslyRevealedSecretBeforeShowingT
 	if updated.adminView.RevealedTokenAccessor != "" {
 		t.Fatalf("RevealedTokenAccessor = %q after opening robot tokens, want cleared", updated.adminView.RevealedTokenAccessor)
 	}
-	if strings.Contains(updated.View(), "stale-secret-from-earlier-creation") {
-		t.Fatalf("view = %q, must never render the stale secret", updated.View())
+	if strings.Contains(updated.View().Content, "stale-secret-from-earlier-creation") {
+		t.Fatalf("view = %q, must never render the stale secret", updated.View().Content)
 	}
 	if got, want := updated.screen, screenAdminEditUserTokens; got != want {
 		t.Fatalf("screen = %q, want %q (reuses the existing token screen)", got, want)
@@ -1851,8 +1845,8 @@ func TestModelEnableDisableAdminRobotConfirmFlow(t *testing.T) {
 	model.adminView.SelectedRobot = 0
 
 	updated := runKey(t, model, "x")
-	if !strings.Contains(updated.View(), `Confirm disable robot "robot$ci"?`) {
-		t.Fatalf("view = %q, want a disable-robot confirmation", updated.View())
+	if !strings.Contains(updated.View().Content, `Confirm disable robot "robot$ci"?`) {
+		t.Fatalf("view = %q, want a disable-robot confirmation", updated.View().Content)
 	}
 
 	updated = runKey(t, updated, "enter")
@@ -1891,7 +1885,7 @@ func TestModelAdminRobotDeleteKeyOpensConfirmModal(t *testing.T) {
 	if !updated.adminView.Confirm.Active() {
 		t.Fatalf("adminView.Confirm.Active() = false, want true (delete opens a confirm)")
 	}
-	view := updated.View()
+	view := updated.View().Content
 	if !strings.Contains(view, `robot$ci`) {
 		t.Fatalf("view = %q, want the robot's username in the confirmation", view)
 	}
@@ -2155,8 +2149,8 @@ func TestAdminConfirmCharacterization(t *testing.T) {
 			t.Parallel()
 			m, client := c.setup(t)
 			opened := runKey(t, m, c.openKey)
-			if !strings.Contains(ansi.Strip(opened.View()), c.wantOpenSubstr) {
-				t.Fatalf("view after %q = %q, want to contain %q", c.openKey, opened.View(), c.wantOpenSubstr)
+			if !strings.Contains(ansi.Strip(opened.View().Content), c.wantOpenSubstr) {
+				t.Fatalf("view after %q = %q, want to contain %q", c.openKey, opened.View().Content, c.wantOpenSubstr)
 			}
 			before := c.callCount(client)
 			confirmed := runKey(t, opened, "enter")
@@ -2171,8 +2165,8 @@ func TestAdminConfirmCharacterization(t *testing.T) {
 			opened := runKey(t, m, c.openKey)
 			before := c.callCount(client)
 			cancelled := runKey(t, opened, "esc")
-			if strings.Contains(ansi.Strip(cancelled.View()), c.wantOpenSubstr) {
-				t.Fatalf("view after esc = %q, want confirm closed", cancelled.View())
+			if strings.Contains(ansi.Strip(cancelled.View().Content), c.wantOpenSubstr) {
+				t.Fatalf("view after esc = %q, want confirm closed", cancelled.View().Content)
 			}
 			if got := c.callCount(client); got != before {
 				t.Fatalf("call count after esc = %d, want unchanged %d (cancel must not dispatch)", got, before)
@@ -2216,7 +2210,7 @@ func TestDeleteTagConfirmCharacterization(t *testing.T) {
 	// before this assertion ever sees the intermediate "deleted" status —
 	// mirroring TestModelTagsDeleteEnterConfirmFlowSuccess's own two-step
 	// inspection of the Update chain.
-	enterUpdated, deleteCmd := pending.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	enterUpdated, deleteCmd := pending.Update(testKeyEnter())
 	firedModel := enterUpdated.(Model)
 	if deleteCmd == nil {
 		t.Fatalf("Enter while pending returned a nil tea.Cmd, want the delete command")
@@ -2281,7 +2275,7 @@ func TestModelProjectsKeyNavigatesFromRepositoriesAndEscReturns(t *testing.T) {
 	if len(onProjects.projects.Items) != 3 {
 		t.Fatalf("len(projects.Items) = %d, want 3 (team, smoke, ungrouped)", len(onProjects.projects.Items))
 	}
-	view := onProjects.View()
+	view := onProjects.View().Content
 	for _, want := range []string{"team", "smoke", projectUngroupedLabel} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view = %q, want it to contain %q", view, want)
@@ -2314,7 +2308,7 @@ func TestModelProjectsEnterFiltersRepositoriesToSelectedProject(t *testing.T) {
 	// "(ungrouped)" -- '(' (0x28) sorts before letters, so "(ungrouped)"
 	// is actually first; move down once to land on "smoke".
 	filtered := runKey(t, onProjects, "down")
-	filteredView := filtered.View()
+	filteredView := filtered.View().Content
 	if !strings.Contains(filteredView, "smoke") {
 		t.Fatalf("view after one down = %q, want the 'smoke' row highlighted next", filteredView)
 	}
@@ -2330,8 +2324,8 @@ func TestModelProjectsEnterFiltersRepositoriesToSelectedProject(t *testing.T) {
 	if len(items) != 1 || items[0].Name != "smoke/keyless-live-verify" {
 		t.Fatalf("FilteredItems() = %#v, want only smoke/keyless-live-verify", items)
 	}
-	if !strings.Contains(entered.View(), "Repositories (project: smoke)") {
-		t.Fatalf("view = %q, want the active filter named in the heading", entered.View())
+	if !strings.Contains(entered.View().Content, "Repositories (project: smoke)") {
+		t.Fatalf("view = %q, want the active filter named in the heading", entered.View().Content)
 	}
 
 	cleared := runKey(t, entered, "esc")
@@ -2368,8 +2362,8 @@ func TestModelProjectsSortKeyCyclesNameAscendingToDateDescendingAndBack(t *testi
 	if got, want := sorted.projects.Items[0].Name, "zzz"; got != want {
 		t.Fatalf("after sort Items[0].Name = %q, want %q (date-descending)", got, want)
 	}
-	if !strings.Contains(sorted.View(), "Projects (sort: date)") {
-		t.Fatalf("view after sort = %q, want the sort mode shown", sorted.View())
+	if !strings.Contains(sorted.View().Content, "Projects (sort: date)") {
+		t.Fatalf("view after sort = %q, want the sort mode shown", sorted.View().Content)
 	}
 
 	backToName := runKey(t, sorted, "s")
@@ -2439,7 +2433,7 @@ func TestDeleteRepositoryConfirmCharacterization(t *testing.T) {
 	// runKey auto-chains every returned tea.Cmd to completion, which would
 	// also run the post-delete catalog refresh and clear m.status back to
 	// "" before this assertion ever sees the intermediate "deleted" status.
-	enterUpdated, deleteCmd := pending.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	enterUpdated, deleteCmd := pending.Update(testKeyEnter())
 	firedModel := enterUpdated.(Model)
 	if deleteCmd == nil {
 		t.Fatalf("Enter while pending returned a nil tea.Cmd, want the delete command")
@@ -2610,7 +2604,7 @@ func TestDeleteProjectConfirmCharacterization(t *testing.T) {
 	// the post-delete catalog refresh and clear m.status before this
 	// assertion ever sees the intermediate "deleted" status -- mirroring
 	// TestDeleteRepositoryConfirmCharacterization's own two-step inspection.
-	enterUpdated, deleteCmd := pending.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	enterUpdated, deleteCmd := pending.Update(testKeyEnter())
 	firedModel := enterUpdated.(Model)
 	if deleteCmd == nil {
 		t.Fatalf("Enter while pending returned a nil tea.Cmd, want the delete command")
@@ -2658,7 +2652,7 @@ func TestDeleteProjectConfirmMixedAuthorizationPartialFailure(t *testing.T) {
 	onTeam := teamProjectReadyModel(t, service)
 	pending := runKey(t, onTeam, "d")
 
-	enterUpdated, deleteCmd := pending.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	enterUpdated, deleteCmd := pending.Update(testKeyEnter())
 	firedModel := enterUpdated.(Model)
 	afterDeleteUpdated, _ := firedModel.Update(deleteCmd())
 	afterDelete := afterDeleteUpdated.(Model)
@@ -2691,7 +2685,7 @@ func TestDeleteProjectConfirmAllFail(t *testing.T) {
 	onTeam := teamProjectReadyModel(t, service)
 	pending := runKey(t, onTeam, "d")
 
-	enterUpdated, deleteCmd := pending.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	enterUpdated, deleteCmd := pending.Update(testKeyEnter())
 	firedModel := enterUpdated.(Model)
 	afterDeleteUpdated, _ := firedModel.Update(deleteCmd())
 	afterDelete := afterDeleteUpdated.(Model)
@@ -2717,7 +2711,7 @@ func TestModelUsersScreenShowsOnlyListAndSearch(t *testing.T) {
 	model := newAdminReadyModel(t, adminClient)
 	updated := runAdminLogin(t, model, "operator", "secret-pass")
 	updated = openIdentityAccessDomain(t, updated)
-	view := updated.View()
+	view := updated.View().Content
 
 	if !strings.Contains(view, "Username contains") || !strings.Contains(view, "alice [admin, enabled]") {
 		t.Fatalf("view = %q, want users list and search", view)
@@ -2751,8 +2745,8 @@ func TestModelResetPasswordFailureKeepsFormVisible(t *testing.T) {
 	if updated.screen != screenAdminChangePassword {
 		t.Fatalf("screen = %q, want %q", updated.screen, screenAdminChangePassword)
 	}
-	if !strings.Contains(updated.View(), "Change Password") || !strings.Contains(updated.View(), "password must be 12 characters or longer") {
-		t.Fatalf("view = %q, want recoverable backend error", updated.View())
+	if !strings.Contains(updated.View().Content, "Change Password") || !strings.Contains(updated.View().Content, "password must be 12 characters or longer") {
+		t.Fatalf("view = %q, want recoverable backend error", updated.View().Content)
 	}
 }
 
@@ -2775,8 +2769,8 @@ func TestModelDisableUserSuccessRefreshesUsersAndPreservesSelectionByID(t *testi
 	updated = runKey(t, updated, "enter")
 	updated = runKey(t, updated, "x")
 
-	if !strings.Contains(updated.View(), `Confirm disable user "bob"?`) {
-		t.Fatalf("view = %q, want disable confirmation", updated.View())
+	if !strings.Contains(updated.View().Content, `Confirm disable user "bob"?`) {
+		t.Fatalf("view = %q, want disable confirmation", updated.View().Content)
 	}
 
 	updated = runKey(t, updated, "enter")
@@ -2790,8 +2784,8 @@ func TestModelDisableUserSuccessRefreshesUsersAndPreservesSelectionByID(t *testi
 	if updated.screen != screenAdminEditUser {
 		t.Fatalf("screen = %q, want %q", updated.screen, screenAdminEditUser)
 	}
-	if !strings.Contains(updated.View(), "Disabled") {
-		t.Fatalf("view = %q, want refreshed disabled status", updated.View())
+	if !strings.Contains(updated.View().Content, "Disabled") {
+		t.Fatalf("view = %q, want refreshed disabled status", updated.View().Content)
 	}
 }
 
@@ -2804,8 +2798,8 @@ func TestModelNoSelectedUserBlocksEditing(t *testing.T) {
 	updated = openIdentityAccessDomain(t, updated)
 	updated = runKey(t, updated, "enter")
 
-	if !strings.Contains(updated.View(), "Select a user to edit.") {
-		t.Fatalf("view = %q, want blocked edit state", updated.View())
+	if !strings.Contains(updated.View().Content, "Select a user to edit.") {
+		t.Fatalf("view = %q, want blocked edit state", updated.View().Content)
 	}
 }
 
@@ -2839,8 +2833,8 @@ func TestModelGrantSaveAndRemoveStayContextualizedToSelectedUser(t *testing.T) {
 	}
 
 	updated = runKey(t, updated, "x")
-	if !strings.Contains(updated.View(), `Remove grant "library/alpine" from "alice"?`) {
-		t.Fatalf("view = %q, want grant removal confirmation", updated.View())
+	if !strings.Contains(updated.View().Content, `Remove grant "library/alpine" from "alice"?`) {
+		t.Fatalf("view = %q, want grant removal confirmation", updated.View().Content)
 	}
 	updated = runKey(t, updated, "enter")
 	if adminClient.deleteGrantCalls != 1 {
@@ -2882,13 +2876,13 @@ func TestModelTokenCreateRevealOnceAndRevokeConfirmation(t *testing.T) {
 	if adminClient.createTokenCalls != 1 {
 		t.Fatalf("createTokenCalls = %d, want 1", adminClient.createTokenCalls)
 	}
-	if !strings.Contains(updated.View(), "One-time secret") || !strings.Contains(updated.View(), "super-secret") {
-		t.Fatalf("view = %q, want one-time secret reveal", updated.View())
+	if !strings.Contains(updated.View().Content, "One-time secret") || !strings.Contains(updated.View().Content, "super-secret") {
+		t.Fatalf("view = %q, want one-time secret reveal", updated.View().Content)
 	}
 
 	updated = runKey(t, updated, "x")
-	if !strings.Contains(updated.View(), `Revoke admin token "tok_abc" for "alice"?`) {
-		t.Fatalf("view = %q, want revoke confirmation", updated.View())
+	if !strings.Contains(updated.View().Content, `Revoke admin token "tok_abc" for "alice"?`) {
+		t.Fatalf("view = %q, want revoke confirmation", updated.View().Content)
 	}
 	updated = runKey(t, updated, "enter")
 
@@ -2896,8 +2890,8 @@ func TestModelTokenCreateRevealOnceAndRevokeConfirmation(t *testing.T) {
 		t.Fatalf("revokeTokenCalls = %d, want 1", adminClient.revokeTokenCalls)
 	}
 	updated = runKey(t, updated, "g")
-	if strings.Contains(updated.View(), "super-secret") {
-		t.Fatalf("view = %q, want token secret cleared after leaving tokens panel", updated.View())
+	if strings.Contains(updated.View().Content, "super-secret") {
+		t.Fatalf("view = %q, want token secret cleared after leaving tokens panel", updated.View().Content)
 	}
 }
 
@@ -2921,8 +2915,8 @@ func TestModelExpiredSessionForcesRelogin(t *testing.T) {
 	if updated.adminAuth != adminAuthStateExpired {
 		t.Fatalf("adminAuth = %q, want %q", updated.adminAuth, adminAuthStateExpired)
 	}
-	if !strings.Contains(updated.View(), AdminSessionExpiredReasonExpired) {
-		t.Fatalf("view = %q, want expiry-specific relogin message", updated.View())
+	if !strings.Contains(updated.View().Content, AdminSessionExpiredReasonExpired) {
+		t.Fatalf("view = %q, want expiry-specific relogin message", updated.View().Content)
 	}
 }
 
@@ -2962,8 +2956,8 @@ func TestModelFeatureViewRendersGenericPageAndAllowsDeclaredAction(t *testing.T)
 	if adminClient.listFeaturesCalls != 1 {
 		t.Fatalf("listFeaturesCalls = %d, want 1", adminClient.listFeaturesCalls)
 	}
-	if !strings.Contains(updated.View(), "Built-in Features") || !strings.Contains(updated.View(), "trivy") {
-		t.Fatalf("view = %q, want the Security & Compliance menu listing trivy", updated.View())
+	if !strings.Contains(updated.View().Content, "Built-in Features") || !strings.Contains(updated.View().Content, "trivy") {
+		t.Fatalf("view = %q, want the Security & Compliance menu listing trivy", updated.View().Content)
 	}
 
 	updated = runKey(t, updated, "enter")
@@ -2973,7 +2967,7 @@ func TestModelFeatureViewRendersGenericPageAndAllowsDeclaredAction(t *testing.T)
 	if adminClient.getFeaturePageCalls != 1 {
 		t.Fatalf("getFeaturePageCalls = %d, want one page read", adminClient.getFeaturePageCalls)
 	}
-	view := updated.View()
+	view := updated.View().Content
 	for _, want := range []string{"Configuration", "Runtime", "Version: 0.57.1", "x: disable"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view = %q, want %q", view, want)
@@ -2981,8 +2975,8 @@ func TestModelFeatureViewRendersGenericPageAndAllowsDeclaredAction(t *testing.T)
 	}
 
 	updated = runKey(t, updated, "x")
-	if !strings.Contains(updated.View(), `Confirm disable feature "trivy"?`) {
-		t.Fatalf("view = %q, want feature disable confirmation", updated.View())
+	if !strings.Contains(updated.View().Content, `Confirm disable feature "trivy"?`) {
+		t.Fatalf("view = %q, want feature disable confirmation", updated.View().Content)
 	}
 
 	updated = runKey(t, updated, "enter")
@@ -2992,8 +2986,8 @@ func TestModelFeatureViewRendersGenericPageAndAllowsDeclaredAction(t *testing.T)
 	if updated.screen != screenSecurityTrivy {
 		t.Fatalf("screen = %q, want %q after disable", updated.screen, screenSecurityTrivy)
 	}
-	if !strings.Contains(updated.View(), `Feature "trivy" disabled.`) || !strings.Contains(updated.View(), `Enabled: false`) {
-		t.Fatalf("view = %q, want disabled feature status", updated.View())
+	if !strings.Contains(updated.View().Content, `Feature "trivy" disabled.`) || !strings.Contains(updated.View().Content, `Enabled: false`) {
+		t.Fatalf("view = %q, want disabled feature status", updated.View().Content)
 	}
 }
 
@@ -3020,7 +3014,7 @@ func TestModelFeatureViewKeepsMinimalPagesUsable(t *testing.T) {
 	// trivy/gitleaks/signing gain one) -- Enter on such a row is inert,
 	// since Decision I only builds forward-navigation targets for the three
 	// known built-in features.
-	view := updated.View()
+	view := updated.View().Content
 	for _, want := range []string{"future-plugin", "true"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view = %q, want %q", view, want)
@@ -3066,7 +3060,7 @@ func TestModelFeatureSelectionRefreshesPageAndHelpFromBackendActions(t *testing.
 	if adminClient.getFeaturePageCalls != 1 {
 		t.Fatalf("getFeaturePageCalls = %d, want one page read for gitleaks", adminClient.getFeaturePageCalls)
 	}
-	view := updated.View()
+	view := updated.View().Content
 	for _, want := range []string{"Gitleaks", "e: enable"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view = %q, want %q", view, want)
@@ -3102,7 +3096,7 @@ func TestModelTrivyFeatureDefaultsToRuntimeTabAndKeepsNonTrivyUntabbed(t *testin
 		// successor, is reached separately via Tab).
 		updated = runKey(t, updated, "enter")
 
-		view := updated.View()
+		view := updated.View().Content
 		for _, want := range []string{"Runtime", "Repository Alerts", "Configuration", "Version: 0.57.1"} {
 			if !strings.Contains(view, want) {
 				t.Fatalf("view = %q, want %q", view, want)
@@ -3127,7 +3121,7 @@ func TestModelTrivyFeatureDefaultsToRuntimeTabAndKeepsNonTrivyUntabbed(t *testin
 		// own (only trivy/gitleaks/signing do), so it is only ever seen on
 		// securityMenuScreen's own bare peer list -- which never shows
 		// trivy-only tab chrome regardless of which feature is highlighted.
-		view := updated.View()
+		view := updated.View().Content
 		if strings.Contains(view, "Repository Alerts") || strings.Contains(view, "Tabs") {
 			t.Fatalf("view = %q, want no trivy-only tab chrome", view)
 		}
@@ -3154,7 +3148,7 @@ func TestModelTrivyConfigModalOpenCancelAndSubmitCurrentSettingsOnly(t *testing.
 	updated = runKey(t, updated, "enter")
 
 	updated = runKey(t, updated, "c")
-	modalView := updated.View()
+	modalView := updated.View().Content
 	for _, want := range []string{"Edit Trivy Configuration", "Schedule Enabled", "Interval", "Timeout", "Registry Reachable URL", "Max Concurrency"} {
 		if !strings.Contains(modalView, want) {
 			t.Fatalf("view = %q, want %q", modalView, want)
@@ -3170,8 +3164,8 @@ func TestModelTrivyConfigModalOpenCancelAndSubmitCurrentSettingsOnly(t *testing.
 	if adminClient.configureFeatureCalls != 0 {
 		t.Fatalf("configureFeatureCalls = %d, want cancel to keep modal client-idle", adminClient.configureFeatureCalls)
 	}
-	if strings.Contains(canceled.View(), "Edit Trivy Configuration") {
-		t.Fatalf("view = %q, want modal closed after esc", canceled.View())
+	if strings.Contains(canceled.View().Content, "Edit Trivy Configuration") {
+		t.Fatalf("view = %q, want modal closed after esc", canceled.View().Content)
 	}
 
 	submitted := runKey(t, updated, "enter")
@@ -3187,8 +3181,8 @@ func TestModelTrivyConfigModalOpenCancelAndSubmitCurrentSettingsOnly(t *testing.
 	if adminClient.lastConfigureInput.AuthToken != nil || adminClient.lastConfigureInput.CacheDir != nil || adminClient.lastConfigureInput.BinaryPath != nil || adminClient.lastConfigureInput.TLSCACertPath != nil || adminClient.lastConfigureInput.ServiceURL != nil {
 		t.Fatalf("lastConfigureInput = %#v, want unsupported fields omitted", adminClient.lastConfigureInput)
 	}
-	if !strings.Contains(submitted.View(), "Configuration saved") {
-		t.Fatalf("view = %q, want config feedback after submit", submitted.View())
+	if !strings.Contains(submitted.View().Content, "Configuration saved") {
+		t.Fatalf("view = %q, want config feedback after submit", submitted.View().Content)
 	}
 }
 
@@ -3240,7 +3234,7 @@ func TestModelGitleaksConfigModalOpenCancelAndSubmitCurrentSettingsOnly(t *testi
 	}
 
 	updated = runKey(t, updated, "s")
-	modalView := updated.View()
+	modalView := updated.View().Content
 	for _, want := range []string{"Edit Gitleaks Configuration", "Enabled", "Timeout", "Max Concurrency"} {
 		if !strings.Contains(modalView, want) {
 			t.Fatalf("view = %q, want %q", modalView, want)
@@ -3270,8 +3264,8 @@ func TestModelGitleaksConfigModalOpenCancelAndSubmitCurrentSettingsOnly(t *testi
 	if adminClient.configureFeatureCalls != 0 {
 		t.Fatalf("configureFeatureCalls = %d, want cancel to keep modal client-idle", adminClient.configureFeatureCalls)
 	}
-	if strings.Contains(canceled.View(), "Edit Gitleaks Configuration") {
-		t.Fatalf("view = %q, want modal closed after esc", canceled.View())
+	if strings.Contains(canceled.View().Content, "Edit Gitleaks Configuration") {
+		t.Fatalf("view = %q, want modal closed after esc", canceled.View().Content)
 	}
 
 	submitted := runKey(t, updated, "enter")
@@ -3287,8 +3281,8 @@ func TestModelGitleaksConfigModalOpenCancelAndSubmitCurrentSettingsOnly(t *testi
 	if adminClient.lastConfigureInput.ScheduleEnabled != nil || adminClient.lastConfigureInput.Interval != nil || adminClient.lastConfigureInput.RegistryReachableURL != nil {
 		t.Fatalf("lastConfigureInput = %#v, want ScheduleEnabled/Interval/RegistryReachableURL omitted (rejected design decision, gitleaks-irrelevant fields)", adminClient.lastConfigureInput)
 	}
-	if !strings.Contains(submitted.View(), "Configuration saved") {
-		t.Fatalf("view = %q, want config feedback after submit", submitted.View())
+	if !strings.Contains(submitted.View().Content, "Configuration saved") {
+		t.Fatalf("view = %q, want config feedback after submit", submitted.View().Content)
 	}
 	// Phase 11 deviation from the pre-promotion assertion: gitleaksConfigScreen
 	// is now a persistent top-level screen (screenSecurityGitleaksConfig),
@@ -3343,8 +3337,8 @@ func TestModelGitleaksConfigModalValidationErrorSurfaced(t *testing.T) {
 	if adminClient.configureFeatureCalls != 0 {
 		t.Fatalf("configureFeatureCalls = %d, want validation failure to block the submit", adminClient.configureFeatureCalls)
 	}
-	if !strings.Contains(submitted.View(), "invalid timeout") {
-		t.Fatalf("view = %q, want invalid timeout error surfaced", submitted.View())
+	if !strings.Contains(submitted.View().Content, "invalid timeout") {
+		t.Fatalf("view = %q, want invalid timeout error surfaced", submitted.View().Content)
 	}
 }
 
@@ -3379,8 +3373,8 @@ func TestGitleaksConfigModalCharacterization(t *testing.T) {
 		updated = runKey(t, updated, "enter")
 		updated = runKey(t, updated, "enter")
 		updated = runKey(t, updated, "s")
-		if !strings.Contains(updated.View(), "Edit Gitleaks Configuration") {
-			t.Fatalf("test setup invalid: view = %q, want the gitleaks modal open", updated.View())
+		if !strings.Contains(updated.View().Content, "Edit Gitleaks Configuration") {
+			t.Fatalf("test setup invalid: view = %q, want the gitleaks modal open", updated.View().Content)
 		}
 		return updated, adminClient
 	}
@@ -3389,8 +3383,8 @@ func TestGitleaksConfigModalCharacterization(t *testing.T) {
 		t.Parallel()
 		opened, client := newReady(t)
 		closed := runKey(t, opened, "esc")
-		if strings.Contains(closed.View(), "Edit Gitleaks Configuration") {
-			t.Fatalf("view after esc = %q, want the modal closed", closed.View())
+		if strings.Contains(closed.View().Content, "Edit Gitleaks Configuration") {
+			t.Fatalf("view after esc = %q, want the modal closed", closed.View().Content)
 		}
 		if client.configureFeatureCalls != 0 {
 			t.Fatalf("configureFeatureCalls = %d, want 0 after esc", client.configureFeatureCalls)
@@ -3406,12 +3400,12 @@ func TestGitleaksConfigModalCharacterization(t *testing.T) {
 		// change the view; two toggles must exactly restore it.
 		opened, _ := newReady(t)
 		toggledOnce := runKey(t, opened, " ")
-		if toggledOnce.View() == opened.View() {
+		if toggledOnce.View().Content == opened.View().Content {
 			t.Fatalf("view after one space = unchanged, want Enabled to visibly flip")
 		}
 		toggledTwice := runKey(t, toggledOnce, " ")
-		if toggledTwice.View() != opened.View() {
-			t.Fatalf("view after two spaces = %q, want it to exactly restore the original %q", toggledTwice.View(), opened.View())
+		if toggledTwice.View().Content != opened.View().Content {
+			t.Fatalf("view after two spaces = %q, want it to exactly restore the original %q", toggledTwice.View().Content, opened.View().Content)
 		}
 	})
 
@@ -3423,11 +3417,11 @@ func TestGitleaksConfigModalCharacterization(t *testing.T) {
 			afterFourTabs = runKey(t, afterFourTabs, "tab")
 		}
 		typed := runKey(t, afterFourTabs, "9")
-		if !strings.Contains(typed.View(), "5m0s9") {
-			t.Fatalf("view after tab x4 + rune = %q, want the rune appended to Timeout (0:Enabled -> 1:Timeout -> 2:MaxConcurrency -> 0:Enabled -> 1:Timeout)", typed.View())
+		if !strings.Contains(ansi.Strip(typed.View().Content), "5m0s9") {
+			t.Fatalf("view after tab x4 + rune = %q, want the rune appended to Timeout (0:Enabled -> 1:Timeout -> 2:MaxConcurrency -> 0:Enabled -> 1:Timeout)", ansi.Strip(typed.View().Content))
 		}
-		if strings.Contains(typed.View(), "19") {
-			t.Fatalf("view after tab x4 + rune = %q, want MaxConcurrency (\"1\") untouched", typed.View())
+		if strings.Contains(ansi.Strip(typed.View().Content), "19") {
+			t.Fatalf("view after tab x4 + rune = %q, want MaxConcurrency (\"1\") untouched", ansi.Strip(typed.View().Content))
 		}
 	})
 
@@ -3439,12 +3433,12 @@ func TestGitleaksConfigModalCharacterization(t *testing.T) {
 		opened, _ := newReady(t)
 		onTimeout := runKey(t, opened, "tab")
 		trimmed := runKey(t, onTimeout, "backspace")
-		if trimmed.View() == onTimeout.View() {
+		if trimmed.View().Content == onTimeout.View().Content {
 			t.Fatalf("view after backspace = unchanged, want Timeout's trailing rune removed")
 		}
 		restored := runKey(t, trimmed, "s")
-		if restored.View() != onTimeout.View() {
-			t.Fatalf("view after backspace+\"s\" = %q, want it to exactly restore %q", restored.View(), onTimeout.View())
+		if restored.View().Content != onTimeout.View().Content {
+			t.Fatalf("view after backspace+\"s\" = %q, want it to exactly restore %q", restored.View().Content, onTimeout.View().Content)
 		}
 	})
 
@@ -3458,8 +3452,8 @@ func TestGitleaksConfigModalCharacterization(t *testing.T) {
 		if client.lastConfiguredFeature != "gitleaks" {
 			t.Fatalf("lastConfiguredFeature = %q, want gitleaks", client.lastConfiguredFeature)
 		}
-		if strings.Contains(submitted.View(), "Edit Gitleaks Configuration") {
-			t.Fatalf("view after successful submit = %q, want the modal closed", submitted.View())
+		if strings.Contains(submitted.View().Content, "Edit Gitleaks Configuration") {
+			t.Fatalf("view after successful submit = %q, want the modal closed", submitted.View().Content)
 		}
 	})
 
@@ -3468,22 +3462,22 @@ func TestGitleaksConfigModalCharacterization(t *testing.T) {
 		opened, _ := newReady(t)
 		onTimeout := runKey(t, opened, "tab")
 		typed := runKey(t, onTimeout, "9")
-		if !strings.Contains(typed.View(), "5m0s9") {
-			t.Fatalf("view after rune = %q, want \"9\" appended to Timeout", typed.View())
+		if !strings.Contains(typed.View().Content, "5m0s9") {
+			t.Fatalf("view after rune = %q, want \"9\" appended to Timeout", typed.View().Content)
 		}
 	})
 
 	t.Run("unmapped key is a no-op", func(t *testing.T) {
 		t.Parallel()
 		opened, client := newReady(t)
-		before := opened.View()
-		updated, cmd := opened.Update(tea.KeyMsg{Type: tea.KeyLeft})
+		before := opened.View().Content
+		updated, cmd := opened.Update(testKeyLeft())
 		after := updated.(Model)
 		if cmd != nil {
 			t.Fatalf("Update(unmapped key) returned a non-nil cmd, want nil")
 		}
-		if after.View() != before {
-			t.Fatalf("view after an unmapped key = %q, want unchanged %q", after.View(), before)
+		if after.View().Content != before {
+			t.Fatalf("view after an unmapped key = %q, want unchanged %q", after.View().Content, before)
 		}
 		if client.configureFeatureCalls != 0 {
 			t.Fatalf("configureFeatureCalls = %d, want 0", client.configureFeatureCalls)
@@ -3524,7 +3518,7 @@ func TestModelScanPolicyModalOpenToggleSubmitPersistsAndReflectsCurrentSettings(
 	}
 
 	updated = runKey(t, updated, "p")
-	modalView := updated.View()
+	modalView := updated.View().Content
 	for _, want := range []string{"Enabled", "Severity Threshold", "CRITICAL"} {
 		if !strings.Contains(modalView, want) {
 			t.Fatalf("view = %q, want %q", modalView, want)
@@ -3555,8 +3549,8 @@ func TestModelScanPolicyModalOpenToggleSubmitPersistsAndReflectsCurrentSettings(
 	if submittedScreen.policyModal.Active() {
 		t.Fatalf("trivyConfigScreen.policyModal = %#v, want closed after submit", submittedScreen.policyModal)
 	}
-	if !strings.Contains(submitted.View(), "Vulnerability policy saved") {
-		t.Fatalf("view = %q, want policy feedback after submit", submitted.View())
+	if !strings.Contains(submitted.View().Content, "Vulnerability policy saved") {
+		t.Fatalf("view = %q, want policy feedback after submit", submitted.View().Content)
 	}
 }
 
@@ -3598,7 +3592,7 @@ func TestModelSigningPolicyModalOpenerKeyIsScopedToSigningFeature(t *testing.T) 
 		if updated.adminScreens[slotTrivyConfig] != nil {
 			t.Fatal("adminScreens[slotTrivyConfig] != nil, want unmounted -- 'p' on signing must not touch the trivy screen")
 		}
-		modalView := updated.View()
+		modalView := updated.View().Content
 		for _, want := range []string{"Signing Policy", "Enabled", "Trusted Keys"} {
 			if !strings.Contains(modalView, want) {
 				t.Fatalf("view = %q, want %q", modalView, want)
@@ -3800,8 +3794,8 @@ func TestModelSigningPolicyModalAddKeySubmitPersistsAndReflectsCurrentSettings(t
 	if len(submittedScreen.cfg.Keys.Keys()) != 1 {
 		t.Fatalf("cfg.Keys.Keys() = %#v, want 1 key reflected from the saved policy", submittedScreen.cfg.Keys.Keys())
 	}
-	if !strings.Contains(submitted.View(), "Signing policy saved") {
-		t.Fatalf("view = %q, want signing policy feedback after submit", submitted.View())
+	if !strings.Contains(submitted.View().Content, "Signing policy saved") {
+		t.Fatalf("view = %q, want signing policy feedback after submit", submitted.View().Content)
 	}
 
 	// ClearKeys: Tab twice more (Keys -> Identities -> ClearKeys, the new
@@ -3938,7 +3932,7 @@ func TestModelTrivyOverrideEditorOpenerKeyIsScopedToRepositoryAlertsRow(t *testi
 		if editor.loading {
 			t.Fatal("editor.loading = true, want false once the load Cmd has resolved")
 		}
-		if !editor.exists || !strings.Contains(updated.View(), "team/api") {
+		if !editor.exists || !strings.Contains(updated.View().Content, "team/api") {
 			t.Fatalf("editor = %#v, want the stored override reflected", editor)
 		}
 
@@ -4058,8 +4052,8 @@ func TestModelTrivyOverrideEditorSetAndClearRoundTripReflectsInModal(t *testing.
 	if !editorAfterSave.exists || editorAfterSave.pathPrimary != "/etc/trivy/ignore" {
 		t.Fatalf("editor = %#v, want the saved override reflected", editorAfterSave)
 	}
-	if !strings.Contains(submitted.View(), "Repository override saved") {
-		t.Fatalf("view = %q, want save feedback", submitted.View())
+	if !strings.Contains(submitted.View().Content, "Repository override saved") {
+		t.Fatalf("view = %q, want save feedback", submitted.View().Content)
 	}
 
 	// Tab to the Clear row and press Enter to clear it.
@@ -4081,8 +4075,8 @@ func TestModelTrivyOverrideEditorSetAndClearRoundTripReflectsInModal(t *testing.
 	if editorAfterClear.exists {
 		t.Fatal("editor.exists = true, want false after clear")
 	}
-	if !strings.Contains(cleared.View(), "inheriting global settings") {
-		t.Fatalf("view = %q, want the editor to show the repository inheriting global settings after clear", cleared.View())
+	if !strings.Contains(cleared.View().Content, "inheriting global settings") {
+		t.Fatalf("view = %q, want the editor to show the repository inheriting global settings after clear", cleared.View().Content)
 	}
 
 	// Pressing Enter on the Clear row again (already inheriting global) must
@@ -4352,7 +4346,7 @@ func TestModelTrivyRepositoryAlertsLoadSelectDetailAndRecoverEmptyState(t *testi
 		if adminClient.listRepositoryScanSummariesCalls != 1 {
 			t.Fatalf("listRepositoryScanSummariesCalls = %d, want one repository-alert load", adminClient.listRepositoryScanSummariesCalls)
 		}
-		alertsView := updated.View()
+		alertsView := updated.View().Content
 		for _, want := range []string{"Repository Alerts", "Repository", "Reference", "team/api", "library/base", "library/alpine", "1.0.0", "stable", "latest"} {
 			if !strings.Contains(alertsView, want) {
 				t.Fatalf("view = %q, want %q", alertsView, want)
@@ -4379,7 +4373,7 @@ func TestModelTrivyRepositoryAlertsLoadSelectDetailAndRecoverEmptyState(t *testi
 		if got, want := scanHistoryScreenOf(t, updated).modal.Repository, "team/api"; got != want {
 			t.Fatalf("scanHistoryScreen.modal.Repository = %q, want %q", got, want)
 		}
-		detailView := updated.View()
+		detailView := updated.View().Content
 		for _, want := range []string{"Scan History — team/api", "CVE-2026-0001", "openssl"} {
 			if !strings.Contains(detailView, want) {
 				t.Fatalf("view = %q, want %q", detailView, want)
@@ -4390,8 +4384,8 @@ func TestModelTrivyRepositoryAlertsLoadSelectDetailAndRecoverEmptyState(t *testi
 		if updated.adminScreens[slotScanHistory] != nil {
 			t.Fatal("adminScreens[slotScanHistory] still mounted, want un-mounted after esc")
 		}
-		if strings.Contains(updated.View(), "Scan History —") {
-			t.Fatalf("view = %q, want esc to close the scan history modal with no residual detail", updated.View())
+		if strings.Contains(updated.View().Content, "Scan History —") {
+			t.Fatalf("view = %q, want esc to close the scan history modal with no residual detail", updated.View().Content)
 		}
 		reposAfterEsc, ok := updated.adminScreens[slotTrivyRepos].(trivyReposScreen)
 		if !ok {
@@ -4417,12 +4411,12 @@ func TestModelTrivyRepositoryAlertsLoadSelectDetailAndRecoverEmptyState(t *testi
 		updated = runKey(t, updated, "enter")
 		updated = runKey(t, updated, "enter")
 		updated = runKey(t, updated, "tab")
-		if !strings.Contains(updated.View(), "No repository alerts found.") {
-			t.Fatalf("view = %q, want clear empty-state message", updated.View())
+		if !strings.Contains(updated.View().Content, "No repository alerts found.") {
+			t.Fatalf("view = %q, want clear empty-state message", updated.View().Content)
 		}
 		updated = runKey(t, updated, "tab")
-		if !strings.Contains(updated.View(), "Version: 0.57.1") {
-			t.Fatalf("view = %q, want runtime tab (trivyConfigScreen) still usable after empty alerts", updated.View())
+		if !strings.Contains(updated.View().Content, "Version: 0.57.1") {
+			t.Fatalf("view = %q, want runtime tab (trivyConfigScreen) still usable after empty alerts", updated.View().Content)
 		}
 	})
 }
@@ -4468,7 +4462,7 @@ func TestModelRepositoryAlertsScreenShowsOneRowPerRepositoryNotPerScanRun(t *tes
 		t.Fatalf("ScanSummary TotalRows() = %d, want %d (one row per repository, not %d per scan run)", got, want, len(adminClient.scanRuns))
 	}
 
-	view := updated.View()
+	view := updated.View().Content
 	if !strings.Contains(view, "Repository Alerts") {
 		t.Fatalf("view = %q, want the Repository Alerts summary table on screen", view)
 	}
@@ -4873,7 +4867,7 @@ func TestSecurityDomainListsThreePeers(t *testing.T) {
 	if got, want := updated.screen, screenAdminFeatures; got != want {
 		t.Fatalf("screen = %q, want %q", got, want)
 	}
-	view := updated.View()
+	view := updated.View().Content
 	for _, want := range []string{"trivy", "gitleaks", "signing"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view = %q, want %q listed as a peer entry", view, want)
@@ -4901,7 +4895,7 @@ func TestOperationsListsBothResultsScreens(t *testing.T) {
 	if got, want := updated.screen, screenAdminOperations; got != want {
 		t.Fatalf("screen = %q, want %q", got, want)
 	}
-	view := updated.View()
+	view := updated.View().Content
 	if !strings.Contains(view, "Scan Runs") || !strings.Contains(view, "Secret Scan Findings") {
 		t.Fatalf("view = %q, want both Scan Runs and Secret Scan Findings listed", view)
 	}
@@ -4951,7 +4945,7 @@ func TestOperationsThirdRowReachesUpdateChannelScreen(t *testing.T) {
 	if got, want := screen.current, "stable"; got != want {
 		t.Fatalf("updateChannelScreen.current = %q, want %q", got, want)
 	}
-	view := updated.View()
+	view := updated.View().Content
 	if strings.Contains(view, "Loading update channel...") {
 		t.Fatalf("view = %q, want the loading message gone once the channel is loaded", view)
 	}
@@ -5150,7 +5144,7 @@ func TestModelScanHistoryModalHistoryNavigationRefetchesDetailAndSecretsPerCurso
 		t.Fatalf("Detail.Run.ID after paging = %q, want %q", got, want)
 	}
 
-	view := paged.View()
+	view := paged.View().Content
 	if !strings.Contains(view, "CVE-OLD") || strings.Contains(view, "CVE-NEW") {
 		t.Fatalf("view = %q, want only the navigated run's (run-old) findings on the Vulnerabilities tab", view)
 	}
@@ -5158,7 +5152,7 @@ func TestModelScanHistoryModalHistoryNavigationRefetchesDetailAndSecretsPerCurso
 		t.Fatalf("view = %q, want the position indicator to report 2/2 after paging to the oldest (last, newest-first) run", view)
 	}
 
-	leaksView := runKey(t, paged, "tab").View()
+	leaksView := runKey(t, paged, "tab").View().Content
 	if !strings.Contains(leaksView, "rule-old") || strings.Contains(leaksView, "rule-new") {
 		t.Fatalf("view = %q, want only run-old's secret finding on the Leaks tab", leaksView)
 	}
@@ -5211,7 +5205,7 @@ func TestModelScanHistoryModalDigestNeverLeaksAcrossRunsWhenPagingHistory(t *tes
 	// relay Cmd, design.md Decision B -- a migrated screen cannot write to
 	// AdminViewState.ScanHistoryModal directly), one hop before the actual
 	// history load Cmd the pre-change code returned directly.
-	updatedRaw, openCmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updatedRaw, openCmd := model.Update(testKeyEnter())
 	afterOpenRequest := updatedRaw.(Model)
 	if openCmd == nil {
 		t.Fatal("expected openAdminScanHistory after enter")
@@ -5233,7 +5227,7 @@ func TestModelScanHistoryModalDigestNeverLeaksAcrossRunsWhenPagingHistory(t *tes
 
 	// Before resolving run-a's in-flight detail Cmd, the operator pages to
 	// run-b — this fires a SECOND (newer) detail Cmd for run-b.
-	updatedRaw, detailCmdForB := afterHistory.Update(tea.KeyMsg{Type: tea.KeyRight})
+	updatedRaw, detailCmdForB := afterHistory.Update(testKeyRight())
 	afterPage := updatedRaw.(Model)
 	if got, want := scanHistoryScreenOf(t, afterPage).modal.Cursor, 1; got != want {
 		t.Fatalf("Cursor after right = %d, want %d", got, want)
@@ -5262,7 +5256,7 @@ func TestModelScanHistoryModalDigestNeverLeaksAcrossRunsWhenPagingHistory(t *tes
 		t.Fatalf("Detail.Run.ID = %q, want %q", got, want)
 	}
 
-	view := final.View()
+	view := final.View().Content
 	if !strings.Contains(view, "CVE-B") || strings.Contains(view, "CVE-A") {
 		t.Fatalf("view = %q, want only run-b's findings, never a leaked run-a finding", view)
 	}
@@ -5321,12 +5315,12 @@ func TestModelScanHistoryModalRendersWithinViewportAcrossHeights(t *testing.T) {
 				t.Fatal("ScanHistoryModal.Open = false, want true after the real key-press flow opened it")
 			}
 
-			view := result.View()
+			view := result.View().Content
 			if got := lipgloss.Height(view); got > height {
 				t.Fatalf("view height = %d, want <= %d (modal open with a full findings page)\nview:\n%s", got, height, view)
 			}
 
-			leaksView := runKey(t, result, "tab").View()
+			leaksView := runKey(t, result, "tab").View().Content
 			if got := lipgloss.Height(leaksView); got > height {
 				t.Fatalf("Leaks tab view height = %d, want <= %d\nview:\n%s", got, height, leaksView)
 			}
@@ -5370,7 +5364,7 @@ func TestModelConfirmAndTrivyConfigModalOverlayFitsViewportAndDoesNotGrowPageHei
 
 			model := newModelForModalOverlayTest(t, height)
 			model.adminView.Confirm = newConfirmPrompt("Enable User", "Enable alice?", "enable", "", func(screenEnv) tea.Cmd { return nil })
-			openView := model.View()
+			openView := model.View().Content
 			if got := lipgloss.Height(openView); got > height {
 				t.Fatalf("view height with Confirm modal open = %d, want <= %d (viewport height)\n%s", got, height, openView)
 			}
@@ -5394,7 +5388,7 @@ func TestModelConfirmAndTrivyConfigModalOverlayFitsViewportAndDoesNotGrowPageHei
 					RegistryReachableURL: "https://registry.example.com", MaxConcurrency: "4",
 				},
 			}
-			openView := model.View()
+			openView := model.View().Content
 			if got := lipgloss.Height(openView); got > height {
 				t.Fatalf("view height with Trivy config modal open = %d, want <= %d (viewport height)\n%s", got, height, openView)
 			}
@@ -5424,7 +5418,7 @@ func TestModelTrivyConfigModalRendersFullBottomBorderAndHelpLineAtViewportFloor(
 		},
 	}
 
-	view := model.View()
+	view := model.View().Content
 	if got := lipgloss.Height(view); got > minViewportHeight {
 		t.Fatalf("view height = %d, want <= %d (viewport floor)\n%s", got, minViewportHeight, view)
 	}
@@ -5521,13 +5515,13 @@ func TestModelScanHistoryModalRendersWithinViewportAcrossWidths(t *testing.T) {
 				t.Fatalf("len(Runs) = %d, want %d (adminScanHistoryWindowLimit-scale history loaded)", got, want)
 			}
 
-			view := result.View()
+			view := result.View().Content
 			assertNoLineExceedsWidthOrCorruptsBorders(t, view, width)
 			if !strings.Contains(view, "Executions") {
 				t.Fatalf("view = %q, want the executions rail present on the Vulnerabilities tab", view)
 			}
 
-			leaksView := runKey(t, result, "tab").View()
+			leaksView := runKey(t, result, "tab").View().Content
 			assertNoLineExceedsWidthOrCorruptsBorders(t, leaksView, width)
 			if !strings.Contains(leaksView, "Executions") {
 				t.Fatalf("leaksView = %q, want the executions rail present on the Leaks tab too", leaksView)
@@ -5588,7 +5582,7 @@ func TestModelSecretFindingsSurfaceAlongsideVulnerabilityResultsWithoutSeverityO
 	// Enter now opens the scan history modal (spec.md "Repository Alert
 	// Drill-Down Opens History Modal"), defaulting to the Vulnerabilities
 	// tab; the secret findings surface on the Leaks tab, reachable via Tab.
-	view := updated.View()
+	view := updated.View().Content
 	for _, want := range []string{"CVE-2026-0099", "Vulnerabilities", "Leaks"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view = %q, want %q on the modal's default Vulnerabilities tab", view, want)
@@ -5599,7 +5593,7 @@ func TestModelSecretFindingsSurfaceAlongsideVulnerabilityResultsWithoutSeverityO
 	}
 
 	leaksTab := runKey(t, updated, "tab")
-	leaksView := leaksTab.View()
+	leaksView := leaksTab.View().Content
 	for _, want := range []string{"aws-access-token", "config.json:4"} {
 		if !strings.Contains(leaksView, want) {
 			t.Fatalf("view = %q, want %q on the Leaks tab", leaksView, want)
@@ -5672,7 +5666,7 @@ func TestModelFeatureTablesRenderAlignedRowsAndPreserveBackendValues(t *testing.
 	if got, want := menu.table.HighlightedRow().Data[adminTableMetaFeatureName], "trivy"; got != want {
 		t.Fatalf("highlighted feature metadata = %#v, want %q", got, want)
 	}
-	menuView := updated.View()
+	menuView := updated.View().Content
 	for _, want := range []string{"Name", "Kind", "Enabled", "Configured", "Current", "Latest", "Update", "0.57.1", "0.58.0", "available"} {
 		if !strings.Contains(menuView, want) {
 			t.Fatalf("view = %q, want %q", menuView, want)
@@ -5691,7 +5685,7 @@ func TestModelFeatureTablesRenderAlignedRowsAndPreserveBackendValues(t *testing.
 	if got, want := rowsTable.TotalRows(), 2; got != want {
 		t.Fatalf("rows table rows = %d, want %d", got, want)
 	}
-	view := updated.View()
+	view := updated.View().Content
 	for _, want := range []string{"Runtime Checks", "Title", "Status", "Detail", "DB freshness", "older than 24h", "Registry reachability", "https://registry.internal:5443"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view = %q, want %q", view, want)
@@ -5722,8 +5716,8 @@ func TestModelTrivyTablesPreserveEmptyStateAndBackendOrdering(t *testing.T) {
 		if got, want := repos.table.TotalRows(), 0; got != want {
 			t.Fatalf("scan-summary table rows = %d, want %d", got, want)
 		}
-		if !strings.Contains(updated.View(), "No repository alerts found.") {
-			t.Fatalf("view = %q, want empty alerts message", updated.View())
+		if !strings.Contains(updated.View().Content, "No repository alerts found.") {
+			t.Fatalf("view = %q, want empty alerts message", updated.View().Content)
 		}
 	})
 
@@ -5754,7 +5748,7 @@ func TestModelTrivyTablesPreserveEmptyStateAndBackendOrdering(t *testing.T) {
 		if got, want := repos.table.HighlightedRow().Data[adminTableMetaScanRunID], "run-2"; got != want {
 			t.Fatalf("highlighted scan-summary metadata = %#v, want %q", got, want)
 		}
-		view := updated.View()
+		view := updated.View().Content
 		for _, want := range []string{"Repository", "Reference", "Status", "Critical", "High", "Fixable", "team/api", "library/base", "library/alpine", "1.0.0", "stable", "latest"} {
 			if !strings.Contains(view, want) {
 				t.Fatalf("view = %q, want %q", view, want)
@@ -5838,7 +5832,7 @@ func TestModelTrivyFindingsMixedSeverityRenderPreservesLabelsAndCounts(t *testin
 		t.Fatalf("visible findings rows = %d, want %d", got, want)
 	}
 
-	// want.style is severityStyleV2 (charm.land/lipgloss/v2), the exact same
+	// want.style is severityStyle (charm.land/lipgloss/v2), the exact same
 	// v2 style severityStyledCell itself builds -- not adminTheme's own
 	// v1-lipgloss severityCritical/severityHigh/severityLow. Comparing
 	// against a v1 style's Render output is no longer meaningful once
@@ -5850,12 +5844,12 @@ func TestModelTrivyFindingsMixedSeverityRenderPreservesLabelsAndCounts(t *testin
 	// whether the cell's actual color is correct.
 	expectedSeverities := []struct {
 		label string
-		style lipglossv2.Style
+		style lipgloss.Style
 	}{
-		{label: "CRITICAL", style: severityStyleV2("CRITICAL")},
-		{label: "HIGH", style: severityStyleV2("HIGH")},
-		{label: "LOW", style: severityStyleV2("LOW")},
-		{label: "HIGH", style: severityStyleV2("HIGH")},
+		{label: "CRITICAL", style: severityStyle("CRITICAL")},
+		{label: "HIGH", style: severityStyle("HIGH")},
+		{label: "LOW", style: severityStyle("LOW")},
+		{label: "HIGH", style: severityStyle("HIGH")},
 	}
 	for i, want := range expectedSeverities {
 		severityCell, ok := rows[i].Data[adminTableColumnFindingSeverity].(bubbletable.StyledCell)
@@ -5870,7 +5864,7 @@ func TestModelTrivyFindingsMixedSeverityRenderPreservesLabelsAndCounts(t *testin
 		}
 	}
 
-	view := updated.View()
+	view := updated.View().Content
 	for label, want := range map[string]int{"CRITICAL": 1, "HIGH": 2, "LOW": 1} {
 		if got := strings.Count(view, label); got != want {
 			t.Fatalf("view %q count = %d, want %d", label, got, want)
@@ -5933,8 +5927,8 @@ func TestModelAdminFeatureTablesKeepScreenShortcutsAuthoritative(t *testing.T) {
 	if adminClient.getScanRunDetailCalls != 1 {
 		t.Fatalf("getScanRunDetailCalls = %d, want 1", adminClient.getScanRunDetailCalls)
 	}
-	if !strings.Contains(updated.View(), "CVE-2026-2000") {
-		t.Fatalf("view = %q, want loaded detail", updated.View())
+	if !strings.Contains(updated.View().Content, "CVE-2026-2000") {
+		t.Fatalf("view = %q, want loaded detail", updated.View().Content)
 	}
 
 	updated = runKey(t, updated, "esc")
@@ -6024,7 +6018,7 @@ func TestModelAdminScanRunsTablePagesOnArrowKeyNavigationPastPageBoundary(t *tes
 	if !ok || firstPageOnlyRepository == "" {
 		t.Fatalf("highlighted row repository before navigation = %#v, want a non-empty string", beforeTable.HighlightedRow().Data[adminTableColumnScanSummaryRepository])
 	}
-	beforeView := updated.View()
+	beforeView := updated.View().Content
 	beforeTableView := beforeTable.View()
 	wantBeforeIndicator := fmt.Sprintf("%d/%d", 1, beforeTable.MaxPages())
 	if !strings.Contains(beforeTableView, wantBeforeIndicator) {
@@ -6049,7 +6043,7 @@ func TestModelAdminScanRunsTablePagesOnArrowKeyNavigationPastPageBoundary(t *tes
 		t.Fatalf("scan-summary table CurrentPage() after paging past the first page boundary = %d, want %d (design.md decision #5: WithHighlightedRow must auto-page the table)", got, want)
 	}
 
-	afterView := updated.View()
+	afterView := updated.View().Content
 	afterTableView := afterTable.View()
 	wantAfterIndicator := fmt.Sprintf("%d/%d", 2, afterTable.MaxPages())
 	if !strings.Contains(afterTableView, wantAfterIndicator) {
@@ -6140,7 +6134,7 @@ func TestModelSearchPreservesSelectionByIDAndEnterOpensEditUser(t *testing.T) {
 	if got, want := updated.adminView.SelectedUserID, "u-2"; got != want {
 		t.Fatalf("SelectedUserID = %q, want %q", got, want)
 	}
-	view := updated.View()
+	view := updated.View().Content
 	if !strings.Contains(view, "Username contains") || !strings.Contains(view, "bo") {
 		t.Fatalf("view = %q, want visible search query", view)
 	}
@@ -6155,15 +6149,15 @@ func TestModelSearchPreservesSelectionByIDAndEnterOpensEditUser(t *testing.T) {
 	if got, want := updated.adminView.SelectedUserID, "u-3"; got != want {
 		t.Fatalf("SelectedUserID = %q, want %q after narrowing filter", got, want)
 	}
-	if strings.Contains(updated.View(), "bob [user, enabled]") {
-		t.Fatalf("view = %q, want bob filtered out after narrowing", updated.View())
+	if strings.Contains(updated.View().Content, "bob [user, enabled]") {
+		t.Fatalf("view = %q, want bob filtered out after narrowing", updated.View().Content)
 	}
 	updated = runKey(t, updated, "enter")
 	if updated.screen != screenAdminEditUser {
 		t.Fatalf("screen = %q, want %q", updated.screen, screenAdminEditUser)
 	}
-	if !strings.Contains(updated.View(), "bobby") {
-		t.Fatalf("view = %q, want selected user context", updated.View())
+	if !strings.Contains(updated.View().Content, "bobby") {
+		t.Fatalf("view = %q, want selected user context", updated.View().Content)
 	}
 }
 
@@ -6339,13 +6333,13 @@ func TestModelGrantRepositorySuggestionsFilterAndSelect(t *testing.T) {
 	updated = runKey(t, updated, "g")
 	updated = runKey(t, updated, "n")
 
-	initialView := updated.View()
+	initialView := updated.View().Content
 	if !strings.Contains(initialView, "Known Repositories") || !strings.Contains(initialView, "team/demo") || !strings.Contains(initialView, "team/backend") {
 		t.Fatalf("view = %q, want known repository suggestions", initialView)
 	}
 
 	updated = runKey(t, updated, "tea")
-	filteredView := updated.View()
+	filteredView := updated.View().Content
 	if strings.Contains(filteredView, "library/alpine") {
 		t.Fatalf("view = %q, want non-matching repository hidden", filteredView)
 	}
@@ -7328,36 +7322,36 @@ func runAdminLogin(t *testing.T, model Model, username string, password string) 
 
 func runKey(t *testing.T, model Model, key string) Model {
 	t.Helper()
-	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}
+	msg := testKeyRunes(key)
 	switch key {
 	case "enter":
-		msg = tea.KeyMsg{Type: tea.KeyEnter}
+		msg = testKeyEnter()
 	case "esc":
-		msg = tea.KeyMsg{Type: tea.KeyEsc}
+		msg = testKeyEsc()
 	case "tab":
-		msg = tea.KeyMsg{Type: tea.KeyTab}
+		msg = testKeyTab()
 	case "shift+tab":
-		msg = tea.KeyMsg{Type: tea.KeyShiftTab}
+		msg = testKeyShiftTab()
 	case "left":
-		msg = tea.KeyMsg{Type: tea.KeyLeft}
+		msg = testKeyLeft()
 	case "right":
-		msg = tea.KeyMsg{Type: tea.KeyRight}
+		msg = testKeyRight()
 	case "down":
-		msg = tea.KeyMsg{Type: tea.KeyDown}
+		msg = testKeyDown()
 	case "up":
-		msg = tea.KeyMsg{Type: tea.KeyUp}
+		msg = testKeyUp()
 	case "backspace":
-		msg = tea.KeyMsg{Type: tea.KeyBackspace}
+		msg = testKeyBackspace()
 	case "pgup":
-		msg = tea.KeyMsg{Type: tea.KeyPgUp}
+		msg = testKeyPgUp()
 	case "pgdown":
-		msg = tea.KeyMsg{Type: tea.KeyPgDown}
+		msg = testKeyPgDown()
 	case "home":
-		msg = tea.KeyMsg{Type: tea.KeyHome}
+		msg = testKeyHome()
 	case "end":
-		msg = tea.KeyMsg{Type: tea.KeyEnd}
+		msg = testKeyEnd()
 	case " ":
-		msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}}
+		msg = testKeySpace()
 	}
 	updated, cmd := model.Update(msg)
 	result := updated.(Model)

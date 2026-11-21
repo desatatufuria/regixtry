@@ -3,8 +3,8 @@ package tui
 import (
 	"strings"
 
-	"github.com/charmbracelet/bubbles/key"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
 	"regixtry/internal/ports"
 )
 
@@ -407,7 +407,7 @@ func clearRepositoryOverrideCmd(env screenEnv, repository string, feature string
 var overrideEditorKeys = screenKeys{short: []key.Binding{
 	key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", "save/clear")),
 	key.NewBinding(key.WithKeys("tab"), key.WithHelp("Tab", "next field")),
-	key.NewBinding(key.WithKeys(" "), key.WithHelp("Space", "toggle")),
+	key.NewBinding(key.WithKeys("space"), key.WithHelp("Space", "toggle")),
 	key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "cancel")),
 }}
 

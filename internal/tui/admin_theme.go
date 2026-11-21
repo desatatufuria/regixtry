@@ -1,6 +1,10 @@
 package tui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"image/color"
+
+	"charm.land/lipgloss/v2"
+)
 
 // The Nord hex values bubble-table's v2-lipgloss styling needs
 // (admin_tables_lipgloss_v2.go) are pulled from these named constants
@@ -23,7 +27,7 @@ type adminTheme struct {
 	app              lipgloss.Style
 	section          lipgloss.Style
 	tableHeader      lipgloss.Style
-	borderColor      lipgloss.Color
+	borderColor      color.Color
 	title            lipgloss.Style
 	context          lipgloss.Style
 	subheading       lipgloss.Style

@@ -4,8 +4,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 // TestUpdateChannelScreenSatisfiesAdminScreenInterface mirrors every other
@@ -214,12 +212,12 @@ func TestUpdateChannelScreenRefreshRecoversFromFailedInitialLoad(t *testing.T) {
 	}
 }
 
-// keyMsgFor mirrors runKey's own tea.KeyMsg construction (model_test.go)
+// keyMsgFor mirrors runKey's own keyMsg construction (model_test.go)
 // for the two keys this screen's own tests need, operating directly on a
 // screen struct rather than a full Model.
-func keyMsgFor(s string) tea.KeyMsg {
+func keyMsgFor(s string) keyMsg {
 	if s == "enter" {
-		return tea.KeyMsg{Type: tea.KeyEnter}
+		return testKeyEnter()
 	}
-	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
+	return testKeyRunes(s)
 }

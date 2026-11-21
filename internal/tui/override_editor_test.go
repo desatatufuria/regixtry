@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"regixtry/internal/ports"
 )
 
@@ -17,12 +16,12 @@ func TestOverrideEditorFeatureIsImmutable(t *testing.T) {
 	t.Parallel()
 
 	env := screenEnv{}
-	keys := []tea.KeyMsg{
-		{Type: tea.KeyEnter},
-		{Type: tea.KeyTab},
-		{Type: tea.KeyRunes, Runes: []rune{' '}},
-		{Type: tea.KeyBackspace},
-		{Type: tea.KeyRunes, Runes: []rune{'x'}},
+	keys := []keyMsg{
+		testKeyEnter(),
+		testKeyTab(),
+		testKeySpace(),
+		testKeyBackspace(),
+		testKeyRunes("x"),
 	}
 
 	for _, feature := range []string{trivyFeatureName, gitleaksFeatureName, signingFeatureName} {
@@ -61,7 +60,7 @@ func TestOverrideEditorSigningKeyListReachableWithoutTabbingToIt(t *testing.T) {
 		t.Fatal("test setup invalid: default focus is already overrideFieldPathPrimary")
 	}
 
-	next, cmd, consumed := editor.update(env, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	next, cmd, consumed := editor.update(env, testKeyRunes("n"))
 	if !consumed || cmd != nil {
 		t.Fatalf("'n' with focus elsewhere: consumed = %v, cmd = %v, want consumed=true, cmd=nil", consumed, cmd)
 	}
@@ -83,7 +82,7 @@ func TestOverrideEditorSigningKeyListDeleteReachableWithoutTabbingToIt(t *testin
 		t.Fatal("test setup invalid: default focus is already overrideFieldPathPrimary")
 	}
 
-	next, cmd, consumed := editor.update(env, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	next, cmd, consumed := editor.update(env, testKeyRunes("x"))
 	if !consumed || cmd == nil {
 		t.Fatalf("'x' with focus elsewhere: consumed = %v, cmd = %v, want consumed=true, cmd != nil", consumed, cmd)
 	}
@@ -112,7 +111,7 @@ func TestOverrideEditorSigningKeyListInteractionSnapsFocusToTheKeyList(t *testin
 		t.Fatal("test setup invalid: default focus is already overrideFieldPathPrimary")
 	}
 
-	next, _, consumed := editor.update(env, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	next, _, consumed := editor.update(env, testKeyRunes("n"))
 	if !consumed {
 		t.Fatal("'n' with focus elsewhere: consumed = false, want true")
 	}
@@ -291,7 +290,7 @@ func TestOverrideEditorSigningIdentityListReachableOnceTabbedTo(t *testing.T) {
 	}
 	editor.focus = idx
 
-	next, cmd, consumed := editor.update(env, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	next, cmd, consumed := editor.update(env, testKeyRunes("n"))
 	if !consumed || cmd != nil {
 		t.Fatalf("'n' with identities focused: consumed = %v, cmd = %v, want consumed=true, cmd=nil", consumed, cmd)
 	}
@@ -311,7 +310,7 @@ func TestOverrideEditorSaveIncludesConfiguredIdentities(t *testing.T) {
 	editor := newOverrideEditor(signingFeatureName, "team/api")
 	editor.identities = newTrustedIdentityList([]ports.TrustedIdentity{{CertificateIdentityRegexp: "^valid$", CertificateOIDCIssuer: "https://token.actions.githubusercontent.com"}})
 
-	_, cmd, consumed := editor.update(env, tea.KeyMsg{Type: tea.KeyEnter})
+	_, cmd, consumed := editor.update(env, testKeyEnter())
 	if !consumed || cmd == nil {
 		t.Fatalf("Enter (save): consumed = %v, cmd = %v, want consumed=true, cmd != nil", consumed, cmd)
 	}

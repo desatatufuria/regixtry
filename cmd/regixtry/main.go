@@ -19,7 +19,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	appauth "regixtry/internal/app/auth"
 	appregixtry "regixtry/internal/app/regixtry"
 	appscanning "regixtry/internal/app/scanning"
@@ -2533,7 +2533,7 @@ func runTUI(cfg tuiConfig, stdin io.Reader, stdout io.Writer) error {
 			updated, _ = model.Update(cmd())
 		}
 		if stdout != nil {
-			_, _ = io.WriteString(stdout, updated.(tui.Model).View())
+			_, _ = io.WriteString(stdout, updated.(tui.Model).View().Content)
 		}
 		return nil
 	}
@@ -2542,7 +2542,6 @@ func runTUI(cfg tuiConfig, stdin io.Reader, stdout io.Writer) error {
 		tui.NewModel(service, modelOpts...),
 		tea.WithInput(stdin),
 		tea.WithOutput(stdout),
-		tea.WithAltScreen(),
 	)
 
 	_, err = program.Run()

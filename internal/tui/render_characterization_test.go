@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	appregixtry "regixtry/internal/app/regixtry"
@@ -154,7 +154,7 @@ func TestRenderCharacterization(t *testing.T) {
 		name := fmt.Sprintf("too_small_%dx%d", size.width, size.height)
 		t.Run(name, func(t *testing.T) {
 			model := characterizationScreens[0].build(t, size.width, size.height)
-			assertCharacterizationGolden(t, name, ansi.Strip(model.View()))
+			assertCharacterizationGolden(t, name, ansi.Strip(model.View().Content))
 		})
 	}
 
@@ -165,7 +165,7 @@ func TestRenderCharacterization(t *testing.T) {
 			name := fmt.Sprintf("%s_%dx%d", screen.name, size.width, size.height)
 			t.Run(name, func(t *testing.T) {
 				model := screen.build(t, size.width, size.height)
-				got := ansi.Strip(model.View())
+				got := ansi.Strip(model.View().Content)
 				assertCharacterizationGolden(t, name, got)
 			})
 		}

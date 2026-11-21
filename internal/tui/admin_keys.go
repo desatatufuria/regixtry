@@ -3,7 +3,7 @@ package tui
 import (
 	"strings"
 
-	"github.com/charmbracelet/bubbles/key"
+	"charm.land/bubbles/v2/key"
 	"regixtry/internal/ports"
 )
 
@@ -57,7 +57,7 @@ func shortHelpView(theme adminTheme, keys screenKeys) string {
 var gitleaksConfigModalKeys = screenKeys{short: []key.Binding{
 	key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", "save")),
 	key.NewBinding(key.WithKeys("tab"), key.WithHelp("Tab", "next field")),
-	key.NewBinding(key.WithKeys(" "), key.WithHelp("Space", "toggle")),
+	key.NewBinding(key.WithKeys("space"), key.WithHelp("Space", "toggle")),
 	key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "cancel")),
 }}
 
@@ -73,7 +73,7 @@ var gitleaksConfigModalKeys = screenKeys{short: []key.Binding{
 var signingConfigModalKeys = screenKeys{short: []key.Binding{
 	key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", "save/add key")),
 	key.NewBinding(key.WithKeys("tab"), key.WithHelp("Tab", "next field")),
-	key.NewBinding(key.WithKeys(" "), key.WithHelp("Space", "toggle/cycle")),
+	key.NewBinding(key.WithKeys("space"), key.WithHelp("Space", "toggle/cycle")),
 	key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "cancel")),
 }}
 

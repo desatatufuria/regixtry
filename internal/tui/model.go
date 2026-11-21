@@ -13,8 +13,8 @@ import (
 	"time"
 	"unicode"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	bubbletable "github.com/evertras/bubble-table/table"
 	appregixtry "regixtry/internal/app/regixtry"
 	domainauth "regixtry/internal/domain/auth"
@@ -1710,7 +1710,15 @@ const terminalTooSmallTemplate = "Terminal too small\nRegixtry needs at least %d
 // renderInspectionWorkspace's ~11 existing call sites (design.md Decision 2:
 // "0 of ~11 callers touched" -- this wrapper keeps that true for the banner
 // too).
-func (m Model) View() string {
+// View wraps viewContent in a tea.View that requests the alternate screen
+// (the v2 replacement for tea.WithAltScreen()).
+func (m Model) View() tea.View {
+	view := tea.NewView(m.viewContent())
+	view.AltScreen = true
+	return view
+}
+
+func (m Model) viewContent() string {
 	// Guarded here (design decision #7) rather than in Update: View() is the
 	// single funnel both the interactive program loop and the --snapshot
 	// CLI path render through.

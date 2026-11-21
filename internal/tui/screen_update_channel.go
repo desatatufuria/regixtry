@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/key"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
 	"regixtry/internal/infra/release"
 )
 
@@ -144,7 +144,7 @@ func (s updateChannelScreen) View(theme adminTheme, env screenEnv) screenFrame {
 }
 
 var updateChannelKeys = screenKeys{short: []key.Binding{
-	key.NewBinding(key.WithKeys(" "), key.WithHelp("Space", "toggle stable/insider")),
+	key.NewBinding(key.WithKeys("space"), key.WithHelp("Space", "toggle stable/insider")),
 	key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", "save")),
 	key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 	key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "back")),

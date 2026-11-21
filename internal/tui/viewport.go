@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 )
 
 // Terminal viewport sizing. contentBudget() computes how many rows are left
@@ -59,8 +59,8 @@ const (
 
 	// sectionHorizontalOverhead is theme.section's total non-content-area
 	// horizontal overhead once wrapped by theme.app: theme.section's own
-	// RoundedBorder (2 columns; lipgloss.Style.Width already accounts for
-	// Padding internally, see sectionWidth) plus theme.app's outer
+	// RoundedBorder (2 columns, added back to Width at the call site because
+	// lipgloss v2 Width includes the border; see sectionWidth) plus theme.app's outer
 	// Padding(0, 1) (2 columns).
 	sectionHorizontalOverhead = 4
 
@@ -185,5 +185,7 @@ func renderSection(theme adminTheme, inner string, l consoleLayout) string {
 	if indicator != "" {
 		content = fitted + "\n" + theme.muted.Render(indicator)
 	}
-	return theme.section.Width(sectionWidth(l)).Render(content)
+	// lipgloss v2 counts the border inside Width (v1 did not), so the border is
+	// added back to keep the box at the same on-screen size.
+	return theme.section.Width(sectionWidth(l) + theme.section.GetHorizontalBorderSize()).Render(content)
 }

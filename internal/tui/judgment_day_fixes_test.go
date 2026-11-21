@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // TestSecurityConfigScreensJoinAdminPrincipalScreenSet is the Judgment Day
@@ -126,7 +126,7 @@ func TestTrivyGitleaksSigningConfigScreensShowSubmittingStatusOnConfirmDispatch(
 			}),
 		}
 
-		next, cmd, consumed := s.Update(env, tea.KeyMsg{Type: tea.KeyEnter})
+		next, cmd, consumed := s.Update(env, testKeyEnter())
 		if !consumed {
 			t.Fatalf("consumed = false, want true")
 		}
@@ -155,7 +155,7 @@ func TestTrivyGitleaksSigningConfigScreensShowSubmittingStatusOnConfirmDispatch(
 			}),
 		}
 
-		next, cmd, consumed := s.Update(env, tea.KeyMsg{Type: tea.KeyEnter})
+		next, cmd, consumed := s.Update(env, testKeyEnter())
 		if !consumed {
 			t.Fatalf("consumed = false, want true")
 		}
@@ -184,7 +184,7 @@ func TestTrivyGitleaksSigningConfigScreensShowSubmittingStatusOnConfirmDispatch(
 			}),
 		}
 
-		next, cmd, consumed := s.Update(env, tea.KeyMsg{Type: tea.KeyEnter})
+		next, cmd, consumed := s.Update(env, testKeyEnter())
 		if !consumed {
 			t.Fatalf("consumed = false, want true")
 		}

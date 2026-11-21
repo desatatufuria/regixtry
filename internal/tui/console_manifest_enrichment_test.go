@@ -201,7 +201,7 @@ func TestModelLoadManifestFetchesAndStoresReferrers(t *testing.T) {
 	if got, want := len(updated.manifest.Referrers.Manifests), 1; got != want {
 		t.Fatalf("len(updated.manifest.Referrers.Manifests) = %d, want %d", got, want)
 	}
-	if !strings.Contains(updated.View(), "sha256:sig111") {
-		t.Fatalf("view = %q, want the referrer's digest rendered", updated.View())
+	if !strings.Contains(updated.View().Content, "sha256:sig111") {
+		t.Fatalf("view = %q, want the referrer's digest rendered", updated.View().Content)
 	}
 }

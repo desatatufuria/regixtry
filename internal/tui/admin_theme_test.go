@@ -1,13 +1,13 @@
 package tui
 
 import (
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/lipgloss"
-	"github.com/muesli/termenv"
+	"charm.land/lipgloss/v2"
 )
 
 // srgbLinearize converts one sRGB channel (0-1) to its linear-light value,
@@ -51,11 +51,12 @@ func relativeLuminance(t *testing.T, hex string) float64 {
 // (the theme's only foreground constructor).
 func styleForegroundHex(t *testing.T, style lipgloss.Style) string {
 	t.Helper()
-	color, ok := style.GetForeground().(lipgloss.Color)
-	if !ok {
-		t.Fatalf("style.GetForeground() = %#v, want a lipgloss.Color", style.GetForeground())
+	fg := style.GetForeground()
+	if fg == nil {
+		t.Fatalf("style.GetForeground() = nil, want a color")
 	}
-	return string(color)
+	r, g, b, _ := fg.RGBA()
+	return fmt.Sprintf("#%02X%02X%02X", r>>8, g>>8, b>>8)
 }
 
 // TestSeverityMediumHasItsOwnDistinctHex is the Phase 1 task 1.1 RED test
@@ -149,15 +150,8 @@ func TestThemeInputAndInputFocusRenderSingleRowWithNoBorder(t *testing.T) {
 // differ (focus re-expressed via theme.selected's gold fill/foreground), and
 // neither may contain a border rune.
 func TestThemeInputFocusDiffersFromInputWithoutAnyBorderRune(t *testing.T) {
-	// Not t.Parallel(): forces the global lipgloss color profile so the
-	// focus/unfocus foreground+background actually emit distinguishable ANSI
-	// sequences (go test runs with no tty, so lipgloss otherwise
-	// auto-detects "no color" and the two renders would be byte-identical),
-	// following TestRenderAdminScanHistoryModalRendersExecutionsColumnWithCursorHighlighted's
-	// precedent in this same package.
-	original := lipgloss.ColorProfile()
-	lipgloss.SetColorProfile(termenv.TrueColor)
-	defer lipgloss.SetColorProfile(original)
+	// lipgloss v2 always renders full-fidelity ANSI, so no color profile needs
+	// forcing for the styled output below to be distinguishable from plain text.
 
 	theme := newAdminTheme()
 

@@ -1,6 +1,6 @@
 package tui
 
-import tea "github.com/charmbracelet/bubbletea"
+import tea "charm.land/bubbletea/v2"
 
 // legacyHandler is a Go method expression on an existing, unmodified
 // AdminViewState-backed key handler (design.md Decision C). legacyHandler

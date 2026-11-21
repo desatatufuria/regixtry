@@ -4,7 +4,7 @@ import (
 	"image/color"
 	"testing"
 
-	lipglossv2 "charm.land/lipgloss/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // colorsEqual compares two color.Color values by their RGBA output rather
@@ -24,33 +24,33 @@ func TestBubbleTableV2StylesMatchNordConstants(t *testing.T) {
 
 	t.Run("base style uses the border color and left alignment", func(t *testing.T) {
 		t.Parallel()
-		style := bubbleTableBaseStyleV2()
-		if !colorsEqual(t, style.GetBorderTopForeground(), lipglossv2.Color(nordBorderHex)) {
+		style := bubbleTableBaseStyle()
+		if !colorsEqual(t, style.GetBorderTopForeground(), lipgloss.Color(nordBorderHex)) {
 			t.Fatalf("base style border foreground does not match nordBorderHex")
 		}
 	})
 
 	t.Run("header style is bold and uses the text color", func(t *testing.T) {
 		t.Parallel()
-		style := bubbleTableHeaderStyleV2()
+		style := bubbleTableHeaderStyle()
 		if !style.GetBold() {
 			t.Fatal("header style GetBold() = false, want true")
 		}
-		if !colorsEqual(t, style.GetForeground(), lipglossv2.Color(nordTextHex)) {
+		if !colorsEqual(t, style.GetForeground(), lipgloss.Color(nordTextHex)) {
 			t.Fatalf("header style foreground does not match nordTextHex")
 		}
 	})
 
 	t.Run("highlight style uses selected foreground and background", func(t *testing.T) {
 		t.Parallel()
-		style := bubbleTableHighlightStyleV2()
+		style := bubbleTableHighlightStyle()
 		if !style.GetBold() {
 			t.Fatal("highlight style GetBold() = false, want true")
 		}
-		if !colorsEqual(t, style.GetForeground(), lipglossv2.Color(nordSelectedFGHex)) {
+		if !colorsEqual(t, style.GetForeground(), lipgloss.Color(nordSelectedFGHex)) {
 			t.Fatalf("highlight style foreground does not match nordSelectedFGHex")
 		}
-		if !colorsEqual(t, style.GetBackground(), lipglossv2.Color(nordSelectedBGHex)) {
+		if !colorsEqual(t, style.GetBackground(), lipgloss.Color(nordSelectedBGHex)) {
 			t.Fatalf("highlight style background does not match nordSelectedBGHex")
 		}
 	})
@@ -69,12 +69,12 @@ func TestBubbleTableV2StylesMatchNordConstants(t *testing.T) {
 			{"UNKNOWN", nordTextHex, false},
 		}
 		for _, tc := range cases {
-			style := severityStyleV2(tc.value)
-			if !colorsEqual(t, style.GetForeground(), lipglossv2.Color(tc.wantHex)) {
-				t.Fatalf("severityStyleV2(%q) foreground does not match %s", tc.value, tc.wantHex)
+			style := severityStyle(tc.value)
+			if !colorsEqual(t, style.GetForeground(), lipgloss.Color(tc.wantHex)) {
+				t.Fatalf("severityStyle(%q) foreground does not match %s", tc.value, tc.wantHex)
 			}
 			if style.GetBold() != tc.wantBold {
-				t.Fatalf("severityStyleV2(%q) GetBold() = %v, want %v", tc.value, style.GetBold(), tc.wantBold)
+				t.Fatalf("severityStyle(%q) GetBold() = %v, want %v", tc.value, style.GetBold(), tc.wantBold)
 			}
 		}
 	})

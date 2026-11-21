@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	bubbletable "github.com/evertras/bubble-table/table"
 	"regixtry/internal/ports"
 )
