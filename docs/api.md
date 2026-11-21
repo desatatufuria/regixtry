@@ -30,10 +30,10 @@ JSON bodies are decoded rejecting unknown fields and multiple bodies.
 | PUT | `/admin/v1/users/{id}/grants/{repository}` | `role` | `200`, grant |
 | DELETE | `/admin/v1/users/{id}/grants/{repository}` | none | `204` |
 | GET | `/admin/v1/users/{id}/admin-tokens` | none | `200`, array without secrets |
-| POST | `/admin/v1/users/{id}/admin-tokens` | `name`, optional `ttl_seconds` | `201`, token and secret |
+| POST | `/admin/v1/users/{id}/admin-tokens` | `name`, optional `ttl_seconds` (seconds; default 30 days; maximum 2 years, `63072000`) | `201`, token and secret |
 | DELETE | `/admin/v1/users/{id}/admin-tokens/{accessor}` | none | `204` |
 | GET | `/admin/v1/robots` | none | `200`, array of robot accounts |
-| POST | `/admin/v1/robots` | `name`, `repository`, `role`, optional `ttl_seconds` | `201`, robot account with one-time token secret |
+| POST | `/admin/v1/robots` | `name`, `repository`, `role`, optional `ttl_seconds` (seconds; default 30 days; maximum 2 years, `63072000`) | `201`, robot account with one-time token secret |
 | DELETE | `/admin/v1/robots/{id}` | none | `204`; rejected if the target is not a robot account |
 | GET | `/admin/v1/features` | none | `200`, built-in feature inventory |
 | GET | `/admin/v1/features/{name}` | none | `200`, feature-owned configuration |

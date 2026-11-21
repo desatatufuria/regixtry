@@ -4,7 +4,7 @@
 
 - User passwords are verified with bcrypt.
 - Stored tokens and pre-issued credentials keep only a SHA-256 hash of the secret, never the plaintext.
-- Access tokens expire after 15 minutes (`TokenKindAccess`); admin credential tokens (`TokenKindAdminCredential`, used for both human admin tokens and robot secrets) are bounded to 30 days by default and are revocable.
+- Access tokens expire after 15 minutes (`TokenKindAccess`); admin credential tokens (`TokenKindAdminCredential`, used for both human admin tokens and robot secrets) last 30 days by default, can be given at most 2 years, and are revocable.
 - Repository grants apply the roles `repo-reader`, `repo-writer`, `repo-admin` (`RepoRole.AllowsRead/AllowsWrite/AllowsAdmin`).
 - `/admin/v1` requires a valid Bearer token for every route. Almost every route additionally requires `Principal.IsAdmin` — with one deliberate, narrow exception described below.
 - TLS termination directly on the binary requires both a certificate and a key together; the configuration rejects an inconsistent combination (one present, one missing).
