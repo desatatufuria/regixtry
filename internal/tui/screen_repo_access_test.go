@@ -948,3 +948,55 @@ func TestRepoAccessViewGoldens(t *testing.T) {
 		}
 	}
 }
+
+// repoAccessSplit serves two pages (limit 200): team/split holds 200 grants
+// from page 1 onward, and its only Admin ("zed", last by username) is on
+// page 2 when withAdmin is set.
+func repoAccessSplit(withAdmin bool) *fakeAdminClient {
+	client := &fakeAdminClient{}
+	client.allGrants = append(client.allGrants, repoAccessEntry("team/alone", "u-w", "wanda", false, domainauth.RepoRoleWriter, time.Time{}))
+	for i := range 198 {
+		client.allGrants = append(client.allGrants, repoAccessEntry("team/split", fmt.Sprintf("u-%03d", i), fmt.Sprintf("user%03d", i), false, domainauth.RepoRoleReader, time.Time{}))
+	}
+	// Page 1 ends here: 199 rows; the 200th is the first of page 2's view.
+	client.allGrants = append(client.allGrants, repoAccessEntry("team/split", "u-x", "xavier", false, domainauth.RepoRoleReader, time.Time{}))
+	role := domainauth.RepoRoleReader
+	if withAdmin {
+		role = domainauth.RepoRoleAdmin
+	}
+	client.allGrants = append(client.allGrants, repoAccessEntry("team/split", "u-z", "zed", false, role, time.Time{}))
+	return client
+}
+
+func TestRepoAccessPanelNeverClaimsNoAdminOnASplitRepository(t *testing.T) {
+	t.Parallel()
+	const noAdmin = "No Admin on this repository."
+	for _, withAdmin := range []bool{true, false} {
+		client := repoAccessSplit(withAdmin)
+		m := repoAccessModelAt(t, client, 200, 40)
+		if s := repoAccessScreenOf(t, m); s.done || len(s.rows) != 200 {
+			t.Fatalf("page 1: done=%v rows=%d", s.done, len(s.rows))
+		}
+		// A repository fully inside page 1 is exact even while next is set.
+		out := repoAccessRender(m)
+		if !strings.Contains(out, noAdmin) || strings.Contains(out, "Loading more…") {
+			t.Fatalf("team/alone (first, complete): want the exact warning and no Loading more…:\n%s", out)
+		}
+		m = repoAccessPress(t, m, testKeyDown())
+		if len(client.allGrantsCursors) != 1 {
+			t.Fatalf("reads = %q, want the split repository shown from page 1 only", client.allGrantsCursors)
+		}
+		out = repoAccessRender(m)
+		if strings.Contains(out, noAdmin) || !strings.Contains(out, "Loading more…") || !strings.Contains(out, "199+ principals have access") {
+			t.Fatalf("admin=%v split repository on page 1: no warning, Loading more… and a partial count expected:\n%s", withAdmin, out)
+		}
+		m = repoAccessPress(t, m, append([]keyMsg{testKeyRunes("/")}, repoAccessType("zed")...)...)
+		if s := repoAccessScreenOf(t, m); !s.done || len(s.rows) != 201 {
+			t.Fatalf("page 2: done=%v rows=%d", s.done, len(s.rows))
+		}
+		out = repoAccessRender(m)
+		if strings.Contains(out, "Loading more…") || strings.Contains(out, "+ principals") || strings.Contains(out, noAdmin) == withAdmin {
+			t.Fatalf("admin=%v after page 2: exact panel expected (warning iff no admin):\n%s", withAdmin, out)
+		}
+	}
+}

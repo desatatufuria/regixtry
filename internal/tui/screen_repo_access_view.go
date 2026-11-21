@@ -239,6 +239,11 @@ func (s repoAccessScreen) renderPanel(theme adminTheme, row repoAccessRow, ok bo
 	}
 
 	who := s.whoHas(row.repo)
+	incomplete := s.incomplete(row.repo)
+	reserved := 0
+	if incomplete {
+		reserved = 1
+	}
 	spaced := func(spacer bool) (head, actions, warning []string) {
 		blank := func() []string {
 			if spacer {
@@ -248,14 +253,14 @@ func (s repoAccessScreen) renderPanel(theme adminTheme, row repoAccessRow, ok bo
 		}
 		head = append([]string{
 			theme.subheading.Render(grantTruncate(row.repo, inner)),
-			theme.muted.Render(grantTruncate(fmt.Sprintf("%s %s access", plural(len(who), "principal"), haveWord(len(who))), inner)),
+			theme.muted.Render(grantTruncate(s.principalCount(len(who), incomplete), inner)),
 		}, blank()...)
 		head = append(head, theme.muted.Bold(true).Render("WHO HAS WHAT"))
 		actions = append(blank(), theme.muted.Bold(true).Render("ACTIONS ON SELECTED GRANT"),
 			repoAccessAction(theme, "Open principal", "enter", inner),
 			repoAccessAction(theme, "Grant access", "g", inner),
 			repoAccessRevokeAction(theme, fmt.Sprintf("Revoke %s on %s", row.username, row.repo), inner))
-		if !hasRepoAdmin(who) {
+		if !incomplete && !hasRepoAdmin(who) {
 			warning = append(blank(), wrapStyled(theme.warning, "No Admin on this repository. Only server admins can change access here.", inner)...)
 		}
 		return head, actions, warning
@@ -263,10 +268,10 @@ func (s repoAccessScreen) renderPanel(theme adminTheme, row repoAccessRow, ok bo
 	// The blank rows between the sections are the first thing to go when the
 	// panel is too short to list everyone.
 	head, actions, warning := spaced(true)
-	if innerH-len(head)-len(actions)-len(warning) < len(who) {
+	if innerH-len(head)-len(actions)-len(warning)-reserved < len(who) {
 		head, actions, warning = spaced(false)
 	}
-	capacity := innerH - len(head) - len(actions) - len(warning)
+	capacity := innerH - len(head) - len(actions) - len(warning) - reserved
 	shown := who
 	hidden := 0
 	if len(who) > capacity {
@@ -280,12 +285,31 @@ func (s repoAccessScreen) renderPanel(theme adminTheme, row repoAccessRow, ok bo
 	if hidden > 0 {
 		lines = append(lines, theme.muted.Render(fmt.Sprintf("+%d more", hidden)))
 	}
+	if incomplete {
+		lines = append(lines, theme.muted.Render("Loading more…"))
+	}
 	lines = append(lines, actions...)
 	lines = append(lines, warning...)
 	if len(lines) > innerH {
 		lines = lines[:innerH]
 	}
 	return style.Render(strings.Join(lines, "\n"))
+}
+
+// incomplete reports whether more grants of repo may still be unread: the
+// endpoint orders by repository, so only the last loaded repository can be
+// split across pages, and only while a next cursor remains.
+func (s repoAccessScreen) incomplete(repo string) bool {
+	return !s.done && len(s.rows) > 0 && s.rows[len(s.rows)-1].repo == repo
+}
+
+// principalCount is "3 principals have access", "3+ principals have access"
+// while the repository's grants are still being read.
+func (s repoAccessScreen) principalCount(n int, partial bool) string {
+	if !partial {
+		return fmt.Sprintf("%s %s access", plural(n, "principal"), haveWord(n))
+	}
+	return fmt.Sprintf("%d+ principals have access", n)
 }
 
 func haveWord(n int) string {
