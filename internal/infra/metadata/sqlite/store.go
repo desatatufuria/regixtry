@@ -155,8 +155,9 @@ func sqliteDSN(path string) string {
 func sqliteDSNWithBusyTimeout(path string, busyTimeoutMillis int) string {
 	query := url.Values{}
 	query.Add("_pragma", "foreign_keys(1)")
-	query.Add("_pragma", "journal_mode(WAL)")
+	// busy_timeout first so a new connection runs the WAL pragma with it set.
 	query.Add("_pragma", "busy_timeout("+strconv.Itoa(busyTimeoutMillis)+")")
+	query.Add("_pragma", "journal_mode(WAL)")
 	// immediate: a deferred read-then-write transaction cannot honor
 	// busy_timeout when another writer committed in between (WAL).
 	query.Add("_txlock", "immediate")
