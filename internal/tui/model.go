@@ -2289,6 +2289,14 @@ func (m Model) updateAdminUsersKey(msg keyMsg) (tea.Model, tea.Cmd) {
 		return m.openAdminFeatures()
 	case isRuneKey(msg, 'b'):
 		return m.openAdminRobots()
+	case isRuneKey(msg, 'g'):
+		// "Grant repository access" with the highlighted user preselected.
+		user, ok := m.selectedAdminUser()
+		if !ok {
+			m.status = "Select a user to grant repository access."
+			return m, nil
+		}
+		return m, openGrantAccess(user.ID, screenAdminUsers)
 	}
 
 	return m, nil
@@ -2327,6 +2335,14 @@ func (m Model) updateAdminRobotsKey(msg keyMsg) (tea.Model, tea.Cmd) {
 		return m, m.loadAdminRobotsCmd()
 	case isRuneKey(msg, 't'):
 		return m.openAdminRobotTokens()
+	case isRuneKey(msg, 'g'):
+		// "Grant repository access" with the highlighted robot preselected.
+		robot, ok := selectedAdminRobot(m.adminView)
+		if !ok {
+			m.status = "No robot selected."
+			return m, nil
+		}
+		return m, openGrantAccess(robot.ID, screenAdminRobots)
 	case isRuneKey(msg, 'e', 'x'):
 		robot, ok := selectedAdminRobot(m.adminView)
 		if !ok {

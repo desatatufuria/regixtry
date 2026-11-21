@@ -23,6 +23,7 @@ var adminMenuRows = []adminMenuRow{
 	{Label: "Security & Compliance", Help: "Trivy, Gitleaks, Signing"},
 	{Label: "Identity & Access", Help: "Users, Robots, Repository Grants, Tokens"},
 	{Label: "Operations", Help: "Scan Runs, Secret Scan Findings"},
+	{Label: "Grant repository access", Help: "Give a user or robot a role on repositories"},
 }
 
 // adminMenuScreen is screenAdminMenu: the post-login landing screen (Phase
@@ -81,6 +82,8 @@ func (s adminMenuScreen) navigateToSelected() tea.Cmd {
 		return navigate(screenAdminUsers)
 	case "Operations":
 		return navigate(screenAdminOperations)
+	case "Grant repository access":
+		return openGrantAccess("", screenAdminMenu)
 	}
 	return nil
 }

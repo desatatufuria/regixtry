@@ -105,7 +105,7 @@ func adminScreenHelp(current screen, view AdminViewState) string {
 	case screenRepoAdminAddGrant:
 		return "Enter: save | Tab: next field | Space: cycle role | Esc: cancel"
 	case screenAdminRobots:
-		return "n: create robot | e: enable | x: disable | t: tokens | r: refresh | Esc: back | q: quit"
+		return "n: create robot | e: enable | x: disable | t: tokens | g: grant access | r: refresh | Esc: back | q: quit"
 	case screenAdminCreateRobot:
 		return "Enter: create robot | Tab: next field | Space: cycle role | Esc: cancel"
 	default:
