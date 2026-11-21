@@ -18,7 +18,7 @@ The console shows repositories, tags, manifests, blobs, and uploads. When `-api-
 
 ### Navigation map
 
-Post-login, the operator lands on `screenAdminMenu` — a bare, four-row domain menu (`↑`/`↓` to move, `Enter` to open a domain, `Esc` to leave the admin panel back to Console browsing):
+Post-login, the operator lands on `screenAdminMenu` — a bare, five-row menu (four domains plus a shortcut to the grant screen) (`↑`/`↓` to move, `Enter` to open a domain, `Esc` to leave the admin panel back to Console browsing):
 
 ```
 Admin (screenAdminMenu)
@@ -28,9 +28,10 @@ Admin (screenAdminMenu)
 │   ├─ Gitleaks -> gitleaksConfigScreen  ---'o' on a repo row--->  Gitleaks' own override editor screen
 │   └─ Signing  -> signingConfigScreen   ---'o' on a repo row--->  Signing's own override editor screen
 ├─ Identity & Access      -> screenAdminUsers (Users, Robots, Repository Grants, Tokens — unchanged legacy screens)
-└─ Operations             -> screenAdminOperations (Scan Runs / Secret Scan Findings, two peers)
-    ├─ Scan Runs             -> repository picker -> Enter opens scan history, Vulnerabilities tab first
-    └─ Secret Scan Findings  -> repository picker -> Enter opens scan history, Leaks tab first
+├─ Operations             -> screenAdminOperations (Scan Runs / Secret Scan Findings, two peers)
+│   ├─ Scan Runs             -> repository picker -> Enter opens scan history, Vulnerabilities tab first
+│   └─ Secret Scan Findings  -> repository picker -> Enter opens scan history, Leaks tab first
+└─ Grant repository access -> screenAdminGrantAccess (see below)
 ```
 
 Every domain row's own screen has an `Esc` that returns one level up to `screenAdminMenu`, except Identity & Access (`screenAdminUsers`, whose sub-screens keep their existing legacy Esc chain) and each Security & Compliance feature's own sub-screens (`Esc` there returns to the Security & Compliance list, `screenAdminFeatures`).
@@ -41,13 +42,44 @@ Each Security & Compliance feature owns two things: a **config screen** (global 
 
 The `Read-only` toggle only exists on the **Create User** form (`screenAdminCreateUser`, beside `Admin` and `Enabled`): a read-only user pulls from every repository without an explicit grant, and never gains any admin-surface access. It is set once, at creation time. The **Edit User** screen (`screenAdminEditUser`) does not expose or re-show this flag — it only shows Username, Role, Status, and User ID, plus in-screen actions to open grants, tokens, change the password, or enable/disable the account.
 
-The Admin Users screen (`screenAdminUsers`) supports `/` to enter a username-contains search filter (typing updates the list live, `Enter`/`Esc` leaves search mode), `n` to open the Create User form, `Enter`/`e` to open the selected user in Edit User, `b` to jump to the Robots screen, and `r` to reload the user list. `Esc` returns to the domain menu (`screenAdminMenu`).
+The Admin Users screen (`screenAdminUsers`) supports `/` to enter a username-contains search filter (typing updates the list live, `Up`/`Down` pick a user, `Enter`/`Esc` leaves search mode), `n` to open the Create User form, `Enter`/`e` to open the selected user in Edit User, `b` to jump to the Robots screen, `g` to open [Grant repository access](#grant-repository-access) with the highlighted user preselected, and `r` to reload the user list. `Esc` returns to the domain menu (`screenAdminMenu`).
 
 From Edit User, `p` opens `screenAdminChangePassword` — a single new-password field; `Enter` saves it and `Esc` cancels back to Edit User. `g` opens the Grants screen and `t` opens the Tokens screen for the selected user. On the Grants screen (`screenAdminEditUserGrants`), `n` opens `screenAdminAddGrant` to add a grant, `e` opens the same form pre-filled with the selected grant to edit it, and `x` removes the selected grant (with a confirm modal). `screenAdminAddGrant` itself has a Repository field with autosuggest from known repositories: typing filters the suggestion list, `Up`/`Down` cycles the highlighted suggestion, and `Enter` commits the highlighted suggestion and advances to the Role field (`Space` cycles the role); a second `Enter` saves the grant. On the Tokens screen (`screenAdminEditUserTokens`), `n` opens `screenAdminCreateToken` (Name and TTL-seconds fields, `Enter` creates the token and reveals its one-time secret) and `x` revokes the selected token.
 
 A repo-admin delegate (a user holding `repo-admin` on at least one repository, but not global admin) reaches a repository-scoped grants view directly from the Console Repositories screen (`g` key) instead of the global-admin user workspace: `screenRepoAdminGrants`/`screenRepoAdminAddGrant` list and mutate only the delegate's own repository's grants via `/admin/v1/repositories/{repo}/grants`, and the role picker never offers `repo-admin`. On `screenRepoAdminGrants`, `n` adds a grant, `e` edits the selected grant (refused with a status message if that grant is itself a `repo-admin` grant — those can only be changed by a global admin), and `x` removes the selected grant. `screenRepoAdminAddGrant` has no repository field (the repository is fixed context) — only Username (free text) and Role (cycled with `Space`, never offering `repo-admin`).
 
-Global admins also get two robot-account screens, reached with `b` from the Users screen: `screenAdminRobots` lists robot accounts (repository, role, enabled state). `n` creates one, `t` reuses the existing token screens to issue/revoke its token, and `r` refreshes the list. `e` enables and `x` disables the selected robot (each is a no-op if the robot is already in that state) — but on this screen only, `d` is a separate, genuinely irreversible **delete** action that opens its own confirm modal ("This action cannot be undone"); this is the one admin screen where `x` does not mean delete. `screenAdminCreateRobot` collects name/repository/role/TTL and shows the created robot's one-time token secret exactly once, immediately after creation — the same reveal-once pattern already used for human admin tokens. Its Repository field has the same autosuggest as the Add Grant form: type to filter, `Up`/`Down` to cycle suggestions, `Enter` to commit the highlighted suggestion and advance to Role.
+Global admins also get two robot-account screens, reached with `b` from the Users screen: `screenAdminRobots` lists robot accounts (repository, role, enabled state). `n` creates one, `t` reuses the existing token screens to issue/revoke its token, `g` opens [Grant repository access](#grant-repository-access) with the highlighted robot preselected, and `r` refreshes the list. `e` enables and `x` disables the selected robot (each is a no-op if the robot is already in that state) — but on this screen only, `d` is a separate, genuinely irreversible **delete** action that opens its own confirm modal ("This action cannot be undone"); this is the one admin screen where `x` does not mean delete. `screenAdminCreateRobot` collects name/repository/role/TTL and shows the created robot's one-time token secret exactly once, immediately after creation — the same reveal-once pattern already used for human admin tokens. Its Repository field has the same autosuggest as the Add Grant form: type to filter, `Up`/`Down` to cycle suggestions, `Enter` to commit the highlighted suggestion and advance to Role.
+
+## Grant repository access
+
+One screen to give a user or robot a role on one or more repositories. Open it from the admin menu row **Grant repository access**, or press `g` on the Users or Robots list to start with that account preselected (focus then starts on the repositories pane). `Esc` returns to the screen it was opened from.
+
+Three panes, switched with `Tab` / `Shift+Tab`:
+
+| Pane | What it does |
+| --- | --- |
+| **Who** | Filter box plus a list of users and robots (the filter matches the name, case-insensitive). Below it, "Already has" shows the highlighted account's current grants. |
+| **Which repositories** | Filter box plus a checklist of known repositories, annotated with the role the account already has. Exact names only, no wildcards. |
+| **Role and review** | Pick the role: `1` Reader (pull), `2` Writer (pull, push, delete tags), `3` Admin (Writer plus manage who has access), or `Up`/`Down`. Reader is the default. The box below shows what `Enter` will do. |
+
+Repository selection:
+
+- Type in the filter to narrow the list; ticked repositories stay ticked while the filter changes.
+- `Space` ticks or unticks the highlighted repository. `Ctrl+A` ticks every shown known repository, or unticks them all when all are already ticked.
+- A valid repository name that is not known yet appears as an extra `+ name` row marked "not pushed yet". Only `Space` on that row ticks it, so `Ctrl+A` never selects it.
+
+Applying:
+
+- `Enter` applies from any pane. Nothing is sent before that. With no account or no repository selected, the status line says what is missing.
+- Each repository gets its own grant. A failure does not stop the rest and nothing is rolled back; the review box then lists every repository as `granted` or with its error (failures first when the list does not fit), and the status line reads "Granted Reader on N of M repositories to name". Repositories that succeeded are unticked.
+- While grants are being applied, every key is ignored except `Ctrl+C`; `Esc` only shows "Applying N grants, please wait". The screen cannot be left mid-apply.
+- If the admin session expires, the TUI returns to the login screen with the expiry reason; repositories after the expiry are reported as "not attempted (session expired)".
+
+Keys: `Tab`/`Shift+Tab` switch pane, `Up`/`Down` move, `Space` toggle repository, `Ctrl+A` toggle all shown, `1`/`2`/`3` role, `Enter` apply, `Esc` back. The filter fields take plain text, so `j`, `k`, `q` and `l` are typed there.
+
+## Text entry
+
+In text fields, letters are typed, including `j`, `k` and `q`: the login form, the user search while active, Create User username and password, the Repository field of Add Grant and Create Robot, and the Grant repository access filters. Arrow keys move suggestions and focus, `Esc` is the way out, and `Ctrl+C` always quits. `q` quits only on screens without a focused text input. Pasting works in text fields: a bracketed paste is delivered as text, so pasted key names such as "enter" stay text.
 
 ## Security & Compliance
 
@@ -75,10 +107,11 @@ Trivy, Gitleaks, and Signing are three peer feature screens (`securityMenuScreen
 
 | Key | Screen | Action |
 | --- | --- | --- |
-| `q`, `Ctrl+C` | all | quit |
+| `Ctrl+C` | all | quit |
+| `q` | screens without a focused text input | quit |
 | `Tab` | inspection | open admin |
-| `↑` / `k` | lists | move selection up |
-| `↓` / `j` | lists | move selection down |
+| `↑` / `k` | lists (not text fields) | move selection up |
+| `↓` / `j` | lists (not text fields) | move selection down |
 | `Enter` | repositories / tags | open the next detail |
 | `Esc`, `Backspace` | detail views | go back |
 | `b` | manifest | view blobs |
@@ -93,6 +126,7 @@ Trivy, Gitleaks, and Signing are three peer feature screens (`securityMenuScreen
 | `/` | admin users | enter username search filter |
 | `n` | admin users | create user |
 | `b` | admin users | jump to Robots screen |
+| `g` | admin users / admin robots | open Grant repository access for the highlighted account |
 | `Esc` | admin users | back to the domain menu |
 | `p` | admin edit user | change password |
 | `g` | admin edit user | open grants |
@@ -108,6 +142,13 @@ Trivy, Gitleaks, and Signing are three peer feature screens (`securityMenuScreen
 | `x` | admin robots | disable selected robot |
 | `d` | admin robots | delete selected robot (irreversible, confirm modal) |
 | `t` | admin robots | manage selected robot's token |
+| `Tab` / `Shift+Tab` | Grant repository access | switch pane |
+| `Up` / `Down` | Grant repository access | move (list or role) |
+| `Space` | Grant repository access (repositories) | toggle the highlighted repository |
+| `Ctrl+A` | Grant repository access (repositories) | toggle all shown known repositories |
+| `1` / `2` / `3` | Grant repository access (role pane) | Reader / Writer / Admin |
+| `Enter` | Grant repository access | apply the grants |
+| `Esc` | Grant repository access | back (ignored while applying) |
 | `↑` / `↓` | Security & Compliance list | move between Trivy / Gitleaks / Signing |
 | `Enter` | Security & Compliance list | open the highlighted feature's own screen |
 | `Tab` | Trivy | switch between Runtime and Repository Alerts |
