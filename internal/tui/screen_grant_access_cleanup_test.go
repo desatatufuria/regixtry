@@ -268,7 +268,7 @@ func TestGrantExpiredApplyLeavesAFreshScreenAfterSigningInAgain(t *testing.T) {
 	}
 	m.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: charFixedTime.Add(time.Hour)}
 	m.adminAuth = adminAuthStateAuthenticated
-	updated, cmd := m.Update(openGrantAccessMsg{returnTo: screenAdminMenu})
+	updated, cmd := m.Update(openGrantAccessMsg{returnTo: screenAdminOverview})
 	m = runCmd(t, updated.(Model), cmd)
 	s := grantScreenOf(t, m)
 	if s.applying || s.chosenID != "" || s.status != "" || len(s.selection.names) != 0 {
@@ -278,7 +278,7 @@ func TestGrantExpiredApplyLeavesAFreshScreenAfterSigningInAgain(t *testing.T) {
 		t.Fatal("the earlier expiry note reappeared")
 	}
 	m = grantModelPress(t, m, testKeyEsc())
-	if m.screen != screenAdminMenu {
+	if m.screen != screenAdminOverview {
 		t.Fatalf("Esc left screen = %q, want the menu", m.screen)
 	}
 }

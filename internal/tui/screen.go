@@ -97,10 +97,6 @@ const (
 	// Phase 11 promotes it to a top-level screen
 	// (screenSecuritySigningConfig) exactly like slotGitleaksConfig above.
 	slotSigningConfig
-	// slotSecurityMenu holds securityMenuScreen (Phase 11, design.md
-	// Decision I): screenAdminFeatures repurposed as the bare 3-row
-	// Security & Compliance domain menu.
-	slotSecurityMenu
 	// slotTrivyConfig/slotTrivyRepos hold Trivy's own peer screens (Phase
 	// 11): trivyConfigScreen (screenSecurityTrivy, Runtime tab equivalent
 	// plus config/scan-policy) and trivyReposScreen (screenSecurityTrivyRepos,
@@ -109,14 +105,9 @@ const (
 	// so the former slotTrivyOverride overlay slot no longer exists.
 	slotTrivyConfig
 	slotTrivyRepos
-	// slotAdminMenu/slotAdminOperations/slotScanRuns/slotSecretFindings hold
-	// Phase 18/19's new domain-menu and Operations screens (design.md
-	// Decision I, D9): screenAdminMenu (the 4-domain post-login landing
-	// screen), screenAdminOperations (2 rows: Scan Runs/Secret Scan
-	// Findings), and the two scanRunsScreen-backed repository pickers each
-	// row navigates to.
-	slotAdminMenu
-	slotAdminOperations
+	// slotScanRuns/slotSecretFindings hold the two scanRunsScreen-backed
+	// repository pickers the Overview's Scan runs and Secret findings items
+	// open.
 	slotScanRuns
 	slotSecretFindings
 	// slotUpdateChannel holds updateChannelScreen (tui-update-check
@@ -148,14 +139,11 @@ const (
 type adminScreenSet [numScreenSlots]adminScreen
 
 // slotFor resolves a screen id to its migrated slot, if any (design.md
-// Decision I / the Phase 11 resolved-gap addendum). screenAdminFeatures
-// itself is repurposed as securityMenuScreen; Trivy/Gitleaks/Signing each
-// gain their own peer screen(s), all addressed here. Every other screen id
-// updateAdminKey resolves still falls through to legacyScreenHandlers.
+// Decision I / the Phase 11 resolved-gap addendum). Trivy/Gitleaks/Signing
+// each have their own peer screen(s), all addressed here. Every other screen
+// id updateAdminKey resolves still falls through to legacyScreenHandlers.
 func slotFor(id screen) (screenSlot, bool) {
 	switch id {
-	case screenAdminFeatures:
-		return slotSecurityMenu, true
 	case screenSecurityTrivy:
 		return slotTrivyConfig, true
 	case screenSecurityTrivyRepos:
@@ -168,10 +156,6 @@ func slotFor(id screen) (screenSlot, bool) {
 		return slotGitleaksRepos, true
 	case screenSecuritySigningRepos:
 		return slotSigningRepos, true
-	case screenAdminMenu:
-		return slotAdminMenu, true
-	case screenAdminOperations:
-		return slotAdminOperations, true
 	case screenAdminScanRuns:
 		return slotScanRuns, true
 	case screenAdminSecretFindings:
@@ -226,14 +210,12 @@ func openScanHistory(repository string, returnTo screen, activeTab int) tea.Cmd 
 }
 
 // returnToInspectionMsg asks the parent to leave the admin panel back to
-// Console inspection (Model.returnToInspection): Phase 18 makes
-// screenAdminMenu the new admin root, so its own Esc now carries the
-// pre-Phase-18 "leave the admin panel" behavior that used to live on
-// screenAdminUsers. A migrated screen cannot call
-// Model.returnToInspection() directly (Decision B: it mutates several
-// Model-level fields beyond m.screen -- adminReturn, Confirm,
-// UserSearchActive, revealed token state, adminIntent), so this mirrors
-// navigateMsg's own "ask the parent" pattern.
+// Console inspection (Model.returnToInspection): the Overview is the admin
+// panel's root, so its Esc carries the "leave the admin panel" behavior. A
+// migrated screen cannot call Model.returnToInspection() directly (Decision
+// B: it mutates several Model-level fields beyond m.screen -- adminReturn,
+// Confirm, UserSearchActive, revealed token state, adminIntent), so this
+// mirrors navigateMsg's own "ask the parent" pattern.
 type returnToInspectionMsg struct{}
 
 func returnToInspectionCmd() tea.Cmd {
@@ -242,15 +224,13 @@ func returnToInspectionCmd() tea.Cmd {
 
 // newAdminScreenFor constructs the zero-value screen for id, used by
 // navigateMsg's central handler (model.go) to lazily mount a target screen
-// the first time the operator navigates to it (Enter from securityMenuScreen,
-// Tab between Trivy's peer screens, 'o' into a repository override list,
+// the first time the operator navigates to it (Enter on an Overview
+// sidebar item, Tab between Trivy's peer screens, 'o' into a repository override list,
 // Esc back to an already-mounted screen is a no-op here since the slot is
 // already occupied). Every migrated top-level screen this change ships is
 // listed here; an id with no migrated screen returns nil.
 func newAdminScreenFor(id screen) adminScreen {
 	switch id {
-	case screenAdminFeatures:
-		return newSecurityMenuScreen()
 	case screenSecurityTrivy:
 		return newTrivyConfigScreen()
 	case screenSecurityTrivyRepos:
@@ -263,10 +243,6 @@ func newAdminScreenFor(id screen) adminScreen {
 		return newFeatureOverridesScreen(screenSecurityGitleaksRepos, gitleaksFeatureName)
 	case screenSecuritySigningRepos:
 		return newSigningReposScreen()
-	case screenAdminMenu:
-		return newAdminMenuScreen()
-	case screenAdminOperations:
-		return newAdminOperationsScreen()
 	case screenAdminScanRuns:
 		return newScanRunsScreen()
 	case screenAdminSecretFindings:
@@ -274,7 +250,7 @@ func newAdminScreenFor(id screen) adminScreen {
 	case screenAdminUpdateChannel:
 		return newUpdateChannelScreen()
 	case screenAdminGrantAccess:
-		return newGrantAccessScreen(screenAdminMenu, "")
+		return newGrantAccessScreen(screenAdminOverview, "")
 	case screenAdminOverview:
 		return newOverviewScreen()
 	default:

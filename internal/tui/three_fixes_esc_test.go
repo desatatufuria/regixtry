@@ -40,16 +40,16 @@ func TestEscEndsTheUserSearchAndStaysOnUsers(t *testing.T) {
 	}
 
 	m = pressEsc(t, m)
-	if m.screen != screenAdminMenu {
-		t.Fatalf("second Esc screen = %v, want the Admin menu", m.screen)
+	if m.screen != screenAdminOverview {
+		t.Fatalf("second Esc screen = %v, want the Overview", m.screen)
 	}
 }
 
 func TestEscWithoutSearchStillGoesBack(t *testing.T) {
 	t.Parallel()
 	m := pressEsc(t, kjSearchModel(t, false))
-	if m.screen != screenAdminMenu {
-		t.Fatalf("screen = %v, want the Admin menu", m.screen)
+	if m.screen != screenAdminOverview {
+		t.Fatalf("screen = %v, want the Overview", m.screen)
 	}
 }
 

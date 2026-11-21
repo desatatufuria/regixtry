@@ -241,7 +241,6 @@ func TestViewportChromeInvariantTitleContextHelpAreSingleLine(t *testing.T) {
 	// production function, not a copy, so this also guards against drift.
 	adminScreens := []screen{
 		screenAdminUsers,
-		screenAdminFeatures,
 		screenAdminCreateUser,
 		screenAdminEditUser,
 		screenAdminChangePassword,

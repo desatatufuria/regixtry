@@ -638,22 +638,6 @@ func TestHTTPAdminClientFeatureRoutes(t *testing.T) {
 		run        func(t *testing.T, client *HTTPAdminClient)
 	}{
 		{
-			name:       "list features",
-			method:     http.MethodGet,
-			path:       "/admin/v1/features",
-			statusCode: http.StatusOK,
-			body:       `[{"name":"trivy","kind":"builtin","enabled":true,"configured":true}]`,
-			run: func(t *testing.T, client *HTTPAdminClient) {
-				features, err := client.ListFeatures(context.Background(), session)
-				if err != nil {
-					t.Fatalf("ListFeatures() error = %v", err)
-				}
-				if len(features) != 1 || features[0].Name != "trivy" {
-					t.Fatalf("features = %#v, want builtin trivy inventory", features)
-				}
-			},
-		},
-		{
 			name:       "feature status",
 			method:     http.MethodGet,
 			path:       "/admin/v1/features/trivy/status",

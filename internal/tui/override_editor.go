@@ -411,14 +411,16 @@ var overrideEditorKeys = screenKeys{short: []key.Binding{
 	key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "cancel")),
 }}
 
-// overrideEditor also satisfies adminScreen directly (design.md Decision A),
-// so Trivy's own override entry point (updateAdminFeaturesKey's 'o' branch)
-// can mount it as an overlay on screenAdminFeatures exactly the way
-// gitleaksConfigScreen mounts at slotGitleaksConfig -- one uniform mechanism
-// for all three features (D2: "the override action is selection-driven,
-// uniformly").
-
-func (e overrideEditor) ID() screen { return screenAdminFeatures }
+// ID is the repository list screen hosting the editor for its feature.
+func (e overrideEditor) ID() screen {
+	switch e.feature {
+	case gitleaksFeatureName:
+		return screenSecurityGitleaksRepos
+	case signingFeatureName:
+		return screenSecuritySigningRepos
+	}
+	return screenSecurityTrivyRepos
+}
 
 func (e overrideEditor) Keys() screenKeys { return overrideEditorKeys }
 

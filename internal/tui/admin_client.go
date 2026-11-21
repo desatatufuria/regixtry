@@ -20,7 +20,6 @@ const defaultAdminClientTimeout = 15 * time.Second
 
 type AdminClient interface {
 	Login(ctx context.Context, username, password string) (AdminSession, error)
-	ListFeatures(ctx context.Context, session AdminSession) ([]ports.FeatureSummary, error)
 	GetFeaturePage(ctx context.Context, session AdminSession, name string) (ports.FeaturePage, error)
 	ListScanRuns(ctx context.Context, session AdminSession, repository string, limit int) ([]ports.ScanRun, error)
 	// ListRepositoryScanSummaries backs the Repository Alerts table's
@@ -194,14 +193,6 @@ func (c *HTTPAdminClient) ListUsers(ctx context.Context, session AdminSession) (
 		return nil, err
 	}
 	return users, nil
-}
-
-func (c *HTTPAdminClient) ListFeatures(ctx context.Context, session AdminSession) ([]ports.FeatureSummary, error) {
-	var features []ports.FeatureSummary
-	if err := c.getJSON(ctx, session, "/admin/v1/features", &features); err != nil {
-		return nil, err
-	}
-	return features, nil
 }
 
 func (c *HTTPAdminClient) GetFeature(ctx context.Context, session AdminSession, name string) (ports.FeatureDetails, error) {

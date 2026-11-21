@@ -264,7 +264,6 @@ const (
 	screenAdminLogin          screen = "admin-login"
 	screenAdminAuthenticating screen = "admin-authenticating"
 	screenAdminUsers          screen = "admin-users"
-	screenAdminFeatures       screen = "admin-features"
 	screenAdminCreateUser     screen = "admin-create-user"
 	screenAdminEditUser       screen = "admin-edit-user"
 	screenAdminChangePassword screen = "admin-change-password"
@@ -296,32 +295,22 @@ const (
 	// screens (Phase 11, design.md Decision I): trivyConfigScreen (Runtime
 	// tab equivalent: config, scan policy, enable/disable/install/upgrade
 	// actions) and trivyReposScreen (Repository Alerts tab equivalent),
-	// reached from securityMenuScreen and from each other via Tab.
+	// reached from the Overview's Image scanning item and from each other via Tab.
 	screenSecurityTrivy      screen = "security-trivy"
 	screenSecurityTrivyRepos screen = "security-trivy-repos"
 	// screenSecurityGitleaksConfig/screenSecuritySigningConfig are
 	// Gitleaks'/Signing's own config screens (Phase 11 resolved-gap
-	// addendum), promoting gitleaksConfigScreen/signingConfigScreen from
-	// overlays on the legacy screenAdminFeatures (Slice 1/Phase 12.3) to
-	// properly addressable top-level screens, symmetric to
+	// addendum): properly addressable top-level screens, symmetric to
 	// screenSecurityTrivy.
 	screenSecurityGitleaksConfig screen = "security-gitleaks-config"
 	screenSecuritySigningConfig  screen = "security-signing-config"
-	// screenAdminMenu is the post-login domain-menu landing screen (Phase
-	// 18, design.md Decision I/D8): 4 domain rows (Browse, Security &
-	// Compliance, Identity & Access, Operations). It replaces
-	// screenAdminUsers as the admin panel's own root.
-	screenAdminMenu screen = "admin-menu"
 	// screenAdminOverview is the post-login landing screen (tui-v2-redesign
 	// S3): the application shell around the quick actions and "Needs
 	// attention".
 	screenAdminOverview screen = "admin-overview"
-	// screenAdminOperations is the Operations domain (Phase 18, D9): 2 rows
-	// (Scan Runs, Secret Scan Findings).
-	screenAdminOperations screen = "admin-operations"
 	// screenAdminScanRuns/screenAdminSecretFindings are the two
-	// scanRunsScreen-backed repository pickers Operations' own rows
-	// navigate to (Phase 19, D9): the only difference between them is which
+	// scanRunsScreen-backed repository pickers the Overview's Scan runs and
+	// Secret findings items open (Phase 19, D9): the only difference between them is which
 	// scanHistoryScreen tab Enter defaults to.
 	screenAdminScanRuns       screen = "admin-scan-runs"
 	screenAdminSecretFindings screen = "admin-secret-findings"
@@ -494,16 +483,15 @@ func (m Model) contentBudget(status, help string) consoleLayout {
 }
 
 // adminTablesLayout computes the consoleLayout used to size admin tables at
-// rebuild time (design.md decision #6). It uses securityMenuScreen's own
-// help text as a representative stand-in (Phase 11: adminFeatureHelp,
-// screenAdminFeatures' pre-migration help text, is retired) — callers of
+// rebuild time (design.md decision #6). It uses the Overview's own help text
+// as a representative stand-in — callers of
 // rebuildAdminTables/screenEnv() run from Update handlers, not View(), so no
 // screen-specific help string is otherwise available; this is the same
 // approximation the pre-change code already made for every OTHER migrated
 // screen's own screenEnv().Layout, just now keyed to a static var instead of
 // a dynamic view read.
 func (m Model) adminTablesLayout() consoleLayout {
-	return m.contentBudget(m.status, shortHelpView(newAdminTheme(), securityMenuKeys))
+	return m.contentBudget(m.status, shortHelpView(newAdminTheme(), overviewKeys))
 }
 
 // tagsTableLayout computes the consoleLayout used to size the Tags table at
@@ -620,11 +608,6 @@ type adminLoginCompletedMsg struct {
 type adminUsersLoadedMsg struct {
 	users []ports.AdminUser
 	err   error
-}
-
-type adminFeaturesLoadedMsg struct {
-	features []ports.FeatureSummary
-	err      error
 }
 
 // adminFeaturePageLoadedMsg carries the feature name it was requested for
@@ -944,7 +927,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// same reason -- harmless/cheap when no projects are derived yet.
 		m.rebuildProjectsTable(m.projectsTableLayout())
 		// Migrated screens with their own baked-in bubbletable.Model
-		// (securityMenuScreen/trivyReposScreen) need the same explicit
+		// (trivyReposScreen) needs the same explicit
 		// resize-rebuild, broadcast like every other non-key message
 		// (design.md Decision H).
 		m.adminScreens, _ = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
@@ -1109,18 +1092,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.startupLogin = false
 			return m, m.loadCatalogCmd()
 		}
-		// Phase 18 (design.md Decision I): the operator lands on the
-		// domain-grouped menu, not directly on screenAdminUsers (Identity &
-		// Access is now one domain among four, reached via its own row).
-		// The Users list still loads immediately in the background exactly
-		// as before (design.md's "narrow scope" precedent): no screen along
-		// the legacy screenAdminUsers/screenAdminEditUser/securityMenuScreen
-		// Esc-back chain ever re-fires loadAdminUsersCmd itself, so this
-		// single post-login load remains the only source, just no longer
-		// paired with landing directly on the screen it feeds.
+		// The operator lands on the Overview. The Users list still loads
+		// immediately in the background: no screen along the
+		// screenAdminUsers/screenAdminEditUser Esc-back chain ever re-fires
+		// loadAdminUsersCmd itself, so this single post-login load remains
+		// the only source. The Overview's own load follows it (one command
+		// at a time; see the adminUsersLoadedMsg case).
 		m.status = ""
-		m.screen = screenAdminMenu
-		m.adminScreens[slotAdminMenu] = newAdminMenuScreen()
+		m.screen = screenAdminOverview
+		m.adminScreens[slotOverview] = newOverviewScreen()
 		return m, m.loadAdminUsersCmd()
 	case adminUsersLoadedMsg:
 		if msg.err != nil {
@@ -1128,7 +1108,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m.expireAdminSession(msg.err.Error()), nil
 			}
 			m.status = msg.err.Error()
-			return m, nil
+			return m, m.overviewRefreshCmd()
 		}
 		m.applyLoadedUsers(msg.users)
 		if len(m.adminView.Users) == 0 {
@@ -1136,31 +1116,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else if strings.HasPrefix(strings.ToLower(m.status), "loading") {
 			m.status = ""
 		}
-		return m, nil
-	case adminFeaturesLoadedMsg:
-		// Phase 11 (design.md Decision I / the resolved-gap addendum):
-		// securityMenuScreen owns Features/SelectedFeature/Tables.Features
-		// now; the central handler only sets global status and broadcasts
-		// (design.md Decision H) -- it no longer chain-loads a FeaturePage,
-		// since each feature's own screen loads its own page independently
-		// once navigated into.
-		if msg.err != nil {
-			if IsAdminSessionExpired(msg.err) {
-				return m.expireAdminSession(msg.err.Error()), nil
-			}
-			m.status = msg.err.Error()
-			var cmd tea.Cmd
-			m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
-			return m, cmd
-		}
-		if len(msg.features) == 0 {
-			m.status = "No built-in features found."
-		} else if strings.HasPrefix(strings.ToLower(m.status), "loading") {
-			m.status = ""
-		}
-		var cmd tea.Cmd
-		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
-		return m, cmd
+		return m, m.overviewRefreshCmd()
 	case adminFeaturePageLoadedMsg:
 		// Broadcast only (design.md Decision H): whichever of
 		// trivyConfigScreen/gitleaksConfigScreen/signingConfigScreen this
@@ -1330,9 +1286,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case navigateMsg:
 		// The router's own navigation channel (design.md screen.go
 		// "navigate"): a migrated screen asks to switch the active
-		// top-level screen (e.g. Esc on a repos screen back to
-		// screenAdminFeatures, Tab between Trivy's peer screens, Enter from
-		// securityMenuScreen into a feature's own screen) without ever
+		// top-level screen (e.g. Esc on a repos screen back to the Overview,
+		// Tab between Trivy's peer screens, Enter on an Overview sidebar
+		// item) without ever
 		// writing m.screen itself. Lazily mounts+Inits the target the first
 		// time it is visited (newAdminScreenFor, screen.go) -- an
 		// already-mounted target's slot is left exactly as it was, so
@@ -1435,9 +1391,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case adminFeatureRuntimeMutatedMsg:
 		// Broadcast only (design.md Decision H): the requesting screen
 		// (msg.name) reloads its own page; this handler only sets the
-		// global status line. Phase 11 deviation from the pre-change
-		// central handler: no longer forces m.screen back to
-		// screenAdminFeatures -- each feature's own screen stays active and
+		// global status line. Each feature's own screen stays active and
 		// refreshes itself in place, consistent with
 		// adminFeatureActionCompletedMsg/adminFeatureConfiguredMsg above.
 		if msg.err != nil {
@@ -1934,7 +1888,7 @@ func (m Model) viewScreen() string {
 		help := "q: quit"
 		layout := m.contentBudget("", help)
 		return renderInspectionWorkspace("Sign In", renderConsoleTextSection(m.loadingText, layout), "", help)
-	case screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken, screenRepoAdminGrants, screenRepoAdminAddGrant, screenAdminRobots, screenAdminCreateRobot, screenSecurityGitleaksRepos, screenSecuritySigningRepos, screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminMenu, screenAdminOverview, screenAdminOperations, screenAdminScanRuns, screenAdminSecretFindings, screenAdminUpdateChannel, screenAdminGrantAccess:
+	case screenAdminUsers, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken, screenRepoAdminGrants, screenRepoAdminAddGrant, screenAdminRobots, screenAdminCreateRobot, screenSecurityGitleaksRepos, screenSecuritySigningRepos, screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminOverview, screenAdminScanRuns, screenAdminSecretFindings, screenAdminUpdateChannel, screenAdminGrantAccess:
 		help := adminScreenHelp(m.screen, m.adminView)
 		if slot, ok := slotFor(m.screen); ok && m.adminScreens[slot] != nil {
 			// Migrated top-level screen: help is derived from the screen's
@@ -2334,11 +2288,9 @@ func (m Model) updateAdminUsersKey(msg keyMsg) (tea.Model, tea.Cmd) {
 		// Esc ends the search and stays on Users; the next Esc goes back.
 		return m.updateAdminSearchKey(msg)
 	case isEscKey(msg):
-		// Phase 18: screenAdminMenu is now the admin panel's own root, not
-		// screenAdminUsers (design.md Decision I) -- Esc here goes back up
-		// to the domain menu; returnToInspection() moved onto
-		// screenAdminMenu's own Esc (screen_admin_menu.go).
-		return m, navigate(screenAdminMenu)
+		// The Overview is the admin panel's root: Esc goes back up to it, and
+		// its own Esc leaves the panel (overviewScreen.updateKey).
+		return m, navigate(screenAdminOverview)
 	case m.adminView.UserSearchActive:
 		return m.updateAdminSearchKey(msg)
 	case isRuneKey(msg, '/'):
@@ -2363,8 +2315,6 @@ func (m Model) updateAdminUsersKey(msg keyMsg) (tea.Model, tea.Cmd) {
 	case isRuneKey(msg, 'r'):
 		m.status = "Loading admin users..."
 		return m, m.loadAdminUsersCmd()
-	case isRuneKey(msg, 'f'):
-		return m.openAdminFeatures()
 	case isRuneKey(msg, 't'):
 		// Tokens are per principal: the highlighted user's token list.
 		return m.openAdminEditTokens()
@@ -2392,10 +2342,10 @@ func (m Model) updateAdminUsersKey(msg keyMsg) (tea.Model, tea.Cmd) {
 func (m Model) updateAdminRobotsKey(msg keyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case isEscKey(msg):
+		// Robots and Users are peers in the Overview's sidebar: Esc goes
+		// back up to the Overview from either.
 		m.clearRevealedAdminToken()
-		m.screen = screenAdminUsers
-		m.status = ""
-		return m, nil
+		return m, navigate(screenAdminOverview)
 	case isMoveUpKey(msg):
 		m.adminView.SelectedRobot = boundedIndex(m.adminView.SelectedRobot-1, len(m.adminView.Robots))
 		return m, nil
@@ -2568,13 +2518,9 @@ func (m Model) updateCreateRobotFormKey(msg keyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// updateAdminFeaturesKey/updateTrivyConfigModalKey/updateScanPolicyModalKey
-// moved to securityMenuScreen/trivyConfigScreen's own Update methods
-// (screen_security_menu.go, screen_trivy_config.go, Phase 11 resolved-gap
-// addendum): screenAdminFeatures is repurposed as securityMenuScreen, and
-// Trivy's own config/scan-policy modals move onto trivyConfigScreen exactly
-// like gitleaksConfigScreen's own config modal (Slice 1) and
-// signingConfigScreen's own policy modal (Phase 12.3).
+// Trivy's config/scan-policy modals live on trivyConfigScreen, exactly like
+// gitleaksConfigScreen's own config modal and signingConfigScreen's own
+// policy modal.
 
 // nextScanPolicyThreshold cycles the 2-value severity threshold, toggled
 // with Space per design.md Decision 6.
@@ -3555,16 +3501,6 @@ func (m Model) loadAdminUsersCmd() tea.Cmd {
 	}
 }
 
-func (m Model) loadAdminFeaturesCmd() tea.Cmd {
-	return func() tea.Msg {
-		if m.adminClient == nil {
-			return adminFeaturesLoadedMsg{err: fmt.Errorf("admin API is unavailable for this session")}
-		}
-		features, err := m.adminClient.ListFeatures(m.ctx, m.adminSession)
-		return adminFeaturesLoadedMsg{features: features, err: err}
-	}
-}
-
 func (m Model) loadAdminFeaturePageCmd(name string) tea.Cmd {
 	return func() tea.Msg {
 		if m.adminClient == nil {
@@ -4038,17 +3974,13 @@ func (m Model) openAdmin() (tea.Model, tea.Cmd) {
 		}
 		m.adminAuth = adminAuthStateAuthenticated
 		m.status = ""
-		// Phase 18 (design.md Decision I): re-entering an already-
-		// authenticated session must land on the same domain-menu root a
-		// fresh login lands on (model.go's adminLoginCompletedMsg success
-		// handler) -- this branch was the one re-entry path Phase 18 left
-		// pointed at screenAdminUsers directly, confirmed live by an
-		// operator whose deployment forces startup-login (so a fresh
-		// login's own success handler never lands on screenAdminMenu
-		// either -- it routes to the repository catalog instead), making
+		// Re-entering an already-authenticated session must land on the same
+		// Overview a fresh login lands on (the adminLoginCompletedMsg
+		// success handler): for a deployment that forces startup-login that
+		// handler routes to the repository catalog instead, which makes
 		// this branch the ONLY reachable path into the admin panel.
-		m.screen = screenAdminMenu
-		m.adminScreens[slotAdminMenu] = newAdminMenuScreen()
+		m.screen = screenAdminOverview
+		m.adminScreens[slotOverview] = newOverviewScreen()
 		if len(m.adminView.Users) == 0 {
 			return m, m.loadAdminUsersCmd()
 		}
@@ -4057,7 +3989,7 @@ func (m Model) openAdmin() (tea.Model, tea.Cmd) {
 			m.clearSelectedAdminDetails()
 		}
 		m.adminView.UserSearchActive = false
-		return m, nil
+		return m, m.overviewRefreshCmd()
 	}
 	if strings.TrimSpace(m.adminSession.ExpiredReason) != "" {
 		m.adminAuth = adminAuthStateExpired
@@ -4115,24 +4047,21 @@ func (m Model) openRepoAdminGrants() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) openAdminFeatures() (tea.Model, tea.Cmd) {
-	// screenAdminFeatures is repurposed as securityMenuScreen (design.md
-	// Decision I): mount+Init it here exactly like Gitleaks'/Signing's own
-	// 'o' openers do (mirrors newAdminScreenFor's own construction,
-	// screen.go), rather than relying on navigateMsg's lazy-mount path,
-	// since this is the very first entry point into the admin section's
-	// Security & Compliance domain.
-	screen := newSecurityMenuScreen()
-	cmd := screen.Init(m.screenEnv())
-	m.adminScreens[slotSecurityMenu] = screen
-	m.screen = screenAdminFeatures
-	m.adminView.UserSearchActive = false
-	m.status = "Loading built-in features..."
-	return m, cmd
+// overviewRefreshCmd reloads "Needs attention" when the Overview is the
+// screen on show, and does nothing otherwise.
+func (m Model) overviewRefreshCmd() tea.Cmd {
+	if m.screen != screenAdminOverview {
+		return nil
+	}
+	overview, ok := m.adminScreens[slotOverview].(overviewScreen)
+	if !ok {
+		return nil
+	}
+	return overview.Init(m.screenEnv())
 }
 
 // openAdminRobots opens screenAdminRobots from screenAdminUsers (design.md
-// Decision 7), mirroring openAdminFeatures. Defensively clears any lingering
+// Decision 7). Defensively clears any lingering
 // RevealedTokenSecret on entry (see updateAdminRobotsKey's "n" case for the
 // leak scenario this guards against).
 // openFromOverview opens a destination the Overview asked for that needs
@@ -4364,7 +4293,7 @@ func nextDelegateGrantRole(current domainauth.RepoRole) domainauth.RepoRole {
 
 func isAdminScreen(current screen) bool {
 	switch current {
-	case screenAdminLogin, screenAdminAuthenticating, screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken, screenRepoAdminGrants, screenRepoAdminAddGrant, screenAdminRobots, screenAdminCreateRobot, screenSecurityGitleaksRepos, screenSecuritySigningRepos, screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminMenu, screenAdminOverview, screenAdminOperations, screenAdminScanRuns, screenAdminSecretFindings, screenAdminUpdateChannel, screenAdminGrantAccess:
+	case screenAdminLogin, screenAdminAuthenticating, screenAdminUsers, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken, screenRepoAdminGrants, screenRepoAdminAddGrant, screenAdminRobots, screenAdminCreateRobot, screenSecurityGitleaksRepos, screenSecuritySigningRepos, screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminOverview, screenAdminScanRuns, screenAdminSecretFindings, screenAdminUpdateChannel, screenAdminGrantAccess:
 		return true
 	default:
 		return false
@@ -4388,7 +4317,7 @@ func isAdminScreen(current screen) bool {
 // screens above.
 func isAdminPrincipalScreen(current screen) bool {
 	switch current {
-	case screenAdminLogin, screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminEditUserGrants, screenAdminEditUserTokens, screenRepoAdminGrants, screenAdminRobots, screenSecurityTrivy, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminMenu, screenAdminOverview, screenAdminOperations, screenAdminUpdateChannel:
+	case screenAdminLogin, screenAdminUsers, screenAdminCreateUser, screenAdminEditUser, screenAdminEditUserGrants, screenAdminEditUserTokens, screenRepoAdminGrants, screenAdminRobots, screenSecurityTrivy, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminOverview, screenAdminUpdateChannel:
 		return true
 	default:
 		return false
@@ -4434,9 +4363,9 @@ func (m Model) canLogoutAdminFromCurrentScreen() bool {
 	switch m.screen {
 	case screenAdminUsers:
 		return !m.adminView.UserSearchActive
-	case screenAdminFeatures, screenAdminEditUser, screenAdminEditUserGrants, screenAdminEditUserTokens, screenRepoAdminGrants, screenAdminRobots,
+	case screenAdminEditUser, screenAdminEditUserGrants, screenAdminEditUserTokens, screenRepoAdminGrants, screenAdminRobots,
 		screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenSecurityGitleaksRepos, screenSecuritySigningRepos,
-		screenAdminMenu, screenAdminOverview, screenAdminOperations, screenAdminScanRuns, screenAdminSecretFindings, screenAdminUpdateChannel:
+		screenAdminOverview, screenAdminScanRuns, screenAdminSecretFindings, screenAdminUpdateChannel:
 		return true
 	default:
 		return false
@@ -4772,10 +4701,9 @@ func (m *Model) clearSelectedAdminDetails() {
 	m.adminView.AdminTokens = nil
 	// Features/FeaturePage/TrivyTab/TrivyConfigModal/TrivyScanRuns/
 	// TrivySelectedAlert/TrivyAlertsLoaded/TrivySummaries/TrivyOverrides all
-	// migrated off AdminViewState (Phase 11); the Security & Compliance
-	// domain's screens are simply un-mounted here instead, so the operator
+	// migrated off AdminViewState (Phase 11); the Security screens are simply
+	// un-mounted here instead, so the operator
 	// gets a fresh load the next time they are navigated into.
-	m.adminScreens[slotSecurityMenu] = nil
 	m.adminScreens[slotTrivyConfig] = nil
 	m.adminScreens[slotTrivyRepos] = nil
 	m.adminScreens[slotGitleaksConfig] = nil
@@ -4800,8 +4728,8 @@ func (m *Model) clearSelectedAdminDetails() {
 // nextTrivyConfigField/gitleaksConfigModalFromPage/nextGitleaksConfigField/
 // deleteTrivyConfigModalRune/appendTrivyConfigModalRunes/
 // trivyConfigInputFromModal/moveAdminFeatureSelection all moved onto
-// securityMenuScreen/trivyConfigScreen/gitleaksConfigScreen's own state and
-// methods (Phase 11 resolved-gap addendum) -- each screen now independently
+// trivyConfigScreen/gitleaksConfigScreen's own state and methods (Phase 11
+// resolved-gap addendum) -- each screen now independently
 // owns the piece of this logic scoped to its own fixed feature, per
 // design.md Decision D4 (no shared cross-screen state).
 

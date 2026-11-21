@@ -127,7 +127,7 @@ func (s *trivyReposScreen) rebuildTable(env screenEnv) {
 func (s trivyReposScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd, bool) {
 	switch {
 	case isEscKey(msg):
-		return s, navigate(screenAdminFeatures), true
+		return s, navigate(screenAdminOverview), true
 	case isTabKey(msg):
 		return s, navigate(screenSecurityTrivy), true
 	case isMoveUpKey(msg):

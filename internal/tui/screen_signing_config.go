@@ -10,21 +10,14 @@ import (
 	"regixtry/internal/ports"
 )
 
-// signingConfigScreen was Phase 12.3's sub-model, mounted as an overlay on
-// the still-legacy screenAdminFeatures. Phase 11 (the resolved-gap
-// addendum) promotes it to a properly addressable top-level screen
-// (screenSecuritySigningConfig), mirroring gitleaksConfigScreen exactly:
-// it now independently owns its own `page` (loaded via loadFeaturePageCmd
+// signingConfigScreen is a properly addressable top-level screen
+// (screenSecuritySigningConfig), mirroring gitleaksConfigScreen exactly: it
+// independently owns its own `page` (loaded via loadFeaturePageCmd
 // scoped to signingFeatureName) and the enable/disable/install/upgrade/
 // rollback action dispatch.
 //
-// policy is now the full migrated AdminViewState.SigningPolicy (design.md's
-// State Migration table, closing Phase 12.3's own disclosed deviation): the
-// signing badge's only reader, renderAdminFeaturesScreen's Feature Page
-// heading, no longer exists (Phase 11 deletes it -- securityMenuScreen is a
-// bare peer list with no per-feature badge), so the second-reader conflict
-// that justified keeping SigningPolicy on AdminViewState in the Phase 12.3
-// follow-up batch no longer applies.
+// policy is the full migrated AdminViewState.SigningPolicy (design.md's
+// State Migration table).
 type signingConfigScreen struct {
 	page   ports.FeaturePage
 	loaded bool
@@ -178,7 +171,7 @@ func (s *signingConfigScreen) rebuildRows(env screenEnv) {
 func (s signingConfigScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd, bool) {
 	switch {
 	case isEscKey(msg):
-		return s, navigate(screenAdminFeatures), true
+		return s, navigate(screenAdminOverview), true
 	case isRuneKey(msg, 'p'):
 		s.cfg = signingPolicyModal{
 			Open:             true,

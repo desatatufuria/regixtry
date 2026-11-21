@@ -13,7 +13,7 @@ import (
 func grantOpenModel(t *testing.T, client AdminClient, preselect string) Model {
 	t.Helper()
 	m := grantModel(t, client, 150, 24)
-	updated, cmd := m.Update(openGrantAccessMsg{returnTo: screenAdminMenu, preselectID: preselect})
+	updated, cmd := m.Update(openGrantAccessMsg{returnTo: screenAdminOverview, preselectID: preselect})
 	return runCmd(t, updated.(Model), cmd)
 }
 
@@ -69,9 +69,9 @@ func TestGrantLateApplyResultNeverTouchesAFreshScreen(t *testing.T) {
 		t.Fatal("no apply command")
 	}
 	// Force a fresh screen in the slot, as a reopen would after the screen was left.
-	fresh := newGrantAccessScreen(screenAdminMenu, "u-2")
+	fresh := newGrantAccessScreen(screenAdminOverview, "u-2")
 	m.adminScreens[slotGrantAccess] = fresh
-	updated, cmd := m.Update(openGrantAccessMsg{returnTo: screenAdminMenu, preselectID: "u-2"})
+	updated, cmd := m.Update(openGrantAccessMsg{returnTo: screenAdminOverview, preselectID: "u-2"})
 	m = runCmd(t, updated.(Model), cmd)
 	m = grantModelPress(t, m, testKeySpace())
 	before := grantScreenOf(t, m)
@@ -130,7 +130,7 @@ func TestGrantNoSecondApplyWhileInFlight(t *testing.T) {
 	}
 	// A reopen request while applying keeps the running screen.
 	running := grantScreenOf(t, m)
-	updated, cmd := m.Update(openGrantAccessMsg{returnTo: screenAdminMenu, preselectID: "u-2"})
+	updated, cmd := m.Update(openGrantAccessMsg{returnTo: screenAdminOverview, preselectID: "u-2"})
 	m = updated.(Model)
 	if cmd != nil || !grantScreenOf(t, m).applying || grantScreenOf(t, m).gen != running.gen {
 		t.Fatal("a reopen replaced the screen that is applying")
@@ -146,8 +146,8 @@ func TestGrantScreenDropsMessagesFromAnotherGeneration(t *testing.T) {
 	t.Parallel()
 	client := newRecordingGrantClient()
 	env := grantTestEnv(client)
-	a := newGrantAccessScreen(screenAdminMenu, "")
-	b := newGrantAccessScreen(screenAdminMenu, "")
+	a := newGrantAccessScreen(screenAdminOverview, "")
+	b := newGrantAccessScreen(screenAdminOverview, "")
 	if a.gen == b.gen {
 		t.Fatal("generations are not unique")
 	}

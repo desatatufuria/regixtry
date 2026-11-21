@@ -405,3 +405,40 @@ func TestOverviewViewGoldens(t *testing.T) {
 		}
 	}
 }
+
+func TestEscFromEverySidebarScreenReturnsToTheOverview(t *testing.T) {
+	t.Parallel()
+	for _, item := range shellNavItems() {
+		if item.ID == shellNavOverview {
+			continue
+		}
+		t.Run(string(item.ID), func(t *testing.T) {
+			t.Parallel()
+			m := overviewModelAt(t, overviewClient(), 150, 24)
+			m = openSidebarItem(t, m, item.ID)
+			if m.screen == screenAdminOverview {
+				t.Fatalf("opening %q left the Overview on screen", item.Label)
+			}
+			m = overviewPress(t, m, testKeyEsc())
+			if m.screen != screenAdminOverview {
+				t.Fatalf("Esc from %q went to %q, want the Overview", item.Label, m.screen)
+			}
+		})
+	}
+}
+
+func TestLoginLandsOnTheOverviewWithItsAttentionLoaded(t *testing.T) {
+	t.Parallel()
+	client := overviewClient()
+	client.loginSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: charFixedTime.Add(time.Hour)}
+	m := newAdminReadyModel(t, client)
+	m.now = func() time.Time { return charFixedTime }
+	m = runAdminLogin(t, m, "operator", "secret-pass")
+	if m.screen != screenAdminOverview {
+		t.Fatalf("screen = %q, want the Overview", m.screen)
+	}
+	s := overviewScreenOf(t, m)
+	if !s.loaded || len(s.robotsWithoutAccess) != 1 || s.criticalImages != 2 {
+		t.Fatalf("attention not loaded after login: loaded=%v robots=%d images=%d", s.loaded, len(s.robotsWithoutAccess), s.criticalImages)
+	}
+}

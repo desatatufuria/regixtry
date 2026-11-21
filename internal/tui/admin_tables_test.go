@@ -95,11 +95,10 @@ func TestTableRolesAssignsPrimaryAdaptiveAndCompactFloorAtThree(t *testing.T) {
 // TestRebuildAdminTablesBakesPrimaryAndCompactPageSizeIntoTables integrates
 // tableRoles into each Security & Compliance screen's own table rebuild
 // (Phase 11: Features/ScanSummary/FeatureRows moved off
-// AdminViewState/rebuildAdminTables onto securityMenuScreen/
-// trivyReposScreen/trivyConfigScreen's own rebuildTable/rebuildRows
-// methods): Features/ScanSummary (operator-navigable primary lists) get the
-// primary pageSize, FeatureRows (a secondary detail table) gets the compact
-// pageSize. Findings/SecretFindings are exercised separately (they only
+// AdminViewState/rebuildAdminTables onto trivyReposScreen/trivyConfigScreen's
+// own rebuildTable/rebuildRows methods): ScanSummary (the operator-navigable
+// primary list) gets the primary pageSize, FeatureRows (a secondary detail
+// table) gets the compact pageSize. Findings/SecretFindings are exercised separately (they only
 // build while the scan history modal is active, sized from the modal's own
 // nested row budget, not this primary/compact split — see
 // TestModelScanHistoryModal* in model_test.go).
@@ -110,10 +109,8 @@ func TestRebuildAdminTablesBakesPrimaryAndCompactPageSizeIntoTables(t *testing.T
 	model.viewport = viewportSize{Width: defaultViewportWidth, Height: defaultViewportHeight}
 
 	rowCount := 40
-	features := make([]ports.FeatureSummary, rowCount)
 	scanRuns := make([]ports.ScanRun, rowCount)
 	for i := 0; i < rowCount; i++ {
-		features[i] = ports.FeatureSummary{Name: fmt.Sprintf("feature-%d", i)}
 		scanRuns[i] = ports.ScanRun{ID: fmt.Sprintf("run-%d", i), Repository: fmt.Sprintf("team/service-%d", i)}
 	}
 	summaries := summarizeScanRunsByRepository(scanRuns)
@@ -124,9 +121,6 @@ func TestRebuildAdminTablesBakesPrimaryAndCompactPageSizeIntoTables(t *testing.T
 	layout := model.adminTablesLayout()
 	wantPrimary, wantCompact := tableRoles(layout)
 	env := model.screenEnv()
-
-	menu := securityMenuScreen{features: features, loaded: true}
-	menu.rebuildTable(env)
 
 	repos := trivyReposScreen{summaries: summaries, loaded: true}
 	repos.rebuildTable(env)
@@ -143,7 +137,6 @@ func TestRebuildAdminTablesBakesPrimaryAndCompactPageSizeIntoTables(t *testing.T
 		}
 	}
 
-	assertTableHeight(t, "securityMenuScreen.table (primary)", menu.table, wantPrimary)
 	assertTableHeight(t, "trivyReposScreen.table (primary)", repos.table, wantPrimary)
 	rowsTable, ok := config.rows["rows-section"]
 	if !ok {

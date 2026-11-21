@@ -48,14 +48,12 @@ func TestQStillQuitsOutsideTextFields(t *testing.T) {
 		"repositories": screenRepositories,
 		"tags":         screenTags,
 		"users":        screenAdminUsers,
-		"features":     screenAdminFeatures,
 		"edit user":    screenAdminEditUser,
 		"grants":       screenAdminEditUserGrants,
 		"tokens":       screenAdminEditUserTokens,
 		"repo grants":  screenRepoAdminGrants,
 		"robots":       screenAdminRobots,
-		"menu":         screenAdminMenu,
-		"operations":   screenAdminOperations,
+		"overview":     screenAdminOverview,
 	}
 	for name, sc := range screens {
 		t.Run(name, func(t *testing.T) {

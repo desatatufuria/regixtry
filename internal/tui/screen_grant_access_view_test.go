@@ -52,7 +52,7 @@ func grantViewModelAt(t *testing.T, client AdminClient, known []string, w, h int
 	m = charResize(t, m, w, h)
 	m.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: charFixedTime.Add(24 * time.Hour)}
 	m.adminAuth = adminAuthStateAuthenticated
-	updated, cmd := m.Update(openGrantAccessMsg{returnTo: screenAdminMenu})
+	updated, cmd := m.Update(openGrantAccessMsg{returnTo: screenAdminOverview})
 	return runCmd(t, updated.(Model), cmd)
 }
 

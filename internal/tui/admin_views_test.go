@@ -1198,19 +1198,19 @@ func TestRenderAdminWorkspaceKeepsBaseFullSizeAndLayersModalOnTopWhenOpen(t *tes
 	}
 	findingsTable := buildAdminFindingsTable(modal.Detail.Findings, 0, minTableRows)
 	screens := adminScreenSet{}
-	screens[slotScanHistory] = scanHistoryScreen{returnTo: screenAdminFeatures, modal: modal, findings: findingsTable}
+	screens[slotScanHistory] = scanHistoryScreen{returnTo: screenAdminUsers, modal: modal, findings: findingsTable}
 
-	layout := contentBudget(defaultViewportWidth, defaultViewportHeight, "", adminScreenHelp(screenAdminFeatures, view))
+	layout := contentBudget(defaultViewportWidth, defaultViewportHeight, "", adminScreenHelp(screenAdminUsers, view))
 
 	// Property 1: the base page (rendered independently, at the very same
 	// unreduced layout the modal-open path is given) must be byte-identical
 	// to what renderAdminWorkspace's modal-open branch composites as its
 	// base -- proving it is never shrunk via a reduced SectionRows the way
 	// the superseded row-split design did.
-	standaloneContext, standaloneBody, standaloneHelp := renderAdminScreen(theme, screenAdminFeatures, session, view, nil, layout, now)
+	standaloneContext, standaloneBody, standaloneHelp := renderAdminScreen(theme, screenAdminUsers, session, view, nil, layout, now)
 	wantBase := renderConsoleWorkspace("Regixtry Admin", standaloneContext, standaloneBody, "", standaloneHelp, statusKindAuto)
 
-	got := renderAdminWorkspace(screenAdminFeatures, session, view, nil, "", layout, now, screens)
+	got := renderAdminWorkspace(screenAdminUsers, session, view, nil, "", layout, now, screens)
 
 	// Property 2: layered on top, not appended below -- the composite must
 	// fit exactly within the canvas (layout.Width x layout.Height), never
@@ -1851,37 +1851,5 @@ func TestNonMigratedScreensUnchanged(t *testing.T) {
 				t.Fatalf("screen %q: Model.View() diverged from renderAdminScreen's direct output\ngot:\n%s\nwant:\n%s", id, got, want)
 			}
 		})
-	}
-}
-
-// TestRenderPeerMenuRowsHighlightsCursorAndAlignsLabelColumn is the visual
-// polish RED test the user asked for on the domain menu / Operations
-// screens: the highlighted row must carry a leading "▸ " cursor (other rows
-// get matching blank padding, not shifted text), and every row's label must
-// be right-padded to the widest label's rendered width so each row's help
-// text starts in the same column.
-func TestRenderPeerMenuRowsHighlightsCursorAndAlignsLabelColumn(t *testing.T) {
-	t.Parallel()
-
-	theme := newAdminTheme()
-	lines := renderPeerMenuRows(theme, []peerMenuRow{
-		{Label: "Browse", Help: "Repositories, Tags, Manifests, Blobs & Uploads"},
-		{Label: "Security & Compliance", Help: "Trivy, Gitleaks, Signing"},
-	}, 1)
-
-	if len(lines) != 2 {
-		t.Fatalf("len(lines) = %d, want 2", len(lines))
-	}
-	if strings.Contains(lines[0], "▸") {
-		t.Fatalf("non-highlighted row 0 = %q, must not carry the cursor", lines[0])
-	}
-	if !strings.Contains(lines[1], "▸") {
-		t.Fatalf("highlighted row 1 = %q, must carry the cursor", lines[1])
-	}
-
-	labelColumnWidth := lipgloss.Width(strings.SplitN(lines[0], "Repositories", 2)[0])
-	otherLabelColumnWidth := lipgloss.Width(strings.SplitN(lines[1], "Trivy", 2)[0])
-	if labelColumnWidth != otherLabelColumnWidth {
-		t.Fatalf("label column width = %d and %d, want equal (help text must align across rows)", labelColumnWidth, otherLabelColumnWidth)
 	}
 }

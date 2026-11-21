@@ -75,7 +75,7 @@ func (s updateChannelScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, te
 func (s updateChannelScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd, bool) {
 	switch {
 	case isEscKey(msg):
-		return s, navigate(screenAdminOperations), true
+		return s, navigate(screenAdminOverview), true
 	case isSpaceKey(msg):
 		if !s.loaded || s.saving {
 			return s, nil, true

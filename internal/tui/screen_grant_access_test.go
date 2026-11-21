@@ -103,7 +103,7 @@ func grantSettle(s adminScreen, env screenEnv, cmd tea.Cmd) adminScreen {
 
 func grantOpen(t *testing.T, env screenEnv, preselect string) grantAccessScreen {
 	t.Helper()
-	s := newGrantAccessScreen(screenAdminMenu, preselect)
+	s := newGrantAccessScreen(screenAdminOverview, preselect)
 	return grantSettle(s, env, s.Init(env)).(grantAccessScreen)
 }
 
@@ -304,7 +304,7 @@ func TestGrantRoleOptionsAndDefault(t *testing.T) {
 		t.Fatalf("grantRoleLabel of an unknown role must echo it")
 	}
 	// The default role is the one the existing add-grant form starts with.
-	screen := newGrantAccessScreen(screenAdminMenu, "")
+	screen := newGrantAccessScreen(screenAdminOverview, "")
 	if screen.role != newAdminViewState().GrantForm.Role || screen.role != domainauth.RepoRoleReader {
 		t.Fatalf("default role = %q, want the add-grant form default %q", screen.role, newAdminViewState().GrantForm.Role)
 	}
@@ -396,7 +396,7 @@ func TestGrantScreenInitLoadsUsersAndRobotsInOneCommand(t *testing.T) {
 	t.Parallel()
 	client := newRecordingGrantClient()
 	env := grantTestEnv(client)
-	s := newGrantAccessScreen(screenAdminMenu, "")
+	s := newGrantAccessScreen(screenAdminOverview, "")
 	cmd := s.Init(env)
 	if cmd == nil {
 		t.Fatal("Init returned nil")
@@ -584,7 +584,7 @@ func TestGrantScreenPartialFailureKeepsFailedCheckedAndReportsPerRepository(t *t
 			t.Fatalf("view does not show %q:\n%s", want, view)
 		}
 	}
-	if s.returnTo != screenAdminMenu {
+	if s.returnTo != screenAdminOverview {
 		t.Fatal("screen state lost")
 	}
 
@@ -720,7 +720,7 @@ func TestGrantScreenPastedKeyNamesStayTextInFilters(t *testing.T) {
 func TestGrantScreenEscLeavesToWhereItWasOpenedFrom(t *testing.T) {
 	t.Parallel()
 	env := grantTestEnv(newRecordingGrantClient())
-	for _, from := range []screen{screenAdminMenu, screenAdminUsers, screenAdminRobots} {
+	for _, from := range []screen{screenAdminOverview, screenAdminUsers, screenAdminRobots} {
 		s := newGrantAccessScreen(from, "")
 		for _, k := range []keyMsg{testKeyEsc()} {
 			_, cmd, consumed := s.Update(env, k)
@@ -902,7 +902,7 @@ func TestGrantScreenLoadingAndErrorStatesRender(t *testing.T) {
 	theme := newAdminTheme()
 	t.Run("loading", func(t *testing.T) {
 		env := grantTestEnv(newRecordingGrantClient())
-		s := newGrantAccessScreen(screenAdminMenu, "")
+		s := newGrantAccessScreen(screenAdminOverview, "")
 		body := s.View(theme, env).Body
 		if !strings.Contains(body, "Loading") {
 			t.Fatalf("no loading state:\n%s", body)
@@ -949,7 +949,7 @@ func TestGrantScreenLoadingAndErrorStatesRender(t *testing.T) {
 		}
 	})
 	t.Run("bare env does not panic", func(t *testing.T) {
-		_ = newGrantAccessScreen(screenAdminMenu, "").View(theme, screenEnv{})
+		_ = newGrantAccessScreen(screenAdminOverview, "").View(theme, screenEnv{})
 	})
 }
 
@@ -978,7 +978,7 @@ func grantModelPress(t *testing.T, m Model, keys ...keyMsg) Model {
 func TestGrantScreenTypesLettersThatAreGlobalKeysElsewhere(t *testing.T) {
 	t.Parallel()
 	m := grantModel(t, newRecordingGrantClient(), 150, 24)
-	updated, cmd := m.Update(openGrantAccessMsg{returnTo: screenAdminMenu})
+	updated, cmd := m.Update(openGrantAccessMsg{returnTo: screenAdminOverview})
 	m = runCmd(t, updated.(Model), cmd)
 	// q quits and l logs out on other admin screens; here they are text.
 	m = grantModelPress(t, m, testKeyRunes("q"), testKeyRunes("l"))
@@ -991,7 +991,7 @@ func TestGrantScreenTypesLettersThatAreGlobalKeysElsewhere(t *testing.T) {
 func TestGrantScreenPasteReachesTheFocusedFilterThroughTheModel(t *testing.T) {
 	t.Parallel()
 	m := grantModel(t, newRecordingGrantClient(), 150, 24)
-	updated, cmd := m.Update(openGrantAccessMsg{returnTo: screenAdminMenu})
+	updated, cmd := m.Update(openGrantAccessMsg{returnTo: screenAdminOverview})
 	m = runCmd(t, updated.(Model), cmd)
 	updated, cmd = m.Update(tea.PasteMsg{Content: "enter"})
 	m = runCmd(t, updated.(Model), cmd)
@@ -1016,10 +1016,10 @@ func TestGrantAccessScreenRoutesLikeEveryMigratedScreen(t *testing.T) {
 	if _, isGrant := newAdminScreenFor(screenAdminGrantAccess).(grantAccessScreen); !isGrant {
 		t.Fatal("newAdminScreenFor does not build the grant screen")
 	}
-	if got := newGrantAccessScreen(screenAdminMenu, "").Keys(); len(got.short) == 0 {
+	if got := newGrantAccessScreen(screenAdminOverview, "").Keys(); len(got.short) == 0 {
 		t.Fatal("no key hints")
 	}
-	if keys := shortHelpView(newAdminTheme(), newGrantAccessScreen(screenAdminMenu, "").Keys()); !strings.Contains(keys, "Space") || !strings.Contains(keys, "Enter") {
+	if keys := shortHelpView(newAdminTheme(), newGrantAccessScreen(screenAdminOverview, "").Keys()); !strings.Contains(keys, "Space") || !strings.Contains(keys, "Enter") {
 		t.Fatalf("footer = %q", keys)
 	}
 }
@@ -1028,7 +1028,7 @@ func TestGrantSessionExpiryDuringApplyExpiresTheAdminSession(t *testing.T) {
 	t.Parallel()
 	client := newRecordingGrantClient()
 	m := grantModel(t, client, 150, 24)
-	updated, cmd := m.Update(openGrantAccessMsg{returnTo: screenAdminMenu})
+	updated, cmd := m.Update(openGrantAccessMsg{returnTo: screenAdminOverview})
 	m = runCmd(t, updated.(Model), cmd)
 	// The message must carry the open screen's generation (a foreign one is dropped).
 	expired := grantAccessAppliedMsg{gen: grantScreenOf(t, m).gen, principalID: "u-1", outcomes: []grantOutcome{{repo: "team/demo", err: AdminSessionExpiredError{Reason: "expired"}}}}

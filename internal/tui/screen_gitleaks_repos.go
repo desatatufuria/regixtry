@@ -115,7 +115,7 @@ func (s *featureOverridesScreen) rebuildTable(env screenEnv) {
 func (s featureOverridesScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd, bool) {
 	switch {
 	case isEscKey(msg):
-		return s, navigate(screenAdminFeatures), true
+		return s, navigate(screenAdminOverview), true
 	case isMoveUpKey(msg):
 		if len(s.rows) == 0 {
 			return s, nil, true

@@ -10,7 +10,7 @@ import (
 
 // scanRunsScreen lists per-repository scan summaries (design.md D9,
 // ListRepositoryScanSummaries -- zero new AdminClient methods). It backs
-// BOTH of screenAdminOperations' rows (design.md's Slice 3 File Changes
+// BOTH of the Overview's Scan runs and Secret findings items (design.md's Slice 3 File Changes
 // table lists only screen_scan_runs.go for this repository-list side,
 // mirroring screen_signing_repos.go's "one shared type, two named
 // constructors" precedent, Phase 12.4): "Scan Runs" opens scanHistoryScreen
@@ -74,7 +74,7 @@ func (s *scanRunsScreen) rebuildTable(env screenEnv) {
 func (s scanRunsScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd, bool) {
 	switch {
 	case isEscKey(msg):
-		return s, navigate(screenAdminOperations), true
+		return s, navigate(screenAdminOverview), true
 	case isMoveUpKey(msg):
 		if len(s.summaries) == 0 {
 			return s, nil, true

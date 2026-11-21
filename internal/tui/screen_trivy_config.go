@@ -17,9 +17,7 @@ import (
 // Per the resolved-gap addendum (design.md, State Migration section), it
 // independently owns its own `page` (loaded via loadFeaturePageCmd scoped to
 // trivyFeatureName) and the enable/disable/install/upgrade/rollback action
-// dispatch (featureActionForKey/featureActionKeyBindings), which used to
-// live in the shared updateAdminFeaturesKey/adminFeatureHelp -- both now
-// deleted.
+// dispatch (featureActionForKey/featureActionKeyBindings).
 type trivyConfigScreen struct {
 	page        ports.FeaturePage
 	loaded      bool
@@ -165,7 +163,7 @@ func (s *trivyConfigScreen) rebuildRows(env screenEnv) {
 func (s trivyConfigScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd, bool) {
 	switch {
 	case isEscKey(msg):
-		return s, navigate(screenAdminFeatures), true
+		return s, navigate(screenAdminOverview), true
 	case isTabKey(msg):
 		return s, navigate(screenSecurityTrivyRepos), true
 	case isRuneKey(msg, 'c'):

@@ -31,14 +31,8 @@ import (
 //   - SigningPolicy -- migrated onto signingConfigScreen this batch too,
 //     closing the Phase 12.3 disclosed deviation: its only other reader
 //     (signingPolicyBadge, composed into the retired
-//     renderAdminFeaturesScreen's heading) no longer exists now that
-//     screenAdminFeatures is securityMenuScreen, a bare peer list with no
-//     Feature Page heading of its own.
-//   - Features, SelectedFeature -- migrated onto securityMenuScreen this
-//     batch (Tables.Features, the third item design.md's own row groups
-//     with these two, is verified separately: it is a field of the
-//     `Tables adminTablesState` struct, not a direct AdminViewState field
-//     this reflect scan can enumerate by name here).
+//     renderAdminFeaturesScreen's heading) no longer exists.
+//   - Features, SelectedFeature -- gone with the retired Security menu.
 //
 // ScanHistoryModal -- migrated onto scanHistoryScreen this batch (Phase 19,
 // design.md's State Migration table: "ScanHistoryModal -> scanHistoryScreen

@@ -10,17 +10,8 @@ import (
 )
 
 const (
-	adminTableMetaFeatureName = "__feature_name"
-	adminTableMetaScanRunID   = "__scan_run_id"
-	adminTableMetaFindingID   = "__finding_id"
-
-	adminTableColumnFeatureName       = "feature_name"
-	adminTableColumnFeatureKind       = "feature_kind"
-	adminTableColumnFeatureEnabled    = "feature_enabled"
-	adminTableColumnFeatureConfigured = "feature_configured"
-	adminTableColumnFeatureCurrent    = "feature_current"
-	adminTableColumnFeatureLatest     = "feature_latest"
-	adminTableColumnFeatureUpdate     = "feature_update"
+	adminTableMetaScanRunID = "__scan_run_id"
+	adminTableMetaFindingID = "__finding_id"
 
 	adminTableColumnRowTitle  = "row_title"
 	adminTableColumnRowStatus = "row_status"
@@ -66,14 +57,6 @@ const (
 // widest of these tables (Repository Alerts) so the outer bordered section
 // never wraps a table's own rendered lines.
 const (
-	adminFeaturesColumnNameWidth       = 22
-	adminFeaturesColumnKindWidth       = 10
-	adminFeaturesColumnEnabledWidth    = 8
-	adminFeaturesColumnConfiguredWidth = 12
-	adminFeaturesColumnCurrentWidth    = 12
-	adminFeaturesColumnLatestWidth     = 12
-	adminFeaturesColumnUpdateWidth     = 10
-
 	adminFindingsColumnSeverityWidth  = 10
 	adminFindingsColumnFindingWidth   = 22
 	adminFindingsColumnPackageWidth   = 18
@@ -150,32 +133,6 @@ func newAdminBubbleTable(columns []bubbletable.Column, rows []bubbletable.Row, h
 	}
 
 	return model
-}
-
-func buildAdminFeaturesTable(features []ports.FeatureSummary, highlighted int, pageSize int) bubbletable.Model {
-	columns := []bubbletable.Column{
-		bubbletable.NewColumn(adminTableColumnFeatureName, "Name", adminFeaturesColumnNameWidth),
-		bubbletable.NewColumn(adminTableColumnFeatureKind, "Kind", adminFeaturesColumnKindWidth),
-		bubbletable.NewColumn(adminTableColumnFeatureEnabled, "Enabled", adminFeaturesColumnEnabledWidth),
-		bubbletable.NewColumn(adminTableColumnFeatureConfigured, "Configured", adminFeaturesColumnConfiguredWidth),
-		bubbletable.NewColumn(adminTableColumnFeatureCurrent, "Current", adminFeaturesColumnCurrentWidth),
-		bubbletable.NewColumn(adminTableColumnFeatureLatest, "Latest", adminFeaturesColumnLatestWidth),
-		bubbletable.NewColumn(adminTableColumnFeatureUpdate, "Update", adminFeaturesColumnUpdateWidth),
-	}
-	rows := make([]bubbletable.Row, 0, len(features))
-	for _, feature := range features {
-		rows = append(rows, bubbletable.NewRow(bubbletable.RowData{
-			adminTableColumnFeatureName:       feature.Name,
-			adminTableColumnFeatureKind:       string(feature.Kind),
-			adminTableColumnFeatureEnabled:    fmt.Sprintf("%t", feature.Enabled),
-			adminTableColumnFeatureConfigured: fmt.Sprintf("%t", feature.Configured),
-			adminTableColumnFeatureCurrent:    adminFirstNonEmpty(feature.CurrentVersion, "unknown"),
-			adminTableColumnFeatureLatest:     adminFirstNonEmpty(feature.LatestVersion, "unknown"),
-			adminTableColumnFeatureUpdate:     adminFirstNonEmpty(feature.UpdateStatus, "unknown"),
-			adminTableMetaFeatureName:         feature.Name,
-		}))
-	}
-	return newAdminBubbleTable(columns, rows, highlighted, pageSize)
 }
 
 func buildAdminFeatureRowsTable(section ports.FeatureSection, pageSize int) bubbletable.Model {

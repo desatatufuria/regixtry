@@ -5,23 +5,13 @@ import (
 	"testing"
 )
 
-func TestGrantAccessIsReachableFromTheAdminMenu(t *testing.T) {
+func TestGrantAccessIsReachableFromTheOverviewSidebar(t *testing.T) {
 	t.Parallel()
 	client := newRecordingGrantClient()
 	m := grantModel(t, client, 150, 24)
-	m.screen = screenAdminMenu
-	updated, cmd := m.Update(navigateMsg{To: screenAdminMenu})
+	updated, cmd := m.Update(navigateMsg{To: screenAdminOverview})
 	m = runCmd(t, updated.(Model), cmd)
-	row := -1
-	for i, r := range adminMenuRows {
-		if r.Label == "Grant repository access" {
-			row = i
-		}
-	}
-	if row < 0 {
-		t.Fatal("no Grant repository access row in the admin menu")
-	}
-	for i := 0; i < row; i++ {
+	for range 3 { // Overview -> Users -> Robots -> Repository access
 		m = grantModelPress(t, m, testKeyDown())
 	}
 	m = grantModelPress(t, m, testKeyEnter())
@@ -36,8 +26,8 @@ func TestGrantAccessIsReachableFromTheAdminMenu(t *testing.T) {
 		t.Fatalf("principals = %d, want loaded users and robots", len(s.principals))
 	}
 	m = grantModelPress(t, m, testKeyEsc())
-	if m.screen != screenAdminMenu {
-		t.Fatalf("Esc went to %q, want the admin menu", m.screen)
+	if m.screen != screenAdminOverview {
+		t.Fatalf("Esc went to %q, want the Overview", m.screen)
 	}
 }
 

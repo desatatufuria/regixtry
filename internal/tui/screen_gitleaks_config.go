@@ -13,10 +13,8 @@ import (
 )
 
 // gitleaksConfigScreen was Slice 1's proof sub-model (design.md Decision G),
-// mounted as an overlay on the still-legacy screenAdminFeatures through the
-// Phase 12.3 follow-up batch. Phase 11 (the resolved-gap addendum) promotes
-// it to a properly addressable top-level screen
-// (screenSecurityGitleaksConfig): it now independently owns its own `page`
+// a properly addressable top-level screen (screenSecurityGitleaksConfig): it
+// independently owns its own `page`
 // (loaded via loadFeaturePageCmd scoped to gitleaksFeatureName) and the
 // enable/disable/install/upgrade/rollback action dispatch
 // (featureActionForKey/featureActionKeyBindings), mirroring
@@ -151,7 +149,7 @@ func (s *gitleaksConfigScreen) rebuildRows(env screenEnv) {
 func (s gitleaksConfigScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd, bool) {
 	switch {
 	case isEscKey(msg):
-		return s, navigate(screenAdminFeatures), true
+		return s, navigate(screenAdminOverview), true
 	case isRuneKey(msg, 's'):
 		modal, ok := gitleaksConfigModalFromPage(s.page)
 		if !ok {

@@ -265,9 +265,8 @@ func (l trustedKeyList) applyUsageLoaded(msg adminSigningKeyUsageLoadedMsg) trus
 // signingKeyFingerprints, model.go -- the exact same helper
 // renderSigningPolicyKeyList already uses, so a stored key is never
 // rendered in this new component either) with a "▸ " cursor on the
-// selected row, mirroring renderPeerMenuRows' cursor convention
-// (admin_views.go, added earlier this session for the domain menu) adapted
-// to a form field rather than a full-screen menu. focused controls whether
+// selected row, like the shell's sidebar, adapted to a form field rather
+// than a full-screen menu. focused controls whether
 // the list itself is drawn with focus styling (theme.inputFocus on its
 // heading) when the surrounding form has moved focus elsewhere.
 func renderTrustedKeyList(theme adminTheme, l trustedKeyList, focused bool) []string {

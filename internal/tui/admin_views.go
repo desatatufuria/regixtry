@@ -119,14 +119,14 @@ func adminScreenHelp(current screen, view AdminViewState) string {
 		if current == screenAdminUsers && view.UserSearchActive {
 			return "Type to search | Up/Down: pick user | Esc: end search"
 		}
-		return "/: search | Enter/e: edit user | n: create user | f: features | b: robots | g: grant access | Esc: back | q: quit"
+		return "/: search | Enter/e: edit user | n: create user | t: tokens | b: robots | g: grant access | Esc: back | q: quit"
 	}
 }
 
 // renderAdminScreen renders the current admin screen's (context, body, help)
-// triple. Only renderAdminUsersScreen/renderAdminFeaturesScreen — the two
-// screens whose body can grow with data (user list, Trivy tables) — take
-// layout and route their content through renderSection's outer-pane clip
+// triple. Only renderAdminUsersScreen -- the screen whose body can grow with
+// data (the user list) -- takes layout and routes its content through
+// renderSection's outer-pane clip
 // (design.md decision #4/#6). The remaining screens are short, fixed-size
 // forms that do not scale with data and stay on their existing
 // theme.section.Render path (Phase 3 precedent: narrow scope to what the
@@ -164,59 +164,15 @@ func renderAdminScreen(theme adminTheme, current screen, session AdminSession, v
 // renderAdminOperatorFooter is the trailing "Operator: %s" / "Session
 // remaining: %s" pair every legacy admin screen renders (see
 // renderAdminUsersScreen/renderAdminRobotsScreen below). Phase 11's five new
-// migrated screens (securityMenuScreen, trivyConfigScreen, trivyReposScreen,
-// gitleaksConfigScreen, signingConfigScreen) share it via this helper so the
-// operator never loses their session countdown while navigating the
-// Security & Compliance domain.
+// migrated screens (trivyConfigScreen, trivyReposScreen, gitleaksConfigScreen,
+// signingConfigScreen) share it via this helper so the operator never loses
+// their session countdown while navigating the Security screens.
 func renderAdminOperatorFooter(theme adminTheme, session AdminSession, now time.Time) []string {
 	return []string{
 		"",
 		theme.muted.Render(fmt.Sprintf("Operator: %s", session.Username)),
 		theme.muted.Render(fmt.Sprintf("Session remaining: %s", formatRemaining(session.Remaining(now)))),
 	}
-}
-
-// peerMenuRow is one row of a bare peer-list menu (adminMenuScreen,
-// adminOperationsScreen) -- screens deliberately kept as plain rows rather
-// than a bubbletable (design.md's "no page/action state of its own"
-// screens), which otherwise rendered ragged, unaligned label/help text with
-// no visual cursor beyond the background fill.
-type peerMenuRow struct {
-	Label string
-	Help  string
-}
-
-// renderPeerMenuRows renders peer rows with a leading cursor ("▸ ", matching
-// blank padding on other rows so nothing shifts) and label-column alignment
-// (every row's label right-padded to the widest one, so help text starts in
-// the same column across rows) -- shared by adminMenuScreen and
-// adminOperationsScreen so the two peer-list screens stay visually
-// consistent with each other.
-func renderPeerMenuRows(theme adminTheme, rows []peerMenuRow, highlighted int) []string {
-	labelWidth := 0
-	for _, row := range rows {
-		if w := lipgloss.Width(row.Label); w > labelWidth {
-			labelWidth = w
-		}
-	}
-
-	lines := make([]string, len(rows))
-	for index, row := range rows {
-		padded := row.Label + strings.Repeat(" ", labelWidth-lipgloss.Width(row.Label))
-		cursor := "  "
-		// theme.selected carries its own Padding(0, 1) (1 space each side),
-		// so the non-highlighted branch adds matching plain-space padding --
-		// otherwise the highlighted row's label column would render 2
-		// columns wider than every other row's, breaking the very alignment
-		// this helper exists to guarantee.
-		label := " " + padded + " "
-		if index == highlighted {
-			cursor = "▸ "
-			label = theme.selected.Render(padded)
-		}
-		lines[index] = cursor + label + "  " + theme.muted.Render(row.Help)
-	}
-	return lines
 }
 
 func renderAdminUsersScreen(theme adminTheme, session AdminSession, view AdminViewState, layout consoleLayout, now time.Time) string {
@@ -255,11 +211,8 @@ func renderAdminUsersScreen(theme adminTheme, session AdminSession, view AdminVi
 	return renderSection(theme, strings.Join(lines, "\n"), layout)
 }
 
-// renderAdminFeaturesScreen/renderFeaturePageBody moved onto
-// securityMenuScreen/trivyConfigScreen/gitleaksConfigScreen/
-// signingConfigScreen's own View methods (Phase 11, design.md Decision I):
-// screenAdminFeatures is repurposed as securityMenuScreen, a bare 3-row
-// peer list with no Feature Page detail of its own.
+// renderFeaturePageBody moved onto trivyConfigScreen/gitleaksConfigScreen/
+// signingConfigScreen's own View methods (Phase 11, design.md Decision I).
 
 // renderGenericFeaturePage renders a backend-declared ports.FeaturePage's
 // generic body: header fields, then each section (a "rows" section renders
@@ -960,13 +913,10 @@ func scanPolicyThresholdLabel(threshold string) string {
 // renders through renderOverrideEditor/overrideStatusLine/
 // renderOverrideClearRow (override_editor.go), with no Feature row.
 
-// adminFeatureHelp (Trivy/Gitleaks/Signing's shared Built-in Features help
-// builder) is retired (Phase 11): each of securityMenuScreen/
-// trivyConfigScreen/gitleaksConfigScreen/signingConfigScreen now composes
-// its own Keys() directly (screen_security_menu.go, screen_trivy_config.go,
-// screen_gitleaks_config.go, screen_signing_config.go), rendered through
-// shortHelpView so help can never drift from what a key actually does
-// (design.md Decision A).
+// Each of trivyConfigScreen/gitleaksConfigScreen/signingConfigScreen composes
+// its own Keys() directly (screen_trivy_config.go, screen_gitleaks_config.go,
+// screen_signing_config.go), rendered through shortHelpView so help can never
+// drift from what a key actually does (design.md Decision A).
 
 // statusKind is an explicit style selector for renderAdminStatus, carried as
 // a parameter along the render path rather than stored on Model (design.md
