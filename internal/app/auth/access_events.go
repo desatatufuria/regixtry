@@ -53,6 +53,7 @@ func (s *Service) recordAccessEvent(ctx context.Context, actor domainauth.Princi
 	event.OccurredAt = s.now()
 	event.ActorUserID = actor.UserID
 	event.ActorUsername = actor.Username
+	event = event.Normalized()
 
 	auditCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), auditWriteTimeout)
 	defer cancel()

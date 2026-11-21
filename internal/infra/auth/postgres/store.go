@@ -399,6 +399,7 @@ func (s *Store) ListExpiringTokens(ctx context.Context, now time.Time, until tim
 // AppendAccessEvent stores one access change. Empty optional fields are
 // stored as NULL.
 func (s *Store) AppendAccessEvent(ctx context.Context, event domainauth.AccessEvent) error {
+	event = event.Normalized()
 	if err := event.Validate(); err != nil {
 		return err
 	}

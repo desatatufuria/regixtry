@@ -221,3 +221,37 @@ func TestRouterAdminAccessEventsEmptyIsArray(t *testing.T) {
 		t.Fatalf("status=%d body=%q, want 200 []", rec.Code, rec.Body.String())
 	}
 }
+
+func TestRouterAdminAccessEventsStaySmallWithGiantNames(t *testing.T) {
+	t.Parallel()
+
+	handler, authService, adminActor, adminToken, cleanup := newTestRouterWithRealAuth(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	ana, err := authService.CreateAdminUser(ctx, adminActor, ports.AdminCreateUserInput{Username: "ana", Password: "password123", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	giant := strings.Repeat("日", 100_000)
+	for i := 0; i < 200; i++ {
+		if _, err := authService.CreateAdminUserToken(ctx, adminActor, ports.AdminCreateTokenInput{UserID: ana.ID, Name: giant, TTL: time.Hour}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/access-events?limit=200", nil)
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if size := rec.Body.Len(); size > 400*1024 {
+		t.Fatalf("response is %d bytes, want under 400 KB", size)
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &rows); err != nil || len(rows) != 200 {
+		t.Fatalf("rows = %d, err = %v", len(rows), err)
+	}
+}

@@ -491,3 +491,17 @@ func TestListAdminAccessEvents(t *testing.T) {
 		t.Fatal("user ids must not leak into the projection")
 	}
 }
+
+func TestRecordedEventsCapGiantFreeText(t *testing.T) {
+	t.Parallel()
+	f := newAuditFixture(t)
+
+	giant := strings.Repeat("日", 1<<20)
+	if _, err := f.service.CreateAdminToken(context.Background(), f.admin, ports.CreateAdminTokenInput{UserID: f.alice.ID, Name: giant}); err != nil {
+		t.Fatalf("token creation rules must not change: %v", err)
+	}
+	got := f.only(t)
+	if n := len([]rune(got.TokenName)); n != domainauth.AccessEventTextLimit || !strings.HasSuffix(got.TokenName, "…") {
+		t.Fatalf("stored token name = %d runes", n)
+	}
+}

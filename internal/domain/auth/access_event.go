@@ -3,6 +3,17 @@ package auth
 import (
 	"strings"
 	"time"
+	"unicode/utf8"
+)
+
+const (
+	// AccessEventTextLimit is the most runes a name, role or detail keeps in
+	// an access event, ellipsis included.
+	AccessEventTextLimit = 200
+	// AccessEventRepositoryLimit is the most runes a repository keeps.
+	AccessEventRepositoryLimit = 255
+
+	accessEventEllipsis = "…"
 )
 
 // AccessAction names one kind of access change recorded in the audit trail.
@@ -63,4 +74,38 @@ func (e AccessEvent) Validate() error {
 	}
 
 	return nil
+}
+
+// Normalized returns the event with every free-text field capped, so a huge
+// name can never be stored whole or served back whole. It is the one place
+// that cap lives: both the service and the store apply it, and applying it
+// twice changes nothing.
+func (e AccessEvent) Normalized() AccessEvent {
+	e.ActorUsername = capRunes(e.ActorUsername, AccessEventTextLimit)
+	e.SubjectUsername = capRunes(e.SubjectUsername, AccessEventTextLimit)
+	e.Repository = capRunes(e.Repository, AccessEventRepositoryLimit)
+	e.Role = capRunes(e.Role, AccessEventTextLimit)
+	e.TokenName = capRunes(e.TokenName, AccessEventTextLimit)
+	e.Detail = capRunes(e.Detail, AccessEventTextLimit)
+
+	return e
+}
+
+// capRunes keeps at most limit runes, ellipsis included, cutting on a rune
+// boundary.
+func capRunes(value string, limit int) string {
+	// Every rune takes at least one byte, so a short string cannot be over.
+	if len(value) <= limit || utf8.RuneCountInString(value) <= limit {
+		return value
+	}
+
+	kept := 0
+	for index := range value {
+		if kept == limit-1 {
+			return value[:index] + accessEventEllipsis
+		}
+		kept++
+	}
+
+	return value
 }
