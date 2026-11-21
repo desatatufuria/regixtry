@@ -48,7 +48,7 @@ func TestLogoutAdminStateClearsSessionAndViewData(t *testing.T) {
 	if session.ExpiredReason != "" {
 		t.Fatalf("ExpiredReason = %q, want empty", session.ExpiredReason)
 	}
-	if len(view.Users) != 0 || view.SelectedUserID != "" || len(view.Grants) != 0 || len(view.AdminTokens) != 0 {
+	if view.SelectedUserID != "" || len(view.Grants) != 0 || len(view.AdminTokens) != 0 {
 		t.Fatalf("LogoutAdminState() returned populated view state: %#v", view)
 	}
 }
@@ -63,7 +63,7 @@ func TestExpireAdminStateClearsViewDataAndKeepsReason(t *testing.T) {
 	if session.ExpiredReason != "Session expired. Log in again." {
 		t.Fatalf("ExpiredReason = %q, want session expiry message", session.ExpiredReason)
 	}
-	if len(view.Users) != 0 || len(view.Grants) != 0 || len(view.AdminTokens) != 0 {
+	if len(view.Grants) != 0 || len(view.AdminTokens) != 0 {
 		t.Fatalf("ExpireAdminState() returned populated view state: %#v", view)
 	}
 }
@@ -327,63 +327,6 @@ func TestNormalizeUnsignedSelfReadMapsEmptyToOff(t *testing.T) {
 		if got := normalizeUnsignedSelfRead(value); got != value {
 			t.Fatalf("normalizeUnsignedSelfRead(%q) = %q, want unchanged", value, got)
 		}
-	}
-}
-
-// TestNextCreateUserFieldCyclesThroughReadOnlyIndependentlyOfAdmin pins
-// design.md Decision 7's "Read-only toggle beside the existing Admin
-// toggle": the create/edit user form gains a distinct
-// adminCreateUserFieldIsReadOnly focus stop, between IsAdmin and Enabled,
-// and nextCreateUserField's wrapping-cursor visits it on its own.
-func TestNextCreateUserFieldCyclesThroughReadOnlyIndependentlyOfAdmin(t *testing.T) {
-	t.Parallel()
-
-	if got := nextCreateUserField(adminCreateUserFieldUsername); got != adminCreateUserFieldPassword {
-		t.Fatalf("nextCreateUserField(Username) = %v, want Password", got)
-	}
-	if got := nextCreateUserField(adminCreateUserFieldPassword); got != adminCreateUserFieldIsAdmin {
-		t.Fatalf("nextCreateUserField(Password) = %v, want IsAdmin", got)
-	}
-	if got := nextCreateUserField(adminCreateUserFieldIsAdmin); got != adminCreateUserFieldIsReadOnly {
-		t.Fatalf("nextCreateUserField(IsAdmin) = %v, want IsReadOnly", got)
-	}
-	if got := nextCreateUserField(adminCreateUserFieldIsReadOnly); got != adminCreateUserFieldEnabled {
-		t.Fatalf("nextCreateUserField(IsReadOnly) = %v, want Enabled", got)
-	}
-	if got := nextCreateUserField(adminCreateUserFieldEnabled); got != adminCreateUserFieldUsername {
-		t.Fatalf("nextCreateUserField(Enabled) = %v, want Username (wraps)", got)
-	}
-}
-
-// TestCreateUserFormDefaultsReadOnlyToFalseAndToggleIsIndependentOfAdmin pins
-// the same requirement's default state and independence: a fresh form has
-// IsReadOnly false, and toggling the Admin field never flips IsReadOnly (and
-// vice versa) -- the two booleans are separate flags, not a shared role enum.
-func TestCreateUserFormDefaultsReadOnlyToFalseAndToggleIsIndependentOfAdmin(t *testing.T) {
-	t.Parallel()
-
-	form := newAdminViewState().CreateUserForm
-	if form.IsReadOnly {
-		t.Fatal("newAdminViewState().CreateUserForm.IsReadOnly = true, want false")
-	}
-
-	model := Model{}
-	model.adminView.CreateUserForm.Focus = adminCreateUserFieldIsAdmin
-	model.toggleCreateUserField()
-	if !model.adminView.CreateUserForm.IsAdmin {
-		t.Fatal("toggleCreateUserField() on IsAdmin focus did not set IsAdmin")
-	}
-	if model.adminView.CreateUserForm.IsReadOnly {
-		t.Fatal("toggleCreateUserField() on IsAdmin focus unexpectedly set IsReadOnly")
-	}
-
-	model.adminView.CreateUserForm.Focus = adminCreateUserFieldIsReadOnly
-	model.toggleCreateUserField()
-	if !model.adminView.CreateUserForm.IsReadOnly {
-		t.Fatal("toggleCreateUserField() on IsReadOnly focus did not set IsReadOnly")
-	}
-	if !model.adminView.CreateUserForm.IsAdmin {
-		t.Fatal("toggleCreateUserField() on IsReadOnly focus unexpectedly cleared IsAdmin")
 	}
 }
 

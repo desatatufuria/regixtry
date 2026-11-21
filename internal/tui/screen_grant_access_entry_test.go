@@ -36,8 +36,7 @@ func TestGKeyOnUsersListOpensGrantScreenWithThatUserPreselected(t *testing.T) {
 	client := newRecordingGrantClient()
 	m := grantModel(t, client, 150, 24)
 	m.screen = screenAdminUsers
-	m.adminView.Users = client.users
-	m.adminView.SelectedUser = 1
+	m.adminScreens[slotUsers] = usersAt(client, "u-2")
 
 	m = grantModelPress(t, m, testKeyRunes("g"))
 	if m.screen != screenAdminGrantAccess {
@@ -57,10 +56,10 @@ func TestGKeyOnUsersListWithoutSelectionSaysSo(t *testing.T) {
 	t.Parallel()
 	m := grantModel(t, newRecordingGrantClient(), 150, 24)
 	m.screen = screenAdminUsers
-	m.adminView.SelectedUserID = ""
+	m.adminScreens[slotUsers] = usersAt(&fakeAdminClient{}, "")
 	m = grantModelPress(t, m, testKeyRunes("g"))
-	if m.screen != screenAdminUsers || !strings.Contains(m.status, "Select a user") {
-		t.Fatalf("screen=%q status=%q", m.screen, m.status)
+	if notice := usersScreenOf(t, m).notice; m.screen != screenAdminUsers || !strings.Contains(notice, "Select a user") {
+		t.Fatalf("screen=%q notice=%q", m.screen, notice)
 	}
 }
 
@@ -68,13 +67,15 @@ func TestGKeyIsTextWhileSearchingUsers(t *testing.T) {
 	t.Parallel()
 	m := grantModel(t, newRecordingGrantClient(), 150, 24)
 	m.screen = screenAdminUsers
-	m.adminView.UserSearchActive = true
+	searching := usersAt(newRecordingGrantClient(), "")
+	searching.searching = true
+	m.adminScreens[slotUsers] = searching
 	m = grantModelPress(t, m, testKeyRunes("g"))
 	if m.screen != screenAdminUsers {
 		t.Fatalf("g left the Users list while searching: %q", m.screen)
 	}
-	if !strings.Contains(m.adminView.UserSearchQuery, "g") {
-		t.Fatalf("g was not typed into the search: %q", m.adminView.UserSearchQuery)
+	if !strings.Contains(usersScreenOf(t, m).query, "g") {
+		t.Fatalf("g was not typed into the search: %q", usersScreenOf(t, m).query)
 	}
 }
 

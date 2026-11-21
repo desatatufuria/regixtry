@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // Every key message in the characterization tests is built only by the
@@ -226,39 +227,39 @@ func TestCreateUserFormPasswordEntryCharacterization(t *testing.T) {
 	t.Parallel()
 
 	m := charAdminModel(t, 160, 40)
-	m.screen = screenAdminCreateUser
+	mountCreateUser(&m, createUserFieldUsername)
 
 	m = testSendKey(t, m, testKeyRunes("alice"))
-	if got, want := m.adminView.CreateUserForm.Username, "alice"; got != want {
+	if got, want := createUserOf(m).username, "alice"; got != want {
 		t.Fatalf("Username = %q, want %q", got, want)
 	}
 	m = testSendKey(t, m, testKeyTab())
 	m = testSendKeys(t, m, testKeyRunes("s3cr"), testKeySpace(), testKeyRunes("et"))
-	if got, want := m.adminView.CreateUserForm.Password, "s3cret"; got != want {
-		t.Fatalf("Password = %q, want %q (space is swallowed by the field toggle, not typed)", got, want)
+	if got, want := createUserOf(m).password, "s3cr et"; got != want {
+		t.Fatalf("Password = %q, want %q (a real space is typed into the field)", got, want)
 	}
 	m = testSendKey(t, m, testKeyBackspace())
-	if got, want := m.adminView.CreateUserForm.Password, "s3cre"; got != want {
+	if got, want := createUserOf(m).password, "s3cr e"; got != want {
 		t.Fatalf("Password after backspace = %q, want %q", got, want)
 	}
 
-	view := m.View().Content
+	view := ansi.Strip(m.View().Content)
 	if !strings.Contains(view, "alice") {
 		t.Fatalf("view does not show the username")
 	}
-	if !strings.Contains(view, "*****") {
-		t.Fatalf("view does not show a 5-char mask for the password:\n%s", view)
+	if !strings.Contains(view, "••••••") {
+		t.Fatalf("view does not show a 6-char mask for the password:\n%s", view)
 	}
-	for _, leak := range []string{"s3cre", "s3c", "3cr"} {
+	for _, leak := range []string{"s3cr", "s3c", "3cr"} {
 		if strings.Contains(view, leak) {
 			t.Fatalf("view leaks password fragment %q:\n%s", leak, view)
 		}
 	}
 
 	m = testSendKey(t, m, testKeyTab())
-	m = testSendKey(t, m, testKeySpace())
-	if !m.adminView.CreateUserForm.IsAdmin {
-		t.Fatalf("space on the is-admin field did not toggle it")
+	m = testSendKeys(t, m, testKeyLeft(), testKeySpace())
+	if got := createUserOf(m); !got.readOnly || got.admin {
+		t.Fatalf("left then space on the role row: admin=%v readOnly=%v, want only read-only", got.admin, got.readOnly)
 	}
 }
 
@@ -266,19 +267,17 @@ func TestResetPasswordFormEntryCharacterization(t *testing.T) {
 	t.Parallel()
 
 	m := charAdminModel(t, 160, 40)
-	m.screen = screenAdminChangePassword
-	m.adminView.SelectedUserID = "u-1"
-	m.adminView.SelectedUsername = "alice"
+	mountResetPassword(&m)
 
 	m = testSendKeys(t, m, testKeyRunes("pa"), testKeySpace(), testKeyRunes("ss"))
-	if got, want := m.adminView.ResetPasswordForm.NewPassword, "pa ss"; got != want {
+	if got, want := resetPasswordOf(m).password, "pa ss"; got != want {
 		t.Fatalf("NewPassword = %q, want %q (this field types spaces)", got, want)
 	}
 	m = testSendKey(t, m, testKeyBackspace())
-	if got, want := m.adminView.ResetPasswordForm.NewPassword, "pa s"; got != want {
+	if got, want := resetPasswordOf(m).password, "pa s"; got != want {
 		t.Fatalf("NewPassword after backspace = %q, want %q", got, want)
 	}
-	view := m.View().Content
+	view := ansi.Strip(m.View().Content)
 	if strings.Contains(view, "pa s") {
 		t.Fatalf("view leaks the new password:\n%s", view)
 	}

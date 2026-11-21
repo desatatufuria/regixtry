@@ -20,10 +20,6 @@ var legacyScreenHandlers = map[screen]legacyHandler{
 	screenAdminAuthenticating: func(m Model, _ keyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	},
-	screenAdminUsers:          Model.updateAdminUsersKey,
-	screenAdminCreateUser:     Model.updateCreateUserFormKey,
-	screenAdminEditUser:       Model.updateAdminEditUserKey,
-	screenAdminChangePassword: Model.updateResetPasswordFormKey,
 	screenAdminEditUserGrants: Model.updateAdminGrantsKey,
 	screenAdminAddGrant:       Model.updateGrantFormKey,
 	screenAdminEditUserTokens: Model.updateAdminTokensKey,

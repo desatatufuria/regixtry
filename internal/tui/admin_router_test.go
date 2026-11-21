@@ -29,8 +29,7 @@ func TestAdminScreenSetHoldsOnlyInterfaceValues(t *testing.T) {
 // larger (it also includes every already-migrated screen), so this list is
 // deliberately narrower than isAdminScreen's full set.
 var adminScreenIDs = []screen{
-	screenAdminLogin, screenAdminAuthenticating, screenAdminUsers,
-	screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword,
+	screenAdminLogin, screenAdminAuthenticating,
 	screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens,
 	screenAdminCreateToken, screenRepoAdminGrants, screenRepoAdminAddGrant,
 	screenAdminRobots, screenAdminCreateRobot,

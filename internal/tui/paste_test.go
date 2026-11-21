@@ -25,14 +25,12 @@ func TestPasteReachesAdminTextFields(t *testing.T) {
 		got   func(m Model) string
 		want  string
 	}{
-		{"create user username", func(m *Model) { m.screen = screenAdminCreateUser },
-			func(m Model) string { return m.adminView.CreateUserForm.Username }, pasteSample},
-		{"create user password", func(m *Model) {
-			m.screen = screenAdminCreateUser
-			m.adminView.CreateUserForm.Focus = adminCreateUserFieldPassword
-		}, func(m Model) string { return m.adminView.CreateUserForm.Password }, pasteSample},
-		{"reset password", func(m *Model) { m.screen = screenAdminChangePassword },
-			func(m Model) string { return m.adminView.ResetPasswordForm.NewPassword }, pasteSample},
+		{"create user username", func(m *Model) { mountCreateUser(m, createUserFieldUsername) },
+			func(m Model) string { return createUserOf(m).username }, pasteSample},
+		{"create user password", func(m *Model) { mountCreateUser(m, createUserFieldPassword) },
+			func(m Model) string { return createUserOf(m).password }, pasteSample},
+		{"reset password", mountResetPassword,
+			func(m Model) string { return resetPasswordOf(m).password }, pasteSample},
 		{"create token name", func(m *Model) { m.screen = screenAdminCreateToken },
 			func(m Model) string { return m.adminView.TokenForm.Name }, pasteSample},
 		{"grant repository", func(m *Model) {
@@ -62,11 +60,8 @@ func TestPastedPasswordIsNeverRenderedInClear(t *testing.T) {
 		name  string
 		setup func(m *Model)
 	}{
-		{"create user", func(m *Model) {
-			m.screen = screenAdminCreateUser
-			m.adminView.CreateUserForm.Focus = adminCreateUserFieldPassword
-		}},
-		{"reset password", func(m *Model) { m.screen = screenAdminChangePassword }},
+		{"create user", func(m *Model) { mountCreateUser(m, createUserFieldPassword) }},
+		{"reset password", mountResetPassword},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
@@ -155,8 +150,8 @@ func TestRealSpaceKeyTypesIntoNameAndPasswordFields(t *testing.T) {
 		setup func(m *Model)
 		got   func(m Model) string
 	}{
-		{"reset password", func(m *Model) { m.screen = screenAdminChangePassword },
-			func(m Model) string { return m.adminView.ResetPasswordForm.NewPassword }},
+		{"reset password", mountResetPassword,
+			func(m Model) string { return resetPasswordOf(m).password }},
 		{"token name", func(m *Model) { m.screen = screenAdminCreateToken },
 			func(m Model) string { return m.adminView.TokenForm.Name }},
 		{"robot name", func(m *Model) { m.screen = screenAdminCreateRobot },

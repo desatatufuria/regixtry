@@ -102,7 +102,6 @@ type confirmSite struct {
 
 func confirmSites() []confirmSite {
 	robot := ports.AdminRobot{ID: "r-1", Username: "ci", Enabled: true}
-	user := ports.AdminUser{ID: "u-9", Username: "dave", Enabled: true}
 	repo := regixtrydomain.MustParseRepositoryRef("team/api")
 	boom := errors.New("boom")
 	return []confirmSite{
@@ -116,11 +115,6 @@ func confirmSites() []confirmSite {
 			m.screen, m.adminView.Robots = screenAdminRobots, []ports.AdminRobot{robot}
 			return m
 		}, testKeyRunes("d"), func() tea.Msg { return adminRobotDeletedMsg{robotID: "r-1", username: "ci", err: boom} }},
-		{"disable user", func(t *testing.T) Model {
-			m := charAdminModel(t, 150, 24)
-			m.screen, m.adminView.Users, m.adminView.SelectedUserID = screenAdminEditUser, []ports.AdminUser{user}, "u-9"
-			return m
-		}, testKeyRunes("x"), func() tea.Msg { return adminUserEnabledMsg{err: boom} }},
 		{"remove grant", func(t *testing.T) Model {
 			m := charAdminModel(t, 150, 24)
 			m.screen = screenAdminEditUserGrants

@@ -11,18 +11,6 @@ import (
 
 const AdminSessionExpiredReasonExpired = "Session expired. Log in again."
 
-type adminCreateUserField int
-
-const (
-	adminCreateUserFieldUsername adminCreateUserField = iota
-	adminCreateUserFieldPassword
-	adminCreateUserFieldIsAdmin
-	adminCreateUserFieldIsReadOnly
-	adminCreateUserFieldEnabled
-)
-
-type adminResetPasswordField int
-
 type adminGrantField int
 
 const (
@@ -70,20 +58,6 @@ const (
 	trivyConfigFieldRegistryReachableURL
 	trivyConfigFieldMaxConcurrency
 )
-
-type adminCreateUserForm struct {
-	Username   string
-	Password   string
-	IsAdmin    bool
-	IsReadOnly bool
-	Enabled    bool
-	Focus      adminCreateUserField
-}
-
-type adminResetPasswordForm struct {
-	NewPassword string
-	Focus       adminResetPasswordField
-}
 
 type adminGrantForm struct {
 	Repository           string
@@ -375,20 +349,16 @@ type AdminSession struct {
 }
 
 type AdminViewState struct {
-	Users             []ports.AdminUser
-	SelectedUser      int
-	SelectedUserID    string
-	SelectedUsername  string
-	UserSearchQuery   string
-	UserSearchActive  bool
-	Grants            []ports.AdminRepoGrant
-	SelectedGrant     int
-	AdminTokens       []ports.AdminToken
-	SelectedToken     int
-	CreateUserForm    adminCreateUserForm
-	ResetPasswordForm adminResetPasswordForm
-	GrantForm         adminGrantForm
-	TokenForm         adminTokenForm
+	// SelectedUserID/SelectedUsername name the principal the old Grants and
+	// Tokens screens work on (the Users screens own their own state).
+	SelectedUserID   string
+	SelectedUsername string
+	Grants           []ports.AdminRepoGrant
+	SelectedGrant    int
+	AdminTokens      []ports.AdminToken
+	SelectedToken    int
+	GrantForm        adminGrantForm
+	TokenForm        adminTokenForm
 	// Confirm is THE confirm-before-destructive-action primitive
 	// (design.md Decision E, D7), replacing adminConfirmModal's Kind-union.
 	// Shared by the Users and Robots screens; the Security screens each
@@ -427,11 +397,10 @@ type AdminViewState struct {
 	RepoAdminGrantForm        adminRepositoryGrantForm
 	// Robots/SelectedRobot/CreateRobotForm back screenAdminRobots/
 	// screenAdminCreateRobot (design.md Decision 7): global-admin-only
-	// screens mirroring Users/SelectedUser/CreateUserForm, a sibling data
-	// set rather than an extension -- a robot is never listed in Users
-	// (store.go's ListUsers excludes is_robot rows) and has no
-	// SelectedUserID-keyed edit screen of its own; enable/disable and token
-	// issuance reuse the existing user routes/screens via SelectedUserID.
+	// screens, a sibling data set to the Users list -- a robot is never listed
+	// in Users (store.go's ListUsers excludes is_robot rows) and has no
+	// edit screen of its own; token issuance reuses the old Tokens screen via
+	// SelectedUserID.
 	Robots          []ports.AdminRobot
 	SelectedRobot   int
 	CreateRobotForm adminCreateRobotForm
@@ -490,9 +459,6 @@ func (s AdminSession) Remaining(now time.Time) time.Duration {
 
 func newAdminViewState() AdminViewState {
 	return AdminViewState{
-		CreateUserForm: adminCreateUserForm{
-			Enabled: true,
-		},
 		GrantForm: adminGrantForm{
 			Role: domainauth.RepoRoleReader,
 		},

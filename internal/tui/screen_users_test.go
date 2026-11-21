@@ -498,8 +498,8 @@ func TestUsersDisableAsksThenDisablesOnceAndReloads(t *testing.T) {
 	if client.disableCalls != 1 {
 		t.Fatalf("DisableUser called %d times, want 1", client.disableCalls)
 	}
-	if s.confirm.Active() || s.toggling || !strings.Contains(s.notice, `User "carol" disabled.`) || s.noticeTone != userNoticeSuccess {
-		t.Fatalf("after the result: confirm=%v toggling=%v notice=%q", s.confirm.Active(), s.toggling, s.notice)
+	if s.confirm.Active() || !strings.Contains(s.notice, `User "carol" disabled.`) || s.noticeTone != userNoticeSuccess {
+		t.Fatalf("after the result: confirm=%v notice=%q", s.confirm.Active(), s.notice)
 	}
 	if client.listUsersCalls != loadsBefore+1 {
 		t.Fatalf("the list was not reloaded (%d -> %d calls)", loadsBefore, client.listUsersCalls)
@@ -538,8 +538,8 @@ func TestUsersDisableFailureIsShownAndThePromptCloses(t *testing.T) {
 	client.disableErr = errors.New("cannot disable the last admin")
 	s, env := usersOpen(t, client, "u-1")
 	s, _ = usersPress(t, s, env, testKeyRunes("d"), testKeyEnter())
-	if s.confirm.Active() || s.toggling || s.noticeTone != userNoticeError || s.notice != "cannot disable the last admin" {
-		t.Fatalf("confirm=%v toggling=%v notice=%q tone=%v", s.confirm.Active(), s.toggling, s.notice, s.noticeTone)
+	if s.confirm.Active() || s.noticeTone != userNoticeError || s.notice != "cannot disable the last admin" {
+		t.Fatalf("confirm=%v notice=%q tone=%v", s.confirm.Active(), s.notice, s.noticeTone)
 	}
 	if out := renderUsers(s, env); !strings.Contains(out, "cannot disable the last admin") {
 		t.Errorf("the failure is not on screen:\n%s", out)

@@ -10,22 +10,22 @@
       Repository access        │  │   USERNAME                                                                                 ROLE       STATE     EXPIRING │  │ ACTIONS                            │
                                │  │   admin                                                                                    admin      enabled   0        │  │ Open profile                 enter │
   SECURITY                     │  │   alice                                                                                    user       enabled   1        │  │ Grant access                     g │
-      Image scanning           │  │   bob                                                                                      read-only  enabled   0        │  │ Tokens                           t │
-      Secret scanning          │  │ ▸ carol                                                                                    user       enabled   2        │  │ Reset password                   p │
-      Signing policy           │  │   dave                                                                                     user       disabled  0        │  │ Disable user                     d │
-                               │  │                                                                                                                          │  │                                    │
-  OPERATIONS                   │  │                                                ╭───────────────────────────────╮                                         │  │ NEEDS ATTENTION                    │
-      Scan runs                │  │                                                │                               │                                         │  │ Token laptop expires in 4 days     │
-      Secret findings          │  │                                                │ Confirm Disable               │                                         │  │ Token ci expires in 30 hours       │
-      Update channel           │  │                                                │ Confirm disable user "carol"? │                                         │  │                                    │
-                               │  │                                                │                               │                                         │  │                                    │
-                               │  │                                                │ Enter: disable | Esc: cancel  │                                         │  │                                    │
-                               │  │                                                │                               │                                         │  │                                    │
-                               │  │                                                ╰───────────────────────────────╯                                         │  │                                    │
-                               │  │                                                                                                                          │  │                                    │
-                               │  │                                                                                                                          │  │                                    │
-                               │  │                                                                                                                          │  │                                    │
-                               │  │                                                                                                                          │  │                                    │
+      Image scanning           │  │   bob                           ╭──────────────────────────────────────────────────────────────╮  ly  enabled   0        │  │ Tokens                           t │
+      Secret scanning          │  │ ▸ carol                         │  Confirm Disable                                             │      enabled   2        │  │ Reset password                   p │
+      Signing policy           │  │   dave                          │                                                              │      disabled  0        │  │ Disable user                     d │
+                               │  │                                 │  Confirm disable user "carol"?                               │                         │  │                                    │
+  OPERATIONS                   │  │                                 │                                                              │                         │  │ NEEDS ATTENTION                    │
+      Scan runs                │  │                                 │  ╭────────────────────────────────────────────────────────╮  │                         │  │ Token laptop expires in 4 days     │
+      Secret findings          │  │                                 │  │ carol                                                  │  │                         │  │ Token ci expires in 30 hours       │
+      Update channel           │  │                                 │  │ user, enabled, created 3 Mar 2026                      │  │                         │  │                                    │
+                               │  │                                 │  ╰────────────────────────────────────────────────────────╯  │                         │  │                                    │
+                               │  │                                 │                                                              │                         │  │                                    │
+                               │  │                                 │  carol is signed out and their tokens stop working. Their    │                         │  │                                    │
+                               │  │                                 │  grants stay, so enabling them again restores access.        │                         │  │                                    │
+                               │  │                                 │                                                              │                         │  │                                    │
+                               │  │                                 │   Confirm                                        y / enter   │                         │  │                                    │
+                               │  │                                 │   Cancel                                               esc   │                         │  │                                    │
+                               │  │                                 ╰──────────────────────────────────────────────────────────────╯                         │  │                                    │
                                │  │                                                                                                                          │  │                                    │
                                │  │                                                                                                                          │  │                                    │
                                │  │                                                                                                                          │  │                                    │

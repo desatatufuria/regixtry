@@ -33,11 +33,6 @@ func charAdminModel(t *testing.T, width, height int) Model {
 	updated, _ := model.Update(tea.WindowSizeMsg{Width: width, Height: height})
 	model = updated.(Model)
 	model.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: charFixedTime.Add(24 * time.Hour)}
-	model.adminView.Users = []ports.AdminUser{
-		{ID: "u-1", Username: "alice", IsAdmin: true, Enabled: true, CreatedAt: charFixedTime},
-		{ID: "u-2", Username: "bob", Enabled: true, CreatedAt: charFixedTime},
-		{ID: "u-3", Username: "carol", IsReadOnly: true, CreatedAt: charFixedTime},
-	}
 	model.adminView.SelectedUserID = "u-1"
 	model.adminView.SelectedUsername = "alice"
 	return model
@@ -83,18 +78,6 @@ var characterizationScreens = []struct {
 			t.Fatalf("screen = %q, want %q", m.screen, screenProjects)
 		}
 		return charResize(t, m, w, h)
-	}},
-	{"admin_users", func(t *testing.T, w, h int) Model {
-		m := charAdminModel(t, w, h)
-		m.screen = screenAdminUsers
-		return m
-	}},
-	{"admin_create_user", func(t *testing.T, w, h int) Model {
-		m := charAdminModel(t, w, h)
-		m.screen = screenAdminCreateUser
-		m.adminView.CreateUserForm.Username = "dave"
-		m.adminView.CreateUserForm.Password = "hunter2"
-		return m
 	}},
 	{"admin_create_token_form", func(t *testing.T, w, h int) Model {
 		m := charAdminModel(t, w, h)

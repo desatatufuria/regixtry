@@ -28,8 +28,7 @@ type editUserScreen struct {
 	tokens    []ports.AdminToken
 	tokensErr string
 
-	confirm  confirmPrompt
-	toggling bool
+	confirm confirmPrompt
 
 	notice     string
 	noticeTone userNoticeTone
@@ -111,7 +110,7 @@ func (s editUserScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.Cmd
 		if typed.gen != s.gen {
 			return s, nil, false
 		}
-		s.confirm, s.toggling = confirmPrompt{}, false
+		s.confirm = confirmPrompt{}
 		s.noticeTone, s.notice = userEnabledNotice(typed)
 		if typed.err != nil {
 			return s, nil, false
@@ -144,17 +143,8 @@ func (s editUserScreen) applyLoaded(msg editUserLoadedMsg) editUserScreen {
 
 func (s editUserScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd, bool) {
 	if s.confirm.Active() {
-		if s.toggling && !isEscKey(msg) {
-			return s, nil, true
-		}
 		next, cmd, consumed := s.confirm.update(env, msg)
 		s.confirm = next
-		if cmd != nil {
-			s.toggling = true
-		}
-		if isEscKey(msg) {
-			s.toggling = false
-		}
 		return s, cmd, consumed
 	}
 	name := adminFirstNonEmpty(s.username, s.userID)

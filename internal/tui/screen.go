@@ -130,6 +130,13 @@ const (
 	// slotOverview holds overviewScreen (tui-v2-redesign S3): the post-login
 	// landing screen, rendered inside the application shell.
 	slotOverview
+	// slotUsers, slotEditUser, slotCreateUser and slotChangePassword hold the
+	// user-management screens (tui-v2-redesign S3): the Users list, one user's
+	// profile, the New user form and the Reset password form.
+	slotUsers
+	slotEditUser
+	slotCreateUser
+	slotChangePassword
 	numScreenSlots
 )
 
@@ -166,6 +173,14 @@ func slotFor(id screen) (screenSlot, bool) {
 		return slotGrantAccess, true
 	case screenAdminOverview:
 		return slotOverview, true
+	case screenAdminUsers:
+		return slotUsers, true
+	case screenAdminEditUser:
+		return slotEditUser, true
+	case screenAdminCreateUser:
+		return slotCreateUser, true
+	case screenAdminChangePassword:
+		return slotChangePassword, true
 	default:
 		return 0, false
 	}
@@ -214,7 +229,7 @@ func openScanHistory(repository string, returnTo screen, activeTab int) tea.Cmd 
 // panel's root, so its Esc carries the "leave the admin panel" behavior. A
 // migrated screen cannot call Model.returnToInspection() directly (Decision
 // B: it mutates several Model-level fields beyond m.screen -- adminReturn,
-// Confirm, UserSearchActive, revealed token state, adminIntent), so this
+// Confirm, revealed token state, adminIntent), so this
 // mirrors navigateMsg's own "ask the parent" pattern.
 type returnToInspectionMsg struct{}
 

@@ -28,10 +28,10 @@ func TestPastedKeyNamesAreTextNotKeys(t *testing.T) {
 		setup  func(m *Model)
 		got    func(m Model) string
 	}{
-		{"create user username", screenAdminCreateUser, nil, func(m Model) string { return m.adminView.CreateUserForm.Username }},
-		{"create user password", screenAdminCreateUser, func(m *Model) { m.adminView.CreateUserForm.Focus = adminCreateUserFieldPassword },
-			func(m Model) string { return m.adminView.CreateUserForm.Password }},
-		{"reset password", screenAdminChangePassword, nil, func(m Model) string { return m.adminView.ResetPasswordForm.NewPassword }},
+		{"create user username", screenAdminCreateUser, func(m *Model) { mountCreateUser(m, createUserFieldUsername) }, func(m Model) string { return createUserOf(m).username }},
+		{"create user password", screenAdminCreateUser, func(m *Model) { mountCreateUser(m, createUserFieldPassword) },
+			func(m Model) string { return createUserOf(m).password }},
+		{"reset password", screenAdminChangePassword, mountResetPassword, func(m Model) string { return resetPasswordOf(m).password }},
 		{"token name", screenAdminCreateToken, nil, func(m Model) string { return m.adminView.TokenForm.Name }},
 		{"robot name", screenAdminCreateRobot, nil, func(m Model) string { return m.adminView.CreateRobotForm.Name }},
 		{"grant repository", screenAdminAddGrant, nil, func(m Model) string { return m.adminView.GrantForm.Repository }},
@@ -66,6 +66,7 @@ func TestPastedKeyNamesDoNotActOnLists(t *testing.T) {
 			t.Parallel()
 			m := charAdminModel(t, 160, 30)
 			m.screen = screenAdminUsers
+			m.adminScreens[slotUsers] = usersAt(usersTestClient(), "")
 			u, cmd := m.Update(tea.PasteMsg{Content: p})
 			if didQuit(cmd) || u.(Model).screen != screenAdminUsers {
 				t.Fatalf("paste %q acted as a key on the users list (screen=%s)", p, u.(Model).screen)

@@ -63,52 +63,47 @@ func TestAdminLoginShiftTabBehavesAsBefore(t *testing.T) {
 func kjSearchModel(t *testing.T, active bool) Model {
 	t.Helper()
 	users := []ports.AdminUser{{ID: "u1", Username: "kj-one"}, {ID: "u2", Username: "kj-two"}, {ID: "u3", Username: "zed"}}
-	m := newAdminReadyModel(t, &fakeAdminClient{users: users})
-	m.screen = screenAdminUsers
-	m.adminAuth = adminAuthStateAuthenticated
-	m.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token"}
-	m.adminView.Users = users
-	m.adminView.SelectedUser = 0
-	m.adminView.SelectedUserID = "u1"
-	m.adminView.SelectedUsername = "kj-one"
-	m.adminView.UserSearchActive = active
+	m := usersModelAt(t, &fakeAdminClient{users: users}, 150, 24)
+	if active {
+		m = testSendKey(t, m, testKeyRunes("/"))
+	}
 	return m
 }
 
 func TestAdminUserSearchTypesJAndKWithoutMovingSelection(t *testing.T) {
 	m := typeRunes(t, kjSearchModel(t, true), "kube/jobs")
-	if got := m.adminView.UserSearchQuery; got != "kube/jobs" {
+	if got := usersScreenOf(t, m).query; got != "kube/jobs" {
 		t.Fatalf("query = %q, want kube/jobs", got)
 	}
-	if !m.adminView.UserSearchActive {
+	if !usersScreenOf(t, m).searching {
 		t.Fatal("search should stay active")
 	}
 	m = kjSearchModel(t, true)
 	m = typeRunes(t, m, "kj")
-	if m.adminView.SelectedUser != 0 || m.adminView.SelectedUserID != "u1" {
-		t.Fatalf("selection moved: index %d id %q", m.adminView.SelectedUser, m.adminView.SelectedUserID)
+	if got := usersScreenOf(t, m).selectedIndex(usersScreenOf(t, m).visible()); got != 0 {
+		t.Fatalf("selection moved to row %d", got)
 	}
 }
 
 func TestAdminUserSearchArrowsStillMoveSelection(t *testing.T) {
 	m := testSendKey(t, kjSearchModel(t, true), testKeyDown())
-	if m.adminView.SelectedUser != 1 || m.adminView.SelectedUserID != "u2" {
-		t.Fatalf("after Down: index %d id %q, want 1 u2", m.adminView.SelectedUser, m.adminView.SelectedUserID)
+	if user, _ := usersScreenOf(t, m).current(); user.ID != "u2" {
+		t.Fatalf("after Down on %q, want u2", user.ID)
 	}
 	m = testSendKey(t, m, testKeyUp())
-	if m.adminView.SelectedUser != 0 || m.adminView.SelectedUserID != "u1" {
-		t.Fatalf("after Up: index %d id %q, want 0 u1", m.adminView.SelectedUser, m.adminView.SelectedUserID)
+	if user, _ := usersScreenOf(t, m).current(); user.ID != "u1" {
+		t.Fatalf("after Up on %q, want u1", user.ID)
 	}
 }
 
 func TestAdminUsersJAndKStillNavigateWhenSearchInactive(t *testing.T) {
 	m := testSendKey(t, kjSearchModel(t, false), testKeyRunes("j"))
-	if m.adminView.SelectedUserID != "u2" || m.adminView.UserSearchQuery != "" {
-		t.Fatalf("after j: id %q query %q, want u2 and empty", m.adminView.SelectedUserID, m.adminView.UserSearchQuery)
+	if user, _ := usersScreenOf(t, m).current(); user.ID != "u2" || usersScreenOf(t, m).query != "" {
+		t.Fatalf("after j: id %q query %q, want u2 and empty", user.ID, usersScreenOf(t, m).query)
 	}
 	m = testSendKey(t, m, testKeyRunes("k"))
-	if m.adminView.SelectedUserID != "u1" || m.adminView.UserSearchQuery != "" {
-		t.Fatalf("after k: id %q query %q, want u1 and empty", m.adminView.SelectedUserID, m.adminView.UserSearchQuery)
+	if user, _ := usersScreenOf(t, m).current(); user.ID != "u1" || usersScreenOf(t, m).query != "" {
+		t.Fatalf("after k: id %q query %q, want u1 and empty", user.ID, usersScreenOf(t, m).query)
 	}
 }
 

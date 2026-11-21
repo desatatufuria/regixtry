@@ -50,10 +50,9 @@ type usersScreen struct {
 	// reload or a narrower filter keeps the cursor on the same person.
 	selectedID string
 
-	// confirm is the disable/enable prompt; toggling is set while its command
-	// is in flight, so a second Enter cannot send it twice.
-	confirm  confirmPrompt
-	toggling bool
+	// confirm is the disable/enable prompt; its own in-flight guard keeps a
+	// second Enter from sending the command twice.
+	confirm confirmPrompt
 
 	notice     string
 	noticeTone userNoticeTone
@@ -177,13 +176,17 @@ func userToggleConfirm(gen uint64, user ports.AdminUser) confirmPrompt {
 		verb, title = "enable", "Confirm Enable"
 	}
 	userID, username := user.ID, user.Username
+	consequence := fmt.Sprintf("%s is signed out and their tokens stop working. Their grants stay, so enabling them again restores access.", username)
+	if enable {
+		consequence = fmt.Sprintf("%s can sign in again and their grants apply as before.", username)
+	}
 	return newConfirmPrompt(
 		title,
 		fmt.Sprintf("Confirm %s user %q?", verb, username),
 		verb,
 		fmt.Sprintf("Submitting %s for %s...", verb, username),
 		func(env screenEnv) tea.Cmd { return userSetEnabledCmd(env, gen, userID, username, enable) },
-	)
+	).withTarget(username, userSubtitle(user, true)).withConsequence(consequence)
 }
 
 // userEnabledNotice is the line shown after a disable or enable.
@@ -227,7 +230,7 @@ func (s usersScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.Cmd, b
 		if typed.gen != s.gen {
 			return s, nil, false
 		}
-		s.confirm, s.toggling = confirmPrompt{}, false
+		s.confirm = confirmPrompt{}
 		s.noticeTone, s.notice = userEnabledNotice(typed)
 		if typed.err != nil {
 			return s, nil, false
@@ -300,19 +303,8 @@ func (s usersScreen) move(delta int) usersScreen {
 
 func (s usersScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd, bool) {
 	if s.confirm.Active() {
-		// Esc still cancels the prompt while its command is in flight; a
-		// second Enter does nothing until the result arrives.
-		if s.toggling && !isEscKey(msg) {
-			return s, nil, true
-		}
 		next, cmd, consumed := s.confirm.update(env, msg)
 		s.confirm = next
-		if cmd != nil {
-			s.toggling = true
-		}
-		if isEscKey(msg) {
-			s.toggling = false
-		}
 		return s, cmd, consumed
 	}
 	if s.searching {

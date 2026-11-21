@@ -155,8 +155,11 @@ func TestOverviewTOpensUsersWithAPointerToTheTokenKey(t *testing.T) {
 	if m.screen != screenAdminUsers {
 		t.Fatalf("t opened %q", m.screen)
 	}
-	if m.status != "Pick a user, then press t to issue a token" {
-		t.Fatalf("status = %q", m.status)
+	if notice := usersScreenOf(t, m).notice; notice != "Pick a user, then press t to issue a token" {
+		t.Fatalf("notice = %q", notice)
+	}
+	if out := overviewRender(m); !strings.Contains(out, "Pick a user, then press t to issue a token") {
+		t.Fatalf("the pointer to the token key is not on screen:\n%s", out)
 	}
 }
 
@@ -164,10 +167,6 @@ func TestUsersListTIssuesATokenForTheSelectedUser(t *testing.T) {
 	t.Parallel()
 	client := overviewClient()
 	m := overviewModelAt(t, client, 150, 24)
-	m.adminView.Users = client.users
-	m.adminView.SelectedUser = 0
-	m.adminView.SelectedUserID = "u-1"
-	m.adminView.SelectedUsername = "alice"
 	m = overviewPress(t, m, testKeyRunes("t"))
 	if m.screen != screenAdminUsers {
 		t.Fatalf("setup: screen = %q", m.screen)

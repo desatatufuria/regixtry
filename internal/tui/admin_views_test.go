@@ -1167,19 +1167,19 @@ func TestRenderAdminWorkspaceKeepsBaseFullSizeAndLayersModalOnTopWhenOpen(t *tes
 	}
 	findingsTable := buildAdminFindingsTable(modal.Detail.Findings, 0, minTableRows)
 	screens := adminScreenSet{}
-	screens[slotScanHistory] = scanHistoryScreen{returnTo: screenAdminUsers, modal: modal, findings: findingsTable}
+	screens[slotScanHistory] = scanHistoryScreen{returnTo: screenAdminRobots, modal: modal, findings: findingsTable}
 
-	layout := contentBudget(defaultViewportWidth, defaultViewportHeight, "", adminScreenHelp(screenAdminUsers, view))
+	layout := contentBudget(defaultViewportWidth, defaultViewportHeight, "", adminScreenHelp(screenAdminRobots, view))
 
 	// Property 1: the base page (rendered independently, at the very same
 	// unreduced layout the modal-open path is given) must be byte-identical
 	// to what renderAdminWorkspace's modal-open branch composites as its
 	// base -- proving it is never shrunk via a reduced SectionRows the way
 	// the superseded row-split design did.
-	standaloneContext, standaloneBody, standaloneHelp := renderAdminScreen(theme, screenAdminUsers, session, view, nil, layout, now)
+	standaloneContext, standaloneBody, standaloneHelp := renderAdminScreen(theme, screenAdminRobots, session, view, nil, layout, now)
 	wantBase := renderConsoleWorkspace("Regixtry Admin", standaloneContext, standaloneBody, "", standaloneHelp, statusKindAuto)
 
-	got := renderAdminWorkspace(screenAdminUsers, session, view, nil, "", layout, now, screens)
+	got := renderAdminWorkspace(screenAdminRobots, session, view, nil, "", layout, now, screens)
 
 	// Property 2: layered on top, not appended below -- the composite must
 	// fit exactly within the canvas (layout.Width x layout.Height), never
@@ -1750,7 +1750,6 @@ func TestNonMigratedScreensUnchanged(t *testing.T) {
 	session := AdminSession{Username: "operator", ExpiresAt: now.Add(10 * time.Minute)}
 
 	userView := AdminViewState{
-		Users:            []ports.AdminUser{{ID: "u-1", Username: "alice", IsAdmin: true, Enabled: true}},
 		SelectedUserID:   "u-1",
 		SelectedUsername: "alice",
 	}
@@ -1760,10 +1759,6 @@ func TestNonMigratedScreensUnchanged(t *testing.T) {
 		name string
 		view AdminViewState
 	}{
-		{"screenAdminUsers", AdminViewState{}},
-		{"screenAdminCreateUser", AdminViewState{}},
-		{"screenAdminEditUser", userView},
-		{"screenAdminChangePassword", userView},
 		{"screenAdminEditUserGrants", userView},
 		{"screenAdminAddGrant", userView},
 		{"screenAdminEditUserTokens", userView},
@@ -1774,10 +1769,6 @@ func TestNonMigratedScreensUnchanged(t *testing.T) {
 		{"screenAdminCreateRobot", AdminViewState{}},
 	}
 	ids := map[string]screen{
-		"screenAdminUsers":          screenAdminUsers,
-		"screenAdminCreateUser":     screenAdminCreateUser,
-		"screenAdminEditUser":       screenAdminEditUser,
-		"screenAdminChangePassword": screenAdminChangePassword,
 		"screenAdminEditUserGrants": screenAdminEditUserGrants,
 		"screenAdminAddGrant":       screenAdminAddGrant,
 		"screenAdminEditUserTokens": screenAdminEditUserTokens,
@@ -1788,8 +1779,8 @@ func TestNonMigratedScreensUnchanged(t *testing.T) {
 		"screenAdminCreateRobot":    screenAdminCreateRobot,
 	}
 
-	if got, want := len(screens), 12; got != want {
-		t.Fatalf("test setup invalid: %d screen fixtures, want %d (Phase 11 narrows design.md's 13 legacy screens by one)", got, want)
+	if got, want := len(screens), 8; got != want {
+		t.Fatalf("test setup invalid: %d screen fixtures, want %d (the user-management screens left the old renderer)", got, want)
 	}
 
 	for _, tc := range screens {

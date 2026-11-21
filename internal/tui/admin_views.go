@@ -93,12 +93,6 @@ func renderAdminWorkspace(current screen, session AdminSession, view AdminViewSt
 // renderAdminScreen itself then consumes).
 func adminScreenHelp(current screen, view AdminViewState) string {
 	switch current {
-	case screenAdminCreateUser:
-		return "Enter: create user | Tab: next field | Space: toggle | Esc: cancel"
-	case screenAdminEditUser:
-		return "g: grants | t: tokens | p: change password | e: enable | x: disable | Esc: back | q: quit"
-	case screenAdminChangePassword:
-		return "Enter: save password | Esc: cancel"
 	case screenAdminEditUserGrants:
 		return "n: add grant | e: edit selected grant | x: remove grant | t: tokens | Esc: back | q: quit"
 	case screenAdminAddGrant:
@@ -116,10 +110,7 @@ func adminScreenHelp(current screen, view AdminViewState) string {
 	case screenAdminCreateRobot:
 		return "Enter: create robot | Tab: next field | Space: cycle role | Esc: cancel"
 	default:
-		if current == screenAdminUsers && view.UserSearchActive {
-			return "Type to search | Up/Down: pick user | Esc: end search"
-		}
-		return "/: search | Enter/e: edit user | n: create user | t: tokens | b: robots | g: grant access | Esc: back | q: quit"
+		return "Esc: back | q: quit"
 	}
 }
 
@@ -134,12 +125,6 @@ func adminScreenHelp(current screen, view AdminViewState) string {
 func renderAdminScreen(theme adminTheme, current screen, session AdminSession, view AdminViewState, knownRepositories []string, layout consoleLayout, now time.Time) (string, string, string) {
 	help := adminScreenHelp(current, view)
 	switch current {
-	case screenAdminCreateUser:
-		return adminContext("Access", "Users", "Create user"), renderAdminCreateUserScreen(theme, view), help
-	case screenAdminEditUser:
-		return adminContext("Access", "Users", selectedAdminUsername(view), "General"), renderAdminEditUserScreen(theme, session, view, now), help
-	case screenAdminChangePassword:
-		return adminContext("Access", "Users", selectedAdminUsername(view), "Change password"), renderAdminChangePasswordScreen(theme, view), help
 	case screenAdminEditUserGrants:
 		return adminContext("Access", "Users", selectedAdminUsername(view), "Grants"), renderAdminGrantsScreen(theme, view), help
 	case screenAdminAddGrant:
@@ -157,13 +142,13 @@ func renderAdminScreen(theme adminTheme, current screen, session AdminSession, v
 	case screenAdminCreateRobot:
 		return adminContext("Access", "Robots", "Create robot"), renderAdminCreateRobotScreenWithin(theme, view, knownRepositories, now, layout.SectionRows), help
 	default:
-		return adminContext("Access", "Users"), renderAdminUsersScreen(theme, session, view, layout, now), help
+		return adminContext("Access"), "", help
 	}
 }
 
 // renderAdminOperatorFooter is the trailing "Operator: %s" / "Session
-// remaining: %s" pair the Users and Robots screens render (see
-// renderAdminUsersScreen/renderAdminRobotsScreen below). The migrated Security
+// remaining: %s" pair the Robots screen renders (see
+// renderAdminRobotsScreen below). The migrated Security
 // screens (trivyConfigScreen, trivyReposScreen, gitleaksConfigScreen,
 // signingConfigScreen) share it via this helper so the operator never loses
 // their session countdown while navigating the Security screens.
@@ -173,42 +158,6 @@ func renderAdminOperatorFooter(theme adminTheme, session AdminSession, now time.
 		theme.muted.Render(fmt.Sprintf("Operator: %s", session.Username)),
 		theme.muted.Render(fmt.Sprintf("Session remaining: %s", formatRemaining(session.Remaining(now)))),
 	}
-}
-
-func renderAdminUsersScreen(theme adminTheme, session AdminSession, view AdminViewState, layout consoleLayout, now time.Time) string {
-	searchHint := "Press / to edit the search"
-	if view.UserSearchActive {
-		searchHint = "Typing updates the user list"
-	}
-	lines := []string{
-		theme.subheading.Render("Search"),
-		renderTextField(theme, "Username contains", view.UserSearchQuery, view.UserSearchActive),
-		theme.muted.Render(searchHint),
-		"",
-		theme.subheading.Render("Users"),
-	}
-	filteredUsers := filteredAdminUsers(view)
-	if len(filteredUsers) == 0 {
-		message := "No admin users available."
-		if strings.TrimSpace(view.UserSearchQuery) != "" {
-			message = "No users match the current search."
-		}
-		lines = append(lines, theme.muted.Render(message))
-	} else {
-		for _, user := range filteredUsers {
-			label := formatAdminUserLabel(user)
-			if user.ID == view.SelectedUserID {
-				label = theme.selected.Render(label)
-			}
-			lines = append(lines, label)
-		}
-	}
-	lines = append(lines,
-		"",
-		theme.muted.Render(fmt.Sprintf("Operator: %s", session.Username)),
-		theme.muted.Render(fmt.Sprintf("Session remaining: %s", formatRemaining(session.Remaining(now)))),
-	)
-	return renderSection(theme, strings.Join(lines, "\n"), layout)
 }
 
 // renderFeaturePageBody moved onto trivyConfigScreen/gitleaksConfigScreen/
@@ -493,52 +442,6 @@ func renderAdminScanHistoryModal(theme adminTheme, modal adminScanHistoryModal, 
 	return theme.section.Render(combined)
 }
 
-func renderAdminCreateUserScreen(theme adminTheme, view AdminViewState) string {
-	form := view.CreateUserForm
-	return theme.section.Render(strings.Join([]string{
-		theme.subheading.Render("Create User"),
-		renderTextField(theme, "Username", form.Username, form.Focus == adminCreateUserFieldUsername),
-		renderSecretField(theme, "Password", form.Password, form.Focus == adminCreateUserFieldPassword),
-		renderToggleField(theme, "Create as admin", form.IsAdmin, form.Focus == adminCreateUserFieldIsAdmin),
-		renderToggleField(theme, "Read-only", form.IsReadOnly, form.Focus == adminCreateUserFieldIsReadOnly),
-		renderToggleField(theme, "Enabled", form.Enabled, form.Focus == adminCreateUserFieldEnabled),
-	}, "\n"))
-}
-
-func renderAdminEditUserScreen(theme adminTheme, session AdminSession, view AdminViewState, now time.Time) string {
-	user, ok := selectedAdminUserForView(view)
-	if !ok {
-		return theme.section.Render(theme.warning.Render("Select a user from Users before opening edit mode."))
-	}
-	role := "User"
-	if user.IsAdmin {
-		role = "Admin"
-	}
-	status := theme.success.Render("Enabled")
-	if !user.Enabled {
-		status = theme.warning.Render("Disabled")
-	}
-	return theme.section.Render(strings.Join([]string{
-		theme.subheading.Render("Account"),
-		fmt.Sprintf("Username: %s", user.Username),
-		fmt.Sprintf("Role: %s", role),
-		fmt.Sprintf("Status: %s", status),
-		fmt.Sprintf("User ID: %s", user.ID),
-		"",
-		theme.subheading.Render("Context"),
-		fmt.Sprintf("Session remaining: %s", formatRemaining(session.Remaining(now))),
-		"Grants and tokens are managed from their dedicated screens.",
-	}, "\n"))
-}
-
-func renderAdminChangePasswordScreen(theme adminTheme, view AdminViewState) string {
-	return theme.section.Render(strings.Join([]string{
-		theme.subheading.Render("Change Password"),
-		fmt.Sprintf("Target: %s", selectedAdminUsername(view)),
-		renderSecretField(theme, "New password", view.ResetPasswordForm.NewPassword, true),
-	}, "\n"))
-}
-
 func renderAdminGrantsScreen(theme adminTheme, view AdminViewState) string {
 	if strings.TrimSpace(view.SelectedUserID) == "" {
 		return theme.section.Render(theme.warning.Render("Select a user before opening grants."))
@@ -698,9 +601,7 @@ func renderAdminRobotsScreen(theme adminTheme, session AdminSession, view AdminV
 	return renderSection(theme, strings.Join(lines, "\n"), layout)
 }
 
-// formatAdminRobotLabel mirrors formatAdminUserLabel's "name [details]"
-// shape, substituting the robot's repository/role/enabled state for the
-// human user's admin/read-only/enabled flags.
+// formatAdminRobotLabel renders a robot as "name [repository, role, state]".
 func formatAdminRobotLabel(robot ports.AdminRobot) string {
 	state := "disabled"
 	if robot.Enabled {
@@ -1030,15 +931,6 @@ func selectedAdminUsername(view AdminViewState) string {
 	return "No selection"
 }
 
-func selectedAdminUserForView(view AdminViewState) (ports.AdminUser, bool) {
-	for _, user := range view.Users {
-		if user.ID == view.SelectedUserID {
-			return user, true
-		}
-	}
-	return ports.AdminUser{}, false
-}
-
 func selectedGrantForView(view AdminViewState) (ports.AdminRepoGrant, bool) {
 	if len(view.Grants) == 0 {
 		return ports.AdminRepoGrant{}, false
@@ -1061,18 +953,6 @@ func selectedTokenForView(view AdminViewState) (ports.AdminToken, bool) {
 	}
 	index := boundedIndex(view.SelectedToken, len(view.AdminTokens))
 	return view.AdminTokens[index], true
-}
-
-func formatAdminUserLabel(user ports.AdminUser) string {
-	role := "user"
-	if user.IsAdmin {
-		role = "admin"
-	}
-	state := "disabled"
-	if user.Enabled {
-		state = "enabled"
-	}
-	return fmt.Sprintf("%s [%s, %s]", user.Username, role, state)
 }
 
 func adminFirstNonEmpty(values ...string) string {

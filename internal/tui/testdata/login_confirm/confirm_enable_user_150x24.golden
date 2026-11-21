@@ -1,22 +1,22 @@
  Regixtry Admin
- Admin › Access › Users
- ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
- │                                                                                                                                                  │
- │ Search                                                                                                                                           │
- │ Username contains                       ╭──────────────────────────────────────────────────────────────╮                                         │
+ Admin › Access › Robots
+ ╭───────────────────────────────────────  ╭──────────────────────────────────────────────────────────────╮  ───────────────────────────────────────╮
  │                                         │  Enable User                                                 │                                         │
- │ Press / to edit the search              │                                                              │                                         │
- │                                         │  Enable alice?                                               │                                         │
- │ Users                                   │                                                              │                                         │
- │  alice [admin, enabled]                 │   Confirm                                        y / enter   │                                         │
- │ bob [user, enabled]                     │   Cancel                                               esc   │                                         │
- │ carol [user, disabled]                  ╰──────────────────────────────────────────────────────────────╯                                         │
- │                                                                                                                                                  │
- │ Operator: operator                                                                                                                               │
- │ Session remaining: 24h0m0s                                                                                                                       │
- │                                                                                                                                                  │
+ │ Robots                                  │                                                              │                                         │
+ │ No robot accounts available.            │  Enable alice?                                               │                                         │
+ │                                         │                                                              │                                         │
+ │ Operator: operator                      │   Confirm                                        y / enter   │                                         │
+ │ Session remaining: 24h0m0s              │   Cancel                                               esc   │                                         │
+ │                                         ╰──────────────────────────────────────────────────────────────╯                                         │
  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- /: search | Enter/e: edit user | n: create user | t: tokens | b: robots | g: grant access | Esc: back | q: quit
+ n: create robot | e: enable | x: disable | t: tokens | g: grant access | r: refresh | Esc: back | q: quit
+
+
+
+
+
+
+
 
 
 

@@ -22,15 +22,15 @@ func TestEscEndsTheUserSearchAndStaysOnUsers(t *testing.T) {
 	m := kjSearchModel(t, false)
 	m = testSendKey(t, m, testKeyRunes("/"))
 	m = typeRunes(t, m, "kube")
-	if !m.adminView.UserSearchActive || m.adminView.UserSearchQuery != "kube" {
-		t.Fatalf("setup: active = %v query = %q", m.adminView.UserSearchActive, m.adminView.UserSearchQuery)
+	if got := usersScreenOf(t, m); !got.searching || got.query != "kube" {
+		t.Fatalf("setup: searching = %v query = %q", got.searching, got.query)
 	}
 
 	m = pressEsc(t, m)
 	if m.screen != screenAdminUsers {
 		t.Fatalf("screen after Esc = %v, want Users", m.screen)
 	}
-	if m.adminView.UserSearchActive {
+	if usersScreenOf(t, m).searching {
 		t.Fatal("the search is still active after Esc")
 	}
 
@@ -55,7 +55,9 @@ func TestEscWithoutSearchStillGoesBack(t *testing.T) {
 
 func TestActiveSearchFooterSaysEscEndsTheSearch(t *testing.T) {
 	t.Parallel()
-	if got := adminScreenHelp(screenAdminUsers, kjSearchModel(t, true).adminView); got != "Type to search | Up/Down: pick user | Esc: end search" {
-		t.Fatalf("footer = %q", got)
+	m := kjSearchModel(t, true)
+	keys := usersScreenOf(t, m).Keys().short
+	if len(keys) != 3 || keys[2].Help().Key != "esc" || keys[2].Help().Desc != "done" {
+		t.Fatalf("footer keys = %+v, want the search footer ending in esc done", keys)
 	}
 }

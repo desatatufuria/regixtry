@@ -1532,6 +1532,8 @@ func TestModelCreateAdminUserRefreshesUsers(t *testing.T) {
 	updated = runKey(t, updated, "tab")
 	updated = runKey(t, updated, "secret-pass")
 	updated = runKey(t, updated, "tab")
+	updated = runKey(t, updated, "left")
+	updated = runKey(t, updated, "left")
 	updated = runKey(t, updated, " ")
 	updated = runKey(t, updated, "enter")
 
@@ -1541,22 +1543,17 @@ func TestModelCreateAdminUserRefreshesUsers(t *testing.T) {
 	if updated.screen != screenAdminUsers {
 		t.Fatalf("screen = %q, want %q", updated.screen, screenAdminUsers)
 	}
-	if got, want := updated.adminView.SelectedUserID, "u-2"; got != want {
-		t.Fatalf("SelectedUserID = %q, want %q", got, want)
+	if user, _ := usersScreenOf(t, updated).current(); user.ID != "u-2" {
+		t.Fatalf("selected user = %q, want the new user u-2", user.ID)
 	}
-	if !strings.Contains(updated.View().Content, `User "bob" created. Refreshing users...`) && !strings.Contains(updated.View().Content, `User "bob" created.`) {
-		t.Fatalf("view = %q, want create-user status", updated.View().Content)
+	if view := ansi.Strip(updated.View().Content); !strings.Contains(view, `User "bob" created.`) {
+		t.Fatalf("view = %q, want create-user status", view)
+	}
+	if got := adminClient.lastCreateUserInput; got.Username != "bob" || got.Password != "secret-pass" || !got.IsAdmin || got.IsReadOnly || !got.Enabled {
+		t.Fatalf("create input = %+v, want admin bob, enabled", got)
 	}
 }
 
-// TestAdminRobotScreensJoinAdminScreenSets is task 5.7's RED test (design.md
-// Decision 7): screenAdminRobots/screenAdminCreateRobot must route through
-// updateKey (isAdminScreen) so the shipped session-expiry/logout plumbing
-// covers them. Only screenAdminRobots -- a list screen, like its
-// screenAdminUsers precedent -- joins isAdminPrincipalScreen (gates the bare
-// 'q' quit key); screenAdminCreateRobot is a free-text Name/Repository form,
-// like screenAdminCreateUser, so it is deliberately excluded (typing "q"
-// into a field must never quit the program).
 func TestAdminRobotScreensJoinAdminScreenSets(t *testing.T) {
 	t.Parallel()
 
@@ -1620,31 +1617,6 @@ func TestModelReenteringAdminWithActiveSessionLandsOnOverview(t *testing.T) {
 	}
 }
 
-func TestModelOpenAdminRobotsFromUsersLoadsRobotList(t *testing.T) {
-	t.Parallel()
-
-	adminClient := &fakeAdminClient{
-		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: time.Date(2026, time.August, 14, 12, 5, 0, 0, time.UTC)},
-		robots:       []ports.AdminRobot{{ID: "u-2", Username: "robot$ci", Repository: "team/app", Role: domainauth.RepoRoleWriter, Enabled: true}},
-	}
-	model := newAdminReadyModel(t, adminClient)
-	updated := runAdminLogin(t, model, "operator", "secret-pass")
-	updated = openUsersFromOverview(t, updated)
-	landingCalls := adminClient.listRobotsCalls // the Overview's own read
-
-	updated = runKey(t, updated, "b")
-
-	if got, want := updated.screen, screenAdminRobots; got != want {
-		t.Fatalf("screen = %q, want %q", got, want)
-	}
-	if got := adminClient.listRobotsCalls - landingCalls; got != 1 {
-		t.Fatalf("listRobotsCalls grew by %d after pressing b, want 1", got)
-	}
-	if !strings.Contains(updated.View().Content, "robot$ci") || !strings.Contains(updated.View().Content, "team/app") {
-		t.Fatalf("view = %q, want robot$ci's row listed", updated.View().Content)
-	}
-}
-
 // TestModelCreateAdminRobotShowsOneTimeSecretOnceOnCreateScreen is task 5.7's
 // CRITICAL RED test (spec.md "Operator manages a robot account end to end"):
 // submitting the create-robot form stays on screenAdminCreateRobot and
@@ -1662,9 +1634,7 @@ func TestModelCreateAdminRobotShowsOneTimeSecretOnceOnCreateScreen(t *testing.T)
 	}
 	model := newAdminReadyModel(t, adminClient)
 	updated := runAdminLogin(t, model, "operator", "secret-pass")
-	updated = openUsersFromOverview(t, updated)
-
-	updated = runKey(t, updated, "b")
+	updated = openSidebarItem(t, updated, shellNavRobots)
 	updated = runKey(t, updated, "n")
 	if got, want := updated.screen, screenAdminCreateRobot; got != want {
 		t.Fatalf("screen = %q, want %q", got, want)
@@ -1719,9 +1689,7 @@ func TestModelCreateRobotFormRepositorySuggestionsFilterAndSelect(t *testing.T) 
 	}
 	model := newAdminReadyModelWithCatalog(t, []string{"library/alpine", "team/demo", "team/backend", "ops/console"}, adminClient)
 	updated := runAdminLogin(t, model, "operator", "secret-pass")
-	updated = openUsersFromOverview(t, updated)
-
-	updated = runKey(t, updated, "b")
+	updated = openSidebarItem(t, updated, shellNavRobots)
 	updated = runKey(t, updated, "n")
 	if got, want := updated.screen, screenAdminCreateRobot; got != want {
 		t.Fatalf("screen = %q, want %q", got, want)
@@ -1966,10 +1934,9 @@ func TestAdminConfirmCharacterization(t *testing.T) {
 				}
 				m := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
 				m = openUsersFromOverview(t, m)
-				m = runKey(t, m, "enter")
 				return m, adminClient
 			},
-			openKey:        "e",
+			openKey:        "d",
 			wantOpenSubstr: `Confirm enable user "alice"?`,
 			callCount:      func(f *fakeAdminClient) int { return f.enableCalls },
 		},
@@ -1983,10 +1950,9 @@ func TestAdminConfirmCharacterization(t *testing.T) {
 				}
 				m := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
 				m = openUsersFromOverview(t, m)
-				m = runKey(t, m, "enter")
 				return m, adminClient
 			},
-			openKey:        "x",
+			openKey:        "d",
 			wantOpenSubstr: `Confirm disable user "alice"?`,
 			callCount:      func(f *fakeAdminClient) int { return f.disableCalls },
 		},
@@ -2036,7 +2002,7 @@ func TestAdminConfirmCharacterization(t *testing.T) {
 				}
 				m := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
 				m = openUsersFromOverview(t, m)
-				m = runKey(t, m, "enter")
+				m = runKey(t, m, "t")
 				m = runKey(t, m, "g")
 				return m, adminClient
 			},
@@ -2054,7 +2020,6 @@ func TestAdminConfirmCharacterization(t *testing.T) {
 				}
 				m := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
 				m = openUsersFromOverview(t, m)
-				m = runKey(t, m, "enter")
 				m = runKey(t, m, "t")
 				return m, adminClient
 			},
@@ -2702,9 +2667,9 @@ func TestModelUsersScreenShowsOnlyListAndSearch(t *testing.T) {
 	model := newAdminReadyModel(t, adminClient)
 	updated := runAdminLogin(t, model, "operator", "secret-pass")
 	updated = openUsersFromOverview(t, updated)
-	view := updated.View().Content
+	view := ansi.Strip(updated.View().Content)
 
-	if !strings.Contains(view, "Username contains") || !strings.Contains(view, "alice [admin, enabled]") {
+	if !strings.Contains(view, "/ search") || !strings.Contains(view, "alice") || !strings.Contains(view, "admin") {
 		t.Fatalf("view = %q, want users list and search", view)
 	}
 
@@ -2722,22 +2687,27 @@ func TestModelResetPasswordFailureKeepsFormVisible(t *testing.T) {
 	adminClient := &fakeAdminClient{
 		loginSession:     AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: time.Date(2026, time.August, 6, 22, 5, 0, 0, time.UTC)},
 		users:            []ports.AdminUser{{ID: "u-1", Username: "alice", IsAdmin: true, Enabled: true}},
-		resetPasswordErr: errors.New("mutate admin resource: password must be 12 characters or longer"),
+		resetPasswordErr: errors.New("mutate admin resource: password is too common"),
 	}
 	model := newAdminReadyModel(t, adminClient)
 	updated := runAdminLogin(t, model, "operator", "secret-pass")
 	updated = openUsersFromOverview(t, updated)
-	updated = runKey(t, updated, "enter")
 
 	updated = runKey(t, updated, "p")
-	updated = runKey(t, updated, "short")
+	updated = runKey(t, updated, "long-enough-pass")
+	updated = runKey(t, updated, "tab")
+	updated = runKey(t, updated, "long-enough-pass")
 	updated = runKey(t, updated, "enter")
 
 	if updated.screen != screenAdminChangePassword {
 		t.Fatalf("screen = %q, want %q", updated.screen, screenAdminChangePassword)
 	}
-	if !strings.Contains(updated.View().Content, "Change Password") || !strings.Contains(updated.View().Content, "password must be 12 characters or longer") {
-		t.Fatalf("view = %q, want recoverable backend error", updated.View().Content)
+	view := ansi.Strip(updated.View().Content)
+	if !strings.Contains(view, "Reset password for alice") || !strings.Contains(view, "password is too common") {
+		t.Fatalf("view = %q, want recoverable backend error", view)
+	}
+	if strings.Contains(view, "long-enough-pass") {
+		t.Fatalf("view leaks the password:\n%s", view)
 	}
 }
 
@@ -2757,10 +2727,9 @@ func TestModelDisableUserSuccessRefreshesUsersAndPreservesSelectionByID(t *testi
 	updated := runAdminLogin(t, model, "operator", "secret-pass")
 	updated = openUsersFromOverview(t, updated)
 	updated = runKey(t, updated, "j")
-	updated = runKey(t, updated, "enter")
-	updated = runKey(t, updated, "x")
+	updated = runKey(t, updated, "d")
 
-	if !strings.Contains(updated.View().Content, `Confirm disable user "bob"?`) {
+	if !strings.Contains(ansi.Strip(updated.View().Content), `Confirm disable user "bob"?`) {
 		t.Fatalf("view = %q, want disable confirmation", updated.View().Content)
 	}
 
@@ -2769,14 +2738,15 @@ func TestModelDisableUserSuccessRefreshesUsersAndPreservesSelectionByID(t *testi
 	if adminClient.disableCalls != 1 || adminClient.listUsersCalls != 2 {
 		t.Fatalf("admin client calls = %#v, want one disable and refresh", adminClient)
 	}
-	if got, want := updated.adminView.SelectedUserID, "u-2"; got != want {
-		t.Fatalf("SelectedUserID = %q, want %q", got, want)
+	if user, _ := usersScreenOf(t, updated).current(); user.ID != "u-2" {
+		t.Fatalf("selected user = %q, want u-2", user.ID)
 	}
-	if updated.screen != screenAdminEditUser {
-		t.Fatalf("screen = %q, want %q", updated.screen, screenAdminEditUser)
+	if updated.screen != screenAdminUsers {
+		t.Fatalf("screen = %q, want %q", updated.screen, screenAdminUsers)
 	}
-	if !strings.Contains(updated.View().Content, "Disabled") {
-		t.Fatalf("view = %q, want refreshed disabled status", updated.View().Content)
+	view := ansi.Strip(updated.View().Content)
+	if !strings.Contains(view, `User "bob" disabled.`) || !strings.Contains(view, "disabled") {
+		t.Fatalf("view = %q, want refreshed disabled status", view)
 	}
 }
 
@@ -2789,8 +2759,11 @@ func TestModelNoSelectedUserBlocksEditing(t *testing.T) {
 	updated = openUsersFromOverview(t, updated)
 	updated = runKey(t, updated, "enter")
 
-	if !strings.Contains(updated.View().Content, "Select a user to edit.") {
+	if !strings.Contains(ansi.Strip(updated.View().Content), "Select a user first.") {
 		t.Fatalf("view = %q, want blocked edit state", updated.View().Content)
+	}
+	if updated.screen != screenAdminUsers {
+		t.Fatalf("screen = %q, want to stay on the Users list", updated.screen)
 	}
 }
 
@@ -2807,7 +2780,7 @@ func TestModelGrantSaveAndRemoveStayContextualizedToSelectedUser(t *testing.T) {
 	model := newAdminReadyModel(t, adminClient)
 	updated := runAdminLogin(t, model, "operator", "secret-pass")
 	updated = openUsersFromOverview(t, updated)
-	updated = runKey(t, updated, "enter")
+	updated = runKey(t, updated, "t")
 	updated = runKey(t, updated, "g")
 
 	updated = runKey(t, updated, "n")
@@ -5069,7 +5042,7 @@ func newModelForModalOverlayTest(t *testing.T, height int) Model {
 	result := updated.(Model)
 	result.screen = screenAdminUsers
 	result.adminSession = AdminSession{Username: "operator", ExpiresAt: time.Now().Add(time.Hour)}
-	result.adminView.Users = []ports.AdminUser{{ID: "u-1", Username: "alice", IsAdmin: true, Enabled: true}}
+	result.adminScreens[slotUsers] = usersAt(&fakeAdminClient{users: []ports.AdminUser{{ID: "u-1", Username: "alice", IsAdmin: true, Enabled: true}}}, "")
 	return result
 }
 
@@ -5769,7 +5742,7 @@ func TestModelEscWalksBackThroughEditFlow(t *testing.T) {
 	updated := runAdminLogin(t, model, "operator", "secret-pass")
 	updated = openUsersFromOverview(t, updated)
 
-	updated = runKey(t, updated, "enter")
+	updated = runKey(t, updated, "t")
 	updated = runKey(t, updated, "g")
 	updated = runKey(t, updated, "n")
 	if updated.screen != screenAdminAddGrant {
@@ -5809,14 +5782,14 @@ func TestModelSearchPreservesSelectionByIDAndEnterOpensEditUser(t *testing.T) {
 	updated = runKey(t, updated, "bo")
 	updated = runKey(t, updated, "enter")
 
-	if got, want := updated.adminView.SelectedUserID, "u-2"; got != want {
-		t.Fatalf("SelectedUserID = %q, want %q", got, want)
+	if user, _ := usersScreenOf(t, updated).current(); user.ID != "u-2" {
+		t.Fatalf("selected user = %q, want u-2", user.ID)
 	}
-	view := updated.View().Content
-	if !strings.Contains(view, "Username contains") || !strings.Contains(view, "bo") {
+	view := ansi.Strip(updated.View().Content)
+	if !strings.Contains(view, "/ search  bo") {
 		t.Fatalf("view = %q, want visible search query", view)
 	}
-	if strings.Contains(view, "alice [admin, enabled]") {
+	if strings.Contains(view, "alice") {
 		t.Fatalf("view = %q, want alice filtered out", view)
 	}
 
@@ -5824,17 +5797,17 @@ func TestModelSearchPreservesSelectionByIDAndEnterOpensEditUser(t *testing.T) {
 	updated = runKey(t, updated, "bb")
 	updated = runKey(t, updated, "enter")
 
-	if got, want := updated.adminView.SelectedUserID, "u-3"; got != want {
-		t.Fatalf("SelectedUserID = %q, want %q after narrowing filter", got, want)
+	if user, _ := usersScreenOf(t, updated).current(); user.ID != "u-3" {
+		t.Fatalf("selected user = %q, want u-3 after narrowing filter", user.ID)
 	}
-	if strings.Contains(updated.View().Content, "bob [user, enabled]") {
+	if strings.Contains(strings.ReplaceAll(ansi.Strip(updated.View().Content), "bobby", ""), "bob ") {
 		t.Fatalf("view = %q, want bob filtered out after narrowing", updated.View().Content)
 	}
 	updated = runKey(t, updated, "enter")
 	if updated.screen != screenAdminEditUser {
 		t.Fatalf("screen = %q, want %q", updated.screen, screenAdminEditUser)
 	}
-	if !strings.Contains(updated.View().Content, "bobby") {
+	if !strings.Contains(ansi.Strip(updated.View().Content), "bobby") {
 		t.Fatalf("view = %q, want selected user context", updated.View().Content)
 	}
 }
@@ -5875,15 +5848,14 @@ func TestModelTypingLInEditingInputsDoesNotLogout(t *testing.T) {
 			name: "create user username",
 			setup: func() Model {
 				model := newAdminReadyModel(t, &fakeAdminClient{})
-				model.screen = screenAdminCreateUser
+				mountCreateUser(&model, createUserFieldUsername)
 				model.adminAuth = adminAuthStateAuthenticated
 				model.adminSession = baseSession
-				model.adminView.CreateUserForm.Focus = adminCreateUserFieldUsername
 				return model
 			},
 			assert: func(t *testing.T, got Model) {
-				if got.adminView.CreateUserForm.Username != "l" {
-					t.Fatalf("username = %q, want %q", got.adminView.CreateUserForm.Username, "l")
+				if createUserOf(got).username != "l" {
+					t.Fatalf("username = %q, want %q", createUserOf(got).username, "l")
 				}
 			},
 		},
@@ -5891,16 +5863,14 @@ func TestModelTypingLInEditingInputsDoesNotLogout(t *testing.T) {
 			name: "change password",
 			setup: func() Model {
 				model := newAdminReadyModel(t, &fakeAdminClient{})
-				model.screen = screenAdminChangePassword
+				mountResetPassword(&model)
 				model.adminAuth = adminAuthStateAuthenticated
 				model.adminSession = baseSession
-				model.adminView.SelectedUserID = user.ID
-				model.adminView.SelectedUsername = user.Username
 				return model
 			},
 			assert: func(t *testing.T, got Model) {
-				if got.adminView.ResetPasswordForm.NewPassword != "l" {
-					t.Fatalf("new password = %q, want %q", got.adminView.ResetPasswordForm.NewPassword, "l")
+				if resetPasswordOf(got).password != "l" {
+					t.Fatalf("new password = %q, want %q", resetPasswordOf(got).password, "l")
 				}
 			},
 		},
@@ -5947,15 +5917,15 @@ func TestModelTypingLInEditingInputsDoesNotLogout(t *testing.T) {
 				model.screen = screenAdminUsers
 				model.adminAuth = adminAuthStateAuthenticated
 				model.adminSession = baseSession
-				model.adminView.Users = []ports.AdminUser{user}
-				model.adminView.UserSearchActive = true
+				searching := usersAt(&fakeAdminClient{users: []ports.AdminUser{user}}, "")
+				searching.searching = true
+				model.adminScreens[slotUsers] = searching
 				return model
 			},
 			assert: func(t *testing.T, got Model) {
-				if got.adminView.UserSearchQuery != "l" {
-					t.Fatalf("query = %q, want %q", got.adminView.UserSearchQuery, "l")
-				}
-				if !got.adminView.UserSearchActive {
+				if s, _ := got.adminScreens[slotUsers].(usersScreen); s.query != "l" {
+					t.Fatalf("query = %q, want %q", s.query, "l")
+				} else if !s.searching {
 					t.Fatal("expected search to stay active")
 				}
 			},
@@ -6007,7 +5977,7 @@ func TestModelGrantRepositorySuggestionsFilterAndSelect(t *testing.T) {
 	model := newAdminReadyModelWithCatalog(t, []string{"library/alpine", "team/demo", "team/backend", "ops/console"}, adminClient)
 	updated := runAdminLogin(t, model, "operator", "secret-pass")
 	updated = openUsersFromOverview(t, updated)
-	updated = runKey(t, updated, "enter")
+	updated = runKey(t, updated, "t")
 	updated = runKey(t, updated, "g")
 	updated = runKey(t, updated, "n")
 
