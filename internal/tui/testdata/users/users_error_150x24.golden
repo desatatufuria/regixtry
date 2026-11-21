@@ -1,0 +1,24 @@
+  Admin › Access › Users                                                                                                       signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                      
+                               │  Users                                                                                          5 users, 1 disabled  
+    Overview                   │                                                                                                                      
+                               │  ╭────────────────────────────────────────────────────────────────────────╮  ╭────────────────────────────────────╮  
+  ACCESS                       │  │ / search  username                                                     │  │ admin                              │  
+    ▸ Users                    │  ╰────────────────────────────────────────────────────────────────────────╯  │ admin, enabled, created 3 Mar 2026 │  
+      Robots                   │  ╭────────────────────────────────────────────────────────────────────────╮  │                                    │  
+      Repository access        │  │   USERNAME                               ROLE       STATE     EXPIRING │  │ ACTIONS                            │  
+                               │  │ ▸ admin                                  admin      enabled   ?        │  │ Open profile                 enter │  
+  SECURITY                     │  │   alice                                  user       enabled   ?        │  │ Grant access                     g │  
+      Image scanning           │  │   bob                                    read-only  enabled   ?        │  │ Tokens                           t │  
+      Secret scanning          │  │   carol                                  user       enabled   ?        │  │ Reset password                   p │  
+      Signing policy           │  │   dave                                   user       disabled  ?        │  │ Disable user                     d │  
+                               │  │                                                                        │  │                                    │  
+  OPERATIONS                   │  │                                                                        │  │ NEEDS ATTENTION                    │  
+      Scan runs                │  │                                                                        │  │ Nothing needs attention.           │  
+      Secret findings          │  │                                                                        │  │                                    │  
+      Update channel           │  │                                                                        │  │                                    │  
+                               │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
+                               │  Could not load expiring tokens: expiring exploded                           ╰────────────────────────────────────╯  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ↑↓ move   enter open   / search   n new user   g grant access   t tokens   p password   d disable   esc back                                        

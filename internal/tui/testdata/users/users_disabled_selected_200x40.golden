@@ -1,0 +1,40 @@
+  Admin › Access › Users                                                                                                                                                         signed in as operator  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                                                                        
+                               │  Users                                                                                                                                            5 users, 1 disabled  
+    Overview                   │                                                                                                                                                                        
+                               │  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  ╭────────────────────────────────────╮  
+  ACCESS                       │  │ / search  username                                                                                                       │  │ dave                               │  
+    ▸ Users                    │  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  │ user, disabled, created 3 Mar 2026 │  
+      Robots                   │  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  │                                    │  
+      Repository access        │  │   USERNAME                                                                                 ROLE       STATE     EXPIRING │  │ ACTIONS                            │  
+                               │  │   admin                                                                                    admin      enabled   0        │  │ Open profile                 enter │  
+  SECURITY                     │  │   alice                                                                                    user       enabled   1        │  │ Grant access                     g │  
+      Image scanning           │  │   bob                                                                                      read-only  enabled   0        │  │ Tokens                           t │  
+      Secret scanning          │  │   carol                                                                                    user       enabled   2        │  │ Reset password                   p │  
+      Signing policy           │  │ ▸ dave                                                                                     user       disabled  0        │  │ Enable user                      d │  
+                               │  │                                                                                                                          │  │                                    │  
+  OPERATIONS                   │  │                                                                                                                          │  │ NEEDS ATTENTION                    │  
+      Scan runs                │  │                                                                                                                          │  │ User is disabled          d enable │  
+      Secret findings          │  │                                                                                                                          │  │                                    │  
+      Update channel           │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  │                                    │  
+                               │  EXPIRING counts tokens that expire within 7 days.                                                                             ╰────────────────────────────────────╯  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ↑↓ move   enter open   / search   n new user   g grant access   t tokens   p password   d disable   esc back                                                                                          

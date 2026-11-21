@@ -1,0 +1,24 @@
+  Admin › Access › Users › New user                                                                                            signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                      
+                               │  New user                                                                                                            
+    Overview                   │  The user signs in with this username and password. Grants come after.                                               
+                               │                                                                                                                      
+  ACCESS                       │  ╭──────────────────────────────────────────────────────────────────╮  ╭──────────────────────────────────────────╮  
+    ▸ Users                    │  │ Username                                                         │  │ RULES                                    │  
+      Robots                   │  │  grace                                                           │  │ ✓ Username: letters, numbers, dot, dash  │  
+      Repository access        │  │ Password                                                         │  │   and underscore                         │  
+                               │  │  •••••••••••••▏                                                  │  │ ✓ Password: at least 8 characters        │  
+  SECURITY                     │  │ ✓ 13 characters                                                  │  │ The password is masked while you type    │  
+      Image scanning           │  │                                                                  │  │ and is never shown again, here or after  │  
+      Secret scanning          │  │ Role                                                             │  │ saving.                                  │  
+      Signing policy           │  │  admin   ✓ read-only   user                                      │  │                                          │  
+                               │  │                                                                  │  │ ROLES                                    │  
+  OPERATIONS                   │  │ [x] Enabled (space toggles; a disabled user cannot sign in)      │  │ admin manages users, robots and grants   │  
+      Scan runs                │  │                                                                  │  │ user pulls and pushes where granted      │  
+      Secret findings          │  │  Create user  enter   Cancel  esc                                │  │ read-only pulls where granted, never     │  
+      Update channel           │  │                                                                  │  │ pushes                                   │  
+                               │  │                                                                  │  │                                          │  
+                               │  ╰──────────────────────────────────────────────────────────────────╯  ╰──────────────────────────────────────────╯  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  tab next field   ←→ role   space toggle   enter create   esc cancel                                                                                 
