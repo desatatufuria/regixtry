@@ -1759,8 +1759,6 @@ func TestNonMigratedScreensUnchanged(t *testing.T) {
 		name string
 		view AdminViewState
 	}{
-		{"screenAdminEditUserGrants", userView},
-		{"screenAdminAddGrant", userView},
 		{"screenAdminEditUserTokens", userView},
 		{"screenAdminCreateToken", userView},
 		{"screenRepoAdminGrants", repoAdminView},
@@ -1769,8 +1767,6 @@ func TestNonMigratedScreensUnchanged(t *testing.T) {
 		{"screenAdminCreateRobot", AdminViewState{}},
 	}
 	ids := map[string]screen{
-		"screenAdminEditUserGrants": screenAdminEditUserGrants,
-		"screenAdminAddGrant":       screenAdminAddGrant,
 		"screenAdminEditUserTokens": screenAdminEditUserTokens,
 		"screenAdminCreateToken":    screenAdminCreateToken,
 		"screenRepoAdminGrants":     screenRepoAdminGrants,
@@ -1779,7 +1775,7 @@ func TestNonMigratedScreensUnchanged(t *testing.T) {
 		"screenAdminCreateRobot":    screenAdminCreateRobot,
 	}
 
-	if got, want := len(screens), 8; got != want {
+	if got, want := len(screens), 6; got != want {
 		t.Fatalf("test setup invalid: %d screen fixtures, want %d (the user-management screens left the old renderer)", got, want)
 	}
 

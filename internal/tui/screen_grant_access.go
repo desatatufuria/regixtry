@@ -223,8 +223,7 @@ func newGrantAccessScreen(returnTo screen, preselectID string) grantAccessScreen
 		gen:         grantGenerations.Add(1),
 		returnTo:    returnTo,
 		preselectID: preselectID,
-		// Same default the existing add-grant form starts with.
-		role: newAdminViewState().GrantForm.Role,
+		role:        domainauth.RepoRoleReader,
 	}
 	if preselectID != "" {
 		s.focus = grantPaneRepos

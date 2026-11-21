@@ -1993,24 +1993,6 @@ func TestAdminConfirmCharacterization(t *testing.T) {
 			callCount:      func(f *fakeAdminClient) int { return f.executeFeatureActionCalls },
 		},
 		{
-			name: "delete-grant",
-			setup: func(t *testing.T) (Model, *fakeAdminClient) {
-				adminClient := &fakeAdminClient{
-					loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-					users:        []ports.AdminUser{{ID: "u-1", Username: "alice", Enabled: true}},
-					grants:       map[string][]ports.AdminRepoGrant{"u-1": {{Repository: regixtrydomain.MustParseRepositoryRef("team/app"), Role: domainauth.RepoRoleWriter}}},
-				}
-				m := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
-				m = openUsersFromOverview(t, m)
-				m = runKey(t, m, "t")
-				m = runKey(t, m, "g")
-				return m, adminClient
-			},
-			openKey:        "x",
-			wantOpenSubstr: `Remove grant "team/app" from "alice"?`,
-			callCount:      func(f *fakeAdminClient) int { return f.deleteGrantCalls },
-		},
-		{
 			name: "revoke-token",
 			setup: func(t *testing.T) (Model, *fakeAdminClient) {
 				adminClient := &fakeAdminClient{
@@ -2764,48 +2746,6 @@ func TestModelNoSelectedUserBlocksEditing(t *testing.T) {
 	}
 	if updated.screen != screenAdminUsers {
 		t.Fatalf("screen = %q, want to stay on the Users list", updated.screen)
-	}
-}
-
-func TestModelGrantSaveAndRemoveStayContextualizedToSelectedUser(t *testing.T) {
-	t.Parallel()
-
-	adminClient := &fakeAdminClient{
-		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: time.Date(2026, time.August, 6, 22, 30, 0, 0, time.UTC)},
-		users:        []ports.AdminUser{{ID: "u-1", Username: "alice", IsAdmin: true, Enabled: true}},
-		grants: map[string][]ports.AdminRepoGrant{
-			"u-1": {{UserID: "u-1", Repository: regixtrydomain.MustParseRepositoryRef("library/alpine"), Role: domainauth.RepoRoleWriter}},
-		},
-	}
-	model := newAdminReadyModel(t, adminClient)
-	updated := runAdminLogin(t, model, "operator", "secret-pass")
-	updated = openUsersFromOverview(t, updated)
-	updated = runKey(t, updated, "t")
-	updated = runKey(t, updated, "g")
-
-	updated = runKey(t, updated, "n")
-	updated = runKey(t, updated, "team/demo")
-	updated = runKey(t, updated, "tab")
-	updated = runKey(t, updated, " ")
-	updated = runKey(t, updated, "enter")
-
-	if adminClient.putGrantCalls != 1 {
-		t.Fatalf("putGrantCalls = %d, want 1", adminClient.putGrantCalls)
-	}
-	if got, want := adminClient.lastGrantInput.UserID, "u-1"; got != want {
-		t.Fatalf("grant user ID = %q, want %q", got, want)
-	}
-
-	updated = runKey(t, updated, "x")
-	if !strings.Contains(updated.View().Content, `Remove grant "library/alpine" from "alice"?`) {
-		t.Fatalf("view = %q, want grant removal confirmation", updated.View().Content)
-	}
-	updated = runKey(t, updated, "enter")
-	if adminClient.deleteGrantCalls != 1 {
-		t.Fatalf("deleteGrantCalls = %d, want 1", adminClient.deleteGrantCalls)
-	}
-	if got, want := adminClient.lastDeleteGrantUserID, "u-1"; got != want {
-		t.Fatalf("delete user ID = %q, want %q", got, want)
 	}
 }
 
@@ -5744,13 +5684,12 @@ func TestModelEscWalksBackThroughEditFlow(t *testing.T) {
 
 	updated = runKey(t, updated, "t")
 	updated = runKey(t, updated, "g")
-	updated = runKey(t, updated, "n")
-	if updated.screen != screenAdminAddGrant {
-		t.Fatalf("screen = %q, want %q", updated.screen, screenAdminAddGrant)
+	if updated.screen != screenAdminGrantAccess {
+		t.Fatalf("screen = %q, want %q", updated.screen, screenAdminGrantAccess)
 	}
 	updated = runKey(t, updated, "esc")
-	if updated.screen != screenAdminEditUserGrants {
-		t.Fatalf("screen = %q, want %q", updated.screen, screenAdminEditUserGrants)
+	if updated.screen != screenAdminEditUserTokens {
+		t.Fatalf("screen = %q, want %q", updated.screen, screenAdminEditUserTokens)
 	}
 	updated = runKey(t, updated, "esc")
 	if updated.screen != screenAdminEditUser {
@@ -5818,7 +5757,6 @@ func TestModelTypingLInEditingInputsDoesNotLogout(t *testing.T) {
 	now := time.Date(2026, time.August, 8, 12, 0, 0, 0, time.UTC)
 	baseSession := AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)}
 	user := ports.AdminUser{ID: "u-1", Username: "alice", IsAdmin: true, Enabled: true}
-	grant := ports.AdminRepoGrant{UserID: "u-1", Repository: regixtrydomain.MustParseRepositoryRef("library/alpine"), Role: domainauth.RepoRoleReader}
 
 	tests := []struct {
 		name   string
@@ -5875,24 +5813,6 @@ func TestModelTypingLInEditingInputsDoesNotLogout(t *testing.T) {
 			},
 		},
 		{
-			name: "grant repository",
-			setup: func() Model {
-				model := newAdminReadyModel(t, &fakeAdminClient{})
-				model.screen = screenAdminAddGrant
-				model.adminAuth = adminAuthStateAuthenticated
-				model.adminSession = baseSession
-				model.adminView.SelectedUserID = user.ID
-				model.adminView.SelectedUsername = user.Username
-				model.adminView.GrantForm.Focus = adminGrantFieldRepository
-				return model
-			},
-			assert: func(t *testing.T, got Model) {
-				if got.adminView.GrantForm.Repository != "l" {
-					t.Fatalf("repository = %q, want %q", got.adminView.GrantForm.Repository, "l")
-				}
-			},
-		},
-		{
 			name: "token name",
 			setup: func() Model {
 				model := newAdminReadyModel(t, &fakeAdminClient{})
@@ -5930,26 +5850,6 @@ func TestModelTypingLInEditingInputsDoesNotLogout(t *testing.T) {
 				}
 			},
 		},
-		{
-			name: "grant edit repository",
-			setup: func() Model {
-				model := newAdminReadyModel(t, &fakeAdminClient{})
-				model.screen = screenAdminAddGrant
-				model.adminAuth = adminAuthStateAuthenticated
-				model.adminSession = baseSession
-				model.adminView.SelectedUserID = user.ID
-				model.adminView.SelectedUsername = user.Username
-				model.adminView.Grants = []ports.AdminRepoGrant{grant}
-				model.adminView.GrantForm.Repository = grant.Repository.String()
-				model.adminView.GrantForm.Focus = adminGrantFieldRepository
-				return model
-			},
-			assert: func(t *testing.T, got Model) {
-				if got.adminView.GrantForm.Repository != "library/alpinel" {
-					t.Fatalf("repository = %q, want appended input", got.adminView.GrantForm.Repository)
-				}
-			},
-		},
 	}
 
 	for _, tt := range tests {
@@ -5964,52 +5864,6 @@ func TestModelTypingLInEditingInputsDoesNotLogout(t *testing.T) {
 			}
 			tt.assert(t, updated)
 		})
-	}
-}
-
-func TestModelGrantRepositorySuggestionsFilterAndSelect(t *testing.T) {
-	t.Parallel()
-
-	adminClient := &fakeAdminClient{
-		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: time.Date(2026, time.August, 8, 13, 0, 0, 0, time.UTC)},
-		users:        []ports.AdminUser{{ID: "u-1", Username: "alice", IsAdmin: true, Enabled: true}},
-	}
-	model := newAdminReadyModelWithCatalog(t, []string{"library/alpine", "team/demo", "team/backend", "ops/console"}, adminClient)
-	updated := runAdminLogin(t, model, "operator", "secret-pass")
-	updated = openUsersFromOverview(t, updated)
-	updated = runKey(t, updated, "t")
-	updated = runKey(t, updated, "g")
-	updated = runKey(t, updated, "n")
-
-	initialView := updated.View().Content
-	if !strings.Contains(initialView, "Known Repositories") || !strings.Contains(initialView, "team/demo") || !strings.Contains(initialView, "team/backend") {
-		t.Fatalf("view = %q, want known repository suggestions", initialView)
-	}
-
-	updated = runKey(t, updated, "tea")
-	filteredView := updated.View().Content
-	if strings.Contains(filteredView, "library/alpine") {
-		t.Fatalf("view = %q, want non-matching repository hidden", filteredView)
-	}
-	if !strings.Contains(filteredView, "team/demo") || !strings.Contains(filteredView, "team/backend") {
-		t.Fatalf("view = %q, want filtered suggestions", filteredView)
-	}
-
-	updated = runKey(t, updated, "down")
-	updated = runKey(t, updated, "enter")
-	if got, want := updated.adminView.GrantForm.Repository, "team/backend"; got != want {
-		t.Fatalf("repository = %q, want %q", got, want)
-	}
-	if got, want := updated.adminView.GrantForm.Focus, adminGrantFieldRole; got != want {
-		t.Fatalf("focus = %v, want %v", got, want)
-	}
-
-	updated = runKey(t, updated, "enter")
-	if adminClient.putGrantCalls != 1 {
-		t.Fatalf("putGrantCalls = %d, want 1", adminClient.putGrantCalls)
-	}
-	if got, want := adminClient.lastGrantInput.Repository, "team/backend"; got != want {
-		t.Fatalf("grant repository = %q, want %q", got, want)
 	}
 }
 
@@ -6134,10 +5988,6 @@ type fakeAdminClient struct {
 	putGrantErr    error
 	lastGrantInput ports.AdminPutRepoGrantInput
 
-	deleteGrantErr        error
-	lastDeleteGrantUserID string
-	lastDeleteGrantRepo   string
-
 	repoGrants         map[string][]ports.AdminRepositoryGrant
 	listRepoGrantsErr  error
 	putRepoGrantErr    error
@@ -6211,7 +6061,6 @@ type fakeAdminClient struct {
 	resetPasswordCalls               int
 	configureFeatureCalls            int
 	putGrantCalls                    int
-	deleteGrantCalls                 int
 	listRepoGrantsCalls              int
 	putRepoGrantCalls                int
 	deleteRepoGrantCalls             int
@@ -6574,13 +6423,6 @@ func (f *fakeAdminClient) PutUserGrant(_ context.Context, _ AdminSession, input 
 		return ports.AdminRepoGrant{}, f.putGrantErr
 	}
 	return ports.AdminRepoGrant{UserID: input.UserID, Repository: regixtrydomain.MustParseRepositoryRef(input.Repository), Role: input.Role}, nil
-}
-
-func (f *fakeAdminClient) DeleteUserGrant(_ context.Context, _ AdminSession, userID string, repository string) error {
-	f.deleteGrantCalls++
-	f.lastDeleteGrantUserID = userID
-	f.lastDeleteGrantRepo = repository
-	return f.deleteGrantErr
 }
 
 func (f *fakeAdminClient) DeleteRobot(_ context.Context, _ AdminSession, userID string) error {

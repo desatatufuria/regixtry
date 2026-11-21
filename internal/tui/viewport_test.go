@@ -242,8 +242,6 @@ func TestViewportChromeInvariantTitleContextHelpAreSingleLine(t *testing.T) {
 		screenAdminCreateUser,
 		screenAdminEditUser,
 		screenAdminChangePassword,
-		screenAdminEditUserGrants,
-		screenAdminAddGrant,
 		screenAdminEditUserTokens,
 		screenAdminCreateToken,
 	}

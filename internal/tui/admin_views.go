@@ -93,10 +93,6 @@ func renderAdminWorkspace(current screen, session AdminSession, view AdminViewSt
 // renderAdminScreen itself then consumes).
 func adminScreenHelp(current screen, view AdminViewState) string {
 	switch current {
-	case screenAdminEditUserGrants:
-		return "n: add grant | e: edit selected grant | x: remove grant | t: tokens | Esc: back | q: quit"
-	case screenAdminAddGrant:
-		return "Up/Down: pick repository | Enter: accept or save | Tab: next field | Space: cycle role | Esc: cancel"
 	case screenAdminEditUserTokens:
 		return "n: create token | x: revoke token | g: grants | Esc: back | q: quit"
 	case screenAdminCreateToken:
@@ -125,10 +121,6 @@ func adminScreenHelp(current screen, view AdminViewState) string {
 func renderAdminScreen(theme adminTheme, current screen, session AdminSession, view AdminViewState, knownRepositories []string, layout consoleLayout, now time.Time) (string, string, string) {
 	help := adminScreenHelp(current, view)
 	switch current {
-	case screenAdminEditUserGrants:
-		return adminContext("Access", "Users", selectedAdminUsername(view), "Grants"), renderAdminGrantsScreen(theme, view), help
-	case screenAdminAddGrant:
-		return adminContext("Access", "Users", selectedAdminUsername(view), "Grants", "Add grant"), renderAdminAddGrantScreen(theme, view, knownRepositories), help
 	case screenAdminEditUserTokens:
 		return adminContext("Access", "Users", selectedAdminUsername(view), "Tokens"), renderAdminTokensScreen(theme, view), help
 	case screenAdminCreateToken:
@@ -440,62 +432,6 @@ func renderAdminScanHistoryModal(theme adminTheme, modal adminScanHistoryModal, 
 	combined := lipgloss.JoinHorizontal(lipgloss.Top, executionsColumn, rightColumn)
 
 	return theme.section.Render(combined)
-}
-
-func renderAdminGrantsScreen(theme adminTheme, view AdminViewState) string {
-	if strings.TrimSpace(view.SelectedUserID) == "" {
-		return theme.section.Render(theme.warning.Render("Select a user before opening grants."))
-	}
-	lines := []string{
-		theme.subheading.Render("Repository Grants"),
-		fmt.Sprintf("User: %s", selectedAdminUsername(view)),
-		"",
-	}
-	if len(view.Grants) == 0 {
-		lines = append(lines, theme.muted.Render("No repository grants for the selected user."))
-	} else {
-		for index, grant := range view.Grants {
-			label := fmt.Sprintf("%s | %s", grant.Repository, grant.Role)
-			if index == view.SelectedGrant {
-				label = theme.selected.Render(label)
-			}
-			lines = append(lines, label)
-		}
-	}
-	return theme.section.Render(strings.Join(lines, "\n"))
-}
-
-func renderAdminAddGrantScreen(theme adminTheme, view AdminViewState, knownRepositories []string) string {
-	lines := []string{
-		theme.subheading.Render("Grant Details"),
-		fmt.Sprintf("User: %s", selectedAdminUsername(view)),
-		renderTextField(theme, "Repository", view.GrantForm.Repository, view.GrantForm.Focus == adminGrantFieldRepository),
-		renderTextField(theme, "Role", string(view.GrantForm.Role), view.GrantForm.Focus == adminGrantFieldRole),
-	}
-	suggestions := grantRepositorySuggestions(view.GrantForm, knownRepositories)
-	if len(suggestions) == 0 {
-		lines = append(lines, theme.muted.Render("No known repositories match the current filter."))
-	} else {
-		selected := boundedIndex(view.GrantForm.RepositorySuggestion, len(suggestions))
-		start := 0
-		if selected >= 5 {
-			start = selected - 4
-		}
-		end := start + 5
-		if end > len(suggestions) {
-			end = len(suggestions)
-		}
-		lines = append(lines, "", theme.subheading.Render("Known Repositories"))
-		for index := start; index < end; index++ {
-			repository := suggestions[index]
-			label := repository
-			if index == selected {
-				label = theme.selected.Render(label)
-			}
-			lines = append(lines, label)
-		}
-	}
-	return theme.section.Render(strings.Join(lines, "\n"))
 }
 
 // renderRepoAdminGrantsScreen renders the repo-admin delegate's own
@@ -929,14 +865,6 @@ func selectedAdminUsername(view AdminViewState) string {
 		return view.SelectedUsername
 	}
 	return "No selection"
-}
-
-func selectedGrantForView(view AdminViewState) (ports.AdminRepoGrant, bool) {
-	if len(view.Grants) == 0 {
-		return ports.AdminRepoGrant{}, false
-	}
-	index := boundedIndex(view.SelectedGrant, len(view.Grants))
-	return view.Grants[index], true
 }
 
 func selectedRepoAdminGrantForView(view AdminViewState) (ports.AdminRepositoryGrant, bool) {

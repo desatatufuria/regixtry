@@ -327,16 +327,10 @@ func repoAccessRevokeCmd(env screenEnv, gen uint64, repo, username string) tea.C
 
 func (s repoAccessScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd, bool) {
 	if s.confirm.Active() {
-		// A second Enter while the revoke is in flight must not send a second
-		// delete.
-		if isEnterKey(msg) && s.revoking {
-			return s, nil, true
-		}
-		if isEnterKey(msg) {
-			s.revoking = true
-		}
+		// The prompt ignores a second Enter while the delete is in flight.
 		confirm, cmd, consumed := s.confirm.update(env, msg)
 		s.confirm = confirm
+		s.revoking = s.revoking || confirm.inFlight
 		return s, cmd, consumed
 	}
 	if s.filtering {
@@ -423,7 +417,8 @@ func (s repoAccessScreen) askRevoke(env screenEnv, rows []repoAccessRow) (adminS
 		"revoke",
 		fmt.Sprintf("Revoking %s on %s...", username, repo),
 		func(env screenEnv) tea.Cmd { return repoAccessRevokeCmd(env, gen, repo, username) },
-	)
+	).withTarget(fmt.Sprintf("%s on %s", username, repo), grantRoleLabel(row.role)).
+		withConsequence(fmt.Sprintf("%s loses %s access to %s.", username, grantRoleLabel(row.role), repo))
 	return s, nil, true
 }
 

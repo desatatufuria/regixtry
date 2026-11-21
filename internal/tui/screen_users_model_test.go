@@ -206,16 +206,20 @@ func openSidebarItemFrom(t *testing.T, m Model, id shellNavID) Model {
 	return openSidebarItem(t, m, id)
 }
 
-func TestGrantsEscGoesBackToTheProfileToo(t *testing.T) {
+func TestGrantAccessFromTokensComesBackToTokensThenTheProfile(t *testing.T) {
 	t.Parallel()
 	m := usersModelAt(t, editTestClient(), 150, 24)
 	m = modelPress(t, m, testKeyDown(), testKeyDown(), testKeyDown(), testKeyRunes("t"), testKeyRunes("g"))
-	if m.screen != screenAdminEditUserGrants {
+	if m.screen != screenAdminGrantAccess {
 		t.Fatalf("g from Tokens opened %q", m.screen)
 	}
 	m = modelPress(t, m, testKeyEsc())
+	if m.screen != screenAdminEditUserTokens {
+		t.Fatalf("Esc from Grant access went to %q, want the Tokens", m.screen)
+	}
+	m = modelPress(t, m, testKeyEsc())
 	if m.screen != screenAdminEditUser {
-		t.Fatalf("Esc from Grants went to %q", m.screen)
+		t.Fatalf("Esc from Tokens went to %q", m.screen)
 	}
 }
 

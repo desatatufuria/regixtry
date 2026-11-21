@@ -13,7 +13,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	appregixtry "regixtry/internal/app/regixtry"
-	domainauth "regixtry/internal/domain/auth"
 	"regixtry/internal/ports"
 )
 
@@ -83,12 +82,6 @@ var characterizationScreens = []struct {
 		m := charAdminModel(t, w, h)
 		m.screen = screenAdminCreateToken
 		m.adminView.TokenForm = adminTokenForm{Name: "ci bot"}
-		return m
-	}},
-	{"admin_grant_form_suggestions", func(t *testing.T, w, h int) Model {
-		m := charAdminModel(t, w, h)
-		m.screen = screenAdminAddGrant
-		m.adminView.GrantForm = adminGrantForm{Repository: "team", Role: domainauth.RepoRoleWriter}
 		return m
 	}},
 	{"admin_tokens_list", func(t *testing.T, w, h int) Model {

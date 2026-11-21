@@ -13,7 +13,6 @@ import (
 	"regixtry/internal/ports"
 
 	domainauth "regixtry/internal/domain/auth"
-	regixtrydomain "regixtry/internal/domain/regixtry"
 )
 
 // ---- the keys that confirm ----
@@ -102,7 +101,6 @@ type confirmSite struct {
 
 func confirmSites() []confirmSite {
 	robot := ports.AdminRobot{ID: "r-1", Username: "ci", Enabled: true}
-	repo := regixtrydomain.MustParseRepositoryRef("team/api")
 	boom := errors.New("boom")
 	return []confirmSite{
 		{"disable robot", func(t *testing.T) Model {
@@ -115,12 +113,6 @@ func confirmSites() []confirmSite {
 			m.screen, m.adminView.Robots = screenAdminRobots, []ports.AdminRobot{robot}
 			return m
 		}, testKeyRunes("d"), func() tea.Msg { return adminRobotDeletedMsg{robotID: "r-1", username: "ci", err: boom} }},
-		{"remove grant", func(t *testing.T) Model {
-			m := charAdminModel(t, 150, 24)
-			m.screen = screenAdminEditUserGrants
-			m.adminView.Grants = []ports.AdminRepoGrant{{UserID: "u-1", Repository: repo, Role: domainauth.RepoRoleReader}}
-			return m
-		}, testKeyRunes("x"), func() tea.Msg { return adminGrantMutatedMsg{err: boom} }},
 		{"revoke token", func(t *testing.T) Model {
 			m := charAdminModel(t, 150, 24)
 			m.screen = screenAdminEditUserTokens

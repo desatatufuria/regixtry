@@ -30,7 +30,7 @@ func TestAdminScreenSetHoldsOnlyInterfaceValues(t *testing.T) {
 // deliberately narrower than isAdminScreen's full set.
 var adminScreenIDs = []screen{
 	screenAdminLogin, screenAdminAuthenticating,
-	screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens,
+	screenAdminEditUserTokens,
 	screenAdminCreateToken, screenRepoAdminGrants, screenRepoAdminAddGrant,
 	screenAdminRobots, screenAdminCreateRobot,
 }

@@ -48,7 +48,7 @@ func TestLogoutAdminStateClearsSessionAndViewData(t *testing.T) {
 	if session.ExpiredReason != "" {
 		t.Fatalf("ExpiredReason = %q, want empty", session.ExpiredReason)
 	}
-	if view.SelectedUserID != "" || len(view.Grants) != 0 || len(view.AdminTokens) != 0 {
+	if view.SelectedUserID != "" || len(view.AdminTokens) != 0 {
 		t.Fatalf("LogoutAdminState() returned populated view state: %#v", view)
 	}
 }
@@ -63,7 +63,7 @@ func TestExpireAdminStateClearsViewDataAndKeepsReason(t *testing.T) {
 	if session.ExpiredReason != "Session expired. Log in again." {
 		t.Fatalf("ExpiredReason = %q, want session expiry message", session.ExpiredReason)
 	}
-	if len(view.Grants) != 0 || len(view.AdminTokens) != 0 {
+	if len(view.AdminTokens) != 0 {
 		t.Fatalf("ExpireAdminState() returned populated view state: %#v", view)
 	}
 }

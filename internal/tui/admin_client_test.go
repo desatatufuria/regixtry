@@ -162,20 +162,9 @@ func TestHTTPAdminClientMutationRoutes(t *testing.T) {
 			},
 		},
 		{
-			name:       "delete grant",
-			method:     http.MethodDelete,
-			path:       "/admin/v1/users/u-1/grants/library/alpine",
-			statusCode: http.StatusNoContent,
-			run: func(t *testing.T, client *HTTPAdminClient) {
-				if err := client.DeleteUserGrant(context.Background(), session, "u-1", "library/alpine"); err != nil {
-					t.Fatalf("DeleteUserGrant() error = %v", err)
-				}
-			},
-		},
-		{
 			// Phase 3 task 3.7 RED test (design.md Decision 3 route table):
 			// the repository segment ("team/app") contains "/" and is NOT
-			// PathEscape-d, mirroring PutUserGrant/DeleteUserGrant's own
+			// PathEscape-d, mirroring PutUserGrant's own
 			// unescaped-repository precedent above.
 			name:       "list repository grants",
 			method:     http.MethodGet,

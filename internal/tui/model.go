@@ -261,8 +261,6 @@ const (
 	screenAdminCreateUser     screen = "admin-create-user"
 	screenAdminEditUser       screen = "admin-edit-user"
 	screenAdminChangePassword screen = "admin-change-password"
-	screenAdminEditUserGrants screen = "admin-edit-user-grants"
-	screenAdminAddGrant       screen = "admin-add-grant"
 	screenAdminEditUserTokens screen = "admin-edit-user-tokens"
 	screenAdminCreateToken    screen = "admin-create-token"
 	// screenRepoAdminGrants/screenRepoAdminAddGrant are the delegate-facing
@@ -744,25 +742,11 @@ type adminScanHistoryLoadedMsg struct {
 	err        error
 }
 
-type adminUserGrantsLoadedMsg struct {
-	userID   string
-	username string
-	grants   []ports.AdminRepoGrant
-	err      error
-}
-
 type adminUserTokensLoadedMsg struct {
 	userID   string
 	username string
 	tokens   []ports.AdminToken
 	err      error
-}
-
-type adminGrantMutatedMsg struct {
-	userID     string
-	username   string
-	repository string
-	err        error
 }
 
 // adminRepoGrantsLoadedMsg carries one repository's grants for the
@@ -1497,22 +1481,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = ""
 		}
 		return m, cmd
-	case adminUserGrantsLoadedMsg:
-		if msg.err != nil {
-			if IsAdminSessionExpired(msg.err) {
-				return m.expireAdminSession(msg.err.Error()), nil
-			}
-			m.status = msg.err.Error()
-			return m, nil
-		}
-		m.adminView.SelectedUserID = msg.userID
-		m.adminView.SelectedUsername = msg.username
-		m.adminView.Grants = append([]ports.AdminRepoGrant(nil), msg.grants...)
-		m.adminView.SelectedGrant = boundedIndex(m.adminView.SelectedGrant, len(m.adminView.Grants))
-		if strings.HasPrefix(strings.ToLower(m.status), "loading") {
-			m.status = ""
-		}
-		return m, nil
 	case adminUserTokensLoadedMsg:
 		if msg.err != nil {
 			if IsAdminSessionExpired(msg.err) {
@@ -1529,26 +1497,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = ""
 		}
 		return m, nil
-	case adminGrantMutatedMsg:
-		if msg.err != nil {
-			if IsAdminSessionExpired(msg.err) {
-				return m.expireAdminSession(msg.err.Error()), nil
-			}
-			m.closeFailedConfirm()
-			m.status = msg.err.Error()
-			return m, nil
-		}
-		m.adminView.GrantForm = newAdminViewState().GrantForm
-		m.adminView.Confirm = confirmPrompt{}
-		m.adminView.SelectedUserID = msg.userID
-		m.adminView.SelectedUsername = msg.username
-		if msg.repository == "" {
-			m.status = fmt.Sprintf("Grant saved for %q. Refreshing grants...", msg.username)
-		} else {
-			m.status = fmt.Sprintf("Grant removed from %q. Refreshing grants...", msg.username)
-		}
-		m.screen = screenAdminEditUserGrants
-		return m, m.loadAdminGrantsCmd(msg.userID, msg.username)
 	case adminRepoGrantsLoadedMsg:
 		if msg.err != nil {
 			if IsAdminSessionExpired(msg.err) {
@@ -1857,7 +1805,7 @@ func (m Model) viewScreen() string {
 		return renderAdminLogin(newAdminTheme(), view, m.viewport.Width, m.viewport.Height)
 	case screenAdminAuthenticating:
 		return renderAdminAuthenticating(newAdminTheme(), m.loadingText, m.viewport.Width, m.viewport.Height)
-	case screenAdminUsers, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken, screenRepoAdminGrants, screenRepoAdminAddGrant, screenAdminRobots, screenAdminCreateRobot, screenSecurityGitleaksRepos, screenSecuritySigningRepos, screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminOverview, screenAdminScanRuns, screenAdminSecretFindings, screenAdminUpdateChannel, screenAdminGrantAccess, screenAdminRepositoryAccess:
+	case screenAdminUsers, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserTokens, screenAdminCreateToken, screenRepoAdminGrants, screenRepoAdminAddGrant, screenAdminRobots, screenAdminCreateRobot, screenSecurityGitleaksRepos, screenSecuritySigningRepos, screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminOverview, screenAdminScanRuns, screenAdminSecretFindings, screenAdminUpdateChannel, screenAdminGrantAccess, screenAdminRepositoryAccess:
 		help := adminScreenHelp(m.screen, m.adminView)
 		if slot, ok := slotFor(m.screen); ok && m.adminScreens[slot] != nil {
 			// Migrated top-level screen: help is derived from the screen's
@@ -2475,74 +2423,13 @@ func signingKeyFingerprints(keys []string) []string {
 // scanHistoryScreen (Phase 19, screen_scan_history.go): ScanHistoryModal
 // migrates off AdminViewState per design.md's State Migration table.
 
-func (m Model) updateAdminGrantsKey(msg keyMsg) (tea.Model, tea.Cmd) {
-	switch {
-	case isEscKey(msg):
-		return m.backToUser()
-	case isRuneKey(msg, 't'):
-		return m.openAdminEditTokens()
-	case isRuneKey(msg, 'r'):
-		if strings.TrimSpace(m.adminView.SelectedUserID) == "" {
-			m.status = "Select a user to manage grants."
-			return m, nil
-		}
-		m.status = fmt.Sprintf("Loading grants for %s...", m.adminView.SelectedUsername)
-		return m, m.loadAdminGrantsCmd(m.adminView.SelectedUserID, m.adminView.SelectedUsername)
-	case isRuneKey(msg, 'n'):
-		if strings.TrimSpace(m.adminView.SelectedUserID) == "" {
-			m.status = "Select a user to manage grants."
-			return m, nil
-		}
-		m.adminView.GrantForm = newAdminViewState().GrantForm
-		m.screen = screenAdminAddGrant
-		m.status = ""
-		return m, nil
-	case isRuneKey(msg, 'e'):
-		grant, ok := selectedGrantForView(m.adminView)
-		if !ok {
-			m.status = "No grant selected to edit."
-			return m, nil
-		}
-		m.adminView.GrantForm.Repository = grant.Repository.String()
-		m.adminView.GrantForm.Role = grant.Role
-		m.adminView.GrantForm.Focus = adminGrantFieldRepository
-		m.screen = screenAdminAddGrant
-		m.status = ""
-		return m, nil
-	case isMoveUpKey(msg):
-		m.adminView.SelectedGrant = boundedIndex(m.adminView.SelectedGrant-1, len(m.adminView.Grants))
-		return m, nil
-	case isMoveDownKey(msg):
-		m.adminView.SelectedGrant = boundedIndex(m.adminView.SelectedGrant+1, len(m.adminView.Grants))
-		return m, nil
-	case isRuneKey(msg, 'x'):
-		grant, ok := selectedGrantForView(m.adminView)
-		if !ok {
-			m.status = "No grant selected to remove."
-			return m, nil
-		}
-		userID, username, repository := m.adminView.SelectedUserID, m.adminView.SelectedUsername, grant.Repository.String()
-		m.adminView.Confirm = newConfirmPrompt(
-			"Confirm Grant Removal",
-			fmt.Sprintf("Remove grant %q from %q?", repository, username),
-			"remove",
-			fmt.Sprintf("Removing grant %q from %s...", repository, username),
-			func(env screenEnv) tea.Cmd { return env.asModel().deleteAdminGrantCmd(userID, username, repository) },
-		)
-		m.status = ""
-		return m, nil
-	}
-	return m, nil
-}
-
 func (m Model) updateAdminTokensKey(msg keyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case isEscKey(msg):
 		m.clearRevealedAdminToken()
 		return m.backToUser()
 	case isRuneKey(msg, 'g'):
-		m.clearRevealedAdminToken()
-		return m.openAdminEditGrants()
+		return m.openGrantAccessForSelectedUser(screenAdminEditUserTokens)
 	case isRuneKey(msg, 'n'):
 		if m.adminView.SelectedUserID == "" {
 			m.status = "Select a user to manage admin tokens."
@@ -2581,77 +2468,6 @@ func (m Model) updateAdminTokensKey(msg keyMsg) (tea.Model, tea.Cmd) {
 			func(env screenEnv) tea.Cmd { return env.asModel().revokeAdminTokenCmd(userID, username, accessor) },
 		)
 		m.status = ""
-		return m, nil
-	}
-	return m, nil
-}
-
-func (m Model) updateGrantFormKey(msg keyMsg) (tea.Model, tea.Cmd) {
-	switch {
-	case isEscKey(msg):
-		m.screen = screenAdminEditUserGrants
-		return m, nil
-	// Only the arrow keys move the suggestion: k and j are typed text here.
-	case isArrowUpKey(msg):
-		if m.adminView.GrantForm.Focus == adminGrantFieldRepository {
-			suggestions := grantRepositorySuggestions(m.adminView.GrantForm, m.repositories.Names())
-			m.adminView.GrantForm.RepositorySuggestion = boundedIndex(m.adminView.GrantForm.RepositorySuggestion-1, len(suggestions))
-			return m, nil
-		}
-	case isArrowDownKey(msg):
-		if m.adminView.GrantForm.Focus == adminGrantFieldRepository {
-			suggestions := grantRepositorySuggestions(m.adminView.GrantForm, m.repositories.Names())
-			m.adminView.GrantForm.RepositorySuggestion = boundedIndex(m.adminView.GrantForm.RepositorySuggestion+1, len(suggestions))
-			return m, nil
-		}
-	case isTabKey(msg):
-		if m.adminView.GrantForm.Focus == adminGrantFieldRepository {
-			m.adminView.GrantForm.Focus = adminGrantFieldRole
-		} else {
-			m.adminView.GrantForm.Focus = adminGrantFieldRepository
-		}
-		return m, nil
-	case isBackspaceKey(msg):
-		if m.adminView.GrantForm.Focus == adminGrantFieldRepository {
-			m.adminView.GrantForm.Repository = trimLastRune(m.adminView.GrantForm.Repository)
-			m.adminView.GrantForm.RepositorySuggestion = 0
-		}
-		return m, nil
-	case isSpaceKey(msg):
-		if m.adminView.GrantForm.Focus == adminGrantFieldRole {
-			m.adminView.GrantForm.Role = nextGrantRole(m.adminView.GrantForm.Role)
-		}
-		return m, nil
-	case isEnterKey(msg):
-		if m.adminView.GrantForm.Focus == adminGrantFieldRepository {
-			suggestions := grantRepositorySuggestions(m.adminView.GrantForm, m.repositories.Names())
-			if len(suggestions) > 0 {
-				m.adminView.GrantForm.Repository = suggestions[boundedIndex(m.adminView.GrantForm.RepositorySuggestion, len(suggestions))]
-			}
-			if strings.TrimSpace(m.adminView.GrantForm.Repository) == "" {
-				m.status = "Repository is required."
-				return m, nil
-			}
-			m.adminView.GrantForm.Focus = adminGrantFieldRole
-			m.adminView.GrantForm.RepositorySuggestion = 0
-			return m, nil
-		}
-		if strings.TrimSpace(m.adminView.SelectedUserID) == "" {
-			m.status = "Select a user to manage grants."
-			return m, nil
-		}
-		repository := strings.TrimSpace(m.adminView.GrantForm.Repository)
-		if repository == "" {
-			m.status = "Repository is required."
-			return m, nil
-		}
-		input := ports.AdminPutRepoGrantInput{UserID: m.adminView.SelectedUserID, Repository: repository, Role: m.adminView.GrantForm.Role}
-		m.status = fmt.Sprintf("Saving grant for %s...", m.adminView.SelectedUsername)
-		return m, m.putAdminGrantCmd(input, m.adminView.SelectedUsername)
-	}
-	if isTextKey(msg) && m.adminView.GrantForm.Focus == adminGrantFieldRepository {
-		m.adminView.GrantForm.Repository += keyText(msg)
-		m.adminView.GrantForm.RepositorySuggestion = 0
 		return m, nil
 	}
 	return m, nil
@@ -3265,16 +3081,6 @@ func (m Model) loadAdminScanHistoryCmd(repository string) tea.Cmd {
 	}
 }
 
-func (m Model) loadAdminGrantsCmd(userID string, username string) tea.Cmd {
-	return func() tea.Msg {
-		if m.adminClient == nil {
-			return adminUserGrantsLoadedMsg{userID: userID, username: username, err: fmt.Errorf("admin API is unavailable for this session")}
-		}
-		grants, err := m.adminClient.ListUserGrants(m.ctx, m.adminSession, userID)
-		return adminUserGrantsLoadedMsg{userID: userID, username: username, grants: grants, err: err}
-	}
-}
-
 func (m Model) loadAdminTokensCmd(userID string, username string) tea.Cmd {
 	return func() tea.Msg {
 		if m.adminClient == nil {
@@ -3282,26 +3088,6 @@ func (m Model) loadAdminTokensCmd(userID string, username string) tea.Cmd {
 		}
 		tokens, err := m.adminClient.ListUserAdminTokens(m.ctx, m.adminSession, userID)
 		return adminUserTokensLoadedMsg{userID: userID, username: username, tokens: tokens, err: err}
-	}
-}
-
-func (m Model) putAdminGrantCmd(input ports.AdminPutRepoGrantInput, username string) tea.Cmd {
-	return func() tea.Msg {
-		if m.adminClient == nil {
-			return adminGrantMutatedMsg{userID: input.UserID, username: username, err: fmt.Errorf("admin API is unavailable for this session")}
-		}
-		_, err := m.adminClient.PutUserGrant(m.ctx, m.adminSession, input)
-		return adminGrantMutatedMsg{userID: input.UserID, username: username, err: err}
-	}
-}
-
-func (m Model) deleteAdminGrantCmd(userID string, username string, repository string) tea.Cmd {
-	return func() tea.Msg {
-		if m.adminClient == nil {
-			return adminGrantMutatedMsg{userID: userID, username: username, repository: repository, err: fmt.Errorf("admin API is unavailable for this session")}
-		}
-		err := m.adminClient.DeleteUserGrant(m.ctx, m.adminSession, userID, repository)
-		return adminGrantMutatedMsg{userID: userID, username: username, repository: repository, err: err}
 	}
 }
 
@@ -3949,7 +3735,7 @@ func nextDelegateGrantRole(current domainauth.RepoRole) domainauth.RepoRole {
 
 func isAdminScreen(current screen) bool {
 	switch current {
-	case screenAdminLogin, screenAdminAuthenticating, screenAdminUsers, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken, screenRepoAdminGrants, screenRepoAdminAddGrant, screenAdminRobots, screenAdminCreateRobot, screenSecurityGitleaksRepos, screenSecuritySigningRepos, screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminOverview, screenAdminScanRuns, screenAdminSecretFindings, screenAdminUpdateChannel, screenAdminGrantAccess, screenAdminRepositoryAccess:
+	case screenAdminLogin, screenAdminAuthenticating, screenAdminUsers, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserTokens, screenAdminCreateToken, screenRepoAdminGrants, screenRepoAdminAddGrant, screenAdminRobots, screenAdminCreateRobot, screenSecurityGitleaksRepos, screenSecuritySigningRepos, screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminOverview, screenAdminScanRuns, screenAdminSecretFindings, screenAdminUpdateChannel, screenAdminGrantAccess, screenAdminRepositoryAccess:
 		return true
 	default:
 		return false
@@ -3973,7 +3759,7 @@ func isAdminScreen(current screen) bool {
 // screens above.
 func isAdminPrincipalScreen(current screen) bool {
 	switch current {
-	case screenAdminLogin, screenAdminUsers, screenAdminEditUser, screenAdminEditUserGrants, screenAdminEditUserTokens, screenRepoAdminGrants, screenAdminRobots, screenSecurityTrivy, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminOverview, screenAdminUpdateChannel:
+	case screenAdminLogin, screenAdminUsers, screenAdminEditUser, screenAdminEditUserTokens, screenRepoAdminGrants, screenAdminRobots, screenSecurityTrivy, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminOverview, screenAdminUpdateChannel:
 		return true
 	default:
 		return false
@@ -4023,7 +3809,7 @@ func (m Model) canLogoutAdminFromCurrentScreen() bool {
 	}
 
 	switch m.screen {
-	case screenAdminUsers, screenAdminEditUser, screenAdminEditUserGrants, screenAdminEditUserTokens, screenRepoAdminGrants, screenAdminRobots,
+	case screenAdminUsers, screenAdminEditUser, screenAdminEditUserTokens, screenRepoAdminGrants, screenAdminRobots,
 		screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenSecurityGitleaksRepos, screenSecuritySigningRepos,
 		screenAdminOverview, screenAdminScanRuns, screenAdminSecretFindings, screenAdminUpdateChannel:
 		return true
@@ -4060,10 +3846,6 @@ func repositorySuggestionsMatching(query string, repositories []string) []string
 		suggestions = append(suggestions, repository)
 	}
 	return suggestions
-}
-
-func grantRepositorySuggestions(form adminGrantForm, repositories []string) []string {
-	return repositorySuggestionsMatching(form.Repository, repositories)
 }
 
 // robotRepositorySuggestions is screenAdminCreateRobot's counterpart to
@@ -4327,7 +4109,6 @@ func formatRemaining(remaining time.Duration) string {
 }
 
 func (m *Model) clearSelectedAdminDetails() {
-	m.adminView.Grants = nil
 	m.adminView.AdminTokens = nil
 	// Features/FeaturePage/TrivyTab/TrivyConfigModal/TrivyScanRuns/
 	// TrivySelectedAlert/TrivyAlertsLoaded/TrivySummaries/TrivyOverrides all
@@ -4342,9 +4123,7 @@ func (m *Model) clearSelectedAdminDetails() {
 	// onto its own dedicated slot (design.md's State Migration table);
 	// un-mounted here exactly like the Security screens above.
 	m.adminScreens[slotScanHistory] = nil
-	m.adminView.SelectedGrant = 0
 	m.adminView.SelectedToken = 0
-	m.adminView.GrantForm = newAdminViewState().GrantForm
 	m.adminView.TokenForm = adminTokenForm{}
 	m.adminView.RevealedTokenSecret = ""
 	m.adminView.RevealedTokenAccessor = ""
@@ -4368,15 +4147,15 @@ func (m *Model) clearRevealedAdminToken() {
 	m.adminView.RevealedTokenExpiresAt = time.Time{}
 }
 
-func (m Model) openAdminEditGrants() (tea.Model, tea.Cmd) {
+// openGrantAccessForSelectedUser opens "Grant repository access" with the
+// selected user preselected; Esc comes back to returnTo.
+func (m Model) openGrantAccessForSelectedUser(returnTo screen) (tea.Model, tea.Cmd) {
 	if strings.TrimSpace(m.adminView.SelectedUserID) == "" {
-		m.status = "Select a user to manage grants."
+		m.status = "Select a user to grant repository access."
 		return m, nil
 	}
 	m.clearRevealedAdminToken()
-	m.screen = screenAdminEditUserGrants
-	m.status = fmt.Sprintf("Loading grants for %s...", m.adminView.SelectedUsername)
-	return m, m.loadAdminGrantsCmd(m.adminView.SelectedUserID, m.adminView.SelectedUsername)
+	return m, openGrantAccess(m.adminView.SelectedUserID, returnTo)
 }
 
 func (m Model) openAdminEditTokens() (tea.Model, tea.Cmd) {

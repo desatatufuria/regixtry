@@ -282,31 +282,3 @@ func TestResetPasswordFormEntryCharacterization(t *testing.T) {
 		t.Fatalf("view leaks the new password:\n%s", view)
 	}
 }
-
-func TestGrantFormRepositoryEntryCharacterization(t *testing.T) {
-	t.Parallel()
-
-	m := charAdminModel(t, 160, 40)
-	m.screen = screenAdminAddGrant
-	m.adminView.SelectedUserID = "u-1"
-	m.adminView.SelectedUsername = "alice"
-
-	m = testSendKeys(t, m, testKeyRunes("team/"), testKeySpace(), testKeyRunes("de"))
-	if got, want := m.adminView.GrantForm.Repository, "team/de"; got != want {
-		t.Fatalf("Repository = %q, want %q (space is not typed into the repository)", got, want)
-	}
-	m = testSendKey(t, m, testKeyBackspace())
-	if got, want := m.adminView.GrantForm.Repository, "team/d"; got != want {
-		t.Fatalf("Repository after backspace = %q, want %q", got, want)
-	}
-	m = testSendKey(t, m, testKeyTab())
-	before := m.adminView.GrantForm.Role
-	m = testSendKey(t, m, testKeySpace())
-	if m.adminView.GrantForm.Role == before {
-		t.Fatalf("space on the role field did not cycle the role")
-	}
-	m = testSendKey(t, m, testKeyRunes("zzz"))
-	if got, want := m.adminView.GrantForm.Repository, "team/d"; got != want {
-		t.Fatalf("Repository changed while role focused: %q, want %q", got, want)
-	}
-}

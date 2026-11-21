@@ -305,8 +305,8 @@ func TestGrantRoleOptionsAndDefault(t *testing.T) {
 	}
 	// The default role is the one the existing add-grant form starts with.
 	screen := newGrantAccessScreen(screenAdminOverview, "")
-	if screen.role != newAdminViewState().GrantForm.Role || screen.role != domainauth.RepoRoleReader {
-		t.Fatalf("default role = %q, want the add-grant form default %q", screen.role, newAdminViewState().GrantForm.Role)
+	if screen.role != domainauth.RepoRoleReader {
+		t.Fatalf("default role = %q, want %q", screen.role, domainauth.RepoRoleReader)
 	}
 }
 

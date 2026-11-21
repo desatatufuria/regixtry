@@ -33,10 +33,6 @@ func TestPasteReachesAdminTextFields(t *testing.T) {
 			func(m Model) string { return resetPasswordOf(m).password }, pasteSample},
 		{"create token name", func(m *Model) { m.screen = screenAdminCreateToken },
 			func(m Model) string { return m.adminView.TokenForm.Name }, pasteSample},
-		{"grant repository", func(m *Model) {
-			m.screen = screenAdminAddGrant
-			m.adminView.GrantForm.Repository = "team"
-		}, func(m Model) string { return m.adminView.GrantForm.Repository }, "team" + pasteSample},
 		{"create robot name", func(m *Model) { m.screen = screenAdminCreateRobot },
 			func(m Model) string { return m.adminView.CreateRobotForm.Name }, pasteSample},
 	}

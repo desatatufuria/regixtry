@@ -50,7 +50,6 @@ func TestQStillQuitsOutsideTextFields(t *testing.T) {
 		"tags":         screenTags,
 		"users":        screenAdminUsers,
 		"edit user":    screenAdminEditUser,
-		"grants":       screenAdminEditUserGrants,
 		"tokens":       screenAdminEditUserTokens,
 		"repo grants":  screenRepoAdminGrants,
 		"robots":       screenAdminRobots,
@@ -65,15 +64,6 @@ func TestQStillQuitsOutsideTextFields(t *testing.T) {
 				t.Fatalf("q on %s did not quit", name)
 			}
 		})
-	}
-}
-
-func TestOldGrantFormStillTypesQ(t *testing.T) {
-	m := kjSearchModel(t, false)
-	m.screen = screenAdminAddGrant
-	_, cmd := sendKeyCmd(m, testKeyRunes("q"))
-	if didQuit(cmd) {
-		t.Fatal("q on the old grant form quit")
 	}
 }
 

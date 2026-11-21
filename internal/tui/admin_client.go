@@ -65,7 +65,6 @@ type AdminClient interface {
 	ResetPassword(ctx context.Context, session AdminSession, input ports.AdminResetPasswordInput) error
 	ListUserGrants(ctx context.Context, session AdminSession, userID string) ([]ports.AdminRepoGrant, error)
 	PutUserGrant(ctx context.Context, session AdminSession, input ports.AdminPutRepoGrantInput) (ports.AdminRepoGrant, error)
-	DeleteUserGrant(ctx context.Context, session AdminSession, userID string, repository string) error
 	// ListRepositoryGrants/PutRepositoryGrant/DeleteRepositoryGrant back the
 	// repo-admin delegate's own grants view (design.md Decision 7), calling
 	// /admin/v1/repositories/{repo}/grants[/{username}] rather than the
@@ -450,15 +449,10 @@ func (c *HTTPAdminClient) PutUserGrant(ctx context.Context, session AdminSession
 	return grant, nil
 }
 
-func (c *HTTPAdminClient) DeleteUserGrant(ctx context.Context, session AdminSession, userID string, repository string) error {
-	path := "/admin/v1/users/" + url.PathEscape(strings.TrimSpace(userID)) + "/grants/" + strings.TrimSpace(repository)
-	return c.requestNoContent(ctx, stdhttp.MethodDelete, session, path, nil, stdhttp.StatusNoContent)
-}
-
 // repositoryGrantsPath/repositoryGrantPath build the delegate-facing
 // repository-grant resource paths (design.md Decision 3 route table).
 // repository is deliberately NOT PathEscape-d -- it can literally contain
-// "/" (mirroring PutUserGrant/DeleteUserGrant's own unescaped-repository
+// "/" (mirroring PutUserGrant's own unescaped-repository
 // precedent above); username can never contain "/" so it is escaped.
 func repositoryGrantsPath(repository string) string {
 	return "/admin/v1/repositories/" + strings.TrimSpace(repository) + "/grants"
@@ -526,8 +520,8 @@ func (c *HTTPAdminClient) RevokeUserAdminToken(ctx context.Context, session Admi
 // url.PathEscape-d (design.md Decision 8 wire shape): escaping its slashes
 // would defeat the server-side split (adminNestedResource splits on the
 // last "/repository-overrides/" occurrence, expecting a literal slash-
-// bearing repository as the final segment), mirroring PutUserGrant/
-// DeleteUserGrant's own unescaped repository precedent.
+// bearing repository as the final segment), mirroring PutUserGrant's own
+// unescaped repository precedent.
 func repositoryOverridePath(feature string, repository string) string {
 	return "/admin/v1/features/" + url.PathEscape(strings.TrimSpace(feature)) + "/repository-overrides/" + strings.TrimSpace(repository)
 }
@@ -594,7 +588,7 @@ func (c *HTTPAdminClient) SetRepositoryOverride(ctx context.Context, session Adm
 }
 
 // ClearRepositoryOverride deletes one repository's override, exactly like
-// DeleteUserGrant (design.md Decision 8).
+// the repository grant delete (design.md Decision 8).
 func (c *HTTPAdminClient) ClearRepositoryOverride(ctx context.Context, session AdminSession, repository string, feature string) error {
 	return c.requestNoContent(ctx, stdhttp.MethodDelete, session, repositoryOverridePath(feature, repository), nil, stdhttp.StatusNoContent)
 }

@@ -11,13 +11,6 @@ import (
 
 const AdminSessionExpiredReasonExpired = "Session expired. Log in again."
 
-type adminGrantField int
-
-const (
-	adminGrantFieldRepository adminGrantField = iota
-	adminGrantFieldRole
-)
-
 // adminRepoGrantField identifies which of adminRepositoryGrantForm's 2
 // fields has focus. A sibling of adminGrantField, not an extension: the
 // repo-admin delegate's form has no Repository field (it is fixed by
@@ -58,13 +51,6 @@ const (
 	trivyConfigFieldRegistryReachableURL
 	trivyConfigFieldMaxConcurrency
 )
-
-type adminGrantForm struct {
-	Repository           string
-	Role                 domainauth.RepoRole
-	Focus                adminGrantField
-	RepositorySuggestion int
-}
 
 // adminRepositoryGrantForm backs screenRepoAdminAddGrant (design.md
 // Decision 7): a repo-admin delegate names a user by username (no user
@@ -353,11 +339,8 @@ type AdminViewState struct {
 	// Tokens screens work on (the Users screens own their own state).
 	SelectedUserID   string
 	SelectedUsername string
-	Grants           []ports.AdminRepoGrant
-	SelectedGrant    int
 	AdminTokens      []ports.AdminToken
 	SelectedToken    int
-	GrantForm        adminGrantForm
 	TokenForm        adminTokenForm
 	// Confirm is THE confirm-before-destructive-action primitive
 	// (design.md Decision E, D7), replacing adminConfirmModal's Kind-union.
@@ -459,9 +442,6 @@ func (s AdminSession) Remaining(now time.Time) time.Duration {
 
 func newAdminViewState() AdminViewState {
 	return AdminViewState{
-		GrantForm: adminGrantForm{
-			Role: domainauth.RepoRoleReader,
-		},
 		RepoAdminGrantForm: adminRepositoryGrantForm{
 			Role: domainauth.RepoRoleReader,
 		},

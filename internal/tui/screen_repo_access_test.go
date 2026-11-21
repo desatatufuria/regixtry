@@ -433,8 +433,9 @@ func TestRepoAccessEnterOpensTheUserOrTheRobot(t *testing.T) {
 	t.Parallel()
 	m := repoAccessModelAt(t, repoAccessClient(), repoAccessKnown, 150, 24)
 	m = repoAccessPress(t, m, testKeyEnter())
-	if m.screen != screenAdminEditUser || m.adminView.SelectedUserID != "u-alice" || m.adminView.SelectedUsername != "alice" {
-		t.Fatalf("Enter on alice: screen=%q id=%q name=%q", m.screen, m.adminView.SelectedUserID, m.adminView.SelectedUsername)
+	edit, _ := m.adminScreens[slotEditUser].(editUserScreen)
+	if m.screen != screenAdminEditUser || edit.userID != "u-alice" || edit.username != "alice" {
+		t.Fatalf("Enter on alice: screen=%q id=%q name=%q", m.screen, edit.userID, edit.username)
 	}
 
 	m = repoAccessModelAt(t, repoAccessClient(), repoAccessKnown, 150, 24)
