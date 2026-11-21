@@ -77,7 +77,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 ```
 
 ```json
-[{"id":"tok_1","accessor":"atk_a1b2","name":"ci","user_id":"u_1","username":"alice","is_robot":false,"created_at":"2026-02-01T10:00:00Z","expires_at":"2026-03-10T10:00:00Z"}]
+[{"id":"6f1c2b0e-8d4a-4a53-9a57-1f3e5c7d9b21","accessor":"act_6f1c2b0e8d4a4a539a571f3e5c7d9b21","name":"ci","user_id":"u_1","username":"alice","is_robot":false,"created_at":"2026-02-01T10:00:00Z","expires_at":"2026-03-10T10:00:00Z"}]
 ```
 
 See [registry.md](registry.md#blob-garbage-collection) for the full garbage-collection flow, including the grace window and delete-time re-check that keep it safe.

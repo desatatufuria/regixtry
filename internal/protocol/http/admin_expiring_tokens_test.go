@@ -106,7 +106,7 @@ func TestRouterAdminExpiringTokens(t *testing.T) {
 		}
 	})
 	t.Run("invalid parameters are 422", func(t *testing.T) {
-		for _, q := range []string{"?within=3y", "?within=731d", "?within=30", "?within=0d", "?within=-1d", "?within=1w", "?within=", "?within=d", "?within=1.5d", "?limit=0", "?limit=201", "?limit=abc", "?limit=", "?limit=-1", "?limit=+5", "?limit=1.5"} {
+		for _, q := range []string{"?within=3y", "?within=731d", "?within=30", "?within=0d", "?within=-1d", "?within=1w", "?within=", "?within=d", "?within=1.5d", "?limit=0", "?limit=201", "?limit=abc", "?limit=", "?limit=-1", "?limit=+5", "?limit=0001", "?limit=+1", "?limit=%201", "?limit=1.5"} {
 			if rec := get(q, adminToken); rec.Code != http.StatusUnprocessableEntity {
 				t.Errorf("%s status = %d body=%s", q, rec.Code, rec.Body.String())
 			}

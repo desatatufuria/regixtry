@@ -1369,7 +1369,7 @@ func (r *Router) handleAdminExpiringTokens(w stdhttp.ResponseWriter, req *stdhtt
 
 func parseAdminExpiringLimit(raw string) (int, error) {
 	invalid := domainauth.NewValidationError("limit must be a whole number between 1 and 200")
-	if raw == "" || len(raw) > 6 {
+	if raw == "" || len(raw) > 3 || raw[0] == '0' {
 		return 0, invalid
 	}
 	for i := 0; i < len(raw); i++ {
