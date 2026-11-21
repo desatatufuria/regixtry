@@ -107,7 +107,9 @@ func (s resetPasswordScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, te
 func (s resetPasswordScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd, bool) {
 	switch {
 	case isEscKey(msg):
-		return s, openUserScreen(openUserScreenMsg{to: screenAdminEditUser, userID: s.userID, username: s.username}), true
+		// Leave nothing typed behind: the returned value replaces the slot's.
+		cancelled := newResetPasswordScreen(s.userID, s.username)
+		return cancelled, openUserScreen(openUserScreenMsg{to: screenAdminEditUser, userID: s.userID, username: s.username}), true
 	case isTabKey(msg), isShiftTabKey(msg), isArrowDownKey(msg), isArrowUpKey(msg):
 		s.focus = (s.focus + 1) % resetPasswordFieldCount
 	case isEnterKey(msg):

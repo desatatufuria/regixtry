@@ -349,7 +349,7 @@ type AdminSession struct {
 }
 
 type AdminViewState struct {
-	// SelectedUserID/SelectedUsername name the principal the old Grants and
+	// SelectedUserID/SelectedUsername name the principal the Grants and
 	// Tokens screens work on (the Users screens own their own state).
 	SelectedUserID   string
 	SelectedUsername string
@@ -399,7 +399,7 @@ type AdminViewState struct {
 	// screenAdminCreateRobot (design.md Decision 7): global-admin-only
 	// screens, a sibling data set to the Users list -- a robot is never listed
 	// in Users (store.go's ListUsers excludes is_robot rows) and has no
-	// edit screen of its own; token issuance reuses the old Tokens screen via
+	// edit screen of its own; token issuance reuses the Tokens screen via
 	// SelectedUserID.
 	Robots          []ports.AdminRobot
 	SelectedRobot   int

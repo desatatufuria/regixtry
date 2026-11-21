@@ -273,7 +273,7 @@ const (
 	screenRepoAdminAddGrant screen = "repo-admin-add-grant"
 	// screenAdminRobots/screenAdminCreateRobot are global-admin-only
 	// screens (design.md Decision 7), reached from the Overview's sidebar.
-	// Token issuance reuses the old Tokens screen through SelectedUserID --
+	// Token issuance reuses the Tokens screen through SelectedUserID --
 	// there is no separate robot edit screen.
 	screenAdminRobots      screen = "admin-robots"
 	screenAdminCreateRobot screen = "admin-create-robot"
@@ -1246,6 +1246,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// navigating back to it never discards its state.
 		m.screen = msg.To
 		m.status = ""
+		m.adminScreens[slotCreateUser] = nil
+		m.adminScreens[slotChangePassword] = nil
 		if msg.To == screenAdminOverview {
 			// Coming back to the Overview refreshes "Needs attention": the
 			// operator may just have granted access or fixed a robot.
@@ -3689,10 +3691,18 @@ func (m Model) userScreenOwns(gen uint64) bool {
 }
 
 // openUserScreen mounts a FRESH user-management screen and loads it, or opens
-// the Tokens screen (still the old one) for the user. A fresh screen every
+// the Tokens screen for the user. A fresh screen every
 // time means a form never shows what was typed on an earlier visit.
 func (m Model) openUserScreen(msg openUserScreenMsg) (tea.Model, tea.Cmd) {
 	m.status = ""
+	// A form left behind (Esc, or another screen opening) must not keep what
+	// was typed in it: only the form being opened survives.
+	if msg.to != screenAdminCreateUser {
+		m.adminScreens[slotCreateUser] = nil
+	}
+	if msg.to != screenAdminChangePassword {
+		m.adminScreens[slotChangePassword] = nil
+	}
 	switch msg.to {
 	case screenAdminEditUserTokens:
 		if msg.userID != m.adminView.SelectedUserID {
@@ -3719,7 +3729,7 @@ func (m Model) openUserScreen(msg openUserScreenMsg) (tea.Model, tea.Cmd) {
 	return m, next.Init(m.screenEnv())
 }
 
-// backToUser is Esc on the old Grants and Tokens screens: back to the user's
+// backToUser is Esc on the Grants and Tokens screens: back to the user's
 // profile, or to the Robots list when the principal is a robot (a robot has no
 // profile screen).
 func (m Model) backToUser() (tea.Model, tea.Cmd) {

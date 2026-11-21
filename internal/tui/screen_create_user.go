@@ -117,7 +117,9 @@ func (s createUserScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.C
 func (s createUserScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd, bool) {
 	switch {
 	case isEscKey(msg):
-		return s, openUserScreen(openUserScreenMsg{to: screenAdminUsers}), true
+		// Leave nothing typed behind: the returned value replaces the slot's.
+		cancelled := newCreateUserScreen()
+		return cancelled, openUserScreen(openUserScreenMsg{to: screenAdminUsers}), true
 	case isTabKey(msg), isArrowDownKey(msg):
 		s.focus = (s.focus + 1) % createUserFieldCount
 	case isShiftTabKey(msg), isArrowUpKey(msg):
