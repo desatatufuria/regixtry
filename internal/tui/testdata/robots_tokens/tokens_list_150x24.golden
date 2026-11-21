@@ -21,4 +21,4 @@
                                │                                                                    │                                              │  
                                │                                                                    ╰──────────────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  n new token   x revoke   g grant access   ↑↓ move   esc back   q quit                                                                               
+  n new token   x revoke   g grant access   r refresh   ↑↓ move   esc back   q quit                                                                   

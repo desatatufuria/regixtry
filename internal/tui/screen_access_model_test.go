@@ -187,13 +187,8 @@ func TestAForeignGenerationNeverReachesTheMountedScreen(t *testing.T) {
 	m, _ := accessModel(t, nil)
 	m = overviewPress(t, m, testKeyRunes("r"))
 	current := m.adminScreens[slotCreateRobot].(createRobotScreen)
-	updated, _ := m.Update(robotCreatedMsg{gen: current.gen + 99, created: ports.AdminCreatedRobot{Secret: "stale-secret"}})
-	got := updated.(Model)
-	if got.adminScreens[slotCreateRobot].(createRobotScreen).done {
-		t.Fatal("a stale result produced a secret screen")
-	}
-	// A stale expiry must not log the operator out either.
-	updated, _ = m.Update(robotCreatedMsg{gen: current.gen + 99, err: NewAdminSessionExpiredError("old")})
+	// A stale list result is dropped, and a stale expiry never logs out.
+	updated, _ := m.Update(robotsLoadedMsg{gen: current.gen + 99, err: NewAdminSessionExpiredError("old")})
 	if updated.(Model).screen != screenAdminCreateRobot {
 		t.Fatalf("a stale expiry changed the screen to %q", updated.(Model).screen)
 	}

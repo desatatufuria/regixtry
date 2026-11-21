@@ -74,9 +74,9 @@ func (l trustedKeyList) Keys() []string { return l.keys }
 // update handles one key while the list has focus. consumed=false lets the
 // caller (overrideEditor/signingConfigScreen) fall through to its own
 // Tab/Esc/Enter/Space handling for any key this list does not claim --
-// Up/Down, 'n' (add, matching this codebase's existing "new" precedent,
-// e.g. updateAdminUsersKey), 'x' (delete, matching its existing "remove"
-// precedent, e.g. updateAdminTokensKey), and everything typed while
+// Up/Down, 'n' (add, matching this codebase's existing "new" precedent on the
+// Users and Robots lists), 'x' (delete, matching its existing "remove"
+// precedent on the Tokens and Repository access screens), and everything typed while
 // adding or confirming a delete.
 func (l trustedKeyList) update(env screenEnv, msg keyMsg) (trustedKeyList, tea.Cmd, bool) {
 	if l.usageLoading {

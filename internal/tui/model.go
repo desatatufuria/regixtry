@@ -364,12 +364,17 @@ type adminLoginForm struct {
 }
 
 type Model struct {
-	ctx         context.Context
-	service     QueryService
-	screen      screen
-	loadingText string
-	err         error
-	now         func() time.Time
+	// lateNotice is the one-line report of a create result that arrived after
+	// its screen was left; queuedSecrets are created credentials waiting
+	// behind a secret that is on screen. Both end with the session.
+	lateNotice    string
+	queuedSecrets []accessMsg
+	ctx           context.Context
+	service       QueryService
+	screen        screen
+	loadingText   string
+	err           error
+	now           func() time.Time
 
 	repositories RepositoriesModel
 	projects     ProjectsModel
@@ -855,10 +860,10 @@ func (m Model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.adminScreens, _ = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
 		return m, nil
 	case keyMsg:
-		return m.updateKey(msg)
+		return m.handleKey(msg)
 	case tea.PasteMsg:
 		// v1 delivered a paste as a runes key to the active screen only; keep that path.
-		return m.updateKey(keyMsg{Text: msg.Content})
+		return m.handleKey(keyMsg{Text: msg.Content})
 	case catalogLoadedMsg:
 		if msg.err != nil {
 			m.screen = screenError
@@ -1668,7 +1673,8 @@ func (m Model) viewScreen() string {
 			help = shortHelpView(newAdminTheme(), m.adminScreens[slot].Keys())
 		}
 		layout := m.contentBudget(m.status, help)
-		return renderAdminWorkspace(m.screen, m.adminSession, m.adminView, m.repositories.Names(), m.status, layout, m.now(), m.adminScreens)
+		content := renderAdminWorkspace(m.screen, m.adminSession, m.adminView, m.repositories.Names(), m.status, layout, m.now(), m.adminScreens)
+		return m.overlayLateNotice(content, layout)
 	}
 
 	help := "q: quit"
@@ -3066,6 +3072,10 @@ func (m Model) mountTokens(open openTokensMsg) (tea.Model, tea.Cmd) {
 // stale expiry must never log the operator out. An expired admin session ends
 // in the normal re-login; anything else goes to the screens.
 func (m Model) routeAccessMsg(msg accessMsg) (tea.Model, tea.Cmd) {
+	switch msg.(type) {
+	case robotCreatedMsg, tokenCreatedMsg:
+		return m.routeCreatedCredential(msg)
+	}
 	current, ok := m.adminScreens[msg.accessSlot()].(interface{ generation() uint64 })
 	if !ok || current.generation() != msg.accessGen() {
 		return m, nil
@@ -3081,6 +3091,7 @@ func (m Model) routeAccessMsg(msg accessMsg) (tea.Model, tea.Cmd) {
 // dropAccessScreens un-mounts the Robots, Create robot and Tokens screens so
 // the next visit starts fresh and no one-time secret outlives the session.
 func (m *Model) dropAccessScreens() {
+	m.queuedSecrets, m.lateNotice = nil, ""
 	m.adminScreens[slotRobots] = nil
 	m.adminScreens[slotCreateRobot] = nil
 	m.adminScreens[slotTokens] = nil
@@ -3270,34 +3281,6 @@ func (m Model) canLogoutAdminFromCurrentScreen() bool {
 	default:
 		return false
 	}
-}
-
-// repositorySuggestionsMatching is the core repository-autosuggest filter:
-// case-insensitive substring match against query, deduplicated, order
-// preserved. It takes a plain query string rather than a specific form type
-// so every form with a Repository autosuggest field (adminCreateRobotForm
-// below) can share this exact filtering/dedupe logic -- unlike the
-// authorization-scoped structs such as adminRepositoryGrantForm, this is pure
-// display filtering with no authorization semantics, so sharing is correct.
-func repositorySuggestionsMatching(query string, repositories []string) []string {
-	query = strings.ToLower(strings.TrimSpace(query))
-	seen := make(map[string]struct{}, len(repositories))
-	suggestions := make([]string, 0, len(repositories))
-	for _, repository := range repositories {
-		repository = strings.TrimSpace(repository)
-		if repository == "" {
-			continue
-		}
-		if _, ok := seen[repository]; ok {
-			continue
-		}
-		seen[repository] = struct{}{}
-		if query != "" && !strings.Contains(strings.ToLower(repository), query) {
-			continue
-		}
-		suggestions = append(suggestions, repository)
-	}
-	return suggestions
 }
 
 func featureActionForKey(msg keyMsg, page ports.FeaturePage) (ports.FeatureAction, bool) {
@@ -3550,22 +3533,6 @@ func formatRemaining(remaining time.Duration) string {
 		return "0s"
 	}
 	return remaining.Truncate(time.Second).String()
-}
-
-func (m *Model) clearSelectedAdminDetails() {
-	// Features/FeaturePage/TrivyTab/TrivyConfigModal/TrivyScanRuns/
-	// TrivySelectedAlert/TrivyAlertsLoaded/TrivySummaries/TrivyOverrides all
-	// migrated off AdminViewState (Phase 11); the Security screens are simply
-	// un-mounted here instead, so the operator
-	// gets a fresh load the next time they are navigated into.
-	m.adminScreens[slotTrivyConfig] = nil
-	m.adminScreens[slotTrivyRepos] = nil
-	m.adminScreens[slotGitleaksConfig] = nil
-	m.adminScreens[slotSigningConfig] = nil
-	// scanHistoryScreen (Phase 19) migrated off AdminViewState.ScanHistoryModal
-	// onto its own dedicated slot (design.md's State Migration table);
-	// un-mounted here exactly like the Security screens above.
-	m.adminScreens[slotScanHistory] = nil
 }
 
 // applyLoadedFeatures/applyFeaturePage/selectedFeatureName/

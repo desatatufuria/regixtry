@@ -29,6 +29,8 @@ type tokensScreen struct {
 	loaded   bool
 	err      string
 	selected int
+	// loading is true while a read is in flight; r does not start another.
+	loading bool
 
 	// focus is the list until the operator starts issuing a token with n or
 	// Tab; the panel's name and lifetime then take every key, letters included.
@@ -36,11 +38,9 @@ type tokensScreen struct {
 	name     string
 	lifetime tokenLifetime
 	// creating is true from the Enter that issued the create command until its
-	// result arrives; Enter is ignored meanwhile. Esc still leaves: left then
-	// brings the screen back when the token was created after all, so its
-	// one-time secret is never lost.
+	// result arrives; Enter is ignored meanwhile. Esc still leaves: the Model
+	// then shows the secret anyway when the token was created after all.
 	creating bool
-	left     bool
 	formErr  string
 
 	done    bool
@@ -92,6 +92,20 @@ func (s tokensScreen) Keys() screenKeys {
 
 func (s tokensScreen) Init(env screenEnv) tea.Cmd { return tokensLoadCmd(env, s.gen, s.principalID) }
 
+// reload starts a read of the tokens unless one is already in flight.
+func (s tokensScreen) reload(env screenEnv) (tokensScreen, tea.Cmd) {
+	if s.loading || !s.loaded {
+		return s, nil
+	}
+	return s.startLoad(env)
+}
+
+// startLoad reads the tokens now, whatever is in flight.
+func (s tokensScreen) startLoad(env screenEnv) (tokensScreen, tea.Cmd) {
+	s.loading = true
+	return s, tokensLoadCmd(env, s.gen, s.principalID)
+}
+
 // capturesInput reports a state in which letters are typed or swallowed, so
 // the global q (quit) and l (logout) keys must not act.
 func (s tokensScreen) capturesInput() bool {
@@ -121,10 +135,14 @@ type tokensLoadedMsg struct {
 }
 
 type tokenCreatedMsg struct {
-	gen     uint64
-	input   ports.AdminCreateTokenInput
-	created ports.AdminCreatedToken
-	err     error
+	gen uint64
+	// principal is who the token was issued for, so a result that outlived its
+	// screen can still rebuild the secret state.
+	principalID, principalName string
+	robot                      bool
+	input                      ports.AdminCreateTokenInput
+	created                    ports.AdminCreatedToken
+	err                        error
 }
 
 type tokenRevokedMsg struct {
@@ -153,7 +171,7 @@ func (s tokensScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.Cmd, 
 		if typed.gen != s.gen {
 			return s, nil, false
 		}
-		s.loaded, s.err = true, errText(typed.err)
+		s.loaded, s.loading, s.err = true, false, errText(typed.err)
 		if typed.err == nil {
 			var keep string
 			if token, ok := s.selectedToken(); ok {
@@ -176,19 +194,9 @@ func (s tokensScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.Cmd, 
 			return s, nil, false
 		}
 		s.done, s.formErr = true, ""
-		s.created = createdToken{
-			name:     firstText(typed.created.Token.Name, typed.input.Name),
-			accessor: firstText(typed.created.Accessor, typed.created.Token.Accessor),
-			secret:   typed.created.Secret,
-			expires:  typed.created.ExpiresAt,
-		}
-		if s.left {
-			// The operator pressed Esc while the token was being created: show
-			// the secret anyway, it cannot be displayed again.
-			s.left = false
-			return s, navigate(screenAdminEditUserTokens), false
-		}
-		return s, tokensLoadCmd(env, s.gen, s.principalID), false
+		s.created = createdTokenFrom(typed)
+		next, cmd := s.startLoad(env)
+		return next, cmd, false
 	case tokenRevokedMsg:
 		if typed.gen != s.gen {
 			return s, nil, false
@@ -199,7 +207,8 @@ func (s tokensScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.Cmd, 
 			return s, nil, false
 		}
 		s.notice, s.noticeFail = "Token revoked.", false
-		return s, tokensLoadCmd(env, s.gen, s.principalID), false
+		next, cmd := s.startLoad(env)
+		return next, cmd, false
 	}
 	return s, nil, false
 }
@@ -251,22 +260,22 @@ func (s tokensScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd
 		if isEnterKey(msg) || isEscKey(msg) {
 			s.done, s.created, s.focus = false, createdToken{}, tokensFocusList
 			s.name, s.lifetime = "", tokenLifetime{}
-			return s, tokensLoadCmd(env, s.gen, s.principalID), true
+			next, cmd := s.startLoad(env)
+			return next, cmd, true
 		}
 		return s, nil, true
 	case s.creating:
 		if isEscKey(msg) {
-			s.left = true
 			return s, s.back(), true
 		}
 		return s, nil, true
 	case s.focus != tokensFocusList:
 		return s.panelKey(env, msg)
 	}
-	return s.listKey(msg)
+	return s.listKey(env, msg)
 }
 
-func (s tokensScreen) listKey(msg keyMsg) (adminScreen, tea.Cmd, bool) {
+func (s tokensScreen) listKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd, bool) {
 	switch {
 	case isEscKey(msg):
 		return s, s.back(), true
@@ -274,6 +283,9 @@ func (s tokensScreen) listKey(msg keyMsg) (adminScreen, tea.Cmd, bool) {
 		s.selected = boundedIndex(s.selected-1, len(s.tokens))
 	case isMoveDownKey(msg):
 		s.selected = boundedIndex(s.selected+1, len(s.tokens))
+	case isCommandRune(msg, 'r'):
+		next, cmd := s.reload(env)
+		return next, cmd, true
 	case isCommandRune(msg, 'g'):
 		return s, openGrantAccess(s.principalID, screenAdminEditUserTokens), true
 	case isCommandRune(msg, 'n') || isTabKey(msg):
@@ -334,7 +346,7 @@ func (s tokensScreen) panelKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd,
 		}
 		s.creating, s.formErr = true, ""
 		input := ports.AdminCreateTokenInput{UserID: s.principalID, Name: strings.TrimSpace(s.name), TTL: ttl}
-		return s, tokenCreateCmd(env, s.gen, input), true
+		return s, tokenCreateCmd(env, s, input), true
 	}
 	switch s.focus {
 	case tokensFocusName:
@@ -358,14 +370,17 @@ func tokensLoadCmd(env screenEnv, gen uint64, principalID string) tea.Cmd {
 	}
 }
 
-func tokenCreateCmd(env screenEnv, gen uint64, input ports.AdminCreateTokenInput) tea.Cmd {
+func tokenCreateCmd(env screenEnv, s tokensScreen, input ports.AdminCreateTokenInput) tea.Cmd {
+	gen := s.gen
+	who := tokenCreatedMsg{gen: gen, principalID: s.principalID, principalName: s.principalName, robot: s.robot, input: input}
 	client, session := env.Client, env.Session
 	return func() tea.Msg {
 		if client == nil {
-			return tokenCreatedMsg{gen: gen, input: input, err: errAdminUnavailable}
+			who.err = errAdminUnavailable
+			return who
 		}
-		created, err := client.CreateUserAdminToken(context.Background(), session, input)
-		return tokenCreatedMsg{gen: gen, input: input, created: created, err: err}
+		who.created, who.err = client.CreateUserAdminToken(context.Background(), session, input)
+		return who
 	}
 }
 
@@ -384,6 +399,7 @@ var tokensListKeys = screenKeys{short: []key.Binding{
 	key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "new token")),
 	key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "revoke")),
 	key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "grant access")),
+	key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 	key.NewBinding(key.WithKeys("up", "down"), key.WithHelp("↑↓", "move")),
 	key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
 	key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
@@ -399,3 +415,22 @@ var tokensPanelKeys = screenKeys{short: []key.Binding{
 var tokensDoneKeys = screenKeys{short: []key.Binding{
 	key.NewBinding(key.WithKeys("enter", "esc"), key.WithHelp("enter", "done")),
 }}
+
+// createdTokenFrom is what the secret state shows for a created token.
+func createdTokenFrom(msg tokenCreatedMsg) createdToken {
+	return createdToken{
+		name:     firstText(msg.created.Token.Name, msg.input.Name),
+		accessor: firstText(msg.created.Accessor, msg.created.Token.Accessor),
+		secret:   msg.created.Secret,
+		expires:  msg.created.ExpiresAt,
+	}
+}
+
+// newClaimedTokensScreen is the secret state of a token created by a screen
+// that is gone: the credential cannot be displayed again.
+func newClaimedTokensScreen(msg tokenCreatedMsg) tokensScreen {
+	s := newTokensScreen(msg.principalID, msg.principalName, msg.robot)
+	s.done = true
+	s.created = createdTokenFrom(msg)
+	return s
+}

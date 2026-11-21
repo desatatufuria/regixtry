@@ -29,11 +29,9 @@ type createRobotScreen struct {
 	focus      robotField
 
 	// creating is true from the Enter that issued the create command until its
-	// result arrives; Enter is ignored meanwhile. Esc still leaves: left then
-	// brings the screen back when the robot was created after all, so its
-	// one-time secret is never lost.
+	// result arrives; Enter is ignored meanwhile. Esc still leaves: the Model
+	// then shows the secret anyway when the robot was created after all.
 	creating bool
-	left     bool
 	// err is the validation or server message shown above the buttons.
 	err string
 
@@ -110,26 +108,8 @@ func (s createRobotScreen) applyCreated(msg robotCreatedMsg) (createRobotScreen,
 		s.err = msg.err.Error()
 		return s, nil
 	}
-	robot := msg.created.Robot
 	s.done, s.err = true, ""
-	s.created = createdRobot{
-		id:         robot.ID,
-		name:       firstText(robot.Username, msg.input.Name),
-		repository: firstText(robot.Repository, msg.input.Repository),
-		role:       msg.created.Robot.Role,
-		accessor:   msg.created.Accessor,
-		secret:     msg.created.Secret,
-		expires:    msg.created.ExpiresAt,
-	}
-	if s.created.role == "" {
-		s.created.role = msg.input.Role
-	}
-	if s.left {
-		// The operator pressed Esc while the robot was being created: show the
-		// secret anyway, it cannot be displayed again.
-		s.left = false
-		return s, navigate(screenAdminCreateRobot)
-	}
+	s.created = createdRobotFrom(msg)
 	return s, nil
 }
 
@@ -152,7 +132,6 @@ func (s createRobotScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, te
 	}
 	if s.creating {
 		if isEscKey(msg) {
-			s.left = true
 			return s, openRobots(""), true
 		}
 		return s, nil, true
@@ -276,3 +255,31 @@ var createRobotKeys = screenKeys{short: []key.Binding{
 var createRobotDoneKeys = screenKeys{short: []key.Binding{
 	key.NewBinding(key.WithKeys("enter", "esc"), key.WithHelp("enter", "done")),
 }}
+
+// createdRobotFrom is what the secret state shows for a created robot.
+func createdRobotFrom(msg robotCreatedMsg) createdRobot {
+	robot := msg.created.Robot
+	created := createdRobot{
+		id:         robot.ID,
+		name:       firstText(robot.Username, msg.input.Name),
+		repository: firstText(robot.Repository, msg.input.Repository),
+		role:       robot.Role,
+		accessor:   msg.created.Accessor,
+		secret:     msg.created.Secret,
+		expires:    msg.created.ExpiresAt,
+	}
+	if created.role == "" {
+		created.role = msg.input.Role
+	}
+	return created
+}
+
+// newClaimedRobotScreen is the secret state of a robot created by a screen
+// that is gone: the credential cannot be displayed again, so it is shown
+// whatever the operator was doing.
+func newClaimedRobotScreen(msg robotCreatedMsg) createRobotScreen {
+	s := newCreateRobotScreen()
+	s.done = true
+	s.created = createdRobotFrom(msg)
+	return s
+}
