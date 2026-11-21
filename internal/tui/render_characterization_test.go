@@ -99,7 +99,7 @@ var characterizationScreens = []struct {
 	{"admin_create_token_form", func(t *testing.T, w, h int) Model {
 		m := charAdminModel(t, w, h)
 		m.screen = screenAdminCreateToken
-		m.adminView.TokenForm = adminTokenForm{Name: "ci bot", TTLSeconds: "3600"}
+		m.adminView.TokenForm = adminTokenForm{Name: "ci bot"}
 		return m
 	}},
 	{"admin_grant_form_suggestions", func(t *testing.T, w, h int) Model {

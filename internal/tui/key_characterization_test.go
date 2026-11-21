@@ -195,23 +195,25 @@ func TestTokenFormTextEntryCharacterization(t *testing.T) {
 	}
 
 	m = testSendKey(t, m, testKeyTab())
-	if got := m.adminView.TokenForm.Focus; got != adminTokenFieldTTL {
-		t.Fatalf("focus after tab = %v, want TTL", got)
+	if got := m.adminView.TokenForm.Focus; got != adminTokenFieldLifetime {
+		t.Fatalf("focus after tab = %v, want Lifetime", got)
 	}
+	// The lifetime selector replaced the raw TTL seconds field: letters and
+	// digits do nothing on a preset, and Custom takes digits only.
 	m = testSendKeys(t, m, testKeyRunes("12x"), testKeyRunes("a"), testKeySpace(), testKeyRunes("-"))
-	if got := m.adminView.TokenForm.TTLSeconds; got != "" {
-		t.Fatalf("TTL after non-digit input = %q, want it rejected", got)
+	if got := m.adminView.TokenForm.Lifetime; got != (tokenLifetime{}) {
+		t.Fatalf("lifetime after stray input = %#v, want it untouched", got)
 	}
-	m = testSendKeys(t, m, testKeyRunes("3600"), testKeyRunes("9"))
-	if got, want := m.adminView.TokenForm.TTLSeconds, "36009"; got != want {
-		t.Fatalf("TTL after digits = %q, want %q", got, want)
+	m = testSendKeys(t, m, testKeyRight(), testKeyRunes("x"), testKeyRunes("3"), testKeyRunes("9"))
+	if got, want := m.adminView.TokenForm.Lifetime.CustomDays, "39"; got != want {
+		t.Fatalf("custom days after digits = %q, want %q", got, want)
 	}
 	m = testSendKey(t, m, testKeyBackspace())
-	if got, want := m.adminView.TokenForm.TTLSeconds, "3600"; got != want {
-		t.Fatalf("TTL after backspace = %q, want %q", got, want)
+	if got, want := m.adminView.TokenForm.Lifetime.CustomDays, "3"; got != want {
+		t.Fatalf("custom days after backspace = %q, want %q", got, want)
 	}
 	if got, want := m.adminView.TokenForm.Name, "ci bo"; got != want {
-		t.Fatalf("Name changed while TTL focused: %q, want %q", got, want)
+		t.Fatalf("Name changed while Lifetime focused: %q, want %q", got, want)
 	}
 
 	m = testSendKey(t, m, testKeyEsc())

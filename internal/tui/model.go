@@ -8,7 +8,6 @@ import (
 	stdhttp "net/http"
 	"os"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -2403,6 +2402,12 @@ func (m Model) updateAdminRobotsKey(msg keyMsg) (tea.Model, tea.Cmd) {
 // this form is global-admin-only, so Role is not restricted away from
 // repo-admin.
 func (m Model) updateCreateRobotFormKey(msg keyMsg) (tea.Model, tea.Cmd) {
+	if m.adminView.CreateRobotForm.Focus == adminCreateRobotFieldLifetime {
+		if lifetime, handled := m.adminView.CreateRobotForm.Lifetime.handleKey(msg, lifetimeCeiling()); handled {
+			m.adminView.CreateRobotForm.Lifetime = lifetime
+			return m, nil
+		}
+	}
 	switch {
 	case isEscKey(msg):
 		// Esc is the ordinary "cancel/back" exit from the create screen,
@@ -2459,15 +2464,12 @@ func (m Model) updateCreateRobotFormKey(msg keyMsg) (tea.Model, tea.Cmd) {
 			m.status = "Name and repository are required."
 			return m, nil
 		}
-		input := ports.AdminCreateRobotInput{Name: name, Repository: repository, Role: m.adminView.CreateRobotForm.Role}
-		if ttl := strings.TrimSpace(m.adminView.CreateRobotForm.TTLSeconds); ttl != "" {
-			seconds, err := strconv.ParseInt(ttl, 10, 64)
-			if err != nil {
-				m.status = "TTL seconds must be a whole number."
-				return m, nil
-			}
-			input.TTL = time.Duration(seconds) * time.Second
+		ttl, ok := m.adminView.CreateRobotForm.Lifetime.duration(lifetimeCeiling())
+		if !ok {
+			// The form stays open; the validation message replaces the preview.
+			return m, nil
 		}
+		input := ports.AdminCreateRobotInput{Name: name, Repository: repository, Role: m.adminView.CreateRobotForm.Role, TTL: ttl}
 		m.status = fmt.Sprintf("Creating robot %s...", name)
 		return m, m.createAdminRobotCmd(input)
 	}
@@ -2478,13 +2480,6 @@ func (m Model) updateCreateRobotFormKey(msg keyMsg) (tea.Model, tea.Cmd) {
 		case adminCreateRobotFieldRepository:
 			m.adminView.CreateRobotForm.Repository += keyText(msg)
 			m.adminView.CreateRobotForm.RepositorySuggestion = 0
-		case adminCreateRobotFieldTTL:
-			for _, r := range keyText(msg) {
-				if !unicode.IsDigit(r) {
-					return m, nil
-				}
-			}
-			m.adminView.CreateRobotForm.TTLSeconds += keyText(msg)
 		}
 		return m, nil
 	}
@@ -3007,51 +3002,41 @@ func (m Model) updateRepoAdminAddGrantKey(msg keyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateTokenFormKey(msg keyMsg) (tea.Model, tea.Cmd) {
+	if m.adminView.TokenForm.Focus == adminTokenFieldLifetime {
+		if lifetime, handled := m.adminView.TokenForm.Lifetime.handleKey(msg, lifetimeCeiling()); handled {
+			m.adminView.TokenForm.Lifetime = lifetime
+			return m, nil
+		}
+	}
 	switch {
 	case isEscKey(msg):
 		m.screen = screenAdminEditUserTokens
 		return m, nil
 	case isTabKey(msg):
 		if m.adminView.TokenForm.Focus == adminTokenFieldName {
-			m.adminView.TokenForm.Focus = adminTokenFieldTTL
+			m.adminView.TokenForm.Focus = adminTokenFieldLifetime
 		} else {
 			m.adminView.TokenForm.Focus = adminTokenFieldName
 		}
 		return m, nil
 	case isBackspaceKey(msg):
-		if m.adminView.TokenForm.Focus == adminTokenFieldName {
-			m.adminView.TokenForm.Name = trimLastRune(m.adminView.TokenForm.Name)
-		} else {
-			m.adminView.TokenForm.TTLSeconds = trimLastRune(m.adminView.TokenForm.TTLSeconds)
-		}
+		m.adminView.TokenForm.Name = trimLastRune(m.adminView.TokenForm.Name)
 		return m, nil
 	case isEnterKey(msg):
 		if strings.TrimSpace(m.adminView.SelectedUserID) == "" {
 			m.status = "Select a user to manage admin tokens."
 			return m, nil
 		}
-		input := ports.AdminCreateTokenInput{UserID: m.adminView.SelectedUserID, Name: strings.TrimSpace(m.adminView.TokenForm.Name)}
-		if ttl := strings.TrimSpace(m.adminView.TokenForm.TTLSeconds); ttl != "" {
-			seconds, err := strconv.ParseInt(ttl, 10, 64)
-			if err != nil {
-				m.status = "TTL seconds must be a whole number."
-				return m, nil
-			}
-			input.TTL = time.Duration(seconds) * time.Second
+		ttl, ok := m.adminView.TokenForm.Lifetime.duration(lifetimeCeiling())
+		if !ok {
+			// The form stays open; the validation message replaces the preview.
+			return m, nil
 		}
+		input := ports.AdminCreateTokenInput{UserID: m.adminView.SelectedUserID, Name: strings.TrimSpace(m.adminView.TokenForm.Name), TTL: ttl}
 		m.status = fmt.Sprintf("Creating admin token for %s...", m.adminView.SelectedUsername)
 		return m, m.createAdminTokenCmd(input)
 	}
 	if isTextKey(msg) {
-		if m.adminView.TokenForm.Focus == adminTokenFieldTTL {
-			for _, r := range keyText(msg) {
-				if !unicode.IsDigit(r) {
-					return m, nil
-				}
-			}
-			m.adminView.TokenForm.TTLSeconds += keyText(msg)
-			return m, nil
-		}
 		m.adminView.TokenForm.Name += keyText(msg)
 		return m, nil
 	}
@@ -4190,8 +4175,6 @@ func (m *Model) deleteCreateRobotRune() {
 		m.adminView.CreateRobotForm.Name = trimLastRune(m.adminView.CreateRobotForm.Name)
 	case adminCreateRobotFieldRepository:
 		m.adminView.CreateRobotForm.Repository = trimLastRune(m.adminView.CreateRobotForm.Repository)
-	case adminCreateRobotFieldTTL:
-		m.adminView.CreateRobotForm.TTLSeconds = trimLastRune(m.adminView.CreateRobotForm.TTLSeconds)
 	}
 }
 
@@ -4229,9 +4212,9 @@ func nextCreateUserField(field adminCreateUserField) adminCreateUserField {
 }
 
 // nextCreateRobotField cycles screenAdminCreateRobot's 4 fields with a
-// wrapping cursor: Name -> Repository -> Role -> TTL -> Name.
+// wrapping cursor: Name -> Repository -> Role -> Lifetime -> Name.
 func nextCreateRobotField(field adminCreateRobotField) adminCreateRobotField {
-	if field >= adminCreateRobotFieldTTL {
+	if field >= adminCreateRobotFieldLifetime {
 		return adminCreateRobotFieldName
 	}
 	return field + 1

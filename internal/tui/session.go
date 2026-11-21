@@ -49,12 +49,12 @@ type adminTokenField int
 
 const (
 	adminTokenFieldName adminTokenField = iota
-	adminTokenFieldTTL
+	adminTokenFieldLifetime
 )
 
 // adminCreateRobotField identifies which of adminCreateRobotForm's 4 fields
 // has focus (design.md Decision 7's robot screens): Name -> Repository ->
-// Role -> TTL, a global-admin-only form so, unlike adminRepositoryGrantForm,
+// Role -> Lifetime, a global-admin-only form so, unlike adminRepositoryGrantForm,
 // Role is not restricted away from RepoRoleAdmin.
 type adminCreateRobotField int
 
@@ -62,7 +62,7 @@ const (
 	adminCreateRobotFieldName adminCreateRobotField = iota
 	adminCreateRobotFieldRepository
 	adminCreateRobotFieldRole
-	adminCreateRobotFieldTTL
+	adminCreateRobotFieldLifetime
 )
 
 type TrivyTab string
@@ -115,15 +115,15 @@ type adminRepositoryGrantForm struct {
 }
 
 type adminTokenForm struct {
-	Name       string
-	TTLSeconds string
-	Focus      adminTokenField
+	Name     string
+	Lifetime tokenLifetime
+	Focus    adminTokenField
 }
 
 // adminCreateRobotForm backs screenAdminCreateRobot (design.md Decision 7).
 // Role's zero value is set to domainauth.RepoRoleReader by newAdminViewState
-// (mirroring adminGrantForm/adminRepositoryGrantForm), and TTLSeconds follows
-// adminTokenForm's convention: empty means the service's default TTL.
+// (mirroring adminGrantForm/adminRepositoryGrantForm), and Lifetime is the
+// same selector adminTokenForm uses (default: the service's default TTL).
 // RepositorySuggestion mirrors adminGrantForm.RepositorySuggestion: the
 // screenAdminAddGrant repository autosuggest pattern (filter as you type,
 // Up/Down cycle, Enter commits) reused here so Create Robot behaves
@@ -132,7 +132,7 @@ type adminCreateRobotForm struct {
 	Name                 string
 	Repository           string
 	Role                 domainauth.RepoRole
-	TTLSeconds           string
+	Lifetime             tokenLifetime
 	Focus                adminCreateRobotField
 	RepositorySuggestion int
 }

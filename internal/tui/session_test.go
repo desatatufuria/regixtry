@@ -409,7 +409,7 @@ func TestNewAdminViewStateSeedsAdminRobotFormDefaultsAndEmptyList(t *testing.T) 
 }
 
 // TestNextAdminRobotFormFieldCyclesThroughAllFourFields pins the create-robot
-// form's field order: Name -> Repository -> Role -> TTL, wrapping to Name.
+// form's field order: Name -> Repository -> Role -> Lifetime, wrapping to Name.
 func TestNextAdminRobotFormFieldCyclesThroughAllFourFields(t *testing.T) {
 	t.Parallel()
 
@@ -419,11 +419,11 @@ func TestNextAdminRobotFormFieldCyclesThroughAllFourFields(t *testing.T) {
 	if got := nextCreateRobotField(adminCreateRobotFieldRepository); got != adminCreateRobotFieldRole {
 		t.Fatalf("nextCreateRobotField(Repository) = %v, want Role", got)
 	}
-	if got := nextCreateRobotField(adminCreateRobotFieldRole); got != adminCreateRobotFieldTTL {
-		t.Fatalf("nextCreateRobotField(Role) = %v, want TTL", got)
+	if got := nextCreateRobotField(adminCreateRobotFieldRole); got != adminCreateRobotFieldLifetime {
+		t.Fatalf("nextCreateRobotField(Role) = %v, want Lifetime", got)
 	}
-	if got := nextCreateRobotField(adminCreateRobotFieldTTL); got != adminCreateRobotFieldName {
-		t.Fatalf("nextCreateRobotField(TTL) = %v, want Name (wraps)", got)
+	if got := nextCreateRobotField(adminCreateRobotFieldLifetime); got != adminCreateRobotFieldName {
+		t.Fatalf("nextCreateRobotField(Lifetime) = %v, want Name (wraps)", got)
 	}
 }
 

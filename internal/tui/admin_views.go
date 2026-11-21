@@ -137,7 +137,7 @@ func renderAdminScreen(theme adminTheme, current screen, session AdminSession, v
 	case screenAdminEditUserTokens:
 		return fmt.Sprintf("Users / %s / Tokens", selectedAdminUsername(view)), renderAdminTokensScreen(theme, view), help
 	case screenAdminCreateToken:
-		return fmt.Sprintf("Users / %s / Tokens / Create Token", selectedAdminUsername(view)), renderAdminCreateTokenScreen(theme, view), help
+		return fmt.Sprintf("Users / %s / Tokens / Create Token", selectedAdminUsername(view)), renderAdminCreateTokenScreen(theme, view, now), help
 	case screenRepoAdminGrants:
 		return fmt.Sprintf("Repositories / %s / Grants", view.RepoAdminRepository), renderRepoAdminGrantsScreen(theme, view), help
 	case screenRepoAdminAddGrant:
@@ -145,7 +145,7 @@ func renderAdminScreen(theme adminTheme, current screen, session AdminSession, v
 	case screenAdminRobots:
 		return "Robots", renderAdminRobotsScreen(theme, session, view, layout, now), help
 	case screenAdminCreateRobot:
-		return "Robots / Create Robot", renderAdminCreateRobotScreen(theme, view, knownRepositories), help
+		return "Robots / Create Robot", renderAdminCreateRobotScreen(theme, view, knownRepositories, now), help
 	default:
 		return "Users", renderAdminUsersScreen(theme, session, view, layout, now), help
 	}
@@ -756,7 +756,7 @@ func formatAdminRobotLabel(robot ports.AdminRobot) string {
 // renderAdminCreateRobotScreen mirrors renderAdminAddGrantScreen's windowed,
 // highlighted repository-suggestion list (manual RC feedback: Create Robot's
 // Repository field previously had no autocomplete, unlike Add Grant's).
-func renderAdminCreateRobotScreen(theme adminTheme, view AdminViewState, knownRepositories []string) string {
+func renderAdminCreateRobotScreen(theme adminTheme, view AdminViewState, knownRepositories []string, now time.Time) string {
 	lines := []string{theme.subheading.Render("Create Robot")}
 	if strings.TrimSpace(view.RevealedTokenSecret) != "" {
 		lines = append(lines,
@@ -771,7 +771,7 @@ func renderAdminCreateRobotScreen(theme adminTheme, view AdminViewState, knownRe
 		renderTextField(theme, "Name", view.CreateRobotForm.Name, view.CreateRobotForm.Focus == adminCreateRobotFieldName),
 		renderTextField(theme, "Repository", view.CreateRobotForm.Repository, view.CreateRobotForm.Focus == adminCreateRobotFieldRepository),
 		renderTextField(theme, "Role", string(view.CreateRobotForm.Role), view.CreateRobotForm.Focus == adminCreateRobotFieldRole),
-		renderTextField(theme, "TTL seconds", view.CreateRobotForm.TTLSeconds, view.CreateRobotForm.Focus == adminCreateRobotFieldTTL),
+		renderLifetimeField(theme, view.CreateRobotForm.Lifetime, now, view.CreateRobotForm.Focus == adminCreateRobotFieldLifetime),
 	)
 	suggestions := robotRepositorySuggestions(view.CreateRobotForm, knownRepositories)
 	if len(suggestions) == 0 {
@@ -799,12 +799,12 @@ func renderAdminCreateRobotScreen(theme adminTheme, view AdminViewState, knownRe
 	return theme.section.Render(strings.Join(lines, "\n"))
 }
 
-func renderAdminCreateTokenScreen(theme adminTheme, view AdminViewState) string {
+func renderAdminCreateTokenScreen(theme adminTheme, view AdminViewState, now time.Time) string {
 	return theme.section.Render(strings.Join([]string{
 		theme.subheading.Render("Create Token"),
 		fmt.Sprintf("User: %s", selectedAdminUsername(view)),
 		renderTextField(theme, "Name", view.TokenForm.Name, view.TokenForm.Focus == adminTokenFieldName),
-		renderTextField(theme, "TTL seconds", view.TokenForm.TTLSeconds, view.TokenForm.Focus == adminTokenFieldTTL),
+		renderLifetimeField(theme, view.TokenForm.Lifetime, now, view.TokenForm.Focus == adminTokenFieldLifetime),
 	}, "\n"))
 }
 

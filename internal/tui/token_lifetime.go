@@ -187,3 +187,44 @@ func truncateRunes(value string, limit int) string {
 	}
 	return string(runes[:limit])
 }
+
+// renderLifetimeField draws the selector for either form on three rows: the
+// label with the option row (and the days input when Custom is selected), then
+// either the exact expiry preview or the validation message, then the leak
+// warning. One row for label and options keeps the Create Robot form, the
+// tallest one, inside the 24 row minimum with a full suggestion list.
+func renderLifetimeField(theme adminTheme, l tokenLifetime, now time.Time, focused bool) string {
+	ceiling := lifetimeCeiling()
+	selected := l.selected(ceiling)
+	var options []string
+	for i, option := range lifetimeOptions(ceiling) {
+		mark := "( ) " + option.Label
+		if i == selected {
+			mark = "(*) " + option.Label
+			if focused {
+				mark = theme.selected.Render(mark)
+			}
+		}
+		options = append(options, mark)
+	}
+	row := "Lifetime  " + strings.Join(options, "  ")
+	if l.isCustom(ceiling) {
+		row += "  Days" + renderDaysInput(theme, l.CustomDays, focused)
+	}
+	lines := []string{row}
+	if duration, ok := l.duration(ceiling); ok {
+		lines = append(lines, expiryPreview(now, duration))
+	} else {
+		lines = append(lines, theme.error.Render(fmt.Sprintf("Enter a whole number of days between 1 and %d", lifetimeCeilingDays(ceiling))))
+	}
+	lines = append(lines, theme.muted.Render("A leaked token stays valid until it expires or you revoke it."))
+	return strings.Join(lines, "\n")
+}
+
+func renderDaysInput(theme adminTheme, days string, focused bool) string {
+	style := theme.input
+	if focused {
+		style = theme.inputFocus
+	}
+	return style.Render(days)
+}

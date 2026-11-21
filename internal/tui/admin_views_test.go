@@ -1613,13 +1613,13 @@ func TestRenderCreateAdminRobotScreenShowsFormFields(t *testing.T) {
 			Name:       "ci",
 			Repository: "team/app",
 			Role:       domainauth.RepoRoleWriter,
-			TTLSeconds: "604800",
+			Lifetime:   tokenLifetime{Index: 0, Chosen: true},
 		},
 	}
 
-	got := renderAdminCreateRobotScreen(theme, view, nil)
+	got := renderAdminCreateRobotScreen(theme, view, nil, charFixedTime)
 
-	for _, want := range []string{"ci", "team/app", string(domainauth.RepoRoleWriter), "604800"} {
+	for _, want := range []string{"ci", "team/app", string(domainauth.RepoRoleWriter), "Expires Sat 21 Mar 2026 09:30 UTC (in 7 days)"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("renderAdminCreateRobotScreen() = %q, want it to contain %q", got, want)
 		}
@@ -1642,7 +1642,7 @@ func TestRenderCreateAdminRobotScreenShowsOneTimeSecretWhenRevealed(t *testing.T
 		RevealedTokenAccessor: "accessor-123",
 	}
 
-	got := renderAdminCreateRobotScreen(theme, view, nil)
+	got := renderAdminCreateRobotScreen(theme, view, nil, charFixedTime)
 
 	if !strings.Contains(got, "s3cr3t-value") {
 		t.Fatalf("renderAdminCreateRobotScreen() = %q, want the one-time secret rendered", got)
@@ -1662,7 +1662,7 @@ func TestRenderCreateAdminRobotScreenNeverShowsSecretBlockWhenNotRevealed(t *tes
 	t.Parallel()
 
 	theme := newAdminTheme()
-	got := renderAdminCreateRobotScreen(theme, AdminViewState{}, nil)
+	got := renderAdminCreateRobotScreen(theme, AdminViewState{}, nil, charFixedTime)
 
 	if strings.Contains(got, "One-time secret") {
 		t.Fatalf("renderAdminCreateRobotScreen() = %q, must not render the secret block when nothing was revealed", got)
@@ -1687,7 +1687,7 @@ func TestRenderCreateAdminRobotScreenShowsRepositorySuggestionList(t *testing.T)
 	}
 	knownRepositories := []string{"library/alpine", "team/demo", "team/backend", "ops/console"}
 
-	got := renderAdminCreateRobotScreen(theme, view, knownRepositories)
+	got := renderAdminCreateRobotScreen(theme, view, knownRepositories, charFixedTime)
 
 	if !strings.Contains(got, "Known Repositories") {
 		t.Fatalf("renderAdminCreateRobotScreen() = %q, want a known-repositories suggestion header", got)
@@ -1712,7 +1712,7 @@ func TestRenderCreateAdminRobotScreenShowsEmptySuggestionMessage(t *testing.T) {
 		CreateRobotForm: adminCreateRobotForm{Repository: "no-match", Focus: adminCreateRobotFieldRepository},
 	}
 
-	got := renderAdminCreateRobotScreen(theme, view, []string{"library/alpine", "team/demo"})
+	got := renderAdminCreateRobotScreen(theme, view, []string{"library/alpine", "team/demo"}, charFixedTime)
 
 	if !strings.Contains(got, "No known repositories match the current filter.") {
 		t.Fatalf("renderAdminCreateRobotScreen() = %q, want the empty-suggestions message", got)
