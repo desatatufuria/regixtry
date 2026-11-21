@@ -1,0 +1,40 @@
+  Admin › Access › Repository access                                                                                                                                             signed in as operator  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │
+                               │  Repository access                                                                                                                         6 grants on 3 repositories
+    Overview                   │   Filter…                                                                                                                      ╭────────────────────────────────────╮
+                               │                                                                                                                                │ team/api                           │
+  ACCESS                       │  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  │ 4 principals have access           │
+      Users                    │  │   REPOSITORY                                                                      PRINCIPAL         ROLE     SINCE       │  │                                    │
+      Robots                   │  │ ▸ team/api                                                                        alice             Writer   14 Oct      │  │ WHO HAS WHAT                       │
+    ▸ Repository access        │  │   team/api                                                                        bob               Reader   2 Nov       │  │ alice user                [Writer] │
+                               │  │   team/api                                                                        carol             Writer   9 Nov       │  │ carol user                [Writer] │
+  SECURITY                     │  │   team/api                                                                        ci-publisher      Writer   12 Jan      │  │ ci-publisher robot        [Writer] │
+      Image scanning           │  │   team/docs                                                                       alice             Reader   3 Mar       │  │ bob user                  [Reader] │
+      Secret scanning          │  │   team/infra                                                                      old-deploy        Admin    5 Feb       │  │                                    │
+      Signing policy           │  │                                                                                                                          │  │ ACTIONS ON SELECTED GRANT          │
+                               │  │                                                                                                                          │  │ Open principal               enter │
+  OPERATIONS                   │  │                                          ╭───────────────────────────────────────────╮                                   │  │ Grant access                     g │
+      Scan runs                │  │                                          │                                           │                                   │  │ Revoke alice on team/api         x │
+      Secret findings          │  │                                          │ Revoke access                             │                                   │  │                                    │
+      Update channel           │  │                                          │ Revoke alice's Writer access to team/api? │                                   │  │ No Admin on this repository. Only  │
+                               │  │                                          │                                           │                                   │  │ server admins can change access    │
+                               │  │                                          │ Enter: revoke | Esc: cancel               │                                   │  │ here.                              │
+                               │  │                                          │                                           │                                   │  │                                    │
+                               │  │                                          ╰───────────────────────────────────────────╯                                   │  │                                    │
+                               │  │                                                                                                                          │  │                                    │
+                               │  │                                                                                                                          │  │                                    │
+                               │  │                                                                                                                          │  │                                    │
+                               │  │                                                                                                                          │  │                                    │
+                               │  │                                                                                                                          │  │                                    │
+                               │  │                                                                                                                          │  │                                    │
+                               │  │                                                                                                                          │  │                                    │
+                               │  │                                                                                                                          │  │                                    │
+                               │  │                                                                                                                          │  │                                    │
+                               │  │                                                                                                                          │  │                                    │
+                               │  │                                                                                                                          │  │                                    │
+                               │  │                                                                                                                          │  │                                    │
+                               │  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  │                                    │
+                               │  Roles: Reader pulls, Writer pushes, Admin manages access.                                                                     ╰────────────────────────────────────╯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ↑↓ move   enter open   / search   g grant access   x revoke   esc back                                                                                                                                

@@ -137,6 +137,9 @@ const (
 	slotEditUser
 	slotCreateUser
 	slotChangePassword
+	// slotRepositoryAccess holds repoAccessScreen: the grants of every
+	// repository, rendered inside the application shell.
+	slotRepositoryAccess
 	numScreenSlots
 )
 
@@ -181,6 +184,8 @@ func slotFor(id screen) (screenSlot, bool) {
 		return slotCreateUser, true
 	case screenAdminChangePassword:
 		return slotChangePassword, true
+	case screenAdminRepositoryAccess:
+		return slotRepositoryAccess, true
 	default:
 		return 0, false
 	}
@@ -268,6 +273,8 @@ func newAdminScreenFor(id screen) adminScreen {
 		return newGrantAccessScreen(screenAdminOverview, "")
 	case screenAdminOverview:
 		return newOverviewScreen()
+	case screenAdminRepositoryAccess:
+		return newRepoAccessScreen()
 	default:
 		return nil
 	}

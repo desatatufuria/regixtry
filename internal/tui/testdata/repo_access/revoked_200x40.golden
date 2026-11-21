@@ -1,0 +1,40 @@
+  Admin › Access › Repository access                                                                                                                                             signed in as operator  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                                                                        
+                               │  Repository access                                                                                                                         5 grants on 3 repositories  
+    Overview                   │   Filter…                                                                                                                      ╭────────────────────────────────────╮  
+                               │                                                                                                                                │ team/api                           │  
+  ACCESS                       │  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  │ 3 principals have access           │  
+      Users                    │  │   REPOSITORY                                                                      PRINCIPAL         ROLE     SINCE       │  │                                    │  
+      Robots                   │  │ ▸ team/api                                                                        bob               Reader   2 Nov       │  │ WHO HAS WHAT                       │  
+    ▸ Repository access        │  │   team/api                                                                        carol             Writer   9 Nov       │  │ carol user                [Writer] │  
+                               │  │   team/api                                                                        ci-publisher      Writer   12 Jan      │  │ ci-publisher robot        [Writer] │  
+  SECURITY                     │  │   team/docs                                                                       alice             Reader   3 Mar       │  │ bob user                  [Reader] │  
+      Image scanning           │  │   team/infra                                                                      old-deploy        Admin    5 Feb       │  │                                    │  
+      Secret scanning          │  │                                                                                                                          │  │ ACTIONS ON SELECTED GRANT          │  
+      Signing policy           │  │                                                                                                                          │  │ Open principal               enter │  
+                               │  │                                                                                                                          │  │ Grant access                     g │  
+  OPERATIONS                   │  │                                                                                                                          │  │ Revoke bob on team/api           x │  
+      Scan runs                │  │                                                                                                                          │  │                                    │  
+      Secret findings          │  │                                                                                                                          │  │ No Admin on this repository. Only  │  
+      Update channel           │  │                                                                                                                          │  │ server admins can change access    │  
+                               │  │                                                                                                                          │  │ here.                              │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  │                                    │  
+                               │  Revoked alice on team/api.                                                                                                    ╰────────────────────────────────────╯  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ↑↓ move   enter open   / search   g grant access   x revoke   esc back                                                                                                                                

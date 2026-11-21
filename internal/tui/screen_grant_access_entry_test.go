@@ -5,16 +5,13 @@ import (
 	"testing"
 )
 
-func TestGrantAccessIsReachableFromTheOverviewSidebar(t *testing.T) {
+func TestGrantAccessIsReachableFromTheOverviewCard(t *testing.T) {
 	t.Parallel()
 	client := newRecordingGrantClient()
 	m := grantModel(t, client, 150, 24)
 	updated, cmd := m.Update(navigateMsg{To: screenAdminOverview})
 	m = runCmd(t, updated.(Model), cmd)
-	for range 3 { // Overview -> Users -> Robots -> Repository access
-		m = grantModelPress(t, m, testKeyDown())
-	}
-	m = grantModelPress(t, m, testKeyEnter())
+	m = grantModelPress(t, m, testKeyRunes("g"))
 	if m.screen != screenAdminGrantAccess {
 		t.Fatalf("screen = %q, want %q", m.screen, screenAdminGrantAccess)
 	}

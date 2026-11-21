@@ -1,0 +1,40 @@
+  Admin › Access › Repository access                                                                                                                                             signed in as operator  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                                                                        
+                               │  Repository access                                                                                                                         6 grants on 3 repositories  
+    Overview                   │   team/d▏                                                                                                                      ╭────────────────────────────────────╮  
+                               │                                                                                                                                │ team/docs                          │  
+  ACCESS                       │  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  │ 1 principal has access             │  
+      Users                    │  │   REPOSITORY                                                                      PRINCIPAL         ROLE     SINCE       │  │                                    │  
+      Robots                   │  │ ▸ team/docs                                                                       alice             Reader   3 Mar       │  │ WHO HAS WHAT                       │  
+    ▸ Repository access        │  │                                                                                                                          │  │ alice user                [Reader] │  
+                               │  │                                                                                                                          │  │                                    │  
+  SECURITY                     │  │                                                                                                                          │  │ ACTIONS ON SELECTED GRANT          │  
+      Image scanning           │  │                                                                                                                          │  │ Open principal               enter │  
+      Secret scanning          │  │                                                                                                                          │  │ Grant access                     g │  
+      Signing policy           │  │                                                                                                                          │  │ Revoke alice on team/docs        x │  
+                               │  │                                                                                                                          │  │                                    │  
+  OPERATIONS                   │  │                                                                                                                          │  │ No Admin on this repository. Only  │  
+      Scan runs                │  │                                                                                                                          │  │ server admins can change access    │  
+      Secret findings          │  │                                                                                                                          │  │ here.                              │  
+      Update channel           │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
+                               │  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  │                                    │  
+                               │  Roles: Reader pulls, Writer pushes, Admin manages access.                                                                     ╰────────────────────────────────────╯  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ↑↓ move   enter done   esc done                                                                                                                                                                       

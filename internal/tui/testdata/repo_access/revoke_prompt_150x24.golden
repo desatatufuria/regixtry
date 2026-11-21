@@ -1,0 +1,24 @@
+  Admin › Access › Repository access                                                                                           signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │
+                               │  Repository access                                                                       6 grants on 3 repositories
+    Overview                   │   Filter…                                                                    ╭────────────────────────────────────╮
+                               │                                                                              │ team/api                           │
+  ACCESS                       │  ╭────────────────────────────────────────────────────────────────────────╮  │ 4 principals have access           │
+      Users                    │  │   REPOSITORY                    PRINCIPAL         ROLE     SINCE       │  │ WHO HAS WHAT                       │
+      Robots                   │  │ ▸ team/api      ╭───────────────────────────────────────────╮  ct      │  │ alice user                [Writer] │
+    ▸ Repository access        │  │   team/api      │                                           │  v       │  │ carol user                [Writer] │
+                               │  │   team/api      │ Revoke access                             │  v       │  │ ci-publisher robot        [Writer] │
+  SECURITY                     │  │   team/api      │ Revoke alice's Writer access to team/api? │  an      │  │ bob user                  [Reader] │
+      Image scanning           │  │   team/docs     │                                           │  r       │  │ ACTIONS ON SELECTED GRANT          │
+      Secret scanning          │  │   team/infra    │ Enter: revoke | Esc: cancel               │  b       │  │ Open principal               enter │
+      Signing policy           │  │                 │                                           │          │  │ Grant access                     g │
+                               │  │                 ╰───────────────────────────────────────────╯          │  │ Revoke alice on team/api         x │
+  OPERATIONS                   │  │                                                                        │  │ No Admin on this repository. Only  │
+      Scan runs                │  │                                                                        │  │ server admins can change access    │
+      Secret findings          │  │                                                                        │  │ here.                              │
+      Update channel           │  │                                                                        │  │                                    │
+                               │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │
+                               │  Roles: Reader pulls, Writer pushes, Admin manages access.                   ╰────────────────────────────────────╯
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ↑↓ move   enter open   / search   g grant access   x revoke   esc back                                                                              

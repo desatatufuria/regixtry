@@ -36,7 +36,8 @@ func TestEveryBaselineFunctionIsReachableFromTheOverview(t *testing.T) {
 	}{
 		{"users", sidebar(shellNavUsers), screenAdminUsers},
 		{"robots", sidebar(shellNavRobots), screenAdminRobots},
-		{"grant repository access", sidebar(shellNavRepositoryAccess), screenAdminGrantAccess},
+		{"repository access", sidebar(shellNavRepositoryAccess), screenAdminRepositoryAccess},
+		{"grant repository access", then(sidebar(shellNavRepositoryAccess), key("g")), screenAdminGrantAccess},
 		{"create user", then(sidebar(shellNavUsers), key("n")), screenAdminCreateUser},
 		{"edit user", then(sidebar(shellNavUsers), key("enter")), screenAdminEditUser},
 		{"user tokens", then(sidebar(shellNavUsers), key("t")), screenAdminEditUserTokens},

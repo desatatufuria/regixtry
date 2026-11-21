@@ -76,7 +76,7 @@ func TestOverviewSidebarItemsOpenTheirScreens(t *testing.T) {
 	wantScreens := map[shellNavID]screen{
 		shellNavUsers:            screenAdminUsers,
 		shellNavRobots:           screenAdminRobots,
-		shellNavRepositoryAccess: screenAdminGrantAccess,
+		shellNavRepositoryAccess: screenAdminRepositoryAccess,
 		shellNavImageScanning:    screenSecurityTrivy,
 		shellNavSecretScanning:   screenSecurityGitleaksConfig,
 		shellNavSigningPolicy:    screenSecuritySigningConfig,

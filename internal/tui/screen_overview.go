@@ -95,7 +95,7 @@ func overviewOpenItem(id shellNavID) tea.Cmd {
 	case shellNavRobots:
 		return overviewOpen(overviewOpenRobots)
 	case shellNavRepositoryAccess:
-		return openGrantAccess("", screenAdminOverview)
+		return openRepoAccess()
 	case shellNavImageScanning:
 		return navigate(screenSecurityTrivy)
 	case shellNavSecretScanning:

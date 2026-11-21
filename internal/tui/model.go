@@ -316,6 +316,9 @@ const (
 	// screenAdminGrantAccess is "Grant repository access" (tui-v2-redesign S4):
 	// one screen to give a user or robot a role on several repositories.
 	screenAdminGrantAccess screen = "admin-grant-access"
+	// screenAdminRepositoryAccess is "Repository access": every grant, by
+	// repository, with revoke.
+	screenAdminRepositoryAccess screen = "admin-repository-access"
 )
 
 // adminIntent is a one-shot field set before screenAdminLogin and consumed
@@ -1248,6 +1251,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = ""
 		m.adminScreens[slotCreateUser] = nil
 		m.adminScreens[slotChangePassword] = nil
+		if msg.To == screenAdminRepositoryAccess {
+			// Always a fresh read: grants change elsewhere (the grant-access
+			// screen, a revoke) and the list is built from several calls.
+			next := newRepoAccessScreen()
+			m.adminScreens[slotRepositoryAccess] = next
+			return m, next.Init(m.screenEnv())
+		}
 		if msg.To == screenAdminOverview {
 			// Coming back to the Overview refreshes "Needs attention": the
 			// operator may just have granted access or fixed a robot.
@@ -1344,6 +1354,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
 		return m, cmd
+	case repoAccessReposMsg, repoAccessPrincipalsLoadedMsg, repoAccessGrantsLoadedMsg, repoAccessRevokedMsg:
+		// Drop a message from another screen instance FIRST: a stale expiry
+		// result must never log the operator out.
+		if gen, ok := repoAccessMsgGen(msg); ok {
+			if current, isRepoAccess := m.adminScreens[slotRepositoryAccess].(repoAccessScreen); !isRepoAccess || current.gen != gen {
+				return m, nil
+			}
+		}
+		if expired, ok := msg.(interface{ expiredReason() (string, bool) }); ok {
+			if reason, isExpired := expired.expiredReason(); isExpired {
+				return m.expireAdminSession(reason), nil
+			}
+		}
+		var cmd tea.Cmd
+		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
+		return m, cmd
+	case repoAccessOpenPrincipalMsg:
+		return m.openRepoAccessPrincipal(msg.principal)
 	case returnToInspectionMsg:
 		return m.returnToInspection(), nil
 	case openUserScreenMsg:
@@ -1829,7 +1857,7 @@ func (m Model) viewScreen() string {
 		return renderAdminLogin(newAdminTheme(), view, m.viewport.Width, m.viewport.Height)
 	case screenAdminAuthenticating:
 		return renderAdminAuthenticating(newAdminTheme(), m.loadingText, m.viewport.Width, m.viewport.Height)
-	case screenAdminUsers, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken, screenRepoAdminGrants, screenRepoAdminAddGrant, screenAdminRobots, screenAdminCreateRobot, screenSecurityGitleaksRepos, screenSecuritySigningRepos, screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminOverview, screenAdminScanRuns, screenAdminSecretFindings, screenAdminUpdateChannel, screenAdminGrantAccess:
+	case screenAdminUsers, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken, screenRepoAdminGrants, screenRepoAdminAddGrant, screenAdminRobots, screenAdminCreateRobot, screenSecurityGitleaksRepos, screenSecuritySigningRepos, screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminOverview, screenAdminScanRuns, screenAdminSecretFindings, screenAdminUpdateChannel, screenAdminGrantAccess, screenAdminRepositoryAccess:
 		help := adminScreenHelp(m.screen, m.adminView)
 		if slot, ok := slotFor(m.screen); ok && m.adminScreens[slot] != nil {
 			// Migrated top-level screen: help is derived from the screen's
@@ -3743,6 +3771,15 @@ func (m Model) backToUser() (tea.Model, tea.Cmd) {
 	return m.openUserScreen(openUserScreenMsg{to: screenAdminEditUser, userID: m.adminView.SelectedUserID, username: m.adminView.SelectedUsername})
 }
 
+// openRepoAccessPrincipal opens the user or robot behind a grant on the
+// repository-access screen: the user's page, or the Robots list for a robot.
+func (m Model) openRepoAccessPrincipal(principal grantPrincipal) (tea.Model, tea.Cmd) {
+	if principal.Kind == grantKindRobot {
+		return m.openAdminRobots()
+	}
+	return m.openUserScreen(openUserScreenMsg{to: screenAdminEditUser, userID: principal.ID, username: principal.Name})
+}
+
 // openAdminRobots opens screenAdminRobots (design.md Decision 7). Defensively
 // clears any lingering RevealedTokenSecret on entry (see
 // updateAdminRobotsKey's "n" case for the leak scenario this guards against).
@@ -3912,7 +3949,7 @@ func nextDelegateGrantRole(current domainauth.RepoRole) domainauth.RepoRole {
 
 func isAdminScreen(current screen) bool {
 	switch current {
-	case screenAdminLogin, screenAdminAuthenticating, screenAdminUsers, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken, screenRepoAdminGrants, screenRepoAdminAddGrant, screenAdminRobots, screenAdminCreateRobot, screenSecurityGitleaksRepos, screenSecuritySigningRepos, screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminOverview, screenAdminScanRuns, screenAdminSecretFindings, screenAdminUpdateChannel, screenAdminGrantAccess:
+	case screenAdminLogin, screenAdminAuthenticating, screenAdminUsers, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken, screenRepoAdminGrants, screenRepoAdminAddGrant, screenAdminRobots, screenAdminCreateRobot, screenSecurityGitleaksRepos, screenSecuritySigningRepos, screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminOverview, screenAdminScanRuns, screenAdminSecretFindings, screenAdminUpdateChannel, screenAdminGrantAccess, screenAdminRepositoryAccess:
 		return true
 	default:
 		return false
@@ -3973,6 +4010,8 @@ func (m Model) migratedScreenCapturesTextInput() bool {
 		return s.searching || s.confirm.Active()
 	case editUserScreen:
 		return s.confirm.Active()
+	case repoAccessScreen:
+		return s.filtering || s.confirm.Active()
 	default:
 		return false
 	}
