@@ -82,9 +82,9 @@ func TestSeverityMediumHasItsOwnDistinctHex(t *testing.T) {
 	}
 }
 
-// TestSeverityRampIsFourDistinctColors replaces the Nord-era luminance
+// TestSeverityRampIsFourDistinctColors replaces the earlier luminance
 // ordering (critical < medium < low < high), which was an artifact of the
-// Nord hues and no longer holds in the design palette: what matters is that
+// old hues and no longer holds in the design palette: what matters is that
 // the four severities stay pairwise distinguishable by color.
 func TestSeverityRampIsFourDistinctColors(t *testing.T) {
 	t.Parallel()

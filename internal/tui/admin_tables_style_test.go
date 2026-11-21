@@ -19,14 +19,14 @@ func colorsEqual(t *testing.T, got, want color.Color) bool {
 	return gr == wr && gg == wg && gb == wb && ga == wa
 }
 
-func TestBubbleTableV2StylesMatchNordConstants(t *testing.T) {
+func TestBubbleTableV2StylesMatchPaletteTokens(t *testing.T) {
 	t.Parallel()
 
 	t.Run("base style uses the border color and left alignment", func(t *testing.T) {
 		t.Parallel()
 		style := bubbleTableBaseStyle()
-		if !colorsEqual(t, style.GetBorderTopForeground(), lipgloss.Color(nordBorderHex)) {
-			t.Fatalf("base style border foreground does not match nordBorderHex")
+		if !colorsEqual(t, style.GetBorderTopForeground(), lipgloss.Color(paletteBorderHex)) {
+			t.Fatalf("base style border foreground does not match paletteBorderHex")
 		}
 	})
 
@@ -36,8 +36,8 @@ func TestBubbleTableV2StylesMatchNordConstants(t *testing.T) {
 		if !style.GetBold() {
 			t.Fatal("header style GetBold() = false, want true")
 		}
-		if !colorsEqual(t, style.GetForeground(), lipgloss.Color(nordTextHex)) {
-			t.Fatalf("header style foreground does not match nordTextHex")
+		if !colorsEqual(t, style.GetForeground(), lipgloss.Color(paletteTextHex)) {
+			t.Fatalf("header style foreground does not match paletteTextHex")
 		}
 	})
 
@@ -47,11 +47,11 @@ func TestBubbleTableV2StylesMatchNordConstants(t *testing.T) {
 		if !style.GetBold() {
 			t.Fatal("highlight style GetBold() = false, want true")
 		}
-		if !colorsEqual(t, style.GetForeground(), lipgloss.Color(nordSelectedFGHex)) {
-			t.Fatalf("highlight style foreground does not match nordSelectedFGHex")
+		if !colorsEqual(t, style.GetForeground(), lipgloss.Color(paletteAccentHex)) {
+			t.Fatalf("highlight style foreground does not match paletteAccentHex")
 		}
-		if !colorsEqual(t, style.GetBackground(), lipgloss.Color(nordSelectedBGHex)) {
-			t.Fatalf("highlight style background does not match nordSelectedBGHex")
+		if !colorsEqual(t, style.GetBackground(), lipgloss.Color(paletteSelectedBGHex)) {
+			t.Fatalf("highlight style background does not match paletteSelectedBGHex")
 		}
 	})
 
@@ -62,11 +62,11 @@ func TestBubbleTableV2StylesMatchNordConstants(t *testing.T) {
 			wantHex  string
 			wantBold bool
 		}{
-			{"CRITICAL", nordErrorHex, true},
-			{"HIGH", nordWarningHex, true},
-			{"MEDIUM", nordSeverityMediumHex, false},
-			{"LOW", nordMutedHex, false},
-			{"UNKNOWN", nordTextHex, false},
+			{"CRITICAL", paletteErrorHex, true},
+			{"HIGH", paletteWarningHex, true},
+			{"MEDIUM", paletteAccentHex, false},
+			{"LOW", paletteMutedHex, false},
+			{"UNKNOWN", paletteTextHex, false},
 		}
 		for _, tc := range cases {
 			style := severityStyle(tc.value)

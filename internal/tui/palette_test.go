@@ -208,3 +208,27 @@ func TestNoColorLiteralsOutsideTheTheme(t *testing.T) {
 		}
 	}
 }
+
+// legacyName finds identifiers or words from the retired theme, in production
+// and test files alike. Built from pieces so this file does not match itself.
+var legacyName = regexp.MustCompile(`(?i)(^|[^a-z])` + "no" + `rd`)
+
+func TestNoLegacyThemeNamesRemain(t *testing.T) {
+	t.Parallel()
+
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, line := range strings.Split(string(data), "\n") {
+			if legacyName.MatchString(line) {
+				t.Errorf("%s:%d mentions the retired theme: %s", f, i+1, strings.TrimSpace(line))
+			}
+		}
+	}
+}

@@ -222,7 +222,7 @@ func TestNewAdminBubbleTableShowsNoMisleadingIndicatorWhenAllRowsFit(t *testing.
 // evertras/bubble-table v0.22.3) emits TrueColor ANSI by default in this
 // non-TTY test environment with no profile forcing needed -- unlike v1
 // lipgloss, whose color profile this test used to force explicitly. The
-// expected sequence is derived by rendering nordBorderHex through the exact
+// expected sequence is derived by rendering paletteBorderHex through the exact
 // same v2 style constructor the table itself uses (bubbleTableBaseStyle),
 // not by independently recomputing it via v1's termenv.RGBColor: that path
 // has its own rounding difference from a direct hex-to-decimal conversion
@@ -238,13 +238,13 @@ func TestNewAdminBubbleTableAppliesThemeBorderForegroundColor(t *testing.T) {
 
 	table := newAdminBubbleTable(columns, rows, 0, minTableRows)
 
-	rendered := lipgloss.NewStyle().Foreground(lipgloss.Color(nordBorderHex)).Render("X")
+	rendered := lipgloss.NewStyle().Foreground(lipgloss.Color(paletteBorderHex)).Render("X")
 	wantPrefix, _, found := strings.Cut(rendered, "X")
 	if !found {
-		t.Fatalf("v2 style rendering of nordBorderHex = %q, want an ANSI prefix before the literal %q", rendered, "X")
+		t.Fatalf("v2 style rendering of paletteBorderHex = %q, want an ANSI prefix before the literal %q", rendered, "X")
 	}
 	if !strings.Contains(table.View(), wantPrefix) {
-		t.Fatalf("table view does not contain the border color's ANSI sequence %q derived from nordBorderHex — border MUST use nordBorderHex", wantPrefix)
+		t.Fatalf("table view does not contain the border color's ANSI sequence %q derived from paletteBorderHex — border MUST use paletteBorderHex", wantPrefix)
 	}
 }
 

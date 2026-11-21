@@ -25,21 +25,6 @@ const (
 	paletteErrorHex        = "#f7768e"
 )
 
-// Role constants. The nord* names are kept only so files and tests that
-// still reference them compile; they now point at the design palette.
-// The design has no hue for MEDIUM severity, so it takes the accent blue,
-// which is distinct from error red, warning amber and muted grey.
-const (
-	nordBorderHex         = paletteBorderHex
-	nordTextHex           = paletteTextHex
-	nordMutedHex          = paletteMutedHex
-	nordSelectedFGHex     = paletteAccentHex
-	nordSelectedBGHex     = paletteSelectedBGHex
-	nordErrorHex          = paletteErrorHex
-	nordWarningHex        = paletteWarningHex
-	nordSeverityMediumHex = paletteAccentHex
-)
-
 type adminTheme struct {
 	app              lipgloss.Style
 	section          lipgloss.Style
@@ -113,8 +98,8 @@ func newAdminTheme() adminTheme {
 		severityCritical: lipgloss.NewStyle().Foreground(errorColor).Bold(true),
 		severityHigh:     lipgloss.NewStyle().Foreground(warning).Bold(true),
 		// severityMedium: the design has no hue for it, so it uses the accent
-		// blue (see nordSeverityMediumHex); distinct from critical, high and low.
-		severityMedium: lipgloss.NewStyle().Foreground(lipgloss.Color(nordSeverityMediumHex)),
+		// blue (paletteAccentHex); distinct from critical, high and low.
+		severityMedium: lipgloss.NewStyle().Foreground(lipgloss.Color(paletteAccentHex)),
 		severityLow:    lipgloss.NewStyle().Foreground(muted),
 		// input/inputFocus stay borderless (design.md Decision 5: a
 		// top/bottom border only ever carried a focus color, so 2 rows per

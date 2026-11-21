@@ -55,9 +55,9 @@ func renderGrantPane(theme adminTheme, lines []string, outerW, innerH int, focus
 	for len(lines) < innerH {
 		lines = append(lines, "")
 	}
-	borderColor := lipgloss.Color(nordBorderHex)
+	borderColor := lipgloss.Color(paletteBorderHex)
 	if focused {
-		borderColor = lipgloss.Color(nordSelectedBGHex)
+		borderColor = lipgloss.Color(paletteSelectedBGHex)
 	}
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -319,7 +319,7 @@ func (s grantAccessScreen) rolePane(theme adminTheme, env screenEnv, iw, h int) 
 	}
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color(nordBorderHex)).
+		BorderForeground(lipgloss.Color(paletteBorderHex)).
 		Width(iw).
 		Render(strings.Join(content, "\n"))
 	return append(lines, strings.Split(box, "\n")...)

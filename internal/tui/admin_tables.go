@@ -502,11 +502,11 @@ func (m *Model) rebuildAdminTables(layout consoleLayout) {
 // never drift from the theme palette.
 
 func bubbleTableBaseStyle() lipgloss.Style {
-	return lipgloss.NewStyle().Align(lipgloss.Left).BorderForeground(lipgloss.Color(nordBorderHex))
+	return lipgloss.NewStyle().Align(lipgloss.Left).BorderForeground(lipgloss.Color(paletteBorderHex))
 }
 
 func bubbleTableHeaderStyle() lipgloss.Style {
-	return lipgloss.NewStyle().Foreground(lipgloss.Color(nordTextHex)).Bold(true)
+	return lipgloss.NewStyle().Foreground(lipgloss.Color(paletteTextHex)).Bold(true)
 }
 
 // bubbleTableHighlightStyle deliberately carries NO Padding, unlike
@@ -525,8 +525,8 @@ func bubbleTableHeaderStyle() lipgloss.Style {
 // non-table callers use it -- it does not need its own padding.
 func bubbleTableHighlightStyle() lipgloss.Style {
 	return lipgloss.NewStyle().
-		Foreground(lipgloss.Color(nordSelectedFGHex)).
-		Background(lipgloss.Color(nordSelectedBGHex)).
+		Foreground(lipgloss.Color(paletteAccentHex)).
+		Background(lipgloss.Color(paletteSelectedBGHex)).
 		Bold(true)
 }
 
@@ -538,14 +538,14 @@ func bubbleTableHighlightStyle() lipgloss.Style {
 func severityStyle(value string) lipgloss.Style {
 	switch value {
 	case "CRITICAL":
-		return lipgloss.NewStyle().Foreground(lipgloss.Color(nordErrorHex)).Bold(true)
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(paletteErrorHex)).Bold(true)
 	case "HIGH":
-		return lipgloss.NewStyle().Foreground(lipgloss.Color(nordWarningHex)).Bold(true)
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(paletteWarningHex)).Bold(true)
 	case "MEDIUM":
-		return lipgloss.NewStyle().Foreground(lipgloss.Color(nordSeverityMediumHex))
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(paletteAccentHex))
 	case "LOW":
-		return lipgloss.NewStyle().Foreground(lipgloss.Color(nordMutedHex))
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(paletteMutedHex))
 	default:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color(nordTextHex))
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(paletteTextHex))
 	}
 }
