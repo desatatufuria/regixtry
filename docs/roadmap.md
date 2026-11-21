@@ -23,6 +23,7 @@ Read this document as a sequencing contract, not a wish list.
 | Repository access control completion | Registry-wide read-only role, delegated repo-admin grant management scoped to one repository, and bounded-TTL, revocable robot accounts | Implemented across the auth domain/service, `/admin/v1`, and the operator console |
 | Supply-chain scanning and signing | Trivy vulnerability scanning (fail-open policy gate), Gitleaks secret scanning (no pull gate), and cosign signature verification (fail-closed policy gate), each a managed feature — see [`docs/features.md`](features.md) for each feature's specific gating behavior | Implemented across `internal/domain/signing/`, `internal/infra/scanning/trivy/`, `internal/infra/scanning/gitleaks/`, `/admin/v1/signing-policy`, and the operator console |
 | Manifest and tag deletion | Opt-in `DELETE /v2/<name>/manifests/<reference>` for withdrawing a bad manifest by digest (cascading to its tags) or untagging a single reference, metadata-only, never touching blob files | Implemented, gated behind `REGISTRY_DELETE_ENABLED`/`-delete-enabled` (default `false`) |
+| TUI v2 redesign | Bubble Tea v2 migration, application shell and Overview, grant screen, token lifetime selector, palette, login and confirm, users | In progress on `feature/tui-v2-redesign` (local, unpublished) |
 
 ## Approved v1 boundary
 

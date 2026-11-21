@@ -28,7 +28,9 @@
 | TUI Console Repositories table (Name/Tags/Last Pushed) | `internal/tui/console_repositories_table.go` | `tui.md` |
 | TUI Console Tags table (Tag/Created/Signed) | `internal/tui/console_tags_table.go` | `tui.md` |
 | TUI session state (`AdminViewState`, `AdminSession`) | `internal/tui/session.go` | `tui.md`, `architecture.md` |
-| TUI admin theming | `internal/tui/admin_theme.go` | `tui.md` |
+| TUI admin theming and the colour palette (`palette*Hex`) | `internal/tui/admin_theme.go` | `tui.md` |
+| TUI application shell: header, sidebar (`shellNavGroups`), footer | `internal/tui/shell.go` | `tui.md`, `architecture.md` |
+| TUI token lifetime selector (presets, Custom input, ceiling `MaxAdminTokenTTL`) | `internal/tui/token_lifetime.go` | `tui.md`, `users.md` |
 | TUI admin overlay/modal rendering (`compositeOverlay`) | `internal/tui/admin_overlay.go` | `tui.md`, `architecture.md` |
 | TUI scan history render helpers (`renderAdminScanHistoryModal` and friends) | `internal/tui/admin_scan_history.go` | `tui.md`, `security.md` |
 | TUI scroll viewport helper | `internal/tui/viewport.go` | `tui.md` |
@@ -36,19 +38,22 @@
 | TUI per-screen sub-model contract (`adminScreen`, `screenEnv`, `screenFrame`, `adminScreenSet`, `slotFor`, `navigate`, `openScanHistory`, `returnToInspectionCmd`) | `internal/tui/screen.go` | `architecture.md` |
 | TUI admin router (`routeAdminKey`, `routeAdminMsg`, `legacyScreenHandlers` — the D5 adapter) | `internal/tui/admin_router.go` | `architecture.md` |
 | TUI keymap-derived help (`screenKeys`, `shortHelpView`, `matches`) | `internal/tui/admin_keys.go` | `architecture.md`, `tui.md` |
-| TUI confirm-before-destructive-action primitive (`confirmPrompt`) | `internal/tui/confirm.go` | `architecture.md` |
+| TUI confirm-before-destructive-action primitive and dialog (`confirmPrompt`) | `internal/tui/confirm.go` | `architecture.md` |
 | TUI per-repository override editor, shared by Trivy/Gitleaks/Signing (`overrideEditor`) | `internal/tui/override_editor.go` | `tui.md`, `architecture.md` |
 | TUI navigable trusted-key list, shared by Signing's config screen and its override editor (`trustedKeyList`) | `internal/tui/trusted_key_list.go` | `tui.md`, `features.md` |
 | TUI navigable trusted-identity list, shared by Signing's config screen and its override editor (`trustedIdentityList`) | `internal/tui/trusted_identity_list.go` | `tui.md`, `features.md` |
-| TUI Security & Compliance domain menu (`securityMenuScreen`) | `internal/tui/screen_security_menu.go` | `tui.md` |
 | TUI Trivy Runtime screen (`trivyConfigScreen`) | `internal/tui/screen_trivy_config.go` | `tui.md` |
 | TUI Trivy Repository Alerts screen (`trivyReposScreen`) | `internal/tui/screen_trivy_repos.go` | `tui.md` |
 | TUI Gitleaks config screen (`gitleaksConfigScreen`) | `internal/tui/screen_gitleaks_config.go` | `tui.md` |
 | TUI Gitleaks/Signing repository override list (shared `featureOverridesScreen`) | `internal/tui/screen_gitleaks_repos.go` | `tui.md` |
 | TUI Signing config screen (`signingConfigScreen`) | `internal/tui/screen_signing_config.go` | `tui.md` |
 | TUI Signing repository override list (`newSigningReposScreen`, backed by `featureOverridesScreen`) | `internal/tui/screen_signing_repos.go` | `tui.md` |
-| TUI post-login domain menu (`adminMenuScreen`) | `internal/tui/screen_admin_menu.go` | `tui.md`, `architecture.md` |
-| TUI Operations domain menu (`adminOperationsScreen`) | `internal/tui/screen_operations.go` | `tui.md` |
+| TUI Overview landing screen and its quick-action cards (`overviewScreen`) | `internal/tui/screen_overview.go`, `screen_overview_view.go` | `tui.md` |
+| TUI Grant repository access screen (`grantAccessScreen`) | `internal/tui/screen_grant_access.go`, `screen_grant_access_view.go` | `tui.md` |
+| TUI login screen rendering (`renderAdminLogin`) | `internal/tui/screen_login_view.go` | `tui.md` |
+| TUI Users list (`usersScreen`) | `internal/tui/screen_users.go`, `screen_users_view.go` | `tui.md` |
+| TUI Edit user, New user and Reset password forms | `internal/tui/screen_edit_user.go`, `screen_create_user.go`, `screen_reset_password.go` (plus `_view.go` renderers) | `tui.md` |
+| TUI Update channel screen (`updateChannelScreen`) | `internal/tui/screen_update_channel.go` | `tui.md` |
 | TUI Scan Runs / Secret Scan Findings repository pickers (shared `scanRunsScreen`) | `internal/tui/screen_scan_runs.go` | `tui.md` |
 | TUI scan history sub-model, reached from both Operations and Trivy's drill-down (`scanHistoryScreen`) | `internal/tui/screen_scan_history.go` | `tui.md`, `architecture.md` |
 | Runtime image/Compose | `Dockerfile`, `docker-compose.yml` | `getting-started.md`, `ci-cd.md` |
