@@ -3346,3 +3346,28 @@ func waitForUploadLocation(t *testing.T, address string) string {
 		time.Sleep(20 * time.Millisecond)
 	}
 }
+
+// Snapshot mode writes the model's styled view straight to stdout. lipgloss v2
+// always emits full-fidelity ANSI, so snapshot mode must downsample at the
+// output layer: when stdout is not a terminal the output carries no escapes.
+func TestRunTUISnapshotEmitsNoColorEscapesWhenNotATerminal(t *testing.T) {
+	t.Parallel()
+
+	storageRoot := t.TempDir()
+	databasePath := filepath.Join(storageRoot, "registry.db")
+	seedRegixtryState(t, storageRoot, databasePath)
+
+	stdout := &bytes.Buffer{}
+	err := runTUI(tuiConfig{StorageRoot: storageRoot, DatabasePath: databasePath, Tenant: "tenant-a", Snapshot: true}, strings.NewReader("q"), stdout)
+	if err != nil {
+		t.Fatalf("runTUI() error = %v", err)
+	}
+
+	view := stdout.String()
+	if !strings.Contains(view, "Regixtry Console") || !strings.Contains(view, "library/alpine") {
+		t.Fatalf("stdout = %q, want rendered repository view", view)
+	}
+	if strings.Contains(view, "\x1b") {
+		t.Fatalf("stdout contains ANSI escapes when not a terminal: %q", view)
+	}
+}
