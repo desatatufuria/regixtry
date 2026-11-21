@@ -19,10 +19,15 @@ import (
 type Service struct {
 	store ports.AuthStore
 	now   func() time.Time
+	// rollbackTimeout bounds the best-effort robot rollback.
+	rollbackTimeout time.Duration
 }
 
+// robotRollbackTimeout is the default bound on the robot rollback delete.
+const robotRollbackTimeout = 5 * time.Second
+
 func NewService(store ports.AuthStore) *Service {
-	return &Service{store: store, now: func() time.Time { return time.Now().UTC() }}
+	return &Service{store: store, now: func() time.Time { return time.Now().UTC() }, rollbackTimeout: robotRollbackTimeout}
 }
 
 func (s *Service) EnsureBootstrapAdmin(ctx context.Context) error {
@@ -781,7 +786,9 @@ func (s *Service) CreateRobot(ctx context.Context, actor domainauth.Principal, i
 // (grants and tokens cascade with the user). The original failure is what the
 // caller reports; a failed rollback cannot be surfaced without masking it.
 func (s *Service) rollbackRobot(ctx context.Context, userID string) {
-	_ = s.store.DeleteUser(context.WithoutCancel(ctx), userID)
+	rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.rollbackTimeout)
+	defer cancel()
+	_ = s.store.DeleteUser(rollbackCtx, userID)
 }
 
 // ListRobots lists every robot account (design.md Decision 6): a dedicated

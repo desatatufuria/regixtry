@@ -128,3 +128,50 @@ func TestCreateRobotSuccessCreatesOneRobotAndOneToken(t *testing.T) {
 		})
 	}
 }
+
+// blockingDeleteStore fails token creation and then blocks DeleteUser until
+// its context is done, recording whether that context carried a deadline.
+type blockingDeleteStore struct {
+	*memoryAuthStore
+	err         error
+	hadDeadline chan bool
+}
+
+func (s *blockingDeleteStore) CreateToken(context.Context, domainauth.Token) error { return s.err }
+
+func (s *blockingDeleteStore) DeleteUser(ctx context.Context, _ string) error {
+	_, ok := ctx.Deadline()
+	s.hadDeadline <- ok
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func TestCreateRobotRollbackIsBoundedByATimeout(t *testing.T) {
+	t.Parallel()
+
+	boom := errors.New("boom")
+	store := &blockingDeleteStore{memoryAuthStore: newMemoryAuthStore(), err: boom, hadDeadline: make(chan bool, 1)}
+	service := NewService(store)
+	service.rollbackTimeout = 50 * time.Millisecond
+	actor := domainauth.Principal{UserID: "admin-1", Username: "admin", IsAdmin: true}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := service.CreateRobot(context.Background(), actor, ports.CreateRobotInput{
+			Name: "ci", Repository: "team/app", Role: domainauth.RepoRoleWriter,
+		})
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, boom) {
+			t.Fatalf("error = %v, want the original boom", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("CreateRobot hung on a blocking rollback")
+	}
+	if !<-store.hadDeadline {
+		t.Fatal("rollback context has no deadline")
+	}
+}
