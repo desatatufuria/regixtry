@@ -941,6 +941,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case keyMsg:
 		return m.updateKey(msg)
+	case tea.PasteMsg:
+		// v1 delivered a paste as a runes key to the active screen only; keep that path.
+		return m.updateKey(keyMsg{Text: msg.Content})
 	case catalogLoadedMsg:
 		if msg.err != nil {
 			m.screen = screenError
