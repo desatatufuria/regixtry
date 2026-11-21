@@ -2,9 +2,17 @@ package tui
 
 import (
 	"errors"
+	"flag"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/charmbracelet/x/ansi"
 )
+
+var updateUpdateChannelGoldens = flag.Bool("update-update-channel", false, "rewrite the update channel golden files")
 
 // TestUpdateChannelScreenSatisfiesAdminScreenInterface mirrors every other
 // migrated screen's own compile-level guard (design.md Decision A):
@@ -24,7 +32,7 @@ func TestUpdateChannelScreenLoadsCurrentChannelOnInit(t *testing.T) {
 	t.Parallel()
 
 	adminClient := &fakeAdminClient{updateChannel: "insider"}
-	env := screenEnv{Client: adminClient, Session: AdminSession{BearerToken: "token"}, Layout: consoleLayout{SectionRows: 20}}
+	env := screenEnv{Client: adminClient, Session: AdminSession{BearerToken: "token"}, Layout: consoleLayout{Width: 150, Height: 24}}
 
 	screen := newUpdateChannelScreen()
 	cmd := screen.Init(env)
@@ -61,7 +69,7 @@ func TestUpdateChannelScreenSpaceTogglesPendingSelectionThenEnterSaves(t *testin
 	t.Parallel()
 
 	adminClient := &fakeAdminClient{updateChannel: "stable"}
-	env := screenEnv{Client: adminClient, Session: AdminSession{BearerToken: "token"}, Layout: consoleLayout{SectionRows: 20}}
+	env := screenEnv{Client: adminClient, Session: AdminSession{BearerToken: "token"}, Layout: consoleLayout{Width: 150, Height: 24}}
 
 	screen := newUpdateChannelScreen()
 	loaded, _, _ := screen.Update(env, adminUpdateChannelLoadedMsg{channel: "stable"})
@@ -115,7 +123,7 @@ func TestUpdateChannelScreenEnterWithNoPendingChangeIsANoop(t *testing.T) {
 	t.Parallel()
 
 	adminClient := &fakeAdminClient{updateChannel: "stable"}
-	env := screenEnv{Client: adminClient, Session: AdminSession{BearerToken: "token"}, Layout: consoleLayout{SectionRows: 20}}
+	env := screenEnv{Client: adminClient, Session: AdminSession{BearerToken: "token"}, Layout: consoleLayout{Width: 150, Height: 24}}
 
 	loaded, _, _ := newUpdateChannelScreen().Update(env, adminUpdateChannelLoadedMsg{channel: "stable"})
 	screen := loaded.(updateChannelScreen)
@@ -138,7 +146,7 @@ func TestUpdateChannelScreenEnterWithNoPendingChangeIsANoop(t *testing.T) {
 func TestUpdateChannelScreenReflectsSaveError(t *testing.T) {
 	t.Parallel()
 
-	env := screenEnv{Layout: consoleLayout{SectionRows: 20}}
+	env := screenEnv{Layout: consoleLayout{Width: 150, Height: 24}}
 	screen := updateChannelScreen{loaded: true, current: "stable", selected: "insider", saving: true}
 
 	updated, _, _ := screen.Update(env, adminUpdateChannelUpdatedMsg{err: errors.New("admin session expired")})
@@ -165,7 +173,7 @@ func TestUpdateChannelScreenReflectsSaveError(t *testing.T) {
 func TestUpdateChannelScreenRefreshIsNoopWhileSaving(t *testing.T) {
 	t.Parallel()
 
-	env := screenEnv{Layout: consoleLayout{SectionRows: 20}}
+	env := screenEnv{Layout: consoleLayout{Width: 150, Height: 24}}
 	screen := updateChannelScreen{loaded: true, current: "stable", selected: "insider", saving: true}
 
 	updated, cmd, consumed := screen.updateKey(env, keyMsgFor("r"))
@@ -196,7 +204,7 @@ func TestUpdateChannelScreenRefreshIsNoopWhileSaving(t *testing.T) {
 func TestUpdateChannelScreenRefreshRecoversFromFailedInitialLoad(t *testing.T) {
 	t.Parallel()
 
-	env := screenEnv{Layout: consoleLayout{SectionRows: 20}}
+	env := screenEnv{Layout: consoleLayout{Width: 150, Height: 24}}
 	screen := updateChannelScreen{loaded: false, err: "admin API is unavailable for this session"}
 
 	updated, cmd, consumed := screen.updateKey(env, keyMsgFor("r"))
@@ -220,4 +228,138 @@ func keyMsgFor(s string) keyMsg {
 		return testKeyEnter()
 	}
 	return testKeyRunes(s)
+}
+
+var updateChannelSizes = []struct{ w, h int }{{150, 24}, {151, 25}, {160, 30}, {200, 40}, {220, 60}}
+
+var updateChannelStates = []struct {
+	name   string
+	screen updateChannelScreen
+}{
+	{"loading", updateChannelScreen{}},
+	{"error", updateChannelScreen{err: "admin API is unavailable for this session"}},
+	{"unchanged", updateChannelScreen{loaded: true, current: "stable", selected: "stable"}},
+	{"unsaved", updateChannelScreen{loaded: true, current: "stable", selected: "insider"}},
+	{"saving", updateChannelScreen{loaded: true, current: "stable", selected: "insider", saving: true}},
+	{"saved", updateChannelScreen{loaded: true, current: "insider", selected: "insider", saved: true}},
+	{"save_error", updateChannelScreen{loaded: true, current: "stable", selected: "insider", err: "update channel must be stable or insider"}},
+}
+
+func renderUpdateChannel(s updateChannelScreen, w, h int) string {
+	env := screenEnv{Session: AdminSession{Username: "admin"}, Layout: consoleLayout{Width: w, Height: h}}
+	return ansi.Strip(s.View(newAdminTheme(), env).Body)
+}
+
+func TestUpdateChannelGeometryAtEverySizeInEveryState(t *testing.T) {
+	t.Parallel()
+	for _, size := range updateChannelSizes {
+		for _, state := range updateChannelStates {
+			out := renderUpdateChannel(state.screen, size.w, size.h)
+			lines := strings.Split(out, "\n")
+			if len(lines) != size.h {
+				t.Fatalf("%s %dx%d: %d rows, want %d\n%s", state.name, size.w, size.h, len(lines), size.h, out)
+			}
+			for i, line := range lines {
+				if width := ansi.StringWidth(line); width > size.w {
+					t.Fatalf("%s %dx%d: line %d is %d cells wide: %q", state.name, size.w, size.h, i+1, width, line)
+				}
+			}
+		}
+	}
+}
+
+func TestUpdateChannelViewInsideShell(t *testing.T) {
+	t.Parallel()
+	out := renderUpdateChannel(updateChannelStates[3].screen, 150, 24)
+	for _, want := range []string{
+		"Admin › Operations › Update channel", "signed in as admin", "CHANNEL",
+		"▸ insider", "selected, unsaved", "Default channel.",
+		"Selected: insider (unsaved, press enter to save)",
+		"Space toggle stable/insider", "Enter save", "r refresh", "Esc back", "q quit",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("view lacks %q\n%s", want, out)
+		}
+	}
+	for _, old := range []string{"Current:", "Selected: insider (unsaved --"} {
+		if strings.Contains(out, old) {
+			t.Fatalf("view still has the old look %q", old)
+		}
+	}
+}
+
+func TestUpdateChannelSavedAndUnchangedMessages(t *testing.T) {
+	t.Parallel()
+	if out := renderUpdateChannel(updateChannelStates[5].screen, 150, 24); !strings.Contains(out, "Saved: the update check now uses insider") {
+		t.Fatalf("saved view lacks confirmation\n%s", out)
+	}
+	if out := renderUpdateChannel(updateChannelStates[2].screen, 150, 24); !strings.Contains(out, "Unchanged: stable") {
+		t.Fatalf("unchanged view lacks note\n%s", out)
+	}
+}
+
+func TestUpdateChannelSaveMarksSavedAndToggleClearsIt(t *testing.T) {
+	t.Parallel()
+	env := screenEnv{Client: &fakeAdminClient{}, Layout: consoleLayout{Width: 150, Height: 24}}
+	screen := updateChannelScreen{loaded: true, current: "stable", selected: "insider", saving: true}
+	updated, _, _ := screen.Update(env, adminUpdateChannelUpdatedMsg{channel: "insider"})
+	screen = updated.(updateChannelScreen)
+	if !screen.saved {
+		t.Fatal("saved = false after a successful save")
+	}
+	toggled, _, _ := screen.updateKey(env, keyMsgFor(" "))
+	if toggled.(updateChannelScreen).saved {
+		t.Fatal("saved = true after toggling again")
+	}
+}
+
+func TestUpdateChannelEnterIgnoredWhileSaving(t *testing.T) {
+	t.Parallel()
+	adminClient := &fakeAdminClient{}
+	env := screenEnv{Client: adminClient, Layout: consoleLayout{Width: 150, Height: 24}}
+	screen := updateChannelScreen{loaded: true, current: "stable", selected: "insider", saving: true}
+	_, cmd, consumed := screen.updateKey(env, keyMsgFor("enter"))
+	if !consumed || cmd != nil {
+		t.Fatalf("Enter while saving: consumed=%v cmd=%v, want consumed and nil", consumed, cmd != nil)
+	}
+}
+
+func TestUpdateChannelEscGoesBackAndQIsNotConsumed(t *testing.T) {
+	t.Parallel()
+	env := screenEnv{Layout: consoleLayout{Width: 150, Height: 24}}
+	screen := updateChannelScreen{loaded: true, current: "stable", selected: "stable"}
+	_, cmd, consumed := screen.updateKey(env, testKeyEsc())
+	if !consumed || cmd == nil {
+		t.Fatal("Esc must navigate back")
+	}
+}
+
+func TestUpdateChannelViewGoldens(t *testing.T) {
+	for _, state := range updateChannelStates {
+		for _, size := range []struct{ w, h int }{{150, 24}, {200, 40}} {
+			name := state.name + "_" + fmt.Sprintf("%dx%d", size.w, size.h)
+			assertUpdateChannelGolden(t, name, renderUpdateChannel(state.screen, size.w, size.h)+"\n")
+		}
+	}
+}
+
+func assertUpdateChannelGolden(t *testing.T, name, got string) {
+	t.Helper()
+	path := filepath.Join("testdata", "update_channel", name+".golden")
+	if *updateUpdateChannelGoldens {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(path, []byte(got), 0o644); err != nil {
+			t.Fatalf("write golden: %v", err)
+		}
+		return
+	}
+	want, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read golden %s (run with -update-update-channel): %v", path, err)
+	}
+	if string(want) != got {
+		t.Fatalf("view differs from %s\n--- want\n%s\n--- got\n%s", path, want, got)
+	}
 }

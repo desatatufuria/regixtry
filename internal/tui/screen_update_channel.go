@@ -1,9 +1,6 @@
 package tui
 
 import (
-	"fmt"
-	"strings"
-
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"regixtry/internal/infra/release"
@@ -29,7 +26,10 @@ type updateChannelScreen struct {
 	current  string
 	selected string
 	saving   bool
-	err      string
+	// saved is true from a successful save until the next toggle or reload,
+	// so the screen can confirm what was persisted.
+	saved bool
+	err   string
 }
 
 func newUpdateChannelScreen() updateChannelScreen { return updateChannelScreen{} }
@@ -55,6 +55,7 @@ func (s updateChannelScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, te
 		s.current = channel
 		s.selected = channel
 		s.loaded = true
+		s.saved = false
 		s.err = ""
 		return s, nil, false
 	case adminUpdateChannelUpdatedMsg:
@@ -66,6 +67,7 @@ func (s updateChannelScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, te
 		channel := adminFirstNonEmpty(typed.channel, s.selected)
 		s.current = channel
 		s.selected = channel
+		s.saved = true
 		s.err = ""
 		return s, nil, false
 	}
@@ -81,6 +83,7 @@ func (s updateChannelScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, 
 			return s, nil, true
 		}
 		s.selected = otherUpdateChannel(s.selected)
+		s.saved = false
 		s.err = ""
 		return s, nil, true
 	case isEnterKey(msg):
@@ -88,6 +91,7 @@ func (s updateChannelScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, 
 			return s, nil, true
 		}
 		s.saving = true
+		s.saved = false
 		s.err = ""
 		return s, updateUpdateChannelCmd(env, s.selected), true
 	case isRuneKey(msg, 'r'):
@@ -116,31 +120,6 @@ func otherUpdateChannel(current string) string {
 		return string(release.ChannelStable)
 	}
 	return string(release.ChannelInsider)
-}
-
-func (s updateChannelScreen) View(theme adminTheme, env screenEnv) screenFrame {
-	lines := []string{theme.subheading.Render("Update Channel")}
-	switch {
-	case s.err != "":
-		lines = append(lines, theme.error.Render(s.err))
-	case !s.loaded:
-		lines = append(lines, theme.muted.Render("Loading update channel..."))
-	default:
-		lines = append(lines, fmt.Sprintf("Current: %s", s.current))
-		selectedLine := fmt.Sprintf("Selected: %s", s.selected)
-		if s.selected != s.current {
-			selectedLine += " (unsaved -- press Enter to save)"
-		}
-		lines = append(lines, selectedLine)
-		if s.saving {
-			lines = append(lines, theme.muted.Render("Saving..."))
-		}
-	}
-	lines = append(lines, renderAdminOperatorFooter(theme, env.Session, env.now())...)
-	return screenFrame{
-		Context: adminContext("Operations", "Update channel"),
-		Body:    renderSection(theme, strings.Join(lines, "\n"), env.Layout),
-	}
 }
 
 var updateChannelKeys = screenKeys{short: []key.Binding{
