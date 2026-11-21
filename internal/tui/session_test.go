@@ -332,7 +332,7 @@ func TestNormalizeUnsignedSelfReadMapsEmptyToOff(t *testing.T) {
 
 // TestNewAdminViewStateSeedsAdminRobotFormDefaultsAndEmptyList is task 5.1's
 // RED test (design.md Decision 7's robot screens): a fresh AdminViewState
-// seeds CreateRobotForm.Role to RepoRoleReader -- mirroring GrantForm/
+// seeds CreateRobotForm.Role to RepoRoleReader -- mirroring
 // RepoAdminGrantForm's own zero-value convention, so the create-robot form
 // never starts on the unrestricted repo-admin role by accident -- and starts
 // with no robots listed or selected.

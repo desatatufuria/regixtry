@@ -80,6 +80,12 @@ func (s repoAccessScreen) countText() string {
 	for _, row := range s.rows {
 		repos[row.repo] = true
 	}
+	if len(s.rows) == 0 && !s.complete() {
+		return "Reading grants…"
+	}
+	if len(s.rows) == 0 && len(s.repoErrs) > 0 {
+		return "Grants unavailable"
+	}
 	text := fmt.Sprintf("%s on %s", plural(len(s.rows), "grant"), plural(len(repos), "repository"))
 	if !s.complete() && len(s.repos) > 0 {
 		text += fmt.Sprintf(" (read %d of %d repositories)", s.next, len(s.repos))
@@ -152,16 +158,33 @@ func (s repoAccessScreen) renderTable(theme adminTheme, env screenEnv, rows []re
 
 func (s repoAccessScreen) emptyText() string {
 	switch {
-	case len(s.repos) == 0 && s.next == 0 && !s.loading && s.principalsLoaded:
-		return "No repositories in the catalog yet."
-	case !s.complete() && s.filter != "":
-		return fmt.Sprintf("Searching... %d of %d repositories read", s.next, len(s.repos))
 	case !s.complete():
-		return "Loading grants..."
+		return s.readingText()
+	case len(s.repos) == 0:
+		return "No repositories in the catalog yet."
+	case len(s.repoErrs) > 0:
+		return s.readErrorText()
 	case s.filter != "":
 		return "No grants match."
 	}
 	return "No grants yet. Press g to grant access."
+}
+
+// readingText is the loading line, with how many repositories were read.
+func (s repoAccessScreen) readingText() string {
+	if len(s.repos) == 0 {
+		return "Reading grants…"
+	}
+	return fmt.Sprintf("Reading grants… %d of %d repositories read", s.next, len(s.repos))
+}
+
+// readErrorText summarizes the reads that failed.
+func (s repoAccessScreen) readErrorText() string {
+	text := "Could not read grants of " + s.repoErrs[0]
+	if len(s.repoErrs) > 1 {
+		text += fmt.Sprintf(" (+%d more)", len(s.repoErrs)-1)
+	}
+	return text
 }
 
 // repoAccessSince is the grant date as "14 Oct", with the year once it is
@@ -190,11 +213,7 @@ func (s repoAccessScreen) statusLine(theme adminTheme, width int) string {
 		}
 		return style.Render(grantTruncate(s.status, width))
 	case len(s.repoErrs) > 0:
-		text := "Could not read grants of " + s.repoErrs[0]
-		if len(s.repoErrs) > 1 {
-			text += fmt.Sprintf(" (+%d more)", len(s.repoErrs)-1)
-		}
-		return theme.error.Render(grantTruncate(text, width))
+		return theme.error.Render(grantTruncate(s.readErrorText(), width))
 	case s.principalsErr != "":
 		return theme.warning.Render(grantTruncate("Could not tell users from robots: "+s.principalsErr, width))
 	}

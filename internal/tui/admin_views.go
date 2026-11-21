@@ -436,8 +436,8 @@ func renderAdminScanHistoryModal(theme adminTheme, modal adminScanHistoryModal, 
 
 // renderRepoAdminGrantsScreen renders the repo-admin delegate's own
 // repository's grants (design.md Decision 7 / spec.md "Delegate sees only
-// their own repositories' grants"). A sibling of renderAdminGrantsScreen,
-// not an extension: it is keyed by RepoAdminRepository, not SelectedUserID.
+// their own repositories' grants"). It is keyed by
+// RepoAdminRepository, not SelectedUserID.
 func renderRepoAdminGrantsScreen(theme adminTheme, view AdminViewState) string {
 	if strings.TrimSpace(view.RepoAdminRepository) == "" {
 		return theme.section.Render(theme.warning.Render("Select a repository before opening grants."))
@@ -553,9 +553,8 @@ func formatAdminRobotLabel(robot ports.AdminRobot) string {
 // the (now-cleared) form -- mirroring renderAdminTokensScreen's own
 // conditional block so this reveal follows the one already-audited pattern
 // instead of introducing a new one.
-// renderAdminCreateRobotScreen mirrors renderAdminAddGrantScreen's windowed,
-// highlighted repository-suggestion list (manual RC feedback: Create Robot's
-// Repository field previously had no autocomplete, unlike Add Grant's).
+// renderAdminCreateRobotScreen renders a windowed, highlighted
+// repository-suggestion list under its Repository field.
 func renderAdminCreateRobotScreen(theme adminTheme, view AdminViewState, knownRepositories []string, now time.Time) string {
 	return renderAdminCreateRobotScreenWithin(theme, view, knownRepositories, now, 0)
 }

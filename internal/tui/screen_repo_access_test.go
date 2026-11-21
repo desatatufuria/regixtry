@@ -1,9 +1,11 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
@@ -255,17 +257,246 @@ func TestRepoAccessEscEndsTheSearchThenGoesBack(t *testing.T) {
 	}
 }
 
-func TestRepoAccessQOutsideTheFilterDoesNotLeaveTheScreen(t *testing.T) {
+func TestRepoAccessQQuitsOutsideTheFilterAndIsTypedInsideIt(t *testing.T) {
 	t.Parallel()
 	m := repoAccessModelAt(t, repoAccessClient(), repoAccessKnown, 150, 24)
+	if _, cmd := m.Update(testKeyRunes("q")); !didQuit(cmd) {
+		t.Fatal("q outside the filter did not quit")
+	}
+	m = repoAccessPress(t, m, testKeyRunes("/"))
 	updated, cmd := m.Update(testKeyRunes("q"))
-	if cmd != nil {
-		if _, quit := cmd().(tea.QuitMsg); quit {
-			t.Fatalf("q quit although the footer does not offer it")
+	if didQuit(cmd) {
+		t.Fatal("q quit while the filter had focus")
+	}
+	if got := repoAccessScreenOf(t, updated.(Model)).filter; got != "q" {
+		t.Fatalf("filter = %q, want q typed", got)
+	}
+	m = repoAccessPress(t, repoAccessModelAt(t, repoAccessClient(), repoAccessKnown, 150, 24), testKeyRunes("x"))
+	if _, cmd := m.Update(testKeyRunes("q")); didQuit(cmd) {
+		t.Fatal("q quit while the revoke prompt was open")
+	}
+}
+
+// repoAccessCounting counts the grant reads, so a test can see whether the
+// screen keeps asking after it was left.
+type repoAccessCounting struct {
+	*fakeAdminClient
+	lists int
+	dels  [][2]string
+}
+
+func (c *repoAccessCounting) ListRepositoryGrants(ctx context.Context, s AdminSession, repo string) ([]ports.AdminRepositoryGrant, error) {
+	c.lists++
+	return c.fakeAdminClient.ListRepositoryGrants(ctx, s, repo)
+}
+
+func (c *repoAccessCounting) DeleteRepositoryGrant(_ context.Context, _ AdminSession, repo, user string) error {
+	c.dels = append(c.dels, [2]string{repo, user})
+	return nil
+}
+
+func repoAccessFlatten(cmd tea.Cmd, out *[]tea.Msg) {
+	if cmd == nil {
+		return
+	}
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		for _, sub := range batch {
+			repoAccessFlatten(sub, out)
+		}
+		return
+	}
+	if msg != nil {
+		*out = append(*out, msg)
+	}
+}
+
+func repoAccessCatalog(count int) []string {
+	known := make([]string, count)
+	for i := range known {
+		known[i] = fmt.Sprintf("org/repo%03d", i)
+	}
+	return known
+}
+
+func TestRepoAccessStopsReadingOnceLeft(t *testing.T) {
+	t.Parallel()
+	client := &repoAccessCounting{fakeAdminClient: &fakeAdminClient{}}
+	m := newAdminReadyModelWithCatalog(t, repoAccessCatalog(500), client)
+	m = charResize(t, m, 150, 24)
+	m.adminSession = AdminSession{Username: "operator", BearerToken: "b", ExpiresAt: charFixedTime.Add(time.Hour)}
+	m.adminAuth = adminAuthStateAuthenticated
+
+	var pending []tea.Msg
+	step := func(msg tea.Msg) {
+		updated, cmd := m.Update(msg)
+		m = updated.(Model)
+		repoAccessFlatten(cmd, &pending)
+	}
+	step(navigateMsg{To: screenAdminRepositoryAccess})
+	// Deliver the repository list and the first batch, leaving a batch
+	// request in flight.
+	for range 2 {
+		msg := pending[0]
+		pending = pending[1:]
+		step(msg)
+	}
+	step(testKeyEsc())
+	for i, msg := range pending {
+		if nav, ok := msg.(navigateMsg); ok {
+			pending = append(pending[:i], pending[i+1:]...)
+			step(nav)
+			break
 		}
 	}
-	if updated.(Model).screen != screenAdminRepositoryAccess {
-		t.Fatalf("screen = %q", updated.(Model).screen)
+	if m.screen != screenAdminOverview {
+		t.Fatalf("Esc went to %q", m.screen)
+	}
+	if m.adminScreens[slotRepositoryAccess] != nil {
+		t.Fatal("the screen stayed mounted after leaving it")
+	}
+	callsAtLeave := client.lists
+	for len(pending) > 0 {
+		msg := pending[0]
+		pending = pending[1:]
+		step(msg)
+	}
+	if extra := client.lists - callsAtLeave; extra > repoAccessPageRows(24) {
+		t.Fatalf("%d more reads after leaving, want at most the batch already in flight", extra)
+	}
+	settled := client.lists
+	for range 3 {
+		step(testKeyDown())
+	}
+	if client.lists != settled || len(pending) != 0 {
+		t.Fatalf("reads continued behind another screen (%d -> %d, %d pending)", settled, client.lists, len(pending))
+	}
+	// Coming back mounts a fresh screen.
+	step(navigateMsg{To: screenAdminRepositoryAccess})
+	if s := repoAccessScreenOf(t, m); len(s.rows) != 0 || s.next != 0 {
+		t.Fatalf("re-entry kept state: rows=%d next=%d", len(s.rows), s.next)
+	}
+}
+
+func TestRepoAccessLoadingAndFailedStatesAreNotTheEmptyState(t *testing.T) {
+	t.Parallel()
+	// Loading: the repository list arrived, no grants yet.
+	s := newRepoAccessScreen()
+	s.started, s.repos, s.next, s.loading = true, repoAccessCatalog(40), 12, true
+	theme := newAdminTheme()
+	frame := s.View(theme, screenEnv{Layout: consoleLayout{Width: 150, Height: 24}})
+	out := ansi.Strip(frame.Body)
+	if !strings.Contains(out, "Reading grants… 12 of 40 repositories read") {
+		t.Fatalf("loading line missing:\n%s", out)
+	}
+	for _, bad := range []string{"No grants yet", "0 grants on 0 repositories"} {
+		if strings.Contains(out, bad) {
+			t.Fatalf("loading state shows %q:\n%s", bad, out)
+		}
+	}
+	// Every read failed.
+	client := repoAccessClient()
+	client.listRepoGrantsErr = errors.New("boom")
+	out = repoAccessRender(repoAccessModelAt(t, client, repoAccessKnown, 150, 24))
+	if !strings.Contains(out, "Could not read grants of team/api: boom (+3 more)") || strings.Contains(out, "No grants yet") || strings.Contains(out, "0 grants on 0 repositories") {
+		t.Fatalf("failed state wrong:\n%s", out)
+	}
+	// Completed with zero grants: only now the empty text.
+	out = repoAccessRender(repoAccessModelAt(t, &fakeAdminClient{}, repoAccessKnown, 150, 24))
+	if !strings.Contains(out, "No grants yet. Press g to grant access.") {
+		t.Fatalf("empty state missing:\n%s", out)
+	}
+}
+
+// TestRepoAccessRevokeTargetFuzz drives seeded random key and message
+// sequences and checks, for every delete the client sees, that it equals the
+// target the dialog showed at confirmation, that no delete happens without a
+// confirm key, and that the target never changes while the dialog is open,
+// including when a batch of grants arrives mid-dialog.
+func TestRepoAccessRevokeTargetFuzz(t *testing.T) {
+	t.Parallel()
+	names := []string{"alice", "bob", "carol", "Dave", "ci", "kjq", "jack", "old-deploy", "queue", "yak"}
+	letters := "jkqxyYagnN/ e"
+	r := rand.New(rand.NewSource(20260721))
+	for seq := range 300 {
+		nrepo := 1 + r.Intn(30)
+		known := repoAccessCatalog(nrepo)
+		fake := &fakeAdminClient{repoGrants: map[string][]ports.AdminRepositoryGrant{}}
+		for _, repo := range known {
+			used := map[string]bool{}
+			for range r.Intn(4) {
+				name := names[r.Intn(len(names))]
+				if !used[name] {
+					used[name] = true
+					fake.repoGrants[repo] = append(fake.repoGrants[repo], ports.AdminRepositoryGrant{Username: name, Role: domainauth.RepoRoleWriter})
+				}
+			}
+		}
+		client := &repoAccessCounting{fakeAdminClient: fake}
+		m := newAdminReadyModelWithCatalog(t, known, client)
+		m = charResize(t, m, 150, 24)
+		m.adminSession = AdminSession{Username: "operator", BearerToken: "b", ExpiresAt: charFixedTime.Add(time.Hour)}
+		m.adminAuth = adminAuthStateAuthenticated
+		var pending []tea.Msg
+		step := func(msg tea.Msg) {
+			updated, cmd := m.Update(msg)
+			m = updated.(Model)
+			repoAccessFlatten(cmd, &pending)
+		}
+		step(navigateMsg{To: screenAdminRepositoryAccess})
+		openTarget := ""
+		for i := range 24 {
+			for k := r.Intn(3); k > 0 && len(pending) > 0; k-- {
+				j := r.Intn(len(pending))
+				msg := pending[j]
+				pending = append(pending[:j], pending[j+1:]...)
+				before := len(client.dels)
+				step(msg)
+				if len(client.dels) != before {
+					t.Fatalf("seq %d step %d: a delete came from a message, not a key", seq, i)
+				}
+			}
+			if m.screen != screenAdminRepositoryAccess {
+				break
+			}
+			s := repoAccessScreenOf(t, m)
+			if s.confirm.Active() && openTarget != "" && s.confirm.target != openTarget {
+				t.Fatalf("seq %d step %d: dialog target changed %q -> %q", seq, i, openTarget, s.confirm.target)
+			}
+			var key keyMsg
+			switch c := r.Intn(8); c {
+			case 0:
+				key = testKeyDown()
+			case 1:
+				key = testKeyUp()
+			case 2:
+				key = testKeyEnter()
+			case 3:
+				key = testKeyBackspace()
+			default:
+				key = testKeyRunes(string(letters[r.Intn(len(letters))]))
+			}
+			wasActive, wasInFlight, target := s.confirm.Active(), s.confirm.inFlight, s.confirm.target
+			confirms := wasActive && !wasInFlight && (isEnterKey(key) || isPlainYKey(key))
+			before := len(client.dels)
+			step(key)
+			deleted := client.dels[before:]
+			switch {
+			case len(deleted) > 1, len(deleted) == 1 && !confirms:
+				t.Fatalf("seq %d step %d: %d deletes on key %q (confirming=%v)", seq, i, len(deleted), key.Text, confirms)
+			case len(deleted) == 1 && deleted[0][1]+" on "+deleted[0][0] != target:
+				t.Fatalf("seq %d step %d: deleted %v, dialog said %q", seq, i, deleted[0], target)
+			case confirms && len(deleted) == 0:
+				t.Fatalf("seq %d step %d: a confirm key sent nothing", seq, i)
+			}
+			if after := repoAccessScreenOf(t, m); after.confirm.Active() {
+				if !wasActive {
+					openTarget = after.confirm.target
+				}
+			} else {
+				openTarget = ""
+			}
+		}
 	}
 }
 

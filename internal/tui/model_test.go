@@ -1222,10 +1222,10 @@ func TestModelAdminIntentRoutesPostLoginToUsersWhenNotSet(t *testing.T) {
 // test (design.md Decision 7): screenRepoAdminGrants/screenRepoAdminAddGrant
 // must route through updateAdminKey (isAdminScreen) so the shipped
 // session-expiry/logout plumbing covers them. Only screenRepoAdminGrants — a
-// read/list screen, like its screenAdminEditUserGrants precedent — joins
+// read/list screen — joins
 // isAdminPrincipalScreen and canLogoutAdminFromCurrentScreen;
-// screenRepoAdminAddGrant is a free-text username form, like its
-// screenAdminAddGrant precedent, so it is deliberately excluded from both
+// screenRepoAdminAddGrant is a free-text username form, so it is
+// deliberately excluded from both
 // (isAdminPrincipalScreen gates the bare 'q' quit key — including it would
 // make typing "q" as part of a username quit the whole program).
 func TestRepoAdminGrantsScreensJoinAdminScreenSets(t *testing.T) {
@@ -1644,7 +1644,7 @@ func TestModelCreateAdminRobotShowsOneTimeSecretOnceOnCreateScreen(t *testing.T)
 	updated = runKey(t, updated, "team/app")
 	// First Enter (while focused on Repository) commits the highlighted
 	// suggestion and advances focus to Role -- it does not submit the form,
-	// mirroring updateGrantFormKey's Add Grant behavior.
+	// as the other repository suggestion lists do.
 	updated = runKey(t, updated, "enter")
 	if got, want := updated.adminView.CreateRobotForm.Focus, adminCreateRobotFieldRole; got != want {
 		t.Fatalf("focus = %v, want %v after first Enter", got, want)
@@ -1676,8 +1676,7 @@ func TestModelCreateAdminRobotShowsOneTimeSecretOnceOnCreateScreen(t *testing.T)
 
 // TestModelCreateRobotFormRepositorySuggestionsFilterAndSelect is the manual
 // RC follow-up's RED test: screenAdminCreateRobot's Repository field must
-// offer the same autosuggest behavior as screenAdminAddGrant's Repository
-// field (updateGrantFormKey) -- typing filters known repositories, Up/Down
+// offer repository autosuggest -- typing filters known repositories, Up/Down
 // cycle the highlighted suggestion, and Enter while focused on Repository
 // commits the highlighted suggestion and advances focus to Role WITHOUT
 // submitting the whole create-robot form.
@@ -1731,8 +1730,8 @@ func TestModelCreateRobotFormRepositorySuggestionsFilterAndSelect(t *testing.T) 
 // AdminViewState when the operator presses "t" on ANY robot row, the reused
 // token screen would render that stale secret a second time -- without a
 // fresh token ever being issued. openAdminRobotTokens (the "t" handler) MUST
-// clear it before navigating, exactly like the existing openAdminEditTokens/
-// openAdminEditGrants precedent already does for the human path.
+// clear it before navigating, exactly like the existing openAdminEditTokens
+// precedent already does for the human path.
 func TestModelAdminRobotTokensKeyClearsAnyPreviouslyRevealedSecretBeforeShowingTokenScreen(t *testing.T) {
 	t.Parallel()
 

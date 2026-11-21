@@ -172,7 +172,7 @@ type ProjectsModel struct {
 }
 
 // Names extracts each repository's name, used by admin-side screens that
-// only need name lookup/suggestions (grantRepositorySuggestions,
+// only need name lookup/suggestions (robotRepositorySuggestions,
 // renderAdminWorkspace, adminBaseBodyHeight), not the Tags/Last Pushed
 // columns this screen's own table renders.
 func (m RepositoriesModel) Names() []string {
@@ -750,8 +750,7 @@ type adminUserTokensLoadedMsg struct {
 }
 
 // adminRepoGrantsLoadedMsg carries one repository's grants for the
-// repo-admin delegate's own grants screen (design.md Decision 7), a sibling
-// of adminUserGrantsLoadedMsg keyed by repository instead of userID.
+// repo-admin delegate's own grants screen (design.md Decision 7).
 type adminRepoGrantsLoadedMsg struct {
 	repository string
 	grants     []ports.AdminRepositoryGrant
@@ -759,8 +758,7 @@ type adminRepoGrantsLoadedMsg struct {
 }
 
 // adminRepoGrantMutatedMsg carries the outcome of a put or delete on the
-// repo-admin delegate's grants screen. deleted distinguishes the two (unlike
-// adminGrantMutatedMsg's repository-emptiness convention above) because
+// repo-admin delegate's grants screen. deleted distinguishes the two because
 // username is always present here.
 type adminRepoGrantMutatedMsg struct {
 	repository string
@@ -861,6 +859,25 @@ func (m Model) Init() tea.Cmd {
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	next, cmd := m.updateModel(msg)
+	if updated, ok := next.(Model); ok {
+		updated.dropLeftRepositoryAccess()
+		next = updated
+	}
+	return next, cmd
+}
+
+// dropLeftRepositoryAccess un-mounts the Repository access screen once the
+// operator is anywhere else: it holds a list built from many reads and keeps
+// asking for the next batch of repositories while mounted, which must never
+// go on behind another screen. Coming back mounts a fresh one.
+func (m *Model) dropLeftRepositoryAccess() {
+	if m.screen != screenAdminRepositoryAccess {
+		m.adminScreens[slotRepositoryAccess] = nil
+	}
+}
+
+func (m Model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.viewport = viewportSize{Width: msg.Width, Height: msg.Height}
@@ -2291,8 +2308,7 @@ func (m Model) updateAdminRobotsKey(msg keyMsg) (tea.Model, tea.Cmd) {
 }
 
 // updateCreateRobotFormKey handles screenAdminCreateRobot's free-text form.
-// Role cycles with Space (mirroring updateGrantFormKey's adminGrantFieldRole
-// convention); unlike the repo-admin delegate's adminRepositoryGrantForm,
+// Role cycles with Space; unlike the repo-admin delegate's adminRepositoryGrantForm,
 // this form is global-admin-only, so Role is not restricted away from
 // repo-admin.
 func (m Model) updateCreateRobotFormKey(msg keyMsg) (tea.Model, tea.Cmd) {
@@ -2473,11 +2489,10 @@ func (m Model) updateAdminTokensKey(msg keyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// updateRepoAdminGrantsKey handles screenRepoAdminGrants, a sibling of
-// updateAdminGrantsKey scoped to RepoAdminRepository instead of
-// SelectedUserID -- there is no user-selection guard on "n" (Add Grant),
-// unlike the user-centric screen, because the repository context is already
-// fixed by the time this screen is reachable at all.
+// updateRepoAdminGrantsKey handles screenRepoAdminGrants, scoped to
+// RepoAdminRepository -- there is no user-selection guard on "n" (Add Grant)
+// because the repository context is already fixed by the time this screen is
+// reachable at all.
 func (m Model) updateRepoAdminGrantsKey(msg keyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case isEscKey(msg):
@@ -2540,8 +2555,8 @@ func (m Model) updateRepoAdminGrantsKey(msg keyMsg) (tea.Model, tea.Cmd) {
 }
 
 // updateRepoAdminAddGrantKey handles screenRepoAdminAddGrant. Unlike
-// updateGrantFormKey's repository text field with autosuggest, this form has
-// no repository field at all (RepoAdminRepository is fixed context), and its
+// the global-admin forms, this form has no repository field at all
+// (RepoAdminRepository is fixed context), and its
 // Role field is cycled only by nextDelegateGrantRole -- the structural
 // guarantee that repo-admin can never be offered here.
 func (m Model) updateRepoAdminAddGrantKey(msg keyMsg) (tea.Model, tea.Cmd) {
@@ -3743,8 +3758,7 @@ func isAdminScreen(current screen) bool {
 }
 
 // isAdminPrincipalScreen deliberately excludes screenRepoAdminAddGrant
-// (a free-text username form), mirroring the existing screenAdminAddGrant
-// exclusion: this gates the bare 'q' quit key, and including a free-text
+// (a free-text username form): this gates the bare 'q' quit key, and including a free-text
 // form here would make typing "q" as part of a username quit the program.
 //
 // screenSecurityTrivy/screenSecurityGitleaksConfig/screenSecuritySigningConfig
@@ -3759,7 +3773,7 @@ func isAdminScreen(current screen) bool {
 // screens above.
 func isAdminPrincipalScreen(current screen) bool {
 	switch current {
-	case screenAdminLogin, screenAdminUsers, screenAdminEditUser, screenAdminEditUserTokens, screenRepoAdminGrants, screenAdminRobots, screenSecurityTrivy, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminOverview, screenAdminUpdateChannel:
+	case screenAdminLogin, screenAdminUsers, screenAdminEditUser, screenAdminEditUserTokens, screenRepoAdminGrants, screenAdminRobots, screenSecurityTrivy, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminOverview, screenAdminUpdateChannel, screenAdminRepositoryAccess:
 		return true
 	default:
 		return false
@@ -3821,12 +3835,10 @@ func (m Model) canLogoutAdminFromCurrentScreen() bool {
 // repositorySuggestionsMatching is the core repository-autosuggest filter:
 // case-insensitive substring match against query, deduplicated, order
 // preserved. It takes a plain query string rather than a specific form type
-// so every form with a Repository autosuggest field (adminGrantForm today,
-// adminCreateRobotForm below) can share this exact filtering/dedupe logic
-// instead of each re-implementing it -- unlike the deliberate "sibling, not
-// shared" pattern used for authorization-scoped structs such as
-// adminGrantForm/adminRepositoryGrantForm, this is pure display filtering
-// with no authorization semantics, so sharing is correct here.
+// so every form with a Repository autosuggest field (adminCreateRobotForm
+// below) can share this exact filtering/dedupe logic -- unlike the
+// authorization-scoped structs such as adminRepositoryGrantForm, this is pure
+// display filtering with no authorization semantics, so sharing is correct.
 func repositorySuggestionsMatching(query string, repositories []string) []string {
 	query = strings.ToLower(strings.TrimSpace(query))
 	seen := make(map[string]struct{}, len(repositories))
@@ -3848,10 +3860,8 @@ func repositorySuggestionsMatching(query string, repositories []string) []string
 	return suggestions
 }
 
-// robotRepositorySuggestions is screenAdminCreateRobot's counterpart to
-// grantRepositorySuggestions, reusing the same core filter so both forms'
-// Repository field behave identically (manual RC feedback: Create Robot's
-// Repository field had no autocomplete while Add Grant's already did).
+// robotRepositorySuggestions is screenAdminCreateRobot's repository
+// suggestion list, built on the shared core filter.
 func robotRepositorySuggestions(form adminCreateRobotForm, repositories []string) []string {
 	return repositorySuggestionsMatching(form.Repository, repositories)
 }

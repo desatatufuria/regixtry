@@ -1640,9 +1640,8 @@ func TestRenderCreateAdminRobotScreenNeverShowsSecretBlockWhenNotRevealed(t *tes
 
 // TestRenderCreateAdminRobotScreenShowsRepositorySuggestionList is the manual
 // RC follow-up's RED test: screenAdminCreateRobot must render a "Known
-// Repositories" suggestion list, mirroring renderAdminAddGrantScreen's
-// windowed, highlighted-selection rendering for the same filter/select
-// behavior.
+// Repositories" suggestion list with windowed, highlighted-selection
+// rendering for the filter/select behavior.
 func TestRenderCreateAdminRobotScreenShowsRepositorySuggestionList(t *testing.T) {
 	t.Parallel()
 

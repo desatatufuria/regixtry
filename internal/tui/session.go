@@ -12,8 +12,7 @@ import (
 const AdminSessionExpiredReasonExpired = "Session expired. Log in again."
 
 // adminRepoGrantField identifies which of adminRepositoryGrantForm's 2
-// fields has focus. A sibling of adminGrantField, not an extension: the
-// repo-admin delegate's form has no Repository field (it is fixed by
+// fields has focus. The repo-admin delegate's form has no Repository field (it is fixed by
 // RepoAdminRepository, the operator's own repository), only Username+Role.
 type adminRepoGrantField int
 
@@ -74,12 +73,10 @@ type adminTokenForm struct {
 
 // adminCreateRobotForm backs screenAdminCreateRobot (design.md Decision 7).
 // Role's zero value is set to domainauth.RepoRoleReader by newAdminViewState
-// (mirroring adminGrantForm/adminRepositoryGrantForm), and Lifetime is the
+// (mirroring adminRepositoryGrantForm), and Lifetime is the
 // same selector adminTokenForm uses (default: the service's default TTL).
-// RepositorySuggestion mirrors adminGrantForm.RepositorySuggestion: the
-// screenAdminAddGrant repository autosuggest pattern (filter as you type,
-// Up/Down cycle, Enter commits) reused here so Create Robot behaves
-// consistently with Add Grant instead of being a plain free-text field.
+// RepositorySuggestion is the repository autosuggest pattern (filter as you
+// type, Up/Down cycle, Enter commits).
 type adminCreateRobotForm struct {
 	Name                 string
 	Repository           string
@@ -362,9 +359,7 @@ type AdminViewState struct {
 	// RepoAdminRepository/RepoAdminGrants/SelectedRepoAdminGrant/
 	// RepoAdminGrantForm back screenRepoAdminGrants/screenRepoAdminAddGrant
 	// (design.md Decision 7): the repo-admin delegate's own repository-
-	// centric grants view, a sibling of the global-admin
-	// Grants/SelectedGrant/GrantForm fields above, not an extension of them
-	// — a delegate's Grants view is keyed by repository, not by SelectedUserID.
+	// centric grants view, keyed by repository, not by SelectedUserID.
 	RepoAdminRepository string
 	RepoAdminGrants     []ports.AdminRepositoryGrant
 	// RepoAdminGrantsAuthorized is true only after the most recent

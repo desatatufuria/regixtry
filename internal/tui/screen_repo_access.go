@@ -33,6 +33,9 @@ type repoAccessScreen struct {
 	gen uint64
 
 	repos []string
+	// started is set once the repository names arrived: until then "no
+	// repositories" is not yet known.
+	started bool
 	// next indexes repos: everything before it has been requested.
 	next    int
 	loading bool
@@ -210,7 +213,7 @@ func (s repoAccessScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.C
 	case keyMsg:
 		return s.updateKey(env, typed)
 	case repoAccessReposMsg:
-		s.repos = typed.repos
+		s.repos, s.started = typed.repos, true
 		next, cmd := s.fill(env)
 		return next, cmd, false
 	case repoAccessPrincipalsLoadedMsg:
@@ -479,4 +482,4 @@ func repoAccessPageRows(height int) int {
 }
 
 // complete reports whether every repository has been read.
-func (s repoAccessScreen) complete() bool { return s.next >= len(s.repos) && !s.loading }
+func (s repoAccessScreen) complete() bool { return s.started && s.next >= len(s.repos) && !s.loading }

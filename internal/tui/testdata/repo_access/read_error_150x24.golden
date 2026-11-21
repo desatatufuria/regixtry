@@ -1,12 +1,12 @@
   Admin › Access › Repository access                                                                                           signed in as operator  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  regixtry admin                │                                                                                                                      
-                               │  Repository access                                                                       0 grants on 0 repositories  
+                               │  Repository access                                                                               Grants unavailable  
     Overview                   │   Filter…                                                                    ╭────────────────────────────────────╮  
                                │                                                                              │ Select a grant to see who has acc… │  
   ACCESS                       │  ╭────────────────────────────────────────────────────────────────────────╮  │                                    │  
       Users                    │  │   REPOSITORY                    PRINCIPAL         ROLE     SINCE       │  │                                    │  
-      Robots                   │  │ No grants yet. Press g to grant access.                                │  │                                    │  
+      Robots                   │  │ Could not read grants of team/api: boom (+3 more)                      │  │                                    │  
     ▸ Repository access        │  │                                                                        │  │                                    │  
                                │  │                                                                        │  │                                    │  
   SECURITY                     │  │                                                                        │  │                                    │  
