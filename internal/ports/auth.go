@@ -19,6 +19,10 @@ type AuthStore interface {
 	ListRobots(ctx context.Context) ([]domainauth.User, error)
 	ListRepoGrants(ctx context.Context, userID string) ([]domainauth.RepoGrant, error)
 	ListRepoGrantsByRepository(ctx context.Context, repository regixtrydomain.RepositoryRef) ([]domainauth.RepoGrant, error)
+	// ListRepoGrantsPage returns up to limit grants of every principal on
+	// every repository (cataloged or not), ordered by repository, username and
+	// user id, strictly after the cursor when one is given.
+	ListRepoGrantsPage(ctx context.Context, after *domainauth.GrantCursor, limit int) ([]domainauth.RepositoryGrantRow, error)
 	PutRepoGrant(ctx context.Context, grant domainauth.RepoGrant) error
 	DeleteRepoGrant(ctx context.Context, userID string, repository regixtrydomain.RepositoryRef) error
 	CreateToken(ctx context.Context, token domainauth.Token) error
@@ -158,6 +162,25 @@ type AdminRepositoryGrant struct {
 	UpdatedAt time.Time           `json:"updated_at"`
 }
 
+// AdminGrantEntry is one grant of the all-grants listing: the grants of every
+// user and robot on every repository. It carries no secret, hash or token.
+type AdminGrantEntry struct {
+	Repository string              `json:"repository"`
+	UserID     string              `json:"user_id"`
+	Username   string              `json:"username"`
+	IsRobot    bool                `json:"is_robot"`
+	Role       domainauth.RepoRole `json:"role"`
+	CreatedAt  time.Time           `json:"created_at"`
+	UpdatedAt  time.Time           `json:"updated_at"`
+}
+
+// AdminGrantPage is one page of the all-grants listing. Next is the opaque
+// cursor of the following page, empty on the last page.
+type AdminGrantPage struct {
+	Grants []AdminGrantEntry `json:"grants"`
+	Next   string            `json:"next"`
+}
+
 type AdminPutRepositoryGrantInput struct {
 	Repository string              `json:"-"`
 	Username   string              `json:"-"`
@@ -256,6 +279,7 @@ type AdminHTTPService interface {
 	DeleteAdminUserRepoGrant(ctx context.Context, actor domainauth.Principal, userID string, repository string) error
 	ListAdminRepositoryGrants(ctx context.Context, actor domainauth.Principal, repository string) ([]AdminRepositoryGrant, error)
 	PutAdminRepositoryGrant(ctx context.Context, actor domainauth.Principal, input AdminPutRepositoryGrantInput) (AdminRepositoryGrant, error)
+	ListAdminAllRepositoryGrants(ctx context.Context, actor domainauth.Principal, limit int, after string) (AdminGrantPage, error)
 	DeleteAdminRepositoryGrant(ctx context.Context, actor domainauth.Principal, repository string, username string) error
 	CreateAdminRobot(ctx context.Context, actor domainauth.Principal, input AdminCreateRobotInput) (AdminCreatedRobot, error)
 	ListAdminRobots(ctx context.Context, actor domainauth.Principal) ([]AdminRobot, error)

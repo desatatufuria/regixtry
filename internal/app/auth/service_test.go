@@ -1140,6 +1140,25 @@ func (s *memoryAuthStore) ListRepoGrantsByRepository(_ context.Context, reposito
 	}
 	return grants, nil
 }
+func (s *memoryAuthStore) ListRepoGrantsPage(_ context.Context, after *domainauth.GrantCursor, limit int) ([]domainauth.RepositoryGrantRow, error) {
+	rows := make([]domainauth.RepositoryGrantRow, 0)
+	for userID, userGrants := range s.grants {
+		user := s.usersByID[userID]
+		for _, grant := range userGrants {
+			row := domainauth.RepositoryGrantRow{Repository: grant.Repository.String(), UserID: userID, Username: user.Username, IsRobot: user.IsRobot, Role: grant.Role, CreatedAt: grant.CreatedAt, UpdatedAt: grant.UpdatedAt}
+			if after == nil || !after.AtOrBefore(row) {
+				rows = append(rows, row)
+			}
+		}
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		return domainauth.CompareGrantKeys(rows[i].Repository, rows[i].Username, rows[i].UserID, rows[j].Repository, rows[j].Username, rows[j].UserID) < 0
+	})
+	if len(rows) > limit {
+		rows = rows[:limit]
+	}
+	return rows, nil
+}
 func (s *memoryAuthStore) PutRepoGrant(_ context.Context, grant domainauth.RepoGrant) error {
 	existing := s.grants[grant.UserID]
 	for i, current := range existing {

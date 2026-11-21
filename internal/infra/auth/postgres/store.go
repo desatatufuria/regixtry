@@ -248,6 +248,57 @@ func (s *Store) ListRepoGrantsByRepository(ctx context.Context, repository regix
 	return grants, rows.Err()
 }
 
+// ListRepoGrantsPage returns up to limit grants of every user and robot on
+// every repository, cataloged or not, ordered by repository, username and user
+// id, strictly after the cursor. One query joins grants to their owners (a
+// disabled owner still appears). Text collation differs between Postgres and
+// the sqlite test harness, so the SQL carries no ORDER BY or cursor predicate:
+// the exact bytewise order, the keyset cut and the limit run in Go. The table
+// is small (design.md Open Questions), so reading it whole per page is cheap.
+func (s *Store) ListRepoGrantsPage(ctx context.Context, after *domainauth.GrantCursor, limit int) ([]domainauth.RepositoryGrantRow, error) {
+	if limit <= 0 {
+		return []domainauth.RepositoryGrantRow{}, nil
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT g.repository, g.user_id, u.username, u.is_robot, g.role, g.created_at, g.updated_at
+		FROM auth_repo_grants g
+		JOIN auth_users u ON u.id = g.user_id
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]domainauth.RepositoryGrantRow, 0)
+	for rows.Next() {
+		var row domainauth.RepositoryGrantRow
+		var role, createdAt, updatedAt string
+		if err := rows.Scan(&row.Repository, &row.UserID, &row.Username, &row.IsRobot, &role, &createdAt, &updatedAt); err != nil {
+			return nil, err
+		}
+		row.Role = domainauth.RepoRole(role)
+		row.CreatedAt = parseTime(createdAt)
+		row.UpdatedAt = parseTime(updatedAt)
+		if after != nil && after.AtOrBefore(row) {
+			continue
+		}
+		result = append(result, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		return domainauth.CompareGrantKeys(result[i].Repository, result[i].Username, result[i].UserID, result[j].Repository, result[j].Username, result[j].UserID) < 0
+	})
+	if len(result) > limit {
+		result = result[:limit]
+	}
+
+	return result, nil
+}
+
 func (s *Store) PutRepoGrant(ctx context.Context, grant domainauth.RepoGrant) error {
 	if err := grant.Validate(); err != nil {
 		return err
