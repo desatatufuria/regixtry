@@ -455,7 +455,7 @@ type viewportSize struct {
 // string. Measuring "" instead would under-count chrome and let the row
 // budget exceed the terminal height once content is clipped.
 // screenEnv builds the read-only view of the outside world a migrated
-// sub-model or a legacy model's embedded confirmPrompt may read
+// sub-model or a model's embedded confirmPrompt may read
 // (design.md's screenEnv). Layout uses adminTablesLayout's own admin-screen
 // budget since, in Slice 1, only admin-side screens/overlays consume it.
 func (m Model) screenEnv() screenEnv {
@@ -4272,7 +4272,7 @@ func isAdminPrincipalScreen(current screen) bool {
 // migrated top-level screen (design.md Decision A/I, resolved via slotFor)
 // has its own local overlay open that captures free-text or key input -- a
 // confirm prompt, a config/policy modal, or the shared overrideEditor. None
-// of these local overlays are visible to the legacy
+// of these local overlays are visible to the
 // m.adminView.Confirm.Active() guard (design.md Decision B: each migrated
 // screen owns its own state), so the bare 'l' logout / 'q' quit global keys
 // must not intercept keystrokes meant for one of these overlays -- mirrors
@@ -4639,7 +4639,7 @@ func (m *Model) clearSelectedAdminDetails() {
 	m.adminScreens[slotSigningConfig] = nil
 	// scanHistoryScreen (Phase 19) migrated off AdminViewState.ScanHistoryModal
 	// onto its own dedicated slot (design.md's State Migration table);
-	// un-mounted here exactly like the Security & Compliance screens above.
+	// un-mounted here exactly like the Security screens above.
 	m.adminScreens[slotScanHistory] = nil
 	m.adminView.SelectedGrant = 0
 	m.adminView.SelectedToken = 0

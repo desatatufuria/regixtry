@@ -391,9 +391,8 @@ type AdminViewState struct {
 	TokenForm         adminTokenForm
 	// Confirm is THE confirm-before-destructive-action primitive
 	// (design.md Decision E, D7), replacing adminConfirmModal's Kind-union.
-	// Still shared across every legacy admin screen; the Security &
-	// Compliance domain's own screens (Phase 11) each own their own local
-	// confirm field instead (design.md Decision B: a migrated screen cannot
+	// Shared by the Users and Robots screens; the Security screens each
+	// own their own local confirm field instead (design.md Decision B: a migrated screen cannot
 	// write to AdminViewState directly).
 	Confirm                confirmPrompt
 	RevealedTokenSecret    string

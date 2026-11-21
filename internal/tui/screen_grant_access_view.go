@@ -41,7 +41,7 @@ func (s grantAccessScreen) View(theme adminTheme, env screenEnv) screenFrame {
 		renderGrantPane(theme, s.rolePane(theme, env, w3-grantPaneChromeW, innerH), w3, innerH, s.focus == grantPaneRole),
 	)
 	body := renderSection(theme, panes+"\n"+s.statusLine(theme, contentW), layout)
-	return screenFrame{Context: "Identity & Access / Grant repository access", Body: body}
+	return screenFrame{Context: adminContext("Access", "Repository access"), Body: body}
 }
 
 func renderGrantPane(theme adminTheme, lines []string, outerW, innerH int, focused bool) string {

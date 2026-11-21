@@ -442,10 +442,9 @@ func tableRoles(l consoleLayout) (primary, compact int) {
 // rebuildAdminTables keeps AdminViewState.Layout's Primary/Compact split
 // fresh (design.md decision #6) -- a handful of tests read it as a proxy
 // for "the row budget this screen was sized against". Every admin table
-// itself is now built by its own owning screen (securityMenuScreen/
-// trivyConfigScreen/trivyReposScreen's own fields since Phase 11;
-// scanHistoryScreen's own findings/secretFindings fields since Phase 19,
-// design.md's State Migration table) from inside its own Update, broadcast
+// itself is built by its own owning screen (trivyConfigScreen/
+// trivyReposScreen's own fields; scanHistoryScreen's own
+// findings/secretFindings fields, design.md's State Migration table) from inside its own Update, broadcast
 // the same way every other migrated screen refreshes on tea.WindowSizeMsg
 // (design.md Decision H). Still called unconditionally after almost every
 // admin action -- harmless/cheap, this method itself now does no table

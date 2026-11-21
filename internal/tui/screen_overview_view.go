@@ -38,7 +38,7 @@ func (s overviewScreen) View(theme adminTheme, env screenEnv) screenFrame {
 		Context: "Overview",
 		Full:    true,
 		Body: renderShell(theme, shellSpec{
-			Breadcrumb: []string{"Admin", "Overview"},
+			Breadcrumb: shellCrumb("Overview"),
 			Operator:   env.Session.Username,
 			Active:     s.selectedID(),
 			Body:       strings.Join(lines, "\n"),

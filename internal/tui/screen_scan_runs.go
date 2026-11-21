@@ -110,10 +110,10 @@ func (s scanRunsScreen) selectedSummary() (repositorySummary, bool) {
 
 func (s scanRunsScreen) View(theme adminTheme, env screenEnv) screenFrame {
 	heading := "Scan Runs"
-	context := "Operations / Scan Runs"
+	context := adminContext("Operations", "Scan runs")
 	if s.id == screenAdminSecretFindings {
 		heading = "Secret Scan Findings"
-		context = "Operations / Secret Scan Findings"
+		context = adminContext("Operations", "Secret findings")
 	}
 	lines := []string{theme.subheading.Render(heading)}
 	switch {

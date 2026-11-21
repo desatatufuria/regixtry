@@ -174,7 +174,7 @@ func (s featureOverridesScreen) View(theme adminTheme, env screenEnv) screenFram
 		lines = renderFeatureOverridesTable(theme, s.feature, s.rows, s.loaded, s.table)
 	}
 	frame := screenFrame{
-		Context: "Security & Compliance / " + featureDisplayName(s.feature) + " / Repositories",
+		Context: adminContext(featureNavGroup, featureNavLabel(s.feature), "Repositories"),
 		Body:    renderSection(theme, strings.Join(lines, "\n"), env.Layout),
 	}
 	if s.editor.Active() {

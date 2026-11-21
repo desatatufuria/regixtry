@@ -328,7 +328,7 @@ func (s signingConfigScreen) View(theme adminTheme, env screenEnv) screenFrame {
 	}
 	lines = append(lines, renderAdminOperatorFooter(theme, env.Session, env.now())...)
 	frame := screenFrame{
-		Context: "Security & Compliance / Signing",
+		Context: adminContext("Security", "Signing policy"),
 		Body:    renderSection(theme, strings.Join(lines, "\n"), env.Layout),
 	}
 	switch {

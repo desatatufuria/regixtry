@@ -315,7 +315,7 @@ func (s trivyConfigScreen) View(theme adminTheme, env screenEnv) screenFrame {
 	}
 	lines = append(lines, renderAdminOperatorFooter(theme, env.Session, env.now())...)
 	frame := screenFrame{
-		Context: "Security & Compliance / Trivy",
+		Context: adminContext("Security", "Image scanning"),
 		Body:    renderSection(theme, strings.Join(lines, "\n"), env.Layout),
 	}
 	switch {

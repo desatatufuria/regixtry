@@ -2989,7 +2989,7 @@ func TestModelFeatureSelectionRefreshesPageAndHelpFromBackendActions(t *testing.
 		t.Fatalf("getFeaturePageCalls = %d, want one page read for gitleaks", adminClient.getFeaturePageCalls)
 	}
 	view := updated.View().Content
-	for _, want := range []string{"Gitleaks", "e: enable"} {
+	for _, want := range []string{"Secret scanning", "e: enable"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view = %q, want %q", view, want)
 		}

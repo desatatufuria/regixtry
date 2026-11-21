@@ -93,7 +93,7 @@ func TestTableRolesAssignsPrimaryAdaptiveAndCompactFloorAtThree(t *testing.T) {
 }
 
 // TestRebuildAdminTablesBakesPrimaryAndCompactPageSizeIntoTables integrates
-// tableRoles into each Security & Compliance screen's own table rebuild
+// tableRoles into each Security screen's own table rebuild
 // (Phase 11: Features/ScanSummary/FeatureRows moved off
 // AdminViewState/rebuildAdminTables onto trivyReposScreen/trivyConfigScreen's
 // own rebuildTable/rebuildRows methods): ScanSummary (the operator-navigable

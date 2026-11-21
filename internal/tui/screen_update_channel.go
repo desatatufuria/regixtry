@@ -138,7 +138,7 @@ func (s updateChannelScreen) View(theme adminTheme, env screenEnv) screenFrame {
 	}
 	lines = append(lines, renderAdminOperatorFooter(theme, env.Session, env.now())...)
 	return screenFrame{
-		Context: "Operations / Update Channel",
+		Context: adminContext("Operations", "Update channel"),
 		Body:    renderSection(theme, strings.Join(lines, "\n"), env.Layout),
 	}
 }

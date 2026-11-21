@@ -1773,12 +1773,6 @@ func TestGeneratedFooterMatchesPreviousHandWrittenString(t *testing.T) {
 // non-migrated screen. A routing regression that dispatches a legacy
 // screen to the wrong renderer, drops its help text, or diverges its body
 // would fail this test.
-//
-// Narrowed from 13 to 12 screens in Phase 11: screenAdminFeatures is no
-// longer one of them (design.md Decision I repurposes it as
-// securityMenuScreen, a migrated screen addressed via slotFor) — see
-// TestEveryScreenRoutesExactlyOnce/TestModel* coverage for its own
-// characterization now.
 func TestNonMigratedScreensUnchanged(t *testing.T) {
 	t.Parallel()
 

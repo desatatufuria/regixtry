@@ -239,3 +239,28 @@ func shellNavRow(theme adminTheme, item shellNavItem, indented, active bool) str
 	}
 	return bar.Render(" ") + row.Render(label)
 }
+
+// shellCrumb builds a breadcrumb trail below the shell's root crumb: Access,
+// Security and Operations name the sidebar group, then come the screen and
+// anything deeper.
+func shellCrumb(parts ...string) []string { return append([]string{"Admin"}, parts...) }
+
+// adminContext is shellCrumb as the one-line context the workspace prints
+// under the title.
+func adminContext(parts ...string) string { return strings.Join(shellCrumb(parts...), " › ") }
+
+// featureNavLabel is the sidebar label of the screen that owns a feature.
+func featureNavLabel(feature string) string {
+	switch feature {
+	case trivyFeatureName:
+		return "Image scanning"
+	case gitleaksFeatureName:
+		return "Secret scanning"
+	case signingFeatureName:
+		return "Signing policy"
+	}
+	return feature
+}
+
+// featureNavGroup is the sidebar group of the screen that owns a feature.
+const featureNavGroup = "Security"

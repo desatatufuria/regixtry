@@ -336,7 +336,7 @@ func (s gitleaksConfigScreen) View(theme adminTheme, env screenEnv) screenFrame 
 	}
 	lines = append(lines, renderAdminOperatorFooter(theme, env.Session, env.now())...)
 	frame := screenFrame{
-		Context: "Security & Compliance / Gitleaks",
+		Context: adminContext("Security", "Secret scanning"),
 		Body:    renderSection(theme, strings.Join(lines, "\n"), env.Layout),
 	}
 	switch {

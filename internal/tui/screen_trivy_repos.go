@@ -176,7 +176,7 @@ func (s trivyReposScreen) View(theme adminTheme, env screenEnv) screenFrame {
 	lines = append(lines, renderAdminScanSummary(theme, s.summaries, s.loaded, s.table)...)
 	lines = append(lines, renderAdminOperatorFooter(theme, env.Session, env.now())...)
 	frame := screenFrame{
-		Context: "Security & Compliance / Trivy / Repository Alerts",
+		Context: adminContext("Security", "Image scanning", "Repository alerts"),
 		Body:    renderSection(theme, strings.Join(lines, "\n"), env.Layout),
 	}
 	if s.editor.Active() {

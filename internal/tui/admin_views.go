@@ -28,7 +28,7 @@ func renderAdminWorkspace(current screen, session AdminSession, view AdminViewSt
 
 	// Migrated top-level screen (design.md Decision I / Data Flow): the
 	// screen's own View() supplies context/body/help/overlay. Every other
-	// screen id still resolves through the legacy renderAdminScreen path
+	// screen id still resolves through the renderAdminScreen path
 	// unchanged (design.md D5's adapter boundary).
 	var context, body, help, screenOverlay string
 	var fullScreen bool
@@ -135,36 +135,36 @@ func renderAdminScreen(theme adminTheme, current screen, session AdminSession, v
 	help := adminScreenHelp(current, view)
 	switch current {
 	case screenAdminCreateUser:
-		return "Users / Create User", renderAdminCreateUserScreen(theme, view), help
+		return adminContext("Access", "Users", "Create user"), renderAdminCreateUserScreen(theme, view), help
 	case screenAdminEditUser:
-		return fmt.Sprintf("Users / %s / General", selectedAdminUsername(view)), renderAdminEditUserScreen(theme, session, view, now), help
+		return adminContext("Access", "Users", selectedAdminUsername(view), "General"), renderAdminEditUserScreen(theme, session, view, now), help
 	case screenAdminChangePassword:
-		return fmt.Sprintf("Users / %s / Change Password", selectedAdminUsername(view)), renderAdminChangePasswordScreen(theme, view), help
+		return adminContext("Access", "Users", selectedAdminUsername(view), "Change password"), renderAdminChangePasswordScreen(theme, view), help
 	case screenAdminEditUserGrants:
-		return fmt.Sprintf("Users / %s / Grants", selectedAdminUsername(view)), renderAdminGrantsScreen(theme, view), help
+		return adminContext("Access", "Users", selectedAdminUsername(view), "Grants"), renderAdminGrantsScreen(theme, view), help
 	case screenAdminAddGrant:
-		return fmt.Sprintf("Users / %s / Grants / Add Grant", selectedAdminUsername(view)), renderAdminAddGrantScreen(theme, view, knownRepositories), help
+		return adminContext("Access", "Users", selectedAdminUsername(view), "Grants", "Add grant"), renderAdminAddGrantScreen(theme, view, knownRepositories), help
 	case screenAdminEditUserTokens:
-		return fmt.Sprintf("Users / %s / Tokens", selectedAdminUsername(view)), renderAdminTokensScreen(theme, view), help
+		return adminContext("Access", "Users", selectedAdminUsername(view), "Tokens"), renderAdminTokensScreen(theme, view), help
 	case screenAdminCreateToken:
-		return fmt.Sprintf("Users / %s / Tokens / Create Token", selectedAdminUsername(view)), renderAdminCreateTokenScreen(theme, view, now), help
+		return adminContext("Access", "Users", selectedAdminUsername(view), "Tokens", "Create token"), renderAdminCreateTokenScreen(theme, view, now), help
 	case screenRepoAdminGrants:
 		return fmt.Sprintf("Repositories / %s / Grants", view.RepoAdminRepository), renderRepoAdminGrantsScreen(theme, view), help
 	case screenRepoAdminAddGrant:
 		return fmt.Sprintf("Repositories / %s / Grants / Add Grant", view.RepoAdminRepository), renderRepoAdminAddGrantScreen(theme, view), help
 	case screenAdminRobots:
-		return "Robots", renderAdminRobotsScreen(theme, session, view, layout, now), help
+		return adminContext("Access", "Robots"), renderAdminRobotsScreen(theme, session, view, layout, now), help
 	case screenAdminCreateRobot:
-		return "Robots / Create Robot", renderAdminCreateRobotScreenWithin(theme, view, knownRepositories, now, layout.SectionRows), help
+		return adminContext("Access", "Robots", "Create robot"), renderAdminCreateRobotScreenWithin(theme, view, knownRepositories, now, layout.SectionRows), help
 	default:
-		return "Users", renderAdminUsersScreen(theme, session, view, layout, now), help
+		return adminContext("Access", "Users"), renderAdminUsersScreen(theme, session, view, layout, now), help
 	}
 }
 
 // renderAdminOperatorFooter is the trailing "Operator: %s" / "Session
-// remaining: %s" pair every legacy admin screen renders (see
-// renderAdminUsersScreen/renderAdminRobotsScreen below). Phase 11's five new
-// migrated screens (trivyConfigScreen, trivyReposScreen, gitleaksConfigScreen,
+// remaining: %s" pair the Users and Robots screens render (see
+// renderAdminUsersScreen/renderAdminRobotsScreen below). The migrated Security
+// screens (trivyConfigScreen, trivyReposScreen, gitleaksConfigScreen,
 // signingConfigScreen) share it via this helper so the operator never loses
 // their session countdown while navigating the Security screens.
 func renderAdminOperatorFooter(theme adminTheme, session AdminSession, now time.Time) []string {

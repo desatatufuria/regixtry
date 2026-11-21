@@ -36,9 +36,8 @@ func TestSecurityConfigScreensJoinAdminPrincipalScreenSet(t *testing.T) {
 
 // TestCanLogoutFromAllSixNewSecurityScreens is the Judgment Day fix-round RED
 // test for Finding 2 (Judge A, CRITICAL): canLogoutAdminFromCurrentScreen
-// gates the bare 'l' logout key (model.go:1668). All 6 new Security &
-// Compliance screens introduced by this change must be reachable via 'l',
-// exactly as the legacy single screenAdminFeatures id was before this change.
+// gates the bare 'l' logout key. All 6 Security screens must be reachable
+// via 'l'.
 func TestCanLogoutFromAllSixNewSecurityScreens(t *testing.T) {
 	t.Parallel()
 
