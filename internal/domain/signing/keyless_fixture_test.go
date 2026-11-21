@@ -67,6 +67,14 @@ func (e *keylessTestEntity) TlogEntries() ([]*tlog.Entry, error) {
 	return e.tlogEntries, nil
 }
 
+// Version reports the bundle media-type version the real captured keyless
+// bundles carry (application/vnd.dev.sigstore.bundle.v0.3+json, see
+// testdata/README.md). sigstore-go v1.4.0's SignedEntity requires it and
+// branches signature-verification compatibility on it.
+func (e *keylessTestEntity) Version() (string, error) {
+	return "v0.3", nil
+}
+
 var _ verify.SignedEntity = (*keylessTestEntity)(nil)
 
 // newSyntheticVirtualSigstore builds a fresh sigstore-go/pkg/testing/ca
@@ -142,7 +150,12 @@ func buildKeylessEntity(t *testing.T, signingCA *ca.VirtualSigstore, identity, i
 		t.Fatalf("GenerateLeafCert() error = %v", err)
 	}
 
-	signer, err := signature.LoadECDSASignerVerifier(leafKey, crypto.SHA256)
+	leafECDSAKey, ok := leafKey.(*ecdsa.PrivateKey)
+	if !ok {
+		t.Fatalf("GenerateLeafCert() key type = %T, want *ecdsa.PrivateKey", leafKey)
+	}
+
+	signer, err := signature.LoadECDSASignerVerifier(leafECDSAKey, crypto.SHA256)
 	if err != nil {
 		t.Fatalf("LoadECDSASignerVerifier() error = %v", err)
 	}

@@ -41,6 +41,8 @@
       ],
       "settings": {
         "go.toolsEnvVars": {
+          // Transitional safety net: lets gopls fetch go1.27.4 until the image is rebuilt on it; safe to drop afterwards.
+          "GOTOOLCHAIN": "auto",
           "GOMODCACHE": "/tmp/opencode/gomodcache",
           "GOCACHE": "/tmp/opencode/gocache"
         },
@@ -65,6 +67,8 @@
   "updateRemoteUserUID": true,
   "remoteEnv": {
     "DOCKER_BUILDKIT": "1",
+    // Transitional safety net: lets go fetch go1.27.4 until the image is rebuilt on it; safe to drop afterwards.
+    "GOTOOLCHAIN": "auto",
     "GOMODCACHE": "/tmp/opencode/gomodcache",
     "GOCACHE": "/tmp/opencode/gocache"
   },

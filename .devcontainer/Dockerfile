@@ -1,5 +1,5 @@
 # Define the Go image version as a build argument
-ARG GO_IMAGE_VERSION=1.26.4-bookworm
+ARG GO_IMAGE_VERSION=1.27.4-bookworm
 
 FROM docker.io/golang:${GO_IMAGE_VERSION}
 
@@ -9,10 +9,10 @@ ARG USER_ID=1000
 ARG GROUP_ID=1000
 
 ARG DOCKER_COMPOSE_VERSION=v5.0.2
-ARG AIR_VERSION=v1.64.4
-ARG GO_DELVE_VERSION=v1.26.0
-ARG GOPLS_VERSION=v0.21.0
-ARG STATICCHECK_VERSION=2025.1.1
+ARG AIR_VERSION=v1.67.4
+ARG GO_DELVE_VERSION=v1.27.2
+ARG GOPLS_VERSION=v0.24.0
+ARG STATICCHECK_VERSION=2026.2.2
 
 # Install necessary packages (APT en Debian)
 RUN apt-get update && apt-get install -y \

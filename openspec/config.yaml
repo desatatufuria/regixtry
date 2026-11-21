@@ -1,7 +1,7 @@
 schema: spec-driven
 
 context: |
-  Stack: Single-binary Go 1.26 OCI registry with Bubble Tea TUI, filesystem blob storage, SQLite metadata, and optional PostgreSQL-backed auth/admin APIs.
+  Stack: Single-binary Go 1.27 OCI registry with Bubble Tea TUI, filesystem blob storage, SQLite metadata, and optional PostgreSQL-backed auth/admin APIs.
   Runtime: `cmd/regixtry` exposes `serve`, `tui`, `bootstrap`, `bootstrap-admin`, `setup`, `uninstall`, and `upgrade`; release CI is defined in `.github/workflows/release.yml`.
   Architecture: Layered `internal/domain`, `internal/app`, `internal/ports`, `internal/infra`, `internal/protocol/http`, and `internal/tui`; current jobs remain inline with no persistent worker/queue.
   Testing: Go package tests cover domain, app, HTTP router, storage/auth adapters, TUI, and install lifecycle; smoke scripts validate installer, Docker push/pull, and TUI snapshot flows.
