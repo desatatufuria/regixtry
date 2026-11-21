@@ -3,22 +3,22 @@
  regixtry admin                │
                                │  Users                                                                                          5 users, 1 disabled
     Overview                   │           ╭──────────────────────────────────────────────────────────────╮
-                               │  ╭──────  │  Confirm Disable                                             │   ╭────────────────────────────────────╮
-  ACCESS                       │  │ / sea  │                                                              │   │ carol                              │
-    ▸ Users                    │  ╰──────  │  Confirm disable user "carol"?                               │   │ user, enabled, created 3 Mar 2026  │
-      Robots                   │  ╭──────  │                                                              │   │                                    │
-      Repository access        │  │   USE  │  ╭────────────────────────────────────────────────────────╮  │   │ ACTIONS                            │
-                               │  │   adm  │  │ carol                                                  │  │   │ Open profile                 enter │
-  SECURITY                     │  │   ali  │  │ user, enabled, created 3 Mar 2026                      │  │   │ Grant access                     g │
-      Image scanning           │  │   bob  │  ╰────────────────────────────────────────────────────────╯  │   │ Tokens                           t │
-      Secret scanning          │  │ ▸ car  │                                                              │   │ Reset password                   p │
-      Signing policy           │  │   dav  │  carol is signed out and their tokens stop working. Their    │   │ Disable user                     d │
-                               │  │        │  grants stay, so enabling them again restores access.        │   │                                    │
-  OPERATIONS                   │  │        │                                                              │   │ NEEDS ATTENTION                    │
-      Scan runs                │  │        │   Confirm                                        y / enter   │   │ Token laptop expires in 4 days     │
-      Secret findings          │  │        │   Cancel                                               esc   │   │ Token ci expires in 30 hours       │
-      Update channel           │  │        ╰──────────────────────────────────────────────────────────────╯   │                                    │
-                               │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │
-                               │  EXPIRING counts tokens that expire within 7 days.                           ╰────────────────────────────────────╯
+                               │           │  Disable user?                                               │
+  ACCESS                       │           │                                                              │
+    ▸ Users                    │           │  The user cannot sign in and their tokens stop working.      │
+      Robots                   │           │                                                              │
+      Repository access        │           │  ╭────────────────────────────────────────────────────────╮  │
+                               │           │  │ carol                                                  │  │
+  SECURITY                     │           │  │ user, enabled, created 3 Mar 2026                      │  │
+      Image scanning           │           │  ╰────────────────────────────────────────────────────────╯  │
+      Secret scanning          │           │                                                              │
+      Signing policy           │           │  Grants are kept. Enable carol again to restore access.      │
+                               │           │                                                              │
+  OPERATIONS                   │           │   Confirm                                        y / enter   │
+      Scan runs                │           │   Cancel                                               esc   │
+      Secret findings          │           ╰──────────────────────────────────────────────────────────────╯
+      Update channel           │
+                               │
+                               │
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  enter confirm   esc cancel                                                                                                                          
+  y / enter confirm   esc cancel                                                                                                                      

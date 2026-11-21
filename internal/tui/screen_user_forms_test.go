@@ -133,7 +133,15 @@ func TestCreateUserValidatesOnTheClientWithoutCallingTheServer(t *testing.T) {
 			if client.createUserCalls != 0 {
 				t.Fatalf("CreateUser was called %d times", client.createUserCalls)
 			}
-			if out := renderCreate(s, env); !strings.Contains(out, tt.wantError) {
+			out := ansi.Strip(renderCreate(s, env))
+			if tt.wantError == userPasswordTooShort {
+				// The short-password message is the counter line, told once.
+				if strings.Contains(out, tt.wantError) || strings.Count(out, "minimum 8.") != 1 {
+					t.Fatalf("the short-password error must show once, as the counter line:\n%s", out)
+				}
+				return
+			}
+			if !strings.Contains(out, tt.wantError) {
 				t.Fatalf("the error is not on screen:\n%s", out)
 			}
 		})

@@ -11,14 +11,14 @@
                                │  │ Enabled                                 [ ] disabled │  │                                                      │  
   SECURITY                     │  ╰──────────────────────────────────────────────────────╯  │                                                      │  
       Image scanning           │  ╭──────────────────────────────────────────────────────╮  │                                                      │  
-      Secret scanning          │  │ PASSWORD                                             │  │                                                      │  
-      Signing policy           │  │ Set a new password for dave                  p reset │  │                                                      │  
-                               │  ╰──────────────────────────────────────────────────────╯  ╰──────────────────────────────────────────────────────╯  
-  OPERATIONS                   │  ╭──────────────────────────────────────────────────────╮  ╭──────────────────────────────────────────────────────╮  
-      Scan runs                │  │ REPOSITORY GRANTS                     g grant access │  │ DANGER AREA                                          │  
-      Secret findings          │  │ No repository grants.                                │  │ dave is disabled and cannot sign in. Enabling        │  
-      Update channel           │  │                                                      │  │ restores their access; their grants were kept.       │  
-                               │  │                                                      │  │ Enable user  d                                       │  
+      Secret scanning          │  │ PASSWORD                                             │  ╰──────────────────────────────────────────────────────╯  
+      Signing policy           │  │ Set a new password for dave                  p reset │  ╭──────────────────────────────────────────────────────╮  
+                               │  ╰──────────────────────────────────────────────────────╯  │ DANGER AREA                                          │  
+  OPERATIONS                   │  ╭──────────────────────────────────────────────────────╮  │ dave is disabled and cannot sign in. Enabling        │  
+      Scan runs                │  │ REPOSITORY GRANTS                     g grant access │  │ restores their access; their grants were kept.       │  
+      Secret findings          │  │ No repository grants.                                │  │ ╭────────────────╮                                   │  
+      Update channel           │  │                                                      │  │ │ Enable user  d │                                   │  
+                               │  │                                                      │  │ ╰────────────────╯                                   │  
                                │  ╰──────────────────────────────────────────────────────╯  ╰──────────────────────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   space enable/disable   p password   g grant access   t tokens   d disable   r refresh   esc back                                                    

@@ -481,7 +481,7 @@ func TestUsersDisableAsksThenDisablesOnceAndReloads(t *testing.T) {
 		t.Fatalf("d: confirm=%v calls=%d, want a prompt and no call yet", s.confirm.Active(), client.disableCalls)
 	}
 	view := s.View(newAdminTheme(), env)
-	if !strings.Contains(ansi.Strip(view.Overlay), `Confirm disable user "carol"?`) {
+	if !strings.Contains(ansi.Strip(view.Overlay), "Disable user?") {
 		t.Fatalf("overlay = %q", view.Overlay)
 	}
 	loadsBefore := client.listUsersCalls

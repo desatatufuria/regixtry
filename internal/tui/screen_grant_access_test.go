@@ -328,23 +328,35 @@ func TestGrantReviewLines(t *testing.T) {
 	t.Parallel()
 	t.Run("lists names under the sentence", func(t *testing.T) {
 		got := grantReviewLines("alice", domainauth.RepoRoleWriter, []string{"a/one", "b/two"}, 60, 10)
-		want := []string{"alice becomes Writer on 2 repositories:", "a/one", "b/two"}
+		want := []string{"alice becomes Writer on 2 repositories:", "a/one, b/two"}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("grantReviewLines = %#v, want %#v", got, want)
 		}
 	})
 	t.Run("truncates with +k more inside the budget", func(t *testing.T) {
-		names := []string{"a/1", "a/2", "a/3", "a/4", "a/5", "a/6"}
-		got := grantReviewLines("alice", domainauth.RepoRoleReader, names, 60, 4)
-		want := []string{"alice becomes Reader on 6 repositories:", "a/1", "a/2", "+4 more"}
+		names := []string{"a/1", "a/2", "a/3", "a/4", "a/5", "a/6", "a/7", "a/8", "a/9", "a/10"}
+		got := grantReviewLines("alice", domainauth.RepoRoleReader, names, 20, 4)
+		want := []string{"alice becomes Reader", "on 10 repositories:", "a/1, a/2, a/3, a/4,", "+6 more"}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("grantReviewLines = %#v, want %#v", got, want)
 		}
 	})
 	t.Run("exact fit does not add +k more", func(t *testing.T) {
-		got := grantReviewLines("alice", domainauth.RepoRoleReader, []string{"a/1", "a/2", "a/3"}, 60, 4)
-		if len(got) != 4 || strings.Contains(strings.Join(got, "\n"), "more") {
+		got := grantReviewLines("alice", domainauth.RepoRoleReader, []string{"a/1", "a/2", "a/3"}, 60, 2)
+		if len(got) != 2 || strings.Contains(strings.Join(got, "\n"), "more") {
 			t.Fatalf("grantReviewLines = %#v", got)
+		}
+	})
+	t.Run("names are one wrapped comma-separated line", func(t *testing.T) {
+		names := []string{"a/1", "a/2", "a/3", "a/4", "a/5", "a/6"}
+		got := grantReviewLines("alice", domainauth.RepoRoleReader, names, 60, 4)
+		want := []string{"alice becomes Reader on 6 repositories:", "a/1, a/2, a/3, a/4, a/5, a/6"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("grantReviewLines = %#v, want %#v", got, want)
+		}
+		one := grantReviewLines("alice", domainauth.RepoRoleReader, []string{"a/1"}, 60, 4)
+		if one[0] != "alice becomes Reader on 1 repository:" {
+			t.Fatalf("singular = %#v", one)
 		}
 	})
 	t.Run("wraps a long sentence and still respects the budget", func(t *testing.T) {
@@ -1019,7 +1031,7 @@ func TestGrantAccessScreenRoutesLikeEveryMigratedScreen(t *testing.T) {
 	if got := newGrantAccessScreen(screenAdminOverview, "").Keys(); len(got.short) == 0 {
 		t.Fatal("no key hints")
 	}
-	if keys := shortHelpView(newAdminTheme(), newGrantAccessScreen(screenAdminOverview, "").Keys()); !strings.Contains(keys, "Space") || !strings.Contains(keys, "Enter") {
+	if keys := shortHelpView(newAdminTheme(), newGrantAccessScreen(screenAdminOverview, "").Keys()); !strings.Contains(keys, "space") || !strings.Contains(keys, "enter") {
 		t.Fatalf("footer = %q", keys)
 	}
 }

@@ -129,7 +129,7 @@ func TestEditUserDisableAndSpaceBothAskBeforeActing(t *testing.T) {
 		if !s.confirm.Active() || client.disableCalls != 0 {
 			t.Fatalf("key %q: confirm=%v calls=%d, want a prompt and no call", keyText(key), s.confirm.Active(), client.disableCalls)
 		}
-		if got := ansi.Strip(s.View(newAdminTheme(), env).Overlay); !strings.Contains(got, `Confirm disable user "carol"?`) {
+		if got := ansi.Strip(s.View(newAdminTheme(), env).Overlay); !strings.Contains(got, "Disable user?") {
 			t.Fatalf("overlay = %q", got)
 		}
 		// Two Enters before the result: one call.

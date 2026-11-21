@@ -1936,7 +1936,7 @@ func TestAdminConfirmCharacterization(t *testing.T) {
 				return m, adminClient
 			},
 			openKey:        "d",
-			wantOpenSubstr: `Confirm enable user "alice"?`,
+			wantOpenSubstr: "Enable user?",
 			callCount:      func(f *fakeAdminClient) int { return f.enableCalls },
 		},
 		{
@@ -1952,7 +1952,7 @@ func TestAdminConfirmCharacterization(t *testing.T) {
 				return m, adminClient
 			},
 			openKey:        "d",
-			wantOpenSubstr: `Confirm disable user "alice"?`,
+			wantOpenSubstr: "Disable user?",
 			callCount:      func(f *fakeAdminClient) int { return f.disableCalls },
 		},
 		{
@@ -2710,7 +2710,7 @@ func TestModelDisableUserSuccessRefreshesUsersAndPreservesSelectionByID(t *testi
 	updated = runKey(t, updated, "j")
 	updated = runKey(t, updated, "d")
 
-	if !strings.Contains(ansi.Strip(updated.View().Content), `Confirm disable user "bob"?`) {
+	if !strings.Contains(ansi.Strip(updated.View().Content), "Disable user?") {
 		t.Fatalf("view = %q, want disable confirmation", updated.View().Content)
 	}
 

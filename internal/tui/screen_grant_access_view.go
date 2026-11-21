@@ -8,9 +8,10 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// Layout budget (see viewport.go): the section body gets env.Layout.SectionRows
-// rows and sectionWidth(l)-2 columns. The panes take every row but one, which
-// is the status line under them; each pane spends 2 rows on its border.
+// Layout budget: the screen has no sidebar (the board is three panes across
+// the whole width), so it draws its own header and footer bars around a body of
+// height-shellChromeRows rows. The panes take every row but one, which is the
+// status line under them; each pane spends 2 rows on its border.
 const (
 	grantStatusRows   = 1
 	grantPaneBorder   = 2
@@ -19,12 +20,9 @@ const (
 )
 
 func (s grantAccessScreen) View(theme adminTheme, env screenEnv) screenFrame {
-	layout := env.Layout
-	contentW := sectionWidth(layout) - 2
-	rows := layout.SectionRows
-	if rows < grantMinSectionRs {
-		rows = grantMinSectionRs
-	}
+	width, height := max(env.Layout.Width, 1), max(env.Layout.Height, shellChromeRows+grantMinSectionRs)
+	contentW := max(width-2*shellContentPadX, 1)
+	rows := height - shellChromeRows
 	innerH := rows - grantStatusRows - grantPaneBorder
 
 	const gap = 1
@@ -40,8 +38,20 @@ func (s grantAccessScreen) View(theme adminTheme, env screenEnv) screenFrame {
 		strings.Repeat(" ", gap),
 		renderGrantPane(theme, s.rolePane(theme, env, w3-grantPaneChromeW, innerH), w3, innerH, s.focus == grantPaneRole),
 	)
-	body := renderSection(theme, panes+"\n"+s.statusLine(theme, contentW), layout)
-	return screenFrame{Context: adminContext("Access", "Repository access"), Body: body}
+	lines := strings.Split(panes+"\n"+s.statusLine(theme, contentW), "\n")
+	for len(lines) < rows {
+		lines = append(lines, "")
+	}
+	pad := strings.Repeat(" ", shellContentPadX)
+	for i, line := range lines[:rows] {
+		line = lipgloss.NewStyle().MaxWidth(contentW).Render(line)
+		lines[i] = pad + line + strings.Repeat(" ", max(width-shellContentPadX-lipgloss.Width(line), 0))
+	}
+
+	spec := shellSpec{Breadcrumb: shellCrumb("Access", "Repository access"), Operator: env.Session.Username, Hints: s.Keys().short, Width: width, Height: height}
+	rule := lipgloss.NewStyle().Foreground(theme.borderColor).Render(strings.Repeat("─", width))
+	body := strings.Join(append(append([]string{shellHeader(theme, spec, width), rule}, lines[:rows]...), rule, shellFooter(theme, spec, width)), "\n")
+	return screenFrame{Context: adminContext("Access", "Repository access"), Body: body, Full: true}
 }
 
 func renderGrantPane(theme adminTheme, lines []string, outerW, innerH int, focused bool) string {
@@ -117,11 +127,12 @@ func renderGrantFilter(theme adminTheme, value string, focused bool, width int) 
 
 func (s grantAccessScreen) whoPane(theme adminTheme, env screenEnv, iw, h int) []string {
 	lines := []string{
-		grantPaneTitle(theme, "Who", s.focus == grantPaneWho),
+		grantPaneTitle(theme, "1 Who", s.focus == grantPaneWho),
+		theme.muted.Render(grantTruncate("Search users and robots", iw)),
 		renderGrantFilter(theme, s.whoFilter, s.focus == grantPaneWho, iw),
 	}
 	already := min(max(h/4, 2), 6)
-	listRows := max(h-2-1-already, 1)
+	listRows := max(h-3-1-already, 1)
 
 	var listLines []string
 	if !s.principalsLoaded {
@@ -215,11 +226,12 @@ func (s grantAccessScreen) alreadyHasLines(theme adminTheme, iw, rows int) []str
 func (s grantAccessScreen) reposPane(theme adminTheme, env screenEnv, iw, h int) []string {
 	focused := s.focus == grantPaneRepos
 	lines := []string{
-		grantPaneTitle(theme, "Which repositories", focused),
+		grantPaneTitle(theme, "2 Which repositories", focused),
+		theme.muted.Render(grantTruncate("Filter, or type a new name", iw)),
 		renderGrantFilter(theme, s.repoFilter, focused, iw),
 		theme.muted.Render(grantTruncate("Exact names only, no wildcards.", iw)),
 	}
-	listRows := max(h-4, 1)
+	listRows := max(h-5, 1)
 	rows := grantRepoRows(env.KnownRepositories, s.repoFilter)
 	principal, hasPrincipal := s.chosen()
 	var current []string
@@ -255,9 +267,7 @@ func (s grantAccessScreen) reposPane(theme adminTheme, env screenEnv, iw, h int)
 		case row.New:
 			name, annotation = "+ "+row.Name, "not pushed yet"
 		case hasPrincipal:
-			if role, ok := grantRoleOn(s.grants[principal.ID].items, row.Name); ok {
-				annotation = principal.Name + " is " + grantRoleLabel(role)
-			}
+			annotation = s.repoPreview(principal, row.Name)
 		}
 		listLines = append(listLines, renderGrantRepoRow(theme, box, name, annotation, textBudget, i == cursor))
 	}
@@ -272,6 +282,23 @@ func (s grantAccessScreen) reposPane(theme adminTheme, env screenEnv, iw, h int)
 	selected := len(s.selection.ordered(env.KnownRepositories))
 	lines = append(lines, theme.muted.Render(grantTruncate(fmt.Sprintf("%d selected, %d shown", selected, len(rows)), iw)))
 	return lines
+}
+
+// repoPreview says what the grant would do on one repository for the chosen
+// role: nothing is said until the principal's grants are known.
+func (s grantAccessScreen) repoPreview(principal grantPrincipal, repository string) string {
+	entry := s.grants[principal.ID]
+	if !entry.loaded || entry.err != "" {
+		return ""
+	}
+	current, ok := grantRoleOn(entry.items, repository)
+	switch {
+	case !ok:
+		return "no access yet"
+	case current == s.role:
+		return principal.Name + " is " + grantRoleLabel(current)
+	}
+	return principal.Name + " is " + grantRoleLabel(current) + ", will become " + grantRoleLabel(s.role)
 }
 
 func renderGrantRepoRow(theme adminTheme, box, name, annotation string, budget int, highlighted bool) string {
@@ -301,7 +328,7 @@ func renderGrantRepoRow(theme adminTheme, box, name, annotation string, budget i
 
 func (s grantAccessScreen) rolePane(theme adminTheme, env screenEnv, iw, h int) []string {
 	focused := s.focus == grantPaneRole
-	lines := []string{grantPaneTitle(theme, "Role and review", focused)}
+	lines := []string{grantPaneTitle(theme, "3 Role and review", focused)}
 	for i, option := range grantRoleOptions {
 		radio := fmt.Sprintf("( ) %d %s", i+1, option.Label)
 		if option.Role == s.role {
@@ -309,7 +336,15 @@ func (s grantAccessScreen) rolePane(theme adminTheme, env screenEnv, iw, h int) 
 		}
 		lines = append(lines, radio, "    "+theme.muted.Render(grantTruncate(option.Description, iw-4)))
 	}
-	boxRows := h - len(lines)
+	_, hasWho := s.chosen()
+	ready := hasWho && !s.applying && len(s.selection.ordered(env.KnownRepositories)) > 0
+	buttons := s.buttons(theme, iw, ready)
+	boxRows := h - len(lines) - len(buttons)
+	if boxRows < 3 {
+		// Too short for the box and the buttons: the review text comes first.
+		buttons = nil
+		boxRows = h - len(lines)
+	}
 	if boxRows < 3 {
 		return append(lines, s.reviewContent(theme, env, iw, h-len(lines))...)
 	}
@@ -322,7 +357,22 @@ func (s grantAccessScreen) rolePane(theme adminTheme, env screenEnv, iw, h int) 
 		BorderForeground(lipgloss.Color(paletteBorderHex)).
 		Width(iw).
 		Render(strings.Join(content, "\n"))
-	return append(lines, strings.Split(box, "\n")...)
+	return append(append(lines, strings.Split(box, "\n")...), buttons...)
+}
+
+// buttons are the board's two buttons under the review. They only show the
+// keys: the primary one is lit while something can be applied.
+func (s grantAccessScreen) buttons(theme adminTheme, width int, ready bool) []string {
+	line := func(label, keycap string) string {
+		return label + strings.Repeat(" ", max(width-2-lipgloss.Width(label)-lipgloss.Width(keycap), 1)) + keycap
+	}
+	style := lipgloss.NewStyle().Width(width).Padding(0, 1)
+	primary := style.Foreground(theme.muted.GetForeground()).Render(line("Grant access", "enter"))
+	if ready {
+		primary = style.Bold(true).Foreground(theme.pill.GetForeground()).Background(theme.pill.GetBackground()).Render(line("Grant access", "enter"))
+	}
+	cancel := style.Foreground(theme.text.GetForeground()).Render("Cancel" + strings.Repeat(" ", max(width-2-len("Cancel")-len("esc"), 1)) + theme.muted.Render("esc"))
+	return []string{primary, cancel}
 }
 
 func (s grantAccessScreen) reviewContent(theme adminTheme, env screenEnv, width, budget int) []string {
@@ -337,16 +387,20 @@ func (s grantAccessScreen) reviewContent(theme adminTheme, env screenEnv, width,
 	if ok {
 		name = grantTruncate(principal.Name, max(width/2, 8))
 	}
-	var plain []string
-	if ok {
-		plain = grantReviewLines(name, s.role, s.selection.ordered(env.KnownRepositories), width, budget)
-	} else {
-		plain = grantReviewLines(name, s.role, nil, width, budget)
+	names := s.selection.ordered(env.KnownRepositories)
+	if !ok {
+		names = nil
+	}
+	plain := grantReviewLines(name, s.role, names, width, budget)
+	// The names under the sentence are secondary text, as on the board.
+	headerRows := 0
+	if len(names) > 0 {
+		headerRows = len(grantWrap(grantReviewHeader(name, s.role, len(names)), width))
 	}
 	lines := make([]string, len(plain))
 	for i, line := range plain {
 		lines[i] = line
-		if strings.HasPrefix(line, "+") && strings.HasSuffix(line, " more") {
+		if i >= headerRows {
 			lines[i] = theme.muted.Render(line)
 		}
 	}

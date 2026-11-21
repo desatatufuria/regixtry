@@ -1,40 +1,40 @@
- Regixtry Admin                                                                                                                                                                                         
- Admin › Access › Repository access                                                                                                                                                                     
- ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ 
- │                                                                                                                                                                                                    │ 
- │ ╭───────────────────────────────────────────────────────╮ ╭────────────────────────────────────────────────────────────────────────╮ ╭───────────────────────────────────────────────────────────╮ │ 
- │ │ Who                                                   │ │ Which repositories                                                     │ │ Role and review                                           │ │ 
- │ │  Filter…                                              │ │  Filter…                                                               │ │ ( ) 1 Reader                                              │ │ 
- │ │ ▸  alice                                       user   │ │ Exact names only, no wildcards.                                        │ │     pull                                                  │ │ 
- │ │    bob                                         user   │ │    [ ] library/alpine  alice is Writer                                 │ │ (•) 2 Writer                                              │ │ 
- │ │    carol                                       user   │ │    [x] library/nginx                                                   │ │     pull, push, delete tags                               │ │ 
- │ │    ci-bot                                      robot  │ │ ▸  [ ] ops/console  alice is Writer                                    │ │ ( ) 3 Admin                                               │ │ 
- │ │                                                       │ │    [ ] team/backend                                                    │ │     Writer plus manage who has access                     │ │ 
- │ │                                                       │ │    [ ] team/demo  alice is Reader                                      │ │ ╭───────────────────────────────────────────────────────╮ │ │ 
- │ │                                                       │ │    [ ] team/frontend                                                   │ │ │library/alpine  granted                                │ │ │ 
- │ │                                                       │ │    [ ] team/infra                                                      │ │ │library/nginx  repository is locked by a retention…    │ │ │ 
- │ │                                                       │ │    [ ] team/web                                                        │ │ │ops/console  granted                                   │ │ │ 
- │ │                                                       │ │                                                                        │ │ │                                                       │ │ │ 
- │ │                                                       │ │                                                                        │ │ │                                                       │ │ │ 
- │ │                                                       │ │                                                                        │ │ │                                                       │ │ │ 
- │ │                                                       │ │                                                                        │ │ │                                                       │ │ │ 
- │ │                                                       │ │                                                                        │ │ │                                                       │ │ │ 
- │ │                                                       │ │                                                                        │ │ │                                                       │ │ │ 
- │ │                                                       │ │                                                                        │ │ │                                                       │ │ │ 
- │ │                                                       │ │                                                                        │ │ │                                                       │ │ │ 
- │ │                                                       │ │                                                                        │ │ │                                                       │ │ │ 
- │ │                                                       │ │                                                                        │ │ │                                                       │ │ │ 
- │ │                                                       │ │                                                                        │ │ │                                                       │ │ │ 
- │ │                                                       │ │                                                                        │ │ │                                                       │ │ │ 
- │ │ Already has (alice)                                   │ │                                                                        │ │ │                                                       │ │ │ 
- │ │ team/demo                                      Reader │ │                                                                        │ │ │                                                       │ │ │ 
- │ │ library/alpine                                 Writer │ │                                                                        │ │ │                                                       │ │ │ 
- │ │ ops/console                                    Writer │ │                                                                        │ │ │                                                       │ │ │ 
- │ │                                                       │ │                                                                        │ │ │                                                       │ │ │ 
- │ │                                                       │ │                                                                        │ │ │                                                       │ │ │ 
- │ │                                                       │ │ 1 selected, 8 shown                                                    │ │ ╰───────────────────────────────────────────────────────╯ │ │ 
- │ ╰───────────────────────────────────────────────────────╯ ╰────────────────────────────────────────────────────────────────────────╯ ╰───────────────────────────────────────────────────────────╯ │ 
- │ Granted Writer on 2 of 3 repositories to alice                                                                                                                                                     │ 
- │                                                                                                                                                                                                    │ 
- ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ 
- Tab/Shift+Tab: switch pane | Up/Down: move | Space: toggle repository | Ctrl+A: toggle all shown | 1/2/3: role | Enter: apply | Esc: back                                                              
+  Admin › Access › Repository access                                                                                                                                             signed in as operator  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ╭────────────────────────────────────────────────────────╮ ╭────────────────────────────────────────────────────────────────────────╮ ╭────────────────────────────────────────────────────────────╮  
+  │ 1 Who                                                  │ │ 2 Which repositories                                                   │ │ 3 Role and review                                          │  
+  │ Search users and robots                                │ │ Filter, or type a new name                                             │ │ ( ) 1 Reader                                               │  
+  │  Filter…                                               │ │  Filter…                                                               │ │     pull                                                   │  
+  │ ▸  alice                                        user   │ │ Exact names only, no wildcards.                                        │ │ (•) 2 Writer                                               │  
+  │    bob                                          user   │ │    [ ] library/alpine  alice is Writer                                 │ │     pull, push, delete tags                                │  
+  │    carol                                        user   │ │    [x] library/nginx  no access yet                                    │ │ ( ) 3 Admin                                                │  
+  │    ci-bot                                       robot  │ │ ▸  [ ] ops/console  alice is Writer                                    │ │     Writer plus manage who has access                      │  
+  │                                                        │ │    [ ] team/backend  no access yet                                     │ │ ╭────────────────────────────────────────────────────────╮ │  
+  │                                                        │ │    [ ] team/demo  alice is Reader, will become Writer                  │ │ │library/alpine  granted                                 │ │  
+  │                                                        │ │    [ ] team/frontend  no access yet                                    │ │ │library/nginx  repository is locked by a retention …    │ │  
+  │                                                        │ │    [ ] team/infra  no access yet                                       │ │ │ops/console  granted                                    │ │  
+  │                                                        │ │    [ ] team/web  no access yet                                         │ │ │                                                        │ │  
+  │                                                        │ │                                                                        │ │ │                                                        │ │  
+  │                                                        │ │                                                                        │ │ │                                                        │ │  
+  │                                                        │ │                                                                        │ │ │                                                        │ │  
+  │                                                        │ │                                                                        │ │ │                                                        │ │  
+  │                                                        │ │                                                                        │ │ │                                                        │ │  
+  │                                                        │ │                                                                        │ │ │                                                        │ │  
+  │                                                        │ │                                                                        │ │ │                                                        │ │  
+  │                                                        │ │                                                                        │ │ │                                                        │ │  
+  │                                                        │ │                                                                        │ │ │                                                        │ │  
+  │                                                        │ │                                                                        │ │ │                                                        │ │  
+  │                                                        │ │                                                                        │ │ │                                                        │ │  
+  │                                                        │ │                                                                        │ │ │                                                        │ │  
+  │                                                        │ │                                                                        │ │ │                                                        │ │  
+  │                                                        │ │                                                                        │ │ │                                                        │ │  
+  │ Already has (alice)                                    │ │                                                                        │ │ │                                                        │ │  
+  │ team/demo                                       Reader │ │                                                                        │ │ │                                                        │ │  
+  │ library/alpine                                  Writer │ │                                                                        │ │ │                                                        │ │  
+  │ ops/console                                     Writer │ │                                                                        │ │ │                                                        │ │  
+  │                                                        │ │                                                                        │ │ ╰────────────────────────────────────────────────────────╯ │  
+  │                                                        │ │                                                                        │ │  Grant access                                       enter  │  
+  │                                                        │ │ 1 selected, 8 shown                                                    │ │  Cancel                                               esc  │  
+  ╰────────────────────────────────────────────────────────╯ ╰────────────────────────────────────────────────────────────────────────╯ ╰────────────────────────────────────────────────────────────╯  
+  Granted Writer on 2 of 3 repositories to alice                                                                                                                                                        
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  tab next step   ↑↓ move   space toggle repo   ctrl+a all shown   1 2 3 pick role   enter grant   esc cancel                                                                                           

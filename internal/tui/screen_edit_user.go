@@ -52,7 +52,7 @@ func (s editUserScreen) Init(env screenEnv) tea.Cmd { return editUserLoadCmd(env
 func (s editUserScreen) Keys() screenKeys {
 	if s.confirm.Active() {
 		return screenKeys{short: []key.Binding{
-			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "confirm")),
+			key.NewBinding(key.WithKeys("y", "enter"), key.WithHelp("y / enter", "confirm")),
 			key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
 		}}
 	}

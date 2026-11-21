@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"image/color"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
@@ -32,7 +33,7 @@ type loginView struct {
 	form adminLoginForm
 	// note is the session-expired note: wrapped in an amber box at the top of
 	// the panel. status is any other message (a failed sign-in, a missing
-	// field), shown in the error color.
+	// field), boxed in the error color.
 	note   string
 	status string
 }
@@ -52,10 +53,10 @@ func renderAdminLogin(theme adminTheme, view loginView, width, height int) strin
 		lines = append(lines, theme.subheading.Render("regixtry")+theme.muted.Render(" operator sign in"))
 		if view.note != "" {
 			lines = append(lines, gap()...)
-			lines = append(lines, loginNoteBox(theme, view.note, inner))
+			lines = append(lines, loginMessageBox(view.note, theme.warning.GetForeground(), inner))
 		} else if view.status != "" {
 			lines = append(lines, gap()...)
-			lines = append(lines, theme.error.Render(strings.Join(loginCapLines(view.status, inner), "\n")))
+			lines = append(lines, loginMessageBox(view.status, theme.error.GetForeground(), inner))
 		}
 		lines = append(lines, gap()...)
 		lines = append(lines, renderLoginField(theme, "Username", maskedOrPlain(view.form.Username, false), inner, view.form.Focus == loginFieldUsername))
@@ -121,16 +122,16 @@ func loginPanelStyle(theme adminTheme) lipgloss.Style {
 		Width(loginPanelWidth)
 }
 
-// loginNoteBox is the amber session-expired note, wrapped to width so its
-// tail ("Not applied ... Sign in ...") is never cut off.
-func loginNoteBox(theme adminTheme, note string, width int) string {
-	warn := theme.warning.GetForeground()
+// loginMessageBox is a message in a box of its own, wrapped to width so its
+// tail is never cut off: amber for the session-expired note, red for a failed
+// sign-in.
+func loginMessageBox(text string, tone color.Color, width int) string {
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(warn).
-		Foreground(warn).
+		BorderForeground(tone).
+		Foreground(tone).
 		Padding(0, 1).
-		Render(strings.Join(loginCapLines(note, max(width-4, 1)), "\n"))
+		Render(strings.Join(loginCapLines(text, max(width-4, 1)), "\n"))
 }
 
 // maskedOrPlain is what a field shows: the password becomes one "*" per rune.

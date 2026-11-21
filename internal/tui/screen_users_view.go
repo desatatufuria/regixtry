@@ -54,6 +54,11 @@ func (s usersScreen) View(theme adminTheme, env screenEnv) screenFrame {
 	body := strings.Join(lines, "\n") + "\n" +
 		lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", usersColumnGap), right)
 
+	if s.confirm.Active() {
+		// The dialog sits on a blank panel: a table row cut by the dialog's
+		// edge would read as corruption.
+		body = strings.Join(lines, "\n")
+	}
 	frame := screenFrame{
 		Context: "Users",
 		Full:    true,

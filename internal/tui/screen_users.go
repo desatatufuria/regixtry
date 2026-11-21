@@ -78,7 +78,7 @@ func (s usersScreen) Keys() screenKeys {
 	switch {
 	case s.confirm.Active():
 		return screenKeys{short: []key.Binding{
-			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "confirm")),
+			key.NewBinding(key.WithKeys("y", "enter"), key.WithHelp("y / enter", "confirm")),
 			key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
 		}}
 	case s.searching:
@@ -175,18 +175,20 @@ func userSetEnabledCmd(env screenEnv, gen uint64, userID, username string, enabl
 // list and the Edit user screen.
 func userToggleConfirm(gen uint64, user ports.AdminUser) confirmPrompt {
 	enable := !user.Enabled
-	verb, title := "disable", "Confirm Disable"
+	verb, title := "disable", "Disable user?"
+	message := "The user cannot sign in and their tokens stop working."
+	consequence := fmt.Sprintf("Grants are kept. Enable %s again to restore access.", user.Username)
 	if enable {
-		verb, title = "enable", "Confirm Enable"
+		// Enabling only switches the account on (SetUserEnabled): grants and
+		// tokens are left exactly as they are.
+		verb, title = "enable", "Enable user?"
+		message = "The user can sign in again."
+		consequence = fmt.Sprintf("%s can sign in again. Their grants and tokens are left as they are.", user.Username)
 	}
 	userID, username := user.ID, user.Username
-	consequence := fmt.Sprintf("%s is signed out and their tokens stop working. Their grants stay, so enabling them again restores access.", username)
-	if enable {
-		consequence = fmt.Sprintf("%s can sign in again and their grants apply as before.", username)
-	}
 	return newConfirmPrompt(
 		title,
-		fmt.Sprintf("Confirm %s user %q?", verb, username),
+		message,
 		verb,
 		fmt.Sprintf("Submitting %s for %s...", verb, username),
 		func(env screenEnv) tea.Cmd { return userSetEnabledCmd(env, gen, userID, username, enable) },

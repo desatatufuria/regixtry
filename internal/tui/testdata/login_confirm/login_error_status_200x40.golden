@@ -9,13 +9,14 @@
                                                                                                                                                                                                         
                                                                                                                                                                                                         
                                                                                                                                                                                                         
-                                                                                                                                                                                                        
                                                                 ╭──────────────────────────────────────────────────────────────────────╮                                                                
                                                                 │  regixtry operator sign in                                           │                                                                
                                                                 │                                                                      │                                                                
-                                                                │  Sign in failed: the admin API refused the credentials the admin     │                                                                
-                                                                │  API refused the credentials the admin API refused the credentials   │                                                                
-                                                                │  the admin API refused the credentials                               │                                                                
+                                                                │  ╭─────────────────────────────────────────────────────────────╮     │                                                                
+                                                                │  │ Sign in failed: the admin API refused the credentials the   │     │                                                                
+                                                                │  │ admin API refused the credentials the admin API refused the │     │                                                                
+                                                                │  │ credentials the admin API refused the credentials           │     │                                                                
+                                                                │  ╰─────────────────────────────────────────────────────────────╯     │                                                                
                                                                 │                                                                      │                                                                
                                                                 │  Username                                                            │                                                                
                                                                 │                                                                      │                                                                
@@ -25,7 +26,6 @@
                                                                 │   Sign in                                                    enter   │                                                                
                                                                 │   Back                                                         esc   │                                                                
                                                                 ╰──────────────────────────────────────────────────────────────────────╯                                                                
-                                                                                                                                                                                                        
                                                                                                                                                                                                         
                                                                                                                                                                                                         
                                                                                                                                                                                                         

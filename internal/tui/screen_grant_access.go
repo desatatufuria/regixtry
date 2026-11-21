@@ -424,9 +424,19 @@ func grantRoleOn(grants []ports.AdminRepoGrant, repository string) (domainauth.R
 	return "", false
 }
 
+// grantReviewHeader is the sentence that opens the review box.
+func grantReviewHeader(principal string, role domainauth.RepoRole, count int) string {
+	noun := "repositories"
+	if count == 1 {
+		noun = "repository"
+	}
+	return fmt.Sprintf("%s becomes %s on %d %s:", principal, grantRoleLabel(role), count, noun)
+}
+
 // grantReviewLines is the review box text: "<principal> becomes <Role> on N
-// repositories:" (wrapped to width) then the names, using at most budget
-// lines; names that do not fit collapse into "+k more".
+// repositories:" (wrapped to width) then the names as one comma-separated
+// wrapped line, using at most budget lines; names that do not fit collapse
+// into "+k more".
 func grantReviewLines(principal string, role domainauth.RepoRole, names []string, width, budget int) []string {
 	if budget < 1 {
 		return nil
@@ -434,22 +444,22 @@ func grantReviewLines(principal string, role domainauth.RepoRole, names []string
 	if len(names) == 0 {
 		return grantClipLines(grantWrap("Nothing selected yet. Pick a user or robot, tick repositories, then press Enter.", width), budget)
 	}
-	header := grantWrap(fmt.Sprintf("%s becomes %s on %d repositories:", principal, grantRoleLabel(role), len(names)), width)
+	header := grantWrap(grantReviewHeader(principal, role, len(names)), width)
 	if len(header) >= budget {
 		return header[:budget]
 	}
 	room := budget - len(header)
+	listed := grantWrap(strings.Join(names, ", "), width)
 	lines := header
-	if len(names) <= room {
-		for _, name := range names {
-			lines = append(lines, grantTruncate(name, width))
-		}
-		return lines
+	if len(listed) <= room {
+		return append(lines, listed...)
 	}
-	shown := room - 1
-	for _, name := range names[:shown] {
-		lines = append(lines, grantTruncate(name, width))
+	kept := listed[:room-1]
+	shown := 0
+	for _, line := range kept {
+		shown += len(strings.Fields(line))
 	}
+	lines = append(lines, kept...)
 	return append(lines, fmt.Sprintf("+%d more", len(names)-shown))
 }
 
@@ -939,12 +949,14 @@ func grantAccessApplyCmd(env screenEnv, gen uint64, userID string, role domainau
 	}
 }
 
+// The footer follows the board. The select-all key stays Ctrl+A: plain letters
+// are typed into the filters.
 var grantAccessKeys = screenKeys{short: []key.Binding{
-	key.NewBinding(key.WithKeys("tab", "shift+tab"), key.WithHelp("Tab/Shift+Tab", "switch pane")),
-	key.NewBinding(key.WithKeys("up", "down"), key.WithHelp("Up/Down", "move")),
-	key.NewBinding(key.WithKeys("space"), key.WithHelp("Space", "toggle repository")),
-	key.NewBinding(key.WithKeys("ctrl+a"), key.WithHelp("Ctrl+A", "toggle all shown")),
-	key.NewBinding(key.WithKeys("1", "2", "3"), key.WithHelp("1/2/3", "role")),
-	key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", "apply")),
-	key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "back")),
+	key.NewBinding(key.WithKeys("tab", "shift+tab"), key.WithHelp("tab", "next step")),
+	key.NewBinding(key.WithKeys("up", "down"), key.WithHelp("↑↓", "move")),
+	key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "toggle repo")),
+	key.NewBinding(key.WithKeys("ctrl+a"), key.WithHelp("ctrl+a", "all shown")),
+	key.NewBinding(key.WithKeys("1", "2", "3"), key.WithHelp("1 2 3", "pick role")),
+	key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "grant")),
+	key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
 }}

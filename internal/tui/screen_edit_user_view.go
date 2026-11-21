@@ -47,6 +47,11 @@ func (s editUserScreen) View(theme adminTheme, env screenEnv) screenFrame {
 		)
 	}
 
+	body := strings.Join(lines, "\n") + "\n" + columns
+	if s.confirm.Active() {
+		// The dialog sits on a blank panel: no panel edge is cut by it.
+		body = strings.Join(lines, "\n")
+	}
 	frame := screenFrame{
 		Context: title,
 		Full:    true,
@@ -54,7 +59,7 @@ func (s editUserScreen) View(theme adminTheme, env screenEnv) screenFrame {
 			Breadcrumb: s.breadcrumb(),
 			Operator:   env.Session.Username,
 			Active:     shellNavUsers,
-			Body:       strings.Join(lines, "\n") + "\n" + columns,
+			Body:       body,
 			Hints:      s.Keys().short,
 			Width:      width,
 			Height:     height,
@@ -211,11 +216,19 @@ func (s editUserScreen) dangerLines(theme adminTheme, width int) []string {
 	if s.found && !s.user.Enabled {
 		verb, text = "Enable user", fmt.Sprintf("%s is disabled and cannot sign in. Enabling restores their access; their grants were kept.", name)
 	}
+	tone := theme.error.GetForeground()
+	if s.found && !s.user.Enabled {
+		tone = theme.accent.GetForeground()
+	}
 	lines := []string{theme.error.Render("DANGER AREA")}
 	for _, line := range wrapText(text, width) {
 		lines = append(lines, theme.text.Render(line))
 	}
-	return append(lines, theme.error.UnsetBold().Render(verb+"  d"))
+	button := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).BorderForeground(tone).
+		Foreground(tone).Padding(0, 1).
+		Render(verb + "  d")
+	return append(lines, strings.Split(button, "\n")...)
 }
 
 // userPanelDanger is userPanel with the danger border, sized to its content.

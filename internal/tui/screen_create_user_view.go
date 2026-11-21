@@ -8,6 +8,10 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
+// userUsernameRule is the server's username rule (domain/auth usernamePattern
+// and normalizeUsername): there is no length limit.
+const userUsernameRule = "Username: letters, numbers, dot, dash and underscore; starts and ends with a letter or number; capitals are lowercased"
+
 const (
 	userFormRulesWidth = 44
 	userFormColumnGap  = 2
@@ -64,7 +68,9 @@ func (s createUserScreen) formLines(theme adminTheme, width int) []string {
 	}
 	lines = append(lines, "", boxStyle.Render(box)+" Enabled "+theme.muted.Render("(space toggles; a disabled user cannot sign in)"))
 
-	if s.err != "" {
+	// The short-password message is the counter line above turned red, so it
+	// is never told twice.
+	if s.err != "" && s.err != userPasswordTooShort {
 		lines = append(lines, theme.error.Render(s.err))
 	}
 	lines = append(lines, "", s.buttons(theme))
@@ -80,7 +86,11 @@ func (s createUserScreen) passwordHint(theme adminTheme) string {
 	case validateNewPassword(s.password) == "":
 		return theme.success.UnsetBold().Render(fmt.Sprintf("✓ %d characters", count))
 	}
-	return theme.warning.UnsetBold().Render(fmt.Sprintf("%d characters, minimum %d.", count, userPasswordMinLength))
+	style := theme.warning
+	if s.err == userPasswordTooShort {
+		style = theme.error
+	}
+	return style.UnsetBold().Render(fmt.Sprintf("%d characters, minimum %d.", count, userPasswordMinLength))
 }
 
 // roleButtons draws the three role buttons on one row: a lit button is a
@@ -124,7 +134,7 @@ func (s createUserScreen) rulesLines(theme adminTheme, width int) []string {
 			lines = append(lines, prefix+line)
 		}
 	}
-	rule("Username: letters, numbers, dot, dash and underscore")
+	rule(userUsernameRule)
 	rule(fmt.Sprintf("Password: at least %d characters", userPasswordMinLength))
 	for _, line := range wrapText("The password is masked while you type and is never shown again, here or after saving.", width) {
 		lines = append(lines, theme.muted.Render(line))
