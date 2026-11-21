@@ -17,13 +17,19 @@ import (
 )
 
 type Store struct {
-	db *sql.DB
+	db        *sql.DB
+	writeLock fifoLock
 }
 
 const sqliteBusyTimeoutMillis = 5000
 
 func New(path string) (*Store, error) {
-	db, err := sql.Open("sqlite", sqliteDSN(path))
+	return newWithBusyTimeout(path, sqliteBusyTimeoutMillis)
+}
+
+// newWithBusyTimeout is the test seam for a short busy timeout.
+func newWithBusyTimeout(path string, busyTimeoutMillis int) (*Store, error) {
+	db, err := sql.Open("sqlite", sqliteDSNWithBusyTimeout(path, busyTimeoutMillis))
 	if err != nil {
 		return nil, err
 	}
@@ -79,15 +85,11 @@ func (s *Store) backfillSubjectDigests() error {
 		return err
 	}
 
-	tx, err := s.db.Begin()
+	tx, err := s.beginWrite(context.Background())
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
+	defer func() { _ = tx.Rollback() }()
 
 	type backfillTarget struct {
 		id     int64
@@ -147,10 +149,14 @@ func (s *Store) backfillSubjectDigests() error {
 }
 
 func sqliteDSN(path string) string {
+	return sqliteDSNWithBusyTimeout(path, sqliteBusyTimeoutMillis)
+}
+
+func sqliteDSNWithBusyTimeout(path string, busyTimeoutMillis int) string {
 	query := url.Values{}
 	query.Add("_pragma", "foreign_keys(1)")
 	query.Add("_pragma", "journal_mode(WAL)")
-	query.Add("_pragma", "busy_timeout("+strconv.Itoa(sqliteBusyTimeoutMillis)+")")
+	query.Add("_pragma", "busy_timeout("+strconv.Itoa(busyTimeoutMillis)+")")
 	// immediate: a deferred read-then-write transaction cannot honor
 	// busy_timeout when another writer committed in between (WAL).
 	query.Add("_txlock", "immediate")
@@ -321,17 +327,13 @@ func (s *Store) PublishManifest(ctx context.Context, tenant string, repository d
 		}
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
+	defer func() { _ = tx.Rollback() }()
 
-	repositoryID, err := ensureRepository(ctx, tx, tenant, repository)
+	repositoryID, err := ensureRepository(ctx, tx.Tx, tenant, repository)
 	if err != nil {
 		return err
 	}
@@ -470,15 +472,11 @@ func (s *Store) DeleteManifestByDigest(ctx context.Context, tenant string, repos
 		return nil, err
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
+	defer func() { _ = tx.Rollback() }()
 
 	var rows *sql.Rows
 	rows, err = tx.QueryContext(ctx, `
@@ -558,15 +556,11 @@ func (s *Store) DeleteRepository(ctx context.Context, tenant string, repository 
 		return nil, 0, err
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return nil, 0, err
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
+	defer func() { _ = tx.Rollback() }()
 
 	var rows *sql.Rows
 	rows, err = tx.QueryContext(ctx, `
@@ -671,15 +665,11 @@ func (s *Store) IsBlobDigestReferenced(ctx context.Context, digest string) (bool
 // children in a single transaction (design.md interfaces doc): a partially
 // written report is never observable. GLOBAL -- no tenant column at all.
 func (s *Store) CreateGCReport(ctx context.Context, report ports.GCReport, candidates []ports.GCReportCandidate) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
+	defer func() { _ = tx.Rollback() }()
 
 	var deletedAt any
 	if report.DeletedAt != nil {
@@ -842,15 +832,11 @@ func (s *Store) PruneExpiredGCReports(ctx context.Context, now time.Time) (int, 
 // a Go-side status check performed in advance, so two concurrent deletes
 // against the same report can never both succeed.
 func (s *Store) MarkGCReportDeleted(ctx context.Context, reportID string, outcome ports.GCDeleteOutcome) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
+	defer func() { _ = tx.Rollback() }()
 
 	var result sql.Result
 	result, err = tx.ExecContext(ctx, `
@@ -1673,16 +1659,12 @@ func (s *Store) UpsertScanRun(ctx context.Context, tenant string, run ports.Scan
 }
 
 func (s *Store) UpsertScanRunDetail(ctx context.Context, tenant string, detail ports.ScanRunDetail) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
-	if err = upsertScanRunTx(ctx, tx, tenant, detail.Run); err != nil {
+	defer func() { _ = tx.Rollback() }()
+	if err = upsertScanRunTx(ctx, tx.Tx, tenant, detail.Run); err != nil {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM scan_run_findings WHERE run_id = ?`, detail.Run.ID); err != nil {
@@ -1813,32 +1795,24 @@ func (s *Store) GetSecretScanRunDetail(ctx context.Context, tenant string, runID
 }
 
 func (s *Store) UpsertSecretScanRun(ctx context.Context, tenant string, run ports.SecretScanRun) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
-	if err = upsertSecretScanRunTx(ctx, tx, tenant, run); err != nil {
+	defer func() { _ = tx.Rollback() }()
+	if err = upsertSecretScanRunTx(ctx, tx.Tx, tenant, run); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
 func (s *Store) UpsertSecretScanRunDetail(ctx context.Context, tenant string, detail ports.SecretScanRunDetail) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
-	if err = upsertSecretScanRunTx(ctx, tx, tenant, detail.Run); err != nil {
+	defer func() { _ = tx.Rollback() }()
+	if err = upsertSecretScanRunTx(ctx, tx.Tx, tenant, detail.Run); err != nil {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM secret_scan_findings WHERE run_id = ?`, detail.Run.ID); err != nil {
