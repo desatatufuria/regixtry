@@ -277,18 +277,18 @@ func TestLifetimeCustomDaysKeysInTheForm(t *testing.T) {
 	t.Parallel()
 	m := testSendKey(t, tokenFormAt(t, newTTLClient(), 150, 24), testKeyTab())
 	m = testSendKeys(t, m, testKeyRight(), testKeyRunes("j"), testKeyRunes("k"), testKeyRunes("a"), testKeyRunes("1"), testKeyRunes("2"))
-	if got := m.adminView.TokenForm.Lifetime.CustomDays; got != "12" {
+	if got := m.adminView.TokenForm.Lifetime.Custom; got != "12" {
 		t.Fatalf("days = %q, want 12", got)
 	}
 	if !m.adminView.TokenForm.Lifetime.isCustom(lifetimeCeiling()) || m.adminView.TokenForm.Focus != adminTokenFieldLifetime {
 		t.Fatalf("j/k moved the selection or the focus")
 	}
 	m = testSendKey(t, m, testKeyBackspace())
-	if got := m.adminView.TokenForm.Lifetime.CustomDays; got != "1" {
+	if got := m.adminView.TokenForm.Lifetime.Custom; got != "1" {
 		t.Fatalf("days after Backspace = %q, want 1", got)
 	}
 	m = testSendKey(t, m, keyMsg{Text: "4x2"}) // bracketed paste, filtered to digits
-	if got := m.adminView.TokenForm.Lifetime.CustomDays; got != "142" {
+	if got := m.adminView.TokenForm.Lifetime.Custom; got != "142" {
 		t.Fatalf("days after paste = %q, want 142", got)
 	}
 }

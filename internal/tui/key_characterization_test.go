@@ -205,11 +205,11 @@ func TestTokenFormTextEntryCharacterization(t *testing.T) {
 		t.Fatalf("lifetime after stray input = %#v, want it untouched", got)
 	}
 	m = testSendKeys(t, m, testKeyRight(), testKeyRunes("x"), testKeyRunes("3"), testKeyRunes("9"))
-	if got, want := m.adminView.TokenForm.Lifetime.CustomDays, "39"; got != want {
+	if got, want := m.adminView.TokenForm.Lifetime.Custom, "39"; got != want {
 		t.Fatalf("custom days after digits = %q, want %q", got, want)
 	}
 	m = testSendKey(t, m, testKeyBackspace())
-	if got, want := m.adminView.TokenForm.Lifetime.CustomDays, "3"; got != want {
+	if got, want := m.adminView.TokenForm.Lifetime.Custom, "3"; got != want {
 		t.Fatalf("custom days after backspace = %q, want %q", got, want)
 	}
 	if got, want := m.adminView.TokenForm.Name, "ci bo"; got != want {

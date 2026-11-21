@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	domainauth "regixtry/internal/domain/auth"
 )
@@ -16,91 +17,130 @@ import (
 
 // lifetimePreset is one ready-made lifetime. Presets are the ONLY place the
 // list of lifetimes is spelled; options longer than the ceiling are filtered
-// out by lifetimeOptions, never shown.
+// out by lifetimeOptions, never shown. Labels are in days and years, never
+// seconds.
 type lifetimePreset struct {
-	Days  int
-	Label string
+	Duration time.Duration
+	Label    string
 }
+
+const (
+	lifetimeHour = time.Hour
+	lifetimeDay  = 24 * time.Hour
+	lifetimeYear = 365 * lifetimeDay
+)
 
 var lifetimePresets = []lifetimePreset{
-	{Days: 7, Label: "7 days"},
-	{Days: 30, Label: "30 days"},
+	{Duration: 7 * lifetimeDay, Label: "7 days"},
+	{Duration: 30 * lifetimeDay, Label: "30 days"},
+	{Duration: 90 * lifetimeDay, Label: "90 days"},
+	{Duration: lifetimeYear, Label: "1 year"},
+	{Duration: 2 * lifetimeYear, Label: "2 years"},
 }
 
-// lifetimeCeiling is the longest lifetime the server accepts. It is the
-// server default today; when the backend grows a separate maximum only this
-// reference (and lifetimePresets) change.
-func lifetimeCeiling() time.Duration { return domainauth.DefaultAdminTokenTTL }
+// lifetimeCeiling is the longest lifetime the server accepts.
+func lifetimeCeiling() time.Duration { return domainauth.MaxAdminTokenTTL }
 
-// maxCustomDigits bounds the Custom days input; anything longer is far above
-// any ceiling and would only risk overflow while parsing.
-const maxCustomDigits = 6
+// maxCustomLifetimeChars bounds the Custom input (digits plus one unit
+// letter); it makes overflow while parsing impossible.
+const maxCustomLifetimeChars = 7
 
 const customLifetimeLabel = "Custom"
 
 type lifetimeOption struct {
-	Days   int
-	Label  string
-	Custom bool
+	Duration time.Duration
+	Label    string
+	Custom   bool
 }
-
-// lifetimeCeilingDays is the ceiling in whole days.
-func lifetimeCeilingDays(ceiling time.Duration) int { return int(ceiling / (24 * time.Hour)) }
 
 // lifetimeOptions returns the presets that fit under the ceiling followed by
 // the Custom option, which is always last.
 func lifetimeOptions(ceiling time.Duration) []lifetimeOption {
 	var options []lifetimeOption
 	for _, preset := range lifetimePresets {
-		if lifetimeDuration(preset.Days) > ceiling {
+		if preset.Duration > ceiling {
 			continue
 		}
-		options = append(options, lifetimeOption{Days: preset.Days, Label: preset.Label})
+		options = append(options, lifetimeOption{Duration: preset.Duration, Label: preset.Label})
 	}
 	return append(options, lifetimeOption{Label: customLifetimeLabel, Custom: true})
 }
 
-// lifetimeDuration is the one place days become a duration, so a
-// days/seconds mix-up cannot happen elsewhere.
-func lifetimeDuration(days int) time.Duration { return time.Duration(days) * 24 * time.Hour }
+// lifetimeUnit maps a unit letter (any case) to its length.
+func lifetimeUnit(r rune) (time.Duration, bool) {
+	switch r {
+	case 'h', 'H':
+		return lifetimeHour, true
+	case 'd', 'D':
+		return lifetimeDay, true
+	case 'y', 'Y':
+		return lifetimeYear, true
+	}
+	return 0, false
+}
 
-// parseCustomDays accepts a whole number of days from 1 to the ceiling.
-func parseCustomDays(text string, ceiling time.Duration) (int, bool) {
-	text = strings.TrimSpace(text)
-	if text == "" || len(text) > maxCustomDigits {
+// parseCustomLifetime is the one place the Custom text becomes a duration. The
+// grammar is the API's ttl field: a positive whole number followed by ONE
+// unit letter h (hours), d (days) or y (years, 365 days); no unit means days.
+// The minimum is 1 hour and the maximum is the ceiling.
+func parseCustomLifetime(text string, ceiling time.Duration) (time.Duration, bool) {
+	unit := lifetimeDay
+	digits := text
+	if n := len(text); n > 0 {
+		if u, ok := lifetimeUnit(rune(text[n-1])); ok {
+			unit, digits = u, text[:n-1]
+		}
+	}
+	if digits == "" || len(digits) > maxCustomLifetimeChars {
 		return 0, false
 	}
-	for _, r := range text {
+	for _, r := range digits {
 		if r < '0' || r > '9' {
 			return 0, false
 		}
 	}
-	days, err := strconv.Atoi(text)
-	if err != nil || days < 1 || days > lifetimeCeilingDays(ceiling) {
+	count, err := strconv.Atoi(digits)
+	if err != nil || count < 1 {
 		return 0, false
 	}
-	return days, true
+	// At most 7 digits times 8760 hours cannot overflow an int64 of hours.
+	hours := int64(count) * int64(unit/lifetimeHour)
+	if hours > int64(ceiling/lifetimeHour) {
+		return 0, false
+	}
+	return time.Duration(hours) * lifetimeHour, true
+}
+
+// humanLifetime words a duration in its natural unit: years when it is a
+// multiple of 365 days, else days when a multiple of 24 hours, else hours.
+func humanLifetime(d time.Duration) string {
+	count, unit := int64(d/lifetimeHour), "hour"
+	switch {
+	case d > 0 && d%lifetimeYear == 0:
+		count, unit = int64(d/lifetimeYear), "year"
+	case d > 0 && d%lifetimeDay == 0:
+		count, unit = int64(d/lifetimeDay), "day"
+	}
+	if count != 1 {
+		unit += "s"
+	}
+	return fmt.Sprintf("%d %s", count, unit)
 }
 
 // expiryPreview states the exact moment a credential created at now with
 // lifetime d stops working. Plain time arithmetic on the clock value, in UTC.
 func expiryPreview(now time.Time, d time.Duration) string {
 	expires := now.UTC().Add(d)
-	days := int(d / (24 * time.Hour))
-	unit := "days"
-	if days == 1 {
-		unit = "day"
-	}
-	return fmt.Sprintf("Expires %s UTC (in %d %s)", expires.Format("Mon 2 Jan 2006 15:04"), days, unit)
+	return fmt.Sprintf("Expires %s UTC (in %s)", expires.Format("Mon 2 Jan 2006 15:04"), humanLifetime(d))
 }
 
 // tokenLifetime is the selector state held by both forms. Its zero value
 // means "untouched", which selects the default option; Chosen records that
 // the operator moved the selection.
 type tokenLifetime struct {
-	Index      int
-	Chosen     bool
-	CustomDays string
+	Index  int
+	Chosen bool
+	Custom string
 }
 
 // selected is the index into lifetimeOptions(ceiling). Untouched, it is the
@@ -115,7 +155,7 @@ func (l tokenLifetime) selected(ceiling time.Duration) int {
 		if option.Custom {
 			continue
 		}
-		if lifetimeDuration(option.Days) <= domainauth.DefaultAdminTokenTTL {
+		if option.Duration <= domainauth.DefaultAdminTokenTTL {
 			best = i
 		}
 	}
@@ -127,24 +167,46 @@ func (l tokenLifetime) isCustom(ceiling time.Duration) bool {
 }
 
 // duration is the lifetime to send; ok is false when Custom holds no valid
-// number of days.
+// value.
 func (l tokenLifetime) duration(ceiling time.Duration) (time.Duration, bool) {
 	option := lifetimeOptions(ceiling)[l.selected(ceiling)]
 	if !option.Custom {
-		return lifetimeDuration(option.Days), true
+		return option.Duration, true
 	}
-	days, ok := parseCustomDays(l.CustomDays, ceiling)
-	if !ok {
-		return 0, false
+	return parseCustomLifetime(l.Custom, ceiling)
+}
+
+// typeCustom applies one typed character to the Custom text: digits extend
+// the number (never after the unit), a unit letter h, d or y (any case, stored
+// lowercase) sets or replaces the trailing unit once a number exists, and
+// anything else is ignored. The text never exceeds maxCustomLifetimeChars.
+func typeCustom(text string, r rune) string {
+	if _, ok := lifetimeUnit(r); ok {
+		r = unicode.ToLower(r)
+		if n := len(text); n > 0 && text[n-1] >= '0' && text[n-1] <= '9' {
+			if n < maxCustomLifetimeChars {
+				return text + string(r)
+			}
+			return text
+		} else if n > 0 { // a unit is already there: replace it
+			return text[:n-1] + string(r)
+		}
+		return text
 	}
-	return lifetimeDuration(days), true
+	if r < '0' || r > '9' || len(text) >= maxCustomLifetimeChars {
+		return text
+	}
+	if n := len(text); n > 0 && (text[n-1] < '0' || text[n-1] > '9') {
+		return text
+	}
+	return text + string(r)
 }
 
 // handleKey applies a key to the selector when it has focus and reports
-// whether the selector consumed it. Left/Right (arrow keys only) move
-// between options; with Custom selected, digits (and pasted text filtered to
-// digits) fill the days input and Backspace deletes one. No letter moves
-// anything, and presets have no digit shortcuts.
+// whether the selector consumed it. Left/Right (arrow keys only) move between
+// options; with Custom selected, digits and one trailing unit letter (and
+// pasted text filtered the same way) fill the input and Backspace deletes one
+// character. No other letter moves anything, and presets have no shortcuts.
 func (l tokenLifetime) handleKey(msg keyMsg, ceiling time.Duration) (tokenLifetime, bool) {
 	options := lifetimeOptions(ceiling)
 	current := l.selected(ceiling)
@@ -165,27 +227,15 @@ func (l tokenLifetime) handleKey(msg keyMsg, ceiling time.Duration) (tokenLifeti
 	}
 	switch {
 	case isBackspaceKey(msg):
-		l.CustomDays = trimLastRune(l.CustomDays)
+		l.Custom = trimLastRune(l.Custom)
 		return l, true
 	case isTextKey(msg):
-		var digits strings.Builder
 		for _, r := range keyText(msg) {
-			if r >= '0' && r <= '9' {
-				digits.WriteRune(r)
-			}
+			l.Custom = typeCustom(l.Custom, r)
 		}
-		l.CustomDays = truncateRunes(l.CustomDays+digits.String(), maxCustomDigits)
 		return l, true
 	}
 	return l, false
-}
-
-func truncateRunes(value string, limit int) string {
-	runes := []rune(value)
-	if len(runes) <= limit {
-		return value
-	}
-	return string(runes[:limit])
 }
 
 // renderLifetimeField draws the selector for either form on three rows: the
@@ -209,22 +259,25 @@ func renderLifetimeField(theme adminTheme, l tokenLifetime, now time.Time, focus
 	}
 	row := "Lifetime  " + strings.Join(options, "  ")
 	if l.isCustom(ceiling) {
-		row += "  Days" + renderDaysInput(theme, l.CustomDays, focused)
+		row += "  " + renderCustomInput(theme, l.Custom, focused)
 	}
 	lines := []string{row}
 	if duration, ok := l.duration(ceiling); ok {
 		lines = append(lines, expiryPreview(now, duration))
 	} else {
-		lines = append(lines, theme.error.Render(fmt.Sprintf("Enter a whole number of days between 1 and %d", lifetimeCeilingDays(ceiling))))
+		lines = append(lines, theme.error.Render(fmt.Sprintf("Enter a whole number followed by h, d or y, up to %s (for example 12h, 30d, 2y)", humanLifetime(ceiling))))
 	}
 	lines = append(lines, theme.muted.Render("A leaked token stays valid until it expires or you revoke it."))
 	return strings.Join(lines, "\n")
 }
 
-func renderDaysInput(theme adminTheme, days string, focused bool) string {
+func renderCustomInput(theme adminTheme, text string, focused bool) string {
 	style := theme.input
 	if focused {
 		style = theme.inputFocus
 	}
-	return style.Render(days)
+	if text == "" {
+		return style.Render(theme.muted.Render("e.g. 12h, 30d, 2y"))
+	}
+	return style.Render(text)
 }
