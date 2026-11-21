@@ -83,6 +83,8 @@ func (r *Router) handleAdmin(w stdhttp.ResponseWriter, req *stdhttp.Request) {
 		r.handleAdminScanRunDetail(w, req, strings.TrimPrefix(subpath, "scan-runs/"))
 	case subpath == "secret-scan-findings":
 		r.handleAdminSecretScanFindings(w, req)
+	case subpath == "admin-tokens/expiring":
+		r.handleAdminExpiringTokens(w, req, *principal)
 	case subpath == "users":
 		r.handleAdminUsersCollection(w, req, *principal)
 	case strings.HasPrefix(subpath, "users/"):
@@ -1313,6 +1315,73 @@ func (r *Router) handleAdminRepositoryGrantResource(w stdhttp.ResponseWriter, re
 		w.Header().Set("Allow", strings.Join([]string{stdhttp.MethodPut, stdhttp.MethodDelete}, ", "))
 		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
 	}
+}
+
+const (
+	adminExpiringDefaultWithin = "30d"
+	adminExpiringDefaultLimit  = 50
+	adminExpiringMaxLimit      = 200
+)
+
+// handleAdminExpiringTokens serves GET /admin/v1/admin-tokens/expiring: admin
+// credentials of enabled users and robots that expire within `within`
+// (readable ttl grammar, default 30d, at most 2y), soonest first, at most
+// `limit` (1..200, default 50). Metadata only, never secret material.
+func (r *Router) handleAdminExpiringTokens(w stdhttp.ResponseWriter, req *stdhttp.Request, principal domainauth.Principal) {
+	if req.Method != stdhttp.MethodGet {
+		w.Header().Set("Allow", stdhttp.MethodGet)
+		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+		return
+	}
+
+	query := req.URL.Query()
+	withinText := adminExpiringDefaultWithin
+	if query.Has("within") {
+		withinText = query.Get("within")
+	}
+	encoded, _ := json.Marshal(withinText)
+	within, err := adminTTLFromReadable(encoded)
+	if err != nil {
+		writeAdminError(w, err, ports.Challenge{})
+		return
+	}
+
+	limit := adminExpiringDefaultLimit
+	if query.Has("limit") {
+		limit, err = parseAdminExpiringLimit(query.Get("limit"))
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+	}
+
+	tokens, err := r.admin.ListAdminExpiringTokens(req.Context(), principal, within, limit)
+	if err != nil {
+		writeAdminError(w, err, ports.Challenge{})
+		return
+	}
+	if tokens == nil {
+		tokens = []ports.AdminExpiringToken{}
+	}
+
+	writeJSON(w, stdhttp.StatusOK, tokens)
+}
+
+func parseAdminExpiringLimit(raw string) (int, error) {
+	invalid := domainauth.NewValidationError("limit must be a whole number between 1 and 200")
+	if raw == "" || len(raw) > 6 {
+		return 0, invalid
+	}
+	for i := 0; i < len(raw); i++ {
+		if raw[i] < '0' || raw[i] > '9' {
+			return 0, invalid
+		}
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 || n > adminExpiringMaxLimit {
+		return 0, invalid
+	}
+	return n, nil
 }
 
 func (r *Router) handleAdminUserTokensCollection(w stdhttp.ResponseWriter, req *stdhttp.Request, principal domainauth.Principal, userID string) {
