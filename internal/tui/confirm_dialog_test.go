@@ -31,7 +31,7 @@ func TestConfirmPromptKeysEveryCallerRelies(t *testing.T) {
 	}{
 		{"enter confirms and keeps the prompt open", testKeyEnter(), 1, true, true},
 		{"y confirms and keeps the prompt open", testKeyRunes("y"), 1, true, true},
-		{"capital Y confirms", testKeyRunes("Y"), 1, true, true},
+		{"capital Y does not confirm", testKeyRunes("Y"), 0, true, false},
 		{"esc cancels without dispatching", testKeyEsc(), 0, false, false},
 		{"n is swallowed: it neither confirms nor cancels", testKeyRunes("n"), 0, true, false},
 		{"tab is swallowed", testKeyTab(), 0, true, false},

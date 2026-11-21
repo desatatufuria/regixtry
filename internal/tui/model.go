@@ -1540,6 +1540,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if IsAdminSessionExpired(msg.err) {
 				return m.expireAdminSession(msg.err.Error()), nil
 			}
+			// A failed confirm closes its prompt (as the tag, repository and
+			// project deletes do): the prompt is marked in flight and would
+			// otherwise ignore every confirm key.
+			m.adminView.Confirm = confirmPrompt{}
 			m.status = msg.err.Error()
 			return m, nil
 		}
@@ -1578,6 +1582,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if IsAdminSessionExpired(msg.err) {
 				return m.expireAdminSession(msg.err.Error()), nil
 			}
+			// A failed confirm closes its prompt (as the tag, repository and
+			// project deletes do): the prompt is marked in flight and would
+			// otherwise ignore every confirm key.
+			m.adminView.Confirm = confirmPrompt{}
 			m.status = msg.err.Error()
 			return m, nil
 		}
@@ -1613,6 +1621,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if IsAdminSessionExpired(msg.err) {
 				return m.expireAdminSession(msg.err.Error()), nil
 			}
+			// A failed confirm closes its prompt (as the tag, repository and
+			// project deletes do): the prompt is marked in flight and would
+			// otherwise ignore every confirm key.
+			m.adminView.Confirm = confirmPrompt{}
 			m.status = msg.err.Error()
 			return m, nil
 		}
@@ -1627,6 +1639,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if IsAdminSessionExpired(msg.err) {
 				return m.expireAdminSession(msg.err.Error()), nil
 			}
+			// A failed confirm closes its prompt (as the tag, repository and
+			// project deletes do): the prompt is marked in flight and would
+			// otherwise ignore every confirm key.
+			m.adminView.Confirm = confirmPrompt{}
 			m.status = msg.err.Error()
 			return m, nil
 		}
@@ -1686,6 +1702,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if IsAdminSessionExpired(msg.err) {
 				return m.expireAdminSession(msg.err.Error()), nil
 			}
+			// A failed confirm closes its prompt (as the tag, repository and
+			// project deletes do): the prompt is marked in flight and would
+			// otherwise ignore every confirm key.
+			m.adminView.Confirm = confirmPrompt{}
 			m.status = msg.err.Error()
 			return m, nil
 		}
@@ -1702,6 +1722,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if IsAdminSessionExpired(msg.err) {
 				return m.expireAdminSession(msg.err.Error()), nil
 			}
+			// A failed confirm closes its prompt (as the tag, repository and
+			// project deletes do): the prompt is marked in flight and would
+			// otherwise ignore every confirm key.
+			m.adminView.Confirm = confirmPrompt{}
 			m.status = msg.err.Error()
 			return m, nil
 		}

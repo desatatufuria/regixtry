@@ -36,6 +36,11 @@ type confirmPrompt struct {
 	// All three are optional (set with withTarget and withConsequence): a
 	// prompt without them shows only its title and message.
 	target, targetDetail, consequence string
+	// inFlight is set once Enter or y dispatched onConfirm's command: every
+	// further confirm key is ignored until the result message clears or
+	// replaces the prompt, so a double press never runs a destructive action
+	// twice. Esc still closes the prompt.
+	inFlight bool
 }
 
 // newConfirmPrompt constructs an active confirmPrompt. See the submitting
@@ -74,11 +79,13 @@ func (c confirmPrompt) update(env screenEnv, msg keyMsg) (confirmPrompt, tea.Cmd
 	switch {
 	case isEscKey(msg):
 		return confirmPrompt{}, nil, true
-	case isEnterKey(msg), isRuneKey(msg, 'y'):
-		if c.onConfirm == nil {
+	case isEnterKey(msg), isPlainYKey(msg):
+		if c.onConfirm == nil || c.inFlight {
 			return c, nil, true
 		}
-		return c, c.onConfirm(env), true
+		cmd := c.onConfirm(env)
+		c.inFlight = cmd != nil
+		return c, cmd, true
 	}
 	return c, nil, true
 }
@@ -141,4 +148,11 @@ func (c confirmPrompt) view(theme adminTheme) string {
 
 func confirmButtonLine(label, keycap string, width int) string {
 	return label + strings.Repeat(" ", max(width-len(label)-len(keycap), 1)) + keycap
+}
+
+// isPlainYKey is a lowercase y with no Shift, Alt or Ctrl: the only letter that
+// confirms, so a destructive action is never confirmed by a stray Y, Alt+y or
+// Ctrl+y. Lock keys (Caps, Num, Scroll) are not modifiers of the press.
+func isPlainYKey(msg keyMsg) bool {
+	return msg.Text == "y" && msg.Mod&^(tea.ModCapsLock|tea.ModNumLock|tea.ModScrollLock) == 0
 }
