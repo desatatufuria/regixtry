@@ -2279,6 +2279,9 @@ func (m Model) updateAdminLoginKey(msg keyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) updateAdminUsersKey(msg keyMsg) (tea.Model, tea.Cmd) {
 	switch {
+	case m.adminView.UserSearchActive && isEscKey(msg):
+		// Esc ends the search and stays on Users; the next Esc goes back.
+		return m.updateAdminSearchKey(msg)
 	case isEscKey(msg):
 		// Phase 18: screenAdminMenu is now the admin panel's own root, not
 		// screenAdminUsers (design.md Decision I) -- Esc here goes back up
