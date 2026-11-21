@@ -1038,6 +1038,8 @@ type memoryAuthStore struct {
 	tokensByHash     map[string]domainauth.Token
 	tokensByAccessor map[string]domainauth.Token
 	tokensByUser     map[string][]domainauth.Token
+	events           []domainauth.AccessEvent
+	appendEventErr   error
 }
 
 func newMemoryAuthStore() *memoryAuthStore {
@@ -1052,6 +1054,20 @@ func newMemoryAuthStore() *memoryAuthStore {
 }
 
 func (s *memoryAuthStore) Close() error { return nil }
+func (s *memoryAuthStore) AppendAccessEvent(_ context.Context, event domainauth.AccessEvent) error {
+	if s.appendEventErr != nil {
+		return s.appendEventErr
+	}
+	s.events = append(s.events, event)
+	return nil
+}
+func (s *memoryAuthStore) ListAccessEvents(_ context.Context, limit int) ([]domainauth.AccessEvent, error) {
+	result := make([]domainauth.AccessEvent, 0)
+	for i := len(s.events) - 1; i >= 0 && len(result) < limit; i-- {
+		result = append(result, s.events[i])
+	}
+	return result, nil
+}
 func (s *memoryAuthStore) HasActiveGlobalAdmin(context.Context) (bool, error) {
 	for _, user := range s.usersByID {
 		if user.IsAdmin && user.Enabled {

@@ -30,6 +30,10 @@ type AuthStore interface {
 	// that are neither revoked nor expired at now and expire at or before
 	// until, ordered by expiry ascending, at most limit rows.
 	ListExpiringTokens(ctx context.Context, now time.Time, until time.Time, limit int) ([]domainauth.ExpiringToken, error)
+	// AppendAccessEvent records one access change in the append-only history.
+	AppendAccessEvent(ctx context.Context, event domainauth.AccessEvent) error
+	// ListAccessEvents returns the newest events first, at most limit rows.
+	ListAccessEvents(ctx context.Context, limit int) ([]domainauth.AccessEvent, error)
 }
 
 type LoginResult struct {

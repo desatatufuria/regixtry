@@ -396,6 +396,90 @@ func (s *Store) ListExpiringTokens(ctx context.Context, now time.Time, until tim
 	return tokens, nil
 }
 
+// AppendAccessEvent stores one access change. Empty optional fields are
+// stored as NULL.
+func (s *Store) AppendAccessEvent(ctx context.Context, event domainauth.AccessEvent) error {
+	if err := event.Validate(); err != nil {
+		return err
+	}
+
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO auth_access_events (id, occurred_at, action, actor_user_id, actor_username, subject_user_id, subject_username, repository, role, token_name, detail)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+	`, event.ID, formatTime(event.OccurredAt), string(event.Action), event.ActorUserID, event.ActorUsername,
+		nullIfEmpty(event.SubjectUserID), nullIfEmpty(event.SubjectUsername), nullIfEmpty(event.Repository),
+		nullIfEmpty(event.Role), nullIfEmpty(event.TokenName), nullIfEmpty(event.Detail))
+
+	return err
+}
+
+// ListAccessEvents returns the newest events first, at most limit rows. The
+// timestamps are RFC3339Nano text with trimmed trailing zeros, so a text order
+// is only exact at second granularity (see expiringSecondLayout). The query
+// therefore reads every row from the second that holds the limit-th newest
+// row, and Go does the exact ordering and the cut.
+func (s *Store) ListAccessEvents(ctx context.Context, limit int) ([]domainauth.AccessEvent, error) {
+	if limit <= 0 {
+		return []domainauth.AccessEvent{}, nil
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, occurred_at, action, actor_user_id, actor_username, subject_user_id, subject_username, repository, role, token_name, detail
+		FROM auth_access_events
+		WHERE occurred_at >= COALESCE((
+			SELECT substr(occurred_at, 1, 19)
+			FROM auth_access_events
+			ORDER BY occurred_at DESC
+			LIMIT 1 OFFSET $1
+		), '')
+	`, limit-1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	events := make([]domainauth.AccessEvent, 0, limit)
+	for rows.Next() {
+		var event domainauth.AccessEvent
+		var occurredAt string
+		var subjectID, subjectName, repository, role, tokenName, detail sql.NullString
+		if err := rows.Scan(&event.ID, &occurredAt, &event.Action, &event.ActorUserID, &event.ActorUsername, &subjectID, &subjectName, &repository, &role, &tokenName, &detail); err != nil {
+			return nil, err
+		}
+		event.OccurredAt = parseTime(occurredAt)
+		event.SubjectUserID = subjectID.String
+		event.SubjectUsername = subjectName.String
+		event.Repository = repository.String
+		event.Role = role.String
+		event.TokenName = tokenName.String
+		event.Detail = detail.String
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	sort.SliceStable(events, func(i, j int) bool {
+		if !events[i].OccurredAt.Equal(events[j].OccurredAt) {
+			return events[i].OccurredAt.After(events[j].OccurredAt)
+		}
+		return events[i].ID > events[j].ID
+	})
+	if len(events) > limit {
+		events = events[:limit]
+	}
+
+	return events, nil
+}
+
+func nullIfEmpty(value string) any {
+	if value == "" {
+		return nil
+	}
+
+	return value
+}
+
 func (s *Store) RevokeTokenByAccessor(ctx context.Context, accessor string, revokedAt time.Time) error {
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE auth_tokens
