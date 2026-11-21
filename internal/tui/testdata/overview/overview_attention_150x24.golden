@@ -14,7 +14,7 @@
       Secret scanning          │  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  
       Signing policy           │  │ NEEDS ATTENTION                                                                                                │  
                                │  │ Robot gh-actions has no repository access                                                              g grant │  
-  OPERATIONS                   │  │ 2 images have critical findings                                                                     enter open │  
+  OPERATIONS                   │  │ 2 images have critical findings                                                                                │  
       Scan runs                │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  
       Secret findings          │                                                                                                                      
       Update channel           │                                                                                                                      

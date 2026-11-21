@@ -153,6 +153,9 @@ func renderAttentionItem(theme adminTheme, item attentionItem, width int) string
 	if item.tone == attentionCritical {
 		style = theme.error
 	}
+	if item.hint == "" {
+		return style.MaxWidth(width).Render(item.text)
+	}
 	hint := theme.muted.Render(item.hint)
 	text := style.MaxWidth(max(width-lipgloss.Width(hint)-2, 1)).Render(item.text)
 	gap := max(width-lipgloss.Width(text)-lipgloss.Width(hint), 1)

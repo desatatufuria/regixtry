@@ -241,7 +241,7 @@ func TestOverviewNeedsAttentionListsRobotsWithoutGrants(t *testing.T) {
 func TestOverviewNeedsAttentionCountsImagesWithCriticalFindings(t *testing.T) {
 	t.Parallel()
 	out := overviewRender(overviewModelAt(t, overviewClient(), 150, 24))
-	if !strings.Contains(out, "2 images have critical findings") || !strings.Contains(out, "enter open") {
+	if !strings.Contains(out, "2 images have critical findings") {
 		t.Errorf("critical images not reported:\n%s", out)
 	}
 	client := overviewClient()
@@ -282,7 +282,7 @@ func TestOverviewNeedsAttentionClipsToTheRowBudget(t *testing.T) {
 	client := overviewClient()
 	client.robots = nil
 	for _, name := range []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"} {
-		client.robots = append(client.robots, ports.AdminRobot{ID: name, Username: "bot-" + name})
+		client.robots = append(client.robots, ports.AdminRobot{ID: name, Username: "bot-" + name, Enabled: true})
 	}
 	out := overviewRender(overviewModelAt(t, client, 150, 24))
 	if rows := len(strings.Split(out, "\n")); rows != 24 {
@@ -440,5 +440,45 @@ func TestLoginLandsOnTheOverviewWithItsAttentionLoaded(t *testing.T) {
 	s := overviewScreenOf(t, m)
 	if !s.loaded || len(s.robotsWithoutAccess) != 1 || s.criticalImages != 2 {
 		t.Fatalf("attention not loaded after login: loaded=%v robots=%d images=%d", s.loaded, len(s.robotsWithoutAccess), s.criticalImages)
+	}
+}
+
+func TestOverviewNeedsAttentionSkipsDisabledRobots(t *testing.T) {
+	t.Parallel()
+	client := overviewClient()
+	client.robots = append(client.robots, ports.AdminRobot{ID: "r-3", Username: "retired-bot", Enabled: false})
+	out := overviewRender(overviewModelAt(t, client, 150, 24))
+	if strings.Contains(out, "retired-bot") {
+		t.Errorf("a disabled robot is listed:\n%s", out)
+	}
+}
+
+func TestOverviewCriticalImagesRowHasNoKeyHint(t *testing.T) {
+	t.Parallel()
+	out := overviewRender(overviewModelAt(t, overviewClient(), 150, 24))
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "images have critical findings") && strings.Contains(line, "enter") {
+			t.Errorf("the images row advertises a key: %q", line)
+		}
+	}
+}
+
+func TestOverviewCriticalImagesCountIsCappedAtTheSampleSize(t *testing.T) {
+	t.Parallel()
+	critical := func(n int) []ports.RepositoryScanSummary {
+		var summaries []ports.RepositoryScanSummary
+		for i := range n {
+			summaries = append(summaries, ports.RepositoryScanSummary{Run: ports.ScanRun{Repository: fmt.Sprintf("team/r%d", i), Critical: 1}})
+		}
+		return summaries
+	}
+	client := overviewClient()
+	client.repositoryScanSummaries = critical(overviewScanSummaryLimit)
+	if out := overviewRender(overviewModelAt(t, client, 150, 24)); !strings.Contains(out, "25+ images have critical findings") {
+		t.Errorf("a full sample of critical images is not shown as 25+:\n%s", out)
+	}
+	client.repositoryScanSummaries = critical(overviewScanSummaryLimit - 1)
+	if out := overviewRender(overviewModelAt(t, client, 150, 24)); !strings.Contains(out, "24 images have critical findings") {
+		t.Errorf("an under-cap count is not exact:\n%s", out)
 	}
 }

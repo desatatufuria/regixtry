@@ -32,7 +32,11 @@ type overviewScreen struct {
 	// criticalImages counts the repositories whose latest scan found at
 	// least one critical vulnerability.
 	criticalImages int
-	imagesErr      string
+	// imagesCapped is set when every repository the read returned (a full
+	// overviewScanSummaryLimit) has critical findings: the true count may be
+	// larger than criticalImages.
+	imagesCapped bool
+	imagesErr    string
 }
 
 func newOverviewScreen() overviewScreen { return overviewScreen{} }
@@ -145,12 +149,12 @@ func (m overviewLoadedMsg) expiredReason() (string, bool) {
 func (s overviewScreen) applyLoaded(msg overviewLoadedMsg) overviewScreen {
 	s.loaded = true
 	s.robotsWithoutAccess, s.robotsErr = nil, ""
-	s.criticalImages, s.imagesErr = 0, ""
+	s.criticalImages, s.imagesCapped, s.imagesErr = 0, false, ""
 	if msg.robotsErr != nil {
 		s.robotsErr = msg.robotsErr.Error()
 	}
 	for _, robot := range msg.robots {
-		if robot.Repository == "" {
+		if robot.Enabled && robot.Repository == "" {
 			s.robotsWithoutAccess = append(s.robotsWithoutAccess, robot.Username)
 		}
 	}
@@ -162,6 +166,7 @@ func (s overviewScreen) applyLoaded(msg overviewLoadedMsg) overviewScreen {
 			s.criticalImages++
 		}
 	}
+	s.imagesCapped = len(msg.summaries) == overviewScanSummaryLimit && s.criticalImages == overviewScanSummaryLimit
 	return s
 }
 
@@ -186,8 +191,8 @@ const (
 	attentionCritical
 )
 
-// attentionItem is one "Needs attention" row: what is wrong and the key that
-// deals with it.
+// attentionItem is one "Needs attention" row: what is wrong and, when a key
+// deals with it, that key.
 type attentionItem struct {
 	tone attentionTone
 	text string
@@ -202,10 +207,12 @@ func (s overviewScreen) attentionItems() []attentionItem {
 		items = append(items, attentionItem{tone: attentionWarning, text: fmt.Sprintf("Robot %s has no repository access", name), hint: "g grant"})
 	}
 	switch {
+	case s.imagesCapped:
+		items = append(items, attentionItem{tone: attentionCritical, text: fmt.Sprintf("%d+ images have critical findings", s.criticalImages)})
 	case s.criticalImages == 1:
-		items = append(items, attentionItem{tone: attentionCritical, text: "1 image has critical findings", hint: "enter open"})
+		items = append(items, attentionItem{tone: attentionCritical, text: "1 image has critical findings"})
 	case s.criticalImages > 1:
-		items = append(items, attentionItem{tone: attentionCritical, text: fmt.Sprintf("%d images have critical findings", s.criticalImages), hint: "enter open"})
+		items = append(items, attentionItem{tone: attentionCritical, text: fmt.Sprintf("%d images have critical findings", s.criticalImages)})
 	}
 	return items
 }

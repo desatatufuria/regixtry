@@ -13,7 +13,7 @@
       Image scanning           │  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  
       Secret scanning          │  │ NEEDS ATTENTION                                                                                                                                                  │  
       Signing policy           │  │ Robot gh-actions has no repository access                                                                                                                g grant │  
-                               │  │ 2 images have critical findings                                                                                                                       enter open │  
+                               │  │ 2 images have critical findings                                                                                                                                  │  
   OPERATIONS                   │  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  
       Scan runs                │                                                                                                                                                                        
       Secret findings          │                                                                                                                                                                        
