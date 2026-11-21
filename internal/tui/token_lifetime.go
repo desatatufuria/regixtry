@@ -48,6 +48,10 @@ const maxCustomLifetimeChars = 7
 
 const customLifetimeLabel = "Custom"
 
+// customLifetimeInputWidth fits the placeholder "e.g. 12h, 30d, 2y" and the
+// input's padding.
+const customLifetimeInputWidth = 21
+
 type lifetimeOption struct {
 	Duration time.Duration
 	Label    string
@@ -260,15 +264,13 @@ func (l tokenLifetime) handleKey(msg keyMsg, ceiling time.Duration) (tokenLifeti
 	return l, false
 }
 
-// renderLifetimeField draws the selector for either form on three rows: the
-// label with the option row (and the days input when Custom is selected), then
-// either the exact expiry preview or the validation message, then the leak
-// warning. One row for label and options keeps the Create Robot form, the
-// tallest one, inside the 24 row minimum with a full suggestion list.
-func renderLifetimeField(theme adminTheme, l tokenLifetime, now time.Time, focused bool) string {
+// lifetimeMarks are the selector's options as "(*) 30 days" marks, the
+// selected one highlighted when the selector has focus. Callers lay them out
+// in their own width.
+func lifetimeMarks(theme adminTheme, l tokenLifetime, focused bool) []string {
 	ceiling := lifetimeCeiling()
 	selected := l.selected(ceiling)
-	var options []string
+	var marks []string
 	for i, option := range lifetimeOptions(ceiling) {
 		mark := "( ) " + option.Label
 		if i == selected {
@@ -277,26 +279,38 @@ func renderLifetimeField(theme adminTheme, l tokenLifetime, now time.Time, focus
 				mark = theme.selected.Render(mark)
 			}
 		}
-		options = append(options, mark)
+		marks = append(marks, mark)
 	}
-	row := "Lifetime  " + strings.Join(options, "  ")
+	return marks
+}
+
+// lifetimeInvalidText is the message that replaces the expiry preview while
+// Custom holds no valid value.
+func lifetimeInvalidText() string {
+	return fmt.Sprintf("Enter a whole number followed by h, d or y, up to %s (for example 12h, 30d, 2y)", humanLifetime(lifetimeCeiling()))
+}
+
+// renderLifetimeField draws the selector for the old forms on three rows.
+func renderLifetimeField(theme adminTheme, l tokenLifetime, now time.Time, focused bool) string {
+	ceiling := lifetimeCeiling()
+	row := "Lifetime  " + strings.Join(lifetimeMarks(theme, l, focused), "  ")
 	if l.isCustom(ceiling) {
-		row += "  " + renderCustomInput(theme, l.Custom, focused)
+		row += "  " + renderCustomInput(theme, l.Custom, focused, theme.inputWidth)
 	}
 	lines := []string{row}
 	if duration, ok := l.duration(ceiling); ok {
 		lines = append(lines, expiryPreview(now, duration))
 	} else {
-		lines = append(lines, theme.error.Render(fmt.Sprintf("Enter a whole number followed by h, d or y, up to %s (for example 12h, 30d, 2y)", humanLifetime(ceiling))))
+		lines = append(lines, theme.error.Render(lifetimeInvalidText()))
 	}
 	lines = append(lines, theme.muted.Render("A leaked token stays valid until it expires or you revoke it."))
 	return strings.Join(lines, "\n")
 }
 
-func renderCustomInput(theme adminTheme, text string, focused bool) string {
-	style := theme.input
+func renderCustomInput(theme adminTheme, text string, focused bool, width int) string {
+	style := theme.input.Width(width)
 	if focused {
-		style = theme.inputFocus
+		style = theme.inputFocus.Width(width)
 	}
 	if text == "" {
 		return style.Render(theme.muted.Render("e.g. 12h, 30d, 2y"))

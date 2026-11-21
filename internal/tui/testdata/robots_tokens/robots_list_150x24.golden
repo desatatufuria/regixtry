@@ -1,0 +1,24 @@
+  Admin › Access › Robots                                                                                                      signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                      
+                               │  Robots                             4 robots, 1 without repository access  ╭──────────────────────────────────────╮  
+    Overview                   │  ╭──────────────────────────────────────────────────────────────────────╮  │ ci-publisher                         │  
+                               │  │   NAME                REPOSITORY        ROLE    STATE     EXPIRES    │  │ robot, enabled, created 12 Jun 2026  │  
+  ACCESS                       │  │ ──────────────────────────────────────────────────────────────────── │  │                                      │  
+      Users                    │  │ ▸ ci-publisher        team/api          Writer  enabled   6 days     │  │ ACCESS                               │  
+    ▸ Robots                   │  │   gh-actions          none              none    enabled   89 days    │  │ team/api                    [Writer] │  
+      Repository access        │  │   staging-deploy      team/web          Writer  enabled   18 days    │  │ 1 repository, 2 tokens               │  
+                               │  │   old-deploy          team/infra        Writer  disabled  expired    │  │                                      │  
+  SECURITY                     │  ╰──────────────────────────────────────────────────────────────────────╯  │ ACTIONS                              │  
+      Image scanning           │                                                                            │ New robot                          n │  
+      Secret scanning          │  EXPIRES is the token that ends first.                                     │ Tokens                             t │  
+      Signing policy           │                                                                            │ Grant access                       g │  
+                               │                                                                            │ Disable robot                      d │  
+  OPERATIONS                   │                                                                            │                                      │  
+      Scan runs                │                                                                            │ NEEDS ATTENTION                      │  
+      Secret findings          │                                                                            │ Token release-pipeline expires in 6  │  
+      Update channel           │                                                                            │ days                         t renew │  
+                               │                                                                            │                                      │  
+                               │                                                                            ╰──────────────────────────────────────╯  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ↑↓ move   enter open   n new robot   t tokens   g grant access   d disable   e enable   r refresh   esc back   q quit                               

@@ -1,0 +1,40 @@
+  Admin › Access › Robots › New robot                                                                                                                                            signed in as operator  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                                                                        
+                               │  New robot                                                                                                                                                             
+    Overview                   │                                                                                                                                                                        
+                               │  Name         e.g. ci-publisher                                                                                                                                        
+  ACCESS                       │  Repository   e.g. team/api                                                                                                                                            
+      Users                    │               ▸ team/app-1                                                                                                                                             
+    ▸ Robots                   │                 team/app-2                                                                                                                                             
+      Repository access        │                 team/app-3                                                                                                                                             
+                               │                 team/app-4                                                                                                                                             
+  SECURITY                     │                 team/app-5                                                                                                                                             
+      Image scanning           │                 +2 more                                                                                                                                                
+      Secret scanning          │                                                                                                                                                                        
+      Signing policy           │  Role        (*) Reader  ( ) Writer  ( ) Admin                                                                                                                         
+                               │  Lifetime    ( ) 7 days  ( ) 30 days  ( ) 90 days  ( ) 1 year  ( ) 2 years   (*) Custom    3y                                                                          
+  OPERATIONS                   │              Enter a whole number followed by h, d or y, up to 2 years (for example 12h, 30d, 2y)                                                                      
+      Scan runs                │              A leaked token works until it expires or you revoke it. Pick the shortest lifetime CI can live with.                                                      
+      Secret findings          │                                                                                                                                                                        
+      Update channel           │                                                                                                                                                                        
+                               │   Create robot  enter   Cancel  esc                                                                                                                                    
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  tab next field   ↑↓ pick repository   ←→ role, lifetime   enter create   esc cancel                                                                                                                   

@@ -1,0 +1,24 @@
+  Admin › Access › Robots                                                                                                      signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                      
+                               │  Robots                                                                    ╭──────────────────────────────────────╮  
+    Overview                   │  ╭──────────────────────────────────────────────────────────────────────╮  │ No robot selected.                   │  
+                               │  │   NAME                REPOSITORY        ROLE    STATE     EXPIRES    │  │                                      │  
+  ACCESS                       │  │ ──────────────────────────────────────────────────────────────────── │  │ ACTIONS                              │  
+      Users                    │  │ Could not load robots: boom                                          │  │ New robot                          n │  
+    ▸ Robots                   │  │ Press r to try again.                                                │  │                                      │  
+      Repository access        │  ╰──────────────────────────────────────────────────────────────────────╯  │                                      │  
+                               │                                                                            │                                      │  
+  SECURITY                     │  EXPIRES is the token that ends first.                                     │                                      │  
+      Image scanning           │                                                                            │                                      │  
+      Secret scanning          │                                                                            │                                      │  
+      Signing policy           │                                                                            │                                      │  
+                               │                                                                            │                                      │  
+  OPERATIONS                   │                                                                            │                                      │  
+      Scan runs                │                                                                            │                                      │  
+      Secret findings          │                                                                            │                                      │  
+      Update channel           │                                                                            │                                      │  
+                               │                                                                            │                                      │  
+                               │                                                                            ╰──────────────────────────────────────╯  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ↑↓ move   enter open   n new robot   t tokens   g grant access   d disable   e enable   r refresh   esc back   q quit                               

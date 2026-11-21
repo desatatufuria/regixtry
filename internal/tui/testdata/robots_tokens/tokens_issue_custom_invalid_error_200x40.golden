@@ -1,0 +1,40 @@
+  Admin › Access › Robots › ci-publisher › Tokens                                                                                                                                signed in as operator  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                                                                        
+                               │  Tokens for ci-publisher                                                                                             ╭──────────────────────────────────────────────╮  
+    Overview                   │  Each bar is the time left out of the token's full lifetime.                                                         │ Issue a new token                            │  
+                               │                                                                                                                      │ Name   optional                              │  
+  ACCESS                       │  ▸ release-pipeline                                                                                     6 days left  │                                              │  
+      Users                    │  ███████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  │ Lifetime                                     │  
+    ▸ Robots                   │  act_9c41…e0d2                                                                   issued 28 Oct, expires 27 Nov 2026  │ ( ) 7 days  ( ) 30 days  ( ) 90 days         │  
+      Repository access        │                                                                                                                      │ ( ) 1 year  ( ) 2 years   (*) Custom         │  
+                               │    staging-deploy                                                                                      18 days left  │  2h                                          │  
+  SECURITY                     │  ████████████████████████████████████████████████████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  │                                              │  
+      Image scanning           │  act_17ab…3f2a                                                                     issued 9 Nov, expires 9 Dec 2026  │ EXPIRES                                      │  
+      Secret scanning          │                                                                                                                      │ Sat 21 Nov 2026 11:30 UTC                    │  
+      Signing policy           │    old-deploy                                                                                               expired  │ 2 hours from now                             │  
+                               │  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  │                                              │  
+  OPERATIONS                   │  act_55f0…b81c                                                                                   expired 2 Nov 2026  │ A leaked token stays valid until it expires  │  
+      Scan runs                │                                                                                                                      │ or you revoke it. Shorter for people, longer │  
+      Secret findings          │                                                                                                                      │ only for CI robots.                          │  
+      Update channel           │                                                                                                                      │ The secret is shown once, right after        │  
+                               │                                                                                                                      │ creation. Copy it before leaving.            │  
+                               │                                                                                                                      │                                              │  
+                               │                                                                                                                      │ token limit reached for this user            │  
+                               │                                                                                                                      │  Create token  enter   Cancel  esc           │  
+                               │                                                                                                                      │                                              │  
+                               │                                                                                                                      │                                              │  
+                               │                                                                                                                      │                                              │  
+                               │                                                                                                                      │                                              │  
+                               │                                                                                                                      │                                              │  
+                               │                                                                                                                      │                                              │  
+                               │                                                                                                                      │                                              │  
+                               │                                                                                                                      │                                              │  
+                               │                                                                                                                      │                                              │  
+                               │                                                                                                                      │                                              │  
+                               │                                                                                                                      │                                              │  
+                               │                                                                                                                      │                                              │  
+                               │                                                                                                                      │                                              │  
+                               │                                                                                                                      ╰──────────────────────────────────────────────╯  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  tab next field   ←→ lifetime   enter create token   esc cancel                                                                                                                                        

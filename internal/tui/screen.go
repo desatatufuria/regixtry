@@ -140,6 +140,11 @@ const (
 	// slotRepositoryAccess holds repoAccessScreen: the grants of every
 	// repository, rendered inside the application shell.
 	slotRepositoryAccess
+	// slotRobots, slotCreateRobot and slotTokens hold the Access screens for
+	// robots and auth tokens (tui-v2-redesign S3), addressed via slotFor.
+	slotRobots
+	slotCreateRobot
+	slotTokens
 	numScreenSlots
 )
 
