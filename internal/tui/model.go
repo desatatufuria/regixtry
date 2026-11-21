@@ -399,7 +399,11 @@ type Model struct {
 	adminView    AdminViewState
 	adminAuth    adminAuthState
 	adminLogin   adminLoginForm
-	adminReturn  screen
+	// expiryNoteShown is true while adminSession.ExpiredReason holds the
+	// "applied before it expired" note of a grant apply; Esc on the login
+	// screen clears it.
+	expiryNoteShown bool
+	adminReturn     screen
 	// adminIntent/adminIntentRepository carry the one-shot repo-admin-grants
 	// destination (design.md Decision 7) from the Console Repositories
 	// screen's grant action through screenAdminLogin to the post-login
@@ -1076,6 +1080,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.adminSession = msg.session
 		m.adminSession.ExpiredReason = ""
+		m.expiryNoteShown = false
 		m.adminAuth = adminAuthStateAuthenticated
 		m.adminLogin.Username = msg.session.Username
 		m.adminLogin.Password = ""
@@ -1369,8 +1374,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = ""
 		return m, next.Init(m.screenEnv())
 	case grantAccessPrincipalsLoadedMsg, grantAccessGrantsLoadedMsg, grantAccessAppliedMsg:
+		// Drop a message from another screen instance FIRST: a stale expiry
+		// result must never log the operator out.
+		if gen, ok := grantAccessMsgGen(msg); ok {
+			if current, isGrant := m.adminScreens[slotGrantAccess].(grantAccessScreen); !isGrant || current.gen != gen {
+				return m, nil
+			}
+		}
 		if expired, ok := msg.(interface{ expiredReason() (string, bool) }); ok {
 			if reason, isExpired := expired.expiredReason(); isExpired {
+				if applied, isApplied := msg.(grantAccessAppliedMsg); isApplied {
+					if note, hasNote := applied.expiryNote(); hasNote {
+						m = m.expireAdminSession(note)
+						m.expiryNoteShown = true
+						return m, nil
+					}
+				}
 				return m.expireAdminSession(reason), nil
 			}
 		}
@@ -2248,6 +2267,10 @@ func (m Model) adminTextInputFocused() bool {
 func (m Model) updateAdminLoginKey(msg keyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case isEscKey(msg):
+		if m.expiryNoteShown {
+			m.adminSession.ExpiredReason = ""
+			m.expiryNoteShown = false
+		}
 		return m.returnToInspection(), nil
 	// Only Tab and the arrows toggle focus: k and j are typed text here.
 	case isTabKey(msg), isArrowUpKey(msg), isArrowDownKey(msg):
@@ -4156,6 +4179,7 @@ func (m Model) returnToInspection() Model {
 }
 
 func (m Model) expireAdminSession(reason string) Model {
+	m.expiryNoteShown = false
 	m.adminSession, m.adminView = ExpireAdminState(reason)
 	m.adminAuth = adminAuthStateExpired
 	m.adminLogin.Password = ""

@@ -36,6 +36,13 @@ type grantAccessScreen struct {
 	gen         uint64
 	returnTo    screen
 	preselectID string
+	// chosenID is the principal the grant will go to. It is empty until the
+	// operator chooses one (Enter or Space in the Who pane) or the screen was
+	// opened with a preselection; the highlight alone never chooses.
+	chosenID string
+	// cursorShown is false until the operator touches the Who pane (or a
+	// preselection exists): until then no row is highlighted.
+	cursorShown bool
 	focus       grantPane
 
 	principals       []grantPrincipal
@@ -146,6 +153,49 @@ func (m grantAccessAppliedMsg) expiredReason() (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// expiryNote builds the login-screen message for an apply cut short by an
+// expired session, or false when nothing was applied before it expired (the
+// plain expiry message is then enough).
+func (m grantAccessAppliedMsg) expiryNote() (string, bool) {
+	var applied []string
+	for _, outcome := range m.outcomes {
+		if outcome.err == nil {
+			applied = append(applied, outcome.repo)
+		}
+	}
+	if len(applied) == 0 {
+		return "", false
+	}
+	return grantExpiryNote(applied, len(m.outcomes)-len(applied)), true
+}
+
+// grantExpiryNote lists at most three applied repositories, then "+N more".
+func grantExpiryNote(applied []string, notApplied int) string {
+	shown := applied
+	if len(shown) > 3 {
+		shown = shown[:3]
+	}
+	list := strings.Join(shown, ", ")
+	if more := len(applied) - len(shown); more > 0 {
+		list += fmt.Sprintf(" +%d more", more)
+	}
+	return fmt.Sprintf("Session expired. Applied before it expired: %s. Not applied: %d. Sign in and apply the rest.", list, notApplied)
+}
+
+// grantAccessMsgGen returns the screen generation a grant-access async
+// message belongs to.
+func grantAccessMsgGen(msg tea.Msg) (uint64, bool) {
+	switch typed := msg.(type) {
+	case grantAccessPrincipalsLoadedMsg:
+		return typed.gen, true
+	case grantAccessGrantsLoadedMsg:
+		return typed.gen, true
+	case grantAccessAppliedMsg:
+		return typed.gen, true
+	}
+	return 0, false
 }
 
 func expiredReasonOf(errs ...error) (string, bool) {
@@ -521,9 +571,11 @@ func (s grantAccessScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.
 			for i, principal := range filterGrantPrincipals(s.principals, s.whoFilter) {
 				if principal.ID == s.preselectID {
 					s.whoCursor = i
+					s.chosenID = principal.ID
 					break
 				}
 			}
+			s.cursorShown = true
 			s.preselectID = ""
 		}
 		next, cmd := s.loadHighlightedGrants(env)
@@ -556,6 +608,28 @@ func errText(err error) string {
 	return err.Error()
 }
 
+// chosen is the principal the grant would go to, if one was chosen.
+func (s grantAccessScreen) chosen() (grantPrincipal, bool) {
+	if s.chosenID == "" {
+		return grantPrincipal{}, false
+	}
+	for _, principal := range s.principals {
+		if principal.ID == s.chosenID {
+			return principal, true
+		}
+	}
+	return grantPrincipal{}, false
+}
+
+// shownHighlight is the highlighted principal when a row is visibly
+// highlighted; nothing is highlighted before the operator touches the pane.
+func (s grantAccessScreen) shownHighlight() (grantPrincipal, bool) {
+	if !s.cursorShown {
+		return grantPrincipal{}, false
+	}
+	return s.highlighted()
+}
+
 func (s grantAccessScreen) highlighted() (grantPrincipal, bool) {
 	filtered := filterGrantPrincipals(s.principals, s.whoFilter)
 	if len(filtered) == 0 {
@@ -567,7 +641,7 @@ func (s grantAccessScreen) highlighted() (grantPrincipal, bool) {
 // loadHighlightedGrants starts the "Already has" load for the highlighted
 // principal unless it is cached or already loading (a failed load retries).
 func (s grantAccessScreen) loadHighlightedGrants(env screenEnv) (grantAccessScreen, tea.Cmd) {
-	principal, ok := s.highlighted()
+	principal, ok := s.shownHighlight()
 	if !ok {
 		return s, nil
 	}
@@ -612,6 +686,13 @@ func (s grantAccessScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, te
 		s.focus = (s.focus + grantPaneCount - 1) % grantPaneCount
 		return s, nil, true
 	case isEnterKey(msg):
+		// In the Who pane Enter on a not-yet-chosen row chooses it; it never
+		// applies in the same press.
+		if s.focus == grantPaneWho {
+			if next, ok := s.chooseHighlighted(); ok {
+				return next, nil, true
+			}
+		}
 		next, cmd := s.apply(env)
 		return next, cmd, true
 	}
@@ -630,9 +711,28 @@ func (s grantAccessScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, te
 	return next, cmd, true
 }
 
+// chooseHighlighted chooses the visibly highlighted principal. It reports
+// false when nothing is highlighted or it is already the chosen one.
+func (s grantAccessScreen) chooseHighlighted() (grantAccessScreen, bool) {
+	principal, ok := s.shownHighlight()
+	if !ok || principal.ID == s.chosenID {
+		return s, false
+	}
+	s.chosenID = principal.ID
+	return s.clearOutcome(), true
+}
+
 func (s grantAccessScreen) whoKey(env screenEnv, msg keyMsg) (grantAccessScreen, tea.Cmd) {
 	switch {
+	case isSpaceKey(msg) && !isPasteKey(msg):
+		next, _ := s.chooseHighlighted()
+		return next, nil
 	case isArrowUpKey(msg), isArrowDownKey(msg):
+		if !s.cursorShown {
+			// The first arrow reveals the highlight on the first row.
+			s.cursorShown = true
+			return s.loadHighlightedGrants(env)
+		}
 		filtered := filterGrantPrincipals(s.principals, s.whoFilter)
 		before, _ := s.highlighted()
 		delta := 1
@@ -664,6 +764,7 @@ func (s grantAccessScreen) afterHighlightChange(env screenEnv, before grantPrinc
 // still matches, otherwise highlights the first match.
 func (s grantAccessScreen) withWhoFilter(env screenEnv, filter string) (grantAccessScreen, tea.Cmd) {
 	before, hadBefore := s.highlighted()
+	s.cursorShown = true
 	s.whoFilter = filter
 	s.whoCursor = 0
 	if hadBefore {
@@ -742,9 +843,9 @@ func (s grantAccessScreen) roleKey(msg keyMsg) grantAccessScreen {
 }
 
 func (s grantAccessScreen) apply(env screenEnv) (grantAccessScreen, tea.Cmd) {
-	principal, ok := s.highlighted()
+	principal, ok := s.chosen()
 	if !ok {
-		return s.setStatus(grantToneError, "Select a user or robot first."), nil
+		return s.setStatus(grantToneError, "Pick who to grant access to first"), nil
 	}
 	names := s.selection.ordered(env.KnownRepositories)
 	if len(names) == 0 {

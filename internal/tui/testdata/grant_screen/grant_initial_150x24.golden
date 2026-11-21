@@ -5,17 +5,17 @@
  │ ╭────────────────────────────────────────╮ ╭─────────────────────────────────────────────────────╮ ╭───────────────────────────────────────────╮ │ 
  │ │ Who                                    │ │ Which repositories                                  │ │ Role and review                           │ │ 
  │ │  ▏                                     │ │  Filter…                                            │ │ (•) 1 Reader                              │ │ 
- │ │ ▸  alice                        user   │ │ Exact names only, no wildcards.                     │ │     pull                                  │ │ 
+ │ │    alice                        user   │ │ Exact names only, no wildcards.                     │ │     pull                                  │ │ 
  │ │    bob                          user   │ │ ▸  [ ] library/alpine                               │ │ ( ) 2 Writer                              │ │ 
  │ │    carol                        user   │ │    [ ] library/nginx                                │ │     pull, push, delete tags               │ │ 
- │ │    ci-bot                       robot  │ │    [ ] ops/console  alice is Writer                 │ │ ( ) 3 Admin                               │ │ 
+ │ │    ci-bot                       robot  │ │    [ ] ops/console                                  │ │ ( ) 3 Admin                               │ │ 
  │ │                                        │ │    [ ] team/backend                                 │ │     Writer plus manage who has access     │ │ 
- │ │                                        │ │    [ ] team/demo  alice is Reader                   │ │ ╭───────────────────────────────────────╮ │ │ 
+ │ │                                        │ │    [ ] team/demo                                    │ │ ╭───────────────────────────────────────╮ │ │ 
  │ │                                        │ │    [ ] team/frontend                                │ │ │Nothing selected yet. Pick a user or   │ │ │ 
  │ │                                        │ │    [ ] team/infra                                   │ │ │robot, tick repositories, then press   │ │ │ 
- │ │ Already has (alice)                    │ │    [ ] team/web                                     │ │ │Enter.                                 │ │ │ 
- │ │ team/demo                       Reader │ │                                                     │ │ │                                       │ │ │ 
- │ │ ops/console                     Writer │ │                                                     │ │ │                                       │ │ │ 
+ │ │ Already has                            │ │    [ ] team/web                                     │ │ │Enter.                                 │ │ │ 
+ │ │                                        │ │                                                     │ │ │                                       │ │ │ 
+ │ │                                        │ │                                                     │ │ │                                       │ │ │ 
  │ │                                        │ │ 0 selected, 8 shown                                 │ │ ╰───────────────────────────────────────╯ │ │ 
  │ ╰────────────────────────────────────────╯ ╰─────────────────────────────────────────────────────╯ ╰───────────────────────────────────────────╯ │ 
  │                                                                                                                                                  │ 

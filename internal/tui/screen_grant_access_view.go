@@ -153,9 +153,12 @@ func (s grantAccessScreen) whoPane(theme adminTheme, env screenEnv, iw, h int) [
 		p := filtered[i]
 		plain := grantTruncate(p.Name, textBudget-6)
 		plain += strings.Repeat(" ", max(textBudget-6-lipgloss.Width(plain), 0)) + " " + fmt.Sprintf("%-5s", p.Kind)
-		if i == cursor {
+		switch {
+		case s.cursorShown && i == cursor:
 			listLines = append(listLines, "▸ "+theme.selected.Render(plain))
-		} else {
+		case p.ID == s.chosenID:
+			listLines = append(listLines, "✓  "+plain+" ")
+		default:
 			listLines = append(listLines, "   "+plain+" ")
 		}
 	}
@@ -172,7 +175,7 @@ func (s grantAccessScreen) whoPane(theme adminTheme, env screenEnv, iw, h int) [
 }
 
 func (s grantAccessScreen) alreadyHasLines(theme adminTheme, iw, rows int) []string {
-	principal, ok := s.highlighted()
+	principal, ok := s.shownHighlight()
 	header := "Already has"
 	if ok {
 		header += " (" + principal.Name + ")"
@@ -218,7 +221,7 @@ func (s grantAccessScreen) reposPane(theme adminTheme, env screenEnv, iw, h int)
 	}
 	listRows := max(h-4, 1)
 	rows := grantRepoRows(env.KnownRepositories, s.repoFilter)
-	principal, hasPrincipal := s.highlighted()
+	principal, hasPrincipal := s.shownHighlight()
 	var current []string
 	if hasPrincipal {
 		for _, grant := range s.grants[principal.ID].items {
@@ -329,7 +332,7 @@ func (s grantAccessScreen) reviewContent(theme adminTheme, env screenEnv, width,
 	if len(s.results) > 0 {
 		return grantResultLines(theme, s.results, width, budget)
 	}
-	principal, ok := s.highlighted()
+	principal, ok := s.chosen()
 	name := "Nobody"
 	if ok {
 		name = grantTruncate(principal.Name, max(width/2, 8))

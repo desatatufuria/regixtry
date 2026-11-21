@@ -100,6 +100,7 @@ func grantStateInitial(t *testing.T, w, h int) Model {
 // name that is not pushed yet, with that row ticked too.
 func grantStateFiltered(t *testing.T, w, h int) Model {
 	m := grantStateInitial(t, w, h)
+	m = grantModelPress(t, m, testKeyDown(), testKeySpace())
 	m = grantModelPress(t, m, testKeyTab(), testKeyDown(), testKeySpace(), testKeyDown(), testKeyDown(), testKeySpace())
 	m = grantModelPress(t, m, grantType("team/newrepo")...)
 	return grantModelPress(t, m, testKeySpace())
@@ -110,6 +111,7 @@ func grantStatePartial(t *testing.T, w, h int) Model {
 	client := grantViewClient()
 	client.putErrors["library/nginx"] = errors.New("repository is locked by a retention policy")
 	m := grantViewModelAt(t, client, grantViewKnown, w, h)
+	m = grantModelPress(t, m, testKeyDown(), testKeySpace())
 	m = grantModelPress(t, m, testKeyTab(), testKeySpace(), testKeyDown(), testKeySpace(), testKeyDown(), testKeySpace())
 	m = grantModelPress(t, m, testKeyTab(), testKeyRunes("2"))
 	return grantModelPress(t, m, testKeyEnter())

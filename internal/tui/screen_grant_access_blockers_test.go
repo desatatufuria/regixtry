@@ -31,7 +31,7 @@ func TestGrantCtrlANeverTicksTheNewNameRow(t *testing.T) {
 	t.Parallel()
 	client := newRecordingGrantClient()
 	env := grantTestEnv(client, "team/api", "team/app", "ops/console")
-	s := grantOpen(t, env, "")
+	s := grantOpenFirst(t, env)
 	s = grantPress(t, s, env, testKeyTab())
 	s = grantPress(t, s, env, grantType("team/a")...)
 	rows := grantRepoRows(env.KnownRepositories, s.repoFilter)
@@ -90,7 +90,7 @@ func TestGrantLateApplyResultNeverTouchesAFreshScreen(t *testing.T) {
 func TestGrantEscWhileApplyingStaysAndShowsApplying(t *testing.T) {
 	t.Parallel()
 	env := grantTestEnv(newRecordingGrantClient())
-	s := grantOpen(t, env, "")
+	s := grantOpenFirst(t, env)
 	s = grantPress(t, s, env, testKeyTab(), testKeySpace())
 	next, cmd, _ := s.Update(env, testKeyEnter())
 	applying := next.(grantAccessScreen)
@@ -177,7 +177,7 @@ func TestGrantExpiredSessionStopsRemainingWrites(t *testing.T) {
 	client := newRecordingGrantClient()
 	client.putErrors["team/backend"] = AdminSessionExpiredError{Reason: "expired"}
 	env := grantTestEnv(client)
-	s := grantOpen(t, env, "")
+	s := grantOpenFirst(t, env)
 	s = grantPress(t, s, env, testKeyTab(), testKeyCtrl('a'))
 	_, cmd, _ := s.Update(env, testKeyEnter())
 	msg := cmd().(grantAccessAppliedMsg)
@@ -193,6 +193,7 @@ func TestGrantExpiredSessionStopsRemainingWrites(t *testing.T) {
 		}
 	}
 	m := grantModel(t, client, 150, 24)
+	m.adminScreens[slotGrantAccess] = s // the screen that issued the apply is the mounted one
 	updated, _ := m.Update(msg)
 	if updated.(Model).screen != screenAdminLogin {
 		t.Fatal("no redirect to login")

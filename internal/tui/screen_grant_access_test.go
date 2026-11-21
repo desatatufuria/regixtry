@@ -412,8 +412,8 @@ func TestGrantScreenInitLoadsUsersAndRobotsInOneCommand(t *testing.T) {
 	if len(loaded.principals) != 5 {
 		t.Fatalf("principals = %d, want 3 users + 2 robots", len(loaded.principals))
 	}
-	if nextCmd == nil {
-		t.Fatal("expected the grants load for the highlighted principal")
+	if nextCmd != nil {
+		t.Fatal("no principal is highlighted yet, so no grants load is expected")
 	}
 }
 
@@ -422,7 +422,7 @@ func TestGrantScreenLoadsAlreadyHasOncePerPrincipal(t *testing.T) {
 	client := newRecordingGrantClient()
 	client.grantsFor["u-1"] = []ports.AdminRepoGrant{grantTestGrant("u-1", "team/demo", domainauth.RepoRoleReader)}
 	env := grantTestEnv(client)
-	s := grantOpen(t, env, "")
+	s := grantOpenFirst(t, env)
 	if !reflect.DeepEqual(client.listed, []string{"u-1"}) {
 		t.Fatalf("listed after open = %v, want only the highlighted principal", client.listed)
 	}
@@ -439,7 +439,7 @@ func TestGrantScreenNothingIsCalledBeforeEnter(t *testing.T) {
 	t.Parallel()
 	client := newRecordingGrantClient()
 	env := grantTestEnv(client)
-	s := grantOpen(t, env, "")
+	s := grantOpenFirst(t, env)
 	s = grantPress(t, s, env, testKeyTab(), testKeySpace(), testKeyDown(), testKeySpace(), testKeyCtrl('a'), testKeyTab(), testKeyRunes("2"), testKeyDown())
 	if len(client.puts) != 0 {
 		t.Fatalf("puts before Enter = %v, want none", client.puts)
@@ -453,7 +453,7 @@ func TestGrantScreenEnterWithNothingSelectedCallsNothingAndSaysSo(t *testing.T) 
 	t.Parallel()
 	client := newRecordingGrantClient()
 	env := grantTestEnv(client)
-	s := grantOpen(t, env, "")
+	s := grantOpenFirst(t, env)
 	next, cmd, consumed := s.Update(env, testKeyEnter())
 	if cmd != nil {
 		t.Fatal("Enter with no repository selected must not return a command")
@@ -475,13 +475,13 @@ func TestGrantScreenEnterWithoutAPrincipalCallsNothingAndSaysSo(t *testing.T) {
 	client := newRecordingGrantClient()
 	client.users, client.robots = nil, nil
 	env := grantTestEnv(client)
-	s := grantOpen(t, env, "")
+	s := grantOpenFirst(t, env)
 	s = grantPress(t, s, env, testKeyTab(), testKeySpace())
 	next, cmd, _ := s.Update(env, testKeyEnter())
 	if cmd != nil {
 		t.Fatal("Enter with no principal must not return a command")
 	}
-	if got := next.(grantAccessScreen).status; !strings.Contains(got, "Select a user or robot") {
+	if got := next.(grantAccessScreen).status; !strings.Contains(got, "Pick who to grant access to first") {
 		t.Fatalf("status = %q", got)
 	}
 	if len(client.puts) != 0 {
@@ -493,9 +493,9 @@ func TestGrantScreenApplyIssuesOneGrantPerRepositoryInShownOrderInOneCommand(t *
 	t.Parallel()
 	client := newRecordingGrantClient()
 	env := grantTestEnv(client)
-	s := grantOpen(t, env, "")
+	s := grantOpenFirst(t, env)
 	// Move to robot ci-bot (index 3), pick rows in scrambled order: 3rd then 1st, then a new name.
-	s = grantPress(t, s, env, testKeyDown(), testKeyDown(), testKeyDown())
+	s = grantPress(t, s, env, testKeyDown(), testKeyDown(), testKeyDown(), testKeySpace())
 	s = grantPress(t, s, env, testKeyTab(), testKeyDown(), testKeyDown(), testKeySpace(), testKeyUp(), testKeyUp(), testKeySpace())
 	s = grantPress(t, s, env, grantType("zz/fresh")...)
 	s = grantPress(t, s, env, testKeySpace())
@@ -538,7 +538,7 @@ func TestGrantScreenPartialFailureKeepsFailedCheckedAndReportsPerRepository(t *t
 	client := newRecordingGrantClient()
 	client.putErrors["team/backend"] = errors.New("quota exceeded")
 	env := grantTestEnv(client)
-	s := grantOpen(t, env, "")
+	s := grantOpenFirst(t, env)
 	// Select library/alpine, team/backend, team/demo with Ctrl+A minus ops/console.
 	s = grantPress(t, s, env, testKeyTab(), testKeyCtrl('a'), testKeyDown(), testKeyDown(), testKeyDown(), testKeySpace())
 	s = grantPress(t, s, env, testKeyTab(), testKeyDown(), testKeyEnter())
@@ -603,7 +603,7 @@ func TestGrantScreenReloadsAlreadyHasAfterApplyAndAnnotatesRows(t *testing.T) {
 	client := newRecordingGrantClient()
 	client.grantsFor["u-1"] = []ports.AdminRepoGrant{grantTestGrant("u-1", "team/demo", domainauth.RepoRoleReader)}
 	env := grantTestEnv(client)
-	s := grantOpen(t, env, "")
+	s := grantOpenFirst(t, env)
 	if !strings.Contains(s.View(newAdminTheme(), env).Body, "alice is Reader") {
 		t.Fatalf("row annotation missing before apply:\n%s", s.View(newAdminTheme(), env).Body)
 	}
@@ -623,7 +623,7 @@ func TestGrantScreenLettersAreTypedIntoFiltersAndBackspaceDeletes(t *testing.T) 
 	client := newRecordingGrantClient()
 	env := grantTestEnv(client)
 
-	s := grantOpen(t, env, "")
+	s := grantOpenFirst(t, env)
 	s = grantPress(t, s, env, testKeyRunes("j"), testKeyRunes("k"))
 	if s.whoFilter != "jk" {
 		t.Fatalf("who filter = %q, want %q (j and k are letters here)", s.whoFilter, "jk")
@@ -652,7 +652,7 @@ func TestGrantScreenLettersAreTypedIntoFiltersAndBackspaceDeletes(t *testing.T) 
 func TestGrantScreenSpaceTogglesOnlyInRepositoriesAndNeverTypesIntoAFilter(t *testing.T) {
 	t.Parallel()
 	env := grantTestEnv(newRecordingGrantClient())
-	s := grantOpen(t, env, "")
+	s := grantOpenFirst(t, env)
 	s = grantPress(t, s, env, testKeySpace())
 	if s.whoFilter != "" {
 		t.Fatalf("Space typed into the who filter: %q", s.whoFilter)
@@ -674,7 +674,7 @@ func TestGrantScreenPastedKeyNamesStayTextInFilters(t *testing.T) {
 	t.Parallel()
 	client := newRecordingGrantClient()
 	env := grantTestEnv(client)
-	s := grantOpen(t, env, "")
+	s := grantOpenFirst(t, env)
 	for _, pasted := range []string{"enter", "esc", "tab", "ctrl+a", "q"} {
 		var cmd tea.Cmd
 		var next adminScreen
@@ -728,7 +728,7 @@ func TestGrantScreenEscLeavesToWhereItWasOpenedFrom(t *testing.T) {
 		}
 	}
 	// Esc also leaves from the text panes with a filter typed.
-	s := grantOpen(t, env, "")
+	s := grantOpenFirst(t, env)
 	s = grantPress(t, s, env, testKeyRunes("a"))
 	if _, cmd, _ := s.Update(env, testKeyEsc()); cmd == nil {
 		t.Fatal("Esc with text in the filter did not leave")
@@ -738,7 +738,7 @@ func TestGrantScreenEscLeavesToWhereItWasOpenedFrom(t *testing.T) {
 func TestGrantScreenTabAndShiftTabCycleThePanes(t *testing.T) {
 	t.Parallel()
 	env := grantTestEnv(newRecordingGrantClient())
-	s := grantOpen(t, env, "")
+	s := grantOpenFirst(t, env)
 	order := []grantPane{grantPaneRepos, grantPaneRole, grantPaneWho, grantPaneRepos}
 	for i, want := range order {
 		s = grantPress(t, s, env, testKeyTab())
@@ -755,7 +755,7 @@ func TestGrantScreenTabAndShiftTabCycleThePanes(t *testing.T) {
 func TestGrantScreenRolePaneKeys(t *testing.T) {
 	t.Parallel()
 	env := grantTestEnv(newRecordingGrantClient())
-	s := grantOpen(t, env, "")
+	s := grantOpenFirst(t, env)
 	s = grantPress(t, s, env, testKeyTab(), testKeyTab())
 	if s.focus != grantPaneRole {
 		t.Fatal("not on the role pane")
@@ -787,7 +787,7 @@ func TestGrantScreenRolePaneKeys(t *testing.T) {
 func TestGrantScreenCtrlAToggleAllShownKeepsHiddenSelection(t *testing.T) {
 	t.Parallel()
 	env := grantTestEnv(newRecordingGrantClient())
-	s := grantOpen(t, env, "")
+	s := grantOpenFirst(t, env)
 	s = grantPress(t, s, env, testKeyTab(), testKeyCtrl('a'))
 	if got := len(s.selection.ordered(grantTestKnown)); got != 4 {
 		t.Fatalf("selected after Ctrl+A = %d, want 4", got)
@@ -804,7 +804,7 @@ func TestGrantScreenNotPushedYetNameCanBeGranted(t *testing.T) {
 	t.Parallel()
 	client := newRecordingGrantClient()
 	env := grantTestEnv(client)
-	s := grantOpen(t, env, "")
+	s := grantOpenFirst(t, env)
 	s = grantPress(t, s, env, testKeyTab())
 	s = grantPress(t, s, env, grantType("brand/new")...)
 	body := s.View(newAdminTheme(), env).Body
@@ -821,7 +821,7 @@ func TestGrantScreenWhoFilterNarrowsPrincipalsAndPicksTheHighlighted(t *testing.
 	t.Parallel()
 	client := newRecordingGrantClient()
 	env := grantTestEnv(client)
-	s := grantOpen(t, env, "")
+	s := grantOpenFirst(t, env)
 	s = grantPress(t, s, env, grantType("BOT")...)
 	got, ok := s.highlighted()
 	if !ok || got.ID != "r-1" || got.Kind != "robot" {
@@ -868,7 +868,7 @@ func TestGrantScreenPreselectsPrincipalAndFocusesRepositories(t *testing.T) {
 		t.Fatalf("listed = %v, want grants only for the preselected principal", client.listed)
 	}
 	// Without a preselection the first pane is focused.
-	if grantOpen(t, env, "").focus != grantPaneWho {
+	if grantOpenFirst(t, env).focus != grantPaneWho {
 		t.Fatal("default focus is not the who pane")
 	}
 }
@@ -876,7 +876,7 @@ func TestGrantScreenPreselectsPrincipalAndFocusesRepositories(t *testing.T) {
 func TestGrantScreenKeysAreIgnoredWhileApplying(t *testing.T) {
 	t.Parallel()
 	env := grantTestEnv(newRecordingGrantClient())
-	s := grantOpen(t, env, "")
+	s := grantOpenFirst(t, env)
 	s = grantPress(t, s, env, testKeyTab(), testKeySpace())
 	next, cmd, _ := s.Update(env, testKeyEnter())
 	applying := next.(grantAccessScreen)
@@ -908,7 +908,7 @@ func TestGrantScreenLoadingAndErrorStatesRender(t *testing.T) {
 		client.usersErr = errors.New("users backend down")
 		client.listRobotsErr = errors.New("robots backend down")
 		env := grantTestEnv(client)
-		s := grantOpen(t, env, "")
+		s := grantOpenFirst(t, env)
 		body := s.View(theme, env).Body
 		for _, want := range []string{"users backend down", "robots backend down"} {
 			if !strings.Contains(body, want) {
@@ -920,7 +920,7 @@ func TestGrantScreenLoadingAndErrorStatesRender(t *testing.T) {
 		client := newRecordingGrantClient()
 		client.listRobotsErr = errors.New("robots backend down")
 		env := grantTestEnv(client)
-		s := grantOpen(t, env, "")
+		s := grantOpenFirst(t, env)
 		body := s.View(theme, env).Body
 		if !strings.Contains(body, "alice") || !strings.Contains(body, "robots backend down") {
 			t.Fatalf("partial load not shown:\n%s", body)
@@ -930,7 +930,7 @@ func TestGrantScreenLoadingAndErrorStatesRender(t *testing.T) {
 		client := newRecordingGrantClient()
 		client.grantsErr = errors.New("grants backend down")
 		env := grantTestEnv(client)
-		s := grantOpen(t, env, "")
+		s := grantOpenFirst(t, env)
 		body := s.View(theme, env).Body
 		if !strings.Contains(body, "grants backend down") {
 			t.Fatalf("grants error not shown:\n%s", body)
@@ -1025,7 +1025,8 @@ func TestGrantSessionExpiryDuringApplyExpiresTheAdminSession(t *testing.T) {
 	m := grantModel(t, client, 150, 24)
 	updated, cmd := m.Update(openGrantAccessMsg{returnTo: screenAdminMenu})
 	m = runCmd(t, updated.(Model), cmd)
-	expired := grantAccessAppliedMsg{principalID: "u-1", outcomes: []grantOutcome{{repo: "team/demo", err: AdminSessionExpiredError{Reason: "expired"}}}}
+	// The message must carry the open screen's generation (a foreign one is dropped).
+	expired := grantAccessAppliedMsg{gen: grantScreenOf(t, m).gen, principalID: "u-1", outcomes: []grantOutcome{{repo: "team/demo", err: AdminSessionExpiredError{Reason: "expired"}}}}
 	updated, _ = m.Update(expired)
 	got := updated.(Model)
 	if got.screen != screenAdminLogin {
