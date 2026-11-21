@@ -1,24 +1,24 @@
- Regixtry Admin                                                                          
- Robots / Create Robot                                                                   
- ╭─────────────────────────────────────────────────────────────────────────────────────╮ 
- │                                                                                     │ 
- │ Create Robot                                                                        │ 
- │ Name                                                                                │ 
- │  x                                                                                  │ 
- │ Repository                                                                          │ 
- │                                                                                     │ 
- │ Role                                                                                │ 
- │  repo-reader                                                                        │ 
- │ Lifetime  ( ) 7 days  ( ) 30 days   (*) Custom   Days 45                            │ 
- │ Enter a whole number of days between 1 and 30                                       │ 
- │ A leaked token stays valid until it expires or you revoke it.                       │ 
- │                                                                                     │ 
- │ Known Repositories                                                                  │ 
- │  a/1                                                                                │ 
- │ a/2                                                                                 │ 
- │ a/3                                                                                 │ 
- │ a/4                                                                                 │ 
- │ a/5                                                                                 │ 
- │                                                                                     │ 
- ╰─────────────────────────────────────────────────────────────────────────────────────╯ 
- Enter: create robot | Tab: next field | Space: cycle role | Esc: cancel                 
+ Regixtry Admin                                                                                                            
+ Robots / Create Robot                                                                                                     
+ ╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ 
+ │                                                                                                                       │ 
+ │ Create Robot                                                                                                          │ 
+ │ Name                                                                                                                  │ 
+ │  x                                                                                                                    │ 
+ │ Repository                                                                                                            │ 
+ │                                                                                                                       │ 
+ │ Role                                                                                                                  │ 
+ │  repo-reader                                                                                                          │ 
+ │ Lifetime  ( ) 7 days  ( ) 30 days  ( ) 90 days  ( ) 1 year  ( ) 2 years   (*) Custom    3y                            │ 
+ │ Enter a whole number followed by h, d or y, up to 2 years (for example 12h, 30d, 2y)                                  │ 
+ │ A leaked token stays valid until it expires or you revoke it.                                                         │ 
+ │                                                                                                                       │ 
+ │ Known Repositories                                                                                                    │ 
+ │  a/1                                                                                                                  │ 
+ │ a/2                                                                                                                   │ 
+ │ a/3                                                                                                                   │ 
+ │ a/4                                                                                                                   │ 
+ │ a/5                                                                                                                   │ 
+ │                                                                                                                       │ 
+ ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ 
+ Enter: create robot | Tab: next field | Space: cycle role | Esc: cancel                                                   

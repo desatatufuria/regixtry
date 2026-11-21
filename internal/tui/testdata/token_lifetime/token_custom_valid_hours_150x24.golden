@@ -1,0 +1,14 @@
+ Regixtry Admin                                                                                                            
+ Users / alice / Tokens / Create Token                                                                                     
+ ╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ 
+ │                                                                                                                       │ 
+ │ Create Token                                                                                                          │ 
+ │ User: alice                                                                                                           │ 
+ │ Name                                                                                                                  │ 
+ │  ci bot                                                                                                               │ 
+ │ Lifetime  ( ) 7 days  ( ) 30 days  ( ) 90 days  ( ) 1 year  ( ) 2 years   (*) Custom    12h                           │ 
+ │ Expires Sat 14 Mar 2026 21:30 UTC (in 12 hours)                                                                       │ 
+ │ A leaked token stays valid until it expires or you revoke it.                                                         │ 
+ │                                                                                                                       │ 
+ ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ 
+ Enter: create token | Tab: next field | Esc: cancel                                                                       
