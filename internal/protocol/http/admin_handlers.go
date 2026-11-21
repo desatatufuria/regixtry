@@ -1590,5 +1590,14 @@ func writeAdminError(w stdhttp.ResponseWriter, err error, challenge ports.Challe
 		}
 	}
 
+	if status == stdhttp.StatusInternalServerError {
+		// Same rule as writeError: the real cause reaches the request log
+		// (via the capturing writer), never the client.
+		if recorder, ok := w.(*statusCapturingResponseWriter); ok {
+			recorder.internalErr = err
+		}
+		message = "internal server error"
+	}
+
 	writeJSON(w, status, map[string]any{"error": message})
 }
