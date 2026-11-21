@@ -1882,7 +1882,7 @@ func (m Model) viewScreen() string {
 			renderConsoleTextSection(theme.error.Render(errText), layout),
 			errText, help, statusKindError)
 	case screenAdminLogin:
-		return renderInspectionWorkspace("Sign In", renderAdminLogin(newAdminTheme(), m.adminLogin), m.status, "Enter: sign in | Tab: switch field | Esc: back | q: quit")
+		return renderInspectionWorkspace("Sign In", renderAdminLogin(newAdminTheme(), m.adminLogin), m.status, "Enter: sign in | Tab: switch field | Esc: back")
 	case screenAdminAuthenticating:
 		help := "q: quit"
 		layout := m.contentBudget("", help)
@@ -2218,7 +2218,10 @@ func (m Model) updateAdminKey(msg keyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
-	if isRuneKey(msg, 'q') && isAdminPrincipalScreen(m.screen) && !m.migratedScreenCapturesTextInput() {
+	// The login form and the active user search are text fields: q is typed
+	// there and Esc is the way out (Ctrl+C still quits in updateKey).
+	if isRuneKey(msg, 'q') && isAdminPrincipalScreen(m.screen) && !m.migratedScreenCapturesTextInput() &&
+		m.screen != screenAdminLogin && !(m.screen == screenAdminUsers && m.adminView.UserSearchActive) {
 		return m, tea.Quit
 	}
 
