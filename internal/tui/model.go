@@ -2418,13 +2418,14 @@ func (m Model) updateCreateRobotFormKey(msg keyMsg) (tea.Model, tea.Cmd) {
 		m.screen = screenAdminRobots
 		m.status = ""
 		return m, nil
-	case isMoveUpKey(msg):
+	// Only the arrow keys move the suggestion: k and j are typed text here.
+	case isArrowUpKey(msg):
 		if m.adminView.CreateRobotForm.Focus == adminCreateRobotFieldRepository {
 			suggestions := robotRepositorySuggestions(m.adminView.CreateRobotForm, m.repositories.Names())
 			m.adminView.CreateRobotForm.RepositorySuggestion = boundedIndex(m.adminView.CreateRobotForm.RepositorySuggestion-1, len(suggestions))
 			return m, nil
 		}
-	case isMoveDownKey(msg):
+	case isArrowDownKey(msg):
 		if m.adminView.CreateRobotForm.Focus == adminCreateRobotFieldRepository {
 			suggestions := robotRepositorySuggestions(m.adminView.CreateRobotForm, m.repositories.Names())
 			m.adminView.CreateRobotForm.RepositorySuggestion = boundedIndex(m.adminView.CreateRobotForm.RepositorySuggestion+1, len(suggestions))
