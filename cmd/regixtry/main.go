@@ -636,10 +636,6 @@ func parseTUIConfigWithBootstrapStatePath(args []string, bootstrapStatePath stri
 	return cfg, nil
 }
 
-func defaultTUIConfig() (tuiConfig, error) {
-	return defaultTUIConfigWithBootstrapStatePath("/etc/regixtry/bootstrap-state.json")
-}
-
 func defaultTUIConfigWithBootstrapStatePath(bootstrapStatePath string) (tuiConfig, error) {
 	// APIBaseURL falls back to REGISTRY_PUBLIC_URL when REGISTRY_API_BASE_URL
 	// is unset: found live inside a docker-mode container, which `docker
@@ -1665,8 +1661,6 @@ func importLegacySetupTrivyFlags(ctx context.Context, cfg installlinux.Bootstrap
 func boolPointer(value bool) *bool { return &value }
 
 func durationPointer(value time.Duration) *time.Duration { return &value }
-
-func stringPointer(value string) *string { return &value }
 
 func intPointer(value int) *int { return &value }
 
