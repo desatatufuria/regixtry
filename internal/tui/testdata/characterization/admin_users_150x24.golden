@@ -16,4 +16,4 @@
  │ Session remaining: 24h0m0s                                                                                                                       │ 
  │                                                                                                                                                  │ 
  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ 
- /: search | Enter/e: edit user | n: create user | f: features | b: robots | Esc: back | q: quit                                                      
+ /: search | Enter/e: edit user | n: create user | f: features | b: robots | g: grant access | Esc: back | q: quit                                    

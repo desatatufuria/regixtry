@@ -109,7 +109,7 @@ func adminScreenHelp(current screen, view AdminViewState) string {
 	case screenAdminCreateRobot:
 		return "Enter: create robot | Tab: next field | Space: cycle role | Esc: cancel"
 	default:
-		return "/: search | Enter/e: edit user | n: create user | f: features | b: robots | Esc: back | q: quit"
+		return "/: search | Enter/e: edit user | n: create user | f: features | b: robots | g: grant access | Esc: back | q: quit"
 	}
 }
 
