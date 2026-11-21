@@ -44,11 +44,11 @@ The `Read-only` toggle only exists on the **Create User** form (`screenAdminCrea
 
 The Admin Users screen (`screenAdminUsers`) supports `/` to enter a username-contains search filter (typing updates the list live, `Up`/`Down` pick a user, `Enter`/`Esc` leaves search mode), `n` to open the Create User form, `Enter`/`e` to open the selected user in Edit User, `b` to jump to the Robots screen, `g` to open [Grant repository access](#grant-repository-access) with the highlighted user preselected, and `r` to reload the user list. `Esc` returns to the domain menu (`screenAdminMenu`).
 
-From Edit User, `p` opens `screenAdminChangePassword` — a single new-password field; `Enter` saves it and `Esc` cancels back to Edit User. `g` opens the Grants screen and `t` opens the Tokens screen for the selected user. On the Grants screen (`screenAdminEditUserGrants`), `n` opens `screenAdminAddGrant` to add a grant, `e` opens the same form pre-filled with the selected grant to edit it, and `x` removes the selected grant (with a confirm modal). `screenAdminAddGrant` itself has a Repository field with autosuggest from known repositories: typing filters the suggestion list, `Up`/`Down` cycles the highlighted suggestion, and `Enter` commits the highlighted suggestion and advances to the Role field (`Space` cycles the role); a second `Enter` saves the grant. On the Tokens screen (`screenAdminEditUserTokens`), `n` opens `screenAdminCreateToken` (Name and TTL-seconds fields, `Enter` creates the token and reveals its one-time secret) and `x` revokes the selected token.
+From Edit User, `p` opens `screenAdminChangePassword` — a single new-password field; `Enter` saves it and `Esc` cancels back to Edit User. `g` opens the Grants screen and `t` opens the Tokens screen for the selected user. On the Grants screen (`screenAdminEditUserGrants`), `n` opens `screenAdminAddGrant` to add a grant, `e` opens the same form pre-filled with the selected grant to edit it, and `x` removes the selected grant (with a confirm modal). `screenAdminAddGrant` itself has a Repository field with autosuggest from known repositories: typing filters the suggestion list, `Up`/`Down` cycles the highlighted suggestion, and `Enter` commits the highlighted suggestion and advances to the Role field (`Space` cycles the role); a second `Enter` saves the grant. On the Tokens screen (`screenAdminEditUserTokens`), `n` opens `screenAdminCreateToken` (Name field and a [Lifetime selector](#token-lifetime), `Tab` switches between them, `Enter` creates the token and reveals its one-time secret) and `x` revokes the selected token.
 
 A repo-admin delegate (a user holding `repo-admin` on at least one repository, but not global admin) reaches a repository-scoped grants view directly from the Console Repositories screen (`g` key) instead of the global-admin user workspace: `screenRepoAdminGrants`/`screenRepoAdminAddGrant` list and mutate only the delegate's own repository's grants via `/admin/v1/repositories/{repo}/grants`, and the role picker never offers `repo-admin`. On `screenRepoAdminGrants`, `n` adds a grant, `e` edits the selected grant (refused with a status message if that grant is itself a `repo-admin` grant — those can only be changed by a global admin), and `x` removes the selected grant. `screenRepoAdminAddGrant` has no repository field (the repository is fixed context) — only Username (free text) and Role (cycled with `Space`, never offering `repo-admin`).
 
-Global admins also get two robot-account screens, reached with `b` from the Users screen: `screenAdminRobots` lists robot accounts (repository, role, enabled state). `n` creates one, `t` reuses the existing token screens to issue/revoke its token, `g` opens [Grant repository access](#grant-repository-access) with the highlighted robot preselected, and `r` refreshes the list. `e` enables and `x` disables the selected robot (each is a no-op if the robot is already in that state) — but on this screen only, `d` is a separate, genuinely irreversible **delete** action that opens its own confirm modal ("This action cannot be undone"); this is the one admin screen where `x` does not mean delete. `screenAdminCreateRobot` collects name/repository/role/TTL and shows the created robot's one-time token secret exactly once, immediately after creation — the same reveal-once pattern already used for human admin tokens. Its Repository field has the same autosuggest as the Add Grant form: type to filter, `Up`/`Down` to cycle suggestions, `Enter` to commit the highlighted suggestion and advance to Role.
+Global admins also get two robot-account screens, reached with `b` from the Users screen: `screenAdminRobots` lists robot accounts (repository, role, enabled state). `n` creates one, `t` reuses the existing token screens to issue/revoke its token, `g` opens [Grant repository access](#grant-repository-access) with the highlighted robot preselected, and `r` refreshes the list. `e` enables and `x` disables the selected robot (each is a no-op if the robot is already in that state) — but on this screen only, `d` is a separate, genuinely irreversible **delete** action that opens its own confirm modal ("This action cannot be undone"); this is the one admin screen where `x` does not mean delete. `screenAdminCreateRobot` collects name, repository, role and a [Lifetime](#token-lifetime) (in that order) and shows the created robot's one-time token secret exactly once, immediately after creation — the same reveal-once pattern already used for human admin tokens. Its Repository field has the same autosuggest as the Add Grant form: type to filter, `Up`/`Down` to cycle suggestions, `Enter` to commit the highlighted suggestion and advance to Role.
 
 ## Grant repository access
 
@@ -76,6 +76,24 @@ Applying:
 - If the admin session expires, the TUI returns to the login screen with the expiry reason; repositories after the expiry are reported as "not attempted (session expired)".
 
 Keys: `Tab`/`Shift+Tab` switch pane, `Up`/`Down` move, `Space` toggle repository, `Ctrl+A` toggle all shown, `1`/`2`/`3` role, `Enter` apply, `Esc` back. The filter fields take plain text, so `j`, `k`, `q` and `l` are typed there.
+
+## Token lifetime
+
+The Create Token and Create Robot forms share one **Lifetime** selector. It starts on 30 days; nothing is sent until `Enter`.
+
+| Option | Lifetime |
+| --- | --- |
+| 7 days, 30 days, 90 days | as named |
+| 1 year, 2 years | 365 and 730 days |
+| Custom | a value you type |
+
+- `Left`/`Right` move between options. 2 years (730 days) is the server maximum, so nothing longer is offered.
+- In **Custom**, type a whole number and an optional unit: `h` (hours), `d` (days) or `y` (years). No unit means days. The minimum is 1 hour and the maximum 2 years, for example `12h`, `30d`, `2y`. Other letters are ignored and `Backspace` deletes.
+- A pasted value is used only if it is a complete valid lifetime (for example `12h`); otherwise the paste is ignored.
+- A preview line shows the exact expiry in UTC and how far away it is, from the client clock. An invalid Custom value replaces it with a message, and `Enter` sends nothing until it is fixed.
+- A muted warning reminds you that a leaked token stays valid until it expires or you revoke it.
+
+The API field `ttl` accepts the same `h`/`d`/`y` format (see [API reference](api.md)).
 
 ## Text entry
 
