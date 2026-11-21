@@ -280,3 +280,55 @@ func waitForWaiters(t *testing.T, lock *fifoLock, want int) {
 	}
 	t.Fatalf("timed out waiting for %d queued waiters", want)
 }
+
+func TestReadersAreNotBlockedByTheWriteQueue(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	t.Cleanup(func() {
+		cancel()
+		wg.Wait()
+	})
+
+	held, err := store.beginWrite(ctx)
+	if err != nil {
+		t.Fatalf("beginWrite() error = %v", err)
+	}
+	defer func() { _ = held.Rollback() }()
+
+	const queued = 8
+	for range queued {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if tx, err := store.beginWrite(ctx); err == nil {
+				_ = tx.Rollback()
+			}
+		}()
+	}
+	waitForWaiters(t, &store.writeLock, queued)
+
+	reads := map[string]func() error{
+		"ListRepositoriesWithSummary": func() error {
+			_, err := store.ListRepositoriesWithSummary(ctx, "tenant-a", 10, "")
+			return err
+		},
+		"ListScanRuns": func() error {
+			_, err := store.ListScanRuns(ctx, "tenant-a", "", 10)
+			return err
+		},
+	}
+	for name, read := range reads {
+		start := time.Now()
+		if err := read(); err != nil {
+			t.Fatalf("%s error = %v", name, err)
+		}
+		if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+			t.Fatalf("%s took %s while writers were queued, want < 500ms", name, elapsed)
+		}
+	}
+}

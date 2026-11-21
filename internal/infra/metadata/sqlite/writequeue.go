@@ -82,6 +82,12 @@ func (t *writeTx) Rollback() error {
 // beginWrite serializes write transactions in arrival order. Never call it (or
 // touch s.db for a write) while another writeTx is open in the same goroutine:
 // that would deadlock on the write lock.
+//
+// Single-statement writes on s.db (SaveUpload, DeleteUpload,
+// PruneExpiredGCReports, DeleteTag, the settings/override/runtime-state
+// upserts, UpsertScanRun, UpsertScanSchedulerState) deliberately skip the
+// queue: one statement holds the SQLite lock only briefly. The queue is for
+// multi-statement transactions.
 func (s *Store) beginWrite(ctx context.Context) (*writeTx, error) {
 	if err := s.writeLock.acquire(ctx); err != nil {
 		return nil, err
