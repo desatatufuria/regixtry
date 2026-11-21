@@ -8,12 +8,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// screenKeys is this project's help.KeyMap implementation (design.md
-// Decision D). The struct is declared here rather than in admin_keys.go
-// (its natural Phase 4 home) because adminScreen's Keys() method below
-// needs the type to exist before Phase 4 adds bubbles/help wiring
-// (ShortHelp/FullHelp/matches/shortHelpView) — Go requires the type at
-// every reference site, not only where it is fully fleshed out.
+// screenKeys is the key bindings a screen advertises in its footer help
+// (design.md Decision D): a short list and an optional full list.
 type screenKeys struct {
 	short []key.Binding
 	full  [][]key.Binding
