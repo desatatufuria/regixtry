@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"math"
 	"slices"
 	"strings"
 
@@ -285,12 +284,6 @@ func (s grantAccessScreen) reposPane(theme adminTheme, env screenEnv, iw, h int)
 	selected := len(s.selection.ordered(env.KnownRepositories))
 	lines = append(lines, theme.muted.Render(grantTruncate(fmt.Sprintf("%d selected, %d shown", selected, len(rows)), iw)))
 	return lines
-}
-
-// repoPreview says what the grant would do on one repository for the chosen
-// role: nothing is said until the principal's grants are known.
-func (s grantAccessScreen) repoPreview(principal grantPrincipal, repository string) string {
-	return s.repoPreviewFit(principal, repository, math.MaxInt)
 }
 
 // repoPreviewFit returns the longest form of the preview that fits width. Only

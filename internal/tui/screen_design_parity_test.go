@@ -24,7 +24,7 @@ func TestGrantRepoPreviewSaysWhatTheChosenRoleWouldDo(t *testing.T) {
 		"team/api":   "alice is Writer",
 		"team/infra": "no access yet",
 	} {
-		if got := s.repoPreview(alice, repo); got != want {
+		if got := s.repoPreviewFit(alice, repo, 1000); got != want {
 			t.Errorf("repoPreview(%s) = %q, want %q", repo, got, want)
 		}
 	}
@@ -34,7 +34,7 @@ func TestGrantRepoPreviewSaysWhatTheChosenRoleWouldDo(t *testing.T) {
 		"missing":    {},
 	} {
 		s.grants = map[string]grantsEntry{"u-1": entry}
-		if got := s.repoPreview(alice, "team/infra"); got != "" {
+		if got := s.repoPreviewFit(alice, "team/infra", 1000); got != "" {
 			t.Errorf("%s: repoPreview = %q, want nothing claimed", name, got)
 		}
 	}
