@@ -85,6 +85,8 @@ func (r *Router) handleAdmin(w stdhttp.ResponseWriter, req *stdhttp.Request) {
 		r.handleAdminSecretScanFindings(w, req)
 	case subpath == "access-events":
 		r.handleAdminAccessEvents(w, req, *principal)
+	case subpath == "repository-grants":
+		r.handleAdminAllRepositoryGrants(w, req, *principal)
 	case subpath == "admin-tokens/expiring":
 		r.handleAdminExpiringTokens(w, req, *principal)
 	case subpath == "users":
@@ -1325,6 +1327,7 @@ const (
 	adminListMaxLimit          = 200
 
 	adminAccessEventsDefaultLimit = 20
+	adminAllGrantsDefaultLimit    = 100
 )
 
 // handleAdminExpiringTokens serves GET /admin/v1/admin-tokens/expiring: admin
@@ -1403,6 +1406,42 @@ func (r *Router) handleAdminAccessEvents(w stdhttp.ResponseWriter, req *stdhttp.
 	}
 
 	writeJSON(w, stdhttp.StatusOK, events)
+}
+
+// handleAdminAllRepositoryGrants serves GET /admin/v1/repository-grants: the
+// grants of every user and robot on every repository (pushed or not), ordered
+// by repository then username, at most `limit` (1..200, default 100) per page.
+// `after` is the opaque `next` of the previous page; `next` is empty on the
+// last page. Disabled users still appear. Global admin only, enforced by
+// requireAdminPrincipal and again by the service. Never secret material.
+func (r *Router) handleAdminAllRepositoryGrants(w stdhttp.ResponseWriter, req *stdhttp.Request, principal domainauth.Principal) {
+	if req.Method != stdhttp.MethodGet {
+		w.Header().Set("Allow", stdhttp.MethodGet)
+		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+		return
+	}
+
+	limit := adminAllGrantsDefaultLimit
+	query := req.URL.Query()
+	if query.Has("limit") {
+		var err error
+		limit, err = parseAdminLimit(query.Get("limit"))
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+	}
+
+	page, err := r.admin.ListAdminAllRepositoryGrants(req.Context(), principal, limit, query.Get("after"))
+	if err != nil {
+		writeAdminError(w, err, ports.Challenge{})
+		return
+	}
+	if page.Grants == nil {
+		page.Grants = []ports.AdminGrantEntry{}
+	}
+
+	writeJSON(w, stdhttp.StatusOK, page)
 }
 
 func parseAdminLimit(raw string) (int, error) {

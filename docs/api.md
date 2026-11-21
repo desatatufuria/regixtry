@@ -34,6 +34,7 @@ JSON bodies are decoded rejecting unknown fields and multiple bodies.
 | DELETE | `/admin/v1/users/{id}/admin-tokens/{accessor}` | none | `204` |
 | GET | `/admin/v1/admin-tokens/expiring` | query `within` (number plus `h`, `d` or `y`; default `30d`; maximum `2y`) and `limit` (1 to 200; default 50); invalid values give `422` | `200`, array (soonest first) of `id`, `accessor`, `name`, `user_id`, `username`, `is_robot`, `created_at`, `expires_at` for enabled users and robots whose token is not revoked, not yet expired and expires within `within`; never a secret or hash |
 | GET | `/admin/v1/access-events` | query `limit` (1 to 200; default 20); invalid values give `422` | `200`, array (newest first) of `id`, `at`, `action`, `actor`, `subject`, `repository`, `role`, `token_name`, `detail`; empty fields are omitted; `action` is `grant.put` (repository grant given or changed), `grant.delete` (grant revoked), `token.issued`, `token.revoked`, `robot.created`, `robot.deleted`, `user.created` (`detail` lists the role flags: `administrator`, `read-only` or `standard user`), `user.enabled`, `user.disabled`, `user.updated` (`detail` lists only the flags that changed, such as `administrator on`; no event when none changed), `user.password_reset` (never carries a password) or `user.deleted` (the deleted username stays in `subject`); names and short text only, never a secret, hash, accessor or token id; global admin only |
+| GET | `/admin/v1/repository-grants` | query `limit` (1 to 200; default 100) and `after` (the opaque `next` of the previous page); invalid values or a malformed cursor give `422` | `200`, object `{"grants":[...],"next":"..."}`; `grants` holds the grants of every user and robot on every repository, including repositories that were never pushed, ordered by repository then username, each with `repository`, `user_id`, `username`, `is_robot`, `role`, `created_at`, `updated_at`; `next` is empty on the last page; disabled users still appear; never a secret, hash or token; global admin only |
 | GET | `/admin/v1/robots` | none | `200`, array of robot accounts |
 | POST | `/admin/v1/robots` | `name`, `repository`, `role`, optional `ttl` (number plus `h`, `d` or `y`, for example `12h`, `30d`, `2y`; default 30 days; maximum 2 years), or the older `ttl_seconds` (seconds; maximum `63072000`), never both | `201`, robot account with one-time token secret |
 | DELETE | `/admin/v1/robots/{id}` | none | `204`; rejected if the target is not a robot account |
@@ -91,6 +92,21 @@ curl -H "Authorization: Bearer $TOKEN" \
 ```json
 [{"id":"0b6f4c1e-52c1-4e0a-9f55-7d1a2c3e4b5f","at":"2026-03-01T10:00:00.5Z","action":"grant.put","actor":"admin","subject":"alice","repository":"team/app","role":"repo-writer","detail":"Reader to Writer"},{"id":"7a1d9e20-3b4c-4f6a-8d12-9e0f1a2b3c4d","at":"2026-03-01T09:30:00Z","action":"token.issued","actor":"admin","subject":"alice","token_name":"ci","detail":"30 days"}]
 ```
+
+Example: the first page of all repository grants, then the next one (global admin token required):
+
+```sh
+curl -H "Authorization: Bearer $TOKEN" \
+  "https://registry.example.com/admin/v1/repository-grants?limit=2"
+curl -H "Authorization: Bearer $TOKEN" \
+  "https://registry.example.com/admin/v1/repository-grants?limit=2&after=eyJyIjoidGVhbS93ZWIiLCJ1IjoiYW5hIiwiaSI6InVfMSJ9"
+```
+
+```json
+{"grants":[{"repository":"alpha/api","user_id":"u_1","username":"ana","is_robot":false,"role":"repo-admin","created_at":"2026-03-01T09:00:00Z","updated_at":"2026-03-01T09:00:00Z"},{"repository":"team/web","user_id":"u_1","username":"ana","is_robot":false,"role":"repo-writer","created_at":"2026-03-01T09:30:00Z","updated_at":"2026-03-02T08:00:00Z"}],"next":"eyJyIjoidGVhbS93ZWIiLCJ1IjoiYW5hIiwiaSI6InVfMSJ9"}
+```
+
+Pass `next` back unchanged as `after`; do not parse it. The order is bytewise by repository name, then username. Grants are read live, so a grant added or removed between pages can appear or vanish but the walk never repeats or skips a stable row.
 
 Events are recorded after the change succeeded and on a best-effort basis: a failed history write never fails the change itself.
 
