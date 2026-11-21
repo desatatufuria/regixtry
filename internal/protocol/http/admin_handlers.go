@@ -1067,12 +1067,13 @@ func decodeAdminCreateRobotInput(req *stdhttp.Request) (ports.AdminCreateRobotIn
 		Name       string              `json:"name"`
 		Repository string              `json:"repository"`
 		Role       domainauth.RepoRole `json:"role"`
+		TTL        json.RawMessage     `json:"ttl"`
 		TTLSeconds *int64              `json:"ttl_seconds"`
 	}
 	if err := decodeAdminJSON(req, &payload); err != nil {
 		return ports.AdminCreateRobotInput{}, err
 	}
-	ttl, err := adminTTLFromSeconds(payload.TTLSeconds)
+	ttl, err := adminTTLFromPayload(payload.TTL, payload.TTLSeconds)
 	if err != nil {
 		return ports.AdminCreateRobotInput{}, err
 	}
@@ -1435,13 +1436,14 @@ func adminNestedResource(resource string, marker string) (string, string, bool) 
 
 func decodeAdminCreateTokenInput(req *stdhttp.Request) (ports.AdminCreateTokenInput, error) {
 	var payload struct {
-		Name       string `json:"name"`
-		TTLSeconds *int64 `json:"ttl_seconds"`
+		Name       string          `json:"name"`
+		TTL        json.RawMessage `json:"ttl"`
+		TTLSeconds *int64          `json:"ttl_seconds"`
 	}
 	if err := decodeAdminJSON(req, &payload); err != nil {
 		return ports.AdminCreateTokenInput{}, err
 	}
-	ttl, err := adminTTLFromSeconds(payload.TTLSeconds)
+	ttl, err := adminTTLFromPayload(payload.TTL, payload.TTLSeconds)
 	if err != nil {
 		return ports.AdminCreateTokenInput{}, err
 	}
@@ -1450,6 +1452,56 @@ func decodeAdminCreateTokenInput(req *stdhttp.Request) (ports.AdminCreateTokenIn
 	input.TTL = ttl
 
 	return input, nil
+}
+
+// adminTTLFromPayload resolves the lifetime of a new admin token or robot from
+// the optional readable ttl ("12h", "30d", "2y") and the older ttl_seconds.
+// Sending both is rejected; sending neither (or null) means the default.
+func adminTTLFromPayload(ttl json.RawMessage, seconds *int64) (time.Duration, error) {
+	if len(ttl) == 0 || string(ttl) == "null" {
+		return adminTTLFromSeconds(seconds)
+	}
+	if seconds != nil {
+		return 0, domainauth.NewValidationError("send either ttl or ttl_seconds, not both")
+	}
+	return adminTTLFromReadable(ttl)
+}
+
+// adminTTLFromReadable parses ^[1-9][0-9]*[hdy]$ (h hours, d days of 24 h,
+// y years of 365 days). The number is compared with the maximum in its own
+// unit BEFORE multiplying, so no value can overflow or wrap.
+func adminTTLFromReadable(raw json.RawMessage) (time.Duration, error) {
+	errGrammar := domainauth.NewValidationError("ttl must be a whole number followed by h, d or y, for example 12h, 30d or 2y")
+
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil || len(value) < 2 {
+		return 0, errGrammar
+	}
+	digits, unit := value[:len(value)-1], value[len(value)-1]
+	var per time.Duration
+	switch unit {
+	case 'h':
+		per = time.Hour
+	case 'd':
+		per = 24 * time.Hour
+	case 'y':
+		per = 365 * 24 * time.Hour
+	default:
+		return 0, errGrammar
+	}
+	if digits[0] < '1' || digits[0] > '9' {
+		return 0, errGrammar
+	}
+	for i := 1; i < len(digits); i++ {
+		if digits[i] < '0' || digits[i] > '9' {
+			return 0, errGrammar
+		}
+	}
+	n, err := strconv.ParseUint(digits, 10, 64)
+	if err != nil || n > uint64(domainauth.MaxAdminTokenTTL/per) {
+		return 0, domainauth.NewValidationError("admin token ttl must be 2 years or shorter")
+	}
+	return time.Duration(n) * per, nil
 }
 
 // adminTTLFromSeconds converts an optional ttl_seconds payload value to a
