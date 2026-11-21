@@ -1606,6 +1606,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.screen = screenRepoAdminGrants
 		return m, m.loadRepoAdminGrantsCmd(msg.repository)
 	case adminTokenCreatedMsg:
+		m.adminView.TokenForm.Creating = false
 		if msg.err != nil {
 			if IsAdminSessionExpired(msg.err) {
 				return m.expireAdminSession(msg.err.Error()), nil
@@ -1671,6 +1672,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case adminRobotCreatedMsg:
+		m.adminView.CreateRobotForm.Creating = false
 		if msg.err != nil {
 			if IsAdminSessionExpired(msg.err) {
 				return m.expireAdminSession(msg.err.Error()), nil
@@ -2437,6 +2439,7 @@ func (m Model) updateCreateRobotFormKey(msg keyMsg) (tea.Model, tea.Cmd) {
 		// is still shown: it MUST be cleared here so it can never render
 		// again on this screen after the operator has moved on.
 		m.clearRevealedAdminToken()
+		m.adminView.CreateRobotForm.Creating = false
 		m.screen = screenAdminRobots
 		m.status = ""
 		return m, nil
@@ -2493,6 +2496,10 @@ func (m Model) updateCreateRobotFormKey(msg keyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		input := ports.AdminCreateRobotInput{Name: name, Repository: repository, Role: m.adminView.CreateRobotForm.Role, TTL: ttl}
+		if m.adminView.CreateRobotForm.Creating {
+			return m, nil
+		}
+		m.adminView.CreateRobotForm.Creating = true
 		m.status = fmt.Sprintf("Creating robot %s...", name)
 		return m, m.createAdminRobotCmd(input)
 	}
@@ -3035,6 +3042,7 @@ func (m Model) updateTokenFormKey(msg keyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch {
 	case isEscKey(msg):
+		m.adminView.TokenForm.Creating = false
 		m.screen = screenAdminEditUserTokens
 		return m, nil
 	case isTabKey(msg):
@@ -3058,6 +3066,10 @@ func (m Model) updateTokenFormKey(msg keyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		input := ports.AdminCreateTokenInput{UserID: m.adminView.SelectedUserID, Name: strings.TrimSpace(m.adminView.TokenForm.Name), TTL: ttl}
+		if m.adminView.TokenForm.Creating {
+			return m, nil
+		}
+		m.adminView.TokenForm.Creating = true
 		m.status = fmt.Sprintf("Creating admin token for %s...", m.adminView.SelectedUsername)
 		return m, m.createAdminTokenCmd(input)
 	}

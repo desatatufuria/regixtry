@@ -118,6 +118,9 @@ type adminTokenForm struct {
 	Name     string
 	Lifetime tokenLifetime
 	Focus    adminTokenField
+	// Creating is true from the Enter that issued the create command until
+	// its result (success or error) arrives; Enter is ignored meanwhile.
+	Creating bool
 }
 
 // adminCreateRobotForm backs screenAdminCreateRobot (design.md Decision 7).
@@ -135,6 +138,9 @@ type adminCreateRobotForm struct {
 	Lifetime             tokenLifetime
 	Focus                adminCreateRobotField
 	RepositorySuggestion int
+	// Creating is true from the Enter that issued the create command until
+	// its result (success or error) arrives; Enter is ignored meanwhile.
+	Creating bool
 }
 
 type trivyConfigModal struct {
