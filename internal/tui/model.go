@@ -1356,6 +1356,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = fmt.Sprintf("Loading scan history for %s...", adminFirstNonEmpty(msg.repository, "repository"))
 		return m, next.Init(m.screenEnv())
 	case openGrantAccessMsg:
+		// An apply in flight owns the slot: never replace it (its result and
+		// the grants it writes must stay with the screen that started it).
+		if running, ok := m.adminScreens[slotGrantAccess].(grantAccessScreen); ok && running.applying {
+			m.screen = screenAdminGrantAccess
+			return m, nil
+		}
 		// Always a fresh screen: a previous visit's selection must not leak
 		// into a new one, and the principal may differ (Users/Robots `g`).
 		next := newGrantAccessScreen(msg.returnTo, msg.preselectID)

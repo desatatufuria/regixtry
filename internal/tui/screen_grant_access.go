@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync/atomic"
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
@@ -25,7 +26,14 @@ import (
 // until Enter; applying is one tea.Cmd that issues one PutUserGrant per
 // selected repository and returns one grantAccessAppliedMsg. There is no
 // rollback: a partial failure keeps the grants that succeeded.
+// grantGenerations hands out the unique id of each grantAccessScreen instance.
+var grantGenerations atomic.Uint64
+
 type grantAccessScreen struct {
+	// gen identifies this instance. Every async message it produces carries
+	// it and Update drops a message with another gen, so a late result can
+	// never land on a newer screen that reuses the slot.
+	gen         uint64
 	returnTo    screen
 	preselectID string
 	focus       grantPane
@@ -48,6 +56,7 @@ type grantAccessScreen struct {
 	role domainauth.RepoRole
 
 	applying   bool
+	applyCount int
 	results    []grantOutcome
 	status     string
 	statusTone grantTone
@@ -99,6 +108,7 @@ type grantOutcome struct {
 }
 
 type grantAccessPrincipalsLoadedMsg struct {
+	gen       uint64
 	users     []ports.AdminUser
 	usersErr  error
 	robots    []ports.AdminRobot
@@ -106,12 +116,14 @@ type grantAccessPrincipalsLoadedMsg struct {
 }
 
 type grantAccessGrantsLoadedMsg struct {
+	gen    uint64
 	userID string
 	grants []ports.AdminRepoGrant
 	err    error
 }
 
 type grantAccessAppliedMsg struct {
+	gen         uint64
 	principalID string
 	role        domainauth.RepoRole
 	outcomes    []grantOutcome
@@ -158,6 +170,7 @@ func openGrantAccess(preselectID string, returnTo screen) tea.Cmd {
 
 func newGrantAccessScreen(returnTo screen, preselectID string) grantAccessScreen {
 	s := grantAccessScreen{
+		gen:         grantGenerations.Add(1),
 		returnTo:    returnTo,
 		preselectID: preselectID,
 		// Same default the existing add-grant form starts with.
@@ -273,9 +286,16 @@ func (g grantSelection) toggled(row grantRepoRow) grantSelection {
 	return g.with(row)
 }
 
-// toggledAll ticks every given row, or unticks them all when every one is
-// already ticked. Selected rows that are not in rows are left alone.
-func (g grantSelection) toggledAll(rows []grantRepoRow) grantSelection {
+// toggledAll ticks every given KNOWN row, or unticks them all when every one
+// is already ticked. A New (not pushed yet) row is never touched: it is ticked
+// only by Space on it. Rows that are not in rows are left alone.
+func (g grantSelection) toggledAll(shown []grantRepoRow) grantSelection {
+	var rows []grantRepoRow
+	for _, row := range shown {
+		if !row.New {
+			rows = append(rows, row)
+		}
+	}
 	allOn := len(rows) > 0
 	for _, row := range rows {
 		if !g.has(row.Name) {
@@ -483,7 +503,7 @@ func (s grantAccessScreen) ID() screen { return screenAdminGrantAccess }
 func (s grantAccessScreen) Keys() screenKeys { return grantAccessKeys }
 
 func (s grantAccessScreen) Init(env screenEnv) tea.Cmd {
-	return grantAccessLoadPrincipalsCmd(env)
+	return grantAccessLoadPrincipalsCmd(env, s.gen)
 }
 
 func (s grantAccessScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.Cmd, bool) {
@@ -491,6 +511,9 @@ func (s grantAccessScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.
 	case keyMsg:
 		return s.updateKey(env, typed)
 	case grantAccessPrincipalsLoadedMsg:
+		if typed.gen != s.gen {
+			return s, nil, false
+		}
 		s.principalsLoaded = true
 		s.usersErr, s.robotsErr = errText(typed.usersErr), errText(typed.robotsErr)
 		s.principals = mergeGrantPrincipals(typed.users, typed.robots)
@@ -506,6 +529,9 @@ func (s grantAccessScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.
 		next, cmd := s.loadHighlightedGrants(env)
 		return next, cmd, false
 	case grantAccessGrantsLoadedMsg:
+		if typed.gen != s.gen {
+			return s, nil, false
+		}
 		s.grants = cloneGrantCache(s.grants)
 		if typed.err != nil {
 			s.grants[typed.userID] = grantsEntry{err: typed.err.Error()}
@@ -514,6 +540,9 @@ func (s grantAccessScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.
 		}
 		return s, nil, false
 	case grantAccessAppliedMsg:
+		if typed.gen != s.gen {
+			return s, nil, false
+		}
 		next, cmd := s.applied(env, typed)
 		return next, cmd, false
 	}
@@ -547,7 +576,7 @@ func (s grantAccessScreen) loadHighlightedGrants(env screenEnv) (grantAccessScre
 	}
 	s.grants = cloneGrantCache(s.grants)
 	s.grants[principal.ID] = grantsEntry{loading: true}
-	return s, grantAccessLoadGrantsCmd(env, principal.ID)
+	return s, grantAccessLoadGrantsCmd(env, s.gen, principal.ID)
 }
 
 // clearOutcome drops the last apply result and status once the operator
@@ -565,11 +594,15 @@ func (s grantAccessScreen) setStatus(tone grantTone, text string) grantAccessScr
 }
 
 func (s grantAccessScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd, bool) {
+	if s.applying {
+		// Leaving mid-apply would lose the result; wait for it.
+		if isEscKey(msg) {
+			s = s.setStatus(grantToneInfo, fmt.Sprintf("Applying %d grants, please wait", s.applyCount))
+		}
+		return s, nil, true
+	}
 	if isEscKey(msg) {
 		return s, navigate(s.returnTo), true
-	}
-	if s.applying {
-		return s, nil, true
 	}
 	switch {
 	case isTabKey(msg):
@@ -718,9 +751,10 @@ func (s grantAccessScreen) apply(env screenEnv) (grantAccessScreen, tea.Cmd) {
 		return s.setStatus(grantToneError, "Select at least one repository (Space ticks the highlighted one)."), nil
 	}
 	s.applying = true
+	s.applyCount = len(names)
 	s.results = nil
 	s = s.setStatus(grantToneInfo, fmt.Sprintf("Granting %s on %d repositories to %s...", grantRoleLabel(s.role), len(names), principal.Name))
-	return s, grantAccessApplyCmd(env, principal.ID, s.role, names)
+	return s, grantAccessApplyCmd(env, s.gen, principal.ID, s.role, names)
 }
 
 func (s grantAccessScreen) applied(env screenEnv, msg grantAccessAppliedMsg) (grantAccessScreen, tea.Cmd) {
@@ -754,47 +788,53 @@ func (s grantAccessScreen) applied(env screenEnv, msg grantAccessAppliedMsg) (gr
 
 // ---- commands ----
 
-func grantAccessLoadPrincipalsCmd(env screenEnv) tea.Cmd {
+func grantAccessLoadPrincipalsCmd(env screenEnv, gen uint64) tea.Cmd {
 	client, session := env.Client, env.Session
 	return func() tea.Msg {
 		if client == nil {
 			unavailable := errors.New("admin API is unavailable for this session")
-			return grantAccessPrincipalsLoadedMsg{usersErr: unavailable, robotsErr: unavailable}
+			return grantAccessPrincipalsLoadedMsg{gen: gen, usersErr: unavailable, robotsErr: unavailable}
 		}
 		users, usersErr := client.ListUsers(context.Background(), session)
 		robots, robotsErr := client.ListRobots(context.Background(), session)
-		return grantAccessPrincipalsLoadedMsg{users: users, usersErr: usersErr, robots: robots, robotsErr: robotsErr}
+		return grantAccessPrincipalsLoadedMsg{gen: gen, users: users, usersErr: usersErr, robots: robots, robotsErr: robotsErr}
 	}
 }
 
-func grantAccessLoadGrantsCmd(env screenEnv, userID string) tea.Cmd {
+func grantAccessLoadGrantsCmd(env screenEnv, gen uint64, userID string) tea.Cmd {
 	client, session := env.Client, env.Session
 	return func() tea.Msg {
 		if client == nil {
-			return grantAccessGrantsLoadedMsg{userID: userID, err: errors.New("admin API is unavailable for this session")}
+			return grantAccessGrantsLoadedMsg{gen: gen, userID: userID, err: errors.New("admin API is unavailable for this session")}
 		}
 		grants, err := client.ListUserGrants(context.Background(), session, userID)
-		return grantAccessGrantsLoadedMsg{userID: userID, grants: grants, err: err}
+		return grantAccessGrantsLoadedMsg{gen: gen, userID: userID, grants: grants, err: err}
 	}
 }
 
 // grantAccessApplyCmd runs every PutUserGrant sequentially inside ONE command
 // and reports ONE message (this codebase deliberately avoids tea.Batch). A
 // failure does not stop the remaining repositories and nothing is rolled back.
-func grantAccessApplyCmd(env screenEnv, userID string, role domainauth.RepoRole, repositories []string) tea.Cmd {
+func grantAccessApplyCmd(env screenEnv, gen uint64, userID string, role domainauth.RepoRole, repositories []string) tea.Cmd {
 	client, session := env.Client, env.Session
 	repositories = slices.Clone(repositories)
 	return func() tea.Msg {
 		outcomes := make([]grantOutcome, 0, len(repositories))
+		expired := false
 		for _, repository := range repositories {
+			if expired {
+				outcomes = append(outcomes, grantOutcome{repo: repository, err: errors.New("not attempted (session expired)")})
+				continue
+			}
 			if client == nil {
 				outcomes = append(outcomes, grantOutcome{repo: repository, err: errors.New("admin API is unavailable for this session")})
 				continue
 			}
 			_, err := client.PutUserGrant(context.Background(), session, ports.AdminPutRepoGrantInput{UserID: userID, Repository: repository, Role: role})
 			outcomes = append(outcomes, grantOutcome{repo: repository, err: err})
+			expired = err != nil && IsAdminSessionExpired(err)
 		}
-		return grantAccessAppliedMsg{principalID: userID, role: role, outcomes: outcomes}
+		return grantAccessAppliedMsg{gen: gen, principalID: userID, role: role, outcomes: outcomes}
 	}
 }
 

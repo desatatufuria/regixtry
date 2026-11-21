@@ -249,13 +249,13 @@ func TestGrantSelectionToggleAllShown(t *testing.T) {
 	hidden := grantRepoRow{Name: "b/hidden"}
 
 	all := (grantSelection{}).toggled(hidden).toggledAll(rows)
-	for _, name := range []string{"a/one", "a/two", "a/new", "b/hidden"} {
+	for _, name := range []string{"a/one", "a/two", "b/hidden"} {
 		if !all.has(name) {
 			t.Fatalf("toggledAll from empty: %s not selected", name)
 		}
 	}
 	none := all.toggledAll(rows)
-	for _, name := range []string{"a/one", "a/two", "a/new"} {
+	for _, name := range []string{"a/one", "a/two"} {
 		if none.has(name) {
 			t.Fatalf("toggledAll when all shown selected: %s still selected", name)
 		}
@@ -264,10 +264,13 @@ func TestGrantSelectionToggleAllShown(t *testing.T) {
 		t.Fatal("toggledAll touched a row that is not shown")
 	}
 	mixed := (grantSelection{}).toggled(rows[0]).toggledAll(rows)
-	for _, row := range rows {
+	for _, row := range rows[:2] {
 		if !mixed.has(row.Name) {
-			t.Fatalf("toggledAll from a mixed state must select all shown; %s is not", row.Name)
+			t.Fatalf("toggledAll from a mixed state must select all shown known rows; %s is not", row.Name)
 		}
+	}
+	if mixed.has("a/new") {
+		t.Fatal("toggledAll ticked the new-name row")
 	}
 	if got := (grantSelection{}).toggledAll(nil); len(got.ordered(nil)) != 0 {
 		t.Fatal("toggledAll(nil) must stay empty")
@@ -870,7 +873,7 @@ func TestGrantScreenPreselectsPrincipalAndFocusesRepositories(t *testing.T) {
 	}
 }
 
-func TestGrantScreenKeysAreIgnoredWhileApplyingExceptEsc(t *testing.T) {
+func TestGrantScreenKeysAreIgnoredWhileApplying(t *testing.T) {
 	t.Parallel()
 	env := grantTestEnv(newRecordingGrantClient())
 	s := grantOpen(t, env, "")
@@ -884,8 +887,8 @@ func TestGrantScreenKeysAreIgnoredWhileApplyingExceptEsc(t *testing.T) {
 	if c2 != nil || after.(grantAccessScreen).repoFilter != "" {
 		t.Fatal("typing while applying changed state")
 	}
-	if _, c3, _ := applying.Update(env, testKeyEsc()); c3 == nil {
-		t.Fatal("Esc must still leave while applying")
+	if _, c3, _ := applying.Update(env, testKeyEsc()); c3 != nil {
+		t.Fatal("Esc must not leave while applying")
 	}
 }
 
