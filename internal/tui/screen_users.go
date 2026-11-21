@@ -37,6 +37,9 @@ type usersScreen struct {
 	users   []ports.AdminUser
 	loaded  bool
 	loadErr string
+	// refreshing is set from the moment a reload is requested (r, or after a
+	// disable or enable) until its result arrives; r is ignored meanwhile.
+	refreshing bool
 
 	// expiring maps a user id to that user's tokens expiring within
 	// usersExpiringWithin, from ONE call for all users.
@@ -97,6 +100,7 @@ var usersKeys = screenKeys{short: []key.Binding{
 	key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "tokens")),
 	key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "password")),
 	key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "disable")),
+	key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 	key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
 }}
 
@@ -189,6 +193,20 @@ func userToggleConfirm(gen uint64, user ports.AdminUser) confirmPrompt {
 	).withTarget(username, userSubtitle(user, true)).withConsequence(consequence)
 }
 
+// userOwnAccountReason is the notice shown when the operator tries to disable
+// the account they are signed in with.
+const userOwnAccountReason = "You cannot disable your own account"
+
+// ownAccountGuard reports whether user is the signed-in operator and the
+// action would disable it. Enabling is never blocked. The session carries only
+// the operator's username, which is what the comparison uses.
+func ownAccountGuard(env screenEnv, user ports.AdminUser) (bool, string) {
+	if user.Enabled && env.Session.Username != "" && strings.EqualFold(env.Session.Username, user.Username) {
+		return true, userOwnAccountReason
+	}
+	return false, ""
+}
+
 // userEnabledNotice is the line shown after a disable or enable.
 func userEnabledNotice(msg userEnabledMsg) (userNoticeTone, string) {
 	if msg.err != nil {
@@ -203,7 +221,7 @@ func userEnabledNotice(msg userEnabledMsg) (userNoticeTone, string) {
 
 // openUserScreenMsg asks the Model to mount a FRESH user-management screen
 // (state from an earlier visit, a typed password above all, is discarded) or
-// the legacy Tokens screen for the user.
+// the Tokens screen for the user.
 type openUserScreenMsg struct {
 	to       screen
 	userID   string
@@ -235,13 +253,14 @@ func (s usersScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.Cmd, b
 		if typed.err != nil {
 			return s, nil, false
 		}
+		s.refreshing = true
 		return s, usersLoadCmd(env, s.gen), false
 	}
 	return s, nil, false
 }
 
 func (s usersScreen) applyLoaded(msg usersLoadedMsg) usersScreen {
-	s.loaded = true
+	s.loaded, s.refreshing = true, false
 	s.loadErr, s.expiringErr = errText(msg.usersErr), errText(msg.expiringErr)
 	if msg.usersErr == nil {
 		s.users = msg.users
@@ -325,6 +344,14 @@ func (s usersScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd,
 		s = s.move(1)
 	case isRuneKey(msg, 'n'):
 		return s, openUserScreen(openUserScreenMsg{to: screenAdminCreateUser}), true
+	case isRuneKey(msg, 'r'):
+		// Reload the list and the expiring report; the cursor stays on the
+		// same user (it is kept by id). Ignored while a load is in flight.
+		if !s.loaded || s.refreshing {
+			return s, nil, true
+		}
+		s.refreshing, s.notice = true, ""
+		return s, usersLoadCmd(env, s.gen), true
 	case !hasUser:
 		if isEnterKey(msg) || isRuneKey(msg, 'g', 't', 'p', 'd') {
 			s = s.withNotice(userNoticeInfo, "Select a user first.")
@@ -338,6 +365,9 @@ func (s usersScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd,
 	case isRuneKey(msg, 'p'):
 		return s, openUserScreen(openUserScreenMsg{to: screenAdminChangePassword, userID: user.ID, username: user.Username}), true
 	case isRuneKey(msg, 'd'):
+		if blocked, reason := ownAccountGuard(env, user); blocked {
+			return s.withNotice(userNoticeError, reason), nil, true
+		}
 		s.confirm, s.notice = userToggleConfirm(s.gen, user), ""
 	}
 	return s, nil, true

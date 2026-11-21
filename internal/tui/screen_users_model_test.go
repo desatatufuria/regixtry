@@ -206,7 +206,7 @@ func openSidebarItemFrom(t *testing.T, m Model, id shellNavID) Model {
 	return openSidebarItem(t, m, id)
 }
 
-func TestLegacyGrantsEscGoesBackToTheProfileToo(t *testing.T) {
+func TestGrantsEscGoesBackToTheProfileToo(t *testing.T) {
 	t.Parallel()
 	m := usersModelAt(t, editTestClient(), 150, 24)
 	m = modelPress(t, m, testKeyDown(), testKeyDown(), testKeyDown(), testKeyRunes("t"), testKeyRunes("g"))
@@ -407,7 +407,7 @@ func TestUsersDisableUsesTheSharedPromptAndItsGuardThroughTheModel(t *testing.T)
 		if _, again := m.Update(confirmKey); again != nil {
 			t.Fatal("a second confirm key ran the command again")
 		}
-		m = runCmd(t, m, cmd)
+		_ = runCmd(t, m, cmd)
 		if client.disableCalls != 1 {
 			t.Fatalf("DisableUser called %d times, want 1", client.disableCalls)
 		}

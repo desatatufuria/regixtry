@@ -19,14 +19,16 @@ type editUserScreen struct {
 	userID   string
 	username string
 
-	user      ports.AdminUser
-	found     bool
-	loaded    bool
-	userErr   string
-	grants    []ports.AdminRepoGrant
-	grantsErr string
-	tokens    []ports.AdminToken
-	tokensErr string
+	user   ports.AdminUser
+	found  bool
+	loaded bool
+	// refreshing is set while a reload is in flight; r is ignored meanwhile.
+	refreshing bool
+	userErr    string
+	grants     []ports.AdminRepoGrant
+	grantsErr  string
+	tokens     []ports.AdminToken
+	tokensErr  string
 
 	confirm confirmPrompt
 
@@ -60,6 +62,7 @@ func (s editUserScreen) Keys() screenKeys {
 		key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "grant access")),
 		key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "tokens")),
 		key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "disable")),
+		key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
 	}}
 }
@@ -115,13 +118,14 @@ func (s editUserScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.Cmd
 		if typed.err != nil {
 			return s, nil, false
 		}
+		s.refreshing = true
 		return s, editUserLoadCmd(env, s.gen, s.userID), false
 	}
 	return s, nil, false
 }
 
 func (s editUserScreen) applyLoaded(msg editUserLoadedMsg) editUserScreen {
-	s.loaded = true
+	s.loaded, s.refreshing = true, false
 	s.userErr, s.grantsErr, s.tokensErr = errText(msg.usersErr), errText(msg.grantsErr), errText(msg.tokensErr)
 	if msg.usersErr == nil {
 		s.found = false
@@ -157,9 +161,18 @@ func (s editUserScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea.C
 		return s, openUserScreen(openUserScreenMsg{to: screenAdminEditUserTokens, userID: s.userID, username: name}), true
 	case isRuneKey(msg, 'p'):
 		return s, openUserScreen(openUserScreenMsg{to: screenAdminChangePassword, userID: s.userID, username: name}), true
+	case isRuneKey(msg, 'r'):
+		if !s.loaded || s.refreshing {
+			return s, nil, true
+		}
+		s.refreshing, s.notice = true, ""
+		return s, editUserLoadCmd(env, s.gen, s.userID), true
 	case isRuneKey(msg, 'd'), isSpaceKey(msg):
 		if !s.found {
 			return s.withNotice(userNoticeInfo, "The user is not loaded yet."), nil, true
+		}
+		if blocked, reason := ownAccountGuard(env, s.user); blocked {
+			return s.withNotice(userNoticeError, reason), nil, true
 		}
 		s.confirm, s.notice = userToggleConfirm(s.gen, s.user), ""
 	}

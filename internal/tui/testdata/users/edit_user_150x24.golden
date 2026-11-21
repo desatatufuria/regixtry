@@ -21,4 +21,4 @@
                                │  │ 2 repositories.                                      │  │ Disable user  d                                      │  
                                │  ╰──────────────────────────────────────────────────────╯  ╰──────────────────────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  space enable/disable   p password   g grant access   t tokens   d disable   esc back                                                                
+  space enable/disable   p password   g grant access   t tokens   d disable   r refresh   esc back                                                    
