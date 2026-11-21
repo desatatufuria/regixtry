@@ -52,3 +52,10 @@ func TestEscWithoutSearchStillGoesBack(t *testing.T) {
 		t.Fatalf("screen = %v, want the Admin menu", m.screen)
 	}
 }
+
+func TestActiveSearchFooterSaysEscEndsTheSearch(t *testing.T) {
+	t.Parallel()
+	if got := adminScreenHelp(screenAdminUsers, kjSearchModel(t, true).adminView); got != "Type to search | Up/Down: pick user | Esc: end search" {
+		t.Fatalf("footer = %q", got)
+	}
+}

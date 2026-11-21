@@ -110,7 +110,7 @@ func adminScreenHelp(current screen, view AdminViewState) string {
 		return "Enter: create robot | Tab: next field | Space: cycle role | Esc: cancel"
 	default:
 		if current == screenAdminUsers && view.UserSearchActive {
-			return "Type to search | Up/Down: pick user | Esc: back"
+			return "Type to search | Up/Down: pick user | Esc: end search"
 		}
 		return "/: search | Enter/e: edit user | n: create user | f: features | b: robots | g: grant access | Esc: back | q: quit"
 	}

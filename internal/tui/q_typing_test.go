@@ -89,14 +89,14 @@ func TestCtrlCQuitsOnLoginAndActiveSearch(t *testing.T) {
 	}
 }
 
-func TestLoginAndActiveSearchFootersSayEscBack(t *testing.T) {
+func TestLoginSaysEscBackAndActiveSearchSaysEscEndsIt(t *testing.T) {
 	login := kjLoginModel(t).View().Content
 	if strings.Contains(login, "q: quit") || !strings.Contains(login, "Esc: back") {
 		t.Fatalf("login footer wrong:\n%s", login)
 	}
 	m := charResize(t, kjSearchModel(t, true), 200, 40)
 	search := m.View().Content
-	if strings.Contains(search, "q: quit") || !strings.Contains(search, "Esc: back") {
+	if strings.Contains(search, "q: quit") || !strings.Contains(search, "Esc: end search") {
 		t.Fatalf("active search footer wrong:\n%s", search)
 	}
 	m = charResize(t, kjSearchModel(t, false), 200, 40)
