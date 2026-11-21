@@ -1,0 +1,17 @@
+ Regixtry Admin                                                                                       
+ Users / alice / Grants / Add Grant                                                                   
+ ╭────────────────────────────────╮                                                                   
+ │                                │                                                                   
+ │ Grant Details                  │                                                                   
+ │ User: alice                    │                                                                   
+ │ Repository                     │                                                                   
+ │  team                          │                                                                   
+ │ Role                           │                                                                   
+ │  repo-writer                   │                                                                   
+ │                                │                                                                   
+ │ Known Repositories             │                                                                   
+ │  team/demo                     │                                                                   
+ │ team/backend                   │                                                                   
+ │                                │                                                                   
+ ╰────────────────────────────────╯                                                                   
+ Up/Down: pick repository | Enter: accept or save | Tab: next field | Space: cycle role | Esc: cancel 

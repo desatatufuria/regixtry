@@ -1,0 +1,13 @@
+ Regixtry Admin                                      
+ Users / alice / Tokens / Create Token               
+ ╭────────────────────────────────╮                  
+ │                                │                  
+ │ Create Token                   │                  
+ │ User: alice                    │                  
+ │ Name                           │                  
+ │  ci bot                        │                  
+ │ TTL seconds                    │                  
+ │  3600                          │                  
+ │                                │                  
+ ╰────────────────────────────────╯                  
+ Enter: create token | Tab: next field | Esc: cancel 

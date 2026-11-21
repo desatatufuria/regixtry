@@ -1,0 +1,303 @@
+package tui
+
+import (
+	"sort"
+	"strings"
+	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
+)
+
+// Every key message in the characterization tests is built only by the
+// testKey* helpers below, so a Bubble Tea major upgrade edits just these bodies.
+
+func testKeyRunes(text string) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(text)} }
+func testKeySpace() tea.KeyMsg            { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}} }
+func testKeyEnter() tea.KeyMsg            { return tea.KeyMsg{Type: tea.KeyEnter} }
+func testKeyEsc() tea.KeyMsg              { return tea.KeyMsg{Type: tea.KeyEsc} }
+func testKeyBackspace() tea.KeyMsg        { return tea.KeyMsg{Type: tea.KeyBackspace} }
+func testKeyTab() tea.KeyMsg              { return tea.KeyMsg{Type: tea.KeyTab} }
+func testKeyShiftTab() tea.KeyMsg         { return tea.KeyMsg{Type: tea.KeyShiftTab} }
+func testKeyUp() tea.KeyMsg               { return tea.KeyMsg{Type: tea.KeyUp} }
+func testKeyDown() tea.KeyMsg             { return tea.KeyMsg{Type: tea.KeyDown} }
+func testKeyLeft() tea.KeyMsg             { return tea.KeyMsg{Type: tea.KeyLeft} }
+func testKeyRight() tea.KeyMsg            { return tea.KeyMsg{Type: tea.KeyRight} }
+func testKeyPgUp() tea.KeyMsg             { return tea.KeyMsg{Type: tea.KeyPgUp} }
+func testKeyPgDown() tea.KeyMsg           { return tea.KeyMsg{Type: tea.KeyPgDown} }
+func testKeyHome() tea.KeyMsg             { return tea.KeyMsg{Type: tea.KeyHome} }
+func testKeyEnd() tea.KeyMsg              { return tea.KeyMsg{Type: tea.KeyEnd} }
+func testKeyAlt(text string) tea.KeyMsg {
+	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(text), Alt: true}
+}
+
+func testKeyCtrl(letter byte) tea.KeyMsg {
+	return tea.KeyMsg{Type: tea.KeyType(letter - 'a' + 1)}
+}
+
+// testSendKey feeds one key through Update and drops the returned command.
+func testSendKey(t *testing.T, m Model, msg tea.KeyMsg) Model {
+	t.Helper()
+	updated, _ := m.Update(msg)
+	return updated.(Model)
+}
+
+func testSendKeys(t *testing.T, m Model, msgs ...tea.KeyMsg) Model {
+	t.Helper()
+	for _, msg := range msgs {
+		m = testSendKey(t, m, msg)
+	}
+	return m
+}
+
+func TestKeyHelpersCharacterization(t *testing.T) {
+	t.Parallel()
+
+	helpers := map[string]func(tea.KeyMsg) bool{
+		"isMoveUpKey":    isMoveUpKey,
+		"isMoveDownKey":  isMoveDownKey,
+		"isMoveLeftKey":  isMoveLeftKey,
+		"isMoveRightKey": isMoveRightKey,
+		"isEnterKey":     isEnterKey,
+		"isTabKey":       isTabKey,
+		"isShiftTabKey":  isShiftTabKey,
+		"isEscKey":       isEscKey,
+		"isBackspaceKey": isBackspaceKey,
+		"isBackKey":      isBackKey,
+		"isPgUpKey":      isPgUpKey,
+		"isPgDnKey":      isPgDnKey,
+		"isHomeKey":      isHomeKey,
+		"isEndKey":       isEndKey,
+	}
+
+	tests := []struct {
+		name string
+		msg  tea.KeyMsg
+		want []string // helpers that must return true; every other helper must return false
+	}{
+		{"enter", testKeyEnter(), []string{"isEnterKey"}},
+		{"tab", testKeyTab(), []string{"isTabKey"}},
+		{"shift+tab", testKeyShiftTab(), []string{"isShiftTabKey"}},
+		{"esc", testKeyEsc(), []string{"isEscKey", "isBackKey"}},
+		{"backspace", testKeyBackspace(), []string{"isBackspaceKey", "isBackKey"}},
+		{"up arrow", testKeyUp(), []string{"isMoveUpKey"}},
+		{"down arrow", testKeyDown(), []string{"isMoveDownKey"}},
+		{"left arrow", testKeyLeft(), []string{"isMoveLeftKey"}},
+		{"right arrow", testKeyRight(), []string{"isMoveRightKey"}},
+		{"pgup", testKeyPgUp(), []string{"isPgUpKey"}},
+		{"pgdown", testKeyPgDown(), []string{"isPgDnKey"}},
+		{"home", testKeyHome(), []string{"isHomeKey"}},
+		{"end", testKeyEnd(), []string{"isEndKey"}},
+		{"k rune is vim up", testKeyRunes("k"), []string{"isMoveUpKey"}},
+		{"upper K is vim up", testKeyRunes("K"), []string{"isMoveUpKey"}},
+		{"j rune is vim down", testKeyRunes("j"), []string{"isMoveDownKey"}},
+		{"upper J is vim down", testKeyRunes("J"), []string{"isMoveDownKey"}},
+		{"alt+k still vim up", testKeyAlt("k"), []string{"isMoveUpKey"}},
+		{"h has no left alias", testKeyRunes("h"), nil},
+		{"l has no right alias", testKeyRunes("l"), nil},
+		{"plain letter", testKeyRunes("a"), nil},
+		{"space", testKeySpace(), nil},
+		{"multi-rune kk", testKeyRunes("kk"), nil},
+		{"multi-rune with space", testKeyRunes("a b"), nil},
+		{"empty runes", testKeyRunes(""), nil},
+		{"ctrl+c", testKeyCtrl('c'), nil},
+		{"ctrl+k is not vim up", testKeyCtrl('k'), nil},
+		{"ctrl+j is not vim down", testKeyCtrl('j'), nil},
+		{"pasted text spelling a key name", testKeyRunes("enter"), []string{"isEnterKey"}},
+	}
+
+	names := make([]string, 0, len(helpers))
+	for name := range helpers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			wantSet := map[string]bool{}
+			for _, name := range tt.want {
+				wantSet[name] = true
+			}
+			for _, name := range names {
+				if got := helpers[name](tt.msg); got != wantSet[name] {
+					t.Errorf("%s(%q) = %v, want %v", name, tt.msg.String(), got, wantSet[name])
+				}
+			}
+		})
+	}
+}
+
+func TestIsRuneKeyCharacterization(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		msg        tea.KeyMsg
+		candidates []rune
+		want       bool
+	}{
+		{"match", testKeyRunes("g"), []rune{'g'}, true},
+		{"match is case-insensitive on the message", testKeyRunes("G"), []rune{'g'}, true},
+		{"match is case-insensitive on the candidate", testKeyRunes("g"), []rune{'G'}, true},
+		{"any of several candidates", testKeyRunes("x"), []rune{'a', 'x'}, true},
+		{"no candidate matches", testKeyRunes("z"), []rune{'a', 'x'}, false},
+		{"no candidates", testKeyRunes("a"), nil, false},
+		{"space candidate", testKeySpace(), []rune{' '}, true},
+		{"space is not a letter", testKeySpace(), []rune{'a'}, false},
+		{"multi-rune input", testKeyRunes("gg"), []rune{'g'}, false},
+		{"empty runes", testKeyRunes(""), []rune{'g'}, false},
+		{"alt modifier is ignored", testKeyAlt("g"), []rune{'g'}, true},
+		{"ctrl combo has no rune", testKeyCtrl('g'), []rune{'g'}, false},
+		{"enter has no rune", testKeyEnter(), []rune{'g'}, false},
+		{"digit", testKeyRunes("7"), []rune{'7'}, true},
+		{"non-ascii", testKeyRunes("ñ"), []rune{'Ñ'}, true},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := isRuneKey(tt.msg, tt.candidates...); got != tt.want {
+				t.Fatalf("isRuneKey(%q, %q) = %v, want %v", tt.msg.String(), string(tt.candidates), got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTokenFormTextEntryCharacterization(t *testing.T) {
+	t.Parallel()
+
+	m := charAdminModel(t, 160, 40)
+	m.screen = screenAdminCreateToken
+	m.adminView.SelectedUserID = "u-1"
+	m.adminView.SelectedUsername = "alice"
+
+	m = testSendKeys(t, m, testKeyRunes("ci"), testKeySpace(), testKeyRunes("bot"))
+	if got, want := m.adminView.TokenForm.Name, "ci bot"; got != want {
+		t.Fatalf("Name after typing = %q, want %q", got, want)
+	}
+	m = testSendKey(t, m, testKeyBackspace())
+	if got, want := m.adminView.TokenForm.Name, "ci bo"; got != want {
+		t.Fatalf("Name after backspace = %q, want %q", got, want)
+	}
+	if !strings.Contains(m.View(), "ci bo") {
+		t.Fatalf("view does not show the typed name")
+	}
+
+	m = testSendKey(t, m, testKeyTab())
+	if got := m.adminView.TokenForm.Focus; got != adminTokenFieldTTL {
+		t.Fatalf("focus after tab = %v, want TTL", got)
+	}
+	m = testSendKeys(t, m, testKeyRunes("12x"), testKeyRunes("a"), testKeySpace(), testKeyRunes("-"))
+	if got := m.adminView.TokenForm.TTLSeconds; got != "" {
+		t.Fatalf("TTL after non-digit input = %q, want it rejected", got)
+	}
+	m = testSendKeys(t, m, testKeyRunes("3600"), testKeyRunes("9"))
+	if got, want := m.adminView.TokenForm.TTLSeconds, "36009"; got != want {
+		t.Fatalf("TTL after digits = %q, want %q", got, want)
+	}
+	m = testSendKey(t, m, testKeyBackspace())
+	if got, want := m.adminView.TokenForm.TTLSeconds, "3600"; got != want {
+		t.Fatalf("TTL after backspace = %q, want %q", got, want)
+	}
+	if got, want := m.adminView.TokenForm.Name, "ci bo"; got != want {
+		t.Fatalf("Name changed while TTL focused: %q, want %q", got, want)
+	}
+
+	m = testSendKey(t, m, testKeyEsc())
+	if m.screen != screenAdminEditUserTokens {
+		t.Fatalf("screen after esc = %q, want %q", m.screen, screenAdminEditUserTokens)
+	}
+}
+
+func TestCreateUserFormPasswordEntryCharacterization(t *testing.T) {
+	t.Parallel()
+
+	m := charAdminModel(t, 160, 40)
+	m.screen = screenAdminCreateUser
+
+	m = testSendKey(t, m, testKeyRunes("alice"))
+	if got, want := m.adminView.CreateUserForm.Username, "alice"; got != want {
+		t.Fatalf("Username = %q, want %q", got, want)
+	}
+	m = testSendKey(t, m, testKeyTab())
+	m = testSendKeys(t, m, testKeyRunes("s3cr"), testKeySpace(), testKeyRunes("et"))
+	if got, want := m.adminView.CreateUserForm.Password, "s3cret"; got != want {
+		t.Fatalf("Password = %q, want %q (space is swallowed by the field toggle, not typed)", got, want)
+	}
+	m = testSendKey(t, m, testKeyBackspace())
+	if got, want := m.adminView.CreateUserForm.Password, "s3cre"; got != want {
+		t.Fatalf("Password after backspace = %q, want %q", got, want)
+	}
+
+	view := m.View()
+	if !strings.Contains(view, "alice") {
+		t.Fatalf("view does not show the username")
+	}
+	if !strings.Contains(view, "*****") {
+		t.Fatalf("view does not show a 5-char mask for the password:\n%s", view)
+	}
+	for _, leak := range []string{"s3cre", "s3c", "3cr"} {
+		if strings.Contains(view, leak) {
+			t.Fatalf("view leaks password fragment %q:\n%s", leak, view)
+		}
+	}
+
+	m = testSendKey(t, m, testKeyTab())
+	m = testSendKey(t, m, testKeySpace())
+	if !m.adminView.CreateUserForm.IsAdmin {
+		t.Fatalf("space on the is-admin field did not toggle it")
+	}
+}
+
+func TestResetPasswordFormEntryCharacterization(t *testing.T) {
+	t.Parallel()
+
+	m := charAdminModel(t, 160, 40)
+	m.screen = screenAdminChangePassword
+	m.adminView.SelectedUserID = "u-1"
+	m.adminView.SelectedUsername = "alice"
+
+	m = testSendKeys(t, m, testKeyRunes("pa"), testKeySpace(), testKeyRunes("ss"))
+	if got, want := m.adminView.ResetPasswordForm.NewPassword, "pa ss"; got != want {
+		t.Fatalf("NewPassword = %q, want %q (this field types spaces)", got, want)
+	}
+	m = testSendKey(t, m, testKeyBackspace())
+	if got, want := m.adminView.ResetPasswordForm.NewPassword, "pa s"; got != want {
+		t.Fatalf("NewPassword after backspace = %q, want %q", got, want)
+	}
+	view := m.View()
+	if strings.Contains(view, "pa s") {
+		t.Fatalf("view leaks the new password:\n%s", view)
+	}
+}
+
+func TestGrantFormRepositoryEntryCharacterization(t *testing.T) {
+	t.Parallel()
+
+	m := charAdminModel(t, 160, 40)
+	m.screen = screenAdminAddGrant
+	m.adminView.SelectedUserID = "u-1"
+	m.adminView.SelectedUsername = "alice"
+
+	m = testSendKeys(t, m, testKeyRunes("team/"), testKeySpace(), testKeyRunes("de"))
+	if got, want := m.adminView.GrantForm.Repository, "team/de"; got != want {
+		t.Fatalf("Repository = %q, want %q (space is not typed into the repository)", got, want)
+	}
+	m = testSendKey(t, m, testKeyBackspace())
+	if got, want := m.adminView.GrantForm.Repository, "team/d"; got != want {
+		t.Fatalf("Repository after backspace = %q, want %q", got, want)
+	}
+	m = testSendKey(t, m, testKeyTab())
+	before := m.adminView.GrantForm.Role
+	m = testSendKey(t, m, testKeySpace())
+	if m.adminView.GrantForm.Role == before {
+		t.Fatalf("space on the role field did not cycle the role")
+	}
+	m = testSendKey(t, m, testKeyRunes("zzz"))
+	if got, want := m.adminView.GrantForm.Repository, "team/d"; got != want {
+		t.Fatalf("Repository changed while role focused: %q, want %q", got, want)
+	}
+}
