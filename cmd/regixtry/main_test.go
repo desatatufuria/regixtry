@@ -2898,7 +2898,7 @@ func TestRunTUISnapshotRequiresLoginWhenAuthAndAPIAreConfigured(t *testing.T) {
 	}
 
 	view := stdout.String()
-	if !strings.Contains(view, "Operator Login") || !strings.Contains(view, "Enter: sign in | Tab: switch field | Esc: back | q: quit") {
+	if !strings.Contains(view, "Operator Login") || !strings.Contains(view, "Enter: sign in | Tab: switch field | Esc: back") {
 		t.Fatalf("stdout = %q, want login-first snapshot", view)
 	}
 	if strings.Contains(view, "library/alpine") {

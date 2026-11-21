@@ -104,3 +104,43 @@ func TestLoginAndActiveSearchFootersSayEscBack(t *testing.T) {
 		t.Fatal("inactive search footer must still advertise q: quit")
 	}
 }
+
+func createUserQModel(t *testing.T, focus adminCreateUserField) Model {
+	t.Helper()
+	m := kjSearchModel(t, false)
+	m.screen = screenAdminCreateUser
+	m.adminView.CreateUserForm = adminCreateUserForm{Focus: focus}
+	return m
+}
+
+func TestCreateUserTypesQInTextFieldsOnly(t *testing.T) {
+	m := createUserQModel(t, adminCreateUserFieldUsername)
+	m, cmd := sendKeyCmd(m, testKeyRunes("q"))
+	if didQuit(cmd) {
+		t.Fatal("q in Create User username quit")
+	}
+	m = typeRunes(t, m, "Q")
+	if m.adminView.CreateUserForm.Username != "qQ" || m.adminView.CreateUserForm.Focus != adminCreateUserFieldUsername {
+		t.Fatalf("username = %q focus = %v", m.adminView.CreateUserForm.Username, m.adminView.CreateUserForm.Focus)
+	}
+	m = testSendKey(t, m, testKeyTab())
+	m, cmd = sendKeyCmd(m, testKeyRunes("q"))
+	if didQuit(cmd) {
+		t.Fatal("q in Create User password quit")
+	}
+	if m.adminView.CreateUserForm.Password != "q" || m.adminView.CreateUserForm.Username != "qQ" {
+		t.Fatalf("password = %q username = %q", m.adminView.CreateUserForm.Password, m.adminView.CreateUserForm.Username)
+	}
+	for _, focus := range []adminCreateUserField{adminCreateUserFieldIsAdmin, adminCreateUserFieldIsReadOnly, adminCreateUserFieldEnabled} {
+		_, cmd = sendKeyCmd(createUserQModel(t, focus), testKeyRunes("q"))
+		if !didQuit(cmd) {
+			t.Fatalf("q on Create User toggle %v did not quit", focus)
+		}
+	}
+	for _, focus := range []adminCreateUserField{adminCreateUserFieldUsername, adminCreateUserFieldPassword} {
+		_, cmd = sendKeyCmd(createUserQModel(t, focus), testKeyCtrl('c'))
+		if !didQuit(cmd) {
+			t.Fatalf("ctrl+c in Create User field %v did not quit", focus)
+		}
+	}
+}

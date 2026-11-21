@@ -2218,14 +2218,29 @@ func (m Model) updateAdminKey(msg keyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
-	// The login form and the active user search are text fields: q is typed
-	// there and Esc is the way out (Ctrl+C still quits in updateKey).
+	// The login form, the active user search and the Create User text fields
+	// type q; Esc is the way out (Ctrl+C still quits in updateKey).
 	if isRuneKey(msg, 'q') && isAdminPrincipalScreen(m.screen) && !m.migratedScreenCapturesTextInput() &&
-		m.screen != screenAdminLogin && !(m.screen == screenAdminUsers && m.adminView.UserSearchActive) {
+		!m.adminTextInputFocused() {
 		return m, tea.Quit
 	}
 
 	return routeAdminKey(m, msg)
+}
+
+// adminTextInputFocused reports whether a principal admin screen currently has
+// a text input focused, so a bare q must be typed instead of quitting.
+func (m Model) adminTextInputFocused() bool {
+	switch m.screen {
+	case screenAdminLogin:
+		return true
+	case screenAdminUsers:
+		return m.adminView.UserSearchActive
+	case screenAdminCreateUser:
+		focus := m.adminView.CreateUserForm.Focus
+		return focus == adminCreateUserFieldUsername || focus == adminCreateUserFieldPassword
+	}
+	return false
 }
 
 func (m Model) updateAdminLoginKey(msg keyMsg) (tea.Model, tea.Cmd) {
