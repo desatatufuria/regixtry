@@ -478,6 +478,36 @@ func (s *Service) ListAdminUserTokens(ctx context.Context, actor domainauth.Prin
 	return result, nil
 }
 
+// ListAdminExpiringTokens lists admin credentials that expire within the given
+// window from the service clock, soonest first. Metadata only.
+func (s *Service) ListAdminExpiringTokens(ctx context.Context, actor domainauth.Principal, within time.Duration, limit int) ([]ports.AdminExpiringToken, error) {
+	if err := requireAdmin(actor); err != nil {
+		return nil, err
+	}
+
+	now := s.now()
+	tokens, err := s.store.ListExpiringTokens(ctx, now, now.Add(within), limit)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]ports.AdminExpiringToken, 0, len(tokens))
+	for _, token := range tokens {
+		result = append(result, ports.AdminExpiringToken{
+			ID:        token.ID,
+			Accessor:  token.Accessor,
+			Name:      token.Name,
+			UserID:    token.UserID,
+			Username:  token.Username,
+			IsRobot:   token.IsRobot,
+			CreatedAt: token.CreatedAt,
+			ExpiresAt: token.ExpiresAt,
+		})
+	}
+
+	return result, nil
+}
+
 func (s *Service) RevokeAdminToken(ctx context.Context, actor domainauth.Principal, accessor string) error {
 	if err := requireAdmin(actor); err != nil {
 		return err

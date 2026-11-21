@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -1159,6 +1160,24 @@ func (s *memoryAuthStore) ListTokensByUser(_ context.Context, userID string, kin
 		}
 	}
 	return tokens, nil
+}
+func (s *memoryAuthStore) ListExpiringTokens(_ context.Context, now time.Time, until time.Time, limit int) ([]domainauth.ExpiringToken, error) {
+	result := make([]domainauth.ExpiringToken, 0)
+	for _, token := range s.tokensByAccessor {
+		user, ok := s.usersByID[token.UserID]
+		if !ok || !user.Enabled || token.Kind != domainauth.TokenKindAdminCredential || token.RevokedAt != nil {
+			continue
+		}
+		if !token.ExpiresAt.After(now) || token.ExpiresAt.After(until) {
+			continue
+		}
+		result = append(result, domainauth.ExpiringToken{ID: token.ID, UserID: token.UserID, Username: user.Username, IsRobot: user.IsRobot, Name: token.Name, Accessor: token.Accessor, ExpiresAt: token.ExpiresAt, CreatedAt: token.CreatedAt})
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].ExpiresAt.Before(result[j].ExpiresAt) })
+	if limit >= 0 && len(result) > limit {
+		result = result[:limit]
+	}
+	return result, nil
 }
 func (s *memoryAuthStore) GetTokenByAccessor(_ context.Context, kind domainauth.TokenKind, accessor string) (domainauth.Token, error) {
 	token, ok := s.tokensByAccessor[accessor]

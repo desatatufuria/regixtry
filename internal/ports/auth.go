@@ -26,6 +26,10 @@ type AuthStore interface {
 	GetTokenByAccessor(ctx context.Context, kind domainauth.TokenKind, accessor string) (domainauth.Token, error)
 	ListTokensByUser(ctx context.Context, userID string, kind domainauth.TokenKind) ([]domainauth.Token, error)
 	RevokeTokenByAccessor(ctx context.Context, accessor string, revokedAt time.Time) error
+	// ListExpiringTokens returns admin credentials of enabled users and robots
+	// that are neither revoked nor expired at now and expire at or before
+	// until, ordered by expiry ascending, at most limit rows.
+	ListExpiringTokens(ctx context.Context, now time.Time, until time.Time, limit int) ([]domainauth.ExpiringToken, error)
 }
 
 type LoginResult struct {
@@ -196,6 +200,19 @@ type AdminToken struct {
 	RevokedAt *time.Time           `json:"revoked_at,omitempty"`
 }
 
+// AdminExpiringToken is one row of the expiring-tokens report. It carries
+// metadata only: never a secret, hash or secret-derived value.
+type AdminExpiringToken struct {
+	ID        string    `json:"id"`
+	Accessor  string    `json:"accessor"`
+	Name      string    `json:"name,omitempty"`
+	UserID    string    `json:"user_id"`
+	Username  string    `json:"username"`
+	IsRobot   bool      `json:"is_robot"`
+	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
 type AdminCreateTokenInput struct {
 	UserID string        `json:"-"`
 	Name   string        `json:"name"`
@@ -226,6 +243,7 @@ type AdminHTTPService interface {
 	ListAdminRobots(ctx context.Context, actor domainauth.Principal) ([]AdminRobot, error)
 	DeleteAdminRobot(ctx context.Context, actor domainauth.Principal, userID string) error
 	ListAdminUserTokens(ctx context.Context, actor domainauth.Principal, userID string) ([]AdminToken, error)
+	ListAdminExpiringTokens(ctx context.Context, actor domainauth.Principal, within time.Duration, limit int) ([]AdminExpiringToken, error)
 	CreateAdminUserToken(ctx context.Context, actor domainauth.Principal, input AdminCreateTokenInput) (AdminCreatedToken, error)
 	RevokeAdminUserToken(ctx context.Context, actor domainauth.Principal, userID string, accessor string) error
 }

@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"sort"
 	"strings"
 	"time"
 
@@ -334,6 +335,65 @@ func (s *Store) ListTokensByUser(ctx context.Context, userID string, kind domain
 	}
 
 	return tokens, rows.Err()
+}
+
+// expiringSecondLayout is formatTime's layout cut at whole seconds and without
+// the trailing "Z". Timestamps are stored as RFC3339Nano text whose fraction
+// has trailing zeros trimmed, so a plain text comparison against a full
+// timestamp is wrong inside one second ("...:00.5Z" sorts before "...:00Z").
+// Comparing against this unterminated prefix is exact at second granularity,
+// so the SQL below is a superset and Go does the exact comparison.
+const expiringSecondLayout = "2006-01-02T15:04:05"
+
+// ListExpiringTokens returns admin credentials of enabled owners that are not
+// revoked, not expired at now and expire at or before until, soonest first.
+// One query, no N+1; the exact time filter, ordering and limit run in Go.
+func (s *Store) ListExpiringTokens(ctx context.Context, now time.Time, until time.Time, limit int) ([]domainauth.ExpiringToken, error) {
+	if limit <= 0 || until.Before(now) {
+		return []domainauth.ExpiringToken{}, nil
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT t.id, t.user_id, u.username, u.is_robot, t.name, t.accessor, t.expires_at, t.created_at
+		FROM auth_tokens t
+		JOIN auth_users u ON u.id = t.user_id
+		WHERE t.kind = $1
+		  AND t.revoked_at IS NULL
+		  AND u.enabled = TRUE
+		  AND t.expires_at >= $2
+		  AND t.expires_at < $3
+	`, string(domainauth.TokenKindAdminCredential),
+		now.UTC().Format(expiringSecondLayout),
+		until.UTC().Truncate(time.Second).Add(time.Second).Format(expiringSecondLayout))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	tokens := make([]domainauth.ExpiringToken, 0)
+	for rows.Next() {
+		var token domainauth.ExpiringToken
+		var expiresAt, createdAt string
+		if err := rows.Scan(&token.ID, &token.UserID, &token.Username, &token.IsRobot, &token.Name, &token.Accessor, &expiresAt, &createdAt); err != nil {
+			return nil, err
+		}
+		token.ExpiresAt = parseTime(expiresAt)
+		token.CreatedAt = parseTime(createdAt)
+		if !token.ExpiresAt.After(now) || token.ExpiresAt.After(until) {
+			continue
+		}
+		tokens = append(tokens, token)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	sort.SliceStable(tokens, func(i, j int) bool { return tokens[i].ExpiresAt.Before(tokens[j].ExpiresAt) })
+	if len(tokens) > limit {
+		tokens = tokens[:limit]
+	}
+
+	return tokens, nil
 }
 
 func (s *Store) RevokeTokenByAccessor(ctx context.Context, accessor string, revokedAt time.Time) error {
