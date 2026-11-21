@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -13,7 +14,7 @@ import (
 
 // auditWriteTimeout bounds the best-effort history write that follows a
 // mutation that already succeeded.
-const auditWriteTimeout = 5 * time.Second
+const auditWriteTimeout = 2 * time.Second
 
 // ListAdminAccessEvents lists the newest access changes first, at most limit
 // rows. Global admin only. Names and short text only, never secret material.
@@ -47,7 +48,7 @@ func (s *Service) ListAdminAccessEvents(ctx context.Context, actor domainauth.Pr
 
 // recordAccessEvent appends one history row after a mutation succeeded. It is
 // best effort by design: an audit write must never turn a successful change
-// into an error, and the service has no logger, so a failure is dropped.
+// into an error, so a failure is only logged.
 func (s *Service) recordAccessEvent(ctx context.Context, actor domainauth.Principal, event domainauth.AccessEvent) {
 	event.ID = uuid.NewString()
 	event.OccurredAt = s.now()
@@ -57,7 +58,11 @@ func (s *Service) recordAccessEvent(ctx context.Context, actor domainauth.Princi
 
 	auditCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), auditWriteTimeout)
 	defer cancel()
-	_ = s.store.AppendAccessEvent(auditCtx, event)
+	if err := s.store.AppendAccessEvent(auditCtx, event); err != nil {
+		// Only the action and the error text: never a token name, detail,
+		// secret or any other field of the event.
+		slog.Warn("access event not recorded", "action", string(event.Action), "error", err.Error())
+	}
 }
 
 // grantRoleOn returns the role the grants hold on the repository, if any.
@@ -150,8 +155,20 @@ const (
 )
 
 // humanLifetime words a lifetime in its natural unit: years when it is a whole
-// number of 365 day years, else days when whole, else hours. Never seconds.
+// number of 365 day years, else days when whole, else hours; below one hour
+// whole minutes, and below one minute "less than 1 minute". Never seconds.
 func humanLifetime(d time.Duration) string {
+	if d < lifetimeHour {
+		if d < time.Minute {
+			return "less than 1 minute"
+		}
+		minutes := int64(d / time.Minute)
+		if minutes == 1 {
+			return "1 minute"
+		}
+		return fmt.Sprintf("%d minutes", minutes)
+	}
+
 	count, unit := int64(d/lifetimeHour), "hour"
 	switch {
 	case d > 0 && d%lifetimeYear == 0:

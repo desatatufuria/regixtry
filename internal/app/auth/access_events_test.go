@@ -3,7 +3,9 @@ package auth
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -503,5 +505,125 @@ func TestRecordedEventsCapGiantFreeText(t *testing.T) {
 	got := f.only(t)
 	if n := len([]rune(got.TokenName)); n != domainauth.AccessEventTextLimit || !strings.HasSuffix(got.TokenName, "…") {
 		t.Fatalf("stored token name = %d runes", n)
+	}
+}
+
+func TestHumanLifetimeBoundaries(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		d    time.Duration
+		want string
+	}{
+		{time.Second, "less than 1 minute"},
+		{59 * time.Second, "less than 1 minute"},
+		{time.Minute, "1 minute"},
+		{90 * time.Second, "1 minute"},
+		{30 * time.Minute, "30 minutes"},
+		{59 * time.Minute, "59 minutes"},
+		{59*time.Minute + 59*time.Second, "59 minutes"},
+		{time.Hour, "1 hour"},
+		{2 * time.Hour, "2 hours"},
+		{36 * time.Hour, "36 hours"},
+		{24 * time.Hour, "1 day"},
+		{30 * 24 * time.Hour, "30 days"},
+		{365 * 24 * time.Hour, "1 year"},
+		{domainauth.MaxAdminTokenTTL, "2 years"},
+	}
+	for _, tt := range tests {
+		if got := humanLifetime(tt.d); got != tt.want {
+			t.Errorf("humanLifetime(%v) = %q, want %q", tt.d, got, tt.want)
+		}
+	}
+}
+
+func TestTokenIssuedWithSubHourTTLIsAuditedInMinutes(t *testing.T) {
+	t.Parallel()
+	f := newAuditFixture(t)
+
+	if _, err := f.service.CreateAdminToken(context.Background(), f.admin, ports.CreateAdminTokenInput{UserID: f.alice.ID, TTL: 1800 * time.Second}); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.only(t); got.Detail != "30 minutes" {
+		t.Fatalf("detail = %q", got.Detail)
+	}
+}
+
+// blockingAuditStore blocks the audit write until its context ends, like a
+// degraded audit table.
+type blockingAuditStore struct{ *memoryAuthStore }
+
+func (blockingAuditStore) AppendAccessEvent(ctx context.Context, _ domainauth.AccessEvent) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func TestDegradedAuditWriteDelaysAMutationByTwoSecondsAtMost(t *testing.T) {
+	t.Parallel()
+	f := newAuditFixture(t)
+	service := NewService(blockingAuditStore{f.store})
+	service.now = f.service.now
+
+	started := time.Now()
+	if _, err := service.PutRepoGrant(context.Background(), f.admin, f.alice.ID, "team/app", domainauth.RepoRoleReader); err != nil {
+		t.Fatalf("PutRepoGrant error = %v, want success", err)
+	}
+	if elapsed := time.Since(started); elapsed > 2500*time.Millisecond {
+		t.Fatalf("mutation took %v, want about 2s at most", elapsed)
+	}
+}
+
+type recordingHandler struct {
+	mu      *sync.Mutex
+	records *[]string
+}
+
+func (h recordingHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h recordingHandler) Handle(_ context.Context, r slog.Record) error {
+	line := r.Level.String() + " " + r.Message
+	r.Attrs(func(a slog.Attr) bool { line += " " + a.Key + "=" + a.Value.String(); return true })
+	h.mu.Lock()
+	*h.records = append(*h.records, line)
+	h.mu.Unlock()
+	return nil
+}
+func (h recordingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h recordingHandler) WithGroup(string) slog.Handler      { return h }
+
+// Not parallel: it swaps the process-wide default logger. Parallel tests only
+// resume after every serial test finished.
+func TestFailedAuditWriteIsLoggedWithoutSensitiveText(t *testing.T) {
+	var records []string
+	previous := slog.Default()
+	slog.SetDefault(slog.New(recordingHandler{mu: &sync.Mutex{}, records: &records}))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	f := newAuditFixture(t)
+	ctx := context.Background()
+
+	if _, err := f.service.CreateAdminToken(ctx, f.admin, ports.CreateAdminTokenInput{UserID: f.alice.ID, Name: "very-secret-name", TTL: 12 * time.Hour}); err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 0 {
+		t.Fatalf("a successful audit write must not log, got %v", records)
+	}
+
+	f.store.appendEventErr = errors.New("audit table unavailable")
+	if _, err := f.service.CreateAdminToken(ctx, f.admin, ports.CreateAdminTokenInput{UserID: f.alice.ID, Name: "very-secret-name", TTL: 12 * time.Hour}); err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("records = %v, want exactly one", records)
+	}
+	line := records[0]
+	for _, want := range []string{"WARN access event not recorded", "action=token.issued", "error=audit table unavailable"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("log line %q lacks %q", line, want)
+		}
+	}
+	for _, banned := range []string{"very-secret-name", "12 hours", "alice", "admin"} {
+		if strings.Contains(line, banned) {
+			t.Errorf("log line %q must not contain %q", line, banned)
+		}
 	}
 }
