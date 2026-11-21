@@ -67,14 +67,6 @@ func robotFormAt(t *testing.T, client *ttlRecordingClient, w, h int) Model {
 	return m
 }
 
-func typeDays(t *testing.T, m Model, digits string) Model {
-	t.Helper()
-	for _, r := range digits {
-		m = testSendKey(t, m, testKeyRunes(string(r)))
-	}
-	return m
-}
-
 // pressEnter feeds Enter and runs the resulting command, if any.
 func pressEnter(t *testing.T, m Model) (Model, bool) {
 	t.Helper()
@@ -86,6 +78,21 @@ func pressEnter(t *testing.T, m Model) (Model, bool) {
 	return runCmd(t, m, cmd), true
 }
 
+// toCustom moves the selection from the default (30 days) to Custom.
+func toCustom() []keyMsg {
+	return []keyMsg{testKeyRight(), testKeyRight(), testKeyRight(), testKeyRight()}
+}
+
+func withCustom(typed ...string) []keyMsg {
+	keys := toCustom()
+	for _, text := range typed {
+		keys = append(keys, testKeyRunes(text))
+	}
+	return keys
+}
+
+const lifetimeInvalidMessage = "Enter a whole number followed by h, d or y, up to 2 years (for example 12h, 30d, 2y)"
+
 var lifetimeSubmitCases = []struct {
 	name string
 	keys []keyMsg
@@ -94,20 +101,30 @@ var lifetimeSubmitCases = []struct {
 	{"default is 30 days", nil, 30 * day},
 	{"Left selects 7 days", []keyMsg{testKeyLeft()}, 7 * day},
 	{"Left then Right is 30 days again", []keyMsg{testKeyLeft(), testKeyRight()}, 30 * day},
-	{"Custom 1 day", []keyMsg{testKeyRight(), testKeyRunes("1")}, 1 * day},
-	{"Custom 15 days", []keyMsg{testKeyRight(), testKeyRunes("1"), testKeyRunes("5")}, 15 * day},
-	{"Custom 30 days", []keyMsg{testKeyRight(), testKeyRunes("3"), testKeyRunes("0")}, 30 * day},
+	{"Right selects 90 days", []keyMsg{testKeyRight()}, 90 * day},
+	{"two Right select 1 year (365 days)", []keyMsg{testKeyRight(), testKeyRight()}, 365 * day},
+	{"three Right select 2 years (730 days)", []keyMsg{testKeyRight(), testKeyRight(), testKeyRight()}, 730 * day},
+	{"Custom 12h", withCustom("1", "2", "h"), 12 * time.Hour},
+	{"Custom 36h", withCustom("3", "6", "h"), 36 * time.Hour},
+	{"Custom 45 means days", withCustom("4", "5"), 45 * day},
+	{"Custom 30d", withCustom("3", "0", "d"), 30 * day},
+	{"Custom 2y", withCustom("2", "y"), 730 * day},
+	{"Custom 17520h is the ceiling", withCustom("1", "7", "5", "2", "0", "h"), 730 * day},
 }
 
 var lifetimeRejectCases = []struct {
 	name string
 	keys []keyMsg
 }{
-	{"Custom empty", []keyMsg{testKeyRight()}},
-	{"Custom 0", []keyMsg{testKeyRight(), testKeyRunes("0")}},
-	{"Custom 31", []keyMsg{testKeyRight(), testKeyRunes("3"), testKeyRunes("1")}},
-	{"Custom huge", []keyMsg{testKeyRight(), {Text: "99999999999999999999"}}},
-	{"Custom emptied again", []keyMsg{testKeyRight(), testKeyRunes("5"), testKeyBackspace()}},
+	{"Custom empty", toCustom()},
+	{"Custom 0", withCustom("0")},
+	{"Custom 0h", withCustom("0", "h")},
+	{"Custom 731d", withCustom("7", "3", "1", "d")},
+	{"Custom 3y", withCustom("3", "y")},
+	{"Custom 17521h", withCustom("1", "7", "5", "2", "1", "h")},
+	{"Custom huge", append(toCustom(), keyMsg{Text: "99999999999999999999"})},
+	{"Custom emptied again", append(withCustom("5"), testKeyBackspace())},
+	{"Custom unit only", withCustom("h")},
 }
 
 func TestCreateTokenFormSendsTheChosenLifetime(t *testing.T) {
@@ -161,7 +178,7 @@ func TestCreateTokenFormRejectsAnInvalidCustomLifetime(t *testing.T) {
 			if m.screen != screenAdminCreateToken {
 				t.Fatalf("screen = %q, want the form to stay open", m.screen)
 			}
-			if got := ansi.Strip(m.View().Content); !strings.Contains(got, "Enter a whole number of days between 1 and 30") {
+			if got := ansi.Strip(m.View().Content); !strings.Contains(got, lifetimeInvalidMessage) {
 				t.Fatalf("view lacks the validation message:\n%s", got)
 			}
 		})
@@ -205,7 +222,7 @@ func TestCreateRobotFormRejectsAnInvalidCustomLifetime(t *testing.T) {
 			if m.screen != screenAdminCreateRobot {
 				t.Fatalf("screen = %q, want the form to stay open", m.screen)
 			}
-			if got := ansi.Strip(m.View().Content); !strings.Contains(got, "Enter a whole number of days between 1 and 30") {
+			if got := ansi.Strip(m.View().Content); !strings.Contains(got, lifetimeInvalidMessage) {
 				t.Fatalf("view lacks the validation message:\n%s", got)
 			}
 		})
@@ -273,23 +290,30 @@ func lifetimeOf(m Model, form string) tokenLifetime {
 	return m.adminView.CreateRobotForm.Lifetime
 }
 
-func TestLifetimeCustomDaysKeysInTheForm(t *testing.T) {
+func TestLifetimeCustomKeysInTheForm(t *testing.T) {
 	t.Parallel()
 	m := testSendKey(t, tokenFormAt(t, newTTLClient(), 150, 24), testKeyTab())
-	m = testSendKeys(t, m, testKeyRight(), testKeyRunes("j"), testKeyRunes("k"), testKeyRunes("a"), testKeyRunes("1"), testKeyRunes("2"))
-	if got := m.adminView.TokenForm.Lifetime.Custom; got != "12" {
-		t.Fatalf("days = %q, want 12", got)
+	m = testSendKeys(t, m, toCustom()...)
+	m = testSendKeys(t, m, testKeyRunes("j"), testKeyRunes("k"), testKeyRunes("a"), testKeyRunes("1"), testKeyRunes("2"))
+	got := func() string { return m.adminView.TokenForm.Lifetime.Custom }
+	if got() != "12" {
+		t.Fatalf("input = %q, want 12", got())
 	}
 	if !m.adminView.TokenForm.Lifetime.isCustom(lifetimeCeiling()) || m.adminView.TokenForm.Focus != adminTokenFieldLifetime {
 		t.Fatalf("j/k moved the selection or the focus")
 	}
-	m = testSendKey(t, m, testKeyBackspace())
-	if got := m.adminView.TokenForm.Lifetime.Custom; got != "1" {
-		t.Fatalf("days after Backspace = %q, want 1", got)
+	m = testSendKeys(t, m, testKeyRunes("h"), testKeyRunes("Y"))
+	if got() != "12y" {
+		t.Fatalf("input after h then Y = %q, want 12y (replaced, lowercase)", got())
 	}
-	m = testSendKey(t, m, keyMsg{Text: "4x2"}) // bracketed paste, filtered to digits
-	if got := m.adminView.TokenForm.Lifetime.Custom; got != "142" {
-		t.Fatalf("days after paste = %q, want 142", got)
+	m = testSendKey(t, m, testKeyBackspace())
+	m = testSendKey(t, m, testKeyBackspace())
+	if got() != "1" {
+		t.Fatalf("input after two Backspace = %q, want 1", got())
+	}
+	m = testSendKey(t, m, keyMsg{Text: "4x2d"}) // bracketed paste, filtered
+	if got() != "142d" {
+		t.Fatalf("input after paste = %q, want 142d", got())
 	}
 }
 
@@ -314,7 +338,7 @@ func TestLifetimePreviewReflectsTheModelClock(t *testing.T) {
 	t.Parallel()
 	m := tokenFormAt(t, newTTLClient(), 150, 24)
 	view := ansi.Strip(m.View().Content)
-	for _, want := range []string{"Lifetime", "7 days", "30 days", "Custom", "Expires Mon 13 Apr 2026 09:30 UTC (in 30 days)", "A leaked token stays valid until it expires or you revoke it."} {
+	for _, want := range []string{"Lifetime", "7 days", "30 days", "90 days", "1 year", "2 years", "Custom", "Expires Mon 13 Apr 2026 09:30 UTC (in 30 days)", "A leaked token stays valid until it expires or you revoke it."} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("default view lacks %q:\n%s", want, view)
 		}
@@ -340,8 +364,9 @@ type lifetimeViewState struct {
 
 var lifetimeViewStates = []lifetimeViewState{
 	{"default", nil},
-	{"custom_valid", []keyMsg{testKeyRight(), testKeyRunes("1"), testKeyRunes("5")}},
-	{"custom_invalid", []keyMsg{testKeyRight(), testKeyRunes("4"), testKeyRunes("5")}},
+	{"custom_valid_hours", withCustom("1", "2", "h")},
+	{"custom_valid_years", withCustom("2", "y")},
+	{"custom_invalid", withCustom("3", "y")},
 }
 
 func assertLifetimeGolden(t *testing.T, name, got string) {
@@ -414,7 +439,8 @@ func TestLifetimeRobotFormWithFullSuggestionListFits(t *testing.T) {
 			m.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: charFixedTime.Add(24 * time.Hour)}
 			m.adminAuth = adminAuthStateAuthenticated
 			m.screen = screenAdminCreateRobot
-			m = testSendKeys(t, m, testKeyRunes("x"), testKeyTab(), testKeyTab(), testKeyTab(), testKeyRight(), testKeyRunes("4"), testKeyRunes("5"))
+			m = testSendKeys(t, m, testKeyRunes("x"), testKeyTab(), testKeyTab(), testKeyTab())
+			m = testSendKeys(t, m, withCustom("3", "y")...)
 			rendered := ansi.Strip(m.View().Content)
 			name := "robot_full_suggestions_custom_invalid_" + sizeLabel(size.w, size.h)
 			assertLifetimeNoOverflow(t, name, rendered, size.w, size.h)

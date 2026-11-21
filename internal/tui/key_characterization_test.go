@@ -199,12 +199,12 @@ func TestTokenFormTextEntryCharacterization(t *testing.T) {
 		t.Fatalf("focus after tab = %v, want Lifetime", got)
 	}
 	// The lifetime selector replaced the raw TTL seconds field: letters and
-	// digits do nothing on a preset, and Custom takes digits only.
+	// digits do nothing on a preset, and Custom takes digits and one unit letter.
 	m = testSendKeys(t, m, testKeyRunes("12x"), testKeyRunes("a"), testKeySpace(), testKeyRunes("-"))
 	if got := m.adminView.TokenForm.Lifetime; got != (tokenLifetime{}) {
 		t.Fatalf("lifetime after stray input = %#v, want it untouched", got)
 	}
-	m = testSendKeys(t, m, testKeyRight(), testKeyRunes("x"), testKeyRunes("3"), testKeyRunes("9"))
+	m = testSendKeys(t, m, testKeyRight(), testKeyRight(), testKeyRight(), testKeyRight(), testKeyRunes("x"), testKeyRunes("3"), testKeyRunes("9"))
 	if got, want := m.adminView.TokenForm.Lifetime.Custom, "39"; got != want {
 		t.Fatalf("custom days after digits = %q, want %q", got, want)
 	}
