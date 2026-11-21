@@ -10,12 +10,12 @@ import (
 func TestAccessActionIsKnown(t *testing.T) {
 	t.Parallel()
 
-	for _, action := range []AccessAction{AccessActionGrantPut, AccessActionGrantDelete, AccessActionTokenIssued, AccessActionTokenRevoked, AccessActionRobotCreated} {
+	for _, action := range []AccessAction{AccessActionGrantPut, AccessActionGrantDelete, AccessActionTokenIssued, AccessActionTokenRevoked, AccessActionRobotCreated, AccessActionUserCreated, AccessActionUserEnabled, AccessActionUserDisabled, AccessActionUserUpdated, AccessActionUserPasswordReset, AccessActionUserDeleted, AccessActionRobotDeleted} {
 		if !action.IsKnown() {
 			t.Errorf("%q should be known", action)
 		}
 	}
-	for _, action := range []AccessAction{"", "grant", "grant.PUT", "user.deleted"} {
+	for _, action := range []AccessAction{"", "grant", "grant.PUT", "user.removed"} {
 		if action.IsKnown() {
 			t.Errorf("%q should be unknown", action)
 		}
@@ -26,11 +26,18 @@ func TestAccessActionValues(t *testing.T) {
 	t.Parallel()
 
 	want := map[AccessAction]string{
-		AccessActionGrantPut:     "grant.put",
-		AccessActionGrantDelete:  "grant.delete",
-		AccessActionTokenIssued:  "token.issued",
-		AccessActionTokenRevoked: "token.revoked",
-		AccessActionRobotCreated: "robot.created",
+		AccessActionGrantPut:          "grant.put",
+		AccessActionGrantDelete:       "grant.delete",
+		AccessActionTokenIssued:       "token.issued",
+		AccessActionTokenRevoked:      "token.revoked",
+		AccessActionRobotCreated:      "robot.created",
+		AccessActionUserCreated:       "user.created",
+		AccessActionUserEnabled:       "user.enabled",
+		AccessActionUserDisabled:      "user.disabled",
+		AccessActionUserUpdated:       "user.updated",
+		AccessActionUserPasswordReset: "user.password_reset",
+		AccessActionUserDeleted:       "user.deleted",
+		AccessActionRobotDeleted:      "robot.deleted",
 	}
 	for action, value := range want {
 		if string(action) != value {

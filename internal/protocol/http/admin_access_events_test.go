@@ -66,14 +66,14 @@ func TestRouterAdminAccessEvents(t *testing.T) {
 			t.Fatalf("Content-Type = %q", ct)
 		}
 		got := rows(t, rec)
-		if len(got) != 4 {
-			t.Fatalf("rows = %d, want 4: %s", len(got), rec.Body.String())
+		if len(got) != 5 {
+			t.Fatalf("rows = %d, want 5: %s", len(got), rec.Body.String())
 		}
 		actions := []string{}
 		for _, row := range got {
 			actions = append(actions, row["action"].(string))
 		}
-		if strings.Join(actions, ",") != "robot.created,token.issued,grant.put,grant.put" {
+		if strings.Join(actions, ",") != "robot.created,token.issued,grant.put,grant.put,user.created" {
 			t.Fatalf("actions = %v", actions)
 		}
 		if got[0]["subject"] != "ci-bot" || got[0]["repository"] != "team/app" || got[0]["role"] != "repo-reader" || got[0]["detail"] != "1 day" || got[0]["actor"] != "admin" {
@@ -87,6 +87,9 @@ func TestRouterAdminAccessEvents(t *testing.T) {
 		}
 		if _, present := got[3]["detail"]; present {
 			t.Errorf("a new grant has no detail, row = %v", got[3])
+		}
+		if got[4]["subject"] != "ana" || got[4]["detail"] != "standard user" {
+			t.Errorf("user row = %v", got[4])
 		}
 		for _, row := range got {
 			for _, key := range []string{"id", "at", "action", "actor"} {
@@ -118,7 +121,7 @@ func TestRouterAdminAccessEvents(t *testing.T) {
 		if n := len(rows(t, get("?limit=1", adminToken))); n != 1 {
 			t.Errorf("limit=1 rows = %d", n)
 		}
-		if n := len(rows(t, get("?limit=200", adminToken))); n != 4 {
+		if n := len(rows(t, get("?limit=200", adminToken))); n != 5 {
 			t.Errorf("limit=200 rows = %d", n)
 		}
 		if n := len(rows(t, get("?limit=2", adminToken))); n != 2 {

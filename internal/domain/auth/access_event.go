@@ -31,12 +31,30 @@ const (
 	// AccessActionRobotCreated is a robot created together with its first
 	// grant and token: one event for the whole operation.
 	AccessActionRobotCreated AccessAction = "robot.created"
+	// AccessActionUserCreated is a user account created by an administrator.
+	AccessActionUserCreated AccessAction = "user.created"
+	// AccessActionUserEnabled is a user account enabled.
+	AccessActionUserEnabled AccessAction = "user.enabled"
+	// AccessActionUserDisabled is a user account disabled.
+	AccessActionUserDisabled AccessAction = "user.disabled"
+	// AccessActionUserUpdated is a user's administrator or read-only flag
+	// changed.
+	AccessActionUserUpdated AccessAction = "user.updated"
+	// AccessActionUserPasswordReset is a user's password reset by an
+	// administrator. It never carries the password or anything derived from it.
+	AccessActionUserPasswordReset AccessAction = "user.password_reset"
+	// AccessActionUserDeleted is a user account deleted.
+	AccessActionUserDeleted AccessAction = "user.deleted"
+	// AccessActionRobotDeleted is a robot account deleted.
+	AccessActionRobotDeleted AccessAction = "robot.deleted"
 )
 
 // IsKnown reports whether the action is one of the recorded kinds.
 func (a AccessAction) IsKnown() bool {
 	switch a {
-	case AccessActionGrantPut, AccessActionGrantDelete, AccessActionTokenIssued, AccessActionTokenRevoked, AccessActionRobotCreated:
+	case AccessActionGrantPut, AccessActionGrantDelete, AccessActionTokenIssued, AccessActionTokenRevoked, AccessActionRobotCreated,
+		AccessActionUserCreated, AccessActionUserEnabled, AccessActionUserDisabled, AccessActionUserUpdated,
+		AccessActionUserPasswordReset, AccessActionUserDeleted, AccessActionRobotDeleted:
 		return true
 	}
 

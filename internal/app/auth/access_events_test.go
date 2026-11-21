@@ -627,3 +627,327 @@ func TestFailedAuditWriteIsLoggedWithoutSensitiveText(t *testing.T) {
 		}
 	}
 }
+
+// eventText joins every column of an event so a test can prove a secret is
+// nowhere in it.
+func eventText(e domainauth.AccessEvent) string {
+	return strings.Join([]string{
+		e.ID, string(e.Action), e.ActorUserID, e.ActorUsername, e.SubjectUserID,
+		e.SubjectUsername, e.Repository, e.Role, e.TokenName, e.Detail,
+	}, "|")
+}
+
+func TestCreateUserRecordsOneEventWithRoleFlags(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		input  ports.CreateUserInput
+		detail string
+	}{
+		{"administrator", ports.CreateUserInput{Username: "Root", Password: "s3cret-passw0rd", IsAdmin: true, Enabled: true}, "administrator"},
+		{"read only", ports.CreateUserInput{Username: "viewer", Password: "s3cret-passw0rd", IsReadOnly: true, Enabled: true}, "read-only"},
+		{"standard", ports.CreateUserInput{Username: "plain", Password: "s3cret-passw0rd", Enabled: true}, "standard user"},
+		{"both", ports.CreateUserInput{Username: "both", Password: "s3cret-passw0rd", IsAdmin: true, IsReadOnly: true}, "administrator, read-only"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			f := newAuditFixture(t)
+			user, err := f.service.CreateUser(context.Background(), f.admin, tt.input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := f.only(t)
+			want := domainauth.AccessEvent{
+				ID: got.ID, OccurredAt: f.now, Action: domainauth.AccessActionUserCreated,
+				ActorUserID: "u-admin", ActorUsername: "admin",
+				SubjectUserID: user.ID, SubjectUsername: user.Username, Detail: tt.detail,
+			}
+			if got != want {
+				t.Fatalf("event = %#v, want %#v", got, want)
+			}
+			if text := eventText(got); strings.Contains(text, tt.input.Password) || strings.Contains(text, user.PasswordHash) {
+				t.Fatalf("event leaks the password or its hash: %q", text)
+			}
+		})
+	}
+}
+
+func TestCreateAdminUserRecordsExactlyOneEvent(t *testing.T) {
+	t.Parallel()
+	f := newAuditFixture(t)
+	if _, err := f.service.CreateAdminUser(context.Background(), f.admin, ports.AdminCreateUserInput{Username: "bob", Password: "s3cret-passw0rd", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	f.only(t)
+}
+
+func TestFailedCreateUserRecordsNothing(t *testing.T) {
+	t.Parallel()
+	f := newAuditFixture(t)
+	ctx := context.Background()
+	for _, input := range []ports.CreateUserInput{
+		{Username: "alice", Password: "s3cret-passw0rd"}, // duplicate
+		{Username: " ", Password: "s3cret-passw0rd"},     // no name
+		{Username: "short", Password: "x"},               // weak password
+	} {
+		if _, err := f.service.CreateUser(ctx, f.admin, input); err == nil {
+			t.Errorf("CreateUser(%#v) must fail", input)
+		}
+	}
+	if _, err := f.service.CreateUser(ctx, domainauth.Principal{UserID: "u-bob"}, ports.CreateUserInput{Username: "z", Password: "s3cret-passw0rd"}); err == nil {
+		t.Error("forbidden actor must fail")
+	}
+	f.none(t)
+}
+
+func TestSetUserEnabledRecordsEnabledAndDisabled(t *testing.T) {
+	t.Parallel()
+	f := newAuditFixture(t)
+	ctx := context.Background()
+
+	if _, err := f.service.SetUserEnabled(ctx, f.admin, f.alice.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	got := f.only(t)
+	want := domainauth.AccessEvent{
+		ID: got.ID, OccurredAt: f.now, Action: domainauth.AccessActionUserDisabled,
+		ActorUserID: "u-admin", ActorUsername: "admin", SubjectUserID: "u-alice", SubjectUsername: "alice",
+	}
+	if got != want {
+		t.Fatalf("event = %#v, want %#v", got, want)
+	}
+
+	f.store.events = nil
+	if _, err := f.service.EnableAdminUser(ctx, f.admin, f.alice.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.only(t); got.Action != domainauth.AccessActionUserEnabled || got.SubjectUsername != "alice" {
+		t.Fatalf("event = %#v, want user.enabled for alice", got)
+	}
+
+	f.store.events = nil
+	if _, err := f.service.DisableAdminUser(ctx, f.admin, f.alice.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.only(t); got.Action != domainauth.AccessActionUserDisabled {
+		t.Fatalf("event = %#v, want user.disabled", got)
+	}
+}
+
+func TestFailedSetUserEnabledRecordsNothing(t *testing.T) {
+	t.Parallel()
+	f := newAuditFixture(t)
+	ctx := context.Background()
+	if _, err := f.service.SetUserEnabled(ctx, f.admin, "missing", false); err == nil {
+		t.Error("unknown user must fail")
+	}
+	if _, err := f.service.SetUserEnabled(ctx, domainauth.Principal{UserID: "u-bob"}, f.alice.ID, false); err == nil {
+		t.Error("forbidden actor must fail")
+	}
+	// The only active administrator cannot be disabled.
+	root := domainauth.User{ID: "u-root", Username: "root", PasswordHash: "h", IsAdmin: true, Enabled: true}
+	_ = f.store.UpsertUser(ctx, root)
+	if _, err := f.service.SetUserEnabled(ctx, f.admin, root.ID, false); err == nil {
+		t.Error("last administrator must not be disabled")
+	}
+	f.none(t)
+}
+
+func TestUpdateUserRecordsOnlyChangedFlags(t *testing.T) {
+	t.Parallel()
+	f := newAuditFixture(t)
+	ctx := context.Background()
+
+	if _, err := f.service.UpdateUser(ctx, f.admin, ports.UpdateUserInput{UserID: f.alice.ID, Username: "alice", IsAdmin: true}); err != nil {
+		t.Fatal(err)
+	}
+	got := f.only(t)
+	want := domainauth.AccessEvent{
+		ID: got.ID, OccurredAt: f.now, Action: domainauth.AccessActionUserUpdated,
+		ActorUserID: "u-admin", ActorUsername: "admin", SubjectUserID: "u-alice", SubjectUsername: "alice",
+		Detail: "administrator on",
+	}
+	if got != want {
+		t.Fatalf("event = %#v, want %#v", got, want)
+	}
+
+	// Nothing changed: no event.
+	f.store.events = nil
+	if _, err := f.service.UpdateUser(ctx, f.admin, ports.UpdateUserInput{UserID: f.alice.ID, Username: "alice", IsAdmin: true}); err != nil {
+		t.Fatal(err)
+	}
+	f.none(t)
+}
+
+func TestUpdateUserTwoFlagsAndFailuresRecord(t *testing.T) {
+	t.Parallel()
+	f := newAuditFixture(t)
+	ctx := context.Background()
+	other := domainauth.User{ID: "u-other", Username: "other", PasswordHash: "h", IsAdmin: true, Enabled: true}
+	_ = f.store.UpsertUser(ctx, other)
+	_ = f.store.UpsertUser(ctx, domainauth.User{ID: "u-flip", Username: "flip", PasswordHash: "h", IsAdmin: true, IsReadOnly: false, Enabled: true})
+
+	if _, err := f.service.UpdateUser(ctx, f.admin, ports.UpdateUserInput{UserID: "u-flip", Username: "flip", IsReadOnly: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.only(t); got.Detail != "administrator off, read-only on" {
+		t.Fatalf("detail = %q", got.Detail)
+	}
+
+	f.store.events = nil
+	if _, err := f.service.UpdateUser(ctx, f.admin, ports.UpdateUserInput{UserID: "missing", Username: "x"}); err == nil {
+		t.Error("unknown user must fail")
+	}
+	if _, err := f.service.UpdateUser(ctx, f.admin, ports.UpdateUserInput{UserID: f.alice.ID, Username: "other"}); err == nil {
+		t.Error("duplicate username must fail")
+	}
+	if _, err := f.service.UpdateUser(ctx, domainauth.Principal{UserID: "u-bob"}, ports.UpdateUserInput{UserID: f.alice.ID, Username: "alice", IsAdmin: true}); err == nil {
+		t.Error("forbidden actor must fail")
+	}
+	f.none(t)
+}
+
+func TestResetPasswordRecordsAnEventWithoutAnySecret(t *testing.T) {
+	t.Parallel()
+	f := newAuditFixture(t)
+	ctx := context.Background()
+	const password = "brand-new-passw0rd"
+
+	if err := f.service.ResetAdminUserPassword(ctx, f.admin, ports.AdminResetPasswordInput{UserID: f.alice.ID, NewPassword: password}); err != nil {
+		t.Fatal(err)
+	}
+	got := f.only(t)
+	want := domainauth.AccessEvent{
+		ID: got.ID, OccurredAt: f.now, Action: domainauth.AccessActionUserPasswordReset,
+		ActorUserID: "u-admin", ActorUsername: "admin", SubjectUserID: "u-alice", SubjectUsername: "alice",
+	}
+	if got != want {
+		t.Fatalf("event = %#v, want %#v", got, want)
+	}
+	stored, _ := f.store.GetUserByID(ctx, f.alice.ID)
+	if text := eventText(got); strings.Contains(text, password) || strings.Contains(text, stored.PasswordHash) {
+		t.Fatalf("event leaks the password or its hash: %q", text)
+	}
+}
+
+func TestFailedResetPasswordRecordsNothing(t *testing.T) {
+	t.Parallel()
+	f := newAuditFixture(t)
+	ctx := context.Background()
+	if err := f.service.ResetPassword(ctx, f.admin, "missing", "brand-new-passw0rd"); err == nil {
+		t.Error("unknown user must fail")
+	}
+	if err := f.service.ResetPassword(ctx, f.admin, f.alice.ID, "x"); err == nil {
+		t.Error("weak password must fail")
+	}
+	if err := f.service.ResetPassword(ctx, domainauth.Principal{UserID: "u-bob"}, f.alice.ID, "brand-new-passw0rd"); err == nil {
+		t.Error("forbidden actor must fail")
+	}
+	f.none(t)
+}
+
+func TestDeleteUserRecordsTheDeletedUsername(t *testing.T) {
+	t.Parallel()
+	f := newAuditFixture(t)
+	ctx := context.Background()
+
+	if err := f.service.DeleteUser(ctx, f.admin, f.alice.ID); err != nil {
+		t.Fatal(err)
+	}
+	got := f.only(t)
+	want := domainauth.AccessEvent{
+		ID: got.ID, OccurredAt: f.now, Action: domainauth.AccessActionUserDeleted,
+		ActorUserID: "u-admin", ActorUsername: "admin", SubjectUserID: "u-alice", SubjectUsername: "alice",
+	}
+	if got != want {
+		t.Fatalf("event = %#v, want %#v", got, want)
+	}
+
+	f.store.events = nil
+	if err := f.service.DeleteUser(ctx, f.admin, f.alice.ID); err == nil {
+		t.Error("already deleted user must fail")
+	}
+	root := domainauth.User{ID: "u-root", Username: "root", PasswordHash: "h", IsAdmin: true, Enabled: true}
+	_ = f.store.UpsertUser(ctx, root)
+	if err := f.service.DeleteUser(ctx, f.admin, root.ID); err == nil {
+		t.Error("last administrator must not be deleted")
+	}
+	if err := f.service.DeleteUser(ctx, domainauth.Principal{UserID: "u-bob"}, root.ID); err == nil {
+		t.Error("forbidden actor must fail")
+	}
+	f.none(t)
+}
+
+func TestDeleteRobotRecordsExactlyOneEvent(t *testing.T) {
+	t.Parallel()
+	f := newAuditFixture(t)
+	ctx := context.Background()
+	created, err := f.service.CreateRobot(ctx, f.admin, ports.CreateRobotInput{Name: "ci", Repository: "team/app", Role: domainauth.RepoRoleReader})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.store.events = nil
+
+	if err := f.service.DeleteAdminRobot(ctx, f.admin, created.User.ID); err != nil {
+		t.Fatal(err)
+	}
+	got := f.only(t)
+	want := domainauth.AccessEvent{
+		ID: got.ID, OccurredAt: f.now, Action: domainauth.AccessActionRobotDeleted,
+		ActorUserID: "u-admin", ActorUsername: "admin", SubjectUserID: created.User.ID, SubjectUsername: "ci",
+	}
+	if got != want {
+		t.Fatalf("event = %#v, want %#v", got, want)
+	}
+}
+
+func TestFailedDeleteRobotRecordsNothing(t *testing.T) {
+	t.Parallel()
+	f := newAuditFixture(t)
+	ctx := context.Background()
+	if err := f.service.DeleteRobot(ctx, f.admin, "missing"); err == nil {
+		t.Error("unknown robot must fail")
+	}
+	if err := f.service.DeleteRobot(ctx, f.admin, f.alice.ID); err == nil {
+		t.Error("a human user is not a robot")
+	}
+	if err := f.service.DeleteRobot(ctx, domainauth.Principal{UserID: "u-bob"}, f.alice.ID); err == nil {
+		t.Error("forbidden actor must fail")
+	}
+	f.none(t)
+}
+
+func TestFailingAuditWriteNeverFailsUserLifecycleMutations(t *testing.T) {
+	t.Parallel()
+	f := newAuditFixture(t)
+	ctx := context.Background()
+	f.store.appendEventErr = errors.New("audit table unavailable")
+
+	user, err := f.service.CreateUser(ctx, f.admin, ports.CreateUserInput{Username: "bob", Password: "s3cret-passw0rd", Enabled: true})
+	if err != nil {
+		t.Fatalf("CreateUser error = %v", err)
+	}
+	if _, err := f.service.UpdateUser(ctx, f.admin, ports.UpdateUserInput{UserID: user.ID, Username: "bob", IsReadOnly: true}); err != nil {
+		t.Fatalf("UpdateUser error = %v", err)
+	}
+	if _, err := f.service.SetUserEnabled(ctx, f.admin, user.ID, false); err != nil {
+		t.Fatalf("SetUserEnabled error = %v", err)
+	}
+	if err := f.service.ResetPassword(ctx, f.admin, user.ID, "brand-new-passw0rd"); err != nil {
+		t.Fatalf("ResetPassword error = %v", err)
+	}
+	if err := f.service.DeleteUser(ctx, f.admin, user.ID); err != nil {
+		t.Fatalf("DeleteUser error = %v", err)
+	}
+	robot, err := f.service.CreateRobot(ctx, f.admin, ports.CreateRobotInput{Name: "bot", Repository: "team/app", Role: domainauth.RepoRoleReader})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.service.DeleteRobot(ctx, f.admin, robot.User.ID); err != nil {
+		t.Fatalf("DeleteRobot error = %v", err)
+	}
+	if _, err := f.store.GetUserByID(ctx, robot.User.ID); err == nil {
+		t.Fatal("robot must stay deleted")
+	}
+}

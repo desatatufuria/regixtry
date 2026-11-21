@@ -138,6 +138,63 @@ func (s *Service) recordRobotCreated(ctx context.Context, actor domainauth.Princ
 	})
 }
 
+// userRoleFlags words the flags a new user is created with.
+func userRoleFlags(user domainauth.User) string {
+	var flags []string
+	if user.IsAdmin {
+		flags = append(flags, "administrator")
+	}
+	if user.IsReadOnly {
+		flags = append(flags, "read-only")
+	}
+	if len(flags) == 0 {
+		return "standard user"
+	}
+
+	return strings.Join(flags, ", ")
+}
+
+func (s *Service) recordUserCreated(ctx context.Context, actor domainauth.Principal, user domainauth.User) {
+	s.recordUserEvent(ctx, actor, domainauth.AccessActionUserCreated, user, userRoleFlags(user))
+}
+
+// recordUserUpdated records the flags that changed between before and after;
+// an update that changes none records nothing.
+func (s *Service) recordUserUpdated(ctx context.Context, actor domainauth.Principal, before domainauth.User, after domainauth.User) {
+	var changes []string
+	if before.IsAdmin != after.IsAdmin {
+		changes = append(changes, "administrator "+onOff(after.IsAdmin))
+	}
+	if before.IsReadOnly != after.IsReadOnly {
+		changes = append(changes, "read-only "+onOff(after.IsReadOnly))
+	}
+	if len(changes) == 0 {
+		return
+	}
+
+	s.recordUserEvent(ctx, actor, domainauth.AccessActionUserUpdated, after, strings.Join(changes, ", "))
+}
+
+func onOff(on bool) string {
+	if on {
+		return "on"
+	}
+
+	return "off"
+}
+
+// recordUserEvent records a user lifecycle change. The subject name is kept in
+// the event itself because the history has no foreign keys and must outlive a
+// deleted user.
+func (s *Service) recordUserEvent(ctx context.Context, actor domainauth.Principal, action domainauth.AccessAction, subject domainauth.User, detail string) {
+	s.recordAccessEvent(ctx, actor, domainauth.AccessEvent{
+		Action:          action,
+		SubjectUserID:   subject.ID,
+		SubjectUsername: subject.Username,
+		Detail:          detail,
+	})
+}
+
 // roleLabel words a role for people: "repo-reader" becomes "Reader".
 func roleLabel(role domainauth.RepoRole) string {
 	name := strings.TrimPrefix(string(role), "repo-")

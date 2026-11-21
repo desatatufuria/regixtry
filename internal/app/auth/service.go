@@ -171,6 +171,8 @@ func (s *Service) CreateUser(ctx context.Context, actor domainauth.Principal, in
 		return domainauth.User{}, err
 	}
 
+	s.recordUserCreated(ctx, actor, user)
+
 	return user, nil
 }
 
@@ -219,6 +221,7 @@ func (s *Service) UpdateUser(ctx context.Context, actor domainauth.Principal, in
 		}
 	}
 
+	before := user
 	user.Username = nextUsername
 	user.IsAdmin = input.IsAdmin
 	user.IsReadOnly = input.IsReadOnly
@@ -226,6 +229,8 @@ func (s *Service) UpdateUser(ctx context.Context, actor domainauth.Principal, in
 	if err := s.store.UpsertUser(ctx, user); err != nil {
 		return domainauth.User{}, err
 	}
+
+	s.recordUserUpdated(ctx, actor, before, user)
 
 	return user, nil
 }
@@ -250,6 +255,12 @@ func (s *Service) SetUserEnabled(ctx context.Context, actor domainauth.Principal
 	if err := s.store.UpsertUser(ctx, user); err != nil {
 		return domainauth.User{}, err
 	}
+
+	action := domainauth.AccessActionUserDisabled
+	if enabled {
+		action = domainauth.AccessActionUserEnabled
+	}
+	s.recordUserEvent(ctx, actor, action, user, "")
 
 	return user, nil
 }
@@ -287,7 +298,17 @@ func (s *Service) DeleteUser(ctx context.Context, actor domainauth.Principal, us
 		}
 	}
 
-	return s.store.DeleteUser(ctx, userID)
+	if err := s.store.DeleteUser(ctx, userID); err != nil {
+		return err
+	}
+
+	action := domainauth.AccessActionUserDeleted
+	if user.IsRobot {
+		action = domainauth.AccessActionRobotDeleted
+	}
+	s.recordUserEvent(ctx, actor, action, user, "")
+
+	return nil
 }
 
 func (s *Service) LoginWithPassword(ctx context.Context, username string, password string, requestedScopes []domainauth.Scope) (ports.LoginResult, error) {
@@ -590,7 +611,15 @@ func (s *Service) ResetPassword(ctx context.Context, actor domainauth.Principal,
 	}
 	user.PasswordHash = hash
 	user.UpdatedAt = s.now()
-	return s.store.UpsertUser(ctx, user)
+	if err := s.store.UpsertUser(ctx, user); err != nil {
+		return err
+	}
+
+	// Detail stays empty: neither the password nor anything derived from it
+	// belongs in the history.
+	s.recordUserEvent(ctx, actor, domainauth.AccessActionUserPasswordReset, user, "")
+
+	return nil
 }
 
 func (s *Service) ResetAdminUserPassword(ctx context.Context, actor domainauth.Principal, input ports.AdminResetPasswordInput) error {
@@ -963,7 +992,13 @@ func (s *Service) DeleteRobot(ctx context.Context, actor domainauth.Principal, u
 		return domainauth.NewValidationError("target user is not a robot account")
 	}
 
-	return s.store.DeleteUser(ctx, userID)
+	if err := s.store.DeleteUser(ctx, userID); err != nil {
+		return err
+	}
+
+	s.recordUserEvent(ctx, actor, domainauth.AccessActionRobotDeleted, user, "")
+
+	return nil
 }
 
 func (s *Service) DeleteAdminRobot(ctx context.Context, actor domainauth.Principal, userID string) error {
