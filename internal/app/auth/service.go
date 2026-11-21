@@ -357,6 +357,21 @@ func (s *Service) VerifyAccessToken(ctx context.Context, bearerToken string) (do
 	return principal, nil
 }
 
+// resolveAdminTokenTTL applies the default and the ceiling to a requested admin
+// token lifetime. It is shared by CreateAdminToken and CreateRobot so the robot
+// flow can reject a bad TTL before it writes anything.
+func resolveAdminTokenTTL(requested time.Duration) (time.Duration, error) {
+	ttl := requested
+	if ttl <= 0 {
+		ttl = domainauth.DefaultAdminTokenTTL
+	}
+	if ttl > domainauth.MaxAdminTokenTTL {
+		return 0, domainauth.NewValidationError("admin token ttl must be 2 years or shorter")
+	}
+
+	return ttl, nil
+}
+
 func (s *Service) CreateAdminToken(ctx context.Context, actor domainauth.Principal, input ports.CreateAdminTokenInput) (ports.CreatedAdminToken, error) {
 	if err := requireAdmin(actor); err != nil {
 		return ports.CreatedAdminToken{}, err
@@ -370,12 +385,9 @@ func (s *Service) CreateAdminToken(ctx context.Context, actor domainauth.Princip
 		return ports.CreatedAdminToken{}, domainauth.NewDisabledUserError(user.Username)
 	}
 
-	ttl := input.TTL
-	if ttl <= 0 {
-		ttl = domainauth.DefaultAdminTokenTTL
-	}
-	if ttl > domainauth.MaxAdminTokenTTL {
-		return ports.CreatedAdminToken{}, domainauth.NewValidationError("admin token ttl must be 2 years or shorter")
+	ttl, err := resolveAdminTokenTTL(input.TTL)
+	if err != nil {
+		return ports.CreatedAdminToken{}, err
 	}
 
 	secret, err := randomSecret(32)
@@ -730,6 +742,12 @@ func (s *Service) CreateRobot(ctx context.Context, actor domainauth.Principal, i
 		return ports.CreatedRobot{}, err
 	}
 
+	// Validate everything CreateAdminToken will validate before the first
+	// write, so a bad TTL cannot leave an orphan robot behind.
+	if _, err := resolveAdminTokenTTL(input.TTL); err != nil {
+		return ports.CreatedRobot{}, err
+	}
+
 	now := s.now()
 	user := domainauth.User{
 		ID:           uuid.NewString(),
@@ -746,15 +764,24 @@ func (s *Service) CreateRobot(ctx context.Context, actor domainauth.Principal, i
 
 	grant := domainauth.RepoGrant{UserID: user.ID, Repository: repo, Role: input.Role, CreatedAt: now, UpdatedAt: now}
 	if err := s.store.PutRepoGrant(ctx, grant); err != nil {
+		s.rollbackRobot(ctx, user.ID)
 		return ports.CreatedRobot{}, err
 	}
 
 	created, err := s.CreateAdminToken(ctx, actor, ports.CreateAdminTokenInput{UserID: user.ID, Name: strings.TrimSpace(input.Name), TTL: input.TTL})
 	if err != nil {
+		s.rollbackRobot(ctx, user.ID)
 		return ports.CreatedRobot{}, err
 	}
 
 	return ports.CreatedRobot{User: user, Grant: grant, Secret: created.Secret, Accessor: created.Accessor, ExpiresAt: created.ExpiresAt}, nil
+}
+
+// rollbackRobot best-effort deletes the robot user CreateRobot just wrote
+// (grants and tokens cascade with the user). The original failure is what the
+// caller reports; a failed rollback cannot be surfaced without masking it.
+func (s *Service) rollbackRobot(ctx context.Context, userID string) {
+	_ = s.store.DeleteUser(context.WithoutCancel(ctx), userID)
 }
 
 // ListRobots lists every robot account (design.md Decision 6): a dedicated
