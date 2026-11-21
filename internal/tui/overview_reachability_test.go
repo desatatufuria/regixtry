@@ -70,3 +70,53 @@ func TestEveryBaselineFunctionIsReachableFromTheOverview(t *testing.T) {
 		})
 	}
 }
+
+// TestEscFromRepositoryScreensEndsOnTheOverview pins the back path of the
+// repository screens reached from a feature screen: Tab on Image scanning,
+// 'o' on Secret scanning and Signing policy.
+func TestEscFromRepositoryScreensEndsOnTheOverview(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name  string
+		item  shellNavID
+		key   string
+		repos screen
+	}{
+		{"image scanning", shellNavImageScanning, "tab", screenSecurityTrivyRepos},
+		{"secret scanning", shellNavSecretScanning, "o", screenSecurityGitleaksRepos},
+		{"signing policy", shellNavSigningPolicy, "o", screenSecuritySigningRepos},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			client := overviewClient()
+			client.loginSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: time.Now().Add(time.Hour)}
+			m := runAdminLogin(t, newAdminReadyModel(t, client), "operator", "secret-pass")
+			m = openSidebarItem(t, m, tc.item)
+			m = runKey(t, m, tc.key)
+			if m.screen != tc.repos {
+				t.Fatalf("setup: reached %q, want %q", m.screen, tc.repos)
+			}
+			m = runKey(t, m, "esc")
+			if m.screen != screenAdminOverview {
+				t.Fatalf("first Esc from the repositories screen reached %q, want the Overview", m.screen)
+			}
+		})
+	}
+}
+
+func TestEscFromCreateRobotGoesThroughRobotsToTheOverview(t *testing.T) {
+	t.Parallel()
+	client := overviewClient()
+	client.loginSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: time.Now().Add(time.Hour)}
+	m := runAdminLogin(t, newAdminReadyModel(t, client), "operator", "secret-pass")
+	m = runKey(t, m, "r")
+	m = runKey(t, m, "esc")
+	if m.screen != screenAdminRobots {
+		t.Fatalf("first Esc from Create robot reached %q, want the Robots list", m.screen)
+	}
+	m = runKey(t, m, "esc")
+	if m.screen != screenAdminOverview {
+		t.Fatalf("second Esc reached %q, want the Overview", m.screen)
+	}
+}
