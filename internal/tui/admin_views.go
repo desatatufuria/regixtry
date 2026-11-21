@@ -148,7 +148,7 @@ func renderAdminScreen(theme adminTheme, current screen, session AdminSession, v
 	case screenAdminRobots:
 		return "Robots", renderAdminRobotsScreen(theme, session, view, layout, now), help
 	case screenAdminCreateRobot:
-		return "Robots / Create Robot", renderAdminCreateRobotScreen(theme, view, knownRepositories, now), help
+		return "Robots / Create Robot", renderAdminCreateRobotScreenWithin(theme, view, knownRepositories, now, layout.SectionRows), help
 	default:
 		return "Users", renderAdminUsersScreen(theme, session, view, layout, now), help
 	}
@@ -760,44 +760,109 @@ func formatAdminRobotLabel(robot ports.AdminRobot) string {
 // highlighted repository-suggestion list (manual RC feedback: Create Robot's
 // Repository field previously had no autocomplete, unlike Add Grant's).
 func renderAdminCreateRobotScreen(theme adminTheme, view AdminViewState, knownRepositories []string, now time.Time) string {
-	lines := []string{theme.subheading.Render("Create Robot")}
-	if strings.TrimSpace(view.RevealedTokenSecret) != "" {
-		lines = append(lines,
-			"",
-			theme.success.Render("One-time secret"),
-			fmt.Sprintf("Accessor: %s", view.RevealedTokenAccessor),
-			theme.text.Render(view.RevealedTokenSecret),
-			"",
+	return renderAdminCreateRobotScreenWithin(theme, view, knownRepositories, now, 0)
+}
+
+// renderAdminCreateRobotScreenWithin renders the Create Robot form inside a
+// budget of `rows` body rows (consoleLayout.SectionRows; 0 means unbounded).
+// The one-time secret, the Lifetime rows and the form fields are never cut:
+// only the suggestion list shrinks (selected row first, then a muted "+N more"
+// when rows allow), and the blank separators are dropped when even that is not
+// enough.
+func renderAdminCreateRobotScreenWithin(theme adminTheme, view AdminViewState, knownRepositories []string, now time.Time, rows int) string {
+	suggestions := robotRepositorySuggestions(view.CreateRobotForm, knownRepositories)
+	hasSecret := strings.TrimSpace(view.RevealedTokenSecret) != ""
+
+	build := func(compactSecret bool) []string {
+		lines := []string{theme.subheading.Render("Create Robot")}
+		if hasSecret {
+			if !compactSecret {
+				lines = append(lines, "")
+			}
+			lines = append(lines,
+				theme.success.Render("One-time secret"),
+				fmt.Sprintf("Accessor: %s", view.RevealedTokenAccessor),
+				theme.text.Render(view.RevealedTokenSecret),
+			)
+			if !compactSecret {
+				lines = append(lines, "")
+			}
+		}
+		return append(lines,
+			renderTextField(theme, "Name", view.CreateRobotForm.Name, view.CreateRobotForm.Focus == adminCreateRobotFieldName),
+			renderTextField(theme, "Repository", view.CreateRobotForm.Repository, view.CreateRobotForm.Focus == adminCreateRobotFieldRepository),
+			renderTextField(theme, "Role", string(view.CreateRobotForm.Role), view.CreateRobotForm.Focus == adminCreateRobotFieldRole),
+			renderLifetimeField(theme, view.CreateRobotForm.Lifetime, now, view.CreateRobotForm.Focus == adminCreateRobotFieldLifetime),
 		)
 	}
-	lines = append(lines,
-		renderTextField(theme, "Name", view.CreateRobotForm.Name, view.CreateRobotForm.Focus == adminCreateRobotFieldName),
-		renderTextField(theme, "Repository", view.CreateRobotForm.Repository, view.CreateRobotForm.Focus == adminCreateRobotFieldRepository),
-		renderTextField(theme, "Role", string(view.CreateRobotForm.Role), view.CreateRobotForm.Focus == adminCreateRobotFieldRole),
-		renderLifetimeField(theme, view.CreateRobotForm.Lifetime, now, view.CreateRobotForm.Focus == adminCreateRobotFieldLifetime),
-	)
-	suggestions := robotRepositorySuggestions(view.CreateRobotForm, knownRepositories)
+	height := func(lines []string) int { return strings.Count(strings.Join(lines, "\n"), "\n") + 1 }
+
+	lines := build(false)
+	avail := 0 // rows left for the suggestions; 0 with rows == 0 means unbounded
+	if rows > 0 {
+		avail = rows - height(lines)
+		// Needed for one suggestion under its header: blank + header + row.
+		if avail < 3 && hasSecret && len(suggestions) > 0 {
+			lines = build(true)
+			avail = rows - height(lines)
+		}
+	}
+
 	if len(suggestions) == 0 {
-		lines = append(lines, theme.muted.Render("No known repositories match the current filter."))
-	} else {
-		selected := boundedIndex(view.CreateRobotForm.RepositorySuggestion, len(suggestions))
-		start := 0
-		if selected >= 5 {
-			start = selected - 4
+		if rows == 0 || avail >= 1 {
+			lines = append(lines, theme.muted.Render("No known repositories match the current filter."))
 		}
-		end := start + 5
-		if end > len(suggestions) {
-			end = len(suggestions)
-		}
-		lines = append(lines, "", theme.subheading.Render("Known Repositories"))
-		for index := start; index < end; index++ {
-			repository := suggestions[index]
-			label := repository
-			if index == selected {
-				label = theme.selected.Render(label)
+		return theme.section.Render(strings.Join(lines, "\n"))
+	}
+
+	window := 5
+	if window > len(suggestions) {
+		window = len(suggestions)
+	}
+	withBlank, withHeader := true, true
+	moreLine := false
+	if rows > 0 {
+		switch {
+		case avail >= 3:
+			if room := avail - 2; room < window {
+				// Rows cut the list: keep one row for "+N more" when at least
+				// two suggestions still fit next to it.
+				window = room
+				if room >= 3 {
+					window = room - 1
+					moreLine = true
+				}
 			}
-			lines = append(lines, label)
+		case avail == 2:
+			withBlank, window = false, 1
+		default:
+			withBlank, withHeader, window = false, false, 1
 		}
+	}
+	selected := boundedIndex(view.CreateRobotForm.RepositorySuggestion, len(suggestions))
+	start := 0
+	if selected >= window {
+		start = selected - window + 1
+	}
+	end := start + window
+	if end > len(suggestions) {
+		end = len(suggestions)
+	}
+	if withBlank {
+		lines = append(lines, "")
+	}
+	if withHeader {
+		lines = append(lines, theme.subheading.Render("Known Repositories"))
+	}
+	for index := start; index < end; index++ {
+		label := suggestions[index]
+		if index == selected {
+			label = theme.selected.Render(label)
+		}
+		lines = append(lines, label)
+	}
+	if moreLine {
+		lines = append(lines, theme.muted.Render(fmt.Sprintf("+%d more", len(suggestions)-window)))
 	}
 	return theme.section.Render(strings.Join(lines, "\n"))
 }
