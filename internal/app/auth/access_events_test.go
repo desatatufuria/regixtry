@@ -951,3 +951,34 @@ func TestFailingAuditWriteNeverFailsUserLifecycleMutations(t *testing.T) {
 		t.Fatal("robot must stay deleted")
 	}
 }
+
+func TestSetUserEnabledRecordsNothingWhenStateIsUnchanged(t *testing.T) {
+	t.Parallel()
+	f := newAuditFixture(t)
+	ctx := context.Background()
+
+	if _, err := f.service.SetUserEnabled(ctx, f.admin, f.alice.ID, true); err != nil {
+		t.Fatalf("enable of an enabled user must succeed: %v", err)
+	}
+	f.none(t)
+
+	if _, err := f.service.SetUserEnabled(ctx, f.admin, f.alice.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.only(t); got.Action != domainauth.AccessActionUserDisabled {
+		t.Fatalf("event = %#v, want user.disabled", got)
+	}
+
+	f.store.events = nil
+	if _, err := f.service.DisableAdminUser(ctx, f.admin, f.alice.ID); err != nil {
+		t.Fatalf("disable of a disabled user must succeed: %v", err)
+	}
+	f.none(t)
+
+	if _, err := f.service.EnableAdminUser(ctx, f.admin, f.alice.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.only(t); got.Action != domainauth.AccessActionUserEnabled {
+		t.Fatalf("event = %#v, want user.enabled", got)
+	}
+}

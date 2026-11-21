@@ -250,10 +250,17 @@ func (s *Service) SetUserEnabled(ctx context.Context, actor domainauth.Principal
 		}
 	}
 
+	changed := user.Enabled != enabled
 	user.Enabled = enabled
 	user.UpdatedAt = s.now()
 	if err := s.store.UpsertUser(ctx, user); err != nil {
 		return domainauth.User{}, err
+	}
+
+	// Enabling an enabled user (or disabling a disabled one) changes nothing,
+	// so it leaves nothing in the history.
+	if !changed {
+		return user, nil
 	}
 
 	action := domainauth.AccessActionUserDisabled
