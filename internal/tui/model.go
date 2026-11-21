@@ -1903,7 +1903,13 @@ func (m Model) viewScreen() string {
 			renderConsoleTextSection(theme.error.Render(errText), layout),
 			errText, help, statusKindError)
 	case screenAdminLogin:
-		return renderInspectionWorkspace("Sign In", renderAdminLogin(newAdminTheme(), m.adminLogin), m.status, "Enter: sign in | Tab: switch field | Esc: back")
+		status := m.status
+		if m.expiryNoteShown {
+			// The note is long: wrap it to the terminal width so its tail
+			// ("Not applied ... Sign in ...") is never cut off.
+			status = strings.Join(grantWrap(status, max(m.contentBudget("", "").Width-4, 20)), "\n")
+		}
+		return renderInspectionWorkspace("Sign In", renderAdminLogin(newAdminTheme(), m.adminLogin), status, "Enter: sign in | Tab: switch field | Esc: back")
 	case screenAdminAuthenticating:
 		help := "q: quit"
 		layout := m.contentBudget("", help)
@@ -4180,6 +4186,9 @@ func (m Model) returnToInspection() Model {
 
 func (m Model) expireAdminSession(reason string) Model {
 	m.expiryNoteShown = false
+	// An expired session ends any grant screen, including one stuck applying:
+	// the next open must mount a fresh one.
+	m.adminScreens[slotGrantAccess] = nil
 	m.adminSession, m.adminView = ExpireAdminState(reason)
 	m.adminAuth = adminAuthStateExpired
 	m.adminLogin.Password = ""

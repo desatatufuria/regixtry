@@ -173,9 +173,9 @@ func (m grantAccessAppliedMsg) expiryNote() (string, bool) {
 
 // grantExpiryNote lists at most three applied repositories, then "+N more".
 func grantExpiryNote(applied []string, notApplied int) string {
-	shown := applied
-	if len(shown) > 3 {
-		shown = shown[:3]
+	shown := make([]string, 0, 3)
+	for _, name := range applied[:min(len(applied), 3)] {
+		shown = append(shown, grantTruncate(name, 24))
 	}
 	list := strings.Join(shown, ", ")
 	if more := len(applied) - len(shown); more > 0 {
@@ -578,7 +578,7 @@ func (s grantAccessScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.
 			s.cursorShown = true
 			s.preselectID = ""
 		}
-		next, cmd := s.loadHighlightedGrants(env)
+		next, cmd := s.loadChosenGrants(env)
 		return next, cmd, false
 	case grantAccessGrantsLoadedMsg:
 		if typed.gen != s.gen {
@@ -638,10 +638,10 @@ func (s grantAccessScreen) highlighted() (grantPrincipal, bool) {
 	return filtered[boundedIndex(s.whoCursor, len(filtered))], true
 }
 
-// loadHighlightedGrants starts the "Already has" load for the highlighted
+// loadChosenGrants starts the "Already has" load for the chosen
 // principal unless it is cached or already loading (a failed load retries).
-func (s grantAccessScreen) loadHighlightedGrants(env screenEnv) (grantAccessScreen, tea.Cmd) {
-	principal, ok := s.shownHighlight()
+func (s grantAccessScreen) loadChosenGrants(env screenEnv) (grantAccessScreen, tea.Cmd) {
+	principal, ok := s.chosen()
 	if !ok {
 		return s, nil
 	}
@@ -689,8 +689,8 @@ func (s grantAccessScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, te
 		// In the Who pane Enter on a not-yet-chosen row chooses it; it never
 		// applies in the same press.
 		if s.focus == grantPaneWho {
-			if next, ok := s.chooseHighlighted(); ok {
-				return next, nil, true
+			if next, cmd, ok := s.chooseHighlighted(env); ok {
+				return next, cmd, true
 			}
 		}
 		next, cmd := s.apply(env)
@@ -713,25 +713,26 @@ func (s grantAccessScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, te
 
 // chooseHighlighted chooses the visibly highlighted principal. It reports
 // false when nothing is highlighted or it is already the chosen one.
-func (s grantAccessScreen) chooseHighlighted() (grantAccessScreen, bool) {
+func (s grantAccessScreen) chooseHighlighted(env screenEnv) (grantAccessScreen, tea.Cmd, bool) {
 	principal, ok := s.shownHighlight()
 	if !ok || principal.ID == s.chosenID {
-		return s, false
+		return s, nil, false
 	}
 	s.chosenID = principal.ID
-	return s.clearOutcome(), true
+	next, cmd := s.clearOutcome().loadChosenGrants(env)
+	return next, cmd, true
 }
 
 func (s grantAccessScreen) whoKey(env screenEnv, msg keyMsg) (grantAccessScreen, tea.Cmd) {
 	switch {
 	case isSpaceKey(msg) && !isPasteKey(msg):
-		next, _ := s.chooseHighlighted()
-		return next, nil
+		next, cmd, _ := s.chooseHighlighted(env)
+		return next, cmd
 	case isArrowUpKey(msg), isArrowDownKey(msg):
 		if !s.cursorShown {
 			// The first arrow reveals the highlight on the first row.
 			s.cursorShown = true
-			return s.loadHighlightedGrants(env)
+			return s, nil
 		}
 		filtered := filterGrantPrincipals(s.principals, s.whoFilter)
 		before, _ := s.highlighted()
@@ -757,7 +758,7 @@ func (s grantAccessScreen) afterHighlightChange(env screenEnv, before grantPrinc
 	if after, ok := s.highlighted(); !ok || after.ID != before.ID {
 		s = s.clearOutcome()
 	}
-	return s.loadHighlightedGrants(env)
+	return s, nil
 }
 
 // withWhoFilter sets the filter and keeps the highlighted principal when it
@@ -884,7 +885,7 @@ func (s grantAccessScreen) applied(env screenEnv, msg grantAccessAppliedMsg) (gr
 	// Reload "Already has" for whoever was changed.
 	s.grants = cloneGrantCache(s.grants)
 	delete(s.grants, msg.principalID)
-	return s.loadHighlightedGrants(env)
+	return s.loadChosenGrants(env)
 }
 
 // ---- commands ----

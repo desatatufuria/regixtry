@@ -175,7 +175,7 @@ func (s grantAccessScreen) whoPane(theme adminTheme, env screenEnv, iw, h int) [
 }
 
 func (s grantAccessScreen) alreadyHasLines(theme adminTheme, iw, rows int) []string {
-	principal, ok := s.shownHighlight()
+	principal, ok := s.chosen()
 	header := "Already has"
 	if ok {
 		header += " (" + principal.Name + ")"
@@ -221,7 +221,7 @@ func (s grantAccessScreen) reposPane(theme adminTheme, env screenEnv, iw, h int)
 	}
 	listRows := max(h-4, 1)
 	rows := grantRepoRows(env.KnownRepositories, s.repoFilter)
-	principal, hasPrincipal := s.shownHighlight()
+	principal, hasPrincipal := s.chosen()
 	var current []string
 	if hasPrincipal {
 		for _, grant := range s.grants[principal.ID].items {

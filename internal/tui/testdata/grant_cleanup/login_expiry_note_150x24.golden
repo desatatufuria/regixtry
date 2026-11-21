@@ -1,0 +1,14 @@
+ Regixtry Console                                                                                                                                  
+ Sign In                                                                                                                                           
+ ╭────────────────────────────────╮                                                                                                                
+ │                                │                                                                                                                
+ │ Operator Login                 │                                                                                                                
+ │ Username                       │                                                                                                                
+ │                                │                                                                                                                
+ │ Password                       │                                                                                                                
+ │                                │                                                                                                                
+ │                                │                                                                                                                
+ ╰────────────────────────────────╯                                                                                                                
+ Session expired. Applied before it expired: organization-0/xxxxxxxx…, organization-1/xxxxxxxx…, organization-2/xxxxxxxx… +2 more. Not applied: 1. 
+ Sign in and apply the rest.                                                                                                                       
+ Enter: sign in | Tab: switch field | Esc: back                                                                                                    

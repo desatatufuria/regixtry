@@ -424,11 +424,16 @@ func TestGrantScreenLoadsAlreadyHasOncePerPrincipal(t *testing.T) {
 	env := grantTestEnv(client)
 	s := grantOpenFirst(t, env)
 	if !reflect.DeepEqual(client.listed, []string{"u-1"}) {
-		t.Fatalf("listed after open = %v, want only the highlighted principal", client.listed)
+		t.Fatalf("listed after open = %v, want only the chosen principal", client.listed)
 	}
+	// Moving the highlight loads nothing; choosing a principal loads it once.
 	s = grantPress(t, s, env, testKeyDown(), testKeyUp(), testKeyDown(), testKeyUp())
+	if !reflect.DeepEqual(client.listed, []string{"u-1"}) {
+		t.Fatalf("listed after only moving the highlight = %v, want no new call", client.listed)
+	}
+	s = grantPress(t, s, env, testKeyDown(), testKeySpace(), testKeyUp(), testKeySpace(), testKeyDown(), testKeySpace())
 	if !reflect.DeepEqual(client.listed, []string{"u-1", "u-2"}) {
-		t.Fatalf("listed after moving back and forth = %v, want one call per principal (cached)", client.listed)
+		t.Fatalf("listed after choosing back and forth = %v, want one call per principal (cached)", client.listed)
 	}
 	if got := s.grants["u-1"].items; len(got) != 1 {
 		t.Fatalf("cached grants for u-1 = %v", got)
@@ -935,10 +940,10 @@ func TestGrantScreenLoadingAndErrorStatesRender(t *testing.T) {
 		if !strings.Contains(body, "grants backend down") {
 			t.Fatalf("grants error not shown:\n%s", body)
 		}
-		// A later highlight retries instead of staying failed forever.
+		// Choosing the principal again retries instead of staying failed forever.
 		client.grantsErr = nil
 		before := len(client.listed)
-		s = grantPress(t, s, env, testKeyDown(), testKeyUp())
+		s = grantPress(t, s, env, testKeyDown(), testKeySpace(), testKeyUp(), testKeySpace())
 		if len(client.listed) <= before {
 			t.Fatal("a failed grants load was never retried")
 		}
