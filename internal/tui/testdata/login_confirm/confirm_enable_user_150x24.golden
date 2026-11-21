@@ -3,14 +3,14 @@
  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
  │                                                                                                                                                  │
  │ Search                                                                                                                                           │
- │ Username contains                                       ╭─────────────────────────────╮                                                          │
- │                                                         │                             │                                                          │
- │ Press / to edit the search                              │ Enable User                 │                                                          │
- │                                                         │ Enable alice?               │                                                          │
- │ Users                                                   │                             │                                                          │
- │  alice [admin, enabled]                                 │ Enter: enable | Esc: cancel │                                                          │
- │ bob [user, enabled]                                     │                             │                                                          │
- │ carol [user, disabled]                                  ╰─────────────────────────────╯                                                          │
+ │ Username contains                       ╭──────────────────────────────────────────────────────────────╮                                         │
+ │                                         │  Enable User                                                 │                                         │
+ │ Press / to edit the search              │                                                              │                                         │
+ │                                         │  Enable alice?                                               │                                         │
+ │ Users                                   │                                                              │                                         │
+ │  alice [admin, enabled]                 │   Confirm                                        y / enter   │                                         │
+ │ bob [user, enabled]                     │   Cancel                                               esc   │                                         │
+ │ carol [user, disabled]                  ╰──────────────────────────────────────────────────────────────╯                                         │
  │                                                                                                                                                  │
  │ Operator: operator                                                                                                                               │
  │ Session remaining: 24h0m0s                                                                                                                       │

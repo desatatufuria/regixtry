@@ -117,12 +117,6 @@ var characterizationScreens = []struct {
 		}
 		return m
 	}},
-	{"admin_confirm_prompt", func(t *testing.T, w, h int) Model {
-		m := charAdminModel(t, w, h)
-		m.screen = screenAdminUsers
-		m.adminView.Confirm = newConfirmPrompt("Enable User", "Enable alice?", "enable", "", func(screenEnv) tea.Cmd { return nil })
-		return m
-	}},
 	{"overlay_trivy_config_modal", func(t *testing.T, w, h int) Model {
 		m := charAdminModel(t, w, h)
 		m.screen = screenSecurityTrivy

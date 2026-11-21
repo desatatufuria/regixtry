@@ -1,10 +1,10 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // confirmPrompt is THE confirm-before-destructive-action primitive
@@ -31,6 +31,11 @@ type confirmPrompt struct {
 	// AdminSession in the closure would fire a command with a token that
 	// expired or was replaced while the prompt was on screen.
 	onConfirm func(env screenEnv) tea.Cmd
+	// target and targetDetail name what the action applies to, shown in a box
+	// under the message; consequence is the amber note about what follows.
+	// All three are optional (set with withTarget and withConsequence): a
+	// prompt without them shows only its title and message.
+	target, targetDetail, consequence string
 }
 
 // newConfirmPrompt constructs an active confirmPrompt. See the submitting
@@ -40,13 +45,27 @@ func newConfirmPrompt(title, message, confirmText, submitting string, onConfirm 
 	return confirmPrompt{title: title, message: message, confirmText: confirmText, submitting: submitting, onConfirm: onConfirm}
 }
 
+// withTarget names the exact target of the action (and an optional detail
+// line under it) for the dialog's target box.
+func (c confirmPrompt) withTarget(target, detail string) confirmPrompt {
+	c.target, c.targetDetail = target, detail
+	return c
+}
+
+// withConsequence sets the amber note about what the action leads to.
+func (c confirmPrompt) withConsequence(text string) confirmPrompt {
+	c.consequence = text
+	return c
+}
+
 // Active reports whether a confirm is currently open.
 func (c confirmPrompt) Active() bool {
 	return c.onConfirm != nil
 }
 
 // update mirrors updateAdminConfirmKey's exact behavior: Esc clears the
-// prompt and dispatches nothing; Enter dispatches onConfirm(env) and leaves
+// prompt and dispatches nothing; Enter, or y as the dialog's button says,
+// dispatches onConfirm(env) and leaves
 // the prompt open (the real close happens once the async result msg
 // arrives, exactly like adminConfirmModal today); every other key is
 // swallowed as a no-op. consumed is true for every key while active,
@@ -55,7 +74,7 @@ func (c confirmPrompt) update(env screenEnv, msg keyMsg) (confirmPrompt, tea.Cmd
 	switch {
 	case isEscKey(msg):
 		return confirmPrompt{}, nil, true
-	case isEnterKey(msg):
+	case isEnterKey(msg), isRuneKey(msg, 'y'):
 		if c.onConfirm == nil {
 			return c, nil, true
 		}
@@ -64,13 +83,62 @@ func (c confirmPrompt) update(env screenEnv, msg keyMsg) (confirmPrompt, tea.Cmd
 	return c, nil, true
 }
 
-// view renders the confirm as a floating modal box, byte-identical to the
-// retired renderAdminModal.
+const (
+	// confirmDialogWidth is the board's 360px dialog at about 8.5px a column,
+	// widened for the longest messages.
+	confirmDialogWidth  = 64
+	confirmDialogChrome = 6 // border plus two columns of padding each side
+)
+
+// confirmDestructiveVerbs are the confirmText values of actions that remove
+// or switch off something: their dialog is drawn in the error color.
+var confirmDestructiveVerbs = map[string]bool{"delete": true, "remove": true, "revoke": true, "disable": true}
+
+// destructive reports whether the action is one the dialog must warn about.
+func (c confirmPrompt) destructive() bool {
+	return confirmDestructiveVerbs[strings.ToLower(strings.TrimSpace(c.confirmText))]
+}
+
+// view renders the confirm as a bordered dialog (the approved "Confirm
+// dialogs" board): the title, what will happen, the exact target, the
+// consequence, then the Confirm and Cancel buttons. A destructive action is
+// drawn in the error color; any other in the accent.
 func (c confirmPrompt) view(theme adminTheme) string {
-	return theme.section.Render(strings.Join([]string{
-		theme.subheading.Render(c.title),
-		c.message,
-		"",
-		theme.muted.Render(fmt.Sprintf("Enter: %s | Esc: cancel", c.confirmText)),
-	}, "\n"))
+	inner := confirmDialogWidth - confirmDialogChrome
+	tone := theme.accent.GetForeground()
+	if c.destructive() {
+		tone = theme.error.GetForeground()
+	}
+
+	lines := []string{lipgloss.NewStyle().Foreground(tone).Bold(true).Render(c.title)}
+	if c.message != "" {
+		lines = append(lines, "", strings.Join(grantWrap(c.message, inner), "\n"))
+	}
+	if c.target != "" {
+		box := theme.text.Bold(true).Render(c.target)
+		if c.targetDetail != "" {
+			box += "\n" + theme.muted.Render(c.targetDetail)
+		}
+		lines = append(lines, "", lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).BorderForeground(theme.borderColor).
+			Padding(0, 1).Width(inner).Render(box))
+	}
+	if c.consequence != "" {
+		lines = append(lines, "", theme.warning.Render(strings.Join(grantWrap(c.consequence, inner), "\n")))
+	}
+	confirm := lipgloss.NewStyle().Width(inner).Padding(0, 1).Bold(true).
+		Foreground(theme.pill.GetForeground()).Background(tone).
+		Render(confirmButtonLine("Confirm", "y / enter", inner-2))
+	cancel := lipgloss.NewStyle().Width(inner).Padding(0, 1).
+		Render("Cancel" + strings.Repeat(" ", max(inner-2-len("Cancel")-len("esc"), 1)) + theme.muted.Render("esc"))
+	lines = append(lines, "", confirm, cancel)
+
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).BorderForeground(tone).
+		Padding(0, 2).Width(confirmDialogWidth).
+		Render(strings.Join(lines, "\n"))
+}
+
+func confirmButtonLine(label, keycap string, width int) string {
+	return label + strings.Repeat(" ", max(width-len(label)-len(keycap), 1)) + keycap
 }

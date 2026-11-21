@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	bubbletable "github.com/evertras/bubble-table/table"
@@ -123,36 +122,6 @@ func TestRenderAdminStatusReturnsSingleRowWithNoBorder(t *testing.T) {
 				t.Fatalf("renderAdminStatus(%q, kind=%v) = %q, want no \"Status\" subheading", status, kind, got)
 			}
 		}
-	}
-}
-
-// TestRenderAdminModalRendersTitleMessageAndHelp is the Phase 3 task 3.1
-// approval test (design.md Decision 1), updated for Phase 5's confirmPrompt
-// retirement of adminConfirmModal (design.md Decision E): renderAdminModal
-// moved onto confirmPrompt.view, called here directly instead of through
-// renderAdminWorkspace's stacked composition. Captures its standalone
-// rendered content and measured height (title+message+blank+help = 4 inner
-// rows + 4 rows of theme.section chrome = 8, per design.md's measured-height
-// table).
-func TestRenderAdminModalRendersTitleMessageAndHelp(t *testing.T) {
-	t.Parallel()
-
-	theme := newAdminTheme()
-	modal := newConfirmPrompt("Enable User", "Enable alice?", "enable", "", func(screenEnv) tea.Cmd { return nil })
-
-	got := modal.view(theme)
-
-	if !strings.Contains(got, "Enable User") {
-		t.Fatalf("confirmPrompt.view() = %q, want the title present", got)
-	}
-	if !strings.Contains(got, "Enable alice?") {
-		t.Fatalf("confirmPrompt.view() = %q, want the message present", got)
-	}
-	if !strings.Contains(got, "Enter: enable | Esc: cancel") {
-		t.Fatalf("confirmPrompt.view() = %q, want the confirm/cancel help line present", got)
-	}
-	if h := lipgloss.Height(got); h != 8 {
-		t.Fatalf("confirmPrompt.view() height = %d, want 8 (title+message+blank+help = 4 inner rows + 4 rows theme.section chrome, design.md Decision 1)", h)
 	}
 }
 
