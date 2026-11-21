@@ -2229,7 +2229,8 @@ func (m Model) updateAdminLoginKey(msg keyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case isEscKey(msg):
 		return m.returnToInspection(), nil
-	case isTabKey(msg), isMoveUpKey(msg), isMoveDownKey(msg):
+	// Only Tab and the arrows toggle focus: k and j are typed text here.
+	case isTabKey(msg), isArrowUpKey(msg), isArrowDownKey(msg):
 		m.adminLogin.Focus = oppositeLoginField(m.adminLogin.Focus)
 		return m, nil
 	case isEnterKey(msg):
@@ -2541,9 +2542,10 @@ func (m Model) updateAdminSearchKey(msg keyMsg) (tea.Model, tea.Cmd) {
 	case isBackspaceKey(msg):
 		m.adminView.UserSearchQuery = trimLastRune(m.adminView.UserSearchQuery)
 		return m.applyAdminUserFilter()
-	case isMoveUpKey(msg):
+	// Only the arrows move the sidebar while typing: k and j are query text.
+	case isArrowUpKey(msg):
 		return m.moveAdminSidebarSelection(-1)
-	case isMoveDownKey(msg):
+	case isArrowDownKey(msg):
 		return m.moveAdminSidebarSelection(1)
 	}
 
@@ -2822,13 +2824,14 @@ func (m Model) updateGrantFormKey(msg keyMsg) (tea.Model, tea.Cmd) {
 	case isEscKey(msg):
 		m.screen = screenAdminEditUserGrants
 		return m, nil
-	case isMoveUpKey(msg):
+	// Only the arrow keys move the suggestion: k and j are typed text here.
+	case isArrowUpKey(msg):
 		if m.adminView.GrantForm.Focus == adminGrantFieldRepository {
 			suggestions := grantRepositorySuggestions(m.adminView.GrantForm, m.repositories.Names())
 			m.adminView.GrantForm.RepositorySuggestion = boundedIndex(m.adminView.GrantForm.RepositorySuggestion-1, len(suggestions))
 			return m, nil
 		}
-	case isMoveDownKey(msg):
+	case isArrowDownKey(msg):
 		if m.adminView.GrantForm.Focus == adminGrantFieldRepository {
 			suggestions := grantRepositorySuggestions(m.adminView.GrantForm, m.repositories.Names())
 			m.adminView.GrantForm.RepositorySuggestion = boundedIndex(m.adminView.GrantForm.RepositorySuggestion+1, len(suggestions))
