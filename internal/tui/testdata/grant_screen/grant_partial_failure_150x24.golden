@@ -9,7 +9,7 @@
   │    carol                         user   │ │    [x] library/nginx  no access yet                 │ │ ( ) 3 Admin                                │  
   │    ci-bot                        robot  │ │ ▸  [ ] ops/console  alice is Writer                 │ │     Writer plus manage who has access      │  
   │                                         │ │    [ ] team/backend  no access yet                  │ │ ╭────────────────────────────────────────╮ │  
-  │                                         │ │    [ ] team/demo  alice is Reader, will become Wr…  │ │ │library/alpine  granted                 │ │  
+  │                                         │ │    [ ] team/demo  Reader to Writer                  │ │ │library/alpine  granted                 │ │  
   │                                         │ │    [ ] team/frontend  no access yet                 │ │ │library/ngi…  repository is locked by a…│ │  
   │                                         │ │    [ ] team/infra  no access yet                    │ │ │ops/console  granted                    │ │  
   │                                         │ │    [ ] team/web  no access yet                      │ │ │                                        │ │  

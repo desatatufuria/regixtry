@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 
@@ -267,9 +268,11 @@ func (s grantAccessScreen) reposPane(theme adminTheme, env screenEnv, iw, h int)
 		case row.New:
 			name, annotation = "+ "+row.Name, "not pushed yet"
 		case hasPrincipal:
-			annotation = s.repoPreview(principal, row.Name)
+			preview := func(width int) string { return s.repoPreviewFit(principal, row.Name, width) }
+			listLines = append(listLines, renderGrantRepoRow(theme, box, name, preview, textBudget, i == cursor))
+			continue
 		}
-		listLines = append(listLines, renderGrantRepoRow(theme, box, name, annotation, textBudget, i == cursor))
+		listLines = append(listLines, renderGrantRepoRow(theme, box, name, constantGrantHint(annotation), textBudget, i == cursor))
 	}
 	if len(rows) > visible {
 		listLines = append(listLines, theme.muted.Render(grantTruncate(fmt.Sprintf("  %d of %d", cursor+1, len(rows)), iw)))
@@ -287,6 +290,12 @@ func (s grantAccessScreen) reposPane(theme adminTheme, env screenEnv, iw, h int)
 // repoPreview says what the grant would do on one repository for the chosen
 // role: nothing is said until the principal's grants are known.
 func (s grantAccessScreen) repoPreview(principal grantPrincipal, repository string) string {
+	return s.repoPreviewFit(principal, repository, math.MaxInt)
+}
+
+// repoPreviewFit returns the longest form of the preview that fits width. Only
+// the principal name is ever shortened (with an ellipsis); the roles never are.
+func (s grantAccessScreen) repoPreviewFit(principal grantPrincipal, repository string, width int) string {
 	entry := s.grants[principal.ID]
 	if !entry.loaded || entry.err != "" {
 		return ""
@@ -294,20 +303,44 @@ func (s grantAccessScreen) repoPreview(principal grantPrincipal, repository stri
 	current, ok := grantRoleOn(entry.items, repository)
 	switch {
 	case !ok:
-		return "no access yet"
+		return firstFitting(width, "no access yet", "none")
 	case current == s.role:
-		return principal.Name + " is " + grantRoleLabel(current)
+		return grantNamedHint(principal.Name, " is "+grantRoleLabel(current), width, grantRoleLabel(current))
 	}
-	return principal.Name + " is " + grantRoleLabel(current) + ", will become " + grantRoleLabel(s.role)
+	from, to := grantRoleLabel(current), grantRoleLabel(s.role)
+	return grantNamedHint(principal.Name, " is "+from+", will become "+to, width, from+" to "+to, "to "+to)
 }
 
-func renderGrantRepoRow(theme adminTheme, box, name, annotation string, budget int, highlighted bool) string {
+// grantNamedHint tries the whole name plus tail, then a shortened name plus
+// tail, then each name-less fallback in order.
+func grantNamedHint(name, tail string, width int, fallbacks ...string) string {
+	if lipgloss.Width(name+tail) <= width {
+		return name + tail
+	}
+	if room := width - lipgloss.Width(tail); room >= 4 {
+		return grantTruncate(name, room) + tail
+	}
+	return firstFitting(width, fallbacks...)
+}
+
+func firstFitting(width int, forms ...string) string {
+	for _, form := range forms {
+		if lipgloss.Width(form) <= width {
+			return form
+		}
+	}
+	return ""
+}
+
+func constantGrantHint(text string) func(int) string {
+	return func(width int) string { return grantTruncate(text, width) }
+}
+
+func renderGrantRepoRow(theme adminTheme, box, name string, hint func(int) string, budget int, highlighted bool) string {
 	head := grantTruncate(box+name, budget)
-	rest := budget - lipgloss.Width(head) - 2
-	if rest < 3 || annotation == "" || lipgloss.Width(box+name) >= budget {
-		annotation = ""
-	} else {
-		annotation = grantTruncate(annotation, rest)
+	annotation := ""
+	if rest := budget - lipgloss.Width(head) - 2; rest >= 3 && lipgloss.Width(box+name) < budget {
+		annotation = hint(rest)
 	}
 	if highlighted {
 		plain := head
