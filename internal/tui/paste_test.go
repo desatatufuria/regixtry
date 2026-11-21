@@ -31,10 +31,8 @@ func TestPasteReachesAdminTextFields(t *testing.T) {
 			func(m Model) string { return createUserOf(m).password }, pasteSample},
 		{"reset password", mountResetPassword,
 			func(m Model) string { return resetPasswordOf(m).password }, pasteSample},
-		{"create token name", func(m *Model) { m.screen = screenAdminCreateToken },
-			func(m Model) string { return m.adminView.TokenForm.Name }, pasteSample},
-		{"create robot name", func(m *Model) { m.screen = screenAdminCreateRobot },
-			func(m Model) string { return m.adminView.CreateRobotForm.Name }, pasteSample},
+		{"create token name", mountTokensForTest, tokenNameOf, pasteSample},
+		{"create robot name", mountCreateRobotForTest, createRobotNameOf, pasteSample},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -148,10 +146,8 @@ func TestRealSpaceKeyTypesIntoNameAndPasswordFields(t *testing.T) {
 	}{
 		{"reset password", mountResetPassword,
 			func(m Model) string { return resetPasswordOf(m).password }},
-		{"token name", func(m *Model) { m.screen = screenAdminCreateToken },
-			func(m Model) string { return m.adminView.TokenForm.Name }},
-		{"robot name", func(m *Model) { m.screen = screenAdminCreateRobot },
-			func(m Model) string { return m.adminView.CreateRobotForm.Name }},
+		{"token name", mountTokensForTest, tokenNameOf},
+		{"robot name", mountCreateRobotForTest, createRobotNameOf},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -30,9 +30,7 @@ func TestAdminScreenSetHoldsOnlyInterfaceValues(t *testing.T) {
 // deliberately narrower than isAdminScreen's full set.
 var adminScreenIDs = []screen{
 	screenAdminLogin, screenAdminAuthenticating,
-	screenAdminEditUserTokens,
-	screenAdminCreateToken, screenRepoAdminGrants, screenRepoAdminAddGrant,
-	screenAdminRobots, screenAdminCreateRobot,
+	screenRepoAdminGrants, screenRepoAdminAddGrant,
 }
 
 // TestEveryScreenRoutesExactlyOnce is the tui-menu-architecture change's

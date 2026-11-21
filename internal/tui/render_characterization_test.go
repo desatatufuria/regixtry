@@ -13,7 +13,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	appregixtry "regixtry/internal/app/regixtry"
-	"regixtry/internal/ports"
 )
 
 var updateCharacterization = flag.Bool("update", false, "rewrite the characterization golden files")
@@ -32,8 +31,6 @@ func charAdminModel(t *testing.T, width, height int) Model {
 	updated, _ := model.Update(tea.WindowSizeMsg{Width: width, Height: height})
 	model = updated.(Model)
 	model.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: charFixedTime.Add(24 * time.Hour)}
-	model.adminView.SelectedUserID = "u-1"
-	model.adminView.SelectedUsername = "alice"
 	return model
 }
 
@@ -77,21 +74,6 @@ var characterizationScreens = []struct {
 			t.Fatalf("screen = %q, want %q", m.screen, screenProjects)
 		}
 		return charResize(t, m, w, h)
-	}},
-	{"admin_create_token_form", func(t *testing.T, w, h int) Model {
-		m := charAdminModel(t, w, h)
-		m.screen = screenAdminCreateToken
-		m.adminView.TokenForm = adminTokenForm{Name: "ci bot"}
-		return m
-	}},
-	{"admin_tokens_list", func(t *testing.T, w, h int) Model {
-		m := charAdminModel(t, w, h)
-		m.screen = screenAdminEditUserTokens
-		m.adminView.AdminTokens = []ports.AdminToken{
-			{ID: "t-1", UserID: "u-1", Name: "ci bot", Accessor: "acc-1111", CreatedAt: charFixedTime, ExpiresAt: charFixedTime.Add(30 * 24 * time.Hour)},
-			{ID: "t-2", UserID: "u-1", Name: "laptop", Accessor: "acc-2222", CreatedAt: charFixedTime, ExpiresAt: charFixedTime.Add(7 * 24 * time.Hour)},
-		}
-		return m
 	}},
 	{"overlay_trivy_config_modal", func(t *testing.T, w, h int) Model {
 		m := charAdminModel(t, w, h)

@@ -191,6 +191,12 @@ func slotFor(id screen) (screenSlot, bool) {
 		return slotChangePassword, true
 	case screenAdminRepositoryAccess:
 		return slotRepositoryAccess, true
+	case screenAdminRobots:
+		return slotRobots, true
+	case screenAdminCreateRobot:
+		return slotCreateRobot, true
+	case screenAdminEditUserTokens:
+		return slotTokens, true
 	default:
 		return 0, false
 	}
@@ -280,6 +286,8 @@ func newAdminScreenFor(id screen) adminScreen {
 		return newOverviewScreen()
 	case screenAdminRepositoryAccess:
 		return newRepoAccessScreen()
+	case screenAdminRobots:
+		return newRobotsScreen()
 	default:
 		return nil
 	}

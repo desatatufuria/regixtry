@@ -242,12 +242,8 @@ func TestViewportChromeInvariantTitleContextHelpAreSingleLine(t *testing.T) {
 		screenAdminCreateUser,
 		screenAdminEditUser,
 		screenAdminChangePassword,
-		screenAdminEditUserTokens,
-		screenAdminCreateToken,
 	}
 	view := newAdminViewState()
-	view.SelectedUserID = "user-1"
-	view.SelectedUsername = "alice"
 	layout := contentBudget(defaultViewportWidth, defaultViewportHeight, "", "")
 	for _, current := range adminScreens {
 		context, _, help := renderAdminScreen(theme, current, AdminSession{}, view, nil, layout, time.Time{})

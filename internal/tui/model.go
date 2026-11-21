@@ -262,7 +262,6 @@ const (
 	screenAdminEditUser       screen = "admin-edit-user"
 	screenAdminChangePassword screen = "admin-change-password"
 	screenAdminEditUserTokens screen = "admin-edit-user-tokens"
-	screenAdminCreateToken    screen = "admin-create-token"
 	// screenRepoAdminGrants/screenRepoAdminAddGrant are the delegate-facing
 	// entry point (design.md Decision 7): reached from the Console
 	// Repositories screen, not from the global-admin user workspace, and
@@ -271,7 +270,6 @@ const (
 	screenRepoAdminAddGrant screen = "repo-admin-add-grant"
 	// screenAdminRobots/screenAdminCreateRobot are global-admin-only
 	// screens (design.md Decision 7), reached from the Overview's sidebar.
-	// Token issuance reuses the Tokens screen through SelectedUserID --
 	// there is no separate robot edit screen.
 	screenAdminRobots      screen = "admin-robots"
 	screenAdminCreateRobot screen = "admin-create-robot"
@@ -742,13 +740,6 @@ type adminScanHistoryLoadedMsg struct {
 	err        error
 }
 
-type adminUserTokensLoadedMsg struct {
-	userID   string
-	username string
-	tokens   []ports.AdminToken
-	err      error
-}
-
 // adminRepoGrantsLoadedMsg carries one repository's grants for the
 // repo-admin delegate's own grants screen (design.md Decision 7).
 type adminRepoGrantsLoadedMsg struct {
@@ -765,48 +756,6 @@ type adminRepoGrantMutatedMsg struct {
 	username   string
 	deleted    bool
 	err        error
-}
-
-type adminTokenCreatedMsg struct {
-	created ports.AdminCreatedToken
-	err     error
-}
-
-type adminTokenRevokedMsg struct {
-	userID   string
-	username string
-	accessor string
-	err      error
-}
-
-type adminRobotsLoadedMsg struct {
-	robots []ports.AdminRobot
-	err    error
-}
-
-type adminRobotCreatedMsg struct {
-	created ports.AdminCreatedRobot
-	err     error
-}
-
-// adminRobotEnabledMsg carries only the robot's ID, not a full
-// ports.AdminUser: after a mutation the screen reloads screenAdminRobots' own
-// ports.AdminRobot-shaped list rather than reusing the enable/disable
-// response body.
-type adminRobotEnabledMsg struct {
-	robotID string
-	enabled bool
-	err     error
-}
-
-// adminRobotDeletedMsg carries only the robot's ID/username, the same
-// shape adminRobotEnabledMsg uses: after a successful delete the screen
-// reloads screenAdminRobots' own list rather than reusing a mutation
-// response body.
-type adminRobotDeletedMsg struct {
-	robotID  string
-	username string
-	err      error
 }
 
 type startupLoginMsg struct{}
@@ -1318,6 +1267,14 @@ func (m Model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	case overviewOpenMsg:
 		return m.openFromOverview(msg.action)
+	case openRobotsMsg:
+		return m.mountRobots(msg.selectID)
+	case openCreateRobotMsg:
+		return m.mountCreateRobot()
+	case openTokensMsg:
+		return m.mountTokens(msg)
+	case robotsLoadedMsg, robotsTokensLoadedMsg, robotEnabledMsg, robotCreatedMsg, tokensLoadedMsg, tokenCreatedMsg, tokenRevokedMsg:
+		return m.routeAccessMsg(msg.(accessMsg))
 	case openGrantAccessMsg:
 		// An apply in flight owns the slot: never replace it (its result and
 		// the grants it writes must stay with the screen that started it).
@@ -1498,22 +1455,6 @@ func (m Model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = ""
 		}
 		return m, cmd
-	case adminUserTokensLoadedMsg:
-		if msg.err != nil {
-			if IsAdminSessionExpired(msg.err) {
-				return m.expireAdminSession(msg.err.Error()), nil
-			}
-			m.status = msg.err.Error()
-			return m, nil
-		}
-		m.adminView.SelectedUserID = msg.userID
-		m.adminView.SelectedUsername = msg.username
-		m.adminView.AdminTokens = append([]ports.AdminToken(nil), msg.tokens...)
-		m.adminView.SelectedToken = boundedIndex(m.adminView.SelectedToken, len(m.adminView.AdminTokens))
-		if strings.HasPrefix(strings.ToLower(m.status), "loading") {
-			m.status = ""
-		}
-		return m, nil
 	case adminRepoGrantsLoadedMsg:
 		if msg.err != nil {
 			if IsAdminSessionExpired(msg.err) {
@@ -1551,110 +1492,6 @@ func (m Model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.screen = screenRepoAdminGrants
 		return m, m.loadRepoAdminGrantsCmd(msg.repository)
-	case adminTokenCreatedMsg:
-		m.adminView.TokenForm.Creating = false
-		if msg.err != nil {
-			if IsAdminSessionExpired(msg.err) {
-				return m.expireAdminSession(msg.err.Error()), nil
-			}
-			m.status = msg.err.Error()
-			return m, nil
-		}
-		m.adminView.TokenForm = adminTokenForm{}
-		m.adminView.SelectedUserID = msg.created.TargetUser.ID
-		m.adminView.SelectedUsername = msg.created.TargetUser.Username
-		m.adminView.RevealedTokenSecret = msg.created.Secret
-		m.adminView.RevealedTokenAccessor = msg.created.Accessor
-		m.adminView.RevealedTokenExpiresAt = msg.created.ExpiresAt
-		m.status = fmt.Sprintf("Admin token created for %q. Refreshing tokens...", msg.created.TargetUser.Username)
-		m.screen = screenAdminEditUserTokens
-		return m, m.loadAdminTokensCmd(msg.created.TargetUser.ID, msg.created.TargetUser.Username)
-	case adminTokenRevokedMsg:
-		if msg.err != nil {
-			if IsAdminSessionExpired(msg.err) {
-				return m.expireAdminSession(msg.err.Error()), nil
-			}
-			m.closeFailedConfirm()
-			m.status = msg.err.Error()
-			return m, nil
-		}
-		m.adminView.Confirm = confirmPrompt{}
-		m.adminView.RevealedTokenSecret = ""
-		m.adminView.RevealedTokenAccessor = ""
-		m.status = fmt.Sprintf("Admin token revoked for %q. Refreshing tokens...", msg.username)
-		m.screen = screenAdminEditUserTokens
-		return m, m.loadAdminTokensCmd(msg.userID, msg.username)
-	case adminRobotsLoadedMsg:
-		if msg.err != nil {
-			if IsAdminSessionExpired(msg.err) {
-				return m.expireAdminSession(msg.err.Error()), nil
-			}
-			m.status = msg.err.Error()
-			return m, nil
-		}
-		m.adminView.Robots = append([]ports.AdminRobot(nil), msg.robots...)
-		m.adminView.SelectedRobot = boundedIndex(m.adminView.SelectedRobot, len(m.adminView.Robots))
-		if len(m.adminView.Robots) == 0 {
-			m.status = "No robot accounts found."
-		} else if strings.HasPrefix(strings.ToLower(m.status), "loading") {
-			m.status = ""
-		}
-		return m, nil
-	case adminRobotCreatedMsg:
-		m.adminView.CreateRobotForm.Creating = false
-		if msg.err != nil {
-			if IsAdminSessionExpired(msg.err) {
-				return m.expireAdminSession(msg.err.Error()), nil
-			}
-			m.status = msg.err.Error()
-			return m, nil
-		}
-		m.adminView.CreateRobotForm = newAdminViewState().CreateRobotForm
-		// The one-time secret (spec.md "Operator manages a robot account
-		// end to end") is shown exactly once, here, on screenAdminCreateRobot
-		// -- reusing RevealedTokenSecret/Accessor, the exact fields
-		// renderAdminTokensScreen already reveals once for human admin
-		// tokens (design.md Decision 6). The screen does NOT navigate away,
-		// so the reveal survives this single render; every navigation away
-		// from screenAdminCreateRobot (Esc) and every navigation into the
-		// reused token screen (openAdminRobotTokens's "t") clears these
-		// fields first, so the secret can never render a second time.
-		m.adminView.RevealedTokenSecret = msg.created.Secret
-		m.adminView.RevealedTokenAccessor = msg.created.Accessor
-		m.adminView.RevealedTokenExpiresAt = msg.created.ExpiresAt
-		m.status = fmt.Sprintf("Robot %q created.", msg.created.Robot.Username)
-		m.screen = screenAdminCreateRobot
-		return m, m.loadAdminRobotsCmd()
-	case adminRobotEnabledMsg:
-		if msg.err != nil {
-			if IsAdminSessionExpired(msg.err) {
-				return m.expireAdminSession(msg.err.Error()), nil
-			}
-			m.closeFailedConfirm()
-			m.status = msg.err.Error()
-			return m, nil
-		}
-		m.adminView.Confirm = confirmPrompt{}
-		verb := "disabled"
-		if msg.enabled {
-			verb = "enabled"
-		}
-		m.status = fmt.Sprintf("Robot %s. Refreshing robots...", verb)
-		m.screen = screenAdminRobots
-		return m, m.loadAdminRobotsCmd()
-	case adminRobotDeletedMsg:
-		if msg.err != nil {
-			if IsAdminSessionExpired(msg.err) {
-				return m.expireAdminSession(msg.err.Error()), nil
-			}
-			m.closeFailedConfirm()
-			m.status = msg.err.Error()
-			return m, nil
-		}
-		m.adminView.Confirm = confirmPrompt{}
-		m.status = fmt.Sprintf("Robot %q deleted. Refreshing robots...", msg.username)
-		m.screen = screenAdminRobots
-		return m, m.loadAdminRobotsCmd()
 	}
 
 	return m, nil
@@ -1822,7 +1659,7 @@ func (m Model) viewScreen() string {
 		return renderAdminLogin(newAdminTheme(), view, m.viewport.Width, m.viewport.Height)
 	case screenAdminAuthenticating:
 		return renderAdminAuthenticating(newAdminTheme(), m.loadingText, m.viewport.Width, m.viewport.Height)
-	case screenAdminUsers, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserTokens, screenAdminCreateToken, screenRepoAdminGrants, screenRepoAdminAddGrant, screenAdminRobots, screenAdminCreateRobot, screenSecurityGitleaksRepos, screenSecuritySigningRepos, screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminOverview, screenAdminScanRuns, screenAdminSecretFindings, screenAdminUpdateChannel, screenAdminGrantAccess, screenAdminRepositoryAccess:
+	case screenAdminUsers, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserTokens, screenRepoAdminGrants, screenRepoAdminAddGrant, screenAdminRobots, screenAdminCreateRobot, screenSecurityGitleaksRepos, screenSecuritySigningRepos, screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminOverview, screenAdminScanRuns, screenAdminSecretFindings, screenAdminUpdateChannel, screenAdminGrantAccess, screenAdminRepositoryAccess:
 		help := adminScreenHelp(m.screen, m.adminView)
 		if slot, ok := slotFor(m.screen); ok && m.adminScreens[slot] != nil {
 			// Migrated top-level screen: help is derived from the screen's
@@ -2218,190 +2055,6 @@ func (m Model) updateAdminLoginKey(msg keyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// updateAdminRobotsKey handles screenAdminRobots, a sibling of
-// updateAdminUsersKey (design.md Decision 7): list/select, "n" to create,
-// "e"/"x" to enable/disable via the confirm modal, "d" to delete (genuinely
-// irreversible -- distinct from "x"/disable, and distinct from every other
-// admin screen in this codebase where "x" itself means delete), "t" to
-// reuse the existing token screens for the selected robot, "r" to refresh.
-func (m Model) updateAdminRobotsKey(msg keyMsg) (tea.Model, tea.Cmd) {
-	switch {
-	case isEscKey(msg):
-		// Robots and Users are peers in the Overview's sidebar: Esc goes
-		// back up to the Overview from either.
-		m.clearRevealedAdminToken()
-		return m, navigate(screenAdminOverview)
-	case isMoveUpKey(msg):
-		m.adminView.SelectedRobot = boundedIndex(m.adminView.SelectedRobot-1, len(m.adminView.Robots))
-		return m, nil
-	case isMoveDownKey(msg):
-		m.adminView.SelectedRobot = boundedIndex(m.adminView.SelectedRobot+1, len(m.adminView.Robots))
-		return m, nil
-	case isRuneKey(msg, 'n'):
-		// Defensive: a lingering RevealedTokenSecret from a PRIOR creation
-		// must never bleed into a fresh create-robot form (the same
-		// second-write-path shape the "t" guard below protects against).
-		m.clearRevealedAdminToken()
-		m.adminView.CreateRobotForm = newAdminViewState().CreateRobotForm
-		m.screen = screenAdminCreateRobot
-		m.status = ""
-		return m, nil
-	case isRuneKey(msg, 'r'):
-		m.status = "Loading robots..."
-		return m, m.loadAdminRobotsCmd()
-	case isRuneKey(msg, 't'):
-		return m.openAdminRobotTokens()
-	case isRuneKey(msg, 'g'):
-		// "Grant repository access" with the highlighted robot preselected.
-		robot, ok := selectedAdminRobot(m.adminView)
-		if !ok {
-			m.status = "No robot selected."
-			return m, nil
-		}
-		return m, openGrantAccess(robot.ID, screenAdminRobots)
-	case isRuneKey(msg, 'e', 'x'):
-		robot, ok := selectedAdminRobot(m.adminView)
-		if !ok {
-			m.status = "No robot selected."
-			return m, nil
-		}
-		if isRuneKey(msg, 'e') && robot.Enabled {
-			return m, nil
-		}
-		if isRuneKey(msg, 'x') && !robot.Enabled {
-			return m, nil
-		}
-		enable := isRuneKey(msg, 'e')
-		verb := "disable"
-		if enable {
-			verb = "enable"
-		}
-		robotID := robot.ID
-		m.adminView.Confirm = newConfirmPrompt(
-			fmt.Sprintf("Confirm %s", strings.Title(verb)),
-			fmt.Sprintf("Confirm %s robot %q?", verb, robot.Username),
-			verb,
-			fmt.Sprintf("Submitting %s for %s...", verb, robot.Username),
-			func(env screenEnv) tea.Cmd { return env.asModel().enableDisableRobotCmd(robotID, enable) },
-		)
-		m.status = ""
-		return m, nil
-	case isRuneKey(msg, 'd'):
-		robot, ok := selectedAdminRobot(m.adminView)
-		if !ok {
-			m.status = "No robot selected."
-			return m, nil
-		}
-		robotID, robotUsername := robot.ID, robot.Username
-		m.adminView.Confirm = newConfirmPrompt(
-			"Confirm Delete",
-			fmt.Sprintf("Delete robot %q? This action cannot be undone.", robot.Username),
-			"delete",
-			fmt.Sprintf("Deleting robot %q...", robot.Username),
-			func(env screenEnv) tea.Cmd { return env.asModel().deleteRobotCmd(robotID, robotUsername) },
-		)
-		m.status = ""
-		return m, nil
-	}
-
-	return m, nil
-}
-
-// updateCreateRobotFormKey handles screenAdminCreateRobot's free-text form.
-// Role cycles with Space; unlike the repo-admin delegate's adminRepositoryGrantForm,
-// this form is global-admin-only, so Role is not restricted away from
-// repo-admin.
-func (m Model) updateCreateRobotFormKey(msg keyMsg) (tea.Model, tea.Cmd) {
-	if m.adminView.CreateRobotForm.Focus == adminCreateRobotFieldLifetime {
-		if lifetime, handled := m.adminView.CreateRobotForm.Lifetime.handleKey(msg, lifetimeCeiling()); handled {
-			m.adminView.CreateRobotForm.Lifetime = lifetime
-			return m, nil
-		}
-	}
-	switch {
-	case isEscKey(msg):
-		// Esc is the ordinary "cancel/back" exit from the create screen,
-		// including immediately after a creation while the one-time secret
-		// is still shown: it MUST be cleared here so it can never render
-		// again on this screen after the operator has moved on.
-		m.clearRevealedAdminToken()
-		m.adminView.CreateRobotForm.Creating = false
-		m.screen = screenAdminRobots
-		m.status = ""
-		return m, nil
-	// Only the arrow keys move the suggestion: k and j are typed text here.
-	case isArrowUpKey(msg):
-		if m.adminView.CreateRobotForm.Focus == adminCreateRobotFieldRepository {
-			suggestions := robotRepositorySuggestions(m.adminView.CreateRobotForm, m.repositories.Names())
-			m.adminView.CreateRobotForm.RepositorySuggestion = boundedIndex(m.adminView.CreateRobotForm.RepositorySuggestion-1, len(suggestions))
-			return m, nil
-		}
-	case isArrowDownKey(msg):
-		if m.adminView.CreateRobotForm.Focus == adminCreateRobotFieldRepository {
-			suggestions := robotRepositorySuggestions(m.adminView.CreateRobotForm, m.repositories.Names())
-			m.adminView.CreateRobotForm.RepositorySuggestion = boundedIndex(m.adminView.CreateRobotForm.RepositorySuggestion+1, len(suggestions))
-			return m, nil
-		}
-	case isTabKey(msg):
-		m.adminView.CreateRobotForm.Focus = nextCreateRobotField(m.adminView.CreateRobotForm.Focus)
-		return m, nil
-	case isBackspaceKey(msg):
-		m.deleteCreateRobotRune()
-		if m.adminView.CreateRobotForm.Focus == adminCreateRobotFieldRepository {
-			m.adminView.CreateRobotForm.RepositorySuggestion = 0
-		}
-		return m, nil
-	case isSpaceKey(msg):
-		if m.adminView.CreateRobotForm.Focus == adminCreateRobotFieldRole {
-			m.adminView.CreateRobotForm.Role = nextGrantRole(m.adminView.CreateRobotForm.Role)
-			return m, nil
-		}
-	case isEnterKey(msg):
-		if m.adminView.CreateRobotForm.Focus == adminCreateRobotFieldRepository {
-			suggestions := robotRepositorySuggestions(m.adminView.CreateRobotForm, m.repositories.Names())
-			if len(suggestions) > 0 {
-				m.adminView.CreateRobotForm.Repository = suggestions[boundedIndex(m.adminView.CreateRobotForm.RepositorySuggestion, len(suggestions))]
-			}
-			if strings.TrimSpace(m.adminView.CreateRobotForm.Repository) == "" {
-				m.status = "Repository is required."
-				return m, nil
-			}
-			m.adminView.CreateRobotForm.Focus = adminCreateRobotFieldRole
-			m.adminView.CreateRobotForm.RepositorySuggestion = 0
-			return m, nil
-		}
-		name := strings.TrimSpace(m.adminView.CreateRobotForm.Name)
-		repository := strings.TrimSpace(m.adminView.CreateRobotForm.Repository)
-		if name == "" || repository == "" {
-			m.status = "Name and repository are required."
-			return m, nil
-		}
-		ttl, ok := m.adminView.CreateRobotForm.Lifetime.duration(lifetimeCeiling())
-		if !ok {
-			// The form stays open; the validation message replaces the preview.
-			return m, nil
-		}
-		input := ports.AdminCreateRobotInput{Name: name, Repository: repository, Role: m.adminView.CreateRobotForm.Role, TTL: ttl}
-		if m.adminView.CreateRobotForm.Creating {
-			return m, nil
-		}
-		m.adminView.CreateRobotForm.Creating = true
-		m.status = fmt.Sprintf("Creating robot %s...", name)
-		return m, m.createAdminRobotCmd(input)
-	}
-	if isTextKey(msg) {
-		switch m.adminView.CreateRobotForm.Focus {
-		case adminCreateRobotFieldName:
-			m.adminView.CreateRobotForm.Name += keyText(msg)
-		case adminCreateRobotFieldRepository:
-			m.adminView.CreateRobotForm.Repository += keyText(msg)
-			m.adminView.CreateRobotForm.RepositorySuggestion = 0
-		}
-		return m, nil
-	}
-	return m, nil
-}
-
 // Trivy's config/scan-policy modals live on trivyConfigScreen, exactly like
 // gitleaksConfigScreen's own config modal and signingConfigScreen's own
 // policy modal.
@@ -2439,60 +2092,6 @@ func signingKeyFingerprints(keys []string) []string {
 // scanHistoryScreen (Phase 19, screen_scan_history.go): ScanHistoryModal
 // migrates off AdminViewState per design.md's State Migration table.
 
-func (m Model) updateAdminTokensKey(msg keyMsg) (tea.Model, tea.Cmd) {
-	switch {
-	case isEscKey(msg):
-		m.clearRevealedAdminToken()
-		return m.backToUser()
-	case isRuneKey(msg, 'g'):
-		return m.openGrantAccessForSelectedUser(screenAdminEditUserTokens)
-	case isRuneKey(msg, 'n'):
-		if m.adminView.SelectedUserID == "" {
-			m.status = "Select a user to manage admin tokens."
-			return m, nil
-		}
-		m.adminView.TokenForm = adminTokenForm{}
-		m.screen = screenAdminCreateToken
-		m.status = ""
-		return m, nil
-	case isMoveUpKey(msg):
-		m.adminView.SelectedToken = boundedIndex(m.adminView.SelectedToken-1, len(m.adminView.AdminTokens))
-		return m, nil
-	case isMoveDownKey(msg):
-		m.adminView.SelectedToken = boundedIndex(m.adminView.SelectedToken+1, len(m.adminView.AdminTokens))
-		return m, nil
-	case isRuneKey(msg, 'r'):
-		if m.adminView.SelectedUserID == "" {
-			m.status = "Select a user to manage admin tokens."
-			return m, nil
-		}
-		m.clearRevealedAdminToken()
-		m.status = fmt.Sprintf("Loading admin tokens for %s...", m.adminView.SelectedUsername)
-		return m, m.loadAdminTokensCmd(m.adminView.SelectedUserID, m.adminView.SelectedUsername)
-	case isRuneKey(msg, 'x'):
-		token, ok := selectedTokenForView(m.adminView)
-		if !ok {
-			m.status = "No admin token selected to revoke."
-			return m, nil
-		}
-		userID, username, accessor := m.adminView.SelectedUserID, m.adminView.SelectedUsername, token.Accessor
-		m.adminView.Confirm = newConfirmPrompt(
-			"Confirm Token Revocation",
-			fmt.Sprintf("Revoke admin token %q for %q?", accessor, username),
-			"revoke",
-			fmt.Sprintf("Revoking token %q for %s...", accessor, username),
-			func(env screenEnv) tea.Cmd { return env.asModel().revokeAdminTokenCmd(userID, username, accessor) },
-		)
-		m.status = ""
-		return m, nil
-	}
-	return m, nil
-}
-
-// updateRepoAdminGrantsKey handles screenRepoAdminGrants, scoped to
-// RepoAdminRepository -- there is no user-selection guard on "n" (Add Grant)
-// because the repository context is already fixed by the time this screen is
-// reachable at all.
 func (m Model) updateRepoAdminGrantsKey(msg keyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case isEscKey(msg):
@@ -2598,53 +2197,6 @@ func (m Model) updateRepoAdminAddGrantKey(msg keyMsg) (tea.Model, tea.Cmd) {
 	}
 	if isTextKey(msg) && m.adminView.RepoAdminGrantForm.Focus == adminRepoGrantFieldUsername {
 		m.adminView.RepoAdminGrantForm.Username += keyText(msg)
-		return m, nil
-	}
-	return m, nil
-}
-
-func (m Model) updateTokenFormKey(msg keyMsg) (tea.Model, tea.Cmd) {
-	if m.adminView.TokenForm.Focus == adminTokenFieldLifetime {
-		if lifetime, handled := m.adminView.TokenForm.Lifetime.handleKey(msg, lifetimeCeiling()); handled {
-			m.adminView.TokenForm.Lifetime = lifetime
-			return m, nil
-		}
-	}
-	switch {
-	case isEscKey(msg):
-		m.adminView.TokenForm.Creating = false
-		m.screen = screenAdminEditUserTokens
-		return m, nil
-	case isTabKey(msg):
-		if m.adminView.TokenForm.Focus == adminTokenFieldName {
-			m.adminView.TokenForm.Focus = adminTokenFieldLifetime
-		} else {
-			m.adminView.TokenForm.Focus = adminTokenFieldName
-		}
-		return m, nil
-	case isBackspaceKey(msg):
-		m.adminView.TokenForm.Name = trimLastRune(m.adminView.TokenForm.Name)
-		return m, nil
-	case isEnterKey(msg):
-		if strings.TrimSpace(m.adminView.SelectedUserID) == "" {
-			m.status = "Select a user to manage admin tokens."
-			return m, nil
-		}
-		ttl, ok := m.adminView.TokenForm.Lifetime.duration(lifetimeCeiling())
-		if !ok {
-			// The form stays open; the validation message replaces the preview.
-			return m, nil
-		}
-		input := ports.AdminCreateTokenInput{UserID: m.adminView.SelectedUserID, Name: strings.TrimSpace(m.adminView.TokenForm.Name), TTL: ttl}
-		if m.adminView.TokenForm.Creating {
-			return m, nil
-		}
-		m.adminView.TokenForm.Creating = true
-		m.status = fmt.Sprintf("Creating admin token for %s...", m.adminView.SelectedUsername)
-		return m, m.createAdminTokenCmd(input)
-	}
-	if isTextKey(msg) {
-		m.adminView.TokenForm.Name += keyText(msg)
 		return m, nil
 	}
 	return m, nil
@@ -3096,16 +2648,6 @@ func (m Model) loadAdminScanHistoryCmd(repository string) tea.Cmd {
 	}
 }
 
-func (m Model) loadAdminTokensCmd(userID string, username string) tea.Cmd {
-	return func() tea.Msg {
-		if m.adminClient == nil {
-			return adminUserTokensLoadedMsg{userID: userID, username: username, err: fmt.Errorf("admin API is unavailable for this session")}
-		}
-		tokens, err := m.adminClient.ListUserAdminTokens(m.ctx, m.adminSession, userID)
-		return adminUserTokensLoadedMsg{userID: userID, username: username, tokens: tokens, err: err}
-	}
-}
-
 func (m Model) loadRepoAdminGrantsCmd(repository string) tea.Cmd {
 	return func() tea.Msg {
 		if m.adminClient == nil {
@@ -3133,78 +2675,6 @@ func (m Model) deleteRepoAdminGrantCmd(repository string, username string) tea.C
 		}
 		err := m.adminClient.DeleteRepositoryGrant(m.ctx, m.adminSession, repository, username)
 		return adminRepoGrantMutatedMsg{repository: repository, username: username, deleted: true, err: err}
-	}
-}
-
-func (m Model) createAdminTokenCmd(input ports.AdminCreateTokenInput) tea.Cmd {
-	return func() tea.Msg {
-		if m.adminClient == nil {
-			return adminTokenCreatedMsg{err: fmt.Errorf("admin API is unavailable for this session")}
-		}
-		created, err := m.adminClient.CreateUserAdminToken(m.ctx, m.adminSession, input)
-		return adminTokenCreatedMsg{created: created, err: err}
-	}
-}
-
-func (m Model) revokeAdminTokenCmd(userID string, username string, accessor string) tea.Cmd {
-	return func() tea.Msg {
-		if m.adminClient == nil {
-			return adminTokenRevokedMsg{userID: userID, username: username, accessor: accessor, err: fmt.Errorf("admin API is unavailable for this session")}
-		}
-		err := m.adminClient.RevokeUserAdminToken(m.ctx, m.adminSession, userID, accessor)
-		return adminTokenRevokedMsg{userID: userID, username: username, accessor: accessor, err: err}
-	}
-}
-
-func (m Model) loadAdminRobotsCmd() tea.Cmd {
-	return func() tea.Msg {
-		if m.adminClient == nil {
-			return adminRobotsLoadedMsg{err: fmt.Errorf("admin API is unavailable for this session")}
-		}
-		robots, err := m.adminClient.ListRobots(m.ctx, m.adminSession)
-		return adminRobotsLoadedMsg{robots: robots, err: err}
-	}
-}
-
-func (m Model) createAdminRobotCmd(input ports.AdminCreateRobotInput) tea.Cmd {
-	return func() tea.Msg {
-		if m.adminClient == nil {
-			return adminRobotCreatedMsg{err: fmt.Errorf("admin API is unavailable for this session")}
-		}
-		created, err := m.adminClient.CreateRobot(m.ctx, m.adminSession, input)
-		return adminRobotCreatedMsg{created: created, err: err}
-	}
-}
-
-// enableDisableRobotCmd reuses AdminClient.EnableUser/DisableUser with the
-// robot's user ID (design.md Decision 6) -- no dedicated robot mutation
-// route exists or is needed.
-func (m Model) enableDisableRobotCmd(robotID string, enabled bool) tea.Cmd {
-	return func() tea.Msg {
-		if m.adminClient == nil {
-			return adminRobotEnabledMsg{robotID: robotID, enabled: enabled, err: fmt.Errorf("admin API is unavailable for this session")}
-		}
-		var err error
-		if enabled {
-			_, err = m.adminClient.EnableUser(m.ctx, m.adminSession, robotID)
-		} else {
-			_, err = m.adminClient.DisableUser(m.ctx, m.adminSession, robotID)
-		}
-		return adminRobotEnabledMsg{robotID: robotID, enabled: enabled, err: err}
-	}
-}
-
-// deleteRobotCmd backs the "d" key on screenAdminRobots (a genuinely
-// destructive, irreversible action, unlike enableDisableRobotCmd above).
-// It calls AdminClient.DeleteRobot, already wired through to the backend's
-// DELETE /admin/v1/robots/{id} route added in PR 4.
-func (m Model) deleteRobotCmd(robotID string, username string) tea.Cmd {
-	return func() tea.Msg {
-		if m.adminClient == nil {
-			return adminRobotDeletedMsg{robotID: robotID, username: username, err: fmt.Errorf("admin API is unavailable for this session")}
-		}
-		err := m.adminClient.DeleteRobot(m.ctx, m.adminSession, robotID)
-		return adminRobotDeletedMsg{robotID: robotID, username: username, err: err}
 	}
 }
 
@@ -3463,19 +2933,14 @@ func (m Model) openRepoAdminGrants() (tea.Model, tea.Cmd) {
 }
 
 // openFromOverview opens a destination the Overview asked for that needs
-// Model state: the Robots list (loaded), the Create Robot form (a fresh one,
-// with the robots loaded behind it so Esc lands on a filled list) or the
-// Users list with a one-line pointer to the token key.
+// Model state: the Robots list, a fresh Create robot form, or the Users list
+// with a one-line pointer to the token key.
 func (m Model) openFromOverview(action overviewOpenAction) (tea.Model, tea.Cmd) {
 	switch action {
 	case overviewOpenRobots:
 		return m.openAdminRobots()
 	case overviewOpenCreateRobot:
-		m.clearRevealedAdminToken()
-		m.adminView.CreateRobotForm = newAdminViewState().CreateRobotForm
-		m.screen = screenAdminCreateRobot
-		m.status = ""
-		return m, m.loadAdminRobotsCmd()
+		return m.mountCreateRobot()
 	case overviewOpenUsersForToken:
 		return m.openUserScreen(openUserScreenMsg{to: screenAdminUsers, notice: overviewUsersTokenStatus, noticeTone: userNoticeInfo})
 	}
@@ -3534,12 +2999,7 @@ func (m Model) openUserScreen(msg openUserScreenMsg) (tea.Model, tea.Cmd) {
 	}
 	switch msg.to {
 	case screenAdminEditUserTokens:
-		if msg.userID != m.adminView.SelectedUserID {
-			m.clearSelectedAdminDetails()
-		}
-		m.adminView.SelectedUserID, m.adminView.SelectedUsername = msg.userID, msg.username
-		m.clearRevealedAdminToken()
-		return m.openAdminEditTokens()
+		return m.mountTokens(openTokensMsg{principalID: msg.userID, principalName: msg.username})
 	case screenAdminEditUser:
 		next := newEditUserScreen(msg.userID, msg.username).withNotice(msg.noticeTone, msg.notice)
 		m.adminScreens[slotEditUser], m.screen = next, screenAdminEditUser
@@ -3558,20 +3018,6 @@ func (m Model) openUserScreen(msg openUserScreenMsg) (tea.Model, tea.Cmd) {
 	return m, next.Init(m.screenEnv())
 }
 
-// backToUser is Esc on the Grants and Tokens screens: back to the user's
-// profile, or to the Robots list when the principal is a robot (a robot has no
-// profile screen).
-func (m Model) backToUser() (tea.Model, tea.Cmd) {
-	for _, robot := range m.adminView.Robots {
-		if robot.ID == m.adminView.SelectedUserID {
-			m.screen = screenAdminRobots
-			m.status = ""
-			return m, nil
-		}
-	}
-	return m.openUserScreen(openUserScreenMsg{to: screenAdminEditUser, userID: m.adminView.SelectedUserID, username: m.adminView.SelectedUsername})
-}
-
 // openRepoAccessPrincipal opens the user or robot behind a grant on the
 // repository-access screen: the user's page, or the Robots list for a robot.
 func (m Model) openRepoAccessPrincipal(principal grantPrincipal) (tea.Model, tea.Cmd) {
@@ -3581,49 +3027,67 @@ func (m Model) openRepoAccessPrincipal(principal grantPrincipal) (tea.Model, tea
 	return m.openUserScreen(openUserScreenMsg{to: screenAdminEditUser, userID: principal.ID, username: principal.Name})
 }
 
-// openAdminRobots opens screenAdminRobots (design.md Decision 7). Defensively
-// clears any lingering RevealedTokenSecret on entry (see
-// updateAdminRobotsKey's "n" case for the leak scenario this guards against).
-func (m Model) openAdminRobots() (tea.Model, tea.Cmd) {
+// openAdminRobots opens the Robots list from the Users list ("b") or the
+// Overview: always a fresh screen, so the list is read again.
+func (m Model) openAdminRobots() (tea.Model, tea.Cmd) { return m.mountRobots("") }
+
+// mountRobots mounts a FRESH Robots screen (loaded on mount) with the robot
+// of selectID highlighted once the list arrives.
+func (m Model) mountRobots(selectID string) (tea.Model, tea.Cmd) {
+	next := newRobotsScreen()
+	next.selectID = selectID
+	m.adminScreens[slotRobots] = next
 	m.screen = screenAdminRobots
-	m.clearRevealedAdminToken()
-	m.status = "Loading robots..."
-	return m, m.loadAdminRobotsCmd()
+	m.status = ""
+	return m, next.Init(m.screenEnv())
 }
 
-// openAdminRobotTokens opens the existing screenAdminEditUserTokens screen
-// for the selected robot, reusing SelectedUserID/SelectedUsername exactly
-// like a human user (design.md Decision 6: enable/disable/token issuance
-// reuse the existing user routes/screens unchanged). clearRevealedAdminToken
-// MUST run first: RevealedTokenSecret/Accessor are the same fields the
-// robot-creation reveal (screenAdminCreateRobot) populates, and
-// renderAdminTokensScreen renders them unconditionally when non-empty --
-// without this clear, a secret from an earlier robot creation would render
-// a second time here, for a different robot, with no fresh token issued.
-func (m Model) openAdminRobotTokens() (tea.Model, tea.Cmd) {
-	robot, ok := selectedAdminRobot(m.adminView)
-	if !ok {
-		m.status = "Select a robot to manage tokens."
+// mountCreateRobot mounts a FRESH Create robot form.
+func (m Model) mountCreateRobot() (tea.Model, tea.Cmd) {
+	next := newCreateRobotScreen()
+	m.adminScreens[slotCreateRobot] = next
+	m.screen = screenAdminCreateRobot
+	m.status = ""
+	return m, next.Init(m.screenEnv())
+}
+
+// mountTokens mounts a FRESH Tokens screen for one principal: nothing from an
+// earlier visit, a one-time secret above all, can show again.
+func (m Model) mountTokens(open openTokensMsg) (tea.Model, tea.Cmd) {
+	next := newTokensScreen(open.principalID, open.principalName, open.robot)
+	m.adminScreens[slotTokens] = next
+	m.screen = screenAdminEditUserTokens
+	m.status = ""
+	return m, next.Init(m.screenEnv())
+}
+
+// routeAccessMsg delivers an async result of the Robots, Create robot or
+// Tokens screens. A result of another screen instance is dropped FIRST: a
+// stale expiry must never log the operator out. An expired admin session ends
+// in the normal re-login; anything else goes to the screens.
+func (m Model) routeAccessMsg(msg accessMsg) (tea.Model, tea.Cmd) {
+	current, ok := m.adminScreens[msg.accessSlot()].(interface{ generation() uint64 })
+	if !ok || current.generation() != msg.accessGen() {
 		return m, nil
 	}
-	m.clearRevealedAdminToken()
-	m.adminView.SelectedUserID = robot.ID
-	m.adminView.SelectedUsername = robot.Username
-	m.screen = screenAdminEditUserTokens
-	m.status = fmt.Sprintf("Loading admin tokens for %s...", robot.Username)
-	return m, m.loadAdminTokensCmd(robot.ID, robot.Username)
+	if reason, expired := msg.expiredReason(); expired {
+		return m.expireAdminSession(reason), nil
+	}
+	var cmd tea.Cmd
+	m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
+	return m, cmd
 }
 
-// selectedAdminRobot returns the robot under AdminViewState.SelectedRobot,
-// mirroring selectedAdminUser's bounds-checked convention.
-func selectedAdminRobot(view AdminViewState) (ports.AdminRobot, bool) {
-	if view.SelectedRobot < 0 || view.SelectedRobot >= len(view.Robots) {
-		return ports.AdminRobot{}, false
-	}
-	return view.Robots[view.SelectedRobot], true
+// dropAccessScreens un-mounts the Robots, Create robot and Tokens screens so
+// the next visit starts fresh and no one-time secret outlives the session.
+func (m *Model) dropAccessScreens() {
+	m.adminScreens[slotRobots] = nil
+	m.adminScreens[slotCreateRobot] = nil
+	m.adminScreens[slotTokens] = nil
 }
 
 func (m Model) logoutAdmin() Model {
+	m.dropAccessScreens()
 	m.clearUserScreens()
 	m.adminSession, m.adminView = LogoutAdminState()
 	m.adminAuth = adminAuthStateUnauthenticated
@@ -3641,11 +3105,11 @@ func (m Model) logoutAdmin() Model {
 }
 
 func (m Model) returnToInspection() Model {
+	m.dropAccessScreens()
 	m.screen = m.adminReturn
 	m.loadingText = ""
 	m.status = ""
 	m.adminView.Confirm = confirmPrompt{}
-	m.clearRevealedAdminToken()
 	// Defensive reset: leaving the login screen (e.g. Esc) without
 	// completing auth must not leave a stale repo-grants intent for a
 	// later, unrelated login (adminIntent is one-shot per design.md
@@ -3660,6 +3124,7 @@ func (m Model) expireAdminSession(reason string) Model {
 	// An expired session ends any grant screen, including one stuck applying:
 	// the next open must mount a fresh one.
 	m.adminScreens[slotGrantAccess] = nil
+	m.dropAccessScreens()
 	m.clearUserScreens()
 	m.adminSession, m.adminView = ExpireAdminState(reason)
 	m.adminAuth = adminAuthStateExpired
@@ -3690,15 +3155,6 @@ func (m *Model) deleteLoginRune() {
 	m.adminLogin.Username = trimLastRune(m.adminLogin.Username)
 }
 
-func (m *Model) deleteCreateRobotRune() {
-	switch m.adminView.CreateRobotForm.Focus {
-	case adminCreateRobotFieldName:
-		m.adminView.CreateRobotForm.Name = trimLastRune(m.adminView.CreateRobotForm.Name)
-	case adminCreateRobotFieldRepository:
-		m.adminView.CreateRobotForm.Repository = trimLastRune(m.adminView.CreateRobotForm.Repository)
-	}
-}
-
 func trimLastRune(value string) string {
 	runes := []rune(value)
 	if len(runes) == 0 {
@@ -3712,26 +3168,6 @@ func oppositeLoginField(field loginField) loginField {
 		return loginFieldUsername
 	}
 	return loginFieldPassword
-}
-
-// nextCreateRobotField cycles screenAdminCreateRobot's 4 fields with a
-// wrapping cursor: Name -> Repository -> Role -> Lifetime -> Name.
-func nextCreateRobotField(field adminCreateRobotField) adminCreateRobotField {
-	if field >= adminCreateRobotFieldLifetime {
-		return adminCreateRobotFieldName
-	}
-	return field + 1
-}
-
-func nextGrantRole(current domainauth.RepoRole) domainauth.RepoRole {
-	switch current {
-	case domainauth.RepoRoleWriter:
-		return domainauth.RepoRoleAdmin
-	case domainauth.RepoRoleAdmin:
-		return domainauth.RepoRoleReader
-	default:
-		return domainauth.RepoRoleWriter
-	}
 }
 
 // nextDelegateGrantRole cycles screenRepoAdminAddGrant's role field between
@@ -3750,7 +3186,7 @@ func nextDelegateGrantRole(current domainauth.RepoRole) domainauth.RepoRole {
 
 func isAdminScreen(current screen) bool {
 	switch current {
-	case screenAdminLogin, screenAdminAuthenticating, screenAdminUsers, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserTokens, screenAdminCreateToken, screenRepoAdminGrants, screenRepoAdminAddGrant, screenAdminRobots, screenAdminCreateRobot, screenSecurityGitleaksRepos, screenSecuritySigningRepos, screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminOverview, screenAdminScanRuns, screenAdminSecretFindings, screenAdminUpdateChannel, screenAdminGrantAccess, screenAdminRepositoryAccess:
+	case screenAdminLogin, screenAdminAuthenticating, screenAdminUsers, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserTokens, screenRepoAdminGrants, screenRepoAdminAddGrant, screenAdminRobots, screenAdminCreateRobot, screenSecurityGitleaksRepos, screenSecuritySigningRepos, screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminOverview, screenAdminScanRuns, screenAdminSecretFindings, screenAdminUpdateChannel, screenAdminGrantAccess, screenAdminRepositoryAccess:
 		return true
 	default:
 		return false
@@ -3812,6 +3248,10 @@ func (m Model) migratedScreenCapturesTextInput() bool {
 		return s.confirm.Active()
 	case repoAccessScreen:
 		return s.filtering || s.confirm.Active()
+	case robotsScreen:
+		return s.confirm.Active()
+	case tokensScreen:
+		return s.capturesInput()
 	default:
 		return false
 	}
@@ -3858,12 +3298,6 @@ func repositorySuggestionsMatching(query string, repositories []string) []string
 		suggestions = append(suggestions, repository)
 	}
 	return suggestions
-}
-
-// robotRepositorySuggestions is screenAdminCreateRobot's repository
-// suggestion list, built on the shared core filter.
-func robotRepositorySuggestions(form adminCreateRobotForm, repositories []string) []string {
-	return repositorySuggestionsMatching(form.Repository, repositories)
 }
 
 func featureActionForKey(msg keyMsg, page ports.FeaturePage) (ports.FeatureAction, bool) {
@@ -4119,7 +3553,6 @@ func formatRemaining(remaining time.Duration) string {
 }
 
 func (m *Model) clearSelectedAdminDetails() {
-	m.adminView.AdminTokens = nil
 	// Features/FeaturePage/TrivyTab/TrivyConfigModal/TrivyScanRuns/
 	// TrivySelectedAlert/TrivyAlertsLoaded/TrivySummaries/TrivyOverrides all
 	// migrated off AdminViewState (Phase 11); the Security screens are simply
@@ -4133,11 +3566,6 @@ func (m *Model) clearSelectedAdminDetails() {
 	// onto its own dedicated slot (design.md's State Migration table);
 	// un-mounted here exactly like the Security screens above.
 	m.adminScreens[slotScanHistory] = nil
-	m.adminView.SelectedToken = 0
-	m.adminView.TokenForm = adminTokenForm{}
-	m.adminView.RevealedTokenSecret = ""
-	m.adminView.RevealedTokenAccessor = ""
-	m.adminView.RevealedTokenExpiresAt = time.Time{}
 }
 
 // applyLoadedFeatures/applyFeaturePage/selectedFeatureName/
@@ -4150,30 +3578,3 @@ func (m *Model) clearSelectedAdminDetails() {
 // resolved-gap addendum) -- each screen now independently
 // owns the piece of this logic scoped to its own fixed feature, per
 // design.md Decision D4 (no shared cross-screen state).
-
-func (m *Model) clearRevealedAdminToken() {
-	m.adminView.RevealedTokenSecret = ""
-	m.adminView.RevealedTokenAccessor = ""
-	m.adminView.RevealedTokenExpiresAt = time.Time{}
-}
-
-// openGrantAccessForSelectedUser opens "Grant repository access" with the
-// selected user preselected; Esc comes back to returnTo.
-func (m Model) openGrantAccessForSelectedUser(returnTo screen) (tea.Model, tea.Cmd) {
-	if strings.TrimSpace(m.adminView.SelectedUserID) == "" {
-		m.status = "Select a user to grant repository access."
-		return m, nil
-	}
-	m.clearRevealedAdminToken()
-	return m, openGrantAccess(m.adminView.SelectedUserID, returnTo)
-}
-
-func (m Model) openAdminEditTokens() (tea.Model, tea.Cmd) {
-	if strings.TrimSpace(m.adminView.SelectedUserID) == "" {
-		m.status = "Select a user to manage admin tokens."
-		return m, nil
-	}
-	m.screen = screenAdminEditUserTokens
-	m.status = fmt.Sprintf("Loading admin tokens for %s...", m.adminView.SelectedUsername)
-	return m, m.loadAdminTokensCmd(m.adminView.SelectedUserID, m.adminView.SelectedUsername)
-}

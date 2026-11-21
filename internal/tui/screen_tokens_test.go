@@ -19,7 +19,7 @@ func tokensFixture(robot bool) (*accessClient, screenEnv, tokensScreen) {
 		accessToken("release-pipeline", "act_9c410000000e0d2", accessNow.Add(-24*day), accessNow.Add(6*day+2*time.Hour)),
 	}
 	env := accessEnv(client)
-	s := newTokensScreen("r-ci", "ci-publisher", robot, screenAdminRobots)
+	s := newTokensScreen("r-ci", "ci-publisher", robot)
 	settled, _ := accessSettle(s, env, s.Init(env))
 	return client, env, settled.(tokensScreen)
 }
@@ -160,7 +160,7 @@ func TestTokensSelectionAndKeys(t *testing.T) {
 	}
 }
 
-func TestTokensEscGoesBackToWhereItCameFrom(t *testing.T) {
+func TestTokensEscGoesToTheProfileForAUserAndTheRobotsForARobot(t *testing.T) {
 	t.Parallel()
 	_, env, robot := tokensFixture(true)
 	_, cmd, _ := robot.Update(env, testKeyEsc())
@@ -168,10 +168,9 @@ func TestTokensEscGoesBackToWhereItCameFrom(t *testing.T) {
 		t.Fatalf("robot Esc = %#v, want the Robots list with the robot selected", cmd())
 	}
 	_, _, user := tokensFixture(false)
-	user.returnTo = screenAdminUsers
 	_, cmd, _ = user.Update(env, testKeyEsc())
-	if msg, ok := cmd().(navigateMsg); !ok || msg.To != screenAdminUsers {
-		t.Fatalf("user Esc = %#v", cmd())
+	if msg, ok := cmd().(openUserScreenMsg); !ok || msg.to != screenAdminEditUser || msg.userID != "r-ci" || msg.username != "ci-publisher" {
+		t.Fatalf("user Esc = %#v, want the profile", cmd())
 	}
 }
 
@@ -187,7 +186,7 @@ func TestRevokingAsksFirstThenRevokesTheSelectedTokenOnce(t *testing.T) {
 	mustContain(t, overlay, "Confirm Token Revocation", `"release-pipeline"`, "act_9c41…e0d2", `"ci-publisher"`)
 
 	first, cmd, _ := asked.Update(env, testKeyEnter())
-	if cmd == nil || !first.(tokensScreen).revoking {
+	if cmd == nil || !first.(tokensScreen).confirm.inFlight {
 		t.Fatal("Enter did not dispatch the revoke")
 	}
 	if _, second, _ := first.Update(env, testKeyEnter()); second != nil {
@@ -199,8 +198,8 @@ func TestRevokingAsksFirstThenRevokesTheSelectedTokenOnce(t *testing.T) {
 	if len(client.revoked) != 1 || client.revoked[0] != "act_9c410000000e0d2" {
 		t.Fatalf("RevokeUserAdminToken got %v, want the full accessor", client.revoked)
 	}
-	if after.confirm.Active() || after.revoking || after.notice != "Token revoked." {
-		t.Fatalf("after revoke: confirm=%v revoking=%v notice=%q", after.confirm.Active(), after.revoking, after.notice)
+	if after.confirm.Active() || after.notice != "Token revoked." {
+		t.Fatalf("after revoke: confirm=%v notice=%q", after.confirm.Active(), after.notice)
 	}
 }
 
@@ -225,7 +224,7 @@ func TestRevokingARevokedOrMissingTokenSaysSo(t *testing.T) {
 	revoked := accessNow.Add(-day)
 	client.tokens["u-1"] = []ports.AdminToken{{Accessor: "act_r", Name: "r", CreatedAt: accessNow.Add(-5 * day), ExpiresAt: accessNow.Add(5 * day), RevokedAt: &revoked}}
 	env := accessEnv(client)
-	s := newTokensScreen("u-1", "alice", false, screenAdminUsers)
+	s := newTokensScreen("u-1", "alice", false)
 	settled, _ := accessSettle(s, env, s.Init(env))
 	next, _ := accessPress(t, settled, env, testKeyRunes("x"))
 	if got := next.(tokensScreen); got.confirm.Active() || got.notice != "That token is already revoked." {
@@ -233,7 +232,7 @@ func TestRevokingARevokedOrMissingTokenSaysSo(t *testing.T) {
 	}
 	mustContain(t, accessView(next, env), "revoked", "That token is already revoked.")
 
-	empty := newTokensScreen("u-2", "bob", false, screenAdminUsers)
+	empty := newTokensScreen("u-2", "bob", false)
 	settled, _ = accessSettle(empty, env, empty.Init(env))
 	next, _ = accessPress(t, settled, env, testKeyRunes("x"))
 	if got := next.(tokensScreen).notice; got != "No token selected to revoke." {
@@ -340,12 +339,12 @@ func TestIssuingSendsNameAndTTLAndShowsTheSecretOnce(t *testing.T) {
 	if after.done || after.created.secret != "" || after.focus != tokensFocusList || strings.Contains(accessView(back, env), "rgx_0123") {
 		t.Fatal("the secret survived Done")
 	}
-	if len(client.listedTokens) < 2 {
-		t.Fatal("the token list was not reloaded after creating")
+	if len(client.listedTokens) < 3 {
+		t.Fatal("the token list was not reloaded after creating and after Done")
 	}
 }
 
-func TestTokensCreatingIgnoresEnterAndEscStays(t *testing.T) {
+func TestTokensCreatingIgnoresEnterAndEscLeavesButTheSecretComesBack(t *testing.T) {
 	t.Parallel()
 	client, env, s := tokensFixture(true)
 	client.createToken = ports.AdminCreatedToken{Secret: "s", Accessor: "a"}
@@ -358,10 +357,9 @@ func TestTokensCreatingIgnoresEnterAndEscStays(t *testing.T) {
 		t.Fatal("second Enter dispatched while in flight")
 	}
 	stay, escCmd, _ := first.Update(env, testKeyEsc())
-	if escCmd != nil || !strings.Contains(stay.(tokensScreen).formErr, "please wait") {
-		t.Fatal("Esc left mid-creation")
+	if msg, ok := escCmd().(openRobotsMsg); !ok || msg.selectID != "r-ci" {
+		t.Fatalf("Esc mid-creation = %#v, want back to the list", escCmd())
 	}
-	mustContain(t, accessView(stay, env), "Creating token...")
 	done, _ := accessSettle(stay, env, func() tea.Msg { return cmd() })
 	if len(client.tokenInputs) != 1 || !done.(tokensScreen).done {
 		t.Fatalf("calls=%d done=%v", len(client.tokenInputs), done.(tokensScreen).done)
@@ -433,7 +431,7 @@ func TestTokensLoadFailureAndLoadingStates(t *testing.T) {
 	client := newAccessClient()
 	client.tokensErr = fmt.Errorf("no route")
 	env := accessEnv(client)
-	s := newTokensScreen("u-1", "alice", false, screenAdminUsers)
+	s := newTokensScreen("u-1", "alice", false)
 	mustContain(t, accessView(s, env), "Loading tokens...")
 	settled, _ := accessSettle(s, env, s.Init(env))
 	mustContain(t, accessView(settled, env), "Could not load tokens: no route")
@@ -502,5 +500,27 @@ func TestTokensPastedLetterIsNotACommand(t *testing.T) {
 		if cmd != nil || next.(tokensScreen).focus != tokensFocusList || next.(tokensScreen).confirm.Active() {
 			t.Fatalf("a pasted %q acted as a command", text)
 		}
+	}
+}
+
+func TestTokensLifetimeIgnoresStrayKeysOnAPresetAndTakesCustomDigits(t *testing.T) {
+	t.Parallel()
+	_, env, s := tokensFixture(true)
+	s2, _ := accessPress(t, s, env, testKeyRunes("n"), testKeyTab())
+	stray, _ := accessPress(t, s2, env, testKeyRunes("12x"), testKeyRunes("a"), testKeySpace(), testKeyRunes("-"))
+	if got := stray.(tokensScreen).lifetime; got != (tokenLifetime{}) {
+		t.Fatalf("lifetime after stray input = %#v, want it untouched", got)
+	}
+	custom, _ := accessPress(t, s2, env, testKeyRight(), testKeyRight(), testKeyRight(), testKeyRight(), testKeyRight(), testKeyRunes("x"), testKeyRunes("3"), testKeyRunes("9"))
+	if got := custom.(tokensScreen).lifetime.Custom; got != "39" {
+		t.Fatalf("custom after digits = %q, want 39", got)
+	}
+	custom, _ = accessPress(t, custom, env, testKeyBackspace())
+	if got := custom.(tokensScreen); got.lifetime.Custom != "3" || got.name != "" {
+		t.Fatalf("custom=%q name=%q after Backspace", got.lifetime.Custom, got.name)
+	}
+	pasted, _ := accessPress(t, custom, env, keyMsg{Text: "12h"})
+	if got := pasted.(tokensScreen).lifetime.Custom; got != "12h" {
+		t.Fatalf("pasted custom = %q", got)
 	}
 }

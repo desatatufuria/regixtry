@@ -11,7 +11,7 @@ import (
 	domainauth "regixtry/internal/domain/auth"
 )
 
-// The lifetime selector shared by the Create Token and Create Robot forms
+// The lifetime selector shared by the Tokens panel and the Create robot form
 // (both issue the same kind of credential). Everything about what the
 // operator may choose lives here: the preset list, the ceiling that filters
 // it, the days-to-duration conversion and the expiry preview.
@@ -290,27 +290,10 @@ func lifetimeInvalidText() string {
 	return fmt.Sprintf("Enter a whole number followed by h, d or y, up to %s (for example 12h, 30d, 2y)", humanLifetime(lifetimeCeiling()))
 }
 
-// renderLifetimeField draws the selector for the old forms on three rows.
-func renderLifetimeField(theme adminTheme, l tokenLifetime, now time.Time, focused bool) string {
-	ceiling := lifetimeCeiling()
-	row := "Lifetime  " + strings.Join(lifetimeMarks(theme, l, focused), "  ")
-	if l.isCustom(ceiling) {
-		row += "  " + renderCustomInput(theme, l.Custom, focused, theme.inputWidth)
-	}
-	lines := []string{row}
-	if duration, ok := l.duration(ceiling); ok {
-		lines = append(lines, expiryPreview(now, duration))
-	} else {
-		lines = append(lines, theme.error.Render(lifetimeInvalidText()))
-	}
-	lines = append(lines, theme.muted.Render("A leaked token stays valid until it expires or you revoke it."))
-	return strings.Join(lines, "\n")
-}
-
-func renderCustomInput(theme adminTheme, text string, focused bool, width int) string {
-	style := theme.input.Width(width)
+func renderCustomInput(theme adminTheme, text string, focused bool) string {
+	style := theme.input.Width(customLifetimeInputWidth)
 	if focused {
-		style = theme.inputFocus.Width(width)
+		style = theme.inputFocus.Width(customLifetimeInputWidth)
 	}
 	if text == "" {
 		return style.Render(theme.muted.Render("e.g. 12h, 30d, 2y"))

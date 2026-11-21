@@ -119,8 +119,9 @@ func TestOverviewRobotsItemLoadsTheRobots(t *testing.T) {
 	m := overviewModelAt(t, client, 150, 24)
 	before := client.listRobotsCalls
 	m = overviewPress(t, m, testKeyDown(), testKeyDown(), testKeyEnter())
-	if m.screen != screenAdminRobots || client.listRobotsCalls != before+1 || len(m.adminView.Robots) != 2 {
-		t.Fatalf("screen=%q loads=%d robots=%d", m.screen, client.listRobotsCalls-before, len(m.adminView.Robots))
+	robots, _ := m.adminScreens[slotRobots].(robotsScreen)
+	if m.screen != screenAdminRobots || client.listRobotsCalls != before+1 || len(robots.robots) != 2 {
+		t.Fatalf("screen=%q loads=%d robots=%d", m.screen, client.listRobotsCalls-before, len(robots.robots))
 	}
 }
 
@@ -139,13 +140,18 @@ func TestOverviewGOpensGrantAccessAndEscComesBack(t *testing.T) {
 func TestOverviewROpensCreateRobot(t *testing.T) {
 	t.Parallel()
 	m := overviewModelAt(t, overviewClient(), 150, 24)
-	m.adminView.CreateRobotForm.Name = "left over"
 	m = overviewPress(t, m, testKeyRunes("r"))
 	if m.screen != screenAdminCreateRobot {
 		t.Fatalf("r opened %q", m.screen)
 	}
-	if m.adminView.CreateRobotForm.Name != "" {
-		t.Fatalf("the form kept %q from an earlier visit", m.adminView.CreateRobotForm.Name)
+	m = overviewPress(t, m, testKeyRunes("left over"))
+	if createRobotNameOf(m) != "left over" {
+		t.Fatalf("setup: name = %q", createRobotNameOf(m))
+	}
+	m.screen = screenAdminOverview
+	m = overviewPress(t, m, testKeyRunes("r"))
+	if m.screen != screenAdminCreateRobot || createRobotNameOf(m) != "" {
+		t.Fatalf("screen=%q: the form kept %q from an earlier visit", m.screen, createRobotNameOf(m))
 	}
 }
 
@@ -172,8 +178,9 @@ func TestUsersListTIssuesATokenForTheSelectedUser(t *testing.T) {
 		t.Fatalf("setup: screen = %q", m.screen)
 	}
 	m = overviewPress(t, m, testKeyRunes("t"))
-	if m.screen != screenAdminEditUserTokens || m.adminView.SelectedUsername != "alice" {
-		t.Fatalf("t on Users: screen=%q user=%q, want alice's tokens", m.screen, m.adminView.SelectedUsername)
+	tokens, _ := m.adminScreens[slotTokens].(tokensScreen)
+	if m.screen != screenAdminEditUserTokens || tokens.principalName != "alice" || tokens.principalID != "u-1" || tokens.robot {
+		t.Fatalf("t on Users: screen=%q tokens=%#v, want alice's tokens opened from Users", m.screen, tokens)
 	}
 }
 

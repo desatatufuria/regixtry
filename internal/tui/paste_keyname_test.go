@@ -32,8 +32,8 @@ func TestPastedKeyNamesAreTextNotKeys(t *testing.T) {
 		{"create user password", screenAdminCreateUser, func(m *Model) { mountCreateUser(m, createUserFieldPassword) },
 			func(m Model) string { return createUserOf(m).password }},
 		{"reset password", screenAdminChangePassword, mountResetPassword, func(m Model) string { return resetPasswordOf(m).password }},
-		{"token name", screenAdminCreateToken, nil, func(m Model) string { return m.adminView.TokenForm.Name }},
-		{"robot name", screenAdminCreateRobot, nil, func(m Model) string { return m.adminView.CreateRobotForm.Name }},
+		{"token name", screenAdminEditUserTokens, mountTokensForTest, tokenNameOf},
+		{"robot name", screenAdminCreateRobot, mountCreateRobotForTest, createRobotNameOf},
 	}
 	for _, f := range fields {
 		for _, p := range pastedKeyNames {

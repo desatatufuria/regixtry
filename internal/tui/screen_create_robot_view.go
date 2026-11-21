@@ -155,7 +155,7 @@ func (s createRobotScreen) lifetimeLines(theme adminTheme, env screenEnv, indent
 	head := padRight(theme.muted.Render("Lifetime"), createRobotLabelWidth)
 	lines := []string{head + options}
 	if s.lifetime.isCustom(ceiling) {
-		custom := renderCustomInput(theme, s.lifetime.Custom, focused, customLifetimeInputWidth)
+		custom := renderCustomInput(theme, s.lifetime.Custom, focused)
 		if lipgloss.Width(lines[0])+2+lipgloss.Width(custom) <= width {
 			lines[0] += "  " + custom
 		} else {

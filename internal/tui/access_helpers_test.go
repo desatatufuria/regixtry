@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -172,3 +173,36 @@ func sampleRobotTokens() map[string][]ports.AdminToken {
 }
 
 var errBoom = errors.New("boom")
+
+func sizeLabel(w, h int) string { return fmt.Sprintf("%dx%d", w, h) }
+
+// typeRunes types text one character at a time through the Model.
+func typeRunes(t *testing.T, m Model, text string) Model {
+	t.Helper()
+	for _, r := range text {
+		m = testSendKey(t, m, testKeyRunes(string(r)))
+	}
+	return m
+}
+
+// mountCreateRobotForTest mounts a fresh Create robot form on the model.
+func mountCreateRobotForTest(m *Model) {
+	next, _ := m.mountCreateRobot()
+	*m = next.(Model)
+}
+
+// mountTokensForTest mounts a fresh Tokens screen for alice with the name
+// field focused, as after pressing n.
+func mountTokensForTest(m *Model) {
+	next, _ := m.mountTokens(openTokensMsg{principalID: "u-1", principalName: "alice"})
+	*m = next.(Model)
+	tokens := m.adminScreens[slotTokens].(tokensScreen)
+	tokens.focus = tokensFocusName
+	m.adminScreens[slotTokens] = tokens
+}
+
+func createRobotNameOf(m Model) string {
+	return m.adminScreens[slotCreateRobot].(createRobotScreen).name
+}
+
+func tokenNameOf(m Model) string { return m.adminScreens[slotTokens].(tokensScreen).name }

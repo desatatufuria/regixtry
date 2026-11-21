@@ -101,7 +101,7 @@ func (s tokensScreen) renderList(theme adminTheme, width, rows int, now time.Tim
 
 func (s tokensScreen) statusLine(theme adminTheme, width int) string {
 	switch {
-	case s.revoking && s.confirm.submitting != "":
+	case s.confirm.inFlight && s.confirm.submitting != "":
 		return theme.muted.Render(grantTruncate(s.confirm.submitting, width))
 	case s.notice != "" && s.noticeFail:
 		return theme.error.Render(grantTruncate(s.notice, width))
@@ -199,7 +199,7 @@ func (s tokensScreen) formBlocks(theme adminTheme, env screenEnv, inner int) [][
 	lifetime := []string{label("Lifetime")}
 	lifetime = append(lifetime, packMarks(lifetimeMarks(theme, s.lifetime, focused), inner)...)
 	if s.lifetime.isCustom(ceiling) {
-		lifetime = append(lifetime, renderCustomInput(theme, s.lifetime.Custom, focused, customLifetimeInputWidth))
+		lifetime = append(lifetime, renderCustomInput(theme, s.lifetime.Custom, focused))
 	}
 
 	expires := []string{theme.muted.Bold(true).Render("EXPIRES")}

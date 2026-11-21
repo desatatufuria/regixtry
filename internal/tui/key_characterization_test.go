@@ -175,54 +175,6 @@ func TestIsRuneKeyCharacterization(t *testing.T) {
 	}
 }
 
-func TestTokenFormTextEntryCharacterization(t *testing.T) {
-	t.Parallel()
-
-	m := charAdminModel(t, 160, 40)
-	m.screen = screenAdminCreateToken
-	m.adminView.SelectedUserID = "u-1"
-	m.adminView.SelectedUsername = "alice"
-
-	m = testSendKeys(t, m, testKeyRunes("ci"), testKeySpace(), testKeyRunes("bot"))
-	if got, want := m.adminView.TokenForm.Name, "ci bot"; got != want {
-		t.Fatalf("Name after typing = %q, want %q", got, want)
-	}
-	m = testSendKey(t, m, testKeyBackspace())
-	if got, want := m.adminView.TokenForm.Name, "ci bo"; got != want {
-		t.Fatalf("Name after backspace = %q, want %q", got, want)
-	}
-	if !strings.Contains(m.View().Content, "ci bo") {
-		t.Fatalf("view does not show the typed name")
-	}
-
-	m = testSendKey(t, m, testKeyTab())
-	if got := m.adminView.TokenForm.Focus; got != adminTokenFieldLifetime {
-		t.Fatalf("focus after tab = %v, want Lifetime", got)
-	}
-	// The lifetime selector replaced the raw TTL seconds field: letters and
-	// digits do nothing on a preset, and Custom takes digits and one unit letter.
-	m = testSendKeys(t, m, testKeyRunes("12x"), testKeyRunes("a"), testKeySpace(), testKeyRunes("-"))
-	if got := m.adminView.TokenForm.Lifetime; got != (tokenLifetime{}) {
-		t.Fatalf("lifetime after stray input = %#v, want it untouched", got)
-	}
-	m = testSendKeys(t, m, testKeyRight(), testKeyRight(), testKeyRight(), testKeyRight(), testKeyRunes("x"), testKeyRunes("3"), testKeyRunes("9"))
-	if got, want := m.adminView.TokenForm.Lifetime.Custom, "39"; got != want {
-		t.Fatalf("custom days after digits = %q, want %q", got, want)
-	}
-	m = testSendKey(t, m, testKeyBackspace())
-	if got, want := m.adminView.TokenForm.Lifetime.Custom, "3"; got != want {
-		t.Fatalf("custom days after backspace = %q, want %q", got, want)
-	}
-	if got, want := m.adminView.TokenForm.Name, "ci bo"; got != want {
-		t.Fatalf("Name changed while Lifetime focused: %q, want %q", got, want)
-	}
-
-	m = testSendKey(t, m, testKeyEsc())
-	if m.screen != screenAdminEditUserTokens {
-		t.Fatalf("screen after esc = %q, want %q", m.screen, screenAdminEditUserTokens)
-	}
-}
-
 func TestCreateUserFormPasswordEntryCharacterization(t *testing.T) {
 	t.Parallel()
 

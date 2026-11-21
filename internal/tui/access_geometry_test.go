@@ -88,7 +88,7 @@ func tokensStateAt(mutate func(*accessClient), keys ...keyMsg) func(*testing.T, 
 			mutate(client)
 		}
 		env := accessEnvSized(client, w, h)
-		s := newTokensScreen("r-ci", "ci-publisher", true, screenAdminRobots)
+		s := newTokensScreen("r-ci", "ci-publisher", true)
 		settled, _ := accessSettle(s, env, s.Init(env))
 		settled, _ = accessPress(t, settled, env, keys...)
 		return settled, env
@@ -135,7 +135,7 @@ var accessStates = []accessState{
 
 	{name: "tokens_list", build: tokensStateAt(nil), contains: []string{"6 days left", "expired"}},
 	{name: "tokens_loading", build: func(t *testing.T, w, h int) (adminScreen, screenEnv) {
-		return newTokensScreen("u-1", "alice", false, screenAdminUsers), accessEnvSized(newAccessClient(), w, h)
+		return newTokensScreen("u-1", "alice", false), accessEnvSized(newAccessClient(), w, h)
 	}, contains: []string{"Loading tokens..."}},
 	{name: "tokens_empty", build: tokensStateAt(func(c *accessClient) { c.tokens["r-ci"] = nil }), contains: []string{"No tokens yet"}},
 	{name: "tokens_error", build: tokensStateAt(func(c *accessClient) { c.tokensErr = errBoom }), contains: []string{"Could not load tokens: boom"}},

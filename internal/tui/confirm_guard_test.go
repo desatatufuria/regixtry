@@ -88,7 +88,7 @@ func TestConfirmPromptThatReturnsNoCommandStaysConfirmable(t *testing.T) {
 	}
 }
 
-// ---- the six admin call sites ----
+// ---- the admin call sites that keep their prompt on the Model ----
 
 // confirmSite opens one real admin confirm through its own key and counts how
 // many times the prompt's action is invoked.
@@ -100,25 +100,8 @@ type confirmSite struct {
 }
 
 func confirmSites() []confirmSite {
-	robot := ports.AdminRobot{ID: "r-1", Username: "ci", Enabled: true}
 	boom := errors.New("boom")
 	return []confirmSite{
-		{"disable robot", func(t *testing.T) Model {
-			m := charAdminModel(t, 150, 24)
-			m.screen, m.adminView.Robots = screenAdminRobots, []ports.AdminRobot{robot}
-			return m
-		}, testKeyRunes("x"), func() tea.Msg { return adminRobotEnabledMsg{robotID: "r-1", err: boom} }},
-		{"delete robot", func(t *testing.T) Model {
-			m := charAdminModel(t, 150, 24)
-			m.screen, m.adminView.Robots = screenAdminRobots, []ports.AdminRobot{robot}
-			return m
-		}, testKeyRunes("d"), func() tea.Msg { return adminRobotDeletedMsg{robotID: "r-1", username: "ci", err: boom} }},
-		{"revoke token", func(t *testing.T) Model {
-			m := charAdminModel(t, 150, 24)
-			m.screen = screenAdminEditUserTokens
-			m.adminView.AdminTokens = []ports.AdminToken{{ID: "t-1", UserID: "u-1", Accessor: "acc-1"}}
-			return m
-		}, testKeyRunes("x"), func() tea.Msg { return adminTokenRevokedMsg{err: boom} }},
 		{"remove repository grant", func(t *testing.T) Model {
 			m := charAdminModel(t, 150, 24)
 			m.screen, m.adminView.RepoAdminRepository = screenRepoAdminGrants, "team/api"

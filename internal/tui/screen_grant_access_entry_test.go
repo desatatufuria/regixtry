@@ -80,11 +80,10 @@ func TestGKeyOnRobotsListOpensGrantScreenWithThatRobotPreselected(t *testing.T) 
 	t.Parallel()
 	client := newRecordingGrantClient()
 	m := grantModel(t, client, 150, 24)
-	m.screen = screenAdminRobots
-	m.adminView.Robots = client.robots
-	m.adminView.SelectedRobot = 1
+	next, cmd := m.mountRobots("")
+	m = runCmd(t, next.(Model), cmd)
 
-	m = grantModelPress(t, m, testKeyRunes("g"))
+	m = grantModelPress(t, m, testKeyDown(), testKeyRunes("g"))
 	if m.screen != screenAdminGrantAccess {
 		t.Fatalf("screen = %q after g on Robots", m.screen)
 	}
@@ -98,20 +97,22 @@ func TestGKeyOnRobotsListOpensGrantScreenWithThatRobotPreselected(t *testing.T) 
 	}
 }
 
-func TestGKeyOnRobotsListWithoutRobotsSaysSo(t *testing.T) {
+func TestGKeyOnRobotsListWithoutRobotsDoesNothing(t *testing.T) {
 	t.Parallel()
-	m := grantModel(t, newRecordingGrantClient(), 150, 24)
-	m.screen = screenAdminRobots
-	m.adminView.Robots = nil
+	client := newRecordingGrantClient()
+	client.robots = nil
+	m := grantModel(t, client, 150, 24)
+	next, cmd := m.mountRobots("")
+	m = runCmd(t, next.(Model), cmd)
 	m = grantModelPress(t, m, testKeyRunes("g"))
-	if m.screen != screenAdminRobots || !strings.Contains(m.status, "No robot selected") {
-		t.Fatalf("screen=%q status=%q", m.screen, m.status)
+	if m.screen != screenAdminRobots {
+		t.Fatalf("screen=%q, want to stay on the Robots list", m.screen)
 	}
 }
 
 func TestRobotsFooterAdvertisesTheGrantKey(t *testing.T) {
 	t.Parallel()
-	if help := adminScreenHelp(screenAdminRobots, AdminViewState{}); !strings.Contains(help, "g: grant access") {
+	if help := shortHelpView(newAdminTheme(), robotsKeys); !strings.Contains(help, "g: grant access") {
 		t.Fatalf("robots footer = %q, want it to advertise g", help)
 	}
 }

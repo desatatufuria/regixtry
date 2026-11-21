@@ -170,8 +170,9 @@ func TestTokensOfAUserGoBackToTheirProfile(t *testing.T) {
 	client := editTestClient()
 	m := usersModelAt(t, client, 150, 24)
 	m = modelPress(t, m, testKeyDown(), testKeyDown(), testKeyDown(), testKeyRunes("t"))
-	if m.screen != screenAdminEditUserTokens || m.adminView.SelectedUserID != "u-4" || m.adminView.SelectedUsername != "carol" {
-		t.Fatalf("t opened %q for %q", m.screen, m.adminView.SelectedUsername)
+	tokens, _ := m.adminScreens[slotTokens].(tokensScreen)
+	if m.screen != screenAdminEditUserTokens || tokens.principalID != "u-4" || tokens.principalName != "carol" || tokens.robot {
+		t.Fatalf("t opened %q for %#v", m.screen, tokens)
 	}
 	m = modelPress(t, m, testKeyEsc())
 	if m.screen != screenAdminEditUser {

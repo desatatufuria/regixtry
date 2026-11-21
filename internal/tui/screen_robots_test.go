@@ -147,7 +147,7 @@ func TestRobotsKeysOpenTheScreensOfTheBoard(t *testing.T) {
 
 func wantTokensMsg(m tea.Msg) error {
 	got, ok := m.(openTokensMsg)
-	if !ok || got.principalID != "r-ci" || got.principalName != "ci-publisher" || !got.robot || got.returnTo != screenAdminRobots {
+	if !ok || got.principalID != "r-ci" || got.principalName != "ci-publisher" || !got.robot {
 		return fmt.Errorf("got %#v", m)
 	}
 	return nil
@@ -178,7 +178,7 @@ func TestDisablingARobotAsksFirstAndSendsItOnce(t *testing.T) {
 
 	// Enter dispatches; a second Enter before the result is ignored.
 	first, cmd, _ := asked.Update(env, testKeyEnter())
-	if cmd == nil || !first.(robotsScreen).acting {
+	if cmd == nil || !first.(robotsScreen).confirm.inFlight {
 		t.Fatal("Enter did not dispatch")
 	}
 	again, second, _ := first.Update(env, testKeyEnter())
@@ -191,7 +191,7 @@ func TestDisablingARobotAsksFirstAndSendsItOnce(t *testing.T) {
 	if len(client.disabled) != 1 || client.disabled[0] != "r-ci" {
 		t.Fatalf("DisableUser calls = %v", client.disabled)
 	}
-	if got.confirm.Active() || got.acting {
+	if got.confirm.Active() {
 		t.Fatal("result must clear the confirm and the in-flight flag")
 	}
 	if got.notice != "Robot ci-publisher disabled." {
@@ -241,7 +241,7 @@ func TestFailedDisableShowsTheErrorAndKeepsTheRobot(t *testing.T) {
 	s := openRobotsScreen(t, client, env)
 	next, _ := accessPress(t, s, env, testKeyRunes("d"), testKeyEnter())
 	got := next.(robotsScreen)
-	if got.notice != "cannot disable" || !got.noticeFail || got.confirm.Active() || got.acting {
+	if got.notice != "cannot disable" || !got.noticeFail || got.confirm.Active() {
 		t.Fatalf("state after failure: %#v", got)
 	}
 	mustContain(t, accessView(next, env), "cannot disable")

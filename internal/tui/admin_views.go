@@ -93,18 +93,10 @@ func renderAdminWorkspace(current screen, session AdminSession, view AdminViewSt
 // renderAdminScreen itself then consumes).
 func adminScreenHelp(current screen, view AdminViewState) string {
 	switch current {
-	case screenAdminEditUserTokens:
-		return "n: create token | x: revoke token | g: grants | Esc: back | q: quit"
-	case screenAdminCreateToken:
-		return "Enter: create token | Tab: next field | Esc: cancel"
 	case screenRepoAdminGrants:
 		return "n: add grant | e: edit selected grant | x: remove grant | Esc: back | q: quit"
 	case screenRepoAdminAddGrant:
 		return "Enter: save | Tab: next field | Space: cycle role | Esc: cancel"
-	case screenAdminRobots:
-		return "n: create robot | e: enable | x: disable | t: tokens | g: grant access | r: refresh | Esc: back | q: quit"
-	case screenAdminCreateRobot:
-		return "Enter: create robot | Tab: next field | Space: cycle role | Esc: cancel"
 	default:
 		return "Esc: back | q: quit"
 	}
@@ -121,26 +113,18 @@ func adminScreenHelp(current screen, view AdminViewState) string {
 func renderAdminScreen(theme adminTheme, current screen, session AdminSession, view AdminViewState, knownRepositories []string, layout consoleLayout, now time.Time) (string, string, string) {
 	help := adminScreenHelp(current, view)
 	switch current {
-	case screenAdminEditUserTokens:
-		return adminContext("Access", "Users", selectedAdminUsername(view), "Tokens"), renderAdminTokensScreen(theme, view), help
-	case screenAdminCreateToken:
-		return adminContext("Access", "Users", selectedAdminUsername(view), "Tokens", "Create token"), renderAdminCreateTokenScreen(theme, view, now), help
 	case screenRepoAdminGrants:
 		return fmt.Sprintf("Repositories / %s / Grants", view.RepoAdminRepository), renderRepoAdminGrantsScreen(theme, view), help
 	case screenRepoAdminAddGrant:
 		return fmt.Sprintf("Repositories / %s / Grants / Add Grant", view.RepoAdminRepository), renderRepoAdminAddGrantScreen(theme, view), help
-	case screenAdminRobots:
-		return adminContext("Access", "Robots"), renderAdminRobotsScreen(theme, session, view, layout, now), help
-	case screenAdminCreateRobot:
-		return adminContext("Access", "Robots", "Create robot"), renderAdminCreateRobotScreenWithin(theme, view, knownRepositories, now, layout.SectionRows), help
 	default:
 		return adminContext("Access"), "", help
 	}
 }
 
 // renderAdminOperatorFooter is the trailing "Operator: %s" / "Session
-// remaining: %s" pair the Robots screen renders (see
-// renderAdminRobotsScreen below). The migrated Security
+// remaining: %s" pair the Users screen renders (see
+// renderAdminUsersScreen below). The migrated Security
 // screens (trivyConfigScreen, trivyReposScreen, gitleaksConfigScreen,
 // signingConfigScreen) share it via this helper so the operator never loses
 // their session countdown while navigating the Security screens.
@@ -476,202 +460,6 @@ func renderRepoAdminAddGrantScreen(theme adminTheme, view AdminViewState) string
 	}, "\n"))
 }
 
-func renderAdminTokensScreen(theme adminTheme, view AdminViewState) string {
-	if strings.TrimSpace(view.SelectedUserID) == "" {
-		return theme.section.Render(theme.warning.Render("Select a user before opening tokens."))
-	}
-	lines := []string{
-		theme.subheading.Render("Admin Tokens"),
-		fmt.Sprintf("User: %s", selectedAdminUsername(view)),
-	}
-	if strings.TrimSpace(view.RevealedTokenSecret) != "" {
-		lines = append(lines,
-			"",
-			theme.success.Render("One-time secret"),
-			fmt.Sprintf("Accessor: %s", view.RevealedTokenAccessor),
-			theme.text.Render(view.RevealedTokenSecret),
-		)
-	}
-	lines = append(lines, "")
-	if len(view.AdminTokens) == 0 {
-		lines = append(lines, theme.muted.Render("No admin tokens for the selected user."))
-	} else {
-		for index, token := range view.AdminTokens {
-			state := "active"
-			if token.RevokedAt != nil {
-				state = "revoked"
-			}
-			label := fmt.Sprintf("%s | %s | expires %s", token.Accessor, state, token.ExpiresAt.UTC().Format(time.RFC3339))
-			if index == view.SelectedToken {
-				label = theme.selected.Render(label)
-			}
-			lines = append(lines, label)
-		}
-	}
-	return theme.section.Render(strings.Join(lines, "\n"))
-}
-
-// renderAdminRobotsScreen renders screenAdminRobots (design.md Decision 7),
-// mirroring renderAdminUsersScreen's list shape: one line per robot, the
-// selected row highlighted, an Operator/session-remaining footer. Keyed by
-// repository/role/enabled state instead of admin/read-only flags, since a
-// robot's identity is its single repository grant, not a global role.
-func renderAdminRobotsScreen(theme adminTheme, session AdminSession, view AdminViewState, layout consoleLayout, now time.Time) string {
-	lines := []string{theme.subheading.Render("Robots")}
-	if len(view.Robots) == 0 {
-		lines = append(lines, theme.muted.Render("No robot accounts available."))
-	} else {
-		for index, robot := range view.Robots {
-			label := formatAdminRobotLabel(robot)
-			if index == view.SelectedRobot {
-				label = theme.selected.Render(label)
-			}
-			lines = append(lines, label)
-		}
-	}
-	lines = append(lines,
-		"",
-		theme.muted.Render(fmt.Sprintf("Operator: %s", session.Username)),
-		theme.muted.Render(fmt.Sprintf("Session remaining: %s", formatRemaining(session.Remaining(now)))),
-	)
-	return renderSection(theme, strings.Join(lines, "\n"), layout)
-}
-
-// formatAdminRobotLabel renders a robot as "name [repository, role, state]".
-func formatAdminRobotLabel(robot ports.AdminRobot) string {
-	state := "disabled"
-	if robot.Enabled {
-		state = "enabled"
-	}
-	return fmt.Sprintf("%s [%s, %s, %s]", robot.Username, robot.Repository, robot.Role, state)
-}
-
-// renderAdminCreateRobotScreen renders screenAdminCreateRobot (design.md
-// Decision 7). Immediately after a successful creation, RevealedTokenSecret/
-// Accessor are populated (the exact fields renderAdminTokensScreen already
-// reveals once for human admin tokens) and rendered here exactly once, above
-// the (now-cleared) form -- mirroring renderAdminTokensScreen's own
-// conditional block so this reveal follows the one already-audited pattern
-// instead of introducing a new one.
-// renderAdminCreateRobotScreen renders a windowed, highlighted
-// repository-suggestion list under its Repository field.
-func renderAdminCreateRobotScreen(theme adminTheme, view AdminViewState, knownRepositories []string, now time.Time) string {
-	return renderAdminCreateRobotScreenWithin(theme, view, knownRepositories, now, 0)
-}
-
-// renderAdminCreateRobotScreenWithin renders the Create Robot form inside a
-// budget of `rows` body rows (consoleLayout.SectionRows; 0 means unbounded).
-// The one-time secret, the Lifetime rows and the form fields are never cut:
-// only the suggestion list shrinks (selected row first, then a muted "+N more"
-// when rows allow), and the blank separators are dropped when even that is not
-// enough.
-func renderAdminCreateRobotScreenWithin(theme adminTheme, view AdminViewState, knownRepositories []string, now time.Time, rows int) string {
-	suggestions := robotRepositorySuggestions(view.CreateRobotForm, knownRepositories)
-	hasSecret := strings.TrimSpace(view.RevealedTokenSecret) != ""
-
-	build := func(compactSecret bool) []string {
-		lines := []string{theme.subheading.Render("Create Robot")}
-		if hasSecret {
-			if !compactSecret {
-				lines = append(lines, "")
-			}
-			lines = append(lines,
-				theme.success.Render("One-time secret"),
-				fmt.Sprintf("Accessor: %s", view.RevealedTokenAccessor),
-				theme.text.Render(view.RevealedTokenSecret),
-			)
-			if !compactSecret {
-				lines = append(lines, "")
-			}
-		}
-		return append(lines,
-			renderTextField(theme, "Name", view.CreateRobotForm.Name, view.CreateRobotForm.Focus == adminCreateRobotFieldName),
-			renderTextField(theme, "Repository", view.CreateRobotForm.Repository, view.CreateRobotForm.Focus == adminCreateRobotFieldRepository),
-			renderTextField(theme, "Role", string(view.CreateRobotForm.Role), view.CreateRobotForm.Focus == adminCreateRobotFieldRole),
-			renderLifetimeField(theme, view.CreateRobotForm.Lifetime, now, view.CreateRobotForm.Focus == adminCreateRobotFieldLifetime),
-		)
-	}
-	height := func(lines []string) int { return strings.Count(strings.Join(lines, "\n"), "\n") + 1 }
-
-	lines := build(false)
-	avail := 0 // rows left for the suggestions; 0 with rows == 0 means unbounded
-	if rows > 0 {
-		avail = rows - height(lines)
-		// Needed for one suggestion under its header: blank + header + row.
-		if avail < 3 && hasSecret && len(suggestions) > 0 {
-			lines = build(true)
-			avail = rows - height(lines)
-		}
-	}
-
-	if len(suggestions) == 0 {
-		if rows == 0 || avail >= 1 {
-			lines = append(lines, theme.muted.Render("No known repositories match the current filter."))
-		}
-		return theme.section.Render(strings.Join(lines, "\n"))
-	}
-
-	window := 5
-	if window > len(suggestions) {
-		window = len(suggestions)
-	}
-	withBlank, withHeader := true, true
-	moreLine := false
-	if rows > 0 {
-		switch {
-		case avail >= 3:
-			if room := avail - 2; room < window {
-				// Rows cut the list: keep one row for "+N more" when at least
-				// two suggestions still fit next to it.
-				window = room
-				if room >= 3 {
-					window = room - 1
-					moreLine = true
-				}
-			}
-		case avail == 2:
-			withBlank, window = false, 1
-		default:
-			withBlank, withHeader, window = false, false, 1
-		}
-	}
-	selected := boundedIndex(view.CreateRobotForm.RepositorySuggestion, len(suggestions))
-	start := 0
-	if selected >= window {
-		start = selected - window + 1
-	}
-	end := start + window
-	if end > len(suggestions) {
-		end = len(suggestions)
-	}
-	if withBlank {
-		lines = append(lines, "")
-	}
-	if withHeader {
-		lines = append(lines, theme.subheading.Render("Known Repositories"))
-	}
-	for index := start; index < end; index++ {
-		label := suggestions[index]
-		if index == selected {
-			label = theme.selected.Render(label)
-		}
-		lines = append(lines, label)
-	}
-	if moreLine {
-		lines = append(lines, theme.muted.Render(fmt.Sprintf("+%d more", len(suggestions)-window)))
-	}
-	return theme.section.Render(strings.Join(lines, "\n"))
-}
-
-func renderAdminCreateTokenScreen(theme adminTheme, view AdminViewState, now time.Time) string {
-	return theme.section.Render(strings.Join([]string{
-		theme.subheading.Render("Create Token"),
-		fmt.Sprintf("User: %s", selectedAdminUsername(view)),
-		renderTextField(theme, "Name", view.TokenForm.Name, view.TokenForm.Focus == adminTokenFieldName),
-		renderLifetimeField(theme, view.TokenForm.Lifetime, now, view.TokenForm.Focus == adminTokenFieldLifetime),
-	}, "\n"))
-}
-
 func renderTrivyConfigModal(theme adminTheme, modal trivyConfigModal) string {
 	lines := []string{
 		theme.subheading.Render("Edit Trivy Configuration"),
@@ -859,27 +647,12 @@ func renderToggleField(theme adminTheme, label string, value bool, focused bool)
 	return fmt.Sprintf("%s\n%s", label, style.Render(current))
 }
 
-func selectedAdminUsername(view AdminViewState) string {
-	if strings.TrimSpace(view.SelectedUsername) != "" {
-		return view.SelectedUsername
-	}
-	return "No selection"
-}
-
 func selectedRepoAdminGrantForView(view AdminViewState) (ports.AdminRepositoryGrant, bool) {
 	if len(view.RepoAdminGrants) == 0 {
 		return ports.AdminRepositoryGrant{}, false
 	}
 	index := boundedIndex(view.SelectedRepoAdminGrant, len(view.RepoAdminGrants))
 	return view.RepoAdminGrants[index], true
-}
-
-func selectedTokenForView(view AdminViewState) (ports.AdminToken, bool) {
-	if len(view.AdminTokens) == 0 {
-		return ports.AdminToken{}, false
-	}
-	index := boundedIndex(view.SelectedToken, len(view.AdminTokens))
-	return view.AdminTokens[index], true
 }
 
 func adminFirstNonEmpty(values ...string) string {

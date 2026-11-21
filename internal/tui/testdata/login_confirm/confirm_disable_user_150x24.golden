@@ -1,15 +1,15 @@
  Regixtry Admin                            ╭──────────────────────────────────────────────────────────────╮
- Admin › Access › Robots                   │  Disable user?                                               │
- ╭───────────────────────────────────────  │                                                              │  ───────────────────────────────────────╮
- │                                         │  The user is signed out and cannot sign in. Their tokens     │                                         │
- │ Robots                                  │  stop working.                                               │                                         │
- │ No robot accounts available.            │                                                              │                                         │
- │                                         │  ╭────────────────────────────────────────────────────────╮  │                                         │
- │ Operator: operator                      │  │ carol                                                  │  │                                         │
- │ Session remaining: 24h0m0s              │  │ user, 2 grants, 2 active tokens                        │  │                                         │
- │                                         │  ╰────────────────────────────────────────────────────────╯  │                                         │
- ╰───────────────────────────────────────  │                                                              │  ───────────────────────────────────────╯
- n: create robot | e: enable | x: disable  │  Grants are kept. Enable carol again to restore everything.  │
+ Repositories /  / Grants                  │  Disable user?                                               │
+ ╭───────────────────────────────────────  │                                                              │
+ │                                         │  The user is signed out and cannot sign in. Their tokens     │
+ │ Select a repository before opening gra  │  stop working.                                               │
+ │                                         │                                                              │
+ ╰───────────────────────────────────────  │  ╭────────────────────────────────────────────────────────╮  │
+ n: add grant | e: edit selected grant |   │  │ carol                                                  │  │
+                                           │  │ user, 2 grants, 2 active tokens                        │  │
+                                           │  ╰────────────────────────────────────────────────────────╯  │
+                                           │                                                              │
+                                           │  Grants are kept. Enable carol again to restore everything.  │
                                            │                                                              │
                                            │   Confirm                                        y / enter   │
                                            │   Cancel                                               esc   │

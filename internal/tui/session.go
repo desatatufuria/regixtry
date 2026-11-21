@@ -21,26 +21,6 @@ const (
 	adminRepoGrantFieldRole
 )
 
-type adminTokenField int
-
-const (
-	adminTokenFieldName adminTokenField = iota
-	adminTokenFieldLifetime
-)
-
-// adminCreateRobotField identifies which of adminCreateRobotForm's 4 fields
-// has focus (design.md Decision 7's robot screens): Name -> Repository ->
-// Role -> Lifetime, a global-admin-only form so, unlike adminRepositoryGrantForm,
-// Role is not restricted away from RepoRoleAdmin.
-type adminCreateRobotField int
-
-const (
-	adminCreateRobotFieldName adminCreateRobotField = iota
-	adminCreateRobotFieldRepository
-	adminCreateRobotFieldRole
-	adminCreateRobotFieldLifetime
-)
-
 type trivyConfigField int
 
 const (
@@ -60,33 +40,6 @@ type adminRepositoryGrantForm struct {
 	Username string
 	Role     domainauth.RepoRole
 	Focus    adminRepoGrantField
-}
-
-type adminTokenForm struct {
-	Name     string
-	Lifetime tokenLifetime
-	Focus    adminTokenField
-	// Creating is true from the Enter that issued the create command until
-	// its result (success or error) arrives; Enter is ignored meanwhile.
-	Creating bool
-}
-
-// adminCreateRobotForm backs screenAdminCreateRobot (design.md Decision 7).
-// Role's zero value is set to domainauth.RepoRoleReader by newAdminViewState
-// (mirroring adminRepositoryGrantForm), and Lifetime is the
-// same selector adminTokenForm uses (default: the service's default TTL).
-// RepositorySuggestion is the repository autosuggest pattern (filter as you
-// type, Up/Down cycle, Enter commits).
-type adminCreateRobotForm struct {
-	Name                 string
-	Repository           string
-	Role                 domainauth.RepoRole
-	Lifetime             tokenLifetime
-	Focus                adminCreateRobotField
-	RepositorySuggestion int
-	// Creating is true from the Enter that issued the create command until
-	// its result (success or error) arrives; Enter is ignored meanwhile.
-	Creating bool
 }
 
 type trivyConfigModal struct {
@@ -332,22 +285,12 @@ type AdminSession struct {
 }
 
 type AdminViewState struct {
-	// SelectedUserID/SelectedUsername name the principal the Grants and
-	// Tokens screens work on (the Users screens own their own state).
-	SelectedUserID   string
-	SelectedUsername string
-	AdminTokens      []ports.AdminToken
-	SelectedToken    int
-	TokenForm        adminTokenForm
 	// Confirm is THE confirm-before-destructive-action primitive
 	// (design.md Decision E, D7), replacing adminConfirmModal's Kind-union.
 	// Shared by the Users and Robots screens; the Security screens each
 	// own their own local confirm field instead (design.md Decision B: a migrated screen cannot
 	// write to AdminViewState directly).
-	Confirm                confirmPrompt
-	RevealedTokenSecret    string
-	RevealedTokenAccessor  string
-	RevealedTokenExpiresAt time.Time
+	Confirm confirmPrompt
 	// ScanHistoryModal is retired (Phase 19, design.md's State Migration
 	// table): its state now lives on scanHistoryScreen
 	// (screen_scan_history.go), reached at its own dedicated slot
@@ -359,7 +302,7 @@ type AdminViewState struct {
 	// RepoAdminRepository/RepoAdminGrants/SelectedRepoAdminGrant/
 	// RepoAdminGrantForm back screenRepoAdminGrants/screenRepoAdminAddGrant
 	// (design.md Decision 7): the repo-admin delegate's own repository-
-	// centric grants view, keyed by repository, not by SelectedUserID.
+	// centric grants view, keyed by repository.
 	RepoAdminRepository string
 	RepoAdminGrants     []ports.AdminRepositoryGrant
 	// RepoAdminGrantsAuthorized is true only after the most recent
@@ -373,15 +316,6 @@ type AdminViewState struct {
 	RepoAdminGrantsAuthorized bool
 	SelectedRepoAdminGrant    int
 	RepoAdminGrantForm        adminRepositoryGrantForm
-	// Robots/SelectedRobot/CreateRobotForm back screenAdminRobots/
-	// screenAdminCreateRobot (design.md Decision 7): global-admin-only
-	// screens, a sibling data set to the Users list -- a robot is never listed
-	// in Users (store.go's ListUsers excludes is_robot rows) and has no
-	// edit screen of its own; token issuance reuses the Tokens screen via
-	// SelectedUserID.
-	Robots          []ports.AdminRobot
-	SelectedRobot   int
-	CreateRobotForm adminCreateRobotForm
 	// Layout is the consoleLayout used the last time rebuildAdminTables ran,
 	// including the primary/compact table pageSize split (design.md
 	// decision #6). It is a snapshot for table construction, not the live
@@ -438,9 +372,6 @@ func (s AdminSession) Remaining(now time.Time) time.Duration {
 func newAdminViewState() AdminViewState {
 	return AdminViewState{
 		RepoAdminGrantForm: adminRepositoryGrantForm{
-			Role: domainauth.RepoRoleReader,
-		},
-		CreateRobotForm: adminCreateRobotForm{
 			Role: domainauth.RepoRoleReader,
 		},
 	}

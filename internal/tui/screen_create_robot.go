@@ -29,9 +29,11 @@ type createRobotScreen struct {
 	focus      robotField
 
 	// creating is true from the Enter that issued the create command until its
-	// result arrives; Enter is ignored meanwhile and Esc does not leave, so the
-	// one-time secret can never be lost.
+	// result arrives; Enter is ignored meanwhile. Esc still leaves: left then
+	// brings the screen back when the robot was created after all, so its
+	// one-time secret is never lost.
 	creating bool
+	left     bool
 	// err is the validation or server message shown above the buttons.
 	err string
 
@@ -96,16 +98,17 @@ func (s createRobotScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.
 		if typed.gen != s.gen {
 			return s, nil, false
 		}
-		return s.applyCreated(typed), nil, false
+		next, cmd := s.applyCreated(typed)
+		return next, cmd, false
 	}
 	return s, nil, false
 }
 
-func (s createRobotScreen) applyCreated(msg robotCreatedMsg) createRobotScreen {
+func (s createRobotScreen) applyCreated(msg robotCreatedMsg) (createRobotScreen, tea.Cmd) {
 	s.creating = false
 	if msg.err != nil {
 		s.err = msg.err.Error()
-		return s
+		return s, nil
 	}
 	robot := msg.created.Robot
 	s.done, s.err = true, ""
@@ -121,7 +124,13 @@ func (s createRobotScreen) applyCreated(msg robotCreatedMsg) createRobotScreen {
 	if s.created.role == "" {
 		s.created.role = msg.input.Role
 	}
-	return s
+	if s.left {
+		// The operator pressed Esc while the robot was being created: show the
+		// secret anyway, it cannot be displayed again.
+		s.left = false
+		return s, navigate(screenAdminCreateRobot)
+	}
+	return s, nil
 }
 
 func firstText(values ...string) string {
@@ -143,7 +152,8 @@ func (s createRobotScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, te
 	}
 	if s.creating {
 		if isEscKey(msg) {
-			s.err = "Creating the robot, please wait: its secret is shown once it exists."
+			s.left = true
+			return s, openRobots(""), true
 		}
 		return s, nil, true
 	}

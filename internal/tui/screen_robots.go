@@ -38,6 +38,8 @@ type robotsScreen struct {
 	loaded   bool
 	err      string
 	selected int
+	// selectID is the robot to highlight once the list first arrives.
+	selectID string
 
 	// tokens holds each robot's tokens by robot id, read one robot at a time
 	// after the list. It is replaced, never edited, because Model is copied by
@@ -46,10 +48,9 @@ type robotsScreen struct {
 	tokensLoaded bool
 	tokensErr    string
 
-	// confirm is the enable/disable confirmation; acting is true from the
-	// Enter that dispatched the change until its result arrives.
+	// confirm is the enable/disable confirmation; its in-flight guard keeps a
+	// second Enter from sending the change twice.
 	confirm confirmPrompt
-	acting  bool
 	// notice is the line under the table: the last action's outcome.
 	notice     string
 	noticeFail bool
@@ -152,7 +153,7 @@ func (s robotsScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.Cmd, 
 		if typed.gen != s.gen {
 			return s, nil, false
 		}
-		s.acting, s.confirm = false, confirmPrompt{}
+		s.confirm = confirmPrompt{}
 		if typed.err != nil {
 			s.notice, s.noticeFail = typed.err.Error(), true
 			return s, nil, false
@@ -173,10 +174,11 @@ func (s robotsScreen) applyRobots(env screenEnv, msg robotsLoadedMsg) (adminScre
 	if msg.err != nil {
 		return s, nil, false
 	}
-	var keep string
+	keep := s.selectID
 	if robot, ok := s.selectedRobot(); ok {
 		keep = robot.ID
 	}
+	s.selectID = ""
 	s.robots = slices.Clone(msg.robots)
 	s.selected = boundedIndex(s.selected, len(s.robots))
 	s = s.withSelection(keep)
@@ -186,14 +188,8 @@ func (s robotsScreen) applyRobots(env screenEnv, msg robotsLoadedMsg) (adminScre
 
 func (s robotsScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd, bool) {
 	if s.confirm.Active() {
-		if s.acting && isEnterKey(msg) {
-			return s, nil, true
-		}
 		next, cmd, _ := s.confirm.update(env, msg)
 		s.confirm = next
-		if cmd != nil {
-			s.acting = true
-		}
 		return s, cmd, true
 	}
 	robot, hasRobot := s.selectedRobot()
@@ -212,7 +208,7 @@ func (s robotsScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd
 	case !hasRobot:
 		// Every remaining key acts on the selected robot.
 	case isCommandRune(msg, 't') || isEnterKey(msg):
-		return s, openTokens(robot.ID, robot.Username, true, screenAdminRobots), true
+		return s, openTokens(robot.ID, robot.Username, true), true
 	case isCommandRune(msg, 'g'):
 		return s, openGrantAccess(robot.ID, screenAdminRobots), true
 	case isCommandRune(msg, 'd') && robot.Enabled:
@@ -233,13 +229,17 @@ func (s robotsScreen) enableConfirm(robot ports.AdminRobot, enable bool) confirm
 		verb = "enable"
 	}
 	gen, id, name := s.gen, robot.ID, robot.Username
-	return newConfirmPrompt(
+	prompt := newConfirmPrompt(
 		"Confirm "+verb,
 		fmt.Sprintf("Confirm %s robot %q?", verb, name),
 		verb,
 		fmt.Sprintf("Submitting %s for %s...", verb, name),
 		func(env screenEnv) tea.Cmd { return robotEnableCmd(env, gen, id, name, enable) },
-	)
+	).withTarget(name, robotDetail(robot))
+	if !enable {
+		prompt = prompt.withConsequence(name + " can no longer authenticate.")
+	}
+	return prompt
 }
 
 // ---- commands ----
@@ -363,3 +363,11 @@ var robotsKeys = screenKeys{short: []key.Binding{
 	key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
 	key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
 }}
+
+// robotDetail is the line under a robot's name in a dialog: its access.
+func robotDetail(robot ports.AdminRobot) string {
+	if robot.Repository == "" {
+		return "no repository access"
+	}
+	return grantRoleLabel(robot.Role) + " on " + robot.Repository
+}

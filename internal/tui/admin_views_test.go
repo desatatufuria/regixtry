@@ -1167,19 +1167,19 @@ func TestRenderAdminWorkspaceKeepsBaseFullSizeAndLayersModalOnTopWhenOpen(t *tes
 	}
 	findingsTable := buildAdminFindingsTable(modal.Detail.Findings, 0, minTableRows)
 	screens := adminScreenSet{}
-	screens[slotScanHistory] = scanHistoryScreen{returnTo: screenAdminRobots, modal: modal, findings: findingsTable}
+	screens[slotScanHistory] = scanHistoryScreen{returnTo: screenRepoAdminGrants, modal: modal, findings: findingsTable}
 
-	layout := contentBudget(defaultViewportWidth, defaultViewportHeight, "", adminScreenHelp(screenAdminRobots, view))
+	layout := contentBudget(defaultViewportWidth, defaultViewportHeight, "", adminScreenHelp(screenRepoAdminGrants, view))
 
 	// Property 1: the base page (rendered independently, at the very same
 	// unreduced layout the modal-open path is given) must be byte-identical
 	// to what renderAdminWorkspace's modal-open branch composites as its
 	// base -- proving it is never shrunk via a reduced SectionRows the way
 	// the superseded row-split design did.
-	standaloneContext, standaloneBody, standaloneHelp := renderAdminScreen(theme, screenAdminRobots, session, view, nil, layout, now)
+	standaloneContext, standaloneBody, standaloneHelp := renderAdminScreen(theme, screenRepoAdminGrants, session, view, nil, layout, now)
 	wantBase := renderConsoleWorkspace("Regixtry Admin", standaloneContext, standaloneBody, "", standaloneHelp, statusKindAuto)
 
-	got := renderAdminWorkspace(screenAdminRobots, session, view, nil, "", layout, now, screens)
+	got := renderAdminWorkspace(screenRepoAdminGrants, session, view, nil, "", layout, now, screens)
 
 	// Property 2: layered on top, not appended below -- the composite must
 	// fit exactly within the canvas (layout.Width x layout.Height), never
@@ -1192,11 +1192,11 @@ func TestRenderAdminWorkspaceKeepsBaseFullSizeAndLayersModalOnTopWhenOpen(t *tes
 
 	// The base's own bottom-of-screen marker (only present once the full,
 	// unshrunk base is rendered) must survive in the composite.
-	if !strings.Contains(wantBase, "Operator: operator") {
-		t.Fatalf("test setup invalid: standalone base render = %q, want it to contain the Operator marker", wantBase)
+	if !strings.Contains(wantBase, "Select a repository") {
+		t.Fatalf("test setup invalid: standalone base render = %q, want it to contain the base marker", wantBase)
 	}
-	if !strings.Contains(got, "Operator: operator") {
-		t.Fatalf("renderAdminWorkspace() = %q, want the base page's full content (Operator marker) to survive unshrunk when the modal opens", got)
+	if !strings.Contains(got, "Select a repository") {
+		t.Fatalf("renderAdminWorkspace() = %q, want the base page's full content (its body marker) to survive unshrunk when the modal opens", got)
 	}
 
 	// The modal's own title must be present, proving it was actually
@@ -1523,170 +1523,6 @@ func TestRenderRepoAdminAddGrantScreenRoleFieldNeverRendersRepoAdmin(t *testing.
 // mutate RepoAdminGrantForm.Role from a keypress (Space), so it alone must
 // guarantee repo-admin is structurally unreachable — including from the
 // (otherwise impossible) RepoRoleAdmin starting state.
-// TestRenderAdminRobotsScreenListsRobotsWithRepositoryRoleAndState is task
-// 5.3's first RED test (design.md Decision 7): screenAdminRobots mirrors
-// renderAdminUsersScreen's list shape -- one line per robot, the selected
-// row highlighted, an Operator/session-remaining footer -- but keyed by
-// repository/role/enabled state instead of admin/read-only flags.
-func TestRenderAdminRobotsScreenListsRobotsWithRepositoryRoleAndState(t *testing.T) {
-	t.Parallel()
-
-	theme := newAdminTheme()
-	session := AdminSession{Username: "operator"}
-	view := AdminViewState{
-		Robots: []ports.AdminRobot{
-			{ID: "1", Username: "robot$ci", Repository: "team/app", Role: domainauth.RepoRoleWriter, Enabled: true},
-			{ID: "2", Username: "robot$audit", Repository: "team/other", Role: domainauth.RepoRoleReader, Enabled: false},
-		},
-		SelectedRobot: 0,
-	}
-	layout := consoleLayout{Width: defaultViewportWidth, Height: defaultViewportHeight, SectionRows: 20}
-
-	got := renderAdminRobotsScreen(theme, session, view, layout, time.Now())
-
-	if !strings.Contains(got, "robot$ci") || !strings.Contains(got, "team/app") || !strings.Contains(got, string(domainauth.RepoRoleWriter)) || !strings.Contains(got, "enabled") {
-		t.Fatalf("renderAdminRobotsScreen() = %q, want robot$ci's repository/role/enabled state listed", got)
-	}
-	if !strings.Contains(got, "robot$audit") || !strings.Contains(got, "team/other") || !strings.Contains(got, string(domainauth.RepoRoleReader)) || !strings.Contains(got, "disabled") {
-		t.Fatalf("renderAdminRobotsScreen() = %q, want robot$audit's repository/role/disabled state listed", got)
-	}
-	if !strings.Contains(got, "operator") {
-		t.Fatalf("renderAdminRobotsScreen() = %q, want the operator footer", got)
-	}
-}
-
-// TestRenderAdminRobotsScreenShowsEmptyStateWithNoRobots triangulates the
-// populated case above with an empty robot list.
-func TestRenderAdminRobotsScreenShowsEmptyStateWithNoRobots(t *testing.T) {
-	t.Parallel()
-
-	theme := newAdminTheme()
-	session := AdminSession{Username: "operator"}
-	layout := consoleLayout{Width: defaultViewportWidth, Height: defaultViewportHeight, SectionRows: 20}
-
-	got := renderAdminRobotsScreen(theme, session, AdminViewState{}, layout, time.Now())
-
-	if !strings.Contains(got, "No robot") {
-		t.Fatalf("renderAdminRobotsScreen() = %q, want an explicit empty-robots message", got)
-	}
-}
-
-// TestRenderAdminCreateRobotScreenShowsFormFields is task 5.3's third RED
-// test: screenAdminCreateRobot renders every form field's current value.
-func TestRenderCreateAdminRobotScreenShowsFormFields(t *testing.T) {
-	t.Parallel()
-
-	theme := newAdminTheme()
-	view := AdminViewState{
-		CreateRobotForm: adminCreateRobotForm{
-			Name:       "ci",
-			Repository: "team/app",
-			Role:       domainauth.RepoRoleWriter,
-			Lifetime:   tokenLifetime{Index: 0, Chosen: true},
-		},
-	}
-
-	got := renderAdminCreateRobotScreen(theme, view, nil, charFixedTime)
-
-	for _, want := range []string{"ci", "team/app", string(domainauth.RepoRoleWriter), "Expires Sat 21 Mar 2026 09:30 UTC (in 7 days)"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("renderAdminCreateRobotScreen() = %q, want it to contain %q", got, want)
-		}
-	}
-}
-
-// TestRenderAdminCreateRobotScreenShowsOneTimeSecretWhenRevealed is task
-// 5.3's CRITICAL RED test (spec.md "Operator manages a robot account end to
-// end": "the TUI ... shows the one-time token secret"): immediately after a
-// successful creation, RevealedTokenSecret/Accessor are populated on
-// AdminViewState (the exact same fields renderAdminTokensScreen already
-// reveals once for human admin tokens -- design.md Decision 6 reuses the
-// token machinery unchanged), and screenAdminCreateRobot must display them.
-func TestRenderCreateAdminRobotScreenShowsOneTimeSecretWhenRevealed(t *testing.T) {
-	t.Parallel()
-
-	theme := newAdminTheme()
-	view := AdminViewState{
-		RevealedTokenSecret:   "s3cr3t-value",
-		RevealedTokenAccessor: "accessor-123",
-	}
-
-	got := renderAdminCreateRobotScreen(theme, view, nil, charFixedTime)
-
-	if !strings.Contains(got, "s3cr3t-value") {
-		t.Fatalf("renderAdminCreateRobotScreen() = %q, want the one-time secret rendered", got)
-	}
-	if !strings.Contains(got, "accessor-123") {
-		t.Fatalf("renderAdminCreateRobotScreen() = %q, want the accessor rendered", got)
-	}
-}
-
-// TestRenderAdminCreateRobotScreenNeverShowsSecretBlockWhenNotRevealed
-// triangulates the reveal case above: with no secret populated (the normal
-// state before a creation, and after clearRevealedAdminToken runs), no
-// secret material or accessor placeholder is rendered at all -- proving the
-// block is conditional, not merely blank-value formatting that would leave
-// an empty label lying around.
-func TestRenderCreateAdminRobotScreenNeverShowsSecretBlockWhenNotRevealed(t *testing.T) {
-	t.Parallel()
-
-	theme := newAdminTheme()
-	got := renderAdminCreateRobotScreen(theme, AdminViewState{}, nil, charFixedTime)
-
-	if strings.Contains(got, "One-time secret") {
-		t.Fatalf("renderAdminCreateRobotScreen() = %q, must not render the secret block when nothing was revealed", got)
-	}
-}
-
-// TestRenderCreateAdminRobotScreenShowsRepositorySuggestionList is the manual
-// RC follow-up's RED test: screenAdminCreateRobot must render a "Known
-// Repositories" suggestion list with windowed, highlighted-selection
-// rendering for the filter/select behavior.
-func TestRenderCreateAdminRobotScreenShowsRepositorySuggestionList(t *testing.T) {
-	t.Parallel()
-
-	theme := newAdminTheme()
-	view := AdminViewState{
-		CreateRobotForm: adminCreateRobotForm{
-			Repository:           "tea",
-			Focus:                adminCreateRobotFieldRepository,
-			RepositorySuggestion: 1,
-		},
-	}
-	knownRepositories := []string{"library/alpine", "team/demo", "team/backend", "ops/console"}
-
-	got := renderAdminCreateRobotScreen(theme, view, knownRepositories, charFixedTime)
-
-	if !strings.Contains(got, "Known Repositories") {
-		t.Fatalf("renderAdminCreateRobotScreen() = %q, want a known-repositories suggestion header", got)
-	}
-	if strings.Contains(got, "library/alpine") {
-		t.Fatalf("renderAdminCreateRobotScreen() = %q, want non-matching repository hidden", got)
-	}
-	if !strings.Contains(got, "team/demo") || !strings.Contains(got, "team/backend") {
-		t.Fatalf("renderAdminCreateRobotScreen() = %q, want filtered suggestions rendered", got)
-	}
-}
-
-// TestRenderCreateAdminRobotScreenShowsEmptySuggestionMessage triangulates
-// the suggestion-list case above: when no known repository matches the
-// current filter, the screen shows an explicit empty-state message instead
-// of an empty "Known Repositories" section.
-func TestRenderCreateAdminRobotScreenShowsEmptySuggestionMessage(t *testing.T) {
-	t.Parallel()
-
-	theme := newAdminTheme()
-	view := AdminViewState{
-		CreateRobotForm: adminCreateRobotForm{Repository: "no-match", Focus: adminCreateRobotFieldRepository},
-	}
-
-	got := renderAdminCreateRobotScreen(theme, view, []string{"library/alpine", "team/demo"}, charFixedTime)
-
-	if !strings.Contains(got, "No known repositories match the current filter.") {
-		t.Fatalf("renderAdminCreateRobotScreen() = %q, want the empty-suggestions message", got)
-	}
-}
-
 func TestNextDelegateGrantRoleNeverProducesRepoAdmin(t *testing.T) {
 	t.Parallel()
 
@@ -1748,33 +1584,21 @@ func TestNonMigratedScreensUnchanged(t *testing.T) {
 	now := time.Date(2026, time.August, 20, 9, 0, 0, 0, time.UTC)
 	session := AdminSession{Username: "operator", ExpiresAt: now.Add(10 * time.Minute)}
 
-	userView := AdminViewState{
-		SelectedUserID:   "u-1",
-		SelectedUsername: "alice",
-	}
 	repoAdminView := AdminViewState{RepoAdminRepository: "team/app"}
 
 	screens := []struct {
 		name string
 		view AdminViewState
 	}{
-		{"screenAdminEditUserTokens", userView},
-		{"screenAdminCreateToken", userView},
 		{"screenRepoAdminGrants", repoAdminView},
 		{"screenRepoAdminAddGrant", repoAdminView},
-		{"screenAdminRobots", AdminViewState{}},
-		{"screenAdminCreateRobot", AdminViewState{}},
 	}
 	ids := map[string]screen{
-		"screenAdminEditUserTokens": screenAdminEditUserTokens,
-		"screenAdminCreateToken":    screenAdminCreateToken,
-		"screenRepoAdminGrants":     screenRepoAdminGrants,
-		"screenRepoAdminAddGrant":   screenRepoAdminAddGrant,
-		"screenAdminRobots":         screenAdminRobots,
-		"screenAdminCreateRobot":    screenAdminCreateRobot,
+		"screenRepoAdminGrants":   screenRepoAdminGrants,
+		"screenRepoAdminAddGrant": screenRepoAdminAddGrant,
 	}
 
-	if got, want := len(screens), 6; got != want {
+	if got, want := len(screens), 2; got != want {
 		t.Fatalf("test setup invalid: %d screen fixtures, want %d (the user-management screens left the old renderer)", got, want)
 	}
 

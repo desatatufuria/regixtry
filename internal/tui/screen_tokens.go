@@ -23,8 +23,7 @@ type tokensScreen struct {
 	principalID   string
 	principalName string
 	// robot picks the breadcrumb (Robots instead of Users) and where Esc goes.
-	robot    bool
-	returnTo screen
+	robot bool
 
 	tokens   []ports.AdminToken
 	loaded   bool
@@ -37,17 +36,17 @@ type tokensScreen struct {
 	name     string
 	lifetime tokenLifetime
 	// creating is true from the Enter that issued the create command until its
-	// result arrives; Enter is ignored meanwhile and Esc does not leave, so the
-	// one-time secret can never be lost.
+	// result arrives; Enter is ignored meanwhile. Esc still leaves: left then
+	// brings the screen back when the token was created after all, so its
+	// one-time secret is never lost.
 	creating bool
+	left     bool
 	formErr  string
 
 	done    bool
 	created createdToken
 
-	confirm confirmPrompt
-	// revoking is true from the Enter that confirmed a revoke until its result.
-	revoking   bool
+	confirm    confirmPrompt
 	notice     string
 	noticeFail bool
 }
@@ -68,13 +67,12 @@ type createdToken struct {
 	expires  time.Time
 }
 
-func newTokensScreen(principalID, principalName string, robot bool, returnTo screen) tokensScreen {
+func newTokensScreen(principalID, principalName string, robot bool) tokensScreen {
 	return tokensScreen{
 		gen:           accessGenerations.Add(1),
 		principalID:   principalID,
 		principalName: principalName,
 		robot:         robot,
-		returnTo:      returnTo,
 	}
 }
 
@@ -108,12 +106,11 @@ type openTokensMsg struct {
 	principalID   string
 	principalName string
 	robot         bool
-	returnTo      screen
 }
 
-func openTokens(principalID, principalName string, robot bool, returnTo screen) tea.Cmd {
+func openTokens(principalID, principalName string, robot bool) tea.Cmd {
 	return func() tea.Msg {
-		return openTokensMsg{principalID: principalID, principalName: principalName, robot: robot, returnTo: returnTo}
+		return openTokensMsg{principalID: principalID, principalName: principalName, robot: robot}
 	}
 }
 
@@ -185,12 +182,18 @@ func (s tokensScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.Cmd, 
 			secret:   typed.created.Secret,
 			expires:  typed.created.ExpiresAt,
 		}
+		if s.left {
+			// The operator pressed Esc while the token was being created: show
+			// the secret anyway, it cannot be displayed again.
+			s.left = false
+			return s, navigate(screenAdminEditUserTokens), false
+		}
 		return s, tokensLoadCmd(env, s.gen, s.principalID), false
 	case tokenRevokedMsg:
 		if typed.gen != s.gen {
 			return s, nil, false
 		}
-		s.revoking, s.confirm = false, confirmPrompt{}
+		s.confirm = confirmPrompt{}
 		if typed.err != nil {
 			s.notice, s.noticeFail = typed.err.Error(), true
 			return s, nil, false
@@ -234,31 +237,27 @@ func (s tokensScreen) back() tea.Cmd {
 	if s.robot {
 		return openRobots(s.principalID)
 	}
-	return navigate(s.returnTo)
+	return openUserScreen(openUserScreenMsg{to: screenAdminEditUser, userID: s.principalID, username: s.principalName})
 }
 
 func (s tokensScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd, bool) {
 	switch {
 	case s.confirm.Active():
-		if s.revoking && isEnterKey(msg) {
-			return s, nil, true
-		}
 		next, cmd, _ := s.confirm.update(env, msg)
 		s.confirm = next
-		if cmd != nil {
-			s.revoking = true
-		}
 		return s, cmd, true
 	case s.done:
 		// Enter and Esc both mean Done: the secret is dropped, the list stays.
 		if isEnterKey(msg) || isEscKey(msg) {
 			s.done, s.created, s.focus = false, createdToken{}, tokensFocusList
 			s.name, s.lifetime = "", tokenLifetime{}
+			return s, tokensLoadCmd(env, s.gen, s.principalID), true
 		}
 		return s, nil, true
 	case s.creating:
 		if isEscKey(msg) {
-			s.formErr = "Creating the token, please wait: its secret is shown once it exists."
+			s.left = true
+			return s, s.back(), true
 		}
 		return s, nil, true
 	case s.focus != tokensFocusList:
@@ -275,6 +274,8 @@ func (s tokensScreen) listKey(msg keyMsg) (adminScreen, tea.Cmd, bool) {
 		s.selected = boundedIndex(s.selected-1, len(s.tokens))
 	case isMoveDownKey(msg):
 		s.selected = boundedIndex(s.selected+1, len(s.tokens))
+	case isCommandRune(msg, 'g'):
+		return s, openGrantAccess(s.principalID, screenAdminEditUserTokens), true
 	case isCommandRune(msg, 'n') || isTabKey(msg):
 		s.focus, s.formErr, s.notice = tokensFocusName, "", ""
 	case isCommandRune(msg, 'x'):
@@ -296,11 +297,12 @@ func (s tokensScreen) revokeConfirm(token ports.AdminToken) confirmPrompt {
 	gen, userID, accessor := s.gen, s.principalID, token.Accessor
 	return newConfirmPrompt(
 		"Confirm Token Revocation",
-		fmt.Sprintf("Revoke token %q (%s) for %q? It stops working at once.", tokenDisplayName(token), shortAccessor(accessor), s.principalName),
+		fmt.Sprintf("Revoke token %q (%s) for %q?", tokenDisplayName(token), shortAccessor(accessor), s.principalName),
 		"revoke",
 		fmt.Sprintf("Revoking token %s for %s...", shortAccessor(accessor), s.principalName),
 		func(env screenEnv) tea.Cmd { return tokenRevokeCmd(env, gen, userID, accessor) },
-	)
+	).withTarget(tokenDisplayName(token), s.principalName).
+		withConsequence("Anything using this token stops working immediately.")
 }
 
 func tokenDisplayName(token ports.AdminToken) string {
@@ -381,6 +383,7 @@ func tokenRevokeCmd(env screenEnv, gen uint64, userID, accessor string) tea.Cmd 
 var tokensListKeys = screenKeys{short: []key.Binding{
 	key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "new token")),
 	key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "revoke")),
+	key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "grant access")),
 	key.NewBinding(key.WithKeys("up", "down"), key.WithHelp("↑↓", "move")),
 	key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
 	key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),

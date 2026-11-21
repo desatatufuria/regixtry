@@ -175,7 +175,7 @@ func TestCreateRobotRequiresNameAndRepository(t *testing.T) {
 	}
 }
 
-func TestCreateRobotIgnoresEnterWhileInFlight(t *testing.T) {
+func TestCreateRobotIgnoresEnterWhileInFlightAndEscLeavesButTheSecretComesBack(t *testing.T) {
 	t.Parallel()
 	client, env, s := newCreateRobotFixture()
 	client.createRobot = ports.AdminCreatedRobot{Robot: ports.AdminRobot{ID: "r-1", Username: "bot"}, Secret: "s3cret", Accessor: "acc"}
@@ -189,14 +189,18 @@ func TestCreateRobotIgnoresEnterWhileInFlight(t *testing.T) {
 	if second != nil {
 		t.Fatal("a second Enter dispatched while in flight")
 	}
-	// Esc does not leave while the secret is still on its way.
+	// Esc still leaves; the secret is not lost when the robot is created anyway.
 	stay, escCmd, _ := again.Update(env, testKeyEsc())
-	if escCmd != nil || !strings.Contains(stay.(createRobotScreen).err, "please wait") {
-		t.Fatal("Esc left the screen mid-creation")
+	if msg, ok := escCmd().(openRobotsMsg); !ok || msg.selectID != "" {
+		t.Fatalf("Esc mid-creation = %#v, want back to the list", escCmd())
 	}
-	done, _ := accessSettle(stay, env, func() tea.Msg { return cmd() })
+	done, seen := accessSettle(stay, env, func() tea.Msg { return cmd() })
 	if client.createRobotCalls != 1 || !done.(createRobotScreen).done || done.(createRobotScreen).creating {
 		t.Fatalf("calls=%d done=%v creating=%v", client.createRobotCalls, done.(createRobotScreen).done, done.(createRobotScreen).creating)
+	}
+	// The screen asks to be shown again: the secret appears only once.
+	if last := seen[len(seen)-1]; last != (navigateMsg{To: screenAdminCreateRobot}) {
+		t.Fatalf("after the late result got %#v, want navigation back to the secret", last)
 	}
 }
 
@@ -323,5 +327,73 @@ func TestCreateRobotKeysChangeWithTheState(t *testing.T) {
 	done.done = true
 	if len(form.Keys().short) == len(done.Keys().short) {
 		t.Fatal("the footer must differ between the form and the secret state")
+	}
+}
+
+func TestCreateRobotStartsAsReaderOnTheNameFieldAndTabCyclesAllFourFields(t *testing.T) {
+	t.Parallel()
+	_, env, s := newCreateRobotFixture()
+	got := s.(createRobotScreen)
+	if got.role != domainauth.RepoRoleReader || got.focus != robotFieldName {
+		t.Fatalf("role=%q focus=%v, want Reader on Name (never the unrestricted role by accident)", got.role, got.focus)
+	}
+	want := []robotField{robotFieldRepository, robotFieldRole, robotFieldLifetime, robotFieldName}
+	for i, focus := range want {
+		s, _ = accessPress(t, s, env, testKeyTab())
+		if got := s.(createRobotScreen).focus; got != focus {
+			t.Fatalf("Tab %d: focus = %v, want %v", i+1, got, focus)
+		}
+	}
+}
+
+var createRobotOverflowStates = []struct {
+	name string
+	keys []keyMsg
+}{
+	{"repository_focus", nil},
+	{"role_focus", []keyMsg{testKeyTab()}},
+	{"custom_empty", toCustomKeys()},
+	{"custom_valid", append(toCustomKeys(), accessType("12h")...)},
+	{"custom_invalid", append(toCustomKeys(), accessType("3y")...)},
+}
+
+// toCustomKeys moves the focus to Lifetime and selects Custom.
+func toCustomKeys() []keyMsg {
+	keys := []keyMsg{testKeyTab(), testKeyTab()}
+	for range 5 {
+		keys = append(keys, testKeyRight())
+	}
+	return keys
+}
+
+// The Create robot form keeps the overflow budgeting of the screen it
+// replaced: at every size and for 0 to 5 matching repositories, in every
+// Lifetime state, it fits the terminal, keeps the highlighted suggestion and
+// the Lifetime rows visible, and only the suggestion list shrinks.
+func TestCreateRobotFormNeverExceedsTheTerminal(t *testing.T) {
+	t.Parallel()
+	for _, size := range accessSizes {
+		for suggestions := 0; suggestions <= 5; suggestions++ {
+			for _, state := range createRobotOverflowStates {
+				t.Run(fmt.Sprintf("%s n=%d %s", sizeLabel(size.w, size.h), suggestions, state.name), func(t *testing.T) {
+					t.Parallel()
+					var known []string
+					for i := range suggestions {
+						known = append(known, fmt.Sprintf("team/app-%d", i+1))
+					}
+					env := accessEnvSized(newAccessClient(), size.w, size.h, known...)
+					s := fillRobot(t, newCreateRobotScreen(), env, "ci-bot", "team/app")
+					s, _ = accessPress(t, s, env, state.keys...)
+					view := accessView(s, env)
+					if lines := accessLines(view); len(lines) > size.h {
+						t.Fatalf("%d rows, terminal has %d", len(lines), size.h)
+					}
+					if suggestions > 0 {
+						mustContain(t, view, "team/app-1")
+					}
+					mustContain(t, view, "Lifetime", "esc")
+				})
+			}
+		}
 	}
 }

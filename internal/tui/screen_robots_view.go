@@ -114,7 +114,7 @@ func (s robotsScreen) renderList(theme adminTheme, width, rows int, now time.Tim
 // selected robot's missing access.
 func (s robotsScreen) statusLines(theme adminTheme, width int) []string {
 	switch {
-	case s.acting && s.confirm.submitting != "":
+	case s.confirm.inFlight && s.confirm.submitting != "":
 		return []string{theme.muted.Render(grantTruncate(s.confirm.submitting, width))}
 	case s.notice != "" && s.noticeFail:
 		return []string{theme.error.Render(grantTruncate(s.notice, width))}

@@ -10,8 +10,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	domainauth "regixtry/internal/domain/auth"
 )
 
 func TestAdminSessionIsExpired(t *testing.T) {
@@ -48,7 +46,7 @@ func TestLogoutAdminStateClearsSessionAndViewData(t *testing.T) {
 	if session.ExpiredReason != "" {
 		t.Fatalf("ExpiredReason = %q, want empty", session.ExpiredReason)
 	}
-	if view.SelectedUserID != "" || len(view.AdminTokens) != 0 {
+	if view.Confirm.Active() || view.RepoAdminRepository != "" {
 		t.Fatalf("LogoutAdminState() returned populated view state: %#v", view)
 	}
 }
@@ -63,7 +61,7 @@ func TestExpireAdminStateClearsViewDataAndKeepsReason(t *testing.T) {
 	if session.ExpiredReason != "Session expired. Log in again." {
 		t.Fatalf("ExpiredReason = %q, want session expiry message", session.ExpiredReason)
 	}
-	if len(view.AdminTokens) != 0 {
+	if view.Confirm.Active() || view.RepoAdminRepository != "" {
 		t.Fatalf("ExpireAdminState() returned populated view state: %#v", view)
 	}
 }
@@ -327,46 +325,6 @@ func TestNormalizeUnsignedSelfReadMapsEmptyToOff(t *testing.T) {
 		if got := normalizeUnsignedSelfRead(value); got != value {
 			t.Fatalf("normalizeUnsignedSelfRead(%q) = %q, want unchanged", value, got)
 		}
-	}
-}
-
-// TestNewAdminViewStateSeedsAdminRobotFormDefaultsAndEmptyList is task 5.1's
-// RED test (design.md Decision 7's robot screens): a fresh AdminViewState
-// seeds CreateRobotForm.Role to RepoRoleReader -- mirroring
-// RepoAdminGrantForm's own zero-value convention, so the create-robot form
-// never starts on the unrestricted repo-admin role by accident -- and starts
-// with no robots listed or selected.
-func TestNewAdminViewStateSeedsAdminRobotFormDefaultsAndEmptyList(t *testing.T) {
-	t.Parallel()
-
-	view := newAdminViewState()
-	if view.CreateRobotForm.Role != domainauth.RepoRoleReader {
-		t.Fatalf("CreateRobotForm.Role = %v, want RepoRoleReader", view.CreateRobotForm.Role)
-	}
-	if view.CreateRobotForm.Focus != adminCreateRobotFieldName {
-		t.Fatalf("CreateRobotForm.Focus = %v, want adminCreateRobotFieldName", view.CreateRobotForm.Focus)
-	}
-	if len(view.Robots) != 0 || view.SelectedRobot != 0 {
-		t.Fatalf("fresh AdminViewState has populated robot data: %#v", view)
-	}
-}
-
-// TestNextAdminRobotFormFieldCyclesThroughAllFourFields pins the create-robot
-// form's field order: Name -> Repository -> Role -> Lifetime, wrapping to Name.
-func TestNextAdminRobotFormFieldCyclesThroughAllFourFields(t *testing.T) {
-	t.Parallel()
-
-	if got := nextCreateRobotField(adminCreateRobotFieldName); got != adminCreateRobotFieldRepository {
-		t.Fatalf("nextCreateRobotField(Name) = %v, want Repository", got)
-	}
-	if got := nextCreateRobotField(adminCreateRobotFieldRepository); got != adminCreateRobotFieldRole {
-		t.Fatalf("nextCreateRobotField(Repository) = %v, want Role", got)
-	}
-	if got := nextCreateRobotField(adminCreateRobotFieldRole); got != adminCreateRobotFieldLifetime {
-		t.Fatalf("nextCreateRobotField(Role) = %v, want Lifetime", got)
-	}
-	if got := nextCreateRobotField(adminCreateRobotFieldLifetime); got != adminCreateRobotFieldName {
-		t.Fatalf("nextCreateRobotField(Lifetime) = %v, want Name (wraps)", got)
 	}
 }
 

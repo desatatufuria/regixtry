@@ -1,15 +1,15 @@
- Regixtry Admin
- Admin › Access › Robots
- ╭───────────────────────────────────────  ╭──────────────────────────────────────────────────────────────╮  ───────────────────────────────────────╮
- │                                         │  Enable User                                                 │                                         │
- │ Robots                                  │                                                              │                                         │
- │ No robot accounts available.            │  Enable alice?                                               │                                         │
- │                                         │                                                              │                                         │
- │ Operator: operator                      │   Confirm                                        y / enter   │                                         │
- │ Session remaining: 24h0m0s              │   Cancel                                               esc   │                                         │
- │                                         ╰──────────────────────────────────────────────────────────────╯                                         │
- ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- n: create robot | e: enable | x: disable | t: tokens | g: grant access | r: refresh | Esc: back | q: quit
+ Regixtry Admin                            ╭──────────────────────────────────────────────────────────────╮
+ Repositories /  / Grants                  │  Enable User                                                 │
+ ╭───────────────────────────────────────  │                                                              │
+ │                                         │  Enable alice?                                               │
+ │ Select a repository before opening gra  │                                                              │
+ │                                         │   Confirm                                        y / enter   │
+ ╰───────────────────────────────────────  │   Cancel                                               esc   │
+ n: add grant | e: edit selected grant |   ╰──────────────────────────────────────────────────────────────╯
+
+
+
+
 
 
 
