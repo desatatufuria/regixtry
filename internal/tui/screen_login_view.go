@@ -12,7 +12,7 @@ import (
 // hints. The same chrome frames the "signing in" wait.
 const (
 	// loginPanelWidth is the board's 460px panel at about 8.5px a column.
-	loginPanelWidth = 60
+	loginPanelWidth = 72
 	// loginPanelChrome is the panel's border and horizontal padding: 2 + 2*2.
 	loginPanelChrome = 6
 )
@@ -55,7 +55,7 @@ func renderAdminLogin(theme adminTheme, view loginView, width, height int) strin
 			lines = append(lines, loginNoteBox(theme, view.note, inner))
 		} else if view.status != "" {
 			lines = append(lines, gap()...)
-			lines = append(lines, theme.error.Render(strings.Join(grantWrap(view.status, inner), "\n")))
+			lines = append(lines, theme.error.Render(strings.Join(loginCapLines(view.status, inner), "\n")))
 		}
 		lines = append(lines, gap()...)
 		lines = append(lines, renderLoginField(theme, "Username", maskedOrPlain(view.form.Username, false), inner, view.form.Focus == loginFieldUsername))
@@ -130,7 +130,7 @@ func loginNoteBox(theme adminTheme, note string, width int) string {
 		BorderForeground(warn).
 		Foreground(warn).
 		Padding(0, 1).
-		Render(strings.Join(grantWrap(note, max(width-4, 1)), "\n"))
+		Render(strings.Join(loginCapLines(note, max(width-4, 1)), "\n"))
 }
 
 // maskedOrPlain is what a field shows: the password becomes one "*" per rune.
@@ -164,4 +164,21 @@ func loginButton(theme adminTheme, label, keycap string, width int, primary bool
 		return style.Foreground(theme.pill.GetForeground()).Background(theme.pill.GetBackground()).Bold(true).Render(line)
 	}
 	return style.Foreground(theme.text.GetForeground()).Render(label + strings.Repeat(" ", gap) + theme.muted.Render(keycap))
+}
+
+// loginMaxMessageLines caps the message block so the fields, buttons and
+// footer stay visible however long the message is.
+const loginMaxMessageLines = 4
+
+// loginCapLines wraps text to width and keeps at most loginMaxMessageLines
+// lines; when text is cut, the last line ends in an ellipsis (cut on a rune
+// boundary, so a multibyte rune is never split).
+func loginCapLines(text string, width int) []string {
+	lines := grantWrap(text, width)
+	if len(lines) <= loginMaxMessageLines {
+		return lines
+	}
+	lines = lines[:loginMaxMessageLines]
+	lines[loginMaxMessageLines-1] = grantTruncate(lines[loginMaxMessageLines-1]+"…", width)
+	return lines
 }

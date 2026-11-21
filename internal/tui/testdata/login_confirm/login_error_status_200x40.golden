@@ -10,22 +10,22 @@
                                                                                                                                                                                                         
                                                                                                                                                                                                         
                                                                                                                                                                                                         
-                                                                      ╭──────────────────────────────────────────────────────────╮                                                                      
-                                                                      │  regixtry operator sign in                               │                                                                      
-                                                                      │                                                          │                                                                      
-                                                                      │  Sign in failed: the admin API refused the credentials   │                                                                      
-                                                                      │  the admin API refused the credentials the admin API     │                                                                      
-                                                                      │  refused the credentials the admin API refused the       │                                                                      
-                                                                      │  credentials                                             │                                                                      
-                                                                      │                                                          │                                                                      
-                                                                      │  Username                                                │                                                                      
-                                                                      │                                                          │                                                                      
-                                                                      │  Password                                                │                                                                      
-                                                                      │                                                          │                                                                      
-                                                                      │                                                          │                                                                      
-                                                                      │   Sign in                                        enter   │                                                                      
-                                                                      │   Back                                             esc   │                                                                      
-                                                                      ╰──────────────────────────────────────────────────────────╯                                                                      
+                                                                ╭──────────────────────────────────────────────────────────────────────╮                                                                
+                                                                │  regixtry operator sign in                                           │                                                                
+                                                                │                                                                      │                                                                
+                                                                │  Sign in failed: the admin API refused the credentials the admin     │                                                                
+                                                                │  API refused the credentials the admin API refused the credentials   │                                                                
+                                                                │  the admin API refused the credentials                               │                                                                
+                                                                │                                                                      │                                                                
+                                                                │  Username                                                            │                                                                
+                                                                │                                                                      │                                                                
+                                                                │  Password                                                            │                                                                
+                                                                │                                                                      │                                                                
+                                                                │                                                                      │                                                                
+                                                                │   Sign in                                                    enter   │                                                                
+                                                                │   Back                                                         esc   │                                                                
+                                                                ╰──────────────────────────────────────────────────────────────────────╯                                                                
+                                                                                                                                                                                                        
                                                                                                                                                                                                         
                                                                                                                                                                                                         
                                                                                                                                                                                                         
