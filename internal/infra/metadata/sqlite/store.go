@@ -20,7 +20,7 @@ type Store struct {
 	db *sql.DB
 }
 
-const sqliteBusyTimeoutMillis = 100
+const sqliteBusyTimeoutMillis = 5000
 
 func New(path string) (*Store, error) {
 	db, err := sql.Open("sqlite", sqliteDSN(path))
@@ -151,6 +151,9 @@ func sqliteDSN(path string) string {
 	query.Add("_pragma", "foreign_keys(1)")
 	query.Add("_pragma", "journal_mode(WAL)")
 	query.Add("_pragma", "busy_timeout("+strconv.Itoa(sqliteBusyTimeoutMillis)+")")
+	// immediate: a deferred read-then-write transaction cannot honor
+	// busy_timeout when another writer committed in between (WAL).
+	query.Add("_txlock", "immediate")
 
 	return (&url.URL{Scheme: "file", Path: path, RawQuery: query.Encode()}).String()
 }
