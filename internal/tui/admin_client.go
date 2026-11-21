@@ -101,6 +101,12 @@ type AdminClient interface {
 	// that expire within the given window, soonest first, in ONE call for all
 	// principals. A zero within or limit leaves the server default.
 	ListExpiringTokens(ctx context.Context, session AdminSession, within time.Duration, limit int) ([]ports.AdminExpiringToken, error)
+	// ListAllRepositoryGrants returns one page of every repository grant of
+	// every user and robot, ordered by repository then username, in ONE call
+	// for all repositories (also those never pushed). after is the opaque
+	// cursor a previous page returned as Next, "" for the first page; a zero
+	// limit leaves the server default.
+	ListAllRepositoryGrants(ctx context.Context, session AdminSession, limit int, after string) (ports.AdminGrantPage, error)
 }
 
 type HTTPAdminClient struct {
@@ -262,6 +268,29 @@ func (c *HTTPAdminClient) ListExpiringTokens(ctx context.Context, session AdminS
 		return nil, err
 	}
 	return tokens, nil
+}
+
+// adminGrantsMaxLimit is the most rows GET /admin/v1/repository-grants returns
+// per page; a larger request is a server validation error, so it is clamped.
+const adminGrantsMaxLimit = 200
+
+func (c *HTTPAdminClient) ListAllRepositoryGrants(ctx context.Context, session AdminSession, limit int, after string) (ports.AdminGrantPage, error) {
+	query := url.Values{}
+	if limit > 0 {
+		query.Set("limit", strconv.Itoa(min(limit, adminGrantsMaxLimit)))
+	}
+	if after != "" {
+		query.Set("after", after)
+	}
+	path := "/admin/v1/repository-grants"
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var page ports.AdminGrantPage
+	if err := c.getJSON(ctx, session, path, &page); err != nil {
+		return ports.AdminGrantPage{}, err
+	}
+	return page, nil
 }
 
 // readableWithin words a window in the API's readable grammar (12h, 7d, 2y):
