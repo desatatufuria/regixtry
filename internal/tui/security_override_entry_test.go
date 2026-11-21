@@ -21,7 +21,6 @@ func TestGitleaksOverrideOpensWithoutEnteringTrivy(t *testing.T) {
 	now := time.Date(2026, time.August, 20, 10, 0, 0, 0, time.UTC)
 	adminClient := &fakeAdminClient{
 		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-		features:     []ports.FeatureSummary{{Name: "gitleaks", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 		featurePage: ports.FeaturePage{
 			Summary: ports.FeatureSummary{Name: "gitleaks", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
 		},
@@ -67,7 +66,6 @@ func TestSigningOverrideOpensWithoutEnteringTrivy(t *testing.T) {
 	now := time.Date(2026, time.August, 20, 10, 0, 0, 0, time.UTC)
 	adminClient := &fakeAdminClient{
 		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-		features:     []ports.FeatureSummary{{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: true}},
 		featurePage: ports.FeaturePage{
 			Summary: ports.FeatureSummary{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: true},
 		},
@@ -106,7 +104,6 @@ func TestOverrideKeyIsInertWithoutAHighlightedRow(t *testing.T) {
 	now := time.Date(2026, time.August, 20, 10, 0, 0, 0, time.UTC)
 	adminClient := &fakeAdminClient{
 		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-		features:     []ports.FeatureSummary{{Name: "gitleaks", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 		featurePage: ports.FeaturePage{
 			Summary: ports.FeatureSummary{Name: "gitleaks", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
 		},

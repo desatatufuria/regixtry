@@ -25,7 +25,6 @@ func TestEveryOverridePathReachableBeforeIsReachableAfter(t *testing.T) {
 		t.Parallel()
 		adminClient := &fakeAdminClient{
 			loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-			features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 			featurePage:  ports.FeaturePage{Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 			scanRuns: []ports.ScanRun{
 				{ID: "run-1", Repository: "team/api", RequestedRef: "1.0.0", Status: ports.ScanRunStatusCompleted, Critical: 1},
@@ -49,7 +48,6 @@ func TestEveryOverridePathReachableBeforeIsReachableAfter(t *testing.T) {
 		t.Parallel()
 		adminClient := &fakeAdminClient{
 			loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-			features:     []ports.FeatureSummary{{Name: "gitleaks", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 			featurePage:  ports.FeaturePage{Summary: ports.FeatureSummary{Name: "gitleaks", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 		}
 		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
@@ -67,7 +65,6 @@ func TestEveryOverridePathReachableBeforeIsReachableAfter(t *testing.T) {
 		t.Parallel()
 		adminClient := &fakeAdminClient{
 			loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-			features:     []ports.FeatureSummary{{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: true}},
 			featurePage:  ports.FeaturePage{Summary: ports.FeatureSummary{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: true}},
 		}
 		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
@@ -85,7 +82,6 @@ func TestEveryOverridePathReachableBeforeIsReachableAfter(t *testing.T) {
 		t.Parallel()
 		adminClient := &fakeAdminClient{
 			loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-			features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 			featurePage:  ports.FeaturePage{Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 			scanRuns: []ports.ScanRun{
 				{ID: "run-1", Repository: "team/api", RequestedRef: "1.0.0", Status: ports.ScanRunStatusCompleted, Critical: 1},

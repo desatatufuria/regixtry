@@ -23,10 +23,6 @@ const (
 
 type adminResetPasswordField int
 
-const (
-	adminResetPasswordFieldPassword adminResetPasswordField = iota
-)
-
 type adminGrantField int
 
 const (
@@ -63,13 +59,6 @@ const (
 	adminCreateRobotFieldRepository
 	adminCreateRobotFieldRole
 	adminCreateRobotFieldLifetime
-)
-
-type TrivyTab string
-
-const (
-	trivyTabRuntime          TrivyTab = "runtime"
-	trivyTabRepositoryAlerts TrivyTab = "repository-alerts"
 )
 
 type trivyConfigField int

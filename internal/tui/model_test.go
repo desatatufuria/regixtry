@@ -1995,7 +1995,6 @@ func TestAdminConfirmCharacterization(t *testing.T) {
 			setup: func(t *testing.T) (Model, *fakeAdminClient) {
 				adminClient := &fakeAdminClient{
 					loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-					features:     []ports.FeatureSummary{{Name: "gitleaks", Kind: ports.FeatureKindBuiltin, Enabled: false}},
 					featurePage: ports.FeaturePage{
 						Summary: ports.FeatureSummary{Name: "gitleaks", Kind: ports.FeatureKindBuiltin, Enabled: false},
 						Actions: []ports.FeatureAction{{ID: "enable", Label: "Enable", ConfirmTitle: "Confirm Enable", ConfirmMessage: `Confirm enable feature "gitleaks"?`}},
@@ -2014,7 +2013,6 @@ func TestAdminConfirmCharacterization(t *testing.T) {
 			setup: func(t *testing.T) (Model, *fakeAdminClient) {
 				adminClient := &fakeAdminClient{
 					loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-					features:     []ports.FeatureSummary{{Name: "gitleaks", Kind: ports.FeatureKindBuiltin, Enabled: true}},
 					featurePage: ports.FeaturePage{
 						Summary: ports.FeatureSummary{Name: "gitleaks", Kind: ports.FeatureKindBuiltin, Enabled: true},
 						Actions: []ports.FeatureAction{{ID: "disable", Label: "Disable", ConfirmTitle: "Confirm Disable", ConfirmMessage: `Confirm disable feature "gitleaks"?`}},
@@ -2920,7 +2918,6 @@ func TestModelFeatureViewRendersGenericPageAndAllowsDeclaredAction(t *testing.T)
 	adminClient := &fakeAdminClient{
 		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
 		users:        []ports.AdminUser{{ID: "u-1", Username: "alice", IsAdmin: true, Enabled: true}},
-		features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 		featurePage: ports.FeaturePage{
 			Summary:  ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
 			Header:   []ports.FeatureField{{Label: "Enabled", Value: "true"}, {Label: "Configured", Value: "true"}},
@@ -2974,7 +2971,6 @@ func TestModelFeatureSelectionRefreshesPageAndHelpFromBackendActions(t *testing.
 	now := time.Date(2026, time.August, 8, 14, 0, 0, 0, time.UTC)
 	adminClient := &fakeAdminClient{
 		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-		features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}, {Name: "gitleaks", Kind: ports.FeatureKindBuiltin, Enabled: false, Configured: true}},
 		featurePages: map[string]ports.FeaturePage{
 			"trivy":    {Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}, Header: []ports.FeatureField{{Label: "Enabled", Value: "true"}}, Actions: []ports.FeatureAction{{ID: "refresh", Label: "Refresh"}, {ID: "disable", Label: "Disable", ConfirmTitle: "Confirm Disable", ConfirmMessage: `Confirm disable feature "trivy"?`}}},
 			"gitleaks": {Summary: ports.FeatureSummary{Name: "gitleaks", Kind: ports.FeatureKindBuiltin, Enabled: false, Configured: true}, Header: []ports.FeatureField{{Label: "Enabled", Value: "false"}}, Actions: []ports.FeatureAction{{ID: "refresh", Label: "Refresh"}, {ID: "enable", Label: "Enable", ConfirmTitle: "Confirm Enable", ConfirmMessage: `Confirm enable feature "gitleaks"?`}}},
@@ -3010,7 +3006,6 @@ func TestModelTrivyFeatureDefaultsToRuntimeTab(t *testing.T) {
 	t.Run("trivy defaults to runtime tab", func(t *testing.T) {
 		adminClient := &fakeAdminClient{
 			loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-			features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 			featurePage: ports.FeaturePage{
 				Summary:  ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
 				Header:   []ports.FeatureField{{Label: "Enabled", Value: "true"}},
@@ -3043,7 +3038,6 @@ func TestModelTrivyConfigModalOpenCancelAndSubmitCurrentSettingsOnly(t *testing.
 	now := time.Date(2026, time.August, 8, 14, 0, 0, 0, time.UTC)
 	adminClient := &fakeAdminClient{
 		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-		features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 		featurePage: ports.FeaturePage{
 			Summary:  ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
 			Header:   []ports.FeatureField{{Label: "Enabled", Value: "true"}},
@@ -3106,10 +3100,6 @@ func TestModelGitleaksConfigModalOpenCancelAndSubmitCurrentSettingsOnly(t *testi
 	now := time.Date(2026, time.August, 13, 14, 0, 0, 0, time.UTC)
 	adminClient := &fakeAdminClient{
 		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-		features: []ports.FeatureSummary{
-			{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
-			{Name: "gitleaks", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
-		},
 		featurePages: map[string]ports.FeaturePage{
 			"trivy": {
 				Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
@@ -3210,9 +3200,6 @@ func TestModelGitleaksConfigModalValidationErrorSurfaced(t *testing.T) {
 	now := time.Date(2026, time.August, 13, 14, 0, 0, 0, time.UTC)
 	adminClient := &fakeAdminClient{
 		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-		features: []ports.FeatureSummary{
-			{Name: "gitleaks", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
-		},
 		featurePage: ports.FeaturePage{
 			Summary: ports.FeatureSummary{Name: "gitleaks", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
 			Header:  []ports.FeatureField{{Label: "Enabled", Value: "true"}},
@@ -3260,7 +3247,6 @@ func TestGitleaksConfigModalCharacterization(t *testing.T) {
 		t.Helper()
 		adminClient := &fakeAdminClient{
 			loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-			features:     []ports.FeatureSummary{{Name: "gitleaks", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 			featurePage: ports.FeaturePage{
 				Summary: ports.FeatureSummary{Name: "gitleaks", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
 				Header:  []ports.FeatureField{{Label: "Enabled", Value: "true"}},
@@ -3391,7 +3377,6 @@ func TestModelScanPolicyModalOpenToggleSubmitPersistsAndReflectsCurrentSettings(
 	now := time.Date(2026, time.August, 8, 14, 0, 0, 0, time.UTC)
 	adminClient := &fakeAdminClient{
 		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-		features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 		featurePage: ports.FeaturePage{
 			Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
 			Header:  []ports.FeatureField{{Label: "Enabled", Value: "true"}},
@@ -3466,7 +3451,6 @@ func TestModelSigningPolicyModalOpenerKeyIsScopedToSigningFeature(t *testing.T) 
 		t.Parallel()
 		adminClient := &fakeAdminClient{
 			loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-			features:     []ports.FeatureSummary{{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: true}},
 			featurePage: ports.FeaturePage{
 				Summary: ports.FeatureSummary{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: true},
 			},
@@ -3499,7 +3483,6 @@ func TestModelSigningPolicyModalOpenerKeyIsScopedToSigningFeature(t *testing.T) 
 		t.Parallel()
 		adminClient := &fakeAdminClient{
 			loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-			features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 			featurePage: ports.FeaturePage{
 				Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
 			},
@@ -3529,7 +3512,6 @@ func TestModelSigningPolicyModalOpenSeedsUnsignedSelfReadFromLoadedSettings(t *t
 	now := time.Date(2026, time.August, 15, 20, 0, 0, 0, time.UTC)
 	adminClient := &fakeAdminClient{
 		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-		features:     []ports.FeatureSummary{{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: true}},
 		featurePage: ports.FeaturePage{
 			Summary: ports.FeatureSummary{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: true},
 		},
@@ -3561,7 +3543,6 @@ func TestModelSigningPolicyModalSaveIncludesUnsignedSelfRead(t *testing.T) {
 	newModel := func() (Model, *fakeAdminClient) {
 		adminClient := &fakeAdminClient{
 			loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-			features:     []ports.FeatureSummary{{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: true}},
 			featurePage: ports.FeaturePage{
 				Summary: ports.FeatureSummary{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: true},
 			},
@@ -3630,7 +3611,6 @@ func TestModelSigningPolicyModalAddKeySubmitPersistsAndReflectsCurrentSettings(t
 	now := time.Date(2026, time.August, 13, 15, 0, 0, 0, time.UTC)
 	adminClient := &fakeAdminClient{
 		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-		features:     []ports.FeatureSummary{{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: false}},
 		featurePage: ports.FeaturePage{
 			Summary: ports.FeatureSummary{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: false},
 		},
@@ -3718,7 +3698,6 @@ func TestModelSigningPolicyModalDeleteKeyIsUsageInformedAndNeverBlocked(t *testi
 	now := time.Date(2026, time.August, 25, 12, 0, 0, 0, time.UTC)
 	adminClient := &fakeAdminClient{
 		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-		features:     []ports.FeatureSummary{{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: true}},
 		featurePage: ports.FeaturePage{
 			Summary: ports.FeatureSummary{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: true},
 		},
@@ -3779,7 +3758,6 @@ func TestModelTrivyOverrideEditorOpenerKeyIsScopedToRepositoryAlertsRow(t *testi
 		t.Parallel()
 		adminClient := &fakeAdminClient{
 			loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-			features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 			featurePage:  baseFeaturePage,
 			scanRuns: []ports.ScanRun{
 				{ID: "run-1", Repository: "team/api", RequestedRef: "1.0.0", Status: ports.ScanRunStatusCompleted, Critical: 1},
@@ -3830,7 +3808,6 @@ func TestModelTrivyOverrideEditorOpenerKeyIsScopedToRepositoryAlertsRow(t *testi
 		t.Parallel()
 		adminClient := &fakeAdminClient{
 			loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-			features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 			featurePage:  baseFeaturePage,
 		}
 		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
@@ -3853,7 +3830,6 @@ func TestModelTrivyOverrideEditorOpenerKeyIsScopedToRepositoryAlertsRow(t *testi
 		t.Parallel()
 		adminClient := &fakeAdminClient{
 			loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-			features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 			featurePage:  baseFeaturePage,
 		}
 		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
@@ -3883,7 +3859,6 @@ func TestModelTrivyOverrideEditorSetAndClearRoundTripReflectsInModal(t *testing.
 	now := time.Date(2026, time.August, 13, 9, 0, 0, 0, time.UTC)
 	adminClient := &fakeAdminClient{
 		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-		features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 		featurePage: ports.FeaturePage{
 			Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
 			Header:  []ports.FeatureField{{Label: "Enabled", Value: "true"}},
@@ -3983,7 +3958,6 @@ func TestFeatureOverridesScreenSigningSaveIncludesUnsignedSelfRead(t *testing.T)
 	now := time.Date(2026, time.August, 15, 21, 0, 0, 0, time.UTC)
 	adminClient := &fakeAdminClient{
 		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-		features:     []ports.FeatureSummary{{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: true}},
 		featurePage: ports.FeaturePage{
 			Summary: ports.FeatureSummary{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: true},
 		},
@@ -4059,7 +4033,6 @@ func TestFeatureOverridesScreenSigningOpenPrefillsFromGlobalPolicyWhenNeverConfi
 	now := time.Date(2026, time.August, 25, 12, 0, 0, 0, time.UTC)
 	adminClient := &fakeAdminClient{
 		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-		features:     []ports.FeatureSummary{{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: true}},
 		featurePage: ports.FeaturePage{
 			Summary: ports.FeatureSummary{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: true},
 		},
@@ -4094,7 +4067,6 @@ func TestFeatureOverridesScreenSigningOpenDoesNotPrefillWhenOverrideAlreadyExist
 	now := time.Date(2026, time.August, 25, 12, 0, 0, 0, time.UTC)
 	adminClient := &fakeAdminClient{
 		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-		features:     []ports.FeatureSummary{{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: true}},
 		featurePage: ports.FeaturePage{
 			Summary: ports.FeatureSummary{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: true},
 		},
@@ -4130,7 +4102,6 @@ func TestFeatureOverridesScreenSigningDeleteKeyIsUsageInformedAndNeverBlocked(t 
 	now := time.Date(2026, time.August, 25, 12, 0, 0, 0, time.UTC)
 	adminClient := &fakeAdminClient{
 		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-		features:     []ports.FeatureSummary{{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: true}},
 		featurePage: ports.FeaturePage{
 			Summary: ports.FeatureSummary{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: true},
 		},
@@ -4180,7 +4151,6 @@ func TestModelTrivyRepositoryAlertsLoadSelectDetailAndRecoverEmptyState(t *testi
 	t.Run("loads scan runs and drills into selected alert", func(t *testing.T) {
 		adminClient := &fakeAdminClient{
 			loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-			features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 			featurePage: ports.FeaturePage{
 				Summary:  ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
 				Header:   []ports.FeatureField{{Label: "Enabled", Value: "true"}},
@@ -4267,7 +4237,6 @@ func TestModelTrivyRepositoryAlertsLoadSelectDetailAndRecoverEmptyState(t *testi
 	t.Run("empty scan runs stay recoverable and runtime tab remains usable", func(t *testing.T) {
 		adminClient := &fakeAdminClient{
 			loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-			features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 			featurePage: ports.FeaturePage{
 				Summary:  ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
 				Header:   []ports.FeatureField{{Label: "Enabled", Value: "true"}},
@@ -4301,7 +4270,6 @@ func TestModelRepositoryAlertsScreenShowsOneRowPerRepositoryNotPerScanRun(t *tes
 	now := time.Date(2026, time.August, 12, 9, 0, 0, 0, time.UTC)
 	adminClient := &fakeAdminClient{
 		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-		features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 		featurePage:  ports.FeaturePage{Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 		// team/api has three underlying scan runs; library/base has one.
 		// Four scan runs total, but only two repositories.
@@ -4380,7 +4348,6 @@ func TestModelScanHistoryModalTabCyclesForwardAndBackwardWrapping(t *testing.T) 
 	now := time.Date(2026, time.August, 12, 9, 0, 0, 0, time.UTC)
 	adminClient := &fakeAdminClient{
 		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-		features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 		featurePage:  ports.FeaturePage{Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 		scanRuns:     []ports.ScanRun{{ID: "run-1", Repository: "acme/api", RequestedRef: "latest", Digest: "sha256:aaa", Status: ports.ScanRunStatusCompleted, Critical: 1, HasFixable: true}},
 	}
@@ -4416,7 +4383,6 @@ func TestModelScanHistoryModalFindingCursorMovesBoundedWithinActiveTabList(t *te
 	now := time.Date(2026, time.August, 12, 9, 0, 0, 0, time.UTC)
 	adminClient := &fakeAdminClient{
 		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-		features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 		featurePage:  ports.FeaturePage{Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 		scanRuns:     []ports.ScanRun{{ID: "run-1", Repository: "acme/api", Digest: "sha256:aaa", Status: ports.ScanRunStatusCompleted}},
 		scanRunDetails: map[string]ports.ScanRunDetail{
@@ -4479,7 +4445,6 @@ func TestModelScanHistoryModalFindingCursorResetsOnTabSwitchAndHistoryPaging(t *
 	older := now.Add(-24 * time.Hour)
 	adminClient := &fakeAdminClient{
 		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-		features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 		featurePage:  ports.FeaturePage{Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 		scanRuns: []ports.ScanRun{
 			{ID: "run-new", Repository: "acme/api", Digest: "sha256:new", FinishedAt: &now, CreatedAt: now},
@@ -4529,7 +4494,6 @@ func TestModelScanHistoryModalEnterOpensSelectedFindingLink(t *testing.T) {
 	now := time.Date(2026, time.August, 12, 9, 0, 0, 0, time.UTC)
 	adminClient := &fakeAdminClient{
 		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-		features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 		featurePage:  ports.FeaturePage{Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 		scanRuns:     []ports.ScanRun{{ID: "run-1", Repository: "acme/api", Digest: "sha256:aaa", Status: ports.ScanRunStatusCompleted}},
 		scanRunDetails: map[string]ports.ScanRunDetail{
@@ -4575,7 +4539,6 @@ func TestModelScanHistoryModalEnterFailureShowsCopyableURLStatus(t *testing.T) {
 	now := time.Date(2026, time.August, 12, 9, 0, 0, 0, time.UTC)
 	adminClient := &fakeAdminClient{
 		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-		features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 		featurePage:  ports.FeaturePage{Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 		scanRuns:     []ports.ScanRun{{ID: "run-1", Repository: "acme/api", Digest: "sha256:aaa", Status: ports.ScanRunStatusCompleted}},
 		scanRunDetails: map[string]ports.ScanRunDetail{
@@ -4613,7 +4576,6 @@ func TestModelScanHistoryModalEnterOnLeaksTabDoesNotOpenAnyLink(t *testing.T) {
 	now := time.Date(2026, time.August, 12, 9, 0, 0, 0, time.UTC)
 	adminClient := &fakeAdminClient{
 		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-		features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 		featurePage:  ports.FeaturePage{Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 		scanRuns:     []ports.ScanRun{{ID: "run-1", Repository: "acme/api", Digest: "sha256:aaa", Status: ports.ScanRunStatusCompleted}},
 		scanRunDetails: map[string]ports.ScanRunDetail{
@@ -4657,7 +4619,6 @@ func TestFindingLinkOpenUsesExplicitArgvAndHTTPSchemeGuard(t *testing.T) {
 	now := time.Date(2026, time.August, 20, 9, 0, 0, 0, time.UTC)
 	adminClient := &fakeAdminClient{
 		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-		features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 		featurePage:  ports.FeaturePage{Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 		scanRuns:     []ports.ScanRun{{ID: "run-1", Repository: "acme/api", Digest: "sha256:aaa", Status: ports.ScanRunStatusCompleted}},
 		scanRunDetails: map[string]ports.ScanRunDetail{
@@ -4682,7 +4643,6 @@ func TestFindingLinkOpenUsesExplicitArgvAndHTTPSchemeGuard(t *testing.T) {
 	// never returns a Cmd, and openURLInBrowser is never even invoked.
 	nonHTTPClient := &fakeAdminClient{
 		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-		features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 		featurePage:  ports.FeaturePage{Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 		scanRuns:     []ports.ScanRun{{ID: "run-1", Repository: "acme/api", Digest: "sha256:bbb", Status: ports.ScanRunStatusCompleted}},
 		scanRunDetails: map[string]ports.ScanRunDetail{
@@ -4791,7 +4751,6 @@ func TestTrivyDrillDownStillReachesSecretFindings(t *testing.T) {
 	now := time.Date(2026, time.August, 25, 9, 0, 0, 0, time.UTC)
 	adminClient := &fakeAdminClient{
 		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-		features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 		featurePage:  ports.FeaturePage{Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 		scanRuns:     []ports.ScanRun{{ID: "run-1", Repository: "acme/api", RequestedRef: "latest", Status: ports.ScanRunStatusCompleted}},
 	}
@@ -4825,7 +4784,6 @@ func TestScanHistoryEscReturnsToOpener(t *testing.T) {
 		t.Parallel()
 		adminClient := &fakeAdminClient{
 			loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-			features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 			featurePage:  ports.FeaturePage{Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 			scanRuns:     []ports.ScanRun{{ID: "run-1", Repository: "acme/api", RequestedRef: "latest", Status: ports.ScanRunStatusCompleted}},
 		}
@@ -4885,7 +4843,6 @@ func TestModelScanHistoryModalHistoryNavigationRefetchesDetailAndSecretsPerCurso
 	newer := now.Add(-1 * time.Hour)
 	adminClient := &fakeAdminClient{
 		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-		features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 		featurePage:  ports.FeaturePage{Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 		scanRuns: []ports.ScanRun{
 			{ID: "run-old", Repository: "acme/api", RequestedRef: "1.0.0", Digest: "sha256:old", Status: ports.ScanRunStatusCompleted, FinishedAt: &older, CreatedAt: older, Critical: 1, HasFixable: true},
@@ -4959,7 +4916,6 @@ func TestModelScanHistoryModalDigestNeverLeaksAcrossRunsWhenPagingHistory(t *tes
 	runB := ports.ScanRun{ID: "run-b", Repository: "acme/api", Digest: "sha256:bbb", FinishedAt: &older, CreatedAt: older}
 	adminClient := &fakeAdminClient{
 		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-		features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 		featurePage:  ports.FeaturePage{Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 		scanRuns:     []ports.ScanRun{runA, runB},
 		scanRunDetails: map[string]ports.ScanRunDetail{
@@ -5066,7 +5022,6 @@ func TestModelScanHistoryModalRendersWithinViewportAcrossHeights(t *testing.T) {
 
 			adminClient := &fakeAdminClient{
 				loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-				features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 				featurePage:  ports.FeaturePage{Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 				scanRuns:     []ports.ScanRun{{ID: "run-1", Repository: "acme/api", RequestedRef: "latest", Digest: "sha256:aaa", Status: ports.ScanRunStatusCompleted, Critical: 1, HasFixable: true}},
 				scanRunDetails: map[string]ports.ScanRunDetail{
@@ -5261,7 +5216,6 @@ func TestModelScanHistoryModalRendersWithinViewportAcrossWidths(t *testing.T) {
 
 			adminClient := &fakeAdminClient{
 				loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-				features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 				featurePage:  ports.FeaturePage{Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 				scanRuns:     runs,
 				scanRunDetails: map[string]ports.ScanRunDetail{
@@ -5316,7 +5270,6 @@ func TestModelSecretFindingsSurfaceAlongsideVulnerabilityResultsWithoutSeverityO
 	now := time.Date(2026, time.August, 11, 16, 0, 0, 0, time.UTC)
 	adminClient := &fakeAdminClient{
 		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-		features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 		featurePage: ports.FeaturePage{
 			Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
 			Header:  []ports.FeatureField{{Label: "Enabled", Value: "true"}},
@@ -5395,10 +5348,6 @@ func TestModelFeatureTablesRenderAlignedRowsAndPreserveBackendValues(t *testing.
 	now := time.Date(2026, time.August, 10, 10, 0, 0, 0, time.UTC)
 	adminClient := &fakeAdminClient{
 		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-		features: []ports.FeatureSummary{
-			{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true, CurrentVersion: "0.57.1", LatestVersion: "0.58.0", UpdateStatus: "available"},
-			{Name: "future-plugin", Kind: ports.FeatureKindExternalService, Enabled: false, Configured: false, CurrentVersion: "n/a", LatestVersion: "1.0.0", UpdateStatus: "blocked"},
-		},
 		featurePage: ports.FeaturePage{
 			Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true, CurrentVersion: "0.57.1", LatestVersion: "0.58.0", UpdateStatus: "available"},
 			Header:  []ports.FeatureField{{Label: "Enabled", Value: "true"}},
@@ -5449,7 +5398,6 @@ func TestModelTrivyTablesPreserveEmptyStateAndBackendOrdering(t *testing.T) {
 	t.Run("empty state stays explicit", func(t *testing.T) {
 		adminClient := &fakeAdminClient{
 			loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-			features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 			featurePage:  ports.FeaturePage{Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}, Header: []ports.FeatureField{{Label: "Enabled", Value: "true"}}},
 		}
 		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
@@ -5471,7 +5419,6 @@ func TestModelTrivyTablesPreserveEmptyStateAndBackendOrdering(t *testing.T) {
 	t.Run("scan runs keep sorted backend values in the table", func(t *testing.T) {
 		adminClient := &fakeAdminClient{
 			loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-			features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 			featurePage:  ports.FeaturePage{Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}, Header: []ports.FeatureField{{Label: "Enabled", Value: "true"}}},
 			scanRuns: []ports.ScanRun{
 				{ID: "run-2", Repository: "team/api", RequestedRef: "1.0.0", Status: ports.ScanRunStatusCompleted, Critical: 1, High: 0, HasFixable: true},
@@ -5531,7 +5478,6 @@ func TestModelTrivyFindingsMixedSeverityRenderPreservesLabelsAndCounts(t *testin
 	now := time.Date(2026, time.August, 10, 12, 30, 0, 0, time.UTC)
 	adminClient := &fakeAdminClient{
 		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-		features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 		featurePage:  ports.FeaturePage{Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}, Header: []ports.FeatureField{{Label: "Enabled", Value: "true"}}},
 		scanRuns: []ports.ScanRun{{
 			ID:           "run-1",
@@ -5627,7 +5573,6 @@ func TestModelAdminFeatureTablesKeepScreenShortcutsAuthoritative(t *testing.T) {
 	now := time.Date(2026, time.August, 10, 12, 0, 0, 0, time.UTC)
 	adminClient := &fakeAdminClient{
 		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-		features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 		featurePage: ports.FeaturePage{
 			Summary:  ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
 			Header:   []ports.FeatureField{{Label: "Enabled", Value: "true"}},
@@ -5713,7 +5658,6 @@ func TestModelAdminScanRunsTablePagesOnArrowKeyNavigationPastPageBoundary(t *tes
 
 	adminClient := &fakeAdminClient{
 		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: time.Now().Add(time.Hour)},
-		features:     []ports.FeatureSummary{{Name: trivyFeatureName, Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 		featurePage: ports.FeaturePage{
 			Summary: ports.FeatureSummary{Name: trivyFeatureName, Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
 		},
@@ -6150,7 +6094,6 @@ type fakeAdminClient struct {
 	loginSession AdminSession
 	loginErr     error
 
-	features              []ports.FeatureSummary
 	feature               ports.FeatureDetails
 	featureStatus         ports.FeatureDetails
 	featurePage           ports.FeaturePage
@@ -6469,14 +6412,6 @@ func (f *fakeAdminClient) ExecuteFeatureAction(_ context.Context, _ AdminSession
 			if f.featurePages != nil {
 				f.featurePages[name] = f.pageAfterAction
 			}
-			if len(f.features) > 0 {
-				for index := range f.features {
-					if f.features[index].Name == name {
-						f.features[index].Enabled = f.pageAfterAction.Summary.Enabled
-						f.features[index].Configured = f.pageAfterAction.Summary.Configured
-					}
-				}
-			}
 		}
 		return result, nil
 	}
@@ -6493,10 +6428,6 @@ func (f *fakeAdminClient) InstallFeatureRuntime(context.Context, AdminSession, s
 		f.featureStatus.Runtime.Health = string(f.installRuntime.Status)
 		f.featureStatus.Runtime.Version = f.installRuntime.ActiveVersion
 		f.featureStatus.Runtime.UpdateStatus = "up-to-date"
-		if len(f.features) > 0 {
-			f.features[0].CurrentVersion = f.installRuntime.ActiveVersion
-			f.features[0].UpdateStatus = "up-to-date"
-		}
 		return f.installRuntime, nil
 	}
 	return ports.FeatureRuntimeState{}, nil
@@ -6513,10 +6444,6 @@ func (f *fakeAdminClient) UpgradeFeatureRuntime(context.Context, AdminSession, s
 		f.featureStatus.Runtime.Version = f.upgradeRuntime.ActiveVersion
 		f.featureStatus.Runtime.UpdateStatus = "up-to-date"
 		f.featureStatus.Runtime.RollbackAvailable = strings.TrimSpace(f.upgradeRuntime.PreviousVersion) != ""
-		if len(f.features) > 0 {
-			f.features[0].CurrentVersion = f.upgradeRuntime.ActiveVersion
-			f.features[0].UpdateStatus = "up-to-date"
-		}
 	}
 	return f.upgradeRuntime, nil
 }
@@ -6606,10 +6533,6 @@ func (f *fakeAdminClient) EnableFeature(context.Context, AdminSession, string) (
 	if f.enableFeature.Name != "" {
 		f.feature = f.enableFeature
 		f.featureStatus = f.enableFeature
-		if len(f.features) > 0 {
-			f.features[0].Enabled = f.enableFeature.Enabled
-			f.features[0].Configured = f.enableFeature.Configured
-		}
 		return f.enableFeature, nil
 	}
 	return f.feature, nil
@@ -6623,10 +6546,6 @@ func (f *fakeAdminClient) DisableFeature(context.Context, AdminSession, string) 
 	if f.disableFeature.Name != "" {
 		f.feature = f.disableFeature
 		f.featureStatus = f.disableFeature
-		if len(f.features) > 0 {
-			f.features[0].Enabled = f.disableFeature.Enabled
-			f.features[0].Configured = f.disableFeature.Configured
-		}
 		return f.disableFeature, nil
 	}
 	return f.feature, nil

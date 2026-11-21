@@ -77,17 +77,3 @@ func routeAdminMsg(env screenEnv, screens adminScreenSet, msg tea.Msg) (adminScr
 	}
 	return screens, firstCmd
 }
-
-// renderRoutedFrame renders a migrated slot's screenFrame, or the zero value
-// when the slot is unoccupied. Slice 1 has exactly one caller of this shape
-// today (the gitleaks overlay check inside updateAdminKey/renderAdminWorkspace
-// reads adminScreens[slotGitleaksConfig] directly, since it is an overlay
-// rather than a slotFor-addressed top-level screen) — this helper exists for
-// Slice 2's top-level migrated screens, which DO resolve through slotFor.
-func renderRoutedFrame(theme adminTheme, env screenEnv, screens adminScreenSet, slot screenSlot) screenFrame {
-	s := screens[slot]
-	if s == nil {
-		return screenFrame{}
-	}
-	return s.View(theme, env)
-}

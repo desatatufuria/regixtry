@@ -24,12 +24,6 @@ import (
 
 type Option func(*Model)
 
-func WithNotice(notice string) Option {
-	return func(m *Model) {
-		m.notice = strings.TrimSpace(notice)
-	}
-}
-
 func WithAdminClient(adminClient AdminClient) Option {
 	return func(m *Model) {
 		m.adminClient = adminClient
@@ -374,7 +368,6 @@ type adminLoginForm struct {
 type Model struct {
 	ctx         context.Context
 	service     QueryService
-	notice      string
 	screen      screen
 	loadingText string
 	err         error
@@ -412,7 +405,6 @@ type Model struct {
 	lastRepository     string
 	lastTag            string
 	startupLogin       bool
-	pendingAdminStatus string
 
 	// viewport is the terminal size captured from the most recent
 	// tea.WindowSizeMsg (or the default from NewModel before any resize
@@ -459,7 +451,7 @@ type viewportSize struct {
 // screen actually renders, and this Model's current bodyScroll.
 //
 // Phase 3 deviation from design.md's zero-arg method: several screens
-// render a status other than m.status (e.g. m.notice) plus their own help
+// render a status other than m.status plus their own help
 // string. Measuring "" instead would under-count chrome and let the row
 // budget exceed the terminal height once content is clipped.
 // screenEnv builds the read-only view of the outside world a migrated
@@ -3088,13 +3080,8 @@ func (m Model) scrollableBodyContext() (status, help string, total int, ok bool)
 	case screenRepositories:
 		// m.status carries the delete-repository pending-confirm message and
 		// its success/error follow-up (mirrors screenTags' own use of
-		// m.status below); m.notice is this screen's own persistent
-		// startup-time baseline, shown whenever no transient status is
-		// active.
-		status := m.notice
-		if strings.TrimSpace(m.status) != "" {
-			status = m.status
-		}
+		// m.status below).
+		status := m.status
 		help := "Enter: open tags | d: delete repository | p: projects | Tab: admin | g: repo grants | q: quit"
 		if m.repositories.Filter != nil {
 			help += " | Esc: show all"
@@ -3431,19 +3418,6 @@ func (m Model) loadTagsCmd(repository string) tea.Cmd {
 	return func() tea.Msg {
 		result, err := m.service.TagDetails(m.ctx, repository, 100, "")
 		return tagsLoadedMsg{repository: repository, result: result, err: err}
-	}
-}
-
-// deleteTagCmd fires the Tags screen's pending-delete confirm (Enter),
-// calling QueryService.DeleteManifest with the tag name as reference --
-// per newDeletionDetailsForTag this untags only, leaving the manifest and
-// any other tags intact. Always returns a tagDeletedMsg carrying err, the
-// same always-returns-a-Msg-never-a-bare-error convention deleteRobotCmd
-// uses.
-func (m Model) deleteTagCmd(repository string, tag string) tea.Cmd {
-	return func() tea.Msg {
-		_, err := m.service.DeleteManifest(m.ctx, repository, tag)
-		return tagDeletedMsg{repository: repository, tag: tag, err: err}
 	}
 }
 
@@ -3930,36 +3904,6 @@ func (m Model) loadRepositoryOverridesListCmd(feature string) tea.Cmd {
 	}
 }
 
-func (m Model) installFeatureRuntimeCmd(name string) tea.Cmd {
-	return func() tea.Msg {
-		if m.adminClient == nil {
-			return adminFeatureRuntimeMutatedMsg{name: name, action: "installed", err: fmt.Errorf("admin API is unavailable for this session")}
-		}
-		state, err := m.adminClient.InstallFeatureRuntime(m.ctx, m.adminSession, name, "")
-		return adminFeatureRuntimeMutatedMsg{name: name, action: "installed", state: state, err: err}
-	}
-}
-
-func (m Model) upgradeFeatureRuntimeCmd(name string) tea.Cmd {
-	return func() tea.Msg {
-		if m.adminClient == nil {
-			return adminFeatureRuntimeMutatedMsg{name: name, action: "upgraded", err: fmt.Errorf("admin API is unavailable for this session")}
-		}
-		state, err := m.adminClient.UpgradeFeatureRuntime(m.ctx, m.adminSession, name, "")
-		return adminFeatureRuntimeMutatedMsg{name: name, action: "upgraded", state: state, err: err}
-	}
-}
-
-func (m Model) rollbackFeatureRuntimeCmd(name string) tea.Cmd {
-	return func() tea.Msg {
-		if m.adminClient == nil {
-			return adminFeatureRuntimeMutatedMsg{name: name, action: "rolled back", err: fmt.Errorf("admin API is unavailable for this session")}
-		}
-		state, err := m.adminClient.RollbackFeatureRuntime(m.ctx, m.adminSession, name)
-		return adminFeatureRuntimeMutatedMsg{name: name, action: "rolled back", state: state, err: err}
-	}
-}
-
 func (m Model) openAdmin() (tea.Model, tea.Cmd) {
 	if m.adminClient == nil {
 		m.status = "Admin API is unavailable for this session."
@@ -4442,21 +4386,6 @@ func featureActionForKey(msg keyMsg, page ports.FeaturePage) (ports.FeatureActio
 // 11): featureActionKeyBindings (admin_keys.go) is its replacement,
 // composed via shortHelpView so a migrated screen's help can never drift
 // from what a key actually does (design.md Decision A).
-
-func renderList(items []string, selected int) string {
-	if len(items) == 0 {
-		return "- none -"
-	}
-	lines := make([]string, 0, len(items))
-	for index, item := range items {
-		prefix := "  "
-		if index == selected {
-			prefix = "> "
-		}
-		lines = append(lines, prefix+item)
-	}
-	return strings.Join(lines, "\n")
-}
 
 func renderConsoleWorkspace(title string, context string, body string, status string, help string, kind statusKind) string {
 	theme := newAdminTheme()
