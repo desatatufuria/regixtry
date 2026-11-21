@@ -70,10 +70,10 @@ func (r *Router) ServeHTTP(w stdhttp.ResponseWriter, req *stdhttp.Request) {
 	start := time.Now()
 	recorder := &statusCapturingResponseWriter{ResponseWriter: w}
 	r.mux.ServeHTTP(recorder, req)
-	r.logRequest(req, recorder.statusCode(), time.Since(start), recorder.Header().Get("WWW-Authenticate"))
+	r.logRequest(req, recorder.statusCode(), time.Since(start), recorder.Header().Get("WWW-Authenticate"), recorder.internalErr)
 }
 
-func (r *Router) logRequest(req *stdhttp.Request, statusCode int, duration time.Duration, authChallenge string) {
+func (r *Router) logRequest(req *stdhttp.Request, statusCode int, duration time.Duration, authChallenge string, internalErr error) {
 	if r.logger == nil {
 		return
 	}
@@ -81,6 +81,9 @@ func (r *Router) logRequest(req *stdhttp.Request, statusCode int, duration time.
 	message := fmt.Sprintf("registry request method=%s path=%s status=%d duration=%s", req.Method, requestPath(req), statusCode, duration.Round(time.Microsecond))
 	if authChallenge != "" {
 		message += fmt.Sprintf(" auth_challenge=%q", authChallenge)
+	}
+	if internalErr != nil {
+		message += fmt.Sprintf(" error=%q", internalErr.Error())
 	}
 
 	r.logger.Print(message)
@@ -99,6 +102,9 @@ func requestPath(req *stdhttp.Request) string {
 type statusCapturingResponseWriter struct {
 	stdhttp.ResponseWriter
 	status int
+	// internalErr is the real cause behind a 500, kept for the request log
+	// line only: writeError never sends it to the client.
+	internalErr error
 }
 
 func (w *statusCapturingResponseWriter) WriteHeader(status int) {
@@ -760,6 +766,11 @@ func writeError(w stdhttp.ResponseWriter, req *stdhttp.Request, err error, chall
 			// authenticating cannot resolve a policy violation.
 			status = stdhttp.StatusForbidden
 			code = "DENIED"
+		case domain.ErrorCodeInvalidRepository:
+			// OCI NAME_INVALID: a malformed repository name is a client
+			// error, not an internal failure.
+			status = stdhttp.StatusBadRequest
+			code = "NAME_INVALID"
 		case domain.ErrorCodeInvalidDigest, domain.ErrorCodeDigestMismatch, domain.ErrorCodeInvalidManifest, domain.ErrorCodeValidation:
 			status = stdhttp.StatusBadRequest
 			if code == "" {
@@ -789,6 +800,14 @@ func writeError(w stdhttp.ResponseWriter, req *stdhttp.Request, err error, chall
 		default:
 			status = stdhttp.StatusInternalServerError
 		}
+	}
+
+	if status == stdhttp.StatusInternalServerError {
+		if recorder, ok := w.(*statusCapturingResponseWriter); ok {
+			recorder.internalErr = err
+		}
+		code = "UNKNOWN"
+		message = "internal server error"
 	}
 
 	writeJSON(w, status, map[string]any{
