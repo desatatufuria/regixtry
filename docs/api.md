@@ -70,7 +70,9 @@ JSON bodies are decoded rejecting unknown fields and multiple bodies.
 
 See [registry.md](registry.md#blob-garbage-collection) for the full garbage-collection flow, including the grace window and delete-time re-check that keep it safe.
 
-Admin errors: `401`, `403`, `404`, `409`, `422` depending on auth, existence, conflict, or validation; the body is `{ "error": "..." }`.
+Admin errors: `401` (with a `WWW-Authenticate` challenge), `403`, `404`, `409`, `422`, `501` depending on auth, existence, conflict, validation, or a capability that is disabled in this deployment; the body is `{ "error": "..." }`.
+
+An unexpected server failure on an admin endpoint answers `500` with the body `{ "error": "internal server error" }`. The cause is not returned to the client; it is recorded in the server log together with the request.
 
 ### Scan settings example
 
