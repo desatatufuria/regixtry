@@ -328,6 +328,9 @@ const (
 	// /admin/v1/update-channel is the only write path, admin-gated -- this
 	// screen is the sole caller of the write side).
 	screenAdminUpdateChannel screen = "admin-update-channel"
+	// screenAdminGrantAccess is "Grant repository access" (tui-v2-redesign S4):
+	// one screen to give a user or robot a role on several repositories.
+	screenAdminGrantAccess screen = "admin-grant-access"
 )
 
 // adminIntent is a one-shot field set before screenAdminLogin and consumed
@@ -1352,6 +1355,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.adminScreens[slotScanHistory] = next
 		m.status = fmt.Sprintf("Loading scan history for %s...", adminFirstNonEmpty(msg.repository, "repository"))
 		return m, next.Init(m.screenEnv())
+	case openGrantAccessMsg:
+		// Always a fresh screen: a previous visit's selection must not leak
+		// into a new one, and the principal may differ (Users/Robots `g`).
+		next := newGrantAccessScreen(msg.returnTo, msg.preselectID)
+		m.adminScreens[slotGrantAccess] = next
+		m.screen = screenAdminGrantAccess
+		m.status = ""
+		return m, next.Init(m.screenEnv())
+	case grantAccessPrincipalsLoadedMsg, grantAccessGrantsLoadedMsg, grantAccessAppliedMsg:
+		if expired, ok := msg.(interface{ expiredReason() (string, bool) }); ok {
+			if reason, isExpired := expired.expiredReason(); isExpired {
+				return m.expireAdminSession(reason), nil
+			}
+		}
+		var cmd tea.Cmd
+		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
+		return m, cmd
 	case returnToInspectionMsg:
 		return m.returnToInspection(), nil
 	case adminRepositoryOverridesListLoadedMsg:
@@ -1862,7 +1882,7 @@ func (m Model) viewScreen() string {
 		help := "q: quit"
 		layout := m.contentBudget("", help)
 		return renderInspectionWorkspace("Sign In", renderConsoleTextSection(m.loadingText, layout), "", help)
-	case screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken, screenRepoAdminGrants, screenRepoAdminAddGrant, screenAdminRobots, screenAdminCreateRobot, screenSecurityGitleaksRepos, screenSecuritySigningRepos, screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminMenu, screenAdminOperations, screenAdminScanRuns, screenAdminSecretFindings, screenAdminUpdateChannel:
+	case screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken, screenRepoAdminGrants, screenRepoAdminAddGrant, screenAdminRobots, screenAdminCreateRobot, screenSecurityGitleaksRepos, screenSecuritySigningRepos, screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminMenu, screenAdminOperations, screenAdminScanRuns, screenAdminSecretFindings, screenAdminUpdateChannel, screenAdminGrantAccess:
 		help := adminScreenHelp(m.screen, m.adminView)
 		if slot, ok := slotFor(m.screen); ok && m.adminScreens[slot] != nil {
 			// Migrated top-level screen: help is derived from the screen's
@@ -4222,7 +4242,7 @@ func nextDelegateGrantRole(current domainauth.RepoRole) domainauth.RepoRole {
 
 func isAdminScreen(current screen) bool {
 	switch current {
-	case screenAdminLogin, screenAdminAuthenticating, screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken, screenRepoAdminGrants, screenRepoAdminAddGrant, screenAdminRobots, screenAdminCreateRobot, screenSecurityGitleaksRepos, screenSecuritySigningRepos, screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminMenu, screenAdminOperations, screenAdminScanRuns, screenAdminSecretFindings, screenAdminUpdateChannel:
+	case screenAdminLogin, screenAdminAuthenticating, screenAdminUsers, screenAdminFeatures, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserGrants, screenAdminAddGrant, screenAdminEditUserTokens, screenAdminCreateToken, screenRepoAdminGrants, screenRepoAdminAddGrant, screenAdminRobots, screenAdminCreateRobot, screenSecurityGitleaksRepos, screenSecuritySigningRepos, screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminMenu, screenAdminOperations, screenAdminScanRuns, screenAdminSecretFindings, screenAdminUpdateChannel, screenAdminGrantAccess:
 		return true
 	default:
 		return false

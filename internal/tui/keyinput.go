@@ -126,3 +126,27 @@ func keyString(msg keyMsg) string {
 type keyName string
 
 func (k keyName) String() string { return string(k) }
+
+// isArrowUpKey and isArrowDownKey match only the arrow keys. Unlike
+// isMoveUpKey/isMoveDownKey they never match the letters k and j, so a pane
+// with a text filter can move with the arrows and still type every letter.
+func isArrowUpKey(msg keyMsg) bool {
+	return isCode(msg, tea.KeyUp) || keyString(msg) == "up"
+}
+
+func isArrowDownKey(msg keyMsg) bool {
+	return isCode(msg, tea.KeyDown) || keyString(msg) == "down"
+}
+
+// isCtrlKey reports whether msg is Ctrl+<letter>. Pasted text that spells
+// "ctrl+a" never matches, because keyString renders a paste as "[text]".
+func isCtrlKey(msg keyMsg, letter rune) bool {
+	return keyString(msg) == "ctrl+"+string(unicode.ToLower(letter))
+}
+
+// isPasteKey reports whether msg is the synthetic key Model.Update builds from
+// a bracketed paste: it carries text but no key code, which a typed key
+// (including Space) never does.
+func isPasteKey(msg keyMsg) bool {
+	return msg.Code == 0 && msg.Text != ""
+}

@@ -133,6 +133,9 @@ const (
 	// Findings' own repository picker Enter), tracked via its own returnTo
 	// field, not a screen id transition.
 	slotScanHistory
+	// slotGrantAccess holds grantAccessScreen (tui-v2-redesign S4): the
+	// one-screen "Grant repository access" flow, addressed via slotFor.
+	slotGrantAccess
 	numScreenSlots
 )
 
@@ -172,6 +175,8 @@ func slotFor(id screen) (screenSlot, bool) {
 		return slotSecretFindings, true
 	case screenAdminUpdateChannel:
 		return slotUpdateChannel, true
+	case screenAdminGrantAccess:
+		return slotGrantAccess, true
 	default:
 		return 0, false
 	}
@@ -263,6 +268,8 @@ func newAdminScreenFor(id screen) adminScreen {
 		return newSecretFindingsRunsScreen()
 	case screenAdminUpdateChannel:
 		return newUpdateChannelScreen()
+	case screenAdminGrantAccess:
+		return newGrantAccessScreen(screenAdminMenu, "")
 	default:
 		return nil
 	}
