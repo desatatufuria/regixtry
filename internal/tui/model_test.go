@@ -6153,11 +6153,13 @@ type fakeAdminClient struct {
 	tokens    map[string][]ports.AdminToken
 	tokensErr error
 
-	createUser            ports.AdminUser
-	createUserErr         error
-	resetPasswordErr      error
-	lastConfiguredFeature string
-	lastConfigureInput    ports.FeatureConfigureInput
+	createUser             ports.AdminUser
+	createUserErr          error
+	lastCreateUserInput    ports.AdminCreateUserInput
+	lastResetPasswordInput ports.AdminResetPasswordInput
+	resetPasswordErr       error
+	lastConfiguredFeature  string
+	lastConfigureInput     ports.FeatureConfigureInput
 
 	putGrantErr    error
 	lastGrantInput ports.AdminPutRepoGrantInput
@@ -6184,6 +6186,12 @@ type fakeAdminClient struct {
 
 	enableUser ports.AdminUser
 	enableErr  error
+
+	expiringTokens     []ports.AdminExpiringToken
+	expiringErr        error
+	listExpiringCalls  int
+	lastExpiringWithin time.Duration
+	lastExpiringLimit  int
 
 	disableUser ports.AdminUser
 	disableErr  error
@@ -6566,16 +6574,18 @@ func (f *fakeAdminClient) ListUsers(context.Context, AdminSession) ([]ports.Admi
 	return append([]ports.AdminUser(nil), f.users...), nil
 }
 
-func (f *fakeAdminClient) CreateUser(context.Context, AdminSession, ports.AdminCreateUserInput) (ports.AdminUser, error) {
+func (f *fakeAdminClient) CreateUser(_ context.Context, _ AdminSession, input ports.AdminCreateUserInput) (ports.AdminUser, error) {
 	f.createUserCalls++
+	f.lastCreateUserInput = input
 	if f.createUserErr != nil {
 		return ports.AdminUser{}, f.createUserErr
 	}
 	return f.createUser, nil
 }
 
-func (f *fakeAdminClient) ResetPassword(context.Context, AdminSession, ports.AdminResetPasswordInput) error {
+func (f *fakeAdminClient) ResetPassword(_ context.Context, _ AdminSession, input ports.AdminResetPasswordInput) error {
 	f.resetPasswordCalls++
+	f.lastResetPasswordInput = input
 	return f.resetPasswordErr
 }
 
@@ -6740,6 +6750,15 @@ func (f *fakeAdminClient) DisableUser(_ context.Context, _ AdminSession, _ strin
 		return ports.AdminUser{}, f.disableErr
 	}
 	return f.disableUser, nil
+}
+
+func (f *fakeAdminClient) ListExpiringTokens(_ context.Context, _ AdminSession, within time.Duration, limit int) ([]ports.AdminExpiringToken, error) {
+	f.listExpiringCalls++
+	f.lastExpiringWithin, f.lastExpiringLimit = within, limit
+	if f.expiringErr != nil {
+		return nil, f.expiringErr
+	}
+	return append([]ports.AdminExpiringToken(nil), f.expiringTokens...), nil
 }
 
 func (f *fakeAdminClient) ListRobots(context.Context, AdminSession) ([]ports.AdminRobot, error) {

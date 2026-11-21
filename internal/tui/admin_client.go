@@ -98,6 +98,10 @@ type AdminClient interface {
 	// follow-up). Added on PR 4 (backend-only) as part of the API contract;
 	// the TUI key/UI wiring lands on PR 5.
 	DeleteRobot(ctx context.Context, session AdminSession, userID string) error
+	// ListExpiringTokens returns the admin tokens of enabled users and robots
+	// that expire within the given window, soonest first, in ONE call for all
+	// principals. A zero within or limit leaves the server default.
+	ListExpiringTokens(ctx context.Context, session AdminSession, within time.Duration, limit int) ([]ports.AdminExpiringToken, error)
 }
 
 type HTTPAdminClient struct {
@@ -236,6 +240,43 @@ func (c *HTTPAdminClient) ListRepositoryScanSummaries(ctx context.Context, sessi
 		return nil, err
 	}
 	return summaries, nil
+}
+
+// adminExpiringMaxLimit is the most rows GET /admin/v1/admin-tokens/expiring
+// returns; a larger request is a server validation error, so it is clamped.
+const adminExpiringMaxLimit = 200
+
+func (c *HTTPAdminClient) ListExpiringTokens(ctx context.Context, session AdminSession, within time.Duration, limit int) ([]ports.AdminExpiringToken, error) {
+	query := url.Values{}
+	if within > 0 {
+		query.Set("within", readableWithin(within))
+	}
+	if limit > 0 {
+		query.Set("limit", strconv.Itoa(min(limit, adminExpiringMaxLimit)))
+	}
+	path := "/admin/v1/admin-tokens/expiring"
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var tokens []ports.AdminExpiringToken
+	if err := c.getJSON(ctx, session, path, &tokens); err != nil {
+		return nil, err
+	}
+	return tokens, nil
+}
+
+// readableWithin words a window in the API's readable grammar (12h, 7d, 2y):
+// years when a whole multiple of 365 days, days when a whole multiple of 24
+// hours, else hours rounded up. Never seconds.
+func readableWithin(d time.Duration) string {
+	switch {
+	case d >= lifetimeYear && d%lifetimeYear == 0:
+		return strconv.FormatInt(int64(d/lifetimeYear), 10) + "y"
+	case d >= lifetimeDay && d%lifetimeDay == 0:
+		return strconv.FormatInt(int64(d/lifetimeDay), 10) + "d"
+	}
+	hours := int64((d + lifetimeHour - 1) / lifetimeHour)
+	return strconv.FormatInt(max(hours, 1), 10) + "h"
 }
 
 func (c *HTTPAdminClient) GetScanRunDetail(ctx context.Context, session AdminSession, runID string) (ports.ScanRunDetail, error) {
