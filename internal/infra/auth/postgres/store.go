@@ -255,6 +255,7 @@ func (s *Store) ListRepoGrantsByRepository(ctx context.Context, repository regix
 // the sqlite test harness, so the SQL carries no ORDER BY or cursor predicate:
 // the exact bytewise order, the keyset cut and the limit run in Go. The table
 // is small (design.md Open Questions), so reading it whole per page is cheap.
+// Cost: O(N) rows read per page, accepted for collation-independent ordering.
 func (s *Store) ListRepoGrantsPage(ctx context.Context, after *domainauth.GrantCursor, limit int) ([]domainauth.RepositoryGrantRow, error) {
 	if limit <= 0 {
 		return []domainauth.RepositoryGrantRow{}, nil

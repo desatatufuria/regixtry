@@ -144,6 +144,37 @@ func TestRouterAdminRepositoryGrants(t *testing.T) {
 		}
 	})
 
+	t.Run("walking with many limits reproduces the full ordered list", func(t *testing.T) {
+		full := page(t, get("?limit=200", adminToken))
+		if len(full.Grants) != 4 {
+			t.Fatalf("full = %s", keys(full))
+		}
+		for _, size := range []string{"1", "2", "3", "7", "100", "200"} {
+			var walked []map[string]any
+			after := ""
+			for i := 0; ; i++ {
+				if i > 20 {
+					t.Fatalf("limit %s: walk did not end", size)
+				}
+				q := "?limit=" + size
+				if after != "" {
+					q += "&after=" + url.QueryEscape(after)
+				}
+				p := page(t, get(q, adminToken))
+				walked = append(walked, p.Grants...)
+				if p.Next == "" {
+					break
+				}
+				after = p.Next
+			}
+			a, _ := json.Marshal(walked)
+			b, _ := json.Marshal(full.Grants)
+			if string(a) != string(b) {
+				t.Errorf("limit %s walked\n%s\nwant\n%s", size, a, b)
+			}
+		}
+	})
+
 	t.Run("limit boundaries", func(t *testing.T) {
 		for _, q := range []string{"?limit=1", "?limit=100", "?limit=200"} {
 			if rec := get(q, adminToken); rec.Code != http.StatusOK {

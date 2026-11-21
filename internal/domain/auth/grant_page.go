@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"strings"
 	"time"
-	"unicode/utf8"
 )
 
 // RepositoryGrantRow is one grant joined to its owner, as the all-grants
@@ -88,8 +87,23 @@ func DecodeGrantCursor(text string) (GrantCursor, error) {
 		return GrantCursor{}, invalid
 	}
 	if cursor.Repository == "" || cursor.Username == "" || cursor.UserID == "" ||
-		!utf8.ValidString(cursor.Repository) || !utf8.ValidString(cursor.Username) || !utf8.ValidString(cursor.UserID) {
+		hasControl(cursor.Repository) || hasControl(cursor.Username) || hasControl(cursor.UserID) {
+		return GrantCursor{}, invalid
+	}
+	// Canonical form: the payload must be byte-for-byte what Encode emits, which
+	// rejects duplicate keys, reordering, whitespace, invalid UTF-8 (decoding
+	// rewrites it to U+FFFD) and non-canonical escapes.
+	if cursor.Encode() != text {
 		return GrantCursor{}, invalid
 	}
 	return cursor, nil
+}
+
+func hasControl(text string) bool {
+	for _, r := range text {
+		if r < 0x20 || r == 0x7f {
+			return true
+		}
+	}
+	return false
 }

@@ -81,6 +81,13 @@ func TestListAdminAllRepositoryGrantsRejectsBadInput(t *testing.T) {
 		"unknown field":  "eyJyIjoiYSIsInUiOiJiIiwiaSI6ImMiLCJ4IjoxfQ",
 		"empty fields":   "eyJyIjoiIiwidSI6IiIsImkiOiIifQ",
 		"trailing data":  "eyJyIjoiYSIsInUiOiJiIiwiaSI6ImMifXt9",
+
+		"duplicate keys":       "eyJyIjoiYS9iIiwidSI6IngiLCJpIjoiaSIsImkiOiJqIn0",
+		"reordered keys":       "eyJ1IjoieCIsInIiOiJhL2IiLCJpIjoiaSJ9",
+		"extra whitespace":     "eyJyIjogImEvYiIsInUiOiJ4IiwiaSI6ImkifQ",
+		"invalid utf8":         "eyJyIjoiYS9iIiwidSI6Inj_IiwiaSI6ImkifQ",
+		"NUL in a field":       "eyJyIjoiYS9iIiwidSI6InhcdTAwMDAiLCJpIjoiaSJ9",
+		"non-canonical escape": "eyJyIjoiYS9iIiwidSI6Ilx1MDA3OCIsImkiOiJpIn0",
 	} {
 		_, err := f.service.ListAdminAllRepositoryGrants(ctx, f.admin, 10, after)
 		if !domainauth.IsCode(err, domainauth.ErrorCodeValidation) {

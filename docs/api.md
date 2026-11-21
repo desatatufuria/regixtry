@@ -106,7 +106,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 {"grants":[{"repository":"alpha/api","user_id":"u_1","username":"ana","is_robot":false,"role":"repo-admin","created_at":"2026-03-01T09:00:00Z","updated_at":"2026-03-01T09:00:00Z"},{"repository":"team/web","user_id":"u_1","username":"ana","is_robot":false,"role":"repo-writer","created_at":"2026-03-01T09:30:00Z","updated_at":"2026-03-02T08:00:00Z"}],"next":"eyJyIjoidGVhbS93ZWIiLCJ1IjoiYW5hIiwiaSI6InVfMSJ9"}
 ```
 
-Pass `next` back unchanged as `after`; do not parse it. The order is bytewise by repository name, then username. Grants are read live, so a grant added or removed between pages can appear or vanish but the walk never repeats or skips a stable row.
+The cursor is opaque: pass `next` back unchanged as `after`, never build or edit one. The order is bytewise by repository name, then username. Grants are read live, so a grant added or removed between pages can appear or vanish but the walk never repeats or skips a stable row.
 
 Events are recorded after the change succeeded and on a best-effort basis: a failed history write never fails the change itself.
 
