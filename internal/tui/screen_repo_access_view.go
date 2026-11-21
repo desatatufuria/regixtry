@@ -73,22 +73,22 @@ func (s repoAccessScreen) titleLine(theme adminTheme, width int) string {
 	return left + strings.Repeat(" ", gap) + right
 }
 
-// countText is "11 grants on 4 repositories", with how much of the catalog
-// was read when that is not all of it.
+// countText is "11 grants on 4 repositories", flagged when later pages were
+// not read, or "Reading grants… N loaded" while a page is on its way.
 func (s repoAccessScreen) countText() string {
+	switch {
+	case s.loading:
+		return s.readingText()
+	case len(s.rows) == 0 && s.loadErr != "":
+		return "Grants unavailable"
+	}
 	repos := map[string]bool{}
 	for _, row := range s.rows {
 		repos[row.repo] = true
 	}
-	if len(s.rows) == 0 && !s.complete() {
-		return "Reading grants…"
-	}
-	if len(s.rows) == 0 && len(s.repoErrs) > 0 {
-		return "Grants unavailable"
-	}
 	text := fmt.Sprintf("%s on %s", plural(len(s.rows), "grant"), plural(len(repos), "repository"))
-	if !s.complete() && len(s.repos) > 0 {
-		text += fmt.Sprintf(" (read %d of %d repositories)", s.next, len(s.repos))
+	if !s.done {
+		text += " (not all loaded)"
 	}
 	return text
 }
@@ -158,33 +158,19 @@ func (s repoAccessScreen) renderTable(theme adminTheme, env screenEnv, rows []re
 
 func (s repoAccessScreen) emptyText() string {
 	switch {
-	case !s.complete():
+	case s.loading:
 		return s.readingText()
-	case len(s.repos) == 0:
-		return "No repositories in the catalog yet."
-	case len(s.repoErrs) > 0:
-		return s.readErrorText()
+	case s.loadErr != "":
+		return "Could not read grants."
 	case s.filter != "":
 		return "No grants match."
 	}
 	return "No grants yet. Press g to grant access."
 }
 
-// readingText is the loading line, with how many repositories were read.
+// readingText is the loading line, with how many grants arrived so far.
 func (s repoAccessScreen) readingText() string {
-	if len(s.repos) == 0 {
-		return "Reading grants…"
-	}
-	return fmt.Sprintf("Reading grants… %d of %d repositories read", s.next, len(s.repos))
-}
-
-// readErrorText summarizes the reads that failed.
-func (s repoAccessScreen) readErrorText() string {
-	text := "Could not read grants of " + s.repoErrs[0]
-	if len(s.repoErrs) > 1 {
-		text += fmt.Sprintf(" (+%d more)", len(s.repoErrs)-1)
-	}
-	return text
+	return fmt.Sprintf("Reading grants… %d loaded", len(s.rows))
 }
 
 // repoAccessSince is the grant date as "14 Oct", with the year once it is
@@ -212,10 +198,8 @@ func (s repoAccessScreen) statusLine(theme adminTheme, width int) string {
 			style = theme.success
 		}
 		return style.Render(grantTruncate(s.status, width))
-	case len(s.repoErrs) > 0:
-		return theme.error.Render(grantTruncate(s.readErrorText(), width))
-	case s.principalsErr != "":
-		return theme.warning.Render(grantTruncate("Could not tell users from robots: "+s.principalsErr, width))
+	case s.loadErr != "":
+		return theme.error.Render(grantTruncate("Could not read grants: "+strings.TrimRight(s.loadErr, ".")+". Press r to retry.", width))
 	}
 	return theme.muted.Render(grantTruncate("Roles: Reader pulls, Writer pushes, Admin manages access.", width))
 }
@@ -232,7 +216,7 @@ func (s repoAccessScreen) whoHas(repo string) []repoAccessWho {
 	var out []repoAccessWho
 	for _, row := range s.rows {
 		if row.repo == repo {
-			out = append(out, repoAccessWho{name: row.username, kind: s.principals[strings.ToLower(row.username)].Kind, role: row.role})
+			out = append(out, repoAccessWho{name: row.username, kind: row.principal().Kind, role: row.role})
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool {

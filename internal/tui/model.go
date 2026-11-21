@@ -1254,7 +1254,7 @@ func (m Model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.adminScreens[slotChangePassword] = nil
 		if msg.To == screenAdminRepositoryAccess {
 			// Always a fresh read: grants change elsewhere (the grant-access
-			// screen, a revoke) and the list is built from several calls.
+			// screen, a revoke) and the list is paged.
 			next := newRepoAccessScreen()
 			m.adminScreens[slotRepositoryAccess] = next
 			return m, next.Init(m.screenEnv())
@@ -1355,7 +1355,7 @@ func (m Model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
 		return m, cmd
-	case repoAccessReposMsg, repoAccessPrincipalsLoadedMsg, repoAccessGrantsLoadedMsg, repoAccessRevokedMsg:
+	case repoAccessGrantsLoadedMsg, repoAccessRevokedMsg:
 		// Drop a message from another screen instance FIRST: a stale expiry
 		// result must never log the operator out.
 		if gen, ok := repoAccessMsgGen(msg); ok {

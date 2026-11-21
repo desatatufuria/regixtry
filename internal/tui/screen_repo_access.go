@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -18,37 +17,27 @@ import (
 // repoAccessScreen is "Repository access" (tui-v2-redesign, the "Repository
 // access" board): every grant, grouped by repository, for a global admin.
 //
-// No backend call returns all grants at once, so the list is built from the
-// calls that exist: the catalog's repository names (no call, the screen
-// reads screenEnv.KnownRepositories), one ListRepositoryGrants per
-// repository, and one ListUsers plus one ListRobots to tell users from
-// robots and to open a principal. Grants are read lazily, a batch of
-// repositories (about one page) at a time, only as far as the visible page
-// and the cursor need, so a large catalog costs a page of calls, not one per
-// repository.
+// The grants come from ONE endpoint, GET /admin/v1/repository-grants, read a
+// page (200 grants) at a time by following the opaque cursor it returns. The
+// first page is read on open; the next one only when the cursor nears the end
+// of what is loaded or a filter has too few matches, until the cursor is
+// empty. It also lists grants on repositories that were never pushed.
 type repoAccessScreen struct {
 	// gen identifies this instance: every async message carries it and a
 	// message with another gen is dropped, so a late result can never land on
 	// a newer screen that reuses the slot.
 	gen uint64
 
-	repos []string
-	// started is set once the repository names arrived: until then "no
-	// repositories" is not yet known.
-	started bool
-	// next indexes repos: everything before it has been requested.
-	next    int
+	rows []repoAccessRow
+	// next is the cursor of the page to read next ("" for the first one). It
+	// only advances when a page arrives, so after a failure it is the cursor
+	// to retry from.
+	next string
+	// done is set once a page came back with no next cursor.
+	done    bool
 	loading bool
-	rows    []repoAccessRow
-	// repoErrs lists the repositories whose grants could not be read.
-	repoErrs []string
-
-	// principals maps a username to the user or robot behind it. It is
-	// replaced as a whole, never mutated, so copies of the screen share it
-	// safely.
-	principals       map[string]grantPrincipal
-	principalsLoaded bool
-	principalsErr    string
+	// loadErr is the text of the last failed page read, "" when none.
+	loadErr string
 
 	filter    string
 	filtering bool
@@ -64,9 +53,20 @@ type repoAccessScreen struct {
 // repoAccessRow is one grant: a principal's role on a repository.
 type repoAccessRow struct {
 	repo     string
+	userID   string
 	username string
+	isRobot  bool
 	role     domainauth.RepoRole
 	since    time.Time
+}
+
+// principal is the user or robot behind the grant.
+func (r repoAccessRow) principal() grantPrincipal {
+	kind := grantKindUser
+	if r.isRobot {
+		kind = grantKindRobot
+	}
+	return grantPrincipal{ID: r.userID, Name: r.username, Kind: kind}
 }
 
 // repoAccessGenerations hands out the unique id of each repoAccessScreen.
@@ -76,18 +76,23 @@ var repoAccessGenerations atomic.Uint64
 // known.
 const repoAccessDefaultPage = 20
 
-// repoAccessMinBatch is the fewest repositories one read asks for.
-const repoAccessMinBatch = 5
+// repoAccessPageLimit is how many grants one read asks for: the most the
+// endpoint serves.
+const repoAccessPageLimit = 200
 
+// newRepoAccessScreen starts loading: Init issues the first read.
 func newRepoAccessScreen() repoAccessScreen {
-	return repoAccessScreen{gen: repoAccessGenerations.Add(1)}
+	return repoAccessScreen{gen: repoAccessGenerations.Add(1), loading: true}
 }
 
 func (s repoAccessScreen) ID() screen { return screenAdminRepositoryAccess }
 
 func (s repoAccessScreen) Keys() screenKeys {
-	if s.filtering {
+	switch {
+	case s.filtering:
 		return repoAccessFilterKeys
+	case s.loadErr != "":
+		return repoAccessRetryKeys
 	}
 	return repoAccessKeys
 }
@@ -101,6 +106,17 @@ var repoAccessKeys = screenKeys{short: []key.Binding{
 	key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
 }}
 
+// repoAccessRetryKeys adds "r retry" while a page read has failed.
+var repoAccessRetryKeys = screenKeys{short: []key.Binding{
+	key.NewBinding(key.WithKeys("up", "down"), key.WithHelp("↑↓", "move")),
+	key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
+	key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "search")),
+	key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "retry")),
+	key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "grant access")),
+	key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "revoke")),
+	key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
+}}
+
 var repoAccessFilterKeys = screenKeys{short: []key.Binding{
 	key.NewBinding(key.WithKeys("up", "down"), key.WithHelp("↑↓", "move")),
 	key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "done")),
@@ -109,29 +125,13 @@ var repoAccessFilterKeys = screenKeys{short: []key.Binding{
 
 // ---- messages ----
 
-type repoAccessReposMsg struct {
-	gen   uint64
-	repos []string
-}
-
-type repoAccessPrincipalsLoadedMsg struct {
-	gen       uint64
-	users     []ports.AdminUser
-	usersErr  error
-	robots    []ports.AdminRobot
-	robotsErr error
-}
-
-// repoAccessRepoGrants is one repository's read inside a batch.
-type repoAccessRepoGrants struct {
-	repo   string
-	grants []ports.AdminRepositoryGrant
-	err    error
-}
-
+// repoAccessGrantsLoadedMsg is the result of reading the page that starts at
+// the cursor after.
 type repoAccessGrantsLoadedMsg struct {
-	gen     uint64
-	results []repoAccessRepoGrants
+	gen   uint64
+	after string
+	page  ports.AdminGrantPage
+	err   error
 }
 
 type repoAccessRevokedMsg struct {
@@ -147,18 +147,7 @@ type repoAccessOpenPrincipalMsg struct {
 	principal grantPrincipal
 }
 
-func (m repoAccessPrincipalsLoadedMsg) expiredReason() (string, bool) {
-	return expiredReasonOf(m.usersErr, m.robotsErr)
-}
-
-func (m repoAccessGrantsLoadedMsg) expiredReason() (string, bool) {
-	for _, result := range m.results {
-		if reason, ok := expiredReasonOf(result.err); ok {
-			return reason, true
-		}
-	}
-	return "", false
-}
+func (m repoAccessGrantsLoadedMsg) expiredReason() (string, bool) { return expiredReasonOf(m.err) }
 
 func (m repoAccessRevokedMsg) expiredReason() (string, bool) { return expiredReasonOf(m.err) }
 
@@ -166,10 +155,6 @@ func (m repoAccessRevokedMsg) expiredReason() (string, bool) { return expiredRea
 // message belongs to.
 func repoAccessMsgGen(msg tea.Msg) (uint64, bool) {
 	switch typed := msg.(type) {
-	case repoAccessReposMsg:
-		return typed.gen, true
-	case repoAccessPrincipalsLoadedMsg:
-		return typed.gen, true
 	case repoAccessGrantsLoadedMsg:
 		return typed.gen, true
 	case repoAccessRevokedMsg:
@@ -184,25 +169,7 @@ func openRepoAccess() tea.Cmd { return navigate(screenAdminRepositoryAccess) }
 // ---- Init and Update ----
 
 func (s repoAccessScreen) Init(env screenEnv) tea.Cmd {
-	gen := s.gen
-	repos := sortedUniqueRepositories(env.KnownRepositories)
-	return tea.Batch(
-		func() tea.Msg { return repoAccessReposMsg{gen: gen, repos: repos} },
-		repoAccessLoadPrincipalsCmd(env, gen),
-	)
-}
-
-func sortedUniqueRepositories(names []string) []string {
-	seen := make(map[string]bool, len(names))
-	out := make([]string, 0, len(names))
-	for _, name := range names {
-		if name = strings.TrimSpace(name); name != "" && !seen[name] {
-			seen[name] = true
-			out = append(out, name)
-		}
-	}
-	sort.Strings(out)
-	return out
+	return repoAccessLoadPageCmd(env, s.gen, "")
 }
 
 func (s repoAccessScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.Cmd, bool) {
@@ -212,39 +179,20 @@ func (s repoAccessScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.C
 	switch typed := msg.(type) {
 	case keyMsg:
 		return s.updateKey(env, typed)
-	case repoAccessReposMsg:
-		s.repos, s.started = typed.repos, true
-		next, cmd := s.fill(env)
-		return next, cmd, false
-	case repoAccessPrincipalsLoadedMsg:
-		s.principalsLoaded = true
-		s.principalsErr = ""
-		if typed.usersErr != nil {
-			s.principalsErr = "Users: " + typed.usersErr.Error()
-		}
-		if typed.robotsErr != nil {
-			s.principalsErr = strings.TrimSpace(s.principalsErr + " Robots: " + typed.robotsErr.Error())
-		}
-		s.principals = make(map[string]grantPrincipal)
-		for _, p := range mergeGrantPrincipals(typed.users, typed.robots) {
-			s.principals[strings.ToLower(p.Name)] = p
-		}
-		return s, nil, false
 	case repoAccessGrantsLoadedMsg:
 		s.loading = false
-		rows := append([]repoAccessRow(nil), s.rows...)
-		errs := append([]string(nil), s.repoErrs...)
-		for _, result := range typed.results {
-			if result.err != nil {
-				errs = append(errs, result.repo+": "+result.err.Error())
-				continue
-			}
-			for _, grant := range result.grants {
-				rows = append(rows, repoAccessRow{repo: result.repo, username: grant.Username, role: grant.Role, since: grant.CreatedAt})
-			}
+		if typed.err != nil {
+			s.loadErr = typed.err.Error()
+			return s, nil, false
 		}
-		sortRepoAccessRows(rows)
-		s.rows, s.repoErrs = rows, errs
+		s.loadErr = ""
+		for _, grant := range typed.page.Grants {
+			s.rows = append(s.rows, repoAccessRow{
+				repo: grant.Repository, userID: grant.UserID, username: grant.Username,
+				isRobot: grant.IsRobot, role: grant.Role, since: grant.CreatedAt,
+			})
+		}
+		s.next, s.done = typed.page.Next, typed.page.Next == ""
 		next, cmd := s.fill(env)
 		return next, cmd, false
 	case repoAccessRevokedMsg:
@@ -253,65 +201,39 @@ func (s repoAccessScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.C
 	return s, nil, false
 }
 
-func sortRepoAccessRows(rows []repoAccessRow) {
-	sort.SliceStable(rows, func(i, j int) bool {
-		if rows[i].repo != rows[j].repo {
-			return rows[i].repo < rows[j].repo
-		}
-		return strings.ToLower(rows[i].username) < strings.ToLower(rows[j].username)
-	})
-}
-
-// fill reads the next batch of repositories when the visible rows do not yet
-// cover the cursor plus one page, and there is something left to read.
+// fill reads the next page when the matching rows do not yet cover the cursor
+// plus one screen of rows and there is a page left. A failed read is not
+// retried on its own: the operator presses r.
 func (s repoAccessScreen) fill(env screenEnv) (repoAccessScreen, tea.Cmd) {
-	if s.loading || s.next >= len(s.repos) {
+	if s.loading || s.done || s.loadErr != "" {
 		return s, nil
 	}
-	page := repoAccessPageRows(env.Layout.Height)
-	if len(s.visibleRows()) >= s.cursor+page {
+	if len(s.visibleRows()) >= s.cursor+repoAccessPageRows(env.Layout.Height) {
 		return s, nil
 	}
-	count := min(max(page, repoAccessMinBatch), len(s.repos)-s.next)
-	batch := s.repos[s.next : s.next+count]
-	s.next += count
 	s.loading = true
-	return s, repoAccessLoadGrantsCmd(env, s.gen, batch)
+	return s, repoAccessLoadPageCmd(env, s.gen, s.next)
 }
 
-func repoAccessLoadPrincipalsCmd(env screenEnv, gen uint64) tea.Cmd {
+// retry reads again from the cursor that failed.
+func (s repoAccessScreen) retry(env screenEnv) (repoAccessScreen, tea.Cmd) {
+	if s.loadErr == "" || s.loading {
+		return s, nil
+	}
+	s.loadErr = ""
+	s.loading = true
+	return s, repoAccessLoadPageCmd(env, s.gen, s.next)
+}
+
+// repoAccessLoadPageCmd reads the page that starts at the cursor after.
+func repoAccessLoadPageCmd(env screenEnv, gen uint64, after string) tea.Cmd {
 	client, session := env.Client, env.Session
 	return func() tea.Msg {
 		if client == nil {
-			unavailable := errors.New("admin API is unavailable for this session")
-			return repoAccessPrincipalsLoadedMsg{gen: gen, usersErr: unavailable, robotsErr: unavailable}
+			return repoAccessGrantsLoadedMsg{gen: gen, after: after, err: errors.New("admin API is unavailable for this session")}
 		}
-		users, usersErr := client.ListUsers(context.Background(), session)
-		robots, robotsErr := client.ListRobots(context.Background(), session)
-		return repoAccessPrincipalsLoadedMsg{gen: gen, users: users, usersErr: usersErr, robots: robots, robotsErr: robotsErr}
-	}
-}
-
-// repoAccessLoadGrantsCmd reads the grants of each repository in batch, one
-// call each, and stops at the first expired session: the rest would only
-// repeat the same error.
-func repoAccessLoadGrantsCmd(env screenEnv, gen uint64, batch []string) tea.Cmd {
-	client, session := env.Client, env.Session
-	repos := append([]string(nil), batch...)
-	return func() tea.Msg {
-		results := make([]repoAccessRepoGrants, 0, len(repos))
-		for _, repo := range repos {
-			if client == nil {
-				results = append(results, repoAccessRepoGrants{repo: repo, err: errors.New("admin API is unavailable for this session")})
-				continue
-			}
-			grants, err := client.ListRepositoryGrants(context.Background(), session, repo)
-			results = append(results, repoAccessRepoGrants{repo: repo, grants: grants, err: err})
-			if err != nil && IsAdminSessionExpired(err) {
-				break
-			}
-		}
-		return repoAccessGrantsLoadedMsg{gen: gen, results: results}
+		page, err := client.ListAllRepositoryGrants(context.Background(), session, repoAccessPageLimit, after)
+		return repoAccessGrantsLoadedMsg{gen: gen, after: after, page: page, err: err}
 	}
 }
 
@@ -351,6 +273,8 @@ func (s repoAccessScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea
 		return next, cmd, true
 	case isRuneKey(msg, '/'):
 		s.filtering = true
+	case isRuneKey(msg, 'r'):
+		return s.retryKey(env)
 	case isRuneKey(msg, 'g'):
 		return s, openGrantAccess("", screenAdminRepositoryAccess), true
 	case isEnterKey(msg):
@@ -359,6 +283,11 @@ func (s repoAccessScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea
 		return s.askRevoke(env, rows)
 	}
 	return s, nil, true
+}
+
+func (s repoAccessScreen) retryKey(env screenEnv) (adminScreen, tea.Cmd, bool) {
+	next, cmd := s.retry(env)
+	return next, cmd, true
 }
 
 func (s repoAccessScreen) updateFilterKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd, bool) {
@@ -395,11 +324,7 @@ func (s repoAccessScreen) openPrincipal(rows []repoAccessRow) (adminScreen, tea.
 	if !ok {
 		return s, nil, true
 	}
-	principal, found := s.principals[strings.ToLower(row.username)]
-	if !found {
-		s.status, s.statusTone = fmt.Sprintf("Cannot open %s: it is not in the users or robots list.", row.username), grantToneWarning
-		return s, nil, true
-	}
+	principal := row.principal()
 	return s, func() tea.Msg { return repoAccessOpenPrincipalMsg{principal: principal} }, true
 }
 
@@ -471,8 +396,8 @@ func (s repoAccessScreen) selected(rows []repoAccessRow) (repoAccessRow, bool) {
 	return rows[boundedIndex(s.cursor, len(rows))], true
 }
 
-// repoAccessPageRows is how many table rows fit at this terminal height; it
-// sizes the batches of repositories read.
+// repoAccessPageRows is how many table rows fit at this terminal height; the
+// next page is read when fewer than that many rows lie below the cursor.
 func repoAccessPageRows(height int) int {
 	if height <= 0 {
 		return repoAccessDefaultPage
@@ -480,6 +405,3 @@ func repoAccessPageRows(height int) int {
 	_, bodyH := shellContentSize(0, height)
 	return max(bodyH-repoAccessTableChromeRows, 1)
 }
-
-// complete reports whether every repository has been read.
-func (s repoAccessScreen) complete() bool { return s.started && s.next >= len(s.repos) && !s.loading }

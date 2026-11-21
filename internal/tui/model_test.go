@@ -6012,6 +6012,14 @@ type fakeAdminClient struct {
 	lastExpiringWithin time.Duration
 	lastExpiringLimit  int
 
+	// allGrants backs ListAllRepositoryGrants, served in pages with the
+	// opaque cursor "c<offset>"; allGrantsErrs fails the read whose cursor is
+	// the key ("" is the first page); allGrantsCursors records every cursor
+	// asked for.
+	allGrants        []ports.AdminGrantEntry
+	allGrantsErrs    map[string]error
+	allGrantsCursors []string
+
 	disableUser ports.AdminUser
 	disableErr  error
 
@@ -6570,6 +6578,28 @@ func (f *fakeAdminClient) ListExpiringTokens(_ context.Context, _ AdminSession, 
 		return nil, f.expiringErr
 	}
 	return append([]ports.AdminExpiringToken(nil), f.expiringTokens...), nil
+}
+
+func (f *fakeAdminClient) ListAllRepositoryGrants(_ context.Context, _ AdminSession, limit int, after string) (ports.AdminGrantPage, error) {
+	f.allGrantsCursors = append(f.allGrantsCursors, after)
+	if err := f.allGrantsErrs[after]; err != nil {
+		return ports.AdminGrantPage{}, err
+	}
+	offset := 0
+	if after != "" {
+		if _, err := fmt.Sscanf(after, "c%d", &offset); err != nil {
+			return ports.AdminGrantPage{}, fmt.Errorf("invalid cursor %q", after)
+		}
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	end := min(offset+limit, len(f.allGrants))
+	page := ports.AdminGrantPage{Grants: append([]ports.AdminGrantEntry(nil), f.allGrants[min(offset, end):end]...)}
+	if end < len(f.allGrants) {
+		page.Next = fmt.Sprintf("c%d", end)
+	}
+	return page, nil
 }
 
 func (f *fakeAdminClient) ListRobots(context.Context, AdminSession) ([]ports.AdminRobot, error) {

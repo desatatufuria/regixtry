@@ -24,36 +24,26 @@ var updateRepoAccessGoldens = flag.Bool("update-repo-access", false, "rewrite th
 
 var repoAccessSizes = []struct{ w, h int }{{150, 24}, {151, 25}, {160, 30}, {200, 40}, {220, 60}}
 
-var repoAccessKnown = []string{"team/api", "team/docs", "team/web", "team/infra"}
-
 func repoAccessDay(month time.Month, day int) time.Time {
 	return time.Date(2026, month, day, 8, 0, 0, 0, time.UTC)
 }
 
-// repoAccessClient serves the board's sample: four repositories, three of them
-// with grants, one of them (team/infra) granted to a principal that is neither
-// a user nor a robot any more.
+func repoAccessEntry(repo, id, user string, robot bool, role domainauth.RepoRole, at time.Time) ports.AdminGrantEntry {
+	return ports.AdminGrantEntry{Repository: repo, UserID: id, Username: user, IsRobot: robot, Role: role, CreatedAt: at, UpdatedAt: at}
+}
+
+// repoAccessClient serves the board's sample, in the endpoint's order
+// (repository, then username): team/api has four grants, team/docs one and
+// team/infra one, and team/infra is not in the catalog (never pushed).
 func repoAccessClient() *fakeAdminClient {
 	return &fakeAdminClient{
-		users: []ports.AdminUser{
-			{ID: "u-alice", Username: "alice", Enabled: true},
-			{ID: "u-bob", Username: "bob", Enabled: true},
-			{ID: "u-carol", Username: "carol", Enabled: true},
-		},
-		robots: []ports.AdminRobot{{ID: "r-ci", Username: "ci-publisher", Enabled: true}},
-		repoGrants: map[string][]ports.AdminRepositoryGrant{
-			"team/api": {
-				{Username: "bob", Role: domainauth.RepoRoleReader, CreatedAt: repoAccessDay(time.November, 2)},
-				{Username: "alice", Role: domainauth.RepoRoleWriter, CreatedAt: repoAccessDay(time.October, 14)},
-				{Username: "ci-publisher", Role: domainauth.RepoRoleWriter, CreatedAt: repoAccessDay(time.January, 12)},
-				{Username: "carol", Role: domainauth.RepoRoleWriter, CreatedAt: repoAccessDay(time.November, 9)},
-			},
-			"team/docs": {
-				{Username: "alice", Role: domainauth.RepoRoleReader, CreatedAt: repoAccessDay(time.March, 3)},
-			},
-			"team/infra": {
-				{Username: "old-deploy", Role: domainauth.RepoRoleAdmin, CreatedAt: repoAccessDay(time.February, 5)},
-			},
+		allGrants: []ports.AdminGrantEntry{
+			repoAccessEntry("team/api", "u-alice", "alice", false, domainauth.RepoRoleWriter, repoAccessDay(time.October, 14)),
+			repoAccessEntry("team/api", "u-bob", "bob", false, domainauth.RepoRoleReader, repoAccessDay(time.November, 2)),
+			repoAccessEntry("team/api", "u-carol", "carol", false, domainauth.RepoRoleWriter, repoAccessDay(time.November, 9)),
+			repoAccessEntry("team/api", "r-ci", "ci-publisher", true, domainauth.RepoRoleWriter, repoAccessDay(time.January, 12)),
+			repoAccessEntry("team/docs", "u-alice", "alice", false, domainauth.RepoRoleReader, repoAccessDay(time.March, 3)),
+			repoAccessEntry("team/infra", "u-old", "old-deploy", false, domainauth.RepoRoleAdmin, repoAccessDay(time.February, 5)),
 		},
 	}
 }
@@ -76,9 +66,9 @@ func repoAccessRun(t *testing.T, m Model, cmd tea.Cmd) Model {
 	return repoAccessRun(t, updated.(Model), next)
 }
 
-func repoAccessModelAt(t *testing.T, client AdminClient, known []string, w, h int) Model {
+func repoAccessModelAt(t *testing.T, client AdminClient, w, h int) Model {
 	t.Helper()
-	m := newAdminReadyModelWithCatalog(t, known, client)
+	m := newAdminReadyModel(t, client)
 	m.now = func() time.Time { return charFixedTime }
 	m = charResize(t, m, w, h)
 	m.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: charFixedTime.Add(24 * time.Hour)}
@@ -123,21 +113,23 @@ func repoAccessKeyPairs(s repoAccessScreen) []string {
 	return out
 }
 
-func TestRepoAccessListsEveryGrantByRepositoryWithTheMinimumCalls(t *testing.T) {
+func TestRepoAccessListsEveryGrantInOneCall(t *testing.T) {
 	t.Parallel()
 	client := repoAccessClient()
-	m := repoAccessModelAt(t, client, repoAccessKnown, 150, 24)
+	m := repoAccessModelAt(t, client, 150, 24)
 	if m.screen != screenAdminRepositoryAccess {
 		t.Fatalf("screen = %q", m.screen)
 	}
 	got := repoAccessKeyPairs(repoAccessScreenOf(t, m))
 	want := []string{"team/api|alice", "team/api|bob", "team/api|carol", "team/api|ci-publisher", "team/docs|alice", "team/infra|old-deploy"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("rows = %v, want %v", got, want)
+		t.Fatalf("rows = %v, want %v (team/infra is not in the catalog and must be listed)", got, want)
 	}
-	// One read per repository, one users read, one robots read.
-	if client.listRepoGrantsCalls != len(repoAccessKnown) || client.listUsersCalls < 1 || client.listRobotsCalls < 1 {
-		t.Fatalf("calls: grants=%d users=%d robots=%d", client.listRepoGrantsCalls, client.listUsersCalls, client.listRobotsCalls)
+	if strings.Join(client.allGrantsCursors, ",") != "" || len(client.allGrantsCursors) != 1 {
+		t.Fatalf("grant reads = %q, want exactly one, for the first page", client.allGrantsCursors)
+	}
+	if client.listRepoGrantsCalls != 0 || client.listUsersCalls != 0 || client.listRobotsCalls != 0 {
+		t.Fatalf("per-repository or principal reads: grants=%d users=%d robots=%d, want none", client.listRepoGrantsCalls, client.listUsersCalls, client.listRobotsCalls)
 	}
 	out := repoAccessRender(m)
 	for _, text := range []string{"Admin › Access › Repository access", "6 grants on 3 repositories", "REPOSITORY", "PRINCIPAL", "ROLE", "SINCE",
@@ -151,41 +143,87 @@ func TestRepoAccessListsEveryGrantByRepositoryWithTheMinimumCalls(t *testing.T) 
 
 func TestRepoAccessSidebarItemOpensItAndEscReturnsToTheOverview(t *testing.T) {
 	t.Parallel()
-	m := repoAccessModelAt(t, repoAccessClient(), repoAccessKnown, 150, 24)
+	m := repoAccessModelAt(t, repoAccessClient(), 150, 24)
 	m = repoAccessPress(t, m, testKeyEsc())
 	if m.screen != screenAdminOverview {
 		t.Fatalf("Esc went to %q, want the Overview", m.screen)
 	}
 }
 
-func TestRepoAccessReadsOnlyThePageUntilTheCursorNeedsMore(t *testing.T) {
+// repoAccessBulk is total grants of alice on org/repo000.. in endpoint order.
+func repoAccessBulk(total int) *fakeAdminClient {
+	client := &fakeAdminClient{}
+	for i := range total {
+		client.allGrants = append(client.allGrants, repoAccessEntry(fmt.Sprintf("org/repo%03d", i), "u-alice", "alice", false, domainauth.RepoRoleReader, repoAccessDay(time.May, 1)))
+	}
+	return client
+}
+
+func TestRepoAccessReadsTheNextPageOnlyWhenTheCursorNearsTheEnd(t *testing.T) {
 	t.Parallel()
-	client := &fakeAdminClient{repoGrants: map[string][]ports.AdminRepositoryGrant{}}
-	var known []string
-	for i := range 60 {
-		name := fmt.Sprintf("org/repo%02d", i)
-		known = append(known, name)
-		client.repoGrants[name] = []ports.AdminRepositoryGrant{{Username: "alice", Role: domainauth.RepoRoleReader, CreatedAt: repoAccessDay(time.May, 1)}}
+	client := repoAccessBulk(450)
+	m := repoAccessModelAt(t, client, 150, 24)
+	if len(client.allGrantsCursors) != 1 || len(repoAccessScreenOf(t, m).rows) != 200 {
+		t.Fatalf("on open: cursors=%q rows=%d, want one read of 200 rows", client.allGrantsCursors, len(repoAccessScreenOf(t, m).rows))
 	}
-	m := repoAccessModelAt(t, client, known, 150, 24)
-	page := repoAccessPageRows(24)
-	if client.listRepoGrantsCalls != page {
-		t.Fatalf("initial reads = %d, want one page (%d) of 60 repositories", client.listRepoGrantsCalls, page)
+	if out := repoAccessRender(m); !strings.Contains(out, "200 grants on 200 repositories (not all loaded)") {
+		t.Fatalf("the title does not say more remains:\n%s", out)
 	}
-	if out := repoAccessRender(m); !strings.Contains(out, fmt.Sprintf("(read %d of 60 repositories)", page)) {
-		t.Fatalf("the title does not say how much was read:\n%s", out)
-	}
-	for range page - 1 {
+	for range 100 {
 		m = repoAccessPress(t, m, testKeyDown())
 	}
-	if client.listRepoGrantsCalls <= page {
-		t.Fatalf("moving to the end of the page read nothing more (%d calls)", client.listRepoGrantsCalls)
+	if len(client.allGrantsCursors) != 1 {
+		t.Fatalf("reads = %q while the cursor was still far from the end", client.allGrantsCursors)
 	}
-	if got := len(repoAccessScreenOf(t, m).rows); got < page+1 {
-		t.Fatalf("rows = %d after scrolling", got)
+	for range 100 {
+		m = repoAccessPress(t, m, testKeyDown())
 	}
-	if client.listRepoGrantsCalls >= 60 {
-		t.Fatalf("read every repository (%d calls) instead of paging", client.listRepoGrantsCalls)
+	if got := strings.Join(client.allGrantsCursors, ","); got != ",c200" {
+		t.Fatalf("reads = %q, want the first page then the cursor the server returned", got)
+	}
+	if got := len(repoAccessScreenOf(t, m).rows); got != 400 {
+		t.Fatalf("rows = %d, want 400", got)
+	}
+}
+
+func TestRepoAccessFollowsNextUntilEmptyAndNeverReadsMoreThanThePages(t *testing.T) {
+	t.Parallel()
+	client := repoAccessBulk(450)
+	m := repoAccessModelAt(t, client, 150, 24)
+	// A filter that matches nothing walks every page.
+	m = repoAccessPress(t, m, append([]keyMsg{testKeyRunes("/")}, repoAccessType("zzz")...)...)
+	if got := strings.Join(client.allGrantsCursors, ","); got != ",c200,c400" {
+		t.Fatalf("reads = %q, want ,c200,c400 (ceil(450/200) = 3 calls)", got)
+	}
+	s := repoAccessScreenOf(t, m)
+	if !s.done || len(s.rows) != 450 || s.loading {
+		t.Fatalf("done=%v rows=%d loading=%v, want a finished walk", s.done, len(s.rows), s.loading)
+	}
+	m = repoAccessPress(t, m, repoAccessType("z")...)
+	if len(client.allGrantsCursors) != 3 {
+		t.Fatalf("a finished walk read again: %q", client.allGrantsCursors)
+	}
+}
+
+func TestRepoAccessFilterWithEnoughMatchesReadsNoMorePages(t *testing.T) {
+	t.Parallel()
+	client := repoAccessBulk(450)
+	m := repoAccessModelAt(t, client, 150, 24)
+	m = repoAccessPress(t, m, append([]keyMsg{testKeyRunes("/")}, repoAccessType("org/repo0")...)...)
+	if len(client.allGrantsCursors) != 1 {
+		t.Fatalf("reads = %q, the first page already holds enough matches", client.allGrantsCursors)
+	}
+}
+
+func TestRepoAccessFilterWithFewMatchesReadsPagesOnlyAsNeeded(t *testing.T) {
+	t.Parallel()
+	client := repoAccessBulk(1000)
+	m := repoAccessModelAt(t, client, 150, 24)
+	// repo3xx matches 100 rows: page 2 (200..399) holds them all, and 100 is
+	// more than a screen, so reading stops there.
+	m = repoAccessPress(t, m, append([]keyMsg{testKeyRunes("/")}, repoAccessType("repo3")...)...)
+	if got := strings.Join(client.allGrantsCursors, ","); got != ",c200" {
+		t.Fatalf("reads = %q, want only the pages needed (,c200)", got)
 	}
 }
 
@@ -200,7 +238,7 @@ func TestRepoAccessFilterMatchesRepositoryOrPrincipal(t *testing.T) {
 		{"alice", []string{"team/api|alice", "team/docs|alice"}},
 		{"nothing", nil},
 	} {
-		m := repoAccessModelAt(t, repoAccessClient(), repoAccessKnown, 150, 24)
+		m := repoAccessModelAt(t, repoAccessClient(), 150, 24)
 		m = repoAccessPress(t, m, testKeyRunes("/"))
 		m = repoAccessPress(t, m, repoAccessType(tc.filter)...)
 		if got := repoAccessKeyPairs(repoAccessScreenOf(t, m)); strings.Join(got, ",") != strings.Join(tc.want, ",") {
@@ -212,8 +250,8 @@ func TestRepoAccessFilterMatchesRepositoryOrPrincipal(t *testing.T) {
 func TestRepoAccessFilterTypesJKQAndDoesNotQuit(t *testing.T) {
 	t.Parallel()
 	client := repoAccessClient()
-	client.repoGrants["team/api"] = append(client.repoGrants["team/api"], ports.AdminRepositoryGrant{Username: "jkq-bot", Role: domainauth.RepoRoleReader})
-	m := repoAccessModelAt(t, client, repoAccessKnown, 150, 24)
+	client.allGrants = append(client.allGrants, repoAccessEntry("team/web", "u-jkq", "jkq-bot", false, domainauth.RepoRoleReader, time.Time{}))
+	m := repoAccessModelAt(t, client, 150, 24)
 	m = repoAccessPress(t, m, testKeyRunes("/"))
 	for _, k := range repoAccessType("jkq") {
 		updated, cmd := m.Update(k)
@@ -236,7 +274,7 @@ func TestRepoAccessFilterTypesJKQAndDoesNotQuit(t *testing.T) {
 
 func TestRepoAccessFilterAcceptsPastedText(t *testing.T) {
 	t.Parallel()
-	m := repoAccessModelAt(t, repoAccessClient(), repoAccessKnown, 150, 24)
+	m := repoAccessModelAt(t, repoAccessClient(), 150, 24)
 	m = repoAccessPress(t, m, testKeyRunes("/"))
 	m = repoAccessPress(t, m, keyMsg{Text: "team/docs"})
 	if s := repoAccessScreenOf(t, m); s.filter != "team/docs" || len(s.visibleRows()) != 1 {
@@ -246,7 +284,7 @@ func TestRepoAccessFilterAcceptsPastedText(t *testing.T) {
 
 func TestRepoAccessEscEndsTheSearchThenGoesBack(t *testing.T) {
 	t.Parallel()
-	m := repoAccessModelAt(t, repoAccessClient(), repoAccessKnown, 150, 24)
+	m := repoAccessModelAt(t, repoAccessClient(), 150, 24)
 	m = repoAccessPress(t, m, testKeyRunes("/"), testKeyRunes("a"), testKeyEsc())
 	if s := repoAccessScreenOf(t, m); s.filtering || s.filter != "a" || m.screen != screenAdminRepositoryAccess {
 		t.Fatalf("first Esc: filtering=%v filter=%q screen=%q", s.filtering, s.filter, m.screen)
@@ -259,7 +297,7 @@ func TestRepoAccessEscEndsTheSearchThenGoesBack(t *testing.T) {
 
 func TestRepoAccessQQuitsOutsideTheFilterAndIsTypedInsideIt(t *testing.T) {
 	t.Parallel()
-	m := repoAccessModelAt(t, repoAccessClient(), repoAccessKnown, 150, 24)
+	m := repoAccessModelAt(t, repoAccessClient(), 150, 24)
 	if _, cmd := m.Update(testKeyRunes("q")); !didQuit(cmd) {
 		t.Fatal("q outside the filter did not quit")
 	}
@@ -271,23 +309,17 @@ func TestRepoAccessQQuitsOutsideTheFilterAndIsTypedInsideIt(t *testing.T) {
 	if got := repoAccessScreenOf(t, updated.(Model)).filter; got != "q" {
 		t.Fatalf("filter = %q, want q typed", got)
 	}
-	m = repoAccessPress(t, repoAccessModelAt(t, repoAccessClient(), repoAccessKnown, 150, 24), testKeyRunes("x"))
+	m = repoAccessPress(t, repoAccessModelAt(t, repoAccessClient(), 150, 24), testKeyRunes("x"))
 	if _, cmd := m.Update(testKeyRunes("q")); didQuit(cmd) {
 		t.Fatal("q quit while the revoke prompt was open")
 	}
 }
 
-// repoAccessCounting counts the grant reads, so a test can see whether the
-// screen keeps asking after it was left.
+// repoAccessCounting records the deletes so a fuzz can compare them to the
+// dialog.
 type repoAccessCounting struct {
 	*fakeAdminClient
-	lists int
-	dels  [][2]string
-}
-
-func (c *repoAccessCounting) ListRepositoryGrants(ctx context.Context, s AdminSession, repo string) ([]ports.AdminRepositoryGrant, error) {
-	c.lists++
-	return c.fakeAdminClient.ListRepositoryGrants(ctx, s, repo)
+	dels [][2]string
 }
 
 func (c *repoAccessCounting) DeleteRepositoryGrant(_ context.Context, _ AdminSession, repo, user string) error {
@@ -311,18 +343,10 @@ func repoAccessFlatten(cmd tea.Cmd, out *[]tea.Msg) {
 	}
 }
 
-func repoAccessCatalog(count int) []string {
-	known := make([]string, count)
-	for i := range known {
-		known[i] = fmt.Sprintf("org/repo%03d", i)
-	}
-	return known
-}
-
 func TestRepoAccessStopsReadingOnceLeft(t *testing.T) {
 	t.Parallel()
-	client := &repoAccessCounting{fakeAdminClient: &fakeAdminClient{}}
-	m := newAdminReadyModelWithCatalog(t, repoAccessCatalog(500), client)
+	client := repoAccessBulk(450)
+	m := newAdminReadyModel(t, client)
 	m = charResize(t, m, 150, 24)
 	m.adminSession = AdminSession{Username: "operator", BearerToken: "b", ExpiresAt: charFixedTime.Add(time.Hour)}
 	m.adminAuth = adminAuthStateAuthenticated
@@ -333,14 +357,20 @@ func TestRepoAccessStopsReadingOnceLeft(t *testing.T) {
 		m = updated.(Model)
 		repoAccessFlatten(cmd, &pending)
 	}
-	step(navigateMsg{To: screenAdminRepositoryAccess})
-	// Deliver the repository list and the first batch, leaving a batch
-	// request in flight.
-	for range 2 {
+	deliver := func() {
 		msg := pending[0]
 		pending = pending[1:]
 		step(msg)
 	}
+	step(navigateMsg{To: screenAdminRepositoryAccess})
+	deliver()
+	// A filter with no match asks for the second page, which stays in flight.
+	step(testKeyRunes("/"))
+	step(testKeyRunes("z"))
+	if len(pending) != 1 || len(client.allGrantsCursors) != 2 {
+		t.Fatalf("pending=%d reads=%q, want the second page in flight", len(pending), client.allGrantsCursors)
+	}
+	step(testKeyEsc())
 	step(testKeyEsc())
 	for i, msg := range pending {
 		if nav, ok := msg.(navigateMsg); ok {
@@ -349,44 +379,33 @@ func TestRepoAccessStopsReadingOnceLeft(t *testing.T) {
 			break
 		}
 	}
-	if m.screen != screenAdminOverview {
-		t.Fatalf("Esc went to %q", m.screen)
+	if m.screen != screenAdminOverview || m.adminScreens[slotRepositoryAccess] != nil {
+		t.Fatalf("the screen did not leave and unmount (screen=%q)", m.screen)
 	}
-	if m.adminScreens[slotRepositoryAccess] != nil {
-		t.Fatal("the screen stayed mounted after leaving it")
-	}
-	callsAtLeave := client.lists
+	atLeave := len(client.allGrantsCursors)
 	for len(pending) > 0 {
-		msg := pending[0]
-		pending = pending[1:]
-		step(msg)
+		deliver()
 	}
-	if extra := client.lists - callsAtLeave; extra > repoAccessPageRows(24) {
-		t.Fatalf("%d more reads after leaving, want at most the batch already in flight", extra)
-	}
-	settled := client.lists
 	for range 3 {
 		step(testKeyDown())
 	}
-	if client.lists != settled || len(pending) != 0 {
-		t.Fatalf("reads continued behind another screen (%d -> %d, %d pending)", settled, client.lists, len(pending))
+	if len(client.allGrantsCursors) != atLeave || len(pending) != 0 {
+		t.Fatalf("reads continued behind another screen (%d -> %d, %d pending)", atLeave, len(client.allGrantsCursors), len(pending))
 	}
-	// Coming back mounts a fresh screen.
+	// Coming back mounts a fresh screen that reads the first page again.
 	step(navigateMsg{To: screenAdminRepositoryAccess})
-	if s := repoAccessScreenOf(t, m); len(s.rows) != 0 || s.next != 0 {
-		t.Fatalf("re-entry kept state: rows=%d next=%d", len(s.rows), s.next)
+	if s := repoAccessScreenOf(t, m); len(s.rows) != 0 || s.next != "" || !s.loading {
+		t.Fatalf("re-entry kept state: rows=%d next=%q loading=%v", len(s.rows), s.next, s.loading)
 	}
 }
 
-func TestRepoAccessLoadingAndFailedStatesAreNotTheEmptyState(t *testing.T) {
+func TestRepoAccessLoadingErrorPartialFailureAndEmptyStates(t *testing.T) {
 	t.Parallel()
-	// Loading: the repository list arrived, no grants yet.
+	// Loading: nothing delivered yet.
 	s := newRepoAccessScreen()
-	s.started, s.repos, s.next, s.loading = true, repoAccessCatalog(40), 12, true
-	theme := newAdminTheme()
-	frame := s.View(theme, screenEnv{Layout: consoleLayout{Width: 150, Height: 24}})
-	out := ansi.Strip(frame.Body)
-	if !strings.Contains(out, "Reading grants… 12 of 40 repositories read") {
+	s.rows = []repoAccessRow{{repo: "a/b", username: "alice"}, {repo: "a/c", username: "bob"}}
+	out := ansi.Strip(s.View(newAdminTheme(), screenEnv{Layout: consoleLayout{Width: 150, Height: 24}}).Body)
+	if !strings.Contains(out, "Reading grants… 2 loaded") {
 		t.Fatalf("loading line missing:\n%s", out)
 	}
 	for _, bad := range []string{"No grants yet", "0 grants on 0 repositories"} {
@@ -394,17 +413,71 @@ func TestRepoAccessLoadingAndFailedStatesAreNotTheEmptyState(t *testing.T) {
 			t.Fatalf("loading state shows %q:\n%s", bad, out)
 		}
 	}
-	// Every read failed.
+
+	// The first read fails: the endpoint's text and r to retry, never empty.
 	client := repoAccessClient()
-	client.listRepoGrantsErr = errors.New("boom")
-	out = repoAccessRender(repoAccessModelAt(t, client, repoAccessKnown, 150, 24))
-	if !strings.Contains(out, "Could not read grants of team/api: boom (+3 more)") || strings.Contains(out, "No grants yet") || strings.Contains(out, "0 grants on 0 repositories") {
-		t.Fatalf("failed state wrong:\n%s", out)
+	client.allGrantsErrs = map[string]error{"": errors.New("boom")}
+	m := repoAccessModelAt(t, client, 150, 24)
+	out = repoAccessRender(m)
+	for _, text := range []string{"Could not read grants: boom. Press r to retry.", "Grants unavailable", "r retry"} {
+		if !strings.Contains(out, text) {
+			t.Fatalf("error state lacks %q:\n%s", text, out)
+		}
 	}
+	if strings.Contains(out, "No grants yet") {
+		t.Fatalf("error state shows the empty text:\n%s", out)
+	}
+	client.allGrantsErrs = nil
+	m = repoAccessPress(t, m, testKeyRunes("r"))
+	if got := repoAccessKeyPairs(repoAccessScreenOf(t, m)); len(got) != 6 || strings.Join(client.allGrantsCursors, ",") != "," {
+		t.Fatalf("after r: rows=%v reads=%q, want 6 rows from a second read of the first page", got, client.allGrantsCursors)
+	}
+	if out = repoAccessRender(m); strings.Contains(out, "Could not read grants") || strings.Contains(out, "r retry") {
+		t.Fatalf("the error stayed after a good retry:\n%s", out)
+	}
+
+	// A later page fails: what was loaded stays, r retries from that cursor.
+	client = repoAccessBulk(450)
+	client.allGrantsErrs = map[string]error{"c200": errors.New("page boom")}
+	m = repoAccessModelAt(t, client, 150, 24)
+	m = repoAccessPress(t, m, append([]keyMsg{testKeyRunes("/")}, repoAccessType("zzz")...)...)
+	m = repoAccessPress(t, m, testKeyEnter())
+	if s := repoAccessScreenOf(t, m); len(s.rows) != 200 || s.loadErr != "page boom" || s.next != "c200" {
+		t.Fatalf("partial failure: rows=%d err=%q next=%q", len(s.rows), s.loadErr, s.next)
+	}
+	if out = repoAccessRender(m); !strings.Contains(out, "Could not read grants: page boom. Press r to retry.") {
+		t.Fatalf("partial failure not shown:\n%s", out)
+	}
+	if got := len(client.allGrantsCursors); got != 2 {
+		t.Fatalf("a failed read was retried on its own (%d reads)", got)
+	}
+	client.allGrantsErrs = nil
+	m = repoAccessPress(t, m, testKeyRunes("r"))
+	if got := strings.Join(client.allGrantsCursors, ","); got != ",c200,c200,c400" {
+		t.Fatalf("reads = %q, want the retry to resume from c200 and go on to c400", got)
+	}
+	if s := repoAccessScreenOf(t, m); len(s.rows) != 450 || s.loadErr != "" || !s.done {
+		t.Fatalf("after retry: rows=%d err=%q done=%v", len(s.rows), s.loadErr, s.done)
+	}
+
 	// Completed with zero grants: only now the empty text.
-	out = repoAccessRender(repoAccessModelAt(t, &fakeAdminClient{}, repoAccessKnown, 150, 24))
+	out = repoAccessRender(repoAccessModelAt(t, &fakeAdminClient{}, 150, 24))
 	if !strings.Contains(out, "No grants yet. Press g to grant access.") {
 		t.Fatalf("empty state missing:\n%s", out)
+	}
+}
+
+func TestRepoAccessRTypesIntoTheFilterAndDoesNothingWithoutAnError(t *testing.T) {
+	t.Parallel()
+	client := repoAccessClient()
+	m := repoAccessModelAt(t, client, 150, 24)
+	m = repoAccessPress(t, m, testKeyRunes("r"))
+	if len(client.allGrantsCursors) != 1 {
+		t.Fatalf("r without an error read again: %q", client.allGrantsCursors)
+	}
+	m = repoAccessPress(t, m, testKeyRunes("/"), testKeyRunes("r"))
+	if s := repoAccessScreenOf(t, m); s.filter != "r" {
+		t.Fatalf("filter = %q, want r typed", s.filter)
 	}
 }
 
@@ -412,28 +485,28 @@ func TestRepoAccessLoadingAndFailedStatesAreNotTheEmptyState(t *testing.T) {
 // sequences and checks, for every delete the client sees, that it equals the
 // target the dialog showed at confirmation, that no delete happens without a
 // confirm key, and that the target never changes while the dialog is open,
-// including when a batch of grants arrives mid-dialog.
+// including when a page of grants arrives mid-dialog.
 func TestRepoAccessRevokeTargetFuzz(t *testing.T) {
 	t.Parallel()
 	names := []string{"alice", "bob", "carol", "Dave", "ci", "kjq", "jack", "old-deploy", "queue", "yak"}
 	letters := "jkqxyYagnN/ e"
 	r := rand.New(rand.NewSource(20260721))
 	for seq := range 300 {
-		nrepo := 1 + r.Intn(30)
-		known := repoAccessCatalog(nrepo)
-		fake := &fakeAdminClient{repoGrants: map[string][]ports.AdminRepositoryGrant{}}
-		for _, repo := range known {
+		nrepo := 1 + r.Intn(150)
+		fake := &fakeAdminClient{}
+		for i := range nrepo {
+			repo := fmt.Sprintf("org/repo%03d", i)
 			used := map[string]bool{}
 			for range r.Intn(4) {
 				name := names[r.Intn(len(names))]
 				if !used[name] {
 					used[name] = true
-					fake.repoGrants[repo] = append(fake.repoGrants[repo], ports.AdminRepositoryGrant{Username: name, Role: domainauth.RepoRoleWriter})
+					fake.allGrants = append(fake.allGrants, repoAccessEntry(repo, "id-"+name, name, false, domainauth.RepoRoleWriter, time.Time{}))
 				}
 			}
 		}
 		client := &repoAccessCounting{fakeAdminClient: fake}
-		m := newAdminReadyModelWithCatalog(t, known, client)
+		m := newAdminReadyModel(t, client)
 		m = charResize(t, m, 150, 24)
 		m.adminSession = AdminSession{Username: "operator", BearerToken: "b", ExpiresAt: charFixedTime.Add(time.Hour)}
 		m.adminAuth = adminAuthStateAuthenticated
@@ -502,7 +575,7 @@ func TestRepoAccessRevokeTargetFuzz(t *testing.T) {
 
 func TestRepoAccessJAndKDoNotMove(t *testing.T) {
 	t.Parallel()
-	m := repoAccessModelAt(t, repoAccessClient(), repoAccessKnown, 150, 24)
+	m := repoAccessModelAt(t, repoAccessClient(), 150, 24)
 	m = repoAccessPress(t, m, testKeyRunes("j"), testKeyRunes("j"))
 	if got := repoAccessScreenOf(t, m).cursor; got != 0 {
 		t.Fatalf("j moved the cursor to %d", got)
@@ -519,7 +592,7 @@ func TestRepoAccessJAndKDoNotMove(t *testing.T) {
 
 func TestRepoAccessPanelFollowsTheSelectedRepository(t *testing.T) {
 	t.Parallel()
-	m := repoAccessModelAt(t, repoAccessClient(), repoAccessKnown, 150, 24)
+	m := repoAccessModelAt(t, repoAccessClient(), 150, 24)
 	m = repoAccessPress(t, m, testKeyDown(), testKeyDown(), testKeyDown(), testKeyDown(), testKeyDown())
 	out := repoAccessRender(m)
 	for _, text := range []string{"1 principal has access", "Revoke old-deploy on team/infra"} {
@@ -535,7 +608,7 @@ func TestRepoAccessPanelFollowsTheSelectedRepository(t *testing.T) {
 func TestRepoAccessRevokeAsksThenDeletesOnce(t *testing.T) {
 	t.Parallel()
 	client := repoAccessClient()
-	m := repoAccessModelAt(t, client, repoAccessKnown, 150, 24)
+	m := repoAccessModelAt(t, client, 150, 24)
 	m = repoAccessPress(t, m, testKeyRunes("x"))
 	if !repoAccessScreenOf(t, m).confirm.Active() {
 		t.Fatal("x did not open the confirm prompt")
@@ -580,7 +653,7 @@ func TestRepoAccessRevokeFailureKeepsTheGrantAndSaysWhy(t *testing.T) {
 	t.Parallel()
 	client := repoAccessClient()
 	client.deleteRepoGrantErr = errors.New("forbidden")
-	m := repoAccessModelAt(t, client, repoAccessKnown, 150, 24)
+	m := repoAccessModelAt(t, client, 150, 24)
 	m = repoAccessPress(t, m, testKeyRunes("x"), testKeyEnter())
 	s := repoAccessScreenOf(t, m)
 	if len(s.rows) != 6 || s.confirm.Active() || s.revoking {
@@ -599,7 +672,7 @@ func TestRepoAccessRevokeFailureKeepsTheGrantAndSaysWhy(t *testing.T) {
 
 func TestRepoAccessXWithNothingSelectedDoesNothing(t *testing.T) {
 	t.Parallel()
-	m := repoAccessModelAt(t, &fakeAdminClient{}, repoAccessKnown, 150, 24)
+	m := repoAccessModelAt(t, &fakeAdminClient{}, 150, 24)
 	m = repoAccessPress(t, m, testKeyRunes("x"), testKeyEnter())
 	if repoAccessScreenOf(t, m).confirm.Active() || m.screen != screenAdminRepositoryAccess {
 		t.Fatalf("confirm=%v screen=%q", repoAccessScreenOf(t, m).confirm.Active(), m.screen)
@@ -609,7 +682,7 @@ func TestRepoAccessXWithNothingSelectedDoesNothing(t *testing.T) {
 func TestRepoAccessRevokeWithAnExpiredSessionGoesToLogin(t *testing.T) {
 	t.Parallel()
 	client := repoAccessClient()
-	m := repoAccessModelAt(t, client, repoAccessKnown, 150, 24)
+	m := repoAccessModelAt(t, client, 150, 24)
 	client.deleteRepoGrantErr = AdminSessionExpiredError{}
 	m = repoAccessPress(t, m, testKeyRunes("x"), testKeyEnter())
 	if m.screen != screenAdminLogin {
@@ -620,24 +693,24 @@ func TestRepoAccessRevokeWithAnExpiredSessionGoesToLogin(t *testing.T) {
 func TestRepoAccessListingWithAnExpiredSessionGoesToLoginAfterOneCall(t *testing.T) {
 	t.Parallel()
 	client := repoAccessClient()
-	client.listRepoGrantsErr = AdminSessionExpiredError{}
-	m := repoAccessModelAt(t, client, repoAccessKnown, 150, 24)
+	client.allGrantsErrs = map[string]error{"": AdminSessionExpiredError{}}
+	m := repoAccessModelAt(t, client, 150, 24)
 	if m.screen != screenAdminLogin {
 		t.Fatalf("screen = %q, want the login", m.screen)
 	}
-	if client.listRepoGrantsCalls != 1 {
-		t.Fatalf("grant reads after expiry = %d, want the batch to stop at 1", client.listRepoGrantsCalls)
+	if len(client.allGrantsCursors) != 1 {
+		t.Fatalf("grant reads after expiry = %d, want 1", len(client.allGrantsCursors))
 	}
 }
 
 func TestRepoAccessDropsMessagesOfAnotherInstance(t *testing.T) {
 	t.Parallel()
-	m := repoAccessModelAt(t, repoAccessClient(), repoAccessKnown, 150, 24)
+	m := repoAccessModelAt(t, repoAccessClient(), 150, 24)
 	before := len(repoAccessScreenOf(t, m).rows)
 	stale := repoAccessScreenOf(t, m).gen - 1
 	for _, msg := range []tea.Msg{
-		repoAccessGrantsLoadedMsg{gen: stale, results: []repoAccessRepoGrants{{repo: "x/y", grants: []ports.AdminRepositoryGrant{{Username: "mallory"}}}}},
-		repoAccessGrantsLoadedMsg{gen: stale, results: []repoAccessRepoGrants{{repo: "x/y", err: AdminSessionExpiredError{}}}},
+		repoAccessGrantsLoadedMsg{gen: stale, page: ports.AdminGrantPage{Grants: []ports.AdminGrantEntry{{Repository: "x/y", Username: "mallory"}}, Next: "c9"}},
+		repoAccessGrantsLoadedMsg{gen: stale, err: AdminSessionExpiredError{}},
 		repoAccessRevokedMsg{gen: stale, repo: "team/api", username: "alice"},
 		repoAccessRevokedMsg{gen: stale, repo: "team/api", username: "alice", err: AdminSessionExpiredError{}},
 	} {
@@ -649,75 +722,48 @@ func TestRepoAccessDropsMessagesOfAnotherInstance(t *testing.T) {
 	}
 }
 
-func TestRepoAccessReadFailureOfOneRepositoryIsShownAndOthersStay(t *testing.T) {
-	t.Parallel()
-	client := repoAccessClient()
-	client.listRepoGrantsErr = errors.New("boom")
-	m := repoAccessModelAt(t, client, repoAccessKnown, 150, 24)
-	out := repoAccessRender(m)
-	if !strings.Contains(out, "Could not read grants of team/api: boom (+3 more)") {
-		t.Fatalf("read failure not shown:\n%s", out)
-	}
-}
-
 func TestRepoAccessEnterOpensTheUserOrTheRobot(t *testing.T) {
 	t.Parallel()
-	m := repoAccessModelAt(t, repoAccessClient(), repoAccessKnown, 150, 24)
+	m := repoAccessModelAt(t, repoAccessClient(), 150, 24)
 	m = repoAccessPress(t, m, testKeyEnter())
 	edit, _ := m.adminScreens[slotEditUser].(editUserScreen)
 	if m.screen != screenAdminEditUser || edit.userID != "u-alice" || edit.username != "alice" {
 		t.Fatalf("Enter on alice: screen=%q id=%q name=%q", m.screen, edit.userID, edit.username)
 	}
 
-	m = repoAccessModelAt(t, repoAccessClient(), repoAccessKnown, 150, 24)
+	m = repoAccessModelAt(t, repoAccessClient(), 150, 24)
 	m = repoAccessPress(t, m, testKeyDown(), testKeyDown(), testKeyDown(), testKeyEnter())
 	if m.screen != screenAdminRobots {
 		t.Fatalf("Enter on a robot opened %q, want the Robots list", m.screen)
 	}
 }
 
-func TestRepoAccessEnterOnAnUnknownPrincipalSaysSo(t *testing.T) {
-	t.Parallel()
-	m := repoAccessModelAt(t, repoAccessClient(), repoAccessKnown, 150, 24)
-	m = repoAccessPress(t, m, testKeyDown(), testKeyDown(), testKeyDown(), testKeyDown(), testKeyDown(), testKeyEnter())
-	if m.screen != screenAdminRepositoryAccess {
-		t.Fatalf("screen = %q", m.screen)
-	}
-	if out := repoAccessRender(m); !strings.Contains(out, "Cannot open old-deploy") {
-		t.Fatalf("no explanation:\n%s", out)
-	}
-}
-
 func TestRepoAccessGOpensGrantAccessAndEscComesBackToAFreshList(t *testing.T) {
 	t.Parallel()
 	client := repoAccessClient()
-	m := repoAccessModelAt(t, client, repoAccessKnown, 150, 24)
+	m := repoAccessModelAt(t, client, 150, 24)
 	oldGen := repoAccessScreenOf(t, m).gen
 	m = repoAccessPress(t, m, testKeyRunes("g"))
 	if m.screen != screenAdminGrantAccess {
 		t.Fatalf("g opened %q", m.screen)
 	}
-	callsBefore := client.listRepoGrantsCalls
+	callsBefore := len(client.allGrantsCursors)
 	m = repoAccessPress(t, m, testKeyEsc())
 	if m.screen != screenAdminRepositoryAccess {
 		t.Fatalf("Esc from Grant access went to %q", m.screen)
 	}
-	if s := repoAccessScreenOf(t, m); s.gen == oldGen || client.listRepoGrantsCalls <= callsBefore {
-		t.Fatalf("the list was not re-read (gen %d -> %d, calls %d -> %d)", oldGen, s.gen, callsBefore, client.listRepoGrantsCalls)
+	if s := repoAccessScreenOf(t, m); s.gen == oldGen || len(client.allGrantsCursors) <= callsBefore {
+		t.Fatalf("the list was not re-read (gen %d -> %d, calls %d -> %d)", oldGen, s.gen, callsBefore, len(client.allGrantsCursors))
 	}
 }
 
 func TestRepoAccessEmptyStates(t *testing.T) {
 	t.Parallel()
-	noGrants := repoAccessModelAt(t, &fakeAdminClient{}, repoAccessKnown, 150, 24)
+	noGrants := repoAccessModelAt(t, &fakeAdminClient{}, 150, 24)
 	if out := repoAccessRender(noGrants); !strings.Contains(out, "No grants yet. Press g to grant access.") {
 		t.Errorf("no-grants state:\n%s", out)
 	}
-	noRepos := repoAccessModelAt(t, &fakeAdminClient{}, nil, 150, 24)
-	if out := repoAccessRender(noRepos); !strings.Contains(out, "No repositories in the catalog yet.") {
-		t.Errorf("no-repositories state:\n%s", out)
-	}
-	noMatch := repoAccessPress(t, repoAccessModelAt(t, repoAccessClient(), repoAccessKnown, 150, 24), testKeyRunes("/"), testKeyRunes("z"))
+	noMatch := repoAccessPress(t, repoAccessModelAt(t, repoAccessClient(), 150, 24), testKeyRunes("/"), testKeyRunes("z"))
 	if out := repoAccessRender(noMatch); !strings.Contains(out, "No grants match.") {
 		t.Errorf("no-match state:\n%s", out)
 	}
@@ -725,7 +771,7 @@ func TestRepoAccessEmptyStates(t *testing.T) {
 
 func TestRepoAccessFooterHintsFollowTheState(t *testing.T) {
 	t.Parallel()
-	m := repoAccessModelAt(t, repoAccessClient(), repoAccessKnown, 150, 24)
+	m := repoAccessModelAt(t, repoAccessClient(), 150, 24)
 	out := repoAccessRender(m)
 	for _, text := range []string{"↑↓ move", "enter open", "/ search", "g grant access", "x revoke", "esc back"} {
 		if !strings.Contains(out, text) {
@@ -738,21 +784,16 @@ func TestRepoAccessFooterHintsFollowTheState(t *testing.T) {
 	}
 }
 
-func repoAccessManyRows(count int) (*fakeAdminClient, []string) {
-	client := &fakeAdminClient{
-		users:      []ports.AdminUser{{ID: "u-1", Username: "alice"}},
-		repoGrants: map[string][]ports.AdminRepositoryGrant{},
-	}
-	var known []string
+func repoAccessManyRows(count int) *fakeAdminClient {
+	client := &fakeAdminClient{}
 	for i := range count {
 		name := fmt.Sprintf("organización-ñandú/servicio-con-un-nombre-muy-largo-número-%03d", i)
-		known = append(known, name)
-		client.repoGrants[name] = []ports.AdminRepositoryGrant{
-			{Username: "usuario-con-nombre-larguísimo-日本語", Role: domainauth.RepoRoleWriter, CreatedAt: repoAccessDay(time.April, 3)},
-			{Username: "alice", Role: domainauth.RepoRoleAdmin, CreatedAt: time.Date(2020, 1, 2, 0, 0, 0, 0, time.UTC)},
-		}
+		client.allGrants = append(client.allGrants,
+			repoAccessEntry(name, "u-alice", "alice", false, domainauth.RepoRoleAdmin, time.Date(2020, 1, 2, 0, 0, 0, 0, time.UTC)),
+			repoAccessEntry(name, "u-long", "usuario-con-nombre-larguísimo-日本語", false, domainauth.RepoRoleWriter, repoAccessDay(time.April, 3)),
+		)
 	}
-	return client, known
+	return client
 }
 
 func repoAccessNoOverflow(t *testing.T, label, rendered string, w, h int) {
@@ -768,34 +809,50 @@ func repoAccessNoOverflow(t *testing.T, label, rendered string, w, h int) {
 	}
 }
 
+// repoAccessLoadingModel mounts the screen and leaves its first read
+// undelivered.
+func repoAccessLoadingModel(t *testing.T, w, h int) Model {
+	t.Helper()
+	m := newAdminReadyModel(t, repoAccessClient())
+	m.now = func() time.Time { return charFixedTime }
+	m = charResize(t, m, w, h)
+	m.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: charFixedTime.Add(24 * time.Hour)}
+	m.adminAuth = adminAuthStateAuthenticated
+	updated, _ := m.Update(navigateMsg{To: screenAdminRepositoryAccess})
+	return updated.(Model)
+}
+
 func TestRepoAccessGeometryAtEverySizeInEveryState(t *testing.T) {
 	t.Parallel()
 	for _, size := range repoAccessSizes {
 		states := map[string]func() Model{
-			"normal": func() Model { return repoAccessModelAt(t, repoAccessClient(), repoAccessKnown, size.w, size.h) },
-			"empty":  func() Model { return repoAccessModelAt(t, &fakeAdminClient{}, repoAccessKnown, size.w, size.h) },
-			"no catalog": func() Model {
-				return repoAccessModelAt(t, &fakeAdminClient{}, nil, size.w, size.h)
+			"normal":  func() Model { return repoAccessModelAt(t, repoAccessClient(), size.w, size.h) },
+			"empty":   func() Model { return repoAccessModelAt(t, &fakeAdminClient{}, size.w, size.h) },
+			"loading": func() Model { return repoAccessLoadingModel(t, size.w, size.h) },
+			"partial failure": func() Model {
+				client := repoAccessBulk(450)
+				client.allGrantsErrs = map[string]error{"c200": errors.New(strings.Repeat("a very long error ", 20))}
+				m := repoAccessModelAt(t, client, size.w, size.h)
+				return repoAccessPress(t, m, append([]keyMsg{testKeyRunes("/")}, repoAccessType("zzz")...)...)
 			},
 			"read error": func() Model {
 				client := repoAccessClient()
-				client.listRepoGrantsErr = errors.New(strings.Repeat("a very long error ", 20))
-				return repoAccessModelAt(t, client, repoAccessKnown, size.w, size.h)
+				client.allGrantsErrs = map[string]error{"": errors.New(strings.Repeat("a very long error ", 20))}
+				return repoAccessModelAt(t, client, size.w, size.h)
 			},
 			"many rows, long and multibyte names": func() Model {
-				client, known := repoAccessManyRows(80)
-				m := repoAccessModelAt(t, client, known, size.w, size.h)
+				m := repoAccessModelAt(t, repoAccessManyRows(80), size.w, size.h)
 				for range 25 {
 					m = repoAccessPress(t, m, testKeyDown())
 				}
 				return m
 			},
 			"filtering": func() Model {
-				m := repoAccessModelAt(t, repoAccessClient(), repoAccessKnown, size.w, size.h)
+				m := repoAccessModelAt(t, repoAccessClient(), size.w, size.h)
 				return repoAccessPress(t, m, append([]keyMsg{testKeyRunes("/")}, repoAccessType("team/日本語-long-long-long-long-long-long")...)...)
 			},
 			"revoke prompt": func() Model {
-				m := repoAccessModelAt(t, repoAccessClient(), repoAccessKnown, size.w, size.h)
+				m := repoAccessModelAt(t, repoAccessClient(), size.w, size.h)
 				return repoAccessPress(t, m, testKeyRunes("x"))
 			},
 		}
@@ -809,8 +866,7 @@ func TestRepoAccessGeometryAtEverySizeInEveryState(t *testing.T) {
 
 func TestRepoAccessSelectedRowStaysVisibleWhileScrolling(t *testing.T) {
 	t.Parallel()
-	client, known := repoAccessManyRows(80)
-	m := repoAccessModelAt(t, client, known, 150, 24)
+	m := repoAccessModelAt(t, repoAccessManyRows(80), 150, 24)
 	for i := range 40 {
 		m = repoAccessPress(t, m, testKeyDown())
 		s := repoAccessScreenOf(t, m)
@@ -848,33 +904,40 @@ func TestRepoAccessViewGoldens(t *testing.T) {
 		build func(t *testing.T, w, h int) Model
 	}{
 		{"grants", func(t *testing.T, w, h int) Model {
-			return repoAccessModelAt(t, repoAccessClient(), repoAccessKnown, w, h)
+			return repoAccessModelAt(t, repoAccessClient(), w, h)
 		}},
 		{"filtered", func(t *testing.T, w, h int) Model {
-			m := repoAccessModelAt(t, repoAccessClient(), repoAccessKnown, w, h)
+			m := repoAccessModelAt(t, repoAccessClient(), w, h)
 			return repoAccessPress(t, m, testKeyRunes("/"), testKeyRunes("t"), testKeyRunes("e"), testKeyRunes("a"), testKeyRunes("m"), testKeyRunes("/"), testKeyRunes("d"))
 		}},
 		{"revoke_prompt", func(t *testing.T, w, h int) Model {
-			m := repoAccessModelAt(t, repoAccessClient(), repoAccessKnown, w, h)
+			m := repoAccessModelAt(t, repoAccessClient(), w, h)
 			return repoAccessPress(t, m, testKeyRunes("x"))
 		}},
 		{"revoked", func(t *testing.T, w, h int) Model {
-			m := repoAccessModelAt(t, repoAccessClient(), repoAccessKnown, w, h)
+			m := repoAccessModelAt(t, repoAccessClient(), w, h)
 			return repoAccessPress(t, m, testKeyRunes("x"), testKeyEnter())
 		}},
 		{"revoke_failed", func(t *testing.T, w, h int) Model {
 			client := repoAccessClient()
 			client.deleteRepoGrantErr = errors.New("forbidden")
-			m := repoAccessModelAt(t, client, repoAccessKnown, w, h)
+			m := repoAccessModelAt(t, client, w, h)
 			return repoAccessPress(t, m, testKeyRunes("x"), testKeyEnter())
 		}},
 		{"empty", func(t *testing.T, w, h int) Model {
-			return repoAccessModelAt(t, &fakeAdminClient{}, repoAccessKnown, w, h)
+			return repoAccessModelAt(t, &fakeAdminClient{}, w, h)
 		}},
 		{"read_error", func(t *testing.T, w, h int) Model {
 			client := repoAccessClient()
-			client.listRepoGrantsErr = errors.New("boom")
-			return repoAccessModelAt(t, client, repoAccessKnown, w, h)
+			client.allGrantsErrs = map[string]error{"": errors.New("boom")}
+			return repoAccessModelAt(t, client, w, h)
+		}},
+		{"loading", func(t *testing.T, w, h int) Model { return repoAccessLoadingModel(t, w, h) }},
+		{"partial_error", func(t *testing.T, w, h int) Model {
+			client := repoAccessBulk(450)
+			client.allGrantsErrs = map[string]error{"c200": errors.New("boom")}
+			m := repoAccessModelAt(t, client, w, h)
+			return repoAccessPress(t, m, testKeyRunes("/"), testKeyRunes("z"), testKeyEnter())
 		}},
 	}
 	for _, tc := range cases {
