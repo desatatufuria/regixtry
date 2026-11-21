@@ -83,6 +83,8 @@ func (r *Router) handleAdmin(w stdhttp.ResponseWriter, req *stdhttp.Request) {
 		r.handleAdminScanRunDetail(w, req, strings.TrimPrefix(subpath, "scan-runs/"))
 	case subpath == "secret-scan-findings":
 		r.handleAdminSecretScanFindings(w, req)
+	case subpath == "access-events":
+		r.handleAdminAccessEvents(w, req, *principal)
 	case subpath == "admin-tokens/expiring":
 		r.handleAdminExpiringTokens(w, req, *principal)
 	case subpath == "users":
@@ -1320,7 +1322,9 @@ func (r *Router) handleAdminRepositoryGrantResource(w stdhttp.ResponseWriter, re
 const (
 	adminExpiringDefaultWithin = "30d"
 	adminExpiringDefaultLimit  = 50
-	adminExpiringMaxLimit      = 200
+	adminListMaxLimit          = 200
+
+	adminAccessEventsDefaultLimit = 20
 )
 
 // handleAdminExpiringTokens serves GET /admin/v1/admin-tokens/expiring: admin
@@ -1348,7 +1352,7 @@ func (r *Router) handleAdminExpiringTokens(w stdhttp.ResponseWriter, req *stdhtt
 
 	limit := adminExpiringDefaultLimit
 	if query.Has("limit") {
-		limit, err = parseAdminExpiringLimit(query.Get("limit"))
+		limit, err = parseAdminLimit(query.Get("limit"))
 		if err != nil {
 			writeAdminError(w, err, ports.Challenge{})
 			return
@@ -1367,7 +1371,41 @@ func (r *Router) handleAdminExpiringTokens(w stdhttp.ResponseWriter, req *stdhtt
 	writeJSON(w, stdhttp.StatusOK, tokens)
 }
 
-func parseAdminExpiringLimit(raw string) (int, error) {
+// handleAdminAccessEvents serves GET /admin/v1/access-events: the newest
+// access changes first (grants, tokens, robots), at most `limit` (1..200,
+// default 20). Global admin only, enforced by requireAdminPrincipal and again
+// by the service. Names and short text only, never secret material.
+func (r *Router) handleAdminAccessEvents(w stdhttp.ResponseWriter, req *stdhttp.Request, principal domainauth.Principal) {
+	if req.Method != stdhttp.MethodGet {
+		w.Header().Set("Allow", stdhttp.MethodGet)
+		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+		return
+	}
+
+	limit := adminAccessEventsDefaultLimit
+	query := req.URL.Query()
+	if query.Has("limit") {
+		var err error
+		limit, err = parseAdminLimit(query.Get("limit"))
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+	}
+
+	events, err := r.admin.ListAdminAccessEvents(req.Context(), principal, limit)
+	if err != nil {
+		writeAdminError(w, err, ports.Challenge{})
+		return
+	}
+	if events == nil {
+		events = []ports.AdminAccessEvent{}
+	}
+
+	writeJSON(w, stdhttp.StatusOK, events)
+}
+
+func parseAdminLimit(raw string) (int, error) {
 	invalid := domainauth.NewValidationError("limit must be a whole number between 1 and 200")
 	if raw == "" || len(raw) > 3 || raw[0] == '0' {
 		return 0, invalid
@@ -1378,7 +1416,7 @@ func parseAdminExpiringLimit(raw string) (int, error) {
 		}
 	}
 	n, err := strconv.Atoi(raw)
-	if err != nil || n < 1 || n > adminExpiringMaxLimit {
+	if err != nil || n < 1 || n > adminListMaxLimit {
 		return 0, invalid
 	}
 	return n, nil

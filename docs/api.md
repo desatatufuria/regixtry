@@ -33,6 +33,7 @@ JSON bodies are decoded rejecting unknown fields and multiple bodies.
 | POST | `/admin/v1/users/{id}/admin-tokens` | `name`, optional `ttl` (number plus `h`, `d` or `y`, for example `12h`, `30d`, `2y`; default 30 days; maximum 2 years), or the older `ttl_seconds` (seconds; maximum `63072000`), never both | `201`, token and secret |
 | DELETE | `/admin/v1/users/{id}/admin-tokens/{accessor}` | none | `204` |
 | GET | `/admin/v1/admin-tokens/expiring` | query `within` (number plus `h`, `d` or `y`; default `30d`; maximum `2y`) and `limit` (1 to 200; default 50); invalid values give `422` | `200`, array (soonest first) of `id`, `accessor`, `name`, `user_id`, `username`, `is_robot`, `created_at`, `expires_at` for enabled users and robots whose token is not revoked, not yet expired and expires within `within`; never a secret or hash |
+| GET | `/admin/v1/access-events` | query `limit` (1 to 200; default 20); invalid values give `422` | `200`, array (newest first) of `id`, `at`, `action`, `actor`, `subject`, `repository`, `role`, `token_name`, `detail`; empty fields are omitted; `action` is `grant.put`, `grant.delete`, `token.issued`, `token.revoked` or `robot.created`; names and short text only, never a secret, hash, accessor or token id; global admin only |
 | GET | `/admin/v1/robots` | none | `200`, array of robot accounts |
 | POST | `/admin/v1/robots` | `name`, `repository`, `role`, optional `ttl` (number plus `h`, `d` or `y`, for example `12h`, `30d`, `2y`; default 30 days; maximum 2 years), or the older `ttl_seconds` (seconds; maximum `63072000`), never both | `201`, robot account with one-time token secret |
 | DELETE | `/admin/v1/robots/{id}` | none | `204`; rejected if the target is not a robot account |
@@ -79,6 +80,19 @@ curl -H "Authorization: Bearer $TOKEN" \
 ```json
 [{"id":"6f1c2b0e-8d4a-4a53-9a57-1f3e5c7d9b21","accessor":"act_6f1c2b0e8d4a4a539a571f3e5c7d9b21","name":"ci","user_id":"u_1","username":"alice","is_robot":false,"created_at":"2026-02-01T10:00:00Z","expires_at":"2026-03-10T10:00:00Z"}]
 ```
+
+Example: the five most recent access changes (global admin token required):
+
+```sh
+curl -H "Authorization: Bearer $TOKEN" \
+  "https://registry.example.com/admin/v1/access-events?limit=5"
+```
+
+```json
+[{"id":"0b6f4c1e-52c1-4e0a-9f55-7d1a2c3e4b5f","at":"2026-03-01T10:00:00.5Z","action":"grant.put","actor":"admin","subject":"alice","repository":"team/app","role":"repo-writer","detail":"Reader to Writer"},{"id":"7a1d9e20-3b4c-4f6a-8d12-9e0f1a2b3c4d","at":"2026-03-01T09:30:00Z","action":"token.issued","actor":"admin","subject":"alice","token_name":"ci","detail":"30 days"}]
+```
+
+Events are recorded after the change succeeded and on a best-effort basis: a failed history write never fails the change itself.
 
 See [registry.md](registry.md#blob-garbage-collection) for the full garbage-collection flow, including the grace window and delete-time re-check that keep it safe.
 
