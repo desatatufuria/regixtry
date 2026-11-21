@@ -199,7 +199,12 @@ func (s repoAccessScreen) statusLine(theme adminTheme, width int) string {
 		}
 		return style.Render(grantTruncate(s.status, width))
 	case s.loadErr != "":
-		return theme.error.Render(grantTruncate("Could not read grants: "+strings.TrimRight(s.loadErr, ".")+". Press r to retry.", width))
+		retry := "Press r to retry."
+		if s.filtering {
+			// r types into the filter while it has focus.
+			retry = "Esc to leave the filter, then r to retry."
+		}
+		return theme.error.Render(grantTruncate("Could not read grants: "+strings.TrimRight(s.loadErr, ".")+". "+retry, width))
 	}
 	return theme.muted.Render(grantTruncate("Roles: Reader pulls, Writer pushes, Admin manages access.", width))
 }
@@ -286,7 +291,11 @@ func (s repoAccessScreen) renderPanel(theme adminTheme, row repoAccessRow, ok bo
 		lines = append(lines, theme.muted.Render(fmt.Sprintf("+%d more", hidden)))
 	}
 	if incomplete {
-		lines = append(lines, theme.muted.Render("Loading more…"))
+		more := "Loading more…"
+		if s.loadErr != "" && !s.loading {
+			more = "not fully loaded"
+		}
+		lines = append(lines, theme.muted.Render(more))
 	}
 	lines = append(lines, actions...)
 	lines = append(lines, warning...)

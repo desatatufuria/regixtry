@@ -199,7 +199,7 @@ func TestRepoAccessFollowsNextUntilEmptyAndNeverReadsMoreThanThePages(t *testing
 	if !s.done || len(s.rows) != 450 || s.loading {
 		t.Fatalf("done=%v rows=%d loading=%v, want a finished walk", s.done, len(s.rows), s.loading)
 	}
-	m = repoAccessPress(t, m, repoAccessType("z")...)
+	repoAccessPress(t, m, repoAccessType("z")...)
 	if len(client.allGrantsCursors) != 3 {
 		t.Fatalf("a finished walk read again: %q", client.allGrantsCursors)
 	}
@@ -209,7 +209,7 @@ func TestRepoAccessFilterWithEnoughMatchesReadsNoMorePages(t *testing.T) {
 	t.Parallel()
 	client := repoAccessBulk(450)
 	m := repoAccessModelAt(t, client, 150, 24)
-	m = repoAccessPress(t, m, append([]keyMsg{testKeyRunes("/")}, repoAccessType("org/repo0")...)...)
+	repoAccessPress(t, m, append([]keyMsg{testKeyRunes("/")}, repoAccessType("org/repo0")...)...)
 	if len(client.allGrantsCursors) != 1 {
 		t.Fatalf("reads = %q, the first page already holds enough matches", client.allGrantsCursors)
 	}
@@ -221,7 +221,7 @@ func TestRepoAccessFilterWithFewMatchesReadsPagesOnlyAsNeeded(t *testing.T) {
 	m := repoAccessModelAt(t, client, 150, 24)
 	// repo3xx matches 100 rows: page 2 (200..399) holds them all, and 100 is
 	// more than a screen, so reading stops there.
-	m = repoAccessPress(t, m, append([]keyMsg{testKeyRunes("/")}, repoAccessType("repo3")...)...)
+	repoAccessPress(t, m, append([]keyMsg{testKeyRunes("/")}, repoAccessType("repo3")...)...)
 	if got := strings.Join(client.allGrantsCursors, ","); got != ",c200" {
 		t.Fatalf("reads = %q, want only the pages needed (,c200)", got)
 	}
@@ -998,5 +998,68 @@ func TestRepoAccessPanelNeverClaimsNoAdminOnASplitRepository(t *testing.T) {
 		if strings.Contains(out, "Loading more…") || strings.Contains(out, "+ principals") || strings.Contains(out, noAdmin) == withAdmin {
 			t.Fatalf("admin=%v after page 2: exact panel expected (warning iff no admin):\n%s", withAdmin, out)
 		}
+	}
+}
+
+func TestRepoAccessRetryHintDoesNotPromiseRWhileTheFilterHasFocus(t *testing.T) {
+	t.Parallel()
+	client := repoAccessClient()
+	client.allGrantsErrs = map[string]error{"": errors.New("boom")}
+	m := repoAccessModelAt(t, client, 200, 40)
+	if out := repoAccessRender(m); !strings.Contains(out, "Could not read grants: boom. Press r to retry.") {
+		t.Fatalf("not filtering: retry hint missing:\n%s", out)
+	}
+	m = repoAccessPress(t, m, testKeyRunes("/"))
+	out := repoAccessRender(m)
+	if strings.Contains(out, "Press r to retry") || !strings.Contains(out, "Esc to leave the filter, then r to retry") {
+		t.Fatalf("filtering: the hint must say to leave the filter first:\n%s", out)
+	}
+	if strings.Contains(out, "r retry") {
+		t.Fatalf("filtering: the footer offers r:\n%s", out)
+	}
+	m = repoAccessPress(t, m, testKeyRunes("r"))
+	if s := repoAccessScreenOf(t, m); s.filter != "r" || len(client.allGrantsCursors) != 1 {
+		t.Fatalf("r while filtering: filter=%q reads=%q, want it typed and no read", s.filter, client.allGrantsCursors)
+	}
+}
+
+func TestRepoAccessPanelAfterALaterPageFailureSaysNotFullyLoaded(t *testing.T) {
+	t.Parallel()
+	client := repoAccessBulk(450)
+	client.allGrantsErrs = map[string]error{"c200": errors.New("page boom")}
+	m := repoAccessModelAt(t, client, 220, 60)
+	for range 199 {
+		m = repoAccessPress(t, m, testKeyDown())
+	}
+	s := repoAccessScreenOf(t, m)
+	if s.loadErr == "" || s.loading || len(s.rows) != 200 {
+		t.Fatalf("loadErr=%q loading=%v rows=%d, want the c200 read failed", s.loadErr, s.loading, len(s.rows))
+	}
+	out := repoAccessRender(m)
+	if strings.Contains(out, "Loading more…") || !strings.Contains(out, "not fully loaded") || !strings.Contains(out, "1+ principals have access") || strings.Contains(out, "No Admin on this repository") {
+		t.Fatalf("after a page failure the last repository must say not fully loaded, never No Admin:\n%s", out)
+	}
+	// While a retry is in flight it is loading again.
+	client.allGrantsErrs = nil
+	m = repoAccessPress(t, m, testKeyRunes("r"))
+	if out = repoAccessRender(m); strings.Contains(out, "not fully loaded") {
+		t.Fatalf("a good retry left the not-fully-loaded line:\n%s", out)
+	}
+}
+
+func TestRepoAccessRevokeTopsUpWhenTheLoadedRowsRunOut(t *testing.T) {
+	t.Parallel()
+	client := repoAccessBulk(450)
+	s := newRepoAccessScreen()
+	s.loading, s.next = false, "c200"
+	s.rows = []repoAccessRow{{repo: "org/repo000", userID: "u-alice", username: "alice"}}
+	env := screenEnv{Client: client, Session: AdminSession{Username: "operator"}, Layout: consoleLayout{Width: 150, Height: 24}}
+	next, cmd, _ := s.Update(env, repoAccessRevokedMsg{gen: s.gen, repo: "org/repo000", username: "alice"})
+	got := next.(repoAccessScreen)
+	if len(got.rows) != 0 || cmd == nil || !got.loading {
+		t.Fatalf("rows=%d cmd=%v loading=%v, want the emptied screen to read the next page", len(got.rows), cmd != nil, got.loading)
+	}
+	if msg, ok := cmd().(repoAccessGrantsLoadedMsg); !ok || msg.after != "c200" {
+		t.Fatalf("the top-up read %#v, want the page after c200", msg)
 	}
 }

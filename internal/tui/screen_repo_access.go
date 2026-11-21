@@ -196,7 +196,8 @@ func (s repoAccessScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.C
 		next, cmd := s.fill(env)
 		return next, cmd, false
 	case repoAccessRevokedMsg:
-		return s.revoked(env, typed), nil, false
+		next, cmd := s.revoked(env, typed)
+		return next, cmd, false
 	}
 	return s, nil, false
 }
@@ -352,12 +353,12 @@ func (s repoAccessScreen) askRevoke(env screenEnv, rows []repoAccessRow) (adminS
 
 // revoked applies a delete result: the row leaves the list on success; either
 // way the prompt closes and the outcome is on the status line.
-func (s repoAccessScreen) revoked(env screenEnv, msg repoAccessRevokedMsg) repoAccessScreen {
+func (s repoAccessScreen) revoked(env screenEnv, msg repoAccessRevokedMsg) (repoAccessScreen, tea.Cmd) {
 	s.revoking = false
 	s.confirm = confirmPrompt{}
 	if msg.err != nil {
 		s.status, s.statusTone = fmt.Sprintf("Could not revoke %s on %s: %s", msg.username, msg.repo, msg.err.Error()), grantToneError
-		return s
+		return s, nil
 	}
 	kept := make([]repoAccessRow, 0, len(s.rows))
 	for _, row := range s.rows {
@@ -368,7 +369,8 @@ func (s repoAccessScreen) revoked(env screenEnv, msg repoAccessRevokedMsg) repoA
 	s.rows = kept
 	s.cursor = boundedIndex(s.cursor, len(s.visibleRows()))
 	s.status, s.statusTone = fmt.Sprintf("Revoked %s on %s.", msg.username, msg.repo), grantToneSuccess
-	return s
+	// A screen emptied by revokes with pages left reads the next one.
+	return s.fill(env)
 }
 
 // ---- derived data ----
