@@ -498,7 +498,7 @@ func (m *Model) rebuildAdminTables(layout consoleLayout) {
 	m.adminView.Layout = layout
 }
 
-// Table styles are built from admin_theme.go's Nord hex constants so they can
+// Table styles are built from admin_theme.go's palette role constants so they can
 // never drift from the theme palette.
 
 func bubbleTableBaseStyle() lipgloss.Style {

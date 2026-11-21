@@ -76,35 +76,32 @@ func TestSeverityMediumHasItsOwnDistinctHex(t *testing.T) {
 	if medium == high {
 		t.Fatalf("severityMedium foreground = %q, want it to differ from severityHigh foreground %q", medium, high)
 	}
-	if medium != "#C0A16B" {
-		t.Fatalf("severityMedium foreground = %q, want %q (design.md Decision 3, confirmed)", medium, "#C0A16B")
+	// The design palette has no hue for MEDIUM; it takes the accent blue.
+	if medium != "#7AA2F7" {
+		t.Fatalf("severityMedium foreground = %q, want %q (design accent)", medium, "#7AA2F7")
 	}
 }
 
-// TestSeverityRampLuminanceOrdering guards the real luminance relationships
-// design.md's palette table asserts once severityMedium moves off warning's
-// hex: critical (errorColor, darkest/most alarming) < medium (new bronze) <
-// low (muted grey) < high (warning amber, brightest). This is computed from
-// the theme's real hex values via the WCAG relative luminance formula, not
-// hardcoded, so it fails if any severity's underlying color drifts.
-func TestSeverityRampLuminanceOrdering(t *testing.T) {
+// TestSeverityRampIsFourDistinctColors replaces the Nord-era luminance
+// ordering (critical < medium < low < high), which was an artifact of the
+// Nord hues and no longer holds in the design palette: what matters is that
+// the four severities stay pairwise distinguishable by color.
+func TestSeverityRampIsFourDistinctColors(t *testing.T) {
 	t.Parallel()
 
 	theme := newAdminTheme()
-
-	critical := relativeLuminance(t, styleForegroundHex(t, theme.severityCritical))
-	medium := relativeLuminance(t, styleForegroundHex(t, theme.severityMedium))
-	low := relativeLuminance(t, styleForegroundHex(t, theme.severityLow))
-	high := relativeLuminance(t, styleForegroundHex(t, theme.severityHigh))
-
-	if !(critical < medium) {
-		t.Fatalf("luminance(critical)=%.4f, luminance(medium)=%.4f, want critical < medium", critical, medium)
+	got := map[string]string{
+		"critical": styleForegroundHex(t, theme.severityCritical),
+		"medium":   styleForegroundHex(t, theme.severityMedium),
+		"low":      styleForegroundHex(t, theme.severityLow),
+		"high":     styleForegroundHex(t, theme.severityHigh),
 	}
-	if !(medium < low) {
-		t.Fatalf("luminance(medium)=%.4f, luminance(low)=%.4f, want medium < low", medium, low)
-	}
-	if !(low < high) {
-		t.Fatalf("luminance(low)=%.4f, luminance(high)=%.4f, want low < high", low, high)
+	seen := map[string]string{}
+	for name, hex := range got {
+		if other, dup := seen[hex]; dup {
+			t.Fatalf("severity %s and %s share foreground %s", name, other, hex)
+		}
+		seen[hex] = name
 	}
 }
 
