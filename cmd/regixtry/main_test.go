@@ -3317,11 +3317,15 @@ func writeTestTLSCertificate(t *testing.T) (string, string) {
 	return certFile, keyFile
 }
 
+// uploadStartupWindow bounds both each request and the readiness wait: serve()
+// startup (SQLite open and migrations) can take about 1 s on a loaded machine.
+const uploadStartupWindow = 10 * time.Second
+
 func waitForUploadLocation(t *testing.T, address string) string {
 	t.Helper()
 
-	client := &http.Client{Timeout: 2 * time.Second}
-	deadline := time.Now().Add(2 * time.Second)
+	client := &http.Client{Timeout: uploadStartupWindow}
+	deadline := time.Now().Add(uploadStartupWindow)
 	for {
 		request, err := http.NewRequest(http.MethodPost, "http://"+address+"/v2/library/alpine/blobs/uploads/", nil)
 		if err != nil {
