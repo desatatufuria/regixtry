@@ -38,7 +38,7 @@ func (s securityMenuScreen) Init(env screenEnv) tea.Cmd {
 
 func (s securityMenuScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.Cmd, bool) {
 	switch typed := msg.(type) {
-	case tea.KeyMsg:
+	case keyMsg:
 		return s.updateKey(env, typed)
 	case tea.WindowSizeMsg:
 		s.rebuildTable(env)
@@ -66,7 +66,7 @@ func (s *securityMenuScreen) rebuildTable(env screenEnv) {
 	s.table = buildAdminFeaturesTable(s.features, s.selected, primary)
 }
 
-func (s securityMenuScreen) updateKey(env screenEnv, msg tea.KeyMsg) (adminScreen, tea.Cmd, bool) {
+func (s securityMenuScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd, bool) {
 	switch {
 	case isEscKey(msg):
 		return s, navigate(screenAdminMenu), true

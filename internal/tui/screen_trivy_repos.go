@@ -52,7 +52,7 @@ func (s trivyReposScreen) Init(env screenEnv) tea.Cmd {
 func (s trivyReposScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.Cmd, bool) {
 	if s.editor.Active() {
 		switch typed := msg.(type) {
-		case tea.KeyMsg:
+		case keyMsg:
 			next, cmd, consumed := s.editor.update(env, typed)
 			s.editor = next
 			return s, cmd, consumed
@@ -67,7 +67,7 @@ func (s trivyReposScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.C
 		return s, nil, false
 	}
 	switch typed := msg.(type) {
-	case tea.KeyMsg:
+	case keyMsg:
 		return s.updateKey(env, typed)
 	case tea.WindowSizeMsg:
 		s.rebuildTable(env)
@@ -124,7 +124,7 @@ func (s *trivyReposScreen) rebuildTable(env screenEnv) {
 	s.table = buildAdminScanSummaryTable(annotateDisabledSummaries(s.summaries, s.overrides), s.selected, primary)
 }
 
-func (s trivyReposScreen) updateKey(env screenEnv, msg tea.KeyMsg) (adminScreen, tea.Cmd, bool) {
+func (s trivyReposScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd, bool) {
 	switch {
 	case isEscKey(msg):
 		return s, navigate(screenAdminFeatures), true

@@ -45,7 +45,7 @@ func (s scanRunsScreen) Init(env screenEnv) tea.Cmd {
 
 func (s scanRunsScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.Cmd, bool) {
 	switch typed := msg.(type) {
-	case tea.KeyMsg:
+	case keyMsg:
 		return s.updateKey(env, typed)
 	case tea.WindowSizeMsg:
 		s.rebuildTable(env)
@@ -71,7 +71,7 @@ func (s *scanRunsScreen) rebuildTable(env screenEnv) {
 	s.table = buildAdminScanSummaryTable(s.summaries, s.selected, primary)
 }
 
-func (s scanRunsScreen) updateKey(env screenEnv, msg tea.KeyMsg) (adminScreen, tea.Cmd, bool) {
+func (s scanRunsScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd, bool) {
 	switch {
 	case isEscKey(msg):
 		return s, navigate(screenAdminOperations), true

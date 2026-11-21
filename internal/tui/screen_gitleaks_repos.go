@@ -58,7 +58,7 @@ func (s featureOverridesScreen) Init(env screenEnv) tea.Cmd {
 func (s featureOverridesScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.Cmd, bool) {
 	if s.editor.Active() {
 		switch typed := msg.(type) {
-		case tea.KeyMsg:
+		case keyMsg:
 			next, cmd, consumed := s.editor.update(env, typed)
 			s.editor = next
 			return s, cmd, consumed
@@ -81,7 +81,7 @@ func (s featureOverridesScreen) Update(env screenEnv, msg tea.Msg) (adminScreen,
 		return s, nil, false
 	}
 	switch typed := msg.(type) {
-	case tea.KeyMsg:
+	case keyMsg:
 		return s.updateKey(env, typed)
 	case tea.WindowSizeMsg:
 		s.rebuildTable(env)
@@ -112,7 +112,7 @@ func (s *featureOverridesScreen) rebuildTable(env screenEnv) {
 	s.table = buildFeatureOverridesTable(s.feature, s.rows, s.selected, primary)
 }
 
-func (s featureOverridesScreen) updateKey(env screenEnv, msg tea.KeyMsg) (adminScreen, tea.Cmd, bool) {
+func (s featureOverridesScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd, bool) {
 	switch {
 	case isEscKey(msg):
 		return s, navigate(screenAdminFeatures), true

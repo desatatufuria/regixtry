@@ -78,7 +78,7 @@ func (l trustedKeyList) Keys() []string { return l.keys }
 // e.g. updateAdminUsersKey), 'x' (delete, matching its existing "remove"
 // precedent, e.g. updateAdminGrantsKey), and everything typed while
 // adding or confirming a delete.
-func (l trustedKeyList) update(env screenEnv, msg tea.KeyMsg) (trustedKeyList, tea.Cmd, bool) {
+func (l trustedKeyList) update(env screenEnv, msg keyMsg) (trustedKeyList, tea.Cmd, bool) {
 	if l.usageLoading {
 		return l, nil, true // swallow input while the usage-count call is in flight
 	}
@@ -106,7 +106,7 @@ func (l trustedKeyList) update(env screenEnv, msg tea.KeyMsg) (trustedKeyList, t
 		case isEnterKey(msg):
 			// A raw terminal without bracketed-paste support delivers each
 			// embedded newline byte of a pasted multi-line PEM as its own
-			// tea.KeyEnter event, not accumulated literal '\n' runes. Only
+			// Enter key event, not accumulated literal '\n' runes. Only
 			// treat Enter as a genuine submit once the accumulated input
 			// already looks like a complete PEM (both markers present);
 			// otherwise this is a mid-paste newline, so append it to input
@@ -139,8 +139,8 @@ func (l trustedKeyList) update(env screenEnv, msg tea.KeyMsg) (trustedKeyList, t
 			l.err = ""
 			return l, nil, true
 		}
-		if msg.Type == tea.KeyRunes {
-			l.input += string(msg.Runes)
+		if isTextKey(msg) {
+			l.input += keyText(msg)
 			l.err = ""
 			return l, nil, true
 		}

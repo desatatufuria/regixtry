@@ -68,7 +68,7 @@ func (s trivyConfigScreen) Init(env screenEnv) tea.Cmd {
 }
 
 func (s trivyConfigScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.Cmd, bool) {
-	if key, ok := msg.(tea.KeyMsg); ok {
+	if key, ok := msg.(keyMsg); ok {
 		switch {
 		case s.confirm.Active():
 			before := s.confirm
@@ -162,7 +162,7 @@ func (s *trivyConfigScreen) rebuildRows(env screenEnv) {
 	s.rows = rows
 }
 
-func (s trivyConfigScreen) updateKey(env screenEnv, msg tea.KeyMsg) (adminScreen, tea.Cmd, bool) {
+func (s trivyConfigScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd, bool) {
 	switch {
 	case isEscKey(msg):
 		return s, navigate(screenAdminFeatures), true
@@ -213,7 +213,7 @@ func (s trivyConfigScreen) dispatchAction(env screenEnv, action ports.FeatureAct
 	return s, executeFeatureActionCmd(env, trivyFeatureName, action.ID), true
 }
 
-func (s trivyConfigScreen) updateConfigKey(env screenEnv, msg tea.KeyMsg) (adminScreen, tea.Cmd, bool) {
+func (s trivyConfigScreen) updateConfigKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd, bool) {
 	switch {
 	case isEscKey(msg):
 		s.cfg = trivyConfigModal{}
@@ -222,7 +222,7 @@ func (s trivyConfigScreen) updateConfigKey(env screenEnv, msg tea.KeyMsg) (admin
 		s.cfg.Focus = nextTrivyConfigField(s.cfg.Focus)
 		s.cfg.Error = ""
 		return s, nil, true
-	case isRuneKey(msg, ' '):
+	case isSpaceKey(msg):
 		if s.cfg.Focus == trivyConfigFieldScheduleEnabled {
 			s.cfg.ScheduleEnabled = !s.cfg.ScheduleEnabled
 			s.cfg.Error = ""
@@ -240,8 +240,8 @@ func (s trivyConfigScreen) updateConfigKey(env screenEnv, msg tea.KeyMsg) (admin
 		}
 		return s, configureFeatureCmd(env, trivyFeatureName, input), true
 	}
-	if msg.Type == tea.KeyRunes {
-		s.appendConfigRunes(string(msg.Runes))
+	if isTextKey(msg) {
+		s.appendConfigRunes(keyText(msg))
 		s.cfg.Error = ""
 		return s, nil, true
 	}
@@ -277,7 +277,7 @@ func (s *trivyConfigScreen) appendConfigRunes(value string) {
 	}
 }
 
-func (s trivyConfigScreen) updatePolicyKey(env screenEnv, msg tea.KeyMsg) (adminScreen, tea.Cmd, bool) {
+func (s trivyConfigScreen) updatePolicyKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd, bool) {
 	switch {
 	case isEscKey(msg):
 		s.policyModal = scanPolicyModal{}
@@ -286,7 +286,7 @@ func (s trivyConfigScreen) updatePolicyKey(env screenEnv, msg tea.KeyMsg) (admin
 		s.policyModal.Focus = nextScanPolicyField(s.policyModal.Focus)
 		s.policyModal.Error = ""
 		return s, nil, true
-	case isRuneKey(msg, ' '):
+	case isSpaceKey(msg):
 		switch s.policyModal.Focus {
 		case scanPolicyFieldEnabled:
 			s.policyModal.Enabled = !s.policyModal.Enabled

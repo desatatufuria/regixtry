@@ -51,7 +51,7 @@ func (c confirmPrompt) Active() bool {
 // arrives, exactly like adminConfirmModal today); every other key is
 // swallowed as a no-op. consumed is true for every key while active,
 // reproducing updateAdminConfirmKey's existing swallow-all behavior.
-func (c confirmPrompt) update(env screenEnv, msg tea.KeyMsg) (confirmPrompt, tea.Cmd, bool) {
+func (c confirmPrompt) update(env screenEnv, msg keyMsg) (confirmPrompt, tea.Cmd, bool) {
 	switch {
 	case isEscKey(msg):
 		return confirmPrompt{}, nil, true

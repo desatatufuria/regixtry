@@ -74,7 +74,7 @@ func (s signingConfigScreen) Init(env screenEnv) tea.Cmd {
 }
 
 func (s signingConfigScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.Cmd, bool) {
-	if key, ok := msg.(tea.KeyMsg); ok {
+	if key, ok := msg.(keyMsg); ok {
 		switch {
 		case s.confirm.Active():
 			before := s.confirm
@@ -175,7 +175,7 @@ func (s *signingConfigScreen) rebuildRows(env screenEnv) {
 	s.rows = rows
 }
 
-func (s signingConfigScreen) updateKey(env screenEnv, msg tea.KeyMsg) (adminScreen, tea.Cmd, bool) {
+func (s signingConfigScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd, bool) {
 	switch {
 	case isEscKey(msg):
 		return s, navigate(screenAdminFeatures), true
@@ -221,7 +221,7 @@ func (s signingConfigScreen) dispatchAction(env screenEnv, action ports.FeatureA
 	return s, executeFeatureActionCmd(env, signingFeatureName, action.ID), true
 }
 
-func (s signingConfigScreen) updateConfigKey(env screenEnv, msg tea.KeyMsg) (adminScreen, tea.Cmd, bool) {
+func (s signingConfigScreen) updateConfigKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd, bool) {
 	// The Keys field (trustedKeyList) claims Up/Down/'n'/'x' and every key
 	// while it is mid-add or mid-delete-confirm; only what it does NOT
 	// consume (Tab/Esc/Space/Enter in its own idle navigation state) falls
@@ -278,7 +278,7 @@ func (s signingConfigScreen) updateConfigKey(env screenEnv, msg tea.KeyMsg) (adm
 		s.cfg.Focus = nextSigningPolicyField(s.cfg.Focus)
 		s.cfg.Error = ""
 		return s, nil, true
-	case isRuneKey(msg, ' '):
+	case isSpaceKey(msg):
 		switch s.cfg.Focus {
 		case signingPolicyFieldEnabled:
 			s.cfg.Enabled = !s.cfg.Enabled

@@ -132,7 +132,7 @@ func (e overrideEditor) currentField() overrideField {
 // cycle: Esc clears, Tab cycles the per-feature field set, Space toggles
 // Enabled/cycles UnsignedSelfRead, runes append to the focused path field,
 // Enter means save on every focus except Clear, where it means clear.
-func (e overrideEditor) update(env screenEnv, msg tea.KeyMsg) (overrideEditor, tea.Cmd, bool) {
+func (e overrideEditor) update(env screenEnv, msg keyMsg) (overrideEditor, tea.Cmd, bool) {
 	// The trusted-key list claims Up/Down/'n'/'x' and every key while it is
 	// mid-add or mid-delete-confirm; only what it does NOT consume (Tab/
 	// Esc/Space/Enter in its own idle navigation state) falls through to
@@ -195,7 +195,7 @@ func (e overrideEditor) update(env screenEnv, msg tea.KeyMsg) (overrideEditor, t
 		}
 		e.err = ""
 		return e, nil, true
-	case isRuneKey(msg, ' '):
+	case isSpaceKey(msg):
 		switch e.currentField() {
 		case overrideFieldEnabled:
 			e.enabled = !e.enabled
@@ -230,8 +230,8 @@ func (e overrideEditor) update(env screenEnv, msg tea.KeyMsg) (overrideEditor, t
 		}
 		return e, saveRepositoryOverrideCmd(env, e.repository, e.feature, input), true
 	}
-	if msg.Type == tea.KeyRunes {
-		e.appendRunes(string(msg.Runes))
+	if isTextKey(msg) {
+		e.appendRunes(keyText(msg))
 		e.err = ""
 		return e, nil, true
 	}
@@ -430,7 +430,7 @@ func (e overrideEditor) Init(env screenEnv) tea.Cmd {
 // once Esc has cleared the editor.
 func (e overrideEditor) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.Cmd, bool) {
 	switch typed := msg.(type) {
-	case tea.KeyMsg:
+	case keyMsg:
 		next, cmd, consumed := e.update(env, typed)
 		if !next.open {
 			return nil, cmd, consumed

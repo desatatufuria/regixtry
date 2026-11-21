@@ -44,7 +44,7 @@ func (s updateChannelScreen) Init(env screenEnv) tea.Cmd {
 
 func (s updateChannelScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.Cmd, bool) {
 	switch typed := msg.(type) {
-	case tea.KeyMsg:
+	case keyMsg:
 		return s.updateKey(env, typed)
 	case adminUpdateChannelLoadedMsg:
 		if typed.err != nil {
@@ -72,11 +72,11 @@ func (s updateChannelScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, te
 	return s, nil, false
 }
 
-func (s updateChannelScreen) updateKey(env screenEnv, msg tea.KeyMsg) (adminScreen, tea.Cmd, bool) {
+func (s updateChannelScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd, bool) {
 	switch {
 	case isEscKey(msg):
 		return s, navigate(screenAdminOperations), true
-	case isRuneKey(msg, ' '):
+	case isSpaceKey(msg):
 		if !s.loaded || s.saving {
 			return s, nil, true
 		}

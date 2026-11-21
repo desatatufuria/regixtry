@@ -46,13 +46,13 @@ func (s adminMenuScreen) Init(env screenEnv) tea.Cmd { return nil }
 
 func (s adminMenuScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.Cmd, bool) {
 	switch typed := msg.(type) {
-	case tea.KeyMsg:
+	case keyMsg:
 		return s.updateKey(typed)
 	}
 	return s, nil, false
 }
 
-func (s adminMenuScreen) updateKey(msg tea.KeyMsg) (adminScreen, tea.Cmd, bool) {
+func (s adminMenuScreen) updateKey(msg keyMsg) (adminScreen, tea.Cmd, bool) {
 	switch {
 	case isEscKey(msg):
 		return s, returnToInspectionCmd(), true

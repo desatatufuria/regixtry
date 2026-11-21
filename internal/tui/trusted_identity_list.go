@@ -5,7 +5,6 @@ import (
 	"regexp"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"regixtry/internal/ports"
 )
 
@@ -73,7 +72,7 @@ func (l trustedIdentityList) Identities() []ports.TrustedIdentity { return l.ide
 // update, this never dispatches a tea.Cmd (no async usage-count lookup
 // exists for identities), so callers that need the (list, cmd, consumed)
 // shape trustedKeyList.update returns wrap this with a nil cmd.
-func (l trustedIdentityList) update(msg tea.KeyMsg) (trustedIdentityList, bool) {
+func (l trustedIdentityList) update(msg keyMsg) (trustedIdentityList, bool) {
 	if l.adding {
 		switch {
 		case isEscKey(msg):
@@ -104,12 +103,12 @@ func (l trustedIdentityList) update(msg tea.KeyMsg) (trustedIdentityList, bool) 
 			l.err = ""
 			return l, true
 		}
-		if msg.Type == tea.KeyRunes {
+		if isTextKey(msg) {
 			switch l.addFocus {
 			case identityAddFieldRegexp:
-				l.inputRegexp += string(msg.Runes)
+				l.inputRegexp += keyText(msg)
 			default:
-				l.inputIssuer += string(msg.Runes)
+				l.inputIssuer += keyText(msg)
 			}
 			l.err = ""
 			return l, true

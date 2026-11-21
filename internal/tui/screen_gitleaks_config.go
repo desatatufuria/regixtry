@@ -70,7 +70,7 @@ func (s gitleaksConfigScreen) Init(env screenEnv) tea.Cmd {
 }
 
 func (s gitleaksConfigScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.Cmd, bool) {
-	if key, ok := msg.(tea.KeyMsg); ok {
+	if key, ok := msg.(keyMsg); ok {
 		switch {
 		case s.confirm.Active():
 			before := s.confirm
@@ -148,7 +148,7 @@ func (s *gitleaksConfigScreen) rebuildRows(env screenEnv) {
 	s.rows = rows
 }
 
-func (s gitleaksConfigScreen) updateKey(env screenEnv, msg tea.KeyMsg) (adminScreen, tea.Cmd, bool) {
+func (s gitleaksConfigScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd, bool) {
 	switch {
 	case isEscKey(msg):
 		return s, navigate(screenAdminFeatures), true
@@ -195,7 +195,7 @@ func (s gitleaksConfigScreen) dispatchAction(env screenEnv, action ports.Feature
 	return s, executeFeatureActionCmd(env, gitleaksFeatureName, action.ID), true
 }
 
-func (s gitleaksConfigScreen) updateConfigKey(env screenEnv, msg tea.KeyMsg) (adminScreen, tea.Cmd, bool) {
+func (s gitleaksConfigScreen) updateConfigKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd, bool) {
 	switch {
 	case isEscKey(msg):
 		s.cfg = gitleaksConfigModal{}
@@ -204,7 +204,7 @@ func (s gitleaksConfigScreen) updateConfigKey(env screenEnv, msg tea.KeyMsg) (ad
 		s.cfg.Focus = nextGitleaksConfigField(s.cfg.Focus)
 		s.cfg.Error = ""
 		return s, nil, true
-	case isRuneKey(msg, ' '):
+	case isSpaceKey(msg):
 		if s.cfg.Focus == gitleaksConfigFieldEnabled {
 			s.cfg.Enabled = !s.cfg.Enabled
 			s.cfg.Error = ""
@@ -222,8 +222,8 @@ func (s gitleaksConfigScreen) updateConfigKey(env screenEnv, msg tea.KeyMsg) (ad
 		}
 		return s, configureFeatureCmd(env, gitleaksFeatureName, input), true
 	}
-	if msg.Type == tea.KeyRunes {
-		s.appendRunes(string(msg.Runes))
+	if isTextKey(msg) {
+		s.appendRunes(keyText(msg))
 		s.cfg.Error = ""
 		return s, nil, true
 	}

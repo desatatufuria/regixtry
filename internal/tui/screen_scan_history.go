@@ -60,7 +60,7 @@ func (s scanHistoryScreen) Init(env screenEnv) tea.Cmd {
 
 func (s scanHistoryScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.Cmd, bool) {
 	switch typed := msg.(type) {
-	case tea.KeyMsg:
+	case keyMsg:
 		return s.updateKey(env, typed)
 	case tea.WindowSizeMsg:
 		s.rebuildTables(env)
@@ -111,7 +111,7 @@ func (s *scanHistoryScreen) rebuildTables(env screenEnv) {
 	s.secretFindings = buildAdminSecretFindingsTable(s.modal.Secrets, s.modal.FindingCursor, primary)
 }
 
-func (s scanHistoryScreen) updateKey(env screenEnv, msg tea.KeyMsg) (adminScreen, tea.Cmd, bool) {
+func (s scanHistoryScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd, bool) {
 	switch {
 	case isShiftTabKey(msg):
 		s.modal.ActiveTab = cycleIndex(s.modal.ActiveTab-1, len(s.modal.Tabs))

@@ -66,7 +66,7 @@ type screenFrame struct {
 // adminScreen is the per-screen sub-model contract (design.md
 // "Interfaces / Contracts"). Update returns the screen's NEW value — the
 // parent replaces its held value, it never writes into a sub-model's fields
-// directly (design.md Decision B). consumed reports whether a tea.KeyMsg was
+// directly (design.md Decision B). consumed reports whether a key message was
 // handled here; false lets the router fall through to the global key
 // fallbacks, preserving today's precedence exactly.
 type adminScreen interface {

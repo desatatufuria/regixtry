@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
-	tea "github.com/charmbracelet/bubbletea"
 	"regixtry/internal/ports"
 )
 
@@ -22,7 +21,7 @@ func (k screenKeys) FullHelp() [][]key.Binding { return k.full }
 // lookup is deliberate: a screen's Update can only dispatch a key that is
 // also in its rendered help, and a key present in help cannot silently stop
 // being handled — the drift class this change exists to kill.
-func (k screenKeys) matches(msg tea.KeyMsg, id string) bool {
+func (k screenKeys) matches(msg keyMsg, id string) bool {
 	for _, b := range k.short {
 		if b.Help().Key == id && key.Matches(msg, b) {
 			return true

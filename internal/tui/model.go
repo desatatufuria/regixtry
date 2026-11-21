@@ -939,7 +939,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// (design.md Decision H).
 		m.adminScreens, _ = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
 		return m, nil
-	case tea.KeyMsg:
+	case keyMsg:
 		return m.updateKey(msg)
 	case catalogLoadedMsg:
 		if msg.err != nil {
@@ -1867,8 +1867,8 @@ func (m Model) viewScreen() string {
 	return renderInspectionWorkspace("Regixtry", renderConsoleTextSection("Ready.", m.contentBudget("", help)), "", help)
 }
 
-func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
+func (m Model) updateKey(msg keyMsg) (tea.Model, tea.Cmd) {
+	switch keyString(msg) {
 	case "ctrl+c":
 		return m, tea.Quit
 	case "q":
@@ -1881,7 +1881,7 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateAdminKey(msg)
 	}
 
-	if msg.String() == "tab" {
+	if keyString(msg) == "tab" {
 		return m.openAdmin()
 	}
 
@@ -2135,7 +2135,7 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) updateAdminKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) updateAdminKey(msg keyMsg) (tea.Model, tea.Cmd) {
 	// Trivy's config/scan-policy modals, gitleaks' config modal, and
 	// signing's policy modal are no longer overlays pre-dispatched here
 	// (Phase 11 promotes trivyConfigScreen/gitleaksConfigScreen/
@@ -2189,7 +2189,7 @@ func (m Model) updateAdminKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return routeAdminKey(m, msg)
 }
 
-func (m Model) updateAdminLoginKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) updateAdminLoginKey(msg keyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case isEscKey(msg):
 		return m.returnToInspection(), nil
@@ -2215,14 +2215,14 @@ func (m Model) updateAdminLoginKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.deleteLoginRune()
 		return m, nil
 	}
-	if msg.Type == tea.KeyRunes {
-		m.appendLoginRunes(string(msg.Runes))
+	if isTextKey(msg) {
+		m.appendLoginRunes(keyText(msg))
 		return m, nil
 	}
 	return m, nil
 }
 
-func (m Model) updateAdminUsersKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) updateAdminUsersKey(msg keyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case isEscKey(msg):
 		// Phase 18: screenAdminMenu is now the admin panel's own root, not
@@ -2269,7 +2269,7 @@ func (m Model) updateAdminUsersKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // irreversible -- distinct from "x"/disable, and distinct from every other
 // admin screen in this codebase where "x" itself means delete), "t" to
 // reuse the existing token screens for the selected robot, "r" to refresh.
-func (m Model) updateAdminRobotsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) updateAdminRobotsKey(msg keyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case isEscKey(msg):
 		m.clearRevealedAdminToken()
@@ -2349,7 +2349,7 @@ func (m Model) updateAdminRobotsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // convention); unlike the repo-admin delegate's adminRepositoryGrantForm,
 // this form is global-admin-only, so Role is not restricted away from
 // repo-admin.
-func (m Model) updateCreateRobotFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) updateCreateRobotFormKey(msg keyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case isEscKey(msg):
 		// Esc is the ordinary "cancel/back" exit from the create screen,
@@ -2381,7 +2381,7 @@ func (m Model) updateCreateRobotFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.adminView.CreateRobotForm.RepositorySuggestion = 0
 		}
 		return m, nil
-	case isRuneKey(msg, ' '):
+	case isSpaceKey(msg):
 		if m.adminView.CreateRobotForm.Focus == adminCreateRobotFieldRole {
 			m.adminView.CreateRobotForm.Role = nextGrantRole(m.adminView.CreateRobotForm.Role)
 			return m, nil
@@ -2418,20 +2418,20 @@ func (m Model) updateCreateRobotFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status = fmt.Sprintf("Creating robot %s...", name)
 		return m, m.createAdminRobotCmd(input)
 	}
-	if msg.Type == tea.KeyRunes {
+	if isTextKey(msg) {
 		switch m.adminView.CreateRobotForm.Focus {
 		case adminCreateRobotFieldName:
-			m.adminView.CreateRobotForm.Name += string(msg.Runes)
+			m.adminView.CreateRobotForm.Name += keyText(msg)
 		case adminCreateRobotFieldRepository:
-			m.adminView.CreateRobotForm.Repository += string(msg.Runes)
+			m.adminView.CreateRobotForm.Repository += keyText(msg)
 			m.adminView.CreateRobotForm.RepositorySuggestion = 0
 		case adminCreateRobotFieldTTL:
-			for _, r := range msg.Runes {
+			for _, r := range keyText(msg) {
 				if !unicode.IsDigit(r) {
 					return m, nil
 				}
 			}
-			m.adminView.CreateRobotForm.TTLSeconds += string(msg.Runes)
+			m.adminView.CreateRobotForm.TTLSeconds += keyText(msg)
 		}
 		return m, nil
 	}
@@ -2479,7 +2479,7 @@ func signingKeyFingerprints(keys []string) []string {
 // scanHistoryScreen (Phase 19, screen_scan_history.go): ScanHistoryModal
 // migrates off AdminViewState per design.md's State Migration table.
 
-func (m Model) updateAdminSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) updateAdminSearchKey(msg keyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case isEscKey(msg):
 		m.adminView.UserSearchActive = false
@@ -2498,8 +2498,8 @@ func (m Model) updateAdminSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.moveAdminSidebarSelection(1)
 	}
 
-	if msg.Type == tea.KeyRunes {
-		m.adminView.UserSearchQuery += string(msg.Runes)
+	if isTextKey(msg) {
+		m.adminView.UserSearchQuery += keyText(msg)
 		return m.applyAdminUserFilter()
 	}
 
@@ -2536,7 +2536,7 @@ func (m Model) applyAdminUserFilter() (tea.Model, tea.Cmd) {
 	return m, m.reloadAdminPanelForSelectedUserChange(selectionChanged)
 }
 
-func (m Model) updateAdminEditUserKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) updateAdminEditUserKey(msg keyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case isEscKey(msg):
 		m.clearRevealedAdminToken()
@@ -2589,7 +2589,7 @@ func (m Model) updateAdminEditUserKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) updateAdminGrantsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) updateAdminGrantsKey(msg keyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case isEscKey(msg):
 		m.screen = screenAdminEditUser
@@ -2651,7 +2651,7 @@ func (m Model) updateAdminGrantsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) updateAdminTokensKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) updateAdminTokensKey(msg keyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case isEscKey(msg):
 		m.clearRevealedAdminToken()
@@ -2704,7 +2704,7 @@ func (m Model) updateAdminTokensKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) updateCreateUserFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) updateCreateUserFormKey(msg keyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case isEscKey(msg):
 		m.screen = screenAdminUsers
@@ -2729,18 +2729,18 @@ func (m Model) updateCreateUserFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.status = fmt.Sprintf("Creating user %s...", input.Username)
 		return m, m.createAdminUserCmd(input)
-	case isRuneKey(msg, ' '):
+	case isSpaceKey(msg):
 		m.toggleCreateUserField()
 		return m, nil
 	}
-	if msg.Type == tea.KeyRunes {
-		m.appendCreateUserRunes(string(msg.Runes))
+	if isTextKey(msg) {
+		m.appendCreateUserRunes(keyText(msg))
 		return m, nil
 	}
 	return m, nil
 }
 
-func (m Model) updateResetPasswordFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) updateResetPasswordFormKey(msg keyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case isEscKey(msg):
 		m.screen = screenAdminEditUser
@@ -2761,14 +2761,14 @@ func (m Model) updateResetPasswordFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status = fmt.Sprintf("Resetting password for %s...", m.adminView.SelectedUsername)
 		return m, m.resetAdminPasswordCmd(input, m.adminView.SelectedUsername)
 	}
-	if msg.Type == tea.KeyRunes {
-		m.adminView.ResetPasswordForm.NewPassword += string(msg.Runes)
+	if isTextKey(msg) {
+		m.adminView.ResetPasswordForm.NewPassword += keyText(msg)
 		return m, nil
 	}
 	return m, nil
 }
 
-func (m Model) updateGrantFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) updateGrantFormKey(msg keyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case isEscKey(msg):
 		m.screen = screenAdminEditUserGrants
@@ -2798,7 +2798,7 @@ func (m Model) updateGrantFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.adminView.GrantForm.RepositorySuggestion = 0
 		}
 		return m, nil
-	case isRuneKey(msg, ' '):
+	case isSpaceKey(msg):
 		if m.adminView.GrantForm.Focus == adminGrantFieldRole {
 			m.adminView.GrantForm.Role = nextGrantRole(m.adminView.GrantForm.Role)
 		}
@@ -2830,8 +2830,8 @@ func (m Model) updateGrantFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status = fmt.Sprintf("Saving grant for %s...", m.adminView.SelectedUsername)
 		return m, m.putAdminGrantCmd(input, m.adminView.SelectedUsername)
 	}
-	if msg.Type == tea.KeyRunes && m.adminView.GrantForm.Focus == adminGrantFieldRepository {
-		m.adminView.GrantForm.Repository += string(msg.Runes)
+	if isTextKey(msg) && m.adminView.GrantForm.Focus == adminGrantFieldRepository {
+		m.adminView.GrantForm.Repository += keyText(msg)
 		m.adminView.GrantForm.RepositorySuggestion = 0
 		return m, nil
 	}
@@ -2843,7 +2843,7 @@ func (m Model) updateGrantFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // SelectedUserID -- there is no user-selection guard on "n" (Add Grant),
 // unlike the user-centric screen, because the repository context is already
 // fixed by the time this screen is reachable at all.
-func (m Model) updateRepoAdminGrantsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) updateRepoAdminGrantsKey(msg keyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case isEscKey(msg):
 		return m.returnToInspection(), nil
@@ -2909,7 +2909,7 @@ func (m Model) updateRepoAdminGrantsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // no repository field at all (RepoAdminRepository is fixed context), and its
 // Role field is cycled only by nextDelegateGrantRole -- the structural
 // guarantee that repo-admin can never be offered here.
-func (m Model) updateRepoAdminAddGrantKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) updateRepoAdminAddGrantKey(msg keyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case isEscKey(msg):
 		m.screen = screenRepoAdminGrants
@@ -2926,7 +2926,7 @@ func (m Model) updateRepoAdminAddGrantKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.adminView.RepoAdminGrantForm.Username = trimLastRune(m.adminView.RepoAdminGrantForm.Username)
 		}
 		return m, nil
-	case isRuneKey(msg, ' '):
+	case isSpaceKey(msg):
 		if m.adminView.RepoAdminGrantForm.Focus == adminRepoGrantFieldRole {
 			m.adminView.RepoAdminGrantForm.Role = nextDelegateGrantRole(m.adminView.RepoAdminGrantForm.Role)
 		}
@@ -2946,14 +2946,14 @@ func (m Model) updateRepoAdminAddGrantKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status = fmt.Sprintf("Saving grant for %s...", username)
 		return m, m.putRepoAdminGrantCmd(input)
 	}
-	if msg.Type == tea.KeyRunes && m.adminView.RepoAdminGrantForm.Focus == adminRepoGrantFieldUsername {
-		m.adminView.RepoAdminGrantForm.Username += string(msg.Runes)
+	if isTextKey(msg) && m.adminView.RepoAdminGrantForm.Focus == adminRepoGrantFieldUsername {
+		m.adminView.RepoAdminGrantForm.Username += keyText(msg)
 		return m, nil
 	}
 	return m, nil
 }
 
-func (m Model) updateTokenFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) updateTokenFormKey(msg keyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case isEscKey(msg):
 		m.screen = screenAdminEditUserTokens
@@ -2989,93 +2989,20 @@ func (m Model) updateTokenFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status = fmt.Sprintf("Creating admin token for %s...", m.adminView.SelectedUsername)
 		return m, m.createAdminTokenCmd(input)
 	}
-	if msg.Type == tea.KeyRunes {
+	if isTextKey(msg) {
 		if m.adminView.TokenForm.Focus == adminTokenFieldTTL {
-			for _, r := range msg.Runes {
+			for _, r := range keyText(msg) {
 				if !unicode.IsDigit(r) {
 					return m, nil
 				}
 			}
-			m.adminView.TokenForm.TTLSeconds += string(msg.Runes)
+			m.adminView.TokenForm.TTLSeconds += keyText(msg)
 			return m, nil
 		}
-		m.adminView.TokenForm.Name += string(msg.Runes)
+		m.adminView.TokenForm.Name += keyText(msg)
 		return m, nil
 	}
 	return m, nil
-}
-
-func isMoveUpKey(msg tea.KeyMsg) bool {
-	return msg.Type == tea.KeyUp || msg.String() == "up" || isRuneKey(msg, 'k')
-}
-
-func isMoveDownKey(msg tea.KeyMsg) bool {
-	return msg.Type == tea.KeyDown || msg.String() == "down" || isRuneKey(msg, 'j')
-}
-
-func isEnterKey(msg tea.KeyMsg) bool {
-	return msg.Type == tea.KeyEnter || msg.String() == "enter"
-}
-
-func isTabKey(msg tea.KeyMsg) bool {
-	return msg.Type == tea.KeyTab || msg.String() == "tab"
-}
-
-func isShiftTabKey(msg tea.KeyMsg) bool {
-	return msg.Type == tea.KeyShiftTab || msg.String() == "shift+tab"
-}
-
-// isMoveLeftKey/isMoveRightKey back the scan history modal's Left/Right
-// history paging (spec.md "Scan Execution History Navigation"). Deliberately
-// no 'h'/'l' vim-style rune aliases (unlike isMoveUpKey/isMoveDownKey's 'k'/
-// 'j'): 'l' is already the admin logout key.
-func isMoveLeftKey(msg tea.KeyMsg) bool {
-	return msg.Type == tea.KeyLeft || msg.String() == "left"
-}
-
-func isMoveRightKey(msg tea.KeyMsg) bool {
-	return msg.Type == tea.KeyRight || msg.String() == "right"
-}
-
-func isEscKey(msg tea.KeyMsg) bool {
-	return msg.Type == tea.KeyEsc || msg.String() == "esc"
-}
-
-func isBackspaceKey(msg tea.KeyMsg) bool {
-	return msg.Type == tea.KeyBackspace || msg.String() == "backspace"
-}
-
-func isBackKey(msg tea.KeyMsg) bool {
-	return isEscKey(msg) || isBackspaceKey(msg)
-}
-
-func isPgUpKey(msg tea.KeyMsg) bool {
-	return msg.Type == tea.KeyPgUp || msg.String() == "pgup"
-}
-
-func isPgDnKey(msg tea.KeyMsg) bool {
-	return msg.Type == tea.KeyPgDown || msg.String() == "pgdown"
-}
-
-func isHomeKey(msg tea.KeyMsg) bool {
-	return msg.Type == tea.KeyHome || msg.String() == "home"
-}
-
-func isEndKey(msg tea.KeyMsg) bool {
-	return msg.Type == tea.KeyEnd || msg.String() == "end"
-}
-
-func isRuneKey(msg tea.KeyMsg, candidates ...rune) bool {
-	if len(msg.Runes) != 1 {
-		return false
-	}
-	r := unicode.ToLower(msg.Runes[0])
-	for _, candidate := range candidates {
-		if r == unicode.ToLower(candidate) {
-			return true
-		}
-	}
-	return false
 }
 
 // scrollableBodyContext returns the status/help text and total line count
@@ -3120,7 +3047,7 @@ func (m Model) scrollableBodyContext() (status, help string, total int, ok bool)
 // applyBodyPageKey drives bodyScroll from PgUp/PgDn/Home/End, clamping to
 // [0, maxScroll] with the same visible-row math fitLines uses at render
 // time. Returns false (no-op) when the screen has no scrollable body.
-func (m *Model) applyBodyPageKey(msg tea.KeyMsg) bool {
+func (m *Model) applyBodyPageKey(msg keyMsg) bool {
 	status, help, total, ok := m.scrollableBodyContext()
 	if !ok {
 		return false
@@ -4405,8 +4332,9 @@ func robotRepositorySuggestions(form adminCreateRobotForm, repositories []string
 	return repositorySuggestionsMatching(form.Repository, repositories)
 }
 
-func featureActionForKey(msg tea.KeyMsg, page ports.FeaturePage) (ports.FeatureAction, bool) {
-	if msg.Type != tea.KeyRunes || len(msg.Runes) == 0 {
+func featureActionForKey(msg keyMsg, page ports.FeaturePage) (ports.FeatureAction, bool) {
+	text := keyText(msg)
+	if text == "" {
 		return ports.FeatureAction{}, false
 	}
 	lookup := map[rune]string{
@@ -4416,7 +4344,7 @@ func featureActionForKey(msg tea.KeyMsg, page ports.FeaturePage) (ports.FeatureA
 		'u': "upgrade-runtime",
 		'b': "rollback-runtime",
 	}
-	actionID, ok := lookup[unicode.ToLower(msg.Runes[0])]
+	actionID, ok := lookup[unicode.ToLower([]rune(text)[0])]
 	if !ok {
 		return ports.FeatureAction{}, false
 	}

@@ -7,7 +7,7 @@ import tea "github.com/charmbracelet/bubbletea"
 // itself holds no state — the adapter is the map below, not this type — so
 // AdminViewState stays exactly where it is on Model and adding a screen
 // here adds one line, never a new field.
-type legacyHandler func(Model, tea.KeyMsg) (tea.Model, tea.Cmd)
+type legacyHandler func(Model, keyMsg) (tea.Model, tea.Cmd)
 
 // legacyScreenHandlers is THE D5 adapter for every admin screen Slice 1
 // does not migrate to a sub-model. It holds no data of its own: every value
@@ -17,7 +17,7 @@ type legacyHandler func(Model, tea.KeyMsg) (tea.Model, tea.Cmd)
 // TestLegacyAdapterHoldsNoState keep that boundary honest.
 var legacyScreenHandlers = map[screen]legacyHandler{
 	screenAdminLogin: Model.updateAdminLoginKey,
-	screenAdminAuthenticating: func(m Model, _ tea.KeyMsg) (tea.Model, tea.Cmd) {
+	screenAdminAuthenticating: func(m Model, _ keyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	},
 	screenAdminUsers:          Model.updateAdminUsersKey,
@@ -39,7 +39,7 @@ var legacyScreenHandlers = map[screen]legacyHandler{
 // prior switch-on-m.screen dispatch exactly. Slice 2 populates the migrated
 // arm: the parent REPLACES its held sub-model value (m.adminScreens[slot] =
 // next), it never writes into the sub-model's fields directly (Decision B).
-func routeAdminKey(m Model, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func routeAdminKey(m Model, msg keyMsg) (tea.Model, tea.Cmd) {
 	if slot, ok := slotFor(m.screen); ok {
 		s := m.adminScreens[slot]
 		if s == nil {
@@ -56,7 +56,7 @@ func routeAdminKey(m Model, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // routeAdminMsg broadcasts a non-key tea.Msg to every occupied slot in
-// adminScreens (design.md Decision H): unlike tea.KeyMsg, which goes only to
+// adminScreens (design.md Decision H): unlike a key message, which goes only to
 // the active screen, every other message goes to every migrated screen so
 // none of them can miss a result it needs while the operator has navigated
 // away — each screen's Update ignores what it does not own via its own type
