@@ -2382,10 +2382,6 @@ func ensureRepository(ctx context.Context, tx *sql.Tx, tenant string, repository
 	return repositoryID, err
 }
 
-func normalizeReference(reference string) string {
-	return strings.TrimSpace(reference)
-}
-
 type scanRunScanner interface {
 	Scan(dest ...any) error
 }
