@@ -66,8 +66,10 @@ Robots are machine identities for CI/CD, created and managed only by a global ad
 curl -X POST 'https://registry.example.com/admin/v1/robots' \
   -H "Authorization: Bearer ${TOKEN}" \
   -H 'Content-Type: application/json' \
-  -d '{"name":"ci-builder","repository":"team/image","role":"repo-writer","ttl_seconds":2592000}'
+  -d '{"name":"ci-builder","repository":"team/image","role":"repo-writer","ttl":"30d"}'
 ```
+
+`ttl` takes a whole number followed by `h`, `d` or `y` (maximum `2y`). The older `ttl_seconds` is still accepted, but not together with `ttl`.
 
 Response (`201`):
 
@@ -111,8 +113,10 @@ Global admins reach two dedicated robot screens from the Users screen with `b`:
 curl -X POST 'https://registry.example.com/admin/v1/users/USER_ID/admin-tokens' \
   -H "Authorization: Bearer ${TOKEN}" \
   -H 'Content-Type: application/json' \
-  -d '{"name":"ci","ttl_seconds":2592000}'
+  -d '{"name":"ci","ttl":"30d"}'
 ```
+
+`ttl` takes a whole number followed by `h`, `d` or `y` (maximum `2y`). The older `ttl_seconds` is still accepted, but not together with `ttl`.
 
 The secret is only returned in the creation response and should never be logged. To revoke:
 
