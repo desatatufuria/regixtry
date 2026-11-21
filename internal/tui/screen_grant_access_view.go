@@ -57,7 +57,7 @@ func renderGrantPane(theme adminTheme, lines []string, outerW, innerH int, focus
 	}
 	borderColor := lipgloss.Color(paletteBorderHex)
 	if focused {
-		borderColor = lipgloss.Color(paletteSelectedBGHex)
+		borderColor = lipgloss.Color(paletteAccentHex)
 	}
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).

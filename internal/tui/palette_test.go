@@ -232,3 +232,27 @@ func TestNoLegacyThemeNamesRemain(t *testing.T) {
 		}
 	}
 }
+
+// The focused grant pane border uses the accent (never the selected-row
+// background); the focus color must stay visible against the page.
+func TestFocusBorderColorsAreVisibleAgainstThePage(t *testing.T) {
+	t.Parallel()
+
+	for name, hex := range map[string]string{
+		"focused pane border (accent)": paletteAccentHex,
+	} {
+		ratio := contrastRatio(t, strings.ToUpper(hex), designPageBG)
+		t.Logf("%s %s on page = %.2f:1", name, hex, ratio)
+		if ratio < 3 {
+			t.Errorf("%s = %.2f:1, want >= 3:1", name, ratio)
+		}
+	}
+	data, err := os.ReadFile("screen_grant_access_view.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "paletteSelectedBGHex") {
+		t.Error("screen_grant_access_view.go uses the selected-row background; borders must use the accent or border token")
+	}
+	t.Logf("unfocused border %s on page = %.2f:1 (design value, not asserted)", paletteBorderHex, contrastRatio(t, strings.ToUpper(paletteBorderHex), designPageBG))
+}
