@@ -32,6 +32,7 @@ JSON bodies are decoded rejecting unknown fields and multiple bodies.
 | GET | `/admin/v1/users/{id}/admin-tokens` | none | `200`, array without secrets |
 | POST | `/admin/v1/users/{id}/admin-tokens` | `name`, optional `ttl` (number plus `h`, `d` or `y`, for example `12h`, `30d`, `2y`; default 30 days; maximum 2 years), or the older `ttl_seconds` (seconds; maximum `63072000`), never both | `201`, token and secret |
 | DELETE | `/admin/v1/users/{id}/admin-tokens/{accessor}` | none | `204` |
+| GET | `/admin/v1/admin-tokens/expiring` | query `within` (number plus `h`, `d` or `y`; default `30d`; maximum `2y`) and `limit` (1 to 200; default 50); invalid values give `422` | `200`, array (soonest first) of `id`, `accessor`, `name`, `user_id`, `username`, `is_robot`, `created_at`, `expires_at` for enabled users and robots whose token is not revoked, not yet expired and expires within `within`; never a secret or hash |
 | GET | `/admin/v1/robots` | none | `200`, array of robot accounts |
 | POST | `/admin/v1/robots` | `name`, `repository`, `role`, optional `ttl` (number plus `h`, `d` or `y`, for example `12h`, `30d`, `2y`; default 30 days; maximum 2 years), or the older `ttl_seconds` (seconds; maximum `63072000`), never both | `201`, robot account with one-time token secret |
 | DELETE | `/admin/v1/robots/{id}` | none | `204`; rejected if the target is not a robot account |
@@ -67,6 +68,17 @@ JSON bodies are decoded rejecting unknown fields and multiple bodies.
 | POST | `/admin/v1/gc/reports` | none | `201`, computed report of unreferenced, grace-expired blob candidates; always reachable regardless of `REGISTRY_GC_DELETE_ENABLED` |
 | GET | `/admin/v1/gc/reports/{id}` | none | `200`, a previously computed report by id, with its full candidate list |
 | POST | `/admin/v1/gc/reports/{id}/delete` | none | `200`, delete outcome (per-candidate `deleted`/`retained`/`missing`/`failed`); gated by `REGISTRY_GC_DELETE_ENABLED` (`UNSUPPORTED`/`501` while disabled) |
+
+Example: tokens that expire in the next 14 days (global admin token required):
+
+```sh
+curl -H "Authorization: Bearer $TOKEN" \
+  "https://registry.example.com/admin/v1/admin-tokens/expiring?within=14d"
+```
+
+```json
+[{"id":"tok_1","accessor":"atk_a1b2","name":"ci","user_id":"u_1","username":"alice","is_robot":false,"created_at":"2026-02-01T10:00:00Z","expires_at":"2026-03-10T10:00:00Z"}]
+```
 
 See [registry.md](registry.md#blob-garbage-collection) for the full garbage-collection flow, including the grace window and delete-time re-check that keep it safe.
 
