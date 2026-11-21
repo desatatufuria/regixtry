@@ -36,15 +36,23 @@ func (l *fifoLock) acquire(ctx context.Context) error {
 	case <-granted:
 		return nil
 	case <-ctx.Done():
-		l.mu.Lock()
-		if l.waiters.Remove(element) != nil {
-			l.mu.Unlock()
-			return ctx.Err()
-		}
+		l.abandon(element, granted)
+		return ctx.Err()
+	}
+}
+
+// abandon withdraws a waiter whose context ended. Ownership is decided by the
+// granted channel, never by list.Remove (which returns the value either way).
+func (l *fifoLock) abandon(element *list.Element, granted chan struct{}) {
+	l.mu.Lock()
+	select {
+	case <-granted:
 		l.mu.Unlock()
 		// Ownership was handed to us just before cancellation: pass it on.
 		l.release()
-		return ctx.Err()
+	default:
+		l.waiters.Remove(element)
+		l.mu.Unlock()
 	}
 }
 

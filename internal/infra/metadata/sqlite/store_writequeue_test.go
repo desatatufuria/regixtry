@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -331,4 +333,80 @@ func TestReadersAreNotBlockedByTheWriteQueue(t *testing.T) {
 			t.Fatalf("%s took %s while writers were queued, want < 500ms", name, elapsed)
 		}
 	}
+}
+
+// TestFIFOLockAbandonAfterGrantPassesOwnershipOn forces the race between
+// release() granting a waiter and that waiter's context ending: the grant has
+// already happened (element removed, channel closed, held still true) when the
+// cancelled waiter runs its cancel branch. The lock must not leak.
+func TestFIFOLockAbandonAfterGrantPassesOwnershipOn(t *testing.T) {
+	t.Parallel()
+
+	var lock fifoLock
+	if err := lock.acquire(context.Background()); err != nil {
+		t.Fatalf("acquire() error = %v", err)
+	}
+
+	granted := make(chan struct{})
+	lock.mu.Lock()
+	element := lock.waiters.PushBack(granted)
+	lock.mu.Unlock()
+
+	lock.release() // grants the queued waiter: held stays true, granted closed
+	lock.abandon(element, granted)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := lock.acquire(ctx); err != nil {
+		t.Fatalf("acquire() after a cancelled grant error = %v, want the lock to be free", err)
+	}
+	lock.release()
+}
+
+func TestFIFOLockSurvivesRandomCancellationsWhileReleasing(t *testing.T) {
+	t.Parallel()
+
+	const (
+		goroutines = 64
+		rounds     = 200
+	)
+
+	var lock fifoLock
+	rng := rand.New(rand.NewSource(42))
+	var rngMu sync.Mutex
+	pick := func(n int) int {
+		rngMu.Lock()
+		defer rngMu.Unlock()
+		return rng.Intn(n)
+	}
+
+	var wg sync.WaitGroup
+	for range goroutines {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range rounds {
+				ctx, cancel := context.WithCancel(context.Background())
+				go func(delay int) {
+					for range delay {
+						runtime.Gosched()
+					}
+					cancel()
+				}(pick(20))
+				if err := lock.acquire(ctx); err == nil {
+					runtime.Gosched()
+					lock.release()
+				}
+				cancel()
+			}
+		}()
+	}
+	wg.Wait()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := lock.acquire(ctx); err != nil {
+		t.Fatalf("final acquire() error = %v, want the lock to be free", err)
+	}
+	lock.release()
 }
