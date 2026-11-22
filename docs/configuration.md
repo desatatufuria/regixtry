@@ -31,6 +31,11 @@
 | `-trivy-max-concurrency` | `REGISTRY_TRIVY_MAX_CONCURRENCY` | `1` | Maximum concurrent Trivy runs |
 | `-delete-enabled` | `REGISTRY_DELETE_ENABLED` | `false` | Enable `DELETE /v2/<name>/manifests/<reference>` (manifest and tag deletion) |
 | `-gc-delete-enabled` | `REGISTRY_GC_DELETE_ENABLED` | `false` | Enable `POST /admin/v1/gc/reports/{id}/delete` (irreversibly unlinks unreferenced blob files); distinct from `-delete-enabled`, which is metadata-only and never touches blob files |
+| `-max-manifest-bytes` | `REGISTRY_MAX_MANIFEST_BYTES` | `4194304` (4 MiB) | Maximum manifest `PUT` body; larger is `413` `SIZE_INVALID`. Negative disables |
+| `-max-upload-bytes` | `REGISTRY_MAX_UPLOAD_BYTES` | `5368709120` (5 GiB) | Maximum total size of one blob upload, enforced while streaming; larger is `413` `SIZE_INVALID`. Negative disables |
+| `-max-open-uploads` | `REGISTRY_MAX_OPEN_UPLOADS` | `1000` | Maximum concurrently open blob uploads; more is `429` `TOOMANYREQUESTS`. Negative disables |
+| `-max-open-uploads-per-repo` | `REGISTRY_MAX_OPEN_UPLOADS_PER_REPO` | `200` | Maximum concurrently open blob uploads per repository. Negative disables |
+| `-upload-ttl` | `REGISTRY_UPLOAD_TTL` | `24h` | Idle time after which an abandoned upload (row and temp file) is deleted by a background reaper. Negative disables the reaper |
 
 Implementation: `cmd/regixtry/main.go` (`parseServeConfig`, `normalizeRuntimeConfig`).
 

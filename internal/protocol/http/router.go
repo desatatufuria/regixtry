@@ -2,6 +2,7 @@ package regixtryhttp
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -22,7 +23,14 @@ type Router struct {
 	admin   ports.AdminHTTPService
 	logger  *log.Logger
 	mux     *stdhttp.ServeMux
+	// maxManifestBytes caps a manifest PUT body (zero or negative: no cap).
+	maxManifestBytes int64
 }
+
+// DefaultMaxManifestBytes is the manifest PUT body cap NewRouter applies
+// unless WithMaxManifestBytes overrides it (4 MiB, the size distribution
+// registries conventionally accept).
+const DefaultMaxManifestBytes int64 = 4 << 20
 
 type RouterOption func(*Router)
 
@@ -34,8 +42,17 @@ func WithLogger(logger *log.Logger) RouterOption {
 	}
 }
 
+// WithMaxManifestBytes caps the body of a manifest PUT; a larger body is
+// refused with 413 SIZE_INVALID without being buffered. Zero or negative
+// disables the cap.
+func WithMaxManifestBytes(limit int64) RouterOption {
+	return func(router *Router) {
+		router.maxManifestBytes = limit
+	}
+}
+
 func NewRouter(service *appregixtry.Service, authService ports.AuthService, options ...RouterOption) *Router {
-	router := &Router{service: service, auth: authService, logger: log.Default(), mux: stdhttp.NewServeMux()}
+	router := &Router{service: service, auth: authService, logger: log.Default(), mux: stdhttp.NewServeMux(), maxManifestBytes: DefaultMaxManifestBytes}
 	if adminService, ok := authService.(ports.AdminHTTPService); ok {
 		router.admin = adminService
 	}
@@ -299,7 +316,12 @@ func (r *Router) handleUploadState(w stdhttp.ResponseWriter, req *stdhttp.Reques
 		w.Header().Set("Docker-Content-Digest", blob.Digest)
 		w.WriteHeader(stdhttp.StatusCreated)
 	case stdhttp.MethodDelete:
-		writeError(w, req, domain.NewValidationError("upload cancellation is not implemented in this slice"), r.service.Challenge(action), "UNSUPPORTED")
+		if err := r.service.CancelUpload(req.Context(), repository, uploadID); err != nil {
+			writeError(w, req, err, r.challengeForError(action, err), "BLOB_UPLOAD_UNKNOWN")
+			return
+		}
+
+		w.WriteHeader(stdhttp.StatusNoContent)
 	default:
 		w.Header().Set("Allow", strings.Join([]string{stdhttp.MethodGet, stdhttp.MethodHead, stdhttp.MethodPatch, stdhttp.MethodPut, stdhttp.MethodDelete}, ", "))
 		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
@@ -355,8 +377,16 @@ func (r *Router) handleManifest(w stdhttp.ResponseWriter, req *stdhttp.Request, 
 	switch req.Method {
 	case stdhttp.MethodPut:
 		defer req.Body.Close()
-		payload, err := io.ReadAll(req.Body)
+		body := io.Reader(req.Body)
+		if r.maxManifestBytes > 0 {
+			body = stdhttp.MaxBytesReader(w, req.Body, r.maxManifestBytes)
+		}
+		payload, err := io.ReadAll(body)
 		if err != nil {
+			var tooLarge *stdhttp.MaxBytesError
+			if errors.As(err, &tooLarge) {
+				err = domain.NewPayloadTooLargeError(fmt.Sprintf("manifest exceeds the maximum size of %d bytes", r.maxManifestBytes))
+			}
 			writeError(w, req, err, r.service.Challenge(action), "MANIFEST_INVALID")
 			return
 		}
@@ -776,6 +806,12 @@ func writeError(w stdhttp.ResponseWriter, req *stdhttp.Request, err error, chall
 			if code == "" {
 				code = "DIGEST_INVALID"
 			}
+		case domain.ErrorCodePayloadTooLarge:
+			status = stdhttp.StatusRequestEntityTooLarge
+			code = "SIZE_INVALID"
+		case domain.ErrorCodeTooManyRequests:
+			status = stdhttp.StatusTooManyRequests
+			code = "TOOMANYREQUESTS"
 		case domain.ErrorCodeConflict:
 			status = stdhttp.StatusConflict
 			if code == "" {

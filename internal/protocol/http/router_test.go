@@ -347,7 +347,7 @@ func TestRouterDeleteOnOtherManifestSubroutesUnchanged(t *testing.T) {
 	}{
 		{name: "DELETE tags/list stays 405", method: http.MethodDelete, path: "/v2/library/alpine/tags/list", wantStatus: http.StatusMethodNotAllowed, wantAllow: http.MethodGet},
 		{name: "DELETE blob read stays 405", method: http.MethodDelete, path: "/v2/library/alpine/blobs/" + blobDigest, wantStatus: http.StatusMethodNotAllowed, wantAllow: "GET, HEAD"},
-		{name: "DELETE upload state stays 400 UNSUPPORTED (unchanged upload-cancel stub)", method: http.MethodDelete, path: "/v2/library/alpine/blobs/uploads/" + uploadID, wantStatus: http.StatusBadRequest},
+		{name: "DELETE upload state cancels the upload (204, replaces the old UNSUPPORTED stub)", method: http.MethodDelete, path: "/v2/library/alpine/blobs/uploads/" + uploadID, wantStatus: http.StatusNoContent},
 	}
 
 	for _, tt := range tests {
