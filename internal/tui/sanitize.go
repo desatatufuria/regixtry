@@ -83,8 +83,12 @@ func isCleanText(text string, keepSGR, keepNewline bool) bool {
 		if c < utf8.RuneSelf {
 			switch {
 			case c == '\n' && keepNewline:
-			case c == 0x1b && keepSGR && safeSGRLength(text[i:]) > 0:
-				i += safeSGRLength(text[i:])
+			case c == 0x1b && keepSGR:
+				n := safeSGRLength(text[i:])
+				if n == 0 {
+					return false
+				}
+				i += n
 				continue
 			case c < 0x20 || c == 0x7f:
 				return false

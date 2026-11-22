@@ -112,3 +112,10 @@ func TestSanitizeNeverEmitsControlRunes(t *testing.T) {
 		}
 	}
 }
+
+func TestSanitizeFrameSGRDenseFrameUnchanged(t *testing.T) {
+	frame := strings.Repeat("\x1b[1;38;2;1;2;3mword\x1b[0m \x1b[48;5;200mx\x1b[m\n", 200)
+	if got := sanitizeFrame(frame); got != frame {
+		t.Fatal("an SGR-dense frame of the renderer's own styling must pass through byte-identical")
+	}
+}
