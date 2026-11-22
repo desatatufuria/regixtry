@@ -12,12 +12,12 @@
   SECURITY                     │  │   tea  │  │ Writer                                                 │  │   │ bob user                  [Reader] │
       Image scanning           │  │   tea  │  ╰────────────────────────────────────────────────────────╯  │   │ ACTIONS ON SELECTED GRANT          │
       Secret scanning          │  │   tea  │                                                              │   │ Open principal               enter │
-      Signing policy           │  │        │  alice loses Writer access to team/api.                      │   │ Grant access                     g │
-                               │  │        │                                                              │   │ Revoke alice on team/api         x │
-  OPERATIONS                   │  │        │   Confirm                                        y / enter   │   │ No Admin on this repository. Only  │
-      Scan runs                │  │        │   Cancel                                               esc   │   │ server admins can change access    │
-      Secret findings          │  │        ╰──────────────────────────────────────────────────────────────╯   │ here.                              │
-      Update channel           │  │                                                                        │  │                                    │
+      Signing policy           │  │        │  alice loses Writer access to team/api. It applies from the  │   │ Grant access                     g │
+                               │  │        │  next request; no token is revoked.                          │   │ Revoke alice on team/api         x │
+  OPERATIONS                   │  │        │                                                              │   │ No Admin on this repository. Only  │
+      Scan runs                │  │        │   Confirm                                        y / enter   │   │ server admins can change access    │
+      Secret findings          │  │        │   Cancel                                               esc   │   │ here.                              │
+      Update channel           │  │        ╰──────────────────────────────────────────────────────────────╯   │                                    │
                                │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │
                                │  Roles: Reader pulls, Writer pushes, Admin manages access.                   ╰────────────────────────────────────╯
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

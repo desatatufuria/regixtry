@@ -21,4 +21,4 @@
                                │  │                                                      │  │ ╰─────────────────╯                                  │  
                                │  ╰──────────────────────────────────────────────────────╯  ╰──────────────────────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  space enable/disable   p password   g grant access   t tokens   d disable   r refresh   esc back   q quit                                           
+  space enable/disable   p password   g grant access   tab grants   t tokens   d disable   r refresh   esc back   q quit                              

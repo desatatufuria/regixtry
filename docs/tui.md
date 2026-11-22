@@ -137,7 +137,7 @@ Each panel loads on its own; one failing read shows an error inside its panel an
 | `r` | reload |
 | `Esc` | Overview |
 
-- **Profile** (`Users › name`): profile, tokens with time left, password and repository grants panels, and a danger area. `g` grant access, `t` tokens, `p` password, `d` or `Space` disable/enable, `r` refresh, `Esc` back. Grants are not edited here; use the grant screen or [Repository access](#repository-access).
+- **Profile** (`Users › name`): profile, tokens with time left, password and repository grants panels, and a danger area. `g` grant access, `t` tokens, `p` password, `d` or `Space` disable/enable, `r` refresh, `Esc` back. `Tab` moves the focus into the grants list (`↑↓` or `j`/`k` select, `Tab` leaves it); `x` revokes the selected grant after a confirmation. The dialog names the user, repository and role. A revoke applies from the user's next request (the grants are read per request); no token is revoked and the user's other grants are untouched. A global admin may revoke any grant, repository-admin grants included; the API's refusals are shown as they are and the list stays. The mouse does not act on this screen.
 - **New user** (`Tab`/`↑`/`↓` fields, `←`/`→` role, `Space` toggles the role and `Enabled`, `Enter` creates, `Esc` cancels): username, masked password (at least 8 characters), role `admin`, `read-only` or `user`. A read-only user pulls from every repository without a grant and has no admin access. The flag is set at creation.
 - **Reset password** (two masked fields, `Enter` saves, `Esc` cancels): the password is never shown or logged.
 
@@ -157,7 +157,7 @@ Each panel loads on its own; one failing read shows an error inside its panel an
 | `r` | refresh |
 | `Esc` | Overview |
 
-`x` deletes on this screen. Everywhere else it revokes.
+`x` deletes on this screen. Everywhere else it revokes. A robot's single grant cannot be revoked from here: `x` would be ambiguous; revoke it from [Repository access](#repository-access).
 
 **New robot** collects name, repository (type to filter, `↑`/`↓` pick a suggestion), role (`←`/`→`: Reader, Writer, Admin) and a [lifetime](#token-lifetime), then shows the robot's token secret once.
 

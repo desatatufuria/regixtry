@@ -20,12 +20,12 @@
                                │  │   user012                       │  │ Admin                                                  │  │                 Writer  │  │                                    │
                                │  │   user013                       │  ╰────────────────────────────────────────────────────────╯  │                 Reader  │  │                                    │
                                │  │   user015                       │                                                              │                 Writer  │  │                                    │
-                               │  │   user016                       │  erin loses Admin access to team/api.                        │                 Reader  │  │                                    │
-                               │  │   user017                       │                                                              │                 Reader  │  │                                    │
-                               │  │   user018                       │   Confirm                                        y / enter   │                 Writer  │  │                                    │
-                               │  │   user019                       │   Cancel                                               esc   │                 Reader  │  │                                    │
-                               │  │   user020                       ╰──────────────────────────────────────────────────────────────╯                 Reader  │  │                                    │
-                               │  │   user022                                                                                                        Reader  │  │                                    │
+                               │  │   user016                       │  erin loses Admin access to team/api. It applies from the    │                 Reader  │  │                                    │
+                               │  │   user017                       │  next request; no token is revoked.                          │                 Reader  │  │                                    │
+                               │  │   user018                       │                                                              │                 Writer  │  │                                    │
+                               │  │   user019                       │   Confirm                                        y / enter   │                 Reader  │  │                                    │
+                               │  │   user020                       │   Cancel                                               esc   │                 Reader  │  │                                    │
+                               │  │   user022                       ╰──────────────────────────────────────────────────────────────╯                 Reader  │  │                                    │
                                │  │   user023                                                                                                        Reader  │  │                                    │
                                │  │   user024                                                                                                        Writer  │  │                                    │
                                │  │   user025                                                                                                        Reader  │  │                                    │

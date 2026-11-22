@@ -20,12 +20,12 @@
       Update channel           │  │                                 │  │ Writer                                                 │  │                         │  │ No Admin on this repository. Only  │
                                │  │                                 │  ╰────────────────────────────────────────────────────────╯  │                         │  │ server admins can change access    │
                                │  │                                 │                                                              │                         │  │ here.                              │
-                               │  │                                 │  alice loses Writer access to team/api.                      │                         │  │                                    │
+                               │  │                                 │  alice loses Writer access to team/api. It applies from the  │                         │  │                                    │
+                               │  │                                 │  next request; no token is revoked.                          │                         │  │                                    │
                                │  │                                 │                                                              │                         │  │                                    │
                                │  │                                 │   Confirm                                        y / enter   │                         │  │                                    │
                                │  │                                 │   Cancel                                               esc   │                         │  │                                    │
                                │  │                                 ╰──────────────────────────────────────────────────────────────╯                         │  │                                    │
-                               │  │                                                                                                                          │  │                                    │
                                │  │                                                                                                                          │  │                                    │
                                │  │                                                                                                                          │  │                                    │
                                │  │                                                                                                                          │  │                                    │

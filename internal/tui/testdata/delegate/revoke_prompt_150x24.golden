@@ -12,12 +12,12 @@
                                │  │   use  │  │ Admin                                                  │  │   │ Edit role                        e │
                                │  │   use  │  ╰────────────────────────────────────────────────────────╯  │   │ Revoke grant                     x │
                                │  │   use  │                                                              │   │                                    │
-                               │  │   use  │  erin loses Admin access to team/api.                        │   │ ADD GRANT                          │
-                               │  │   use  │                                                              │   │ Username and role (Reader or       │
-                               │  │   use  │   Confirm                                        y / enter   │   │ Writer). The repository is fixed   │
-                               │  │   use  │   Cancel                                               esc   │   │ to team/api.                       │
+                               │  │   use  │  erin loses Admin access to team/api. It applies from the    │   │ ADD GRANT                          │
+                               │  │   use  │  next request; no token is revoked.                          │   │ Username and role (Reader or       │
+                               │  │   use  │                                                              │   │ Writer). The repository is fixed   │
+                               │  │   use  │   Confirm                                        y / enter   │   │ to team/api.                       │
+                               │  │   use  │   Cancel                                               esc   │   │                                    │
                                │  │   use  ╰──────────────────────────────────────────────────────────────╯   │                                    │
-                               │  │   user012                                                      Writer  │  │                                    │
                                │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │
                                │  You can give Reader or Writer. Admin grants: ask a global admin.            ╰────────────────────────────────────╯
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
