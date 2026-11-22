@@ -292,14 +292,20 @@ func TestStoreOldSchemaScanRunsGainFingerprintColumnsAndOldRowsReadAsEmptyHash(t
 	}
 	again.Close()
 
-	got, err := store.GetScanRun(context.Background(), latestOnlyTenant, "old-1")
+	// The two old rows are duplicates of one digest with identical
+	// timestamps: the purge migration keeps one (the larger id, old-2) and
+	// deletes the other; the survivor keeps its data with empty defaults.
+	if _, err := store.GetScanRun(context.Background(), latestOnlyTenant, "old-1"); err == nil {
+		t.Fatalf("duplicate old-1 must be purged by the latest-only migration")
+	}
+	got, err := store.GetScanRun(context.Background(), latestOnlyTenant, "old-2")
 	if err != nil {
 		t.Fatalf("GetScanRun(old row) error = %v", err)
 	}
 	if got.SettingsHash != "" || got.DBVersion != 0 || got.LastCheckedAt != nil || got.Stale || got.Critical != 3 {
-		t.Fatalf("old row = %#v, want empty fingerprint defaults and data intact (never deleted by the migration)", got)
+		t.Fatalf("old row = %#v, want empty fingerprint defaults and data intact", got)
 	}
-	if n := countRunsForDigest(t, store, "library/alpine", "sha256:old"); n != 2 {
-		t.Fatalf("old rows = %d, want 2 untouched (purge is a separate migration)", n)
+	if n := countRunsForDigest(t, store, "library/alpine", "sha256:old"); n != 1 {
+		t.Fatalf("old rows = %d, want 1 after the purge", n)
 	}
 }
