@@ -14,16 +14,16 @@
       Secret scanning          │  │ c edit configuration.                                                                         │  │                                                               │
       Signing policy           │  ╰─────────────────────────────────────  ╭──────────────────────────────────────────────────╮  ──╯  ╰───────────────────────────────────────────────────────────────╯
                                │  ╭─────────────────────────────────────  │  Vulnerability policy                            │  ─────────────────────────────────────────────────────────────────────╮
-  OPERATIONS                   │  │ PER-REPOSITORY OVERRIDES              │  A scan that reaches the threshold blocks the    │                                                                       │
-      Scan runs                │  │ REPOSITORY                            │  pull. Applies to every repository without an    │                 STATUS     ENABLED  DETAIL                UPDATED     │
-      Secret findings          │  │ team/api                              │  override.                                       │                 override   yes      ignore file set       14 Nov      │
-      Update channel           │  │ team/docs                             │  [x] Policy enabled                              │                 override   no       scanning off          2 Nov       │
-                               │  │ team/web                              │  Severity threshold                              │                 inherited  —        global settings       -           │
-                               │  │ team/infra                            │   CRITICAL+HIGH                                  │                 inherited  —        global settings       -           │
-                               │  │                                       │                                                  │                                                                       │
-                               │  │                                       │   Save  enter   Cancel  esc                      │                                                                       │
-                               │  │                                       │  tab next field, space toggles or cycles         │                                                                       │
-                               │  │                                       ╰──────────────────────────────────────────────────╯                                                                       │
+  OPERATIONS                   │  │ LAST SWEEP                            │  A scan that reaches the threshold blocks the    │                                                                       │
+      Scan runs                │  │ no sweep yet                          │  pull. Applies to every repository without an    │                                                                       │
+      Secret findings          │  ╰─────────────────────────────────────  │  override.                                       │  ─────────────────────────────────────────────────────────────────────╯
+      Update channel           │  ╭─────────────────────────────────────  │  [x] Policy enabled                              │  ─────────────────────────────────────────────────────────────────────╮
+                               │  │ PER-REPOSITORY OVERRIDES              │  Severity threshold                              │                                                                       │
+                               │  │ REPOSITORY                            │   CRITICAL+HIGH                                  │                 STATUS     ENABLED  DETAIL                UPDATED     │
+                               │  │ team/api                              │                                                  │                 override   yes      ignore file set       14 Nov      │
+                               │  │ team/docs                             │   Save  enter   Cancel  esc                      │                 override   no       scanning off          2 Nov       │
+                               │  │ team/web                              │  tab next field, space toggles or cycles         │                 inherited  —        global settings       -           │
+                               │  │ team/infra                            ╰──────────────────────────────────────────────────╯                 inherited  —        global settings       -           │
                                │  │                                                                                                                                                                  │
                                │  │                                                                                                                                                                  │
                                │  │                                                                                                                                                                  │

@@ -273,6 +273,8 @@ func scanStatusStyle(theme adminTheme, status string) lipgloss.Style {
 		return theme.error
 	case ports.ScanRunStatusRunning, ports.ScanRunStatusQueued:
 		return theme.accent
+	case ports.ScanRunStatusSkipped:
+		return theme.muted
 	}
 	return theme.text
 }
@@ -295,6 +297,13 @@ func scanCountStyle(theme adminTheme, run ports.ScanRun, n int, hot lipgloss.Sty
 // scanRunPanel renders one run: its reference and status, the run's facts and
 // its finding counts. actions lists the keys of the screen it sits on.
 func scanRunPanel(theme adminTheme, run ports.ScanRun, now time.Time, actions [][2]string, width, height int) string {
+	return scanRunPanelFor(theme, run, now, actions, false, width, height)
+}
+
+// scanRunPanelFor is scanRunPanel; freshness adds what the latest-only scan
+// model records per digest: the vulnerability DB the result used, the last
+// check, and why a kept result is stale.
+func scanRunPanelFor(theme adminTheme, run ports.ScanRun, now time.Time, actions [][2]string, freshness bool, width, height int) string {
 	inner := max(width-4, 1)
 	title := run.Repository
 	if ref := strings.TrimSpace(run.RequestedRef); ref != "" {
@@ -306,6 +315,17 @@ func scanRunPanel(theme adminTheme, run ports.ScanRun, now time.Time, actions []
 	}
 	head := []string{theme.subheading.Render(grantTruncate(title, inner))}
 	head = append(head, wrapStyled(theme.muted, subtitle, inner)...)
+	if freshness && run.Stale {
+		reason := "Rescan failed: this result is kept and still enforced."
+		if detail := strings.TrimSpace(run.StaleReason); detail != "" {
+			reason = "Rescan failed: " + detail
+		}
+		lines := wrapStyled(theme.warning, reason, inner)
+		if len(lines) > 2 {
+			lines = lines[:2]
+		}
+		head = append(head, lines...)
+	}
 	runSection := []string{
 		scanSectionTitle(theme, "RUN"),
 		scanKV(theme, "Digest", scanShortDigest(run.Digest), theme.text, width),
@@ -313,8 +333,23 @@ func scanRunPanel(theme adminTheme, run ports.ScanRun, now time.Time, actions []
 		scanKV(theme, "Finished", scanClockUTC(run.FinishedAt, now), theme.text, width),
 		scanKV(theme, "Trivy", adminFirstNonEmpty(run.TrivyVersion, "-"), theme.text, width),
 	}
+	if freshness {
+		// One row per digest keeps its latest result: the panel trades the
+		// start time for what makes the result current.
+		runSection = []string{
+			scanSectionTitle(theme, "RESULT"),
+			scanKV(theme, "Digest", scanShortDigest(run.Digest), theme.text, width),
+			scanKV(theme, "Finished", scanClockUTC(run.FinishedAt, now), theme.text, width),
+			scanKV(theme, "Trivy", adminFirstNonEmpty(run.TrivyVersion, "-"), theme.text, width),
+			scanKV(theme, "Trivy DB", scanDBText(run, now), theme.text, width),
+			scanKV(theme, "Checked", scanCheckedText(run, now), theme.text, width),
+		}
+	}
 	if run.Status == ports.ScanRunStatusFailed && strings.TrimSpace(run.Error) != "" {
 		runSection = append(runSection, scanKV(theme, "Error", run.Error, theme.error, width))
+	}
+	if freshness && run.Status == ports.ScanRunStatusSkipped && strings.TrimSpace(run.Error) != "" {
+		runSection = append(runSection, scanKV(theme, "Reason", run.Error, theme.muted, width))
 	}
 	findings := []string{
 		scanSectionTitle(theme, "FINDINGS"),

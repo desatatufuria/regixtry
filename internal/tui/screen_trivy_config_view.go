@@ -9,25 +9,41 @@ import (
 func (s trivyConfigScreen) View(theme adminTheme, env screenEnv) screenFrame {
 	bodyW, bodyH := shellContentSize(env.Layout.Width, env.Layout.Height)
 
-	lines := []string{
+	head := []string{
 		securityTitleLine(theme, "Image scanning", "Trivy, vulnerability scanner", bodyW),
 		s.noticeLine(theme, bodyW),
-		s.tabsLine(theme),
 	}
+	var lines []string
 	if !s.loaded {
+		lines = append(head, s.tabsLine(theme, "", bodyW))
 		lines = append(lines, securityLoadingBody(theme, s.err, bodyW)...)
 	} else {
 		leftW := max((bodyW-securityPanelGap)*3/5, 1)
 		rightW := max(bodyW-securityPanelGap-leftW, 1)
 		config, policy := s.configLines(theme, leftW-4), s.policyLines(theme, rightW-4, env)
-		top := securityTopHeight(max(len(config), len(policy))+3, bodyH-len(lines))
-		columns := lipgloss.JoinHorizontal(lipgloss.Top,
-			securityPanel(theme, "TRIVY CONFIGURATION", leftW, top, config),
-			strings.Repeat(" ", securityPanelGap),
-			securityPanel(theme, "SCAN POLICY", rightW, top, policy),
-		)
-		lines = append(lines, columns,
-			securityOverridesPanel(theme, env, trivyFeatureName, s.overrides, bodyW, max(bodyH-len(lines)-top, 1)))
+		columns := func(top int) string {
+			return lipgloss.JoinHorizontal(lipgloss.Top,
+				securityPanel(theme, "TRIVY CONFIGURATION", leftW, top, config),
+				strings.Repeat(" ", securityPanelGap),
+				securityPanel(theme, "SCAN POLICY", rightW, top, policy),
+			)
+		}
+		// LAST SWEEP is a card of its own between the two panels and the
+		// overrides while the overrides keep their minimum rows; on a short
+		// terminal the card gives way to its summary on the tabs row, so the
+		// configuration and the overrides stay as they are.
+		const headRows = 3
+		available := bodyH - headRows
+		top := max(len(config), len(policy)) + 3
+		card, cardRows := s.sweepCard(theme, env, bodyW)
+		if top+cardRows+securityOverridesMinRows <= available {
+			lines = append(head, s.tabsLine(theme, "", bodyW), columns(top), card,
+				securityOverridesPanel(theme, env, trivyFeatureName, s.overrides, bodyW, max(available-top-cardRows, 1)))
+		} else {
+			top = securityTopHeight(top, available)
+			lines = append(head, s.tabsLine(theme, s.sweepSummary(theme, env), bodyW), columns(top),
+				securityOverridesPanel(theme, env, trivyFeatureName, s.overrides, bodyW, max(available-top, 1)))
+		}
 	}
 
 	frame := screenFrame{
@@ -60,9 +76,15 @@ func (s trivyConfigScreen) noticeLine(theme adminTheme, width int) string {
 }
 
 // tabsLine marks Config as the open tab; Repositories is the other screen.
-func (s trivyConfigScreen) tabsLine(theme adminTheme) string {
+// right is muted text at the right end of the row.
+func (s trivyConfigScreen) tabsLine(theme adminTheme, right string, width int) string {
 	other := lipgloss.NewStyle().Padding(0, 1).Foreground(theme.muted.GetForeground())
-	return theme.selected.Render("Config") + " " + other.Render("Repositories")
+	tabs := theme.selected.Render("Config") + " " + other.Render("Repositories")
+	if right == "" {
+		return tabs
+	}
+	right = fitText(right, max(width-lipgloss.Width(tabs)-2, 1))
+	return tabs + strings.Repeat(" ", max(width-lipgloss.Width(tabs)-lipgloss.Width(right), 1)) + right
 }
 
 func (s trivyConfigScreen) configLines(theme adminTheme, width int) []string {

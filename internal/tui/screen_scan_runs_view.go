@@ -44,6 +44,9 @@ func (s scanRunsScreen) View(theme adminTheme, env screenEnv) screenFrame {
 	}
 }
 
+// scanRescanRule says when a digest is scanned again.
+const scanRescanRule = "Rescans only when the vulnerability DB or scan settings change"
+
 // scanTitleRows is the title line above the table box.
 const scanTitleRows = 1
 
@@ -66,7 +69,10 @@ func (s scanRunsScreen) note() string {
 		}
 		return "Gitleaks, leaked secrets across repositories"
 	}
-	return "Trivy scans, latest of each repository"
+	if n := len(s.digestPending); n > 0 {
+		return fmt.Sprintf("Reading… %d of %d repositories", len(s.summaries)-n, len(s.summaries))
+	}
+	return "Trivy scans, latest result of each image digest"
 }
 
 // notice is what the list says instead of rows.
@@ -95,31 +101,36 @@ func (s scanRunsScreen) runsBoard(theme adminTheme, env screenEnv, listW, panelW
 	now := env.now()
 	specs := []scanColSpec{
 		{title: "REPOSITORY", flex: 1, min: 8},
+		{title: "DIGEST", fixed: 11},
 		{title: "STATUS", fixed: 9},
-		{title: "STARTED", fixed: 12},
-		{title: "TOOK", fixed: 10},
+		{title: "TRIVY DB", fixed: 9},
+		{title: "CHECKED", fixed: 9},
 		{title: "CRIT", fixed: 4},
 		{title: "HIGH", fixed: 4},
 	}
-	rows := make([][]scanCell, len(s.summaries))
-	for i, summary := range s.summaries {
-		run := summary.Run
+	rows := make([][]scanCell, len(s.rows))
+	for i, run := range s.rows {
+		status := scanStatusStyle(theme, run.Status)
+		if scanRowStatus(run) == "stale" {
+			status = theme.warning
+		}
 		rows[i] = []scanCell{
 			{run.Repository, theme.text},
-			{adminFirstNonEmpty(run.Status, "unknown"), scanStatusStyle(theme, run.Status)},
-			{scanClock(scanRunStart(run), now), theme.text},
-			{scanTook(run), theme.text},
+			{scanShortHash(run.Digest), theme.muted},
+			{scanRowStatus(run), status},
+			{scanDBText(run, now), theme.text},
+			{scanCheckedText(run, now), theme.text},
 			{scanCount(run, run.Critical), scanCountStyle(theme, run, run.Critical, theme.severityCritical)},
 			{scanCount(run, run.High), scanCountStyle(theme, run, run.High, theme.severityHigh)},
 		}
 	}
 	table = renderScanTable(theme, specs, rows, s.cursor, visible, listW, s.notice(theme, max(listW-4, 1)))
-	if len(s.summaries) == 0 {
-		return table, scanEmptyPanel(theme, "Select a run to see its details.", panelW, panelH)
+	run, ok := s.selectedRun()
+	if !ok {
+		return table, scanEmptyPanel(theme, "Select a digest for details.", panelW, panelH)
 	}
-	run := s.summaries[boundedIndex(s.cursor, len(s.summaries))].Run
 	actions := [][2]string{{"Scan history", "enter"}, {"Refresh", "r"}}
-	return table, scanRunPanel(theme, run, now, actions, panelW, panelH)
+	return table, scanRunPanelFor(theme, run, now, actions, true, panelW, panelH)
 }
 
 // ---- Secret findings ----
@@ -163,7 +174,11 @@ func (s scanRunsScreen) secretBoard(theme adminTheme, env screenEnv, listW, pane
 // secret findings' advice needs them.
 func (s scanRunsScreen) footnoteLines(theme adminTheme, width int) []string {
 	if !s.isSecretFindings() {
-		return []string{theme.muted.Render(grantTruncate("One row per repository, its latest scan. enter opens its scan history.", width))}
+		lines := wrapStyled(theme.muted, "One row per image digest, its latest result. "+scanRescanRule+". enter opens its scan history.", width)
+		if len(lines) > 2 {
+			lines = lines[:2]
+		}
+		return lines
 	}
 	found := s.secretRows()
 	if len(found) == 0 {

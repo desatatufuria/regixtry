@@ -3,7 +3,9 @@ package trivy
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -307,4 +309,105 @@ func managedBinaryPath(binaryPath string) (string, error) {
 		return "", fmt.Errorf("managed trivy runtime must execute only from the Regixtry-owned features/trivy layout")
 	}
 	return clean, nil
+}
+
+// RefreshDB downloads the latest vulnerability database into the cache
+// (`trivy image --download-db-only`), bounded by the settings timeout. It is
+// the once-per-sweep refresh of the scheduled scan sweep and needs network
+// access to the Trivy DB mirror.
+func (r *Runner) RefreshDB(ctx context.Context, settings ports.ScanSettings) error {
+	if r == nil || r.exec == nil {
+		return fmt.Errorf("trivy runner is not configured")
+	}
+	binaryPath, err := managedBinaryPath(settings.BinaryPath)
+	if err != nil {
+		return err
+	}
+	cacheDir := strings.TrimSpace(settings.CacheDir)
+	if cacheDir == "" {
+		return fmt.Errorf("trivy cache directory is not configured")
+	}
+	timeout := settings.Timeout
+	if timeout <= 0 {
+		timeout = 15 * time.Minute
+	}
+	runCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	if _, err := r.exec(runCtx, binaryPath, "image", "--download-db-only", "--cache-dir", cacheDir); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			if stderr := strings.TrimSpace(string(exitErr.Stderr)); stderr != "" {
+				if len(stderr) > 300 {
+					stderr = stderr[:300]
+				}
+				return fmt.Errorf("trivy db download failed: %w: %s", err, stderr)
+			}
+		}
+		return fmt.Errorf("trivy db download failed: %w", err)
+	}
+	return nil
+}
+
+type trivyDBMetadata struct {
+	Version      int        `json:"Version"`
+	NextUpdate   *time.Time `json:"NextUpdate"`
+	UpdatedAt    *time.Time `json:"UpdatedAt"`
+	DownloadedAt *time.Time `json:"DownloadedAt"`
+}
+
+// ReadDBMetadata reads the vulnerability database metadata from
+// <cache-dir>/db/metadata.json WITHOUT running a scan or touching the
+// network. It errors when the cache directory is unset or the database has
+// not been downloaded yet; callers treat that as unknown and scan.
+func (r *Runner) ReadDBMetadata(_ context.Context, settings ports.ScanSettings) (ports.ScanDBMetadata, error) {
+	cacheDir := strings.TrimSpace(settings.CacheDir)
+	if cacheDir == "" {
+		return ports.ScanDBMetadata{}, fmt.Errorf("trivy cache directory is not configured")
+	}
+	raw, err := readBoundedRegularFile(filepath.Join(cacheDir, "db"), "metadata.json", maxDBMetadataBytes)
+	if err != nil {
+		return ports.ScanDBMetadata{}, fmt.Errorf("read trivy db metadata: %w", err)
+	}
+	var meta trivyDBMetadata
+	if err := json.Unmarshal(raw, &meta); err != nil {
+		return ports.ScanDBMetadata{}, fmt.Errorf("decode trivy db metadata: %w", err)
+	}
+	if meta.UpdatedAt == nil {
+		return ports.ScanDBMetadata{}, fmt.Errorf("trivy db metadata has no UpdatedAt")
+	}
+	return ports.ScanDBMetadata{Version: meta.Version, UpdatedAt: meta.UpdatedAt, NextUpdate: meta.NextUpdate, DownloadedAt: meta.DownloadedAt}, nil
+}
+
+// maxDBMetadataBytes bounds the metadata read: the real file is a few
+// hundred bytes.
+const maxDBMetadataBytes = 64 << 10
+
+// readBoundedRegularFile reads dir/name only when neither the directory nor
+// the file is a symlink and the file is regular, and fails when it exceeds
+// limit bytes.
+func readBoundedRegularFile(dir string, name string, limit int64) ([]byte, error) {
+	if info, err := os.Lstat(dir); err != nil || !info.IsDir() {
+		return nil, fmt.Errorf("%s is not a plain directory", dir)
+	}
+	path := filepath.Join(dir, name)
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	raw, err := io.ReadAll(io.LimitReader(file, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(raw)) > limit {
+		return nil, fmt.Errorf("%s exceeds %d bytes", path, limit)
+	}
+	return raw, nil
 }

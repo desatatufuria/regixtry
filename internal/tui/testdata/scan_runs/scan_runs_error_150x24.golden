@@ -3,7 +3,7 @@
  regixtry admin                │                                                                                                                      
                                │  Scan runs                                                                                              Unavailable  
     Overview                   │  ╭────────────────────────────────────────────────────────────────────────╮  ╭────────────────────────────────────╮  
-                               │  │   REPOSITORY           STATUS     STARTED       TOOK        CRIT  HIGH │  │ Select a run to see its details.   │  
+                               │  │   REPOSITORY  DIGEST       STATUS     TRIVY DB   CHECKED    CRIT  HIGH │  │ Select a digest for details.       │  
   ACCESS                       │  │ Could not read scan history: admin API returned 500                    │  │                                    │  
       Users                    │  │ Press r to try again.                                                  │  │                                    │  
       Robots                   │  │                                                                        │  │                                    │  
@@ -17,8 +17,8 @@
   OPERATIONS                   │  │                                                                        │  │                                    │  
     ▸ Scan runs                │  │                                                                        │  │                                    │  
       Secret findings          │  │                                                                        │  │                                    │  
-      Update channel           │  │                                                                        │  │                                    │  
-                               │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
-                               │  One row per repository, its latest scan. enter opens its scan history.      ╰────────────────────────────────────╯  
+      Update channel           │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
+                               │  One row per image digest, its latest result. Rescans only when the          │                                    │  
+                               │  vulnerability DB or scan settings change. enter opens its scan history.     ╰────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   ↑↓ move   enter scan history   r refresh   esc back   q quit                                                                           F2 mouse on  

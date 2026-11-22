@@ -97,7 +97,11 @@ func (s *Service) enforceScanPolicy(ctx context.Context, repository string, dige
 	if err != nil {
 		return err
 	}
-	run, err := s.metadata.GetLatestScanRunByDigest(ctx, s.tenant(ctx), repository, digest)
+	// The latest COMPLETED run is what the policy enforces: an in-flight
+	// rescan row (newer than the result) or a failed rescan must never hide
+	// a known result and open the gate. A digest with no completed run
+	// allows the pull (NotFound is fail-open).
+	run, err := s.metadata.GetLatestCompletedScanRunByDigest(ctx, s.tenant(ctx), repository, digest)
 	if err != nil {
 		if domain.IsCode(err, domain.ErrorCodeNotFound) {
 			return nil
@@ -134,6 +138,10 @@ func (s *Service) QueueManualScan(ctx context.Context, repositoryName string, re
 		return ports.ScanRun{}, err
 	}
 	digest := manifest.Digest.String()
+	// A manual scan always scans (force) and replaces the previous result.
+	if !s.scanDecision(ctx, s.tenant(ctx), repository.String(), digest, settings, true) {
+		return ports.ScanRun{}, nil
+	}
 	run, existed, err := s.dedupAndQueueScanRun(ctx, s.tenant(ctx), repository.String(), strings.TrimSpace(reference), digest, ports.ScanTriggerManual, settings.Timeout)
 	if err != nil {
 		return ports.ScanRun{}, err
@@ -252,27 +260,9 @@ func (s *Service) GetSecretScanFindings(ctx context.Context, repository string, 
 	return ports.SecretScanRunDetail{}, domain.NewNotFoundError("secret scan run", repository+"@"+digest)
 }
 
-func (s *Service) RunScheduledScans(ctx context.Context) error {
-	settings, err := s.resolveManagedScanSettings(ctx)
-	if err != nil {
-		return err
-	}
-	if !settings.Enabled || !settings.ScheduleEnabled {
-		return nil
-	}
-	repositories, err := s.metadata.Catalog(ctx, s.tenant(ctx), 100, "")
-	if err != nil {
-		return err
-	}
-	for _, repository := range repositories {
-		_, err := s.queueScheduledScan(ctx, repository.String(), "latest", settings)
-		if err != nil && !domain.IsCode(err, domain.ErrorCodeNotFound) {
-			return err
-		}
-	}
-	return nil
-}
-
+// queueScheduledScan queues one scheduled-trigger scan for a single
+// repository reference (the per-reference decision RunScheduledScans makes
+// for every tagged digest, kept as a unit for a single reference).
 func (s *Service) queueScheduledScan(ctx context.Context, repositoryName string, reference string, settings ports.ScanSettings) (ports.ScanRun, error) {
 	settings, err := s.applyRepositoryOverride(ctx, s.tenant(ctx), repositoryName, trivyFeatureName, settings)
 	if err != nil {
@@ -296,6 +286,9 @@ func (s *Service) queueScheduledScan(ctx context.Context, repositoryName string,
 		return ports.ScanRun{}, err
 	}
 	digest := manifest.Digest.String()
+	if !s.scanDecision(ctx, s.tenant(ctx), repository.String(), digest, settings, false) {
+		return ports.ScanRun{}, nil
+	}
 	run, existed, err := s.dedupAndQueueScanRun(ctx, s.tenant(ctx), repository.String(), strings.TrimSpace(reference), digest, ports.ScanTriggerScheduled, settings.Timeout)
 	if err != nil {
 		return ports.ScanRun{}, err
@@ -348,6 +341,9 @@ func (s *Service) runPushScan(ctx context.Context, tenant string, repository str
 	if err != nil || !settings.Enabled {
 		return
 	}
+	if !s.scanDecision(ctx, tenant, repository, digest, settings, false) {
+		return
+	}
 	run, existed, err := s.dedupAndQueueScanRun(ctx, tenant, repository, strings.TrimSpace(reference), digest, ports.ScanTriggerPush, settings.Timeout)
 	if err != nil || existed {
 		return
@@ -378,6 +374,7 @@ func (s *Service) resolveManagedScanSettingsForTenant(ctx context.Context, tenan
 	}
 	settings.BinaryPath = strings.TrimSpace(state.ActiveBinaryPath)
 	settings.CacheDir = strings.TrimSpace(state.CacheDir)
+	settings.TrivyVersion = strings.TrimSpace(state.ActiveVersion)
 	return settings, nil
 }
 
@@ -465,6 +462,20 @@ func (s *Service) executeScanRun(ctx context.Context, tenant string, run ports.S
 		s.persistAsyncScanRun(ctx, tenant, run)
 		return
 	}
+	// The settings hash (and the ignore file contents it covers) is taken
+	// BEFORE the scan: a file edited mid-scan must not get its new hash
+	// stored against results produced with the old content.
+	preScanHash, preScanHashOK := scanSettingsHash(settings)
+	// The DB metadata is read BEFORE the scan too: it is the DB the scan
+	// uses (a concurrent RefreshDB landing mid-scan must not get its newer
+	// date stamped on a result produced with the older DB: the next trigger
+	// then sees a different DB and rescans).
+	var preScanMeta *ports.ScanDBMetadata
+	if reader, ok := scanRunner.(ports.ScanDBMetadataReader); ok {
+		if meta, merr := reader.ReadDBMetadata(ctx, settings); merr == nil && meta.UpdatedAt != nil {
+			preScanMeta = &meta
+		}
+	}
 	runCtx, cancelRun := context.WithTimeout(ctx, s.scanRunBound(settings.Timeout))
 	result, err := scanRunner.Run(runCtx, target, settings)
 	cancelRun()
@@ -484,6 +495,36 @@ func (s *Service) executeScanRun(ctx context.Context, tenant string, run ports.S
 	run.Low = result.Low
 	run.TrivyVersion = result.TrivyVersion
 	run.DBUpdatedAt = result.DBUpdatedAt
+	run.DBVersion = result.DBFreshness.DBVersion
+	// Real Trivy image reports carry no DB info, so the fingerprint takes it
+	// from the cache metadata read BEFORE the scan. Only when the cache had
+	// no DB yet (the scan downloads it) is it read after the scan; the report
+	// fields are the last fallback. With none, the fingerprint stays
+	// incomplete and the next trigger rescans (safe).
+	meta, haveMeta := ports.ScanDBMetadata{}, false
+	if preScanMeta != nil {
+		meta, haveMeta = *preScanMeta, true
+	} else if reader, ok := scanRunner.(ports.ScanDBMetadataReader); ok {
+		if m, merr := reader.ReadDBMetadata(ctx, settings); merr == nil && m.UpdatedAt != nil {
+			meta, haveMeta = m, true
+		}
+	}
+	if haveMeta {
+		run.DBVersion = meta.Version
+		run.DBUpdatedAt = meta.UpdatedAt
+		result.DBFreshness.DBVersion = meta.Version
+		result.DBFreshness.DBUpdatedAt = meta.UpdatedAt
+		result.DBFreshness.DBDownloadedAt = firstTime(meta.DownloadedAt, result.DBFreshness.DBDownloadedAt)
+		result.DBFreshness.DBNextUpdateAt = firstTime(meta.NextUpdate, result.DBFreshness.DBNextUpdateAt)
+	}
+	// An unreadable configured file leaves the hash empty so the result
+	// never matches a later fingerprint.
+	if preScanHashOK {
+		run.SettingsHash = preScanHash
+	}
+	run.LastCheckedAt = &finished
+	run.Stale = false
+	run.StaleReason = ""
 	run.Error = ""
 	s.persistAsyncScanRunDetail(ctx, tenant, ports.ScanRunDetail{Run: run, Findings: result.Findings, DBFreshness: result.DBFreshness})
 }
@@ -749,6 +790,7 @@ func (s *Service) resolveManagedScanSettings(ctx context.Context) (ports.ScanSet
 	}
 	settings.BinaryPath = strings.TrimSpace(state.ActiveBinaryPath)
 	settings.CacheDir = strings.TrimSpace(state.CacheDir)
+	settings.TrivyVersion = strings.TrimSpace(state.ActiveVersion)
 	return settings, nil
 }
 
@@ -799,4 +841,13 @@ func isLoopbackOnlyAddress(raw string) bool {
 		return ip.IsLoopback()
 	}
 	return false
+}
+
+func firstTime(values ...*time.Time) *time.Time {
+	for _, v := range values {
+		if v != nil {
+			return v
+		}
+	}
+	return nil
 }

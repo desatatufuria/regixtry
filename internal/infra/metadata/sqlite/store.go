@@ -50,6 +50,12 @@ func newWithBusyTimeout(path string, busyTimeoutMillis int) (*Store, error) {
 		return nil, err
 	}
 
+	// After init(): the latest-only columns exist before any purge runs.
+	if err := store.purgeDuplicateScanHistory(nil); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+
 	return store, nil
 }
 
@@ -1754,7 +1760,7 @@ func (s *Store) UpsertFeatureRuntimeState(ctx context.Context, tenant string, fe
 
 func (s *Store) GetActiveScanRunByDigest(ctx context.Context, tenant string, repository string, digest string) (ports.ScanRun, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, repository, requested_ref, digest, status, trigger, started_at, finished_at, created_at, updated_at, critical, high, medium, low, trivy_version, db_updated_at, error
+		SELECT id, repository, requested_ref, digest, status, trigger, started_at, finished_at, created_at, updated_at, critical, high, medium, low, trivy_version, db_updated_at, error, settings_hash, db_version, last_checked_at, stale, stale_reason
 		FROM scan_runs
 		WHERE tenant = ? AND repository = ? AND digest = ? AND status IN (?, ?)
 		ORDER BY created_at DESC
@@ -1776,7 +1782,7 @@ func (s *Store) GetLatestScanRunByDigest(ctx context.Context, tenant string, rep
 	// (a random UUID) or created_at alone (live-DB confirmed unstable —
 	// design.md's Open Questions).
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, repository, requested_ref, digest, status, trigger, started_at, finished_at, created_at, updated_at, critical, high, medium, low, trivy_version, db_updated_at, error
+		SELECT id, repository, requested_ref, digest, status, trigger, started_at, finished_at, created_at, updated_at, critical, high, medium, low, trivy_version, db_updated_at, error, settings_hash, db_version, last_checked_at, stale, stale_reason
 		FROM scan_runs
 		WHERE tenant = ? AND repository = ? AND digest = ?
 		ORDER BY (status = 'skipped') ASC, created_at DESC, rowid DESC
@@ -1787,23 +1793,43 @@ func (s *Store) GetLatestScanRunByDigest(ctx context.Context, tenant string, rep
 
 func (s *Store) GetScanRun(ctx context.Context, tenant string, runID string) (ports.ScanRun, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, repository, requested_ref, digest, status, trigger, started_at, finished_at, created_at, updated_at, critical, high, medium, low, trivy_version, db_updated_at, error
+		SELECT id, repository, requested_ref, digest, status, trigger, started_at, finished_at, created_at, updated_at, critical, high, medium, low, trivy_version, db_updated_at, error, settings_hash, db_version, last_checked_at, stale, stale_reason
 		FROM scan_runs
 		WHERE tenant = ? AND id = ?
 	`, tenant, runID)
 	return scanRunRow(row, runID)
 }
 
-func (s *Store) GetScanRunDetail(ctx context.Context, tenant string, runID string) (ports.ScanRunDetail, error) {
-	run, err := s.GetScanRun(ctx, tenant, runID)
+// GetScanRunDetail reads the run row, its findings and its DB freshness in ONE
+// read snapshot: a replacement that commits in between (latest-only scans
+// delete the old run and its findings) can never yield counts with zero
+// findings. The transaction is a plain DEFERRED BEGIN on one connection: in
+// WAL it never blocks writers and sees a single consistent commit.
+func (s *Store) GetScanRunDetail(ctx context.Context, tenant string, runID string) (detail ports.ScanRunDetail, err error) {
+	conn, err := s.db.Conn(ctx)
 	if err != nil {
 		return ports.ScanRunDetail{}, err
 	}
-	findings, err := s.listScanRunFindings(ctx, runID)
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, `BEGIN DEFERRED`); err != nil {
+		return ports.ScanRunDetail{}, err
+	}
+	defer func() { _, _ = conn.ExecContext(context.WithoutCancel(ctx), `ROLLBACK`) }()
+
+	row := conn.QueryRowContext(ctx, `
+		SELECT id, repository, requested_ref, digest, status, trigger, started_at, finished_at, created_at, updated_at, critical, high, medium, low, trivy_version, db_updated_at, error, settings_hash, db_version, last_checked_at, stale, stale_reason
+		FROM scan_runs
+		WHERE tenant = ? AND id = ?
+	`, tenant, runID)
+	run, err := scanRunRow(row, runID)
 	if err != nil {
 		return ports.ScanRunDetail{}, err
 	}
-	freshness, err := s.getScanRunDBFreshness(ctx, runID)
+	findings, err := listScanRunFindings(ctx, conn, runID)
+	if err != nil {
+		return ports.ScanRunDetail{}, err
+	}
+	freshness, err := scanRunDBFreshnessOf(ctx, conn, runID)
 	if err != nil {
 		return ports.ScanRunDetail{}, err
 	}
@@ -1811,7 +1837,159 @@ func (s *Store) GetScanRunDetail(ctx context.Context, tenant string, runID strin
 	return ports.ScanRunDetail{Run: run, Findings: findings, DBFreshness: freshness}, nil
 }
 
+// UpsertScanRun persists one scan run row. A FAILED run never destroys the
+// digest's previous completed result (the pull policy enforces it): when a
+// completed run exists for the same (tenant, repository, digest) the failure
+// is recorded as a stale marker on that result and the failed row is
+// dropped; the failed row is kept only when no completed result exists.
 func (s *Store) UpsertScanRun(ctx context.Context, tenant string, run ports.ScanRun) error {
+	if run.Status == ports.ScanRunStatusFailed {
+		return s.recordFailedScanRun(ctx, tenant, run)
+	}
+	return s.upsertScanRunExec(ctx, s.db, tenant, run)
+}
+
+func (s *Store) recordFailedScanRun(ctx context.Context, tenant string, run ports.ScanRun) error {
+	tx, err := s.beginWrite(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var completedID string
+	err = tx.QueryRowContext(ctx, `
+		SELECT id FROM scan_runs
+		WHERE tenant = ? AND repository = ? AND digest = ? AND status = 'completed' AND id != ?
+		ORDER BY created_at DESC, rowid DESC
+		LIMIT 1
+	`, tenant, run.Repository, run.Digest, run.ID).Scan(&completedID)
+	switch {
+	case err == sql.ErrNoRows:
+		if err = s.upsertScanRunExec(ctx, tx.Tx, tenant, run); err != nil {
+			return err
+		}
+	case err != nil:
+		return err
+	default:
+		reason := strings.TrimSpace(run.Error)
+		if reason == "" {
+			reason = "rescan failed"
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE scan_runs SET stale = 1, stale_reason = ? WHERE tenant = ? AND id = ?`, reason, tenant, completedID); err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, `DELETE FROM scan_runs WHERE tenant = ? AND id = ? AND status != 'completed'`, tenant, run.ID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// GetLatestCompletedScanRunByDigest returns the newest completed run for a
+// digest, or the typed NotFound error when none exists.
+func (s *Store) GetLatestCompletedScanRunByDigest(ctx context.Context, tenant string, repository string, digest string) (ports.ScanRun, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT `+scanRunSelectColumns+`
+		FROM scan_runs
+		WHERE tenant = ? AND repository = ? AND digest = ? AND status = 'completed'
+		ORDER BY created_at DESC, rowid DESC
+		LIMIT 1
+	`, tenant, repository, digest)
+	return scanRunRow(row, repository+"@"+digest)
+}
+
+// TouchScanRunChecked records that a completed run was re-confirmed current.
+func (s *Store) TouchScanRunChecked(ctx context.Context, tenant string, runID string, checkedAt time.Time) error {
+	tx, err := s.beginWrite(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err = tx.ExecContext(ctx, `UPDATE scan_runs SET last_checked_at = ? WHERE tenant = ? AND id = ? AND status = 'completed'`, checkedAt.UTC().Format(time.RFC3339Nano), tenant, runID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// TouchScanRunsChecked batches TouchScanRunChecked: one short write
+// transaction per 200 runs, so a sweep of thousands of unchanged digests
+// never holds the shared write queue for long.
+func (s *Store) TouchScanRunsChecked(ctx context.Context, tenant string, runIDs []string, checkedAt time.Time) error {
+	const batch = 200
+	stamp := checkedAt.UTC().Format(time.RFC3339Nano)
+	for start := 0; start < len(runIDs); start += batch {
+		end := start + batch
+		if end > len(runIDs) {
+			end = len(runIDs)
+		}
+		chunk := runIDs[start:end]
+		args := make([]any, 0, len(chunk)+2)
+		args = append(args, stamp, tenant)
+		for _, id := range chunk {
+			args = append(args, id)
+		}
+		query := `UPDATE scan_runs SET last_checked_at = ? WHERE tenant = ? AND status = 'completed' AND id IN (?` + strings.Repeat(",?", len(chunk)-1) + `)`
+		if err := func() error {
+			tx, err := s.beginWrite(ctx)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = tx.Rollback() }()
+			if _, err := tx.ExecContext(ctx, query, args...); err != nil {
+				return err
+			}
+			return tx.Commit()
+		}(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ListTaggedDigests returns a repository's tags with the digest each one
+// points at, ordered by tag name and paginated exactly like ListTags.
+func (s *Store) ListTaggedDigests(ctx context.Context, tenant string, repository domain.RepositoryRef, limit int, after string) ([]ports.TaggedDigest, error) {
+	if err := repository.Validate(); err != nil {
+		return nil, err
+	}
+	query := `
+		SELECT t.name, m.digest
+		FROM tags t
+		JOIN repositories r ON r.id = t.repository_id
+		JOIN manifests m ON m.id = t.manifest_id
+		WHERE t.tenant = ? AND r.tenant = ? AND r.name = ?
+	`
+	args := []any{tenant, tenant, repository.String()}
+	if after != "" {
+		query += ` AND t.name > ?`
+		args = append(args, after)
+	}
+	query += ` ORDER BY t.name ASC`
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT %d", limit)
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var tagged []ports.TaggedDigest
+	for rows.Next() {
+		var item ports.TaggedDigest
+		if err := rows.Scan(&item.Tag, &item.Digest); err != nil {
+			return nil, err
+		}
+		tagged = append(tagged, item)
+	}
+	return tagged, rows.Err()
+}
+
+type execer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+const scanRunSelectColumns = "id, repository, requested_ref, digest, status, trigger, started_at, finished_at, created_at, updated_at, critical, high, medium, low, trivy_version, db_updated_at, error, settings_hash, db_version, last_checked_at, stale, stale_reason"
+
+func (s *Store) upsertScanRunExec(ctx context.Context, db execer, tenant string, run ports.ScanRun) error {
 	if run.CreatedAt.IsZero() {
 		run.CreatedAt = time.Now().UTC()
 	}
@@ -1830,9 +2008,13 @@ func (s *Store) UpsertScanRun(ctx context.Context, tenant string, run ports.Scan
 	if run.DBUpdatedAt != nil {
 		dbUpdatedAt = run.DBUpdatedAt.UTC().Format(time.RFC3339Nano)
 	}
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO scan_runs (id, tenant, repository, requested_ref, digest, status, trigger, started_at, finished_at, created_at, updated_at, critical, high, medium, low, trivy_version, db_updated_at, error)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	var lastCheckedAt any
+	if run.LastCheckedAt != nil {
+		lastCheckedAt = run.LastCheckedAt.UTC().Format(time.RFC3339Nano)
+	}
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO scan_runs (id, tenant, repository, requested_ref, digest, status, trigger, started_at, finished_at, created_at, updated_at, critical, high, medium, low, trivy_version, db_updated_at, error, settings_hash, db_version, last_checked_at, stale, stale_reason)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			status = excluded.status,
 			started_at = excluded.started_at,
@@ -1845,13 +2027,18 @@ func (s *Store) UpsertScanRun(ctx context.Context, tenant string, run ports.Scan
 			trivy_version = excluded.trivy_version,
 			db_updated_at = excluded.db_updated_at,
 			error = excluded.error,
+			settings_hash = excluded.settings_hash,
+			db_version = excluded.db_version,
+			last_checked_at = excluded.last_checked_at,
+			stale = excluded.stale,
+			stale_reason = excluded.stale_reason,
 			-- A skipped marker is a per-repository notice overwritten by the
 			-- newest dropped push; real runs keep their identity columns.
 			requested_ref = CASE WHEN excluded.status = 'skipped' THEN excluded.requested_ref ELSE scan_runs.requested_ref END,
 			digest = CASE WHEN excluded.status = 'skipped' THEN excluded.digest ELSE scan_runs.digest END,
 			created_at = CASE WHEN excluded.status = 'skipped' THEN excluded.created_at ELSE scan_runs.created_at END
 		WHERE scan_runs.tenant = excluded.tenant
-	`, run.ID, tenant, run.Repository, run.RequestedRef, run.Digest, run.Status, run.Trigger, startedAt, finishedAt, run.CreatedAt.UTC().Format(time.RFC3339Nano), run.UpdatedAt.UTC().Format(time.RFC3339Nano), run.Critical, run.High, run.Medium, run.Low, run.TrivyVersion, dbUpdatedAt, run.Error)
+	`, run.ID, tenant, run.Repository, run.RequestedRef, run.Digest, run.Status, run.Trigger, startedAt, finishedAt, run.CreatedAt.UTC().Format(time.RFC3339Nano), run.UpdatedAt.UTC().Format(time.RFC3339Nano), run.Critical, run.High, run.Medium, run.Low, run.TrivyVersion, dbUpdatedAt, run.Error, run.SettingsHash, run.DBVersion, lastCheckedAt, run.Stale, run.StaleReason)
 	return err
 }
 
@@ -1861,6 +2048,28 @@ func (s *Store) UpsertScanRunDetail(ctx context.Context, tenant string, detail p
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	// Out-of-order completions: a run that was queued earlier can complete
+	// after a later run whose vulnerability DB is NEWER. Rule: the result
+	// with the newer db_updated_at wins (compared only when both are known);
+	// otherwise the last completion wins. The loser is discarded here.
+	if detail.Run.Status == ports.ScanRunStatusCompleted && detail.Run.DBUpdatedAt != nil {
+		keptID, kept, kerr := newerCompletedScanRunTx(ctx, tx.Tx, tenant, detail.Run)
+		if kerr != nil {
+			return kerr
+		}
+		if kept {
+			if _, err = tx.ExecContext(ctx, `
+				DELETE FROM scan_runs
+				WHERE tenant = ? AND repository = ? AND digest = ? AND id != ? AND status NOT IN ('queued', 'running')
+			`, tenant, detail.Run.Repository, detail.Run.Digest, keptID); err != nil {
+				return err
+			}
+			if _, err = tx.ExecContext(ctx, `DELETE FROM scan_runs WHERE tenant = ? AND id = ?`, tenant, detail.Run.ID); err != nil {
+				return err
+			}
+			return tx.Commit()
+		}
+	}
 	if err = upsertScanRunTx(ctx, tx.Tx, tenant, detail.Run); err != nil {
 		return err
 	}
@@ -1918,12 +2127,53 @@ func (s *Store) UpsertScanRunDetail(ctx context.Context, tenant string, detail p
 	} else if _, err = tx.ExecContext(ctx, `DELETE FROM scan_run_db_freshness WHERE run_id = ?`, detail.Run.ID); err != nil {
 		return err
 	}
+	if detail.Run.Status == ports.ScanRunStatusCompleted {
+		// Latest-only replacement in the SAME transaction as the new
+		// result: the digest never has zero completed results. In-flight
+		// runs are never touched; findings and freshness rows go with
+		// their run through ON DELETE CASCADE.
+		if _, err = tx.ExecContext(ctx, `
+			DELETE FROM scan_runs
+			WHERE tenant = ? AND repository = ? AND digest = ? AND id != ? AND status NOT IN ('queued', 'running')
+		`, tenant, detail.Run.Repository, detail.Run.Digest, detail.Run.ID); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
+}
+
+// newerCompletedScanRunTx returns the completed run of the same digest with
+// the newest db_updated_at when it is strictly newer than run's.
+func newerCompletedScanRunTx(ctx context.Context, tx *sql.Tx, tenant string, run ports.ScanRun) (string, bool, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT id, db_updated_at FROM scan_runs
+		WHERE tenant = ? AND repository = ? AND digest = ? AND status = 'completed' AND id != ? AND db_updated_at IS NOT NULL
+	`, tenant, run.Repository, run.Digest, run.ID)
+	if err != nil {
+		return "", false, err
+	}
+	defer rows.Close()
+	var bestID string
+	best := *run.DBUpdatedAt
+	for rows.Next() {
+		var id, raw string
+		if err := rows.Scan(&id, &raw); err != nil {
+			return "", false, err
+		}
+		parsed, perr := time.Parse(time.RFC3339Nano, raw)
+		if perr != nil {
+			continue
+		}
+		if parsed.After(best) {
+			best, bestID = parsed, id
+		}
+	}
+	return bestID, bestID != "", rows.Err()
 }
 
 func (s *Store) ListScanRuns(ctx context.Context, tenant string, repository string, limit int) ([]ports.ScanRun, error) {
 	query := `
-		SELECT id, repository, requested_ref, digest, status, trigger, started_at, finished_at, created_at, updated_at, critical, high, medium, low, trivy_version, db_updated_at, error
+		SELECT id, repository, requested_ref, digest, status, trigger, started_at, finished_at, created_at, updated_at, critical, high, medium, low, trivy_version, db_updated_at, error, settings_hash, db_version, last_checked_at, stale, stale_reason
 		FROM scan_runs
 		WHERE tenant = ?
 	`
@@ -2094,6 +2344,12 @@ func (s *Store) HeartbeatScanScheduler(ctx context.Context, tenant string, owner
 	if err != nil {
 		return err
 	}
+	// A heartbeat renews the caller's own lease only: when another owner
+	// holds a live lease (this one expired and was reclaimed), renewing would
+	// silently steal it back.
+	if state.OwnerID != "" && state.OwnerID != owner && state.LeaseExpiresAt.After(now) {
+		return ports.ErrScanLeaseLost
+	}
 	state.OwnerID = owner
 	state.LeaseExpiresAt = now.Add(leaseTTL)
 	state.LastHeartbeatAt = now
@@ -2101,12 +2357,19 @@ func (s *Store) HeartbeatScanScheduler(ctx context.Context, tenant string, owner
 }
 
 func (s *Store) GetScanSchedulerState(ctx context.Context, tenant string) (ports.ScanSchedulerState, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT owner_id, lease_expires_at, last_heartbeat_at, batch_started_at FROM scan_scheduler_state WHERE tenant = ?`, tenant)
+	row := s.db.QueryRowContext(ctx, `SELECT owner_id, lease_expires_at, last_heartbeat_at, batch_started_at,
+		sweep_started_at, sweep_finished_at, sweep_visited, sweep_skipped, sweep_queued, sweep_errors,
+		last_db_refresh_at, last_db_refresh_error, db_fingerprint, db_changed
+		FROM scan_scheduler_state WHERE tenant = ?`, tenant)
 	var ownerID string
 	var leaseExpiresAt string
 	var lastHeartbeatAt string
 	var batchStartedAt sql.NullString
-	if err := row.Scan(&ownerID, &leaseExpiresAt, &lastHeartbeatAt, &batchStartedAt); err != nil {
+	var sweep ports.ScanSweepSummary
+	var sweepStarted, sweepFinished, dbRefreshAt sql.NullString
+	if err := row.Scan(&ownerID, &leaseExpiresAt, &lastHeartbeatAt, &batchStartedAt,
+		&sweepStarted, &sweepFinished, &sweep.Visited, &sweep.SkippedUnchanged, &sweep.Queued, &sweep.Errors,
+		&dbRefreshAt, &sweep.LastDBRefreshError, &sweep.DBFingerprint, &sweep.DBChanged); err != nil {
 		if err == sql.ErrNoRows {
 			return ports.ScanSchedulerState{}, domain.NewNotFoundError("scan_scheduler_state", tenant)
 		}
@@ -2120,7 +2383,19 @@ func (s *Store) GetScanSchedulerState(ctx context.Context, tenant string) (ports
 	if err != nil {
 		return ports.ScanSchedulerState{}, err
 	}
-	state := ports.ScanSchedulerState{OwnerID: ownerID, LeaseExpiresAt: leaseTime, LastHeartbeatAt: heartbeatTime}
+	for _, field := range []struct {
+		raw  sql.NullString
+		into **time.Time
+	}{{sweepStarted, &sweep.StartedAt}, {sweepFinished, &sweep.FinishedAt}, {dbRefreshAt, &sweep.LastDBRefreshAt}} {
+		if field.raw.Valid && strings.TrimSpace(field.raw.String) != "" {
+			parsed, err := time.Parse(time.RFC3339Nano, field.raw.String)
+			if err != nil {
+				return ports.ScanSchedulerState{}, err
+			}
+			*field.into = &parsed
+		}
+	}
+	state := ports.ScanSchedulerState{OwnerID: ownerID, LeaseExpiresAt: leaseTime, LastHeartbeatAt: heartbeatTime, LastSweep: sweep}
 	if batchStartedAt.Valid && strings.TrimSpace(batchStartedAt.String) != "" {
 		parsed, err := time.Parse(time.RFC3339Nano, batchStartedAt.String)
 		if err != nil {
@@ -2129,6 +2404,38 @@ func (s *Store) GetScanSchedulerState(ctx context.Context, tenant string) (ports
 		state.BatchStartedAt = &parsed
 	}
 	return state, nil
+}
+
+// RecordScanSweep writes only the sweep-summary columns (an upsert that
+// never touches the lease columns of an existing row), so it cannot race the
+// lease heartbeat into a lost update.
+func (s *Store) RecordScanSweep(ctx context.Context, tenant string, sweep ports.ScanSweepSummary) error {
+	optional := func(value *time.Time) any {
+		if value == nil {
+			return nil
+		}
+		return value.UTC().Format(time.RFC3339Nano)
+	}
+	epoch := time.Time{}.UTC().Format(time.RFC3339Nano)
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO scan_scheduler_state (tenant, owner_id, lease_expires_at, last_heartbeat_at,
+			sweep_started_at, sweep_finished_at, sweep_visited, sweep_skipped, sweep_queued, sweep_errors,
+			last_db_refresh_at, last_db_refresh_error, db_fingerprint, db_changed)
+		VALUES (?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(tenant) DO UPDATE SET
+			sweep_started_at = excluded.sweep_started_at,
+			sweep_finished_at = excluded.sweep_finished_at,
+			sweep_visited = excluded.sweep_visited,
+			sweep_skipped = excluded.sweep_skipped,
+			sweep_queued = excluded.sweep_queued,
+			sweep_errors = excluded.sweep_errors,
+			last_db_refresh_at = excluded.last_db_refresh_at,
+			last_db_refresh_error = excluded.last_db_refresh_error,
+			db_fingerprint = excluded.db_fingerprint,
+			db_changed = excluded.db_changed
+	`, tenant, epoch, epoch, optional(sweep.StartedAt), optional(sweep.FinishedAt), sweep.Visited, sweep.SkippedUnchanged, sweep.Queued, sweep.Errors,
+		optional(sweep.LastDBRefreshAt), sweep.LastDBRefreshError, sweep.DBFingerprint, sweep.DBChanged)
+	return err
 }
 
 func (s *Store) UpsertScanSchedulerState(ctx context.Context, tenant string, state ports.ScanSchedulerState) error {
@@ -2481,6 +2788,35 @@ func (s *Store) init() error {
 		// migration. DEFAULT '[]' keeps GetSigningPolicySettings' nil-vs-[]
 		// normalization consistent for every pre-existing row.
 		`ALTER TABLE signing_policy_settings ADD COLUMN trusted_identities TEXT NOT NULL DEFAULT '[]';`,
+		// Latest-only scan results: the fingerprint inputs a run was
+		// scanned with (settings_hash, db_version; trivy_version and
+		// db_updated_at already exist), when a push/sweep last re-confirmed
+		// the result without rescanning (last_checked_at), and the stale
+		// marker a failed rescan leaves on the previous completed result.
+		// Additive with empty defaults: an old row has an empty hash, which
+		// never equals a real fingerprint, so it is rescanned exactly once.
+		`ALTER TABLE scan_runs ADD COLUMN settings_hash TEXT NOT NULL DEFAULT '';`,
+		`ALTER TABLE scan_runs ADD COLUMN db_version INTEGER NOT NULL DEFAULT 0;`,
+		`ALTER TABLE scan_runs ADD COLUMN last_checked_at TEXT;`,
+		`ALTER TABLE scan_runs ADD COLUMN stale INTEGER NOT NULL DEFAULT 0;`,
+		`ALTER TABLE scan_runs ADD COLUMN stale_reason TEXT NOT NULL DEFAULT '';`,
+		// Sweep summary on the scheduler state row (latest-only scan
+		// results): what the last scheduled sweep did and the outcome of its
+		// once-per-sweep vulnerability DB refresh. Additive with empty
+		// defaults; written only by RecordScanSweep.
+		`ALTER TABLE scan_scheduler_state ADD COLUMN sweep_started_at TEXT;`,
+		`ALTER TABLE scan_scheduler_state ADD COLUMN sweep_finished_at TEXT;`,
+		`ALTER TABLE scan_scheduler_state ADD COLUMN sweep_visited INTEGER NOT NULL DEFAULT 0;`,
+		`ALTER TABLE scan_scheduler_state ADD COLUMN sweep_skipped INTEGER NOT NULL DEFAULT 0;`,
+		`ALTER TABLE scan_scheduler_state ADD COLUMN sweep_queued INTEGER NOT NULL DEFAULT 0;`,
+		`ALTER TABLE scan_scheduler_state ADD COLUMN sweep_errors INTEGER NOT NULL DEFAULT 0;`,
+		`ALTER TABLE scan_scheduler_state ADD COLUMN last_db_refresh_at TEXT;`,
+		`ALTER TABLE scan_scheduler_state ADD COLUMN last_db_refresh_error TEXT NOT NULL DEFAULT '';`,
+		`ALTER TABLE scan_scheduler_state ADD COLUMN db_fingerprint TEXT NOT NULL DEFAULT '';`,
+		`ALTER TABLE scan_scheduler_state ADD COLUMN db_changed INTEGER NOT NULL DEFAULT 0;`,
+		// Per-digest lookups (latest/active/completed run, replacement, the
+		// history purge) all filter on this triple.
+		`CREATE INDEX IF NOT EXISTS idx_scan_runs_digest ON scan_runs (tenant, repository, digest);`,
 	}
 
 	for _, statement := range statements {
@@ -2638,8 +2974,10 @@ func (s *Store) listScanRunFindings(ctx context.Context, runID string) ([]ports.
 	return listScanRunFindings(ctx, s.db, runID)
 }
 
-func (s *Store) getScanRunDBFreshness(ctx context.Context, runID string) (ports.ScanRunDBFreshness, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT report_schema_version, report_created_at, trivy_version, db_version, db_updated_at, db_downloaded_at, db_next_update_at, freshness_state FROM scan_run_db_freshness WHERE run_id = ?`, runID)
+func scanRunDBFreshnessOf(ctx context.Context, db interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}, runID string) (ports.ScanRunDBFreshness, error) {
+	row := db.QueryRowContext(ctx, `SELECT report_schema_version, report_created_at, trivy_version, db_version, db_updated_at, db_downloaded_at, db_next_update_at, freshness_state FROM scan_run_db_freshness WHERE run_id = ?`, runID)
 	var freshness ports.ScanRunDBFreshness
 	var reportCreatedAt sql.NullString
 	var dbUpdatedAt sql.NullString
@@ -2732,9 +3070,13 @@ func upsertScanRunTx(ctx context.Context, tx *sql.Tx, tenant string, run ports.S
 	if run.DBUpdatedAt != nil {
 		dbUpdatedAt = run.DBUpdatedAt.UTC().Format(time.RFC3339Nano)
 	}
+	var lastCheckedAt any
+	if run.LastCheckedAt != nil {
+		lastCheckedAt = run.LastCheckedAt.UTC().Format(time.RFC3339Nano)
+	}
 	_, err := tx.ExecContext(ctx, `
-		INSERT INTO scan_runs (id, tenant, repository, requested_ref, digest, status, trigger, started_at, finished_at, created_at, updated_at, critical, high, medium, low, trivy_version, db_updated_at, error)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO scan_runs (id, tenant, repository, requested_ref, digest, status, trigger, started_at, finished_at, created_at, updated_at, critical, high, medium, low, trivy_version, db_updated_at, error, settings_hash, db_version, last_checked_at, stale, stale_reason)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			status = excluded.status,
 			started_at = excluded.started_at,
@@ -2746,8 +3088,13 @@ func upsertScanRunTx(ctx context.Context, tx *sql.Tx, tenant string, run ports.S
 			low = excluded.low,
 			trivy_version = excluded.trivy_version,
 			db_updated_at = excluded.db_updated_at,
-			error = excluded.error
-	`, run.ID, tenant, run.Repository, run.RequestedRef, run.Digest, run.Status, run.Trigger, startedAt, finishedAt, run.CreatedAt.UTC().Format(time.RFC3339Nano), run.UpdatedAt.UTC().Format(time.RFC3339Nano), run.Critical, run.High, run.Medium, run.Low, run.TrivyVersion, dbUpdatedAt, run.Error)
+			error = excluded.error,
+			settings_hash = excluded.settings_hash,
+			db_version = excluded.db_version,
+			last_checked_at = excluded.last_checked_at,
+			stale = excluded.stale,
+			stale_reason = excluded.stale_reason
+	`, run.ID, tenant, run.Repository, run.RequestedRef, run.Digest, run.Status, run.Trigger, startedAt, finishedAt, run.CreatedAt.UTC().Format(time.RFC3339Nano), run.UpdatedAt.UTC().Format(time.RFC3339Nano), run.Critical, run.High, run.Medium, run.Low, run.TrivyVersion, dbUpdatedAt, run.Error, run.SettingsHash, run.DBVersion, lastCheckedAt, run.Stale, run.StaleReason)
 	return err
 }
 
@@ -2865,12 +3212,13 @@ func scanRunFromScanner(scanner scanRunScanner) (ports.ScanRun, error) {
 	var startedAt sql.NullString
 	var finishedAt sql.NullString
 	var dbUpdatedAt sql.NullString
+	var lastCheckedAt sql.NullString
 	var createdAtRaw string
 	var updatedAtRaw string
-	if err := scanner.Scan(&run.ID, &run.Repository, &run.RequestedRef, &run.Digest, &run.Status, &run.Trigger, &startedAt, &finishedAt, &createdAtRaw, &updatedAtRaw, &run.Critical, &run.High, &run.Medium, &run.Low, &run.TrivyVersion, &dbUpdatedAt, &run.Error); err != nil {
+	if err := scanner.Scan(&run.ID, &run.Repository, &run.RequestedRef, &run.Digest, &run.Status, &run.Trigger, &startedAt, &finishedAt, &createdAtRaw, &updatedAtRaw, &run.Critical, &run.High, &run.Medium, &run.Low, &run.TrivyVersion, &dbUpdatedAt, &run.Error, &run.SettingsHash, &run.DBVersion, &lastCheckedAt, &run.Stale, &run.StaleReason); err != nil {
 		return ports.ScanRun{}, err
 	}
-	if err := populateScanRunTimestamps(&run, createdAtRaw, updatedAtRaw, startedAt, finishedAt, dbUpdatedAt); err != nil {
+	if err := populateScanRunTimestamps(&run, createdAtRaw, updatedAtRaw, startedAt, finishedAt, dbUpdatedAt, lastCheckedAt); err != nil {
 		return ports.ScanRun{}, err
 	}
 	return run, nil
@@ -2880,7 +3228,7 @@ func scanRunFromScanner(scanner scanRunScanner) (ports.ScanRun, error) {
 // every scan_runs row shape (ListScanRuns' scanRunFromScanner and
 // ListLatestScanRunPerRepository's scanRunAndRunCountFromScanner alike)
 // onto run, mutating it in place.
-func populateScanRunTimestamps(run *ports.ScanRun, createdAtRaw, updatedAtRaw string, startedAt, finishedAt, dbUpdatedAt sql.NullString) error {
+func populateScanRunTimestamps(run *ports.ScanRun, createdAtRaw, updatedAtRaw string, startedAt, finishedAt, dbUpdatedAt, lastCheckedAt sql.NullString) error {
 	createdAt, err := time.Parse(time.RFC3339Nano, createdAtRaw)
 	if err != nil {
 		return err
@@ -2912,6 +3260,13 @@ func populateScanRunTimestamps(run *ports.ScanRun, createdAtRaw, updatedAtRaw st
 		}
 		run.DBUpdatedAt = &parsed
 	}
+	if lastCheckedAt.Valid && strings.TrimSpace(lastCheckedAt.String) != "" {
+		parsed, err := time.Parse(time.RFC3339Nano, lastCheckedAt.String)
+		if err != nil {
+			return err
+		}
+		run.LastCheckedAt = &parsed
+	}
 	return nil
 }
 
@@ -2925,12 +3280,13 @@ func scanRunAndRunCountFromScanner(scanner scanRunScanner) (ports.RepositoryScan
 	var startedAt sql.NullString
 	var finishedAt sql.NullString
 	var dbUpdatedAt sql.NullString
+	var lastCheckedAt sql.NullString
 	var createdAtRaw string
 	var updatedAtRaw string
-	if err := scanner.Scan(&run.ID, &run.Repository, &run.RequestedRef, &run.Digest, &run.Status, &run.Trigger, &startedAt, &finishedAt, &createdAtRaw, &updatedAtRaw, &run.Critical, &run.High, &run.Medium, &run.Low, &run.TrivyVersion, &dbUpdatedAt, &run.Error, &runCount); err != nil {
+	if err := scanner.Scan(&run.ID, &run.Repository, &run.RequestedRef, &run.Digest, &run.Status, &run.Trigger, &startedAt, &finishedAt, &createdAtRaw, &updatedAtRaw, &run.Critical, &run.High, &run.Medium, &run.Low, &run.TrivyVersion, &dbUpdatedAt, &run.Error, &run.SettingsHash, &run.DBVersion, &lastCheckedAt, &run.Stale, &run.StaleReason, &runCount); err != nil {
 		return ports.RepositoryScanSummary{}, err
 	}
-	if err := populateScanRunTimestamps(&run, createdAtRaw, updatedAtRaw, startedAt, finishedAt, dbUpdatedAt); err != nil {
+	if err := populateScanRunTimestamps(&run, createdAtRaw, updatedAtRaw, startedAt, finishedAt, dbUpdatedAt, lastCheckedAt); err != nil {
 		return ports.RepositoryScanSummary{}, err
 	}
 	return ports.RepositoryScanSummary{Run: run, RunCount: runCount}, nil
@@ -2946,13 +3302,13 @@ func scanRunAndRunCountFromScanner(scanner scanRunScanner) (ports.RepositoryScan
 func (s *Store) ListLatestScanRunPerRepository(ctx context.Context, tenant string, limit int) ([]ports.RepositoryScanSummary, error) {
 	query := `
 		WITH latest AS (
-			SELECT id, repository, requested_ref, digest, status, trigger, started_at, finished_at, created_at, updated_at, critical, high, medium, low, trivy_version, db_updated_at, error,
+			SELECT id, repository, requested_ref, digest, status, trigger, started_at, finished_at, created_at, updated_at, critical, high, medium, low, trivy_version, db_updated_at, error, settings_hash, db_version, last_checked_at, stale, stale_reason,
 				ROW_NUMBER() OVER (PARTITION BY repository ORDER BY (status = 'skipped') ASC, created_at DESC, rowid DESC) AS rn,
 				COUNT(*) OVER (PARTITION BY repository) AS run_count
 			FROM scan_runs
 			WHERE tenant = ?
 		)
-		SELECT id, repository, requested_ref, digest, status, trigger, started_at, finished_at, created_at, updated_at, critical, high, medium, low, trivy_version, db_updated_at, error, run_count
+		SELECT id, repository, requested_ref, digest, status, trigger, started_at, finished_at, created_at, updated_at, critical, high, medium, low, trivy_version, db_updated_at, error, settings_hash, db_version, last_checked_at, stale, stale_reason, run_count
 		FROM latest
 		WHERE rn = 1
 		ORDER BY CASE WHEN critical > 0 THEN 4 WHEN high > 0 THEN 3 WHEN medium > 0 THEN 2 WHEN low > 0 THEN 1 ELSE 0 END DESC,

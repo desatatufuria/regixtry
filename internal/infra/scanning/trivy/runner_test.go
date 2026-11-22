@@ -2,6 +2,7 @@ package trivy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -278,4 +279,117 @@ func containsArgPair(args []string, name string, value string) bool {
 		}
 	}
 	return false
+}
+
+func TestRunnerReadDBMetadataReadsCacheMetadataWithoutExec(t *testing.T) {
+	t.Parallel()
+	cacheDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(cacheDir, "db"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cacheDir, "db", "metadata.json"), []byte(`{"Version":2,"NextUpdate":"2026-11-02T00:00:00Z","UpdatedAt":"2026-11-01T00:00:00Z","DownloadedAt":"2026-11-01T06:00:00Z"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runner := New(RunnerConfig{Exec: func(context.Context, string, ...string) ([]byte, error) {
+		t.Fatal("ReadDBMetadata must not execute trivy")
+		return nil, nil
+	}})
+	meta, err := runner.ReadDBMetadata(context.Background(), ports.ScanSettings{CacheDir: cacheDir})
+	if err != nil {
+		t.Fatalf("ReadDBMetadata() error = %v", err)
+	}
+	if meta.Version != 2 || meta.UpdatedAt == nil || meta.UpdatedAt.Format(time.RFC3339) != "2026-11-01T00:00:00Z" || meta.NextUpdate == nil || meta.DownloadedAt == nil {
+		t.Fatalf("meta = %#v, want Version, UpdatedAt, NextUpdate and DownloadedAt", meta)
+	}
+	if _, err := runner.ReadDBMetadata(context.Background(), ports.ScanSettings{CacheDir: t.TempDir()}); err == nil {
+		t.Fatal("ReadDBMetadata() without a downloaded DB must error (unknown, never skip)")
+	}
+	if _, err := runner.ReadDBMetadata(context.Background(), ports.ScanSettings{}); err == nil {
+		t.Fatal("ReadDBMetadata() without a cache dir must error")
+	}
+}
+
+func TestRunnerReadDBMetadataIsBoundedAndRefusesSymlinks(t *testing.T) {
+	t.Parallel()
+	runner := New(RunnerConfig{})
+	valid := `{"Version":2,"UpdatedAt":"2026-11-01T00:00:00Z"}`
+
+	big := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(big, "db"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oversized := valid[:len(valid)-1] + `,"Pad":"` + strings.Repeat("x", 70<<10) + `"}`
+	if err := os.WriteFile(filepath.Join(big, "db", "metadata.json"), []byte(oversized), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runner.ReadDBMetadata(context.Background(), ports.ScanSettings{CacheDir: big}); err == nil {
+		t.Fatal("a metadata file over 64 KiB must error")
+	}
+
+	outside := filepath.Join(t.TempDir(), "outside.json")
+	if err := os.WriteFile(outside, []byte(valid), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	linkFile := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(linkFile, "db"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(linkFile, "db", "metadata.json")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, err := runner.ReadDBMetadata(context.Background(), ports.ScanSettings{CacheDir: linkFile}); err == nil {
+		t.Fatal("a symlinked metadata.json must be refused")
+	}
+
+	realDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(realDir, "metadata.json"), []byte(valid), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	linkDir := t.TempDir()
+	if err := os.Symlink(realDir, filepath.Join(linkDir, "db")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, err := runner.ReadDBMetadata(context.Background(), ports.ScanSettings{CacheDir: linkDir}); err == nil {
+		t.Fatal("a symlinked db directory must be refused")
+	}
+}
+
+func TestRunnerRefreshDBDownloadsOnlyTheDBIntoTheCache(t *testing.T) {
+	t.Parallel()
+	var gotBinary string
+	var gotArgs []string
+	var gotDeadline bool
+	runner := New(RunnerConfig{Exec: func(ctx context.Context, binary string, args ...string) ([]byte, error) {
+		gotBinary, gotArgs = binary, args
+		_, gotDeadline = ctx.Deadline()
+		return nil, nil
+	}})
+	settings := ports.ScanSettings{BinaryPath: "/var/lib/regixtry/features/trivy/bin/active/trivy", CacheDir: "/var/lib/regixtry/features/trivy/trivy-cache", Timeout: time.Minute}
+	if err := runner.RefreshDB(context.Background(), settings); err != nil {
+		t.Fatalf("RefreshDB() error = %v", err)
+	}
+	want := []string{"image", "--download-db-only", "--cache-dir", "/var/lib/regixtry/features/trivy/trivy-cache"}
+	if gotBinary != settings.BinaryPath || strings.Join(gotArgs, " ") != strings.Join(want, " ") {
+		t.Fatalf("exec = %s %v, want %s %v", gotBinary, gotArgs, settings.BinaryPath, want)
+	}
+	if !gotDeadline {
+		t.Fatal("RefreshDB must run under the settings timeout")
+	}
+}
+
+func TestRunnerRefreshDBReportsFailuresAndRefusesAnUnmanagedBinary(t *testing.T) {
+	t.Parallel()
+	failing := New(RunnerConfig{Exec: func(context.Context, string, ...string) ([]byte, error) {
+		return nil, errors.New("exit status 1")
+	}})
+	managed := ports.ScanSettings{BinaryPath: "/var/lib/regixtry/features/trivy/bin/active/trivy", CacheDir: "/cache"}
+	if err := failing.RefreshDB(context.Background(), managed); err == nil || !strings.Contains(err.Error(), "exit status 1") {
+		t.Fatalf("RefreshDB() error = %v, want the exec failure", err)
+	}
+	if err := failing.RefreshDB(context.Background(), ports.ScanSettings{BinaryPath: "/usr/bin/trivy", CacheDir: "/cache"}); err == nil {
+		t.Fatal("RefreshDB() must refuse a binary outside the managed layout")
+	}
+	if err := failing.RefreshDB(context.Background(), ports.ScanSettings{BinaryPath: managed.BinaryPath}); err == nil {
+		t.Fatal("RefreshDB() must require a cache directory")
+	}
 }

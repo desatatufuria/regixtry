@@ -14,16 +14,16 @@
       Secret scanning          │  │ c edit configuration.                 │  Applies to every repository without an          │    │  │                                                               │
       Signing policy           │  ╰─────────────────────────────────────  │  override.                                       │  ──╯  ╰───────────────────────────────────────────────────────────────╯
                                │  ╭─────────────────────────────────────  │  [x] Scheduled scans                             │  ─────────────────────────────────────────────────────────────────────╮
-  OPERATIONS                   │  │ PER-REPOSITORY OVERRIDES              │  Interval                                        │                                                                       │
-      Scan runs                │  │ REPOSITORY                            │   24h                                            │                 STATUS     ENABLED  DETAIL                UPDATED     │
-      Secret findings          │  │ team/api                              │  Timeout                                         │                 override   yes      ignore file set       14 Nov      │
-      Update channel           │  │ team/docs                             │   5m                                             │                 override   no       scanning off          2 Nov       │
-                               │  │ team/web                              │  Registry Reachable URL                          │                 inherited  —        global settings       -           │
-                               │  │ team/infra                            │   http://regixtry:5000                           │                 inherited  —        global settings       -           │
-                               │  │                                       │  Max Concurrency                                 │                                                                       │
-                               │  │                                       │   2                                              │                                                                       │
-                               │  │                                       │                                                  │                                                                       │
-                               │  │                                       │   Save  enter   Cancel  esc                      │                                                                       │
+  OPERATIONS                   │  │ LAST SWEEP                            │  Interval                                        │                                                                       │
+      Scan runs                │  │ no sweep yet                          │   24h                                            │                                                                       │
+      Secret findings          │  ╰─────────────────────────────────────  │  Timeout                                         │  ─────────────────────────────────────────────────────────────────────╯
+      Update channel           │  ╭─────────────────────────────────────  │   5m                                             │  ─────────────────────────────────────────────────────────────────────╮
+                               │  │ PER-REPOSITORY OVERRIDES              │  Registry Reachable URL                          │                                                                       │
+                               │  │ REPOSITORY                            │   http://regixtry:5000                           │                 STATUS     ENABLED  DETAIL                UPDATED     │
+                               │  │ team/api                              │  Max Concurrency                                 │                 override   yes      ignore file set       14 Nov      │
+                               │  │ team/docs                             │   2                                              │                 override   no       scanning off          2 Nov       │
+                               │  │ team/web                              │                                                  │                 inherited  —        global settings       -           │
+                               │  │ team/infra                            │   Save  enter   Cancel  esc                      │                 inherited  —        global settings       -           │
                                │  │                                       │  tab next field, space toggles                   │                                                                       │
                                │  │                                       ╰──────────────────────────────────────────────────╯                                                                       │
                                │  │                                                                                                                                                                  │

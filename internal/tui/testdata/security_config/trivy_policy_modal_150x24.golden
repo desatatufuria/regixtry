@@ -3,7 +3,7 @@
  regixtry admin                │
                                │  Image scanning                                                                        Trivy, vulnerability scanner
     Overview                   │  Feature enabled  ·  Runtime ready, healthy  ·  version 0.57.1  ·  update available (0.58.0)  ·  rollback available
-                               │   Config   Repositories
+                               │   Config   Repositories                                                                    last sweep: no sweep yet
   ACCESS                       │  ╭────────────  ╭──────────────────────────────────────────────────╮  ╭───────────────────────────────────────────╮
       Users                    │  │ TRIVY CONFI  │  Vulnerability policy                            │  │ SCAN POLICY                               │
       Robots                   │  │ Scheduled s  │  A scan that reaches the threshold blocks the    │  │ Policy                        [x] enabled │

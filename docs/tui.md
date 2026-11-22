@@ -270,6 +270,8 @@ Three feature screens under SECURITY, each with a configuration page and per-rep
 | **Secret scanning** (Gitleaks) | `c` configuration modal | `o` opens the repository list |
 | **Signing policy** | `p` policy modal | `o` opens the repository list |
 
+The Image scanning `Config` tab also shows a **LAST SWEEP** card, read from the `sweep` section of the Trivy feature page: when the last scheduled sweep finished (hours or days ago), how many digests it visited, left unchanged and queued, its errors, the outcome of its once-per-sweep vulnerability DB refresh (ok with its age, failed with the reason, or not refreshed), whether the DB changed, and an estimate of the next sweep from the configured interval (`next sweep due` once it is overdue, `scheduled scans off` when the schedule is disabled). Before any sweep has run, or on a server that does not send the section, the card reads `no sweep yet`. On a short terminal (about 25 rows or fewer) the card gives way to a one-line summary on the tabs row, so the configuration and overrides panels keep their size. Digests are rescanned only when the vulnerability DB or the scan settings change.
+
 Common keys on the configuration page: `r` refresh, `Esc` back to the Overview. `e` enable, `x` disable, `i` install runtime, `u` upgrade runtime and `b` rollback runtime appear only when the backend declares that action for the page, and the confirmation copy of those actions is backend-authored. Modals: `Tab` next field, `Space` toggles or cycles, `Enter` saves, `Esc` cancels.
 
 **Repository lists** (Image scanning `Repositories` tab; the Secret scanning and Signing override lists): one row per repository, with status (`override` or `inherited`).
@@ -297,7 +299,7 @@ Every editor ends with **Clear override, use the global settings**, which asks `
 
 ## Scan runs, secret findings and scan history
 
-`Scan runs` and `Secret findings` list repositories with their latest scan (`↑`/`↓`, `Enter` scan history, `r` refresh, `Esc` Overview). Both open the same **scan history**, a full screen inside the shell, on a different tab: Vulnerabilities for Scan runs, Leaks for Secret findings. Image scanning `Repositories` opens it on Vulnerabilities.
+`Scan runs` lists **one row per image digest** of the repositories with scan history (scan results are latest-only: a digest keeps one result, replaced by each rescan), and `Secret findings` lists repositories with their latest scan (`↑`/`↓`, `Enter` scan history, `r` refresh, `Esc` Overview). Each Scan runs row shows the repository, a short digest, the status, the age of the Trivy vulnerability DB the result used (`TRIVY DB`, for example `3 d ago`), when a push or sweep last confirmed the result (`CHECKED`, for example `5 h ago`) and the Critical and High counts; ages are hours, days or years, never seconds. A completed result whose latest rescan failed is kept and enforced by the pull policy: its status reads `stale` (amber) and the detail panel gives the reason; `skipped` rows (a push scan dropped under load) show no counts and say why in the panel. A server that does not send the DB date or the last check shows `—`. Digests are rescanned only when the vulnerability DB or the scan settings change (a manual scan always forces one). Both open the same **scan history**, a full screen inside the shell, on a different tab: Vulnerabilities for Scan runs, Leaks for Secret findings. Image scanning `Repositories` opens it on Vulnerabilities.
 
 | Key | Action |
 | --- | --- |

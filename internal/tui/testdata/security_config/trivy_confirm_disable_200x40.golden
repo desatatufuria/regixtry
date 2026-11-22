@@ -14,16 +14,16 @@
       Secret scanning          │  │ c edit configuration.                                                                         │  │                                                               │
       Signing policy           │  ╰───────────────────────────────  ╭──────────────────────────────────────────────────────────────╮  ───────────────────────────────────────────────────────────────╯
                                │  ╭───────────────────────────────  │  Confirm Disable                                             │  ───────────────────────────────────────────────────────────────╮
-  OPERATIONS                   │  │ PER-REPOSITORY OVERRIDES        │                                                              │                                                                 │
-      Scan runs                │  │ REPOSITORY                      │  Confirm disable feature?                                    │           STATUS     ENABLED  DETAIL                UPDATED     │
-      Secret findings          │  │ team/api                        │                                                              │           override   yes      ignore file set       14 Nov      │
-      Update channel           │  │ team/docs                       │  ╭────────────────────────────────────────────────────────╮  │           override   no       scanning off          2 Nov       │
-                               │  │ team/web                        │  │ Trivy                                                  │  │           inherited  —        global settings       -           │
-                               │  │ team/infra                      │  ╰────────────────────────────────────────────────────────╯  │           inherited  —        global settings       -           │
-                               │  │                                 │                                                              │                                                                 │
-                               │  │                                 │   Confirm                                        y / enter   │                                                                 │
-                               │  │                                 │   Cancel                                               esc   │                                                                 │
-                               │  │                                 ╰──────────────────────────────────────────────────────────────╯                                                                 │
+  OPERATIONS                   │  │ LAST SWEEP                      │                                                              │                                                                 │
+      Scan runs                │  │ no sweep yet                    │  Confirm disable feature?                                    │                                                                 │
+      Secret findings          │  ╰───────────────────────────────  │                                                              │  ───────────────────────────────────────────────────────────────╯
+      Update channel           │  ╭───────────────────────────────  │  ╭────────────────────────────────────────────────────────╮  │  ───────────────────────────────────────────────────────────────╮
+                               │  │ PER-REPOSITORY OVERRIDES        │  │ Trivy                                                  │  │                                                                 │
+                               │  │ REPOSITORY                      │  ╰────────────────────────────────────────────────────────╯  │           STATUS     ENABLED  DETAIL                UPDATED     │
+                               │  │ team/api                        │                                                              │           override   yes      ignore file set       14 Nov      │
+                               │  │ team/docs                       │   Confirm                                        y / enter   │           override   no       scanning off          2 Nov       │
+                               │  │ team/web                        │   Cancel                                               esc   │           inherited  —        global settings       -           │
+                               │  │ team/infra                      ╰──────────────────────────────────────────────────────────────╯           inherited  —        global settings       -           │
                                │  │                                                                                                                                                                  │
                                │  │                                                                                                                                                                  │
                                │  │                                                                                                                                                                  │

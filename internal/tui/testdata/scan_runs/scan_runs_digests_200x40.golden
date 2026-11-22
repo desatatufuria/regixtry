@@ -1,0 +1,40 @@
+  Admin › Operations › Scan runs                                                                                                                                                 signed in as operator  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                                                                        
+                               │  Scan runs                                                                                                            Trivy scans, latest result of each image digest  
+    Overview                   │  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  ╭──────────────────────────────────────╮  
+                               │  │   REPOSITORY                                                  DIGEST       STATUS     TRIVY DB   CHECKED    CRIT  HIGH │  │ team/api:v1                          │  
+  ACCESS                       │  │   team/api                                                    000000…0001  completed  1 d ago    1 h ago    0     0    │  │ completed, trigger push              │  
+      Users                    │  │ ▸ team/api                                                    000000…0002  stale      2 d ago    2 h ago    1     1    │  │ Rescan failed: trivy exited with     │  
+      Robots                   │  │   team/api                                                    000000…0003  skipped    3 d ago    3 h ago    -     -    │  │ status 1: failed to download the     │  
+      Repository access        │  │   team/api                                                    000000…0004  completed  4 d ago    4 h ago    0     3    │  │                                      │  
+                               │  │   team/api                                                    000000…0005  completed  5 d ago    5 h ago    1     4    │  │ RESULT                               │  
+  SECURITY                     │  │   team/api                                                    000000…0006  completed  6 d ago    6 h ago    2     0    │  │ Digest              sha256:0000…0002 │  
+      Image scanning           │  │   team/api                                                    000000…0007  completed  7 d ago    7 h ago    0     1    │  │ Finished            14 Mar 07:31 UTC │  
+      Secret scanning          │  │   team/api                                                    000000…0008  completed  —          —          1     2    │  │ Trivy                         0.58.1 │  
+      Signing policy           │  │                                                                                                                        │  │ Trivy DB                     2 d ago │  
+                               │  │                                                                                                                        │  │ Checked                      2 h ago │  
+  OPERATIONS                   │  │                                                                                                                        │  │                                      │  
+    ▸ Scan runs                │  │                                                                                                                        │  │ FINDINGS                             │  
+      Secret findings          │  │                                                                                                                        │  │ Critical                           1 │  
+      Update channel           │  │                                                                                                                        │  │ High                               1 │  
+                               │  │                                                                                                                        │  │ Medium                            11 │  
+                               │  │                                                                                                                        │  │ Low                                7 │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │ ACTIONS                              │  
+                               │  │                                                                                                                        │  │ Scan history                   enter │  
+                               │  │                                                                                                                        │  │ Refresh                            r │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  │                                      │  
+                               │  One row per image digest, its latest result. Rescans only when the vulnerability DB or scan settings change. enter opens    │                                      │  
+                               │  its scan history.                                                                                                           ╰──────────────────────────────────────╯  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ↑↓ move   enter scan history   r refresh   esc back   q quit                                                                                                                             F2 mouse on  

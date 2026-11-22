@@ -2175,3 +2175,44 @@ func TestAdminRobotDeleteRouteGlobalAdminOnlyAndRejectsNonRobots(t *testing.T) {
 		t.Fatalf("list body = %q, want deleted robot ci-delete-route to be gone", listRecorder.Body.String())
 	}
 }
+
+func TestAdminTrivyFeatureStatusReportsTheLastSweepAndItsDBRefreshFailure(t *testing.T) {
+	t.Parallel()
+
+	blobStore, store, cleanup := newTestStores(t)
+	defer cleanup()
+	handler := newRouterWithStores(blobStore, store, allowAllAccessController{}, fakeAuthService{verify: &auth.Principal{Subject: "atk_1", UserID: "admin-1", Username: "admin", IsAdmin: true}})
+	if err := store.UpsertScanSettings(context.Background(), "tenant-a", "trivy", ports.ScanSettings{Enabled: true, ScheduleEnabled: true, Interval: time.Hour, Timeout: time.Minute, RegistryReachableURL: "https://registry.internal", MaxConcurrency: 1, UpdatedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("UpsertScanSettings() error = %v", err)
+	}
+	get := func(path string) string {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("Authorization", "Bearer admin-token")
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d, want 200: %s", path, recorder.Code, recorder.Body.String())
+		}
+		return recorder.Body.String()
+	}
+
+	if body := get("/admin/v1/features/trivy/status"); strings.Contains(body, `"sweep"`) {
+		t.Fatalf("body = %s, want no sweep key before any sweep ran", body)
+	}
+
+	started := time.Date(2026, 11, 1, 1, 0, 0, 0, time.UTC)
+	finished := started.Add(time.Minute)
+	if err := store.RecordScanSweep(context.Background(), "tenant-a", ports.ScanSweepSummary{StartedAt: &started, FinishedAt: &finished, Visited: 9, SkippedUnchanged: 7, Queued: 2, LastDBRefreshAt: &started, LastDBRefreshError: "network is unreachable"}); err != nil {
+		t.Fatalf("RecordScanSweep() error = %v", err)
+	}
+	body := get("/admin/v1/features/trivy/status")
+	for _, want := range []string{`"sweep":{`, `"visited":9`, `"skipped_unchanged":7`, `"queued":2`, `"last_db_refresh_error":"network is unreachable"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("status body = %s, want %q", body, want)
+		}
+	}
+	if page := get("/admin/v1/features/trivy"); !strings.Contains(page, "Last sweep") || !strings.Contains(page, "failed: network is unreachable") {
+		t.Fatalf("page = %s, want the Last sweep section with the refresh failure", page)
+	}
+}

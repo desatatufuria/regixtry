@@ -46,6 +46,11 @@ func scanFixtureClient() *fakeAdminClient {
 	older := scanFixtureRun("team/api", "1.8.1", ports.ScanRunStatusCompleted, -30*time.Hour, 41*time.Second, 2, 4)
 	older.ID = "run-api-older"
 	older.Digest = "sha256:" + strings.Repeat("0a1b2c3d", 8)
+	// The latest-only fields: the DB each result used and its last check; a
+	// kept result whose rescan failed is stale.
+	api.DBUpdatedAt, api.LastCheckedAt = scanTime(-3*24*time.Hour), scanTime(-5*time.Hour)
+	older.DBUpdatedAt, older.LastCheckedAt = scanTime(-40*24*time.Hour), scanTime(-20*time.Hour)
+	older.Stale, older.StaleReason = true, "trivy timed out"
 	return &fakeAdminClient{
 		repositoryScanSummaries: []ports.RepositoryScanSummary{{Run: api, RunCount: 2}, {Run: web, RunCount: 1}, {Run: docs, RunCount: 1}},
 		scanRuns:                []ports.ScanRun{api, older},
@@ -141,16 +146,17 @@ func assertScanGolden(t *testing.T, name, got string) {
 	}
 }
 
-func TestScanRunsShowsTheLatestRunOfEachRepositoryInsideTheShell(t *testing.T) {
+func TestScanRunsShowsOneRowPerDigestInsideTheShell(t *testing.T) {
 	t.Parallel()
 	out := scanText(scanModelAt(t, scanFixtureClient(), screenAdminScanRuns, 150, 24))
 	lines := strings.Split(out, "\n")
 	if !strings.Contains(lines[0], "Admin › Operations › Scan runs") || !strings.Contains(lines[0], "signed in as operator") {
 		t.Errorf("header = %q", lines[0])
 	}
-	for _, want := range []string{"REPOSITORY", "STATUS", "STARTED", "TOOK", "CRIT", "HIGH",
-		"team/api", "team/web", "team/docs", "completed", "running", "failed", "<1 min",
-		"team/api:1.8.2", "completed, trigger push", "sha256:9c41…e0d2", "0.58.1", "Critical", "Medium", "Low",
+	for _, want := range []string{"REPOSITORY", "DIGEST", "STATUS", "TRIVY DB", "CHECKED", "CRIT", "HIGH",
+		"team/api", "team/web", "team/docs", "completed", "running", "failed", "stale", "3 d ago", "5 h ago", "40 d ago", "20 h ago", "9c41e0…e0d2", "0a1b2c…2c3d",
+		"vulnerability DB or scan settings change",
+		"team/api:1.8.2", "Trivy DB", "Checked", "completed, trigger push", "sha256:9c41…e0d2", "0.58.1", "Critical", "Medium", "Low",
 		"Scan history", "Refresh", "enter", "esc back", "↑↓ move", "r refresh"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("view lacks %q", want)
@@ -174,14 +180,18 @@ func TestScanRunsArrowsMoveTheSelectionAndThePanelFollows(t *testing.T) {
 	if got := scanListScreen(t, m, slotScanRuns).cursor; got != 1 {
 		t.Fatalf("cursor = %d, want 1", got)
 	}
+	if out := scanText(m); !strings.Contains(out, "team/api:1.8.1") || !strings.Contains(out, "Rescan failed: trivy timed out") {
+		t.Errorf("panel did not follow the selection (the second digest of team/api, stale):\n%s", out)
+	}
+	m = scanPress(t, m, testKeyDown())
 	if out := scanText(m); !strings.Contains(out, "team/web:2.0.0") || !strings.Contains(out, "running, trigger push") {
 		t.Errorf("panel did not follow the selection:\n%s", out)
 	}
 	m = scanPress(t, m, testKeyDown(), testKeyDown(), testKeyDown())
-	if got := scanListScreen(t, m, slotScanRuns).cursor; got != 2 {
-		t.Fatalf("cursor = %d after moving past the end, want 2", got)
+	if got := scanListScreen(t, m, slotScanRuns).cursor; got != 3 {
+		t.Fatalf("cursor = %d after moving past the end, want 3", got)
 	}
-	m = scanPress(t, m, testKeyUp(), testKeyUp(), testKeyUp())
+	m = scanPress(t, m, testKeyUp(), testKeyUp(), testKeyUp(), testKeyUp(), testKeyUp())
 	if got := scanListScreen(t, m, slotScanRuns).cursor; got != 0 {
 		t.Fatalf("cursor = %d after moving past the start, want 0", got)
 	}
@@ -190,7 +200,7 @@ func TestScanRunsArrowsMoveTheSelectionAndThePanelFollows(t *testing.T) {
 func TestScanRunsFailedRunShowsItsError(t *testing.T) {
 	t.Parallel()
 	m := scanModelAt(t, scanFixtureClient(), screenAdminScanRuns, 150, 24)
-	m = scanPress(t, m, testKeyDown(), testKeyDown())
+	m = scanPress(t, m, testKeyDown(), testKeyDown(), testKeyDown())
 	if out := scanText(m); !strings.Contains(out, "registry unreachable") {
 		t.Errorf("a failed run's error is not shown:\n%s", out)
 	}
@@ -255,7 +265,7 @@ func TestScanRunsStates(t *testing.T) {
 	t.Run("empty", func(t *testing.T) {
 		t.Parallel()
 		out := scanText(scanModelAt(t, &fakeAdminClient{repositoryScanSummaries: []ports.RepositoryScanSummary{}}, screenAdminScanRuns, 150, 24))
-		if !strings.Contains(out, "No repository scan history found.") {
+		if !strings.Contains(out, "No repository scan history found.") || !strings.Contains(out, "vulnerability DB or scan settings change") {
 			t.Errorf("no empty line:\n%s", out)
 		}
 	})

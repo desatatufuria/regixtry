@@ -14,16 +14,16 @@
       Secret scanning          │  │ c edit configuration.                 │  override.                                       │    │  │                                                               │
       Signing policy           │  ╰─────────────────────────────────────  │  [x] Scheduled scans                             │  ──╯  ╰───────────────────────────────────────────────────────────────╯
                                │  ╭─────────────────────────────────────  │  Interval                                        │  ─────────────────────────────────────────────────────────────────────╮
-  OPERATIONS                   │  │ PER-REPOSITORY OVERRIDES              │   24hx▏                                          │                                                                       │
-      Scan runs                │  │ REPOSITORY                            │  Timeout                                         │                 STATUS     ENABLED  DETAIL                UPDATED     │
-      Secret findings          │  │ team/api                              │   5m                                             │                 override   yes      ignore file set       14 Nov      │
-      Update channel           │  │ team/docs                             │  Registry Reachable URL                          │                 override   no       scanning off          2 Nov       │
-                               │  │ team/web                              │   http://regixtry:5000                           │                 inherited  —        global settings       -           │
-                               │  │ team/infra                            │  Max Concurrency                                 │                 inherited  —        global settings       -           │
-                               │  │                                       │   2                                              │                                                                       │
-                               │  │                                       │  invalid interval: time: unknown unit "hx" in    │                                                                       │
-                               │  │                                       │  duration "24hx"                                 │                                                                       │
-                               │  │                                       │                                                  │                                                                       │
+  OPERATIONS                   │  │ LAST SWEEP                            │   24hx▏                                          │                                                                       │
+      Scan runs                │  │ no sweep yet                          │  Timeout                                         │                                                                       │
+      Secret findings          │  ╰─────────────────────────────────────  │   5m                                             │  ─────────────────────────────────────────────────────────────────────╯
+      Update channel           │  ╭─────────────────────────────────────  │  Registry Reachable URL                          │  ─────────────────────────────────────────────────────────────────────╮
+                               │  │ PER-REPOSITORY OVERRIDES              │   http://regixtry:5000                           │                                                                       │
+                               │  │ REPOSITORY                            │  Max Concurrency                                 │                 STATUS     ENABLED  DETAIL                UPDATED     │
+                               │  │ team/api                              │   2                                              │                 override   yes      ignore file set       14 Nov      │
+                               │  │ team/docs                             │  invalid interval: time: unknown unit "hx" in    │                 override   no       scanning off          2 Nov       │
+                               │  │ team/web                              │  duration "24hx"                                 │                 inherited  —        global settings       -           │
+                               │  │ team/infra                            │                                                  │                 inherited  —        global settings       -           │
                                │  │                                       │   Save  enter   Cancel  esc                      │                                                                       │
                                │  │                                       │  tab next field, space toggles                   │                                                                       │
                                │  │                                       ╰──────────────────────────────────────────────────╯                                                                       │

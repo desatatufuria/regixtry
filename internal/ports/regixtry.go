@@ -3,6 +3,7 @@ package ports
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"time"
 
@@ -131,6 +132,22 @@ type MetadataStore interface {
 	UpsertFeatureRuntimeState(ctx context.Context, tenant string, feature string, state FeatureRuntimeState) error
 	GetActiveScanRunByDigest(ctx context.Context, tenant string, repository string, digest string) (ScanRun, error)
 	GetLatestScanRunByDigest(ctx context.Context, tenant string, repository string, digest string) (ScanRun, error)
+	// GetLatestCompletedScanRunByDigest returns the newest COMPLETED run for
+	// a digest (typed NotFound when none): the result push/sweep compare
+	// their fingerprint against and the one the pull policy enforces.
+	GetLatestCompletedScanRunByDigest(ctx context.Context, tenant string, repository string, digest string) (ScanRun, error)
+	// TouchScanRunChecked records that a completed run was re-confirmed as
+	// current at the given time without a rescan.
+	TouchScanRunChecked(ctx context.Context, tenant string, runID string, checkedAt time.Time) error
+	// TouchScanRunsChecked is TouchScanRunChecked for many runs: the sweep
+	// batches its last_checked_at writes (at most 200 rows per transaction).
+	TouchScanRunsChecked(ctx context.Context, tenant string, runIDs []string, checkedAt time.Time) error
+	// ListTaggedDigests returns one repository's tags with the digest each
+	// points at, ordered by tag name and paginated like ListTags.
+	ListTaggedDigests(ctx context.Context, tenant string, repository domain.RepositoryRef, limit int, after string) ([]TaggedDigest, error)
+	// RecordScanSweep stores the summary of the latest scheduled sweep on the
+	// scheduler state row without touching its lease columns.
+	RecordScanSweep(ctx context.Context, tenant string, sweep ScanSweepSummary) error
 	GetScanRun(ctx context.Context, tenant string, runID string) (ScanRun, error)
 	GetScanRunDetail(ctx context.Context, tenant string, runID string) (ScanRunDetail, error)
 	UpsertScanRun(ctx context.Context, tenant string, run ScanRun) error
@@ -533,6 +550,35 @@ type ScanSettings struct {
 	IgnoreFilePath   string `json:"-"` // trivy --ignorefile
 	IgnorePolicyPath string `json:"-"` // trivy --ignore-policy
 	ConfigPath       string `json:"-"` // gitleaks --config
+
+	// TrivyVersion is the active managed runtime version, resolved from the
+	// feature runtime state per run (never persisted in the settings row).
+	// It is one component of the scan fingerprint.
+	TrivyVersion string `json:"-"`
+}
+
+// ScanDBMetadata is the vulnerability database metadata a scan runner can
+// read WITHOUT running a scan (Trivy: <cache-dir>/db/metadata.json). The
+// scan fingerprint uses Version and UpdatedAt.
+type ScanDBMetadata struct {
+	Version      int
+	UpdatedAt    *time.Time
+	NextUpdate   *time.Time
+	DownloadedAt *time.Time
+}
+
+// ScanDBMetadataReader is an optional capability of a ScanRunner. When the
+// metadata is unavailable (no database downloaded yet) it returns an error
+// and the service never skips a scan on unknown metadata.
+type ScanDBMetadataReader interface {
+	ReadDBMetadata(ctx context.Context, settings ScanSettings) (ScanDBMetadata, error)
+}
+
+// ScanDBRefresher is an optional capability of a ScanRunner: download the
+// latest vulnerability database into the runner's cache (Trivy:
+// `image --download-db-only`). The scheduled sweep calls it once per sweep.
+type ScanDBRefresher interface {
+	RefreshDB(ctx context.Context, settings ScanSettings) error
 }
 
 // TrivyOverride is one repository's full replacement of the global Trivy
@@ -665,6 +711,22 @@ type ScanRun struct {
 	DBUpdatedAt  *time.Time `json:"db_updated_at,omitempty"`
 	Error        string     `json:"error,omitempty"`
 	HasFixable   bool       `json:"-"`
+
+	// SettingsHash is the hash of the effective scan configuration the run
+	// used (ignore file/policy paths and content). Empty on rows written
+	// before the column existed: an empty hash never equals a real
+	// fingerprint, so those rows count as stale and are rescanned once.
+	SettingsHash string `json:"settings_hash,omitempty"`
+	// DBVersion is the vulnerability database version the run used.
+	DBVersion int `json:"db_version,omitempty"`
+	// LastCheckedAt is when a push or sweep last confirmed this result is
+	// still current (the run's fingerprint matched, so no rescan ran).
+	LastCheckedAt *time.Time `json:"last_checked_at,omitempty"`
+	// Stale marks a completed result whose latest rescan failed: it is
+	// kept (the pull policy keeps enforcing it) and StaleReason explains
+	// the failure.
+	Stale       bool   `json:"stale,omitempty"`
+	StaleReason string `json:"stale_reason,omitempty"`
 }
 
 // RepositoryScanSummary is one repository's most recent scan run plus its
@@ -684,6 +746,45 @@ type ScanSchedulerState struct {
 	LeaseExpiresAt  time.Time  `json:"lease_expires_at"`
 	LastHeartbeatAt time.Time  `json:"last_heartbeat_at"`
 	BatchStartedAt  *time.Time `json:"batch_started_at,omitempty"`
+	// LastSweep is the summary of the latest scheduled sweep (zero value
+	// until one has run).
+	LastSweep ScanSweepSummary `json:"last_sweep"`
+}
+
+// ErrScanLeaseLost is returned by HeartbeatScanScheduler when another owner
+// has reclaimed the scheduler lease: the caller must stop its sweep.
+var ErrScanLeaseLost = errors.New("scan scheduler lease is held by another owner")
+
+// ScanSweepSummary is what the latest scheduled sweep did, for the admin
+// feature page and status JSON.
+type ScanSweepSummary struct {
+	StartedAt  *time.Time `json:"started_at,omitempty"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
+	// Visited counts tagged digests examined; SkippedUnchanged those whose
+	// latest result already had the current fingerprint (no new run);
+	// Queued the new scan runs created; Errors the digests or repositories
+	// that could not be examined or queued.
+	Visited          int `json:"visited"`
+	SkippedUnchanged int `json:"skipped_unchanged"`
+	Queued           int `json:"queued"`
+	Errors           int `json:"errors"`
+	// LastDBRefreshAt is when the vulnerability DB download was last
+	// attempted (kept across sweeps that do not refresh); LastDBRefreshError
+	// is its failure, empty on success. A failed refresh never aborts the
+	// sweep: it continues with the existing DB.
+	LastDBRefreshAt    *time.Time `json:"last_db_refresh_at,omitempty"`
+	LastDBRefreshError string     `json:"last_db_refresh_error,omitempty"`
+	// DBFingerprint identifies the DB metadata (version and updated_at) the
+	// sweep ran against; DBChanged is true when it differs from the previous
+	// sweep's.
+	DBFingerprint string `json:"db_fingerprint,omitempty"`
+	DBChanged     bool   `json:"db_changed"`
+}
+
+// TaggedDigest is one tag and the manifest digest it points at.
+type TaggedDigest struct {
+	Tag    string
+	Digest string
 }
 
 type ScanRunner interface {
@@ -846,6 +947,9 @@ type FeatureDetails struct {
 	BinaryPath            string         `json:"-"`
 	MaxConcurrency        int            `json:"max_concurrency"`
 	Runtime               FeatureRuntime `json:"runtime,omitempty"`
+	// Sweep is the latest scheduled-scan sweep summary (trivy only; nil
+	// until a sweep has run).
+	Sweep *ScanSweepSummary `json:"sweep,omitempty"`
 }
 
 type FeatureRuntimeStatus string

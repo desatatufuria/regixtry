@@ -3,7 +3,7 @@
  regixtry admin                │                 ╭──────────────────────────────────────────────────╮
                                │  Image scannin  │  Trivy configuration                             │                   Trivy, vulnerability scanner
     Overview                   │  Feature enabl  │  Applies to every repository without an          │  ate available (0.58.0)  ·  rollback available
-                               │   Config   Rep  │  override.                                       │
+                               │   Config   Rep  │  override.                                       │                       last sweep: no sweep yet
   ACCESS                       │  ╭────────────  │  [x] Scheduled scans                             │  ╭───────────────────────────────────────────╮
       Users                    │  │ TRIVY CONFI  │  Interval                                        │  │ SCAN POLICY                               │
       Robots                   │  │ Scheduled s  │   24hx▏                                          │  │ Policy                        [x] enabled │

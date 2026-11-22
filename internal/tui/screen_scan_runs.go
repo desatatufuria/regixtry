@@ -16,7 +16,8 @@ const scanRunsSummaryLimit = 25
 // and "Secret findings" boards) over the same read, the latest Trivy scan of
 // each repository (ListRepositoryScanSummaries):
 //
-//   - Scan runs lists those runs.
+//   - Scan runs lists one row per image digest of those repositories (the
+//     digests of each come from ListScanRuns: scan results are latest-only).
 //   - Secret findings lists the leaked secrets of those runs: one
 //     GetSecretScanFindings per run, answered through
 //     adminSecretScanFindingsLoadedMsg.
@@ -34,6 +35,14 @@ type scanRunsScreen struct {
 	err       string
 	summaries []ports.RepositoryScanSummary
 	cursor    int
+
+	// Scan runs only: one row per digest. rows is derived from the summaries
+	// and the digests read for each repository (reads is the generation of
+	// those reads; the maps are replaced as a whole, never mutated).
+	rows          []ports.ScanRun
+	reads         int
+	digests       map[string][]ports.ScanRun
+	digestPending map[string]bool
 
 	// Secret findings only. The maps are replaced as a whole, never mutated,
 	// so copies of the screen share them safely.
@@ -77,6 +86,8 @@ func (s scanRunsScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.Cmd
 		return s.applySummaries(env, typed)
 	case adminSecretScanFindingsLoadedMsg:
 		return s.applySecrets(typed), nil, false
+	case scanRunsDigestsLoadedMsg:
+		return s.applyDigests(typed), nil, false
 	}
 	return s, nil, false
 }
@@ -90,6 +101,7 @@ func (s scanRunsScreen) applySummaries(env screenEnv, msg adminRepositoryScanSum
 	s.cursor = 0
 	s.requested, s.failed = 0, 0
 	s.pending, s.secrets = nil, nil
+	s.rows, s.digests, s.digestPending = nil, nil, nil
 	if msg.err != nil {
 		s.err = msg.err.Error()
 		s.summaries = nil
@@ -98,7 +110,8 @@ func (s scanRunsScreen) applySummaries(env screenEnv, msg adminRepositoryScanSum
 	s.err = ""
 	s.summaries = msg.summaries
 	if !s.isSecretFindings() {
-		return s, nil, false
+		next, cmd := s.startDigestReads(env)
+		return next, cmd, false
 	}
 	pending := map[string]bool{}
 	var cmds []tea.Cmd
@@ -162,7 +175,15 @@ func (s scanRunsScreen) rowCount() int {
 	if s.isSecretFindings() {
 		return len(s.secretRows())
 	}
-	return len(s.summaries)
+	return len(s.rows)
+}
+
+// selectedRun is the run of the row the cursor is on.
+func (s scanRunsScreen) selectedRun() (ports.ScanRun, bool) {
+	if len(s.rows) == 0 {
+		return ports.ScanRun{}, false
+	}
+	return s.rows[boundedIndex(s.cursor, len(s.rows))], true
 }
 
 // selectedRepository is the repository of the row the cursor is on.
@@ -174,10 +195,8 @@ func (s scanRunsScreen) selectedRepository() (string, bool) {
 		}
 		return rows[boundedIndex(s.cursor, len(rows))].run.Repository, true
 	}
-	if len(s.summaries) == 0 {
-		return "", false
-	}
-	return s.summaries[boundedIndex(s.cursor, len(s.summaries))].Run.Repository, true
+	run, ok := s.selectedRun()
+	return run.Repository, ok
 }
 
 func (s scanRunsScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd, bool) {
