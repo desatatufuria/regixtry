@@ -16,20 +16,6 @@ import (
 func (k screenKeys) ShortHelp() []key.Binding  { return k.short }
 func (k screenKeys) FullHelp() [][]key.Binding { return k.full }
 
-// matches reports whether msg matches the binding in k.short whose display
-// label (Help().Key) equals id. Using the SAME label for both display and
-// lookup is deliberate: a screen's Update can only dispatch a key that is
-// also in its rendered help, and a key present in help cannot silently stop
-// being handled — the drift class this change exists to kill.
-func (k screenKeys) matches(msg keyMsg, id string) bool {
-	for _, b := range k.short {
-		if b.Help().Key == id && key.Matches(keyName(keyString(msg)), b) {
-			return true
-		}
-	}
-	return false
-}
-
 // shortHelpView is the ONLY footer source a migrated screen's View() may
 // use (design.md Decision A: screenFrame has no Help field). It renders each
 // enabled binding as "<key>: <desc>" joined by " | ", unstyled — the

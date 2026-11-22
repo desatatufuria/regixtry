@@ -122,11 +122,6 @@ func keyString(msg keyMsg) string {
 	return msg.String()
 }
 
-// keyName lets key.Matches see the paste-safe string from keyString.
-type keyName string
-
-func (k keyName) String() string { return string(k) }
-
 // isArrowUpKey and isArrowDownKey match only the arrow keys. Unlike
 // isMoveUpKey/isMoveDownKey they never match the letters k and j, so a pane
 // with a text filter can move with the arrows and still type every letter.

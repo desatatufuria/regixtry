@@ -4,44 +4,8 @@ import (
 	"fmt"
 
 	"charm.land/lipgloss/v2"
-	bubbletable "github.com/evertras/bubble-table/table"
 	"regixtry/internal/ports"
 )
-
-// newAdminBubbleTable is the sole construction point for every admin table.
-// pageSize is the number of data rows shown per page (design.md decision #1:
-// we derive this ourselves from the measured terminal budget since
-// WithTargetHeight does not exist at the pinned bubble-table version).
-// Rendered table height is deterministically pageSize+tableChromeRows once a
-// page is filled (viewport.go's tableChromeRows, verified against
-// evertras/bubble-table@v0.19.2).
-func newAdminBubbleTable(columns []bubbletable.Column, rows []bubbletable.Row, highlighted int, pageSize int) bubbletable.Model {
-	keys := bubbletable.DefaultKeyMap()
-	keys.RowSelectToggle.SetKeys("ctrl+space")
-	keys.FilterBlur.SetKeys("ctrl+g")
-	keys.FilterClear.SetKeys("ctrl+shift+g")
-	keys.PageDown.SetKeys("pgdown")
-	keys.PageUp.SetKeys("pgup")
-	keys.PageFirst.SetKeys("home")
-	keys.PageLast.SetKeys("end")
-
-	model := bubbletable.New(columns).
-		WithRows(rows).
-		WithKeyMap(keys).
-		WithBaseStyle(bubbleTableBaseStyle()).
-		HeaderStyle(bubbleTableHeaderStyle()).
-		HighlightStyle(bubbleTableHighlightStyle()).
-		Focused(true).
-		BorderRounded().
-		WithPageSize(pageSize).
-		WithFooterVisibility(true)
-
-	if len(rows) > 0 {
-		model = model.WithHighlightedRow(boundedIndex(highlighted, len(rows)))
-	}
-
-	return model
-}
 
 func secretFindingLocation(finding ports.SecretFinding) string {
 	location := adminFirstNonEmpty(finding.Path, finding.BlobDigest)
@@ -97,35 +61,6 @@ func (m *Model) rebuildAdminTables(layout consoleLayout) {
 
 // Table styles are built from admin_theme.go's palette role constants so they can
 // never drift from the theme palette.
-
-func bubbleTableBaseStyle() lipgloss.Style {
-	return lipgloss.NewStyle().Align(lipgloss.Left).BorderForeground(lipgloss.Color(paletteBorderHex))
-}
-
-func bubbleTableHeaderStyle() lipgloss.Style {
-	return lipgloss.NewStyle().Foreground(lipgloss.Color(paletteTextHex)).Bold(true)
-}
-
-// bubbleTableHighlightStyle deliberately carries NO Padding, unlike
-// adminTheme.selected (v1)'s own Padding(0, 1): bubble-table only reduces
-// its wrap-width calculation by a COLUMN's own style padding
-// (evertras/bubble-table@v0.22.3 row.go's "Reduce the available text width
-// by any horizontal column padding" comment), never by the separate
-// row-level HighlightStyle's padding -- so padding added here is invisible
-// to bubble-table's own width math but still consumes real character
-// columns once rendered, silently wrapping a cell's content that would
-// otherwise fit exactly (found live: a 28-char repository name wrapped
-// mid-word once this highlight style carried the same Padding(0, 1) as
-// adminTheme.selected, in a 30-wide column). The highlight is a
-// foreground/background recolor of an existing cell, not a
-// pill/badge-shaped UI element the way adminTheme.selected's other,
-// non-table callers use it -- it does not need its own padding.
-func bubbleTableHighlightStyle() lipgloss.Style {
-	return lipgloss.NewStyle().
-		Foreground(lipgloss.Color(paletteAccentHex)).
-		Background(lipgloss.Color(paletteSelectedBGHex)).
-		Bold(true)
-}
 
 // severityStyle maps an uppercased severity value onto its v2 cell
 // style, mirroring adminTheme's own severityCritical/severityHigh/

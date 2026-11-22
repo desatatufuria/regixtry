@@ -105,32 +105,6 @@ func TestThemeRolesUseTheDesignPalette(t *testing.T) {
 	}
 }
 
-func TestTableStylesUseTheDesignPalette(t *testing.T) {
-	t.Parallel()
-
-	if got := colorHex(bubbleTableBaseStyle().GetBorderTopForeground()); got != designBorder {
-		t.Errorf("table border = %s, want %s", got, designBorder)
-	}
-	if got := colorHex(bubbleTableHeaderStyle().GetForeground()); got != designText {
-		t.Errorf("table header = %s, want %s", got, designText)
-	}
-	hl := bubbleTableHighlightStyle()
-	if got := colorHex(hl.GetForeground()); got != designAccent {
-		t.Errorf("table highlight fg = %s, want %s", got, designAccent)
-	}
-	if got := colorHex(hl.GetBackground()); got != designSelectedBG {
-		t.Errorf("table highlight bg = %s, want %s", got, designSelectedBG)
-	}
-	cases := map[string]string{
-		"CRITICAL": designError, "HIGH": designWarning, "LOW": designMuted, "UNKNOWN": designText,
-	}
-	for value, want := range cases {
-		if got := colorHex(severityStyle(value).GetForeground()); got != want {
-			t.Errorf("severityStyle(%s) = %s, want %s", value, got, want)
-		}
-	}
-}
-
 func contrastRatio(t *testing.T, a, b string) float64 {
 	t.Helper()
 	la, lb := relativeLuminance(t, a), relativeLuminance(t, b)
