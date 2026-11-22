@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -256,5 +257,136 @@ func TestStoreDeleteProjectRemovesOrphanBlobLinksOfItsPrefixOnly(t *testing.T) {
 	}
 	if linked, _ := store.IsBlobLinked(ctx, "tenant-a", domain.MustParseRepositoryRef("odabank2/api"), digest); !linked {
 		t.Fatalf("odabank2/api blob link was removed by deleting odabank")
+	}
+}
+
+func TestStoreFlatRepositoryNamedLikeAProjectIsOutsideIt(t *testing.T) {
+	t.Parallel()
+	store := newTestStore(t)
+	defer store.Close()
+	ctx := context.Background()
+
+	for _, name := range []string{"odabank", "solo"} {
+		if err := store.CreateProject(ctx, "tenant-a", name, "root"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	publishInto(t, store, "tenant-a", "odabank", "v1", `{"schemaVersion":2,"n":1}`)
+	publishInto(t, store, "tenant-a", "odabank/a", "v1", `{"schemaVersion":2,"n":2}`)
+	publishInto(t, store, "tenant-a", "odabank/payments/strike", "v1", `{"schemaVersion":2,"n":3}`)
+	publishInto(t, store, "tenant-a", "solo", "v1", `{"schemaVersion":2,"n":4}`)
+
+	projects, err := store.ListProjects(ctx, "tenant-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, project := range projects {
+		switch project.Name {
+		case "odabank":
+			if project.Repositories != 2 || project.Tags != 2 {
+				t.Fatalf("odabank = %+v, want 2 repositories and 2 tags (the flat repo is outside)", project)
+			}
+		case "solo":
+			if project.Repositories != 0 || project.Tags != 0 || !project.LastPushed.IsZero() {
+				t.Fatalf("solo = %+v, want empty (only a flat repo named solo exists)", project)
+			}
+		}
+	}
+
+	// solo is deletable although a flat repository "solo" exists, and the flat
+	// repository is untouched.
+	if err := store.DeleteProjectIfEmpty(ctx, "tenant-a", "solo"); err != nil {
+		t.Fatalf("DeleteProjectIfEmpty(solo) error = %v, want success", err)
+	}
+	if scalar(t, store, `SELECT COUNT(*) FROM repositories WHERE name = 'solo'`) != 1 {
+		t.Fatalf("flat repository solo was affected by deleting project solo")
+	}
+	// An orphan blob link of the flat repository survives too.
+	digest := domain.DigestFromBytes([]byte("flat"))
+	if err := store.CreateProject(ctx, "tenant-a", "flatlink", "root"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.LinkBlob(ctx, "tenant-a", domain.MustParseRepositoryRef("flatlink"), digest); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DeleteProjectIfEmpty(ctx, "tenant-a", "flatlink"); err != nil {
+		t.Fatal(err)
+	}
+	if linked, _ := store.IsBlobLinked(ctx, "tenant-a", domain.MustParseRepositoryRef("flatlink"), digest); !linked {
+		t.Fatalf("flat repository blob link removed by deleting the same-named project")
+	}
+	// odabank (with real members) is still refused.
+	if err := store.DeleteProjectIfEmpty(ctx, "tenant-a", "odabank"); !errors.Is(err, domain.ErrProjectNotEmpty) {
+		t.Fatalf("DeleteProjectIfEmpty(odabank) error = %v, want non-empty", err)
+	}
+}
+
+func TestStoreProjectMembershipTrickyNames(t *testing.T) {
+	t.Parallel()
+	store := newTestStore(t)
+	defer store.Close()
+	ctx := context.Background()
+
+	for _, name := range []string{"odabank", "odabank2", "odabank-x", "od_bank", "odxbank", "odabank.x"} {
+		if err := store.CreateProject(ctx, "tenant-a", name, "root"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i, repository := range []string{"odabank/a", "odabank2/x", "odabank-x/y", "od_bank/z", "odxbank/z", "odabank.x/q", "odabank/b/c"} {
+		publishInto(t, store, "tenant-a", repository, "v1", fmt.Sprintf(`{"schemaVersion":2,"n":%d}`, i))
+	}
+	projects, _ := store.ListProjects(ctx, "tenant-a")
+	got := map[string]int{}
+	for _, project := range projects {
+		got[project.Name] = project.Repositories
+	}
+	want := map[string]int{"odabank": 2, "odabank2": 1, "odabank-x": 1, "od_bank": 1, "odxbank": 1, "odabank.x": 1}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("repositories per project = %v, want %v", got, want)
+	}
+	// Deleting od_bank must refuse (it has z) and never be confused with odxbank.
+	if err := store.DeleteProjectIfEmpty(ctx, "tenant-a", "odabank-x"); !errors.Is(err, domain.ErrProjectNotEmpty) {
+		t.Fatalf("delete odabank-x error = %v, want non-empty", err)
+	}
+}
+
+func TestStoreListProjectsScalesWithRepositories(t *testing.T) {
+	if testing.Short() || raceEnabled {
+		t.Skip("scale fixture: timing is meaningless under -short or the race detector")
+	}
+	t.Parallel()
+	store := newTestStore(t)
+	defer store.Close()
+
+	const projects, perProject = 2000, 100 // 200k repositories
+	tx, err := store.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for p := 0; p < projects; p++ {
+		if _, err := tx.Exec(`INSERT INTO projects (tenant, name, created_at, created_by) VALUES ('t', ?, '2026-01-01T00:00:00Z', 'root')`, fmt.Sprintf("proj%04d", p)); err != nil {
+			t.Fatal(err)
+		}
+		for r := 0; r < perProject; r++ {
+			if _, err := tx.Exec(`INSERT INTO repositories (tenant, name, created_at) VALUES ('t', ?, '2026-01-01T00:00:00Z')`, fmt.Sprintf("proj%04d/repo%03d", p, r)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	list, err := store.ListProjects(context.Background(), "t")
+	elapsed := time.Since(start)
+	if err != nil || len(list) != projects {
+		t.Fatalf("ListProjects() = %d projects, %v", len(list), err)
+	}
+	if list[0].Repositories != perProject {
+		t.Fatalf("first project repositories = %d, want %d", list[0].Repositories, perProject)
+	}
+	t.Logf("ListProjects over %d repositories and %d projects took %s", projects*perProject, projects, elapsed)
+	if elapsed > 5*time.Second {
+		t.Fatalf("ListProjects took %s, want well under 5s", elapsed)
 	}
 }

@@ -9,14 +9,13 @@ import (
 	"regixtry/internal/ports"
 )
 
-// inProject is the exact "belongs to project" predicate on a repository name
-// column: the name IS the project, or starts with "<project>/". It is a
-// substr comparison, not LIKE, so the '_' and '.' allowed in project names are
-// never wildcards and "odabank" never matches "odabank2/...". Both ? are the
-// project name.
+// Project membership is exact: a repository belongs to project P only when its
+// name starts with "P/" (a flat repository named P belongs to no project). The
+// range [P+"/", P+"0") is that prefix set ('0' is '/'+1 in byte order), so it
+// uses the (tenant, name) index and treats '_' and '%' literally, unlike LIKE.
 const (
-	repositoryInProject = `(r.name = ? OR substr(r.name, 1, length(?) + 1) = ? || '/')`
-	uploadInProject     = `(u.repository = ? OR substr(u.repository, 1, length(?) + 1) = ? || '/')`
+	repositoryInProject = `r.name >= ? || '/' AND r.name < ? || '0'`
+	uploadInProject     = `u.repository >= ? || '/' AND u.repository < ? || '0'`
 )
 
 // CreateProject inserts a project through the write queue. A duplicate
@@ -56,21 +55,27 @@ func (s *Store) ProjectExists(ctx context.Context, tenant string, name string) (
 // and the last push, derived from repositories/tags/manifests by exact
 // first-segment match.
 func (s *Store) ListProjects(ctx context.Context, tenant string) ([]ports.ProjectSummary, error) {
+	// One pass over the tenant's repositories grouped by first segment, then
+	// joined to projects: O(repositories), independent of the project count.
 	rows, err := s.db.QueryContext(ctx, `
+		WITH usage AS (
+			SELECT substr(r.name, 1, instr(r.name, '/') - 1) AS project,
+				COUNT(DISTINCT r.id) AS repositories,
+				COUNT(t.id) AS tags,
+				MAX(m.created_at) AS last_pushed
+			FROM repositories r
+			LEFT JOIN tags t ON t.repository_id = r.id AND t.tenant = r.tenant
+			LEFT JOIN manifests m ON m.id = t.manifest_id
+			WHERE r.tenant = ? AND instr(r.name, '/') > 1
+			GROUP BY project
+		)
 		SELECT p.name, p.created_at, p.created_by,
-			(SELECT COUNT(*) FROM repositories r
-				WHERE r.tenant = p.tenant AND (r.name = p.name OR substr(r.name, 1, length(p.name) + 1) = p.name || '/')),
-			(SELECT COUNT(t.id) FROM repositories r
-				JOIN tags t ON t.repository_id = r.id AND t.tenant = r.tenant
-				WHERE r.tenant = p.tenant AND (r.name = p.name OR substr(r.name, 1, length(p.name) + 1) = p.name || '/')),
-			(SELECT MAX(m.created_at) FROM repositories r
-				JOIN tags t ON t.repository_id = r.id AND t.tenant = r.tenant
-				JOIN manifests m ON m.id = t.manifest_id
-				WHERE r.tenant = p.tenant AND (r.name = p.name OR substr(r.name, 1, length(p.name) + 1) = p.name || '/'))
+			COALESCE(u.repositories, 0), COALESCE(u.tags, 0), u.last_pushed
 		FROM projects p
+		LEFT JOIN usage u ON u.project = p.name
 		WHERE p.tenant = ?
 		ORDER BY p.name ASC
-	`, tenant)
+	`, tenant, tenant)
 	if err != nil {
 		return nil, err
 	}
@@ -122,13 +127,13 @@ func (s *Store) DeleteProjectIfEmpty(ctx context.Context, tenant string, name st
 	var repositories int
 	if err = tx.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM repositories r WHERE r.tenant = ? AND `+repositoryInProject,
-		tenant, name, name, name).Scan(&repositories); err != nil {
+		tenant, name, name).Scan(&repositories); err != nil {
 		return err
 	}
 	var openUploads int
 	if err = tx.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM uploads u WHERE u.tenant = ? AND u.status = ? AND `+uploadInProject,
-		tenant, string(domain.UploadStatusActive), name, name, name).Scan(&openUploads); err != nil {
+		tenant, string(domain.UploadStatusActive), name, name).Scan(&openUploads); err != nil {
 		return err
 	}
 	if repositories > 0 || openUploads > 0 {
@@ -137,8 +142,8 @@ func (s *Store) DeleteProjectIfEmpty(ctx context.Context, tenant string, name st
 
 	if _, err = tx.ExecContext(ctx, `
 		DELETE FROM repository_blobs
-		WHERE tenant = ? AND (repository = ? OR substr(repository, 1, length(?) + 1) = ? || '/')
-	`, tenant, name, name, name); err != nil {
+		WHERE tenant = ? AND repository >= ? || '/' AND repository < ? || '0'
+	`, tenant, name, name); err != nil {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM projects WHERE tenant = ? AND name = ?`, tenant, name); err != nil {
