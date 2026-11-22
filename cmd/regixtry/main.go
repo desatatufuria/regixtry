@@ -423,11 +423,28 @@ func parseServeConfig(args []string) (serveConfig, error) {
 	flags.IntVar(&cfg.TrivyMaxConcurrency, "trivy-max-concurrency", 0, "maximum concurrent trivy runs")
 	flags.BoolVar(&cfg.DeleteEnabled, "delete-enabled", parseBoolEnv("REGISTRY_DELETE_ENABLED", false), "enable DELETE /v2/<name>/manifests/<reference> (manifest and tag deletion)")
 	flags.BoolVar(&cfg.GCDeleteEnabled, "gc-delete-enabled", parseBoolEnv("REGISTRY_GC_DELETE_ENABLED", false), "enable POST /admin/v1/gc/reports/{id}/delete (irreversibly unlinks unreferenced blob files; distinct from -delete-enabled, which is metadata-only)")
-	flags.Int64Var(&cfg.MaxManifestBytes, "max-manifest-bytes", parseInt64Env("REGISTRY_MAX_MANIFEST_BYTES", regixtryhttp.DefaultMaxManifestBytes), "maximum manifest PUT body size in bytes (413 above it; negative disables)")
-	flags.Int64Var(&cfg.MaxUploadBytes, "max-upload-bytes", parseInt64Env("REGISTRY_MAX_UPLOAD_BYTES", fsblob.DefaultMaxUploadSize), "maximum total size of one blob upload in bytes (413 above it; negative disables)")
-	flags.IntVar(&cfg.MaxOpenUploads, "max-open-uploads", parseIntEnv("REGISTRY_MAX_OPEN_UPLOADS", appregixtry.DefaultMaxOpenUploads), "maximum concurrently open blob uploads (429 above it; negative disables)")
-	flags.IntVar(&cfg.MaxOpenUploadsPerRepo, "max-open-uploads-per-repo", parseIntEnv("REGISTRY_MAX_OPEN_UPLOADS_PER_REPO", appregixtry.DefaultMaxOpenUploadsPerRepo), "maximum concurrently open blob uploads per repository (429 above it; negative disables)")
-	flags.DurationVar(&cfg.UploadTTL, "upload-ttl", parseDurationEnv("REGISTRY_UPLOAD_TTL", appregixtry.DefaultUploadTTL), "idle time after which an abandoned blob upload is deleted (negative disables the reaper)")
+	var limitEnvErr error
+	trackEnv := func(err error) {
+		if limitEnvErr == nil {
+			limitEnvErr = err
+		}
+	}
+	limitInt64 := func(key string, fallback int64) int64 {
+		value, err := strictInt64Env(key, fallback)
+		trackEnv(err)
+		return value
+	}
+	flags.Int64Var(&cfg.MaxManifestBytes, "max-manifest-bytes", limitInt64("REGISTRY_MAX_MANIFEST_BYTES", regixtryhttp.DefaultMaxManifestBytes), "maximum manifest PUT body size in bytes (0 = default, negative disables)")
+	flags.Int64Var(&cfg.MaxUploadBytes, "max-upload-bytes", limitInt64("REGISTRY_MAX_UPLOAD_BYTES", fsblob.DefaultMaxUploadSize), "maximum total size of one blob upload in bytes (0 = default, negative disables)")
+	flags.IntVar(&cfg.MaxOpenUploads, "max-open-uploads", int(limitInt64("REGISTRY_MAX_OPEN_UPLOADS", appregixtry.DefaultMaxOpenUploads)), "maximum concurrently open blob uploads (0 = default, negative disables)")
+	flags.IntVar(&cfg.MaxOpenUploadsPerRepo, "max-open-uploads-per-repo", int(limitInt64("REGISTRY_MAX_OPEN_UPLOADS_PER_REPO", appregixtry.DefaultMaxOpenUploadsPerRepo)), "maximum concurrently open blob uploads per repository (0 = default, negative disables)")
+	uploadTTLDefault, ttlErr := strictDurationEnv("REGISTRY_UPLOAD_TTL", appregixtry.DefaultUploadTTL)
+	trackEnv(ttlErr)
+	flags.DurationVar(&cfg.UploadTTL, "upload-ttl", uploadTTLDefault, "idle time after which an abandoned blob upload is deleted (0 = default, negative disables the reaper)")
+
+	if limitEnvErr != nil {
+		return serveConfig{}, limitEnvErr
+	}
 
 	if err := flags.Parse(args); err != nil {
 		return serveConfig{}, err
@@ -1971,16 +1988,31 @@ func uploadReapInterval(ttl time.Duration) time.Duration {
 	return interval
 }
 
-func parseInt64Env(key string, fallback int64) int64 {
+// strictInt64Env reads an integer environment variable; unlike parseIntEnv an
+// invalid value is an error, so a typo in a safety limit is never silently
+// replaced by the default.
+func strictInt64Env(key string, fallback int64) (int64, error) {
 	value := strings.TrimSpace(os.Getenv(key))
 	if value == "" {
-		return fallback
+		return fallback, nil
 	}
 	parsed, err := strconv.ParseInt(value, 10, 64)
 	if err != nil {
-		return fallback
+		return 0, fmt.Errorf("invalid %s %q: must be an integer", key, value)
 	}
-	return parsed
+	return parsed, nil
+}
+
+func strictDurationEnv(key string, fallback time.Duration) (time.Duration, error) {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback, nil
+	}
+	parsed, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s %q: must be a duration such as 24h", key, value)
+	}
+	return parsed, nil
 }
 
 // limitOrDefault resolves a serveConfig limit: zero is "unset" and takes the

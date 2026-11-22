@@ -315,10 +315,40 @@ type UploadReaper interface {
 	ReapUpload(ctx context.Context, uploadID string, olderThan time.Time) (bool, error)
 }
 
+// OrphanUploadReaper is the optional BlobStore capability that removes upload
+// directories with no metadata row (see fsblob.Store.ReapOrphanUploads).
+type OrphanUploadReaper interface {
+	ReapOrphanUploads(ctx context.Context, olderThan time.Time, limit int, hasRow func(ctx context.Context, uploadID string) (bool, error)) (int, error)
+}
+
+// uploadRowChecker is the optional MetadataStore capability to look an upload
+// row up across tenants.
+type uploadRowChecker interface {
+	UploadExists(ctx context.Context, uploadID string) (bool, error)
+}
+
+// maxOrphanReapsPerPass bounds how many orphaned upload directories one reaper
+// pass removes.
+const maxOrphanReapsPerPass = 100
+
+func (s *Service) uploadHasRow(ctx context.Context, uploadID string) (bool, error) {
+	if checker, ok := s.metadata.(uploadRowChecker); ok {
+		return checker.UploadExists(ctx, uploadID)
+	}
+	if _, err := s.metadata.GetUpload(ctx, s.tenant(ctx), uploadID); err != nil {
+		if domain.IsCode(err, domain.ErrorCodeNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
 // ReapAbandonedUploads deletes uploads idle for longer than the configured
 // TTL, both the session row and the temp file, and returns how many it
 // removed. It never touches committed blobs, and it skips an upload that has a
-// write or commit in flight. Disabled when the TTL is zero or negative.
+// write or commit in flight. It also removes orphaned upload directories that
+// have no row. Disabled when the TTL is zero or negative.
 func (s *Service) ReapAbandonedUploads(ctx context.Context) (int, error) {
 	if s.uploadTTL <= 0 {
 		return 0, nil
@@ -354,6 +384,14 @@ func (s *Service) ReapAbandonedUploads(ctx context.Context) (int, error) {
 			return reaped, err
 		}
 		reaped++
+	}
+
+	if orphans, ok := s.blobs.(OrphanUploadReaper); ok {
+		removed, err := orphans.ReapOrphanUploads(ctx, cutoff, maxOrphanReapsPerPass, s.uploadHasRow)
+		reaped += removed
+		if err != nil {
+			return reaped, err
+		}
 	}
 
 	return reaped, nil

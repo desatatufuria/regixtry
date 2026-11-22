@@ -24,6 +24,10 @@ const DefaultMaxUploadSize int64 = 5 << 30
 type Store struct {
 	rootDir       string
 	maxUploadSize int64
+	// linkFile publishes an upload into the content store without replacing
+	// an existing blob. It is os.Link; tests inject failures to exercise the
+	// copy fallback.
+	linkFile func(oldPath string, newPath string) error
 	// uploads holds one *uploadEntry per upload that has been touched by this
 	// process. The entry serializes every writer of that upload against
 	// CommitUpload so no write descriptor can outlive the digest check.
@@ -49,7 +53,7 @@ func WithMaxUploadSize(bytes int64) Option {
 }
 
 func New(rootDir string, options ...Option) (*Store, error) {
-	store := &Store{rootDir: rootDir, maxUploadSize: DefaultMaxUploadSize}
+	store := &Store{rootDir: rootDir, maxUploadSize: DefaultMaxUploadSize, linkFile: os.Link}
 	for _, option := range options {
 		if option != nil {
 			option(store)
@@ -270,13 +274,11 @@ func (s *Store) CommitUpload(_ context.Context, uploadID string, expected domain
 	}
 
 	// Hard-link instead of rename: link never replaces an existing blob
-	// (EEXIST), so a committed blob's inode is only ever created here.
-	if err := os.Link(uploadPath, finalPath); err != nil && !os.IsExist(err) {
-		// Filesystems without hard links: fall back to rename, but only when
-		// nothing occupies the final path.
-		if _, statErr := os.Lstat(finalPath); statErr == nil {
-			// Someone published the same digest meanwhile; keep theirs.
-		} else if renameErr := os.Rename(uploadPath, finalPath); renameErr != nil {
+	// (EEXIST), so a committed blob's inode is only ever created here. When
+	// the filesystem cannot hard-link (EXDEV, EPERM, ENOTSUP, some network or
+	// overlay mounts) fall back to a verified copy.
+	if err := s.linkFile(uploadPath, finalPath); err != nil && !os.IsExist(err) {
+		if err := s.copyIntoStore(uploadPath, finalPath, actual); err != nil {
 			return domain.Descriptor{}, err
 		}
 	}
@@ -287,6 +289,69 @@ func (s *Store) CommitUpload(_ context.Context, uploadID string, expected domain
 	}
 
 	return domain.Descriptor{Digest: actual, Size: size}, nil
+}
+
+// copyIntoStore is the link(2) fallback: copy the verified upload into an
+// O_EXCL temp file next to the final path, fsync it, re-verify the digest of
+// what actually reached the disk, make it read-only, and rename it into place
+// unless a blob already occupies the final path (which is kept). The temp file
+// is removed on every failure, so no partial file is left in the store.
+func (s *Store) copyIntoStore(uploadPath string, finalPath string, expected domain.Digest) (err error) {
+	tempName, err := newUploadID()
+	if err != nil {
+		return err
+	}
+	tempPath := filepath.Join(filepath.Dir(finalPath), ".tmp-"+tempName)
+	temp, err := os.OpenFile(tempPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = temp.Close()
+			_ = os.Remove(tempPath)
+		}
+	}()
+
+	source, err := os.Open(uploadPath)
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(temp, source)
+	_ = source.Close()
+	if err != nil {
+		return err
+	}
+	if err = temp.Sync(); err != nil {
+		return err
+	}
+	if err = temp.Close(); err != nil {
+		return err
+	}
+
+	check, err := os.Open(tempPath)
+	if err != nil {
+		return err
+	}
+	copied, _, err := domain.DigestFromReader(check)
+	_ = check.Close()
+	if err != nil {
+		return err
+	}
+	if copied != expected {
+		err = domain.NewDigestMismatchError(expected, copied)
+		return err
+	}
+	if err = os.Chmod(tempPath, 0o444); err != nil {
+		return err
+	}
+
+	if _, statErr := os.Lstat(finalPath); statErr == nil {
+		// Someone published the same digest meanwhile; keep theirs.
+		err = os.Remove(tempPath)
+		return err
+	}
+	return os.Rename(tempPath, finalPath)
 }
 
 func (s *Store) CancelUpload(_ context.Context, uploadID string) error {
@@ -496,4 +561,104 @@ func (s *Store) readUploadState(uploadID string) (domain.UploadState, error) {
 	}
 
 	return state, nil
+}
+
+// validUploadDirName matches the IDs newUploadID generates; anything else
+// under the uploads root is never touched.
+func validUploadDirName(name string) bool {
+	if len(name) != 32 {
+		return false
+	}
+	for _, r := range name {
+		if !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// ReapOrphanUploads removes upload directories under the uploads root that
+// have no metadata row (a crash between creating the directory and saving the
+// row) and whose newest file is older than olderThan. hasRow reports whether
+// an upload ID still has a row; a directory with a row is never removed. At
+// most limit directories are removed per call. Only direct children of the
+// uploads root named like an upload ID are considered, nothing is followed
+// through symlinks (a stray symlink is unlinked, never its target), and an
+// upload this process is writing or committing is skipped.
+func (s *Store) ReapOrphanUploads(ctx context.Context, olderThan time.Time, limit int, hasRow func(ctx context.Context, uploadID string) (bool, error)) (int, error) {
+	entries, err := os.ReadDir(s.uploadsRoot())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+
+	reaped := 0
+	for _, entry := range entries {
+		if limit > 0 && reaped >= limit {
+			break
+		}
+		if err := ctx.Err(); err != nil {
+			return reaped, err
+		}
+		name := entry.Name()
+		if !validUploadDirName(name) {
+			continue
+		}
+		dir := s.uploadDir(name)
+		info, err := os.Lstat(dir)
+		if err != nil {
+			continue
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			// Not something this store creates: unlink the entry itself when
+			// stale, never follow it.
+			if info.ModTime().Before(olderThan) {
+				if err := os.Remove(dir); err == nil {
+					reaped++
+				}
+			}
+			continue
+		}
+
+		newest := info.ModTime()
+		for _, child := range []string{s.uploadFile(name), s.uploadStateFile(name)} {
+			if childInfo, err := os.Lstat(child); err == nil && childInfo.ModTime().After(newest) {
+				newest = childInfo.ModTime()
+			}
+		}
+		if !newest.Before(olderThan) {
+			continue
+		}
+
+		// An upload this process has touched is handled by ReapUpload.
+		if _, known := s.uploads.Load(name); known {
+			continue
+		}
+		fresh := &uploadEntry{}
+		if _, loaded := s.uploads.LoadOrStore(name, fresh); loaded {
+			continue
+		}
+		if !fresh.mu.TryLock() {
+			continue
+		}
+		exists, err := hasRow(ctx, name)
+		if err != nil || exists {
+			fresh.mu.Unlock()
+			s.uploads.CompareAndDelete(name, fresh)
+			if err != nil {
+				return reaped, err
+			}
+			continue
+		}
+		s.retire(name, fresh)
+		fresh.mu.Unlock()
+		if err := os.RemoveAll(dir); err != nil {
+			return reaped, err
+		}
+		reaped++
+	}
+
+	return reaped, nil
 }

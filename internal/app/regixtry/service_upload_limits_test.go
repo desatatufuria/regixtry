@@ -296,3 +296,81 @@ func mustDigest(t *testing.T, value string) domain.Digest {
 	}
 	return digest
 }
+
+func TestReapAbandonedUploadsRemovesOrphanDirsButNeverOnesWithARow(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+	ctx := context.Background()
+
+	live, err := service.BeginUpload(ctx, "team/a")
+	if err != nil {
+		t.Fatalf("BeginUpload() error = %v", err)
+	}
+	liveState, err := service.metadata.GetUpload(ctx, service.tenant(ctx), live.ID)
+	if err != nil {
+		t.Fatalf("GetUpload() error = %v", err)
+	}
+
+	// An orphan: the directory exists but SaveUpload never ran (crash).
+	orphan, err := service.blobs.BeginUpload(ctx, domain.MustParseRepositoryRef("team/a"))
+	if err != nil {
+		t.Fatalf("blobs.BeginUpload() error = %v", err)
+	}
+
+	now := time.Now().UTC()
+	service.now = func() time.Time { return now }
+	if reaped, err := service.ReapAbandonedUploads(ctx); err != nil || reaped != 0 {
+		t.Fatalf("ReapAbandonedUploads() inside TTL = %d, %v, want 0, nil", reaped, err)
+	}
+	if _, err := os.Stat(orphan.Location); err != nil {
+		t.Fatalf("fresh orphan must survive inside the TTL: %v", err)
+	}
+
+	// Make the live upload's row old enough to be reaped too, to show the two
+	// paths do not double count, then jump past the TTL.
+	service.now = func() time.Time { return now.Add(DefaultUploadTTL + time.Hour) }
+	reaped, err := service.ReapAbandonedUploads(ctx)
+	if err != nil {
+		t.Fatalf("ReapAbandonedUploads() error = %v", err)
+	}
+	if reaped != 2 {
+		t.Fatalf("reaped = %d, want 2 (the idle upload with a row, and the orphan)", reaped)
+	}
+	if _, err := os.Stat(orphan.Location); !os.IsNotExist(err) {
+		t.Fatalf("orphan file still present: %v", err)
+	}
+	if _, err := os.Stat(liveState.Location); !os.IsNotExist(err) {
+		t.Fatalf("idle upload file still present: %v", err)
+	}
+}
+
+func TestReapAbandonedUploadsKeepsAnOldDirWhoseRowStillExists(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+	ctx := context.Background()
+
+	upload, err := service.BeginUpload(ctx, "team/a")
+	if err != nil {
+		t.Fatalf("BeginUpload() error = %v", err)
+	}
+	state, err := service.metadata.GetUpload(ctx, service.tenant(ctx), upload.ID)
+	if err != nil {
+		t.Fatalf("GetUpload() error = %v", err)
+	}
+	// Row says "recently updated" while the files are old: the row wins.
+	state.UpdatedAt = time.Now().UTC().Add(48 * time.Hour)
+	if err := service.metadata.SaveUpload(ctx, service.tenant(ctx), state); err != nil {
+		t.Fatalf("SaveUpload() error = %v", err)
+	}
+	service.now = func() time.Time { return time.Now().UTC().Add(DefaultUploadTTL + time.Hour) }
+	if reaped, err := service.ReapAbandonedUploads(ctx); err != nil || reaped != 0 {
+		t.Fatalf("ReapAbandonedUploads() = %d, %v, want 0, nil (row exists)", reaped, err)
+	}
+	if _, err := os.Stat(state.Location); err != nil {
+		t.Fatalf("directory with a live row was removed: %v", err)
+	}
+}

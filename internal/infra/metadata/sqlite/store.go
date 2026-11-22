@@ -295,6 +295,21 @@ func (s *Store) ListUploads(ctx context.Context, tenant string, repository *doma
 	return uploads, rows.Err()
 }
 
+// UploadExists reports whether an upload session row with this ID exists for
+// any tenant. The upload reaper uses it to tell an orphaned upload directory
+// from a live one.
+func (s *Store) UploadExists(ctx context.Context, uploadID string) (bool, error) {
+	var found int
+	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM uploads WHERE id = ?`, uploadID).Scan(&found)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (s *Store) DeleteUpload(ctx context.Context, tenant string, uploadID string) error {
 	result, err := s.db.ExecContext(ctx, `DELETE FROM uploads WHERE tenant = ? AND id = ?`, tenant, uploadID)
 	if err != nil {

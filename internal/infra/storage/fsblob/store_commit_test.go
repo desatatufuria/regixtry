@@ -5,7 +5,9 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -355,5 +357,204 @@ func TestReapUploadHonorsCutoffAndInFlightWrites(t *testing.T) {
 	}
 	if _, statErr := os.Stat(store.uploadDir(upload.ID)); !os.IsNotExist(statErr) {
 		t.Fatalf("upload dir still present after reap: %v", statErr)
+	}
+}
+
+func TestCommitFallsBackToVerifiedCopyWhenLinkFails(t *testing.T) {
+	t.Parallel()
+
+	for _, linkErr := range []error{syscall.EXDEV, syscall.EPERM, syscall.ENOTSUP} {
+		t.Run(linkErr.Error(), func(t *testing.T) {
+			t.Parallel()
+			store := newTestStore(t)
+			store.linkFile = func(string, string) error { return &os.LinkError{Op: "link", Err: linkErr} }
+
+			upload := beginUpload(t, store)
+			payload := []byte("copied-into-the-store")
+			if _, err := store.PutUploadChunk(context.Background(), upload.ID, strings.NewReader(string(payload))); err != nil {
+				t.Fatalf("PutUploadChunk() error = %v", err)
+			}
+			digest := domain.DigestFromBytes(payload)
+			if _, err := store.CommitUpload(context.Background(), upload.ID, digest); err != nil {
+				t.Fatalf("CommitUpload() with failing link error = %v", err)
+			}
+
+			if got := string(readBlob(t, store, digest)); got != string(payload) {
+				t.Fatalf("blob = %q, want %q", got, payload)
+			}
+			info, err := os.Stat(store.blobPath(digest))
+			if err != nil {
+				t.Fatalf("stat blob: %v", err)
+			}
+			if info.Mode().Perm() != 0o444 {
+				t.Fatalf("blob mode = %v, want 0444", info.Mode().Perm())
+			}
+			assertNoTempFiles(t, store, digest)
+			if _, err := os.Stat(store.uploadDir(upload.ID)); !os.IsNotExist(err) {
+				t.Fatalf("upload dir still present: %v", err)
+			}
+		})
+	}
+}
+
+func TestCommitFallbackNeverReplacesAnExistingBlobAndLeavesNoTempFile(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	payload := []byte("already-there")
+	digest := domain.DigestFromBytes(payload)
+
+	first := beginUpload(t, store)
+	if _, err := store.PutUploadChunk(context.Background(), first.ID, strings.NewReader(string(payload))); err != nil {
+		t.Fatalf("PutUploadChunk() error = %v", err)
+	}
+	if _, err := store.CommitUpload(context.Background(), first.ID, digest); err != nil {
+		t.Fatalf("CommitUpload() error = %v", err)
+	}
+	before, err := os.Stat(store.blobPath(digest))
+	if err != nil {
+		t.Fatalf("stat blob: %v", err)
+	}
+
+	// The link now fails with something other than EEXIST: the copy path must
+	// notice the occupied final path and keep the existing blob.
+	store.linkFile = func(string, string) error { return syscall.EXDEV }
+	second := beginUpload(t, store)
+	if _, err := store.PutUploadChunk(context.Background(), second.ID, strings.NewReader(string(payload))); err != nil {
+		t.Fatalf("PutUploadChunk() error = %v", err)
+	}
+	if _, err := store.CommitUpload(context.Background(), second.ID, digest); err != nil {
+		t.Fatalf("second CommitUpload() error = %v", err)
+	}
+	after, err := os.Stat(store.blobPath(digest))
+	if err != nil {
+		t.Fatalf("stat blob: %v", err)
+	}
+	if !os.SameFile(before, after) {
+		t.Fatal("fallback replaced an existing blob")
+	}
+	assertNoTempFiles(t, store, digest)
+}
+
+func TestCopyIntoStoreLeavesNoPartialFileOnFailure(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	payload := []byte("will-not-match")
+	upload := beginUpload(t, store)
+	if _, err := store.PutUploadChunk(context.Background(), upload.ID, strings.NewReader(string(payload))); err != nil {
+		t.Fatalf("PutUploadChunk() error = %v", err)
+	}
+	// Asking for a different digest makes the post-copy verification fail.
+	wrong := domain.DigestFromBytes([]byte("something else"))
+	finalPath := store.blobPath(wrong)
+	if err := os.MkdirAll(filepath.Dir(finalPath), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := store.copyIntoStore(store.uploadFile(upload.ID), finalPath, wrong); !domain.IsCode(err, domain.ErrorCodeDigestMismatch) {
+		t.Fatalf("copyIntoStore() error = %v, want digest mismatch", err)
+	}
+	entries, err := os.ReadDir(filepath.Dir(finalPath))
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("store dir has %d leftover entries after a failed copy, want 0", len(entries))
+	}
+}
+
+func assertNoTempFiles(t *testing.T, store *Store, digest domain.Digest) {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Dir(store.blobPath(digest)))
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+	if len(entries) != 1 {
+		names := []string{}
+		for _, entry := range entries {
+			names = append(names, entry.Name())
+		}
+		t.Fatalf("store dir entries = %v, want exactly the blob", names)
+	}
+}
+
+func TestReapOrphanUploadsOnlyRemovesStaleRowlessUploadDirs(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	withRow := beginUpload(t, store)
+	orphan := beginUpload(t, store)
+	freshOrphan := beginUpload(t, store)
+
+	outside := t.TempDir()
+	victim := filepath.Join(outside, "victim.txt")
+	if err := os.WriteFile(victim, []byte("keep"), 0o644); err != nil {
+		t.Fatalf("write victim: %v", err)
+	}
+	linkName := strings.Repeat("a", 32)
+	if err := os.Symlink(outside, store.uploadDir(linkName)); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	notAnUpload := filepath.Join(store.uploadsRoot(), "not-an-upload-id")
+	if err := os.MkdirAll(notAnUpload, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	old := time.Now().Add(-48 * time.Hour)
+	for _, id := range []string{withRow.ID, orphan.ID} {
+		for _, path := range []string{store.uploadFile(id), store.uploadStateFile(id), store.uploadDir(id)} {
+			if err := os.Chtimes(path, old, old); err != nil {
+				t.Fatalf("chtimes: %v", err)
+			}
+		}
+	}
+	if err := os.Chtimes(notAnUpload, old, old); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+	if err := os.Lchown(store.uploadDir(linkName), os.Getuid(), os.Getgid()); err != nil {
+		t.Fatalf("lchown: %v", err)
+	}
+
+	rows := map[string]bool{withRow.ID: true}
+	hasRow := func(_ context.Context, id string) (bool, error) { return rows[id], nil }
+	cutoff := time.Now().Add(-24 * time.Hour)
+
+	reaped, err := store.ReapOrphanUploads(ctx, cutoff, 100, hasRow)
+	if err != nil {
+		t.Fatalf("ReapOrphanUploads() error = %v", err)
+	}
+	if reaped != 1 {
+		t.Fatalf("reaped = %d, want 1 (only the stale rowless dir)", reaped)
+	}
+	if _, err := os.Stat(store.uploadDir(orphan.ID)); !os.IsNotExist(err) {
+		t.Fatalf("orphan dir still present: %v", err)
+	}
+	for name, path := range map[string]string{"dir with a row": store.uploadDir(withRow.ID), "fresh orphan": store.uploadDir(freshOrphan.ID), "non-upload name": notAnUpload} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("%s must be kept: %v", name, err)
+		}
+	}
+	if _, err := os.Stat(victim); err != nil {
+		t.Fatalf("a symlinked directory outside the root was touched: %v", err)
+	}
+}
+
+func TestReapOrphanUploadsIsBoundedPerCall(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	old := time.Now().Add(-48 * time.Hour)
+	for i := 0; i < 5; i++ {
+		upload := beginUpload(t, store)
+		for _, path := range []string{store.uploadFile(upload.ID), store.uploadStateFile(upload.ID), store.uploadDir(upload.ID)} {
+			_ = os.Chtimes(path, old, old)
+		}
+	}
+	noRow := func(context.Context, string) (bool, error) { return false, nil }
+	reaped, err := store.ReapOrphanUploads(context.Background(), time.Now().Add(-24*time.Hour), 2, noRow)
+	if err != nil || reaped != 2 {
+		t.Fatalf("ReapOrphanUploads(limit 2) = %d, %v, want 2, nil", reaped, err)
 	}
 }
