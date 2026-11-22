@@ -83,14 +83,7 @@ func parseManagedEnvFile(body []byte) (map[string]string, error) {
 }
 
 func parseManagedEnvValue(raw string) (string, error) {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return "", nil
-	}
-	if unquoted, err := strconv.Unquote(trimmed); err == nil {
-		return unquoted, nil
-	}
-	return trimmed, nil
+	return ParseManagedEnvValue(raw)
 }
 
 func loadInstalledIntent(provenance LifecycleProvenance, envValues map[string]string) (InstalledIntent, error) {
@@ -121,7 +114,7 @@ func loadInstalledIntent(provenance LifecycleProvenance, envValues map[string]st
 	intent.PublicURL = firstNonBlank(provenance.Intent.PublicURL, envValues["REGISTRY_PUBLIC_URL"])
 	intent.TLSCertFile = firstNonBlank(provenance.Intent.TLSCertFile, envValues["REGISTRY_TLS_CERT_FILE"])
 	intent.TLSKeyFile = firstNonBlank(provenance.Intent.TLSKeyFile, envValues["REGISTRY_TLS_KEY_FILE"])
-	intent.AuthPostgresDSN = firstNonBlank(provenance.Intent.AuthPostgresDSN, envValues["REGISTRY_AUTH_POSTGRES_DSN"])
+	intent.AuthPostgresDSN = firstNonBlank(envValues["REGISTRY_AUTH_POSTGRES_DSN"], provenance.Intent.AuthPostgresDSN)
 	intent.RuntimeTLSMode = firstNonBlank(provenance.Intent.RuntimeTLSMode)
 	intent.TrivyCacheDir = firstNonBlank(provenance.Intent.TrivyCacheDir, envValues["REGISTRY_TRIVY_CACHE_DIR"])
 	intent.TrivyBinaryPath = firstNonBlank(provenance.Intent.TrivyBinaryPath, envValues["REGISTRY_TRIVY_BINARY_PATH"], "trivy")

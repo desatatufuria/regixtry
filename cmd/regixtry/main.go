@@ -744,14 +744,7 @@ func readSetupManagedEnvFile(path string) (map[string]string, error) {
 }
 
 func parseSetupManagedEnvValue(raw string) (string, error) {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return "", nil
-	}
-	if unquoted, err := strconv.Unquote(trimmed); err == nil {
-		return unquoted, nil
-	}
-	return trimmed, nil
+	return installlinux.ParseManagedEnvValue(raw)
 }
 
 func parseBootstrapAdminConfig(args []string, stdin io.Reader) (bootstrapAdminConfig, error) {
@@ -2169,9 +2162,6 @@ func formatSetupCommand(cfg BootstrapConfig, placeholderOnly bool) string {
 		if strings.TrimSpace(cfg.RuntimeTLSMode) != "" {
 			args = append(args, "--runtime-tls-mode", cfg.RuntimeTLSMode)
 		}
-		if strings.TrimSpace(cfg.AuthPostgresDSN) != "" {
-			args = append(args, "--auth-postgres-dsn", cfg.AuthPostgresDSN)
-		}
 		args = append(args,
 			"--addr", cfg.Addr,
 			"--storage-root", cfg.StorageRoot,
@@ -2189,7 +2179,19 @@ func formatSetupCommand(cfg BootstrapConfig, placeholderOnly bool) string {
 			args = append(args, "--no-start")
 		}
 	}
-	return formatPrivilegedLifecycleCommand(args...)
+	dsn := strings.TrimSpace(cfg.AuthPostgresDSN)
+	if placeholderOnly || dsn == "" {
+		return formatPrivilegedLifecycleCommand(args...)
+	}
+	// The DSN carries a password: it must never be printed (scrollback, shell
+	// history) nor passed as an argument (ps, /proc/<pid>/cmdline). The operator
+	// supplies it through REGISTRY_AUTH_POSTGRES_DSN, which setup reads as the
+	// default of -auth-postgres-dsn. A plain `sudo` resets the environment, so
+	// the variable is kept with `sudo --preserve-env=NAME` (accepted by sudo
+	// when the user may run the command; `-E` would preserve everything and is
+	// avoided). As root there is no sudo and the exported variable suffices.
+	return fmt.Sprintf("# set the DSN without echoing it (shown here redacted as %s):\n  #   read -rs REGISTRY_AUTH_POSTGRES_DSN && export REGISTRY_AUTH_POSTGRES_DSN\n  %s",
+		installlinux.RedactDSN(dsn), formatPrivilegedLifecycleCommandPreserving("REGISTRY_AUTH_POSTGRES_DSN", args...))
 }
 
 func formatUninstallCommand(cfg uninstallConfig) string {
@@ -2208,9 +2210,16 @@ func formatUpgradeCommand(cfg upgradeConfig) string {
 }
 
 func formatPrivilegedLifecycleCommand(args ...string) string {
-	parts := make([]string, 0, len(args)+2)
+	return formatPrivilegedLifecycleCommandPreserving("", args...)
+}
+
+func formatPrivilegedLifecycleCommandPreserving(preserveEnv string, args ...string) string {
+	parts := make([]string, 0, len(args)+3)
 	if currentEUID() != 0 {
 		parts = append(parts, "sudo")
+		if preserveEnv != "" {
+			parts = append(parts, "--preserve-env="+preserveEnv)
+		}
 	}
 	parts = append(parts, lifecycleExecutablePath())
 	parts = append(parts, args...)
