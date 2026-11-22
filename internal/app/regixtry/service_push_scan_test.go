@@ -1,0 +1,210 @@
+package regixtry
+
+import (
+	"context"
+	"fmt"
+	"runtime"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"regixtry/internal/ports"
+)
+
+// pushDistinctManifests publishes n manifests that share one blob but differ
+// by an annotation, so every push yields a distinct digest (defeating the
+// per-digest dedup).
+func pushDistinctManifests(t *testing.T, service *Service, repository string, n int, prefix string) {
+	t.Helper()
+	ctx := context.Background()
+	upload, err := service.BeginUpload(ctx, repository)
+	if err != nil {
+		t.Fatalf("BeginUpload() error = %v", err)
+	}
+	if _, err := service.AppendUpload(ctx, repository, upload.ID, strings.NewReader("layer-one")); err != nil {
+		t.Fatalf("AppendUpload() error = %v", err)
+	}
+	blob, err := service.CompleteUpload(ctx, repository, upload.ID, digestForTest([]byte("layer-one")), nil)
+	if err != nil {
+		t.Fatalf("CompleteUpload() error = %v", err)
+	}
+	for i := 0; i < n; i++ {
+		payload := []byte(fmt.Sprintf(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{"mediaType":"application/vnd.oci.image.config.v1+json","digest":"%s","size":9},"layers":[{"mediaType":"application/vnd.oci.image.layer.v1.tar","digest":"%s","size":9}],"annotations":{"n":"%s-%d"}}`, blob.Digest, blob.Digest, prefix, i))
+		if _, err := service.PublishManifest(ctx, repository, fmt.Sprintf("%s-%d", prefix, i), "application/vnd.oci.image.manifest.v1+json", payload); err != nil {
+			t.Fatalf("PublishManifest(%d) error = %v", i, err)
+		}
+	}
+}
+
+func newPushScanService(t *testing.T) (*Service, *blockingScanRunner, func()) {
+	t.Helper()
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	if _, err := service.EnsureScanSettings(context.Background(), ports.ScanSettings{Enabled: true, Timeout: time.Minute, Interval: time.Hour, RegistryReachableURL: "https://registry.internal", MaxConcurrency: 1}); err != nil {
+		t.Fatalf("EnsureScanSettings() error = %v", err)
+	}
+	seedManagedRuntimeState(t, service, "0.57.1")
+	runner := &blockingScanRunner{release: make(chan struct{})}
+	service.SetScanRunner(runner)
+	return service, runner, func() {
+		close(runner.release)
+		time.Sleep(50 * time.Millisecond)
+		cleanup()
+	}
+}
+
+func countActivePushScans(t *testing.T, service *Service) (active int, skipped int) {
+	t.Helper()
+	runs, err := service.metadata.ListScanRuns(context.Background(), "tenant-a", "", 5000)
+	if err != nil {
+		t.Fatalf("ListScanRuns() error = %v", err)
+	}
+	for _, run := range runs {
+		switch {
+		case run.Status == ports.ScanRunStatusQueued || run.Status == ports.ScanRunStatusRunning:
+			active++
+		case run.Status == ports.ScanRunStatusFailed && strings.HasPrefix(run.Error, "skipped:"):
+			skipped++
+		}
+	}
+	return active, skipped
+}
+
+// TestPushScansAreBoundedWhenManyDistinctManifestsArePushed reproduces the
+// audit lead: one writer pushing many distinct digests while scans are held
+// must not grow queued rows or goroutines without bound.
+func TestPushScansAreBoundedWhenManyDistinctManifestsArePushed(t *testing.T) {
+	service, _, cleanup := newPushScanService(t)
+	defer cleanup()
+
+	const pushes = 150
+	before := runtime.NumGoroutine()
+	pushDistinctManifests(t, service, "library/alpine", pushes, "flood")
+	time.Sleep(time.Second)
+
+	active, skipped := countActivePushScans(t, service)
+	grown := runtime.NumGoroutine() - before
+	t.Logf("active=%d skipped=%d goroutine growth=%d", active, skipped, grown)
+	if active > 64 {
+		t.Fatalf("active scans = %d for %d pushes, want <= 64 (bounded queue)", active, pushes)
+	}
+	if grown > 64+20 {
+		t.Fatalf("goroutine growth = %d, want bounded", grown)
+	}
+	if skipped == 0 {
+		t.Fatalf("skipped records = 0, want a visible 'skipped: ...' scan result for dropped pushes")
+	}
+}
+
+func TestPushScanLimitsAreConfigurableAndSkippedRowIsOnePerRepository(t *testing.T) {
+	service, _, cleanup := newPushScanService(t)
+	defer cleanup()
+	service.SetPushScanLimits(5, 2)
+
+	pushDistinctManifests(t, service, "library/alpine", 20, "cfg")
+	time.Sleep(500 * time.Millisecond)
+
+	active, skipped := countActivePushScans(t, service)
+	if active != 2 || skipped != 1 {
+		t.Fatalf("active=%d skipped=%d, want 2 active (per-repository cap) and exactly 1 skipped row", active, skipped)
+	}
+}
+
+func TestPushScansStillRunAtNormalRates(t *testing.T) {
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+	if _, err := service.EnsureScanSettings(context.Background(), ports.ScanSettings{Enabled: true, Timeout: time.Minute, Interval: time.Hour, RegistryReachableURL: "https://registry.internal", MaxConcurrency: 2}); err != nil {
+		t.Fatalf("EnsureScanSettings() error = %v", err)
+	}
+	seedManagedRuntimeState(t, service, "0.57.1")
+	service.SetScanRunner(&fakeScanRunner{})
+
+	// One push at a time, waiting for each scan: slots must be released.
+	for i := 0; i < 20; i++ {
+		pushDistinctManifests(t, service, "library/alpine", 1, fmt.Sprintf("slow%d", i))
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			service.pushScans.mu.Lock()
+			total := service.pushScans.total
+			service.pushScans.mu.Unlock()
+			if total == 0 {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("push %d: slot never released (total=%d)", i, total)
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	runs, err := service.metadata.ListScanRuns(context.Background(), "tenant-a", "", 100)
+	if err != nil {
+		t.Fatalf("ListScanRuns() error = %v", err)
+	}
+	completed := 0
+	for _, run := range runs {
+		if run.Status == ports.ScanRunStatusCompleted {
+			completed++
+		}
+		if strings.HasPrefix(run.Error, "skipped:") {
+			t.Fatalf("unexpected skipped run at normal push rate: %#v", run)
+		}
+	}
+	if completed < 20 {
+		t.Fatalf("completed scans = %d, want 20", completed)
+	}
+}
+
+func TestPushScanSkipIsSilentWhenScanningDisabled(t *testing.T) {
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+	if _, err := service.EnsureScanSettings(context.Background(), ports.ScanSettings{Enabled: false, Timeout: time.Minute, Interval: time.Hour, RegistryReachableURL: "https://registry.internal", MaxConcurrency: 1}); err != nil {
+		t.Fatalf("EnsureScanSettings() error = %v", err)
+	}
+	seedManagedRuntimeState(t, service, "0.57.1")
+	service.SetPushScanLimits(1, 1)
+	for i := 0; i < 5; i++ {
+		service.pushScans.acquire("tenant-a", "library/alpine")
+	}
+	service.recordPushScanSkipped(context.Background(), "tenant-a", "library/alpine", "latest", "sha256:"+strings.Repeat("a", 64))
+	if _, skipped := countActivePushScans(t, service); skipped != 0 {
+		t.Fatalf("skipped rows = %d, want 0 when scanning is disabled", skipped)
+	}
+}
+
+func TestPushScanLimiterConcurrentAcquireNeverExceedsCaps(t *testing.T) {
+	t.Parallel()
+	l := newPushScanLimiter()
+	l.setLimits(10, 4)
+	var mu sync.Mutex
+	held, maxHeld := 0, 0
+	var wg sync.WaitGroup
+	for i := 0; i < 200; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			release, ok := l.acquire("t", fmt.Sprintf("repo/%d", i%5))
+			if !ok {
+				return
+			}
+			mu.Lock()
+			held++
+			if held > maxHeld {
+				maxHeld = held
+			}
+			mu.Unlock()
+			time.Sleep(time.Millisecond)
+			mu.Lock()
+			held--
+			mu.Unlock()
+			release()
+			release() // idempotent
+		}(i)
+	}
+	wg.Wait()
+	if maxHeld > 10 {
+		t.Fatalf("max concurrently held = %d, want <= 10", maxHeld)
+	}
+	if l.total != 0 || len(l.perRepo) != 0 {
+		t.Fatalf("limiter leaked: total=%d perRepo=%v", l.total, l.perRepo)
+	}
+}

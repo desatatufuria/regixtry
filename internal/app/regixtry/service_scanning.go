@@ -317,6 +317,23 @@ func (s *Service) queueScheduledScan(ctx context.Context, repositoryName string,
 // (queued|running) check. Every failure path returns silently: push must
 // never fail or block because of scanning.
 func (s *Service) queuePushScan(ctx context.Context, tenant string, repository string, reference string, digest string) {
+	release, ok := s.pushScans.acquire(tenant, repository)
+	if !ok {
+		s.recordPushScanSkipped(ctx, tenant, repository, reference, digest)
+		return
+	}
+	s.runPushScan(ctx, tenant, repository, reference, digest, release)
+}
+
+// runPushScan holds an admitted push-scan slot: release runs when the scan
+// has finished, or immediately on any early return.
+func (s *Service) runPushScan(ctx context.Context, tenant string, repository string, reference string, digest string, release func()) {
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			release()
+		}
+	}()
 	settings, err := s.resolveManagedScanSettingsForTenant(ctx, tenant)
 	if err != nil {
 		return
@@ -334,7 +351,11 @@ func (s *Service) queuePushScan(ctx context.Context, tenant string, repository s
 	if err != nil || existed {
 		return
 	}
-	go s.executeScanRun(context.Background(), tenant, run, settings)
+	handedOff = true
+	go func() {
+		defer release()
+		s.executeScanRun(context.Background(), tenant, run, settings)
+	}()
 }
 
 // resolveManagedScanSettingsForTenant mirrors resolveManagedScanSettings for
@@ -369,7 +390,14 @@ func (s *Service) executeScanRun(ctx context.Context, tenant string, run ports.S
 	// alongside the Trivy leg in its own goroutine: it is informational
 	// only, so a gitleaks failure or absence must never fail or block the
 	// Trivy leg or the overall scan run's status/result.
-	go s.executeSecretScanLeg(ctx, tenant, run.Repository, run.Digest, run.Trigger)
+	// executeScanRun does not return until this leg has, so a push-scan slot
+	// (held until return) bounds the leg's goroutine too.
+	secretLegDone := make(chan struct{})
+	defer func() { <-secretLegDone }()
+	go func() {
+		defer close(secretLegDone)
+		s.executeSecretScanLeg(ctx, tenant, run.Repository, run.Digest, run.Trigger)
+	}()
 	if err := s.scanGate.acquire(ctx, settings.MaxConcurrency); err != nil {
 		return
 	}

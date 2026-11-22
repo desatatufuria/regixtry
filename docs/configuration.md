@@ -32,6 +32,13 @@
 | `-delete-enabled` | `REGISTRY_DELETE_ENABLED` | `false` | Enable `DELETE /v2/<name>/manifests/<reference>` (manifest and tag deletion) |
 | `-gc-delete-enabled` | `REGISTRY_GC_DELETE_ENABLED` | `false` | Enable `POST /admin/v1/gc/reports/{id}/delete` (irreversibly unlinks unreferenced blob files); distinct from `-delete-enabled`, which is metadata-only and never touches blob files |
 
+Push-triggered scans are admitted against two caps (environment only, no flag). A push over a cap never fails: no scan is queued and one failed scan row per repository, `skipped: push scan queue full`, records the newest dropped digest so the gap is visible and can be rescanned manually.
+
+| Environment | Default | Purpose |
+|---|---|---|
+| `REGISTRY_PUSH_SCAN_MAX_PENDING` | `64` | Maximum push-triggered scans queued or running service-wide |
+| `REGISTRY_PUSH_SCAN_MAX_PER_REPOSITORY` | `8` | Same limit for one repository |
+
 Implementation: `cmd/regixtry/main.go` (`parseServeConfig`, `normalizeRuntimeConfig`).
 
 `-public-url` must be absolute, use HTTP or HTTPS, and contain no query or fragment. Certificate and key must be provided together. An `http` public URL cannot be combined with direct TLS. An `https` public URL can represent either direct TLS or a reverse proxy.

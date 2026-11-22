@@ -45,6 +45,8 @@ type Service struct {
 	now             func() time.Time
 	scanGate        *scanGate
 	secretScanGate  *scanGate
+	// pushScans admits push-triggered scans (see service_push_scan.go).
+	pushScans *pushScanLimiter
 	// gcGate bounds ComputeGCReport/DeleteByGCReport to a single in-flight
 	// run at a time (proposal.md D2: "single in-flight run"), the same
 	// scanGate primitive scan queueing already uses.
@@ -114,6 +116,7 @@ func NewService(blobStore ports.BlobStore, metadataStore ports.MetadataStore, ac
 		now:            func() time.Time { return time.Now().UTC() },
 		scanGate:       newScanGate(),
 		secretScanGate: newScanGate(),
+		pushScans:      newPushScanLimiter(),
 		gcGate:         newScanGate(),
 	}
 }
@@ -339,11 +342,7 @@ func (s *Service) PublishManifest(ctx context.Context, repositoryName string, re
 	// bundle-index manifest above it). The manifest this one refers to is
 	// unaffected and keeps getting scanned normally.
 	if !isReferrerArtifactPush(manifest, tag) {
-		s.backgroundWork.Add(1)
-		go func() {
-			defer s.backgroundWork.Done()
-			s.queuePushScan(context.Background(), s.tenant(ctx), repository.String(), reference, manifest.Digest.String())
-		}()
+		s.startPushScan(s.tenant(ctx), repository.String(), reference, manifest.Digest.String())
 	}
 
 	return newManifestDetails(repository.String(), reference, manifest, manifest.BlobReferences()), nil
