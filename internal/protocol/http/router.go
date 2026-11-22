@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	stdhttp "net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +26,10 @@ type Router struct {
 	mux     *stdhttp.ServeMux
 	// maxManifestBytes caps a manifest PUT body (zero or negative: no cap).
 	maxManifestBytes int64
+	// trustedProxies are the proxies whose X-Forwarded-For is believed when
+	// attributing a request to a client IP; empty means RemoteAddr only.
+	trustedProxies []netip.Prefix
+	loginFailures  loginFailureStats
 }
 
 // DefaultMaxManifestBytes is the manifest PUT body cap NewRouter applies
@@ -48,6 +53,15 @@ func WithLogger(logger *log.Logger) RouterOption {
 func WithMaxManifestBytes(limit int64) RouterOption {
 	return func(router *Router) {
 		router.maxManifestBytes = limit
+	}
+}
+
+// WithTrustedProxies sets the proxies whose X-Forwarded-For header is trusted
+// when logging the client IP of a failed login. Empty (the default) ignores
+// forwarding headers entirely.
+func WithTrustedProxies(proxies []netip.Prefix) RouterOption {
+	return func(router *Router) {
+		router.trustedProxies = proxies
 	}
 }
 
@@ -612,17 +626,36 @@ func (r *Router) handleToken(w stdhttp.ResponseWriter, req *stdhttp.Request) {
 		return
 	}
 
-	result, err := r.auth.LoginWithPassword(req.Context(), username, secret, requestedScopes)
-	if err != nil && domainauth.IsCode(err, domainauth.ErrorCodeInvalidCredentials) {
-		result, err = r.auth.LoginWithPreissuedToken(req.Context(), username, secret, requestedScopes)
+	var result ports.LoginResult
+	fastPath := false
+	if ports.IsCredentialTokenShaped(secret) {
+		// A credential token is 256 bits of entropy, looked up by hash: try it
+		// first so a valid exchange costs no bcrypt. Any miss falls through to
+		// the unchanged password-then-token flow, so status and body for a
+		// failure are exactly the baseline's.
+		if fast, fastErr := r.auth.LoginWithPreissuedToken(req.Context(), username, secret, requestedScopes); fastErr == nil {
+			result, fastPath = fast, true
+		}
+	}
+	if !fastPath {
+		result, err = r.auth.LoginWithPassword(req.Context(), username, secret, requestedScopes)
+		if err != nil && domainauth.IsCode(err, domainauth.ErrorCodeInvalidCredentials) {
+			result, err = r.auth.LoginWithPreissuedToken(req.Context(), username, secret, requestedScopes)
+		}
+	}
+	var throttled *ports.LoginThrottledError
+	if errors.As(err, &throttled) {
+		r.recordLoginThrottle(req, "/auth/token", username, throttled)
+		w.Header().Set("Retry-After", strconv.Itoa(throttled.RetryAfterSeconds()))
+		writeError(w, req, domain.NewTooManyRequestsError("too many login attempts; retry later"), challenge, "TOOMANYREQUESTS")
+		return
 	}
 	if err != nil {
 		// The client only ever sees the uniform error; the real reason (unknown
-		// user, disabled, wrong password, ...) is kept in the server log.
-		if r.logger != nil {
-			if cause := errors.Unwrap(err); cause != nil {
-				r.logger.Printf("auth token denied username=%q reason=%q", username, cause.Error())
-			}
+		// user, disabled, wrong password, ...) goes to the server log with the
+		// client IP, and to the failure counter.
+		if isCredentialFailure(err) {
+			r.recordLoginFailure(req, "/auth/token", username, err)
 		}
 		writeError(w, req, err, challenge, "UNAUTHORIZED")
 		return
@@ -684,6 +717,9 @@ func (r *Router) authenticate(req *stdhttp.Request) (*domainauth.Principal, erro
 
 	principal, err := r.auth.VerifyAccessToken(req.Context(), bearerToken)
 	if err != nil {
+		if isCredentialFailure(err) {
+			r.recordLoginFailure(req, credentialEndpoint(req), "", err)
+		}
 		return nil, err
 	}
 

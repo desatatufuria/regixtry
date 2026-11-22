@@ -29,14 +29,14 @@ func TestAdminAPIRejectsScopeLimitedAccessTokens(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	adminScoped, err := authService.LoginWithPassword(ctx, "admin", "password123", scoped)
+	adminScoped, err := authService.LoginWithPassword(ctx, "admin", "fixture-pass-9x", scoped)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// A repo-admin whose requested scope intersects to nothing must not end up
 	// with an unrestricted token either.
-	owner, err := authService.CreateAdminUser(ctx, adminActor, ports.AdminCreateUserInput{Username: "ra", Password: "password123", Enabled: true})
+	owner, err := authService.CreateAdminUser(ctx, adminActor, ports.AdminCreateUserInput{Username: "ra", Password: "fixture-pass-9x", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,11 +44,11 @@ func TestAdminAPIRejectsScopeLimitedAccessTokens(t *testing.T) {
 		t.Fatal(err)
 	}
 	other, _ := domainauth.ParseScopes([]string{"repository:other/none:pull"})
-	raEmpty, err := authService.LoginWithPassword(ctx, "ra", "password123", other)
+	raEmpty, err := authService.LoginWithPassword(ctx, "ra", "fixture-pass-9x", other)
 	if err != nil {
 		t.Fatal(err)
 	}
-	raFull, err := authService.LoginWithPassword(ctx, "ra", "password123", nil)
+	raFull, err := authService.LoginWithPassword(ctx, "ra", "fixture-pass-9x", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

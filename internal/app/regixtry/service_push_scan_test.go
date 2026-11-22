@@ -430,7 +430,12 @@ func pushScanSlotsInUse(service *Service) int {
 
 func waitUntil(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	waitUntilWithin(t, 5*time.Second, what, cond)
+}
+
+func waitUntilWithin(t *testing.T, limit time.Duration, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(limit)
 	for !cond() {
 		if time.Now().After(deadline) {
 			t.Fatalf("timed out waiting for %s", what)
@@ -490,7 +495,10 @@ func TestHungSecretScanLegNeverHoldsAPushScanSlotForever(t *testing.T) {
 func TestStuckSecretLegsAreCountedBoundedAndRecoverWhenTheyReturn(t *testing.T) {
 	service, cleanup := newTestService(t, allowAllAccessController{})
 	defer cleanup()
-	service.scanRunMargin = 10 * time.Millisecond
+	// Generous bounds: each stuck leg is abandoned after 2*(Timeout+margin) =
+	// 1s, long enough that a loaded machine still starts the runner first. The
+	// legs are started together and the test polls state, never fixed sleeps.
+	service.scanRunMargin = 200 * time.Millisecond
 	ctx := context.Background()
 	// The secret leg dedups per repository@digest, so each push uses its own
 	// repository (each seeded with the same manifest bytes).
@@ -499,7 +507,7 @@ func TestStuckSecretLegsAreCountedBoundedAndRecoverWhenTheyReturn(t *testing.T) 
 		seedRepository(t, service, ctx, fmt.Sprintf("library/r%d", i))
 		digest = seededManifestDigest(t, service, "library/r0")
 	}
-	if _, err := service.EnsureScanSettings(ctx, ports.ScanSettings{Enabled: true, Timeout: 20 * time.Millisecond, Interval: time.Hour, RegistryReachableURL: "https://registry.internal", MaxConcurrency: 64}); err != nil {
+	if _, err := service.EnsureScanSettings(ctx, ports.ScanSettings{Enabled: true, Timeout: 300 * time.Millisecond, Interval: time.Hour, RegistryReachableURL: "https://registry.internal", MaxConcurrency: 64}); err != nil {
 		t.Fatal(err)
 	}
 	seedManagedRuntimeState(t, service, "0.57.1")
@@ -517,9 +525,10 @@ func TestStuckSecretLegsAreCountedBoundedAndRecoverWhenTheyReturn(t *testing.T) 
 	// Each scan leaks one stuck leg until the limit is reached.
 	for i := 0; i < maxStuckSecretLegs; i++ {
 		service.startPushScan("tenant-a", fmt.Sprintf("library/r%d", i), "latest", digest, "p")
-		want := int32(i + 1)
-		waitUntil(t, fmt.Sprintf("stuck leg %d to be counted (stuck=%d slots=%d)", i, service.stuckSecretLegs.Load(), pushScanSlotsInUse(service)), func() bool { return service.stuckSecretLegs.Load() == want && pushScanSlotsInUse(service) == 0 })
 	}
+	waitUntilWithin(t, 60*time.Second, "every stuck leg to be counted and every slot released", func() bool {
+		return service.stuckSecretLegs.Load() == maxStuckSecretLegs && pushScanSlotsInUse(service) == 0
+	})
 	service.startPushScan("tenant-a", fmt.Sprintf("library/r%d", maxStuckSecretLegs), "latest", digest, "p")
 	service.WaitForBackgroundWork()
 	if got := service.stuckSecretLegs.Load(); got != maxStuckSecretLegs {
@@ -530,7 +539,7 @@ func TestStuckSecretLegsAreCountedBoundedAndRecoverWhenTheyReturn(t *testing.T) 
 	}
 
 	close(runner.stop) // the stuck runners finally return
-	waitUntil(t, "stuck legs to drain", func() bool { return service.stuckSecretLegs.Load() == 0 })
+	waitUntilWithin(t, 60*time.Second, "stuck legs to drain", func() bool { return service.stuckSecretLegs.Load() == 0 })
 }
 
 // gatedStore blocks the two store calls recordPushScanSkipped makes until

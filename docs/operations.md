@@ -20,6 +20,58 @@ Registry state requires keeping `metadata.db` and the `content` directory togeth
 
 `local-http` does not encrypt traffic. `reverse-proxy` delegates TLS to a proxy. `direct-tls` uses `-tls-cert-file` and `-tls-key-file`. The public URL must match the scheme and the derived realm.
 
+## Reverse proxy and client IP
+
+Failed logins are logged with the client IP and the reason (see [Failed logins](security.md#failed-logins-and-rate-limiting)). By default the IP is the TCP peer (`RemoteAddr`) and `X-Forwarded-For` is **ignored**, so a client cannot choose the address it is logged under. Behind a reverse proxy the peer is the proxy, so every failure would be attributed to it. Set `-trusted-proxies` (env `REGISTRY_TRUSTED_PROXIES`) to the proxy addresses or CIDRs:
+
+- If the TCP peer is not in the list, forwarding headers are ignored.
+- If it is, `X-Forwarded-For` (all header lines merged) is read right to left, skipping trusted hops; the first untrusted address is the client. Only the rightmost untrusted value is reliable: anything to its left may have been forged by the client. `X-Real-IP` is never used.
+- Keep the list as narrow as possible. A range that includes untrusted hosts lets them forge their logged IP.
+
+The proxy must **append** the peer it saw to `X-Forwarded-For` (not overwrite it with a client value). Per-IP volume limiting stays in the proxy; the registry only logs and counts.
+
+nginx (on `192.168.1.245`, which sends `X-Real-IP` and appends the client to `X-Forwarded-For`):
+
+```nginx
+location / {
+    proxy_pass         http://127.0.0.1:5000;
+    proxy_set_header   Host $host;
+    proxy_set_header   X-Real-IP $remote_addr;
+    proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header   X-Forwarded-Proto $scheme;
+    client_max_body_size 0;
+    # optional per-IP limit for the token endpoint
+    # limit_req_zone $binary_remote_addr zone=authtoken:10m rate=30r/m;
+    # location = /auth/token { limit_req zone=authtoken burst=20 nodelay; proxy_pass http://127.0.0.1:5000; ... }
+}
+```
+
+```
+regixtry serve -trusted-proxies 192.168.1.245
+```
+
+Traefik (v3, file provider; Traefik appends the client to `X-Forwarded-For` itself, and by default does not trust incoming forwarded headers from untrusted clients):
+
+```yaml
+entryPoints:
+  websecure:
+    address: ":443"
+    forwardedHeaders:
+      trustedIPs: ["203.0.113.0/24"]   # only proxies/load balancers in FRONT of Traefik
+```
+
+Run the registry with `-trusted-proxies` set to Traefik's address on the Docker/host network (for example `172.18.0.0/16`).
+
+Caddy (`reverse_proxy` sets `X-Forwarded-For` by appending the peer; by default it discards an incoming value from untrusted clients):
+
+```
+registry.example.com {
+    reverse_proxy 127.0.0.1:5000
+}
+```
+
+with `-trusted-proxies 127.0.0.1` (add `::1` if Caddy connects over IPv6 loopback).
+
 ## Upgrade and rollback
 
 `upgrade` uses the setup provenance record, runs preflight checks, supports `--ref` and `--yes`, and shows progress. Bootstrap rollback removes generated artifacts and stops the service. Review the command output and `journalctl` before retrying.

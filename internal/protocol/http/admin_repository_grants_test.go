@@ -26,11 +26,11 @@ func TestRouterAdminRepositoryGrants(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
-	ana, err := authService.CreateAdminUser(ctx, adminActor, ports.AdminCreateUserInput{Username: "ana", Password: "password123", Enabled: true})
+	ana, err := authService.CreateAdminUser(ctx, adminActor, ports.AdminCreateUserInput{Username: "ana", Password: "fixture-pass-9x", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	off, err := authService.CreateAdminUser(ctx, adminActor, ports.AdminCreateUserInput{Username: "off", Password: "password123", Enabled: true})
+	off, err := authService.CreateAdminUser(ctx, adminActor, ports.AdminCreateUserInput{Username: "off", Password: "fixture-pass-9x", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,10 +212,10 @@ func TestRouterAdminRepositoryGrants(t *testing.T) {
 	})
 
 	t.Run("403 for a non-admin, a robot token and a repo-admin delegate", func(t *testing.T) {
-		if _, err := authService.CreateAdminUser(ctx, adminActor, ports.AdminCreateUserInput{Username: "plain", Password: "password123", Enabled: true}); err != nil {
+		if _, err := authService.CreateAdminUser(ctx, adminActor, ports.AdminCreateUserInput{Username: "plain", Password: "fixture-pass-9x", Enabled: true}); err != nil {
 			t.Fatal(err)
 		}
-		plain, err := authService.LoginWithPassword(ctx, "plain", "password123", nil)
+		plain, err := authService.LoginWithPassword(ctx, "plain", "fixture-pass-9x", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -229,7 +229,7 @@ func TestRouterAdminRepositoryGrants(t *testing.T) {
 		if rec := get("", robotLogin.BearerToken); rec.Code != http.StatusForbidden {
 			t.Errorf("robot status = %d", rec.Code)
 		}
-		delegateLogin, err := authService.LoginWithPassword(ctx, "ana", "password123", nil)
+		delegateLogin, err := authService.LoginWithPassword(ctx, "ana", "fixture-pass-9x", nil)
 		if err != nil {
 			t.Fatal(err)
 		}

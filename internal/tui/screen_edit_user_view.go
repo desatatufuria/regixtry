@@ -130,17 +130,34 @@ func (s editUserScreen) grantLines(theme adminTheme, width, rows int) []string {
 		return append(lines, theme.muted.Render(grantsSummary(0)))
 	}
 	room := max(rows-len(lines)-1, 0) // the summary line below the list
-	shown := s.grants
-	if len(shown) > room {
-		shown = shown[:max(room-1, 0)]
+	visible := len(s.grants)
+	if visible > room {
+		visible = max(room-1, 0)
+		if s.grantsFocused {
+			// The selected row is always on screen, "+N more" or not.
+			visible = room
+		}
 	}
-	for _, grant := range shown {
+	start, end := 0, visible
+	cursor := boundedIndex(s.grantCursor, len(s.grants))
+	if s.grantsFocused {
+		start, end = grantWindow(cursor, len(s.grants), visible)
+	}
+	for i := start; i < end; i++ {
+		grant := s.grants[i]
 		role := theme.muted.Render(grantRoleLabel(grant.Role))
-		lines = append(lines, spreadText(grant.Repository.String(), role, width))
+		switch {
+		case !s.grantsFocused:
+			lines = append(lines, spreadText(grant.Repository.String(), role, width))
+		case i == cursor:
+			lines = append(lines, theme.selected.Padding(0).Render("▸ "+spreadText(grant.Repository.String(), grantRoleLabel(grant.Role), max(width-2, 1))))
+		default:
+			lines = append(lines, "  "+spreadText(grant.Repository.String(), role, max(width-2, 1)))
+		}
 	}
 	summary := grantsSummary(len(s.grants))
-	if len(shown) < len(s.grants) {
-		summary = fmt.Sprintf("+%d more. %s", len(s.grants)-len(shown), summary)
+	if end-start < len(s.grants) {
+		summary = fmt.Sprintf("+%d more. %s", len(s.grants)-(end-start), summary)
 	}
 	return append(lines, theme.muted.Render(summary))
 }

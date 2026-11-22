@@ -342,14 +342,7 @@ func (s repoAccessScreen) askRevoke(env screenEnv, rows []repoAccessRow) (adminS
 	}
 	gen, repo, username := s.gen, row.repo, row.username
 	s.status, s.statusTone = "", grantToneNone
-	s.confirm = newConfirmPrompt(
-		"Revoke access",
-		fmt.Sprintf("Revoke %s's %s access to %s?", username, grantRoleLabel(row.role), repo),
-		"revoke",
-		fmt.Sprintf("Revoking %s on %s...", username, repo),
-		func(env screenEnv) tea.Cmd { return repoAccessRevokeCmd(env, gen, repo, username) },
-	).withTarget(fmt.Sprintf("%s on %s", username, repo), grantRoleLabel(row.role)).
-		withConsequence(fmt.Sprintf("%s loses %s access to %s.", username, grantRoleLabel(row.role), repo))
+	s.confirm = revokeGrantConfirm(repo, username, row.role, func(env screenEnv) tea.Cmd { return repoAccessRevokeCmd(env, gen, repo, username) })
 	return s, nil, true
 }
 

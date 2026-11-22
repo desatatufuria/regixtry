@@ -20,6 +20,13 @@ func (s createRobotScreen) View(theme adminTheme, env screenEnv) screenFrame {
 	bodyW, bodyH := shellContentSize(width, height)
 
 	var lines []string
+	if s.done && s.reveal {
+		return screenFrame{
+			Context: adminContext("Access", "Robots", "New robot"),
+			Full:    true,
+			Body:    renderReveal(theme, s.revealSpec(width, height)),
+		}
+	}
 	if s.done {
 		lines = s.doneLines(theme, bodyW, bodyH)
 	} else {
@@ -201,6 +208,9 @@ func (s createRobotScreen) doneLines(theme adminTheme, width, rows int) []string
 
 	secret := append([]string{theme.subheading.Render("New robot"), summary}, secretBox(theme, created.accessor, created.secret, boxW)...)
 	secret = append(secret, theme.warning.Render(grantTruncate(oneTimeSecretWarning, width)))
+	if s.copied {
+		secret = append(secret, theme.success.Render(grantTruncate(copiedNotice, width)))
+	}
 
 	detail := func(name, value string) string {
 		return padRight(theme.muted.Render(name), createRobotLabelWidth) + value
@@ -217,4 +227,20 @@ func (s createRobotScreen) doneLines(theme adminTheme, width, rows int) []string
 		return fitSections([][]string{secret, details, button}, rows)
 	}
 	return fitSections([][]string{secret, button}, rows)
+}
+
+// revealSpec is the bare screen of the one-time secret.
+func (s createRobotScreen) revealSpec(width, height int) revealSpec {
+	created := s.created
+	facts := []string{"Robot  " + created.name, "Accessor  " + created.accessor}
+	if !created.expires.IsZero() {
+		facts = append(facts, "Expires  "+exactExpiry(created.expires))
+	}
+	if created.repository != "" {
+		facts = append(facts, "Repository  "+created.repository, "Role  "+grantRoleLabel(created.role))
+	}
+	return revealSpec{
+		Title: "Robot secret, shown once", Secret: created.secret, Facts: facts,
+		Copied: s.copied, Width: width, Height: height,
+	}
 }

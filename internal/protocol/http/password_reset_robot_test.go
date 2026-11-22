@@ -69,7 +69,7 @@ func TestAdminPasswordResetOfAHumanKeepsTheirCredentialTokensAndClosesAccessToke
 	defer cleanup()
 	ctx := context.Background()
 
-	human, err := authService.CreateAdminUser(ctx, adminActor, ports.AdminCreateUserInput{Username: "human", Password: "password123", Enabled: true, IsAdmin: true})
+	human, err := authService.CreateAdminUser(ctx, adminActor, ports.AdminCreateUserInput{Username: "human", Password: "fixture-pass-9x", Enabled: true, IsAdmin: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestAdminPasswordResetOfAHumanKeepsTheirCredentialTokensAndClosesAccessToke
 	if err != nil {
 		t.Fatal(err)
 	}
-	access, err := authService.LoginWithPassword(ctx, "human", "password123", nil)
+	access, err := authService.LoginWithPassword(ctx, "human", "fixture-pass-9x", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestAdminPasswordResetOfAHumanKeepsTheirCredentialTokensAndClosesAccessToke
 	if _, err := authService.LoginWithPreissuedToken(ctx, "human", cred.Secret, nil); err != nil {
 		t.Errorf("admin credential token after reset: %v", err)
 	}
-	if _, err := authService.LoginWithPassword(ctx, "human", "password123", nil); err == nil {
+	if _, err := authService.LoginWithPassword(ctx, "human", "fixture-pass-9x", nil); err == nil {
 		t.Error("old password must stop working")
 	}
 	if _, err := authService.LoginWithPassword(ctx, "human", "password456", nil); err != nil {

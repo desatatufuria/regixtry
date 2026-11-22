@@ -19,7 +19,7 @@ func TestAuthTokenEndpointDoesNotRevealUsernameState(t *testing.T) {
 	ctx := context.Background()
 
 	for _, name := range []string{"active", "gone"} {
-		if _, err := authService.CreateAdminUser(ctx, adminActor, ports.AdminCreateUserInput{Username: name, Password: "password123", Enabled: true}); err != nil {
+		if _, err := authService.CreateAdminUser(ctx, adminActor, ports.AdminCreateUserInput{Username: name, Password: "fixture-pass-9x", Enabled: true}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -50,7 +50,7 @@ func TestAuthTokenEndpointDoesNotRevealUsernameState(t *testing.T) {
 	cases := []struct{ name, user, pass string }{
 		{"unknown user", "nobody", "wrong-password"},
 		{"disabled user wrong password", "gone", "wrong-password"},
-		{"disabled user correct password", "gone", "password123"},
+		{"disabled user correct password", "gone", "fixture-pass-9x"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -72,7 +72,7 @@ func TestAuthTokenEndpointCredentialTokensKeepWorkingAndDisabledOnesAreUniform(t
 	defer cleanup()
 	ctx := context.Background()
 
-	u, err := authService.CreateAdminUser(ctx, adminActor, ports.AdminCreateUserInput{Username: "ci", Password: "password123", Enabled: true, IsAdmin: true})
+	u, err := authService.CreateAdminUser(ctx, adminActor, ports.AdminCreateUserInput{Username: "ci", Password: "fixture-pass-9x", Enabled: true, IsAdmin: true})
 	if err != nil {
 		t.Fatal(err)
 	}

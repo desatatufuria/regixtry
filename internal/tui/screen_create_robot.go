@@ -37,6 +37,9 @@ type createRobotScreen struct {
 
 	done    bool
 	created createdRobot
+	// reveal shows the bare screen with the secret alone on its row; copied
+	// says the c key was pressed (the note it shows holds no secret).
+	reveal, copied bool
 }
 
 type robotField int
@@ -70,7 +73,7 @@ func (s createRobotScreen) generation() uint64 { return s.gen }
 
 func (s createRobotScreen) Keys() screenKeys {
 	if s.done {
-		return createRobotDoneKeys
+		return secretFooterKeys
 	}
 	return createRobotKeys
 }
@@ -125,8 +128,14 @@ func firstText(values ...string) string {
 func (s createRobotScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd, bool) {
 	if s.done {
 		// Enter and Esc both mean Done: back to the list, secret dropped.
-		if isEnterKey(msg) || isEscKey(msg) {
+		switch {
+		case isEnterKey(msg) || isEscKey(msg):
 			return newCreateRobotScreen(), openRobots(s.created.id), true
+		case isCommandRune(msg, 'c'):
+			s.copied = true
+			return s, copySecretCmd(s.created.secret), true
+		case isCommandRune(msg, 'v'):
+			s.reveal = !s.reveal
 		}
 		return s, nil, true
 	}
@@ -250,10 +259,6 @@ var createRobotKeys = screenKeys{short: []key.Binding{
 	key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←→", "role, lifetime")),
 	key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "create")),
 	key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
-}}
-
-var createRobotDoneKeys = screenKeys{short: []key.Binding{
-	key.NewBinding(key.WithKeys("enter", "esc"), key.WithHelp("enter", "done")),
 }}
 
 // createdRobotFrom is what the secret state shows for a created robot.

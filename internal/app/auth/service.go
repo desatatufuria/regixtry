@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -26,13 +27,17 @@ type Service struct {
 	// comparePassword is the bcrypt comparison every password login performs;
 	// a seam so tests can assert each failure path reaches exactly one.
 	comparePassword func(hash, password []byte) error
+	// limiter bounds simultaneous bcrypt comparisons (see ConfigureLogin).
+	limiter *loginLimiter
+	backoff *loginBackoff
+	logger  *log.Logger
 }
 
 // robotRollbackTimeout is the default bound on the robot rollback delete.
 const robotRollbackTimeout = 5 * time.Second
 
 func NewService(store ports.AuthStore) *Service {
-	return &Service{store: store, now: func() time.Time { return time.Now().UTC() }, rollbackTimeout: robotRollbackTimeout, comparePassword: bcrypt.CompareHashAndPassword}
+	return &Service{store: store, now: func() time.Time { return time.Now().UTC() }, rollbackTimeout: robotRollbackTimeout, comparePassword: bcrypt.CompareHashAndPassword, limiter: newLoginLimiter(0, 0), backoff: newLoginBackoff(DefaultBackoffPolicy()), logger: log.Default()}
 }
 
 func (s *Service) EnsureBootstrapAdmin(ctx context.Context) error {
@@ -330,10 +335,35 @@ func (s *Service) DeleteUser(ctx context.Context, actor domainauth.Principal, us
 // response nor infer existence from the response time. The real reason travels
 // only in the error's wrapped cause, for server-side logs.
 func (s *Service) LoginWithPassword(ctx context.Context, username string, password string, requestedScopes []domainauth.Scope) (ports.LoginResult, error) {
-	user, err := s.store.GetUserByUsername(ctx, normalizeUsername(username))
+	// The backoff key is the normalized username alone, decided before any
+	// lookup, so an unknown and an existing account behave identically. A
+	// token-shaped secret (64 hex) is never gated and never counted: a wrong
+	// one must not let a stranger put someone else's account in backoff.
+	key := normalizeUsername(username)
+	accounted := s.backoff.enabled() && !ports.IsCredentialTokenShaped(password)
+	var wouldBlock time.Duration
+	if accounted {
+		if wait := s.backoff.check(key); wait > 0 {
+			if s.backoff.enforcing() {
+				// No log here: the HTTP adapter writes the single "login failed"
+				// line for a refusal, with the client IP.
+				return ports.LoginResult{}, &ports.LoginThrottledError{RetryAfter: wait, Reason: "throttled: account backoff"}
+			}
+			wouldBlock = wait
+		}
+	}
+
+	user, err := s.store.GetUserByUsername(ctx, key)
 	found := err == nil
 	if err != nil && !domainauth.IsCode(err, domainauth.ErrorCodeNotFound) {
 		return ports.LoginResult{}, err
+	}
+	if wouldBlock > 0 {
+		account := "account_hash=" + accountHash(key)
+		if found {
+			account = "account=" + accountLogName(key)
+		}
+		s.logger.Printf("login backoff would have blocked %s retry_after=%s mode=log", account, wouldBlock.Round(time.Second))
 	}
 
 	// design.md Decision 6: a robot never authenticates with a password. Its
@@ -345,17 +375,30 @@ func (s *Service) LoginWithPassword(ctx context.Context, username string, passwo
 	if found && !user.IsRobot {
 		hash = []byte(user.PasswordHash)
 	}
-	passwordMatches := s.comparePassword(hash, []byte(password)) == nil
+	passwordMatches, err := s.compareLimited(ctx, hash, []byte(password))
+	if err != nil {
+		return ports.LoginResult{}, err
+	}
 
+	var failure error
 	switch {
 	case !found:
-		return ports.LoginResult{}, invalidCredentialsBecause("unknown user")
+		failure = invalidCredentialsBecause("unknown user")
 	case !user.Enabled:
-		return ports.LoginResult{}, invalidCredentialsBecause("user is disabled")
+		failure = invalidCredentialsBecause("user is disabled")
 	case user.IsRobot:
-		return ports.LoginResult{}, invalidCredentialsBecause("robot accounts cannot use a password")
+		failure = invalidCredentialsBecause("robot accounts cannot use a password")
 	case !passwordMatches:
-		return ports.LoginResult{}, invalidCredentialsBecause("wrong password")
+		failure = invalidCredentialsBecause("wrong password")
+	}
+	if failure != nil {
+		if accounted {
+			s.backoff.fail(key)
+		}
+		return ports.LoginResult{}, failure
+	}
+	if accounted {
+		s.backoff.success(key)
 	}
 
 	return s.issueAccessToken(ctx, user, requestedScopes)
@@ -1328,6 +1371,9 @@ func normalizeUsername(username string) string {
 func validatePassword(password string) error {
 	if len(strings.TrimSpace(password)) < 8 {
 		return domainauth.NewValidationError("password must be at least 8 characters")
+	}
+	if isCommonPassword(password) {
+		return domainauth.NewValidationError("password is too common; choose a less guessable one")
 	}
 
 	return nil

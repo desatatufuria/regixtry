@@ -202,7 +202,7 @@ func TestCreateRobotIgnoresEnterWhileInFlightAndEscLeavesButTheSecretComesBack(t
 
 func TestCreateRobotShowsTheWholeSecretOnceAndDropsItOnDone(t *testing.T) {
 	t.Parallel()
-	secret := "sk_live_n4TqZ8vKx2mR7wYb3LpJd9HcE5sUa6FgRgx_0123456789abcdefghijklmnopqrstuvwxyzABCDEFGH"
+	secret := "rgx_tst_n4TqZ8vKx2mR7wYb3LpJd9HcE5sUa6FgRgx_0123456789abcdefghijklmnopqrstuvwxyzABCDEFGH"
 	client, env, s := newCreateRobotFixture()
 	client.createRobot = ports.AdminCreatedRobot{
 		Robot:  ports.AdminRobot{ID: "r-7", Username: "release-bot", Repository: "team/api", Role: domainauth.RepoRoleWriter},

@@ -1,0 +1,24 @@
+  Admin › Access › Users › carol                                                                                               signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                      
+                               │  carol                                                                                                               
+    Overview                   │  user, created 3 Mar 2026                                                                                            
+                               │                                                                                                                      
+  ACCESS                       │  ╭──────────────────────────────────────────────────────╮  ╭──────────────────────────────────────────────────────╮  
+    ▸ Users                    │  │ PROFILE                                              │  │ TOKENS                                      t manage │  
+      Robots                   │  │ Username                                       carol │  │ laptop                        █░░░░░░░░░ 4 days left │  
+      Repository access        │  │ Role                                            user │  │ ci-local                     ██████░░░░ 61 days left │  
+                               │  │ Enabled                                  [x] enabled │  │ old-laptop                                   expired │  
+  SECURITY                     │  ╰──────────────────────────────────────────────────────╯  │                                                      │  
+      Image scanning           │  ╭──────────────────────────────────────────────────────╮  ╰──────────────────────────────────────────────────────╯  
+      Secret scanning          │  │ PASSWORD                                             │  ╭──────────────────────────────────────────────────────╮  
+      Signing policy           │  │ Set a new password for carol                 p reset │  │ DANGER AREA                                          │  
+                               │  ╰──────────────────────────────────────────────────────╯  │ Disable carol. They are signed out and their tokens  │  
+  OPERATIONS                   │  ╭──────────────────────────────────────────────────────╮  │ stop working. Their grants stay, so enabling them    │  
+      Scan runs                │  │ REPOSITORY GRANTS                     g grant access │  │ again restores access.                               │  
+      Secret findings          │  │   team/docs                                   Reader │  │ ╭─────────────────╮                                  │  
+      Update channel           │  │ ▸ team/api                                    Writer │  │ │ Disable user  d │                                  │  
+                               │  │ 2 repositories.                                      │  │ ╰─────────────────╯                                  │  
+                               │  ╰──────────────────────────────────────────────────────╯  ╰──────────────────────────────────────────────────────╯  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ↑↓ move   x revoke   g grant access   tab done   esc back   q quit                                                                                  
