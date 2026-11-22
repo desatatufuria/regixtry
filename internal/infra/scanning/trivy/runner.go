@@ -308,3 +308,33 @@ func managedBinaryPath(binaryPath string) (string, error) {
 	}
 	return clean, nil
 }
+
+type trivyDBMetadata struct {
+	Version      int        `json:"Version"`
+	NextUpdate   *time.Time `json:"NextUpdate"`
+	UpdatedAt    *time.Time `json:"UpdatedAt"`
+	DownloadedAt *time.Time `json:"DownloadedAt"`
+}
+
+// ReadDBMetadata reads the vulnerability database metadata from
+// <cache-dir>/db/metadata.json WITHOUT running a scan or touching the
+// network. It errors when the cache directory is unset or the database has
+// not been downloaded yet; callers treat that as unknown and scan.
+func (r *Runner) ReadDBMetadata(_ context.Context, settings ports.ScanSettings) (ports.ScanDBMetadata, error) {
+	cacheDir := strings.TrimSpace(settings.CacheDir)
+	if cacheDir == "" {
+		return ports.ScanDBMetadata{}, fmt.Errorf("trivy cache directory is not configured")
+	}
+	raw, err := os.ReadFile(filepath.Join(cacheDir, "db", "metadata.json"))
+	if err != nil {
+		return ports.ScanDBMetadata{}, fmt.Errorf("read trivy db metadata: %w", err)
+	}
+	var meta trivyDBMetadata
+	if err := json.Unmarshal(raw, &meta); err != nil {
+		return ports.ScanDBMetadata{}, fmt.Errorf("decode trivy db metadata: %w", err)
+	}
+	if meta.UpdatedAt == nil {
+		return ports.ScanDBMetadata{}, fmt.Errorf("trivy db metadata has no UpdatedAt")
+	}
+	return ports.ScanDBMetadata{Version: meta.Version, UpdatedAt: meta.UpdatedAt, NextUpdate: meta.NextUpdate, DownloadedAt: meta.DownloadedAt}, nil
+}

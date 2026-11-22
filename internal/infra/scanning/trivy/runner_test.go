@@ -279,3 +279,31 @@ func containsArgPair(args []string, name string, value string) bool {
 	}
 	return false
 }
+
+func TestRunnerReadDBMetadataReadsCacheMetadataWithoutExec(t *testing.T) {
+	t.Parallel()
+	cacheDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(cacheDir, "db"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cacheDir, "db", "metadata.json"), []byte(`{"Version":2,"NextUpdate":"2026-11-02T00:00:00Z","UpdatedAt":"2026-11-01T00:00:00Z","DownloadedAt":"2026-11-01T06:00:00Z"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runner := New(RunnerConfig{Exec: func(context.Context, string, ...string) ([]byte, error) {
+		t.Fatal("ReadDBMetadata must not execute trivy")
+		return nil, nil
+	}})
+	meta, err := runner.ReadDBMetadata(context.Background(), ports.ScanSettings{CacheDir: cacheDir})
+	if err != nil {
+		t.Fatalf("ReadDBMetadata() error = %v", err)
+	}
+	if meta.Version != 2 || meta.UpdatedAt == nil || meta.UpdatedAt.Format(time.RFC3339) != "2026-11-01T00:00:00Z" || meta.NextUpdate == nil || meta.DownloadedAt == nil {
+		t.Fatalf("meta = %#v, want Version, UpdatedAt, NextUpdate and DownloadedAt", meta)
+	}
+	if _, err := runner.ReadDBMetadata(context.Background(), ports.ScanSettings{CacheDir: t.TempDir()}); err == nil {
+		t.Fatal("ReadDBMetadata() without a downloaded DB must error (unknown, never skip)")
+	}
+	if _, err := runner.ReadDBMetadata(context.Background(), ports.ScanSettings{}); err == nil {
+		t.Fatal("ReadDBMetadata() without a cache dir must error")
+	}
+}
