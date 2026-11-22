@@ -554,42 +554,6 @@ func (s *Store) RevokeTokenByAccessor(ctx context.Context, accessor string, revo
 	return nil
 }
 
-func (s *Store) ResetUserPassword(ctx context.Context, user domainauth.User, revokedAt time.Time) (err error) {
-	user.Username = strings.ToLower(strings.TrimSpace(user.Username))
-	if err = user.Validate(); err != nil {
-		return err
-	}
-
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
-
-	result, err := tx.ExecContext(ctx, `UPDATE auth_users SET password_hash = $2, updated_at = $3 WHERE id = $1`, user.ID, user.PasswordHash, formatTime(user.UpdatedAt))
-	if err != nil {
-		return err
-	}
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if rows == 0 {
-		err = domainauth.NewNotFoundError("user", user.ID)
-		return err
-	}
-	if _, err = tx.ExecContext(ctx, `UPDATE auth_tokens SET revoked_at = $2 WHERE user_id = $1 AND revoked_at IS NULL`, user.ID, formatTime(revokedAt)); err != nil {
-		return err
-	}
-
-	err = tx.Commit()
-	return err
-}
-
 func (s *Store) bootstrap(ctx context.Context) error {
 	return bootstrapSchema(ctx, s.db)
 }
