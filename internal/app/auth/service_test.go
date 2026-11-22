@@ -1327,3 +1327,23 @@ func TestServiceLoginFailuresAreIndistinguishableButKeepAServerSideCause(t *test
 		t.Fatalf("valid login must still work: %v", err)
 	}
 }
+
+func TestServiceResetPasswordRejectsRobotAndKeepsSentinel(t *testing.T) {
+	t.Parallel()
+
+	store := newMemoryAuthStore()
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	robot := domainauth.User{ID: "r1", Username: "robot-ci", PasswordHash: domainauth.RobotPasswordHash, IsRobot: true, Enabled: true, CreatedAt: now, UpdatedAt: now}
+	store.usersByID[robot.ID] = robot
+	store.usersByUsername[robot.Username] = robot
+	service := NewService(store)
+	service.now = func() time.Time { return now }
+
+	err := service.ResetPassword(context.Background(), domainauth.Principal{IsAdmin: true}, robot.ID, "password456")
+	if !domainauth.IsCode(err, domainauth.ErrorCodeValidation) {
+		t.Fatalf("ResetPassword(robot) error = %v, want a validation error", err)
+	}
+	if got := store.usersByID[robot.ID].PasswordHash; got != domainauth.RobotPasswordHash {
+		t.Fatalf("robot password hash = %q, want the unchanged sentinel", got)
+	}
+}

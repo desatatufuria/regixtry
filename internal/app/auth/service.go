@@ -665,10 +665,19 @@ func (s *Service) ResetPassword(ctx context.Context, actor domainauth.Principal,
 	if err != nil {
 		return err
 	}
+	// A robot has no password: LoginWithPassword refuses robots and the
+	// RobotPasswordHash sentinel must never be replaced by a real hash.
+	if user.IsRobot {
+		return domainauth.NewValidationError("target user is a robot account and has no password")
+	}
 	hash, err := hashPassword(newPassword)
 	if err != nil {
 		return err
 	}
+	// Tokens intentionally survive a reset (PAT-like behavior, an explicit
+	// product decision): the reset replaces only the password hash. Admin
+	// credential tokens and access tokens stay valid until they expire or are
+	// revoked individually.
 	user.PasswordHash = hash
 	user.UpdatedAt = s.now()
 	if err := s.store.UpsertUser(ctx, user); err != nil {
