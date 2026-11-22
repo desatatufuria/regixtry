@@ -224,7 +224,7 @@ The detail payload keeps the summary `run` object, a compact ordered `findings` 
 | GET/HEAD | `/v2/<repo>/blobs/uploads/<id>` | Upload state; `204` |
 | PATCH | `/v2/<repo>/blobs/uploads/<id>` | Appends a chunk; `202` |
 | PUT | `/v2/<repo>/blobs/uploads/<id>?digest=sha256:...` | Completes upload and links the blob to `<repo>`; `201` |
-| DELETE | `/v2/<repo>/blobs/uploads/<id>` | Not implemented; `UNSUPPORTED` |
+| DELETE | `/v2/<repo>/blobs/uploads/<id>` | Cancels the upload (session row and temp data); `204`. Needs `push` on the upload's own repository; an upload of another repository is `404` |
 | GET/HEAD | `/v2/<repo>/blobs/<digest>` | Blob; `200`. Served only if `<repo>` holds the blob (uploaded into it or referenced by one of its manifests); otherwise `404 BLOB_UNKNOWN` even if another repository has it |
 | PUT | `/v2/<repo>/manifests/<tag-or-digest>` | Publishes manifest; `201` |
 | GET/HEAD | `/v2/<repo>/manifests/<tag-or-digest>` | Manifest; `200` |
@@ -236,7 +236,9 @@ The detail payload keeps the summary `run` object, a compact ordered `findings` 
 
 `_catalog` and `tags/list` accept `n` and `last`. Without `n`, no limit is applied; a negative or non-numeric `n` is `400`. Registry errors follow `{ "errors": [{"code":"...","message":"..."}] }`.
 
-Both `DELETE` routes are gated by the opt-in `-delete-enabled`/`REGISTRY_DELETE_ENABLED` flag (default `false`). When the flag is off, an otherwise-authorized caller gets `UNSUPPORTED` (`400`), the same acknowledged-but-refused shape `blobs/uploads/<id>` DELETE already uses, never a bare `405`. Deletion requires the distinct `delete` scope action (`repository:<name>:delete`) and never removes blob files on disk.
+Both `DELETE` routes are gated by the opt-in `-delete-enabled`/`REGISTRY_DELETE_ENABLED` flag (default `false`). When the flag is off, an otherwise-authorized caller gets `UNSUPPORTED` (`400`), an acknowledged-but-refused shape rather than a bare `405`. Deletion requires the distinct `delete` scope action (`repository:<name>:delete`) and never removes blob files on disk.
+
+Limits: a manifest `PUT` body above `-max-manifest-bytes` (default 4 MiB) is refused with `413` and OCI code `SIZE_INVALID`; a blob upload whose accumulated size (across all `PATCH`/`PUT` chunks) would exceed `-max-upload-bytes` (default 5 GiB) is refused the same way and keeps its previous size; opening an upload beyond `-max-open-uploads` / `-max-open-uploads-per-repo` is `429` with `TOOMANYREQUESTS`. A `PUT` that commits an upload while a `PATCH` to the same upload is still streaming is `409`. Uploads idle longer than `-upload-ttl` (default 24h) are deleted by a background reaper. See [configuration.md](configuration.md).
 
 Relevant headers: `Docker-Content-Digest`, `Docker-Upload-UUID`, `Location`, `Range`, `Content-Length`, `Content-Type`, `WWW-Authenticate`.
 

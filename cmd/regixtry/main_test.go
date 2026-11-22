@@ -32,6 +32,7 @@ import (
 	metadata "regixtry/internal/infra/metadata/sqlite"
 	"regixtry/internal/infra/storage/fsblob"
 	"regixtry/internal/ports"
+	regixtryhttp "regixtry/internal/protocol/http"
 )
 
 var featureRuntimeFactorySwapMu sync.Mutex
@@ -3373,5 +3374,90 @@ func TestRunTUISnapshotEmitsNoColorEscapesWhenNotATerminal(t *testing.T) {
 	}
 	if strings.Contains(view, "\x1b") {
 		t.Fatalf("stdout contains ANSI escapes when not a terminal: %q", view)
+	}
+}
+
+func clearUploadLimitEnv(t *testing.T) {
+	t.Helper()
+	for _, key := range []string{"REGISTRY_MAX_MANIFEST_BYTES", "REGISTRY_MAX_UPLOAD_BYTES", "REGISTRY_MAX_OPEN_UPLOADS", "REGISTRY_MAX_OPEN_UPLOADS_PER_REPO", "REGISTRY_UPLOAD_TTL"} {
+		t.Setenv(key, "")
+	}
+}
+
+func TestParseServeConfigUploadLimitDefaults(t *testing.T) {
+	clearUploadLimitEnv(t)
+
+	cfg, err := parseServeConfig(nil)
+	if err != nil {
+		t.Fatalf("parseServeConfig() error = %v", err)
+	}
+	if cfg.MaxManifestBytes != regixtryhttp.DefaultMaxManifestBytes || cfg.MaxUploadBytes != fsblob.DefaultMaxUploadSize ||
+		cfg.MaxOpenUploads != appregixtry.DefaultMaxOpenUploads || cfg.MaxOpenUploadsPerRepo != appregixtry.DefaultMaxOpenUploadsPerRepo ||
+		cfg.UploadTTL != appregixtry.DefaultUploadTTL {
+		t.Fatalf("defaults = %+v", cfg)
+	}
+}
+
+func TestParseServeConfigUploadLimitFlagsAndEnv(t *testing.T) {
+	clearUploadLimitEnv(t)
+	t.Setenv("REGISTRY_MAX_UPLOAD_BYTES", "1048576")
+	t.Setenv("REGISTRY_UPLOAD_TTL", "2h")
+
+	cfg, err := parseServeConfig([]string{"-max-manifest-bytes", "-1", "-max-open-uploads", "0", "-max-open-uploads-per-repo", "7"})
+	if err != nil {
+		t.Fatalf("parseServeConfig() error = %v", err)
+	}
+	if cfg.MaxUploadBytes != 1048576 || cfg.UploadTTL != 2*time.Hour {
+		t.Fatalf("env not applied: %+v", cfg)
+	}
+	if cfg.MaxManifestBytes != -1 || cfg.MaxOpenUploads != 0 || cfg.MaxOpenUploadsPerRepo != 7 {
+		t.Fatalf("flags not applied: %+v", cfg)
+	}
+}
+
+func TestParseServeConfigRejectsInvalidUploadLimits(t *testing.T) {
+	tests := []struct {
+		name    string
+		env     map[string]string
+		args    []string
+		wantErr string
+	}{
+		{name: "env size not a number", env: map[string]string{"REGISTRY_MAX_UPLOAD_BYTES": "5GiB"}, wantErr: "REGISTRY_MAX_UPLOAD_BYTES"},
+		{name: "env ttl not a duration", env: map[string]string{"REGISTRY_UPLOAD_TTL": "tomorrow"}, wantErr: "REGISTRY_UPLOAD_TTL"},
+		{name: "env open uploads not a number", env: map[string]string{"REGISTRY_MAX_OPEN_UPLOADS": "many"}, wantErr: "REGISTRY_MAX_OPEN_UPLOADS"},
+		{name: "flag manifest cap not a number", args: []string{"-max-manifest-bytes", "big"}, wantErr: "max-manifest-bytes"},
+		{name: "flag ttl not a duration", args: []string{"-upload-ttl", "soon"}, wantErr: "upload-ttl"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clearUploadLimitEnv(t)
+			for key, value := range tt.env {
+				t.Setenv(key, value)
+			}
+			_, err := parseServeConfig(tt.args)
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("parseServeConfig() error = %v, want it to mention %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestLimitOrDefaultZeroIsDefaultNegativeDisables(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct{ in, want int64 }{{0, 42}, {-1, 0}, {-100, 0}, {7, 7}} {
+		if got := limitOrDefault(tt.in, 42); got != tt.want {
+			t.Fatalf("limitOrDefault(%d, 42) = %d, want %d", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestUploadReapIntervalIsBounded(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct{ ttl, want time.Duration }{{24 * time.Hour, time.Hour}, {2 * time.Hour, 30 * time.Minute}, {time.Second, time.Second}} {
+		if got := uploadReapInterval(tt.ttl); got != tt.want {
+			t.Fatalf("uploadReapInterval(%v) = %v, want %v", tt.ttl, got, tt.want)
+		}
 	}
 }

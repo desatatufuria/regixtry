@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	stdhttp "net/http"
 	"net/url"
@@ -312,6 +313,13 @@ type serveConfig struct {
 	// REGISTRY_DELETE_ENABLED: that flag is metadata-only and never touches
 	// blob files.
 	GCDeleteEnabled bool
+	// Upload and manifest size/concurrency limits. For each, zero means "use
+	// the built-in default" and a negative value disables the limit.
+	MaxManifestBytes      int64
+	MaxUploadBytes        int64
+	MaxOpenUploads        int
+	MaxOpenUploadsPerRepo int
+	UploadTTL             time.Duration
 }
 
 type bootstrapAdminConfig struct {
@@ -415,6 +423,28 @@ func parseServeConfig(args []string) (serveConfig, error) {
 	flags.IntVar(&cfg.TrivyMaxConcurrency, "trivy-max-concurrency", 0, "maximum concurrent trivy runs")
 	flags.BoolVar(&cfg.DeleteEnabled, "delete-enabled", parseBoolEnv("REGISTRY_DELETE_ENABLED", false), "enable DELETE /v2/<name>/manifests/<reference> (manifest and tag deletion)")
 	flags.BoolVar(&cfg.GCDeleteEnabled, "gc-delete-enabled", parseBoolEnv("REGISTRY_GC_DELETE_ENABLED", false), "enable POST /admin/v1/gc/reports/{id}/delete (irreversibly unlinks unreferenced blob files; distinct from -delete-enabled, which is metadata-only)")
+	var limitEnvErr error
+	trackEnv := func(err error) {
+		if limitEnvErr == nil {
+			limitEnvErr = err
+		}
+	}
+	limitInt64 := func(key string, fallback int64) int64 {
+		value, err := strictInt64Env(key, fallback)
+		trackEnv(err)
+		return value
+	}
+	flags.Int64Var(&cfg.MaxManifestBytes, "max-manifest-bytes", limitInt64("REGISTRY_MAX_MANIFEST_BYTES", regixtryhttp.DefaultMaxManifestBytes), "maximum manifest PUT body size in bytes (0 = default, negative disables)")
+	flags.Int64Var(&cfg.MaxUploadBytes, "max-upload-bytes", limitInt64("REGISTRY_MAX_UPLOAD_BYTES", fsblob.DefaultMaxUploadSize), "maximum total size of one blob upload in bytes (0 = default, negative disables)")
+	flags.IntVar(&cfg.MaxOpenUploads, "max-open-uploads", int(limitInt64("REGISTRY_MAX_OPEN_UPLOADS", appregixtry.DefaultMaxOpenUploads)), "maximum concurrently open blob uploads (0 = default, negative disables)")
+	flags.IntVar(&cfg.MaxOpenUploadsPerRepo, "max-open-uploads-per-repo", int(limitInt64("REGISTRY_MAX_OPEN_UPLOADS_PER_REPO", appregixtry.DefaultMaxOpenUploadsPerRepo)), "maximum concurrently open blob uploads per repository (0 = default, negative disables)")
+	uploadTTLDefault, ttlErr := strictDurationEnv("REGISTRY_UPLOAD_TTL", appregixtry.DefaultUploadTTL)
+	trackEnv(ttlErr)
+	flags.DurationVar(&cfg.UploadTTL, "upload-ttl", uploadTTLDefault, "idle time after which an abandoned blob upload is deleted (0 = default, negative disables the reaper)")
+
+	if limitEnvErr != nil {
+		return serveConfig{}, limitEnvErr
+	}
 
 	if err := flags.Parse(args); err != nil {
 		return serveConfig{}, err
@@ -1938,6 +1968,59 @@ func parseDurationEnv(key string, fallback time.Duration) time.Duration {
 	return parsed
 }
 
+// uploadReapInterval runs the reaper often enough that an abandoned upload
+// outlives its TTL by at most a quarter of it, but never more than hourly.
+func uploadReapInterval(ttl time.Duration) time.Duration {
+	interval := ttl / 4
+	if interval > time.Hour {
+		interval = time.Hour
+	}
+	if interval < time.Second {
+		interval = time.Second
+	}
+	return interval
+}
+
+// strictInt64Env reads an integer environment variable; unlike parseIntEnv an
+// invalid value is an error, so a typo in a safety limit is never silently
+// replaced by the default.
+func strictInt64Env(key string, fallback int64) (int64, error) {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s %q: must be an integer", key, value)
+	}
+	return parsed, nil
+}
+
+func strictDurationEnv(key string, fallback time.Duration) (time.Duration, error) {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback, nil
+	}
+	parsed, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s %q: must be a duration such as 24h", key, value)
+	}
+	return parsed, nil
+}
+
+// limitOrDefault resolves a serveConfig limit: zero is "unset" and takes the
+// built-in default, a negative value disables the limit (returned as 0, the
+// "no cap" value the lower layers use).
+func limitOrDefault(value int64, fallback int64) int64 {
+	switch {
+	case value == 0:
+		return fallback
+	case value < 0:
+		return 0
+	}
+	return value
+}
+
 func parseIntEnv(key string, fallback int) int {
 	value := strings.TrimSpace(os.Getenv(key))
 	if value == "" {
@@ -2382,7 +2465,7 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 		return nil, nil, err
 	}
 
-	blobStore, err := fsblob.New(filepath.Join(cfg.StorageRoot, "content"))
+	blobStore, err := fsblob.New(filepath.Join(cfg.StorageRoot, "content"), fsblob.WithMaxUploadSize(limitOrDefault(cfg.MaxUploadBytes, fsblob.DefaultMaxUploadSize)))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -2407,6 +2490,15 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 	service.SetPushScanLimits(parseIntEnv("REGISTRY_PUSH_SCAN_MAX_PENDING", 0), parseIntEnv("REGISTRY_PUSH_SCAN_MAX_PER_REPOSITORY", 0), parseIntEnv("REGISTRY_PUSH_SCAN_MAX_PER_PUSHER", 0))
 	service.SetDeleteEnabled(cfg.DeleteEnabled)
 	service.SetGCDeleteEnabled(cfg.GCDeleteEnabled)
+	service.SetUploadLimits(
+		int(limitOrDefault(int64(cfg.MaxOpenUploads), appregixtry.DefaultMaxOpenUploads)),
+		int(limitOrDefault(int64(cfg.MaxOpenUploadsPerRepo), appregixtry.DefaultMaxOpenUploadsPerRepo)),
+	)
+	uploadTTL := cfg.UploadTTL
+	if uploadTTL == 0 {
+		uploadTTL = appregixtry.DefaultUploadTTL
+	}
+	service.SetUploadTTL(uploadTTL)
 	trivyMaxConcurrency := cfg.TrivyMaxConcurrency
 	if trivyMaxConcurrency <= 0 {
 		trivyMaxConcurrency = 1
@@ -2441,8 +2533,17 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 		defer schedulerDone.Done()
 		_ = scheduler.Run(schedulerCtx)
 	}()
+	if uploadTTL > 0 {
+		schedulerDone.Add(1)
+		go func() {
+			defer schedulerDone.Done()
+			service.RunUploadReaper(schedulerCtx, uploadReapInterval(uploadTTL), func(err error) {
+				log.Printf("upload reaper: %v", err)
+			})
+		}()
+	}
 
-	return regixtryhttp.NewRouter(service, authService), func() {
+	return regixtryhttp.NewRouter(service, authService, regixtryhttp.WithMaxManifestBytes(limitOrDefault(cfg.MaxManifestBytes, regixtryhttp.DefaultMaxManifestBytes))), func() {
 		// Wait for the scheduler goroutine to actually stop before closing the
 		// stores it reads/writes: cancelling schedulerCtx only takes effect
 		// between ticks (scheduler.Run checks ctx.Done() after each tick

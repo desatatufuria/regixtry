@@ -74,7 +74,24 @@ type Service struct {
 	// an undrained goroutine racing a t.TempDir() cleanup is a real hazard,
 	// not merely a hypothetical one.
 	backgroundWork sync.WaitGroup
+	// beginUploadMu makes the open-upload cap check and the insert of the new
+	// upload row one step, so concurrent BeginUpload calls cannot overshoot.
+	beginUploadMu sync.Mutex
+	// maxOpenUploads / maxOpenUploadsPerRepo cap concurrently open uploads
+	// (zero or negative disables a cap); uploadTTL is how long an upload may
+	// sit idle before the reaper deletes it (zero or negative disables the
+	// reaper). See SetUploadLimits / SetUploadTTL.
+	maxOpenUploads        int
+	maxOpenUploadsPerRepo int
+	uploadTTL             time.Duration
 }
+
+// Default upload limits applied by NewService.
+const (
+	DefaultMaxOpenUploads        = 1000
+	DefaultMaxOpenUploadsPerRepo = 200
+	DefaultUploadTTL             = 24 * time.Hour
+)
 
 // UsernameResolver resolves a principal's opaque UserID (auth.User.ID) to
 // their human-readable username, backing TagDetails' PushedBy column
@@ -127,6 +144,10 @@ func NewService(blobStore ports.BlobStore, metadataStore ports.MetadataStore, ac
 		secretScanGate: newScanGate(),
 		pushScans:      newPushScanLimiter(),
 		gcGate:         newScanGate(),
+
+		maxOpenUploads:        DefaultMaxOpenUploads,
+		maxOpenUploadsPerRepo: DefaultMaxOpenUploadsPerRepo,
+		uploadTTL:             DefaultUploadTTL,
 	}
 }
 
@@ -198,6 +219,19 @@ func (s *Service) SetGCDeleteEnabled(enabled bool) {
 	s.gcDeleteEnabled = enabled
 }
 
+// SetUploadLimits caps concurrently open uploads, globally and per repository
+// (zero or negative disables that cap). Call it before serving traffic.
+func (s *Service) SetUploadLimits(maxOpen int, maxOpenPerRepository int) {
+	s.maxOpenUploads = maxOpen
+	s.maxOpenUploadsPerRepo = maxOpenPerRepository
+}
+
+// SetUploadTTL sets how long an upload may sit idle before the reaper deletes
+// it. Zero or negative disables the reaper.
+func (s *Service) SetUploadTTL(ttl time.Duration) {
+	s.uploadTTL = ttl
+}
+
 func (s *Service) Challenge(action ports.Action) ports.Challenge {
 	return s.access.Challenge(action)
 }
@@ -212,16 +246,192 @@ func (s *Service) BeginUpload(ctx context.Context, repositoryName string) (Uploa
 		return UploadDetails{}, err
 	}
 
+	s.beginUploadMu.Lock()
+	defer s.beginUploadMu.Unlock()
+
+	if err := s.checkOpenUploadCaps(ctx, repository); err != nil {
+		return UploadDetails{}, err
+	}
+
 	state, err := s.blobs.BeginUpload(ctx, repository)
 	if err != nil {
 		return UploadDetails{}, err
 	}
 
 	if err := s.metadata.SaveUpload(ctx, s.tenant(ctx), state); err != nil {
+		_ = s.blobs.CancelUpload(ctx, state.ID)
 		return UploadDetails{}, err
 	}
 
 	return newUploadDetails(state), nil
+}
+
+// checkOpenUploadCaps refuses a new upload once the global or per-repository
+// open-upload cap is reached. Callers hold beginUploadMu.
+func (s *Service) checkOpenUploadCaps(ctx context.Context, repository domain.RepositoryRef) error {
+	if s.maxOpenUploads <= 0 && s.maxOpenUploadsPerRepo <= 0 {
+		return nil
+	}
+
+	open, err := s.metadata.ListUploads(ctx, s.tenant(ctx), nil)
+	if err != nil {
+		return err
+	}
+
+	perRepository := 0
+	for _, upload := range open {
+		if upload.Repository.String() == repository.String() {
+			perRepository++
+		}
+	}
+
+	if s.maxOpenUploads > 0 && len(open) >= s.maxOpenUploads {
+		return domain.NewTooManyRequestsError(fmt.Sprintf("too many open uploads (limit %d); finish or cancel some and retry", s.maxOpenUploads))
+	}
+	if s.maxOpenUploadsPerRepo > 0 && perRepository >= s.maxOpenUploadsPerRepo {
+		return domain.NewTooManyRequestsError(fmt.Sprintf("too many open uploads for repository %q (limit %d); finish or cancel some and retry", repository.String(), s.maxOpenUploadsPerRepo))
+	}
+
+	return nil
+}
+
+// CancelUpload deletes an open upload (DELETE /v2/<name>/blobs/uploads/<id>):
+// the session row and the temp data. Like AppendUpload it needs push
+// permission on the upload's own repository, and an upload that belongs to a
+// different repository is reported as not found.
+func (s *Service) CancelUpload(ctx context.Context, repositoryName string, uploadID string) error {
+	state, err := s.ensureUpload(ctx, repositoryName, uploadID)
+	if err != nil {
+		return err
+	}
+
+	if err := s.authorize(ctx, ports.Action{Verb: ports.ActionPush, Repository: state.Repository.String()}); err != nil {
+		return err
+	}
+
+	if err := s.blobs.CancelUpload(ctx, uploadID); err != nil {
+		return err
+	}
+
+	if err := s.metadata.DeleteUpload(ctx, s.tenant(ctx), uploadID); err != nil && !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		return err
+	}
+
+	return nil
+}
+
+// UploadReaper is the optional BlobStore capability the reaper uses to remove
+// an abandoned upload safely: it must skip an upload with a write or commit in
+// flight and one modified after olderThan, and report whether it removed it.
+type UploadReaper interface {
+	ReapUpload(ctx context.Context, uploadID string, olderThan time.Time) (bool, error)
+}
+
+// OrphanUploadReaper is the optional BlobStore capability that removes upload
+// directories with no metadata row (see fsblob.Store.ReapOrphanUploads).
+type OrphanUploadReaper interface {
+	ReapOrphanUploads(ctx context.Context, olderThan time.Time, limit int, hasRow func(ctx context.Context, uploadID string) (bool, error)) (int, error)
+}
+
+// uploadRowChecker is the optional MetadataStore capability to look an upload
+// row up across tenants.
+type uploadRowChecker interface {
+	UploadExists(ctx context.Context, uploadID string) (bool, error)
+}
+
+// maxOrphanReapsPerPass bounds how many orphaned upload directories one reaper
+// pass removes.
+const maxOrphanReapsPerPass = 100
+
+func (s *Service) uploadHasRow(ctx context.Context, uploadID string) (bool, error) {
+	if checker, ok := s.metadata.(uploadRowChecker); ok {
+		return checker.UploadExists(ctx, uploadID)
+	}
+	if _, err := s.metadata.GetUpload(ctx, s.tenant(ctx), uploadID); err != nil {
+		if domain.IsCode(err, domain.ErrorCodeNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+// ReapAbandonedUploads deletes uploads idle for longer than the configured
+// TTL, both the session row and the temp file, and returns how many it
+// removed. It never touches committed blobs, and it skips an upload that has a
+// write or commit in flight. It also removes orphaned upload directories that
+// have no row. Disabled when the TTL is zero or negative.
+func (s *Service) ReapAbandonedUploads(ctx context.Context) (int, error) {
+	if s.uploadTTL <= 0 {
+		return 0, nil
+	}
+
+	tenant := s.tenant(ctx)
+	cutoff := s.now().Add(-s.uploadTTL)
+	uploads, err := s.metadata.ListUploads(ctx, tenant, nil)
+	if err != nil {
+		return 0, err
+	}
+
+	reaper, _ := s.blobs.(UploadReaper)
+	reaped := 0
+	for _, upload := range uploads {
+		if !upload.UpdatedAt.Before(cutoff) {
+			continue
+		}
+
+		if reaper != nil {
+			removed, err := reaper.ReapUpload(ctx, upload.ID, cutoff)
+			if err != nil {
+				return reaped, err
+			}
+			if !removed {
+				continue
+			}
+		} else if err := s.blobs.CancelUpload(ctx, upload.ID); err != nil {
+			return reaped, err
+		}
+
+		if err := s.metadata.DeleteUpload(ctx, tenant, upload.ID); err != nil && !domain.IsCode(err, domain.ErrorCodeNotFound) {
+			return reaped, err
+		}
+		reaped++
+	}
+
+	if orphans, ok := s.blobs.(OrphanUploadReaper); ok {
+		removed, err := orphans.ReapOrphanUploads(ctx, cutoff, maxOrphanReapsPerPass, s.uploadHasRow)
+		reaped += removed
+		if err != nil {
+			return reaped, err
+		}
+	}
+
+	return reaped, nil
+}
+
+// RunUploadReaper reaps abandoned uploads every interval until ctx is
+// cancelled. A failed pass is logged through onError (may be nil) and retried
+// on the next tick.
+func (s *Service) RunUploadReaper(ctx context.Context, interval time.Duration, onError func(error)) {
+	if s.uploadTTL <= 0 {
+		return
+	}
+	if interval <= 0 {
+		interval = time.Hour
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		if _, err := s.ReapAbandonedUploads(ctx); err != nil && ctx.Err() == nil && onError != nil {
+			onError(err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 func (s *Service) AppendUpload(ctx context.Context, repositoryName string, uploadID string, content io.Reader) (UploadDetails, error) {
@@ -283,7 +493,8 @@ func (s *Service) CompleteUpload(ctx context.Context, repositoryName string, upl
 		return BlobDetails{}, err
 	}
 
-	if err := s.metadata.DeleteUpload(ctx, s.tenant(ctx), uploadID); err != nil {
+	// A cancel racing the commit may already have removed the row.
+	if err := s.metadata.DeleteUpload(ctx, s.tenant(ctx), uploadID); err != nil && !domain.IsCode(err, domain.ErrorCodeNotFound) {
 		return BlobDetails{}, err
 	}
 

@@ -31,6 +31,13 @@
 | `-trivy-max-concurrency` | `REGISTRY_TRIVY_MAX_CONCURRENCY` | `1` | Maximum concurrent Trivy runs |
 | `-delete-enabled` | `REGISTRY_DELETE_ENABLED` | `false` | Enable `DELETE /v2/<name>/manifests/<reference>` (manifest and tag deletion) |
 | `-gc-delete-enabled` | `REGISTRY_GC_DELETE_ENABLED` | `false` | Enable `POST /admin/v1/gc/reports/{id}/delete` (irreversibly unlinks unreferenced blob files); distinct from `-delete-enabled`, which is metadata-only and never touches blob files |
+| `-max-manifest-bytes` | `REGISTRY_MAX_MANIFEST_BYTES` | `4194304` (4 MiB) | Maximum manifest `PUT` body; larger is `413` `SIZE_INVALID`. Negative disables |
+| `-max-upload-bytes` | `REGISTRY_MAX_UPLOAD_BYTES` | `5368709120` (5 GiB) | Maximum total size of one blob upload, enforced while streaming; larger is `413` `SIZE_INVALID`. Negative disables |
+| `-max-open-uploads` | `REGISTRY_MAX_OPEN_UPLOADS` | `1000` | Maximum concurrently open blob uploads; more is `429` `TOOMANYREQUESTS`. Negative disables |
+| `-max-open-uploads-per-repo` | `REGISTRY_MAX_OPEN_UPLOADS_PER_REPO` | `200` | Maximum concurrently open blob uploads per repository. Negative disables |
+| `-upload-ttl` | `REGISTRY_UPLOAD_TTL` | `24h` | Idle time after which an abandoned upload (row and temp file) is deleted by a background reaper. Negative disables the reaper |
+
+For the five upload/manifest limits above (`-max-manifest-bytes`, `-max-upload-bytes`, `-max-open-uploads`, `-max-open-uploads-per-repo`, `-upload-ttl`): `0` = use the default, a negative value = disable the limit. A non-numeric environment value is a startup error naming the variable.
 
 Managed scanner runtimes (Trivy, Gitleaks) are installed from GitHub releases. The requested version must be `v1.2.3` or `1.2.3` with an optional `-prerelease` (at most 64 characters); it is validated at the admin API, in the service and again where the release URL is built, and the tag is escaped as one URL path segment. The archive and checksums URLs from the release metadata must be `https` on `github.com`, `api.github.com` or `*.githubusercontent.com`, and redirects are followed only over HTTPS to those hosts or the original host (at most 5). Release metadata and checksums bodies are limited to 1 MiB and archives to 512 MiB. Extraction aborts, removing partial output, beyond 512 MiB for the binary, 1 GiB of decompressed archive data in total or 10000 entries, and replaces (never follows) a pre-existing symlink at the binary path. The archive SHA-256 is checked against the release's checksums file; this does not authenticate the release itself, because both come from the same release (no signature is verified).
 
