@@ -362,7 +362,7 @@ func (s consoleProjectsScreen) View(theme adminTheme, env screenEnv) screenFrame
 			{formatRepositoryLastPushed(p.LastPushed), theme.text},
 		})
 	}
-	status := consoleStatusLine(theme, s.confirm, s.notice, s.noticeFail, min(bodyW, consoleTableMaxWidth))
+	status := consoleStatusLine(theme, s.confirm, s.notice, s.noticeFail, bodyW)
 	body := consoleBody(theme, bodyW, bodyH, "Projects", countOf(len(s.projects), "project", "projects")+", sort: "+s.sortMode.label(), spec, status,
 		"A project is the first path segment of a repository name. Enter shows its repositories. d deletes the whole project.")
 

@@ -3,37 +3,37 @@
 
     Tags                                                                                                                                                                team/api, 5 tags, sort: name
 
-    ╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
-    │   TAG                                                 CREATED           PUSHED BY         SIGNED │
-    │ ────────────────────────────────────────────────────────────  ╭──────────────────────────────────────────────────────────────╮
-    │ ▸ 0.9                                                 2026-1  │  Delete tag v1.2.3-alpine-v1.2.3-alpine-v1.2.3-alpine-       │
-    │   1.0                                                 2026-1  │  v1.2.3-alpine-v1.2.3-alpine-v1.2.3-alpine-v1.2.3-alpine-    │
-    │   latest                                              2026-1  │  v1.2.3-alpine-v1.2.3-alpine-v1.2.3-alpine-v1.2.3-alpine-    │
-    │   v1.2.3-alpine-v1.2.3-alpine-v1.2.3-alpine-v1.2.3-…  2026-1  │  v1.2.3-alpine-                                              │
-    │   日本語のタグ名-とても長いタグの名前-とても長いタ…   2026-1  │                                                              │
-    │                                                               │  The tag is removed from team/api. Its manifest stays,       │
-    │                                                               │  untagged, with the signatures and referrers attached to     │
-    │                                                               │  it.                                                         │
-    │                                                               │                                                              │
-    │                                                               │  ╭────────────────────────────────────────────────────────╮  │
-    │                                                               │  │ team/api:v1.2.3-alpine-v1.2.3-alpine-v1.2.3-alpine-    │  │
-    │                                                               │  │ v1.2.3-alpine-v1.2.3-alpine-v1.2.3-alpine-v1.2.3-      │  │
-    │                                                               │  │ alpine-v1.2.3-alpine-v1.2.3-alpine-v1.2.3-alpine-      │  │
-    │                                                               │  │ v1.2.3-alpine-v1.2.3-alpine-                           │  │
-    │                                                               │  │ pushed 2026-11-21 07:41 by unknown                     │  │
-    │                                                               │  ╰────────────────────────────────────────────────────────╯  │
-    │                                                               │                                                              │
-    │                                                               │  Pulls by this tag stop working; pulls by digest keep        │
-    │                                                               │  working. Its other tags and the blobs stay. This cannot be  │
-    │                                                               │  undone.                                                     │
-    │                                                               │                                                              │
-    │                                                               │   Delete                                         y / enter   │
-    │                                                               │   Cancel                                               esc   │
-    │                                                               ╰──────────────────────────────────────────────────────────────╯
-    │                                                                                                  │
-    │                                                                                                  │
-    │                                                                                                  │
-    ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+    ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+    │   TAG                                                                                                                                             CREATED           PUSHED BY         SIGNED │
+    │ ────────────────────────────────────────────────────────────  ╭──────────────────────────────────────────────────────────────╮  ──────────────────────────────────────────────────────────── │
+    │ ▸ 0.9                                                         │  Delete tag v1.2.3-alpine-v1.2.3-alpine-v1.2.3-alpine-       │                    2026-11-17 08:41  alice             n/a    │
+    │   1.0                                                         │  v1.2.3-alpine-v1.2.3-alpine-v1.2.3-alpine-v1.2.3-alpine-    │                    2026-11-19 08:41  —                 no     │
+    │   latest                                                      │  v1.2.3-alpine-v1.2.3-alpine-v1.2.3-alpine-v1.2.3-alpine-    │                    2026-11-21 08:41  ci                yes    │
+    │   v1.2.3-alpine-v1.2.3-alpine-v1.2.3-alpine-v1.2.3-alpine-v1  │  v1.2.3-alpine-                                              │  v1.2.3-alpine-v…  2026-11-21 07:41  —                 n/a    │
+    │   日本語のタグ名-とても長いタグの名前-とても長いタグの名前-   │                                                              │                    2026-11-21 08:41  ユーザー名の非…   no     │
+    │                                                               │  The tag is removed from team/api. Its manifest stays,       │                                                               │
+    │                                                               │  untagged, with the signatures and referrers attached to     │                                                               │
+    │                                                               │  it.                                                         │                                                               │
+    │                                                               │                                                              │                                                               │
+    │                                                               │  ╭────────────────────────────────────────────────────────╮  │                                                               │
+    │                                                               │  │ team/api:v1.2.3-alpine-v1.2.3-alpine-v1.2.3-alpine-    │  │                                                               │
+    │                                                               │  │ v1.2.3-alpine-v1.2.3-alpine-v1.2.3-alpine-v1.2.3-      │  │                                                               │
+    │                                                               │  │ alpine-v1.2.3-alpine-v1.2.3-alpine-v1.2.3-alpine-      │  │                                                               │
+    │                                                               │  │ v1.2.3-alpine-v1.2.3-alpine-                           │  │                                                               │
+    │                                                               │  │ pushed 2026-11-21 07:41 by —                           │  │                                                               │
+    │                                                               │  ╰────────────────────────────────────────────────────────╯  │                                                               │
+    │                                                               │                                                              │                                                               │
+    │                                                               │  Pulls by this tag stop working; pulls by digest keep        │                                                               │
+    │                                                               │  working. Its other tags and the blobs stay. This cannot be  │                                                               │
+    │                                                               │  undone.                                                     │                                                               │
+    │                                                               │                                                              │                                                               │
+    │                                                               │   Delete                                         y / enter   │                                                               │
+    │                                                               │   Cancel                                               esc   │                                                               │
+    │                                                               ╰──────────────────────────────────────────────────────────────╯                                                               │
+    │                                                                                                                                                                                              │
+    │                                                                                                                                                                                              │
+    │                                                                                                                                                                                              │
+    ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 
     SIGNED: yes = signature verified, no = signing is on but no valid signature, n/a = signing is off.
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

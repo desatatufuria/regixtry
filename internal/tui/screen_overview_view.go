@@ -83,7 +83,7 @@ func renderOverviewCard(theme adminTheme, card overviewCard, width, height int) 
 		Background(lipgloss.Color(paletteBorderStrongHex)).
 		Padding(0, 1).
 		Render(card.key)
-	title := theme.subheading.MaxWidth(max(inner-lipgloss.Width(keycap)-1, 1)).Render(card.title)
+	title := theme.subheading.Render(grantTruncate(card.title, max(inner-lipgloss.Width(keycap)-1, 1)))
 	gap := max(inner-lipgloss.Width(title)-lipgloss.Width(keycap), 1)
 	content := title + strings.Repeat(" ", gap) + keycap + "\n" + theme.muted.Width(inner).Render(card.desc)
 
@@ -222,12 +222,21 @@ func renderAttentionItem(theme adminTheme, item attentionItem, width int, select
 	}
 	width = max(width-attentionMarkerWidth, 1)
 	if hintText == "" {
-		return marker + style.MaxWidth(width).Render(item.text)
+		return marker + style.Render(attentionFit(item, width))
 	}
 	hint := theme.muted.Render(hintText)
-	text := style.MaxWidth(max(width-lipgloss.Width(hint)-2, 1)).Render(item.text)
+	text := style.Render(attentionFit(item, max(width-lipgloss.Width(hint)-2, 1)))
 	gap := max(width-lipgloss.Width(text)-lipgloss.Width(hint), 1)
 	return marker + text + strings.Repeat(" ", gap) + hint
+}
+
+// attentionFit is a row's text in width columns, ending with an ellipsis when
+// it cannot be shortened any other way, never clipped silently.
+func attentionFit(item attentionItem, width int) string {
+	if item.fit != nil {
+		return fitText(item.fit(width), width)
+	}
+	return grantTruncate(item.text, width)
 }
 
 // mostUrgentAttention keeps at most keep items when the panel is too short

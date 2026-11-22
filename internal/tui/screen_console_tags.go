@@ -226,7 +226,7 @@ func tagDetail(tag appregixtry.TagDetails) string {
 // pushed without a username resolver, or a pusher since deleted all have "".
 func tagPushedByLabel(tag appregixtry.TagDetails) string {
 	if strings.TrimSpace(tag.PushedBy) == "" {
-		return "unknown"
+		return "—"
 	}
 	return tag.PushedBy
 }
@@ -300,7 +300,7 @@ func (s consoleTagsScreen) View(theme adminTheme, env screenEnv) screenFrame {
 			{t.Name, theme.text}, {formatTagCreatedAt(t.CreatedAt), theme.text}, {tagPushedByLabel(t), theme.text}, {tagSignedLabel(t), signed},
 		})
 	}
-	status := consoleStatusLine(theme, s.confirm, s.notice, s.noticeFail, min(bodyW, consoleTableMaxWidth))
+	status := consoleStatusLine(theme, s.confirm, s.notice, s.noticeFail, bodyW)
 	body := consoleBody(theme, bodyW, bodyH, "Tags", summary, spec, status,
 		"SIGNED: yes = signature verified, no = signing is on but no valid signature, n/a = signing is off.")
 

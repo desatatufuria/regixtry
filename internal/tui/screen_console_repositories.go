@@ -344,7 +344,7 @@ func (s consoleRepositoriesScreen) View(theme adminTheme, env screenEnv) screenF
 			{r.Name, theme.text}, {strconv.Itoa(r.TagCount), theme.text}, {formatRepositoryLastPushed(r.LastPushed), theme.text},
 		})
 	}
-	status := consoleStatusLine(theme, s.confirm, s.notice, s.noticeFail, min(bodyW, consoleTableMaxWidth))
+	status := consoleStatusLine(theme, s.confirm, s.notice, s.noticeFail, bodyW)
 	body := consoleBody(theme, bodyW, bodyH, "Repositories", summary, spec, status,
 		"Enter shows the tags of the selected repository. d deletes it with all its tags after confirmation.")
 

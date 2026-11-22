@@ -193,9 +193,9 @@ func otherUpdateChannel(current string) string {
 }
 
 var updateChannelKeys = screenKeys{short: []key.Binding{
-	key.NewBinding(key.WithKeys("space"), key.WithHelp("Space", "toggle stable/insider")),
-	key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", "save")),
+	key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "toggle stable/insider")),
+	key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "save")),
 	key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
-	key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "back")),
+	key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
 	key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
 }}

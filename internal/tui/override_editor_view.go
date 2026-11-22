@@ -60,6 +60,9 @@ func (e overrideEditor) formLines(theme adminTheme, inner int) ([]string, int) {
 	at(overrideFieldEnabled)
 	switch e.feature {
 	case signingFeatureName:
+		if !e.exists {
+			body = append(body, securityNote(theme, e.inheritingNote(), inner)...)
+		}
 		body = append(body, securityToggleLine(theme, "Pull-time gate enforced", e.enabled, focused(overrideFieldEnabled)))
 		at(overrideFieldPathPrimary)
 		if focused(overrideFieldPathPrimary) {
@@ -96,4 +99,14 @@ func (e overrideEditor) formLines(theme adminTheme, inner int) ([]string, int) {
 	}
 	body = append(body, style.Render(label))
 	return body, focusLine
+}
+
+// inheritingNote tells what a new signing override starts from: the global
+// keys and identities, copied into the form.
+func (e overrideEditor) inheritingNote() string {
+	text := "Inheriting the global policy: " + countOf(len(e.globalKeys), "key", "keys") + ", " + countOf(len(e.globalIdentities), "identity", "identities") + "."
+	if len(e.globalKeys)+len(e.globalIdentities) > 0 {
+		text += " Both are copied below."
+	}
+	return text
 }

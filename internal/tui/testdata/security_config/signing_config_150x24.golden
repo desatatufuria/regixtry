@@ -8,11 +8,11 @@
       Users                    │  │ Pull-time gate              [x] enforced │  │ FINGERPRINT                                          TYPE        │  
       Robots                   │  │ Unsigned self-read                pusher │  │ 2c1d7289f2db                                         ECDSA P-256 │  
       Repository access        │  │ Enforced: unsigned images cannot be      │  │ aaf7110bc769                                         ECDSA P-256 │  
-                               │  │ pulled. self-read: off, pusher (whoever  │  │ TRUSTED IDENTITIES (KEYLESS)                                     │  
-  SECURITY                     │  │ pushed that digest) or repo_push (anyone │  │ IDENTITY (SAN REGEXP)           OIDC ISSUER                      │  
-      Image scanning           │  │ who can push). p edit policy.            │  │ https://github.com/team/.*      https://token.actions.githubuse… │  
-      Secret scanning          │  │ Last saved 9 Nov 2026 10:14 UTC.         │  │ Any one matching key or identity is enough.                      │  
-    ▸ Signing policy           │  │                                          │  │                                                                  │  
+                               │  │ pulled. self-read: off, pusher (whoever  │  │                                                                  │  
+  SECURITY                     │  │ pushed that digest) or repo_push (anyone │  │ TRUSTED IDENTITIES (KEYLESS)                                     │  
+      Image scanning           │  │ who can push). p edit policy.            │  │ IDENTITY (SAN REGEXP)           OIDC ISSUER                      │  
+      Secret scanning          │  │ Last saved 9 Nov 2026 10:14 UTC.         │  │ https://github.com/team/.*      https://token.actions.githubuse… │  
+    ▸ Signing policy           │  │                                          │  │ Any one matching key or identity is enough.                      │  
                                │  ╰──────────────────────────────────────────╯  ╰──────────────────────────────────────────────────────────────────╯  
   OPERATIONS                   │  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  
       Scan runs                │  │ PER-REPOSITORY OVERRIDES                                                                                       │  

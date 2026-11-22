@@ -77,10 +77,13 @@ type overrideEditor struct {
 	// them (once, after both the override and the global settings arrived, in
 	// either order). Until then, or if they cannot be read, a new override can
 	// neither be edited nor saved.
-	globalEnabled  bool
-	globalKeys     []string
-	globalLoaded   bool
-	prefillApplied bool
+	globalEnabled bool
+	globalKeys    []string
+	// globalIdentities are the keyless identities of the global policy; a new
+	// override starts with them like it does with the keys.
+	globalIdentities []ports.TrustedIdentity
+	globalLoaded     bool
+	prefillApplied   bool
 	// dirty is true once the operator changed anything since the form was
 	// loaded or last reflected the server. A new override is only saved
 	// after a change: opening the editor and pressing Enter must not create
@@ -418,7 +421,7 @@ func (e overrideEditor) applyGlobal(msg overrideGlobalMsg) overrideEditor {
 	if msg.err != nil {
 		return e.applyGlobalFailure(msg)
 	}
-	e.globalEnabled, e.globalKeys, e.globalLoaded = msg.enabled, msg.keys, true
+	e.globalEnabled, e.globalKeys, e.globalIdentities, e.globalLoaded = msg.enabled, msg.keys, msg.identities, true
 	if e.loaded && !e.exists && !e.prefillApplied {
 		e = e.applyGlobalDefaults()
 	}
@@ -439,6 +442,7 @@ func (e overrideEditor) applyGlobalDefaults() overrideEditor {
 	e.enabled = e.globalEnabled
 	if e.feature == signingFeatureName {
 		e.keys = e.keys.SetKeys(e.globalKeys)
+		e.identities = e.identities.SetIdentities(e.globalIdentities)
 	}
 	e.dirty = false
 	return e
