@@ -466,6 +466,16 @@ func (s *Service) executeScanRun(ctx context.Context, tenant string, run ports.S
 	// BEFORE the scan: a file edited mid-scan must not get its new hash
 	// stored against results produced with the old content.
 	preScanHash, preScanHashOK := scanSettingsHash(settings)
+	// The DB metadata is read BEFORE the scan too: it is the DB the scan
+	// uses (a concurrent RefreshDB landing mid-scan must not get its newer
+	// date stamped on a result produced with the older DB: the next trigger
+	// then sees a different DB and rescans).
+	var preScanMeta *ports.ScanDBMetadata
+	if reader, ok := scanRunner.(ports.ScanDBMetadataReader); ok {
+		if meta, merr := reader.ReadDBMetadata(ctx, settings); merr == nil && meta.UpdatedAt != nil {
+			preScanMeta = &meta
+		}
+	}
 	runCtx, cancelRun := context.WithTimeout(ctx, s.scanRunBound(settings.Timeout))
 	result, err := scanRunner.Run(runCtx, target, settings)
 	cancelRun()
@@ -486,20 +496,26 @@ func (s *Service) executeScanRun(ctx context.Context, tenant string, run ports.S
 	run.TrivyVersion = result.TrivyVersion
 	run.DBUpdatedAt = result.DBUpdatedAt
 	run.DBVersion = result.DBFreshness.DBVersion
-	// Real Trivy image reports carry no DB info. The DB the scan used is the
-	// one in the cache AFTER the scan (Trivy refreshes it at scan start), so
-	// the fingerprint takes it from the cache metadata; the report fields are
-	// only a fallback. With neither, the fingerprint stays incomplete and the
-	// next trigger rescans (safe).
-	if reader, ok := scanRunner.(ports.ScanDBMetadataReader); ok {
-		if meta, merr := reader.ReadDBMetadata(ctx, settings); merr == nil && meta.UpdatedAt != nil {
-			run.DBVersion = meta.Version
-			run.DBUpdatedAt = meta.UpdatedAt
-			result.DBFreshness.DBVersion = meta.Version
-			result.DBFreshness.DBUpdatedAt = meta.UpdatedAt
-			result.DBFreshness.DBDownloadedAt = firstTime(meta.DownloadedAt, result.DBFreshness.DBDownloadedAt)
-			result.DBFreshness.DBNextUpdateAt = firstTime(meta.NextUpdate, result.DBFreshness.DBNextUpdateAt)
+	// Real Trivy image reports carry no DB info, so the fingerprint takes it
+	// from the cache metadata read BEFORE the scan. Only when the cache had
+	// no DB yet (the scan downloads it) is it read after the scan; the report
+	// fields are the last fallback. With none, the fingerprint stays
+	// incomplete and the next trigger rescans (safe).
+	meta, haveMeta := ports.ScanDBMetadata{}, false
+	if preScanMeta != nil {
+		meta, haveMeta = *preScanMeta, true
+	} else if reader, ok := scanRunner.(ports.ScanDBMetadataReader); ok {
+		if m, merr := reader.ReadDBMetadata(ctx, settings); merr == nil && m.UpdatedAt != nil {
+			meta, haveMeta = m, true
 		}
+	}
+	if haveMeta {
+		run.DBVersion = meta.Version
+		run.DBUpdatedAt = meta.UpdatedAt
+		result.DBFreshness.DBVersion = meta.Version
+		result.DBFreshness.DBUpdatedAt = meta.UpdatedAt
+		result.DBFreshness.DBDownloadedAt = firstTime(meta.DownloadedAt, result.DBFreshness.DBDownloadedAt)
+		result.DBFreshness.DBNextUpdateAt = firstTime(meta.NextUpdate, result.DBFreshness.DBNextUpdateAt)
 	}
 	// An unreadable configured file leaves the hash empty so the result
 	// never matches a later fingerprint.

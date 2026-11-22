@@ -26,6 +26,9 @@ type fingerprintRunner struct {
 	nextUpdate *time.Time
 	scanErr    error
 	release    chan struct{}
+	// midScan runs inside Run, after the scan's DB was fixed: it simulates a
+	// concurrent RefreshDB landing while the scan is in flight.
+	midScan func(f *fingerprintRunner)
 }
 
 func newFingerprintRunner() *fingerprintRunner {
@@ -35,8 +38,11 @@ func newFingerprintRunner() *fingerprintRunner {
 func (f *fingerprintRunner) Run(ctx context.Context, _ string, _ ports.ScanSettings) (ports.ScanResult, error) {
 	f.mu.Lock()
 	f.calls++
-	updated, dbVersion, version, scanErr, release := f.dbUpdated, f.dbVersion, f.version, f.scanErr, f.release
+	updated, dbVersion, version, scanErr, release, midScan := f.dbUpdated, f.dbVersion, f.version, f.scanErr, f.release, f.midScan
 	f.mu.Unlock()
+	if midScan != nil {
+		midScan(f)
+	}
 	if release != nil {
 		select {
 		case <-release:
@@ -448,4 +454,30 @@ func TestPushAfterTheDBNextUpdateElapsedRescansInsteadOfTrustingCachedMetadata(t
 	clock = start.Add(60 * 24 * time.Hour) // far past NextUpdate
 	publishAndWait(t, service, "library/alpine", "v1-third", "layer-stale")
 	waitUntil(t, "rescan after NextUpdate elapsed", func() bool { return runner.callCount() == 2 })
+}
+
+// The run is stamped with the DB the scan actually used (read before it
+// started). A refresh landing mid-scan must make the next push see a
+// different DB and rescan, never match a stamp taken after the refresh.
+func TestRefreshDuringAScanDoesNotLeaveTheNewDBStampedOnTheOldResult(t *testing.T) {
+	service, runner, cleanup := newLatestOnlyService(t)
+	defer cleanup()
+	old := runner.dbUpdated
+	refreshed := old.Add(24 * time.Hour)
+	runner.set(func(f *fingerprintRunner) {
+		f.midScan = func(f *fingerprintRunner) {
+			f.mu.Lock()
+			f.dbUpdated = refreshed
+			f.midScan = nil
+			f.mu.Unlock()
+		}
+	})
+
+	publishAndWait(t, service, "library/alpine", "v1", "layer-mid")
+	first := waitForCompletedRuns(t, service, "library/alpine", 1, runner)
+	if first.DBUpdatedAt == nil || !first.DBUpdatedAt.Equal(old) {
+		t.Fatalf("stamped DB = %v, want the DB the scan started with (%v)", first.DBUpdatedAt, old)
+	}
+	publishAndWait(t, service, "library/alpine", "v1-again", "layer-mid")
+	waitUntil(t, "rescan with the refreshed DB", func() bool { return runner.callCount() == 2 })
 }
