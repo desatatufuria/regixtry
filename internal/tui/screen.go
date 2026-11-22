@@ -172,8 +172,7 @@ type adminScreenSet [numScreenSlots]adminScreen
 
 // slotFor resolves a screen id to its migrated slot, if any (design.md
 // Decision I / the Phase 11 resolved-gap addendum). Trivy/Gitleaks/Signing
-// each have their own peer screen(s), all addressed here. Every other screen
-// id updateAdminKey resolves still falls through to legacyScreenHandlers.
+// each have their own peer screen(s), all addressed here.
 func slotFor(id screen) (screenSlot, bool) {
 	switch id {
 	case screenSecurityTrivy:
