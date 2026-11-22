@@ -1097,6 +1097,7 @@ func decodeAdminCreateRobotInput(req *stdhttp.Request) (ports.AdminCreateRobotIn
 	var payload struct {
 		Name       string              `json:"name"`
 		Repository string              `json:"repository"`
+		Project    string              `json:"project"`
 		Role       domainauth.RepoRole `json:"role"`
 		TTL        json.RawMessage     `json:"ttl"`
 		TTLSeconds *int64              `json:"ttl_seconds"`
@@ -1109,7 +1110,7 @@ func decodeAdminCreateRobotInput(req *stdhttp.Request) (ports.AdminCreateRobotIn
 		return ports.AdminCreateRobotInput{}, err
 	}
 
-	input := ports.AdminCreateRobotInput{Name: payload.Name, Repository: payload.Repository, Role: payload.Role}
+	input := ports.AdminCreateRobotInput{Name: payload.Name, Repository: payload.Repository, Project: payload.Project, Role: payload.Role}
 	input.TTL = ttl
 
 	return input, nil
