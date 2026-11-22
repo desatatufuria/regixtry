@@ -37,6 +37,8 @@
 | `-max-open-uploads-per-repo` | `REGISTRY_MAX_OPEN_UPLOADS_PER_REPO` | `200` | Maximum concurrently open blob uploads per repository. Negative disables |
 | `-upload-ttl` | `REGISTRY_UPLOAD_TTL` | `24h` | Idle time after which an abandoned upload (row and temp file) is deleted by a background reaper. Negative disables the reaper |
 
+For the five upload/manifest limits above (`-max-manifest-bytes`, `-max-upload-bytes`, `-max-open-uploads`, `-max-open-uploads-per-repo`, `-upload-ttl`): `0` = use the default, a negative value = disable the limit. A non-numeric environment value is a startup error naming the variable.
+
 Implementation: `cmd/regixtry/main.go` (`parseServeConfig`, `normalizeRuntimeConfig`).
 
 `-public-url` must be absolute, use HTTP or HTTPS, and contain no query or fragment. Certificate and key must be provided together. An `http` public URL cannot be combined with direct TLS. An `https` public URL can represent either direct TLS or a reverse proxy.

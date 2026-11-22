@@ -24,10 +24,13 @@ const DefaultMaxUploadSize int64 = 5 << 30
 type Store struct {
 	rootDir       string
 	maxUploadSize int64
-	// linkFile publishes an upload into the content store without replacing
-	// an existing blob. It is os.Link; tests inject failures to exercise the
-	// copy fallback.
-	linkFile func(oldPath string, newPath string) error
+	// renameFile moves a verified upload file into the content store. It is
+	// os.Rename; tests inject failures (EXDEV, ...) to exercise the copy
+	// fallback.
+	renameFile func(oldPath string, newPath string) error
+	// publishMu serializes "is the blob already there? else rename" across
+	// uploads of the same content so a published blob is never replaced.
+	publishMu sync.Mutex
 	// uploads holds one *uploadEntry per upload that has been touched by this
 	// process. The entry serializes every writer of that upload against
 	// CommitUpload so no write descriptor can outlive the digest check.
@@ -53,7 +56,7 @@ func WithMaxUploadSize(bytes int64) Option {
 }
 
 func New(rootDir string, options ...Option) (*Store, error) {
-	store := &Store{rootDir: rootDir, maxUploadSize: DefaultMaxUploadSize, linkFile: os.Link}
+	store := &Store{rootDir: rootDir, maxUploadSize: DefaultMaxUploadSize, renameFile: os.Rename}
 	for _, option := range options {
 		if option != nil {
 			option(store)
@@ -135,11 +138,17 @@ func (s *Store) uploadEntry(uploadID string) *uploadEntry {
 	return entry.(*uploadEntry)
 }
 
-// retire marks the entry closed and forgets it. Closing first means a writer
-// that already holds the pointer can never write after retirement.
-func (s *Store) retire(uploadID string, entry *uploadEntry) {
+// close marks the entry closed, permanently: writers that hold or later
+// obtain the entry see it and stop. The entry stays in the map (a tombstone)
+// until forget, which callers run only AFTER the upload directory is gone, so
+// a writer arriving in between cannot get a fresh entry and reopen the file.
+func (entry *uploadEntry) close() {
 	entry.closed.Store(true)
-	s.uploads.Delete(uploadID)
+}
+
+// forget drops the tombstone once the upload's files are removed.
+func (s *Store) forget(uploadID string, entry *uploadEntry) {
+	s.uploads.CompareAndDelete(uploadID, entry)
 }
 
 // abortableReader stops a body copy as soon as the upload is retired, so a
@@ -222,10 +231,18 @@ func (s *Store) PutUploadChunk(ctx context.Context, uploadID string, content io.
 }
 
 // CommitUpload verifies the upload's digest and publishes it as an immutable
-// blob. It refuses (conflict) while a write to the same upload is in flight,
-// holds the upload's lock for the whole operation so no writer can reopen the
-// file, makes the file read-only before hashing it, and links it into the
-// content-addressed tree without ever replacing an existing blob.
+// blob. It refuses (conflict) while a write to the same upload is in flight
+// and holds the upload's lock for the whole operation, so no writer holds or
+// can open the file while it is hashed and published.
+//
+// The verified file is RENAMED into the content store (not hard-linked): the
+// upload directory is left with no path to the blob's inode, so even a server
+// running as root, for which 0444 means nothing, cannot have a late writer
+// reach a committed blob. The entry stays a closed tombstone until the upload
+// directory is gone. An existing blob is never replaced: when the digest is
+// already stored the upload is simply discarded. If rename is not possible
+// (EXDEV, ...) a verified O_EXCL copy is published instead. The upload keeps
+// its writable mode, and stays usable, on every failure before publication.
 func (s *Store) CommitUpload(_ context.Context, uploadID string, expected domain.Digest) (domain.Descriptor, error) {
 	if err := expected.Validate(); err != nil {
 		return domain.Descriptor{}, err
@@ -240,31 +257,30 @@ func (s *Store) CommitUpload(_ context.Context, uploadID string, expected domain
 		return domain.Descriptor{}, domain.NewNotFoundError("upload", uploadID)
 	}
 
-	uploadPath := s.uploadFile(uploadID)
-	// No descriptor opened for writing exists past this point (writers are
-	// serialized by the lock above); dropping the write bits also makes any
-	// later open for writing fail.
-	if err := os.Chmod(uploadPath, 0o444); err != nil {
-		if os.IsNotExist(err) {
-			s.retire(uploadID, entry)
-			return domain.Descriptor{}, domain.NewNotFoundError("upload", uploadID)
+	// A cancel or reap racing this commit removes the upload underneath it:
+	// that is "upload gone" (404), never an internal error.
+	gone := func(err error) error {
+		if os.IsNotExist(err) || entry.closed.Load() {
+			return domain.NewNotFoundError("upload", uploadID)
 		}
-		return domain.Descriptor{}, err
+		return err
 	}
 
+	uploadPath := s.uploadFile(uploadID)
 	file, err := os.Open(uploadPath)
 	if err != nil {
-		return domain.Descriptor{}, err
+		if os.IsNotExist(err) {
+			s.forget(uploadID, entry)
+		}
+		return domain.Descriptor{}, gone(err)
 	}
 	actual, size, err := domain.DigestFromReader(file)
 	_ = file.Close()
 	if err != nil {
-		return domain.Descriptor{}, err
+		return domain.Descriptor{}, gone(err)
 	}
 
 	if actual != expected {
-		// The upload stays open for more data; restore append access.
-		_ = os.Chmod(uploadPath, 0o644)
 		return domain.Descriptor{}, domain.NewDigestMismatchError(expected, actual)
 	}
 
@@ -273,25 +289,45 @@ func (s *Store) CommitUpload(_ context.Context, uploadID string, expected domain
 		return domain.Descriptor{}, err
 	}
 
-	// Hard-link instead of rename: link never replaces an existing blob
-	// (EEXIST), so a committed blob's inode is only ever created here. When
-	// the filesystem cannot hard-link (EXDEV, EPERM, ENOTSUP, some network or
-	// overlay mounts) fall back to a verified copy.
-	if err := s.linkFile(uploadPath, finalPath); err != nil && !os.IsExist(err) {
-		if err := s.copyIntoStore(uploadPath, finalPath, actual); err != nil {
-			return domain.Descriptor{}, err
-		}
+	if err := s.publish(uploadPath, finalPath, actual); err != nil {
+		return domain.Descriptor{}, gone(err)
 	}
 
-	s.retire(uploadID, entry)
-	if err := os.RemoveAll(s.uploadDir(uploadID)); err != nil {
+	// Published. Close the entry, remove the directory, and only then forget
+	// the tombstone.
+	entry.close()
+	err = os.RemoveAll(s.uploadDir(uploadID))
+	s.forget(uploadID, entry)
+	if err != nil {
 		return domain.Descriptor{}, err
 	}
 
 	return domain.Descriptor{Digest: actual, Size: size}, nil
 }
 
-// copyIntoStore is the link(2) fallback: copy the verified upload into an
+// publish moves the verified upload file to finalPath without ever replacing
+// an existing blob, and leaves the blob read-only.
+func (s *Store) publish(uploadPath string, finalPath string, expected domain.Digest) error {
+	s.publishMu.Lock()
+	defer s.publishMu.Unlock()
+
+	if _, err := os.Lstat(finalPath); err == nil {
+		// Same digest already stored: keep that blob, discard this upload.
+		return nil
+	}
+
+	if err := s.renameFile(uploadPath, finalPath); err != nil {
+		if os.IsNotExist(err) {
+			return err
+		}
+		return s.copyIntoStore(uploadPath, finalPath, expected)
+	}
+	// Best effort: a failure here leaves a correct blob, merely not read-only.
+	_ = os.Chmod(finalPath, 0o444)
+	return nil
+}
+
+// copyIntoStore is the rename fallback (callers hold publishMu): copy the verified upload into an
 // O_EXCL temp file next to the final path, fsync it, re-verify the digest of
 // what actually reached the disk, make it read-only, and rename it into place
 // unless a blob already occupies the final path (which is kept). The temp file
@@ -355,10 +391,14 @@ func (s *Store) copyIntoStore(uploadPath string, finalPath string, expected doma
 }
 
 func (s *Store) CancelUpload(_ context.Context, uploadID string) error {
-	// Retire first, without waiting for the lock: a writer in the middle of a
-	// slow body stops at its next read instead of blocking the cancel.
-	s.retire(uploadID, s.uploadEntry(uploadID))
-	return os.RemoveAll(s.uploadDir(uploadID))
+	// Close first, without waiting for the lock: a writer in the middle of a
+	// slow body stops at its next read instead of blocking the cancel. The
+	// tombstone stays until the directory is gone.
+	entry := s.uploadEntry(uploadID)
+	entry.close()
+	err := os.RemoveAll(s.uploadDir(uploadID))
+	s.forget(uploadID, entry)
+	return err
 }
 
 // ReapUpload removes an abandoned upload only if no write or commit is in
@@ -381,8 +421,10 @@ func (s *Store) ReapUpload(_ context.Context, uploadID string, olderThan time.Ti
 		return false, nil
 	}
 
-	s.retire(uploadID, entry)
-	if err := os.RemoveAll(s.uploadDir(uploadID)); err != nil {
+	entry.close()
+	err = os.RemoveAll(s.uploadDir(uploadID))
+	s.forget(uploadID, entry)
+	if err != nil {
 		return false, err
 	}
 	return true, nil
@@ -652,9 +694,11 @@ func (s *Store) ReapOrphanUploads(ctx context.Context, olderThan time.Time, limi
 			}
 			continue
 		}
-		s.retire(name, fresh)
+		fresh.close()
+		err = os.RemoveAll(dir)
+		s.forget(name, fresh)
 		fresh.mu.Unlock()
-		if err := os.RemoveAll(dir); err != nil {
+		if err != nil {
 			return reaped, err
 		}
 		reaped++

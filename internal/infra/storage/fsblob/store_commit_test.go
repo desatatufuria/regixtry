@@ -367,7 +367,7 @@ func TestCommitFallsBackToVerifiedCopyWhenLinkFails(t *testing.T) {
 		t.Run(linkErr.Error(), func(t *testing.T) {
 			t.Parallel()
 			store := newTestStore(t)
-			store.linkFile = func(string, string) error { return &os.LinkError{Op: "link", Err: linkErr} }
+			store.renameFile = func(string, string) error { return &os.LinkError{Op: "rename", Err: linkErr} }
 
 			upload := beginUpload(t, store)
 			payload := []byte("copied-into-the-store")
@@ -418,7 +418,7 @@ func TestCommitFallbackNeverReplacesAnExistingBlobAndLeavesNoTempFile(t *testing
 
 	// The link now fails with something other than EEXIST: the copy path must
 	// notice the occupied final path and keep the existing blob.
-	store.linkFile = func(string, string) error { return syscall.EXDEV }
+	store.renameFile = func(string, string) error { return syscall.EXDEV }
 	second := beginUpload(t, store)
 	if _, err := store.PutUploadChunk(context.Background(), second.ID, strings.NewReader(string(payload))); err != nil {
 		t.Fatalf("PutUploadChunk() error = %v", err)

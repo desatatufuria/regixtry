@@ -475,7 +475,8 @@ func (s *Service) CompleteUpload(ctx context.Context, repositoryName string, upl
 		return BlobDetails{}, err
 	}
 
-	if err := s.metadata.DeleteUpload(ctx, s.tenant(ctx), uploadID); err != nil {
+	// A cancel racing the commit may already have removed the row.
+	if err := s.metadata.DeleteUpload(ctx, s.tenant(ctx), uploadID); err != nil && !domain.IsCode(err, domain.ErrorCodeNotFound) {
 		return BlobDetails{}, err
 	}
 
