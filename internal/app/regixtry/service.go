@@ -314,24 +314,6 @@ func (s *Service) PublishManifest(ctx context.Context, repositoryName string, re
 		manifest.PushedBy = principal.UserID
 	}
 
-	for _, descriptor := range manifest.BlobReferences() {
-		exists, err := s.blobs.BlobExists(ctx, descriptor.Digest)
-		if err != nil {
-			return ManifestDetails{}, err
-		}
-		if exists {
-			// A blob that exists only for another repository is "missing"
-			// here: the answer must not reveal it exists elsewhere.
-			exists, err = s.metadata.IsBlobLinked(ctx, s.tenant(ctx), repository, descriptor.Digest)
-			if err != nil {
-				return ManifestDetails{}, err
-			}
-		}
-		if !exists {
-			return ManifestDetails{}, domain.NewConflictError(fmt.Sprintf("manifest references missing blob %s", descriptor.Digest))
-		}
-	}
-
 	// Subject (OCI 1.1) points at another manifest by digest -- e.g. what
 	// `cosign sign` pushes when signing an image -- so it is validated
 	// against manifest storage, never blob storage, and kept entirely out of
@@ -345,7 +327,11 @@ func (s *Service) PublishManifest(ctx context.Context, repositoryName string, re
 		}
 	}
 
-	if err := s.metadata.PublishManifest(ctx, s.tenant(ctx), repository, tag, manifest, manifest.BlobReferences()); err != nil {
+	// Blob existence and repository links are verified by the store inside
+	// the same write transaction that records the manifest, so blob GC
+	// (ReclaimBlob, same write queue) cannot remove a blob between the check
+	// and the publish.
+	if err := s.metadata.PublishManifestVerified(ctx, s.tenant(ctx), repository, tag, manifest, manifest.BlobReferences(), s.blobs.BlobExists); err != nil {
 		return ManifestDetails{}, err
 	}
 

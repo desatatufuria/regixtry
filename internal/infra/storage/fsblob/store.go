@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	domain "regixtry/internal/domain/regixtry"
@@ -17,6 +18,11 @@ import (
 
 type Store struct {
 	rootDir string
+
+	// blobMu makes "touch + rename a blob into place" (CommitUpload) and
+	// "check age + unlink a blob" (DeleteBlobIfOlderThan) mutually exclusive,
+	// so GC can never remove a file that was just (re)committed.
+	blobMu sync.Mutex
 }
 
 func New(rootDir string) (*Store, error) {
@@ -147,13 +153,22 @@ func (s *Store) CommitUpload(_ context.Context, uploadID string, expected domain
 		return domain.Descriptor{}, err
 	}
 
+	// Committing refreshes the blob's age: a blob whose upload sat idle for
+	// longer than the GC grace window is still a fresh commit, and the
+	// rename carries the refreshed mtime into place atomically.
+	s.blobMu.Lock()
+	now := time.Now()
+	_ = os.Chtimes(uploadPath, now, now)
 	if err := os.Rename(uploadPath, finalPath); err != nil {
 		if !os.IsExist(err) {
 			if _, statErr := os.Stat(finalPath); statErr != nil {
+				s.blobMu.Unlock()
 				return domain.Descriptor{}, err
 			}
 		}
+		_ = os.Chtimes(finalPath, now, now)
 	}
+	s.blobMu.Unlock()
 
 	if err := os.RemoveAll(s.uploadDir(uploadID)); err != nil {
 		return domain.Descriptor{}, err
@@ -284,6 +299,39 @@ func (s *Store) DeleteBlob(_ context.Context, digest domain.Digest) (bool, error
 	}
 
 	return true, nil
+}
+
+// DeleteBlobIfOlderThan unlinks the blob only when its mtime is before cutoff.
+// The stat and the remove run under blobMu, which CommitUpload also holds
+// while it renames a blob into place and refreshes its mtime.
+func (s *Store) DeleteBlobIfOlderThan(_ context.Context, digest domain.Digest, cutoff time.Time) (ports.BlobReclaimOutcome, error) {
+	if err := digest.Validate(); err != nil {
+		return ports.BlobReclaimMissing, err
+	}
+
+	s.blobMu.Lock()
+	defer s.blobMu.Unlock()
+
+	path := s.blobPath(digest)
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return ports.BlobReclaimMissing, nil
+		}
+		return ports.BlobReclaimMissing, err
+	}
+	if !info.ModTime().Before(cutoff) {
+		return ports.BlobReclaimTooRecent, nil
+	}
+
+	if err := os.Remove(path); err != nil {
+		if os.IsNotExist(err) {
+			return ports.BlobReclaimMissing, nil
+		}
+		return ports.BlobReclaimMissing, err
+	}
+
+	return ports.BlobReclaimRemoved, nil
 }
 
 func (s *Store) blobsRoot() string {

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	domain "regixtry/internal/domain/regixtry"
 	"regixtry/internal/ports"
@@ -51,6 +52,10 @@ func (f *fakeBlobStore) ListBlobs(context.Context) ([]ports.BlobFileInfo, error)
 
 func (f *fakeBlobStore) DeleteBlob(context.Context, domain.Digest) (bool, error) {
 	return false, fmt.Errorf("DeleteBlob not implemented in fakeBlobStore")
+}
+
+func (f *fakeBlobStore) DeleteBlobIfOlderThan(context.Context, domain.Digest, time.Time) (ports.BlobReclaimOutcome, error) {
+	return ports.BlobReclaimMissing, fmt.Errorf("DeleteBlobIfOlderThan not implemented in fakeBlobStore")
 }
 
 func (f *fakeBlobStore) OpenBlob(_ context.Context, digest domain.Digest) (io.ReadSeekCloser, domain.Descriptor, error) {
