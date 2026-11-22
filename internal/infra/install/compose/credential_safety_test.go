@@ -2,6 +2,7 @@ package compose
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -197,5 +198,50 @@ func TestWriteOwnerOnlyFileTightensWiderExistingFile(t *testing.T) {
 	info, err := os.Stat(path)
 	if err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("mode = %v, err = %v, want 0600", info.Mode().Perm(), err)
+	}
+}
+
+func TestWriteOwnerOnlyFileFailureKeepsOldFileAndLeavesNoTemp(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "regixtry.env")
+	if err := os.WriteFile(path, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	previous := renameFile
+	renameFile = func(string, string) error { return errors.New("injected rename failure") }
+	defer func() { renameFile = previous }()
+
+	if err := writeOwnerOnlyFile(path, []byte("new")); err == nil {
+		t.Fatal("writeOwnerOnlyFile() error = nil, want injected failure")
+	}
+	body, err := os.ReadFile(path)
+	if err != nil || string(body) != "old" {
+		t.Fatalf("old env file = %q, %v, want intact", body, err)
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 1 {
+		t.Fatalf("dir entries = %d, want only the original file (temp removed)", len(entries))
+	}
+}
+
+func TestWriteOwnerOnlyFileReplacesSymlinkInsteadOfFollowing(t *testing.T) {
+	dir := t.TempDir()
+	victim := filepath.Join(dir, "victim")
+	if err := os.WriteFile(victim, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "regixtry.env")
+	if err := os.Symlink(victim, path); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeOwnerOnlyFile(path, []byte("secret")); err != nil {
+		t.Fatal(err)
+	}
+	if body, _ := os.ReadFile(victim); string(body) != "keep" {
+		t.Fatalf("symlink target modified: %q", body)
+	}
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o600 {
+		t.Fatalf("env path = %v, %v, want regular 0600 file", info.Mode(), err)
 	}
 }
