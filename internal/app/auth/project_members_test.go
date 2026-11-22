@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"testing"
 
@@ -157,5 +158,27 @@ func TestAdminListWrappersMatchTheServiceMethods(t *testing.T) {
 	grants, err := env.service.ListAdminUserProjectGrants(ctx, env.admin, "id-ana")
 	if err != nil || len(grants) != 1 || grants[0].Project != "odabank" || grants[0].Role != domainauth.RepoRoleWriter {
 		t.Fatalf("grants = %#v, %v", grants, err)
+	}
+}
+
+func TestListProjectMembersRejectsCraftedCursors(t *testing.T) {
+	t.Parallel()
+	env := newProjectEnv(t, "odabank")
+	ctx := context.Background()
+
+	for name, raw := range map[string]string{
+		"NUL byte":       "id\x00x",
+		"only NUL":       "\x00",
+		"invalid UTF-8":  "id-\xff\xfe",
+		"truncated rune": "id-\xe2\x82",
+	} {
+		cursor := base64.RawURLEncoding.EncodeToString([]byte(raw))
+		if _, err := env.service.ListProjectMembers(ctx, env.admin, "odabank", 10, cursor); !domainauth.IsCode(err, domainauth.ErrorCodeValidation) {
+			t.Errorf("%s: error = %v, want validation", name, err)
+		}
+	}
+	good := base64.RawURLEncoding.EncodeToString([]byte("id-zzz"))
+	if _, err := env.service.ListProjectMembers(ctx, env.admin, "odabank", 10, good); err != nil {
+		t.Fatalf("a well-formed cursor error = %v", err)
 	}
 }

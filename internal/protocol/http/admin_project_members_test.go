@@ -2,6 +2,7 @@ package regixtryhttp
 
 import (
 	"context"
+	"encoding/base64"
 	"net/http"
 	"net/url"
 	"strings"
@@ -294,5 +295,17 @@ func TestProjectGrantWireFlow(t *testing.T) {
 	}
 	if _, scope := exchange("repository:odabank/payments/strike:push,pull"); scope != "" {
 		t.Fatalf("scope after revoke = %q, want nothing", scope)
+	}
+}
+
+func TestAdminProjectMembersCraftedCursorIs422(t *testing.T) {
+	t.Parallel()
+	env := newProjectsHTTP(t, true)
+	env.createProject("odabank")
+	for _, raw := range []string{"id\x00x", "id-\xff"} {
+		cursor := base64.RawURLEncoding.EncodeToString([]byte(raw))
+		if rec := env.do(http.MethodGet, "/admin/v1/projects/odabank/members?after="+cursor, env.adminToken, ""); rec.Code != http.StatusUnprocessableEntity {
+			t.Errorf("cursor %q status = %d, want 422 body=%s", raw, rec.Code, rec.Body.String())
+		}
 	}
 }

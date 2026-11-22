@@ -1,9 +1,11 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"strings"
+	"unicode/utf8"
 
 	domainauth "regixtry/internal/domain/auth"
 	regixtrydomain "regixtry/internal/domain/regixtry"
@@ -103,7 +105,10 @@ func decodeMemberCursor(after string) (string, error) {
 		return "", nil
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(after)
-	if err != nil || len(raw) == 0 || len(raw) > 128 {
+	// The cursor reaches the store as a text parameter: NUL bytes and invalid
+	// UTF-8 are refused here (a real Postgres rejects them with a generic
+	// error that would surface as a 500).
+	if err != nil || len(raw) == 0 || len(raw) > 128 || !utf8.Valid(raw) || bytes.IndexByte(raw, 0) >= 0 {
 		return "", domainauth.NewValidationError("after is not a valid page cursor")
 	}
 
