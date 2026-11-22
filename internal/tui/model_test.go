@@ -4748,6 +4748,11 @@ type fakeAdminClient struct {
 	lastExpiringWithin time.Duration
 	lastExpiringLimit  int
 
+	accessEvents    []ports.AdminAccessEvent
+	accessEventsErr error
+	listEventsCalls int
+	lastEventsLimit int
+
 	// allGrants backs ListAllRepositoryGrants, served in pages with the
 	// opaque cursor "c<offset>"; allGrantsErrs fails the read whose cursor is
 	// the key ("" is the first page); allGrantsCursors records every cursor
@@ -5305,6 +5310,15 @@ func (f *fakeAdminClient) DisableUser(_ context.Context, _ AdminSession, _ strin
 		return ports.AdminUser{}, f.disableErr
 	}
 	return f.disableUser, nil
+}
+
+func (f *fakeAdminClient) ListAccessEvents(_ context.Context, _ AdminSession, limit int) ([]ports.AdminAccessEvent, error) {
+	f.listEventsCalls++
+	f.lastEventsLimit = limit
+	if f.accessEventsErr != nil {
+		return nil, f.accessEventsErr
+	}
+	return append([]ports.AdminAccessEvent(nil), f.accessEvents...), nil
 }
 
 func (f *fakeAdminClient) ListExpiringTokens(_ context.Context, _ AdminSession, within time.Duration, limit int) ([]ports.AdminExpiringToken, error) {

@@ -101,6 +101,9 @@ type AdminClient interface {
 	// that expire within the given window, soonest first, in ONE call for all
 	// principals. A zero within or limit leaves the server default.
 	ListExpiringTokens(ctx context.Context, session AdminSession, within time.Duration, limit int) ([]ports.AdminExpiringToken, error)
+	// ListAccessEvents returns the newest entries of the best-effort access
+	// change history, newest first. A zero limit leaves the server default.
+	ListAccessEvents(ctx context.Context, session AdminSession, limit int) ([]ports.AdminAccessEvent, error)
 	// ListAllRepositoryGrants returns one page of every repository grant of
 	// every user and robot, ordered by repository then username, in ONE call
 	// for all repositories (also those never pushed). after is the opaque
@@ -268,6 +271,22 @@ func (c *HTTPAdminClient) ListExpiringTokens(ctx context.Context, session AdminS
 		return nil, err
 	}
 	return tokens, nil
+}
+
+// adminAccessEventsMaxLimit is the most rows GET /admin/v1/access-events
+// returns; a larger request is a server validation error, so it is clamped.
+const adminAccessEventsMaxLimit = 200
+
+func (c *HTTPAdminClient) ListAccessEvents(ctx context.Context, session AdminSession, limit int) ([]ports.AdminAccessEvent, error) {
+	path := "/admin/v1/access-events"
+	if limit > 0 {
+		path += "?" + url.Values{"limit": []string{strconv.Itoa(min(limit, adminAccessEventsMaxLimit))}}.Encode()
+	}
+	var events []ports.AdminAccessEvent
+	if err := c.getJSON(ctx, session, path, &events); err != nil {
+		return nil, err
+	}
+	return events, nil
 }
 
 // adminGrantsMaxLimit is the most rows GET /admin/v1/repository-grants returns
