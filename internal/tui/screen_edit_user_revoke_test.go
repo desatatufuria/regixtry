@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	domainauth "regixtry/internal/domain/auth"
 	regixtrydomain "regixtry/internal/domain/regixtry"
@@ -129,7 +130,7 @@ func TestEditUserRevokeDialogNamesUserRepositoryRoleAndTheTrueConsequence(t *tes
 		t.Fatal("x opened no dialog")
 	}
 	frame := ansi.Strip(s.View(newAdminTheme(), env).Overlay)
-	for _, want := range []string{"Revoke access", "Revoke carol's Writer access to team/api?", "carol on team/api", "carol loses Writer access to team/api.", "next request", "no token is revoked"} {
+	for _, want := range []string{"Revoke access", "Revoke carol's Writer access to team/api?", "carol on team/api", "carol loses Writer access to team/api.", "next request", "carol keeps access to", "every other repository.", "no token is revoked"} {
 		if !strings.Contains(frame, want) {
 			t.Errorf("dialog lacks %q:\n%s", want, frame)
 		}
@@ -400,5 +401,105 @@ func TestEditUserRevokeGoldens(t *testing.T) {
 		s, _ = editPress(t, s, env, testKeyRunes("x"))
 		frame := s.View(newAdminTheme(), env)
 		assertUsersGolden(t, fmt.Sprintf("edit_user_revoke_dialog_%dx%d", size.w, size.h), ansi.Strip(frame.Body)+"\n-- overlay --\n"+ansi.Strip(frame.Overlay))
+	}
+}
+
+func TestEditUserRevokeNotFoundShowsTheErrorAndRefreshesTheList(t *testing.T) {
+	t.Parallel()
+	client := newRevokeClient()
+	s, env := revokeFocus(t, client)
+	// The grant was removed elsewhere: the API answers 404 and the server list no longer has it.
+	client.grants["u-4"] = client.grants["u-4"][1:]
+	client.err = adminNotFoundError{message: "delete: grant not found"}
+	s, _ = editPress(t, s, env, testKeyRunes("x"), testKeyEnter())
+	if len(s.grants) != 1 || s.grants[0].Repository.String() != "team/api" {
+		t.Fatalf("the stale row stayed: %v", s.grants)
+	}
+	if !strings.Contains(s.notice, "grant not found") || s.noticeTone != userNoticeError {
+		t.Fatalf("notice = %q", s.notice)
+	}
+}
+
+func TestEditUserAStaleDisableResultDoesNotLeaveTheRevokeFlagSet(t *testing.T) {
+	t.Parallel()
+	client := newRevokeClient()
+	s, env := editOpen(t, client, "u-4", "carol")
+	var pending []tea.Msg
+	press := func(k keyMsg) {
+		next, cmd, _ := s.Update(env, k)
+		s = next.(editUserScreen)
+		if cmd != nil {
+			pending = append(pending, cmd())
+		}
+	}
+	press(testKeyRunes("d"))
+	press(testKeyEnter()) // disable in flight
+	press(testKeyEsc())
+	press(testKeyTab())
+	press(testKeyRunes("x")) // revoke dialog opens
+	for _, msg := range pending {
+		next, _, _ := s.Update(env, msg) // the disable result arrives
+		s = next.(editUserScreen)
+	}
+	if s.confirm.Active() || s.revokeOpen || s.revoking {
+		t.Fatalf("confirm=%v revokeOpen=%v revoking=%v after the disable result", s.confirm.Active(), s.revokeOpen, s.revoking)
+	}
+	s, _ = editPress(t, s, env, testKeyRunes("d"), testKeyEnter())
+	s, _ = editPress(t, s, env, testKeyRunes("x"))
+	if !s.confirm.Active() {
+		t.Fatalf("x is blocked: %q", s.notice)
+	}
+}
+
+// revoking is true only while a revoke command is in flight, whatever the
+// order of keys and results.
+func TestEditUserRevokingMeansARevokeIsInFlight(t *testing.T) {
+	t.Parallel()
+	keys := []keyMsg{testKeyRunes("d"), testKeyRunes("x"), testKeyTab(), testKeyDown(), testKeyUp(), testKeyEnter(), testKeyEsc(), testKeyRunes("y"), testKeySpace()}
+	for seed := int64(0); seed < 300; seed++ {
+		rng := rand.New(rand.NewSource(seed))
+		client := newRevokeClient()
+		s, env := editOpen(t, client, "u-4", "carol")
+		var pending []tea.Msg
+		for step := 0; step < 60; step++ {
+			if len(pending) > 0 && rng.Intn(3) == 0 {
+				i := rng.Intn(len(pending))
+				msg := pending[i]
+				pending = append(pending[:i], pending[i+1:]...)
+				next, cmd, _ := s.Update(env, msg)
+				s = next.(editUserScreen)
+				if cmd != nil {
+					pending = append(pending, cmd())
+				}
+			} else {
+				next, cmd, _ := s.Update(env, keys[rng.Intn(len(keys))])
+				s = next.(editUserScreen)
+				if cmd != nil {
+					if msg := cmd(); msg != nil {
+						pending = append(pending, msg)
+					}
+				}
+			}
+			inFlight := false
+			for _, msg := range pending {
+				if _, ok := msg.(editUserGrantRevokedMsg); ok {
+					inFlight = true
+				}
+			}
+			if s.revoking != inFlight {
+				t.Fatalf("seed %d step %d: revoking=%v but a revoke in flight=%v", seed, step, s.revoking, inFlight)
+			}
+		}
+	}
+}
+
+func TestEditUserRevokeWithoutAUsernameSendsNothing(t *testing.T) {
+	t.Parallel()
+	client := newRevokeClient()
+	s, env := revokeFocus(t, client)
+	s.username = ""
+	s, _ = editPress(t, s, env, testKeyRunes("x"))
+	if s.confirm.Active() || s.notice != "Cannot revoke: this user has no username." || len(client.deletes()) != 0 {
+		t.Fatalf("confirm=%v notice=%q deletes=%v", s.confirm.Active(), s.notice, client.deletes())
 	}
 }

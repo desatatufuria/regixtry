@@ -25,5 +25,5 @@ func revokeGrantConfirm(repo, username string, role domainauth.RepoRole, onConfi
 		fmt.Sprintf("Revoking %s on %s...", username, repo),
 		onConfirm,
 	).withTarget(fmt.Sprintf("%s on %s", username, repo), label).
-		withConsequence(fmt.Sprintf("%s loses %s access to %s. It applies from the next request; no token is revoked.", username, label, repo))
+		withConsequence(fmt.Sprintf("%s loses %s access to %s. It applies from the next request; no token is revoked. %s keeps access to every other repository.", username, label, repo, username))
 }

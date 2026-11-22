@@ -156,7 +156,7 @@ func (s editUserScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.Cmd
 		if typed.gen != s.gen {
 			return s, nil, false
 		}
-		s.confirm = confirmPrompt{}
+		s.confirm, s.revokeOpen = confirmPrompt{}, false
 		s.noticeTone, s.notice = userEnabledNotice(typed)
 		if typed.err != nil {
 			return s, nil, false
@@ -335,8 +335,10 @@ func (s editUserScreen) askRevoke() editUserScreen {
 	if s.revoking {
 		return s.withNotice(userNoticeInfo, "Revoking, please wait.")
 	}
-	gen, repo := s.gen, grant.Repository.String()
-	username := adminFirstNonEmpty(s.username, s.userID)
+	if s.username == "" {
+		return s.withNotice(userNoticeError, "Cannot revoke: this user has no username.")
+	}
+	gen, repo, username := s.gen, grant.Repository.String(), s.username
 	s.notice = ""
 	s.confirm = revokeGrantConfirm(repo, username, grant.Role, func(env screenEnv) tea.Cmd { return editUserRevokeCmd(env, gen, repo, username) })
 	s.revokeOpen = true
@@ -352,7 +354,13 @@ func (s editUserScreen) applyRevoked(env screenEnv, msg editUserGrantRevokedMsg)
 		s.confirm, s.revokeOpen = confirmPrompt{}, false
 	}
 	if msg.err != nil {
-		return s.withNotice(userNoticeError, fmt.Sprintf("Could not revoke %s on %s: %s", msg.username, msg.repo, msg.err.Error())), nil
+		s = s.withNotice(userNoticeError, fmt.Sprintf("Could not revoke %s on %s: %s", msg.username, msg.repo, msg.err.Error()))
+		if IsAdminNotFound(msg.err) {
+			// Already gone elsewhere: read the grants again so the row leaves.
+			s.refreshing = true
+			return s, editUserLoadCmd(env, s.gen, s.userID)
+		}
+		return s, nil
 	}
 	kept := make([]ports.AdminRepoGrant, 0, len(s.grants))
 	for _, grant := range s.grants {

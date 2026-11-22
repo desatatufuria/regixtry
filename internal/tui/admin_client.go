@@ -869,7 +869,21 @@ func decodeAdminAPIError(action string, resp *stdhttp.Response) error {
 		message = resp.Status
 	}
 
+	if resp.StatusCode == stdhttp.StatusNotFound {
+		return adminNotFoundError{message: fmt.Sprintf("%s: %s", action, message)}
+	}
 	return fmt.Errorf("%s: %s", action, message)
+}
+
+// adminNotFoundError is a 404 from the admin API; its text is the usual one.
+type adminNotFoundError struct{ message string }
+
+func (e adminNotFoundError) Error() string { return e.message }
+
+// IsAdminNotFound reports whether err is a 404 from the admin API.
+func IsAdminNotFound(err error) bool {
+	var notFound adminNotFoundError
+	return errors.As(err, &notFound)
 }
 
 func readAdminAPIErrorMessage(body io.Reader) string {

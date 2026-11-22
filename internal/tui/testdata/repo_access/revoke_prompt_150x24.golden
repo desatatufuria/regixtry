@@ -1,19 +1,19 @@
   Admin › Access › Repository access                                                                                           signed in as operator  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  regixtry admin                │
-                               │  Repository access                                                                       6 grants on 3 repositories
-    Overview                   │   Filter  ╭──────────────────────────────────────────────────────────────╮   ╭────────────────────────────────────╮
-                               │           │  Revoke access                                               │   │ team/api                           │
-  ACCESS                       │  ╭──────  │                                                              │   │ 4 principals have access           │
-      Users                    │  │   REP  │  Revoke alice's Writer access to team/api?                   │   │ WHO HAS WHAT                       │
-      Robots                   │  │ ▸ tea  │                                                              │   │ alice user                [Writer] │
-    ▸ Repository access        │  │   tea  │  ╭────────────────────────────────────────────────────────╮  │   │ carol user                [Writer] │
-                               │  │   tea  │  │ alice on team/api                                      │  │   │ ci-publisher robot        [Writer] │
-  SECURITY                     │  │   tea  │  │ Writer                                                 │  │   │ bob user                  [Reader] │
-      Image scanning           │  │   tea  │  ╰────────────────────────────────────────────────────────╯  │   │ ACTIONS ON SELECTED GRANT          │
-      Secret scanning          │  │   tea  │                                                              │   │ Open principal               enter │
-      Signing policy           │  │        │  alice loses Writer access to team/api. It applies from the  │   │ Grant access                     g │
-                               │  │        │  next request; no token is revoked.                          │   │ Revoke alice on team/api         x │
+                               │  Reposit  ╭──────────────────────────────────────────────────────────────╮               6 grants on 3 repositories
+    Overview                   │   Filter  │  Revoke access                                               │   ╭────────────────────────────────────╮
+                               │           │                                                              │   │ team/api                           │
+  ACCESS                       │  ╭──────  │  Revoke alice's Writer access to team/api?                   │   │ 4 principals have access           │
+      Users                    │  │   REP  │                                                              │   │ WHO HAS WHAT                       │
+      Robots                   │  │ ▸ tea  │  ╭────────────────────────────────────────────────────────╮  │   │ alice user                [Writer] │
+    ▸ Repository access        │  │   tea  │  │ alice on team/api                                      │  │   │ carol user                [Writer] │
+                               │  │   tea  │  │ Writer                                                 │  │   │ ci-publisher robot        [Writer] │
+  SECURITY                     │  │   tea  │  ╰────────────────────────────────────────────────────────╯  │   │ bob user                  [Reader] │
+      Image scanning           │  │   tea  │                                                              │   │ ACTIONS ON SELECTED GRANT          │
+      Secret scanning          │  │   tea  │  alice loses Writer access to team/api. It applies from the  │   │ Open principal               enter │
+      Signing policy           │  │        │  next request; no token is revoked. alice keeps access to    │   │ Grant access                     g │
+                               │  │        │  every other repository.                                     │   │ Revoke alice on team/api         x │
   OPERATIONS                   │  │        │                                                              │   │ No Admin on this repository. Only  │
       Scan runs                │  │        │   Confirm                                        y / enter   │   │ server admins can change access    │
       Secret findings          │  │        │   Cancel                                               esc   │   │ here.                              │

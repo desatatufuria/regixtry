@@ -9,19 +9,19 @@
   Global settings are visible  │  │ ▸ erin                                                                                                           Admin   │  │                                    │
   to global admins only.       │  │   user001                                                                                                        Reader  │  │ ACTIONS                            │
                                │  │   user002                                                                                                        Reader  │  │ New grant                        n │
-                               │  │   user003                                                                                                        Writer  │  │ Edit role                        e │
-                               │  │   user004                       ╭──────────────────────────────────────────────────────────────╮                 Reader  │  │ Revoke grant                     x │
-                               │  │   user005                       │  Revoke access                                               │                 Reader  │  │                                    │
-                               │  │   user006                       │                                                              │                 Writer  │  │ ADD GRANT                          │
-                               │  │   user008                       │  Revoke erin's Admin access to team/api?                     │                 Reader  │  │ Username and role (Reader or       │
-                               │  │   user009                       │                                                              │                 Writer  │  │ Writer). The repository is fixed   │
-                               │  │   user010                       │  ╭────────────────────────────────────────────────────────╮  │                 Reader  │  │ to team/api.                       │
-                               │  │   user011                       │  │ erin on team/api                                       │  │                 Reader  │  │                                    │
-                               │  │   user012                       │  │ Admin                                                  │  │                 Writer  │  │                                    │
-                               │  │   user013                       │  ╰────────────────────────────────────────────────────────╯  │                 Reader  │  │                                    │
-                               │  │   user015                       │                                                              │                 Writer  │  │                                    │
-                               │  │   user016                       │  erin loses Admin access to team/api. It applies from the    │                 Reader  │  │                                    │
-                               │  │   user017                       │  next request; no token is revoked.                          │                 Reader  │  │                                    │
+                               │  │   user003                       ╭──────────────────────────────────────────────────────────────╮                 Writer  │  │ Edit role                        e │
+                               │  │   user004                       │  Revoke access                                               │                 Reader  │  │ Revoke grant                     x │
+                               │  │   user005                       │                                                              │                 Reader  │  │                                    │
+                               │  │   user006                       │  Revoke erin's Admin access to team/api?                     │                 Writer  │  │ ADD GRANT                          │
+                               │  │   user008                       │                                                              │                 Reader  │  │ Username and role (Reader or       │
+                               │  │   user009                       │  ╭────────────────────────────────────────────────────────╮  │                 Writer  │  │ Writer). The repository is fixed   │
+                               │  │   user010                       │  │ erin on team/api                                       │  │                 Reader  │  │ to team/api.                       │
+                               │  │   user011                       │  │ Admin                                                  │  │                 Reader  │  │                                    │
+                               │  │   user012                       │  ╰────────────────────────────────────────────────────────╯  │                 Writer  │  │                                    │
+                               │  │   user013                       │                                                              │                 Reader  │  │                                    │
+                               │  │   user015                       │  erin loses Admin access to team/api. It applies from the    │                 Writer  │  │                                    │
+                               │  │   user016                       │  next request; no token is revoked. erin keeps access to     │                 Reader  │  │                                    │
+                               │  │   user017                       │  every other repository.                                     │                 Reader  │  │                                    │
                                │  │   user018                       │                                                              │                 Writer  │  │                                    │
                                │  │   user019                       │   Confirm                                        y / enter   │                 Reader  │  │                                    │
                                │  │   user020                       │   Cancel                                               esc   │                 Reader  │  │                                    │

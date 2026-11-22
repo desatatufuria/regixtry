@@ -50,7 +50,8 @@
 │  ╰────────────────────────────────────────────────────────╯  │
 │                                                              │
 │  carol loses Writer access to team/api. It applies from the  │
-│  next request; no token is revoked.                          │
+│  next request; no token is revoked. carol keeps access to    │
+│  every other repository.                                     │
 │                                                              │
 │   Confirm                                        y / enter   │
 │   Cancel                                               esc   │
