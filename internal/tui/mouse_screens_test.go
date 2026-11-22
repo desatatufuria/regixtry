@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+	"regixtry/internal/ports"
 )
 
 // mouseCase describes one list screen for the shared mouse tests: how to put
@@ -65,6 +66,7 @@ var mouseCases = []mouseCase{
 	secretFindingsMouseCase(),
 	scanHistoryMouseCase(),
 	delegateMouseCase(),
+	tokensMouseCase(),
 	consoleRepositoriesMouseCase(),
 	consoleProjectsMouseCase(),
 	consoleTagsMouseCase(),
@@ -437,5 +439,32 @@ func consoleTagsMouseCase() mouseCase {
 		},
 		opens: func(m Model) bool { return m.screen != screenTags },
 		block: func(t *testing.T, m Model) Model { return testSendKey(t, m, testKeyRunes("d")) },
+	}
+}
+
+func tokensMouseCase() mouseCase {
+	return mouseCase{
+		name: "token cards",
+		build: func(t *testing.T, w, h int) Model {
+			m, _ := accessModel(t, func(c *accessClient) {
+				c.tokens["r-ci"] = []ports.AdminToken{
+					accessToken("alpha-deploy", "act_aaaa00000001", accessNow.Add(-24*time.Hour), accessNow.Add(24*time.Hour)),
+					accessToken("beta-deploy", "act_bbbb00000002", accessNow.Add(-24*time.Hour), accessNow.Add(48*time.Hour)),
+					accessToken("gamma-deploy", "act_cccc00000003", accessNow.Add(-24*time.Hour), accessNow.Add(72*time.Hour)),
+				}
+			})
+			m = resizeModel(t, m, w, h)
+			return overviewPress(t, openRobotsOf(t, m), testKeyRunes("t"))
+		},
+		rows: []string{"alpha-deploy", "beta-deploy", "gamma-deploy"},
+		listWidth: func(w int) int {
+			leftW, _ := tokensWidths(w - shellSidebarWidth - 2*shellContentPadX)
+			return leftW
+		},
+		selected: func(m Model) string {
+			s := m.adminScreens[slotTokens].(tokensScreen)
+			return s.tokens[boundedIndex(s.selected, len(s.tokens))].Name
+		},
+		block: func(t *testing.T, m Model) Model { return testSendKey(t, m, testKeyRunes("n")) },
 	}
 }

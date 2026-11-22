@@ -53,17 +53,19 @@ func withMouseIndicator(theme adminTheme, screen string, width int, on bool) str
 
 // mouseRows is where a list drew its rows, in terminal cells: Count items of
 // Step lines each, starting at line Y, X wide Width, the first being item
-// First of the whole list.
+// First of the whole list. The last Gap lines of every item are blank
+// spacing that belongs to no item.
 type mouseRows struct {
 	X, Y, Width int
 	Count, Step int
+	Gap         int
 	First       int
 }
 
 // rowAt is the list item drawn under the cell (x, y).
 func (r mouseRows) rowAt(x, y int) (int, bool) {
 	step := max(r.Step, 1)
-	if x < r.X || x >= r.X+r.Width || y < r.Y || y >= r.Y+r.Count*step {
+	if x < r.X || x >= r.X+r.Width || y < r.Y || y >= r.Y+r.Count*step || (y-r.Y)%step >= step-r.Gap {
 		return 0, false
 	}
 	return r.First + (y-r.Y)/step, true

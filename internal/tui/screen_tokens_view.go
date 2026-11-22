@@ -24,11 +24,7 @@ func (s tokensScreen) View(theme adminTheme, env screenEnv) screenFrame {
 	bodyW, bodyH := shellContentSize(width, height)
 	now := env.now()
 
-	panelW := tokensPanelWidth
-	if bodyW < 2*tokensPanelWidth {
-		panelW = max(bodyW*2/5, 12)
-	}
-	leftW := max(bodyW-panelW-tokensPanelGap, 12)
+	leftW, panelW := tokensWidths(bodyW)
 
 	left := strings.Join(s.renderList(theme, leftW, bodyH, now), "\n")
 	panel := s.renderPanel(theme, env, panelW, bodyH)
@@ -54,6 +50,25 @@ func (s tokensScreen) View(theme adminTheme, env screenEnv) screenFrame {
 	return frame
 }
 
+// tokensWidths splits the body into the token list and the form panel.
+func tokensWidths(bodyW int) (leftW, panelW int) {
+	panelW = tokensPanelWidth
+	if bodyW < 2*tokensPanelWidth {
+		panelW = max(bodyW*2/5, 12)
+	}
+	return max(bodyW-panelW-tokensPanelGap, 12), panelW
+}
+
+// tokensHeadRows is the title, the explanation and a blank above the cards.
+const tokensHeadRows = 3
+
+// tokensVisible is how many cards fit in a list column rows tall.
+func tokensVisible(rows int) int {
+	// One row each for the status line and the "k of n" footer.
+	cardRows := max(rows-tokensHeadRows-2, tokensCardRows)
+	return max((cardRows+1)/(tokensCardRows+1), 1)
+}
+
 // breadcrumb is "Access > Users > alice > Tokens" or "Access > Robots > ci >
 // Tokens", with the sidebar item it belongs to.
 func (s tokensScreen) breadcrumb() ([]string, shellNavID) {
@@ -71,9 +86,7 @@ func (s tokensScreen) renderList(theme adminTheme, width, rows int, now time.Tim
 		theme.muted.Render(grantTruncate("Each bar is the time left out of the token's full lifetime.", width)),
 		"",
 	}
-	// One row each for the status line and the "k of n" footer.
-	cardRows := max(rows-len(lines)-2, tokensCardRows)
-	visible := max((cardRows+1)/(tokensCardRows+1), 1)
+	visible := tokensVisible(rows)
 	cursor := boundedIndex(s.selected, len(s.tokens))
 	start, end := grantWindow(cursor, len(s.tokens), visible)
 

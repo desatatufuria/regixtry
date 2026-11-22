@@ -150,3 +150,58 @@ func TestMouseReleaseMotionAndOtherButtonsAreIgnored(t *testing.T) {
 		}
 	}
 }
+
+func TestMouseIsIgnoredWhileSwitchedOffAndWorksAgainWhenSwitchedOn(t *testing.T) {
+	t.Parallel()
+	m := usersModelAt(t, usersTestClient(), 150, 24)
+	first := usersScreenOf(t, m).selectedID
+	m = testSendKey(t, m, testKeyF2())
+	for _, msg := range []tea.Msg{mouseWheel(tea.MouseWheelDown), mouseClickAt(40, 9), mouseClickAt(3, 10)} {
+		updated, cmd := m.Update(msg)
+		if cmd != nil || usersScreenOf(t, updated.(Model)).selectedID != first || updated.(Model).screen != screenAdminUsers {
+			t.Fatalf("%T acted while the mouse was off", msg)
+		}
+	}
+	m = testSendKey(t, m, testKeyF2())
+	m = sendMouse(t, m, mouseWheel(tea.MouseWheelDown))
+	if usersScreenOf(t, m).selectedID == first {
+		t.Fatal("the wheel does nothing after switching the mouse back on")
+	}
+}
+
+func TestMouseNeverReachesAScreenThatIsNotMounted(t *testing.T) {
+	t.Parallel()
+	m := usersModelAt(t, usersTestClient(), 150, 24)
+	for _, to := range []screen{screenAdminLogin, screenAdminAuthenticating, screenLoading, screenError, screenManifest} {
+		other := m
+		other.screen = to
+		for _, msg := range []tea.Msg{mouseWheel(tea.MouseWheelDown), mouseClickAt(40, 9), mouseClickAt(3, 10)} {
+			updated, cmd := other.Update(msg)
+			if cmd != nil || updated.(Model).screen != to {
+				t.Fatalf("%T on %s acted", msg, to)
+			}
+		}
+	}
+	// A slot screen whose slot is empty: no panic, nothing happens.
+	empty := m
+	empty.adminScreens[slotUsers] = nil
+	if updated, cmd := empty.Update(mouseClickAt(40, 9)); cmd != nil || updated.(Model).screen != screenAdminUsers {
+		t.Fatal("a click acted on an unmounted Users slot")
+	}
+}
+
+func TestMouseDoesNothingWhileARobotChangeIsInFlight(t *testing.T) {
+	t.Parallel()
+	c := robotsMouseCase()
+	m := c.build(t, 150, 24)
+	robots := m.adminScreens[slotRobots].(robotsScreen)
+	robots.busy = true
+	m.adminScreens[slotRobots] = robots
+	x, y := sidebarCell(t, m, "Users")
+	for _, msg := range []tea.Msg{mouseWheel(tea.MouseWheelDown), mouseClickAt(x, y)} {
+		updated, cmd := m.Update(msg)
+		if cmd != nil || updated.(Model).screen != screenAdminRobots || c.selected(updated.(Model)) != c.selected(m) {
+			t.Fatalf("%T acted while a robot change was in flight", msg)
+		}
+	}
+}

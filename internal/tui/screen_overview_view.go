@@ -32,7 +32,7 @@ func (s overviewScreen) View(theme adminTheme, env screenEnv) screenFrame {
 
 	cards := s.renderCards(theme, bodyW)
 	lines := []string{theme.subheading.Render("Overview"), theme.muted.Render(overviewSubtitle), "", cards, ""}
-	used := 4 + lipgloss.Height(cards)
+	used := overviewHeadRows(lipgloss.Height(cards))
 	lines = append(lines, s.renderPanels(theme, env, bodyW, bodyH-used))
 
 	return screenFrame{
@@ -140,20 +140,10 @@ func (s overviewScreen) renderAttention(theme adminTheme, width, rows int, now t
 	}
 	room := max(capacity-len(notes), 0)
 	selected := s.attentionFocus - 1
-	shown := make([]int, len(items))
-	for i := range items {
-		shown[i] = i
-	}
+	shown := attentionShown(items, room, selected)
 	var more []string
-	if len(items) > room {
-		keep := max(room-1, 0)
-		if selected >= 0 {
-			keep = max(keep, 1)
-		}
-		shown = urgentAttentionRows(items, keep, selected)
-		if hidden := len(items) - len(shown); hidden > 0 && len(shown) < room {
-			more = []string{theme.muted.Render(fmt.Sprintf("+%d more", hidden))}
-		}
+	if hidden := len(items) - len(shown); hidden > 0 && len(shown) < room {
+		more = []string{theme.muted.Render(fmt.Sprintf("+%d more", hidden))}
 	}
 	for _, i := range shown {
 		lines = append(lines, renderAttentionItem(theme, items[i], inner, i == selected))
@@ -162,6 +152,44 @@ func (s overviewScreen) renderAttention(theme adminTheme, width, rows int, now t
 	lines = append(lines, notes...)
 	return overviewPanel(theme, width, rows, lines)
 }
+
+// attentionShown is the items a panel with room rows draws, by index, in order:
+// all of them, or the most urgent when they do not fit, always with the row
+// Tab selected.
+func attentionShown(items []attentionItem, room, selected int) []int {
+	if len(items) <= room {
+		shown := make([]int, len(items))
+		for i := range items {
+			shown[i] = i
+		}
+		return shown
+	}
+	keep := max(room-1, 0)
+	if selected >= 0 {
+		keep = max(keep, 1)
+	}
+	return urgentAttentionRows(items, keep, selected)
+}
+
+// attentionPanelChromeRows is the panel's top border and its title line above
+// the first attention row.
+const attentionPanelChromeRows = 2
+
+// attentionLayout is the NEEDS ATTENTION panel's geometry for a terminal
+// size: its width and the room the rows have, from the same arithmetic View
+// uses. headRows is how many body lines come before the panels.
+func (s overviewScreen) attentionLayout(theme adminTheme, env screenEnv) (width, headRows, room int) {
+	bodyW, bodyH := shellContentSize(env.Layout.Width, env.Layout.Height)
+	headRows = overviewHeadRows(lipgloss.Height(s.renderCards(theme, bodyW)))
+	width = (bodyW - overviewCardGap) / 2
+	capacity := max(bodyH-headRows-2-1, 1)
+	room = max(capacity-len(s.loadErrorLines(theme, max(width-4, 1))), 0)
+	return width, headRows, room
+}
+
+// overviewHeadRows is the body lines above the panels: the title, the
+// subtitle, a blank, the cards and a blank.
+func overviewHeadRows(cardsHeight int) int { return 4 + cardsHeight }
 
 // loadErrorLines reports a failed read in the panel instead of silently
 // showing an empty "all clear".
