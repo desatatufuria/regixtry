@@ -665,13 +665,12 @@ func (s *Service) DeleteRepository(ctx context.Context, repositoryName string) (
 // localOperatorAccessController) are evaluated identically to every other
 // delete. But whenever a Principal IS present in ctx, it additionally
 // requires the caller to be a global admin or hold a repo-admin grant on
-// this exact repository -- mirroring internal/app/auth/service.go's
-// requireAdminOrRepoAdmin exactly. That helper is unexported in a different
-// package, so its identical IsAdmin-or-matching-repo-admin-grant logic is
-// reimplemented here (hasRepoAdminGrant below) rather than reusing
+// this repository, directly or through its project (the shared
+// Principal.HasGrantedRepoAdminAccess predicate; internal/app/auth's
+// requireAdminOrRepoAdmin is the remaining exact-only copy). It does not use
 // Principal.HasRepoAdminAccess, for the same reason requireAdminOrRepoAdmin
-// itself exists instead of that method: an admin-session login -- the TUI's
-// own admin panel, or this action's own admin HTTP API route -- always
+// exists instead of that method: an admin-session login -- the TUI's own
+// admin panel, or this action's own admin HTTP API route -- always
 // carries zero token scopes, which would make HasDeleteAccess/
 // HasRepoAdminAccess permanently false even for a genuine global admin.
 //
@@ -697,7 +696,7 @@ func (s *Service) authorizeDeleteRepository(ctx context.Context, repository stri
 		return authorizeErr
 	}
 
-	if principal.IsAdmin || hasRepoAdminGrant(principal, repository) {
+	if principal.HasGrantedRepoAdminAccess(repository) {
 		return nil
 	}
 
@@ -705,18 +704,6 @@ func (s *Service) authorizeDeleteRepository(ctx context.Context, repository stri
 		return authorizeErr
 	}
 	return domainauth.NewForbiddenError("repository administrator privileges are required")
-}
-
-// hasRepoAdminGrant mirrors internal/app/auth/service.go's
-// requireAdminOrRepoAdmin grant-scan loop exactly (unexported there, in a
-// different package).
-func hasRepoAdminGrant(principal *domainauth.Principal, repository string) bool {
-	for _, grant := range principal.Grants {
-		if grant.Repository.String() == repository && grant.Role.AllowsAdmin() {
-			return true
-		}
-	}
-	return false
 }
 
 func parseManifestPayload(reference string, mediaType string, payload []byte) (domain.Manifest, string, error) {

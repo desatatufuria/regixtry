@@ -1235,12 +1235,18 @@ func (s *Service) buildPrincipal(ctx context.Context, user domainauth.User, toke
 	if err != nil {
 		grants = nil
 	}
+	// Same fail-closed handling as the exact grants: a read error leaves the
+	// principal without project access, never with more.
+	projectGrants, err := s.store.ListProjectGrants(ctx, user.ID)
+	if err != nil {
+		projectGrants = nil
+	}
 	scopes, err := token.Scopes()
 	if err != nil {
 		return domainauth.Principal{}, err
 	}
 
-	return domainauth.Principal{Subject: token.Accessor, UserID: user.ID, Username: user.Username, IsAdmin: user.IsAdmin, IsReadOnly: user.IsReadOnly, Grants: grants, Scopes: scopes, ExpiresAt: token.ExpiresAt}, nil
+	return domainauth.Principal{Subject: token.Accessor, UserID: user.ID, Username: user.Username, IsAdmin: user.IsAdmin, IsReadOnly: user.IsReadOnly, Grants: grants, ProjectGrants: projectGrants, Scopes: scopes, ExpiresAt: token.ExpiresAt}, nil
 }
 
 func (s *Service) grantedScopes(ctx context.Context, user domainauth.User, requestedScopes []domainauth.Scope) ([]domainauth.Scope, error) {
@@ -1249,6 +1255,10 @@ func (s *Service) grantedScopes(ctx context.Context, user domainauth.User, reque
 	}
 
 	grants, err := s.store.ListRepoGrants(ctx, user.ID)
+	if err != nil {
+		return nil, err
+	}
+	projectGrants, err := s.store.ListProjectGrants(ctx, user.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -1263,7 +1273,7 @@ func (s *Service) grantedScopes(ctx context.Context, user domainauth.User, reque
 			continue
 		}
 
-		actions := intersectRequestedActions(user.IsAdmin, user.IsReadOnly, grants, requested)
+		actions := intersectRequestedActionsWithProjects(user.IsAdmin, user.IsReadOnly, grants, projectGrants, requested)
 		if len(actions) == 0 {
 			continue
 		}
@@ -1275,6 +1285,15 @@ func (s *Service) grantedScopes(ctx context.Context, user domainauth.User, reque
 }
 
 func intersectRequestedActions(isAdmin bool, isReadOnly bool, grants []domainauth.RepoGrant, requested domainauth.Scope) []string {
+	return intersectRequestedActionsWithProjects(isAdmin, isReadOnly, grants, nil, requested)
+}
+
+// intersectRequestedActionsWithProjects decides which of the requested
+// actions a token may carry. The requested scope always names one exact
+// repository; project grants are expanded here, at issue time, into the
+// actions on that exact repository (the token's scopes never name a project),
+// so a request for a repository outside the project gets nothing.
+func intersectRequestedActionsWithProjects(isAdmin bool, isReadOnly bool, grants []domainauth.RepoGrant, projectGrants []domainauth.ProjectGrant, requested domainauth.Scope) []string {
 	allowPull := false
 	allowPush := false
 	allowDelete := false
@@ -1292,26 +1311,22 @@ func intersectRequestedActions(isAdmin bool, isReadOnly bool, grants []domainaut
 		// never grants delete either: the absence of a line here is the
 		// guarantee, not a check.
 		allowPull = requested.AllowsPull()
-	} else {
-		for _, grant := range grants {
-			if grant.Repository.String() != requested.Repository().String() {
-				continue
-			}
-			if grant.Role.AllowsRead() && requested.AllowsPull() {
-				allowPull = true
-			}
-			if grant.Role.AllowsWrite() && requested.AllowsPush() {
-				allowPush = true
-			}
-			// Own statement, own requested.AllowsDelete() guard — never
-			// folded into the push branch as
-			// `AllowsPush() || AllowsDelete()`. A fifth verb must likewise
-			// add its own line, so no future action can inherit writer
-			// derivation by being forgotten (proposal Q4).
-			if grant.Role.AllowsWrite() && requested.AllowsDelete() {
-				allowDelete = true
-			}
-			break
+	} else if role, ok := domainauth.EffectiveRole(grants, projectGrants, requested.Repository().String()); ok {
+		// The role is the highest of the exact grant and the grant of the
+		// repository's project (first segment, ==).
+		if role.AllowsRead() && requested.AllowsPull() {
+			allowPull = true
+		}
+		if role.AllowsWrite() && requested.AllowsPush() {
+			allowPush = true
+		}
+		// Own statement, own requested.AllowsDelete() guard — never
+		// folded into the push branch as
+		// `AllowsPush() || AllowsDelete()`. A fifth verb must likewise
+		// add its own line, so no future action can inherit writer
+		// derivation by being forgotten (proposal Q4).
+		if role.AllowsWrite() && requested.AllowsDelete() {
+			allowDelete = true
 		}
 	}
 
