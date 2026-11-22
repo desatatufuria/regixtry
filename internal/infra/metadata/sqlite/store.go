@@ -245,6 +245,43 @@ func (s *Store) UnlinkBlobDigest(ctx context.Context, digest domain.Digest) erro
 	return tx.Commit()
 }
 
+// ReclaimBlob re-checks the mark, unlinks the blob file and drops its links in
+// ONE write transaction (see ports.MetadataStore). Publishes and LinkBlob go
+// through the same write queue, so none can slip in between the check and the
+// removal, and a link written after the reclaim commits is never lost.
+func (s *Store) ReclaimBlob(ctx context.Context, digest domain.Digest, remove func(ctx context.Context) (ports.BlobReclaimOutcome, error)) (ports.BlobReclaimOutcome, error) {
+	tx, err := s.beginWrite(ctx)
+	if err != nil {
+		return ports.BlobReclaimMissing, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var referenced bool
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM manifest_blobs WHERE digest = ?)`, digest.String()).Scan(&referenced); err != nil {
+		return ports.BlobReclaimMissing, err
+	}
+	if referenced {
+		return ports.BlobReclaimReferenced, nil
+	}
+
+	outcome, err := remove(ctx)
+	if err != nil {
+		return outcome, err
+	}
+	if outcome == ports.BlobReclaimTooRecent {
+		return outcome, nil
+	}
+
+	if _, err = tx.ExecContext(ctx, `DELETE FROM repository_blobs WHERE digest = ?`, digest.String()); err != nil {
+		return outcome, err
+	}
+	if err = tx.Commit(); err != nil {
+		return outcome, err
+	}
+
+	return outcome, nil
+}
+
 func sqliteDSN(path string) string {
 	return sqliteDSNWithBusyTimeout(path, sqliteBusyTimeoutMillis)
 }
@@ -411,6 +448,13 @@ func (s *Store) DeleteUpload(ctx context.Context, tenant string, uploadID string
 }
 
 func (s *Store) PublishManifest(ctx context.Context, tenant string, repository domain.RepositoryRef, tag string, manifest domain.Manifest, blobs []domain.Descriptor) error {
+	return s.PublishManifestVerified(ctx, tenant, repository, tag, manifest, blobs, nil)
+}
+
+// PublishManifestVerified publishes like PublishManifest and, when present is
+// non-nil, first requires inside the same write transaction that every blob
+// exists and is linked to repository (see ports.MetadataStore).
+func (s *Store) PublishManifestVerified(ctx context.Context, tenant string, repository domain.RepositoryRef, tag string, manifest domain.Manifest, blobs []domain.Descriptor, present ports.BlobPresence) error {
 	if err := repository.Validate(); err != nil {
 		return err
 	}
@@ -430,6 +474,28 @@ func (s *Store) PublishManifest(ctx context.Context, tenant string, repository d
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+
+	if present != nil {
+		for _, blob := range blobs {
+			exists, err := present(ctx, blob.Digest)
+			if err != nil {
+				return err
+			}
+			if exists {
+				// A blob that exists only for another repository is "missing"
+				// here: the answer must not reveal it exists elsewhere.
+				err = tx.QueryRowContext(ctx, `
+					SELECT EXISTS(SELECT 1 FROM repository_blobs WHERE tenant = ? AND repository = ? AND digest = ?)
+				`, tenant, repository.String(), blob.Digest.String()).Scan(&exists)
+				if err != nil {
+					return err
+				}
+			}
+			if !exists {
+				return domain.NewConflictError(fmt.Sprintf("manifest references missing blob %s", blob.Digest))
+			}
+		}
+	}
 
 	repositoryID, err := ensureRepository(ctx, tx.Tx, tenant, repository)
 	if err != nil {

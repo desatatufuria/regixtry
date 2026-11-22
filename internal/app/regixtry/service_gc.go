@@ -178,7 +178,7 @@ func (s *Service) DeleteByGCReport(ctx context.Context, reportID string) (ports.
 	}
 	defer s.gcGate.release()
 
-	fresh, _, err := s.gcCandidates(ctx, now)
+	fresh, cutoff, err := s.gcCandidates(ctx, now)
 	if err != nil {
 		return ports.GCReportDetail{}, err
 	}
@@ -212,46 +212,33 @@ func (s *Service) DeleteByGCReport(ctx context.Context, reportID string) (ports.
 			continue
 		}
 
-		// JD-1: freshSet above is a single snapshot taken before this loop
-		// started. For a large batch, a legitimate push can publish a
-		// manifest referencing THIS exact digest after that snapshot but
-		// before this digest's own turn here. Re-verify narrowly,
-		// immediately before the unlink, rather than trusting the
-		// batch-wide snapshot alone.
-		referenced, refErr := s.metadata.IsBlobDigestReferenced(ctx, candidate.Digest)
-		if refErr != nil {
+		// freshSet above is a single snapshot taken before this loop started,
+		// so it cannot be trusted at unlink time: a push can publish a manifest
+		// referencing this digest, or re-upload the blob, after it. ReclaimBlob
+		// therefore re-checks the mark, removes the file only if it is still
+		// older than the grace cutoff, and drops the repository links, all in
+		// ONE store write transaction that publishes and uploads' link writes
+		// also queue behind (see ports.MetadataStore.ReclaimBlob).
+		outcome, reclaimErr := s.metadata.ReclaimBlob(ctx, digest, func(ctx context.Context) (ports.BlobReclaimOutcome, error) {
+			return s.blobs.DeleteBlobIfOlderThan(ctx, digest, cutoff)
+		})
+		if reclaimErr != nil {
 			failureCount++
 			candidateOutcomes = append(candidateOutcomes, ports.GCCandidateOutcome{
 				Digest:  candidate.Digest,
 				Outcome: ports.GCCandidateOutcomeFailed,
-				Error:   refErr.Error(),
+				Error:   reclaimErr.Error(),
 			})
 			continue
 		}
-		if referenced {
+		switch outcome {
+		case ports.BlobReclaimReferenced, ports.BlobReclaimTooRecent:
 			candidateOutcomes = append(candidateOutcomes, ports.GCCandidateOutcome{
 				Digest:  candidate.Digest,
 				Outcome: ports.GCCandidateOutcomeRetained,
 			})
 			continue
-		}
-
-		removed, deleteErr := s.blobs.DeleteBlob(ctx, digest)
-		if deleteErr != nil {
-			failureCount++
-			candidateOutcomes = append(candidateOutcomes, ports.GCCandidateOutcome{
-				Digest:  candidate.Digest,
-				Outcome: ports.GCCandidateOutcomeFailed,
-				Error:   deleteErr.Error(),
-			})
-			continue
-		}
-		// The bytes are gone (or were already): drop every repository link so
-		// none claims a blob that no longer exists. A failure here is
-		// harmless (reads and publishes also require the file to exist) and
-		// must not turn a completed unlink into a reported failure.
-		_ = s.metadata.UnlinkBlobDigest(ctx, digest)
-		if !removed {
+		case ports.BlobReclaimMissing:
 			candidateOutcomes = append(candidateOutcomes, ports.GCCandidateOutcome{
 				Digest:  candidate.Digest,
 				Outcome: ports.GCCandidateOutcomeMissing,

@@ -2861,3 +2861,108 @@ func TestRepositoryBlobLinksAreIdempotentTenantScopedAndRemovedWithTheRepository
 		t.Fatal("UnlinkBlobDigest kept the link")
 	}
 }
+
+func TestReclaimBlobIsAtomicWithMarkAndLinks(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	repo := domain.MustParseRepositoryRef("team/a")
+	orphan := domain.DigestFromBytes([]byte("orphan"))
+	used := domain.DigestFromBytes([]byte("used"))
+	for _, d := range []domain.Digest{orphan, used} {
+		if err := store.LinkBlob(ctx, "t1", repo, d); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", "", []byte(`{"schemaVersion":2}`), nil, []domain.Descriptor{{Digest: used, Size: 4}}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PublishManifest(ctx, "t1", repo, "v1", m, m.BlobReferences()); err != nil {
+		t.Fatal(err)
+	}
+
+	called := false
+	removeAs := func(outcome ports.BlobReclaimOutcome) func(context.Context) (ports.BlobReclaimOutcome, error) {
+		return func(context.Context) (ports.BlobReclaimOutcome, error) { called = true; return outcome, nil }
+	}
+
+	// Referenced: remove is never called and the link survives.
+	got, err := store.ReclaimBlob(ctx, used, removeAs(ports.BlobReclaimRemoved))
+	if err != nil || got != ports.BlobReclaimReferenced || called {
+		t.Fatalf("ReclaimBlob(referenced) = %v, %v, called=%v", got, err, called)
+	}
+	if linked, _ := store.IsBlobLinked(ctx, "t1", repo, used); !linked {
+		t.Fatal("referenced blob lost its link")
+	}
+
+	// Too recent: remove ran, links stay.
+	got, err = store.ReclaimBlob(ctx, orphan, removeAs(ports.BlobReclaimTooRecent))
+	if err != nil || got != ports.BlobReclaimTooRecent {
+		t.Fatalf("ReclaimBlob(recent) = %v, %v", got, err)
+	}
+	if linked, _ := store.IsBlobLinked(ctx, "t1", repo, orphan); !linked {
+		t.Fatal("recent blob lost its link")
+	}
+
+	// A failing remove rolls back: links stay.
+	if _, err := store.ReclaimBlob(ctx, orphan, func(context.Context) (ports.BlobReclaimOutcome, error) {
+		return ports.BlobReclaimMissing, fmt.Errorf("boom")
+	}); err == nil {
+		t.Fatal("ReclaimBlob() swallowed the remove error")
+	}
+	if linked, _ := store.IsBlobLinked(ctx, "t1", repo, orphan); !linked {
+		t.Fatal("failed reclaim dropped the link")
+	}
+
+	// Removed: links are dropped in the same transaction.
+	got, err = store.ReclaimBlob(ctx, orphan, removeAs(ports.BlobReclaimRemoved))
+	if err != nil || got != ports.BlobReclaimRemoved {
+		t.Fatalf("ReclaimBlob(removed) = %v, %v", got, err)
+	}
+	if linked, _ := store.IsBlobLinked(ctx, "t1", repo, orphan); linked {
+		t.Fatal("reclaimed blob kept its link")
+	}
+}
+
+func TestPublishManifestVerifiedChecksBlobsAndLinksAtomically(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	repo := domain.MustParseRepositoryRef("team/a")
+	digest := domain.DigestFromBytes([]byte("layer"))
+	m, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", "", []byte(`{"schemaVersion":2}`), nil, []domain.Descriptor{{Digest: digest, Size: 5}}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	present := func(bool) ports.BlobPresence {
+		return func(context.Context, domain.Digest) (bool, error) { return true, nil }
+	}
+
+	// File present but never linked to this repository: refused, nothing written.
+	err = store.PublishManifestVerified(ctx, "t1", repo, "v1", m, m.BlobReferences(), present(true))
+	if !domain.IsCode(err, domain.ErrorCodeConflict) {
+		t.Fatalf("unlinked blob error = %v, want conflict", err)
+	}
+	if _, err := store.ResolveManifest(ctx, "t1", repo, "v1"); !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("refused publish left a manifest behind: %v", err)
+	}
+
+	// Linked but the file is gone: refused.
+	if err := store.LinkBlob(ctx, "t1", repo, digest); err != nil {
+		t.Fatal(err)
+	}
+	absent := func(context.Context, domain.Digest) (bool, error) { return false, nil }
+	if err := store.PublishManifestVerified(ctx, "t1", repo, "v1", m, m.BlobReferences(), absent); !domain.IsCode(err, domain.ErrorCodeConflict) {
+		t.Fatalf("missing file error = %v, want conflict", err)
+	}
+
+	// Both present: published.
+	if err := store.PublishManifestVerified(ctx, "t1", repo, "v1", m, m.BlobReferences(), present(true)); err != nil {
+		t.Fatalf("PublishManifestVerified() error = %v", err)
+	}
+}

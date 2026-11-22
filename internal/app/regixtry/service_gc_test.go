@@ -385,20 +385,25 @@ func TestGCRespectsBlobsReferencedOnlyByAnotherTenantAtDeleteTime(t *testing.T) 
 // turn in the loop, proving the gap JD-1 identified: recompute-and-intersect
 // runs exactly once before the loop, with no per-digest recheck immediately
 // before each individual unlink.
+//
+// It wraps the metadata store's ReclaimBlob (the unlink now runs inside that
+// write transaction, so a publish cannot be injected from inside the blob
+// store without deadlocking the write queue by design): onTrigger fires right
+// after the trigger digest's reclaim transaction commits.
 type raceInjectingBlobStore struct {
-	ports.BlobStore
+	ports.MetadataStore
 	triggerAfterDigest string
 	onTrigger          func()
 	fired              bool
 }
 
-func (r *raceInjectingBlobStore) DeleteBlob(ctx context.Context, digest domain.Digest) (bool, error) {
-	removed, err := r.BlobStore.DeleteBlob(ctx, digest)
+func (r *raceInjectingBlobStore) ReclaimBlob(ctx context.Context, digest domain.Digest, remove func(context.Context) (ports.BlobReclaimOutcome, error)) (ports.BlobReclaimOutcome, error) {
+	outcome, err := r.MetadataStore.ReclaimBlob(ctx, digest, remove)
 	if !r.fired && digest.String() == r.triggerAfterDigest {
 		r.fired = true
 		r.onTrigger()
 	}
-	return removed, err
+	return outcome, err
 }
 
 // TestDeleteByGCReportDoesNotUnlinkBlobReferencedDuringBatchProcessing is
@@ -427,10 +432,10 @@ func TestDeleteByGCReportDoesNotUnlinkBlobReferencedDuringBatchProcessing(t *tes
 	}
 	defer metadataStore.Close()
 
-	racing := &raceInjectingBlobStore{BlobStore: blobs}
+	racing := &raceInjectingBlobStore{MetadataStore: metadataStore}
 
 	var service *Service
-	service = NewService(racing, metadataStore, allowAllAccessController{}, ports.NewSingleTenantResolver("tenant-a"), ports.NewInlineJobRunner())
+	service = NewService(blobs, racing, allowAllAccessController{}, ports.NewSingleTenantResolver("tenant-a"), ports.NewInlineJobRunner())
 	defer service.WaitForBackgroundWork()
 	service.SetGCDeleteEnabled(true)
 
@@ -620,11 +625,11 @@ type flakyBlobStore struct {
 	failDigest string
 }
 
-func (f flakyBlobStore) DeleteBlob(ctx context.Context, digest domain.Digest) (bool, error) {
+func (f flakyBlobStore) DeleteBlobIfOlderThan(ctx context.Context, digest domain.Digest, cutoff time.Time) (ports.BlobReclaimOutcome, error) {
 	if digest.String() == f.failDigest {
-		return false, errors.New("simulated unlink failure")
+		return ports.BlobReclaimMissing, errors.New("simulated unlink failure")
 	}
-	return f.BlobStore.DeleteBlob(ctx, digest)
+	return f.BlobStore.DeleteBlobIfOlderThan(ctx, digest, cutoff)
 }
 
 // TestDeleteByGCReportRecordsPerDigestFailureAndPartialReclaim is T10: one
