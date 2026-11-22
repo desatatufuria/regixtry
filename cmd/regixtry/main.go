@@ -313,6 +313,9 @@ type serveConfig struct {
 	// REGISTRY_DELETE_ENABLED: that flag is metadata-only and never touches
 	// blob files.
 	GCDeleteEnabled bool
+	// RequireProject refuses pushes to a project that does not exist and new
+	// repositories without a project (REGISTRY_REQUIRE_PROJECT).
+	RequireProject bool
 	// Upload and manifest size/concurrency limits. For each, zero means "use
 	// the built-in default" and a negative value disables the limit.
 	MaxManifestBytes      int64
@@ -441,6 +444,7 @@ func parseServeConfig(args []string) (serveConfig, error) {
 	flags.IntVar(&cfg.TrivyMaxConcurrency, "trivy-max-concurrency", 0, "maximum concurrent trivy runs")
 	flags.BoolVar(&cfg.DeleteEnabled, "delete-enabled", parseBoolEnv("REGISTRY_DELETE_ENABLED", false), "enable DELETE /v2/<name>/manifests/<reference> (manifest and tag deletion)")
 	flags.BoolVar(&cfg.GCDeleteEnabled, "gc-delete-enabled", parseBoolEnv("REGISTRY_GC_DELETE_ENABLED", false), "enable POST /admin/v1/gc/reports/{id}/delete (irreversibly unlinks unreferenced blob files; distinct from -delete-enabled, which is metadata-only)")
+	flags.BoolVar(&cfg.RequireProject, "require-project", parseBoolEnv("REGISTRY_REQUIRE_PROJECT", false), "refuse pushes to a project that does not exist (404 NAME_UNKNOWN) and new repositories without a project; existing flat repositories keep working (default false)")
 	flags.StringVar(&cfg.TrustedProxies, "trusted-proxies", os.Getenv("REGISTRY_TRUSTED_PROXIES"), "comma-separated CIDRs/IPs of reverse proxies whose X-Forwarded-For is trusted for client IP logging (empty = ignore X-Forwarded-For)")
 	var limitEnvErr error
 	trackEnv := func(err error) {
@@ -2553,7 +2557,7 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 		return nil, nil, err
 	}
 
-	metadataStore, err := metadata.New(cfg.DatabasePath)
+	metadataStore, err := metadata.New(cfg.DatabasePath, metadata.WithRequireProject(cfg.RequireProject))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -2574,6 +2578,7 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 	service.SetPushScanLimits(parseIntEnv("REGISTRY_PUSH_SCAN_MAX_PENDING", 0), parseIntEnv("REGISTRY_PUSH_SCAN_MAX_PER_REPOSITORY", 0), parseIntEnv("REGISTRY_PUSH_SCAN_MAX_PER_PUSHER", 0))
 	service.SetDeleteEnabled(cfg.DeleteEnabled)
 	service.SetGCDeleteEnabled(cfg.GCDeleteEnabled)
+	service.SetRequireProject(cfg.RequireProject)
 	service.SetUploadLimits(
 		int(limitOrDefault(int64(cfg.MaxOpenUploads), appregixtry.DefaultMaxOpenUploads)),
 		int(limitOrDefault(int64(cfg.MaxOpenUploadsPerRepo), appregixtry.DefaultMaxOpenUploadsPerRepo)),
