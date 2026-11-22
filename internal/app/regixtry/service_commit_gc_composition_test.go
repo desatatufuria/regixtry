@@ -199,3 +199,115 @@ func TestDedupCommitLinksBlobIntoPushingRepository(t *testing.T) {
 		t.Fatalf("OpenBlob() after dedup push error = %v", err)
 	}
 }
+
+// afterCommitBlobs runs hook right after the blob store committed an upload,
+// i.e. exactly between CommitUpload and the service's LinkBlob.
+type afterCommitBlobs struct {
+	ports.BlobStore
+	hook func()
+}
+
+func (a *afterCommitBlobs) CommitUpload(ctx context.Context, uploadID string, expected domain.Digest) (domain.Descriptor, error) {
+	descriptor, err := a.BlobStore.CommitUpload(ctx, uploadID, expected)
+	if err == nil && a.hook != nil {
+		a.hook()
+	}
+	return descriptor, err
+}
+
+// TestGCBetweenCommitAndLinkNeverReclaimsTheCommittedBlob pins the
+// composition deterministically: a full GC (report + delete, clock just past
+// the grace window) runs between CommitUpload and LinkBlob. The committed blob
+// must survive and a manifest referencing it must publish, whether the commit
+// published an idle upload or deduplicated onto an old existing blob.
+func TestGCBetweenCommitAndLinkNeverReclaimsTheCommittedBlob(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"idle-upload", "dedup-aged-blob"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx := context.Background()
+			rootDir := t.TempDir()
+			storeDir := filepath.Join(rootDir, "store")
+			real, err := fsblob.New(storeDir)
+			if err != nil {
+				t.Fatalf("fsblob.New() error = %v", err)
+			}
+			store, err := metadata.New(filepath.Join(rootDir, "registry.db"))
+			if err != nil {
+				t.Fatalf("sqlite.New() error = %v", err)
+			}
+			blobs := &afterCommitBlobs{BlobStore: real}
+			service := NewService(blobs, store, allowAllAccessController{}, ports.NewSingleTenantResolver("tenant-a"), ports.NewInlineJobRunner())
+			service.SetGCDeleteEnabled(true)
+			t.Cleanup(func() {
+				service.WaitForBackgroundWork()
+				_ = store.Close()
+			})
+
+			const repo = "library/alpine"
+			payload := []byte("deterministic-" + name)
+			digest := domain.MustParseDigest(digestForTest(payload))
+			blobFile := filepath.Join(storeDir, "blobs", digest.Algorithm(), digest.Encoded())
+			old := time.Now().Add(-time.Hour)
+
+			started, err := service.BeginUpload(ctx, repo)
+			if err != nil {
+				t.Fatalf("BeginUpload() error = %v", err)
+			}
+			if name == "dedup-aged-blob" {
+				// The blob already exists (first push) and sat unreferenced.
+				if _, err := service.AppendUpload(ctx, repo, started.ID, strings.NewReader(string(payload))); err != nil {
+					t.Fatalf("AppendUpload() error = %v", err)
+				}
+				if _, err := service.CompleteUpload(ctx, repo, started.ID, digest.String(), nil); err != nil {
+					t.Fatalf("first CompleteUpload() error = %v", err)
+				}
+				if err := os.Chtimes(blobFile, old, old); err != nil {
+					t.Fatalf("age blob: %v", err)
+				}
+				if started, err = service.BeginUpload(ctx, repo); err != nil {
+					t.Fatalf("BeginUpload() error = %v", err)
+				}
+			}
+			if _, err := service.AppendUpload(ctx, repo, started.ID, strings.NewReader(string(payload))); err != nil {
+				t.Fatalf("AppendUpload() error = %v", err)
+			}
+			if name == "idle-upload" {
+				uploadFile := filepath.Join(storeDir, "uploads", started.ID, "data")
+				if err := os.Chtimes(uploadFile, old, old); err != nil {
+					t.Fatalf("age upload: %v", err)
+				}
+			}
+
+			ran := false
+			blobs.hook = func() {
+				ran = true
+				// Cutoff = real now - 5s: anything not refreshed by the commit is old.
+				service.now = func() time.Time { return time.Now().UTC().Add(gcGraceWindow - 5*time.Second) }
+				report, err := service.ComputeGCReport(ctx)
+				if err != nil {
+					t.Errorf("ComputeGCReport() error = %v", err)
+					return
+				}
+				if _, err := service.DeleteByGCReport(ctx, report.Report.ID); err != nil {
+					t.Errorf("DeleteByGCReport() error = %v", err)
+				}
+			}
+			if _, err := service.CompleteUpload(ctx, repo, started.ID, digest.String(), nil); err != nil {
+				t.Fatalf("CompleteUpload() error = %v", err)
+			}
+			if !ran {
+				t.Fatal("the GC hook never ran")
+			}
+			if exists, err := real.BlobExists(ctx, digest); err != nil || !exists {
+				t.Fatalf("GC reclaimed the blob between commit and link (exists=%v err=%v): lost update", exists, err)
+			}
+			manifest := []byte(fmt.Sprintf(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{"mediaType":"application/vnd.oci.image.config.v1+json","digest":"%s","size":%d},"layers":[]}`, digest, len(payload)))
+			if _, err := service.PublishManifest(ctx, repo, "latest", "application/vnd.oci.image.manifest.v1+json", manifest); err != nil {
+				t.Fatalf("PublishManifest() error = %v", err)
+			}
+		})
+	}
+}

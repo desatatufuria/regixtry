@@ -119,3 +119,49 @@ func TestConcurrentCommitsAndReclaimNeverLoseACommittedBlob(t *testing.T) {
 	close(stop)
 	gc.Wait()
 }
+
+// CommitUpload and DeleteBlobIfOlderThan must share ONE mutex: while it is
+// held by someone else both block, and both proceed once it is released.
+func TestCommitAndReclaimShareTheContentMutex(t *testing.T) {
+	t.Parallel()
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	payload := []byte("shared-mutex")
+	digest := domain.DigestFromBytes(payload)
+	upload := beginUpload(t, store)
+	if _, err := store.PutUploadChunk(ctx, upload.ID, strings.NewReader(string(payload))); err != nil {
+		t.Fatal(err)
+	}
+
+	store.blobMu.Lock()
+	commitDone := make(chan error, 1)
+	reclaimDone := make(chan error, 1)
+	go func() {
+		_, err := store.CommitUpload(ctx, upload.ID, digest)
+		commitDone <- err
+	}()
+	go func() {
+		_, err := store.DeleteBlobIfOlderThan(ctx, digest, time.Now().Add(-24*time.Hour))
+		reclaimDone <- err
+	}()
+	for name, done := range map[string]chan error{"CommitUpload": commitDone, "DeleteBlobIfOlderThan": reclaimDone} {
+		select {
+		case <-done:
+			store.blobMu.Unlock()
+			t.Fatalf("%s ran while the content mutex was held", name)
+		case <-time.After(300 * time.Millisecond):
+		}
+	}
+	store.blobMu.Unlock()
+	for name, done := range map[string]chan error{"CommitUpload": commitDone, "DeleteBlobIfOlderThan": reclaimDone} {
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("%s error = %v", name, err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatalf("%s never proceeded after the mutex was released", name)
+		}
+	}
+}

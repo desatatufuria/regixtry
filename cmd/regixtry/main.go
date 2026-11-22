@@ -320,6 +320,10 @@ type serveConfig struct {
 	MaxOpenUploads        int
 	MaxOpenUploadsPerRepo int
 	UploadTTL             time.Duration
+
+	// Test seams; the zero values keep production behavior.
+	uploadReapInterval time.Duration
+	uploadReapOnError  func(error)
 }
 
 type bootstrapAdminConfig struct {
@@ -2537,9 +2541,15 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 		schedulerDone.Add(1)
 		go func() {
 			defer schedulerDone.Done()
-			service.RunUploadReaper(schedulerCtx, uploadReapInterval(uploadTTL), func(err error) {
-				log.Printf("upload reaper: %v", err)
-			})
+			reapInterval := cfg.uploadReapInterval
+			if reapInterval <= 0 {
+				reapInterval = uploadReapInterval(uploadTTL)
+			}
+			onReapError := cfg.uploadReapOnError
+			if onReapError == nil {
+				onReapError = func(err error) { log.Printf("upload reaper: %v", err) }
+			}
+			service.RunUploadReaper(schedulerCtx, reapInterval, onReapError)
 		}()
 	}
 
