@@ -50,6 +50,11 @@ func newWithBusyTimeout(path string, busyTimeoutMillis int) (*Store, error) {
 		return nil, err
 	}
 
+	if err := store.backfillProjects(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+
 	// After init(): the latest-only columns exist before any purge runs.
 	if err := store.purgeDuplicateScanHistory(nil); err != nil {
 		_ = db.Close()
@@ -2512,6 +2517,17 @@ func (s *Store) init() error {
 			PRIMARY KEY(tenant, repository, digest)
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_repository_blobs_digest ON repository_blobs(digest);`,
+		// projects: the first-level grouping of repositories (the first path
+		// segment of a repository name). Additive; nothing on the push or
+		// read paths consults it yet.
+		`CREATE TABLE IF NOT EXISTS projects (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			tenant TEXT NOT NULL,
+			name TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			created_by TEXT NOT NULL DEFAULT '',
+			UNIQUE(tenant, name)
+		);`,
 		`CREATE TABLE IF NOT EXISTS uploads (
 			id TEXT PRIMARY KEY,
 			tenant TEXT NOT NULL,
