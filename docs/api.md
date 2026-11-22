@@ -223,9 +223,9 @@ The detail payload keeps the summary `run` object, a compact ordered `findings` 
 | POST | `/v2/<repo>/blobs/uploads/` | Starts upload; `202` |
 | GET/HEAD | `/v2/<repo>/blobs/uploads/<id>` | Upload state; `204` |
 | PATCH | `/v2/<repo>/blobs/uploads/<id>` | Appends a chunk; `202` |
-| PUT | `/v2/<repo>/blobs/uploads/<id>?digest=sha256:...` | Completes upload; `201` |
+| PUT | `/v2/<repo>/blobs/uploads/<id>?digest=sha256:...` | Completes upload and links the blob to `<repo>`; `201` |
 | DELETE | `/v2/<repo>/blobs/uploads/<id>` | Not implemented; `UNSUPPORTED` |
-| GET/HEAD | `/v2/<repo>/blobs/<digest>` | Blob; `200` |
+| GET/HEAD | `/v2/<repo>/blobs/<digest>` | Blob; `200`. Served only if `<repo>` holds the blob (uploaded into it or referenced by one of its manifests); otherwise `404 BLOB_UNKNOWN` even if another repository has it |
 | PUT | `/v2/<repo>/manifests/<tag-or-digest>` | Publishes manifest; `201` |
 | GET/HEAD | `/v2/<repo>/manifests/<tag-or-digest>` | Manifest; `200` |
 | DELETE | `/v2/<repo>/manifests/<digest>` | Deletes the manifest, cascading to every tag pointing at it; `202` JSON body naming what was removed; `404` if absent |

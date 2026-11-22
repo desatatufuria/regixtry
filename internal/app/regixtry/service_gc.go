@@ -246,6 +246,11 @@ func (s *Service) DeleteByGCReport(ctx context.Context, reportID string) (ports.
 			})
 			continue
 		}
+		// The bytes are gone (or were already): drop every repository link so
+		// none claims a blob that no longer exists. A failure here is
+		// harmless (reads and publishes also require the file to exist) and
+		// must not turn a completed unlink into a reported failure.
+		_ = s.metadata.UnlinkBlobDigest(ctx, digest)
 		if !removed {
 			candidateOutcomes = append(candidateOutcomes, ports.GCCandidateOutcome{
 				Digest:  candidate.Digest,

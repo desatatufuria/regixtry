@@ -2739,3 +2739,125 @@ func newTestStore(t *testing.T) *Store {
 
 	return store
 }
+
+// TestBackfillRepositoryBlobsLinksExistingManifestBlobsOnce simulates a
+// database written before repository_blobs existed: manifests and their
+// manifest_blobs rows are present, the link table is empty and the backfill
+// marker absent. Opening the store must link every manifest-referenced blob
+// to its own repository only, delete nothing, and be a no-op on reopen.
+func TestBackfillRepositoryBlobsLinksExistingManifestBlobsOnce(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "registry.db")
+	store, err := New(path)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	ctx := context.Background()
+	repoA := domain.MustParseRepositoryRef("team/a")
+	repoB := domain.MustParseRepositoryRef("team/b")
+	shared := domain.DigestFromBytes([]byte("shared"))
+	onlyA := domain.DigestFromBytes([]byte("only-a"))
+	onlyB := domain.DigestFromBytes([]byte("only-b"))
+	layer := func(d domain.Digest) domain.Descriptor {
+		return domain.Descriptor{MediaType: "application/vnd.oci.image.layer.v1.tar", Digest: d, Size: 1}
+	}
+	publish := func(repo domain.RepositoryRef, tenant, tag string, blobs ...domain.Descriptor) {
+		t.Helper()
+		m, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", "", []byte(`{"schemaVersion":2,"t":"`+tenant+repo.String()+tag+`"}`), nil, blobs, nil, nil)
+		if err != nil {
+			t.Fatalf("NewManifest() error = %v", err)
+		}
+		if err := store.PublishManifest(ctx, tenant, repo, tag, m, blobs); err != nil {
+			t.Fatalf("PublishManifest() error = %v", err)
+		}
+	}
+	publish(repoA, "t1", "v1", layer(shared), layer(onlyA))
+	publish(repoB, "t1", "v1", layer(shared), layer(onlyB))
+	publish(repoA, "t2", "v1", layer(onlyB))
+
+	// Rewind to the pre-migration state.
+	if _, err := store.db.Exec(`DELETE FROM repository_blobs`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`DELETE FROM schema_backfills WHERE name = ?`, repositoryBlobsBackfillMarker); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	for pass := 1; pass <= 2; pass++ {
+		store, err = New(path)
+		if err != nil {
+			t.Fatalf("pass %d: New() error = %v", pass, err)
+		}
+		want := []struct {
+			tenant string
+			repo   domain.RepositoryRef
+			digest domain.Digest
+			linked bool
+		}{
+			{"t1", repoA, shared, true}, {"t1", repoA, onlyA, true}, {"t1", repoA, onlyB, false},
+			{"t1", repoB, shared, true}, {"t1", repoB, onlyB, true}, {"t1", repoB, onlyA, false},
+			{"t2", repoA, onlyB, true}, {"t2", repoA, shared, false},
+		}
+		for _, w := range want {
+			got, err := store.IsBlobLinked(ctx, w.tenant, w.repo, w.digest)
+			if err != nil || got != w.linked {
+				t.Fatalf("pass %d: IsBlobLinked(%s, %s, %s) = %v, %v; want %v", pass, w.tenant, w.repo, w.digest, got, err, w.linked)
+			}
+		}
+		var manifests int
+		if err := store.db.QueryRow(`SELECT COUNT(*) FROM manifests`).Scan(&manifests); err != nil || manifests != 3 {
+			t.Fatalf("pass %d: manifests = %d, %v; want 3 (nothing deleted)", pass, manifests, err)
+		}
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestRepositoryBlobLinksAreIdempotentTenantScopedAndRemovedWithTheRepository(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	repo := domain.MustParseRepositoryRef("team/a")
+	digest := domain.DigestFromBytes([]byte("blob"))
+
+	for i := 0; i < 2; i++ {
+		if err := store.LinkBlob(ctx, "t1", repo, digest); err != nil {
+			t.Fatalf("LinkBlob() #%d error = %v", i, err)
+		}
+	}
+	if linked, _ := store.IsBlobLinked(ctx, "t2", repo, digest); linked {
+		t.Fatal("link leaked across tenants")
+	}
+
+	m, err := domain.NewManifest("application/vnd.oci.image.manifest.v1+json", "", []byte(`{"schemaVersion":2}`), nil, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PublishManifest(ctx, "t1", repo, "v1", m, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.DeleteRepository(ctx, "t1", repo); err != nil {
+		t.Fatalf("DeleteRepository() error = %v", err)
+	}
+	if linked, _ := store.IsBlobLinked(ctx, "t1", repo, digest); linked {
+		t.Fatal("DeleteRepository kept the repository's blob links")
+	}
+
+	if err := store.LinkBlob(ctx, "t1", repo, digest); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UnlinkBlobDigest(ctx, digest); err != nil {
+		t.Fatal(err)
+	}
+	if linked, _ := store.IsBlobLinked(ctx, "t1", repo, digest); linked {
+		t.Fatal("UnlinkBlobDigest kept the link")
+	}
+}

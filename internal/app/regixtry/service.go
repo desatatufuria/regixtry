@@ -277,6 +277,12 @@ func (s *Service) CompleteUpload(ctx context.Context, repositoryName string, upl
 		return BlobDetails{}, err
 	}
 
+	// The blob file is shared by content, so the repository link is what
+	// makes it readable and referenceable in THIS repository.
+	if err := s.metadata.LinkBlob(ctx, s.tenant(ctx), state.Repository, descriptor.Digest); err != nil {
+		return BlobDetails{}, err
+	}
+
 	if err := s.metadata.DeleteUpload(ctx, s.tenant(ctx), uploadID); err != nil {
 		return BlobDetails{}, err
 	}
@@ -312,6 +318,14 @@ func (s *Service) PublishManifest(ctx context.Context, repositoryName string, re
 		exists, err := s.blobs.BlobExists(ctx, descriptor.Digest)
 		if err != nil {
 			return ManifestDetails{}, err
+		}
+		if exists {
+			// A blob that exists only for another repository is "missing"
+			// here: the answer must not reveal it exists elsewhere.
+			exists, err = s.metadata.IsBlobLinked(ctx, s.tenant(ctx), repository, descriptor.Digest)
+			if err != nil {
+				return ManifestDetails{}, err
+			}
 		}
 		if !exists {
 			return ManifestDetails{}, domain.NewConflictError(fmt.Sprintf("manifest references missing blob %s", descriptor.Digest))
