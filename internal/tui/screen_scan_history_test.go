@@ -246,26 +246,31 @@ func TestScanHistoryBreadcrumbByOpener(t *testing.T) {
 
 func TestScanHistoryFitsEverySizeInEveryState(t *testing.T) {
 	t.Parallel()
-	many := scanFixtureClient()
-	var findings []ports.ScanRunFinding
-	var secrets []ports.SecretFinding
-	for i := range 60 {
-		findings = append(findings, ports.ScanRunFinding{Severity: "HIGH", VulnerabilityID: fmt.Sprintf("CVE-2026-%04d-with-a-long-identifier", i),
-			PackageName: "a-package-with-a-very-long-name-ñandú", InstalledVersion: "1.2.3-long-version-string", FixedVersion: "9.9.9-long-version-string"})
-		secrets = append(secrets, ports.SecretFinding{RuleID: "a-rule-with-a-very-long-identifier", Path: strings.Repeat("deep/", 12) + "file.env", StartLine: i + 1, EndLine: i + 3,
-			Description: strings.Repeat("long description ", 8), Tags: []string{"a", "b"}})
+	// Every subtest gets its own client: the fake's call counters are plain
+	// fields, so a client shared by parallel subtests is a data race.
+	newMany := func() *fakeAdminClient {
+		many := scanFixtureClient()
+		var findings []ports.ScanRunFinding
+		var secrets []ports.SecretFinding
+		for i := range 60 {
+			findings = append(findings, ports.ScanRunFinding{Severity: "HIGH", VulnerabilityID: fmt.Sprintf("CVE-2026-%04d-with-a-long-identifier", i),
+				PackageName: "a-package-with-a-very-long-name-ñandú", InstalledVersion: "1.2.3-long-version-string", FixedVersion: "9.9.9-long-version-string"})
+			secrets = append(secrets, ports.SecretFinding{RuleID: "a-rule-with-a-very-long-identifier", Path: strings.Repeat("deep/", 12) + "file.env", StartLine: i + 1, EndLine: i + 3,
+				Description: strings.Repeat("long description ", 8), Tags: []string{"a", "b"}})
+		}
+		d := many.scanRunDetails["run-team/api"]
+		d.Findings = findings
+		many.scanRunDetails["run-team/api"] = d
+		api := d.Run
+		many.secretScanFindings = map[string]ports.SecretScanRunDetail{"team/api@" + api.Digest: {Findings: secrets}}
+		return many
 	}
-	d := many.scanRunDetails["run-team/api"]
-	d.Findings = findings
-	many.scanRunDetails["run-team/api"] = d
-	api := d.Run
-	many.secretScanFindings = map[string]ports.SecretScanRunDetail{"team/api@" + api.Digest: {Findings: secrets}}
 
 	for _, tab := range []string{"vulnerabilities", "leaks"} {
 		for _, size := range scanViewSizes {
 			t.Run(fmt.Sprintf("%s_%dx%d", tab, size.w, size.h), func(t *testing.T) {
 				t.Parallel()
-				m := historyModelAt(t, many, size.w, size.h)
+				m := historyModelAt(t, newMany(), size.w, size.h)
 				if tab == "leaks" {
 					m = scanPress(t, m, testKeyTab())
 				}
