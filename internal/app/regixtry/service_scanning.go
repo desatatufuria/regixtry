@@ -381,17 +381,21 @@ func (s *Service) resolveManagedScanSettingsForTenant(ctx context.Context, tenan
 	return settings, nil
 }
 
-// scanRunMargin is added to the configured scan timeout when bounding a scan
-// run or its wait for a slot (a variable so tests can shrink it).
-var scanRunMargin = time.Minute
+// defaultScanRunMargin is added to the configured scan timeout when bounding
+// a scan run or its wait for a slot.
+const defaultScanRunMargin = time.Minute
 
 // scanRunBound is the hard ceiling on one scan run (and on its wait for a
-// slot): the configured timeout (15m when unset) plus scanRunMargin.
-func scanRunBound(timeout time.Duration) time.Duration {
+// slot): the configured timeout (15m when unset) plus the service's margin.
+func (s *Service) scanRunBound(timeout time.Duration) time.Duration {
 	if timeout <= 0 {
 		timeout = 15 * time.Minute
 	}
-	return timeout + scanRunMargin
+	margin := s.scanRunMargin
+	if margin <= 0 {
+		margin = defaultScanRunMargin
+	}
+	return timeout + margin
 }
 
 func (s *Service) executeScanRun(ctx context.Context, tenant string, run ports.ScanRun, settings ports.ScanSettings) {
@@ -407,7 +411,7 @@ func (s *Service) executeScanRun(ctx context.Context, tenant string, run ports.S
 	// executeScanRun does not return until this leg has, so a push-scan slot
 	// (held until return) bounds the leg's goroutine too.
 	secretLegDone := make(chan struct{})
-	legCtx, cancelLeg := context.WithTimeout(ctx, 2*scanRunBound(settings.Timeout))
+	legCtx, cancelLeg := context.WithTimeout(ctx, 2*s.scanRunBound(settings.Timeout))
 	defer cancelLeg()
 	// legState: 0 running, 1 finished, 2 abandoned by this function.
 	var legState atomic.Int32
@@ -433,7 +437,7 @@ func (s *Service) executeScanRun(ctx context.Context, tenant string, run ports.S
 	// The slot wait and the scan itself are each bounded by the configured
 	// scan timeout plus a margin, so a hung runner or a stalled gate can
 	// never hold a goroutine (and a push-scan slot) forever.
-	waitCtx, cancelWait := context.WithTimeout(ctx, scanRunBound(settings.Timeout))
+	waitCtx, cancelWait := context.WithTimeout(ctx, s.scanRunBound(settings.Timeout))
 	err := s.scanGate.acquire(waitCtx, settings.MaxConcurrency)
 	cancelWait()
 	if err != nil {
@@ -461,7 +465,7 @@ func (s *Service) executeScanRun(ctx context.Context, tenant string, run ports.S
 		s.persistAsyncScanRun(ctx, tenant, run)
 		return
 	}
-	runCtx, cancelRun := context.WithTimeout(ctx, scanRunBound(settings.Timeout))
+	runCtx, cancelRun := context.WithTimeout(ctx, s.scanRunBound(settings.Timeout))
 	result, err := scanRunner.Run(runCtx, target, settings)
 	cancelRun()
 	finished := s.now()

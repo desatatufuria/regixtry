@@ -295,14 +295,10 @@ func TestSkippedPushScanForUnscannedDigestStaysVisibleButNeverWinsLatest(t *test
 	}
 }
 
-// Not parallel: it shrinks the package-level scanRunMargin.
 func TestHungScanRunnerFreesItsSlotAfterTheScanTimeout(t *testing.T) {
-	old := scanRunMargin
-	scanRunMargin = 20 * time.Millisecond
-	defer func() { scanRunMargin = old }()
-
 	service, cleanup := newTestService(t, allowAllAccessController{})
 	defer cleanup()
+	service.scanRunMargin = 20 * time.Millisecond
 	if _, err := service.EnsureScanSettings(context.Background(), ports.ScanSettings{Enabled: true, Timeout: 50 * time.Millisecond, Interval: time.Hour, RegistryReachableURL: "https://registry.internal", MaxConcurrency: 1}); err != nil {
 		t.Fatalf("EnsureScanSettings() error = %v", err)
 	}
@@ -330,12 +326,9 @@ func TestHungScanRunnerFreesItsSlotAfterTheScanTimeout(t *testing.T) {
 }
 
 func TestQueuedPushScansTimeOutWaitingForASlot(t *testing.T) {
-	old := scanRunMargin
-	scanRunMargin = 20 * time.Millisecond
-	defer func() { scanRunMargin = old }()
-
 	service, cleanup := newTestService(t, allowAllAccessController{})
 	defer cleanup()
+	service.scanRunMargin = 20 * time.Millisecond
 	if _, err := service.EnsureScanSettings(context.Background(), ports.ScanSettings{Enabled: true, Timeout: 50 * time.Millisecond, Interval: time.Hour, RegistryReachableURL: "https://registry.internal", MaxConcurrency: 1}); err != nil {
 		t.Fatalf("EnsureScanSettings() error = %v", err)
 	}
@@ -464,19 +457,15 @@ func (h *hangingSecretRunner) Run(ctx context.Context, _ ports.SecretScanTarget,
 	}
 }
 
-// Not parallel: shrinks the package-level scanRunMargin.
 func TestHungSecretScanLegNeverHoldsAPushScanSlotForever(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		ignoreCtx bool
 	}{{"honors cancellation", false}, {"ignores cancellation", true}} {
 		t.Run(tc.name, func(t *testing.T) {
-			old := scanRunMargin
-			scanRunMargin = 20 * time.Millisecond
-			defer func() { scanRunMargin = old }()
-
 			service, cleanup := newTestService(t, allowAllAccessController{})
 			defer cleanup()
+			service.scanRunMargin = 20 * time.Millisecond
 			ctx := context.Background()
 			seedRepository(t, service, ctx, "library/alpine")
 			digest := seededManifestDigest(t, service, "library/alpine")
@@ -496,14 +485,10 @@ func TestHungSecretScanLegNeverHoldsAPushScanSlotForever(t *testing.T) {
 	}
 }
 
-// Not parallel: shrinks the package-level scanRunMargin.
 func TestStuckSecretLegsAreCountedBoundedAndRecoverWhenTheyReturn(t *testing.T) {
-	old := scanRunMargin
-	scanRunMargin = 10 * time.Millisecond
-	defer func() { scanRunMargin = old }()
-
 	service, cleanup := newTestService(t, allowAllAccessController{})
 	defer cleanup()
+	service.scanRunMargin = 10 * time.Millisecond
 	ctx := context.Background()
 	// The secret leg dedups per repository@digest, so each push uses its own
 	// repository (each seeded with the same manifest bytes).
