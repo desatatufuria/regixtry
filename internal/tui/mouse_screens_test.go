@@ -376,7 +376,7 @@ func delegateMouseCase() mouseCase {
 	}
 }
 
-func consoleListWidth(w int) int { return consolePadX + min(w-2*consolePadX, consoleTableMaxWidth) }
+func consoleListWidth(w int) int { return consolePadX + w - 2*consolePadX }
 
 func consoleMouseModel(t *testing.T, id screen, built adminScreen, w, h int) Model {
 	t.Helper()

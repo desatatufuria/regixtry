@@ -512,7 +512,7 @@ func TestConsoleTagsShowColumnsSortedAndTheSortIndicator(t *testing.T) {
 	env := consoleEnvFor(service, 150, 24)
 	s := loadedTags(t, service, env)
 	out := consoleRender(s, env)
-	for _, want := range []string{"TAG", "CREATED", "PUSHED BY", "SIGNED", "2026-11-21 08:41", "ci", "yes", "no", "n/a", "unknown", "sort: name"} {
+	for _, want := range []string{"TAG", "CREATED", "PUSHED BY", "SIGNED", "2026-11-21 08:41", "ci", "yes", "no", "n/a", "—", "sort: name"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("view lacks %q:\n%s", want, out)
 		}

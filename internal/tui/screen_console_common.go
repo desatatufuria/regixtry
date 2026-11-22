@@ -28,8 +28,6 @@ var consoleGenerations atomic.Uint64
 const (
 	// consolePadX is the board's 36px side padding at about 8.5px a column.
 	consolePadX = 4
-	// consoleTableMaxWidth is the board's 760 to 860px table column.
-	consoleTableMaxWidth = 100
 	// consoleColumnGap separates table columns; consoleMarkerWidth is the
 	// selection marker's own column.
 	consoleColumnGap   = 2
@@ -363,17 +361,16 @@ func consoleMouseRows(width, height, cursor, total int) mouseRows {
 	return mouseRows{
 		X:     consolePadX,
 		Y:     shellHeaderRows + shellContentPadTop + consoleHeadRows + consoleTableChromeRows,
-		Width: min(bodyW, consoleTableMaxWidth), Count: end - start, First: start,
+		Width: bodyW, Count: end - start, First: start,
 	}
 }
 
 // consoleBody lays out the common body: the title and summary line, a blank,
 // the table card, the status line and the footnote, in exactly rows rows.
 func consoleBody(theme adminTheme, width, rows int, title, summary string, table consoleTableSpec, status, footnote string) string {
-	tableW := min(width, consoleTableMaxWidth)
 	lines := []string{spread(theme.subheading.Render(title), theme.muted.Render(grantTruncate(summary, max(width-lipgloss.Width(title)-2, 1))), width), ""}
 	tableH := consoleTableHeight(rows)
-	lines = append(lines, renderConsoleTable(theme, tableW, tableH, table)...)
+	lines = append(lines, renderConsoleTable(theme, width, tableH, table)...)
 	lines = append(lines, status, theme.muted.Render(grantTruncate(footnote, width)))
 	return strings.Join(lines, "\n")
 }
