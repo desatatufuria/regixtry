@@ -21,14 +21,7 @@ func secretFindingLocation(finding ports.SecretFinding) string {
 	return fmt.Sprintf("%s:%d", location, finding.StartLine)
 }
 
-// Table styles are built from admin_theme.go's palette role constants so they can
-// never drift from the theme palette.
-
-// severityStyle maps an uppercased severity value onto its v2 cell
-// style, mirroring adminTheme's own severityCritical/severityHigh/
-// severityMedium/severityLow/text styles (v1) color-for-color -- the exact
-// same case set and fallback as the old severityStyledCell(theme, ...)
-// switch, before this function replaced it.
+// severityStyle maps an uppercased severity value onto its cell style.
 func severityStyle(value string) lipgloss.Style {
 	switch value {
 	case "CRITICAL":

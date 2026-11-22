@@ -47,13 +47,11 @@ func TestThemeRolesUseTheDesignPalette(t *testing.T) {
 	}{
 		{"title", theme.title, designText},
 		{"subheading", theme.subheading, designText},
-		{"tableHeader", theme.tableHeader, designText},
 		{"text", theme.text, designText},
 		{"input", theme.input, designText},
 		{"context", theme.context, designMuted},
 		{"muted", theme.muted, designMuted},
 		{"help", theme.help, designMuted},
-		{"severityLow", theme.severityLow, designMuted},
 		{"accent", theme.accent, designAccent},
 		{"selected", theme.selected, designAccent},
 		{"inputFocus", theme.inputFocus, designAccent},
@@ -92,17 +90,6 @@ func TestThemeRolesUseTheDesignPalette(t *testing.T) {
 	if got := colorHex(theme.section.GetBorderTopForeground()); got != designBorder {
 		t.Errorf("section border = %s, want %s", got, designBorder)
 	}
-
-	// Severity medium has no hue in the design: it must still differ from
-	// every other severity.
-	medium := colorHex(theme.severityMedium.GetForeground())
-	for name, other := range map[string]lipgloss.Style{
-		"critical": theme.severityCritical, "high": theme.severityHigh, "low": theme.severityLow,
-	} {
-		if medium == colorHex(other.GetForeground()) {
-			t.Errorf("severityMedium %s equals severity %s", medium, name)
-		}
-	}
 }
 
 func contrastRatio(t *testing.T, a, b string) float64 {
@@ -125,7 +112,7 @@ func TestPaletteContrastOnPageAndPanel(t *testing.T) {
 		"warning": colorHex(theme.warning.GetForeground()),
 		"success": colorHex(theme.success.GetForeground()),
 		"error":   colorHex(theme.error.GetForeground()),
-		"medium":  colorHex(theme.severityMedium.GetForeground()),
+		"medium":  colorHex(severityStyle("MEDIUM").GetForeground()),
 	}
 	for name, fg := range fgs {
 		for bgName, bg := range map[string]string{"page": designPageBG, "panel": designPanelBG} {
@@ -229,4 +216,17 @@ func TestFocusBorderColorsAreVisibleAgainstThePage(t *testing.T) {
 		t.Error("screen_grant_access_view.go uses the selected-row background; borders must use the accent or border token")
 	}
 	t.Logf("unfocused border %s on page = %.2f:1 (design value, not asserted)", paletteBorderHex, contrastRatio(t, strings.ToUpper(paletteBorderHex), designPageBG))
+}
+
+func TestSeverityStylesUseTheDesignPalette(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]string{
+		"CRITICAL": designError, "HIGH": designWarning, "MEDIUM": designAccent, "LOW": designMuted, "UNKNOWN": designText,
+	}
+	for value, want := range cases {
+		if got := colorHex(severityStyle(value).GetForeground()); got != want {
+			t.Errorf("severityStyle(%s) = %s, want %s", value, got, want)
+		}
+	}
 }

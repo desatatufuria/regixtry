@@ -28,7 +28,6 @@ const (
 type adminTheme struct {
 	app              lipgloss.Style
 	section          lipgloss.Style
-	tableHeader      lipgloss.Style
 	borderColor      color.Color
 	title            lipgloss.Style
 	context          lipgloss.Style
@@ -42,14 +41,10 @@ type adminTheme struct {
 	error            lipgloss.Style
 	severityCritical lipgloss.Style
 	severityHigh     lipgloss.Style
-	severityMedium   lipgloss.Style
-	severityLow      lipgloss.Style
 	input            lipgloss.Style
 	inputFocus       lipgloss.Style
 	pill             lipgloss.Style
 	help             lipgloss.Style
-	inputWidth       int
-	secretWidth      int
 }
 
 func newAdminTheme() adminTheme {
@@ -78,12 +73,11 @@ func newAdminTheme() adminTheme {
 		// viewport.go's sectionWidth(); call sites without one (forms that
 		// are not viewport-driven) fall back to auto-sizing to their content.
 		section: lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(border).Padding(1),
-		// tableHeader/subheading/context deliberately stay off accent: gold is
+		// subheading/context deliberately stay off accent: gold is
 		// reserved for interactive/selected state (selected, inputFocus, pill)
 		// so it reads as "this is active" rather than decorating every static
 		// label on screen -- restraint over decoration.
-		tableHeader: lipgloss.NewStyle().Foreground(text).Bold(true),
-		// borderColor: same palette as section's border, reused by bubble-table styling (Phase 4).
+		// borderColor: same palette as section's border, reused by the screens that draw their own borders.
 		borderColor:      border,
 		title:            lipgloss.NewStyle().Foreground(text).Bold(true),
 		context:          lipgloss.NewStyle().Foreground(muted),
@@ -97,10 +91,6 @@ func newAdminTheme() adminTheme {
 		error:            lipgloss.NewStyle().Foreground(errorColor).Bold(true),
 		severityCritical: lipgloss.NewStyle().Foreground(errorColor).Bold(true),
 		severityHigh:     lipgloss.NewStyle().Foreground(warning).Bold(true),
-		// severityMedium: the design has no hue for it, so it uses the accent
-		// blue (paletteAccentHex); distinct from critical, high and low.
-		severityMedium: lipgloss.NewStyle().Foreground(lipgloss.Color(paletteAccentHex)),
-		severityLow:    lipgloss.NewStyle().Foreground(muted),
 		// input/inputFocus stay borderless (design.md Decision 5: a
 		// top/bottom border only ever carried a focus color, so 2 rows per
 		// field were spent to communicate one bit already expressible in
@@ -112,14 +102,10 @@ func newAdminTheme() adminTheme {
 		// border rune anywhere -- addressing that gap without spending any
 		// extra rows. Width(30) is kept on both so values stay
 		// column-aligned and the modal's width cannot jitter as focus
-		// moves. renderTextField/renderSecretField/renderToggleField are
-		// not edited -- they already resolve input vs inputFocus and emit
-		// "label\nvalue", so this stays a pure theme-token change.
+		// moves.
 		input:       lipgloss.NewStyle().Foreground(text).Background(fieldBG).Padding(0, 1).Width(30),
 		inputFocus:  lipgloss.NewStyle().Foreground(accent).Background(selectedBG).Bold(true).Padding(0, 1).Width(30),
 		pill:        lipgloss.NewStyle().Foreground(pillText).Background(accent).Bold(true).Padding(0, 1),
 		help:        lipgloss.NewStyle().Foreground(muted),
-		inputWidth:  30,
-		secretWidth: 54,
 	}
 }

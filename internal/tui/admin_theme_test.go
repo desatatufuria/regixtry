@@ -59,29 +59,6 @@ func styleForegroundHex(t *testing.T, style lipgloss.Style) string {
 	return fmt.Sprintf("#%02X%02X%02X", r>>8, g>>8, b>>8)
 }
 
-// TestSeverityMediumHasItsOwnDistinctHex is the Phase 1 task 1.1 RED test
-// (design.md Decision 3 / spec.md "Severity Levels Are Visually
-// Distinguishable By Hue"): severityHigh and severityMedium currently both
-// resolve to warning's "#EBCB8B", differing only by Bold(true) — this test
-// requires them to differ by hue, with severityMedium set to the confirmed
-// "#C0A16B" bronze.
-func TestSeverityMediumHasItsOwnDistinctHex(t *testing.T) {
-	t.Parallel()
-
-	theme := newAdminTheme()
-
-	high := styleForegroundHex(t, theme.severityHigh)
-	medium := styleForegroundHex(t, theme.severityMedium)
-
-	if medium == high {
-		t.Fatalf("severityMedium foreground = %q, want it to differ from severityHigh foreground %q", medium, high)
-	}
-	// The design palette has no hue for MEDIUM; it takes the accent blue.
-	if medium != "#7AA2F7" {
-		t.Fatalf("severityMedium foreground = %q, want %q (design accent)", medium, "#7AA2F7")
-	}
-}
-
 // TestSeverityRampIsFourDistinctColors replaces the earlier luminance
 // ordering (critical < medium < low < high), which was an artifact of the
 // old hues and no longer holds in the design palette: what matters is that
@@ -89,12 +66,11 @@ func TestSeverityMediumHasItsOwnDistinctHex(t *testing.T) {
 func TestSeverityRampIsFourDistinctColors(t *testing.T) {
 	t.Parallel()
 
-	theme := newAdminTheme()
 	got := map[string]string{
-		"critical": styleForegroundHex(t, theme.severityCritical),
-		"medium":   styleForegroundHex(t, theme.severityMedium),
-		"low":      styleForegroundHex(t, theme.severityLow),
-		"high":     styleForegroundHex(t, theme.severityHigh),
+		"critical": styleForegroundHex(t, severityStyle("CRITICAL")),
+		"medium":   styleForegroundHex(t, severityStyle("MEDIUM")),
+		"low":      styleForegroundHex(t, severityStyle("LOW")),
+		"high":     styleForegroundHex(t, severityStyle("HIGH")),
 	}
 	seen := map[string]string{}
 	for name, hex := range got {
