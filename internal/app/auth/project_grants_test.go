@@ -317,10 +317,9 @@ func TestProjectGrantChangeWhileTokensAreIssued(t *testing.T) {
 }
 
 // TestRequireAdminOrRepoAdminAgreesWithDomainForExactGrants keeps the
-// remaining exact-only copy of the repo-admin rule honest: for principals with
-// exact grants only, it must decide exactly like the domain predicate the
-// registry service uses. (Project admin delegation is a later unit's change:
-// until then this copy is stricter, never looser.)
+// service's copy of the repo-admin rule honest: for unrestricted, non
+// read-only principals it must decide exactly like the domain predicate the
+// registry service uses, with exact grants and with project grants alike.
 func TestRequireAdminOrRepoAdminAgreesWithDomainForExactGrants(t *testing.T) {
 	t.Parallel()
 
@@ -339,8 +338,16 @@ func TestRequireAdminOrRepoAdminAgreesWithDomainForExactGrants(t *testing.T) {
 		}
 	}
 
-	projectAdmin := domainauth.Principal{ProjectGrants: []domainauth.ProjectGrant{pg("team", domainauth.RepoRoleAdmin)}}
-	if requireAdminOrRepoAdmin(projectAdmin, "team/app") == nil {
-		t.Fatal("project admin delegation is out of scope here: the exact-only copy must stay strict")
+	for _, role := range []domainauth.RepoRole{"", domainauth.RepoRoleReader, domainauth.RepoRoleWriter, domainauth.RepoRoleAdmin} {
+		for _, repo := range []string{"team/app", "team/a/b", "team", "team2/app", "other/app"} {
+			actor := domainauth.Principal{}
+			if role != "" {
+				actor.ProjectGrants = []domainauth.ProjectGrant{pg("team", role)}
+			}
+			got := requireAdminOrRepoAdmin(actor, repo) == nil
+			if want := actor.HasGrantedRepoAdminAccess(repo); got != want {
+				t.Fatalf("project role=%q repo=%q: requireAdminOrRepoAdmin=%t, domain=%t", role, repo, got, want)
+			}
+		}
 	}
 }

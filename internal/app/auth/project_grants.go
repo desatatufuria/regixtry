@@ -45,11 +45,16 @@ func (s *Service) PutProjectGrant(ctx context.Context, actor domainauth.Principa
 	if err != nil {
 		return domainauth.ProjectGrant{}, err
 	}
-	if err := requireAdmin(actor); err != nil {
+	if err := requireAdminOrProjectAdmin(actor, project); err != nil {
 		return domainauth.ProjectGrant{}, err
 	}
 	if err := role.Validate(); err != nil {
 		return domainauth.ProjectGrant{}, err
+	}
+	// Escalation bound: only a global admin hands out project admin. This
+	// also covers a delegate granting it to themselves.
+	if !actor.IsAdmin && role == domainauth.RepoRoleAdmin {
+		return domainauth.ProjectGrant{}, domainauth.NewForbiddenError("project administrators cannot grant project admin")
 	}
 	if err := s.projectMustExist(ctx, project); err != nil {
 		return domainauth.ProjectGrant{}, err
@@ -59,10 +64,24 @@ func (s *Service) PutProjectGrant(ctx context.Context, actor domainauth.Principa
 	if err != nil {
 		return domainauth.ProjectGrant{}, err
 	}
+	// A read-only user must never gain write or administration through a
+	// project: only the reader role is allowed.
+	if target.IsReadOnly && role != domainauth.RepoRoleReader {
+		return domainauth.ProjectGrant{}, domainauth.NewValidationError("read-only users can only be project readers")
+	}
 
-	// Read only to word the access history ("Reader to Writer"); a failed
-	// read never blocks the grant.
+	// The existing grants bound a delegate and word the access history
+	// ("Reader to Writer"). For a global admin a failed read never blocks the
+	// grant; for a delegate it still does.
 	existing, listErr := s.store.ListProjectGrants(ctx, target.ID)
+	if !actor.IsAdmin {
+		if listErr != nil {
+			return domainauth.ProjectGrant{}, listErr
+		}
+		if current, ok := projectGrantRoleOn(existing, project); ok && current == domainauth.RepoRoleAdmin {
+			return domainauth.ProjectGrant{}, domainauth.NewForbiddenError("project administrators cannot modify another project administrator's grant")
+		}
+	}
 	previous, hadPrevious := projectGrantRoleOn(existing, project)
 
 	now := s.now()
@@ -101,13 +120,22 @@ func (s *Service) DeleteProjectGrant(ctx context.Context, actor domainauth.Princ
 	if err != nil {
 		return err
 	}
-	if err := requireAdmin(actor); err != nil {
+	if err := requireAdminOrProjectAdmin(actor, project); err != nil {
 		return err
 	}
 
 	target, err := s.store.GetUserByUsername(ctx, normalizeUsername(username))
 	if err != nil {
 		return err
+	}
+	if !actor.IsAdmin {
+		existing, err := s.store.ListProjectGrants(ctx, target.ID)
+		if err != nil {
+			return err
+		}
+		if current, ok := projectGrantRoleOn(existing, project); ok && current == domainauth.RepoRoleAdmin {
+			return domainauth.NewForbiddenError("project administrators cannot modify another project administrator's grant")
+		}
 	}
 	if err := s.store.DeleteProjectGrant(ctx, target.ID, project); err != nil {
 		return err

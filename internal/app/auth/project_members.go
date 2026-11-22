@@ -21,7 +21,7 @@ func (s *Service) ListProjectMembers(ctx context.Context, actor domainauth.Princ
 	if err != nil {
 		return ports.AdminProjectMemberPage{}, err
 	}
-	if err := requireAdmin(actor); err != nil {
+	if err := requireAdminOrProjectAdmin(actor, project); err != nil {
 		return ports.AdminProjectMemberPage{}, err
 	}
 	if limit < 1 || limit > projectMembersMaxLimit {
