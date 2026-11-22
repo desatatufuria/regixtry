@@ -58,13 +58,14 @@ Moving between sidebar items:
 | Key | Behavior |
 | --- | --- |
 | `Ctrl+C` | quits from anywhere |
-| `q` | quits where the footer shows `q quit`; never while a text input has focus (it is typed) |
+| `q` | quits on every list and detail screen, and the footer shows `q quit` there; while a text input, modal, confirm dialog, form, search or editor holds focus it is typed or ignored instead |
 | `Esc` | goes back one level, closes a dialog, form or search; on the Overview it returns to the Console |
 | `↑` / `↓` | move the selection; `j` / `k` also move in lists that have no text input |
 | `Tab` / `Shift+Tab` | next / previous field, pane or tab |
 | `l` | log out from a list screen with no dialog or input open |
 | `F2` | switch the mouse on or off |
 
+- `q` per screen: Overview, Users, profile, Robots, Tokens, Repository access, Image/Secret scanning and Signing policy (and their repository lists), Scan runs, Secret findings, scan history, Update channel and the delegate screen quit on `q`, but not while a modal, editor, confirm, search or form is open. The login, New user, Reset password, New robot and **Grant access** screens never quit on `q`: it is typed into the focused field (Grant access filters hold focus from the start, and its footer shows no `q quit`).
 - Text inputs (login, search and filter boxes, create forms, grant filters, the signing key and identity fields) take every letter, including `j`, `k` and `q`. Use the arrows and `Tab` to leave the field; `Backspace` deletes.
 - Pasting works in text fields. A bracketed paste arrives as text, so pasted key names such as "enter" stay text and never trigger a command.
 - Footers are generated from each screen's own key bindings, so a hint cannot disagree with the key it names. The tables below list those hints.
