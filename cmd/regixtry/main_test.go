@@ -2810,10 +2810,10 @@ func TestRunTUIRendersRepositorySnapshot(t *testing.T) {
 	}
 
 	view := stdout.String()
-	if !strings.Contains(view, "Regixtry Console") || !strings.Contains(view, "library/alpine") {
+	if !strings.Contains(view, "Console › Repositories") || !strings.Contains(view, "library/alpine") {
 		t.Fatalf("stdout = %q, want rendered repository view", view)
 	}
-	if !strings.Contains(view, "Enter: open tags | d: delete repository | p: projects | Tab: admin | g: repo grants | q: quit") {
+	if !strings.Contains(view, "enter open tags   d delete repository   p projects   g grants   tab admin   q quit") {
 		t.Fatalf("stdout = %q, want unified help footer", view)
 	}
 }
@@ -3368,7 +3368,7 @@ func TestRunTUISnapshotEmitsNoColorEscapesWhenNotATerminal(t *testing.T) {
 	}
 
 	view := stdout.String()
-	if !strings.Contains(view, "Regixtry Console") || !strings.Contains(view, "library/alpine") {
+	if !strings.Contains(view, "Console › Repositories") || !strings.Contains(view, "library/alpine") {
 		t.Fatalf("stdout = %q, want rendered repository view", view)
 	}
 	if strings.Contains(view, "\x1b") {
