@@ -87,6 +87,13 @@ func (t Token) Scopes() ([]Scope, error) {
 		return nil, nil
 	}
 
+	if trimmed == ScopeNone {
+		// The token was requested with scopes, none of which the user could be
+		// granted. It must stay restricted (carry a scope that authorizes
+		// nothing) rather than collapse into an unrestricted token.
+		return []Scope{{Type: ScopeNone, Name: ScopeNone, Canonical: ScopeNone}}, nil
+	}
+
 	return ParseScopes([]string{trimmed})
 }
 

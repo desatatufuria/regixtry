@@ -13,6 +13,14 @@ type Principal struct {
 	ExpiresAt  time.Time
 }
 
+// IsUnrestricted reports whether the principal authenticated with a token that
+// carries no scope limits (the zero-scope login the TUI and CLI use). A
+// scope-limited registry access token (for example repository:x:pull) is not
+// unrestricted and must not open the administrative API.
+func (p Principal) IsUnrestricted() bool {
+	return len(p.Scopes) == 0
+}
+
 func (p Principal) HasReadAccess(repository string) bool {
 	return p.hasGrantedRepositoryAccess(repository, RepoRole.AllowsRead) && p.scopeAllowsRepository(repository, Scope.AllowsPull)
 }

@@ -1245,3 +1245,44 @@ func mustHashPassword(t *testing.T, password string) string {
 	}
 	return hash
 }
+
+func TestServiceScopeRequestGrantedNothingStaysRestricted(t *testing.T) {
+	t.Parallel()
+
+	store := newMemoryAuthStore()
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	user := domainauth.User{ID: "user-1", Username: "alice", PasswordHash: mustHashPassword(t, "password123"), Enabled: true, CreatedAt: now, UpdatedAt: now}
+	store.usersByID[user.ID] = user
+	store.usersByUsername[user.Username] = user
+
+	service := NewService(store)
+	service.now = func() time.Time { return now }
+	requested, err := domainauth.ParseScopes([]string{"repository:team/app:pull"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := service.LoginWithPassword(context.Background(), "alice", "password123", requested)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Scope != "" {
+		t.Fatalf("result.Scope = %q, want empty (nothing granted)", result.Scope)
+	}
+	principal, err := service.VerifyAccessToken(context.Background(), result.BearerToken)
+	if err != nil {
+		t.Fatalf("VerifyAccessToken() error = %v", err)
+	}
+	if principal.IsUnrestricted() {
+		t.Fatal("a token requested with scopes but granted none must not be unrestricted")
+	}
+
+	unscoped, err := service.LoginWithPassword(context.Background(), "alice", "password123", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p2, err := service.VerifyAccessToken(context.Background(), unscoped.BearerToken)
+	if err != nil || !p2.IsUnrestricted() {
+		t.Fatalf("zero-scope login must stay unrestricted: %v", err)
+	}
+}

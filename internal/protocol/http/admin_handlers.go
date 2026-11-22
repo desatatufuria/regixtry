@@ -1720,6 +1720,10 @@ func (r *Router) requireAuthenticatedPrincipal(w stdhttp.ResponseWriter, req *st
 		writeAdminError(w, domainauth.NewInvalidCredentialsError(), bearerChallenge)
 		return nil, false
 	}
+	if !principal.IsUnrestricted() {
+		writeAdminError(w, domainauth.NewForbiddenError("a scope-limited token cannot be used for administration"), ports.Challenge{})
+		return nil, false
+	}
 
 	return principal, true
 }
@@ -1737,6 +1741,10 @@ func (r *Router) requireAdminPrincipal(w stdhttp.ResponseWriter, req *stdhttp.Re
 	}
 	if !principal.IsAdmin {
 		writeAdminError(w, domainauth.NewForbiddenError("admin access is required"), ports.Challenge{})
+		return nil, false
+	}
+	if !principal.IsUnrestricted() {
+		writeAdminError(w, domainauth.NewForbiddenError("a scope-limited token cannot be used for administration"), ports.Challenge{})
 		return nil, false
 	}
 

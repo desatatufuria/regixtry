@@ -1091,8 +1091,15 @@ func (s *Service) issueAccessToken(ctx context.Context, user domainauth.User, re
 	}
 	grantedScope := domainauth.NormalizeScopes(grantedScopes)
 
+	// A request that named scopes but granted none must not yield an
+	// unrestricted token: persist the restricted marker, report no scope.
+	storedScope := grantedScope
+	if storedScope == "" && len(requestedScopes) > 0 {
+		storedScope = domainauth.ScopeNone
+	}
+
 	now := s.now()
-	token := domainauth.Token{ID: uuid.NewString(), UserID: user.ID, Kind: domainauth.TokenKindAccess, Scope: grantedScope, Accessor: shortAccessor("atk"), SecretHash: hashSecret(secret), CreatedAt: now, ExpiresAt: now.Add(domainauth.AccessTokenTTL)}
+	token := domainauth.Token{ID: uuid.NewString(), UserID: user.ID, Kind: domainauth.TokenKindAccess, Scope: storedScope, Accessor: shortAccessor("atk"), SecretHash: hashSecret(secret), CreatedAt: now, ExpiresAt: now.Add(domainauth.AccessTokenTTL)}
 	if err := s.store.CreateToken(ctx, token); err != nil {
 		return ports.LoginResult{}, err
 	}
@@ -1223,6 +1230,9 @@ func requireAdmin(actor domainauth.Principal) error {
 	if !actor.IsAdmin {
 		return domainauth.NewForbiddenError("administrator privileges are required")
 	}
+	if !actor.IsUnrestricted() {
+		return domainauth.NewForbiddenError("a scope-limited token cannot be used for administration")
+	}
 
 	return nil
 }
@@ -1235,6 +1245,9 @@ func requireAdmin(actor domainauth.Principal) error {
 // scope — a TUI/admin-API login requests zero scopes, so that helper would
 // make delegation permanently dead code on exactly the tokens it runs on.
 func requireAdminOrRepoAdmin(actor domainauth.Principal, repository string) error {
+	if !actor.IsUnrestricted() {
+		return domainauth.NewForbiddenError("a scope-limited token cannot be used for administration")
+	}
 	if actor.IsAdmin {
 		return nil
 	}
