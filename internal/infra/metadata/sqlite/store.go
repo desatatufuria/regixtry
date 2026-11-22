@@ -1846,6 +1846,11 @@ func (s *Store) UpsertScanRun(ctx context.Context, tenant string, run ports.Scan
 	if run.Status == ports.ScanRunStatusFailed {
 		return s.recordFailedScanRun(ctx, tenant, run)
 	}
+	if err := s.writeLock.acquire(ctx); err != nil {
+		return err
+	}
+	defer s.writeLock.release()
+
 	return s.upsertScanRunExec(ctx, s.db, tenant, run)
 }
 

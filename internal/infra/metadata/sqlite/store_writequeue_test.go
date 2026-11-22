@@ -454,6 +454,9 @@ func singleStatementWrites(store *Store) map[string]func(ctx context.Context) er
 		"UpsertFeatureRuntimeState": func(ctx context.Context) error {
 			return store.UpsertFeatureRuntimeState(ctx, "t", "scanning", ports.FeatureRuntimeState{})
 		},
+		"UpsertScanRun": func(ctx context.Context) error {
+			return store.UpsertScanRun(ctx, "t", ports.ScanRun{ID: "run-queue", Repository: "library/alpine", Digest: "sha256:" + strings.Repeat("a", 64), Status: ports.ScanRunStatusQueued})
+		},
 		"RecordScanSweep": func(ctx context.Context) error {
 			return store.RecordScanSweep(ctx, "t", ports.ScanSweepSummary{})
 		},
