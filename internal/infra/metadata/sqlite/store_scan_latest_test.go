@@ -365,3 +365,54 @@ func TestStoreOutOfOrderCompletionKeepsTheResultWithTheNewerDB(t *testing.T) {
 		})
 	}
 }
+
+// A replacement that commits between the run row read and the findings read
+// must never produce a torn detail (counts with no findings).
+func TestStoreScanRunDetailIsNeverTornByAConcurrentReplacement(t *testing.T) {
+	t.Parallel()
+	store := newTestStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	base := time.Now().UTC().Add(-time.Hour)
+	digest := "sha256:torn"
+	if err := store.UpsertScanRunDetail(ctx, latestOnlyTenant, completedDetail("run-000000", "library/alpine", digest, base, "CVE-0")); err != nil {
+		t.Fatal(err)
+	}
+
+	stop := make(chan struct{})
+	var current sync.Map // newest run id
+	current.Store("id", "run-000000")
+	var writer sync.WaitGroup
+	writer.Add(1)
+	go func() {
+		defer writer.Done()
+		for i := 1; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			id := fmt.Sprintf("run-%06d", i)
+			if err := store.UpsertScanRunDetail(ctx, latestOnlyTenant, completedDetail(id, "library/alpine", digest, base.Add(time.Duration(i)*time.Second), "CVE-"+id)); err != nil {
+				t.Errorf("replacement error = %v", err)
+				return
+			}
+			current.Store("id", id)
+		}
+	}()
+	defer func() { close(stop); writer.Wait() }()
+
+	for i := 0; i < 3000; i++ {
+		id, _ := current.Load("id")
+		detail, err := store.GetScanRunDetail(ctx, latestOnlyTenant, id.(string))
+		if domain.IsCode(err, domain.ErrorCodeNotFound) {
+			continue // replaced before the read started: fine
+		}
+		if err != nil {
+			t.Fatalf("GetScanRunDetail() error = %v", err)
+		}
+		if detail.Run.Critical != len(detail.Findings) {
+			t.Fatalf("iteration %d: torn detail for %s: critical=%d findings=%d", i, detail.Run.ID, detail.Run.Critical, len(detail.Findings))
+		}
+	}
+}

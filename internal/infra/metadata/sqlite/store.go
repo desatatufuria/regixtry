@@ -1800,16 +1800,36 @@ func (s *Store) GetScanRun(ctx context.Context, tenant string, runID string) (po
 	return scanRunRow(row, runID)
 }
 
-func (s *Store) GetScanRunDetail(ctx context.Context, tenant string, runID string) (ports.ScanRunDetail, error) {
-	run, err := s.GetScanRun(ctx, tenant, runID)
+// GetScanRunDetail reads the run row, its findings and its DB freshness in ONE
+// read snapshot: a replacement that commits in between (latest-only scans
+// delete the old run and its findings) can never yield counts with zero
+// findings. The transaction is a plain DEFERRED BEGIN on one connection: in
+// WAL it never blocks writers and sees a single consistent commit.
+func (s *Store) GetScanRunDetail(ctx context.Context, tenant string, runID string) (detail ports.ScanRunDetail, err error) {
+	conn, err := s.db.Conn(ctx)
 	if err != nil {
 		return ports.ScanRunDetail{}, err
 	}
-	findings, err := s.listScanRunFindings(ctx, runID)
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, `BEGIN DEFERRED`); err != nil {
+		return ports.ScanRunDetail{}, err
+	}
+	defer func() { _, _ = conn.ExecContext(context.WithoutCancel(ctx), `ROLLBACK`) }()
+
+	row := conn.QueryRowContext(ctx, `
+		SELECT id, repository, requested_ref, digest, status, trigger, started_at, finished_at, created_at, updated_at, critical, high, medium, low, trivy_version, db_updated_at, error, settings_hash, db_version, last_checked_at, stale, stale_reason
+		FROM scan_runs
+		WHERE tenant = ? AND id = ?
+	`, tenant, runID)
+	run, err := scanRunRow(row, runID)
 	if err != nil {
 		return ports.ScanRunDetail{}, err
 	}
-	freshness, err := s.getScanRunDBFreshness(ctx, runID)
+	findings, err := listScanRunFindings(ctx, conn, runID)
+	if err != nil {
+		return ports.ScanRunDetail{}, err
+	}
+	freshness, err := scanRunDBFreshnessOf(ctx, conn, runID)
 	if err != nil {
 		return ports.ScanRunDetail{}, err
 	}
@@ -2954,8 +2974,10 @@ func (s *Store) listScanRunFindings(ctx context.Context, runID string) ([]ports.
 	return listScanRunFindings(ctx, s.db, runID)
 }
 
-func (s *Store) getScanRunDBFreshness(ctx context.Context, runID string) (ports.ScanRunDBFreshness, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT report_schema_version, report_created_at, trivy_version, db_version, db_updated_at, db_downloaded_at, db_next_update_at, freshness_state FROM scan_run_db_freshness WHERE run_id = ?`, runID)
+func scanRunDBFreshnessOf(ctx context.Context, db interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}, runID string) (ports.ScanRunDBFreshness, error) {
+	row := db.QueryRowContext(ctx, `SELECT report_schema_version, report_created_at, trivy_version, db_version, db_updated_at, db_downloaded_at, db_next_update_at, freshness_state FROM scan_run_db_freshness WHERE run_id = ?`, runID)
 	var freshness ports.ScanRunDBFreshness
 	var reportCreatedAt sql.NullString
 	var dbUpdatedAt sql.NullString
