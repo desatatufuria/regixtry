@@ -833,6 +833,11 @@ func writeError(w stdhttp.ResponseWriter, req *stdhttp.Request, err error, chall
 			w.Header().Set("WWW-Authenticate", challengeHeader(challenge))
 		case domain.ErrorCodeNotFound:
 			status = stdhttp.StatusNotFound
+			if errors.Is(err, domain.ErrProjectNotFound) {
+				// A push to a missing project is NAME_UNKNOWN on every
+				// route, not the route's default (BLOB_UPLOAD_UNKNOWN, ...).
+				code = "NAME_UNKNOWN"
+			}
 		case domain.ErrorCodePolicyViolation:
 			// 403, no WWW-Authenticate: the caller is authenticated and
 			// authorized, but the pull is refused by policy — re-

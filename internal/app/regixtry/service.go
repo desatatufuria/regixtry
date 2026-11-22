@@ -88,6 +88,9 @@ type Service struct {
 	// off (air-gapped installs); the zero value keeps the refresh on. See
 	// SetScanDBRefreshOnSweep.
 	skipSweepDBRefresh atomic.Bool
+	// requireProject makes pushes refuse a missing project (see
+	// SetRequireProject in service_options.go). Zero value: off.
+	requireProject bool
 }
 
 // Default upload limits applied by NewService.
@@ -255,6 +258,10 @@ func (s *Service) BeginUpload(ctx context.Context, repositoryName string) (Uploa
 	}
 
 	if err := s.authorize(ctx, ports.Action{Verb: ports.ActionPush, Repository: repository.String()}); err != nil {
+		return UploadDetails{}, err
+	}
+
+	if err := s.requireProjectForPush(ctx, repository); err != nil {
 		return UploadDetails{}, err
 	}
 

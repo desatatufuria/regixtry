@@ -19,12 +19,22 @@ import (
 type Store struct {
 	db        *sql.DB
 	writeLock fifoLock
+	// requireProject makes the write paths that create repository state
+	// refuse a missing project (see enforce.go). False by default.
+	requireProject bool
 }
 
 const sqliteBusyTimeoutMillis = 5000
 
-func New(path string) (*Store, error) {
-	return newWithBusyTimeout(path, sqliteBusyTimeoutMillis)
+func New(path string, opts ...Option) (*Store, error) {
+	store, err := newWithBusyTimeout(path, sqliteBusyTimeoutMillis)
+	if err != nil {
+		return nil, err
+	}
+	for _, opt := range opts {
+		opt(store)
+	}
+	return store, nil
 }
 
 // newWithBusyTimeout is the test seam for a short busy timeout.
@@ -219,6 +229,10 @@ func (s *Store) LinkBlob(ctx context.Context, tenant string, repository domain.R
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+
+	if err := s.checkProjectForWrite(ctx, tx.Tx, tenant, repository); err != nil {
+		return err
+	}
 
 	if _, err = tx.ExecContext(ctx, `
 		INSERT OR IGNORE INTO repository_blobs (tenant, repository, digest, created_at)
@@ -500,6 +514,10 @@ func (s *Store) PublishManifestVerified(ctx context.Context, tenant string, repo
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+
+	if err := s.checkProjectForWrite(ctx, tx.Tx, tenant, repository); err != nil {
+		return err
+	}
 
 	if present != nil {
 		for _, blob := range blobs {
