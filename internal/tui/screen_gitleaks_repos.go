@@ -41,7 +41,7 @@ func (s featureOverridesScreen) ID() screen { return s.id }
 func (s featureOverridesScreen) Keys() screenKeys { return featureOverridesKeys }
 
 func (s featureOverridesScreen) Init(env screenEnv) tea.Cmd {
-	return securityLoadOverridesCmd(env, s.gen, s.feature)
+	return s.loadCmd(env)
 }
 
 func (s featureOverridesScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.Cmd, bool) {
@@ -56,9 +56,10 @@ func (s featureOverridesScreen) Update(env screenEnv, msg tea.Msg) (adminScreen,
 	if owned, ok := msg.(securityMsg); ok && owned.securityGen() != s.gen {
 		return s, nil, false
 	}
-	if typed, ok := msg.(securityOverridesMsg); ok {
-		s.overridesList = s.applyOverrides(env, typed)
-		return s, nil, false
+	if typed, ok := msg.(overrideListMsg); ok {
+		list, cmd := s.applyOverrides(env, typed)
+		s.overridesList = list
+		return s, cmd, false
 	}
 	list, cmd, _ := s.applyEditorMsg(env, msg)
 	s.overridesList = list
@@ -87,7 +88,7 @@ func (s featureOverridesScreen) updateKey(env screenEnv, msg keyMsg) (adminScree
 			return s, nil, true
 		}
 		s.reading, s.note = true, ""
-		return s, securityLoadOverridesCmd(env, s.gen, s.feature), true
+		return s, s.loadCmd(env), true
 	}
 	return s, nil, true
 }

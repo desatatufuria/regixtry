@@ -151,3 +151,76 @@ func TestOverrideEditorEditsAndClearsOverTheRealServer(t *testing.T) {
 		t.Fatalf("clearing the trivy override removed the gitleaks one of the same repository: %v", gitleaks)
 	}
 }
+
+// An editor that was only opened must not create an override: for signing that
+// would have turned pull-time enforcement off for the repository.
+func TestOverrideEditorUntouchedOpenCreatesNothingOverTheRealServer(t *testing.T) {
+	t.Parallel()
+	k1 := signingWireKey(t)
+	cases := []struct {
+		name    string
+		to      screen
+		feature string
+		change  func(t *testing.T, m Model) Model
+	}{
+		{"trivy", screenSecurityTrivyRepos, trivyFeatureName, func(t *testing.T, m Model) Model {
+			m = repoAccessPress(t, m, testKeyTab())
+			return repoAccessPress(t, m, repoAccessType("/etc/trivy/ignore")...)
+		}},
+		{"gitleaks", screenSecurityGitleaksRepos, gitleaksFeatureName, func(t *testing.T, m Model) Model {
+			m = repoAccessPress(t, m, testKeyTab())
+			return repoAccessPress(t, m, repoAccessType("/etc/gitleaks.toml")...)
+		}},
+		{"signing", screenSecuritySigningRepos, signingFeatureName, func(t *testing.T, m Model) Model {
+			m = ovFocus(t, m, screenSecuritySigningRepos, overrideFieldUnsignedSelfRead)
+			return repoAccessPress(t, m, testKeySpace())
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := signingWireSetup(t)
+			if _, err := e.service.UpdateSigningPolicySettings(e.ctx, ports.SigningPolicySettings{Enabled: true, TrustedPublicKeys: []string{k1}}); err != nil {
+				t.Fatal(err)
+			}
+			for _, feature := range []string{trivyFeatureName, gitleaksFeatureName} {
+				if _, err := e.service.SetFeatureEnabled(e.ctx, feature, true); err != nil {
+					t.Logf("could not enable %s globally: %v", feature, err)
+				}
+			}
+			page, err := e.client.GetFeaturePage(e.ctx, e.session, tc.feature)
+			if err != nil {
+				t.Fatal(err)
+			}
+			globalEnabled := page.Summary.Enabled
+			if tc.feature == signingFeatureName {
+				globalEnabled = true
+			}
+
+			m := ovWireOpen(t, e, tc.to, "library/alpine")
+			m = repoAccessPress(t, m, testKeyEnter(), testKeyEnter())
+			if got := ovWirePayloads(t, e, tc.feature); len(got) != 0 {
+				t.Fatalf("an untouched editor created an override: %v", got)
+			}
+
+			m = tc.change(t, m)
+			m = ovFocus(t, m, tc.to, overrideFieldPathPrimary)
+			m = repoAccessPress(t, m, testKeyEnter())
+			got := ovWirePayloads(t, e, tc.feature)["library/alpine"]
+			if got == "" {
+				t.Fatalf("a changed editor saved nothing (err %q)", ovEditorOf(t, m, tc.to).err)
+			}
+			var stored struct {
+				Enabled bool `json:"enabled"`
+			}
+			if err := json.Unmarshal([]byte(got), &stored); err != nil {
+				t.Fatal(err)
+			}
+			if stored.Enabled != globalEnabled {
+				t.Fatalf("the new override has enabled=%v, want the global %v: %s", stored.Enabled, globalEnabled, got)
+			}
+			if tc.feature == signingFeatureName && !bytes.Contains([]byte(got), []byte("trusted_public_keys")) {
+				t.Fatalf("the new signing override lacks the global keys: %s", got)
+			}
+		})
+	}
+}

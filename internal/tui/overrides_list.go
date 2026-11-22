@@ -36,6 +36,9 @@ type overridesList struct {
 	scansErr  string
 	rows      []featureOverrideRow
 	cursor    int
+	// changes counts the saves and clears the screen took: a list read that
+	// started before the last one is older than the rows and is dropped.
+	changes uint64
 	// loaded is true once the overrides were read; reading while a read is in
 	// flight, err the failure of the last one.
 	loaded  bool
@@ -70,17 +73,28 @@ func (l overridesList) rebuild(env screenEnv) overridesList {
 	return l
 }
 
-// applyOverrides takes a loaded overrides list.
-func (l overridesList) applyOverrides(env screenEnv, msg securityOverridesMsg) overridesList {
+// loadCmd reads the stored overrides, remembering how many changes the screen
+// had taken when the read started.
+func (l overridesList) loadCmd(env screenEnv) tea.Cmd {
+	return loadOverrideListCmd(env, l.gen, l.changes, l.feature)
+}
+
+// applyOverrides takes a loaded overrides list. A read that started before the
+// last save or clear would show the old state over the new one: it is dropped
+// and the list is read again.
+func (l overridesList) applyOverrides(env screenEnv, msg overrideListMsg) (overridesList, tea.Cmd) {
+	if msg.err == nil && msg.seq != l.changes {
+		return l, l.loadCmd(env)
+	}
 	l.reading = false
 	if msg.err != nil {
 		l.err = msg.err.Error()
-		return l
+		return l, nil
 	}
 	l.err = ""
 	l.overrides = msg.overrides
 	l.loaded = true
-	return l.rebuild(env)
+	return l.rebuild(env), nil
 }
 
 // applySummaries takes the loaded scan summaries.
@@ -108,6 +122,7 @@ func (l overridesList) applySaved(env screenEnv, msg overrideSavedMsg) overrides
 	if msg.feature != l.feature || msg.err != nil {
 		return l
 	}
+	l.changes++
 	rest := make([]ports.RepositoryOverrideDetails, 0, len(l.overrides)+1)
 	for _, stored := range l.overrides {
 		if stored.Repository != msg.repository {
@@ -136,10 +151,11 @@ func (l overridesList) applyEditorMsg(env screenEnv, msg tea.Msg) (overridesList
 		l.editor = next
 		return l, cmd, true
 	case overrideSavedMsg:
-		l.editor = l.editor.applySaved(typed)
-		return l.applySaved(env, typed), nil, true
-	case overridePolicyMsg:
-		l.editor = l.editor.applyPolicy(typed)
+		next, cmd := l.editor.applySaved(env, typed)
+		l.editor = next
+		return l.applySaved(env, typed), cmd, true
+	case overrideGlobalMsg:
+		l.editor = l.editor.applyGlobal(typed)
 		return l, nil, true
 	case overrideKeyUsageMsg:
 		l.editor = l.editor.applyKeyUsage(typed)

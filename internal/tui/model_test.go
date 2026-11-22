@@ -2104,9 +2104,8 @@ func TestModelTrivyOverrideEditorSetAndClearRoundTripReflectsInModal(t *testing.
 		t.Fatalf("editor = %#v, want open with no existing override", editorAfterOpen)
 	}
 
-	// Focus starts on Enabled (no Feature field, design.md Decision F):
-	// toggle it on, Tab to PathPrimary, type a path, then Enter to submit.
-	updated = runKey(t, updated, " ")
+	// Focus starts on Enabled, which starts from the global value (on here):
+	// Tab to PathPrimary, type a path, then Enter to submit.
 	updated = runKey(t, updated, "tab")
 	for _, r := range "/etc/trivy/ignore" {
 		updated = runKey(t, updated, string(r))

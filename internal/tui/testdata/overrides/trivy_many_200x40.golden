@@ -5,35 +5,35 @@
     Overview                   │  204 repositories, 2 with an override                                                                                                                                  
                                │   Config   Repositories                                                                                                                                                
   ACCESS                       │  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  ╭──────────────────────────────────────╮  
-      Users                    │  │   REPOSITORY                                                               CRIT  HIGH  STATUS     ENABLED  UPDATED     │  │ team/service-199                     │  
-      Robots                   │  │   team/service-172                                                         -     -     inherited  —        -           │  │ inherits the global settings         │  
-      Repository access        │  │   team/service-173                                                         -     -     inherited  —        -           │  │                                      │  
-                               │  │   team/service-174                                                         -     -     inherited  —        -           │  │ OVERRIDE                             │  
-  SECURITY                     │  │   team/service-175                                                         -     -     inherited  —        -           │  │ Uses the global settings. o creates  │  
-    ▸ Image scanning           │  │   team/service-176                                                         -     -     inherited  —        -           │  │ an override for this repository.     │  
-      Secret scanning          │  │   team/service-177                                                         -     -     inherited  —        -           │  │                                      │  
-      Signing policy           │  │   team/service-178                                                         -     -     inherited  —        -           │  │ ACTIONS                              │  
-                               │  │   team/service-179                                                         -     -     inherited  —        -           │  │ Edit override                      o │  
-  OPERATIONS                   │  │   team/service-180                                                         -     -     inherited  —        -           │  │ Scan history                   enter │  
-      Scan runs                │  │   team/service-181                                                         -     -     inherited  —        -           │  │ Refresh                            r │  
-      Secret findings          │  │   team/service-182                                                         -     -     inherited  —        -           │  │                                      │  
-      Update channel           │  │   team/service-183                                                         -     -     inherited  —        -           │  │                                      │  
-                               │  │   team/service-184                                                         -     -     inherited  —        -           │  │                                      │  
-                               │  │   team/service-185                                                         -     -     inherited  —        -           │  │                                      │  
-                               │  │   team/service-186                                                         -     -     inherited  —        -           │  │                                      │  
-                               │  │   team/service-187                                                         -     -     inherited  —        -           │  │                                      │  
-                               │  │   team/service-188                                                         -     -     inherited  —        -           │  │                                      │  
-                               │  │   team/service-189                                                         -     -     inherited  —        -           │  │                                      │  
-                               │  │   team/service-190                                                         -     -     inherited  —        -           │  │                                      │  
-                               │  │   team/service-191                                                         -     -     inherited  —        -           │  │                                      │  
-                               │  │   team/service-192                                                         -     -     inherited  —        -           │  │                                      │  
-                               │  │   team/service-193                                                         -     -     inherited  —        -           │  │                                      │  
-                               │  │   team/service-194                                                         -     -     inherited  —        -           │  │                                      │  
-                               │  │   team/service-195                                                         -     -     inherited  —        -           │  │                                      │  
-                               │  │   team/service-196                                                         -     -     inherited  —        -           │  │                                      │  
-                               │  │   team/service-197                                                         -     -     inherited  —        -           │  │                                      │  
-                               │  │   team/service-198                                                         -     -     inherited  —        -           │  │                                      │  
-                               │  │ ▸ team/service-199                                                         -     -     inherited  —        -           │  │                                      │  
+      Users                    │  │   REPOSITORY                                                           CRIT  HIGH  LAST SCAN        STATUS     ENABLED │  │ team/service-199                     │  
+      Robots                   │  │   team/service-172                                                     -     -     never            inherited  —       │  │ inherits the global settings         │  
+      Repository access        │  │   team/service-173                                                     -     -     never            inherited  —       │  │                                      │  
+                               │  │   team/service-174                                                     -     -     never            inherited  —       │  │ OVERRIDE                             │  
+  SECURITY                     │  │   team/service-175                                                     -     -     never            inherited  —       │  │ Uses the global settings. o creates  │  
+    ▸ Image scanning           │  │   team/service-176                                                     -     -     never            inherited  —       │  │ an override for this repository.     │  
+      Secret scanning          │  │   team/service-177                                                     -     -     never            inherited  —       │  │                                      │  
+      Signing policy           │  │   team/service-178                                                     -     -     never            inherited  —       │  │ ACTIONS                              │  
+                               │  │   team/service-179                                                     -     -     never            inherited  —       │  │ Edit override                      o │  
+  OPERATIONS                   │  │   team/service-180                                                     -     -     never            inherited  —       │  │ Scan history                   enter │  
+      Scan runs                │  │   team/service-181                                                     -     -     never            inherited  —       │  │ Refresh                            r │  
+      Secret findings          │  │   team/service-182                                                     -     -     never            inherited  —       │  │                                      │  
+      Update channel           │  │   team/service-183                                                     -     -     never            inherited  —       │  │                                      │  
+                               │  │   team/service-184                                                     -     -     never            inherited  —       │  │                                      │  
+                               │  │   team/service-185                                                     -     -     never            inherited  —       │  │                                      │  
+                               │  │   team/service-186                                                     -     -     never            inherited  —       │  │                                      │  
+                               │  │   team/service-187                                                     -     -     never            inherited  —       │  │                                      │  
+                               │  │   team/service-188                                                     -     -     never            inherited  —       │  │                                      │  
+                               │  │   team/service-189                                                     -     -     never            inherited  —       │  │                                      │  
+                               │  │   team/service-190                                                     -     -     never            inherited  —       │  │                                      │  
+                               │  │   team/service-191                                                     -     -     never            inherited  —       │  │                                      │  
+                               │  │   team/service-192                                                     -     -     never            inherited  —       │  │                                      │  
+                               │  │   team/service-193                                                     -     -     never            inherited  —       │  │                                      │  
+                               │  │   team/service-194                                                     -     -     never            inherited  —       │  │                                      │  
+                               │  │   team/service-195                                                     -     -     never            inherited  —       │  │                                      │  
+                               │  │   team/service-196                                                     -     -     never            inherited  —       │  │                                      │  
+                               │  │   team/service-197                                                     -     -     never            inherited  —       │  │                                      │  
+                               │  │   team/service-198                                                     -     -     never            inherited  —       │  │                                      │  
+                               │  │ ▸ team/service-199                                                     -     -     never            inherited  —       │  │                                      │  
                                │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  │                                      │  
                                │  One row per repository, severity first. enter opens its scan history, o edits its override.                                 ╰──────────────────────────────────────╯  
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

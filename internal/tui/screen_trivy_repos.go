@@ -49,10 +49,11 @@ func (s trivyReposScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.C
 	switch typed := msg.(type) {
 	case overrideSummariesMsg:
 		s.overridesList = s.applySummaries(env, typed)
-		return s, securityLoadOverridesCmd(env, s.gen, s.feature), false
-	case securityOverridesMsg:
-		s.overridesList = s.applyOverrides(env, typed)
-		return s, nil, false
+		return s, s.loadCmd(env), false
+	case overrideListMsg:
+		list, cmd := s.applyOverrides(env, typed)
+		s.overridesList = list
+		return s, cmd, false
 	}
 	list, cmd, _ := s.applyEditorMsg(env, msg)
 	s.overridesList = list

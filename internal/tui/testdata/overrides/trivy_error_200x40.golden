@@ -5,7 +5,7 @@
     Overview                   │                                                                                                                                                                        
                                │   Config   Repositories                                                                                                                                                
   ACCESS                       │  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  ╭──────────────────────────────────────╮  
-      Users                    │  │   REPOSITORY                                                               CRIT  HIGH  STATUS     ENABLED  UPDATED     │  │ Select a repository to see its over… │  
+      Users                    │  │   REPOSITORY                                                           CRIT  HIGH  LAST SCAN        STATUS     ENABLED │  │ Select a repository to see its over… │  
       Robots                   │  │ Could not read the overrides: the admin API is unreachable                                                             │  │                                      │  
       Repository access        │  │ Press r to try again.                                                                                                  │  │                                      │  
                                │  │                                                                                                                        │  │                                      │  

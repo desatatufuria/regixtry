@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"reflect"
+
 	tea "charm.land/bubbletea/v2"
 	"regixtry/internal/ports"
 )
@@ -69,12 +71,21 @@ type overrideEditor struct {
 	keys                   trustedKeyList
 	identities             trustedIdentityList
 
-	// pendingGlobalKeys, pendingGlobalKeysLoaded and prefillApplied seed a
-	// signing override that does not exist yet with the current global keys:
-	// once, and only after both reads resolved, in either order.
-	pendingGlobalKeys       []string
-	pendingGlobalKeysLoaded bool
-	prefillApplied          bool
+	// A new override starts from the GLOBAL settings, never from "off":
+	// globalEnabled and, for signing, globalKeys are what the feature has now.
+	// globalLoaded says they were read and prefillApplied that the form took
+	// them (once, after both the override and the global settings arrived, in
+	// either order). Until then, or if they cannot be read, a new override can
+	// neither be edited nor saved.
+	globalEnabled  bool
+	globalKeys     []string
+	globalLoaded   bool
+	prefillApplied bool
+	// dirty is true once the operator changed anything since the form was
+	// loaded or last reflected the server. A new override is only saved
+	// after a change: opening the editor and pressing Enter must not create
+	// one.
+	dirty bool
 
 	// confirm asks before the override is cleared.
 	confirm confirmPrompt
@@ -133,9 +144,12 @@ func indexOfOverrideField(fields []overrideField, target overrideField) int {
 	return -1
 }
 
-// ready reports whether the stored override has been read and nothing is in
-// flight: the only state in which the form takes input.
-func (e overrideEditor) ready() bool { return e.loaded && !e.busy }
+// ready reports whether the stored override has been read, a new override has
+// its global starting point, and nothing is in flight: the only state in which
+// the form takes input.
+func (e overrideEditor) ready() bool {
+	return e.loaded && !e.busy && (e.exists || e.prefillApplied)
+}
 
 // update handles one key while the editor is open.
 func (e overrideEditor) update(env screenEnv, msg keyMsg) (overrideEditor, tea.Cmd, bool) {
@@ -170,6 +184,7 @@ func (e overrideEditor) update(env screenEnv, msg keyMsg) (overrideEditor, tea.C
 		return e, nil, true
 	case isBackspaceKey(msg):
 		e.deleteRune()
+		e.dirty = true
 		e.err, e.note = "", ""
 		return e, nil, true
 	case isEnterKey(msg):
@@ -183,11 +198,13 @@ func (e overrideEditor) update(env screenEnv, msg keyMsg) (overrideEditor, tea.C
 		case overrideFieldPathPrimary, overrideFieldPathSecondary:
 			e.appendText(" ")
 		}
+		e.dirty = true
 		e.err, e.note = "", ""
 		return e, nil, true
 	}
 	if isTextKey(msg) {
 		e.appendText(printableText(keyText(msg)))
+		e.dirty = true
 		e.err, e.note = "", ""
 	}
 	return e, nil, true
@@ -213,6 +230,9 @@ func (e overrideEditor) updateLists(env screenEnv, msg keyMsg) (overrideEditor, 
 	if e.currentField() == overrideFieldIdentities {
 		next, consumed := e.identities.update(msg)
 		if consumed {
+			if !reflect.DeepEqual(next.identities, e.identities.identities) {
+				e.dirty = true
+			}
 			e.identities = next
 			e.err, e.note = "", ""
 			return e, nil, true
@@ -227,6 +247,9 @@ func (e overrideEditor) updateLists(env screenEnv, msg keyMsg) (overrideEditor, 
 		// The usage lookup is this editor's own, stamped with its generation
 		// and id, so a late answer cannot reach another editor or screen.
 		cmd = overrideKeyUsageCmd(env, e.gen, e.id, e.repository, next.keys[next.pendingDeleteIndex])
+	}
+	if !reflect.DeepEqual(next.keys, e.keys.keys) {
+		e.dirty = true
 	}
 	e.keys = next
 	if idx := indexOfOverrideField(e.fields, overrideFieldPathPrimary); idx >= 0 {
@@ -255,6 +278,7 @@ func (e overrideEditor) updatePaste(env screenEnv, msg keyMsg) (overrideEditor, 
 	switch e.currentField() {
 	case overrideFieldPathPrimary, overrideFieldPathSecondary:
 		e.appendText(printableText(keyText(msg)))
+		e.dirty = true
 		e.err, e.note = "", ""
 	}
 	return e, nil, true
@@ -286,6 +310,10 @@ func (e overrideEditor) enter(env screenEnv) (overrideEditor, tea.Cmd, bool) {
 		).withTarget(repository, featureDisplayName(feature)+" override").
 			withConsequence("Only this repository changes. Other repositories keep their overrides.").
 			withButtonLabel("Clear override")
+		return e, nil, true
+	}
+	if !e.exists && !e.dirty {
+		e.err = "No changes to save. Change a field first."
 		return e, nil, true
 	}
 	e.busy = true
@@ -354,9 +382,8 @@ func (e overrideEditor) mine(editor uint64, repository, feature string) bool {
 	return e.open && editor == e.id && repository == e.repository && feature == e.feature
 }
 
-// applyLoaded takes the stored override the editor asked for. For a signing
-// override that does not exist yet it then reads the global policy, to seed the
-// keys from.
+// applyLoaded takes the stored override the editor asked for. For an override
+// that does not exist yet it then reads the global settings it starts from.
 func (e overrideEditor) applyLoaded(env screenEnv, msg overrideLoadedMsg) (overrideEditor, tea.Cmd) {
 	if !e.mine(msg.editor, msg.repository, msg.feature) {
 		return e, nil
@@ -368,37 +395,79 @@ func (e overrideEditor) applyLoaded(env screenEnv, msg overrideLoadedMsg) (overr
 	}
 	e.loaded = true
 	e.applyOverride(msg.override, msg.exists)
-	if e.feature != signingFeatureName {
+	return e.startFromGlobal(env)
+}
+
+// startFromGlobal gives a new override its starting point: the global values
+// when they are known, else a read of them.
+func (e overrideEditor) startFromGlobal(env screenEnv) (overrideEditor, tea.Cmd) {
+	if e.exists || e.prefillApplied {
 		return e, nil
 	}
-	e = e.maybeApplyGlobalPrefill()
-	if !e.exists && !e.prefillApplied {
-		return e, loadOverridePolicyCmd(env, e.gen, e.id)
+	if e.globalLoaded {
+		return e.applyGlobalDefaults(), nil
 	}
-	return e, nil
+	return e, loadOverrideGlobalCmd(env, e.gen, e.id, e.feature)
+}
+
+// applyGlobal takes the global settings a new override starts from.
+func (e overrideEditor) applyGlobal(msg overrideGlobalMsg) overrideEditor {
+	if !e.open || msg.editor != e.id {
+		return e
+	}
+	if msg.err != nil {
+		return e.applyGlobalFailure(msg)
+	}
+	e.globalEnabled, e.globalKeys, e.globalLoaded = msg.enabled, msg.keys, true
+	if e.loaded && !e.exists {
+		e = e.applyGlobalDefaults()
+	}
+	return e
+}
+
+// applyGlobalFailure says why the global settings are missing: without them a
+// new override would guess its starting point, so it cannot be saved.
+func (e overrideEditor) applyGlobalFailure(msg overrideGlobalMsg) overrideEditor {
+	e.err = "Could not read the global " + featureDisplayName(e.feature) + " settings: " + msg.err.Error()
+	return e
+}
+
+// applyGlobalDefaults makes a new override start from the global settings,
+// once: enabled as the feature is now and, for signing, its trusted keys.
+func (e overrideEditor) applyGlobalDefaults() overrideEditor {
+	e.prefillApplied = true
+	e.enabled = e.globalEnabled
+	if e.feature == signingFeatureName {
+		e.keys = e.keys.SetKeys(e.globalKeys)
+	}
+	e.dirty = false
+	return e
 }
 
 // applySaved takes the result of a save or a clear. The editor stays open so
 // the operator sees the reflected state, and keeps everything typed after a
-// failed one.
-func (e overrideEditor) applySaved(msg overrideSavedMsg) overrideEditor {
+// failed one. After a clear the editor is a new override again and reads the
+// global settings if it has not them yet.
+func (e overrideEditor) applySaved(env screenEnv, msg overrideSavedMsg) (overrideEditor, tea.Cmd) {
 	if !e.mine(msg.editor, msg.repository, msg.feature) {
-		return e
+		return e, nil
 	}
 	e.busy = false
 	e.confirm = confirmPrompt{}
 	if msg.err != nil {
 		e.err = msg.err.Error()
-		return e
+		return e, nil
 	}
 	e.err = ""
 	e.applyOverride(msg.override, msg.exists)
+	e.dirty = false
 	if msg.exists {
 		e.note = "Override saved."
-	} else {
-		e.note = "Override cleared."
+		return e, nil
 	}
-	return e
+	e.note = "Override cleared."
+	e.prefillApplied = false
+	return e.startFromGlobal(env)
 }
 
 func (e *overrideEditor) applyOverride(override ports.RepositoryOverrideDetails, exists bool) {
@@ -430,30 +499,6 @@ func (e *overrideEditor) applyOverride(override ports.RepositoryOverrideDetails,
 	}
 }
 
-// applyPolicy takes the global signing policy read for the prefill.
-func (e overrideEditor) applyPolicy(msg overridePolicyMsg) overrideEditor {
-	if !e.open || msg.editor != e.id || e.feature != signingFeatureName || msg.err != nil {
-		return e
-	}
-	e.pendingGlobalKeys = msg.settings.TrustedPublicKeys
-	e.pendingGlobalKeysLoaded = true
-	return e.maybeApplyGlobalPrefill()
-}
-
-// maybeApplyGlobalPrefill seeds a signing override that does not exist yet with
-// the global trusted keys. It waits for both reads, runs once per opening, and
-// never touches the keys of an override that exists.
-func (e overrideEditor) maybeApplyGlobalPrefill() overrideEditor {
-	if e.feature != signingFeatureName || e.prefillApplied || !e.loaded || !e.pendingGlobalKeysLoaded {
-		return e
-	}
-	e.prefillApplied = true
-	if !e.exists {
-		e.keys = e.keys.SetKeys(e.pendingGlobalKeys)
-	}
-	return e
-}
-
 // applyKeyUsage takes the answer of a key's usage count.
 func (e overrideEditor) applyKeyUsage(msg overrideKeyUsageMsg) overrideEditor {
 	if !e.open || msg.editor != e.id || e.feature != signingFeatureName {
@@ -469,6 +514,10 @@ func overrideStatusLine(e overrideEditor) string {
 		return "Reading the override…"
 	case !e.loaded:
 		return "The override could not be read."
+	case !e.exists && !e.prefillApplied && e.err == "":
+		return "Reading the global settings…"
+	case !e.exists && !e.prefillApplied:
+		return "The global settings could not be read."
 	case e.exists:
 		return "override active"
 	}

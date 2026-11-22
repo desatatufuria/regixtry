@@ -58,15 +58,18 @@ func ovClient() *fakeAdminClient {
 			c.repositoryOverrides[feature+"/"+stored.Repository] = stored
 		}
 	}
-	scan := func(repo, ref string, critical, high, runs int) ports.RepositoryScanSummary {
-		finished := securityDay(time.November, 20)
-		return ports.RepositoryScanSummary{RunCount: runs, Run: ports.ScanRun{
-			ID: "run-" + repo, Repository: repo, RequestedRef: ref, Status: ports.ScanRunStatusCompleted,
-			Critical: critical, High: high, FinishedAt: &finished, CreatedAt: finished,
-		}}
+	scan := func(repo, ref, status string, critical, high, runs int, ago time.Duration) ports.RepositoryScanSummary {
+		finished := charFixedTime.Add(-ago)
+		run := ports.ScanRun{ID: "run-" + repo, Repository: repo, RequestedRef: ref, Status: status, Critical: critical, High: high, FinishedAt: &finished, CreatedAt: finished}
+		if status == ports.ScanRunStatusFailed {
+			run.Error = "trivy: could not download the vulnerability database"
+		}
+		return ports.RepositoryScanSummary{RunCount: runs, Run: run}
 	}
+	done, failed := ports.ScanRunStatusCompleted, ports.ScanRunStatusFailed
 	c.repositoryScanSummaries = []ports.RepositoryScanSummary{
-		scan("team/api", "1.4.2", 2, 5, 7), scan("team/web", "stable", 0, 3, 2), scan("team/docs", "latest", 0, 0, 1), scan("team/infra", "v3", 1, 0, 4),
+		scan("team/api", "1.4.2", done, 2, 5, 7, 3*time.Hour), scan("team/web", "stable", failed, 0, 3, 2, 50*time.Hour),
+		scan("team/docs", "latest", done, 0, 0, 1, 45*24*time.Hour), scan("team/infra", "v3", done, 1, 0, 4, 400*24*time.Hour),
 	}
 	return c
 }
@@ -178,8 +181,8 @@ func TestOverridesImageScanningListsEachRepositoryWithItsScanAndOverride(t *test
 	out := securityRender(m)
 	for _, want := range []string{
 		"Admin › Security › Image scanning › Repositories", "Image scanning", "Trivy, vulnerability scanner", "Config", "Repositories",
-		"REPOSITORY", "CRIT", "HIGH", "STATUS", "ENABLED", "UPDATED", "4 repositories, 2 with an override",
-		"team/api", "override", "14 Nov", "team/docs", "no", "team/web", "inherited",
+		"REPOSITORY", "CRIT", "HIGH", "LAST SCAN", "STATUS", "ENABLED", "4 repositories, 2 with an override",
+		"team/api", "override", "ok 3 h ago", "team/docs", "no", "team/web", "inherited",
 		"OVERRIDE", "Ignore file", "/etc/trivy/ignore", "ACTIONS", "Edit override", "Scan history",
 		"tab switch tabs", "↑↓ move", "o override", "enter scan history", "r refresh", "esc back",
 	} {
@@ -196,7 +199,7 @@ func TestOverridesImageScanningListsEachRepositoryWithItsScanAndOverride(t *test
 	}
 	// With room, the panel adds the repository's latest scan.
 	tall := securityRender(ovModelAt(t, ovClient(), securityKnown, screenSecurityTrivyRepos, 200, 40))
-	for _, want := range []string{"LATEST SCAN", "Reference", "1.4.2", "completed", "20 Nov 10:14"} {
+	for _, want := range []string{"LATEST SCAN", "Reference", "1.4.2", "completed", "14 Mar 06:30"} {
 		if !strings.Contains(tall, want) {
 			t.Errorf("200x40 view lacks %q:\n%s", want, tall)
 		}
@@ -474,7 +477,7 @@ func TestOverridesDropResultsOfAnotherScreenInstance(t *testing.T) {
 		l := ovListOf(t, m, sc.to)
 		foreign := securityResult{gen: l.gen + 1000, err: securityExpired()}
 		for _, msg := range []tea.Msg{
-			securityOverridesMsg{securityResult: foreign},
+			overrideListMsg{securityResult: foreign},
 			overrideSummariesMsg{securityResult: foreign},
 			overrideLoadedMsg{securityResult: foreign, repository: "team/api", feature: sc.feature},
 			overrideSavedMsg{securityResult: foreign, repository: "team/api", feature: sc.feature},
@@ -484,7 +487,7 @@ func TestOverridesDropResultsOfAnotherScreenInstance(t *testing.T) {
 				t.Fatalf("%s: a stale %T logged the operator out (screen %q)", sc.name, msg, got.screen)
 			}
 		}
-		updated, _ := m.Update(securityOverridesMsg{securityResult: securityResult{gen: l.gen + 1000}, overrides: nil})
+		updated, _ := m.Update(overrideListMsg{securityResult: securityResult{gen: l.gen + 1000}, overrides: nil})
 		if got := ovListOf(t, updated.(Model), sc.to); len(got.overrides) != len(l.overrides) {
 			t.Fatalf("%s: a foreign overrides list replaced the rows", sc.name)
 		}
@@ -493,7 +496,7 @@ func TestOverridesDropResultsOfAnotherScreenInstance(t *testing.T) {
 		// one's late answers.
 		reopened := securityPress(t, m, testKeyEsc())
 		reopened = ovModelAtNavigate(t, reopened, sc.to)
-		updated, _ = reopened.Update(securityOverridesMsg{securityResult: securityResult{gen: l.gen}})
+		updated, _ = reopened.Update(overrideListMsg{securityResult: securityResult{gen: l.gen}, seq: 0})
 		if got := ovListOf(t, updated.(Model), sc.to); len(got.rows) == 0 {
 			t.Fatalf("%s: the old screen's late answer emptied the new screen", sc.name)
 		}
@@ -587,6 +590,174 @@ func TestOverridesPastedTextIsNeverACommand(t *testing.T) {
 		l := ovListOf(t, opened, sc.to)
 		if !l.editor.Active() || client.setRepositoryOverrideCalls != before || l.editor.confirm.Active() || l.editor.keys.adding || l.editor.keys.usageLoading {
 			t.Errorf("%s: pasted text acted as a key in the editor: %+v", sc.name, l.editor)
+		}
+	}
+}
+
+// ---- the latest scan stays in the Trivy list ----
+
+func TestOverridesImageScanningListShowsTheLatestScanResultAtEverySize(t *testing.T) {
+	t.Parallel()
+	for _, size := range securityConfigSizes {
+		out := securityRender(ovModelAt(t, ovClient(), securityKnown, screenSecurityTrivyRepos, size.w, size.h))
+		for _, want := range []string{"LAST SCAN", "ok 3 h ago", "failed 2 d ago", "ok 45 d ago", "ok 1 y ago"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("%dx%d: the list lacks %q:\n%s", size.w, size.h, want, out)
+			}
+		}
+		if strings.Contains(out, " s ago") || strings.Contains(out, "sec") {
+			t.Errorf("%dx%d: a scan age in seconds:\n%s", size.w, size.h, out)
+		}
+	}
+	// A repository that was never scanned says so, and so does a running scan.
+	c := ovClient()
+	c.repositoryScanSummaries = c.repositoryScanSummaries[:2]
+	run := c.repositoryScanSummaries[0]
+	run.Run.Status, run.Run.FinishedAt = ports.ScanRunStatusRunning, nil
+	c.repositoryScanSummaries[0] = run
+	out := securityRender(ovModelAt(t, c, securityKnown, screenSecurityTrivyRepos, 150, 24))
+	if !strings.Contains(out, "never") || !strings.Contains(out, "running") {
+		t.Errorf("never scanned or running not shown:\n%s", out)
+	}
+}
+
+func TestOverridesImageScanningFailedScanIsDistinctAndPanelKeepsReferenceAndRuns(t *testing.T) {
+	t.Parallel()
+	m := ovModelAt(t, ovClient(), securityKnown, screenSecurityTrivyRepos, 150, 24)
+	m = ovSelect(t, m, screenSecurityTrivyRepos, "team/web")
+	// The failed row is drawn in the error colour, not like the others.
+	view := m.View().Content
+	var failedLine, okLine string
+	for _, line := range strings.Split(view, "\n") {
+		switch {
+		case strings.Contains(line, "failed 2 d ago"):
+			failedLine = line
+		case strings.Contains(line, "ok 45 d ago"):
+			okLine = line
+		}
+	}
+	if failedLine == "" || okLine == "" {
+		t.Fatalf("rows not found:\n%s", securityRender(m))
+	}
+	// Compact panel at 150x24: reference and runs stay.
+	out := securityRender(m)
+	for _, want := range []string{"LATEST SCAN", "Reference", "stable", "Runs"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("150x24 panel lacks %q:\n%s", want, out)
+		}
+	}
+	// With room the panel shows the failure itself.
+	tall := securityRender(ovSelect(t, ovModelAt(t, ovClient(), securityKnown, screenSecurityTrivyRepos, 200, 40), screenSecurityTrivyRepos, "team/web"))
+	for _, want := range []string{"Reference", "Runs", "Error", "could not download"} {
+		if !strings.Contains(tall, want) {
+			t.Errorf("200x40 panel lacks %q:\n%s", want, tall)
+		}
+	}
+	// A row of the selected repository is not marked by colour alone: another
+	// repository's failure is red even when it is not selected.
+	other := ovModelAt(t, ovClient(), securityKnown, screenSecurityTrivyRepos, 150, 24)
+	var styled string
+	for _, line := range strings.Split(other.View().Content, "\n") {
+		if strings.Contains(line, "failed 2 d ago") {
+			styled = line
+		}
+	}
+	if !strings.Contains(styled, "\x1b[") || styled == "" {
+		t.Fatalf("the failed scan is not styled: %q", styled)
+	}
+	if strings.Contains(styled, "ok 45") {
+		t.Fatal("rows share a line")
+	}
+}
+
+func TestScanAgeIsHoursDaysOrYearsNeverSeconds(t *testing.T) {
+	t.Parallel()
+	now := charFixedTime
+	cases := []struct {
+		ago  time.Duration
+		want string
+	}{
+		{10 * time.Second, "<1 h ago"}, {59 * time.Minute, "<1 h ago"}, {time.Hour, "1 h ago"}, {23 * time.Hour, "23 h ago"},
+		{24 * time.Hour, "1 d ago"}, {47 * time.Hour, "1 d ago"}, {364 * 24 * time.Hour, "364 d ago"}, {365 * 24 * time.Hour, "1 y ago"}, {800 * 24 * time.Hour, "2 y ago"},
+		{-time.Hour, "<1 h ago"},
+	}
+	for _, tc := range cases {
+		at := now.Add(-tc.ago)
+		if got := scanAge(at, now); got != tc.want {
+			t.Errorf("scanAge(now-%v) = %q, want %q", tc.ago, got, tc.want)
+		}
+	}
+}
+
+// ---- a list read before a save must not overwrite it ----
+
+// ovListRead returns the command that reads the overrides list after the
+// screen was asked to refresh, already holding the answer the server gave
+// at the time it ran.
+func ovListRead(t *testing.T, m Model, to screen) (Model, tea.Msg) {
+	t.Helper()
+	updated, cmd := m.Update(testKeyRunes("r"))
+	m = updated.(Model)
+	for range 3 {
+		msg := cmd()
+		if _, isSummaries := msg.(overrideSummariesMsg); isSummaries {
+			updated, next := m.Update(msg)
+			m, cmd = updated.(Model), next
+			continue
+		}
+		return m, msg
+	}
+	t.Fatal("no overrides read")
+	return m, nil
+}
+
+func TestOverridesStaleListReadDoesNotOverwriteASavedOrClearedRow(t *testing.T) {
+	t.Parallel()
+	for _, sc := range ovScreens {
+		// A read that ran before a save, delivered after it.
+		client := ovClient()
+		m := ovModelAt(t, client, securityKnown, sc.to, 160, 30)
+		m = ovSelect(t, m, sc.to, "team/web")
+		m, stale := ovListRead(t, m, sc.to)
+		m = securityPress(t, m, testKeyRunes("o"))
+		m = securityPress(t, m, testKeySpace(), testKeyEnter()) // a new override on team/web
+		if !hasOverrideRow(ovListOf(t, m, sc.to), "team/web") {
+			t.Fatalf("%s: the save did not show on the row", sc.name)
+		}
+		updated, _ := m.Update(stale)
+		m = updated.(Model)
+		if !hasOverrideRow(ovListOf(t, m, sc.to), "team/web") {
+			t.Errorf("%s: a list read from before the save showed the saved override as inherited", sc.name)
+		}
+
+		// ... and before a clear.
+		client = ovClient()
+		m = ovModelAt(t, client, securityKnown, sc.to, 160, 30)
+		m = ovSelect(t, m, sc.to, "team/api")
+		m, stale = ovListRead(t, m, sc.to)
+		m = securityPress(t, m, testKeyRunes("o"))
+		m = ovFocus(t, m, sc.to, overrideFieldClear)
+		m = securityPress(t, m, testKeyEnter(), testKeyRunes("y"))
+		if hasOverrideRow(ovListOf(t, m, sc.to), "team/api") {
+			t.Fatalf("%s: the clear did not show on the row", sc.name)
+		}
+		updated, _ = m.Update(stale)
+		m = updated.(Model)
+		if hasOverrideRow(ovListOf(t, m, sc.to), "team/api") {
+			t.Errorf("%s: a list read from before the clear showed the cleared override as overridden", sc.name)
+		}
+
+		// A read that started after the change is taken.
+		client = ovClient()
+		m = ovModelAt(t, client, securityKnown, sc.to, 160, 30)
+		m = ovSelect(t, m, sc.to, "team/api")
+		m = securityPress(t, m, testKeyRunes("o"))
+		m = ovFocus(t, m, sc.to, overrideFieldClear)
+		m = securityPress(t, m, testKeyEnter(), testKeyRunes("y"), testKeyEsc())
+		client.repositoryOverrideList[sc.feature] = nil
+		m = securityPress(t, m, testKeyRunes("r"))
+		if hasOverrideRow(ovListOf(t, m, sc.to), "team/docs") {
+			t.Errorf("%s: a fresh read was not taken", sc.name)
 		}
 	}
 }

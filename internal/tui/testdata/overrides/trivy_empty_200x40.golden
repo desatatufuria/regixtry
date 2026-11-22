@@ -5,7 +5,7 @@
     Overview                   │  0 repositories, 0 with an override                                                                                                                                    
                                │   Config   Repositories                                                                                                                                                
   ACCESS                       │  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  ╭──────────────────────────────────────╮  
-      Users                    │  │   REPOSITORY                                                               CRIT  HIGH  STATUS     ENABLED  UPDATED     │  │ Select a repository to see its over… │  
+      Users                    │  │   REPOSITORY                                                           CRIT  HIGH  LAST SCAN        STATUS     ENABLED │  │ Select a repository to see its over… │  
       Robots                   │  │ No repositories yet.                                                                                                   │  │                                      │  
       Repository access        │  │                                                                                                                        │  │                                      │  
                                │  │                                                                                                                        │  │                                      │  

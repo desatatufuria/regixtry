@@ -16,7 +16,8 @@ func renderOverrideEditor(theme adminTheme, env screenEnv, e overrideEditor) str
 
 	var body []string
 	focusLine := 0
-	if e.loaded {
+	formShown := e.loaded && (e.exists || e.prefillApplied)
+	if formShown {
 		body, focusLine = e.formLines(theme, inner)
 	}
 	hint := "tab next field, space toggles"
@@ -27,7 +28,7 @@ func renderOverrideEditor(theme adminTheme, env screenEnv, e overrideEditor) str
 	if !e.loaded && !e.loading && err == "" {
 		err = "The override could not be read."
 	}
-	if !e.loaded {
+	if !formShown {
 		hint = "esc closes. Open the editor again to retry."
 	}
 	return securityModal(theme, env, securityModalSpec{
@@ -38,7 +39,7 @@ func renderOverrideEditor(theme adminTheme, env screenEnv, e overrideEditor) str
 		err:       err,
 		note:      e.note,
 		saving:    e.busy,
-		noSave:    !e.loaded,
+		noSave:    !formShown,
 		hint:      hint,
 		width:     width,
 	})

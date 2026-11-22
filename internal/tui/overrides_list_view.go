@@ -120,9 +120,9 @@ func (l overridesList) table(theme adminTheme, env screenEnv, v overridesView, w
 			{title: "REPOSITORY", flex: 1, min: 8},
 			{title: "CRIT", fixed: 4},
 			{title: "HIGH", fixed: 4},
+			{title: "LAST SCAN", fixed: 15},
 			{title: "STATUS", fixed: 9},
 			{title: "ENABLED", fixed: 7},
-			{title: "UPDATED", fixed: 11},
 		}
 	} else {
 		specs = []scanColSpec{
@@ -147,13 +147,14 @@ func (l overridesList) table(theme adminTheme, env screenEnv, v overridesView, w
 		}
 		repo := scanCell{row.Repository, theme.text}
 		if l.feature == trivyFeatureName {
-			crit, high := scanCell{"-", theme.muted}, scanCell{"-", theme.muted}
+			crit, high, last := scanCell{"-", theme.muted}, scanCell{"-", theme.muted}, scanCell{"never", theme.muted}
 			if scan, ok := l.scans[row.Repository]; ok {
 				run := scan.Run
 				crit = scanCell{scanCount(run, run.Critical), scanCountStyle(theme, run, run.Critical, theme.severityCritical)}
 				high = scanCell{scanCount(run, run.High), scanCountStyle(theme, run, run.High, theme.severityHigh)}
+				last = scanCell{lastScanText(run, now), lastScanStyle(theme, run)}
 			}
-			rows[i] = []scanCell{repo, crit, high, status, enabled, updated}
+			rows[i] = []scanCell{repo, crit, high, last, status, enabled}
 			continue
 		}
 		rows[i] = []scanCell{repo, status, enabled, detail, updated}
@@ -195,9 +196,11 @@ func (l overridesList) panel(theme adminTheme, env screenEnv, v overridesView, w
 	// actions and the override matter more than a second look at what the
 	// table already counts.
 	if scan, ok := l.scans[row.Repository]; ok && l.feature == trivyFeatureName {
-		withScan := [][]string{override, l.scanSection(theme, scan, now, width), actions}
-		if len(head)+len(override)+len(withScan[1])+len(actions) <= max(height-2, 1) {
-			sections = withScan
+		for _, section := range [][]string{l.scanSection(theme, scan, now, width), l.compactScanSection(theme, scan, width)} {
+			if len(head)+len(override)+len(section)+len(actions) <= max(height-2, 1) {
+				sections = [][]string{override, section, actions}
+				break
+			}
 		}
 	}
 	return scanPanel(theme, head, sections, nil, width, height)
@@ -248,13 +251,13 @@ func (l overridesList) overrideSection(theme adminTheme, row featureOverrideRow,
 	return append(lines, kv("Updated", securityOverrideDate(d.UpdatedAt, now), theme.text))
 }
 
-// scanSection is the repository's latest scan (Trivy).
+// scanSection is the repository's latest scan (Trivy), in full.
 func (l overridesList) scanSection(theme adminTheme, scan ports.RepositoryScanSummary, now time.Time, width int) []string {
 	run := scan.Run
 	kv := func(label, value string, style lipgloss.Style) string {
 		return scanKV(theme, label, value, style, width)
 	}
-	return []string{
+	lines := []string{
 		scanSectionTitle(theme, "LATEST SCAN"),
 		kv("Reference", adminFirstNonEmpty(run.RequestedRef, "-"), theme.text),
 		kv("Status", adminFirstNonEmpty(run.Status, "unknown"), scanStatusStyle(theme, run.Status)),
@@ -263,6 +266,61 @@ func (l overridesList) scanSection(theme adminTheme, scan ports.RepositoryScanSu
 		kv("Runs", fmt.Sprintf("%d", scan.RunCount), theme.text),
 		kv("Scanned", scanClock(scanRunTime(run), now), theme.text),
 	}
+	if run.Status == ports.ScanRunStatusFailed && strings.TrimSpace(run.Error) != "" {
+		lines = append(lines, kv("Error", strings.TrimSpace(run.Error), theme.error))
+	}
+	return lines
+}
+
+// compactScanSection is what the panel keeps of the scan when it has no room
+// for the full one: the reference and the runs (the list has the rest).
+func (l overridesList) compactScanSection(theme adminTheme, scan ports.RepositoryScanSummary, width int) []string {
+	return []string{
+		scanSectionTitle(theme, "LATEST SCAN"),
+		scanKV(theme, "Reference", adminFirstNonEmpty(scan.Run.RequestedRef, "-"), theme.text, width),
+		scanKV(theme, "Runs", fmt.Sprintf("%d", scan.RunCount), theme.text, width),
+	}
+}
+
+// lastScanText is the scan result of the list: "ok 3 h ago", "failed 2 d ago",
+// "running". A scan in progress has no age yet.
+func lastScanText(run ports.ScanRun, now time.Time) string {
+	label := adminFirstNonEmpty(run.Status, "unknown")
+	switch run.Status {
+	case ports.ScanRunStatusCompleted:
+		label = "ok"
+	case ports.ScanRunStatusRunning, ports.ScanRunStatusQueued:
+		return label
+	}
+	at := scanRunTime(run)
+	if at.IsZero() {
+		return label
+	}
+	return label + " " + scanAge(at, now)
+}
+
+func lastScanStyle(theme adminTheme, run ports.ScanRun) lipgloss.Style {
+	switch run.Status {
+	case ports.ScanRunStatusFailed:
+		return theme.error
+	case ports.ScanRunStatusCompleted:
+		return theme.text
+	}
+	return scanStatusStyle(theme, run.Status)
+}
+
+// scanAge is how long ago at was: hours, days or years, never seconds.
+func scanAge(at, now time.Time) string {
+	d := now.Sub(at)
+	switch {
+	case d < time.Hour:
+		return "<1 h ago"
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%d h ago", int(d/time.Hour))
+	case d < 365*24*time.Hour:
+		return fmt.Sprintf("%d d ago", int(d/(24*time.Hour)))
+	}
+	return fmt.Sprintf("%d y ago", int(d/(365*24*time.Hour)))
 }
 
 // scanRunTime is when a run finished, else when it was created.

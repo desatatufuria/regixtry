@@ -7,18 +7,18 @@
   ACCESS                       │  ╭──────  │  Remove this repository's override of the Trivy settings.    │   ╭────────────────────────────────────╮
       Users                    │  │   REP  │  It goes back to the global settings.                        │   │ team/api                           │
       Robots                   │  │ ▸ tea  │                                                              │   │ override                           │
-      Repository access        │  │   tea  │  ╭────────────────────────────────────────────────────────╮  │   │                                    │
-                               │  │   tea  │  │ team/api                                               │  │   │ OVERRIDE                           │
-  SECURITY                     │  │   tea  │  │ Trivy override                                         │  │   │ Scanning                        on │
-    ▸ Image scanning           │  │        │  ╰────────────────────────────────────────────────────────╯  │   │ Ignore file      /etc/trivy/ignore │
-      Secret scanning          │  │        │                                                              │   │ Ignore policy                    - │
-      Signing policy           │  │        │  Only this repository changes. Other repositories keep       │   │ Updated                     14 Nov │
-                               │  │        │  their overrides.                                            │   │                                    │
-  OPERATIONS                   │  │        │                                                              │   │ ACTIONS                            │
-      Scan runs                │  │        │   Clear override                                 y / enter   │   │ Edit override                    o │
-      Secret findings          │  │        │   Cancel                                               esc   │   │ Scan history                 enter │
-      Update channel           │  ╰──────  ╰──────────────────────────────────────────────────────────────╯   │ Refresh                          r │
-                               │  One row per repository, severity first. enter opens its scan history,       │                                    │
+      Repository access        │  │   tea  │  ╭────────────────────────────────────────────────────────╮  │   │ OVERRIDE                           │
+                               │  │   tea  │  │ team/api                                               │  │   │ Scanning                        on │
+  SECURITY                     │  │   tea  │  │ Trivy override                                         │  │   │ Ignore file      /etc/trivy/ignore │
+    ▸ Image scanning           │  │        │  ╰────────────────────────────────────────────────────────╯  │   │ Ignore policy                    - │
+      Secret scanning          │  │        │                                                              │   │ Updated                     14 Nov │
+      Signing policy           │  │        │  Only this repository changes. Other repositories keep       │   │ LATEST SCAN                        │
+                               │  │        │  their overrides.                                            │   │ Reference                    1.4.2 │
+  OPERATIONS                   │  │        │                                                              │   │ Runs                             7 │
+      Scan runs                │  │        │   Clear override                                 y / enter   │   │ ACTIONS                            │
+      Secret findings          │  │        │   Cancel                                               esc   │   │ Edit override                    o │
+      Update channel           │  ╰──────  ╰──────────────────────────────────────────────────────────────╯   │ Scan history                 enter │
+                               │  One row per repository, severity first. enter opens its scan history,       │ Refresh                          r │
                                │  o edits its override.                                                       ╰────────────────────────────────────╯
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   y / enter clear override   esc cancel                                                                                                               

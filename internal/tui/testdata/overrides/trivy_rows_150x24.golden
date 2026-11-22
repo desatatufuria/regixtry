@@ -5,20 +5,20 @@
     Overview                   │  4 repositories, 2 with an override                                                                                  
                                │   Config   Repositories                                                                                              
   ACCESS                       │  ╭────────────────────────────────────────────────────────────────────────╮  ╭────────────────────────────────────╮  
-      Users                    │  │   REPOSITORY               CRIT  HIGH  STATUS     ENABLED  UPDATED     │  │ team/api                           │  
-      Robots                   │  │ ▸ team/api                 2     5     override   yes      14 Nov      │  │ override                           │  
-      Repository access        │  │   team/web                 0     3     inherited  —        -           │  │                                    │  
-                               │  │   team/docs                0     0     override   no       2 Nov       │  │ OVERRIDE                           │  
-  SECURITY                     │  │   team/infra               1     0     inherited  —        -           │  │ Scanning                        on │  
-    ▸ Image scanning           │  │                                                                        │  │ Ignore file      /etc/trivy/ignore │  
-      Secret scanning          │  │                                                                        │  │ Ignore policy                    - │  
-      Signing policy           │  │                                                                        │  │ Updated                     14 Nov │  
-                               │  │                                                                        │  │                                    │  
-  OPERATIONS                   │  │                                                                        │  │ ACTIONS                            │  
-      Scan runs                │  │                                                                        │  │ Edit override                    o │  
-      Secret findings          │  │                                                                        │  │ Scan history                 enter │  
-      Update channel           │  ╰────────────────────────────────────────────────────────────────────────╯  │ Refresh                          r │  
-                               │  One row per repository, severity first. enter opens its scan history,       │                                    │  
+      Users                    │  │   REPOSITORY           CRIT  HIGH  LAST SCAN        STATUS     ENABLED │  │ team/api                           │  
+      Robots                   │  │ ▸ team/api             2     5     ok 3 h ago       override   yes     │  │ override                           │  
+      Repository access        │  │   team/web             -     -     failed 2 d ago   inherited  —       │  │ OVERRIDE                           │  
+                               │  │   team/docs            0     0     ok 45 d ago      override   no      │  │ Scanning                        on │  
+  SECURITY                     │  │   team/infra           1     0     ok 1 y ago       inherited  —       │  │ Ignore file      /etc/trivy/ignore │  
+    ▸ Image scanning           │  │                                                                        │  │ Ignore policy                    - │  
+      Secret scanning          │  │                                                                        │  │ Updated                     14 Nov │  
+      Signing policy           │  │                                                                        │  │ LATEST SCAN                        │  
+                               │  │                                                                        │  │ Reference                    1.4.2 │  
+  OPERATIONS                   │  │                                                                        │  │ Runs                             7 │  
+      Scan runs                │  │                                                                        │  │ ACTIONS                            │  
+      Secret findings          │  │                                                                        │  │ Edit override                    o │  
+      Update channel           │  ╰────────────────────────────────────────────────────────────────────────╯  │ Scan history                 enter │  
+                               │  One row per repository, severity first. enter opens its scan history,       │ Refresh                          r │  
                                │  o edits its override.                                                       ╰────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   tab switch tabs   ↑↓ move   o override   enter scan history   r refresh   esc back                                                                  

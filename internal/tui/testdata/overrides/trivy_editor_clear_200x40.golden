@@ -5,11 +5,11 @@
     Overview                   │  4 repositories, 2 with an override
                                │   Config   Repositories 
   ACCESS                       │  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  ╭──────────────────────────────────────╮
-      Users                    │  │   REPOSITORY                                                               CRIT  HIGH  STATUS     ENABLED  UPDATED     │  │ team/api                             │
-      Robots                   │  │ ▸ team/api                                                                 2     5     override   yes      14 Nov      │  │ override                             │
-      Repository access        │  │   team/web                                                                 0     3     inherited  —        -           │  │                                      │
-                               │  │   team/docs                                                                0     0     override   no       2 Nov       │  │ OVERRIDE                             │
-  SECURITY                     │  │   team/infra                    ╭──────────────────────────────────────────────────────────────╮  —        -           │  │ Scanning                          on │
+      Users                    │  │   REPOSITORY                                                           CRIT  HIGH  LAST SCAN        STATUS     ENABLED │  │ team/api                             │
+      Robots                   │  │ ▸ team/api                                                             2     5     ok 3 h ago       override   yes     │  │ override                             │
+      Repository access        │  │   team/web                                                             -     -     failed 2 d ago   inherited  —       │  │                                      │
+                               │  │   team/docs                                                            0     0     ok 45 d ago      override   no      │  │ OVERRIDE                             │
+  SECURITY                     │  │   team/infra                    ╭──────────────────────────────────────────────────────────────╮    inherited  —       │  │ Scanning                          on │
     ▸ Image scanning           │  │                                 │  Clear override                                              │                       │  │ Ignore file        /etc/trivy/ignore │
       Secret scanning          │  │                                 │                                                              │                       │  │ Ignore policy                      - │
       Signing policy           │  │                                 │  Remove this repository's override of the Trivy settings.    │                       │  │ Updated                       14 Nov │
@@ -20,7 +20,7 @@
       Update channel           │  │                                 │  │ Trivy override                                         │  │                       │  │ Critical                           2 │
                                │  │                                 │  ╰────────────────────────────────────────────────────────╯  │                       │  │ High                               5 │
                                │  │                                 │                                                              │                       │  │ Runs                               7 │
-                               │  │                                 │  Only this repository changes. Other repositories keep       │                       │  │ Scanned                 20 Nov 10:14 │
+                               │  │                                 │  Only this repository changes. Other repositories keep       │                       │  │ Scanned                 14 Mar 06:30 │
                                │  │                                 │  their overrides.                                            │                       │  │                                      │
                                │  │                                 │                                                              │                       │  │ ACTIONS                              │
                                │  │                                 │   Clear override                                 y / enter   │                       │  │ Edit override                      o │

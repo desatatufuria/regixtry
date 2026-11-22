@@ -5,20 +5,20 @@
     Overview                   │  4 repositories, 2 with an override
                                │   Config   Rep  ╭──────────────────────────────────────────────────╮
   ACCESS                       │  ╭────────────  │  Trivy override                                  │  ────╮  ╭────────────────────────────────────╮
-      Users                    │  │   REPOSITOR  │  team/api. override active.                      │      │  │ team/api                           │
+      Users                    │  │   REPOSITOR  │  team/api. override active.                      │  LED │  │ team/api                           │
       Robots                   │  │ ▸ team/api   │  [x] Scanning enabled                            │      │  │ override                           │
-      Repository access        │  │   team/web   │  Ignore file path                                │      │  │                                    │
-                               │  │   team/docs  │   /etc/trivy/ignore                              │      │  │ OVERRIDE                           │
-  SECURITY                     │  │   team/infr  │  Ignore policy path                              │      │  │ Scanning                        on │
-    ▸ Image scanning           │  │              │                                                  │      │  │ Ignore file      /etc/trivy/ignore │
-      Secret scanning          │  │              │  Clear override, use the global settings         │      │  │ Ignore policy                    - │
-      Signing policy           │  │              │                                                  │      │  │ Updated                     14 Nov │
-                               │  │              │   Save  enter   Cancel  esc                      │      │  │                                    │
-  OPERATIONS                   │  │              │  tab next field, space toggles                   │      │  │ ACTIONS                            │
-      Scan runs                │  │              ╰──────────────────────────────────────────────────╯      │  │ Edit override                    o │
-      Secret findings          │  │                                                                        │  │ Scan history                 enter │
-      Update channel           │  ╰────────────────────────────────────────────────────────────────────────╯  │ Refresh                          r │
-                               │  One row per repository, severity first. enter opens its scan history,       │                                    │
+      Repository access        │  │   team/web   │  Ignore file path                                │      │  │ OVERRIDE                           │
+                               │  │   team/docs  │   /etc/trivy/ignore                              │      │  │ Scanning                        on │
+  SECURITY                     │  │   team/infr  │  Ignore policy path                              │      │  │ Ignore file      /etc/trivy/ignore │
+    ▸ Image scanning           │  │              │                                                  │      │  │ Ignore policy                    - │
+      Secret scanning          │  │              │  Clear override, use the global settings         │      │  │ Updated                     14 Nov │
+      Signing policy           │  │              │                                                  │      │  │ LATEST SCAN                        │
+                               │  │              │   Save  enter   Cancel  esc                      │      │  │ Reference                    1.4.2 │
+  OPERATIONS                   │  │              │  tab next field, space toggles                   │      │  │ Runs                             7 │
+      Scan runs                │  │              ╰──────────────────────────────────────────────────╯      │  │ ACTIONS                            │
+      Secret findings          │  │                                                                        │  │ Edit override                    o │
+      Update channel           │  ╰────────────────────────────────────────────────────────────────────────╯  │ Scan history                 enter │
+                               │  One row per repository, severity first. enter opens its scan history,       │ Refresh                          r │
                                │  o edits its override.                                                       ╰────────────────────────────────────╯
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   tab next field   space toggle   enter save   esc cancel                                                                                             

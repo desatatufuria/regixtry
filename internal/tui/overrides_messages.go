@@ -39,12 +39,22 @@ type overrideSavedMsg struct {
 	exists     bool
 }
 
-// overridePolicyMsg is the global signing policy, read to seed the keys of a
-// signing override that does not exist yet.
-type overridePolicyMsg struct {
+// overrideGlobalMsg is the global setting a new override starts from: whether
+// the feature is enabled and, for signing, the trusted keys of the policy.
+type overrideGlobalMsg struct {
 	securityResult
-	editor   uint64
-	settings ports.SigningPolicySettings
+	editor  uint64
+	enabled bool
+	keys    []string
+}
+
+// overrideListMsg is the stored overrides of the feature. seq is the number of
+// saves and clears the screen had seen when the read started: an answer that
+// started before a later one would show the old state.
+type overrideListMsg struct {
+	securityResult
+	seq       uint64
+	overrides []ports.RepositoryOverrideDetails
 }
 
 // overrideKeyUsageMsg answers the "how many images does this key verify"
@@ -96,14 +106,40 @@ func clearOverrideCmd(env screenEnv, gen, editor uint64, repository, feature str
 	}
 }
 
-func loadOverridePolicyCmd(env screenEnv, gen, editor uint64) tea.Cmd {
+// loadOverrideGlobalCmd reads what a new override starts from.
+func loadOverrideGlobalCmd(env screenEnv, gen, editor uint64, feature string) tea.Cmd {
+	client, session := env.Client, env.Session
+	return func() tea.Msg {
+		fail := func(err error) tea.Msg {
+			return overrideGlobalMsg{securityResult: securityResult{gen: gen, err: err}, editor: editor}
+		}
+		if client == nil {
+			return fail(errSecurityUnavailable)
+		}
+		if feature == signingFeatureName {
+			settings, err := client.GetSigningPolicy(context.Background(), session)
+			if err != nil {
+				return fail(err)
+			}
+			return overrideGlobalMsg{securityResult: securityResult{gen: gen}, editor: editor, enabled: settings.Enabled, keys: settings.TrustedPublicKeys}
+		}
+		page, err := client.GetFeaturePage(context.Background(), session, feature)
+		if err != nil {
+			return fail(err)
+		}
+		return overrideGlobalMsg{securityResult: securityResult{gen: gen}, editor: editor, enabled: page.Summary.Enabled}
+	}
+}
+
+// loadOverrideListCmd reads the stored overrides of one feature.
+func loadOverrideListCmd(env screenEnv, gen, seq uint64, feature string) tea.Cmd {
 	client, session := env.Client, env.Session
 	return func() tea.Msg {
 		if client == nil {
-			return overridePolicyMsg{securityResult: securityResult{gen: gen, err: errSecurityUnavailable}, editor: editor}
+			return overrideListMsg{securityResult: securityResult{gen: gen, err: errSecurityUnavailable}, seq: seq}
 		}
-		settings, err := client.GetSigningPolicy(context.Background(), session)
-		return overridePolicyMsg{securityResult: securityResult{gen: gen, err: err}, editor: editor, settings: settings}
+		overrides, err := client.ListRepositoryOverrides(context.Background(), session, feature)
+		return overrideListMsg{securityResult: securityResult{gen: gen, err: err}, seq: seq, overrides: overrides}
 	}
 }
 

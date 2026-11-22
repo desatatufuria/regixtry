@@ -76,7 +76,7 @@ func TestOverrideEditorStaysBoundToItsRepositoryAndFeature(t *testing.T) {
 		// A reload landing while the editor is open replaces the rows (and may
 		// reorder them) but cannot change what the editor edits.
 		reordered := []ports.RepositoryOverrideDetails{{Repository: "team/web", Feature: sc.feature, Enabled: true}}
-		updated, _ := m.Update(securityOverridesMsg{securityResult: securityResult{gen: e.gen}, overrides: reordered})
+		updated, _ := m.Update(overrideListMsg{securityResult: securityResult{gen: e.gen}, overrides: reordered})
 		m = updated.(Model)
 		if got := ovEditorOf(t, m, sc.to); got.repository != "team/docs" || got.Feature() != sc.feature || got.id != e.id {
 			t.Fatalf("%s: a reload changed the editor to %q/%q", sc.name, got.repository, got.Feature())
@@ -513,56 +513,165 @@ func TestOverrideEditorSeedsAnOverrideThatDoesNotExistYetWithTheGlobalKeys(t *te
 func TestOverrideEditorPrefillIsOrderIndependentAndRunsOnce(t *testing.T) {
 	t.Parallel()
 	env := screenEnv{}
-	policy := func(e overrideEditor, keys ...string) overridePolicyMsg {
-		return overridePolicyMsg{securityResult: securityResult{gen: e.gen}, editor: e.id, settings: ports.SigningPolicySettings{TrustedPublicKeys: keys}}
+	policy := func(e overrideEditor, keys ...string) overrideGlobalMsg {
+		return overrideGlobalMsg{securityResult: securityResult{gen: e.gen}, editor: e.id, enabled: true, keys: keys}
 	}
 	loaded := func(e overrideEditor, exists bool, keys ...string) overrideLoadedMsg {
 		return overrideLoadedMsg{securityResult: securityResult{gen: e.gen}, editor: e.id, repository: e.repository, feature: e.feature, exists: exists,
 			override: ports.RepositoryOverrideDetails{Enabled: true, TrustedPublicKeys: keys}}
 	}
 
-	// The global policy answers first.
+	// The global settings answer first.
 	e := newOverrideEditor(1, signingFeatureName, "team/web")
-	e = e.applyPolicy(policy(e, trustedKeyListTestPEM1))
-	if len(e.keys.Keys()) != 0 {
+	e = e.applyGlobal(policy(e, trustedKeyListTestPEM1))
+	if len(e.keys.Keys()) != 0 || e.prefillApplied {
 		t.Fatal("the prefill ran before the override was read")
 	}
 	e, cmd := e.applyLoaded(env, loaded(e, false))
-	if len(e.keys.Keys()) != 1 || cmd != nil {
-		t.Fatalf("keys = %d, cmd = %v, want the global key seeded and no second read", len(e.keys.Keys()), cmd != nil)
+	if len(e.keys.Keys()) != 1 || !e.enabled || cmd != nil {
+		t.Fatalf("keys = %d, enabled = %v, cmd = %v, want the global key and switch seeded and no second read", len(e.keys.Keys()), e.enabled, cmd != nil)
 	}
 
-	// The override answers first and asks for the policy.
+	// The override answers first and asks for the global settings.
 	e = newOverrideEditor(1, signingFeatureName, "team/web")
 	e, cmd = e.applyLoaded(env, loaded(e, false))
 	if cmd == nil {
-		t.Fatal("a signing override that does not exist must read the global policy")
+		t.Fatal("an override that does not exist must read the global settings")
 	}
-	e = e.applyPolicy(policy(e, trustedKeyListTestPEM1, trustedKeyListTestPEM2))
-	if len(e.keys.Keys()) != 2 {
-		t.Fatalf("keys = %d, want 2 seeded", len(e.keys.Keys()))
+	e = e.applyGlobal(policy(e, trustedKeyListTestPEM1, trustedKeyListTestPEM2))
+	if len(e.keys.Keys()) != 2 || !e.ready() {
+		t.Fatalf("keys = %d, want 2 seeded and the form ready", len(e.keys.Keys()))
 	}
-	// Only once: a second policy answer does not overwrite what was edited.
+	// Only once: a second answer does not overwrite what was edited.
 	e.keys = e.keys.SetKeys([]string{trustedKeyListTestPEM2})
-	e = e.applyPolicy(policy(e, trustedKeyListTestPEM1))
+	e = e.applyGlobal(policy(e, trustedKeyListTestPEM1))
 	if len(e.keys.Keys()) != 1 {
-		t.Fatal("the prefill ran twice")
+		t.Fatalf("the prefill ran twice (%d keys)", len(e.keys.Keys()))
 	}
 
 	// An override that exists is never overwritten, whatever the order.
 	e = newOverrideEditor(1, signingFeatureName, "team/api")
-	e = e.applyPolicy(policy(e, trustedKeyListTestPEM1, trustedKeyListTestPEM2))
+	e = e.applyGlobal(policy(e, trustedKeyListTestPEM1, trustedKeyListTestPEM2))
 	e, _ = e.applyLoaded(env, loaded(e, true, trustedKeyListTestPEM2))
 	if got := e.keys.Keys(); len(got) != 1 || got[0] != trustedKeyListTestPEM2 {
 		t.Fatalf("keys = %v, want the stored override's own key", got)
 	}
 
-	// A policy answer for another editor is dropped.
+	// An answer for another editor is dropped.
 	e = newOverrideEditor(1, signingFeatureName, "team/web")
 	other := policy(e, trustedKeyListTestPEM1)
 	other.editor++
-	e = e.applyPolicy(other)
-	if e.pendingGlobalKeysLoaded {
-		t.Fatal("the policy answer of another editor was taken")
+	e = e.applyGlobal(other)
+	if e.globalLoaded {
+		t.Fatal("the global answer of another editor was taken")
+	}
+}
+
+// ---- a new override is never created by an untouched editor ----
+
+func ovSetGlobalEnabled(c *fakeAdminClient, enabled bool) {
+	for _, feature := range []string{trivyFeatureName, gitleaksFeatureName} {
+		page := c.featurePages[feature]
+		page.Summary.Enabled = enabled
+		c.featurePages[feature] = page
+	}
+	c.signingPolicy.Enabled = enabled
+}
+
+func TestOverrideEditorUntouchedEnterDoesNotCreateAnOverride(t *testing.T) {
+	t.Parallel()
+	for _, sc := range ovScreens {
+		for _, global := range []bool{true, false} {
+			client := ovClient()
+			ovSetGlobalEnabled(client, global)
+			m := ovOpenEditor(t, client, sc.to, "team/web") // no override stored
+			m = securityPress(t, m, testKeyEnter())
+			if client.setRepositoryOverrideCalls != 0 {
+				t.Fatalf("%s (global %v): Enter on an untouched editor created an override: %#v", sc.name, global, client.lastSetRepositoryOverride)
+			}
+			if e := ovEditorOf(t, m, sc.to); !strings.Contains(e.err, "No changes") || !e.Active() || e.exists {
+				t.Fatalf("%s: editor = err %q, want it open with a no-changes message", sc.name, e.err)
+			}
+			if out := securityRender(m); !strings.Contains(out, "No changes") {
+				t.Fatalf("%s: the message is not shown:\n%s", sc.name, out)
+			}
+			// Focus elsewhere and Enter again: still nothing.
+			m = securityPress(t, m, testKeyTab(), testKeyEnter())
+			if client.setRepositoryOverrideCalls != 0 {
+				t.Fatalf("%s: Enter after Tab created an override", sc.name)
+			}
+		}
+	}
+}
+
+// The first thing an operator changes starts from the GLOBAL settings: a new
+// override is never silently off.
+func TestOverrideEditorNewOverrideStartsFromTheGlobalEnabledValue(t *testing.T) {
+	t.Parallel()
+	for _, sc := range ovScreens {
+		for _, global := range []bool{true, false} {
+			client := ovClient()
+			ovSetGlobalEnabled(client, global)
+			m := ovOpenEditor(t, client, sc.to, "team/web")
+			if e := ovEditorOf(t, m, sc.to); e.enabled != global || e.exists {
+				t.Fatalf("%s: a new override starts enabled=%v, want the global %v", sc.name, e.enabled, global)
+			}
+			// Change something that is not the switch.
+			if sc.feature == signingFeatureName {
+				m = ovFocus(t, m, sc.to, overrideFieldUnsignedSelfRead)
+				m = securityPress(t, m, testKeySpace(), testKeyEnter())
+			} else {
+				m = securityPress(t, m, testKeyTab())
+				m = securityPress(t, m, securityType("/etc/x")...)
+				m = securityPress(t, m, testKeyEnter())
+			}
+			if client.setRepositoryOverrideCalls != 1 || client.lastSetRepositoryOverride.Enabled != global {
+				t.Fatalf("%s (global %v): saved %d times with enabled=%v", sc.name, global, client.setRepositoryOverrideCalls, client.lastSetRepositoryOverride.Enabled)
+			}
+			if sc.feature == signingFeatureName && len(client.lastSetRepositoryOverride.TrustedPublicKeys) != 2 {
+				t.Fatalf("signing: the new override did not start from the global keys: %#v", client.lastSetRepositoryOverride)
+			}
+		}
+	}
+}
+
+// Until the global settings were read a new override cannot be edited or
+// saved, and if they cannot be read it never can.
+func TestOverrideEditorNewOverrideWaitsForTheGlobalSettings(t *testing.T) {
+	t.Parallel()
+	for _, feature := range []string{trivyFeatureName, gitleaksFeatureName, signingFeatureName} {
+		env := screenEnv{}
+		e := newOverrideEditor(1, feature, "team/web")
+		e, cmd := e.applyLoaded(env, overrideLoadedMsg{securityResult: securityResult{gen: 1}, editor: e.id, repository: "team/web", feature: feature})
+		if cmd == nil {
+			t.Fatalf("%s: a new override must read the global settings", feature)
+		}
+		for _, k := range []keyMsg{testKeySpace(), testKeyTab(), testKeyRunes("x"), testKeyEnter()} {
+			next, c, _ := e.update(env, k)
+			if c != nil || next.dirty || next.enabled != e.enabled || next.focus != e.focus {
+				t.Fatalf("%s: a key before the global settings arrived changed the editor", feature)
+			}
+		}
+		failed := e.applyGlobalFailure(overrideGlobalMsg{securityResult: securityResult{gen: 1, err: errors.New("boom")}, editor: e.id})
+		if _, c, _ := failed.update(env, testKeyEnter()); c != nil || !strings.Contains(failed.err, "boom") {
+			t.Fatalf("%s: with the global settings unreadable the editor must show why and not save (err %q)", feature, failed.err)
+		}
+	}
+}
+
+func TestOverrideEditorAfterAClearTheNextSaveNeedsAChange(t *testing.T) {
+	t.Parallel()
+	client := ovClient()
+	m := ovOpenEditor(t, client, screenSecurityGitleaksRepos, "team/api")
+	m = ovFocus(t, m, screenSecurityGitleaksRepos, overrideFieldClear)
+	m = securityPress(t, m, testKeyEnter(), testKeyRunes("y"))
+	e := ovEditorOf(t, m, screenSecurityGitleaksRepos)
+	if e.exists || e.dirty || !e.prefillApplied {
+		t.Fatalf("editor after a clear = %+v, want inheriting, untouched and holding the global settings", e)
+	}
+	m = ovFocus(t, m, screenSecurityGitleaksRepos, overrideFieldEnabled)
+	m = securityPress(t, m, testKeyEnter())
+	if client.setRepositoryOverrideCalls != 0 {
+		t.Fatal("Enter right after a clear re-created the override")
 	}
 }

@@ -5,18 +5,18 @@
     Overview                   │  204 repositories, 2 with an override                                                                                
                                │   Config   Repositories                                                                                              
   ACCESS                       │  ╭────────────────────────────────────────────────────────────────────────╮  ╭────────────────────────────────────╮  
-      Users                    │  │   REPOSITORY               CRIT  HIGH  STATUS     ENABLED  UPDATED     │  │ team/service-199                   │  
-      Robots                   │  │   team/service-189         -     -     inherited  —        -           │  │ inherits the global settings       │  
-      Repository access        │  │   team/service-190         -     -     inherited  —        -           │  │                                    │  
-                               │  │   team/service-191         -     -     inherited  —        -           │  │ OVERRIDE                           │  
-  SECURITY                     │  │   team/service-192         -     -     inherited  —        -           │  │ Uses the global settings. o        │  
-    ▸ Image scanning           │  │   team/service-193         -     -     inherited  —        -           │  │ creates an override for this       │  
-      Secret scanning          │  │   team/service-194         -     -     inherited  —        -           │  │ repository.                        │  
-      Signing policy           │  │   team/service-195         -     -     inherited  —        -           │  │                                    │  
-                               │  │   team/service-196         -     -     inherited  —        -           │  │ ACTIONS                            │  
-  OPERATIONS                   │  │   team/service-197         -     -     inherited  —        -           │  │ Edit override                    o │  
-      Scan runs                │  │   team/service-198         -     -     inherited  —        -           │  │ Scan history                 enter │  
-      Secret findings          │  │ ▸ team/service-199         -     -     inherited  —        -           │  │ Refresh                          r │  
+      Users                    │  │   REPOSITORY           CRIT  HIGH  LAST SCAN        STATUS     ENABLED │  │ team/service-199                   │  
+      Robots                   │  │   team/service-189     -     -     never            inherited  —       │  │ inherits the global settings       │  
+      Repository access        │  │   team/service-190     -     -     never            inherited  —       │  │                                    │  
+                               │  │   team/service-191     -     -     never            inherited  —       │  │ OVERRIDE                           │  
+  SECURITY                     │  │   team/service-192     -     -     never            inherited  —       │  │ Uses the global settings. o        │  
+    ▸ Image scanning           │  │   team/service-193     -     -     never            inherited  —       │  │ creates an override for this       │  
+      Secret scanning          │  │   team/service-194     -     -     never            inherited  —       │  │ repository.                        │  
+      Signing policy           │  │   team/service-195     -     -     never            inherited  —       │  │                                    │  
+                               │  │   team/service-196     -     -     never            inherited  —       │  │ ACTIONS                            │  
+  OPERATIONS                   │  │   team/service-197     -     -     never            inherited  —       │  │ Edit override                    o │  
+      Scan runs                │  │   team/service-198     -     -     never            inherited  —       │  │ Scan history                 enter │  
+      Secret findings          │  │ ▸ team/service-199     -     -     never            inherited  —       │  │ Refresh                          r │  
       Update channel           │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
                                │  One row per repository, severity first. enter opens its scan history,       │                                    │  
                                │  o edits its override.                                                       ╰────────────────────────────────────╯  
