@@ -3,7 +3,6 @@ package regixtry
 import (
 	"context"
 	"fmt"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -87,18 +86,20 @@ func TestPushScansAreBoundedWhenManyDistinctManifestsArePushed(t *testing.T) {
 	defer cleanup()
 
 	const pushes = 150
-	before := runtime.NumGoroutine()
 	pushDistinctManifests(t, service, "library/alpine", pushes, "flood")
-	time.Sleep(time.Second)
+	// Synchronization point: every admitted push has persisted its queued
+	// row (and all others a skipped notice) once the slots in use stop
+	// changing and no push goroutine is mid-flight.
+	service.WaitForBackgroundWork()
+	waitUntil(t, "admitted scans to be running", func() bool {
+		active, _ := countActivePushScans(t, service)
+		return active == pushScanSlotsInUse(service)
+	})
 
 	active, skipped := countActivePushScans(t, service)
-	grown := runtime.NumGoroutine() - before
-	t.Logf("active=%d skipped=%d goroutine growth=%d", active, skipped, grown)
+	t.Logf("active=%d skipped=%d", active, skipped)
 	if active > 64 {
 		t.Fatalf("active scans = %d for %d pushes, want <= 64 (bounded queue)", active, pushes)
-	}
-	if grown > 64+20 {
-		t.Fatalf("goroutine growth = %d, want bounded", grown)
 	}
 	if skipped == 0 {
 		t.Fatalf("skipped records = 0, want a visible 'skipped: ...' scan result for dropped pushes")
@@ -424,4 +425,123 @@ func TestSkippedRowIsTenantScopedAndTracksTheNewestDroppedPush(t *testing.T) {
 	if err != nil || latest.ID != "real-d2" {
 		t.Fatalf("latest = %#v err=%v, want the real run", latest, err)
 	}
+}
+
+func pushScanSlotsInUse(service *Service) int {
+	service.pushScans.mu.Lock()
+	defer service.pushScans.mu.Unlock()
+	return service.pushScans.total
+}
+
+func waitUntil(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// hangingSecretRunner blocks forever; with ignoreCtx it also ignores
+// cancellation, so only the caller giving up can free the slot.
+type hangingSecretRunner struct {
+	ignoreCtx bool
+	stop      chan struct{}
+}
+
+func (h *hangingSecretRunner) Run(ctx context.Context, _ ports.SecretScanTarget, _ ports.ScanSettings) (ports.SecretScanResult, error) {
+	if h.ignoreCtx {
+		<-h.stop
+		return ports.SecretScanResult{}, nil
+	}
+	select {
+	case <-ctx.Done():
+		return ports.SecretScanResult{}, ctx.Err()
+	case <-h.stop:
+		return ports.SecretScanResult{}, nil
+	}
+}
+
+// Not parallel: shrinks the package-level scanRunMargin.
+func TestHungSecretScanLegNeverHoldsAPushScanSlotForever(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		ignoreCtx bool
+	}{{"honors cancellation", false}, {"ignores cancellation", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			old := scanRunMargin
+			scanRunMargin = 20 * time.Millisecond
+			defer func() { scanRunMargin = old }()
+
+			service, cleanup := newTestService(t, allowAllAccessController{})
+			defer cleanup()
+			ctx := context.Background()
+			seedRepository(t, service, ctx, "library/alpine")
+			digest := seededManifestDigest(t, service, "library/alpine")
+			if _, err := service.EnsureScanSettings(ctx, ports.ScanSettings{Enabled: true, Timeout: 50 * time.Millisecond, Interval: time.Hour, RegistryReachableURL: "https://registry.internal", MaxConcurrency: 1}); err != nil {
+				t.Fatalf("EnsureScanSettings() error = %v", err)
+			}
+			seedManagedRuntimeState(t, service, "0.57.1")
+			seedManagedGitleaksSettings(t, service, true)
+			runner := &hangingSecretRunner{ignoreCtx: tc.ignoreCtx, stop: make(chan struct{})}
+			defer close(runner.stop)
+			service.SetScanRunner(&fakeScanRunner{})
+			service.SetSecretScanRunner(runner)
+
+			service.startPushScan("tenant-a", "library/alpine", "latest", digest, "p")
+			waitUntil(t, "the hung secret leg to free the push-scan slot", func() bool { return pushScanSlotsInUse(service) == 0 })
+		})
+	}
+}
+
+// Not parallel: shrinks the package-level scanRunMargin.
+func TestStuckSecretLegsAreCountedBoundedAndRecoverWhenTheyReturn(t *testing.T) {
+	old := scanRunMargin
+	scanRunMargin = 10 * time.Millisecond
+	defer func() { scanRunMargin = old }()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+	ctx := context.Background()
+	// The secret leg dedups per repository@digest, so each push uses its own
+	// repository (each seeded with the same manifest bytes).
+	var digest string
+	for i := 0; i <= maxStuckSecretLegs; i++ {
+		seedRepository(t, service, ctx, fmt.Sprintf("library/r%d", i))
+		digest = seededManifestDigest(t, service, "library/r0")
+	}
+	if _, err := service.EnsureScanSettings(ctx, ports.ScanSettings{Enabled: true, Timeout: 20 * time.Millisecond, Interval: time.Hour, RegistryReachableURL: "https://registry.internal", MaxConcurrency: 64}); err != nil {
+		t.Fatal(err)
+	}
+	seedManagedRuntimeState(t, service, "0.57.1")
+	seedManagedGitleaksSettings(t, service, true)
+	// A stuck leg also holds the secret gate, so allow enough concurrency
+	// for every leak to be reached.
+	if err := service.metadata.UpsertScanSettings(ctx, "tenant-a", gitleaksFeatureName, ports.ScanSettings{Enabled: true, Interval: time.Hour, Timeout: time.Minute, MaxConcurrency: 64, UpdatedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	runner := &hangingSecretRunner{ignoreCtx: true, stop: make(chan struct{})}
+	service.SetScanRunner(&fakeScanRunner{})
+	service.SetSecretScanRunner(runner)
+	service.SetPushScanLimits(1000, 1000, 1000)
+
+	// Each scan leaks one stuck leg until the limit is reached.
+	for i := 0; i < maxStuckSecretLegs; i++ {
+		service.startPushScan("tenant-a", fmt.Sprintf("library/r%d", i), "latest", digest, "p")
+		want := int32(i + 1)
+		waitUntil(t, fmt.Sprintf("stuck leg %d to be counted (stuck=%d slots=%d)", i, service.stuckSecretLegs.Load(), pushScanSlotsInUse(service)), func() bool { return service.stuckSecretLegs.Load() == want && pushScanSlotsInUse(service) == 0 })
+	}
+	service.startPushScan("tenant-a", fmt.Sprintf("library/r%d", maxStuckSecretLegs), "latest", digest, "p")
+	service.WaitForBackgroundWork()
+	if got := service.stuckSecretLegs.Load(); got != maxStuckSecretLegs {
+		t.Fatalf("stuck legs = %d, want exactly the bound %d (new pushes must be refused)", got, maxStuckSecretLegs)
+	}
+	if _, skipped := countActivePushScans(t, service); skipped != 1 {
+		t.Fatalf("skipped rows = %d, want the refused push recorded as skipped", skipped)
+	}
+
+	close(runner.stop) // the stuck runners finally return
+	waitUntil(t, "stuck legs to drain", func() bool { return service.stuckSecretLegs.Load() == 0 })
 }

@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	domainauth "regixtry/internal/domain/auth"
@@ -47,6 +48,10 @@ type Service struct {
 	secretScanGate  *scanGate
 	// pushScans admits push-triggered scans (see service_push_scan.go).
 	pushScans *pushScanLimiter
+	// stuckSecretLegs counts secret-scan goroutines abandoned after their
+	// bound that have not returned yet; push scans are refused (recorded as
+	// skipped) while it is at maxStuckSecretLegs.
+	stuckSecretLegs atomic.Int32
 	// gcGate bounds ComputeGCReport/DeleteByGCReport to a single in-flight
 	// run at a time (proposal.md D2: "single in-flight run"), the same
 	// scanGate primitive scan queueing already uses.

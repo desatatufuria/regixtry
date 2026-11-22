@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -317,7 +318,7 @@ func (s *Service) queueScheduledScan(ctx context.Context, repositoryName string,
 // (queued|running) check. Every failure path returns silently: push must
 // never fail or block because of scanning.
 func (s *Service) queuePushScan(ctx context.Context, tenant string, repository string, reference string, digest string) {
-	release, ok := s.pushScans.acquire(tenant, repository, "")
+	release, ok := s.admitPushScan(tenant, repository, "")
 	if !ok {
 		s.recordPushScanSkipped(ctx, tenant, repository, reference, digest)
 		return
@@ -408,10 +409,26 @@ func (s *Service) executeScanRun(ctx context.Context, tenant string, run ports.S
 	secretLegDone := make(chan struct{})
 	legCtx, cancelLeg := context.WithTimeout(ctx, 2*scanRunBound(settings.Timeout))
 	defer cancelLeg()
-	defer func() { <-secretLegDone }()
+	// legState: 0 running, 1 finished, 2 abandoned by this function.
+	var legState atomic.Int32
+	defer func() {
+		select {
+		case <-secretLegDone:
+		case <-legCtx.Done():
+			// The leg outlived its bound (a runner that ignores its
+			// context). Stop waiting so the caller's slot is released, and
+			// count the stuck goroutine until it eventually returns.
+			if legState.CompareAndSwap(0, 2) {
+				s.stuckSecretLegs.Add(1)
+			}
+		}
+	}()
 	go func() {
 		defer close(secretLegDone)
 		s.executeSecretScanLeg(legCtx, tenant, run.Repository, run.Digest, run.Trigger)
+		if !legState.CompareAndSwap(0, 1) {
+			s.stuckSecretLegs.Add(-1)
+		}
 	}()
 	// The slot wait and the scan itself are each bounded by the configured
 	// scan timeout plus a margin, so a hung runner or a stalled gate can

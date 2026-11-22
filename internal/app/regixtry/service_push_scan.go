@@ -24,6 +24,11 @@ const (
 	DefaultPushScanMaxPerPusher = 16
 
 	pushScanSkippedError = "skipped: push scan queue full"
+
+	// maxStuckSecretLegs bounds goroutines leaked by secret-scan runners
+	// that ignore context cancellation. At the limit no new push scan is
+	// admitted, so leaked goroutines can never exceed it.
+	maxStuckSecretLegs = 16
 )
 
 // pushScanLimiter admits push-triggered scans up to a global and a
@@ -105,11 +110,20 @@ func (s *Service) SetPushScanLimits(maxPending int, maxPerRepository int, maxPer
 	s.pushScans.setLimits(maxPending, maxPerRepository, maxPerPusher)
 }
 
+// admitPushScan reserves a push-scan slot unless the caps are reached or too
+// many secret-scan legs are stuck.
+func (s *Service) admitPushScan(tenant string, repository string, pusher string) (func(), bool) {
+	if s.stuckSecretLegs.Load() >= maxStuckSecretLegs {
+		return nil, false
+	}
+	return s.pushScans.acquire(tenant, repository, pusher)
+}
+
 // startPushScan is PublishManifest's fire-and-forget entry: it admits the
 // push against the caps before spawning anything. A push over the cap never
 // fails; it is recorded as a visible skipped scan instead.
 func (s *Service) startPushScan(tenant string, repository string, reference string, digest string, pusher string) {
-	release, ok := s.pushScans.acquire(tenant, repository, pusher)
+	release, ok := s.admitPushScan(tenant, repository, pusher)
 	if !ok {
 		s.recordPushScanSkipped(context.Background(), tenant, repository, reference, digest)
 		return
