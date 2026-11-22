@@ -923,7 +923,7 @@ func (m Model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 // View wraps viewContent in a tea.View that requests the alternate screen
 // (the v2 replacement for tea.WithAltScreen()).
 func (m Model) View() tea.View {
-	view := tea.NewView(m.viewContent())
+	view := tea.NewView(sanitizeFrame(m.viewContent()))
 	view.AltScreen = true
 	if !m.mouseDisabled {
 		view.MouseMode = tea.MouseModeCellMotion
