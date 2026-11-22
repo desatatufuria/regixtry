@@ -21,4 +21,4 @@
                                │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
                                │  EXPIRING counts tokens that expire within 7 days.                           ╰────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  ↑↓ move   enter open   / search   n new user   g grant access   t tokens   p password   d disable   r refresh   esc back                            
+  ↑↓ move   enter open   / search   n new user   g grant access   t tokens   p password   d disable   r refresh   esc back   q quit                   

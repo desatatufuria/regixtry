@@ -104,6 +104,7 @@ var repoAccessKeys = screenKeys{short: []key.Binding{
 	key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "grant access")),
 	key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "revoke")),
 	key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
+	quitKey(),
 }}
 
 // repoAccessRetryKeys adds "r retry" while a page read has failed.
@@ -115,6 +116,7 @@ var repoAccessRetryKeys = screenKeys{short: []key.Binding{
 	key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "grant access")),
 	key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "revoke")),
 	key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
+	quitKey(),
 }}
 
 var repoAccessFilterKeys = screenKeys{short: []key.Binding{

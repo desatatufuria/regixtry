@@ -54,7 +54,7 @@ func TestUsersRIsTypedInTheSearchAndIgnoredWhileLoading(t *testing.T) {
 	if _, again, _ := next.(usersScreen).Update(env, testKeyRunes("r")); again != nil {
 		t.Fatal("r while a refresh is in flight started another")
 	}
-	if !strings.Contains(renderUsers(loaded, env), "r") || len(usersKeys.short) != 10 {
+	if !strings.Contains(renderUsers(loaded, env), "r") || len(usersKeys.short) != 11 {
 		t.Fatal("the hints lost r refresh")
 	}
 }

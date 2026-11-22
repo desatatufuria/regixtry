@@ -45,6 +45,7 @@ func (s signingConfigScreen) Keys() screenKeys {
 	short = append(short,
 		key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
+		quitKey(),
 	)
 	return screenKeys{short: short}
 }

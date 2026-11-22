@@ -133,9 +133,9 @@ const (
 	slotUpdateChannel
 	// slotScanHistory holds scanHistoryScreen (Phase 19, design.md's State
 	// Migration table: "ScanHistoryModal -> scanHistoryScreen"). It is
-	// deliberately NOT resolved via slotFor: it composites as a floating overlay over whichever
-	// screen opened it (m.screen never changes while it is mounted) rather
-	// than becoming the active top-level screen itself -- reached from TWO
+	// deliberately NOT resolved via slotFor: it is a full shell screen drawn in place of
+	// the screen that opened it (m.screen never changes while it is mounted)
+	// rather than becoming the active top-level screen itself -- reached from TWO
 	// openers (Trivy's Repository Alerts Enter, and Scan Runs/Secret Scan
 	// Findings' own repository picker Enter), tracked via its own returnTo
 	// field, not a screen id transition.
@@ -256,8 +256,8 @@ func navigate(to screen) tea.Cmd {
 // state it does not own). Reached from Trivy's Repository Alerts Enter
 // AND from the Scan Runs/Secret Scan Findings repository pickers' own
 // Enter; returnTo records which screen opened it so Esc pops back to the
-// correct caller (m.screen itself never changes while it is mounted,
-// it is an overlay); activeTab
+// correct caller (m.screen itself never changes while it is mounted);
+// activeTab
 // distinguishes the two D9 access flavors (vulnerabilities-first vs
 // leaks-first) without a second screen or sub-model type.
 type openScanHistoryMsg struct {

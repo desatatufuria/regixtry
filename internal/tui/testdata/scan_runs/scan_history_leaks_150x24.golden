@@ -21,4 +21,4 @@
                                │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
                                │  The secret value itself is never shown.                                     ╰────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  ↑↓ move   ←→ run   tab vulnerabilities / leaks   esc back                                                                              F2 mouse on  
+  ↑↓ move   ←→ run   tab vulnerabilities / leaks   esc back   q quit                                                                     F2 mouse on  

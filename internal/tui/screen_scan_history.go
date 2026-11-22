@@ -33,7 +33,7 @@ type scanHistoryScreen struct {
 }
 
 // ID has no meaningful identity of its own -- this screen is never resolved
-// via slotFor, so it always defers to whichever screen it is floating over.
+// via slotFor, so it always defers to the screen it was opened from (returnTo).
 func (s scanHistoryScreen) ID() screen { return s.returnTo }
 
 func (s scanHistoryScreen) Init(env screenEnv) tea.Cmd {

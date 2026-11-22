@@ -238,9 +238,9 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	slot, ok := slotFor(m.screen)
-	overlay := false
+	inHistory := false
 	if _, mounted := m.adminScreens[slotScanHistory].(scanHistoryScreen); mounted {
-		slot, ok, overlay = slotScanHistory, true, true
+		slot, ok, inHistory = slotScanHistory, true, true
 	}
 	if !ok || m.adminScreens[slot] == nil {
 		return m, nil
@@ -249,7 +249,7 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if !ok || handler.mouseBlocked() {
 		return m, nil
 	}
-	if x, y, _ := leftClick(msg); click && !overlay && isShellScreen(m.screen) {
+	if x, y, _ := leftClick(msg); click && !inHistory && isShellScreen(m.screen) {
 		if id, hit := shellNavAt(x, y); hit {
 			target := shellNavScreen(id)
 			if target == m.screen {

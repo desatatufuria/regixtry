@@ -64,6 +64,7 @@ func (s editUserScreen) Keys() screenKeys {
 		key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "disable")),
 		key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
+		quitKey(),
 	}}
 }
 

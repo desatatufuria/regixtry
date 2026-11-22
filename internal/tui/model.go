@@ -1158,6 +1158,11 @@ func (m Model) updateAdminKey(msg keyMsg) (tea.Model, tea.Cmd) {
 			m.status = ""
 			return m, nil
 		}
+		// The history has no text input: a bare q quits (Ctrl+C is handled in
+		// updateKey).
+		if isRuneKey(msg, 'q') {
+			return m, tea.Quit
+		}
 		next, cmd, _ := scan.Update(m.screenEnv(), msg)
 		m.adminScreens[slotScanHistory] = next
 		return m, cmd
@@ -1862,9 +1867,11 @@ func isAdminScreen(current screen) bool {
 // repositories screens hold the quit key back while their override editor is
 // open (migratedScreenCapturesTextInput). screenAdminUpdateChannel
 // (tui-update-check feature) joins the same way.
+// Scan runs and Secret findings join it (read-only lists); the grant access
+// screen does not, because its filters hold the focus from the moment it opens.
 func isAdminPrincipalScreen(current screen) bool {
 	switch current {
-	case screenAdminLogin, screenAdminUsers, screenAdminEditUser, screenAdminEditUserTokens, screenRepoAdminGrants, screenAdminRobots, screenSecurityTrivy, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenSecurityTrivyRepos, screenSecurityGitleaksRepos, screenSecuritySigningRepos, screenAdminOverview, screenAdminUpdateChannel, screenAdminRepositoryAccess:
+	case screenAdminLogin, screenAdminUsers, screenAdminEditUser, screenAdminEditUserTokens, screenRepoAdminGrants, screenAdminRobots, screenSecurityTrivy, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenSecurityTrivyRepos, screenSecurityGitleaksRepos, screenSecuritySigningRepos, screenAdminOverview, screenAdminScanRuns, screenAdminSecretFindings, screenAdminUpdateChannel, screenAdminRepositoryAccess:
 		return true
 	default:
 		return false

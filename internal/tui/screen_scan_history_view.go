@@ -29,6 +29,7 @@ func (s scanHistoryScreen) Keys() screenKeys {
 		key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←→", "run")),
 		key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "vulnerabilities / leaks")),
 		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
+		quitKey(),
 	)
 	return screenKeys{short: short}
 }

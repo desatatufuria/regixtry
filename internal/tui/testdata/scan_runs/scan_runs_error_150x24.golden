@@ -21,4 +21,4 @@
                                │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
                                │  One row per repository, its latest scan. enter opens its scan history.      ╰────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  ↑↓ move   enter scan history   r refresh   esc back                                                                                    F2 mouse on  
+  ↑↓ move   enter scan history   r refresh   esc back   q quit                                                                           F2 mouse on  

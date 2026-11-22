@@ -2,7 +2,7 @@ package tui
 
 import tea "charm.land/bubbletea/v2"
 
-// mouseBlocked: the history floats over its list and has no dialog.
+// mouseBlocked: the history is a full shell screen with no dialog.
 func (s scanHistoryScreen) mouseBlocked() bool { return false }
 
 // findingCount is the rows of the active tab's list.

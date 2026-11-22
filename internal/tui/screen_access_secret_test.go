@@ -128,7 +128,7 @@ func TestTheSecretScreenOwnsTheFirstKeyAfterAYank(t *testing.T) {
 		t.Fatalf("a key reached the replaced confirm: DisableUser calls = %v", client.disabled)
 	}
 
-	// The scan history overlay is dropped too.
+	// The scan history is dropped too.
 	other, _ := accessModel(t, nil)
 	other, create = startRobotCreate(t, other)
 	late = create()
@@ -138,7 +138,7 @@ func TestTheSecretScreenOwnsTheFirstKeyAfterAYank(t *testing.T) {
 	updated, _ = other.Update(late)
 	other = overviewPress(t, updated.(Model), testKeyEnter())
 	if other.adminScreens[slotScanHistory] != nil {
-		t.Fatal("the scan history overlay survived the yank")
+		t.Fatal("the scan history survived the yank")
 	}
 }
 

@@ -212,4 +212,5 @@ var scanRunsKeys = screenKeys{short: []key.Binding{
 	key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "scan history")),
 	key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 	key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
+	quitKey(),
 }}
