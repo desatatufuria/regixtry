@@ -19,7 +19,7 @@ Read this document as a sequencing contract, not a wish list.
 | Local durability | Filesystem blob storage, SQLite metadata, and safe upload lifecycle | Implemented |
 | Regixtry auth v1 | Postgres-backed auth state, `/auth/token`, bearer challenge interoperability, and repository enforcement | Implemented and verified |
 | Operator admin API | Narrow `/admin/v1` user/grant/admin-token administration over the shared auth service | Implemented and repo-verified; pagination, delete-user, and richer clients stay deferred |
-| Operator console | Thin Bubble Tea client for inspection plus authenticated, read-only admin browsing | Implemented for login, users, grants, and admin tokens; admin mutations and richer client ergonomics stay deferred |
+| Operator console | Bubble Tea client: local Console browsing plus the authenticated admin area, an application shell with sidebar navigation, mouse support and every admin mutation the API offers | Implemented; see [`docs/tui.md`](tui.md) |
 | Repository access control completion | Registry-wide read-only role, delegated repo-admin grant management scoped to one repository, and bounded-TTL, revocable robot accounts | Implemented across the auth domain/service, `/admin/v1`, and the operator console |
 | Supply-chain scanning and signing | Trivy vulnerability scanning (fail-open policy gate), Gitleaks secret scanning (no pull gate), and cosign signature verification (fail-closed policy gate), each a managed feature — see [`docs/features.md`](features.md) for each feature's specific gating behavior | Implemented across `internal/domain/signing/`, `internal/infra/scanning/trivy/`, `internal/infra/scanning/gitleaks/`, `/admin/v1/signing-policy`, and the operator console |
 | Manifest and tag deletion | Opt-in `DELETE /v2/<name>/manifests/<reference>` for withdrawing a bad manifest by digest (cascading to its tags) or untagging a single reference, metadata-only, never touching blob files | Implemented, gated behind `REGISTRY_DELETE_ENABLED`/`-delete-enabled` (default `false`) |
@@ -103,7 +103,7 @@ Note: signing, scanning, and supply-chain automation were listed here as a non-g
 | --- | --- | --- |
 | PR 1 | Registry-wide read-only role: domain/service/store plumbing and the TUI toggle | Completed |
 | PR 2 | Delegated repo-admin grants — backend: `/admin/v1/repositories/{repo}/grants` and the `requireAdminOrRepoAdmin` authority gate | Completed |
-| PR 3 | Delegated repo-admin grants — TUI: `screenRepoAdminGrants`/`screenRepoAdminAddGrant`, reached from Console Repositories | Completed |
+| PR 3 | Delegated repo-admin grants — TUI: reached from Console Repositories (since replaced by the single delegate screen) | Completed |
 | PR 4 | Robot accounts — backend: `is_robot`, `/admin/v1/robots`, and the permanent password-login guard | Completed |
 | PR 5 | Robot accounts — TUI plus this docs/roadmap close-out: `screenAdminRobots`/`screenAdminCreateRobot`, reusing the existing token screens | Completed |
 
@@ -124,6 +124,8 @@ Note: signing, scanning, and supply-chain automation were listed here as a non-g
 | PR 2 | Delete/flag/audit/expiry — `BlobStore.DeleteBlob`, `MarkGCReportDeleted`, `DeleteByGCReport` (recompute-and-intersect), `POST /admin/v1/gc/reports/{id}/delete`, `REGISTRY_GC_DELETE_ENABLED`/`-gc-delete-enabled`, and this reader-facing doc close-out | Completed |
 
 ## Delivery sequence for `tui-menu-architecture`
+
+Historical record: the domain menu and the legacy adapter named below were later replaced by the application shell and slot screens only; see [`docs/tui.md`](tui.md) and [`docs/architecture.md`](architecture.md#tui-screen-ownership-model) for the current design.
 
 | Slice | Target outcome | Status |
 | --- | --- | --- |
