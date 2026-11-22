@@ -3,6 +3,7 @@ package trivy
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -308,6 +309,43 @@ func managedBinaryPath(binaryPath string) (string, error) {
 		return "", fmt.Errorf("managed trivy runtime must execute only from the Regixtry-owned features/trivy layout")
 	}
 	return clean, nil
+}
+
+// RefreshDB downloads the latest vulnerability database into the cache
+// (`trivy image --download-db-only`), bounded by the settings timeout. It is
+// the once-per-sweep refresh of the scheduled scan sweep and needs network
+// access to the Trivy DB mirror.
+func (r *Runner) RefreshDB(ctx context.Context, settings ports.ScanSettings) error {
+	if r == nil || r.exec == nil {
+		return fmt.Errorf("trivy runner is not configured")
+	}
+	binaryPath, err := managedBinaryPath(settings.BinaryPath)
+	if err != nil {
+		return err
+	}
+	cacheDir := strings.TrimSpace(settings.CacheDir)
+	if cacheDir == "" {
+		return fmt.Errorf("trivy cache directory is not configured")
+	}
+	timeout := settings.Timeout
+	if timeout <= 0 {
+		timeout = 15 * time.Minute
+	}
+	runCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	if _, err := r.exec(runCtx, binaryPath, "image", "--download-db-only", "--cache-dir", cacheDir); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			if stderr := strings.TrimSpace(string(exitErr.Stderr)); stderr != "" {
+				if len(stderr) > 300 {
+					stderr = stderr[:300]
+				}
+				return fmt.Errorf("trivy db download failed: %w: %s", err, stderr)
+			}
+		}
+		return fmt.Errorf("trivy db download failed: %w", err)
+	}
+	return nil
 }
 
 type trivyDBMetadata struct {

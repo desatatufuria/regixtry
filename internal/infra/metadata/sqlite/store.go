@@ -1884,6 +1884,79 @@ func (s *Store) TouchScanRunChecked(ctx context.Context, tenant string, runID st
 	return tx.Commit()
 }
 
+// TouchScanRunsChecked batches TouchScanRunChecked: one short write
+// transaction per 200 runs, so a sweep of thousands of unchanged digests
+// never holds the shared write queue for long.
+func (s *Store) TouchScanRunsChecked(ctx context.Context, tenant string, runIDs []string, checkedAt time.Time) error {
+	const batch = 200
+	stamp := checkedAt.UTC().Format(time.RFC3339Nano)
+	for start := 0; start < len(runIDs); start += batch {
+		end := start + batch
+		if end > len(runIDs) {
+			end = len(runIDs)
+		}
+		chunk := runIDs[start:end]
+		args := make([]any, 0, len(chunk)+2)
+		args = append(args, stamp, tenant)
+		for _, id := range chunk {
+			args = append(args, id)
+		}
+		query := `UPDATE scan_runs SET last_checked_at = ? WHERE tenant = ? AND status = 'completed' AND id IN (?` + strings.Repeat(",?", len(chunk)-1) + `)`
+		if err := func() error {
+			tx, err := s.beginWrite(ctx)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = tx.Rollback() }()
+			if _, err := tx.ExecContext(ctx, query, args...); err != nil {
+				return err
+			}
+			return tx.Commit()
+		}(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ListTaggedDigests returns a repository's tags with the digest each one
+// points at, ordered by tag name and paginated exactly like ListTags.
+func (s *Store) ListTaggedDigests(ctx context.Context, tenant string, repository domain.RepositoryRef, limit int, after string) ([]ports.TaggedDigest, error) {
+	if err := repository.Validate(); err != nil {
+		return nil, err
+	}
+	query := `
+		SELECT t.name, m.digest
+		FROM tags t
+		JOIN repositories r ON r.id = t.repository_id
+		JOIN manifests m ON m.id = t.manifest_id
+		WHERE t.tenant = ? AND r.tenant = ? AND r.name = ?
+	`
+	args := []any{tenant, tenant, repository.String()}
+	if after != "" {
+		query += ` AND t.name > ?`
+		args = append(args, after)
+	}
+	query += ` ORDER BY t.name ASC`
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT %d", limit)
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var tagged []ports.TaggedDigest
+	for rows.Next() {
+		var item ports.TaggedDigest
+		if err := rows.Scan(&item.Tag, &item.Digest); err != nil {
+			return nil, err
+		}
+		tagged = append(tagged, item)
+	}
+	return tagged, rows.Err()
+}
+
 type execer interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
@@ -2245,6 +2318,12 @@ func (s *Store) HeartbeatScanScheduler(ctx context.Context, tenant string, owner
 	if err != nil {
 		return err
 	}
+	// A heartbeat renews the caller's own lease only: when another owner
+	// holds a live lease (this one expired and was reclaimed), renewing would
+	// silently steal it back.
+	if state.OwnerID != "" && state.OwnerID != owner && state.LeaseExpiresAt.After(now) {
+		return ports.ErrScanLeaseLost
+	}
 	state.OwnerID = owner
 	state.LeaseExpiresAt = now.Add(leaseTTL)
 	state.LastHeartbeatAt = now
@@ -2252,12 +2331,19 @@ func (s *Store) HeartbeatScanScheduler(ctx context.Context, tenant string, owner
 }
 
 func (s *Store) GetScanSchedulerState(ctx context.Context, tenant string) (ports.ScanSchedulerState, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT owner_id, lease_expires_at, last_heartbeat_at, batch_started_at FROM scan_scheduler_state WHERE tenant = ?`, tenant)
+	row := s.db.QueryRowContext(ctx, `SELECT owner_id, lease_expires_at, last_heartbeat_at, batch_started_at,
+		sweep_started_at, sweep_finished_at, sweep_visited, sweep_skipped, sweep_queued, sweep_errors,
+		last_db_refresh_at, last_db_refresh_error, db_fingerprint, db_changed
+		FROM scan_scheduler_state WHERE tenant = ?`, tenant)
 	var ownerID string
 	var leaseExpiresAt string
 	var lastHeartbeatAt string
 	var batchStartedAt sql.NullString
-	if err := row.Scan(&ownerID, &leaseExpiresAt, &lastHeartbeatAt, &batchStartedAt); err != nil {
+	var sweep ports.ScanSweepSummary
+	var sweepStarted, sweepFinished, dbRefreshAt sql.NullString
+	if err := row.Scan(&ownerID, &leaseExpiresAt, &lastHeartbeatAt, &batchStartedAt,
+		&sweepStarted, &sweepFinished, &sweep.Visited, &sweep.SkippedUnchanged, &sweep.Queued, &sweep.Errors,
+		&dbRefreshAt, &sweep.LastDBRefreshError, &sweep.DBFingerprint, &sweep.DBChanged); err != nil {
 		if err == sql.ErrNoRows {
 			return ports.ScanSchedulerState{}, domain.NewNotFoundError("scan_scheduler_state", tenant)
 		}
@@ -2271,7 +2357,19 @@ func (s *Store) GetScanSchedulerState(ctx context.Context, tenant string) (ports
 	if err != nil {
 		return ports.ScanSchedulerState{}, err
 	}
-	state := ports.ScanSchedulerState{OwnerID: ownerID, LeaseExpiresAt: leaseTime, LastHeartbeatAt: heartbeatTime}
+	for _, field := range []struct {
+		raw  sql.NullString
+		into **time.Time
+	}{{sweepStarted, &sweep.StartedAt}, {sweepFinished, &sweep.FinishedAt}, {dbRefreshAt, &sweep.LastDBRefreshAt}} {
+		if field.raw.Valid && strings.TrimSpace(field.raw.String) != "" {
+			parsed, err := time.Parse(time.RFC3339Nano, field.raw.String)
+			if err != nil {
+				return ports.ScanSchedulerState{}, err
+			}
+			*field.into = &parsed
+		}
+	}
+	state := ports.ScanSchedulerState{OwnerID: ownerID, LeaseExpiresAt: leaseTime, LastHeartbeatAt: heartbeatTime, LastSweep: sweep}
 	if batchStartedAt.Valid && strings.TrimSpace(batchStartedAt.String) != "" {
 		parsed, err := time.Parse(time.RFC3339Nano, batchStartedAt.String)
 		if err != nil {
@@ -2280,6 +2378,38 @@ func (s *Store) GetScanSchedulerState(ctx context.Context, tenant string) (ports
 		state.BatchStartedAt = &parsed
 	}
 	return state, nil
+}
+
+// RecordScanSweep writes only the sweep-summary columns (an upsert that
+// never touches the lease columns of an existing row), so it cannot race the
+// lease heartbeat into a lost update.
+func (s *Store) RecordScanSweep(ctx context.Context, tenant string, sweep ports.ScanSweepSummary) error {
+	optional := func(value *time.Time) any {
+		if value == nil {
+			return nil
+		}
+		return value.UTC().Format(time.RFC3339Nano)
+	}
+	epoch := time.Time{}.UTC().Format(time.RFC3339Nano)
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO scan_scheduler_state (tenant, owner_id, lease_expires_at, last_heartbeat_at,
+			sweep_started_at, sweep_finished_at, sweep_visited, sweep_skipped, sweep_queued, sweep_errors,
+			last_db_refresh_at, last_db_refresh_error, db_fingerprint, db_changed)
+		VALUES (?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(tenant) DO UPDATE SET
+			sweep_started_at = excluded.sweep_started_at,
+			sweep_finished_at = excluded.sweep_finished_at,
+			sweep_visited = excluded.sweep_visited,
+			sweep_skipped = excluded.sweep_skipped,
+			sweep_queued = excluded.sweep_queued,
+			sweep_errors = excluded.sweep_errors,
+			last_db_refresh_at = excluded.last_db_refresh_at,
+			last_db_refresh_error = excluded.last_db_refresh_error,
+			db_fingerprint = excluded.db_fingerprint,
+			db_changed = excluded.db_changed
+	`, tenant, epoch, epoch, optional(sweep.StartedAt), optional(sweep.FinishedAt), sweep.Visited, sweep.SkippedUnchanged, sweep.Queued, sweep.Errors,
+		optional(sweep.LastDBRefreshAt), sweep.LastDBRefreshError, sweep.DBFingerprint, sweep.DBChanged)
+	return err
 }
 
 func (s *Store) UpsertScanSchedulerState(ctx context.Context, tenant string, state ports.ScanSchedulerState) error {
@@ -2644,6 +2774,20 @@ func (s *Store) init() error {
 		`ALTER TABLE scan_runs ADD COLUMN last_checked_at TEXT;`,
 		`ALTER TABLE scan_runs ADD COLUMN stale INTEGER NOT NULL DEFAULT 0;`,
 		`ALTER TABLE scan_runs ADD COLUMN stale_reason TEXT NOT NULL DEFAULT '';`,
+		// Sweep summary on the scheduler state row (latest-only scan
+		// results): what the last scheduled sweep did and the outcome of its
+		// once-per-sweep vulnerability DB refresh. Additive with empty
+		// defaults; written only by RecordScanSweep.
+		`ALTER TABLE scan_scheduler_state ADD COLUMN sweep_started_at TEXT;`,
+		`ALTER TABLE scan_scheduler_state ADD COLUMN sweep_finished_at TEXT;`,
+		`ALTER TABLE scan_scheduler_state ADD COLUMN sweep_visited INTEGER NOT NULL DEFAULT 0;`,
+		`ALTER TABLE scan_scheduler_state ADD COLUMN sweep_skipped INTEGER NOT NULL DEFAULT 0;`,
+		`ALTER TABLE scan_scheduler_state ADD COLUMN sweep_queued INTEGER NOT NULL DEFAULT 0;`,
+		`ALTER TABLE scan_scheduler_state ADD COLUMN sweep_errors INTEGER NOT NULL DEFAULT 0;`,
+		`ALTER TABLE scan_scheduler_state ADD COLUMN last_db_refresh_at TEXT;`,
+		`ALTER TABLE scan_scheduler_state ADD COLUMN last_db_refresh_error TEXT NOT NULL DEFAULT '';`,
+		`ALTER TABLE scan_scheduler_state ADD COLUMN db_fingerprint TEXT NOT NULL DEFAULT '';`,
+		`ALTER TABLE scan_scheduler_state ADD COLUMN db_changed INTEGER NOT NULL DEFAULT 0;`,
 	}
 
 	for _, statement := range statements {

@@ -260,27 +260,9 @@ func (s *Service) GetSecretScanFindings(ctx context.Context, repository string, 
 	return ports.SecretScanRunDetail{}, domain.NewNotFoundError("secret scan run", repository+"@"+digest)
 }
 
-func (s *Service) RunScheduledScans(ctx context.Context) error {
-	settings, err := s.resolveManagedScanSettings(ctx)
-	if err != nil {
-		return err
-	}
-	if !settings.Enabled || !settings.ScheduleEnabled {
-		return nil
-	}
-	repositories, err := s.metadata.Catalog(ctx, s.tenant(ctx), 100, "")
-	if err != nil {
-		return err
-	}
-	for _, repository := range repositories {
-		_, err := s.queueScheduledScan(ctx, repository.String(), "latest", settings)
-		if err != nil && !domain.IsCode(err, domain.ErrorCodeNotFound) {
-			return err
-		}
-	}
-	return nil
-}
-
+// queueScheduledScan queues one scheduled-trigger scan for a single
+// repository reference (the per-reference decision RunScheduledScans makes
+// for every tagged digest, kept as a unit for a single reference).
 func (s *Service) queueScheduledScan(ctx context.Context, repositoryName string, reference string, settings ports.ScanSettings) (ports.ScanRun, error) {
 	settings, err := s.applyRepositoryOverride(ctx, s.tenant(ctx), repositoryName, trivyFeatureName, settings)
 	if err != nil {

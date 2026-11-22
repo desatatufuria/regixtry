@@ -2,6 +2,7 @@ package trivy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -350,5 +351,45 @@ func TestRunnerReadDBMetadataIsBoundedAndRefusesSymlinks(t *testing.T) {
 	}
 	if _, err := runner.ReadDBMetadata(context.Background(), ports.ScanSettings{CacheDir: linkDir}); err == nil {
 		t.Fatal("a symlinked db directory must be refused")
+	}
+}
+
+func TestRunnerRefreshDBDownloadsOnlyTheDBIntoTheCache(t *testing.T) {
+	t.Parallel()
+	var gotBinary string
+	var gotArgs []string
+	var gotDeadline bool
+	runner := New(RunnerConfig{Exec: func(ctx context.Context, binary string, args ...string) ([]byte, error) {
+		gotBinary, gotArgs = binary, args
+		_, gotDeadline = ctx.Deadline()
+		return nil, nil
+	}})
+	settings := ports.ScanSettings{BinaryPath: "/var/lib/regixtry/features/trivy/bin/active/trivy", CacheDir: "/var/lib/regixtry/features/trivy/trivy-cache", Timeout: time.Minute}
+	if err := runner.RefreshDB(context.Background(), settings); err != nil {
+		t.Fatalf("RefreshDB() error = %v", err)
+	}
+	want := []string{"image", "--download-db-only", "--cache-dir", "/var/lib/regixtry/features/trivy/trivy-cache"}
+	if gotBinary != settings.BinaryPath || strings.Join(gotArgs, " ") != strings.Join(want, " ") {
+		t.Fatalf("exec = %s %v, want %s %v", gotBinary, gotArgs, settings.BinaryPath, want)
+	}
+	if !gotDeadline {
+		t.Fatal("RefreshDB must run under the settings timeout")
+	}
+}
+
+func TestRunnerRefreshDBReportsFailuresAndRefusesAnUnmanagedBinary(t *testing.T) {
+	t.Parallel()
+	failing := New(RunnerConfig{Exec: func(context.Context, string, ...string) ([]byte, error) {
+		return nil, errors.New("exit status 1")
+	}})
+	managed := ports.ScanSettings{BinaryPath: "/var/lib/regixtry/features/trivy/bin/active/trivy", CacheDir: "/cache"}
+	if err := failing.RefreshDB(context.Background(), managed); err == nil || !strings.Contains(err.Error(), "exit status 1") {
+		t.Fatalf("RefreshDB() error = %v, want the exec failure", err)
+	}
+	if err := failing.RefreshDB(context.Background(), ports.ScanSettings{BinaryPath: "/usr/bin/trivy", CacheDir: "/cache"}); err == nil {
+		t.Fatal("RefreshDB() must refuse a binary outside the managed layout")
+	}
+	if err := failing.RefreshDB(context.Background(), ports.ScanSettings{BinaryPath: managed.BinaryPath}); err == nil {
+		t.Fatal("RefreshDB() must require a cache directory")
 	}
 }

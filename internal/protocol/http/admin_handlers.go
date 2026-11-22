@@ -963,6 +963,9 @@ func featureDetailsResponse(details ports.FeatureDetails, includeRuntime bool) m
 	}
 	if includeRuntime {
 		response["runtime"] = details.Runtime
+		if details.Sweep != nil {
+			response["sweep"] = details.Sweep
+		}
 	}
 	return response
 }

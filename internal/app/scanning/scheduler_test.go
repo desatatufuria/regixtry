@@ -144,3 +144,209 @@ func (f *fakeSchedulerService) RunScheduledScans(ctx context.Context) error {
 		return ctx.Err()
 	}
 }
+
+// fakeClock is a manually advanced clock with a manually fired ticker.
+type fakeClock struct {
+	mu    sync.Mutex
+	now   time.Time
+	ticks chan time.Time
+}
+
+func newFakeClock() *fakeClock {
+	return &fakeClock{now: time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC), ticks: make(chan time.Time)}
+}
+
+func (c *fakeClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *fakeClock) advance(d time.Duration) {
+	c.mu.Lock()
+	c.now = c.now.Add(d)
+	c.mu.Unlock()
+}
+
+func (c *fakeClock) ticker(time.Duration) (<-chan time.Time, func()) { return c.ticks, func() {} }
+
+// recordingLeaseStore records every heartbeat and can refuse them.
+type recordingLeaseStore struct {
+	fakeLeaseStore
+	hbMu       sync.Mutex
+	heartbeats []heartbeat
+	err        error
+}
+
+type heartbeat struct {
+	at     time.Time
+	expiry time.Time
+}
+
+func (r *recordingLeaseStore) HeartbeatScanScheduler(ctx context.Context, tenant string, owner string, now time.Time, leaseTTL time.Duration) error {
+	r.hbMu.Lock()
+	defer r.hbMu.Unlock()
+	r.heartbeats = append(r.heartbeats, heartbeat{at: now, expiry: now.Add(leaseTTL)})
+	if r.err != nil {
+		return r.err
+	}
+	return r.fakeLeaseStore.HeartbeatScanScheduler(ctx, tenant, owner, now, leaseTTL)
+}
+
+func (r *recordingLeaseStore) heartbeatCount() int {
+	r.hbMu.Lock()
+	defer r.hbMu.Unlock()
+	return len(r.heartbeats)
+}
+
+// blockingSweepService blocks RunScheduledScans until released or cancelled.
+type blockingSweepService struct {
+	settings  ports.ScanSettings
+	started   chan struct{}
+	release   chan struct{}
+	cancelled chan struct{}
+}
+
+func (b *blockingSweepService) GetScanSettings(context.Context) (ports.ScanSettings, error) {
+	return b.settings, nil
+}
+
+func (b *blockingSweepService) RunScheduledScans(ctx context.Context) error {
+	close(b.started)
+	select {
+	case <-b.release:
+		return nil
+	case <-ctx.Done():
+		close(b.cancelled)
+		return ctx.Err()
+	}
+}
+
+func newBlockingSweepService() *blockingSweepService {
+	return &blockingSweepService{
+		settings:  ports.ScanSettings{Enabled: true, ScheduleEnabled: true, Interval: time.Hour},
+		started:   make(chan struct{}),
+		release:   make(chan struct{}),
+		cancelled: make(chan struct{}),
+	}
+}
+
+func fireTick(t *testing.T, clock *fakeClock, wantHeartbeats int, store *recordingLeaseStore) {
+	t.Helper()
+	select {
+	case clock.ticks <- clock.Now():
+	case <-time.After(2 * time.Second):
+		t.Fatal("renewal loop did not take the tick")
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for store.heartbeatCount() < wantHeartbeats {
+		if time.Now().After(deadline) {
+			t.Fatalf("heartbeats = %d, want %d", store.heartbeatCount(), wantHeartbeats)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestSchedulerRenewsTheLeaseWhileASweepOutlastsTheTTL(t *testing.T) {
+	t.Parallel()
+	const ttl = 30 * time.Second
+	clock := newFakeClock()
+	store := &recordingLeaseStore{}
+	service := newBlockingSweepService()
+	scheduler := NewScheduler(store, service, "tenant-a", "node-a", time.Minute, ttl)
+	scheduler.now, scheduler.newTicker = clock.Now, clock.ticker
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := scheduler.tick(context.Background())
+		done <- err
+	}()
+	<-service.started
+	if got := store.heartbeatCount(); got != 1 {
+		t.Fatalf("heartbeats at sweep start = %d, want 1 (the acquire heartbeat)", got)
+	}
+
+	// The sweep runs for 5x the TTL: every renewal moves the lease expiry
+	// forward, so it never lapses while the sweep is alive.
+	for i := 1; i <= 5; i++ {
+		clock.advance(ttl)
+		fireTick(t, clock, 1+i, store)
+		store.hbMu.Lock()
+		last := store.heartbeats[len(store.heartbeats)-1]
+		store.hbMu.Unlock()
+		if !last.expiry.After(clock.Now()) {
+			t.Fatalf("renewal %d: lease expiry %v is not after now %v (the lease would have lapsed)", i, last.expiry, clock.Now())
+		}
+	}
+	close(service.release)
+	if err := <-done; err != nil {
+		t.Fatalf("tick() error = %v", err)
+	}
+}
+
+func TestSchedulerCancelsTheSweepWhenTheLeaseIsLost(t *testing.T) {
+	t.Parallel()
+	clock := newFakeClock()
+	store := &recordingLeaseStore{}
+	service := newBlockingSweepService()
+	scheduler := NewScheduler(store, service, "tenant-a", "node-a", time.Minute, 30*time.Second)
+	scheduler.now, scheduler.newTicker = clock.Now, clock.ticker
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := scheduler.tick(context.Background())
+		done <- err
+	}()
+	<-service.started
+	store.hbMu.Lock()
+	store.err = ports.ErrScanLeaseLost
+	store.hbMu.Unlock()
+	clock.advance(10 * time.Second)
+	fireTick(t, clock, 2, store)
+
+	select {
+	case <-service.cancelled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the sweep was not cancelled after the lease was lost")
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("tick() error = %v, want nil so the scheduler keeps running after losing a lease", err)
+	}
+}
+
+func TestSchedulerCancelsTheSweepWhenRenewalFailsForAFullTTL(t *testing.T) {
+	t.Parallel()
+	clock := newFakeClock()
+	store := &recordingLeaseStore{}
+	service := newBlockingSweepService()
+	scheduler := NewScheduler(store, service, "tenant-a", "node-a", time.Minute, 30*time.Second)
+	scheduler.now, scheduler.newTicker = clock.Now, clock.ticker
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := scheduler.tick(context.Background())
+		done <- err
+	}()
+	<-service.started
+	store.hbMu.Lock()
+	store.err = context.DeadlineExceeded
+	store.hbMu.Unlock()
+
+	// A transient failure shorter than the TTL keeps the sweep alive.
+	clock.advance(10 * time.Second)
+	fireTick(t, clock, 2, store)
+	select {
+	case <-service.cancelled:
+		t.Fatal("the sweep was cancelled after a transient renewal failure inside the TTL")
+	case <-time.After(20 * time.Millisecond):
+	}
+	// Past a full TTL without a successful renewal the lease has lapsed.
+	clock.advance(25 * time.Second)
+	fireTick(t, clock, 3, store)
+	select {
+	case <-service.cancelled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the sweep kept running after the lease lapsed")
+	}
+	<-done
+}
