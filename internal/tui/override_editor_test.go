@@ -542,11 +542,18 @@ func TestOverrideEditorPrefillIsOrderIndependentAndRunsOnce(t *testing.T) {
 	if len(e.keys.Keys()) != 2 || !e.ready() {
 		t.Fatalf("keys = %d, want 2 seeded and the form ready", len(e.keys.Keys()))
 	}
-	// Only once: a second answer does not overwrite what was edited.
+	// Only once: a second or late answer never overwrites what the operator
+	// edited, never resets the switch and never clears dirty.
 	e.keys = e.keys.SetKeys([]string{trustedKeyListTestPEM2})
-	e = e.applyGlobal(policy(e, trustedKeyListTestPEM1))
-	if len(e.keys.Keys()) != 1 {
-		t.Fatalf("the prefill ran twice (%d keys)", len(e.keys.Keys()))
+	e.enabled, e.dirty = false, true
+	late := policy(e, trustedKeyListTestPEM1)
+	late.enabled = true
+	e = e.applyGlobal(late)
+	if got := e.keys.Keys(); len(got) != 1 || got[0] != trustedKeyListTestPEM2 {
+		t.Fatalf("a late global answer replaced the operator's key: %v", got)
+	}
+	if e.enabled || !e.dirty {
+		t.Fatalf("a late global answer reset enabled=%v dirty=%v, want the operator's false and true", e.enabled, e.dirty)
 	}
 
 	// An override that exists is never overwritten, whatever the order.

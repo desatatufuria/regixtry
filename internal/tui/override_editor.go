@@ -419,7 +419,7 @@ func (e overrideEditor) applyGlobal(msg overrideGlobalMsg) overrideEditor {
 		return e.applyGlobalFailure(msg)
 	}
 	e.globalEnabled, e.globalKeys, e.globalLoaded = msg.enabled, msg.keys, true
-	if e.loaded && !e.exists {
+	if e.loaded && !e.exists && !e.prefillApplied {
 		e = e.applyGlobalDefaults()
 	}
 	return e
