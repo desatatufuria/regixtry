@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	domainauth "regixtry/internal/domain/auth"
@@ -45,6 +46,16 @@ type Service struct {
 	now             func() time.Time
 	scanGate        *scanGate
 	secretScanGate  *scanGate
+	// pushScans admits push-triggered scans (see service_push_scan.go).
+	pushScans *pushScanLimiter
+	// skippedPushScans records dropped push scans off the request path.
+	skippedPushScans skippedRecorder
+	// scanRunMargin overrides defaultScanRunMargin (tests only; set before use).
+	scanRunMargin time.Duration
+	// stuckSecretLegs counts secret-scan goroutines abandoned after their
+	// bound that have not returned yet; push scans are refused (recorded as
+	// skipped) while it is at maxStuckSecretLegs.
+	stuckSecretLegs atomic.Int32
 	// gcGate bounds ComputeGCReport/DeleteByGCReport to a single in-flight
 	// run at a time (proposal.md D2: "single in-flight run"), the same
 	// scanGate primitive scan queueing already uses.
@@ -114,6 +125,7 @@ func NewService(blobStore ports.BlobStore, metadataStore ports.MetadataStore, ac
 		now:            func() time.Time { return time.Now().UTC() },
 		scanGate:       newScanGate(),
 		secretScanGate: newScanGate(),
+		pushScans:      newPushScanLimiter(),
 		gcGate:         newScanGate(),
 	}
 }
@@ -339,11 +351,11 @@ func (s *Service) PublishManifest(ctx context.Context, repositoryName string, re
 	// bundle-index manifest above it). The manifest this one refers to is
 	// unaffected and keeps getting scanned normally.
 	if !isReferrerArtifactPush(manifest, tag) {
-		s.backgroundWork.Add(1)
-		go func() {
-			defer s.backgroundWork.Done()
-			s.queuePushScan(context.Background(), s.tenant(ctx), repository.String(), reference, manifest.Digest.String())
-		}()
+		pusher := ""
+		if principal := ports.PrincipalFromContext(ctx); principal != nil {
+			pusher = principal.UserID
+		}
+		s.startPushScan(s.tenant(ctx), repository.String(), reference, manifest.Digest.String(), pusher)
 	}
 
 	return newManifestDetails(repository.String(), reference, manifest, manifest.BlobReferences()), nil

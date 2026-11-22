@@ -2404,6 +2404,7 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 	service.SetFeatureRuntimeManager("trivy", newFeatureRuntimeManager("trivy", appregixtry.FeatureRuntimeManagerConfig{StorageRoot: cfg.StorageRoot, Store: metadataStore, ScanRunner: trivyinfra.New(trivyinfra.RunnerConfig{})}))
 	service.SetSecretScanRunner(gitleaksinfra.New(gitleaksinfra.RunnerConfig{Blobs: blobStore}))
 	service.SetFeatureRuntimeManager("gitleaks", newFeatureRuntimeManager("gitleaks", appregixtry.FeatureRuntimeManagerConfig{StorageRoot: cfg.StorageRoot, Store: metadataStore}))
+	service.SetPushScanLimits(parseIntEnv("REGISTRY_PUSH_SCAN_MAX_PENDING", 0), parseIntEnv("REGISTRY_PUSH_SCAN_MAX_PER_REPOSITORY", 0), parseIntEnv("REGISTRY_PUSH_SCAN_MAX_PER_PUSHER", 0))
 	service.SetDeleteEnabled(cfg.DeleteEnabled)
 	service.SetGCDeleteEnabled(cfg.GCDeleteEnabled)
 	trivyMaxConcurrency := cfg.TrivyMaxConcurrency

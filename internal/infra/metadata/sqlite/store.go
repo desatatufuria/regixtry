@@ -1589,7 +1589,7 @@ func (s *Store) GetLatestScanRunByDigest(ctx context.Context, tenant string, rep
 		SELECT id, repository, requested_ref, digest, status, trigger, started_at, finished_at, created_at, updated_at, critical, high, medium, low, trivy_version, db_updated_at, error
 		FROM scan_runs
 		WHERE tenant = ? AND repository = ? AND digest = ?
-		ORDER BY created_at DESC, rowid DESC
+		ORDER BY (status = 'skipped') ASC, created_at DESC, rowid DESC
 		LIMIT 1
 	`, tenant, repository, digest)
 	return scanRunRow(row, repository+"@"+digest)
@@ -1654,7 +1654,13 @@ func (s *Store) UpsertScanRun(ctx context.Context, tenant string, run ports.Scan
 			low = excluded.low,
 			trivy_version = excluded.trivy_version,
 			db_updated_at = excluded.db_updated_at,
-			error = excluded.error
+			error = excluded.error,
+			-- A skipped marker is a per-repository notice overwritten by the
+			-- newest dropped push; real runs keep their identity columns.
+			requested_ref = CASE WHEN excluded.status = 'skipped' THEN excluded.requested_ref ELSE scan_runs.requested_ref END,
+			digest = CASE WHEN excluded.status = 'skipped' THEN excluded.digest ELSE scan_runs.digest END,
+			created_at = CASE WHEN excluded.status = 'skipped' THEN excluded.created_at ELSE scan_runs.created_at END
+		WHERE scan_runs.tenant = excluded.tenant
 	`, run.ID, tenant, run.Repository, run.RequestedRef, run.Digest, run.Status, run.Trigger, startedAt, finishedAt, run.CreatedAt.UTC().Format(time.RFC3339Nano), run.UpdatedAt.UTC().Format(time.RFC3339Nano), run.Critical, run.High, run.Medium, run.Low, run.TrivyVersion, dbUpdatedAt, run.Error)
 	return err
 }
@@ -2738,7 +2744,7 @@ func (s *Store) ListLatestScanRunPerRepository(ctx context.Context, tenant strin
 	query := `
 		WITH latest AS (
 			SELECT id, repository, requested_ref, digest, status, trigger, started_at, finished_at, created_at, updated_at, critical, high, medium, low, trivy_version, db_updated_at, error,
-				ROW_NUMBER() OVER (PARTITION BY repository ORDER BY created_at DESC, rowid DESC) AS rn,
+				ROW_NUMBER() OVER (PARTITION BY repository ORDER BY (status = 'skipped') ASC, created_at DESC, rowid DESC) AS rn,
 				COUNT(*) OVER (PARTITION BY repository) AS run_count
 			FROM scan_runs
 			WHERE tenant = ?

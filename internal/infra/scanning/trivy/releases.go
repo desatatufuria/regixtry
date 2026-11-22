@@ -3,10 +3,10 @@ package trivy
 import (
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 
+	domain "regixtry/internal/domain/regixtry"
 	"regixtry/internal/infra/release"
 )
 
@@ -29,18 +29,24 @@ type githubReleaseClient struct {
 }
 
 func newGitHubReleaseClient() releaseClient {
-	return githubReleaseClient{baseAPI: "https://api.github.com/repos/aquasecurity/trivy/releases", client: &http.Client{}}
+	return githubReleaseClient{baseAPI: "https://api.github.com/repos/aquasecurity/trivy/releases", client: &http.Client{CheckRedirect: release.RestrictRedirects}}
 }
 
 func (c githubReleaseClient) ResolveRelease(ctx context.Context, version string) (releaseAsset, error) {
 	trimmedVersion := strings.TrimSpace(version)
 	tag := ""
 	if trimmedVersion != "" {
+		// Defense in depth: the API boundary already validates, but this is
+		// the last decision point before the version becomes a URL path.
+		if err := domain.ValidateRuntimeVersion(trimmedVersion); err != nil {
+			return releaseAsset{}, err
+		}
 		tag = "v" + strings.TrimPrefix(trimmedVersion, "v")
 	}
 	query := release.AssetQuery{
-		BaseAPI: c.baseAPI,
-		Tag:     tag,
+		BaseAPI:  c.baseAPI,
+		Tag:      tag,
+		CheckURL: release.CheckDownloadURL,
 		MatchArchive: func(name string) bool {
 			return strings.HasPrefix(name, "trivy_") && strings.HasSuffix(name, "_Linux-64bit.tar.gz")
 		},
@@ -61,14 +67,14 @@ func (c githubReleaseClient) ResolveRelease(ctx context.Context, version string)
 }
 
 func (c githubReleaseClient) DownloadReleaseAsset(ctx context.Context, url string) ([]byte, error) {
-	return c.download(ctx, url)
+	return c.download(ctx, url, release.MaxArchiveBytes)
 }
 
 func (c githubReleaseClient) DownloadChecksums(ctx context.Context, url string) ([]byte, error) {
-	return c.download(ctx, url)
+	return c.download(ctx, url, release.MaxMetadataBytes)
 }
 
-func (c githubReleaseClient) download(ctx context.Context, url string) ([]byte, error) {
+func (c githubReleaseClient) download(ctx context.Context, url string, maxBytes int64) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -81,5 +87,5 @@ func (c githubReleaseClient) download(ctx context.Context, url string) ([]byte, 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("download %s returned %d", url, resp.StatusCode)
 	}
-	return io.ReadAll(resp.Body)
+	return release.ReadLimited(resp.Body, maxBytes)
 }

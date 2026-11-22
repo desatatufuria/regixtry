@@ -32,6 +32,16 @@
 | `-delete-enabled` | `REGISTRY_DELETE_ENABLED` | `false` | Enable `DELETE /v2/<name>/manifests/<reference>` (manifest and tag deletion) |
 | `-gc-delete-enabled` | `REGISTRY_GC_DELETE_ENABLED` | `false` | Enable `POST /admin/v1/gc/reports/{id}/delete` (irreversibly unlinks unreferenced blob files); distinct from `-delete-enabled`, which is metadata-only and never touches blob files |
 
+Managed scanner runtimes (Trivy, Gitleaks) are installed from GitHub releases. The requested version must be `v1.2.3` or `1.2.3` with an optional `-prerelease` (at most 64 characters); it is validated at the admin API, in the service and again where the release URL is built, and the tag is escaped as one URL path segment. The archive and checksums URLs from the release metadata must be `https` on `github.com`, `api.github.com` or `*.githubusercontent.com`, and redirects are followed only over HTTPS to those hosts or the original host (at most 5). Release metadata and checksums bodies are limited to 1 MiB and archives to 512 MiB. Extraction aborts, removing partial output, beyond 512 MiB for the binary, 1 GiB of decompressed archive data in total or 10000 entries, and replaces (never follows) a pre-existing symlink at the binary path. The archive SHA-256 is checked against the release's checksums file; this does not authenticate the release itself, because both come from the same release (no signature is verified).
+
+Push-triggered scans are admitted against three caps (environment only, no flag): service-wide, per repository, and per pushing principal across all its repositories, so one user with many repositories cannot take every slot. A push over a cap never fails: no scan is queued and one scan row per tenant and repository with status `skipped` and error `skipped: push scan queue full` records the newest dropped digest that has no real run. A skipped row never counts as the latest scan of a digest or repository and never affects the pull policy. Each scan run, and its wait for a slot, is also bounded by the configured scan timeout plus one minute, so a hung runner releases its slot. A secret-scan runner that ignores cancellation leaks one goroutine per scan; at most 16 such stuck scans are tolerated, after which new push scans are recorded as skipped until they return.
+
+| Environment | Default | Purpose |
+|---|---|---|
+| `REGISTRY_PUSH_SCAN_MAX_PENDING` | `64` | Maximum push-triggered scans queued or running service-wide |
+| `REGISTRY_PUSH_SCAN_MAX_PER_REPOSITORY` | `8` | Same limit for one repository |
+| `REGISTRY_PUSH_SCAN_MAX_PER_PUSHER` | `16` | Same limit for one pushing principal across all repositories (pushes without a principal share one bucket) |
+
 Implementation: `cmd/regixtry/main.go` (`parseServeConfig`, `normalizeRuntimeConfig`).
 
 `-public-url` must be absolute, use HTTP or HTTPS, and contain no query or fragment. Certificate and key must be provided together. An `http` public URL cannot be combined with direct TLS. An `https` public URL can represent either direct TLS or a reverse proxy.

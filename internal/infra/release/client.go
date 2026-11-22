@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strings"
 )
@@ -34,6 +35,9 @@ type AssetQuery struct {
 	Tag            string
 	MatchArchive   func(assetName string) bool
 	MatchChecksums func(assetName string) bool
+	// CheckURL, when set, vets the download URL of the selected archive and
+	// checksums assets before they are returned.
+	CheckURL func(rawURL string) error
 }
 
 // ResolveAsset queries a GitHub releases API endpoint and selects the
@@ -48,7 +52,10 @@ func ResolveAsset(ctx context.Context, httpClient *http.Client, query AssetQuery
 	endpoint := baseAPI + "/latest"
 	tag := strings.TrimSpace(query.Tag)
 	if tag != "" {
-		endpoint = baseAPI + "/tags/" + tag
+		if err := validateTag(tag); err != nil {
+			return Asset{}, err
+		}
+		endpoint = baseAPI + "/tags/" + url.PathEscape(tag)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
@@ -71,12 +78,20 @@ func ResolveAsset(ctx context.Context, httpClient *http.Client, query AssetQuery
 			BrowserDownloadURL string `json:"browser_download_url"`
 		} `json:"assets"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+	metadata, err := ReadLimited(resp.Body, MaxMetadataBytes)
+	if err != nil {
+		return Asset{}, fmt.Errorf("read release metadata: %w", err)
+	}
+	if err := json.Unmarshal(metadata, &payload); err != nil {
 		return Asset{}, fmt.Errorf("decode release metadata: %w", err)
 	}
 	tagName := strings.TrimSpace(payload.TagName)
 	if tagName == "" {
 		return Asset{}, fmt.Errorf("release metadata did not contain a tag name")
+	}
+
+	if err := validateTag(tagName); err != nil {
+		return Asset{}, fmt.Errorf("release metadata tag name: %w", err)
 	}
 
 	asset := Asset{Tag: tagName, Version: strings.TrimPrefix(tagName, "v")}
@@ -89,12 +104,25 @@ func ResolveAsset(ctx context.Context, httpClient *http.Client, query AssetQuery
 		if name == "" {
 			name = filepath.Base(url)
 		}
+		if strings.ContainsAny(name, `/\`) || name == "." || name == ".." {
+			continue
+		}
 		if query.MatchArchive != nil && query.MatchArchive(name) {
 			asset.ArchiveName = name
 			asset.ArchiveURL = url
 		}
 		if query.MatchChecksums != nil && query.MatchChecksums(name) {
 			asset.ChecksumsURL = url
+		}
+	}
+	if query.CheckURL != nil {
+		for _, u := range []string{asset.ArchiveURL, asset.ChecksumsURL} {
+			if u == "" {
+				continue
+			}
+			if err := query.CheckURL(u); err != nil {
+				return Asset{}, err
+			}
 		}
 	}
 	if asset.ArchiveName == "" || asset.ArchiveURL == "" || asset.ChecksumsURL == "" {
