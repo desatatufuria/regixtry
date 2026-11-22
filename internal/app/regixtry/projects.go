@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	domainauth "regixtry/internal/domain/auth"
 	domain "regixtry/internal/domain/regixtry"
@@ -28,6 +29,9 @@ type ProjectService struct {
 	// interleave with another create or delete of the same name in this
 	// process.
 	lifecycle sync.Mutex
+	// cleanupTimeout bounds each cleaner call (grantCleanupTimeout; a field
+	// only so a test can shorten it).
+	cleanupTimeout time.Duration
 
 	mu      sync.RWMutex
 	cleaner ports.ProjectGrantCleaner
@@ -39,7 +43,7 @@ var _ ports.ProjectAdmin = (*ProjectService)(nil)
 // NewProjectService wires the project use cases over the registry service and
 // a project store (the SQLite metadata store implements it).
 func NewProjectService(service *Service, projects ports.ProjectStore) *ProjectService {
-	return &ProjectService{service: service, projects: projects}
+	return &ProjectService{service: service, projects: projects, cleanupTimeout: grantCleanupTimeout}
 }
 
 // SetGrantCleaner installs the seam through which project grants, which live
@@ -69,6 +73,19 @@ func (p *ProjectService) recordEvent(ctx context.Context, actor domainauth.Princ
 	if events != nil {
 		events.RecordProjectEvent(ctx, actor, action, project)
 	}
+}
+
+// grantCleanupTimeout bounds every call to the grant cleaner. The cleaner talks
+// to the auth database while the lifecycle lock is held, so a stalled store
+// must not block every create and delete of a project.
+const grantCleanupTimeout = 15 * time.Second
+
+// purgeGrants runs the cleaner under grantCleanupTimeout.
+func (p *ProjectService) purgeGrants(ctx context.Context, cleaner ports.ProjectGrantCleaner, project string) (int64, error) {
+	ctx, cancel := context.WithTimeout(ctx, p.cleanupTimeout)
+	defer cancel()
+
+	return cleaner.PurgeProjectGrants(ctx, project)
 }
 
 func (p *ProjectService) grantCleaner() ports.ProjectGrantCleaner {
@@ -132,7 +149,7 @@ func (p *ProjectService) CreateProject(ctx context.Context, name string) error {
 		if exists {
 			return domain.NewProjectExistsError(name)
 		}
-		if _, err := cleaner.PurgeProjectGrants(ctx, name); err != nil {
+		if _, err := p.purgeGrants(ctx, cleaner, name); err != nil {
 			return fmt.Errorf("project %q was not created: stale grants could not be purged: %w", name, err)
 		}
 	}
@@ -187,7 +204,7 @@ func (p *ProjectService) DeleteProject(ctx context.Context, name string) error {
 	if cleaner == nil {
 		return deleteErr
 	}
-	removed, err := cleaner.PurgeProjectGrants(ctx, name)
+	removed, err := p.purgeGrants(ctx, cleaner, name)
 	if err != nil {
 		return fmt.Errorf("project %q grants could not be purged (the project row is already deleted): %w", name, err)
 	}

@@ -625,3 +625,63 @@ func TestProjectServiceLifecycleRacesWithGrants(t *testing.T) {
 		t.Fatalf("orphan grants remain after the converging delete: %#v", grants)
 	}
 }
+
+// hangingCleaner blocks until its context ends, like a stalled auth store.
+type hangingCleaner struct {
+	mu      sync.Mutex
+	hang    bool
+	removed int64
+}
+
+func (c *hangingCleaner) PurgeProjectGrants(ctx context.Context, _ string) (int64, error) {
+	c.mu.Lock()
+	hang := c.hang
+	c.mu.Unlock()
+	if hang {
+		<-ctx.Done()
+		return 0, ctx.Err()
+	}
+	return c.removed, nil
+}
+
+func TestProjectServiceBoundsTheCleanerAndReleasesTheLock(t *testing.T) {
+	t.Parallel()
+	fixture := newProjectFixture(t, true)
+	ctx := adminContext()
+	cleaner := &hangingCleaner{removed: 1}
+	fixture.projects.SetGrantCleaner(cleaner)
+	fixture.projects.cleanupTimeout = 100 * time.Millisecond
+	if grantCleanupTimeout != 15*time.Second {
+		t.Fatalf("grantCleanupTimeout = %v, want 15s", grantCleanupTimeout)
+	}
+	if err := fixture.projects.CreateProject(ctx, "odabank"); err != nil {
+		t.Fatal(err)
+	}
+
+	cleaner.mu.Lock()
+	cleaner.hang = true
+	cleaner.mu.Unlock()
+	start := time.Now()
+	err := fixture.projects.DeleteProject(ctx, "odabank")
+	if err == nil || !errors.Is(err, context.DeadlineExceeded) || time.Since(start) > 3*time.Second {
+		t.Fatalf("DeleteProject() = %v after %v, want a deadline error within the bound", err, time.Since(start))
+	}
+	if exists, _ := fixture.projects.ProjectExists(ctx, "odabank"); exists {
+		t.Fatal("the project row must be gone")
+	}
+
+	// The lock was released: another project can be created and a create that
+	// hits the hanging cleaner fails within the bound too.
+	start = time.Now()
+	if err := fixture.projects.CreateProject(ctx, "other"); !errors.Is(err, context.DeadlineExceeded) || time.Since(start) > 3*time.Second {
+		t.Fatalf("CreateProject() = %v after %v, want a bounded failure, not a blocked lock", err, time.Since(start))
+	}
+
+	// Retry converges once the store answers.
+	cleaner.mu.Lock()
+	cleaner.hang = false
+	cleaner.mu.Unlock()
+	if err := fixture.projects.DeleteProject(ctx, "odabank"); err != nil {
+		t.Fatalf("retry DeleteProject() error = %v, want convergence", err)
+	}
+}
