@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strings"
 	"testing"
@@ -1298,5 +1299,45 @@ func TestServiceScopeRequestGrantedNothingStaysRestricted(t *testing.T) {
 	p2, err := service.VerifyAccessToken(context.Background(), unscoped.BearerToken)
 	if err != nil || !p2.IsUnrestricted() {
 		t.Fatalf("zero-scope login must stay unrestricted: %v", err)
+	}
+}
+
+func TestServiceLoginFailuresAreIndistinguishableButKeepAServerSideCause(t *testing.T) {
+	t.Parallel()
+
+	store := newMemoryAuthStore()
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	hash := mustHashPassword(t, "password123")
+	add := func(u domainauth.User) {
+		u.CreatedAt, u.UpdatedAt = now, now
+		store.usersByID[u.ID] = u
+		store.usersByUsername[u.Username] = u
+	}
+	add(domainauth.User{ID: "u1", Username: "alice", PasswordHash: hash, Enabled: true})
+	add(domainauth.User{ID: "u2", Username: "dora", PasswordHash: hash, Enabled: false})
+	add(domainauth.User{ID: "u3", Username: "robo", PasswordHash: domainauth.RobotPasswordHash, IsRobot: true, Enabled: true})
+	service := NewService(store)
+	service.now = func() time.Time { return now }
+
+	for _, tc := range []struct{ name, user, pass, cause string }{
+		{"unknown", "nobody", "password123", "unknown user"},
+		{"disabled with the right password", "dora", "password123", "user is disabled"},
+		{"robot", "robo", "password123", "robot accounts cannot use a password"},
+		{"wrong password", "alice", "nope-nope", "wrong password"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := service.LoginWithPassword(context.Background(), tc.user, tc.pass, nil)
+			var authErr *domainauth.Error
+			if !errors.As(err, &authErr) || authErr.Code != domainauth.ErrorCodeInvalidCredentials || authErr.Message != "invalid credentials" {
+				t.Fatalf("err = %#v, want the uniform invalid-credentials error", err)
+			}
+			if authErr.Err == nil || authErr.Err.Error() != tc.cause {
+				t.Fatalf("cause = %v, want %q", authErr.Err, tc.cause)
+			}
+		})
+	}
+
+	if _, err := service.LoginWithPassword(context.Background(), "alice", "password123", nil); err != nil {
+		t.Fatalf("valid login must still work: %v", err)
 	}
 }

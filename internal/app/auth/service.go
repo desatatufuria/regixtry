@@ -5,8 +5,10 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -318,48 +320,99 @@ func (s *Service) DeleteUser(ctx context.Context, actor domainauth.Principal, us
 	return nil
 }
 
+// LoginWithPassword authenticates a human user. Every way of failing the
+// credential check (unknown username, disabled user, robot, wrong password)
+// returns the same invalid-credentials error and pays one bcrypt comparison,
+// so an unauthenticated caller can neither read the account state from the
+// response nor infer existence from the response time. The real reason travels
+// only in the error's wrapped cause, for server-side logs.
 func (s *Service) LoginWithPassword(ctx context.Context, username string, password string, requestedScopes []domainauth.Scope) (ports.LoginResult, error) {
-	user, err := s.getActiveUserByUsername(ctx, username)
-	if err != nil {
+	user, err := s.store.GetUserByUsername(ctx, normalizeUsername(username))
+	found := err == nil
+	if err != nil && !domainauth.IsCode(err, domainauth.ErrorCodeNotFound) {
 		return ports.LoginResult{}, err
 	}
-	// design.md Decision 6: the guard sits here, immediately after
-	// getActiveUserByUsername, and NOT inside that helper — it is shared
-	// with LoginWithPreissuedToken, the robot's only working credential
-	// path. A robot's RobotPasswordHash sentinel (user.go) independently
-	// blocks bcrypt below, but this per-attempt guard is a second,
-	// permanent layer that does not depend on the stored hash's shape.
-	if user.IsRobot {
-		return ports.LoginResult{}, domainauth.NewInvalidCredentialsError()
+
+	// design.md Decision 6: a robot never authenticates with a password. Its
+	// RobotPasswordHash sentinel independently blocks bcrypt, but this
+	// per-attempt guard is a second, permanent layer that does not depend on
+	// the stored hash's shape. The guard stays out of the shared lookup because
+	// LoginWithPreissuedToken is the robot's only working credential path.
+	hash := dummyPasswordHash()
+	if found && !user.IsRobot {
+		hash = []byte(user.PasswordHash)
 	}
-	if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)) != nil {
-		return ports.LoginResult{}, domainauth.NewInvalidCredentialsError()
+	passwordMatches := bcrypt.CompareHashAndPassword(hash, []byte(password)) == nil
+
+	switch {
+	case !found:
+		return ports.LoginResult{}, invalidCredentialsBecause("unknown user")
+	case !user.Enabled:
+		return ports.LoginResult{}, invalidCredentialsBecause("user is disabled")
+	case user.IsRobot:
+		return ports.LoginResult{}, invalidCredentialsBecause("robot accounts cannot use a password")
+	case !passwordMatches:
+		return ports.LoginResult{}, invalidCredentialsBecause("wrong password")
 	}
 
 	return s.issueAccessToken(ctx, user, requestedScopes)
 }
 
+// LoginWithPreissuedToken exchanges an admin credential token for an access
+// token. The user and token lookups both always run, and every mismatch
+// (unknown user, disabled user, unknown token, token of another user) yields
+// the same invalid-credentials error as a wrong password.
 func (s *Service) LoginWithPreissuedToken(ctx context.Context, username string, token string, requestedScopes []domainauth.Scope) (ports.LoginResult, error) {
-	user, err := s.getActiveUserByUsername(ctx, username)
-	if err != nil {
-		return ports.LoginResult{}, err
+	user, userErr := s.store.GetUserByUsername(ctx, normalizeUsername(username))
+	if userErr != nil && !domainauth.IsCode(userErr, domainauth.ErrorCodeNotFound) {
+		return ports.LoginResult{}, userErr
+	}
+	storedToken, tokenErr := s.store.GetTokenBySecretHash(ctx, domainauth.TokenKindAdminCredential, hashSecret(token))
+	if tokenErr != nil && !domainauth.IsCode(tokenErr, domainauth.ErrorCodeNotFound) {
+		return ports.LoginResult{}, tokenErr
 	}
 
-	storedToken, err := s.store.GetTokenBySecretHash(ctx, domainauth.TokenKindAdminCredential, hashSecret(token))
-	if err != nil {
-		if domainauth.IsCode(err, domainauth.ErrorCodeNotFound) {
-			return ports.LoginResult{}, domainauth.NewInvalidCredentialsError()
-		}
-		return ports.LoginResult{}, err
-	}
-	if storedToken.UserID != user.ID {
-		return ports.LoginResult{}, domainauth.NewInvalidCredentialsError()
+	switch {
+	case userErr != nil:
+		return ports.LoginResult{}, invalidCredentialsBecause("unknown user")
+	case !user.Enabled:
+		return ports.LoginResult{}, invalidCredentialsBecause("user is disabled")
+	case tokenErr != nil:
+		return ports.LoginResult{}, invalidCredentialsBecause("wrong password or unknown admin credential token")
+	case storedToken.UserID != user.ID:
+		return ports.LoginResult{}, invalidCredentialsBecause("admin credential token belongs to another user")
 	}
 	if err := storedToken.IsActive(s.now()); err != nil {
 		return ports.LoginResult{}, err
 	}
 
 	return s.issueAccessToken(ctx, user, requestedScopes)
+}
+
+// invalidCredentialsBecause is the uniform client-facing error with the real
+// reason attached as a wrapped cause. The client sees only Message.
+func invalidCredentialsBecause(reason string) error {
+	return &domainauth.Error{Code: domainauth.ErrorCodeInvalidCredentials, Message: "invalid credentials", Err: errors.New(reason)}
+}
+
+var (
+	dummyHashOnce  sync.Once
+	dummyHashBytes []byte
+)
+
+// dummyPasswordHash returns a bcrypt hash of the same cost as real password
+// hashes, compared against when no real hash applies so every failed login
+// costs the same.
+func dummyPasswordHash() []byte {
+	dummyHashOnce.Do(func() {
+		hash, err := bcrypt.GenerateFromPassword([]byte("regixtry-dummy-password"), bcrypt.DefaultCost)
+		if err != nil {
+			panic(err)
+		}
+		dummyHashBytes = hash
+	})
+
+	return dummyHashBytes
 }
 
 func (s *Service) VerifyAccessToken(ctx context.Context, bearerToken string) (domainauth.Principal, error) {
@@ -1113,21 +1166,6 @@ func (s *Service) issueAccessToken(ctx context.Context, user domainauth.User, re
 	}
 
 	return ports.LoginResult{Principal: principal, BearerToken: secret, ExpiresAt: token.ExpiresAt, Accessor: token.Accessor, Scope: grantedScope}, nil
-}
-
-func (s *Service) getActiveUserByUsername(ctx context.Context, username string) (domainauth.User, error) {
-	user, err := s.store.GetUserByUsername(ctx, normalizeUsername(username))
-	if err != nil {
-		if domainauth.IsCode(err, domainauth.ErrorCodeNotFound) {
-			return domainauth.User{}, domainauth.NewInvalidCredentialsError()
-		}
-		return domainauth.User{}, err
-	}
-	if !user.Enabled {
-		return domainauth.User{}, domainauth.NewDisabledUserError(user.Username)
-	}
-
-	return user, nil
 }
 
 func (s *Service) buildPrincipal(ctx context.Context, user domainauth.User, token domainauth.Token) (domainauth.Principal, error) {

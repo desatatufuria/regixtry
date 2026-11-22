@@ -6,7 +6,7 @@ The implementation registers `/auth/token` only when auth is configured, `/admin
 
 ### `GET|POST /auth/token`
 
-Accepts Basic Auth and repeated `scope` parameters; `service` is optional and reflected back in the response. Returns `200` with `token`, `access_token`, `expires_in`, `issued_at`, and optionally `service`/`scope`. Invalid credentials return `401` with a Registry-style error. The endpoint accepts either a user's password or a pre-issued admin credential token.
+Accepts Basic Auth and repeated `scope` parameters; `service` is optional and reflected back in the response. Returns `200` with `token`, `access_token`, `expires_in`, `issued_at`, and optionally `service`/`scope`. Invalid credentials return `401` with a Registry-style error. Every credential failure is indistinguishable to the caller: an unknown username, a disabled user, a robot trying a password and a wrong password all give the same `401` and the same `invalid credentials` body, and each one costs one bcrypt comparison (against a dummy hash when no real one applies), so neither the response nor its timing reveals whether a username exists or is disabled. The real reason is only written to the server log (`auth token denied username=... reason=...`). The endpoint accepts either a user's password or a pre-issued admin credential token.
 
 ```bash
 curl -u USERNAME:PASSWORD \
@@ -16,6 +16,10 @@ curl -u USERNAME:PASSWORD \
 ## Management API
 
 Every route under `/admin/v1` requires a Bearer token for a global admin (`Principal.IsAdmin`), with one deliberate exception: `/admin/v1/repositories/{repo}/grants...` is reachable by any authenticated principal. The HTTP layer only authenticates the caller there (`requireAuthenticatedPrincipal`, no `IsAdmin` check); the service layer then decides admin-or-repo-admin authority per repository, since only it has the repository argument in scope. In practice this means a user holding the `repo-admin` role on that one repository (a delegate, not a global admin) can list, grant, and revoke grants for that repository — everything else under `/admin/v1` stays global-admin-only. See `internal/protocol/http/admin_handlers.go`'s `handleAdmin` for the exact prefix check.
+
+The Bearer token must also be unrestricted: an access token that carries scopes (for example one obtained with `?scope=repository:team/image:pull`, which is what `docker login` and CI pulls use) is refused on every `/admin/v1` route with `403`, even when its owner is a global admin or a repo-admin. This includes a token that was requested with scopes but was granted none of them. Administrative clients (the TUI and CLI) log in without `scope`, which produces the unrestricted token these routes accept.
+
+Resetting a user's password (`:reset-password`) also revokes, in the same transaction, every active token of that user: admin credential tokens and access tokens. Bearers already issued stop working at once (`401`) and the user must authenticate again, including the admin who resets their own password. The `user.password_reset` access event is still recorded.
 
 JSON bodies are decoded rejecting unknown fields and multiple bodies.
 

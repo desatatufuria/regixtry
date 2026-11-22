@@ -2,6 +2,7 @@ package regixtryhttp
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -587,6 +588,13 @@ func (r *Router) handleToken(w stdhttp.ResponseWriter, req *stdhttp.Request) {
 		result, err = r.auth.LoginWithPreissuedToken(req.Context(), username, secret, requestedScopes)
 	}
 	if err != nil {
+		// The client only ever sees the uniform error; the real reason (unknown
+		// user, disabled, wrong password, ...) is kept in the server log.
+		if r.logger != nil {
+			if cause := errors.Unwrap(err); cause != nil {
+				r.logger.Printf("auth token denied username=%q reason=%q", username, cause.Error())
+			}
+		}
 		writeError(w, req, err, challenge, "UNAUTHORIZED")
 		return
 	}
