@@ -286,7 +286,9 @@ func scanRunsMouseCase() mouseCase {
 	return mouseCase{
 		name: "scan runs",
 		build: func(t *testing.T, w, h int) Model {
-			return scanModelAt(t, scanFixtureClient(), screenAdminScanRuns, w, h)
+			client := scanFixtureClient()
+			client.scanRuns = nil // one row per repository: the summaries' runs
+			return scanModelAt(t, client, screenAdminScanRuns, w, h)
 		},
 		rows:      []string{"team/api", "team/web", "team/docs"},
 		listWidth: scanListWidth,

@@ -876,6 +876,13 @@ func (m Model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.expireAdminSession(msg.err.Error()), nil
 		}
 		return m, cmd
+	case scanRunsDigestsLoadedMsg:
+		var cmd tea.Cmd
+		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
+		if msg.err != nil && IsAdminSessionExpired(msg.err) {
+			return m.expireAdminSession(msg.err.Error()), nil
+		}
+		return m, cmd
 	case adminOpenURLCompletedMsg:
 		// openSelectedAdminFindingLink's side effect (opening a finding's
 		// advisory link) already ran inside its Cmd; only the resulting

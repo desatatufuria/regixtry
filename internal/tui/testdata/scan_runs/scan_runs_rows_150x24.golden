@@ -1,24 +1,24 @@
   Admin › Operations › Scan runs                                                                                               signed in as operator  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  regixtry admin                │                                                                                                                      
-                               │  Scan runs                                                                   Trivy scans, latest of each repository  
+                               │  Scan runs                                                          Trivy scans, latest result of each image digest  
     Overview                   │  ╭────────────────────────────────────────────────────────────────────────╮  ╭────────────────────────────────────╮  
-                               │  │   REPOSITORY           STATUS     STARTED       TOOK        CRIT  HIGH │  │ team/api:1.8.2                     │  
-  ACCESS                       │  │ ▸ team/api             completed  14 Mar 08:30  <1 min      2     5    │  │ completed, trigger push            │  
-      Users                    │  │   team/web             running    14 Mar 09:20  -           -     -    │  │ RUN                                │  
-      Robots                   │  │   team/docs            failed     13 Mar 13:30  <1 min      -     -    │  │ Digest            sha256:9c41…e0d2 │  
-      Repository access        │  │                                                                        │  │ Started           14 Mar 08:30 UTC │  
-                               │  │                                                                        │  │ Finished          14 Mar 08:30 UTC │  
-  SECURITY                     │  │                                                                        │  │ Trivy                       0.58.1 │  
-      Image scanning           │  │                                                                        │  │ FINDINGS                           │  
-      Secret scanning          │  │                                                                        │  │ Critical                         2 │  
-      Signing policy           │  │                                                                        │  │ High                             5 │  
-                               │  │                                                                        │  │ Medium                          11 │  
-  OPERATIONS                   │  │                                                                        │  │ Low                              7 │  
-    ▸ Scan runs                │  │                                                                        │  │ ACTIONS                            │  
-      Secret findings          │  │                                                                        │  │ Scan history                 enter │  
-      Update channel           │  │                                                                        │  │ Refresh                          r │  
-                               │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
-                               │  One row per repository, its latest scan. enter opens its scan history.      ╰────────────────────────────────────╯  
+                               │  │   REPOSITORY  DIGEST       STATUS     TRIVY DB   CHECKED    CRIT  HIGH │  │ team/api:1.8.2                     │  
+  ACCESS                       │  │ ▸ team/api    9c41e0…e0d2  completed  3 d ago    5 h ago    2     5    │  │ completed, trigger push            │  
+      Users                    │  │   team/api    0a1b2c…2c3d  stale      40 d ago   20 h ago   2     4    │  │ RESULT                             │  
+      Robots                   │  │   team/web    9c41e0…e0d2  running    —          —          -     -    │  │ Digest            sha256:9c41…e0d2 │  
+      Repository access        │  │   team/docs   9c41e0…e0d2  failed     —          —          -     -    │  │ Finished          14 Mar 08:30 UTC │  
+                               │  │                                                                        │  │ Trivy                       0.58.1 │  
+  SECURITY                     │  │                                                                        │  │ Trivy DB                   3 d ago │  
+      Image scanning           │  │                                                                        │  │ Checked                    5 h ago │  
+      Secret scanning          │  │                                                                        │  │ FINDINGS                           │  
+      Signing policy           │  │                                                                        │  │ Critical                         2 │  
+                               │  │                                                                        │  │ High                             5 │  
+  OPERATIONS                   │  │                                                                        │  │ Medium                          11 │  
+    ▸ Scan runs                │  │                                                                        │  │ Low                              7 │  
+      Secret findings          │  │                                                                        │  │ ACTIONS                            │  
+      Update channel           │  ╰────────────────────────────────────────────────────────────────────────╯  │ Scan history                 enter │  
+                               │  One row per image digest, its latest result. Rescans only when the          │ Refresh                          r │  
+                               │  vulnerability DB or scan settings change. enter opens its scan history.     ╰────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   ↑↓ move   enter scan history   r refresh   esc back   q quit                                                                           F2 mouse on  
