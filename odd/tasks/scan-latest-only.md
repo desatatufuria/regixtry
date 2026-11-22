@@ -16,7 +16,7 @@ Branch: `feat/scan-latest-only` (base `integration/audit-fixes`). Delivery strat
 
 ## Tasks
 
-- T1 [S1-S4] Fingerprint + settings hash + latest-only model + needs-scan decision + atomic replacement + regression tests - route: delegated writer - status: pending - commit: -; Risk: item 1 (data), item 2 (security via pull policy)
+- T1 [S1-S4] Fingerprint + settings hash + latest-only model + needs-scan decision + atomic replacement + regression tests - route: delegated writer - status: done - commit: d39e0b4 (schema+atomic replacement), 1615743 (fingerprint+decision), ce73158 (docs); evidence: RED = new tests do not compile on base (new ports fields/methods), plus mutation checks (policy reading any-status latest -> in-flight assertion FAILs; push without decision -> SameFingerprint test FAILs); GREEN = go test ./... ; Risk: item 1 (data), item 2 (security via pull policy)
 - T2 [S5] Sweep rewrite: DB refresh and compare, all digests, pagination, bounded concurrency, `last_checked_at` - route: delegated writer - status: pending - commit: -
 - T3 [S6] Migration and purge with old-schema fixture - route: delegated writer - status: pending - commit: -; Risk: item 1 (deletes stored data)
 - T4 [S7] TUI, API and docs - route: delegated writer - status: pending - commit: -
