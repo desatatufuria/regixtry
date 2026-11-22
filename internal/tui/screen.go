@@ -20,8 +20,11 @@ type screenKeys struct {
 // never stored on a screen: a cached AdminSession goes stale on re-login or
 // expiry, and a cached consoleLayout goes stale on resize.
 type screenEnv struct {
-	Client            AdminClient
-	Session           AdminSession
+	Client  AdminClient
+	Session AdminSession
+	// Service is the registry's own query service, read in-process by the
+	// console browser (catalog, tags, deletes); it is nil in a bare literal.
+	Service           QueryService
 	Layout            consoleLayout
 	KnownRepositories []string
 	Now               func() time.Time
@@ -153,6 +156,12 @@ const (
 	// slotDelegate holds delegateScreen: the grants of one repository for its
 	// repository administrator, opened from the console Repositories screen.
 	slotDelegate
+	// slotConsoleRepositories, slotConsoleProjects and slotConsoleTags hold the
+	// console browser (tui-v2-redesign S3): the Repositories, Projects and Tags
+	// screens that browse the catalog and delete its data.
+	slotConsoleRepositories
+	slotConsoleProjects
+	slotConsoleTags
 	numScreenSlots
 )
 
@@ -207,6 +216,12 @@ func slotFor(id screen) (screenSlot, bool) {
 		return slotTokens, true
 	case screenRepoAdminGrants:
 		return slotDelegate, true
+	case screenRepositories:
+		return slotConsoleRepositories, true
+	case screenProjects:
+		return slotConsoleProjects, true
+	case screenTags:
+		return slotConsoleTags, true
 	default:
 		return 0, false
 	}

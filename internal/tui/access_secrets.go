@@ -138,7 +138,7 @@ func (m Model) overlayLateNotice(content string, layout consoleLayout) string {
 		return content
 	}
 	theme := newAdminTheme()
-	env := screenEnv{Session: m.adminSession, Layout: layout, KnownRepositories: m.repositories.Names(), Now: m.now}
+	env := screenEnv{Session: m.adminSession, Layout: layout, KnownRepositories: m.knownRepositories(), Now: m.now}
 	if !m.adminScreens[slot].View(theme, env).Full {
 		return content
 	}

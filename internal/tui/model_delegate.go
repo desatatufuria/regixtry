@@ -8,16 +8,11 @@ import (
 
 // openRepoAdminGrants is the repository administrator's entry point, reached
 // from the Console Repositories screen's grant key instead of the global
-// admin's tab. It carries the selected repository through the shared login
+// admin's tab. It carries the chosen repository through the shared login
 // screen when the operator is not signed in yet.
-func (m Model) openRepoAdminGrants() (tea.Model, tea.Cmd) {
+func (m Model) openRepoAdminGrants(repository string) (tea.Model, tea.Cmd) {
 	if m.adminClient == nil {
 		m.status = "Admin API is unavailable for this session."
-		return m, nil
-	}
-	repository, ok := m.selectedRepository()
-	if !ok {
-		m.status = "Select a repository to manage grants."
 		return m, nil
 	}
 	m.adminIntent = adminIntentRepoGrants

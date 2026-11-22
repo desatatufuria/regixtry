@@ -12,7 +12,7 @@ import (
 // sibling fields (UserID/Username/FeatureName/Repository/Accessor) is
 // captured by onConfirm's closure instead, so adding a confirm never widens
 // a shared struct. It is a plain composable value: a migrated sub-model and
-// a legacy model (TagsModel) embed it identically.
+// a console screen embed it identically.
 type confirmPrompt struct {
 	title       string
 	message     string

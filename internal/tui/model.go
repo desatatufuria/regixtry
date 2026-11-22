@@ -14,7 +14,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	bubbletable "github.com/evertras/bubble-table/table"
 	appregixtry "regixtry/internal/app/regixtry"
 	"regixtry/internal/domain/signing"
 	"regixtry/internal/infra/release"
@@ -103,104 +102,6 @@ type QueryService interface {
 	Referrers(ctx context.Context, repositoryName string, subjectDigest string, artifactType string) (appregixtry.ReferrersIndex, error)
 }
 
-type RepositoriesModel struct {
-	Items    []appregixtry.RepositorySummary
-	Selected int
-	// Table is the Repositories screen's bubbletable.Model, baked from Items
-	// at rebuildRepositoriesTable() time -- mirrors TagsModel.Table's own
-	// baked-not-computed-in-View() pattern (design.md decision #6).
-	Table bubbletable.Model
-	// Confirm holds the delete-repository pending confirm opened by the "d"
-	// key (delete-entire-repository feature), the same confirmPrompt
-	// primitive TagsModel.Confirm uses, composed here identically.
-	Confirm confirmPrompt
-	// Filter, when non-nil, narrows FilteredItems()/rendering/selection to
-	// one project's repositories (path-based-project-grouping feature),
-	// set by Enter on the Projects screen and cleared by Esc here. Items
-	// itself always holds the FULL unfiltered catalog -- Filter is purely a
-	// view-layer narrowing, so clearing it (or reloading the catalog) never
-	// loses data.
-	Filter *projectFilter
-}
-
-// projectFilter narrows the Repositories screen to one project's
-// repositories. Project is deriveProjects' own Name (including the
-// ungrouped bucket's projectUngroupedLabel), matched via
-// repositoryProjectName -- a single string is sufficient since that label
-// already uniquely identifies the ungrouped bucket.
-type projectFilter struct {
-	Project string
-}
-
-// FilteredItems returns Items narrowed to Filter's project, or every item
-// unfiltered when Filter is nil -- the single source both rendering
-// (renderConsoleRepositoriesSection) and selection (selectedRepositorySummary,
-// moveSelection) index into, so they can never drift apart on which rows
-// are actually visible.
-func (m RepositoriesModel) FilteredItems() []appregixtry.RepositorySummary {
-	if m.Filter == nil {
-		return m.Items
-	}
-	filtered := make([]appregixtry.RepositorySummary, 0, len(m.Items))
-	for _, item := range m.Items {
-		if repositoryProjectName(item.Name) == m.Filter.Project {
-			filtered = append(filtered, item)
-		}
-	}
-	return filtered
-}
-
-// ProjectsModel backs the Projects screen (path-based-project-grouping
-// feature): Items is deriveProjects' own output over the Repositories
-// screen's already-fetched catalog, purely client-side -- there is no
-// separate load step, Init, or Service call for this screen at all.
-type ProjectsModel struct {
-	Items    []projectSummary
-	Selected int
-	// Table mirrors RepositoriesModel.Table's own baked-not-computed-in-
-	// View() pattern.
-	Table bubbletable.Model
-	// SortMode is the "s" key's client-side sort cycle (sortable-tags-and-
-	// projects feature), mirroring TagsModel.SortMode exactly.
-	SortMode sortMode
-	// Confirm holds the delete-project pending confirm opened by the "d" key
-	// (delete-entire-project feature), the same confirmPrompt primitive
-	// RepositoriesModel.Confirm/TagsModel.Confirm use, composed here
-	// identically.
-	Confirm confirmPrompt
-}
-
-// Names extracts each repository's name, used by admin-side screens that
-// only need name lookup/suggestions (robotRepositorySuggestions,
-// renderAdminWorkspace, adminBaseBodyHeight), not the Tags/Last Pushed
-// columns this screen's own table renders.
-func (m RepositoriesModel) Names() []string {
-	names := make([]string, 0, len(m.Items))
-	for _, item := range m.Items {
-		names = append(names, item.Name)
-	}
-	return names
-}
-
-type TagsModel struct {
-	Repository string
-	Items      []appregixtry.TagDetails
-	Selected   int
-	// Table is the Tags screen's bubbletable.Model, baked from Items at
-	// rebuildTagsTable() time -- mirrors AdminViewState.Tables' own
-	// baked-not-computed-in-View() pattern (design.md decision #6).
-	Table bubbletable.Model
-	// Confirm holds the delete-tag pending confirm opened by the "d" key
-	// (design.md Decision E/D7): the shared confirmPrompt primitive, which
-	// retired TagsModel's own former PendingDelete string field.
-	Confirm confirmPrompt
-	// SortMode is the "s" key's client-side sort cycle (sortable-tags-and-
-	// projects feature), defaulting to sortByNameAsc's zero value -- Items
-	// is kept sorted according to it at all times (rebuildTagsTable time),
-	// so Selected always indexes into the currently-displayed order.
-	SortMode sortMode
-}
-
 type ManifestModel struct {
 	Details appregixtry.ManifestDetails
 	// Signature is the SAME SignatureStatusResult shape the Console Tags
@@ -225,11 +126,6 @@ type UploadsModel struct {
 	Items      []appregixtry.UploadDetails
 }
 
-type EmptyStateModel struct {
-	Title   string
-	Message string
-}
-
 type MutationUnavailableModel struct {
 	Action string
 	Reason string
@@ -250,7 +146,6 @@ const (
 	screenManifest            screen = "manifest"
 	screenBlobs               screen = "blobs"
 	screenUploads             screen = "uploads"
-	screenEmpty               screen = "empty"
 	screenError               screen = "error"
 	screenAdminLogin          screen = "admin-login"
 	screenAdminAuthenticating screen = "admin-authenticating"
@@ -373,12 +268,9 @@ type Model struct {
 	err           error
 	now           func() time.Time
 
-	repositories RepositoriesModel
-	projects     ProjectsModel
-	tags         TagsModel
-	manifest     ManifestModel
-	blobs        BlobsModel
-	uploads      UploadsModel
+	manifest ManifestModel
+	blobs    BlobsModel
+	uploads  UploadsModel
 
 	adminClient  AdminClient
 	adminSession AdminSession
@@ -397,7 +289,6 @@ type Model struct {
 	adminIntent           adminIntent
 	adminIntentRepository string
 
-	empty    EmptyStateModel
 	mutation MutationUnavailableModel
 	status   string
 
@@ -409,10 +300,7 @@ type Model struct {
 	// viewport is the terminal size captured from the most recent
 	// tea.WindowSizeMsg (or the default from NewModel before any resize
 	// event, e.g. under the --snapshot CLI path — design.md decision #8).
-	// bodyScroll is the current scroll offset applied by fitLines() when
-	// rendering a screen's bounded section (wired in Phase 3).
-	viewport   viewportSize
-	bodyScroll int
+	viewport viewportSize
 
 	// adminScreens holds every migrated screen sub-model (design.md
 	// Decision B), keyed by screenSlot. It is an array of an interface
@@ -448,7 +336,7 @@ type viewportSize struct {
 
 // contentBudget wraps the package-level pure contentBudget() (viewport.go)
 // with this Model's captured viewport, the status/help text the calling
-// screen actually renders, and this Model's current bodyScroll.
+// screen actually renders.
 //
 // Phase 3 deviation from design.md's zero-arg method: several screens
 // render a status other than m.status plus their own help
@@ -463,7 +351,8 @@ func (m Model) screenEnv() screenEnv {
 		Client:            m.adminClient,
 		Session:           m.adminSession,
 		Layout:            m.adminTablesLayout(),
-		KnownRepositories: m.repositories.Names(),
+		Service:           m.service,
+		KnownRepositories: m.knownRepositories(),
 		Now:               m.now,
 		CurrentVersion:    m.currentVersion,
 		UpdateAvailable:   m.updateAvailable,
@@ -472,7 +361,6 @@ func (m Model) screenEnv() screenEnv {
 
 func (m Model) contentBudget(status, help string) consoleLayout {
 	layout := contentBudget(m.viewport.Width, m.viewport.Height, status, help)
-	layout.Scroll = m.bodyScroll
 	return layout
 }
 
@@ -488,100 +376,9 @@ func (m Model) adminTablesLayout() consoleLayout {
 	return m.contentBudget(m.status, shortHelpView(newAdminTheme(), overviewKeys))
 }
 
-// tagsTableLayout computes the consoleLayout used to size the Tags table at
-// rebuild time, mirroring adminTablesLayout()'s own use of the exact
-// status/help this screen renders (scrollableBodyContext) so the layout used
-// to build the table can never drift from what View() actually shows.
-func (m Model) tagsTableLayout() consoleLayout {
-	status, help, _, _ := m.scrollableBodyContext()
-	return m.contentBudget(status, help)
-}
-
-// rebuildTagsTable bakes m.tags.Items into a fresh bubbletable.Model sized
-// by layout (consoleTagsTablePageSize), mirroring rebuildAdminTables' own
-// bake-at-mutation-time pattern rather than computing the table in View().
-func (m *Model) rebuildTagsTable(layout consoleLayout) {
-	theme := newAdminTheme()
-	m.tags.Table = buildConsoleTagsTable(theme, m.tags.Items, m.tags.Selected, consoleTagsTablePageSize(layout))
-}
-
-// repositoriesTableLayout computes the consoleLayout used to size the
-// Repositories table at rebuild time -- mirrors tagsTableLayout's own use of
-// the exact status/help this screen renders (scrollableBodyContext) so the
-// layout used to build the table can never drift from what View() actually
-// shows.
-func (m Model) repositoriesTableLayout() consoleLayout {
-	status, help, _, _ := m.scrollableBodyContext()
-	return m.contentBudget(status, help)
-}
-
-// rebuildRepositoriesTable bakes m.repositories.Items into a fresh
-// bubbletable.Model sized by layout (consoleRepositoriesTablePageSize),
-// mirroring rebuildTagsTable's own bake-at-mutation-time pattern one level
-// up.
-func (m *Model) rebuildRepositoriesTable(layout consoleLayout) {
-	theme := newAdminTheme()
-	m.repositories.Table = buildConsoleRepositoriesTable(theme, m.repositories.FilteredItems(), m.repositories.Selected, consoleRepositoriesTablePageSize(layout))
-}
-
-// projectsTableLayout mirrors repositoriesTableLayout's own use of the
-// exact status/help this screen renders (scrollableBodyContext).
-func (m Model) projectsTableLayout() consoleLayout {
-	status, help, _, _ := m.scrollableBodyContext()
-	return m.contentBudget(status, help)
-}
-
-// rebuildProjectsTable bakes m.projects.Items into a fresh
-// bubbletable.Model, mirroring rebuildRepositoriesTable's own
-// bake-at-mutation-time pattern exactly.
-func (m *Model) rebuildProjectsTable(layout consoleLayout) {
-	theme := newAdminTheme()
-	m.projects.Table = buildConsoleProjectsTable(theme, m.projects.Items, m.projects.Selected, consoleProjectsTablePageSize(layout))
-}
-
 type catalogLoadedMsg struct {
 	result []appregixtry.RepositorySummary
 	err    error
-}
-
-type tagsLoadedMsg struct {
-	repository string
-	result     []appregixtry.TagDetails
-	err        error
-}
-
-// tagDeletedMsg carries the repository/tag pair a deleteTagCmd targeted,
-// mirroring adminRobotDeletedMsg's own shape: after a successful delete the
-// screen reloads screenTags' own list (loadTagsCmd) rather than reusing a
-// mutation response body.
-type tagDeletedMsg struct {
-	repository string
-	tag        string
-	err        error
-}
-
-// repositoryDeletedMsg mirrors tagDeletedMsg's own shape exactly, for the
-// Repositories screen's delete-entire-repository "d" key/confirm flow.
-type repositoryDeletedMsg struct {
-	repository string
-	err        error
-}
-
-// projectDeletionResult holds one repository's outcome inside the
-// delete-entire-project feature's best-effort bulk-delete loop.
-type projectDeletionResult struct {
-	repository string
-	err        error
-}
-
-// projectDeletedMsg is the aggregate result of the Projects screen's "d" key
-// best-effort bulk-delete: Results holds one entry per repository the
-// project contained, in attempt order, so a partial failure can always be
-// reported honestly -- never collapsed into a bare success/failure bool the
-// way repositoryDeletedMsg's single-repository shape can afford to.
-type projectDeletedMsg struct {
-	project string
-	results []projectDeletionResult
 }
 
 type manifestLoadedMsg struct {
@@ -718,10 +515,6 @@ func NewModel(service QueryService, options ...Option) Model {
 		adminReturn: screenLoading,
 		adminView:   newAdminViewState(),
 		adminIntent: adminIntentOperator,
-		empty: EmptyStateModel{
-			Title:   "Regixtry is empty",
-			Message: "No repositories have been published yet.",
-		},
 		mutation: MutationUnavailableModel{
 			Action: "delete",
 			Reason: "Mutations such as deletion and retention controls are unavailable in v1.",
@@ -772,16 +565,6 @@ func (m Model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Refit). Safe/cheap when no admin tables are loaded yet: builds
 		// harmlessly from empty adminView state.
 		m.rebuildAdminTables(m.adminTablesLayout())
-		// The Tags table needs the same explicit resize-rebuild for the same
-		// reason (its pageSize is baked in at rebuildTagsTable() time, not
-		// recomputed by View()); harmless/cheap when no tags are loaded yet.
-		m.rebuildTagsTable(m.tagsTableLayout())
-		// The Repositories table needs the same explicit resize-rebuild, for
-		// the same reason.
-		m.rebuildRepositoriesTable(m.repositoriesTableLayout())
-		// The Projects table needs the same explicit resize-rebuild, for the
-		// same reason -- harmless/cheap when no projects are derived yet.
-		m.rebuildProjectsTable(m.projectsTableLayout())
 		// Migrated screens with their own baked-in bubbletable.Model
 		// (trivyReposScreen) needs the same explicit
 		// resize-rebuild, broadcast like every other non-key message
@@ -799,17 +582,12 @@ func (m Model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = msg.err
 			return m, m.checkForUpdateCmd()
 		}
-		// Filter carries over across a reload (e.g. the post-delete-
-		// repository refresh) instead of resetting -- returning to the same
-		// filtered project view the operator was already in.
-		m.repositories = RepositoriesModel{Items: append([]appregixtry.RepositorySummary(nil), msg.result...), Filter: m.repositories.Filter}
-		m.bodyScroll = 0
-		if len(m.repositories.Items) == 0 {
-			m.screen = screenEmpty
-			return m, m.checkForUpdateCmd()
-		}
+		// The first read of the catalog mounts the console browser at its
+		// root; an empty catalog is the Repositories screen's own empty state.
+		m.adminScreens[slotConsoleRepositories] = newConsoleRepositoriesScreen(msg.result)
+		m.adminScreens[slotConsoleProjects] = nil
+		m.adminScreens[slotConsoleTags] = nil
 		m.screen = screenRepositories
-		m.rebuildRepositoriesTable(m.repositoriesTableLayout())
 		m.loadingText = ""
 		return m, m.checkForUpdateCmd()
 	case startupLoginMsg:
@@ -829,69 +607,15 @@ func (m Model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.updateAvailable = msg.latestVersion
 		}
 		return m, nil
-	case tagsLoadedMsg:
-		if msg.err != nil {
-			m.screen = screenError
-			m.err = msg.err
-			return m, nil
-		}
-		// SortMode carries over across a reload (e.g. the post-delete
-		// refresh) instead of resetting to the default -- the operator's
-		// chosen sort should not silently revert out from under them.
-		items := append([]appregixtry.TagDetails(nil), msg.result...)
-		sortTagItems(items, m.tags.SortMode)
-		m.tags = TagsModel{Repository: msg.repository, Items: items, SortMode: m.tags.SortMode}
-		m.lastRepository = msg.repository
-		m.showMutationNotice = false
-		m.status = ""
-		m.bodyScroll = 0
-		if len(m.tags.Items) == 0 {
-			m.screen = screenEmpty
-			m.empty = EmptyStateModel{Title: "Repository has no tags", Message: fmt.Sprintf("%s has no published tags yet.", msg.repository)}
-			return m, nil
-		}
-		m.screen = screenTags
-		m.rebuildTagsTable(m.tagsTableLayout())
-		return m, nil
-	case tagDeletedMsg:
-		// Not an AdminClient/HTTP call (QueryService.DeleteManifest runs
-		// in-process against *appregixtry.Service directly), so there is no
-		// admin session to expire here -- just surface the error and clear
-		// the pending state so the operator is never stuck on a failed
-		// confirm.
-		if msg.err != nil {
-			m.tags.Confirm = confirmPrompt{}
-			m.status = msg.err.Error()
-			return m, nil
-		}
-		m.tags.Confirm = confirmPrompt{}
-		m.status = fmt.Sprintf("Tag %q deleted. Refreshing tags...", msg.tag)
-		return m, m.loadTagsCmd(msg.repository)
-	case repositoryDeletedMsg:
-		// Mirrors tagDeletedMsg's own shape exactly: not an AdminClient/HTTP
-		// call, so there is no admin session to expire here.
-		if msg.err != nil {
-			m.repositories.Confirm = confirmPrompt{}
-			m.status = msg.err.Error()
-			return m, nil
-		}
-		m.repositories.Confirm = confirmPrompt{}
-		m.status = fmt.Sprintf("Repository %q deleted. Refreshing repositories...", msg.repository)
-		return m, m.loadCatalogCmd()
-	case projectDeletedMsg:
-		// Mirrors repositoryDeletedMsg's own shape one level up: not an
-		// AdminClient/HTTP call, so there is no admin session to expire
-		// here. Unlike repositoryDeletedMsg, Results can mix successes and
-		// failures (best-effort, no cross-repository transaction) --
-		// projectDeletionSummary is the single place that turns that mix
-		// into one honest status line, never a bare success or failure.
-		// The catalog refresh below lands back on screenRepositories via
-		// catalogLoadedMsg's own existing behavior, exactly mirroring the
-		// single-repository delete flow immediately above -- no
-		// special-cased screen transition for this bulk variant.
-		m.projects.Confirm = confirmPrompt{}
-		m.status = projectDeletionSummary(msg.project, msg.results)
-		return m, m.loadCatalogCmd()
+	case consoleCatalogMsg, consoleTagsMsg, repositoryDeletedMsg, tagDeletedMsg, projectDeletedMsg:
+		// Results of the console browser. Each screen drops what carries
+		// another instance's generation; the deletes are facts the other
+		// mounted screens apply too.
+		var cmd tea.Cmd
+		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
+		return m, cmd
+	case openProjectsMsg, openRepositoriesMsg, openTagsMsg, openManifestMsg:
+		return m.openConsole(msg)
 	case manifestLoadedMsg:
 		if msg.err != nil {
 			m.screen = screenError
@@ -937,7 +661,7 @@ func (m Model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.adminIntentRepository = ""
 			return m.mountDelegate(repository)
 		}
-		if m.startupLogin && len(m.repositories.Items) == 0 {
+		if m.startupLogin && len(m.knownRepositories()) == 0 {
 			m.status = ""
 			m.screen = screenLoading
 			m.loadingText = "Loading repositories..."
@@ -1377,33 +1101,8 @@ func (m Model) viewScreen() string {
 		help := "q: quit"
 		layout := m.contentBudget("", help)
 		return renderInspectionWorkspace("Loading", renderConsoleTextSection(m.loadingText, layout), "", help)
-	case screenRepositories:
-		status, help, _, _ := m.scrollableBodyContext()
-		layout := m.contentBudget(status, help)
-		return renderInspectionWorkspace(
-			"Repositories",
-			renderConsoleRepositoriesSection(m.repositories, layout),
-			status,
-			help,
-		)
-	case screenProjects:
-		status, help, _, _ := m.scrollableBodyContext()
-		layout := m.contentBudget(status, help)
-		return renderInspectionWorkspace(
-			"Repositories / Projects",
-			renderConsoleProjectsSection(m.projects, layout),
-			status,
-			help,
-		)
-	case screenTags:
-		status, help, _, _ := m.scrollableBodyContext()
-		layout := m.contentBudget(status, help)
-		return renderInspectionWorkspace(
-			fmt.Sprintf("Repositories / %s / Tags", m.tags.Repository),
-			renderConsoleTagsSection(m.tags, layout),
-			status,
-			help,
-		)
+	case screenRepositories, screenProjects, screenTags:
+		return m.viewConsole()
 	case screenManifest:
 		status := ""
 		if m.showMutationNotice {
@@ -1443,15 +1142,6 @@ func (m Model) viewScreen() string {
 			status,
 			help,
 		)
-	case screenEmpty:
-		help := "Tab: admin | Esc: back | q: quit"
-		layout := m.contentBudget("", help)
-		return renderInspectionWorkspace(
-			"Empty",
-			renderConsoleTextSection(strings.Join([]string{m.empty.Title, "", m.empty.Message}, "\n"), layout),
-			"",
-			help,
-		)
 	case screenError:
 		errText := "Unknown error"
 		if m.err != nil {
@@ -1486,7 +1176,7 @@ func (m Model) viewScreen() string {
 			help = shortHelpView(newAdminTheme(), m.adminScreens[slot].Keys())
 		}
 		layout := m.contentBudget(m.status, help)
-		content := renderAdminWorkspace(m.screen, m.adminSession, m.adminView, m.repositories.Names(), m.status, layout, m.now(), m.adminScreens)
+		content := renderAdminWorkspace(m.screen, m.adminSession, m.adminView, m.knownRepositories(), m.status, layout, m.now(), m.adminScreens)
 		return m.overlayLateNotice(content, layout)
 	}
 
@@ -1511,109 +1201,25 @@ func (m Model) updateKey(msg keyMsg) (tea.Model, tea.Cmd) {
 		return m.updateAdminKey(msg)
 	}
 
+	if isConsoleScreen(m.screen) {
+		return m.updateConsoleKey(msg)
+	}
+
 	if keyString(msg) == "tab" {
 		return m.openAdmin()
 	}
 
 	switch {
-	// The Tags screen's delete-tag pending-confirm check runs first, ahead
-	// of every other case below: while a delete is pending, Enter/Esc must
-	// mean "confirm"/"cancel this confirm", not the screen's ordinary
-	// inspect-manifest/back-to-Repositories behavior those same keys
-	// otherwise trigger further down this switch.
-	case m.screen == screenTags && m.tags.Confirm.Active() && isEnterKey(msg):
-		next, cmd, _ := m.tags.Confirm.update(m.screenEnv(), msg)
-		m.tags.Confirm = next
-		return m, cmd
-	case m.screen == screenTags && m.tags.Confirm.Active() && isEscKey(msg):
-		next, _, _ := m.tags.Confirm.update(m.screenEnv(), msg)
-		m.tags.Confirm = next
-		m.status = ""
-		return m, nil
-	// The Repositories screen's delete-repository pending-confirm check
-	// mirrors the Tags screen's own above exactly, ahead of every other
-	// case below for the same reason.
-	case m.screen == screenRepositories && m.repositories.Confirm.Active() && isEnterKey(msg):
-		next, cmd, _ := m.repositories.Confirm.update(m.screenEnv(), msg)
-		m.repositories.Confirm = next
-		return m, cmd
-	case m.screen == screenRepositories && m.repositories.Confirm.Active() && isEscKey(msg):
-		next, _, _ := m.repositories.Confirm.update(m.screenEnv(), msg)
-		m.repositories.Confirm = next
-		m.status = ""
-		return m, nil
-	// The Projects screen's delete-project pending-confirm check mirrors the
-	// Repositories screen's own above exactly, ahead of every other case
-	// below for the same reason.
-	case m.screen == screenProjects && m.projects.Confirm.Active() && isEnterKey(msg):
-		next, cmd, _ := m.projects.Confirm.update(m.screenEnv(), msg)
-		m.projects.Confirm = next
-		return m, cmd
-	case m.screen == screenProjects && m.projects.Confirm.Active() && isEscKey(msg):
-		next, _, _ := m.projects.Confirm.update(m.screenEnv(), msg)
-		m.projects.Confirm = next
-		m.status = ""
-		return m, nil
-	case isPgUpKey(msg), isPgDnKey(msg), isHomeKey(msg), isEndKey(msg):
-		if m.applyBodyPageKey(msg) {
-			return m, nil
-		}
 	case isMoveUpKey(msg):
 		m.moveSelection(-1)
 		return m, nil
 	case isMoveDownKey(msg):
 		m.moveSelection(1)
 		return m, nil
-	case isEnterKey(msg):
-		switch m.screen {
-		case screenRepositories:
-			if repository, ok := m.selectedRepository(); ok {
-				m.screen = screenLoading
-				m.loadingText = fmt.Sprintf("Loading tags for %s...", repository)
-				return m, m.loadTagsCmd(repository)
-			}
-		case screenTags:
-			if tag, ok := m.selectedTag(); ok {
-				m.screen = screenLoading
-				m.loadingText = fmt.Sprintf("Loading manifest %s:%s...", m.tags.Repository, tag)
-				return m, m.loadManifestCmd(m.tags.Repository, tag)
-			}
-		case screenProjects:
-			// Path-based-project-grouping feature: purely client-side, no
-			// screenLoading interstitial needed -- the filtered Repositories
-			// table rebuilds from data already in memory.
-			if project, ok := m.selectedProject(); ok {
-				m.repositories.Filter = &projectFilter{Project: project.Name}
-				m.repositories.Selected = 0
-				m.screen = screenRepositories
-				m.rebuildRepositoriesTable(m.repositoriesTableLayout())
-				return m, nil
-			}
-		}
 	case isBackKey(msg):
 		m.showMutationNotice = false
 		m.status = ""
-		m.bodyScroll = 0
 		switch m.screen {
-		case screenRepositories:
-			// Path-based-project-grouping feature: Esc clears an active
-			// project filter (back to "all repositories"), mirroring the
-			// user's own explicit requirement that every repository stay
-			// reachable unfiltered. A no-op with no filter active, exactly
-			// like this key already was on this screen before this feature.
-			if m.repositories.Filter != nil {
-				m.repositories.Filter = nil
-				m.repositories.Selected = 0
-				m.rebuildRepositoriesTable(m.repositoriesTableLayout())
-			}
-		case screenProjects:
-			m.screen = screenRepositories
-			return m, nil
-		case screenTags, screenEmpty:
-			if m.lastRepository != "" {
-				m.screen = screenRepositories
-				return m, nil
-			}
 		case screenManifest:
 			m.screen = screenTags
 			return m, nil
@@ -1633,130 +1239,9 @@ func (m Model) updateKey(msg keyMsg) (tea.Model, tea.Cmd) {
 			m.showMutationNotice = false
 		}
 		return m, nil
-	case isRuneKey(msg, 'd') && m.screen == screenTags:
-		// Only "d" -- placed ahead of the
-		// screenManifest/Blobs/Uploads case below so it never falls through
-		// to that unrelated v1 placeholder.
-		if tag, ok := m.selectedTag(); ok {
-			repository := m.tags.Repository
-			service := m.service
-			ctx := m.ctx
-			// onConfirm ignores env and closes over service/ctx/repository/tag
-			// directly instead: QueryService.DeleteManifest runs in-process
-			// (not AdminClient-backed), so there is no session token to go
-			// stale the way design.md's "receive env at confirm time" guard
-			// protects against -- capturing these here is exactly as safe as
-			// capturing them at open time already was in the pre-change code.
-			m.tags.Confirm = newConfirmPrompt("", "", "delete", "", func(screenEnv) tea.Cmd {
-				return func() tea.Msg {
-					_, err := service.DeleteManifest(ctx, repository, tag)
-					return tagDeletedMsg{repository: repository, tag: tag, err: err}
-				}
-			})
-			m.status = fmt.Sprintf("Delete tag %q from %q? This action cannot be undone. (Enter: delete | Esc: cancel)", tag, m.tags.Repository)
-		} else {
-			m.status = "No tag selected to delete."
-		}
-		return m, nil
-	case isRuneKey(msg, 'd') && m.screen == screenRepositories:
-		// Delete-entire-repository feature: mirrors the Tags screen's own
-		// "d" delete-tag flow immediately above exactly, one level up --
-		// same confirm primitive, same in-process (not AdminClient-backed)
-		// capture-at-open-time shape. The confirmation message names the
-		// repository AND its current tag count (already known client-side
-		// from RepositorySummary, no extra round trip) so the operator is
-		// never confirming blind.
-		if summary, ok := m.selectedRepositorySummary(); ok {
-			repository := summary.Name
-			tagCount := summary.TagCount
-			service := m.service
-			ctx := m.ctx
-			m.repositories.Confirm = newConfirmPrompt("", "", "delete", "", func(screenEnv) tea.Cmd {
-				return func() tea.Msg {
-					_, err := service.DeleteRepository(ctx, repository)
-					return repositoryDeletedMsg{repository: repository, err: err}
-				}
-			})
-			m.status = fmt.Sprintf("Delete repository %q and all %d tag(s)? This action cannot be undone. (Enter: delete | Esc: cancel)", repository, tagCount)
-		} else {
-			m.status = "No repository selected to delete."
-		}
-		return m, nil
-	case isRuneKey(msg, 'd') && m.screen == screenProjects:
-		// Delete-entire-project feature: "project" is purely a client-side
-		// grouping (deriveProjects/repositoryProjectName) with no backend
-		// concept of its own, so this is a best-effort orchestration over
-		// the SAME per-repository Service.DeleteRepository call the
-		// Repositories screen's own "d" key immediately above already uses
-		// -- never a new backend concept, never a new authorization rule.
-		// repositoriesInProject reuses repositoryProjectName (the exact
-		// grouping function deriveProjects itself uses) rather than
-		// re-deriving membership a second way. The confirmation message
-		// names the project, its repository count, AND its aggregate tag
-		// count (already known client-side from projectSummary) so the
-		// operator is never confirming blind. onConfirm's closure attempts
-		// EVERY repository even after an individual failure (best-effort,
-		// like a real bulk-delete tool -- there is no cross-repository
-		// transaction to roll back since each DeleteRepository call is its
-		// own independent transaction), then reports one aggregate
-		// projectDeletedMsg so a partial failure is never misreported as
-		// either a clean success or a clean failure.
-		if project, ok := m.selectedProject(); ok {
-			repositories := repositoriesInProject(m.repositories.Items, project.Name)
-			service := m.service
-			ctx := m.ctx
-			m.projects.Confirm = newConfirmPrompt("", "", "delete", "", func(screenEnv) tea.Cmd {
-				return func() tea.Msg {
-					results := make([]projectDeletionResult, 0, len(repositories))
-					for _, repository := range repositories {
-						_, err := service.DeleteRepository(ctx, repository)
-						results = append(results, projectDeletionResult{repository: repository, err: err})
-					}
-					return projectDeletedMsg{project: project.Name, results: results}
-				}
-			})
-			m.status = fmt.Sprintf("Delete project %q and all %d repository(s) (%d tag(s) total)? This action cannot be undone. (Enter: delete | Esc: cancel)", project.Name, project.RepositoryCount, project.TagCount)
-		} else {
-			m.status = "No project selected to delete."
-		}
-		return m, nil
-	case isRuneKey(msg, 's') && m.screen == screenTags:
-		// Sortable-tags-and-projects feature: cycles name-ascending ->
-		// date-descending -> back, entirely client-side (Items is already
-		// the full fetched page -- see console_tags_table.go's own doc
-		// comment). The currently-highlighted tag's identity is not
-		// preserved across a re-sort (Selected resets to 0) -- a deliberate
-		// simplification, since bubble-table's own WithHighlightedRow
-		// re-page happens at rebuildTagsTable time regardless.
-		m.tags.SortMode = m.tags.SortMode.next()
-		m.tags.Selected = 0
-		sortTagItems(m.tags.Items, m.tags.SortMode)
-		m.rebuildTagsTable(m.tagsTableLayout())
-		return m, nil
-	case isRuneKey(msg, 's') && m.screen == screenProjects:
-		// Mirrors the Tags screen's own "s" sort-cycle immediately above
-		// exactly, one screen over.
-		m.projects.SortMode = m.projects.SortMode.next()
-		m.projects.Selected = 0
-		sortProjectItems(m.projects.Items, m.projects.SortMode)
-		m.rebuildProjectsTable(m.projectsTableLayout())
-		return m, nil
-	case isRuneKey(msg, 'p') && m.screen == screenRepositories:
-		// Path-based-project-grouping feature: derives the Projects screen
-		// fresh from the currently-loaded (unfiltered) catalog every time --
-		// no independent load step, Init, or cached state across visits.
-		m.projects = ProjectsModel{Items: deriveProjects(m.repositories.Items)}
-		m.screen = screenProjects
-		m.rebuildProjectsTable(m.projectsTableLayout())
-		return m, nil
 	case isRuneKey(msg, 'd', 'x'):
 		if m.screen == screenManifest || m.screen == screenBlobs || m.screen == screenUploads {
 			m.showMutationNotice = true
-		}
-		return m, nil
-	case isRuneKey(msg, 'g'):
-		if m.screen == screenRepositories {
-			return m.openRepoAdminGrants()
 		}
 		return m, nil
 	}
@@ -1890,103 +1375,8 @@ func signingKeyFingerprints(keys []string) []string {
 // scanHistoryScreen (Phase 19, screen_scan_history.go): ScanHistoryModal
 // migrates off AdminViewState per design.md's State Migration table.
 
-// scrollableBodyContext returns the status/help text and total line count
-// for screens whose body scrolls via bodyScroll/renderSection (repository
-// catalog and tags — design.md decision #3). ok is false elsewhere (table
-// screens gain paging in Phase 4). Shared by View() and applyBodyPageKey so
-// the measured status/help text can never drift from what is rendered.
-func (m Model) scrollableBodyContext() (status, help string, total int, ok bool) {
-	switch m.screen {
-	case screenRepositories:
-		// m.status carries the delete-repository pending-confirm message and
-		// its success/error follow-up (mirrors screenTags' own use of
-		// m.status below).
-		status := m.status
-		help := "Enter: open tags | d: delete repository | p: projects | Tab: admin | g: repo grants | q: quit"
-		if m.repositories.Filter != nil {
-			help += " | Esc: show all"
-		}
-		return status, help, len(m.repositories.FilteredItems()) + 1, true
-	case screenProjects:
-		// m.status carries the delete-project pending-confirm message and its
-		// success/partial-failure/failure follow-up (mirrors screenRepositories'
-		// own use of m.status above); "" is the ordinary baseline otherwise.
-		help := "Enter: open project | d: delete project | s: sort | Tab: admin | Esc: back | q: quit"
-		return m.status, help, len(m.projects.Items) + 1, true
-	case screenTags:
-		// Unlike the hardcoded "" every other branch here used before it,
-		// this returns m.status: the delete-tag pending-confirm message,
-		// its success/error follow-up, and the ordinary "" baseline all
-		// flow through the same field, so View() and the row-budget math
-		// below can never drift apart on what's actually shown.
-		return m.status, "Enter: inspect manifest | d: delete tag | s: sort | Tab: admin | Esc: back | q: quit", len(m.tags.Items) + 1, true
-	}
-	return "", "", 0, false
-}
-
-// applyBodyPageKey drives bodyScroll from PgUp/PgDn/Home/End, clamping to
-// [0, maxScroll] with the same visible-row math fitLines uses at render
-// time. Returns false (no-op) when the screen has no scrollable body.
-func (m *Model) applyBodyPageKey(msg keyMsg) bool {
-	status, help, total, ok := m.scrollableBodyContext()
-	if !ok {
-		return false
-	}
-
-	layout := m.contentBudget(status, help)
-	visible := layout.SectionRows - 1
-	if visible < 1 {
-		visible = 1
-	}
-	maxScroll := total - visible
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
-
-	switch {
-	case isHomeKey(msg):
-		m.bodyScroll = 0
-	case isEndKey(msg):
-		m.bodyScroll = maxScroll
-	case isPgUpKey(msg):
-		m.bodyScroll -= visible
-	case isPgDnKey(msg):
-		m.bodyScroll += visible
-	}
-	if m.bodyScroll < 0 {
-		m.bodyScroll = 0
-	}
-	if m.bodyScroll > maxScroll {
-		m.bodyScroll = maxScroll
-	}
-	return true
-}
-
 func (m *Model) moveSelection(delta int) {
-	switch m.screen {
-	case screenRepositories:
-		m.repositories.Selected = boundedIndex(m.repositories.Selected+delta, len(m.repositories.FilteredItems()))
-		// WithHighlightedRow auto-pages the live bubble-table to keep the
-		// highlighted row visible -- mirrors the Tags table's own mechanism
-		// below, one level up.
-		if m.repositories.Table.TotalRows() > 0 {
-			m.repositories.Table = m.repositories.Table.WithHighlightedRow(m.repositories.Selected)
-		}
-	case screenProjects:
-		m.projects.Selected = boundedIndex(m.projects.Selected+delta, len(m.projects.Items))
-		if m.projects.Table.TotalRows() > 0 {
-			m.projects.Table = m.projects.Table.WithHighlightedRow(m.projects.Selected)
-		}
-	case screenTags:
-		m.tags.Selected = boundedIndex(m.tags.Selected+delta, len(m.tags.Items))
-		// WithHighlightedRow auto-pages the live bubble-table to keep the
-		// highlighted row visible (design.md decision #5's own mechanism,
-		// mirrored from syncAdminTableHighlights) -- no PgUp/PgDn forwarding
-		// into table.Update, which is never called for this table.
-		if m.tags.Table.TotalRows() > 0 {
-			m.tags.Table = m.tags.Table.WithHighlightedRow(m.tags.Selected)
-		}
-	case screenBlobs:
+	if m.screen == screenBlobs {
 		m.blobs.Selected = boundedIndex(m.blobs.Selected+delta, len(m.blobs.Items))
 	}
 }
@@ -2002,41 +1392,6 @@ func boundedIndex(index int, size int) int {
 		return size - 1
 	}
 	return index
-}
-
-func (m Model) selectedRepository() (string, bool) {
-	summary, ok := m.selectedRepositorySummary()
-	if !ok {
-		return "", false
-	}
-	return summary.Name, true
-}
-
-// selectedRepositorySummary returns the currently highlighted repository's
-// full RepositorySummary (Name, TagCount, LastPushed) -- the delete-
-// repository confirm needs TagCount to warn the operator how many tags will
-// be lost, which selectedRepository()'s bare name does not carry.
-func (m Model) selectedRepositorySummary() (appregixtry.RepositorySummary, bool) {
-	items := m.repositories.FilteredItems()
-	if len(items) == 0 {
-		return appregixtry.RepositorySummary{}, false
-	}
-	return items[m.repositories.Selected], true
-}
-
-// selectedProject returns the Projects screen's currently highlighted row.
-func (m Model) selectedProject() (projectSummary, bool) {
-	if len(m.projects.Items) == 0 {
-		return projectSummary{}, false
-	}
-	return m.projects.Items[m.projects.Selected], true
-}
-
-func (m Model) selectedTag() (string, bool) {
-	if len(m.tags.Items) == 0 {
-		return "", false
-	}
-	return m.tags.Items[m.tags.Selected].Name, true
 }
 
 func (m Model) loadCatalogCmd() tea.Cmd {
@@ -2210,13 +1565,6 @@ func writeUpdateCheckCache(path string, entry updateCheckCacheEntry) {
 	_ = os.WriteFile(path, body, 0o644)
 }
 
-func (m Model) loadTagsCmd(repository string) tea.Cmd {
-	return func() tea.Msg {
-		result, err := m.service.TagDetails(m.ctx, repository, 100, "")
-		return tagsLoadedMsg{repository: repository, result: result, err: err}
-	}
-}
-
 func (m Model) loadManifestCmd(repository string, tag string) tea.Cmd {
 	return func() tea.Msg {
 		manifest, err := m.service.ResolveManifest(m.ctx, repository, tag)
@@ -2226,7 +1574,7 @@ func (m Model) loadManifestCmd(repository string, tag string) tea.Cmd {
 		uploads, uploadsErr := m.service.Uploads(m.ctx, repository)
 		// A fresh SignatureStatus call here, rather than threading the
 		// Console Tags table's already-resolved SignatureStatusResult
-		// through tagsLoadedMsg/TagsModel: this screen's ResolveManifest
+		// through the Tags screen: this screen's ResolveManifest
 		// call above is already gated on ActionPull, the same
 		// authorization SignatureStatus itself requires, while the Tags
 		// list (TagDetails) is gated on the weaker ActionInspect -- its
@@ -2628,6 +1976,7 @@ func (m Model) logoutAdmin() Model {
 func (m Model) returnToInspection() Model {
 	m.dropAccessScreens()
 	m.screen = m.adminReturn
+	m = m.withMountedConsole()
 	m.loadingText = ""
 	m.status = ""
 	// Defensive reset: leaving the login screen (e.g. Esc) without
