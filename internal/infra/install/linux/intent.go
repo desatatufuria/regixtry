@@ -83,14 +83,7 @@ func parseManagedEnvFile(body []byte) (map[string]string, error) {
 }
 
 func parseManagedEnvValue(raw string) (string, error) {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return "", nil
-	}
-	if unquoted, err := strconv.Unquote(trimmed); err == nil {
-		return unquoted, nil
-	}
-	return trimmed, nil
+	return ParseManagedEnvValue(raw)
 }
 
 func loadInstalledIntent(provenance LifecycleProvenance, envValues map[string]string) (InstalledIntent, error) {

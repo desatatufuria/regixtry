@@ -182,3 +182,20 @@ func TestCredentialSafetyEnvFileIsSoleChannelWith0600Mode(t *testing.T) {
 		}
 	}
 }
+
+func TestWriteOwnerOnlyFileTightensWiderExistingFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "regixtry.env")
+	if err := os.WriteFile(path, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeOwnerOnlyFile(path, []byte("new")); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("mode = %v, err = %v, want 0600", info.Mode().Perm(), err)
+	}
+}

@@ -55,7 +55,11 @@ func (b *Bootstrapper) secretWriter() func(string, []byte, os.FileMode) error {
 	return writeSecretFile
 }
 
-var keywordPasswordPattern = regexp.MustCompile(`(?i)(\bpassword\s*=\s*)('(?:[^'\\]|\\.)*'|\S+)`)
+var (
+	keywordPasswordPattern = regexp.MustCompile(`(?i)(\bpassword\s*=\s*)('(?:[^'\\]|\\.)*'|(?:\\.|[^\s\\'"])+)`)
+	// keywordPasswordAny finds every password key, however its value is written.
+	keywordPasswordAny = regexp.MustCompile(`(?i)\bpassword\s*=`)
+)
 
 // RedactDSN masks the password of a Postgres DSN (URL or keyword/value form)
 // so the remainder can be recorded in world-readable metadata.
@@ -81,5 +85,12 @@ func RedactDSN(dsn string) string {
 		}
 		return u.String()
 	}
-	return keywordPasswordPattern.ReplaceAllString(trimmed, "${1}"+redactedPassword)
+	redacted := keywordPasswordPattern.ReplaceAllString(trimmed, "${1}"+redactedPassword)
+	// Every password key must have been recognised and masked (a double-quoted
+	// or otherwise unsupported value would leave a fragment behind); if not,
+	// record nothing rather than a partial secret.
+	if len(keywordPasswordAny.FindAllString(trimmed, -1)) != len(keywordPasswordPattern.FindAllString(trimmed, -1)) {
+		return "[redacted]"
+	}
+	return redacted
 }

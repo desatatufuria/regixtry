@@ -104,7 +104,7 @@ func (p *Provisioner) WriteProject(cfg ProjectConfig) (Project, error) {
 		PostgresPassword: password,
 		AuthPostgresDSN:  authDSN,
 	})
-	if err := os.WriteFile(envFilePath, []byte(envBody), 0o600); err != nil {
+	if err := writeOwnerOnlyFile(envFilePath, []byte(envBody)); err != nil {
 		return Project{}, fmt.Errorf("write compose project env file: %w", err)
 	}
 
@@ -149,4 +149,22 @@ func renderEnvFile(data envFileData) string {
 		fmt.Sprintf("REGIXTRY_AUTH_POSTGRES_DSN=%s", data.AuthPostgresDSN),
 	}
 	return strings.Join(lines, "\n") + "\n"
+}
+
+// writeOwnerOnlyFile writes a secret-bearing file with mode 0600 from the moment
+// it exists: os.WriteFile keeps the mode of a pre-existing file, so the old file
+// is removed first and the new one created O_EXCL, tightening a wider leftover.
+func writeOwnerOnlyFile(path string, body []byte) error {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(body); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
 }

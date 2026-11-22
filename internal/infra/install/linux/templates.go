@@ -39,30 +39,55 @@ type BootstrapPlan struct {
 	GCDeleteEnabled            bool
 }
 
-func RenderEnvFile(plan BootstrapPlan) string {
-	lines := []string{
-		fmt.Sprintf("REGISTRY_ADDR=%s", quoteEnvValue(plan.Addr)),
-		fmt.Sprintf("REGISTRY_PUBLIC_URL=%s", quoteEnvValue(plan.PublicURL)),
-		fmt.Sprintf("REGISTRY_STORAGE_ROOT=%s", quoteEnvValue(plan.StorageRoot)),
-		fmt.Sprintf("REGISTRY_DATABASE_PATH=%s", quoteEnvValue(plan.DatabasePath)),
-		fmt.Sprintf("REGISTRY_SERVICE_NAME=%s", quoteEnvValue(plan.ServiceName)),
+type envEntry struct{ key, value string }
+
+// envEntries lists every KEY=value pair written to the managed env file.
+func envEntries(plan BootstrapPlan) []envEntry {
+	entries := []envEntry{
+		{"REGISTRY_ADDR", plan.Addr},
+		{"REGISTRY_PUBLIC_URL", plan.PublicURL},
+		{"REGISTRY_STORAGE_ROOT", plan.StorageRoot},
+		{"REGISTRY_DATABASE_PATH", plan.DatabasePath},
+		{"REGISTRY_SERVICE_NAME", plan.ServiceName},
 	}
 	if strings.TrimSpace(plan.AuthPostgresDSN) != "" {
-		lines = append(lines, fmt.Sprintf("REGISTRY_AUTH_POSTGRES_DSN=%s", quoteEnvValue(plan.AuthPostgresDSN)))
+		entries = append(entries, envEntry{"REGISTRY_AUTH_POSTGRES_DSN", plan.AuthPostgresDSN})
 	}
 	if strings.TrimSpace(plan.TLSCertFile) != "" && strings.TrimSpace(plan.TLSKeyFile) != "" {
-		lines = append(lines,
-			fmt.Sprintf("REGISTRY_TLS_CERT_FILE=%s", quoteEnvValue(plan.TLSCertFile)),
-			fmt.Sprintf("REGISTRY_TLS_KEY_FILE=%s", quoteEnvValue(plan.TLSKeyFile)),
+		entries = append(entries,
+			envEntry{"REGISTRY_TLS_CERT_FILE", plan.TLSCertFile},
+			envEntry{"REGISTRY_TLS_KEY_FILE", plan.TLSKeyFile},
 		)
 	}
 	if plan.DeleteEnabled {
-		lines = append(lines, fmt.Sprintf("REGISTRY_DELETE_ENABLED=%s", quoteEnvValue("true")))
+		entries = append(entries, envEntry{"REGISTRY_DELETE_ENABLED", "true"})
 	}
 	if plan.GCDeleteEnabled {
-		lines = append(lines, fmt.Sprintf("REGISTRY_GC_DELETE_ENABLED=%s", quoteEnvValue("true")))
+		entries = append(entries, envEntry{"REGISTRY_GC_DELETE_ENABLED", "true"})
 	}
+	return entries
+}
 
+// ValidateEnvValues rejects any env value systemd would mangle: a C0 control
+// character (newline, CR, tab, NUL, ...) or DEL cannot be represented in a
+// double-quoted EnvironmentFile value. The value itself is never echoed, since
+// it may be a DSN.
+func ValidateEnvValues(plan BootstrapPlan) error {
+	for _, entry := range envEntries(plan) {
+		for _, r := range entry.value {
+			if r < 0x20 || r == 0x7f {
+				return fmt.Errorf("%s contains a control character (U+%04X) that cannot be written to the env file", entry.key, r)
+			}
+		}
+	}
+	return nil
+}
+
+func RenderEnvFile(plan BootstrapPlan) string {
+	lines := make([]string, 0, 10)
+	for _, entry := range envEntries(plan) {
+		lines = append(lines, entry.key+"="+quoteEnvValue(entry.value))
+	}
 	return strings.Join(lines, "\n") + "\n"
 }
 
@@ -93,6 +118,48 @@ WantedBy=multi-user.target
 `, plan.EnvPath, execStart, plan.StorageRoot)
 }
 
+// quoteEnvValue renders a systemd EnvironmentFile double-quoted value. Inside
+// double quotes systemd treats only backslash, double quote, dollar and
+// backtick specially, so exactly those are backslash-escaped; everything else
+// (single quote, space, #, %, unicode) is literal. Control characters are
+// rejected earlier by ValidateEnvValues.
 func quoteEnvValue(value string) string {
-	return strconv.Quote(value)
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range value {
+		switch r {
+		case '\\', '"', '$', '`':
+			b.WriteByte('\\')
+		}
+		b.WriteRune(r)
+	}
+	b.WriteByte('"')
+	return b.String()
+}
+
+// ParseManagedEnvValue reads a value written by quoteEnvValue, or by older
+// installers that used Go-quoted strings.
+func ParseManagedEnvValue(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", nil
+	}
+	if unquoted, err := strconv.Unquote(trimmed); err == nil {
+		return unquoted, nil
+	}
+	if len(trimmed) >= 2 && trimmed[0] == '"' && trimmed[len(trimmed)-1] == '"' {
+		inner := trimmed[1 : len(trimmed)-1]
+		var b strings.Builder
+		for i := 0; i < len(inner); i++ {
+			if inner[i] == '\\' && i+1 < len(inner) {
+				switch inner[i+1] {
+				case '\\', '"', '$', '`':
+					i++
+				}
+			}
+			b.WriteByte(inner[i])
+		}
+		return b.String(), nil
+	}
+	return trimmed, nil
 }

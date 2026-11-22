@@ -397,6 +397,9 @@ func (b *Bootstrapper) writeSetupArtifacts(plan BootstrapPlan, receipt Bootstrap
 }
 
 func (b *Bootstrapper) writeManagedArtifacts(plan BootstrapPlan, receipt BootstrapReceipt, createDatabase bool) error {
+	if err := ValidateEnvValues(plan); err != nil {
+		return err
+	}
 	for _, dir := range []string{filepath.Dir(plan.EnvPath), filepath.Dir(plan.UnitPath), plan.StorageRoot, plan.ContentPath} {
 		if strings.TrimSpace(dir) == "" {
 			continue

@@ -254,3 +254,95 @@ func TestLoadInstalledIntentPrefersEnvDSNOverRedactedAndLegacyProvenance(t *test
 		t.Fatalf("AuthPostgresDSN = %q, redacted value must never become the live DSN", intent.AuthPostgresDSN)
 	}
 }
+
+func TestQuoteEnvValueMatchesSystemdRulesAndRoundTrips(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct{ name, in, want string }{
+		{"plain", "abc", `"abc"`},
+		{"single quote kept", "it's", `"it's"`},
+		{"double quote escaped", `a"b`, `"a\"b"`},
+		{"dollar escaped", "a$b", `"a\$b"`},
+		{"backtick escaped", "a`b", "\"a\\`b\""},
+		{"backslash escaped", `a\b`, `"a\\b"`},
+		{"space kept", "a b", `"a b"`},
+		{"hash kept", "a#b", `"a#b"`},
+		{"percent kept", "a%b", `"a%b"`},
+		{"unicode kept verbatim", "pässwörd-日本", `"pässwörd-日本"`},
+		{"all specials", "\\\"$`", "\"\\\\\\\"\\$\\`\""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := quoteEnvValue(tc.in)
+			if got != tc.want {
+				t.Fatalf("quoteEnvValue(%q) = %s, want %s", tc.in, got, tc.want)
+			}
+			back, err := ParseManagedEnvValue(got)
+			if err != nil || back != tc.in {
+				t.Fatalf("ParseManagedEnvValue(%s) = %q, %v, want %q", got, back, err, tc.in)
+			}
+		})
+	}
+}
+
+func TestParseManagedEnvValueReadsLegacyGoQuotedValues(t *testing.T) {
+	t.Parallel()
+
+	got, err := ParseManagedEnvValue(`"a\"b\\c"`)
+	if err != nil || got != `a"b\c` {
+		t.Fatalf("got %q, %v", got, err)
+	}
+}
+
+func TestWriteManagedArtifactsRejectsControlCharactersBeforeWriting(t *testing.T) {
+	for name, mutate := range map[string]func(*BootstrapPlan){
+		"dsn newline":  func(p *BootstrapPlan) { p.AuthPostgresDSN = "postgres://u:p\nREGISTRY_DELETE_ENABLED=true@h/db" },
+		"dsn tab":      func(p *BootstrapPlan) { p.AuthPostgresDSN = "postgres://u:p\t@h/db" },
+		"dsn cr":       func(p *BootstrapPlan) { p.AuthPostgresDSN = "postgres://u:p\r@h/db" },
+		"dsn nul":      func(p *BootstrapPlan) { p.AuthPostgresDSN = "postgres://u:p\x00@h/db" },
+		"dsn esc":      func(p *BootstrapPlan) { p.AuthPostgresDSN = "postgres://u:p\x1b@h/db" },
+		"public url":   func(p *BootstrapPlan) { p.PublicURL = "http://h\nX=1" },
+		"storage root": func(p *BootstrapPlan) { p.StorageRoot = "/var/lib/a\tb" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			plan := secretTestPlan(root)
+			mutate(&plan)
+			b := &Bootstrapper{mkdirAll: os.MkdirAll, writeFile: os.WriteFile}
+			err := b.writeSetupArtifacts(plan, bootstrapReceiptFromPlan(plan))
+			if err == nil || !strings.Contains(err.Error(), "control character") {
+				t.Fatalf("writeSetupArtifacts() error = %v, want control character rejection", err)
+			}
+			if strings.Contains(err.Error(), secretTestPassword) {
+				t.Fatalf("error leaks a secret: %v", err)
+			}
+			if _, statErr := os.Stat(plan.EnvPath); !os.IsNotExist(statErr) {
+				t.Fatalf("env file written despite rejection (stat err = %v)", statErr)
+			}
+		})
+	}
+}
+
+func TestRedactDSNNeverLeaksFragments(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]string{
+		`host=h password="dq secret" dbname=d`: "[redacted]",
+		`password="dq secret"`:                 "[redacted]",
+		`host=h PASSWORD = 'a b' x=1`:          "host=h PASSWORD = xxxxx x=1",
+		"postgres://u:p%40ss@h/db?password=zz": "postgres://u:xxxxx@h/db?password=xxxxx",
+		"postgres://u:p ss@h/db":               "[redacted]",
+	}
+	for in, want := range cases {
+		got := RedactDSN(in)
+		if got != want {
+			t.Errorf("RedactDSN(%q) = %q, want %q", in, got, want)
+		}
+		for _, frag := range []string{"secret", "ss@", "p%40ss", "zz"} {
+			if strings.Contains(got, frag) {
+				t.Errorf("RedactDSN(%q) = %q leaks %q", in, got, frag)
+			}
+		}
+	}
+}
