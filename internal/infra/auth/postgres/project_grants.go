@@ -10,6 +10,7 @@ import (
 // PutProjectGrant creates or updates the one grant of a user on a project.
 // An update changes role and updated_at and keeps created_at.
 func (s *Store) PutProjectGrant(ctx context.Context, grant domainauth.ProjectGrant) error {
+	grant.UserID = strings.TrimSpace(grant.UserID)
 	if err := grant.Validate(); err != nil {
 		return err
 	}

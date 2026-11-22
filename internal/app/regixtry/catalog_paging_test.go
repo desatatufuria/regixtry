@@ -17,12 +17,16 @@ import (
 // does (limit before any access filtering).
 type syntheticCatalog struct {
 	ports.MetadataStore
-	names []string
-	calls int
+	names   []string
+	calls   int
+	onFetch func(limit int)
 }
 
 func (c *syntheticCatalog) window(limit int, after string) []string {
 	c.calls++
+	if c.onFetch != nil {
+		c.onFetch(limit)
+	}
 	out := []string{}
 	for _, name := range c.names {
 		if after != "" && name <= after {
@@ -228,5 +232,45 @@ func TestCatalogNeverShowsRepositoriesOutsideTheGrant(t *testing.T) {
 	page, err := service.Catalog(none, 10, "")
 	if err != nil || page.Repositories == nil || len(page.Repositories) != 0 {
 		t.Fatalf("Catalog() = %#v, %v, want an empty non-nil page", page, err)
+	}
+}
+
+// TestCatalogUniversalPrincipalsFetchExactlyLimit: a global admin or
+// registry-wide reader with the catalog scope sees everything, so the store is
+// asked for exactly limit rows (as before) and the page is identical to the
+// filtered path; a scope-limited admin still goes through filtering.
+func TestCatalogUniversalPrincipalsFetchExactlyLimit(t *testing.T) {
+	t.Parallel()
+	names := manyRepositories()
+	service, fake := catalogServiceWith(t, names)
+	var asked []int
+	fake.onFetch = func(limit int) { asked = append(asked, limit) }
+
+	for _, p := range []domainauth.Principal{
+		{IsAdmin: true, Scopes: catalogScope()},
+		{IsReadOnly: true, Scopes: catalogScope()},
+	} {
+		asked = nil
+		ctx := ports.ContextWithPrincipal(context.Background(), p)
+		page, err := service.Catalog(ctx, 7, "bulk/repo0010")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(asked) != 1 || asked[0] != 7 {
+			t.Fatalf("store asked for %v, want exactly [7]", asked)
+		}
+		if strings.Join(page.Repositories, ",") != strings.Join(names[11:18], ",") {
+			t.Fatalf("page = %v", page.Repositories)
+		}
+		summaries, err := service.RepositorySummaries(ctx, 7, "bulk/repo0010")
+		if err != nil || len(summaries) != 7 || summaries[0].Name != names[11] {
+			t.Fatalf("summaries = %#v, %v", summaries, err)
+		}
+	}
+
+	limited := ports.ContextWithPrincipal(context.Background(), domainauth.Principal{IsAdmin: true, Scopes: []domainauth.Scope{{Type: "repository", Name: "zzz/last", Actions: []string{"pull"}, Canonical: "repository:zzz/last:pull"}}})
+	page, err := service.Catalog(limited, 3, "")
+	if err != nil || strings.Join(page.Repositories, ",") != "zzz/last" {
+		t.Fatalf("scope-limited admin page = %v, %v, want only zzz/last", page.Repositories, err)
 	}
 }

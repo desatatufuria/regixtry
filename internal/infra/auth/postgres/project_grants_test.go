@@ -277,3 +277,25 @@ func TestProjectGrantsMigrationOnOldSchema(t *testing.T) {
 		t.Fatalf("PutProjectGrant() on migrated database error = %v", err)
 	}
 }
+
+func TestStorePutProjectGrantTrimsUserID(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := newSQLiteBackedStore(t)
+	defer store.Close()
+	now := seedUsers(t, store, "u1")
+
+	if err := store.PutProjectGrant(ctx, projectGrant("  u1\t", "odabank", domainauth.RepoRoleReader, now)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.ListProjectGrants(ctx, "u1")
+	if err != nil || len(got) != 1 {
+		t.Fatalf("ListProjectGrants() = %#v, %v, want the grant put with whitespace", got, err)
+	}
+	if err := store.DeleteProjectGrant(ctx, " u1 ", "odabank"); err != nil {
+		t.Fatalf("DeleteProjectGrant() error = %v", err)
+	}
+	if err := store.PutProjectGrant(ctx, projectGrant("   ", "odabank", domainauth.RepoRoleReader, now)); err == nil {
+		t.Fatal("PutProjectGrant(blank user) error = nil")
+	}
+}

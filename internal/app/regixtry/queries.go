@@ -596,7 +596,7 @@ func (s *Service) Catalog(ctx context.Context, limit int, after string) (Catalog
 	}
 
 	principal := ports.PrincipalFromContext(ctx)
-	repositories, err := pageAccessible(limit, after, principal != nil,
+	repositories, err := pageAccessible(limit, after, principal != nil && !principal.HasUniversalCatalogAccess(),
 		func(repository domain.RepositoryRef) string { return repository.String() },
 		func(name string) bool { return principal.HasCatalogAccess(name) },
 		func(batch int, cursor string) ([]domain.RepositoryRef, error) {
@@ -878,7 +878,7 @@ func (s *Service) RepositorySummaries(ctx context.Context, limit int, after stri
 	}
 
 	principal := ports.PrincipalFromContext(ctx)
-	summaries, err := pageAccessible(limit, after, principal != nil,
+	summaries, err := pageAccessible(limit, after, principal != nil && !principal.HasUniversalCatalogAccess(),
 		func(summary ports.RepositorySummary) string { return summary.Name },
 		func(name string) bool { return principal.HasCatalogAccess(name) },
 		func(batch int, cursor string) ([]ports.RepositorySummary, error) {

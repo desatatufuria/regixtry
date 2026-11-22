@@ -202,3 +202,36 @@ func TestProjectGrantValidate(t *testing.T) {
 		}
 	}
 }
+
+func TestHasUniversalCatalogAccessImpliesCatalogAccessEverywhere(t *testing.T) {
+	t.Parallel()
+
+	catalog := Scope{Type: "regixtry", Name: "catalog", Actions: []string{"*"}}
+	pullOne := Scope{Type: "repository", Name: "a/b", Actions: []string{"pull"}}
+	tests := []struct {
+		name      string
+		principal Principal
+		want      bool
+	}{
+		{"admin with catalog scope", Principal{IsAdmin: true, Scopes: []Scope{catalog}}, true},
+		{"read-only with catalog scope", Principal{IsReadOnly: true, Scopes: []Scope{catalog}}, true},
+		{"admin limited to one repository", Principal{IsAdmin: true, Scopes: []Scope{pullOne}}, false},
+		{"admin without scopes", Principal{IsAdmin: true}, false},
+		{"grant holder with catalog scope", Principal{Grants: []RepoGrant{{Role: RepoRoleReader}}, Scopes: []Scope{catalog}}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tt.principal.HasUniversalCatalogAccess(); got != tt.want {
+				t.Fatalf("HasUniversalCatalogAccess() = %t, want %t", got, tt.want)
+			}
+			if tt.want {
+				for _, repo := range []string{"x/y", "flat", "a/b"} {
+					if !tt.principal.HasCatalogAccess(repo) {
+						t.Fatalf("universal principal lacks catalog access to %q", repo)
+					}
+				}
+			}
+		})
+	}
+}

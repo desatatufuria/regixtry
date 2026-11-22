@@ -79,6 +79,14 @@ func (p Principal) HasCatalogAccess(repository string) bool {
 	return p.scopeAllowsCatalog() || p.scopeAllowsRepository(repository, Scope.AllowsPull)
 }
 
+// HasUniversalCatalogAccess reports that HasCatalogAccess is true for every
+// repository: a global admin or registry-wide reader whose token carries the
+// catalog scope. Callers use it only to skip per-repository filtering; a
+// scope-limited admin (repository scopes only) is not universal.
+func (p Principal) HasUniversalCatalogAccess() bool {
+	return (p.IsAdmin || p.IsReadOnly) && p.scopeAllowsCatalog()
+}
+
 func (p Principal) CanAccessCatalog() bool {
 	if p.scopeAllowsCatalog() {
 		return true

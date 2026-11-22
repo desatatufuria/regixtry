@@ -23,10 +23,23 @@ var exactGrantMatchSites = map[string]string{
 	"internal/app/auth/access_events.go:grantRoleOn":               "history text of an exact grant change",
 	"internal/tui/screen_edit_user.go:withGrants":                  "presentation only, not a security boundary",
 	"internal/tui/screen_edit_user.go:applyRevoked":                "presentation only, not a security boundary",
+
+	// Not grants: other records that carry a repository name.
+	"internal/app/regixtry/service.go:ensureUpload":                         "upload state belongs to one repository, not a grant",
+	"internal/app/regixtry/service.go:checkOpenUploadCaps":                  "upload state belongs to one repository, not a grant",
+	"internal/app/regixtry/repository_overrides.go:GetRepositoryOverride":   "feature override keyed by repository, not a grant",
+	"internal/tui/overrides_list.go:applySaved":                             "override rows in the TUI, not a grant",
+	"internal/tui/overrides_list.go:rebuild":                                "override rows in the TUI, not a grant",
+	"internal/tui/screen_scan_runs_digests.go:digestRows":                   "scan runs in the TUI, not a grant",
+	"internal/tui/screen_scan_runs_digests.go:repositoryListed":             "scan rows in the TUI, not a grant",
+	"internal/tui/admin_scan_history.go:adminScanHistorySecretsMatchCursor": "scan history cursor, not a grant",
 }
 
 var (
-	exactGrantMatch = regexp.MustCompile(`(?i)grants?(\[[^\]]*\])?\.Repository\.String\(\)\s*[!=]=`)
+	// Any identifier, any alias: x.Repository.String() ==/!= and
+	// x.Repository ==/!= (a struct comparison), except against the empty
+	// string literal (an emptiness check, not a match).
+	exactGrantMatch = regexp.MustCompile(`\.Repository(\.String\(\))?\s*[!=]=\s*[^"\s]`)
 	funcDecl        = regexp.MustCompile(`^func (?:\([^)]*\) )?([A-Za-z0-9_]+)`)
 )
 
@@ -46,6 +59,9 @@ func TestExactGrantMatchSitesAreAllowlisted(t *testing.T) {
 
 	found := map[string]bool{}
 	for _, dir := range []string{"internal", "cmd"} {
+		if _, err := os.Stat(filepath.Join(root, dir)); os.IsNotExist(err) {
+			continue
+		}
 		err := filepath.WalkDir(filepath.Join(root, dir), func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return err
