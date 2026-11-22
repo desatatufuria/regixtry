@@ -78,7 +78,7 @@ On by default; `F2` toggles it and the footer shows `F2 mouse on` / `F2 mouse of
 - A second click on the selected row does what `Enter` does only when that is harmless: opening a profile, a tag list or an editor. It never opens a browser (scan history advisories) and never acts on data.
 - The mouse never confirms or cancels a dialog and never triggers a destructive action; deleting, revoking and disabling stay keys.
 - While a dialog, a form or a text input is in front, or a change is in flight, the mouse does nothing, the sidebar included.
-- Forms, the grant screen and the configuration screens have no list to scroll; the mouse only reaches the sidebar there.
+- The forms (New user, Reset password, New robot), the user profile and Grant access take no mouse input at all. The configuration screens and Update channel have no list, so the mouse only reaches their sidebar.
 
 ## Confirm dialog
 
