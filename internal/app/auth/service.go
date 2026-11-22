@@ -674,13 +674,15 @@ func (s *Service) ResetPassword(ctx context.Context, actor domainauth.Principal,
 	if err != nil {
 		return err
 	}
-	// Tokens intentionally survive a reset (PAT-like behavior, an explicit
-	// product decision): the reset replaces only the password hash. Admin
-	// credential tokens and access tokens stay valid until they expire or are
-	// revoked individually.
+	// The new hash and the revocation of the user's login sessions (access
+	// tokens, which a password login minted) commit in one transaction, so a
+	// session opened with the old password cannot outlive the reset. Admin
+	// credential tokens intentionally survive: they are PAT-like, do not
+	// derive from the password and are revoked explicitly by the operator
+	// (Tokens screen). Resetting your own password closes your own session.
 	user.PasswordHash = hash
 	user.UpdatedAt = s.now()
-	if err := s.store.UpsertUser(ctx, user); err != nil {
+	if err := s.store.ResetUserPassword(ctx, user, user.UpdatedAt); err != nil {
 		return err
 	}
 

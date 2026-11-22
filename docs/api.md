@@ -19,7 +19,7 @@ Every route under `/admin/v1` requires a Bearer token for a global admin (`Princ
 
 The Bearer token must also be unrestricted: an access token that carries scopes (for example one obtained with `?scope=repository:team/image:pull`, which is what `docker login` and CI pulls use) is refused on every `/admin/v1` route with `403`, even when its owner is a global admin or a repo-admin. This includes a token that was requested with scopes but was granted none of them. Administrative clients (the TUI and CLI) log in without `scope`, which produces the unrestricted token these routes accept.
 
-Resetting a password (`:reset-password`) replaces only the password hash and records the `user.password_reset` access event. Existing tokens of that user (admin credential tokens and access tokens) intentionally stay valid until they expire or are revoked individually. A robot has no password, so resetting one is rejected with `422` (`target user is a robot account and has no password`) and nothing is changed or recorded.
+Resetting a password (`:reset-password`) replaces the password hash and, in the same transaction, revokes the user's active login sessions: their access tokens stop working at once (`401`). This includes the caller's own session when an admin resets their own password; they must log in again. Admin credential tokens (the PAT-like tokens managed on the Tokens screen) are not touched and still exchange for new access tokens at `/auth/token`; revoke them explicitly. The `user.password_reset` access event is recorded as before. A robot has no password, so resetting one is rejected with `422` (`target user is a robot account and has no password`) and nothing is changed or recorded.
 
 JSON bodies are decoded rejecting unknown fields and multiple bodies.
 

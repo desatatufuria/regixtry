@@ -62,7 +62,7 @@ func TestAdminPasswordResetRejectsRobotsAndKeepsSentinel(t *testing.T) {
 	}
 }
 
-func TestAdminPasswordResetOfAHumanKeepsTheirTokensValid(t *testing.T) {
+func TestAdminPasswordResetOfAHumanKeepsTheirCredentialTokensAndClosesAccessTokens(t *testing.T) {
 	t.Parallel()
 
 	handler, authService, adminActor, adminToken, cleanup := newTestRouterWithRealAuth(t)
@@ -87,9 +87,9 @@ func TestAdminPasswordResetOfAHumanKeepsTheirTokensValid(t *testing.T) {
 		t.Fatalf("human reset status = %d body=%s", rec.Code, rec.Body.String())
 	}
 
-	// Intentional product decision: tokens survive a password reset.
-	if got := adminGet(handler, "/admin/v1/users", access.BearerToken).Code; got != http.StatusOK {
-		t.Errorf("existing access token after reset: status = %d, want 200", got)
+	// Login sessions close; PAT-like credential tokens survive.
+	if got := adminGet(handler, "/admin/v1/users", access.BearerToken).Code; got != http.StatusUnauthorized {
+		t.Errorf("existing access token after reset: status = %d, want 401", got)
 	}
 	if _, err := authService.LoginWithPreissuedToken(ctx, "human", cred.Secret, nil); err != nil {
 		t.Errorf("admin credential token after reset: %v", err)
@@ -102,5 +102,22 @@ func TestAdminPasswordResetOfAHumanKeepsTheirTokensValid(t *testing.T) {
 	}
 	if got := countResetEvents(t, authService, adminActor); got != before+1 {
 		t.Errorf("password_reset events = %d, want %d", got, before+1)
+	}
+}
+
+func TestAdminResettingYourOwnPasswordClosesYourOwnAccessToken(t *testing.T) {
+	t.Parallel()
+
+	handler, authService, adminActor, adminToken, cleanup := newTestRouterWithRealAuth(t)
+	defer cleanup()
+
+	if rec := resetPassword(handler, adminToken, adminActor.UserID); rec.Code != http.StatusNoContent {
+		t.Fatalf("self reset status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := adminGet(handler, "/admin/v1/users", adminToken).Code; got != http.StatusUnauthorized {
+		t.Fatalf("own access token after own reset: status = %d, want 401", got)
+	}
+	if _, err := authService.LoginWithPassword(context.Background(), "admin", "password456", nil); err != nil {
+		t.Fatalf("logging in with the new password: %v", err)
 	}
 }
