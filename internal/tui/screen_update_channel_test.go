@@ -277,7 +277,7 @@ func TestUpdateChannelViewInsideShell(t *testing.T) {
 		"Admin › Operations › Update channel", "signed in as admin", "CHANNEL",
 		"▸ insider", "selected, unsaved", "Default channel.",
 		"Selected: insider (unsaved, press enter to save)",
-		"Space toggle stable/insider", "Enter save", "r refresh", "Esc back", "q quit",
+		"space toggle stable/insider", "enter save", "r refresh", "esc back", "q quit",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("view lacks %q\n%s", want, out)
