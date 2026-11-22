@@ -115,3 +115,47 @@ func TestLoginPolicyFromConfig(t *testing.T) {
 		t.Fatalf("policy = %+v", policy.Backoff)
 	}
 }
+
+func TestParseServeConfigRejectsNegativeLoginMaxConcurrency(t *testing.T) {
+	t.Setenv("REGISTRY_LOGIN_MAX_CONCURRENCY", "")
+	_, err := parseServeConfig([]string{"-login-max-concurrency=-1"})
+	if err == nil || !strings.Contains(err.Error(), "login-max-concurrency") {
+		t.Fatalf("err = %v, want a clear startup error", err)
+	}
+	t.Setenv("REGISTRY_LOGIN_MAX_CONCURRENCY", "-4")
+	if _, err = parseServeConfig(nil); err == nil {
+		t.Fatal("a negative env value must fail too")
+	}
+}
+
+func TestParseServeConfigLoginBackoffModeIsCaseInsensitive(t *testing.T) {
+	clearLoginEnv(t)
+	for _, in := range []string{"ENFORCE", "Enforce", " enforce "} {
+		cfg, err := parseServeConfig([]string{"-login-backoff-mode=" + in})
+		if err != nil || cfg.LoginBackoffMode != "enforce" {
+			t.Fatalf("%q -> %q, %v; want enforce", in, cfg.LoginBackoffMode, err)
+		}
+	}
+	t.Setenv("REGISTRY_LOGIN_BACKOFF_MODE", "OFF")
+	if cfg, err := parseServeConfig(nil); err != nil || cfg.LoginBackoffMode != "off" {
+		t.Fatalf("env OFF -> %q, %v", cfg.LoginBackoffMode, err)
+	}
+	if _, err := parseServeConfig([]string{"-login-backoff-mode=Block"}); err == nil {
+		t.Fatal("unknown mode must still be rejected")
+	}
+}
+
+func TestParseServeConfigRefusesTrustEverythingProxies(t *testing.T) {
+	t.Setenv("REGISTRY_TRUSTED_PROXIES", "")
+	for _, value := range []string{"0.0.0.0/0", "::/0", "10.0.0.0/8,0.0.0.0/0", " ::/0 "} {
+		_, err := parseServeConfig([]string{"-trusted-proxies", value})
+		if err == nil || !strings.Contains(err.Error(), "every peer") || !strings.Contains(err.Error(), "X-Forwarded-For") {
+			t.Errorf("%q: err = %v, want a refusal explaining it trusts every peer's X-Forwarded-For", value, err)
+		}
+	}
+	for _, value := range []string{"10.0.0.0/8", "0.0.0.0/1", "::/1", "172.16.0.0/12,fd00::/8"} {
+		if _, err := parseServeConfig([]string{"-trusted-proxies", value}); err != nil {
+			t.Errorf("%q must be accepted: %v", value, err)
+		}
+	}
+}

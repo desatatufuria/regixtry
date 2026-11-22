@@ -23,6 +23,9 @@ func ParseTrustedProxies(value string) ([]netip.Prefix, error) {
 			if err != nil {
 				return nil, fmt.Errorf("invalid trusted proxy %q: %w", entry, err)
 			}
+			if prefix.Bits() == 0 {
+				return nil, fmt.Errorf("invalid trusted proxy %q: a /0 range trusts every peer's X-Forwarded-For, so any client could forge its logged IP; list the actual proxy addresses or a narrower range", entry)
+			}
 			prefixes = append(prefixes, prefix)
 			continue
 		}

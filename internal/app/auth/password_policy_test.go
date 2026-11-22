@@ -103,3 +103,56 @@ func TestExistingCommonPasswordsKeepWorking(t *testing.T) {
 		t.Fatalf("an existing password on the blocklist must still log in: %v", err)
 	}
 }
+
+func TestBlocklistMatchesUnicodeVariants(t *testing.T) {
+	t.Parallel()
+
+	for name, password := range map[string]string{
+		"fullwidth":            "ｐａｓｓｗｏｒｄ",
+		"fullwidth mixed case": "Ｐａｓｓｗｏｒｄ１２３",
+		"NBSP inside":          "pass\u00a0word123",
+		"NBSP around":          "\u00a0qwertyuiop\u00a0",
+		"ideographic space":    "pass\u3000word",
+		"zero width space":     "pass\u200bword",
+		"zero width joiner":    "pa\u200dss\u200cword",
+		"word joiner":          "pass\u2060word123",
+		"BOM":                  "\ufeffpassword",
+		"combined":             "ｐａｓｓ\u200bｗｏｒｄ\u00a0",
+	} {
+		if err := validatePassword(password); err == nil || !strings.Contains(err.Error(), "too common") {
+			t.Errorf("%s: validatePassword(%q) = %v, want too common", name, password, err)
+		}
+	}
+	for _, ok := range []string{"pass word 99 zz", "ｐａｓｓｗｏｒｄ-and-more-words", "Zk4!vNp9wq"} {
+		if err := validatePassword(ok); err != nil {
+			t.Errorf("validatePassword(%q) = %v, want nil", ok, err)
+		}
+	}
+}
+
+func TestBlocklistNormalizationNeverAltersTheStoredPassword(t *testing.T) {
+	t.Parallel()
+
+	store := newMemoryAuthStore()
+	service := NewService(store)
+	ctx := context.Background()
+	boot, err := service.BootstrapAdmin(ctx, ports.BootstrapAdminInput{Username: "root", Password: "tq7#Lm2z-root"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	actor := domainauth.Principal{UserID: boot.User.ID, Username: "root", IsAdmin: true}
+	// Zero-width characters inside an otherwise strong password are legal and
+	// kept verbatim: the stored hash matches the exact original bytes.
+	password := "Zk4!vN\u200bp9wq"
+	user, err := service.CreateAdminUser(ctx, actor, ports.AdminCreateUserInput{Username: "zed", Password: password, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.LoginWithPassword(ctx, "zed", password, nil); err != nil {
+		t.Fatalf("exact password must log in: %v", err)
+	}
+	if _, err := service.LoginWithPassword(ctx, "zed", "Zk4!vNp9wq", nil); err == nil {
+		t.Fatal("the stripped variant must not log in: the stored password is unaltered")
+	}
+	_ = user
+}

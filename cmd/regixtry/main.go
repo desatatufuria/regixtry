@@ -485,6 +485,10 @@ func parseServeConfig(args []string) (serveConfig, error) {
 	if _, err := regixtryhttp.ParseTrustedProxies(cfg.TrustedProxies); err != nil {
 		return serveConfig{}, err
 	}
+	cfg.LoginBackoffMode = strings.ToLower(strings.TrimSpace(cfg.LoginBackoffMode))
+	if cfg.LoginMaxConcurrency < 0 {
+		return serveConfig{}, fmt.Errorf("invalid -login-max-concurrency %d: must be 0 (automatic) or a positive number of simultaneous bcrypt checks", cfg.LoginMaxConcurrency)
+	}
 	if err := validateLoginBackoff(cfg); err != nil {
 		return serveConfig{}, err
 	}

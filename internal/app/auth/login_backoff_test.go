@@ -300,3 +300,15 @@ func TestBackoffIsRaceFree(t *testing.T) {
 		t.Fatalf("size = %d > 50", b.size())
 	}
 }
+
+func TestEnforcedBackoffRefusalLeavesLoggingToTheRouter(t *testing.T) {
+	t.Parallel()
+	h := newBackoffHarness(t, BackoffEnforce)
+	for i := 0; i < 5; i++ {
+		_ = h.login("alice", "nope")
+	}
+	_ = retryAfter(t, h.login("alice", "nope"))
+	if h.logs.Len() != 0 {
+		t.Fatalf("the service must not log an enforced refusal (the router writes the single line): %q", h.logs.String())
+	}
+}

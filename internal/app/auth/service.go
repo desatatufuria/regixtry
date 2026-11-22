@@ -345,7 +345,8 @@ func (s *Service) LoginWithPassword(ctx context.Context, username string, passwo
 	if accounted {
 		if wait := s.backoff.check(key); wait > 0 {
 			if s.backoff.enforcing() {
-				s.logger.Printf("login backoff active account_hash=%s retry_after=%s", accountHash(key), wait.Round(time.Second))
+				// No log here: the HTTP adapter writes the single "login failed"
+				// line for a refusal, with the client IP.
 				return ports.LoginResult{}, &ports.LoginThrottledError{RetryAfter: wait, Reason: "throttled: account backoff"}
 			}
 			wouldBlock = wait

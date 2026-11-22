@@ -3,6 +3,7 @@ package regixtryhttp
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -18,6 +19,12 @@ func TestParseTrustedProxies(t *testing.T) {
 	}
 	if empty, err := ParseTrustedProxies("  "); err != nil || len(empty) != 0 {
 		t.Fatalf("empty list = %v, %v; want none", empty, err)
+	}
+	for _, bad := range []string{"0.0.0.0/0", "::/0", "10.0.0.0/8,0.0.0.0/0"} {
+		_, err := ParseTrustedProxies(bad)
+		if err == nil || !strings.Contains(err.Error(), "every peer") {
+			t.Fatalf("ParseTrustedProxies(%q) = %v, want a /0 refusal", bad, err)
+		}
 	}
 	for _, bad := range []string{"not-an-ip", "10.0.0.0/33", "10.0.0.1/8x"} {
 		if _, err := ParseTrustedProxies(bad); err == nil {
