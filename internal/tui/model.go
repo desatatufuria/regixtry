@@ -295,6 +295,9 @@ type Model struct {
 	lastRepository     string
 	lastTag            string
 	startupLogin       bool
+	// mouseDisabled is the F2 switch; the zero value keeps the mouse ON, the
+	// default. It lives on the Model so it survives every screen change.
+	mouseDisabled bool
 
 	// viewport is the terminal size captured from the most recent
 	// tea.WindowSizeMsg (or the default from NewModel before any resize
@@ -512,6 +515,8 @@ func (m Model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case keyMsg:
 		return m.handleKey(msg)
+	case tea.MouseMsg:
+		return m.updateMouse(msg)
 	case tea.PasteMsg:
 		// v1 delivered a paste as a runes key to the active screen only; keep that path.
 		return m.handleKey(keyMsg{Text: msg.Content})
@@ -920,6 +925,9 @@ func (m Model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) View() tea.View {
 	view := tea.NewView(m.viewContent())
 	view.AltScreen = true
+	if !m.mouseDisabled {
+		view.MouseMode = tea.MouseModeCellMotion
+	}
 	return view
 }
 
@@ -939,7 +947,8 @@ func (m Model) viewContent() string {
 	if m.currentVersion != "" {
 		screenModel.viewport.Height--
 	}
-	return m.withUpdateBanner(screenModel.viewScreen())
+	content := withMouseIndicator(newAdminTheme(), screenModel.viewScreen(), m.viewport.Width, !m.mouseDisabled)
+	return m.withUpdateBanner(content)
 }
 
 // withUpdateBanner prepends a version line above body -- either "a newer
@@ -1059,6 +1068,10 @@ func (m Model) viewScreen() string {
 }
 
 func (m Model) updateKey(msg keyMsg) (tea.Model, tea.Cmd) {
+	if isMouseToggleKey(msg) {
+		m.mouseDisabled = !m.mouseDisabled
+		return m, nil
+	}
 	if m.tooSmall() {
 		return m.updateTooSmallKey(msg)
 	}

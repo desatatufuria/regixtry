@@ -85,6 +85,16 @@ type adminScreen interface {
 	View(theme adminTheme, env screenEnv) screenFrame
 }
 
+// mouseScreen is the optional interface a slot screen implements to take mouse
+// input; a screen without it ignores the mouse. Mouse returns the screen's new
+// value (like Update) and the command its key equivalent would return;
+// mouseBlocked reports that a dialog, a text input or an in-flight command is
+// in front, when the screen takes no mouse input at all (the sidebar included).
+type mouseScreen interface {
+	Mouse(env screenEnv, msg tea.MouseMsg) (adminScreen, tea.Cmd)
+	mouseBlocked() bool
+}
+
 // screenSlot indexes adminScreenSet. Dense and compile-time bounded.
 type screenSlot int
 

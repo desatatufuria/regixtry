@@ -19,6 +19,9 @@ const (
 	shellSidebarWidth = 32
 	// shellChromeRows is the header, the two rules and the footer.
 	shellChromeRows = 4
+	// shellHeaderRows is the header bar and its rule: the sidebar and the
+	// content start on the row after them.
+	shellHeaderRows = 2
 	// shellContentPadX is the content area's left and right margin; the top
 	// margin is shellContentPadTop rows.
 	shellContentPadX   = 2
@@ -237,18 +240,43 @@ func shellRepoAdminSidebar(theme adminTheme, repository string) []string {
 	return content
 }
 
+// shellSidebarLine is one line of the admin sidebar under its brand row: a
+// blank separator, a group title or a navigation item. The renderer and the
+// mouse hit-test both walk shellSidebarLines, so a click lands on the row that
+// was drawn.
+type shellSidebarLine struct {
+	Title    string
+	Item     shellNavItem
+	IsItem   bool
+	Indented bool
+}
+
+func shellSidebarLines() []shellSidebarLine {
+	var lines []shellSidebarLine
+	for _, group := range shellNavGroups {
+		lines = append(lines, shellSidebarLine{})
+		if group.Title != "" {
+			lines = append(lines, shellSidebarLine{Title: group.Title})
+		}
+		for _, item := range group.Items {
+			lines = append(lines, shellSidebarLine{Item: item, IsItem: true, Indented: group.Title != ""})
+		}
+	}
+	return lines
+}
+
 func shellAdminSidebar(theme adminTheme, active shellNavID) []string {
 	bar := shellBarStyle()
 	muted := theme.muted.Inherit(bar)
-	var content []string
-	content = append(content, bar.Render(" ")+theme.title.Inherit(bar).Render("regixtry")+muted.Render(" admin"))
-	for _, group := range shellNavGroups {
-		content = append(content, "")
-		if group.Title != "" {
-			content = append(content, bar.Render(" ")+muted.Bold(true).Padding(0, 1).Render(group.Title))
-		}
-		for _, item := range group.Items {
-			content = append(content, shellNavRow(theme, item, group.Title != "", item.ID == active))
+	content := []string{bar.Render(" ") + theme.title.Inherit(bar).Render("regixtry") + muted.Render(" admin")}
+	for _, line := range shellSidebarLines() {
+		switch {
+		case line.IsItem:
+			content = append(content, shellNavRow(theme, line.Item, line.Indented, line.Item.ID == active))
+		case line.Title != "":
+			content = append(content, bar.Render(" ")+muted.Bold(true).Padding(0, 1).Render(line.Title))
+		default:
+			content = append(content, "")
 		}
 	}
 	return content

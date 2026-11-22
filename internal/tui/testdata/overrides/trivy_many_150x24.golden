@@ -21,4 +21,4 @@
                                │  One row per repository, severity first. enter opens its scan history,       │                                    │  
                                │  o edits its override.                                                       ╰────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  tab switch tabs   ↑↓ move   o override   enter scan history   r refresh   esc back                                                                  
+  tab switch tabs   ↑↓ move   o override   enter scan history   r refresh   esc back                                                     F2 mouse on  

@@ -37,4 +37,4 @@
 
     SIGNED: yes = signature verified, no = signing is on but no valid signature, n/a = signing is off.
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  ↑↓ move   enter manifest   d delete tag   s sort   tab admin   esc back   q quit                                                                                                                      
+  ↑↓ move   enter manifest   d delete tag   s sort   tab admin   esc back   q quit                                                                                                         F2 mouse on  

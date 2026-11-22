@@ -21,4 +21,4 @@
                                            │  undone.                                                     │
     SIGNED: yes = signature verified, no   │                                                              │
 ─────────────────────────────────────────  │   Delete                                         y / enter   │  ─────────────────────────────────────────
-  ↑↓ move   enter manifest   d delete tag  │   Cancel                                               esc   │                                           
+  ↑↓ move   enter manifest   d delete tag  │   Cancel                                               esc   │                              F2 mouse on  
