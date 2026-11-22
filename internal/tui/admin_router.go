@@ -20,8 +20,6 @@ var legacyScreenHandlers = map[screen]legacyHandler{
 	screenAdminAuthenticating: func(m Model, _ keyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	},
-	screenRepoAdminGrants:   Model.updateRepoAdminGrantsKey,
-	screenRepoAdminAddGrant: Model.updateRepoAdminAddGrantKey,
 }
 
 // routeAdminKey resolves m.screen through the migrated slot first, then

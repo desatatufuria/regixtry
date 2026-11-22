@@ -99,6 +99,11 @@ type shellSpec struct {
 	Body string
 	// Hints are the footer key hints, in order.
 	Hints []key.Binding
+	// RepoAdmin, when set, is the repository the signed-in repository
+	// administrator manages: the sidebar then shows only "Repository access"
+	// and a note that global settings belong to global admins, never the
+	// admin-only navigation.
+	RepoAdmin string
 	// Width and Height are the terminal size the shell must fit exactly.
 	Width, Height int
 }
@@ -174,7 +179,7 @@ func shellFooter(theme adminTheme, spec shellSpec, width int) string {
 }
 
 func shellBody(theme adminTheme, spec shellSpec, width, rows int) []string {
-	sidebar := shellSidebar(theme, spec.Active, rows)
+	sidebar := shellSidebar(theme, spec.Active, spec.RepoAdmin, rows)
 	contentWidth := width - shellSidebarWidth
 	inner, _ := shellContentSize(width, rows+shellChromeRows)
 	bodyLines := strings.Split(spec.Body, "\n")
@@ -193,21 +198,14 @@ func shellBody(theme adminTheme, spec shellSpec, width, rows int) []string {
 
 // shellSidebar renders the sidebar column: exactly rows lines, each
 // shellSidebarWidth wide, ending in the border column.
-func shellSidebar(theme adminTheme, active shellNavID, rows int) []string {
-	bar := shellBarStyle()
-	muted := theme.muted.Inherit(bar)
+func shellSidebar(theme adminTheme, active shellNavID, repoAdmin string, rows int) []string {
 	border := lipgloss.NewStyle().Foreground(theme.borderColor).Background(lipgloss.Color(paletteBarHex)).Render("│")
 
 	var content []string
-	content = append(content, bar.Render(" ")+theme.title.Inherit(bar).Render("regixtry")+muted.Render(" admin"))
-	for _, group := range shellNavGroups {
-		content = append(content, "")
-		if group.Title != "" {
-			content = append(content, bar.Render(" ")+muted.Bold(true).Padding(0, 1).Render(group.Title))
-		}
-		for _, item := range group.Items {
-			content = append(content, shellNavRow(theme, item, group.Title != "", item.ID == active))
-		}
+	if repoAdmin != "" {
+		content = shellRepoAdminSidebar(theme, repoAdmin)
+	} else {
+		content = shellAdminSidebar(theme, active)
 	}
 
 	lines := make([]string, rows)
@@ -219,6 +217,41 @@ func shellSidebar(theme adminTheme, active shellNavID, rows int) []string {
 		lines[i] = shellFitBar(line, shellSidebarWidth-1) + border
 	}
 	return lines
+}
+
+// shellRepoAdminSidebar is the sidebar of a repository administrator: the
+// one screen they can use, and why nothing else is listed.
+func shellRepoAdminSidebar(theme adminTheme, repository string) []string {
+	bar := shellBarStyle()
+	muted := theme.muted.Inherit(bar)
+	content := []string{
+		bar.Render(" ") + theme.title.Inherit(bar).Render("regixtry") + muted.Render(" repository admin"),
+		"",
+		bar.Render(" ") + muted.Bold(true).Padding(0, 1).Render("ACCESS"),
+		shellNavRow(theme, shellNavItem{shellNavRepositoryAccess, "Repository access"}, true, true),
+		"",
+	}
+	for _, line := range grantWrap("You administer "+repository+". Global settings are visible to global admins only.", shellSidebarWidth-5) {
+		content = append(content, bar.Render("  ")+muted.Render(line))
+	}
+	return content
+}
+
+func shellAdminSidebar(theme adminTheme, active shellNavID) []string {
+	bar := shellBarStyle()
+	muted := theme.muted.Inherit(bar)
+	var content []string
+	content = append(content, bar.Render(" ")+theme.title.Inherit(bar).Render("regixtry")+muted.Render(" admin"))
+	for _, group := range shellNavGroups {
+		content = append(content, "")
+		if group.Title != "" {
+			content = append(content, bar.Render(" ")+muted.Bold(true).Padding(0, 1).Render(group.Title))
+		}
+		for _, item := range group.Items {
+			content = append(content, shellNavRow(theme, item, group.Title != "", item.ID == active))
+		}
+	}
+	return content
 }
 
 // shellNavRow renders one sidebar item: the active one is the theme's

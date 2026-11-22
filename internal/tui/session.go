@@ -5,21 +5,10 @@ import (
 	"strings"
 	"time"
 
-	domainauth "regixtry/internal/domain/auth"
 	"regixtry/internal/ports"
 )
 
 const AdminSessionExpiredReasonExpired = "Session expired. Log in again."
-
-// adminRepoGrantField identifies which of adminRepositoryGrantForm's 2
-// fields has focus. The repo-admin delegate's form has no Repository field (it is fixed by
-// RepoAdminRepository, the operator's own repository), only Username+Role.
-type adminRepoGrantField int
-
-const (
-	adminRepoGrantFieldUsername adminRepoGrantField = iota
-	adminRepoGrantFieldRole
-)
 
 type trivyConfigField int
 
@@ -30,17 +19,6 @@ const (
 	trivyConfigFieldRegistryReachableURL
 	trivyConfigFieldMaxConcurrency
 )
-
-// adminRepositoryGrantForm backs screenRepoAdminAddGrant (design.md
-// Decision 7): a repo-admin delegate names a user by username (no user
-// directory read) and picks a role. Role's zero value is set to
-// domainauth.RepoRoleReader by newAdminViewState, and the field is cycled
-// only by nextDelegateGrantRole, which can never produce RepoRoleAdmin.
-type adminRepositoryGrantForm struct {
-	Username string
-	Role     domainauth.RepoRole
-	Focus    adminRepoGrantField
-}
 
 type trivyConfigModal struct {
 	Open                 bool
@@ -299,23 +277,6 @@ type AdminViewState struct {
 	// Decision F): the per-repository override editor now lives per-screen
 	// as overrideEditor, embedded directly in trivyReposScreen/
 	// featureOverridesScreen.
-	// RepoAdminRepository/RepoAdminGrants/SelectedRepoAdminGrant/
-	// RepoAdminGrantForm back screenRepoAdminGrants/screenRepoAdminAddGrant
-	// (design.md Decision 7): the repo-admin delegate's own repository-
-	// centric grants view, keyed by repository.
-	RepoAdminRepository string
-	RepoAdminGrants     []ports.AdminRepositoryGrant
-	// RepoAdminGrantsAuthorized is true only after the most recent
-	// screenRepoAdminGrants load actually succeeded (adminRepoGrantsLoadedMsg
-	// with a nil err), distinct from "loaded successfully with zero grants".
-	// A 403 from GET .../grants (repository-administrator privileges
-	// required) leaves this false. Every call site that dispatches
-	// loadRepoAdminGrantsCmd must reset this to false first, so a stale
-	// true from a PREVIOUS repository's successful load can never leak into
-	// a NEW repository's screen before its own load response arrives.
-	RepoAdminGrantsAuthorized bool
-	SelectedRepoAdminGrant    int
-	RepoAdminGrantForm        adminRepositoryGrantForm
 	// Layout is the consoleLayout used the last time rebuildAdminTables ran,
 	// including the primary/compact table pageSize split (design.md
 	// decision #6). It is a snapshot for table construction, not the live
@@ -370,11 +331,7 @@ func (s AdminSession) Remaining(now time.Time) time.Duration {
 }
 
 func newAdminViewState() AdminViewState {
-	return AdminViewState{
-		RepoAdminGrantForm: adminRepositoryGrantForm{
-			Role: domainauth.RepoRoleReader,
-		},
-	}
+	return AdminViewState{}
 }
 
 func LogoutAdminState() (AdminSession, AdminViewState) {

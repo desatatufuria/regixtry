@@ -82,10 +82,6 @@ func renderAdminWorkspace(current screen, session AdminSession, view AdminViewSt
 // renderAdminScreen itself then consumes).
 func adminScreenHelp(current screen, view AdminViewState) string {
 	switch current {
-	case screenRepoAdminGrants:
-		return "n: add grant | e: edit selected grant | x: remove grant | Esc: back | q: quit"
-	case screenRepoAdminAddGrant:
-		return "Enter: save | Tab: next field | Space: cycle role | Esc: cancel"
 	default:
 		return "Esc: back | q: quit"
 	}
@@ -102,10 +98,6 @@ func adminScreenHelp(current screen, view AdminViewState) string {
 func renderAdminScreen(theme adminTheme, current screen, session AdminSession, view AdminViewState, knownRepositories []string, layout consoleLayout, now time.Time) (string, string, string) {
 	help := adminScreenHelp(current, view)
 	switch current {
-	case screenRepoAdminGrants:
-		return fmt.Sprintf("Repositories / %s / Grants", view.RepoAdminRepository), renderRepoAdminGrantsScreen(theme, view), help
-	case screenRepoAdminAddGrant:
-		return fmt.Sprintf("Repositories / %s / Grants / Add Grant", view.RepoAdminRepository), renderRepoAdminAddGrantScreen(theme, view), help
 	default:
 		return adminContext("Access"), "", help
 	}
@@ -236,48 +228,6 @@ func renderFeatureOverridesTable(theme adminTheme, feature string, rows []featur
 	default:
 		return append(lines, table.View())
 	}
-}
-
-// renderRepoAdminGrantsScreen renders the repo-admin delegate's own
-// repository's grants (design.md Decision 7 / spec.md "Delegate sees only
-// their own repositories' grants"). It is keyed by
-// RepoAdminRepository, not SelectedUserID.
-func renderRepoAdminGrantsScreen(theme adminTheme, view AdminViewState) string {
-	if strings.TrimSpace(view.RepoAdminRepository) == "" {
-		return theme.section.Render(theme.warning.Render("Select a repository before opening grants."))
-	}
-	lines := []string{
-		theme.subheading.Render("Repository Grants"),
-		fmt.Sprintf("Repository: %s", view.RepoAdminRepository),
-		"",
-	}
-	if len(view.RepoAdminGrants) == 0 {
-		lines = append(lines, theme.muted.Render("No grants for this repository."))
-	} else {
-		for index, grant := range view.RepoAdminGrants {
-			label := fmt.Sprintf("%s | %s", grant.Username, grant.Role)
-			if index == view.SelectedRepoAdminGrant {
-				label = theme.selected.Render(label)
-			}
-			lines = append(lines, label)
-		}
-	}
-	return theme.section.Render(strings.Join(lines, "\n"))
-}
-
-// renderRepoAdminAddGrantScreen renders the delegate's username+role form.
-// It never offers a repository field (RepoAdminRepository is fixed context,
-// not editable here) and the Role value it displays can never be
-// domainauth.RepoRoleAdmin -- that guarantee lives in nextDelegateGrantRole,
-// the only function allowed to change this field (spec.md "Delegate cannot
-// select repo-admin in the grant role picker").
-func renderRepoAdminAddGrantScreen(theme adminTheme, view AdminViewState) string {
-	return theme.section.Render(strings.Join([]string{
-		theme.subheading.Render("Grant Details"),
-		fmt.Sprintf("Repository: %s", view.RepoAdminRepository),
-		renderTextField(theme, "Username", view.RepoAdminGrantForm.Username, view.RepoAdminGrantForm.Focus == adminRepoGrantFieldUsername),
-		renderTextField(theme, "Role", string(view.RepoAdminGrantForm.Role), view.RepoAdminGrantForm.Focus == adminRepoGrantFieldRole),
-	}, "\n"))
 }
 
 func renderTrivyConfigModal(theme adminTheme, modal trivyConfigModal) string {
@@ -465,14 +415,6 @@ func renderToggleField(theme adminTheme, label string, value bool, focused bool)
 		style = theme.inputFocus
 	}
 	return fmt.Sprintf("%s\n%s", label, style.Render(current))
-}
-
-func selectedRepoAdminGrantForView(view AdminViewState) (ports.AdminRepositoryGrant, bool) {
-	if len(view.RepoAdminGrants) == 0 {
-		return ports.AdminRepositoryGrant{}, false
-	}
-	index := boundedIndex(view.SelectedRepoAdminGrant, len(view.RepoAdminGrants))
-	return view.RepoAdminGrants[index], true
 }
 
 func adminFirstNonEmpty(values ...string) string {

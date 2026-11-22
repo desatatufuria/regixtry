@@ -1,0 +1,24 @@
+  regixtry › Repository access › team/api                                                                                          signed in as erin  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry repository admin     │                                                                                                                      
+                               │  Repository access                                                                                         team/api  
+  ACCESS                       │                                                                                                                      
+    ▸ Repository access        │  GRANTS ON TEAM/API                                                          ╭────────────────────────────────────╮  
+                               │  ╭────────────────────────────────────────────────────────────────────────╮  │ team/api                           │  
+  You administer team/api.     │  │   USERNAME                                                     ROLE    │  │ you are Admin on this repository   │  
+  Global settings are visible  │  │   user167                                                      Reader  │  │                                    │  
+  to global admins only.       │  │   user169                                                      Reader  │  │ ACTIONS                            │  
+                               │  │   user170                                                      Reader  │  │ New grant                        n │  
+                               │  │   user171                                                      Writer  │  │ Edit role                        e │  
+                               │  │   user172                                                      Reader  │  │ Revoke grant                     x │  
+                               │  │   user173                                                      Reader  │  │                                    │  
+                               │  │ ▸ user174                                                      Writer  │  │ ADD GRANT                          │  
+                               │  │   user176                                                      Reader  │  │ Username and role (Reader or       │  
+                               │  │   user177                                                      Writer  │  │ Writer). The repository is fixed   │  
+                               │  │   user178                                                      Reader  │  │ to team/api.                       │  
+                               │  │   user179                                                      Reader  │  │                                    │  
+                               │  │   user180                                                      Writer  │  │                                    │  
+                               │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
+                               │  You can give Reader or Writer. Admin grants: ask a global admin.            ╰────────────────────────────────────╯  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ↑↓ move   n new grant   e edit role   x revoke   esc back                                                                                           

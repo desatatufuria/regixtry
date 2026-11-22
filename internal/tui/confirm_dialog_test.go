@@ -56,7 +56,7 @@ func TestConfirmPromptInTheAdminViewRecordsSubmittingOnConfirmAndClearsOnEsc(t *
 	t.Parallel()
 	for _, confirmKey := range []keyMsg{testKeyEnter(), testKeyRunes("y")} {
 		m := charAdminModel(t, 150, 24)
-		m.screen = screenRepoAdminGrants
+		m.screen = screenAdminUsers
 		m.adminView.Confirm, _ = confirmDialogPrompt("disable")
 		m.adminView.Confirm.submitting = "Submitting disable for alice..."
 		m = testSendKey(t, m, confirmKey)
@@ -65,7 +65,7 @@ func TestConfirmPromptInTheAdminViewRecordsSubmittingOnConfirmAndClearsOnEsc(t *
 		}
 	}
 	m := charAdminModel(t, 150, 24)
-	m.screen = screenRepoAdminGrants
+	m.screen = screenAdminUsers
 	m.adminView.Confirm, _ = confirmDialogPrompt("disable")
 	m = testSendKey(t, m, testKeyEsc())
 	if m.adminView.Confirm.Active() || m.status != "" {
@@ -118,7 +118,7 @@ func TestConfirmDialogFitsEverySizeOverTheScreen(t *testing.T) {
 			t.Run(fmt.Sprintf("%dx%d/long=%v", size.w, size.h, long), func(t *testing.T) {
 				t.Parallel()
 				m := charAdminModel(t, size.w, size.h)
-				m.screen = screenRepoAdminGrants
+				m.screen = screenAdminUsers
 				c, _ := confirmDialogPrompt("remove")
 				c = c.withTarget("alice on team/api", "Writer").withConsequence("Grant access again to restore it.")
 				if long {
@@ -137,7 +137,7 @@ func TestConfirmDialogFitsEverySizeOverTheScreen(t *testing.T) {
 
 func confirmGoldenModel(t *testing.T, w, h int) Model {
 	m := charAdminModel(t, w, h)
-	m.screen = screenRepoAdminGrants
+	m.screen = screenAdminUsers
 	c, _ := confirmDialogPrompt("disable")
 	c.title, c.message = "Disable user?", "The user is signed out and cannot sign in. Their tokens stop working."
 	m.adminView.Confirm = c.withTarget("carol", "user, 2 grants, 2 active tokens").withConsequence("Grants are kept. Enable carol again to restore everything.")
@@ -156,7 +156,7 @@ func TestConfirmDialogGoldens(t *testing.T) {
 	t.Run("enable_150x24", func(t *testing.T) {
 		t.Parallel()
 		m := charAdminModel(t, 150, 24)
-		m.screen = screenRepoAdminGrants
+		m.screen = screenAdminUsers
 		m.adminView.Confirm = newConfirmPrompt("Enable User", "Enable alice?", "enable", "", func(screenEnv) tea.Cmd { return nil })
 		assertLoginConfirmGolden(t, "confirm_enable_user_150x24", ansi.Strip(m.View().Content))
 	})

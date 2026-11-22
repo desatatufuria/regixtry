@@ -3,12 +3,10 @@ package tui
 import (
 	"strings"
 	"testing"
-	"time"
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	bubbletable "github.com/evertras/bubble-table/table"
-	domainauth "regixtry/internal/domain/auth"
 	"regixtry/internal/ports"
 )
 
@@ -889,104 +887,6 @@ func TestRenderAdminScanSummaryShowsEmptyStateThenPopulatedTable(t *testing.T) {
 	}
 }
 
-// TestRenderRepoAdminGrantsScreenShowsOperatorsOwnRepositoryGrants is the
-// Phase 3 task 3.5 RED test (design.md Decision 7 / spec.md "Delegate sees
-// only their own repositories' grants"): the repo-admin delegate's grants
-// screen renders exactly the repository it was opened for, and every
-// username/role pair it was handed — never a user-directory-style listing.
-func TestRenderRepoAdminGrantsScreenShowsOperatorsOwnRepositoryGrants(t *testing.T) {
-	t.Parallel()
-
-	theme := newAdminTheme()
-	view := AdminViewState{
-		RepoAdminRepository: "team/app",
-		RepoAdminGrants: []ports.AdminRepositoryGrant{
-			{Username: "bob", Role: domainauth.RepoRoleWriter},
-			{Username: "carol", Role: domainauth.RepoRoleReader},
-		},
-	}
-
-	got := renderRepoAdminGrantsScreen(theme, view)
-
-	if !strings.Contains(got, "team/app") {
-		t.Fatalf("renderRepoAdminGrantsScreen() = %q, want the repository heading", got)
-	}
-	if !strings.Contains(got, "bob") || !strings.Contains(got, string(domainauth.RepoRoleWriter)) {
-		t.Fatalf("renderRepoAdminGrantsScreen() = %q, want bob's repo-writer grant listed", got)
-	}
-	if !strings.Contains(got, "carol") || !strings.Contains(got, string(domainauth.RepoRoleReader)) {
-		t.Fatalf("renderRepoAdminGrantsScreen() = %q, want carol's repo-reader grant listed", got)
-	}
-}
-
-// TestRenderRepoAdminGrantsScreenShowsEmptyStateWithNoGrants triangulates
-// the populated-grants case above with an empty repository.
-func TestRenderRepoAdminGrantsScreenShowsEmptyStateWithNoGrants(t *testing.T) {
-	t.Parallel()
-
-	theme := newAdminTheme()
-	view := AdminViewState{RepoAdminRepository: "team/app"}
-
-	got := renderRepoAdminGrantsScreen(theme, view)
-
-	if !strings.Contains(got, "team/app") {
-		t.Fatalf("renderRepoAdminGrantsScreen() = %q, want the repository heading even with no grants", got)
-	}
-	if !strings.Contains(got, "No") {
-		t.Fatalf("renderRepoAdminGrantsScreen() = %q, want an explicit empty-grants message", got)
-	}
-}
-
-// TestRenderRepoAdminAddGrantScreenRoleFieldNeverRendersRepoAdmin is the
-// Phase 3 task 3.5 RED test's second half (spec.md "Delegate cannot select
-// repo-admin in the grant role picker"): whatever role the form currently
-// holds, the rendered field text never shows "repo-admin".
-func TestRenderRepoAdminAddGrantScreenRoleFieldNeverRendersRepoAdmin(t *testing.T) {
-	t.Parallel()
-
-	theme := newAdminTheme()
-	for _, role := range []domainauth.RepoRole{domainauth.RepoRoleReader, domainauth.RepoRoleWriter} {
-		view := AdminViewState{RepoAdminRepository: "team/app", RepoAdminGrantForm: adminRepositoryGrantForm{Role: role}}
-		got := renderRepoAdminAddGrantScreen(theme, view)
-		if strings.Contains(got, string(domainauth.RepoRoleAdmin)) {
-			t.Fatalf("renderRepoAdminAddGrantScreen() = %q, role field must never render %q", got, domainauth.RepoRoleAdmin)
-		}
-		if !strings.Contains(got, string(role)) {
-			t.Fatalf("renderRepoAdminAddGrantScreen() = %q, want the current role %q rendered", got, role)
-		}
-	}
-}
-
-// TestNextDelegateGrantRoleNeverProducesRepoAdmin is the pure-function proof
-// behind the UI constraint above: this is the ONLY function allowed to
-// mutate RepoAdminGrantForm.Role from a keypress (Space), so it alone must
-// guarantee repo-admin is structurally unreachable — including from the
-// (otherwise impossible) RepoRoleAdmin starting state.
-func TestNextDelegateGrantRoleNeverProducesRepoAdmin(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name    string
-		current domainauth.RepoRole
-		want    domainauth.RepoRole
-	}{
-		{"reader cycles to writer", domainauth.RepoRoleReader, domainauth.RepoRoleWriter},
-		{"writer cycles to reader", domainauth.RepoRoleWriter, domainauth.RepoRoleReader},
-		{"admin (structurally unreachable) falls back to reader", domainauth.RepoRoleAdmin, domainauth.RepoRoleReader},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			if got := nextDelegateGrantRole(tt.current); got != tt.want {
-				t.Fatalf("nextDelegateGrantRole(%q) = %q, want %q", tt.current, got, tt.want)
-			}
-			if got := nextDelegateGrantRole(tt.current); got == domainauth.RepoRoleAdmin {
-				t.Fatalf("nextDelegateGrantRole(%q) = %q, must never be repo-admin", tt.current, got)
-			}
-		})
-	}
-}
-
 // TestGeneratedFooterMatchesPreviousHandWrittenString is the
 // tui-menu-architecture change's Phase 4 task 4.3 (T1.3) RED test
 // (design.md Decision D's Rung-1 gate): shortHelpView(gitleaksConfigModalKeys)
@@ -1002,66 +902,5 @@ func TestGeneratedFooterMatchesPreviousHandWrittenString(t *testing.T) {
 	want := "Enter: save | Tab: next field | Space: toggle | Esc: cancel"
 	if got != want {
 		t.Fatalf("shortHelpView(gitleaksConfigModalKeys) = %q, want %q byte-for-byte", got, want)
-	}
-}
-
-// TestNonMigratedScreensUnchanged is the tui-menu-architecture change's
-// Phase 1 task 1.1 (T1.8) golden/characterization baseline, captured
-// BEFORE screen.go/admin_router.go or any router code exists: for every one
-// of the legacy admin screens dispatched by renderAdminScreen (the screens
-// updateAdminKey's switch still resolves through legacyScreenHandlers),
-// Model.View()'s composited output MUST always equal renderAdminScreen's
-// own direct output for that exact screen/session/view/layout/now — the
-// invariant design.md's Data Flow section states holds for every
-// non-migrated screen. A routing regression that dispatches a legacy
-// screen to the wrong renderer, drops its help text, or diverges its body
-// would fail this test.
-func TestNonMigratedScreensUnchanged(t *testing.T) {
-	t.Parallel()
-
-	theme := newAdminTheme()
-	now := time.Date(2026, time.August, 20, 9, 0, 0, 0, time.UTC)
-	session := AdminSession{Username: "operator", ExpiresAt: now.Add(10 * time.Minute)}
-
-	repoAdminView := AdminViewState{RepoAdminRepository: "team/app"}
-
-	screens := []struct {
-		name string
-		view AdminViewState
-	}{
-		{"screenRepoAdminGrants", repoAdminView},
-		{"screenRepoAdminAddGrant", repoAdminView},
-	}
-	ids := map[string]screen{
-		"screenRepoAdminGrants":   screenRepoAdminGrants,
-		"screenRepoAdminAddGrant": screenRepoAdminAddGrant,
-	}
-
-	if got, want := len(screens), 2; got != want {
-		t.Fatalf("test setup invalid: %d screen fixtures, want %d (the user-management screens left the old renderer)", got, want)
-	}
-
-	for _, tc := range screens {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			id := ids[tc.name]
-			m := NewModel(&fakeQueryService{})
-			m.viewport = viewportSize{Width: defaultViewportWidth, Height: adminTestViewportHeight}
-			m.screen = id
-			m.adminSession = session
-			m.adminAuth = adminAuthStateAuthenticated
-			m.adminView = tc.view
-			m.now = func() time.Time { return now }
-
-			layout := m.contentBudget(m.status, adminScreenHelp(id, tc.view))
-			wantContext, wantBody, wantHelp := renderAdminScreen(theme, id, session, tc.view, m.repositories.Names(), layout, now)
-			want := renderConsoleWorkspace("Regixtry Admin", wantContext, wantBody, m.status, wantHelp, statusKindAuto)
-
-			got := m.View().Content
-			if got != want {
-				t.Fatalf("screen %q: Model.View() diverged from renderAdminScreen's direct output\ngot:\n%s\nwant:\n%s", id, got, want)
-			}
-		})
 	}
 }

@@ -11,8 +11,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"regixtry/internal/ports"
-
-	domainauth "regixtry/internal/domain/auth"
 )
 
 // ---- the keys that confirm ----
@@ -85,116 +83,6 @@ func TestConfirmPromptThatReturnsNoCommandStaysConfirmable(t *testing.T) {
 	}
 	if calls != 2 {
 		t.Fatalf("calls = %d, want 2: nothing is in flight when no command ran", calls)
-	}
-}
-
-// ---- the admin call sites that keep their prompt on the Model ----
-
-// confirmSite opens one real admin confirm through its own key and counts how
-// many times the prompt's action is invoked.
-type confirmSite struct {
-	name   string
-	build  func(t *testing.T) Model
-	open   keyMsg
-	result func() tea.Msg // the result message of a failed action
-}
-
-func confirmSites() []confirmSite {
-	boom := errors.New("boom")
-	return []confirmSite{
-		{"remove repository grant", func(t *testing.T) Model {
-			m := charAdminModel(t, 150, 24)
-			m.screen, m.adminView.RepoAdminRepository = screenRepoAdminGrants, "team/api"
-			m.adminView.RepoAdminGrants = []ports.AdminRepositoryGrant{{Username: "bob", Role: domainauth.RepoRoleReader}}
-			return m
-		}, testKeyRunes("x"), func() tea.Msg { return adminRepoGrantMutatedMsg{err: boom} }},
-	}
-}
-
-// openCounted opens the site's prompt and wraps its action in a counter.
-func openCounted(t *testing.T, site confirmSite) (Model, *int) {
-	t.Helper()
-	m := testSendKey(t, site.build(t), site.open)
-	if !m.adminView.Confirm.Active() {
-		t.Fatalf("%s: key %v did not open the confirm", site.name, site.open)
-	}
-	calls := new(int)
-	inner := m.adminView.Confirm.onConfirm
-	m.adminView.Confirm.onConfirm = func(env screenEnv) tea.Cmd {
-		*calls++
-		return inner(env)
-	}
-	return m, calls
-}
-
-func TestEveryAdminConfirmRunsOnlyOnEnterOrY(t *testing.T) {
-	t.Parallel()
-	others := []keyMsg{
-		testKeyRunes("n"), testKeyRunes("Y"), testKeyRunes("x"), testKeyRunes("q"), testKeyRunes("d"), testKeyRunes("e"),
-		testKeySpace(), testKeyTab(), testKeyUp(), testKeyDown(), testKeyBackspace(),
-		{Code: 'y', Mod: tea.ModAlt}, {Code: 'y', Mod: tea.ModCtrl},
-	}
-	for _, site := range confirmSites() {
-		t.Run(site.name, func(t *testing.T) {
-			t.Parallel()
-			for _, ok := range []keyMsg{testKeyEnter(), testKeyRunes("y")} {
-				m, calls := openCounted(t, site)
-				updated, cmd := m.Update(ok)
-				if *calls != 1 || cmd == nil || !updated.(Model).adminView.Confirm.Active() {
-					t.Fatalf("%v: calls = %d, command = %v, want the action run once", ok, *calls, cmd != nil)
-				}
-			}
-			for _, other := range others {
-				m, calls := openCounted(t, site)
-				updated, cmd := m.Update(other)
-				if *calls != 0 || cmd != nil {
-					t.Fatalf("%v ran the action (calls = %d, command = %v)", other, *calls, cmd != nil)
-				}
-				if !updated.(Model).adminView.Confirm.Active() {
-					t.Fatalf("%v closed the prompt", other)
-				}
-			}
-			m, calls := openCounted(t, site)
-			updated, cmd := m.Update(testKeyEsc())
-			if *calls != 0 || cmd != nil || updated.(Model).adminView.Confirm.Active() {
-				t.Fatalf("esc: calls = %d command = %v active = %v, want closed without running", *calls, cmd != nil, updated.(Model).adminView.Confirm.Active())
-			}
-		})
-	}
-}
-
-func TestEveryAdminConfirmRunsOnceOnRapidKeysAndWorksAgainAfterAnError(t *testing.T) {
-	t.Parallel()
-	sequences := map[string][]keyMsg{
-		"enter,enter,enter": {testKeyEnter(), testKeyEnter(), testKeyEnter()},
-		"y,y":               {testKeyRunes("y"), testKeyRunes("y")},
-		"y,enter":           {testKeyRunes("y"), testKeyEnter()},
-	}
-	for _, site := range confirmSites() {
-		for name, keys := range sequences {
-			t.Run(site.name+"/"+name, func(t *testing.T) {
-				t.Parallel()
-				m, calls := openCounted(t, site)
-				for _, k := range keys {
-					updated, _ := m.Update(k)
-					m = updated.(Model)
-				}
-				if *calls != 1 {
-					t.Fatalf("the action ran %d times, want once", *calls)
-				}
-				// The failed result closes the prompt; a new one works again.
-				updated, _ := m.Update(site.result())
-				m = updated.(Model)
-				if m.adminView.Confirm.Active() {
-					t.Fatal("a failed action left its prompt open and locked")
-				}
-				again, againCalls := openCounted(t, site)
-				updated, _ = again.Update(testKeyEnter())
-				if *againCalls != 1 || !updated.(Model).adminView.Confirm.Active() {
-					t.Fatalf("the next prompt ran %d times, want once", *againCalls)
-				}
-			})
-		}
 	}
 }
 

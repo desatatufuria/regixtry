@@ -1,0 +1,40 @@
+  regixtry › Repository access › team/api                                                                                                                                            signed in as erin  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry repository admin     │
+                               │  Repository access                                                                                                                                           team/api
+  ACCESS                       │
+    ▸ Repository access        │  GRANTS ON TEAM/API                                                                                                            ╭────────────────────────────────────╮
+                               │  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  │ team/api                           │
+  You administer team/api.     │  │   USERNAME                                                                                                       ROLE    │  │ you are Admin on this repository   │
+  Global settings are visible  │  │ ▸ erin                                                                                                           Admin   │  │                                    │
+  to global admins only.       │  │   user001                                                                                                        Reader  │  │ ACTIONS                            │
+                               │  │   user002                                                                                                        Reader  │  │ New grant                        n │
+                               │  │   user003                                                                                                        Writer  │  │ Edit role                        e │
+                               │  │   user004                       ╭──────────────────────────────────────────────────────────────╮                 Reader  │  │ Revoke grant                     x │
+                               │  │   user005                       │  Revoke access                                               │                 Reader  │  │                                    │
+                               │  │   user006                       │                                                              │                 Writer  │  │ ADD GRANT                          │
+                               │  │   user008                       │  Revoke erin's Admin access to team/api?                     │                 Reader  │  │ Username and role (Reader or       │
+                               │  │   user009                       │                                                              │                 Writer  │  │ Writer). The repository is fixed   │
+                               │  │   user010                       │  ╭────────────────────────────────────────────────────────╮  │                 Reader  │  │ to team/api.                       │
+                               │  │   user011                       │  │ erin on team/api                                       │  │                 Reader  │  │                                    │
+                               │  │   user012                       │  │ Admin                                                  │  │                 Writer  │  │                                    │
+                               │  │   user013                       │  ╰────────────────────────────────────────────────────────╯  │                 Reader  │  │                                    │
+                               │  │   user015                       │                                                              │                 Writer  │  │                                    │
+                               │  │   user016                       │  erin loses Admin access to team/api.                        │                 Reader  │  │                                    │
+                               │  │   user017                       │                                                              │                 Reader  │  │                                    │
+                               │  │   user018                       │   Confirm                                        y / enter   │                 Writer  │  │                                    │
+                               │  │   user019                       │   Cancel                                               esc   │                 Reader  │  │                                    │
+                               │  │   user020                       ╰──────────────────────────────────────────────────────────────╯                 Reader  │  │                                    │
+                               │  │   user022                                                                                                        Reader  │  │                                    │
+                               │  │   user023                                                                                                        Reader  │  │                                    │
+                               │  │   user024                                                                                                        Writer  │  │                                    │
+                               │  │   user025                                                                                                        Reader  │  │                                    │
+                               │  │   user026                                                                                                        Reader  │  │                                    │
+                               │  │   user027                                                                                                        Writer  │  │                                    │
+                               │  │   user029                                                                                                        Reader  │  │                                    │
+                               │  │   user030                                                                                                        Writer  │  │                                    │
+                               │  │   user031                                                                                                        Reader  │  │                                    │
+                               │  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  │                                    │
+                               │  You can give Reader or Writer. Admin grants: ask a global admin.                                                              ╰────────────────────────────────────╯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ↑↓ move   n new grant   e edit role   x revoke   esc back                                                                                                                                             

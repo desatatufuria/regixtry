@@ -1,0 +1,24 @@
+  regixtry › Repository access › team/api                                                                                          signed in as erin  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry repository admin     │
+                               │  Repository access                                                                                         team/api
+  ACCESS                       │           ╭──────────────────────────────────────────────────────────────╮
+    ▸ Repository access        │  GRANTS   │  Revoke access                                               │   ╭────────────────────────────────────╮
+                               │  ╭──────  │                                                              │   │ team/api                           │
+  You administer team/api.     │  │   USE  │  Revoke erin's Admin access to team/api?                     │   │ you are Admin on this repository   │
+  Global settings are visible  │  │ ▸ eri  │                                                              │   │                                    │
+  to global admins only.       │  │   use  │  ╭────────────────────────────────────────────────────────╮  │   │ ACTIONS                            │
+                               │  │   use  │  │ erin on team/api                                       │  │   │ New grant                        n │
+                               │  │   use  │  │ Admin                                                  │  │   │ Edit role                        e │
+                               │  │   use  │  ╰────────────────────────────────────────────────────────╯  │   │ Revoke grant                     x │
+                               │  │   use  │                                                              │   │                                    │
+                               │  │   use  │  erin loses Admin access to team/api.                        │   │ ADD GRANT                          │
+                               │  │   use  │                                                              │   │ Username and role (Reader or       │
+                               │  │   use  │   Confirm                                        y / enter   │   │ Writer). The repository is fixed   │
+                               │  │   use  │   Cancel                                               esc   │   │ to team/api.                       │
+                               │  │   use  ╰──────────────────────────────────────────────────────────────╯   │                                    │
+                               │  │   user012                                                      Writer  │  │                                    │
+                               │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │
+                               │  You can give Reader or Writer. Admin grants: ask a global admin.            ╰────────────────────────────────────╯
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ↑↓ move   n new grant   e edit role   x revoke   esc back                                                                                           

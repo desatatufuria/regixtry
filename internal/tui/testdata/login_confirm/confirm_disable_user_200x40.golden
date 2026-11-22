@@ -1,11 +1,11 @@
  Regixtry Admin                                                     ╭──────────────────────────────────────────────────────────────╮
- Repositories /  / Grants                                           │  Disable user?                                               │
- ╭────────────────────────────────────────────╮                     │                                                              │
- │                                            │                     │  The user is signed out and cannot sign in. Their tokens     │
- │ Select a repository before opening grants. │                     │  stop working.                                               │
- │                                            │                     │                                                              │
- ╰────────────────────────────────────────────╯                     │  ╭────────────────────────────────────────────────────────╮  │
- n: add grant | e: edit selected grant | x: remove grant | Esc: ba  │  │ carol                                                  │  │
+ Admin › Access                                                     │  Disable user?                                               │
+                                                                    │                                                              │
+ Esc: back | q: quit                                                │  The user is signed out and cannot sign in. Their tokens     │
+                                                                    │  stop working.                                               │
+                                                                    │                                                              │
+                                                                    │  ╭────────────────────────────────────────────────────────╮  │
+                                                                    │  │ carol                                                  │  │
                                                                     │  │ user, 2 grants, 2 active tokens                        │  │
                                                                     │  ╰────────────────────────────────────────────────────────╯  │
                                                                     │                                                              │

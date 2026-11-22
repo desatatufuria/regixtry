@@ -150,6 +150,9 @@ const (
 	slotRobots
 	slotCreateRobot
 	slotTokens
+	// slotDelegate holds delegateScreen: the grants of one repository for its
+	// repository administrator, opened from the console Repositories screen.
+	slotDelegate
 	numScreenSlots
 )
 
@@ -202,6 +205,8 @@ func slotFor(id screen) (screenSlot, bool) {
 		return slotCreateRobot, true
 	case screenAdminEditUserTokens:
 		return slotTokens, true
+	case screenRepoAdminGrants:
+		return slotDelegate, true
 	default:
 		return 0, false
 	}

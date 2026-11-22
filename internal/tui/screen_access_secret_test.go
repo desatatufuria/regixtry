@@ -134,7 +134,7 @@ func TestTheSecretScreenOwnsTheFirstKeyAfterAYank(t *testing.T) {
 	late = create()
 	other = overviewPress(t, other, testKeyEsc())
 	runs := 0
-	other.screen = screenRepoAdminGrants
+	other.screen = screenAdminUsers
 	other.adminView.Confirm = newConfirmPrompt("t", "m", "delete", "", func(screenEnv) tea.Cmd { runs++; return nil })
 	other.adminScreens[slotScanHistory] = scanHistoryScreen{}
 	updated, _ = other.Update(late)

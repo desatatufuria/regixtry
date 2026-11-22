@@ -1,11 +1,11 @@
  Regixtry Admin                            ╭──────────────────────────────────────────────────────────────╮
- Repositories /  / Grants                  │  Enable User                                                 │
- ╭───────────────────────────────────────  │                                                              │
- │                                         │  Enable alice?                                               │
- │ Select a repository before opening gra  │                                                              │
- │                                         │   Confirm                                        y / enter   │
- ╰───────────────────────────────────────  │   Cancel                                               esc   │
- n: add grant | e: edit selected grant |   ╰──────────────────────────────────────────────────────────────╯
+ Admin › Access                            │  Enable User                                                 │
+                                           │                                                              │
+ Esc: back | q: quit                       │  Enable alice?                                               │
+                                           │                                                              │
+                                           │   Confirm                                        y / enter   │
+                                           │   Cancel                                               esc   │
+                                           ╰──────────────────────────────────────────────────────────────╯
 
 
 
