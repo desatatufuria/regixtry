@@ -46,6 +46,18 @@ func (r *Router) handleAdmin(w stdhttp.ResponseWriter, req *stdhttp.Request) {
 		return
 	}
 
+	// The second and last delegate-eligible namespace: the member routes of a
+	// project. The service decides (global admin, or admin of exactly this
+	// project); every other projects/... route stays global-admin only below.
+	if project, username, ok := adminProjectMembersPath(subpath); ok {
+		principal, ok := r.requireAuthenticatedPrincipal(w, req)
+		if !ok {
+			return
+		}
+		r.handleAdminProjectMembers(w, req, *principal, project, username)
+		return
+	}
+
 	principal, ok := r.requireAdminPrincipal(w, req)
 	if !ok {
 		return
@@ -1126,6 +1138,13 @@ func (r *Router) handleAdminUserResource(w stdhttp.ResponseWriter, req *stdhttp.
 			return
 		}
 		r.handleAdminUserPasswordReset(w, req, principal, userID)
+	case strings.HasSuffix(resource, "/project-grants"):
+		userID, ok := adminNestedUserID(resource, "/project-grants")
+		if !ok {
+			writeAdminError(w, domainauth.NewNotFoundError("route", req.URL.Path), ports.Challenge{})
+			return
+		}
+		r.handleAdminUserProjectGrants(w, req, principal, userID)
 	case strings.HasSuffix(resource, "/grants"):
 		userID, ok := adminNestedUserID(resource, "/grants")
 		if !ok {

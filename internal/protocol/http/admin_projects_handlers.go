@@ -47,6 +47,26 @@ func WithProjects(projects ports.ProjectAdmin) RouterOption {
 	}
 }
 
+// adminProjectMembersPath recognizes the delegate-eligible member routes of
+// the already-trimmed admin subpath: projects/{project}/members and
+// projects/{project}/members/{user}. Every other projects/... path stays under
+// requireAdminPrincipal by construction, like the rest of /admin/v1.
+func adminProjectMembersPath(subpath string) (project string, username string, ok bool) {
+	rest, found := strings.CutPrefix(subpath, "projects/")
+	if !found {
+		return "", "", false
+	}
+	parts := strings.Split(rest, "/")
+	switch {
+	case len(parts) == 2 && parts[1] == "members":
+		return parts[0], "", parts[0] != ""
+	case len(parts) == 3 && parts[1] == "members":
+		return parts[0], parts[2], parts[0] != "" && parts[2] != ""
+	}
+
+	return "", "", false
+}
+
 // handleAdminProjects serves the global-administrator project routes:
 // GET and POST projects, GET and DELETE projects/{project}. The project name
 // is validated by the project service (ParseProjectName: lowercase, one
@@ -118,4 +138,84 @@ func (r *Router) handleAdminProjects(w stdhttp.ResponseWriter, req *stdhttp.Requ
 		w.Header().Set("Allow", strings.Join([]string{stdhttp.MethodGet, stdhttp.MethodDelete}, ", "))
 		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
 	}
+}
+
+// handleAdminProjectMembers serves the delegate-eligible member routes. The
+// caller is authenticated but not required to be a global admin: the auth
+// service decides (global admin, or a project admin of exactly this project)
+// and refuses before it says anything about the project's existence.
+func (r *Router) handleAdminProjectMembers(w stdhttp.ResponseWriter, req *stdhttp.Request, principal domainauth.Principal, project string, username string) {
+	if username == "" {
+		if req.Method != stdhttp.MethodGet {
+			w.Header().Set("Allow", stdhttp.MethodGet)
+			w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+			return
+		}
+
+		limit := adminAllGrantsDefaultLimit
+		query := req.URL.Query()
+		if query.Has("limit") {
+			var err error
+			limit, err = parseAdminLimit(query.Get("limit"))
+			if err != nil {
+				writeAdminError(w, err, ports.Challenge{})
+				return
+			}
+		}
+		page, err := r.admin.ListAdminProjectMembers(req.Context(), principal, project, limit, query.Get("after"))
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		if page.Members == nil {
+			page.Members = []ports.AdminProjectMember{}
+		}
+		writeJSON(w, stdhttp.StatusOK, page)
+		return
+	}
+
+	switch req.Method {
+	case stdhttp.MethodPut:
+		var input ports.AdminPutProjectGrantInput
+		if err := decodeAdminJSON(req, &input); err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		input.Project = project
+		input.Username = username
+
+		member, err := r.admin.PutAdminProjectGrant(req.Context(), principal, input)
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		writeJSON(w, stdhttp.StatusOK, member)
+	case stdhttp.MethodDelete:
+		if err := r.admin.DeleteAdminProjectGrant(req.Context(), principal, project, username); err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+		w.WriteHeader(stdhttp.StatusNoContent)
+	default:
+		w.Header().Set("Allow", strings.Join([]string{stdhttp.MethodPut, stdhttp.MethodDelete}, ", "))
+		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+	}
+}
+
+// handleAdminUserProjectGrants serves GET /admin/v1/users/{user}/project-grants
+// (global administrators only, like the repository grants of a user).
+func (r *Router) handleAdminUserProjectGrants(w stdhttp.ResponseWriter, req *stdhttp.Request, principal domainauth.Principal, userID string) {
+	if req.Method != stdhttp.MethodGet {
+		w.Header().Set("Allow", stdhttp.MethodGet)
+		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+		return
+	}
+
+	grants, err := r.admin.ListAdminUserProjectGrants(req.Context(), principal, userID)
+	if err != nil {
+		writeAdminError(w, err, ports.Challenge{})
+		return
+	}
+
+	writeJSON(w, stdhttp.StatusOK, grants)
 }
