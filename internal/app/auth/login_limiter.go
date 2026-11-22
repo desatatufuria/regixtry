@@ -27,6 +27,9 @@ type LoginPolicy struct {
 	MaxWait time.Duration
 	// Logger receives backoff and limiter notices; nil uses the default logger.
 	Logger *log.Logger
+	// Backoff configures the per-account failure backoff; nil keeps
+	// DefaultBackoffPolicy (log-only).
+	Backoff *BackoffPolicy
 	// Compare replaces the bcrypt comparison. It is a test seam: nil keeps
 	// bcrypt.
 	Compare func(hash, password []byte) error
@@ -92,6 +95,11 @@ func (s *Service) ConfigureLogin(policy LoginPolicy) {
 	if policy.Logger != nil {
 		s.logger = policy.Logger
 	}
+	backoff := DefaultBackoffPolicy()
+	if policy.Backoff != nil {
+		backoff = *policy.Backoff
+	}
+	s.backoff = newLoginBackoff(backoff)
 }
 
 // compareLimited runs the bcrypt comparison inside the concurrency limiter.

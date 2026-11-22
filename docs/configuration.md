@@ -37,6 +37,10 @@
 | `-max-open-uploads-per-repo` | `REGISTRY_MAX_OPEN_UPLOADS_PER_REPO` | `200` | Maximum concurrently open blob uploads per repository. Negative disables |
 | `-upload-ttl` | `REGISTRY_UPLOAD_TTL` | `24h` | Idle time after which an abandoned upload (row and temp file) is deleted by a background reaper. Negative disables the reaper |
 | `-login-max-concurrency` | `REGISTRY_LOGIN_MAX_CONCURRENCY` | `0` (automatic: `max(2, NumCPU/2)`) | Maximum simultaneous bcrypt password checks. A password login that cannot get a slot within 250 ms is refused with `429` `TOOMANYREQUESTS` and `Retry-After: 1` without verifying the password. A valid credential token skips bcrypt and the limiter |
+| `-login-backoff-mode` | `REGISTRY_LOGIN_BACKOFF_MODE` | `log` | Per-account login backoff: `log` only logs `login backoff would have blocked ...` and never refuses (the default in this version), `enforce` answers `429` + `Retry-After`, `off` disables. Anything else is a startup error |
+| `-login-backoff-threshold` | `REGISTRY_LOGIN_BACKOFF_THRESHOLD` | `5` | Consecutive failed password logins per account before backoff starts. `0` disables backoff in every mode |
+| `-login-backoff-base` | `REGISTRY_LOGIN_BACKOFF_BASE` | `2s` | First delay after the threshold; doubles on each further failure |
+| `-login-backoff-max` | `REGISTRY_LOGIN_BACKOFF_MAX` | `5m` | Cap of the delay. There is never a hard lockout. Must not be below the base |
 | `-trusted-proxies` | `REGISTRY_TRUSTED_PROXIES` | empty | Comma-separated IPs/CIDRs of reverse proxies whose `X-Forwarded-For` is trusted when logging the client IP of a failed login. Empty ignores `X-Forwarded-For`. An invalid entry is a startup error. See [operations.md](operations.md#reverse-proxy-and-client-ip) |
 
 For the five upload/manifest limits above (`-max-manifest-bytes`, `-max-upload-bytes`, `-max-open-uploads`, `-max-open-uploads-per-repo`, `-upload-ttl`): `0` = use the default, a negative value = disable the limit. A non-numeric environment value is a startup error naming the variable.

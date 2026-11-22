@@ -327,6 +327,13 @@ type serveConfig struct {
 	// LoginMaxConcurrency caps simultaneous bcrypt comparisons (0 = automatic,
 	// max(2, NumCPU/2)).
 	LoginMaxConcurrency int
+	// Per-account login backoff. Mode "log" (default) only logs what it would
+	// have blocked; "enforce" answers 429; "off" disables. Threshold 0 also
+	// disables.
+	LoginBackoffMode      string
+	LoginBackoffThreshold int
+	LoginBackoffBase      time.Duration
+	LoginBackoffMax       time.Duration
 
 	// Test seams; the zero values keep production behavior.
 	uploadReapInterval time.Duration
@@ -453,6 +460,18 @@ func parseServeConfig(args []string) (serveConfig, error) {
 	uploadTTLDefault, ttlErr := strictDurationEnv("REGISTRY_UPLOAD_TTL", appregixtry.DefaultUploadTTL)
 	trackEnv(ttlErr)
 	flags.DurationVar(&cfg.UploadTTL, "upload-ttl", uploadTTLDefault, "idle time after which an abandoned blob upload is deleted (0 = default, negative disables the reaper)")
+	loginBackoffMode := strings.TrimSpace(os.Getenv("REGISTRY_LOGIN_BACKOFF_MODE"))
+	if loginBackoffMode == "" {
+		loginBackoffMode = "log"
+	}
+	flags.StringVar(&cfg.LoginBackoffMode, "login-backoff-mode", loginBackoffMode, "per-account login backoff: log (default; only log what would be blocked), enforce (answer 429 + Retry-After), off")
+	flags.IntVar(&cfg.LoginBackoffThreshold, "login-backoff-threshold", int(limitInt64("REGISTRY_LOGIN_BACKOFF_THRESHOLD", 5)), "consecutive failed logins per account before backoff starts (0 disables)")
+	loginBackoffBase, baseErr := strictDurationEnv("REGISTRY_LOGIN_BACKOFF_BASE", 2*time.Second)
+	trackEnv(baseErr)
+	flags.DurationVar(&cfg.LoginBackoffBase, "login-backoff-base", loginBackoffBase, "first login backoff delay; doubles per further failure")
+	loginBackoffMax, maxErr := strictDurationEnv("REGISTRY_LOGIN_BACKOFF_MAX", 5*time.Minute)
+	trackEnv(maxErr)
+	flags.DurationVar(&cfg.LoginBackoffMax, "login-backoff-max", loginBackoffMax, "maximum login backoff delay")
 	flags.IntVar(&cfg.LoginMaxConcurrency, "login-max-concurrency", int(limitInt64("REGISTRY_LOGIN_MAX_CONCURRENCY", 0)), "maximum simultaneous bcrypt password checks; a login that cannot get a slot within 250ms gets 429 (0 = automatic, max(2, NumCPU/2))")
 
 	if limitEnvErr != nil {
@@ -466,6 +485,9 @@ func parseServeConfig(args []string) (serveConfig, error) {
 	if _, err := regixtryhttp.ParseTrustedProxies(cfg.TrustedProxies); err != nil {
 		return serveConfig{}, err
 	}
+	if err := validateLoginBackoff(cfg); err != nil {
+		return serveConfig{}, err
+	}
 
 	if cfg.DatabasePath == "" {
 		cfg.DatabasePath = filepath.Join(cfg.StorageRoot, "metadata.db")
@@ -475,6 +497,39 @@ func parseServeConfig(args []string) (serveConfig, error) {
 	}
 
 	return cfg, nil
+}
+
+func validateLoginBackoff(cfg serveConfig) error {
+	switch cfg.LoginBackoffMode {
+	case "log", "enforce", "off":
+	default:
+		return fmt.Errorf("invalid -login-backoff-mode %q: must be log, enforce or off", cfg.LoginBackoffMode)
+	}
+	if cfg.LoginBackoffThreshold < 0 {
+		return fmt.Errorf("invalid -login-backoff-threshold %d: must be 0 (disabled) or positive", cfg.LoginBackoffThreshold)
+	}
+	if cfg.LoginBackoffThreshold > 0 {
+		if cfg.LoginBackoffBase <= 0 {
+			return fmt.Errorf("invalid -login-backoff-base %s: must be positive", cfg.LoginBackoffBase)
+		}
+		if cfg.LoginBackoffMax < cfg.LoginBackoffBase {
+			return fmt.Errorf("invalid -login-backoff-max %s: must not be below -login-backoff-base %s", cfg.LoginBackoffMax, cfg.LoginBackoffBase)
+		}
+	}
+	return nil
+}
+
+// loginPolicyFromConfig maps the serve flags to the auth service login policy.
+func loginPolicyFromConfig(cfg serveConfig) appauth.LoginPolicy {
+	return appauth.LoginPolicy{
+		MaxConcurrency: cfg.LoginMaxConcurrency,
+		Backoff: &appauth.BackoffPolicy{
+			Mode:      appauth.BackoffMode(cfg.LoginBackoffMode),
+			Threshold: cfg.LoginBackoffThreshold,
+			Base:      cfg.LoginBackoffBase,
+			Max:       cfg.LoginBackoffMax,
+		},
+	}
 }
 
 func normalizeRuntimeConfig(cfg serveConfig) (runtimeConfig, error) {
@@ -2474,7 +2529,7 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 		}
 
 		concreteAuth := appauth.NewService(authStore)
-		concreteAuth.ConfigureLogin(appauth.LoginPolicy{MaxConcurrency: cfg.LoginMaxConcurrency})
+		concreteAuth.ConfigureLogin(loginPolicyFromConfig(cfg))
 		authService = concreteAuth
 		err = authService.EnsureBootstrapAdmin(context.Background())
 		if err != nil {

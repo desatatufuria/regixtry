@@ -84,6 +84,16 @@ These are recommendations, not guarantees enforced by the program.
 
 Every rejected credential (`/auth/token`, and bearer tokens on `/v2` and `/admin/v1`) writes one log line `login failed endpoint=<path> ip=<client> reason="<real reason>" account=<name>` and increments an in-process counter by reason. An unknown username is logged as `account_hash=<8 hex>`, never raw, to avoid log injection and unbounded cardinality; passwords and tokens are never logged. The client IP is the TCP peer unless `-trusted-proxies` names the proxies whose `X-Forwarded-For` to trust (see [operations.md](operations.md#reverse-proxy-and-client-ip)). Password checks are bcrypt (cost 10, about 85 ms): their concurrency is capped at `max(2, NumCPU/2)` (`-login-max-concurrency`) so a flood of bad passwords cannot starve `/v2`; excess logins wait at most 250 ms and then get `429` with `Retry-After: 1`. A valid credential token (64 hex) skips bcrypt, so CI robots keep working during a flood. There is no IP-based blocking in the registry: keep per-IP volume limits in the reverse proxy.
 
+### Per-account backoff
+
+Consecutive failed password logins are counted per normalized username (trimmed, case-insensitive; unknown usernames are tracked exactly like existing ones, so the behavior reveals nothing about which accounts exist). After 5 failures the next attempt must wait 2 s, then 4 s, 8 s, ... capped at 5 minutes (`-login-backoff-threshold`, `-login-backoff-base`, `-login-backoff-max`). A success, or 15 minutes without failures, resets the counter. State lives in memory (LRU of 10 000 accounts, per process, lost on restart; with several instances each counts separately).
+
+- **Mode `log` (default in this version):** nothing is refused; the registry logs `login backoff would have blocked account=<name> retry_after=...` (an unknown username appears as `account_hash=<8 hex>`). Use it to calibrate, then set `-login-backoff-mode=enforce`.
+- **Mode `enforce`:** while an account is in backoff the password is not verified and the answer is `429` with `Retry-After: <seconds>` and error code `TOOMANYREQUESTS`, identical for existing and unknown usernames. Outside a backoff a failure is the usual uniform `401`.
+- `-login-backoff-threshold=0` (or mode `off`) disables it.
+
+Trade-offs to know: an attacker who knows an account name can keep it in backoff, at most 5 minutes at a time (no hard lockout); during that window the account's password is refused with `429`, but credential tokens (robots, CI) are exempt, and `regixtry bootstrap-admin` on the host is the last resort. Only secrets that are not token-shaped count: a wrong 64-hex secret never counts against the account, so strangers cannot put a robot in backoff. Flooding with many random usernames can evict an account's counter from the LRU; the bcrypt concurrency cap and the proxy's per-IP limits remain the defense against volume.
+
 ## Risks and limits
 
 - `local-http` transmits credentials and tokens unencrypted if used outside a trusted network.
