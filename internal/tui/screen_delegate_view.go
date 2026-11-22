@@ -17,6 +17,9 @@ const (
 	// title, the blank after it, the table heading, the border (2), the
 	// header (1) and the status line.
 	delegateTableChromeRows = 7
+	// delegateTableBelowRows is the part of that chrome under the last table
+	// row: the bottom border and the status line.
+	delegateTableBelowRows = 2
 )
 
 func (s delegateScreen) View(theme adminTheme, env screenEnv) screenFrame {

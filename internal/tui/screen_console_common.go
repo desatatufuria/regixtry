@@ -250,7 +250,7 @@ type consoleTableSpec struct {
 // rows by width columns.
 func renderConsoleTable(theme adminTheme, width, height int, spec consoleTableSpec) []string {
 	inner := max(width-4, 1)
-	visible := max(height-4, 1)
+	visible := consoleTableVisible(height)
 	widths := consoleColumnWidths(spec.columns, inner)
 
 	head := make([]string, len(spec.columns))
@@ -334,12 +334,45 @@ func consoleStatusLine(theme adminTheme, confirm confirmPrompt, notice string, f
 	return ""
 }
 
+const (
+	// consoleHeadRows is the title line and the blank row under it, above the
+	// table card; consoleTableChromeRows the card's top border, header and rule
+	// above its first row. The card's bottom border is one more row.
+	consoleHeadRows        = 2
+	consoleTableChromeRows = 3
+	// consoleTableBelowRows is what the body keeps under the table card: the
+	// status line and the footnote.
+	consoleTableBelowRows = 2
+)
+
+// consoleTableHeight is the table card's height in a body rows tall.
+func consoleTableHeight(rows int) int { return max(rows-consoleHeadRows-consoleTableBelowRows, 5) }
+
+// consoleTableVisible is how many data rows a card height rows tall shows.
+func consoleTableVisible(height int) int { return max(height-consoleTableChromeRows-1, 1) }
+
+// consoleMouseRows is where a console table drew its data rows, in the
+// terminal's cells, for a terminal width by height and total rows.
+func consoleMouseRows(width, height, cursor, total int) mouseRows {
+	if total == 0 {
+		return mouseRows{}
+	}
+	bodyW, bodyH := consoleBodySize(width, height)
+	visible := consoleTableVisible(consoleTableHeight(bodyH))
+	start, end := grantWindow(boundedIndex(cursor, total), total, visible)
+	return mouseRows{
+		X:     consolePadX,
+		Y:     shellHeaderRows + shellContentPadTop + consoleHeadRows + consoleTableChromeRows,
+		Width: min(bodyW, consoleTableMaxWidth), Count: end - start, First: start,
+	}
+}
+
 // consoleBody lays out the common body: the title and summary line, a blank,
 // the table card, the status line and the footnote, in exactly rows rows.
 func consoleBody(theme adminTheme, width, rows int, title, summary string, table consoleTableSpec, status, footnote string) string {
 	tableW := min(width, consoleTableMaxWidth)
 	lines := []string{spread(theme.subheading.Render(title), theme.muted.Render(grantTruncate(summary, max(width-lipgloss.Width(title)-2, 1))), width), ""}
-	tableH := max(rows-len(lines)-2, 5)
+	tableH := consoleTableHeight(rows)
 	lines = append(lines, renderConsoleTable(theme, tableW, tableH, table)...)
 	lines = append(lines, status, theme.muted.Render(grantTruncate(footnote, width)))
 	return strings.Join(lines, "\n")

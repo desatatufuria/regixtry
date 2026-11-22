@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -63,6 +64,10 @@ var mouseCases = []mouseCase{
 	scanRunsMouseCase(),
 	secretFindingsMouseCase(),
 	scanHistoryMouseCase(),
+	delegateMouseCase(),
+	consoleRepositoriesMouseCase(),
+	consoleProjectsMouseCase(),
+	consoleTagsMouseCase(),
 	overridesMouseCase("image scanning repositories", screenSecurityTrivyRepos, true),
 	overridesMouseCase("secret scanning repositories", screenSecurityGitleaksRepos, false),
 	overridesMouseCase("signing repositories", screenSecuritySigningRepos, false),
@@ -351,4 +356,86 @@ func overridesMouseCase(name string, to screen, opensHistory bool) mouseCase {
 		c.opens = func(m Model) bool { return m.adminScreens[slotScanHistory] != nil }
 	}
 	return c
+}
+
+func delegateMouseCase() mouseCase {
+	return mouseCase{
+		name: "delegate grants",
+		build: func(t *testing.T, w, h int) Model {
+			return delegateModelAt(t, delegateClientFor(), w, h)
+		},
+		rows:      []string{"alice", "bob", "carol", "ci-publisher", "dave", "erin"},
+		listWidth: func(w int) int { return w - shellSidebarWidth - 2*shellContentPadX - delegatePanelWidth - 2 },
+		selected: func(m Model) string {
+			s := m.adminScreens[slotDelegate].(delegateScreen)
+			return s.rows[boundedIndex(s.cursor, len(s.rows))].Username
+		},
+		block: func(t *testing.T, m Model) Model { return testSendKey(t, m, testKeyRunes("n")) },
+	}
+}
+
+func consoleListWidth(w int) int { return consolePadX + min(w-2*consolePadX, consoleTableMaxWidth) }
+
+func consoleMouseModel(t *testing.T, id screen, built adminScreen, w, h int) Model {
+	t.Helper()
+	m := NewModel(newConsoleService(), WithAdminClient(&fakeAdminClient{}))
+	m.now = func() time.Time { return consoleTime }
+	slot, _ := slotFor(id)
+	m.adminScreens[slot] = built
+	m.screen = id
+	return resizeModel(t, m, w, h)
+}
+
+func consoleRepositoriesMouseCase() mouseCase {
+	return mouseCase{
+		name: "console repositories",
+		build: func(t *testing.T, w, h int) Model {
+			return consoleMouseModel(t, screenRepositories, reposScreen(t, consoleRepos("library/alpine", "team/api", "team/web", "ops/x", "flat")), w, h)
+		},
+		rows:      []string{"library/alpine", "team/api", "team/web", "ops/x", "flat"},
+		listWidth: consoleListWidth,
+		noSidebar: true,
+		selected: func(m Model) string {
+			repository, _ := m.adminScreens[slotConsoleRepositories].(consoleRepositoriesScreen).selectedRepository()
+			return repository.Name
+		},
+		opens: func(m Model) bool { return m.screen == screenTags },
+		block: func(t *testing.T, m Model) Model { return testSendKey(t, m, testKeyRunes("d")) },
+	}
+}
+
+func consoleProjectsMouseCase() mouseCase {
+	return mouseCase{
+		name: "console projects",
+		build: func(t *testing.T, w, h int) Model {
+			return consoleMouseModel(t, screenProjects, newConsoleProjectsScreen(consoleRepos("library/alpine", "team/api", "team/web", "ops/x", "flat")), w, h)
+		},
+		rows:      []string{"flat", "library", "ops", "team"},
+		listWidth: consoleListWidth,
+		noSidebar: true,
+		selected: func(m Model) string {
+			project, _ := m.adminScreens[slotConsoleProjects].(consoleProjectsScreen).selectedProject()
+			return project.Name
+		},
+		opens: func(m Model) bool { return m.screen == screenRepositories },
+		block: func(t *testing.T, m Model) Model { return testSendKey(t, m, testKeyRunes("d")) },
+	}
+}
+
+func consoleTagsMouseCase() mouseCase {
+	return mouseCase{
+		name: "console tags",
+		build: func(t *testing.T, w, h int) Model {
+			return consoleMouseModel(t, screenTags, tagsScreenWith(tagsFixture(), sortByNameAsc), w, h)
+		},
+		rows:      []string{"0.9", "1.0", "latest"},
+		listWidth: consoleListWidth,
+		noSidebar: true,
+		selected: func(m Model) string {
+			tag, _ := m.adminScreens[slotConsoleTags].(consoleTagsScreen).selectedTag()
+			return tag.Name
+		},
+		opens: func(m Model) bool { return m.screen != screenTags },
+		block: func(t *testing.T, m Model) Model { return testSendKey(t, m, testKeyRunes("d")) },
+	}
 }
