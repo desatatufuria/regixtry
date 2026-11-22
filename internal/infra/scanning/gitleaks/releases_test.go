@@ -17,7 +17,7 @@ func TestResolveReleaseRejectsAssetBelowMinimumVersion(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		_, _ = fmt.Fprint(w, `{"tag_name":"v8.18.0","assets":[{"name":"gitleaks_8.18.0_linux_x64.tar.gz","browser_download_url":"https://example.invalid/gitleaks_8.18.0_linux_x64.tar.gz"},{"name":"gitleaks_8.18.0_checksums.txt","browser_download_url":"https://example.invalid/gitleaks_8.18.0_checksums.txt"}]}`)
+		_, _ = fmt.Fprint(w, `{"tag_name":"v8.18.0","assets":[{"name":"gitleaks_8.18.0_linux_x64.tar.gz","browser_download_url":"https://github.com/o/r/releases/download/v1/gitleaks_8.18.0_linux_x64.tar.gz"},{"name":"gitleaks_8.18.0_checksums.txt","browser_download_url":"https://github.com/o/r/releases/download/v1/gitleaks_8.18.0_checksums.txt"}]}`)
 	}))
 	defer server.Close()
 
@@ -38,7 +38,7 @@ func TestResolveReleaseAcceptsAssetAtOrAboveMinimumVersion(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		_, _ = fmt.Fprint(w, `{"tag_name":"v8.27.0","assets":[{"name":"gitleaks_8.27.0_linux_x64.tar.gz","browser_download_url":"https://example.invalid/gitleaks_8.27.0_linux_x64.tar.gz"},{"name":"gitleaks_8.27.0_checksums.txt","browser_download_url":"https://example.invalid/gitleaks_8.27.0_checksums.txt"}]}`)
+		_, _ = fmt.Fprint(w, `{"tag_name":"v8.27.0","assets":[{"name":"gitleaks_8.27.0_linux_x64.tar.gz","browser_download_url":"https://github.com/o/r/releases/download/v1/gitleaks_8.27.0_linux_x64.tar.gz"},{"name":"gitleaks_8.27.0_checksums.txt","browser_download_url":"https://github.com/o/r/releases/download/v1/gitleaks_8.27.0_checksums.txt"}]}`)
 	}))
 	defer server.Close()
 

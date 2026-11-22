@@ -53,3 +53,27 @@ func TestResolveReleaseNeverContactsTheFeedForHostileVersions(t *testing.T) {
 		})
 	}
 }
+
+func TestDownloadsAreSizeLimitedAndFeedURLsMustBeTrusted(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(strings.Repeat("x", 2<<20))) // 2 MiB
+	}))
+	defer server.Close()
+	client := githubReleaseClient{baseAPI: server.URL, client: server.Client()}
+	if _, err := client.DownloadChecksums(context.Background(), server.URL); err == nil {
+		t.Fatal("DownloadChecksums() error = nil, want a size-limit error for a 2 MiB checksums body")
+	}
+	if body, err := client.DownloadReleaseAsset(context.Background(), server.URL); err != nil || len(body) != 2<<20 {
+		t.Fatalf("DownloadReleaseAsset() len=%d err=%v, want the archive within its larger limit", len(body), err)
+	}
+
+	feed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"tag_name":"v8.30.0","assets":[{"name":"ARCHIVE","browser_download_url":"https://evil.example/a"},{"name":"CHECKSUMS","browser_download_url":"https://github.com/o/r/c"}]}`))
+	}))
+	defer feed.Close()
+	if _, err := (githubReleaseClient{baseAPI: feed.URL, client: feed.Client()}).ResolveRelease(context.Background(), "8.30.0"); err == nil {
+		t.Fatal("ResolveRelease() error = nil, want an error (names do not match or URL untrusted)")
+	}
+}

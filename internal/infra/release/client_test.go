@@ -178,3 +178,61 @@ func TestRestrictRedirects(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckDownloadURL(t *testing.T) {
+	t.Parallel()
+	for raw, ok := range map[string]bool{
+		"https://github.com/o/r/releases/download/v1/a.tgz": true,
+		"https://objects.githubusercontent.com/x":           true,
+		"http://github.com/a":                               false,
+		"https://evil.example/a":                            false,
+		"https://github.com.evil.example/a":                 false,
+		"https://user:pw@github.com/a":                      false,
+		"https://evilgithubusercontent.com/a":               false,
+		"file:///etc/passwd":                                false,
+		"::bad":                                             false,
+	} {
+		if err := CheckDownloadURL(raw); (err == nil) != ok {
+			t.Errorf("CheckDownloadURL(%q) error = %v, want ok=%v", raw, err, ok)
+		}
+	}
+}
+
+func TestResolveAssetRejectsUntrustedDownloadURLsAndOversizedMetadata(t *testing.T) {
+	t.Parallel()
+
+	body := `{"tag_name":"v1.0.0","assets":[{"name":"x_linux.tar.gz","browser_download_url":"https://evil.example/a"},{"name":"x_checksums.txt","browser_download_url":"https://github.com/o/r/c"}]}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/big") {
+			_, _ = fmt.Fprint(w, `{"tag_name":"v1.0.0","pad":"`+strings.Repeat("a", int(MaxMetadataBytes))+`"}`)
+			return
+		}
+		_, _ = fmt.Fprint(w, body)
+	}))
+	defer server.Close()
+	query := AssetQuery{BaseAPI: server.URL, Tag: "v1.0.0", CheckURL: CheckDownloadURL,
+		MatchArchive:   func(n string) bool { return strings.HasSuffix(n, "_linux.tar.gz") },
+		MatchChecksums: func(n string) bool { return strings.HasSuffix(n, "_checksums.txt") }}
+	if _, err := ResolveAsset(context.Background(), server.Client(), query); err == nil {
+		t.Fatal("ResolveAsset() error = nil, want rejection of the untrusted archive URL")
+	}
+	query.CheckURL = nil
+	if _, err := ResolveAsset(context.Background(), server.Client(), query); err != nil {
+		t.Fatalf("without CheckURL (self-update) ResolveAsset() error = %v", err)
+	}
+	query.BaseAPI = server.URL + "/x"
+	query.Tag = "big"
+	if _, err := ResolveAsset(context.Background(), server.Client(), query); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("oversized metadata error = %v, want a size-limit error", err)
+	}
+}
+
+func TestReadLimited(t *testing.T) {
+	t.Parallel()
+	if b, err := ReadLimited(strings.NewReader("abcd"), 4); err != nil || string(b) != "abcd" {
+		t.Fatalf("at limit: %q %v", b, err)
+	}
+	if _, err := ReadLimited(strings.NewReader("abcde"), 4); err == nil {
+		t.Fatal("over limit: error = nil")
+	}
+}

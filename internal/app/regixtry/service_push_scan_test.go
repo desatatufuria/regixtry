@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	domainauth "regixtry/internal/domain/auth"
 	"regixtry/internal/ports"
 )
 
@@ -17,7 +18,15 @@ import (
 // per-digest dedup).
 func pushDistinctManifests(t *testing.T, service *Service, repository string, n int, prefix string) {
 	t.Helper()
+	pushDistinctManifestsAs(t, service, repository, n, prefix, "")
+}
+
+func pushDistinctManifestsAs(t *testing.T, service *Service, repository string, n int, prefix string, userID string) {
+	t.Helper()
 	ctx := context.Background()
+	if userID != "" {
+		ctx = ports.ContextWithPrincipal(ctx, domainauth.Principal{UserID: userID})
+	}
 	upload, err := service.BeginUpload(ctx, repository)
 	if err != nil {
 		t.Fatalf("BeginUpload() error = %v", err)
@@ -282,5 +291,91 @@ func TestSkippedPushScanForUnscannedDigestStaysVisibleButNeverWinsLatest(t *test
 	latest, err := service.metadata.GetLatestScanRunByDigest(ctx, "tenant-a", "library/alpine", digest)
 	if err != nil || latest.ID != "real" {
 		t.Fatalf("latest = %#v err=%v, want the real run", latest, err)
+	}
+}
+
+// Not parallel: it shrinks the package-level scanRunMargin.
+func TestHungScanRunnerFreesItsSlotAfterTheScanTimeout(t *testing.T) {
+	old := scanRunMargin
+	scanRunMargin = 20 * time.Millisecond
+	defer func() { scanRunMargin = old }()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+	if _, err := service.EnsureScanSettings(context.Background(), ports.ScanSettings{Enabled: true, Timeout: 50 * time.Millisecond, Interval: time.Hour, RegistryReachableURL: "https://registry.internal", MaxConcurrency: 1}); err != nil {
+		t.Fatalf("EnsureScanSettings() error = %v", err)
+	}
+	seedManagedRuntimeState(t, service, "0.57.1")
+	service.SetScanRunner(&fakeScanRunner{release: make(chan struct{})}) // never released; honors ctx
+
+	service.startPushScan("tenant-a", "library/alpine", "latest", "sha256:"+strings.Repeat("1", 64), "p")
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		service.pushScans.mu.Lock()
+		total := service.pushScans.total
+		service.pushScans.mu.Unlock()
+		if total == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("hung runner still holds its push-scan slot after the scan timeout")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	runs, _ := service.metadata.ListScanRuns(context.Background(), "tenant-a", "library/alpine", 10)
+	if len(runs) != 1 || runs[0].Status != ports.ScanRunStatusFailed {
+		t.Fatalf("runs = %#v, want one failed (timed out) run", runs)
+	}
+}
+
+func TestQueuedPushScansTimeOutWaitingForASlot(t *testing.T) {
+	old := scanRunMargin
+	scanRunMargin = 20 * time.Millisecond
+	defer func() { scanRunMargin = old }()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+	if _, err := service.EnsureScanSettings(context.Background(), ports.ScanSettings{Enabled: true, Timeout: 50 * time.Millisecond, Interval: time.Hour, RegistryReachableURL: "https://registry.internal", MaxConcurrency: 1}); err != nil {
+		t.Fatalf("EnsureScanSettings() error = %v", err)
+	}
+	seedManagedRuntimeState(t, service, "0.57.1")
+	service.SetScanRunner(&blockingScanRunner{release: make(chan struct{})})
+	for i := 0; i < 3; i++ {
+		service.startPushScan("tenant-a", "library/alpine", "latest", "sha256:"+strings.Repeat(string(rune('a'+i)), 64), "p")
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		service.pushScans.mu.Lock()
+		total := service.pushScans.total
+		service.pushScans.mu.Unlock()
+		if total == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("queued scans never released their slots")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestOnePusherWithManyRepositoriesCannotFillTheGlobalCap(t *testing.T) {
+	service, _, cleanup := newPushScanService(t)
+	defer cleanup()
+	service.SetPushScanLimits(40, 8, 12)
+
+	for r := 0; r < 10; r++ {
+		pushDistinctManifestsAs(t, service, fmt.Sprintf("attacker/repo%d", r), 8, "x", "attacker")
+	}
+	time.Sleep(time.Second)
+	active, _ := countActivePushScans(t, service)
+	if active > 12 {
+		t.Fatalf("attacker holds %d slots across 10 repositories, want <= 12 (per-pusher cap)", active)
+	}
+
+	pushDistinctManifestsAs(t, service, "victim/app", 1, "v", "victim")
+	time.Sleep(300 * time.Millisecond)
+	runs, _ := service.metadata.ListScanRuns(context.Background(), "tenant-a", "victim/app", 10)
+	if len(runs) != 1 || runs[0].Status == ports.ScanRunStatusSkipped {
+		t.Fatalf("victim runs = %#v, want a real queued/running scan despite the attacker flood", runs)
 	}
 }
