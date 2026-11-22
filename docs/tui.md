@@ -64,6 +64,7 @@ Moving between sidebar items:
 | `Tab` / `Shift+Tab` | next / previous field, pane or tab |
 | `l` | log out from a list screen with no dialog or input open |
 | `F2` | switch the mouse on or off |
+| `c` / `v` | on a [one-time secret](#one-time-secrets) screen: `c` copies the whole secret to the clipboard, `v` shows it alone on its own row |
 
 - `q` per screen: Overview, Users, profile, Robots, Tokens, Repository access, Image/Secret scanning and Signing policy (and their repository lists), Scan runs, Secret findings, scan history, Update channel and the delegate screen quit on `q`, but not while a modal, editor, confirm, search or form is open. The login, New user, Reset password, New robot and **Grant access** screens never quit on `q`: it is typed into the focused field (Grant access filters hold focus from the start, and its footer shows no `q quit`).
 - Text inputs (login, search and filter boxes, create forms, grant filters, the signing key and identity fields) take every letter, including `j`, `k` and `q`. Use the arrows and `Tab` to leave the field; `Backspace` deletes.
@@ -173,6 +174,15 @@ Each panel loads on its own; one failing read shows an error inside its panel an
 | `Esc` | back to the profile or the robot list |
 
 After creating a token or robot the **secret is shown once**, with its accessor and expiry; it cannot be displayed again. `Enter` or `Esc` closes it. `Esc` leaves the screen even while the create call is in flight; the result, secret included, is still shown when it arrives.
+
+#### One-time secrets
+
+Selecting the secret with the mouse across the shell also copies the sidebar and borders drawn on the same rows, so the secret screens offer two cleaner ways. The footer shows `c copy`, `v show alone`, `enter done`.
+
+- `c` copies the whole secret to the system clipboard with an OSC 52 command and confirms in one line (`Copied. If nothing pastes, your terminal may not support OSC 52: press v to select it by hand.`). The secret is held only by that command until it runs; nothing about it is kept once you press `Enter` or `Esc`. Only keys copy: the mouse never does.
+- `v` toggles a bare screen: a title row, the secret alone on one row starting at column 0 (split into rows of exactly the terminal width only when the terminal is narrower than the secret, with a note that `c` copies it whole), the accessor, expiry and name each on their own row below, and one hint row at the bottom. In most terminals a triple-click on the secret row should select just the secret (turn the mouse off with `F2` first so the terminal's own selection works; not verified in a real terminal). The hint row at the bottom also carries the `F2` mouse indicator. `c`, `Enter` and `Esc` work there as on the normal screen.
+
+OSC 52 needs terminal support, and the terminal gives no answer when it ignores the request. The terminals commonly reported to support it are iTerm2, kitty, WezTerm, Windows Terminal, foot and some versions of Alacritty (according to their documentation; not verified here). Some terminals ask for permission or disable it by default. Under tmux, `set -g set-clipboard on` in `~/.tmux.conf` should be needed for the request to pass through; over SSH the sequence should travel through the connection to your local terminal, if that terminal supports it. The `Copied.` notice only says the request was sent: it cannot confirm that the terminal honored it. When nothing pastes, use `v`.
 
 ### Token lifetime
 

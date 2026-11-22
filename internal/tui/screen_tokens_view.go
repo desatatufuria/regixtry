@@ -24,7 +24,18 @@ func (s tokensScreen) View(theme adminTheme, env screenEnv) screenFrame {
 	bodyW, bodyH := shellContentSize(width, height)
 	now := env.now()
 
+	if s.done && s.reveal {
+		return screenFrame{
+			Context: strings.Join(shellCrumb(s.breadcrumbNames()...), " › "),
+			Full:    true,
+			Body:    renderReveal(theme, s.revealSpec(width, height)),
+		}
+	}
+
 	leftW, panelW := tokensWidths(bodyW)
+	if s.done {
+		leftW, panelW = tokensDoneWidths(bodyW, len(s.created.secret))
+	}
 
 	left := strings.Join(s.renderList(theme, leftW, bodyH, now), "\n")
 	panel := s.renderPanel(theme, env, panelW, bodyH)
@@ -57,6 +68,36 @@ func tokensWidths(bodyW int) (leftW, panelW int) {
 		panelW = max(bodyW*2/5, 12)
 	}
 	return max(bodyW-panelW-tokensPanelGap, 12), panelW
+}
+
+// tokensDoneWidths is tokensWidths for the secret state: the panel is widened
+// so the secret sits on one row when the token list can still keep a usable
+// width beside it. A secret that cannot fit wraps, whole, as before.
+func tokensDoneWidths(bodyW, secretLen int) (leftW, panelW int) {
+	leftW, panelW = tokensWidths(bodyW)
+	if wide := secretLen + 4; wide > panelW && bodyW-wide-tokensPanelGap >= secretCardMinList {
+		return bodyW - wide - tokensPanelGap, wide
+	}
+	return leftW, panelW
+}
+
+// breadcrumbNames is the breadcrumb without the sidebar item.
+func (s tokensScreen) breadcrumbNames() []string {
+	crumbs, _ := s.breadcrumb()
+	return crumbs
+}
+
+// revealSpec is the bare screen of the one-time secret.
+func (s tokensScreen) revealSpec(width, height int) revealSpec {
+	created := s.created
+	facts := []string{"Name  " + firstText(created.name, "(unnamed)"), "Accessor  " + created.accessor}
+	if !created.expires.IsZero() {
+		facts = append(facts, "Expires  "+exactExpiry(created.expires))
+	}
+	return revealSpec{
+		Title: "Token secret, shown once", Secret: created.secret, Facts: facts,
+		Copied: s.copied, Width: width, Height: height,
+	}
 }
 
 // tokensHeadRows is the title, the explanation and a blank above the cards.
@@ -295,6 +336,11 @@ func (s tokensScreen) doneBlocks(theme adminTheme, inner int) [][]string {
 	}
 	for _, line := range grantWrap(oneTimeSecretWarning, inner) {
 		secret = append(secret, theme.warning.Render(line))
+	}
+	if s.copied {
+		for _, line := range grantWrap(copiedNotice, inner) {
+			secret = append(secret, theme.success.Render(line))
+		}
 	}
 	var details []string
 	if !created.expires.IsZero() {

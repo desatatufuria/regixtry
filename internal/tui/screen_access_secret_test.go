@@ -204,7 +204,7 @@ func TestSecretLifecycleFuzz(t *testing.T) {
 	t.Parallel()
 	starters := []tea.Msg{openCreateRobotMsg{}, openRobotsMsg{}, openTokensMsg{principalID: "r-ci", principalName: "ci-publisher", robot: true}, openTokensMsg{principalID: "u-1", principalName: "alice"}}
 	keys := []keyMsg{testKeyEnter(), testKeyEnter(), testKeyEsc(), testKeyEsc(), testKeyTab(), testKeyDown(), testKeyUp(), testKeyLeft(), testKeyRight(),
-		testKeyRunes("n"), testKeyRunes("t"), testKeyRunes("x"), testKeyRunes("y"), testKeyRunes("d"), testKeyRunes("r"), testKeyRunes("a"), testKeyRunes("/")}
+		testKeyRunes("n"), testKeyRunes("t"), testKeyRunes("x"), testKeyRunes("y"), testKeyRunes("d"), testKeyRunes("r"), testKeyRunes("a"), testKeyRunes("/"), testKeyRunes("c"), testKeyRunes("v")}
 
 	for seed := range 60 {
 		rng := rand.New(rand.NewSource(int64(seed)))

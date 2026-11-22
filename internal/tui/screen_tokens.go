@@ -45,6 +45,9 @@ type tokensScreen struct {
 
 	done    bool
 	created createdToken
+	// reveal shows the bare screen with the secret alone on its row; copied
+	// says the c key was pressed (the note it shows holds no secret).
+	reveal, copied bool
 
 	confirm    confirmPrompt
 	notice     string
@@ -83,7 +86,7 @@ func (s tokensScreen) generation() uint64 { return s.gen }
 func (s tokensScreen) Keys() screenKeys {
 	switch {
 	case s.done:
-		return tokensDoneKeys
+		return secretFooterKeys
 	case s.focus != tokensFocusList:
 		return tokensPanelKeys
 	}
@@ -257,11 +260,18 @@ func (s tokensScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd
 		return s, cmd, true
 	case s.done:
 		// Enter and Esc both mean Done: the secret is dropped, the list stays.
-		if isEnterKey(msg) || isEscKey(msg) {
+		switch {
+		case isEnterKey(msg) || isEscKey(msg):
 			s.done, s.created, s.focus = false, createdToken{}, tokensFocusList
+			s.reveal, s.copied = false, false
 			s.name, s.lifetime = "", tokenLifetime{}
 			next, cmd := s.startLoad(env)
 			return next, cmd, true
+		case isCommandRune(msg, 'c'):
+			s.copied = true
+			return s, copySecretCmd(s.created.secret), true
+		case isCommandRune(msg, 'v'):
+			s.reveal = !s.reveal
 		}
 		return s, nil, true
 	case s.creating:
@@ -410,10 +420,6 @@ var tokensPanelKeys = screenKeys{short: []key.Binding{
 	key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←→", "lifetime")),
 	key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "create token")),
 	key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
-}}
-
-var tokensDoneKeys = screenKeys{short: []key.Binding{
-	key.NewBinding(key.WithKeys("enter", "esc"), key.WithHelp("enter", "done")),
 }}
 
 // createdTokenFrom is what the secret state shows for a created token.
