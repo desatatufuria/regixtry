@@ -126,10 +126,12 @@ func TestLoginLimiterHonoursContextCancellation(t *testing.T) {
 	store, _ := loginFixtureStore(t)
 	service := NewService(store)
 	hold := make(chan struct{})
-	service.comparePassword = func(h, p []byte) error { <-hold; return errors.New("mismatch") }
+	holding := make(chan struct{})
+	var once sync.Once
+	service.comparePassword = func(h, p []byte) error { once.Do(func() { close(holding) }); <-hold; return errors.New("mismatch") }
 	service.ConfigureLogin(LoginPolicy{MaxConcurrency: 1, MaxWait: time.Minute})
 	go func() { _, _ = service.LoginWithPassword(context.Background(), "alice", "wrong-password", nil) }()
-	time.Sleep(50 * time.Millisecond)
+	<-holding // the only slot is now taken
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
