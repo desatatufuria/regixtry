@@ -11,23 +11,10 @@ import (
 
 const (
 	adminTableMetaScanRunID = "__scan_run_id"
-	adminTableMetaFindingID = "__finding_id"
 
 	adminTableColumnRowTitle  = "row_title"
 	adminTableColumnRowStatus = "row_status"
 	adminTableColumnRowDetail = "row_detail"
-
-	adminTableColumnFindingSeverity  = "finding_severity"
-	adminTableColumnFindingID        = "finding_id"
-	adminTableColumnFindingPackage   = "finding_package"
-	adminTableColumnFindingInstalled = "finding_installed"
-	adminTableColumnFindingFixed     = "finding_fixed"
-	adminTableColumnFindingFixable   = "finding_fixable"
-
-	adminTableColumnSecretFindingRule        = "secret_finding_rule"
-	adminTableColumnSecretFindingLocation    = "secret_finding_location"
-	adminTableColumnSecretFindingDescription = "secret_finding_description"
-	adminTableColumnSecretFindingTags        = "secret_finding_tags"
 
 	adminTableColumnScanSummaryRepository   = "scan_summary_repository"
 	adminTableColumnScanSummaryReference    = "scan_summary_reference"
@@ -57,26 +44,6 @@ const (
 // widest of these tables (Repository Alerts) so the outer bordered section
 // never wraps a table's own rendered lines.
 const (
-	adminFindingsColumnSeverityWidth  = 10
-	adminFindingsColumnFindingWidth   = 22
-	adminFindingsColumnPackageWidth   = 18
-	adminFindingsColumnInstalledWidth = 12
-	adminFindingsColumnFixedWidth     = 12
-	adminFindingsColumnFixableWidth   = 8
-
-	// adminSecretColumnRuleWidth/LocationWidth were narrowed from their
-	// original 24/46 (measured against a 2-column table) to make room for
-	// the added Description/Tags columns below, re-measured against
-	// TestBuildAdminSecretFindingsTableColumnsFitWithoutOverflow's realistic
-	// values rather than the pathological long strings a rule ID or path can
-	// theoretically reach -- bubble-table truncates an overlong cell value
-	// rather than corrupting the table, so this is a readability budget, not
-	// a hard byte limit.
-	adminSecretColumnRuleWidth        = 20
-	adminSecretColumnLocationWidth    = 26
-	adminSecretColumnDescriptionWidth = 30
-	adminSecretColumnTagsWidth        = 18
-
 	adminScanSummaryColumnRepositoryWidth   = 26
 	adminScanSummaryColumnReferenceWidth    = 16
 	adminScanSummaryColumnStatusWidth       = 12
@@ -150,58 +117,6 @@ func buildAdminFeatureRowsTable(section ports.FeatureSection, pageSize int) bubb
 		}))
 	}
 	return newAdminBubbleTable(columns, rows, 0, pageSize)
-}
-
-func buildAdminFindingsTable(findings []ports.ScanRunFinding, highlighted int, pageSize int) bubbletable.Model {
-	columns := []bubbletable.Column{
-		bubbletable.NewColumn(adminTableColumnFindingSeverity, "Severity", adminFindingsColumnSeverityWidth),
-		bubbletable.NewColumn(adminTableColumnFindingID, "Finding", adminFindingsColumnFindingWidth),
-		bubbletable.NewColumn(adminTableColumnFindingPackage, "Package", adminFindingsColumnPackageWidth),
-		bubbletable.NewColumn(adminTableColumnFindingInstalled, "Installed", adminFindingsColumnInstalledWidth),
-		bubbletable.NewColumn(adminTableColumnFindingFixed, "Fixed", adminFindingsColumnFixedWidth),
-		bubbletable.NewColumn(adminTableColumnFindingFixable, "Fixable", adminFindingsColumnFixableWidth),
-	}
-	rows := make([]bubbletable.Row, 0, len(findings))
-	for _, finding := range findings {
-		rows = append(rows, bubbletable.NewRow(bubbletable.RowData{
-			adminTableColumnFindingSeverity:  severityStyledCell(finding.Severity),
-			adminTableColumnFindingID:        adminFirstNonEmpty(finding.VulnerabilityID, "unknown"),
-			adminTableColumnFindingPackage:   adminFirstNonEmpty(finding.PackageName, "unknown"),
-			adminTableColumnFindingInstalled: adminFirstNonEmpty(finding.InstalledVersion, "unknown"),
-			adminTableColumnFindingFixed:     adminFirstNonEmpty(finding.FixedVersion, "n/a"),
-			adminTableColumnFindingFixable:   fmt.Sprintf("%t", finding.Fixable),
-			adminTableMetaFindingID:          adminFirstNonEmpty(finding.VulnerabilityID, finding.PackageName),
-		}))
-	}
-	return newAdminBubbleTable(columns, rows, highlighted, pageSize)
-}
-
-// buildAdminSecretFindingsTable renders redacted secret-scan findings: rule
-// ID, location, description, and tags (spec.md "Redacted Secret Findings
-// Model", "Informational Findings Only"). Deliberately no
-// severity/status/fixable column — secret findings carry no severity or
-// gating dimension in this change, unlike buildAdminFindingsTable's
-// vulnerability rows. Description renders as-is (may be blank); Tags join
-// with ", " and render as an empty cell when nil/empty rather than a
-// placeholder like Rule/Location's "unknown" fallback — Description/Tags are
-// optional supplementary metadata, not the row's identity.
-func buildAdminSecretFindingsTable(findings []ports.SecretFinding, highlighted int, pageSize int) bubbletable.Model {
-	columns := []bubbletable.Column{
-		bubbletable.NewColumn(adminTableColumnSecretFindingRule, "Rule", adminSecretColumnRuleWidth),
-		bubbletable.NewColumn(adminTableColumnSecretFindingLocation, "Location", adminSecretColumnLocationWidth),
-		bubbletable.NewColumn(adminTableColumnSecretFindingDescription, "Description", adminSecretColumnDescriptionWidth),
-		bubbletable.NewColumn(adminTableColumnSecretFindingTags, "Tags", adminSecretColumnTagsWidth),
-	}
-	rows := make([]bubbletable.Row, 0, len(findings))
-	for _, finding := range findings {
-		rows = append(rows, bubbletable.NewRow(bubbletable.RowData{
-			adminTableColumnSecretFindingRule:        adminFirstNonEmpty(finding.RuleID, "unknown"),
-			adminTableColumnSecretFindingLocation:    secretFindingLocation(finding),
-			adminTableColumnSecretFindingDescription: strings.TrimSpace(finding.Description),
-			adminTableColumnSecretFindingTags:        strings.Join(finding.Tags, ", "),
-		}))
-	}
-	return newAdminBubbleTable(columns, rows, highlighted, pageSize)
 }
 
 // buildAdminScanSummaryTable renders one row per repository
@@ -361,40 +276,6 @@ func formatScanSummaryLastExecuted(summary repositorySummary) string {
 		return formatted + " (in progress)"
 	}
 	return formatted
-}
-
-// adminScanHistoryModalChromeRows is the scan history modal's own fixed
-// non-table content once open: title, tab bar, the "Execution N/M — date"
-// history footer, and the help line — each guarded to exactly one row by
-// TestRenderAdminScanHistoryModalChromeLinesAreSingleLine.
-//
-// adminScanHistoryModalRows (admin_scan_history.go) already reserves the
-// modal's own border+padding exactly once via `l.Height - sectionChromeRows`,
-// so the rows it returns are already a border-free content budget —
-// re-subtracting sectionChromeRows here would charge the same border twice
-// and starve the table for no reason.
-const adminScanHistoryModalChromeRows = 4
-
-// adminScanHistoryModalMinTableBudget is the smallest number of rows a
-// bordered table needs at all: its own fixed chrome (tableChromeRows) plus
-// the smallest usable pageSize (minTableRows). Below this, the modal
-// substitutes a single-line message instead of ever slicing a bordered
-// table (design.md "the table is replaced by a single-line substitute,
-// never sliced").
-const adminScanHistoryModalMinTableBudget = tableChromeRows + minTableRows
-
-// adminScanHistoryModalTablePageSize computes the scan history modal's
-// active-tab table pageSize from the modal's own content budget (modalRows,
-// from adminScanHistoryModalRows), the modal's fixed chrome
-// (adminScanHistoryModalChromeRows), and the measured height of any
-// variable header content rendered above the table (an error or loading
-// message) — measured, not guessed. Floored at minTableRows.
-func adminScanHistoryModalTablePageSize(modalRows, measuredHeaderHeight int) int {
-	available := modalRows - adminScanHistoryModalChromeRows - measuredHeaderHeight - tableChromeRows
-	if available < minTableRows {
-		available = minTableRows
-	}
-	return available
 }
 
 func secretFindingLocation(finding ports.SecretFinding) string {

@@ -481,23 +481,6 @@ func TestAnnotateDisabledSummariesMarksOnlyDisabledOverrideRepositories(t *testi
 // "" whenever nothing usable resolves -- including when the resolved value
 // isn't a valid http(s) URL (isHTTPURL), the same defense-in-depth guard
 // openURLInBrowser applies.
-//
-// buildAdminFindingsTable does NOT call this helper to OSC8-wrap the
-// Finding cell -- that was attempted and reverted. evertras/bubble-table
-// v0.19.2 (this repo's pinned version) truncates cell text through
-// muesli/reflow's ansi.PrintableRuneWidth/truncate.StringWithTail, which is
-// unaware of OSC8 hyperlink escapes: it misreads any letter inside the
-// wrapped URL as an ANSI-sequence terminator (its terminator heuristic
-// only knows about single-byte CSI finals, not OSC's ST/BEL), so it starts
-// counting the rest of the URL as literal printable width and truncates the
-// cell mid-escape -- verified by rendering buildAdminFindingsTable with a
-// termenv.Hyperlink-wrapped cell and inspecting the real output, which came
-// back with the Finding column blank/mangled. lipgloss.Width itself has no
-// such bug (confirmed separately) -- only this table library's own,
-// separate width scanner does. Fixing it upstream requires
-// evertras/bubble-table >= v0.20.0, which switched to the OSC8-aware
-// charmbracelet/x/ansi -- but that version also moved to
-// charm.land/bubbletea/v2, a breaking migration out of scope here.
 func TestAdminFindingLinkResolution(t *testing.T) {
 	t.Parallel()
 
@@ -519,113 +502,6 @@ func TestAdminFindingLinkResolution(t *testing.T) {
 				t.Fatalf("adminFindingLink(%+v) = %q, want %q", tc.finding, got, tc.want)
 			}
 		})
-	}
-}
-
-// TestAdminScanHistoryModalTablePageSizeFloorsAtMinTableRows is the Phase 2
-// task 2.2 RED test: the modal's active-tab table page size is derived from
-// the nested modalRows budget minus fixed/measured chrome, floored at
-// minTableRows rather than going to zero or negative when the budget is
-// tight.
-func TestAdminScanHistoryModalTablePageSizeFloorsAtMinTableRows(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name                 string
-		modalRows            int
-		measuredHeaderHeight int
-		want                 int
-	}{
-		{name: "generous budget computes available rows", modalRows: 20, measuredHeaderHeight: 0, want: 20 - adminScanHistoryModalChromeRows - tableChromeRows},
-		{name: "tight budget floors at minTableRows", modalRows: adminScanHistoryModalChromeRows + tableChromeRows, measuredHeaderHeight: 0, want: minTableRows},
-		// adminScanHistoryModalMinRows (Phase 11, tui-menu-architecture) is
-		// itself derived to guarantee a viable table even with a 1-row
-		// Loading/Error header present (see its own doc comment) -- this
-		// case is the regression guard for that exact derivation.
-		{name: "adminScanHistoryModalMinRows floor still clears adminScanHistoryModalMinTableBudget with a header row", modalRows: adminScanHistoryModalMinRows, measuredHeaderHeight: 1, want: adminScanHistoryModalMinRows - adminScanHistoryModalChromeRows - 1 - tableChromeRows},
-		{name: "measured header height reduces the remaining table budget", modalRows: 20, measuredHeaderHeight: 3, want: 20 - adminScanHistoryModalChromeRows - 3 - tableChromeRows},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			got := adminScanHistoryModalTablePageSize(tc.modalRows, tc.measuredHeaderHeight)
-			if got != tc.want {
-				t.Fatalf("adminScanHistoryModalTablePageSize(%d, %d) = %d, want %d", tc.modalRows, tc.measuredHeaderHeight, got, tc.want)
-			}
-			if got < minTableRows {
-				t.Fatalf("adminScanHistoryModalTablePageSize(%d, %d) = %d, want >= minTableRows(%d)", tc.modalRows, tc.measuredHeaderHeight, got, minTableRows)
-			}
-		})
-	}
-}
-
-// TestBuildAdminSecretFindingsTableRendersDescriptionAndTagsColumns is the
-// RED test for the Leaks tab's missing Description/Tags columns
-// (ports.SecretFinding already carries both fields, unused until now). Tags
-// join with ", "; a finding with no tags renders an empty cell rather than a
-// placeholder, since Description/Tags are optional supplementary metadata,
-// unlike Rule/Location's "unknown" fallback which guards the row's identity
-// columns.
-func TestBuildAdminSecretFindingsTableRendersDescriptionAndTagsColumns(t *testing.T) {
-	t.Parallel()
-
-	findings := []ports.SecretFinding{
-		{RuleID: "aws-access-token", Path: "config.json", StartLine: 4, Description: "AWS access token detected", Tags: []string{"aws", "credentials"}},
-		{RuleID: "generic-api-key", Path: "app.env", StartLine: 1, Description: "", Tags: nil},
-	}
-	table := buildAdminSecretFindingsTable(findings, 0, 5)
-
-	if got, want := table.TotalRows(), 2; got != want {
-		t.Fatalf("TotalRows() = %d, want %d", got, want)
-	}
-
-	rows := table.GetVisibleRows()
-	first := rows[0].Data
-	if got, want := first[adminTableColumnSecretFindingDescription], "AWS access token detected"; got != want {
-		t.Fatalf("Description cell = %q, want %q", got, want)
-	}
-	if got, want := first[adminTableColumnSecretFindingTags], "aws, credentials"; got != want {
-		t.Fatalf("Tags cell = %q, want %q", got, want)
-	}
-
-	second := rows[1].Data
-	if got, want := second[adminTableColumnSecretFindingDescription], ""; got != want {
-		t.Fatalf("Description cell for empty description = %q, want empty %q", got, want)
-	}
-	if got, want := second[adminTableColumnSecretFindingTags], ""; got != want {
-		t.Fatalf("Tags cell for nil tags = %q, want empty %q (no placeholder for optional metadata)", got, want)
-	}
-
-	view := table.View()
-	for _, want := range []string{"AWS access token detected", "aws, credentials", "Description", "Tags"} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("view = %q, want it to contain %q", view, want)
-		}
-	}
-}
-
-// TestBuildAdminSecretFindingsTableColumnsFitWithoutOverflow verifies the
-// widened 4-column secret findings table (Rule, Location, Description, Tags)
-// still fits within the modal's own auto-sized section width at realistic
-// terminal sizes — measured, not guessed, the same discipline as
-// TestScanSummaryLastExecutedColumnFitsLongestFormattedValueWithoutTruncation.
-// Realistic (not pathological) values must render without any rendered line
-// exceeding the declared column-derived table width.
-func TestBuildAdminSecretFindingsTableColumnsFitWithoutOverflow(t *testing.T) {
-	t.Parallel()
-
-	findings := []ports.SecretFinding{
-		{RuleID: "aws-access-token", Path: "some/nested/path/config.json", StartLine: 4, EndLine: 8, Description: "AWS access token detected in configuration file", Tags: []string{"aws", "credentials", "critical"}},
-	}
-	table := buildAdminSecretFindingsTable(findings, 0, 5)
-	view := table.View()
-
-	wantWidth := adminSecretColumnRuleWidth + adminSecretColumnLocationWidth + adminSecretColumnDescriptionWidth + adminSecretColumnTagsWidth + 5 // +5: 4 columns' own border/separator characters (cols+1)
-	for i, line := range strings.Split(view, "\n") {
-		if w := lipgloss.Width(line); w > wantWidth {
-			t.Fatalf("line %d width = %d, want <= %d (table overflowed its own declared column widths):\n%s", i, w, wantWidth, view)
-		}
 	}
 }
 

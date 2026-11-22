@@ -1,0 +1,24 @@
+  Admin › Operations › Scan runs                                                                                               signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                      
+                               │  Scan runs                                                                   Trivy scans, latest of each repository  
+    Overview                   │  ╭────────────────────────────────────────────────────────────────────────╮  ╭────────────────────────────────────╮  
+                               │  │   REPOSITORY                STATUS     STARTED       TOOK   CRIT  HIGH │  │ organisation/team-00/service-with… │  
+  ACCESS                       │  │ ▸ organisation/team-00/se…  completed  14 Mar 08:30  0s     0     0    │  │ completed, trigger push            │  
+      Users                    │  │   organisation/team-01/se…  completed  14 Mar 07:30  1m     1     1    │  │ RUN                                │  
+      Robots                   │  │   organisation/team-02/se…  completed  14 Mar 06:30  2m     2     2    │  │ Digest            sha256:9c41…e0d2 │  
+      Repository access        │  │   organisation/team-03/se…  completed  14 Mar 05:30  3m     3     3    │  │ Started           14 Mar 08:30 UTC │  
+                               │  │   organisation/team-04/se…  completed  14 Mar 04:30  4m     0     4    │  │ Finished          14 Mar 08:30 UTC │  
+  SECURITY                     │  │   organisation/team-05/se…  completed  14 Mar 03:30  5m     1     5    │  │ Trivy                       0.58.1 │  
+      Image scanning           │  │   organisation/team-06/se…  completed  14 Mar 02:30  6m     2     6    │  │ FINDINGS                           │  
+      Secret scanning          │  │   organisation/team-07/se…  completed  14 Mar 01:30  7m     3     0    │  │ Critical                         0 │  
+      Signing policy           │  │   organisation/team-08/se…  completed  14 Mar 00:30  8m     0     1    │  │ High                             0 │  
+                               │  │   organisation/team-09/se…  completed  13 Mar 23:30  9m     1     2    │  │ Medium                          11 │  
+  OPERATIONS                   │  │   organisation/team-10/se…  completed  13 Mar 22:30  10m    2     3    │  │ Low                              7 │  
+    ▸ Scan runs                │  │   organisation/team-11/se…  completed  13 Mar 21:30  11m    3     4    │  │ ACTIONS                            │  
+      Secret findings          │  │   organisation/team-12/se…  completed  13 Mar 20:30  12m    0     5    │  │ Scan history                 enter │  
+      Update channel           │  │   organisation/team-13/se…  completed  13 Mar 19:30  13m    1     6    │  │ Refresh                          r │  
+                               │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
+                               │  One row per repository, its latest scan. enter opens its scan history.      ╰────────────────────────────────────╯  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ↑↓ move   enter scan history   r refresh   esc back                                                                                                 

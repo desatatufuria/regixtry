@@ -17,11 +17,8 @@ import (
 // layout -- exactly as if no modal were open -- and compositeOverlay
 // (admin_overlay.go:63-110) already clamps overlayWidth/overlayHeight to the
 // canvas, so a modal mathematically cannot grow page height; there is no
-// per-modal budget function to keep in sync (the superseded design, still
-// used only by the scan history modal below, needed real arithmetic because
-// its table page size must be pre-built to match its own budget -- Confirm
-// and Trivy render fixed content with no page sizing, so the compositor's
-// own clamp is the only bound they need).
+// per-modal budget function to keep in sync. The scan history is not a
+// modal: it is a whole screen that replaces the base (see below).
 func renderAdminWorkspace(current screen, session AdminSession, view AdminViewState, knownRepositories []string, status string, layout consoleLayout, now time.Time, adminScreens adminScreenSet) string {
 	theme := newAdminTheme()
 	env := screenEnv{Session: session, Layout: layout, KnownRepositories: knownRepositories, Now: func() time.Time { return now }}
@@ -55,19 +52,11 @@ func renderAdminWorkspace(current screen, session AdminSession, view AdminViewSt
 	var modalView string
 	switch {
 	case adminScreens[slotScanHistory] != nil:
-		// scanHistoryScreen (Phase 19) is never slotFor(current)-addressed
-		// (screen.go's slotScanHistory doc comment): current/body above
-		// already resolve to whichever screen opened it (m.screen never
-		// changes while it is mounted), so this composites on top exactly
-		// like the pre-migration ScanHistoryModal.Active() branch did. The
-		// scan history overlay keeps its own nested budget
-		// (adminScanHistoryModalRows): its table page size must be
-		// pre-built to match this budget, since its content is
-		// data-scrollable and cannot simply be clamped after the fact the
-		// way compositeOverlay clamps fixed-content modals.
+		// scanHistoryScreen is never slotFor(current)-addressed (screen.go's
+		// slotScanHistory doc comment): it draws the whole shell over
+		// whichever screen opened it, so it replaces the base entirely.
 		if scan, ok := adminScreens[slotScanHistory].(scanHistoryScreen); ok {
-			baseBodyHeight := lipgloss.Height(body)
-			modalView = renderAdminScanHistoryModal(theme, scan.modal, scan.findings, scan.secretFindings, adminScanHistoryModalRows(layout, baseBodyHeight))
+			return scan.viewFull(theme, env, status).Body
 		}
 	case view.Confirm.Active():
 		modalView = view.Confirm.view(theme)
@@ -247,175 +236,6 @@ func renderFeatureOverridesTable(theme adminTheme, feature string, rows []featur
 	default:
 		return append(lines, table.View())
 	}
-}
-
-// adminScanHistoryModalTabBar renders the modal's tab strip as a single
-// line, guarded by TestRenderAdminScanHistoryModalChromeLinesAreSingleLine
-// (design.md "Modal chrome accounting").
-func adminScanHistoryModalTabBar(theme adminTheme, modal adminScanHistoryModal) string {
-	if len(modal.Tabs) == 0 {
-		return theme.muted.Render("No tabs available.")
-	}
-	labels := make([]string, 0, len(modal.Tabs))
-	for index, tab := range modal.Tabs {
-		label := tab.Label
-		if index == boundedIndex(modal.ActiveTab, len(modal.Tabs)) {
-			label = theme.selected.Render(label)
-		}
-		labels = append(labels, label)
-	}
-	return strings.Join(labels, " | ")
-}
-
-// adminScanHistoryModalExecutionsColumnStyle is the fixed-width container for
-// the modal's left-hand executions rail: a right-only border (no top/bottom,
-// so it never adds extra rows) draws the vertical divider between the rail
-// and the existing right column, matching theme.section's own border color.
-func adminScanHistoryModalExecutionsColumnStyle(theme adminTheme) lipgloss.Style {
-	return lipgloss.NewStyle().
-		Width(adminScanHistoryModalExecutionsColumnWidth).
-		Border(lipgloss.NormalBorder(), false, true, false, false).
-		BorderForeground(theme.borderColor)
-}
-
-// adminScanHistoryModalExecutionsColumn renders the modal's left-hand
-// executions rail: a heading followed by a scrollable window
-// (adminScanHistoryModalExecutionsWindow) of at most windowSize run rows, so
-// the rail never unconditionally renders the full adminScanHistoryWindowLimit
-// (50) history. The currently navigated run (modal.Cursor, via boundedIndex)
-// is highlighted the same way adminScanHistoryModalTabBar highlights the
-// active tab.
-func adminScanHistoryModalExecutionsColumn(theme adminTheme, modal adminScanHistoryModal, windowSize int) string {
-	heading := theme.subheading.Render("Executions")
-	if len(modal.Runs) == 0 {
-		return heading
-	}
-
-	cursor := boundedIndex(modal.Cursor, len(modal.Runs))
-	start, end := adminScanHistoryModalExecutionsWindow(cursor, len(modal.Runs), windowSize)
-
-	lines := []string{heading}
-	for index := start; index < end; index++ {
-		label := adminScanHistoryModalExecutionRowLabel(index, modal.Runs[index])
-		if index == cursor {
-			label = theme.selected.Render(label)
-		}
-		lines = append(lines, label)
-	}
-	return strings.Join(lines, "\n")
-}
-
-// adminScanHistoryModalFooter renders the history-position indicator (spec.md
-// "Scan Execution History Navigation": "the TUI SHALL show 2/17, the run's
-// date"), guarded to a single row.
-func adminScanHistoryModalFooter(modal adminScanHistoryModal) string {
-	if len(modal.Runs) == 0 {
-		return "Execution 0/0"
-	}
-	cursor := boundedIndex(modal.Cursor, len(modal.Runs))
-	run := modal.Runs[cursor]
-	effTime, inProgress := effectiveScanRunTime(run)
-	dateLabel := effTime.UTC().Format("2006-01-02 15:04")
-	if inProgress {
-		dateLabel += " (in progress)"
-	}
-	return fmt.Sprintf("Execution %d/%d — %s", cursor+1, len(modal.Runs), dateLabel)
-}
-
-// adminScanHistoryModalTableBody selects the active tab's table (findings or
-// secretFindings, owned by scanHistoryScreen itself since Phase 19 -- design.md
-// Decision B) or a tab-appropriate empty state. When tableBudget cannot hold
-// a bordered table at all, it returns a single-line substitute instead of
-// ever slicing one (design.md "the table is replaced by a single-line
-// substitute, never sliced" — the fix for the historical orphaned
-// "Showing x-y of N" bug).
-func adminScanHistoryModalTableBody(theme adminTheme, modal adminScanHistoryModal, findings, secretFindings bubbletable.Model, tableBudget int) string {
-	if len(modal.Tabs) == 0 {
-		return theme.muted.Render("No tabs available.")
-	}
-	if tableBudget < adminScanHistoryModalMinTableBudget {
-		return theme.muted.Render("Terminal too small to show the table.")
-	}
-
-	active := modal.Tabs[boundedIndex(modal.ActiveTab, len(modal.Tabs))]
-	switch active.Kind {
-	case adminScanHistoryTabLeaks:
-		if len(modal.Secrets) == 0 {
-			return theme.muted.Render("No secret findings recorded for this execution.")
-		}
-		return secretFindings.View()
-	default:
-		if len(modal.Detail.Findings) == 0 {
-			return theme.muted.Render("No findings recorded for this execution.")
-		}
-		return findings.View()
-	}
-}
-
-// renderAdminScanHistoryModal composes the scan history modal within its own
-// content budget (modalRows, from adminScanHistoryModalRows): title,
-// tab bar, the active tab's table (or empty/substitute state), and the
-// history-position footer, forming the right column, alongside a left-hand
-// executions rail (adminScanHistoryModalExecutionsColumn) joined via
-// lipgloss.JoinHorizontal -- which auto-pads the shorter column with blank
-// lines, so the two need not be hand-matched in line count. Every block is
-// measured, not guessed, and the whole composite is wrapped by
-// theme.section.Render directly rather than passed through
-// renderSection/fitLines a second time (design.md "No fitLines over a
-// composite containing a bordered block" — the bug that produced an orphaned
-// "Showing x-y of N" line with no table above it). Each bordered block is
-// clipped exactly once, by its own owner: the base screen body is clipped by
-// the outer renderSection at baseRows; this modal never needs slicing
-// because its table is pre-sized (via adminScanHistoryModalTablePageSize) to
-// fit modalRows exactly, or replaced by a one-line substitute when it
-// cannot.
-func renderAdminScanHistoryModal(theme adminTheme, modal adminScanHistoryModal, findings, secretFindings bubbletable.Model, modalRows int) string {
-	title := theme.subheading.Render(fmt.Sprintf("Scan History — %s", adminFirstNonEmpty(modal.Repository, "unknown")))
-	tabBar := adminScanHistoryModalTabBar(theme, modal)
-	footer := theme.muted.Render(adminScanHistoryModalFooter(modal))
-	// Kept deliberately terse (unlike some other screens' longer help lines):
-	// this line must never become the modal's own widest rendered line, or
-	// it silently drives the executions-side-panel's combined width (measured
-	// empirically against TestModelScanHistoryModalRendersWithinViewportAcrossWidths).
-	help := theme.help.Render("Tab/Shift+Tab: tabs | Left/Right: history | Up/Down: select | Enter/click: open | Esc: close")
-
-	var header string
-	switch {
-	case strings.TrimSpace(modal.Error) != "":
-		header = theme.error.Render(fmt.Sprintf("Error: %s", modal.Error))
-	case modal.Loading:
-		header = theme.muted.Render("Loading scan history...")
-	}
-	measuredHeaderHeight := 0
-	if header != "" {
-		measuredHeaderHeight = lipgloss.Height(header)
-	}
-
-	tableBudget := modalRows - adminScanHistoryModalChromeRows - measuredHeaderHeight
-	tableBody := adminScanHistoryModalTableBody(theme, modal, findings, secretFindings, tableBudget)
-
-	lines := []string{title, tabBar}
-	if header != "" {
-		lines = append(lines, header)
-	}
-	lines = append(lines, tableBody, footer, help)
-	rightColumn := strings.Join(lines, "\n")
-
-	// The executions rail's window size is derived from the right column's
-	// own measured height (title+tabBar+optional header+tableBody+footer+
-	// help), minus one row for the rail's own "Executions" heading, so the
-	// two columns stay close in height without hand-matching line counts
-	// (lipgloss.JoinHorizontal below pads whichever column ends up shorter).
-	executionsWindowSize := lipgloss.Height(rightColumn) - 1
-	if executionsWindowSize < 1 {
-		executionsWindowSize = 1
-	}
-	executionsColumn := adminScanHistoryModalExecutionsColumnStyle(theme).
-		Render(adminScanHistoryModalExecutionsColumn(theme, modal, executionsWindowSize))
-
-	combined := lipgloss.JoinHorizontal(lipgloss.Top, executionsColumn, rightColumn)
-
-	return theme.section.Render(combined)
 }
 
 // renderRepoAdminGrantsScreen renders the repo-admin delegate's own

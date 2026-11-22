@@ -104,8 +104,7 @@ func tagSignedLabel(tag appregixtry.TagDetails) string {
 
 // consoleTagsTablePageSize computes the Tags table's pageSize from the
 // screen's own content budget, reserving exactly one row for the "Tags"
-// subheading rendered above it -- mirrors
-// adminScanHistoryModalTablePageSize's own fixed-header-row accounting -- so
+// subheading rendered above it, so
 // the section's total rendered height exactly matches layout.SectionRows and
 // renderSection's fitLines never clips mid-table. Floored at minTableRows,
 // same floor every other table in this package uses.

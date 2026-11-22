@@ -1,0 +1,24 @@
+  Admin › Operations › Scan runs                                                                                               signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                      
+                               │  Scan runs                                                                   Trivy scans, latest of each repository  
+    Overview                   │  ╭────────────────────────────────────────────────────────────────────────╮  ╭────────────────────────────────────╮  
+                               │  │   REPOSITORY                STATUS     STARTED       TOOK   CRIT  HIGH │  │ team/api:1.8.2                     │  
+  ACCESS                       │  │ ▸ team/api                  completed  14 Mar 08:30  38s    2     5    │  │ completed, trigger push            │  
+      Users                    │  │   team/web                  running    14 Mar 09:20  -      -     -    │  │ RUN                                │  
+      Robots                   │  │   team/docs                 failed     13 Mar 13:30  12s    -     -    │  │ Digest            sha256:9c41…e0d2 │  
+      Repository access        │  │                                                                        │  │ Started           14 Mar 08:30 UTC │  
+                               │  │                                                                        │  │ Finished          14 Mar 08:30 UTC │  
+  SECURITY                     │  │                                                                        │  │ Trivy                       0.58.1 │  
+      Image scanning           │  │                                                                        │  │ FINDINGS                           │  
+      Secret scanning          │  │                                                                        │  │ Critical                         2 │  
+      Signing policy           │  │                                                                        │  │ High                             5 │  
+                               │  │                                                                        │  │ Medium                          11 │  
+  OPERATIONS                   │  │                                                                        │  │ Low                              7 │  
+    ▸ Scan runs                │  │                                                                        │  │ ACTIONS                            │  
+      Secret findings          │  │                                                                        │  │ Scan history                 enter │  
+      Update channel           │  │                                                                        │  │ Refresh                          r │  
+                               │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
+                               │  One row per repository, its latest scan. enter opens its scan history.      ╰────────────────────────────────────╯  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ↑↓ move   enter scan history   r refresh   esc back                                                                                                 

@@ -31,7 +31,7 @@ const (
 	// contract at the old floor without truncating/wrapping table borders.
 	//
 	// Raised a second time, from 132 to 150, for the scan history modal's
-	// executions side panel (adminScanHistoryModalExecutionsColumnStyle):
+	// executions side panel of the former scan history modal (since replaced by a full screen):
 	// measured against the modal's own worst case (Leaks tab, the 4-column
 	// secret findings table at 99 columns wide, plus the executions rail's
 	// ~19 columns, plus the modal's own border+padding overhead) the

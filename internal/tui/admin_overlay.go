@@ -23,10 +23,7 @@ import (
 // legitimately hold meaningful base content right up to the overlay's own
 // edge (e.g. the screen's help line, one row below a tall modal on a short
 // base render) -- blanking it unconditionally risked destroying real
-// content instead of empty canvas. The vertical gap the modal already gets
-// in practice comes from adminScanHistoryModalRows leaving real margin
-// below the floor most terminal heights (adminScanHistoryModalVerticalMargin),
-// not from this compositor blanking rows it cannot tell are safe to clear.
+// content instead of empty canvas.
 const overlayHorizontalMargin = 2
 
 // compositeOverlay draws overlay on top of base within a width x height
@@ -48,10 +45,7 @@ const overlayHorizontalMargin = 2
 // any base footprint of B rows, centering-in-full-canvas mathematically
 // cannot keep even a 1-row overlay within B once height exceeds roughly 2B,
 // no matter how small overlay is capped to be (a real regression found by
-// real-render inspection at generously tall terminals, tracked alongside
-// adminScanHistoryModalRows' own base-height-aware budget cap -- that cap
-// bounds overlay's SIZE, this bounds its POSITION; both are required, this
-// one categorically cannot be worked around by tightening the budget alone).
+// real-render inspection at generously tall terminals).
 // The returned canvas is still always exactly width x height regardless.
 //
 // Both base and overlay may contain ANSI escape sequences from lipgloss

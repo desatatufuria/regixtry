@@ -1,0 +1,40 @@
+  Admin › Operations › Scan runs                                                                                                                                                 signed in as operator  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                                                                        
+                               │  Scan runs                                                                                                                     Trivy scans, latest of each repository  
+    Overview                   │  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  ╭──────────────────────────────────────╮  
+                               │  │   REPOSITORY                                                                STATUS     STARTED       TOOK   CRIT  HIGH │  │ team/api:1.8.2                       │  
+  ACCESS                       │  │ ▸ team/api                                                                  completed  14 Mar 08:30  38s    2     5    │  │ completed, trigger push              │  
+      Users                    │  │   team/web                                                                  running    14 Mar 09:20  -      -     -    │  │                                      │  
+      Robots                   │  │   team/docs                                                                 failed     13 Mar 13:30  12s    -     -    │  │ RUN                                  │  
+      Repository access        │  │                                                                                                                        │  │ Digest              sha256:9c41…e0d2 │  
+                               │  │                                                                                                                        │  │ Started             14 Mar 08:30 UTC │  
+  SECURITY                     │  │                                                                                                                        │  │ Finished            14 Mar 08:30 UTC │  
+      Image scanning           │  │                                                                                                                        │  │ Trivy                         0.58.1 │  
+      Secret scanning          │  │                                                                                                                        │  │                                      │  
+      Signing policy           │  │                                                                                                                        │  │ FINDINGS                             │  
+                               │  │                                                                                                                        │  │ Critical                           2 │  
+  OPERATIONS                   │  │                                                                                                                        │  │ High                               5 │  
+    ▸ Scan runs                │  │                                                                                                                        │  │ Medium                            11 │  
+      Secret findings          │  │                                                                                                                        │  │ Low                                7 │  
+      Update channel           │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │ ACTIONS                              │  
+                               │  │                                                                                                                        │  │ Scan history                   enter │  
+                               │  │                                                                                                                        │  │ Refresh                            r │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  │                                      │  
+                               │  One row per repository, its latest scan. enter opens its scan history.                                                      ╰──────────────────────────────────────╯  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ↑↓ move   enter scan history   r refresh   esc back                                                                                                                                                   
