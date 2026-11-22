@@ -1392,6 +1392,8 @@ func (m Model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m.expireAdminSession(msg.err.Error()), nil
 			}
 			m.status = msg.err.Error()
+			// The screens that asked for the summaries show the failure too.
+			m.adminScreens, _ = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
 			return m, nil
 		}
 		if len(msg.summaries) == 0 {
