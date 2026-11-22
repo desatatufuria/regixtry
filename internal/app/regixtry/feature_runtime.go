@@ -3,6 +3,7 @@ package regixtry
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	domain "regixtry/internal/domain/regixtry"
 	"regixtry/internal/ports"
@@ -14,6 +15,9 @@ func (s *Service) InstallFeatureRuntime(ctx context.Context, name string, versio
 
 func (s *Service) InstallFeatureRuntimeWithProgress(ctx context.Context, name string, version string, progress func(ports.FeatureRuntimeProgress)) (ports.FeatureRuntimeState, error) {
 	if err := ValidateFeatureName(name); err != nil {
+		return ports.FeatureRuntimeState{}, err
+	}
+	if err := validateRuntimeVersionInput(version); err != nil {
 		return ports.FeatureRuntimeState{}, err
 	}
 	manager, err := s.featureRuntimeManager(name)
@@ -29,6 +33,9 @@ func (s *Service) UpgradeFeatureRuntime(ctx context.Context, name string, versio
 
 func (s *Service) UpgradeFeatureRuntimeWithProgress(ctx context.Context, name string, version string, progress func(ports.FeatureRuntimeProgress)) (ports.FeatureRuntimeState, error) {
 	if err := ValidateFeatureName(name); err != nil {
+		return ports.FeatureRuntimeState{}, err
+	}
+	if err := validateRuntimeVersionInput(version); err != nil {
 		return ports.FeatureRuntimeState{}, err
 	}
 	manager, err := s.featureRuntimeManager(name)
@@ -73,4 +80,14 @@ func (s *Service) featureRuntimeManager(name string) (FeatureRuntimeManager, err
 		return nil, fmt.Errorf("%s runtime manager is not configured", name)
 	}
 	return manager, nil
+}
+
+// validateRuntimeVersionInput accepts an empty version (meaning "latest") or
+// a strict release version; anything else never reaches a runtime manager.
+func validateRuntimeVersionInput(version string) error {
+	version = strings.TrimSpace(version)
+	if version == "" {
+		return nil
+	}
+	return domain.ValidateRuntimeVersion(version)
 }

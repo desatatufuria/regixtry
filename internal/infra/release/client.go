@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strings"
 )
@@ -48,7 +49,10 @@ func ResolveAsset(ctx context.Context, httpClient *http.Client, query AssetQuery
 	endpoint := baseAPI + "/latest"
 	tag := strings.TrimSpace(query.Tag)
 	if tag != "" {
-		endpoint = baseAPI + "/tags/" + tag
+		if err := validateTag(tag); err != nil {
+			return Asset{}, err
+		}
+		endpoint = baseAPI + "/tags/" + url.PathEscape(tag)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
@@ -79,6 +83,10 @@ func ResolveAsset(ctx context.Context, httpClient *http.Client, query AssetQuery
 		return Asset{}, fmt.Errorf("release metadata did not contain a tag name")
 	}
 
+	if err := validateTag(tagName); err != nil {
+		return Asset{}, fmt.Errorf("release metadata tag name: %w", err)
+	}
+
 	asset := Asset{Tag: tagName, Version: strings.TrimPrefix(tagName, "v")}
 	for _, candidate := range payload.Assets {
 		url := strings.TrimSpace(candidate.BrowserDownloadURL)
@@ -88,6 +96,9 @@ func ResolveAsset(ctx context.Context, httpClient *http.Client, query AssetQuery
 		name := strings.TrimSpace(candidate.Name)
 		if name == "" {
 			name = filepath.Base(url)
+		}
+		if strings.ContainsAny(name, `/\`) || name == "." || name == ".." {
+			continue
 		}
 		if query.MatchArchive != nil && query.MatchArchive(name) {
 			asset.ArchiveName = name

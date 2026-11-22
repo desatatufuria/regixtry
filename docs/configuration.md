@@ -32,6 +32,8 @@
 | `-delete-enabled` | `REGISTRY_DELETE_ENABLED` | `false` | Enable `DELETE /v2/<name>/manifests/<reference>` (manifest and tag deletion) |
 | `-gc-delete-enabled` | `REGISTRY_GC_DELETE_ENABLED` | `false` | Enable `POST /admin/v1/gc/reports/{id}/delete` (irreversibly unlinks unreferenced blob files); distinct from `-delete-enabled`, which is metadata-only and never touches blob files |
 
+Managed scanner runtimes (Trivy, Gitleaks) are downloaded from GitHub releases only. The requested version is validated twice (API boundary and URL construction), the archive checksum is verified against the release's checksums file, and release downloads follow redirects only over HTTPS to `github.com` or `*.githubusercontent.com`.
+
 Push-triggered scans are admitted against two caps (environment only, no flag). A push over a cap never fails: no scan is queued and one failed scan row per repository, `skipped: push scan queue full`, records the newest dropped digest so the gap is visible and can be rescanned manually.
 
 | Environment | Default | Purpose |

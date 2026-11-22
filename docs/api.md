@@ -44,8 +44,8 @@ JSON bodies are decoded rejecting unknown fields and multiple bodies.
 | PUT | `/admin/v1/features/{name}/config` | `enabled`, `schedule_enabled`, `interval`, `timeout`, `service_url`, `registry_reachable_url`, optional `auth_token`, `tls_ca_cert_path`, `tls_insecure_skip_verify`, `max_concurrency` | `200`, persisted feature state |
 | POST | `/admin/v1/features/{name}:enable` | none | `200`, enabled feature state |
 | POST | `/admin/v1/features/{name}:disable` | none | `200`, disabled feature state |
-| POST | `/admin/v1/features/{name}:install` | optional `version` | `200`, runtime state |
-| POST | `/admin/v1/features/{name}:upgrade` | optional `version` | `200`, runtime state |
+| POST | `/admin/v1/features/{name}:install` | optional `version`: `v1.2.3` or `1.2.3`, optionally with a `-prerelease` suffix, at most 64 characters; anything else (paths, `..`, queries, fragments, percent escapes, whitespace, `latest`) gives `422`; empty means the latest release | `200`, runtime state |
+| POST | `/admin/v1/features/{name}:upgrade` | optional `version`: `v1.2.3` or `1.2.3`, optionally with a `-prerelease` suffix, at most 64 characters; anything else (paths, `..`, queries, fragments, percent escapes, whitespace, `latest`) gives `422`; empty means the latest release | `200`, runtime state |
 | POST | `/admin/v1/features/{name}:rollback` | none | `200`, runtime state |
 | GET | `/admin/v1/features/{name}/repository-overrides` | none | `200`, array of stored per-repository overrides |
 | GET | `/admin/v1/features/{name}/repository-overrides/{repository}` | none | `200`, override, or `404` when none is set |

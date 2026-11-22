@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	domain "regixtry/internal/domain/regixtry"
 	"regixtry/internal/infra/release"
 )
 
@@ -29,13 +30,18 @@ type githubReleaseClient struct {
 }
 
 func newGitHubReleaseClient() releaseClient {
-	return githubReleaseClient{baseAPI: "https://api.github.com/repos/aquasecurity/trivy/releases", client: &http.Client{}}
+	return githubReleaseClient{baseAPI: "https://api.github.com/repos/aquasecurity/trivy/releases", client: &http.Client{CheckRedirect: release.RestrictRedirects}}
 }
 
 func (c githubReleaseClient) ResolveRelease(ctx context.Context, version string) (releaseAsset, error) {
 	trimmedVersion := strings.TrimSpace(version)
 	tag := ""
 	if trimmedVersion != "" {
+		// Defense in depth: the API boundary already validates, but this is
+		// the last decision point before the version becomes a URL path.
+		if err := domain.ValidateRuntimeVersion(trimmedVersion); err != nil {
+			return releaseAsset{}, err
+		}
 		tag = "v" + strings.TrimPrefix(trimmedVersion, "v")
 	}
 	query := release.AssetQuery{

@@ -979,7 +979,13 @@ func (r *Router) mutateFeatureRuntime(req *stdhttp.Request, name string, action 
 			return ports.FeatureRuntimeState{}, err
 		}
 	}
-	return action(strings.TrimSpace(payload.Version))
+	version := strings.TrimSpace(payload.Version)
+	if version != "" {
+		if err := domainregistry.ValidateRuntimeVersion(version); err != nil {
+			return ports.FeatureRuntimeState{}, err
+		}
+	}
+	return action(version)
 }
 
 func (r *Router) handleAdminUsersCollection(w stdhttp.ResponseWriter, req *stdhttp.Request, principal domainauth.Principal) {
