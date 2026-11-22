@@ -1065,7 +1065,13 @@ func (m Model) viewContent() string {
 			MinWidth: minViewportWidth, MinHeight: minViewportHeight,
 		})
 	}
-	return m.withUpdateBanner(m.viewScreen())
+	// The version line takes the last row of the terminal: the screen itself
+	// is laid out one row shorter, so the two never exceed the height.
+	screenModel := m
+	if m.currentVersion != "" {
+		screenModel.viewport.Height--
+	}
+	return m.withUpdateBanner(screenModel.viewScreen())
 }
 
 // withUpdateBanner prepends a version line above body -- either "a newer

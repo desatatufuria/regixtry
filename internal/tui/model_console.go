@@ -65,19 +65,13 @@ func (m Model) viewConsole() string {
 	if current == nil {
 		current = newConsoleRepositoriesScreen(nil)
 	}
-	// The version line the update banner adds below the screen takes the last
-	// row, so the screen itself is one row shorter then.
-	height := m.viewport.Height
-	if m.currentVersion != "" {
-		height--
-	}
 	env := m.screenEnv()
-	env.Layout = consoleLayout{Width: m.viewport.Width, Height: height}
+	env.Layout = consoleLayout{Width: m.viewport.Width, Height: m.viewport.Height}
 	frame := current.View(theme, env)
 	if frame.Overlay == "" {
 		return frame.Body
 	}
-	return compositeOverlay(frame.Body, frame.Overlay, m.viewport.Width, height)
+	return compositeOverlay(frame.Body, frame.Overlay, m.viewport.Width, m.viewport.Height)
 }
 
 // openConsole handles a console screen's request to move to another one.
