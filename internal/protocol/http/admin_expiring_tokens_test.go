@@ -20,7 +20,7 @@ func TestRouterAdminExpiringTokens(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
-	owner, err := authService.CreateAdminUser(ctx, adminActor, ports.AdminCreateUserInput{Username: "exp-owner", Password: "password123", Enabled: true, IsAdmin: true})
+	owner, err := authService.CreateAdminUser(ctx, adminActor, ports.AdminCreateUserInput{Username: "exp-owner", Password: "fixture-pass-9x", Enabled: true, IsAdmin: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,10 +137,10 @@ func TestRouterAdminExpiringTokens(t *testing.T) {
 		if rec := get("", ""); rec.Code != http.StatusUnauthorized {
 			t.Errorf("no token status = %d", rec.Code)
 		}
-		if _, err := authService.CreateAdminUser(ctx, adminActor, ports.AdminCreateUserInput{Username: "plain", Password: "password123", Enabled: true}); err != nil {
+		if _, err := authService.CreateAdminUser(ctx, adminActor, ports.AdminCreateUserInput{Username: "plain", Password: "fixture-pass-9x", Enabled: true}); err != nil {
 			t.Fatal(err)
 		}
-		login, err := authService.LoginWithPassword(ctx, "plain", "password123", nil)
+		login, err := authService.LoginWithPassword(ctx, "plain", "fixture-pass-9x", nil)
 		if err != nil {
 			t.Fatal(err)
 		}

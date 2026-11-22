@@ -44,11 +44,11 @@ func TestDeletingARobotOverTheRealWire(t *testing.T) {
 	router := regixtryhttp.NewRouter(service, authService)
 	ctx := context.Background()
 
-	boot, err := authService.BootstrapAdmin(ctx, ports.BootstrapAdminInput{Username: "admin", Password: "password123"})
+	boot, err := authService.BootstrapAdmin(ctx, ports.BootstrapAdminInput{Username: "admin", Password: "fixture-pass-9x"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	login, err := authService.LoginWithPassword(ctx, "admin", "password123", nil)
+	login, err := authService.LoginWithPassword(ctx, "admin", "fixture-pass-9x", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,11 +64,11 @@ func TestDeletingARobotOverTheRealWire(t *testing.T) {
 		}
 		robotIDs = append(robotIDs, created.Robot.ID)
 	}
-	human, err := authService.CreateAdminUser(ctx, actor, ports.AdminCreateUserInput{Username: "bob", Password: "password123", Enabled: true})
+	human, err := authService.CreateAdminUser(ctx, actor, ports.AdminCreateUserInput{Username: "bob", Password: "fixture-pass-9x", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := authService.CreateAdminUser(ctx, actor, ports.AdminCreateUserInput{Username: "carol", Password: "password123", Enabled: true}); err != nil {
+	if _, err := authService.CreateAdminUser(ctx, actor, ports.AdminCreateUserInput{Username: "carol", Password: "fixture-pass-9x", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	server := httptest.NewServer(router)
@@ -131,7 +131,7 @@ func TestDeletingARobotOverTheRealWire(t *testing.T) {
 	if _, err := authStore.GetUserByID(ctx, human.ID); err != nil {
 		t.Fatal("a human user was deleted")
 	}
-	carol, err := authService.LoginWithPassword(ctx, "carol", "password123", nil)
+	carol, err := authService.LoginWithPassword(ctx, "carol", "fixture-pass-9x", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

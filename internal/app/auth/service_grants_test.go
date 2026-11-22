@@ -24,7 +24,7 @@ func TestServiceUserCentricGrantMethodsCharacterizeAdminOnlyBehavior(t *testing.
 
 	newStoreWithTargetUser := func() (*memoryAuthStore, domainauth.User) {
 		store := newMemoryAuthStore()
-		target := domainauth.User{ID: "user-1", Username: "alice", PasswordHash: mustHashPassword(t, "password123"), Enabled: true, CreatedAt: now, UpdatedAt: now}
+		target := domainauth.User{ID: "user-1", Username: "alice", PasswordHash: mustHashPassword(t, "fixture-pass-9x"), Enabled: true, CreatedAt: now, UpdatedAt: now}
 		store.usersByID[target.ID] = target
 		store.usersByUsername[target.Username] = target
 		return store, target

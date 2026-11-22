@@ -26,7 +26,7 @@ func TestRouterAdminReadableTTL(t *testing.T) {
 	defer cleanup()
 
 	owner, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
-		Username: "readable-ttl-owner", Password: "password123", Enabled: true, IsAdmin: true,
+		Username: "readable-ttl-owner", Password: "fixture-pass-9x", Enabled: true, IsAdmin: true,
 	})
 	if err != nil {
 		t.Fatalf("CreateAdminUser() error = %v", err)

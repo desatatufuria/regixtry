@@ -80,9 +80,27 @@ Local TUI inspection is not, and was never designed to be, a third enforcement b
 
 These are recommendations, not guarantees enforced by the program.
 
+## Failed logins and rate limiting
+
+Every rejected credential (`/auth/token`, and bearer tokens on `/v2` and `/admin/v1`) writes one log line `login failed endpoint=<path> ip=<client> reason="<real reason>" account=<name>` and increments an in-process counter by reason. An unknown username is logged as `account_hash=<8 hex>`, never raw, to avoid log injection and unbounded cardinality; passwords and tokens are never logged. The client IP is the TCP peer unless `-trusted-proxies` names the proxies whose `X-Forwarded-For` to trust (see [operations.md](operations.md#reverse-proxy-and-client-ip)). Password checks are bcrypt (cost 10, about 85 ms): their concurrency is capped at `max(2, NumCPU/2)` (`-login-max-concurrency`) so a flood of bad passwords cannot starve `/v2`; excess logins wait at most 250 ms and then get `429` with `Retry-After: 1`. A valid credential token (64 hex) skips bcrypt, so CI robots keep working during a flood. A `-trusted-proxies` range of `/0` is refused at startup because it would trust every peer's `X-Forwarded-For`. There is no IP-based blocking in the registry: keep per-IP volume limits in the reverse proxy.
+
+### Password policy
+
+A password must have at least 8 characters (after trimming) and must not be one of the roughly 340 most common passwords embedded in the binary. The match is whole-password (not substring) and ignores case, fullwidth and other compatibility forms (NFKC), zero-width/format characters and all Unicode spaces, so `ｐａｓｓｗｏｒｄ` or `pass\u00a0word` are refused too; this folding is for the match only and the stored password is never altered. The check applies wherever a password is set: `bootstrap-admin`, creating a user and resetting a password; the API answers `422` with `password is too common; choose a less guessable one`. Existing passwords are not re-checked and keep working. There is no forced complexity or rotation.
+
+### Per-account backoff
+
+Consecutive failed password logins are counted per normalized username (trimmed, case-insensitive; unknown usernames are tracked exactly like existing ones, so the behavior reveals nothing about which accounts exist). After 5 failures the next attempt must wait 2 s, then 4 s, 8 s, ... capped at 5 minutes (`-login-backoff-threshold`, `-login-backoff-base`, `-login-backoff-max`). A success, or 15 minutes without failures, resets the counter. State lives in memory (LRU of 10 000 accounts, per process, lost on restart; with several instances each counts separately).
+
+- **Mode `log` (default in this version):** nothing is refused; the registry logs `login backoff would have blocked account=<name> retry_after=...` (an unknown username appears as `account_hash=<8 hex>`). Use it to calibrate, then set `-login-backoff-mode=enforce`.
+- **Mode `enforce`:** while an account is in backoff the password is not verified, one `login failed ... reason="throttled: account backoff"` line is logged, and the answer is `429` with `Retry-After: <seconds>` and error code `TOOMANYREQUESTS`, identical for existing and unknown usernames. Outside a backoff a failure is the usual uniform `401`.
+- `-login-backoff-threshold=0` (or mode `off`) disables it.
+
+Trade-offs to know: an attacker who knows an account name can keep it in backoff, at most 5 minutes at a time (no hard lockout); during that window the account's password is refused with `429`, but credential tokens (robots, CI) are exempt, and `regixtry bootstrap-admin` on the host is the last resort. Only secrets that are not token-shaped count: a wrong 64-hex secret never counts against the account, so strangers cannot put a robot in backoff. Flooding with many random usernames can evict an account's counter from the LRU: measured, 10,001 random usernames evicted a victim that was in backoff, which buys the attacker about 5 fresh guesses per ~10,000 requests, each of those requests costing a bcrypt whose concurrency is capped by the semaphore. The bcrypt concurrency cap and the proxy's per-IP limits remain the defense against volume. The per-account denial of service is bounded: an account is never blocked longer than 300 s (`-login-backoff-max`) per window, and never hard-locked.
+
 ## Risks and limits
 
 - `local-http` transmits credentials and tokens unencrypted if used outside a trusted network.
 - The generated env file may contain the Postgres DSN; its real permissions derive from how bootstrap wrote it and should be reviewed operationally.
-- No metrics, rate limiting, or audit logging of access-control events are confirmed in the code.
+- No metrics endpoint or persistent audit logging of failed logins is confirmed in the code. Failed credentials are written to the structured log with the client IP and reason and counted in memory (see [Failed logins](#failed-logins-and-rate-limiting)).
 - ⚠️ A formal review of the complete OCI-facing attack surface has not been confirmed from the current code.

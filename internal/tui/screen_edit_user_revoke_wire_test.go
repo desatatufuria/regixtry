@@ -46,17 +46,17 @@ func TestEditUserRevokesExactlyOneGrantThroughTheRealStack(t *testing.T) {
 	svc := appregixtry.NewService(blob, meta, ac, ports.NewSingleTenantResolver("tenant-a"), ports.NewInlineJobRunner())
 	router := regixtryhttp.NewRouter(svc, as)
 	ctx := context.Background()
-	boot, err := as.BootstrapAdmin(ctx, ports.BootstrapAdminInput{Username: "admin", Password: "password123"})
+	boot, err := as.BootstrapAdmin(ctx, ports.BootstrapAdminInput{Username: "admin", Password: "fixture-pass-9x"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	login, err := as.LoginWithPassword(ctx, "admin", "password123", nil)
+	login, err := as.LoginWithPassword(ctx, "admin", "fixture-pass-9x", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	actor := domainauth.Principal{UserID: boot.User.ID, Username: "admin", IsAdmin: true}
 	mk := func(name string) ports.AdminUser {
-		u, err := as.CreateAdminUser(ctx, actor, ports.AdminCreateUserInput{Username: name, Password: "password123", Enabled: true})
+		u, err := as.CreateAdminUser(ctx, actor, ports.AdminCreateUserInput{Username: name, Password: "fixture-pass-9x", Enabled: true})
 		if err != nil {
 			t.Fatal(err)
 		}
