@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -325,7 +326,7 @@ func (r *Runner) ReadDBMetadata(_ context.Context, settings ports.ScanSettings) 
 	if cacheDir == "" {
 		return ports.ScanDBMetadata{}, fmt.Errorf("trivy cache directory is not configured")
 	}
-	raw, err := os.ReadFile(filepath.Join(cacheDir, "db", "metadata.json"))
+	raw, err := readBoundedRegularFile(filepath.Join(cacheDir, "db"), "metadata.json", maxDBMetadataBytes)
 	if err != nil {
 		return ports.ScanDBMetadata{}, fmt.Errorf("read trivy db metadata: %w", err)
 	}
@@ -337,4 +338,38 @@ func (r *Runner) ReadDBMetadata(_ context.Context, settings ports.ScanSettings) 
 		return ports.ScanDBMetadata{}, fmt.Errorf("trivy db metadata has no UpdatedAt")
 	}
 	return ports.ScanDBMetadata{Version: meta.Version, UpdatedAt: meta.UpdatedAt, NextUpdate: meta.NextUpdate, DownloadedAt: meta.DownloadedAt}, nil
+}
+
+// maxDBMetadataBytes bounds the metadata read: the real file is a few
+// hundred bytes.
+const maxDBMetadataBytes = 64 << 10
+
+// readBoundedRegularFile reads dir/name only when neither the directory nor
+// the file is a symlink and the file is regular, and fails when it exceeds
+// limit bytes.
+func readBoundedRegularFile(dir string, name string, limit int64) ([]byte, error) {
+	if info, err := os.Lstat(dir); err != nil || !info.IsDir() {
+		return nil, fmt.Errorf("%s is not a plain directory", dir)
+	}
+	path := filepath.Join(dir, name)
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	raw, err := io.ReadAll(io.LimitReader(file, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(raw)) > limit {
+		return nil, fmt.Errorf("%s exceeds %d bytes", path, limit)
+	}
+	return raw, nil
 }

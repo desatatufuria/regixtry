@@ -303,3 +303,59 @@ func TestStoreOldSchemaScanRunsGainFingerprintColumnsAndOldRowsReadAsEmptyHash(t
 		t.Fatalf("old rows = %d, want 2 untouched (purge is a separate migration)", n)
 	}
 }
+
+func completedWithDB(id string, digest string, createdAt time.Time, dbUpdated *time.Time) ports.ScanRunDetail {
+	detail := completedDetail(id, "library/alpine", digest, createdAt, "CVE-"+id)
+	detail.Run.DBUpdatedAt = dbUpdated
+	return detail
+}
+
+func TestStoreOutOfOrderCompletionKeepsTheResultWithTheNewerDB(t *testing.T) {
+	t.Parallel()
+	base := time.Now().UTC().Add(-time.Hour)
+	older := base.Add(-24 * time.Hour)
+	newer := base
+
+	cases := []struct {
+		name     string
+		first    ports.ScanRunDetail // completes first
+		second   ports.ScanRunDetail // completes last (queued earlier in the dangerous case)
+		wantKept string
+	}{
+		{"older-DB run completing last does not replace the newer-DB result", completedWithDB("new-db", "sha256:ooo", base.Add(time.Minute), &newer), completedWithDB("old-db", "sha256:ooo", base, &older), "new-db"},
+		{"newer-DB run completing last replaces the older-DB result", completedWithDB("old-db", "sha256:ooo", base, &older), completedWithDB("new-db", "sha256:ooo", base.Add(time.Minute), &newer), "new-db"},
+		{"unknown DB: last completion wins", completedWithDB("a", "sha256:ooo", base, nil), completedWithDB("b", "sha256:ooo", base.Add(time.Minute), nil), "b"},
+		{"unknown DB incoming over known DB: last completion wins", completedWithDB("known", "sha256:ooo", base, &newer), completedWithDB("unknown", "sha256:ooo", base.Add(time.Minute), nil), "unknown"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			store := newTestStore(t)
+			defer store.Close()
+			ctx := context.Background()
+			// The later-completing run was queued (running) before it finished.
+			running := tc.second.Run
+			running.Status = ports.ScanRunStatusRunning
+			if err := store.UpsertScanRun(ctx, latestOnlyTenant, running); err != nil {
+				t.Fatalf("running row error = %v", err)
+			}
+			if err := store.UpsertScanRunDetail(ctx, latestOnlyTenant, tc.first); err != nil {
+				t.Fatalf("first completion error = %v", err)
+			}
+			if err := store.UpsertScanRunDetail(ctx, latestOnlyTenant, tc.second); err != nil {
+				t.Fatalf("second completion error = %v", err)
+			}
+			got, err := store.GetLatestCompletedScanRunByDigest(ctx, latestOnlyTenant, "library/alpine", "sha256:ooo")
+			if err != nil || got.ID != tc.wantKept {
+				t.Fatalf("kept = %#v err = %v, want %q", got, err, tc.wantKept)
+			}
+			if n := countRunsForDigest(t, store, "library/alpine", "sha256:ooo"); n != 1 {
+				t.Fatalf("runs = %d, want exactly 1", n)
+			}
+			detail, err := store.GetScanRunDetail(ctx, latestOnlyTenant, tc.wantKept)
+			if err != nil || len(detail.Findings) != 1 || detail.Findings[0].VulnerabilityID != "CVE-"+tc.wantKept {
+				t.Fatalf("detail = %#v err = %v, want the kept run's own findings", detail, err)
+			}
+		})
+	}
+}

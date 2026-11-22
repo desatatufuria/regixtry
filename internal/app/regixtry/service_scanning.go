@@ -480,6 +480,10 @@ func (s *Service) executeScanRun(ctx context.Context, tenant string, run ports.S
 		s.persistAsyncScanRun(ctx, tenant, run)
 		return
 	}
+	// The settings hash (and the ignore file contents it covers) is taken
+	// BEFORE the scan: a file edited mid-scan must not get its new hash
+	// stored against results produced with the old content.
+	preScanHash, preScanHashOK := scanSettingsHash(settings)
 	runCtx, cancelRun := context.WithTimeout(ctx, s.scanRunBound(settings.Timeout))
 	result, err := scanRunner.Run(runCtx, target, settings)
 	cancelRun()
@@ -500,11 +504,25 @@ func (s *Service) executeScanRun(ctx context.Context, tenant string, run ports.S
 	run.TrivyVersion = result.TrivyVersion
 	run.DBUpdatedAt = result.DBUpdatedAt
 	run.DBVersion = result.DBFreshness.DBVersion
-	// The fingerprint inputs the result was produced with; the settings
-	// hash is empty when a configured file became unreadable, so such a
-	// result never matches a later fingerprint.
-	if hash, ok := scanSettingsHash(settings); ok {
-		run.SettingsHash = hash
+	// Real Trivy image reports carry no DB info. The DB the scan used is the
+	// one in the cache AFTER the scan (Trivy refreshes it at scan start), so
+	// the fingerprint takes it from the cache metadata; the report fields are
+	// only a fallback. With neither, the fingerprint stays incomplete and the
+	// next trigger rescans (safe).
+	if reader, ok := scanRunner.(ports.ScanDBMetadataReader); ok {
+		if meta, merr := reader.ReadDBMetadata(ctx, settings); merr == nil && meta.UpdatedAt != nil {
+			run.DBVersion = meta.Version
+			run.DBUpdatedAt = meta.UpdatedAt
+			result.DBFreshness.DBVersion = meta.Version
+			result.DBFreshness.DBUpdatedAt = meta.UpdatedAt
+			result.DBFreshness.DBDownloadedAt = firstTime(meta.DownloadedAt, result.DBFreshness.DBDownloadedAt)
+			result.DBFreshness.DBNextUpdateAt = firstTime(meta.NextUpdate, result.DBFreshness.DBNextUpdateAt)
+		}
+	}
+	// An unreadable configured file leaves the hash empty so the result
+	// never matches a later fingerprint.
+	if preScanHashOK {
+		run.SettingsHash = preScanHash
 	}
 	run.LastCheckedAt = &finished
 	run.Stale = false
@@ -825,4 +843,13 @@ func isLoopbackOnlyAddress(raw string) bool {
 		return ip.IsLoopback()
 	}
 	return false
+}
+
+func firstTime(values ...*time.Time) *time.Time {
+	for _, v := range values {
+		if v != nil {
+			return v
+		}
+	}
+	return nil
 }

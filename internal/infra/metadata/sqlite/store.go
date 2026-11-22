@@ -1949,6 +1949,28 @@ func (s *Store) UpsertScanRunDetail(ctx context.Context, tenant string, detail p
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	// Out-of-order completions: a run that was queued earlier can complete
+	// after a later run whose vulnerability DB is NEWER. Rule: the result
+	// with the newer db_updated_at wins (compared only when both are known);
+	// otherwise the last completion wins. The loser is discarded here.
+	if detail.Run.Status == ports.ScanRunStatusCompleted && detail.Run.DBUpdatedAt != nil {
+		keptID, kept, kerr := newerCompletedScanRunTx(ctx, tx.Tx, tenant, detail.Run)
+		if kerr != nil {
+			return kerr
+		}
+		if kept {
+			if _, err = tx.ExecContext(ctx, `
+				DELETE FROM scan_runs
+				WHERE tenant = ? AND repository = ? AND digest = ? AND id != ? AND status NOT IN ('queued', 'running')
+			`, tenant, detail.Run.Repository, detail.Run.Digest, keptID); err != nil {
+				return err
+			}
+			if _, err = tx.ExecContext(ctx, `DELETE FROM scan_runs WHERE tenant = ? AND id = ?`, tenant, detail.Run.ID); err != nil {
+				return err
+			}
+			return tx.Commit()
+		}
+	}
 	if err = upsertScanRunTx(ctx, tx.Tx, tenant, detail.Run); err != nil {
 		return err
 	}
@@ -2019,6 +2041,35 @@ func (s *Store) UpsertScanRunDetail(ctx context.Context, tenant string, detail p
 		}
 	}
 	return tx.Commit()
+}
+
+// newerCompletedScanRunTx returns the completed run of the same digest with
+// the newest db_updated_at when it is strictly newer than run's.
+func newerCompletedScanRunTx(ctx context.Context, tx *sql.Tx, tenant string, run ports.ScanRun) (string, bool, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT id, db_updated_at FROM scan_runs
+		WHERE tenant = ? AND repository = ? AND digest = ? AND status = 'completed' AND id != ? AND db_updated_at IS NOT NULL
+	`, tenant, run.Repository, run.Digest, run.ID)
+	if err != nil {
+		return "", false, err
+	}
+	defer rows.Close()
+	var bestID string
+	best := *run.DBUpdatedAt
+	for rows.Next() {
+		var id, raw string
+		if err := rows.Scan(&id, &raw); err != nil {
+			return "", false, err
+		}
+		parsed, perr := time.Parse(time.RFC3339Nano, raw)
+		if perr != nil {
+			continue
+		}
+		if parsed.After(best) {
+			best, bestID = parsed, id
+		}
+	}
+	return bestID, bestID != "", rows.Err()
 }
 
 func (s *Store) ListScanRuns(ctx context.Context, tenant string, repository string, limit int) ([]ports.ScanRun, error) {

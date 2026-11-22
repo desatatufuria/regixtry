@@ -307,3 +307,48 @@ func TestRunnerReadDBMetadataReadsCacheMetadataWithoutExec(t *testing.T) {
 		t.Fatal("ReadDBMetadata() without a cache dir must error")
 	}
 }
+
+func TestRunnerReadDBMetadataIsBoundedAndRefusesSymlinks(t *testing.T) {
+	t.Parallel()
+	runner := New(RunnerConfig{})
+	valid := `{"Version":2,"UpdatedAt":"2026-11-01T00:00:00Z"}`
+
+	big := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(big, "db"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oversized := valid[:len(valid)-1] + `,"Pad":"` + strings.Repeat("x", 70<<10) + `"}`
+	if err := os.WriteFile(filepath.Join(big, "db", "metadata.json"), []byte(oversized), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runner.ReadDBMetadata(context.Background(), ports.ScanSettings{CacheDir: big}); err == nil {
+		t.Fatal("a metadata file over 64 KiB must error")
+	}
+
+	outside := filepath.Join(t.TempDir(), "outside.json")
+	if err := os.WriteFile(outside, []byte(valid), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	linkFile := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(linkFile, "db"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(linkFile, "db", "metadata.json")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, err := runner.ReadDBMetadata(context.Background(), ports.ScanSettings{CacheDir: linkFile}); err == nil {
+		t.Fatal("a symlinked metadata.json must be refused")
+	}
+
+	realDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(realDir, "metadata.json"), []byte(valid), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	linkDir := t.TempDir()
+	if err := os.Symlink(realDir, filepath.Join(linkDir, "db")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, err := runner.ReadDBMetadata(context.Background(), ports.ScanSettings{CacheDir: linkDir}); err == nil {
+		t.Fatal("a symlinked db directory must be refused")
+	}
+}
