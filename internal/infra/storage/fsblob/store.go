@@ -5,12 +5,14 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	domain "regixtry/internal/domain/regixtry"
@@ -396,7 +398,15 @@ func (s *Store) CancelUpload(_ context.Context, uploadID string) error {
 	// tombstone stays until the directory is gone.
 	entry := s.uploadEntry(uploadID)
 	entry.close()
+	// Then take the lock: a writer that was mid-chunk stops at its next read
+	// and releases it, so nothing holds an fd or rewrites the state file
+	// while the directory is removed.
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
 	err := os.RemoveAll(s.uploadDir(uploadID))
+	if errors.Is(err, syscall.ENOTEMPTY) {
+		err = os.RemoveAll(s.uploadDir(uploadID))
+	}
 	s.forget(uploadID, entry)
 	return err
 }

@@ -136,3 +136,36 @@ func TestCancelRacingCommitNeverYieldsAnInternalError(t *testing.T) {
 		}
 	}
 }
+
+func TestCancelRacingFinishingPatchesNeverFails(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	deadline := time.Now().Add(2500 * time.Millisecond)
+	for iteration := 0; iteration < 1500 && time.Now().Before(deadline); iteration++ {
+		upload := beginUpload(t, store)
+
+		var stop atomic.Bool
+		var wg sync.WaitGroup
+		for i := 0; i < 3; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for !stop.Load() {
+					_, _ = store.PutUploadChunk(context.Background(), upload.ID, strings.NewReader("x"))
+				}
+			}()
+		}
+		time.Sleep(time.Duration(iteration%3) * 100 * time.Microsecond)
+		err := store.CancelUpload(context.Background(), upload.ID)
+		stop.Store(true)
+		wg.Wait()
+
+		if err != nil && !domain.IsCode(err, domain.ErrorCodeNotFound) && !domain.IsCode(err, domain.ErrorCodeConflict) {
+			t.Fatalf("iteration %d: CancelUpload() racing PATCHes error = %v, want nil, not found or conflict", iteration, err)
+		}
+		if _, statErr := os.Stat(store.uploadDir(upload.ID)); !os.IsNotExist(statErr) {
+			t.Fatalf("iteration %d: upload dir still present after cancel: %v", iteration, statErr)
+		}
+	}
+}
