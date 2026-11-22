@@ -53,6 +53,8 @@ The `-trivy-*` flags configure the built-in Trivy feature at process start. For 
 
 A managed installation can auto-detect values from `/etc/regixtry/regixtry.env`; explicit flags take priority.
 
+On a Linux daemon install the auth DSN (it carries the Postgres password) is stored only in `regixtry.env`, a root-owned `0600` file created with that mode and loaded through the unit's `EnvironmentFile=`. It is never an `ExecStart` argument (so it is not visible in the unit file, `systemctl show` or `ps`), and the lifecycle provenance file records only a redacted DSN (`auth_postgres_dsn_redacted`, password replaced by `xxxxx`). Re-running `setup` or `upgrade` on an install made by an older version rewrites the env file as `0600`, drops the DSN flag from the unit, and removes the clear-text DSN from the provenance file.
+
 ## Setup-managed environment
 
 Setup writes `REGISTRY_ADDR`, `REGISTRY_PUBLIC_URL`, `REGISTRY_STORAGE_ROOT`, `REGISTRY_DATABASE_PATH`, `REGISTRY_SERVICE_NAME`, and, when applicable, `REGISTRY_AUTH_POSTGRES_DSN`, `REGISTRY_TLS_CERT_FILE`, and `REGISTRY_TLS_KEY_FILE`. These values are interpreted in `internal/infra/install/linux/templates.go`.

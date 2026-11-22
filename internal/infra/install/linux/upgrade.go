@@ -1,6 +1,7 @@
 package linux
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -516,7 +517,7 @@ func (b *Bootstrapper) restoreManagedRuntimeBackup(ctx context.Context, backup m
 	} else if err := b.writeFile(backup.Binary.Path, backup.Binary.Body, backup.Binary.Mode); err != nil {
 		errs = append(errs, fmt.Errorf("restore installed binary: %w", err))
 	}
-	if err := b.writeFile(backup.Env.Path, backup.Env.Body, backup.Env.Mode); err != nil {
+	if err := b.secretWriter()(backup.Env.Path, backup.Env.Body, 0o600); err != nil {
 		errs = append(errs, fmt.Errorf("restore env file: %w", err))
 	}
 	if err := b.writeFile(backup.Unit.Path, backup.Unit.Body, backup.Unit.Mode); err != nil {
@@ -525,7 +526,13 @@ func (b *Bootstrapper) restoreManagedRuntimeBackup(ctx context.Context, backup m
 	if err := b.writeFile(backup.BootstrapReceipt.Path, backup.BootstrapReceipt.Body, backup.BootstrapReceipt.Mode); err != nil {
 		errs = append(errs, fmt.Errorf("restore bootstrap receipt: %w", err))
 	}
-	if err := b.writeFile(backup.Provenance.Path, backup.Provenance.Body, backup.Provenance.Mode); err != nil {
+	restoreProvenance, provenanceMode := b.writeFile, backup.Provenance.Mode
+	if bytes.Contains(backup.Provenance.Body, []byte(`"auth_postgres_dsn"`)) {
+		// A pre-fix provenance holds the clear-text DSN: never put it back
+		// world-readable.
+		restoreProvenance, provenanceMode = b.secretWriter(), 0o600
+	}
+	if err := restoreProvenance(backup.Provenance.Path, backup.Provenance.Body, provenanceMode); err != nil {
 		errs = append(errs, fmt.Errorf("restore lifecycle provenance: %w", err))
 	}
 	if err := b.runCommand(ctx, "systemctl", "daemon-reload"); err != nil {

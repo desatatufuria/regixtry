@@ -124,8 +124,8 @@ func TestTemplateRendering(t *testing.T) {
 	if !strings.Contains(unit, "/usr/local/bin/regixtry serve") {
 		t.Fatalf("unit = %q, want regixtry serve exec start", unit)
 	}
-	if !strings.Contains(unit, "-auth-postgres-dsn=${REGISTRY_AUTH_POSTGRES_DSN}") {
-		t.Fatalf("unit = %q, want auth DSN serve flag", unit)
+	if strings.Contains(unit, "auth-postgres-dsn") {
+		t.Fatalf("unit = %q, want the DSN delivered only through the env file", unit)
 	}
 	if !strings.Contains(unit, "-tls-cert-file=${REGISTRY_TLS_CERT_FILE} -tls-key-file=${REGISTRY_TLS_KEY_FILE}") {
 		t.Fatalf("unit = %q, want TLS serve flags", unit)

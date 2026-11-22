@@ -66,6 +66,7 @@ type Bootstrapper struct {
 	detector       detector
 	mkdirAll       func(string, os.FileMode) error
 	writeFile      func(string, []byte, os.FileMode) error
+	writeSecret    func(string, []byte, os.FileMode) error
 	readFile       func(string) ([]byte, error)
 	stat           func(string) (os.FileInfo, error)
 	rename         func(string, string) error
@@ -405,7 +406,7 @@ func (b *Bootstrapper) writeManagedArtifacts(plan BootstrapPlan, receipt Bootstr
 		}
 	}
 
-	if err := b.writeFile(plan.EnvPath, []byte(RenderEnvFile(plan)), 0o644); err != nil {
+	if err := b.secretWriter()(plan.EnvPath, []byte(RenderEnvFile(plan)), 0o600); err != nil {
 		return fmt.Errorf("write env file: %w", err)
 	}
 	if err := b.writeFile(plan.UnitPath, []byte(RenderSystemdUnit(plan)), 0o644); err != nil {
