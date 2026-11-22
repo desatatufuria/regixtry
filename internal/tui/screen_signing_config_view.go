@@ -83,7 +83,18 @@ func (s signingConfigScreen) policyLines(theme adminTheme, width int) []string {
 // lines: both lists get room, the longer one loses rows first.
 func (s signingConfigScreen) trustLines(theme adminTheme, width, rows int) []string {
 	if !s.policyLoaded {
-		return []string{userSectionTitle(theme, "TRUSTED PUBLIC KEYS"), theme.muted.Render("Loading…")}
+		text := "Loading…"
+		if s.policyErr != "" {
+			text = "Could not read the policy: " + s.policyErr
+		}
+		lines := []string{userSectionTitle(theme, "TRUSTED PUBLIC KEYS")}
+		for _, line := range wrapText(text, max(width, 1)) {
+			lines = append(lines, theme.muted.Render(line))
+		}
+		if s.policyErr != "" {
+			lines = append(lines, theme.muted.Render("r to retry"))
+		}
+		return lines
 	}
 	fingerprints := signingKeyFingerprints(s.policy.TrustedPublicKeys)
 	identities := s.policy.TrustedIdentities

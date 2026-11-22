@@ -46,6 +46,9 @@ type trustedKeyList struct {
 	// possible, the usage count is advisory only (spec requirement).
 	confirm            confirmPrompt
 	pendingDeleteIndex int
+	// pendingDeleteKey is the key the usage lookup was asked about: the answer
+	// is only shown for that key, whatever else was selected or deleted since.
+	pendingDeleteKey string
 	// usageLoading is true from the moment 'x' fires the key-usage-count
 	// request until that response arrives and the confirm prompt actually
 	// opens.
@@ -169,6 +172,7 @@ func (l trustedKeyList) update(env screenEnv, msg keyMsg) (trustedKeyList, tea.C
 		}
 		index := boundedIndex(l.selected, len(l.keys))
 		l.pendingDeleteIndex = index
+		l.pendingDeleteKey = l.keys[index]
 		l.usageLoading = true
 		return l, signingKeyUsageCmd(env, l.scopeRepository, l.keys[index]), true
 	}
@@ -249,7 +253,8 @@ func (l *trustedKeyList) removeAt(index int) {
 // response (usageLoading already false, e.g. the list was reset/reseeded
 // in the meantime) is discarded.
 func (l trustedKeyList) applyUsageLoaded(msg adminSigningKeyUsageLoadedMsg) trustedKeyList {
-	if !l.usageLoading {
+	if !l.usageLoading || msg.key != l.pendingDeleteKey {
+		// Nothing was asked, or this answers another key's lookup.
 		return l
 	}
 	l.usageLoading = false

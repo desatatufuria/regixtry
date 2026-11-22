@@ -108,7 +108,7 @@ func (s signingConfigScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, te
 		s.err, s.note = "", "Signing policy saved."
 		return s, nil, false
 	case securityKeyUsageMsg:
-		s.cfg.Keys = s.cfg.Keys.applyUsageLoaded(adminSigningKeyUsageLoadedMsg{count: typed.count, capped: typed.capped, err: typed.err})
+		s.cfg.Keys = s.cfg.Keys.applyUsageLoaded(adminSigningKeyUsageLoadedMsg{key: typed.key, count: typed.count, capped: typed.capped, err: typed.err})
 		return s, nil, false
 	case securityActionMsg:
 		f, reload := s.applyActionResult(typed)
@@ -122,6 +122,11 @@ func (s signingConfigScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, te
 }
 
 func (s signingConfigScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd, bool) {
+	if isPasteKey(msg) {
+		// Pasted text is never a command: its first character must not run an
+		// action or open an editor.
+		return s, nil, true
+	}
 	s.note = ""
 	switch {
 	case isEscKey(msg):

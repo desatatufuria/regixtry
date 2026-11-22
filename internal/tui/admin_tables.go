@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"strings"
 
 	"charm.land/lipgloss/v2"
 	bubbletable "github.com/evertras/bubble-table/table"
@@ -269,11 +268,6 @@ func secretFindingLocation(finding ports.SecretFinding) string {
 		return fmt.Sprintf("%s:%d-%d", location, finding.StartLine, finding.EndLine)
 	}
 	return fmt.Sprintf("%s:%d", location, finding.StartLine)
-}
-
-func severityStyledCell(severity string) bubbletable.StyledCell {
-	value := strings.ToUpper(strings.TrimSpace(severity))
-	return bubbletable.NewStyledCell(adminFirstNonEmpty(value, "UNKNOWN"), severityStyle(value))
 }
 
 // tableRoles splits a screen's row budget into two admin-table pageSize

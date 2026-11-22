@@ -806,7 +806,7 @@ func TestSecuritySigningModalEscapeLeavesOneLevelAtATime(t *testing.T) {
 	if s := securitySigningOf(t, m); s.cfg.Keys.usageLoading || !s.cfg.Active() {
 		t.Fatal("Esc must stop waiting for the lookup and keep the modal")
 	}
-	late, _ := m.Update(adminSigningKeyUsageLoadedMsg{count: 3})
+	late, _ := m.Update(adminSigningKeyUsageLoadedMsg{key: trustedKeyListTestPEM1, count: 3})
 	if securitySigningOf(t, late.(Model)).cfg.Keys.confirm.Active() {
 		t.Fatal("a late usage answer must not open a confirm nobody asked for")
 	}
@@ -1088,5 +1088,33 @@ func TestSecurityEachScreenSendsOnlyItsOwnFeature(t *testing.T) {
 	updated, _ := m.Update(securityScanPolicySavedMsg{securityResult: securityResult{gen: securityScreenGenOf(t, m, screenSecuritySigningConfig)}, settings: ports.ScanPolicySettings{Enabled: true}})
 	if s := securitySigningOf(t, updated.(Model)); s.saving || s.note != "" || !s.cfg.Active() {
 		t.Fatal("a scan policy result changed the signing screen")
+	}
+}
+
+func TestSecurityScreensIgnorePastedTextOnTheMainScreen(t *testing.T) {
+	t.Parallel()
+	// A paste is not a key press: the first character of pasted text must not
+	// run a runtime action or open an editor.
+	for _, to := range []screen{screenSecurityTrivy, screenSecurityGitleaksConfig, screenSecuritySigningConfig} {
+		for _, text := range []string{"i", "u", "b", "e", "x", "c", "p", "o", "r", "upgrade"} {
+			client := securityClient()
+			m := securityModelAt(t, client, to, 150, 24)
+			before, reads := securityRender(m), client.getFeaturePageCalls
+			updated, cmd := m.Update(tea.PasteMsg{Content: text})
+			got := updated.(Model)
+			if cmd != nil || client.executeFeatureActionCalls != 0 || got.screen != to || securityRender(got) != before || client.getFeaturePageCalls != reads {
+				t.Errorf("%s: pasting %q did something (cmd %v, actions %d)", to, text, cmd != nil, client.executeFeatureActionCalls)
+			}
+		}
+	}
+}
+
+func TestSigningTrustedKeysCardSaysWhyItIsEmptyAndHowToRetry(t *testing.T) {
+	t.Parallel()
+	client := securityClient()
+	client.signingPolicyErr = errors.New("policy down")
+	out := securityRender(securityModelAt(t, client, screenSecuritySigningConfig, 150, 24))
+	if strings.Count(out, "Could not read the policy: policy down") < 2 || !strings.Contains(out, "r to retry") || strings.Contains(out, "Loading…") {
+		t.Fatalf("the trusted keys card must show the error and how to retry, never Loading… forever:\n%s", out)
 	}
 }

@@ -414,7 +414,7 @@ func TestTrustedKeyListDeleteFiresUsageCmdAndOpensConfirmOnResponse(t *testing.T
 		t.Fatal("confirm active before the usage response arrives")
 	}
 
-	list = list.applyUsageLoaded(adminSigningKeyUsageLoadedMsg{count: 3, capped: false})
+	list = list.applyUsageLoaded(trustedKeyUsageAnswer(list, 3, false))
 	if list.usageLoading {
 		t.Fatal("usageLoading = true after the response, want false")
 	}
@@ -431,7 +431,7 @@ func TestTrustedKeyListDeleteNeverBlocksOnAHighCount(t *testing.T) {
 
 	list := newTrustedKeyList("", []string{trustedKeyListTestPEM1})
 	list, _, _ = list.update(screenEnv{}, trustedKeyListTestKey("x"))
-	list = list.applyUsageLoaded(adminSigningKeyUsageLoadedMsg{count: 9999, capped: true})
+	list = list.applyUsageLoaded(trustedKeyUsageAnswer(list, 9999, true))
 
 	if !list.confirm.Active() {
 		t.Fatal("confirm not active for a high, capped usage count -- deletion must never be blocked, only informed")
@@ -446,7 +446,7 @@ func TestTrustedKeyListConfirmEnterRemovesExactlyTheSelectedKey(t *testing.T) {
 
 	list.selected = 0
 	list, _, _ = list.update(env, trustedKeyListTestKey("x"))
-	list = list.applyUsageLoaded(adminSigningKeyUsageLoadedMsg{count: 0, capped: false})
+	list = list.applyUsageLoaded(trustedKeyUsageAnswer(list, 0, false))
 
 	list, cmd, consumed := list.update(env, testKeyEnter())
 	if !consumed || cmd != nil {
@@ -470,7 +470,7 @@ func TestTrustedKeyListConfirmEscCancelsWithoutRemoving(t *testing.T) {
 	env := screenEnv{}
 
 	list, _, _ = list.update(env, trustedKeyListTestKey("x"))
-	list = list.applyUsageLoaded(adminSigningKeyUsageLoadedMsg{count: 0, capped: false})
+	list = list.applyUsageLoaded(trustedKeyUsageAnswer(list, 0, false))
 
 	list, _, consumed := list.update(env, testKeyEsc())
 	if !consumed {
@@ -510,7 +510,7 @@ func TestTrustedKeyListEscStopsWaitingForTheUsageLookupAndDropsItsLateAnswer(t *
 	if !consumed || list.usageLoading {
 		t.Fatalf("consumed = %v, usageLoading = %v, want Esc to stop waiting", consumed, list.usageLoading)
 	}
-	list = list.applyUsageLoaded(adminSigningKeyUsageLoadedMsg{count: 2})
+	list = list.applyUsageLoaded(trustedKeyUsageAnswer(list, 2, false))
 	if list.confirm.Active() {
 		t.Fatal("a late usage answer opened a confirm nobody asked for")
 	}
@@ -521,9 +521,9 @@ func TestRenderTrustedKeyListShowsTheDeleteConfirmAndKeepsTheAddFieldOnOneLine(t
 
 	theme := newAdminTheme()
 	list := newTrustedKeyList("", []string{trustedKeyListTestPEM1})
-	list = list.applyUsageLoaded(adminSigningKeyUsageLoadedMsg{count: 0})
+	list = list.applyUsageLoaded(trustedKeyUsageAnswer(list, 0, false))
 	list.usageLoading = true
-	list = list.applyUsageLoaded(adminSigningKeyUsageLoadedMsg{count: 4})
+	list = list.applyUsageLoaded(trustedKeyUsageAnswer(list, 4, false))
 	out := ansi.Strip(strings.Join(renderTrustedKeyList(theme, list, true), "\n"))
 	for _, want := range []string{"This key currently verifies 4 tagged image(s). Delete it anyway?", "enter deletes the key, esc keeps it"} {
 		if !strings.Contains(out, want) {
@@ -570,5 +570,31 @@ func TestTrustedListFocusRowsPointAtWhatTheOperatorIsDoing(t *testing.T) {
 	ids.addFocus = identityAddFieldIssuer
 	if got := trustedIdentityFocusRow(ids); got != 5 {
 		t.Fatalf("trustedIdentityFocusRow(adding issuer) = %d, want 5", got)
+	}
+}
+
+// trustedKeyUsageAnswer is the answer to the lookup the list asked for.
+func trustedKeyUsageAnswer(list trustedKeyList, count int, capped bool) adminSigningKeyUsageLoadedMsg {
+	return adminSigningKeyUsageLoadedMsg{key: list.pendingDeleteKey, count: count, capped: capped}
+}
+
+func TestTrustedKeyListShowsAUsageAnswerOnlyForTheKeyItWasAskedAbout(t *testing.T) {
+	t.Parallel()
+
+	list := newTrustedKeyList("", []string{trustedKeyListTestPEM1, trustedKeyListTestPEM2})
+	list, _, _ = list.update(screenEnv{}, trustedKeyListTestKey("x")) // asks about key 1
+	if list.pendingDeleteKey != trustedKeyListTestPEM1 {
+		t.Fatalf("pendingDeleteKey = %q, want the first key", list.pendingDeleteKey)
+	}
+
+	// A stale answer for another key arrives first: it must not open the
+	// confirm, nor stop the wait for the real one.
+	list = list.applyUsageLoaded(adminSigningKeyUsageLoadedMsg{key: trustedKeyListTestPEM2, count: 42})
+	if list.confirm.Active() || !list.usageLoading {
+		t.Fatalf("confirm = %v, usageLoading = %v, want a stale answer ignored", list.confirm.Active(), list.usageLoading)
+	}
+	list = list.applyUsageLoaded(adminSigningKeyUsageLoadedMsg{key: trustedKeyListTestPEM1, count: 3})
+	if !list.confirm.Active() || !strings.Contains(list.confirm.message, "verifies 3 tagged") || strings.Contains(list.confirm.message, "42") {
+		t.Fatalf("confirm message = %q, want the count of the asked key", list.confirm.message)
 	}
 }

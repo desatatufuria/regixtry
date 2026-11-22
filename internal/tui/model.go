@@ -618,6 +618,9 @@ type adminSigningPolicyLoadedMsg struct {
 // discards a response that arrives when it is not expecting one
 // (usageLoading already false).
 type adminSigningKeyUsageLoadedMsg struct {
+	// key is the PEM the count was asked for: the list ignores an answer for
+	// any other key.
+	key    string
 	count  int
 	capped bool
 	err    error
@@ -1866,9 +1869,6 @@ func nextScanPolicyThreshold(threshold string) string {
 	return ports.ScanPolicyThresholdCriticalHigh
 }
 
-// updateSigningPolicyModalKey moved to signingConfigScreen.updateKey
-// (screen_signing_config.go, Phase 12.3).
-
 // signingKeyFingerprints derives a read-only fingerprint for each stored
 // trusted key via signing.Fingerprint (the ONE canonical implementation of
 // that algorithm), so signingPolicyModal/renderSigningPolicyModal never has
@@ -2357,10 +2357,10 @@ func signingKeyUsageCmd(env screenEnv, repository string, keyPEM string) tea.Cmd
 func (m Model) signingKeyUsageCmd(repository string, keyPEM string) tea.Cmd {
 	return func() tea.Msg {
 		if m.adminClient == nil {
-			return adminSigningKeyUsageLoadedMsg{err: fmt.Errorf("admin API is unavailable for this session")}
+			return adminSigningKeyUsageLoadedMsg{key: keyPEM, err: fmt.Errorf("admin API is unavailable for this session")}
 		}
 		count, capped, err := m.adminClient.CountSigningKeyUsage(m.ctx, m.adminSession, repository, keyPEM)
-		return adminSigningKeyUsageLoadedMsg{count: count, capped: capped, err: err}
+		return adminSigningKeyUsageLoadedMsg{key: keyPEM, count: count, capped: capped, err: err}
 	}
 }
 

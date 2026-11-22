@@ -296,15 +296,6 @@ func renderTextField(theme adminTheme, label string, value string, focused bool)
 	return fmt.Sprintf("%s\n%s", label, style.Render(value))
 }
 
-func renderSecretField(theme adminTheme, label string, value string, focused bool) string {
-	masked := strings.Repeat("*", len([]rune(value)))
-	style := theme.input
-	if focused {
-		style = theme.inputFocus
-	}
-	return fmt.Sprintf("%s\n%s", label, style.Render(masked))
-}
-
 func renderToggleField(theme adminTheme, label string, value bool, focused bool) string {
 	current := "off"
 	if value {

@@ -140,6 +140,11 @@ func (s *trivyConfigScreen) showSaveError(err error) {
 }
 
 func (s trivyConfigScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd, bool) {
+	if isPasteKey(msg) {
+		// Pasted text is never a command: its first character must not run an
+		// action or open an editor.
+		return s, nil, true
+	}
 	s.note = ""
 	switch {
 	case isEscKey(msg):

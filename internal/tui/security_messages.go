@@ -74,6 +74,7 @@ type securitySigningPolicySavedMsg struct {
 
 type securityKeyUsageMsg struct {
 	securityResult
+	key    string
 	count  int
 	capped bool
 }
@@ -170,10 +171,10 @@ func securityKeyUsageCmd(env screenEnv, gen uint64, keyPEM string) tea.Cmd {
 	client, session := env.Client, env.Session
 	return func() tea.Msg {
 		if client == nil {
-			return securityKeyUsageMsg{securityResult: securityResult{gen: gen, err: errSecurityUnavailable}}
+			return securityKeyUsageMsg{securityResult: securityResult{gen: gen, err: errSecurityUnavailable}, key: keyPEM}
 		}
 		count, capped, err := client.CountSigningKeyUsage(context.Background(), session, "", keyPEM)
-		return securityKeyUsageMsg{securityResult: securityResult{gen: gen, err: err}, count: count, capped: capped}
+		return securityKeyUsageMsg{securityResult: securityResult{gen: gen, err: err}, key: keyPEM, count: count, capped: capped}
 	}
 }
 

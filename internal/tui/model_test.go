@@ -2823,7 +2823,7 @@ func TestModelSigningPolicyModalOpenSeedsUnsignedSelfReadFromLoadedSettings(t *t
 // TestModelSigningPolicyModalSaveIncludesUnsignedSelfRead is the RED test
 // for the bug found while scoping this change: saving the modal after
 // changing an unrelated field (Enabled) used to silently wipe
-// UnsignedSelfRead back to "" because updateSigningPolicyModalKey's Enter
+// UnsignedSelfRead back to "" because the modal's Enter
 // handler never included it in the save payload. Also verifies cycling the
 // field itself with Space persists the new value.
 func TestModelSigningPolicyModalSaveIncludesUnsignedSelfRead(t *testing.T) {
@@ -3554,8 +3554,8 @@ func TestModelTrivyRepositoryAlertsLoadSelectDetailAndRecoverEmptyState(t *testi
 }
 
 // TestModelRepositoryAlertsScreenShowsOneRowPerRepositoryNotPerScanRun is the
-// Phase 4 removal-sweep RED/GREEN test: after renderFeaturePageBody's call
-// site swap (renderTrivyRepositoryAlerts -> renderAdminScanSummary), the
+// Phase 4 removal-sweep RED/GREEN test: after the call site swap
+// (renderTrivyRepositoryAlerts -> renderAdminScanSummary), the
 // Repository Alerts screen an operator actually sees through a real
 // Model.Update()/View() key flow must show exactly one row per repository,
 // with a Runs count reflecting every underlying scan run for that
@@ -3869,23 +3869,6 @@ func TestModelTrivyConfigModalRendersFullBottomBorderAndHelpLineAtViewportFloor(
 	}
 	if !strings.Contains(ansi.Strip(view), "tab next field, space toggles") {
 		t.Fatalf("view = %q, want the modal's help line present at the viewport floor", view)
-	}
-}
-
-// assertNoLineExceedsWidthOrCorruptsBorders is the shared width-boundary
-// assertion (mirrors admin_overlay_test.go's
-// TestCompositeOverlayIsANSISafeAcrossSplicedStyledBlocks and
-// admin_tables_test.go's declaredWidth pattern): an ANSI-corrupted line can
-// measure wider than the canvas it was composited into, so asserting every
-// line's lipgloss.Width stays within the terminal width is this codebase's
-// established way of catching corrupted/mismatched border runes, not just
-// literal overflow.
-func assertNoLineExceedsWidthOrCorruptsBorders(t *testing.T, view string, width int) {
-	t.Helper()
-	for i, line := range strings.Split(view, "\n") {
-		if w := lipgloss.Width(line); w > width {
-			t.Fatalf("line %d width = %d, want <= %d (terminal width) -- an ANSI-corrupted or overflowing line:\n%s", i, w, width, view)
-		}
 	}
 }
 
