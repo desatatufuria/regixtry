@@ -333,9 +333,20 @@ func (s *Store) SaveUpload(ctx context.Context, tenant string, state domain.Uplo
 		return err
 	}
 
-	_, err := s.execWrite(ctx, `
+	args := []any{state.ID, tenant, state.Repository.String(), string(state.Status), state.Size, state.StartedAt.UTC().Format(time.RFC3339Nano), state.UpdatedAt.UTC().Format(time.RFC3339Nano), state.Location}
+	source := "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+	project, guarded := domain.ProjectOf(state.Repository)
+	guarded = guarded && s.requireProject
+	if guarded {
+		// Authoritative: the row exists only if the project still does, in
+		// the same statement (no phantom upload of a deleted project).
+		source = "SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM projects WHERE tenant = ? AND name = ?)"
+		args = append(args, tenant, project)
+	}
+
+	result, err := s.execWrite(ctx, `
 		INSERT INTO uploads (id, tenant, repository, status, size, started_at, updated_at, location)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		`+source+`
 		ON CONFLICT(id) DO UPDATE SET
 			repository = excluded.repository,
 			status = excluded.status,
@@ -343,8 +354,16 @@ func (s *Store) SaveUpload(ctx context.Context, tenant string, state domain.Uplo
 			started_at = excluded.started_at,
 			updated_at = excluded.updated_at,
 			location = excluded.location
-	`, state.ID, tenant, state.Repository.String(), string(state.Status), state.Size, state.StartedAt.UTC().Format(time.RFC3339Nano), state.UpdatedAt.UTC().Format(time.RFC3339Nano), state.Location)
-	return err
+	`, args...)
+	if err != nil {
+		return err
+	}
+	if guarded {
+		if n, err := result.RowsAffected(); err == nil && n == 0 {
+			return domain.NewProjectNotFoundError(project)
+		}
+	}
+	return nil
 }
 
 func (s *Store) GetUpload(ctx context.Context, tenant string, uploadID string) (domain.UploadState, error) {

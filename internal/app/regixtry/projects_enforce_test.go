@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	domain "regixtry/internal/domain/regixtry"
 	metadata "regixtry/internal/infra/metadata/sqlite"
@@ -259,6 +260,79 @@ func TestRequireProjectPushRacingProjectDelete(t *testing.T) {
 		}
 		if pushErr != nil && !domain.IsCode(pushErr, domain.ErrorCodeNotFound) && !domain.IsCode(pushErr, domain.ErrorCodeConflict) {
 			t.Fatalf("iteration %d: push error = %v, want nil or not found", i, pushErr)
+		}
+	}
+}
+
+func countUploadsOfMissingProjects(t *testing.T, env enforceEnv, projects []string) int {
+	t.Helper()
+	open, err := env.store.ListUploads(context.Background(), enforceTenant, nil)
+	if err != nil {
+		t.Fatalf("ListUploads() error = %v", err)
+	}
+	orphans := 0
+	for _, upload := range open {
+		project, _ := domain.ProjectOf(upload.Repository)
+		if exists, _ := env.store.ProjectExists(context.Background(), enforceTenant, project); !exists {
+			orphans++
+		}
+	}
+	return orphans
+}
+
+func TestRequireProjectSaveUploadIsRefusedForAMissingProject(t *testing.T) {
+	t.Parallel()
+	env := newEnforceEnv(t, true)
+	repository, _ := domain.ParseRepositoryRef("ghost/app")
+	state := domain.UploadState{ID: "u1", Repository: repository, Status: domain.UploadStatusActive, StartedAt: time.Now(), UpdatedAt: time.Now(), Location: "/x"}
+
+	if err := env.store.SaveUpload(context.Background(), enforceTenant, state); !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("SaveUpload() error = %v, want not found", err)
+	}
+	if open, _ := env.store.ListUploads(context.Background(), enforceTenant, nil); len(open) != 0 {
+		t.Fatalf("%d upload rows saved for a missing project", len(open))
+	}
+}
+
+// Parallel BeginUpload against project delete/create cycles: no upload row of
+// a missing project survives, and DeleteProject is never blocked by one.
+func TestRequireProjectBeginUploadRacingProjectCycles(t *testing.T) {
+	t.Parallel()
+	env := newEnforceEnv(t, true)
+	ctx := context.Background()
+
+	for round := 0; round < 25; round++ {
+		project := fmt.Sprintf("c%d", round)
+		if err := env.projects.CreateProject(adminContext(), project); err != nil {
+			t.Fatalf("CreateProject() error = %v", err)
+		}
+		var wg sync.WaitGroup
+		for i := 0; i < 4; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_, _ = env.service.BeginUpload(ctx, project+"/app")
+			}()
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = env.projects.DeleteProject(adminContext(), project)
+		}()
+		wg.Wait()
+
+		if n := countUploadsOfMissingProjects(t, env, nil); n != 0 {
+			t.Fatalf("round %d: %d upload rows of a missing project", round, n)
+		}
+		// Whatever survived must be deletable once its uploads are cancelled.
+		open, _ := env.store.ListUploads(ctx, enforceTenant, nil)
+		for _, upload := range open {
+			_ = env.service.CancelUpload(ctx, upload.Repository.String(), upload.ID)
+		}
+		if exists, _ := env.projects.ProjectExists(adminContext(), project); exists {
+			if err := env.projects.DeleteProject(adminContext(), project); err != nil {
+				t.Fatalf("round %d: DeleteProject() blocked: %v", round, err)
+			}
 		}
 	}
 }
