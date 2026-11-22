@@ -120,7 +120,7 @@ func (s trivyConfigScreen) sweepSummary(theme adminTheme, env screenEnv) string 
 	}
 	switch {
 	case strings.HasPrefix(sweep.dbRefresh, "failed"):
-		text += ", DB refresh failed"
+		text += ", DB refresh failed, results may be stale"
 	case sweep.dbRefresh == "never":
 		text += ", DB not refreshed"
 	default:
@@ -151,7 +151,11 @@ func (t trivySweep) errorsText(theme adminTheme) string {
 func (t trivySweep) refreshPlain(now time.Time) string {
 	switch {
 	case strings.HasPrefix(t.dbRefresh, "failed"):
-		return "DB refresh " + t.dbRefresh
+		text := "DB refresh failed, results may be stale"
+		if reason := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(t.dbRefresh, "failed"), ":")); reason != "" {
+			text += " (" + reason + ")"
+		}
+		return text
 	case t.dbRefresh == "never":
 		return "DB not refreshed"
 	case !t.dbRefreshed.IsZero():

@@ -56,7 +56,7 @@ func TestTrivyConfigLastSweepStates(t *testing.T) {
 		notWant []string
 	}{
 		{"no sweep yet", sweepClient(nil, nil), []string{"no sweep yet"}, []string{"visited"}},
-		{"refresh failed with errors", sweepClient(&failed, nil), []string{"DB refresh failed: network unreachable", "3 errors", "DB unchanged, nothing rescanned", "finished 1 d ago", "next sweep due"}, nil},
+		{"refresh failed with errors", sweepClient(&failed, nil), []string{"DB refresh failed, results may be stale (network unreachable)", "3 errors", "DB unchanged, nothing rescanned", "finished 1 d ago", "next sweep due"}, nil},
 		{"overdue", sweepClient(&overdue, nil), []string{"finished 3 d ago", "next sweep due"}, nil},
 		{"scheduled scans off", sweepClient(&overdue, func(p *ports.FeaturePage) {
 			for i, s := range p.Sections {
