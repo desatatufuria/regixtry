@@ -150,6 +150,7 @@ func shellHeader(theme adminTheme, spec shellSpec, width int) string {
 
 	crumbs := make([]string, len(spec.Breadcrumb))
 	for i, crumb := range spec.Breadcrumb {
+		crumb = sanitizeDisplay(crumb)
 		if i == len(spec.Breadcrumb)-1 {
 			crumbs[i] = text.Render(crumb)
 		} else {
@@ -157,7 +158,7 @@ func shellHeader(theme adminTheme, spec shellSpec, width int) string {
 		}
 	}
 	left := bar.Render("  ") + strings.Join(crumbs, muted.Render(" › "))
-	right := muted.Render("signed in as ") + text.Render(spec.Operator) + bar.Render("  ")
+	right := muted.Render("signed in as ") + text.Render(sanitizeDisplay(spec.Operator)) + bar.Render("  ")
 
 	gap := width - lipgloss.Width(left) - lipgloss.Width(right)
 	if gap < 1 {
@@ -191,7 +192,7 @@ func shellBody(theme adminTheme, spec shellSpec, width, rows int) []string {
 	for i := range rows {
 		content := ""
 		if row := i - shellContentPadTop; row >= 0 && row < len(bodyLines) {
-			content = lipgloss.NewStyle().MaxWidth(inner).Render(bodyLines[row])
+			content = lipgloss.NewStyle().MaxWidth(inner).Render(sanitizeFrame(bodyLines[row]))
 		}
 		pad := max(contentWidth-shellContentPadX-lipgloss.Width(content), 0)
 		lines[i] = sidebar[i] + strings.Repeat(" ", shellContentPadX) + content + strings.Repeat(" ", pad)
