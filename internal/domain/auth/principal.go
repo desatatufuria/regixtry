@@ -9,8 +9,11 @@ type Principal struct {
 	IsAdmin    bool
 	IsReadOnly bool
 	Grants     []RepoGrant
-	Scopes     []Scope
-	ExpiresAt  time.Time
+	// ProjectGrants give a role over every repository of a project (first
+	// path segment, compared with ==).
+	ProjectGrants []ProjectGrant
+	Scopes        []Scope
+	ExpiresAt     time.Time
 }
 
 // IsUnrestricted reports whether the principal authenticated with a token that
@@ -60,6 +63,14 @@ func (p Principal) HasRepoAdminAccess(repository string) bool {
 	return p.scopeAllowsRepository(repository, Scope.AllowsPush)
 }
 
+// HasGrantedRepoAdminAccess reports whether the principal is a global admin or
+// holds repo-admin on the repository, directly or through its project. Like
+// HasGrantedWriteAccess it checks only the grant half, never the token scope:
+// admin-session tokens carry zero scopes.
+func (p Principal) HasGrantedRepoAdminAccess(repository string) bool {
+	return p.hasGrantedRepositoryAccess(repository, RepoRole.AllowsAdmin)
+}
+
 func (p Principal) HasCatalogAccess(repository string) bool {
 	if !p.hasGrantedRepositoryAccess(repository, RepoRole.AllowsRead) {
 		return false
@@ -96,9 +107,20 @@ func (p Principal) hasGrantedRepositoryAccess(repository string, allows func(Rep
 		return true
 	}
 
+	// Effective access is the exact repository grant OR the grant of the
+	// repository's project (first segment, ==). One loop per source, so all
+	// six predicates built on this function inherit project grants.
 	for _, grant := range p.Grants {
 		if grant.Repository.String() == repository && allows(grant.Role) {
 			return true
+		}
+	}
+
+	if project, ok := projectOf(repository); ok {
+		for _, grant := range p.ProjectGrants {
+			if grant.Project == project && allows(grant.Role) {
+				return true
+			}
 		}
 	}
 
