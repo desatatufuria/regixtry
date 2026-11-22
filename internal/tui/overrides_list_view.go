@@ -41,17 +41,8 @@ func overridesShell(theme adminTheme, env screenEnv, v overridesView, body strin
 func (l overridesList) frame(theme adminTheme, env screenEnv, v overridesView) screenFrame {
 	bodyW, bodyH, listW, panelW := scanBoardSize(env)
 
-	head := []string{
-		scanTitleLine(theme, v.title, v.subtitle, bodyW),
-		l.noticeLine(theme, bodyW),
-	}
-	if v.tabs != "" {
-		head = append(head, v.tabs)
-	}
-	foot := wrapStyled(theme.muted, v.foot, max(listW-4, 1))
-	if len(foot) > 2 {
-		foot = foot[:2]
-	}
+	head := l.headLines(theme, v, bodyW)
+	foot := l.footLines(theme, v, listW)
 	visible := max(bodyH-len(head)-len(foot)-scanTableChromeRows, 1)
 	panelH := max(bodyH-len(head), 3)
 
@@ -72,6 +63,41 @@ func (l overridesList) frame(theme adminTheme, env screenEnv, v overridesView) s
 	}
 	frame.Body = overridesShell(theme, env, v, body, hints)
 	return frame
+}
+
+// headLines is the title, the notice and, on Trivy, the tab strip above the
+// columns.
+func (l overridesList) headLines(theme adminTheme, v overridesView, bodyW int) []string {
+	head := []string{
+		scanTitleLine(theme, v.title, v.subtitle, bodyW),
+		l.noticeLine(theme, bodyW),
+	}
+	if v.tabs != "" {
+		head = append(head, v.tabs)
+	}
+	return head
+}
+
+// footLines is the one or two muted lines under the table.
+func (l overridesList) footLines(theme adminTheme, v overridesView, listW int) []string {
+	foot := wrapStyled(theme.muted, v.foot, max(listW-4, 1))
+	if len(foot) > 2 {
+		foot = foot[:2]
+	}
+	return foot
+}
+
+// mouseRows is where the table drew its repository rows.
+func (l overridesList) mouseRows(theme adminTheme, env screenEnv, v overridesView) mouseRows {
+	if len(l.rows) == 0 {
+		return mouseRows{}
+	}
+	bodyW, bodyH, listW, _ := scanBoardSize(env)
+	head := len(l.headLines(theme, v, bodyW))
+	visible := max(bodyH-head-len(l.footLines(theme, v, listW))-scanTableChromeRows, 1)
+	start, end := grantWindow(boundedIndex(l.cursor, len(l.rows)), len(l.rows), visible)
+	x, y := shellContentOrigin()
+	return mouseRows{X: x, Y: y + head + scanTableChromeRows - 1, Width: listW, Count: end - start, First: start}
 }
 
 // noticeLine is the failure or outcome of the last action, else how many

@@ -40,11 +40,16 @@ func (s usersScreen) summaryText() string {
 	return count
 }
 
+// headLines is the title row and the blank row under it, above both columns.
+func (s usersScreen) headLines(theme adminTheme, bodyW int) []string {
+	return []string{spreadText(theme.subheading.Render("Users"), theme.muted.Render(s.summaryText()), bodyW), ""}
+}
+
 func (s usersScreen) View(theme adminTheme, env screenEnv) screenFrame {
 	width, height := env.Layout.Width, env.Layout.Height
 	bodyW, bodyH := shellContentSize(width, height)
 
-	lines := []string{spreadText(theme.subheading.Render("Users"), theme.muted.Render(s.summaryText()), bodyW), ""}
+	lines := s.headLines(theme, bodyW)
 	columnsHeight := max(bodyH-len(lines), 3)
 	detailW := min(usersDetailWidth, max(bodyW/3, 20))
 	tableW := max(bodyW-detailW-usersColumnGap, 10)
@@ -82,18 +87,43 @@ func (s usersScreen) View(theme adminTheme, env screenEnv) screenFrame {
 // width columns by height rows.
 func (s usersScreen) renderLeft(theme adminTheme, env screenEnv, width, height int) string {
 	search := s.renderSearch(theme, width)
-	rows := height - lipgloss.Height(search)
 	parts := []string{search}
 
 	if s.notice != "" {
 		parts = append(parts, renderUserNotice(theme, s.noticeTone, s.notice, width))
-		rows--
 	}
 	footnote := s.footnote(theme, width)
-	rows -= len(footnote)
-	parts = append(parts, s.renderTable(theme, width, max(rows, 3)))
+	parts = append(parts, s.renderTable(theme, width, s.tableHeight(theme, width, height)))
 	parts = append(parts, footnote...)
 	return lipgloss.NewStyle().Width(width).Height(height).MaxHeight(height).Render(strings.Join(parts, "\n"))
+}
+
+// tableHeight is the rows the table panel gets in a left column of the given
+// width and height: what the search box, the notice and the footnote leave.
+func (s usersScreen) tableHeight(theme adminTheme, width, height int) int {
+	rows := height - lipgloss.Height(s.renderSearch(theme, width)) - len(s.footnote(theme, width))
+	if s.notice != "" {
+		rows--
+	}
+	return max(rows, 3)
+}
+
+// renderSearchLines is the search box as lines, to count them.
+func (s usersScreen) renderSearchLines(theme adminTheme, width int) []string {
+	return strings.Split(s.renderSearch(theme, width), "\n")
+}
+
+// usersTableChromeRows is the panel's top border and the column header above
+// the first user row; the panel's bottom border sits under the last one.
+const usersTableChromeRows = 2
+
+// usersTableCapacity is how many user rows a table panel of height rows holds.
+func usersTableCapacity(height int) int { return max(height-usersTableChromeRows-1, 1) }
+
+// usersTableTop is the first visible row: the selection is centered, clamped
+// to the ends of the list.
+func usersTableTop(selected, total, capacity int) int {
+	return min(max(selected-capacity/2, 0), max(total-capacity, 0))
 }
 
 func (s usersScreen) renderSearch(theme adminTheme, width int) string {
@@ -140,7 +170,7 @@ func (s usersScreen) renderTable(theme adminTheme, width, height int) string {
 	}
 
 	lines := []string{theme.muted.Bold(true).Render("  " + row("USERNAME", "ROLE", "STATE", "EXPIRING"))}
-	capacity := max(height-2-1, 1) // border rows and the column header
+	capacity := usersTableCapacity(height)
 
 	switch {
 	case !s.loaded:
@@ -158,7 +188,7 @@ func (s usersScreen) renderTable(theme adminTheme, width, height int) string {
 			break
 		}
 		selected := s.selectedIndex(visible)
-		top := min(max(selected-capacity/2, 0), max(len(visible)-capacity, 0))
+		top := usersTableTop(selected, len(visible), capacity)
 		for i := top; i < min(top+capacity, len(visible)); i++ {
 			lines = append(lines, s.renderRow(theme, visible[i], i == selected, row, inner))
 		}

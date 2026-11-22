@@ -94,6 +94,11 @@ func (s featureOverridesScreen) updateKey(env screenEnv, msg keyMsg) (adminScree
 }
 
 func (s featureOverridesScreen) View(theme adminTheme, env screenEnv) screenFrame {
+	return s.frame(theme, env, s.viewSpec())
+}
+
+// viewSpec is what this screen draws around the shared list.
+func (s featureOverridesScreen) viewSpec() overridesView {
 	v := overridesView{
 		title: featureNavLabel(s.feature),
 		keys:  s.Keys(),
@@ -108,7 +113,7 @@ func (s featureOverridesScreen) View(theme adminTheme, env screenEnv) screenFram
 		v.nav = shellNavSecretScanning
 		v.foot = "o edits the override of the selected repository. An override replaces the global settings for it."
 	}
-	return s.frame(theme, env, v)
+	return v
 }
 
 // featureDisplayName maps a feature identity to its display label.

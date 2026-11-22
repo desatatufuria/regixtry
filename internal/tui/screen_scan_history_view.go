@@ -58,8 +58,8 @@ func (s scanHistoryScreen) viewFull(theme adminTheme, env screenEnv, status stri
 	m := s.modal
 
 	// title, tabs, then the columns; the table box, its footnote.
-	columnsH := max(bodyH-2, 3)
-	visible := max(columnsH-1-scanTableChromeRows, 1)
+	columnsH := max(bodyH-scanHistoryHeadRows, 3)
+	visible := scanHistoryVisibleRows(bodyH)
 
 	table, footnote := s.renderList(theme, listW, visible, status)
 	var panel string
@@ -86,6 +86,14 @@ func (s scanHistoryScreen) viewFull(theme adminTheme, env screenEnv, status stri
 			Height:     height,
 		}),
 	}
+}
+
+// scanHistoryHeadRows is the title line and the tab bar above the columns.
+const scanHistoryHeadRows = 2
+
+// scanHistoryVisibleRows is how many finding rows fit in a body bodyH rows tall.
+func scanHistoryVisibleRows(bodyH int) int {
+	return max(max(bodyH-scanHistoryHeadRows, 3)-1-scanTableChromeRows, 1)
 }
 
 // currentRun is the run on screen: its detail once read, else the list entry.

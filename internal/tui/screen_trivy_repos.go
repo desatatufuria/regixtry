@@ -96,8 +96,13 @@ func (s trivyReposScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea
 }
 
 func (s trivyReposScreen) View(theme adminTheme, env screenEnv) screenFrame {
+	return s.frame(theme, env, s.viewSpec(theme))
+}
+
+// viewSpec is what this screen draws around the shared list.
+func (s trivyReposScreen) viewSpec(theme adminTheme) overridesView {
 	other := lipgloss.NewStyle().Padding(0, 1).Foreground(theme.muted.GetForeground())
-	return s.frame(theme, env, overridesView{
+	return overridesView{
 		title:    "Image scanning",
 		subtitle: "Trivy, vulnerability scanner",
 		crumb:    []string{featureNavGroup, "Image scanning", "Repositories"},
@@ -106,7 +111,7 @@ func (s trivyReposScreen) View(theme adminTheme, env screenEnv) screenFrame {
 		foot:     "One row per repository, severity first. enter opens its scan history, o edits its override.",
 		keys:     s.Keys(),
 		history:  true,
-	})
+	}
 }
 
 var trivyReposKeys = screenKeys{short: []key.Binding{

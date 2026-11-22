@@ -22,6 +22,9 @@ const (
 	// the title, the filter, the blank after it, the table's border (2) and
 	// header (1), and the status line.
 	repoAccessTableChromeRows = 7
+	// repoAccessTableBelowRows is the part of that chrome under the last table
+	// row: the bottom border and the status line.
+	repoAccessTableBelowRows = 2
 )
 
 func (s repoAccessScreen) View(theme adminTheme, env screenEnv) screenFrame {

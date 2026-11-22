@@ -26,11 +26,7 @@ func (s robotsScreen) View(theme adminTheme, env screenEnv) screenFrame {
 	bodyW, bodyH := shellContentSize(width, height)
 	now := env.now()
 
-	panelW := robotsPanelWidth
-	if bodyW < 2*robotsPanelWidth+robotsPanelGap {
-		panelW = max(bodyW*2/5, 12)
-	}
-	leftW := max(bodyW-panelW-robotsPanelGap, 12)
+	leftW, panelW := robotsWidths(bodyW)
 
 	left := strings.Join(s.renderList(theme, leftW, bodyH, now), "\n")
 	panel := s.renderPanel(theme, panelW, bodyH, now)
@@ -53,6 +49,29 @@ func (s robotsScreen) View(theme adminTheme, env screenEnv) screenFrame {
 		frame.Overlay = s.confirm.view(theme)
 	}
 	return frame
+}
+
+// robotsWidths splits the body into the list column and the detail panel.
+func robotsWidths(bodyW int) (leftW, panelW int) {
+	panelW = robotsPanelWidth
+	if bodyW < 2*robotsPanelWidth+robotsPanelGap {
+		panelW = max(bodyW*2/5, 12)
+	}
+	return max(bodyW-panelW-robotsPanelGap, 12), panelW
+}
+
+// robotsTableChromeRows is the list's title row, then the table's top border,
+// column header and rule above the first robot row.
+const robotsTableChromeRows = 4
+
+// listWindow is the robots drawn in a list column of the given width and rows:
+// the cursor, the first and one past the last visible robot.
+func (s robotsScreen) listWindow(theme adminTheme, width, rows int) (cursor, start, end, visible int) {
+	status := s.statusLines(theme, width)
+	visible = max(rows-1-4-len(status)-1, 1)
+	cursor = boundedIndex(s.selected, len(s.robots))
+	start, end = grantWindow(cursor, len(s.robots), visible)
+	return cursor, start, end, visible
 }
 
 // summary is "5 robots, 1 without repository access".
@@ -80,9 +99,7 @@ func (s robotsScreen) renderList(theme adminTheme, width, rows int, now time.Tim
 	inner := max(width-4, 1)
 
 	status := s.statusLines(theme, width)
-	visible := max(rows-1-4-len(status)-1, 1)
-	cursor := boundedIndex(s.selected, len(s.robots))
-	start, end := grantWindow(cursor, len(s.robots), visible)
+	cursor, start, end, visible := s.listWindow(theme, width, rows)
 
 	box := []string{s.headerRow(theme, inner)}
 	box = append(box, lipgloss.NewStyle().Foreground(theme.borderColor).Render(strings.Repeat("─", inner)))

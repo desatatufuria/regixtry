@@ -12,7 +12,7 @@ func (s scanRunsScreen) View(theme adminTheme, env screenEnv) screenFrame {
 	width, height := env.Layout.Width, env.Layout.Height
 	bodyW, bodyH, listW, panelW := scanBoardSize(env)
 	foot := s.footnoteLines(theme, listW)
-	visible := max(bodyH-1-len(foot)-scanTableChromeRows, 1)
+	visible := s.visibleRows(foot, bodyH)
 	panelH := max(bodyH-1, 3)
 
 	title, crumb, nav := "Scan runs", "Scan runs", shellNavScanRuns
@@ -42,6 +42,15 @@ func (s scanRunsScreen) View(theme adminTheme, env screenEnv) screenFrame {
 			Height:     height,
 		}),
 	}
+}
+
+// scanTitleRows is the title line above the table box.
+const scanTitleRows = 1
+
+// visibleRows is how many list rows fit under the title with the footnote
+// lines under the box.
+func (s scanRunsScreen) visibleRows(foot []string, bodyH int) int {
+	return max(bodyH-scanTitleRows-len(foot)-scanTableChromeRows, 1)
 }
 
 // note is the muted text on the right of the title.
