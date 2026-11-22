@@ -84,6 +84,15 @@ Scan results are now latest-only: one result per (tenant, repository, digest). T
 
 The purge runs in batches of at most 200 deleted runs, each in its own short write transaction, so pushes keep flowing while it runs. It is resumable: if the process stops midway, the next start continues, and the marker is written only when nothing is left. Later starts only check the marker. The file does not shrink by itself; `VACUUM` is an optional operator step to reclaim disk, run with the registry stopped because it rewrites the whole database and takes an exclusive lock.
 
+Expect the purge to take roughly 12 s per 200k scan runs (measured on a 200k-run database); pushes interleave between batches.
+
+Release note text:
+
+- Scan results are latest-only: one result per image digest. Digests are rescanned only when the vulnerability DB or the scan settings change; a manual scan always rescans.
+- The first start after upgrading permanently deletes duplicate scan history (irreversible, see above). Back up `metadata.db` first.
+- Stricter pull policy: a digest whose newest run failed over an older critical completed run is now blocked. The previous behavior allowed it. A failed rescan keeps the previous completed result (marked stale) and the policy keeps enforcing it.
+- A failed vulnerability DB refresh during the sweep continues with the cached DB; the Image scanning screen then reads `DB refresh failed, results may be stale`.
+
 ## Cleanup
 
 Blob garbage collection is a report-then-delete admin flow, off by default. Compute a report with `POST /admin/v1/gc/reports` — always reachable, and safe to run repeatedly since it only reads state — then review it (`GET /admin/v1/gc/reports/{id}`) before acting on it. Deletion (`POST /admin/v1/gc/reports/{id}/delete`) is gated by `REGISTRY_GC_DELETE_ENABLED` (default `false`, returns `UNSUPPORTED`/`501` while disabled); enable it only once you're ready to irreversibly unlink blob files. A 24-hour grace window and a fresh re-check at delete time protect blobs from an in-flight push, and each blob's removal is atomic with manifest publishes and upload links (a push racing a delete either publishes with all its blobs intact or is refused with a `409`, never leaving a manifest with a missing layer) — see [`docs/registry.md`](registry.md#blob-garbage-collection) for the full mark-sweep-grace mechanism.
