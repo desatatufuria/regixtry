@@ -223,10 +223,14 @@ denied (fail closed), and a candidate for a different digest or signed by an
 untrusted key never satisfies the gate. Flooding a digest with junk does not
 shadow a genuine signature: a bundle candidate only consumes the evaluation cap
 (`maxSignatureCandidates`, 256, shared by the bundle-index and Referrers API
-sources) once its signature verified under a trusted key, so malformed
+sources) once (per bundle, however many signatures it carries) its signature verified
+under a trusted key, so malformed
 candidates, candidates for another digest and candidates signed by untrusted
 keys or failing keyless identity verification are skipped for free; each one
-costs at most one blob read capped at 1 MiB. The legacy `.sig` manifest has its
+costs at most one blob read capped at 1 MiB. Inside one bundle, identical
+signature entries are inspected once and at most 16 distinct entries are
+inspected (`maxSignaturesPerBundle`); a genuine signature placed after the
+16th distinct entry is ignored and the bundle fails closed. The legacy `.sig` manifest has its
 own bound (64 signature layers). If 256 trusted-key-signed candidates still do
 not verify (for example because they bind another digest), the rest are not
 examined and the pull is denied.

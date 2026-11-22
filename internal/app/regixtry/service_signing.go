@@ -224,8 +224,13 @@ func (s *Service) verifySignature(ctx context.Context, repository, digest string
 // work stays bounded (one blob read capped at signing.MaxPayloadBytes plus
 // the configured trusted keys, at most 16), and the cap is shared across the
 // bundle-index and Referrers API sources. The legacy `.sig` manifest has its
-// own bound, signing.MaxSignatureEntries layers. Hitting the cap fails closed.
+// own bound, signing.MaxSignatureEntries layers. A candidate spends the cap
+// once, however many signatures it carries. Hitting the cap fails closed.
 const maxSignatureCandidates = 256
+
+// maxSignaturesPerBundle bounds the distinct DSSE signature entries inspected
+// inside ONE bundle document (identical entries are deduplicated first).
+const maxSignaturesPerBundle = 16
 
 // verifyLegacySignature verifies the legacy cosign `.sig` manifest payload
 // against the trusted keys. Every entry is tried: an entry that does not
@@ -461,22 +466,37 @@ func (s *Service) tryVerifyBundleReferrerCandidate(ctx context.Context, digest s
 	}
 
 	paeBytes := signing.PAE(bundle.PayloadType, payload)
-	mismatched := false
-
+	// Identical signature strings are inspected once (repetition costs
+	// nothing) and at most maxSignaturesPerBundle distinct entries are
+	// inspected: a writer-controlled bundle must not multiply the crypto work
+	// or the cap. Entries beyond that are ignored (fail closed for a genuine
+	// signature placed after them).
+	seen := make(map[string]struct{}, maxSignaturesPerBundle)
 	for _, signatureB64 := range bundle.Signatures {
+		if _, dup := seen[signatureB64]; dup {
+			continue
+		}
+		if len(seen) >= maxSignaturesPerBundle {
+			break
+		}
+		seen[signatureB64] = struct{}{}
+
 		for _, trusted := range keys {
 			if err := signing.Verify(trusted.key, paeBytes, signatureB64); err != nil {
 				continue
 			}
 			// The signature verifies under a trusted key: only now does the
-			// candidate consume the shared cap (see maxSignatureCandidates).
+			// candidate consume the shared cap, once per candidate (every
+			// signature of this bundle shares one payload, hence one claims
+			// outcome; see maxSignatureCandidates).
 			if *budget <= 0 {
 				return "", signatureMatch{}, nil // candidate cap reached; fail closed
 			}
 			*budget--
 			if err := signing.CheckBundleClaims(payload, digest); err != nil {
-				mismatched = true // a real signature over a different digest: not accepted, must not shadow other candidates
-				continue
+				// A real signature over a different digest: not accepted, but
+				// reported so the caller keeps evaluating other candidates.
+				return signatureStateMismatched, signatureMatch{}, nil
 			}
 			return signatureStateVerified, signatureMatch{KeyFingerprint: signing.Fingerprint(trusted.pemText)}, nil
 		}
@@ -486,9 +506,6 @@ func (s *Service) tryVerifyBundleReferrerCandidate(ctx context.Context, digest s
 	// anchor next, still scoped to this same candidate bundle document
 	// (design.md Data Flow: key loop, then identity branch, OR semantics,
 	// never combined).
-	if mismatched {
-		return signatureStateMismatched, signatureMatch{}, nil
-	}
 	if len(identities) == 0 {
 		return "", signatureMatch{}, nil // no identity anchors configured; try the next candidate
 	}

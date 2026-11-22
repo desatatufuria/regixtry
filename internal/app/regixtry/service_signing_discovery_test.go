@@ -2,6 +2,7 @@ package regixtry
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"testing"
 
@@ -315,5 +316,123 @@ func TestServiceVerifySignature_OversizedBundleBlobIsSkippedNotRead(t *testing.T
 	state, _, err := verifyForTest(t, service, repository, digest, []string{keyPEM})
 	if err != nil || state != signatureStateVerified {
 		t.Fatalf("verifySignature() = (%q, %v), want verified (oversized blob skipped)", state, err)
+	}
+}
+
+// seedReferrerWithBundleDoc publishes a referrer for subject whose single
+// bundle layer is the given raw bundle document.
+func seedReferrerWithBundleDoc(t *testing.T, service *Service, repository, subject string, bundleDoc []byte) {
+	t.Helper()
+
+	uploadBlobForTest(t, service, repository, bundleDoc)
+	emptyConfig := []byte("{}")
+	uploadBlobForTest(t, service, repository, emptyConfig)
+	referrer, err := json.Marshal(map[string]any{
+		"schemaVersion": 2,
+		"mediaType":     "application/vnd.oci.image.manifest.v1+json",
+		"config":        map[string]any{"mediaType": "application/vnd.oci.empty.v1+json", "digest": digestForTest(emptyConfig), "size": len(emptyConfig)},
+		"layers":        []map[string]any{{"mediaType": signing.SigstoreBundleMediaType, "digest": digestForTest(bundleDoc), "size": len(bundleDoc)}},
+		"subject":       map[string]any{"mediaType": "application/vnd.docker.distribution.manifest.v2+json", "digest": subject, "size": 949},
+		"artifactType":  signing.SigstoreBundleMediaType,
+	})
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	if _, err := service.PublishManifest(context.Background(), repository, digestForTest(referrer), "application/vnd.oci.image.manifest.v1+json", referrer); err != nil {
+		t.Fatalf("PublishManifest(referrer) error = %v", err)
+	}
+	service.WaitForBackgroundWork()
+}
+
+// bundleDocWithSignatures builds a bundle document over the in-toto statement
+// binding statementHex with the given raw signature list.
+func bundleDocWithSignatures(t *testing.T, statementHex string, signatures []string) []byte {
+	t.Helper()
+
+	entries := make([]map[string]string, 0, len(signatures))
+	for _, sig := range signatures {
+		entries = append(entries, map[string]string{"sig": sig})
+	}
+	raw, err := json.Marshal(map[string]any{
+		"mediaType": signing.SigstoreBundleMediaType,
+		"dsseEnvelope": map[string]any{
+			"payload":     base64.StdEncoding.EncodeToString(bundleInTotoStatementPayload(t, statementHex)),
+			"payloadType": "application/vnd.in-toto+json",
+			"signatures":  entries,
+		},
+	})
+	if err != nil {
+		t.Fatalf("json.Marshal(bundle) error = %v", err)
+	}
+	return raw
+}
+
+func TestServiceVerifySignature_RepeatedReplayedSignatureInOneBundleSpendsTheCapOnce(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	repository := "library/alpine"
+	digest := seedArbitraryImageManifest(t, service, repository, " - repeated signature")
+	other := seedArbitraryImageManifest(t, service, repository, " - repeated signature, other image")
+	key, keyPEM := generateTestECDSAP256KeyPair(t)
+
+	// Several bundles each repeating one genuine replayed trusted-key
+	// signature (bound to ANOTHER digest) 1000 times; some sort before the
+	// genuine referrer. Each used to burn the whole cap on its own.
+	for i := 0; i < 6; i++ {
+		replayed := signBundlePayload(t, key, "application/vnd.in-toto+json", bundleInTotoStatementPayload(t, bareHex(other)))
+		sigs := make([]string, 1000)
+		for j := range sigs {
+			sigs[j] = replayed
+		}
+		seedReferrerWithBundleDoc(t, service, repository, digest, bundleDocWithSignatures(t, bareHex(other), sigs))
+	}
+	seedReferrerOnlyBundleSignatureArtifact(t, service, repository, digest, bareHex(digest), key)
+
+	state, _, err := verifyForTest(t, service, repository, digest, []string{keyPEM})
+	if err != nil || state != signatureStateVerified {
+		t.Fatalf("verifySignature() = (%q, %v), want verified", state, err)
+	}
+}
+
+func TestServiceVerifySignature_BundleSignatureEntryLimit(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name      string
+		junkFirst int
+		wantOK    bool
+	}{
+		{name: "valid signature as the last allowed distinct entry is accepted", junkFirst: maxSignaturesPerBundle - 1, wantOK: true},
+		{name: "valid signature beyond the entry limit is ignored and denied", junkFirst: maxSignaturesPerBundle, wantOK: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			service, cleanup := newTestService(t, allowAllAccessController{})
+			defer cleanup()
+
+			repository := "library/alpine"
+			digest := seedArbitraryImageManifest(t, service, repository, " - entry limit "+tc.name)
+			key, keyPEM := generateTestECDSAP256KeyPair(t)
+
+			sigs := make([]string, 0, tc.junkFirst+1)
+			for i := 0; i < tc.junkFirst; i++ {
+				sigs = append(sigs, base64.StdEncoding.EncodeToString([]byte("junk-signature-"+string(rune('a'+i)))))
+			}
+			sigs = append(sigs, signBundlePayload(t, key, "application/vnd.in-toto+json", bundleInTotoStatementPayload(t, bareHex(digest))))
+			seedReferrerWithBundleDoc(t, service, repository, digest, bundleDocWithSignatures(t, bareHex(digest), sigs))
+
+			state, _, err := verifyForTest(t, service, repository, digest, []string{keyPEM})
+			if tc.wantOK {
+				if err != nil || state != signatureStateVerified {
+					t.Fatalf("verifySignature() = (%q, %v), want verified", state, err)
+				}
+				return
+			}
+			requirePolicyDenial(t, state, err, signatureStateUntrusted)
+		})
 	}
 }
