@@ -321,6 +321,10 @@ type serveConfig struct {
 	MaxOpenUploadsPerRepo int
 	UploadTTL             time.Duration
 
+	// TrustedProxies is the raw -trusted-proxies list (CIDRs/IPs). Empty means
+	// X-Forwarded-For is never believed when attributing a failed login.
+	TrustedProxies string
+
 	// Test seams; the zero values keep production behavior.
 	uploadReapInterval time.Duration
 	uploadReapOnError  func(error)
@@ -427,6 +431,7 @@ func parseServeConfig(args []string) (serveConfig, error) {
 	flags.IntVar(&cfg.TrivyMaxConcurrency, "trivy-max-concurrency", 0, "maximum concurrent trivy runs")
 	flags.BoolVar(&cfg.DeleteEnabled, "delete-enabled", parseBoolEnv("REGISTRY_DELETE_ENABLED", false), "enable DELETE /v2/<name>/manifests/<reference> (manifest and tag deletion)")
 	flags.BoolVar(&cfg.GCDeleteEnabled, "gc-delete-enabled", parseBoolEnv("REGISTRY_GC_DELETE_ENABLED", false), "enable POST /admin/v1/gc/reports/{id}/delete (irreversibly unlinks unreferenced blob files; distinct from -delete-enabled, which is metadata-only)")
+	flags.StringVar(&cfg.TrustedProxies, "trusted-proxies", os.Getenv("REGISTRY_TRUSTED_PROXIES"), "comma-separated CIDRs/IPs of reverse proxies whose X-Forwarded-For is trusted for client IP logging (empty = ignore X-Forwarded-For)")
 	var limitEnvErr error
 	trackEnv := func(err error) {
 		if limitEnvErr == nil {
@@ -451,6 +456,10 @@ func parseServeConfig(args []string) (serveConfig, error) {
 	}
 
 	if err := flags.Parse(args); err != nil {
+		return serveConfig{}, err
+	}
+
+	if _, err := regixtryhttp.ParseTrustedProxies(cfg.TrustedProxies); err != nil {
 		return serveConfig{}, err
 	}
 
@@ -2441,6 +2450,11 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 		bearerRealm = trimmed
 	}
 
+	trustedProxies, tpErr := regixtryhttp.ParseTrustedProxies(cfg.TrustedProxies)
+	if tpErr != nil {
+		return nil, nil, tpErr
+	}
+
 	accessController := ports.NewConfigurableAccessController(ports.AccessConfig{
 		AllowAnonymousPull: cfg.AllowAnonymousPull,
 		AllowAnonymousPush: cfg.AllowAnonymousPush,
@@ -2553,7 +2567,7 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 		}()
 	}
 
-	return regixtryhttp.NewRouter(service, authService, regixtryhttp.WithMaxManifestBytes(limitOrDefault(cfg.MaxManifestBytes, regixtryhttp.DefaultMaxManifestBytes))), func() {
+	return regixtryhttp.NewRouter(service, authService, regixtryhttp.WithMaxManifestBytes(limitOrDefault(cfg.MaxManifestBytes, regixtryhttp.DefaultMaxManifestBytes)), regixtryhttp.WithTrustedProxies(trustedProxies)), func() {
 		// Wait for the scheduler goroutine to actually stop before closing the
 		// stores it reads/writes: cancelling schedulerCtx only takes effect
 		// between ticks (scheduler.Run checks ctx.Done() after each tick

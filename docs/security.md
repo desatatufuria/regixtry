@@ -80,9 +80,13 @@ Local TUI inspection is not, and was never designed to be, a third enforcement b
 
 These are recommendations, not guarantees enforced by the program.
 
+## Failed logins and rate limiting
+
+Every rejected credential (`/auth/token`, and bearer tokens on `/v2` and `/admin/v1`) writes one log line `login failed endpoint=<path> ip=<client> reason="<real reason>" account=<name>` and increments an in-process counter by reason. An unknown username is logged as `account_hash=<8 hex>`, never raw, to avoid log injection and unbounded cardinality; passwords and tokens are never logged. The client IP is the TCP peer unless `-trusted-proxies` names the proxies whose `X-Forwarded-For` to trust (see [operations.md](operations.md#reverse-proxy-and-client-ip)). There is no IP-based blocking in the registry: keep per-IP volume limits in the reverse proxy.
+
 ## Risks and limits
 
 - `local-http` transmits credentials and tokens unencrypted if used outside a trusted network.
 - The generated env file may contain the Postgres DSN; its real permissions derive from how bootstrap wrote it and should be reviewed operationally.
-- No metrics, rate limiting, or audit logging of access-control events are confirmed in the code.
+- No metrics endpoint or persistent audit logging of failed logins is confirmed in the code. Failed credentials are written to the structured log with the client IP and reason and counted in memory (see [Failed logins](#failed-logins-and-rate-limiting)).
 - ⚠️ A formal review of the complete OCI-facing attack surface has not been confirmed from the current code.

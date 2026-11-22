@@ -3386,11 +3386,22 @@ func drainingCleanup(router *Router, cleanup func()) func() {
 
 func newTestRouterWithRealAuth(t *testing.T) (*Router, *appauth.Service, domainauth.Principal, string, func()) {
 	t.Helper()
+	return newTestRouterWithRealAuthOptions(t, nil)
+}
+
+// newTestRouterWithRealAuthOptions is newTestRouterWithRealAuth with router
+// options and an optional hook that configures the auth service before the
+// router is built (login policy, injected clock and compare function).
+func newTestRouterWithRealAuthOptions(t *testing.T, configure func(*appauth.Service), options ...RouterOption) (*Router, *appauth.Service, domainauth.Principal, string, func()) {
+	t.Helper()
 
 	authStore := newSQLiteAuthStore(t)
 	accessController := ports.NewPrincipalAccessController(ports.Challenge{Realm: "http://127.0.0.1:5000/auth/token", Service: "regixtry"})
 	authService := appauth.NewService(authStore)
-	handler, cleanup := newTestRouterWithAuth(t, accessController, authServiceOrFatal(t, authService))
+	if configure != nil {
+		configure(authService)
+	}
+	handler, cleanup := newTestRouterWithAuth(t, accessController, authServiceOrFatal(t, authService), options...)
 
 	bootstrapResult, err := authService.BootstrapAdmin(context.Background(), ports.BootstrapAdminInput{
 		Username: "admin",

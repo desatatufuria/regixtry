@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	stdhttp "net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +26,10 @@ type Router struct {
 	mux     *stdhttp.ServeMux
 	// maxManifestBytes caps a manifest PUT body (zero or negative: no cap).
 	maxManifestBytes int64
+	// trustedProxies are the proxies whose X-Forwarded-For is believed when
+	// attributing a request to a client IP; empty means RemoteAddr only.
+	trustedProxies []netip.Prefix
+	loginFailures  loginFailureStats
 }
 
 // DefaultMaxManifestBytes is the manifest PUT body cap NewRouter applies
@@ -48,6 +53,15 @@ func WithLogger(logger *log.Logger) RouterOption {
 func WithMaxManifestBytes(limit int64) RouterOption {
 	return func(router *Router) {
 		router.maxManifestBytes = limit
+	}
+}
+
+// WithTrustedProxies sets the proxies whose X-Forwarded-For header is trusted
+// when logging the client IP of a failed login. Empty (the default) ignores
+// forwarding headers entirely.
+func WithTrustedProxies(proxies []netip.Prefix) RouterOption {
+	return func(router *Router) {
+		router.trustedProxies = proxies
 	}
 }
 
@@ -618,11 +632,10 @@ func (r *Router) handleToken(w stdhttp.ResponseWriter, req *stdhttp.Request) {
 	}
 	if err != nil {
 		// The client only ever sees the uniform error; the real reason (unknown
-		// user, disabled, wrong password, ...) is kept in the server log.
-		if r.logger != nil {
-			if cause := errors.Unwrap(err); cause != nil {
-				r.logger.Printf("auth token denied username=%q reason=%q", username, cause.Error())
-			}
+		// user, disabled, wrong password, ...) goes to the server log with the
+		// client IP, and to the failure counter.
+		if isCredentialFailure(err) {
+			r.recordLoginFailure(req, "/auth/token", username, err)
 		}
 		writeError(w, req, err, challenge, "UNAUTHORIZED")
 		return
@@ -684,6 +697,9 @@ func (r *Router) authenticate(req *stdhttp.Request) (*domainauth.Principal, erro
 
 	principal, err := r.auth.VerifyAccessToken(req.Context(), bearerToken)
 	if err != nil {
+		if isCredentialFailure(err) {
+			r.recordLoginFailure(req, credentialEndpoint(req), "", err)
+		}
 		return nil, err
 	}
 
