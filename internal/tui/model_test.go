@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -2857,6 +2858,9 @@ type fakeQueryService struct {
 }
 
 type fakeAdminClient struct {
+	// mu serializes the fake so subtests sharing one client can run in parallel.
+	mu sync.Mutex
+
 	loginSession AdminSession
 	loginErr     error
 
@@ -3040,6 +3044,8 @@ type fakeAdminClient struct {
 }
 
 func (f *fakeAdminClient) Login(context.Context, string, string) (AdminSession, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.loginCalls++
 	if f.loginErr != nil {
 		return AdminSession{}, f.loginErr
@@ -3048,6 +3054,8 @@ func (f *fakeAdminClient) Login(context.Context, string, string) (AdminSession, 
 }
 
 func (f *fakeAdminClient) GetFeature(context.Context, AdminSession, string) (ports.FeatureDetails, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.getFeatureCalls++
 	if f.featureErr != nil {
 		return ports.FeatureDetails{}, f.featureErr
@@ -3056,6 +3064,8 @@ func (f *fakeAdminClient) GetFeature(context.Context, AdminSession, string) (por
 }
 
 func (f *fakeAdminClient) GetFeatureStatus(context.Context, AdminSession, string) (ports.FeatureDetails, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.getFeatureStatusCalls++
 	if f.featureErr != nil {
 		return ports.FeatureDetails{}, f.featureErr
@@ -3064,6 +3074,8 @@ func (f *fakeAdminClient) GetFeatureStatus(context.Context, AdminSession, string
 }
 
 func (f *fakeAdminClient) GetFeaturePage(_ context.Context, _ AdminSession, name string) (ports.FeaturePage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.getFeaturePageCalls++
 	if f.featureErr != nil {
 		return ports.FeaturePage{}, f.featureErr
@@ -3080,6 +3092,8 @@ func (f *fakeAdminClient) GetFeaturePage(_ context.Context, _ AdminSession, name
 // repository history window returns only that repository's runs in tests,
 // same as it would against the real store.
 func (f *fakeAdminClient) ListScanRuns(_ context.Context, _ AdminSession, repository string, _ int) ([]ports.ScanRun, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.listScanRunsCalls++
 	if f.featureErr != nil {
 		return nil, f.featureErr
@@ -3133,6 +3147,8 @@ func fakeScanRunSortsBefore(left, right ports.ScanRun) bool {
 }
 
 func (f *fakeAdminClient) ListRepositoryScanSummaries(_ context.Context, _ AdminSession, limit int) ([]ports.RepositoryScanSummary, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.listRepositoryScanSummariesCalls++
 	if f.featureErr != nil {
 		return nil, f.featureErr
@@ -3188,6 +3204,8 @@ func fakeScanSummariesByRepository(runs []ports.ScanRun) []ports.RepositoryScanS
 }
 
 func (f *fakeAdminClient) GetScanRunDetail(_ context.Context, _ AdminSession, runID string) (ports.ScanRunDetail, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.getScanRunDetailCalls++
 	if f.featureErr != nil {
 		return ports.ScanRunDetail{}, f.featureErr
@@ -3199,6 +3217,8 @@ func (f *fakeAdminClient) GetScanRunDetail(_ context.Context, _ AdminSession, ru
 }
 
 func (f *fakeAdminClient) GetSecretScanFindings(_ context.Context, _ AdminSession, repository string, digest string) (ports.SecretScanRunDetail, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.getSecretScanFindingsCalls++
 	f.lastSecretScanFindingsQuery = repository + "@" + digest
 	if f.secretScanFindingsErr != nil {
@@ -3211,6 +3231,8 @@ func (f *fakeAdminClient) GetSecretScanFindings(_ context.Context, _ AdminSessio
 }
 
 func (f *fakeAdminClient) ExecuteFeatureAction(_ context.Context, _ AdminSession, name string, actionID string) (ports.FeatureActionResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.executeFeatureActionCalls++
 	f.lastFeatureAction = actionID
 	if f.featureErr != nil {
@@ -3232,6 +3254,8 @@ func (f *fakeAdminClient) ExecuteFeatureAction(_ context.Context, _ AdminSession
 }
 
 func (f *fakeAdminClient) InstallFeatureRuntime(context.Context, AdminSession, string, string) (ports.FeatureRuntimeState, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.installRuntimeCalls++
 	if f.featureErr != nil {
 		return ports.FeatureRuntimeState{}, f.featureErr
@@ -3247,6 +3271,8 @@ func (f *fakeAdminClient) InstallFeatureRuntime(context.Context, AdminSession, s
 }
 
 func (f *fakeAdminClient) UpgradeFeatureRuntime(context.Context, AdminSession, string, string) (ports.FeatureRuntimeState, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.upgradeRuntimeCalls++
 	if f.featureErr != nil {
 		return ports.FeatureRuntimeState{}, f.featureErr
@@ -3262,6 +3288,8 @@ func (f *fakeAdminClient) UpgradeFeatureRuntime(context.Context, AdminSession, s
 }
 
 func (f *fakeAdminClient) RollbackFeatureRuntime(context.Context, AdminSession, string) (ports.FeatureRuntimeState, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.rollbackRuntimeCalls++
 	if f.featureErr != nil {
 		return ports.FeatureRuntimeState{}, f.featureErr
@@ -3270,6 +3298,8 @@ func (f *fakeAdminClient) RollbackFeatureRuntime(context.Context, AdminSession, 
 }
 
 func (f *fakeAdminClient) ConfigureFeature(_ context.Context, _ AdminSession, name string, input ports.FeatureConfigureInput) (ports.FeatureDetails, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.configureFeatureCalls++
 	if f.featureErr != nil {
 		return ports.FeatureDetails{}, f.featureErr
@@ -3285,6 +3315,8 @@ func (f *fakeAdminClient) ConfigureFeature(_ context.Context, _ AdminSession, na
 }
 
 func (f *fakeAdminClient) GetScanPolicy(context.Context, AdminSession) (ports.ScanPolicySettings, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.getScanPolicyCalls++
 	if f.scanPolicyErr != nil {
 		return ports.ScanPolicySettings{}, f.scanPolicyErr
@@ -3293,6 +3325,8 @@ func (f *fakeAdminClient) GetScanPolicy(context.Context, AdminSession) (ports.Sc
 }
 
 func (f *fakeAdminClient) UpdateScanPolicy(_ context.Context, _ AdminSession, input ports.ScanPolicySettings) (ports.ScanPolicySettings, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.updateScanPolicyCalls++
 	f.lastScanPolicyInput = input
 	if f.scanPolicyUpdateErr != nil {
@@ -3303,6 +3337,8 @@ func (f *fakeAdminClient) UpdateScanPolicy(_ context.Context, _ AdminSession, in
 }
 
 func (f *fakeAdminClient) GetUpdateChannel(context.Context, AdminSession) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.getUpdateChannelCalls++
 	if f.updateChannelErr != nil {
 		return "", f.updateChannelErr
@@ -3311,6 +3347,8 @@ func (f *fakeAdminClient) GetUpdateChannel(context.Context, AdminSession) (strin
 }
 
 func (f *fakeAdminClient) SetUpdateChannel(_ context.Context, _ AdminSession, channel string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.updateUpdateChannelCalls++
 	f.lastUpdateChannelInput = channel
 	if f.updateChannelUpdateErr != nil {
@@ -3321,6 +3359,8 @@ func (f *fakeAdminClient) SetUpdateChannel(_ context.Context, _ AdminSession, ch
 }
 
 func (f *fakeAdminClient) GetSigningPolicy(context.Context, AdminSession) (ports.SigningPolicySettings, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.getSigningPolicyCalls++
 	if f.signingPolicyErr != nil {
 		return ports.SigningPolicySettings{}, f.signingPolicyErr
@@ -3329,6 +3369,8 @@ func (f *fakeAdminClient) GetSigningPolicy(context.Context, AdminSession) (ports
 }
 
 func (f *fakeAdminClient) UpdateSigningPolicy(_ context.Context, _ AdminSession, input ports.SigningPolicySettings) (ports.SigningPolicySettings, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.updateSigningPolicyCalls++
 	f.lastSigningPolicyInput = input
 	if f.signingPolicyUpdateErr != nil {
@@ -3339,6 +3381,8 @@ func (f *fakeAdminClient) UpdateSigningPolicy(_ context.Context, _ AdminSession,
 }
 
 func (f *fakeAdminClient) EnableFeature(context.Context, AdminSession, string) (ports.FeatureDetails, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.enableFeatureCalls++
 	if f.featureErr != nil {
 		return ports.FeatureDetails{}, f.featureErr
@@ -3352,6 +3396,8 @@ func (f *fakeAdminClient) EnableFeature(context.Context, AdminSession, string) (
 }
 
 func (f *fakeAdminClient) DisableFeature(context.Context, AdminSession, string) (ports.FeatureDetails, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.disableFeatureCalls++
 	if f.featureErr != nil {
 		return ports.FeatureDetails{}, f.featureErr
@@ -3365,6 +3411,8 @@ func (f *fakeAdminClient) DisableFeature(context.Context, AdminSession, string) 
 }
 
 func (f *fakeAdminClient) ListUsers(context.Context, AdminSession) ([]ports.AdminUser, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.listUsersCalls++
 	if f.usersErr != nil {
 		return nil, f.usersErr
@@ -3380,6 +3428,8 @@ func (f *fakeAdminClient) ListUsers(context.Context, AdminSession) ([]ports.Admi
 }
 
 func (f *fakeAdminClient) CreateUser(_ context.Context, _ AdminSession, input ports.AdminCreateUserInput) (ports.AdminUser, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.createUserCalls++
 	f.lastCreateUserInput = input
 	if f.createUserErr != nil {
@@ -3389,12 +3439,16 @@ func (f *fakeAdminClient) CreateUser(_ context.Context, _ AdminSession, input po
 }
 
 func (f *fakeAdminClient) ResetPassword(_ context.Context, _ AdminSession, input ports.AdminResetPasswordInput) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.resetPasswordCalls++
 	f.lastResetPasswordInput = input
 	return f.resetPasswordErr
 }
 
 func (f *fakeAdminClient) ListUserGrants(_ context.Context, _ AdminSession, userID string) ([]ports.AdminRepoGrant, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.listGrantsCalls++
 	if f.grantsErr != nil {
 		return nil, f.grantsErr
@@ -3403,6 +3457,8 @@ func (f *fakeAdminClient) ListUserGrants(_ context.Context, _ AdminSession, user
 }
 
 func (f *fakeAdminClient) PutUserGrant(_ context.Context, _ AdminSession, input ports.AdminPutRepoGrantInput) (ports.AdminRepoGrant, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.putGrantCalls++
 	f.lastGrantInput = input
 	if f.putGrantErr != nil {
@@ -3412,6 +3468,8 @@ func (f *fakeAdminClient) PutUserGrant(_ context.Context, _ AdminSession, input 
 }
 
 func (f *fakeAdminClient) DeleteRobot(_ context.Context, _ AdminSession, userID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.deleteRobotCalls++
 	f.lastDeleteRobotUserID = userID
 	if f.deleteRobotErr != nil {
@@ -3428,6 +3486,8 @@ func (f *fakeAdminClient) DeleteRobot(_ context.Context, _ AdminSession, userID 
 }
 
 func (f *fakeAdminClient) ListRepositoryGrants(_ context.Context, _ AdminSession, repository string) ([]ports.AdminRepositoryGrant, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.listRepoGrantsCalls++
 	if f.listRepoGrantsErr != nil {
 		return nil, f.listRepoGrantsErr
@@ -3436,6 +3496,8 @@ func (f *fakeAdminClient) ListRepositoryGrants(_ context.Context, _ AdminSession
 }
 
 func (f *fakeAdminClient) PutRepositoryGrant(_ context.Context, _ AdminSession, input ports.AdminPutRepositoryGrantInput) (ports.AdminRepositoryGrant, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.putRepoGrantCalls++
 	f.lastRepoGrantInput = input
 	if f.putRepoGrantErr != nil {
@@ -3445,6 +3507,8 @@ func (f *fakeAdminClient) PutRepositoryGrant(_ context.Context, _ AdminSession, 
 }
 
 func (f *fakeAdminClient) DeleteRepositoryGrant(_ context.Context, _ AdminSession, repository string, username string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.deleteRepoGrantCalls++
 	f.lastDeleteRepoGrantRepo = repository
 	f.lastDeleteRepoGrantUsername = username
@@ -3452,6 +3516,8 @@ func (f *fakeAdminClient) DeleteRepositoryGrant(_ context.Context, _ AdminSessio
 }
 
 func (f *fakeAdminClient) ListUserAdminTokens(_ context.Context, _ AdminSession, userID string) ([]ports.AdminToken, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.listTokensCalls++
 	if f.tokensErr != nil {
 		return nil, f.tokensErr
@@ -3460,6 +3526,8 @@ func (f *fakeAdminClient) ListUserAdminTokens(_ context.Context, _ AdminSession,
 }
 
 func (f *fakeAdminClient) CreateUserAdminToken(_ context.Context, _ AdminSession, _ ports.AdminCreateTokenInput) (ports.AdminCreatedToken, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.createTokenCalls++
 	if f.createTokenErr != nil {
 		return ports.AdminCreatedToken{}, f.createTokenErr
@@ -3468,6 +3536,8 @@ func (f *fakeAdminClient) CreateUserAdminToken(_ context.Context, _ AdminSession
 }
 
 func (f *fakeAdminClient) RevokeUserAdminToken(_ context.Context, _ AdminSession, userID string, accessor string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.revokeTokenCalls++
 	f.lastRevokeTokenUserID = userID
 	f.lastRevokeTokenID = accessor
@@ -3475,6 +3545,8 @@ func (f *fakeAdminClient) RevokeUserAdminToken(_ context.Context, _ AdminSession
 }
 
 func (f *fakeAdminClient) GetRepositoryOverride(_ context.Context, _ AdminSession, repository string, feature string) (ports.RepositoryOverrideDetails, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.getRepositoryOverrideCalls++
 	f.lastRepositoryOverrideRepo = repository
 	f.lastRepositoryOverrideFeature = feature
@@ -3489,6 +3561,8 @@ func (f *fakeAdminClient) GetRepositoryOverride(_ context.Context, _ AdminSessio
 }
 
 func (f *fakeAdminClient) ListRepositoryOverrides(_ context.Context, _ AdminSession, feature string) ([]ports.RepositoryOverrideDetails, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.listRepositoryOverridesCalls++
 	if f.listRepositoryOverridesErr != nil {
 		return nil, f.listRepositoryOverridesErr
@@ -3497,6 +3571,8 @@ func (f *fakeAdminClient) ListRepositoryOverrides(_ context.Context, _ AdminSess
 }
 
 func (f *fakeAdminClient) SetRepositoryOverride(_ context.Context, _ AdminSession, repository string, feature string, input ports.RepositoryOverrideDetails) (ports.RepositoryOverrideDetails, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.setRepositoryOverrideCalls++
 	f.lastSetRepositoryOverride = input
 	f.lastRepositoryOverrideRepo = repository
@@ -3514,6 +3590,8 @@ func (f *fakeAdminClient) SetRepositoryOverride(_ context.Context, _ AdminSessio
 }
 
 func (f *fakeAdminClient) ClearRepositoryOverride(_ context.Context, _ AdminSession, repository string, feature string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.clearRepositoryOverrideCalls++
 	f.lastRepositoryOverrideRepo = repository
 	f.lastRepositoryOverrideFeature = feature
@@ -3525,6 +3603,8 @@ func (f *fakeAdminClient) ClearRepositoryOverride(_ context.Context, _ AdminSess
 }
 
 func (f *fakeAdminClient) CountSigningKeyUsage(_ context.Context, _ AdminSession, repository string, keyPEM string) (int, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.signingKeyUsageCalls++
 	f.lastSigningKeyUsageRepo = repository
 	f.lastSigningKeyUsageKeyPEM = keyPEM
@@ -3535,6 +3615,8 @@ func (f *fakeAdminClient) CountSigningKeyUsage(_ context.Context, _ AdminSession
 }
 
 func (f *fakeAdminClient) EnableUser(_ context.Context, _ AdminSession, _ string) (ports.AdminUser, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.enableCalls++
 	if f.enableErr != nil {
 		return ports.AdminUser{}, f.enableErr
@@ -3543,6 +3625,8 @@ func (f *fakeAdminClient) EnableUser(_ context.Context, _ AdminSession, _ string
 }
 
 func (f *fakeAdminClient) DisableUser(_ context.Context, _ AdminSession, _ string) (ports.AdminUser, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.disableCalls++
 	if f.disableErr != nil {
 		return ports.AdminUser{}, f.disableErr
@@ -3551,6 +3635,8 @@ func (f *fakeAdminClient) DisableUser(_ context.Context, _ AdminSession, _ strin
 }
 
 func (f *fakeAdminClient) ListAccessEvents(_ context.Context, _ AdminSession, limit int) ([]ports.AdminAccessEvent, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.listEventsCalls++
 	f.lastEventsLimit = limit
 	if f.accessEventsErr != nil {
@@ -3560,6 +3646,8 @@ func (f *fakeAdminClient) ListAccessEvents(_ context.Context, _ AdminSession, li
 }
 
 func (f *fakeAdminClient) ListExpiringTokens(_ context.Context, _ AdminSession, within time.Duration, limit int) ([]ports.AdminExpiringToken, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.listExpiringCalls++
 	f.lastExpiringWithin, f.lastExpiringLimit = within, limit
 	if f.expiringErr != nil {
@@ -3569,6 +3657,8 @@ func (f *fakeAdminClient) ListExpiringTokens(_ context.Context, _ AdminSession, 
 }
 
 func (f *fakeAdminClient) ListAllRepositoryGrants(_ context.Context, _ AdminSession, limit int, after string) (ports.AdminGrantPage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.allGrantsCursors = append(f.allGrantsCursors, after)
 	if err := f.allGrantsErrs[after]; err != nil {
 		return ports.AdminGrantPage{}, err
@@ -3591,6 +3681,8 @@ func (f *fakeAdminClient) ListAllRepositoryGrants(_ context.Context, _ AdminSess
 }
 
 func (f *fakeAdminClient) ListRobots(context.Context, AdminSession) ([]ports.AdminRobot, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.listRobotsCalls++
 	if f.listRobotsErr != nil {
 		return nil, f.listRobotsErr
@@ -3599,6 +3691,8 @@ func (f *fakeAdminClient) ListRobots(context.Context, AdminSession) ([]ports.Adm
 }
 
 func (f *fakeAdminClient) CreateRobot(_ context.Context, _ AdminSession, input ports.AdminCreateRobotInput) (ports.AdminCreatedRobot, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.createRobotCalls++
 	f.lastCreateRobotInput = input
 	if f.createRobotErr != nil {
