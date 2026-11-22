@@ -4754,7 +4754,7 @@ type fakeAdminClient struct {
 	createRobotCalls     int
 	lastCreateRobotInput ports.AdminCreateRobotInput
 
-	// deleteRobot* backs the registry-acl-v1 robot-deletion "d" key/confirm
+	// deleteRobot* backs the registry-acl-v1 robot-deletion "x" key/confirm
 	// flow on screenAdminRobots.
 	deleteRobotErr        error
 	deleteRobotCalls      int

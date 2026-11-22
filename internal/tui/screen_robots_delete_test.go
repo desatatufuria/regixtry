@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+
+	"regixtry/internal/ports"
 )
 
 var updateRobotsDeleteGoldens = flag.Bool("update-robots-delete", false, "rewrite the Robots delete golden files")
@@ -297,4 +299,41 @@ func TestDeletingARobotThroughTheModelRemovesItFromTheList(t *testing.T) {
 	view := overviewRender(m)
 	mustContain(t, view, "Robot ci-publisher deleted.", "old-deploy")
 	mustNotContain(t, view, "team/api")
+}
+
+func TestAStaleReloadNeverBringsADeletedRobotBack(t *testing.T) {
+	t.Parallel()
+	client, env := robotsFixture()
+	s := openRobotsScreen(t, client, env)
+	before := append([]ports.AdminRobot(nil), s.robots...)
+
+	asked, _ := accessPress(t, s, env, testKeyRunes("x"))
+	_, cmd, _ := asked.Update(env, testKeyEnter())
+	if cmd == nil {
+		t.Fatal("Enter did not dispatch")
+	}
+	var cur adminScreen = asked
+	cur, _, _ = cur.Update(env, robotDeletedMsg{gen: s.gen, robotID: "r-ci", name: "ci-publisher"})
+	// A reload that started before the delete lands after its result.
+	cur, _, _ = cur.Update(env, robotsLoadedMsg{gen: s.gen, robots: before})
+	for _, robot := range cur.(robotsScreen).robots {
+		if robot.ID == "r-ci" {
+			t.Fatal("a stale list brought the deleted robot back")
+		}
+	}
+}
+
+func TestRefreshIsIgnoredWhileADeleteIsInFlight(t *testing.T) {
+	t.Parallel()
+	client, env := robotsFixture()
+	s := openRobotsScreen(t, client, env)
+	asked, _ := accessPress(t, s, env, testKeyRunes("x"))
+	sent, cmd, _ := asked.Update(env, testKeyEnter())
+	if cmd == nil {
+		t.Fatal("Enter did not dispatch")
+	}
+	closed, _, _ := sent.Update(env, testKeyEsc())
+	if _, reload, _ := closed.Update(env, testKeyRunes("r")); reload != nil {
+		t.Fatal("r started a reload while a delete is in flight")
+	}
 }

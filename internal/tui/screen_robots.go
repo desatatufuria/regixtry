@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"sync/atomic"
 	"time"
@@ -48,13 +49,16 @@ type robotsScreen struct {
 	tokensLoaded bool
 	tokensErr    string
 
-	// confirm is the enable/disable confirmation; its in-flight guard keeps a
-	// second Enter from sending the change twice.
+	// confirm is the confirmation of the open action (disable, enable or
+	// delete); its in-flight guard keeps a second Enter from sending it twice.
 	confirm confirmPrompt
 	// busy is set from the moment a confirmed change (enable, disable or
 	// delete) is sent until its result arrives, even if Esc closed the prompt
 	// meanwhile: no other change starts while one is on its way.
 	busy bool
+	// deleted holds the ids of the robots this instance deleted: a list read
+	// that started before the delete and lands after it never brings one back.
+	deleted map[string]bool
 	// notice is the line under the table: the last action's outcome.
 	notice     string
 	noticeFail bool
@@ -197,6 +201,11 @@ func (s robotsScreen) applyDeleted(msg robotDeletedMsg) robotsScreen {
 		s.notice, s.noticeFail = msg.err.Error(), true
 		return s
 	}
+	s.deleted = maps.Clone(s.deleted)
+	if s.deleted == nil {
+		s.deleted = map[string]bool{}
+	}
+	s.deleted[msg.robotID] = true
 	s.robots = slices.DeleteFunc(slices.Clone(s.robots), func(r ports.AdminRobot) bool { return r.ID == msg.robotID })
 	tokens := make(map[string][]ports.AdminToken, len(s.tokens))
 	for id, list := range s.tokens {
@@ -221,7 +230,7 @@ func (s robotsScreen) applyRobots(env screenEnv, msg robotsLoadedMsg) (adminScre
 		keep = robot.ID
 	}
 	s.selectID = ""
-	s.robots = slices.Clone(msg.robots)
+	s.robots = slices.DeleteFunc(slices.Clone(msg.robots), func(r ports.AdminRobot) bool { return s.deleted[r.ID] })
 	s.selected = boundedIndex(s.selected, len(s.robots))
 	s = s.withSelection(keep)
 	s.tokensLoaded = false
@@ -245,6 +254,8 @@ func (s robotsScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd
 		s.selected = boundedIndex(s.selected+1, len(s.robots))
 	case isCommandRune(msg, 'n'):
 		return s, openCreateRobot(), true
+	case s.busy && isCommandRune(msg, 'r'):
+		// A change is on its way: its result decides what the list shows.
 	case isCommandRune(msg, 'r'):
 		s.loaded, s.err, s.notice = false, "", ""
 		return s, robotsLoadCmd(env, s.gen), true

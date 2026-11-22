@@ -93,9 +93,8 @@ type AdminClient interface {
 	ListRepositoryOverrides(ctx context.Context, session AdminSession, feature string) ([]ports.RepositoryOverrideDetails, error)
 	SetRepositoryOverride(ctx context.Context, session AdminSession, repository string, feature string, input ports.RepositoryOverrideDetails) (ports.RepositoryOverrideDetails, error)
 	ClearRepositoryOverride(ctx context.Context, session AdminSession, repository string, feature string) error
-	// DeleteRobot backs the robot-accounts hard-delete route (registry-acl-v1
-	// follow-up). Added on PR 4 (backend-only) as part of the API contract;
-	// the TUI key/UI wiring lands on PR 5.
+	// DeleteRobot backs the robot-accounts hard-delete route (DELETE
+	// /admin/v1/robots/{id}); the Robots screen calls it from its x action.
 	DeleteRobot(ctx context.Context, session AdminSession, userID string) error
 	// ListExpiringTokens returns the admin tokens of enabled users and robots
 	// that expire within the given window, soonest first, in ONE call for all
