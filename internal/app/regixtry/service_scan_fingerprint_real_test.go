@@ -52,7 +52,7 @@ func newRealShapedService(t *testing.T) (*Service, *realShapedTrivy, string, fun
 	if err := os.MkdirAll(filepath.Join(cacheDir, "db"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(cacheDir, "db", "metadata.json"), []byte(`{"Version":2,"NextUpdate":"2026-11-02T00:00:00Z","UpdatedAt":"2026-11-01T00:00:00Z","DownloadedAt":"2026-11-01T06:00:00Z"}`), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(cacheDir, "db", "metadata.json"), []byte(`{"Version":2,"NextUpdate":"`+time.Now().UTC().Add(24*time.Hour).Format(time.RFC3339)+`","UpdatedAt":"2026-11-01T00:00:00Z","DownloadedAt":"2026-11-01T06:00:00Z"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := service.metadata.UpsertFeatureRuntimeState(context.Background(), "tenant-a", "trivy", ports.FeatureRuntimeState{
