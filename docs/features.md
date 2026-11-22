@@ -214,6 +214,16 @@ against a pinned, offline trusted root (no TUF auto-update, no live Rekor
 query). A signature verifies if it matches ANY configured trusted key OR ANY
 configured trusted identity; the two anchor kinds never combine with AND.
 
+Signature discovery evaluates every candidate (the legacy `.sig` tag, the
+`sha256-<hex>` bundle-index tag and the OCI Referrers API) and accepts the
+digest if ANY candidate verifies, so a junk tag, a malformed index, or a
+replayed or untrusted signature planted by a repository writer cannot deny a
+digest that is validly signed. With no verifying candidate the pull stays
+denied (fail closed), and a candidate for a different digest or signed by an
+untrusted key never satisfies the gate. At most 256 well-formed candidates for
+the digest are evaluated per verification (`maxSignatureCandidates`); the rest
+are not examined.
+
 ### Enable and configure
 
 Signing is **not** configured through `feature configure` — that endpoint
