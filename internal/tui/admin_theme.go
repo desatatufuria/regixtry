@@ -103,9 +103,9 @@ func newAdminTheme() adminTheme {
 		// extra rows. Width(30) is kept on both so values stay
 		// column-aligned and the modal's width cannot jitter as focus
 		// moves.
-		input:       lipgloss.NewStyle().Foreground(text).Background(fieldBG).Padding(0, 1).Width(30),
-		inputFocus:  lipgloss.NewStyle().Foreground(accent).Background(selectedBG).Bold(true).Padding(0, 1).Width(30),
-		pill:        lipgloss.NewStyle().Foreground(pillText).Background(accent).Bold(true).Padding(0, 1),
-		help:        lipgloss.NewStyle().Foreground(muted),
+		input:      lipgloss.NewStyle().Foreground(text).Background(fieldBG).Padding(0, 1).Width(30),
+		inputFocus: lipgloss.NewStyle().Foreground(accent).Background(selectedBG).Bold(true).Padding(0, 1).Width(30),
+		pill:       lipgloss.NewStyle().Foreground(pillText).Background(accent).Bold(true).Padding(0, 1),
+		help:       lipgloss.NewStyle().Foreground(muted),
 	}
 }
