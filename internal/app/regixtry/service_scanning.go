@@ -320,7 +320,7 @@ func (s *Service) queueScheduledScan(ctx context.Context, repositoryName string,
 func (s *Service) queuePushScan(ctx context.Context, tenant string, repository string, reference string, digest string) {
 	release, ok := s.admitPushScan(tenant, repository, "")
 	if !ok {
-		s.recordPushScanSkipped(ctx, tenant, repository, reference, digest)
+		s.noteSkippedPushScan(tenant, repository, reference, digest)
 		return
 	}
 	s.runPushScan(ctx, tenant, repository, reference, digest, release)

@@ -125,7 +125,8 @@ func (s *Service) admitPushScan(tenant string, repository string, pusher string)
 func (s *Service) startPushScan(tenant string, repository string, reference string, digest string, pusher string) {
 	release, ok := s.admitPushScan(tenant, repository, pusher)
 	if !ok {
-		s.recordPushScanSkipped(context.Background(), tenant, repository, reference, digest)
+		// In-memory only: the store work happens on the recorder's worker.
+		s.noteSkippedPushScan(tenant, repository, reference, digest)
 		return
 	}
 	s.backgroundWork.Add(1)

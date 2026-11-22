@@ -250,6 +250,7 @@ func TestSkippedPushScanNeverUnblocksAKnownCriticalDigest(t *testing.T) {
 		}
 	}
 	service.startPushScan("tenant-a", "library/alpine", "latest", digest, "")
+	service.WaitForBackgroundWork() // drains the skipped-notice recorder
 
 	if err := service.enforceScanPolicy(context.Background(), "library/alpine", digest); err == nil {
 		t.Fatal("pull allowed after a dropped re-push: the skipped row hid the critical result")
@@ -274,6 +275,7 @@ func TestSkippedPushScanForUnscannedDigestStaysVisibleButNeverWinsLatest(t *test
 	service.pushScans.acquire("tenant-a", "library/alpine", "")
 	digest := "sha256:" + strings.Repeat("e", 64)
 	service.startPushScan("tenant-a", "library/alpine", "latest", digest, "")
+	service.WaitForBackgroundWork() // drains the skipped-notice recorder
 
 	runs, _ := service.metadata.ListScanRuns(ctx, "tenant-a", "library/alpine", 10)
 	if len(runs) != 1 || runs[0].Status != ports.ScanRunStatusSkipped || runs[0].Error != pushScanSkippedError {
@@ -529,4 +531,85 @@ func TestStuckSecretLegsAreCountedBoundedAndRecoverWhenTheyReturn(t *testing.T) 
 
 	close(runner.stop) // the stuck runners finally return
 	waitUntil(t, "stuck legs to drain", func() bool { return service.stuckSecretLegs.Load() == 0 })
+}
+
+// gatedStore blocks the two store calls recordPushScanSkipped makes until
+// opened, standing in for serialized sqlite work that stalls.
+type gatedStore struct {
+	ports.MetadataStore
+	mu     sync.Mutex
+	closed bool
+	open   chan struct{}
+}
+
+func (g *gatedStore) wait() {
+	g.mu.Lock()
+	closed := g.closed
+	g.mu.Unlock()
+	if closed {
+		<-g.open
+	}
+}
+
+func (g *gatedStore) UpsertScanRun(ctx context.Context, tenant string, run ports.ScanRun) error {
+	g.wait()
+	return g.MetadataStore.UpsertScanRun(ctx, tenant, run)
+}
+
+func (g *gatedStore) GetLatestScanRunByDigest(ctx context.Context, tenant string, repository string, digest string) (ports.ScanRun, error) {
+	g.wait()
+	return g.MetadataStore.GetLatestScanRunByDigest(ctx, tenant, repository, digest)
+}
+
+func (g *gatedStore) block() {
+	g.mu.Lock()
+	g.closed = true
+	g.mu.Unlock()
+}
+
+func TestOverCapPushNeverBlocksOnTheStoreAndSkippedRowsAreCoalesced(t *testing.T) {
+	service, _, cleanup := newPushScanService(t)
+	gate := &gatedStore{MetadataStore: service.metadata, open: make(chan struct{})}
+	service.metadata = gate
+	unblocked := false
+	defer func() {
+		if !unblocked {
+			close(gate.open)
+		}
+		cleanup()
+	}()
+
+	service.SetPushScanLimits(1, 1, 0)
+	if _, ok := service.pushScans.acquire("tenant-a", "library/a", ""); !ok { // fill the global cap
+		t.Fatal("could not fill the cap")
+	}
+	gate.block()
+
+	repos := []string{"library/a", "library/b", "library/c"}
+	start := time.Now()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for _, repo := range repos {
+			pushDistinctManifests(t, service, repo, 170, "over") // 510 over-cap pushes
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(60 * time.Second):
+		t.Fatal("PublishManifest blocked on the stalled store while over cap")
+	}
+	t.Logf("510 over-cap pushes took %s", time.Since(start))
+
+	pending, workers := service.skippedPushScans.stats()
+	if workers > 1 || pending > len(repos) {
+		t.Fatalf("recorder pending=%d workers=%d, want <= %d coalesced entries and a single worker", pending, workers, len(repos))
+	}
+
+	unblocked = true
+	close(gate.open)
+	waitUntil(t, "skipped rows to be recorded once the store unblocks", func() bool {
+		_, skipped := countActivePushScans(t, service)
+		return skipped == len(repos)
+	})
 }

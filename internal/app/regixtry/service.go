@@ -48,6 +48,8 @@ type Service struct {
 	secretScanGate  *scanGate
 	// pushScans admits push-triggered scans (see service_push_scan.go).
 	pushScans *pushScanLimiter
+	// skippedPushScans records dropped push scans off the request path.
+	skippedPushScans skippedRecorder
 	// scanRunMargin overrides defaultScanRunMargin (tests only; set before use).
 	scanRunMargin time.Duration
 	// stuckSecretLegs counts secret-scan goroutines abandoned after their
