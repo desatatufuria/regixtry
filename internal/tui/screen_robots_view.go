@@ -297,6 +297,7 @@ func (s robotsScreen) panelBlocks(theme adminTheme, inner int, now time.Time) []
 		action("Tokens", "t", theme.text),
 		action("Grant access", "g", theme.text),
 		toggle,
+		action("Delete robot", "x", theme.error),
 	}
 
 	blocks := [][]string{head, access, actions}

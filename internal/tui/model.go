@@ -1265,7 +1265,7 @@ func (m Model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.mountCreateRobot()
 	case openTokensMsg:
 		return m.mountTokens(msg)
-	case robotsLoadedMsg, robotsTokensLoadedMsg, robotEnabledMsg, robotCreatedMsg, tokensLoadedMsg, tokenCreatedMsg, tokenRevokedMsg:
+	case robotsLoadedMsg, robotsTokensLoadedMsg, robotEnabledMsg, robotDeletedMsg, robotCreatedMsg, tokensLoadedMsg, tokenCreatedMsg, tokenRevokedMsg:
 		return m.routeAccessMsg(msg.(accessMsg))
 	case openGrantAccessMsg:
 		// An apply in flight owns the slot: never replace it (its result and

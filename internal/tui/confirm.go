@@ -36,6 +36,9 @@ type confirmPrompt struct {
 	// All three are optional (set with withTarget and withConsequence): a
 	// prompt without them shows only its title and message.
 	target, targetDetail, consequence string
+	// buttonLabel names the confirm button; empty means "Confirm". A dialog
+	// whose board names the action (Delete) sets it with withButtonLabel.
+	buttonLabel string
 	// inFlight is set once Enter or y dispatched onConfirm's command: every
 	// further confirm key is ignored until the result message clears or
 	// replaces the prompt, so a double press never runs a destructive action
@@ -54,6 +57,12 @@ func newConfirmPrompt(title, message, confirmText, submitting string, onConfirm 
 // line under it) for the dialog's target box.
 func (c confirmPrompt) withTarget(target, detail string) confirmPrompt {
 	c.target, c.targetDetail = target, detail
+	return c
+}
+
+// withButtonLabel names the confirm button after the action ("Delete").
+func (c confirmPrompt) withButtonLabel(label string) confirmPrompt {
+	c.buttonLabel = label
 	return c
 }
 
@@ -133,9 +142,13 @@ func (c confirmPrompt) view(theme adminTheme) string {
 	if c.consequence != "" {
 		lines = append(lines, "", theme.warning.Render(strings.Join(grantWrap(c.consequence, inner), "\n")))
 	}
+	buttonLabel := c.buttonLabel
+	if buttonLabel == "" {
+		buttonLabel = "Confirm"
+	}
 	confirm := lipgloss.NewStyle().Width(inner).Padding(0, 1).Bold(true).
 		Foreground(theme.pill.GetForeground()).Background(tone).
-		Render(confirmButtonLine("Confirm", "y / enter", inner-2))
+		Render(confirmButtonLine(buttonLabel, "y / enter", inner-2))
 	cancel := lipgloss.NewStyle().Width(inner).Padding(0, 1).
 		Render("Cancel" + strings.Repeat(" ", max(inner-2-len("Cancel")-len("esc"), 1)) + theme.muted.Render("esc"))
 	lines = append(lines, "", confirm, cancel)

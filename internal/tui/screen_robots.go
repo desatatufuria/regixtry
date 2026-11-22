@@ -51,6 +51,10 @@ type robotsScreen struct {
 	// confirm is the enable/disable confirmation; its in-flight guard keeps a
 	// second Enter from sending the change twice.
 	confirm confirmPrompt
+	// busy is set from the moment a confirmed change (enable, disable or
+	// delete) is sent until its result arrives, even if Esc closed the prompt
+	// meanwhile: no other change starts while one is on its way.
+	busy bool
 	// notice is the line under the table: the last action's outcome.
 	notice     string
 	noticeFail bool
@@ -106,6 +110,17 @@ type robotEnabledMsg struct {
 	err     error
 }
 
+type robotDeletedMsg struct {
+	gen     uint64
+	robotID string
+	name    string
+	err     error
+}
+
+func (m robotDeletedMsg) accessSlot() screenSlot        { return slotRobots }
+func (m robotDeletedMsg) accessGen() uint64             { return m.gen }
+func (m robotDeletedMsg) expiredReason() (string, bool) { return expiredReasonOf(m.err) }
+
 func (m robotsLoadedMsg) accessSlot() screenSlot        { return slotRobots }
 func (m robotsLoadedMsg) accessGen() uint64             { return m.gen }
 func (m robotsLoadedMsg) expiredReason() (string, bool) { return expiredReasonOf(m.err) }
@@ -153,7 +168,7 @@ func (s robotsScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.Cmd, 
 		if typed.gen != s.gen {
 			return s, nil, false
 		}
-		s.confirm = confirmPrompt{}
+		s.confirm, s.busy = confirmPrompt{}, false
 		if typed.err != nil {
 			s.notice, s.noticeFail = typed.err.Error(), true
 			return s, nil, false
@@ -164,8 +179,35 @@ func (s robotsScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.Cmd, 
 		}
 		s.notice, s.noticeFail = fmt.Sprintf("Robot %s %s.", typed.name, verb), false
 		return s, robotsLoadCmd(env, s.gen), false
+	case robotDeletedMsg:
+		if typed.gen != s.gen {
+			return s, nil, false
+		}
+		return s.applyDeleted(typed), nil, false
 	}
 	return s, nil, false
+}
+
+// applyDeleted closes the prompt and, when the robot is gone, drops it and its
+// tokens from the list: the selection stays on the same row, which is now the
+// next robot (the previous one when the last row was deleted).
+func (s robotsScreen) applyDeleted(msg robotDeletedMsg) robotsScreen {
+	s.confirm, s.busy = confirmPrompt{}, false
+	if msg.err != nil {
+		s.notice, s.noticeFail = msg.err.Error(), true
+		return s
+	}
+	s.robots = slices.DeleteFunc(slices.Clone(s.robots), func(r ports.AdminRobot) bool { return r.ID == msg.robotID })
+	tokens := make(map[string][]ports.AdminToken, len(s.tokens))
+	for id, list := range s.tokens {
+		if id != msg.robotID {
+			tokens[id] = list
+		}
+	}
+	s.tokens = tokens
+	s.selected = boundedIndex(s.selected, len(s.robots))
+	s.notice, s.noticeFail = fmt.Sprintf("Robot %s deleted.", msg.name), false
+	return s
 }
 
 func (s robotsScreen) applyRobots(env screenEnv, msg robotsLoadedMsg) (adminScreen, tea.Cmd, bool) {
@@ -190,6 +232,7 @@ func (s robotsScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd
 	if s.confirm.Active() {
 		next, cmd, _ := s.confirm.update(env, msg)
 		s.confirm = next
+		s.busy = s.busy || cmd != nil
 		return s, cmd, true
 	}
 	robot, hasRobot := s.selectedRobot()
@@ -211,6 +254,11 @@ func (s robotsScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd
 		return s, openTokens(robot.ID, robot.Username, true), true
 	case isCommandRune(msg, 'g'):
 		return s, openGrantAccess(robot.ID, screenAdminRobots), true
+	case s.busy && (isCommandRune(msg, 'd') || isCommandRune(msg, 'e') || isCommandRune(msg, 'x')):
+		// A change is already on its way.
+	case isCommandRune(msg, 'x'):
+		s.confirm = s.deleteConfirm(robot)
+		s.notice = ""
 	case isCommandRune(msg, 'd') && robot.Enabled:
 		s.confirm = s.enableConfirm(robot, false)
 		s.notice = ""
@@ -240,6 +288,25 @@ func (s robotsScreen) enableConfirm(robot ports.AdminRobot, enable bool) confirm
 		prompt = prompt.withConsequence(name + " can no longer authenticate.")
 	}
 	return prompt
+}
+
+// deleteConfirm builds the confirmation for deleting a robot. The backend
+// removes the account together with its repository grant and every token, and
+// records a robot.deleted event; nothing of it can be restored.
+func (s robotsScreen) deleteConfirm(robot ports.AdminRobot) confirmPrompt {
+	gen, id, name := s.gen, robot.ID, robot.Username
+	detail := "no repository access"
+	if robot.Repository != "" {
+		detail = "repository " + robot.Repository + ", role " + grantRoleLabel(robot.Role)
+	}
+	return newConfirmPrompt(
+		"Delete robot "+name,
+		"The robot account is removed together with its repository access and all of its tokens.",
+		"delete",
+		fmt.Sprintf("Deleting robot %s...", name),
+		func(env screenEnv) tea.Cmd { return robotDeleteCmd(env, gen, id, name) },
+	).withTarget(name, detail).withButtonLabel("Delete").
+		withConsequence("Anything using its tokens stops working immediately. This cannot be undone.")
 }
 
 // ---- commands ----
@@ -308,6 +375,17 @@ func robotEnableCmd(env screenEnv, gen uint64, robotID, name string, enable bool
 	}
 }
 
+func robotDeleteCmd(env screenEnv, gen uint64, robotID, name string) tea.Cmd {
+	client, session := env.Client, env.Session
+	return func() tea.Msg {
+		if client == nil {
+			return robotDeletedMsg{gen: gen, robotID: robotID, name: name, err: errAdminUnavailable}
+		}
+		err := client.DeleteRobot(context.Background(), session, robotID)
+		return robotDeletedMsg{gen: gen, robotID: robotID, name: name, err: err}
+	}
+}
+
 // ---- token facts about a robot ----
 
 // liveTokens are the robot's tokens that were not revoked.
@@ -359,6 +437,7 @@ var robotsKeys = screenKeys{short: []key.Binding{
 	key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "grant access")),
 	key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "disable")),
 	key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "enable")),
+	key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "delete")),
 	key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 	key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
 	key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),

@@ -1,0 +1,24 @@
+  Admin › Access › Robots                                                                                                      signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │
+                               │  Robots   ╭──────────────────────────────────────────────────────────────╮  ──────────────────────────────────────╮
+    Overview                   │  ╭──────  │  Delete robot ci-publisher                                   │   ci-publisher                         │
+                               │  │   NAM  │                                                              │   robot, enabled, created 12 Jun 2026  │
+  ACCESS                       │  │ ─────  │  The robot account is removed together with its repository   │                                        │
+      Users                    │  │ ▸ ci-  │  access and all of its tokens.                               │   ACCESS                               │
+    ▸ Robots                   │  │   gh-  │                                                              │   team/api                    [Writer] │
+      Repository access        │  │   sta  │  ╭────────────────────────────────────────────────────────╮  │   1 repository, 2 tokens               │
+                               │  │   old  │  │ ci-publisher                                           │  │                                        │
+  SECURITY                     │  ╰──────  │  │ repository team/api, role Writer                       │  │   ACTIONS                              │
+      Image scanning           │           │  ╰────────────────────────────────────────────────────────╯  │   New robot                          n │
+      Secret scanning          │  EXPIRES  │                                                              │   Tokens                             t │
+      Signing policy           │           │  Anything using its tokens stops working immediately. This   │   Grant access                       g │
+                               │           │  cannot be undone.                                           │   Disable robot                      d │
+  OPERATIONS                   │           │                                                              │   Delete robot                       x │
+      Scan runs                │           │   Delete                                         y / enter   │                                        │
+      Secret findings          │           │   Cancel                                               esc   │   NEEDS ATTENTION                      │
+      Update channel           │           ╰──────────────────────────────────────────────────────────────╯   Token release-pipeline expires in 6  │
+                               │                                                                            │ days                         t renew │
+                               │                                                                            ╰──────────────────────────────────────╯
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ↑↓ move   enter open   n new robot   t tokens   g grant access   d disable   e enable   x delete   r refresh   esc back   q quit                    

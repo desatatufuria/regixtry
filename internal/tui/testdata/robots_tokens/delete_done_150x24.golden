@@ -1,0 +1,24 @@
+  Admin › Access › Robots                                                                                                      signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                      
+                               │  Robots                             3 robots, 1 without repository access  ╭──────────────────────────────────────╮  
+    Overview                   │  ╭──────────────────────────────────────────────────────────────────────╮  │ gh-actions                           │  
+                               │  │   NAME                REPOSITORY        ROLE    STATE     EXPIRES    │  │ robot, enabled                       │  
+  ACCESS                       │  │ ──────────────────────────────────────────────────────────────────── │  │                                      │  
+      Users                    │  │ ▸ gh-actions          none              none    enabled   89 days    │  │ ACCESS                               │  
+    ▸ Robots                   │  │   staging-deploy      team/web          Writer  enabled   18 days    │  │ No repository access                 │  
+      Repository access        │  │   old-deploy          team/infra        Writer  disabled  expired    │  │ 0 repositories, 1 token              │  
+                               │  ╰──────────────────────────────────────────────────────────────────────╯  │                                      │  
+  SECURITY                     │  Robot ci-publisher deleted.                                               │ ACTIONS                              │  
+      Image scanning           │  EXPIRES is the token that ends first.                                     │ New robot                          n │  
+      Secret scanning          │                                                                            │ Tokens                             t │  
+      Signing policy           │                                                                            │ Grant access                       g │  
+                               │                                                                            │ Disable robot                      d │  
+  OPERATIONS                   │                                                                            │ Delete robot                       x │  
+      Scan runs                │                                                                            │                                      │  
+      Secret findings          │                                                                            │ NEEDS ATTENTION                      │  
+      Update channel           │                                                                            │ No repository access         g grant │  
+                               │                                                                            │                                      │  
+                               │                                                                            ╰──────────────────────────────────────╯  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ↑↓ move   enter open   n new robot   t tokens   g grant access   d disable   e enable   x delete   r refresh   esc back   q quit                    

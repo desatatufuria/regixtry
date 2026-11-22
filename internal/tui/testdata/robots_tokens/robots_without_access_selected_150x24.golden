@@ -14,11 +14,11 @@
       Secret scanning          │  Grant it a repository with g.                                             │ Tokens                             t │  
       Signing policy           │  EXPIRES is the token that ends first.                                     │ Grant access                       g │  
                                │                                                                            │ Disable robot                      d │  
-  OPERATIONS                   │                                                                            │                                      │  
-      Scan runs                │                                                                            │ NEEDS ATTENTION                      │  
-      Secret findings          │                                                                            │ No repository access         g grant │  
-      Update channel           │                                                                            │                                      │  
+  OPERATIONS                   │                                                                            │ Delete robot                       x │  
+      Scan runs                │                                                                            │                                      │  
+      Secret findings          │                                                                            │ NEEDS ATTENTION                      │  
+      Update channel           │                                                                            │ No repository access         g grant │  
                                │                                                                            │                                      │  
                                │                                                                            ╰──────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  ↑↓ move   enter open   n new robot   t tokens   g grant access   d disable   e enable   r refresh   esc back   q quit                               
+  ↑↓ move   enter open   n new robot   t tokens   g grant access   d disable   e enable   x delete   r refresh   esc back   q quit                    
