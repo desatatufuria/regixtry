@@ -1505,7 +1505,7 @@ func TestAdminRepositoryGrantRoutesAuthenticationAndDelegateAuthority(t *testing
 	defer cleanup()
 
 	delegate, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
-		Username: "delegate", Password: "password123", Enabled: true,
+		Username: "delegate", Password: "fixture-pass-9x", Enabled: true,
 	})
 	if err != nil {
 		t.Fatalf("CreateAdminUser(delegate) error = %v", err)
@@ -1514,24 +1514,24 @@ func TestAdminRepositoryGrantRoutesAuthenticationAndDelegateAuthority(t *testing
 		t.Fatalf("PutRepoGrant(delegate, team/app, repo-admin) error = %v", err)
 	}
 	victim, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
-		Username: "victim", Password: "password123", Enabled: true,
+		Username: "victim", Password: "fixture-pass-9x", Enabled: true,
 	})
 	if err != nil {
 		t.Fatalf("CreateAdminUser(victim) error = %v", err)
 	}
 
 	plainUser, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
-		Username: "plain", Password: "password123", Enabled: true,
+		Username: "plain", Password: "fixture-pass-9x", Enabled: true,
 	})
 	if err != nil {
 		t.Fatalf("CreateAdminUser(plain) error = %v", err)
 	}
 
-	delegateLogin, err := authService.LoginWithPassword(context.Background(), delegate.Username, "password123", nil)
+	delegateLogin, err := authService.LoginWithPassword(context.Background(), delegate.Username, "fixture-pass-9x", nil)
 	if err != nil {
 		t.Fatalf("LoginWithPassword(delegate) error = %v", err)
 	}
-	plainLogin, err := authService.LoginWithPassword(context.Background(), plainUser.Username, "password123", nil)
+	plainLogin, err := authService.LoginWithPassword(context.Background(), plainUser.Username, "fixture-pass-9x", nil)
 	if err != nil {
 		t.Fatalf("LoginWithPassword(plain) error = %v", err)
 	}
@@ -1600,7 +1600,7 @@ func TestAdminRepositoryGrantRoutesRepositoryNamedTeamGrantsRoutesCorrectly(t *t
 	handler, authService, adminActor, _, cleanup := newTestRouterWithRealAuth(t)
 	defer cleanup()
 
-	adminLogin, err := authService.LoginWithPassword(context.Background(), adminActor.Username, "password123", nil)
+	adminLogin, err := authService.LoginWithPassword(context.Background(), adminActor.Username, "fixture-pass-9x", nil)
 	if err != nil {
 		t.Fatalf("LoginWithPassword(admin) error = %v", err)
 	}
@@ -1625,7 +1625,7 @@ func TestAdminRepositoryGrantRoutesRepositoryNamedTeamGrantsRoutesCorrectly(t *t
 		t.Fatalf("put status = %d, want %d (user not found after correct parse), body = %s", putRecorder.Code, http.StatusNotFound, putRecorder.Body.String())
 	}
 
-	if _, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{Username: "bob", Password: "password123", Enabled: true}); err != nil {
+	if _, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{Username: "bob", Password: "fixture-pass-9x", Enabled: true}); err != nil {
 		t.Fatalf("CreateAdminUser(bob) error = %v", err)
 	}
 
@@ -1717,12 +1717,12 @@ func TestAdminDeleteRepositoryRouteRejectsAuthenticatedNonAdminNonRepoAdmin(t *t
 	seedRouterRepositoryForDelete(t, handler, "team/app", "latest")
 
 	plainUser, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
-		Username: "plain", Password: "password123", Enabled: true,
+		Username: "plain", Password: "fixture-pass-9x", Enabled: true,
 	})
 	if err != nil {
 		t.Fatalf("CreateAdminUser(plain) error = %v", err)
 	}
-	plainLogin, err := authService.LoginWithPassword(context.Background(), plainUser.Username, "password123", nil)
+	plainLogin, err := authService.LoginWithPassword(context.Background(), plainUser.Username, "fixture-pass-9x", nil)
 	if err != nil {
 		t.Fatalf("LoginWithPassword(plain) error = %v", err)
 	}
@@ -1749,7 +1749,7 @@ func TestAdminDeleteRepositoryRouteSucceedsForGlobalAdminAndReportsCounts(t *tes
 	handler.service.SetDeleteEnabled(true)
 	seedRouterRepositoryForDelete(t, handler, "team/app", "latest", "v1")
 
-	adminLogin, err := authService.LoginWithPassword(context.Background(), adminActor.Username, "password123", nil)
+	adminLogin, err := authService.LoginWithPassword(context.Background(), adminActor.Username, "fixture-pass-9x", nil)
 	if err != nil {
 		t.Fatalf("LoginWithPassword(admin) error = %v", err)
 	}
@@ -1804,7 +1804,7 @@ func TestAdminDeleteRepositoryRouteAllowsRepoAdminDelegateButConfinesToOwnReposi
 	seedRouterRepositoryForDelete(t, handler, "team/other", "latest")
 
 	delegate, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
-		Username: "delegate", Password: "password123", Enabled: true,
+		Username: "delegate", Password: "fixture-pass-9x", Enabled: true,
 	})
 	if err != nil {
 		t.Fatalf("CreateAdminUser(delegate) error = %v", err)
@@ -1812,7 +1812,7 @@ func TestAdminDeleteRepositoryRouteAllowsRepoAdminDelegateButConfinesToOwnReposi
 	if _, err := authService.PutRepoGrant(context.Background(), adminActor, delegate.ID, "team/app", auth.RepoRoleAdmin); err != nil {
 		t.Fatalf("PutRepoGrant(delegate, team/app, repo-admin) error = %v", err)
 	}
-	delegateLogin, err := authService.LoginWithPassword(context.Background(), delegate.Username, "password123", nil)
+	delegateLogin, err := authService.LoginWithPassword(context.Background(), delegate.Username, "fixture-pass-9x", nil)
 	if err != nil {
 		t.Fatalf("LoginWithPassword(delegate) error = %v", err)
 	}
@@ -1843,7 +1843,7 @@ func TestAdminDeleteRepositoryRouteReturnsNotFoundForAbsentRepository(t *testing
 	defer cleanup()
 	handler.service.SetDeleteEnabled(true)
 
-	adminLogin, err := authService.LoginWithPassword(context.Background(), adminActor.Username, "password123", nil)
+	adminLogin, err := authService.LoginWithPassword(context.Background(), adminActor.Username, "fixture-pass-9x", nil)
 	if err != nil {
 		t.Fatalf("LoginWithPassword(admin) error = %v", err)
 	}
@@ -1868,7 +1868,7 @@ func TestAdminDeleteRepositoryRouteRefusesWhenDeleteDisabled(t *testing.T) {
 	// deleteEnabled defaults to false -- SetDeleteEnabled is never called.
 	seedRouterRepositoryForDelete(t, handler, "team/app", "latest")
 
-	adminLogin, err := authService.LoginWithPassword(context.Background(), adminActor.Username, "password123", nil)
+	adminLogin, err := authService.LoginWithPassword(context.Background(), adminActor.Username, "fixture-pass-9x", nil)
 	if err != nil {
 		t.Fatalf("LoginWithPassword(admin) error = %v", err)
 	}
@@ -1892,7 +1892,7 @@ func TestAdminDeleteRepositoryRouteMethodNotAllowedAdvertisesDelete(t *testing.T
 	handler, authService, adminActor, _, cleanup := newTestRouterWithRealAuth(t)
 	defer cleanup()
 
-	adminLogin, err := authService.LoginWithPassword(context.Background(), adminActor.Username, "password123", nil)
+	adminLogin, err := authService.LoginWithPassword(context.Background(), adminActor.Username, "fixture-pass-9x", nil)
 	if err != nil {
 		t.Fatalf("LoginWithPassword(admin) error = %v", err)
 	}
@@ -1924,7 +1924,7 @@ func TestAdminNonGrantRoutesStillRequireGlobalAdminForRepoAdminDelegate(t *testi
 	defer cleanup()
 
 	delegate, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
-		Username: "delegate", Password: "password123", Enabled: true,
+		Username: "delegate", Password: "fixture-pass-9x", Enabled: true,
 	})
 	if err != nil {
 		t.Fatalf("CreateAdminUser(delegate) error = %v", err)
@@ -1932,7 +1932,7 @@ func TestAdminNonGrantRoutesStillRequireGlobalAdminForRepoAdminDelegate(t *testi
 	if _, err := authService.PutRepoGrant(context.Background(), adminActor, delegate.ID, "team/app", auth.RepoRoleAdmin); err != nil {
 		t.Fatalf("PutRepoGrant(delegate, team/app, repo-admin) error = %v", err)
 	}
-	delegateLogin, err := authService.LoginWithPassword(context.Background(), delegate.Username, "password123", nil)
+	delegateLogin, err := authService.LoginWithPassword(context.Background(), delegate.Username, "fixture-pass-9x", nil)
 	if err != nil {
 		t.Fatalf("LoginWithPassword(delegate) error = %v", err)
 	}
@@ -1985,7 +1985,7 @@ func TestAdminRepositoryGrantResponsesCarryNoUserIdentityFields(t *testing.T) {
 	defer cleanup()
 
 	victim, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
-		Username: "victim", Password: "password123", Enabled: true, IsAdmin: false, IsReadOnly: true,
+		Username: "victim", Password: "fixture-pass-9x", Enabled: true, IsAdmin: false, IsReadOnly: true,
 	})
 	if err != nil {
 		t.Fatalf("CreateAdminUser(victim) error = %v", err)
@@ -1997,7 +1997,7 @@ func TestAdminRepositoryGrantResponsesCarryNoUserIdentityFields(t *testing.T) {
 		t.Fatalf("PutRepoGrant(victim, team/other, repo-writer) error = %v", err)
 	}
 
-	adminLogin, err := authService.LoginWithPassword(context.Background(), adminActor.Username, "password123", nil)
+	adminLogin, err := authService.LoginWithPassword(context.Background(), adminActor.Username, "fixture-pass-9x", nil)
 	if err != nil {
 		t.Fatalf("LoginWithPassword(admin) error = %v", err)
 	}
@@ -2033,16 +2033,16 @@ func TestAdminRobotsRoutesCreateAndListGlobalAdminOnly(t *testing.T) {
 	defer cleanup()
 
 	plainUser, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
-		Username: "plain", Password: "password123", Enabled: true,
+		Username: "plain", Password: "fixture-pass-9x", Enabled: true,
 	})
 	if err != nil {
 		t.Fatalf("CreateAdminUser(plain) error = %v", err)
 	}
-	plainLogin, err := authService.LoginWithPassword(context.Background(), plainUser.Username, "password123", nil)
+	plainLogin, err := authService.LoginWithPassword(context.Background(), plainUser.Username, "fixture-pass-9x", nil)
 	if err != nil {
 		t.Fatalf("LoginWithPassword(plain) error = %v", err)
 	}
-	adminLogin, err := authService.LoginWithPassword(context.Background(), adminActor.Username, "password123", nil)
+	adminLogin, err := authService.LoginWithPassword(context.Background(), adminActor.Username, "fixture-pass-9x", nil)
 	if err != nil {
 		t.Fatalf("LoginWithPassword(admin) error = %v", err)
 	}
@@ -2101,16 +2101,16 @@ func TestAdminRobotDeleteRouteGlobalAdminOnlyAndRejectsNonRobots(t *testing.T) {
 	defer cleanup()
 
 	plainUser, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
-		Username: "plain-delete-robot", Password: "password123", Enabled: true,
+		Username: "plain-delete-robot", Password: "fixture-pass-9x", Enabled: true,
 	})
 	if err != nil {
 		t.Fatalf("CreateAdminUser(plain) error = %v", err)
 	}
-	plainLogin, err := authService.LoginWithPassword(context.Background(), plainUser.Username, "password123", nil)
+	plainLogin, err := authService.LoginWithPassword(context.Background(), plainUser.Username, "fixture-pass-9x", nil)
 	if err != nil {
 		t.Fatalf("LoginWithPassword(plain) error = %v", err)
 	}
-	adminLogin, err := authService.LoginWithPassword(context.Background(), adminActor.Username, "password123", nil)
+	adminLogin, err := authService.LoginWithPassword(context.Background(), adminActor.Username, "fixture-pass-9x", nil)
 	if err != nil {
 		t.Fatalf("LoginWithPassword(admin) error = %v", err)
 	}
@@ -2152,7 +2152,7 @@ func TestAdminRobotDeleteRouteGlobalAdminOnlyAndRejectsNonRobots(t *testing.T) {
 	if nonRobotRecorder.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("non-robot target status = %d, want %d, body = %s", nonRobotRecorder.Code, http.StatusUnprocessableEntity, nonRobotRecorder.Body.String())
 	}
-	if _, err := authService.LoginWithPassword(context.Background(), plainUser.Username, "password123", nil); err != nil {
+	if _, err := authService.LoginWithPassword(context.Background(), plainUser.Username, "fixture-pass-9x", nil); err != nil {
 		t.Fatalf("plain user was removed by a rejected robot-delete call: LoginWithPassword() error = %v", err)
 	}
 

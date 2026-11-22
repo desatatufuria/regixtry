@@ -30,7 +30,7 @@ func backoffRouter(t *testing.T, mode appauth.BackoffMode, clock *httpClock) (*R
 	handler, authService, actor, _, cleanup := newTestRouterWithRealAuthOptions(t, func(s *appauth.Service) {
 		s.ConfigureLogin(appauth.LoginPolicy{
 			Compare: func(h, p []byte) error {
-				if strings.HasPrefix(string(p), "ok-") || string(p) == "password123" {
+				if strings.HasPrefix(string(p), "ok-") || string(p) == "fixture-pass-9x" {
 					return nil
 				}
 				return errors.New("mismatch")
@@ -51,7 +51,7 @@ func TestDefaultModeNeverRefusesALogin(t *testing.T) {
 			t.Fatalf("attempt %d: status %d, want 401 in the default (log-only) mode", i, rec.Code)
 		}
 	}
-	if rec := tokenExchange(handler, "admin", "password123"); rec.Code != http.StatusOK {
+	if rec := tokenExchange(handler, "admin", "fixture-pass-9x"); rec.Code != http.StatusOK {
 		t.Fatalf("correct password after failures: %d", rec.Code)
 	}
 }
@@ -194,5 +194,28 @@ func TestBackoffIsPerUsernameNotPerIP(t *testing.T) {
 	}
 	if got := do("two", "ok-password-1"); got != http.StatusOK {
 		t.Fatalf("another account from the same IP must be unaffected: %d", got)
+	}
+}
+
+func TestAdminAPIRefusesACommonPassword(t *testing.T) {
+	t.Parallel()
+	handler, _, _, adminToken, cleanup := newTestRouterWithRealAuthOptions(t, nil)
+	defer cleanup()
+
+	create := func(password string) *httptest.ResponseRecorder {
+		body := `{"username":"newbie","password":"` + password + `","enabled":true}`
+		req := httptest.NewRequest(http.MethodPost, "/admin/v1/users", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+adminToken)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec
+	}
+	rec := create("Password123")
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "password is too common") {
+		t.Fatalf("common password: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := create("Zk4!vNp9wq"); rec.Code != http.StatusCreated && rec.Code != http.StatusOK {
+		t.Fatalf("good password: %d %s", rec.Code, rec.Body.String())
 	}
 }

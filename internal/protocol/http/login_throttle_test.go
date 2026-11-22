@@ -45,8 +45,8 @@ func (c *countingCompare) compare(hash, password []byte) error {
 		time.Sleep(c.delay)
 	}
 	c.inFlight.Add(-1)
-	// "password123" is the fixture admin the router helper logs in as.
-	if strings.HasPrefix(string(password), "ok-") || string(password) == "password123" {
+	// "fixture-pass-9x" is the fixture admin the router helper logs in as.
+	if strings.HasPrefix(string(password), "ok-") || string(password) == "fixture-pass-9x" {
 		return nil
 	}
 	return errors.New("mismatch")
@@ -125,7 +125,7 @@ func TestLimiterRefusalBodyIsUniformAndNotAnInvalidCredential(t *testing.T) {
 	started := make(chan struct{}, 1)
 	handler, authService, adminActor, _, cleanup := newTestRouterWithRealAuthOptions(t, func(s *appauth.Service) {
 		s.ConfigureLogin(appauth.LoginPolicy{MaxConcurrency: 1, MaxWait: 10 * time.Millisecond, Compare: func(h, p []byte) error {
-			if string(p) == "password123" {
+			if string(p) == "fixture-pass-9x" {
 				return nil
 			}
 			select {
@@ -207,7 +207,7 @@ func TestHexPasswordStillWorksAfterTheFastPathMisses(t *testing.T) {
 	hexPassword := strings.Repeat("c0", 32)
 	handler, authService, adminActor, _, cleanup := newTestRouterWithRealAuthOptions(t, func(s *appauth.Service) {
 		s.ConfigureLogin(appauth.LoginPolicy{Compare: func(h, p []byte) error {
-			if string(p) == hexPassword || string(p) == "password123" {
+			if string(p) == hexPassword || string(p) == "fixture-pass-9x" {
 				return nil
 			}
 			return errors.New("mismatch")

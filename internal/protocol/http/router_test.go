@@ -1108,7 +1108,7 @@ func TestRouterListsAdminUsersWithoutPasswordHashes(t *testing.T) {
 
 	if _, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
 		Username: "bob",
-		Password: "password123",
+		Password: "fixture-pass-9x",
 		Enabled:  true,
 	}); err != nil {
 		t.Fatalf("CreateAdminUser() error = %v", err)
@@ -1137,7 +1137,7 @@ func TestRouterListsAdminUsersWithoutPasswordHashes(t *testing.T) {
 	if _, ok := users[1]["password_hash"]; ok {
 		t.Fatalf("users[1] = %#v, did not expect password_hash", users[1])
 	}
-	if strings.Contains(recorder.Body.String(), "password123") {
+	if strings.Contains(recorder.Body.String(), "fixture-pass-9x") {
 		t.Fatalf("body = %q, did not expect plaintext password", recorder.Body.String())
 	}
 	if users[0]["username"] != "admin" || users[1]["username"] != "bob" {
@@ -1157,7 +1157,7 @@ func TestRouterAdminUserRoutesSupportCreateEnableDisableAndResetPassword(t *test
 	handler, authService, _, adminToken, cleanup := newTestRouterWithRealAuth(t)
 	defer cleanup()
 
-	createReq := httptest.NewRequest(http.MethodPost, "/admin/v1/users", strings.NewReader(`{"username":"bob","password":"password123","enabled":false,"is_admin":false}`))
+	createReq := httptest.NewRequest(http.MethodPost, "/admin/v1/users", strings.NewReader(`{"username":"bob","password":"fixture-pass-9x","enabled":false,"is_admin":false}`))
 	createReq.Header.Set("Authorization", "Bearer "+adminToken)
 	createReq.Header.Set("Content-Type", "application/json")
 	createRecorder := httptest.NewRecorder()
@@ -1202,7 +1202,7 @@ func TestRouterAdminUserRoutesSupportCreateEnableDisableAndResetPassword(t *test
 		t.Fatalf("reset status = %d, want %d", resetRecorder.Code, http.StatusNoContent)
 	}
 
-	if _, err := authService.LoginWithPassword(context.Background(), "bob", "password123", nil); !domainauth.IsCode(err, domainauth.ErrorCodeInvalidCredentials) {
+	if _, err := authService.LoginWithPassword(context.Background(), "bob", "fixture-pass-9x", nil); !domainauth.IsCode(err, domainauth.ErrorCodeInvalidCredentials) {
 		t.Fatalf("LoginWithPassword(old password) error = %v, want invalid credentials", err)
 	}
 	if _, err := authService.LoginWithPassword(context.Background(), "bob", "password456", nil); err != nil {
@@ -1235,13 +1235,13 @@ func TestRouterAdminCreateUserRejectsUsernameConflicts(t *testing.T) {
 
 	if _, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
 		Username: "bob",
-		Password: "password123",
+		Password: "fixture-pass-9x",
 		Enabled:  true,
 	}); err != nil {
 		t.Fatalf("CreateAdminUser() setup error = %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/admin/v1/users", strings.NewReader(`{"username":"bob","password":"password123","enabled":true,"is_admin":false}`))
+	req := httptest.NewRequest(http.MethodPost, "/admin/v1/users", strings.NewReader(`{"username":"bob","password":"fixture-pass-9x","enabled":true,"is_admin":false}`))
 	req.Header.Set("Authorization", "Bearer "+adminToken)
 	req.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
@@ -1276,7 +1276,7 @@ func TestRouterAdminResetPasswordRejectsWeakPasswords(t *testing.T) {
 
 	user, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
 		Username: "bob",
-		Password: "password123",
+		Password: "fixture-pass-9x",
 		Enabled:  true,
 	})
 	if err != nil {
@@ -1302,7 +1302,7 @@ func TestRouterAdminUserMutationRoutesRemainUnavailable(t *testing.T) {
 
 	user, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
 		Username: "bob",
-		Password: "password123",
+		Password: "fixture-pass-9x",
 		Enabled:  true,
 	})
 	if err != nil {
@@ -1345,7 +1345,7 @@ func TestRouterAdminGrantRoutesSupportListPutReplaceAndDelete(t *testing.T) {
 
 	user, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
 		Username: "bob",
-		Password: "password123",
+		Password: "fixture-pass-9x",
 		Enabled:  true,
 	})
 	if err != nil {
@@ -1438,7 +1438,7 @@ func TestRouterAdminGrantRoutesRejectInvalidInput(t *testing.T) {
 
 	user, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
 		Username: "bob",
-		Password: "password123",
+		Password: "fixture-pass-9x",
 		Enabled:  true,
 	})
 	if err != nil {
@@ -1479,7 +1479,7 @@ func TestRouterAdminTokenRoutesSupportListCreateAndScopedRevoke(t *testing.T) {
 
 	user, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
 		Username: "bob",
-		Password: "password123",
+		Password: "fixture-pass-9x",
 		Enabled:  true,
 		IsAdmin:  true,
 	})
@@ -1562,7 +1562,7 @@ func TestRouterAdminTokenRoutesRejectExcessiveTTLAndMismatchedRevoke(t *testing.
 
 	owner, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
 		Username: "owner",
-		Password: "password123",
+		Password: "fixture-pass-9x",
 		Enabled:  true,
 		IsAdmin:  true,
 	})
@@ -1571,7 +1571,7 @@ func TestRouterAdminTokenRoutesRejectExcessiveTTLAndMismatchedRevoke(t *testing.
 	}
 	other, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
 		Username: "other",
-		Password: "password123",
+		Password: "fixture-pass-9x",
 		Enabled:  true,
 		IsAdmin:  true,
 	})
@@ -2105,7 +2105,7 @@ func TestRouterLogsRequestPathWithQueryString(t *testing.T) {
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodGet, "/auth/token?service=registry&scope=repository:team/app:pull", nil)
-	req.SetBasicAuth("alice", "password123")
+	req.SetBasicAuth("alice", "fixture-pass-9x")
 	recorder := httptest.NewRecorder()
 
 	handler.ServeHTTP(recorder, req)
@@ -2128,7 +2128,7 @@ func TestRouterIssuesAccessTokenFromBasicCredentials(t *testing.T) {
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodGet, "/auth/token?service=registry&scope=repository:team/app:pull", nil)
-	req.SetBasicAuth("alice", "password123")
+	req.SetBasicAuth("alice", "fixture-pass-9x")
 	recorder := httptest.NewRecorder()
 
 	handler.ServeHTTP(recorder, req)
@@ -2180,7 +2180,7 @@ func TestRouterRejectsMalformedTokenScopeRequests(t *testing.T) {
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodGet, "/auth/token?service=registry&scope=repository:team/app", nil)
-	req.SetBasicAuth("alice", "password123")
+	req.SetBasicAuth("alice", "fixture-pass-9x")
 	recorder := httptest.NewRecorder()
 
 	handler.ServeHTTP(recorder, req)
@@ -2341,7 +2341,7 @@ func TestRouterReadOnlyPrincipalReadsAnyRepositoryRejectedOnPushAndAdmin(t *test
 	if err != nil {
 		t.Fatalf("ParseScopes(push) error = %v", err)
 	}
-	adminPushLogin, err := authService.LoginWithPassword(context.Background(), "admin", "password123", pushScopes)
+	adminPushLogin, err := authService.LoginWithPassword(context.Background(), "admin", "fixture-pass-9x", pushScopes)
 	if err != nil {
 		t.Fatalf("LoginWithPassword(admin push) error = %v", err)
 	}
@@ -2349,7 +2349,7 @@ func TestRouterReadOnlyPrincipalReadsAnyRepositoryRejectedOnPushAndAdmin(t *test
 
 	created, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
 		Username:   "reader",
-		Password:   "password123",
+		Password:   "fixture-pass-9x",
 		Enabled:    true,
 		IsReadOnly: true,
 	})
@@ -2364,7 +2364,7 @@ func TestRouterReadOnlyPrincipalReadsAnyRepositoryRejectedOnPushAndAdmin(t *test
 	if err != nil {
 		t.Fatalf("ParseScopes() error = %v", err)
 	}
-	loginResult, err := authService.LoginWithPassword(context.Background(), "reader", "password123", requestedScopes)
+	loginResult, err := authService.LoginWithPassword(context.Background(), "reader", "fixture-pass-9x", requestedScopes)
 	if err != nil {
 		t.Fatalf("LoginWithPassword() error = %v", err)
 	}
@@ -3405,7 +3405,7 @@ func newTestRouterWithRealAuthOptions(t *testing.T, configure func(*appauth.Serv
 
 	bootstrapResult, err := authService.BootstrapAdmin(context.Background(), ports.BootstrapAdminInput{
 		Username: "admin",
-		Password: "password123",
+		Password: "fixture-pass-9x",
 	})
 	if err != nil {
 		cleanup()
@@ -3413,7 +3413,7 @@ func newTestRouterWithRealAuthOptions(t *testing.T, configure func(*appauth.Serv
 		t.Fatalf("BootstrapAdmin() error = %v", err)
 	}
 
-	loginResult, err := authService.LoginWithPassword(context.Background(), "admin", "password123", nil)
+	loginResult, err := authService.LoginWithPassword(context.Background(), "admin", "fixture-pass-9x", nil)
 	if err != nil {
 		cleanup()
 		_ = authStore.Close()
@@ -3651,7 +3651,7 @@ func TestRouterAdminTokenAndRobotTTLBounds(t *testing.T) {
 
 	owner, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
 		Username: "ttl-owner",
-		Password: "password123",
+		Password: "fixture-pass-9x",
 		Enabled:  true,
 		IsAdmin:  true,
 	})

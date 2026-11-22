@@ -19,11 +19,11 @@ func TestAdminPasswordResetClosesLoginSessionsButKeepsCredentialTokens(t *testin
 	defer cleanup()
 	ctx := context.Background()
 
-	victim, err := authService.CreateAdminUser(ctx, adminActor, ports.AdminCreateUserInput{Username: "victim", Password: "password123", Enabled: true, IsAdmin: true})
+	victim, err := authService.CreateAdminUser(ctx, adminActor, ports.AdminCreateUserInput{Username: "victim", Password: "fixture-pass-9x", Enabled: true, IsAdmin: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	bystander, err := authService.CreateAdminUser(ctx, adminActor, ports.AdminCreateUserInput{Username: "bystander", Password: "password123", Enabled: true, IsAdmin: true})
+	bystander, err := authService.CreateAdminUser(ctx, adminActor, ports.AdminCreateUserInput{Username: "bystander", Password: "fixture-pass-9x", Enabled: true, IsAdmin: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,16 +35,16 @@ func TestAdminPasswordResetClosesLoginSessionsButKeepsCredentialTokens(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	access, err := authService.LoginWithPassword(ctx, "victim", "password123", nil)
+	access, err := authService.LoginWithPassword(ctx, "victim", "fixture-pass-9x", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	scoped, _ := domainauth.ParseScopes([]string{"repository:team/app:pull"})
-	accessScoped, err := authService.LoginWithPassword(ctx, "victim", "password123", scoped)
+	accessScoped, err := authService.LoginWithPassword(ctx, "victim", "fixture-pass-9x", scoped)
 	if err != nil {
 		t.Fatal(err)
 	}
-	bystanderAccess, err := authService.LoginWithPassword(ctx, "bystander", "password123", nil)
+	bystanderAccess, err := authService.LoginWithPassword(ctx, "bystander", "fixture-pass-9x", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

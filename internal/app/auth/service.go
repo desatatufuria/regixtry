@@ -1371,6 +1371,9 @@ func validatePassword(password string) error {
 	if len(strings.TrimSpace(password)) < 8 {
 		return domainauth.NewValidationError("password must be at least 8 characters")
 	}
+	if isCommonPassword(password) {
+		return domainauth.NewValidationError("password is too common; choose a less guessable one")
+	}
 
 	return nil
 }
