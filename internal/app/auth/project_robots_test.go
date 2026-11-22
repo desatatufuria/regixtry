@@ -256,3 +256,72 @@ func TestProjectGrantsForRobotsAreReaderOrWriterAndExclusive(t *testing.T) {
 	}
 	_ = bot
 }
+
+// TestRobotHoldsExactlyOneGrantInBothDirections pins the one-grant invariant:
+// a robot holds one grant in total, whichever API gives it.
+func TestRobotHoldsExactlyOneGrantInBothDirections(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	delegate := projectAdminOf("odabank")
+	conflict := func(t *testing.T, err error) {
+		t.Helper()
+		if !domainauth.IsCode(err, domainauth.ErrorCodeConflict) {
+			t.Fatalf("error = %v, want conflict", err)
+		}
+	}
+
+	t.Run("a second project is refused, the same project may change role", func(t *testing.T) {
+		t.Parallel()
+		env := newProjectEnv(t, "odabank", "odabank2")
+		env.robot("bot")
+		if err := env.put(env.admin, "odabank", "bot", domainauth.RepoRoleReader); err != nil {
+			t.Fatal(err)
+		}
+		conflict(t, env.put(env.admin, "odabank2", "bot", domainauth.RepoRoleReader))
+		if err := env.put(env.admin, "odabank", "bot", domainauth.RepoRoleWriter); err != nil {
+			t.Fatalf("same project, other role error = %v", err)
+		}
+		if grants, _ := env.store.ListProjectGrants(ctx, "id-bot"); len(grants) != 1 || grants[0].Role != domainauth.RepoRoleWriter {
+			t.Fatalf("grants = %#v", grants)
+		}
+	})
+
+	t.Run("a repository grant on a project robot is refused on every route", func(t *testing.T) {
+		t.Parallel()
+		env := newProjectEnv(t, "odabank")
+		env.robot("bot")
+		if err := env.put(env.admin, "odabank", "bot", domainauth.RepoRoleWriter); err != nil {
+			t.Fatal(err)
+		}
+		for _, role := range []domainauth.RepoRole{domainauth.RepoRoleReader, domainauth.RepoRoleAdmin} {
+			_, err := env.service.PutRepoGrant(ctx, env.admin, "id-bot", "odabank/x", role)
+			conflict(t, err)
+			_, err = env.service.PutRepositoryGrant(ctx, env.admin, "odabank/x", "bot", role)
+			conflict(t, err)
+		}
+		_, err := env.service.PutRepositoryGrant(ctx, delegate, "odabank/x", "bot", domainauth.RepoRoleReader)
+		conflict(t, err)
+		if repos, _ := env.store.ListRepoGrants(ctx, "id-bot"); len(repos) != 0 {
+			t.Fatalf("a refused grant was stored: %#v", repos)
+		}
+	})
+
+	t.Run("repository robots and users behave as before", func(t *testing.T) {
+		t.Parallel()
+		env := newProjectEnv(t, "odabank")
+		env.robot("bot")
+		env.user("ana")
+		if _, err := env.service.PutRepoGrant(ctx, env.admin, "id-bot", "odabank/x", domainauth.RepoRoleReader); err != nil {
+			t.Fatalf("repo grant for a repository robot error = %v", err)
+		}
+		if _, err := env.service.PutRepositoryGrant(ctx, delegate, "odabank/y", "bot", domainauth.RepoRoleReader); err != nil {
+			t.Fatalf("delegate grant for a repository robot error = %v", err)
+		}
+		if err := env.put(env.admin, "odabank", "ana", domainauth.RepoRoleWriter); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := env.service.PutRepoGrant(ctx, env.admin, "id-ana", "odabank/x", domainauth.RepoRoleReader); err != nil {
+			t.Fatalf("repo grant for a user with a project grant error = %v", err)
+		}
+	})
+}

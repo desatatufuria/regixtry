@@ -75,7 +75,16 @@ func (s *Service) PutProjectGrant(ctx context.Context, actor domainauth.Principa
 			return domainauth.ProjectGrant{}, err
 		}
 		if len(repoGrants) > 0 {
-			return domainauth.ProjectGrant{}, domainauth.NewConflictError("robot already has a repository grant; a robot holds one grant")
+			return domainauth.ProjectGrant{}, domainauth.NewConflictError(robotOneGrantMessage)
+		}
+		held, err := s.store.ListProjectGrants(ctx, target.ID)
+		if err != nil {
+			return domainauth.ProjectGrant{}, err
+		}
+		for _, grant := range held {
+			if grant.Project != project {
+				return domainauth.ProjectGrant{}, domainauth.NewConflictError(robotOneGrantMessage)
+			}
 		}
 	}
 	// A read-only user must never gain write or administration through a
@@ -185,6 +194,27 @@ func (s *Service) RecordProjectEvent(ctx context.Context, actor domainauth.Princ
 		Action:     action,
 		Repository: domainauth.ProjectEventRepository(project),
 	})
+}
+
+const robotOneGrantMessage = "robot already has a grant; a robot holds one grant"
+
+// refuseRepoGrantOnProjectRobot keeps the one-grant invariant from the
+// repository side: a robot bound to a project takes no exact repository grant
+// (which also keeps it from ever reaching repo-admin). Users and repository
+// robots are untouched.
+func (s *Service) refuseRepoGrantOnProjectRobot(ctx context.Context, target domainauth.User) error {
+	if !target.IsRobot {
+		return nil
+	}
+	held, err := s.store.ListProjectGrants(ctx, target.ID)
+	if err != nil {
+		return err
+	}
+	if len(held) > 0 {
+		return domainauth.NewConflictError(robotOneGrantMessage)
+	}
+
+	return nil
 }
 
 func projectGrantRoleOn(grants []domainauth.ProjectGrant, project string) (domainauth.RepoRole, bool) {
