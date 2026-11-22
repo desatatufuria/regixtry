@@ -35,16 +35,15 @@ func TestAuthTokenEndpointDoesNotRevealUsernameState(t *testing.T) {
 		}
 	}
 
-	attempt := func(user, pass string) (*httptest.ResponseRecorder, time.Duration) {
+	attempt := func(user, pass string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodGet, "/auth/token?scope=repository:team/app:pull", nil)
 		req.SetBasicAuth(user, pass)
 		rec := httptest.NewRecorder()
-		start := time.Now()
 		handler.ServeHTTP(rec, req)
-		return rec, time.Since(start)
+		return rec
 	}
 
-	want, wantDur := attempt("active", "wrong-password")
+	want := attempt("active", "wrong-password")
 	if want.Code != http.StatusUnauthorized {
 		t.Fatalf("baseline status = %d", want.Code)
 	}
@@ -55,17 +54,12 @@ func TestAuthTokenEndpointDoesNotRevealUsernameState(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, dur := attempt(tc.user, tc.pass)
+			got := attempt(tc.user, tc.pass)
 			if got.Code != want.Code || got.Body.String() != want.Body.String() {
 				t.Fatalf("response differs from wrong-password for an active user:\n got %d %q\nwant %d %q", got.Code, got.Body.String(), want.Code, want.Body.String())
 			}
 			if got.Header().Get("WWW-Authenticate") != want.Header().Get("WWW-Authenticate") {
 				t.Fatalf("challenge differs: %q vs %q", got.Header().Get("WWW-Authenticate"), want.Header().Get("WWW-Authenticate"))
-			}
-			// bcrypt dominates the wrong-password path; the other paths must
-			// pay a comparable cost (generous bound to stay stable under load).
-			if dur < wantDur/3 {
-				t.Fatalf("took %s, active-user wrong-password took %s: no comparable hash work", dur, wantDur)
 			}
 		})
 	}

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
 	domainauth "regixtry/internal/domain/auth"
 	regixtrydomain "regixtry/internal/domain/regixtry"
 	"regixtry/internal/ports"
@@ -1359,5 +1360,95 @@ func TestServiceResetPasswordRejectsRobotAndKeepsSentinel(t *testing.T) {
 	}
 	if got := store.usersByID[robot.ID].PasswordHash; got != domainauth.RobotPasswordHash {
 		t.Fatalf("robot password hash = %q, want the unchanged sentinel", got)
+	}
+}
+
+func TestServiceEveryFailedPasswordLoginPaysExactlyOneBcryptComparison(t *testing.T) {
+	t.Parallel()
+
+	store := newMemoryAuthStore()
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	hash := mustHashPassword(t, "password123")
+	add := func(u domainauth.User) {
+		u.CreatedAt, u.UpdatedAt = now, now
+		store.usersByID[u.ID] = u
+		store.usersByUsername[u.Username] = u
+	}
+	add(domainauth.User{ID: "u1", Username: "alice", PasswordHash: hash, Enabled: true})
+	add(domainauth.User{ID: "u2", Username: "dora", PasswordHash: hash, Enabled: false})
+	add(domainauth.User{ID: "u3", Username: "robo", PasswordHash: domainauth.RobotPasswordHash, IsRobot: true, Enabled: true})
+
+	for _, tc := range []struct{ name, user, pass string }{
+		{"unknown user", "nobody", "password123"},
+		{"disabled user", "dora", "password123"},
+		{"robot", "robo", "password123"},
+		{"wrong password", "alice", "nope-nope"},
+		{"success", "alice", "password123"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			service := NewService(store)
+			service.now = func() time.Time { return now }
+			calls := 0
+			service.comparePassword = func(h, p []byte) error {
+				calls++
+				return bcrypt.CompareHashAndPassword(h, p)
+			}
+			_, _ = service.LoginWithPassword(context.Background(), tc.user, tc.pass, nil)
+			if calls != 1 {
+				t.Fatalf("bcrypt comparisons = %d, want exactly 1", calls)
+			}
+		})
+	}
+
+	t.Run("credential exchange failures add no comparison of their own", func(t *testing.T) {
+		service := NewService(store)
+		calls := 0
+		service.comparePassword = func(h, p []byte) error { calls++; return nil }
+		for _, user := range []string{"nobody", "dora", "alice"} {
+			if _, err := service.LoginWithPreissuedToken(context.Background(), user, "not-a-token", nil); err == nil {
+				t.Fatalf("exchange for %q unexpectedly succeeded", user)
+			}
+		}
+		if calls != 0 {
+			t.Fatalf("credential exchange compared passwords %d times, want 0", calls)
+		}
+	})
+}
+
+func TestDummyPasswordHashUsesTheCostOfNewlyWrittenHashes(t *testing.T) {
+	t.Parallel()
+
+	written, err := hashPassword("password123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writtenCost, err := bcrypt.Cost([]byte(written))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dummyCost, err := bcrypt.Cost(dummyPasswordHash())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dummyCost != writtenCost || dummyCost != passwordHashCost {
+		t.Fatalf("dummy cost = %d, written cost = %d, passwordHashCost = %d: all must match", dummyCost, writtenCost, passwordHashCost)
+	}
+
+	// A legacy hash stored with another cost keeps that cost and never moves
+	// the dummy's.
+	for _, legacy := range []int{4, 12} {
+		if legacy == passwordHashCost {
+			continue
+		}
+		h, err := bcrypt.GenerateFromPassword([]byte("x"), legacy)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := bcrypt.Cost(h); got != legacy {
+			t.Fatalf("legacy cost = %d, want %d", got, legacy)
+		}
+		if after, _ := bcrypt.Cost(dummyPasswordHash()); after != passwordHashCost {
+			t.Fatalf("dummy cost moved to %d after a cost-%d hash existed", after, legacy)
+		}
 	}
 }

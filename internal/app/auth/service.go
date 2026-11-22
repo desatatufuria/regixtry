@@ -23,13 +23,16 @@ type Service struct {
 	now   func() time.Time
 	// rollbackTimeout bounds the best-effort robot rollback.
 	rollbackTimeout time.Duration
+	// comparePassword is the bcrypt comparison every password login performs;
+	// a seam so tests can assert each failure path reaches exactly one.
+	comparePassword func(hash, password []byte) error
 }
 
 // robotRollbackTimeout is the default bound on the robot rollback delete.
 const robotRollbackTimeout = 5 * time.Second
 
 func NewService(store ports.AuthStore) *Service {
-	return &Service{store: store, now: func() time.Time { return time.Now().UTC() }, rollbackTimeout: robotRollbackTimeout}
+	return &Service{store: store, now: func() time.Time { return time.Now().UTC() }, rollbackTimeout: robotRollbackTimeout, comparePassword: bcrypt.CompareHashAndPassword}
 }
 
 func (s *Service) EnsureBootstrapAdmin(ctx context.Context) error {
@@ -342,7 +345,7 @@ func (s *Service) LoginWithPassword(ctx context.Context, username string, passwo
 	if found && !user.IsRobot {
 		hash = []byte(user.PasswordHash)
 	}
-	passwordMatches := bcrypt.CompareHashAndPassword(hash, []byte(password)) == nil
+	passwordMatches := s.comparePassword(hash, []byte(password)) == nil
 
 	switch {
 	case !found:
@@ -395,6 +398,14 @@ func invalidCredentialsBecause(reason string) error {
 	return &domainauth.Error{Code: domainauth.ErrorCodeInvalidCredentials, Message: "invalid credentials", Err: errors.New(reason)}
 }
 
+// passwordHashCost is the bcrypt cost of every newly written password hash and
+// of the dummy hash used to equalize failed logins. A hash stored with another
+// cost (for example a legacy one at cost 4 or 12 migrated in) keeps its own
+// cost, so a login against it takes proportionally longer or shorter than the
+// dummy comparison; the dummy cost deliberately tracks new hashes only and
+// never adapts to whatever is stored. Re-hash such users to remove the gap.
+const passwordHashCost = bcrypt.DefaultCost
+
 var (
 	dummyHashOnce  sync.Once
 	dummyHashBytes []byte
@@ -405,7 +416,7 @@ var (
 // costs the same.
 func dummyPasswordHash() []byte {
 	dummyHashOnce.Do(func() {
-		hash, err := bcrypt.GenerateFromPassword([]byte("regixtry-dummy-password"), bcrypt.DefaultCost)
+		hash, err := bcrypt.GenerateFromPassword([]byte("regixtry-dummy-password"), passwordHashCost)
 		if err != nil {
 			panic(err)
 		}
@@ -1323,7 +1334,7 @@ func validatePassword(password string) error {
 }
 
 func hashPassword(password string) (string, error) {
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), passwordHashCost)
 	if err != nil {
 		return "", err
 	}
