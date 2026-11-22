@@ -1237,6 +1237,20 @@ func (s *memoryAuthStore) RevokeTokenByAccessor(_ context.Context, accessor stri
 	return nil
 }
 
+func (s *memoryAuthStore) ResetUserPassword(ctx context.Context, user domainauth.User, revokedAt time.Time) error {
+	if err := s.UpsertUser(ctx, user); err != nil {
+		return err
+	}
+	for _, token := range append([]domainauth.Token(nil), s.tokensByUser[user.ID]...) {
+		if token.RevokedAt == nil {
+			if err := s.RevokeTokenByAccessor(ctx, token.Accessor, revokedAt); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func mustHashPassword(t *testing.T, password string) string {
 	t.Helper()
 	hash, err := hashPassword(password)

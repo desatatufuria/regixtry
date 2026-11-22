@@ -412,3 +412,63 @@ func newSQLiteBackedStore(t *testing.T) *Store {
 
 	return store
 }
+
+func TestStoreResetUserPasswordRevokesOnlyThatUsersActiveTokensAtomically(t *testing.T) {
+	t.Parallel()
+
+	store := newSQLiteBackedStore(t)
+	defer store.Close()
+	ctx := context.Background()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	mk := func(id string) domainauth.User {
+		u := domainauth.User{ID: id, Username: id, PasswordHash: "old", Enabled: true, CreatedAt: now, UpdatedAt: now}
+		if err := store.UpsertUser(ctx, u); err != nil {
+			t.Fatal(err)
+		}
+		return u
+	}
+	target, other := mk("target"), mk("other")
+	tok := func(id string, u domainauth.User, kind domainauth.TokenKind) {
+		name := ""
+		if kind == domainauth.TokenKindAdminCredential {
+			name = id
+		}
+		token := domainauth.Token{ID: id, UserID: u.ID, Kind: kind, Name: name, Accessor: "acc_" + id, SecretHash: "hash-" + id, CreatedAt: now, ExpiresAt: now.Add(time.Hour)}
+		if err := store.CreateToken(ctx, token); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tok("t-access", target, domainauth.TokenKindAccess)
+	tok("t-cred", target, domainauth.TokenKindAdminCredential)
+	tok("o-access", other, domainauth.TokenKindAccess)
+
+	// Unknown user: not found, nothing revoked.
+	ghost := domainauth.User{ID: "ghost", Username: "ghost", PasswordHash: "x", Enabled: true, CreatedAt: now, UpdatedAt: now}
+	if err := store.ResetUserPassword(ctx, ghost, now); !domainauth.IsCode(err, domainauth.ErrorCodeNotFound) {
+		t.Fatalf("ResetUserPassword(unknown) error = %v, want not-found", err)
+	}
+
+	target.PasswordHash = "new"
+	target.UpdatedAt = now.Add(time.Minute)
+	if err := store.ResetUserPassword(ctx, target, now.Add(time.Minute)); err != nil {
+		t.Fatalf("ResetUserPassword() error = %v", err)
+	}
+	got, err := store.GetUserByID(ctx, "target")
+	if err != nil || got.PasswordHash != "new" {
+		t.Fatalf("user after reset = %+v err=%v", got, err)
+	}
+	for _, c := range []struct {
+		kind    domainauth.TokenKind
+		hash    string
+		revoked bool
+	}{{domainauth.TokenKindAccess, "hash-t-access", true}, {domainauth.TokenKindAdminCredential, "hash-t-cred", true}, {domainauth.TokenKindAccess, "hash-o-access", false}} {
+		tk, err := store.GetTokenBySecretHash(ctx, c.kind, c.hash)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if tk.IsRevoked() != c.revoked {
+			t.Errorf("%s revoked = %v, want %v", c.hash, tk.IsRevoked(), c.revoked)
+		}
+	}
+}

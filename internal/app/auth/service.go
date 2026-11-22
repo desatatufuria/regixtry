@@ -618,7 +618,10 @@ func (s *Service) ResetPassword(ctx context.Context, actor domainauth.Principal,
 	}
 	user.PasswordHash = hash
 	user.UpdatedAt = s.now()
-	if err := s.store.UpsertUser(ctx, user); err != nil {
+	// The new password and the revocation of every token the old credential
+	// could have minted or protected (admin credentials and access tokens)
+	// commit together, so a stolen token cannot outlive a reset.
+	if err := s.store.ResetUserPassword(ctx, user, user.UpdatedAt); err != nil {
 		return err
 	}
 
