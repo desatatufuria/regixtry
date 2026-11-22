@@ -389,14 +389,7 @@ func (s delegateScreen) askRemove() delegateScreen {
 	}
 	gen, repo, username := s.gen, s.repo, grant.Username
 	s.status, s.statusTone = "", grantToneNone
-	s.confirm = newConfirmPrompt(
-		"Revoke access",
-		fmt.Sprintf("Revoke %s's %s access to %s?", username, grantRoleLabel(grant.Role), repo),
-		"revoke",
-		fmt.Sprintf("Revoking %s on %s...", username, repo),
-		func(env screenEnv) tea.Cmd { return delegateRemoveCmd(env, gen, repo, username) },
-	).withTarget(fmt.Sprintf("%s on %s", username, repo), grantRoleLabel(grant.Role)).
-		withConsequence(fmt.Sprintf("%s loses %s access to %s.", username, grantRoleLabel(grant.Role), repo))
+	s.confirm = revokeGrantConfirm(repo, username, grant.Role, func(env screenEnv) tea.Cmd { return delegateRemoveCmd(env, gen, repo, username) })
 	return s
 }
 
