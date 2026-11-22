@@ -5,8 +5,10 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -21,13 +23,16 @@ type Service struct {
 	now   func() time.Time
 	// rollbackTimeout bounds the best-effort robot rollback.
 	rollbackTimeout time.Duration
+	// comparePassword is the bcrypt comparison every password login performs;
+	// a seam so tests can assert each failure path reaches exactly one.
+	comparePassword func(hash, password []byte) error
 }
 
 // robotRollbackTimeout is the default bound on the robot rollback delete.
 const robotRollbackTimeout = 5 * time.Second
 
 func NewService(store ports.AuthStore) *Service {
-	return &Service{store: store, now: func() time.Time { return time.Now().UTC() }, rollbackTimeout: robotRollbackTimeout}
+	return &Service{store: store, now: func() time.Time { return time.Now().UTC() }, rollbackTimeout: robotRollbackTimeout, comparePassword: bcrypt.CompareHashAndPassword}
 }
 
 func (s *Service) EnsureBootstrapAdmin(ctx context.Context) error {
@@ -318,48 +323,107 @@ func (s *Service) DeleteUser(ctx context.Context, actor domainauth.Principal, us
 	return nil
 }
 
+// LoginWithPassword authenticates a human user. Every way of failing the
+// credential check (unknown username, disabled user, robot, wrong password)
+// returns the same invalid-credentials error and pays one bcrypt comparison,
+// so an unauthenticated caller can neither read the account state from the
+// response nor infer existence from the response time. The real reason travels
+// only in the error's wrapped cause, for server-side logs.
 func (s *Service) LoginWithPassword(ctx context.Context, username string, password string, requestedScopes []domainauth.Scope) (ports.LoginResult, error) {
-	user, err := s.getActiveUserByUsername(ctx, username)
-	if err != nil {
+	user, err := s.store.GetUserByUsername(ctx, normalizeUsername(username))
+	found := err == nil
+	if err != nil && !domainauth.IsCode(err, domainauth.ErrorCodeNotFound) {
 		return ports.LoginResult{}, err
 	}
-	// design.md Decision 6: the guard sits here, immediately after
-	// getActiveUserByUsername, and NOT inside that helper — it is shared
-	// with LoginWithPreissuedToken, the robot's only working credential
-	// path. A robot's RobotPasswordHash sentinel (user.go) independently
-	// blocks bcrypt below, but this per-attempt guard is a second,
-	// permanent layer that does not depend on the stored hash's shape.
-	if user.IsRobot {
-		return ports.LoginResult{}, domainauth.NewInvalidCredentialsError()
+
+	// design.md Decision 6: a robot never authenticates with a password. Its
+	// RobotPasswordHash sentinel independently blocks bcrypt, but this
+	// per-attempt guard is a second, permanent layer that does not depend on
+	// the stored hash's shape. The guard stays out of the shared lookup because
+	// LoginWithPreissuedToken is the robot's only working credential path.
+	hash := dummyPasswordHash()
+	if found && !user.IsRobot {
+		hash = []byte(user.PasswordHash)
 	}
-	if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)) != nil {
-		return ports.LoginResult{}, domainauth.NewInvalidCredentialsError()
+	passwordMatches := s.comparePassword(hash, []byte(password)) == nil
+
+	switch {
+	case !found:
+		return ports.LoginResult{}, invalidCredentialsBecause("unknown user")
+	case !user.Enabled:
+		return ports.LoginResult{}, invalidCredentialsBecause("user is disabled")
+	case user.IsRobot:
+		return ports.LoginResult{}, invalidCredentialsBecause("robot accounts cannot use a password")
+	case !passwordMatches:
+		return ports.LoginResult{}, invalidCredentialsBecause("wrong password")
 	}
 
 	return s.issueAccessToken(ctx, user, requestedScopes)
 }
 
+// LoginWithPreissuedToken exchanges an admin credential token for an access
+// token. The user and token lookups both always run, and every mismatch
+// (unknown user, disabled user, unknown token, token of another user) yields
+// the same invalid-credentials error as a wrong password.
 func (s *Service) LoginWithPreissuedToken(ctx context.Context, username string, token string, requestedScopes []domainauth.Scope) (ports.LoginResult, error) {
-	user, err := s.getActiveUserByUsername(ctx, username)
-	if err != nil {
-		return ports.LoginResult{}, err
+	user, userErr := s.store.GetUserByUsername(ctx, normalizeUsername(username))
+	if userErr != nil && !domainauth.IsCode(userErr, domainauth.ErrorCodeNotFound) {
+		return ports.LoginResult{}, userErr
+	}
+	storedToken, tokenErr := s.store.GetTokenBySecretHash(ctx, domainauth.TokenKindAdminCredential, hashSecret(token))
+	if tokenErr != nil && !domainauth.IsCode(tokenErr, domainauth.ErrorCodeNotFound) {
+		return ports.LoginResult{}, tokenErr
 	}
 
-	storedToken, err := s.store.GetTokenBySecretHash(ctx, domainauth.TokenKindAdminCredential, hashSecret(token))
-	if err != nil {
-		if domainauth.IsCode(err, domainauth.ErrorCodeNotFound) {
-			return ports.LoginResult{}, domainauth.NewInvalidCredentialsError()
-		}
-		return ports.LoginResult{}, err
-	}
-	if storedToken.UserID != user.ID {
-		return ports.LoginResult{}, domainauth.NewInvalidCredentialsError()
+	switch {
+	case userErr != nil:
+		return ports.LoginResult{}, invalidCredentialsBecause("unknown user")
+	case !user.Enabled:
+		return ports.LoginResult{}, invalidCredentialsBecause("user is disabled")
+	case tokenErr != nil:
+		return ports.LoginResult{}, invalidCredentialsBecause("wrong password or unknown admin credential token")
+	case storedToken.UserID != user.ID:
+		return ports.LoginResult{}, invalidCredentialsBecause("admin credential token belongs to another user")
 	}
 	if err := storedToken.IsActive(s.now()); err != nil {
 		return ports.LoginResult{}, err
 	}
 
 	return s.issueAccessToken(ctx, user, requestedScopes)
+}
+
+// invalidCredentialsBecause is the uniform client-facing error with the real
+// reason attached as a wrapped cause. The client sees only Message.
+func invalidCredentialsBecause(reason string) error {
+	return &domainauth.Error{Code: domainauth.ErrorCodeInvalidCredentials, Message: "invalid credentials", Err: errors.New(reason)}
+}
+
+// passwordHashCost is the bcrypt cost of every newly written password hash and
+// of the dummy hash used to equalize failed logins. A hash stored with another
+// cost (for example a legacy one at cost 4 or 12 migrated in) keeps its own
+// cost, so a login against it takes proportionally longer or shorter than the
+// dummy comparison; the dummy cost deliberately tracks new hashes only and
+// never adapts to whatever is stored. Re-hash such users to remove the gap.
+const passwordHashCost = bcrypt.DefaultCost
+
+var (
+	dummyHashOnce  sync.Once
+	dummyHashBytes []byte
+)
+
+// dummyPasswordHash returns a bcrypt hash of the same cost as real password
+// hashes, compared against when no real hash applies so every failed login
+// costs the same.
+func dummyPasswordHash() []byte {
+	dummyHashOnce.Do(func() {
+		hash, err := bcrypt.GenerateFromPassword([]byte("regixtry-dummy-password"), passwordHashCost)
+		if err != nil {
+			panic(err)
+		}
+		dummyHashBytes = hash
+	})
+
+	return dummyHashBytes
 }
 
 func (s *Service) VerifyAccessToken(ctx context.Context, bearerToken string) (domainauth.Principal, error) {
@@ -612,13 +676,24 @@ func (s *Service) ResetPassword(ctx context.Context, actor domainauth.Principal,
 	if err != nil {
 		return err
 	}
+	// A robot has no password: LoginWithPassword refuses robots and the
+	// RobotPasswordHash sentinel must never be replaced by a real hash.
+	if user.IsRobot {
+		return domainauth.NewValidationError("target user is a robot account and has no password")
+	}
 	hash, err := hashPassword(newPassword)
 	if err != nil {
 		return err
 	}
+	// The new hash and the revocation of the user's login sessions (access
+	// tokens, which a password login minted) commit in one transaction, so a
+	// session opened with the old password cannot outlive the reset. Admin
+	// credential tokens intentionally survive: they are PAT-like, do not
+	// derive from the password and are revoked explicitly by the operator
+	// (Tokens screen). Resetting your own password closes your own session.
 	user.PasswordHash = hash
 	user.UpdatedAt = s.now()
-	if err := s.store.UpsertUser(ctx, user); err != nil {
+	if err := s.store.ResetUserPassword(ctx, user, user.UpdatedAt); err != nil {
 		return err
 	}
 
@@ -1091,8 +1166,15 @@ func (s *Service) issueAccessToken(ctx context.Context, user domainauth.User, re
 	}
 	grantedScope := domainauth.NormalizeScopes(grantedScopes)
 
+	// A request that named scopes but granted none must not yield an
+	// unrestricted token: persist the restricted marker, report no scope.
+	storedScope := grantedScope
+	if storedScope == "" && len(requestedScopes) > 0 {
+		storedScope = domainauth.ScopeNone
+	}
+
 	now := s.now()
-	token := domainauth.Token{ID: uuid.NewString(), UserID: user.ID, Kind: domainauth.TokenKindAccess, Scope: grantedScope, Accessor: shortAccessor("atk"), SecretHash: hashSecret(secret), CreatedAt: now, ExpiresAt: now.Add(domainauth.AccessTokenTTL)}
+	token := domainauth.Token{ID: uuid.NewString(), UserID: user.ID, Kind: domainauth.TokenKindAccess, Scope: storedScope, Accessor: shortAccessor("atk"), SecretHash: hashSecret(secret), CreatedAt: now, ExpiresAt: now.Add(domainauth.AccessTokenTTL)}
 	if err := s.store.CreateToken(ctx, token); err != nil {
 		return ports.LoginResult{}, err
 	}
@@ -1103,21 +1185,6 @@ func (s *Service) issueAccessToken(ctx context.Context, user domainauth.User, re
 	}
 
 	return ports.LoginResult{Principal: principal, BearerToken: secret, ExpiresAt: token.ExpiresAt, Accessor: token.Accessor, Scope: grantedScope}, nil
-}
-
-func (s *Service) getActiveUserByUsername(ctx context.Context, username string) (domainauth.User, error) {
-	user, err := s.store.GetUserByUsername(ctx, normalizeUsername(username))
-	if err != nil {
-		if domainauth.IsCode(err, domainauth.ErrorCodeNotFound) {
-			return domainauth.User{}, domainauth.NewInvalidCredentialsError()
-		}
-		return domainauth.User{}, err
-	}
-	if !user.Enabled {
-		return domainauth.User{}, domainauth.NewDisabledUserError(user.Username)
-	}
-
-	return user, nil
 }
 
 func (s *Service) buildPrincipal(ctx context.Context, user domainauth.User, token domainauth.Token) (domainauth.Principal, error) {
@@ -1223,6 +1290,9 @@ func requireAdmin(actor domainauth.Principal) error {
 	if !actor.IsAdmin {
 		return domainauth.NewForbiddenError("administrator privileges are required")
 	}
+	if !actor.IsUnrestricted() {
+		return domainauth.NewForbiddenError("a scope-limited token cannot be used for administration")
+	}
 
 	return nil
 }
@@ -1235,6 +1305,9 @@ func requireAdmin(actor domainauth.Principal) error {
 // scope — a TUI/admin-API login requests zero scopes, so that helper would
 // make delegation permanently dead code on exactly the tokens it runs on.
 func requireAdminOrRepoAdmin(actor domainauth.Principal, repository string) error {
+	if !actor.IsUnrestricted() {
+		return domainauth.NewForbiddenError("a scope-limited token cannot be used for administration")
+	}
 	if actor.IsAdmin {
 		return nil
 	}
@@ -1261,7 +1334,7 @@ func validatePassword(password string) error {
 }
 
 func hashPassword(password string) (string, error) {
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), passwordHashCost)
 	if err != nil {
 		return "", err
 	}

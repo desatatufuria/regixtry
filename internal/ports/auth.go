@@ -30,6 +30,10 @@ type AuthStore interface {
 	GetTokenByAccessor(ctx context.Context, kind domainauth.TokenKind, accessor string) (domainauth.Token, error)
 	ListTokensByUser(ctx context.Context, userID string, kind domainauth.TokenKind) ([]domainauth.Token, error)
 	RevokeTokenByAccessor(ctx context.Context, accessor string, revokedAt time.Time) error
+	// ResetUserPassword stores the user (carrying the new password hash) and
+	// revokes every still-active access (login) token of that user, in one
+	// transaction; admin credential tokens are left alone: either both happen or neither does.
+	ResetUserPassword(ctx context.Context, user domainauth.User, revokedAt time.Time) error
 	// ListExpiringTokens returns admin credentials of enabled users and robots
 	// that are neither revoked nor expired at now and expire at or before
 	// until, ordered by expiry ascending, at most limit rows.
