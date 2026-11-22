@@ -87,6 +87,10 @@ func (r *Router) handleAdmin(w stdhttp.ResponseWriter, req *stdhttp.Request) {
 		r.handleAdminAccessEvents(w, req, *principal)
 	case subpath == "repository-grants":
 		r.handleAdminAllRepositoryGrants(w, req, *principal)
+	case subpath == "projects":
+		r.handleAdminProjects(w, req, *principal, "")
+	case strings.HasPrefix(subpath, "projects/"):
+		r.handleAdminProjects(w, req, *principal, strings.TrimPrefix(subpath, "projects/"))
 	case subpath == "admin-tokens/expiring":
 		r.handleAdminExpiringTokens(w, req, *principal)
 	case subpath == "users":

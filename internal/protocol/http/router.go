@@ -22,8 +22,10 @@ type Router struct {
 	service *appregixtry.Service
 	auth    ports.AuthService
 	admin   ports.AdminHTTPService
-	logger  *log.Logger
-	mux     *stdhttp.ServeMux
+	// projects serves /admin/v1/projects (see WithProjects); nil answers 501.
+	projects ports.ProjectAdmin
+	logger   *log.Logger
+	mux      *stdhttp.ServeMux
 	// maxManifestBytes caps a manifest PUT body (zero or negative: no cap).
 	maxManifestBytes int64
 	// trustedProxies are the proxies whose X-Forwarded-For is believed when
