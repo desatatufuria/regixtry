@@ -70,29 +70,28 @@ func (s trivyConfigScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.
 		}
 		return s.updateKey(env, key)
 	}
+	if owned, ok := msg.(securityMsg); ok && owned.securityGen() != s.gen {
+		return s, nil, false
+	}
 	switch typed := msg.(type) {
-	case adminFeaturePageLoadedMsg:
-		f, ok := s.applyPage(typed)
-		if !ok {
-			return s, nil, false
-		}
-		s.securityFeature = f
+	case securityPageMsg:
+		s.securityFeature = s.applyPage(typed)
 		if typed.err != nil {
 			return s, nil, false
 		}
-		return s, loadScanPolicyCmd(env), false
-	case featureOverridesLoadedMsg:
+		return s, securityLoadScanPolicyCmd(env, s.gen), false
+	case securityOverridesMsg:
 		s.securityFeature = s.applyOverrides(env, typed)
 		return s, nil, false
-	case adminFeatureActionCompletedMsg:
+	case securityActionMsg:
 		f, reload := s.applyActionResult(typed)
 		s.securityFeature = f
 		if reload {
-			return s, loadFeaturePageCmd(env, trivyFeatureName), false
+			return s, s.load(env), false
 		}
 		return s, nil, false
-	case adminFeatureConfiguredMsg:
-		if typed.name != trivyFeatureName || !s.saving {
+	case securityConfigureMsg:
+		if !s.saving {
 			return s, nil, false
 		}
 		s.saving = false
@@ -102,20 +101,15 @@ func (s trivyConfigScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.
 		}
 		s.cfg = trivyConfigModal{}
 		s.err, s.note = "", "Configuration saved."
-		return s, loadFeaturePageCmd(env, trivyFeatureName), false
-	case adminFeatureRuntimeMutatedMsg:
-		if typed.name != trivyFeatureName || typed.err != nil {
-			return s, nil, false
-		}
-		return s, loadFeaturePageCmd(env, trivyFeatureName), false
-	case adminScanPolicyLoadedMsg:
+		return s, s.load(env), false
+	case securityScanPolicyLoadedMsg:
 		if typed.err != nil {
 			s.policyErr = typed.err.Error()
 			return s, s.loadOverrides(env), false
 		}
 		s.policy, s.policyLoaded, s.policyErr = typed.settings, true, ""
 		return s, s.loadOverrides(env), false
-	case adminScanPolicyUpdatedMsg:
+	case securityScanPolicySavedMsg:
 		if !s.saving {
 			return s, nil, false
 		}
@@ -208,7 +202,7 @@ func (s trivyConfigScreen) updateConfigKey(env screenEnv, msg keyMsg) (adminScre
 		}
 		s.saving = true
 		s.cfg.Error = ""
-		return s, configureFeatureCmd(env, trivyFeatureName, input), true
+		return s, securityConfigureCmd(env, s.gen, trivyFeatureName, input), true
 	case isBackspaceKey(msg):
 		s.editConfigField(func(value string) string { return trimLastRune(value) })
 		return s, nil, true
@@ -266,7 +260,7 @@ func (s trivyConfigScreen) updatePolicyKey(env screenEnv, msg keyMsg) (adminScre
 		}
 		s.saving = true
 		s.policyModal.Error = ""
-		return s, updateScanPolicyCmd(env, ports.ScanPolicySettings{Enabled: s.policyModal.Enabled, SeverityThreshold: s.policyModal.SeverityThreshold}), true
+		return s, securitySaveScanPolicyCmd(env, s.gen, ports.ScanPolicySettings{Enabled: s.policyModal.Enabled, SeverityThreshold: s.policyModal.SeverityThreshold}), true
 	}
 	return s, nil, true
 }

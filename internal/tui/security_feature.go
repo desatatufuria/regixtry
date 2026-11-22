@@ -18,6 +18,9 @@ import (
 // The field names confirm and err are read by Model
 // (migratedScreenCapturesTextInput): do not rename them.
 type securityFeature struct {
+	// gen identifies this screen instance: every async result it asks for
+	// carries it, and a result with another gen is dropped.
+	gen     uint64
 	feature string
 	page    ports.FeaturePage
 	loaded  bool
@@ -37,51 +40,42 @@ type securityFeature struct {
 }
 
 func newSecurityFeature(feature string) securityFeature {
-	return securityFeature{feature: feature}
+	return securityFeature{gen: securityGenerations.Add(1), feature: feature}
 }
 
 // load reads the page. The reads that depend on it follow, one after the other
 // (the page, then the screen's own policy, then the overrides), each started by
 // the result of the one before.
 func (f securityFeature) load(env screenEnv) tea.Cmd {
-	return loadFeaturePageCmd(env, f.feature)
+	return securityLoadPageCmd(env, f.gen, f.feature)
 }
 
 // loadOverrides reads the feature's per-repository overrides.
 func (f securityFeature) loadOverrides(env screenEnv) tea.Cmd {
-	return loadFeatureOverridesCmd(env, f.feature)
+	return securityLoadOverridesCmd(env, f.gen, f.feature)
 }
 
-// applyPage stores a loaded page. ok is false when the message belongs to
-// another feature.
-func (f securityFeature) applyPage(msg adminFeaturePageLoadedMsg) (securityFeature, bool) {
-	if msg.feature != f.feature {
-		return f, false
-	}
+// applyPage stores a loaded page.
+func (f securityFeature) applyPage(msg securityPageMsg) securityFeature {
 	if msg.err != nil {
 		f.err = msg.err.Error()
-		return f, true
+		return f
 	}
 	f.page = msg.page
 	f.loaded = true
 	f.err = ""
-	return f, true
-}
-
-// applyOverrides stores a loaded overrides list of this feature.
-func (f securityFeature) applyOverrides(env screenEnv, msg featureOverridesLoadedMsg) securityFeature {
-	if msg.feature == f.feature {
-		f.overrides = f.overrides.apply(env, msg)
-	}
 	return f
 }
 
-// applyActionResult closes the confirm and the in-flight state of an action of
-// this feature and reports whether the page must be read again.
-func (f securityFeature) applyActionResult(msg adminFeatureActionCompletedMsg) (securityFeature, bool) {
-	if msg.feature != f.feature {
-		return f, false
-	}
+// applyOverrides stores a loaded overrides list.
+func (f securityFeature) applyOverrides(env screenEnv, msg securityOverridesMsg) securityFeature {
+	f.overrides = f.overrides.apply(env, msg)
+	return f
+}
+
+// applyActionResult closes the confirm and the in-flight state of an action and
+// reports whether the page must be read again.
+func (f securityFeature) applyActionResult(msg securityActionMsg) (securityFeature, bool) {
 	f.confirm = confirmPrompt{}
 	f.submitting = ""
 	f.acting = false
@@ -121,8 +115,8 @@ func (f securityFeature) actionKey(env screenEnv, msg keyMsg) (securityFeature, 
 	if f.acting {
 		return f, nil, true
 	}
-	feature := f.feature
-	run := func(env screenEnv) tea.Cmd { return executeFeatureActionCmd(env, feature, action.ID) }
+	feature, gen := f.feature, f.gen
+	run := func(env screenEnv) tea.Cmd { return securityActionCmd(env, gen, feature, action.ID) }
 	if strings.TrimSpace(action.ConfirmMessage) != "" {
 		submitting := fmt.Sprintf("Submitting %s for %s...", action.ID, feature)
 		f.confirm = newConfirmPrompt(adminFirstNonEmpty(action.ConfirmTitle, action.Label), action.ConfirmMessage, strings.ToLower(strings.TrimSpace(action.Label)), submitting, run).
@@ -132,11 +126,6 @@ func (f securityFeature) actionKey(env screenEnv, msg keyMsg) (securityFeature, 
 	f.acting = true
 	f.submitting = fmt.Sprintf("Submitting %s for %s...", action.ID, feature)
 	return f, run(env), true
-}
-
-// configureFeatureCmd saves one feature's configuration.
-func configureFeatureCmd(env screenEnv, name string, input ports.FeatureConfigureInput) tea.Cmd {
-	return env.asModel().configureFeatureCmd(name, input)
 }
 
 // securityDuration shows a backend duration the short way: "24h0m0s" is

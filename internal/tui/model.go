@@ -599,48 +599,12 @@ type adminLoginCompletedMsg struct {
 	err     error
 }
 
-// adminFeaturePageLoadedMsg carries the feature name it was requested for
-// (stamped by loadAdminFeaturePageCmd) so a per-feature screen (Phase 11:
-// trivyConfigScreen/gitleaksConfigScreen/signingConfigScreen, each fixed to
-// its own feature) can reliably filter a broadcast result even on error,
-// when page.Summary.Name itself is unavailable (design.md Decision H).
-type adminFeaturePageLoadedMsg struct {
-	feature string
-	page    ports.FeaturePage
-	err     error
-}
-
-// adminFeatureActionCompletedMsg mirrors adminFeaturePageLoadedMsg's own
-// feature-stamping reasoning: enable/disable/install/upgrade/rollback is
-// dispatched by three different feature screens now, and result carries no
-// feature identity of its own.
-type adminFeatureActionCompletedMsg struct {
-	feature string
-	result  ports.FeatureActionResult
-	err     error
-}
-
-type adminFeatureConfiguredMsg struct {
-	name string
-	err  error
-}
-
 type adminScanPolicyLoadedMsg struct {
 	settings ports.ScanPolicySettings
 	err      error
 }
 
-type adminScanPolicyUpdatedMsg struct {
-	settings ports.ScanPolicySettings
-	err      error
-}
-
 type adminSigningPolicyLoadedMsg struct {
-	settings ports.SigningPolicySettings
-	err      error
-}
-
-type adminSigningPolicyUpdatedMsg struct {
 	settings ports.SigningPolicySettings
 	err      error
 }
@@ -691,13 +655,6 @@ type adminRepositoryOverridesListLoadedMsg struct {
 	feature   string
 	overrides []ports.RepositoryOverrideDetails
 	err       error
-}
-
-type adminFeatureRuntimeMutatedMsg struct {
-	name   string
-	action string
-	state  ports.FeatureRuntimeState
-	err    error
 }
 
 // adminRepositoryScanSummariesLoadedMsg carries the result of loading the
@@ -991,52 +948,16 @@ func (m Model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 		overview := newOverviewScreen()
 		m.adminScreens[slotOverview] = overview
 		return m, overview.Init(m.screenEnv())
-	case adminFeaturePageLoadedMsg:
-		// Broadcast only (design.md Decision H): whichever of
-		// trivyConfigScreen/gitleaksConfigScreen/signingConfigScreen this
-		// was requested for (msg.feature) applies it to its own page.
-		if msg.err != nil {
-			if IsAdminSessionExpired(msg.err) {
-				return m.expireAdminSession(msg.err.Error()), nil
-			}
-			m.status = msg.err.Error()
-			var cmd tea.Cmd
-			m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
-			return m, cmd
+	case securityMsg:
+		// The Security configuration screens' results. Drop one from another
+		// screen instance FIRST: a stale expiry result must never log the
+		// operator out.
+		if !securityScreenOwns(m.adminScreens, msg.securityGen()) {
+			return m, nil
 		}
-		if strings.HasPrefix(strings.ToLower(m.status), "loading") {
-			m.status = ""
+		if reason, expired := msg.expiredReason(); expired {
+			return m.expireAdminSession(reason), nil
 		}
-		var cmd tea.Cmd
-		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
-		return m, cmd
-	case adminFeatureActionCompletedMsg:
-		// Broadcast only: the requesting screen (msg.feature) clears its own
-		// confirm and reloads its own page; this handler only sets the
-		// global status line (design.md Decision H).
-		if msg.err != nil {
-			if IsAdminSessionExpired(msg.err) {
-				return m.expireAdminSession(msg.err.Error()), nil
-			}
-			m.status = msg.err.Error()
-			var cmd tea.Cmd
-			m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
-			return m, cmd
-		}
-		m.status = strings.TrimSpace(msg.result.Message)
-		var cmd tea.Cmd
-		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
-		return m, cmd
-	case adminFeatureConfiguredMsg:
-		if msg.err != nil {
-			if IsAdminSessionExpired(msg.err) {
-				return m.expireAdminSession(msg.err.Error()), nil
-			}
-			var cmd tea.Cmd
-			m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
-			return m, cmd
-		}
-		m.status = "Configuration saved."
 		var cmd tea.Cmd
 		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
 		return m, cmd
@@ -1050,19 +971,6 @@ func (m Model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil && IsAdminSessionExpired(msg.err) {
 			return m.expireAdminSession(msg.err.Error()), nil
 		}
-		return m, cmd
-	case adminScanPolicyUpdatedMsg:
-		if msg.err != nil {
-			if IsAdminSessionExpired(msg.err) {
-				return m.expireAdminSession(msg.err.Error()), nil
-			}
-			var cmd tea.Cmd
-			m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
-			return m, cmd
-		}
-		m.status = "Vulnerability policy saved."
-		var cmd tea.Cmd
-		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
 		return m, cmd
 	case adminUpdateChannelLoadedMsg, adminUpdateChannelUpdatedMsg:
 		// Drop a message from another screen instance FIRST: a stale expiry
@@ -1086,24 +994,6 @@ func (m Model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil && IsAdminSessionExpired(msg.err) {
 			return m.expireAdminSession(msg.err.Error()), nil
 		}
-		return m, cmd
-	case adminSigningPolicyUpdatedMsg:
-		// signingConfigScreen's own policy/cfg-refresh handling is reached
-		// via the routeAdminMsg broadcast below (design.md Decision H) --
-		// SigningPolicy fully migrated onto signingConfigScreen in Phase 11
-		// (closing the Phase 12.3 disclosed deviation: the badge that used
-		// to be its second reader no longer exists).
-		if msg.err != nil {
-			if IsAdminSessionExpired(msg.err) {
-				return m.expireAdminSession(msg.err.Error()), nil
-			}
-			var cmd tea.Cmd
-			m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
-			return m, cmd
-		}
-		m.status = "Signing policy saved."
-		var cmd tea.Cmd
-		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
 		return m, cmd
 	case adminSigningKeyUsageLoadedMsg:
 		// Broadcast like adminSigningPolicyLoadedMsg above (design.md
@@ -1196,6 +1086,15 @@ func (m Model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, edit.Init(m.screenEnv())
 			}
 			return m.openUserScreen(openUserScreenMsg{to: screenAdminUsers})
+		}
+		switch msg.To {
+		case screenSecurityTrivy, screenSecurityGitleaksConfig, screenSecuritySigningConfig:
+			// Always a fresh screen with a new generation: a result still in
+			// flight for an earlier visit must not land on this one.
+			slot, _ := slotFor(msg.To)
+			next := newAdminScreenFor(msg.To)
+			m.adminScreens[slot] = next
+			return m, next.Init(m.screenEnv())
 		}
 		if slot, ok := slotFor(msg.To); ok && m.adminScreens[slot] == nil {
 			next := newAdminScreenFor(msg.To)
@@ -1327,23 +1226,6 @@ func (m Model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil && IsAdminSessionExpired(msg.err) {
 			return m.expireAdminSession(msg.err.Error()), nil
 		}
-		return m, cmd
-	case adminFeatureRuntimeMutatedMsg:
-		// Broadcast only (design.md Decision H): the requesting screen
-		// (msg.name) reloads its own page; this handler only sets the
-		// global status line. Each feature's own screen stays active and
-		// refreshes itself in place, consistent with
-		// adminFeatureActionCompletedMsg/adminFeatureConfiguredMsg above.
-		if msg.err != nil {
-			if IsAdminSessionExpired(msg.err) {
-				return m.expireAdminSession(msg.err.Error()), nil
-			}
-			m.status = msg.err.Error()
-			return m, nil
-		}
-		m.status = fmt.Sprintf("Managed runtime %s for %q at %s.", msg.action, msg.name, adminFirstNonEmpty(strings.TrimSpace(msg.state.ActiveVersion), adminFirstNonEmpty(strings.TrimSpace(string(msg.state.Status)), "unknown")))
-		var cmd tea.Cmd
-		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
 		return m, cmd
 	case adminRepositoryScanSummariesLoadedMsg:
 		// Broadcast only (design.md Decision H): trivyReposScreen owns
@@ -2379,24 +2261,6 @@ func (m Model) loginCmd(username string, password string) tea.Cmd {
 	}
 }
 
-func (m Model) loadAdminFeaturePageCmd(name string) tea.Cmd {
-	return func() tea.Msg {
-		if m.adminClient == nil {
-			return adminFeaturePageLoadedMsg{feature: name, err: fmt.Errorf("admin API is unavailable for this session")}
-		}
-		page, err := m.adminClient.GetFeaturePage(m.ctx, m.adminSession, name)
-		return adminFeaturePageLoadedMsg{feature: name, page: page, err: err}
-	}
-}
-
-// loadFeaturePageCmd is the screenEnv-scoped equivalent of
-// Model.loadAdminFeaturePageCmd, needed because a sub-model has no Model to
-// call a method on (mirrors screen_gitleaks_config.go's configureFeatureCmd
-// wrapper).
-func loadFeaturePageCmd(env screenEnv, name string) tea.Cmd {
-	return env.asModel().loadAdminFeaturePageCmd(name)
-}
-
 // loadAdminRepositoryScanSummariesCmd fetches the Repository Alerts table's
 // data: one row per repository, collapsed server-side before limit
 // (ListRepositoryScanSummaries/ports.RepositoryScanSummary) so a few
@@ -2454,32 +2318,6 @@ func (m Model) loadAdminScanHistoryCmd(repository string) tea.Cmd {
 	}
 }
 
-func (m Model) executeFeatureActionCmd(name string, actionID string) tea.Cmd {
-	return func() tea.Msg {
-		if m.adminClient == nil {
-			return adminFeatureActionCompletedMsg{feature: name, err: fmt.Errorf("admin API is unavailable for this session")}
-		}
-		result, err := m.adminClient.ExecuteFeatureAction(m.ctx, m.adminSession, name, actionID)
-		return adminFeatureActionCompletedMsg{feature: name, result: result, err: err}
-	}
-}
-
-// executeFeatureActionCmd is the screenEnv-scoped equivalent of Model's own
-// executeFeatureActionCmd method (mirrors configureFeatureCmd's wrapper).
-func executeFeatureActionCmd(env screenEnv, name string, actionID string) tea.Cmd {
-	return env.asModel().executeFeatureActionCmd(name, actionID)
-}
-
-func (m Model) configureFeatureCmd(name string, input ports.FeatureConfigureInput) tea.Cmd {
-	return func() tea.Msg {
-		if m.adminClient == nil {
-			return adminFeatureConfiguredMsg{name: name, err: fmt.Errorf("admin API is unavailable for this session")}
-		}
-		_, err := m.adminClient.ConfigureFeature(m.ctx, m.adminSession, name, input)
-		return adminFeatureConfiguredMsg{name: name, err: err}
-	}
-}
-
 func (m Model) loadScanPolicyCmd() tea.Cmd {
 	return func() tea.Msg {
 		if m.adminClient == nil {
@@ -2487,16 +2325,6 @@ func (m Model) loadScanPolicyCmd() tea.Cmd {
 		}
 		settings, err := m.adminClient.GetScanPolicy(m.ctx, m.adminSession)
 		return adminScanPolicyLoadedMsg{settings: settings, err: err}
-	}
-}
-
-func (m Model) updateScanPolicyCmd(input ports.ScanPolicySettings) tea.Cmd {
-	return func() tea.Msg {
-		if m.adminClient == nil {
-			return adminScanPolicyUpdatedMsg{err: fmt.Errorf("admin API is unavailable for this session")}
-		}
-		settings, err := m.adminClient.UpdateScanPolicy(m.ctx, m.adminSession, input)
-		return adminScanPolicyUpdatedMsg{settings: settings, err: err}
 	}
 }
 
@@ -2516,21 +2344,7 @@ func (m Model) loadSigningPolicyCmd() tea.Cmd {
 // screen_gitleaks_config.go's configureFeatureCmd wrapper).
 func loadScanPolicyCmd(env screenEnv) tea.Cmd { return env.asModel().loadScanPolicyCmd() }
 
-func updateScanPolicyCmd(env screenEnv, input ports.ScanPolicySettings) tea.Cmd {
-	return env.asModel().updateScanPolicyCmd(input)
-}
-
 func loadSigningPolicyCmd(env screenEnv) tea.Cmd { return env.asModel().loadSigningPolicyCmd() }
-
-func (m Model) updateSigningPolicyCmd(input ports.SigningPolicySettings) tea.Cmd {
-	return func() tea.Msg {
-		if m.adminClient == nil {
-			return adminSigningPolicyUpdatedMsg{err: fmt.Errorf("admin API is unavailable for this session")}
-		}
-		settings, err := m.adminClient.UpdateSigningPolicy(m.ctx, m.adminSession, input)
-		return adminSigningPolicyUpdatedMsg{settings: settings, err: err}
-	}
-}
 
 // signingKeyUsageCmd fetches trustedKeyList's delete-key usage-count
 // advisory (CountSigningKeyUsage), the screenEnv-scoped equivalent of

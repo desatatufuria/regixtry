@@ -4,6 +4,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -477,34 +478,144 @@ func TestSecurityScreensRedirectToLoginOnAnExpiredSession(t *testing.T) {
 	}
 }
 
-func TestSecurityScreensIgnoreMessagesOfOtherFeatures(t *testing.T) {
-	t.Parallel()
-	m := securityModelAt(t, securityClient(), screenSecurityTrivy, 150, 24)
-	before := securityRender(m)
-	for _, msg := range []tea.Msg{
-		adminFeaturePageLoadedMsg{feature: gitleaksFeatureName, page: securityGitleaksPage()},
-		adminFeaturePageLoadedMsg{feature: gitleaksFeatureName, err: errors.New("other")},
-		adminFeatureActionCompletedMsg{feature: gitleaksFeatureName, err: errors.New("other")},
-		featureOverridesLoadedMsg{feature: gitleaksFeatureName, overrides: []ports.RepositoryOverrideDetails{{Repository: "x/y"}}},
-		adminFeatureConfiguredMsg{name: gitleaksFeatureName, err: errors.New("other")},
-	} {
-		updated, _ := m.Update(msg)
-		m = updated.(Model)
+func securityScreenGenOf(t *testing.T, m Model, to screen) uint64 {
+	t.Helper()
+	slot, _ := slotFor(to)
+	gen, ok := securityScreenGen(m.adminScreens, slot)
+	if !ok {
+		t.Fatalf("no security screen mounted for %s", to)
 	}
-	if after := securityRender(m); after != before {
-		t.Fatalf("a message of another feature changed the screen:\n%s\n--- was\n%s", after, before)
+	return gen
+}
+
+// securityForeign returns one result of every kind, stamped with gen.
+func securityForeign(gen uint64, err error) []tea.Msg {
+	res := securityResult{gen: gen, err: err}
+	return []tea.Msg{
+		securityPageMsg{securityResult: res, page: securityGitleaksPage()},
+		securityOverridesMsg{securityResult: res, overrides: []ports.RepositoryOverrideDetails{{Repository: "x/y"}}},
+		securityActionMsg{securityResult: res},
+		securityConfigureMsg{res},
+		securityScanPolicyLoadedMsg{securityResult: res},
+		securityScanPolicySavedMsg{securityResult: res},
+		securitySigningPolicyLoadedMsg{securityResult: res},
+		securitySigningPolicySavedMsg{securityResult: res},
+		securityKeyUsageMsg{securityResult: res, count: 9},
 	}
 }
 
-func TestSecurityStaleSaveResultsAreDropped(t *testing.T) {
+func TestSecurityScreensDropResultsOfAnotherGeneration(t *testing.T) {
 	t.Parallel()
-	m := securityModelAt(t, securityClient(), screenSecurityTrivy, 150, 24)
-	m = securityPress(t, m, testKeyRunes("c"))
-	// No save is in flight: a result arriving now belongs to nobody.
-	updated, _ := m.Update(adminFeatureConfiguredMsg{name: trivyFeatureName, err: errors.New("late")})
-	m = updated.(Model)
-	if s := securityTrivyOf(t, m); !s.cfg.Active() || s.cfg.Error != "" {
-		t.Fatalf("a stale configure result changed the open modal: %#v", s.cfg)
+	for _, to := range []screen{screenSecurityTrivy, screenSecurityGitleaksConfig, screenSecuritySigningConfig} {
+		m := securityModelAt(t, securityClient(), to, 150, 24)
+		before := securityRender(m)
+		slot, _ := slotFor(to)
+		own := securityScreenGenOf(t, m, to)
+		for _, msg := range securityForeign(own+1000, errors.New("other")) {
+			// Straight to the screen: it drops a foreign generation itself.
+			next, cmd, _ := m.adminScreens[slot].Update(m.screenEnv(), msg)
+			if cmd != nil || !reflect.DeepEqual(next, m.adminScreens[slot]) {
+				t.Fatalf("%s: %T of another generation changed the screen or started work", to, msg)
+			}
+			// Through the Model: dropped before anything else happens.
+			updated, cmd := m.Update(msg)
+			if cmd != nil || securityRender(updated.(Model)) != before {
+				t.Fatalf("%s: %T of another generation changed the view", to, msg)
+			}
+		}
+	}
+}
+
+func TestSecurityStaleExpiredResultDoesNotLogTheOperatorOut(t *testing.T) {
+	t.Parallel()
+	for _, to := range []screen{screenSecurityTrivy, screenSecurityGitleaksConfig, screenSecuritySigningConfig} {
+		m := securityModelAt(t, securityClient(), to, 150, 24)
+		for _, msg := range securityForeign(securityScreenGenOf(t, m, to)+1000, securityExpired()) {
+			updated, _ := m.Update(msg)
+			got := updated.(Model)
+			if got.screen != to || got.adminAuth != adminAuthStateAuthenticated {
+				t.Fatalf("%s: a stale expired %T logged the operator out (screen %q, auth %q)", to, msg, got.screen, got.adminAuth)
+			}
+		}
+		// The screen's own expired result still does.
+		for _, msg := range securityForeign(securityScreenGenOf(t, m, to), securityExpired())[:1] {
+			updated, _ := m.Update(msg)
+			if updated.(Model).screen != screenAdminLogin {
+				t.Fatalf("%s: an expired result of the mounted screen must redirect to login", to)
+			}
+		}
+	}
+}
+
+func TestSecurityLateSaveAfterLeavingAndReopeningNeverTouchesTheNewScreen(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		to   screen
+		open keyMsg
+		note string
+		read func(*testing.T, Model) (saving, modal bool, note string)
+	}{
+		{screenSecurityTrivy, testKeyRunes("c"), "Configuration saved.", func(t *testing.T, m Model) (bool, bool, string) {
+			s := securityTrivyOf(t, m)
+			return s.saving, s.cfg.Active(), s.note
+		}},
+		{screenSecurityGitleaksConfig, testKeyRunes("c"), "Configuration saved.", func(t *testing.T, m Model) (bool, bool, string) {
+			s := securityGitleaksOf(t, m)
+			return s.saving, s.cfg.Active(), s.note
+		}},
+		{screenSecuritySigningConfig, testKeyRunes("p"), "Signing policy saved.", func(t *testing.T, m Model) (bool, bool, string) {
+			s := securitySigningOf(t, m)
+			return s.saving, s.cfg.Active(), s.note
+		}},
+	} {
+		for _, expired := range []bool{false, true} {
+			client := securityClient()
+			m := securityModelAt(t, client, tc.to, 150, 24)
+			m = securityPress(t, m, tc.open)
+			updated, saveCmd := m.Update(testKeyEnter()) // the save is in flight
+			m = updated.(Model)
+			if saveCmd == nil {
+				t.Fatalf("%s: Enter returned no command", tc.to)
+			}
+			// Leave (Esc closes the modal, Esc leaves) and come back.
+			m = securityPress(t, m, testKeyEsc(), testKeyEsc())
+			if m.screen != screenAdminOverview {
+				t.Fatalf("%s: could not leave the screen", tc.to)
+			}
+			updated, reopenCmd := m.Update(navigateMsg{To: tc.to})
+			m = securityRun(t, updated.(Model), reopenCmd)
+			if saving, modal, note := tc.read(t, m); saving || modal || note != "" {
+				t.Fatalf("%s: the reopened screen starts with saving=%v modal=%v note=%q", tc.to, saving, modal, note)
+			}
+			before := securityRender(m)
+
+			// The old save finally answers.
+			if expired {
+				client.featureErr, client.scanPolicyUpdateErr, client.signingPolicyUpdateErr = securityExpired(), securityExpired(), securityExpired()
+			}
+			late := saveCmd()
+			updated, _ = m.Update(late)
+			m = updated.(Model)
+			if m.screen != tc.to || m.adminAuth != adminAuthStateAuthenticated {
+				t.Fatalf("%s (expired=%v): the late result moved the operator to %q (auth %q)", tc.to, expired, m.screen, m.adminAuth)
+			}
+			if saving, modal, note := tc.read(t, m); saving || modal || note != "" || securityRender(m) != before {
+				t.Fatalf("%s (expired=%v): the late result marked the new screen (saving=%v modal=%v note=%q):\n%s", tc.to, expired, saving, modal, note, securityRender(m))
+			}
+		}
+	}
+}
+
+func TestSecurityScreensGetAFreshGenerationOnEveryVisit(t *testing.T) {
+	t.Parallel()
+	for _, to := range []screen{screenSecurityTrivy, screenSecurityGitleaksConfig, screenSecuritySigningConfig} {
+		m := securityModelAt(t, securityClient(), to, 150, 24)
+		first := securityScreenGenOf(t, m, to)
+		updated, cmd := m.Update(navigateMsg{To: to})
+		m = securityRun(t, updated.(Model), cmd)
+		if second := securityScreenGenOf(t, m, to); second == first {
+			t.Fatalf("%s: reopening kept generation %d", to, first)
+		}
 	}
 }
 
@@ -723,9 +834,14 @@ func TestSecuritySigningIdentityListAndSaveFailure(t *testing.T) {
 
 	// The clear row saves without any trusted key.
 	client.signingPolicyUpdateErr = nil
+	calls := client.updateSigningPolicyCalls
 	m = securityPress(t, m, testKeyTab(), testKeyEnter())
-	if got := client.lastSigningPolicyInput; len(got.TrustedPublicKeys) != 0 || len(got.TrustedIdentities) != 2 {
-		t.Fatalf("clear-keys save sent %#v, want no keys and both identities", got)
+	if client.updateSigningPolicyCalls != calls || !strings.Contains(securityRender(m), "Press enter again to confirm") {
+		t.Fatalf("the clear row must ask before it sends anything:\n%s", securityRender(m))
+	}
+	m = securityPress(t, m, testKeyEnter())
+	if got := client.lastSigningPolicyInput; client.updateSigningPolicyCalls != calls+1 || len(got.TrustedPublicKeys) != 0 || len(got.TrustedIdentities) != 2 {
+		t.Fatalf("clear-keys save sent %#v after the confirmation, want no keys and both identities", got)
 	}
 }
 
@@ -817,5 +933,160 @@ func TestSecurityOverridesListShowsErrorsAndOverflow(t *testing.T) {
 	}
 	if strings.Index(out, "team/docs") < 0 || strings.Index(out, "team/api") < 0 {
 		t.Fatalf("the overrides must come first even in a long catalog:\n%s", out)
+	}
+}
+
+// ---- the policy editors cannot send a blank or foreign policy ----
+
+func TestSecurityPolicyEditorsRefuseToOpenOnAPolicyThatNeverLoaded(t *testing.T) {
+	t.Parallel()
+	client := securityClient()
+	client.signingPolicyErr = errors.New("policy down")
+	client.scanPolicyErr = errors.New("policy down")
+
+	m := securityModelAt(t, client, screenSecuritySigningConfig, 150, 24)
+	m = securityPress(t, m, testKeyRunes("p"), testKeyEnter(), testKeyEnter())
+	if securitySigningOf(t, m).cfg.Active() || client.updateSigningPolicyCalls != 0 {
+		t.Fatalf("signing: modal open = %v, saves = %d, want neither: a blank policy must never go over the real keys", securitySigningOf(t, m).cfg.Active(), client.updateSigningPolicyCalls)
+	}
+	m = securityModelAt(t, client, screenSecurityTrivy, 150, 24)
+	m = securityPress(t, m, testKeyRunes("p"), testKeyEnter(), testKeyEnter())
+	if securityTrivyOf(t, m).policyModal.Active() || client.updateScanPolicyCalls != 0 {
+		t.Fatalf("trivy: modal open = %v, saves = %d, want neither", securityTrivyOf(t, m).policyModal.Active(), client.updateScanPolicyCalls)
+	}
+}
+
+func TestSecuritySigningSaveSendsExactlyTheLoadedTrustUnlessTheOperatorRemovedIt(t *testing.T) {
+	t.Parallel()
+	client := securityClient()
+	loaded := client.signingPolicy
+	m := securityModelAt(t, client, screenSecuritySigningConfig, 150, 24)
+
+	// Opening and saving without touching the lists sends them as they are.
+	m = securityPress(t, m, testKeyRunes("p"), testKeyEnter())
+	got := client.lastSigningPolicyInput
+	if client.updateSigningPolicyCalls != 1 || !reflect.DeepEqual(got.TrustedPublicKeys, loaded.TrustedPublicKeys) || !reflect.DeepEqual(got.TrustedIdentities, loaded.TrustedIdentities) {
+		t.Fatalf("a plain save sent keys %d and identities %d, want the loaded %d and %d", len(got.TrustedPublicKeys), len(got.TrustedIdentities), len(loaded.TrustedPublicKeys), len(loaded.TrustedIdentities))
+	}
+
+	// A refresh that fails does not blank what the editor will send.
+	client.featureErr = errors.New("down")
+	client.signingPolicyErr = errors.New("down")
+	m = securityPress(t, m, testKeyEsc(), testKeyRunes("r"), testKeyRunes("p"), testKeyEnter())
+	got = client.lastSigningPolicyInput
+	if len(got.TrustedPublicKeys) != len(loaded.TrustedPublicKeys) || len(got.TrustedIdentities) != len(loaded.TrustedIdentities) {
+		t.Fatalf("after a failed refresh a save sent keys %d and identities %d, want the last loaded", len(got.TrustedPublicKeys), len(got.TrustedIdentities))
+	}
+}
+
+func TestSecuritySigningClearAllKeysAsksBeforeSendingAnything(t *testing.T) {
+	t.Parallel()
+	client := securityClient()
+	m := securityModelAt(t, client, screenSecuritySigningConfig, 150, 24)
+	m = securityPress(t, m, testKeyRunes("p"), testKeyTab(), testKeyTab(), testKeyTab(), testKeyTab())
+	if securitySigningOf(t, m).cfg.Focus != signingPolicyFieldClearKeys {
+		t.Fatalf("focus = %v, want the clear row", securitySigningOf(t, m).cfg.Focus)
+	}
+
+	m = securityPress(t, m, testKeyEnter())
+	if client.updateSigningPolicyCalls != 0 || !strings.Contains(securityRender(m), "Remove all 2 trusted keys?") {
+		t.Fatalf("saves = %d, view:\n%s\nwant a question and no save", client.updateSigningPolicyCalls, securityRender(m))
+	}
+	// Any other key cancels the question: the next Enter asks again.
+	m = securityPress(t, m, testKeyTab(), testKeyTab(), testKeyTab(), testKeyTab(), testKeyTab(), testKeyEnter())
+	if client.updateSigningPolicyCalls != 0 {
+		t.Fatal("a cancelled clear question still saved")
+	}
+	// Esc leaves with the question open and nothing sent.
+	m = securityPress(t, m, testKeyEsc())
+	if client.updateSigningPolicyCalls != 0 || securitySigningOf(t, m).clearArmed {
+		t.Fatal("Esc must drop the clear question without saving")
+	}
+}
+
+func TestSecuritySigningFailedSaveKeepsTheModalAndWhatWasTyped(t *testing.T) {
+	t.Parallel()
+	client := securityClient()
+	m := securityModelAt(t, client, screenSecuritySigningConfig, 150, 24)
+	m = securityPress(t, m, testKeyRunes("p"), testKeyRunes("n"))
+	updated, _ := m.Update(tea.PasteMsg{Content: strings.TrimSpace(trustedKeyListTestPEM1) + "\n"})
+	m = updated.(Model)
+	m = securityPress(t, m, testKeyEnter()) // commits the pasted key into the list
+	keysBefore := securitySigningOf(t, m).cfg.Keys.Keys()
+	m = securityPress(t, m, testKeySpace()) // self-read untouched; focus is on the key list
+	m = securityPress(t, m, testKeyTab(), testKeyTab())
+
+	client.signingPolicyUpdateErr = errors.New("rejected")
+	m = securityPress(t, m, testKeyTab(), testKeyTab(), testKeyTab(), testKeyTab(), testKeyEnter())
+	s := securitySigningOf(t, m)
+	if !s.cfg.Active() || s.saving || !strings.Contains(securityRender(m), "rejected") {
+		t.Fatalf("a failed save must keep the modal open, unlocked and showing the error:\n%s", securityRender(m))
+	}
+	if !reflect.DeepEqual(s.cfg.Keys.Keys(), keysBefore) || len(keysBefore) != 3 {
+		t.Fatalf("keys after the failure = %d, want the %d typed ones kept", len(s.cfg.Keys.Keys()), len(keysBefore))
+	}
+
+	// Trying again sends what was typed.
+	client.signingPolicyUpdateErr = nil
+	m = securityPress(t, m, testKeyShiftTab(), testKeyShiftTab(), testKeyShiftTab(), testKeyEnter())
+	if got := client.lastSigningPolicyInput.TrustedPublicKeys; len(got) != 3 {
+		t.Fatalf("the retry sent %d keys, want the 3 typed ones", len(got))
+	}
+}
+
+func TestSecurityTrivyFailedSaveKeepsTheTypedValues(t *testing.T) {
+	t.Parallel()
+	client := securityClient()
+	m := securityModelAt(t, client, screenSecurityTrivy, 150, 24)
+	m = securityPress(t, m, testKeyRunes("c"), testKeyTab(), testKeyTab(), testKeyTab(), testKeyTab())
+	m = securityPress(t, m, securityBackspaces(1)...)
+	m = securityPress(t, m, testKeyRunes("7"))
+	client.featureErr = errors.New("rejected")
+	m = securityPress(t, m, testKeyEnter())
+	if s := securityTrivyOf(t, m); !s.cfg.Active() || s.cfg.MaxConcurrency != "7" || !strings.Contains(securityRender(m), "rejected") {
+		t.Fatalf("cfg = %#v, want the modal kept with the typed value", s.cfg)
+	}
+	client.featureErr = nil
+	securityPress(t, m, testKeyEnter())
+	if got := client.lastConfigureInput.MaxConcurrency; got == nil || *got != 7 {
+		t.Fatalf("the retry sent %v, want 7", got)
+	}
+}
+
+func TestSecurityEachScreenSendsOnlyItsOwnFeature(t *testing.T) {
+	t.Parallel()
+	type counts struct{ configure, scan, signing int }
+	read := func(c *fakeAdminClient) counts {
+		return counts{c.configureFeatureCalls, c.updateScanPolicyCalls, c.updateSigningPolicyCalls}
+	}
+	for _, tc := range []struct {
+		to      screen
+		keys    []keyMsg
+		want    counts
+		feature string
+	}{
+		{screenSecurityTrivy, []keyMsg{testKeyRunes("c"), testKeyEnter()}, counts{1, 0, 0}, trivyFeatureName},
+		{screenSecurityTrivy, []keyMsg{testKeyRunes("p"), testKeyEnter()}, counts{0, 1, 0}, ""},
+		{screenSecurityGitleaksConfig, []keyMsg{testKeyRunes("c"), testKeyEnter()}, counts{1, 0, 0}, gitleaksFeatureName},
+		{screenSecuritySigningConfig, []keyMsg{testKeyRunes("p"), testKeyEnter()}, counts{0, 0, 1}, ""},
+	} {
+		client := securityClient()
+		m := securityModelAt(t, client, tc.to, 150, 24)
+		securityPress(t, m, tc.keys...)
+		if got := read(client); got != tc.want {
+			t.Errorf("%s %v: calls %+v, want %+v", tc.to, tc.keys, got, tc.want)
+		}
+		if tc.feature != "" && client.lastConfiguredFeature != tc.feature {
+			t.Errorf("%s configured %q, want %q", tc.to, client.lastConfiguredFeature, tc.feature)
+		}
+	}
+
+	// A result of another screen's save is never applied here.
+	client := securityClient()
+	m := securityModelAt(t, client, screenSecuritySigningConfig, 150, 24)
+	m = securityPress(t, m, testKeyRunes("p"))
+	updated, _ := m.Update(securityScanPolicySavedMsg{securityResult: securityResult{gen: securityScreenGenOf(t, m, screenSecuritySigningConfig)}, settings: ports.ScanPolicySettings{Enabled: true}})
+	if s := securitySigningOf(t, updated.(Model)); s.saving || s.note != "" || !s.cfg.Active() {
+		t.Fatal("a scan policy result changed the signing screen")
 	}
 }

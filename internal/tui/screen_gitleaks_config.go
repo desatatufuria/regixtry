@@ -61,26 +61,25 @@ func (s gitleaksConfigScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, t
 		}
 		return s.updateKey(env, key)
 	}
+	if owned, ok := msg.(securityMsg); ok && owned.securityGen() != s.gen {
+		return s, nil, false
+	}
 	switch typed := msg.(type) {
-	case adminFeaturePageLoadedMsg:
-		f, ok := s.applyPage(typed)
-		if !ok {
-			return s, nil, false
-		}
-		s.securityFeature = f
+	case securityPageMsg:
+		s.securityFeature = s.applyPage(typed)
 		return s, s.loadOverrides(env), false
-	case featureOverridesLoadedMsg:
+	case securityOverridesMsg:
 		s.securityFeature = s.applyOverrides(env, typed)
 		return s, nil, false
-	case adminFeatureActionCompletedMsg:
+	case securityActionMsg:
 		f, reload := s.applyActionResult(typed)
 		s.securityFeature = f
 		if reload {
-			return s, loadFeaturePageCmd(env, gitleaksFeatureName), false
+			return s, s.load(env), false
 		}
 		return s, nil, false
-	case adminFeatureConfiguredMsg:
-		if typed.name != gitleaksFeatureName || !s.saving {
+	case securityConfigureMsg:
+		if !s.saving {
 			return s, nil, false
 		}
 		s.saving = false
@@ -94,12 +93,7 @@ func (s gitleaksConfigScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, t
 		}
 		s.cfg = gitleaksConfigModal{}
 		s.err, s.note = "", "Configuration saved."
-		return s, loadFeaturePageCmd(env, gitleaksFeatureName), false
-	case adminFeatureRuntimeMutatedMsg:
-		if typed.name != gitleaksFeatureName || typed.err != nil {
-			return s, nil, false
-		}
-		return s, loadFeaturePageCmd(env, gitleaksFeatureName), false
+		return s, s.load(env), false
 	}
 	return s, nil, false
 }
@@ -153,7 +147,7 @@ func (s gitleaksConfigScreen) updateConfigKey(env screenEnv, msg keyMsg) (adminS
 		}
 		s.saving = true
 		s.cfg.Error = ""
-		return s, configureFeatureCmd(env, gitleaksFeatureName, input), true
+		return s, securityConfigureCmd(env, s.gen, gitleaksFeatureName, input), true
 	case isBackspaceKey(msg):
 		s.editConfigField(func(value string) string { return trimLastRune(value) })
 		return s, nil, true

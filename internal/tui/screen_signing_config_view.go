@@ -195,9 +195,18 @@ func (s signingConfigScreen) renderPolicyModal(theme adminTheme, env screenEnv) 
 		body:      body,
 		focusLine: focusLine,
 		err:       cfg.Error,
+		warning:   s.clearWarning(),
 		note:      s.note,
 		saving:    s.saving,
 		hint:      "tab next field, space toggles, n adds and x deletes in a list",
 		width:     securitySigningModalWidth,
 	})
+}
+
+// clearWarning asks the operator to confirm clearing every trusted key.
+func (s signingConfigScreen) clearWarning() string {
+	if !s.clearArmed {
+		return ""
+	}
+	return fmt.Sprintf("Remove all %s? Every pull will fail verification until one is added. Press enter again to confirm, any other key cancels.", securityCount(len(s.cfg.Keys.Keys()), "trusted key", "trusted keys"))
 }

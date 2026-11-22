@@ -106,12 +106,6 @@ func (s trivyReposScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.C
 		}
 		s.policy = typed.settings
 		return s, nil, false
-	case adminScanPolicyUpdatedMsg:
-		if typed.err != nil {
-			return s, nil, false
-		}
-		s.policy = typed.settings
-		return s, nil, false
 	}
 	return s, nil, false
 }

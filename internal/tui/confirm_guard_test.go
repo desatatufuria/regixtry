@@ -94,7 +94,7 @@ func TestFeatureActionConfirmsRunOnceOnRapidKeys(t *testing.T) {
 			calls := 0
 			c := newConfirmPrompt("Confirm Disable", "Disable?", "disable", "Submitting...", func(screenEnv) tea.Cmd {
 				calls++
-				return func() tea.Msg { return adminFeatureActionCompletedMsg{feature: feature} }
+				return func() tea.Msg { return securityActionMsg{} }
 			})
 			for _, k := range []keyMsg{testKeyEnter(), testKeyRunes("y"), testKeyEnter()} {
 				c, _, _ = c.update(screenEnv{}, k)

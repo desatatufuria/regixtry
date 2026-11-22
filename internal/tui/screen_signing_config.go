@@ -22,6 +22,9 @@ type signingConfigScreen struct {
 	// saving is true from the Enter that saved the policy until the result
 	// arrives: Enter is ignored meanwhile.
 	saving bool
+	// clearArmed is set by the Enter that asked to clear every trusted key: the
+	// next Enter confirms it, any other key cancels it.
+	clearArmed bool
 }
 
 func newSigningConfigScreen() signingConfigScreen {
@@ -60,33 +63,33 @@ func (s signingConfigScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, te
 		}
 		return s.updateKey(env, key)
 	}
+	if owned, ok := msg.(securityMsg); ok && owned.securityGen() != s.gen {
+		return s, nil, false
+	}
 	switch typed := msg.(type) {
-	case adminFeaturePageLoadedMsg:
-		f, ok := s.applyPage(typed)
-		if !ok {
-			return s, nil, false
-		}
-		s.securityFeature = f
+	case securityPageMsg:
+		s.securityFeature = s.applyPage(typed)
 		if typed.err != nil {
 			return s, nil, false
 		}
-		return s, loadSigningPolicyCmd(env), false
-	case featureOverridesLoadedMsg:
+		return s, securityLoadSigningPolicyCmd(env, s.gen), false
+	case securityOverridesMsg:
 		s.securityFeature = s.applyOverrides(env, typed)
 		return s, nil, false
-	case adminSigningPolicyLoadedMsg:
+	case securitySigningPolicyLoadedMsg:
 		if typed.err != nil {
 			s.policyErr = typed.err.Error()
 			return s, s.loadOverrides(env), false
 		}
 		s.policy, s.policyLoaded, s.policyErr = typed.settings, true, ""
 		return s, s.loadOverrides(env), false
-	case adminSigningPolicyUpdatedMsg:
+	case securitySigningPolicySavedMsg:
 		if !s.saving {
 			return s, nil, false
 		}
 		s.saving = false
 		if typed.err != nil {
+			// The modal keeps everything the operator typed.
 			if s.cfg.Active() {
 				s.cfg.Error = typed.err.Error()
 			} else {
@@ -104,21 +107,16 @@ func (s signingConfigScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, te
 		s.cfg.Error = ""
 		s.err, s.note = "", "Signing policy saved."
 		return s, nil, false
-	case adminSigningKeyUsageLoadedMsg:
-		s.cfg.Keys = s.cfg.Keys.applyUsageLoaded(typed)
+	case securityKeyUsageMsg:
+		s.cfg.Keys = s.cfg.Keys.applyUsageLoaded(adminSigningKeyUsageLoadedMsg{count: typed.count, capped: typed.capped, err: typed.err})
 		return s, nil, false
-	case adminFeatureActionCompletedMsg:
+	case securityActionMsg:
 		f, reload := s.applyActionResult(typed)
 		s.securityFeature = f
 		if reload {
-			return s, loadFeaturePageCmd(env, signingFeatureName), false
+			return s, s.load(env), false
 		}
 		return s, nil, false
-	case adminFeatureRuntimeMutatedMsg:
-		if typed.name != signingFeatureName || typed.err != nil {
-			return s, nil, false
-		}
-		return s, loadFeaturePageCmd(env, signingFeatureName), false
 	}
 	return s, nil, false
 }
@@ -167,12 +165,15 @@ func (s signingConfigScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, 
 func (s signingConfigScreen) updateConfigKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd, bool) {
 	if isEscKey(msg) && !s.cfg.Keys.adding && !s.cfg.Keys.confirm.Active() && !s.cfg.Keys.usageLoading && !s.cfg.Identities.adding {
 		s.cfg = signingPolicyModal{}
+		s.clearArmed = false
 		return s, nil, true
 	}
 	if s.saving {
 		return s, nil, true
 	}
 	s.note = ""
+	armed := s.clearArmed
+	s.clearArmed = false
 	if s.cfg.Focus == signingPolicyFieldIdentities {
 		next, consumed := s.cfg.Identities.update(msg)
 		if consumed {
@@ -182,6 +183,11 @@ func (s signingConfigScreen) updateConfigKey(env screenEnv, msg keyMsg) (adminSc
 	} else {
 		next, cmd, consumed := s.cfg.Keys.update(env, msg)
 		if consumed {
+			if next.usageLoading && !s.cfg.Keys.usageLoading {
+				// The usage lookup is this screen's own, stamped with its
+				// generation, so a late answer cannot reach another screen.
+				cmd = securityKeyUsageCmd(env, s.gen, next.keys[next.pendingDeleteIndex])
+			}
 			s.cfg.Keys = next
 			s.cfg.Focus = signingPolicyFieldAddKey
 			return s, cmd, true
@@ -204,12 +210,19 @@ func (s signingConfigScreen) updateConfigKey(env screenEnv, msg keyMsg) (adminSc
 		s.cfg.Error = ""
 	case isEnterKey(msg):
 		var trustedKeys []string
-		if s.cfg.Focus != signingPolicyFieldClearKeys {
+		if s.cfg.Focus == signingPolicyFieldClearKeys {
+			if len(s.cfg.Keys.Keys()) > 0 && !armed {
+				// Removing every trusted key makes every pull unverifiable:
+				// ask before sending it.
+				s.clearArmed = true
+				return s, nil, true
+			}
+		} else {
 			trustedKeys = s.cfg.Keys.Keys()
 		}
 		s.saving = true
 		s.cfg.Error = ""
-		return s, updateSigningPolicyCmd(env, ports.SigningPolicySettings{
+		return s, securitySaveSigningPolicyCmd(env, s.gen, ports.SigningPolicySettings{
 			Enabled:           s.cfg.Enabled,
 			TrustedPublicKeys: trustedKeys,
 			TrustedIdentities: s.cfg.Identities.Identities(),
@@ -224,9 +237,4 @@ func previousSigningPolicyField(field signingPolicyField) signingPolicyField {
 		return signingPolicyFieldClearKeys
 	}
 	return field - 1
-}
-
-// updateSigningPolicyCmd saves the global signing policy.
-func updateSigningPolicyCmd(env screenEnv, input ports.SigningPolicySettings) tea.Cmd {
-	return env.asModel().updateSigningPolicyCmd(input)
 }

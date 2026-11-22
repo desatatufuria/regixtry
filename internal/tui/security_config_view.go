@@ -184,7 +184,7 @@ type securityOverrides struct {
 	rows   []featureOverrideRow
 }
 
-func (o securityOverrides) apply(env screenEnv, msg featureOverridesLoadedMsg) securityOverrides {
+func (o securityOverrides) apply(env screenEnv, msg securityOverridesMsg) securityOverrides {
 	if msg.err != nil {
 		o.err = msg.err.Error()
 		return o
@@ -334,6 +334,8 @@ type securityModalSpec struct {
 	// than the terminal allows.
 	focusLine int
 	err       string
+	// warning is a question the operator must answer with the next key.
+	warning string
 	// note is the outcome of the last save when the modal stays open.
 	note   string
 	saving bool
@@ -376,6 +378,11 @@ func securityModal(theme adminTheme, env screenEnv, spec securityModalSpec) stri
 	if spec.err != "" {
 		for _, line := range wrapText(spec.err, inner) {
 			tail = append(tail, theme.error.UnsetBold().Render(line))
+		}
+	}
+	if spec.warning != "" {
+		for _, line := range wrapText(spec.warning, inner) {
+			tail = append(tail, theme.warning.UnsetBold().Render(line))
 		}
 	}
 	if spec.note != "" {
