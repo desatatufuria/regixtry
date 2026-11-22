@@ -245,7 +245,7 @@ A user with `repo-admin` on a repository, who is not a global admin, manages tha
 | `Tab` / `Enter` / `Esc` in the form | next field / save (ignored while saving) / cancel |
 | `Esc` | back to the Console |
 
-The repository is fixed context; the screen never offers `repo-admin`, whether for a new grant or for yourself, and it never shows another repository's grants. Reads and writes use `/admin/v1/repositories/{repo}/grants` ([users.md](users.md#delegating-repository-access)).
+The repository is fixed context; the screen never offers `repo-admin`, whether for a new grant or for yourself, and it never shows another repository's grants. Reads and writes use `/admin/v1/repositories/{repo}/grants` ([users.md](users.md#grants-delegated-repo-admin-flow)).
 
 ## Image, secret scanning and signing policy
 
