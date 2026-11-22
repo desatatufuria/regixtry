@@ -1477,8 +1477,12 @@ func TestStoreGetLatestScanRunByDigestReturnsNewestRunRegardlessOfStatus(t *test
 	if err != nil {
 		t.Fatalf("GetLatestScanRunByDigest() error = %v", err)
 	}
-	if latest.ID != failed.ID {
-		t.Fatalf("latest.ID = %q, want %q (newest run regardless of status, including a completed run in between)", latest.ID, failed.ID)
+	// Latest-only results: a failed rescan no longer becomes the digest's
+	// newest row when a completed result exists. The completed result is
+	// kept (the pull policy enforces it) and marked stale instead, and the
+	// failed row is dropped (see TestStoreFailedRescanKeepsCompletedResultAndMarksItStale).
+	if latest.ID != completed.ID || !latest.Stale {
+		t.Fatalf("latest = %#v, want the stale completed run %q (a failed rescan must not replace a completed result)", latest, completed.ID)
 	}
 }
 

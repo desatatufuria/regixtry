@@ -131,6 +131,13 @@ type MetadataStore interface {
 	UpsertFeatureRuntimeState(ctx context.Context, tenant string, feature string, state FeatureRuntimeState) error
 	GetActiveScanRunByDigest(ctx context.Context, tenant string, repository string, digest string) (ScanRun, error)
 	GetLatestScanRunByDigest(ctx context.Context, tenant string, repository string, digest string) (ScanRun, error)
+	// GetLatestCompletedScanRunByDigest returns the newest COMPLETED run for
+	// a digest (typed NotFound when none): the result push/sweep compare
+	// their fingerprint against and the one the pull policy enforces.
+	GetLatestCompletedScanRunByDigest(ctx context.Context, tenant string, repository string, digest string) (ScanRun, error)
+	// TouchScanRunChecked records that a completed run was re-confirmed as
+	// current at the given time without a rescan.
+	TouchScanRunChecked(ctx context.Context, tenant string, runID string, checkedAt time.Time) error
 	GetScanRun(ctx context.Context, tenant string, runID string) (ScanRun, error)
 	GetScanRunDetail(ctx context.Context, tenant string, runID string) (ScanRunDetail, error)
 	UpsertScanRun(ctx context.Context, tenant string, run ScanRun) error
@@ -533,6 +540,28 @@ type ScanSettings struct {
 	IgnoreFilePath   string `json:"-"` // trivy --ignorefile
 	IgnorePolicyPath string `json:"-"` // trivy --ignore-policy
 	ConfigPath       string `json:"-"` // gitleaks --config
+
+	// TrivyVersion is the active managed runtime version, resolved from the
+	// feature runtime state per run (never persisted in the settings row).
+	// It is one component of the scan fingerprint.
+	TrivyVersion string `json:"-"`
+}
+
+// ScanDBMetadata is the vulnerability database metadata a scan runner can
+// read WITHOUT running a scan (Trivy: <cache-dir>/db/metadata.json). The
+// scan fingerprint uses Version and UpdatedAt.
+type ScanDBMetadata struct {
+	Version      int
+	UpdatedAt    *time.Time
+	NextUpdate   *time.Time
+	DownloadedAt *time.Time
+}
+
+// ScanDBMetadataReader is an optional capability of a ScanRunner. When the
+// metadata is unavailable (no database downloaded yet) it returns an error
+// and the service never skips a scan on unknown metadata.
+type ScanDBMetadataReader interface {
+	ReadDBMetadata(ctx context.Context, settings ScanSettings) (ScanDBMetadata, error)
 }
 
 // TrivyOverride is one repository's full replacement of the global Trivy
@@ -665,6 +694,22 @@ type ScanRun struct {
 	DBUpdatedAt  *time.Time `json:"db_updated_at,omitempty"`
 	Error        string     `json:"error,omitempty"`
 	HasFixable   bool       `json:"-"`
+
+	// SettingsHash is the hash of the effective scan configuration the run
+	// used (ignore file/policy paths and content). Empty on rows written
+	// before the column existed: an empty hash never equals a real
+	// fingerprint, so those rows count as stale and are rescanned once.
+	SettingsHash string `json:"settings_hash,omitempty"`
+	// DBVersion is the vulnerability database version the run used.
+	DBVersion int `json:"db_version,omitempty"`
+	// LastCheckedAt is when a push or sweep last confirmed this result is
+	// still current (the run's fingerprint matched, so no rescan ran).
+	LastCheckedAt *time.Time `json:"last_checked_at,omitempty"`
+	// Stale marks a completed result whose latest rescan failed: it is
+	// kept (the pull policy keeps enforcing it) and StaleReason explains
+	// the failure.
+	Stale       bool   `json:"stale,omitempty"`
+	StaleReason string `json:"stale_reason,omitempty"`
 }
 
 // RepositoryScanSummary is one repository's most recent scan run plus its
