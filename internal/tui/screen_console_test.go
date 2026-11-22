@@ -245,8 +245,8 @@ func TestConsoleRepositoriesDeleteErrorKeepsTheScreenAndShowsTheMessage(t *testi
 	s, cmd := consoleKeys(s, env, testKeyRunes("d"), testKeyEnter())
 	s, _ = consoleSettle(s, env, cmd)
 	repos := s.(consoleRepositoriesScreen)
-	if repos.confirm.Active() || repos.busy || len(repos.items) != 2 || !repos.noticeFail {
-		t.Fatalf("after a failed delete: confirm=%v busy=%v items=%d fail=%v", repos.confirm.Active(), repos.busy, len(repos.items), repos.noticeFail)
+	if repos.confirm.Active() || repos.shared.isBusy() || len(repos.items) != 2 || !repos.noticeFail {
+		t.Fatalf("after a failed delete: confirm=%v busy=%v items=%d fail=%v", repos.confirm.Active(), repos.shared.isBusy(), len(repos.items), repos.noticeFail)
 	}
 	if out := consoleRender(s, env); !strings.Contains(out, "repository deletion is not enabled") || !strings.Contains(out, "r/a") {
 		t.Fatalf("the error is not visible next to the list:\n%s", out)
@@ -297,7 +297,7 @@ func TestConsoleRepositoriesDropAResultOfAnotherInstance(t *testing.T) {
 	var s adminScreen = reposScreen(t, consoleRepos("r/a", "r/b"))
 	gen := s.(consoleRepositoriesScreen).gen
 	s, _ = consoleStep(s, env, consoleCatalogMsg{gen: gen + 99, result: consoleRepos("x/y")})
-	s, cmd := consoleStep(s, env, repositoryDeletedMsg{gen: gen + 99, repository: "r/a"})
+	s, cmd := consoleStep(s, env, repositoryDeletedMsg{gen: gen + 99, repository: "r/a", err: errors.New("denied")})
 	if cmd != nil || len(s.(consoleRepositoriesScreen).items) != 2 {
 		t.Fatal("a foreign result changed the screen")
 	}
@@ -422,7 +422,7 @@ func TestConsoleProjectsPartialFailureIsReportedAndKeepsTheFailedRepository(t *t
 	if len(projects.projects) != 1 || projects.projects[0].RepositoryCount != 1 {
 		t.Fatalf("projects = %+v, want team with the one repository that failed", projects.projects)
 	}
-	if projects.confirm.Active() || projects.busy {
+	if projects.confirm.Active() || projects.shared.isBusy() {
 		t.Fatal("the dialog or the busy flag is still set")
 	}
 }
@@ -552,8 +552,8 @@ func TestConsoleTagsDeleteRemovesExactlyTheNamedTag(t *testing.T) {
 		t.Fatalf("deleted %v, want [r/a:1.0]", service.deletedTags)
 	}
 	tags := s.(consoleTagsScreen)
-	if len(tags.items) != 2 || tags.confirm.Active() || tags.busy || tags.noticeFail {
-		t.Fatalf("after the delete: items=%d confirm=%v busy=%v", len(tags.items), tags.confirm.Active(), tags.busy)
+	if len(tags.items) != 2 || tags.confirm.Active() || tags.shared.isBusy() || tags.noticeFail {
+		t.Fatalf("after the delete: items=%d confirm=%v busy=%v", len(tags.items), tags.confirm.Active(), tags.shared.isBusy())
 	}
 }
 
@@ -611,7 +611,7 @@ func TestConsoleTagsDropAResultOfAnotherInstance(t *testing.T) {
 	s := loadedTags(t, service, env)
 	gen := s.(consoleTagsScreen).gen
 	s, _ = consoleStep(s, env, consoleTagsMsg{gen: gen + 1, result: nil})
-	s, _ = consoleStep(s, env, tagDeletedMsg{gen: gen + 1, repository: "r/a", tag: "latest"})
+	s, _ = consoleStep(s, env, tagDeletedMsg{gen: gen + 1, repository: "r/a", tag: "latest", err: errors.New("denied")})
 	if len(s.(consoleTagsScreen).items) != 3 {
 		t.Fatal("a foreign result changed the tags")
 	}

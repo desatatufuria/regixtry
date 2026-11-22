@@ -268,6 +268,9 @@ type Model struct {
 	err           error
 	now           func() time.Time
 
+	// console is the console browser's delete bookkeeping, shared by every
+	// console screen it mounts (see consoleShared).
+	console  *consoleShared
 	manifest ManifestModel
 	blobs    BlobsModel
 	uploads  UploadsModel
@@ -502,6 +505,7 @@ type updateCheckCompletedMsg struct {
 func NewModel(service QueryService, options ...Option) Model {
 	m := Model{
 		ctx:         context.Background(),
+		console:     newConsoleShared(),
 		service:     service,
 		screen:      screenLoading,
 		loadingText: "Loading repositories...",
@@ -584,7 +588,9 @@ func (m Model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// The first read of the catalog mounts the console browser at its
 		// root; an empty catalog is the Repositories screen's own empty state.
-		m.adminScreens[slotConsoleRepositories] = newConsoleRepositoriesScreen(msg.result)
+		repositories := newConsoleRepositoriesScreen(msg.result)
+		repositories.shared = m.console
+		m.adminScreens[slotConsoleRepositories] = repositories
 		m.adminScreens[slotConsoleProjects] = nil
 		m.adminScreens[slotConsoleTags] = nil
 		m.screen = screenRepositories
@@ -611,6 +617,7 @@ func (m Model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Results of the console browser. Each screen drops what carries
 		// another instance's generation; the deletes are facts the other
 		// mounted screens apply too.
+		m.console.applyResult(msg)
 		var cmd tea.Cmd
 		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
 		return m, cmd

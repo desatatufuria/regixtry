@@ -1,24 +1,24 @@
   Console › Repositories › team/api › Tags                                                                                                            
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-
-    Tags                                                                                                              team/api, 3 tags, sort: name
                                            ╭──────────────────────────────────────────────────────────────╮
-    ╭────────────────────────────────────  │  Delete tag 1.0                                              │
-    │   TAG                                │                                                              │
-    │ ───────────────────────────────────  │  The tag is removed from team/api.                           │
+    Tags                                   │  Delete tag 1.0                                              │           team/api, 3 tags, sort: name
+                                           │                                                              │
+    ╭────────────────────────────────────  │  The tag is removed from team/api. Its manifest stays,       │
+    │   TAG                                │  untagged, with the signatures and referrers attached to     │
+    │ ───────────────────────────────────  │  it.                                                         │
     │ ▸ 0.9                                │                                                              │
     │   1.0                                │  ╭────────────────────────────────────────────────────────╮  │
     │   latest                             │  │ team/api:1.0                                           │  │
     │                                      │  │ pushed 2026-11-19 08:41 by unknown                     │  │
     │                                      │  ╰────────────────────────────────────────────────────────╯  │
     │                                      │                                                              │
-    │                                      │  Pulls by this tag stop working. The manifest, its other     │
-    │                                      │  tags and the blobs stay. This cannot be undone.             │
+    │                                      │  Pulls by this tag stop working; pulls by digest keep        │
+    │                                      │  working. Its other tags and the blobs stay. This cannot be  │
+    │                                      │  undone.                                                     │
     │                                      │                                                              │
     │                                      │   Delete                                         y / enter   │
-    │                                      │   Cancel                                               esc   │
-    ╰────────────────────────────────────  ╰──────────────────────────────────────────────────────────────╯
-
+    ╰────────────────────────────────────  │   Cancel                                               esc   │
+                                           ╰──────────────────────────────────────────────────────────────╯
     SIGNED: yes = signature verified, no = signing is on but no valid signature, n/a = signing is off.
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   ↑↓ move   enter manifest   d delete tag   s sort   tab admin   esc back   q quit                                                                    

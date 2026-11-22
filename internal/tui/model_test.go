@@ -528,30 +528,6 @@ func TestModelNavigatesRepositoriesManifestBlobsAndUploads(t *testing.T) {
 	}
 }
 
-// newTagsReadyModel builds a Model already on screenTags for a single
-// repository/tag, mirroring the tag-setup slice other Tags tests above use,
-// factored out since every tag-delete test below needs the same starting
-// point.
-func newTagsReadyModel(t *testing.T, service *fakeQueryService) Model {
-	t.Helper()
-	model := NewModel(service)
-	updated := runCmd(t, model, model.Init())
-	updated = runKey(t, updated, "enter")
-	if updated.screen != screenTags {
-		t.Fatalf("test setup invalid: screen = %q, want %q", updated.screen, screenTags)
-	}
-	return updated
-}
-
-func tagsReadyFakeService() *fakeQueryService {
-	return &fakeQueryService{
-		repositorySummaries: []appregixtry.RepositorySummary{{Name: "library/alpine"}},
-		tagDetails: map[string][]appregixtry.TagDetails{
-			"library/alpine": {{Name: "latest", SignatureState: appregixtry.SignatureStatusUnsigned}},
-		},
-	}
-}
-
 // TestModelManifestBlobsUploadsDeleteKeyUnaffectedByTagsDeleteWiring is the
 // regression guard for this task's explicit constraint: screenManifest's
 // (and its screenBlobs/screenUploads siblings') existing "d"/"x" ->
@@ -1011,36 +987,6 @@ func newRepositoriesReadyModel(t *testing.T, service *fakeQueryService) Model {
 func repositoriesReadyFakeService() *fakeQueryService {
 	return &fakeQueryService{
 		repositorySummaries: []appregixtry.RepositorySummary{{Name: "library/alpine", TagCount: 3}},
-	}
-}
-
-// multiProjectFakeService seeds a catalog spanning two real projects plus
-// one flat (no "/") repository, for the path-based-project-grouping
-// feature's navigation/filter tests.
-func multiProjectFakeService() *fakeQueryService {
-	return &fakeQueryService{
-		repositorySummaries: []appregixtry.RepositorySummary{
-			{Name: "team/app", TagCount: 2},
-			{Name: "team/other", TagCount: 5},
-			{Name: "smoke/keyless-live-verify", TagCount: 1},
-			{Name: "govault-api", TagCount: 4},
-		},
-	}
-}
-
-// projectDeleteFakeService seeds a "team" project with THREE repositories
-// (not two) plus one ungrouped repository, for the delete-entire-project
-// feature's bulk-delete tests: three gives the mixed-authorization scenario
-// (2 succeeded, 1 failed) a real minority/majority split to characterize,
-// which a two-repository project could not.
-func projectDeleteFakeService() *fakeQueryService {
-	return &fakeQueryService{
-		repositorySummaries: []appregixtry.RepositorySummary{
-			{Name: "team/app", TagCount: 2},
-			{Name: "team/api", TagCount: 1},
-			{Name: "team/web", TagCount: 3},
-			{Name: "solo-repo", TagCount: 4},
-		},
 	}
 }
 

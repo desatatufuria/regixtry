@@ -27,14 +27,14 @@ type consoleRepositoriesScreen struct {
 	confirm confirmPrompt
 	// busy is set from the moment a confirmed delete is sent until its result
 	// arrives, even if Esc closed the prompt meanwhile.
-	busy       bool
+	shared     *consoleShared
 	sync       consoleSync
 	notice     string
 	noticeFail bool
 }
 
 func newConsoleRepositoriesScreen(items []appregixtry.RepositorySummary) consoleRepositoriesScreen {
-	return consoleRepositoriesScreen{gen: consoleGenerations.Add(1), items: slices.Clone(items)}
+	return consoleRepositoriesScreen{gen: consoleGenerations.Add(1), items: slices.Clone(items), shared: newConsoleShared()}
 }
 
 func (s consoleRepositoriesScreen) ID() screen { return screenRepositories }
@@ -115,6 +115,9 @@ func (s consoleRepositoriesScreen) Update(env screenEnv, msg tea.Msg) (adminScre
 		return s.applyCatalog(typed), nil, false
 	case repositoryDeletedMsg:
 		if typed.gen != s.gen {
+			if typed.err == nil {
+				return s.withoutRepositories([]string{typed.repository}), nil, false
+			}
 			return s, nil, false
 		}
 		return s.applyDeleted(env, typed)
@@ -131,7 +134,7 @@ func (s consoleRepositoriesScreen) Update(env screenEnv, msg tea.Msg) (adminScre
 }
 
 func (s consoleRepositoriesScreen) applyCatalog(msg consoleCatalogMsg) consoleRepositoriesScreen {
-	sync, ok, hide := s.sync.accept(msg.stamp)
+	sync, ok, hide := s.sync.accept(msg.stamp, s.shared)
 	if !ok {
 		return s
 	}
@@ -144,7 +147,7 @@ func (s consoleRepositoriesScreen) applyCatalog(msg consoleCatalogMsg) consoleRe
 	if current, ok := s.selectedRepository(); ok {
 		keep = current.Name
 	}
-	s.items = slices.DeleteFunc(slices.Clone(msg.result), func(r appregixtry.RepositorySummary) bool { return hide && s.sync.deleted[r.Name] })
+	s.items = slices.DeleteFunc(slices.Clone(msg.result), func(r appregixtry.RepositorySummary) bool { return hide && s.shared.isDeleted(repositoryKey(r.Name)) })
 	return s.keepSelection(keep)
 }
 
@@ -163,7 +166,9 @@ func (s consoleRepositoriesScreen) withoutRepositories(names []string) consoleRe
 	if len(names) == 0 {
 		return s
 	}
-	s.sync = s.sync.withDeleted(names...)
+	for _, name := range names {
+		s.shared.markDeleted(repositoryKey(name))
+	}
 	s.items = slices.DeleteFunc(slices.Clone(s.items), func(r appregixtry.RepositorySummary) bool { return slices.Contains(names, r.Name) })
 	s.selected = boundedIndex(s.selected, len(s.visible()))
 	return s
@@ -182,14 +187,15 @@ func (s consoleRepositoriesScreen) withOneTagLess(repository string) consoleRepo
 }
 
 func (s consoleRepositoriesScreen) applyDeleted(env screenEnv, msg repositoryDeletedMsg) (adminScreen, tea.Cmd, bool) {
-	s.confirm, s.busy = confirmPrompt{}, false
+	s.confirm = confirmPrompt{}
+	s.shared.setBusy(false)
 	if msg.err != nil {
 		s.notice, s.noticeFail = msg.err.Error(), true
 		return s, nil, false
 	}
 	s = s.withoutRepositories([]string{msg.repository})
 	s.notice, s.noticeFail = fmt.Sprintf("Repository %q deleted. Refreshing repositories...", msg.repository), false
-	sync, stamp := s.sync.launch()
+	sync, stamp := s.sync.launch(s.shared)
 	s.sync = sync
 	return s, consoleCatalogCmd(env, s.gen, stamp), false
 }
@@ -198,7 +204,9 @@ func (s consoleRepositoriesScreen) updateKey(env screenEnv, msg keyMsg) (adminSc
 	if s.confirm.Active() {
 		next, cmd, _ := s.confirm.update(env, msg)
 		s.confirm = next
-		s.busy = s.busy || cmd != nil
+		if cmd != nil {
+			s.shared.setBusy(true)
+		}
 		return s, cmd, true
 	}
 	current, has := s.selectedRepository()
@@ -227,7 +235,7 @@ func (s consoleRepositoriesScreen) updateKey(env screenEnv, msg keyMsg) (adminSc
 		return s.needsAdminClient(env)
 	case isCommandRune(msg, 'd'):
 		switch {
-		case s.busy:
+		case s.shared.isBusy():
 			// A delete is already on its way.
 		case !has:
 			s.notice, s.noticeFail = "No repository selected to delete.", true
@@ -260,12 +268,12 @@ func (s consoleRepositoriesScreen) deleteConfirm(repository appregixtry.Reposito
 	gen, name := s.gen, repository.Name
 	return newConfirmPrompt(
 		"Delete repository "+name,
-		fmt.Sprintf("The repository is removed with %s and every manifest.", countOf(repository.TagCount, "tag", "tags")),
+		fmt.Sprintf("The repository is removed with %s and every manifest, in one transaction.", countOf(repository.TagCount, "tag", "tags")),
 		"delete",
 		fmt.Sprintf("Deleting repository %s...", name),
 		func(env screenEnv) tea.Cmd { return repositoryDeleteCmd(env, gen, name) },
 	).withTarget(name, repositoryDetail(repository)).withButtonLabel("Delete").
-		withConsequence("Pulls of its tags stop working at once. Blob files stay until garbage collection. This cannot be undone.")
+		withConsequence("Pulls by tag and by digest stop working at once. Blob files stay until garbage collection. This cannot be undone.")
 }
 
 func repositoryDeleteCmd(env screenEnv, gen uint64, repository string) tea.Cmd {

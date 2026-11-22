@@ -89,14 +89,14 @@ type consoleProjectsScreen struct {
 	selected     int
 
 	confirm    confirmPrompt
-	busy       bool
+	shared     *consoleShared
 	sync       consoleSync
 	notice     string
 	noticeFail bool
 }
 
 func newConsoleProjectsScreen(repositories []appregixtry.RepositorySummary) consoleProjectsScreen {
-	s := consoleProjectsScreen{gen: consoleGenerations.Add(1), repositories: slices.Clone(repositories)}
+	s := consoleProjectsScreen{gen: consoleGenerations.Add(1), repositories: slices.Clone(repositories), shared: newConsoleShared()}
 	s.projects = deriveProjects(s.repositories)
 	return s
 }
@@ -164,15 +164,31 @@ func (s consoleProjectsScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, 
 		return s.applyCatalog(typed), nil, false
 	case projectDeletedMsg:
 		if typed.gen != s.gen {
-			return s, nil, false
+			return s.withoutRepositories(typed.removed()), nil, false
 		}
 		return s.applyDeleted(env, typed)
+	case repositoryDeletedMsg:
+		if typed.err == nil {
+			return s.withoutRepositories([]string{typed.repository}), nil, false
+		}
 	}
 	return s, nil, false
 }
 
+// withoutRepositories drops repositories deleted elsewhere from the projects.
+func (s consoleProjectsScreen) withoutRepositories(names []string) consoleProjectsScreen {
+	if len(names) == 0 {
+		return s
+	}
+	keep := ""
+	if current, ok := s.selectedProject(); ok {
+		keep = current.Name
+	}
+	return s.withRepositories(slices.DeleteFunc(slices.Clone(s.repositories), func(r appregixtry.RepositorySummary) bool { return slices.Contains(names, r.Name) }), keep)
+}
+
 func (s consoleProjectsScreen) applyCatalog(msg consoleCatalogMsg) consoleProjectsScreen {
-	sync, ok, hide := s.sync.accept(msg.stamp)
+	sync, ok, hide := s.sync.accept(msg.stamp, s.shared)
 	if !ok {
 		return s
 	}
@@ -185,22 +201,25 @@ func (s consoleProjectsScreen) applyCatalog(msg consoleCatalogMsg) consoleProjec
 	if current, ok := s.selectedProject(); ok {
 		keep = current.Name
 	}
-	repositories := slices.DeleteFunc(slices.Clone(msg.result), func(r appregixtry.RepositorySummary) bool { return hide && s.sync.deleted[r.Name] })
+	repositories := slices.DeleteFunc(slices.Clone(msg.result), func(r appregixtry.RepositorySummary) bool { return hide && s.shared.isDeleted(repositoryKey(r.Name)) })
 	return s.withRepositories(repositories, keep)
 }
 
 func (s consoleProjectsScreen) applyDeleted(env screenEnv, msg projectDeletedMsg) (adminScreen, tea.Cmd, bool) {
-	s.confirm, s.busy = confirmPrompt{}, false
+	s.confirm = confirmPrompt{}
+	s.shared.setBusy(false)
 	removed := msg.removed()
 	if len(removed) > 0 {
-		s.sync = s.sync.withDeleted(removed...)
+		for _, name := range removed {
+			s.shared.markDeleted(repositoryKey(name))
+		}
 		s = s.withRepositories(slices.DeleteFunc(slices.Clone(s.repositories), func(r appregixtry.RepositorySummary) bool { return slices.Contains(removed, r.Name) }), "")
 	}
 	s.notice, s.noticeFail = projectDeletionSummary(msg.project, msg.results), len(removed) < len(msg.results)
 	if len(removed) == 0 {
 		return s, nil, false
 	}
-	sync, stamp := s.sync.launch()
+	sync, stamp := s.sync.launch(s.shared)
 	s.sync = sync
 	return s, consoleCatalogCmd(env, s.gen, stamp), false
 }
@@ -231,7 +250,9 @@ func (s consoleProjectsScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen
 	if s.confirm.Active() {
 		next, cmd, _ := s.confirm.update(env, msg)
 		s.confirm = next
-		s.busy = s.busy || cmd != nil
+		if cmd != nil {
+			s.shared.setBusy(true)
+		}
 		return s, cmd, true
 	}
 	current, has := s.selectedProject()
@@ -259,7 +280,7 @@ func (s consoleProjectsScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen
 		sortProjectItems(s.projects, s.sortMode)
 	case isCommandRune(msg, 'd'):
 		switch {
-		case s.busy:
+		case s.shared.isBusy():
 			// A delete is already on its way.
 		case !has:
 			s.notice, s.noticeFail = "No project selected to delete.", true

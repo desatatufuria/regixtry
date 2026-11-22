@@ -9,24 +9,24 @@
     │ ▸ team/api                                                              1       2026-11-21 08:41 │
     │   team/web                                                              2       2026-11-20 08:41 │
     │                                                                                                  │
-    │                                                                                                  │
     │                                                               ╭──────────────────────────────────────────────────────────────╮
     │                                                               │  Delete repository team/api                                  │
     │                                                               │                                                              │
-    │                                                               │  The repository is removed with 1 tag and every manifest.    │
+    │                                                               │  The repository is removed with 1 tag and every manifest,    │
+    │                                                               │  in one transaction.                                         │
     │                                                               │                                                              │
     │                                                               │  ╭────────────────────────────────────────────────────────╮  │
     │                                                               │  │ team/api                                               │  │
     │                                                               │  │ 1 tag, last pushed 2026-11-21 08:41                    │  │
     │                                                               │  ╰────────────────────────────────────────────────────────╯  │
     │                                                               │                                                              │
-    │                                                               │  Pulls of its tags stop working at once. Blob files stay     │
-    │                                                               │  until garbage collection. This cannot be undone.            │
+    │                                                               │  Pulls by tag and by digest stop working at once. Blob       │
+    │                                                               │  files stay until garbage collection. This cannot be         │
+    │                                                               │  undone.                                                     │
     │                                                               │                                                              │
     │                                                               │   Delete                                         y / enter   │
     │                                                               │   Cancel                                               esc   │
     │                                                               ╰──────────────────────────────────────────────────────────────╯
-    │                                                                                                  │
     │                                                                                                  │
     │                                                                                                  │
     │                                                                                                  │

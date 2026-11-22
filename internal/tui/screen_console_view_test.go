@@ -93,7 +93,8 @@ var consoleStates = []consoleState{
 	{"repositories_deleting", func(t *testing.T) (screen, adminScreen) {
 		s := newConsoleRepositoriesScreen(consoleRepos("team/api", "team/web"))
 		s.confirm = s.deleteConfirm(s.items[0])
-		s.confirm.inFlight, s.busy = true, true
+		s.confirm.inFlight = true
+		s.shared.setBusy(true)
 		return screenRepositories, s
 	}},
 	{"projects", func(t *testing.T) (screen, adminScreen) {
@@ -230,7 +231,7 @@ func TestConsoleDialogShowsTheTargetAtEverySize(t *testing.T) {
 			}
 			for _, size := range consoleSizes {
 				out := ansi.Strip(consoleModelFor(t, st, size.w, size.h).View().Content)
-				for _, want := range []string{"Delete", "Cancel", "esc", "This cannot be undone"} {
+				for _, want := range []string{"Delete", "Cancel", "esc", "undone."} {
 					if !strings.Contains(out, want) {
 						t.Fatalf("%s at %dx%d lacks %q:\n%s", name, size.w, size.h, want, out)
 					}
@@ -273,5 +274,20 @@ func assertConsoleGolden(t *testing.T, name, got string) {
 	}
 	if string(want) != got {
 		t.Fatalf("rendered view differs from %s (run with -update-console to inspect)\n--- want\n%s\n--- got\n%s", path, strings.TrimRight(string(want), "\n"), strings.TrimRight(got, "\n"))
+	}
+}
+
+func TestConsoleBreadcrumbKeepsTheLastCrumbWhenNamesAreVeryLong(t *testing.T) {
+	t.Parallel()
+	long := strings.Repeat("segment/", 25) + "leaf"
+	s := newConsoleTagsScreen(long, sortByNameAsc)
+	m := NewModel(newConsoleService(), WithAdminClient(&fakeAdminClient{}))
+	slot, _ := slotFor(screenTags)
+	m.adminScreens[slot], m.screen = s, screenTags
+	for _, size := range consoleSizes {
+		first := strings.Split(ansi.Strip(charResize(t, m, size.w, size.h).View().Content), "\n")[0]
+		if !strings.HasSuffix(strings.TrimRight(first, " "), "Tags") || ansi.StringWidth(first) > size.w {
+			t.Fatalf("%dx%d: breadcrumb %q lost its last crumb", size.w, size.h, first)
+		}
 	}
 }

@@ -51,7 +51,9 @@ type consoleScreen interface {
 // was ever read, lands on an empty Repositories screen, never on nothing.
 func (m Model) withMountedConsole() Model {
 	if m.screen == screenRepositories && m.adminScreens[slotConsoleRepositories] == nil {
-		m.adminScreens[slotConsoleRepositories] = newConsoleRepositoriesScreen(nil)
+		repositories := newConsoleRepositoriesScreen(nil)
+		repositories.shared = m.console
+		m.adminScreens[slotConsoleRepositories] = repositories
 	}
 	return m
 }
@@ -79,7 +81,9 @@ func (m Model) openConsole(request tea.Msg) (tea.Model, tea.Cmd) {
 	m.status = ""
 	switch msg := request.(type) {
 	case openProjectsMsg:
-		m.adminScreens[slotConsoleProjects] = newConsoleProjectsScreen(msg.repositories)
+		projects := newConsoleProjectsScreen(msg.repositories)
+		projects.shared = m.console
+		m.adminScreens[slotConsoleProjects] = projects
 		m.screen = screenProjects
 	case openRepositoriesMsg:
 		if repositories, ok := m.adminScreens[slotConsoleRepositories].(consoleRepositoriesScreen); ok {
@@ -94,6 +98,7 @@ func (m Model) openConsole(request tea.Msg) (tea.Model, tea.Cmd) {
 			mode = previous.sortMode
 		}
 		next := newConsoleTagsScreen(msg.repository, mode)
+		next.shared = m.console
 		m.adminScreens[slotConsoleTags] = next
 		m.screen = screenTags
 		return m, next.Init(m.screenEnv())

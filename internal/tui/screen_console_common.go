@@ -3,6 +3,7 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync/atomic"
 
@@ -64,46 +65,102 @@ func consoleAsk(msg tea.Msg) tea.Cmd { return func() tea.Msg { return msg } }
 
 // ---- delete bookkeeping ----
 
+// consoleShared is the delete bookkeeping that outlives any one console screen:
+// the Model owns one and mounts every console screen on it, so a screen
+// re-created while a delete is in flight still blocks a second one, and a list
+// read before a delete never shows the deleted row, whichever instance asked.
+// It is a pointer on purpose: Model and the screens are copied by value.
+type consoleShared struct {
+	busy    bool
+	deletes int
+	deleted map[string]bool
+}
+
+func newConsoleShared() *consoleShared { return &consoleShared{deleted: map[string]bool{}} }
+
+// Keys name a deleted row across screens.
+func repositoryKey(name string) string     { return "r:" + name }
+func tagKey(repository, tag string) string { return "t:" + repository + ":" + tag }
+
+func (c *consoleShared) isBusy() bool { return c != nil && c.busy }
+func (c *consoleShared) setBusy(busy bool) {
+	if c != nil {
+		c.busy = busy
+	}
+}
+
+func (c *consoleShared) isDeleted(key string) bool { return c != nil && c.deleted[key] }
+
+// markDeleted records rows whose delete landed. It is idempotent: the Model and
+// the screen that asked both apply the same result.
+func (c *consoleShared) markDeleted(keys ...string) {
+	if c == nil {
+		return
+	}
+	added := false
+	for _, k := range keys {
+		if !c.deleted[k] {
+			c.deleted[k], added = true, true
+		}
+	}
+	if added {
+		c.deletes++
+	}
+}
+
+func (c *consoleShared) deleteCount() int {
+	if c == nil {
+		return 0
+	}
+	return c.deletes
+}
+
+// applyResult records a delete result of any screen instance: the row is gone
+// and no delete is in flight any more.
+func (c *consoleShared) applyResult(msg tea.Msg) {
+	switch m := msg.(type) {
+	case repositoryDeletedMsg:
+		c.setBusy(false)
+		if m.err == nil {
+			c.markDeleted(repositoryKey(m.repository))
+		}
+	case tagDeletedMsg:
+		c.setBusy(false)
+		if m.err == nil {
+			c.markDeleted(tagKey(m.repository, m.tag))
+		}
+	case projectDeletedMsg:
+		c.setBusy(false)
+		for _, name := range m.removed() {
+			c.markDeleted(repositoryKey(name))
+		}
+	}
+}
+
 // consoleSync keeps a reload from undoing a delete. A list read that was
 // launched before a delete landed may still contain the deleted row: it is
-// filtered with the deleted set. A list launched after the last delete is
-// authoritative. A list older than one already applied is dropped.
+// filtered with the shared deleted set. A list launched after the last delete
+// is authoritative. A list older than one already applied is dropped.
 type consoleSync struct {
 	launched int
 	applied  int
-	deletes  int
-	deleted  map[string]bool
 }
 
 // launch registers a read about to start and returns the stamp it carries.
-func (c consoleSync) launch() (consoleSync, consoleStamp) {
+func (c consoleSync) launch(shared *consoleShared) (consoleSync, consoleStamp) {
 	c.launched++
-	return c, consoleStamp{seq: c.launched, deletes: c.deletes}
+	return c, consoleStamp{seq: c.launched, deletes: shared.deleteCount()}
 }
 
 // accept decides what to do with a list stamped at launch: ok is false for a
 // list older than the last one applied; hide is true when the list predates a
 // delete and so must not show the deleted rows.
-func (c consoleSync) accept(stamp consoleStamp) (next consoleSync, ok, hide bool) {
+func (c consoleSync) accept(stamp consoleStamp, shared *consoleShared) (next consoleSync, ok, hide bool) {
 	if stamp.seq < c.applied {
 		return c, false, false
 	}
 	c.applied = stamp.seq
-	return c, true, stamp.deletes < c.deletes
-}
-
-// withDeleted records rows whose delete landed.
-func (c consoleSync) withDeleted(keys ...string) consoleSync {
-	deleted := make(map[string]bool, len(c.deleted)+len(keys))
-	for k := range c.deleted {
-		deleted[k] = true
-	}
-	for _, k := range keys {
-		deleted[k] = true
-	}
-	c.deleted = deleted
-	c.deletes++
-	return c
+	return c, true, stamp.deletes < shared.deleteCount()
 }
 
 // consoleStamp is what a read carries from its launch.
@@ -142,6 +199,11 @@ func consoleBodySize(width, height int) (int, int) {
 // consoleHeader is the shell's header bar. "signed in as" shows only when an
 // admin session exists: the console itself needs none.
 func consoleHeader(theme adminTheme, env screenEnv, crumbs []string, width int) string {
+	reserve := 4
+	if env.Session.IsAuthenticated() {
+		reserve += len("signed in as ") + lipgloss.Width(env.Session.Username) + 2
+	}
+	crumbs = fitCrumbs(crumbs, width-reserve)
 	if env.Session.IsAuthenticated() {
 		return shellHeader(theme, shellSpec{Breadcrumb: crumbs, Operator: env.Session.Username}, width)
 	}
@@ -312,4 +374,35 @@ func countOf(n int, one, many string) string {
 		return "1 " + one
 	}
 	return fmt.Sprintf("%d %s", n, many)
+}
+
+// fitCrumbs shortens a breadcrumb trail to width columns: the longest of the
+// middle crumbs first, so the last one, the place the operator is in, stays
+// whole for as long as it can.
+func fitCrumbs(crumbs []string, width int) []string {
+	out := slices.Clone(crumbs)
+	total := func() int {
+		n := 3 * (len(out) - 1)
+		for _, c := range out {
+			n += lipgloss.Width(c)
+		}
+		return n
+	}
+	const floor = 6
+	for total() > width {
+		longest := -1
+		for i := 0; i < len(out)-1; i++ {
+			if lipgloss.Width(out[i]) > floor && (longest < 0 || lipgloss.Width(out[i]) > lipgloss.Width(out[longest])) {
+				longest = i
+			}
+		}
+		if longest < 0 {
+			longest = len(out) - 1
+			if lipgloss.Width(out[longest]) <= floor {
+				break
+			}
+		}
+		out[longest] = grantTruncate(out[longest], lipgloss.Width(out[longest])-1)
+	}
+	return out
 }

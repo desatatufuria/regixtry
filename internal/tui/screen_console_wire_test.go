@@ -218,3 +218,66 @@ func TestConsoleLeavingTheStartupLoginLandsOnAMountedRepositoriesScreen(t *testi
 		t.Fatalf("view:\n%s", consoleView(m))
 	}
 }
+
+// A delete in flight blocks every other delete, even when the screens are
+// left and mounted again before its result arrives.
+func TestConsoleASecondDeleteCannotStartWhileOneIsInFlightAcrossScreens(t *testing.T) {
+	t.Parallel()
+	service := newConsoleService(consoleRepos("p3/a", "p3/b")...)
+	service.tags["p3/a"] = tagsFixture()
+	m := consoleModel(t, service)
+	// Confirm the repository delete but do not deliver its result.
+	updated, _ := m.Update(testKeyRunes("d"))
+	updated, cmd := updated.(Model).Update(testKeyRunes("y"))
+	m = updated.(Model)
+	if cmd == nil {
+		t.Fatal("y sent nothing")
+	}
+	// Esc closes the dialog, Esc again, then p mounts a fresh Projects screen.
+	m = runKey(t, runKey(t, m, "esc"), "esc")
+	m = runKey(t, m, "p")
+	m = runKey(t, m, "d")
+	if m.adminScreens[slotConsoleProjects].(consoleProjectsScreen).confirm.Active() {
+		t.Fatal("d opened a delete dialog on a fresh Projects screen while a delete was in flight")
+	}
+	// The same through Tags: Esc to the repositories, Enter on a repository.
+	m = runKey(t, runKey(t, m, "esc"), "enter")
+	m = runKey(t, m, "d")
+	if m.adminScreens[slotConsoleTags].(consoleTagsScreen).confirm.Active() {
+		t.Fatal("d opened a delete dialog on a fresh Tags screen while a delete was in flight")
+	}
+	// Once the result lands, deleting works again.
+	updated, _ = m.Update(cmd())
+	m = runKey(t, updated.(Model), "d")
+	if !m.adminScreens[slotConsoleTags].(consoleTagsScreen).confirm.Active() {
+		t.Fatal("d does nothing after the delete finished")
+	}
+}
+
+// The result of a delete asked from a visit that was left still removes the
+// row from the visit that replaced it.
+func TestConsoleALateTagDeleteResultRemovesTheTagFromTheCurrentScreen(t *testing.T) {
+	t.Parallel()
+	service := newConsoleService(consoleRepos("team/a")...)
+	service.tags["team/a"] = tagsFixture()
+	m := consoleModel(t, service)
+	m = runKey(t, m, "enter")
+	updated, _ := m.Update(testKeyRunes("d"))
+	updated, cmd := updated.(Model).Update(testKeyRunes("y"))
+	m = updated.(Model)
+	late := cmd() // the delete ran; its result is still on its way
+	m = runKey(t, runKey(t, m, "esc"), "enter")
+	if got := len(m.adminScreens[slotConsoleTags].(consoleTagsScreen).items); got != 3 {
+		t.Fatalf("test setup: the new Tags screen lists %d tags, want 3 (the read ran before the delete)", got)
+	}
+	updated, _ = m.Update(late)
+	m = updated.(Model)
+	for _, tag := range m.adminScreens[slotConsoleTags].(consoleTagsScreen).items {
+		if tag.Name == "0.9" {
+			t.Fatal("the deleted tag is still listed on the current Tags screen")
+		}
+	}
+	if m.console.isBusy() {
+		t.Fatal("the delete is still in flight after its result")
+	}
+}

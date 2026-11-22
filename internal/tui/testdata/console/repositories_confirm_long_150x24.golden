@@ -1,11 +1,11 @@
   Console › Repositories                                                                                                                              
-──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-                                           ╭──────────────────────────────────────────────────────────────╮
-    Repositories                           │  Delete repository                                           │                           1 repository
-                                           │  日本語のプロジェクト/とても長いリポジトリ名とても長いリポ   │
-    ╭────────────────────────────────────  │  ジトリ名とても長いリポジトリ名とても長い                    │
-    │   NAME                               │                                                              │
-    │ ───────────────────────────────────  │  The repository is removed with 1 tag and every manifest.    │
+─────────────────────────────────────────  ╭──────────────────────────────────────────────────────────────╮  ─────────────────────────────────────────
+                                           │  Delete repository                                           │
+    Repositories                           │  日本語のプロジェクト/とても長いリポジトリ名とても長いリポ   │                           1 repository
+                                           │  ジトリ名とても長いリポジトリ名とても長い                    │
+    ╭────────────────────────────────────  │                                                              │
+    │   NAME                               │  The repository is removed with 1 tag and every manifest,    │
+    │ ───────────────────────────────────  │  in one transaction.                                         │
     │ ▸ 日本語のプロジェクト/とても長いリ  │                                                              │
     │                                      │  ╭────────────────────────────────────────────────────────╮  │
     │                                      │  │ 日本語のプロジェクト/とても長いリポジトリ名とても長い  │  │
@@ -13,12 +13,12 @@
     │                                      │  │ 1 tag, last pushed 2026-11-21 08:41                    │  │
     │                                      │  ╰────────────────────────────────────────────────────────╯  │
     │                                      │                                                              │
-    │                                      │  Pulls of its tags stop working at once. Blob files stay     │
-    │                                      │  until garbage collection. This cannot be undone.            │
+    │                                      │  Pulls by tag and by digest stop working at once. Blob       │
+    │                                      │  files stay until garbage collection. This cannot be         │
+    │                                      │  undone.                                                     │
     │                                      │                                                              │
-    │                                      │   Delete                                         y / enter   │
-    ╰────────────────────────────────────  │   Cancel                                               esc   │
-                                           ╰──────────────────────────────────────────────────────────────╯
-    Enter shows the tags of the selected repository. d deletes it with all its tags after confirmation.
+    ╰────────────────────────────────────  │   Delete                                         y / enter   │
+                                           │   Cancel                                               esc   │
+    Enter shows the tags of the selected   ╰──────────────────────────────────────────────────────────────╯
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   ↑↓ move   enter open tags   d delete repository   p projects   g grants   tab admin   q quit                                                        
