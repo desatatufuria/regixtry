@@ -226,9 +226,9 @@ func shellNavScreen(id shellNavID) screen {
 // updateMouse is the one mouse router. It ignores the mouse when it is
 // switched off or the terminal is too small, and every event but the wheel and
 // a left click; it routes the rest to the mounted slot screen when that screen
-// implements mouseScreen and no dialog, text input or in-flight command blocks
-// it. A click on a sidebar item opens it through the same command the Overview's
-// Enter uses.
+// implements mouseScreen and no dialog or text input (nor, on the screens that
+// track one, a change in flight) blocks it. A click on a sidebar item opens it
+// through the same command the Overview's Enter uses.
 func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.mouseDisabled || m.tooSmall() {
 		return m, nil

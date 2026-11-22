@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -25,19 +24,6 @@ func sendMouse(t *testing.T, m Model, msg tea.Msg) Model {
 	t.Helper()
 	updated, cmd := m.Update(msg)
 	return runCmd(t, updated.(Model), cmd)
-}
-
-// cellOf finds the first cell where text starts in the rendered Model view:
-// the column counts terminal cells, the row terminal rows.
-func cellOf(t *testing.T, m Model, text string) (x, y int) {
-	t.Helper()
-	for row, line := range strings.Split(ansi.Strip(m.View().Content), "\n") {
-		if i := strings.Index(line, text); i >= 0 {
-			return lipgloss.Width(line[:i]), row
-		}
-	}
-	t.Fatalf("%q is not on screen:\n%s", text, ansi.Strip(m.View().Content))
-	return 0, 0
 }
 
 func lastRow(m Model) string {

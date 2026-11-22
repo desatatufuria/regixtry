@@ -19,8 +19,8 @@ type mouseCase struct {
 	build func(t *testing.T, w, h int) Model
 	// rows are texts that identify one row each, unique inside the list area.
 	rows []string
-	// listWidth is the number of cells, counted from the list's left edge,
-	// that hold the list (the detail panel to its right is excluded).
+	// listWidth is the number of cells, counted from the content's left
+	// padding, that hold the list (the detail panel to its right is excluded).
 	listWidth func(w int) int
 	// noSidebar marks a screen drawn without the admin sidebar.
 	noSidebar bool
@@ -35,13 +35,13 @@ type mouseCase struct {
 // cellInList finds the cell where text starts inside the list area of the
 // rendered Model view, skipping the header and footer bars.
 func cellInList(m Model, c mouseCase, text string) (x, y int, ok bool) {
-	left := shellSidebarWidth
+	left, pad := shellSidebarWidth, shellContentPadX
 	if c.noSidebar {
-		left = 0
+		left, pad = 0, 0 // the console's listWidth already counts its own padding
 	}
 	lines := strings.Split(ansi.Strip(m.View().Content), "\n")
 	for row := shellHeaderRows; row < len(lines)-shellFooterRows; row++ {
-		area := ansi.Cut(lines[row], left, left+c.listWidth(m.viewport.Width))
+		area := ansi.Cut(lines[row], left, left+pad+c.listWidth(m.viewport.Width))
 		if i := strings.Index(area, text); i >= 0 {
 			return left + lipgloss.Width(area[:i]), row, true
 		}
