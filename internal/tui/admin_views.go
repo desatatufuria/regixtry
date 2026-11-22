@@ -22,9 +22,8 @@ func renderAdminWorkspace(current screen, session AdminSession, knownRepositorie
 	env := screenEnv{Session: session, Layout: layout, KnownRepositories: knownRepositories, Now: func() time.Time { return now }}
 
 	// Migrated top-level screen (design.md Decision I / Data Flow): the
-	// screen's own View() supplies context/body/help/overlay. Every other
-	// screen id still resolves through the renderAdminScreen path
-	// unchanged (design.md D5's adapter boundary).
+	// screen's own View() supplies context/body/help/overlay. A slot that is
+	// not mounted renders an empty Access frame.
 	var context, body, help, screenOverlay string
 	var fullScreen bool
 	if slot, ok := slotFor(current); ok && adminScreens[slot] != nil {

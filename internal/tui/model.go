@@ -343,8 +343,8 @@ type viewportSize struct {
 // budget exceed the terminal height once content is clipped.
 // screenEnv builds the read-only view of the outside world a migrated
 // sub-model or a model's embedded confirmPrompt may read
-// (design.md's screenEnv). Layout uses adminTablesLayout's own admin-screen
-// budget since, in Slice 1, only admin-side screens/overlays consume it.
+// (design.md's screenEnv). Layout uses adminTablesLayout's admin-screen
+// budget, since only admin-side screens and overlays consume it.
 func (m Model) screenEnv() screenEnv {
 	return screenEnv{
 		Client:            m.adminClient,
@@ -363,14 +363,10 @@ func (m Model) contentBudget(status, help string) consoleLayout {
 	return layout
 }
 
-// adminTablesLayout computes the consoleLayout used to size admin tables at
-// rebuild time (design.md decision #6). It uses the Overview's own help text
-// as a representative stand-in — callers of
-// rebuildAdminTables/screenEnv() run from Update handlers, not View(), so no
-// screen-specific help string is otherwise available; this is the same
-// approximation the pre-change code already made for every OTHER migrated
-// screen's own screenEnv().Layout, just now keyed to a static var instead of
-// a dynamic view read.
+// adminTablesLayout computes the consoleLayout a screen is sized against in
+// its Update. It uses the Overview's own help text as a representative
+// stand-in: Update handlers run outside View(), so no screen-specific help
+// string is available there.
 func (m Model) adminTablesLayout() consoleLayout {
 	return m.contentBudget(m.status, shortHelpView(newAdminTheme(), overviewKeys))
 }
@@ -1246,9 +1242,8 @@ func signingKeyFingerprints(keys []string) []string {
 }
 
 // updateAdminScanHistoryModalKey/moveAdminFindingCursor/
-// openSelectedAdminFindingLink/pageAdminScanHistory moved onto
-// scanHistoryScreen (Phase 19, screen_scan_history.go): ScanHistoryModal
-// migrates off AdminViewState per design.md's State Migration table.
+// openSelectedAdminFindingLink/pageAdminScanHistory live on
+// scanHistoryScreen (screen_scan_history.go).
 
 func (m *Model) moveSelection(delta int) {
 	if m.screen == screenBlobs {

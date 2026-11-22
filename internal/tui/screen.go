@@ -89,11 +89,9 @@ type adminScreen interface {
 type screenSlot int
 
 const (
-	// slotGitleaksConfig held gitleaks' own global config editor as an
-	// overlay through Slice 1/the Phase 12.3 follow-up batch (design.md
-	// Decision G). Phase 11 promotes gitleaksConfigScreen to a properly
-	// addressable top-level screen (screenSecurityGitleaksConfig), so this
-	// slot is now resolved via slotFor like every other top-level screen
+	// slotGitleaksConfig holds gitleaks' own global config editor, a
+	// top-level screen (screenSecurityGitleaksConfig) resolved via slotFor
+	// like every other top-level screen
 	// slot below, rather than read directly as an overlay.
 	slotGitleaksConfig screenSlot = iota
 	// slotGitleaksRepos/slotSigningRepos hold Gitleaks' and Signing's own
@@ -124,8 +122,7 @@ const (
 	slotUpdateChannel
 	// slotScanHistory holds scanHistoryScreen (Phase 19, design.md's State
 	// Migration table: "ScanHistoryModal -> scanHistoryScreen"). It is
-	// deliberately NOT resolved via slotFor: like slotGitleaksConfig's own
-	// Slice 1 precedent, it composites as a floating overlay over whichever
+	// deliberately NOT resolved via slotFor: it composites as a floating overlay over whichever
 	// screen opened it (m.screen never changes while it is mounted) rather
 	// than becoming the active top-level screen itself -- reached from TWO
 	// openers (Trivy's Repository Alerts Enter, and Scan Runs/Secret Scan
@@ -227,7 +224,7 @@ func slotFor(id screen) (screenSlot, bool) {
 }
 
 // navigateMsg asks the router to switch the active top-level screen —
-// Slice 2's first real use (design.md screen.go): a migrated screen's Esc
+// a migrated screen's Esc
 // asks the parent to switch m.screen back without ever writing it directly
 // (Decision B: the parent replaces its held value, a child never reaches
 // into the parent).
@@ -249,7 +246,7 @@ func navigate(to screen) tea.Cmd {
 // AND from the Scan Runs/Secret Scan Findings repository pickers' own
 // Enter; returnTo records which screen opened it so Esc pops back to the
 // correct caller (m.screen itself never changes while it is mounted,
-// exactly like slotGitleaksConfig's Slice 1 overlay precedent); activeTab
+// it is an overlay); activeTab
 // distinguishes the two D9 access flavors (vulnerabilities-first vs
 // leaks-first) without a second screen or sub-model type.
 type openScanHistoryMsg struct {

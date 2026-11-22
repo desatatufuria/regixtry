@@ -1954,9 +1954,7 @@ func TestModelSigningPolicyModalDeleteKeyIsUsageInformedAndNeverBlocked(t *testi
 	}
 }
 
-// TestModelTrivyOverrideEditorOpenerKeyIsScopedToRepositoryAlertsRow is the
-// Slice 2 successor to the retired
-// TestModelRepositoryOverrideModalOpenerKeyIsScopedToRepositoryAlertsRow
+// TestModelTrivyOverrideEditorOpenerKeyIsScopedToRepositoryAlertsRow pins
 // (operator-admin-tui spec's "The override key is scoped to the opening
 // screen's row only" scenario, design.md Decision F): `o` on a highlighted
 // Repository Alerts row mounts the uniform overrideEditor bound to that
@@ -2050,9 +2048,7 @@ func TestModelTrivyOverrideEditorOpenerKeyIsScopedToRepositoryAlertsRow(t *testi
 	})
 }
 
-// TestModelTrivyOverrideEditorSetAndClearRoundTripReflectsInModal is the
-// Slice 2 successor to the retired
-// TestModelRepositoryOverrideModalSetAndClearRoundTripReflectsInModal
+// TestModelTrivyOverrideEditorSetAndClearRoundTripReflectsInModal pins
 // (operator-admin-tui spec's "Operator sets an override from the modal" /
 // "Operator clears an override from the modal" scenarios): submitting new
 // values persists through the admin API and reflects the new values back in
@@ -2358,9 +2354,7 @@ func TestFeatureOverridesScreenSigningDeleteKeyIsUsageInformedAndNeverBlocked(t 
 
 // newScanHistoryModalReadyModel logs in, opens the Trivy Repository Alerts
 // tab, and presses Enter to open the scan history modal — a real
-// Model.Update()/View() key-press flow (design.md "Keys ... gated in
-// updateAdminKey"), not direct AdminViewState construction, shared by the
-// Phase 3 wiring tests below.
+// Model.Update()/View() key-press flow shared by the wiring tests below.
 func newScanHistoryModalReadyModel(t *testing.T, adminClient *fakeAdminClient) Model {
 	t.Helper()
 	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
@@ -2554,7 +2548,6 @@ func TestModelConfirmAndTrivyConfigModalOverlayFitsViewportAndDoesNotGrowPageHei
 			t.Parallel()
 
 			model := newModelForModalOverlayTest(t, height)
-			// Phase 11: TrivyConfigModal moved off AdminViewState onto
 			// trivyConfigScreen (screenSecurityTrivy), mounted here exactly
 			// like a real navigation would.
 			model.screen = screenSecurityTrivy
@@ -3703,9 +3696,8 @@ func runCmd(t *testing.T, model Model, cmd tea.Cmd) Model {
 	return result
 }
 
-// scanHistoryScreenOf extracts the mounted scanHistoryScreen (Phase 19,
-// design.md's State Migration table: ScanHistoryModal migrated off
-// AdminViewState onto its own dedicated slot, screen.go's slotScanHistory).
+// scanHistoryScreenOf extracts the mounted scanHistoryScreen (its own
+// dedicated slot, screen.go's slotScanHistory).
 // Fails the test if it is not mounted -- callers that need to assert it is
 // CLOSED must check m.adminScreens[slotScanHistory] == nil directly instead
 // (un-mounted, not a zero-value modal).

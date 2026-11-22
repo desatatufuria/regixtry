@@ -28,8 +28,7 @@ func routeAdminKey(m Model, msg keyMsg) (tea.Model, tea.Cmd) {
 // none of them can miss a result it needs while the operator has navigated
 // away — each screen's Update ignores what it does not own via its own type
 // switch. Returns the updated screen set and the first non-nil cmd
-// (Slice 1 mounts at most one sub-model at a time, so batching is not yet
-// needed; a future slice with concurrent occupied slots would batch these).
+// (at most one sub-model is mounted at a time, so there is nothing to batch).
 func routeAdminMsg(env screenEnv, screens adminScreenSet, msg tea.Msg) (adminScreenSet, tea.Cmd) {
 	var firstCmd tea.Cmd
 	for slot, s := range screens {

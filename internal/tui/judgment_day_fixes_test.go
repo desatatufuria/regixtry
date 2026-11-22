@@ -55,10 +55,8 @@ func TestCanLogoutFromAllSixNewSecurityScreens(t *testing.T) {
 // confirmPrompt.submitting is built with a real "Submitting X for Y..."
 // value by each of trivyConfigScreen/gitleaksConfigScreen/
 // signingConfigScreen's dispatchAction, but was never read/rendered by any
-// of their own Update/View methods -- unlike the legacy
-// AdminViewState.Confirm path (model.go's updateAdminKey sets
-// m.status = before.submitting), which these migrated screens no longer go
-// through (design.md Decision B: a migrated screen owns its own state).
+// of their own Update/View methods -- unlike a shared
+// Model-level status (design.md Decision B: a migrated screen owns its own state).
 // Each screen must surface its own submitting status text, entirely within
 // its own confirmPrompt/Update/View handling, the instant Enter dispatches
 // onConfirm's command.

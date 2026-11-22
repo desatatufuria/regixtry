@@ -112,9 +112,7 @@ func TestNextScanPolicyFieldCyclesBetweenTheTwoFields(t *testing.T) {
 	}
 }
 
-// TestOverrideFieldsForFeatureSkipsPathSecondaryForGitleaks is the Slice 2
-// successor to the retired
-// TestNextRepositoryOverrideFieldSkipsPathSecondaryForGitleaks:
+// TestOverrideFieldsForFeatureSkipsPathSecondaryForGitleaks pins that
 // overrideFieldsForFeature builds trivy's 4-field set (with PathSecondary),
 // skips it for gitleaks (3 fields), and skips it for signing while
 // including UnsignedSelfRead instead (4 fields) -- the concrete replacement

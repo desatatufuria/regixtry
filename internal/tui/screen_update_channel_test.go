@@ -285,7 +285,7 @@ func TestUpdateChannelViewInsideShell(t *testing.T) {
 	}
 	for _, old := range []string{"Current:", "Selected: insider (unsaved --"} {
 		if strings.Contains(out, old) {
-			t.Fatalf("view still has the old look %q", old)
+			t.Fatalf("view still shows %q", old)
 		}
 	}
 }

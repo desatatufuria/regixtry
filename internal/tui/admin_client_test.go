@@ -265,9 +265,7 @@ func TestHTTPAdminClientMutationRoutes(t *testing.T) {
 			},
 		},
 		{
-			// registry-acl-v1 robot-deletion follow-up (PR 4, backend-only):
-			// the client method is added here as part of the API contract;
-			// the TUI key/UI wiring is a separate PR 5 follow-up.
+			// robot deletion over the admin API contract.
 			name:       "delete robot",
 			method:     http.MethodDelete,
 			path:       "/admin/v1/robots/robot-1",
