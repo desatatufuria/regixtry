@@ -215,6 +215,8 @@ The detail payload keeps the summary `run` object, a compact ordered `findings` 
 
 Scan results are latest-only: a digest keeps one completed result per repository, and a completed scan replaces the previous one atomically. Run objects carry these additive fields (all omitted when empty): `settings_hash` (hash of the effective scan configuration), `db_version`, `last_checked_at` (when a push or sweep last confirmed the result was still current without rescanning, because the scanner version, vulnerability database and scan configuration were unchanged), and `stale` plus `stale_reason` (a rescan failed: the previous completed result is kept and still enforced by the pull policy). A manual rescan always scans and replaces the result.
 
+`GET /admin/v1/features/trivy/status` adds an additive `sweep` object once a scheduled sweep has run (absent before): `started_at`, `finished_at`, `visited` (tagged digests examined), `skipped_unchanged` (latest result already current: no new run), `queued` (new scan runs), `errors` (digests or repositories that could not be examined), `last_db_refresh_at` and `last_db_refresh_error` (outcome of the once-per-sweep vulnerability database download: the error is omitted on success, and a failed download never aborts the sweep, which continues with the cached database), `db_fingerprint` (database version and `updated_at` the sweep ran against) and `db_changed` (it differs from the previous sweep's). The Trivy feature page (`GET /admin/v1/features/trivy`) shows the same data in a `Last sweep` section.
+
 ## Registry API V2
 
 | Method | Endpoint | Auth/success |
