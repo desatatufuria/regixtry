@@ -48,11 +48,6 @@ const (
 	// and rows still have real breathing room out of the box.
 	defaultViewportWidth, defaultViewportHeight = 170, 44
 
-	// tableChromeRows is the fixed row overhead a bubble-table adds around
-	// its rows: border top/bottom + header + separator + footer.
-	// Verified against evertras/bubble-table@v0.19.2: height == pageSize+6.
-	tableChromeRows = 6
-
 	// sectionChromeRows is the fixed row overhead of theme.section: a
 	// RoundedBorder (2 rows) plus Padding(1) (2 rows).
 	sectionChromeRows = 4
@@ -69,8 +64,7 @@ const (
 	// degenerate or negative lipgloss.Style.Width value.
 	minSectionContentWidth = 40
 
-	minTableRows     = 3
-	compactTableRows = 5
+	minTableRows = 3
 )
 
 // sectionWidth derives theme.section's content width (the value passed to
@@ -95,8 +89,6 @@ type consoleLayout struct {
 	Height      int
 	SectionRows int
 	Scroll      int
-	Primary     int
-	Compact     int
 }
 
 // contentBudget computes the row budget available to a screen's bounded body

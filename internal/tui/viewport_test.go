@@ -3,7 +3,6 @@ package tui
 import (
 	"strings"
 	"testing"
-	"time"
 
 	"charm.land/lipgloss/v2"
 )
@@ -235,22 +234,5 @@ func TestViewportChromeInvariantTitleContextHelpAreSingleLine(t *testing.T) {
 		assertSingleLine(t, "help "+help, theme.help.Render(help))
 	}
 
-	// Admin workspace screens: context/help come straight from the real
-	// production function, not a copy, so this also guards against drift.
-	adminScreens := []screen{
-		screenAdminUsers,
-		screenAdminCreateUser,
-		screenAdminEditUser,
-		screenAdminChangePassword,
-	}
-	view := newAdminViewState()
-	layout := contentBudget(defaultViewportWidth, defaultViewportHeight, "", "")
-	for _, current := range adminScreens {
-		context, _, help := renderAdminScreen(theme, current, AdminSession{}, view, nil, layout, time.Time{})
-		assertSingleLine(t, string(current)+" context", theme.context.Render(context))
-		if strings.TrimSpace(help) != "" {
-			assertSingleLine(t, string(current)+" help", theme.help.Render(help))
-		}
-	}
 	assertSingleLine(t, "admin title", theme.title.Render("Regixtry Admin"))
 }

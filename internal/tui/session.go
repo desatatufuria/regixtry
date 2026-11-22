@@ -255,19 +255,6 @@ type AdminSession struct {
 	ExpiredReason string
 }
 
-type AdminViewState struct {
-	// ScanHistoryModal is retired (Phase 19, design.md's State Migration
-	// table): its state now lives on scanHistoryScreen
-	// (screen_scan_history.go), reached at its own dedicated slot
-	// (screen.go's slotScanHistory), never as an AdminViewState field.
-	// Layout is the consoleLayout used the last time rebuildAdminTables ran,
-	// including the primary/compact table pageSize split (design.md
-	// decision #6). It is a snapshot for table construction, not the live
-	// render-time budget — renderAdminWorkspace/renderAdminScreen receive a
-	// freshly computed layout on every View() call instead.
-	Layout consoleLayout
-}
-
 type AdminSessionExpiredError struct {
 	Reason string
 }
@@ -313,14 +300,10 @@ func (s AdminSession) Remaining(now time.Time) time.Duration {
 	return s.ExpiresAt.Sub(now)
 }
 
-func newAdminViewState() AdminViewState {
-	return AdminViewState{}
+func LogoutAdminState() AdminSession {
+	return AdminSession{}
 }
 
-func LogoutAdminState() (AdminSession, AdminViewState) {
-	return AdminSession{}, newAdminViewState()
-}
-
-func ExpireAdminState(reason string) (AdminSession, AdminViewState) {
-	return AdminSession{ExpiredReason: strings.TrimSpace(reason)}, newAdminViewState()
+func ExpireAdminState(reason string) AdminSession {
+	return AdminSession{ExpiredReason: strings.TrimSpace(reason)}
 }

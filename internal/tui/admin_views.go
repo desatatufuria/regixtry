@@ -17,7 +17,7 @@ import (
 // canvas, so a modal mathematically cannot grow page height; there is no
 // per-modal budget function to keep in sync. The scan history is not a
 // modal: it is a whole screen that replaces the base (see below).
-func renderAdminWorkspace(current screen, session AdminSession, view AdminViewState, knownRepositories []string, status string, layout consoleLayout, now time.Time, adminScreens adminScreenSet) string {
+func renderAdminWorkspace(current screen, session AdminSession, knownRepositories []string, status string, layout consoleLayout, now time.Time, adminScreens adminScreenSet) string {
 	theme := newAdminTheme()
 	env := screenEnv{Session: session, Layout: layout, KnownRepositories: knownRepositories, Now: func() time.Time { return now }}
 
@@ -34,7 +34,7 @@ func renderAdminWorkspace(current screen, session AdminSession, view AdminViewSt
 		screenOverlay = frame.Overlay
 		fullScreen = frame.Full
 	} else {
-		context, body, help = renderAdminScreen(theme, current, session, view, knownRepositories, layout, now)
+		context, help = adminContext("Access"), "Esc: back | q: quit"
 	}
 	// statusKindAuto preserves today's substring-classification behavior
 	// (design.md Decision 2: 0 of ~11 renderInspectionWorkspace callers are
@@ -70,33 +70,6 @@ func renderAdminWorkspace(current screen, session AdminSession, view AdminViewSt
 		return base
 	}
 	return compositeOverlay(base, modalView, layout.Width, layout.Height)
-}
-
-// adminScreenHelp returns the help line for an admin screen. Extracted from
-// renderAdminScreen so callers can compute the same help text before layout
-// is known (model.go's View() needs it to build the consoleLayout that
-// renderAdminScreen itself then consumes).
-func adminScreenHelp(current screen, view AdminViewState) string {
-	switch current {
-	default:
-		return "Esc: back | q: quit"
-	}
-}
-
-// renderAdminScreen renders the current admin screen's (context, body, help)
-// triple. Only renderAdminUsersScreen -- the screen whose body can grow with
-// data (the user list) -- takes layout and routes its content through
-// renderSection's outer-pane clip
-// (design.md decision #4/#6). The remaining screens are short, fixed-size
-// forms that do not scale with data and stay on their existing
-// theme.section.Render path (Phase 3 precedent: narrow scope to what the
-// spec scenarios require).
-func renderAdminScreen(theme adminTheme, current screen, session AdminSession, view AdminViewState, knownRepositories []string, layout consoleLayout, now time.Time) (string, string, string) {
-	help := adminScreenHelp(current, view)
-	switch current {
-	default:
-		return adminContext("Access"), "", help
-	}
 }
 
 // scanPolicyThresholdLabel renders the severity threshold as the operator-

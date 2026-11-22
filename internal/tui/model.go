@@ -274,7 +274,6 @@ type Model struct {
 
 	adminClient  AdminClient
 	adminSession AdminSession
-	adminView    AdminViewState
 	adminAuth    adminAuthState
 	adminLogin   adminLoginForm
 	// expiryNoteShown is true while adminSession.ExpiredReason holds the
@@ -468,7 +467,6 @@ func NewModel(service QueryService, options ...Option) Model {
 		viewport:    viewportSize{Width: defaultViewportWidth, Height: defaultViewportHeight},
 		adminAuth:   adminAuthStateUnauthenticated,
 		adminReturn: screenLoading,
-		adminView:   newAdminViewState(),
 		adminIntent: adminIntentOperator,
 		mutation: MutationUnavailableModel{
 			Action: "delete",
@@ -512,14 +510,6 @@ func (m Model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.viewport = viewportSize{Width: msg.Width, Height: msg.Height}
-		// Plain-list/text sections re-fit for free: View() recomputes
-		// contentBudget() and renderSection() on every render (Phase 3).
-		// Admin tables do not — their pageSize is baked into the
-		// bubbletable.Model at rebuildAdminTables() time, so a resize must
-		// explicitly rebuild them here too (Req: Live Terminal Resize
-		// Refit). Safe/cheap when no admin tables are loaded yet: builds
-		// harmlessly from empty adminView state.
-		m.rebuildAdminTables(m.adminTablesLayout())
 		// Migrated screens learn the new size through the broadcast like every
 		// other non-key message (design.md Decision H).
 		m.adminScreens, _ = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
@@ -594,7 +584,7 @@ func (m Model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m.expireAdminSession(msg.err.Error()), nil
 			}
 			m.adminAuth = adminAuthStateUnauthenticated
-			m.adminSession, m.adminView = LogoutAdminState()
+			m.adminSession = LogoutAdminState()
 			m.adminLogin.Password = ""
 			m.screen = screenAdminLogin
 			m.loadingText = ""
@@ -861,12 +851,6 @@ func (m Model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else if strings.HasPrefix(strings.ToLower(m.status), "loading") {
 			m.status = ""
 		}
-		// rebuildAdminTables no longer builds this screen's own table (Phase
-		// 11), but still keeps AdminViewState.Layout's Primary/Compact split
-		// fresh -- a handful of tests read it as a proxy for "the row budget
-		// this screen was sized against", mirroring the pre-change
-		// unconditional call here.
-		m.rebuildAdminTables(m.adminTablesLayout())
 		var cmd tea.Cmd
 		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
 		return m, cmd
@@ -1062,7 +1046,7 @@ func (m Model) viewScreen() string {
 	case screenAdminAuthenticating:
 		return renderAdminAuthenticating(newAdminTheme(), m.loadingText, m.viewport.Width, m.viewport.Height)
 	case screenAdminUsers, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserTokens, screenRepoAdminGrants, screenAdminRobots, screenAdminCreateRobot, screenSecurityGitleaksRepos, screenSecuritySigningRepos, screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminOverview, screenAdminScanRuns, screenAdminSecretFindings, screenAdminUpdateChannel, screenAdminGrantAccess, screenAdminRepositoryAccess:
-		help := adminScreenHelp(m.screen, m.adminView)
+		help := "Esc: back | q: quit"
 		if slot, ok := slotFor(m.screen); ok && m.adminScreens[slot] != nil {
 			// Migrated top-level screen: help is derived from the screen's
 			// own Keys(), never a separately hand-written string (spec.md
@@ -1070,7 +1054,7 @@ func (m Model) viewScreen() string {
 			help = shortHelpView(newAdminTheme(), m.adminScreens[slot].Keys())
 		}
 		layout := m.contentBudget(m.status, help)
-		content := renderAdminWorkspace(m.screen, m.adminSession, m.adminView, m.knownRepositories(), m.status, layout, m.now(), m.adminScreens)
+		content := renderAdminWorkspace(m.screen, m.adminSession, m.knownRepositories(), m.status, layout, m.now(), m.adminScreens)
 		return m.overlayLateNotice(content, layout)
 	}
 
@@ -1772,7 +1756,7 @@ func (m *Model) dropAccessScreens() {
 func (m Model) logoutAdmin() Model {
 	m.dropAccessScreens()
 	m.clearUserScreens()
-	m.adminSession, m.adminView = LogoutAdminState()
+	m.adminSession = LogoutAdminState()
 	m.adminAuth = adminAuthStateUnauthenticated
 	m.adminLogin.Password = ""
 	m.adminLogin.Focus = loginFieldUsername
@@ -1809,7 +1793,7 @@ func (m Model) expireAdminSession(reason string) Model {
 	m.adminScreens[slotGrantAccess] = nil
 	m.dropAccessScreens()
 	m.clearUserScreens()
-	m.adminSession, m.adminView = ExpireAdminState(reason)
+	m.adminSession = ExpireAdminState(reason)
 	m.adminAuth = adminAuthStateExpired
 	m.adminLogin.Password = ""
 	m.adminLogin.Focus = loginFieldUsername

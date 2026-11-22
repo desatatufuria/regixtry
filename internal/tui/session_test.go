@@ -7,7 +7,6 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -37,33 +36,27 @@ func TestAdminSessionIsExpired(t *testing.T) {
 	}
 }
 
-func TestLogoutAdminStateClearsSessionAndViewData(t *testing.T) {
+func TestLogoutAdminStateClearsSession(t *testing.T) {
 	t.Parallel()
 
-	session, view := LogoutAdminState()
+	session := LogoutAdminState()
 	if session.IsAuthenticated() {
 		t.Fatal("LogoutAdminState() returned authenticated session")
 	}
 	if session.ExpiredReason != "" {
 		t.Fatalf("ExpiredReason = %q, want empty", session.ExpiredReason)
 	}
-	if !reflect.ValueOf(view).IsZero() {
-		t.Fatalf("LogoutAdminState() returned populated view state: %#v", view)
-	}
 }
 
-func TestExpireAdminStateClearsViewDataAndKeepsReason(t *testing.T) {
+func TestExpireAdminStateKeepsReason(t *testing.T) {
 	t.Parallel()
 
-	session, view := ExpireAdminState("Session expired. Log in again.")
+	session := ExpireAdminState("Session expired. Log in again.")
 	if session.IsAuthenticated() {
 		t.Fatal("ExpireAdminState() returned authenticated session")
 	}
 	if session.ExpiredReason != "Session expired. Log in again." {
 		t.Fatalf("ExpiredReason = %q, want session expiry message", session.ExpiredReason)
-	}
-	if !reflect.ValueOf(view).IsZero() {
-		t.Fatalf("ExpireAdminState() returned populated view state: %#v", view)
 	}
 }
 

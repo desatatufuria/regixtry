@@ -292,7 +292,7 @@ func TestSecretLifecycleFuzz(t *testing.T) {
 // modelState is everything the model holds that a secret could hide in: the
 // mounted screens, the shared view state, the queue and the status lines.
 func modelState(m Model) string {
-	return fmt.Sprintf("%+v|%+v|%+v|%s|%s", m.adminScreens, m.adminView, m.queuedSecrets, m.status, m.lateNotice)
+	return fmt.Sprintf("%+v|%+v|%s|%s", m.adminScreens, m.queuedSecrets, m.status, m.lateNotice)
 }
 
 // fuzzClient mints a fresh secret for every successful creation and fails
