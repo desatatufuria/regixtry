@@ -194,13 +194,6 @@ func nextUnsignedSelfReadValue(value string) string {
 	return unsignedSelfReadCycle[0]
 }
 
-// repositoryOverrideModal and repositoryOverrideField were retired by
-// tui-menu-architecture (design.md Decision F): the per-repository override
-// editor is now overrideEditor (override_editor.go), whose Feature is
-// unexported and constructor-only rather than a focusable, cycle-driven
-// field. See operator-admin-tui's MODIFIED requirement "Repository-Scoped
-// Override Modal On The Repository Alerts Row".
-
 // adminScanHistoryTabKind identifies one feature's tab inside the scan
 // history modal (design.md "Ordered tab slice with a wrapping cursor").
 type adminScanHistoryTabKind string
@@ -267,10 +260,6 @@ type AdminViewState struct {
 	// table): its state now lives on scanHistoryScreen
 	// (screen_scan_history.go), reached at its own dedicated slot
 	// (screen.go's slotScanHistory), never as an AdminViewState field.
-	// RepositoryOverrideModal is retired (tui-menu-architecture, design.md
-	// Decision F): the per-repository override editor now lives per-screen
-	// as overrideEditor, embedded directly in trivyReposScreen/
-	// featureOverridesScreen.
 	// Layout is the consoleLayout used the last time rebuildAdminTables ran,
 	// including the primary/compact table pageSize split (design.md
 	// decision #6). It is a snapshot for table construction, not the live

@@ -175,7 +175,7 @@ const (
 	// screenSecurityTrivy/screenSecurityTrivyRepos are Trivy's own peer
 	// screens (Phase 11, design.md Decision I): trivyConfigScreen (Runtime
 	// tab equivalent: config, scan policy, enable/disable/install/upgrade
-	// actions) and trivyReposScreen (Repository Alerts tab equivalent),
+	// actions) and trivyReposScreen (the Repositories tab),
 	// reached from the Overview's Image scanning item and from each other via Tab.
 	screenSecurityTrivy      screen = "security-trivy"
 	screenSecurityTrivyRepos screen = "security-trivy-repos"
@@ -234,14 +234,11 @@ type loginField int
 const trivyFeatureName = "trivy"
 
 // gitleaksFeatureName mirrors internal/app/regixtry's own package-private
-// constant of the same name and value, used by repositoryOverrideModal to
-// tell the two feature codecs apart (design.md Decision 8).
+// constant of the same name and value.
 const gitleaksFeatureName = "gitleaks"
 
 // signingFeatureName mirrors internal/app/regixtry's own package-private
-// constant of the same name and value (design.md Decision 11), used both by
-// signingPolicyModal's own opener/badge and as the third value in
-// repositoryOverrideModal's Feature cycle.
+// constant of the same name and value (design.md Decision 11).
 const signingFeatureName = "signing"
 
 const (
@@ -399,22 +396,10 @@ type adminLoginCompletedMsg struct {
 	err     error
 }
 
-type adminScanPolicyLoadedMsg struct {
-	settings ports.ScanPolicySettings
-	err      error
-}
-
-type adminSigningPolicyLoadedMsg struct {
-	settings ports.SigningPolicySettings
-	err      error
-}
-
 // adminSigningKeyUsageLoadedMsg carries the result of a trustedKeyList
 // delete-key usage-count lookup (CountSigningKeyUsage). It carries no
-// requester identity (unlike adminRepositoryOverrideLoadedMsg's
-// repository/feature): only one trustedKeyList is ever mid-delete at a
-// time (signingConfigScreen's modal and overrideEditor's editor are
-// mutually exclusive overlays), and trustedKeyList.applyUsageLoaded itself
+// requester identity: only one trustedKeyList is ever mid-delete at a
+// time, and trustedKeyList.applyUsageLoaded itself
 // discards a response that arrives when it is not expecting one
 // (usageLoading already false).
 type adminSigningKeyUsageLoadedMsg struct {
@@ -424,40 +409,6 @@ type adminSigningKeyUsageLoadedMsg struct {
 	count  int
 	capped bool
 	err    error
-}
-
-// adminRepositoryOverrideLoadedMsg carries the result of opening
-// repositoryOverrideModal (design.md Decision 8 piece 2), echoing the
-// queried repository/feature so a stale response for a modal the operator
-// has since closed or switched away from can be discarded, mirroring
-// adminScanHistoryLoadedMsg's own staleness guard.
-type adminRepositoryOverrideLoadedMsg struct {
-	repository string
-	feature    string
-	override   ports.RepositoryOverrideDetails
-	exists     bool
-	err        error
-}
-
-// adminRepositoryOverrideSavedMsg carries the result of a set (submit) or
-// clear action on repositoryOverrideModal. exists distinguishes the two:
-// true after a successful set, false after a successful clear.
-type adminRepositoryOverrideSavedMsg struct {
-	repository string
-	feature    string
-	override   ports.RepositoryOverrideDetails
-	exists     bool
-	err        error
-}
-
-// adminRepositoryOverridesListLoadedMsg carries every stored override row
-// for one feature (design.md Decision 7's "List (TUI annotation)" row),
-// fetched alongside TrivyScanRuns to annotate the Repository Alerts table
-// with a distinct "scanning disabled" state.
-type adminRepositoryOverridesListLoadedMsg struct {
-	feature   string
-	overrides []ports.RepositoryOverrideDetails
-	err       error
 }
 
 // adminRepositoryScanSummariesLoadedMsg carries the result of loading the
@@ -569,10 +520,8 @@ func (m Model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Refit). Safe/cheap when no admin tables are loaded yet: builds
 		// harmlessly from empty adminView state.
 		m.rebuildAdminTables(m.adminTablesLayout())
-		// Migrated screens with their own baked-in bubbletable.Model
-		// (trivyReposScreen) needs the same explicit
-		// resize-rebuild, broadcast like every other non-key message
-		// (design.md Decision H).
+		// Migrated screens learn the new size through the broadcast like every
+		// other non-key message (design.md Decision H).
 		m.adminScreens, _ = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
 		return m, nil
 	case keyMsg:
@@ -695,17 +644,6 @@ func (m Model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
 		return m, cmd
-	case adminScanPolicyLoadedMsg:
-		// Best-effort, matching the badge/modal's fail-quiet posture: a
-		// load failure just broadcasts (each screen leaves its own policy
-		// copy at its zero value) rather than surfacing a blocking status
-		// error over an otherwise-successful feature page load.
-		var cmd tea.Cmd
-		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
-		if msg.err != nil && IsAdminSessionExpired(msg.err) {
-			return m.expireAdminSession(msg.err.Error()), nil
-		}
-		return m, cmd
 	case adminUpdateChannelLoadedMsg, adminUpdateChannelUpdatedMsg:
 		// Drop a message from another screen instance FIRST: a stale expiry
 		// result must never log the operator out.
@@ -722,57 +660,16 @@ func (m Model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
 		return m, cmd
-	case adminSigningPolicyLoadedMsg:
-		var cmd tea.Cmd
-		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
-		if msg.err != nil && IsAdminSessionExpired(msg.err) {
-			return m.expireAdminSession(msg.err.Error()), nil
-		}
-		return m, cmd
 	case adminSigningKeyUsageLoadedMsg:
-		// Broadcast like adminSigningPolicyLoadedMsg above (design.md
-		// Decision H): whichever screen holds a trustedKeyList mid-delete
-		// (signingConfigScreen's modal or an open signing overrideEditor)
-		// reflects the usage count and opens its confirm; every other
-		// occupied slot ignores it via its own type switch /
-		// trustedKeyList.applyUsageLoaded's own usageLoading guard.
+		// Broadcast (design.md Decision H): whichever screen holds a
+		// trustedKeyList mid-delete reflects the usage count and opens its
+		// confirm; every other occupied slot ignores it via its own type
+		// switch / trustedKeyList.applyUsageLoaded's own usageLoading guard.
 		var cmd tea.Cmd
 		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
 		if msg.err != nil && IsAdminSessionExpired(msg.err) {
 			return m.expireAdminSession(msg.err.Error()), nil
 		}
-		return m, cmd
-	case adminRepositoryOverrideLoadedMsg:
-		// The uniform overrideEditor (design.md Decision F) is broadcast to
-		// (design.md Decision H): whichever screen is holding an open
-		// editor for this exact repository+feature reflects it; every other
-		// occupied slot ignores it via its own type switch.
-		if msg.err != nil && IsAdminSessionExpired(msg.err) {
-			return m.expireAdminSession(msg.err.Error()), nil
-		}
-		var cmd tea.Cmd
-		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
-		return m, cmd
-	case adminRepositoryOverrideSavedMsg:
-		if msg.err != nil && IsAdminSessionExpired(msg.err) {
-			return m.expireAdminSession(msg.err.Error()), nil
-		}
-		if msg.err == nil {
-			if msg.exists {
-				m.status = "Repository override saved."
-			} else {
-				m.status = "Repository override cleared."
-			}
-		}
-		var cmd tea.Cmd
-		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
-		return m, cmd
-	case featureOverridesLoadedMsg:
-		if msg.err != nil && IsAdminSessionExpired(msg.err) {
-			return m.expireAdminSession(msg.err.Error()), nil
-		}
-		var cmd tea.Cmd
-		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
 		return m, cmd
 	case navigateMsg:
 		// The router's own navigation channel (design.md screen.go
@@ -947,25 +844,9 @@ func (m Model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
 		return m, cmd
-	case adminRepositoryOverridesListLoadedMsg:
-		// Best-effort, matching the ScanPolicy load's fail-quiet posture: a
-		// load failure just broadcasts (trivyReposScreen's table renders
-		// without the "scanning disabled" annotation) rather than surfacing
-		// a blocking status error over an otherwise-successful alerts load.
-		// trivyReposScreen filters this itself (typed.feature ==
-		// trivyFeatureName), mirroring the pre-change central handler's own
-		// filter (design.md Decision H).
-		var cmd tea.Cmd
-		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
-		if msg.err != nil && IsAdminSessionExpired(msg.err) {
-			return m.expireAdminSession(msg.err.Error()), nil
-		}
-		return m, cmd
 	case adminRepositoryScanSummariesLoadedMsg:
-		// Broadcast only (design.md Decision H): trivyReposScreen owns
-		// TrivySummaries/TrivyScanRuns/TrivySelectedAlert/TrivyAlertsLoaded
-		// now (Phase 11) and chains its own loadTrivyRepositoryOverridesListCmd
-		// follow-up from inside its own Update.
+		// Broadcast only (design.md Decision H): the Scan runs and Secret
+		// findings screens own what they show.
 		if msg.err != nil {
 			if IsAdminSessionExpired(msg.err) {
 				return m.expireAdminSession(msg.err.Error()), nil
@@ -1268,10 +1149,7 @@ func (m Model) updateAdminKey(msg keyMsg) (tea.Model, tea.Cmd) {
 	// (Phase 11 promotes trivyConfigScreen/gitleaksConfigScreen/
 	// signingConfigScreen to top-level screens, addressed via slotFor):
 	// each now handles its own modal state inside its own Update, reached
-	// through the ordinary routeAdminKey path below. Trivy's own override
-	// editor is likewise now embedded in trivyReposScreen directly (mirrors
-	// featureOverridesScreen), so the former slotTrivyOverride pre-dispatch
-	// branch is also gone.
+	// through the ordinary routeAdminKey path below.
 	// scanHistoryScreen (Phase 19) is never m.screen-addressed (screen.go's
 	// slotScanHistory doc comment), so it cannot be reached through
 	// routeAdminKey's ordinary slotFor(m.screen) dispatch below -- this
@@ -1679,38 +1557,10 @@ func (m Model) loadAdminScanHistoryCmd(repository string) tea.Cmd {
 	}
 }
 
-func (m Model) loadScanPolicyCmd() tea.Cmd {
-	return func() tea.Msg {
-		if m.adminClient == nil {
-			return adminScanPolicyLoadedMsg{err: fmt.Errorf("admin API is unavailable for this session")}
-		}
-		settings, err := m.adminClient.GetScanPolicy(m.ctx, m.adminSession)
-		return adminScanPolicyLoadedMsg{settings: settings, err: err}
-	}
-}
-
-func (m Model) loadSigningPolicyCmd() tea.Cmd {
-	return func() tea.Msg {
-		if m.adminClient == nil {
-			return adminSigningPolicyLoadedMsg{err: fmt.Errorf("admin API is unavailable for this session")}
-		}
-		settings, err := m.adminClient.GetSigningPolicy(m.ctx, m.adminSession)
-		return adminSigningPolicyLoadedMsg{settings: settings, err: err}
-	}
-}
-
-// loadScanPolicyCmd/updateScanPolicyCmd/loadSigningPolicyCmd are the
-// screenEnv-scoped equivalents of Model's own methods above, needed because
-// a sub-model has no Model to call a method on (mirror
-// screen_gitleaks_config.go's configureFeatureCmd wrapper).
-func loadScanPolicyCmd(env screenEnv) tea.Cmd { return env.asModel().loadScanPolicyCmd() }
-
-func loadSigningPolicyCmd(env screenEnv) tea.Cmd { return env.asModel().loadSigningPolicyCmd() }
-
 // signingKeyUsageCmd fetches trustedKeyList's delete-key usage-count
 // advisory (CountSigningKeyUsage), the screenEnv-scoped equivalent of
 // Model's own method below, needed because a sub-model has no Model to call
-// a method on (mirrors loadSigningPolicyCmd's identical wrapper above).
+// a method on.
 func signingKeyUsageCmd(env screenEnv, repository string, keyPEM string) tea.Cmd {
 	return env.asModel().signingKeyUsageCmd(repository, keyPEM)
 }
@@ -1722,55 +1572,6 @@ func (m Model) signingKeyUsageCmd(repository string, keyPEM string) tea.Cmd {
 		}
 		count, capped, err := m.adminClient.CountSigningKeyUsage(m.ctx, m.adminSession, repository, keyPEM)
 		return adminSigningKeyUsageLoadedMsg{key: keyPEM, count: count, capped: capped, err: err}
-	}
-}
-
-// loadRepositoryOverrideCmd fetches one repository's stored override to
-// populate repositoryOverrideModal on open (design.md Decision 8 piece 2).
-func (m Model) loadRepositoryOverrideCmd(repository string, feature string) tea.Cmd {
-	return func() tea.Msg {
-		if m.adminClient == nil {
-			return adminRepositoryOverrideLoadedMsg{repository: repository, feature: feature, err: fmt.Errorf("admin API is unavailable for this session")}
-		}
-		override, exists, err := m.adminClient.GetRepositoryOverride(m.ctx, m.adminSession, repository, feature)
-		return adminRepositoryOverrideLoadedMsg{repository: repository, feature: feature, override: override, exists: exists, err: err}
-	}
-}
-
-// saveRepositoryOverrideCmd submits repositoryOverrideModal's edited fields
-// as a full-row-replace PUT.
-func (m Model) saveRepositoryOverrideCmd(repository string, feature string, input ports.RepositoryOverrideDetails) tea.Cmd {
-	return func() tea.Msg {
-		if m.adminClient == nil {
-			return adminRepositoryOverrideSavedMsg{repository: repository, feature: feature, err: fmt.Errorf("admin API is unavailable for this session")}
-		}
-		override, err := m.adminClient.SetRepositoryOverride(m.ctx, m.adminSession, repository, feature, input)
-		return adminRepositoryOverrideSavedMsg{repository: repository, feature: feature, override: override, exists: true, err: err}
-	}
-}
-
-// clearRepositoryOverrideCmd deletes the stored override for repositoryOverrideModal's Clear row.
-func (m Model) clearRepositoryOverrideCmd(repository string, feature string) tea.Cmd {
-	return func() tea.Msg {
-		if m.adminClient == nil {
-			return adminRepositoryOverrideSavedMsg{repository: repository, feature: feature, err: fmt.Errorf("admin API is unavailable for this session")}
-		}
-		err := m.adminClient.ClearRepositoryOverride(m.ctx, m.adminSession, repository, feature)
-		return adminRepositoryOverrideSavedMsg{repository: repository, feature: feature, exists: false, err: err}
-	}
-}
-
-// loadRepositoryOverridesListCmd fetches every stored override row for one
-// feature, chained after adminRepositoryScanSummariesLoadedMsg so the
-// Repository Alerts table can annotate disabled repositories (design.md
-// Decision 7's "List (TUI annotation)" row).
-func (m Model) loadRepositoryOverridesListCmd(feature string) tea.Cmd {
-	return func() tea.Msg {
-		if m.adminClient == nil {
-			return adminRepositoryOverridesListLoadedMsg{feature: feature, err: fmt.Errorf("admin API is unavailable for this session")}
-		}
-		overrides, err := m.adminClient.ListRepositoryOverrides(m.ctx, m.adminSession, feature)
-		return adminRepositoryOverridesListLoadedMsg{feature: feature, overrides: overrides, err: err}
 	}
 }
 
@@ -2081,7 +1882,7 @@ func isAdminPrincipalScreen(current screen) bool {
 // migratedScreenCapturesTextInput reports whether the currently mounted
 // migrated top-level screen (design.md Decision A/I, resolved via slotFor)
 // has its own local overlay open that captures free-text or key input -- a
-// confirm prompt, a config/policy modal, or the shared overrideEditor. None
+// confirm prompt, a config/policy modal, or the override editor. None
 // of these local overlays is Model state (design.md Decision B: each
 // migrated screen owns its own), so the bare 'l' logout / 'q' quit global
 // keys must not intercept keystrokes meant for one of these overlays.
@@ -2376,13 +2177,6 @@ func renderUploads(theme adminTheme, uploads UploadsModel) string {
 		lines = append(lines, theme.text.Render(fmt.Sprintf("%s · %s · %d bytes", upload.ID, upload.Status, upload.Size)))
 	}
 	return strings.Join(lines, "\n")
-}
-
-func formatRemaining(remaining time.Duration) string {
-	if remaining <= 0 {
-		return "0s"
-	}
-	return remaining.Truncate(time.Second).String()
 }
 
 // applyLoadedFeatures/applyFeaturePage/selectedFeatureName/

@@ -136,19 +136,3 @@ var featureOverridesKeys = screenKeys{short: []key.Binding{
 	key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 	key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
 }}
-
-// featureOverrideRowStatus and featureOverridesLoadedMsg are what the old
-// override tables and Model's old broadcast still name; the next commit deletes
-// them with those.
-func featureOverrideRowStatus(row featureOverrideRow) string {
-	if row.HasOverride {
-		return "override active"
-	}
-	return "inheriting global settings"
-}
-
-type featureOverridesLoadedMsg struct {
-	feature   string
-	overrides []ports.RepositoryOverrideDetails
-	err       error
-}

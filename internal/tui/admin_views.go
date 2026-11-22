@@ -1,12 +1,10 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 	"time"
 
 	"charm.land/lipgloss/v2"
-	bubbletable "github.com/evertras/bubble-table/table"
 	"regixtry/internal/ports"
 )
 
@@ -98,95 +96,6 @@ func renderAdminScreen(theme adminTheme, current screen, session AdminSession, v
 	switch current {
 	default:
 		return adminContext("Access"), "", help
-	}
-}
-
-// renderAdminOperatorFooter is the trailing "Operator: %s" / "Session
-// remaining: %s" pair the Users screen renders (see
-// renderAdminUsersScreen below). The migrated Security
-// screens (trivyConfigScreen, trivyReposScreen, gitleaksConfigScreen,
-// signingConfigScreen) share it via this helper so the operator never loses
-// their session countdown while navigating the Security screens.
-func renderAdminOperatorFooter(theme adminTheme, session AdminSession, now time.Time) []string {
-	return []string{
-		"",
-		theme.muted.Render(fmt.Sprintf("Operator: %s", session.Username)),
-		theme.muted.Render(fmt.Sprintf("Session remaining: %s", formatRemaining(session.Remaining(now)))),
-	}
-}
-
-// renderTrivyTabs composes the persistent policy status badge onto its
-// existing tab line (design.md Decision 6), which returns exactly 2 rows
-// and keeps returning 2 — the badge costs 0 rows because it is appended to
-// the same line, not placed on a line of its own. contentBudget/fitLines/
-// SectionRows need no change (spec's explicit "no arithmetic change"
-// scope note).
-//
-// Phase 11 deviation from the pre-change signature: "Tab becomes a screen
-// switch" (design.md Decision I) means Runtime/Repository Alerts are now
-// two screens (screenSecurityTrivy/screenSecurityTrivyRepos) rather than
-// one AdminViewState.TrivyTab field, so this takes the ACTIVE screen id
-// directly. Called from both trivyConfigScreen and trivyReposScreen's own
-// View (design's "retained as a header on both") -- each passes its own
-// read-only copy of ScanPolicy (Decision D4: no shared cross-screen state;
-// trivyReposScreen's copy is display-only, it owns no policyModal).
-func renderTrivyTabs(theme adminTheme, active screen, policy ports.ScanPolicySettings) string {
-	runtimeLabel := "Runtime"
-	alertsLabel := "Repository Alerts"
-	if active == screenSecurityTrivy {
-		runtimeLabel = theme.selected.Render(runtimeLabel)
-	} else {
-		alertsLabel = theme.selected.Render(alertsLabel)
-	}
-	return theme.subheading.Render("Tabs") + "\n" + runtimeLabel + " | " + alertsLabel + "  " + scanPolicyBadge(theme, policy)
-}
-
-// scanPolicyBadge renders the persistent, text-only policy status badge
-// (spec.md "Persistent Policy Status Badge" — text, not an icon or glyph).
-func scanPolicyBadge(theme adminTheme, policy ports.ScanPolicySettings) string {
-	if !policy.Enabled {
-		return theme.muted.Render("Policy: OFF")
-	}
-	return theme.selected.Render(fmt.Sprintf("Policy: ON (%s)", scanPolicyThresholdLabel(policy.SeverityThreshold)))
-}
-
-// renderAdminScanSummary renders the Repository Alerts tab as one row per
-// repository (spec.md "Repository Alerts Summarized Per Repository With
-// Ordering And Freshness"). Drill-down into a specific run's findings
-// happens exclusively through the scan history modal
-// (renderAdminScanHistoryModal), opened by Enter on a summary row.
-//
-// Phase 11 deviation from the pre-change signature: takes the already-loaded
-// summaries/loaded flag/table directly instead of a full AdminViewState,
-// mirroring renderGenericFeaturePage's own signature change now that these
-// live on trivyReposScreen's own fields.
-func renderAdminScanSummary(theme adminTheme, summaries []repositorySummary, loaded bool, table bubbletable.Model) []string {
-	lines := []string{theme.subheading.Render("Repository Alerts")}
-	if len(summaries) == 0 {
-		message := "No repository alerts found."
-		if !loaded {
-			message = "Loading repository alerts..."
-		}
-		return append(lines, theme.muted.Render(message))
-	}
-	return append(lines, table.View())
-}
-
-// renderFeatureOverridesTable mirrors renderAdminScanSummary's shape for
-// featureOverridesScreen (screen_gitleaks_repos.go): a bubble-table body in
-// place of the old plain "Repository — status" line list. loaded/empty
-// precedence matches the screen's own pre-existing behavior exactly (a
-// not-yet-loaded screen reports "Loading...", never the empty state, even
-// though rows is naturally empty in both cases).
-func renderFeatureOverridesTable(theme adminTheme, feature string, rows []featureOverrideRow, loaded bool, table bubbletable.Model) []string {
-	lines := []string{theme.subheading.Render(featureDisplayName(feature) + " — Repository Overrides")}
-	switch {
-	case !loaded:
-		return append(lines, theme.muted.Render("Loading repository overrides..."))
-	case len(rows) == 0:
-		return append(lines, theme.muted.Render("No repositories available to override."))
-	default:
-		return append(lines, table.View())
 	}
 }
 
@@ -283,29 +192,6 @@ func renderAdminStatus(theme adminTheme, status string, kind statusKind) string 
 		kind = classifyStatusText(status)
 	}
 	return statusStyle(theme, kind).Render(status)
-}
-
-func renderTextField(theme adminTheme, label string, value string, focused bool) string {
-	style := theme.input
-	if focused {
-		style = theme.inputFocus
-	}
-	if strings.TrimSpace(value) == "" {
-		value = ""
-	}
-	return fmt.Sprintf("%s\n%s", label, style.Render(value))
-}
-
-func renderToggleField(theme adminTheme, label string, value bool, focused bool) string {
-	current := "off"
-	if value {
-		current = "on"
-	}
-	style := theme.input
-	if focused {
-		style = theme.inputFocus
-	}
-	return fmt.Sprintf("%s\n%s", label, style.Render(current))
 }
 
 func adminFirstNonEmpty(values ...string) string {

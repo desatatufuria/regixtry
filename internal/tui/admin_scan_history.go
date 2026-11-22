@@ -13,24 +13,6 @@ import (
 // rather than a new port/query).
 const adminScanHistoryWindowLimit = 50
 
-// repositorySummary is one aggregated row for the Repository Alerts summary
-// table: the latest scan run for a repository, plus how many runs exist and
-// when the repository was last executed. Produced by
-// summarizeScanRunsByRepository.
-type repositorySummary struct {
-	Repository   string
-	LatestRun    ports.ScanRun
-	LastExecuted time.Time // FinishedAt, else CreatedAt
-	InProgress   bool      // FinishedAt nil -> show marker, never blank
-	RunCount     int
-	// Disabled is set by annotateDisabledSummaries (admin_tables.go) when a
-	// stored repository override sets Enabled=false for this repository
-	// (operator-admin-tui spec's "Repository Alerts Renders Override-
-	// Disabled Repositories Distinctly" requirement). Never set by
-	// summarizeScanRunsByRepository itself.
-	Disabled bool
-}
-
 // effectiveScanRunTime returns a scan run's last-execution timestamp:
 // FinishedAt when present, else CreatedAt with inProgress=true so callers
 // can render an in-progress marker instead of leaving the date column blank
@@ -41,80 +23,6 @@ func effectiveScanRunTime(run ports.ScanRun) (t time.Time, inProgress bool) {
 		return *run.FinishedAt, false
 	}
 	return run.CreatedAt, true
-}
-
-// summarizeScanRunsByRepository collapses scan runs into one row per
-// repository (spec.md "Repeated rescans collapse into one dated row"). The
-// most recently executed run (by effectiveScanRunTime) becomes LatestRun,
-// RunCount tracks how many runs were folded in, and LastExecuted/InProgress
-// follow the FinishedAt->CreatedAt fallback so the date column is never
-// blank. Row order follows first-seen repository order in runs.
-func summarizeScanRunsByRepository(runs []ports.ScanRun) []repositorySummary {
-	order := make([]string, 0, len(runs))
-	byRepo := make(map[string]*repositorySummary, len(runs))
-
-	for _, run := range runs {
-		effTime, inProgress := effectiveScanRunTime(run)
-
-		summary, ok := byRepo[run.Repository]
-		if !ok {
-			order = append(order, run.Repository)
-			byRepo[run.Repository] = &repositorySummary{
-				Repository:   run.Repository,
-				LatestRun:    run,
-				LastExecuted: effTime,
-				InProgress:   inProgress,
-				RunCount:     1,
-			}
-			continue
-		}
-
-		summary.RunCount++
-		if effTime.After(summary.LastExecuted) {
-			summary.LatestRun = run
-			summary.LastExecuted = effTime
-			summary.InProgress = inProgress
-		}
-	}
-
-	summaries := make([]repositorySummary, 0, len(order))
-	for _, repo := range order {
-		summaries = append(summaries, *byRepo[repo])
-	}
-	return summaries
-}
-
-// repositorySummariesFromScanSummaries maps ports.RepositoryScanSummary rows
-// (already one row per repository, collapsed and severity-ordered
-// server-side by ListLatestScanRunPerRepository) straight onto the TUI's own
-// repositorySummary shape -- no re-grouping, unlike
-// summarizeScanRunsByRepository, which this replaces on the production load
-// path (repository-alerts-scan-coverage fix).
-func repositorySummariesFromScanSummaries(scanSummaries []ports.RepositoryScanSummary) []repositorySummary {
-	summaries := make([]repositorySummary, 0, len(scanSummaries))
-	for _, scanSummary := range scanSummaries {
-		effTime, inProgress := effectiveScanRunTime(scanSummary.Run)
-		summaries = append(summaries, repositorySummary{
-			Repository:   scanSummary.Run.Repository,
-			LatestRun:    scanSummary.Run,
-			LastExecuted: effTime,
-			InProgress:   inProgress,
-			RunCount:     scanSummary.RunCount,
-		})
-	}
-	return summaries
-}
-
-// scanRunsFromScanSummaries extracts each ports.RepositoryScanSummary's
-// latest run, for AdminViewState.TrivyScanRuns -- which, since this fix, no
-// longer holds every raw scan_runs row, only each repository's single
-// latest one (one entry per TrivySummaries row).
-func scanRunsFromScanSummaries(scanSummaries []ports.RepositoryScanSummary) []ports.ScanRun {
-	runs := make([]ports.ScanRun, 0, len(scanSummaries))
-	for _, scanSummary := range scanSummaries {
-		runs = append(runs, scanSummary.Run)
-	}
-	return runs
 }
 
 // sortScanRunsChronologically returns a NEW slice of runs ordered newest
