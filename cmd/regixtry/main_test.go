@@ -867,8 +867,6 @@ func TestParseFeatureConfigAutoDetectsManagedRuntime(t *testing.T) {
 }
 
 func TestParseFeatureConfigExplicitFlagsOverrideManagedRuntime(t *testing.T) {
-	t.Parallel()
-
 	bootstrapStatePath := writeManagedFeatureBootstrapState(t, "/var/lib/regixtry", "/var/lib/regixtry/metadata.db", "https://registry.example.com")
 	restore := swapFeatureBootstrapStatePath(t, bootstrapStatePath)
 	defer restore()
@@ -1576,8 +1574,6 @@ func TestFeatureRuntimeLifecycleCommandsUseManagedRuntimeActions(t *testing.T) {
 }
 
 func TestFeatureRuntimeLifecycleCommandStopsOnTruthfulFailure(t *testing.T) {
-	t.Parallel()
-
 	root := t.TempDir()
 	storageRoot := filepath.Join(root, "data")
 	databasePath := filepath.Join(storageRoot, "metadata.db")
@@ -1610,8 +1606,6 @@ func TestFeatureRuntimeLifecycleCommandStopsOnTruthfulFailure(t *testing.T) {
 }
 
 func TestFeatureRuntimeLifecycleCommandsAutoDetectManagedRuntimePaths(t *testing.T) {
-	t.Parallel()
-
 	root := t.TempDir()
 	storageRoot := filepath.Join(root, "managed")
 	databasePath := filepath.Join(storageRoot, "metadata.db")
