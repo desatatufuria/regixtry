@@ -42,10 +42,10 @@ func TestAdminClientDecodesTheLatestOnlyScanFieldsFromTheRealRouter(t *testing.T
 	service := appregixtry.NewService(blob, meta, access, ports.NewSingleTenantResolver("tenant-a"), ports.NewInlineJobRunner())
 	router := regixtryhttp.NewRouter(service, authService)
 	ctx := context.Background()
-	if _, err := authService.BootstrapAdmin(ctx, ports.BootstrapAdminInput{Username: "admin", Password: "password123"}); err != nil {
+	if _, err := authService.BootstrapAdmin(ctx, ports.BootstrapAdminInput{Username: "admin", Password: "fixture-pass-9x"}); err != nil {
 		t.Fatal(err)
 	}
-	login, err := authService.LoginWithPassword(ctx, "admin", "password123", nil)
+	login, err := authService.LoginWithPassword(ctx, "admin", "fixture-pass-9x", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
