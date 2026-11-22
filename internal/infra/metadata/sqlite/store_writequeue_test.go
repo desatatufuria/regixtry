@@ -7,11 +7,13 @@ import (
 	"math/rand"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	domain "regixtry/internal/domain/regixtry"
+	"regixtry/internal/ports"
 )
 
 // TestStoreWriteQueueSurvivesShortBusyTimeoutUnderContention pins that write
@@ -409,4 +411,139 @@ func TestFIFOLockSurvivesRandomCancellationsWhileReleasing(t *testing.T) {
 		t.Fatalf("final acquire() error = %v, want the lock to be free", err)
 	}
 	lock.release()
+}
+
+// singleStatementWrites lists every store method that issues one write
+// statement (no explicit transaction). Each must go through the write queue.
+func singleStatementWrites(store *Store) map[string]func(ctx context.Context) error {
+	repo := domain.MustParseRepositoryRef("library/alpine")
+	upload := domain.UploadState{
+		ID:         "upload-queue",
+		Repository: repo,
+		Status:     domain.UploadStatusActive,
+		StartedAt:  time.Now().UTC(),
+		UpdatedAt:  time.Now().UTC(),
+		Location:   "/tmp/uploads/upload-queue/data",
+	}
+	return map[string]func(ctx context.Context) error{
+		"SaveUpload":   func(ctx context.Context) error { return store.SaveUpload(ctx, "t", upload) },
+		"DeleteUpload": func(ctx context.Context) error { return store.DeleteUpload(ctx, "t", "missing") },
+		"PruneExpiredGCReports": func(ctx context.Context) error {
+			_, err := store.PruneExpiredGCReports(ctx, time.Now())
+			return err
+		},
+		"DeleteTag": func(ctx context.Context) error { return store.DeleteTag(ctx, "t", repo, "missing") },
+		"UpsertScanSettings": func(ctx context.Context) error {
+			return store.UpsertScanSettings(ctx, "t", "scanning", ports.ScanSettings{})
+		},
+		"UpsertScanPolicySettings": func(ctx context.Context) error {
+			return store.UpsertScanPolicySettings(ctx, "t", ports.ScanPolicySettings{})
+		},
+		"UpsertUpdateChannel": func(ctx context.Context) error {
+			return store.UpsertUpdateChannel(ctx, "t", ports.UpdateChannelSettings{})
+		},
+		"UpsertSigningPolicySettings": func(ctx context.Context) error {
+			return store.UpsertSigningPolicySettings(ctx, "t", ports.SigningPolicySettings{})
+		},
+		"UpsertRepositoryFeatureOverride": func(ctx context.Context) error {
+			return store.UpsertRepositoryFeatureOverride(ctx, "t", "library/alpine", "scanning", []byte(`{}`))
+		},
+		"DeleteRepositoryFeatureOverride": func(ctx context.Context) error {
+			return store.DeleteRepositoryFeatureOverride(ctx, "t", "library/alpine", "scanning")
+		},
+		"UpsertFeatureRuntimeState": func(ctx context.Context) error {
+			return store.UpsertFeatureRuntimeState(ctx, "t", "scanning", ports.FeatureRuntimeState{})
+		},
+		"UpsertScanRun": func(ctx context.Context) error {
+			return store.UpsertScanRun(ctx, "t", ports.ScanRun{ID: "run-queue", Repository: "library/alpine", Digest: "sha256:" + strings.Repeat("a", 64), Status: ports.ScanRunStatusQueued})
+		},
+		"RecordScanSweep": func(ctx context.Context) error {
+			return store.RecordScanSweep(ctx, "t", ports.ScanSweepSummary{})
+		},
+		"UpsertScanSchedulerState": func(ctx context.Context) error {
+			return store.UpsertScanSchedulerState(ctx, "t", ports.ScanSchedulerState{})
+		},
+	}
+}
+
+// A queued write transaction that outlives the busy timeout must not make a
+// single-statement write fail with SQLITE_BUSY: the statement waits in the
+// queue, like every other writer, and runs once the holder is done.
+func TestSingleStatementWritesQueueBehindALongWriteTransaction(t *testing.T) {
+	t.Parallel()
+
+	for name := range singleStatementWrites(nil) {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			store := mustTestStore(t, 50)
+			ctx := context.Background()
+			holder, err := store.beginWrite(ctx)
+			if err != nil {
+				t.Fatalf("beginWrite() error = %v", err)
+			}
+			if _, err := holder.ExecContext(ctx, `INSERT OR IGNORE INTO repository_blobs (tenant, repository, digest, created_at) VALUES ('t','r','d','x')`); err != nil {
+				t.Fatalf("holder write error = %v", err)
+			}
+
+			done := make(chan error, 1)
+			go func() { done <- singleStatementWrites(store)[name](ctx) }()
+
+			time.Sleep(300 * time.Millisecond) // 6x the busy timeout
+			if err := holder.Commit(); err != nil {
+				t.Fatalf("holder Commit() error = %v", err)
+			}
+			select {
+			case err := <-done:
+				if err != nil && isBusy(err) {
+					t.Fatalf("%s error = %v, want it queued behind the holder", name, err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatalf("%s never returned", name)
+			}
+		})
+	}
+}
+
+// A single-statement write that is waiting in the queue gives up with the
+// context's error as soon as its context ends, and never touches SQLite.
+func TestSingleStatementWritesHonourCancellationWhileQueued(t *testing.T) {
+	t.Parallel()
+
+	store := mustTestStore(t, 5000)
+	holder, err := store.beginWrite(context.Background())
+	if err != nil {
+		t.Fatalf("beginWrite() error = %v", err)
+	}
+	defer holder.Rollback()
+
+	for name, write := range singleStatementWrites(store) {
+		t.Run(name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+			defer cancel()
+
+			start := time.Now()
+			err := write(ctx)
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("%s error = %v, want context.DeadlineExceeded", name, err)
+			}
+			if elapsed := time.Since(start); elapsed > 2*time.Second {
+				t.Fatalf("%s took %s to give up", name, elapsed)
+			}
+		})
+	}
+}
+
+func mustTestStore(t *testing.T, busyMillis int) *Store {
+	t.Helper()
+	store, err := newWithBusyTimeout(filepath.Join(t.TempDir(), "registry.db"), busyMillis)
+	if err != nil {
+		t.Fatalf("newWithBusyTimeout() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	return store
+}
+
+func isBusy(err error) bool {
+	return err != nil && (strings.Contains(err.Error(), "SQLITE_BUSY") || strings.Contains(err.Error(), "database is locked"))
 }

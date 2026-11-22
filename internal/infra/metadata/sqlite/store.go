@@ -333,7 +333,7 @@ func (s *Store) SaveUpload(ctx context.Context, tenant string, state domain.Uplo
 		return err
 	}
 
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.execWrite(ctx, `
 		INSERT INTO uploads (id, tenant, repository, status, size, started_at, updated_at, location)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
@@ -470,7 +470,7 @@ func (s *Store) UploadExists(ctx context.Context, uploadID string) (bool, error)
 }
 
 func (s *Store) DeleteUpload(ctx context.Context, tenant string, uploadID string) error {
-	result, err := s.db.ExecContext(ctx, `DELETE FROM uploads WHERE tenant = ? AND id = ?`, tenant, uploadID)
+	result, err := s.execWrite(ctx, `DELETE FROM uploads WHERE tenant = ? AND id = ?`, tenant, uploadID)
 	if err != nil {
 		return err
 	}
@@ -1030,7 +1030,7 @@ func (s *Store) GetGCReport(ctx context.Context, reportID string) (ports.GCRepor
 // "deleted"-state rows are the audit trail of irreversible deletions and are
 // NEVER pruned (design.md D8 -- hygiene, not safety).
 func (s *Store) PruneExpiredGCReports(ctx context.Context, now time.Time) (int, error) {
-	result, err := s.db.ExecContext(ctx, `
+	result, err := s.execWrite(ctx, `
 		DELETE FROM gc_reports WHERE status = ? AND expires_at <= ?
 	`, string(ports.GCReportStatusReported), now.UTC().Format(time.RFC3339Nano))
 	if err != nil {
@@ -1103,7 +1103,7 @@ func (s *Store) DeleteTag(ctx context.Context, tenant string, repository domain.
 		return err
 	}
 
-	result, err := s.db.ExecContext(ctx, `
+	result, err := s.execWrite(ctx, `
 		DELETE FROM tags
 		WHERE tenant = ? AND name = ? AND repository_id = (
 			SELECT id FROM repositories WHERE tenant = ? AND name = ?
@@ -1449,7 +1449,7 @@ func (s *Store) GetScanSettings(ctx context.Context, tenant string, feature stri
 }
 
 func (s *Store) UpsertScanSettings(ctx context.Context, tenant string, feature string, settings ports.ScanSettings) error {
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.execWrite(ctx, `
 		INSERT INTO scan_settings (tenant, feature, enabled, schedule_enabled, interval, timeout, cache_dir, binary_path, service_url, registry_reachable_url, auth_token, tls_ca_cert_path, tls_insecure_skip_verify, max_concurrency, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(tenant, feature) DO UPDATE SET
@@ -1495,7 +1495,7 @@ func (s *Store) GetScanPolicySettings(ctx context.Context, tenant string) (ports
 }
 
 func (s *Store) UpsertScanPolicySettings(ctx context.Context, tenant string, settings ports.ScanPolicySettings) error {
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.execWrite(ctx, `
 		INSERT INTO scan_policy_settings (tenant, enabled, severity_threshold, updated_at)
 		VALUES (?, ?, ?, ?)
 		ON CONFLICT(tenant) DO UPDATE SET
@@ -1534,7 +1534,7 @@ func (s *Store) GetUpdateChannel(ctx context.Context, tenant string) (ports.Upda
 }
 
 func (s *Store) UpsertUpdateChannel(ctx context.Context, tenant string, settings ports.UpdateChannelSettings) error {
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.execWrite(ctx, `
 		INSERT INTO update_channel_settings (tenant, channel, updated_at)
 		VALUES (?, ?, ?)
 		ON CONFLICT(tenant) DO UPDATE SET
@@ -1618,7 +1618,7 @@ func (s *Store) UpsertSigningPolicySettings(ctx context.Context, tenant string, 
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `
+	_, err = s.execWrite(ctx, `
 		INSERT INTO signing_policy_settings (tenant, enabled, trusted_public_keys, updated_at, unsigned_self_read, trusted_identities)
 		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT(tenant) DO UPDATE SET
@@ -1687,7 +1687,7 @@ func (s *Store) ListRepositoryFeatureOverrides(ctx context.Context, tenant strin
 }
 
 func (s *Store) UpsertRepositoryFeatureOverride(ctx context.Context, tenant string, repository string, feature string, payload []byte) error {
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.execWrite(ctx, `
 		INSERT INTO repository_feature_overrides (tenant, repository, feature_name, payload, updated_at)
 		VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(tenant, repository, feature_name) DO UPDATE SET
@@ -1698,7 +1698,7 @@ func (s *Store) UpsertRepositoryFeatureOverride(ctx context.Context, tenant stri
 }
 
 func (s *Store) DeleteRepositoryFeatureOverride(ctx context.Context, tenant string, repository string, feature string) error {
-	result, err := s.db.ExecContext(ctx, `
+	result, err := s.execWrite(ctx, `
 		DELETE FROM repository_feature_overrides WHERE tenant = ? AND repository = ? AND feature_name = ?
 	`, tenant, repository, feature)
 	if err != nil {
@@ -1761,7 +1761,7 @@ func (s *Store) UpsertFeatureRuntimeState(ctx context.Context, tenant string, fe
 	if state.UpdatedAt.IsZero() {
 		state.UpdatedAt = time.Now().UTC()
 	}
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.execWrite(ctx, `
 		INSERT INTO feature_runtime_state (tenant, feature, status, active_version, previous_version, active_binary_path, cache_dir, receipt_path, migration_hint, last_verified_at, last_health_check_at, last_db_updated_at, last_error, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(tenant, feature) DO UPDATE SET
@@ -1869,6 +1869,11 @@ func (s *Store) UpsertScanRun(ctx context.Context, tenant string, run ports.Scan
 	if run.Status == ports.ScanRunStatusFailed {
 		return s.recordFailedScanRun(ctx, tenant, run)
 	}
+	if err := s.writeLock.acquire(ctx); err != nil {
+		return err
+	}
+	defer s.writeLock.release()
+
 	return s.upsertScanRunExec(ctx, s.db, tenant, run)
 }
 
@@ -2440,7 +2445,7 @@ func (s *Store) RecordScanSweep(ctx context.Context, tenant string, sweep ports.
 		return value.UTC().Format(time.RFC3339Nano)
 	}
 	epoch := time.Time{}.UTC().Format(time.RFC3339Nano)
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.execWrite(ctx, `
 		INSERT INTO scan_scheduler_state (tenant, owner_id, lease_expires_at, last_heartbeat_at,
 			sweep_started_at, sweep_finished_at, sweep_visited, sweep_skipped, sweep_queued, sweep_errors,
 			last_db_refresh_at, last_db_refresh_error, db_fingerprint, db_changed)
@@ -2466,7 +2471,7 @@ func (s *Store) UpsertScanSchedulerState(ctx context.Context, tenant string, sta
 	if state.BatchStartedAt != nil {
 		batchStartedAt = state.BatchStartedAt.UTC().Format(time.RFC3339Nano)
 	}
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.execWrite(ctx, `
 		INSERT INTO scan_scheduler_state (tenant, owner_id, lease_expires_at, last_heartbeat_at, batch_started_at)
 		VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(tenant) DO UPDATE SET
