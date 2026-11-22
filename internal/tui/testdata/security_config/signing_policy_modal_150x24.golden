@@ -9,10 +9,10 @@
       Robots                   │  │ U  │  Unsigned self-read (space cycles)                                   │                        ECDSA P-256 │
       Repository access        │  │ E  │   pusher                                                             │                        ECDSA P-256 │
                                │  │ p  │  Trusted Keys (2)                                                    │                                    │
-  SECURITY                     │  │ p  │    Key: 2c1d7289f2db                                                 │   OIDC ISSUER                      │
-      Image scanning           │  │ w  │    Key: aaf7110bc769                                                 │   https://token.actions.githubuse… │
-      Secret scanning          │  │ L  │  Trusted Identities (1)                                              │  y is enough.                      │
-    ▸ Signing policy           │  │    │    Identity: https://github.com/team/.* (https://token.actions.git…  │                                    │
+  SECURITY                     │  │ p  │    Key: 2c1d7289f2db                                                 │                                    │
+      Image scanning           │  │ w  │    Key: aaf7110bc769                                                 │   OIDC ISSUER                      │
+      Secret scanning          │  │ L  │  Trusted Identities (1)                                              │   https://token.actions.githubuse… │
+    ▸ Signing policy           │  │    │    Identity: https://github.com/team/.* (https://token.actions.git…  │  y is enough.                      │
                                │  ╰──  │  Clear all trusted keys                                              │  ──────────────────────────────────╯
   OPERATIONS                   │  ╭──  │                                                                      │  ──────────────────────────────────╮
       Scan runs                │  │ P  │   Save  enter   Cancel  esc                                          │                                    │

@@ -24,7 +24,7 @@ func (s signingConfigScreen) View(theme adminTheme, env screenEnv) screenFrame {
 		leftW := max((bodyW-securityPanelGap)*2/5, 1)
 		rightW := max(bodyW-securityPanelGap-leftW, 1)
 		policy := s.policyLines(theme, leftW-4)
-		natural := 4 + len(s.policy.TrustedPublicKeys) + len(s.policy.TrustedIdentities) + 4
+		natural := 4 + max(len(s.policy.TrustedPublicKeys), 1) + max(len(s.policy.TrustedIdentities), 1) + 5
 		top := securityTopHeight(max(natural, len(policy)+3), bodyH-len(lines))
 		columns := lipgloss.JoinHorizontal(lipgloss.Top,
 			securityPanel(theme, "SIGNING POLICY", leftW, top, policy),
@@ -102,6 +102,12 @@ func (s signingConfigScreen) trustLines(theme adminTheme, width, rows int) []str
 	// Fixed rows: two titles, two headers and the closing note.
 	note := securityNote(theme, "Any one matching key or identity is enough.", width)
 	room := max(rows-4-len(note), 2)
+	// One blank row separates the two lists when every entry still fits;
+	// when it does not, the spacer is the first thing to go.
+	spacer := room-1 >= max(len(fingerprints), 1)+max(len(identities), 1)
+	if spacer {
+		room--
+	}
 	keyRows, idRows := splitTrustRows(max(len(fingerprints), 1), max(len(identities), 1), room)
 
 	typeW := len(signingKeyType)
@@ -114,6 +120,9 @@ func (s signingConfigScreen) trustLines(theme adminTheme, width, rows int) []str
 		return padText(fingerprints[i], keyW) + strings.Repeat(" ", securityColGap) + signingKeyType
 	})...)
 
+	if spacer {
+		lines = append(lines, "")
+	}
 	issuerW := min(44, max(width/2, 1))
 	sanW := max(width-issuerW-securityColGap, 1)
 	lines = append(lines,

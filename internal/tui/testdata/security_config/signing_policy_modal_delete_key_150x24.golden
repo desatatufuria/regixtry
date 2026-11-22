@@ -9,10 +9,10 @@
       Robots                   │  │ U  │   pusher                                                             │                        ECDSA P-256 │
       Repository access        │  │ E  │   Trusted Keys (2)                                                   │                        ECDSA P-256 │
                                │  │ p  │  ▸  Key: 2c1d7289f2db                                                │                                    │
-  SECURITY                     │  │ p  │    Key: aaf7110bc769                                                 │   OIDC ISSUER                      │
-      Image scanning           │  │ w  │  This key currently verifies 0 tagged image(s). Delete it anyway?    │   https://token.actions.githubuse… │
-      Secret scanning          │  │ L  │  enter deletes the key, esc keeps it                                 │  y is enough.                      │
-    ▸ Signing policy           │  │    │  Trusted Identities (1)                                              │                                    │
+  SECURITY                     │  │ p  │    Key: aaf7110bc769                                                 │                                    │
+      Image scanning           │  │ w  │  This key currently verifies 0 tagged image(s). Delete it anyway?    │   OIDC ISSUER                      │
+      Secret scanning          │  │ L  │  enter deletes the key, esc keeps it                                 │   https://token.actions.githubuse… │
+    ▸ Signing policy           │  │    │  Trusted Identities (1)                                              │  y is enough.                      │
                                │  ╰──  │    Identity: https://github.com/team/.* (https://token.actions.git…  │  ──────────────────────────────────╯
   OPERATIONS                   │  ╭──  │  Clear all trusted keys                                              │  ──────────────────────────────────╮
       Scan runs                │  │ P  │                                                                      │                                    │
