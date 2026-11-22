@@ -46,8 +46,8 @@ type overrideGlobalMsg struct {
 	editor  uint64
 	enabled bool
 	keys    []string
-	// identities is the number of keyless identities of the signing policy.
-	identities int
+	// identities are the keyless identities of the signing policy.
+	identities []ports.TrustedIdentity
 }
 
 // overrideListMsg is the stored overrides of the feature. seq is the number of
@@ -123,7 +123,7 @@ func loadOverrideGlobalCmd(env screenEnv, gen, editor uint64, feature string) te
 			if err != nil {
 				return fail(err)
 			}
-			return overrideGlobalMsg{securityResult: securityResult{gen: gen}, editor: editor, enabled: settings.Enabled, keys: settings.TrustedPublicKeys, identities: len(settings.TrustedIdentities)}
+			return overrideGlobalMsg{securityResult: securityResult{gen: gen}, editor: editor, enabled: settings.Enabled, keys: settings.TrustedPublicKeys, identities: settings.TrustedIdentities}
 		}
 		page, err := client.GetFeaturePage(context.Background(), session, feature)
 		if err != nil {

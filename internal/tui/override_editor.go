@@ -79,10 +79,9 @@ type overrideEditor struct {
 	// neither be edited nor saved.
 	globalEnabled bool
 	globalKeys    []string
-	// globalIdentities is how many keyless identities the global policy has;
-	// only the count is kept, to word the inheriting note (identities are not
-	// copied into a new override).
-	globalIdentities int
+	// globalIdentities are the keyless identities of the global policy; a new
+	// override starts with them like it does with the keys.
+	globalIdentities []ports.TrustedIdentity
 	globalLoaded     bool
 	prefillApplied   bool
 	// dirty is true once the operator changed anything since the form was
@@ -443,6 +442,7 @@ func (e overrideEditor) applyGlobalDefaults() overrideEditor {
 	e.enabled = e.globalEnabled
 	if e.feature == signingFeatureName {
 		e.keys = e.keys.SetKeys(e.globalKeys)
+		e.identities = e.identities.SetIdentities(e.globalIdentities)
 	}
 	e.dirty = false
 	return e
