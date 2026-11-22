@@ -236,13 +236,21 @@ func scanTook(run ports.ScanRun) string {
 	d := run.FinishedAt.Sub(*run.StartedAt)
 	switch {
 	case d < time.Minute:
-		return fmt.Sprintf("%ds", int(d/time.Second))
+		return "<1 min"
 	case d < time.Hour:
-		return fmt.Sprintf("%dm", int(d/time.Minute))
+		return fmt.Sprintf("%d min", int(d/time.Minute))
 	case d < 24*time.Hour:
-		return fmt.Sprintf("%dh", int(d/time.Hour))
+		hours, minutes := int(d/time.Hour), int(d%time.Hour/time.Minute)
+		if minutes == 0 {
+			return fmt.Sprintf("%d h", hours)
+		}
+		return fmt.Sprintf("%d h %d min", hours, minutes)
 	}
-	return fmt.Sprintf("%dd", int(d/(24*time.Hour)))
+	days, hours := int(d/(24*time.Hour)), int(d%(24*time.Hour)/time.Hour)
+	if hours == 0 {
+		return fmt.Sprintf("%d d", days)
+	}
+	return fmt.Sprintf("%d d %d h", days, hours)
 }
 
 // scanShortDigest is "sha256:9c41…e0d2".

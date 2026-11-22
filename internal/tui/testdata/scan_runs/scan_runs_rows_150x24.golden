@@ -3,10 +3,10 @@
  regixtry admin                │                                                                                                                      
                                │  Scan runs                                                                   Trivy scans, latest of each repository  
     Overview                   │  ╭────────────────────────────────────────────────────────────────────────╮  ╭────────────────────────────────────╮  
-                               │  │   REPOSITORY                STATUS     STARTED       TOOK   CRIT  HIGH │  │ team/api:1.8.2                     │  
-  ACCESS                       │  │ ▸ team/api                  completed  14 Mar 08:30  38s    2     5    │  │ completed, trigger push            │  
-      Users                    │  │   team/web                  running    14 Mar 09:20  -      -     -    │  │ RUN                                │  
-      Robots                   │  │   team/docs                 failed     13 Mar 13:30  12s    -     -    │  │ Digest            sha256:9c41…e0d2 │  
+                               │  │   REPOSITORY           STATUS     STARTED       TOOK        CRIT  HIGH │  │ team/api:1.8.2                     │  
+  ACCESS                       │  │ ▸ team/api             completed  14 Mar 08:30  <1 min      2     5    │  │ completed, trigger push            │  
+      Users                    │  │   team/web             running    14 Mar 09:20  -           -     -    │  │ RUN                                │  
+      Robots                   │  │   team/docs            failed     13 Mar 13:30  <1 min      -     -    │  │ Digest            sha256:9c41…e0d2 │  
       Repository access        │  │                                                                        │  │ Started           14 Mar 08:30 UTC │  
                                │  │                                                                        │  │ Finished          14 Mar 08:30 UTC │  
   SECURITY                     │  │                                                                        │  │ Trivy                       0.58.1 │  

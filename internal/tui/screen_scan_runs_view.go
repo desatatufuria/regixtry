@@ -88,7 +88,7 @@ func (s scanRunsScreen) runsBoard(theme adminTheme, env screenEnv, listW, panelW
 		{title: "REPOSITORY", flex: 1, min: 8},
 		{title: "STATUS", fixed: 9},
 		{title: "STARTED", fixed: 12},
-		{title: "TOOK", fixed: 5},
+		{title: "TOOK", fixed: 10},
 		{title: "CRIT", fixed: 4},
 		{title: "HIGH", fixed: 4},
 	}

@@ -149,7 +149,7 @@ func TestScanRunsShowsTheLatestRunOfEachRepositoryInsideTheShell(t *testing.T) {
 		t.Errorf("header = %q", lines[0])
 	}
 	for _, want := range []string{"REPOSITORY", "STATUS", "STARTED", "TOOK", "CRIT", "HIGH",
-		"team/api", "team/web", "team/docs", "completed", "running", "failed", "38s", "12s",
+		"team/api", "team/web", "team/docs", "completed", "running", "failed", "<1 min",
 		"team/api:1.8.2", "completed, trigger push", "sha256:9c41…e0d2", "0.58.1", "Critical", "Medium", "Low",
 		"Scan history", "Refresh", "enter", "esc back", "↑↓ move", "r refresh"} {
 		if !strings.Contains(out, want) {
@@ -494,5 +494,23 @@ func TestScanListScreensViewGoldens(t *testing.T) {
 				assertScanGolden(t, name, scanText(scanModelAt(t, tc.client(), tc.id, size.w, size.h)))
 			})
 		}
+	}
+}
+
+func TestScanTookNeverShowsSeconds(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		seconds int
+		want    string
+	}{{0, "<1 min"}, {59, "<1 min"}, {60, "1 min"}, {3599, "59 min"}, {3600, "1 h"}, {7800, "2 h 10 min"}, {90000, "1 d 1 h"}, {86400, "1 d"}} {
+		started := charFixedTime
+		finished := started.Add(time.Duration(tc.seconds) * time.Second)
+		run := ports.ScanRun{StartedAt: &started, FinishedAt: &finished}
+		if got := scanTook(run); got != tc.want {
+			t.Errorf("scanTook(%d s) = %q, want %q", tc.seconds, got, tc.want)
+		}
+	}
+	if got := scanTook(ports.ScanRun{}); got != "-" {
+		t.Errorf("scanTook of an unfinished run = %q, want -", got)
 	}
 }

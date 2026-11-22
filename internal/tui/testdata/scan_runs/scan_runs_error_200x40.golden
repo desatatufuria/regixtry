@@ -3,7 +3,7 @@
  regixtry admin                │                                                                                                                                                                        
                                │  Scan runs                                                                                                                                                Unavailable  
     Overview                   │  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  ╭──────────────────────────────────────╮  
-                               │  │   REPOSITORY                                                                STATUS     STARTED       TOOK   CRIT  HIGH │  │ Select a run to see its details.     │  
+                               │  │   REPOSITORY                                                           STATUS     STARTED       TOOK        CRIT  HIGH │  │ Select a run to see its details.     │  
   ACCESS                       │  │ Could not read scan history: admin API returned 500                                                                    │  │                                      │  
       Users                    │  │ Press r to try again.                                                                                                  │  │                                      │  
       Robots                   │  │                                                                                                                        │  │                                      │  
