@@ -379,3 +379,49 @@ func TestOnePusherWithManyRepositoriesCannotFillTheGlobalCap(t *testing.T) {
 		t.Fatalf("victim runs = %#v, want a real queued/running scan despite the attacker flood", runs)
 	}
 }
+
+func TestSkippedRowIsTenantScopedAndTracksTheNewestDroppedPush(t *testing.T) {
+	service, _, cleanup := newPushScanService(t)
+	defer cleanup()
+	ctx := context.Background()
+	for _, tenant := range []string{"tenant-a", "tenant-b"} {
+		if err := service.metadata.UpsertFeatureRuntimeState(ctx, tenant, "trivy", ports.FeatureRuntimeState{Status: ports.FeatureRuntimeStatusReady, ActiveBinaryPath: "/x/trivy", CacheDir: "/x/c", UpdatedAt: time.Now().UTC()}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := service.metadata.GetScanSettings(ctx, tenant, "trivy"); err != nil {
+			if err := service.metadata.UpsertScanSettings(ctx, tenant, "trivy", ports.ScanSettings{Enabled: true, Timeout: time.Minute, Interval: time.Hour, RegistryReachableURL: "https://registry.internal", MaxConcurrency: 1, UpdatedAt: time.Now().UTC()}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	d1 := "sha256:" + strings.Repeat("1", 64)
+	d2 := "sha256:" + strings.Repeat("2", 64)
+	d3 := "sha256:" + strings.Repeat("3", 64)
+	service.recordPushScanSkipped(ctx, "tenant-a", "library/alpine", "t1", d1)
+	service.recordPushScanSkipped(ctx, "tenant-b", "library/alpine", "tb", d3)
+	time.Sleep(5 * time.Millisecond)
+	service.recordPushScanSkipped(ctx, "tenant-a", "library/alpine", "t2", d2)
+
+	runsA, _ := service.metadata.ListScanRuns(ctx, "tenant-a", "library/alpine", 10)
+	runsB, _ := service.metadata.ListScanRuns(ctx, "tenant-b", "library/alpine", 10)
+	if len(runsA) != 1 || runsA[0].Digest != d2 || runsA[0].RequestedRef != "t2" {
+		t.Fatalf("tenant-a runs = %#v, want one row holding the newest dropped push", runsA)
+	}
+	if len(runsB) != 1 || runsB[0].Digest != d3 {
+		t.Fatalf("tenant-b runs = %#v, want its own untouched row", runsB)
+	}
+	if runsA[0].ID == runsB[0].ID {
+		t.Fatalf("both tenants share skipped row id %q", runsA[0].ID)
+	}
+
+	// The refreshed (newer created_at) skipped row still never outranks a
+	// real run of the same digest, even an older one.
+	past := time.Now().UTC().Add(-time.Hour)
+	if err := service.metadata.UpsertScanRun(ctx, "tenant-a", ports.ScanRun{ID: "real-d2", Repository: "library/alpine", RequestedRef: "t2", Digest: d2, Status: ports.ScanRunStatusCompleted, Trigger: ports.ScanTriggerManual, CreatedAt: past, UpdatedAt: past, Critical: 1}); err != nil {
+		t.Fatal(err)
+	}
+	latest, err := service.metadata.GetLatestScanRunByDigest(ctx, "tenant-a", "library/alpine", d2)
+	if err != nil || latest.ID != "real-d2" {
+		t.Fatalf("latest = %#v err=%v, want the real run", latest, err)
+	}
+}

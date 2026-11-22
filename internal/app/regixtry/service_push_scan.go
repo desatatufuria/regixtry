@@ -143,7 +143,7 @@ func (s *Service) recordPushScanSkipped(ctx context.Context, tenant string, repo
 	} else if err != nil && !domain.IsCode(err, domain.ErrorCodeNotFound) {
 		return
 	}
-	sum := sha256.Sum256([]byte(repository))
+	sum := sha256.Sum256([]byte(tenant + "\x00" + repository))
 	now := s.now()
 	run := ports.ScanRun{
 		ID:           "push-skipped-" + hex.EncodeToString(sum[:8]),
