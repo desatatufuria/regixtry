@@ -324,6 +324,9 @@ type serveConfig struct {
 	// TrustedProxies is the raw -trusted-proxies list (CIDRs/IPs). Empty means
 	// X-Forwarded-For is never believed when attributing a failed login.
 	TrustedProxies string
+	// LoginMaxConcurrency caps simultaneous bcrypt comparisons (0 = automatic,
+	// max(2, NumCPU/2)).
+	LoginMaxConcurrency int
 
 	// Test seams; the zero values keep production behavior.
 	uploadReapInterval time.Duration
@@ -450,6 +453,7 @@ func parseServeConfig(args []string) (serveConfig, error) {
 	uploadTTLDefault, ttlErr := strictDurationEnv("REGISTRY_UPLOAD_TTL", appregixtry.DefaultUploadTTL)
 	trackEnv(ttlErr)
 	flags.DurationVar(&cfg.UploadTTL, "upload-ttl", uploadTTLDefault, "idle time after which an abandoned blob upload is deleted (0 = default, negative disables the reaper)")
+	flags.IntVar(&cfg.LoginMaxConcurrency, "login-max-concurrency", int(limitInt64("REGISTRY_LOGIN_MAX_CONCURRENCY", 0)), "maximum simultaneous bcrypt password checks; a login that cannot get a slot within 250ms gets 429 (0 = automatic, max(2, NumCPU/2))")
 
 	if limitEnvErr != nil {
 		return serveConfig{}, limitEnvErr
@@ -2469,7 +2473,9 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 			return nil, nil, err
 		}
 
-		authService = appauth.NewService(authStore)
+		concreteAuth := appauth.NewService(authStore)
+		concreteAuth.ConfigureLogin(appauth.LoginPolicy{MaxConcurrency: cfg.LoginMaxConcurrency})
+		authService = concreteAuth
 		err = authService.EnsureBootstrapAdmin(context.Background())
 		if err != nil {
 			_ = authStore.Close()

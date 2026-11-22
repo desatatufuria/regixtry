@@ -36,6 +36,7 @@
 | `-max-open-uploads` | `REGISTRY_MAX_OPEN_UPLOADS` | `1000` | Maximum concurrently open blob uploads; more is `429` `TOOMANYREQUESTS`. Negative disables |
 | `-max-open-uploads-per-repo` | `REGISTRY_MAX_OPEN_UPLOADS_PER_REPO` | `200` | Maximum concurrently open blob uploads per repository. Negative disables |
 | `-upload-ttl` | `REGISTRY_UPLOAD_TTL` | `24h` | Idle time after which an abandoned upload (row and temp file) is deleted by a background reaper. Negative disables the reaper |
+| `-login-max-concurrency` | `REGISTRY_LOGIN_MAX_CONCURRENCY` | `0` (automatic: `max(2, NumCPU/2)`) | Maximum simultaneous bcrypt password checks. A password login that cannot get a slot within 250 ms is refused with `429` `TOOMANYREQUESTS` and `Retry-After: 1` without verifying the password. A valid credential token skips bcrypt and the limiter |
 | `-trusted-proxies` | `REGISTRY_TRUSTED_PROXIES` | empty | Comma-separated IPs/CIDRs of reverse proxies whose `X-Forwarded-For` is trusted when logging the client IP of a failed login. Empty ignores `X-Forwarded-For`. An invalid entry is a startup error. See [operations.md](operations.md#reverse-proxy-and-client-ip) |
 
 For the five upload/manifest limits above (`-max-manifest-bytes`, `-max-upload-bytes`, `-max-open-uploads`, `-max-open-uploads-per-repo`, `-upload-ttl`): `0` = use the default, a negative value = disable the limit. A non-numeric environment value is a startup error naming the variable.

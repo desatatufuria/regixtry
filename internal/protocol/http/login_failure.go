@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	domainauth "regixtry/internal/domain/auth"
+	"regixtry/internal/ports"
 )
 
 // maxLoginFailureReasons bounds the counter's label set so a bug that leaks
@@ -89,12 +90,25 @@ func (r *Router) recordLoginFailure(req *stdhttp.Request, endpoint string, usern
 	r.logger.Print(line)
 }
 
+// recordLoginThrottle counts and logs a login refused before verification.
+func (r *Router) recordLoginThrottle(req *stdhttp.Request, endpoint string, username string, throttled *ports.LoginThrottledError) {
+	reason := throttled.Reason
+	if reason == "" {
+		reason = "throttled"
+	}
+	r.loginFailures.inc(reason)
+	if r.logger == nil {
+		return
+	}
+	r.logger.Printf("login failed endpoint=%s ip=%s reason=%q %s", endpoint, clientIP(req, r.trustedProxies), reason, accountLogField(username, reason))
+}
+
 // accountLogField renders the account for the log. An existing account is
 // logged by its normalized (and bounded) name; an unknown username is
 // attacker-chosen and unbounded in variety, so it is logged as a short hash.
 func accountLogField(username string, reason string) string {
 	normalized := strings.ToLower(strings.TrimSpace(username))
-	if reason == "unknown user" {
+	if reason == "unknown user" || strings.HasPrefix(reason, "throttled") {
 		sum := sha256.Sum256([]byte(normalized))
 		return "account_hash=" + hex.EncodeToString(sum[:4])
 	}

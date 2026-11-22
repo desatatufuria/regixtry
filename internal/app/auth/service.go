@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -26,13 +27,16 @@ type Service struct {
 	// comparePassword is the bcrypt comparison every password login performs;
 	// a seam so tests can assert each failure path reaches exactly one.
 	comparePassword func(hash, password []byte) error
+	// limiter bounds simultaneous bcrypt comparisons (see ConfigureLogin).
+	limiter *loginLimiter
+	logger  *log.Logger
 }
 
 // robotRollbackTimeout is the default bound on the robot rollback delete.
 const robotRollbackTimeout = 5 * time.Second
 
 func NewService(store ports.AuthStore) *Service {
-	return &Service{store: store, now: func() time.Time { return time.Now().UTC() }, rollbackTimeout: robotRollbackTimeout, comparePassword: bcrypt.CompareHashAndPassword}
+	return &Service{store: store, now: func() time.Time { return time.Now().UTC() }, rollbackTimeout: robotRollbackTimeout, comparePassword: bcrypt.CompareHashAndPassword, limiter: newLoginLimiter(0, 0), logger: log.Default()}
 }
 
 func (s *Service) EnsureBootstrapAdmin(ctx context.Context) error {
@@ -345,7 +349,10 @@ func (s *Service) LoginWithPassword(ctx context.Context, username string, passwo
 	if found && !user.IsRobot {
 		hash = []byte(user.PasswordHash)
 	}
-	passwordMatches := s.comparePassword(hash, []byte(password)) == nil
+	passwordMatches, err := s.compareLimited(ctx, hash, []byte(password))
+	if err != nil {
+		return ports.LoginResult{}, err
+	}
 
 	switch {
 	case !found:

@@ -626,9 +626,29 @@ func (r *Router) handleToken(w stdhttp.ResponseWriter, req *stdhttp.Request) {
 		return
 	}
 
-	result, err := r.auth.LoginWithPassword(req.Context(), username, secret, requestedScopes)
-	if err != nil && domainauth.IsCode(err, domainauth.ErrorCodeInvalidCredentials) {
-		result, err = r.auth.LoginWithPreissuedToken(req.Context(), username, secret, requestedScopes)
+	var result ports.LoginResult
+	fastPath := false
+	if ports.IsCredentialTokenShaped(secret) {
+		// A credential token is 256 bits of entropy, looked up by hash: try it
+		// first so a valid exchange costs no bcrypt. Any miss falls through to
+		// the unchanged password-then-token flow, so status and body for a
+		// failure are exactly the baseline's.
+		if fast, fastErr := r.auth.LoginWithPreissuedToken(req.Context(), username, secret, requestedScopes); fastErr == nil {
+			result, fastPath = fast, true
+		}
+	}
+	if !fastPath {
+		result, err = r.auth.LoginWithPassword(req.Context(), username, secret, requestedScopes)
+		if err != nil && domainauth.IsCode(err, domainauth.ErrorCodeInvalidCredentials) {
+			result, err = r.auth.LoginWithPreissuedToken(req.Context(), username, secret, requestedScopes)
+		}
+	}
+	var throttled *ports.LoginThrottledError
+	if errors.As(err, &throttled) {
+		r.recordLoginThrottle(req, "/auth/token", username, throttled)
+		w.Header().Set("Retry-After", strconv.Itoa(throttled.RetryAfterSeconds()))
+		writeError(w, req, domain.NewTooManyRequestsError("too many login attempts; retry later"), challenge, "TOOMANYREQUESTS")
+		return
 	}
 	if err != nil {
 		// The client only ever sees the uniform error; the real reason (unknown

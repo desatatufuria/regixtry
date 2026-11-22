@@ -35,3 +35,22 @@ func TestParseServeConfigRejectsInvalidTrustedProxies(t *testing.T) {
 		t.Fatalf("err = %v, want a trusted proxy error", err)
 	}
 }
+
+func TestParseServeConfigLoginMaxConcurrency(t *testing.T) {
+	t.Setenv("REGISTRY_LOGIN_MAX_CONCURRENCY", "")
+	cfg, err := parseServeConfig(nil)
+	if err != nil || cfg.LoginMaxConcurrency != 0 {
+		t.Fatalf("default = %d, %v; want 0 (automatic)", cfg.LoginMaxConcurrency, err)
+	}
+	t.Setenv("REGISTRY_LOGIN_MAX_CONCURRENCY", "6")
+	if cfg, err = parseServeConfig(nil); err != nil || cfg.LoginMaxConcurrency != 6 {
+		t.Fatalf("env = %d, %v", cfg.LoginMaxConcurrency, err)
+	}
+	if cfg, err = parseServeConfig([]string{"-login-max-concurrency", "3"}); err != nil || cfg.LoginMaxConcurrency != 3 {
+		t.Fatalf("flag = %d, %v", cfg.LoginMaxConcurrency, err)
+	}
+	t.Setenv("REGISTRY_LOGIN_MAX_CONCURRENCY", "lots")
+	if _, err = parseServeConfig(nil); err == nil {
+		t.Fatal("a non-numeric env value must be a startup error")
+	}
+}
