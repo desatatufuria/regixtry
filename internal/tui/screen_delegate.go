@@ -326,9 +326,19 @@ func (s delegateScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea.C
 			next, cmd := s.reload(env)
 			return next, cmd, true
 		}
-	case isRuneKey(msg, 'n'):
-		return s.openNewForm(), nil, true
-	case isRuneKey(msg, 'e'):
+	case isRuneKey(msg, 'n'), isRuneKey(msg, 'e'):
+		// A result still on its way would land on the form opened meanwhile
+		// and close it, taking the typed text with it.
+		if s.saving || s.removing {
+			s.status, s.statusTone = "Saving, please wait.", grantToneInfo
+			if s.removing {
+				s.status = "Revoking, please wait."
+			}
+			return s, nil, true
+		}
+		if isRuneKey(msg, 'n') {
+			return s.openNewForm(), nil, true
+		}
 		return s.openEditForm(), nil, true
 	case isRuneKey(msg, 'x'):
 		return s.askRemove(), nil, true

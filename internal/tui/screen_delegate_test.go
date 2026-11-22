@@ -932,3 +932,22 @@ func TestDelegateGoldens(t *testing.T) {
 		}
 	}
 }
+
+func TestDelegateNewAndEditAreIgnoredWhileASaveOrRevokeIsInFlight(t *testing.T) {
+	t.Parallel()
+	for name, inFlight := range map[string]func(s *delegateScreen){
+		"save":   func(s *delegateScreen) { s.saving = true },
+		"revoke": func(s *delegateScreen) { s.removing = true },
+	} {
+		for _, k := range []string{"n", "e"} {
+			m := delegateModelAt(t, delegateClientFor(), 150, 24)
+			s := delegateScreenOf(t, m)
+			inFlight(&s)
+			m.adminScreens[slotDelegate] = s
+			m = delegatePress(t, m, testKeyRunes(k))
+			if got := delegateScreenOf(t, m); got.form.active || got.status == "" {
+				t.Fatalf("%s then %s: form=%v status=%q, want the key ignored with a note", name, k, got.form.active, got.status)
+			}
+		}
+	}
+}
