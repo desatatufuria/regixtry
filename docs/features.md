@@ -108,8 +108,11 @@ duplicated):
 
 - **push** — a scan is queued automatically right after a successful push,
   if Trivy is enabled (independent of the schedule toggle).
-- **scheduled** — the periodic sweep (`ScheduleEnabled` + `Interval`) rescans
-  every repository's `latest` tag.
+- **scheduled** — the periodic sweep (`ScheduleEnabled` + `Interval`) visits
+  every tagged digest of every repository, refreshes the Trivy vulnerability
+  DB once, and rescans only digests that are new or whose scan fingerprint
+  (Trivy version, vulnerability DB date, scan settings) changed. Unchanged
+  digests only get their last-check time updated.
 - **manual** — `POST /admin/v1/scan-runs` (or the TUI's Repository Alerts
   actions) queues a scan on demand for a given repository/reference.
 
