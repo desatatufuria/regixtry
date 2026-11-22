@@ -213,6 +213,8 @@ curl \
 
 The detail payload keeps the summary `run` object, a compact ordered `findings` table, `db_freshness`, and `reference_freshness`. Summary list payloads stay compact; drill-down data is returned only from the detail endpoint.
 
+Scan results are latest-only: a digest keeps one completed result per repository, and a completed scan replaces the previous one atomically. Run objects carry these additive fields (all omitted when empty): `settings_hash` (hash of the effective scan configuration), `db_version`, `last_checked_at` (when a push or sweep last confirmed the result was still current without rescanning, because the scanner version, vulnerability database and scan configuration were unchanged), and `stale` plus `stale_reason` (a rescan failed: the previous completed result is kept and still enforced by the pull policy). A manual rescan always scans and replaces the result.
+
 ## Registry API V2
 
 | Method | Endpoint | Auth/success |
