@@ -14,16 +14,16 @@
       Secret scanning          │  │ c edit configuration.                                                                         │  │                                                               │  
       Signing policy           │  ╰───────────────────────────────────────────────────────────────────────────────────────────────╯  ╰───────────────────────────────────────────────────────────────╯  
                                │  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  
-  OPERATIONS                   │  │ PER-REPOSITORY OVERRIDES                                                                                                                                         │  
-      Scan runs                │  │ REPOSITORY                                                                                                 STATUS     ENABLED  DETAIL                UPDATED     │  
-      Secret findings          │  │ team/api                                                                                                   override   yes      ignore file set       14 Nov      │  
-      Update channel           │  │ team/docs                                                                                                  override   no       scanning off          2 Nov       │  
+  OPERATIONS                   │  │ LAST SWEEP                                                                                                                                                       │  
+      Scan runs                │  │ no sweep yet                                                                                                                                                     │  
+      Secret findings          │  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  
+      Update channel           │  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  
+                               │  │ PER-REPOSITORY OVERRIDES                                                                                                                                         │  
+                               │  │ REPOSITORY                                                                                                 STATUS     ENABLED  DETAIL                UPDATED     │  
+                               │  │ team/api                                                                                                   override   yes      ignore file set       14 Nov      │  
+                               │  │ team/docs                                                                                                  override   no       scanning off          2 Nov       │  
                                │  │ team/web                                                                                                   inherited  —        global settings       -           │  
                                │  │ team/infra                                                                                                 inherited  —        global settings       -           │  
-                               │  │                                                                                                                                                                  │  
-                               │  │                                                                                                                                                                  │  
-                               │  │                                                                                                                                                                  │  
-                               │  │                                                                                                                                                                  │  
                                │  │                                                                                                                                                                  │  
                                │  │                                                                                                                                                                  │  
                                │  │                                                                                                                                                                  │  
