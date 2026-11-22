@@ -25,6 +25,11 @@ type screenEnv struct {
 	Layout            consoleLayout
 	KnownRepositories []string
 	Now               func() time.Time
+	// CurrentVersion is the running build's version ("" for an unbuilt
+	// binary) and UpdateAvailable the newer release the background check
+	// found ("" when none is known); the Update channel screen shows both.
+	CurrentVersion  string
+	UpdateAvailable string
 }
 
 // asModel builds a throwaway Model carrying only the fields this env's

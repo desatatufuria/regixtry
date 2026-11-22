@@ -468,6 +468,8 @@ func (m Model) screenEnv() screenEnv {
 		Layout:            m.adminTablesLayout(),
 		KnownRepositories: m.repositories.Names(),
 		Now:               m.now,
+		CurrentVersion:    m.currentVersion,
+		UpdateAvailable:   m.updateAvailable,
 	}
 }
 
@@ -634,19 +636,6 @@ type adminScanPolicyLoadedMsg struct {
 type adminScanPolicyUpdatedMsg struct {
 	settings ports.ScanPolicySettings
 	err      error
-}
-
-// adminUpdateChannelLoadedMsg/adminUpdateChannelUpdatedMsg back
-// updateChannelScreen (tui-update-check feature), mirroring
-// adminScanPolicyLoadedMsg/adminScanPolicyUpdatedMsg's own shape.
-type adminUpdateChannelLoadedMsg struct {
-	channel string
-	err     error
-}
-
-type adminUpdateChannelUpdatedMsg struct {
-	channel string
-	err     error
 }
 
 type adminSigningPolicyLoadedMsg struct {
@@ -1099,26 +1088,19 @@ func (m Model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
 		return m, cmd
-	case adminUpdateChannelLoadedMsg:
-		// Mirrors adminScanPolicyLoadedMsg's own fail-quiet posture: a load
-		// failure just broadcasts (updateChannelScreen shows its own error,
-		// never a blocking status line) rather than being surfaced here.
-		var cmd tea.Cmd
-		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
-		if msg.err != nil && IsAdminSessionExpired(msg.err) {
-			return m.expireAdminSession(msg.err.Error()), nil
-		}
-		return m, cmd
-	case adminUpdateChannelUpdatedMsg:
-		if msg.err != nil {
-			if IsAdminSessionExpired(msg.err) {
-				return m.expireAdminSession(msg.err.Error()), nil
+	case adminUpdateChannelLoadedMsg, adminUpdateChannelUpdatedMsg:
+		// Drop a message from another screen instance FIRST: a stale expiry
+		// result must never log the operator out.
+		if gen, ok := updateChannelMsgGen(msg); ok {
+			if current, isChannel := m.adminScreens[slotUpdateChannel].(updateChannelScreen); !isChannel || current.gen != gen {
+				return m, nil
 			}
-			var cmd tea.Cmd
-			m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
-			return m, cmd
 		}
-		m.status = "Update channel saved."
+		if expired, ok := msg.(interface{ expiredReason() (string, bool) }); ok {
+			if reason, isExpired := expired.expiredReason(); isExpired {
+				return m.expireAdminSession(reason), nil
+			}
+		}
 		var cmd tea.Cmd
 		m.adminScreens, cmd = routeAdminMsg(m.screenEnv(), m.adminScreens, msg)
 		return m, cmd
@@ -1820,8 +1802,7 @@ func (m Model) updateKey(msg keyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case isRuneKey(msg, 'd') && m.screen == screenTags:
-		// Only "d" (not "d"/"x", matching robot-delete's own single-key
-		// precedent in updateAdminRobotsKey) -- placed ahead of the
+		// Only "d" -- placed ahead of the
 		// screenManifest/Blobs/Uploads case below so it never falls through
 		// to that unrelated v1 placeholder.
 		if tag, ok := m.selectedTag(); ok {
@@ -2732,26 +2713,6 @@ func (m Model) updateScanPolicyCmd(input ports.ScanPolicySettings) tea.Cmd {
 	}
 }
 
-func (m Model) loadUpdateChannelCmd() tea.Cmd {
-	return func() tea.Msg {
-		if m.adminClient == nil {
-			return adminUpdateChannelLoadedMsg{err: fmt.Errorf("admin API is unavailable for this session")}
-		}
-		channel, err := m.adminClient.GetUpdateChannel(m.ctx, m.adminSession)
-		return adminUpdateChannelLoadedMsg{channel: channel, err: err}
-	}
-}
-
-func (m Model) updateUpdateChannelCmd(channel string) tea.Cmd {
-	return func() tea.Msg {
-		if m.adminClient == nil {
-			return adminUpdateChannelUpdatedMsg{err: fmt.Errorf("admin API is unavailable for this session")}
-		}
-		persisted, err := m.adminClient.SetUpdateChannel(m.ctx, m.adminSession, channel)
-		return adminUpdateChannelUpdatedMsg{channel: persisted, err: err}
-	}
-}
-
 func (m Model) loadSigningPolicyCmd() tea.Cmd {
 	return func() tea.Msg {
 		if m.adminClient == nil {
@@ -2770,15 +2731,6 @@ func loadScanPolicyCmd(env screenEnv) tea.Cmd { return env.asModel().loadScanPol
 
 func updateScanPolicyCmd(env screenEnv, input ports.ScanPolicySettings) tea.Cmd {
 	return env.asModel().updateScanPolicyCmd(input)
-}
-
-// loadUpdateChannelCmd/updateUpdateChannelCmd are updateChannelScreen's own
-// screenEnv-scoped wrappers, mirroring loadScanPolicyCmd/updateScanPolicyCmd
-// exactly.
-func loadUpdateChannelCmd(env screenEnv) tea.Cmd { return env.asModel().loadUpdateChannelCmd() }
-
-func updateUpdateChannelCmd(env screenEnv, channel string) tea.Cmd {
-	return env.asModel().updateUpdateChannelCmd(channel)
 }
 
 func loadSigningPolicyCmd(env screenEnv) tea.Cmd { return env.asModel().loadSigningPolicyCmd() }

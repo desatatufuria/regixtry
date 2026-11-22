@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/x/ansi"
 )
@@ -72,7 +73,7 @@ func TestUpdateChannelScreenSpaceTogglesPendingSelectionThenEnterSaves(t *testin
 	env := screenEnv{Client: adminClient, Session: AdminSession{BearerToken: "token"}, Layout: consoleLayout{Width: 150, Height: 24}}
 
 	screen := newUpdateChannelScreen()
-	loaded, _, _ := screen.Update(env, adminUpdateChannelLoadedMsg{channel: "stable"})
+	loaded, _, _ := screen.Update(env, adminUpdateChannelLoadedMsg{gen: screen.gen, channel: "stable"})
 	screen = loaded.(updateChannelScreen)
 
 	toggled, cmd, consumed := screen.Update(env, keyMsgFor(" "))
@@ -125,7 +126,8 @@ func TestUpdateChannelScreenEnterWithNoPendingChangeIsANoop(t *testing.T) {
 	adminClient := &fakeAdminClient{updateChannel: "stable"}
 	env := screenEnv{Client: adminClient, Session: AdminSession{BearerToken: "token"}, Layout: consoleLayout{Width: 150, Height: 24}}
 
-	loaded, _, _ := newUpdateChannelScreen().Update(env, adminUpdateChannelLoadedMsg{channel: "stable"})
+	fresh := newUpdateChannelScreen()
+	loaded, _, _ := fresh.Update(env, adminUpdateChannelLoadedMsg{gen: fresh.gen, channel: "stable"})
 	screen := loaded.(updateChannelScreen)
 
 	_, cmd, consumed := screen.Update(env, keyMsgFor("enter"))
@@ -361,5 +363,84 @@ func assertUpdateChannelGolden(t *testing.T, name, got string) {
 	}
 	if string(want) != got {
 		t.Fatalf("view differs from %s\n--- want\n%s\n--- got\n%s", path, want, got)
+	}
+}
+
+func TestUpdateChannelDropsMessagesOfAnotherInstance(t *testing.T) {
+	t.Parallel()
+	env := screenEnv{Layout: consoleLayout{Width: 150, Height: 24}}
+	screen := newUpdateChannelScreen()
+	other := newUpdateChannelScreen()
+	if screen.gen == other.gen {
+		t.Fatal("two instances share a generation id")
+	}
+	updated, _, _ := screen.Update(env, adminUpdateChannelLoadedMsg{gen: other.gen, channel: "insider"})
+	if updated.(updateChannelScreen).loaded {
+		t.Fatal("a load result of another instance was applied")
+	}
+	updated, _, _ = screen.Update(env, adminUpdateChannelLoadedMsg{gen: screen.gen, channel: "insider"})
+	if !updated.(updateChannelScreen).loaded {
+		t.Fatal("the instance's own load result was dropped")
+	}
+	saving := updateChannelScreen{gen: screen.gen, loaded: true, current: "stable", selected: "insider", saving: true}
+	updated, _, _ = saving.Update(env, adminUpdateChannelUpdatedMsg{gen: other.gen, channel: "insider"})
+	if got := updated.(updateChannelScreen); !got.saving || got.current != "stable" {
+		t.Fatal("a save result of another instance was applied")
+	}
+}
+
+func TestUpdateChannelStaleExpiredResultDoesNotLogOut(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, time.August, 26, 9, 0, 0, 0, time.UTC)
+	adminClient := &fakeAdminClient{
+		loginSession:  AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
+		updateChannel: "stable",
+	}
+	model := openSidebarItem(t, runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass"), shellNavUpdateChannel)
+	next, _ := model.Update(adminUpdateChannelLoadedMsg{gen: 0, err: NewAdminSessionExpiredError("")})
+	if next.(Model).adminAuth != adminAuthStateAuthenticated {
+		t.Fatal("a foreign expired result logged the operator out")
+	}
+	current := model.adminScreens[slotUpdateChannel].(updateChannelScreen)
+	next, _ = model.Update(adminUpdateChannelLoadedMsg{gen: current.gen, err: NewAdminSessionExpiredError("")})
+	if next.(Model).adminAuth == adminAuthStateAuthenticated {
+		t.Fatal("the screen's own expired result did not redirect to login")
+	}
+}
+
+func TestUpdateChannelStatusPanelShowsRealVersions(t *testing.T) {
+	t.Parallel()
+	screen := updateChannelStates[2].screen
+	render := func(current, available string) string {
+		env := screenEnv{Session: AdminSession{Username: "admin"}, CurrentVersion: current, UpdateAvailable: available, Layout: consoleLayout{Width: 150, Height: 24}}
+		return ansi.Strip(screen.View(newAdminTheme(), env).Body)
+	}
+	out := render("v0.14.2", "v0.15.0")
+	for _, want := range []string{"UPDATE STATUS", "Current version", "v0.14.2", "Latest on this channel", "v0.15.0", "available"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("status panel lacks %q\n%s", want, out)
+		}
+	}
+	if out := render("v0.14.2", ""); strings.Contains(out, "Latest on this channel") || !strings.Contains(out, "no newer release known") {
+		t.Fatalf("with no known update the latest row must be omitted\n%s", out)
+	}
+	if out := render("", ""); !strings.Contains(out, "unknown (development build)") {
+		t.Fatalf("a build without a version must say so\n%s", out)
+	}
+}
+
+func TestUpdateChannelStateLabelsShareTheRightEdge(t *testing.T) {
+	t.Parallel()
+	out := renderUpdateChannel(updateChannelStates[3].screen, 150, 24)
+	var edges []int
+	for _, line := range strings.Split(out, "\n") {
+		for _, label := range []string{"current  │", "selected, unsaved  │"} {
+			if i := strings.Index(line, label); i >= 0 {
+				edges = append(edges, ansi.StringWidth(line[:i])+len(strings.TrimSuffix(label, "  │")))
+			}
+		}
+	}
+	if len(edges) != 2 || edges[0] != edges[1] {
+		t.Fatalf("state labels end at columns %v, want one shared right edge\n%s", edges, out)
 	}
 }

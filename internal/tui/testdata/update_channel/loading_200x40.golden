@@ -3,14 +3,14 @@
  regixtry admin                │                                                                                                                                                                        
                                │  Update channel                                                                                                        which released tags the update check considers  
     Overview                   │                                                                                                                                                                        
-                               │  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  
-  ACCESS                       │  │ CHANNEL                                                                                                                                                          │  
-      Users                    │  │ Loading update channel...                                                                                                                                        │  
-      Robots                   │  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  
-      Repository access        │                                                                                                                                                                        
-                               │                                                                                                                                                                        
-  SECURITY                     │                                                                                                                                                                        
-      Image scanning           │                                                                                                                                                                        
+                               │  ╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  ╭─────────────────────────────────────────────╮  
+  ACCESS                       │  │ CHANNEL                                                                                                         │  │ UPDATE STATUS                               │  
+      Users                    │  │ Loading update channel...                                                                                       │  │ Current version unknown (development build) │  
+      Robots                   │  ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  │ Update               no newer release known │  
+      Repository access        │                                                                                                                       │ The background update check compares the    │  
+                               │                                                                                                                       │ current version with the latest tag on the  │  
+  SECURITY                     │                                                                                                                       │ selected channel.                           │  
+      Image scanning           │                                                                                                                       ╰─────────────────────────────────────────────╯  
       Secret scanning          │                                                                                                                                                                        
       Signing policy           │                                                                                                                                                                        
                                │                                                                                                                                                                        

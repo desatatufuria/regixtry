@@ -3,14 +3,14 @@
  regixtry admin                │                                                                                                                                                                        
                                │  Update channel                                                                                                        which released tags the update check considers  
     Overview                   │                                                                                                                                                                        
-                               │  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  
-  ACCESS                       │  │ CHANNEL                                                                                                                                                          │  
-      Users                    │  │   stable                                                                                                                                                         │  
-      Robots                   │  │   Default channel.                                                                                                                                               │  
-      Repository access        │  │  ▸ insider                                                                                                                                              current  │  
-                               │  │   Alternative channel for the update check.                                                                                                                      │  
-  SECURITY                     │  │ Saved: the update check now uses insider                                                                                                                         │  
-      Image scanning           │  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  
+                               │  ╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  ╭─────────────────────────────────────────────╮  
+  ACCESS                       │  │ CHANNEL                                                                                                         │  │ UPDATE STATUS                               │  
+      Users                    │  │    stable                                                                                                       │  │ Current version unknown (development build) │  
+      Robots                   │  │   Default channel.                                                                                              │  │ Update               no newer release known │  
+      Repository access        │  │  ▸ insider                                                                                             current  │  │ The background update check compares the    │  
+                               │  │   Alternative channel for the update check.                                                                     │  │ current version with the latest tag on the  │  
+  SECURITY                     │  │ Saved: the update check now uses insider                                                                        │  │ selected channel.                           │  
+      Image scanning           │  ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  ╰─────────────────────────────────────────────╯  
       Secret scanning          │                                                                                                                                                                        
       Signing policy           │                                                                                                                                                                        
                                │                                                                                                                                                                        

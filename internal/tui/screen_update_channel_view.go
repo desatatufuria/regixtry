@@ -7,6 +7,13 @@ import (
 	"regixtry/internal/infra/release"
 )
 
+const (
+	// updateChannelStatusWidth is the board's 400px status column at about
+	// 8.5px a column.
+	updateChannelStatusWidth = 47
+	updateChannelPanelGap    = 2
+)
+
 const updateChannelSubtitle = "which released tags the update check considers"
 
 // updateChannelOption is one selectable channel of the board's CHANNEL panel.
@@ -31,7 +38,13 @@ func (s updateChannelScreen) View(theme adminTheme, env screenEnv) screenFrame {
 		theme.subheading.Render(title) + strings.Repeat(" ", gap) + theme.muted.Render(subtitle),
 		"",
 	}
-	lines = append(lines, userPanel(theme, bodyW, 0, s.panelLines(theme, max(bodyW-4, 1))))
+	statusW := min(updateChannelStatusWidth, bodyW/2)
+	channelW := max(bodyW-statusW-updateChannelPanelGap, 1)
+	lines = append(lines, lipgloss.JoinHorizontal(lipgloss.Top,
+		userPanel(theme, channelW, 0, s.panelLines(theme, max(channelW-4, 1))),
+		strings.Repeat(" ", updateChannelPanelGap),
+		userPanel(theme, statusW, 0, updateStatusLines(theme, env, max(statusW-4, 1))),
+	))
 
 	return screenFrame{
 		Context: "Update channel",
@@ -91,7 +104,10 @@ func (s updateChannelScreen) optionLines(theme adminTheme, option updateChannelO
 			theme.muted.Render(fitText(desc, inner)),
 		}
 	}
-	return []string{theme.text.Render(fitText(head, inner)), theme.muted.Render(fitText(desc, inner))}
+	return []string{
+		theme.text.Padding(0, 1).Width(inner).Render(head),
+		theme.muted.Render(fitText(desc, inner)),
+	}
 }
 
 func (s updateChannelScreen) statusLine(theme adminTheme) string {
@@ -106,4 +122,34 @@ func (s updateChannelScreen) statusLine(theme adminTheme) string {
 		return theme.success.Render("Saved: the update check now uses " + s.current)
 	}
 	return theme.muted.Render("Unchanged: " + s.current + " (press space to pick the other channel)")
+}
+
+// updateStatusLines is the board's UPDATE STATUS panel, fed only by what the
+// model really knows: the running version and the newer release the
+// background check found, if any.
+func updateStatusLines(theme adminTheme, env screenEnv, inner int) []string {
+	current, currentStyle := env.CurrentVersion, theme.text
+	if current == "" {
+		current, currentStyle = "unknown (development build)", theme.muted
+	}
+	lines := []string{
+		userSectionTitle(theme, "UPDATE STATUS"),
+		updateStatusRow(theme, "Current version", current, currentStyle, inner),
+	}
+	if env.UpdateAvailable != "" {
+		lines = append(lines,
+			updateStatusRow(theme, "Latest on this channel", env.UpdateAvailable, theme.text, inner),
+			updateStatusRow(theme, "Update", "available", theme.warning, inner),
+		)
+	} else {
+		lines = append(lines, updateStatusRow(theme, "Update", "no newer release known", theme.muted, inner))
+	}
+	note := "The background update check compares the current version with the latest tag on the selected channel."
+	return append(lines, strings.Split(theme.muted.Width(inner).Render(note), "\n")...)
+}
+
+func updateStatusRow(theme adminTheme, label, value string, style lipgloss.Style, inner int) string {
+	value = fitText(value, max(inner-lipgloss.Width(label)-1, 1))
+	gap := max(inner-lipgloss.Width(label)-lipgloss.Width(value), 1)
+	return theme.muted.Render(label) + strings.Repeat(" ", gap) + style.Render(value)
 }

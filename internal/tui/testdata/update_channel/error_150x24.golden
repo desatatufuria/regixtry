@@ -3,14 +3,14 @@
  regixtry admin                │                                                                                                                      
                                │  Update channel                                                      which released tags the update check considers  
     Overview                   │                                                                                                                      
-                               │  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  
-  ACCESS                       │  │ CHANNEL                                                                                                        │  
-      Users                    │  │ admin API is unavailable for this session                                                                      │  
-      Robots                   │  │ Press r to try again.                                                                                          │  
-      Repository access        │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  
-                               │                                                                                                                      
-  SECURITY                     │                                                                                                                      
-      Image scanning           │                                                                                                                      
+                               │  ╭───────────────────────────────────────────────────────────────╮  ╭─────────────────────────────────────────────╮  
+  ACCESS                       │  │ CHANNEL                                                       │  │ UPDATE STATUS                               │  
+      Users                    │  │ admin API is unavailable for this session                     │  │ Current version unknown (development build) │  
+      Robots                   │  │ Press r to try again.                                         │  │ Update               no newer release known │  
+      Repository access        │  ╰───────────────────────────────────────────────────────────────╯  │ The background update check compares the    │  
+                               │                                                                     │ current version with the latest tag on the  │  
+  SECURITY                     │                                                                     │ selected channel.                           │  
+      Image scanning           │                                                                     ╰─────────────────────────────────────────────╯  
       Secret scanning          │                                                                                                                      
       Signing policy           │                                                                                                                      
                                │                                                                                                                      
