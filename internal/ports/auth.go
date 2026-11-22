@@ -209,6 +209,22 @@ type AdminProjectMember struct {
 	UpdatedAt time.Time           `json:"updated_at"`
 }
 
+// AdminProjectMemberPage is one page of a project's members. Next is the
+// opaque cursor of the following page, empty on the last page.
+type AdminProjectMemberPage struct {
+	Members []AdminProjectMember `json:"members"`
+	Next    string               `json:"next"`
+}
+
+// AdminProjectGrant is one project grant of one user, as the global
+// administrator's per-user listing shows it.
+type AdminProjectGrant struct {
+	Project   string              `json:"project"`
+	Role      domainauth.RepoRole `json:"role"`
+	CreatedAt time.Time           `json:"created_at"`
+	UpdatedAt time.Time           `json:"updated_at"`
+}
+
 // AdminPutProjectGrantInput carries PUT /admin/v1/projects/{project}/members/{user}.
 type AdminPutProjectGrantInput struct {
 	Project  string              `json:"-"`
@@ -316,8 +332,10 @@ type AdminHTTPService interface {
 	PutAdminRepositoryGrant(ctx context.Context, actor domainauth.Principal, input AdminPutRepositoryGrantInput) (AdminRepositoryGrant, error)
 	ListAdminAllRepositoryGrants(ctx context.Context, actor domainauth.Principal, limit int, after string) (AdminGrantPage, error)
 	DeleteAdminRepositoryGrant(ctx context.Context, actor domainauth.Principal, repository string, username string) error
+	ListAdminProjectMembers(ctx context.Context, actor domainauth.Principal, project string, limit int, after string) (AdminProjectMemberPage, error)
 	PutAdminProjectGrant(ctx context.Context, actor domainauth.Principal, input AdminPutProjectGrantInput) (AdminProjectMember, error)
 	DeleteAdminProjectGrant(ctx context.Context, actor domainauth.Principal, project string, username string) error
+	ListAdminUserProjectGrants(ctx context.Context, actor domainauth.Principal, userID string) ([]AdminProjectGrant, error)
 	CreateAdminRobot(ctx context.Context, actor domainauth.Principal, input AdminCreateRobotInput) (AdminCreatedRobot, error)
 	ListAdminRobots(ctx context.Context, actor domainauth.Principal) ([]AdminRobot, error)
 	DeleteAdminRobot(ctx context.Context, actor domainauth.Principal, userID string) error
