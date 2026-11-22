@@ -10,19 +10,19 @@ import (
 
 // TestEveryKeyHandledIsInTheKeyMapAndViceVersa is the tui-menu-architecture
 // change's Phase 4 task 4.1 (T1.5) RED test (design.md Decision D): every
-// discrete action key updateGitleaksConfigModalKey's original switch handled
+// discrete action key the config modals' key handlers act on
 // (Esc/Tab/Space/Enter — free-text editing via Backspace/plain runes is
 // deliberately excluded, mirroring the pre-change hand-written help string,
-// which never enumerated them either) must be present in gitleaksConfigModalKeys,
-// and gitleaksConfigModalKeys must declare no binding beyond that set — both
+// which never enumerated them either) must be present in securityModalKeys,
+// and securityModalKeys must declare no binding beyond that set — both
 // directions of drift are unrepresentable once matches() is the only
 // key-matching path a migrated screen may use.
 func TestEveryKeyHandledIsInTheKeyMapAndViceVersa(t *testing.T) {
 	t.Parallel()
 
-	want := []string{"Enter", "Tab", "Space", "Esc"}
-	got := make([]string, 0, len(gitleaksConfigModalKeys.short))
-	for _, b := range gitleaksConfigModalKeys.short {
+	want := []string{"enter", "tab", "space", "esc"}
+	got := make([]string, 0, len(securityModalKeys.short))
+	for _, b := range securityModalKeys.short {
 		got = append(got, b.Help().Key)
 	}
 
@@ -32,11 +32,11 @@ func TestEveryKeyHandledIsInTheKeyMapAndViceVersa(t *testing.T) {
 	sort.Strings(sortedGot)
 
 	if len(sortedGot) != len(sortedWant) {
-		t.Fatalf("gitleaksConfigModalKeys.short labels = %v, want exactly %v", got, want)
+		t.Fatalf("securityModalKeys.short labels = %v, want exactly %v", got, want)
 	}
 	for i := range sortedWant {
 		if sortedGot[i] != sortedWant[i] {
-			t.Fatalf("gitleaksConfigModalKeys.short labels = %v, want exactly %v", got, want)
+			t.Fatalf("securityModalKeys.short labels = %v, want exactly %v", got, want)
 		}
 	}
 }
@@ -51,13 +51,13 @@ func TestRemovingABindingRemovesItFromRenderedHelp(t *testing.T) {
 	t.Parallel()
 
 	theme := newAdminTheme()
-	full := shortHelpView(theme, gitleaksConfigModalKeys)
-	if !strings.Contains(full, "Esc") {
-		t.Fatalf("shortHelpView(full) = %q, want it to contain the Esc binding before removal", full)
+	full := shortHelpView(theme, securityModalKeys)
+	if !strings.Contains(full, "esc") {
+		t.Fatalf("shortHelpView(full) = %q, want it to contain the esc binding before removal", full)
 	}
 
-	reduced := screenKeys{short: append([]key.Binding(nil), gitleaksConfigModalKeys.short[:len(gitleaksConfigModalKeys.short)-1]...)}
-	removedLabel := gitleaksConfigModalKeys.short[len(gitleaksConfigModalKeys.short)-1].Help().Key
+	reduced := screenKeys{short: append([]key.Binding(nil), securityModalKeys.short[:len(securityModalKeys.short)-1]...)}
+	removedLabel := securityModalKeys.short[len(securityModalKeys.short)-1].Help().Key
 
 	got := shortHelpView(theme, reduced)
 	if strings.Contains(got, removedLabel) {

@@ -1,0 +1,40 @@
+  Admin › Security › Image scanning                                                                                                                                              signed in as operator  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │
+                               │  Image scanning                                                                                                                          Trivy, vulnerability scanner
+    Overview                   │  Feature enabled  ·  Runtime ready, healthy  ·  version 0.57.1  ·  update available (0.58.0)  ·  rollback available
+                               │   Config   Repositories
+  ACCESS                       │  ╭───────────────────────────────────────────────────────────────────────────────────────────────╮  ╭───────────────────────────────────────────────────────────────╮
+      Users                    │  │ TRIVY CONFIGURATION                                                                           │  │ SCAN POLICY                                                   │
+      Robots                   │  │ Scheduled scans                                                                   [x] enabled │  │ Policy                                            [x] enabled │
+      Repository access        │  │ Interval                                                                                  24h │  │ Severity threshold                              CRITICAL+HIGH │
+                               │  │ Timeout                               ╭──────────────────────────────────────────────────╮  m │  │ A scan that reaches the threshold blocks the pull. p edit     │
+  SECURITY                     │  │ Max concurrency                       │  Trivy configuration                             │  2 │  │ policy.                                                       │
+    ▸ Image scanning           │  │ Registry reachable URL                │  Applies to every repository without an          │  0 │  │ Last saved 2 Nov 2026 10:14 UTC.                              │
+      Secret scanning          │  │ c edit configuration.                 │  override.                                       │    │  │                                                               │
+      Signing policy           │  ╰─────────────────────────────────────  │  [x] Scheduled scans                             │  ──╯  ╰───────────────────────────────────────────────────────────────╯
+                               │  ╭─────────────────────────────────────  │  Interval                                        │  ─────────────────────────────────────────────────────────────────────╮
+  OPERATIONS                   │  │ PER-REPOSITORY OVERRIDES              │   24hx▏                                          │                                                                       │
+      Scan runs                │  │ REPOSITORY                            │  Timeout                                         │                 STATUS     ENABLED  DETAIL                UPDATED     │
+      Secret findings          │  │ team/api                              │   5m                                             │                 override   yes      ignore file set       14 Nov      │
+      Update channel           │  │ team/docs                             │  Registry Reachable URL                          │                 override   no       scanning off          2 Nov       │
+                               │  │ team/web                              │   http://regixtry:5000                           │                 inherited  —        global settings       -           │
+                               │  │ team/infra                            │  Max Concurrency                                 │                 inherited  —        global settings       -           │
+                               │  │                                       │   2                                              │                                                                       │
+                               │  │                                       │  invalid interval: time: unknown unit "hx" in    │                                                                       │
+                               │  │                                       │  duration "24hx"                                 │                                                                       │
+                               │  │                                       │                                                  │                                                                       │
+                               │  │                                       │   Save  enter   Cancel  esc                      │                                                                       │
+                               │  │                                       │  tab next field, space toggles                   │                                                                       │
+                               │  │                                       ╰──────────────────────────────────────────────────╯                                                                       │
+                               │  │                                                                                                                                                                  │
+                               │  │                                                                                                                                                                  │
+                               │  │                                                                                                                                                                  │
+                               │  │                                                                                                                                                                  │
+                               │  │                                                                                                                                                                  │
+                               │  │                                                                                                                                                                  │
+                               │  │                                                                                                                                                                  │
+                               │  │                                                                                                                                                                  │
+                               │  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  tab next field   space toggle   enter save   esc cancel                                                                                                                                               

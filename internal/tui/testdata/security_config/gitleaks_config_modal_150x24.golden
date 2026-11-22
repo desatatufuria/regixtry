@@ -1,0 +1,24 @@
+  Admin › Security › Secret scanning                                                                                           signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │
+                               │  Secret scanning                                                                    Gitleaks, leaked-secret scanner
+    Overview                   │  Feature enabled  ·  Runtime ready, healthy  ·  version 0.57.1  ·  update available (0.58.0)  ·  rollback available
+                               │  ╭────────────  ╭──────────────────────────────────────────────────╮  ────────────────────────────────────────────╮
+  ACCESS                       │  │ GITLEAKS CO  │  Gitleaks configuration                          │                                              │
+      Users                    │  │ Secret scan  │  Applies to every repository without an          │                                  [x] enabled │
+      Robots                   │  │ Timeout      │  override.                                       │                                           2m │
+      Repository access        │  │ Max concurr  │  [x] Enabled                                     │                                            2 │
+                               │  │ c edit conf  │  Timeout                                         │                                              │
+  SECURITY                     │  ╰────────────  │   2m                                             │  ────────────────────────────────────────────╯
+      Image scanning           │  ╭────────────  │  Max Concurrency                                 │  ────────────────────────────────────────────╮
+    ▸ Secret scanning          │  │ PER-REPOSIT  │   2                                              │                                              │
+      Signing policy           │  │ REPOSITORY   │                                                  │   ENABLED  DETAIL                UPDATED     │
+                               │  │ team/api     │   Save  enter   Cancel  esc                      │   yes      config path set       12 Nov      │
+  OPERATIONS                   │  │ team/docs    │  tab next field, space toggles                   │   no       scanning off          2 Nov       │
+      Scan runs                │  │ team/web     ╰──────────────────────────────────────────────────╯   —        global settings       -           │
+      Secret findings          │  │ team/infra                                               inherited  —        global settings       -           │
+      Update channel           │  │                                                                                                                │
+                               │  │                                                                                                                │
+                               │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  tab next field   space toggle   enter save   esc cancel                                                                                             

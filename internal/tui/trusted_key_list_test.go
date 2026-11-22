@@ -4,7 +4,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
 	"regixtry/internal/domain/signing"
+	"regixtry/internal/ports"
 )
 
 func trustedKeyListTestKey(runes string) keyMsg {
@@ -489,5 +491,84 @@ func TestTrustedKeyListSetKeysReplacesWholesale(t *testing.T) {
 	list = list.SetKeys([]string{trustedKeyListTestPEM2})
 	if len(list.Keys()) != 1 || list.Keys()[0] != trustedKeyListTestPEM2 {
 		t.Fatalf("Keys() = %#v, want [%q]", list.Keys(), trustedKeyListTestPEM2)
+	}
+}
+
+func TestTrustedKeyListEscStopsWaitingForTheUsageLookupAndDropsItsLateAnswer(t *testing.T) {
+	t.Parallel()
+
+	list := newTrustedKeyList("", []string{trustedKeyListTestPEM1})
+	list, cmd, _ := list.update(screenEnv{}, trustedKeyListTestKey("x"))
+	if !list.usageLoading || cmd == nil {
+		t.Fatalf("usageLoading = %v, cmd = %v, want the lookup started", list.usageLoading, cmd)
+	}
+	// Every other key is still swallowed while waiting.
+	if swallowed, _, consumed := list.update(screenEnv{}, trustedKeyListTestKey("n")); !consumed || swallowed.adding {
+		t.Fatal("a key other than Esc must be swallowed while the lookup runs")
+	}
+	list, _, consumed := list.update(screenEnv{}, testKeyEsc())
+	if !consumed || list.usageLoading {
+		t.Fatalf("consumed = %v, usageLoading = %v, want Esc to stop waiting", consumed, list.usageLoading)
+	}
+	list = list.applyUsageLoaded(adminSigningKeyUsageLoadedMsg{count: 2})
+	if list.confirm.Active() {
+		t.Fatal("a late usage answer opened a confirm nobody asked for")
+	}
+}
+
+func TestRenderTrustedKeyListShowsTheDeleteConfirmAndKeepsTheAddFieldOnOneLine(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+	list := newTrustedKeyList("", []string{trustedKeyListTestPEM1})
+	list = list.applyUsageLoaded(adminSigningKeyUsageLoadedMsg{count: 0})
+	list.usageLoading = true
+	list = list.applyUsageLoaded(adminSigningKeyUsageLoadedMsg{count: 4})
+	out := ansi.Strip(strings.Join(renderTrustedKeyList(theme, list, true), "\n"))
+	for _, want := range []string{"This key currently verifies 4 tagged image(s). Delete it anyway?", "enter deletes the key, esc keeps it"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("render lacks %q:\n%s", want, out)
+		}
+	}
+
+	adding := newTrustedKeyList("", nil)
+	adding.adding = true
+	adding.input = trustedKeyListTestPEM1
+	rendered := renderTrustedKeyList(theme, adding, true)
+	if got := len(strings.Split(strings.Join(rendered, "\n"), "\n")); got > 6 {
+		t.Fatalf("a pasted multi-line key made the list %d rows tall, want the input kept on one line:\n%s", got, ansi.Strip(strings.Join(rendered, "\n")))
+	}
+	if strings.Contains(ansi.Strip(strings.Join(rendered, "\n")), "\n-----END") {
+		t.Fatal("the pasted key must not be rendered line by line")
+	}
+}
+
+func TestTrustedListFocusRowsPointAtWhatTheOperatorIsDoing(t *testing.T) {
+	t.Parallel()
+
+	keys := newTrustedKeyList("", []string{trustedKeyListTestPEM1, trustedKeyListTestPEM2})
+	keys.selected = 1
+	if got := trustedKeyFocusRow(keys); got != 2 {
+		t.Fatalf("trustedKeyFocusRow(selected 1) = %d, want 2 (heading then the key)", got)
+	}
+	keys.adding = true
+	if got := trustedKeyFocusRow(keys); got != 3 {
+		t.Fatalf("trustedKeyFocusRow(adding) = %d, want 3 (below the two keys)", got)
+	}
+	if got := trustedKeyFocusRow(newTrustedKeyList("", nil)); got != 1 {
+		t.Fatalf("trustedKeyFocusRow(empty) = %d, want 1", got)
+	}
+
+	ids := newTrustedIdentityList([]ports.TrustedIdentity{{CertificateIdentityRegexp: "a", CertificateOIDCIssuer: "b"}})
+	if got := trustedIdentityFocusRow(ids); got != 1 {
+		t.Fatalf("trustedIdentityFocusRow(selected 0) = %d, want 1", got)
+	}
+	ids.adding = true
+	if got := trustedIdentityFocusRow(ids); got != 3 {
+		t.Fatalf("trustedIdentityFocusRow(adding regexp) = %d, want 3", got)
+	}
+	ids.addFocus = identityAddFieldIssuer
+	if got := trustedIdentityFocusRow(ids); got != 5 {
+		t.Fatalf("trustedIdentityFocusRow(adding issuer) = %d, want 5", got)
 	}
 }

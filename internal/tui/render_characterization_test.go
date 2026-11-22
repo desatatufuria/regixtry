@@ -75,27 +75,6 @@ var characterizationScreens = []struct {
 		}
 		return charResize(t, m, w, h)
 	}},
-	{"overlay_trivy_config_modal", func(t *testing.T, w, h int) Model {
-		m := charAdminModel(t, w, h)
-		m.screen = screenSecurityTrivy
-		m.adminScreens[slotTrivyConfig] = trivyConfigScreen{
-			loaded: true,
-			cfg: trivyConfigModal{
-				Open: true, ScheduleEnabled: true, Interval: "1h", Timeout: "30s",
-				RegistryReachableURL: "https://registry.example.com", MaxConcurrency: "4",
-			},
-		}
-		return m
-	}},
-	{"overlay_gitleaks_config_modal", func(t *testing.T, w, h int) Model {
-		m := charAdminModel(t, w, h)
-		m.screen = screenSecurityGitleaksConfig
-		m.adminScreens[slotGitleaksConfig] = gitleaksConfigScreen{
-			loaded: true,
-			cfg:    gitleaksConfigModal{Open: true, Enabled: true, Timeout: "45s", MaxConcurrency: "2"},
-		}
-		return m
-	}},
 }
 
 func TestRenderCharacterization(t *testing.T) {

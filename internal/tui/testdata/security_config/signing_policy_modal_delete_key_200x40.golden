@@ -1,0 +1,40 @@
+  Admin › Security › Signing policy                                                                                                                                              signed in as operator  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │
+                               │  Signing policy                                                                                                                          image signature verification
+    Overview                   │  Feature enabled
+                               │  ╭──────────────────────────────────────────────────────────────╮  ╭────────────────────────────────────────────────────────────────────────────────────────────────╮
+  ACCESS                       │  │ SIGNING POLICY                                               │  │ TRUSTED PUBLIC KEYS                                                                            │
+      Users                    │  │ Pull-time gate                                  [x] enforced │  │ FINGERPRINT                                                                        TYPE        │
+      Robots                   │  │ Unsigned self-read                                    pusher │  │ 2c1d7289f2db                                                                       ECDSA P-256 │
+      Repository access        │  │ Enforced: unsigned images cannot be pulled. self-read: off,  │  │ aaf7110bc769                                                                       ECDSA P-256 │
+                               │  │ pusher (whoever pushed tha  ╭──────────────────────────────────────────────────────────────────────╮                                                             │
+  SECURITY                     │  │ can push). p edit policy.   │  Signing policy                                                      │                OIDC ISSUER                                  │
+      Image scanning           │  │ Last saved 9 Nov 2026 10:1  │  Applies to every repository without an override. 2 keys, 1          │                https://token.actions.githubusercontent.com  │
+      Secret scanning          │  │                             │  identity configured.                                                │  enough.                                                    │
+    ▸ Signing policy           │  │                             │  [x] Pull-time gate enforced                                         │                                                             │
+                               │  ╰───────────────────────────  │  Unsigned self-read (space cycles)                                   │  ───────────────────────────────────────────────────────────╯
+  OPERATIONS                   │  ╭───────────────────────────  │   pusher                                                             │  ───────────────────────────────────────────────────────────╮
+      Scan runs                │  │ PER-REPOSITORY OVERRIDES    │   Trusted Keys (2)                                                   │                                                             │
+      Secret findings          │  │ REPOSITORY                  │  ▸  Key: 2c1d7289f2db                                                │       STATUS     ENABLED  DETAIL                UPDATED     │
+      Update channel           │  │ team/api                    │    Key: aaf7110bc769                                                 │       override   yes      1 key, 0 identities   9 Nov       │
+                               │  │ team/docs                   │  This key currently verifies 0 tagged image(s). Delete it anyway?    │       override   no       not enforced          2 Nov       │
+                               │  │ team/web                    │  enter deletes the key, esc keeps it                                 │       inherited  —        global policy         -           │
+                               │  │ team/infra                  │  Trusted Identities (1)                                              │       inherited  —        global policy         -           │
+                               │  │                             │    Identity: https://github.com/team/.* (https://token.actions.git…  │                                                             │
+                               │  │                             │  Clear all trusted keys                                              │                                                             │
+                               │  │                             │                                                                      │                                                             │
+                               │  │                             │   Save  enter   Cancel  esc                                          │                                                             │
+                               │  │                             │  tab next field, space toggles, n adds and x deletes in a list       │                                                             │
+                               │  │                             ╰──────────────────────────────────────────────────────────────────────╯                                                             │
+                               │  │                                                                                                                                                                  │
+                               │  │                                                                                                                                                                  │
+                               │  │                                                                                                                                                                  │
+                               │  │                                                                                                                                                                  │
+                               │  │                                                                                                                                                                  │
+                               │  │                                                                                                                                                                  │
+                               │  │                                                                                                                                                                  │
+                               │  │                                                                                                                                                                  │
+                               │  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  tab next field   space toggle   enter save   esc cancel                                                                                                                                               

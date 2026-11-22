@@ -208,8 +208,8 @@ func renderTrustedIdentityList(theme adminTheme, l trustedIdentityList, focused 
 
 	switch {
 	case l.adding:
-		lines = append(lines, renderTextField(theme, "New Identity Regexp", l.inputRegexp, l.addFocus == identityAddFieldRegexp))
-		lines = append(lines, renderTextField(theme, "New Identity Issuer", l.inputIssuer, l.addFocus == identityAddFieldIssuer))
+		lines = append(lines, userField(theme, "New Identity Regexp", l.inputRegexp, false, l.addFocus == identityAddFieldRegexp, trustedListFieldWidth)...)
+		lines = append(lines, userField(theme, "New Identity Issuer", l.inputIssuer, false, l.addFocus == identityAddFieldIssuer, trustedListFieldWidth)...)
 	case focused:
 		lines = append(lines, theme.muted.Render("n: add identity | x: delete selected identity"))
 	}
@@ -217,4 +217,18 @@ func renderTrustedIdentityList(theme adminTheme, l trustedIdentityList, focused 
 		lines = append(lines, theme.error.Render(l.err))
 	}
 	return lines
+}
+
+// trustedIdentityFocusRow is the line of renderTrustedIdentityList's output
+// that holds what the operator is working on: the selected identity, or the
+// field being filled in below the identities.
+func trustedIdentityFocusRow(l trustedIdentityList) int {
+	rows := max(len(l.identities), 1)
+	if l.adding {
+		if l.addFocus == identityAddFieldIssuer {
+			return rows + 4
+		}
+		return rows + 2
+	}
+	return min(boundedIndex(l.selected, len(l.identities)), max(len(l.identities)-1, 0)) + 1
 }

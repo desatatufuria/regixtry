@@ -1,0 +1,24 @@
+  Admin › Security › Secret scanning                                                                                           signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │
+                               │  Secret scanning                                                                    Gitleaks, leaked-secret scanner
+    Overview                   │  Feature enabl  ╭──────────────────────────────────────────────────╮  ate available (0.58.0)  ·  rollback available
+                               │  ╭────────────  │  Gitleaks configuration                          │  ────────────────────────────────────────────╮
+  ACCESS                       │  │ GITLEAKS CO  │  Applies to every repository without an          │                                              │
+      Users                    │  │ Secret scan  │  override.                                       │                                  [x] enabled │
+      Robots                   │  │ Timeout      │  [x] Enabled                                     │                                           2m │
+      Repository access        │  │ Max concurr  │  Timeout                                         │                                            2 │
+                               │  │ c edit conf  │   2mx▏                                           │                                              │
+  SECURITY                     │  ╰────────────  │  Max Concurrency                                 │  ────────────────────────────────────────────╯
+      Image scanning           │  ╭────────────  │   2                                              │  ────────────────────────────────────────────╮
+    ▸ Secret scanning          │  │ PER-REPOSIT  │  invalid timeout: time: unknown unit "mx" in     │                                              │
+      Signing policy           │  │ REPOSITORY   │  duration "2mx"                                  │   ENABLED  DETAIL                UPDATED     │
+                               │  │ team/api     │                                                  │   yes      config path set       12 Nov      │
+  OPERATIONS                   │  │ team/docs    │   Save  enter   Cancel  esc                      │   no       scanning off          2 Nov       │
+      Scan runs                │  │ team/web     │  tab next field, space toggles                   │   —        global settings       -           │
+      Secret findings          │  │ team/infra   ╰──────────────────────────────────────────────────╯   —        global settings       -           │
+      Update channel           │  │                                                                                                                │
+                               │  │                                                                                                                │
+                               │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  tab next field   space toggle   enter save   esc cancel                                                                                             

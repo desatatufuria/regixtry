@@ -1,0 +1,40 @@
+  Admin › Security › Secret scanning                                                                                                                                             signed in as operator  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │
+                               │  Secret scanning                                                                                                                      Gitleaks, leaked-secret scanner
+    Overview                   │  Feature enabled  ·  Runtime ready, healthy  ·  version 0.57.1  ·  update available (0.58.0)  ·  rollback available
+                               │  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  ACCESS                       │  │ GITLEAKS CONFIGURATION                                                                                                                                           │
+      Users                    │  │ Secret scanning                                                                                                                                      [x] enabled │
+      Robots                   │  │ Timeout                                                                                                                                                       2m │
+      Repository access        │  │ Max concurrency                                                                                                                                                2 │
+                               │  │ c edit configuration.                                                                                                                                            │
+  SECURITY                     │  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+      Image scanning           │  ╭─────────────────────────────────────  ╭──────────────────────────────────────────────────╮  ─────────────────────────────────────────────────────────────────────╮
+    ▸ Secret scanning          │  │ PER-REPOSITORY OVERRIDES              │  Gitleaks configuration                          │                                                                       │
+      Signing policy           │  │ REPOSITORY                            │  Applies to every repository without an          │                 STATUS     ENABLED  DETAIL                UPDATED     │
+                               │  │ team/api                              │  override.                                       │                 override   yes      config path set       12 Nov      │
+  OPERATIONS                   │  │ team/docs                             │  [x] Enabled                                     │                 override   no       scanning off          2 Nov       │
+      Scan runs                │  │ team/web                              │  Timeout                                         │                 inherited  —        global settings       -           │
+      Secret findings          │  │ team/infra                            │   2mx▏                                           │                 inherited  —        global settings       -           │
+      Update channel           │  │                                       │  Max Concurrency                                 │                                                                       │
+                               │  │                                       │   2                                              │                                                                       │
+                               │  │                                       │  invalid timeout: time: unknown unit "mx" in     │                                                                       │
+                               │  │                                       │  duration "2mx"                                  │                                                                       │
+                               │  │                                       │                                                  │                                                                       │
+                               │  │                                       │   Save  enter   Cancel  esc                      │                                                                       │
+                               │  │                                       │  tab next field, space toggles                   │                                                                       │
+                               │  │                                       ╰──────────────────────────────────────────────────╯                                                                       │
+                               │  │                                                                                                                                                                  │
+                               │  │                                                                                                                                                                  │
+                               │  │                                                                                                                                                                  │
+                               │  │                                                                                                                                                                  │
+                               │  │                                                                                                                                                                  │
+                               │  │                                                                                                                                                                  │
+                               │  │                                                                                                                                                                  │
+                               │  │                                                                                                                                                                  │
+                               │  │                                                                                                                                                                  │
+                               │  │                                                                                                                                                                  │
+                               │  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  tab next field   space toggle   enter save   esc cancel                                                                                                                                               

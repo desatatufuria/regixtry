@@ -2196,7 +2196,7 @@ func TestModelExpiredSessionForcesRelogin(t *testing.T) {
 	}
 }
 
-func TestModelFeatureViewRendersGenericPageAndAllowsDeclaredAction(t *testing.T) {
+func TestModelFeatureViewRendersPageAndAllowsDeclaredAction(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.August, 8, 14, 0, 0, 0, time.UTC)
@@ -2227,8 +2227,8 @@ func TestModelFeatureViewRendersGenericPageAndAllowsDeclaredAction(t *testing.T)
 		t.Fatalf("getFeaturePageCalls = %d, want one page read", adminClient.getFeaturePageCalls)
 	}
 	view := updated.View().Content
-	for _, want := range []string{"Configuration", "Runtime", "Version: 0.57.1", "x: disable"} {
-		if !strings.Contains(view, want) {
+	for _, want := range []string{"TRIVY CONFIGURATION", "Runtime ready", "version 0.57.1", "x disable"} {
+		if !strings.Contains(ansi.Strip(view), want) {
 			t.Fatalf("view = %q, want %q", view, want)
 		}
 	}
@@ -2245,8 +2245,13 @@ func TestModelFeatureViewRendersGenericPageAndAllowsDeclaredAction(t *testing.T)
 	if updated.screen != screenSecurityTrivy {
 		t.Fatalf("screen = %q, want %q after disable", updated.screen, screenSecurityTrivy)
 	}
-	if !strings.Contains(updated.View().Content, `Feature "trivy" disabled.`) || !strings.Contains(updated.View().Content, `Enabled: false`) {
-		t.Fatalf("view = %q, want disabled feature status", updated.View().Content)
+	if !strings.Contains(updated.View().Content, `Feature "trivy" disabled.`) {
+		t.Fatalf("view = %q, want the action's own message", updated.View().Content)
+	}
+	// The message gives way to the feature's state on the next key.
+	updated = runKey(t, updated, "r")
+	if !strings.Contains(ansi.Strip(updated.View().Content), `Feature disabled`) || !strings.Contains(ansi.Strip(updated.View().Content), "e enable") {
+		t.Fatalf("view = %q, want the disabled feature state and its enable action", ansi.Strip(updated.View().Content))
 	}
 }
 
@@ -2274,21 +2279,21 @@ func TestModelFeatureSelectionRefreshesPageAndHelpFromBackendActions(t *testing.
 		t.Fatalf("getFeaturePageCalls = %d, want one page read for gitleaks", adminClient.getFeaturePageCalls)
 	}
 	view := updated.View().Content
-	for _, want := range []string{"Secret scanning", "e: enable"} {
-		if !strings.Contains(view, want) {
+	for _, want := range []string{"Secret scanning", "e enable"} {
+		if !strings.Contains(ansi.Strip(view), want) {
 			t.Fatalf("view = %q, want %q", view, want)
 		}
 	}
-	if strings.Contains(view, "x: disable") {
+	if strings.Contains(ansi.Strip(view), "x disable") {
 		t.Fatalf("view = %q, want backend-authoritative action help for selected feature", view)
 	}
 }
 
-func TestModelTrivyFeatureDefaultsToRuntimeTab(t *testing.T) {
+func TestModelTrivyFeatureDefaultsToConfigTab(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.August, 8, 14, 0, 0, 0, time.UTC)
-	t.Run("trivy defaults to runtime tab", func(t *testing.T) {
+	t.Run("trivy defaults to the config tab", func(t *testing.T) {
 		adminClient := &fakeAdminClient{
 			loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
 			featurePage: ports.FeaturePage{
@@ -2306,8 +2311,8 @@ func TestModelTrivyFeatureDefaultsToRuntimeTab(t *testing.T) {
 		updated = openSidebarItem(t, updated, shellNavImageScanning)
 
 		view := updated.View().Content
-		for _, want := range []string{"Runtime", "Repository Alerts", "Configuration", "Version: 0.57.1"} {
-			if !strings.Contains(view, want) {
+		for _, want := range []string{"Config", "Repositories", "TRIVY CONFIGURATION", "version 0.57.1"} {
+			if !strings.Contains(ansi.Strip(view), want) {
 				t.Fatalf("view = %q, want %q", view, want)
 			}
 		}
@@ -2335,7 +2340,7 @@ func TestModelTrivyConfigModalOpenCancelAndSubmitCurrentSettingsOnly(t *testing.
 
 	updated = runKey(t, updated, "c")
 	modalView := updated.View().Content
-	for _, want := range []string{"Edit Trivy Configuration", "Schedule Enabled", "Interval", "Timeout", "Registry Reachable URL", "Max Concurrency"} {
+	for _, want := range []string{"Trivy configuration", "Scheduled scans", "Interval", "Timeout", "Registry Reachable URL", "Max Concurrency"} {
 		if !strings.Contains(modalView, want) {
 			t.Fatalf("view = %q, want %q", modalView, want)
 		}
@@ -2350,7 +2355,7 @@ func TestModelTrivyConfigModalOpenCancelAndSubmitCurrentSettingsOnly(t *testing.
 	if adminClient.configureFeatureCalls != 0 {
 		t.Fatalf("configureFeatureCalls = %d, want cancel to keep modal client-idle", adminClient.configureFeatureCalls)
 	}
-	if strings.Contains(canceled.View().Content, "Edit Trivy Configuration") {
+	if strings.Contains(canceled.View().Content, "Trivy configuration") {
 		t.Fatalf("view = %q, want modal closed after esc", canceled.View().Content)
 	}
 
@@ -2412,9 +2417,9 @@ func TestModelGitleaksConfigModalOpenCancelAndSubmitCurrentSettingsOnly(t *testi
 		t.Fatalf("screen = %q, want %q", got, want)
 	}
 
-	updated = runKey(t, updated, "s")
+	updated = runKey(t, updated, "c")
 	modalView := updated.View().Content
-	for _, want := range []string{"Edit Gitleaks Configuration", "Enabled", "Timeout", "Max Concurrency"} {
+	for _, want := range []string{"Gitleaks configuration", "Enabled", "Timeout", "Max Concurrency"} {
 		if !strings.Contains(modalView, want) {
 			t.Fatalf("view = %q, want %q", modalView, want)
 		}
@@ -2429,7 +2434,7 @@ func TestModelGitleaksConfigModalOpenCancelAndSubmitCurrentSettingsOnly(t *testi
 	if !ok {
 		t.Fatalf("adminScreens[slotGitleaksConfig] = %#v, want a mounted gitleaksConfigScreen", updated.adminScreens[slotGitleaksConfig])
 	}
-	if got, want := screen.cfg, (gitleaksConfigModal{Open: true, Focus: gitleaksConfigFieldEnabled, Enabled: true, Timeout: "5m0s", MaxConcurrency: "1"}); got != want {
+	if got, want := screen.cfg, (gitleaksConfigModal{Open: true, Focus: gitleaksConfigFieldEnabled, Enabled: true, Timeout: "5m", MaxConcurrency: "1"}); got != want {
 		t.Fatalf("adminScreens[slotGitleaksConfig].cfg = %#v, want %#v", got, want)
 	}
 	modalOnly := screen.View(newAdminTheme(), screenEnv{}).Overlay
@@ -2443,7 +2448,7 @@ func TestModelGitleaksConfigModalOpenCancelAndSubmitCurrentSettingsOnly(t *testi
 	if adminClient.configureFeatureCalls != 0 {
 		t.Fatalf("configureFeatureCalls = %d, want cancel to keep modal client-idle", adminClient.configureFeatureCalls)
 	}
-	if strings.Contains(canceled.View().Content, "Edit Gitleaks Configuration") {
+	if strings.Contains(canceled.View().Content, "Gitleaks configuration") {
 		t.Fatalf("view = %q, want modal closed after esc", canceled.View().Content)
 	}
 
@@ -2496,7 +2501,7 @@ func TestModelGitleaksConfigModalValidationErrorSurfaced(t *testing.T) {
 	}
 	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
 	updated = openSidebarItem(t, updated, shellNavSecretScanning)
-	updated = runKey(t, updated, "s")
+	updated = runKey(t, updated, "c")
 
 	// Focus starts on Enabled; Tab once lands on Timeout.
 	updated = runKey(t, updated, "tab")
@@ -2543,8 +2548,8 @@ func TestGitleaksConfigModalCharacterization(t *testing.T) {
 		}
 		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
 		updated = openSidebarItem(t, updated, shellNavSecretScanning)
-		updated = runKey(t, updated, "s")
-		if !strings.Contains(updated.View().Content, "Edit Gitleaks Configuration") {
+		updated = runKey(t, updated, "c")
+		if !strings.Contains(updated.View().Content, "Gitleaks configuration") {
 			t.Fatalf("test setup invalid: view = %q, want the gitleaks modal open", updated.View().Content)
 		}
 		return updated, adminClient
@@ -2554,7 +2559,7 @@ func TestGitleaksConfigModalCharacterization(t *testing.T) {
 		t.Parallel()
 		opened, client := newReady(t)
 		closed := runKey(t, opened, "esc")
-		if strings.Contains(closed.View().Content, "Edit Gitleaks Configuration") {
+		if strings.Contains(closed.View().Content, "Gitleaks configuration") {
 			t.Fatalf("view after esc = %q, want the modal closed", closed.View().Content)
 		}
 		if client.configureFeatureCalls != 0 {
@@ -2588,7 +2593,7 @@ func TestGitleaksConfigModalCharacterization(t *testing.T) {
 			afterFourTabs = runKey(t, afterFourTabs, "tab")
 		}
 		typed := runKey(t, afterFourTabs, "9")
-		if !strings.Contains(ansi.Strip(typed.View().Content), "5m0s9") {
+		if !strings.Contains(ansi.Strip(typed.View().Content), "5m9") {
 			t.Fatalf("view after tab x4 + rune = %q, want the rune appended to Timeout (0:Enabled -> 1:Timeout -> 2:MaxConcurrency -> 0:Enabled -> 1:Timeout)", ansi.Strip(typed.View().Content))
 		}
 		if strings.Contains(ansi.Strip(typed.View().Content), "19") {
@@ -2599,7 +2604,7 @@ func TestGitleaksConfigModalCharacterization(t *testing.T) {
 	t.Run("backspace trims the focused field", func(t *testing.T) {
 		t.Parallel()
 		// Round-trip identity again (see the space test's comment above):
-		// removing "s" from "5m0s" must change the view, and typing "s"
+		// removing "m" from "5m" must change the view, and typing "m"
 		// back must exactly restore it.
 		opened, _ := newReady(t)
 		onTimeout := runKey(t, opened, "tab")
@@ -2607,9 +2612,9 @@ func TestGitleaksConfigModalCharacterization(t *testing.T) {
 		if trimmed.View().Content == onTimeout.View().Content {
 			t.Fatalf("view after backspace = unchanged, want Timeout's trailing rune removed")
 		}
-		restored := runKey(t, trimmed, "s")
+		restored := runKey(t, trimmed, "m")
 		if restored.View().Content != onTimeout.View().Content {
-			t.Fatalf("view after backspace+\"s\" = %q, want it to exactly restore %q", restored.View().Content, onTimeout.View().Content)
+			t.Fatalf("view after backspace+\"m\" = %q, want it to exactly restore %q", restored.View().Content, onTimeout.View().Content)
 		}
 	})
 
@@ -2623,7 +2628,7 @@ func TestGitleaksConfigModalCharacterization(t *testing.T) {
 		if client.lastConfiguredFeature != "gitleaks" {
 			t.Fatalf("lastConfiguredFeature = %q, want gitleaks", client.lastConfiguredFeature)
 		}
-		if strings.Contains(submitted.View().Content, "Edit Gitleaks Configuration") {
+		if strings.Contains(submitted.View().Content, "Gitleaks configuration") {
 			t.Fatalf("view after successful submit = %q, want the modal closed", submitted.View().Content)
 		}
 	})
@@ -2633,7 +2638,7 @@ func TestGitleaksConfigModalCharacterization(t *testing.T) {
 		opened, _ := newReady(t)
 		onTimeout := runKey(t, opened, "tab")
 		typed := runKey(t, onTimeout, "9")
-		if !strings.Contains(typed.View().Content, "5m0s9") {
+		if !strings.Contains(typed.View().Content, "5m9") {
 			t.Fatalf("view after rune = %q, want \"9\" appended to Timeout", typed.View().Content)
 		}
 	})
@@ -2686,7 +2691,7 @@ func TestModelScanPolicyModalOpenToggleSubmitPersistsAndReflectsCurrentSettings(
 
 	updated = runKey(t, updated, "p")
 	modalView := updated.View().Content
-	for _, want := range []string{"Enabled", "Severity Threshold", "CRITICAL"} {
+	for _, want := range []string{"Policy enabled", "Severity threshold", "CRITICAL"} {
 		if !strings.Contains(modalView, want) {
 			t.Fatalf("view = %q, want %q", modalView, want)
 		}
@@ -2757,7 +2762,7 @@ func TestModelSigningPolicyModalOpenerKeyIsScopedToSigningFeature(t *testing.T) 
 			t.Fatal("adminScreens[slotTrivyConfig] != nil, want unmounted -- 'p' on signing must not touch the trivy screen")
 		}
 		modalView := updated.View().Content
-		for _, want := range []string{"Signing Policy", "Enabled", "Trusted Keys"} {
+		for _, want := range []string{"Signing policy", "Pull-time gate enforced", "Trusted Keys"} {
 			if !strings.Contains(modalView, want) {
 				t.Fatalf("view = %q, want %q", modalView, want)
 			}
@@ -3089,7 +3094,7 @@ func TestModelTrivyOverrideEditorOpenerKeyIsScopedToRepositoryAlertsRow(t *testi
 		}
 	})
 
-	t.Run("o on trivyConfigScreen does not open the editor or collide with feature actions", func(t *testing.T) {
+	t.Run("o on trivyConfigScreen opens the repositories screen, not the editor, and does not collide with feature actions", func(t *testing.T) {
 		t.Parallel()
 		adminClient := &fakeAdminClient{
 			loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
@@ -3100,11 +3105,14 @@ func TestModelTrivyOverrideEditorOpenerKeyIsScopedToRepositoryAlertsRow(t *testi
 
 		updated = runKey(t, updated, "o")
 
-		if updated.adminScreens[slotTrivyRepos] != nil {
-			t.Fatal("adminScreens[slotTrivyRepos] != nil, want unmounted -- 'o' on trivyConfigScreen (the Runtime tab's successor) does nothing")
+		if updated.screen != screenSecurityTrivyRepos {
+			t.Fatalf("screen = %q, want %q: 'o' on the Image scanning screen opens the repositories screen", updated.screen, screenSecurityTrivyRepos)
+		}
+		if repos, ok := updated.adminScreens[slotTrivyRepos].(trivyReposScreen); !ok || repos.editor.Active() {
+			t.Fatal("'o' on trivyConfigScreen must not open the override editor itself")
 		}
 		if adminClient.getRepositoryOverrideCalls != 0 {
-			t.Fatalf("getRepositoryOverrideCalls = %d, want 0 (no load fired)", adminClient.getRepositoryOverrideCalls)
+			t.Fatalf("getRepositoryOverrideCalls = %d, want 0 (no editor load fired)", adminClient.getRepositoryOverrideCalls)
 		}
 		if adminClient.executeFeatureActionCalls != 0 {
 			t.Fatalf("executeFeatureActionCalls = %d, want 0 ('o' must not fall through to featureActionForKey)", adminClient.executeFeatureActionCalls)
@@ -3535,8 +3543,8 @@ func TestModelTrivyRepositoryAlertsLoadSelectDetailAndRecoverEmptyState(t *testi
 			t.Fatalf("view = %q, want clear empty-state message", updated.View().Content)
 		}
 		updated = runKey(t, updated, "tab")
-		if !strings.Contains(updated.View().Content, "Version: 0.57.1") {
-			t.Fatalf("view = %q, want runtime tab (trivyConfigScreen) still usable after empty alerts", updated.View().Content)
+		if !strings.Contains(ansi.Strip(updated.View().Content), "version 0.57.1") {
+			t.Fatalf("view = %q, want the config tab (trivyConfigScreen) still usable after empty alerts", updated.View().Content)
 		}
 	})
 }
@@ -3832,7 +3840,7 @@ func TestModelConfirmAndTrivyConfigModalOverlayFitsViewportAndDoesNotGrowPageHei
 // TestModelTrivyConfigModalRendersFullBottomBorderAndHelpLineAtViewportFloor
 // is the Phase 3 task 3.3 RED test: at the 24-row viewport floor, the
 // composited Trivy config modal must still show its own closing border and
-// its "Enter: save | ... | Esc: cancel" help line — proof the modal is never
+// its "tab next field, space toggles" help line — proof the modal is never
 // silently clipped by the viewport-height guard now that it is a floating
 // overlay rather than appended body content.
 func TestModelTrivyConfigModalRendersFullBottomBorderAndHelpLineAtViewportFloor(t *testing.T) {
@@ -3855,7 +3863,7 @@ func TestModelTrivyConfigModalRendersFullBottomBorderAndHelpLineAtViewportFloor(
 	if !strings.Contains(view, "╰") {
 		t.Fatalf("view = %q, want the Trivy config modal's own closing border rune present at the viewport floor", view)
 	}
-	if !strings.Contains(view, "Enter: save | Tab: next field | Space: toggle | Esc: cancel") {
+	if !strings.Contains(ansi.Strip(view), "tab next field, space toggles") {
 		t.Fatalf("view = %q, want the modal's help line present at the viewport floor", view)
 	}
 }
@@ -3873,55 +3881,6 @@ func assertNoLineExceedsWidthOrCorruptsBorders(t *testing.T, view string, width 
 	for i, line := range strings.Split(view, "\n") {
 		if w := lipgloss.Width(line); w > width {
 			t.Fatalf("line %d width = %d, want <= %d (terminal width) -- an ANSI-corrupted or overflowing line:\n%s", i, w, width, view)
-		}
-	}
-}
-
-func TestModelFeatureTablesRenderAlignedRowsAndPreserveBackendValues(t *testing.T) {
-	t.Parallel()
-
-	now := time.Date(2026, time.August, 10, 10, 0, 0, 0, time.UTC)
-	adminClient := &fakeAdminClient{
-		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-		featurePage: ports.FeaturePage{
-			Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true, CurrentVersion: "0.57.1", LatestVersion: "0.58.0", UpdateStatus: "available"},
-			Header:  []ports.FeatureField{{Label: "Enabled", Value: "true"}},
-			Sections: []ports.FeatureSection{{
-				ID:    "checks",
-				Title: "Runtime Checks",
-				Kind:  "rows",
-				Rows: []ports.FeatureRow{{
-					Title:  "DB freshness",
-					Status: "stale",
-					Detail: "older than 24h",
-				}, {
-					Title:  "Registry reachability",
-					Status: "ready",
-					Detail: "https://registry.internal:5443",
-				}},
-			}},
-		},
-	}
-
-	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
-	// The "checks" rows table lives on trivyConfigScreen, reached by the
-	// sidebar's Image scanning item.
-	updated = openSidebarItem(t, updated, shellNavImageScanning)
-	trivy, ok := updated.adminScreens[slotTrivyConfig].(trivyConfigScreen)
-	if !ok {
-		t.Fatal("adminScreens[slotTrivyConfig] not a mounted trivyConfigScreen")
-	}
-	rowsTable, ok := trivy.rows["checks"]
-	if !ok {
-		t.Fatal("expected rows table for checks section")
-	}
-	if got, want := rowsTable.TotalRows(), 2; got != want {
-		t.Fatalf("rows table rows = %d, want %d", got, want)
-	}
-	view := updated.View().Content
-	for _, want := range []string{"Runtime Checks", "Title", "Status", "Detail", "DB freshness", "older than 24h", "Registry reachability", "https://registry.internal:5443"} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("view = %q, want %q", view, want)
 		}
 	}
 }
@@ -3986,11 +3945,6 @@ func TestModelTrivyTablesPreserveEmptyStateAndBackendOrdering(t *testing.T) {
 
 func TestAdminTableStatusCellsStayNeutral(t *testing.T) {
 	t.Parallel()
-
-	rowsTable := buildAdminFeatureRowsTable(ports.FeatureSection{ID: "checks", Title: "Checks", Kind: "rows", Rows: []ports.FeatureRow{{Title: "DB freshness", Status: "stale", Detail: "older than 24h"}}}, compactTableRows)
-	if _, styled := rowsTable.HighlightedRow().Data[adminTableColumnRowStatus].(bubbletable.StyledCell); styled {
-		t.Fatal("generic row status cells must stay neutral")
-	}
 
 	scanSummaryTable := buildAdminScanSummaryTable([]repositorySummary{{Repository: "team/api", LatestRun: ports.ScanRun{ID: "run-1", Repository: "team/api", RequestedRef: "1.0.0", Status: ports.ScanRunStatusCompleted, Critical: 1, High: 0, HasFixable: true}, RunCount: 1}}, 0, defaultViewportHeight)
 	if _, styled := scanSummaryTable.HighlightedRow().Data[adminTableColumnScanSummaryStatus].(bubbletable.StyledCell); styled {

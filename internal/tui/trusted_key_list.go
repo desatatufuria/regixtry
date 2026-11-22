@@ -80,6 +80,10 @@ func (l trustedKeyList) Keys() []string { return l.keys }
 // adding or confirming a delete.
 func (l trustedKeyList) update(env screenEnv, msg keyMsg) (trustedKeyList, tea.Cmd, bool) {
 	if l.usageLoading {
+		if isEscKey(msg) {
+			// Stop waiting: the late answer is dropped by applyUsageLoaded.
+			l.usageLoading = false
+		}
 		return l, nil, true // swallow input while the usage-count call is in flight
 	}
 
@@ -294,9 +298,11 @@ func renderTrustedKeyList(theme adminTheme, l trustedKeyList, focused bool) []st
 
 	switch {
 	case l.usageLoading:
-		lines = append(lines, theme.muted.Render("Checking key usage..."))
+		lines = append(lines, theme.muted.Render("Checking key usage... esc stops waiting"))
+	case l.confirm.Active():
+		lines = append(lines, theme.warning.Render(l.confirm.message), theme.muted.Render("enter deletes the key, esc keeps it"))
 	case l.adding:
-		lines = append(lines, renderTextField(theme, "New Key (PEM)", l.input, true))
+		lines = append(lines, userField(theme, "New Key (PEM)", strings.Join(strings.Fields(l.input), " "), false, true, trustedListFieldWidth)...)
 	case focused:
 		lines = append(lines, theme.muted.Render("n: add key | x: delete selected key"))
 	}
@@ -304,4 +310,18 @@ func renderTrustedKeyList(theme adminTheme, l trustedKeyList, focused bool) []st
 		lines = append(lines, theme.error.Render(l.err))
 	}
 	return lines
+}
+
+// trustedListFieldWidth is the width of a list's add fields.
+const trustedListFieldWidth = 44
+
+// trustedKeyFocusRow is the line of renderTrustedKeyList's output that holds
+// what the operator is working on: the selected key, or the add field and the
+// delete confirm below the keys. A screen with little room keeps it visible.
+func trustedKeyFocusRow(l trustedKeyList) int {
+	rows := max(len(l.keys), 1)
+	if l.adding || l.confirm.Active() || l.usageLoading {
+		return rows + 1
+	}
+	return min(boundedIndex(l.selected, len(l.keys)), max(len(l.keys)-1, 0)) + 1
 }

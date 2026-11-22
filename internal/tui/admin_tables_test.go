@@ -92,17 +92,14 @@ func TestTableRolesAssignsPrimaryAdaptiveAndCompactFloorAtThree(t *testing.T) {
 	}
 }
 
-// TestRebuildAdminTablesBakesPrimaryAndCompactPageSizeIntoTables integrates
-// tableRoles into each Security screen's own table rebuild
-// (Phase 11: Features/ScanSummary/FeatureRows moved off
-// AdminViewState/rebuildAdminTables onto trivyReposScreen/trivyConfigScreen's
-// own rebuildTable/rebuildRows methods): ScanSummary (the operator-navigable
-// primary list) gets the primary pageSize, FeatureRows (a secondary detail
-// table) gets the compact pageSize. Findings/SecretFindings are exercised separately (they only
+// TestRebuildAdminTablesBakesPrimaryPageSizeIntoTables integrates tableRoles
+// into the Repository Alerts screen's own table rebuild: ScanSummary (the
+// operator-navigable primary list) gets the primary pageSize.
+// Findings/SecretFindings are exercised separately (they only
 // build while the scan history modal is active, sized from the modal's own
 // nested row budget, not this primary/compact split — see
 // TestModelScanHistoryModal* in model_test.go).
-func TestRebuildAdminTablesBakesPrimaryAndCompactPageSizeIntoTables(t *testing.T) {
+func TestRebuildAdminTablesBakesPrimaryPageSizeIntoTables(t *testing.T) {
 	t.Parallel()
 
 	model := NewModel(&fakeQueryService{})
@@ -114,19 +111,13 @@ func TestRebuildAdminTablesBakesPrimaryAndCompactPageSizeIntoTables(t *testing.T
 		scanRuns[i] = ports.ScanRun{ID: fmt.Sprintf("run-%d", i), Repository: fmt.Sprintf("team/service-%d", i)}
 	}
 	summaries := summarizeScanRunsByRepository(scanRuns)
-	page := ports.FeaturePage{
-		Sections: []ports.FeatureSection{{ID: "rows-section", Kind: "rows", Rows: make([]ports.FeatureRow, rowCount)}},
-	}
 
 	layout := model.adminTablesLayout()
-	wantPrimary, wantCompact := tableRoles(layout)
+	wantPrimary, _ := tableRoles(layout)
 	env := model.screenEnv()
 
 	repos := trivyReposScreen{summaries: summaries, loaded: true}
 	repos.rebuildTable(env)
-
-	config := trivyConfigScreen{page: page, loaded: true}
-	config.rebuildRows(env)
 
 	assertTableHeight := func(t *testing.T, label string, table bubbletable.Model, wantPageSize int) {
 		t.Helper()
@@ -138,11 +129,6 @@ func TestRebuildAdminTablesBakesPrimaryAndCompactPageSizeIntoTables(t *testing.T
 	}
 
 	assertTableHeight(t, "trivyReposScreen.table (primary)", repos.table, wantPrimary)
-	rowsTable, ok := config.rows["rows-section"]
-	if !ok {
-		t.Fatalf("rows[%q] missing", "rows-section")
-	}
-	assertTableHeight(t, "trivyConfigScreen.rows (compact)", rowsTable, wantCompact)
 }
 
 // TestNewAdminBubbleTableShowsPositionIndicatorWhenRowsExceedPageSize is the

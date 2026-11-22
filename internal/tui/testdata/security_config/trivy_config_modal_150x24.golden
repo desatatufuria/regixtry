@@ -1,0 +1,24 @@
+  Admin › Security › Image scanning                                                                                            signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │
+                               │  Image scannin  ╭──────────────────────────────────────────────────╮                   Trivy, vulnerability scanner
+    Overview                   │  Feature enabl  │  Trivy configuration                             │  ate available (0.58.0)  ·  rollback available
+                               │   Config   Rep  │  Applies to every repository without an          │
+  ACCESS                       │  ╭────────────  │  override.                                       │  ╭───────────────────────────────────────────╮
+      Users                    │  │ TRIVY CONFI  │  [x] Scheduled scans                             │  │ SCAN POLICY                               │
+      Robots                   │  │ Scheduled s  │  Interval                                        │  │ Policy                        [x] enabled │
+      Repository access        │  │ Interval     │   24h                                            │  │ Severity threshold          CRITICAL+HIGH │
+                               │  │ Timeout      │  Timeout                                         │  │ A scan that reaches the threshold blocks  │
+  SECURITY                     │  │ Max concurr  │   5m                                             │  │ the pull. p edit policy.                  │
+    ▸ Image scanning           │  │ Registry re  │  Registry Reachable URL                          │  │ Last saved 2 Nov 2026 10:14 UTC.          │
+      Secret scanning          │  │ c edit conf  │   http://regixtry:5000                           │  │                                           │
+      Signing policy           │  ╰────────────  │  Max Concurrency                                 │  ╰───────────────────────────────────────────╯
+                               │  ╭────────────  │   2                                              │  ────────────────────────────────────────────╮
+  OPERATIONS                   │  │ PER-REPOSIT  │                                                  │                                              │
+      Scan runs                │  │ REPOSITORY   │   Save  enter   Cancel  esc                      │   ENABLED  DETAIL                UPDATED     │
+      Secret findings          │  │ team/api     │  tab next field, space toggles                   │   yes      ignore file set       14 Nov      │
+      Update channel           │  │ team/docs    ╰──────────────────────────────────────────────────╯   no       scanning off          2 Nov       │
+                               │  │ +2 more, o opens the list                                                                                      │
+                               │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  tab next field   space toggle   enter save   esc cancel                                                                                             
