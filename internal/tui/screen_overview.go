@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"charm.land/lipgloss/v2"
 	"context"
 	"errors"
 	"fmt"
@@ -265,6 +266,9 @@ type attentionItem struct {
 	tone attentionTone
 	text string
 	hint string
+	// fit, when set, words the row for a width, shortening what matters
+	// least (a name) before what matters most (a time left).
+	fit func(width int) string
 	// open is what Enter does on the row once Tab selected it.
 	open tea.Cmd
 }
@@ -274,7 +278,7 @@ type attentionItem struct {
 func (s overviewScreen) attentionItems(now time.Time) []attentionItem {
 	var items []attentionItem
 	if s.expiringCount > 0 {
-		items = append(items, attentionItem{tone: attentionWarning, text: s.expiringText(now), open: overviewOpenSoonestToken(s.soonest)})
+		items = append(items, attentionItem{tone: attentionWarning, text: s.expiringText(now), fit: func(w int) string { return s.expiringTextFit(now, w) }, open: overviewOpenSoonestToken(s.soonest)})
 	}
 	for i, name := range s.robotsWithoutAccess {
 		items = append(items, attentionItem{tone: attentionWarning, text: fmt.Sprintf("Robot %s has no repository access", name), hint: "g grant", open: openGrantAccess(s.robotsWithoutAccessIDs[i], screenAdminOverview)})
@@ -294,11 +298,26 @@ func (s overviewScreen) attentionItems(now time.Time) []attentionItem {
 // expiringText is the "Tokens expiring soon" row: how many, and whose token
 // goes first. The time left is hours or days, never seconds.
 func (s overviewScreen) expiringText(now time.Time) string {
+	return s.expiringTextFit(now, 0)
+}
+
+// expiringTextFit is expiringText in width columns (0 is unlimited): the
+// owner's name is shortened with an ellipsis before the time left is touched.
+func (s overviewScreen) expiringTextFit(now time.Time, width int) string {
 	count := fmt.Sprint(s.expiringCount)
 	if s.expiringCapped {
 		count += "+"
 	}
-	return fmt.Sprintf("Tokens expiring soon: %s. Soonest: %s in %s", count, sanitizeFieldText(s.soonest.Username, true), remainingText(s.soonest.ExpiresAt.Sub(now)))
+	owner := sanitizeFieldText(s.soonest.Username, true)
+	left := remainingText(s.soonest.ExpiresAt.Sub(now))
+	text := fmt.Sprintf("Tokens expiring soon: %s. Soonest: %s in %s", count, owner, left)
+	if width <= 0 || lipgloss.Width(text) <= width {
+		return text
+	}
+	if room := width - lipgloss.Width(text) + lipgloss.Width(owner); room >= 4 {
+		return fmt.Sprintf("Tokens expiring soon: %s. Soonest: %s in %s", count, grantTruncate(owner, room), left)
+	}
+	return grantTruncate(text, width)
 }
 
 // overviewOpenSoonestToken opens the Tokens screen of the principal whose
