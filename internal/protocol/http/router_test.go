@@ -3626,6 +3626,12 @@ func (f fakeAuthService) PutAdminRepositoryGrant(context.Context, domainauth.Pri
 func (f fakeAuthService) DeleteAdminRepositoryGrant(context.Context, domainauth.Principal, string, string) error {
 	return nil
 }
+func (f fakeAuthService) PutAdminProjectGrant(context.Context, domainauth.Principal, ports.AdminPutProjectGrantInput) (ports.AdminProjectMember, error) {
+	return ports.AdminProjectMember{}, nil
+}
+func (f fakeAuthService) DeleteAdminProjectGrant(context.Context, domainauth.Principal, string, string) error {
+	return nil
+}
 func (f fakeAuthService) CreateRobot(context.Context, domainauth.Principal, ports.CreateRobotInput) (ports.CreatedRobot, error) {
 	return ports.CreatedRobot{}, nil
 }

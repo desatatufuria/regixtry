@@ -31,6 +31,9 @@ type Service struct {
 	limiter *loginLimiter
 	backoff *loginBackoff
 	logger  *log.Logger
+	// projects answers whether a project exists (see SetProjectLookup); nil
+	// until main installs it.
+	projects ports.ProjectLookup
 }
 
 // robotRollbackTimeout is the default bound on the robot rollback delete.

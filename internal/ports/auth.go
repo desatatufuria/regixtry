@@ -198,6 +198,24 @@ type AdminGrantPage struct {
 	Next   string            `json:"next"`
 }
 
+// AdminProjectMember is one member of a project: a user or robot holding a
+// project grant. Like AdminRepositoryGrant it carries no user ID, hash, flags
+// or token, so a project administrator never reads the user directory.
+type AdminProjectMember struct {
+	Username  string              `json:"username"`
+	IsRobot   bool                `json:"is_robot"`
+	Role      domainauth.RepoRole `json:"role"`
+	CreatedAt time.Time           `json:"created_at"`
+	UpdatedAt time.Time           `json:"updated_at"`
+}
+
+// AdminPutProjectGrantInput carries PUT /admin/v1/projects/{project}/members/{user}.
+type AdminPutProjectGrantInput struct {
+	Project  string              `json:"-"`
+	Username string              `json:"-"`
+	Role     domainauth.RepoRole `json:"role"`
+}
+
 type AdminPutRepositoryGrantInput struct {
 	Repository string              `json:"-"`
 	Username   string              `json:"-"`
@@ -298,6 +316,8 @@ type AdminHTTPService interface {
 	PutAdminRepositoryGrant(ctx context.Context, actor domainauth.Principal, input AdminPutRepositoryGrantInput) (AdminRepositoryGrant, error)
 	ListAdminAllRepositoryGrants(ctx context.Context, actor domainauth.Principal, limit int, after string) (AdminGrantPage, error)
 	DeleteAdminRepositoryGrant(ctx context.Context, actor domainauth.Principal, repository string, username string) error
+	PutAdminProjectGrant(ctx context.Context, actor domainauth.Principal, input AdminPutProjectGrantInput) (AdminProjectMember, error)
+	DeleteAdminProjectGrant(ctx context.Context, actor domainauth.Principal, project string, username string) error
 	CreateAdminRobot(ctx context.Context, actor domainauth.Principal, input AdminCreateRobotInput) (AdminCreatedRobot, error)
 	ListAdminRobots(ctx context.Context, actor domainauth.Principal) ([]AdminRobot, error)
 	DeleteAdminRobot(ctx context.Context, actor domainauth.Principal, userID string) error

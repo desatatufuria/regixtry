@@ -1,0 +1,160 @@
+package auth
+
+import (
+	"context"
+	"strings"
+
+	domainauth "regixtry/internal/domain/auth"
+	regixtrydomain "regixtry/internal/domain/regixtry"
+	"regixtry/internal/ports"
+)
+
+// SetProjectLookup installs the directory the service asks whether a project
+// exists (project grants for a missing project are refused). It is the one
+// seam to the registry metadata store, so this package never imports registry
+// code. Set it once at startup, before the service handles requests; without
+// it project grants are unavailable (unsupported), never silently accepted.
+func (s *Service) SetProjectLookup(lookup ports.ProjectLookup) {
+	s.projects = lookup
+}
+
+// projectMustExist is the existence check of a project grant. It runs AFTER
+// authorization, so a caller without rights gets the same refusal whether or
+// not the project exists and never learns which projects there are.
+func (s *Service) projectMustExist(ctx context.Context, project string) error {
+	if s.projects == nil {
+		return regixtrydomain.NewUnsupportedError("projects are not available in this deployment")
+	}
+	exists, err := s.projects.ProjectExists(ctx, project)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return domainauth.NewNotFoundError("project", project)
+	}
+
+	return nil
+}
+
+// PutProjectGrant gives a user or robot one role over every repository of a
+// project, or changes it. Grants are addressed by username so no caller needs
+// to read the user directory. The role is validated like RepoRole; the
+// project must exist.
+func (s *Service) PutProjectGrant(ctx context.Context, actor domainauth.Principal, project string, username string, role domainauth.RepoRole) (domainauth.ProjectGrant, error) {
+	project, err := regixtrydomain.ParseProjectName(strings.TrimSpace(project))
+	if err != nil {
+		return domainauth.ProjectGrant{}, err
+	}
+	if err := requireAdmin(actor); err != nil {
+		return domainauth.ProjectGrant{}, err
+	}
+	if err := role.Validate(); err != nil {
+		return domainauth.ProjectGrant{}, err
+	}
+	if err := s.projectMustExist(ctx, project); err != nil {
+		return domainauth.ProjectGrant{}, err
+	}
+
+	target, err := s.store.GetUserByUsername(ctx, normalizeUsername(username))
+	if err != nil {
+		return domainauth.ProjectGrant{}, err
+	}
+
+	// Read only to word the access history ("Reader to Writer"); a failed
+	// read never blocks the grant.
+	existing, listErr := s.store.ListProjectGrants(ctx, target.ID)
+	previous, hadPrevious := projectGrantRoleOn(existing, project)
+
+	now := s.now()
+	grant := domainauth.ProjectGrant{UserID: target.ID, Project: project, Role: role, CreatedAt: now, UpdatedAt: now}
+	if err := s.store.PutProjectGrant(ctx, grant); err != nil {
+		return domainauth.ProjectGrant{}, err
+	}
+
+	if listErr == nil {
+		s.recordProjectGrantPut(ctx, actor, target, grant, previous, hadPrevious)
+	}
+
+	return grant, nil
+}
+
+// PutAdminProjectGrant is the HTTP-facing PutProjectGrant: it answers with the
+// member projection, never a user ID.
+func (s *Service) PutAdminProjectGrant(ctx context.Context, actor domainauth.Principal, input ports.AdminPutProjectGrantInput) (ports.AdminProjectMember, error) {
+	grant, err := s.PutProjectGrant(ctx, actor, input.Project, input.Username, input.Role)
+	if err != nil {
+		return ports.AdminProjectMember{}, err
+	}
+	target, err := s.store.GetUserByID(ctx, grant.UserID)
+	if err != nil {
+		return ports.AdminProjectMember{}, err
+	}
+
+	return toAdminProjectMember(target, grant), nil
+}
+
+// DeleteProjectGrant revokes one user's grant on a project. It does not
+// require the project to exist, so an orphan grant left by a failed cleanup
+// can still be removed; exact repository grants are never touched.
+func (s *Service) DeleteProjectGrant(ctx context.Context, actor domainauth.Principal, project string, username string) error {
+	project, err := regixtrydomain.ParseProjectName(strings.TrimSpace(project))
+	if err != nil {
+		return err
+	}
+	if err := requireAdmin(actor); err != nil {
+		return err
+	}
+
+	target, err := s.store.GetUserByUsername(ctx, normalizeUsername(username))
+	if err != nil {
+		return err
+	}
+	if err := s.store.DeleteProjectGrant(ctx, target.ID, project); err != nil {
+		return err
+	}
+
+	s.recordProjectGrantDelete(ctx, actor, target, project)
+
+	return nil
+}
+
+// DeleteAdminProjectGrant is the HTTP-facing DeleteProjectGrant.
+func (s *Service) DeleteAdminProjectGrant(ctx context.Context, actor domainauth.Principal, project string, username string) error {
+	return s.DeleteProjectGrant(ctx, actor, project, username)
+}
+
+// PurgeProjectGrants removes every grant of a project and reports how many it
+// removed. It is the ports.ProjectGrantCleaner seam the project service calls
+// around a project's life; it does its own no authorization because only the
+// project service (global admin) reaches it.
+func (s *Service) PurgeProjectGrants(ctx context.Context, project string) (int64, error) {
+	return s.store.DeleteProjectGrantsByProject(ctx, project)
+}
+
+// RecordProjectEvent is the ports.ProjectEventRecorder seam: the project
+// service records project.created and project.deleted through the same
+// history as every other access change. Any other action is ignored.
+func (s *Service) RecordProjectEvent(ctx context.Context, actor domainauth.Principal, action domainauth.AccessAction, project string) {
+	if action != domainauth.AccessActionProjectCreated && action != domainauth.AccessActionProjectDeleted {
+		return
+	}
+
+	s.recordAccessEvent(ctx, actor, domainauth.AccessEvent{
+		Action:     action,
+		Repository: domainauth.ProjectEventRepository(project),
+	})
+}
+
+func projectGrantRoleOn(grants []domainauth.ProjectGrant, project string) (domainauth.RepoRole, bool) {
+	for _, grant := range grants {
+		if grant.Project == project {
+			return grant.Role, true
+		}
+	}
+
+	return "", false
+}
+
+func toAdminProjectMember(user domainauth.User, grant domainauth.ProjectGrant) ports.AdminProjectMember {
+	return ports.AdminProjectMember{Username: user.Username, IsRobot: user.IsRobot, Role: grant.Role, CreatedAt: grant.CreatedAt, UpdatedAt: grant.UpdatedAt}
+}
