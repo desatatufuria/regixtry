@@ -103,9 +103,13 @@ type UpdateUserInput struct {
 // (design.md Decision 2): exactly one repository+role is bound at creation,
 // enforced by the service, not the schema. TTL follows CreateAdminTokenInput's
 // convention: zero means DefaultAdminTokenTTL, reused unchanged.
+//
+// Project is an additive alternative to Repository: exactly one of the two
+// names the grant, and a project robot is reader or writer only.
 type CreateRobotInput struct {
 	Name       string
 	Repository string
+	Project    string
 	Role       domainauth.RepoRole
 	TTL        time.Duration
 }
@@ -113,12 +117,16 @@ type CreateRobotInput struct {
 // CreatedRobot is CreateRobot's result: the persisted robot user, its single
 // grant, and its issued admin-credential token (secret shown once, matching
 // CreateAdminToken's shape).
+//
+// A project robot has ProjectGrant set and a zero Grant; a repository robot
+// the opposite.
 type CreatedRobot struct {
-	User      domainauth.User
-	Grant     domainauth.RepoGrant
-	Secret    string
-	Accessor  string
-	ExpiresAt time.Time
+	User         domainauth.User
+	Grant        domainauth.RepoGrant
+	ProjectGrant domainauth.ProjectGrant
+	Secret       string
+	Accessor     string
+	ExpiresAt    time.Time
 }
 
 type CreatedAdminToken struct {
@@ -242,17 +250,21 @@ type AdminPutRepositoryGrantInput struct {
 // route table): id/username/repository/role/enabled/created_at, matching
 // GET /admin/v1/robots' documented shape.
 type AdminRobot struct {
-	ID         string              `json:"id"`
-	Username   string              `json:"username"`
-	Repository string              `json:"repository"`
-	Role       domainauth.RepoRole `json:"role"`
-	Enabled    bool                `json:"enabled"`
-	CreatedAt  time.Time           `json:"created_at"`
+	ID         string `json:"id"`
+	Username   string `json:"username"`
+	Repository string `json:"repository"`
+	// Project is set instead of Repository for a robot holding a project
+	// grant; it is omitted for a repository robot.
+	Project   string              `json:"project,omitempty"`
+	Role      domainauth.RepoRole `json:"role"`
+	Enabled   bool                `json:"enabled"`
+	CreatedAt time.Time           `json:"created_at"`
 }
 
 type AdminCreateRobotInput struct {
 	Name       string              `json:"name"`
 	Repository string              `json:"repository"`
+	Project    string              `json:"project"`
 	Role       domainauth.RepoRole `json:"role"`
 	TTL        time.Duration       `json:"-"`
 }

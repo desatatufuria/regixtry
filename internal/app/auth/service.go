@@ -992,12 +992,39 @@ func (s *Service) CreateRobot(ctx context.Context, actor domainauth.Principal, i
 		return ports.CreatedRobot{}, err
 	}
 
-	repo, err := regixtrydomain.ParseRepositoryRef(strings.TrimSpace(input.Repository))
-	if err != nil {
-		return ports.CreatedRobot{}, err
+	// A robot is bound to exactly one repository OR one project, never both.
+	// Neither falls through to the repository path and its usual error.
+	repositoryName := strings.TrimSpace(input.Repository)
+	projectName := strings.TrimSpace(input.Project)
+	if repositoryName != "" && projectName != "" {
+		return ports.CreatedRobot{}, domainauth.NewValidationError("a robot takes either a repository or a project, not both")
 	}
-	if err := input.Role.Validate(); err != nil {
-		return ports.CreatedRobot{}, err
+
+	var repo regixtrydomain.RepositoryRef
+	if projectName != "" {
+		var err error
+		if projectName, err = regixtrydomain.ParseProjectName(projectName); err != nil {
+			return ports.CreatedRobot{}, err
+		}
+		if err := input.Role.Validate(); err != nil {
+			return ports.CreatedRobot{}, err
+		}
+		// A robot token is an admin credential: a project admin robot would
+		// delegate project management, so only reader and writer exist.
+		if input.Role == domainauth.RepoRoleAdmin {
+			return ports.CreatedRobot{}, domainauth.NewValidationError("robots on a project can be reader or writer only")
+		}
+		if err := s.projectMustExist(ctx, projectName); err != nil {
+			return ports.CreatedRobot{}, err
+		}
+	} else {
+		var err error
+		if repo, err = regixtrydomain.ParseRepositoryRef(repositoryName); err != nil {
+			return ports.CreatedRobot{}, err
+		}
+		if err := input.Role.Validate(); err != nil {
+			return ports.CreatedRobot{}, err
+		}
 	}
 
 	// Validate everything CreateAdminToken will validate before the first
@@ -1021,10 +1048,23 @@ func (s *Service) CreateRobot(ctx context.Context, actor domainauth.Principal, i
 		return ports.CreatedRobot{}, err
 	}
 
-	grant := domainauth.RepoGrant{UserID: user.ID, Repository: repo, Role: input.Role, CreatedAt: now, UpdatedAt: now}
-	if err := s.store.PutRepoGrant(ctx, grant); err != nil {
-		s.rollbackRobot(ctx, user.ID)
-		return ports.CreatedRobot{}, err
+	var grant domainauth.RepoGrant
+	var projectGrant domainauth.ProjectGrant
+	boundTo := projectName
+	if projectName != "" {
+		projectGrant = domainauth.ProjectGrant{UserID: user.ID, Project: projectName, Role: input.Role, CreatedAt: now, UpdatedAt: now}
+		if err := s.store.PutProjectGrant(ctx, projectGrant); err != nil {
+			s.rollbackRobot(ctx, user.ID)
+			return ports.CreatedRobot{}, err
+		}
+		boundTo = domainauth.ProjectEventRepository(projectName)
+	} else {
+		grant = domainauth.RepoGrant{UserID: user.ID, Repository: repo, Role: input.Role, CreatedAt: now, UpdatedAt: now}
+		if err := s.store.PutRepoGrant(ctx, grant); err != nil {
+			s.rollbackRobot(ctx, user.ID)
+			return ports.CreatedRobot{}, err
+		}
+		boundTo = repo.String()
 	}
 
 	created, _, err := s.issueAdminToken(ctx, actor, ports.CreateAdminTokenInput{UserID: user.ID, Name: strings.TrimSpace(input.Name), TTL: input.TTL})
@@ -1033,9 +1073,9 @@ func (s *Service) CreateRobot(ctx context.Context, actor domainauth.Principal, i
 		return ports.CreatedRobot{}, err
 	}
 
-	s.recordRobotCreated(ctx, actor, user, grant, created.Token.Name, ttl)
+	s.recordRobotCreated(ctx, actor, user, boundTo, input.Role, created.Token.Name, ttl)
 
-	return ports.CreatedRobot{User: user, Grant: grant, Secret: created.Secret, Accessor: created.Accessor, ExpiresAt: created.ExpiresAt}, nil
+	return ports.CreatedRobot{User: user, Grant: grant, ProjectGrant: projectGrant, Secret: created.Secret, Accessor: created.Accessor, ExpiresAt: created.ExpiresAt}, nil
 }
 
 // rollbackRobot best-effort deletes the robot user CreateRobot just wrote
@@ -1061,6 +1101,7 @@ func (s *Service) CreateAdminRobot(ctx context.Context, actor domainauth.Princip
 	created, err := s.CreateRobot(ctx, actor, ports.CreateRobotInput{
 		Name:       input.Name,
 		Repository: input.Repository,
+		Project:    input.Project,
 		Role:       input.Role,
 		TTL:        input.TTL,
 	})
@@ -1069,7 +1110,7 @@ func (s *Service) CreateAdminRobot(ctx context.Context, actor domainauth.Princip
 	}
 
 	return ports.AdminCreatedRobot{
-		Robot:     toAdminRobot(created.User, created.Grant),
+		Robot:     toAdminRobot(created.User, created.Grant, created.ProjectGrant),
 		Secret:    created.Secret,
 		Accessor:  created.Accessor,
 		ExpiresAt: created.ExpiresAt,
@@ -1093,7 +1134,17 @@ func (s *Service) ListAdminRobots(ctx context.Context, actor domainauth.Principa
 		if len(grants) > 0 {
 			grant = grants[0]
 		}
-		result = append(result, toAdminRobot(robot, grant))
+		var projectGrant domainauth.ProjectGrant
+		if len(grants) == 0 {
+			projectGrants, err := s.store.ListProjectGrants(ctx, robot.ID)
+			if err != nil {
+				return nil, err
+			}
+			if len(projectGrants) > 0 {
+				projectGrant = projectGrants[0]
+			}
+		}
+		result = append(result, toAdminRobot(robot, grant, projectGrant))
 	}
 
 	return result, nil
@@ -1133,12 +1184,18 @@ func (s *Service) DeleteAdminRobot(ctx context.Context, actor domainauth.Princip
 	return s.DeleteRobot(ctx, actor, userID)
 }
 
-func toAdminRobot(user domainauth.User, grant domainauth.RepoGrant) ports.AdminRobot {
+func toAdminRobot(user domainauth.User, grant domainauth.RepoGrant, projectGrant domainauth.ProjectGrant) ports.AdminRobot {
+	role := grant.Role
+	if projectGrant.Project != "" {
+		role = projectGrant.Role
+	}
+
 	return ports.AdminRobot{
 		ID:         user.ID,
 		Username:   user.Username,
 		Repository: grant.Repository.String(),
-		Role:       grant.Role,
+		Project:    projectGrant.Project,
+		Role:       role,
 		Enabled:    user.Enabled,
 		CreatedAt:  user.CreatedAt,
 	}

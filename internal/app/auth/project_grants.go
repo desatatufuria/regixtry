@@ -64,6 +64,20 @@ func (s *Service) PutProjectGrant(ctx context.Context, actor domainauth.Principa
 	if err != nil {
 		return domainauth.ProjectGrant{}, err
 	}
+	// A robot token is an admin credential: a project admin robot would
+	// delegate project management, and a robot holds a single grant.
+	if target.IsRobot {
+		if role == domainauth.RepoRoleAdmin {
+			return domainauth.ProjectGrant{}, domainauth.NewValidationError("robots on a project can be reader or writer only")
+		}
+		repoGrants, err := s.store.ListRepoGrants(ctx, target.ID)
+		if err != nil {
+			return domainauth.ProjectGrant{}, err
+		}
+		if len(repoGrants) > 0 {
+			return domainauth.ProjectGrant{}, domainauth.NewConflictError("robot already has a repository grant; a robot holds one grant")
+		}
+	}
 	// A read-only user must never gain write or administration through a
 	// project: only the reader role is allowed.
 	if target.IsReadOnly && role != domainauth.RepoRoleReader {

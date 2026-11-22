@@ -157,13 +157,15 @@ func (s *Service) recordTokenRevoked(ctx context.Context, actor domainauth.Princ
 	})
 }
 
-func (s *Service) recordRobotCreated(ctx context.Context, actor domainauth.Principal, robot domainauth.User, grant domainauth.RepoGrant, tokenName string, ttl time.Duration) {
+// recordRobotCreated records a robot created with its first grant. boundTo is
+// the repository, or "project:<name>" for a project robot.
+func (s *Service) recordRobotCreated(ctx context.Context, actor domainauth.Principal, robot domainauth.User, boundTo string, role domainauth.RepoRole, tokenName string, ttl time.Duration) {
 	s.recordAccessEvent(ctx, actor, domainauth.AccessEvent{
 		Action:          domainauth.AccessActionRobotCreated,
 		SubjectUserID:   robot.ID,
 		SubjectUsername: robot.Username,
-		Repository:      grant.Repository.String(),
-		Role:            string(grant.Role),
+		Repository:      boundTo,
+		Role:            string(role),
 		TokenName:       tokenName,
 		Detail:          humanLifetime(ttl),
 	})
