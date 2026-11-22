@@ -595,17 +595,19 @@ func (s *Service) Catalog(ctx context.Context, limit int, after string) (Catalog
 		return CatalogResult{}, err
 	}
 
-	repositories, err := s.metadata.Catalog(ctx, s.tenant(ctx), limit, after)
+	principal := ports.PrincipalFromContext(ctx)
+	repositories, err := pageAccessible(limit, after, principal != nil,
+		func(repository domain.RepositoryRef) string { return repository.String() },
+		func(name string) bool { return principal.HasCatalogAccess(name) },
+		func(batch int, cursor string) ([]domain.RepositoryRef, error) {
+			return s.metadata.Catalog(ctx, s.tenant(ctx), batch, cursor)
+		})
 	if err != nil {
 		return CatalogResult{}, err
 	}
 
-	principal := ports.PrincipalFromContext(ctx)
 	result := CatalogResult{Repositories: make([]string, 0, len(repositories))}
 	for _, repository := range repositories {
-		if principal != nil && !principal.HasCatalogAccess(repository.String()) {
-			continue
-		}
 		result.Repositories = append(result.Repositories, repository.String())
 	}
 
@@ -875,17 +877,19 @@ func (s *Service) RepositorySummaries(ctx context.Context, limit int, after stri
 		return nil, err
 	}
 
-	summaries, err := s.metadata.ListRepositoriesWithSummary(ctx, s.tenant(ctx), limit, after)
+	principal := ports.PrincipalFromContext(ctx)
+	summaries, err := pageAccessible(limit, after, principal != nil,
+		func(summary ports.RepositorySummary) string { return summary.Name },
+		func(name string) bool { return principal.HasCatalogAccess(name) },
+		func(batch int, cursor string) ([]ports.RepositorySummary, error) {
+			return s.metadata.ListRepositoriesWithSummary(ctx, s.tenant(ctx), batch, cursor)
+		})
 	if err != nil {
 		return nil, err
 	}
 
-	principal := ports.PrincipalFromContext(ctx)
 	result := make([]RepositorySummary, 0, len(summaries))
 	for _, summary := range summaries {
-		if principal != nil && !principal.HasCatalogAccess(summary.Name) {
-			continue
-		}
 		result = append(result, RepositorySummary{
 			Name:       summary.Name,
 			TagCount:   summary.TagCount,
@@ -1123,5 +1127,57 @@ func newUploadDetails(state domain.UploadState) UploadDetails {
 		StartedAt:  state.StartedAt,
 		UpdatedAt:  state.UpdatedAt,
 		Location:   state.Location,
+	}
+}
+
+// accessiblePageBatch is the smallest page pageAccessible asks the store for
+// when it has to filter, so a tiny limit does not turn into one query per row.
+const accessiblePageBatch = 100
+
+// pageAccessible returns up to limit items, in name order and strictly after
+// the cursor, that the caller may see. The store applies limit before access
+// filtering, so a caller with a few grants among many repositories used to get
+// short or empty pages. When filter is true this walks the store page by page
+// (the next cursor is the last name seen, accessible or not) until limit
+// accessible items are collected or the store is exhausted; the cursor
+// contract is unchanged: the next request passes the last returned name.
+// With filter false, or an unlimited request (limit <= 0), it is one fetch,
+// exactly as before. No SQL changes; worst case it reads every repository.
+func pageAccessible[T any](limit int, after string, filter bool, name func(T) string, allowed func(string) bool, fetch func(limit int, after string) ([]T, error)) ([]T, error) {
+	if !filter || limit <= 0 {
+		items, err := fetch(limit, after)
+		if err != nil || !filter {
+			return items, err
+		}
+		kept := make([]T, 0, len(items))
+		for _, item := range items {
+			if allowed(name(item)) {
+				kept = append(kept, item)
+			}
+		}
+		return kept, nil
+	}
+
+	batch := max(limit, accessiblePageBatch)
+	result := make([]T, 0, limit)
+	cursor := after
+	for {
+		items, err := fetch(batch, cursor)
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range items {
+			cursor = name(item)
+			if !allowed(cursor) {
+				continue
+			}
+			result = append(result, item)
+			if len(result) == limit {
+				return result, nil
+			}
+		}
+		if len(items) < batch {
+			return result, nil
+		}
 	}
 }
