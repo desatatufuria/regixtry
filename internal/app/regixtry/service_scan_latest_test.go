@@ -17,14 +17,15 @@ import (
 // fingerprintRunner is a scan runner that also exposes the vulnerability DB
 // metadata (ports.ScanDBMetadataReader), so tests control the fingerprint.
 type fingerprintRunner struct {
-	mu        sync.Mutex
-	calls     int
-	dbUpdated time.Time
-	dbVersion int
-	version   string
-	metaErr   error
-	scanErr   error
-	release   chan struct{}
+	mu         sync.Mutex
+	calls      int
+	dbUpdated  time.Time
+	dbVersion  int
+	version    string
+	metaErr    error
+	nextUpdate *time.Time
+	scanErr    error
+	release    chan struct{}
 }
 
 func newFingerprintRunner() *fingerprintRunner {
@@ -62,7 +63,7 @@ func (f *fingerprintRunner) ReadDBMetadata(context.Context, ports.ScanSettings) 
 		return ports.ScanDBMetadata{}, f.metaErr
 	}
 	updated := f.dbUpdated
-	return ports.ScanDBMetadata{Version: f.dbVersion, UpdatedAt: &updated}, nil
+	return ports.ScanDBMetadata{Version: f.dbVersion, UpdatedAt: &updated, NextUpdate: f.nextUpdate}, nil
 }
 
 func (f *fingerprintRunner) set(mutate func(*fingerprintRunner)) {
@@ -421,4 +422,30 @@ func TestPullPolicyNeverSeesAMissingCompletedResultDuringReplacement(t *testing.
 	}
 	close(stop)
 	writer.Wait()
+}
+
+// Nothing refreshes the cached DB metadata when no scan or sweep runs, so a
+// push long after the DB's NextUpdate must not trust it: the digest is
+// rescanned (the scan refreshes the DB); before NextUpdate it is skipped.
+func TestPushAfterTheDBNextUpdateElapsedRescansInsteadOfTrustingCachedMetadata(t *testing.T) {
+	service, runner, cleanup := newLatestOnlyService(t)
+	defer cleanup()
+	start := time.Now().UTC()
+	next := start.Add(24 * time.Hour)
+	runner.set(func(f *fingerprintRunner) { f.nextUpdate = &next })
+	clock := start
+	service.now = func() time.Time { return clock }
+
+	publishAndWait(t, service, "library/alpine", "v1", "layer-stale")
+	waitForCompletedRuns(t, service, "library/alpine", 1, runner)
+
+	clock = start.Add(12 * time.Hour) // before NextUpdate
+	publishAndWait(t, service, "library/alpine", "v1-again", "layer-stale")
+	if got := runner.callCount(); got != 1 {
+		t.Fatalf("scans before NextUpdate = %d, want 1 (skipped)", got)
+	}
+
+	clock = start.Add(60 * 24 * time.Hour) // far past NextUpdate
+	publishAndWait(t, service, "library/alpine", "v1-third", "layer-stale")
+	waitUntil(t, "rescan after NextUpdate elapsed", func() bool { return runner.callCount() == 2 })
 }

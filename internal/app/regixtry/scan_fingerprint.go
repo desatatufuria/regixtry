@@ -27,6 +27,10 @@ type scanFingerprint struct {
 	DBVersion    int
 	DBUpdatedAt  *time.Time
 	SettingsHash string
+	// DBNextUpdate is when the cached DB is due a refresh. It is NOT part of
+	// the comparison (equal ignores it); the push/manual decision treats an
+	// elapsed one as unknown freshness.
+	DBNextUpdate *time.Time
 	// Unknown is set when a component could not be determined (no DB
 	// metadata yet, unreadable ignore file, unknown version). An unknown
 	// fingerprint never matches anything: the decision is always "scan".
@@ -117,6 +121,7 @@ func (s *Service) currentScanFingerprint(ctx context.Context, settings ports.Sca
 	}
 	fp.DBVersion = meta.Version
 	fp.DBUpdatedAt = meta.UpdatedAt
+	fp.DBNextUpdate = meta.NextUpdate
 	return fp
 }
 
@@ -137,7 +142,14 @@ func (s *Service) scanDecision(ctx context.Context, tenant string, repository st
 	default:
 		return true
 	}
-	scan, _ := needsScan(latest, s.currentScanFingerprint(ctx, settings), false)
+	current := s.currentScanFingerprint(ctx, settings)
+	if current.DBNextUpdate != nil && s.now().After(*current.DBNextUpdate) {
+		// Nothing refreshes the cached DB metadata unless a scan or sweep
+		// runs, so past NextUpdate it says nothing about the live DB: the
+		// fingerprint cannot match and the rescan refreshes it.
+		current.Unknown = true
+	}
+	scan, _ := needsScan(latest, current, false)
 	if !scan && latest != nil {
 		if err := s.metadata.TouchScanRunChecked(ctx, tenant, latest.ID, s.now()); err != nil {
 			return true
