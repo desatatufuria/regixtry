@@ -88,14 +88,14 @@ func (t *writeTx) Rollback() error {
 }
 
 // beginWrite serializes write transactions in arrival order. Never call it (or
-// touch s.db for a write) while another writeTx is open in the same goroutine:
-// that would deadlock on the write lock.
+// execWrite, or touch s.db for a write) while another writeTx is open in the
+// same goroutine: that would deadlock on the write lock.
 //
-// Single-statement writes on s.db (SaveUpload, DeleteUpload,
-// PruneExpiredGCReports, DeleteTag, the settings/override/runtime-state
-// upserts, UpsertScanRun, UpsertScanSchedulerState) deliberately skip the
-// queue: one statement holds the SQLite lock only briefly. The queue is for
-// multi-statement transactions.
+// Every write goes through the queue, single statements included (execWrite):
+// SQLite's busy handler polls with sleeps and no ordering, and the queue hands
+// the lock straight from one transaction to the next, so a statement that
+// bypassed the queue could starve past the busy timeout and surface a raw
+// SQLITE_BUSY (a failed push) while a long write, such as a GC reclaim, ran.
 func (s *Store) beginWrite(ctx context.Context) (*writeTx, error) {
 	if err := s.writeLock.acquire(ctx); err != nil {
 		return nil, err
@@ -108,4 +108,15 @@ func (s *Store) beginWrite(ctx context.Context) (*writeTx, error) {
 	}
 
 	return &writeTx{Tx: tx, release: s.writeLock.release}, nil
+}
+
+// execWrite runs one write statement under the write queue. It returns the
+// context's error if ctx ends while the statement is still waiting.
+func (s *Store) execWrite(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	if err := s.writeLock.acquire(ctx); err != nil {
+		return nil, err
+	}
+	defer s.writeLock.release()
+
+	return s.db.ExecContext(ctx, query, args...)
 }
