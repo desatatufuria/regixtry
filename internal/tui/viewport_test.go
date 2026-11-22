@@ -3,9 +3,8 @@ package tui
 import (
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 )
 
 func TestViewportContentBudgetAccountsForChrome(t *testing.T) {
@@ -205,7 +204,6 @@ func TestViewportChromeInvariantTitleContextHelpAreSingleLine(t *testing.T) {
 		"Repositories / library/alpine / latest / Uploads",
 		"Empty",
 		"Error",
-		"Sign In",
 		"Regixtry",
 		"Regixtry Admin",
 	}
@@ -231,35 +229,10 @@ func TestViewportChromeInvariantTitleContextHelpAreSingleLine(t *testing.T) {
 		"Enter: inspect manifest | d: delete tag | Tab: admin | Esc: back | q: quit",
 		"b: blobs | u: uploads | d: unsupported delete | Tab: admin | Esc: back | q: quit",
 		"Tab: admin | Esc: back | q: quit",
-		"Enter: sign in | Tab: switch field | Esc: back | q: quit",
 	}
 	for _, help := range inspectionHelp {
 		assertSingleLine(t, "help "+help, theme.help.Render(help))
 	}
 
-	// Admin workspace screens: context/help come straight from the real
-	// production function, not a copy, so this also guards against drift.
-	adminScreens := []screen{
-		screenAdminUsers,
-		screenAdminFeatures,
-		screenAdminCreateUser,
-		screenAdminEditUser,
-		screenAdminChangePassword,
-		screenAdminEditUserGrants,
-		screenAdminAddGrant,
-		screenAdminEditUserTokens,
-		screenAdminCreateToken,
-	}
-	view := newAdminViewState()
-	view.SelectedUserID = "user-1"
-	view.SelectedUsername = "alice"
-	layout := contentBudget(defaultViewportWidth, defaultViewportHeight, "", "")
-	for _, current := range adminScreens {
-		context, _, help := renderAdminScreen(theme, current, AdminSession{}, view, nil, layout, time.Time{})
-		assertSingleLine(t, string(current)+" context", theme.context.Render(context))
-		if strings.TrimSpace(help) != "" {
-			assertSingleLine(t, string(current)+" help", theme.help.Render(help))
-		}
-	}
 	assertSingleLine(t, "admin title", theme.title.Render("Regixtry Admin"))
 }

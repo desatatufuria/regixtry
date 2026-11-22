@@ -21,36 +21,35 @@
 | Keyless (Fulcio/OIDC) offline bundle verification against a pinned trusted root (`VerifyKeyless`) | `internal/domain/signing/keyless.go` | `security.md`, `features.md` |
 | Linux bootstrap/systemd | `internal/infra/install/linux/` | `installation.md`, `operations.md` |
 | Release installer | `install.sh`, `.goreleaser.yaml` | `installation.md` |
-| TUI keys/screens (root model) | `internal/tui/model.go` | `tui.md` |
-| TUI admin HTTP client | `internal/tui/admin_client.go` | `tui.md`, `authentication.md` |
-| TUI admin views (legacy render helpers for users, grants, robots, scan history modal) | `internal/tui/admin_views.go` | `tui.md`, `architecture.md` |
-| TUI admin table rendering helpers | `internal/tui/admin_tables.go` | `tui.md` |
-| TUI Console Repositories table (Name/Tags/Last Pushed) | `internal/tui/console_repositories_table.go` | `tui.md` |
-| TUI Console Tags table (Tag/Created/Signed) | `internal/tui/console_tags_table.go` | `tui.md` |
-| TUI session state (`AdminViewState`, `AdminSession`) | `internal/tui/session.go` | `tui.md`, `architecture.md` |
-| TUI admin theming | `internal/tui/admin_theme.go` | `tui.md` |
-| TUI admin overlay/modal rendering (`compositeOverlay`) | `internal/tui/admin_overlay.go` | `tui.md`, `architecture.md` |
-| TUI scan history render helpers (`renderAdminScanHistoryModal` and friends) | `internal/tui/admin_scan_history.go` | `tui.md`, `security.md` |
-| TUI scroll viewport helper | `internal/tui/viewport.go` | `tui.md` |
-| TUI open-URL helper (`openURLInBrowser`, `isHTTPURL`, `openAdminURLCmd`) | `internal/tui/openurl.go` | `tui.md`, `security.md` |
-| TUI per-screen sub-model contract (`adminScreen`, `screenEnv`, `screenFrame`, `adminScreenSet`, `slotFor`, `navigate`, `openScanHistory`, `returnToInspectionCmd`) | `internal/tui/screen.go` | `architecture.md` |
-| TUI admin router (`routeAdminKey`, `routeAdminMsg`, `legacyScreenHandlers` — the D5 adapter) | `internal/tui/admin_router.go` | `architecture.md` |
-| TUI keymap-derived help (`screenKeys`, `shortHelpView`, `matches`) | `internal/tui/admin_keys.go` | `architecture.md`, `tui.md` |
-| TUI confirm-before-destructive-action primitive (`confirmPrompt`) | `internal/tui/confirm.go` | `architecture.md` |
-| TUI per-repository override editor, shared by Trivy/Gitleaks/Signing (`overrideEditor`) | `internal/tui/override_editor.go` | `tui.md`, `architecture.md` |
-| TUI navigable trusted-key list, shared by Signing's config screen and its override editor (`trustedKeyList`) | `internal/tui/trusted_key_list.go` | `tui.md`, `features.md` |
-| TUI navigable trusted-identity list, shared by Signing's config screen and its override editor (`trustedIdentityList`) | `internal/tui/trusted_identity_list.go` | `tui.md`, `features.md` |
-| TUI Security & Compliance domain menu (`securityMenuScreen`) | `internal/tui/screen_security_menu.go` | `tui.md` |
-| TUI Trivy Runtime screen (`trivyConfigScreen`) | `internal/tui/screen_trivy_config.go` | `tui.md` |
-| TUI Trivy Repository Alerts screen (`trivyReposScreen`) | `internal/tui/screen_trivy_repos.go` | `tui.md` |
-| TUI Gitleaks config screen (`gitleaksConfigScreen`) | `internal/tui/screen_gitleaks_config.go` | `tui.md` |
-| TUI Gitleaks/Signing repository override list (shared `featureOverridesScreen`) | `internal/tui/screen_gitleaks_repos.go` | `tui.md` |
-| TUI Signing config screen (`signingConfigScreen`) | `internal/tui/screen_signing_config.go` | `tui.md` |
-| TUI Signing repository override list (`newSigningReposScreen`, backed by `featureOverridesScreen`) | `internal/tui/screen_signing_repos.go` | `tui.md` |
-| TUI post-login domain menu (`adminMenuScreen`) | `internal/tui/screen_admin_menu.go` | `tui.md`, `architecture.md` |
-| TUI Operations domain menu (`adminOperationsScreen`) | `internal/tui/screen_operations.go` | `tui.md` |
-| TUI Scan Runs / Secret Scan Findings repository pickers (shared `scanRunsScreen`) | `internal/tui/screen_scan_runs.go` | `tui.md` |
-| TUI scan history sub-model, reached from both Operations and Trivy's drill-down (`scanHistoryScreen`) | `internal/tui/screen_scan_history.go` | `tui.md`, `architecture.md` |
+| TUI root model: key and mouse routing, login, navigation | `internal/tui/model.go`, `model_console.go`, `model_delegate.go` | `tui.md` |
+| TUI admin HTTP client and the `AdminClient` interface | `internal/tui/admin_client.go` | `tui.md`, `authentication.md` |
+| TUI per-screen contract (`adminScreen`, `screenEnv`, `screenFrame`, `mouseScreen`, `slotFor`, `navigate`) | `internal/tui/screen.go` | `architecture.md` |
+| TUI router (`routeAdminKey`, `routeAdminMsg`) | `internal/tui/admin_router.go` | `architecture.md` |
+| TUI session (`AdminSession`) and modal field state | `internal/tui/session.go` | `tui.md` |
+| TUI application shell: header, sidebar (`shellNavGroups`), footer (`renderShell`) | `internal/tui/shell.go` | `tui.md`, `architecture.md` |
+| TUI theme and palette (`palette*Hex`) | `internal/tui/admin_theme.go` | `tui.md` |
+| TUI keymap-derived help (`screenKeys`, `shortHelpView`) and key helpers | `internal/tui/admin_keys.go`, `keyinput.go` | `architecture.md`, `tui.md` |
+| TUI mouse router, `F2` switch and list helpers (`listMouse`) | `internal/tui/mouse.go`, `screen_*_mouse.go` | `tui.md` |
+| TUI confirm primitive and dialog (`confirmPrompt`) | `internal/tui/confirm.go` | `architecture.md`, `tui.md` |
+| TUI too-small notice (150x24 minimum) | `internal/tui/screen_too_small.go`, `viewport.go` | `tui.md` |
+| TUI token lifetime selector (presets, Custom input, ceiling `MaxAdminTokenTTL`) | `internal/tui/token_lifetime.go` | `tui.md`, `users.md` |
+| TUI shared Access helpers (time left text and bars, one-time secrets) | `internal/tui/access_common.go`, `access_secrets.go` | `tui.md` |
+| TUI Overview (`overviewScreen`: needs attention, recent changes) | `internal/tui/screen_overview*.go` | `tui.md` |
+| TUI login screen rendering | `internal/tui/screen_login_view.go` | `tui.md` |
+| TUI Users, profile, New user, Reset password | `internal/tui/screen_users*.go`, `screen_edit_user*.go`, `screen_create_user*.go`, `screen_reset_password*.go`, `user_format.go` | `tui.md` |
+| TUI Robots, New robot, Tokens | `internal/tui/screen_robots*.go`, `screen_create_robot*.go`, `screen_tokens*.go` | `tui.md` |
+| TUI Grant repository access (`grantAccessScreen`) | `internal/tui/screen_grant_access*.go` | `tui.md` |
+| TUI Repository access (`repoAccessScreen`, paged `repository-grants`) | `internal/tui/screen_repo_access*.go` | `tui.md` |
+| TUI delegate screen for repository administrators (`delegateScreen`) | `internal/tui/screen_delegate*.go`, `model_delegate.go` | `tui.md`, `users.md` |
+| TUI Console: Repositories, Projects, Tags and their deletes | `internal/tui/screen_console_*.go`, `sort_mode.go` | `tui.md` |
+| TUI security feature screens: Image scanning, Secret scanning, Signing policy | `internal/tui/screen_trivy_*.go`, `screen_gitleaks_*.go`, `screen_signing_*.go`, `security_*.go` | `tui.md` |
+| TUI per-repository override lists and editor (`overrideEditor`, `featureOverridesScreen`) | `internal/tui/override_editor*.go`, `overrides_*.go`, `screen_gitleaks_repos.go`, `screen_signing_repos.go` | `tui.md`, `architecture.md` |
+| TUI trusted-key and trusted-identity lists (Signing) | `internal/tui/trusted_key_list.go`, `trusted_identity_list.go` | `tui.md`, `features.md` |
+| TUI Scan runs, Secret findings and scan history (`scanRunsScreen`, `scanHistoryScreen`) | `internal/tui/screen_scan_*.go`, `admin_scan_history.go`, `admin_tables.go` | `tui.md`, `security.md` |
+| TUI Update channel (`updateChannelScreen`) | `internal/tui/screen_update_channel*.go` | `tui.md` |
+| TUI admin workspace frame and status line (`renderAdminWorkspace`) | `internal/tui/admin_views.go` | `tui.md` |
+| TUI overlay compositing for dialogs over the Console (`compositeOverlay`) | `internal/tui/admin_overlay.go` | `architecture.md` |
+| TUI open-URL helper (`openURLInBrowser`, `isHTTPURL`) | `internal/tui/openurl.go` | `tui.md`, `security.md` |
 | Runtime image/Compose | `Dockerfile`, `docker-compose.yml` | `getting-started.md`, `ci-cd.md` |
 | Tests | `**/*_test.go` | `development.md`, `documentation-audit.md` |
 

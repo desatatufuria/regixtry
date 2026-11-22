@@ -2,9 +2,13 @@ package auth
 
 import (
 	"context"
+	"errors"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
 	domainauth "regixtry/internal/domain/auth"
 	regixtrydomain "regixtry/internal/domain/regixtry"
 	"regixtry/internal/ports"
@@ -15,7 +19,7 @@ func TestServiceGrantsOnlyAllowedRequestedRepositoryScopes(t *testing.T) {
 
 	store := newMemoryAuthStore()
 	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
-	user := domainauth.User{ID: "user-1", Username: "alice", PasswordHash: mustHashPassword(t, "password123"), Enabled: true, CreatedAt: now, UpdatedAt: now}
+	user := domainauth.User{ID: "user-1", Username: "alice", PasswordHash: mustHashPassword(t, "fixture-pass-9x"), Enabled: true, CreatedAt: now, UpdatedAt: now}
 	store.usersByID[user.ID] = user
 	store.usersByUsername[user.Username] = user
 	store.grants[user.ID] = []domainauth.RepoGrant{{UserID: user.ID, Repository: regixtrydomain.MustParseRepositoryRef("team/app"), Role: domainauth.RepoRoleReader, CreatedAt: now, UpdatedAt: now}}
@@ -28,7 +32,7 @@ func TestServiceGrantsOnlyAllowedRequestedRepositoryScopes(t *testing.T) {
 		t.Fatalf("ParseScopes() error = %v", err)
 	}
 
-	result, err := service.LoginWithPassword(context.Background(), "alice", "password123", requestedScopes)
+	result, err := service.LoginWithPassword(context.Background(), "alice", "fixture-pass-9x", requestedScopes)
 	if err != nil {
 		t.Fatalf("LoginWithPassword() error = %v", err)
 	}
@@ -53,7 +57,7 @@ func TestServiceRejectsRepositoryAccessWhenRequestedScopeHasNoAllowedActions(t *
 
 	store := newMemoryAuthStore()
 	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
-	user := domainauth.User{ID: "user-1", Username: "alice", PasswordHash: mustHashPassword(t, "password123"), Enabled: true, CreatedAt: now, UpdatedAt: now}
+	user := domainauth.User{ID: "user-1", Username: "alice", PasswordHash: mustHashPassword(t, "fixture-pass-9x"), Enabled: true, CreatedAt: now, UpdatedAt: now}
 	store.usersByID[user.ID] = user
 	store.usersByUsername[user.Username] = user
 
@@ -65,7 +69,7 @@ func TestServiceRejectsRepositoryAccessWhenRequestedScopeHasNoAllowedActions(t *
 		t.Fatalf("ParseScopes() error = %v", err)
 	}
 
-	result, err := service.LoginWithPassword(context.Background(), "alice", "password123", requestedScopes)
+	result, err := service.LoginWithPassword(context.Background(), "alice", "fixture-pass-9x", requestedScopes)
 	if err != nil {
 		t.Fatalf("LoginWithPassword() error = %v", err)
 	}
@@ -87,7 +91,7 @@ func TestServiceDisableUserRejectsLastActiveAdmin(t *testing.T) {
 
 	store := newMemoryAuthStore()
 	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
-	admin := domainauth.User{ID: "admin-1", Username: "admin", PasswordHash: mustHashPassword(t, "password123"), IsAdmin: true, Enabled: true, CreatedAt: now, UpdatedAt: now}
+	admin := domainauth.User{ID: "admin-1", Username: "admin", PasswordHash: mustHashPassword(t, "fixture-pass-9x"), IsAdmin: true, Enabled: true, CreatedAt: now, UpdatedAt: now}
 	store.usersByID[admin.ID] = admin
 	store.usersByUsername[admin.Username] = admin
 
@@ -116,7 +120,7 @@ func TestServiceCreateAdminUserTokenRejectsDisabledUserAndExcessiveTTL(t *testin
 
 	store := newMemoryAuthStore()
 	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
-	disabled := domainauth.User{ID: "user-1", Username: "disabled", PasswordHash: mustHashPassword(t, "password123"), Enabled: false, CreatedAt: now, UpdatedAt: now}
+	disabled := domainauth.User{ID: "user-1", Username: "disabled", PasswordHash: mustHashPassword(t, "fixture-pass-9x"), Enabled: false, CreatedAt: now, UpdatedAt: now}
 	store.usersByID[disabled.ID] = disabled
 	store.usersByUsername[disabled.Username] = disabled
 	service := NewService(store)
@@ -135,9 +139,88 @@ func TestServiceCreateAdminUserTokenRejectsDisabledUserAndExcessiveTTL(t *testin
 	store.usersByID[enabled.ID] = enabled
 	store.usersByUsername[enabled.Username] = enabled
 
-	_, err = service.CreateAdminUserToken(context.Background(), actor, ports.AdminCreateTokenInput{UserID: enabled.ID, Name: "ci", TTL: domainauth.DefaultAdminTokenTTL + time.Second})
+	_, err = service.CreateAdminUserToken(context.Background(), actor, ports.AdminCreateTokenInput{UserID: enabled.ID, Name: "ci", TTL: domainauth.MaxAdminTokenTTL + time.Second})
 	if !domainauth.IsCode(err, domainauth.ErrorCodeValidation) {
 		t.Fatalf("CreateAdminUserToken(ttl) error = %v, want validation", err)
+	}
+}
+
+func TestServiceAdminTokenTTLBounds(t *testing.T) {
+	t.Parallel()
+
+	const day = 24 * time.Hour
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	actor := domainauth.Principal{UserID: "admin-1", Username: "admin", IsAdmin: true}
+
+	tests := []struct {
+		name    string
+		ttl     time.Duration
+		want    time.Duration
+		wantErr bool
+	}{
+		{name: "omitted means the 30 day default", ttl: 0, want: 30 * day},
+		{name: "negative means the 30 day default", ttl: -time.Second, want: 30 * day},
+		{name: "30 days", ttl: 30 * day, want: 30 * day},
+		{name: "30 days plus one second", ttl: 30*day + time.Second, want: 30*day + time.Second},
+		{name: "90 days", ttl: 90 * day, want: 90 * day},
+		{name: "365 days", ttl: 365 * day, want: 365 * day},
+		{name: "exactly 2 years", ttl: 730 * day, want: 730 * day},
+		{name: "2 years plus one second", ttl: 730*day + time.Second, wantErr: true},
+		{name: "far above 2 years", ttl: 100 * 365 * day, wantErr: true},
+	}
+
+	assertRejected := func(t *testing.T, err error) {
+		t.Helper()
+		if !domainauth.IsCode(err, domainauth.ErrorCodeValidation) {
+			t.Fatalf("error = %v, want validation", err)
+		}
+		if got, want := err.Error(), "admin token ttl must be 2 years or shorter"; !strings.Contains(got, want) {
+			t.Fatalf("error message = %q, want it to contain %q", got, want)
+		}
+	}
+
+	for _, tt := range tests {
+		t.Run("user token "+tt.name, func(t *testing.T) {
+			t.Parallel()
+			store := newMemoryAuthStore()
+			user := domainauth.User{ID: "user-1", Username: "owner", PasswordHash: mustHashPassword(t, "fixture-pass-9x"), Enabled: true, CreatedAt: now, UpdatedAt: now}
+			store.usersByID[user.ID] = user
+			store.usersByUsername[user.Username] = user
+			service := NewService(store)
+			service.now = func() time.Time { return now }
+
+			created, err := service.CreateAdminUserToken(context.Background(), actor, ports.AdminCreateTokenInput{UserID: user.ID, Name: "ci", TTL: tt.ttl})
+			if tt.wantErr {
+				assertRejected(t, err)
+				return
+			}
+			if err != nil {
+				t.Fatalf("CreateAdminUserToken() error = %v", err)
+			}
+			if want := now.Add(tt.want); !created.ExpiresAt.Equal(want) {
+				t.Fatalf("ExpiresAt = %s, want %s", created.ExpiresAt, want)
+			}
+		})
+
+		t.Run("robot "+tt.name, func(t *testing.T) {
+			t.Parallel()
+			service := NewService(newMemoryAuthStore())
+			service.now = func() time.Time { return now }
+
+			created, err := service.CreateRobot(context.Background(), actor, ports.CreateRobotInput{
+				Name: "ci-ttl", Repository: "team/app", Role: domainauth.RepoRoleWriter, TTL: tt.ttl,
+			})
+			if tt.wantErr {
+				assertRejected(t, err)
+				return
+			}
+			if err != nil {
+				t.Fatalf("CreateRobot() error = %v", err)
+			}
+			if want := now.Add(tt.want); !created.ExpiresAt.Equal(want) {
+				t.Fatalf("ExpiresAt = %s, want %s", created.ExpiresAt, want)
+			}
+		})
 	}
 }
 
@@ -146,8 +229,8 @@ func TestServiceRevokeAdminUserTokenRejectsMismatchedOwner(t *testing.T) {
 
 	store := newMemoryAuthStore()
 	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
-	owner := domainauth.User{ID: "user-1", Username: "owner", PasswordHash: mustHashPassword(t, "password123"), Enabled: true, CreatedAt: now, UpdatedAt: now}
-	other := domainauth.User{ID: "user-2", Username: "other", PasswordHash: mustHashPassword(t, "password123"), Enabled: true, CreatedAt: now, UpdatedAt: now}
+	owner := domainauth.User{ID: "user-1", Username: "owner", PasswordHash: mustHashPassword(t, "fixture-pass-9x"), Enabled: true, CreatedAt: now, UpdatedAt: now}
+	other := domainauth.User{ID: "user-2", Username: "other", PasswordHash: mustHashPassword(t, "fixture-pass-9x"), Enabled: true, CreatedAt: now, UpdatedAt: now}
 	store.usersByID[owner.ID] = owner
 	store.usersByUsername[owner.Username] = owner
 	store.usersByID[other.ID] = other
@@ -387,10 +470,10 @@ func TestServicePutRepositoryGrantRejectsDelegateEscalation(t *testing.T) {
 
 	newStoreWithUsers := func() *memoryAuthStore {
 		store := newMemoryAuthStore()
-		delegateUser := domainauth.User{ID: delegate.UserID, Username: delegate.Username, PasswordHash: mustHashPassword(t, "password123"), Enabled: true, CreatedAt: now, UpdatedAt: now}
+		delegateUser := domainauth.User{ID: delegate.UserID, Username: delegate.Username, PasswordHash: mustHashPassword(t, "fixture-pass-9x"), Enabled: true, CreatedAt: now, UpdatedAt: now}
 		store.usersByID[delegateUser.ID] = delegateUser
 		store.usersByUsername[delegateUser.Username] = delegateUser
-		victim := domainauth.User{ID: "user-victim", Username: "victim", PasswordHash: mustHashPassword(t, "password123"), Enabled: true, CreatedAt: now, UpdatedAt: now}
+		victim := domainauth.User{ID: "user-victim", Username: "victim", PasswordHash: mustHashPassword(t, "fixture-pass-9x"), Enabled: true, CreatedAt: now, UpdatedAt: now}
 		store.usersByID[victim.ID] = victim
 		store.usersByUsername[victim.Username] = victim
 		return store
@@ -566,7 +649,7 @@ func TestServiceCreateRobotPersistsGrantEnforcesTTLCeilingAndSupportsRevocation(
 		service.now = func() time.Time { return now }
 
 		_, err := service.CreateRobot(context.Background(), actor, ports.CreateRobotInput{
-			Name: "ci-ttl", Repository: "team/app", Role: domainauth.RepoRoleWriter, TTL: domainauth.DefaultAdminTokenTTL + time.Second,
+			Name: "ci-ttl", Repository: "team/app", Role: domainauth.RepoRoleWriter, TTL: domainauth.MaxAdminTokenTTL + time.Second,
 		})
 		if !domainauth.IsCode(err, domainauth.ErrorCodeValidation) {
 			t.Fatalf("CreateRobot(excessive ttl) error = %v, want validation", err)
@@ -732,7 +815,7 @@ func TestServiceDeleteRobotRequiresAdminRejectsNonRobotsAndCleansUpGrantsAndToke
 		service.now = func() time.Time { return now }
 
 		human, err := service.CreateUser(context.Background(), actor, ports.CreateUserInput{
-			Username: "alice-delete-guard", Password: "password123", Enabled: true,
+			Username: "alice-delete-guard", Password: "fixture-pass-9x", Enabled: true,
 		})
 		if err != nil {
 			t.Fatalf("CreateUser() error = %v", err)
@@ -883,7 +966,7 @@ func TestServiceCreateAdminUserPersistsReadOnlyFlagAndListReflectsIt(t *testing.
 
 	created, err := service.CreateAdminUser(context.Background(), actor, ports.AdminCreateUserInput{
 		Username:   "reader",
-		Password:   "password123",
+		Password:   "fixture-pass-9x",
 		Enabled:    true,
 		IsReadOnly: true,
 	})
@@ -921,7 +1004,7 @@ func TestServiceUpdateUserSetsReadOnlyFlag(t *testing.T) {
 
 	store := newMemoryAuthStore()
 	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
-	user := domainauth.User{ID: "user-1", Username: "alice", PasswordHash: mustHashPassword(t, "password123"), Enabled: true, CreatedAt: now, UpdatedAt: now}
+	user := domainauth.User{ID: "user-1", Username: "alice", PasswordHash: mustHashPassword(t, "fixture-pass-9x"), Enabled: true, CreatedAt: now, UpdatedAt: now}
 	store.usersByID[user.ID] = user
 	store.usersByUsername[user.Username] = user
 
@@ -957,6 +1040,8 @@ type memoryAuthStore struct {
 	tokensByHash     map[string]domainauth.Token
 	tokensByAccessor map[string]domainauth.Token
 	tokensByUser     map[string][]domainauth.Token
+	events           []domainauth.AccessEvent
+	appendEventErr   error
 }
 
 func newMemoryAuthStore() *memoryAuthStore {
@@ -971,6 +1056,20 @@ func newMemoryAuthStore() *memoryAuthStore {
 }
 
 func (s *memoryAuthStore) Close() error { return nil }
+func (s *memoryAuthStore) AppendAccessEvent(_ context.Context, event domainauth.AccessEvent) error {
+	if s.appendEventErr != nil {
+		return s.appendEventErr
+	}
+	s.events = append(s.events, event)
+	return nil
+}
+func (s *memoryAuthStore) ListAccessEvents(_ context.Context, limit int) ([]domainauth.AccessEvent, error) {
+	result := make([]domainauth.AccessEvent, 0)
+	for i := len(s.events) - 1; i >= 0 && len(result) < limit; i-- {
+		result = append(result, s.events[i])
+	}
+	return result, nil
+}
 func (s *memoryAuthStore) HasActiveGlobalAdmin(context.Context) (bool, error) {
 	for _, user := range s.usersByID {
 		if user.IsAdmin && user.Enabled {
@@ -1043,6 +1142,25 @@ func (s *memoryAuthStore) ListRepoGrantsByRepository(_ context.Context, reposito
 	}
 	return grants, nil
 }
+func (s *memoryAuthStore) ListRepoGrantsPage(_ context.Context, after *domainauth.GrantCursor, limit int) ([]domainauth.RepositoryGrantRow, error) {
+	rows := make([]domainauth.RepositoryGrantRow, 0)
+	for userID, userGrants := range s.grants {
+		user := s.usersByID[userID]
+		for _, grant := range userGrants {
+			row := domainauth.RepositoryGrantRow{Repository: grant.Repository.String(), UserID: userID, Username: user.Username, IsRobot: user.IsRobot, Role: grant.Role, CreatedAt: grant.CreatedAt, UpdatedAt: grant.UpdatedAt}
+			if after == nil || !after.AtOrBefore(row) {
+				rows = append(rows, row)
+			}
+		}
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		return domainauth.CompareGrantKeys(rows[i].Repository, rows[i].Username, rows[i].UserID, rows[j].Repository, rows[j].Username, rows[j].UserID) < 0
+	})
+	if len(rows) > limit {
+		rows = rows[:limit]
+	}
+	return rows, nil
+}
 func (s *memoryAuthStore) PutRepoGrant(_ context.Context, grant domainauth.RepoGrant) error {
 	existing := s.grants[grant.UserID]
 	for i, current := range existing {
@@ -1080,6 +1198,24 @@ func (s *memoryAuthStore) ListTokensByUser(_ context.Context, userID string, kin
 	}
 	return tokens, nil
 }
+func (s *memoryAuthStore) ListExpiringTokens(_ context.Context, now time.Time, until time.Time, limit int) ([]domainauth.ExpiringToken, error) {
+	result := make([]domainauth.ExpiringToken, 0)
+	for _, token := range s.tokensByAccessor {
+		user, ok := s.usersByID[token.UserID]
+		if !ok || !user.Enabled || token.Kind != domainauth.TokenKindAdminCredential || token.RevokedAt != nil {
+			continue
+		}
+		if !token.ExpiresAt.After(now) || token.ExpiresAt.After(until) {
+			continue
+		}
+		result = append(result, domainauth.ExpiringToken{ID: token.ID, UserID: token.UserID, Username: user.Username, IsRobot: user.IsRobot, Name: token.Name, Accessor: token.Accessor, ExpiresAt: token.ExpiresAt, CreatedAt: token.CreatedAt})
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].ExpiresAt.Before(result[j].ExpiresAt) })
+	if limit >= 0 && len(result) > limit {
+		result = result[:limit]
+	}
+	return result, nil
+}
 func (s *memoryAuthStore) GetTokenByAccessor(_ context.Context, kind domainauth.TokenKind, accessor string) (domainauth.Token, error) {
 	token, ok := s.tokensByAccessor[accessor]
 	if !ok || token.Kind != kind {
@@ -1103,6 +1239,20 @@ func (s *memoryAuthStore) RevokeTokenByAccessor(_ context.Context, accessor stri
 	return nil
 }
 
+func (s *memoryAuthStore) ResetUserPassword(ctx context.Context, user domainauth.User, revokedAt time.Time) error {
+	if err := s.UpsertUser(ctx, user); err != nil {
+		return err
+	}
+	for _, token := range append([]domainauth.Token(nil), s.tokensByUser[user.ID]...) {
+		if token.RevokedAt == nil && token.Kind == domainauth.TokenKindAccess {
+			if err := s.RevokeTokenByAccessor(ctx, token.Accessor, revokedAt); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func mustHashPassword(t *testing.T, password string) string {
 	t.Helper()
 	hash, err := hashPassword(password)
@@ -1110,4 +1260,195 @@ func mustHashPassword(t *testing.T, password string) string {
 		t.Fatalf("hashPassword() error = %v", err)
 	}
 	return hash
+}
+
+func TestServiceScopeRequestGrantedNothingStaysRestricted(t *testing.T) {
+	t.Parallel()
+
+	store := newMemoryAuthStore()
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	user := domainauth.User{ID: "user-1", Username: "alice", PasswordHash: mustHashPassword(t, "fixture-pass-9x"), Enabled: true, CreatedAt: now, UpdatedAt: now}
+	store.usersByID[user.ID] = user
+	store.usersByUsername[user.Username] = user
+
+	service := NewService(store)
+	service.now = func() time.Time { return now }
+	requested, err := domainauth.ParseScopes([]string{"repository:team/app:pull"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := service.LoginWithPassword(context.Background(), "alice", "fixture-pass-9x", requested)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Scope != "" {
+		t.Fatalf("result.Scope = %q, want empty (nothing granted)", result.Scope)
+	}
+	principal, err := service.VerifyAccessToken(context.Background(), result.BearerToken)
+	if err != nil {
+		t.Fatalf("VerifyAccessToken() error = %v", err)
+	}
+	if principal.IsUnrestricted() {
+		t.Fatal("a token requested with scopes but granted none must not be unrestricted")
+	}
+
+	unscoped, err := service.LoginWithPassword(context.Background(), "alice", "fixture-pass-9x", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p2, err := service.VerifyAccessToken(context.Background(), unscoped.BearerToken)
+	if err != nil || !p2.IsUnrestricted() {
+		t.Fatalf("zero-scope login must stay unrestricted: %v", err)
+	}
+}
+
+func TestServiceLoginFailuresAreIndistinguishableButKeepAServerSideCause(t *testing.T) {
+	t.Parallel()
+
+	store := newMemoryAuthStore()
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	hash := mustHashPassword(t, "fixture-pass-9x")
+	add := func(u domainauth.User) {
+		u.CreatedAt, u.UpdatedAt = now, now
+		store.usersByID[u.ID] = u
+		store.usersByUsername[u.Username] = u
+	}
+	add(domainauth.User{ID: "u1", Username: "alice", PasswordHash: hash, Enabled: true})
+	add(domainauth.User{ID: "u2", Username: "dora", PasswordHash: hash, Enabled: false})
+	add(domainauth.User{ID: "u3", Username: "robo", PasswordHash: domainauth.RobotPasswordHash, IsRobot: true, Enabled: true})
+	service := NewService(store)
+	service.now = func() time.Time { return now }
+
+	for _, tc := range []struct{ name, user, pass, cause string }{
+		{"unknown", "nobody", "fixture-pass-9x", "unknown user"},
+		{"disabled with the right password", "dora", "fixture-pass-9x", "user is disabled"},
+		{"robot", "robo", "fixture-pass-9x", "robot accounts cannot use a password"},
+		{"wrong password", "alice", "nope-nope", "wrong password"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := service.LoginWithPassword(context.Background(), tc.user, tc.pass, nil)
+			var authErr *domainauth.Error
+			if !errors.As(err, &authErr) || authErr.Code != domainauth.ErrorCodeInvalidCredentials || authErr.Message != "invalid credentials" {
+				t.Fatalf("err = %#v, want the uniform invalid-credentials error", err)
+			}
+			if authErr.Err == nil || authErr.Err.Error() != tc.cause {
+				t.Fatalf("cause = %v, want %q", authErr.Err, tc.cause)
+			}
+		})
+	}
+
+	if _, err := service.LoginWithPassword(context.Background(), "alice", "fixture-pass-9x", nil); err != nil {
+		t.Fatalf("valid login must still work: %v", err)
+	}
+}
+
+func TestServiceResetPasswordRejectsRobotAndKeepsSentinel(t *testing.T) {
+	t.Parallel()
+
+	store := newMemoryAuthStore()
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	robot := domainauth.User{ID: "r1", Username: "robot-ci", PasswordHash: domainauth.RobotPasswordHash, IsRobot: true, Enabled: true, CreatedAt: now, UpdatedAt: now}
+	store.usersByID[robot.ID] = robot
+	store.usersByUsername[robot.Username] = robot
+	service := NewService(store)
+	service.now = func() time.Time { return now }
+
+	err := service.ResetPassword(context.Background(), domainauth.Principal{IsAdmin: true}, robot.ID, "password456")
+	if !domainauth.IsCode(err, domainauth.ErrorCodeValidation) {
+		t.Fatalf("ResetPassword(robot) error = %v, want a validation error", err)
+	}
+	if got := store.usersByID[robot.ID].PasswordHash; got != domainauth.RobotPasswordHash {
+		t.Fatalf("robot password hash = %q, want the unchanged sentinel", got)
+	}
+}
+
+func TestServiceEveryFailedPasswordLoginPaysExactlyOneBcryptComparison(t *testing.T) {
+	t.Parallel()
+
+	store := newMemoryAuthStore()
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	hash := mustHashPassword(t, "fixture-pass-9x")
+	add := func(u domainauth.User) {
+		u.CreatedAt, u.UpdatedAt = now, now
+		store.usersByID[u.ID] = u
+		store.usersByUsername[u.Username] = u
+	}
+	add(domainauth.User{ID: "u1", Username: "alice", PasswordHash: hash, Enabled: true})
+	add(domainauth.User{ID: "u2", Username: "dora", PasswordHash: hash, Enabled: false})
+	add(domainauth.User{ID: "u3", Username: "robo", PasswordHash: domainauth.RobotPasswordHash, IsRobot: true, Enabled: true})
+
+	for _, tc := range []struct{ name, user, pass string }{
+		{"unknown user", "nobody", "fixture-pass-9x"},
+		{"disabled user", "dora", "fixture-pass-9x"},
+		{"robot", "robo", "fixture-pass-9x"},
+		{"wrong password", "alice", "nope-nope"},
+		{"success", "alice", "fixture-pass-9x"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			service := NewService(store)
+			service.now = func() time.Time { return now }
+			calls := 0
+			service.comparePassword = func(h, p []byte) error {
+				calls++
+				return bcrypt.CompareHashAndPassword(h, p)
+			}
+			_, _ = service.LoginWithPassword(context.Background(), tc.user, tc.pass, nil)
+			if calls != 1 {
+				t.Fatalf("bcrypt comparisons = %d, want exactly 1", calls)
+			}
+		})
+	}
+
+	t.Run("credential exchange failures add no comparison of their own", func(t *testing.T) {
+		service := NewService(store)
+		calls := 0
+		service.comparePassword = func(h, p []byte) error { calls++; return nil }
+		for _, user := range []string{"nobody", "dora", "alice"} {
+			if _, err := service.LoginWithPreissuedToken(context.Background(), user, "not-a-token", nil); err == nil {
+				t.Fatalf("exchange for %q unexpectedly succeeded", user)
+			}
+		}
+		if calls != 0 {
+			t.Fatalf("credential exchange compared passwords %d times, want 0", calls)
+		}
+	})
+}
+
+func TestDummyPasswordHashUsesTheCostOfNewlyWrittenHashes(t *testing.T) {
+	t.Parallel()
+
+	written, err := hashPassword("fixture-pass-9x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writtenCost, err := bcrypt.Cost([]byte(written))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dummyCost, err := bcrypt.Cost(dummyPasswordHash())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dummyCost != writtenCost || dummyCost != passwordHashCost {
+		t.Fatalf("dummy cost = %d, written cost = %d, passwordHashCost = %d: all must match", dummyCost, writtenCost, passwordHashCost)
+	}
+
+	// A legacy hash stored with another cost keeps that cost and never moves
+	// the dummy's.
+	for _, legacy := range []int{4, 12} {
+		if legacy == passwordHashCost {
+			continue
+		}
+		h, err := bcrypt.GenerateFromPassword([]byte("x"), legacy)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := bcrypt.Cost(h); got != legacy {
+			t.Fatalf("legacy cost = %d, want %d", got, legacy)
+		}
+		if after, _ := bcrypt.Cost(dummyPasswordHash()); after != passwordHashCost {
+			t.Fatalf("dummy cost moved to %d after a cost-%d hash existed", after, legacy)
+		}
+	}
 }

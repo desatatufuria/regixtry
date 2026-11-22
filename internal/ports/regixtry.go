@@ -37,7 +37,34 @@ type BlobStore interface {
 	// MUST refuse to touch anything outside their own blob root -- in
 	// particular, never anything under an uploads/ tree.
 	DeleteBlob(ctx context.Context, digest domain.Digest) (removed bool, err error)
+
+	// DeleteBlobIfOlderThan is DeleteBlob guarded by the blob's own age: the
+	// age check and the unlink are one step with respect to CommitUpload, so a
+	// blob committed (or re-committed) at or after cutoff is never removed.
+	// It reports BlobReclaimRemoved, BlobReclaimMissing (already absent) or
+	// BlobReclaimTooRecent (file left untouched).
+	DeleteBlobIfOlderThan(ctx context.Context, digest domain.Digest, cutoff time.Time) (BlobReclaimOutcome, error)
 }
+
+// BlobReclaimOutcome is the result of trying to reclaim one blob.
+type BlobReclaimOutcome int
+
+const (
+	// BlobReclaimRemoved: the blob file was unlinked and its links dropped.
+	BlobReclaimRemoved BlobReclaimOutcome = iota
+	// BlobReclaimMissing: the file was already absent; stale links were dropped.
+	BlobReclaimMissing
+	// BlobReclaimReferenced: a manifest references the blob; nothing changed.
+	BlobReclaimReferenced
+	// BlobReclaimTooRecent: the file is younger than the grace cutoff (an
+	// in-flight push may still need it); nothing changed.
+	BlobReclaimTooRecent
+)
+
+// BlobPresence reports whether the blob file for digest exists. The store
+// calls it inside the same write transaction that records a manifest, so the
+// check and the publish cannot interleave with a blob reclaim.
+type BlobPresence func(ctx context.Context, digest domain.Digest) (bool, error)
 
 // BlobFileInfo is one blob file as it exists on disk right now. ModTime is
 // the file's mtime, which is write time and not commit time -- the 24h grace
@@ -186,6 +213,38 @@ type MetadataStore interface {
 	// delete loop).
 	IsBlobDigestReferenced(ctx context.Context, digest string) (bool, error)
 
+	// PublishManifestVerified is PublishManifest plus an atomic blob check:
+	// inside the SAME write transaction that records the manifest it requires
+	// every blob to exist (present) and be linked to repository, returning a
+	// conflict error naming the first missing one. ReclaimBlob runs in the same
+	// write queue, so a blob that passed the check cannot be reclaimed before
+	// the manifest references it.
+	PublishManifestVerified(ctx context.Context, tenant string, repository domain.RepositoryRef, tag string, manifest domain.Manifest, blobs []domain.Descriptor, present BlobPresence) error
+
+	// ReclaimBlob drops one unreferenced blob inside a single write
+	// transaction: it re-checks that no manifest references digest, runs
+	// remove (which unlinks the file, returning its outcome) and, when the
+	// file is gone, deletes every repository link for digest, all before any
+	// publish or link write can interleave. remove must not call back into
+	// the store.
+	ReclaimBlob(ctx context.Context, digest domain.Digest, remove func(ctx context.Context) (BlobReclaimOutcome, error)) (BlobReclaimOutcome, error)
+
+	// LinkBlob records that repository holds the blob with digest: it was
+	// uploaded into the repository, or a manifest of the repository
+	// references it. Idempotent. A blob is readable and referenceable in a
+	// repository only while this link exists (repository_blobs). Tenant
+	// scoped, unlike the GC mark set.
+	LinkBlob(ctx context.Context, tenant string, repository domain.RepositoryRef, digest domain.Digest) error
+
+	// IsBlobLinked reports whether LinkBlob recorded digest for repository.
+	IsBlobLinked(ctx context.Context, tenant string, repository domain.RepositoryRef, digest domain.Digest) (bool, error)
+
+	// UnlinkBlobDigest drops every repository link for digest, in every
+	// tenant. GC calls it after it unlinked the blob file so no repository
+	// keeps a link to bytes that no longer exist. GLOBAL like the GC mark
+	// set, by design.
+	UnlinkBlobDigest(ctx context.Context, digest domain.Digest) error
+
 	// CreateGCReport inserts one gc_reports row plus its
 	// gc_report_candidates children in a single transaction; a partially
 	// written report is never observable. GLOBAL: no tenant argument.
@@ -330,6 +389,10 @@ const (
 	ScanRunStatusRunning   = "running"
 	ScanRunStatusCompleted = "completed"
 	ScanRunStatusFailed    = "failed"
+	// ScanRunStatusSkipped marks a push-triggered scan that was dropped by
+	// admission control. It is informational only: it never wins "latest run
+	// for a digest/repository" over a real run and never affects the pull policy.
+	ScanRunStatusSkipped = "skipped"
 
 	ScanTriggerManual    = "manual"
 	ScanTriggerScheduled = "scheduled"

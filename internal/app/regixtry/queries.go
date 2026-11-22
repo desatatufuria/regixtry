@@ -240,6 +240,11 @@ func (s *Service) ScanStatus(ctx context.Context, repositoryName string, referen
 		result.State = ScanStatusInProgress
 	case ports.ScanRunStatusFailed:
 		result.State = ScanStatusFailed
+	case ports.ScanRunStatusSkipped:
+		// Only reachable when the digest has no real run (skipped rows rank
+		// below every real run): it was never scanned.
+		result.State = ScanStatusUnscanned
+		result.Scan = nil
 	case ports.ScanRunStatusCompleted:
 		if scanPolicyViolated(settings, run) {
 			result.State = ScanStatusBlocked
@@ -901,6 +906,10 @@ func (s *Service) InspectBlob(ctx context.Context, repositoryName string, digest
 		return BlobDetails{}, err
 	}
 
+	if err := s.requireBlobLinked(ctx, repositoryName, digest); err != nil {
+		return BlobDetails{}, err
+	}
+
 	reader, descriptor, err := s.blobs.OpenBlob(ctx, digest)
 	if err != nil {
 		return BlobDetails{}, err
@@ -920,12 +929,39 @@ func (s *Service) OpenBlob(ctx context.Context, repositoryName string, digestVal
 		return nil, BlobDetails{}, err
 	}
 
+	if err := s.requireBlobLinked(ctx, repositoryName, digest); err != nil {
+		return nil, BlobDetails{}, err
+	}
+
 	reader, descriptor, err := s.blobs.OpenBlob(ctx, digest)
 	if err != nil {
 		return nil, BlobDetails{}, err
 	}
 
 	return reader, newBlobDetails(repositoryName, descriptor), nil
+}
+
+// requireBlobLinked enforces that a blob is served only through a repository
+// that holds it (uploaded into it or referenced by one of its manifests).
+// Blob files are shared across repositories by content, so authorization on
+// the URL repository alone would let a principal read any repository's blob
+// by digest. An unlinked blob is reported as not found, identical to an
+// absent one.
+func (s *Service) requireBlobLinked(ctx context.Context, repositoryName string, digest domain.Digest) error {
+	repository, err := parseRepository(repositoryName)
+	if err != nil {
+		return err
+	}
+
+	linked, err := s.metadata.IsBlobLinked(ctx, s.tenant(ctx), repository, digest)
+	if err != nil {
+		return err
+	}
+	if !linked {
+		return domain.NewNotFoundError("blob", digest.String())
+	}
+
+	return nil
 }
 
 func (s *Service) UploadStatus(ctx context.Context, repositoryName string, uploadID string) (UploadDetails, error) {

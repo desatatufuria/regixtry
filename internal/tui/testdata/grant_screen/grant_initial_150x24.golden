@@ -1,0 +1,24 @@
+  Admin › Access › Repository access                                                                                           signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ╭─────────────────────────────────────────╮ ╭─────────────────────────────────────────────────────╮ ╭────────────────────────────────────────────╮  
+  │ 1 Who                                   │ │ 2 Which repositories                                │ │ 3 Role and review                          │  
+  │ Search users and robots                 │ │ Filter, or type a new name                          │ │ (•) 1 Reader                               │  
+  │  ▏                                      │ │  Filter…                                            │ │     pull                                   │  
+  │    alice                         user   │ │ Exact names only, no wildcards.                     │ │ ( ) 2 Writer                               │  
+  │    bob                           user   │ │ ▸  [ ] library/alpine                               │ │     pull, push, delete tags                │  
+  │    carol                         user   │ │    [ ] library/nginx                                │ │ ( ) 3 Admin                                │  
+  │    ci-bot                        robot  │ │    [ ] ops/console                                  │ │     Writer plus manage who has access      │  
+  │                                         │ │    [ ] team/backend                                 │ │ ╭────────────────────────────────────────╮ │  
+  │                                         │ │    [ ] team/demo                                    │ │ │Nothing selected yet. Pick a user or    │ │  
+  │                                         │ │    [ ] team/frontend                                │ │ │robot, tick repositories, then press    │ │  
+  │                                         │ │    [ ] team/infra                                   │ │ │Enter.                                  │ │  
+  │                                         │ │    [ ] team/web                                     │ │ │                                        │ │  
+  │ Already has                             │ │                                                     │ │ │                                        │ │  
+  │                                         │ │                                                     │ │ │                                        │ │  
+  │                                         │ │                                                     │ │ ╰────────────────────────────────────────╯ │  
+  │                                         │ │                                                     │ │  Grant access                       enter  │  
+  │                                         │ │ 0 selected, 8 shown                                 │ │  Cancel                               esc  │  
+  ╰─────────────────────────────────────────╯ ╰─────────────────────────────────────────────────────╯ ╰────────────────────────────────────────────╯  
+                                                                                                                                                      
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  tab next step   ↑↓ move   space toggle repo   ctrl+a all shown   1 2 3 pick role   enter grant   esc cancel                            F2 mouse on  

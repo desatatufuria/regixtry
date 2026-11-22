@@ -73,7 +73,6 @@ func TestSchedulerTriggersManagedRuntimeBatchesThroughServiceContract(t *testing
 type fakeLeaseStore struct {
 	mu    sync.Mutex
 	state ports.ScanSchedulerState
-	owner string
 }
 
 func (f *fakeLeaseStore) TryAcquireScanSchedulerLease(_ context.Context, _ string, owner string, now time.Time, leaseTTL time.Duration) (bool, ports.ScanSchedulerState, error) {

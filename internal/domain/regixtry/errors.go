@@ -23,6 +23,12 @@ const (
 	// request"). Admin routes (writeAdminError) map it to 501; it must never
 	// be returned from a registry (/v2/) route.
 	ErrorCodeUnsupported ErrorCode = "UNSUPPORTED"
+	// ErrorCodePayloadTooLarge means a request body or accumulated upload
+	// exceeded a configured size cap (HTTP 413).
+	ErrorCodePayloadTooLarge ErrorCode = "PAYLOAD_TOO_LARGE"
+	// ErrorCodeTooManyRequests means a configured concurrency cap, such as
+	// the number of open uploads, is exhausted (HTTP 429).
+	ErrorCodeTooManyRequests ErrorCode = "TOO_MANY_REQUESTS"
 )
 
 type Error struct {
@@ -90,4 +96,12 @@ func NewPolicyViolationError(message string) error {
 
 func NewUnsupportedError(message string) error {
 	return &Error{Code: ErrorCodeUnsupported, Message: message}
+}
+
+func NewPayloadTooLargeError(message string) error {
+	return &Error{Code: ErrorCodePayloadTooLarge, Message: message}
+}
+
+func NewTooManyRequestsError(message string) error {
+	return &Error{Code: ErrorCodeTooManyRequests, Message: message}
 }

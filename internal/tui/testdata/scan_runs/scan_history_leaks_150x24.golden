@@ -1,0 +1,24 @@
+  Admin › Operations › Scan runs › team/api                                                                                    signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                      
+                               │  team/api                                                                                  Run 1 of 2, 14 Mar 08:30  
+    Overview                   │   Vulnerabilities (3)   Leaks (2)                                                                                    
+                               │  ╭────────────────────────────────────────────────────────────────────────╮  ╭────────────────────────────────────╮  
+  ACCESS                       │  │   RULE                LOCATION                DESCRIPTION              │  │ team/api:1.8.2                     │  
+      Users                    │  │ ▸ aws-access-key      src/deploy/prod.env:14  AWS Access Key (key, aw… │  │ completed, trigger push            │  
+      Robots                   │  │   generic-api-key     config/ci.yaml:42-44    Generic API Key          │  │                                    │  
+      Repository access        │  │                                                                        │  │ RUN                                │  
+                               │  │                                                                        │  │ Digest            sha256:9c41…e0d2 │  
+  SECURITY                     │  │                                                                        │  │ Started           14 Mar 08:30 UTC │  
+      Image scanning           │  │                                                                        │  │ Finished          14 Mar 08:30 UTC │  
+      Secret scanning          │  │                                                                        │  │ Trivy                       0.58.1 │  
+      Signing policy           │  │                                                                        │  │                                    │  
+                               │  │                                                                        │  │ FINDINGS                           │  
+  OPERATIONS                   │  │                                                                        │  │ Critical                         2 │  
+    ▸ Scan runs                │  │                                                                        │  │ High                             5 │  
+      Secret findings          │  │                                                                        │  │ Medium                          11 │  
+      Update channel           │  │                                                                        │  │ Low                              7 │  
+                               │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
+                               │  The secret value itself is never shown.                                     ╰────────────────────────────────────╯  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ↑↓ move   ←→ run   tab vulnerabilities / leaks   esc back   q quit                                                                     F2 mouse on  

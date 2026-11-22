@@ -5,7 +5,6 @@ import (
 	"regexp"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"regixtry/internal/ports"
 )
 
@@ -73,7 +72,7 @@ func (l trustedIdentityList) Identities() []ports.TrustedIdentity { return l.ide
 // update, this never dispatches a tea.Cmd (no async usage-count lookup
 // exists for identities), so callers that need the (list, cmd, consumed)
 // shape trustedKeyList.update returns wrap this with a nil cmd.
-func (l trustedIdentityList) update(msg tea.KeyMsg) (trustedIdentityList, bool) {
+func (l trustedIdentityList) update(msg keyMsg) (trustedIdentityList, bool) {
 	if l.adding {
 		switch {
 		case isEscKey(msg):
@@ -104,12 +103,12 @@ func (l trustedIdentityList) update(msg tea.KeyMsg) (trustedIdentityList, bool) 
 			l.err = ""
 			return l, true
 		}
-		if msg.Type == tea.KeyRunes {
+		if isTextKey(msg) {
 			switch l.addFocus {
 			case identityAddFieldRegexp:
-				l.inputRegexp += string(msg.Runes)
+				l.inputRegexp += keyText(msg)
 			default:
-				l.inputIssuer += string(msg.Runes)
+				l.inputIssuer += keyText(msg)
 			}
 			l.err = ""
 			return l, true
@@ -209,8 +208,8 @@ func renderTrustedIdentityList(theme adminTheme, l trustedIdentityList, focused 
 
 	switch {
 	case l.adding:
-		lines = append(lines, renderTextField(theme, "New Identity Regexp", l.inputRegexp, l.addFocus == identityAddFieldRegexp))
-		lines = append(lines, renderTextField(theme, "New Identity Issuer", l.inputIssuer, l.addFocus == identityAddFieldIssuer))
+		lines = append(lines, userField(theme, "New Identity Regexp", l.inputRegexp, false, l.addFocus == identityAddFieldRegexp, trustedListFieldWidth)...)
+		lines = append(lines, userField(theme, "New Identity Issuer", l.inputIssuer, false, l.addFocus == identityAddFieldIssuer, trustedListFieldWidth)...)
 	case focused:
 		lines = append(lines, theme.muted.Render("n: add identity | x: delete selected identity"))
 	}
@@ -218,4 +217,18 @@ func renderTrustedIdentityList(theme adminTheme, l trustedIdentityList, focused 
 		lines = append(lines, theme.error.Render(l.err))
 	}
 	return lines
+}
+
+// trustedIdentityFocusRow is the line of renderTrustedIdentityList's output
+// that holds what the operator is working on: the selected identity, or the
+// field being filled in below the identities.
+func trustedIdentityFocusRow(l trustedIdentityList) int {
+	rows := max(len(l.identities), 1)
+	if l.adding {
+		if l.addFocus == identityAddFieldIssuer {
+			return rows + 4
+		}
+		return rows + 2
+	}
+	return min(boundedIndex(l.selected, len(l.identities)), max(len(l.identities)-1, 0)) + 1
 }

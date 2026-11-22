@@ -19,6 +19,10 @@ type AuthStore interface {
 	ListRobots(ctx context.Context) ([]domainauth.User, error)
 	ListRepoGrants(ctx context.Context, userID string) ([]domainauth.RepoGrant, error)
 	ListRepoGrantsByRepository(ctx context.Context, repository regixtrydomain.RepositoryRef) ([]domainauth.RepoGrant, error)
+	// ListRepoGrantsPage returns up to limit grants of every principal on
+	// every repository (cataloged or not), ordered by repository, username and
+	// user id, strictly after the cursor when one is given.
+	ListRepoGrantsPage(ctx context.Context, after *domainauth.GrantCursor, limit int) ([]domainauth.RepositoryGrantRow, error)
 	PutRepoGrant(ctx context.Context, grant domainauth.RepoGrant) error
 	DeleteRepoGrant(ctx context.Context, userID string, repository regixtrydomain.RepositoryRef) error
 	CreateToken(ctx context.Context, token domainauth.Token) error
@@ -26,6 +30,18 @@ type AuthStore interface {
 	GetTokenByAccessor(ctx context.Context, kind domainauth.TokenKind, accessor string) (domainauth.Token, error)
 	ListTokensByUser(ctx context.Context, userID string, kind domainauth.TokenKind) ([]domainauth.Token, error)
 	RevokeTokenByAccessor(ctx context.Context, accessor string, revokedAt time.Time) error
+	// ResetUserPassword stores the user (carrying the new password hash) and
+	// revokes every still-active access (login) token of that user, in one
+	// transaction; admin credential tokens are left alone: either both happen or neither does.
+	ResetUserPassword(ctx context.Context, user domainauth.User, revokedAt time.Time) error
+	// ListExpiringTokens returns admin credentials of enabled users and robots
+	// that are neither revoked nor expired at now and expire at or before
+	// until, ordered by expiry ascending, at most limit rows.
+	ListExpiringTokens(ctx context.Context, now time.Time, until time.Time, limit int) ([]domainauth.ExpiringToken, error)
+	// AppendAccessEvent records one access change in the append-only history.
+	AppendAccessEvent(ctx context.Context, event domainauth.AccessEvent) error
+	// ListAccessEvents returns the newest events first, at most limit rows.
+	ListAccessEvents(ctx context.Context, limit int) ([]domainauth.AccessEvent, error)
 }
 
 type LoginResult struct {
@@ -150,6 +166,25 @@ type AdminRepositoryGrant struct {
 	UpdatedAt time.Time           `json:"updated_at"`
 }
 
+// AdminGrantEntry is one grant of the all-grants listing: the grants of every
+// user and robot on every repository. It carries no secret, hash or token.
+type AdminGrantEntry struct {
+	Repository string              `json:"repository"`
+	UserID     string              `json:"user_id"`
+	Username   string              `json:"username"`
+	IsRobot    bool                `json:"is_robot"`
+	Role       domainauth.RepoRole `json:"role"`
+	CreatedAt  time.Time           `json:"created_at"`
+	UpdatedAt  time.Time           `json:"updated_at"`
+}
+
+// AdminGrantPage is one page of the all-grants listing. Next is the opaque
+// cursor of the following page, empty on the last page.
+type AdminGrantPage struct {
+	Grants []AdminGrantEntry `json:"grants"`
+	Next   string            `json:"next"`
+}
+
 type AdminPutRepositoryGrantInput struct {
 	Repository string              `json:"-"`
 	Username   string              `json:"-"`
@@ -196,6 +231,33 @@ type AdminToken struct {
 	RevokedAt *time.Time           `json:"revoked_at,omitempty"`
 }
 
+// AdminExpiringToken is one row of the expiring-tokens report. It carries
+// metadata only: never a secret, hash or secret-derived value.
+type AdminExpiringToken struct {
+	ID        string    `json:"id"`
+	Accessor  string    `json:"accessor"`
+	Name      string    `json:"name,omitempty"`
+	UserID    string    `json:"user_id"`
+	Username  string    `json:"username"`
+	IsRobot   bool      `json:"is_robot"`
+	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// AdminAccessEvent is one row of the access change history. It carries names
+// and short human text only: never a secret, hash, accessor or token id.
+type AdminAccessEvent struct {
+	ID         string                  `json:"id"`
+	At         time.Time               `json:"at"`
+	Action     domainauth.AccessAction `json:"action"`
+	Actor      string                  `json:"actor"`
+	Subject    string                  `json:"subject,omitempty"`
+	Repository string                  `json:"repository,omitempty"`
+	Role       string                  `json:"role,omitempty"`
+	TokenName  string                  `json:"token_name,omitempty"`
+	Detail     string                  `json:"detail,omitempty"`
+}
+
 type AdminCreateTokenInput struct {
 	UserID string        `json:"-"`
 	Name   string        `json:"name"`
@@ -221,11 +283,14 @@ type AdminHTTPService interface {
 	DeleteAdminUserRepoGrant(ctx context.Context, actor domainauth.Principal, userID string, repository string) error
 	ListAdminRepositoryGrants(ctx context.Context, actor domainauth.Principal, repository string) ([]AdminRepositoryGrant, error)
 	PutAdminRepositoryGrant(ctx context.Context, actor domainauth.Principal, input AdminPutRepositoryGrantInput) (AdminRepositoryGrant, error)
+	ListAdminAllRepositoryGrants(ctx context.Context, actor domainauth.Principal, limit int, after string) (AdminGrantPage, error)
 	DeleteAdminRepositoryGrant(ctx context.Context, actor domainauth.Principal, repository string, username string) error
 	CreateAdminRobot(ctx context.Context, actor domainauth.Principal, input AdminCreateRobotInput) (AdminCreatedRobot, error)
 	ListAdminRobots(ctx context.Context, actor domainauth.Principal) ([]AdminRobot, error)
 	DeleteAdminRobot(ctx context.Context, actor domainauth.Principal, userID string) error
 	ListAdminUserTokens(ctx context.Context, actor domainauth.Principal, userID string) ([]AdminToken, error)
+	ListAdminExpiringTokens(ctx context.Context, actor domainauth.Principal, within time.Duration, limit int) ([]AdminExpiringToken, error)
+	ListAdminAccessEvents(ctx context.Context, actor domainauth.Principal, limit int) ([]AdminAccessEvent, error)
 	CreateAdminUserToken(ctx context.Context, actor domainauth.Principal, input AdminCreateTokenInput) (AdminCreatedToken, error)
 	RevokeAdminUserToken(ctx context.Context, actor domainauth.Principal, userID string, accessor string) error
 }

@@ -1,0 +1,40 @@
+  Admin › Operations › Scan runs › team/api                                                                                                                                      signed in as operator  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                                                                        
+                               │  team/api                                                                                                                                    Run 2 of 2, 13 Mar 03:30  
+    Overview                   │   Vulnerabilities (1)   Leaks (0)                                                                                                                                      
+                               │  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  ╭──────────────────────────────────────╮  
+  ACCESS                       │  │   SEVERITY   FINDING           PACKAGE                                                          INSTALLED   FIXED      │  │ team/api:1.8.1                       │  
+      Users                    │  │ ▸ HIGH       CVE-2025-0001     zlib                                                             1.2         1.3        │  │ completed, trigger push              │  
+      Robots                   │  │                                                                                                                        │  │                                      │  
+      Repository access        │  │                                                                                                                        │  │ RUN                                  │  
+                               │  │                                                                                                                        │  │ Digest              sha256:0a1b…2c3d │  
+  SECURITY                     │  │                                                                                                                        │  │ Started             13 Mar 03:30 UTC │  
+      Image scanning           │  │                                                                                                                        │  │ Finished            13 Mar 03:30 UTC │  
+      Secret scanning          │  │                                                                                                                        │  │ Trivy                         0.58.1 │  
+      Signing policy           │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │ FINDINGS                             │  
+  OPERATIONS                   │  │                                                                                                                        │  │ Critical                           2 │  
+    ▸ Scan runs                │  │                                                                                                                        │  │ High                               4 │  
+      Secret findings          │  │                                                                                                                        │  │ Medium                            11 │  
+      Update channel           │  │                                                                                                                        │  │ Low                                7 │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  │                                      │  
+                               │  enter opens the advisory of the selected finding.                                                                           ╰──────────────────────────────────────╯  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ↑↓ move   enter open advisory   ←→ run   tab vulnerabilities / leaks   esc back   q quit                                                                                                 F2 mouse on  

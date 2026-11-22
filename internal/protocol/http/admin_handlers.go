@@ -83,6 +83,12 @@ func (r *Router) handleAdmin(w stdhttp.ResponseWriter, req *stdhttp.Request) {
 		r.handleAdminScanRunDetail(w, req, strings.TrimPrefix(subpath, "scan-runs/"))
 	case subpath == "secret-scan-findings":
 		r.handleAdminSecretScanFindings(w, req)
+	case subpath == "access-events":
+		r.handleAdminAccessEvents(w, req, *principal)
+	case subpath == "repository-grants":
+		r.handleAdminAllRepositoryGrants(w, req, *principal)
+	case subpath == "admin-tokens/expiring":
+		r.handleAdminExpiringTokens(w, req, *principal)
 	case subpath == "users":
 		r.handleAdminUsersCollection(w, req, *principal)
 	case strings.HasPrefix(subpath, "users/"):
@@ -973,7 +979,13 @@ func (r *Router) mutateFeatureRuntime(req *stdhttp.Request, name string, action 
 			return ports.FeatureRuntimeState{}, err
 		}
 	}
-	return action(strings.TrimSpace(payload.Version))
+	version := strings.TrimSpace(payload.Version)
+	if version != "" {
+		if err := domainregistry.ValidateRuntimeVersion(version); err != nil {
+			return ports.FeatureRuntimeState{}, err
+		}
+	}
+	return action(version)
 }
 
 func (r *Router) handleAdminUsersCollection(w stdhttp.ResponseWriter, req *stdhttp.Request, principal domainauth.Principal) {
@@ -1067,19 +1079,19 @@ func decodeAdminCreateRobotInput(req *stdhttp.Request) (ports.AdminCreateRobotIn
 		Name       string              `json:"name"`
 		Repository string              `json:"repository"`
 		Role       domainauth.RepoRole `json:"role"`
+		TTL        json.RawMessage     `json:"ttl"`
 		TTLSeconds *int64              `json:"ttl_seconds"`
 	}
 	if err := decodeAdminJSON(req, &payload); err != nil {
 		return ports.AdminCreateRobotInput{}, err
 	}
-	if payload.TTLSeconds != nil && *payload.TTLSeconds < 0 {
-		return ports.AdminCreateRobotInput{}, domainauth.NewValidationError("ttl_seconds must be zero or greater")
+	ttl, err := adminTTLFromPayload(payload.TTL, payload.TTLSeconds)
+	if err != nil {
+		return ports.AdminCreateRobotInput{}, err
 	}
 
 	input := ports.AdminCreateRobotInput{Name: payload.Name, Repository: payload.Repository, Role: payload.Role}
-	if payload.TTLSeconds != nil {
-		input.TTL = time.Duration(*payload.TTLSeconds) * time.Second
-	}
+	input.TTL = ttl
 
 	return input, nil
 }
@@ -1315,6 +1327,146 @@ func (r *Router) handleAdminRepositoryGrantResource(w stdhttp.ResponseWriter, re
 	}
 }
 
+const (
+	adminExpiringDefaultWithin = "30d"
+	adminExpiringDefaultLimit  = 50
+	adminListMaxLimit          = 200
+
+	adminAccessEventsDefaultLimit = 20
+	adminAllGrantsDefaultLimit    = 100
+)
+
+// handleAdminExpiringTokens serves GET /admin/v1/admin-tokens/expiring: admin
+// credentials of enabled users and robots that expire within `within`
+// (readable ttl grammar, default 30d, at most 2y), soonest first, at most
+// `limit` (1..200, default 50). Metadata only, never secret material.
+func (r *Router) handleAdminExpiringTokens(w stdhttp.ResponseWriter, req *stdhttp.Request, principal domainauth.Principal) {
+	if req.Method != stdhttp.MethodGet {
+		w.Header().Set("Allow", stdhttp.MethodGet)
+		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+		return
+	}
+
+	query := req.URL.Query()
+	withinText := adminExpiringDefaultWithin
+	if query.Has("within") {
+		withinText = query.Get("within")
+	}
+	encoded, _ := json.Marshal(withinText)
+	within, err := adminTTLFromReadable(encoded)
+	if err != nil {
+		writeAdminError(w, err, ports.Challenge{})
+		return
+	}
+
+	limit := adminExpiringDefaultLimit
+	if query.Has("limit") {
+		limit, err = parseAdminLimit(query.Get("limit"))
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+	}
+
+	tokens, err := r.admin.ListAdminExpiringTokens(req.Context(), principal, within, limit)
+	if err != nil {
+		writeAdminError(w, err, ports.Challenge{})
+		return
+	}
+	if tokens == nil {
+		tokens = []ports.AdminExpiringToken{}
+	}
+
+	writeJSON(w, stdhttp.StatusOK, tokens)
+}
+
+// handleAdminAccessEvents serves GET /admin/v1/access-events: the newest
+// access changes first (grants, tokens, robots), at most `limit` (1..200,
+// default 20). Global admin only, enforced by requireAdminPrincipal and again
+// by the service. Names and short text only, never secret material.
+func (r *Router) handleAdminAccessEvents(w stdhttp.ResponseWriter, req *stdhttp.Request, principal domainauth.Principal) {
+	if req.Method != stdhttp.MethodGet {
+		w.Header().Set("Allow", stdhttp.MethodGet)
+		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+		return
+	}
+
+	limit := adminAccessEventsDefaultLimit
+	query := req.URL.Query()
+	if query.Has("limit") {
+		var err error
+		limit, err = parseAdminLimit(query.Get("limit"))
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+	}
+
+	events, err := r.admin.ListAdminAccessEvents(req.Context(), principal, limit)
+	if err != nil {
+		writeAdminError(w, err, ports.Challenge{})
+		return
+	}
+	if events == nil {
+		events = []ports.AdminAccessEvent{}
+	}
+
+	writeJSON(w, stdhttp.StatusOK, events)
+}
+
+// handleAdminAllRepositoryGrants serves GET /admin/v1/repository-grants: the
+// grants of every user and robot on every repository (pushed or not), ordered
+// by repository then username, at most `limit` (1..200, default 100) per page.
+// `after` is the opaque `next` of the previous page; `next` is empty on the
+// last page. Disabled users still appear. Global admin only, enforced by
+// requireAdminPrincipal and again by the service. Never secret material.
+func (r *Router) handleAdminAllRepositoryGrants(w stdhttp.ResponseWriter, req *stdhttp.Request, principal domainauth.Principal) {
+	if req.Method != stdhttp.MethodGet {
+		w.Header().Set("Allow", stdhttp.MethodGet)
+		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+		return
+	}
+
+	limit := adminAllGrantsDefaultLimit
+	query := req.URL.Query()
+	if query.Has("limit") {
+		var err error
+		limit, err = parseAdminLimit(query.Get("limit"))
+		if err != nil {
+			writeAdminError(w, err, ports.Challenge{})
+			return
+		}
+	}
+
+	page, err := r.admin.ListAdminAllRepositoryGrants(req.Context(), principal, limit, query.Get("after"))
+	if err != nil {
+		writeAdminError(w, err, ports.Challenge{})
+		return
+	}
+	if page.Grants == nil {
+		page.Grants = []ports.AdminGrantEntry{}
+	}
+
+	writeJSON(w, stdhttp.StatusOK, page)
+}
+
+func parseAdminLimit(raw string) (int, error) {
+	invalid := domainauth.NewValidationError("limit must be a whole number between 1 and 200")
+	if raw == "" || len(raw) > 3 || raw[0] == '0' {
+		return 0, invalid
+	}
+	for i := 0; i < len(raw); i++ {
+		if raw[i] < '0' || raw[i] > '9' {
+			return 0, invalid
+		}
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 || n > adminListMaxLimit {
+		return 0, invalid
+	}
+	return n, nil
+}
+
 func (r *Router) handleAdminUserTokensCollection(w stdhttp.ResponseWriter, req *stdhttp.Request, principal domainauth.Principal, userID string) {
 	switch req.Method {
 	case stdhttp.MethodGet:
@@ -1436,22 +1588,89 @@ func adminNestedResource(resource string, marker string) (string, string, bool) 
 
 func decodeAdminCreateTokenInput(req *stdhttp.Request) (ports.AdminCreateTokenInput, error) {
 	var payload struct {
-		Name       string `json:"name"`
-		TTLSeconds *int64 `json:"ttl_seconds"`
+		Name       string          `json:"name"`
+		TTL        json.RawMessage `json:"ttl"`
+		TTLSeconds *int64          `json:"ttl_seconds"`
 	}
 	if err := decodeAdminJSON(req, &payload); err != nil {
 		return ports.AdminCreateTokenInput{}, err
 	}
-	if payload.TTLSeconds != nil && *payload.TTLSeconds < 0 {
-		return ports.AdminCreateTokenInput{}, domainauth.NewValidationError("ttl_seconds must be zero or greater")
+	ttl, err := adminTTLFromPayload(payload.TTL, payload.TTLSeconds)
+	if err != nil {
+		return ports.AdminCreateTokenInput{}, err
 	}
 
 	input := ports.AdminCreateTokenInput{Name: payload.Name}
-	if payload.TTLSeconds != nil {
-		input.TTL = time.Duration(*payload.TTLSeconds) * time.Second
-	}
+	input.TTL = ttl
 
 	return input, nil
+}
+
+// adminTTLFromPayload resolves the lifetime of a new admin token or robot from
+// the optional readable ttl ("12h", "30d", "2y") and the older ttl_seconds.
+// Sending both is rejected; sending neither (or null) means the default.
+func adminTTLFromPayload(ttl json.RawMessage, seconds *int64) (time.Duration, error) {
+	if len(ttl) == 0 || string(ttl) == "null" {
+		return adminTTLFromSeconds(seconds)
+	}
+	if seconds != nil {
+		return 0, domainauth.NewValidationError("send either ttl or ttl_seconds, not both")
+	}
+	return adminTTLFromReadable(ttl)
+}
+
+// adminTTLFromReadable parses ^[1-9][0-9]*[hdy]$ (h hours, d days of 24 h,
+// y years of 365 days). The number is compared with the maximum in its own
+// unit BEFORE multiplying, so no value can overflow or wrap.
+func adminTTLFromReadable(raw json.RawMessage) (time.Duration, error) {
+	errGrammar := domainauth.NewValidationError("ttl must be a whole number followed by h, d or y, for example 12h, 30d or 2y")
+
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil || len(value) < 2 {
+		return 0, errGrammar
+	}
+	digits, unit := value[:len(value)-1], value[len(value)-1]
+	var per time.Duration
+	switch unit {
+	case 'h':
+		per = time.Hour
+	case 'd':
+		per = 24 * time.Hour
+	case 'y':
+		per = 365 * 24 * time.Hour
+	default:
+		return 0, errGrammar
+	}
+	if digits[0] < '1' || digits[0] > '9' {
+		return 0, errGrammar
+	}
+	for i := 1; i < len(digits); i++ {
+		if digits[i] < '0' || digits[i] > '9' {
+			return 0, errGrammar
+		}
+	}
+	n, err := strconv.ParseUint(digits, 10, 64)
+	if err != nil || n > uint64(domainauth.MaxAdminTokenTTL/per) {
+		return 0, domainauth.NewValidationError("admin token ttl must be 2 years or shorter")
+	}
+	return time.Duration(n) * per, nil
+}
+
+// adminTTLFromSeconds converts an optional ttl_seconds payload value to a
+// duration. It validates the seconds BEFORE converting, because multiplying a
+// huge value by time.Second overflows int64 and could wrap to a negative or
+// small positive duration. Omitted and zero mean "use the default".
+func adminTTLFromSeconds(seconds *int64) (time.Duration, error) {
+	if seconds == nil {
+		return 0, nil
+	}
+	if *seconds < 0 {
+		return 0, domainauth.NewValidationError("ttl_seconds must be zero or greater")
+	}
+	if *seconds > int64(domainauth.MaxAdminTokenTTL/time.Second) {
+		return 0, domainauth.NewValidationError("admin token ttl must be 2 years or shorter")
+	}
+	return time.Duration(*seconds) * time.Second, nil
 }
 
 func decodeAdminJSON(req *stdhttp.Request, dst any) error {
@@ -1507,6 +1726,10 @@ func (r *Router) requireAuthenticatedPrincipal(w stdhttp.ResponseWriter, req *st
 		writeAdminError(w, domainauth.NewInvalidCredentialsError(), bearerChallenge)
 		return nil, false
 	}
+	if !principal.IsUnrestricted() {
+		writeAdminError(w, domainauth.NewForbiddenError("a scope-limited token cannot be used for administration"), ports.Challenge{})
+		return nil, false
+	}
 
 	return principal, true
 }
@@ -1524,6 +1747,10 @@ func (r *Router) requireAdminPrincipal(w stdhttp.ResponseWriter, req *stdhttp.Re
 	}
 	if !principal.IsAdmin {
 		writeAdminError(w, domainauth.NewForbiddenError("admin access is required"), ports.Challenge{})
+		return nil, false
+	}
+	if !principal.IsUnrestricted() {
+		writeAdminError(w, domainauth.NewForbiddenError("a scope-limited token cannot be used for administration"), ports.Challenge{})
 		return nil, false
 	}
 

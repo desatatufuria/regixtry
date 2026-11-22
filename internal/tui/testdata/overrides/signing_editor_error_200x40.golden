@@ -1,0 +1,40 @@
+  Admin › Security › Signing policy › Repositories                                                                                                                               signed in as operator  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │
+                               │  Signing policy                                                                                                                          image signature verification
+    Overview                   │  4 repositories, 2 with an override
+                               │  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  ╭──────────────────────────────────────╮
+  ACCESS                       │  │   REPOSITORY                                                         STATUS     ENABLED  DETAIL            UPDATED     │  │ team/api                             │
+      Users                    │  │ ▸ team/api                                                           override   yes      1 key, 1 identi…  9 Nov       │  │ override                             │
+      Robots                   │  │   team/docs                                                          override   no       not enforced      2 Nov       │  │                                      │
+      Repository access        │  │   team/web                                                           inherited  —        global policy     -           │  │ OVERRIDE                             │
+                               │  │   team/infra                                                         inherited  —        global policy     -           │  │ Pull-time gate              enforced │
+  SECURITY                     │  │                             ╭──────────────────────────────────────────────────────────────────────╮                   │  │ Unsigned self-read            pusher │
+      Image scanning           │  │                             │  Signing override                                                    │                   │  │ Trusted keys                       1 │
+      Secret scanning          │  │                             │  team/api. override active.                                          │                   │  │ Identities                         1 │
+    ▸ Signing policy           │  │                             │  [x] Pull-time gate enforced                                         │                   │  │ Updated                        9 Nov │
+                               │  │                             │  Trusted Keys (1)                                                    │                   │  │                                      │
+  OPERATIONS                   │  │                             │    Key: 2c1d7289f2db                                                 │                   │  │ ACTIONS                              │
+      Scan runs                │  │                             │  Trusted Identities (1)                                              │                   │  │ Edit override                      o │
+      Secret findings          │  │                             │    Identity: https://github.com/team/.* (https://token.actions.git…  │                   │  │ Refresh                            r │
+      Update channel           │  │                             │  Unsigned self-read (space cycles)                                   │                   │  │                                      │
+                               │  │                             │   pusher                                                             │                   │  │                                      │
+                               │  │                             │  Clear override, use the global settings                             │                   │  │                                      │
+                               │  │                             │  enabled requires at least one usable entry in trusted_public_keys   │                   │  │                                      │
+                               │  │                             │  or trusted_identities                                               │                   │  │                                      │
+                               │  │                             │                                                                      │                   │  │                                      │
+                               │  │                             │   Save  enter   Cancel  esc                                          │                   │  │                                      │
+                               │  │                             │  tab next field, space toggles or cycles, n adds and x deletes in a  │                   │  │                                      │
+                               │  │                             │  list                                                                │                   │  │                                      │
+                               │  │                             ╰──────────────────────────────────────────────────────────────────────╯                   │  │                                      │
+                               │  │                                                                                                                        │  │                                      │
+                               │  │                                                                                                                        │  │                                      │
+                               │  │                                                                                                                        │  │                                      │
+                               │  │                                                                                                                        │  │                                      │
+                               │  │                                                                                                                        │  │                                      │
+                               │  │                                                                                                                        │  │                                      │
+                               │  │                                                                                                                        │  │                                      │
+                               │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  │                                      │
+                               │  An override replaces the global policy for that repository. o edits the override of the selected repository.                ╰──────────────────────────────────────╯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  tab next field   space toggle   enter save   esc cancel                                                                                                                                  F2 mouse on  

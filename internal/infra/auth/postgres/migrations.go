@@ -43,6 +43,22 @@ func migrationStatements() []string {
 		);`,
 		`ALTER TABLE auth_users ADD COLUMN is_read_only BOOLEAN NOT NULL DEFAULT FALSE;`,
 		`ALTER TABLE auth_users ADD COLUMN is_robot BOOLEAN NOT NULL DEFAULT FALSE;`,
+		// Append-only history of access changes. No foreign keys on purpose:
+		// the history must survive deleted users, robots and grants.
+		`CREATE TABLE IF NOT EXISTS auth_access_events (
+			id TEXT PRIMARY KEY,
+			occurred_at TEXT NOT NULL,
+			action TEXT NOT NULL,
+			actor_user_id TEXT NOT NULL,
+			actor_username TEXT NOT NULL,
+			subject_user_id TEXT NULL,
+			subject_username TEXT NULL,
+			repository TEXT NULL,
+			role TEXT NULL,
+			token_name TEXT NULL,
+			detail TEXT NULL
+		);`,
+		`CREATE INDEX IF NOT EXISTS auth_access_events_occurred_idx ON auth_access_events (occurred_at, id);`,
 	}
 }
 

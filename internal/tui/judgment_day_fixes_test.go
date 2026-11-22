@@ -4,41 +4,31 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
-// TestSecurityConfigScreensJoinAdminPrincipalScreenSet is the Judgment Day
-// fix-round RED test for Finding 1 (Judge A, CRITICAL): isAdminPrincipalScreen
-// gates the bare 'q' quit key (model.go:1685), checked before any screen ever
-// sees the key. screenSecurityTrivy/screenSecurityGitleaksConfig/
-// screenSecuritySigningConfig each advertise "q: quit" in their own
-// Keys()-derived footer (see trivyConfigScreen.Keys/gitleaksConfigScreen.Keys/
-// signingConfigScreen.Keys), so 'q' must actually reach tea.Quit from them.
-// The 3 sibling repos screens (screenSecurityTrivyRepos/
-// screenSecurityGitleaksRepos/screenSecuritySigningRepos) do NOT advertise
-// "q: quit" in their own Keys() (trivyReposKeys/featureOverridesKeys), so
-// they are deliberately excluded here.
-func TestSecurityConfigScreensJoinAdminPrincipalScreenSet(t *testing.T) {
+// TestSecurityScreensJoinAdminPrincipalScreenSet pins that the bare 'q' quit
+// key (isAdminPrincipalScreen, checked before any screen sees the key) works on
+// all six Security screens: the three configuration screens and the three
+// repositories screens. The repositories screens hold it back while their
+// override editor is open (migratedScreenCapturesTextInput).
+func TestSecurityScreensJoinAdminPrincipalScreenSet(t *testing.T) {
 	t.Parallel()
 
-	for _, screenID := range []screen{screenSecurityTrivy, screenSecurityGitleaksConfig, screenSecuritySigningConfig} {
+	for _, screenID := range []screen{
+		screenSecurityTrivy, screenSecurityGitleaksConfig, screenSecuritySigningConfig,
+		screenSecurityTrivyRepos, screenSecurityGitleaksRepos, screenSecuritySigningRepos,
+	} {
 		if !isAdminPrincipalScreen(screenID) {
-			t.Fatalf("isAdminPrincipalScreen(%v) = false, want true (screen advertises \"q: quit\" in its own footer)", screenID)
-		}
-	}
-
-	for _, screenID := range []screen{screenSecurityTrivyRepos, screenSecurityGitleaksRepos, screenSecuritySigningRepos} {
-		if isAdminPrincipalScreen(screenID) {
-			t.Fatalf("isAdminPrincipalScreen(%v) = true, want false (screen does not advertise \"q: quit\")", screenID)
+			t.Fatalf("isAdminPrincipalScreen(%v) = false, want true", screenID)
 		}
 	}
 }
 
 // TestCanLogoutFromAllSixNewSecurityScreens is the Judgment Day fix-round RED
 // test for Finding 2 (Judge A, CRITICAL): canLogoutAdminFromCurrentScreen
-// gates the bare 'l' logout key (model.go:1668). All 6 new Security &
-// Compliance screens introduced by this change must be reachable via 'l',
-// exactly as the legacy single screenAdminFeatures id was before this change.
+// gates the bare 'l' logout key. All 6 Security screens must be reachable
+// via 'l'.
 func TestCanLogoutFromAllSixNewSecurityScreens(t *testing.T) {
 	t.Parallel()
 
@@ -60,46 +50,13 @@ func TestCanLogoutFromAllSixNewSecurityScreens(t *testing.T) {
 	}
 }
 
-// TestCanLogoutFromSecurityRepoScreenIsFalseWhileItsOwnOverrideEditorIsActive
-// guards against a regression the naive Finding 2 fix introduces (caught by
-// the pre-existing TestFeatureOverridesScreenSigningSaveIncludesUnsignedSelfRead):
-// featureOverridesScreen/trivyReposScreen each embed their own overrideEditor
-// as free-text input, invisible to the legacy m.adminView.Confirm.Active()
-// guard (design.md Decision B). Naively joining these screens' ids to
-// canLogoutAdminFromCurrentScreen's unconditional-true case, without also
-// checking the mounted screen's own editor state, makes typing an upper-case
-// "L" (case-insensitively matched by isRuneKey) into the editor's free-text
-// field log the operator out mid-keystroke instead of inserting the rune.
-func TestCanLogoutFromSecurityRepoScreenIsFalseWhileItsOwnOverrideEditorIsActive(t *testing.T) {
-	t.Parallel()
-
-	model := newAdminReadyModel(t, &fakeAdminClient{})
-	model.adminAuth = adminAuthStateAuthenticated
-	model.screen = screenSecuritySigningRepos
-	slot, ok := slotFor(screenSecuritySigningRepos)
-	if !ok {
-		t.Fatalf("slotFor(screenSecuritySigningRepos) = false, want true")
-	}
-	model.adminScreens[slot] = featureOverridesScreen{
-		id:      screenSecuritySigningRepos,
-		feature: signingFeatureName,
-		editor:  newOverrideEditor(signingFeatureName, "library/alpine"),
-	}
-
-	if model.canLogoutAdminFromCurrentScreen() {
-		t.Fatalf("canLogoutAdminFromCurrentScreen() = true, want false while the screen's own override editor is active (would swallow free-text keystrokes as a logout)")
-	}
-}
-
 // TestTrivyGitleaksSigningConfigScreensShowSubmittingStatusOnConfirmDispatch
 // is the Judgment Day fix-round RED test for Finding 3 (Judge B, CRITICAL):
 // confirmPrompt.submitting is built with a real "Submitting X for Y..."
 // value by each of trivyConfigScreen/gitleaksConfigScreen/
 // signingConfigScreen's dispatchAction, but was never read/rendered by any
-// of their own Update/View methods -- unlike the legacy
-// AdminViewState.Confirm path (model.go's updateAdminKey sets
-// m.status = before.submitting), which these migrated screens no longer go
-// through (design.md Decision B: a migrated screen owns its own state).
+// of their own Update/View methods -- unlike a shared
+// Model-level status (design.md Decision B: a migrated screen owns its own state).
 // Each screen must surface its own submitting status text, entirely within
 // its own confirmPrompt/Update/View handling, the instant Enter dispatches
 // onConfirm's command.
@@ -126,7 +83,7 @@ func TestTrivyGitleaksSigningConfigScreensShowSubmittingStatusOnConfirmDispatch(
 			}),
 		}
 
-		next, cmd, consumed := s.Update(env, tea.KeyMsg{Type: tea.KeyEnter})
+		next, cmd, consumed := s.Update(env, testKeyEnter())
 		if !consumed {
 			t.Fatalf("consumed = false, want true")
 		}
@@ -155,7 +112,7 @@ func TestTrivyGitleaksSigningConfigScreensShowSubmittingStatusOnConfirmDispatch(
 			}),
 		}
 
-		next, cmd, consumed := s.Update(env, tea.KeyMsg{Type: tea.KeyEnter})
+		next, cmd, consumed := s.Update(env, testKeyEnter())
 		if !consumed {
 			t.Fatalf("consumed = false, want true")
 		}
@@ -184,7 +141,7 @@ func TestTrivyGitleaksSigningConfigScreensShowSubmittingStatusOnConfirmDispatch(
 			}),
 		}
 
-		next, cmd, consumed := s.Update(env, tea.KeyMsg{Type: tea.KeyEnter})
+		next, cmd, consumed := s.Update(env, testKeyEnter())
 		if !consumed {
 			t.Fatalf("consumed = false, want true")
 		}

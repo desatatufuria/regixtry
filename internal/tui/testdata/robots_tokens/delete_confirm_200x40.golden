@@ -1,0 +1,40 @@
+  Admin › Access › Robots                                                                                                                                                        signed in as operator  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │
+                               │  Robots                                                                               4 robots, 1 without repository access  ╭──────────────────────────────────────╮
+    Overview                   │  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  │ ci-publisher                         │
+                               │  │   NAME                                                                  REPOSITORY        ROLE    STATE     EXPIRES    │  │ robot, enabled, created 12 Jun 2026  │
+  ACCESS                       │  │ ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── │  │                                      │
+      Users                    │  │ ▸ ci-publisher                                                          team/api          Writer  enabled   6 days     │  │ ACCESS                               │
+    ▸ Robots                   │  │   gh-actions                                                            none              none    enabled   89 days    │  │ team/api                    [Writer] │
+      Repository access        │  │   staging-deploy                                                        team/web          Writer  enabled   18 days    │  │ 1 repository, 2 tokens               │
+                               │  │   old-deploy                                                            team/infra        Writer  disabled  expired    │  │                                      │
+  SECURITY                     │  ╰───────────────────────────────  ╭──────────────────────────────────────────────────────────────╮  ─────────────────────╯  │ ACTIONS                              │
+      Image scanning           │                                    │  Delete robot ci-publisher                                   │                          │ New robot                          n │
+      Secret scanning          │  EXPIRES is the token that ends f  │                                                              │                          │ Tokens                             t │
+      Signing policy           │                                    │  The robot account is removed together with its repository   │                          │ Grant access                       g │
+                               │                                    │  access and all of its tokens.                               │                          │ Disable robot                      d │
+  OPERATIONS                   │                                    │                                                              │                          │ Delete robot                       x │
+      Scan runs                │                                    │  ╭────────────────────────────────────────────────────────╮  │                          │                                      │
+      Secret findings          │                                    │  │ ci-publisher                                           │  │                          │ NEEDS ATTENTION                      │
+      Update channel           │                                    │  │ repository team/api, role Writer                       │  │                          │ Token release-pipeline expires in 6  │
+                               │                                    │  ╰────────────────────────────────────────────────────────╯  │                          │ days                         t renew │
+                               │                                    │                                                              │                          │                                      │
+                               │                                    │  Anything using its tokens stops working immediately. This   │                          │                                      │
+                               │                                    │  cannot be undone.                                           │                          │                                      │
+                               │                                    │                                                              │                          │                                      │
+                               │                                    │   Delete                                         y / enter   │                          │                                      │
+                               │                                    │   Cancel                                               esc   │                          │                                      │
+                               │                                    ╰──────────────────────────────────────────────────────────────╯                          │                                      │
+                               │                                                                                                                              │                                      │
+                               │                                                                                                                              │                                      │
+                               │                                                                                                                              │                                      │
+                               │                                                                                                                              │                                      │
+                               │                                                                                                                              │                                      │
+                               │                                                                                                                              │                                      │
+                               │                                                                                                                              │                                      │
+                               │                                                                                                                              │                                      │
+                               │                                                                                                                              │                                      │
+                               │                                                                                                                              ╰──────────────────────────────────────╯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ↑↓ move   enter open   n new robot   t tokens   g grant access   d disable   e enable   x delete   r refresh   esc back   q quit                                                                      

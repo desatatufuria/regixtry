@@ -3,10 +3,13 @@ package fsblob
 import (
 	"context"
 	"io"
+	"os"
 	"strings"
 	"testing"
+	"time"
 
 	domain "regixtry/internal/domain/regixtry"
+	"regixtry/internal/ports"
 )
 
 // TestListBlobsReportsMtime is T3's fsblob half (design.md Testing
@@ -283,5 +286,88 @@ func TestStoreRejectsDigestMismatch(t *testing.T) {
 
 	if !domain.IsCode(err, domain.ErrorCodeDigestMismatch) {
 		t.Fatalf("expected digest mismatch error, got %v", err)
+	}
+}
+
+func commitBlob(t *testing.T, store *Store, payload string) domain.Digest {
+	t.Helper()
+	ctx := context.Background()
+	upload, err := store.BeginUpload(ctx, domain.MustParseRepositoryRef("library/alpine"))
+	if err != nil {
+		t.Fatalf("BeginUpload() error = %v", err)
+	}
+	if _, err := store.PutUploadChunk(ctx, upload.ID, strings.NewReader(payload)); err != nil {
+		t.Fatalf("PutUploadChunk() error = %v", err)
+	}
+	digest := domain.DigestFromBytes([]byte(payload))
+	if _, err := store.CommitUpload(ctx, upload.ID, digest); err != nil {
+		t.Fatalf("CommitUpload() error = %v", err)
+	}
+	return digest
+}
+
+func TestDeleteBlobIfOlderThanHonorsTheCutoff(t *testing.T) {
+	t.Parallel()
+
+	store, err := New(t.TempDir())
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	ctx := context.Background()
+	digest := commitBlob(t, store, "grace-layer")
+
+	// Younger than the cutoff: kept.
+	outcome, err := store.DeleteBlobIfOlderThan(ctx, digest, time.Now().Add(-time.Hour))
+	if err != nil || outcome != ports.BlobReclaimTooRecent {
+		t.Fatalf("recent blob = %v, %v; want TooRecent", outcome, err)
+	}
+	if exists, _ := store.BlobExists(ctx, digest); !exists {
+		t.Fatal("recent blob was removed")
+	}
+
+	// Older than the cutoff: removed, then reported missing.
+	outcome, err = store.DeleteBlobIfOlderThan(ctx, digest, time.Now().Add(time.Hour))
+	if err != nil || outcome != ports.BlobReclaimRemoved {
+		t.Fatalf("old blob = %v, %v; want Removed", outcome, err)
+	}
+	outcome, err = store.DeleteBlobIfOlderThan(ctx, digest, time.Now().Add(time.Hour))
+	if err != nil || outcome != ports.BlobReclaimMissing {
+		t.Fatalf("absent blob = %v, %v; want Missing", outcome, err)
+	}
+	if _, err := store.DeleteBlobIfOlderThan(ctx, domain.Digest("../evil"), time.Now()); err == nil {
+		t.Fatal("malformed digest accepted")
+	}
+}
+
+// TestCommitUploadRefreshesBlobAge pins that a blob committed from an upload
+// that sat idle for days is still a fresh blob for the GC grace window.
+func TestCommitUploadRefreshesBlobAge(t *testing.T) {
+	t.Parallel()
+
+	store, err := New(t.TempDir())
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	ctx := context.Background()
+	payload := "idle-upload"
+	upload, err := store.BeginUpload(ctx, domain.MustParseRepositoryRef("library/alpine"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.PutUploadChunk(ctx, upload.ID, strings.NewReader(payload)); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-72 * time.Hour)
+	if err := os.Chtimes(store.uploadFile(upload.ID), old, old); err != nil {
+		t.Fatal(err)
+	}
+	digest := domain.DigestFromBytes([]byte(payload))
+	if _, err := store.CommitUpload(ctx, upload.ID, digest); err != nil {
+		t.Fatal(err)
+	}
+
+	outcome, err := store.DeleteBlobIfOlderThan(ctx, digest, time.Now().Add(-24*time.Hour))
+	if err != nil || outcome != ports.BlobReclaimTooRecent {
+		t.Fatalf("freshly committed idle upload = %v, %v; want TooRecent", outcome, err)
 	}
 }

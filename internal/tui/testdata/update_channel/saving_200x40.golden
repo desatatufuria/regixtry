@@ -1,0 +1,40 @@
+  Admin › Operations › Update channel                                                                                                                                               signed in as admin  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                                                                        
+                               │  Update channel                                                                                                        which released tags the update check considers  
+    Overview                   │                                                                                                                                                                        
+                               │  ╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  ╭─────────────────────────────────────────────╮  
+  ACCESS                       │  │ CHANNEL                                                                                                         │  │ UPDATE STATUS                               │  
+      Users                    │  │    stable                                                                                              current  │  │ Current version unknown (development build) │  
+      Robots                   │  │   Default channel.                                                                                              │  │ Update               no newer release known │  
+      Repository access        │  │  ▸ insider                                                                                              saving  │  │ The background update check compares the    │  
+                               │  │   Alternative channel for the update check.                                                                     │  │ current version with the latest tag on the  │  
+  SECURITY                     │  │ Saving...                                                                                                       │  │ selected channel.                           │  
+      Image scanning           │  ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  ╰─────────────────────────────────────────────╯  
+      Secret scanning          │                                                                                                                                                                        
+      Signing policy           │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+  OPERATIONS                   │                                                                                                                                                                        
+      Scan runs                │                                                                                                                                                                        
+      Secret findings          │                                                                                                                                                                        
+    ▸ Update channel           │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  space toggle stable/insider   enter save   r refresh   esc back   q quit                                                                                                                              

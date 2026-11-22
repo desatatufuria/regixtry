@@ -5,72 +5,10 @@ import (
 	"strings"
 	"time"
 
-	domainauth "regixtry/internal/domain/auth"
 	"regixtry/internal/ports"
 )
 
 const AdminSessionExpiredReasonExpired = "Session expired. Log in again."
-
-type adminCreateUserField int
-
-const (
-	adminCreateUserFieldUsername adminCreateUserField = iota
-	adminCreateUserFieldPassword
-	adminCreateUserFieldIsAdmin
-	adminCreateUserFieldIsReadOnly
-	adminCreateUserFieldEnabled
-)
-
-type adminResetPasswordField int
-
-const (
-	adminResetPasswordFieldPassword adminResetPasswordField = iota
-)
-
-type adminGrantField int
-
-const (
-	adminGrantFieldRepository adminGrantField = iota
-	adminGrantFieldRole
-)
-
-// adminRepoGrantField identifies which of adminRepositoryGrantForm's 2
-// fields has focus. A sibling of adminGrantField, not an extension: the
-// repo-admin delegate's form has no Repository field (it is fixed by
-// RepoAdminRepository, the operator's own repository), only Username+Role.
-type adminRepoGrantField int
-
-const (
-	adminRepoGrantFieldUsername adminRepoGrantField = iota
-	adminRepoGrantFieldRole
-)
-
-type adminTokenField int
-
-const (
-	adminTokenFieldName adminTokenField = iota
-	adminTokenFieldTTL
-)
-
-// adminCreateRobotField identifies which of adminCreateRobotForm's 4 fields
-// has focus (design.md Decision 7's robot screens): Name -> Repository ->
-// Role -> TTL, a global-admin-only form so, unlike adminRepositoryGrantForm,
-// Role is not restricted away from RepoRoleAdmin.
-type adminCreateRobotField int
-
-const (
-	adminCreateRobotFieldName adminCreateRobotField = iota
-	adminCreateRobotFieldRepository
-	adminCreateRobotFieldRole
-	adminCreateRobotFieldTTL
-)
-
-type TrivyTab string
-
-const (
-	trivyTabRuntime          TrivyTab = "runtime"
-	trivyTabRepositoryAlerts TrivyTab = "repository-alerts"
-)
 
 type trivyConfigField int
 
@@ -81,61 +19,6 @@ const (
 	trivyConfigFieldRegistryReachableURL
 	trivyConfigFieldMaxConcurrency
 )
-
-type adminCreateUserForm struct {
-	Username   string
-	Password   string
-	IsAdmin    bool
-	IsReadOnly bool
-	Enabled    bool
-	Focus      adminCreateUserField
-}
-
-type adminResetPasswordForm struct {
-	NewPassword string
-	Focus       adminResetPasswordField
-}
-
-type adminGrantForm struct {
-	Repository           string
-	Role                 domainauth.RepoRole
-	Focus                adminGrantField
-	RepositorySuggestion int
-}
-
-// adminRepositoryGrantForm backs screenRepoAdminAddGrant (design.md
-// Decision 7): a repo-admin delegate names a user by username (no user
-// directory read) and picks a role. Role's zero value is set to
-// domainauth.RepoRoleReader by newAdminViewState, and the field is cycled
-// only by nextDelegateGrantRole, which can never produce RepoRoleAdmin.
-type adminRepositoryGrantForm struct {
-	Username string
-	Role     domainauth.RepoRole
-	Focus    adminRepoGrantField
-}
-
-type adminTokenForm struct {
-	Name       string
-	TTLSeconds string
-	Focus      adminTokenField
-}
-
-// adminCreateRobotForm backs screenAdminCreateRobot (design.md Decision 7).
-// Role's zero value is set to domainauth.RepoRoleReader by newAdminViewState
-// (mirroring adminGrantForm/adminRepositoryGrantForm), and TTLSeconds follows
-// adminTokenForm's convention: empty means the service's default TTL.
-// RepositorySuggestion mirrors adminGrantForm.RepositorySuggestion: the
-// screenAdminAddGrant repository autosuggest pattern (filter as you type,
-// Up/Down cycle, Enter commits) reused here so Create Robot behaves
-// consistently with Add Grant instead of being a plain free-text field.
-type adminCreateRobotForm struct {
-	Name                 string
-	Repository           string
-	Role                 domainauth.RepoRole
-	TTLSeconds           string
-	Focus                adminCreateRobotField
-	RepositorySuggestion int
-}
 
 type trivyConfigModal struct {
 	Open                 bool
@@ -311,13 +194,6 @@ func nextUnsignedSelfReadValue(value string) string {
 	return unsignedSelfReadCycle[0]
 }
 
-// repositoryOverrideModal and repositoryOverrideField were retired by
-// tui-menu-architecture (design.md Decision F): the per-repository override
-// editor is now overrideEditor (override_editor.go), whose Feature is
-// unexported and constructor-only rather than a focusable, cycle-driven
-// field. See operator-admin-tui's MODIFIED requirement "Repository-Scoped
-// Override Modal On The Repository Alerts Row".
-
 // adminScanHistoryTabKind identifies one feature's tab inside the scan
 // history modal (design.md "Ordered tab slice with a wrapping cursor").
 type adminScanHistoryTabKind string
@@ -379,76 +255,6 @@ type AdminSession struct {
 	ExpiredReason string
 }
 
-type AdminViewState struct {
-	Users             []ports.AdminUser
-	SelectedUser      int
-	SelectedUserID    string
-	SelectedUsername  string
-	UserSearchQuery   string
-	UserSearchActive  bool
-	Grants            []ports.AdminRepoGrant
-	SelectedGrant     int
-	AdminTokens       []ports.AdminToken
-	SelectedToken     int
-	CreateUserForm    adminCreateUserForm
-	ResetPasswordForm adminResetPasswordForm
-	GrantForm         adminGrantForm
-	TokenForm         adminTokenForm
-	// Confirm is THE confirm-before-destructive-action primitive
-	// (design.md Decision E, D7), replacing adminConfirmModal's Kind-union.
-	// Still shared across every legacy admin screen; the Security &
-	// Compliance domain's own screens (Phase 11) each own their own local
-	// confirm field instead (design.md Decision B: a migrated screen cannot
-	// write to AdminViewState directly).
-	Confirm                confirmPrompt
-	RevealedTokenSecret    string
-	RevealedTokenAccessor  string
-	RevealedTokenExpiresAt time.Time
-	// ScanHistoryModal is retired (Phase 19, design.md's State Migration
-	// table): its state now lives on scanHistoryScreen
-	// (screen_scan_history.go), reached at its own dedicated slot
-	// (screen.go's slotScanHistory), never as an AdminViewState field.
-	// RepositoryOverrideModal is retired (tui-menu-architecture, design.md
-	// Decision F): the per-repository override editor now lives per-screen
-	// as overrideEditor, embedded directly in trivyReposScreen/
-	// featureOverridesScreen.
-	// RepoAdminRepository/RepoAdminGrants/SelectedRepoAdminGrant/
-	// RepoAdminGrantForm back screenRepoAdminGrants/screenRepoAdminAddGrant
-	// (design.md Decision 7): the repo-admin delegate's own repository-
-	// centric grants view, a sibling of the global-admin
-	// Grants/SelectedGrant/GrantForm fields above, not an extension of them
-	// — a delegate's Grants view is keyed by repository, not by SelectedUserID.
-	RepoAdminRepository string
-	RepoAdminGrants     []ports.AdminRepositoryGrant
-	// RepoAdminGrantsAuthorized is true only after the most recent
-	// screenRepoAdminGrants load actually succeeded (adminRepoGrantsLoadedMsg
-	// with a nil err), distinct from "loaded successfully with zero grants".
-	// A 403 from GET .../grants (repository-administrator privileges
-	// required) leaves this false. Every call site that dispatches
-	// loadRepoAdminGrantsCmd must reset this to false first, so a stale
-	// true from a PREVIOUS repository's successful load can never leak into
-	// a NEW repository's screen before its own load response arrives.
-	RepoAdminGrantsAuthorized bool
-	SelectedRepoAdminGrant    int
-	RepoAdminGrantForm        adminRepositoryGrantForm
-	// Robots/SelectedRobot/CreateRobotForm back screenAdminRobots/
-	// screenAdminCreateRobot (design.md Decision 7): global-admin-only
-	// screens mirroring Users/SelectedUser/CreateUserForm, a sibling data
-	// set rather than an extension -- a robot is never listed in Users
-	// (store.go's ListUsers excludes is_robot rows) and has no
-	// SelectedUserID-keyed edit screen of its own; enable/disable and token
-	// issuance reuse the existing user routes/screens via SelectedUserID.
-	Robots          []ports.AdminRobot
-	SelectedRobot   int
-	CreateRobotForm adminCreateRobotForm
-	// Layout is the consoleLayout used the last time rebuildAdminTables ran,
-	// including the primary/compact table pageSize split (design.md
-	// decision #6). It is a snapshot for table construction, not the live
-	// render-time budget — renderAdminWorkspace/renderAdminScreen receive a
-	// freshly computed layout on every View() call instead.
-	Layout consoleLayout
-}
-
 type AdminSessionExpiredError struct {
 	Reason string
 }
@@ -494,27 +300,10 @@ func (s AdminSession) Remaining(now time.Time) time.Duration {
 	return s.ExpiresAt.Sub(now)
 }
 
-func newAdminViewState() AdminViewState {
-	return AdminViewState{
-		CreateUserForm: adminCreateUserForm{
-			Enabled: true,
-		},
-		GrantForm: adminGrantForm{
-			Role: domainauth.RepoRoleReader,
-		},
-		RepoAdminGrantForm: adminRepositoryGrantForm{
-			Role: domainauth.RepoRoleReader,
-		},
-		CreateRobotForm: adminCreateRobotForm{
-			Role: domainauth.RepoRoleReader,
-		},
-	}
+func LogoutAdminState() AdminSession {
+	return AdminSession{}
 }
 
-func LogoutAdminState() (AdminSession, AdminViewState) {
-	return AdminSession{}, newAdminViewState()
-}
-
-func ExpireAdminState(reason string) (AdminSession, AdminViewState) {
-	return AdminSession{ExpiredReason: strings.TrimSpace(reason)}, newAdminViewState()
+func ExpireAdminState(reason string) AdminSession {
+	return AdminSession{ExpiredReason: strings.TrimSpace(reason)}
 }

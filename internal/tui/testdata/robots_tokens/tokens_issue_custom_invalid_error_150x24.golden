@@ -1,0 +1,24 @@
+  Admin › Access › Robots › ci-publisher › Tokens                                                                              signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                      
+                               │  Tokens for ci-publisher                                           ╭──────────────────────────────────────────────╮  
+    Overview                   │  Each bar is the time left out of the token's full lifetime.       │ Issue a new token                            │  
+                               │                                                                    │ Name   optional                              │  
+  ACCESS                       │  ▸ release-pipeline                                   6 days left  │ Lifetime                                     │  
+      Users                    │  █████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  │ ( ) 7 days  ( ) 30 days  ( ) 90 days         │  
+    ▸ Robots                   │  act_9c41…e0d2                 issued 28 Oct, expires 27 Nov 2026  │ ( ) 1 year  ( ) 2 years   (*) Custom         │  
+      Repository access        │                                                                    │  2h                                          │  
+                               │    staging-deploy                                    18 days left  │ EXPIRES                                      │  
+  SECURITY                     │  ██████████████████████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░  │ Sat 21 Nov 2026 11:30 UTC                    │  
+      Image scanning           │  act_17ab…3f2a                   issued 9 Nov, expires 9 Dec 2026  │ 2 hours from now                             │  
+      Secret scanning          │                                                                    │ A leaked token stays valid until it expires  │  
+      Signing policy           │    old-deploy                                             expired  │ or you revoke it. Shorter for people, longer │  
+                               │  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  │ only for CI robots.                          │  
+  OPERATIONS                   │  act_55f0…b81c                                 expired 2 Nov 2026  │ The secret is shown once, right after        │  
+      Scan runs                │                                                                    │ creation. Copy it before leaving.            │  
+      Secret findings          │                                                                    │ token limit reached for this user            │  
+      Update channel           │                                                                    │  Create token  enter   Cancel  esc           │  
+                               │                                                                    │                                              │  
+                               │                                                                    ╰──────────────────────────────────────────────╯  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  tab next field   ←→ lifetime   enter create token   esc cancel                                                                                      

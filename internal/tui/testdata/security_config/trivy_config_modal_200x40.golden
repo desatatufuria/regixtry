@@ -1,0 +1,40 @@
+  Admin › Security › Image scanning                                                                                                                                              signed in as operator  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │
+                               │  Image scanning                                                                                                                          Trivy, vulnerability scanner
+    Overview                   │  Feature enabled  ·  Runtime ready, healthy  ·  version 0.57.1  ·  update available (0.58.0)  ·  rollback available
+                               │   Config   Repositories
+  ACCESS                       │  ╭───────────────────────────────────────────────────────────────────────────────────────────────╮  ╭───────────────────────────────────────────────────────────────╮
+      Users                    │  │ TRIVY CONFIGURATION                                                                           │  │ SCAN POLICY                                                   │
+      Robots                   │  │ Scheduled scans                                                                   [x] enabled │  │ Policy                                            [x] enabled │
+      Repository access        │  │ Interval                                                                                  24h │  │ Severity threshold                              CRITICAL+HIGH │
+                               │  │ Timeout                                                                                    5m │  │ A scan that reaches the threshold blocks the pull. p edit     │
+  SECURITY                     │  │ Max concurrency                       ╭──────────────────────────────────────────────────╮  2 │  │ policy.                                                       │
+    ▸ Image scanning           │  │ Registry reachable URL                │  Trivy configuration                             │  0 │  │ Last saved 2 Nov 2026 10:14 UTC.                              │
+      Secret scanning          │  │ c edit configuration.                 │  Applies to every repository without an          │    │  │                                                               │
+      Signing policy           │  ╰─────────────────────────────────────  │  override.                                       │  ──╯  ╰───────────────────────────────────────────────────────────────╯
+                               │  ╭─────────────────────────────────────  │  [x] Scheduled scans                             │  ─────────────────────────────────────────────────────────────────────╮
+  OPERATIONS                   │  │ PER-REPOSITORY OVERRIDES              │  Interval                                        │                                                                       │
+      Scan runs                │  │ REPOSITORY                            │   24h                                            │                 STATUS     ENABLED  DETAIL                UPDATED     │
+      Secret findings          │  │ team/api                              │  Timeout                                         │                 override   yes      ignore file set       14 Nov      │
+      Update channel           │  │ team/docs                             │   5m                                             │                 override   no       scanning off          2 Nov       │
+                               │  │ team/web                              │  Registry Reachable URL                          │                 inherited  —        global settings       -           │
+                               │  │ team/infra                            │   http://regixtry:5000                           │                 inherited  —        global settings       -           │
+                               │  │                                       │  Max Concurrency                                 │                                                                       │
+                               │  │                                       │   2                                              │                                                                       │
+                               │  │                                       │                                                  │                                                                       │
+                               │  │                                       │   Save  enter   Cancel  esc                      │                                                                       │
+                               │  │                                       │  tab next field, space toggles                   │                                                                       │
+                               │  │                                       ╰──────────────────────────────────────────────────╯                                                                       │
+                               │  │                                                                                                                                                                  │
+                               │  │                                                                                                                                                                  │
+                               │  │                                                                                                                                                                  │
+                               │  │                                                                                                                                                                  │
+                               │  │                                                                                                                                                                  │
+                               │  │                                                                                                                                                                  │
+                               │  │                                                                                                                                                                  │
+                               │  │                                                                                                                                                                  │
+                               │  │                                                                                                                                                                  │
+                               │  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  tab next field   space toggle   enter save   esc cancel                                                                                                                                  F2 mouse on  

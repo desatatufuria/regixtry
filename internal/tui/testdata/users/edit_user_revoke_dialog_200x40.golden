@@ -1,0 +1,58 @@
+  Admin › Access › Users › carol                                                                                                                                                 signed in as operator  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                                                                        
+                               │  carol                                                                                                                                                                 
+    Overview                   │  user, created 3 Mar 2026                                                                                                                                              
+                               │                                                                                                                                                                        
+  ACCESS                       │                                                                                                                                                                        
+    ▸ Users                    │                                                                                                                                                                        
+      Robots                   │                                                                                                                                                                        
+      Repository access        │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+  SECURITY                     │                                                                                                                                                                        
+      Image scanning           │                                                                                                                                                                        
+      Secret scanning          │                                                                                                                                                                        
+      Signing policy           │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+  OPERATIONS                   │                                                                                                                                                                        
+      Scan runs                │                                                                                                                                                                        
+      Secret findings          │                                                                                                                                                                        
+      Update channel           │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+                               │                                                                                                                                                                        
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  y / enter confirm   esc cancel                                                                                                                                                                        
+-- overlay --
+╭──────────────────────────────────────────────────────────────╮
+│  Revoke access                                               │
+│                                                              │
+│  Revoke carol's Writer access to team/api?                   │
+│                                                              │
+│  ╭────────────────────────────────────────────────────────╮  │
+│  │ carol on team/api                                      │  │
+│  │ Writer                                                 │  │
+│  ╰────────────────────────────────────────────────────────╯  │
+│                                                              │
+│  carol loses Writer access to team/api. It applies from the  │
+│  next request; no token is revoked. carol keeps access to    │
+│  every other repository.                                     │
+│                                                              │
+│   Confirm                                        y / enter   │
+│   Cancel                                               esc   │
+╰──────────────────────────────────────────────────────────────╯

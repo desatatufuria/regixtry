@@ -1,13 +1,13 @@
 package tui
 
 import (
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/lipgloss"
-	"github.com/muesli/termenv"
+	"charm.land/lipgloss/v2"
 )
 
 // srgbLinearize converts one sRGB channel (0-1) to its linear-light value,
@@ -51,59 +51,33 @@ func relativeLuminance(t *testing.T, hex string) float64 {
 // (the theme's only foreground constructor).
 func styleForegroundHex(t *testing.T, style lipgloss.Style) string {
 	t.Helper()
-	color, ok := style.GetForeground().(lipgloss.Color)
-	if !ok {
-		t.Fatalf("style.GetForeground() = %#v, want a lipgloss.Color", style.GetForeground())
+	fg := style.GetForeground()
+	if fg == nil {
+		t.Fatalf("style.GetForeground() = nil, want a color")
 	}
-	return string(color)
+	r, g, b, _ := fg.RGBA()
+	return fmt.Sprintf("#%02X%02X%02X", r>>8, g>>8, b>>8)
 }
 
-// TestSeverityMediumHasItsOwnDistinctHex is the Phase 1 task 1.1 RED test
-// (design.md Decision 3 / spec.md "Severity Levels Are Visually
-// Distinguishable By Hue"): severityHigh and severityMedium currently both
-// resolve to warning's "#EBCB8B", differing only by Bold(true) — this test
-// requires them to differ by hue, with severityMedium set to the confirmed
-// "#C0A16B" bronze.
-func TestSeverityMediumHasItsOwnDistinctHex(t *testing.T) {
+// TestSeverityRampIsFourDistinctColors replaces the earlier luminance
+// ordering (critical < medium < low < high), which was an artifact of the
+// old hues and no longer holds in the design palette: what matters is that
+// the four severities stay pairwise distinguishable by color.
+func TestSeverityRampIsFourDistinctColors(t *testing.T) {
 	t.Parallel()
 
-	theme := newAdminTheme()
-
-	high := styleForegroundHex(t, theme.severityHigh)
-	medium := styleForegroundHex(t, theme.severityMedium)
-
-	if medium == high {
-		t.Fatalf("severityMedium foreground = %q, want it to differ from severityHigh foreground %q", medium, high)
+	got := map[string]string{
+		"critical": styleForegroundHex(t, severityStyle("CRITICAL")),
+		"medium":   styleForegroundHex(t, severityStyle("MEDIUM")),
+		"low":      styleForegroundHex(t, severityStyle("LOW")),
+		"high":     styleForegroundHex(t, severityStyle("HIGH")),
 	}
-	if medium != "#C0A16B" {
-		t.Fatalf("severityMedium foreground = %q, want %q (design.md Decision 3, confirmed)", medium, "#C0A16B")
-	}
-}
-
-// TestSeverityRampLuminanceOrdering guards the real luminance relationships
-// design.md's palette table asserts once severityMedium moves off warning's
-// hex: critical (errorColor, darkest/most alarming) < medium (new bronze) <
-// low (muted grey) < high (warning amber, brightest). This is computed from
-// the theme's real hex values via the WCAG relative luminance formula, not
-// hardcoded, so it fails if any severity's underlying color drifts.
-func TestSeverityRampLuminanceOrdering(t *testing.T) {
-	t.Parallel()
-
-	theme := newAdminTheme()
-
-	critical := relativeLuminance(t, styleForegroundHex(t, theme.severityCritical))
-	medium := relativeLuminance(t, styleForegroundHex(t, theme.severityMedium))
-	low := relativeLuminance(t, styleForegroundHex(t, theme.severityLow))
-	high := relativeLuminance(t, styleForegroundHex(t, theme.severityHigh))
-
-	if !(critical < medium) {
-		t.Fatalf("luminance(critical)=%.4f, luminance(medium)=%.4f, want critical < medium", critical, medium)
-	}
-	if !(medium < low) {
-		t.Fatalf("luminance(medium)=%.4f, luminance(low)=%.4f, want medium < low", medium, low)
-	}
-	if !(low < high) {
-		t.Fatalf("luminance(low)=%.4f, luminance(high)=%.4f, want low < high", low, high)
+	seen := map[string]string{}
+	for name, hex := range got {
+		if other, dup := seen[hex]; dup {
+			t.Fatalf("severity %s and %s share foreground %s", name, other, hex)
+		}
+		seen[hex] = name
 	}
 }
 
@@ -149,15 +123,8 @@ func TestThemeInputAndInputFocusRenderSingleRowWithNoBorder(t *testing.T) {
 // differ (focus re-expressed via theme.selected's gold fill/foreground), and
 // neither may contain a border rune.
 func TestThemeInputFocusDiffersFromInputWithoutAnyBorderRune(t *testing.T) {
-	// Not t.Parallel(): forces the global lipgloss color profile so the
-	// focus/unfocus foreground+background actually emit distinguishable ANSI
-	// sequences (go test runs with no tty, so lipgloss otherwise
-	// auto-detects "no color" and the two renders would be byte-identical),
-	// following TestRenderAdminScanHistoryModalRendersExecutionsColumnWithCursorHighlighted's
-	// precedent in this same package.
-	original := lipgloss.ColorProfile()
-	lipgloss.SetColorProfile(termenv.TrueColor)
-	defer lipgloss.SetColorProfile(original)
+	// lipgloss v2 always renders full-fidelity ANSI, so no color profile needs
+	// forcing for the styled output below to be distinguishable from plain text.
 
 	theme := newAdminTheme()
 

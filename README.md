@@ -53,7 +53,7 @@ docker login 127.0.0.1:5000 -u admin -p change-me-now
 docker push 127.0.0.1:5000/test/alpine:3.20
 ```
 
-From here, `regixtry tui -api-base-url http://127.0.0.1:5000` gives you an interactive console to create users, grant per-repository roles (`repo-reader`/`repo-writer`/`repo-admin`), delegate grant management to a repo-admin without making them a global admin, mint bounded-TTL robot accounts for CI/CD, or flip a user to registry-wide read-only. Full walkthrough: [`docs/users.md`](docs/users.md) and [`docs/tui.md`](docs/tui.md).
+From here, `regixtry tui -api-base-url http://127.0.0.1:5000` gives you an interactive console to create users, grant per-repository roles (`repo-reader`/`repo-writer`/`repo-admin`), delegate grant management to a repo-admin without making them a global admin, mint bounded-TTL robot accounts for CI/CD (token lifetime defaults to 30 days, maximum 2 years), or flip a user to registry-wide read-only. Full walkthrough: [`docs/users.md`](docs/users.md) and [`docs/tui.md`](docs/tui.md).
 
 ## Run as a container
 
@@ -182,7 +182,7 @@ The `registry:registry` Postgres credential above is a throwaway local-experimen
 - Optional PostgreSQL-backed access control: users, per-repository role grants, delegated repo-admin grant management, registry-wide read-only accounts, and bounded-TTL revocable robot accounts for CI — see [`docs/authentication.md`](docs/authentication.md) and [`docs/security.md`](docs/security.md).
 - Bearer challenge and token issuance at `/auth/token`; a large authenticated admin API under `/admin/v1` — see [`docs/api.md`](docs/api.md).
 - Three built-in features with a shared lifecycle (list/show/status/configure/install/upgrade/rollback): **Trivy** vulnerability scanning with an optional pull-blocking policy gate, **Gitleaks** secret scanning, and cosign-based image **signing** verification against one or more trusted public keys and/or trusted keyless (Fulcio/OIDC) identities, verified offline against a pinned trusted root, globally or per repository — see [`docs/features.md`](docs/features.md).
-- CLI for serving, setup/bootstrap/uninstall/upgrade, and a Bubble Tea TUI that doubles as a local read-only console and, when pointed at a running server, a full HTTP admin client with a domain-grouped admin menu (Browse / Security & Compliance / Identity & Access / Operations) — see [`docs/tui.md`](docs/tui.md).
+- CLI for serving, setup/bootstrap/uninstall/upgrade, and a Bubble Tea TUI that doubles as a local registry console (browse, and delete when `-delete-enabled` is set) and, when pointed at a running server, a full HTTP admin client with an application shell with a sidebar (ACCESS: Users, Robots, Repository access; SECURITY: Image scanning, Secret scanning, Signing policy; OPERATIONS: Scan runs, Secret findings, Update channel) and an Overview landing screen whose quick actions are `g` (grant repository access), `r` (create robot) and `t` (issue token) — see [`docs/tui.md`](docs/tui.md).
 - A Linux release installer with SHA-256-verified `amd64`/`arm64` binaries, driven by `regixtry setup`/`upgrade`.
 
 ## Install

@@ -1,0 +1,24 @@
+  Admin › Security › Signing policy › Repositories                                                                             signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │
+                               │  Sig  ╭──────────────────────────────────────────────────────────────────────╮         image signature verification
+    Overview                   │  4 r  │  Signing override                                                    │
+                               │  ╭──  │  team/api. override active.                                          │  ──────────────────────────────────╮
+  ACCESS                       │  │    │  [x] Pull-time gate enforced                                         │  eam/api                           │
+      Users                    │  │ ▸  │   Trusted Keys (1)                                                   │  verride                           │
+      Robots                   │  │    │  ▸  Key: 2c1d7289f2db                                                │                                    │
+      Repository access        │  │    │  New Key (PEM)                                                       │  VERRIDE                           │
+                               │  │    │   Mopp6MmPX3JDLw== -----END PUBLIC KEY-----▏                         │  ull-time gate            enforced │
+  SECURITY                     │  │    │  Trusted Identities (1)                                              │  nsigned self-read          pusher │
+      Image scanning           │  │    │    Identity: https://github.com/team/.* (https://token.actions.git…  │  rusted keys                     1 │
+      Secret scanning          │  │    │  Unsigned self-read (space cycles)                                   │  dentities                       1 │
+    ▸ Signing policy           │  │    │   pusher                                                             │  pdated                      9 Nov │
+                               │  │    │  Clear override, use the global settings                             │                                    │
+  OPERATIONS                   │  │    │                                                                      │  CTIONS                            │
+      Scan runs                │  │    │   Save  enter   Cancel  esc                                          │  dit override                    o │
+      Secret findings          │  │    │  tab next field, space toggles or cycles, n adds and x deletes in a  │  efresh                          r │
+      Update channel           │  ╰──  │  list                                                                │                                    │
+                               │  An   ╰──────────────────────────────────────────────────────────────────────╯                                    │
+                               │  the override of the selected repository.                                    ╰────────────────────────────────────╯
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  tab next field   space toggle   enter save   esc cancel                                                                                F2 mouse on  

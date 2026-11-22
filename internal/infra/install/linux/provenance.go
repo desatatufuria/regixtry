@@ -33,12 +33,16 @@ type LifecycleProvenance struct {
 }
 
 type LifecycleIntent struct {
-	Addr                       string `json:"addr,omitempty"`
-	PublicURL                  string `json:"public_url,omitempty"`
-	RuntimeTLSMode             string `json:"runtime_tls_mode,omitempty"`
-	TLSCertFile                string `json:"tls_cert_file,omitempty"`
-	TLSKeyFile                 string `json:"tls_key_file,omitempty"`
+	Addr           string `json:"addr,omitempty"`
+	PublicURL      string `json:"public_url,omitempty"`
+	RuntimeTLSMode string `json:"runtime_tls_mode,omitempty"`
+	TLSCertFile    string `json:"tls_cert_file,omitempty"`
+	TLSKeyFile     string `json:"tls_key_file,omitempty"`
+	// AuthPostgresDSN is the legacy clear-text field older installers wrote
+	// into this world-readable file. It is read once to migrate and is never
+	// written again; the live DSN lives only in the 0600 env file.
 	AuthPostgresDSN            string `json:"auth_postgres_dsn,omitempty"`
+	AuthPostgresDSNRedacted    string `json:"auth_postgres_dsn_redacted,omitempty"`
 	StorageRoot                string `json:"storage_root,omitempty"`
 	DatabasePath               string `json:"database_path,omitempty"`
 	ContentPath                string `json:"content_path,omitempty"`
@@ -97,22 +101,22 @@ func lifecycleProvenanceFromPlan(plan BootstrapPlan, receipt BootstrapReceipt) L
 		StatePath:    lifecycleProvenancePath(plan.StatePath),
 		ManagedPaths: append([]string(nil), receipt.Paths...),
 		Intent: LifecycleIntent{
-			Addr:               plan.Addr,
-			PublicURL:          plan.PublicURL,
-			RuntimeTLSMode:     plan.RuntimeTLSMode,
-			TLSCertFile:        plan.TLSCertFile,
-			TLSKeyFile:         plan.TLSKeyFile,
-			AuthPostgresDSN:    plan.AuthPostgresDSN,
-			StorageRoot:        plan.StorageRoot,
-			DatabasePath:       plan.DatabasePath,
-			ContentPath:        plan.ContentPath,
-			BootstrapStatePath: plan.StatePath,
-			EnvPath:            plan.EnvPath,
-			UnitPath:           plan.UnitPath,
-			BinaryPath:         plan.BinaryPath,
-			ServiceName:        plan.ServiceName,
-			DeleteEnabled:      plan.DeleteEnabled,
-			GCDeleteEnabled:    plan.GCDeleteEnabled,
+			Addr:                    plan.Addr,
+			PublicURL:               plan.PublicURL,
+			RuntimeTLSMode:          plan.RuntimeTLSMode,
+			TLSCertFile:             plan.TLSCertFile,
+			TLSKeyFile:              plan.TLSKeyFile,
+			AuthPostgresDSNRedacted: RedactDSN(plan.AuthPostgresDSN),
+			StorageRoot:             plan.StorageRoot,
+			DatabasePath:            plan.DatabasePath,
+			ContentPath:             plan.ContentPath,
+			BootstrapStatePath:      plan.StatePath,
+			EnvPath:                 plan.EnvPath,
+			UnitPath:                plan.UnitPath,
+			BinaryPath:              plan.BinaryPath,
+			ServiceName:             plan.ServiceName,
+			DeleteEnabled:           plan.DeleteEnabled,
+			GCDeleteEnabled:         plan.GCDeleteEnabled,
 		},
 	}
 }
@@ -122,6 +126,12 @@ func (b *Bootstrapper) writeLifecycleProvenance(provenance LifecycleProvenance) 
 	if err != nil {
 		return err
 	}
+	// Never persist a clear-text DSN in this 0644 file, even when the caller
+	// hands one over (legacy provenance read back during an upgrade).
+	if normalized.Intent.AuthPostgresDSN != "" && normalized.Intent.AuthPostgresDSNRedacted == "" {
+		normalized.Intent.AuthPostgresDSNRedacted = RedactDSN(normalized.Intent.AuthPostgresDSN)
+	}
+	normalized.Intent.AuthPostgresDSN = ""
 	body, err := json.MarshalIndent(normalized, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal lifecycle provenance: %w", err)
@@ -202,6 +212,7 @@ func normalizeLifecycleIntent(intent LifecycleIntent) LifecycleIntent {
 	intent.TLSCertFile = strings.TrimSpace(intent.TLSCertFile)
 	intent.TLSKeyFile = strings.TrimSpace(intent.TLSKeyFile)
 	intent.AuthPostgresDSN = strings.TrimSpace(intent.AuthPostgresDSN)
+	intent.AuthPostgresDSNRedacted = strings.TrimSpace(intent.AuthPostgresDSNRedacted)
 	intent.StorageRoot = strings.TrimSpace(intent.StorageRoot)
 	intent.DatabasePath = strings.TrimSpace(intent.DatabasePath)
 	intent.ContentPath = strings.TrimSpace(intent.ContentPath)

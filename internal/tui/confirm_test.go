@@ -3,7 +3,7 @@ package tui
 import (
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // TestConfirmPromptActiveReflectsOnConfirmPresence is the tui-menu-architecture
@@ -33,11 +33,11 @@ func TestConfirmPromptSwallowsEveryKeyWhileActive(t *testing.T) {
 
 	c := newConfirmPrompt("Title", "Message", "confirm", "Submitting...", func(screenEnv) tea.Cmd { return nil })
 
-	for _, msg := range []tea.KeyMsg{
-		{Type: tea.KeyEsc},
-		{Type: tea.KeyEnter},
-		{Type: tea.KeyRunes, Runes: []rune{'z'}},
-		{Type: tea.KeyTab},
+	for _, msg := range []keyMsg{
+		testKeyEsc(),
+		testKeyEnter(),
+		testKeyRunes("z"),
+		testKeyTab(),
 	} {
 		_, _, consumed := c.update(screenEnv{}, msg)
 		if !consumed {
@@ -60,7 +60,7 @@ func TestConfirmPromptEnterDispatchesOnConfirmAndKeepsPromptOpen(t *testing.T) {
 		return func() tea.Msg { return nil }
 	})
 
-	next, cmd, consumed := c.update(screenEnv{}, tea.KeyMsg{Type: tea.KeyEnter})
+	next, cmd, consumed := c.update(screenEnv{}, testKeyEnter())
 	if !consumed {
 		t.Fatalf("consumed = false, want true")
 	}
@@ -87,7 +87,7 @@ func TestConfirmPromptEscClosesWithoutDispatching(t *testing.T) {
 		return nil
 	})
 
-	next, cmd, consumed := c.update(screenEnv{}, tea.KeyMsg{Type: tea.KeyEsc})
+	next, cmd, consumed := c.update(screenEnv{}, testKeyEsc())
 	if !consumed {
 		t.Fatalf("consumed = false, want true")
 	}

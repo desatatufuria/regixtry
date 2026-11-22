@@ -20,7 +20,6 @@ const defaultAdminClientTimeout = 15 * time.Second
 
 type AdminClient interface {
 	Login(ctx context.Context, username, password string) (AdminSession, error)
-	ListFeatures(ctx context.Context, session AdminSession) ([]ports.FeatureSummary, error)
 	GetFeaturePage(ctx context.Context, session AdminSession, name string) (ports.FeaturePage, error)
 	ListScanRuns(ctx context.Context, session AdminSession, repository string, limit int) ([]ports.ScanRun, error)
 	// ListRepositoryScanSummaries backs the Repository Alerts table's
@@ -66,7 +65,6 @@ type AdminClient interface {
 	ResetPassword(ctx context.Context, session AdminSession, input ports.AdminResetPasswordInput) error
 	ListUserGrants(ctx context.Context, session AdminSession, userID string) ([]ports.AdminRepoGrant, error)
 	PutUserGrant(ctx context.Context, session AdminSession, input ports.AdminPutRepoGrantInput) (ports.AdminRepoGrant, error)
-	DeleteUserGrant(ctx context.Context, session AdminSession, userID string, repository string) error
 	// ListRepositoryGrants/PutRepositoryGrant/DeleteRepositoryGrant back the
 	// repo-admin delegate's own grants view (design.md Decision 7), calling
 	// /admin/v1/repositories/{repo}/grants[/{username}] rather than the
@@ -95,10 +93,22 @@ type AdminClient interface {
 	ListRepositoryOverrides(ctx context.Context, session AdminSession, feature string) ([]ports.RepositoryOverrideDetails, error)
 	SetRepositoryOverride(ctx context.Context, session AdminSession, repository string, feature string, input ports.RepositoryOverrideDetails) (ports.RepositoryOverrideDetails, error)
 	ClearRepositoryOverride(ctx context.Context, session AdminSession, repository string, feature string) error
-	// DeleteRobot backs the robot-accounts hard-delete route (registry-acl-v1
-	// follow-up). Added on PR 4 (backend-only) as part of the API contract;
-	// the TUI key/UI wiring lands on PR 5.
+	// DeleteRobot backs the robot-accounts hard-delete route (DELETE
+	// /admin/v1/robots/{id}); the Robots screen calls it from its x action.
 	DeleteRobot(ctx context.Context, session AdminSession, userID string) error
+	// ListExpiringTokens returns the admin tokens of enabled users and robots
+	// that expire within the given window, soonest first, in ONE call for all
+	// principals. A zero within or limit leaves the server default.
+	ListExpiringTokens(ctx context.Context, session AdminSession, within time.Duration, limit int) ([]ports.AdminExpiringToken, error)
+	// ListAccessEvents returns the newest entries of the best-effort access
+	// change history, newest first. A zero limit leaves the server default.
+	ListAccessEvents(ctx context.Context, session AdminSession, limit int) ([]ports.AdminAccessEvent, error)
+	// ListAllRepositoryGrants returns one page of every repository grant of
+	// every user and robot, ordered by repository then username, in ONE call
+	// for all repositories (also those never pushed). after is the opaque
+	// cursor a previous page returned as Next, "" for the first page; a zero
+	// limit leaves the server default.
+	ListAllRepositoryGrants(ctx context.Context, session AdminSession, limit int, after string) (ports.AdminGrantPage, error)
 }
 
 type HTTPAdminClient struct {
@@ -196,14 +206,6 @@ func (c *HTTPAdminClient) ListUsers(ctx context.Context, session AdminSession) (
 	return users, nil
 }
 
-func (c *HTTPAdminClient) ListFeatures(ctx context.Context, session AdminSession) ([]ports.FeatureSummary, error) {
-	var features []ports.FeatureSummary
-	if err := c.getJSON(ctx, session, "/admin/v1/features", &features); err != nil {
-		return nil, err
-	}
-	return features, nil
-}
-
 func (c *HTTPAdminClient) GetFeature(ctx context.Context, session AdminSession, name string) (ports.FeatureDetails, error) {
 	return c.getFeatureDetails(ctx, session, "/admin/v1/features/"+url.PathEscape(strings.TrimSpace(name)))
 }
@@ -245,6 +247,82 @@ func (c *HTTPAdminClient) ListRepositoryScanSummaries(ctx context.Context, sessi
 		return nil, err
 	}
 	return summaries, nil
+}
+
+// adminExpiringMaxLimit is the most rows GET /admin/v1/admin-tokens/expiring
+// returns; a larger request is a server validation error, so it is clamped.
+const adminExpiringMaxLimit = 200
+
+func (c *HTTPAdminClient) ListExpiringTokens(ctx context.Context, session AdminSession, within time.Duration, limit int) ([]ports.AdminExpiringToken, error) {
+	query := url.Values{}
+	if within > 0 {
+		query.Set("within", readableWithin(within))
+	}
+	if limit > 0 {
+		query.Set("limit", strconv.Itoa(min(limit, adminExpiringMaxLimit)))
+	}
+	path := "/admin/v1/admin-tokens/expiring"
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var tokens []ports.AdminExpiringToken
+	if err := c.getJSON(ctx, session, path, &tokens); err != nil {
+		return nil, err
+	}
+	return tokens, nil
+}
+
+// adminAccessEventsMaxLimit is the most rows GET /admin/v1/access-events
+// returns; a larger request is a server validation error, so it is clamped.
+const adminAccessEventsMaxLimit = 200
+
+func (c *HTTPAdminClient) ListAccessEvents(ctx context.Context, session AdminSession, limit int) ([]ports.AdminAccessEvent, error) {
+	path := "/admin/v1/access-events"
+	if limit > 0 {
+		path += "?" + url.Values{"limit": []string{strconv.Itoa(min(limit, adminAccessEventsMaxLimit))}}.Encode()
+	}
+	var events []ports.AdminAccessEvent
+	if err := c.getJSON(ctx, session, path, &events); err != nil {
+		return nil, err
+	}
+	return events, nil
+}
+
+// adminGrantsMaxLimit is the most rows GET /admin/v1/repository-grants returns
+// per page; a larger request is a server validation error, so it is clamped.
+const adminGrantsMaxLimit = 200
+
+func (c *HTTPAdminClient) ListAllRepositoryGrants(ctx context.Context, session AdminSession, limit int, after string) (ports.AdminGrantPage, error) {
+	query := url.Values{}
+	if limit > 0 {
+		query.Set("limit", strconv.Itoa(min(limit, adminGrantsMaxLimit)))
+	}
+	if after != "" {
+		query.Set("after", after)
+	}
+	path := "/admin/v1/repository-grants"
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var page ports.AdminGrantPage
+	if err := c.getJSON(ctx, session, path, &page); err != nil {
+		return ports.AdminGrantPage{}, err
+	}
+	return page, nil
+}
+
+// readableWithin words a window in the API's readable grammar (12h, 7d, 2y):
+// years when a whole multiple of 365 days, days when a whole multiple of 24
+// hours, else hours rounded up. Never seconds.
+func readableWithin(d time.Duration) string {
+	switch {
+	case d >= lifetimeYear && d%lifetimeYear == 0:
+		return strconv.FormatInt(int64(d/lifetimeYear), 10) + "y"
+	case d >= lifetimeDay && d%lifetimeDay == 0:
+		return strconv.FormatInt(int64(d/lifetimeDay), 10) + "d"
+	}
+	hours := int64((d + lifetimeHour - 1) / lifetimeHour)
+	return strconv.FormatInt(max(hours, 1), 10) + "h"
 }
 
 func (c *HTTPAdminClient) GetScanRunDetail(ctx context.Context, session AdminSession, runID string) (ports.ScanRunDetail, error) {
@@ -354,7 +432,14 @@ func (c *HTTPAdminClient) GetSigningPolicy(ctx context.Context, session AdminSes
 
 func (c *HTTPAdminClient) UpdateSigningPolicy(ctx context.Context, session AdminSession, input ports.SigningPolicySettings) (ports.SigningPolicySettings, error) {
 	var settings ports.SigningPolicySettings
-	body := map[string]any{"enabled": input.Enabled, "trusted_public_keys": input.TrustedPublicKeys}
+	// The PUT replaces the whole policy (decodeSigningPolicySettings), so the
+	// body carries every field it replaces: a field left out is reset.
+	body := map[string]any{
+		"enabled":             input.Enabled,
+		"trusted_public_keys": input.TrustedPublicKeys,
+		"trusted_identities":  input.TrustedIdentities,
+		"unsigned_self_read":  input.UnsignedSelfRead,
+	}
 	if err := c.requestJSON(ctx, stdhttp.MethodPut, session, "/admin/v1/signing-policy", body, &settings, stdhttp.StatusOK); err != nil {
 		return ports.SigningPolicySettings{}, err
 	}
@@ -418,15 +503,10 @@ func (c *HTTPAdminClient) PutUserGrant(ctx context.Context, session AdminSession
 	return grant, nil
 }
 
-func (c *HTTPAdminClient) DeleteUserGrant(ctx context.Context, session AdminSession, userID string, repository string) error {
-	path := "/admin/v1/users/" + url.PathEscape(strings.TrimSpace(userID)) + "/grants/" + strings.TrimSpace(repository)
-	return c.requestNoContent(ctx, stdhttp.MethodDelete, session, path, nil, stdhttp.StatusNoContent)
-}
-
 // repositoryGrantsPath/repositoryGrantPath build the delegate-facing
 // repository-grant resource paths (design.md Decision 3 route table).
 // repository is deliberately NOT PathEscape-d -- it can literally contain
-// "/" (mirroring PutUserGrant/DeleteUserGrant's own unescaped-repository
+// "/" (mirroring PutUserGrant's own unescaped-repository
 // precedent above); username can never contain "/" so it is escaped.
 func repositoryGrantsPath(repository string) string {
 	return "/admin/v1/repositories/" + strings.TrimSpace(repository) + "/grants"
@@ -494,8 +574,8 @@ func (c *HTTPAdminClient) RevokeUserAdminToken(ctx context.Context, session Admi
 // url.PathEscape-d (design.md Decision 8 wire shape): escaping its slashes
 // would defeat the server-side split (adminNestedResource splits on the
 // last "/repository-overrides/" occurrence, expecting a literal slash-
-// bearing repository as the final segment), mirroring PutUserGrant/
-// DeleteUserGrant's own unescaped repository precedent.
+// bearing repository as the final segment), mirroring PutUserGrant's own
+// unescaped repository precedent.
 func repositoryOverridePath(feature string, repository string) string {
 	return "/admin/v1/features/" + url.PathEscape(strings.TrimSpace(feature)) + "/repository-overrides/" + strings.TrimSpace(repository)
 }
@@ -562,7 +642,7 @@ func (c *HTTPAdminClient) SetRepositoryOverride(ctx context.Context, session Adm
 }
 
 // ClearRepositoryOverride deletes one repository's override, exactly like
-// DeleteUserGrant (design.md Decision 8).
+// the repository grant delete (design.md Decision 8).
 func (c *HTTPAdminClient) ClearRepositoryOverride(ctx context.Context, session AdminSession, repository string, feature string) error {
 	return c.requestNoContent(ctx, stdhttp.MethodDelete, session, repositoryOverridePath(feature, repository), nil, stdhttp.StatusNoContent)
 }
@@ -789,7 +869,21 @@ func decodeAdminAPIError(action string, resp *stdhttp.Response) error {
 		message = resp.Status
 	}
 
+	if resp.StatusCode == stdhttp.StatusNotFound {
+		return adminNotFoundError{message: fmt.Sprintf("%s: %s", action, message)}
+	}
 	return fmt.Errorf("%s: %s", action, message)
+}
+
+// adminNotFoundError is a 404 from the admin API; its text is the usual one.
+type adminNotFoundError struct{ message string }
+
+func (e adminNotFoundError) Error() string { return e.message }
+
+// IsAdminNotFound reports whether err is a 404 from the admin API.
+func IsAdminNotFound(err error) bool {
+	var notFound adminNotFoundError
+	return errors.As(err, &notFound)
 }
 
 func readAdminAPIErrorMessage(body io.Reader) string {

@@ -1,0 +1,24 @@
+  Admin › Overview                                                                                                             signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                      
+                               │  Overview                                                                                                            
+  ▸ Overview                   │  The three things you do most are one key away from anywhere.                                                        
+                               │                                                                                                                      
+  ACCESS                       │  ╭───────────────────────────────────╮  ╭───────────────────────────────────╮  ╭──────────────────────────────────╮  
+      Users                    │  │ Grant repository access        g  │  │ Create robot                   r  │  │ Issue token                   t  │  
+      Robots                   │  │ Pick a user or robot, pick        │  │ A CI identity with its first      │  │ Choose a lifetime and see the    │  
+      Repository access        │  │ repositories, pick a role. One    │  │ repository grant and token.       │  │ exact expiry date before         │  
+                               │  │ screen.                           │  │                                   │  │ creating.                        │  
+  SECURITY                     │  ╰───────────────────────────────────╯  ╰───────────────────────────────────╯  ╰──────────────────────────────────╯  
+      Image scanning           │                                                                                                                      
+      Secret scanning          │  ╭──────────────────────────────────────────────────────╮  ╭──────────────────────────────────────────────────────╮  
+      Signing policy           │  │ NEEDS ATTENTION                                      │  │ RECENT CHANGES                                       │  
+                               │  │   Robot gh-actions has no repository access  g grant │  │ Could not load recent changes: history unavailable   │  
+  OPERATIONS                   │  │   2 images have critical findings                    │  │                                                      │  
+      Scan runs                │  │ Could not check expiring tokens: expiring unavailab… │  │                                                      │  
+      Secret findings          │  │                                                      │  │                                                      │  
+      Update channel           │  │                                                      │  │                                                      │  
+                               │  │                                                      │  │                                                      │  
+                               │  ╰──────────────────────────────────────────────────────╯  ╰──────────────────────────────────────────────────────╯  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ↑↓ move   tab attention   enter open   g grant access   r robot   t token   esc back   q quit                                          F2 mouse on  

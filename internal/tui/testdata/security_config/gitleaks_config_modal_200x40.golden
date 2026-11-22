@@ -1,0 +1,40 @@
+  Admin › Security › Secret scanning                                                                                                                                             signed in as operator  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │
+                               │  Secret scanning                                                                                                                      Gitleaks, leaked-secret scanner
+    Overview                   │  Feature enabled  ·  Runtime ready, healthy  ·  version 0.57.1  ·  update available (0.58.0)  ·  rollback available
+                               │  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  ACCESS                       │  │ GITLEAKS CONFIGURATION                                                                                                                                           │
+      Users                    │  │ Secret scanning                                                                                                                                      [x] enabled │
+      Robots                   │  │ Timeout                                                                                                                                                       2m │
+      Repository access        │  │ Max concurrency                                                                                                                                                2 │
+                               │  │ c edit configuration.                                                                                                                                            │
+  SECURITY                     │  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+      Image scanning           │  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+    ▸ Secret scanning          │  │ PER-REPOSITORY OVERRIDES              ╭──────────────────────────────────────────────────╮                                                                       │
+      Signing policy           │  │ REPOSITORY                            │  Gitleaks configuration                          │                 STATUS     ENABLED  DETAIL                UPDATED     │
+                               │  │ team/api                              │  Applies to every repository without an          │                 override   yes      config path set       12 Nov      │
+  OPERATIONS                   │  │ team/docs                             │  override.                                       │                 override   no       scanning off          2 Nov       │
+      Scan runs                │  │ team/web                              │  [x] Enabled                                     │                 inherited  —        global settings       -           │
+      Secret findings          │  │ team/infra                            │  Timeout                                         │                 inherited  —        global settings       -           │
+      Update channel           │  │                                       │   2m                                             │                                                                       │
+                               │  │                                       │  Max Concurrency                                 │                                                                       │
+                               │  │                                       │   2                                              │                                                                       │
+                               │  │                                       │                                                  │                                                                       │
+                               │  │                                       │   Save  enter   Cancel  esc                      │                                                                       │
+                               │  │                                       │  tab next field, space toggles                   │                                                                       │
+                               │  │                                       ╰──────────────────────────────────────────────────╯                                                                       │
+                               │  │                                                                                                                                                                  │
+                               │  │                                                                                                                                                                  │
+                               │  │                                                                                                                                                                  │
+                               │  │                                                                                                                                                                  │
+                               │  │                                                                                                                                                                  │
+                               │  │                                                                                                                                                                  │
+                               │  │                                                                                                                                                                  │
+                               │  │                                                                                                                                                                  │
+                               │  │                                                                                                                                                                  │
+                               │  │                                                                                                                                                                  │
+                               │  │                                                                                                                                                                  │
+                               │  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  tab next field   space toggle   enter save   esc cancel                                                                                                                                  F2 mouse on  

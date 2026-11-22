@@ -1,0 +1,40 @@
+  regixtry › Repository access › team/api                                                                                                                                            signed in as erin  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry repository admin     │                                                                                                                                                                        
+                               │  Repository access                                                                                                                                           team/api  
+  ACCESS                       │                                                                                                                                                                        
+    ▸ Repository access        │  GRANTS ON TEAM/API                                                                                                            ╭────────────────────────────────────╮  
+                               │  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  │ team/api                           │  
+  You administer team/api.     │  │   USERNAME                                                                                                       ROLE    │  │ you are Admin on this repository   │  
+  Global settings are visible  │  │   user158                                                                                                        Reader  │  │                                    │  
+  to global admins only.       │  │   user159                                                                                                        Writer  │  │ ACTIONS                            │  
+                               │  │   user160                                                                                                        Reader  │  │ New grant                        n │  
+                               │  │   user162                                                                                                        Writer  │  │ Edit role                        e │  
+                               │  │   user163                                                                                                        Reader  │  │ Revoke grant                     x │  
+                               │  │   user164                                                                                                        Reader  │  │                                    │  
+                               │  │   user165                                                                                                        Writer  │  │ ADD GRANT                          │  
+                               │  │   user166                                                                                                        Reader  │  │ Username and role (Reader or       │  
+                               │  │   user167                                                                                                        Reader  │  │ Writer). The repository is fixed   │  
+                               │  │   user169                                                                                                        Reader  │  │ to team/api.                       │  
+                               │  │   user170                                                                                                        Reader  │  │                                    │  
+                               │  │   user171                                                                                                        Writer  │  │                                    │  
+                               │  │   user172                                                                                                        Reader  │  │                                    │  
+                               │  │   user173                                                                                                        Reader  │  │                                    │  
+                               │  │ ▸ user174                                                                                                        Writer  │  │                                    │  
+                               │  │   user176                                                                                                        Reader  │  │                                    │  
+                               │  │   user177                                                                                                        Writer  │  │                                    │  
+                               │  │   user178                                                                                                        Reader  │  │                                    │  
+                               │  │   user179                                                                                                        Reader  │  │                                    │  
+                               │  │   user180                                                                                                        Writer  │  │                                    │  
+                               │  │   user181                                                                                                        Reader  │  │                                    │  
+                               │  │   user183                                                                                                        Writer  │  │                                    │  
+                               │  │   user184                                                                                                        Reader  │  │                                    │  
+                               │  │   user185                                                                                                        Reader  │  │                                    │  
+                               │  │   user186                                                                                                        Writer  │  │                                    │  
+                               │  │   user187                                                                                                        Reader  │  │                                    │  
+                               │  │   user188                                                                                                        Reader  │  │                                    │  
+                               │  │   user190                                                                                                        Reader  │  │                                    │  
+                               │  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  │                                    │  
+                               │  You can give Reader or Writer. Admin grants: ask a global admin.                                                              ╰────────────────────────────────────╯  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ↑↓ move   n new grant   e edit role   x revoke   esc back                                                                                                                                F2 mouse on  

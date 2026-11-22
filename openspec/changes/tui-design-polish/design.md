@@ -266,7 +266,7 @@ read anywhere; dead-token cleanup is P6, out of scope.
 24 rows is a **hard floor**, enforced in `View()` at `model.go:828-830` before
 any screen dispatch — the single funnel for both the interactive program loop
 and the `--snapshot` CLI path. Below 150×24 the app renders only
-`terminalTooSmallTemplate`, so `renderAdminWorkspace` is unreachable and the
+the too-small notice (`renderTooSmall`), so `renderAdminWorkspace` is unreachable and the
 modal is never composited at all.
 
 After compaction (17/19 ≤ 24), `compositeOverlay`'s clamp therefore **never

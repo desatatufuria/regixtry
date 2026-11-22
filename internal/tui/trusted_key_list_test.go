@@ -4,12 +4,13 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 	"regixtry/internal/domain/signing"
+	"regixtry/internal/ports"
 )
 
-func trustedKeyListTestKey(runes string) tea.KeyMsg {
-	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(runes)}
+func trustedKeyListTestKey(runes string) keyMsg {
+	return testKeyRunes(runes)
 }
 
 const trustedKeyListTestPEM1 = "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAErSUZU4IUnh+IonVC8RB3NSN1lQLe\nxnF8AMhBjtuWIOnJjBgfpVuckOjRgdcXwUr/GtUnkVEeSGvmLC4F3sr/Cw==\n-----END PUBLIC KEY-----\n"
@@ -21,7 +22,7 @@ func TestTrustedKeyListUpDownNavigationIsBounded(t *testing.T) {
 	list := newTrustedKeyList("", []string{trustedKeyListTestPEM1, trustedKeyListTestPEM2})
 	env := screenEnv{}
 
-	next, cmd, consumed := list.update(env, tea.KeyMsg{Type: tea.KeyUp})
+	next, cmd, consumed := list.update(env, testKeyUp())
 	if !consumed || cmd != nil {
 		t.Fatalf("Up: consumed = %v, cmd = %v, want consumed=true, cmd=nil", consumed, cmd)
 	}
@@ -29,11 +30,11 @@ func TestTrustedKeyListUpDownNavigationIsBounded(t *testing.T) {
 		t.Fatalf("selected = %d, want 0 (bounded at zero)", next.selected)
 	}
 
-	next, _, _ = next.update(env, tea.KeyMsg{Type: tea.KeyDown})
+	next, _, _ = next.update(env, testKeyDown())
 	if next.selected != 1 {
 		t.Fatalf("selected = %d, want 1", next.selected)
 	}
-	next, _, _ = next.update(env, tea.KeyMsg{Type: tea.KeyDown})
+	next, _, _ = next.update(env, testKeyDown())
 	if next.selected != 1 {
 		t.Fatalf("selected = %d, want 1 (bounded at len-1)", next.selected)
 	}
@@ -43,7 +44,7 @@ func TestTrustedKeyListUnhandledKeyIsNotConsumed(t *testing.T) {
 	t.Parallel()
 
 	list := newTrustedKeyList("", nil)
-	next, cmd, consumed := list.update(screenEnv{}, tea.KeyMsg{Type: tea.KeyTab})
+	next, cmd, consumed := list.update(screenEnv{}, testKeyTab())
 	if consumed || cmd != nil {
 		t.Fatalf("Tab: consumed = %v, cmd = %v, want consumed=false, cmd=nil (falls through to the host screen)", consumed, cmd)
 	}
@@ -64,10 +65,10 @@ func TestTrustedKeyListAddFlowCommitsAValidKey(t *testing.T) {
 	}
 
 	for _, r := range trustedKeyListTestPEM1 {
-		list, _, _ = list.update(env, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		list, _, _ = list.update(env, testKeyRunes(string(r)))
 	}
 
-	list, cmd, consumed := list.update(env, tea.KeyMsg{Type: tea.KeyEnter})
+	list, cmd, consumed := list.update(env, testKeyEnter())
 	if !consumed || cmd != nil {
 		t.Fatalf("Enter (commit add): consumed = %v, cmd = %v, want consumed=true, cmd=nil", consumed, cmd)
 	}
@@ -99,7 +100,7 @@ func TestTrustedKeyListAddFlowEnterWithoutMarkersDoesNotCommit(t *testing.T) {
 
 	list, _, _ = list.update(env, trustedKeyListTestKey("n"))
 	list, _, _ = list.update(env, trustedKeyListTestKey("not a pem"))
-	list, cmd, consumed := list.update(env, tea.KeyMsg{Type: tea.KeyEnter})
+	list, cmd, consumed := list.update(env, testKeyEnter())
 
 	if !consumed || cmd != nil {
 		t.Fatalf("Enter (no markers yet): consumed = %v, cmd = %v, want consumed=true, cmd=nil", consumed, cmd)
@@ -134,7 +135,7 @@ func TestTrustedKeyListAddFlowRejectsGenuinelyMalformedCompletePEM(t *testing.T)
 
 	list, _, _ = list.update(env, trustedKeyListTestKey("n"))
 	list, _, _ = list.update(env, trustedKeyListTestKey("-----BEGIN PUBLIC KEY----- not valid base64 -----END PUBLIC KEY-----"))
-	list, _, consumed := list.update(env, tea.KeyMsg{Type: tea.KeyEnter})
+	list, _, consumed := list.update(env, testKeyEnter())
 
 	if !consumed {
 		t.Fatal("Enter (rejected commit): consumed = false, want true")
@@ -157,7 +158,7 @@ func trustedKeyListTestTypeLine(t *testing.T, env screenEnv, list trustedKeyList
 	t.Helper()
 	for _, r := range line {
 		var consumed bool
-		list, _, consumed = list.update(env, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		list, _, consumed = list.update(env, testKeyRunes(string(r)))
 		if !consumed {
 			t.Fatalf("rune %q not consumed while adding", r)
 		}
@@ -184,7 +185,7 @@ func TestTrustedKeyListMultilinePasteSurvivesEmbeddedNewlineEnterEvents(t *testi
 	pemLines := strings.Split(strings.TrimRight(trustedKeyListTestPEM1, "\n"), "\n")
 	for i, line := range pemLines {
 		list = trustedKeyListTestTypeLine(t, env, list, line)
-		next, cmd, consumed := list.update(env, tea.KeyMsg{Type: tea.KeyEnter})
+		next, cmd, consumed := list.update(env, testKeyEnter())
 		if !consumed || cmd != nil {
 			t.Fatalf("line %d Enter: consumed = %v, cmd = %v, want consumed=true, cmd=nil", i, consumed, cmd)
 		}
@@ -232,7 +233,7 @@ func TestTrustedKeyListSingleLinePasteStillCommitsOnFirstEnter(t *testing.T) {
 	singleLine := strings.Join(strings.Fields(trustedKeyListTestPEM1), " ")
 	list = trustedKeyListTestTypeLine(t, env, list, singleLine)
 
-	list, cmd, consumed := list.update(env, tea.KeyMsg{Type: tea.KeyEnter})
+	list, cmd, consumed := list.update(env, testKeyEnter())
 	if !consumed || cmd != nil {
 		t.Fatalf("Enter (single-line commit): consumed = %v, cmd = %v, want consumed=true, cmd=nil", consumed, cmd)
 	}
@@ -276,7 +277,7 @@ func TestTrustedKeyListConcatenatedPasteCommitsOnlyTheFirstCompleteBlock(t *test
 	combined := trustedKeyListTestPEM1 + trustedKeyListTestPEM2
 	list = trustedKeyListTestTypeLine(t, env, list, combined)
 
-	list, cmd, consumed := list.update(env, tea.KeyMsg{Type: tea.KeyEnter})
+	list, cmd, consumed := list.update(env, testKeyEnter())
 	if !consumed || cmd != nil {
 		t.Fatalf("Enter (concatenated paste commit): consumed = %v, cmd = %v, want consumed=true, cmd=nil", consumed, cmd)
 	}
@@ -338,7 +339,7 @@ func TestTrustedKeyListConcatenatedPasteWithAMalformedFirstBlockDiscardsTheTrail
 	combined := malformedFirstBlock + trustedKeyListTestPEM2
 	list = trustedKeyListTestTypeLine(t, env, list, combined)
 
-	list, _, consumed := list.update(env, tea.KeyMsg{Type: tea.KeyEnter})
+	list, _, consumed := list.update(env, testKeyEnter())
 	if !consumed {
 		t.Fatal("Enter (rejected commit): consumed = false, want true")
 	}
@@ -367,7 +368,7 @@ func TestTrustedKeyListEscWhileAddingCancelsWithoutAdding(t *testing.T) {
 
 	list, _, _ = list.update(env, trustedKeyListTestKey("n"))
 	list, _, _ = list.update(env, trustedKeyListTestKey("partial input"))
-	list, cmd, consumed := list.update(env, tea.KeyMsg{Type: tea.KeyEsc})
+	list, cmd, consumed := list.update(env, testKeyEsc())
 
 	if !consumed || cmd != nil {
 		t.Fatalf("Esc (cancel add): consumed = %v, cmd = %v, want consumed=true, cmd=nil", consumed, cmd)
@@ -413,7 +414,7 @@ func TestTrustedKeyListDeleteFiresUsageCmdAndOpensConfirmOnResponse(t *testing.T
 		t.Fatal("confirm active before the usage response arrives")
 	}
 
-	list = list.applyUsageLoaded(adminSigningKeyUsageLoadedMsg{count: 3, capped: false})
+	list = list.applyUsageLoaded(trustedKeyUsageAnswer(list, 3, false))
 	if list.usageLoading {
 		t.Fatal("usageLoading = true after the response, want false")
 	}
@@ -430,7 +431,7 @@ func TestTrustedKeyListDeleteNeverBlocksOnAHighCount(t *testing.T) {
 
 	list := newTrustedKeyList("", []string{trustedKeyListTestPEM1})
 	list, _, _ = list.update(screenEnv{}, trustedKeyListTestKey("x"))
-	list = list.applyUsageLoaded(adminSigningKeyUsageLoadedMsg{count: 9999, capped: true})
+	list = list.applyUsageLoaded(trustedKeyUsageAnswer(list, 9999, true))
 
 	if !list.confirm.Active() {
 		t.Fatal("confirm not active for a high, capped usage count -- deletion must never be blocked, only informed")
@@ -445,9 +446,9 @@ func TestTrustedKeyListConfirmEnterRemovesExactlyTheSelectedKey(t *testing.T) {
 
 	list.selected = 0
 	list, _, _ = list.update(env, trustedKeyListTestKey("x"))
-	list = list.applyUsageLoaded(adminSigningKeyUsageLoadedMsg{count: 0, capped: false})
+	list = list.applyUsageLoaded(trustedKeyUsageAnswer(list, 0, false))
 
-	list, cmd, consumed := list.update(env, tea.KeyMsg{Type: tea.KeyEnter})
+	list, cmd, consumed := list.update(env, testKeyEnter())
 	if !consumed || cmd != nil {
 		t.Fatalf("Enter (confirm delete): consumed = %v, cmd = %v, want consumed=true, cmd=nil", consumed, cmd)
 	}
@@ -469,9 +470,9 @@ func TestTrustedKeyListConfirmEscCancelsWithoutRemoving(t *testing.T) {
 	env := screenEnv{}
 
 	list, _, _ = list.update(env, trustedKeyListTestKey("x"))
-	list = list.applyUsageLoaded(adminSigningKeyUsageLoadedMsg{count: 0, capped: false})
+	list = list.applyUsageLoaded(trustedKeyUsageAnswer(list, 0, false))
 
-	list, _, consumed := list.update(env, tea.KeyMsg{Type: tea.KeyEsc})
+	list, _, consumed := list.update(env, testKeyEsc())
 	if !consumed {
 		t.Fatal("Esc (cancel delete): consumed = false, want true")
 	}
@@ -490,5 +491,110 @@ func TestTrustedKeyListSetKeysReplacesWholesale(t *testing.T) {
 	list = list.SetKeys([]string{trustedKeyListTestPEM2})
 	if len(list.Keys()) != 1 || list.Keys()[0] != trustedKeyListTestPEM2 {
 		t.Fatalf("Keys() = %#v, want [%q]", list.Keys(), trustedKeyListTestPEM2)
+	}
+}
+
+func TestTrustedKeyListEscStopsWaitingForTheUsageLookupAndDropsItsLateAnswer(t *testing.T) {
+	t.Parallel()
+
+	list := newTrustedKeyList("", []string{trustedKeyListTestPEM1})
+	list, cmd, _ := list.update(screenEnv{}, trustedKeyListTestKey("x"))
+	if !list.usageLoading || cmd == nil {
+		t.Fatalf("usageLoading = %v, cmd = %v, want the lookup started", list.usageLoading, cmd)
+	}
+	// Every other key is still swallowed while waiting.
+	if swallowed, _, consumed := list.update(screenEnv{}, trustedKeyListTestKey("n")); !consumed || swallowed.adding {
+		t.Fatal("a key other than Esc must be swallowed while the lookup runs")
+	}
+	list, _, consumed := list.update(screenEnv{}, testKeyEsc())
+	if !consumed || list.usageLoading {
+		t.Fatalf("consumed = %v, usageLoading = %v, want Esc to stop waiting", consumed, list.usageLoading)
+	}
+	list = list.applyUsageLoaded(trustedKeyUsageAnswer(list, 2, false))
+	if list.confirm.Active() {
+		t.Fatal("a late usage answer opened a confirm nobody asked for")
+	}
+}
+
+func TestRenderTrustedKeyListShowsTheDeleteConfirmAndKeepsTheAddFieldOnOneLine(t *testing.T) {
+	t.Parallel()
+
+	theme := newAdminTheme()
+	list := newTrustedKeyList("", []string{trustedKeyListTestPEM1})
+	list = list.applyUsageLoaded(trustedKeyUsageAnswer(list, 0, false))
+	list.usageLoading = true
+	list = list.applyUsageLoaded(trustedKeyUsageAnswer(list, 4, false))
+	out := ansi.Strip(strings.Join(renderTrustedKeyList(theme, list, true), "\n"))
+	for _, want := range []string{"This key currently verifies 4 tagged image(s). Delete it anyway?", "enter deletes the key, esc keeps it"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("render lacks %q:\n%s", want, out)
+		}
+	}
+
+	adding := newTrustedKeyList("", nil)
+	adding.adding = true
+	adding.input = trustedKeyListTestPEM1
+	rendered := renderTrustedKeyList(theme, adding, true)
+	if got := len(strings.Split(strings.Join(rendered, "\n"), "\n")); got > 6 {
+		t.Fatalf("a pasted multi-line key made the list %d rows tall, want the input kept on one line:\n%s", got, ansi.Strip(strings.Join(rendered, "\n")))
+	}
+	if strings.Contains(ansi.Strip(strings.Join(rendered, "\n")), "\n-----END") {
+		t.Fatal("the pasted key must not be rendered line by line")
+	}
+}
+
+func TestTrustedListFocusRowsPointAtWhatTheOperatorIsDoing(t *testing.T) {
+	t.Parallel()
+
+	keys := newTrustedKeyList("", []string{trustedKeyListTestPEM1, trustedKeyListTestPEM2})
+	keys.selected = 1
+	if got := trustedKeyFocusRow(keys); got != 2 {
+		t.Fatalf("trustedKeyFocusRow(selected 1) = %d, want 2 (heading then the key)", got)
+	}
+	keys.adding = true
+	if got := trustedKeyFocusRow(keys); got != 3 {
+		t.Fatalf("trustedKeyFocusRow(adding) = %d, want 3 (below the two keys)", got)
+	}
+	if got := trustedKeyFocusRow(newTrustedKeyList("", nil)); got != 1 {
+		t.Fatalf("trustedKeyFocusRow(empty) = %d, want 1", got)
+	}
+
+	ids := newTrustedIdentityList([]ports.TrustedIdentity{{CertificateIdentityRegexp: "a", CertificateOIDCIssuer: "b"}})
+	if got := trustedIdentityFocusRow(ids); got != 1 {
+		t.Fatalf("trustedIdentityFocusRow(selected 0) = %d, want 1", got)
+	}
+	ids.adding = true
+	if got := trustedIdentityFocusRow(ids); got != 3 {
+		t.Fatalf("trustedIdentityFocusRow(adding regexp) = %d, want 3", got)
+	}
+	ids.addFocus = identityAddFieldIssuer
+	if got := trustedIdentityFocusRow(ids); got != 5 {
+		t.Fatalf("trustedIdentityFocusRow(adding issuer) = %d, want 5", got)
+	}
+}
+
+// trustedKeyUsageAnswer is the answer to the lookup the list asked for.
+func trustedKeyUsageAnswer(list trustedKeyList, count int, capped bool) adminSigningKeyUsageLoadedMsg {
+	return adminSigningKeyUsageLoadedMsg{key: list.pendingDeleteKey, count: count, capped: capped}
+}
+
+func TestTrustedKeyListShowsAUsageAnswerOnlyForTheKeyItWasAskedAbout(t *testing.T) {
+	t.Parallel()
+
+	list := newTrustedKeyList("", []string{trustedKeyListTestPEM1, trustedKeyListTestPEM2})
+	list, _, _ = list.update(screenEnv{}, trustedKeyListTestKey("x")) // asks about key 1
+	if list.pendingDeleteKey != trustedKeyListTestPEM1 {
+		t.Fatalf("pendingDeleteKey = %q, want the first key", list.pendingDeleteKey)
+	}
+
+	// A stale answer for another key arrives first: it must not open the
+	// confirm, nor stop the wait for the real one.
+	list = list.applyUsageLoaded(adminSigningKeyUsageLoadedMsg{key: trustedKeyListTestPEM2, count: 42})
+	if list.confirm.Active() || !list.usageLoading {
+		t.Fatalf("confirm = %v, usageLoading = %v, want a stale answer ignored", list.confirm.Active(), list.usageLoading)
+	}
+	list = list.applyUsageLoaded(adminSigningKeyUsageLoadedMsg{key: trustedKeyListTestPEM1, count: 3})
+	if !list.confirm.Active() || !strings.Contains(list.confirm.message, "verifies 3 tagged") || strings.Contains(list.confirm.message, "42") {
+		t.Fatalf("confirm message = %q, want the count of the asked key", list.confirm.message)
 	}
 }

@@ -17,13 +17,19 @@ import (
 )
 
 type Store struct {
-	db *sql.DB
+	db        *sql.DB
+	writeLock fifoLock
 }
 
 const sqliteBusyTimeoutMillis = 5000
 
 func New(path string) (*Store, error) {
-	db, err := sql.Open("sqlite", sqliteDSN(path))
+	return newWithBusyTimeout(path, sqliteBusyTimeoutMillis)
+}
+
+// newWithBusyTimeout is the test seam for a short busy timeout.
+func newWithBusyTimeout(path string, busyTimeoutMillis int) (*Store, error) {
+	db, err := sql.Open("sqlite", sqliteDSNWithBusyTimeout(path, busyTimeoutMillis))
 	if err != nil {
 		return nil, err
 	}
@@ -35,6 +41,11 @@ func New(path string) (*Store, error) {
 	}
 
 	if err := store.backfillSubjectDigests(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+
+	if err := store.backfillRepositoryBlobs(); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -79,15 +90,11 @@ func (s *Store) backfillSubjectDigests() error {
 		return err
 	}
 
-	tx, err := s.db.Begin()
+	tx, err := s.beginWrite(context.Background())
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
+	defer func() { _ = tx.Rollback() }()
 
 	type backfillTarget struct {
 		id     int64
@@ -146,11 +153,145 @@ func (s *Store) backfillSubjectDigests() error {
 	return err
 }
 
+// repositoryBlobsBackfillMarker names the schema_backfills row guarding
+// backfillRepositoryBlobs.
+const repositoryBlobsBackfillMarker = "repository_blobs_from_manifest_blobs_v1"
+
+// backfillRepositoryBlobs is the one-time, idempotent migration that links
+// every blob already referenced by a manifest to that manifest's repository,
+// so no repository loses access to blobs it already uses when blob reads and
+// manifest publishes start requiring a link. It only inserts (never deletes)
+// and commits the rows and the marker together. Blobs committed but not yet
+// referenced by any manifest cannot be attributed to a repository (the blob
+// store records none); their owner re-uploads them, which links them.
+func (s *Store) backfillRepositoryBlobs() error {
+	var marker int
+	err := s.db.QueryRow(`SELECT 1 FROM schema_backfills WHERE name = ?`, repositoryBlobsBackfillMarker).Scan(&marker)
+	if err == nil {
+		return nil
+	}
+	if err != sql.ErrNoRows {
+		return err
+	}
+
+	tx, err := s.beginWrite(context.Background())
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err = tx.Exec(`
+		INSERT OR IGNORE INTO repository_blobs (tenant, repository, digest, created_at)
+		SELECT DISTINCT r.tenant, r.name, mb.digest, ?
+		FROM manifest_blobs mb
+		JOIN manifests m ON m.id = mb.manifest_id
+		JOIN repositories r ON r.id = m.repository_id
+	`, now); err != nil {
+		return err
+	}
+
+	if _, err = tx.Exec(`INSERT OR IGNORE INTO schema_backfills (name, completed_at) VALUES (?, ?)`, repositoryBlobsBackfillMarker, now); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+func (s *Store) LinkBlob(ctx context.Context, tenant string, repository domain.RepositoryRef, digest domain.Digest) error {
+	if err := repository.Validate(); err != nil {
+		return err
+	}
+
+	tx, err := s.beginWrite(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err = tx.ExecContext(ctx, `
+		INSERT OR IGNORE INTO repository_blobs (tenant, repository, digest, created_at)
+		VALUES (?, ?, ?, ?)
+	`, tenant, repository.String(), digest.String(), time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+func (s *Store) IsBlobLinked(ctx context.Context, tenant string, repository domain.RepositoryRef, digest domain.Digest) (bool, error) {
+	if err := repository.Validate(); err != nil {
+		return false, err
+	}
+
+	var linked bool
+	err := s.db.QueryRowContext(ctx, `
+		SELECT EXISTS(SELECT 1 FROM repository_blobs WHERE tenant = ? AND repository = ? AND digest = ?)
+	`, tenant, repository.String(), digest.String()).Scan(&linked)
+	return linked, err
+}
+
+func (s *Store) UnlinkBlobDigest(ctx context.Context, digest domain.Digest) error {
+	tx, err := s.beginWrite(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err = tx.ExecContext(ctx, `DELETE FROM repository_blobs WHERE digest = ?`, digest.String()); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+// ReclaimBlob re-checks the mark, unlinks the blob file and drops its links in
+// ONE write transaction (see ports.MetadataStore). Publishes and LinkBlob go
+// through the same write queue, so none can slip in between the check and the
+// removal, and a link written after the reclaim commits is never lost.
+func (s *Store) ReclaimBlob(ctx context.Context, digest domain.Digest, remove func(ctx context.Context) (ports.BlobReclaimOutcome, error)) (ports.BlobReclaimOutcome, error) {
+	tx, err := s.beginWrite(ctx)
+	if err != nil {
+		return ports.BlobReclaimMissing, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var referenced bool
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM manifest_blobs WHERE digest = ?)`, digest.String()).Scan(&referenced); err != nil {
+		return ports.BlobReclaimMissing, err
+	}
+	if referenced {
+		return ports.BlobReclaimReferenced, nil
+	}
+
+	outcome, err := remove(ctx)
+	if err != nil {
+		return outcome, err
+	}
+	if outcome == ports.BlobReclaimTooRecent {
+		return outcome, nil
+	}
+
+	if _, err = tx.ExecContext(ctx, `DELETE FROM repository_blobs WHERE digest = ?`, digest.String()); err != nil {
+		return outcome, err
+	}
+	if err = tx.Commit(); err != nil {
+		return outcome, err
+	}
+
+	return outcome, nil
+}
+
 func sqliteDSN(path string) string {
+	return sqliteDSNWithBusyTimeout(path, sqliteBusyTimeoutMillis)
+}
+
+func sqliteDSNWithBusyTimeout(path string, busyTimeoutMillis int) string {
 	query := url.Values{}
 	query.Add("_pragma", "foreign_keys(1)")
+	// busy_timeout first so a new connection runs the WAL pragma with it set.
+	query.Add("_pragma", "busy_timeout("+strconv.Itoa(busyTimeoutMillis)+")")
 	query.Add("_pragma", "journal_mode(WAL)")
-	query.Add("_pragma", "busy_timeout("+strconv.Itoa(sqliteBusyTimeoutMillis)+")")
 	// immediate: a deferred read-then-write transaction cannot honor
 	// busy_timeout when another writer committed in between (WAL).
 	query.Add("_txlock", "immediate")
@@ -288,6 +429,21 @@ func (s *Store) ListUploads(ctx context.Context, tenant string, repository *doma
 	return uploads, rows.Err()
 }
 
+// UploadExists reports whether an upload session row with this ID exists for
+// any tenant. The upload reaper uses it to tell an orphaned upload directory
+// from a live one.
+func (s *Store) UploadExists(ctx context.Context, uploadID string) (bool, error) {
+	var found int
+	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM uploads WHERE id = ?`, uploadID).Scan(&found)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (s *Store) DeleteUpload(ctx context.Context, tenant string, uploadID string) error {
 	result, err := s.db.ExecContext(ctx, `DELETE FROM uploads WHERE tenant = ? AND id = ?`, tenant, uploadID)
 	if err != nil {
@@ -307,6 +463,13 @@ func (s *Store) DeleteUpload(ctx context.Context, tenant string, uploadID string
 }
 
 func (s *Store) PublishManifest(ctx context.Context, tenant string, repository domain.RepositoryRef, tag string, manifest domain.Manifest, blobs []domain.Descriptor) error {
+	return s.PublishManifestVerified(ctx, tenant, repository, tag, manifest, blobs, nil)
+}
+
+// PublishManifestVerified publishes like PublishManifest and, when present is
+// non-nil, first requires inside the same write transaction that every blob
+// exists and is linked to repository (see ports.MetadataStore).
+func (s *Store) PublishManifestVerified(ctx context.Context, tenant string, repository domain.RepositoryRef, tag string, manifest domain.Manifest, blobs []domain.Descriptor, present ports.BlobPresence) error {
 	if err := repository.Validate(); err != nil {
 		return err
 	}
@@ -321,17 +484,35 @@ func (s *Store) PublishManifest(ctx context.Context, tenant string, repository d
 		}
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
+	defer func() { _ = tx.Rollback() }()
 
-	repositoryID, err := ensureRepository(ctx, tx, tenant, repository)
+	if present != nil {
+		for _, blob := range blobs {
+			exists, err := present(ctx, blob.Digest)
+			if err != nil {
+				return err
+			}
+			if exists {
+				// A blob that exists only for another repository is "missing"
+				// here: the answer must not reveal it exists elsewhere.
+				err = tx.QueryRowContext(ctx, `
+					SELECT EXISTS(SELECT 1 FROM repository_blobs WHERE tenant = ? AND repository = ? AND digest = ?)
+				`, tenant, repository.String(), blob.Digest.String()).Scan(&exists)
+				if err != nil {
+					return err
+				}
+			}
+			if !exists {
+				return domain.NewConflictError(fmt.Sprintf("manifest references missing blob %s", blob.Digest))
+			}
+		}
+	}
+
+	repositoryID, err := ensureRepository(ctx, tx.Tx, tenant, repository)
 	if err != nil {
 		return err
 	}
@@ -384,6 +565,14 @@ func (s *Store) PublishManifest(ctx context.Context, tenant string, repository d
 			INSERT INTO manifest_blobs (manifest_id, digest, media_type, size, position)
 			VALUES (?, ?, ?, ?, ?)
 		`, manifestID, blob.Digest.String(), blob.MediaType, blob.Size, index); err != nil {
+			return err
+		}
+		// A published manifest keeps its blobs reachable in this repository
+		// even if the upload link is ever lost.
+		if _, err = tx.ExecContext(ctx, `
+			INSERT OR IGNORE INTO repository_blobs (tenant, repository, digest, created_at)
+			VALUES (?, ?, ?, ?)
+		`, tenant, repository.String(), blob.Digest.String(), time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 			return err
 		}
 	}
@@ -470,15 +659,11 @@ func (s *Store) DeleteManifestByDigest(ctx context.Context, tenant string, repos
 		return nil, err
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
+	defer func() { _ = tx.Rollback() }()
 
 	var rows *sql.Rows
 	rows, err = tx.QueryContext(ctx, `
@@ -558,15 +743,11 @@ func (s *Store) DeleteRepository(ctx context.Context, tenant string, repository 
 		return nil, 0, err
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return nil, 0, err
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
+	defer func() { _ = tx.Rollback() }()
 
 	var rows *sql.Rows
 	rows, err = tx.QueryContext(ctx, `
@@ -608,6 +789,10 @@ func (s *Store) DeleteRepository(ctx context.Context, tenant string, repository 
 	var result sql.Result
 	result, err = tx.ExecContext(ctx, `DELETE FROM repositories WHERE tenant = ? AND name = ?`, tenant, repository.String())
 	if err != nil {
+		return nil, 0, err
+	}
+
+	if _, err = tx.ExecContext(ctx, `DELETE FROM repository_blobs WHERE tenant = ? AND repository = ?`, tenant, repository.String()); err != nil {
 		return nil, 0, err
 	}
 
@@ -671,15 +856,11 @@ func (s *Store) IsBlobDigestReferenced(ctx context.Context, digest string) (bool
 // children in a single transaction (design.md interfaces doc): a partially
 // written report is never observable. GLOBAL -- no tenant column at all.
 func (s *Store) CreateGCReport(ctx context.Context, report ports.GCReport, candidates []ports.GCReportCandidate) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
+	defer func() { _ = tx.Rollback() }()
 
 	var deletedAt any
 	if report.DeletedAt != nil {
@@ -842,15 +1023,11 @@ func (s *Store) PruneExpiredGCReports(ctx context.Context, now time.Time) (int, 
 // a Go-side status check performed in advance, so two concurrent deletes
 // against the same report can never both succeed.
 func (s *Store) MarkGCReportDeleted(ctx context.Context, reportID string, outcome ports.GCDeleteOutcome) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
+	defer func() { _ = tx.Rollback() }()
 
 	var result sql.Result
 	result, err = tx.ExecContext(ctx, `
@@ -1602,7 +1779,7 @@ func (s *Store) GetLatestScanRunByDigest(ctx context.Context, tenant string, rep
 		SELECT id, repository, requested_ref, digest, status, trigger, started_at, finished_at, created_at, updated_at, critical, high, medium, low, trivy_version, db_updated_at, error
 		FROM scan_runs
 		WHERE tenant = ? AND repository = ? AND digest = ?
-		ORDER BY created_at DESC, rowid DESC
+		ORDER BY (status = 'skipped') ASC, created_at DESC, rowid DESC
 		LIMIT 1
 	`, tenant, repository, digest)
 	return scanRunRow(row, repository+"@"+digest)
@@ -1667,22 +1844,24 @@ func (s *Store) UpsertScanRun(ctx context.Context, tenant string, run ports.Scan
 			low = excluded.low,
 			trivy_version = excluded.trivy_version,
 			db_updated_at = excluded.db_updated_at,
-			error = excluded.error
+			error = excluded.error,
+			-- A skipped marker is a per-repository notice overwritten by the
+			-- newest dropped push; real runs keep their identity columns.
+			requested_ref = CASE WHEN excluded.status = 'skipped' THEN excluded.requested_ref ELSE scan_runs.requested_ref END,
+			digest = CASE WHEN excluded.status = 'skipped' THEN excluded.digest ELSE scan_runs.digest END,
+			created_at = CASE WHEN excluded.status = 'skipped' THEN excluded.created_at ELSE scan_runs.created_at END
+		WHERE scan_runs.tenant = excluded.tenant
 	`, run.ID, tenant, run.Repository, run.RequestedRef, run.Digest, run.Status, run.Trigger, startedAt, finishedAt, run.CreatedAt.UTC().Format(time.RFC3339Nano), run.UpdatedAt.UTC().Format(time.RFC3339Nano), run.Critical, run.High, run.Medium, run.Low, run.TrivyVersion, dbUpdatedAt, run.Error)
 	return err
 }
 
 func (s *Store) UpsertScanRunDetail(ctx context.Context, tenant string, detail ports.ScanRunDetail) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
-	if err = upsertScanRunTx(ctx, tx, tenant, detail.Run); err != nil {
+	defer func() { _ = tx.Rollback() }()
+	if err = upsertScanRunTx(ctx, tx.Tx, tenant, detail.Run); err != nil {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM scan_run_findings WHERE run_id = ?`, detail.Run.ID); err != nil {
@@ -1813,32 +1992,24 @@ func (s *Store) GetSecretScanRunDetail(ctx context.Context, tenant string, runID
 }
 
 func (s *Store) UpsertSecretScanRun(ctx context.Context, tenant string, run ports.SecretScanRun) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
-	if err = upsertSecretScanRunTx(ctx, tx, tenant, run); err != nil {
+	defer func() { _ = tx.Rollback() }()
+	if err = upsertSecretScanRunTx(ctx, tx.Tx, tenant, run); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
 func (s *Store) UpsertSecretScanRunDetail(ctx context.Context, tenant string, detail ports.SecretScanRunDetail) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
-	if err = upsertSecretScanRunTx(ctx, tx, tenant, detail.Run); err != nil {
+	defer func() { _ = tx.Rollback() }()
+	if err = upsertSecretScanRunTx(ctx, tx.Tx, tenant, detail.Run); err != nil {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM secret_scan_findings WHERE run_id = ?`, detail.Run.ID); err != nil {
@@ -2021,6 +2192,19 @@ func (s *Store) init() error {
 			PRIMARY KEY(manifest_id, position),
 			FOREIGN KEY(manifest_id) REFERENCES manifests(id) ON DELETE CASCADE
 		);`,
+		// repository_blobs: which repository holds which blob. Blob files are
+		// content-addressed and shared, so this table is the only
+		// repository-level authorization record for a blob. Keyed by name,
+		// not repositories(id): a link is written at upload commit, before
+		// the repositories row exists. DeleteRepository removes the rows.
+		`CREATE TABLE IF NOT EXISTS repository_blobs (
+			tenant TEXT NOT NULL,
+			repository TEXT NOT NULL,
+			digest TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			PRIMARY KEY(tenant, repository, digest)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_repository_blobs_digest ON repository_blobs(digest);`,
 		`CREATE TABLE IF NOT EXISTS uploads (
 			id TEXT PRIMARY KEY,
 			tenant TEXT NOT NULL,
@@ -2407,10 +2591,6 @@ func ensureRepository(ctx context.Context, tx *sql.Tx, tenant string, repository
 	return repositoryID, err
 }
 
-func normalizeReference(reference string) string {
-	return strings.TrimSpace(reference)
-}
-
 type scanRunScanner interface {
 	Scan(dest ...any) error
 }
@@ -2767,7 +2947,7 @@ func (s *Store) ListLatestScanRunPerRepository(ctx context.Context, tenant strin
 	query := `
 		WITH latest AS (
 			SELECT id, repository, requested_ref, digest, status, trigger, started_at, finished_at, created_at, updated_at, critical, high, medium, low, trivy_version, db_updated_at, error,
-				ROW_NUMBER() OVER (PARTITION BY repository ORDER BY created_at DESC, rowid DESC) AS rn,
+				ROW_NUMBER() OVER (PARTITION BY repository ORDER BY (status = 'skipped') ASC, created_at DESC, rowid DESC) AS rn,
 				COUNT(*) OVER (PARTITION BY repository) AS run_count
 			FROM scan_runs
 			WHERE tenant = ?

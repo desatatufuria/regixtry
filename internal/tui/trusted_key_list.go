@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"regixtry/internal/domain/signing"
 )
 
@@ -46,6 +46,9 @@ type trustedKeyList struct {
 	// possible, the usage count is advisory only (spec requirement).
 	confirm            confirmPrompt
 	pendingDeleteIndex int
+	// pendingDeleteKey is the key the usage lookup was asked about: the answer
+	// is only shown for that key, whatever else was selected or deleted since.
+	pendingDeleteKey string
 	// usageLoading is true from the moment 'x' fires the key-usage-count
 	// request until that response arrives and the confirm prompt actually
 	// opens.
@@ -74,12 +77,16 @@ func (l trustedKeyList) Keys() []string { return l.keys }
 // update handles one key while the list has focus. consumed=false lets the
 // caller (overrideEditor/signingConfigScreen) fall through to its own
 // Tab/Esc/Enter/Space handling for any key this list does not claim --
-// Up/Down, 'n' (add, matching this codebase's existing "new" precedent,
-// e.g. updateAdminUsersKey), 'x' (delete, matching its existing "remove"
-// precedent, e.g. updateAdminGrantsKey), and everything typed while
+// Up/Down, 'n' (add, matching this codebase's existing "new" precedent on the
+// Users and Robots lists), 'x' (delete, matching its existing "remove"
+// precedent on the Tokens and Repository access screens), and everything typed while
 // adding or confirming a delete.
-func (l trustedKeyList) update(env screenEnv, msg tea.KeyMsg) (trustedKeyList, tea.Cmd, bool) {
+func (l trustedKeyList) update(env screenEnv, msg keyMsg) (trustedKeyList, tea.Cmd, bool) {
 	if l.usageLoading {
+		if isEscKey(msg) {
+			// Stop waiting: the late answer is dropped by applyUsageLoaded.
+			l.usageLoading = false
+		}
 		return l, nil, true // swallow input while the usage-count call is in flight
 	}
 
@@ -106,7 +113,7 @@ func (l trustedKeyList) update(env screenEnv, msg tea.KeyMsg) (trustedKeyList, t
 		case isEnterKey(msg):
 			// A raw terminal without bracketed-paste support delivers each
 			// embedded newline byte of a pasted multi-line PEM as its own
-			// tea.KeyEnter event, not accumulated literal '\n' runes. Only
+			// Enter key event, not accumulated literal '\n' runes. Only
 			// treat Enter as a genuine submit once the accumulated input
 			// already looks like a complete PEM (both markers present);
 			// otherwise this is a mid-paste newline, so append it to input
@@ -139,8 +146,8 @@ func (l trustedKeyList) update(env screenEnv, msg tea.KeyMsg) (trustedKeyList, t
 			l.err = ""
 			return l, nil, true
 		}
-		if msg.Type == tea.KeyRunes {
-			l.input += string(msg.Runes)
+		if isTextKey(msg) {
+			l.input += keyText(msg)
 			l.err = ""
 			return l, nil, true
 		}
@@ -165,6 +172,7 @@ func (l trustedKeyList) update(env screenEnv, msg tea.KeyMsg) (trustedKeyList, t
 		}
 		index := boundedIndex(l.selected, len(l.keys))
 		l.pendingDeleteIndex = index
+		l.pendingDeleteKey = l.keys[index]
 		l.usageLoading = true
 		return l, signingKeyUsageCmd(env, l.scopeRepository, l.keys[index]), true
 	}
@@ -245,7 +253,8 @@ func (l *trustedKeyList) removeAt(index int) {
 // response (usageLoading already false, e.g. the list was reset/reseeded
 // in the meantime) is discarded.
 func (l trustedKeyList) applyUsageLoaded(msg adminSigningKeyUsageLoadedMsg) trustedKeyList {
-	if !l.usageLoading {
+	if !l.usageLoading || msg.key != l.pendingDeleteKey {
+		// Nothing was asked, or this answers another key's lookup.
 		return l
 	}
 	l.usageLoading = false
@@ -265,9 +274,8 @@ func (l trustedKeyList) applyUsageLoaded(msg adminSigningKeyUsageLoadedMsg) trus
 // signingKeyFingerprints, model.go -- the exact same helper
 // renderSigningPolicyKeyList already uses, so a stored key is never
 // rendered in this new component either) with a "▸ " cursor on the
-// selected row, mirroring renderPeerMenuRows' cursor convention
-// (admin_views.go, added earlier this session for the domain menu) adapted
-// to a form field rather than a full-screen menu. focused controls whether
+// selected row, like the shell's sidebar, adapted to a form field rather
+// than a full-screen menu. focused controls whether
 // the list itself is drawn with focus styling (theme.inputFocus on its
 // heading) when the surrounding form has moved focus elsewhere.
 func renderTrustedKeyList(theme adminTheme, l trustedKeyList, focused bool) []string {
@@ -295,9 +303,11 @@ func renderTrustedKeyList(theme adminTheme, l trustedKeyList, focused bool) []st
 
 	switch {
 	case l.usageLoading:
-		lines = append(lines, theme.muted.Render("Checking key usage..."))
+		lines = append(lines, theme.muted.Render("Checking key usage... esc stops waiting"))
+	case l.confirm.Active():
+		lines = append(lines, theme.warning.Render(l.confirm.message), theme.muted.Render("enter deletes the key, esc keeps it"))
 	case l.adding:
-		lines = append(lines, renderTextField(theme, "New Key (PEM)", l.input, true))
+		lines = append(lines, userField(theme, "New Key (PEM)", strings.Join(strings.Fields(l.input), " "), false, true, trustedListFieldWidth)...)
 	case focused:
 		lines = append(lines, theme.muted.Render("n: add key | x: delete selected key"))
 	}
@@ -305,4 +315,18 @@ func renderTrustedKeyList(theme adminTheme, l trustedKeyList, focused bool) []st
 		lines = append(lines, theme.error.Render(l.err))
 	}
 	return lines
+}
+
+// trustedListFieldWidth is the width of a list's add fields.
+const trustedListFieldWidth = 44
+
+// trustedKeyFocusRow is the line of renderTrustedKeyList's output that holds
+// what the operator is working on: the selected key, or the add field and the
+// delete confirm below the keys. A screen with little room keeps it visible.
+func trustedKeyFocusRow(l trustedKeyList) int {
+	rows := max(len(l.keys), 1)
+	if l.adding || l.confirm.Active() || l.usageLoading {
+		return rows + 1
+	}
+	return min(boundedIndex(l.selected, len(l.keys)), max(len(l.keys)-1, 0)) + 1
 }

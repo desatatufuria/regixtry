@@ -1,0 +1,40 @@
+  Admin › Security › Signing policy                                                                                                                                              signed in as operator  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                                                                        
+                               │  Signing policy                                                                                                                          image signature verification  
+    Overview                   │  Feature enabled                                                                                                                                                       
+                               │  ╭──────────────────────────────────────────────────────────────╮  ╭────────────────────────────────────────────────────────────────────────────────────────────────╮  
+  ACCESS                       │  │ SIGNING POLICY                                               │  │ TRUSTED PUBLIC KEYS                                                                            │  
+      Users                    │  │ Pull-time gate                                  [x] enforced │  │ FINGERPRINT                                                                        TYPE        │  
+      Robots                   │  │ Unsigned self-read                                    pusher │  │ 2c1d7289f2db                                                                       ECDSA P-256 │  
+      Repository access        │  │ Enforced: unsigned images cannot be pulled. self-read: off,  │  │ aaf7110bc769                                                                       ECDSA P-256 │  
+                               │  │ pusher (whoever pushed that digest) or repo_push (anyone who │  │                                                                                                │  
+  SECURITY                     │  │ can push). p edit policy.                                    │  │ TRUSTED IDENTITIES (KEYLESS)                                                                   │  
+      Image scanning           │  │ Last saved 9 Nov 2026 10:14 UTC.                             │  │ IDENTITY (SAN REGEXP)                             OIDC ISSUER                                  │  
+      Secret scanning          │  │                                                              │  │ https://github.com/team/.*                        https://token.actions.githubusercontent.com  │  
+    ▸ Signing policy           │  │                                                              │  │ Any one matching key or identity is enough.                                                    │  
+                               │  │                                                              │  │                                                                                                │  
+  OPERATIONS                   │  ╰──────────────────────────────────────────────────────────────╯  ╰────────────────────────────────────────────────────────────────────────────────────────────────╯  
+      Scan runs                │  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  
+      Secret findings          │  │ PER-REPOSITORY OVERRIDES                                                                                                                                         │  
+      Update channel           │  │ REPOSITORY                                                                                                 STATUS     ENABLED  DETAIL                UPDATED     │  
+                               │  │ team/api                                                                                                   override   yes      1 key, 0 identities   9 Nov       │  
+                               │  │ team/docs                                                                                                  override   no       not enforced          2 Nov       │  
+                               │  │ team/web                                                                                                   inherited  —        global policy         -           │  
+                               │  │ team/infra                                                                                                 inherited  —        global policy         -           │  
+                               │  │                                                                                                                                                                  │  
+                               │  │                                                                                                                                                                  │  
+                               │  │                                                                                                                                                                  │  
+                               │  │                                                                                                                                                                  │  
+                               │  │                                                                                                                                                                  │  
+                               │  │                                                                                                                                                                  │  
+                               │  │                                                                                                                                                                  │  
+                               │  │                                                                                                                                                                  │  
+                               │  │                                                                                                                                                                  │  
+                               │  │                                                                                                                                                                  │  
+                               │  │                                                                                                                                                                  │  
+                               │  │                                                                                                                                                                  │  
+                               │  │                                                                                                                                                                  │  
+                               │  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  p policy   o overrides   x disable   r refresh   esc back   q quit                                                                                                                       F2 mouse on  

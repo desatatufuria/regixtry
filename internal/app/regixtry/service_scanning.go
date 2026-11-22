@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -317,6 +318,23 @@ func (s *Service) queueScheduledScan(ctx context.Context, repositoryName string,
 // (queued|running) check. Every failure path returns silently: push must
 // never fail or block because of scanning.
 func (s *Service) queuePushScan(ctx context.Context, tenant string, repository string, reference string, digest string) {
+	release, ok := s.admitPushScan(tenant, repository, "")
+	if !ok {
+		s.noteSkippedPushScan(tenant, repository, reference, digest)
+		return
+	}
+	s.runPushScan(ctx, tenant, repository, reference, digest, release)
+}
+
+// runPushScan holds an admitted push-scan slot: release runs when the scan
+// has finished, or immediately on any early return.
+func (s *Service) runPushScan(ctx context.Context, tenant string, repository string, reference string, digest string, release func()) {
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			release()
+		}
+	}()
 	settings, err := s.resolveManagedScanSettingsForTenant(ctx, tenant)
 	if err != nil {
 		return
@@ -334,7 +352,11 @@ func (s *Service) queuePushScan(ctx context.Context, tenant string, repository s
 	if err != nil || existed {
 		return
 	}
-	go s.executeScanRun(context.Background(), tenant, run, settings)
+	handedOff = true
+	go func() {
+		defer release()
+		s.executeScanRun(context.Background(), tenant, run, settings)
+	}()
 }
 
 // resolveManagedScanSettingsForTenant mirrors resolveManagedScanSettings for
@@ -359,6 +381,23 @@ func (s *Service) resolveManagedScanSettingsForTenant(ctx context.Context, tenan
 	return settings, nil
 }
 
+// defaultScanRunMargin is added to the configured scan timeout when bounding
+// a scan run or its wait for a slot.
+const defaultScanRunMargin = time.Minute
+
+// scanRunBound is the hard ceiling on one scan run (and on its wait for a
+// slot): the configured timeout (15m when unset) plus the service's margin.
+func (s *Service) scanRunBound(timeout time.Duration) time.Duration {
+	if timeout <= 0 {
+		timeout = 15 * time.Minute
+	}
+	margin := s.scanRunMargin
+	if margin <= 0 {
+		margin = defaultScanRunMargin
+	}
+	return timeout + margin
+}
+
 func (s *Service) executeScanRun(ctx context.Context, tenant string, run ports.ScanRun, settings ports.ScanSettings) {
 	scanRunner := s.getScanRunner()
 	if scanRunner == nil {
@@ -369,8 +408,45 @@ func (s *Service) executeScanRun(ctx context.Context, tenant string, run ports.S
 	// alongside the Trivy leg in its own goroutine: it is informational
 	// only, so a gitleaks failure or absence must never fail or block the
 	// Trivy leg or the overall scan run's status/result.
-	go s.executeSecretScanLeg(ctx, tenant, run.Repository, run.Digest, run.Trigger)
-	if err := s.scanGate.acquire(ctx, settings.MaxConcurrency); err != nil {
+	// executeScanRun does not return until this leg has, so a push-scan slot
+	// (held until return) bounds the leg's goroutine too.
+	secretLegDone := make(chan struct{})
+	legCtx, cancelLeg := context.WithTimeout(ctx, 2*s.scanRunBound(settings.Timeout))
+	defer cancelLeg()
+	// legState: 0 running, 1 finished, 2 abandoned by this function.
+	var legState atomic.Int32
+	defer func() {
+		select {
+		case <-secretLegDone:
+		case <-legCtx.Done():
+			// The leg outlived its bound (a runner that ignores its
+			// context). Stop waiting so the caller's slot is released, and
+			// count the stuck goroutine until it eventually returns.
+			if legState.CompareAndSwap(0, 2) {
+				s.stuckSecretLegs.Add(1)
+			}
+		}
+	}()
+	go func() {
+		defer close(secretLegDone)
+		s.executeSecretScanLeg(legCtx, tenant, run.Repository, run.Digest, run.Trigger)
+		if !legState.CompareAndSwap(0, 1) {
+			s.stuckSecretLegs.Add(-1)
+		}
+	}()
+	// The slot wait and the scan itself are each bounded by the configured
+	// scan timeout plus a margin, so a hung runner or a stalled gate can
+	// never hold a goroutine (and a push-scan slot) forever.
+	waitCtx, cancelWait := context.WithTimeout(ctx, s.scanRunBound(settings.Timeout))
+	err := s.scanGate.acquire(waitCtx, settings.MaxConcurrency)
+	cancelWait()
+	if err != nil {
+		finished := s.now()
+		run.FinishedAt = &finished
+		run.UpdatedAt = finished
+		run.Status = ports.ScanRunStatusFailed
+		run.Error = "timed out waiting for a scan slot"
+		s.persistAsyncScanRun(ctx, tenant, run)
 		return
 	}
 	defer s.scanGate.release()
@@ -389,7 +465,9 @@ func (s *Service) executeScanRun(ctx context.Context, tenant string, run ports.S
 		s.persistAsyncScanRun(ctx, tenant, run)
 		return
 	}
-	result, err := scanRunner.Run(ctx, target, settings)
+	runCtx, cancelRun := context.WithTimeout(ctx, s.scanRunBound(settings.Timeout))
+	result, err := scanRunner.Run(runCtx, target, settings)
+	cancelRun()
 	finished := s.now()
 	run.FinishedAt = &finished
 	run.UpdatedAt = finished

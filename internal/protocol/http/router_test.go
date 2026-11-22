@@ -347,7 +347,7 @@ func TestRouterDeleteOnOtherManifestSubroutesUnchanged(t *testing.T) {
 	}{
 		{name: "DELETE tags/list stays 405", method: http.MethodDelete, path: "/v2/library/alpine/tags/list", wantStatus: http.StatusMethodNotAllowed, wantAllow: http.MethodGet},
 		{name: "DELETE blob read stays 405", method: http.MethodDelete, path: "/v2/library/alpine/blobs/" + blobDigest, wantStatus: http.StatusMethodNotAllowed, wantAllow: "GET, HEAD"},
-		{name: "DELETE upload state stays 400 UNSUPPORTED (unchanged upload-cancel stub)", method: http.MethodDelete, path: "/v2/library/alpine/blobs/uploads/" + uploadID, wantStatus: http.StatusBadRequest},
+		{name: "DELETE upload state cancels the upload (204, replaces the old UNSUPPORTED stub)", method: http.MethodDelete, path: "/v2/library/alpine/blobs/uploads/" + uploadID, wantStatus: http.StatusNoContent},
 	}
 
 	for _, tt := range tests {
@@ -1108,7 +1108,7 @@ func TestRouterListsAdminUsersWithoutPasswordHashes(t *testing.T) {
 
 	if _, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
 		Username: "bob",
-		Password: "password123",
+		Password: "fixture-pass-9x",
 		Enabled:  true,
 	}); err != nil {
 		t.Fatalf("CreateAdminUser() error = %v", err)
@@ -1137,7 +1137,7 @@ func TestRouterListsAdminUsersWithoutPasswordHashes(t *testing.T) {
 	if _, ok := users[1]["password_hash"]; ok {
 		t.Fatalf("users[1] = %#v, did not expect password_hash", users[1])
 	}
-	if strings.Contains(recorder.Body.String(), "password123") {
+	if strings.Contains(recorder.Body.String(), "fixture-pass-9x") {
 		t.Fatalf("body = %q, did not expect plaintext password", recorder.Body.String())
 	}
 	if users[0]["username"] != "admin" || users[1]["username"] != "bob" {
@@ -1157,7 +1157,7 @@ func TestRouterAdminUserRoutesSupportCreateEnableDisableAndResetPassword(t *test
 	handler, authService, _, adminToken, cleanup := newTestRouterWithRealAuth(t)
 	defer cleanup()
 
-	createReq := httptest.NewRequest(http.MethodPost, "/admin/v1/users", strings.NewReader(`{"username":"bob","password":"password123","enabled":false,"is_admin":false}`))
+	createReq := httptest.NewRequest(http.MethodPost, "/admin/v1/users", strings.NewReader(`{"username":"bob","password":"fixture-pass-9x","enabled":false,"is_admin":false}`))
 	createReq.Header.Set("Authorization", "Bearer "+adminToken)
 	createReq.Header.Set("Content-Type", "application/json")
 	createRecorder := httptest.NewRecorder()
@@ -1202,7 +1202,7 @@ func TestRouterAdminUserRoutesSupportCreateEnableDisableAndResetPassword(t *test
 		t.Fatalf("reset status = %d, want %d", resetRecorder.Code, http.StatusNoContent)
 	}
 
-	if _, err := authService.LoginWithPassword(context.Background(), "bob", "password123", nil); !domainauth.IsCode(err, domainauth.ErrorCodeInvalidCredentials) {
+	if _, err := authService.LoginWithPassword(context.Background(), "bob", "fixture-pass-9x", nil); !domainauth.IsCode(err, domainauth.ErrorCodeInvalidCredentials) {
 		t.Fatalf("LoginWithPassword(old password) error = %v, want invalid credentials", err)
 	}
 	if _, err := authService.LoginWithPassword(context.Background(), "bob", "password456", nil); err != nil {
@@ -1235,13 +1235,13 @@ func TestRouterAdminCreateUserRejectsUsernameConflicts(t *testing.T) {
 
 	if _, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
 		Username: "bob",
-		Password: "password123",
+		Password: "fixture-pass-9x",
 		Enabled:  true,
 	}); err != nil {
 		t.Fatalf("CreateAdminUser() setup error = %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/admin/v1/users", strings.NewReader(`{"username":"bob","password":"password123","enabled":true,"is_admin":false}`))
+	req := httptest.NewRequest(http.MethodPost, "/admin/v1/users", strings.NewReader(`{"username":"bob","password":"fixture-pass-9x","enabled":true,"is_admin":false}`))
 	req.Header.Set("Authorization", "Bearer "+adminToken)
 	req.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
@@ -1276,7 +1276,7 @@ func TestRouterAdminResetPasswordRejectsWeakPasswords(t *testing.T) {
 
 	user, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
 		Username: "bob",
-		Password: "password123",
+		Password: "fixture-pass-9x",
 		Enabled:  true,
 	})
 	if err != nil {
@@ -1302,7 +1302,7 @@ func TestRouterAdminUserMutationRoutesRemainUnavailable(t *testing.T) {
 
 	user, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
 		Username: "bob",
-		Password: "password123",
+		Password: "fixture-pass-9x",
 		Enabled:  true,
 	})
 	if err != nil {
@@ -1345,7 +1345,7 @@ func TestRouterAdminGrantRoutesSupportListPutReplaceAndDelete(t *testing.T) {
 
 	user, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
 		Username: "bob",
-		Password: "password123",
+		Password: "fixture-pass-9x",
 		Enabled:  true,
 	})
 	if err != nil {
@@ -1438,7 +1438,7 @@ func TestRouterAdminGrantRoutesRejectInvalidInput(t *testing.T) {
 
 	user, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
 		Username: "bob",
-		Password: "password123",
+		Password: "fixture-pass-9x",
 		Enabled:  true,
 	})
 	if err != nil {
@@ -1479,7 +1479,7 @@ func TestRouterAdminTokenRoutesSupportListCreateAndScopedRevoke(t *testing.T) {
 
 	user, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
 		Username: "bob",
-		Password: "password123",
+		Password: "fixture-pass-9x",
 		Enabled:  true,
 		IsAdmin:  true,
 	})
@@ -1562,7 +1562,7 @@ func TestRouterAdminTokenRoutesRejectExcessiveTTLAndMismatchedRevoke(t *testing.
 
 	owner, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
 		Username: "owner",
-		Password: "password123",
+		Password: "fixture-pass-9x",
 		Enabled:  true,
 		IsAdmin:  true,
 	})
@@ -1571,7 +1571,7 @@ func TestRouterAdminTokenRoutesRejectExcessiveTTLAndMismatchedRevoke(t *testing.
 	}
 	other, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
 		Username: "other",
-		Password: "password123",
+		Password: "fixture-pass-9x",
 		Enabled:  true,
 		IsAdmin:  true,
 	})
@@ -1579,7 +1579,7 @@ func TestRouterAdminTokenRoutesRejectExcessiveTTLAndMismatchedRevoke(t *testing.
 		t.Fatalf("CreateAdminUser(other) error = %v", err)
 	}
 
-	createReq := httptest.NewRequest(http.MethodPost, "/admin/v1/users/"+owner.ID+"/admin-tokens", strings.NewReader(`{"name":"ci","ttl_seconds":2592001}`))
+	createReq := httptest.NewRequest(http.MethodPost, "/admin/v1/users/"+owner.ID+"/admin-tokens", strings.NewReader(`{"name":"ci","ttl_seconds":63072001}`))
 	createReq.Header.Set("Authorization", "Bearer "+adminToken)
 	createReq.Header.Set("Content-Type", "application/json")
 	createRecorder := httptest.NewRecorder()
@@ -2105,7 +2105,7 @@ func TestRouterLogsRequestPathWithQueryString(t *testing.T) {
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodGet, "/auth/token?service=registry&scope=repository:team/app:pull", nil)
-	req.SetBasicAuth("alice", "password123")
+	req.SetBasicAuth("alice", "fixture-pass-9x")
 	recorder := httptest.NewRecorder()
 
 	handler.ServeHTTP(recorder, req)
@@ -2128,7 +2128,7 @@ func TestRouterIssuesAccessTokenFromBasicCredentials(t *testing.T) {
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodGet, "/auth/token?service=registry&scope=repository:team/app:pull", nil)
-	req.SetBasicAuth("alice", "password123")
+	req.SetBasicAuth("alice", "fixture-pass-9x")
 	recorder := httptest.NewRecorder()
 
 	handler.ServeHTTP(recorder, req)
@@ -2180,7 +2180,7 @@ func TestRouterRejectsMalformedTokenScopeRequests(t *testing.T) {
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodGet, "/auth/token?service=registry&scope=repository:team/app", nil)
-	req.SetBasicAuth("alice", "password123")
+	req.SetBasicAuth("alice", "fixture-pass-9x")
 	recorder := httptest.NewRecorder()
 
 	handler.ServeHTTP(recorder, req)
@@ -2341,7 +2341,7 @@ func TestRouterReadOnlyPrincipalReadsAnyRepositoryRejectedOnPushAndAdmin(t *test
 	if err != nil {
 		t.Fatalf("ParseScopes(push) error = %v", err)
 	}
-	adminPushLogin, err := authService.LoginWithPassword(context.Background(), "admin", "password123", pushScopes)
+	adminPushLogin, err := authService.LoginWithPassword(context.Background(), "admin", "fixture-pass-9x", pushScopes)
 	if err != nil {
 		t.Fatalf("LoginWithPassword(admin push) error = %v", err)
 	}
@@ -2349,7 +2349,7 @@ func TestRouterReadOnlyPrincipalReadsAnyRepositoryRejectedOnPushAndAdmin(t *test
 
 	created, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
 		Username:   "reader",
-		Password:   "password123",
+		Password:   "fixture-pass-9x",
 		Enabled:    true,
 		IsReadOnly: true,
 	})
@@ -2364,7 +2364,7 @@ func TestRouterReadOnlyPrincipalReadsAnyRepositoryRejectedOnPushAndAdmin(t *test
 	if err != nil {
 		t.Fatalf("ParseScopes() error = %v", err)
 	}
-	loginResult, err := authService.LoginWithPassword(context.Background(), "reader", "password123", requestedScopes)
+	loginResult, err := authService.LoginWithPassword(context.Background(), "reader", "fixture-pass-9x", requestedScopes)
 	if err != nil {
 		t.Fatalf("LoginWithPassword() error = %v", err)
 	}
@@ -3386,15 +3386,26 @@ func drainingCleanup(router *Router, cleanup func()) func() {
 
 func newTestRouterWithRealAuth(t *testing.T) (*Router, *appauth.Service, domainauth.Principal, string, func()) {
 	t.Helper()
+	return newTestRouterWithRealAuthOptions(t, nil)
+}
+
+// newTestRouterWithRealAuthOptions is newTestRouterWithRealAuth with router
+// options and an optional hook that configures the auth service before the
+// router is built (login policy, injected clock and compare function).
+func newTestRouterWithRealAuthOptions(t *testing.T, configure func(*appauth.Service), options ...RouterOption) (*Router, *appauth.Service, domainauth.Principal, string, func()) {
+	t.Helper()
 
 	authStore := newSQLiteAuthStore(t)
 	accessController := ports.NewPrincipalAccessController(ports.Challenge{Realm: "http://127.0.0.1:5000/auth/token", Service: "regixtry"})
 	authService := appauth.NewService(authStore)
-	handler, cleanup := newTestRouterWithAuth(t, accessController, authServiceOrFatal(t, authService))
+	if configure != nil {
+		configure(authService)
+	}
+	handler, cleanup := newTestRouterWithAuth(t, accessController, authServiceOrFatal(t, authService), options...)
 
 	bootstrapResult, err := authService.BootstrapAdmin(context.Background(), ports.BootstrapAdminInput{
 		Username: "admin",
-		Password: "password123",
+		Password: "fixture-pass-9x",
 	})
 	if err != nil {
 		cleanup()
@@ -3402,7 +3413,7 @@ func newTestRouterWithRealAuth(t *testing.T) (*Router, *appauth.Service, domaina
 		t.Fatalf("BootstrapAdmin() error = %v", err)
 	}
 
-	loginResult, err := authService.LoginWithPassword(context.Background(), "admin", "password123", nil)
+	loginResult, err := authService.LoginWithPassword(context.Background(), "admin", "fixture-pass-9x", nil)
 	if err != nil {
 		cleanup()
 		_ = authStore.Close()
@@ -3573,6 +3584,15 @@ func (f fakeAuthService) RevokeAdminUserToken(context.Context, domainauth.Princi
 func (f fakeAuthService) ListRepoGrants(context.Context, domainauth.Principal, string) ([]domainauth.RepoGrant, error) {
 	return nil, nil
 }
+func (f fakeAuthService) ListAdminExpiringTokens(context.Context, domainauth.Principal, time.Duration, int) ([]ports.AdminExpiringToken, error) {
+	return nil, nil
+}
+func (f fakeAuthService) ListAdminAllRepositoryGrants(context.Context, domainauth.Principal, int, string) (ports.AdminGrantPage, error) {
+	return ports.AdminGrantPage{}, nil
+}
+func (f fakeAuthService) ListAdminAccessEvents(context.Context, domainauth.Principal, int) ([]ports.AdminAccessEvent, error) {
+	return nil, nil
+}
 func (f fakeAuthService) ListAdminTokens(context.Context, domainauth.Principal, string) ([]domainauth.Token, error) {
 	return nil, nil
 }
@@ -3621,4 +3641,62 @@ func (f fakeAuthService) ListAdminRobots(context.Context, domainauth.Principal) 
 func (f fakeAuthService) DeleteRobot(context.Context, domainauth.Principal, string) error { return nil }
 func (f fakeAuthService) DeleteAdminRobot(context.Context, domainauth.Principal, string) error {
 	return nil
+}
+
+func TestRouterAdminTokenAndRobotTTLBounds(t *testing.T) {
+	t.Parallel()
+
+	handler, authService, adminActor, adminToken, cleanup := newTestRouterWithRealAuth(t)
+	defer cleanup()
+
+	owner, err := authService.CreateAdminUser(context.Background(), adminActor, ports.AdminCreateUserInput{
+		Username: "ttl-owner",
+		Password: "fixture-pass-9x",
+		Enabled:  true,
+		IsAdmin:  true,
+	})
+	if err != nil {
+		t.Fatalf("CreateAdminUser(owner) error = %v", err)
+	}
+
+	post := func(path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+adminToken)
+		req.Header.Set("Content-Type", "application/json")
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+		return recorder
+	}
+
+	tests := []struct {
+		name       string
+		ttlField   string
+		wantStatus int
+	}{
+		{name: "omitted ttl uses the default", ttlField: ``, wantStatus: http.StatusCreated},
+		{name: "30 days", ttlField: `,"ttl_seconds":2592000`, wantStatus: http.StatusCreated},
+		{name: "exactly 2 years", ttlField: `,"ttl_seconds":63072000`, wantStatus: http.StatusCreated},
+		{name: "2 years plus one second", ttlField: `,"ttl_seconds":63072001`, wantStatus: http.StatusUnprocessableEntity},
+	}
+	for i, tt := range tests {
+		suffix := string(rune('a' + i))
+		t.Run("user token "+tt.name, func(t *testing.T) {
+			rec := post("/admin/v1/users/"+owner.ID+"/admin-tokens", `{"name":"ci-`+suffix+`"`+tt.ttlField+`}`)
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d; body = %s", rec.Code, tt.wantStatus, rec.Body.String())
+			}
+			if tt.wantStatus != http.StatusCreated && !strings.Contains(rec.Body.String(), "2 years") {
+				t.Fatalf("body = %s, want it to name the 2 year maximum", rec.Body.String())
+			}
+		})
+		t.Run("robot "+tt.name, func(t *testing.T) {
+			rec := post("/admin/v1/robots", `{"name":"robot-`+suffix+`","repository":"team/app","role":"repo-writer"`+tt.ttlField+`}`)
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d; body = %s", rec.Code, tt.wantStatus, rec.Body.String())
+			}
+			if tt.wantStatus != http.StatusCreated && !strings.Contains(rec.Body.String(), "2 years") {
+				t.Fatalf("body = %s, want it to name the 2 year maximum", rec.Body.String())
+			}
+		})
+	}
 }

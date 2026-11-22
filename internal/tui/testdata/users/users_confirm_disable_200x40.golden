@@ -1,0 +1,40 @@
+  Admin › Access › Users                                                                                                                                                         signed in as operator  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │
+                               │  Users                                                                                                                                            5 users, 1 disabled
+    Overview                   │
+                               │
+  ACCESS                       │
+    ▸ Users                    │
+      Robots                   │
+      Repository access        │
+                               │
+  SECURITY                     │
+      Image scanning           │                                    ╭──────────────────────────────────────────────────────────────╮
+      Secret scanning          │                                    │  Disable user?                                               │
+      Signing policy           │                                    │                                                              │
+                               │                                    │  The user cannot sign in and their tokens stop working.      │
+  OPERATIONS                   │                                    │                                                              │
+      Scan runs                │                                    │  ╭────────────────────────────────────────────────────────╮  │
+      Secret findings          │                                    │  │ carol                                                  │  │
+      Update channel           │                                    │  │ user, enabled, created 3 Mar 2026                      │  │
+                               │                                    │  ╰────────────────────────────────────────────────────────╯  │
+                               │                                    │                                                              │
+                               │                                    │  Grants are kept. Enable carol again to restore access.      │
+                               │                                    │                                                              │
+                               │                                    │   Confirm                                        y / enter   │
+                               │                                    │   Cancel                                               esc   │
+                               │                                    ╰──────────────────────────────────────────────────────────────╯
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  y / enter confirm   esc cancel                                                                                                                                                                        

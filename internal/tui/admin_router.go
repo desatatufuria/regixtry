@@ -1,45 +1,12 @@
 package tui
 
-import tea "github.com/charmbracelet/bubbletea"
+import tea "charm.land/bubbletea/v2"
 
-// legacyHandler is a Go method expression on an existing, unmodified
-// AdminViewState-backed key handler (design.md Decision C). legacyHandler
-// itself holds no state — the adapter is the map below, not this type — so
-// AdminViewState stays exactly where it is on Model and adding a screen
-// here adds one line, never a new field.
-type legacyHandler func(Model, tea.KeyMsg) (tea.Model, tea.Cmd)
-
-// legacyScreenHandlers is THE D5 adapter for every admin screen Slice 1
-// does not migrate to a sub-model. It holds no data of its own: every value
-// here is a method expression on a handler that already existed before this
-// change. The router resolves a screen id in exactly one place: slotFor
-// first, then this table — TestEveryScreenRoutesExactlyOnce/
-// TestLegacyAdapterHoldsNoState keep that boundary honest.
-var legacyScreenHandlers = map[screen]legacyHandler{
-	screenAdminLogin: Model.updateAdminLoginKey,
-	screenAdminAuthenticating: func(m Model, _ tea.KeyMsg) (tea.Model, tea.Cmd) {
-		return m, nil
-	},
-	screenAdminUsers:          Model.updateAdminUsersKey,
-	screenAdminCreateUser:     Model.updateCreateUserFormKey,
-	screenAdminEditUser:       Model.updateAdminEditUserKey,
-	screenAdminChangePassword: Model.updateResetPasswordFormKey,
-	screenAdminEditUserGrants: Model.updateAdminGrantsKey,
-	screenAdminAddGrant:       Model.updateGrantFormKey,
-	screenAdminEditUserTokens: Model.updateAdminTokensKey,
-	screenAdminCreateToken:    Model.updateTokenFormKey,
-	screenRepoAdminGrants:     Model.updateRepoAdminGrantsKey,
-	screenRepoAdminAddGrant:   Model.updateRepoAdminAddGrantKey,
-	screenAdminRobots:         Model.updateAdminRobotsKey,
-	screenAdminCreateRobot:    Model.updateCreateRobotFormKey,
-}
-
-// routeAdminKey resolves m.screen through the migrated slot first, then
-// legacyScreenHandlers (design.md Data Flow), preserving updateAdminKey's
-// prior switch-on-m.screen dispatch exactly. Slice 2 populates the migrated
-// arm: the parent REPLACES its held sub-model value (m.adminScreens[slot] =
-// next), it never writes into the sub-model's fields directly (Decision B).
-func routeAdminKey(m Model, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+// routeAdminKey sends a key to the active slot screen; the parent REPLACES its
+// held sub-model value (m.adminScreens[slot] = next), it never writes into the
+// sub-model's fields directly. The login form is the one screen that lives on
+// Model itself rather than in a slot.
+func routeAdminKey(m Model, msg keyMsg) (tea.Model, tea.Cmd) {
 	if slot, ok := slotFor(m.screen); ok {
 		s := m.adminScreens[slot]
 		if s == nil {
@@ -49,20 +16,19 @@ func routeAdminKey(m Model, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.adminScreens[slot] = next
 		return m, cmd
 	}
-	if handler, ok := legacyScreenHandlers[m.screen]; ok {
-		return handler(m, msg)
+	if m.screen == screenAdminLogin {
+		return m.updateAdminLoginKey(msg)
 	}
 	return m, nil
 }
 
 // routeAdminMsg broadcasts a non-key tea.Msg to every occupied slot in
-// adminScreens (design.md Decision H): unlike tea.KeyMsg, which goes only to
+// adminScreens (design.md Decision H): unlike a key message, which goes only to
 // the active screen, every other message goes to every migrated screen so
 // none of them can miss a result it needs while the operator has navigated
 // away — each screen's Update ignores what it does not own via its own type
 // switch. Returns the updated screen set and the first non-nil cmd
-// (Slice 1 mounts at most one sub-model at a time, so batching is not yet
-// needed; a future slice with concurrent occupied slots would batch these).
+// (at most one sub-model is mounted at a time, so there is nothing to batch).
 func routeAdminMsg(env screenEnv, screens adminScreenSet, msg tea.Msg) (adminScreenSet, tea.Cmd) {
 	var firstCmd tea.Cmd
 	for slot, s := range screens {
@@ -76,18 +42,4 @@ func routeAdminMsg(env screenEnv, screens adminScreenSet, msg tea.Msg) (adminScr
 		}
 	}
 	return screens, firstCmd
-}
-
-// renderRoutedFrame renders a migrated slot's screenFrame, or the zero value
-// when the slot is unoccupied. Slice 1 has exactly one caller of this shape
-// today (the gitleaks overlay check inside updateAdminKey/renderAdminWorkspace
-// reads adminScreens[slotGitleaksConfig] directly, since it is an overlay
-// rather than a slotFor-addressed top-level screen) — this helper exists for
-// Slice 2's top-level migrated screens, which DO resolve through slotFor.
-func renderRoutedFrame(theme adminTheme, env screenEnv, screens adminScreenSet, slot screenSlot) screenFrame {
-	s := screens[slot]
-	if s == nil {
-		return screenFrame{}
-	}
-	return s.View(theme, env)
 }

@@ -6,7 +6,9 @@ The implementation registers `/auth/token` only when auth is configured, `/admin
 
 ### `GET|POST /auth/token`
 
-Accepts Basic Auth and repeated `scope` parameters; `service` is optional and reflected back in the response. Returns `200` with `token`, `access_token`, `expires_in`, `issued_at`, and optionally `service`/`scope`. Invalid credentials return `401` with a Registry-style error. The endpoint accepts either a user's password or a pre-issued admin credential token.
+Accepts Basic Auth and repeated `scope` parameters; `service` is optional and reflected back in the response. Returns `200` with `token`, `access_token`, `expires_in`, `issued_at`, and optionally `service`/`scope`. Invalid credentials return `401` with a Registry-style error. Every credential failure is indistinguishable to the caller: an unknown username, a disabled user, a robot trying a password and a wrong password all give the same `401` and the same `invalid credentials` body, and each one costs one bcrypt comparison (against a dummy hash when no real one applies), so neither the response nor its timing reveals whether a username exists or is disabled. The real reason is only written to the server log (`login failed endpoint=/auth/token ip=... reason=... account=...`, with an `account_hash=` instead of the name for an unknown username) and to an in-process counter; passwords and tokens are never logged. The endpoint accepts either a user's password or a pre-issued admin credential token. A secret of exactly 64 lowercase hex characters is tried first as a credential token, which skips bcrypt; a miss falls back to the normal flow, so success and failure responses are unchanged.
+
+Under a real flood of password logins, bcrypt concurrency is capped (`-login-max-concurrency`): a request that cannot get a slot within 250 ms is refused with `429`, header `Retry-After: 1` and the registry error code `TOOMANYREQUESTS`, without its password being checked. The `429` has no `WWW-Authenticate` challenge and is identical for every username. Clients should wait `Retry-After` seconds and retry. The same `429` is returned while the username is in a per-account backoff (`-login-backoff-mode=enforce`; the default `log` mode never refuses), with `Retry-After` set to the remaining wait in seconds. It looks the same for existing and unknown usernames. A valid credential token is never refused for backoff.
 
 ```bash
 curl -u USERNAME:PASSWORD \
@@ -17,6 +19,10 @@ curl -u USERNAME:PASSWORD \
 
 Every route under `/admin/v1` requires a Bearer token for a global admin (`Principal.IsAdmin`), with one deliberate exception: `/admin/v1/repositories/{repo}/grants...` is reachable by any authenticated principal. The HTTP layer only authenticates the caller there (`requireAuthenticatedPrincipal`, no `IsAdmin` check); the service layer then decides admin-or-repo-admin authority per repository, since only it has the repository argument in scope. In practice this means a user holding the `repo-admin` role on that one repository (a delegate, not a global admin) can list, grant, and revoke grants for that repository — everything else under `/admin/v1` stays global-admin-only. See `internal/protocol/http/admin_handlers.go`'s `handleAdmin` for the exact prefix check.
 
+The Bearer token must also be unrestricted: an access token that carries scopes (for example one obtained with `?scope=repository:team/image:pull`, which is what `docker login` and CI pulls use) is refused on every `/admin/v1` route with `403`, even when its owner is a global admin or a repo-admin. This includes a token that was requested with scopes but was granted none of them. Upgrade note: access tokens issued before this change whose requested scopes intersected to nothing carry an empty scope and stay unrestricted until they expire (15 minutes). Administrative clients (the TUI and CLI) log in without `scope`, which produces the unrestricted token these routes accept.
+
+Resetting a password (`:reset-password`) replaces the password hash and, in the same transaction, revokes the user's active login sessions: their access tokens stop working at once (`401`). This includes the caller's own session when an admin resets their own password; they must log in again. Admin credential tokens (the PAT-like tokens managed on the Tokens screen) are not touched and still exchange for new access tokens at `/auth/token`; revoke them explicitly. The `user.password_reset` access event is recorded as before. A new password (on create, reset and `bootstrap-admin`) must have at least 8 characters and must not be on the built-in common-password list; otherwise `422` with `password is too common; choose a less guessable one`. Existing passwords are not re-checked. A robot has no password, so resetting one is rejected with `422` (`target user is a robot account and has no password`) and nothing is changed or recorded.
+
 JSON bodies are decoded rejecting unknown fields and multiple bodies.
 
 | Method | Endpoint | Body | Success |
@@ -25,15 +31,18 @@ JSON bodies are decoded rejecting unknown fields and multiple bodies.
 | POST | `/admin/v1/users` | `username`, `password`, `is_admin`, `enabled` | `201`, user |
 | POST | `/admin/v1/users/{id}:enable` | none | `200`, user |
 | POST | `/admin/v1/users/{id}:disable` | none | `200`, user |
-| POST | `/admin/v1/users/{id}:reset-password` | `new_password` | `204` |
+| POST | `/admin/v1/users/{id}:reset-password` | `new_password` | `204`; `422` for a robot |
 | GET | `/admin/v1/users/{id}/grants` | none | `200`, array of grants |
 | PUT | `/admin/v1/users/{id}/grants/{repository}` | `role` | `200`, grant |
 | DELETE | `/admin/v1/users/{id}/grants/{repository}` | none | `204` |
 | GET | `/admin/v1/users/{id}/admin-tokens` | none | `200`, array without secrets |
-| POST | `/admin/v1/users/{id}/admin-tokens` | `name`, optional `ttl_seconds` | `201`, token and secret |
+| POST | `/admin/v1/users/{id}/admin-tokens` | `name`, optional `ttl` (number plus `h`, `d` or `y`, for example `12h`, `30d`, `2y`; default 30 days; maximum 2 years), or the older `ttl_seconds` (seconds; maximum `63072000`), never both | `201`, token and secret |
 | DELETE | `/admin/v1/users/{id}/admin-tokens/{accessor}` | none | `204` |
+| GET | `/admin/v1/admin-tokens/expiring` | query `within` (number plus `h`, `d` or `y`; default `30d`; maximum `2y`) and `limit` (1 to 200; default 50); invalid values give `422` | `200`, array (soonest first) of `id`, `accessor`, `name`, `user_id`, `username`, `is_robot`, `created_at`, `expires_at` for enabled users and robots whose token is not revoked, not yet expired and expires within `within`; never a secret or hash |
+| GET | `/admin/v1/access-events` | query `limit` (1 to 200; default 20); invalid values give `422` | `200`, array (newest first) of `id`, `at`, `action`, `actor`, `subject`, `repository`, `role`, `token_name`, `detail`; empty fields are omitted; `action` is `grant.put` (repository grant given or changed), `grant.delete` (grant revoked), `token.issued`, `token.revoked`, `robot.created`, `robot.deleted`, `user.created` (`detail` lists the role flags: `administrator`, `read-only` or `standard user`), `user.enabled`, `user.disabled`, `user.updated` (`detail` lists only the flags that changed, such as `administrator on`; no event when none changed), `user.password_reset` (never carries a password) or `user.deleted` (the deleted username stays in `subject`); names and short text only, never a secret, hash, accessor or token id; global admin only |
+| GET | `/admin/v1/repository-grants` | query `limit` (1 to 200; default 100) and `after` (the opaque `next` of the previous page); invalid values or a malformed cursor give `422` | `200`, object `{"grants":[...],"next":"..."}`; `grants` holds the grants of every user and robot on every repository, including repositories that were never pushed, ordered by repository then username, each with `repository`, `user_id`, `username`, `is_robot`, `role`, `created_at`, `updated_at`; `next` is empty on the last page; disabled users still appear; never a secret, hash or token; global admin only |
 | GET | `/admin/v1/robots` | none | `200`, array of robot accounts |
-| POST | `/admin/v1/robots` | `name`, `repository`, `role`, optional `ttl_seconds` | `201`, robot account with one-time token secret |
+| POST | `/admin/v1/robots` | `name`, `repository`, `role`, optional `ttl` (number plus `h`, `d` or `y`, for example `12h`, `30d`, `2y`; default 30 days; maximum 2 years), or the older `ttl_seconds` (seconds; maximum `63072000`), never both | `201`, robot account with one-time token secret |
 | DELETE | `/admin/v1/robots/{id}` | none | `204`; rejected if the target is not a robot account |
 | GET | `/admin/v1/features` | none | `200`, built-in feature inventory |
 | GET | `/admin/v1/features/{name}` | none | `200`, feature-owned configuration |
@@ -41,8 +50,8 @@ JSON bodies are decoded rejecting unknown fields and multiple bodies.
 | PUT | `/admin/v1/features/{name}/config` | `enabled`, `schedule_enabled`, `interval`, `timeout`, `service_url`, `registry_reachable_url`, optional `auth_token`, `tls_ca_cert_path`, `tls_insecure_skip_verify`, `max_concurrency` | `200`, persisted feature state |
 | POST | `/admin/v1/features/{name}:enable` | none | `200`, enabled feature state |
 | POST | `/admin/v1/features/{name}:disable` | none | `200`, disabled feature state |
-| POST | `/admin/v1/features/{name}:install` | optional `version` | `200`, runtime state |
-| POST | `/admin/v1/features/{name}:upgrade` | optional `version` | `200`, runtime state |
+| POST | `/admin/v1/features/{name}:install` | optional `version`: `v1.2.3` or `1.2.3`, optionally with a `-prerelease` suffix, at most 64 characters; anything else (paths, `..`, queries, fragments, percent escapes, whitespace, `latest`) gives `422`; empty means the latest release | `200`, runtime state |
+| POST | `/admin/v1/features/{name}:upgrade` | optional `version`: `v1.2.3` or `1.2.3`, optionally with a `-prerelease` suffix, at most 64 characters; anything else (paths, `..`, queries, fragments, percent escapes, whitespace, `latest`) gives `422`; empty means the latest release | `200`, runtime state |
 | POST | `/admin/v1/features/{name}:rollback` | none | `200`, runtime state |
 | GET | `/admin/v1/features/{name}/repository-overrides` | none | `200`, array of stored per-repository overrides |
 | GET | `/admin/v1/features/{name}/repository-overrides/{repository}` | none | `200`, override, or `404` when none is set |
@@ -67,6 +76,45 @@ JSON bodies are decoded rejecting unknown fields and multiple bodies.
 | POST | `/admin/v1/gc/reports` | none | `201`, computed report of unreferenced, grace-expired blob candidates; always reachable regardless of `REGISTRY_GC_DELETE_ENABLED` |
 | GET | `/admin/v1/gc/reports/{id}` | none | `200`, a previously computed report by id, with its full candidate list |
 | POST | `/admin/v1/gc/reports/{id}/delete` | none | `200`, delete outcome (per-candidate `deleted`/`retained`/`missing`/`failed`); gated by `REGISTRY_GC_DELETE_ENABLED` (`UNSUPPORTED`/`501` while disabled) |
+
+Example: tokens that expire in the next 14 days (global admin token required):
+
+```sh
+curl -H "Authorization: Bearer $TOKEN" \
+  "https://registry.example.com/admin/v1/admin-tokens/expiring?within=14d"
+```
+
+```json
+[{"id":"6f1c2b0e-8d4a-4a53-9a57-1f3e5c7d9b21","accessor":"act_6f1c2b0e8d4a4a539a571f3e5c7d9b21","name":"ci","user_id":"u_1","username":"alice","is_robot":false,"created_at":"2026-02-01T10:00:00Z","expires_at":"2026-03-10T10:00:00Z"}]
+```
+
+Example: the five most recent access changes (global admin token required):
+
+```sh
+curl -H "Authorization: Bearer $TOKEN" \
+  "https://registry.example.com/admin/v1/access-events?limit=5"
+```
+
+```json
+[{"id":"0b6f4c1e-52c1-4e0a-9f55-7d1a2c3e4b5f","at":"2026-03-01T10:00:00.5Z","action":"grant.put","actor":"admin","subject":"alice","repository":"team/app","role":"repo-writer","detail":"Reader to Writer"},{"id":"7a1d9e20-3b4c-4f6a-8d12-9e0f1a2b3c4d","at":"2026-03-01T09:30:00Z","action":"token.issued","actor":"admin","subject":"alice","token_name":"ci","detail":"30 days"}]
+```
+
+Example: the first page of all repository grants, then the next one (global admin token required):
+
+```sh
+curl -H "Authorization: Bearer $TOKEN" \
+  "https://registry.example.com/admin/v1/repository-grants?limit=2"
+curl -H "Authorization: Bearer $TOKEN" \
+  "https://registry.example.com/admin/v1/repository-grants?limit=2&after=eyJyIjoidGVhbS93ZWIiLCJ1IjoiYW5hIiwiaSI6InVfMSJ9"
+```
+
+```json
+{"grants":[{"repository":"alpha/api","user_id":"u_1","username":"ana","is_robot":false,"role":"repo-admin","created_at":"2026-03-01T09:00:00Z","updated_at":"2026-03-01T09:00:00Z"},{"repository":"team/web","user_id":"u_1","username":"ana","is_robot":false,"role":"repo-writer","created_at":"2026-03-01T09:30:00Z","updated_at":"2026-03-02T08:00:00Z"}],"next":"eyJyIjoidGVhbS93ZWIiLCJ1IjoiYW5hIiwiaSI6InVfMSJ9"}
+```
+
+The cursor is opaque: pass `next` back unchanged as `after`, never build or edit one. The order is bytewise by repository name, then username. Grants are read live, so a grant added or removed between pages can appear or vanish but the walk never repeats or skips a stable row.
+
+Events are recorded after the change succeeded and on a best-effort basis: a failed history write never fails the change itself.
 
 See [registry.md](registry.md#blob-garbage-collection) for the full garbage-collection flow, including the grace window and delete-time re-check that keep it safe.
 
@@ -179,9 +227,9 @@ The detail payload keeps the summary `run` object, a compact ordered `findings` 
 | POST | `/v2/<repo>/blobs/uploads/` | Starts upload; `202` |
 | GET/HEAD | `/v2/<repo>/blobs/uploads/<id>` | Upload state; `204` |
 | PATCH | `/v2/<repo>/blobs/uploads/<id>` | Appends a chunk; `202` |
-| PUT | `/v2/<repo>/blobs/uploads/<id>?digest=sha256:...` | Completes upload; `201` |
-| DELETE | `/v2/<repo>/blobs/uploads/<id>` | Not implemented; `UNSUPPORTED` |
-| GET/HEAD | `/v2/<repo>/blobs/<digest>` | Blob; `200` |
+| PUT | `/v2/<repo>/blobs/uploads/<id>?digest=sha256:...` | Completes upload and links the blob to `<repo>`; `201` |
+| DELETE | `/v2/<repo>/blobs/uploads/<id>` | Cancels the upload (session row and temp data); `204`. Needs `push` on the upload's own repository; an upload of another repository is `404` |
+| GET/HEAD | `/v2/<repo>/blobs/<digest>` | Blob; `200`. Served only if `<repo>` holds the blob (uploaded into it or referenced by one of its manifests); otherwise `404 BLOB_UNKNOWN` even if another repository has it |
 | PUT | `/v2/<repo>/manifests/<tag-or-digest>` | Publishes manifest; `201` |
 | GET/HEAD | `/v2/<repo>/manifests/<tag-or-digest>` | Manifest; `200` |
 | DELETE | `/v2/<repo>/manifests/<digest>` | Deletes the manifest, cascading to every tag pointing at it; `202` JSON body naming what was removed; `404` if absent |
@@ -192,7 +240,9 @@ The detail payload keeps the summary `run` object, a compact ordered `findings` 
 
 `_catalog` and `tags/list` accept `n` and `last`. Without `n`, no limit is applied; a negative or non-numeric `n` is `400`. Registry errors follow `{ "errors": [{"code":"...","message":"..."}] }`.
 
-Both `DELETE` routes are gated by the opt-in `-delete-enabled`/`REGISTRY_DELETE_ENABLED` flag (default `false`). When the flag is off, an otherwise-authorized caller gets `UNSUPPORTED` (`400`), the same acknowledged-but-refused shape `blobs/uploads/<id>` DELETE already uses, never a bare `405`. Deletion requires the distinct `delete` scope action (`repository:<name>:delete`) and never removes blob files on disk.
+Both `DELETE` routes are gated by the opt-in `-delete-enabled`/`REGISTRY_DELETE_ENABLED` flag (default `false`). When the flag is off, an otherwise-authorized caller gets `UNSUPPORTED` (`400`), an acknowledged-but-refused shape rather than a bare `405`. Deletion requires the distinct `delete` scope action (`repository:<name>:delete`) and never removes blob files on disk.
+
+Limits: a manifest `PUT` body above `-max-manifest-bytes` (default 4 MiB) is refused with `413` and OCI code `SIZE_INVALID`; a blob upload whose accumulated size (across all `PATCH`/`PUT` chunks) would exceed `-max-upload-bytes` (default 5 GiB) is refused the same way and keeps its previous size; opening an upload beyond `-max-open-uploads` / `-max-open-uploads-per-repo` is `429` with `TOOMANYREQUESTS`. A `PUT` that commits an upload while a `PATCH` to the same upload is still streaming is `409`. Uploads idle longer than `-upload-ttl` (default 24h) are deleted by a background reaper. See [configuration.md](configuration.md).
 
 Relevant headers: `Docker-Content-Digest`, `Docker-Upload-UUID`, `Location`, `Range`, `Content-Length`, `Content-Type`, `WWW-Authenticate`.
 

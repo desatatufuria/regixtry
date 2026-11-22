@@ -1,0 +1,24 @@
+  Admin › Security › Secret scanning › Repositories                                                                            signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │
+                               │  Secret scanning                                                                    Gitleaks, leaked-secret scanner
+    Overview                   │  4 repositories, 2 with an override
+                               │  ╭────────────────────────────────────────────────────────────────────────╮  ╭────────────────────────────────────╮
+  ACCESS                       │  │   REPOSITOR  ╭──────────────────────────────────────────────────╮      │  │ team/api                           │
+      Users                    │  │ ▸ team/api   │  Gitleaks override                               │      │  │ override                           │
+      Robots                   │  │   team/docs  │  team/api. override active.                      │      │  │                                    │
+      Repository access        │  │   team/web   │  [x] Scanning enabled                            │      │  │ OVERRIDE                           │
+                               │  │   team/infr  │  Config path                                     │      │  │ Scanning                        on │
+  SECURITY                     │  │              │   /etc/gitleaks.toml                             │      │  │ Config path     /etc/gitleaks.toml │
+      Image scanning           │  │              │  Clear override, use the global settings         │      │  │ Updated                     12 Nov │
+    ▸ Secret scanning          │  │              │                                                  │      │  │                                    │
+      Signing policy           │  │              │   Save  enter   Cancel  esc                      │      │  │ ACTIONS                            │
+                               │  │              │  tab next field, space toggles                   │      │  │ Edit override                    o │
+  OPERATIONS                   │  │              ╰──────────────────────────────────────────────────╯      │  │ Refresh                          r │
+      Scan runs                │  │                                                                        │  │                                    │
+      Secret findings          │  │                                                                        │  │                                    │
+      Update channel           │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │
+                               │  o edits the override of the selected repository. An override replaces       │                                    │
+                               │  the global settings for it.                                                 ╰────────────────────────────────────╯
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  tab next field   space toggle   enter save   esc cancel                                                                                F2 mouse on  

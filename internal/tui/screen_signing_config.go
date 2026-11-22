@@ -1,185 +1,146 @@
 package tui
 
 import (
-	"fmt"
-	"strings"
-
-	"github.com/charmbracelet/bubbles/key"
-	tea "github.com/charmbracelet/bubbletea"
-	bubbletable "github.com/evertras/bubble-table/table"
+	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
 	"regixtry/internal/ports"
 )
 
-// signingConfigScreen was Phase 12.3's sub-model, mounted as an overlay on
-// the still-legacy screenAdminFeatures. Phase 11 (the resolved-gap
-// addendum) promotes it to a properly addressable top-level screen
-// (screenSecuritySigningConfig), mirroring gitleaksConfigScreen exactly:
-// it now independently owns its own `page` (loaded via loadFeaturePageCmd
-// scoped to signingFeatureName) and the enable/disable/install/upgrade/
-// rollback action dispatch.
+// signingConfigScreen is "Signing policy" (the approved "Signing policy"
+// board): whether unsigned images may be pulled, the trusted public keys and
+// keyless identities, and the per-repository overrides, with the policy editor
+// as a modal.
 //
-// policy is now the full migrated AdminViewState.SigningPolicy (design.md's
-// State Migration table, closing Phase 12.3's own disclosed deviation): the
-// signing badge's only reader, renderAdminFeaturesScreen's Feature Page
-// heading, no longer exists (Phase 11 deletes it -- securityMenuScreen is a
-// bare peer list with no per-feature badge), so the second-reader conflict
-// that justified keeping SigningPolicy on AdminViewState in the Phase 12.3
-// follow-up batch no longer applies.
+// The field names confirm and cfg are read by Model
+// (migratedScreenCapturesTextInput): do not rename them.
 type signingConfigScreen struct {
-	page   ports.FeaturePage
-	loaded bool
-	rows   map[string]bubbletable.Model
-	cfg    signingPolicyModal
-	policy ports.SigningPolicySettings
-	// confirm is this screen's own confirm-before-destructive-action prompt
-	// (mirrors trivyConfigScreen.confirm's doc comment exactly).
-	confirm confirmPrompt
-	// submitting is the transient "Submitting X for Y..." status text shown
-	// while confirm's dispatched command is in flight, surfaced through this
-	// screen's own View (Body) the instant Enter dispatches onConfirm --
-	// mirrors trivyConfigScreen.submitting exactly (design.md Decision B).
-	submitting string
-	err        string
+	securityFeature
+	cfg          signingPolicyModal
+	policy       ports.SigningPolicySettings
+	policyLoaded bool
+	policyErr    string
+	// saving is true from the Enter that saved the policy until the result
+	// arrives: Enter is ignored meanwhile.
+	saving bool
+	// clearArmed is set by the Enter that asked to clear every trusted key: the
+	// next Enter confirms it, any other key cancels it.
+	clearArmed bool
 }
 
-// newSigningConfigScreen constructs an unloaded screen; Init issues the
-// FeaturePage load. Phase 11 deviation from Phase 12.3's own constructor
-// (which took an already-seeded signingPolicyModal + baseline keys): now
-// top-level and long-lived, it loads its own page/policy independently
-// instead of being pre-seeded by its opener (mirrors
-// newGitleaksConfigScreen's identical Phase 11 change).
-func newSigningConfigScreen() signingConfigScreen { return signingConfigScreen{} }
+func newSigningConfigScreen() signingConfigScreen {
+	return signingConfigScreen{securityFeature: newSecurityFeature(signingFeatureName)}
+}
 
 func (s signingConfigScreen) ID() screen { return screenSecuritySigningConfig }
 
 func (s signingConfigScreen) Keys() screenKeys {
 	if s.cfg.Active() {
-		return signingConfigModalKeys
+		return securityModalKeys
 	}
 	short := []key.Binding{
-		key.NewBinding(key.WithKeys("enter", "r"), key.WithHelp("Enter/r", "refresh page")),
 		key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "policy")),
+		key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "overrides")),
 	}
 	short = append(short, featureActionKeyBindings(s.page)...)
 	short = append(short,
-		key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "repository overrides")),
-		key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "back")),
-		key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
+		key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
+		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
+		quitKey(),
 	)
 	return screenKeys{short: short}
 }
 
-func (s signingConfigScreen) Init(env screenEnv) tea.Cmd {
-	return loadFeaturePageCmd(env, signingFeatureName)
-}
+func (s signingConfigScreen) Init(env screenEnv) tea.Cmd { return s.load(env) }
 
 func (s signingConfigScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.Cmd, bool) {
-	if key, ok := msg.(tea.KeyMsg); ok {
+	if key, ok := msg.(keyMsg); ok {
 		switch {
 		case s.confirm.Active():
-			before := s.confirm
-			next, cmd, consumed := s.confirm.update(env, key)
-			s.confirm = next
-			switch {
-			case cmd != nil:
-				s.submitting = before.submitting
-			case isEscKey(key):
-				s.submitting = ""
-			}
-			return s, cmd, consumed
+			f, cmd := s.updateConfirm(env, key)
+			s.securityFeature = f
+			return s, cmd, true
 		case s.cfg.Active():
 			return s.updateConfigKey(env, key)
 		}
 		return s.updateKey(env, key)
 	}
+	if owned, ok := msg.(securityMsg); ok && owned.securityGen() != s.gen {
+		return s, nil, false
+	}
 	switch typed := msg.(type) {
-	case tea.WindowSizeMsg:
-		s.rebuildRows(env)
+	case securityPageMsg:
+		s.securityFeature = s.applyPage(typed)
+		if typed.err != nil {
+			return s, nil, false
+		}
+		return s, securityLoadSigningPolicyCmd(env, s.gen), false
+	case securityOverridesMsg:
+		s.securityFeature = s.applyOverrides(env, typed)
 		return s, nil, false
-	case adminFeaturePageLoadedMsg:
-		if typed.feature != signingFeatureName {
-			return s, nil, false
-		}
+	case securitySigningPolicyLoadedMsg:
 		if typed.err != nil {
-			s.err = typed.err.Error()
+			s.policyErr = typed.err.Error()
+			return s, s.loadOverrides(env), false
+		}
+		s.policy, s.policyLoaded, s.policyErr = typed.settings, true, ""
+		return s, s.loadOverrides(env), false
+	case securitySigningPolicySavedMsg:
+		if !s.saving {
 			return s, nil, false
 		}
-		s.page = typed.page
-		s.loaded = true
-		s.err = ""
-		s.rebuildRows(env)
-		return s, loadSigningPolicyCmd(env), false
-	case adminSigningPolicyLoadedMsg:
+		s.saving = false
 		if typed.err != nil {
+			// The modal keeps everything the operator typed.
+			if s.cfg.Active() {
+				s.cfg.Error = typed.err.Error()
+			} else {
+				s.err = typed.err.Error()
+			}
 			return s, nil, false
 		}
-		s.policy = typed.settings
-		return s, nil, false
-	case adminSigningPolicyUpdatedMsg:
-		if typed.err != nil {
-			s.cfg.Error = typed.err.Error()
-			return s, nil, false
-		}
-		// Unlike scanPolicyModal, the modal stays open after a successful
-		// save (design.md Decision 11 piece 1's growable key list): the
-		// operator can keep adding keys/identities.
-		s.policy = typed.settings
+		// Unlike the scan policy modal, this one stays open after a save: the
+		// operator can keep adding keys and identities.
+		s.policy, s.policyLoaded, s.policyErr = typed.settings, true, ""
 		s.cfg.Enabled = typed.settings.Enabled
 		s.cfg.UnsignedSelfRead = normalizeUnsignedSelfRead(typed.settings.UnsignedSelfRead)
 		s.cfg.Keys = s.cfg.Keys.SetKeys(typed.settings.TrustedPublicKeys)
 		s.cfg.Identities = s.cfg.Identities.SetIdentities(typed.settings.TrustedIdentities)
 		s.cfg.Error = ""
+		s.err, s.note = "", "Signing policy saved."
 		return s, nil, false
-	case adminSigningKeyUsageLoadedMsg:
-		s.cfg.Keys = s.cfg.Keys.applyUsageLoaded(typed)
+	case securityKeyUsageMsg:
+		s.cfg.Keys = s.cfg.Keys.applyUsageLoaded(adminSigningKeyUsageLoadedMsg{key: typed.key, count: typed.count, capped: typed.capped, err: typed.err})
 		return s, nil, false
-	case adminFeatureActionCompletedMsg:
-		if typed.feature != signingFeatureName {
-			return s, nil, false
+	case securityActionMsg:
+		f, reload := s.applyActionResult(typed)
+		s.securityFeature = f
+		if reload {
+			return s, s.load(env), false
 		}
-		s.confirm = confirmPrompt{}
-		s.submitting = ""
-		if typed.err != nil {
-			s.err = typed.err.Error()
-			return s, nil, false
-		}
-		s.err = ""
-		return s, loadFeaturePageCmd(env, signingFeatureName), false
-	case adminFeatureConfiguredMsg:
-		if typed.name != signingFeatureName {
-			return s, nil, false
-		}
-		if typed.err != nil {
-			s.err = typed.err.Error()
-			return s, nil, false
-		}
-		return s, loadFeaturePageCmd(env, signingFeatureName), false
-	case adminFeatureRuntimeMutatedMsg:
-		if typed.name != signingFeatureName || typed.err != nil {
-			return s, nil, false
-		}
-		return s, loadFeaturePageCmd(env, signingFeatureName), false
+		return s, nil, false
 	}
 	return s, nil, false
 }
 
-func (s *signingConfigScreen) rebuildRows(env screenEnv) {
-	_, compact := tableRoles(env.Layout)
-	rows := make(map[string]bubbletable.Model)
-	for _, section := range s.page.Sections {
-		if section.Kind != "rows" {
-			continue
-		}
-		rows[section.ID] = buildAdminFeatureRowsTable(section, compact)
+func (s signingConfigScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd, bool) {
+	if isPasteKey(msg) {
+		// Pasted text is never a command: its first character must not run an
+		// action or open an editor.
+		return s, nil, true
 	}
-	s.rows = rows
-}
-
-func (s signingConfigScreen) updateKey(env screenEnv, msg tea.KeyMsg) (adminScreen, tea.Cmd, bool) {
+	s.note = ""
 	switch {
 	case isEscKey(msg):
-		return s, navigate(screenAdminFeatures), true
+		return s, navigate(screenAdminOverview), true
+	case isRuneKey(msg, 'o'):
+		return s, navigate(screenSecuritySigningRepos), true
 	case isRuneKey(msg, 'p'):
+		if !s.policyLoaded {
+			// Saving a policy that never loaded would wipe the real trusted
+			// keys and identities.
+			s.err = "The signing policy has not loaded yet. Press r to try again."
+			return s, nil, true
+		}
 		s.cfg = signingPolicyModal{
 			Open:             true,
 			Focus:            signingPolicyFieldEnabled,
@@ -188,74 +149,37 @@ func (s signingConfigScreen) updateKey(env screenEnv, msg tea.KeyMsg) (adminScre
 			Keys:             newTrustedKeyList("", s.policy.TrustedPublicKeys),
 			Identities:       newTrustedIdentityList(s.policy.TrustedIdentities),
 		}
+		s.err = ""
 		return s, nil, true
-	case isRuneKey(msg, 'o'):
-		// Same fix as gitleaks, for signing (spec.md "Signing
-		// Repository-Scoped Override Entry Point").
-		return s, navigate(screenSecuritySigningRepos), true
-	case isEnterKey(msg), isRuneKey(msg, 'r'):
-		return s, loadFeaturePageCmd(env, signingFeatureName), true
+	case isRuneKey(msg, 'r'), isEnterKey(msg):
+		s.err = ""
+		return s, s.load(env), true
 	}
-	if action, ok := featureActionForKey(msg, s.page); ok {
-		return s.dispatchAction(env, action)
-	}
-	return s, nil, true
+	f, cmd, _ := s.actionKey(env, msg)
+	s.securityFeature = f
+	return s, cmd, true
 }
 
-// dispatchAction mirrors trivyConfigScreen.dispatchAction exactly, scoped
-// to signingFeatureName.
-func (s signingConfigScreen) dispatchAction(env screenEnv, action ports.FeatureAction) (adminScreen, tea.Cmd, bool) {
-	if strings.TrimSpace(action.ConfirmMessage) != "" {
-		var (
-			submitting string
-			onConfirm  func(screenEnv) tea.Cmd
-		)
-		if action.ID == "enable" || action.ID == "disable" {
-			actionID := action.ID
-			submitting = fmt.Sprintf("Submitting %s for %s...", actionID, signingFeatureName)
-			onConfirm = func(env screenEnv) tea.Cmd { return executeFeatureActionCmd(env, signingFeatureName, actionID) }
-		}
-		s.confirm = newConfirmPrompt(adminFirstNonEmpty(action.ConfirmTitle, action.Label), action.ConfirmMessage, strings.ToLower(strings.TrimSpace(action.Label)), submitting, onConfirm)
+// updateConfigKey handles one key of the policy modal.
+//
+// The trusted-key list claims Up, Down, j, k, n and x, and every key while it
+// is adding a key or confirming a delete, whichever field has focus: none of
+// the modal's other fields takes typed text, so there is no clash. When it
+// consumes a key the focus snaps onto it, so the highlight always shows what
+// is receiving input. The identity list claims the same keys only once Tab
+// has put focus on it: two lists cannot both own them unannounced.
+func (s signingConfigScreen) updateConfigKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd, bool) {
+	if isEscKey(msg) && !s.cfg.Keys.adding && !s.cfg.Keys.confirm.Active() && !s.cfg.Keys.usageLoading && !s.cfg.Identities.adding {
+		s.cfg = signingPolicyModal{}
+		s.clearArmed = false
 		return s, nil, true
 	}
-	return s, executeFeatureActionCmd(env, signingFeatureName, action.ID), true
-}
-
-func (s signingConfigScreen) updateConfigKey(env screenEnv, msg tea.KeyMsg) (adminScreen, tea.Cmd, bool) {
-	// The Keys field (trustedKeyList) claims Up/Down/'n'/'x' and every key
-	// while it is mid-add or mid-delete-confirm; only what it does NOT
-	// consume (Tab/Esc/Space/Enter in its own idle navigation state) falls
-	// through to this modal's own bindings below.
-	//
-	// This routing is UNCONDITIONAL (not gated on
-	// s.cfg.Focus == signingPolicyFieldAddKey): the modal opens with
-	// Focus == signingPolicyFieldEnabled (updateKey's 'p' branch), not the
-	// key list's position, so gating on Tab-focus made 'n'/'x'/Up/Down
-	// silent no-ops until the operator tabbed to the exact right field
-	// first -- the "can't add a key" bug. Enabled/UnsignedSelfRead are
-	// Space-toggled/cycled, never rune-typed, so there is no other field in
-	// this modal that could ever claim these keys as literal input; routing
-	// them here first is safe.
-	//
-	// Judgment Day fix-round: unconditional routing alone left the visible
-	// Tab-focus indicator free to disagree with what actually responded to
-	// the keystroke -- pressing 'n' while "Unsigned Self-Read" was
-	// highlighted silently acted on the key list instead, with no on-screen
-	// sign focus had effectively moved. The moment s.cfg.Keys.update
-	// actually CONSUMES a key, snap s.cfg.Focus to signingPolicyFieldAddKey
-	// too, so the rendered highlight (renderSigningPolicyModal's
-	// modal.Focus == signingPolicyFieldAddKey check) is always honest about
-	// what is currently receiving input.
-	//
-	// Identities (signing-keyless-verification) is NOT given the same
-	// unconditional priority as Keys: both widgets would otherwise claim
-	// the identical Up/Down/'n'/'x' keys ambiguously with no way to tell
-	// which list an unfocused keystroke was meant for. Identities only
-	// claims them once the operator has actually tabbed onto
-	// signingPolicyFieldIdentities -- Keys keeps its established
-	// reachable-from-anywhere shortcut (preserving
-	// TestSigningConfigScreenKeyListReachableWithoutTabbingToIt's pinned
-	// behavior) since it has no competing sibling field ambiguity.
+	if s.saving {
+		return s, nil, true
+	}
+	s.note = ""
+	armed := s.clearArmed
+	s.clearArmed = false
 	if s.cfg.Focus == signingPolicyFieldIdentities {
 		next, consumed := s.cfg.Identities.update(msg)
 		if consumed {
@@ -265,20 +189,24 @@ func (s signingConfigScreen) updateConfigKey(env screenEnv, msg tea.KeyMsg) (adm
 	} else {
 		next, cmd, consumed := s.cfg.Keys.update(env, msg)
 		if consumed {
+			if next.usageLoading && !s.cfg.Keys.usageLoading {
+				// The usage lookup is this screen's own, stamped with its
+				// generation, so a late answer cannot reach another screen.
+				cmd = securityKeyUsageCmd(env, s.gen, next.keys[next.pendingDeleteIndex])
+			}
 			s.cfg.Keys = next
 			s.cfg.Focus = signingPolicyFieldAddKey
 			return s, cmd, true
 		}
 	}
 	switch {
-	case isEscKey(msg):
-		s.cfg = signingPolicyModal{}
-		return s, nil, true
-	case isTabKey(msg):
+	case isTabKey(msg), isArrowDownKey(msg):
 		s.cfg.Focus = nextSigningPolicyField(s.cfg.Focus)
 		s.cfg.Error = ""
-		return s, nil, true
-	case isRuneKey(msg, ' '):
+	case isShiftTabKey(msg), isArrowUpKey(msg):
+		s.cfg.Focus = previousSigningPolicyField(s.cfg.Focus)
+		s.cfg.Error = ""
+	case isSpaceKey(msg):
 		switch s.cfg.Focus {
 		case signingPolicyFieldEnabled:
 			s.cfg.Enabled = !s.cfg.Enabled
@@ -286,115 +214,36 @@ func (s signingConfigScreen) updateConfigKey(env screenEnv, msg tea.KeyMsg) (adm
 			s.cfg.UnsignedSelfRead = nextUnsignedSelfReadValue(s.cfg.UnsignedSelfRead)
 		}
 		s.cfg.Error = ""
-		return s, nil, true
 	case isEnterKey(msg):
 		var trustedKeys []string
-		if s.cfg.Focus != signingPolicyFieldClearKeys {
+		if s.cfg.Focus == signingPolicyFieldClearKeys {
+			if len(s.cfg.Keys.Keys()) > 0 && !armed {
+				// Removing every trusted key makes every pull unverifiable:
+				// ask before sending it.
+				s.clearArmed = true
+				return s, nil, true
+			}
+		} else {
 			trustedKeys = s.cfg.Keys.Keys()
 		}
-		input := ports.SigningPolicySettings{
+		s.saving = true
+		s.cfg.Error = ""
+		// The PUT replaces the whole policy with this snapshot of the lists: a
+		// key or identity another operator added since the policy loaded is
+		// lost (accepted, as before this screen was rebuilt).
+		return s, securitySaveSigningPolicyCmd(env, s.gen, ports.SigningPolicySettings{
 			Enabled:           s.cfg.Enabled,
 			TrustedPublicKeys: trustedKeys,
 			TrustedIdentities: s.cfg.Identities.Identities(),
 			UnsignedSelfRead:  normalizeUnsignedSelfRead(s.cfg.UnsignedSelfRead),
-		}
-		return s, updateSigningPolicyCmd(env, input), true
+		}), true
 	}
 	return s, nil, true
 }
 
-// updateSigningPolicyCmd is the screenEnv-scoped equivalent of Model's own
-// updateSigningPolicyCmd method, needed because a sub-model has no Model to
-// call a method on -- built from env.asModel() so the exact same
-// AdminClient.UpdateSigningPolicy call/message shape
-// (adminSigningPolicyUpdatedMsg) is reused verbatim.
-func updateSigningPolicyCmd(env screenEnv, input ports.SigningPolicySettings) tea.Cmd {
-	return env.asModel().updateSigningPolicyCmd(input)
-}
-
-// View reproduces renderSigningPolicyModal's exact layout as this screen's
-// Overlay when the modal is open, with the base Feature Page body rendered
-// underneath (mirrors gitleaksConfigScreen.View exactly).
-func (s signingConfigScreen) View(theme adminTheme, env screenEnv) screenFrame {
-	// The signing badge is composed onto this heading line at zero row
-	// cost -- there is no tab strip on the signing page the way
-	// renderTrivyTabs hosts the scan policy badge, so the heading itself is
-	// the zero-row host (design.md Decision 11 piece 1).
-	heading := theme.subheading.Render("Feature Page") + "  " + signingPolicyBadge(theme, s.policy)
-	lines := []string{heading}
-	if s.err != "" {
-		lines = append(lines, "", theme.error.Render(s.err))
+func previousSigningPolicyField(field signingPolicyField) signingPolicyField {
+	if field <= signingPolicyFieldEnabled {
+		return signingPolicyFieldClearKeys
 	}
-	if s.submitting != "" {
-		lines = append(lines, "", theme.muted.Render(s.submitting))
-	}
-	if !s.loaded {
-		lines = append(lines, theme.muted.Render("Select or refresh a feature to load the backend-declared page."))
-	} else {
-		lines = append(lines, renderGenericFeaturePage(theme, s.page, s.rows)...)
-	}
-	lines = append(lines, renderAdminOperatorFooter(theme, env.Session, env.now())...)
-	frame := screenFrame{
-		Context: "Security & Compliance / Signing",
-		Body:    renderSection(theme, strings.Join(lines, "\n"), env.Layout),
-	}
-	switch {
-	case s.confirm.Active():
-		frame.Overlay = s.confirm.view(theme)
-	case s.cfg.Active():
-		frame.Overlay = renderSigningPolicyModal(theme, s.cfg)
-	}
-	return frame
-}
-
-// renderSigningPolicyModal renders the image-signing content-trust gate's
-// own modal (design.md Decision 11 piece 1), a sibling of
-// renderScanPolicyModal -- NOT an extension of it. Row arithmetic: heading
-// (1) + status (1) + 3 fields x 2 rows (6) + key list (1 for empty, else
-// min(N,4)+[1 if N>4]) + clear row (1) + blank/help (2, +2 more with an
-// error) + 4 rows theme.section chrome.
-func renderSigningPolicyModal(theme adminTheme, modal signingPolicyModal) string {
-	lines := []string{
-		theme.subheading.Render("Signing Policy"),
-		theme.muted.Render(signingPolicyStatusLine(modal)),
-		renderToggleField(theme, "Enabled", modal.Enabled, modal.Focus == signingPolicyFieldEnabled),
-		renderTextField(theme, "Unsigned Self-Read", normalizeUnsignedSelfRead(modal.UnsignedSelfRead), modal.Focus == signingPolicyFieldUnsignedSelfRead),
-	}
-	lines = append(lines, renderTrustedKeyList(theme, modal.Keys, modal.Focus == signingPolicyFieldAddKey)...)
-	lines = append(lines, renderTrustedIdentityList(theme, modal.Identities, modal.Focus == signingPolicyFieldIdentities)...)
-	lines = append(lines, renderSigningPolicyClearKeysRow(theme, modal))
-	if strings.TrimSpace(modal.Error) != "" {
-		lines = append(lines, "", theme.error.Render(modal.Error))
-	}
-	lines = append(lines, "", theme.muted.Render(shortHelpView(theme, signingConfigModalKeys)))
-	return theme.section.Render(strings.Join(lines, "\n"))
-}
-
-// signingPolicyStatusLine answers "is this modal loading, and how many
-// trusted keys are currently configured", occupying the modal's own fixed
-// Status row regardless of key count (design.md Decision 11's row-budget
-// table lists Status as a constant 1-row cost, distinct from the scaling
-// key list below it).
-func signingPolicyStatusLine(modal signingPolicyModal) string {
-	if modal.Loading {
-		return "Loading…"
-	}
-	return fmt.Sprintf("%d trusted key(s), %d trusted identity(ies) configured", len(modal.Keys.Keys()), len(modal.Identities.Identities()))
-}
-
-// renderSigningPolicyClearKeysRow renders the modal's ClearKeys action as a
-// single-row line, mirroring renderRepositoryOverrideClearRow's action-row
-// pattern (an action, not an input, so it costs 1 row rather than 2). This
-// stays alongside trustedKeyList's own per-key 'x' delete as a bulk
-// convenience -- "clear every key in the list" -- not a replacement for it.
-func renderSigningPolicyClearKeysRow(theme adminTheme, modal signingPolicyModal) string {
-	label := "Clear all trusted keys"
-	if len(modal.Keys.Keys()) == 0 {
-		label = "No trusted keys to clear"
-	}
-	style := theme.muted
-	if modal.Focus == signingPolicyFieldClearKeys {
-		style = theme.inputFocus
-	}
-	return style.Render(label)
+	return field - 1
 }

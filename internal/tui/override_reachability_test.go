@@ -25,17 +25,14 @@ func TestEveryOverridePathReachableBeforeIsReachableAfter(t *testing.T) {
 		t.Parallel()
 		adminClient := &fakeAdminClient{
 			loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-			features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 			featurePage:  ports.FeaturePage{Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 			scanRuns: []ports.ScanRun{
 				{ID: "run-1", Repository: "team/api", RequestedRef: "1.0.0", Status: ports.ScanRunStatusCompleted, Critical: 1},
 			},
 		}
 		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
-		updated = runKey(t, updated, "down")
-		updated = runKey(t, updated, "enter")
-		updated = runKey(t, updated, "enter") // trivyConfigScreen
-		updated = runKey(t, updated, "tab")   // trivyReposScreen
+		updated = openSidebarItem(t, updated, shellNavImageScanning)
+		updated = runKey(t, updated, "tab") // trivyReposScreen
 		updated = runKey(t, updated, "o")
 
 		// Phase 11: the uniform overrideEditor is now embedded directly in
@@ -51,15 +48,12 @@ func TestEveryOverridePathReachableBeforeIsReachableAfter(t *testing.T) {
 		t.Parallel()
 		adminClient := &fakeAdminClient{
 			loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-			features:     []ports.FeatureSummary{{Name: "gitleaks", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 			featurePage:  ports.FeaturePage{Summary: ports.FeatureSummary{Name: "gitleaks", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 		}
 		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
-		updated = runKey(t, updated, "down")
-		updated = runKey(t, updated, "enter")
-		updated = runKey(t, updated, "enter") // gitleaksConfigScreen
-		updated = runKey(t, updated, "o")     // screenSecurityGitleaksRepos
-		updated = runKey(t, updated, "o")     // opens the override editor
+		updated = openSidebarItem(t, updated, shellNavSecretScanning)
+		updated = runKey(t, updated, "o") // screenSecurityGitleaksRepos
+		updated = runKey(t, updated, "o") // opens the override editor
 
 		screen, ok := updated.adminScreens[slotGitleaksRepos].(featureOverridesScreen)
 		if !ok || !screen.editor.Active() || screen.editor.Feature() != gitleaksFeatureName {
@@ -71,15 +65,12 @@ func TestEveryOverridePathReachableBeforeIsReachableAfter(t *testing.T) {
 		t.Parallel()
 		adminClient := &fakeAdminClient{
 			loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-			features:     []ports.FeatureSummary{{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: true}},
 			featurePage:  ports.FeaturePage{Summary: ports.FeatureSummary{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: true}},
 		}
 		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
-		updated = runKey(t, updated, "down")
-		updated = runKey(t, updated, "enter")
-		updated = runKey(t, updated, "enter") // signingConfigScreen
-		updated = runKey(t, updated, "o")     // screenSecuritySigningRepos
-		updated = runKey(t, updated, "o")     // opens the override editor
+		updated = openSidebarItem(t, updated, shellNavSigningPolicy)
+		updated = runKey(t, updated, "o") // screenSecuritySigningRepos
+		updated = runKey(t, updated, "o") // opens the override editor
 
 		screen, ok := updated.adminScreens[slotSigningRepos].(featureOverridesScreen)
 		if !ok || !screen.editor.Active() || screen.editor.Feature() != signingFeatureName {
@@ -91,17 +82,14 @@ func TestEveryOverridePathReachableBeforeIsReachableAfter(t *testing.T) {
 		t.Parallel()
 		adminClient := &fakeAdminClient{
 			loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-			features:     []ports.FeatureSummary{{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 			featurePage:  ports.FeaturePage{Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 			scanRuns: []ports.ScanRun{
 				{ID: "run-1", Repository: "team/api", RequestedRef: "1.0.0", Status: ports.ScanRunStatusCompleted, Critical: 1},
 			},
 		}
 		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
-		updated = runKey(t, updated, "down")
-		updated = runKey(t, updated, "enter")
-		updated = runKey(t, updated, "enter") // trivyConfigScreen
-		updated = runKey(t, updated, "tab")   // trivyReposScreen
+		updated = openSidebarItem(t, updated, shellNavImageScanning)
+		updated = runKey(t, updated, "tab") // trivyReposScreen
 		updated = runKey(t, updated, "enter")
 
 		scan, ok := updated.adminScreens[slotScanHistory].(scanHistoryScreen)

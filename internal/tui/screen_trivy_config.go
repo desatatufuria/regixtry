@@ -6,81 +6,64 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/key"
-	tea "github.com/charmbracelet/bubbletea"
-	bubbletable "github.com/evertras/bubble-table/table"
+	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
 	"regixtry/internal/ports"
 )
 
-// trivyConfigScreen is Trivy's Runtime tab, promoted to its own top-level
-// screen (Phase 11, design.md Decision I: "Tab becomes a screen switch").
-// Per the resolved-gap addendum (design.md, State Migration section), it
-// independently owns its own `page` (loaded via loadFeaturePageCmd scoped to
-// trivyFeatureName) and the enable/disable/install/upgrade/rollback action
-// dispatch (featureActionForKey/featureActionKeyBindings), which used to
-// live in the shared updateAdminFeaturesKey/adminFeatureHelp -- both now
-// deleted.
+// trivyConfigScreen is "Image scanning", the Config tab of Trivy (the approved
+// "Image scanning" and "Config modal" boards): the global configuration, the
+// scan policy and the per-repository overrides, with the configuration and
+// policy editors as modals. Its other tab, Repositories, is trivyReposScreen.
+//
+// The field names confirm, cfg and policyModal are read by Model
+// (migratedScreenCapturesTextInput): do not rename them.
 type trivyConfigScreen struct {
-	page        ports.FeaturePage
-	loaded      bool
-	rows        map[string]bubbletable.Model
-	cfg         trivyConfigModal
-	policy      ports.ScanPolicySettings
-	policyModal scanPolicyModal
-	// confirm is this screen's own confirm-before-destructive-action prompt
-	// (design.md Decision E), embedded locally rather than read through the
-	// shared AdminViewState.Confirm field: a migrated screen cannot write to
-	// AdminViewState directly (Decision B), so each screen that opens a
-	// confirm owns one, mirroring featureOverridesScreen's own
-	// self-contained editor field.
-	confirm confirmPrompt
-	// submitting is the transient "Submitting X for Y..." status text shown
-	// while confirm's dispatched command is in flight, surfaced through this
-	// screen's own View (Body) the instant Enter dispatches onConfirm --
-	// mirroring the legacy AdminViewState.Confirm path's
-	// `m.status = before.submitting` (model.go's updateAdminKey), which this
-	// migrated screen cannot reach into per design.md Decision B.
-	submitting string
-	err        string
+	securityFeature
+	cfg          trivyConfigModal
+	policy       ports.ScanPolicySettings
+	policyLoaded bool
+	policyErr    string
+	policyModal  scanPolicyModal
+	// saving is true from the Enter that saved the configuration or the policy
+	// until the result arrives: Enter is ignored meanwhile.
+	saving bool
 }
 
-func newTrivyConfigScreen() trivyConfigScreen { return trivyConfigScreen{} }
+func newTrivyConfigScreen() trivyConfigScreen {
+	return trivyConfigScreen{securityFeature: newSecurityFeature(trivyFeatureName)}
+}
 
 func (s trivyConfigScreen) ID() screen { return screenSecurityTrivy }
 
 func (s trivyConfigScreen) Keys() screenKeys {
+	if s.cfg.Active() || s.policyModal.Active() {
+		return securityModalKeys
+	}
 	short := []key.Binding{
-		key.NewBinding(key.WithKeys("enter", "r"), key.WithHelp("Enter/r", "refresh page")),
-		key.NewBinding(key.WithKeys("tab"), key.WithHelp("Tab", "switch tabs")),
+		key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "switch tabs")),
 		key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "configure")),
 		key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "policy")),
+		key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "overrides")),
 	}
 	short = append(short, featureActionKeyBindings(s.page)...)
 	short = append(short,
-		key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "back")),
-		key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
+		key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
+		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
+		quitKey(),
 	)
 	return screenKeys{short: short}
 }
 
-func (s trivyConfigScreen) Init(env screenEnv) tea.Cmd {
-	return loadFeaturePageCmd(env, trivyFeatureName)
-}
+func (s trivyConfigScreen) Init(env screenEnv) tea.Cmd { return s.load(env) }
 
 func (s trivyConfigScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.Cmd, bool) {
-	if key, ok := msg.(tea.KeyMsg); ok {
+	if key, ok := msg.(keyMsg); ok {
 		switch {
 		case s.confirm.Active():
-			before := s.confirm
-			next, cmd, consumed := s.confirm.update(env, key)
-			s.confirm = next
-			switch {
-			case cmd != nil:
-				s.submitting = before.submitting
-			case isEscKey(key):
-				s.submitting = ""
-			}
-			return s, cmd, consumed
+			f, cmd := s.updateConfirm(env, key)
+			s.securityFeature = f
+			return s, cmd, true
 		case s.cfg.Active():
 			return s.updateConfigKey(env, key)
 		case s.policyModal.Active():
@@ -88,85 +71,86 @@ func (s trivyConfigScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.
 		}
 		return s.updateKey(env, key)
 	}
-	switch typed := msg.(type) {
-	case tea.WindowSizeMsg:
-		s.rebuildRows(env)
+	if owned, ok := msg.(securityMsg); ok && owned.securityGen() != s.gen {
 		return s, nil, false
-	case adminFeaturePageLoadedMsg:
-		if typed.feature != trivyFeatureName {
-			return s, nil, false
-		}
+	}
+	switch typed := msg.(type) {
+	case securityPageMsg:
+		s.securityFeature = s.applyPage(typed)
 		if typed.err != nil {
-			s.err = typed.err.Error()
 			return s, nil, false
 		}
-		s.page = typed.page
-		s.loaded = true
-		s.err = ""
-		s.rebuildRows(env)
-		return s, loadScanPolicyCmd(env), false
-	case adminFeatureActionCompletedMsg:
-		if typed.feature != trivyFeatureName {
+		return s, securityLoadScanPolicyCmd(env, s.gen), false
+	case securityOverridesMsg:
+		s.securityFeature = s.applyOverrides(env, typed)
+		return s, nil, false
+	case securityActionMsg:
+		f, reload := s.applyActionResult(typed)
+		s.securityFeature = f
+		if reload {
+			return s, s.load(env), false
+		}
+		return s, nil, false
+	case securityConfigureMsg:
+		if !s.saving {
 			return s, nil, false
 		}
-		s.confirm = confirmPrompt{}
-		s.submitting = ""
+		s.saving = false
 		if typed.err != nil {
-			s.err = typed.err.Error()
-			return s, nil, false
-		}
-		s.err = ""
-		return s, loadFeaturePageCmd(env, trivyFeatureName), false
-	case adminFeatureConfiguredMsg:
-		if typed.name != trivyFeatureName {
-			return s, nil, false
-		}
-		if typed.err != nil {
-			s.cfg.Error = typed.err.Error()
+			s.showSaveError(typed.err)
 			return s, nil, false
 		}
 		s.cfg = trivyConfigModal{}
-		return s, loadFeaturePageCmd(env, trivyFeatureName), false
-	case adminFeatureRuntimeMutatedMsg:
-		if typed.name != trivyFeatureName || typed.err != nil {
-			return s, nil, false
-		}
-		return s, loadFeaturePageCmd(env, trivyFeatureName), false
-	case adminScanPolicyLoadedMsg:
+		s.err, s.note = "", "Configuration saved."
+		return s, s.load(env), false
+	case securityScanPolicyLoadedMsg:
 		if typed.err != nil {
+			s.policyErr = typed.err.Error()
+			return s, s.loadOverrides(env), false
+		}
+		s.policy, s.policyLoaded, s.policyErr = typed.settings, true, ""
+		return s, s.loadOverrides(env), false
+	case securityScanPolicySavedMsg:
+		if !s.saving {
 			return s, nil, false
 		}
-		s.policy = typed.settings
-		return s, nil, false
-	case adminScanPolicyUpdatedMsg:
+		s.saving = false
 		if typed.err != nil {
-			s.policyModal.Error = typed.err.Error()
+			s.showSaveError(typed.err)
 			return s, nil, false
 		}
-		s.policy = typed.settings
+		s.policy, s.policyLoaded, s.policyErr = typed.settings, true, ""
 		s.policyModal = scanPolicyModal{}
+		s.err, s.note = "", "Vulnerability policy saved."
 		return s, nil, false
 	}
 	return s, nil, false
 }
 
-func (s *trivyConfigScreen) rebuildRows(env screenEnv) {
-	_, compact := tableRoles(env.Layout)
-	rows := make(map[string]bubbletable.Model)
-	for _, section := range s.page.Sections {
-		if section.Kind != "rows" {
-			continue
-		}
-		rows[section.ID] = buildAdminFeatureRowsTable(section, compact)
+// showSaveError puts a failed save in the modal that is still open, else on the
+// screen.
+func (s *trivyConfigScreen) showSaveError(err error) {
+	switch {
+	case s.cfg.Active():
+		s.cfg.Error = err.Error()
+	case s.policyModal.Active():
+		s.policyModal.Error = err.Error()
+	default:
+		s.err = err.Error()
 	}
-	s.rows = rows
 }
 
-func (s trivyConfigScreen) updateKey(env screenEnv, msg tea.KeyMsg) (adminScreen, tea.Cmd, bool) {
+func (s trivyConfigScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd, bool) {
+	if isPasteKey(msg) {
+		// Pasted text is never a command: its first character must not run an
+		// action or open an editor.
+		return s, nil, true
+	}
+	s.note = ""
 	switch {
 	case isEscKey(msg):
-		return s, navigate(screenAdminFeatures), true
-	case isTabKey(msg):
+		return s, navigate(screenAdminOverview), true
+	case isTabKey(msg), isRuneKey(msg, 'o'):
 		return s, navigate(screenSecurityTrivyRepos), true
 	case isRuneKey(msg, 'c'):
 		modal, ok := trivyConfigModalFromPage(s.page)
@@ -178,115 +162,96 @@ func (s trivyConfigScreen) updateKey(env screenEnv, msg tea.KeyMsg) (adminScreen
 		s.err = ""
 		return s, nil, true
 	case isRuneKey(msg, 'p'):
+		if !s.policyLoaded {
+			// Saving a policy that never loaded would overwrite the real one
+			// with defaults.
+			s.err = "The scan policy has not loaded yet. Press r to try again."
+			return s, nil, true
+		}
 		threshold := s.policy.SeverityThreshold
 		if strings.TrimSpace(threshold) == "" {
 			threshold = ports.ScanPolicyThresholdCritical
 		}
 		s.policyModal = scanPolicyModal{Open: true, Focus: scanPolicyFieldEnabled, Enabled: s.policy.Enabled, SeverityThreshold: threshold}
+		s.err = ""
 		return s, nil, true
-	case isEnterKey(msg), isRuneKey(msg, 'r'):
-		return s, loadFeaturePageCmd(env, trivyFeatureName), true
+	case isRuneKey(msg, 'r'), isEnterKey(msg):
+		s.err = ""
+		return s, s.load(env), true
 	}
-	if action, ok := featureActionForKey(msg, s.page); ok {
-		return s.dispatchAction(env, action)
-	}
-	return s, nil, true
+	f, cmd, _ := s.actionKey(env, msg)
+	s.securityFeature = f
+	return s, cmd, true
 }
 
-// dispatchAction mirrors updateAdminFeaturesKey's own post-switch action
-// dispatch exactly (model.go, now deleted): a declared ConfirmMessage opens
-// this screen's own confirm prompt; otherwise the action runs immediately.
-func (s trivyConfigScreen) dispatchAction(env screenEnv, action ports.FeatureAction) (adminScreen, tea.Cmd, bool) {
-	if strings.TrimSpace(action.ConfirmMessage) != "" {
-		var (
-			submitting string
-			onConfirm  func(screenEnv) tea.Cmd
-		)
-		if action.ID == "enable" || action.ID == "disable" {
-			actionID := action.ID
-			submitting = fmt.Sprintf("Submitting %s for %s...", actionID, trivyFeatureName)
-			onConfirm = func(env screenEnv) tea.Cmd { return executeFeatureActionCmd(env, trivyFeatureName, actionID) }
-		}
-		s.confirm = newConfirmPrompt(adminFirstNonEmpty(action.ConfirmTitle, action.Label), action.ConfirmMessage, strings.ToLower(strings.TrimSpace(action.Label)), submitting, onConfirm)
-		return s, nil, true
-	}
-	return s, executeFeatureActionCmd(env, trivyFeatureName, action.ID), true
-}
-
-func (s trivyConfigScreen) updateConfigKey(env screenEnv, msg tea.KeyMsg) (adminScreen, tea.Cmd, bool) {
+func (s trivyConfigScreen) updateConfigKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd, bool) {
 	switch {
 	case isEscKey(msg):
 		s.cfg = trivyConfigModal{}
 		return s, nil, true
-	case isTabKey(msg):
+	case isTabKey(msg), isArrowDownKey(msg):
 		s.cfg.Focus = nextTrivyConfigField(s.cfg.Focus)
 		s.cfg.Error = ""
 		return s, nil, true
-	case isRuneKey(msg, ' '):
-		if s.cfg.Focus == trivyConfigFieldScheduleEnabled {
-			s.cfg.ScheduleEnabled = !s.cfg.ScheduleEnabled
-			s.cfg.Error = ""
-		}
-		return s, nil, true
-	case isBackspaceKey(msg):
-		s.deleteConfigRune()
+	case isShiftTabKey(msg), isArrowUpKey(msg):
+		s.cfg.Focus = previousTrivyConfigField(s.cfg.Focus)
 		s.cfg.Error = ""
 		return s, nil, true
 	case isEnterKey(msg):
+		if s.saving {
+			return s, nil, true
+		}
 		input, err := trivyConfigInputFromModal(s.cfg)
 		if err != nil {
 			s.cfg.Error = err.Error()
 			return s, nil, true
 		}
-		return s, configureFeatureCmd(env, trivyFeatureName, input), true
-	}
-	if msg.Type == tea.KeyRunes {
-		s.appendConfigRunes(string(msg.Runes))
+		s.saving = true
 		s.cfg.Error = ""
+		return s, securityConfigureCmd(env, s.gen, trivyFeatureName, input), true
+	case isBackspaceKey(msg):
+		s.editConfigField(func(value string) string { return trimLastRune(value) })
+		return s, nil, true
+	case isSpaceKey(msg) && s.cfg.Focus == trivyConfigFieldScheduleEnabled:
+		s.cfg.ScheduleEnabled = !s.cfg.ScheduleEnabled
+		s.cfg.Error = ""
+		return s, nil, true
+	case isTextKey(msg):
+		text := printableText(keyText(msg))
+		s.editConfigField(func(value string) string { return value + text })
 		return s, nil, true
 	}
 	return s, nil, true
 }
 
-func (s *trivyConfigScreen) deleteConfigRune() {
+// editConfigField applies edit to the focused text field; the toggle takes no
+// text.
+func (s *trivyConfigScreen) editConfigField(edit func(string) string) {
 	switch s.cfg.Focus {
 	case trivyConfigFieldInterval:
-		s.cfg.Interval = trimLastRune(s.cfg.Interval)
+		s.cfg.Interval = edit(s.cfg.Interval)
 	case trivyConfigFieldTimeout:
-		s.cfg.Timeout = trimLastRune(s.cfg.Timeout)
+		s.cfg.Timeout = edit(s.cfg.Timeout)
 	case trivyConfigFieldRegistryReachableURL:
-		s.cfg.RegistryReachableURL = trimLastRune(s.cfg.RegistryReachableURL)
+		s.cfg.RegistryReachableURL = edit(s.cfg.RegistryReachableURL)
 	case trivyConfigFieldMaxConcurrency:
-		s.cfg.MaxConcurrency = trimLastRune(s.cfg.MaxConcurrency)
-	}
-}
-
-func (s *trivyConfigScreen) appendConfigRunes(value string) {
-	if value == "" {
+		s.cfg.MaxConcurrency = edit(s.cfg.MaxConcurrency)
+	default:
 		return
 	}
-	switch s.cfg.Focus {
-	case trivyConfigFieldInterval:
-		s.cfg.Interval += value
-	case trivyConfigFieldTimeout:
-		s.cfg.Timeout += value
-	case trivyConfigFieldRegistryReachableURL:
-		s.cfg.RegistryReachableURL += value
-	case trivyConfigFieldMaxConcurrency:
-		s.cfg.MaxConcurrency += value
-	}
+	s.cfg.Error = ""
 }
 
-func (s trivyConfigScreen) updatePolicyKey(env screenEnv, msg tea.KeyMsg) (adminScreen, tea.Cmd, bool) {
+func (s trivyConfigScreen) updatePolicyKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd, bool) {
 	switch {
 	case isEscKey(msg):
 		s.policyModal = scanPolicyModal{}
 		return s, nil, true
-	case isTabKey(msg):
+	case isTabKey(msg), isShiftTabKey(msg), isArrowDownKey(msg), isArrowUpKey(msg):
 		s.policyModal.Focus = nextScanPolicyField(s.policyModal.Focus)
 		s.policyModal.Error = ""
 		return s, nil, true
-	case isRuneKey(msg, ' '):
+	case isSpaceKey(msg):
 		switch s.policyModal.Focus {
 		case scanPolicyFieldEnabled:
 			s.policyModal.Enabled = !s.policyModal.Enabled
@@ -296,68 +261,28 @@ func (s trivyConfigScreen) updatePolicyKey(env screenEnv, msg tea.KeyMsg) (admin
 		s.policyModal.Error = ""
 		return s, nil, true
 	case isEnterKey(msg):
-		return s, updateScanPolicyCmd(env, ports.ScanPolicySettings{Enabled: s.policyModal.Enabled, SeverityThreshold: s.policyModal.SeverityThreshold}), true
+		if s.saving {
+			return s, nil, true
+		}
+		s.saving = true
+		s.policyModal.Error = ""
+		return s, securitySaveScanPolicyCmd(env, s.gen, ports.ScanPolicySettings{Enabled: s.policyModal.Enabled, SeverityThreshold: s.policyModal.SeverityThreshold}), true
 	}
 	return s, nil, true
 }
 
-func (s trivyConfigScreen) View(theme adminTheme, env screenEnv) screenFrame {
-	lines := []string{renderTrivyTabs(theme, screenSecurityTrivy, s.policy)}
-	if s.err != "" {
-		lines = append(lines, "", theme.error.Render(s.err))
-	}
-	if s.submitting != "" {
-		lines = append(lines, "", theme.muted.Render(s.submitting))
-	}
-	lines = append(lines, "", theme.subheading.Render("Feature Page"))
-	if !s.loaded {
-		lines = append(lines, theme.muted.Render("Select or refresh a feature to load the backend-declared page."))
-	} else {
-		lines = append(lines, renderGenericFeaturePage(theme, s.page, s.rows)...)
-	}
-	lines = append(lines, renderAdminOperatorFooter(theme, env.Session, env.now())...)
-	frame := screenFrame{
-		Context: "Security & Compliance / Trivy",
-		Body:    renderSection(theme, strings.Join(lines, "\n"), env.Layout),
-	}
-	switch {
-	case s.confirm.Active():
-		frame.Overlay = s.confirm.view(theme)
-	case s.cfg.Active():
-		frame.Overlay = renderTrivyConfigModal(theme, s.cfg)
-	case s.policyModal.Active():
-		frame.Overlay = renderScanPolicyModal(theme, s.policyModal)
-	}
-	return frame
-}
-
-// trivyConfigModalFromPage mirrors the retired Model method of the same
-// name exactly, operating on a plain ports.FeaturePage instead of reading
-// m.adminView.FeaturePage.
+// trivyConfigModalFromPage seeds the configuration modal from the loaded page.
 func trivyConfigModalFromPage(page ports.FeaturePage) (trivyConfigModal, bool) {
 	if page.Summary.Name != trivyFeatureName {
 		return trivyConfigModal{}, false
 	}
 	modal := trivyConfigModal{Open: true, Focus: trivyConfigFieldScheduleEnabled}
-	for _, section := range page.Sections {
-		if section.ID != "config" {
-			continue
-		}
-		for _, field := range section.Fields {
-			switch field.Label {
-			case "Schedule Enabled":
-				modal.ScheduleEnabled, _ = strconv.ParseBool(strings.TrimSpace(field.Value))
-			case "Interval":
-				modal.Interval = strings.TrimSpace(field.Value)
-			case "Timeout":
-				modal.Timeout = strings.TrimSpace(field.Value)
-			case "Registry Reachable URL":
-				modal.RegistryReachableURL = strings.TrimSpace(field.Value)
-			case "Max Concurrency":
-				modal.MaxConcurrency = strings.TrimSpace(field.Value)
-			}
-		}
-	}
+	config := securityPageFields(page, "config")
+	modal.ScheduleEnabled, _ = strconv.ParseBool(config["Schedule Enabled"])
+	modal.Interval = securityDuration(config["Interval"])
+	modal.Timeout = securityDuration(config["Timeout"])
+	modal.RegistryReachableURL = config["Registry Reachable URL"]
+	modal.MaxConcurrency = config["Max Concurrency"]
 	if modal.Interval == "" || modal.Timeout == "" || modal.MaxConcurrency == "" {
 		return trivyConfigModal{}, false
 	}
@@ -371,8 +296,15 @@ func nextTrivyConfigField(field trivyConfigField) trivyConfigField {
 	return field + 1
 }
 
-// trivyConfigInputFromModal mirrors the retired Model method of the same
-// name exactly, operating on a plain trivyConfigModal value.
+func previousTrivyConfigField(field trivyConfigField) trivyConfigField {
+	if field <= trivyConfigFieldScheduleEnabled {
+		return trivyConfigFieldMaxConcurrency
+	}
+	return field - 1
+}
+
+// trivyConfigInputFromModal validates the modal's fields into the update the
+// backend takes.
 func trivyConfigInputFromModal(modal trivyConfigModal) (ports.FeatureConfigureInput, error) {
 	interval, err := time.ParseDuration(strings.TrimSpace(modal.Interval))
 	if err != nil {

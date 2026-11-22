@@ -54,7 +54,7 @@ Note the delegate flow addresses users by **username**, not user ID — a delega
 - Grant or self-assign `repo-admin` on that repository — the request is rejected outright.
 - Modify or remove another repo-admin's grant on that same repository — a delegate cannot demote or replace a peer administrator.
 
-Only a global admin can perform those two operations. This is the same repository-scoped grants view exposed in the TUI as `screenRepoAdminGrants`/`screenRepoAdminAddGrant`, reached directly from the Console Repositories screen by a repo-admin delegate; its role picker never offers `repo-admin`, matching the HTTP-layer bound. See [security.md](security.md) for the full authorization boundary this delegate namespace sits behind.
+Only a global admin can perform those two operations. The TUI exposes the same repository-scoped view as one screen, reached with `g` from the Console Repositories screen (see [Delegating access](tui.md#delegating-access-repository-administrators)); it never offers `repo-admin`, matching the HTTP-layer bound. See [security.md](security.md) for the full authorization boundary this delegate namespace sits behind.
 
 ## Robot accounts
 
@@ -66,8 +66,10 @@ Robots are machine identities for CI/CD, created and managed only by a global ad
 curl -X POST 'https://registry.example.com/admin/v1/robots' \
   -H "Authorization: Bearer ${TOKEN}" \
   -H 'Content-Type: application/json' \
-  -d '{"name":"ci-builder","repository":"team/image","role":"repo-writer","ttl_seconds":2592000}'
+  -d '{"name":"ci-builder","repository":"team/image","role":"repo-writer","ttl":"30d"}'
 ```
+
+`ttl` takes a whole number followed by `h`, `d` or `y` (maximum `2y`). The older `ttl_seconds` is still accepted, but not together with `ttl`.
 
 Response (`201`):
 
@@ -100,10 +102,7 @@ Robots are excluded from `GET /admin/v1/users` by default (`ListUsers` filters `
 
 ### TUI
 
-Global admins reach two dedicated robot screens from the Users screen with `b`:
-
-- `screenAdminRobots` — lists robot accounts (repository, role, enabled state). `n` opens `screenAdminCreateRobot`; `e`/`x` enable/disable the selected robot via the confirm modal; `t` reuses the existing token screens to issue or revoke its token; `d` deletes it (genuinely irreversible, distinct from `x`/disable); `r` refreshes the list.
-- `screenAdminCreateRobot` — collects name, repository, role, and TTL, then shows the created robot's one-time secret exactly once, immediately after creation. This is the same reveal-once pattern already used for human admin tokens.
+Global admins manage robots under **Admin › Access › Robots**: create (`n`), tokens (`t`), grant access (`g`), disable/enable (`d`/`e`) and delete (`x`, irreversible, with a confirm dialog). New robots collect name, repository, role and a lifetime, and the token secret is shown once. Keys and behavior: [Robots and tokens](tui.md#robots-and-tokens).
 
 ## Admin credential tokens (human users)
 
@@ -111,8 +110,10 @@ Global admins reach two dedicated robot screens from the Users screen with `b`:
 curl -X POST 'https://registry.example.com/admin/v1/users/USER_ID/admin-tokens' \
   -H "Authorization: Bearer ${TOKEN}" \
   -H 'Content-Type: application/json' \
-  -d '{"name":"ci","ttl_seconds":2592000}'
+  -d '{"name":"ci","ttl":"30d"}'
 ```
+
+`ttl` takes a whole number followed by `h`, `d` or `y` (maximum `2y`). The older `ttl_seconds` is still accepted, but not together with `ttl`.
 
 The secret is only returned in the creation response and should never be logged. To revoke:
 
@@ -125,4 +126,4 @@ curl -X DELETE 'https://registry.example.com/admin/v1/users/USER_ID/admin-tokens
 
 The last active global admin account can never be disabled or demoted — `Service.SetUserEnabled`/`UpdateUser` reject any operation that would leave zero active global admins. There is no delete-user endpoint for human users; disable instead.
 
-The TUI supports listing users, grants, and tokens, enabling/disabling users, and — as of the access-control-completion work — creating and managing repository grants (including the delegated repo-admin grant screens), and creating/listing/deleting robot accounts. The `Read-only` toggle (beside `Admin`) is set on the **Create User** form only — it is not exposed on the Edit User screen, which shows Username, Role, Status, and User ID and has no path to change it after creation (see [`docs/tui.md`](tui.md)). Remaining mutations not yet TUI-capable must still be done over HTTP.
+The TUI lists, creates, enables and disables users, resets passwords, manages tokens, grants repository access (global and delegated) and creates, lists and deletes robot accounts. The `read-only` role is chosen on the **New user** form only; the user profile screen cannot change it after creation (see [`docs/tui.md`](tui.md#users)). Remaining mutations not yet TUI-capable must still be done over HTTP.

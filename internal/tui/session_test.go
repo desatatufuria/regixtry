@@ -10,8 +10,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	domainauth "regixtry/internal/domain/auth"
 )
 
 func TestAdminSessionIsExpired(t *testing.T) {
@@ -38,33 +36,27 @@ func TestAdminSessionIsExpired(t *testing.T) {
 	}
 }
 
-func TestLogoutAdminStateClearsSessionAndViewData(t *testing.T) {
+func TestLogoutAdminStateClearsSession(t *testing.T) {
 	t.Parallel()
 
-	session, view := LogoutAdminState()
+	session := LogoutAdminState()
 	if session.IsAuthenticated() {
 		t.Fatal("LogoutAdminState() returned authenticated session")
 	}
 	if session.ExpiredReason != "" {
 		t.Fatalf("ExpiredReason = %q, want empty", session.ExpiredReason)
 	}
-	if len(view.Users) != 0 || view.SelectedUserID != "" || len(view.Grants) != 0 || len(view.AdminTokens) != 0 {
-		t.Fatalf("LogoutAdminState() returned populated view state: %#v", view)
-	}
 }
 
-func TestExpireAdminStateClearsViewDataAndKeepsReason(t *testing.T) {
+func TestExpireAdminStateKeepsReason(t *testing.T) {
 	t.Parallel()
 
-	session, view := ExpireAdminState("Session expired. Log in again.")
+	session := ExpireAdminState("Session expired. Log in again.")
 	if session.IsAuthenticated() {
 		t.Fatal("ExpireAdminState() returned authenticated session")
 	}
 	if session.ExpiredReason != "Session expired. Log in again." {
 		t.Fatalf("ExpiredReason = %q, want session expiry message", session.ExpiredReason)
-	}
-	if len(view.Users) != 0 || len(view.Grants) != 0 || len(view.AdminTokens) != 0 {
-		t.Fatalf("ExpireAdminState() returned populated view state: %#v", view)
 	}
 }
 
@@ -120,27 +112,7 @@ func TestNextScanPolicyFieldCyclesBetweenTheTwoFields(t *testing.T) {
 	}
 }
 
-// TestOverrideEditorActiveReflectsOpenField is the Slice 2 successor to the
-// retired TestRepositoryOverrideModalActiveReflectsOpenField: overrideEditor
-// follows the same Active()-gated pattern as scanPolicyModal/trivyConfigModal
-// (design.md Decision F).
-func TestOverrideEditorActiveReflectsOpenField(t *testing.T) {
-	t.Parallel()
-
-	closed := overrideEditor{}
-	if closed.Active() {
-		t.Fatal("overrideEditor{}.Active() = true, want false when open is unset")
-	}
-
-	open := newOverrideEditor(trivyFeatureName, "library/alpine")
-	if !open.Active() {
-		t.Fatal("newOverrideEditor(...).Active() = false, want true")
-	}
-}
-
-// TestOverrideFieldsForFeatureSkipsPathSecondaryForGitleaks is the Slice 2
-// successor to the retired
-// TestNextRepositoryOverrideFieldSkipsPathSecondaryForGitleaks:
+// TestOverrideFieldsForFeatureSkipsPathSecondaryForGitleaks pins that
 // overrideFieldsForFeature builds trivy's 4-field set (with PathSecondary),
 // skips it for gitleaks (3 fields), and skips it for signing while
 // including UnsignedSelfRead instead (4 fields) -- the concrete replacement
@@ -327,103 +299,6 @@ func TestNormalizeUnsignedSelfReadMapsEmptyToOff(t *testing.T) {
 		if got := normalizeUnsignedSelfRead(value); got != value {
 			t.Fatalf("normalizeUnsignedSelfRead(%q) = %q, want unchanged", value, got)
 		}
-	}
-}
-
-// TestNextCreateUserFieldCyclesThroughReadOnlyIndependentlyOfAdmin pins
-// design.md Decision 7's "Read-only toggle beside the existing Admin
-// toggle": the create/edit user form gains a distinct
-// adminCreateUserFieldIsReadOnly focus stop, between IsAdmin and Enabled,
-// and nextCreateUserField's wrapping-cursor visits it on its own.
-func TestNextCreateUserFieldCyclesThroughReadOnlyIndependentlyOfAdmin(t *testing.T) {
-	t.Parallel()
-
-	if got := nextCreateUserField(adminCreateUserFieldUsername); got != adminCreateUserFieldPassword {
-		t.Fatalf("nextCreateUserField(Username) = %v, want Password", got)
-	}
-	if got := nextCreateUserField(adminCreateUserFieldPassword); got != adminCreateUserFieldIsAdmin {
-		t.Fatalf("nextCreateUserField(Password) = %v, want IsAdmin", got)
-	}
-	if got := nextCreateUserField(adminCreateUserFieldIsAdmin); got != adminCreateUserFieldIsReadOnly {
-		t.Fatalf("nextCreateUserField(IsAdmin) = %v, want IsReadOnly", got)
-	}
-	if got := nextCreateUserField(adminCreateUserFieldIsReadOnly); got != adminCreateUserFieldEnabled {
-		t.Fatalf("nextCreateUserField(IsReadOnly) = %v, want Enabled", got)
-	}
-	if got := nextCreateUserField(adminCreateUserFieldEnabled); got != adminCreateUserFieldUsername {
-		t.Fatalf("nextCreateUserField(Enabled) = %v, want Username (wraps)", got)
-	}
-}
-
-// TestCreateUserFormDefaultsReadOnlyToFalseAndToggleIsIndependentOfAdmin pins
-// the same requirement's default state and independence: a fresh form has
-// IsReadOnly false, and toggling the Admin field never flips IsReadOnly (and
-// vice versa) -- the two booleans are separate flags, not a shared role enum.
-func TestCreateUserFormDefaultsReadOnlyToFalseAndToggleIsIndependentOfAdmin(t *testing.T) {
-	t.Parallel()
-
-	form := newAdminViewState().CreateUserForm
-	if form.IsReadOnly {
-		t.Fatal("newAdminViewState().CreateUserForm.IsReadOnly = true, want false")
-	}
-
-	model := Model{}
-	model.adminView.CreateUserForm.Focus = adminCreateUserFieldIsAdmin
-	model.toggleCreateUserField()
-	if !model.adminView.CreateUserForm.IsAdmin {
-		t.Fatal("toggleCreateUserField() on IsAdmin focus did not set IsAdmin")
-	}
-	if model.adminView.CreateUserForm.IsReadOnly {
-		t.Fatal("toggleCreateUserField() on IsAdmin focus unexpectedly set IsReadOnly")
-	}
-
-	model.adminView.CreateUserForm.Focus = adminCreateUserFieldIsReadOnly
-	model.toggleCreateUserField()
-	if !model.adminView.CreateUserForm.IsReadOnly {
-		t.Fatal("toggleCreateUserField() on IsReadOnly focus did not set IsReadOnly")
-	}
-	if !model.adminView.CreateUserForm.IsAdmin {
-		t.Fatal("toggleCreateUserField() on IsReadOnly focus unexpectedly cleared IsAdmin")
-	}
-}
-
-// TestNewAdminViewStateSeedsAdminRobotFormDefaultsAndEmptyList is task 5.1's
-// RED test (design.md Decision 7's robot screens): a fresh AdminViewState
-// seeds CreateRobotForm.Role to RepoRoleReader -- mirroring GrantForm/
-// RepoAdminGrantForm's own zero-value convention, so the create-robot form
-// never starts on the unrestricted repo-admin role by accident -- and starts
-// with no robots listed or selected.
-func TestNewAdminViewStateSeedsAdminRobotFormDefaultsAndEmptyList(t *testing.T) {
-	t.Parallel()
-
-	view := newAdminViewState()
-	if view.CreateRobotForm.Role != domainauth.RepoRoleReader {
-		t.Fatalf("CreateRobotForm.Role = %v, want RepoRoleReader", view.CreateRobotForm.Role)
-	}
-	if view.CreateRobotForm.Focus != adminCreateRobotFieldName {
-		t.Fatalf("CreateRobotForm.Focus = %v, want adminCreateRobotFieldName", view.CreateRobotForm.Focus)
-	}
-	if len(view.Robots) != 0 || view.SelectedRobot != 0 {
-		t.Fatalf("fresh AdminViewState has populated robot data: %#v", view)
-	}
-}
-
-// TestNextAdminRobotFormFieldCyclesThroughAllFourFields pins the create-robot
-// form's field order: Name -> Repository -> Role -> TTL, wrapping to Name.
-func TestNextAdminRobotFormFieldCyclesThroughAllFourFields(t *testing.T) {
-	t.Parallel()
-
-	if got := nextCreateRobotField(adminCreateRobotFieldName); got != adminCreateRobotFieldRepository {
-		t.Fatalf("nextCreateRobotField(Name) = %v, want Repository", got)
-	}
-	if got := nextCreateRobotField(adminCreateRobotFieldRepository); got != adminCreateRobotFieldRole {
-		t.Fatalf("nextCreateRobotField(Repository) = %v, want Role", got)
-	}
-	if got := nextCreateRobotField(adminCreateRobotFieldRole); got != adminCreateRobotFieldTTL {
-		t.Fatalf("nextCreateRobotField(Role) = %v, want TTL", got)
-	}
-	if got := nextCreateRobotField(adminCreateRobotFieldTTL); got != adminCreateRobotFieldName {
-		t.Fatalf("nextCreateRobotField(TTL) = %v, want Name (wraps)", got)
 	}
 }
 

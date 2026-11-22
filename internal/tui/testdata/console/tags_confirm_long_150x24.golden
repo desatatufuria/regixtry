@@ -1,0 +1,24 @@
+  Console › Repositories › team/api › Tag  ╭──────────────────────────────────────────────────────────────╮                                           
+─────────────────────────────────────────  │  Delete tag v1.2.3-alpine-v1.2.3-alpine-v1.2.3-alpine-       │  ─────────────────────────────────────────
+                                           │  v1.2.3-alpine-v1.2.3-alpine-v1.2.3-alpine-v1.2.3-alpine-    │
+    Tags                                   │  v1.2.3-alpine-v1.2.3-alpine-v1.2.3-alpine-v1.2.3-alpine-    │           team/api, 5 tags, sort: name
+                                           │  v1.2.3-alpine-                                              │
+    ╭────────────────────────────────────  │                                                              │  ────────────────────────────────────╮
+    │   TAG                                │  The tag is removed from team/api. Its manifest stays,       │             PUSHED BY         SIGNED │
+    │ ───────────────────────────────────  │  untagged, with the signatures and referrers attached to     │  ─────────────────────────────────── │
+    │ ▸ 0.9                                │  it.                                                         │  -17 08:41  alice             n/a    │
+    │   1.0                                │                                                              │  -19 08:41  —                 no     │
+    │   latest                             │  ╭────────────────────────────────────────────────────────╮  │  -21 08:41  ci                yes    │
+    │   v1.2.3-alpine-v1.2.3-alpine-v1.2.  │  │ team/api:v1.2.3-alpine-v1.2.3-alpine-v1.2.3-alpine-    │  │  -21 07:41  —                 n/a    │
+    │   日本語のタグ名-とても長いタグの名  │  │ v1.2.3-alpine-v1.2.3-alpine-v1.2.3-alpine-v1.2.3-      │  │  -21 08:41  ユーザー名の非…   no     │
+    │                                      │  │ alpine-v1.2.3-alpine-v1.2.3-alpine-v1.2.3-alpine-      │  │                                      │
+    │                                      │  │ v1.2.3-alpine-v1.2.3-alpine-                           │  │                                      │
+    │                                      │  │ pushed 2026-11-21 07:41 by —                           │  │                                      │
+    │                                      │  ╰────────────────────────────────────────────────────────╯  │                                      │
+    │                                      │                                                              │                                      │
+    │                                      │  Pulls by this tag stop working; pulls by digest keep        │                                      │
+    ╰────────────────────────────────────  │  working. Its other tags and the blobs stay. This cannot be  │  ────────────────────────────────────╯
+                                           │  undone.                                                     │
+    SIGNED: yes = signature verified, no   │                                                              │
+─────────────────────────────────────────  │   Delete                                         y / enter   │  ─────────────────────────────────────────
+  ↑↓ move   enter manifest   d delete tag  │   Cancel                                               esc   │                              F2 mouse on  

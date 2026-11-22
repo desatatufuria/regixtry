@@ -1,0 +1,24 @@
+  Admin › Access › Users                                                                                                       signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │
+                               │  Users                                                                                          5 users, 1 disabled
+    Overview                   │           ╭──────────────────────────────────────────────────────────────╮
+                               │           │  Disable user?                                               │
+  ACCESS                       │           │                                                              │
+    ▸ Users                    │           │  The user cannot sign in and their tokens stop working.      │
+      Robots                   │           │                                                              │
+      Repository access        │           │  ╭────────────────────────────────────────────────────────╮  │
+                               │           │  │ carol                                                  │  │
+  SECURITY                     │           │  │ user, enabled, created 3 Mar 2026                      │  │
+      Image scanning           │           │  ╰────────────────────────────────────────────────────────╯  │
+      Secret scanning          │           │                                                              │
+      Signing policy           │           │  Grants are kept. Enable carol again to restore access.      │
+                               │           │                                                              │
+  OPERATIONS                   │           │   Confirm                                        y / enter   │
+      Scan runs                │           │   Cancel                                               esc   │
+      Secret findings          │           ╰──────────────────────────────────────────────────────────────╯
+      Update channel           │
+                               │
+                               │
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  y / enter confirm   esc cancel                                                                                                                      

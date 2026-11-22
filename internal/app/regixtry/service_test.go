@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -17,7 +15,6 @@ import (
 	domainauth "regixtry/internal/domain/auth"
 	domain "regixtry/internal/domain/regixtry"
 	metadata "regixtry/internal/infra/metadata/sqlite"
-	trivy "regixtry/internal/infra/scanning/trivy"
 	"regixtry/internal/infra/storage/fsblob"
 	"regixtry/internal/ports"
 )
@@ -2620,44 +2617,6 @@ func publishRepositoryTag(t *testing.T, service *Service, ctx context.Context, r
 	// its unpredictable scheduling cannot race a caller that configures
 	// scan settings right after publishing.
 	service.WaitForBackgroundWork()
-}
-
-func newTestTrivyRunner(t *testing.T, wantToken string) (*trivy.Runner, *httptest.Server) {
-	t.Helper()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.Header.Get("Authorization"); wantToken != "" && got != "Bearer "+wantToken {
-			http.Error(w, fmt.Sprintf("unexpected auth header %q", got), http.StatusUnauthorized)
-			return
-		}
-		switch r.URL.Path {
-		case "/healthz":
-			w.WriteHeader(http.StatusOK)
-		case "/version":
-			_, _ = w.Write([]byte(`{"Version":"0.57.1"}`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-
-	return trivy.New(trivy.RunnerConfig{}), server
-}
-
-func newFailingVersionTrivyRunner(t *testing.T) (*trivy.Runner, *httptest.Server) {
-	t.Helper()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/healthz":
-			w.WriteHeader(http.StatusOK)
-		case "/version":
-			http.Error(w, "version probe failed", http.StatusBadGateway)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-
-	return trivy.New(trivy.RunnerConfig{}), server
 }
 
 func principalForGrants(repository string, role domainauth.RepoRole, scopes []domainauth.Scope) domainauth.Principal {

@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"regixtry/internal/ports"
 )
 
@@ -40,7 +39,7 @@ func TestSigningConfigScreenKeyListReachableWithoutTabbingToIt(t *testing.T) {
 		t.Fatal("test setup invalid: default focus is already signingPolicyFieldAddKey")
 	}
 
-	next, cmd, consumed := s.updateConfigKey(env, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	next, cmd, consumed := s.updateConfigKey(env, testKeyRunes("n"))
 	if !consumed || cmd != nil {
 		t.Fatalf("'n' with focus elsewhere: consumed = %v, cmd = %v, want consumed=true, cmd=nil", consumed, cmd)
 	}
@@ -77,7 +76,7 @@ func TestSigningConfigScreenKeyListInteractionSnapsFocusToAddKey(t *testing.T) {
 		t.Fatal("test setup invalid: default focus is already signingPolicyFieldAddKey")
 	}
 
-	next, cmd, consumed := s.updateConfigKey(env, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	next, cmd, consumed := s.updateConfigKey(env, testKeyRunes("n"))
 	if !consumed || cmd != nil {
 		t.Fatalf("'n' with focus elsewhere: consumed = %v, cmd = %v, want consumed=true, cmd=nil", consumed, cmd)
 	}
@@ -101,11 +100,11 @@ func TestSigningConfigScreenOpenModalSeedsIdentitiesFromPolicy(t *testing.T) {
 	t.Parallel()
 
 	env := screenEnv{}
-	s := signingConfigScreen{policy: ports.SigningPolicySettings{
+	s := signingConfigScreen{policyLoaded: true, policy: ports.SigningPolicySettings{
 		TrustedIdentities: []ports.TrustedIdentity{{CertificateIdentityRegexp: "^valid$", CertificateOIDCIssuer: "https://token.actions.githubusercontent.com"}},
 	}}
 
-	next, _, consumed := s.updateKey(env, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	next, _, consumed := s.updateKey(env, testKeyRunes("p"))
 	if !consumed {
 		t.Fatal("'p': consumed = false, want true")
 	}
@@ -134,7 +133,7 @@ func TestSigningConfigScreenIdentityListReachableOnceTabbedTo(t *testing.T) {
 		Identities: newTrustedIdentityList(nil),
 	}}
 
-	next, cmd, consumed := s.updateConfigKey(env, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	next, cmd, consumed := s.updateConfigKey(env, testKeyRunes("n"))
 	if !consumed || cmd != nil {
 		t.Fatalf("'n' with identities focused: consumed = %v, cmd = %v, want consumed=true, cmd=nil", consumed, cmd)
 	}
@@ -163,27 +162,26 @@ func TestSigningConfigScreenSaveIncludesConfiguredIdentities(t *testing.T) {
 		Identities: newTrustedIdentityList([]ports.TrustedIdentity{{CertificateIdentityRegexp: "^valid$", CertificateOIDCIssuer: "https://token.actions.githubusercontent.com"}}),
 	}}
 
-	_, cmd, consumed := s.updateConfigKey(env, tea.KeyMsg{Type: tea.KeyEnter})
+	_, cmd, consumed := s.updateConfigKey(env, testKeyEnter())
 	if !consumed || cmd == nil {
 		t.Fatalf("Enter (save): consumed = %v, cmd = %v, want consumed=true, cmd != nil", consumed, cmd)
 	}
 }
 
-// TestRenderSigningPolicyModalShowsConfiguredIdentities is the Phase 8.3 RED
+// TestSigningPolicyModalShowsConfiguredIdentities is the Phase 8.3 RED
 // test: the rendered modal includes the configured trusted identity's
 // regexp and issuer (spec: "Modal shows current global signing policy").
-func TestRenderSigningPolicyModalShowsConfiguredIdentities(t *testing.T) {
+func TestSigningPolicyModalShowsConfiguredIdentities(t *testing.T) {
 	t.Parallel()
 
-	theme := newAdminTheme()
-	modal := signingPolicyModal{
+	s := signingConfigScreen{cfg: signingPolicyModal{
 		Open:       true,
 		Keys:       newTrustedKeyList("", nil),
 		Identities: newTrustedIdentityList([]ports.TrustedIdentity{{CertificateIdentityRegexp: "^valid$", CertificateOIDCIssuer: "https://token.actions.githubusercontent.com"}}),
-	}
+	}}
 
-	rendered := renderSigningPolicyModal(theme, modal)
+	rendered := s.renderPolicyModal(newAdminTheme(), screenEnv{Layout: contentBudget(150, 24, "", "")})
 	if !strings.Contains(rendered, "^valid$") || !strings.Contains(rendered, "https://token.actions.githubusercontent.com") {
-		t.Fatalf("renderSigningPolicyModal() = %q, want the configured identity's regexp and issuer shown", rendered)
+		t.Fatalf("renderPolicyModal() = %q, want the configured identity's regexp and issuer shown", rendered)
 	}
 }

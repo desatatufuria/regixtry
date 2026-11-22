@@ -17,6 +17,10 @@ const (
 	actionWildcard      = "*"
 )
 
+// ScopeNone is the persisted marker of a token that was requested with scopes
+// but granted none of them.
+const ScopeNone = "none"
+
 type Scope struct {
 	Type      string
 	Name      string

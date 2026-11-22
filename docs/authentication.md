@@ -37,7 +37,7 @@ docker logout registry.example.com
 | Kind | TTL | Used for |
 | --- | --- | --- |
 | `TokenKindAccess` | 15 minutes (`AccessTokenTTL`) | Short-lived Bearer tokens issued to Docker clients after `/auth/token` |
-| `TokenKindAdminCredential` | Up to 30 days (`DefaultAdminTokenTTL`), revocable | Pre-issued credentials used both for human "admin tokens" (issued via the TUI or `/admin/v1/users/{id}/admin-tokens` for scripting) and for robot account secrets |
+| `TokenKindAdminCredential` | 30 days by default (`DefaultAdminTokenTTL`), at most 2 years (`MaxAdminTokenTTL`, 730 days), revocable | Pre-issued credentials used both for human "admin tokens" (issued via the TUI or `/admin/v1/users/{id}/admin-tokens` for scripting) and for robot account secrets |
 
 Robots authenticate through `LoginWithPreissuedToken`, the exact same code path human admin credential tokens use — no separate robot login mechanism exists.
 

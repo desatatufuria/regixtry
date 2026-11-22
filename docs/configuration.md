@@ -31,6 +31,29 @@
 | `-trivy-max-concurrency` | `REGISTRY_TRIVY_MAX_CONCURRENCY` | `1` | Maximum concurrent Trivy runs |
 | `-delete-enabled` | `REGISTRY_DELETE_ENABLED` | `false` | Enable `DELETE /v2/<name>/manifests/<reference>` (manifest and tag deletion) |
 | `-gc-delete-enabled` | `REGISTRY_GC_DELETE_ENABLED` | `false` | Enable `POST /admin/v1/gc/reports/{id}/delete` (irreversibly unlinks unreferenced blob files); distinct from `-delete-enabled`, which is metadata-only and never touches blob files |
+| `-max-manifest-bytes` | `REGISTRY_MAX_MANIFEST_BYTES` | `4194304` (4 MiB) | Maximum manifest `PUT` body; larger is `413` `SIZE_INVALID`. Negative disables |
+| `-max-upload-bytes` | `REGISTRY_MAX_UPLOAD_BYTES` | `5368709120` (5 GiB) | Maximum total size of one blob upload, enforced while streaming; larger is `413` `SIZE_INVALID`. Negative disables |
+| `-max-open-uploads` | `REGISTRY_MAX_OPEN_UPLOADS` | `1000` | Maximum concurrently open blob uploads; more is `429` `TOOMANYREQUESTS`. Negative disables |
+| `-max-open-uploads-per-repo` | `REGISTRY_MAX_OPEN_UPLOADS_PER_REPO` | `200` | Maximum concurrently open blob uploads per repository. Negative disables |
+| `-upload-ttl` | `REGISTRY_UPLOAD_TTL` | `24h` | Idle time after which an abandoned upload (row and temp file) is deleted by a background reaper. Negative disables the reaper |
+| `-login-max-concurrency` | `REGISTRY_LOGIN_MAX_CONCURRENCY` | `0` (automatic: `max(2, NumCPU/2)`) | Maximum simultaneous bcrypt password checks. A negative value is a startup error. A password login that cannot get a slot within 250 ms is refused with `429` `TOOMANYREQUESTS` and `Retry-After: 1` without verifying the password. A valid credential token skips bcrypt and the limiter |
+| `-login-backoff-mode` | `REGISTRY_LOGIN_BACKOFF_MODE` | `log` | Per-account login backoff: `log` only logs `login backoff would have blocked ...` and never refuses (the default in this version), `enforce` answers `429` + `Retry-After`, `off` disables. Case-insensitive (`ENFORCE` works). Anything else is a startup error |
+| `-login-backoff-threshold` | `REGISTRY_LOGIN_BACKOFF_THRESHOLD` | `5` | Consecutive failed password logins per account before backoff starts. `0` disables backoff in every mode |
+| `-login-backoff-base` | `REGISTRY_LOGIN_BACKOFF_BASE` | `2s` | First delay after the threshold; doubles on each further failure |
+| `-login-backoff-max` | `REGISTRY_LOGIN_BACKOFF_MAX` | `5m` | Cap of the delay. There is never a hard lockout. Must not be below the base |
+| `-trusted-proxies` | `REGISTRY_TRUSTED_PROXIES` | empty | Comma-separated IPs/CIDRs of reverse proxies whose `X-Forwarded-For` is trusted when logging the client IP of a failed login. Empty ignores `X-Forwarded-For`. An invalid entry is a startup error, and so is any `/0` range (`0.0.0.0/0`, `::/0`): it would trust every peer's `X-Forwarded-For`, letting any client forge its logged IP. Broad non-zero ranges are accepted but weaken the guarantee. See [operations.md](operations.md#reverse-proxy-and-client-ip) |
+
+For the five upload/manifest limits above (`-max-manifest-bytes`, `-max-upload-bytes`, `-max-open-uploads`, `-max-open-uploads-per-repo`, `-upload-ttl`): `0` = use the default, a negative value = disable the limit. A non-numeric environment value is a startup error naming the variable.
+
+Managed scanner runtimes (Trivy, Gitleaks) are installed from GitHub releases. The requested version must be `v1.2.3` or `1.2.3` with an optional `-prerelease` (at most 64 characters); it is validated at the admin API, in the service and again where the release URL is built, and the tag is escaped as one URL path segment. The archive and checksums URLs from the release metadata must be `https` on `github.com`, `api.github.com` or `*.githubusercontent.com`, and redirects are followed only over HTTPS to those hosts or the original host (at most 5). Release metadata and checksums bodies are limited to 1 MiB and archives to 512 MiB. Extraction aborts, removing partial output, beyond 512 MiB for the binary, 1 GiB of decompressed archive data in total or 10000 entries, and replaces (never follows) a pre-existing symlink at the binary path. The archive SHA-256 is checked against the release's checksums file; this does not authenticate the release itself, because both come from the same release (no signature is verified).
+
+Push-triggered scans are admitted against three caps (environment only, no flag): service-wide, per repository, and per pushing principal across all its repositories, so one user with many repositories cannot take every slot. A push over a cap never fails: no scan is queued and one scan row per tenant and repository with status `skipped` and error `skipped: push scan queue full` records the newest dropped digest that has no real run. A skipped row never counts as the latest scan of a digest or repository and never affects the pull policy. Each scan run, and its wait for a slot, is also bounded by the configured scan timeout plus one minute, so a hung runner releases its slot. A secret-scan runner that ignores cancellation leaks one goroutine per scan; at most 16 such stuck scans are tolerated, after which new push scans are recorded as skipped until they return.
+
+| Environment | Default | Purpose |
+|---|---|---|
+| `REGISTRY_PUSH_SCAN_MAX_PENDING` | `64` | Maximum push-triggered scans queued or running service-wide |
+| `REGISTRY_PUSH_SCAN_MAX_PER_REPOSITORY` | `8` | Same limit for one repository |
+| `REGISTRY_PUSH_SCAN_MAX_PER_PUSHER` | `16` | Same limit for one pushing principal across all repositories (pushes without a principal share one bucket) |
 
 Implementation: `cmd/regixtry/main.go` (`parseServeConfig`, `normalizeRuntimeConfig`).
 
@@ -48,10 +71,14 @@ The `-trivy-*` flags configure the built-in Trivy feature at process start. For 
 | `-auth-postgres-dsn` | `REGISTRY_AUTH_POSTGRES_DSN` | Auth DSN |
 | `-api-base-url` | `REGISTRY_API_BASE_URL` | Absolute base URL of the admin API |
 | `-snapshot` | `false` | Render the first view and exit |
-| `-delete-enabled` | `REGISTRY_DELETE_ENABLED` | Enable the Tags screen's delete-tag confirm flow (`d` key); same flag/env pairing and default (`false`) as `serve`'s |
+| `-delete-enabled` | `REGISTRY_DELETE_ENABLED` | Enable the Console's delete actions (`d` on a tag, repository or project, each behind a confirm dialog); same flag/env pairing and default (`false`) as `serve`'s |
 | `-gc-delete-enabled` | `REGISTRY_GC_DELETE_ENABLED` | Same flag/env pairing and default (`false`) as `serve`'s; no TUI action reads it yet |
 
 A managed installation can auto-detect values from `/etc/regixtry/regixtry.env`; explicit flags take priority.
+
+On a Linux daemon install the auth DSN (it carries the Postgres password) is stored only in `regixtry.env`, a root-owned `0600` file created with that mode and loaded through the unit's `EnvironmentFile=`. It is never an `ExecStart` argument: earlier versions wrote `-auth-postgres-dsn=${REGISTRY_AUTH_POSTGRES_DSN}` into the unit, and systemd expands that into the process arguments, so the password was readable by every local user through `ps` and `/proc/<pid>/cmdline`. The lifecycle provenance file records only a redacted DSN (`auth_postgres_dsn_redacted`, password replaced by `xxxxx`, or `[redacted]` when the DSN cannot be parsed). Env values containing control characters (newline, tab, NUL, ...) are rejected before anything is written. The "Rerun with" hint printed after a permission failure never contains the DSN: it shows it redacted and tells you to supply it through `REGISTRY_AUTH_POSTGRES_DSN` (`sudo --preserve-env=REGISTRY_AUTH_POSTGRES_DSN regixtry setup ...`).
+
+Upgrade note: running `regixtry upgrade` (or `setup`) on an install made by an older version rewrites `regixtry.env` as `0600` (previously `0644`), removes the DSN flag from the unit, and strips the clear-text DSN from the provenance file. Until you do, the old files remain readable by all local users; rotate the Postgres password if the host has untrusted local users.
 
 ## Setup-managed environment
 

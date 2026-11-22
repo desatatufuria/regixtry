@@ -1,0 +1,24 @@
+  Admin › Operations › Scan runs                                                                                               signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                      
+                               │  Scan runs                                                                   Trivy scans, latest of each repository  
+    Overview                   │  ╭────────────────────────────────────────────────────────────────────────╮  ╭────────────────────────────────────╮  
+                               │  │   REPOSITORY           STATUS     STARTED       TOOK        CRIT  HIGH │  │ Select a run to see its details.   │  
+  ACCESS                       │  │ No repository scan history found.                                      │  │                                    │  
+      Users                    │  │                                                                        │  │                                    │  
+      Robots                   │  │                                                                        │  │                                    │  
+      Repository access        │  │                                                                        │  │                                    │  
+                               │  │                                                                        │  │                                    │  
+  SECURITY                     │  │                                                                        │  │                                    │  
+      Image scanning           │  │                                                                        │  │                                    │  
+      Secret scanning          │  │                                                                        │  │                                    │  
+      Signing policy           │  │                                                                        │  │                                    │  
+                               │  │                                                                        │  │                                    │  
+  OPERATIONS                   │  │                                                                        │  │                                    │  
+    ▸ Scan runs                │  │                                                                        │  │                                    │  
+      Secret findings          │  │                                                                        │  │                                    │  
+      Update channel           │  │                                                                        │  │                                    │  
+                               │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
+                               │  One row per repository, its latest scan. enter opens its scan history.      ╰────────────────────────────────────╯  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ↑↓ move   enter scan history   r refresh   esc back   q quit                                                                           F2 mouse on  

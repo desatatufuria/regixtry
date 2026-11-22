@@ -1,0 +1,40 @@
+  Admin › Security › Secret scanning › Repositories                                                                                                                              signed in as operator  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                                                                        
+                               │  Secret scanning                                                                                                                      Gitleaks, leaked-secret scanner  
+    Overview                   │  0 repositories, 0 with an override                                                                                                                                    
+                               │  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  ╭──────────────────────────────────────╮  
+  ACCESS                       │  │   REPOSITORY                                                         STATUS     ENABLED  DETAIL            UPDATED     │  │ Select a repository to see its over… │  
+      Users                    │  │ No repositories yet.                                                                                                   │  │                                      │  
+      Robots                   │  │                                                                                                                        │  │                                      │  
+      Repository access        │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+  SECURITY                     │  │                                                                                                                        │  │                                      │  
+      Image scanning           │  │                                                                                                                        │  │                                      │  
+    ▸ Secret scanning          │  │                                                                                                                        │  │                                      │  
+      Signing policy           │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+  OPERATIONS                   │  │                                                                                                                        │  │                                      │  
+      Scan runs                │  │                                                                                                                        │  │                                      │  
+      Secret findings          │  │                                                                                                                        │  │                                      │  
+      Update channel           │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  │                                      │  
+                               │  o edits the override of the selected repository. An override replaces the global settings for it.                           ╰──────────────────────────────────────╯  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ↑↓ move   o override   r refresh   esc back   q quit                                                                                                                                     F2 mouse on  

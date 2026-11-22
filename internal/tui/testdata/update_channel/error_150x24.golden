@@ -1,0 +1,24 @@
+  Admin › Operations › Update channel                                                                                             signed in as admin  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                      
+                               │  Update channel                                                      which released tags the update check considers  
+    Overview                   │                                                                                                                      
+                               │  ╭───────────────────────────────────────────────────────────────╮  ╭─────────────────────────────────────────────╮  
+  ACCESS                       │  │ CHANNEL                                                       │  │ UPDATE STATUS                               │  
+      Users                    │  │ admin API is unavailable for this session                     │  │ Current version unknown (development build) │  
+      Robots                   │  │ Press r to try again.                                         │  │ Update               no newer release known │  
+      Repository access        │  ╰───────────────────────────────────────────────────────────────╯  │ The background update check compares the    │  
+                               │                                                                     │ current version with the latest tag on the  │  
+  SECURITY                     │                                                                     │ selected channel.                           │  
+      Image scanning           │                                                                     ╰─────────────────────────────────────────────╯  
+      Secret scanning          │                                                                                                                      
+      Signing policy           │                                                                                                                      
+                               │                                                                                                                      
+  OPERATIONS                   │                                                                                                                      
+      Scan runs                │                                                                                                                      
+      Secret findings          │                                                                                                                      
+    ▸ Update channel           │                                                                                                                      
+                               │                                                                                                                      
+                               │                                                                                                                      
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  space toggle stable/insider   enter save   r refresh   esc back   q quit                                                                            

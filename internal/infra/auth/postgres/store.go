@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"sort"
 	"strings"
 	"time"
 
@@ -247,6 +248,58 @@ func (s *Store) ListRepoGrantsByRepository(ctx context.Context, repository regix
 	return grants, rows.Err()
 }
 
+// ListRepoGrantsPage returns up to limit grants of every user and robot on
+// every repository, cataloged or not, ordered by repository, username and user
+// id, strictly after the cursor. One query joins grants to their owners (a
+// disabled owner still appears). Text collation differs between Postgres and
+// the sqlite test harness, so the SQL carries no ORDER BY or cursor predicate:
+// the exact bytewise order, the keyset cut and the limit run in Go. The table
+// is small (design.md Open Questions), so reading it whole per page is cheap.
+// Cost: O(N) rows read per page, accepted for collation-independent ordering.
+func (s *Store) ListRepoGrantsPage(ctx context.Context, after *domainauth.GrantCursor, limit int) ([]domainauth.RepositoryGrantRow, error) {
+	if limit <= 0 {
+		return []domainauth.RepositoryGrantRow{}, nil
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT g.repository, g.user_id, u.username, u.is_robot, g.role, g.created_at, g.updated_at
+		FROM auth_repo_grants g
+		JOIN auth_users u ON u.id = g.user_id
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]domainauth.RepositoryGrantRow, 0)
+	for rows.Next() {
+		var row domainauth.RepositoryGrantRow
+		var role, createdAt, updatedAt string
+		if err := rows.Scan(&row.Repository, &row.UserID, &row.Username, &row.IsRobot, &role, &createdAt, &updatedAt); err != nil {
+			return nil, err
+		}
+		row.Role = domainauth.RepoRole(role)
+		row.CreatedAt = parseTime(createdAt)
+		row.UpdatedAt = parseTime(updatedAt)
+		if after != nil && after.AtOrBefore(row) {
+			continue
+		}
+		result = append(result, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		return domainauth.CompareGrantKeys(result[i].Repository, result[i].Username, result[i].UserID, result[j].Repository, result[j].Username, result[j].UserID) < 0
+	})
+	if len(result) > limit {
+		result = result[:limit]
+	}
+
+	return result, nil
+}
+
 func (s *Store) PutRepoGrant(ctx context.Context, grant domainauth.RepoGrant) error {
 	if err := grant.Validate(); err != nil {
 		return err
@@ -336,6 +389,150 @@ func (s *Store) ListTokensByUser(ctx context.Context, userID string, kind domain
 	return tokens, rows.Err()
 }
 
+// expiringSecondLayout is formatTime's layout cut at whole seconds and without
+// the trailing "Z". Timestamps are stored as RFC3339Nano text whose fraction
+// has trailing zeros trimmed, so a plain text comparison against a full
+// timestamp is wrong inside one second ("...:00.5Z" sorts before "...:00Z").
+// Comparing against this unterminated prefix is exact at second granularity,
+// so the SQL below is a superset and Go does the exact comparison.
+const expiringSecondLayout = "2006-01-02T15:04:05"
+
+// ListExpiringTokens returns admin credentials of enabled owners that are not
+// revoked, not expired at now and expire at or before until, soonest first.
+// One query, no N+1; the exact time filter, ordering and limit run in Go.
+func (s *Store) ListExpiringTokens(ctx context.Context, now time.Time, until time.Time, limit int) ([]domainauth.ExpiringToken, error) {
+	if limit <= 0 || until.Before(now) {
+		return []domainauth.ExpiringToken{}, nil
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT t.id, t.user_id, u.username, u.is_robot, t.name, t.accessor, t.expires_at, t.created_at
+		FROM auth_tokens t
+		JOIN auth_users u ON u.id = t.user_id
+		WHERE t.kind = $1
+		  AND t.revoked_at IS NULL
+		  AND u.enabled = TRUE
+		  AND t.expires_at >= $2
+		  AND t.expires_at < $3
+	`, string(domainauth.TokenKindAdminCredential),
+		now.UTC().Format(expiringSecondLayout),
+		until.UTC().Truncate(time.Second).Add(time.Second).Format(expiringSecondLayout))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	tokens := make([]domainauth.ExpiringToken, 0)
+	for rows.Next() {
+		var token domainauth.ExpiringToken
+		var expiresAt, createdAt string
+		if err := rows.Scan(&token.ID, &token.UserID, &token.Username, &token.IsRobot, &token.Name, &token.Accessor, &expiresAt, &createdAt); err != nil {
+			return nil, err
+		}
+		token.ExpiresAt = parseTime(expiresAt)
+		token.CreatedAt = parseTime(createdAt)
+		if !token.ExpiresAt.After(now) || token.ExpiresAt.After(until) {
+			continue
+		}
+		tokens = append(tokens, token)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	sort.SliceStable(tokens, func(i, j int) bool { return tokens[i].ExpiresAt.Before(tokens[j].ExpiresAt) })
+	if len(tokens) > limit {
+		tokens = tokens[:limit]
+	}
+
+	return tokens, nil
+}
+
+// AppendAccessEvent stores one access change. Empty optional fields are
+// stored as NULL.
+func (s *Store) AppendAccessEvent(ctx context.Context, event domainauth.AccessEvent) error {
+	event = event.Normalized()
+	if err := event.Validate(); err != nil {
+		return err
+	}
+
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO auth_access_events (id, occurred_at, action, actor_user_id, actor_username, subject_user_id, subject_username, repository, role, token_name, detail)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+	`, event.ID, formatTime(event.OccurredAt), string(event.Action), event.ActorUserID, event.ActorUsername,
+		nullIfEmpty(event.SubjectUserID), nullIfEmpty(event.SubjectUsername), nullIfEmpty(event.Repository),
+		nullIfEmpty(event.Role), nullIfEmpty(event.TokenName), nullIfEmpty(event.Detail))
+
+	return err
+}
+
+// ListAccessEvents returns the newest events first, at most limit rows. The
+// timestamps are RFC3339Nano text with trimmed trailing zeros, so a text order
+// is only exact at second granularity (see expiringSecondLayout). The query
+// therefore reads every row from the second that holds the limit-th newest
+// row, and Go does the exact ordering and the cut.
+func (s *Store) ListAccessEvents(ctx context.Context, limit int) ([]domainauth.AccessEvent, error) {
+	if limit <= 0 {
+		return []domainauth.AccessEvent{}, nil
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, occurred_at, action, actor_user_id, actor_username, subject_user_id, subject_username, repository, role, token_name, detail
+		FROM auth_access_events
+		WHERE occurred_at >= COALESCE((
+			SELECT substr(occurred_at, 1, 19)
+			FROM auth_access_events
+			ORDER BY occurred_at DESC
+			LIMIT 1 OFFSET $1
+		), '')
+	`, limit-1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	events := make([]domainauth.AccessEvent, 0, limit)
+	for rows.Next() {
+		var event domainauth.AccessEvent
+		var occurredAt string
+		var subjectID, subjectName, repository, role, tokenName, detail sql.NullString
+		if err := rows.Scan(&event.ID, &occurredAt, &event.Action, &event.ActorUserID, &event.ActorUsername, &subjectID, &subjectName, &repository, &role, &tokenName, &detail); err != nil {
+			return nil, err
+		}
+		event.OccurredAt = parseTime(occurredAt)
+		event.SubjectUserID = subjectID.String
+		event.SubjectUsername = subjectName.String
+		event.Repository = repository.String
+		event.Role = role.String
+		event.TokenName = tokenName.String
+		event.Detail = detail.String
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	sort.SliceStable(events, func(i, j int) bool {
+		if !events[i].OccurredAt.Equal(events[j].OccurredAt) {
+			return events[i].OccurredAt.After(events[j].OccurredAt)
+		}
+		return events[i].ID > events[j].ID
+	})
+	if len(events) > limit {
+		events = events[:limit]
+	}
+
+	return events, nil
+}
+
+func nullIfEmpty(value string) any {
+	if value == "" {
+		return nil
+	}
+
+	return value
+}
+
 func (s *Store) RevokeTokenByAccessor(ctx context.Context, accessor string, revokedAt time.Time) error {
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE auth_tokens
@@ -355,6 +552,42 @@ func (s *Store) RevokeTokenByAccessor(ctx context.Context, accessor string, revo
 	}
 
 	return nil
+}
+
+func (s *Store) ResetUserPassword(ctx context.Context, user domainauth.User, revokedAt time.Time) (err error) {
+	user.Username = strings.ToLower(strings.TrimSpace(user.Username))
+	if err = user.Validate(); err != nil {
+		return err
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	result, err := tx.ExecContext(ctx, `UPDATE auth_users SET password_hash = $2, updated_at = $3 WHERE id = $1`, user.ID, user.PasswordHash, formatTime(user.UpdatedAt))
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		err = domainauth.NewNotFoundError("user", user.ID)
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE auth_tokens SET revoked_at = $2 WHERE user_id = $1 AND kind = $3 AND revoked_at IS NULL`, user.ID, formatTime(revokedAt), string(domainauth.TokenKindAccess)); err != nil {
+		return err
+	}
+
+	err = tx.Commit()
+	return err
 }
 
 func (s *Store) bootstrap(ctx context.Context) error {

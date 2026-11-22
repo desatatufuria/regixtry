@@ -1,0 +1,24 @@
+  Admin › Security › Signing policy › Repositories                                                                             signed in as operator  
+─────────────────────────────────────  ╭──────────────────────────────────────────────────────────────────────╮  ─────────────────────────────────────
+ regixtry admin                │       │  Signing override                                                    │
+                               │  Sig  │  team/api. override active.                                          │         image signature verification
+    Overview                   │  4 r  │  [x] Pull-time gate enforced                                         │
+                               │  ╭──  │  Trusted Keys (100)                                                  │  ──────────────────────────────────╮
+  ACCESS                       │  │    │    Key: 9b2ab94ecb70                                                 │  eam/api                           │
+      Users                    │  │ ▸  │    Key: cd1cd30d0c8a                                                 │  verride                           │
+      Robots                   │  │    │    Key: e96f4dceb7c7                                                 │                                    │
+      Repository access        │  │    │    Key: 70eaf5595f4f                                                 │  VERRIDE                           │
+                               │  │    │    Key: bf043ce2c646                                                 │  ull-time gate            enforced │
+  SECURITY                     │  │    │    Key: 539795ee84b7                                                 │  nsigned self-read          pusher │
+      Image scanning           │  │    │    Key: 77aa2d4b3091                                                 │  rusted keys                     1 │
+      Secret scanning          │  │    │    Key: 8bc6e1ef2423                                                 │  dentities                       1 │
+    ▸ Signing policy           │  │    │    Key: 9c8599515846                                                 │  pdated                      9 Nov │
+                               │  │    │    Key: 9314eb98c4dc                                                 │                                    │
+  OPERATIONS                   │  │    │    Key: 760f1941c174                                                 │  CTIONS                            │
+      Scan runs                │  │    │    Key: 1e2e74ac4baf                                                 │  dit override                    o │
+      Secret findings          │  │    │                                                                      │  efresh                          r │
+      Update channel           │  ╰──  │   Save  enter   Cancel  esc                                          │                                    │
+                               │  An   │  tab next field, space toggles or cycles, n adds and x deletes in a  │                                    │
+                               │  the  │  list                                                                │  ──────────────────────────────────╯
+─────────────────────────────────────  ╰──────────────────────────────────────────────────────────────────────╯  ─────────────────────────────────────
+  tab next field   space toggle   enter save   esc cancel                                                                                F2 mouse on  

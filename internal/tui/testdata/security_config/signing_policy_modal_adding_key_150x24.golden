@@ -1,0 +1,24 @@
+  Admin › Security › Signing policy                                                                                            signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │       ╭──────────────────────────────────────────────────────────────────────╮
+                               │  Sig  │  Signing policy                                                      │         image signature verification
+    Overview                   │  Fea  │  Applies to every repository without an override. 2 keys, 1          │
+                               │  ╭──  │  identity configured.                                                │  ──────────────────────────────────╮
+  ACCESS                       │  │ S  │  [x] Pull-time gate enforced                                         │                                    │
+      Users                    │  │ P  │  Unsigned self-read (space cycles)                                   │                        TYPE        │
+      Robots                   │  │ U  │   pusher                                                             │                        ECDSA P-256 │
+      Repository access        │  │ E  │   Trusted Keys (2)                                                   │                        ECDSA P-256 │
+                               │  │ p  │  ▸  Key: 2c1d7289f2db                                                │                                    │
+  SECURITY                     │  │ p  │    Key: aaf7110bc769                                                 │                                    │
+      Image scanning           │  │ w  │  New Key (PEM)                                                       │   OIDC ISSUER                      │
+      Secret scanning          │  │ L  │   --▏                                                                │   https://token.actions.githubuse… │
+    ▸ Signing policy           │  │    │  Trusted Identities (1)                                              │  y is enough.                      │
+                               │  ╰──  │    Identity: https://github.com/team/.* (https://token.actions.git…  │  ──────────────────────────────────╯
+  OPERATIONS                   │  ╭──  │  Clear all trusted keys                                              │  ──────────────────────────────────╮
+      Scan runs                │  │ P  │                                                                      │                                    │
+      Secret findings          │  │ R  │   Save  enter   Cancel  esc                                          │  DETAIL                UPDATED     │
+      Update channel           │  │ t  │  tab next field, space toggles, n adds and x deletes in a list       │  1 key, 0 identities   9 Nov       │
+                               │  │ +  ╰──────────────────────────────────────────────────────────────────────╯                                    │
+                               │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  tab next field   space toggle   enter save   esc cancel                                                                                F2 mouse on  

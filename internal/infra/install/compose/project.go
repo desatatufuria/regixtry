@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // ProjectConfig is the caller-supplied intent for one `docker` setup-mode
@@ -104,7 +105,7 @@ func (p *Provisioner) WriteProject(cfg ProjectConfig) (Project, error) {
 		PostgresPassword: password,
 		AuthPostgresDSN:  authDSN,
 	})
-	if err := os.WriteFile(envFilePath, []byte(envBody), 0o600); err != nil {
+	if err := writeOwnerOnlyFile(envFilePath, []byte(envBody)); err != nil {
 		return Project{}, fmt.Errorf("write compose project env file: %w", err)
 	}
 
@@ -149,4 +150,44 @@ func renderEnvFile(data envFileData) string {
 		fmt.Sprintf("REGIXTRY_AUTH_POSTGRES_DSN=%s", data.AuthPostgresDSN),
 	}
 	return strings.Join(lines, "\n") + "\n"
+}
+
+// renameFile is the final step of writeOwnerOnlyFile; a variable so tests can
+// inject a failure after the temp file exists.
+var renameFile = os.Rename
+
+// writeOwnerOnlyFile writes a secret-bearing file atomically with mode 0600
+// from the moment it exists: the bytes go to a temp file in the same directory
+// opened O_EXCL with 0600, are fsynced, then renamed over the target. A wider
+// pre-existing file is replaced (not chmod-ed after the fact), a symlink at the
+// target is replaced rather than followed, and the old file stays intact until
+// the rename succeeds. The temp file is removed on any failure.
+func writeOwnerOnlyFile(path string, body []byte) error {
+	dir := filepath.Dir(path)
+	for attempt := 0; attempt < 8; attempt++ {
+		tmp := filepath.Join(dir, fmt.Sprintf(".%s.%d.%d.%d.tmp", filepath.Base(path), os.Getpid(), attempt, time.Now().UnixNano()))
+		f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if os.IsExist(err) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		_, werr := f.Write(body)
+		if werr == nil {
+			werr = f.Sync()
+		}
+		if cerr := f.Close(); werr == nil {
+			werr = cerr
+		}
+		if werr == nil {
+			werr = renameFile(tmp, path)
+		}
+		if werr != nil {
+			_ = os.Remove(tmp)
+			return werr
+		}
+		return nil
+	}
+	return fmt.Errorf("create temporary file next to %s: too many collisions", path)
 }

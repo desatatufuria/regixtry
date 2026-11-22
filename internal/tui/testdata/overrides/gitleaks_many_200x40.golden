@@ -1,0 +1,40 @@
+  Admin › Security › Secret scanning › Repositories                                                                                                                              signed in as operator  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                                                                        
+                               │  Secret scanning                                                                                                                      Gitleaks, leaked-secret scanner  
+    Overview                   │  202 repositories, 2 with an override                                                                                                                                  
+                               │  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  ╭──────────────────────────────────────╮  
+  ACCESS                       │  │   REPOSITORY                                                         STATUS     ENABLED  DETAIL            UPDATED     │  │ team/docs                            │  
+      Users                    │  │   team/service-173                                                   inherited  —        global settings   -           │  │ override                             │  
+      Robots                   │  │   team/service-174                                                   inherited  —        global settings   -           │  │                                      │  
+      Repository access        │  │   team/service-175                                                   inherited  —        global settings   -           │  │ OVERRIDE                             │  
+                               │  │   team/service-176                                                   inherited  —        global settings   -           │  │ Scanning                         off │  
+  SECURITY                     │  │   team/service-177                                                   inherited  —        global settings   -           │  │ Config path                        - │  
+      Image scanning           │  │   team/service-178                                                   inherited  —        global settings   -           │  │ Updated                        2 Nov │  
+    ▸ Secret scanning          │  │   team/service-179                                                   inherited  —        global settings   -           │  │                                      │  
+      Signing policy           │  │   team/service-180                                                   inherited  —        global settings   -           │  │ ACTIONS                              │  
+                               │  │   team/service-181                                                   inherited  —        global settings   -           │  │ Edit override                      o │  
+  OPERATIONS                   │  │   team/service-182                                                   inherited  —        global settings   -           │  │ Refresh                            r │  
+      Scan runs                │  │   team/service-183                                                   inherited  —        global settings   -           │  │                                      │  
+      Secret findings          │  │   team/service-184                                                   inherited  —        global settings   -           │  │                                      │  
+      Update channel           │  │   team/service-185                                                   inherited  —        global settings   -           │  │                                      │  
+                               │  │   team/service-186                                                   inherited  —        global settings   -           │  │                                      │  
+                               │  │   team/service-187                                                   inherited  —        global settings   -           │  │                                      │  
+                               │  │   team/service-188                                                   inherited  —        global settings   -           │  │                                      │  
+                               │  │   team/service-189                                                   inherited  —        global settings   -           │  │                                      │  
+                               │  │   team/service-190                                                   inherited  —        global settings   -           │  │                                      │  
+                               │  │   team/service-191                                                   inherited  —        global settings   -           │  │                                      │  
+                               │  │   team/service-192                                                   inherited  —        global settings   -           │  │                                      │  
+                               │  │   team/service-193                                                   inherited  —        global settings   -           │  │                                      │  
+                               │  │   team/service-194                                                   inherited  —        global settings   -           │  │                                      │  
+                               │  │   team/service-195                                                   inherited  —        global settings   -           │  │                                      │  
+                               │  │   team/service-196                                                   inherited  —        global settings   -           │  │                                      │  
+                               │  │   team/service-197                                                   inherited  —        global settings   -           │  │                                      │  
+                               │  │   team/service-198                                                   inherited  —        global settings   -           │  │                                      │  
+                               │  │   team/service-199                                                   inherited  —        global settings   -           │  │                                      │  
+                               │  │   team/api                                                           override   yes      config path set   12 Nov      │  │                                      │  
+                               │  │ ▸ team/docs                                                          override   no       scanning off      2 Nov       │  │                                      │  
+                               │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  │                                      │  
+                               │  o edits the override of the selected repository. An override replaces the global settings for it.                           ╰──────────────────────────────────────╯  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ↑↓ move   o override   r refresh   esc back   q quit                                                                                                                                     F2 mouse on  

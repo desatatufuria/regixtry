@@ -1,0 +1,24 @@
+  Admin › Security › Secret scanning                                                                                           signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                      
+                               │  Secret scanning                                                                    Gitleaks, leaked-secret scanner  
+    Overview                   │  Feature enabled  ·  Runtime ready, healthy  ·  version 0.57.1  ·  update available (0.58.0)  ·  rollback available  
+                               │  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  
+  ACCESS                       │  │ GITLEAKS CONFIGURATION                                                                                         │  
+      Users                    │  │ Secret scanning                                                                                    [x] enabled │  
+      Robots                   │  │ Timeout                                                                                                     2m │  
+      Repository access        │  │ Max concurrency                                                                                              2 │  
+                               │  │ c edit configuration.                                                                                          │  
+  SECURITY                     │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  
+      Image scanning           │  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  
+    ▸ Secret scanning          │  │ PER-REPOSITORY OVERRIDES                                                                                       │  
+      Signing policy           │  │ REPOSITORY                                               STATUS     ENABLED  DETAIL                UPDATED     │  
+                               │  │ team/api                                                 override   yes      config path set       12 Nov      │  
+  OPERATIONS                   │  │ team/docs                                                override   no       scanning off          2 Nov       │  
+      Scan runs                │  │ team/web                                                 inherited  —        global settings       -           │  
+      Secret findings          │  │ team/infra                                               inherited  —        global settings       -           │  
+      Update channel           │  │                                                                                                                │  
+                               │  │                                                                                                                │  
+                               │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  c configure   o overrides   x disable   u upgrade runtime   r refresh   esc back   q quit                                              F2 mouse on  

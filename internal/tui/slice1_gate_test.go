@@ -8,10 +8,10 @@ import (
 // TestNoSecondConfirmPatternRemains is the tui-menu-architecture change's
 // Phase 7 task 7.4 explicit checklist item ("No second confirm pattern
 // remains", spec.md's tui-navigation-architecture requirement "One
-// Confirm-Before-Destructive-Action Primitive"): AdminViewState and
-// TagsModel must each hold exactly a confirmPrompt-typed field for their
+// Confirm-Before-Destructive-Action Primitive"): the three console
+// screens must each hold exactly a confirmPrompt-typed field for their
 // confirm, and no field named "PendingDelete" or "ConfirmModal" (the two
-// retired patterns) may exist on either struct.
+// retired patterns) may exist on any of them.
 func TestNoSecondConfirmPatternRemains(t *testing.T) {
 	t.Parallel()
 
@@ -22,8 +22,9 @@ func TestNoSecondConfirmPatternRemains(t *testing.T) {
 		structVal any
 		wantField string
 	}{
-		{"AdminViewState", AdminViewState{}, "Confirm"},
-		{"TagsModel", TagsModel{}, "Confirm"},
+		{"consoleRepositoriesScreen", consoleRepositoriesScreen{}, "confirm"},
+		{"consoleProjectsScreen", consoleProjectsScreen{}, "confirm"},
+		{"consoleTagsScreen", consoleTagsScreen{}, "confirm"},
 	} {
 		typ := reflect.TypeOf(tc.structVal)
 		field, ok := typ.FieldByName(tc.wantField)

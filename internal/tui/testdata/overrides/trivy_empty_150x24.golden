@@ -1,0 +1,24 @@
+  Admin › Security › Image scanning › Repositories                                                                             signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                      
+                               │  Image scanning                                                                        Trivy, vulnerability scanner  
+    Overview                   │  0 repositories, 0 with an override                                                                                  
+                               │   Config   Repositories                                                                                              
+  ACCESS                       │  ╭────────────────────────────────────────────────────────────────────────╮  ╭────────────────────────────────────╮  
+      Users                    │  │   REPOSITORY           CRIT  HIGH  LAST SCAN        STATUS     ENABLED │  │ Select a repository to see its ov… │  
+      Robots                   │  │ No repositories yet.                                                   │  │                                    │  
+      Repository access        │  │                                                                        │  │                                    │  
+                               │  │                                                                        │  │                                    │  
+  SECURITY                     │  │                                                                        │  │                                    │  
+    ▸ Image scanning           │  │                                                                        │  │                                    │  
+      Secret scanning          │  │                                                                        │  │                                    │  
+      Signing policy           │  │                                                                        │  │                                    │  
+                               │  │                                                                        │  │                                    │  
+  OPERATIONS                   │  │                                                                        │  │                                    │  
+      Scan runs                │  │                                                                        │  │                                    │  
+      Secret findings          │  │                                                                        │  │                                    │  
+      Update channel           │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
+                               │  One row per repository, severity first. enter opens its scan history,       │                                    │  
+                               │  o edits its override.                                                       ╰────────────────────────────────────╯  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  tab switch tabs   ↑↓ move   o override   enter scan history   r refresh   esc back   q quit                                            F2 mouse on  

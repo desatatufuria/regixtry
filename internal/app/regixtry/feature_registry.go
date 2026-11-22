@@ -35,10 +35,6 @@ var builtInFeatures = []featureDescriptor{
 	{name: signingFeatureName, kind: ports.FeatureKindBuiltin, managedRuntime: false},
 }
 
-type trivyRuntimeProber interface {
-	Probe(context.Context, ports.ScanSettings) (ports.FeatureRuntime, error)
-}
-
 func lookupFeature(name string) (featureDescriptor, error) {
 	trimmed := strings.TrimSpace(name)
 	for _, feature := range builtInFeatures {
@@ -492,57 +488,6 @@ func buildSigningPolicySection(details ports.FeatureDetails) ports.FeatureSectio
 			{Label: "Enabled", Value: fmt.Sprintf("%t", details.Enabled)},
 		},
 	}
-}
-
-func buildFeatureRunRows(runs []ports.ScanRun) []ports.FeatureRow {
-	if len(runs) == 0 {
-		return []ports.FeatureRow{{Title: "No scan runs recorded yet.", Status: "empty"}}
-	}
-	rows := make([]ports.FeatureRow, 0, len(runs))
-	for _, run := range runs {
-		detail := fmt.Sprintf("critical=%d high=%d medium=%d low=%d", run.Critical, run.High, run.Medium, run.Low)
-		if strings.TrimSpace(run.Error) != "" {
-			detail = run.Error
-		}
-		rows = append(rows, ports.FeatureRow{
-			Title:  fmt.Sprintf("%s@%s", run.Repository, run.RequestedRef),
-			Status: run.Status,
-			Detail: detail,
-		})
-	}
-	return rows
-}
-
-func buildFeatureVulnerabilityFields(runs []ports.ScanRun) []ports.FeatureField {
-	for _, run := range runs {
-		if run.Status != ports.ScanRunStatusCompleted {
-			continue
-		}
-		return []ports.FeatureField{
-			{Label: "Critical", Value: fmt.Sprintf("%d", run.Critical)},
-			{Label: "High", Value: fmt.Sprintf("%d", run.High)},
-			{Label: "Medium", Value: fmt.Sprintf("%d", run.Medium)},
-			{Label: "Low", Value: fmt.Sprintf("%d", run.Low)},
-		}
-	}
-	return []ports.FeatureField{{Label: "Status", Value: "No completed scan runs available."}}
-}
-
-func buildFeatureRepositoryAlertRows(runs []ports.ScanRun) []ports.FeatureRow {
-	rows := make([]ports.FeatureRow, 0, len(runs))
-	for _, run := range runs {
-		if run.Status == ports.ScanRunStatusFailed || run.Critical > 0 || run.High > 0 {
-			detail := fmt.Sprintf("critical=%d high=%d medium=%d low=%d", run.Critical, run.High, run.Medium, run.Low)
-			if strings.TrimSpace(run.Error) != "" {
-				detail = run.Error
-			}
-			rows = append(rows, ports.FeatureRow{Title: fmt.Sprintf("%s@%s", run.Repository, run.RequestedRef), Status: run.Status, Detail: detail})
-		}
-	}
-	if len(rows) == 0 {
-		return []ports.FeatureRow{{Title: "No repository alerts detected.", Status: "clear"}}
-	}
-	return rows
 }
 
 func buildFeatureActions(details ports.FeatureDetails) []ports.FeatureAction {

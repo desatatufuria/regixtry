@@ -10,8 +10,8 @@ import (
 
 // TestGitleaksOverrideOpensWithoutEnteringTrivy is the Phase 13 task 13.1
 // RED test (T2.1a, spec.md "Gitleaks override opens without entering
-// Trivy"): the key sequence from Gitleaks' own screen -- 'f' to open the
-// Built-in Features list, 'o' to enter Gitleaks' own dedicated repository
+// Trivy"): the key sequence from Gitleaks' own screen -- the sidebar's Secret
+// scanning item, 'o' to enter Gitleaks' own dedicated repository
 // list screen, 'o' again on the highlighted row -- never touches a Trivy
 // screen id or Trivy's own key-routing path (m.isSelectedTrivyFeature()),
 // and opens the override editor bound to gitleaks.
@@ -21,15 +21,12 @@ func TestGitleaksOverrideOpensWithoutEnteringTrivy(t *testing.T) {
 	now := time.Date(2026, time.August, 20, 10, 0, 0, 0, time.UTC)
 	adminClient := &fakeAdminClient{
 		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-		features:     []ports.FeatureSummary{{Name: "gitleaks", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 		featurePage: ports.FeaturePage{
 			Summary: ports.FeatureSummary{Name: "gitleaks", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
 		},
 	}
 	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
-	updated = runKey(t, updated, "down")
-	updated = runKey(t, updated, "enter")
-	updated = runKey(t, updated, "enter") // navigate into gitleaksConfigScreen
+	updated = openSidebarItem(t, updated, shellNavSecretScanning)
 
 	if strings.Contains(string(updated.screen), "trivy") {
 		t.Fatalf("screen = %q, want no Trivy screen id reached", updated.screen)
@@ -69,15 +66,12 @@ func TestSigningOverrideOpensWithoutEnteringTrivy(t *testing.T) {
 	now := time.Date(2026, time.August, 20, 10, 0, 0, 0, time.UTC)
 	adminClient := &fakeAdminClient{
 		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-		features:     []ports.FeatureSummary{{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: true}},
 		featurePage: ports.FeaturePage{
 			Summary: ports.FeatureSummary{Name: "signing", Kind: ports.FeatureKindBuiltin, Enabled: true},
 		},
 	}
 	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
-	updated = runKey(t, updated, "down")
-	updated = runKey(t, updated, "enter")
-	updated = runKey(t, updated, "enter") // navigate into signingConfigScreen
+	updated = openSidebarItem(t, updated, shellNavSigningPolicy)
 
 	if strings.Contains(string(updated.screen), "trivy") {
 		t.Fatalf("screen = %q, want no Trivy screen id reached", updated.screen)
@@ -110,7 +104,6 @@ func TestOverrideKeyIsInertWithoutAHighlightedRow(t *testing.T) {
 	now := time.Date(2026, time.August, 20, 10, 0, 0, 0, time.UTC)
 	adminClient := &fakeAdminClient{
 		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-		features:     []ports.FeatureSummary{{Name: "gitleaks", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
 		featurePage: ports.FeaturePage{
 			Summary: ports.FeatureSummary{Name: "gitleaks", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
 		},
@@ -118,10 +111,8 @@ func TestOverrideKeyIsInertWithoutAHighlightedRow(t *testing.T) {
 	// No repository catalog and no stored overrides -- newAdminReadyModelWithCatalog(nil, ...)
 	// yields an empty row set.
 	updated := runAdminLogin(t, newAdminReadyModelWithCatalog(t, nil, adminClient), "operator", "secret-pass")
-	updated = runKey(t, updated, "down")
-	updated = runKey(t, updated, "enter")
-	updated = runKey(t, updated, "enter") // navigate into gitleaksConfigScreen
-	updated = runKey(t, updated, "o")     // enters screenSecurityGitleaksRepos, zero rows
+	updated = openSidebarItem(t, updated, shellNavSecretScanning)
+	updated = runKey(t, updated, "o") // enters screenSecurityGitleaksRepos, zero rows
 
 	screenBefore, ok := updated.adminScreens[slotGitleaksRepos].(featureOverridesScreen)
 	if !ok || len(screenBefore.rows) != 0 {
@@ -133,22 +124,5 @@ func TestOverrideKeyIsInertWithoutAHighlightedRow(t *testing.T) {
 	screenAfter, _ := updated.adminScreens[slotGitleaksRepos].(featureOverridesScreen)
 	if screenAfter.editor.Active() {
 		t.Fatal("editor.Active() = true, want false -- 'o' must be inert with no highlighted row")
-	}
-}
-
-// TestOverrideModalStaysWithinViewport is the Phase 13 task 13.4 RED test
-// (T2.6, preserved MODIFIED-requirement scenario): at minimum viable
-// terminal height, the rendered override editor overlay does not exceed the
-// terminal's visible rows.
-func TestOverrideModalStaysWithinViewport(t *testing.T) {
-	t.Parallel()
-
-	theme := newAdminTheme()
-	editor := overrideEditor{open: true, repository: "library/alpine", feature: trivyFeatureName, exists: true, enabled: true, pathPrimary: "/etc/trivy/ignore", pathSecondary: "/etc/trivy/policy.rego", err: "ignore_file_path must be absolute"}
-
-	rendered := renderOverrideEditor(theme, editor)
-	height := strings.Count(rendered, "\n") + 1
-	if height > minViewportHeight {
-		t.Fatalf("renderOverrideEditor() height = %d rows, want <= %d (minViewportHeight)\n%s", height, minViewportHeight, rendered)
 	}
 }

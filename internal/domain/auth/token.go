@@ -11,8 +11,13 @@ const (
 	TokenKindAccess          TokenKind = "access"
 	TokenKindAdminCredential TokenKind = "admin-credential"
 
-	AccessTokenTTL       = 15 * time.Minute
+	AccessTokenTTL = 15 * time.Minute
+	// DefaultAdminTokenTTL is the lifetime of an admin credential token when
+	// the request does not ask for one.
 	DefaultAdminTokenTTL = 30 * 24 * time.Hour
+	// MaxAdminTokenTTL is the longest lifetime an admin credential token may
+	// be given. "2 years" is defined as 730 days (2 * 365), ignoring leap days.
+	MaxAdminTokenTTL = 2 * 365 * 24 * time.Hour
 )
 
 type Token struct {
@@ -80,6 +85,13 @@ func (t Token) Scopes() ([]Scope, error) {
 	trimmed := strings.TrimSpace(t.Scope)
 	if trimmed == "" {
 		return nil, nil
+	}
+
+	if trimmed == ScopeNone {
+		// The token was requested with scopes, none of which the user could be
+		// granted. It must stay restricted (carry a scope that authorizes
+		// nothing) rather than collapse into an unrestricted token.
+		return []Scope{{Type: ScopeNone, Name: ScopeNone, Canonical: ScopeNone}}, nil
 	}
 
 	return ParseScopes([]string{trimmed})

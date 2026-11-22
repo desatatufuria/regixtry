@@ -162,20 +162,9 @@ func TestHTTPAdminClientMutationRoutes(t *testing.T) {
 			},
 		},
 		{
-			name:       "delete grant",
-			method:     http.MethodDelete,
-			path:       "/admin/v1/users/u-1/grants/library/alpine",
-			statusCode: http.StatusNoContent,
-			run: func(t *testing.T, client *HTTPAdminClient) {
-				if err := client.DeleteUserGrant(context.Background(), session, "u-1", "library/alpine"); err != nil {
-					t.Fatalf("DeleteUserGrant() error = %v", err)
-				}
-			},
-		},
-		{
 			// Phase 3 task 3.7 RED test (design.md Decision 3 route table):
 			// the repository segment ("team/app") contains "/" and is NOT
-			// PathEscape-d, mirroring PutUserGrant/DeleteUserGrant's own
+			// PathEscape-d, mirroring PutUserGrant's own
 			// unescaped-repository precedent above.
 			name:       "list repository grants",
 			method:     http.MethodGet,
@@ -276,9 +265,7 @@ func TestHTTPAdminClientMutationRoutes(t *testing.T) {
 			},
 		},
 		{
-			// registry-acl-v1 robot-deletion follow-up (PR 4, backend-only):
-			// the client method is added here as part of the API contract;
-			// the TUI key/UI wiring is a separate PR 5 follow-up.
+			// robot deletion over the admin API contract.
 			name:       "delete robot",
 			method:     http.MethodDelete,
 			path:       "/admin/v1/robots/robot-1",
@@ -637,22 +624,6 @@ func TestHTTPAdminClientFeatureRoutes(t *testing.T) {
 		body       string
 		run        func(t *testing.T, client *HTTPAdminClient)
 	}{
-		{
-			name:       "list features",
-			method:     http.MethodGet,
-			path:       "/admin/v1/features",
-			statusCode: http.StatusOK,
-			body:       `[{"name":"trivy","kind":"builtin","enabled":true,"configured":true}]`,
-			run: func(t *testing.T, client *HTTPAdminClient) {
-				features, err := client.ListFeatures(context.Background(), session)
-				if err != nil {
-					t.Fatalf("ListFeatures() error = %v", err)
-				}
-				if len(features) != 1 || features[0].Name != "trivy" {
-					t.Fatalf("features = %#v, want builtin trivy inventory", features)
-				}
-			},
-		},
 		{
 			name:       "feature status",
 			method:     http.MethodGet,

@@ -5,8 +5,11 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -19,10 +22,22 @@ import (
 type Service struct {
 	store ports.AuthStore
 	now   func() time.Time
+	// rollbackTimeout bounds the best-effort robot rollback.
+	rollbackTimeout time.Duration
+	// comparePassword is the bcrypt comparison every password login performs;
+	// a seam so tests can assert each failure path reaches exactly one.
+	comparePassword func(hash, password []byte) error
+	// limiter bounds simultaneous bcrypt comparisons (see ConfigureLogin).
+	limiter *loginLimiter
+	backoff *loginBackoff
+	logger  *log.Logger
 }
 
+// robotRollbackTimeout is the default bound on the robot rollback delete.
+const robotRollbackTimeout = 5 * time.Second
+
 func NewService(store ports.AuthStore) *Service {
-	return &Service{store: store, now: func() time.Time { return time.Now().UTC() }}
+	return &Service{store: store, now: func() time.Time { return time.Now().UTC() }, rollbackTimeout: robotRollbackTimeout, comparePassword: bcrypt.CompareHashAndPassword, limiter: newLoginLimiter(0, 0), backoff: newLoginBackoff(DefaultBackoffPolicy()), logger: log.Default()}
 }
 
 func (s *Service) EnsureBootstrapAdmin(ctx context.Context) error {
@@ -166,6 +181,8 @@ func (s *Service) CreateUser(ctx context.Context, actor domainauth.Principal, in
 		return domainauth.User{}, err
 	}
 
+	s.recordUserCreated(ctx, actor, user)
+
 	return user, nil
 }
 
@@ -214,6 +231,7 @@ func (s *Service) UpdateUser(ctx context.Context, actor domainauth.Principal, in
 		}
 	}
 
+	before := user
 	user.Username = nextUsername
 	user.IsAdmin = input.IsAdmin
 	user.IsReadOnly = input.IsReadOnly
@@ -221,6 +239,8 @@ func (s *Service) UpdateUser(ctx context.Context, actor domainauth.Principal, in
 	if err := s.store.UpsertUser(ctx, user); err != nil {
 		return domainauth.User{}, err
 	}
+
+	s.recordUserUpdated(ctx, actor, before, user)
 
 	return user, nil
 }
@@ -240,11 +260,24 @@ func (s *Service) SetUserEnabled(ctx context.Context, actor domainauth.Principal
 		}
 	}
 
+	changed := user.Enabled != enabled
 	user.Enabled = enabled
 	user.UpdatedAt = s.now()
 	if err := s.store.UpsertUser(ctx, user); err != nil {
 		return domainauth.User{}, err
 	}
+
+	// Enabling an enabled user (or disabling a disabled one) changes nothing,
+	// so it leaves nothing in the history.
+	if !changed {
+		return user, nil
+	}
+
+	action := domainauth.AccessActionUserDisabled
+	if enabled {
+		action = domainauth.AccessActionUserEnabled
+	}
+	s.recordUserEvent(ctx, actor, action, user, "")
 
 	return user, nil
 }
@@ -282,51 +315,158 @@ func (s *Service) DeleteUser(ctx context.Context, actor domainauth.Principal, us
 		}
 	}
 
-	return s.store.DeleteUser(ctx, userID)
+	if err := s.store.DeleteUser(ctx, userID); err != nil {
+		return err
+	}
+
+	action := domainauth.AccessActionUserDeleted
+	if user.IsRobot {
+		action = domainauth.AccessActionRobotDeleted
+	}
+	s.recordUserEvent(ctx, actor, action, user, "")
+
+	return nil
 }
 
+// LoginWithPassword authenticates a human user. Every way of failing the
+// credential check (unknown username, disabled user, robot, wrong password)
+// returns the same invalid-credentials error and pays one bcrypt comparison,
+// so an unauthenticated caller can neither read the account state from the
+// response nor infer existence from the response time. The real reason travels
+// only in the error's wrapped cause, for server-side logs.
 func (s *Service) LoginWithPassword(ctx context.Context, username string, password string, requestedScopes []domainauth.Scope) (ports.LoginResult, error) {
-	user, err := s.getActiveUserByUsername(ctx, username)
+	// The backoff key is the normalized username alone, decided before any
+	// lookup, so an unknown and an existing account behave identically. A
+	// token-shaped secret (64 hex) is never gated and never counted: a wrong
+	// one must not let a stranger put someone else's account in backoff.
+	key := normalizeUsername(username)
+	accounted := s.backoff.enabled() && !ports.IsCredentialTokenShaped(password)
+	var wouldBlock time.Duration
+	if accounted {
+		if wait := s.backoff.check(key); wait > 0 {
+			if s.backoff.enforcing() {
+				// No log here: the HTTP adapter writes the single "login failed"
+				// line for a refusal, with the client IP.
+				return ports.LoginResult{}, &ports.LoginThrottledError{RetryAfter: wait, Reason: "throttled: account backoff"}
+			}
+			wouldBlock = wait
+		}
+	}
+
+	user, err := s.store.GetUserByUsername(ctx, key)
+	found := err == nil
+	if err != nil && !domainauth.IsCode(err, domainauth.ErrorCodeNotFound) {
+		return ports.LoginResult{}, err
+	}
+	if wouldBlock > 0 {
+		account := "account_hash=" + accountHash(key)
+		if found {
+			account = "account=" + accountLogName(key)
+		}
+		s.logger.Printf("login backoff would have blocked %s retry_after=%s mode=log", account, wouldBlock.Round(time.Second))
+	}
+
+	// design.md Decision 6: a robot never authenticates with a password. Its
+	// RobotPasswordHash sentinel independently blocks bcrypt, but this
+	// per-attempt guard is a second, permanent layer that does not depend on
+	// the stored hash's shape. The guard stays out of the shared lookup because
+	// LoginWithPreissuedToken is the robot's only working credential path.
+	hash := dummyPasswordHash()
+	if found && !user.IsRobot {
+		hash = []byte(user.PasswordHash)
+	}
+	passwordMatches, err := s.compareLimited(ctx, hash, []byte(password))
 	if err != nil {
 		return ports.LoginResult{}, err
 	}
-	// design.md Decision 6: the guard sits here, immediately after
-	// getActiveUserByUsername, and NOT inside that helper — it is shared
-	// with LoginWithPreissuedToken, the robot's only working credential
-	// path. A robot's RobotPasswordHash sentinel (user.go) independently
-	// blocks bcrypt below, but this per-attempt guard is a second,
-	// permanent layer that does not depend on the stored hash's shape.
-	if user.IsRobot {
-		return ports.LoginResult{}, domainauth.NewInvalidCredentialsError()
+
+	var failure error
+	switch {
+	case !found:
+		failure = invalidCredentialsBecause("unknown user")
+	case !user.Enabled:
+		failure = invalidCredentialsBecause("user is disabled")
+	case user.IsRobot:
+		failure = invalidCredentialsBecause("robot accounts cannot use a password")
+	case !passwordMatches:
+		failure = invalidCredentialsBecause("wrong password")
 	}
-	if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)) != nil {
-		return ports.LoginResult{}, domainauth.NewInvalidCredentialsError()
+	if failure != nil {
+		if accounted {
+			s.backoff.fail(key)
+		}
+		return ports.LoginResult{}, failure
+	}
+	if accounted {
+		s.backoff.success(key)
 	}
 
 	return s.issueAccessToken(ctx, user, requestedScopes)
 }
 
+// LoginWithPreissuedToken exchanges an admin credential token for an access
+// token. The user and token lookups both always run, and every mismatch
+// (unknown user, disabled user, unknown token, token of another user) yields
+// the same invalid-credentials error as a wrong password.
 func (s *Service) LoginWithPreissuedToken(ctx context.Context, username string, token string, requestedScopes []domainauth.Scope) (ports.LoginResult, error) {
-	user, err := s.getActiveUserByUsername(ctx, username)
-	if err != nil {
-		return ports.LoginResult{}, err
+	user, userErr := s.store.GetUserByUsername(ctx, normalizeUsername(username))
+	if userErr != nil && !domainauth.IsCode(userErr, domainauth.ErrorCodeNotFound) {
+		return ports.LoginResult{}, userErr
+	}
+	storedToken, tokenErr := s.store.GetTokenBySecretHash(ctx, domainauth.TokenKindAdminCredential, hashSecret(token))
+	if tokenErr != nil && !domainauth.IsCode(tokenErr, domainauth.ErrorCodeNotFound) {
+		return ports.LoginResult{}, tokenErr
 	}
 
-	storedToken, err := s.store.GetTokenBySecretHash(ctx, domainauth.TokenKindAdminCredential, hashSecret(token))
-	if err != nil {
-		if domainauth.IsCode(err, domainauth.ErrorCodeNotFound) {
-			return ports.LoginResult{}, domainauth.NewInvalidCredentialsError()
-		}
-		return ports.LoginResult{}, err
-	}
-	if storedToken.UserID != user.ID {
-		return ports.LoginResult{}, domainauth.NewInvalidCredentialsError()
+	switch {
+	case userErr != nil:
+		return ports.LoginResult{}, invalidCredentialsBecause("unknown user")
+	case !user.Enabled:
+		return ports.LoginResult{}, invalidCredentialsBecause("user is disabled")
+	case tokenErr != nil:
+		return ports.LoginResult{}, invalidCredentialsBecause("wrong password or unknown admin credential token")
+	case storedToken.UserID != user.ID:
+		return ports.LoginResult{}, invalidCredentialsBecause("admin credential token belongs to another user")
 	}
 	if err := storedToken.IsActive(s.now()); err != nil {
 		return ports.LoginResult{}, err
 	}
 
 	return s.issueAccessToken(ctx, user, requestedScopes)
+}
+
+// invalidCredentialsBecause is the uniform client-facing error with the real
+// reason attached as a wrapped cause. The client sees only Message.
+func invalidCredentialsBecause(reason string) error {
+	return &domainauth.Error{Code: domainauth.ErrorCodeInvalidCredentials, Message: "invalid credentials", Err: errors.New(reason)}
+}
+
+// passwordHashCost is the bcrypt cost of every newly written password hash and
+// of the dummy hash used to equalize failed logins. A hash stored with another
+// cost (for example a legacy one at cost 4 or 12 migrated in) keeps its own
+// cost, so a login against it takes proportionally longer or shorter than the
+// dummy comparison; the dummy cost deliberately tracks new hashes only and
+// never adapts to whatever is stored. Re-hash such users to remove the gap.
+const passwordHashCost = bcrypt.DefaultCost
+
+var (
+	dummyHashOnce  sync.Once
+	dummyHashBytes []byte
+)
+
+// dummyPasswordHash returns a bcrypt hash of the same cost as real password
+// hashes, compared against when no real hash applies so every failed login
+// costs the same.
+func dummyPasswordHash() []byte {
+	dummyHashOnce.Do(func() {
+		hash, err := bcrypt.GenerateFromPassword([]byte("regixtry-dummy-password"), passwordHashCost)
+		if err != nil {
+			panic(err)
+		}
+		dummyHashBytes = hash
+	})
+
+	return dummyHashBytes
 }
 
 func (s *Service) VerifyAccessToken(ctx context.Context, bearerToken string) (domainauth.Principal, error) {
@@ -357,39 +497,65 @@ func (s *Service) VerifyAccessToken(ctx context.Context, bearerToken string) (do
 	return principal, nil
 }
 
+// resolveAdminTokenTTL applies the default and the ceiling to a requested admin
+// token lifetime. It is shared by CreateAdminToken and CreateRobot so the robot
+// flow can reject a bad TTL before it writes anything.
+func resolveAdminTokenTTL(requested time.Duration) (time.Duration, error) {
+	ttl := requested
+	if ttl <= 0 {
+		ttl = domainauth.DefaultAdminTokenTTL
+	}
+	if ttl > domainauth.MaxAdminTokenTTL {
+		return 0, domainauth.NewValidationError("admin token ttl must be 2 years or shorter")
+	}
+
+	return ttl, nil
+}
+
 func (s *Service) CreateAdminToken(ctx context.Context, actor domainauth.Principal, input ports.CreateAdminTokenInput) (ports.CreatedAdminToken, error) {
-	if err := requireAdmin(actor); err != nil {
+	created, ttl, err := s.issueAdminToken(ctx, actor, input)
+	if err != nil {
 		return ports.CreatedAdminToken{}, err
+	}
+
+	s.recordTokenIssued(ctx, actor, created.TargetUser, created.Token, ttl)
+
+	return created, nil
+}
+
+// issueAdminToken issues an admin credential token without recording it in
+// the access history, so CreateRobot can record one event for the whole
+// operation. It returns the lifetime that was applied.
+func (s *Service) issueAdminToken(ctx context.Context, actor domainauth.Principal, input ports.CreateAdminTokenInput) (ports.CreatedAdminToken, time.Duration, error) {
+	if err := requireAdmin(actor); err != nil {
+		return ports.CreatedAdminToken{}, 0, err
 	}
 
 	user, err := s.store.GetUserByID(ctx, input.UserID)
 	if err != nil {
-		return ports.CreatedAdminToken{}, err
+		return ports.CreatedAdminToken{}, 0, err
 	}
 	if !user.Enabled {
-		return ports.CreatedAdminToken{}, domainauth.NewDisabledUserError(user.Username)
+		return ports.CreatedAdminToken{}, 0, domainauth.NewDisabledUserError(user.Username)
 	}
 
-	ttl := input.TTL
-	if ttl <= 0 {
-		ttl = domainauth.DefaultAdminTokenTTL
-	}
-	if ttl > domainauth.DefaultAdminTokenTTL {
-		return ports.CreatedAdminToken{}, domainauth.NewValidationError("admin token ttl must be 30 days or shorter")
+	ttl, err := resolveAdminTokenTTL(input.TTL)
+	if err != nil {
+		return ports.CreatedAdminToken{}, 0, err
 	}
 
 	secret, err := randomSecret(32)
 	if err != nil {
-		return ports.CreatedAdminToken{}, err
+		return ports.CreatedAdminToken{}, 0, err
 	}
 
 	now := s.now()
 	token := domainauth.Token{ID: uuid.NewString(), UserID: user.ID, Kind: domainauth.TokenKindAdminCredential, Name: strings.TrimSpace(input.Name), Accessor: shortAccessor("act"), SecretHash: hashSecret(secret), CreatedAt: now, ExpiresAt: now.Add(ttl)}
 	if err := s.store.CreateToken(ctx, token); err != nil {
-		return ports.CreatedAdminToken{}, err
+		return ports.CreatedAdminToken{}, 0, err
 	}
 
-	return ports.CreatedAdminToken{Token: token, Secret: secret, Plaintext: secret, Accessor: token.Accessor, ExpiresAt: token.ExpiresAt, TargetUser: user}, nil
+	return ports.CreatedAdminToken{Token: token, Secret: secret, Plaintext: secret, Accessor: token.Accessor, ExpiresAt: token.ExpiresAt, TargetUser: user}, ttl, nil
 }
 
 func (s *Service) CreateAdminUserToken(ctx context.Context, actor domainauth.Principal, input ports.AdminCreateTokenInput) (ports.AdminCreatedToken, error) {
@@ -461,12 +627,57 @@ func (s *Service) ListAdminUserTokens(ctx context.Context, actor domainauth.Prin
 	return result, nil
 }
 
+// ListAdminExpiringTokens lists admin credentials that expire within the given
+// window from the service clock, soonest first. Metadata only.
+func (s *Service) ListAdminExpiringTokens(ctx context.Context, actor domainauth.Principal, within time.Duration, limit int) ([]ports.AdminExpiringToken, error) {
+	if err := requireAdmin(actor); err != nil {
+		return nil, err
+	}
+
+	now := s.now()
+	tokens, err := s.store.ListExpiringTokens(ctx, now, now.Add(within), limit)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]ports.AdminExpiringToken, 0, len(tokens))
+	for _, token := range tokens {
+		result = append(result, ports.AdminExpiringToken{
+			ID:        token.ID,
+			Accessor:  token.Accessor,
+			Name:      token.Name,
+			UserID:    token.UserID,
+			Username:  token.Username,
+			IsRobot:   token.IsRobot,
+			CreatedAt: token.CreatedAt,
+			ExpiresAt: token.ExpiresAt,
+		})
+	}
+
+	return result, nil
+}
+
 func (s *Service) RevokeAdminToken(ctx context.Context, actor domainauth.Principal, accessor string) error {
 	if err := requireAdmin(actor); err != nil {
 		return err
 	}
 
-	return s.store.RevokeTokenByAccessor(ctx, strings.TrimSpace(accessor), s.now())
+	accessor = strings.TrimSpace(accessor)
+	// Resolved only to name the subject in the access history; a failed
+	// lookup never changes the revocation itself.
+	token, tokenErr := s.store.GetTokenByAccessor(ctx, domainauth.TokenKindAdminCredential, accessor)
+
+	if err := s.store.RevokeTokenByAccessor(ctx, accessor, s.now()); err != nil {
+		return err
+	}
+
+	if tokenErr == nil {
+		if subject, err := s.store.GetUserByID(ctx, token.UserID); err == nil {
+			s.recordTokenRevoked(ctx, actor, subject, token)
+		}
+	}
+
+	return nil
 }
 
 func (s *Service) RevokeAdminUserToken(ctx context.Context, actor domainauth.Principal, userID string, accessor string) error {
@@ -487,7 +698,13 @@ func (s *Service) RevokeAdminUserToken(ctx context.Context, actor domainauth.Pri
 		return domainauth.NewNotFoundError("token", strings.TrimSpace(accessor))
 	}
 
-	return s.store.RevokeTokenByAccessor(ctx, token.Accessor, s.now())
+	if err := s.store.RevokeTokenByAccessor(ctx, token.Accessor, s.now()); err != nil {
+		return err
+	}
+
+	s.recordTokenRevoked(ctx, actor, user, token)
+
+	return nil
 }
 
 func (s *Service) ResetPassword(ctx context.Context, actor domainauth.Principal, userID string, newPassword string) error {
@@ -502,13 +719,32 @@ func (s *Service) ResetPassword(ctx context.Context, actor domainauth.Principal,
 	if err != nil {
 		return err
 	}
+	// A robot has no password: LoginWithPassword refuses robots and the
+	// RobotPasswordHash sentinel must never be replaced by a real hash.
+	if user.IsRobot {
+		return domainauth.NewValidationError("target user is a robot account and has no password")
+	}
 	hash, err := hashPassword(newPassword)
 	if err != nil {
 		return err
 	}
+	// The new hash and the revocation of the user's login sessions (access
+	// tokens, which a password login minted) commit in one transaction, so a
+	// session opened with the old password cannot outlive the reset. Admin
+	// credential tokens intentionally survive: they are PAT-like, do not
+	// derive from the password and are revoked explicitly by the operator
+	// (Tokens screen). Resetting your own password closes your own session.
 	user.PasswordHash = hash
 	user.UpdatedAt = s.now()
-	return s.store.UpsertUser(ctx, user)
+	if err := s.store.ResetUserPassword(ctx, user, user.UpdatedAt); err != nil {
+		return err
+	}
+
+	// Detail stays empty: neither the password nor anything derived from it
+	// belongs in the history.
+	s.recordUserEvent(ctx, actor, domainauth.AccessActionUserPasswordReset, user, "")
+
+	return nil
 }
 
 func (s *Service) ResetAdminUserPassword(ctx context.Context, actor domainauth.Principal, input ports.AdminResetPasswordInput) error {
@@ -519,7 +755,8 @@ func (s *Service) PutRepoGrant(ctx context.Context, actor domainauth.Principal, 
 	if err := requireAdmin(actor); err != nil {
 		return domainauth.RepoGrant{}, err
 	}
-	if _, err := s.store.GetUserByID(ctx, userID); err != nil {
+	subject, err := s.store.GetUserByID(ctx, userID)
+	if err != nil {
 		return domainauth.RepoGrant{}, err
 	}
 
@@ -531,10 +768,19 @@ func (s *Service) PutRepoGrant(ctx context.Context, actor domainauth.Principal, 
 		return domainauth.RepoGrant{}, err
 	}
 
+	// Read only to word the access history ("Reader to Writer"); a failed
+	// read never blocks the grant.
+	existing, listErr := s.store.ListRepoGrants(ctx, userID)
+	previous, hadPrevious := grantRoleOn(existing, repo.String())
+
 	now := s.now()
 	grant := domainauth.RepoGrant{UserID: userID, Repository: repo, Role: role, CreatedAt: now, UpdatedAt: now}
 	if err := s.store.PutRepoGrant(ctx, grant); err != nil {
 		return domainauth.RepoGrant{}, err
+	}
+
+	if listErr == nil {
+		s.recordGrantPut(ctx, actor, subject, grant, previous, hadPrevious)
 	}
 
 	return grant, nil
@@ -553,7 +799,8 @@ func (s *Service) DeleteRepoGrant(ctx context.Context, actor domainauth.Principa
 	if err := requireAdmin(actor); err != nil {
 		return err
 	}
-	if _, err := s.store.GetUserByID(ctx, userID); err != nil {
+	subject, err := s.store.GetUserByID(ctx, userID)
+	if err != nil {
 		return err
 	}
 
@@ -562,7 +809,13 @@ func (s *Service) DeleteRepoGrant(ctx context.Context, actor domainauth.Principa
 		return err
 	}
 
-	return s.store.DeleteRepoGrant(ctx, userID, repo)
+	if err := s.store.DeleteRepoGrant(ctx, userID, repo); err != nil {
+		return err
+	}
+
+	s.recordGrantDelete(ctx, actor, subject, repo.String())
+
+	return nil
 }
 
 func (s *Service) DeleteAdminUserRepoGrant(ctx context.Context, actor domainauth.Principal, userID string, repository string) error {
@@ -636,10 +889,13 @@ func (s *Service) PutRepositoryGrant(ctx context.Context, actor domainauth.Princ
 		return domainauth.RepoGrant{}, err
 	}
 
+	// The existing grants bound a delegate and word the access history
+	// ("Reader to Writer"). For a global admin a failed read never blocks the
+	// grant; for a delegate it still does.
+	existing, listErr := s.store.ListRepoGrants(ctx, target.ID)
 	if !actor.IsAdmin {
-		existing, err := s.store.ListRepoGrants(ctx, target.ID)
-		if err != nil {
-			return domainauth.RepoGrant{}, err
+		if listErr != nil {
+			return domainauth.RepoGrant{}, listErr
 		}
 		for _, grant := range existing {
 			if grant.Repository.String() == repo.String() && grant.Role == domainauth.RepoRoleAdmin {
@@ -647,11 +903,16 @@ func (s *Service) PutRepositoryGrant(ctx context.Context, actor domainauth.Princ
 			}
 		}
 	}
+	previous, hadPrevious := grantRoleOn(existing, repo.String())
 
 	now := s.now()
 	grant := domainauth.RepoGrant{UserID: target.ID, Repository: repo, Role: role, CreatedAt: now, UpdatedAt: now}
 	if err := s.store.PutRepoGrant(ctx, grant); err != nil {
 		return domainauth.RepoGrant{}, err
+	}
+
+	if listErr == nil {
+		s.recordGrantPut(ctx, actor, target, grant, previous, hadPrevious)
 	}
 
 	return grant, nil
@@ -696,7 +957,13 @@ func (s *Service) DeleteRepositoryGrant(ctx context.Context, actor domainauth.Pr
 		}
 	}
 
-	return s.store.DeleteRepoGrant(ctx, target.ID, repo)
+	if err := s.store.DeleteRepoGrant(ctx, target.ID, repo); err != nil {
+		return err
+	}
+
+	s.recordGrantDelete(ctx, actor, target, repo.String())
+
+	return nil
 }
 
 func (s *Service) DeleteAdminRepositoryGrant(ctx context.Context, actor domainauth.Principal, repository string, username string) error {
@@ -730,6 +997,13 @@ func (s *Service) CreateRobot(ctx context.Context, actor domainauth.Principal, i
 		return ports.CreatedRobot{}, err
 	}
 
+	// Validate everything CreateAdminToken will validate before the first
+	// write, so a bad TTL cannot leave an orphan robot behind.
+	ttl, err := resolveAdminTokenTTL(input.TTL)
+	if err != nil {
+		return ports.CreatedRobot{}, err
+	}
+
 	now := s.now()
 	user := domainauth.User{
 		ID:           uuid.NewString(),
@@ -746,15 +1020,28 @@ func (s *Service) CreateRobot(ctx context.Context, actor domainauth.Principal, i
 
 	grant := domainauth.RepoGrant{UserID: user.ID, Repository: repo, Role: input.Role, CreatedAt: now, UpdatedAt: now}
 	if err := s.store.PutRepoGrant(ctx, grant); err != nil {
+		s.rollbackRobot(ctx, user.ID)
 		return ports.CreatedRobot{}, err
 	}
 
-	created, err := s.CreateAdminToken(ctx, actor, ports.CreateAdminTokenInput{UserID: user.ID, Name: strings.TrimSpace(input.Name), TTL: input.TTL})
+	created, _, err := s.issueAdminToken(ctx, actor, ports.CreateAdminTokenInput{UserID: user.ID, Name: strings.TrimSpace(input.Name), TTL: input.TTL})
 	if err != nil {
+		s.rollbackRobot(ctx, user.ID)
 		return ports.CreatedRobot{}, err
 	}
+
+	s.recordRobotCreated(ctx, actor, user, grant, created.Token.Name, ttl)
 
 	return ports.CreatedRobot{User: user, Grant: grant, Secret: created.Secret, Accessor: created.Accessor, ExpiresAt: created.ExpiresAt}, nil
+}
+
+// rollbackRobot best-effort deletes the robot user CreateRobot just wrote
+// (grants and tokens cascade with the user). The original failure is what the
+// caller reports; a failed rollback cannot be surfaced without masking it.
+func (s *Service) rollbackRobot(ctx context.Context, userID string) {
+	rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.rollbackTimeout)
+	defer cancel()
+	_ = s.store.DeleteUser(rollbackCtx, userID)
 }
 
 // ListRobots lists every robot account (design.md Decision 6): a dedicated
@@ -830,7 +1117,13 @@ func (s *Service) DeleteRobot(ctx context.Context, actor domainauth.Principal, u
 		return domainauth.NewValidationError("target user is not a robot account")
 	}
 
-	return s.store.DeleteUser(ctx, userID)
+	if err := s.store.DeleteUser(ctx, userID); err != nil {
+		return err
+	}
+
+	s.recordUserEvent(ctx, actor, domainauth.AccessActionRobotDeleted, user, "")
+
+	return nil
 }
 
 func (s *Service) DeleteAdminRobot(ctx context.Context, actor domainauth.Principal, userID string) error {
@@ -916,8 +1209,15 @@ func (s *Service) issueAccessToken(ctx context.Context, user domainauth.User, re
 	}
 	grantedScope := domainauth.NormalizeScopes(grantedScopes)
 
+	// A request that named scopes but granted none must not yield an
+	// unrestricted token: persist the restricted marker, report no scope.
+	storedScope := grantedScope
+	if storedScope == "" && len(requestedScopes) > 0 {
+		storedScope = domainauth.ScopeNone
+	}
+
 	now := s.now()
-	token := domainauth.Token{ID: uuid.NewString(), UserID: user.ID, Kind: domainauth.TokenKindAccess, Scope: grantedScope, Accessor: shortAccessor("atk"), SecretHash: hashSecret(secret), CreatedAt: now, ExpiresAt: now.Add(domainauth.AccessTokenTTL)}
+	token := domainauth.Token{ID: uuid.NewString(), UserID: user.ID, Kind: domainauth.TokenKindAccess, Scope: storedScope, Accessor: shortAccessor("atk"), SecretHash: hashSecret(secret), CreatedAt: now, ExpiresAt: now.Add(domainauth.AccessTokenTTL)}
 	if err := s.store.CreateToken(ctx, token); err != nil {
 		return ports.LoginResult{}, err
 	}
@@ -928,21 +1228,6 @@ func (s *Service) issueAccessToken(ctx context.Context, user domainauth.User, re
 	}
 
 	return ports.LoginResult{Principal: principal, BearerToken: secret, ExpiresAt: token.ExpiresAt, Accessor: token.Accessor, Scope: grantedScope}, nil
-}
-
-func (s *Service) getActiveUserByUsername(ctx context.Context, username string) (domainauth.User, error) {
-	user, err := s.store.GetUserByUsername(ctx, normalizeUsername(username))
-	if err != nil {
-		if domainauth.IsCode(err, domainauth.ErrorCodeNotFound) {
-			return domainauth.User{}, domainauth.NewInvalidCredentialsError()
-		}
-		return domainauth.User{}, err
-	}
-	if !user.Enabled {
-		return domainauth.User{}, domainauth.NewDisabledUserError(user.Username)
-	}
-
-	return user, nil
 }
 
 func (s *Service) buildPrincipal(ctx context.Context, user domainauth.User, token domainauth.Token) (domainauth.Principal, error) {
@@ -1048,6 +1333,9 @@ func requireAdmin(actor domainauth.Principal) error {
 	if !actor.IsAdmin {
 		return domainauth.NewForbiddenError("administrator privileges are required")
 	}
+	if !actor.IsUnrestricted() {
+		return domainauth.NewForbiddenError("a scope-limited token cannot be used for administration")
+	}
 
 	return nil
 }
@@ -1060,6 +1348,9 @@ func requireAdmin(actor domainauth.Principal) error {
 // scope — a TUI/admin-API login requests zero scopes, so that helper would
 // make delegation permanently dead code on exactly the tokens it runs on.
 func requireAdminOrRepoAdmin(actor domainauth.Principal, repository string) error {
+	if !actor.IsUnrestricted() {
+		return domainauth.NewForbiddenError("a scope-limited token cannot be used for administration")
+	}
 	if actor.IsAdmin {
 		return nil
 	}
@@ -1081,12 +1372,15 @@ func validatePassword(password string) error {
 	if len(strings.TrimSpace(password)) < 8 {
 		return domainauth.NewValidationError("password must be at least 8 characters")
 	}
+	if isCommonPassword(password) {
+		return domainauth.NewValidationError("password is too common; choose a less guessable one")
+	}
 
 	return nil
 }
 
 func hashPassword(password string) (string, error) {
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), passwordHashCost)
 	if err != nil {
 		return "", err
 	}

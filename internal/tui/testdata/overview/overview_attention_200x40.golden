@@ -1,0 +1,40 @@
+  Admin › Overview                                                                                                                                                               signed in as operator  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                                                                        
+                               │  Overview                                                                                                                                                              
+  ▸ Overview                   │  The three things you do most are one key away from anywhere.                                                                                                          
+                               │                                                                                                                                                                        
+  ACCESS                       │  ╭────────────────────────────────────────────────────╮  ╭───────────────────────────────────────────────────╮  ╭───────────────────────────────────────────────────╮  
+      Users                    │  │ Grant repository access                         g  │  │ Create robot                                   r  │  │ Issue token                                    t  │  
+      Robots                   │  │ Pick a user or robot, pick repositories, pick a    │  │ A CI identity with its first repository grant and │  │ Choose a lifetime and see the exact expiry date   │  
+      Repository access        │  │ role. One screen.                                  │  │ token.                                            │  │ before creating.                                  │  
+                               │  ╰────────────────────────────────────────────────────╯  ╰───────────────────────────────────────────────────╯  ╰───────────────────────────────────────────────────╯  
+  SECURITY                     │                                                                                                                                                                        
+      Image scanning           │  ╭───────────────────────────────────────────────────────────────────────────────╮  ╭───────────────────────────────────────────────────────────────────────────────╮  
+      Secret scanning          │  │ NEEDS ATTENTION                                                               │  │ RECENT CHANGES                                                                │  
+      Signing policy           │  │   Robot gh-actions has no repository access                           g grant │  │ No changes recorded yet.                                                      │  
+                               │  │   2 images have critical findings                                             │  │                                                                               │  
+  OPERATIONS                   │  │                                                                               │  │                                                                               │  
+      Scan runs                │  │                                                                               │  │                                                                               │  
+      Secret findings          │  │                                                                               │  │                                                                               │  
+      Update channel           │  │                                                                               │  │                                                                               │  
+                               │  │                                                                               │  │                                                                               │  
+                               │  │                                                                               │  │                                                                               │  
+                               │  │                                                                               │  │                                                                               │  
+                               │  │                                                                               │  │                                                                               │  
+                               │  │                                                                               │  │                                                                               │  
+                               │  │                                                                               │  │                                                                               │  
+                               │  │                                                                               │  │                                                                               │  
+                               │  │                                                                               │  │                                                                               │  
+                               │  │                                                                               │  │                                                                               │  
+                               │  │                                                                               │  │                                                                               │  
+                               │  │                                                                               │  │                                                                               │  
+                               │  │                                                                               │  │                                                                               │  
+                               │  │                                                                               │  │                                                                               │  
+                               │  │                                                                               │  │                                                                               │  
+                               │  │                                                                               │  │                                                                               │  
+                               │  │                                                                               │  │                                                                               │  
+                               │  │                                                                               │  │                                                                               │  
+                               │  ╰───────────────────────────────────────────────────────────────────────────────╯  ╰───────────────────────────────────────────────────────────────────────────────╯  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ↑↓ move   tab attention   enter open   g grant access   r robot   t token   esc back   q quit                                                                                            F2 mouse on  

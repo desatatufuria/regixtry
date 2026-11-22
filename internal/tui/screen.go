@@ -4,16 +4,12 @@ import (
 	"context"
 	"time"
 
-	"github.com/charmbracelet/bubbles/key"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
 )
 
-// screenKeys is this project's help.KeyMap implementation (design.md
-// Decision D). The struct is declared here rather than in admin_keys.go
-// (its natural Phase 4 home) because adminScreen's Keys() method below
-// needs the type to exist before Phase 4 adds bubbles/help wiring
-// (ShortHelp/FullHelp/matches/shortHelpView) — Go requires the type at
-// every reference site, not only where it is fully fleshed out.
+// screenKeys is the key bindings a screen advertises in its footer help
+// (design.md Decision D): a short list and an optional full list.
 type screenKeys struct {
 	short []key.Binding
 	full  [][]key.Binding
@@ -24,11 +20,19 @@ type screenKeys struct {
 // never stored on a screen: a cached AdminSession goes stale on re-login or
 // expiry, and a cached consoleLayout goes stale on resize.
 type screenEnv struct {
-	Client            AdminClient
-	Session           AdminSession
+	Client  AdminClient
+	Session AdminSession
+	// Service is the registry's own query service, read in-process by the
+	// console browser (catalog, tags, deletes); it is nil in a bare literal.
+	Service           QueryService
 	Layout            consoleLayout
 	KnownRepositories []string
 	Now               func() time.Time
+	// CurrentVersion is the running build's version ("" for an unbuilt
+	// binary) and UpdateAvailable the newer release the background check
+	// found ("" when none is known); the Update channel screen shows both.
+	CurrentVersion  string
+	UpdateAvailable string
 }
 
 // asModel builds a throwaway Model carrying only the fields this env's
@@ -61,12 +65,16 @@ type screenFrame struct {
 	Context string
 	Body    string
 	Overlay string // "" when the screen has no modal/overlay open
+	// Full marks a Body that is the whole screen, already built by
+	// renderShell: the workspace adds no title, context, status or help row
+	// around it (the shell carries its own header and key-hint footer).
+	Full bool
 }
 
 // adminScreen is the per-screen sub-model contract (design.md
 // "Interfaces / Contracts"). Update returns the screen's NEW value — the
 // parent replaces its held value, it never writes into a sub-model's fields
-// directly (design.md Decision B). consumed reports whether a tea.KeyMsg was
+// directly (design.md Decision B). consumed reports whether a key message was
 // handled here; false lets the router fall through to the global key
 // fallbacks, preserving today's precedence exactly.
 type adminScreen interface {
@@ -77,15 +85,24 @@ type adminScreen interface {
 	View(theme adminTheme, env screenEnv) screenFrame
 }
 
+// mouseScreen is the optional interface a slot screen implements to take mouse
+// input; a screen without it ignores the mouse. Mouse returns the screen's new
+// value (like Update) and the command its key equivalent would return;
+// mouseBlocked reports that a dialog, a form or text input, or (on the screens
+// that track one: Robots, Update channel, Tokens) a change in flight is in
+// front, when the screen takes no mouse input at all (the sidebar included).
+type mouseScreen interface {
+	Mouse(env screenEnv, msg tea.MouseMsg) (adminScreen, tea.Cmd)
+	mouseBlocked() bool
+}
+
 // screenSlot indexes adminScreenSet. Dense and compile-time bounded.
 type screenSlot int
 
 const (
-	// slotGitleaksConfig held gitleaks' own global config editor as an
-	// overlay through Slice 1/the Phase 12.3 follow-up batch (design.md
-	// Decision G). Phase 11 promotes gitleaksConfigScreen to a properly
-	// addressable top-level screen (screenSecurityGitleaksConfig), so this
-	// slot is now resolved via slotFor like every other top-level screen
+	// slotGitleaksConfig holds gitleaks' own global config editor, a
+	// top-level screen (screenSecurityGitleaksConfig) resolved via slotFor
+	// like every other top-level screen
 	// slot below, rather than read directly as an overlay.
 	slotGitleaksConfig screenSlot = iota
 	// slotGitleaksRepos/slotSigningRepos hold Gitleaks' and Signing's own
@@ -97,26 +114,17 @@ const (
 	// Phase 11 promotes it to a top-level screen
 	// (screenSecuritySigningConfig) exactly like slotGitleaksConfig above.
 	slotSigningConfig
-	// slotSecurityMenu holds securityMenuScreen (Phase 11, design.md
-	// Decision I): screenAdminFeatures repurposed as the bare 3-row
-	// Security & Compliance domain menu.
-	slotSecurityMenu
 	// slotTrivyConfig/slotTrivyRepos hold Trivy's own peer screens (Phase
 	// 11): trivyConfigScreen (screenSecurityTrivy, Runtime tab equivalent
 	// plus config/scan-policy) and trivyReposScreen (screenSecurityTrivyRepos,
-	// Repository Alerts tab equivalent). trivyReposScreen embeds its own
-	// overrideEditor field directly (mirroring featureOverridesScreen),
-	// so the former slotTrivyOverride overlay slot no longer exists.
+	// the Repositories tab). Both Trivy tabs and the two other override
+	// screens embed their own override editor, so there is no separate
+	// override overlay slot.
 	slotTrivyConfig
 	slotTrivyRepos
-	// slotAdminMenu/slotAdminOperations/slotScanRuns/slotSecretFindings hold
-	// Phase 18/19's new domain-menu and Operations screens (design.md
-	// Decision I, D9): screenAdminMenu (the 4-domain post-login landing
-	// screen), screenAdminOperations (2 rows: Scan Runs/Secret Scan
-	// Findings), and the two scanRunsScreen-backed repository pickers each
-	// row navigates to.
-	slotAdminMenu
-	slotAdminOperations
+	// slotScanRuns/slotSecretFindings hold the two scanRunsScreen-backed
+	// repository pickers the Overview's Scan runs and Secret findings items
+	// open.
 	slotScanRuns
 	slotSecretFindings
 	// slotUpdateChannel holds updateChannelScreen (tui-update-check
@@ -125,14 +133,43 @@ const (
 	slotUpdateChannel
 	// slotScanHistory holds scanHistoryScreen (Phase 19, design.md's State
 	// Migration table: "ScanHistoryModal -> scanHistoryScreen"). It is
-	// deliberately NOT resolved via slotFor: like slotGitleaksConfig's own
-	// Slice 1 precedent, it composites as a floating overlay over whichever
-	// screen opened it (m.screen never changes while it is mounted) rather
-	// than becoming the active top-level screen itself -- reached from TWO
+	// deliberately NOT resolved via slotFor: it is a full shell screen drawn in place of
+	// the screen that opened it (m.screen never changes while it is mounted)
+	// rather than becoming the active top-level screen itself -- reached from TWO
 	// openers (Trivy's Repository Alerts Enter, and Scan Runs/Secret Scan
 	// Findings' own repository picker Enter), tracked via its own returnTo
 	// field, not a screen id transition.
 	slotScanHistory
+	// slotGrantAccess holds grantAccessScreen (tui-v2-redesign S4): the
+	// one-screen "Grant repository access" flow, addressed via slotFor.
+	slotGrantAccess
+	// slotOverview holds overviewScreen (tui-v2-redesign S3): the post-login
+	// landing screen, rendered inside the application shell.
+	slotOverview
+	// slotUsers, slotEditUser, slotCreateUser and slotChangePassword hold the
+	// user-management screens (tui-v2-redesign S3): the Users list, one user's
+	// profile, the New user form and the Reset password form.
+	slotUsers
+	slotEditUser
+	slotCreateUser
+	slotChangePassword
+	// slotRepositoryAccess holds repoAccessScreen: the grants of every
+	// repository, rendered inside the application shell.
+	slotRepositoryAccess
+	// slotRobots, slotCreateRobot and slotTokens hold the Access screens for
+	// robots and auth tokens (tui-v2-redesign S3), addressed via slotFor.
+	slotRobots
+	slotCreateRobot
+	slotTokens
+	// slotDelegate holds delegateScreen: the grants of one repository for its
+	// repository administrator, opened from the console Repositories screen.
+	slotDelegate
+	// slotConsoleRepositories, slotConsoleProjects and slotConsoleTags hold the
+	// console browser (tui-v2-redesign S3): the Repositories, Projects and Tags
+	// screens that browse the catalog and delete its data.
+	slotConsoleRepositories
+	slotConsoleProjects
+	slotConsoleTags
 	numScreenSlots
 )
 
@@ -142,14 +179,10 @@ const (
 type adminScreenSet [numScreenSlots]adminScreen
 
 // slotFor resolves a screen id to its migrated slot, if any (design.md
-// Decision I / the Phase 11 resolved-gap addendum). screenAdminFeatures
-// itself is repurposed as securityMenuScreen; Trivy/Gitleaks/Signing each
-// gain their own peer screen(s), all addressed here. Every other screen id
-// updateAdminKey resolves still falls through to legacyScreenHandlers.
+// Decision I / the Phase 11 resolved-gap addendum). Trivy/Gitleaks/Signing
+// each have their own peer screen(s), all addressed here.
 func slotFor(id screen) (screenSlot, bool) {
 	switch id {
-	case screenAdminFeatures:
-		return slotSecurityMenu, true
 	case screenSecurityTrivy:
 		return slotTrivyConfig, true
 	case screenSecurityTrivyRepos:
@@ -162,23 +195,47 @@ func slotFor(id screen) (screenSlot, bool) {
 		return slotGitleaksRepos, true
 	case screenSecuritySigningRepos:
 		return slotSigningRepos, true
-	case screenAdminMenu:
-		return slotAdminMenu, true
-	case screenAdminOperations:
-		return slotAdminOperations, true
 	case screenAdminScanRuns:
 		return slotScanRuns, true
 	case screenAdminSecretFindings:
 		return slotSecretFindings, true
 	case screenAdminUpdateChannel:
 		return slotUpdateChannel, true
+	case screenAdminGrantAccess:
+		return slotGrantAccess, true
+	case screenAdminOverview:
+		return slotOverview, true
+	case screenAdminUsers:
+		return slotUsers, true
+	case screenAdminEditUser:
+		return slotEditUser, true
+	case screenAdminCreateUser:
+		return slotCreateUser, true
+	case screenAdminChangePassword:
+		return slotChangePassword, true
+	case screenAdminRepositoryAccess:
+		return slotRepositoryAccess, true
+	case screenAdminRobots:
+		return slotRobots, true
+	case screenAdminCreateRobot:
+		return slotCreateRobot, true
+	case screenAdminEditUserTokens:
+		return slotTokens, true
+	case screenRepoAdminGrants:
+		return slotDelegate, true
+	case screenRepositories:
+		return slotConsoleRepositories, true
+	case screenProjects:
+		return slotConsoleProjects, true
+	case screenTags:
+		return slotConsoleTags, true
 	default:
 		return 0, false
 	}
 }
 
 // navigateMsg asks the router to switch the active top-level screen —
-// Slice 2's first real use (design.md screen.go): a migrated screen's Esc
+// a migrated screen's Esc
 // asks the parent to switch m.screen back without ever writing it directly
 // (Decision B: the parent replaces its held value, a child never reaches
 // into the parent).
@@ -199,8 +256,8 @@ func navigate(to screen) tea.Cmd {
 // state it does not own). Reached from Trivy's Repository Alerts Enter
 // AND from the Scan Runs/Secret Scan Findings repository pickers' own
 // Enter; returnTo records which screen opened it so Esc pops back to the
-// correct caller (m.screen itself never changes while it is mounted,
-// exactly like slotGitleaksConfig's Slice 1 overlay precedent); activeTab
+// correct caller (m.screen itself never changes while it is mounted);
+// activeTab
 // distinguishes the two D9 access flavors (vulnerabilities-first vs
 // leaks-first) without a second screen or sub-model type.
 type openScanHistoryMsg struct {
@@ -216,14 +273,12 @@ func openScanHistory(repository string, returnTo screen, activeTab int) tea.Cmd 
 }
 
 // returnToInspectionMsg asks the parent to leave the admin panel back to
-// Console inspection (Model.returnToInspection): Phase 18 makes
-// screenAdminMenu the new admin root, so its own Esc now carries the
-// pre-Phase-18 "leave the admin panel" behavior that used to live on
-// screenAdminUsers. A migrated screen cannot call
-// Model.returnToInspection() directly (Decision B: it mutates several
-// Model-level fields beyond m.screen -- adminReturn, Confirm,
-// UserSearchActive, revealed token state, adminIntent), so this mirrors
-// navigateMsg's own "ask the parent" pattern.
+// Console inspection (Model.returnToInspection): the Overview is the admin
+// panel's root, so its Esc carries the "leave the admin panel" behavior. A
+// migrated screen cannot call Model.returnToInspection() directly (Decision
+// B: it mutates several Model-level fields beyond m.screen -- adminReturn,
+// Confirm, revealed token state, adminIntent), so this
+// mirrors navigateMsg's own "ask the parent" pattern.
 type returnToInspectionMsg struct{}
 
 func returnToInspectionCmd() tea.Cmd {
@@ -232,15 +287,13 @@ func returnToInspectionCmd() tea.Cmd {
 
 // newAdminScreenFor constructs the zero-value screen for id, used by
 // navigateMsg's central handler (model.go) to lazily mount a target screen
-// the first time the operator navigates to it (Enter from securityMenuScreen,
-// Tab between Trivy's peer screens, 'o' into a repository override list,
+// the first time the operator navigates to it (Enter on an Overview
+// sidebar item, Tab between Trivy's peer screens, 'o' into a repository override list,
 // Esc back to an already-mounted screen is a no-op here since the slot is
 // already occupied). Every migrated top-level screen this change ships is
 // listed here; an id with no migrated screen returns nil.
 func newAdminScreenFor(id screen) adminScreen {
 	switch id {
-	case screenAdminFeatures:
-		return newSecurityMenuScreen()
 	case screenSecurityTrivy:
 		return newTrivyConfigScreen()
 	case screenSecurityTrivyRepos:
@@ -253,16 +306,20 @@ func newAdminScreenFor(id screen) adminScreen {
 		return newFeatureOverridesScreen(screenSecurityGitleaksRepos, gitleaksFeatureName)
 	case screenSecuritySigningRepos:
 		return newSigningReposScreen()
-	case screenAdminMenu:
-		return newAdminMenuScreen()
-	case screenAdminOperations:
-		return newAdminOperationsScreen()
 	case screenAdminScanRuns:
 		return newScanRunsScreen()
 	case screenAdminSecretFindings:
 		return newSecretFindingsRunsScreen()
 	case screenAdminUpdateChannel:
 		return newUpdateChannelScreen()
+	case screenAdminGrantAccess:
+		return newGrantAccessScreen(screenAdminOverview, "")
+	case screenAdminOverview:
+		return newOverviewScreen()
+	case screenAdminRepositoryAccess:
+		return newRepoAccessScreen()
+	case screenAdminRobots:
+		return newRobotsScreen()
 	default:
 		return nil
 	}

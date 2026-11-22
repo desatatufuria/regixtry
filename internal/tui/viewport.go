@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 )
 
 // Terminal viewport sizing. contentBudget() computes how many rows are left
@@ -21,7 +21,7 @@ import (
 // Phase 2 wires a Model.contentBudget() method around this pure logic.
 const (
 	// minViewportWidth/minViewportHeight are the floor terminal size the TUI
-	// guarantees correct rendering at (View() shows terminalTooSmallTemplate
+	// guarantees correct rendering at (View() shows the too-small notice
 	// below these). minViewportWidth was raised from the historical 90
 	// alongside sectionWidth()'s fix for the hardcoded theme.section
 	// Width(88): 90 columns was already narrower than the Repository Alerts
@@ -31,7 +31,7 @@ const (
 	// contract at the old floor without truncating/wrapping table borders.
 	//
 	// Raised a second time, from 132 to 150, for the scan history modal's
-	// executions side panel (adminScanHistoryModalExecutionsColumnStyle):
+	// executions side panel of the former scan history modal (since replaced by a full screen):
 	// measured against the modal's own worst case (Leaks tab, the 4-column
 	// secret findings table at 99 columns wide, plus the executions rail's
 	// ~19 columns, plus the modal's own border+padding overhead) the
@@ -48,19 +48,14 @@ const (
 	// and rows still have real breathing room out of the box.
 	defaultViewportWidth, defaultViewportHeight = 170, 44
 
-	// tableChromeRows is the fixed row overhead a bubble-table adds around
-	// its rows: border top/bottom + header + separator + footer.
-	// Verified against evertras/bubble-table@v0.19.2: height == pageSize+6.
-	tableChromeRows = 6
-
 	// sectionChromeRows is the fixed row overhead of theme.section: a
 	// RoundedBorder (2 rows) plus Padding(1) (2 rows).
 	sectionChromeRows = 4
 
 	// sectionHorizontalOverhead is theme.section's total non-content-area
 	// horizontal overhead once wrapped by theme.app: theme.section's own
-	// RoundedBorder (2 columns; lipgloss.Style.Width already accounts for
-	// Padding internally, see sectionWidth) plus theme.app's outer
+	// RoundedBorder (2 columns, added back to Width at the call site because
+	// lipgloss v2 Width includes the border; see sectionWidth) plus theme.app's outer
 	// Padding(0, 1) (2 columns).
 	sectionHorizontalOverhead = 4
 
@@ -69,8 +64,7 @@ const (
 	// degenerate or negative lipgloss.Style.Width value.
 	minSectionContentWidth = 40
 
-	minTableRows     = 3
-	compactTableRows = 5
+	minTableRows = 3
 )
 
 // sectionWidth derives theme.section's content width (the value passed to
@@ -95,8 +89,6 @@ type consoleLayout struct {
 	Height      int
 	SectionRows int
 	Scroll      int
-	Primary     int
-	Compact     int
 }
 
 // contentBudget computes the row budget available to a screen's bounded body
@@ -185,5 +177,7 @@ func renderSection(theme adminTheme, inner string, l consoleLayout) string {
 	if indicator != "" {
 		content = fitted + "\n" + theme.muted.Render(indicator)
 	}
-	return theme.section.Width(sectionWidth(l)).Render(content)
+	// lipgloss v2 counts the border inside Width (v1 did not), so the border is
+	// added back to keep the box at the same on-screen size.
+	return theme.section.Width(sectionWidth(l) + theme.section.GetHorizontalBorderSize()).Render(content)
 }

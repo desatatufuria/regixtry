@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	stdhttp "net/http"
 	"net/url"
@@ -19,7 +20,8 @@ import (
 	"text/tabwriter"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/colorprofile"
 	appauth "regixtry/internal/app/auth"
 	appregixtry "regixtry/internal/app/regixtry"
 	appscanning "regixtry/internal/app/scanning"
@@ -311,6 +313,31 @@ type serveConfig struct {
 	// REGISTRY_DELETE_ENABLED: that flag is metadata-only and never touches
 	// blob files.
 	GCDeleteEnabled bool
+	// Upload and manifest size/concurrency limits. For each, zero means "use
+	// the built-in default" and a negative value disables the limit.
+	MaxManifestBytes      int64
+	MaxUploadBytes        int64
+	MaxOpenUploads        int
+	MaxOpenUploadsPerRepo int
+	UploadTTL             time.Duration
+
+	// TrustedProxies is the raw -trusted-proxies list (CIDRs/IPs). Empty means
+	// X-Forwarded-For is never believed when attributing a failed login.
+	TrustedProxies string
+	// LoginMaxConcurrency caps simultaneous bcrypt comparisons (0 = automatic,
+	// max(2, NumCPU/2)).
+	LoginMaxConcurrency int
+	// Per-account login backoff. Mode "log" (default) only logs what it would
+	// have blocked; "enforce" answers 429; "off" disables. Threshold 0 also
+	// disables.
+	LoginBackoffMode      string
+	LoginBackoffThreshold int
+	LoginBackoffBase      time.Duration
+	LoginBackoffMax       time.Duration
+
+	// Test seams; the zero values keep production behavior.
+	uploadReapInterval time.Duration
+	uploadReapOnError  func(error)
 }
 
 type bootstrapAdminConfig struct {
@@ -414,8 +441,55 @@ func parseServeConfig(args []string) (serveConfig, error) {
 	flags.IntVar(&cfg.TrivyMaxConcurrency, "trivy-max-concurrency", 0, "maximum concurrent trivy runs")
 	flags.BoolVar(&cfg.DeleteEnabled, "delete-enabled", parseBoolEnv("REGISTRY_DELETE_ENABLED", false), "enable DELETE /v2/<name>/manifests/<reference> (manifest and tag deletion)")
 	flags.BoolVar(&cfg.GCDeleteEnabled, "gc-delete-enabled", parseBoolEnv("REGISTRY_GC_DELETE_ENABLED", false), "enable POST /admin/v1/gc/reports/{id}/delete (irreversibly unlinks unreferenced blob files; distinct from -delete-enabled, which is metadata-only)")
+	flags.StringVar(&cfg.TrustedProxies, "trusted-proxies", os.Getenv("REGISTRY_TRUSTED_PROXIES"), "comma-separated CIDRs/IPs of reverse proxies whose X-Forwarded-For is trusted for client IP logging (empty = ignore X-Forwarded-For)")
+	var limitEnvErr error
+	trackEnv := func(err error) {
+		if limitEnvErr == nil {
+			limitEnvErr = err
+		}
+	}
+	limitInt64 := func(key string, fallback int64) int64 {
+		value, err := strictInt64Env(key, fallback)
+		trackEnv(err)
+		return value
+	}
+	flags.Int64Var(&cfg.MaxManifestBytes, "max-manifest-bytes", limitInt64("REGISTRY_MAX_MANIFEST_BYTES", regixtryhttp.DefaultMaxManifestBytes), "maximum manifest PUT body size in bytes (0 = default, negative disables)")
+	flags.Int64Var(&cfg.MaxUploadBytes, "max-upload-bytes", limitInt64("REGISTRY_MAX_UPLOAD_BYTES", fsblob.DefaultMaxUploadSize), "maximum total size of one blob upload in bytes (0 = default, negative disables)")
+	flags.IntVar(&cfg.MaxOpenUploads, "max-open-uploads", int(limitInt64("REGISTRY_MAX_OPEN_UPLOADS", appregixtry.DefaultMaxOpenUploads)), "maximum concurrently open blob uploads (0 = default, negative disables)")
+	flags.IntVar(&cfg.MaxOpenUploadsPerRepo, "max-open-uploads-per-repo", int(limitInt64("REGISTRY_MAX_OPEN_UPLOADS_PER_REPO", appregixtry.DefaultMaxOpenUploadsPerRepo)), "maximum concurrently open blob uploads per repository (0 = default, negative disables)")
+	uploadTTLDefault, ttlErr := strictDurationEnv("REGISTRY_UPLOAD_TTL", appregixtry.DefaultUploadTTL)
+	trackEnv(ttlErr)
+	flags.DurationVar(&cfg.UploadTTL, "upload-ttl", uploadTTLDefault, "idle time after which an abandoned blob upload is deleted (0 = default, negative disables the reaper)")
+	loginBackoffMode := strings.TrimSpace(os.Getenv("REGISTRY_LOGIN_BACKOFF_MODE"))
+	if loginBackoffMode == "" {
+		loginBackoffMode = "log"
+	}
+	flags.StringVar(&cfg.LoginBackoffMode, "login-backoff-mode", loginBackoffMode, "per-account login backoff: log (default; only log what would be blocked), enforce (answer 429 + Retry-After), off")
+	flags.IntVar(&cfg.LoginBackoffThreshold, "login-backoff-threshold", int(limitInt64("REGISTRY_LOGIN_BACKOFF_THRESHOLD", 5)), "consecutive failed logins per account before backoff starts (0 disables)")
+	loginBackoffBase, baseErr := strictDurationEnv("REGISTRY_LOGIN_BACKOFF_BASE", 2*time.Second)
+	trackEnv(baseErr)
+	flags.DurationVar(&cfg.LoginBackoffBase, "login-backoff-base", loginBackoffBase, "first login backoff delay; doubles per further failure")
+	loginBackoffMax, maxErr := strictDurationEnv("REGISTRY_LOGIN_BACKOFF_MAX", 5*time.Minute)
+	trackEnv(maxErr)
+	flags.DurationVar(&cfg.LoginBackoffMax, "login-backoff-max", loginBackoffMax, "maximum login backoff delay")
+	flags.IntVar(&cfg.LoginMaxConcurrency, "login-max-concurrency", int(limitInt64("REGISTRY_LOGIN_MAX_CONCURRENCY", 0)), "maximum simultaneous bcrypt password checks; a login that cannot get a slot within 250ms gets 429 (0 = automatic, max(2, NumCPU/2))")
+
+	if limitEnvErr != nil {
+		return serveConfig{}, limitEnvErr
+	}
 
 	if err := flags.Parse(args); err != nil {
+		return serveConfig{}, err
+	}
+
+	if _, err := regixtryhttp.ParseTrustedProxies(cfg.TrustedProxies); err != nil {
+		return serveConfig{}, err
+	}
+	cfg.LoginBackoffMode = strings.ToLower(strings.TrimSpace(cfg.LoginBackoffMode))
+	if cfg.LoginMaxConcurrency < 0 {
+		return serveConfig{}, fmt.Errorf("invalid -login-max-concurrency %d: must be 0 (automatic) or a positive number of simultaneous bcrypt checks", cfg.LoginMaxConcurrency)
+	}
+	if err := validateLoginBackoff(cfg); err != nil {
 		return serveConfig{}, err
 	}
 
@@ -427,6 +501,39 @@ func parseServeConfig(args []string) (serveConfig, error) {
 	}
 
 	return cfg, nil
+}
+
+func validateLoginBackoff(cfg serveConfig) error {
+	switch cfg.LoginBackoffMode {
+	case "log", "enforce", "off":
+	default:
+		return fmt.Errorf("invalid -login-backoff-mode %q: must be log, enforce or off", cfg.LoginBackoffMode)
+	}
+	if cfg.LoginBackoffThreshold < 0 {
+		return fmt.Errorf("invalid -login-backoff-threshold %d: must be 0 (disabled) or positive", cfg.LoginBackoffThreshold)
+	}
+	if cfg.LoginBackoffThreshold > 0 {
+		if cfg.LoginBackoffBase <= 0 {
+			return fmt.Errorf("invalid -login-backoff-base %s: must be positive", cfg.LoginBackoffBase)
+		}
+		if cfg.LoginBackoffMax < cfg.LoginBackoffBase {
+			return fmt.Errorf("invalid -login-backoff-max %s: must not be below -login-backoff-base %s", cfg.LoginBackoffMax, cfg.LoginBackoffBase)
+		}
+	}
+	return nil
+}
+
+// loginPolicyFromConfig maps the serve flags to the auth service login policy.
+func loginPolicyFromConfig(cfg serveConfig) appauth.LoginPolicy {
+	return appauth.LoginPolicy{
+		MaxConcurrency: cfg.LoginMaxConcurrency,
+		Backoff: &appauth.BackoffPolicy{
+			Mode:      appauth.BackoffMode(cfg.LoginBackoffMode),
+			Threshold: cfg.LoginBackoffThreshold,
+			Base:      cfg.LoginBackoffBase,
+			Max:       cfg.LoginBackoffMax,
+		},
+	}
 }
 
 func normalizeRuntimeConfig(cfg serveConfig) (runtimeConfig, error) {
@@ -635,10 +742,6 @@ func parseTUIConfigWithBootstrapStatePath(args []string, bootstrapStatePath stri
 	return cfg, nil
 }
 
-func defaultTUIConfig() (tuiConfig, error) {
-	return defaultTUIConfigWithBootstrapStatePath("/etc/regixtry/bootstrap-state.json")
-}
-
 func defaultTUIConfigWithBootstrapStatePath(bootstrapStatePath string) (tuiConfig, error) {
 	// APIBaseURL falls back to REGISTRY_PUBLIC_URL when REGISTRY_API_BASE_URL
 	// is unset: found live inside a docker-mode container, which `docker
@@ -747,14 +850,7 @@ func readSetupManagedEnvFile(path string) (map[string]string, error) {
 }
 
 func parseSetupManagedEnvValue(raw string) (string, error) {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return "", nil
-	}
-	if unquoted, err := strconv.Unquote(trimmed); err == nil {
-		return unquoted, nil
-	}
-	return trimmed, nil
+	return installlinux.ParseManagedEnvValue(raw)
 }
 
 func parseBootstrapAdminConfig(args []string, stdin io.Reader) (bootstrapAdminConfig, error) {
@@ -1665,8 +1761,6 @@ func boolPointer(value bool) *bool { return &value }
 
 func durationPointer(value time.Duration) *time.Duration { return &value }
 
-func stringPointer(value string) *string { return &value }
-
 func intPointer(value int) *int { return &value }
 
 func runUninstall(ctx context.Context, args []string, stdout io.Writer) error {
@@ -1950,6 +2044,59 @@ func parseDurationEnv(key string, fallback time.Duration) time.Duration {
 	return parsed
 }
 
+// uploadReapInterval runs the reaper often enough that an abandoned upload
+// outlives its TTL by at most a quarter of it, but never more than hourly.
+func uploadReapInterval(ttl time.Duration) time.Duration {
+	interval := ttl / 4
+	if interval > time.Hour {
+		interval = time.Hour
+	}
+	if interval < time.Second {
+		interval = time.Second
+	}
+	return interval
+}
+
+// strictInt64Env reads an integer environment variable; unlike parseIntEnv an
+// invalid value is an error, so a typo in a safety limit is never silently
+// replaced by the default.
+func strictInt64Env(key string, fallback int64) (int64, error) {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s %q: must be an integer", key, value)
+	}
+	return parsed, nil
+}
+
+func strictDurationEnv(key string, fallback time.Duration) (time.Duration, error) {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback, nil
+	}
+	parsed, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s %q: must be a duration such as 24h", key, value)
+	}
+	return parsed, nil
+}
+
+// limitOrDefault resolves a serveConfig limit: zero is "unset" and takes the
+// built-in default, a negative value disables the limit (returned as 0, the
+// "no cap" value the lower layers use).
+func limitOrDefault(value int64, fallback int64) int64 {
+	switch {
+	case value == 0:
+		return fallback
+	case value < 0:
+		return 0
+	}
+	return value
+}
+
 func parseIntEnv(key string, fallback int) int {
 	value := strings.TrimSpace(os.Getenv(key))
 	if value == "" {
@@ -2174,9 +2321,6 @@ func formatSetupCommand(cfg BootstrapConfig, placeholderOnly bool) string {
 		if strings.TrimSpace(cfg.RuntimeTLSMode) != "" {
 			args = append(args, "--runtime-tls-mode", cfg.RuntimeTLSMode)
 		}
-		if strings.TrimSpace(cfg.AuthPostgresDSN) != "" {
-			args = append(args, "--auth-postgres-dsn", cfg.AuthPostgresDSN)
-		}
 		args = append(args,
 			"--addr", cfg.Addr,
 			"--storage-root", cfg.StorageRoot,
@@ -2194,7 +2338,19 @@ func formatSetupCommand(cfg BootstrapConfig, placeholderOnly bool) string {
 			args = append(args, "--no-start")
 		}
 	}
-	return formatPrivilegedLifecycleCommand(args...)
+	dsn := strings.TrimSpace(cfg.AuthPostgresDSN)
+	if placeholderOnly || dsn == "" {
+		return formatPrivilegedLifecycleCommand(args...)
+	}
+	// The DSN carries a password: it must never be printed (scrollback, shell
+	// history) nor passed as an argument (ps, /proc/<pid>/cmdline). The operator
+	// supplies it through REGISTRY_AUTH_POSTGRES_DSN, which setup reads as the
+	// default of -auth-postgres-dsn. A plain `sudo` resets the environment, so
+	// the variable is kept with `sudo --preserve-env=NAME` (accepted by sudo
+	// when the user may run the command; `-E` would preserve everything and is
+	// avoided). As root there is no sudo and the exported variable suffices.
+	return fmt.Sprintf("# set the DSN without echoing it (shown here redacted as %s):\n  #   read -rs REGISTRY_AUTH_POSTGRES_DSN && export REGISTRY_AUTH_POSTGRES_DSN\n  %s",
+		installlinux.RedactDSN(dsn), formatPrivilegedLifecycleCommandPreserving("REGISTRY_AUTH_POSTGRES_DSN", args...))
 }
 
 func formatUninstallCommand(cfg uninstallConfig) string {
@@ -2213,9 +2369,16 @@ func formatUpgradeCommand(cfg upgradeConfig) string {
 }
 
 func formatPrivilegedLifecycleCommand(args ...string) string {
-	parts := make([]string, 0, len(args)+2)
+	return formatPrivilegedLifecycleCommandPreserving("", args...)
+}
+
+func formatPrivilegedLifecycleCommandPreserving(preserveEnv string, args ...string) string {
+	parts := make([]string, 0, len(args)+3)
 	if currentEUID() != 0 {
 		parts = append(parts, "sudo")
+		if preserveEnv != "" {
+			parts = append(parts, "--preserve-env="+preserveEnv)
+		}
 	}
 	parts = append(parts, lifecycleExecutablePath())
 	parts = append(parts, args...)
@@ -2350,6 +2513,11 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 		bearerRealm = trimmed
 	}
 
+	trustedProxies, tpErr := regixtryhttp.ParseTrustedProxies(cfg.TrustedProxies)
+	if tpErr != nil {
+		return nil, nil, tpErr
+	}
+
 	accessController := ports.NewConfigurableAccessController(ports.AccessConfig{
 		AllowAnonymousPull: cfg.AllowAnonymousPull,
 		AllowAnonymousPush: cfg.AllowAnonymousPush,
@@ -2364,7 +2532,9 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 			return nil, nil, err
 		}
 
-		authService = appauth.NewService(authStore)
+		concreteAuth := appauth.NewService(authStore)
+		concreteAuth.ConfigureLogin(loginPolicyFromConfig(cfg))
+		authService = concreteAuth
 		err = authService.EnsureBootstrapAdmin(context.Background())
 		if err != nil {
 			_ = authStore.Close()
@@ -2378,7 +2548,7 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 		return nil, nil, err
 	}
 
-	blobStore, err := fsblob.New(filepath.Join(cfg.StorageRoot, "content"))
+	blobStore, err := fsblob.New(filepath.Join(cfg.StorageRoot, "content"), fsblob.WithMaxUploadSize(limitOrDefault(cfg.MaxUploadBytes, fsblob.DefaultMaxUploadSize)))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -2400,8 +2570,18 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 	service.SetFeatureRuntimeManager("trivy", newFeatureRuntimeManager("trivy", appregixtry.FeatureRuntimeManagerConfig{StorageRoot: cfg.StorageRoot, Store: metadataStore, ScanRunner: trivyinfra.New(trivyinfra.RunnerConfig{})}))
 	service.SetSecretScanRunner(gitleaksinfra.New(gitleaksinfra.RunnerConfig{Blobs: blobStore}))
 	service.SetFeatureRuntimeManager("gitleaks", newFeatureRuntimeManager("gitleaks", appregixtry.FeatureRuntimeManagerConfig{StorageRoot: cfg.StorageRoot, Store: metadataStore}))
+	service.SetPushScanLimits(parseIntEnv("REGISTRY_PUSH_SCAN_MAX_PENDING", 0), parseIntEnv("REGISTRY_PUSH_SCAN_MAX_PER_REPOSITORY", 0), parseIntEnv("REGISTRY_PUSH_SCAN_MAX_PER_PUSHER", 0))
 	service.SetDeleteEnabled(cfg.DeleteEnabled)
 	service.SetGCDeleteEnabled(cfg.GCDeleteEnabled)
+	service.SetUploadLimits(
+		int(limitOrDefault(int64(cfg.MaxOpenUploads), appregixtry.DefaultMaxOpenUploads)),
+		int(limitOrDefault(int64(cfg.MaxOpenUploadsPerRepo), appregixtry.DefaultMaxOpenUploadsPerRepo)),
+	)
+	uploadTTL := cfg.UploadTTL
+	if uploadTTL == 0 {
+		uploadTTL = appregixtry.DefaultUploadTTL
+	}
+	service.SetUploadTTL(uploadTTL)
 	trivyMaxConcurrency := cfg.TrivyMaxConcurrency
 	if trivyMaxConcurrency <= 0 {
 		trivyMaxConcurrency = 1
@@ -2436,8 +2616,23 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 		defer schedulerDone.Done()
 		_ = scheduler.Run(schedulerCtx)
 	}()
+	if uploadTTL > 0 {
+		schedulerDone.Add(1)
+		go func() {
+			defer schedulerDone.Done()
+			reapInterval := cfg.uploadReapInterval
+			if reapInterval <= 0 {
+				reapInterval = uploadReapInterval(uploadTTL)
+			}
+			onReapError := cfg.uploadReapOnError
+			if onReapError == nil {
+				onReapError = func(err error) { log.Printf("upload reaper: %v", err) }
+			}
+			service.RunUploadReaper(schedulerCtx, reapInterval, onReapError)
+		}()
+	}
 
-	return regixtryhttp.NewRouter(service, authService), func() {
+	return regixtryhttp.NewRouter(service, authService, regixtryhttp.WithMaxManifestBytes(limitOrDefault(cfg.MaxManifestBytes, regixtryhttp.DefaultMaxManifestBytes)), regixtryhttp.WithTrustedProxies(trustedProxies)), func() {
 		// Wait for the scheduler goroutine to actually stop before closing the
 		// stores it reads/writes: cancelling schedulerCtx only takes effect
 		// between ticks (scheduler.Run checks ctx.Done() after each tick
@@ -2533,7 +2728,10 @@ func runTUI(cfg tuiConfig, stdin io.Reader, stdout io.Writer) error {
 			updated, _ = model.Update(cmd())
 		}
 		if stdout != nil {
-			_, _ = io.WriteString(stdout, updated.(tui.Model).View())
+			// lipgloss v2 always emits full-fidelity ANSI; downsample here so a
+			// non-terminal stdout (a pipe or file) receives no color escapes.
+			writer := colorprofile.NewWriter(stdout, os.Environ())
+			_, _ = io.WriteString(writer, updated.(tui.Model).View().Content)
 		}
 		return nil
 	}
@@ -2542,7 +2740,6 @@ func runTUI(cfg tuiConfig, stdin io.Reader, stdout io.Writer) error {
 		tui.NewModel(service, modelOpts...),
 		tea.WithInput(stdin),
 		tea.WithOutput(stdout),
-		tea.WithAltScreen(),
 	)
 
 	_, err = program.Run()

@@ -1,0 +1,23 @@
+ regixtry › Resize terminal                                                                                                                    150x23 
+
+
+
+
+
+
+
+                                               ╭──────────────────────────────────────────────────────╮
+                                               │                                                      │
+                                               │   Terminal too small                                 │
+                                               │   Regixtry needs at least 150x24. Current: 150x23.   │
+                                               │   Resize, or press q to quit.                        │
+                                               │                                                      │
+                                               ╰──────────────────────────────────────────────────────╯
+
+
+
+
+
+
+
+ q quit                                                                                                                                               

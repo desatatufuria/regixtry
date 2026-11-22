@@ -6,14 +6,11 @@ import (
 	appregixtry "regixtry/internal/app/regixtry"
 )
 
-// sortMode is the shared client-side sort cycle used by both the Tags
-// screen and the Projects screen (sortable-tags-and-projects feature): the
-// exact 2-state cycle the feature's own spec names, "by name ascending ->
-// by date descending", then back. Sorting is entirely client-side (see
-// console_tags_table.go's/console_projects_table.go's own doc comments for
-// why): both screens already fetch their full page in one call
-// (limit=100/0, after="") and page purely via bubbletable's own pageSize,
-// so there is no keyset-pagination cursor tied to ORDER BY to break.
+// sortMode is the shared client-side sort cycle of the Tags and the Projects
+// screens: "by name ascending -> by date descending", then back. Sorting is
+// entirely client-side: both screens fetch their full page in one call
+// (limit 100, no cursor), so there is no keyset-pagination cursor tied to
+// ORDER BY to break.
 type sortMode int
 
 const (
