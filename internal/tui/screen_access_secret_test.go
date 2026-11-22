@@ -211,7 +211,7 @@ func TestSecretLifecycleFuzz(t *testing.T) {
 		secrets := 0
 		client := newAccessClient()
 		client.robots = []ports.AdminRobot{{ID: "r-ci", Username: "ci-publisher", Repository: "team/api", Role: domainauth.RepoRoleWriter, Enabled: true}}
-		client.tokens["r-ci"] = []ports.AdminToken{accessToken("t", "act_seed", charFixedTime.Add(-day), charFixedTime.Add(40*day))}
+		client.tokens["r-ci"] = []ports.AdminToken{accessToken("t", "act_seed", fixedTestTime.Add(-day), fixedTestTime.Add(40*day))}
 		known := map[string]bool{}
 		next := func(kind string) string {
 			secrets++
@@ -319,7 +319,7 @@ func (c *fuzzClient) CreateRobot(_ context.Context, _ AdminSession, in ports.Adm
 	}
 	secret := c.next("robot")
 	c.record(secret)
-	return ports.AdminCreatedRobot{Robot: ports.AdminRobot{ID: "r-new", Username: in.Name, Repository: in.Repository, Role: in.Role}, Secret: secret, Accessor: "act_robot", ExpiresAt: charFixedTime.Add(day)}, nil
+	return ports.AdminCreatedRobot{Robot: ports.AdminRobot{ID: "r-new", Username: in.Name, Repository: in.Repository, Role: in.Role}, Secret: secret, Accessor: "act_robot", ExpiresAt: fixedTestTime.Add(day)}, nil
 }
 
 func (c *fuzzClient) CreateUserAdminToken(_ context.Context, _ AdminSession, in ports.AdminCreateTokenInput) (ports.AdminCreatedToken, error) {
@@ -329,7 +329,7 @@ func (c *fuzzClient) CreateUserAdminToken(_ context.Context, _ AdminSession, in 
 	}
 	secret := c.next("token")
 	c.record(secret)
-	return ports.AdminCreatedToken{Secret: secret, Accessor: "act_tok", ExpiresAt: charFixedTime.Add(day)}, nil
+	return ports.AdminCreatedToken{Secret: secret, Accessor: "act_tok", ExpiresAt: fixedTestTime.Add(day)}, nil
 }
 
 func queuedHolds(m Model, secret string) bool {

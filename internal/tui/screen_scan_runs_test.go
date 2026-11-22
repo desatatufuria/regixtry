@@ -22,7 +22,7 @@ var updateScanRunsGoldens = flag.Bool("update-scan-runs", false, "rewrite the sc
 var scanViewSizes = []struct{ w, h int }{{150, 24}, {151, 25}, {160, 30}, {200, 40}, {220, 60}}
 
 func scanTime(offset time.Duration) *time.Time {
-	at := charFixedTime.Add(offset)
+	at := fixedTestTime.Add(offset)
 	return &at
 }
 
@@ -92,9 +92,9 @@ func scanRun(t *testing.T, m Model, cmd tea.Cmd) Model {
 func scanModelAt(t *testing.T, client AdminClient, id screen, w, h int) Model {
 	t.Helper()
 	m := newAdminReadyModelWithCatalog(t, []string{"team/api"}, client)
-	m.now = func() time.Time { return charFixedTime }
-	m = charResize(t, m, w, h)
-	m.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: charFixedTime.Add(24 * time.Hour)}
+	m.now = func() time.Time { return fixedTestTime }
+	m = resizeModel(t, m, w, h)
+	m.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: fixedTestTime.Add(24 * time.Hour)}
 	m.adminAuth = adminAuthStateAuthenticated
 	updated, cmd := m.Update(navigateMsg{To: id})
 	return scanRun(t, updated.(Model), cmd)
@@ -503,7 +503,7 @@ func TestScanTookNeverShowsSeconds(t *testing.T) {
 		seconds int
 		want    string
 	}{{0, "<1 min"}, {59, "<1 min"}, {60, "1 min"}, {3599, "59 min"}, {3600, "1 h"}, {7800, "2 h 10 min"}, {90000, "1 d 1 h"}, {86400, "1 d"}} {
-		started := charFixedTime
+		started := fixedTestTime
 		finished := started.Add(time.Duration(tc.seconds) * time.Second)
 		run := ports.ScanRun{StartedAt: &started, FinishedAt: &finished}
 		if got := scanTook(run); got != tc.want {

@@ -53,8 +53,8 @@ func ovListStates(prefix, slug string, to screen, feature string) []ovState {
 		}},
 		{prefix + " loading", "", func(t *testing.T, w, h int) Model {
 			m := newAdminReadyModelWithCatalog(t, securityKnown, ovClient())
-			m = charResize(t, m, w, h)
-			m.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: charFixedTime.Add(24 * 3600e9)}
+			m = resizeModel(t, m, w, h)
+			m.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: fixedTestTime.Add(24 * 3600e9)}
 			m.adminAuth = adminAuthStateAuthenticated
 			updated, _ := m.Update(navigateMsg{To: to})
 			return updated.(Model)

@@ -95,22 +95,22 @@ func TestTooSmallShowsCurrentAndRequiredSize(t *testing.T) {
 
 func TestTooSmallModelUpdatesLiveAndRestoresScreen(t *testing.T) {
 	t.Parallel()
-	m := charAdminModel(t, minViewportWidth, minViewportHeight)
+	m := fixedAdminModel(t, minViewportWidth, minViewportHeight)
 	m.screen = screenAdminOverview
 	normal := m.View().Content
 
-	small := charResize(t, m, 100, 20)
+	small := resizeModel(t, m, 100, 20)
 	if out := ansi.Strip(small.View().Content); !strings.Contains(out, "Current: 100x20.") {
 		t.Fatalf("notice missing 100x20:\n%s", out)
 	}
-	smaller := charResize(t, small, 90, 18)
+	smaller := resizeModel(t, small, 90, 18)
 	if out := ansi.Strip(smaller.View().Content); !strings.Contains(out, "Current: 90x18.") {
 		t.Fatalf("notice did not follow the resize:\n%s", out)
 	}
 	if !reflect.DeepEqual(smaller.adminScreens, m.adminScreens) || smaller.screen != m.screen {
 		t.Fatalf("resize while too small changed screen state")
 	}
-	restored := charResize(t, smaller, minViewportWidth, minViewportHeight)
+	restored := resizeModel(t, smaller, minViewportWidth, minViewportHeight)
 	if restored.View().Content != normal {
 		t.Fatalf("screen not restored after growing back")
 	}
@@ -126,7 +126,7 @@ func TestTooSmallKeys(t *testing.T) {
 		_, ok := cmd().(tea.QuitMsg)
 		return ok
 	}
-	m := charResize(t, charAdminModel(t, minViewportWidth, minViewportHeight), 100, 20)
+	m := resizeModel(t, fixedAdminModel(t, minViewportWidth, minViewportHeight), 100, 20)
 	m.screen = screenAdminOverview
 	if !quits(m, testKeyCtrl('c')) || !quits(m, testKeyRunes("q")) {
 		t.Fatalf("ctrl+c and q must quit while too small")

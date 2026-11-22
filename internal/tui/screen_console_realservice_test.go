@@ -136,7 +136,7 @@ func realBlobCount(dir string) int {
 func realModel(t *testing.T, s *realSvc, opts ...Option) Model {
 	m := NewModel(s, append([]Option{WithAdminClient(&fakeAdminClient{})}, opts...)...)
 	m = runCmd(t, m, m.Init())
-	return charResize(t, m, 160, 30)
+	return resizeModel(t, m, 160, 30)
 }
 
 func TestConsoleDeletesNamedTargetOnlyWithTheRealService(t *testing.T) {

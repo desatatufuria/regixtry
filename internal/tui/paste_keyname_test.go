@@ -39,7 +39,7 @@ func TestPastedKeyNamesAreTextNotKeys(t *testing.T) {
 		for _, p := range pastedKeyNames {
 			t.Run(f.name+"/"+p, func(t *testing.T) {
 				t.Parallel()
-				m := charAdminModel(t, 160, 30)
+				m := fixedAdminModel(t, 160, 30)
 				m.screen = f.screen
 				if f.setup != nil {
 					f.setup(&m)
@@ -63,7 +63,7 @@ func TestPastedKeyNamesDoNotActOnLists(t *testing.T) {
 	for _, p := range pastedKeyNames {
 		t.Run("users list/"+p, func(t *testing.T) {
 			t.Parallel()
-			m := charAdminModel(t, 160, 30)
+			m := fixedAdminModel(t, 160, 30)
 			m.screen = screenAdminUsers
 			m.adminScreens[slotUsers] = usersAt(usersTestClient(), "")
 			u, cmd := m.Update(tea.PasteMsg{Content: p})

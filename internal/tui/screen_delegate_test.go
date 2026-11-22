@@ -126,9 +126,9 @@ func delegateType(text string) []keyMsg {
 func delegateConsole(t *testing.T, client AdminClient, repositories []string, w, h int) Model {
 	t.Helper()
 	m := newAdminReadyModelWithCatalog(t, repositories, client)
-	m.now = func() time.Time { return charFixedTime }
-	m = charResize(t, m, w, h)
-	m.adminSession = AdminSession{Username: "erin", BearerToken: "bearer-token", ExpiresAt: charFixedTime.Add(24 * time.Hour)}
+	m.now = func() time.Time { return fixedTestTime }
+	m = resizeModel(t, m, w, h)
+	m.adminSession = AdminSession{Username: "erin", BearerToken: "bearer-token", ExpiresAt: fixedTestTime.Add(24 * time.Hour)}
 	m.adminAuth = adminAuthStateAuthenticated
 	return m
 }

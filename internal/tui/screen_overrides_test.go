@@ -59,7 +59,7 @@ func ovClient() *fakeAdminClient {
 		}
 	}
 	scan := func(repo, ref, status string, critical, high, runs int, ago time.Duration) ports.RepositoryScanSummary {
-		finished := charFixedTime.Add(-ago)
+		finished := fixedTestTime.Add(-ago)
 		run := ports.ScanRun{ID: "run-" + repo, Repository: repo, RequestedRef: ref, Status: status, Critical: critical, High: high, FinishedAt: &finished, CreatedAt: finished}
 		if status == ports.ScanRunStatusFailed {
 			run.Error = "trivy: could not download the vulnerability database"
@@ -78,9 +78,9 @@ func ovClient() *fakeAdminClient {
 func ovModelAt(t *testing.T, client AdminClient, known []string, to screen, w, h int) Model {
 	t.Helper()
 	m := newAdminReadyModelWithCatalog(t, known, client)
-	m.now = func() time.Time { return charFixedTime }
-	m = charResize(t, m, w, h)
-	m.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: charFixedTime.Add(24 * time.Hour)}
+	m.now = func() time.Time { return fixedTestTime }
+	m = resizeModel(t, m, w, h)
+	m.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: fixedTestTime.Add(24 * time.Hour)}
 	m.adminAuth = adminAuthStateAuthenticated
 	updated, cmd := m.Update(navigateMsg{To: to})
 	return securityRun(t, updated.(Model), cmd)
@@ -374,8 +374,8 @@ func TestOverridesLoadingErrorAndRefreshStates(t *testing.T) {
 	for _, sc := range ovScreens {
 		// Before the result arrives the list says it is reading.
 		m := newAdminReadyModelWithCatalog(t, securityKnown, ovClient())
-		m = charResize(t, m, 150, 24)
-		m.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: charFixedTime.Add(time.Hour)}
+		m = resizeModel(t, m, 150, 24)
+		m.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: fixedTestTime.Add(time.Hour)}
 		m.adminAuth = adminAuthStateAuthenticated
 		updated, _ := m.Update(navigateMsg{To: sc.to})
 		if out := securityRender(updated.(Model)); !strings.Contains(out, "Reading repositories…") {
@@ -672,7 +672,7 @@ func TestOverridesImageScanningFailedScanIsDistinctAndPanelKeepsReferenceAndRuns
 
 func TestScanAgeIsHoursDaysOrYearsNeverSeconds(t *testing.T) {
 	t.Parallel()
-	now := charFixedTime
+	now := fixedTestTime
 	cases := []struct {
 		ago  time.Duration
 		want string

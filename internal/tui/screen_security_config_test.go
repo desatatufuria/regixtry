@@ -120,9 +120,9 @@ func securityRun(t *testing.T, m Model, cmd tea.Cmd) Model {
 func securityModelAt(t *testing.T, client AdminClient, to screen, w, h int) Model {
 	t.Helper()
 	m := newAdminReadyModelWithCatalog(t, securityKnown, client)
-	m.now = func() time.Time { return charFixedTime }
-	m = charResize(t, m, w, h)
-	m.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: charFixedTime.Add(24 * time.Hour)}
+	m.now = func() time.Time { return fixedTestTime }
+	m = resizeModel(t, m, w, h)
+	m.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: fixedTestTime.Add(24 * time.Hour)}
 	m.adminAuth = adminAuthStateAuthenticated
 	updated, cmd := m.Update(navigateMsg{To: to})
 	return securityRun(t, updated.(Model), cmd)
@@ -921,9 +921,9 @@ func TestSecurityOverridesListShowsErrorsAndOverflow(t *testing.T) {
 		known = append(known, fmt.Sprintf("team/service-%02d", i))
 	}
 	m = newAdminReadyModelWithCatalog(t, known, client)
-	m.now = func() time.Time { return charFixedTime }
-	m = charResize(t, m, 150, 24)
-	m.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: charFixedTime.Add(24 * time.Hour)}
+	m.now = func() time.Time { return fixedTestTime }
+	m = resizeModel(t, m, 150, 24)
+	m.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: fixedTestTime.Add(24 * time.Hour)}
 	m.adminAuth = adminAuthStateAuthenticated
 	updated, cmd := m.Update(navigateMsg{To: screenSecurityTrivy})
 	m = securityRun(t, updated.(Model), cmd)

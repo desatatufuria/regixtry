@@ -24,8 +24,8 @@ type confirmPrompt struct {
 	// onConfirm) signature: retiring adminConfirmModal's 10 Kind-specific
 	// status strings requires SOMEWHERE to hold each one, and confirmPrompt
 	// is the only composable value that travels with the right one to each
-	// call site — without it, T1.1's exact-status-text characterization
-	// could not survive the retirement.
+	// call site — without it, the exact status text of each confirm
+	// would have no place to live.
 	submitting string
 	// onConfirm receives env at CONFIRM time, never at OPEN time: capturing
 	// AdminSession in the closure would fire a command with a token that

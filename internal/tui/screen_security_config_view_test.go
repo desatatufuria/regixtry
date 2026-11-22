@@ -21,9 +21,9 @@ import (
 func securityModelLoading(t *testing.T, to screen, w, h int) Model {
 	t.Helper()
 	m := newAdminReadyModelWithCatalog(t, securityKnown, securityClient())
-	m.now = func() time.Time { return charFixedTime }
-	m = charResize(t, m, w, h)
-	m.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: charFixedTime.Add(24 * time.Hour)}
+	m.now = func() time.Time { return fixedTestTime }
+	m = resizeModel(t, m, w, h)
+	m.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: fixedTestTime.Add(24 * time.Hour)}
 	m.adminAuth = adminAuthStateAuthenticated
 	updated, _ := m.Update(navigateMsg{To: to})
 	return updated.(Model)
@@ -87,9 +87,9 @@ func securityStressModelAt(t *testing.T, to screen, w, h int) Model {
 	t.Helper()
 	client, known := securityStressClient(t)
 	m := newAdminReadyModelWithCatalog(t, known, client)
-	m.now = func() time.Time { return charFixedTime }
-	m = charResize(t, m, w, h)
-	m.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: charFixedTime.Add(24 * time.Hour)}
+	m.now = func() time.Time { return fixedTestTime }
+	m = resizeModel(t, m, w, h)
+	m.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: fixedTestTime.Add(24 * time.Hour)}
 	m.adminAuth = adminAuthStateAuthenticated
 	updated, cmd := m.Update(navigateMsg{To: to})
 	return securityRun(t, updated.(Model), cmd)

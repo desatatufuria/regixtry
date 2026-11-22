@@ -19,9 +19,9 @@ func accessModel(t *testing.T, mutate func(*accessClient)) (Model, *accessClient
 	}
 	client.createRobot = ports.AdminCreatedRobot{
 		Robot:  ports.AdminRobot{ID: "r-new", Username: "release-bot", Repository: "team/api", Role: domainauth.RepoRoleReader, Enabled: true},
-		Secret: "robot-secret-value", Accessor: "act_robot", ExpiresAt: charFixedTime.Add(30 * day),
+		Secret: "robot-secret-value", Accessor: "act_robot", ExpiresAt: fixedTestTime.Add(30 * day),
 	}
-	client.createToken = ports.AdminCreatedToken{Secret: "token-secret-value", Accessor: "act_tok", ExpiresAt: charFixedTime.Add(30 * day)}
+	client.createToken = ports.AdminCreatedToken{Secret: "token-secret-value", Accessor: "act_tok", ExpiresAt: fixedTestTime.Add(30 * day)}
 	if mutate != nil {
 		mutate(client)
 	}
@@ -38,7 +38,7 @@ func openRobotsOf(t *testing.T, m Model) Model {
 func TestRobotsTokensKeyOpensTheRobotsTokensAndEscComesBackToThatRobot(t *testing.T) {
 	t.Parallel()
 	m, client := accessModel(t, nil)
-	client.tokens["r-old"] = []ports.AdminToken{accessToken("legacy", "act_legacy", charFixedTime.Add(-day), charFixedTime.Add(day))}
+	client.tokens["r-old"] = []ports.AdminToken{accessToken("legacy", "act_legacy", fixedTestTime.Add(-day), fixedTestTime.Add(day))}
 	m = openRobotsOf(t, m)
 	m = overviewPress(t, m, testKeyDown(), testKeyRunes("t"))
 	if m.screen != screenAdminEditUserTokens {
@@ -132,7 +132,7 @@ func TestLettersAreTypedNotCommandsInTheFormsAtModelLevel(t *testing.T) {
 func TestQQuitsAndLLogsOutFromTheListsOnly(t *testing.T) {
 	t.Parallel()
 	m, _ := accessModel(t, func(c *accessClient) {
-		c.tokens["r-ci"] = []ports.AdminToken{accessToken("ci", "act_ci", charFixedTime.Add(-day), charFixedTime.Add(day))}
+		c.tokens["r-ci"] = []ports.AdminToken{accessToken("ci", "act_ci", fixedTestTime.Add(-day), fixedTestTime.Add(day))}
 	})
 	robots := openRobotsOf(t, m)
 	if _, cmd := sendKeyCmd(robots, testKeyRunes("q")); !didQuit(cmd) {
@@ -238,7 +238,7 @@ func TestTokensScreenWorksAtEverySizeThroughTheModel(t *testing.T) {
 	t.Parallel()
 	for _, size := range accessSizes {
 		m, _ := accessModel(t, nil)
-		m = charResize(t, m, size.w, size.h)
+		m = resizeModel(t, m, size.w, size.h)
 		m = overviewPress(t, openRobotsOf(t, m), testKeyRunes("t"), testKeyRunes("n"))
 		lines := accessLines(accessModelText(m))
 		if len(lines) > size.h {

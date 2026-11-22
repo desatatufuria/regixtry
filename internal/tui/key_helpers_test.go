@@ -9,7 +9,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// Every key message in the characterization tests is built only by the
+// Every key message in these tests is built only by the
 // testKey* helpers below, so a Bubble Tea major upgrade edits just these bodies.
 
 func testKeyRunes(text string) keyMsg { return keyMsg{Code: firstRune(text), Text: text} }
@@ -57,7 +57,7 @@ func testSendKeys(t *testing.T, m Model, msgs ...keyMsg) Model {
 	return m
 }
 
-func TestKeyHelpersCharacterization(t *testing.T) {
+func TestKeyHelpers(t *testing.T) {
 	t.Parallel()
 
 	helpers := map[string]func(keyMsg) bool{
@@ -138,7 +138,7 @@ func TestKeyHelpersCharacterization(t *testing.T) {
 	}
 }
 
-func TestIsRuneKeyCharacterization(t *testing.T) {
+func TestIsRuneKey(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -175,10 +175,10 @@ func TestIsRuneKeyCharacterization(t *testing.T) {
 	}
 }
 
-func TestCreateUserFormPasswordEntryCharacterization(t *testing.T) {
+func TestCreateUserFormPasswordEntry(t *testing.T) {
 	t.Parallel()
 
-	m := charAdminModel(t, 160, 40)
+	m := fixedAdminModel(t, 160, 40)
 	mountCreateUser(&m, createUserFieldUsername)
 
 	m = testSendKey(t, m, testKeyRunes("alice"))
@@ -215,10 +215,10 @@ func TestCreateUserFormPasswordEntryCharacterization(t *testing.T) {
 	}
 }
 
-func TestResetPasswordFormEntryCharacterization(t *testing.T) {
+func TestResetPasswordFormEntry(t *testing.T) {
 	t.Parallel()
 
-	m := charAdminModel(t, 160, 40)
+	m := fixedAdminModel(t, 160, 40)
 	mountResetPassword(&m)
 
 	m = testSendKeys(t, m, testKeyRunes("pa"), testKeySpace(), testKeyRunes("ss"))

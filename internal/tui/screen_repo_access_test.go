@@ -69,9 +69,9 @@ func repoAccessRun(t *testing.T, m Model, cmd tea.Cmd) Model {
 func repoAccessModelAt(t *testing.T, client AdminClient, w, h int) Model {
 	t.Helper()
 	m := newAdminReadyModel(t, client)
-	m.now = func() time.Time { return charFixedTime }
-	m = charResize(t, m, w, h)
-	m.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: charFixedTime.Add(24 * time.Hour)}
+	m.now = func() time.Time { return fixedTestTime }
+	m = resizeModel(t, m, w, h)
+	m.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: fixedTestTime.Add(24 * time.Hour)}
 	m.adminAuth = adminAuthStateAuthenticated
 	updated, cmd := m.Update(navigateMsg{To: screenAdminRepositoryAccess})
 	return repoAccessRun(t, updated.(Model), cmd)
@@ -347,8 +347,8 @@ func TestRepoAccessStopsReadingOnceLeft(t *testing.T) {
 	t.Parallel()
 	client := repoAccessBulk(450)
 	m := newAdminReadyModel(t, client)
-	m = charResize(t, m, 150, 24)
-	m.adminSession = AdminSession{Username: "operator", BearerToken: "b", ExpiresAt: charFixedTime.Add(time.Hour)}
+	m = resizeModel(t, m, 150, 24)
+	m.adminSession = AdminSession{Username: "operator", BearerToken: "b", ExpiresAt: fixedTestTime.Add(time.Hour)}
 	m.adminAuth = adminAuthStateAuthenticated
 
 	var pending []tea.Msg
@@ -507,8 +507,8 @@ func TestRepoAccessRevokeTargetFuzz(t *testing.T) {
 		}
 		client := &repoAccessCounting{fakeAdminClient: fake}
 		m := newAdminReadyModel(t, client)
-		m = charResize(t, m, 150, 24)
-		m.adminSession = AdminSession{Username: "operator", BearerToken: "b", ExpiresAt: charFixedTime.Add(time.Hour)}
+		m = resizeModel(t, m, 150, 24)
+		m.adminSession = AdminSession{Username: "operator", BearerToken: "b", ExpiresAt: fixedTestTime.Add(time.Hour)}
 		m.adminAuth = adminAuthStateAuthenticated
 		var pending []tea.Msg
 		step := func(msg tea.Msg) {
@@ -814,9 +814,9 @@ func repoAccessNoOverflow(t *testing.T, label, rendered string, w, h int) {
 func repoAccessLoadingModel(t *testing.T, w, h int) Model {
 	t.Helper()
 	m := newAdminReadyModel(t, repoAccessClient())
-	m.now = func() time.Time { return charFixedTime }
-	m = charResize(t, m, w, h)
-	m.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: charFixedTime.Add(24 * time.Hour)}
+	m.now = func() time.Time { return fixedTestTime }
+	m = resizeModel(t, m, w, h)
+	m.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: fixedTestTime.Add(24 * time.Hour)}
 	m.adminAuth = adminAuthStateAuthenticated
 	updated, _ := m.Update(navigateMsg{To: screenAdminRepositoryAccess})
 	return updated.(Model)

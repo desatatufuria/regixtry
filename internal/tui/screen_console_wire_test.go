@@ -15,7 +15,7 @@ func consoleModel(t *testing.T, service *consoleService, options ...Option) Mode
 	t.Helper()
 	m := NewModel(service, append([]Option{WithAdminClient(&fakeAdminClient{})}, options...)...)
 	m = runCmd(t, m, m.Init())
-	return charResize(t, m, 150, 24)
+	return resizeModel(t, m, 150, 24)
 }
 
 func consoleView(m Model) string { return ansi.Strip(m.View().Content) }
@@ -125,7 +125,7 @@ func TestConsoleWithoutAnAdminAPITabSaysSo(t *testing.T) {
 	t.Parallel()
 	m := NewModel(newConsoleService(consoleRepos("team/a")...))
 	m = runCmd(t, m, m.Init())
-	m = charResize(t, runKey(t, m, "tab"), 150, 24)
+	m = resizeModel(t, runKey(t, m, "tab"), 150, 24)
 	if m.screen != screenRepositories || !strings.Contains(consoleView(m), consoleUnavailableNotice) {
 		t.Fatalf("screen = %q\n%s", m.screen, consoleView(m))
 	}
@@ -210,7 +210,7 @@ func TestConsoleLeavingTheStartupLoginLandsOnAMountedRepositoriesScreen(t *testi
 	t.Parallel()
 	m := NewModel(newConsoleService(consoleRepos("team/a")...), WithAdminClient(&fakeAdminClient{}), WithStartupLogin())
 	m = runCmd(t, m, m.Init())
-	m = charResize(t, runKey(t, m, "esc"), 150, 24)
+	m = resizeModel(t, runKey(t, m, "esc"), 150, 24)
 	if m.screen != screenRepositories || m.adminScreens[slotConsoleRepositories] == nil {
 		t.Fatalf("screen = %q, slot = %v", m.screen, m.adminScreens[slotConsoleRepositories])
 	}

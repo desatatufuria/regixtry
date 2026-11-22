@@ -70,7 +70,7 @@ func signingWireKey(t *testing.T) string {
 
 func signingWireModel(t *testing.T, e signingWireEnv, to screen, w, h int) (Model, tea.Cmd) {
 	m := newAdminReadyModel(t, e.client)
-	m = charResize(t, m, w, h)
+	m = resizeModel(t, m, w, h)
 	m.adminSession, m.adminAuth = e.session, adminAuthStateAuthenticated
 	updated, cmd := m.Update(navigateMsg{To: to})
 	return updated.(Model), cmd

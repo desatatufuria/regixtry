@@ -6,7 +6,7 @@ import (
 	"regixtry/internal/ports"
 )
 
-func TestFeatureActionForKeyCharacterization(t *testing.T) {
+func TestFeatureActionForKey(t *testing.T) {
 	page := ports.FeaturePage{Actions: []ports.FeatureAction{
 		{ID: "enable"}, {ID: "disable"}, {ID: "install-runtime"},
 		{ID: "upgrade-runtime"}, {ID: "rollback-runtime"},

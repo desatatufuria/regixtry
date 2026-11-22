@@ -23,7 +23,7 @@ func TestUpdateBannerNeverMakesAShellScreenTallerThanTheTerminal(t *testing.T) {
 		for _, size := range []struct{ w, h int }{{150, 24}, {200, 40}} {
 			for _, version := range []string{"", "v1.2.3"} {
 				m := NewModel(newConsoleService(consoleRepos("team/api")...), WithAdminClient(&fakeAdminClient{}))
-				m = charResize(t, m, size.w, size.h)
+				m = resizeModel(t, m, size.w, size.h)
 				m.currentVersion = version
 				m.adminSession = AdminSession{Username: "operator", BearerToken: "t", ExpiresAt: consoleTime.Add(24 * 3600e9)}
 				m.now = func() time.Time { return consoleTime }

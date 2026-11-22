@@ -173,7 +173,7 @@ func consoleModelFor(t *testing.T, st consoleState, w, h int) Model {
 	slot, _ := slotFor(id)
 	m.adminScreens[slot] = built
 	m.screen = id
-	return charResize(t, m, w, h)
+	return resizeModel(t, m, w, h)
 }
 
 func TestConsoleGeometryInEveryStateAtEverySize(t *testing.T) {
@@ -285,7 +285,7 @@ func TestConsoleBreadcrumbKeepsTheLastCrumbWhenNamesAreVeryLong(t *testing.T) {
 	slot, _ := slotFor(screenTags)
 	m.adminScreens[slot], m.screen = s, screenTags
 	for _, size := range consoleSizes {
-		first := strings.Split(ansi.Strip(charResize(t, m, size.w, size.h).View().Content), "\n")[0]
+		first := strings.Split(ansi.Strip(resizeModel(t, m, size.w, size.h).View().Content), "\n")[0]
 		if !strings.HasSuffix(strings.TrimRight(first, " "), "Tags") || ansi.StringWidth(first) > size.w {
 			t.Fatalf("%dx%d: breadcrumb %q lost its last crumb", size.w, size.h, first)
 		}

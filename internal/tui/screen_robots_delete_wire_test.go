@@ -80,7 +80,7 @@ func TestDeletingARobotOverTheRealWire(t *testing.T) {
 	session := AdminSession{Username: "admin", BearerToken: login.BearerToken, ExpiresAt: time.Now().Add(time.Hour)}
 
 	m := newAdminReadyModel(t, client)
-	m = charResize(t, m, 150, 24)
+	m = resizeModel(t, m, 150, 24)
 	m.adminSession, m.adminAuth = session, adminAuthStateAuthenticated
 	updated, cmd := m.Update(navigateMsg{To: screenAdminRobots})
 	m = repoAccessRun(t, updated.(Model), cmd)

@@ -83,7 +83,7 @@ func TestLoginSaysEscBackAndActiveSearchSaysEscEndsIt(t *testing.T) {
 	if strings.Contains(login, "q: quit") || !strings.Contains(ansi.Strip(login), "esc back") {
 		t.Fatalf("login footer wrong:\n%s", login)
 	}
-	m := charResize(t, kjSearchModel(t, true), 200, 40)
+	m := resizeModel(t, kjSearchModel(t, true), 200, 40)
 	search := ansi.Strip(m.View().Content)
 	if strings.Contains(search, "q quit") || !strings.Contains(search, "esc done") {
 		t.Fatalf("active search footer wrong:\n%s", search)

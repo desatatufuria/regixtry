@@ -16,7 +16,7 @@ func usersModelAt(t *testing.T, client AdminClient, w, h int) Model {
 	t.Helper()
 	m := newAdminReadyModelWithCatalog(t, []string{"team/api"}, client)
 	m.now = func() time.Time { return usersTestNow }
-	m = charResize(t, m, w, h)
+	m = resizeModel(t, m, w, h)
 	m.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: usersTestNow.Add(24 * time.Hour)}
 	m.adminAuth = adminAuthStateAuthenticated
 	updated, cmd := m.Update(navigateMsg{To: screenAdminUsers})

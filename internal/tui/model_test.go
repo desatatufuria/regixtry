@@ -744,18 +744,12 @@ func TestModelReenteringAdminWithActiveSessionLandsOnOverview(t *testing.T) {
 	}
 }
 
-// TestAdminConfirmCharacterization is the tui-menu-architecture change's
-// Phase 1 task 1.3 (T1.1) golden/characterization baseline, captured
-// BEFORE confirm.go exists: for every one of the 10 adminConfirmKind values,
+// TestAdminConfirm: for every one of the 10 adminConfirmKind values,
 // opening the confirm and pressing Enter must dispatch the exact right
 // admin API call, and Esc must cancel without dispatching anything. Every
 // assertion is black-box (View() content, status text, and fakeAdminClient
-// call counters) — deliberately never touching
-// updated.adminView.ConfirmModal's fields directly, so this test keeps
-// passing unchanged once Phase 5 retires adminConfirmModal onto
-// confirmPrompt (design.md Decision E) and again once AdminViewState.Confirm
-// itself becomes the only place the state lives.
-func TestAdminConfirmCharacterization(t *testing.T) {
+// call counters).
+func TestAdminConfirm(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.August, 20, 10, 0, 0, 0, time.UTC)
@@ -1457,15 +1451,11 @@ func TestModelGitleaksConfigModalValidationErrorSurfaced(t *testing.T) {
 	}
 }
 
-// TestGitleaksConfigModalCharacterization is the tui-menu-architecture
-// change's Phase 1 task 1.2 (T1.0) golden/characterization baseline,
-// captured BEFORE screen_gitleaks_config.go exists: table-driven over Esc,
+// TestGitleaksConfigModal is table-driven over Esc,
 // Tab x4 (the field-wrap cycle), Space, Backspace, Enter, plain rune input,
 // and an unmapped key, every assertion black-box via View()/call-counter
-// content only — never touching updated.adminView.GitleaksConfigModal's
-// fields directly — so this test survives unchanged once Phase 6 moves this
-// state into gitleaksConfigScreen and deletes the AdminViewState field.
-func TestGitleaksConfigModalCharacterization(t *testing.T) {
+// content only.
+func TestGitleaksConfigModal(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.August, 13, 14, 0, 0, 0, time.UTC)

@@ -28,8 +28,8 @@ func TestScanSummaryLoadErrorReachesTheScreensAndTheStatus(t *testing.T) {
 	t.Parallel()
 	m := newAdminReadyModel(t, &fakeAdminClient{})
 	m.adminAuth = adminAuthStateAuthenticated
-	m.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: charFixedTime.Add(time.Hour)}
-	m.now = func() time.Time { return charFixedTime }
+	m.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: fixedTestTime.Add(time.Hour)}
+	m.now = func() time.Time { return fixedTestTime }
 	m.adminScreens[slotScanRuns] = summariesProbe{}
 
 	updated, _ := m.Update(adminRepositoryScanSummariesLoadedMsg{err: errors.New("boom")})
@@ -48,7 +48,7 @@ func TestScanSummaryLoadExpiredSessionStillLogsOut(t *testing.T) {
 	t.Parallel()
 	m := newAdminReadyModel(t, &fakeAdminClient{})
 	m.adminAuth = adminAuthStateAuthenticated
-	m.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: charFixedTime.Add(time.Hour)}
+	m.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: fixedTestTime.Add(time.Hour)}
 	m.adminScreens[slotScanRuns] = summariesProbe{}
 
 	updated, _ := m.Update(adminRepositoryScanSummariesLoadedMsg{err: NewAdminSessionExpiredError(AdminSessionExpiredReasonExpired)})

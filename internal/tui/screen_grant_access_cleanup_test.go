@@ -239,7 +239,7 @@ func TestGrantExpiredApplyLeavesAFreshScreenAfterSigningInAgain(t *testing.T) {
 	if m.screen != screenAdminLogin {
 		t.Fatalf("screen = %q", m.screen)
 	}
-	m.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: charFixedTime.Add(time.Hour)}
+	m.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: fixedTestTime.Add(time.Hour)}
 	m.adminAuth = adminAuthStateAuthenticated
 	updated, cmd := m.Update(openGrantAccessMsg{returnTo: screenAdminOverview})
 	m = runCmd(t, updated.(Model), cmd)

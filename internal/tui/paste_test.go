@@ -37,7 +37,7 @@ func TestPasteReachesAdminTextFields(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			m := charAdminModel(t, 160, 30)
+			m := fixedAdminModel(t, 160, 30)
 			tt.setup(&m)
 			m = pasteInto(t, m, pasteSample)
 			if got := tt.got(m); got != tt.want {
@@ -59,7 +59,7 @@ func TestPastedPasswordIsNeverRenderedInClear(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			m := charAdminModel(t, 160, 30)
+			m := fixedAdminModel(t, 160, 30)
 			tt.setup(&m)
 			m = pasteInto(t, m, "s3cr3t-pasted")
 			if view := ansi.Strip(m.View().Content); strings.Contains(view, "s3cr3t-pasted") {
@@ -87,7 +87,7 @@ func TestRealSpaceKeyTypesIntoNameAndPasswordFields(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			m := charAdminModel(t, 160, 30)
+			m := fixedAdminModel(t, 160, 30)
 			tt.setup(&m)
 			m = testSendKey(t, m, testKeyRunes("ab"))
 			m = testSendKey(t, m, testKeySpace())

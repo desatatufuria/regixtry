@@ -15,8 +15,8 @@ import (
 	"regixtry/internal/ports"
 )
 
-// The Overview has its own flag so regenerating its goldens can never touch
-// the characterization goldens (which use -update).
+// The Overview has its own flag so regenerating its goldens never touches
+// another screen's.
 var updateOverviewGoldens = flag.Bool("update-overview", false, "rewrite the overview golden files")
 
 var overviewViewSizes = []struct{ w, h int }{{150, 24}, {200, 40}}
@@ -43,9 +43,9 @@ func overviewClient() *fakeAdminClient {
 func overviewModelAt(t *testing.T, client AdminClient, w, h int) Model {
 	t.Helper()
 	m := newAdminReadyModelWithCatalog(t, []string{"team/api"}, client)
-	m.now = func() time.Time { return charFixedTime }
-	m = charResize(t, m, w, h)
-	m.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: charFixedTime.Add(24 * time.Hour)}
+	m.now = func() time.Time { return fixedTestTime }
+	m = resizeModel(t, m, w, h)
+	m.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: fixedTestTime.Add(24 * time.Hour)}
 	m.adminAuth = adminAuthStateAuthenticated
 	updated, cmd := m.Update(navigateMsg{To: screenAdminOverview})
 	return runCmd(t, updated.(Model), cmd)
@@ -443,9 +443,9 @@ func TestEscFromEverySidebarScreenReturnsToTheOverview(t *testing.T) {
 func TestLoginLandsOnTheOverviewWithItsAttentionLoaded(t *testing.T) {
 	t.Parallel()
 	client := overviewClient()
-	client.loginSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: charFixedTime.Add(time.Hour)}
+	client.loginSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: fixedTestTime.Add(time.Hour)}
 	m := newAdminReadyModel(t, client)
-	m.now = func() time.Time { return charFixedTime }
+	m.now = func() time.Time { return fixedTestTime }
 	m = runAdminLogin(t, m, "operator", "secret-pass")
 	if m.screen != screenAdminOverview {
 		t.Fatalf("screen = %q, want the Overview", m.screen)

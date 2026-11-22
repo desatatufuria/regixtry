@@ -970,10 +970,10 @@ func TestGrantScreenLoadingAndErrorStatesRender(t *testing.T) {
 func grantModel(t *testing.T, client AdminClient, width, height int) Model {
 	t.Helper()
 	m := newAdminReadyModelWithCatalog(t, grantTestKnown, client)
-	m.now = func() time.Time { return charFixedTime }
+	m.now = func() time.Time { return fixedTestTime }
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 	m = updated.(Model)
-	m.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: charFixedTime.Add(24 * time.Hour)}
+	m.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: fixedTestTime.Add(24 * time.Hour)}
 	m.adminAuth = adminAuthStateAuthenticated
 	return m
 }

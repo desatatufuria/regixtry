@@ -104,7 +104,7 @@ func TestRepoAccessReadsAllGrantsThroughTheRealEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := newAdminReadyModel(t, client)
-	m = charResize(t, m, 220, 60)
+	m = resizeModel(t, m, 220, 60)
 	m.adminSession = AdminSession{Username: "admin", BearerToken: login.BearerToken, ExpiresAt: time.Now().Add(time.Hour)}
 	m.adminAuth = adminAuthStateAuthenticated
 	u, cmd := m.Update(navigateMsg{To: screenAdminRepositoryAccess})

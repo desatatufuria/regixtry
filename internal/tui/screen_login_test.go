@@ -42,7 +42,7 @@ func assertLoginConfirmGolden(t *testing.T, name, got string) {
 func loginScreenModel(t *testing.T, w, h int) Model {
 	t.Helper()
 	m := newAdminReadyModel(t, &fakeAdminClient{})
-	m = charResize(t, m, w, h)
+	m = resizeModel(t, m, w, h)
 	m.screen = screenAdminLogin
 	m.adminLogin = adminLoginForm{Focus: loginFieldUsername}
 	return m

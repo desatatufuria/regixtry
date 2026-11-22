@@ -41,8 +41,8 @@ func TestSigningPolicySaveNeverLosesWhatTheFormDidNotChange(t *testing.T) {
 			signingPolicy: ports.SigningPolicySettings{Enabled: true, TrustedPublicKeys: keys, TrustedIdentities: ids, UnsignedSelfRead: "pusher"},
 		}}
 		m := newAdminReadyModel(t, client)
-		m.adminSession, m.adminAuth = AdminSession{Username: "operator", BearerToken: "t", ExpiresAt: charFixedTime.Add(24 * 3600e9)}, adminAuthStateAuthenticated
-		m.now = func() time.Time { return charFixedTime }
+		m.adminSession, m.adminAuth = AdminSession{Username: "operator", BearerToken: "t", ExpiresAt: fixedTestTime.Add(24 * 3600e9)}, adminAuthStateAuthenticated
+		m.now = func() time.Time { return fixedTestTime }
 		u, c := m.Update(navigateMsg{To: screenSecuritySigningConfig})
 		m = repoAccessRun(t, u.(Model), c)
 		cleared := false

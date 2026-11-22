@@ -10,7 +10,7 @@ import (
 func kjLoginModel(t *testing.T) Model {
 	t.Helper()
 	m := newAdminReadyModel(t, &fakeAdminClient{})
-	m = charResize(t, m, 150, 40)
+	m = resizeModel(t, m, 150, 40)
 	m.screen = screenAdminLogin
 	m.adminLogin = adminLoginForm{Focus: loginFieldUsername}
 	return m

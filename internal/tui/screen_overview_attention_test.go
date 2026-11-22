@@ -18,13 +18,13 @@ func overviewRichClient() *fakeAdminClient {
 	client := overviewClient()
 	client.robots[1].ID = "r-2"
 	client.expiringTokens = []ports.AdminExpiringToken{
-		{ID: "t-1", Name: "ci", UserID: "r-1", Username: "ci-publisher", IsRobot: true, ExpiresAt: charFixedTime.Add(6*lifetimeDay + 3*lifetimeHour)},
-		{ID: "t-2", Name: "laptop", UserID: "u-1", Username: "alice", ExpiresAt: charFixedTime.Add(5*lifetimeHour + 20*time.Minute)},
+		{ID: "t-1", Name: "ci", UserID: "r-1", Username: "ci-publisher", IsRobot: true, ExpiresAt: fixedTestTime.Add(6*lifetimeDay + 3*lifetimeHour)},
+		{ID: "t-2", Name: "laptop", UserID: "u-1", Username: "alice", ExpiresAt: fixedTestTime.Add(5*lifetimeHour + 20*time.Minute)},
 	}
 	client.accessEvents = []ports.AdminAccessEvent{
-		{ID: "e1", At: charFixedTime.Add(-3 * lifetimeHour), Action: "grant.put", Actor: "admin", Subject: "alice", Repository: "team/api", Role: "writer"},
-		{ID: "e2", At: charFixedTime.Add(-2 * lifetimeDay), Action: "token.issued", Actor: "admin", Subject: "ci-publisher", TokenName: "ci", Detail: "30 days"},
-		{ID: "e3", At: charFixedTime.Add(-30 * time.Minute), Action: "quota.changed", Actor: "admin", Subject: "bob"},
+		{ID: "e1", At: fixedTestTime.Add(-3 * lifetimeHour), Action: "grant.put", Actor: "admin", Subject: "alice", Repository: "team/api", Role: "writer"},
+		{ID: "e2", At: fixedTestTime.Add(-2 * lifetimeDay), Action: "token.issued", Actor: "admin", Subject: "ci-publisher", TokenName: "ci", Detail: "30 days"},
+		{ID: "e3", At: fixedTestTime.Add(-30 * time.Minute), Action: "quota.changed", Actor: "admin", Subject: "bob"},
 	}
 	return client
 }
@@ -73,7 +73,7 @@ func TestOverviewNeedsAttentionShowsTheExpiringTokens(t *testing.T) {
 		t.Errorf("row shown without tokens:\n%s", out)
 	}
 	for i := range 100 {
-		client.expiringTokens = append(client.expiringTokens, ports.AdminExpiringToken{ID: fmt.Sprint(i), UserID: "u-1", Username: "alice", ExpiresAt: charFixedTime.Add(lifetimeDay)})
+		client.expiringTokens = append(client.expiringTokens, ports.AdminExpiringToken{ID: fmt.Sprint(i), UserID: "u-1", Username: "alice", ExpiresAt: fixedTestTime.Add(lifetimeDay)})
 	}
 	if out := overviewRender(overviewModelAt(t, client, 200, 40)); !strings.Contains(out, "Tokens expiring soon: 100+.") {
 		t.Errorf("a full page is not shown as 100+:\n%s", out)
@@ -291,7 +291,7 @@ func TestOverviewRecentChangesStates(t *testing.T) {
 		t.Errorf("the attention panel went down with the history:\n%s", out)
 	}
 	loading := newOverviewScreen()
-	view := ansi.Strip(loading.View(newAdminTheme(), screenEnv{Layout: consoleLayout{Width: 150, Height: 24}, Now: func() time.Time { return charFixedTime }}).Body)
+	view := ansi.Strip(loading.View(newAdminTheme(), screenEnv{Layout: consoleLayout{Width: 150, Height: 24}, Now: func() time.Time { return fixedTestTime }}).Body)
 	if strings.Count(view, "Loading...") != 2 {
 		t.Errorf("both panels should say Loading...:\n%s", view)
 	}
@@ -302,7 +302,7 @@ func TestOverviewRecentChangesShowsAsManyRowsAsFit(t *testing.T) {
 	client := overviewRichClient()
 	client.accessEvents = nil
 	for i := range 20 {
-		client.accessEvents = append(client.accessEvents, ports.AdminAccessEvent{ID: fmt.Sprint(i), At: charFixedTime.Add(-time.Duration(i+1) * lifetimeHour), Action: "user.enabled", Actor: "admin", Subject: fmt.Sprintf("user-%02d", i)})
+		client.accessEvents = append(client.accessEvents, ports.AdminAccessEvent{ID: fmt.Sprint(i), At: fixedTestTime.Add(-time.Duration(i+1) * lifetimeHour), Action: "user.enabled", Actor: "admin", Subject: fmt.Sprintf("user-%02d", i)})
 	}
 	small := overviewRender(overviewModelAt(t, client, 150, 24))
 	large := overviewRender(overviewModelAt(t, client, 200, 60))
@@ -388,7 +388,7 @@ func TestOverviewFitsEveryStateAtEverySize(t *testing.T) {
 	}
 	many.accessEvents = nil
 	for i := range 20 {
-		many.accessEvents = append(many.accessEvents, ports.AdminAccessEvent{ID: fmt.Sprint(i), At: charFixedTime.Add(-lifetimeDay * time.Duration(i)), Action: "grant.put", Actor: long, Subject: long, Repository: long, Role: "writer"})
+		many.accessEvents = append(many.accessEvents, ports.AdminAccessEvent{ID: fmt.Sprint(i), At: fixedTestTime.Add(-lifetimeDay * time.Duration(i)), Action: "grant.put", Actor: long, Subject: long, Repository: long, Role: "writer"})
 	}
 	many.expiringTokens[0].Username = long
 	failing := overviewRichClient()

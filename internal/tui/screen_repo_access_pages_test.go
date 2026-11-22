@@ -78,9 +78,9 @@ func repoAccessWalkCorpus(t *testing.T, g repoAccessCorpus, w, h int, label stri
 	t.Helper()
 	client := &fakeAdminClient{allGrants: g.grants}
 	m := newAdminReadyModel(t, client)
-	m.now = func() time.Time { return charFixedTime }
-	m = charResize(t, m, w, h)
-	m.adminSession = AdminSession{Username: "operator", BearerToken: "b", ExpiresAt: charFixedTime.Add(time.Hour)}
+	m.now = func() time.Time { return fixedTestTime }
+	m = resizeModel(t, m, w, h)
+	m.adminSession = AdminSession{Username: "operator", BearerToken: "b", ExpiresAt: fixedTestTime.Add(time.Hour)}
 	m.adminAuth = adminAuthStateAuthenticated
 	var pending []tea.Msg
 	step := func(msg tea.Msg) {
@@ -191,7 +191,7 @@ func TestRepoAccessPageBoundaryWalks(t *testing.T) {
 	for _, off := range []int{1, 38} {
 		var gr []ports.AdminGrantEntry
 		for i := 0; i < off; i++ {
-			gr = append(gr, repoAccessEntry("a/pad", fmt.Sprintf("p%d", i), fmt.Sprintf("p%03d", i), false, domainauth.RepoRoleReader, charFixedTime))
+			gr = append(gr, repoAccessEntry("a/pad", fmt.Sprintf("p%d", i), fmt.Sprintf("p%03d", i), false, domainauth.RepoRoleReader, fixedTestTime))
 		}
 		for i := 0; i < 400-off; i++ {
 			role := domainauth.RepoRoleWriter
@@ -202,7 +202,7 @@ func TestRepoAccessPageBoundaryWalks(t *testing.T) {
 			if i == 399-off {
 				role = domainauth.RepoRoleAdmin
 			}
-			gr = append(gr, repoAccessEntry(repo, fmt.Sprintf("u%d", i), fmt.Sprintf("u%04d", i), false, role, charFixedTime))
+			gr = append(gr, repoAccessEntry(repo, fmt.Sprintf("u%d", i), fmt.Sprintf("u%04d", i), false, role, fixedTestTime))
 		}
 		sort.SliceStable(gr, func(i, j int) bool {
 			if gr[i].Repository != gr[j].Repository {

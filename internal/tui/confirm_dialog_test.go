@@ -96,7 +96,7 @@ func TestConfirmDialogFitsEverySizeOverTheScreen(t *testing.T) {
 		for _, long := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%dx%d/long=%v", size.w, size.h, long), func(t *testing.T) {
 				t.Parallel()
-				m := charAdminModel(t, size.w, size.h)
+				m := fixedAdminModel(t, size.w, size.h)
 				m.screen = screenAdminUsers
 				c, _ := confirmDialogPrompt("remove")
 				c = c.withTarget("alice on team/api", "Writer").withConsequence("Grant access again to restore it.")
@@ -120,7 +120,7 @@ func confirmOver(m Model, c confirmPrompt) string {
 }
 
 func confirmGoldenModel(t *testing.T, w, h int) string {
-	m := charAdminModel(t, w, h)
+	m := fixedAdminModel(t, w, h)
 	m.screen = screenAdminUsers
 	c, _ := confirmDialogPrompt("disable")
 	c.title, c.message = "Disable user?", "The user is signed out and cannot sign in. Their tokens stop working."
@@ -139,7 +139,7 @@ func TestConfirmDialogGoldens(t *testing.T) {
 	}
 	t.Run("enable_150x24", func(t *testing.T) {
 		t.Parallel()
-		m := charAdminModel(t, 150, 24)
+		m := fixedAdminModel(t, 150, 24)
 		m.screen = screenAdminUsers
 		c := newConfirmPrompt("Enable User", "Enable alice?", "enable", "", func(screenEnv) tea.Cmd { return nil })
 		assertLoginConfirmGolden(t, "confirm_enable_user_150x24", ansi.Strip(confirmOver(m, c)))
