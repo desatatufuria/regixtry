@@ -119,7 +119,7 @@ func (p *ProjectService) DeleteProject(ctx context.Context, name string) error {
 	}
 
 	if cleaner := p.grantCleaner(); cleaner != nil {
-		if err := cleaner.PurgeProjectGrants(ctx, name); err != nil {
+		if _, err := cleaner.PurgeProjectGrants(ctx, name); err != nil {
 			return fmt.Errorf("project %q was deleted but its grants could not be purged: %w", name, err)
 		}
 	}

@@ -44,11 +44,11 @@ type recordingCleaner struct {
 	err      error
 }
 
-func (c *recordingCleaner) PurgeProjectGrants(_ context.Context, project string) error {
+func (c *recordingCleaner) PurgeProjectGrants(_ context.Context, project string) (int64, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.projects = append(c.projects, project)
-	return c.err
+	return 0, c.err
 }
 
 func TestProjectServiceCreateListExistsAndDelete(t *testing.T) {

@@ -10,7 +10,7 @@ import (
 func TestAccessActionIsKnown(t *testing.T) {
 	t.Parallel()
 
-	for _, action := range []AccessAction{AccessActionGrantPut, AccessActionGrantDelete, AccessActionTokenIssued, AccessActionTokenRevoked, AccessActionRobotCreated, AccessActionUserCreated, AccessActionUserEnabled, AccessActionUserDisabled, AccessActionUserUpdated, AccessActionUserPasswordReset, AccessActionUserDeleted, AccessActionRobotDeleted} {
+	for _, action := range []AccessAction{AccessActionGrantPut, AccessActionGrantDelete, AccessActionTokenIssued, AccessActionTokenRevoked, AccessActionRobotCreated, AccessActionUserCreated, AccessActionUserEnabled, AccessActionUserDisabled, AccessActionUserUpdated, AccessActionUserPasswordReset, AccessActionUserDeleted, AccessActionRobotDeleted, AccessActionProjectGrantPut, AccessActionProjectGrantDelete, AccessActionProjectCreated, AccessActionProjectDeleted} {
 		if !action.IsKnown() {
 			t.Errorf("%q should be known", action)
 		}
@@ -26,18 +26,22 @@ func TestAccessActionValues(t *testing.T) {
 	t.Parallel()
 
 	want := map[AccessAction]string{
-		AccessActionGrantPut:          "grant.put",
-		AccessActionGrantDelete:       "grant.delete",
-		AccessActionTokenIssued:       "token.issued",
-		AccessActionTokenRevoked:      "token.revoked",
-		AccessActionRobotCreated:      "robot.created",
-		AccessActionUserCreated:       "user.created",
-		AccessActionUserEnabled:       "user.enabled",
-		AccessActionUserDisabled:      "user.disabled",
-		AccessActionUserUpdated:       "user.updated",
-		AccessActionUserPasswordReset: "user.password_reset",
-		AccessActionUserDeleted:       "user.deleted",
-		AccessActionRobotDeleted:      "robot.deleted",
+		AccessActionGrantPut:           "grant.put",
+		AccessActionGrantDelete:        "grant.delete",
+		AccessActionTokenIssued:        "token.issued",
+		AccessActionTokenRevoked:       "token.revoked",
+		AccessActionRobotCreated:       "robot.created",
+		AccessActionUserCreated:        "user.created",
+		AccessActionUserEnabled:        "user.enabled",
+		AccessActionUserDisabled:       "user.disabled",
+		AccessActionUserUpdated:        "user.updated",
+		AccessActionUserPasswordReset:  "user.password_reset",
+		AccessActionUserDeleted:        "user.deleted",
+		AccessActionRobotDeleted:       "robot.deleted",
+		AccessActionProjectGrantPut:    "project.grant.put",
+		AccessActionProjectGrantDelete: "project.grant.delete",
+		AccessActionProjectCreated:     "project.created",
+		AccessActionProjectDeleted:     "project.deleted",
 	}
 	for action, value := range want {
 		if string(action) != value {
@@ -131,5 +135,18 @@ func TestAccessEventNormalizedRepositoryHasItsOwnLimit(t *testing.T) {
 	got := over.Normalized().Repository
 	if utf8.RuneCountInString(got) != AccessEventRepositoryLimit || !strings.HasSuffix(got, "…") {
 		t.Fatalf("repository = %d runes", utf8.RuneCountInString(got))
+	}
+}
+
+func TestProjectEventRepositoryUsesAClearPrefix(t *testing.T) {
+	t.Parallel()
+
+	if got := ProjectEventRepository("odabank"); got != "project:odabank" {
+		t.Fatalf("ProjectEventRepository() = %q, want project:odabank", got)
+	}
+	// A repository name can never start with "project:" (the colon is not a
+	// repository character), so the prefix cannot collide with a repository.
+	if strings.Contains("odabank/x", ":") {
+		t.Fatal("test premise broken")
 	}
 }
