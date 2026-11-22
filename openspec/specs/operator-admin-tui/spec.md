@@ -141,28 +141,22 @@ vocabulary.
 - THEN it SHALL show a text-only "on" indication, and SHALL show a
   text-only "off" indication when the policy is disabled
 
-### Requirement: Signing Is A Third Feature Cycle Option In The Override Modal
+### Requirement: Signing Has Its Own Per-Repository Override Editor
 
-The existing `repositoryOverrideModal` MUST support `signing` as a third
-value in its Feature field cycle, alongside `trivy` and `gitleaks`. No
-new modal is introduced for per-repository signing configuration; the
-existing modal's fields MUST adapt to signing's settings shape — 
-including trusted identities — when `signing` is selected.
+The per-repository override editor (`overrideEditor`) MUST be bound, when it
+opens, to exactly one feature and one repository; no key changes either. For
+`signing` its fields MUST be signing's settings shape, including trusted keys
+and trusted identities, not Trivy's or Gitleaks' scan-path fields.
 
-#### Scenario: Operator cycles to the signing feature
-- GIVEN the repository override modal is open with Feature focused
-- WHEN the operator cycles through Feature values
-- THEN `signing` SHALL appear as a third option alongside `trivy` and
-  `gitleaks`
-
-#### Scenario: Modal fields adapt to signing's settings shape including identities
-- GIVEN the operator has selected `signing` in the Feature field
-- WHEN the modal renders its fields
-- THEN it SHALL present signing's override fields — trusted keys and
-  trusted identities — not Trivy/gitleaks' scan-path fields
+#### Scenario: Signing's editor shows signing's fields
+- GIVEN the operator opens the override of a repository from the Signing
+  policy repository list
+- WHEN the editor renders its fields
+- THEN it SHALL present the pull-time gate, trusted keys, trusted
+  identities and unsigned self-read, and no way to switch to another feature
 
 ## Out of Scope Note
 
-No requirement above adds a new modal for per-repository signing
-configuration; that reuses the existing `repositoryOverrideModal`. Only
-the global policy gets a dedicated modal, now showing both anchor types.
+No requirement above adds a dedicated modal for per-repository signing
+configuration beyond the shared override editor. Only the global policy gets a
+dedicated modal, showing both anchor types.
