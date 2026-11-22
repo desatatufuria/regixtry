@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -46,7 +47,7 @@ func TestLogoutAdminStateClearsSessionAndViewData(t *testing.T) {
 	if session.ExpiredReason != "" {
 		t.Fatalf("ExpiredReason = %q, want empty", session.ExpiredReason)
 	}
-	if view.Confirm.Active() {
+	if !reflect.ValueOf(view).IsZero() {
 		t.Fatalf("LogoutAdminState() returned populated view state: %#v", view)
 	}
 }
@@ -61,7 +62,7 @@ func TestExpireAdminStateClearsViewDataAndKeepsReason(t *testing.T) {
 	if session.ExpiredReason != "Session expired. Log in again." {
 		t.Fatalf("ExpiredReason = %q, want session expiry message", session.ExpiredReason)
 	}
-	if view.Confirm.Active() {
+	if !reflect.ValueOf(view).IsZero() {
 		t.Fatalf("ExpireAdminState() returned populated view state: %#v", view)
 	}
 }

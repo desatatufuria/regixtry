@@ -52,27 +52,6 @@ func TestConfirmPromptKeysEveryCallerRelies(t *testing.T) {
 	}
 }
 
-func TestConfirmPromptInTheAdminViewRecordsSubmittingOnConfirmAndClearsOnEsc(t *testing.T) {
-	t.Parallel()
-	for _, confirmKey := range []keyMsg{testKeyEnter(), testKeyRunes("y")} {
-		m := charAdminModel(t, 150, 24)
-		m.screen = screenAdminUsers
-		m.adminView.Confirm, _ = confirmDialogPrompt("disable")
-		m.adminView.Confirm.submitting = "Submitting disable for alice..."
-		m = testSendKey(t, m, confirmKey)
-		if m.status != "Submitting disable for alice..." || !m.adminView.Confirm.Active() {
-			t.Fatalf("%v: status = %q active = %v", confirmKey, m.status, m.adminView.Confirm.Active())
-		}
-	}
-	m := charAdminModel(t, 150, 24)
-	m.screen = screenAdminUsers
-	m.adminView.Confirm, _ = confirmDialogPrompt("disable")
-	m = testSendKey(t, m, testKeyEsc())
-	if m.adminView.Confirm.Active() || m.status != "" {
-		t.Fatalf("esc: active = %v status = %q", m.adminView.Confirm.Active(), m.status)
-	}
-}
-
 // ---- the dialog ----
 
 func TestConfirmDialogShowsTitleMessageTargetConsequenceAndButtons(t *testing.T) {
@@ -124,8 +103,7 @@ func TestConfirmDialogFitsEverySizeOverTheScreen(t *testing.T) {
 				if long {
 					c.message = strings.Repeat("a very long message ", 12)
 				}
-				m.adminView.Confirm = c
-				view := m.View().Content
+				view := confirmOver(m, c)
 				assertGrantNoOverflow(t, "confirm", view, size.w, size.h)
 				if !long && !strings.Contains(ansi.Strip(view), "Cancel") {
 					t.Fatalf("buttons missing:\n%s", ansi.Strip(view))
@@ -135,13 +113,19 @@ func TestConfirmDialogFitsEverySizeOverTheScreen(t *testing.T) {
 	}
 }
 
-func confirmGoldenModel(t *testing.T, w, h int) Model {
+// confirmOver is the screen with the prompt composited over it, the way the
+// workspace draws a screen's overlay.
+func confirmOver(m Model, c confirmPrompt) string {
+	return compositeOverlay(m.View().Content, c.view(newAdminTheme()), m.viewport.Width, m.viewport.Height)
+}
+
+func confirmGoldenModel(t *testing.T, w, h int) string {
 	m := charAdminModel(t, w, h)
 	m.screen = screenAdminUsers
 	c, _ := confirmDialogPrompt("disable")
 	c.title, c.message = "Disable user?", "The user is signed out and cannot sign in. Their tokens stop working."
-	m.adminView.Confirm = c.withTarget("carol", "user, 2 grants, 2 active tokens").withConsequence("Grants are kept. Enable carol again to restore everything.")
-	return m
+	c = c.withTarget("carol", "user, 2 grants, 2 active tokens").withConsequence("Grants are kept. Enable carol again to restore everything.")
+	return confirmOver(m, c)
 }
 
 func TestConfirmDialogGoldens(t *testing.T) {
@@ -150,14 +134,14 @@ func TestConfirmDialogGoldens(t *testing.T) {
 		name := fmt.Sprintf("confirm_disable_user_%dx%d", size.w, size.h)
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			assertLoginConfirmGolden(t, name, ansi.Strip(confirmGoldenModel(t, size.w, size.h).View().Content))
+			assertLoginConfirmGolden(t, name, ansi.Strip(confirmGoldenModel(t, size.w, size.h)))
 		})
 	}
 	t.Run("enable_150x24", func(t *testing.T) {
 		t.Parallel()
 		m := charAdminModel(t, 150, 24)
 		m.screen = screenAdminUsers
-		m.adminView.Confirm = newConfirmPrompt("Enable User", "Enable alice?", "enable", "", func(screenEnv) tea.Cmd { return nil })
-		assertLoginConfirmGolden(t, "confirm_enable_user_150x24", ansi.Strip(m.View().Content))
+		c := newConfirmPrompt("Enable User", "Enable alice?", "enable", "", func(screenEnv) tea.Cmd { return nil })
+		assertLoginConfirmGolden(t, "confirm_enable_user_150x24", ansi.Strip(confirmOver(m, c)))
 	})
 }

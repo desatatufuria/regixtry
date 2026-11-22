@@ -68,10 +68,9 @@ func (m Model) routeCreatedCredential(msg accessMsg) (tea.Model, tea.Cmd) {
 }
 
 // showClaimed brings the secret state of a created credential to the front. It
-// first drops everything that could take the operator's next key: the shared
-// confirm and the scan history overlay, so the secret screen owns the keys.
+// first drops everything that could take the operator's next key: the scan
+// history overlay, so the secret screen owns the keys.
 func (m Model) showClaimed(msg accessMsg) (tea.Model, tea.Cmd) {
-	m.adminView.Confirm = confirmPrompt{}
 	m.adminScreens[slotScanHistory] = nil
 	m.lateNotice = ""
 	switch typed := msg.(type) {

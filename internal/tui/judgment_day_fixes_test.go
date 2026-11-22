@@ -63,8 +63,8 @@ func TestCanLogoutFromAllSixNewSecurityScreens(t *testing.T) {
 // guards against a regression the naive Finding 2 fix introduces (caught by
 // the pre-existing TestFeatureOverridesScreenSigningSaveIncludesUnsignedSelfRead):
 // featureOverridesScreen/trivyReposScreen each embed their own overrideEditor
-// as free-text input, invisible to the legacy m.adminView.Confirm.Active()
-// guard (design.md Decision B). Naively joining these screens' ids to
+// as free-text input, invisible to the global q and l keys
+// (design.md Decision B). Naively joining these screens' ids to
 // canLogoutAdminFromCurrentScreen's unconditional-true case, without also
 // checking the mounted screen's own editor state, makes typing an upper-case
 // "L" (case-insensitively matched by isRuneKey) into the editor's free-text

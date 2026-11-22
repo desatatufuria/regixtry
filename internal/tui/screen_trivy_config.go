@@ -26,18 +26,13 @@ type trivyConfigScreen struct {
 	policy      ports.ScanPolicySettings
 	policyModal scanPolicyModal
 	// confirm is this screen's own confirm-before-destructive-action prompt
-	// (design.md Decision E), embedded locally rather than read through the
-	// shared AdminViewState.Confirm field: a migrated screen cannot write to
-	// AdminViewState directly (Decision B), so each screen that opens a
-	// confirm owns one, mirroring featureOverridesScreen's own
+	// (design.md Decision E), embedded locally: a migrated screen owns its
+	// own state (Decision B), mirroring featureOverridesScreen's own
 	// self-contained editor field.
 	confirm confirmPrompt
 	// submitting is the transient "Submitting X for Y..." status text shown
 	// while confirm's dispatched command is in flight, surfaced through this
-	// screen's own View (Body) the instant Enter dispatches onConfirm --
-	// mirroring the legacy AdminViewState.Confirm path's
-	// `m.status = before.submitting` (model.go's updateAdminKey), which this
-	// migrated screen cannot reach into per design.md Decision B.
+	// screen's own View (Body) the instant Enter dispatches onConfirm.
 	submitting string
 	err        string
 }

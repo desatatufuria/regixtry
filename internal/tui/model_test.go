@@ -3793,8 +3793,8 @@ func TestModelConfirmAndTrivyConfigModalOverlayFitsViewportAndDoesNotGrowPageHei
 			t.Parallel()
 
 			model := newModelForModalOverlayTest(t, height)
-			model.adminView.Confirm = newConfirmPrompt("Enable User", "Enable alice?", "enable", "", func(screenEnv) tea.Cmd { return nil })
-			openView := model.View().Content
+			c := newConfirmPrompt("Enable User", "Enable alice?", "enable", "", func(screenEnv) tea.Cmd { return nil })
+			openView := confirmOver(model, c)
 			if got := lipgloss.Height(openView); got > height {
 				t.Fatalf("view height with Confirm modal open = %d, want <= %d (viewport height)\n%s", got, height, openView)
 			}

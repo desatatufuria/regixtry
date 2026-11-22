@@ -58,8 +58,6 @@ func renderAdminWorkspace(current screen, session AdminSession, view AdminViewSt
 		if scan, ok := adminScreens[slotScanHistory].(scanHistoryScreen); ok {
 			return scan.viewFull(theme, env, status).Body
 		}
-	case view.Confirm.Active():
-		modalView = view.Confirm.view(theme)
 	case screenOverlay != "":
 		// A migrated top-level screen's own overlay (design.md Decision A):
 		// Trivy's/Gitleaks'/Signing's own config/scan-policy modals

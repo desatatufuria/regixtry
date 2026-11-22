@@ -263,12 +263,6 @@ type AdminSession struct {
 }
 
 type AdminViewState struct {
-	// Confirm is THE confirm-before-destructive-action primitive
-	// (design.md Decision E, D7), replacing adminConfirmModal's Kind-union.
-	// Shared by the Users and Robots screens; the Security screens each
-	// own their own local confirm field instead (design.md Decision B: a migrated screen cannot
-	// write to AdminViewState directly).
-	Confirm confirmPrompt
 	// ScanHistoryModal is retired (Phase 19, design.md's State Migration
 	// table): its state now lives on scanHistoryScreen
 	// (screen_scan_history.go), reached at its own dedicated slot

@@ -22,7 +22,6 @@ func TestNoSecondConfirmPatternRemains(t *testing.T) {
 		structVal any
 		wantField string
 	}{
-		{"AdminViewState", AdminViewState{}, "Confirm"},
 		{"TagsModel", TagsModel{}, "Confirm"},
 	} {
 		typ := reflect.TypeOf(tc.structVal)

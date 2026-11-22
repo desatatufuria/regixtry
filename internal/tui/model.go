@@ -191,10 +191,8 @@ type TagsModel struct {
 	// baked-not-computed-in-View() pattern (design.md decision #6).
 	Table bubbletable.Model
 	// Confirm holds the delete-tag pending confirm opened by the "d" key
-	// (design.md Decision E/D7): the same confirmPrompt primitive
-	// AdminViewState.Confirm uses, composed here identically -- this is the
-	// retirement of TagsModel's own former PendingDelete string field, one
-	// of the two confirm patterns D7 requires collapse to exactly one.
+	// (design.md Decision E/D7): the shared confirmPrompt primitive, which
+	// retired TagsModel's own former PendingDelete string field.
 	Confirm confirmPrompt
 	// SortMode is the "s" key's client-side sort cycle (sortable-tags-and-
 	// projects feature), defaulting to sortByNameAsc's zero value -- Items
@@ -1915,19 +1913,6 @@ func (m Model) updateAdminKey(msg keyMsg) (tea.Model, tea.Cmd) {
 		return m.logoutAdmin(), nil
 	}
 
-	if m.adminView.Confirm.Active() {
-		before := m.adminView.Confirm
-		next, cmd, _ := before.update(m.screenEnv(), msg)
-		m.adminView.Confirm = next
-		switch {
-		case cmd != nil:
-			m.status = before.submitting
-		case isEscKey(msg):
-			m.status = ""
-		}
-		return m, cmd
-	}
-
 	// The login form, the active user search and the Create User text fields
 	// type q; Esc is the way out (Ctrl+C still quits in updateKey).
 	if isRuneKey(msg, 'q') && isAdminPrincipalScreen(m.screen) && !m.migratedScreenCapturesTextInput() &&
@@ -2831,7 +2816,6 @@ func (m Model) returnToInspection() Model {
 	m.screen = m.adminReturn
 	m.loadingText = ""
 	m.status = ""
-	m.adminView.Confirm = confirmPrompt{}
 	// Defensive reset: leaving the login screen (e.g. Esc) without
 	// completing auth must not leave a stale repo-grants intent for a
 	// later, unrelated login (adminIntent is one-shot per design.md
@@ -2928,12 +2912,9 @@ func isAdminPrincipalScreen(current screen) bool {
 // migrated top-level screen (design.md Decision A/I, resolved via slotFor)
 // has its own local overlay open that captures free-text or key input -- a
 // confirm prompt, a config/policy modal, or the shared overrideEditor. None
-// of these local overlays are visible to the
-// m.adminView.Confirm.Active() guard (design.md Decision B: each migrated
-// screen owns its own state), so the bare 'l' logout / 'q' quit global keys
-// must not intercept keystrokes meant for one of these overlays -- mirrors
-// the existing Confirm.Active() top-of-function guard, scoped to the
-// currently mounted migrated screen's own equivalent state.
+// of these local overlays is Model state (design.md Decision B: each
+// migrated screen owns its own), so the bare 'l' logout / 'q' quit global
+// keys must not intercept keystrokes meant for one of these overlays.
 func (m Model) migratedScreenCapturesTextInput() bool {
 	slot, ok := slotFor(m.screen)
 	if !ok {
@@ -2968,7 +2949,7 @@ func (m Model) migratedScreenCapturesTextInput() bool {
 }
 
 func (m Model) canLogoutAdminFromCurrentScreen() bool {
-	if m.adminAuth != adminAuthStateAuthenticated || m.adminView.Confirm.Active() || m.migratedScreenCapturesTextInput() {
+	if m.adminAuth != adminAuthStateAuthenticated || m.migratedScreenCapturesTextInput() {
 		return false
 	}
 
