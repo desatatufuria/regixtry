@@ -24,6 +24,14 @@ Registry state requires keeping `metadata.db` and the `content` directory togeth
 
 `upgrade` uses the setup provenance record, runs preflight checks, supports `--ref` and `--yes`, and shows progress. Bootstrap rollback removes generated artifacts and stops the service. Review the command output and `journalctl` before retrying.
 
+### Upgrade note: scan history purge (irreversible)
+
+Scan results are now latest-only: one result per (tenant, repository, digest). The first start of a version with this model runs a one-time migration (`scan_runs_latest_only_purge_v1` in `schema_backfills`) that **permanently deletes** the old duplicate scan history. Per digest it keeps the newest completed run with its findings and DB freshness (else the newest failed run, else the newest skipped row); queued and running runs are never deleted, and skipped rows are removed only for digests that have a completed or failed result. Secret-scan history is not touched.
+
+**Back up the SQLite database (`metadata.db`, with its `-wal` file or after a clean stop) before upgrading.** There is no undo.
+
+The purge runs in batches of at most 200 deleted runs, each in its own short write transaction, so pushes keep flowing while it runs. It is resumable: if the process stops midway, the next start continues, and the marker is written only when nothing is left. Later starts only check the marker. The file does not shrink by itself; `VACUUM` is an optional operator step to reclaim disk, run with the registry stopped because it rewrites the whole database and takes an exclusive lock.
+
 ## Cleanup
 
 Blob garbage collection is a report-then-delete admin flow, off by default. Compute a report with `POST /admin/v1/gc/reports` — always reachable, and safe to run repeatedly since it only reads state — then review it (`GET /admin/v1/gc/reports/{id}`) before acting on it. Deletion (`POST /admin/v1/gc/reports/{id}/delete`) is gated by `REGISTRY_GC_DELETE_ENABLED` (default `false`, returns `UNSUPPORTED`/`501` while disabled); enable it only once you're ready to irreversibly unlink blob files. A 24-hour grace window and a fresh re-check at delete time protect blobs from an in-flight push, and each blob's removal is atomic with manifest publishes and upload links (a push racing a delete either publishes with all its blobs intact or is refused with a `409`, never leaving a manifest with a missing layer) — see [`docs/registry.md`](registry.md#blob-garbage-collection) for the full mark-sweep-grace mechanism.

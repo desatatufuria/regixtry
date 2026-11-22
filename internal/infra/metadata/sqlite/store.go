@@ -50,6 +50,12 @@ func newWithBusyTimeout(path string, busyTimeoutMillis int) (*Store, error) {
 		return nil, err
 	}
 
+	// After init(): the latest-only columns exist before any purge runs.
+	if err := store.purgeDuplicateScanHistory(nil); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+
 	return store, nil
 }
 
@@ -2788,6 +2794,9 @@ func (s *Store) init() error {
 		`ALTER TABLE scan_scheduler_state ADD COLUMN last_db_refresh_error TEXT NOT NULL DEFAULT '';`,
 		`ALTER TABLE scan_scheduler_state ADD COLUMN db_fingerprint TEXT NOT NULL DEFAULT '';`,
 		`ALTER TABLE scan_scheduler_state ADD COLUMN db_changed INTEGER NOT NULL DEFAULT 0;`,
+		// Per-digest lookups (latest/active/completed run, replacement, the
+		// history purge) all filter on this triple.
+		`CREATE INDEX IF NOT EXISTS idx_scan_runs_digest ON scan_runs (tenant, repository, digest);`,
 	}
 
 	for _, statement := range statements {
