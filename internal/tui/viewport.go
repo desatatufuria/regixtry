@@ -21,7 +21,7 @@ import (
 // Phase 2 wires a Model.contentBudget() method around this pure logic.
 const (
 	// minViewportWidth/minViewportHeight are the floor terminal size the TUI
-	// guarantees correct rendering at (View() shows terminalTooSmallTemplate
+	// guarantees correct rendering at (View() shows the too-small notice
 	// below these). minViewportWidth was raised from the historical 90
 	// alongside sectionWidth()'s fix for the hardcoded theme.section
 	// Width(88): 90 columns was already narrower than the Repository Alerts

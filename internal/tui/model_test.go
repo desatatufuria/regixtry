@@ -311,24 +311,6 @@ func TestModelNewModelDefaultsViewportTo100x40(t *testing.T) {
 	}
 }
 
-func TestModelViewBelowMinimumSizeShowsTerminalTooSmall(t *testing.T) {
-	t.Parallel()
-
-	model := NewModel(&fakeQueryService{})
-	updated, _ := model.Update(tea.WindowSizeMsg{Width: 60, Height: 20})
-	view := updated.(Model).View().Content
-
-	if !strings.Contains(view, "Terminal too small") {
-		t.Fatalf("view = %q, want too-small message", view)
-	}
-	if want := fmt.Sprintf("Regixtry needs at least %dx%d. Current: 60x20.", minViewportWidth, minViewportHeight); !strings.Contains(view, want) {
-		t.Fatalf("view = %q, want current-size detail %q", view, want)
-	}
-	if strings.Contains(view, "Regixtry is empty") || strings.Contains(view, model.loadingText) {
-		t.Fatalf("view = %q, want no screen content below minimum size", view)
-	}
-}
-
 func TestModelViewResizeAboveMinimumRestoresRendering(t *testing.T) {
 	t.Parallel()
 

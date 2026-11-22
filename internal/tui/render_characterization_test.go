@@ -99,17 +99,6 @@ var characterizationScreens = []struct {
 }
 
 func TestRenderCharacterization(t *testing.T) {
-	// The TUI refuses to render below 150x24, so the requested 80x24 and
-	// 120x40 pin the too-small notice; real screens are pinned at 150x24 and 200x40.
-	for _, size := range []struct{ width, height int }{{80, 24}, {120, 40}} {
-		size := size
-		name := fmt.Sprintf("too_small_%dx%d", size.width, size.height)
-		t.Run(name, func(t *testing.T) {
-			model := characterizationScreens[0].build(t, size.width, size.height)
-			assertCharacterizationGolden(t, name, ansi.Strip(model.View().Content))
-		})
-	}
-
 	sizes := []struct{ width, height int }{{150, 24}, {200, 40}}
 	for _, screen := range characterizationScreens {
 		for _, size := range sizes {

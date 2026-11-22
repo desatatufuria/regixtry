@@ -1491,12 +1491,7 @@ func (m Model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// Too-small guard message text per design.md's "Interfaces / Contracts"
-// section: plain (not theme.section, which is a fixed 88-wide box).
-const terminalTooSmallTemplate = "Terminal too small\nRegixtry needs at least %dx%d. Current: %dx%d.\nResize, or press q to quit."
-
-// View renders the too-small guard as-is (a bespoke plain string, never
-// bannered), then wraps every real screen's render in withUpdateBanner --
+// View renders the too-small notice as-is (never bannered), then wraps every real screen's render in withUpdateBanner --
 // chrome that must appear regardless of which screen is active, without
 // threading a banner parameter through renderConsoleWorkspace/
 // renderInspectionWorkspace's ~11 existing call sites (design.md Decision 2:
@@ -1514,8 +1509,11 @@ func (m Model) viewContent() string {
 	// Guarded here (design decision #7) rather than in Update: View() is the
 	// single funnel both the interactive program loop and the --snapshot
 	// CLI path render through.
-	if m.viewport.Width < minViewportWidth || m.viewport.Height < minViewportHeight {
-		return fmt.Sprintf(terminalTooSmallTemplate, minViewportWidth, minViewportHeight, m.viewport.Width, m.viewport.Height)
+	if m.tooSmall() {
+		return renderTooSmall(newAdminTheme(), tooSmallSpec{
+			Width: m.viewport.Width, Height: m.viewport.Height,
+			MinWidth: minViewportWidth, MinHeight: minViewportHeight,
+		})
 	}
 	return m.withUpdateBanner(m.viewScreen())
 }
@@ -1671,6 +1669,9 @@ func (m Model) viewScreen() string {
 }
 
 func (m Model) updateKey(msg keyMsg) (tea.Model, tea.Cmd) {
+	if m.tooSmall() {
+		return m.updateTooSmallKey(msg)
+	}
 	switch keyString(msg) {
 	case "ctrl+c":
 		return m, tea.Quit
