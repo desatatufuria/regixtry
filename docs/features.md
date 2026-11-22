@@ -220,9 +220,16 @@ digest if ANY candidate verifies, so a junk tag, a malformed index, or a
 replayed or untrusted signature planted by a repository writer cannot deny a
 digest that is validly signed. With no verifying candidate the pull stays
 denied (fail closed), and a candidate for a different digest or signed by an
-untrusted key never satisfies the gate. At most 256 well-formed candidates for
-the digest are evaluated per verification (`maxSignatureCandidates`); the rest
-are not examined.
+untrusted key never satisfies the gate. Flooding a digest with junk does not
+shadow a genuine signature: a bundle candidate only consumes the evaluation cap
+(`maxSignatureCandidates`, 256, shared by the bundle-index and Referrers API
+sources) once its signature verified under a trusted key, so malformed
+candidates, candidates for another digest and candidates signed by untrusted
+keys or failing keyless identity verification are skipped for free; each one
+costs at most one blob read capped at 1 MiB. The legacy `.sig` manifest has its
+own bound (64 signature layers). If 256 trusted-key-signed candidates still do
+not verify (for example because they bind another digest), the rest are not
+examined and the pull is denied.
 
 ### Enable and configure
 

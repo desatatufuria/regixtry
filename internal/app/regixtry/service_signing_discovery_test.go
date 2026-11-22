@@ -2,6 +2,7 @@ package regixtry
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	domain "regixtry/internal/domain/regixtry"
@@ -231,22 +232,88 @@ func TestServiceVerifySignature_ReplayedReferrerAloneStaysMismatched(t *testing.
 	requirePolicyDenial(t, state, err, signatureStateMismatched)
 }
 
-func TestServiceVerifySignature_ManyWellFormedJunkReferrersStaysDeniedAndBounded(t *testing.T) {
+func TestServiceVerifySignature_FloodOfUntrustedAndOtherSubjectReferrersDoesNotShadowValidSignature(t *testing.T) {
 	t.Parallel()
 
 	service, cleanup := newTestService(t, allowAllAccessController{})
 	defer cleanup()
 
 	repository := "library/alpine"
-	digest := seedArbitraryImageManifest(t, service, repository, " - candidate cap")
-	_, keyPEM := generateTestECDSAP256KeyPair(t)
+	digest := seedArbitraryImageManifest(t, service, repository, " - flood")
+	other := seedArbitraryImageManifest(t, service, repository, " - flood, other image")
+	key, keyPEM := generateTestECDSAP256KeyPair(t)
 	attacker, _ := generateTestECDSAP256KeyPair(t)
 
-	// More well-formed referrers for this digest than the candidate cap.
-	for i := 0; i < maxSignatureCandidates+8; i++ {
-		seedReferrerOnlyBundleSignatureArtifact(t, service, repository, digest, bareHex(digest), attacker)
+	for i := 0; i < maxSignatureCandidates+44; i++ {
+		seedReferrerOnlyBundleSignatureArtifact(t, service, repository, digest, bareHex(digest), attacker) // untrusted signer
+	}
+	for i := 0; i < 20; i++ {
+		seedReferrerOnlyBundleSignatureArtifact(t, service, repository, other, bareHex(other), attacker) // other subject
+	}
+	seedReferrerOnlyBundleSignatureArtifact(t, service, repository, digest, bareHex(digest), key)
+
+	state, _, err := verifyForTest(t, service, repository, digest, []string{keyPEM})
+	if err != nil || state != signatureStateVerified {
+		t.Fatalf("verifySignature() = (%q, %v), want verified despite %d junk referrers", state, err, maxSignatureCandidates+44)
+	}
+}
+
+func TestServiceVerifySignature_CapFailsClosedWhenManyTrustedSignedCandidatesNeverVerify(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	repository := "library/alpine"
+	digest := seedArbitraryImageManifest(t, service, repository, " - cap fail closed")
+	other := seedArbitraryImageManifest(t, service, repository, " - cap fail closed, other image")
+	key, keyPEM := generateTestECDSAP256KeyPair(t)
+
+	// Every candidate passes the trusted-signer match but binds another digest.
+	for i := 0; i < maxSignatureCandidates+1; i++ {
+		seedReferrerOnlyBundleSignatureArtifact(t, service, repository, digest, bareHex(other), key)
 	}
 
 	state, _, err := verifyForTest(t, service, repository, digest, []string{keyPEM})
-	requirePolicyDenial(t, state, err, signatureStateUntrusted)
+	requirePolicyDenial(t, state, err, signatureStateMismatched)
+}
+
+func TestServiceVerifySignature_OversizedBundleBlobIsSkippedNotRead(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+
+	repository := "library/alpine"
+	digest := seedArbitraryImageManifest(t, service, repository, " - oversized blob")
+	key, keyPEM := generateTestECDSAP256KeyPair(t)
+
+	huge := make([]byte, signing.MaxPayloadBytes+4096)
+	for i := range huge {
+		huge[i] = 'x'
+	}
+	uploadBlobForTest(t, service, repository, huge)
+	emptyConfig := []byte("{}")
+	uploadBlobForTest(t, service, repository, emptyConfig)
+	referrer, err := json.Marshal(map[string]any{
+		"schemaVersion": 2,
+		"mediaType":     "application/vnd.oci.image.manifest.v1+json",
+		"config":        map[string]any{"mediaType": "application/vnd.oci.empty.v1+json", "digest": digestForTest(emptyConfig), "size": len(emptyConfig)},
+		"layers":        []map[string]any{{"mediaType": signing.SigstoreBundleMediaType, "digest": digestForTest(huge), "size": len(huge)}},
+		"subject":       map[string]any{"mediaType": "application/vnd.docker.distribution.manifest.v2+json", "digest": digest, "size": 949},
+		"artifactType":  signing.SigstoreBundleMediaType,
+	})
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	if _, err := service.PublishManifest(context.Background(), repository, digestForTest(referrer), "application/vnd.oci.image.manifest.v1+json", referrer); err != nil {
+		t.Fatalf("PublishManifest(oversized referrer) error = %v", err)
+	}
+	service.WaitForBackgroundWork()
+	seedReferrerOnlyBundleSignatureArtifact(t, service, repository, digest, bareHex(digest), key)
+
+	state, _, err := verifyForTest(t, service, repository, digest, []string{keyPEM})
+	if err != nil || state != signatureStateVerified {
+		t.Fatalf("verifySignature() = (%q, %v), want verified (oversized blob skipped)", state, err)
+	}
 }

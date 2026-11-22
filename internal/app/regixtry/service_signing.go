@@ -212,15 +212,19 @@ func (s *Service) verifySignature(ctx context.Context, repository, digest string
 	return bundleState, signatureMatch{}, bundleErr
 }
 
-// maxSignatureCandidates bounds how many candidate signature artifacts one
-// verification will fully evaluate (blob read plus crypto) per discovery
-// source. Discovery evaluates every candidate rather than stopping at the
-// first, because a repository writer can plant junk candidates; the cap keeps
-// that from becoming a resource-exhaustion vector. Candidates rejected by a
-// cheap structural check (unparsable manifest, subject for another digest) do
-// not consume it, so grinding digests cannot push a genuine signature out of
-// the window; only well-formed candidates for THIS digest count. Hitting the
-// cap fails closed (the remaining candidates are not examined).
+// maxSignatureCandidates bounds how many cryptographically-matching bundle
+// candidates one verification will spend on claims checking. Discovery
+// evaluates every candidate rather than stopping at the first, because a
+// repository writer can plant junk. The cap is only consumed by a candidate
+// whose signature already verified under a TRUSTED key (a signer the
+// attacker would have to hold); junk that is malformed, names another
+// subject, is signed by an untrusted key, or fails keyless identity
+// verification is skipped without consuming it, so flooding a digest with
+// junk can never push a genuine signature out of the window. Per-candidate
+// work stays bounded (one blob read capped at signing.MaxPayloadBytes plus
+// the configured trusted keys, at most 16), and the cap is shared across the
+// bundle-index and Referrers API sources. The legacy `.sig` manifest has its
+// own bound, signing.MaxSignatureEntries layers. Hitting the cap fails closed.
 const maxSignatureCandidates = 256
 
 // verifyLegacySignature verifies the legacy cosign `.sig` manifest payload
@@ -237,10 +241,7 @@ func (s *Service) verifyLegacySignature(ctx context.Context, repository, digest 
 	}
 
 	mismatched := false
-	for i, entry := range entries {
-		if i >= maxSignatureCandidates {
-			break
-		}
+	for _, entry := range entries {
 		payload, err := s.openSignaturePayload(ctx, entry.PayloadDigest)
 		if err != nil {
 			return "", signatureMatch{}, err // infrastructure error propagates unchanged
@@ -431,9 +432,8 @@ func (s *Service) verifyBundleSignature(ctx context.Context, repositoryRef domai
 // cannot shadow a genuine one), or "" (not usable / did not verify: skip). A
 // non-nil err is a genuine infrastructure error (a blob read failure) that
 // must propagate unchanged. budget is the shared maxSignatureCandidates
-// allowance: a candidate consumes one unit only once it is structurally a
-// bundle referrer for THIS digest; with none left the candidate is skipped
-// (fail closed).
+// allowance, consumed only by candidates whose signature verified under a
+// trusted key; with none left such a candidate is skipped (fail closed).
 func (s *Service) tryVerifyBundleReferrerCandidate(ctx context.Context, digest string, referrerPayload []byte, keys []trustedKeyEntry, identities []ports.TrustedIdentity, budget *int) (state string, match signatureMatch, err error) {
 	subjectDigest, layerDigest, parseErr := signing.ParseBundleReferrerManifest(referrerPayload)
 	if parseErr != nil || subjectDigest == "" || layerDigest == "" {
@@ -442,11 +442,6 @@ func (s *Service) tryVerifyBundleReferrerCandidate(ctx context.Context, digest s
 	if subjectDigest != digest {
 		return "", signatureMatch{}, nil // a real signature, just not for THIS digest -- the filter must actually filter
 	}
-	if *budget <= 0 {
-		return "", signatureMatch{}, nil // candidate cap reached; fail closed
-	}
-	*budget--
-
 	bundlePayload, err := s.openSignaturePayload(ctx, layerDigest)
 	if err != nil {
 		return "", signatureMatch{}, err // infrastructure error propagates unchanged
@@ -473,6 +468,12 @@ func (s *Service) tryVerifyBundleReferrerCandidate(ctx context.Context, digest s
 			if err := signing.Verify(trusted.key, paeBytes, signatureB64); err != nil {
 				continue
 			}
+			// The signature verifies under a trusted key: only now does the
+			// candidate consume the shared cap (see maxSignatureCandidates).
+			if *budget <= 0 {
+				return "", signatureMatch{}, nil // candidate cap reached; fail closed
+			}
+			*budget--
 			if err := signing.CheckBundleClaims(payload, digest); err != nil {
 				mismatched = true // a real signature over a different digest: not accepted, must not shadow other candidates
 				continue
