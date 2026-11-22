@@ -1037,6 +1037,7 @@ type memoryAuthStore struct {
 	usersByID        map[string]domainauth.User
 	usersByUsername  map[string]domainauth.User
 	grants           map[string][]domainauth.RepoGrant
+	projectGrants    map[string][]domainauth.ProjectGrant
 	tokensByHash     map[string]domainauth.Token
 	tokensByAccessor map[string]domainauth.Token
 	tokensByUser     map[string][]domainauth.Token

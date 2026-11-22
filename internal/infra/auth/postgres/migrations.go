@@ -59,6 +59,19 @@ func migrationStatements() []string {
 			detail TEXT NULL
 		);`,
 		`CREATE INDEX IF NOT EXISTS auth_access_events_occurred_idx ON auth_access_events (occurred_at, id);`,
+		// Project grants: one role per (user, project) over every repository
+		// whose first path segment equals project. Same RepoRole values as
+		// auth_repo_grants. Additive: a new table, nothing existing changes.
+		`CREATE TABLE IF NOT EXISTS auth_project_grants (
+			user_id TEXT NOT NULL,
+			project TEXT NOT NULL,
+			role TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			PRIMARY KEY(user_id, project),
+			FOREIGN KEY(user_id) REFERENCES auth_users(id) ON DELETE CASCADE
+		);`,
+		`CREATE INDEX IF NOT EXISTS auth_project_grants_project_idx ON auth_project_grants (project, user_id);`,
 	}
 }
 

@@ -25,6 +25,19 @@ type AuthStore interface {
 	ListRepoGrantsPage(ctx context.Context, after *domainauth.GrantCursor, limit int) ([]domainauth.RepositoryGrantRow, error)
 	PutRepoGrant(ctx context.Context, grant domainauth.RepoGrant) error
 	DeleteRepoGrant(ctx context.Context, userID string, repository regixtrydomain.RepositoryRef) error
+	// PutProjectGrant creates or updates one user's grant on one project.
+	PutProjectGrant(ctx context.Context, grant domainauth.ProjectGrant) error
+	// DeleteProjectGrant removes one user's grant on one project; not-found
+	// when there is none. Exact repository grants are never touched.
+	DeleteProjectGrant(ctx context.Context, userID string, project string) error
+	// ListProjectGrants returns every project grant of one user.
+	ListProjectGrants(ctx context.Context, userID string) ([]domainauth.ProjectGrant, error)
+	// ListProjectGrantsByProject returns up to limit grants of one project
+	// ordered by user id, strictly after afterUserID.
+	ListProjectGrantsByProject(ctx context.Context, project string, afterUserID string, limit int) ([]domainauth.ProjectGrant, error)
+	// DeleteProjectGrantsByProject removes every grant of a deleted project and
+	// returns how many it removed.
+	DeleteProjectGrantsByProject(ctx context.Context, project string) (int64, error)
 	CreateToken(ctx context.Context, token domainauth.Token) error
 	GetTokenBySecretHash(ctx context.Context, kind domainauth.TokenKind, secretHash string) (domainauth.Token, error)
 	GetTokenByAccessor(ctx context.Context, kind domainauth.TokenKind, accessor string) (domainauth.Token, error)
