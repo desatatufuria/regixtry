@@ -186,6 +186,22 @@ type MetadataStore interface {
 	// delete loop).
 	IsBlobDigestReferenced(ctx context.Context, digest string) (bool, error)
 
+	// LinkBlob records that repository holds the blob with digest: it was
+	// uploaded into the repository, or a manifest of the repository
+	// references it. Idempotent. A blob is readable and referenceable in a
+	// repository only while this link exists (repository_blobs). Tenant
+	// scoped, unlike the GC mark set.
+	LinkBlob(ctx context.Context, tenant string, repository domain.RepositoryRef, digest domain.Digest) error
+
+	// IsBlobLinked reports whether LinkBlob recorded digest for repository.
+	IsBlobLinked(ctx context.Context, tenant string, repository domain.RepositoryRef, digest domain.Digest) (bool, error)
+
+	// UnlinkBlobDigest drops every repository link for digest, in every
+	// tenant. GC calls it after it unlinked the blob file so no repository
+	// keeps a link to bytes that no longer exist. GLOBAL like the GC mark
+	// set, by design.
+	UnlinkBlobDigest(ctx context.Context, digest domain.Digest) error
+
 	// CreateGCReport inserts one gc_reports row plus its
 	// gc_report_candidates children in a single transaction; a partially
 	// written report is never observable. GLOBAL: no tenant argument.

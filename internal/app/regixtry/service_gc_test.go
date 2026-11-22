@@ -3,6 +3,7 @@ package regixtry
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -1002,5 +1003,68 @@ func newTestServicePairSharingStorage(t *testing.T) (*Service, *Service, func())
 		serviceA.WaitForBackgroundWork()
 		serviceB.WaitForBackgroundWork()
 		_ = metadataStore.Close()
+	}
+}
+
+// TestGCKeepsLinkedBlobsOfManifestsAndDropsLinksOfDeletedBlobs pins GC under
+// repository blob links: a blob referenced by a manifest is never a candidate
+// (its link is not a mark), while an unreferenced, grace-expired blob is
+// unlinked from disk AND loses its repository link.
+func TestGCKeepsLinkedBlobsOfManifestsAndDropsLinksOfDeletedBlobs(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t, allowAllAccessController{})
+	defer cleanup()
+	service.SetGCDeleteEnabled(true)
+	ctx := context.Background()
+	repository := domain.MustParseRepositoryRef("library/alpine")
+
+	upload := func(payload []byte) domain.Digest {
+		t.Helper()
+		started, err := service.BeginUpload(ctx, "library/alpine")
+		if err != nil {
+			t.Fatalf("BeginUpload() error = %v", err)
+		}
+		blob, err := service.CompleteUpload(ctx, "library/alpine", started.ID, digestForTest(payload), strings.NewReader(string(payload)))
+		if err != nil {
+			t.Fatalf("CompleteUpload() error = %v", err)
+		}
+		return domain.MustParseDigest(blob.Digest)
+	}
+
+	kept := []byte("kept-layer")
+	orphan := []byte("orphan-layer")
+	keptDigest := upload(kept)
+	orphanDigest := upload(orphan)
+
+	manifest := fmt.Sprintf(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{"mediaType":"application/vnd.oci.image.config.v1+json","digest":"%s","size":%d},"layers":[]}`, keptDigest, len(kept))
+	if _, err := service.PublishManifest(ctx, "library/alpine", "latest", "application/vnd.oci.image.manifest.v1+json", []byte(manifest)); err != nil {
+		t.Fatalf("PublishManifest() error = %v", err)
+	}
+	service.WaitForBackgroundWork()
+
+	service.now = func() time.Time { return time.Now().UTC().Add(gcGraceWindow + time.Hour) }
+	detail, err := service.ComputeGCReport(ctx)
+	if err != nil {
+		t.Fatalf("ComputeGCReport() error = %v", err)
+	}
+	if detail.Report.CandidateCount != 1 || detail.Candidates[0].Digest != orphanDigest.String() {
+		t.Fatalf("candidates = %#v, want only the orphan %s", detail.Candidates, orphanDigest)
+	}
+	if _, err := service.DeleteByGCReport(ctx, detail.Report.ID); err != nil {
+		t.Fatalf("DeleteByGCReport() error = %v", err)
+	}
+
+	if exists, _ := service.blobs.BlobExists(ctx, keptDigest); !exists {
+		t.Fatal("referenced blob was deleted by GC")
+	}
+	if linked, err := service.metadata.IsBlobLinked(ctx, "tenant-a", repository, keptDigest); err != nil || !linked {
+		t.Fatalf("referenced blob link = %v, %v; want linked", linked, err)
+	}
+	if linked, err := service.metadata.IsBlobLinked(ctx, "tenant-a", repository, orphanDigest); err != nil || linked {
+		t.Fatalf("deleted blob link = %v, %v; want unlinked", linked, err)
+	}
+	if _, _, err := service.OpenBlob(ctx, "library/alpine", orphanDigest.String()); !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("OpenBlob(deleted) error = %v, want not found", err)
 	}
 }

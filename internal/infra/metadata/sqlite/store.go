@@ -45,6 +45,11 @@ func newWithBusyTimeout(path string, busyTimeoutMillis int) (*Store, error) {
 		return nil, err
 	}
 
+	if err := store.backfillRepositoryBlobs(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+
 	return store, nil
 }
 
@@ -146,6 +151,98 @@ func (s *Store) backfillSubjectDigests() error {
 
 	err = tx.Commit()
 	return err
+}
+
+// repositoryBlobsBackfillMarker names the schema_backfills row guarding
+// backfillRepositoryBlobs.
+const repositoryBlobsBackfillMarker = "repository_blobs_from_manifest_blobs_v1"
+
+// backfillRepositoryBlobs is the one-time, idempotent migration that links
+// every blob already referenced by a manifest to that manifest's repository,
+// so no repository loses access to blobs it already uses when blob reads and
+// manifest publishes start requiring a link. It only inserts (never deletes)
+// and commits the rows and the marker together. Blobs committed but not yet
+// referenced by any manifest cannot be attributed to a repository (the blob
+// store records none); their owner re-uploads them, which links them.
+func (s *Store) backfillRepositoryBlobs() error {
+	var marker int
+	err := s.db.QueryRow(`SELECT 1 FROM schema_backfills WHERE name = ?`, repositoryBlobsBackfillMarker).Scan(&marker)
+	if err == nil {
+		return nil
+	}
+	if err != sql.ErrNoRows {
+		return err
+	}
+
+	tx, err := s.beginWrite(context.Background())
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err = tx.Exec(`
+		INSERT OR IGNORE INTO repository_blobs (tenant, repository, digest, created_at)
+		SELECT DISTINCT r.tenant, r.name, mb.digest, ?
+		FROM manifest_blobs mb
+		JOIN manifests m ON m.id = mb.manifest_id
+		JOIN repositories r ON r.id = m.repository_id
+	`, now); err != nil {
+		return err
+	}
+
+	if _, err = tx.Exec(`INSERT OR IGNORE INTO schema_backfills (name, completed_at) VALUES (?, ?)`, repositoryBlobsBackfillMarker, now); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+func (s *Store) LinkBlob(ctx context.Context, tenant string, repository domain.RepositoryRef, digest domain.Digest) error {
+	if err := repository.Validate(); err != nil {
+		return err
+	}
+
+	tx, err := s.beginWrite(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err = tx.ExecContext(ctx, `
+		INSERT OR IGNORE INTO repository_blobs (tenant, repository, digest, created_at)
+		VALUES (?, ?, ?, ?)
+	`, tenant, repository.String(), digest.String(), time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+func (s *Store) IsBlobLinked(ctx context.Context, tenant string, repository domain.RepositoryRef, digest domain.Digest) (bool, error) {
+	if err := repository.Validate(); err != nil {
+		return false, err
+	}
+
+	var linked bool
+	err := s.db.QueryRowContext(ctx, `
+		SELECT EXISTS(SELECT 1 FROM repository_blobs WHERE tenant = ? AND repository = ? AND digest = ?)
+	`, tenant, repository.String(), digest.String()).Scan(&linked)
+	return linked, err
+}
+
+func (s *Store) UnlinkBlobDigest(ctx context.Context, digest domain.Digest) error {
+	tx, err := s.beginWrite(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err = tx.ExecContext(ctx, `DELETE FROM repository_blobs WHERE digest = ?`, digest.String()); err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 func sqliteDSN(path string) string {
@@ -389,6 +486,14 @@ func (s *Store) PublishManifest(ctx context.Context, tenant string, repository d
 		`, manifestID, blob.Digest.String(), blob.MediaType, blob.Size, index); err != nil {
 			return err
 		}
+		// A published manifest keeps its blobs reachable in this repository
+		// even if the upload link is ever lost.
+		if _, err = tx.ExecContext(ctx, `
+			INSERT OR IGNORE INTO repository_blobs (tenant, repository, digest, created_at)
+			VALUES (?, ?, ?, ?)
+		`, tenant, repository.String(), blob.Digest.String(), time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			return err
+		}
 	}
 
 	if tag != "" {
@@ -603,6 +708,10 @@ func (s *Store) DeleteRepository(ctx context.Context, tenant string, repository 
 	var result sql.Result
 	result, err = tx.ExecContext(ctx, `DELETE FROM repositories WHERE tenant = ? AND name = ?`, tenant, repository.String())
 	if err != nil {
+		return nil, 0, err
+	}
+
+	if _, err = tx.ExecContext(ctx, `DELETE FROM repository_blobs WHERE tenant = ? AND repository = ?`, tenant, repository.String()); err != nil {
 		return nil, 0, err
 	}
 
@@ -1996,6 +2105,19 @@ func (s *Store) init() error {
 			PRIMARY KEY(manifest_id, position),
 			FOREIGN KEY(manifest_id) REFERENCES manifests(id) ON DELETE CASCADE
 		);`,
+		// repository_blobs: which repository holds which blob. Blob files are
+		// content-addressed and shared, so this table is the only
+		// repository-level authorization record for a blob. Keyed by name,
+		// not repositories(id): a link is written at upload commit, before
+		// the repositories row exists. DeleteRepository removes the rows.
+		`CREATE TABLE IF NOT EXISTS repository_blobs (
+			tenant TEXT NOT NULL,
+			repository TEXT NOT NULL,
+			digest TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			PRIMARY KEY(tenant, repository, digest)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_repository_blobs_digest ON repository_blobs(digest);`,
 		`CREATE TABLE IF NOT EXISTS uploads (
 			id TEXT PRIMARY KEY,
 			tenant TEXT NOT NULL,
