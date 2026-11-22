@@ -84,9 +84,10 @@ func TestUsersListIsReloadedOnEveryVisit(t *testing.T) {
 	if m.screen != screenAdminOverview {
 		t.Fatalf("Esc went to %q", m.screen)
 	}
+	expiringOnTheOverview := client.listExpiringCalls // the Overview reads the expiring tokens too
 	m = openSidebarItem(t, m, shellNavUsers)
-	if client.listUsersCalls != 2 || client.listExpiringCalls != 2 {
-		t.Fatalf("reads after the second visit: users=%d expiring=%d, want 2 each", client.listUsersCalls, client.listExpiringCalls)
+	if client.listUsersCalls != 2 || client.listExpiringCalls != expiringOnTheOverview+1 {
+		t.Fatalf("reads after the second visit: users=%d expiring=%d, want 2 users and one more expiring read than the Overview's %d", client.listUsersCalls, client.listExpiringCalls, expiringOnTheOverview)
 	}
 }
 

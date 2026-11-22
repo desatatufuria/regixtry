@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"charm.land/lipgloss/v2"
 )
@@ -32,7 +33,7 @@ func (s overviewScreen) View(theme adminTheme, env screenEnv) screenFrame {
 	cards := s.renderCards(theme, bodyW)
 	lines := []string{theme.subheading.Render("Overview"), theme.muted.Render(overviewSubtitle), "", cards, ""}
 	used := 4 + lipgloss.Height(cards)
-	lines = append(lines, s.renderAttention(theme, bodyW, bodyH-used))
+	lines = append(lines, s.renderPanels(theme, env, bodyW, bodyH-used))
 
 	return screenFrame{
 		Context: "Overview",
@@ -97,88 +98,145 @@ func renderOverviewCard(theme adminTheme, card overviewCard, width, height int) 
 	return style.Render(content)
 }
 
-// renderAttention renders the NEEDS ATTENTION panel in at most rows rows.
-func (s overviewScreen) renderAttention(theme adminTheme, width, rows int) string {
-	inner := max(width-4, 1)
-	lines := []string{theme.muted.Bold(true).Render("NEEDS ATTENTION")}
+// renderPanels lays NEEDS ATTENTION and RECENT CHANGES side by side, both rows
+// tall.
+func (s overviewScreen) renderPanels(theme adminTheme, env screenEnv, width, rows int) string {
+	left := (width - overviewCardGap) / 2
+	right := width - overviewCardGap - left
+	return lipgloss.JoinHorizontal(lipgloss.Top,
+		s.renderAttention(theme, left, rows, env.now()),
+		strings.Repeat(" ", overviewCardGap),
+		s.renderRecentChanges(theme, right, rows, env.now()),
+	)
+}
 
-	switch {
-	case !s.loaded:
-		lines = append(lines, theme.muted.Render("Loading..."))
-	default:
-		items := s.attentionItems()
-		capacity := max(rows-2-1, 1) // border rows and the title
-		extra := s.loadErrorLines(theme, inner)
-		switch {
-		case len(items) == 0 && len(extra) == 0:
-			lines = append(lines, theme.muted.Render("Nothing needs attention."))
-		default:
-			room := max(capacity-len(extra), 0)
-			shown := items
-			if len(items) > room {
-				shown = mostUrgentAttention(items, max(room-1, 0))
-				extra = append([]string{theme.muted.Render(fmt.Sprintf("+%d more", len(items)-len(shown)))}, extra...)
-			}
-			for _, item := range shown {
-				lines = append(lines, renderAttentionItem(theme, item, inner))
-			}
-			lines = append(lines, extra...)
-		}
-	}
-
+// overviewPanel frames a panel's lines in a border exactly rows tall.
+func overviewPanel(theme adminTheme, width, rows int, lines []string) string {
+	rows = max(rows, 3)
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(theme.borderColor).
 		Padding(0, 1).
-		Width(width).
-		MaxHeight(max(rows, 3)).
+		Width(max(width, 3)).
+		Height(rows).
+		MaxHeight(rows).
 		Render(strings.Join(lines, "\n"))
+}
+
+// renderAttention renders the NEEDS ATTENTION panel in at most rows rows. The
+// row Tab selected is always shown.
+func (s overviewScreen) renderAttention(theme adminTheme, width, rows int, now time.Time) string {
+	inner := max(width-4, 1)
+	lines := []string{theme.muted.Bold(true).Render("NEEDS ATTENTION")}
+
+	if !s.loaded {
+		return overviewPanel(theme, width, rows, append(lines, theme.muted.Render("Loading...")))
+	}
+	items := s.attentionItems(now)
+	capacity := max(rows-2-1, 1) // border rows and the title
+	notes := s.loadErrorLines(theme, inner)
+	if len(items) == 0 && len(notes) == 0 {
+		return overviewPanel(theme, width, rows, append(lines, theme.muted.Render("Nothing needs attention.")))
+	}
+	room := max(capacity-len(notes), 0)
+	selected := s.attentionFocus - 1
+	shown := make([]int, len(items))
+	for i := range items {
+		shown[i] = i
+	}
+	var more []string
+	if len(items) > room {
+		keep := max(room-1, 0)
+		if selected >= 0 {
+			keep = max(keep, 1)
+		}
+		shown = urgentAttentionRows(items, keep, selected)
+		if hidden := len(items) - len(shown); hidden > 0 && len(shown) < room {
+			more = []string{theme.muted.Render(fmt.Sprintf("+%d more", hidden))}
+		}
+	}
+	for _, i := range shown {
+		lines = append(lines, renderAttentionItem(theme, items[i], inner, i == selected))
+	}
+	lines = append(lines, more...)
+	lines = append(lines, notes...)
+	return overviewPanel(theme, width, rows, lines)
 }
 
 // loadErrorLines reports a failed read in the panel instead of silently
 // showing an empty "all clear".
 func (s overviewScreen) loadErrorLines(theme adminTheme, width int) []string {
 	var lines []string
-	if s.robotsErr != "" {
-		lines = append(lines, theme.error.MaxWidth(width).Render("Could not check robots: "+s.robotsErr))
-	}
-	if s.imagesErr != "" {
-		lines = append(lines, theme.error.MaxWidth(width).Render("Could not check image scans: "+s.imagesErr))
+	for _, note := range []struct{ what, err string }{
+		{"robots", s.robotsErr},
+		{"image scans", s.imagesErr},
+		{"expiring tokens", s.expiringErr},
+	} {
+		if note.err != "" {
+			lines = append(lines, theme.error.Render(fitText("Could not check "+note.what+": "+cleanEventText(note.err), width)))
+		}
 	}
 	return lines
 }
 
-func renderAttentionItem(theme adminTheme, item attentionItem, width int) string {
+// attentionMarkerWidth is the room the selection marker takes in every row.
+const attentionMarkerWidth = 2
+
+func renderAttentionItem(theme adminTheme, item attentionItem, width int, selected bool) string {
 	style := theme.warning
 	if item.tone == attentionCritical {
 		style = theme.error
 	}
-	if item.hint == "" {
-		return style.MaxWidth(width).Render(item.text)
+	marker, hintText := "  ", item.hint
+	if selected {
+		marker, hintText = theme.text.Bold(true).Render("▸ "), "enter open"
+		style = style.Bold(true).Underline(true)
 	}
-	hint := theme.muted.Render(item.hint)
+	width = max(width-attentionMarkerWidth, 1)
+	if hintText == "" {
+		return marker + style.MaxWidth(width).Render(item.text)
+	}
+	hint := theme.muted.Render(hintText)
 	text := style.MaxWidth(max(width-lipgloss.Width(hint)-2, 1)).Render(item.text)
 	gap := max(width-lipgloss.Width(text)-lipgloss.Width(hint), 1)
-	return text + strings.Repeat(" ", gap) + hint
+	return marker + text + strings.Repeat(" ", gap) + hint
 }
 
 // mostUrgentAttention keeps at most keep items when the panel is too short
 // for all of them: critical ones first, then warnings, each kept in their
 // original order.
 func mostUrgentAttention(items []attentionItem, keep int) []attentionItem {
+	var kept []attentionItem
+	for _, i := range urgentAttentionRows(items, keep, -1) {
+		kept = append(kept, items[i])
+	}
+	return kept
+}
+
+// urgentAttentionRows is mostUrgentAttention by index. The row at index must
+// (when not negative) is always kept, at the expense of the least urgent one.
+func urgentAttentionRows(items []attentionItem, keep, must int) []int {
 	chosen := make([]bool, len(items))
+	var order []int
 	for _, tone := range []attentionTone{attentionCritical, attentionWarning} {
 		for i, item := range items {
 			if item.tone == tone && keep > 0 {
 				chosen[i] = true
+				order = append(order, i)
 				keep--
 			}
 		}
 	}
-	var kept []attentionItem
-	for i, item := range items {
+	if must >= 0 && must < len(items) && !chosen[must] {
+		if len(order) > 0 {
+			chosen[order[len(order)-1]] = false
+		}
+		chosen[must] = true
+	}
+	var kept []int
+	for i := range items {
 		if chosen[i] {
-			kept = append(kept, item)
+			kept = append(kept, i)
 		}
 	}
 	return kept

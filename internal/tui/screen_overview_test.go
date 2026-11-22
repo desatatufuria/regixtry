@@ -360,13 +360,13 @@ func TestOverviewShowsTheOperatorAndBreadcrumb(t *testing.T) {
 		t.Errorf("header = %q", first)
 	}
 	for _, want := range []string{"Overview", "The three things you do most are one key away from anywhere.",
-		"Grant repository access", "Create robot", "Issue token", "NEEDS ATTENTION"} {
+		"Grant repository access", "Create robot", "Issue token", "NEEDS ATTENTION", "tab attention"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("view lacks %q", want)
 		}
 	}
-	if strings.Contains(out, "RECENT CHANGES") {
-		t.Errorf("view shows a Recent changes panel")
+	if !strings.Contains(out, "RECENT CHANGES") {
+		t.Errorf("view lacks the Recent changes panel")
 	}
 }
 
@@ -399,6 +399,13 @@ func TestOverviewViewGoldens(t *testing.T) {
 		{"overview_attention", overviewClient},
 		{"overview_empty", func() *fakeAdminClient {
 			return &fakeAdminClient{repositoryScanSummaries: []ports.RepositoryScanSummary{}}
+		}},
+		{"overview_full", overviewRichClient},
+		{"overview_partial_failure", func() *fakeAdminClient {
+			client := overviewRichClient()
+			client.expiringErr = errors.New("expiring unavailable")
+			client.accessEventsErr = errors.New("history unavailable")
+			return client
 		}},
 	}
 	for _, tc := range cases {

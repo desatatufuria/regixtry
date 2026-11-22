@@ -11,14 +11,14 @@
                                │  │ screen.                           │  │                                   │  │ creating.                        │  
   SECURITY                     │  ╰───────────────────────────────────╯  ╰───────────────────────────────────╯  ╰──────────────────────────────────╯  
       Image scanning           │                                                                                                                      
-      Secret scanning          │  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  
-      Signing policy           │  │ NEEDS ATTENTION                                                                                                │  
-                               │  │ Robot gh-actions has no repository access                                                              g grant │  
-  OPERATIONS                   │  │ 2 images have critical findings                                                                                │  
-      Scan runs                │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  
-      Secret findings          │                                                                                                                      
-      Update channel           │                                                                                                                      
-                               │                                                                                                                      
-                               │                                                                                                                      
+      Secret scanning          │  ╭──────────────────────────────────────────────────────╮  ╭──────────────────────────────────────────────────────╮  
+      Signing policy           │  │ NEEDS ATTENTION                                      │  │ RECENT CHANGES                                       │  
+                               │  │   Robot gh-actions has no repository access  g grant │  │ No changes recorded yet.                             │  
+  OPERATIONS                   │  │   2 images have critical findings                    │  │                                                      │  
+      Scan runs                │  │                                                      │  │                                                      │  
+      Secret findings          │  │                                                      │  │                                                      │  
+      Update channel           │  │                                                      │  │                                                      │  
+                               │  │                                                      │  │                                                      │  
+                               │  ╰──────────────────────────────────────────────────────╯  ╰──────────────────────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  ↑↓ move   enter open   g grant access   r robot   t token   esc back   q quit                                                                       
+  ↑↓ move   tab attention   enter open   g grant access   r robot   t token   esc back   q quit                                                       

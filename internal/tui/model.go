@@ -1246,6 +1246,11 @@ func (m Model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = fmt.Sprintf("Loading scan history for %s...", adminFirstNonEmpty(msg.repository, "repository"))
 		return m, next.Init(m.screenEnv())
 	case overviewLoadedMsg:
+		// A load of a replaced Overview is dropped FIRST: its stale expiry
+		// must never log the operator out.
+		if overview, ok := m.adminScreens[slotOverview].(overviewScreen); !ok || overview.gen != msg.gen {
+			return m, nil
+		}
 		if reason, expired := msg.expiredReason(); expired {
 			return m.expireAdminSession(reason), nil
 		}
