@@ -85,6 +85,14 @@ func (s *Service) GetFeatureStatus(ctx context.Context, name string) (ports.Feat
 	}
 	details := featureDetailsFromSettings(feature, settings, configured)
 	details.Runtime = s.projectFeatureRuntime(ctx, feature.name)
+	if feature.name == trivyFeatureName {
+		// The scheduled sweep summary (and its DB refresh outcome) lives on
+		// the scheduler state row; absent until a sweep has run.
+		if state, err := s.metadata.GetScanSchedulerState(ctx, s.tenant(ctx)); err == nil && state.LastSweep.StartedAt != nil {
+			sweep := state.LastSweep
+			details.Sweep = &sweep
+		}
+	}
 	return details, nil
 }
 
@@ -447,6 +455,9 @@ func buildFeaturePage(summary ports.FeatureSummary, details ports.FeatureDetails
 			},
 		}
 	}
+	if summary.Name == trivyFeatureName && details.Sweep != nil {
+		page.Sections = append(page.Sections, buildSweepSection(*details.Sweep))
+	}
 	// The Runtime section only applies to a feature that actually has a
 	// managed runtime (design.md Decision 10): gating on
 	// details.Runtime.Mode == FeatureRuntimeModeManaged, not on
@@ -471,6 +482,39 @@ func buildFeaturePage(summary ports.FeatureSummary, details ports.FeatureDetails
 	}
 	page.Actions = buildFeatureActions(details)
 	return page
+}
+
+// buildSweepSection renders the latest scheduled-scan sweep: what it visited,
+// skipped, queued, and the outcome of its vulnerability DB refresh.
+func buildSweepSection(sweep ports.ScanSweepSummary) ports.FeatureSection {
+	formatTime := func(value *time.Time) string {
+		if value == nil {
+			return "never"
+		}
+		return value.UTC().Format(time.RFC3339)
+	}
+	refresh := "ok"
+	switch {
+	case sweep.LastDBRefreshError != "":
+		refresh = "failed: " + sweep.LastDBRefreshError
+	case sweep.LastDBRefreshAt == nil:
+		refresh = "never"
+	}
+	return ports.FeatureSection{
+		ID:    "sweep",
+		Title: "Last sweep",
+		Kind:  "fields",
+		Fields: []ports.FeatureField{
+			{Label: "Finished", Value: formatTime(sweep.FinishedAt)},
+			{Label: "Visited", Value: fmt.Sprintf("%d", sweep.Visited)},
+			{Label: "Skipped Unchanged", Value: fmt.Sprintf("%d", sweep.SkippedUnchanged)},
+			{Label: "Queued", Value: fmt.Sprintf("%d", sweep.Queued)},
+			{Label: "Errors", Value: fmt.Sprintf("%d", sweep.Errors)},
+			{Label: "DB Refresh", Value: refresh},
+			{Label: "DB Refreshed At", Value: formatTime(sweep.LastDBRefreshAt)},
+			{Label: "DB Changed", Value: fmt.Sprintf("%t", sweep.DBChanged)},
+		},
+	}
 }
 
 // buildSigningPolicySection is signing's own Config-slot section (design.md

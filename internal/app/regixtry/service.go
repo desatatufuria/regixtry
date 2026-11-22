@@ -84,6 +84,10 @@ type Service struct {
 	maxOpenUploads        int
 	maxOpenUploadsPerRepo int
 	uploadTTL             time.Duration
+	// skipSweepDBRefresh turns the once-per-sweep vulnerability DB download
+	// off (air-gapped installs); the zero value keeps the refresh on. See
+	// SetScanDBRefreshOnSweep.
+	skipSweepDBRefresh atomic.Bool
 }
 
 // Default upload limits applied by NewService.
@@ -199,6 +203,14 @@ func (s *Service) SetFeatureRuntimeManager(feature string, manager FeatureRuntim
 
 func (s *Service) SetUsernameResolver(resolver UsernameResolver) {
 	s.usernames = resolver
+}
+
+// SetScanDBRefreshOnSweep controls whether each scheduled sweep first
+// downloads the latest Trivy vulnerability DB (default on). Turn it off for
+// air-gapped installs that cannot reach the Trivy DB mirror: the sweep then
+// scans against the DB already in the cache.
+func (s *Service) SetScanDBRefreshOnSweep(enabled bool) {
+	s.skipSweepDBRefresh.Store(!enabled)
 }
 
 func (s *Service) SetScanHost(host string) {
