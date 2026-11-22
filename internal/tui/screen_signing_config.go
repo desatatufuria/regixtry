@@ -222,6 +222,9 @@ func (s signingConfigScreen) updateConfigKey(env screenEnv, msg keyMsg) (adminSc
 		}
 		s.saving = true
 		s.cfg.Error = ""
+		// The PUT replaces the whole policy with this snapshot of the lists: a
+		// key or identity another operator added since the policy loaded is
+		// lost (accepted, as before this screen was rebuilt).
 		return s, securitySaveSigningPolicyCmd(env, s.gen, ports.SigningPolicySettings{
 			Enabled:           s.cfg.Enabled,
 			TrustedPublicKeys: trustedKeys,

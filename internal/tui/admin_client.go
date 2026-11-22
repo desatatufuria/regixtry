@@ -432,7 +432,14 @@ func (c *HTTPAdminClient) GetSigningPolicy(ctx context.Context, session AdminSes
 
 func (c *HTTPAdminClient) UpdateSigningPolicy(ctx context.Context, session AdminSession, input ports.SigningPolicySettings) (ports.SigningPolicySettings, error) {
 	var settings ports.SigningPolicySettings
-	body := map[string]any{"enabled": input.Enabled, "trusted_public_keys": input.TrustedPublicKeys}
+	// The PUT replaces the whole policy (decodeSigningPolicySettings), so the
+	// body carries every field it replaces: a field left out is reset.
+	body := map[string]any{
+		"enabled":             input.Enabled,
+		"trusted_public_keys": input.TrustedPublicKeys,
+		"trusted_identities":  input.TrustedIdentities,
+		"unsigned_self_read":  input.UnsignedSelfRead,
+	}
 	if err := c.requestJSON(ctx, stdhttp.MethodPut, session, "/admin/v1/signing-policy", body, &settings, stdhttp.StatusOK); err != nil {
 		return ports.SigningPolicySettings{}, err
 	}
