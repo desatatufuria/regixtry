@@ -115,44 +115,6 @@ func renderAdminOperatorFooter(theme adminTheme, session AdminSession, now time.
 	}
 }
 
-// renderFeaturePageBody moved onto trivyConfigScreen/gitleaksConfigScreen/
-// signingConfigScreen's own View methods (Phase 11, design.md Decision I).
-
-// renderGenericFeaturePage renders a backend-declared ports.FeaturePage's
-// generic body: header fields, then each section (a "rows" section renders
-// the caller's already-built bubbletable.Model for that section, keyed by
-// ID; every other kind renders its fields inline). Phase 11 deviation from
-// the pre-change signature: takes rows map[string]bubbletable.Model
-// directly instead of a full AdminViewState, since Tables.FeatureRows moved
-// onto each of trivyConfigScreen/gitleaksConfigScreen/signingConfigScreen's
-// own `rows` field (design.md Decision D4: no shared cross-screen state).
-func renderGenericFeaturePage(theme adminTheme, page ports.FeaturePage, rows map[string]bubbletable.Model) []string {
-	lines := make([]string, 0, len(page.Header)+len(page.Sections)*2)
-	for _, field := range page.Header {
-		lines = append(lines, fmt.Sprintf("%s: %s", field.Label, adminFirstNonEmpty(field.Value, "unknown")))
-	}
-	if len(page.Sections) == 0 {
-		lines = append(lines, theme.muted.Render("No additional feature details."))
-		return lines
-	}
-	for _, section := range page.Sections {
-		lines = append(lines, "", theme.subheading.Render(section.Title))
-		switch section.Kind {
-		case "rows":
-			if tableModel, ok := rows[section.ID]; ok {
-				lines = append(lines, tableModel.View())
-				continue
-			}
-			lines = append(lines, theme.muted.Render("No rows available."))
-		default:
-			for _, field := range section.Fields {
-				lines = append(lines, fmt.Sprintf("%s: %s", field.Label, adminFirstNonEmpty(field.Value, "unknown")))
-			}
-		}
-	}
-	return lines
-}
-
 // renderTrivyTabs composes the persistent policy status badge onto its
 // existing tab line (design.md Decision 6), which returns exactly 2 rows
 // and keeps returning 2 — the badge costs 0 rows because it is appended to
@@ -228,61 +190,6 @@ func renderFeatureOverridesTable(theme adminTheme, feature string, rows []featur
 	}
 }
 
-func renderTrivyConfigModal(theme adminTheme, modal trivyConfigModal) string {
-	lines := []string{
-		theme.subheading.Render("Edit Trivy Configuration"),
-		renderToggleField(theme, "Schedule Enabled", modal.ScheduleEnabled, modal.Focus == trivyConfigFieldScheduleEnabled),
-		renderTextField(theme, "Interval", modal.Interval, modal.Focus == trivyConfigFieldInterval),
-		renderTextField(theme, "Timeout", modal.Timeout, modal.Focus == trivyConfigFieldTimeout),
-		renderTextField(theme, "Registry Reachable URL", modal.RegistryReachableURL, modal.Focus == trivyConfigFieldRegistryReachableURL),
-		renderTextField(theme, "Max Concurrency", modal.MaxConcurrency, modal.Focus == trivyConfigFieldMaxConcurrency),
-	}
-	if strings.TrimSpace(modal.Error) != "" {
-		lines = append(lines, "", theme.error.Render(modal.Error))
-	}
-	lines = append(lines, "", theme.muted.Render("Enter: save | Tab: next field | Space: toggle | Esc: cancel"))
-	return theme.section.Render(strings.Join(lines, "\n"))
-}
-
-// renderGitleaksConfigModal moved to gitleaksConfigScreen.View
-// (screen_gitleaks_config.go, design.md Decision G).
-
-// renderScanPolicyModal renders the vulnerability policy gate's own modal
-// (design.md Decision 6): heading + 2 fields x 2 rows + blank/help = 7
-// inner rows, +4 rows theme.section chrome = 11 total, 13 with an error
-// present. It is a sibling of renderTrivyConfigModal, not an extension —
-// the two never share fields or output (spec's "separate surface"
-// requirement).
-func renderScanPolicyModal(theme adminTheme, modal scanPolicyModal) string {
-	lines := []string{
-		theme.subheading.Render("Vulnerability Policy"),
-		renderToggleField(theme, "Enabled", modal.Enabled, modal.Focus == scanPolicyFieldEnabled),
-		renderTextField(theme, "Severity Threshold", scanPolicyThresholdLabel(modal.SeverityThreshold), modal.Focus == scanPolicyFieldThreshold),
-	}
-	if strings.TrimSpace(modal.Error) != "" {
-		lines = append(lines, "", theme.error.Render(modal.Error))
-	}
-	lines = append(lines, "", theme.muted.Render("Enter: save | Tab: next field | Space: toggle/cycle | Esc: cancel"))
-	return theme.section.Render(strings.Join(lines, "\n"))
-}
-
-// signingPolicyBadge renders the image-signing content-trust gate's
-// persistent, text-only policy status badge, mirroring scanPolicyBadge's
-// exact shape (design.md Decision 11 piece 1) -- text, not an icon or
-// glyph.
-func signingPolicyBadge(theme adminTheme, policy ports.SigningPolicySettings) string {
-	if !policy.Enabled {
-		return theme.muted.Render("Signing: OFF")
-	}
-	return theme.selected.Render(fmt.Sprintf("Signing: REQUIRED (%d keys, %d identities)", len(policy.TrustedPublicKeys), len(policy.TrustedIdentities)))
-}
-
-// renderSigningPolicyModal/signingPolicyStatusLine/renderSigningPolicyKeyList/
-// renderSigningPolicyClearKeysRow moved to screen_signing_config.go (Phase
-// 12.3, design.md's State Migration table): signingConfigScreen.View calls
-// renderSigningPolicyModal directly, with the pre-move hand-written footer
-// replaced by shortHelpView's keymap-generated one.
-
 // scanPolicyThresholdLabel renders the severity threshold as the operator-
 // facing text the badge and modal both use (design.md Decision 6): CRITICAL
 // / CRITICAL+HIGH. An unrecognized value renders as-is rather than
@@ -304,11 +211,6 @@ func scanPolicyThresholdLabel(threshold string) string {
 // (design.md Decision F). The uniform per-repository override editor now
 // renders through renderOverrideEditor/overrideStatusLine/
 // renderOverrideClearRow (override_editor.go), with no Feature row.
-
-// Each of trivyConfigScreen/gitleaksConfigScreen/signingConfigScreen composes
-// its own Keys() directly (screen_trivy_config.go, screen_gitleaks_config.go,
-// screen_signing_config.go), rendered through shortHelpView so help can never
-// drift from what a key actually does (design.md Decision A).
 
 // statusKind is an explicit style selector for renderAdminStatus, carried as
 // a parameter along the render path rather than stored on Model (design.md

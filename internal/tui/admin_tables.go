@@ -12,10 +12,6 @@ import (
 const (
 	adminTableMetaScanRunID = "__scan_run_id"
 
-	adminTableColumnRowTitle  = "row_title"
-	adminTableColumnRowStatus = "row_status"
-	adminTableColumnRowDetail = "row_detail"
-
 	adminTableColumnScanSummaryRepository   = "scan_summary_repository"
 	adminTableColumnScanSummaryReference    = "scan_summary_reference"
 	adminTableColumnScanSummaryStatus       = "scan_summary_status"
@@ -100,23 +96,6 @@ func newAdminBubbleTable(columns []bubbletable.Column, rows []bubbletable.Row, h
 	}
 
 	return model
-}
-
-func buildAdminFeatureRowsTable(section ports.FeatureSection, pageSize int) bubbletable.Model {
-	columns := []bubbletable.Column{
-		bubbletable.NewColumn(adminTableColumnRowTitle, "Title", 22),
-		bubbletable.NewColumn(adminTableColumnRowStatus, "Status", 12),
-		bubbletable.NewColumn(adminTableColumnRowDetail, "Detail", 42),
-	}
-	rows := make([]bubbletable.Row, 0, len(section.Rows))
-	for _, row := range section.Rows {
-		rows = append(rows, bubbletable.NewRow(bubbletable.RowData{
-			adminTableColumnRowTitle:  adminFirstNonEmpty(row.Title, "unknown"),
-			adminTableColumnRowStatus: adminFirstNonEmpty(row.Status, "unknown"),
-			adminTableColumnRowDetail: adminFirstNonEmpty(row.Detail, "n/a"),
-		}))
-	}
-	return newAdminBubbleTable(columns, rows, 0, pageSize)
 }
 
 // buildAdminScanSummaryTable renders one row per repository

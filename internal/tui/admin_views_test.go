@@ -452,4 +452,3 @@ func TestRenderAdminScanSummaryShowsEmptyStateThenPopulatedTable(t *testing.T) {
 		t.Fatalf("renderAdminScanSummary() = %q, want the populated ScanSummary table containing %q", got, "acme/api")
 	}
 }
-
