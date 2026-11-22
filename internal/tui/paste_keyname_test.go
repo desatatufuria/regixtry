@@ -88,10 +88,10 @@ func TestPastedKeyNameIsNotMatchedByScreenKeys(t *testing.T) {
 	t.Parallel()
 
 	paste := keyMsg{Text: "enter"}
-	if overrideEditorKeys.matches(paste, "Enter") {
+	if trivyReposKeys.matches(paste, "enter") {
 		t.Fatal("pasted \"enter\" matched the Enter binding")
 	}
-	if !overrideEditorKeys.matches(testKeyEnter(), "Enter") {
+	if !trivyReposKeys.matches(testKeyEnter(), "enter") {
 		t.Fatal("a real Enter no longer matches the Enter binding")
 	}
 }

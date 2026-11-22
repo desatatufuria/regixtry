@@ -126,20 +126,3 @@ func TestOverrideKeyIsInertWithoutAHighlightedRow(t *testing.T) {
 		t.Fatal("editor.Active() = true, want false -- 'o' must be inert with no highlighted row")
 	}
 }
-
-// TestOverrideModalStaysWithinViewport is the Phase 13 task 13.4 RED test
-// (T2.6, preserved MODIFIED-requirement scenario): at minimum viable
-// terminal height, the rendered override editor overlay does not exceed the
-// terminal's visible rows.
-func TestOverrideModalStaysWithinViewport(t *testing.T) {
-	t.Parallel()
-
-	theme := newAdminTheme()
-	editor := overrideEditor{open: true, repository: "library/alpine", feature: trivyFeatureName, exists: true, enabled: true, pathPrimary: "/etc/trivy/ignore", pathSecondary: "/etc/trivy/policy.rego", err: "ignore_file_path must be absolute"}
-
-	rendered := renderOverrideEditor(theme, editor)
-	height := strings.Count(rendered, "\n") + 1
-	if height > minViewportHeight {
-		t.Fatalf("renderOverrideEditor() height = %d rows, want <= %d (minViewportHeight)\n%s", height, minViewportHeight, rendered)
-	}
-}

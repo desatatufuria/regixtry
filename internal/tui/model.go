@@ -2065,19 +2065,13 @@ func isAdminScreen(current screen) bool {
 // is in it, but its grant form types q: migratedScreenCapturesTextInput holds
 // the quit key back while the form is open.
 //
-// screenSecurityTrivy/screenSecurityGitleaksConfig/screenSecuritySigningConfig
-// join this set because each advertises "q: quit" in its own Keys()-derived
-// footer (trivyConfigScreen.Keys/gitleaksConfigScreen.Keys/
-// signingConfigScreen.Keys). Their sibling repos screens
-// (screenSecurityTrivyRepos/screenSecurityGitleaksRepos/
-// screenSecuritySigningRepos) do not advertise "q: quit" and are
-// deliberately excluded, mirroring the free-text-form exclusion above.
-// screenAdminUpdateChannel (tui-update-check feature) joins the same way:
-// updateChannelKeys advertises "q: quit" exactly like the three config
-// screens above.
+// The Security screens (configuration and repositories) join this set; the
+// repositories screens hold the quit key back while their override editor is
+// open (migratedScreenCapturesTextInput). screenAdminUpdateChannel
+// (tui-update-check feature) joins the same way.
 func isAdminPrincipalScreen(current screen) bool {
 	switch current {
-	case screenAdminLogin, screenAdminUsers, screenAdminEditUser, screenAdminEditUserTokens, screenRepoAdminGrants, screenAdminRobots, screenSecurityTrivy, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminOverview, screenAdminUpdateChannel, screenAdminRepositoryAccess:
+	case screenAdminLogin, screenAdminUsers, screenAdminEditUser, screenAdminEditUserTokens, screenRepoAdminGrants, screenAdminRobots, screenSecurityTrivy, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenSecurityTrivyRepos, screenSecurityGitleaksRepos, screenSecuritySigningRepos, screenAdminOverview, screenAdminUpdateChannel, screenAdminRepositoryAccess:
 		return true
 	default:
 		return false

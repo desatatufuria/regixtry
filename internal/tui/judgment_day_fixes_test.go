@@ -7,29 +7,20 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// TestSecurityConfigScreensJoinAdminPrincipalScreenSet is the Judgment Day
-// fix-round RED test for Finding 1 (Judge A, CRITICAL): isAdminPrincipalScreen
-// gates the bare 'q' quit key (model.go:1685), checked before any screen ever
-// sees the key. screenSecurityTrivy/screenSecurityGitleaksConfig/
-// screenSecuritySigningConfig each advertise "q: quit" in their own
-// Keys()-derived footer (see trivyConfigScreen.Keys/gitleaksConfigScreen.Keys/
-// signingConfigScreen.Keys), so 'q' must actually reach tea.Quit from them.
-// The 3 sibling repos screens (screenSecurityTrivyRepos/
-// screenSecurityGitleaksRepos/screenSecuritySigningRepos) do NOT advertise
-// "q: quit" in their own Keys() (trivyReposKeys/featureOverridesKeys), so
-// they are deliberately excluded here.
-func TestSecurityConfigScreensJoinAdminPrincipalScreenSet(t *testing.T) {
+// TestSecurityScreensJoinAdminPrincipalScreenSet pins that the bare 'q' quit
+// key (isAdminPrincipalScreen, checked before any screen sees the key) works on
+// all six Security screens: the three configuration screens and the three
+// repositories screens. The repositories screens hold it back while their
+// override editor is open (migratedScreenCapturesTextInput).
+func TestSecurityScreensJoinAdminPrincipalScreenSet(t *testing.T) {
 	t.Parallel()
 
-	for _, screenID := range []screen{screenSecurityTrivy, screenSecurityGitleaksConfig, screenSecuritySigningConfig} {
+	for _, screenID := range []screen{
+		screenSecurityTrivy, screenSecurityGitleaksConfig, screenSecuritySigningConfig,
+		screenSecurityTrivyRepos, screenSecurityGitleaksRepos, screenSecuritySigningRepos,
+	} {
 		if !isAdminPrincipalScreen(screenID) {
-			t.Fatalf("isAdminPrincipalScreen(%v) = false, want true (screen advertises \"q: quit\" in its own footer)", screenID)
-		}
-	}
-
-	for _, screenID := range []screen{screenSecurityTrivyRepos, screenSecurityGitleaksRepos, screenSecuritySigningRepos} {
-		if isAdminPrincipalScreen(screenID) {
-			t.Fatalf("isAdminPrincipalScreen(%v) = true, want false (screen does not advertise \"q: quit\")", screenID)
+			t.Fatalf("isAdminPrincipalScreen(%v) = false, want true", screenID)
 		}
 	}
 }
@@ -56,37 +47,6 @@ func TestCanLogoutFromAllSixNewSecurityScreens(t *testing.T) {
 		if !model.canLogoutAdminFromCurrentScreen() {
 			t.Fatalf("canLogoutAdminFromCurrentScreen() = false, want true on %v", screenID)
 		}
-	}
-}
-
-// TestCanLogoutFromSecurityRepoScreenIsFalseWhileItsOwnOverrideEditorIsActive
-// guards against a regression the naive Finding 2 fix introduces (caught by
-// the pre-existing TestFeatureOverridesScreenSigningSaveIncludesUnsignedSelfRead):
-// featureOverridesScreen/trivyReposScreen each embed their own overrideEditor
-// as free-text input, invisible to the global q and l keys
-// (design.md Decision B). Naively joining these screens' ids to
-// canLogoutAdminFromCurrentScreen's unconditional-true case, without also
-// checking the mounted screen's own editor state, makes typing an upper-case
-// "L" (case-insensitively matched by isRuneKey) into the editor's free-text
-// field log the operator out mid-keystroke instead of inserting the rune.
-func TestCanLogoutFromSecurityRepoScreenIsFalseWhileItsOwnOverrideEditorIsActive(t *testing.T) {
-	t.Parallel()
-
-	model := newAdminReadyModel(t, &fakeAdminClient{})
-	model.adminAuth = adminAuthStateAuthenticated
-	model.screen = screenSecuritySigningRepos
-	slot, ok := slotFor(screenSecuritySigningRepos)
-	if !ok {
-		t.Fatalf("slotFor(screenSecuritySigningRepos) = false, want true")
-	}
-	model.adminScreens[slot] = featureOverridesScreen{
-		id:      screenSecuritySigningRepos,
-		feature: signingFeatureName,
-		editor:  newOverrideEditor(signingFeatureName, "library/alpine"),
-	}
-
-	if model.canLogoutAdminFromCurrentScreen() {
-		t.Fatalf("canLogoutAdminFromCurrentScreen() = true, want false while the screen's own override editor is active (would swallow free-text keystrokes as a logout)")
 	}
 }
 

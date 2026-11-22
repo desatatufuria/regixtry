@@ -119,24 +119,6 @@ func TestNextScanPolicyFieldCyclesBetweenTheTwoFields(t *testing.T) {
 	}
 }
 
-// TestOverrideEditorActiveReflectsOpenField is the Slice 2 successor to the
-// retired TestRepositoryOverrideModalActiveReflectsOpenField: overrideEditor
-// follows the same Active()-gated pattern as scanPolicyModal/trivyConfigModal
-// (design.md Decision F).
-func TestOverrideEditorActiveReflectsOpenField(t *testing.T) {
-	t.Parallel()
-
-	closed := overrideEditor{}
-	if closed.Active() {
-		t.Fatal("overrideEditor{}.Active() = true, want false when open is unset")
-	}
-
-	open := newOverrideEditor(trivyFeatureName, "library/alpine")
-	if !open.Active() {
-		t.Fatal("newOverrideEditor(...).Active() = false, want true")
-	}
-}
-
 // TestOverrideFieldsForFeatureSkipsPathSecondaryForGitleaks is the Slice 2
 // successor to the retired
 // TestNextRepositoryOverrideFieldSkipsPathSecondaryForGitleaks:

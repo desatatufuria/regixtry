@@ -9,7 +9,8 @@ import (
 	"regixtry/internal/ports"
 )
 
-// Every async result of the three Security configuration screens carries the
+// Every async result of the Security screens (the three configuration screens
+// and the three per-repository override screens) carries the
 // generation id of the screen instance that asked for it. Model.Update drops a
 // result whose generation no mounted screen owns BEFORE it looks at an expired
 // session, so a late result can neither land on a newer screen nor log the
@@ -188,6 +189,10 @@ func securityScreenGen(screens adminScreenSet, slot screenSlot) (uint64, bool) {
 		return s.gen, true
 	case signingConfigScreen:
 		return s.gen, true
+	case trivyReposScreen:
+		return s.gen, true
+	case featureOverridesScreen:
+		return s.gen, true
 	}
 	return 0, false
 }
@@ -195,7 +200,7 @@ func securityScreenGen(screens adminScreenSet, slot screenSlot) (uint64, bool) {
 // securityScreenOwns reports whether a mounted Security screen has generation
 // gen, i.e. whether a result carrying it still has a screen to land on.
 func securityScreenOwns(screens adminScreenSet, gen uint64) bool {
-	for _, slot := range []screenSlot{slotTrivyConfig, slotGitleaksConfig, slotSigningConfig} {
+	for _, slot := range []screenSlot{slotTrivyConfig, slotGitleaksConfig, slotSigningConfig, slotTrivyRepos, slotGitleaksRepos, slotSigningRepos} {
 		if current, ok := securityScreenGen(screens, slot); ok && current == gen {
 			return true
 		}

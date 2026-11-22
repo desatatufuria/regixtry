@@ -1,0 +1,40 @@
+  Admin › Security › Image scanning › Repositories                                                                                                                               signed in as operator  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │
+                               │  Image scanning                                                                                                                          Trivy, vulnerability scanner
+    Overview                   │  4 repositories, 2 with an override
+                               │   Config   Repositories 
+  ACCESS                       │  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  ╭──────────────────────────────────────╮
+      Users                    │  │   REPOSITORY                                                               CRIT  HIGH  STATUS     ENABLED  UPDATED     │  │ team/api                             │
+      Robots                   │  │ ▸ team/api                                                                 2     5     override   yes      14 Nov      │  │ override                             │
+      Repository access        │  │   team/web                                                                 0     3     inherited  —        -           │  │                                      │
+                               │  │   team/docs                                                                0     0     override   no       2 Nov       │  │ OVERRIDE                             │
+  SECURITY                     │  │   team/infra                    ╭──────────────────────────────────────────────────────────────╮  —        -           │  │ Scanning                          on │
+    ▸ Image scanning           │  │                                 │  Clear override                                              │                       │  │ Ignore file        /etc/trivy/ignore │
+      Secret scanning          │  │                                 │                                                              │                       │  │ Ignore policy                      - │
+      Signing policy           │  │                                 │  Remove this repository's override of the Trivy settings.    │                       │  │ Updated                       14 Nov │
+                               │  │                                 │  It goes back to the global settings.                        │                       │  │                                      │
+  OPERATIONS                   │  │                                 │                                                              │                       │  │ LATEST SCAN                          │
+      Scan runs                │  │                                 │  ╭────────────────────────────────────────────────────────╮  │                       │  │ Reference                      1.4.2 │
+      Secret findings          │  │                                 │  │ team/api                                               │  │                       │  │ Status                     completed │
+      Update channel           │  │                                 │  │ Trivy override                                         │  │                       │  │ Critical                           2 │
+                               │  │                                 │  ╰────────────────────────────────────────────────────────╯  │                       │  │ High                               5 │
+                               │  │                                 │                                                              │                       │  │ Runs                               7 │
+                               │  │                                 │  Only this repository changes. Other repositories keep       │                       │  │ Scanned                 20 Nov 10:14 │
+                               │  │                                 │  their overrides.                                            │                       │  │                                      │
+                               │  │                                 │                                                              │                       │  │ ACTIONS                              │
+                               │  │                                 │   Clear override                                 y / enter   │                       │  │ Edit override                      o │
+                               │  │                                 │   Cancel                                               esc   │                       │  │ Scan history                   enter │
+                               │  │                                 ╰──────────────────────────────────────────────────────────────╯                       │  │ Refresh                            r │
+                               │  │                                                                                                                        │  │                                      │
+                               │  │                                                                                                                        │  │                                      │
+                               │  │                                                                                                                        │  │                                      │
+                               │  │                                                                                                                        │  │                                      │
+                               │  │                                                                                                                        │  │                                      │
+                               │  │                                                                                                                        │  │                                      │
+                               │  │                                                                                                                        │  │                                      │
+                               │  │                                                                                                                        │  │                                      │
+                               │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  │                                      │
+                               │  One row per repository, severity first. enter opens its scan history, o edits its override.                                 ╰──────────────────────────────────────╯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  y / enter clear override   esc cancel                                                                                                                                                                 

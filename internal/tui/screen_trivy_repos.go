@@ -1,201 +1,118 @@
 package tui
 
 import (
-	"strings"
-
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
-	bubbletable "github.com/evertras/bubble-table/table"
-	"regixtry/internal/ports"
+	"charm.land/lipgloss/v2"
 )
 
-// trivyReposScreen is Trivy's Repository Alerts tab, promoted to its own
-// top-level screen (Phase 11, design.md Decision I: "Tab becomes a screen
-// switch"). It owns TrivySummaries/TrivyScanRuns/TrivySelectedAlert/
-// TrivyAlertsLoaded/TrivyOverrides and the ScanSummary table (design.md's
-// State Migration table), plus its own embedded overrideEditor -- mirroring
-// featureOverridesScreen's own pattern, which is why the former
-// slotTrivyOverride overlay slot no longer exists (screen.go).
+// trivyReposScreen is the Repositories tab of "Image scanning" (the approved
+// "Image scanning" board): one row per repository with its latest scan counts
+// and whether it overrides the Trivy settings, and the editor of the override
+// of the selected repository. Enter opens the scan history of the selected
+// repository; Esc there comes back here.
 //
-// policy/policyLoaded are a read-only copy of the scan policy, loaded
-// independently on Init purely to compose the persistent policy badge
-// (design.md Decision 6) onto this screen's own tab-bar header -- mirroring
-// how trivyConfigScreen owns the editable copy, per Decision D4 (no shared
-// cross-screen state): duplicated on read, never written here.
-//
-// Enter opens the still-legacy, Slice-3-gated scan history modal via
-// openAdminScanHistory (model.go) -- a migrated screen cannot write to
-// AdminViewState.ScanHistoryModal directly (design.md Decision B), so this
-// mirrors navigateMsg's own "ask the parent" pattern for that one piece of
-// state Phase 11 does not migrate.
+// The field name editor (inside overridesList) is read by Model
+// (migratedScreenCapturesTextInput): do not rename it.
 type trivyReposScreen struct {
-	summaries []repositorySummary
-	scanRuns  []ports.ScanRun
-	selected  int
-	loaded    bool
-	overrides []ports.RepositoryOverrideDetails
-	table     bubbletable.Model
-	editor    overrideEditor
-	policy    ports.ScanPolicySettings
+	overridesList
 }
 
-func newTrivyReposScreen() trivyReposScreen { return trivyReposScreen{} }
+func newTrivyReposScreen() trivyReposScreen {
+	list := newOverridesList(trivyFeatureName)
+	list.reading = true
+	return trivyReposScreen{list}
+}
 
 func (s trivyReposScreen) ID() screen { return screenSecurityTrivyRepos }
 
 func (s trivyReposScreen) Keys() screenKeys { return trivyReposKeys }
 
+// Init reads the latest scan of each repository; the overrides are read once
+// they arrive, so the list is built from both.
 func (s trivyReposScreen) Init(env screenEnv) tea.Cmd {
-	return loadTrivyRepositoryScanSummariesCmd(env, 25)
+	return loadOverrideSummariesCmd(env, s.gen, overridesScanLimit)
 }
 
 func (s trivyReposScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.Cmd, bool) {
-	if s.editor.Active() {
-		switch typed := msg.(type) {
-		case keyMsg:
-			next, cmd, consumed := s.editor.update(env, typed)
-			s.editor = next
-			return s, cmd, consumed
-		case adminRepositoryOverrideLoadedMsg:
-			next, cmd := s.editor.applyLoaded(env, typed)
-			s.editor = next
-			return s, cmd, false
-		case adminRepositoryOverrideSavedMsg:
-			s.editor = s.editor.applySaved(typed)
-			return s, nil, false
+	if key, ok := msg.(keyMsg); ok {
+		if s.editor.Active() {
+			list, cmd := s.updateEditorKey(env, key)
+			s.overridesList = list
+			return s, cmd, true
 		}
+		return s.updateKey(env, key)
+	}
+	if owned, ok := msg.(securityMsg); ok && owned.securityGen() != s.gen {
 		return s, nil, false
 	}
 	switch typed := msg.(type) {
-	case keyMsg:
-		return s.updateKey(env, typed)
-	case tea.WindowSizeMsg:
-		s.rebuildTable(env)
-		return s, nil, false
-	case adminRepositoryScanSummariesLoadedMsg:
-		if typed.err != nil {
-			return s, nil, false
-		}
-		// The backend already collapses to one row per repository, ordered
-		// severity-first, before applying limit (ports.RepositoryScanSummary)
-		// -- mirrors the pre-change central handler exactly.
-		s.summaries = repositorySummariesFromScanSummaries(typed.summaries)
-		s.scanRuns = scanRunsFromScanSummaries(typed.summaries)
-		s.selected = boundedIndex(0, len(s.summaries))
-		s.loaded = true
-		s.rebuildTable(env)
-		// The disabled-row annotation needs the override list loaded before
-		// it can render; chained as a follow-up Cmd, mirroring the
-		// pre-change central handler's own single-Cmd-return style.
-		return s, loadTrivyRepositoryOverridesListCmd(env), false
-	case adminRepositoryOverridesListLoadedMsg:
-		if typed.err != nil || typed.feature != trivyFeatureName {
-			return s, nil, false
-		}
-		s.overrides = typed.overrides
-		s.rebuildTable(env)
-		// The policy badge (renderTrivyTabs) needs ScanPolicy loaded before
-		// it can render a real state; chained as a follow-up Cmd (not
-		// tea.Batch, this codebase's own convention -- see
-		// adminScanRunDetailLoadedMsg's doc comment in model.go), matching
-		// Init's own single-Cmd-return chain.
-		return s, loadScanPolicyCmd(env), false
-	case adminScanPolicyLoadedMsg:
-		if typed.err != nil {
-			return s, nil, false
-		}
-		s.policy = typed.settings
+	case overrideSummariesMsg:
+		s.overridesList = s.applySummaries(env, typed)
+		return s, securityLoadOverridesCmd(env, s.gen, s.feature), false
+	case securityOverridesMsg:
+		s.overridesList = s.applyOverrides(env, typed)
 		return s, nil, false
 	}
-	return s, nil, false
-}
-
-func (s *trivyReposScreen) rebuildTable(env screenEnv) {
-	if len(s.summaries) == 0 {
-		return
-	}
-	primary, _ := tableRoles(env.Layout)
-	s.table = buildAdminScanSummaryTable(annotateDisabledSummaries(s.summaries, s.overrides), s.selected, primary)
+	list, cmd, _ := s.applyEditorMsg(env, msg)
+	s.overridesList = list
+	return s, cmd, false
 }
 
 func (s trivyReposScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd, bool) {
+	if isPasteKey(msg) {
+		// Pasted text is never a command: its first character must not open
+		// an editor, a history or reload the list.
+		return s, nil, true
+	}
+	if list, handled := s.moveKey(msg); handled {
+		s.overridesList = list
+		return s, nil, true
+	}
 	switch {
 	case isEscKey(msg):
 		return s, navigate(screenAdminOverview), true
 	case isTabKey(msg):
 		return s, navigate(screenSecurityTrivy), true
-	case isMoveUpKey(msg):
-		if len(s.summaries) == 0 {
-			return s, nil, true
-		}
-		s.selected = boundedIndex(s.selected-1, len(s.summaries))
-		s.rebuildTable(env)
-		return s, nil, true
-	case isMoveDownKey(msg):
-		if len(s.summaries) == 0 {
-			return s, nil, true
-		}
-		s.selected = boundedIndex(s.selected+1, len(s.summaries))
-		s.rebuildTable(env)
-		return s, nil, true
 	case isRuneKey(msg, 'o'):
-		summary, ok := s.selectedSummary()
-		if !ok {
-			return s, nil, true
-		}
-		editor := newOverrideEditor(trivyFeatureName, summary.Repository)
-		s.editor = editor
-		return s, editor.Init(env), true
+		list, cmd := s.openEditor(env)
+		s.overridesList = list
+		return s, cmd, true
 	case isEnterKey(msg):
-		summary, ok := s.selectedSummary()
+		row, ok := s.selectedRow()
 		if !ok {
 			return s, nil, true
 		}
-		return s, openScanHistory(summary.Repository, screenSecurityTrivyRepos, scanHistoryTabIndexVulnerabilities), true
+		return s, openScanHistory(row.Repository, screenSecurityTrivyRepos, scanHistoryTabIndexVulnerabilities), true
 	case isRuneKey(msg, 'r'):
-		return s, loadTrivyRepositoryScanSummariesCmd(env, 25), true
+		if s.reading {
+			return s, nil, true
+		}
+		s.reading, s.note = true, ""
+		return s, loadOverrideSummariesCmd(env, s.gen, overridesScanLimit), true
 	}
 	return s, nil, true
 }
 
-func (s trivyReposScreen) selectedSummary() (repositorySummary, bool) {
-	if len(s.summaries) == 0 {
-		return repositorySummary{}, false
-	}
-	return s.summaries[boundedIndex(s.selected, len(s.summaries))], true
-}
-
 func (s trivyReposScreen) View(theme adminTheme, env screenEnv) screenFrame {
-	lines := []string{renderTrivyTabs(theme, screenSecurityTrivyRepos, s.policy)}
-	lines = append(lines, renderAdminScanSummary(theme, s.summaries, s.loaded, s.table)...)
-	lines = append(lines, renderAdminOperatorFooter(theme, env.Session, env.now())...)
-	frame := screenFrame{
-		Context: adminContext("Security", "Image scanning", "Repository alerts"),
-		Body:    renderSection(theme, strings.Join(lines, "\n"), env.Layout),
-	}
-	if s.editor.Active() {
-		frame.Overlay = renderOverrideEditor(theme, s.editor)
-	}
-	return frame
-}
-
-// loadTrivyRepositoryScanSummariesCmd/loadTrivyRepositoryOverridesListCmd
-// are the screenEnv-scoped equivalents of Model's own loadAdmin* methods
-// (mirror screen_gitleaks_config.go's configureFeatureCmd wrapper).
-func loadTrivyRepositoryScanSummariesCmd(env screenEnv, limit int) tea.Cmd {
-	return env.asModel().loadAdminRepositoryScanSummariesCmd(limit)
-}
-
-func loadTrivyRepositoryOverridesListCmd(env screenEnv) tea.Cmd {
-	return env.asModel().loadRepositoryOverridesListCmd(trivyFeatureName)
+	other := lipgloss.NewStyle().Padding(0, 1).Foreground(theme.muted.GetForeground())
+	return s.frame(theme, env, overridesView{
+		title:    "Image scanning",
+		subtitle: "Trivy, vulnerability scanner",
+		crumb:    []string{featureNavGroup, "Image scanning", "Repositories"},
+		nav:      shellNavImageScanning,
+		tabs:     other.Render("Config") + " " + theme.selected.Render("Repositories"),
+		foot:     "One row per repository, severity first. enter opens its scan history, o edits its override.",
+		keys:     s.Keys(),
+		history:  true,
+	})
 }
 
 var trivyReposKeys = screenKeys{short: []key.Binding{
-	key.NewBinding(key.WithKeys("up"), key.WithHelp("Up", "select alert")),
-	key.NewBinding(key.WithKeys("down"), key.WithHelp("Down", "select alert")),
-	key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", "details")),
+	key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "switch tabs")),
+	key.NewBinding(key.WithKeys("up", "down"), key.WithHelp("↑↓", "move")),
 	key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "override")),
+	key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "scan history")),
 	key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
-	key.NewBinding(key.WithKeys("tab"), key.WithHelp("Tab", "switch tabs")),
-	key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "back")),
+	key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
 }}

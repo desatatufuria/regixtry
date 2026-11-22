@@ -108,9 +108,9 @@ const (
 	// slotTrivyConfig/slotTrivyRepos hold Trivy's own peer screens (Phase
 	// 11): trivyConfigScreen (screenSecurityTrivy, Runtime tab equivalent
 	// plus config/scan-policy) and trivyReposScreen (screenSecurityTrivyRepos,
-	// Repository Alerts tab equivalent). trivyReposScreen embeds its own
-	// overrideEditor field directly (mirroring featureOverridesScreen),
-	// so the former slotTrivyOverride overlay slot no longer exists.
+	// the Repositories tab). Both Trivy tabs and the two other override
+	// screens embed their own override editor, so there is no separate
+	// override overlay slot.
 	slotTrivyConfig
 	slotTrivyRepos
 	// slotScanRuns/slotSecretFindings hold the two scanRunsScreen-backed

@@ -1,0 +1,24 @@
+  Admin › Security › Signing policy › Repositories                                                                             signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │
+                               │  Signing policy                                                                        image signature verification
+    Overview                   │  4 r  ╭──────────────────────────────────────────────────────────────────────╮
+                               │  ╭──  │  Signing override                                                    │  ──────────────────────────────────╮
+  ACCESS                       │  │    │  team/api. override active.                                          │  eam/api                           │
+      Users                    │  │ ▸  │  [x] Pull-time gate enforced                                         │  verride                           │
+      Robots                   │  │    │  Trusted Keys (1)                                                    │                                    │
+      Repository access        │  │    │    Key: 2c1d7289f2db                                                 │  VERRIDE                           │
+                               │  │    │  Trusted Identities (1)                                              │  ull-time gate            enforced │
+  SECURITY                     │  │    │    Identity: https://github.com/team/.* (https://token.actions.git…  │  nsigned self-read          pusher │
+      Image scanning           │  │    │  Unsigned self-read (space cycles)                                   │  rusted keys                     1 │
+      Secret scanning          │  │    │   pusher                                                             │  dentities                       1 │
+    ▸ Signing policy           │  │    │  Clear override, use the global settings                             │  pdated                      9 Nov │
+                               │  │    │                                                                      │                                    │
+  OPERATIONS                   │  │    │   Save  enter   Cancel  esc                                          │  CTIONS                            │
+      Scan runs                │  │    │  tab next field, space toggles or cycles, n adds and x deletes in a  │  dit override                    o │
+      Secret findings          │  │    │  list                                                                │  efresh                          r │
+      Update channel           │  ╰──  ╰──────────────────────────────────────────────────────────────────────╯                                    │
+                               │  An override replaces the global policy for that repository. o edits         │                                    │
+                               │  the override of the selected repository.                                    ╰────────────────────────────────────╯
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  tab next field   space toggle   enter save   esc cancel                                                                                             

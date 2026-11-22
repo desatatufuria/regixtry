@@ -13,7 +13,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
-	bubbletable "github.com/evertras/bubble-table/table"
 	appregixtry "regixtry/internal/app/regixtry"
 	domainauth "regixtry/internal/domain/auth"
 	regixtrydomain "regixtry/internal/domain/regixtry"
@@ -313,47 +312,6 @@ func TestModelViewResizeAboveMinimumRestoresRendering(t *testing.T) {
 	}
 	if !strings.Contains(view, model.loadingText) {
 		t.Fatalf("view = %q, want loading screen content restored", view)
-	}
-}
-
-// TestModelResizeTallerRebuildsAdminTablesToShowMoreRowsWithoutRestart is the
-// Phase 5 task 5.5 RED test, first scenario (spec.md "Live Terminal Resize
-// Refit", "Growing the terminal shows more rows"): resizing taller while an
-// admin table screen is displayed must recompute the table pageSize and show
-// more rows without the operator restarting or re-navigating.
-func TestModelResizeTallerRebuildsAdminTablesToShowMoreRowsWithoutRestart(t *testing.T) {
-	t.Parallel()
-
-	model := NewModel(&fakeQueryService{})
-	updated, _ := model.Update(tea.WindowSizeMsg{Width: minViewportWidth, Height: minViewportHeight})
-	result := updated.(Model)
-	result.screen = screenSecurityTrivyRepos
-	result.adminSession = AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: time.Now().Add(time.Hour)}
-	scanRuns := make([]ports.ScanRun, 40)
-	for i := range scanRuns {
-		scanRuns[i] = ports.ScanRun{ID: fmt.Sprintf("run-%d", i), Repository: fmt.Sprintf("team/service-%d", i)}
-	}
-	// Repository Alerts' table lives on trivyReposScreen (design.md's State
-	// Migration table) -- mounted here like production (navigateMsg).
-	repos := trivyReposScreen{summaries: summarizeScanRunsByRepository(scanRuns), loaded: true}
-	repos.rebuildTable(result.screenEnv())
-	result.adminScreens[slotTrivyRepos] = repos
-	result.rebuildAdminTables(result.adminTablesLayout())
-	beforePageSize := result.adminView.Layout.Primary
-
-	grown, _ := result.Update(tea.WindowSizeMsg{Width: minViewportWidth, Height: minViewportHeight + 20})
-	afterModel := grown.(Model)
-
-	if got := afterModel.adminView.Layout.Primary; got <= beforePageSize {
-		t.Fatalf("primary pageSize after taller resize = %d, want > %d (before resize) — resize must recompute the table budget without restart", got, beforePageSize)
-	}
-	afterRepos, ok := afterModel.adminScreens[slotTrivyRepos].(trivyReposScreen)
-	if !ok {
-		t.Fatal("adminScreens[slotTrivyRepos] not a trivyReposScreen after resize")
-	}
-	wantHeight := afterModel.adminView.Layout.Primary + tableChromeRows
-	if got := lipgloss.Height(afterRepos.table.View()); got != wantHeight {
-		t.Fatalf("repository alerts table height after resize = %d, want pageSize(%d)+tableChromeRows = %d", got, afterModel.adminView.Layout.Primary, wantHeight)
 	}
 }
 
@@ -2108,24 +2066,6 @@ func TestModelTrivyOverrideEditorOpenerKeyIsScopedToRepositoryAlertsRow(t *testi
 			t.Fatalf("executeFeatureActionCalls = %d, want 0 ('o' must not fall through to featureActionForKey)", adminClient.executeFeatureActionCalls)
 		}
 	})
-
-	t.Run("o with no Repository Alerts row highlighted does not open the editor", func(t *testing.T) {
-		t.Parallel()
-		adminClient := &fakeAdminClient{
-			loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-			featurePage:  baseFeaturePage,
-		}
-		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
-		updated = openSidebarItem(t, updated, shellNavImageScanning)
-		updated = runKey(t, updated, "tab") // trivyReposScreen, no scan runs loaded
-
-		updated = runKey(t, updated, "o")
-
-		repos, ok := updated.adminScreens[slotTrivyRepos].(trivyReposScreen)
-		if !ok || repos.editor.Active() {
-			t.Fatalf("adminScreens[slotTrivyRepos].editor = %#v, want inactive with no highlighted row", repos.editor)
-		}
-	})
 }
 
 // TestModelTrivyOverrideEditorSetAndClearRoundTripReflectsInModal is the
@@ -2187,7 +2127,7 @@ func TestModelTrivyOverrideEditorSetAndClearRoundTripReflectsInModal(t *testing.
 	if !editorAfterSave.exists || editorAfterSave.pathPrimary != "/etc/trivy/ignore" {
 		t.Fatalf("editor = %#v, want the saved override reflected", editorAfterSave)
 	}
-	if !strings.Contains(submitted.View().Content, "Repository override saved") {
+	if !strings.Contains(submitted.View().Content, "Override saved") {
 		t.Fatalf("view = %q, want save feedback", submitted.View().Content)
 	}
 
@@ -2201,6 +2141,14 @@ func TestModelTrivyOverrideEditorSetAndClearRoundTripReflectsInModal(t *testing.
 		cleared = runKey(t, cleared, "tab")
 	}
 	cleared = runKey(t, cleared, "enter")
+	// Clearing asks first, naming the repository and what follows.
+	if adminClient.clearRepositoryOverrideCalls != 0 {
+		t.Fatalf("clearRepositoryOverrideCalls = %d, want 0 before the confirmation", adminClient.clearRepositoryOverrideCalls)
+	}
+	if view := cleared.View().Content; !strings.Contains(view, "Clear override") || !strings.Contains(view, "team/api") {
+		t.Fatalf("view = %q, want the clear confirmation naming team/api", view)
+	}
+	cleared = runKey(t, cleared, "y")
 
 	if adminClient.clearRepositoryOverrideCalls != 1 {
 		t.Fatalf("clearRepositoryOverrideCalls = %d, want 1", adminClient.clearRepositoryOverrideCalls)
@@ -2210,7 +2158,7 @@ func TestModelTrivyOverrideEditorSetAndClearRoundTripReflectsInModal(t *testing.
 	if editorAfterClear.exists {
 		t.Fatal("editor.exists = true, want false after clear")
 	}
-	if !strings.Contains(cleared.View().Content, "inheriting global settings") {
+	if !strings.Contains(cleared.View().Content, "inheriting the global settings") {
 		t.Fatalf("view = %q, want the editor to show the repository inheriting global settings after clear", cleared.View().Content)
 	}
 
@@ -2221,7 +2169,7 @@ func TestModelTrivyOverrideEditorSetAndClearRoundTripReflectsInModal(t *testing.
 		t.Fatalf("clearRepositoryOverrideCalls = %d, want still 1 (inert when already inheriting global)", adminClient.clearRepositoryOverrideCalls)
 	}
 	inertRepos, _ := inert.adminScreens[slotTrivyRepos].(trivyReposScreen)
-	if !strings.Contains(inertRepos.editor.err, "Already inheriting global") {
+	if !strings.Contains(inertRepos.editor.err, "Already inheriting the global") {
 		t.Fatalf("editor.err = %q, want the inert-clear message", inertRepos.editor.err)
 	}
 }
@@ -2424,186 +2372,6 @@ func TestFeatureOverridesScreenSigningDeleteKeyIsUsageInformedAndNeverBlocked(t 
 	}
 	if len(screenAfterConfirm.editor.keys.Keys()) != 0 {
 		t.Fatalf("editor.keys.Keys() = %#v, want empty -- confirming must remove the key even though the count (42, capped) was high", screenAfterConfirm.editor.keys.Keys())
-	}
-}
-
-func TestModelTrivyRepositoryAlertsLoadSelectDetailAndRecoverEmptyState(t *testing.T) {
-	t.Parallel()
-
-	now := time.Date(2026, time.August, 8, 14, 0, 0, 0, time.UTC)
-	t.Run("loads scan runs and drills into selected alert", func(t *testing.T) {
-		adminClient := &fakeAdminClient{
-			loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-			featurePage: ports.FeaturePage{
-				Summary:  ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
-				Header:   []ports.FeatureField{{Label: "Enabled", Value: "true"}},
-				Sections: []ports.FeatureSection{{ID: "config", Title: "Configuration", Kind: "fields", Fields: []ports.FeatureField{{Label: "Schedule Enabled", Value: "true"}, {Label: "Interval", Value: "6h0m0s"}, {Label: "Timeout", Value: "10m0s"}, {Label: "Registry Reachable URL", Value: "https://registry.internal:5443"}, {Label: "Max Concurrency", Value: "2"}}}, {ID: "runtime", Title: "Runtime", Kind: "fields", Fields: []ports.FeatureField{{Label: "Status", Value: "ready"}, {Label: "Version", Value: "0.57.1"}}}},
-			},
-			scanRuns: []ports.ScanRun{
-				{ID: "run-2", Repository: "team/api", RequestedRef: "1.0.0", Digest: "sha256:222", Status: ports.ScanRunStatusCompleted, Critical: 1, High: 0, Medium: 0, Low: 0, HasFixable: true},
-				{ID: "run-3", Repository: "library/base", RequestedRef: "stable", Digest: "sha256:333", Status: ports.ScanRunStatusCompleted, Critical: 1, High: 0, Medium: 0, Low: 0, HasFixable: false},
-				{ID: "run-1", Repository: "library/alpine", RequestedRef: "latest", Digest: "sha256:111", Status: ports.ScanRunStatusCompleted, Critical: 0, High: 2, Medium: 3, Low: 4, HasFixable: true},
-			},
-			scanRunDetails: map[string]ports.ScanRunDetail{
-				"run-2": {
-					Run:                ports.ScanRun{ID: "run-2", Repository: "team/api", RequestedRef: "1.0.0", Digest: "sha256:222", Status: ports.ScanRunStatusCompleted, Critical: 1},
-					Findings:           []ports.ScanRunFinding{{Severity: "CRITICAL", VulnerabilityID: "CVE-2026-0001", PackageName: "openssl", InstalledVersion: "3.0.0", FixedVersion: "3.0.1", Fixable: true}},
-					DBFreshness:        ports.ScanRunDBFreshness{FreshnessState: ports.ScanRunDBFreshnessStateStale},
-					ReferenceFreshness: ports.ScanReferenceFreshnessMoved,
-				},
-				"run-3": {
-					Run:                ports.ScanRun{ID: "run-3", Repository: "library/base", RequestedRef: "stable", Digest: "sha256:333", Status: ports.ScanRunStatusCompleted, Critical: 1},
-					Findings:           []ports.ScanRunFinding{{Severity: "CRITICAL", VulnerabilityID: "CVE-2026-0002", PackageName: "busybox", InstalledVersion: "1.0.0", Fixable: false}},
-					DBFreshness:        ports.ScanRunDBFreshness{FreshnessState: ports.ScanRunDBFreshnessStateFresh},
-					ReferenceFreshness: ports.ScanReferenceFreshnessCurrent,
-				},
-			},
-		}
-		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
-		landingCalls := adminClient.listRepositoryScanSummariesCalls // the Overview's own read
-		updated = openSidebarItem(t, updated, shellNavImageScanning)
-		updated = runKey(t, updated, "tab")
-
-		if got := adminClient.listRepositoryScanSummariesCalls - landingCalls; got != 1 {
-			t.Fatalf("listRepositoryScanSummariesCalls grew by %d after opening Repository Alerts, want one repository-alert load", got)
-		}
-		alertsView := updated.View().Content
-		for _, want := range []string{"Repository Alerts", "Repository", "Reference", "team/api", "library/base", "library/alpine", "1.0.0", "stable", "latest"} {
-			if !strings.Contains(alertsView, want) {
-				t.Fatalf("view = %q, want %q", alertsView, want)
-			}
-		}
-		repos, ok := updated.adminScreens[slotTrivyRepos].(trivyReposScreen)
-		if !ok {
-			t.Fatal("adminScreens[slotTrivyRepos] not a mounted trivyReposScreen")
-		}
-		if got, want := repos.table.HighlightedRow().Data[adminTableMetaScanRunID], "run-2"; got != want {
-			t.Fatalf("highlighted scan-summary metadata = %#v, want %q", got, want)
-		}
-
-		// Enter opens the scan history modal instead of the old inline
-		// detail (spec.md "Repository Alert Drill-Down Opens History
-		// Modal"), scoped to the highlighted summary row's repository.
-		updated = runKey(t, updated, "enter")
-		if adminClient.getScanRunDetailCalls != 1 {
-			t.Fatalf("getScanRunDetailCalls = %d, want detail fetch on enter", adminClient.getScanRunDetailCalls)
-		}
-		if !scanHistoryScreenOf(t, updated).modal.Open {
-			t.Fatal("scanHistoryScreen.modal.Open = false, want true after enter")
-		}
-		if got, want := scanHistoryScreenOf(t, updated).modal.Repository, "team/api"; got != want {
-			t.Fatalf("scanHistoryScreen.modal.Repository = %q, want %q", got, want)
-		}
-		detailView := updated.View().Content
-		for _, want := range []string{"Run 1 of 1", "CVE-2026-0001", "openssl"} {
-			if !strings.Contains(detailView, want) {
-				t.Fatalf("view = %q, want %q", detailView, want)
-			}
-		}
-
-		updated = runKey(t, updated, "esc")
-		if updated.adminScreens[slotScanHistory] != nil {
-			t.Fatal("adminScreens[slotScanHistory] still mounted, want un-mounted after esc")
-		}
-		if strings.Contains(updated.View().Content, "Run 1 of 1") {
-			t.Fatalf("view = %q, want esc to close the scan history modal with no residual detail", updated.View().Content)
-		}
-		reposAfterEsc, ok := updated.adminScreens[slotTrivyRepos].(trivyReposScreen)
-		if !ok {
-			t.Fatal("adminScreens[slotTrivyRepos] not a mounted trivyReposScreen")
-		}
-		if got, want := reposAfterEsc.selected, 0; got != want {
-			t.Fatalf("trivyReposScreen.selected = %d, want %d", got, want)
-		}
-	})
-
-	t.Run("empty scan runs stay recoverable and runtime tab remains usable", func(t *testing.T) {
-		adminClient := &fakeAdminClient{
-			loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-			featurePage: ports.FeaturePage{
-				Summary:  ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
-				Header:   []ports.FeatureField{{Label: "Enabled", Value: "true"}},
-				Sections: []ports.FeatureSection{{ID: "config", Title: "Configuration", Kind: "fields", Fields: []ports.FeatureField{{Label: "Schedule Enabled", Value: "true"}, {Label: "Interval", Value: "6h0m0s"}, {Label: "Timeout", Value: "10m0s"}, {Label: "Registry Reachable URL", Value: "https://registry.internal:5443"}, {Label: "Max Concurrency", Value: "2"}}}, {ID: "runtime", Title: "Runtime", Kind: "fields", Fields: []ports.FeatureField{{Label: "Status", Value: "ready"}, {Label: "Version", Value: "0.57.1"}}}},
-			},
-		}
-		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
-		updated = openSidebarItem(t, updated, shellNavImageScanning)
-		updated = runKey(t, updated, "tab")
-		if !strings.Contains(updated.View().Content, "No repository alerts found.") {
-			t.Fatalf("view = %q, want clear empty-state message", updated.View().Content)
-		}
-		updated = runKey(t, updated, "tab")
-		if !strings.Contains(ansi.Strip(updated.View().Content), "version 0.57.1") {
-			t.Fatalf("view = %q, want the config tab (trivyConfigScreen) still usable after empty alerts", updated.View().Content)
-		}
-	})
-}
-
-// TestModelRepositoryAlertsScreenShowsOneRowPerRepositoryNotPerScanRun is the
-// Phase 4 removal-sweep RED/GREEN test: after the call site swap
-// (renderTrivyRepositoryAlerts -> renderAdminScanSummary), the
-// Repository Alerts screen an operator actually sees through a real
-// Model.Update()/View() key flow must show exactly one row per repository,
-// with a Runs count reflecting every underlying scan run for that
-// repository — not one row per scan run (spec.md "Repository Alerts
-// Summarized Per Repository With Ordering And Freshness").
-func TestModelRepositoryAlertsScreenShowsOneRowPerRepositoryNotPerScanRun(t *testing.T) {
-	t.Parallel()
-
-	now := time.Date(2026, time.August, 12, 9, 0, 0, 0, time.UTC)
-	adminClient := &fakeAdminClient{
-		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-		featurePage:  ports.FeaturePage{Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}},
-		// team/api has three underlying scan runs; library/base has one.
-		// Four scan runs total, but only two repositories.
-		scanRuns: []ports.ScanRun{
-			{ID: "run-1", Repository: "team/api", RequestedRef: "1.0.0", Status: ports.ScanRunStatusCompleted, CreatedAt: now.Add(-3 * time.Hour), Critical: 0, High: 1},
-			{ID: "run-2", Repository: "team/api", RequestedRef: "1.0.1", Status: ports.ScanRunStatusCompleted, CreatedAt: now.Add(-2 * time.Hour), Critical: 1, High: 0},
-			{ID: "run-3", Repository: "team/api", RequestedRef: "1.0.2", Status: ports.ScanRunStatusCompleted, CreatedAt: now.Add(-1 * time.Hour), Critical: 2, High: 0, HasFixable: true},
-			{ID: "run-4", Repository: "library/base", RequestedRef: "stable", Status: ports.ScanRunStatusCompleted, CreatedAt: now.Add(-30 * time.Minute), Critical: 0, High: 0},
-		},
-	}
-
-	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
-	updated = openSidebarItem(t, updated, shellNavImageScanning)
-	updated = runKey(t, updated, "tab")
-
-	repos, ok := updated.adminScreens[slotTrivyRepos].(trivyReposScreen)
-	if !ok {
-		t.Fatal("adminScreens[slotTrivyRepos] not a mounted trivyReposScreen")
-	}
-	summaryTable := repos.table
-	if got, want := summaryTable.TotalRows(), 2; got != want {
-		t.Fatalf("ScanSummary TotalRows() = %d, want %d (one row per repository, not %d per scan run)", got, want, len(adminClient.scanRuns))
-	}
-
-	view := updated.View().Content
-	if !strings.Contains(view, "Repository Alerts") {
-		t.Fatalf("view = %q, want the Repository Alerts summary table on screen", view)
-	}
-	// The old per-scan-run rendering path is gone: only one row per
-	// repository is ever shown, so "team/api" appears exactly once even
-	// though it backs three scan runs.
-	if got, want := strings.Count(view, "team/api"), 1; got != want {
-		t.Fatalf("view contains %q %d times, want exactly %d (one summary row, not one per underlying scan run)", "team/api", got, want)
-	}
-	if !strings.Contains(view, "library/base") {
-		t.Fatalf("view = %q, want %q's summary row visible", view, "library/base")
-	}
-	// The Runs column on team/api's single summary row must reflect all
-	// three underlying scan runs.
-	rows := summaryTable.GetVisibleRows()
-	found := false
-	for _, row := range rows {
-		if repo, _ := row.Data[adminTableColumnScanSummaryRepository].(string); repo == "team/api" {
-			found = true
-			if got, want := row.Data[adminTableColumnScanSummaryRuns], 3; got != want {
-				t.Fatalf("team/api Runs column = %#v, want %d", got, want)
-			}
-		}
-	}
-	if !found {
-		t.Fatal("team/api summary row not found in ScanSummary table")
 	}
 }
 
@@ -2855,136 +2623,6 @@ func TestModelTrivyConfigModalRendersFullBottomBorderAndHelpLineAtViewportFloor(
 	}
 	if !strings.Contains(ansi.Strip(view), "tab next field, space toggles") {
 		t.Fatalf("view = %q, want the modal's help line present at the viewport floor", view)
-	}
-}
-
-func TestModelTrivyTablesPreserveEmptyStateAndBackendOrdering(t *testing.T) {
-	t.Parallel()
-
-	now := time.Date(2026, time.August, 10, 11, 0, 0, 0, time.UTC)
-	t.Run("empty state stays explicit", func(t *testing.T) {
-		adminClient := &fakeAdminClient{
-			loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-			featurePage:  ports.FeaturePage{Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}, Header: []ports.FeatureField{{Label: "Enabled", Value: "true"}}},
-		}
-		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
-		updated = openSidebarItem(t, updated, shellNavImageScanning)
-		updated = runKey(t, updated, "tab")
-
-		repos, ok := updated.adminScreens[slotTrivyRepos].(trivyReposScreen)
-		if !ok {
-			t.Fatal("adminScreens[slotTrivyRepos] not a mounted trivyReposScreen")
-		}
-		if got, want := repos.table.TotalRows(), 0; got != want {
-			t.Fatalf("scan-summary table rows = %d, want %d", got, want)
-		}
-		if !strings.Contains(updated.View().Content, "No repository alerts found.") {
-			t.Fatalf("view = %q, want empty alerts message", updated.View().Content)
-		}
-	})
-
-	t.Run("scan runs keep sorted backend values in the table", func(t *testing.T) {
-		adminClient := &fakeAdminClient{
-			loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-			featurePage:  ports.FeaturePage{Summary: ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true}, Header: []ports.FeatureField{{Label: "Enabled", Value: "true"}}},
-			scanRuns: []ports.ScanRun{
-				{ID: "run-2", Repository: "team/api", RequestedRef: "1.0.0", Status: ports.ScanRunStatusCompleted, Critical: 1, High: 0, HasFixable: true},
-				{ID: "run-3", Repository: "library/base", RequestedRef: "stable", Status: ports.ScanRunStatusCompleted, Critical: 1, High: 0, HasFixable: false},
-				{ID: "run-1", Repository: "library/alpine", RequestedRef: "latest", Status: ports.ScanRunStatusCompleted, Critical: 0, High: 2, HasFixable: true},
-			},
-		}
-		updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
-		updated = openSidebarItem(t, updated, shellNavImageScanning)
-		updated = runKey(t, updated, "tab")
-
-		repos, ok := updated.adminScreens[slotTrivyRepos].(trivyReposScreen)
-		if !ok {
-			t.Fatal("adminScreens[slotTrivyRepos] not a mounted trivyReposScreen")
-		}
-		if got, want := repos.table.TotalRows(), 3; got != want {
-			t.Fatalf("scan-summary table rows = %d, want %d", got, want)
-		}
-		if got, want := repos.table.HighlightedRow().Data[adminTableMetaScanRunID], "run-2"; got != want {
-			t.Fatalf("highlighted scan-summary metadata = %#v, want %q", got, want)
-		}
-		view := updated.View().Content
-		for _, want := range []string{"Repository", "Reference", "Status", "Critical", "High", "Fixable", "team/api", "library/base", "library/alpine", "1.0.0", "stable", "latest"} {
-			if !strings.Contains(view, want) {
-				t.Fatalf("view = %q, want %q", view, want)
-			}
-		}
-	})
-}
-
-func TestAdminTableStatusCellsStayNeutral(t *testing.T) {
-	t.Parallel()
-
-	scanSummaryTable := buildAdminScanSummaryTable([]repositorySummary{{Repository: "team/api", LatestRun: ports.ScanRun{ID: "run-1", Repository: "team/api", RequestedRef: "1.0.0", Status: ports.ScanRunStatusCompleted, Critical: 1, High: 0, HasFixable: true}, RunCount: 1}}, 0, defaultViewportHeight)
-	if _, styled := scanSummaryTable.HighlightedRow().Data[adminTableColumnScanSummaryStatus].(bubbletable.StyledCell); styled {
-		t.Fatal("scan-summary cells must stay neutral")
-	}
-}
-
-func TestModelAdminFeatureTablesKeepScreenShortcutsAuthoritative(t *testing.T) {
-	t.Parallel()
-
-	now := time.Date(2026, time.August, 10, 12, 0, 0, 0, time.UTC)
-	adminClient := &fakeAdminClient{
-		loginSession: AdminSession{Username: "operator", BearerToken: "bearer-token", ExpiresAt: now.Add(5 * time.Minute)},
-		featurePage: ports.FeaturePage{
-			Summary:  ports.FeatureSummary{Name: "trivy", Kind: ports.FeatureKindBuiltin, Enabled: true, Configured: true},
-			Header:   []ports.FeatureField{{Label: "Enabled", Value: "true"}},
-			Sections: []ports.FeatureSection{{ID: "config", Title: "Configuration", Kind: "fields", Fields: []ports.FeatureField{{Label: "Schedule Enabled", Value: "true"}, {Label: "Interval", Value: "6h0m0s"}, {Label: "Timeout", Value: "10m0s"}, {Label: "Registry Reachable URL", Value: "https://registry.internal:5443"}, {Label: "Max Concurrency", Value: "2"}}}},
-			Actions:  []ports.FeatureAction{{ID: "refresh", Label: "Refresh"}, {ID: "disable", Label: "Disable", ConfirmTitle: "Confirm Disable", ConfirmMessage: `Confirm disable feature "trivy"?`}},
-		},
-		scanRuns: []ports.ScanRun{
-			{ID: "run-1", Repository: "team/api", RequestedRef: "1.0.0", Status: ports.ScanRunStatusCompleted, Critical: 1, High: 0, HasFixable: true},
-			{ID: "run-2", Repository: "library/base", RequestedRef: "stable", Status: ports.ScanRunStatusCompleted, Critical: 0, High: 2, HasFixable: false},
-		},
-		scanRunDetails: map[string]ports.ScanRunDetail{
-			"run-2": {Run: ports.ScanRun{ID: "run-2", Repository: "library/base", RequestedRef: "stable", Status: ports.ScanRunStatusCompleted}, Findings: []ports.ScanRunFinding{{Severity: "HIGH", VulnerabilityID: "CVE-2026-2000", PackageName: "busybox", InstalledVersion: "1.0.0", FixedVersion: "1.0.1", Fixable: true}}},
-		},
-	}
-
-	updated := runAdminLogin(t, newAdminReadyModel(t, adminClient), "operator", "secret-pass")
-	updated = openSidebarItem(t, updated, shellNavImageScanning)
-	updated = runKey(t, updated, "tab") // trivyReposScreen (Repository Alerts tab's successor)
-	updated = runKey(t, updated, "down")
-
-	repos, ok := updated.adminScreens[slotTrivyRepos].(trivyReposScreen)
-	if !ok {
-		t.Fatal("adminScreens[slotTrivyRepos] not a mounted trivyReposScreen")
-	}
-	if got, want := repos.table.GetHighlightedRowIndex(), 1; got != want {
-		t.Fatalf("scan-summary highlighted index = %d, want %d", got, want)
-	}
-	if got, want := repos.table.HighlightedRow().Data[adminTableMetaScanRunID], "run-2"; got != want {
-		t.Fatalf("highlighted scan-summary metadata = %#v, want %q", got, want)
-	}
-
-	updated = runKey(t, updated, "enter")
-	if adminClient.getScanRunDetailCalls != 1 {
-		t.Fatalf("getScanRunDetailCalls = %d, want 1", adminClient.getScanRunDetailCalls)
-	}
-	if !strings.Contains(updated.View().Content, "CVE-2026-2000") {
-		t.Fatalf("view = %q, want loaded detail", updated.View().Content)
-	}
-
-	updated = runKey(t, updated, "esc")
-	if updated.screen != screenSecurityTrivyRepos {
-		t.Fatalf("screen = %q, want %q after closing detail", updated.screen, screenSecurityTrivyRepos)
-	}
-	updated = runKey(t, updated, "tab") // back to trivyConfigScreen
-	updated = runKey(t, updated, "c")
-	trivy, ok := updated.adminScreens[slotTrivyConfig].(trivyConfigScreen)
-	if !ok || !trivy.cfg.Active() {
-		t.Fatal("expected config shortcut to stay authoritative on runtime tab")
-	}
-
-	updated = runKey(t, updated, "esc")
-	updated = runKey(t, updated, "r")
-	if adminClient.getFeaturePageCalls < 2 {
-		t.Fatalf("getFeaturePageCalls = %d, want refresh after table interactions", adminClient.getFeaturePageCalls)
 	}
 }
 
@@ -3533,15 +3171,46 @@ func (f *fakeAdminClient) ListRepositoryScanSummaries(_ context.Context, _ Admin
 	}
 	runs := append([]ports.ScanRun(nil), f.scanRuns...)
 	sort.SliceStable(runs, func(i, j int) bool { return fakeScanRunSortsBefore(runs[i], runs[j]) })
-	grouped := summarizeScanRunsByRepository(runs)
+	grouped := fakeScanSummariesByRepository(runs)
 	summaries := make([]ports.RepositoryScanSummary, 0, len(grouped))
 	for _, summary := range grouped {
 		if limit > 0 && len(summaries) >= limit {
 			break
 		}
-		summaries = append(summaries, ports.RepositoryScanSummary{Run: summary.LatestRun, RunCount: summary.RunCount})
+		summaries = append(summaries, summary)
 	}
 	return summaries, nil
+}
+
+// fakeScanSummariesByRepository collapses runs into one summary per repository,
+// in first-seen order, like the real endpoint: the most recently executed run
+// is the summary's run and RunCount counts them all.
+func fakeScanSummariesByRepository(runs []ports.ScanRun) []ports.RepositoryScanSummary {
+	executed := func(run ports.ScanRun) time.Time {
+		if run.FinishedAt != nil {
+			return *run.FinishedAt
+		}
+		return run.CreatedAt
+	}
+	var order []string
+	byRepo := map[string]*ports.RepositoryScanSummary{}
+	for _, run := range runs {
+		summary, ok := byRepo[run.Repository]
+		if !ok {
+			order = append(order, run.Repository)
+			byRepo[run.Repository] = &ports.RepositoryScanSummary{Run: run, RunCount: 1}
+			continue
+		}
+		summary.RunCount++
+		if executed(run).After(executed(summary.Run)) {
+			summary.Run = run
+		}
+	}
+	summaries := make([]ports.RepositoryScanSummary, 0, len(order))
+	for _, repo := range order {
+		summaries = append(summaries, *byRepo[repo])
+	}
+	return summaries
 }
 
 func (f *fakeAdminClient) GetScanRunDetail(_ context.Context, _ AdminSession, runID string) (ports.ScanRunDetail, error) {

@@ -1,0 +1,24 @@
+  Admin › Security › Signing policy › Repositories                                                                             signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                      
+                               │  Signing policy                                                                        image signature verification  
+    Overview                   │                                                                                                                      
+                               │  ╭────────────────────────────────────────────────────────────────────────╮  ╭────────────────────────────────────╮  
+  ACCESS                       │  │   REPOSITORY         STATUS     ENABLED  DETAIL            UPDATED     │  │ Select a repository to see its ov… │  
+      Users                    │  │ Could not read the overrides: the admin API is unreachable             │  │                                    │  
+      Robots                   │  │ Press r to try again.                                                  │  │                                    │  
+      Repository access        │  │                                                                        │  │                                    │  
+                               │  │                                                                        │  │                                    │  
+  SECURITY                     │  │                                                                        │  │                                    │  
+      Image scanning           │  │                                                                        │  │                                    │  
+      Secret scanning          │  │                                                                        │  │                                    │  
+    ▸ Signing policy           │  │                                                                        │  │                                    │  
+                               │  │                                                                        │  │                                    │  
+  OPERATIONS                   │  │                                                                        │  │                                    │  
+      Scan runs                │  │                                                                        │  │                                    │  
+      Secret findings          │  │                                                                        │  │                                    │  
+      Update channel           │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
+                               │  An override replaces the global policy for that repository. o edits         │                                    │  
+                               │  the override of the selected repository.                                    ╰────────────────────────────────────╯  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ↑↓ move   o override   r refresh   esc back                                                                                                         

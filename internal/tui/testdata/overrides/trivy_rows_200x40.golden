@@ -1,0 +1,40 @@
+  Admin › Security › Image scanning › Repositories                                                                                                                               signed in as operator  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                                                                        
+                               │  Image scanning                                                                                                                          Trivy, vulnerability scanner  
+    Overview                   │  4 repositories, 2 with an override                                                                                                                                    
+                               │   Config   Repositories                                                                                                                                                
+  ACCESS                       │  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  ╭──────────────────────────────────────╮  
+      Users                    │  │   REPOSITORY                                                               CRIT  HIGH  STATUS     ENABLED  UPDATED     │  │ team/api                             │  
+      Robots                   │  │ ▸ team/api                                                                 2     5     override   yes      14 Nov      │  │ override                             │  
+      Repository access        │  │   team/web                                                                 0     3     inherited  —        -           │  │                                      │  
+                               │  │   team/docs                                                                0     0     override   no       2 Nov       │  │ OVERRIDE                             │  
+  SECURITY                     │  │   team/infra                                                               1     0     inherited  —        -           │  │ Scanning                          on │  
+    ▸ Image scanning           │  │                                                                                                                        │  │ Ignore file        /etc/trivy/ignore │  
+      Secret scanning          │  │                                                                                                                        │  │ Ignore policy                      - │  
+      Signing policy           │  │                                                                                                                        │  │ Updated                       14 Nov │  
+                               │  │                                                                                                                        │  │                                      │  
+  OPERATIONS                   │  │                                                                                                                        │  │ LATEST SCAN                          │  
+      Scan runs                │  │                                                                                                                        │  │ Reference                      1.4.2 │  
+      Secret findings          │  │                                                                                                                        │  │ Status                     completed │  
+      Update channel           │  │                                                                                                                        │  │ Critical                           2 │  
+                               │  │                                                                                                                        │  │ High                               5 │  
+                               │  │                                                                                                                        │  │ Runs                               7 │  
+                               │  │                                                                                                                        │  │ Scanned                 20 Nov 10:14 │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │ ACTIONS                              │  
+                               │  │                                                                                                                        │  │ Edit override                      o │  
+                               │  │                                                                                                                        │  │ Scan history                   enter │  
+                               │  │                                                                                                                        │  │ Refresh                            r │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │                                      │  
+                               │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  │                                      │  
+                               │  One row per repository, severity first. enter opens its scan history, o edits its override.                                 ╰──────────────────────────────────────╯  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  tab switch tabs   ↑↓ move   o override   enter scan history   r refresh   esc back                                                                                                                    

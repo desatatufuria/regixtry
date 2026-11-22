@@ -339,6 +339,8 @@ type securityModalSpec struct {
 	// note is the outcome of the last save when the modal stays open.
 	note   string
 	saving bool
+	// noSave leaves out the Save button: nothing can be saved yet.
+	noSave bool
 	hint   string
 	width  int
 }
@@ -392,7 +394,11 @@ func securityModal(theme adminTheme, env screenEnv, spec securityModalSpec) stri
 	if spec.saving {
 		save = "Saving…"
 	}
-	tail = append(tail, "", theme.pill.Render(save)+"  "+theme.muted.Render("Cancel  esc"))
+	buttons := theme.pill.Render(save) + "  " + theme.muted.Render("Cancel  esc")
+	if spec.noSave {
+		buttons = theme.muted.Render("Cancel  esc")
+	}
+	tail = append(tail, "", buttons)
 	tail = append(tail, securityNote(theme, spec.hint, inner)...)
 
 	var body []string

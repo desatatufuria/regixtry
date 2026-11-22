@@ -1,0 +1,40 @@
+  Admin › Security › Image scanning › Repositories                                                                                                                               signed in as operator  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │
+                               │  Image scanning                                                                                                                          Trivy, vulnerability scanner
+    Overview                   │  4 repositories, 2 with an override
+                               │   Config   Repositories 
+  ACCESS                       │  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  ╭──────────────────────────────────────╮
+      Users                    │  │   REPOSITORY                                                               CRIT  HIGH  STATUS     ENABLED  UPDATED     │  │ team/api                             │
+      Robots                   │  │ ▸ team/api                                                                 2     5     override   yes      14 Nov      │  │ override                             │
+      Repository access        │  │   team/web                                                                 0     3     inherited  —        -           │  │                                      │
+                               │  │   team/docs                                                                0     0     override   no       2 Nov       │  │ OVERRIDE                             │
+  SECURITY                     │  │   team/infra                                                               1     0     inherited  —        -           │  │ Scanning                          on │
+    ▸ Image scanning           │  │                                                                                                                        │  │ Ignore file        /etc/trivy/ignore │
+      Secret scanning          │  │                                       ╭──────────────────────────────────────────────────╮                             │  │ Ignore policy                      - │
+      Signing policy           │  │                                       │  Trivy override                                  │                             │  │ Updated                       14 Nov │
+                               │  │                                       │  team/api. override active.                      │                             │  │                                      │
+  OPERATIONS                   │  │                                       │  [x] Scanning enabled                            │                             │  │ LATEST SCAN                          │
+      Scan runs                │  │                                       │  Ignore file path                                │                             │  │ Reference                      1.4.2 │
+      Secret findings          │  │                                       │   /etc/trivy/ignore                              │                             │  │ Status                     completed │
+      Update channel           │  │                                       │  Ignore policy path                              │                             │  │ Critical                           2 │
+                               │  │                                       │                                                  │                             │  │ High                               5 │
+                               │  │                                       │  Clear override, use the global settings         │                             │  │ Runs                               7 │
+                               │  │                                       │  ignore_file_path must be an absolute path       │                             │  │ Scanned                 20 Nov 10:14 │
+                               │  │                                       │                                                  │                             │  │                                      │
+                               │  │                                       │   Save  enter   Cancel  esc                      │                             │  │ ACTIONS                              │
+                               │  │                                       │  tab next field, space toggles                   │                             │  │ Edit override                      o │
+                               │  │                                       ╰──────────────────────────────────────────────────╯                             │  │ Scan history                   enter │
+                               │  │                                                                                                                        │  │ Refresh                            r │
+                               │  │                                                                                                                        │  │                                      │
+                               │  │                                                                                                                        │  │                                      │
+                               │  │                                                                                                                        │  │                                      │
+                               │  │                                                                                                                        │  │                                      │
+                               │  │                                                                                                                        │  │                                      │
+                               │  │                                                                                                                        │  │                                      │
+                               │  │                                                                                                                        │  │                                      │
+                               │  │                                                                                                                        │  │                                      │
+                               │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  │                                      │
+                               │  One row per repository, severity first. enter opens its scan history, o edits its override.                                 ╰──────────────────────────────────────╯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  tab next field   space toggle   enter save   esc cancel                                                                                                                                               
