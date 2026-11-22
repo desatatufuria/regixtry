@@ -63,7 +63,7 @@ func countActivePushScans(t *testing.T, service *Service) (active int, skipped i
 		switch {
 		case run.Status == ports.ScanRunStatusQueued || run.Status == ports.ScanRunStatusRunning:
 			active++
-		case run.Status == ports.ScanRunStatusFailed && strings.HasPrefix(run.Error, "skipped:"):
+		case run.Status == ports.ScanRunStatusSkipped:
 			skipped++
 		}
 	}
@@ -99,7 +99,7 @@ func TestPushScansAreBoundedWhenManyDistinctManifestsArePushed(t *testing.T) {
 func TestPushScanLimitsAreConfigurableAndSkippedRowIsOnePerRepository(t *testing.T) {
 	service, _, cleanup := newPushScanService(t)
 	defer cleanup()
-	service.SetPushScanLimits(5, 2)
+	service.SetPushScanLimits(5, 2, 0)
 
 	pushDistinctManifests(t, service, "library/alpine", 20, "cfg")
 	time.Sleep(500 * time.Millisecond)
@@ -145,7 +145,7 @@ func TestPushScansStillRunAtNormalRates(t *testing.T) {
 		if run.Status == ports.ScanRunStatusCompleted {
 			completed++
 		}
-		if strings.HasPrefix(run.Error, "skipped:") {
+		if run.Status == ports.ScanRunStatusSkipped {
 			t.Fatalf("unexpected skipped run at normal push rate: %#v", run)
 		}
 	}
@@ -161,9 +161,9 @@ func TestPushScanSkipIsSilentWhenScanningDisabled(t *testing.T) {
 		t.Fatalf("EnsureScanSettings() error = %v", err)
 	}
 	seedManagedRuntimeState(t, service, "0.57.1")
-	service.SetPushScanLimits(1, 1)
+	service.SetPushScanLimits(1, 1, 0)
 	for i := 0; i < 5; i++ {
-		service.pushScans.acquire("tenant-a", "library/alpine")
+		service.pushScans.acquire("tenant-a", "library/alpine", "")
 	}
 	service.recordPushScanSkipped(context.Background(), "tenant-a", "library/alpine", "latest", "sha256:"+strings.Repeat("a", 64))
 	if _, skipped := countActivePushScans(t, service); skipped != 0 {
@@ -174,7 +174,7 @@ func TestPushScanSkipIsSilentWhenScanningDisabled(t *testing.T) {
 func TestPushScanLimiterConcurrentAcquireNeverExceedsCaps(t *testing.T) {
 	t.Parallel()
 	l := newPushScanLimiter()
-	l.setLimits(10, 4)
+	l.setLimits(10, 4, 100)
 	var mu sync.Mutex
 	held, maxHeld := 0, 0
 	var wg sync.WaitGroup
@@ -182,7 +182,7 @@ func TestPushScanLimiterConcurrentAcquireNeverExceedsCaps(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			release, ok := l.acquire("t", fmt.Sprintf("repo/%d", i%5))
+			release, ok := l.acquire("t", fmt.Sprintf("repo/%d", i%5), "p")
 			if !ok {
 				return
 			}
@@ -206,5 +206,81 @@ func TestPushScanLimiterConcurrentAcquireNeverExceedsCaps(t *testing.T) {
 	}
 	if l.total != 0 || len(l.perRepo) != 0 {
 		t.Fatalf("limiter leaked: total=%d perRepo=%v", l.total, l.perRepo)
+	}
+}
+
+// seedCompletedCritical stores an older completed run with a critical
+// finding for the digest and enables the pull policy.
+func seedCompletedCritical(t *testing.T, service *Service, repository string, digest string) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := service.UpdateScanPolicySettings(ctx, ports.ScanPolicySettings{Enabled: true, SeverityThreshold: ports.ScanPolicyThresholdCritical}); err != nil {
+		t.Fatalf("UpdateScanPolicySettings() error = %v", err)
+	}
+	past := time.Now().UTC().Add(-time.Hour)
+	run := ports.ScanRun{ID: "run-critical", Repository: repository, RequestedRef: "latest", Digest: digest, Status: ports.ScanRunStatusCompleted, Trigger: ports.ScanTriggerManual, CreatedAt: past, UpdatedAt: past, FinishedAt: &past, Critical: 1}
+	if err := service.metadata.UpsertScanRun(ctx, "tenant-a", run); err != nil {
+		t.Fatalf("UpsertScanRun() error = %v", err)
+	}
+}
+
+func TestSkippedPushScanNeverUnblocksAKnownCriticalDigest(t *testing.T) {
+	service, _, cleanup := newPushScanService(t)
+	defer cleanup()
+	digest := "sha256:" + strings.Repeat("d", 64)
+	seedCompletedCritical(t, service, "library/alpine", digest)
+	if err := service.enforceScanPolicy(context.Background(), "library/alpine", digest); err == nil {
+		t.Fatal("precondition: pull of a critical digest must be blocked")
+	}
+
+	service.SetPushScanLimits(2, 2, 0)
+	for i := 0; i < 2; i++ {
+		if _, ok := service.pushScans.acquire("tenant-a", "library/alpine", ""); !ok {
+			t.Fatal("could not fill the cap")
+		}
+	}
+	service.startPushScan("tenant-a", "library/alpine", "latest", digest, "")
+
+	if err := service.enforceScanPolicy(context.Background(), "library/alpine", digest); err == nil {
+		t.Fatal("pull allowed after a dropped re-push: the skipped row hid the critical result")
+	}
+	summaries, err := service.ListLatestScanRunPerRepository(context.Background(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summaries) != 1 || summaries[0].Run.Status != ports.ScanRunStatusCompleted || summaries[0].Run.Critical != 1 {
+		t.Fatalf("summary = %#v, want the real completed critical run", summaries)
+	}
+	if _, skipped := countActivePushScans(t, service); skipped != 0 {
+		t.Fatalf("skipped rows = %d, want none for a digest that already has a real run", skipped)
+	}
+}
+
+func TestSkippedPushScanForUnscannedDigestStaysVisibleButNeverWinsLatest(t *testing.T) {
+	service, _, cleanup := newPushScanService(t)
+	defer cleanup()
+	ctx := context.Background()
+	service.SetPushScanLimits(1, 1, 0)
+	service.pushScans.acquire("tenant-a", "library/alpine", "")
+	digest := "sha256:" + strings.Repeat("e", 64)
+	service.startPushScan("tenant-a", "library/alpine", "latest", digest, "")
+
+	runs, _ := service.metadata.ListScanRuns(ctx, "tenant-a", "library/alpine", 10)
+	if len(runs) != 1 || runs[0].Status != ports.ScanRunStatusSkipped || runs[0].Error != pushScanSkippedError {
+		t.Fatalf("runs = %#v, want one visible skipped row", runs)
+	}
+	if err := service.enforceScanPolicy(ctx, "library/alpine", digest); err != nil {
+		t.Fatalf("enforceScanPolicy() = %v, want allow (fail-open for unscanned)", err)
+	}
+	// A real run created later still wins over the skipped marker, and an
+	// older real run wins even though the marker is newer.
+	past := time.Now().UTC().Add(-time.Hour)
+	real := ports.ScanRun{ID: "real", Repository: "library/alpine", RequestedRef: "latest", Digest: digest, Status: ports.ScanRunStatusCompleted, Trigger: ports.ScanTriggerManual, CreatedAt: past, UpdatedAt: past, Critical: 2}
+	if err := service.metadata.UpsertScanRun(ctx, "tenant-a", real); err != nil {
+		t.Fatal(err)
+	}
+	latest, err := service.metadata.GetLatestScanRunByDigest(ctx, "tenant-a", "library/alpine", digest)
+	if err != nil || latest.ID != "real" {
+		t.Fatalf("latest = %#v err=%v, want the real run", latest, err)
 	}
 }

@@ -317,7 +317,7 @@ func (s *Service) queueScheduledScan(ctx context.Context, repositoryName string,
 // (queued|running) check. Every failure path returns silently: push must
 // never fail or block because of scanning.
 func (s *Service) queuePushScan(ctx context.Context, tenant string, repository string, reference string, digest string) {
-	release, ok := s.pushScans.acquire(tenant, repository)
+	release, ok := s.pushScans.acquire(tenant, repository, "")
 	if !ok {
 		s.recordPushScanSkipped(ctx, tenant, repository, reference, digest)
 		return

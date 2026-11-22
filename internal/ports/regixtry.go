@@ -330,6 +330,10 @@ const (
 	ScanRunStatusRunning   = "running"
 	ScanRunStatusCompleted = "completed"
 	ScanRunStatusFailed    = "failed"
+	// ScanRunStatusSkipped marks a push-triggered scan that was dropped by
+	// admission control. It is informational only: it never wins "latest run
+	// for a digest/repository" over a real run and never affects the pull policy.
+	ScanRunStatusSkipped = "skipped"
 
 	ScanTriggerManual    = "manual"
 	ScanTriggerScheduled = "scheduled"

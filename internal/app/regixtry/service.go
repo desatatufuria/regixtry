@@ -342,7 +342,11 @@ func (s *Service) PublishManifest(ctx context.Context, repositoryName string, re
 	// bundle-index manifest above it). The manifest this one refers to is
 	// unaffected and keeps getting scanned normally.
 	if !isReferrerArtifactPush(manifest, tag) {
-		s.startPushScan(s.tenant(ctx), repository.String(), reference, manifest.Digest.String())
+		pusher := ""
+		if principal := ports.PrincipalFromContext(ctx); principal != nil {
+			pusher = principal.UserID
+		}
+		s.startPushScan(s.tenant(ctx), repository.String(), reference, manifest.Digest.String(), pusher)
 	}
 
 	return newManifestDetails(repository.String(), reference, manifest, manifest.BlobReferences()), nil

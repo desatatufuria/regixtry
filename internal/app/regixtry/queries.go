@@ -240,6 +240,11 @@ func (s *Service) ScanStatus(ctx context.Context, repositoryName string, referen
 		result.State = ScanStatusInProgress
 	case ports.ScanRunStatusFailed:
 		result.State = ScanStatusFailed
+	case ports.ScanRunStatusSkipped:
+		// Only reachable when the digest has no real run (skipped rows rank
+		// below every real run): it was never scanned.
+		result.State = ScanStatusUnscanned
+		result.Scan = nil
 	case ports.ScanRunStatusCompleted:
 		if scanPolicyViolated(settings, run) {
 			result.State = ScanStatusBlocked

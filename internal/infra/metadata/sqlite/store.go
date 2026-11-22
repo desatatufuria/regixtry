@@ -1589,7 +1589,7 @@ func (s *Store) GetLatestScanRunByDigest(ctx context.Context, tenant string, rep
 		SELECT id, repository, requested_ref, digest, status, trigger, started_at, finished_at, created_at, updated_at, critical, high, medium, low, trivy_version, db_updated_at, error
 		FROM scan_runs
 		WHERE tenant = ? AND repository = ? AND digest = ?
-		ORDER BY created_at DESC, rowid DESC
+		ORDER BY (status = 'skipped') ASC, created_at DESC, rowid DESC
 		LIMIT 1
 	`, tenant, repository, digest)
 	return scanRunRow(row, repository+"@"+digest)
@@ -2738,7 +2738,7 @@ func (s *Store) ListLatestScanRunPerRepository(ctx context.Context, tenant strin
 	query := `
 		WITH latest AS (
 			SELECT id, repository, requested_ref, digest, status, trigger, started_at, finished_at, created_at, updated_at, critical, high, medium, low, trivy_version, db_updated_at, error,
-				ROW_NUMBER() OVER (PARTITION BY repository ORDER BY created_at DESC, rowid DESC) AS rn,
+				ROW_NUMBER() OVER (PARTITION BY repository ORDER BY (status = 'skipped') ASC, created_at DESC, rowid DESC) AS rn,
 				COUNT(*) OVER (PARTITION BY repository) AS run_count
 			FROM scan_runs
 			WHERE tenant = ?
