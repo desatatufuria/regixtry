@@ -380,6 +380,9 @@ func countOf(n int, one, many string) string {
 // middle crumbs first, so the last one, the place the operator is in, stays
 // whole for as long as it can.
 func fitCrumbs(crumbs []string, width int) []string {
+	if len(crumbs) == 0 {
+		return nil
+	}
 	out := slices.Clone(crumbs)
 	total := func() int {
 		n := 3 * (len(out) - 1)

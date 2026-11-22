@@ -291,3 +291,18 @@ func TestConsoleBreadcrumbKeepsTheLastCrumbWhenNamesAreVeryLong(t *testing.T) {
 		}
 	}
 }
+
+func TestFitCrumbsNeverPanicsOnAnEmptyOrSingleTrail(t *testing.T) {
+	t.Parallel()
+	for _, width := range []int{0, 1, 10, 150} {
+		if got := fitCrumbs(nil, width); len(got) != 0 {
+			t.Fatalf("width %d: empty trail gave %v", width, got)
+		}
+		if got := fitCrumbs([]string{}, width); len(got) != 0 {
+			t.Fatalf("width %d: empty trail gave %v", width, got)
+		}
+		if got := fitCrumbs([]string{"Console"}, width); len(got) != 1 {
+			t.Fatalf("width %d: single crumb gave %v", width, got)
+		}
+	}
+}
