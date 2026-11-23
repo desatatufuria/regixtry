@@ -98,6 +98,13 @@ func eventSentence(event ports.AdminAccessEvent) string {
 		words = []string{"reset the password of", subject}
 	case "user.deleted":
 		words = []string{"deleted user", subject}
+	case "login.backoff.reset":
+		// The subject is a name, or the hash label of an unknown username:
+		// shown as the chip, never as the label's raw digits.
+		words = []string{"reset the login backoff of", loginEventSubject(event.Subject)}
+		if subject == "" {
+			words = []string{"reset the login backoff"}
+		}
 	default:
 		words = []string{cleanEventText(string(event.Action)), subject, repo, detail}
 	}
@@ -131,3 +138,7 @@ func capitalizeFirst(text string) string {
 // cleanEventText drops control characters from server text before it reaches
 // the terminal.
 func cleanEventText(text string) string { return strings.TrimSpace(sanitizeFieldText(text, true)) }
+
+// loginEventSubject is the account of a login event as the Login security
+// screen names it: its name, or the chip of an unknown username's hash label.
+func loginEventSubject(subject string) string { return strings.TrimSpace(loginAccountName(subject)) }

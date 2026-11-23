@@ -52,18 +52,26 @@ type loginSecurityScreen struct {
 	from time.Time
 	// appliedSeq is the read that produced failures: a page of an older read
 	// is dropped.
-	appliedSeq   uint64
-	loadingMore  bool
-	moreErr      string
-	filtering    bool
-	filterDraft  string
-	filter       string
-	focus        loginPanel
-	selWaiting   int
-	selFail      int
-	floor        uint64
-	notice       string
-	noticeFailed bool
+	appliedSeq  uint64
+	loadingMore bool
+	moreErr     string
+	filtering   bool
+	filterDraft string
+	filter      string
+	focus       loginPanel
+	selWaiting  int
+	selFail     int
+	floor       uint64
+	notice      string
+	noticeTone  grantTone
+
+	// confirm is the reset confirmation; its in-flight guard keeps a second
+	// Enter from sending the reset twice.
+	confirm confirmPrompt
+	// busy is set from the moment a confirmed reset is sent until its result
+	// arrives, even if Esc closed the dialog meanwhile: no other change starts
+	// while one is on its way.
+	busy bool
 }
 
 func newLoginSecurityScreen() loginSecurityScreen {
@@ -79,7 +87,7 @@ func (s loginSecurityScreen) Init(env screenEnv) tea.Cmd {
 }
 
 // capturesInput reports an input or dialog in front: typed letters belong to it.
-func (s loginSecurityScreen) capturesInput() bool { return s.filtering }
+func (s loginSecurityScreen) capturesInput() bool { return s.filtering || s.confirm.Active() }
 
 // ---- messages ----
 
@@ -185,6 +193,12 @@ func (s loginSecurityScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, te
 			return s, nil, false
 		}
 		return s.applyPage(typed), nil, false
+	case loginSecurityResetMsg:
+		if typed.gen != s.gen {
+			return s, nil, false
+		}
+		next, cmd := s.applyReset(env, typed)
+		return next, cmd, false
 	}
 	return s, nil, false
 }
@@ -208,7 +222,7 @@ func (s loginSecurityScreen) applyLoaded(msg loginSecurityLoadedMsg) loginSecuri
 		text := "Could not load login security: " + loadErrorText(err) + ". r retry"
 		if s.loaded {
 			// What is on screen stays; the failure is a line above it.
-			s.notice, s.noticeFailed = text, true
+			s.notice, s.noticeTone = text, grantToneError
 			return s
 		}
 		s.err = text
@@ -229,7 +243,7 @@ func (s loginSecurityScreen) applyLoaded(msg loginSecurityLoadedMsg) loginSecuri
 		s.failures, s.next, s.from, s.appliedSeq = msg.page.Failures, msg.page.Next, msg.from, msg.seq
 		s.loadingMore, s.moreErr = false, ""
 		s.selFail = boundedIndex(s.selFail, len(s.visibleFailures()))
-		s.notice, s.noticeFailed = "", false
+		s.notice, s.noticeTone = "", grantToneNone
 	}
 	return s
 }
@@ -282,6 +296,12 @@ func (s loginSecurityScreen) visibleFailures() []ports.LoginFailureRecord {
 // ---- keys ----
 
 func (s loginSecurityScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, tea.Cmd, bool) {
+	if s.confirm.Active() {
+		next, cmd, _ := s.confirm.update(env, msg)
+		s.confirm = next
+		s.busy = s.busy || cmd != nil
+		return s, cmd, true
+	}
 	if s.filtering {
 		return s.updateFilterKey(msg)
 	}
@@ -311,8 +331,14 @@ func (s loginSecurityScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, 
 		var cmd tea.Cmd
 		s, cmd = s.moveDown(env, s.pageRows(env))
 		return s, cmd, true
+	case s.busy && isCommandRune(msg, 'r', 'x'):
+		// A reset is on its way: its result decides what the list shows.
+	case isCommandRune(msg, 'x') && s.focus == loginPanelWaiting:
+		if account, ok := s.selectedWaiting(); ok {
+			s.confirm, s.notice, s.noticeTone = s.resetConfirm(account), "", grantToneNone
+		}
 	case isCommandRune(msg, 'r'):
-		s.notice, s.noticeFailed, s.moreErr = "", false, ""
+		s.notice, s.noticeTone, s.moreErr = "", grantToneNone, ""
 		return s, loginSecurityLoadCmd(env, s.gen, true, time.Time{}), true
 	case isCommandRune(msg, 'n') && s.focus == loginPanelFailures:
 		next, cmd := s.loadMore(env)
@@ -382,6 +408,11 @@ func (s loginSecurityScreen) pageRows(env screenEnv) int {
 func (s loginSecurityScreen) Keys() screenKeys {
 	esc := key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back"))
 	switch {
+	case s.confirm.Active():
+		return screenKeys{short: []key.Binding{
+			key.NewBinding(key.WithKeys("y", "enter"), key.WithHelp("y / enter", "confirm")),
+			key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
+		}}
 	case s.filtering:
 		return screenKeys{short: []key.Binding{
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "apply")),
@@ -401,10 +432,102 @@ func (s loginSecurityScreen) Keys() screenKeys {
 			keys = append(keys, key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "load more")))
 		}
 	}
+	keys = append(keys, key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next panel")))
+	if s.focus == loginPanelWaiting && len(s.backoff.Accounts) > 0 {
+		// x acts on the selected waiting account only.
+		keys = append(keys, key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "reset")))
+	}
 	keys = append(keys,
-		key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next panel")),
 		key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter")),
 		key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 		esc, quitKey())
 	return screenKeys{short: keys}
+}
+
+// loginSecurityResetMsg is the result of resetting one account's backoff.
+type loginSecurityResetMsg struct {
+	gen uint64
+	// account is the label that was sent (a name or "hash:xxxxxxxx") and
+	// display how the dialog named it.
+	account string
+	display string
+	err     error
+}
+
+func (loginSecurityResetMsg) loginSecurityMsg()               {}
+func (loginSecurityResetMsg) accessSlot() screenSlot          { return slotLoginSecurity }
+func (m loginSecurityResetMsg) accessGen() uint64             { return m.gen }
+func (m loginSecurityResetMsg) expiredReason() (string, bool) { return expiredReasonOf(m.err) }
+
+// ---- reset ----
+
+// resetConfirm builds the confirmation for resetting one account. Everything it
+// needs is captured NOW, from the row under the cursor: a reload or a reorder
+// while the dialog is open can never change what Enter resets. The backend only
+// clears the failure counter of that one account; it revokes no token.
+func (s loginSecurityScreen) resetConfirm(account ports.AdminBackoffAccount) confirmPrompt {
+	gen, label := s.gen, account.Account
+	display := loginAccountName(label)
+	counts := pluralUnit(int64(account.Failures), "failed login") + ", waiting " + loginDelayText(account.RemainingSeconds)
+	body := "The login delay for this account ends now."
+	detail := "user, " + counts
+	consequence := "Clears the failure counter for " + display + ". " + display + " can try again immediately. Active access tokens are not affected."
+	if loginIsHashLabel(label) {
+		body = "The login delay for this name ends now."
+		detail = "no such account, " + counts
+		consequence = "Clears the failure counter for " + display + ". Anyone using that name can try again immediately. Active access tokens are not affected."
+	}
+	return newConfirmPrompt(
+		"Reset backoff?", body, "reset", "Resetting backoff…",
+		func(env screenEnv) tea.Cmd { return loginSecurityResetCmd(env, gen, label, display) },
+	).withTarget(display, detail).withButtonLabel("Reset backoff").withConsequence(consequence)
+}
+
+func loginSecurityResetCmd(env screenEnv, gen uint64, account, display string) tea.Cmd {
+	client, session := env.Client, env.Session
+	return func() tea.Msg {
+		if client == nil {
+			return loginSecurityResetMsg{gen: gen, account: account, display: display, err: errAdminUnavailable}
+		}
+		_, err := client.ResetLoginBackoff(context.Background(), session, account)
+		return loginSecurityResetMsg{gen: gen, account: account, display: display, err: err}
+	}
+}
+
+// applyReset closes the dialog and shows the outcome. After a reset, or when the
+// account was already gone, the row is dropped at once and the waiting list and
+// the summary are read again; the floor makes every read that started before
+// this result stale, so none of them can bring the row back.
+func (s loginSecurityScreen) applyReset(env screenEnv, msg loginSecurityResetMsg) (loginSecurityScreen, tea.Cmd) {
+	s.confirm, s.busy = confirmPrompt{}, false
+	refresh := func(s loginSecurityScreen) (loginSecurityScreen, tea.Cmd) {
+		kept := make([]ports.AdminBackoffAccount, 0, len(s.backoff.Accounts))
+		for _, account := range s.backoff.Accounts {
+			if account.Account != msg.account {
+				kept = append(kept, account)
+			}
+		}
+		if len(kept) < len(s.backoff.Accounts) && s.summary.AccountsInBackoff > 0 {
+			s.summary.AccountsInBackoff--
+		}
+		s.backoff.Accounts = kept
+		s.selWaiting = boundedIndex(s.selWaiting, len(kept))
+		s.floor = loginSecurityLoadSeq.Add(1)
+		return s, loginSecurityLoadCmd(env, s.gen, false, time.Time{})
+	}
+	switch {
+	case msg.err == nil:
+		if loginIsHashLabel(msg.account) {
+			s.notice = "Backoff reset for " + msg.display + ". Anyone using that name can try again now."
+		} else {
+			s.notice = "Backoff reset for " + msg.display + ". " + msg.display + " can try again now."
+		}
+		s.noticeTone = grantToneSuccess
+		return refresh(s)
+	case IsAdminNotFound(msg.err):
+		s.notice, s.noticeTone = msg.display+" is no longer waiting. The list was refreshed.", grantToneWarning
+		return refresh(s)
+	}
+	s.notice, s.noticeTone = "Could not reset backoff: "+loadErrorText(msg.err)+". The list stays as it was.", grantToneError
+	return s, nil
 }

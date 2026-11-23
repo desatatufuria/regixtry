@@ -187,8 +187,10 @@ func (s loginSecurityScreen) noticeLine(theme adminTheme, width int) string {
 		return theme.warning.UnsetBold().Render(fitText(s.busyText(), width))
 	case s.moreErr != "":
 		return theme.error.UnsetBold().Render(fitText(s.moreErr, width))
-	case s.noticeFailed:
+	case s.noticeTone == grantToneError:
 		return theme.error.UnsetBold().Render(fitText(s.notice, width))
+	case s.noticeTone == grantToneWarning:
+		return theme.warning.UnsetBold().Render(fitText(s.notice, width))
 	}
 	return theme.success.UnsetBold().Render(fitText(s.notice, width))
 }
@@ -516,16 +518,32 @@ func (s loginSecurityScreen) failuresBottom(start, end, total int) string {
 	return text
 }
 
-// ---- reset hooks (filled in by the reset unit) ----
+// ---- reset ----
 
-// busyText is the progress line of a change on its way.
-func (s loginSecurityScreen) busyText() string { return "" }
+// busyText is the progress line of a reset on its way.
+func (s loginSecurityScreen) busyText() string {
+	if s.busy {
+		return "Resetting backoff…"
+	}
+	return ""
+}
 
-// waitingHint is the hint in the waiting panel's border.
-func (s loginSecurityScreen) waitingHint(focused bool) string { return "" }
+// waitingHint is the hint in the waiting panel's border: x only applies while
+// the panel is focused and has a row.
+func (s loginSecurityScreen) waitingHint(focused bool) string {
+	if focused && len(s.backoff.Accounts) > 0 {
+		return "x reset"
+	}
+	return ""
+}
 
 // overlay is the dialog in front, if any.
-func (s loginSecurityScreen) overlay(theme adminTheme) string { return "" }
+func (s loginSecurityScreen) overlay(theme adminTheme) string {
+	if s.confirm.Active() {
+		return s.confirm.view(theme)
+	}
+	return ""
+}
 
 // muteIf renders a border label muted, or nothing for an empty one.
 func muteIf(theme adminTheme, text string) string {
