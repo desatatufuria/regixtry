@@ -13,7 +13,7 @@ curl -X POST 'https://registry.example.com/admin/v1/users' \
 
 Usernames are normalized to lowercase. The response never echoes the password hash.
 
-`is_read_only` grants the registry-wide read-only role: the user can pull from every repository without an explicit grant, but never push, and never reaches any admin-surface functionality. It is independent of `is_admin` — a user can be read-only, admin, both (global admin implies read access anyway), or neither. Robot accounts can be neither admin nor read-only (`User.Validate` rejects that combination); see [Robot accounts](#robot-accounts) below.
+`is_read_only` grants the registry-wide read-only role: the user can pull from every repository without an explicit grant, but never push, and never reaches any admin-surface functionality. It is a ceiling: no repository or project grant raises a read-only user above read, so a writer or admin grant held by a read-only user (for example one made read-only after it was granted) has no effect, and it cannot delete repositories or manage grants. It is independent of `is_admin` — a user can be read-only, admin, both (global admin implies read access anyway), or neither. Robot accounts can be neither admin nor read-only (`User.Validate` rejects that combination); see [Robot accounts](#robot-accounts) below.
 
 ## Grants (global-admin flow)
 
@@ -92,7 +92,7 @@ A project admin cannot:
 - act on another project (`403`, `project administrator privileges are required`; the same answer for a project that does not exist);
 - create, list or delete projects, create robots, or use any other admin route (`403`, `admin access is required`).
 
-Only a global admin gives or removes `repo-admin`. A read-only user (`is_read_only`) can only be a project reader: `repo-writer` and `repo-admin` for them are refused with `422` (`read-only users can only be project readers`).
+Only a global admin gives or removes `repo-admin`. A read-only user (`is_read_only`) can only be a project reader: `repo-writer` and `repo-admin` project grants for them are refused with `422` (`read-only users can only be project readers`). Exact repository grants are not refused, but whatever their role they never give a read-only user more than read.
 
 ## Robot accounts
 
