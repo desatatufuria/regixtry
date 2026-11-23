@@ -8,17 +8,17 @@
       Users                    │  │ TRIVY  │  Confirm Disable                                             │   POLICY                               │
       Robots                   │  │ Sched  │                                                              │  cy                        [x] enabled │
       Repository access        │  │ Inter  │  Confirm disable feature?                                    │  rity threshold          CRITICAL+HIGH │
-                               │  │ Timeo  │                                                              │  an that reaches the threshold blocks  │
-  SECURITY                     │  │ Max c  │  ╭────────────────────────────────────────────────────────╮  │  pull. p edit policy.                  │
-    ▸ Image scanning           │  │ Regis  │  │ Trivy                                                  │  │   saved 2 Nov 2026 10:14 UTC.          │
-      Secret scanning          │  │ c edi  │  ╰────────────────────────────────────────────────────────╯  │                                        │
-      Signing policy           │  ╰──────  │                                                              │  ──────────────────────────────────────╯
-                               │  ╭──────  │   Confirm                                        y / enter   │  ──────────────────────────────────────╮
-  OPERATIONS                   │  │ PER-R  │   Cancel                                               esc   │                                        │
-      Scan runs                │  │ REPOS  ╰──────────────────────────────────────────────────────────────╯  ED  DETAIL                UPDATED     │
-      Secret findings          │  │ team/api                                                 override   yes      ignore file set       14 Nov      │
-      Update channel           │  │ team/docs                                                override   no       scanning off          2 Nov       │
-                               │  │ +2 more, o opens the list                                                                                      │
+      Projects                 │  │ Timeo  │                                                              │  an that reaches the threshold blocks  │
+                               │  │ Max c  │  ╭────────────────────────────────────────────────────────╮  │  pull. p edit policy.                  │
+  SECURITY                     │  │ Regis  │  │ Trivy                                                  │  │   saved 2 Nov 2026 10:14 UTC.          │
+    ▸ Image scanning           │  │ c edi  │  ╰────────────────────────────────────────────────────────╯  │                                        │
+      Secret scanning          │  ╰──────  │                                                              │  ──────────────────────────────────────╯
+      Signing policy           │  ╭──────  │   Confirm                                        y / enter   │  ──────────────────────────────────────╮
+                               │  │ PER-R  │   Cancel                                               esc   │                                        │
+  OPERATIONS                   │  │ REPOS  ╰──────────────────────────────────────────────────────────────╯  ED  DETAIL                UPDATED     │
+      Scan runs                │  │ team/api                                                 override   yes      ignore file set       14 Nov      │
+      Secret findings          │  │ team/docs                                                override   no       scanning off          2 Nov       │
+      Update channel           │  │ +2 more, o opens the list                                                                                      │
                                │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   tab switch tabs   c configure   p policy   o overrides   x disable   u upgrade runtime   r refresh   esc back   q quit                 F2 mouse on  

@@ -8,17 +8,17 @@
       Users                    │  │   REP  │                                                              │   │ WHO HAS WHAT                       │
       Robots                   │  │ ▸ tea  │  ╭────────────────────────────────────────────────────────╮  │   │ alice user                [Writer] │
     ▸ Repository access        │  │   tea  │  │ alice on team/api                                      │  │   │ carol user                [Writer] │
-                               │  │   tea  │  │ Writer                                                 │  │   │ ci-publisher robot        [Writer] │
-  SECURITY                     │  │   tea  │  ╰────────────────────────────────────────────────────────╯  │   │ bob user                  [Reader] │
-      Image scanning           │  │   tea  │                                                              │   │ ACTIONS ON SELECTED GRANT          │
-      Secret scanning          │  │   tea  │  alice loses Writer access to team/api. It applies from the  │   │ Open principal               enter │
-      Signing policy           │  │        │  next request; no token is revoked. alice keeps access to    │   │ Grant access                     g │
-                               │  │        │  every other repository.                                     │   │ Revoke alice on team/api         x │
-  OPERATIONS                   │  │        │                                                              │   │ No Admin on this repository. Only  │
-      Scan runs                │  │        │   Confirm                                        y / enter   │   │ server admins can change access    │
-      Secret findings          │  │        │   Cancel                                               esc   │   │ here.                              │
-      Update channel           │  │        ╰──────────────────────────────────────────────────────────────╯   │                                    │
-                               │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │
+      Projects                 │  │   tea  │  │ Writer                                                 │  │   │ ci-publisher robot        [Writer] │
+                               │  │   tea  │  ╰────────────────────────────────────────────────────────╯  │   │ bob user                  [Reader] │
+  SECURITY                     │  │   tea  │                                                              │   │ ACTIONS ON SELECTED GRANT          │
+      Image scanning           │  │   tea  │  alice loses Writer access to team/api. It applies from the  │   │ Open principal               enter │
+      Secret scanning          │  │        │  next request; no token is revoked. alice keeps access to    │   │ Grant access                     g │
+      Signing policy           │  │        │  every other repository.                                     │   │ Revoke alice on team/api         x │
+                               │  │        │                                                              │   │ No Admin on this repository. Only  │
+  OPERATIONS                   │  │        │   Confirm                                        y / enter   │   │ server admins can change access    │
+      Scan runs                │  │        │   Cancel                                               esc   │   │ here.                              │
+      Secret findings          │  │        ╰──────────────────────────────────────────────────────────────╯   │                                    │
+      Update channel           │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │
                                │  Roles: Reader pulls, Writer pushes, Admin manages access.                   ╰────────────────────────────────────╯
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   ↑↓ move   enter open   / search   g grant access   x revoke   esc back   q quit                                                        F2 mouse on  

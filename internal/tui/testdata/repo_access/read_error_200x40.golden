@@ -8,6 +8,7 @@
       Users                    │  │   REPOSITORY                                                                      PRINCIPAL         ROLE     SINCE       │  │                                    │  
       Robots                   │  │ Could not read grants.                                                                                                   │  │                                    │  
     ▸ Repository access        │  │                                                                                                                          │  │                                    │  
+      Projects                 │  │                                                                                                                          │  │                                    │  
                                │  │                                                                                                                          │  │                                    │  
   SECURITY                     │  │                                                                                                                          │  │                                    │  
       Image scanning           │  │                                                                                                                          │  │                                    │  
@@ -18,7 +19,6 @@
       Scan runs                │  │                                                                                                                          │  │                                    │  
       Secret findings          │  │                                                                                                                          │  │                                    │  
       Update channel           │  │                                                                                                                          │  │                                    │  
-                               │  │                                                                                                                          │  │                                    │  
                                │  │                                                                                                                          │  │                                    │  
                                │  │                                                                                                                          │  │                                    │  
                                │  │                                                                                                                          │  │                                    │  

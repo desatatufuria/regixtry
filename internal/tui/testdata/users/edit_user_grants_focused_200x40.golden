@@ -8,17 +8,17 @@
     ▸ Users                    │  │ PROFILE                                                                       │  │ TOKENS                                                               t manage │  
       Robots                   │  │ Username                                                                carol │  │ laptop                                                 █░░░░░░░░░ 4 days left │  
       Repository access        │  │ Role                                                                     user │  │ ci-local                                              ██████░░░░ 61 days left │  
-                               │  │ Enabled                                                           [x] enabled │  │ old-laptop                                                            expired │  
-  SECURITY                     │  ╰───────────────────────────────────────────────────────────────────────────────╯  │                                                                               │  
-      Image scanning           │  ╭───────────────────────────────────────────────────────────────────────────────╮  │                                                                               │  
-      Secret scanning          │  │ PASSWORD                                                                      │  │                                                                               │  
-      Signing policy           │  │ Set a new password for carol                                          p reset │  │                                                                               │  
-                               │  │ At least 8 characters. You type it twice.                                     │  │                                                                               │  
-  OPERATIONS                   │  ╰───────────────────────────────────────────────────────────────────────────────╯  │                                                                               │  
-      Scan runs                │  ╭───────────────────────────────────────────────────────────────────────────────╮  │                                                                               │  
-      Secret findings          │  │ REPOSITORY GRANTS                                              g grant access │  │                                                                               │  
-      Update channel           │  │   team/docs                                                            Reader │  │                                                                               │  
-                               │  │ ▸ team/api                                                             Writer │  │                                                                               │  
+      Projects                 │  │ Enabled                                                           [x] enabled │  │ old-laptop                                                            expired │  
+                               │  ╰───────────────────────────────────────────────────────────────────────────────╯  │                                                                               │  
+  SECURITY                     │  ╭───────────────────────────────────────────────────────────────────────────────╮  │                                                                               │  
+      Image scanning           │  │ PASSWORD                                                                      │  │                                                                               │  
+      Secret scanning          │  │ Set a new password for carol                                          p reset │  │                                                                               │  
+      Signing policy           │  │ At least 8 characters. You type it twice.                                     │  │                                                                               │  
+                               │  ╰───────────────────────────────────────────────────────────────────────────────╯  │                                                                               │  
+  OPERATIONS                   │  ╭───────────────────────────────────────────────────────────────────────────────╮  │                                                                               │  
+      Scan runs                │  │ REPOSITORY GRANTS                                              g grant access │  │                                                                               │  
+      Secret findings          │  │   team/docs                                                            Reader │  │                                                                               │  
+      Update channel           │  │ ▸ team/api                                                             Writer │  │                                                                               │  
                                │  │ 2 repositories.                                                               │  │                                                                               │  
                                │  │                                                                               │  │                                                                               │  
                                │  │                                                                               │  │                                                                               │  

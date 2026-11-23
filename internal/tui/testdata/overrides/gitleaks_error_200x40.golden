@@ -8,6 +8,7 @@
       Users                    │  │ Could not read the overrides: the admin API is unreachable                                                             │  │                                      │  
       Robots                   │  │ Press r to try again.                                                                                                  │  │                                      │  
       Repository access        │  │                                                                                                                        │  │                                      │  
+      Projects                 │  │                                                                                                                        │  │                                      │  
                                │  │                                                                                                                        │  │                                      │  
   SECURITY                     │  │                                                                                                                        │  │                                      │  
       Image scanning           │  │                                                                                                                        │  │                                      │  
@@ -18,7 +19,6 @@
       Scan runs                │  │                                                                                                                        │  │                                      │  
       Secret findings          │  │                                                                                                                        │  │                                      │  
       Update channel           │  │                                                                                                                        │  │                                      │  
-                               │  │                                                                                                                        │  │                                      │  
                                │  │                                                                                                                        │  │                                      │  
                                │  │                                                                                                                        │  │                                      │  
                                │  │                                                                                                                        │  │                                      │  

@@ -8,17 +8,17 @@
       Users                    │  │ Secret scanning                                                                                                                                      [x] enabled │  
       Robots                   │  │ Timeout                                                                                                                                                       2m │  
       Repository access        │  │ Max concurrency                                                                                                                                                2 │  
-                               │  │ c edit configuration.                                                                                                                                            │  
-  SECURITY                     │  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  
-      Image scanning           │  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  
-    ▸ Secret scanning          │  │ PER-REPOSITORY OVERRIDES                                                                                                                                         │  
-      Signing policy           │  │ REPOSITORY                                                                                                 STATUS     ENABLED  DETAIL                UPDATED     │  
-                               │  │ team/api                                                                                                   override   yes      config path set       12 Nov      │  
-  OPERATIONS                   │  │ team/docs                                                                                                  override   no       scanning off          2 Nov       │  
-      Scan runs                │  │ team/web                                                                                                   inherited  —        global settings       -           │  
-      Secret findings          │  │ team/infra                                                                                                 inherited  —        global settings       -           │  
+      Projects                 │  │ c edit configuration.                                                                                                                                            │  
+                               │  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  
+  SECURITY                     │  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  
+      Image scanning           │  │ PER-REPOSITORY OVERRIDES                                                                                                                                         │  
+    ▸ Secret scanning          │  │ REPOSITORY                                                                                                 STATUS     ENABLED  DETAIL                UPDATED     │  
+      Signing policy           │  │ team/api                                                                                                   override   yes      config path set       12 Nov      │  
+                               │  │ team/docs                                                                                                  override   no       scanning off          2 Nov       │  
+  OPERATIONS                   │  │ team/web                                                                                                   inherited  —        global settings       -           │  
+      Scan runs                │  │ team/infra                                                                                                 inherited  —        global settings       -           │  
+      Secret findings          │  │                                                                                                                                                                  │  
       Update channel           │  │                                                                                                                                                                  │  
-                               │  │                                                                                                                                                                  │  
                                │  │                                                                                                                                                                  │  
                                │  │                                                                                                                                                                  │  
                                │  │                                                                                                                                                                  │  

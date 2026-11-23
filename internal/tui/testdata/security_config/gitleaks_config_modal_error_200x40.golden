@@ -8,17 +8,17 @@
       Users                    │  │ Secret scanning                                                                                                                                      [x] enabled │
       Robots                   │  │ Timeout                                                                                                                                                       2m │
       Repository access        │  │ Max concurrency                                                                                                                                                2 │
-                               │  │ c edit configuration.                                                                                                                                            │
-  SECURITY                     │  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-      Image scanning           │  ╭─────────────────────────────────────  ╭──────────────────────────────────────────────────╮  ─────────────────────────────────────────────────────────────────────╮
-    ▸ Secret scanning          │  │ PER-REPOSITORY OVERRIDES              │  Gitleaks configuration                          │                                                                       │
-      Signing policy           │  │ REPOSITORY                            │  Applies to every repository without an          │                 STATUS     ENABLED  DETAIL                UPDATED     │
-                               │  │ team/api                              │  override.                                       │                 override   yes      config path set       12 Nov      │
-  OPERATIONS                   │  │ team/docs                             │  [x] Enabled                                     │                 override   no       scanning off          2 Nov       │
-      Scan runs                │  │ team/web                              │  Timeout                                         │                 inherited  —        global settings       -           │
-      Secret findings          │  │ team/infra                            │   2mx▏                                           │                 inherited  —        global settings       -           │
-      Update channel           │  │                                       │  Max Concurrency                                 │                                                                       │
-                               │  │                                       │   2                                              │                                                                       │
+      Projects                 │  │ c edit configuration.                                                                                                                                            │
+                               │  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+  SECURITY                     │  ╭─────────────────────────────────────  ╭──────────────────────────────────────────────────╮  ─────────────────────────────────────────────────────────────────────╮
+      Image scanning           │  │ PER-REPOSITORY OVERRIDES              │  Gitleaks configuration                          │                                                                       │
+    ▸ Secret scanning          │  │ REPOSITORY                            │  Applies to every repository without an          │                 STATUS     ENABLED  DETAIL                UPDATED     │
+      Signing policy           │  │ team/api                              │  override.                                       │                 override   yes      config path set       12 Nov      │
+                               │  │ team/docs                             │  [x] Enabled                                     │                 override   no       scanning off          2 Nov       │
+  OPERATIONS                   │  │ team/web                              │  Timeout                                         │                 inherited  —        global settings       -           │
+      Scan runs                │  │ team/infra                            │   2mx▏                                           │                 inherited  —        global settings       -           │
+      Secret findings          │  │                                       │  Max Concurrency                                 │                                                                       │
+      Update channel           │  │                                       │   2                                              │                                                                       │
                                │  │                                       │  invalid timeout: time: unknown unit "mx" in     │                                                                       │
                                │  │                                       │  duration "2mx"                                  │                                                                       │
                                │  │                                       │                                                  │                                                                       │

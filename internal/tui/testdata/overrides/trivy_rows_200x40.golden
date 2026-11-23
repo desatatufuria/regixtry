@@ -8,17 +8,17 @@
       Users                    │  │   REPOSITORY                                                           CRIT  HIGH  LAST SCAN        STATUS     ENABLED │  │ team/api                             │  
       Robots                   │  │ ▸ team/api                                                             2     5     ok 3 h ago       override   yes     │  │ override                             │  
       Repository access        │  │   team/web                                                             -     -     failed 2 d ago   inherited  —       │  │                                      │  
-                               │  │   team/docs                                                            0     0     ok 45 d ago      override   no      │  │ OVERRIDE                             │  
-  SECURITY                     │  │   team/infra                                                           1     0     ok 1 y ago       inherited  —       │  │ Scanning                          on │  
-    ▸ Image scanning           │  │                                                                                                                        │  │ Ignore file        /etc/trivy/ignore │  
-      Secret scanning          │  │                                                                                                                        │  │ Ignore policy                      - │  
-      Signing policy           │  │                                                                                                                        │  │ Updated                       14 Nov │  
-                               │  │                                                                                                                        │  │                                      │  
-  OPERATIONS                   │  │                                                                                                                        │  │ LATEST SCAN                          │  
-      Scan runs                │  │                                                                                                                        │  │ Reference                      1.4.2 │  
-      Secret findings          │  │                                                                                                                        │  │ Status                     completed │  
-      Update channel           │  │                                                                                                                        │  │ Critical                           2 │  
-                               │  │                                                                                                                        │  │ High                               5 │  
+      Projects                 │  │   team/docs                                                            0     0     ok 45 d ago      override   no      │  │ OVERRIDE                             │  
+                               │  │   team/infra                                                           1     0     ok 1 y ago       inherited  —       │  │ Scanning                          on │  
+  SECURITY                     │  │                                                                                                                        │  │ Ignore file        /etc/trivy/ignore │  
+    ▸ Image scanning           │  │                                                                                                                        │  │ Ignore policy                      - │  
+      Secret scanning          │  │                                                                                                                        │  │ Updated                       14 Nov │  
+      Signing policy           │  │                                                                                                                        │  │                                      │  
+                               │  │                                                                                                                        │  │ LATEST SCAN                          │  
+  OPERATIONS                   │  │                                                                                                                        │  │ Reference                      1.4.2 │  
+      Scan runs                │  │                                                                                                                        │  │ Status                     completed │  
+      Secret findings          │  │                                                                                                                        │  │ Critical                           2 │  
+      Update channel           │  │                                                                                                                        │  │ High                               5 │  
                                │  │                                                                                                                        │  │ Runs                               7 │  
                                │  │                                                                                                                        │  │ Scanned                 14 Mar 06:30 │  
                                │  │                                                                                                                        │  │                                      │  

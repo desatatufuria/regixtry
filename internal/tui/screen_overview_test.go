@@ -77,6 +77,7 @@ func TestOverviewSidebarItemsOpenTheirScreens(t *testing.T) {
 		shellNavUsers:            screenAdminUsers,
 		shellNavRobots:           screenAdminRobots,
 		shellNavRepositoryAccess: screenAdminRepositoryAccess,
+		shellNavProjects:         screenAdminProjects,
 		shellNavImageScanning:    screenSecurityTrivy,
 		shellNavSecretScanning:   screenSecurityGitleaksConfig,
 		shellNavSigningPolicy:    screenSecuritySigningConfig,

@@ -79,7 +79,7 @@ func TestShellSidebarGroupsAndLabelsAreExact(t *testing.T) {
 	want := []string{
 		"regixtry admin",
 		"▸ Overview",
-		"ACCESS", "Users", "Robots", "Repository access",
+		"ACCESS", "Users", "Robots", "Repository access", "Projects",
 		"SECURITY", "Image scanning", "Secret scanning", "Signing policy",
 		"OPERATIONS", "Scan runs", "Secret findings", "Update channel",
 	}

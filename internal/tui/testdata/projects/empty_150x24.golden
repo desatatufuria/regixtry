@@ -1,0 +1,24 @@
+  Admin › Access › Projects                                                                                                    signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                      
+                               │  Projects                                                                                                0 projects  
+    Overview                   │                                                                                                                      
+                               │  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  
+  ACCESS                       │  │ No projects yet                                                                                                │  
+      Users                    │  │ A project must exist before anyone can push to it. Press n to create the first one, for example odabank.       │  
+      Robots                   │  │ Repositories pushed as odabank/api then belong to project odabank.                                             │  
+      Repository access        │  │                                                                                                                │  
+    ▸ Projects                 │  │                                                                                                                │  
+                               │  │                                                                                                                │  
+  SECURITY                     │  │                                                                                                                │  
+      Image scanning           │  │                                                                                                                │  
+      Secret scanning          │  │                                                                                                                │  
+      Signing policy           │  │                                                                                                                │  
+                               │  │                                                                                                                │  
+  OPERATIONS                   │  │                                                                                                                │  
+      Scan runs                │  │                                                                                                                │  
+      Secret findings          │  │                                                                                                                │  
+      Update channel           │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  
+                               │                                                                                                                      
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  n new project   esc back   q quit                                                                                                      F2 mouse on  

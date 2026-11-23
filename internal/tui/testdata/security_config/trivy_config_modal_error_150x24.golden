@@ -8,17 +8,17 @@
       Users                    │  │ TRIVY CONFI  │  Interval                                        │  │ SCAN POLICY                               │
       Robots                   │  │ Scheduled s  │   24hx▏                                          │  │ Policy                        [x] enabled │
       Repository access        │  │ Interval     │  Timeout                                         │  │ Severity threshold          CRITICAL+HIGH │
-                               │  │ Timeout      │   5m                                             │  │ A scan that reaches the threshold blocks  │
-  SECURITY                     │  │ Max concurr  │  Registry Reachable URL                          │  │ the pull. p edit policy.                  │
-    ▸ Image scanning           │  │ Registry re  │   http://regixtry:5000                           │  │ Last saved 2 Nov 2026 10:14 UTC.          │
-      Secret scanning          │  │ c edit conf  │  Max Concurrency                                 │  │                                           │
-      Signing policy           │  ╰────────────  │   2                                              │  ╰───────────────────────────────────────────╯
-                               │  ╭────────────  │  invalid interval: time: unknown unit "hx" in    │  ────────────────────────────────────────────╮
-  OPERATIONS                   │  │ PER-REPOSIT  │  duration "24hx"                                 │                                              │
-      Scan runs                │  │ REPOSITORY   │                                                  │   ENABLED  DETAIL                UPDATED     │
-      Secret findings          │  │ team/api     │   Save  enter   Cancel  esc                      │   yes      ignore file set       14 Nov      │
-      Update channel           │  │ team/docs    │  tab next field, space toggles                   │   no       scanning off          2 Nov       │
-                               │  │ +2 more, o   ╰──────────────────────────────────────────────────╯                                              │
+      Projects                 │  │ Timeout      │   5m                                             │  │ A scan that reaches the threshold blocks  │
+                               │  │ Max concurr  │  Registry Reachable URL                          │  │ the pull. p edit policy.                  │
+  SECURITY                     │  │ Registry re  │   http://regixtry:5000                           │  │ Last saved 2 Nov 2026 10:14 UTC.          │
+    ▸ Image scanning           │  │ c edit conf  │  Max Concurrency                                 │  │                                           │
+      Secret scanning          │  ╰────────────  │   2                                              │  ╰───────────────────────────────────────────╯
+      Signing policy           │  ╭────────────  │  invalid interval: time: unknown unit "hx" in    │  ────────────────────────────────────────────╮
+                               │  │ PER-REPOSIT  │  duration "24hx"                                 │                                              │
+  OPERATIONS                   │  │ REPOSITORY   │                                                  │   ENABLED  DETAIL                UPDATED     │
+      Scan runs                │  │ team/api     │   Save  enter   Cancel  esc                      │   yes      ignore file set       14 Nov      │
+      Secret findings          │  │ team/docs    │  tab next field, space toggles                   │   no       scanning off          2 Nov       │
+      Update channel           │  │ +2 more, o   ╰──────────────────────────────────────────────────╯                                              │
                                │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   tab next field   space toggle   enter save   esc cancel                                                                                F2 mouse on  

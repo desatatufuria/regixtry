@@ -8,6 +8,7 @@
       Users                    │  │ Could not read the overrides: the admin API is unreachable             │  │                                    │  
       Robots                   │  │ Press r to try again.                                                  │  │                                    │  
       Repository access        │  │                                                                        │  │                                    │  
+      Projects                 │  │                                                                        │  │                                    │  
                                │  │                                                                        │  │                                    │  
   SECURITY                     │  │                                                                        │  │                                    │  
       Image scanning           │  │                                                                        │  │                                    │  
@@ -16,9 +17,8 @@
                                │  │                                                                        │  │                                    │  
   OPERATIONS                   │  │                                                                        │  │                                    │  
       Scan runs                │  │                                                                        │  │                                    │  
-      Secret findings          │  │                                                                        │  │                                    │  
-      Update channel           │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
-                               │  An override replaces the global policy for that repository. o edits         │                                    │  
+      Secret findings          │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
+      Update channel           │  An override replaces the global policy for that repository. o edits         │                                    │  
                                │  the override of the selected repository.                                    ╰────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   ↑↓ move   o override   r refresh   esc back   q quit                                                                                   F2 mouse on  

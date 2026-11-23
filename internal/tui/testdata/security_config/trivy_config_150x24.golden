@@ -8,17 +8,17 @@
       Users                    │  │ TRIVY CONFIGURATION                                             │  │ SCAN POLICY                               │  
       Robots                   │  │ Scheduled scans                                     [x] enabled │  │ Policy                        [x] enabled │  
       Repository access        │  │ Interval                                                    24h │  │ Severity threshold          CRITICAL+HIGH │  
-                               │  │ Timeout                                                      5m │  │ A scan that reaches the threshold blocks  │  
-  SECURITY                     │  │ Max concurrency                                               2 │  │ the pull. p edit policy.                  │  
-    ▸ Image scanning           │  │ Registry reachable URL                     http://regixtry:5000 │  │ Last saved 2 Nov 2026 10:14 UTC.          │  
-      Secret scanning          │  │ c edit configuration.                                           │  │                                           │  
-      Signing policy           │  ╰─────────────────────────────────────────────────────────────────╯  ╰───────────────────────────────────────────╯  
-                               │  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  
-  OPERATIONS                   │  │ PER-REPOSITORY OVERRIDES                                                                                       │  
-      Scan runs                │  │ REPOSITORY                                               STATUS     ENABLED  DETAIL                UPDATED     │  
-      Secret findings          │  │ team/api                                                 override   yes      ignore file set       14 Nov      │  
-      Update channel           │  │ team/docs                                                override   no       scanning off          2 Nov       │  
-                               │  │ +2 more, o opens the list                                                                                      │  
+      Projects                 │  │ Timeout                                                      5m │  │ A scan that reaches the threshold blocks  │  
+                               │  │ Max concurrency                                               2 │  │ the pull. p edit policy.                  │  
+  SECURITY                     │  │ Registry reachable URL                     http://regixtry:5000 │  │ Last saved 2 Nov 2026 10:14 UTC.          │  
+    ▸ Image scanning           │  │ c edit configuration.                                           │  │                                           │  
+      Secret scanning          │  ╰─────────────────────────────────────────────────────────────────╯  ╰───────────────────────────────────────────╯  
+      Signing policy           │  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  
+                               │  │ PER-REPOSITORY OVERRIDES                                                                                       │  
+  OPERATIONS                   │  │ REPOSITORY                                               STATUS     ENABLED  DETAIL                UPDATED     │  
+      Scan runs                │  │ team/api                                                 override   yes      ignore file set       14 Nov      │  
+      Secret findings          │  │ team/docs                                                override   no       scanning off          2 Nov       │  
+      Update channel           │  │ +2 more, o opens the list                                                                                      │  
                                │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   tab switch tabs   c configure   p policy   o overrides   x disable   u upgrade runtime   r refresh   esc back   q quit                 F2 mouse on  

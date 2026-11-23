@@ -8,17 +8,17 @@
       Users                    │  │ Secret scan  │  Applies to every repository without an          │                                  [x] enabled │
       Robots                   │  │ Timeout      │  override.                                       │                                           2m │
       Repository access        │  │ Max concurr  │  [x] Enabled                                     │                                            2 │
-                               │  │ c edit conf  │  Timeout                                         │                                              │
-  SECURITY                     │  ╰────────────  │   2m                                             │  ────────────────────────────────────────────╯
-      Image scanning           │  ╭────────────  │  Max Concurrency                                 │  ────────────────────────────────────────────╮
-    ▸ Secret scanning          │  │ PER-REPOSIT  │   2                                              │                                              │
-      Signing policy           │  │ REPOSITORY   │                                                  │   ENABLED  DETAIL                UPDATED     │
-                               │  │ team/api     │   Save  enter   Cancel  esc                      │   yes      config path set       12 Nov      │
-  OPERATIONS                   │  │ team/docs    │  tab next field, space toggles                   │   no       scanning off          2 Nov       │
-      Scan runs                │  │ team/web     ╰──────────────────────────────────────────────────╯   —        global settings       -           │
-      Secret findings          │  │ team/infra                                               inherited  —        global settings       -           │
+      Projects                 │  │ c edit conf  │  Timeout                                         │                                              │
+                               │  ╰────────────  │   2m                                             │  ────────────────────────────────────────────╯
+  SECURITY                     │  ╭────────────  │  Max Concurrency                                 │  ────────────────────────────────────────────╮
+      Image scanning           │  │ PER-REPOSIT  │   2                                              │                                              │
+    ▸ Secret scanning          │  │ REPOSITORY   │                                                  │   ENABLED  DETAIL                UPDATED     │
+      Signing policy           │  │ team/api     │   Save  enter   Cancel  esc                      │   yes      config path set       12 Nov      │
+                               │  │ team/docs    │  tab next field, space toggles                   │   no       scanning off          2 Nov       │
+  OPERATIONS                   │  │ team/web     ╰──────────────────────────────────────────────────╯   —        global settings       -           │
+      Scan runs                │  │ team/infra                                               inherited  —        global settings       -           │
+      Secret findings          │  │                                                                                                                │
       Update channel           │  │                                                                                                                │
-                               │  │                                                                                                                │
                                │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   tab next field   space toggle   enter save   esc cancel                                                                                F2 mouse on  

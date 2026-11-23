@@ -148,6 +148,8 @@ func overviewOpenItem(id shellNavID) tea.Cmd {
 		return overviewOpen(overviewOpenRobots)
 	case shellNavRepositoryAccess:
 		return openRepoAccess()
+	case shellNavProjects:
+		return navigate(screenAdminProjects)
 	case shellNavImageScanning:
 		return navigate(screenSecurityTrivy)
 	case shellNavSecretScanning:

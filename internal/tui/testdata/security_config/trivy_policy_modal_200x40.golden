@@ -8,17 +8,17 @@
       Users                    │  │ TRIVY CONFIGURATION                                                                           │  │ SCAN POLICY                                                   │
       Robots                   │  │ Scheduled scans                                                                   [x] enabled │  │ Policy                                            [x] enabled │
       Repository access        │  │ Interval                                                                                  24h │  │ Severity threshold                              CRITICAL+HIGH │
-                               │  │ Timeout                                                                                    5m │  │ A scan that reaches the threshold blocks the pull. p edit     │
-  SECURITY                     │  │ Max concurrency                                                                             2 │  │ policy.                                                       │
-    ▸ Image scanning           │  │ Registry reachable URL                                                   http://regixtry:5000 │  │ Last saved 2 Nov 2026 10:14 UTC.                              │
-      Secret scanning          │  │ c edit configuration.                                                                         │  │                                                               │
-      Signing policy           │  ╰─────────────────────────────────────  ╭──────────────────────────────────────────────────╮  ──╯  ╰───────────────────────────────────────────────────────────────╯
-                               │  ╭─────────────────────────────────────  │  Vulnerability policy                            │  ─────────────────────────────────────────────────────────────────────╮
-  OPERATIONS                   │  │ LAST SWEEP                            │  A scan that reaches the threshold blocks the    │                                                                       │
-      Scan runs                │  │ no sweep yet                          │  pull. Applies to every repository without an    │                                                                       │
-      Secret findings          │  ╰─────────────────────────────────────  │  override.                                       │  ─────────────────────────────────────────────────────────────────────╯
-      Update channel           │  ╭─────────────────────────────────────  │  [x] Policy enabled                              │  ─────────────────────────────────────────────────────────────────────╮
-                               │  │ PER-REPOSITORY OVERRIDES              │  Severity threshold                              │                                                                       │
+      Projects                 │  │ Timeout                                                                                    5m │  │ A scan that reaches the threshold blocks the pull. p edit     │
+                               │  │ Max concurrency                                                                             2 │  │ policy.                                                       │
+  SECURITY                     │  │ Registry reachable URL                                                   http://regixtry:5000 │  │ Last saved 2 Nov 2026 10:14 UTC.                              │
+    ▸ Image scanning           │  │ c edit configuration.                                                                         │  │                                                               │
+      Secret scanning          │  ╰─────────────────────────────────────  ╭──────────────────────────────────────────────────╮  ──╯  ╰───────────────────────────────────────────────────────────────╯
+      Signing policy           │  ╭─────────────────────────────────────  │  Vulnerability policy                            │  ─────────────────────────────────────────────────────────────────────╮
+                               │  │ LAST SWEEP                            │  A scan that reaches the threshold blocks the    │                                                                       │
+  OPERATIONS                   │  │ no sweep yet                          │  pull. Applies to every repository without an    │                                                                       │
+      Scan runs                │  ╰─────────────────────────────────────  │  override.                                       │  ─────────────────────────────────────────────────────────────────────╯
+      Secret findings          │  ╭─────────────────────────────────────  │  [x] Policy enabled                              │  ─────────────────────────────────────────────────────────────────────╮
+      Update channel           │  │ PER-REPOSITORY OVERRIDES              │  Severity threshold                              │                                                                       │
                                │  │ REPOSITORY                            │   CRITICAL+HIGH                                  │                 STATUS     ENABLED  DETAIL                UPDATED     │
                                │  │ team/api                              │                                                  │                 override   yes      ignore file set       14 Nov      │
                                │  │ team/docs                             │   Save  enter   Cancel  esc                      │                 override   no       scanning off          2 Nov       │

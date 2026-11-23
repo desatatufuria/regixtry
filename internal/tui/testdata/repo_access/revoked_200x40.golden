@@ -8,17 +8,17 @@
       Users                    │  │   REPOSITORY                                                                      PRINCIPAL         ROLE     SINCE       │  │                                    │  
       Robots                   │  │ ▸ team/api                                                                        bob               Reader   2 Nov       │  │ WHO HAS WHAT                       │  
     ▸ Repository access        │  │   team/api                                                                        carol             Writer   9 Nov       │  │ carol user                [Writer] │  
-                               │  │   team/api                                                                        ci-publisher      Writer   12 Jan      │  │ ci-publisher robot        [Writer] │  
-  SECURITY                     │  │   team/docs                                                                       alice             Reader   3 Mar       │  │ bob user                  [Reader] │  
-      Image scanning           │  │   team/infra                                                                      old-deploy        Admin    5 Feb       │  │                                    │  
-      Secret scanning          │  │                                                                                                                          │  │ ACTIONS ON SELECTED GRANT          │  
-      Signing policy           │  │                                                                                                                          │  │ Open principal               enter │  
-                               │  │                                                                                                                          │  │ Grant access                     g │  
-  OPERATIONS                   │  │                                                                                                                          │  │ Revoke bob on team/api           x │  
-      Scan runs                │  │                                                                                                                          │  │                                    │  
-      Secret findings          │  │                                                                                                                          │  │ No Admin on this repository. Only  │  
-      Update channel           │  │                                                                                                                          │  │ server admins can change access    │  
-                               │  │                                                                                                                          │  │ here.                              │  
+      Projects                 │  │   team/api                                                                        ci-publisher      Writer   12 Jan      │  │ ci-publisher robot        [Writer] │  
+                               │  │   team/docs                                                                       alice             Reader   3 Mar       │  │ bob user                  [Reader] │  
+  SECURITY                     │  │   team/infra                                                                      old-deploy        Admin    5 Feb       │  │                                    │  
+      Image scanning           │  │                                                                                                                          │  │ ACTIONS ON SELECTED GRANT          │  
+      Secret scanning          │  │                                                                                                                          │  │ Open principal               enter │  
+      Signing policy           │  │                                                                                                                          │  │ Grant access                     g │  
+                               │  │                                                                                                                          │  │ Revoke bob on team/api           x │  
+  OPERATIONS                   │  │                                                                                                                          │  │                                    │  
+      Scan runs                │  │                                                                                                                          │  │ No Admin on this repository. Only  │  
+      Secret findings          │  │                                                                                                                          │  │ server admins can change access    │  
+      Update channel           │  │                                                                                                                          │  │ here.                              │  
                                │  │                                                                                                                          │  │                                    │  
                                │  │                                                                                                                          │  │                                    │  
                                │  │                                                                                                                          │  │                                    │  

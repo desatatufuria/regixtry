@@ -8,17 +8,17 @@
       Users                    │               ▸ team/app-1                                                                                           
     ▸ Robots                   │                 team/app-2                                                                                           
       Repository access        │                 team/app-3                                                                                           
-                               │                 team/app-4                                                                                           
-  SECURITY                     │                 team/app-5                                                                                           
-      Image scanning           │                 +2 more                                                                                              
-      Secret scanning          │                                                                                                                      
-      Signing policy           │  Role        (*) Reader  ( ) Writer  ( ) Admin                                                                       
-                               │  Lifetime    ( ) 7 days  (*) 30 days  ( ) 90 days  ( ) 1 year  ( ) 2 years  ( ) Custom                               
-  OPERATIONS                   │              Expires Mon 21 Dec 2026 09:30 UTC (in 30 days)                                                          
-      Scan runs                │              A leaked token works until it expires or you revoke it. Pick the shortest lifetime CI can live with.    
-      Secret findings          │                                                                                                                      
-      Update channel           │  Name and repository are required.                                                                                   
-                               │   Create robot  enter   Cancel  esc                                                                                  
+      Projects                 │                 team/app-4                                                                                           
+                               │                 team/app-5                                                                                           
+  SECURITY                     │                 +2 more                                                                                              
+      Image scanning           │                                                                                                                      
+      Secret scanning          │  Role        (*) Reader  ( ) Writer  ( ) Admin                                                                       
+      Signing policy           │  Lifetime    ( ) 7 days  (*) 30 days  ( ) 90 days  ( ) 1 year  ( ) 2 years  ( ) Custom                               
+                               │              Expires Mon 21 Dec 2026 09:30 UTC (in 30 days)                                                          
+  OPERATIONS                   │              A leaked token works until it expires or you revoke it. Pick the shortest lifetime CI can live with.    
+      Scan runs                │                                                                                                                      
+      Secret findings          │  Name and repository are required.                                                                                   
+      Update channel           │   Create robot  enter   Cancel  esc                                                                                  
                                │                                                                                                                      
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   tab next field   ↑↓ pick repository   ←→ role, lifetime   enter create   esc cancel                                                                 
