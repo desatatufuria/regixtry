@@ -43,9 +43,9 @@ A project is the first path segment of a repository name. A project grant (`auth
 Escalation rules (server-side, not just hidden in the UI):
 
 - Matching is `==` on the whole first segment: `odabank` never covers `odabank2/...` nor a flat repository named `odabank`.
-- Effective role is the highest of project and exact grant; exact grants only add. A project grant never widens `IsReadOnly` beyond pull and never grants anything to a robot beyond reader or writer.
+- Effective role is the highest of project and exact grant; exact grants only add. No grant, project or exact, widens `IsReadOnly` beyond pull (see the read-only role below), and a project grant never grants anything to a robot beyond reader or writer.
 - Only a global admin creates or deletes projects, gives `repo-admin` on a project, or touches another project admin. A project admin (`repo-admin` on the project) can list members and give or revoke `repo-reader`/`repo-writer` inside that one project; it cannot create robots or reach any other admin route.
-- A read-only user can hold only a project reader grant. A robot holds exactly one grant (repository or project) and never `repo-admin`.
+- Grants for a read-only user: new project grants above reader are refused; exact grants are accepted but, like any project grant already stored, never take effect above read. A robot holds exactly one grant (repository or project) and never `repo-admin`.
 
 Existence oracle: authorization comes before existence. A push by a caller without push permission, and a member-route call by a caller without rights on the project, get the same answer whether or not the project exists (`401`/`403`); only a caller who is allowed learns `NAME_UNKNOWN` or `404`. Pulls, tags and the catalog never consult the projects table.
 
@@ -78,7 +78,8 @@ Robot accounts (`User.IsRobot`) are CI/CD machine identities with a narrower att
 `IsReadOnly` grants pull access to *every* repository with no per-repository grant needed. Its scope is deliberately narrow:
 
 - Never grants push, on any repository — `hasGrantedRepositoryAccess`'s read-only branch is only ever evaluated against `RepoRole.AllowsRead`, so it structurally cannot widen to write or catalog-admin checks even if a caller mistakenly probes with a different predicate.
-- Grants no admin-surface access — a read-only user cannot reach `/admin/v1` routes or the delegated repository-grants namespace.
+- Is a ceiling for grants: a read-only user keeps pull and catalog, but no exact-repository or project grant, of any role (including rows stored before the rule existed, for example a writer or admin grant of a user later made read-only), gives it push, manifest or repository deletion, repository administration or delegation. `Principal` caps every grant role at reader for such a user in one place; every other decision (repository delete, grant management, signing self-read gate, token scopes) consumes that decision. Users who are not read-only are unaffected, and a global admin that is also flagged read-only stays an admin.
+- Grants no admin-surface access — a read-only user cannot reach `/admin/v1` routes or the delegated repository-grants and project-member namespaces, even when it holds a repo-admin or project-admin grant.
 - Is mutually exclusive with `IsRobot` at the domain level (`User.Validate` rejects a robot marked read-only).
 
 ## TUI local browsing is not access-controlled — by design

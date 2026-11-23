@@ -19,7 +19,6 @@ var exactGrantMatchSites = map[string]string{
 	"internal/domain/auth/grant.go:EffectiveRole":                  "the max rule; walks project grants right after",
 	"internal/app/auth/service.go:PutRepositoryGrant":              "escalation bound on exact grants (project awareness is the delegation unit's)",
 	"internal/app/auth/service.go:DeleteRepositoryGrant":           "escalation bound on exact grants (project awareness is the delegation unit's)",
-	"internal/app/auth/service.go:requireAdminOrRepoAdmin":         "exact-only delegation copy; project admin delegation is the delegation unit's",
 	"internal/app/auth/access_events.go:grantRoleOn":               "history text of an exact grant change",
 	"internal/tui/screen_edit_user.go:withGrants":                  "presentation only, not a security boundary",
 	"internal/tui/screen_edit_user.go:applyRevoked":                "presentation only, not a security boundary",

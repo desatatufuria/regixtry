@@ -773,6 +773,9 @@ func (s *Service) PutRepoGrant(ctx context.Context, actor domainauth.Principal, 
 	if err := role.Validate(); err != nil {
 		return domainauth.RepoGrant{}, err
 	}
+	if err := refuseReadOnlyExactGrant(subject, role); err != nil {
+		return domainauth.RepoGrant{}, err
+	}
 	if err := s.refuseRepoGrantOnProjectRobot(ctx, subject); err != nil {
 		return domainauth.RepoGrant{}, err
 	}
@@ -793,6 +796,18 @@ func (s *Service) PutRepoGrant(ctx context.Context, actor domainauth.Principal, 
 	}
 
 	return grant, nil
+}
+
+// refuseReadOnlyExactGrant keeps misleading data out of the store: a
+// read-only user is capped at read whatever its grants say (Principal), so a
+// writer or admin exact grant would be inert. Rows that predate this rule stay
+// capped at decision time.
+func refuseReadOnlyExactGrant(target domainauth.User, role domainauth.RepoRole) error {
+	if target.IsReadOnly && role != domainauth.RepoRoleReader {
+		return domainauth.NewValidationError("read-only users can only be readers")
+	}
+
+	return nil
 }
 
 func (s *Service) PutAdminUserRepoGrant(ctx context.Context, actor domainauth.Principal, input ports.AdminPutRepoGrantInput) (ports.AdminRepoGrant, error) {
@@ -895,6 +910,9 @@ func (s *Service) PutRepositoryGrant(ctx context.Context, actor domainauth.Princ
 
 	target, err := s.store.GetUserByUsername(ctx, normalizeUsername(username))
 	if err != nil {
+		return domainauth.RepoGrant{}, err
+	}
+	if err := refuseReadOnlyExactGrant(target, role); err != nil {
 		return domainauth.RepoGrant{}, err
 	}
 	if err := s.refuseRepoGrantOnProjectRobot(ctx, target); err != nil {
@@ -1426,11 +1444,12 @@ func requireAdmin(actor domainauth.Principal) error {
 
 // requireAdminOrRepoAdmin authorizes the delegated repository-grant
 // namespace (design.md Decision 4): a global admin always passes, and a
-// repo-admin grant on the exact target repository also passes. This
-// deliberately reads actor.Grants directly instead of reusing
-// Principal.HasRepoAdminAccess, which additionally requires a push token
-// scope — a TUI/admin-API login requests zero scopes, so that helper would
-// make delegation permanently dead code on exactly the tokens it runs on.
+// repo-admin grant on the target repository (exact or through its project)
+// also passes. It uses Principal.HasGrantedRepoAdminAccess, the grant half
+// only, instead of Principal.HasRepoAdminAccess, which additionally requires a
+// push token scope — a TUI/admin-API login requests zero scopes, so that
+// helper would make delegation permanently dead code on exactly the tokens it
+// runs on.
 func requireAdminOrRepoAdmin(actor domainauth.Principal, repository string) error {
 	if !actor.IsUnrestricted() {
 		return domainauth.NewForbiddenError("a scope-limited token cannot be used for administration")
@@ -1439,49 +1458,21 @@ func requireAdminOrRepoAdmin(actor domainauth.Principal, repository string) erro
 		return nil
 	}
 
-	for _, grant := range actor.Grants {
-		if grant.Repository.String() == repository && grant.Role.AllowsAdmin() {
-			return nil
-		}
-	}
-
-	// A project admin is a delegate for every repository inside the project,
-	// with the same escalation bounds as an exact repository admin (the
-	// callers enforce them). The project is the first path segment compared
-	// with ==: "odabank" never reaches "odabank2/x" nor the flat "odabank".
-	if project, ok := repositoryProject(repository); ok && isProjectAdminOf(actor, project) {
+	// One decision for the exact repository grant and the project grant, with
+	// the read-only cap applied inside Principal: a read-only actor never
+	// delegates, whatever its grants say.
+	if actor.HasGrantedRepoAdminAccess(repository) {
 		return nil
 	}
 
 	return domainauth.NewForbiddenError("repository administrator privileges are required")
 }
 
-// repositoryProject is the project of a repository name: the segment before
-// the first '/'. A flat name belongs to no project.
-func repositoryProject(repository string) (string, bool) {
-	i := strings.IndexByte(repository, '/')
-	if i <= 0 {
-		return "", false
-	}
-
-	return repository[:i], true
-}
-
 // isProjectAdminOf reports whether the actor holds a project admin grant on
-// exactly this project. A read-only principal never delegates, whatever its
-// grants say (project admin grants for read-only users are refused at grant
-// time; this covers one that predates the rule).
+// exactly this project. A read-only principal never delegates: the cap lives
+// in Principal, so this also covers grants that predate the rule.
 func isProjectAdminOf(actor domainauth.Principal, project string) bool {
-	if actor.IsReadOnly {
-		return false
-	}
-	for _, grant := range actor.ProjectGrants {
-		if grant.Project == project && grant.Role.AllowsAdmin() {
-			return true
-		}
-	}
-
-	return false
+	return actor.HasGrantedProjectAdminAccess(project)
 }
 
 // requireAdminOrProjectAdmin authorizes the delegated project-member

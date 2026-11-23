@@ -673,8 +673,9 @@ func (s *Service) DeleteRepository(ctx context.Context, repositoryName string) (
 // delete. But whenever a Principal IS present in ctx, it additionally
 // requires the caller to be a global admin or hold a repo-admin grant on
 // this repository, directly or through its project (the shared
-// Principal.HasGrantedRepoAdminAccess predicate; internal/app/auth's
-// requireAdminOrRepoAdmin is the remaining exact-only copy). It does not use
+// Principal.HasGrantedRepoAdminAccess predicate, which also caps a read-only
+// principal at read; internal/app/auth's requireAdminOrRepoAdmin consumes the
+// same predicate). It does not use
 // Principal.HasRepoAdminAccess, for the same reason requireAdminOrRepoAdmin
 // exists instead of that method: an admin-session login -- the TUI's own
 // admin panel, or this action's own admin HTTP API route -- always
