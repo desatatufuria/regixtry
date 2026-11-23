@@ -208,7 +208,7 @@ func (s editUserScreen) applyLoaded(msg editUserLoadedMsg) editUserScreen {
 		if msg.projectGrantsErr == nil {
 			projectGrants = msg.projectGrants
 		}
-		s = s.withAccess(grants, projectGrants)
+		s = s.withGrants(grants, projectGrants)
 	}
 	if msg.tokensErr == nil {
 		s.tokens = msg.tokens
@@ -308,13 +308,6 @@ type editUserAccessRow struct {
 	since time.Time
 }
 
-func (r editUserAccessRow) key() string {
-	if r.project {
-		return "project:" + r.name
-	}
-	return "repo:" + r.name
-}
-
 // label is the first column: "odabank/*" for a project role.
 func (r editUserAccessRow) label() string {
 	if r.project {
@@ -344,44 +337,45 @@ func (s editUserScreen) selectedRow() (editUserAccessRow, bool) {
 	return rows[boundedIndex(s.grantCursor, len(rows))], true
 }
 
-// withGrants replaces the exact repository grants, keeping the selection.
-func (s editUserScreen) withGrants(grants []ports.AdminRepoGrant) editUserScreen {
-	return s.withAccess(grants, s.projectGrants)
-}
-
-// withAccess replaces both lists, keeping the selection on the same row when
-// it is still there.
-func (s editUserScreen) withAccess(grants []ports.AdminRepoGrant, projectGrants []ports.AdminProjectGrant) editUserScreen {
-	keep := ""
+// withGrants replaces both lists (the exact repository grants and the project
+// roles), keeping the selection on the same row when it is still there.
+// Presentation only: nothing here decides access.
+func (s editUserScreen) withGrants(grants []ports.AdminRepoGrant, projectGrants []ports.AdminProjectGrant) editUserScreen {
+	keepProject, keepRepo := "", ""
 	if row, ok := s.selectedRow(); ok {
-		keep = row.key()
+		if row.project {
+			keepProject = row.name
+		} else {
+			keepRepo = row.name
+		}
 	}
 	s.grants, s.projectGrants = grants, projectGrants
-	rows := s.accessRows()
-	s.grantCursor = boundedIndex(s.grantCursor, len(rows))
-	for i, row := range rows {
-		if keep != "" && row.key() == keep {
+	total := len(projectGrants) + len(grants)
+	s.grantCursor = boundedIndex(s.grantCursor, total)
+	for i, grant := range projectGrants {
+		if keepProject != "" && grant.Project == keepProject {
 			s.grantCursor = i
 		}
 	}
-	if len(rows) == 0 {
+	for i, grant := range grants {
+		if keepRepo != "" && grant.Repository.String() == keepRepo {
+			s.grantCursor = len(projectGrants) + i
+		}
+	}
+	if total == 0 {
 		s.grantsFocused = false
 	}
 	return s
 }
 
-// selectedGrant is the selected row when it is an exact repository grant.
+// selectedGrant is the selected row when it is an exact repository grant: the
+// rows are the project roles first, then the exact grants in order.
 func (s editUserScreen) selectedGrant() (ports.AdminRepoGrant, bool) {
-	row, ok := s.selectedRow()
-	if !ok || row.project {
+	index := boundedIndex(s.grantCursor, len(s.projectGrants)+len(s.grants)) - len(s.projectGrants)
+	if len(s.grants) == 0 || index < 0 {
 		return ports.AdminRepoGrant{}, false
 	}
-	for _, grant := range s.grants {
-		if grant.Repository.String() == row.name {
-			return grant, true
-		}
-	}
-	return ports.AdminRepoGrant{}, false
+	return s.grants[index], true
 }
 
 // editUserGrantRevokedMsg is the result of revoking one of the user's grants.
@@ -458,7 +452,7 @@ func (s editUserScreen) applyRevoked(env screenEnv, msg editUserGrantRevokedMsg)
 			kept = append(kept, grant)
 		}
 	}
-	s = s.withAccess(kept, s.projectGrants)
+	s = s.withGrants(kept, s.projectGrants)
 	s.grantsFloor = editUserLoadSeq.Add(1)
 	s = s.withNotice(userNoticeSuccess, fmt.Sprintf("Revoked %s on %s.", msg.username, msg.repo))
 	s.refreshing = true
@@ -530,7 +524,7 @@ func (s editUserScreen) applyProjectRevoked(env screenEnv, msg editUserProjectRe
 			kept = append(kept, grant)
 		}
 	}
-	s = s.withAccess(s.grants, kept)
+	s = s.withGrants(s.grants, kept)
 	s.grantsFloor = editUserLoadSeq.Add(1)
 	s = s.withNotice(userNoticeSuccess, fmt.Sprintf("Revoked %s on project %s.", msg.username, msg.project))
 	s.refreshing = true

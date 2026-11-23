@@ -144,9 +144,9 @@ func (s adminProjectsScreen) renderTable(theme adminTheme, env screenEnv, width,
 		return " ▼"
 	}
 	header := "  " + padText("PROJECT"+arrow(projectSortName), nameW) + gap +
-		padLeft("REPOSITORIES"+arrow(projectSortRepositories), projectsColRepos) + gap +
-		padLeft("TAGS", projectsColTags) + gap +
-		padLeft("LAST PUSH"+arrow(projectSortLastPush), projectsColPush)
+		rightAlignText("REPOSITORIES"+arrow(projectSortRepositories), projectsColRepos) + gap +
+		rightAlignText("TAGS", projectsColTags) + gap +
+		rightAlignText("LAST PUSH"+arrow(projectSortLastPush), projectsColPush)
 	lines := []string{theme.muted.Bold(true).Render(fitText(header, inner))}
 
 	cursor := s.index(rows)
@@ -155,9 +155,9 @@ func (s adminProjectsScreen) renderTable(theme adminTheme, env screenEnv, width,
 	for i := start; i < end; i++ {
 		project := rows[i]
 		cells := padText(grantTruncate(project.Name, nameW), nameW) + gap +
-			padLeft(fmt.Sprint(project.Repositories), projectsColRepos) + gap +
-			padLeft(fmt.Sprint(project.Tags), projectsColTags) + gap +
-			padLeft(projectLastPush(project.LastPushed, now), projectsColPush)
+			rightAlignText(fmt.Sprint(project.Repositories), projectsColRepos) + gap +
+			rightAlignText(fmt.Sprint(project.Tags), projectsColTags) + gap +
+			rightAlignText(projectLastPush(project.LastPushed, now), projectsColPush)
 		if i == cursor {
 			lines = append(lines, theme.selected.Padding(0).Render("▸ "+cells))
 			continue
@@ -170,7 +170,7 @@ func (s adminProjectsScreen) renderTable(theme adminTheme, env screenEnv, width,
 	return box.Render(strings.Join(lines, "\n"))
 }
 
-func padLeft(text string, width int) string {
+func rightAlignText(text string, width int) string {
 	text = fitText(text, width)
 	return strings.Repeat(" ", max(width-lipgloss.Width(text), 0)) + text
 }

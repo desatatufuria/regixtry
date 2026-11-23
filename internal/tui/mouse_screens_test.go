@@ -62,6 +62,8 @@ var mouseCases = []mouseCase{
 	usersMouseCase(),
 	robotsMouseCase(),
 	repoAccessMouseCase(),
+	projectsMouseCase(),
+	projectMembersMouseCase(),
 	scanRunsMouseCase(),
 	secretFindingsMouseCase(),
 	scanHistoryMouseCase(),
