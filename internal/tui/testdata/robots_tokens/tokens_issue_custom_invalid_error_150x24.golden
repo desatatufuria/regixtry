@@ -14,11 +14,11 @@
       Image scanning           │                                                                    │ A leaked token stays valid until it expires  │  
       Secret scanning          │    old-deploy                                             expired  │ or you revoke it. Shorter for people, longer │  
       Signing policy           │  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  │ only for CI robots.                          │  
-                               │  act_55f0…b81c                                 expired 2 Nov 2026  │ The secret is shown once, right after        │  
-  OPERATIONS                   │                                                                    │ creation. Copy it before leaving.            │  
-      Scan runs                │                                                                    │ token limit reached for this user            │  
-      Secret findings          │                                                                    │  Create token  enter   Cancel  esc           │  
-      Update channel           │                                                                    │                                              │  
-                               │                                                                    ╰──────────────────────────────────────────────╯  
+      Login security           │  act_55f0…b81c                                 expired 2 Nov 2026  │ The secret is shown once, right after        │  
+                               │                                                                    │ creation. Copy it before leaving.            │  
+  OPERATIONS                   │                                                                    │ token limit reached for this user            │  
+      Scan runs                │                                                                    │  Create token  enter   Cancel  esc           │  
+      Secret findings          │                                                                    │                                              │  
+      Update channel           │                                                                    ╰──────────────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   tab next field   ←→ lifetime   enter create token   esc cancel                                                                                      

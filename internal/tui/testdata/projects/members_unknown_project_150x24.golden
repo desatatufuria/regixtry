@@ -14,11 +14,11 @@
       Image scanning           │  │                                                                        │  │                                    │  
       Secret scanning          │  │                                                                        │  │                                    │  
       Signing policy           │  │                                                                        │  │                                    │  
-                               │  │                                                                        │  │                                    │  
-  OPERATIONS                   │  │                                                                        │  │ 0 repositories. Browse them in     │  
-      Scan runs                │  │                                                                        │  │ Console › Projects › ghost.        │  
-      Secret findings          │  ╰────────────────────────────────────────────────────────────────────────╯  ╰────────────────────────────────────╯  
+      Login security           │  │                                                                        │  │                                    │  
+                               │  │                                                                        │  │ 0 repositories. Browse them in     │  
+  OPERATIONS                   │  │                                                                        │  │ Console › Projects › ghost.        │  
+      Scan runs                │  ╰────────────────────────────────────────────────────────────────────────╯  ╰────────────────────────────────────╯  
+      Secret findings          │                                                                                                                      
       Update channel           │                                                                                                                      
-                               │                                                                                                                      
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   esc back   q quit                                                                                                                      F2 mouse on  

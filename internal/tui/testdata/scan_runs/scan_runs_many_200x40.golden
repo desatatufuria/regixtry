@@ -14,12 +14,12 @@
       Image scanning           │  │   organisation/team-07/service-with-a-very-long-repository-…  9c41e0…e0d2  completed  —          —          3     0    │  │ Checked                            — │  
       Secret scanning          │  │   organisation/team-08/service-with-a-very-long-repository-…  9c41e0…e0d2  completed  —          —          0     1    │  │                                      │  
       Signing policy           │  │   organisation/team-09/service-with-a-very-long-repository-…  9c41e0…e0d2  completed  —          —          1     2    │  │ FINDINGS                             │  
-                               │  │   organisation/team-10/service-with-a-very-long-repository-…  9c41e0…e0d2  completed  —          —          2     3    │  │ Critical                           0 │  
-  OPERATIONS                   │  │   organisation/team-11/service-with-a-very-long-repository-…  9c41e0…e0d2  completed  —          —          3     4    │  │ High                               0 │  
-    ▸ Scan runs                │  │   organisation/team-12/service-with-a-very-long-repository-…  9c41e0…e0d2  completed  —          —          0     5    │  │ Medium                            11 │  
-      Secret findings          │  │   organisation/team-13/service-with-a-very-long-repository-…  9c41e0…e0d2  completed  —          —          1     6    │  │ Low                                7 │  
-      Update channel           │  │   organisation/team-14/service-with-a-very-long-repository-…  9c41e0…e0d2  completed  —          —          2     0    │  │                                      │  
-                               │  │   organisation/team-15/service-with-a-very-long-repository-…  9c41e0…e0d2  completed  —          —          3     1    │  │ ACTIONS                              │  
+      Login security           │  │   organisation/team-10/service-with-a-very-long-repository-…  9c41e0…e0d2  completed  —          —          2     3    │  │ Critical                           0 │  
+                               │  │   organisation/team-11/service-with-a-very-long-repository-…  9c41e0…e0d2  completed  —          —          3     4    │  │ High                               0 │  
+  OPERATIONS                   │  │   organisation/team-12/service-with-a-very-long-repository-…  9c41e0…e0d2  completed  —          —          0     5    │  │ Medium                            11 │  
+    ▸ Scan runs                │  │   organisation/team-13/service-with-a-very-long-repository-…  9c41e0…e0d2  completed  —          —          1     6    │  │ Low                                7 │  
+      Secret findings          │  │   organisation/team-14/service-with-a-very-long-repository-…  9c41e0…e0d2  completed  —          —          2     0    │  │                                      │  
+      Update channel           │  │   organisation/team-15/service-with-a-very-long-repository-…  9c41e0…e0d2  completed  —          —          3     1    │  │ ACTIONS                              │  
                                │  │   organisation/team-16/service-with-a-very-long-repository-…  9c41e0…e0d2  completed  —          —          0     2    │  │ Scan history                   enter │  
                                │  │   organisation/team-17/service-with-a-very-long-repository-…  9c41e0…e0d2  completed  —          —          1     3    │  │ Refresh                            r │  
                                │  │   organisation/team-18/service-with-a-very-long-repository-…  9c41e0…e0d2  completed  —          —          2     4    │  │                                      │  

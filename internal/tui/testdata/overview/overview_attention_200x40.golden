@@ -14,12 +14,12 @@
       Image scanning           │  │ NEEDS ATTENTION                                                               │  │ RECENT CHANGES                                                                │  
       Secret scanning          │  │   Robot gh-actions has no repository access                           g grant │  │ No changes recorded yet.                                                      │  
       Signing policy           │  │   2 images have critical findings                                             │  │                                                                               │  
+      Login security           │  │                                                                               │  │                                                                               │  
                                │  │                                                                               │  │                                                                               │  
   OPERATIONS                   │  │                                                                               │  │                                                                               │  
       Scan runs                │  │                                                                               │  │                                                                               │  
       Secret findings          │  │                                                                               │  │                                                                               │  
       Update channel           │  │                                                                               │  │                                                                               │  
-                               │  │                                                                               │  │                                                                               │  
                                │  │                                                                               │  │                                                                               │  
                                │  │                                                                               │  │                                                                               │  
                                │  │                                                                               │  │                                                                               │  

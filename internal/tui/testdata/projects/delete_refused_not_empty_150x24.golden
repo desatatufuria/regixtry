@@ -14,11 +14,11 @@
       Image scanning           │           │  ╰────────────────────────────────────────────────────────╯  │
       Secret scanning          │           │                                                              │
       Signing policy           │           │  Delete repositories one by one in Console › Projects ›      │
-                               │           │  odabank. Nothing was changed.                               │
-  OPERATIONS                   │           │                                                              │
-      Scan runs                │           │   Close                                        esc / enter   │
-      Secret findings          │           ╰──────────────────────────────────────────────────────────────╯
+      Login security           │           │  odabank. Nothing was changed.                               │
+                               │           │                                                              │
+  OPERATIONS                   │           │   Close                                        esc / enter   │
+      Scan runs                │           ╰──────────────────────────────────────────────────────────────╯
+      Secret findings          │
       Update channel           │
-                               │
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   esc / enter close                                                                                                                      F2 mouse on  

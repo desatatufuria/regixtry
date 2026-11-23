@@ -1,0 +1,40 @@
+  Admin › Security › Login security                                                                                                                                              signed in as operator  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                                                                        
+                               │  Login security                                                                                                                                 backoff mode: enforce  
+    Overview                   │  ╭──────────────────────────────────────╮  ╭──────────────────────────────────────╮  ╭─────────────────────────────────────╮  ╭─────────────────────────────────────╮  
+                               │  │ FAILED LOGINS, 15 MIN                │  │ DISTINCT IPS                         │  │ DISTINCT ACCOUNTS                   │  │ ACCOUNTS WAITING                    │  
+  ACCESS                       │  │ 0                                    │  │ 0                                    │  │ 0                                   │  │ 0                                   │  
+      Users                    │  ╰──────────────────────────────────────╯  ╰──────────────────────────────────────╯  ╰─────────────────────────────────────╯  ╰─────────────────────────────────────╯  
+      Robots                   │  ╭─ EFFECTIVE SETTINGS ─────────────────────────────────────╮  ╭─ RECENT FAILURES ─────────────────────────────────────────────────────────────────────── / filter ─╮  
+      Repository access        │  │ Backoff mode                                     enforce │  │   LAST SEEN     ENDPOINT  REASON        ACCOUNT                IP                          COUNT   │  
+      Projects                 │  │ Failure threshold                 5 failures per account │  │ No failed logins in the last 24 hours.                                                             │  
+                               │  │ Base delay                                   under 1 min │  │                                                                                                    │  
+  SECURITY                     │  │ Max delay                                          5 min │  │                                                                                                    │  
+      Image scanning           │  │ Concurrency limit               8 logins checked at once │  │                                                                                                    │  
+      Secret scanning          │  │ Trusted proxies                          configured: yes │  │                                                                                                    │  
+      Signing policy           │  │ Set by service flags. Read-only here.                    │  │                                                                                                    │  
+    ▸ Login security           │  ╰──────────────────────────────────────────────────────────╯  │                                                                                                    │  
+                               │  ╭─ ACCOUNTS WAITING ───────────────────────────────────────╮  │                                                                                                    │  
+  OPERATIONS                   │  │   ACCOUNT                             FAILS  TIME LEFT   │  │                                                                                                    │  
+      Scan runs                │  │ Nobody is waiting.                                       │  │                                                                                                    │  
+      Secret findings          │  │                                                          │  │                                                                                                    │  
+      Update channel           │  │                                                          │  │                                                                                                    │  
+                               │  │                                                          │  │                                                                                                    │  
+                               │  │                                                          │  │                                                                                                    │  
+                               │  │                                                          │  │                                                                                                    │  
+                               │  │                                                          │  │                                                                                                    │  
+                               │  │                                                          │  │                                                                                                    │  
+                               │  │                                                          │  │                                                                                                    │  
+                               │  │                                                          │  │                                                                                                    │  
+                               │  │                                                          │  │                                                                                                    │  
+                               │  │                                                          │  │                                                                                                    │  
+                               │  │                                                          │  │                                                                                                    │  
+                               │  │                                                          │  │                                                                                                    │  
+                               │  │                                                          │  │                                                                                                    │  
+                               │  │                                                          │  │                                                                                                    │  
+                               │  │                                                          │  │                                                                                                    │  
+                               │  │                                                          │  │                                                                                                    │  
+                               │  ╰─ Time left grows up to the max delay. ───────────────────╯  ╰─ newest first ─────────────────────────────────────────────────────────────────────────────────────╯  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ↑↓ move   tab next panel   / filter   r refresh   esc back   q quit                                                                                                                      F2 mouse on  

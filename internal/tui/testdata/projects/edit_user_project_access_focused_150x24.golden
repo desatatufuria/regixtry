@@ -14,11 +14,11 @@
       Image scanning           │  │ PASSWORD                                             │  ╭──────────────────────────────────────────────────────╮  
       Secret scanning          │  │ Set a new password for carol                 p reset │  │ DANGER AREA                                          │  
       Signing policy           │  ╰──────────────────────────────────────────────────────╯  │ Disable carol. They are signed out and their tokens  │  
-                               │  ╭──────────────────────────────────────────────────────╮  │ stop working. Their grants stay, so enabling them    │  
-  OPERATIONS                   │  │ PROJECT ACCESS AND REPOSIT… x revoke  g grant access │  │ again restores access.                               │  
-      Scan runs                │  │   gosse/*                           Reader   project │  │ ╭─────────────────╮                                  │  
-      Secret findings          │  │ ▸ odabank/*                         Writer   project │  │ │ Disable user  d │                                  │  
-      Update channel           │  │ +2 more. 2 project roles, 2 repository grants.       │  │ ╰─────────────────╯                                  │  
-                               │  ╰──────────────────────────────────────────────────────╯  ╰──────────────────────────────────────────────────────╯  
+      Login security           │  ╭──────────────────────────────────────────────────────╮  │ stop working. Their grants stay, so enabling them    │  
+                               │  │ PROJECT ACCESS AND REPOSIT… x revoke  g grant access │  │ again restores access.                               │  
+  OPERATIONS                   │  │   gosse/*                           Reader   project │  │ ╭─────────────────╮                                  │  
+      Scan runs                │  │ ▸ odabank/*                         Writer   project │  │ │ Disable user  d │                                  │  
+      Secret findings          │  │ +2 more. 2 project roles, 2 repository grants.       │  │ ╰─────────────────╯                                  │  
+      Update channel           │  ╰──────────────────────────────────────────────────────╯  ╰──────────────────────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   ↑↓ move   x revoke   g grant access   tab done   esc back   q quit                                                                                  

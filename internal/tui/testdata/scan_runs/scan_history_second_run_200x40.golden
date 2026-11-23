@@ -14,12 +14,12 @@
       Image scanning           │  │                                                                                                                        │  │ Trivy                         0.58.1 │  
       Secret scanning          │  │                                                                                                                        │  │                                      │  
       Signing policy           │  │                                                                                                                        │  │ FINDINGS                             │  
-                               │  │                                                                                                                        │  │ Critical                           2 │  
-  OPERATIONS                   │  │                                                                                                                        │  │ High                               4 │  
-    ▸ Scan runs                │  │                                                                                                                        │  │ Medium                            11 │  
-      Secret findings          │  │                                                                                                                        │  │ Low                                7 │  
+      Login security           │  │                                                                                                                        │  │ Critical                           2 │  
+                               │  │                                                                                                                        │  │ High                               4 │  
+  OPERATIONS                   │  │                                                                                                                        │  │ Medium                            11 │  
+    ▸ Scan runs                │  │                                                                                                                        │  │ Low                                7 │  
+      Secret findings          │  │                                                                                                                        │  │                                      │  
       Update channel           │  │                                                                                                                        │  │                                      │  
-                               │  │                                                                                                                        │  │                                      │  
                                │  │                                                                                                                        │  │                                      │  
                                │  │                                                                                                                        │  │                                      │  
                                │  │                                                                                                                        │  │                                      │  

@@ -14,11 +14,11 @@
     ▸ Image scanning           │  │ c edit conf  │  Max Concurrency                                 │  │                                           │
       Secret scanning          │  ╰────────────  │   2                                              │  ╰───────────────────────────────────────────╯
       Signing policy           │  ╭────────────  │  invalid interval: time: unknown unit "hx" in    │  ────────────────────────────────────────────╮
-                               │  │ PER-REPOSIT  │  duration "24hx"                                 │                                              │
-  OPERATIONS                   │  │ REPOSITORY   │                                                  │   ENABLED  DETAIL                UPDATED     │
-      Scan runs                │  │ team/api     │   Save  enter   Cancel  esc                      │   yes      ignore file set       14 Nov      │
-      Secret findings          │  │ team/docs    │  tab next field, space toggles                   │   no       scanning off          2 Nov       │
-      Update channel           │  │ +2 more, o   ╰──────────────────────────────────────────────────╯                                              │
-                               │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+      Login security           │  │ PER-REPOSIT  │  duration "24hx"                                 │                                              │
+                               │  │ REPOSITORY   │                                                  │   ENABLED  DETAIL                UPDATED     │
+  OPERATIONS                   │  │ team/api     │   Save  enter   Cancel  esc                      │   yes      ignore file set       14 Nov      │
+      Scan runs                │  │ team/docs    │  tab next field, space toggles                   │   no       scanning off          2 Nov       │
+      Secret findings          │  │ +2 more, o   ╰──────────────────────────────────────────────────╯                                              │
+      Update channel           │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   tab next field   space toggle   enter save   esc cancel                                                                                F2 mouse on  

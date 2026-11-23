@@ -14,11 +14,11 @@
       Image scanning           │  ╭──────────────────────────────────────────────────────╮  ╭──────────────────────────────────────────────────────╮  
       Secret scanning          │  │ NEEDS ATTENTION                                      │  │ RECENT CHANGES                                       │  
       Signing policy           │  │   Robot gh-actions has no repository access  g grant │  │ Could not load recent changes: history unavailable   │  
-                               │  │   2 images have critical findings                    │  │                                                      │  
-  OPERATIONS                   │  │ Could not check expiring tokens: expiring unavailab… │  │                                                      │  
+      Login security           │  │   2 images have critical findings                    │  │                                                      │  
+                               │  │ Could not check expiring tokens: expiring unavailab… │  │                                                      │  
+  OPERATIONS                   │  │                                                      │  │                                                      │  
       Scan runs                │  │                                                      │  │                                                      │  
       Secret findings          │  │                                                      │  │                                                      │  
-      Update channel           │  │                                                      │  │                                                      │  
-                               │  ╰──────────────────────────────────────────────────────╯  ╰──────────────────────────────────────────────────────╯  
+      Update channel           │  ╰──────────────────────────────────────────────────────╯  ╰──────────────────────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   ↑↓ move   tab attention   enter open   g grant access   r robot   t token   esc back   q quit                                          F2 mouse on  

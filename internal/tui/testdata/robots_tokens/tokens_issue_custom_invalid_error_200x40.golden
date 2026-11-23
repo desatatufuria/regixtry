@@ -14,12 +14,12 @@
       Image scanning           │                                                                                                                      │ Sat 21 Nov 2026 11:30 UTC                    │  
       Secret scanning          │    old-deploy                                                                                               expired  │ 2 hours from now                             │  
       Signing policy           │  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  │                                              │  
-                               │  act_55f0…b81c                                                                                   expired 2 Nov 2026  │ A leaked token stays valid until it expires  │  
-  OPERATIONS                   │                                                                                                                      │ or you revoke it. Shorter for people, longer │  
-      Scan runs                │                                                                                                                      │ only for CI robots.                          │  
-      Secret findings          │                                                                                                                      │ The secret is shown once, right after        │  
-      Update channel           │                                                                                                                      │ creation. Copy it before leaving.            │  
-                               │                                                                                                                      │                                              │  
+      Login security           │  act_55f0…b81c                                                                                   expired 2 Nov 2026  │ A leaked token stays valid until it expires  │  
+                               │                                                                                                                      │ or you revoke it. Shorter for people, longer │  
+  OPERATIONS                   │                                                                                                                      │ only for CI robots.                          │  
+      Scan runs                │                                                                                                                      │ The secret is shown once, right after        │  
+      Secret findings          │                                                                                                                      │ creation. Copy it before leaving.            │  
+      Update channel           │                                                                                                                      │                                              │  
                                │                                                                                                                      │ token limit reached for this user            │  
                                │                                                                                                                      │  Create token  enter   Cancel  esc           │  
                                │                                                                                                                      │                                              │  

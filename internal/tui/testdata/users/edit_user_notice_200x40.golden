@@ -14,12 +14,12 @@
       Image scanning           │  ╭───────────────────────────────────────────────────────────────────────────────╮  │                                                                               │  
       Secret scanning          │  │ PASSWORD                                                                      │  │                                                                               │  
       Signing policy           │  │ Set a new password for carol                                          p reset │  │                                                                               │  
-                               │  │ At least 8 characters. You type it twice.                                     │  │                                                                               │  
-  OPERATIONS                   │  ╰───────────────────────────────────────────────────────────────────────────────╯  │                                                                               │  
-      Scan runs                │  ╭───────────────────────────────────────────────────────────────────────────────╮  │                                                                               │  
-      Secret findings          │  │ PROJECT ACCESS AND REPOSITORY GRANTS                           g grant access │  │                                                                               │  
-      Update channel           │  │   REPOSITORY                                                 ROLE     SOURCE  │  │                                                                               │  
-                               │  │   team/docs                                                  Reader   repo    │  │                                                                               │  
+      Login security           │  │ At least 8 characters. You type it twice.                                     │  │                                                                               │  
+                               │  ╰───────────────────────────────────────────────────────────────────────────────╯  │                                                                               │  
+  OPERATIONS                   │  ╭───────────────────────────────────────────────────────────────────────────────╮  │                                                                               │  
+      Scan runs                │  │ PROJECT ACCESS AND REPOSITORY GRANTS                           g grant access │  │                                                                               │  
+      Secret findings          │  │   REPOSITORY                                                 ROLE     SOURCE  │  │                                                                               │  
+      Update channel           │  │   team/docs                                                  Reader   repo    │  │                                                                               │  
                                │  │   team/api                                                   Writer   repo    │  │                                                                               │  
                                │  │ 0 project roles, 2 repository grants.                                         │  │                                                                               │  
                                │  │                                                                               │  │                                                                               │  

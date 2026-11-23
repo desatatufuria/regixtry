@@ -14,12 +14,12 @@
       Image scanning           │  EXPIRES is the token that ends f  │                                                              │                          │ Tokens                             t │
       Secret scanning          │                                    │  The robot account is removed together with its repository   │                          │ Grant access                       g │
       Signing policy           │                                    │  access and all of its tokens.                               │                          │ Disable robot                      d │
-                               │                                    │                                                              │                          │ Delete robot                       x │
-  OPERATIONS                   │                                    │  ╭────────────────────────────────────────────────────────╮  │                          │                                      │
-      Scan runs                │                                    │  │ ci-publisher                                           │  │                          │ NEEDS ATTENTION                      │
-      Secret findings          │                                    │  │ repository team/api, role Writer                       │  │                          │ Token release-pipeline expires in 6  │
-      Update channel           │                                    │  ╰────────────────────────────────────────────────────────╯  │                          │ days                         t renew │
-                               │                                    │                                                              │                          │                                      │
+      Login security           │                                    │                                                              │                          │ Delete robot                       x │
+                               │                                    │  ╭────────────────────────────────────────────────────────╮  │                          │                                      │
+  OPERATIONS                   │                                    │  │ ci-publisher                                           │  │                          │ NEEDS ATTENTION                      │
+      Scan runs                │                                    │  │ repository team/api, role Writer                       │  │                          │ Token release-pipeline expires in 6  │
+      Secret findings          │                                    │  ╰────────────────────────────────────────────────────────╯  │                          │ days                         t renew │
+      Update channel           │                                    │                                                              │                          │                                      │
                                │                                    │  Anything using its tokens stops working immediately. This   │                          │                                      │
                                │                                    │  cannot be undone.                                           │                          │                                      │
                                │                                    │                                                              │                          │                                      │

@@ -14,11 +14,11 @@
       Image scanning           │  │   dave                             user    Project reader  12 Nov      │  │                                    │  
       Secret scanning          │  │                                                                        │  │                                    │  
       Signing policy           │  │                                                                        │  │                                    │  
-                               │  │                                                                        │  │                                    │  
-  OPERATIONS                   │  │                                                                        │  │ 3 repositories. Browse them in     │  
-      Scan runs                │  │                                                                        │  │ Console › Projects › odabank.      │  
-      Secret findings          │  ╰────────────────────────────────────────────────────────────────────────╯  ╰────────────────────────────────────╯  
-      Update channel           │                                                                                                                      
-                               │  A project role covers every repository inside odabank, now and later. A repository grant can only add access.       
+      Login security           │  │                                                                        │  │                                    │  
+                               │  │                                                                        │  │ 3 repositories. Browse them in     │  
+  OPERATIONS                   │  │                                                                        │  │ Console › Projects › odabank.      │  
+      Scan runs                │  ╰────────────────────────────────────────────────────────────────────────╯  ╰────────────────────────────────────╯  
+      Secret findings          │                                                                                                                      
+      Update channel           │  A project role covers every repository inside odabank, now and later. A repository grant can only add access.       
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   tab members   ↑↓ move   esc back   q quit                                                                                              F2 mouse on  

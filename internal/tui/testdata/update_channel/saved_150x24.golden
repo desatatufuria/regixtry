@@ -14,11 +14,11 @@
       Image scanning           │                                                                                                                      
       Secret scanning          │                                                                                                                      
       Signing policy           │                                                                                                                      
+      Login security           │                                                                                                                      
                                │                                                                                                                      
   OPERATIONS                   │                                                                                                                      
       Scan runs                │                                                                                                                      
       Secret findings          │                                                                                                                      
     ▸ Update channel           │                                                                                                                      
-                               │                                                                                                                      
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   space toggle stable/insider   enter save   r refresh   esc back   q quit                                                                            

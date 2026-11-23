@@ -14,11 +14,11 @@
       Image scanning           │  │        │                                                              │   │ Identities                       1 │
       Secret scanning          │  │        │  Only this repository changes. Other repositories keep       │   │ Updated                      9 Nov │
     ▸ Signing policy           │  │        │  their overrides.                                            │   │                                    │
-                               │  │        │                                                              │   │ ACTIONS                            │
-  OPERATIONS                   │  │        │   Clear override                                 y / enter   │   │ Edit override                    o │
-      Scan runs                │  │        │   Cancel                                               esc   │   │ Refresh                          r │
-      Secret findings          │  ╰──────  ╰──────────────────────────────────────────────────────────────╯   │                                    │
-      Update channel           │  An override replaces the global policy for that repository. o edits         │                                    │
-                               │  the override of the selected repository.                                    ╰────────────────────────────────────╯
+      Login security           │  │        │                                                              │   │ ACTIONS                            │
+                               │  │        │   Clear override                                 y / enter   │   │ Edit override                    o │
+  OPERATIONS                   │  │        │   Cancel                                               esc   │   │ Refresh                          r │
+      Scan runs                │  ╰──────  ╰──────────────────────────────────────────────────────────────╯   │                                    │
+      Secret findings          │  An override replaces the global policy for that repository. o edits         │                                    │
+      Update channel           │  the override of the selected repository.                                    ╰────────────────────────────────────╯
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   y / enter clear override   esc cancel                                                                                                  F2 mouse on  

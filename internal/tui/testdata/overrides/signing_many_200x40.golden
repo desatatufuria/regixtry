@@ -14,12 +14,12 @@
       Image scanning           │  │   team/service-179                                                   inherited  —        global policy     -           │  │ Identities                         0 │  
       Secret scanning          │  │   team/service-180                                                   inherited  —        global policy     -           │  │ Updated                        2 Nov │  
     ▸ Signing policy           │  │   team/service-181                                                   inherited  —        global policy     -           │  │                                      │  
-                               │  │   team/service-182                                                   inherited  —        global policy     -           │  │ ACTIONS                              │  
-  OPERATIONS                   │  │   team/service-183                                                   inherited  —        global policy     -           │  │ Edit override                      o │  
-      Scan runs                │  │   team/service-184                                                   inherited  —        global policy     -           │  │ Refresh                            r │  
-      Secret findings          │  │   team/service-185                                                   inherited  —        global policy     -           │  │                                      │  
-      Update channel           │  │   team/service-186                                                   inherited  —        global policy     -           │  │                                      │  
-                               │  │   team/service-187                                                   inherited  —        global policy     -           │  │                                      │  
+      Login security           │  │   team/service-182                                                   inherited  —        global policy     -           │  │ ACTIONS                              │  
+                               │  │   team/service-183                                                   inherited  —        global policy     -           │  │ Edit override                      o │  
+  OPERATIONS                   │  │   team/service-184                                                   inherited  —        global policy     -           │  │ Refresh                            r │  
+      Scan runs                │  │   team/service-185                                                   inherited  —        global policy     -           │  │                                      │  
+      Secret findings          │  │   team/service-186                                                   inherited  —        global policy     -           │  │                                      │  
+      Update channel           │  │   team/service-187                                                   inherited  —        global policy     -           │  │                                      │  
                                │  │   team/service-188                                                   inherited  —        global policy     -           │  │                                      │  
                                │  │   team/service-189                                                   inherited  —        global policy     -           │  │                                      │  
                                │  │   team/service-190                                                   inherited  —        global policy     -           │  │                                      │  

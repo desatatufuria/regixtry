@@ -14,11 +14,11 @@
       Image scanning           │           │                                                              │
       Secret scanning          │           │  Grants are kept. Enable carol again to restore access.      │
       Signing policy           │           │                                                              │
-                               │           │   Confirm                                        y / enter   │
-  OPERATIONS                   │           │   Cancel                                               esc   │
-      Scan runs                │           ╰──────────────────────────────────────────────────────────────╯
+      Login security           │           │   Confirm                                        y / enter   │
+                               │           │   Cancel                                               esc   │
+  OPERATIONS                   │           ╰──────────────────────────────────────────────────────────────╯
+      Scan runs                │
       Secret findings          │
       Update channel           │
-                               │
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   y / enter confirm   esc cancel                                                                                                                      

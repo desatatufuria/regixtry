@@ -14,12 +14,12 @@
       Image scanning           │  │ NEEDS ATTENTION                                                               │  │ RECENT CHANGES                                                                │  
       Secret scanning          │  │   Robot gh-actions has no repository access                           g grant │  │ Could not load recent changes: history unavailable                            │  
       Signing policy           │  │   2 images have critical findings                                             │  │                                                                               │  
-                               │  │ Could not check expiring tokens: expiring unavailable                         │  │                                                                               │  
+      Login security           │  │ Could not check expiring tokens: expiring unavailable                         │  │                                                                               │  
+                               │  │                                                                               │  │                                                                               │  
   OPERATIONS                   │  │                                                                               │  │                                                                               │  
       Scan runs                │  │                                                                               │  │                                                                               │  
       Secret findings          │  │                                                                               │  │                                                                               │  
       Update channel           │  │                                                                               │  │                                                                               │  
-                               │  │                                                                               │  │                                                                               │  
                                │  │                                                                               │  │                                                                               │  
                                │  │                                                                               │  │                                                                               │  
                                │  │                                                                               │  │                                                                               │  

@@ -147,6 +147,11 @@ func (c recordingClient) ClearRepositoryOverride(ctx context.Context, s AdminSes
 	return c.AdminClient.ClearRepositoryOverride(ctx, s, repository, feature)
 }
 
+func (c recordingClient) ResetLoginBackoff(ctx context.Context, s AdminSession, account string) (string, error) {
+	c.rec.record("ResetLoginBackoff")
+	return c.AdminClient.ResetLoginBackoff(ctx, s, account)
+}
+
 func (c recordingClient) DeleteRobot(ctx context.Context, s AdminSession, id string) error {
 	c.rec.record("DeleteRobot")
 	return c.AdminClient.DeleteRobot(ctx, s, id)
@@ -206,6 +211,11 @@ func fuzzTargets() []mouseCase {
 			return runCmd(t, updated.(Model), cmd)
 		}})
 	}
+	// Login security: the reset behind x is the one write; clicks and the wheel
+	// select and focus, they never reset.
+	targets = append(targets, mouseCase{name: "login security", build: func(t *testing.T, w, h int) Model {
+		return loginModelAt(t, loginScreenClient(), w, h)
+	}})
 	// The folder tree under a project: clicks toggle folders, select and open,
 	// and none of them may ever delete.
 	targets = append(targets, mouseCase{name: "console folder tree", build: func(t *testing.T, w, h int) Model {

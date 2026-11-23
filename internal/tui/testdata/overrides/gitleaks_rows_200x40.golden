@@ -14,12 +14,12 @@
       Image scanning           │  │                                                                                                                        │  │                                      │  
     ▸ Secret scanning          │  │                                                                                                                        │  │ ACTIONS                              │  
       Signing policy           │  │                                                                                                                        │  │ Edit override                      o │  
-                               │  │                                                                                                                        │  │ Refresh                            r │  
+      Login security           │  │                                                                                                                        │  │ Refresh                            r │  
+                               │  │                                                                                                                        │  │                                      │  
   OPERATIONS                   │  │                                                                                                                        │  │                                      │  
       Scan runs                │  │                                                                                                                        │  │                                      │  
       Secret findings          │  │                                                                                                                        │  │                                      │  
       Update channel           │  │                                                                                                                        │  │                                      │  
-                               │  │                                                                                                                        │  │                                      │  
                                │  │                                                                                                                        │  │                                      │  
                                │  │                                                                                                                        │  │                                      │  
                                │  │                                                                                                                        │  │                                      │  

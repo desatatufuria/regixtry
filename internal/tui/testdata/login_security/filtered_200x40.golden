@@ -1,0 +1,40 @@
+  Admin › Security › Login security                                                                                                                                              signed in as operator  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                                                                        
+                               │  Login security                                                                                                                                 backoff mode: enforce  
+    Overview                   │  ╭──────────────────────────────────────╮  ╭──────────────────────────────────────╮  ╭─────────────────────────────────────╮  ╭─────────────────────────────────────╮  
+                               │  │ FAILED LOGINS, 15 MIN                │  │ DISTINCT IPS                         │  │ DISTINCT ACCOUNTS                   │  │ ACCOUNTS WAITING                    │  
+  ACCESS                       │  │ 42                                   │  │ 5                                    │  │ 9                                   │  │ 2                                   │  
+      Users                    │  ╰──────────────────────────────────────╯  ╰──────────────────────────────────────╯  ╰─────────────────────────────────────╯  ╰─────────────────────────────────────╯  
+      Robots                   │  ╭─ EFFECTIVE SETTINGS ─────────────────────────────────────╮  ╭─ RECENT FAILURES ────────────────────────────────────────────────────────────────── / filter: thr ─╮  
+      Repository access        │  │ Backoff mode                                     enforce │  │   LAST SEEN     ENDPOINT  REASON        ACCOUNT                IP                          COUNT   │  
+      Projects                 │  │ Failure threshold                 5 failures per account │  │ ▸ 09:19         token     throttled     unknown #ab12cd        198.51.100.4                    3   │  
+                               │  │ Base delay                                   under 1 min │  │                                                                                                    │  
+  SECURITY                     │  │ Max delay                                          5 min │  │                                                                                                    │  
+      Image scanning           │  │ Concurrency limit               8 logins checked at once │  │                                                                                                    │  
+      Secret scanning          │  │ Trusted proxies                           configured: no │  │                                                                                                    │  
+      Signing policy           │  │ Set by service flags. Read-only here.                    │  │                                                                                                    │  
+    ▸ Login security           │  ╰──────────────────────────────────────────────────────────╯  │                                                                                                    │  
+                               │  ╭─ ACCOUNTS WAITING ───────────────────────────────────────╮  │                                                                                                    │  
+  OPERATIONS                   │  │   ACCOUNT                             FAILS  TIME LEFT   │  │                                                                                                    │  
+      Scan runs                │  │   alice                                   7  4 min       │  │                                                                                                    │  
+      Secret findings          │  │   unknown #ab12cd                        12  5 min       │  │                                                                                                    │  
+      Update channel           │  │                                                          │  │                                                                                                    │  
+                               │  │                                                          │  │                                                                                                    │  
+                               │  │                                                          │  │                                                                                                    │  
+                               │  │                                                          │  │                                                                                                    │  
+                               │  │                                                          │  │                                                                                                    │  
+                               │  │                                                          │  │                                                                                                    │  
+                               │  │                                                          │  │                                                                                                    │  
+                               │  │                                                          │  │                                                                                                    │  
+                               │  │                                                          │  │                                                                                                    │  
+                               │  │                                                          │  │                                                                                                    │  
+                               │  │                                                          │  │                                                                                                    │  
+                               │  │                                                          │  │                                                                                                    │  
+                               │  │                                                          │  │                                                                                                    │  
+                               │  │                                                          │  │                                                                                                    │  
+                               │  │                                                          │  │                                                                                                    │  
+                               │  │                                                          │  │                                                                                                    │  
+                               │  ╰─ Time left grows up to the max delay. ───────────────────╯  ╰─ newest first  ▾ 1-1 of 1 ─────────────────────────────────────────────────────────────────────────╯  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ↑↓ move   pgup/pgdn page   tab next panel   / filter   r refresh   esc back   q quit                                                                                                     F2 mouse on  

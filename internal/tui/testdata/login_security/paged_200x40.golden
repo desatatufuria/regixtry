@@ -1,0 +1,40 @@
+  Admin › Security › Login security                                                                                                                                              signed in as operator  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                                                                        
+                               │  Login security                                                                                                                                 backoff mode: enforce  
+    Overview                   │  ╭──────────────────────────────────────╮  ╭──────────────────────────────────────╮  ╭─────────────────────────────────────╮  ╭─────────────────────────────────────╮  
+                               │  │ FAILED LOGINS, 15 MIN                │  │ DISTINCT IPS                         │  │ DISTINCT ACCOUNTS                   │  │ ACCOUNTS WAITING                    │  
+  ACCESS                       │  │ 42                                   │  │ 5                                    │  │ 9                                   │  │ 2                                   │  
+      Users                    │  ╰──────────────────────────────────────╯  ╰──────────────────────────────────────╯  ╰─────────────────────────────────────╯  ╰─────────────────────────────────────╯  
+      Robots                   │  ╭─ EFFECTIVE SETTINGS ─────────────────────────────────────╮  ╭─ RECENT FAILURES ─────────────────────────────────────────────────────────────────────── / filter ─╮  
+      Repository access        │  │ Backoff mode                                     enforce │  │   LAST SEEN     ENDPOINT  REASON        ACCOUNT                IP                          COUNT   │  
+      Projects                 │  │ Failure threshold                 5 failures per account │  │   09:29         token     bad password  alice                  203.0.113.7                     7   │  
+                               │  │ Base delay                                   under 1 min │  │   09:24         token     unknown user  unknown #ab12cd        198.51.100.4                   12   │  
+  SECURITY                     │  │ Max delay                                          5 min │  │   09:19         token     throttled     unknown #ab12cd        198.51.100.4                    3   │  
+      Image scanning           │  │ Concurrency limit               8 logins checked at once │  │   09:14         v2        bad token     -                      2001:db8:85a3:0:0:8a2e:3…       2   │  
+      Secret scanning          │  │ Trusted proxies                           configured: no │  │   13 Mar 23:30  admin     bad token     -                      192.0.2.9                       1   │  
+      Signing policy           │  │ Set by service flags. Read-only here.                    │  │   09:00         token     unknown user  unknown #000000        2001:db8::0                     1   │  
+    ▸ Login security           │  ╰──────────────────────────────────────────────────────────╯  │   08:59         token     unknown user  unknown #9e3779        2001:db8::1                     2   │  
+                               │  ╭─ ACCOUNTS WAITING ───────────────────────────────────────╮  │   08:58         token     unknown user  unknown #3c6ef3        2001:db8::2                     3   │  
+  OPERATIONS                   │  │   ACCOUNT                             FAILS  TIME LEFT   │  │   08:57         token     unknown user  unknown #daa66d        2001:db8::3                     4   │  
+      Scan runs                │  │   alice                                   7  4 min       │  │   08:56         token     unknown user  unknown #78dde6        2001:db8::4                     5   │  
+      Secret findings          │  │   unknown #ab12cd                        12  5 min       │  │   08:55         token     unknown user  unknown #171560        2001:db8::5                     6   │  
+      Update channel           │  │                                                          │  │ ▸ 08:54         token     unknown user  unknown #b54cda        2001:db8::6                     7   │  
+                               │  │                                                          │  │   08:53         token     unknown user  unknown #538453        2001:db8::7                     8   │  
+                               │  │                                                          │  │   08:52         token     unknown user  unknown #f1bbcd        2001:db8::8                     9   │  
+                               │  │                                                          │  │   08:51         token     unknown user  unknown #8ff347        2001:db8::9                    10   │  
+                               │  │                                                          │  │   08:50         token     unknown user  unknown #2e2ac0        2001:db8::a                    11   │  
+                               │  │                                                          │  │   08:49         token     unknown user  unknown #cc623a        2001:db8::b                    12   │  
+                               │  │                                                          │  │   08:48         token     unknown user  unknown #6a99b4        2001:db8::c                    13   │  
+                               │  │                                                          │  │   08:47         token     unknown user  unknown #08d12e        2001:db8::d                    14   │  
+                               │  │                                                          │  │   08:46         token     unknown user  unknown #a708a7        2001:db8::e                    15   │  
+                               │  │                                                          │  │                                                                                                    │  
+                               │  │                                                          │  │                                                                                                    │  
+                               │  │                                                          │  │                                                                                                    │  
+                               │  │                                                          │  │                                                                                                    │  
+                               │  │                                                          │  │                                                                                                    │  
+                               │  │                                                          │  │                                                                                                    │  
+                               │  │                                                          │  │                                                                                                    │  
+                               │  ╰─ Time left grows up to the max delay. ───────────────────╯  ╰─ newest first  ▾ 1-20 of 20+ ──────────────────────────────────────────────────────────────────────╯  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ↑↓ move   pgup/pgdn page   n load more   tab next panel   / filter   r refresh   esc back   q quit                                                                                       F2 mouse on  

@@ -14,11 +14,11 @@
       Image scanning           │  │ Writer access to it. Applies from the next request.                                                            │  
       Secret scanning          │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  
       Signing policy           │  Could not grant role: project administrators cannot grant project admin.                                            
-                               │   Grant role  enter   Cancel  esc                                                                                    
+      Login security           │   Grant role  enter   Cancel  esc                                                                                    
+                               │                                                                                                                      
   OPERATIONS                   │                                                                                                                      
       Scan runs                │                                                                                                                      
       Secret findings          │                                                                                                                      
       Update channel           │                                                                                                                      
-                               │                                                                                                                      
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   tab next field   ↑↓ pick member   ←→ type, role   enter grant   esc cancel                                                             F2 mouse on  

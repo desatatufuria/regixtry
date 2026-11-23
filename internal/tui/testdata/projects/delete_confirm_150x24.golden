@@ -14,11 +14,11 @@
       Image scanning           │           │                                                              │
       Secret scanning          │           │  Removes the project and all its member grants. The project  │
       Signing policy           │           │  must be empty. Cannot be undone.                            │
-                               │           │                                                              │
-  OPERATIONS                   │           │   Delete                                         y / enter   │
-      Scan runs                │           │   Cancel                                               esc   │
-      Secret findings          │           ╰──────────────────────────────────────────────────────────────╯
+      Login security           │           │                                                              │
+                               │           │   Delete                                         y / enter   │
+  OPERATIONS                   │           │   Cancel                                               esc   │
+      Scan runs                │           ╰──────────────────────────────────────────────────────────────╯
+      Secret findings          │
       Update channel           │
-                               │
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   y / enter confirm   esc cancel                                                                                                         F2 mouse on  

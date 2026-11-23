@@ -14,11 +14,11 @@
       Image scanning           │  │    │  Clear override, use the global settings                             │  dentities                       1 │
       Secret scanning          │  │    │  enabled requires at least one usable entry in trusted_public_keys   │  pdated                      9 Nov │
     ▸ Signing policy           │  │    │  or trusted_identities                                               │                                    │
-                               │  │    │                                                                      │  CTIONS                            │
-  OPERATIONS                   │  │    │   Save  enter   Cancel  esc                                          │  dit override                    o │
-      Scan runs                │  │    │  tab next field, space toggles or cycles, n adds and x deletes in a  │  efresh                          r │
-      Secret findings          │  ╰──  │  list                                                                │                                    │
-      Update channel           │  An   ╰──────────────────────────────────────────────────────────────────────╯                                    │
-                               │  the override of the selected repository.                                    ╰────────────────────────────────────╯
+      Login security           │  │    │                                                                      │  CTIONS                            │
+                               │  │    │   Save  enter   Cancel  esc                                          │  dit override                    o │
+  OPERATIONS                   │  │    │  tab next field, space toggles or cycles, n adds and x deletes in a  │  efresh                          r │
+      Scan runs                │  ╰──  │  list                                                                │                                    │
+      Secret findings          │  An   ╰──────────────────────────────────────────────────────────────────────╯                                    │
+      Update channel           │  the override of the selected repository.                                    ╰────────────────────────────────────╯
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   tab next field   space toggle   enter save   esc cancel                                                                                F2 mouse on  

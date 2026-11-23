@@ -14,11 +14,11 @@
       Image scanning           │  │ Role                                                             │  │ The password is masked while you type    │  
       Secret scanning          │  │  admin   ✓ read-only   user                                      │  │ and is never shown again, here or after  │  
       Signing policy           │  │                                                                  │  │ saving.                                  │  
-                               │  │ [x] Enabled (space toggles; a disabled user cannot sign in)      │  │                                          │  
-  OPERATIONS                   │  │                                                                  │  │ ROLES                                    │  
-      Scan runs                │  │  Create user  enter   Cancel  esc                                │  │ admin manages users, robots and grants   │  
-      Secret findings          │  │                                                                  │  │ user pulls and pushes where granted      │  
-      Update channel           │  │                                                                  │  │ read-only pulls where granted, never     │  
-                               │  ╰──────────────────────────────────────────────────────────────────╯  │ pushes                                   │  
+      Login security           │  │ [x] Enabled (space toggles; a disabled user cannot sign in)      │  │                                          │  
+                               │  │                                                                  │  │ ROLES                                    │  
+  OPERATIONS                   │  │  Create user  enter   Cancel  esc                                │  │ admin manages users, robots and grants   │  
+      Scan runs                │  │                                                                  │  │ user pulls and pushes where granted      │  
+      Secret findings          │  │                                                                  │  │ read-only pulls where granted, never     │  
+      Update channel           │  ╰──────────────────────────────────────────────────────────────────╯  │ pushes                                   │  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   tab next field   ←→ role   space toggle   enter create   esc cancel                                                                                 

@@ -73,6 +73,10 @@ type overviewScreen struct {
 
 	events    []ports.AdminAccessEvent
 	eventsErr string
+
+	// login is the "failed logins" row. Its reads never show an error: when
+	// either fails the row is simply absent and the rest is unaffected.
+	login loginAttentionRow
 }
 
 func newOverviewScreen() overviewScreen {
@@ -81,7 +85,20 @@ func newOverviewScreen() overviewScreen {
 
 func (s overviewScreen) ID() screen { return screenAdminOverview }
 
-func (s overviewScreen) Keys() screenKeys { return overviewKeys }
+// Keys is the footer: while Tab has put the focus on an attention row the Tab
+// hint says what the next press does (the login board's footer).
+func (s overviewScreen) Keys() screenKeys {
+	if s.attentionFocus == 0 {
+		return overviewKeys
+	}
+	keys := screenKeys{short: append([]key.Binding(nil), overviewKeys.short...)}
+	for i, binding := range keys.short {
+		if binding.Help().Key == "tab" {
+			keys.short[i] = key.NewBinding(key.WithKeys("tab", "shift+tab"), key.WithHelp("tab", "next attention row"))
+		}
+	}
+	return keys
+}
 
 // Init loads what the "Needs attention" panel is built from.
 func (s overviewScreen) Init(env screenEnv) tea.Cmd { return overviewLoadCmd(env, s.gen) }
@@ -156,6 +173,8 @@ func overviewOpenItem(id shellNavID) tea.Cmd {
 		return navigate(screenSecurityGitleaksConfig)
 	case shellNavSigningPolicy:
 		return navigate(screenSecuritySigningConfig)
+	case shellNavLoginSecurity:
+		return navigate(screenAdminLoginSecurity)
 	case shellNavScanRuns:
 		return navigate(screenAdminScanRuns)
 	case shellNavSecretFindings:
@@ -198,12 +217,17 @@ type overviewLoadedMsg struct {
 	expiringErr  error
 	events       []ports.AdminAccessEvent
 	eventsErr    error
+	// loginSummary and loginBackoff feed the failed-logins row; loginErr is the
+	// first error of those two reads (either one hides the row).
+	loginSummary ports.AdminLoginSummary
+	loginBackoff ports.AdminLoginBackoff
+	loginErr     error
 }
 
 // expiredReason lets Model.Update turn an expired admin session found by
 // any read into the usual re-login.
 func (m overviewLoadedMsg) expiredReason() (string, bool) {
-	return expiredReasonOf(m.robotsErr, m.summariesErr, m.expiringErr, m.eventsErr)
+	return expiredReasonOf(m.robotsErr, m.summariesErr, m.expiringErr, m.eventsErr, m.loginErr)
 }
 
 func (s overviewScreen) applyLoaded(msg overviewLoadedMsg) overviewScreen {
@@ -212,6 +236,7 @@ func (s overviewScreen) applyLoaded(msg overviewLoadedMsg) overviewScreen {
 	s.criticalImages, s.imagesCapped, s.imagesErr = 0, false, errText(msg.summariesErr)
 	s.expiringCount, s.expiringCapped, s.soonest, s.expiringErr = 0, false, ports.AdminExpiringToken{}, errText(msg.expiringErr)
 	s.events, s.eventsErr = msg.events, errText(msg.eventsErr)
+	s.login = newLoginAttentionRow(msg.loginSummary, msg.loginBackoff, msg.loginErr)
 	for _, robot := range msg.robots {
 		if robot.Enabled && robot.Repository == "" && robot.Project == "" {
 			s.robotsWithoutAccess = append(s.robotsWithoutAccess, robot.Username)
@@ -242,7 +267,7 @@ func overviewLoadCmd(env screenEnv, gen uint64) tea.Cmd {
 	return func() tea.Msg {
 		if client == nil {
 			unavailable := errors.New("admin API is unavailable for this session")
-			return overviewLoadedMsg{gen: gen, robotsErr: unavailable, summariesErr: unavailable, expiringErr: unavailable, eventsErr: unavailable}
+			return overviewLoadedMsg{gen: gen, robotsErr: unavailable, summariesErr: unavailable, expiringErr: unavailable, eventsErr: unavailable, loginErr: unavailable}
 		}
 		ctx := context.Background()
 		msg := overviewLoadedMsg{gen: gen}
@@ -250,6 +275,9 @@ func overviewLoadCmd(env screenEnv, gen uint64) tea.Cmd {
 		msg.summaries, msg.summariesErr = client.ListRepositoryScanSummaries(ctx, session, overviewScanSummaryLimit)
 		msg.expiring, msg.expiringErr = client.ListExpiringTokens(ctx, session, overviewExpiringWithin, overviewExpiringLimit)
 		msg.events, msg.eventsErr = client.ListAccessEvents(ctx, session, overviewEventsLimit)
+		if msg.loginSummary, msg.loginErr = client.GetLoginSummary(ctx, session); msg.loginErr == nil {
+			msg.loginBackoff, msg.loginErr = client.GetLoginBackoff(ctx, session)
+		}
 		return msg
 	}
 }
@@ -260,6 +288,9 @@ type attentionTone int
 const (
 	attentionWarning attentionTone = iota
 	attentionCritical
+	// attentionMuted is a row worth seeing but not worth alarm (a few failed
+	// logins): grey, and the first to go when the panel is short.
+	attentionMuted
 )
 
 // attentionItem is one "Needs attention" row: what is wrong and, when a key
@@ -293,6 +324,9 @@ func (s overviewScreen) attentionItems(now time.Time) []attentionItem {
 		items = append(items, attentionItem{tone: attentionCritical, text: "1 image has critical findings", open: images})
 	case s.criticalImages > 1:
 		items = append(items, attentionItem{tone: attentionCritical, text: fmt.Sprintf("%d images have critical findings", s.criticalImages), open: images})
+	}
+	if s.login.shown {
+		items = append(items, attentionItem{tone: s.login.tone(), text: s.login.text(), open: navigate(screenAdminLoginSecurity)})
 	}
 	return items
 }

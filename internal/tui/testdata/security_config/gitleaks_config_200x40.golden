@@ -14,12 +14,12 @@
       Image scanning           │  │ PER-REPOSITORY OVERRIDES                                                                                                                                         │  
     ▸ Secret scanning          │  │ REPOSITORY                                                                                                 STATUS     ENABLED  DETAIL                UPDATED     │  
       Signing policy           │  │ team/api                                                                                                   override   yes      config path set       12 Nov      │  
-                               │  │ team/docs                                                                                                  override   no       scanning off          2 Nov       │  
-  OPERATIONS                   │  │ team/web                                                                                                   inherited  —        global settings       -           │  
-      Scan runs                │  │ team/infra                                                                                                 inherited  —        global settings       -           │  
+      Login security           │  │ team/docs                                                                                                  override   no       scanning off          2 Nov       │  
+                               │  │ team/web                                                                                                   inherited  —        global settings       -           │  
+  OPERATIONS                   │  │ team/infra                                                                                                 inherited  —        global settings       -           │  
+      Scan runs                │  │                                                                                                                                                                  │  
       Secret findings          │  │                                                                                                                                                                  │  
       Update channel           │  │                                                                                                                                                                  │  
-                               │  │                                                                                                                                                                  │  
                                │  │                                                                                                                                                                  │  
                                │  │                                                                                                                                                                  │  
                                │  │                                                                                                                                                                  │  

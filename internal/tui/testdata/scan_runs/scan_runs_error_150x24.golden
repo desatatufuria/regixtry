@@ -14,11 +14,11 @@
       Image scanning           │  │                                                                        │  │                                    │  
       Secret scanning          │  │                                                                        │  │                                    │  
       Signing policy           │  │                                                                        │  │                                    │  
+      Login security           │  │                                                                        │  │                                    │  
                                │  │                                                                        │  │                                    │  
   OPERATIONS                   │  │                                                                        │  │                                    │  
-    ▸ Scan runs                │  │                                                                        │  │                                    │  
-      Secret findings          │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
-      Update channel           │  One row per image digest, its latest result. Rescans only when the          │                                    │  
-                               │  vulnerability DB or scan settings change. enter opens its scan history.     ╰────────────────────────────────────╯  
+    ▸ Scan runs                │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
+      Secret findings          │  One row per image digest, its latest result. Rescans only when the          │                                    │  
+      Update channel           │  vulnerability DB or scan settings change. enter opens its scan history.     ╰────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   ↑↓ move   enter scan history   r refresh   esc back   q quit                                                                           F2 mouse on  

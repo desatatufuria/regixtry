@@ -14,12 +14,12 @@
       Image scanning           │  │   carol                                                                                    user       enabled   2        │  │ Reset password                   p │  
       Secret scanning          │  │ ▸ dave                                                                                     user       disabled  0        │  │ Enable user                      d │  
       Signing policy           │  │                                                                                                                          │  │                                    │  
-                               │  │                                                                                                                          │  │ NEEDS ATTENTION                    │  
-  OPERATIONS                   │  │                                                                                                                          │  │ User is disabled          d enable │  
+      Login security           │  │                                                                                                                          │  │ NEEDS ATTENTION                    │  
+                               │  │                                                                                                                          │  │ User is disabled          d enable │  
+  OPERATIONS                   │  │                                                                                                                          │  │                                    │  
       Scan runs                │  │                                                                                                                          │  │                                    │  
       Secret findings          │  │                                                                                                                          │  │                                    │  
       Update channel           │  │                                                                                                                          │  │                                    │  
-                               │  │                                                                                                                          │  │                                    │  
                                │  │                                                                                                                          │  │                                    │  
                                │  │                                                                                                                          │  │                                    │  
                                │  │                                                                                                                          │  │                                    │  

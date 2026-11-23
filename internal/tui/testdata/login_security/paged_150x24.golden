@@ -1,0 +1,24 @@
+  Admin › Security › Login security                                                                                            signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                      
+                               │  Login security                                                                               backoff mode: enforce  
+    Overview                   │  FAILED LOGINS, 15 MIN 42   DISTINCT IPS 5   DISTINCT ACCOUNTS 9   ACCOUNTS WAITING 2                                
+                               │  ╭─ EFFECTIVE SETTINGS ─────────────────────────────────────────────────── Set by service flags. Read-only here. ─╮  
+  ACCESS                       │  │ Backoff mode                                   enforce  Max delay                                        5 min │  
+      Users                    │  │ Failure threshold               5 failures per account  Concurrency limit             8 logins checked at once │  
+      Robots                   │  │ Base delay                                 under 1 min  Trusted proxies                         configured: no │  
+      Repository access        │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  
+      Projects                 │  ╭─ ACCOUNTS WAITING ─────────────────────────────────────────────────────────────────────────────────────────────╮  
+                               │  │   ACCOUNT                                                                                   FAILS  TIME LEFT   │  
+  SECURITY                     │  │   alice                                                                                         7  4 min       │  
+      Image scanning           │  │   unknown #ab12cd                                                                              12  5 min       │  
+      Secret scanning          │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  
+      Signing policy           │  ╭─ RECENT FAILURES ─────────────────────────────────────────────────────────────────────────────────── / filter ─╮  
+    ▸ Login security           │  │   LAST SEEN     ENDPOINT  REASON        ACCOUNT                      IP                                COUNT   │  
+                               │  │   13 Mar 23:30  admin     bad token     -                            192.0.2.9                             1 │ │  
+  OPERATIONS                   │  │   09:00         token     unknown user  unknown #000000              2001:db8::0                           1 │ │  
+      Scan runs                │  │ ▸ 08:59         token     unknown user  unknown #9e3779              2001:db8::1                           2 █ │  
+      Secret findings          │  │   08:58         token     unknown user  unknown #3c6ef3              2001:db8::2                           3 │ │  
+      Update channel           │  ╰─ newest first  ▾ 5-8 of 10+ ───────────────────────────────────────────────────────────────────────────────────╯  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ↑↓ move   pgup/pgdn page   n load more   tab next panel   / filter   r refresh   esc back   q quit                                     F2 mouse on  

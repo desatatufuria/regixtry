@@ -46,6 +46,7 @@ Sidebar groups, as `shellNavGroups` in `internal/tui/shell.go` defines them:
 | SECURITY | Image scanning | Trivy, [scanning screens](#image-secret-scanning-and-signing-policy) |
 | | Secret scanning | Gitleaks |
 | | Signing policy | Cosign signature policy |
+| | Login security | [Login security](#login-security) |
 | OPERATIONS | Scan runs | [Scan runs](#scan-runs-secret-findings-and-scan-history) |
 | | Secret findings | the same list, Leaks tab first |
 | | Update channel | [Update channel](#update-channel) |
@@ -84,6 +85,7 @@ On by default; `F2` toggles it and the footer shows `F2 mouse on` / `F2 mouse of
 - The mouse never confirms or cancels a dialog and never triggers a destructive action; deleting, revoking and disabling stay keys.
 - While a dialog, a form or a text input is in front, or a change is in flight, the mouse does nothing, the sidebar included.
 - On the project screens a click selects a project or a member and a second click on a project opens its members; on a project's members a click on a repository moves the focus to that panel and a click on a member brings it back. The New project dialog, the delete and revoke confirms and the refusals take no mouse input.
+- On Login security a click focuses the panel under it and selects the row it lands on, and the wheel moves the selection of the panel under the pointer. The reset dialog is opened with `x` only; the mouse never opens it and never confirms it.
 - The forms (New user, Reset password, New robot, Grant project role), the user profile and Grant access take no mouse input at all. The configuration screens and Update channel have no list, so the mouse only reaches their sidebar.
 
 ## Confirm dialog
@@ -112,19 +114,23 @@ Under **150x24** every screen is replaced by a centered notice, `Terminal too sm
 | Part | Content |
 | --- | --- |
 | Quick actions | `g` grant repository access, `r` create robot, `t` issue token (opens Users to pick the person first, because tokens belong to one account) |
-| NEEDS ATTENTION | tokens expiring within 7 days (count and the soonest owner), robots without a repository grant (`g grant`), and the number of images with critical findings (latest scan per repository) |
+| NEEDS ATTENTION | tokens expiring within 7 days (count and the soonest owner), robots without a repository grant (`g grant`), the number of images with critical findings (latest scan per repository), and the failed logins of the last 15 minutes (see below) |
 | RECENT CHANGES | the newest entries of the access-events log, as many as fit: grants, tokens, robots and user changes with who did it and how long ago |
 
 | Key | Action |
 | --- | --- |
 | `↑` / `↓` | move the sidebar cursor |
 | `Enter` | open the sidebar item, or the attention row once selected |
-| `Tab` / `Shift+Tab` | cycle the selection over the attention rows |
+| `Tab` / `Shift+Tab` | cycle the selection over the attention rows; while one is selected the footer reads `tab next attention row` |
 | `g` `r` `t` | quick actions |
 | `Esc` | back to the Console |
 | `q` | quit |
 
 Each panel loads on its own; one failing read shows an error inside its panel and leaves the other intact.
+
+**Failed logins row.** The last attention row reads `N failed logins in 15 min; M accounts waiting` (`1 failed login in 15 min; 1 account waiting` in the singular) and, when the login backoff is in `log` mode, ends with ` (log mode)`. `Enter` on it opens [Login security](#login-security). It is hidden when there are no failures and nobody is waiting, grey (muted) below the warning threshold and amber at or above it. The threshold is a proposal, named in `screen_login_security_summary.go`: **20 failed logins in the window** (`loginWarnFailures`), or **1 account waiting** (`loginWarnWaitingEnforce`) in `enforce` mode only: in `log` and `off` mode nobody is delayed, so waiting accounts never turn it amber. The row is never red (red is for critical findings). It comes from `GET security/login-summary` and `GET security/login-backoff`; if either request fails, or the operator is not a global administrator, the row is simply absent: no error line, no spinner, and nothing else on the Overview changes.
+
+**Recent changes** words a login backoff reset as `admin reset the login backoff of alice` (an unknown username shows as its chip, `unknown #ab12cd`).
 
 ## Users
 
@@ -343,6 +349,30 @@ Every editor ends with **Clear override, use the global settings**, which asks `
 
 **Signing lists.** Trusted public keys show as short fingerprints, never raw key bytes: `n` adds one (paste the PEM, `Enter` commits), `x` deletes the selected key after a usage advisory ("This key currently verifies N tagged image(s)... Delete it anyway?") that never blocks. Trusted identities (keyless, Fulcio) show a SAN regexp and OIDC issuer: `n` adds one (`Tab` switches fields, `Enter` commits and validates), `x` deletes immediately. In the override editor the key list claims `n`/`x`/`↑`/`↓` from any field, the identity list only once `Tab` focused it.
 
+## Login security
+
+`Admin › Security › Login security` (global administrators only): what the login protection is doing, who is being delayed, and the recent failed logins. Open it from the sidebar or from the Overview's failed-logins row. The top right of the content reads `backoff mode: enforce` (green), `log` (amber) or `off` (grey).
+
+- **Summary strip**, in order: `FAILED LOGINS, 15 MIN`, `DISTINCT IPS`, `DISTINCT ACCOUNTS`, `ACCOUNTS WAITING`: four boxed tiles on a tall terminal (40 rows and up), one line otherwise. A zero is grey; failures and waiting are amber by the Overview's rule above. In `log` and `off` mode `ACCOUNTS WAITING` is grey with `log only, nobody is delayed`.
+- **EFFECTIVE SETTINGS** (read-only, set by service flags): `Backoff mode`, `Failure threshold` (`5 failures per account`), `Base delay` and `Max delay` (never seconds: under a minute reads `under 1 min`, then whole minutes, then `1 h 30 min`), `Concurrency limit` (`8 logins checked at once`) and `Trusted proxies` (`configured: yes` or `configured: no`; the CIDRs are never listed).
+- **ACCOUNTS WAITING**: `ACCOUNT`, `FAILS`, `TIME LEFT`. An existing account shows by name; an unknown username only as `unknown #` and six hex digits of its hash (the server never stores or returns the raw name). In `log` mode the column is `WOULD WAIT`, the rows are grey, and a banner explains that failures are counted but nobody is delayed (`off` mode has its own banner).
+- **RECENT FAILURES**: the last 24 hours, newest first: `LAST SEEN` (`09:29` today, `22 Nov 23:58` before, UTC), `ENDPOINT` (`token`, `v2`, `admin`), `REASON` (`bad password`, `unknown user`, `throttled`, `bad token` for a refused bearer token), `ACCOUNT`, `IP`, `COUNT`. A row is an aggregated 5-minute record, not one attempt; the count says how many. A throttled attempt is always keyed by hash, so its account shows as a chip even when the account exists. The IP is information, never a blocking criterion. The first page is 50 rows; `n`, or scrolling past the last row, reads the next page by cursor, and the bottom border reads `newest first  ▾ 1-26 of 26+` while more pages exist.
+
+| Key | Action |
+| --- | --- |
+| `↑` / `↓` | move in the focused panel (`pgup` / `pgdn` page) |
+| `Tab` / `Shift+Tab` | focus the other panel (the focused one has the accent border) |
+| `x` | reset the backoff of the selected waiting account (waiting panel only; hidden elsewhere) |
+| `n` | load the next page of failures (failures panel, when there is one) |
+| `/` | filter the failures loaded so far by account, IP or reason (a case-insensitive substring); `Enter` applies, `Esc` clears |
+| `r` | read everything again |
+| `Esc` | back to the Overview |
+| `q` | quit |
+
+States: `Loading login security…` (only `esc` and `q` in the footer), `Could not load login security: <reason>. r retry`, `No failed logins in the last 24 hours.` with `Nobody is waiting.`, and, for an operator who is not a global administrator, `Only global administrators can see login security.`
+
+**Reset backoff.** `x` opens the shared confirm; nothing is sent until `y` or `Enter`, and a second press while the call is in flight sends nothing. The dialog names the exact account (`alice`, or `unknown #ab12cd`) with its failures and wait, and says what really happens: the failure counter of that one account is cleared and it can try again immediately; active access tokens are not affected. An unknown name is reset by its `hash:` label. The result is a line above the panels: `Backoff reset for alice. alice can try again now.`; `alice is no longer waiting. The list was refreshed.` when the account had no backoff state any more (a `404`: someone else reset it, or it expired); or `Could not reset backoff: <reason>. The list stays as it was.` After a reset or a `404` the row disappears at once and the waiting list and summary are read again; a read that started before the reset can never bring the row back. The server records the reset as the access event `login.backoff.reset`.
+
 ## Scan runs, secret findings and scan history
 
 `Scan runs` lists **one row per image digest** of the repositories with scan history (scan results are latest-only: a digest keeps one result, replaced by each rescan), and `Secret findings` lists repositories with their latest scan (`↑`/`↓`, `Enter` scan history, `r` refresh, `Esc` Overview). Each Scan runs row shows the repository, a short digest, the status, the age of the Trivy vulnerability DB the result used (`TRIVY DB`, for example `3 d ago`), when a push or sweep last confirmed the result (`CHECKED`, for example `5 h ago`) and the Critical and High counts; ages are hours, days or years, never seconds. A completed result whose latest rescan failed is kept and enforced by the pull policy: its status reads `stale` (amber) and the detail panel gives the reason; `skipped` rows (a push scan dropped under load) show no counts and say why in the panel. A server that does not send the DB date or the last check shows `—`. Digests are rescanned only when the vulnerability DB or the scan settings change (a manual scan always forces one). Both open the same **scan history**, a full screen inside the shell, on a different tab: Vulnerabilities for Scan runs, Leaks for Secret findings. Image scanning `Repositories` opens it on Vulnerabilities.
@@ -417,7 +447,8 @@ All under `/admin/v1`, details in the [API reference](api.md).
 
 | Screen | Endpoints |
 | --- | --- |
-| Overview | `GET admin-tokens/expiring`, `GET access-events`, `GET robots`, `GET repository-scan-summaries` |
+| Overview | `GET admin-tokens/expiring`, `GET access-events`, `GET robots`, `GET repository-scan-summaries`, `GET security/login-summary`, `GET security/login-backoff` |
+| Login security | `GET security/login-summary`, `GET security/login-backoff`, `GET security/login-failures` (`from` = 24 h ago, `limit` 50, `cursor`), `POST security/login-backoff/reset` |
 | Users, tokens | `GET users`, `admin-tokens/expiring`, user and token endpoints; `ttl` on create |
 | Repository access | `GET repository-grants` (paged) |
 | Projects | `GET projects`, `POST projects`, `DELETE projects/{project}` |

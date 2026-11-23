@@ -14,12 +14,12 @@
     ▸ Image scanning           │  │ c edit configuration.                                                                         │  │                                                               │
       Secret scanning          │  ╰─────────────────────────────────────  ╭──────────────────────────────────────────────────╮  ──╯  ╰───────────────────────────────────────────────────────────────╯
       Signing policy           │  ╭─────────────────────────────────────  │  Vulnerability policy                            │  ─────────────────────────────────────────────────────────────────────╮
-                               │  │ LAST SWEEP                            │  A scan that reaches the threshold blocks the    │                                                                       │
-  OPERATIONS                   │  │ no sweep yet                          │  pull. Applies to every repository without an    │                                                                       │
-      Scan runs                │  ╰─────────────────────────────────────  │  override.                                       │  ─────────────────────────────────────────────────────────────────────╯
-      Secret findings          │  ╭─────────────────────────────────────  │  [x] Policy enabled                              │  ─────────────────────────────────────────────────────────────────────╮
-      Update channel           │  │ PER-REPOSITORY OVERRIDES              │  Severity threshold                              │                                                                       │
-                               │  │ REPOSITORY                            │   CRITICAL+HIGH                                  │                 STATUS     ENABLED  DETAIL                UPDATED     │
+      Login security           │  │ LAST SWEEP                            │  A scan that reaches the threshold blocks the    │                                                                       │
+                               │  │ no sweep yet                          │  pull. Applies to every repository without an    │                                                                       │
+  OPERATIONS                   │  ╰─────────────────────────────────────  │  override.                                       │  ─────────────────────────────────────────────────────────────────────╯
+      Scan runs                │  ╭─────────────────────────────────────  │  [x] Policy enabled                              │  ─────────────────────────────────────────────────────────────────────╮
+      Secret findings          │  │ PER-REPOSITORY OVERRIDES              │  Severity threshold                              │                                                                       │
+      Update channel           │  │ REPOSITORY                            │   CRITICAL+HIGH                                  │                 STATUS     ENABLED  DETAIL                UPDATED     │
                                │  │ team/api                              │                                                  │                 override   yes      ignore file set       14 Nov      │
                                │  │ team/docs                             │   Save  enter   Cancel  esc                      │                 override   no       scanning off          2 Nov       │
                                │  │ team/web                              │  tab next field, space toggles or cycles         │                 inherited  —        global settings       -           │

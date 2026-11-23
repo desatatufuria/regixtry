@@ -14,11 +14,11 @@
       Image scanning           │  EXPIRES  │                                                              │   Tokens                             t │
       Secret scanning          │           │  Anything using its tokens stops working immediately. This   │   Grant access                       g │
       Signing policy           │           │  cannot be undone.                                           │   Disable robot                      d │
-                               │           │                                                              │   Delete robot                       x │
-  OPERATIONS                   │           │   Delete                                         y / enter   │                                        │
-      Scan runs                │           │   Cancel                                               esc   │   NEEDS ATTENTION                      │
-      Secret findings          │           ╰──────────────────────────────────────────────────────────────╯   Token release-pipeline expires in 6  │
-      Update channel           │                                                                            │ days                         t renew │
-                               │                                                                            ╰──────────────────────────────────────╯
+      Login security           │           │                                                              │   Delete robot                       x │
+                               │           │   Delete                                         y / enter   │                                        │
+  OPERATIONS                   │           │   Cancel                                               esc   │   NEEDS ATTENTION                      │
+      Scan runs                │           ╰──────────────────────────────────────────────────────────────╯   Token release-pipeline expires in 6  │
+      Secret findings          │                                                                            │ days                         t renew │
+      Update channel           │                                                                            ╰──────────────────────────────────────╯
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   ↑↓ move   enter open   n new robot   t tokens   g grant access   d disable   e enable   x delete   r refresh   esc back   q quit                    

@@ -14,12 +14,12 @@
       Image scanning           │  │                                                                                                                        │  │ Identities                         1 │  
       Secret scanning          │  │                                                                                                                        │  │ Updated                        9 Nov │  
     ▸ Signing policy           │  │                                                                                                                        │  │                                      │  
-                               │  │                                                                                                                        │  │ ACTIONS                              │  
-  OPERATIONS                   │  │                                                                                                                        │  │ Edit override                      o │  
-      Scan runs                │  │                                                                                                                        │  │ Refresh                            r │  
+      Login security           │  │                                                                                                                        │  │ ACTIONS                              │  
+                               │  │                                                                                                                        │  │ Edit override                      o │  
+  OPERATIONS                   │  │                                                                                                                        │  │ Refresh                            r │  
+      Scan runs                │  │                                                                                                                        │  │                                      │  
       Secret findings          │  │                                                                                                                        │  │                                      │  
       Update channel           │  │                                                                                                                        │  │                                      │  
-                               │  │                                                                                                                        │  │                                      │  
                                │  │                                                                                                                        │  │                                      │  
                                │  │                                                                                                                        │  │                                      │  
                                │  │                                                                                                                        │  │                                      │  

@@ -14,12 +14,12 @@
     ▸ Image scanning           │  │ c edit configuration.                                                                         │  │                                                               │
       Secret scanning          │  ╰───────────────────────────────  ╭──────────────────────────────────────────────────────────────╮  ───────────────────────────────────────────────────────────────╯
       Signing policy           │  ╭───────────────────────────────  │  Confirm Disable                                             │  ───────────────────────────────────────────────────────────────╮
-                               │  │ LAST SWEEP                      │                                                              │                                                                 │
-  OPERATIONS                   │  │ no sweep yet                    │  Confirm disable feature?                                    │                                                                 │
-      Scan runs                │  ╰───────────────────────────────  │                                                              │  ───────────────────────────────────────────────────────────────╯
-      Secret findings          │  ╭───────────────────────────────  │  ╭────────────────────────────────────────────────────────╮  │  ───────────────────────────────────────────────────────────────╮
-      Update channel           │  │ PER-REPOSITORY OVERRIDES        │  │ Trivy                                                  │  │                                                                 │
-                               │  │ REPOSITORY                      │  ╰────────────────────────────────────────────────────────╯  │           STATUS     ENABLED  DETAIL                UPDATED     │
+      Login security           │  │ LAST SWEEP                      │                                                              │                                                                 │
+                               │  │ no sweep yet                    │  Confirm disable feature?                                    │                                                                 │
+  OPERATIONS                   │  ╰───────────────────────────────  │                                                              │  ───────────────────────────────────────────────────────────────╯
+      Scan runs                │  ╭───────────────────────────────  │  ╭────────────────────────────────────────────────────────╮  │  ───────────────────────────────────────────────────────────────╮
+      Secret findings          │  │ PER-REPOSITORY OVERRIDES        │  │ Trivy                                                  │  │                                                                 │
+      Update channel           │  │ REPOSITORY                      │  ╰────────────────────────────────────────────────────────╯  │           STATUS     ENABLED  DETAIL                UPDATED     │
                                │  │ team/api                        │                                                              │           override   yes      ignore file set       14 Nov      │
                                │  │ team/docs                       │   Confirm                                        y / enter   │           override   no       scanning off          2 Nov       │
                                │  │ team/web                        │   Cancel                                               esc   │           inherited  —        global settings       -           │

@@ -14,11 +14,11 @@
       Image scanning           │  │ PASSWORD                                             │  ╭──────────────────────────────────────────────────────╮  
       Secret scanning          │  │ Set a new password for carol                 p reset │  │ DANGER AREA                                          │  
       Signing policy           │  ╰──────────────────────────────────────────────────────╯  │ Disable carol. They are signed out and their tokens  │  
-                               │  ╭──────────────────────────────────────────────────────╮  │ stop working. Their grants stay, so enabling them    │  
-  OPERATIONS                   │  │ PROJECT ACCESS AND REPOSIT… x revoke  g grant access │  │ again restores access.                               │  
-      Scan runs                │  │   team/docs                         Reader   repo    │  │ ╭─────────────────╮                                  │  
-      Secret findings          │  │ ▸ team/api                          Writer   repo    │  │ │ Disable user  d │                                  │  
-      Update channel           │  │ 0 project roles, 2 repository grants.                │  │ ╰─────────────────╯                                  │  
-                               │  ╰──────────────────────────────────────────────────────╯  ╰──────────────────────────────────────────────────────╯  
+      Login security           │  ╭──────────────────────────────────────────────────────╮  │ stop working. Their grants stay, so enabling them    │  
+                               │  │ PROJECT ACCESS AND REPOSIT… x revoke  g grant access │  │ again restores access.                               │  
+  OPERATIONS                   │  │   team/docs                         Reader   repo    │  │ ╭─────────────────╮                                  │  
+      Scan runs                │  │ ▸ team/api                          Writer   repo    │  │ │ Disable user  d │                                  │  
+      Secret findings          │  │ 0 project roles, 2 repository grants.                │  │ ╰─────────────────╯                                  │  
+      Update channel           │  ╰──────────────────────────────────────────────────────╯  ╰──────────────────────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   ↑↓ move   x revoke   g grant access   tab done   esc back   q quit                                                                                  
