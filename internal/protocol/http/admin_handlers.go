@@ -25,6 +25,13 @@ func (r *Router) handleAdmin(w stdhttp.ResponseWriter, req *stdhttp.Request) {
 
 	subpath := strings.Trim(strings.TrimPrefix(req.URL.Path, "/admin/v1"), "/")
 
+	// Bound every admin body before any handler, authenticated or not, can
+	// read it. The Content-Length refusal happens right after authentication
+	// (capAdminBody) so an unauthenticated caller still gets its 401.
+	if req.Body != nil {
+		req.Body = stdhttp.MaxBytesReader(w, req.Body, adminBodyLimit)
+	}
+
 	// The ONLY delegate-eligible namespace (design.md Decision 3). It is an
 	// explicit opt-in prefix that returns early; authority is decided in the
 	// service layer, which already has the repository argument. Everything
@@ -39,7 +46,7 @@ func (r *Router) handleAdmin(w stdhttp.ResponseWriter, req *stdhttp.Request) {
 	// token" scenario (operator-admin-http-api spec) that requires 401.
 	if strings.HasPrefix(subpath, "repositories/") {
 		principal, ok := r.requireAuthenticatedPrincipal(w, req)
-		if !ok {
+		if !ok || !rejectOversizeAdminBody(w, req) {
 			return
 		}
 		r.handleAdminRepositoryResource(w, req, *principal, strings.TrimPrefix(subpath, "repositories/"))
@@ -51,7 +58,7 @@ func (r *Router) handleAdmin(w stdhttp.ResponseWriter, req *stdhttp.Request) {
 	// project); every other projects/... route stays global-admin only below.
 	if project, username, ok := adminProjectMembersPath(subpath); ok {
 		principal, ok := r.requireAuthenticatedPrincipal(w, req)
-		if !ok {
+		if !ok || !rejectOversizeAdminBody(w, req) {
 			return
 		}
 		r.handleAdminProjectMembers(w, req, *principal, project, username)
@@ -59,7 +66,7 @@ func (r *Router) handleAdmin(w stdhttp.ResponseWriter, req *stdhttp.Request) {
 	}
 
 	principal, ok := r.requireAdminPrincipal(w, req)
-	if !ok {
+	if !ok || !rejectOversizeAdminBody(w, req) {
 		return
 	}
 
@@ -377,6 +384,9 @@ func decodeAdminRawJSON(req *stdhttp.Request) ([]byte, error) {
 
 	raw, err := io.ReadAll(req.Body)
 	if err != nil {
+		if isBodyTooLarge(err) {
+			return nil, errAdminBodyTooLarge
+		}
 		return nil, domainauth.NewValidationError("request body must be valid JSON")
 	}
 	return raw, nil
@@ -1702,6 +1712,32 @@ func adminTTLFromSeconds(seconds *int64) (time.Duration, error) {
 	return time.Duration(*seconds) * time.Second, nil
 }
 
+// adminBodyLimit is the largest request body any /admin/v1 route accepts,
+// applied before the body is decoded. Registry blob and manifest paths have
+// their own limits and are not affected.
+const adminBodyLimit int64 = 1 << 20
+
+// errAdminBodyTooLarge reports a body over adminBodyLimit; writeAdminError
+// answers it with 413.
+var errAdminBodyTooLarge = errors.New("request body too large; the limit is 1 MiB")
+
+func isBodyTooLarge(err error) bool {
+	var tooLarge *stdhttp.MaxBytesError
+	return errors.As(err, &tooLarge)
+}
+
+// rejectOversizeAdminBody answers 413 without reading anything when the
+// declared Content-Length is already over the limit, and reports whether the
+// request may proceed. It runs after authentication so credentials are
+// still checked first.
+func rejectOversizeAdminBody(w stdhttp.ResponseWriter, req *stdhttp.Request) bool {
+	if req.ContentLength > adminBodyLimit {
+		writeAdminError(w, errAdminBodyTooLarge, ports.Challenge{})
+		return false
+	}
+	return true
+}
+
 func decodeAdminJSON(req *stdhttp.Request, dst any) error {
 	if req.Body == nil {
 		return domainauth.NewValidationError("request body is required")
@@ -1711,6 +1747,9 @@ func decodeAdminJSON(req *stdhttp.Request, dst any) error {
 	decoder := json.NewDecoder(req.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(dst); err != nil {
+		if isBodyTooLarge(err) {
+			return errAdminBodyTooLarge
+		}
 		if errors.Is(err, io.EOF) {
 			return domainauth.NewValidationError("request body is required")
 		}
@@ -1733,6 +1772,9 @@ func decodeAdminJSON(req *stdhttp.Request, dst any) error {
 
 	var extra json.RawMessage
 	if err := decoder.Decode(&extra); err != io.EOF {
+		if isBodyTooLarge(err) {
+			return errAdminBodyTooLarge
+		}
 		return domainauth.NewValidationError("request body must contain a single JSON object")
 	}
 
@@ -1796,6 +1838,10 @@ func (r *Router) adminChallenge(req *stdhttp.Request) ports.Challenge {
 }
 
 func writeAdminError(w stdhttp.ResponseWriter, err error, challenge ports.Challenge) {
+	if errors.Is(err, errAdminBodyTooLarge) {
+		writeJSON(w, stdhttp.StatusRequestEntityTooLarge, map[string]any{"error": err.Error()})
+		return
+	}
 	status := stdhttp.StatusInternalServerError
 
 	message := err.Error()
