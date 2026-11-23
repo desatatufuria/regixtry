@@ -14,12 +14,12 @@
     ▸ Image scanning           │  │                                                                                                                        │  │ Ignore policy                      - │  
       Secret scanning          │  │                                                                                                                        │  │ Updated                       14 Nov │  
       Signing policy           │  │                                                                                                                        │  │                                      │  
-                               │  │                                                                                                                        │  │ LATEST SCAN                          │  
-  OPERATIONS                   │  │                                                                                                                        │  │ Reference                      1.4.2 │  
-      Scan runs                │  │                                                                                                                        │  │ Status                     completed │  
-      Secret findings          │  │                                                                                                                        │  │ Critical                           2 │  
-      Update channel           │  │                                                                                                                        │  │ High                               5 │  
-                               │  │                                                                                                                        │  │ Runs                               7 │  
+      Login security           │  │                                                                                                                        │  │ LATEST SCAN                          │  
+                               │  │                                                                                                                        │  │ Reference                      1.4.2 │  
+  OPERATIONS                   │  │                                                                                                                        │  │ Status                     completed │  
+      Scan runs                │  │                                                                                                                        │  │ Critical                           2 │  
+      Secret findings          │  │                                                                                                                        │  │ High                               5 │  
+      Update channel           │  │                                                                                                                        │  │ Runs                               7 │  
                                │  │                                                                                                                        │  │ Scanned                 14 Mar 06:30 │  
                                │  │                                                                                                                        │  │                                      │  
                                │  │                                                                                                                        │  │ ACTIONS                              │  

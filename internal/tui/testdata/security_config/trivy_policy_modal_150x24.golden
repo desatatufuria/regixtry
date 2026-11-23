@@ -14,11 +14,11 @@
     ▸ Image scanning           │  │ c edit conf  │   CRITICAL+HIGH                                  │  │                                           │
       Secret scanning          │  ╰────────────  │                                                  │  ╰───────────────────────────────────────────╯
       Signing policy           │  ╭────────────  │   Save  enter   Cancel  esc                      │  ────────────────────────────────────────────╮
-                               │  │ PER-REPOSIT  │  tab next field, space toggles or cycles         │                                              │
-  OPERATIONS                   │  │ REPOSITORY   ╰──────────────────────────────────────────────────╯   ENABLED  DETAIL                UPDATED     │
-      Scan runs                │  │ team/api                                                 override   yes      ignore file set       14 Nov      │
-      Secret findings          │  │ team/docs                                                override   no       scanning off          2 Nov       │
-      Update channel           │  │ +2 more, o opens the list                                                                                      │
-                               │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+      Login security           │  │ PER-REPOSIT  │  tab next field, space toggles or cycles         │                                              │
+                               │  │ REPOSITORY   ╰──────────────────────────────────────────────────╯   ENABLED  DETAIL                UPDATED     │
+  OPERATIONS                   │  │ team/api                                                 override   yes      ignore file set       14 Nov      │
+      Scan runs                │  │ team/docs                                                override   no       scanning off          2 Nov       │
+      Secret findings          │  │ +2 more, o opens the list                                                                                      │
+      Update channel           │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   tab next field   space toggle   enter save   esc cancel                                                                                F2 mouse on  

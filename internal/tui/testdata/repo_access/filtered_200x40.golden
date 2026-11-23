@@ -14,12 +14,12 @@
       Image scanning           │  │                                                                                                                          │  │ Grant access                     g │  
       Secret scanning          │  │                                                                                                                          │  │ Revoke alice on team/docs        x │  
       Signing policy           │  │                                                                                                                          │  │                                    │  
-                               │  │                                                                                                                          │  │ No Admin on this repository. Only  │  
-  OPERATIONS                   │  │                                                                                                                          │  │ server admins can change access    │  
-      Scan runs                │  │                                                                                                                          │  │ here.                              │  
+      Login security           │  │                                                                                                                          │  │ No Admin on this repository. Only  │  
+                               │  │                                                                                                                          │  │ server admins can change access    │  
+  OPERATIONS                   │  │                                                                                                                          │  │ here.                              │  
+      Scan runs                │  │                                                                                                                          │  │                                    │  
       Secret findings          │  │                                                                                                                          │  │                                    │  
       Update channel           │  │                                                                                                                          │  │                                    │  
-                               │  │                                                                                                                          │  │                                    │  
                                │  │                                                                                                                          │  │                                    │  
                                │  │                                                                                                                          │  │                                    │  
                                │  │                                                                                                                          │  │                                    │  

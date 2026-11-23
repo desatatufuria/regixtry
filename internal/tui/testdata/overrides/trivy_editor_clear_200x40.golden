@@ -14,12 +14,12 @@
     ▸ Image scanning           │  │                                 │                                                              │                       │  │ Ignore policy                      - │
       Secret scanning          │  │                                 │  Remove this repository's override of the Trivy settings.    │                       │  │ Updated                       14 Nov │
       Signing policy           │  │                                 │  It goes back to the global settings.                        │                       │  │                                      │
-                               │  │                                 │                                                              │                       │  │ LATEST SCAN                          │
-  OPERATIONS                   │  │                                 │  ╭────────────────────────────────────────────────────────╮  │                       │  │ Reference                      1.4.2 │
-      Scan runs                │  │                                 │  │ team/api                                               │  │                       │  │ Status                     completed │
-      Secret findings          │  │                                 │  │ Trivy override                                         │  │                       │  │ Critical                           2 │
-      Update channel           │  │                                 │  ╰────────────────────────────────────────────────────────╯  │                       │  │ High                               5 │
-                               │  │                                 │                                                              │                       │  │ Runs                               7 │
+      Login security           │  │                                 │                                                              │                       │  │ LATEST SCAN                          │
+                               │  │                                 │  ╭────────────────────────────────────────────────────────╮  │                       │  │ Reference                      1.4.2 │
+  OPERATIONS                   │  │                                 │  │ team/api                                               │  │                       │  │ Status                     completed │
+      Scan runs                │  │                                 │  │ Trivy override                                         │  │                       │  │ Critical                           2 │
+      Secret findings          │  │                                 │  ╰────────────────────────────────────────────────────────╯  │                       │  │ High                               5 │
+      Update channel           │  │                                 │                                                              │                       │  │ Runs                               7 │
                                │  │                                 │  Only this repository changes. Other repositories keep       │                       │  │ Scanned                 14 Mar 06:30 │
                                │  │                                 │  their overrides.                                            │                       │  │                                      │
                                │  │                                 │                                                              │                       │  │ ACTIONS                              │

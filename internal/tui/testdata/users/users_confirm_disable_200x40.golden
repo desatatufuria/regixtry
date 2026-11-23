@@ -14,12 +14,12 @@
       Image scanning           │                                    │  Disable user?                                               │
       Secret scanning          │                                    │                                                              │
       Signing policy           │                                    │  The user cannot sign in and their tokens stop working.      │
-                               │                                    │                                                              │
-  OPERATIONS                   │                                    │  ╭────────────────────────────────────────────────────────╮  │
-      Scan runs                │                                    │  │ carol                                                  │  │
-      Secret findings          │                                    │  │ user, enabled, created 3 Mar 2026                      │  │
-      Update channel           │                                    │  ╰────────────────────────────────────────────────────────╯  │
-                               │                                    │                                                              │
+      Login security           │                                    │                                                              │
+                               │                                    │  ╭────────────────────────────────────────────────────────╮  │
+  OPERATIONS                   │                                    │  │ carol                                                  │  │
+      Scan runs                │                                    │  │ user, enabled, created 3 Mar 2026                      │  │
+      Secret findings          │                                    │  ╰────────────────────────────────────────────────────────╯  │
+      Update channel           │                                    │                                                              │
                                │                                    │  Grants are kept. Enable carol again to restore access.      │
                                │                                    │                                                              │
                                │                                    │   Confirm                                        y / enter   │

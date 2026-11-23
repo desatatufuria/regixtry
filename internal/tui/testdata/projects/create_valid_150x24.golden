@@ -14,11 +14,11 @@
       Image scanning           │           │  ╰────────────────────────────────────────────────────────╯  │
       Secret scanning          │           │                                                              │
       Signing policy           │           │  Creates project odabank. Repositories pushed as             │
-                               │           │  odabank/... belong to it.                                   │
-  OPERATIONS                   │           │                                                              │
-      Scan runs                │           │   Create project                                     enter   │
-      Secret findings          │           │   Cancel                                               esc   │
-      Update channel           │           ╰──────────────────────────────────────────────────────────────╯
-                               │
+      Login security           │           │  odabank/... belong to it.                                   │
+                               │           │                                                              │
+  OPERATIONS                   │           │   Create project                                     enter   │
+      Scan runs                │           │   Cancel                                               esc   │
+      Secret findings          │           ╰──────────────────────────────────────────────────────────────╯
+      Update channel           │
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   enter create   esc cancel                                                                                                              F2 mouse on  

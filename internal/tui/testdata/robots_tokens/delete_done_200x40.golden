@@ -14,12 +14,12 @@
       Image scanning           │                                                                                                                              │ Tokens                             t │  
       Secret scanning          │                                                                                                                              │ Grant access                       g │  
       Signing policy           │                                                                                                                              │ Disable robot                      d │  
-                               │                                                                                                                              │ Delete robot                       x │  
-  OPERATIONS                   │                                                                                                                              │                                      │  
-      Scan runs                │                                                                                                                              │ NEEDS ATTENTION                      │  
-      Secret findings          │                                                                                                                              │ No repository access         g grant │  
-      Update channel           │                                                                                                                              │                                      │  
+      Login security           │                                                                                                                              │ Delete robot                       x │  
                                │                                                                                                                              │                                      │  
+  OPERATIONS                   │                                                                                                                              │ NEEDS ATTENTION                      │  
+      Scan runs                │                                                                                                                              │ No repository access         g grant │  
+      Secret findings          │                                                                                                                              │                                      │  
+      Update channel           │                                                                                                                              │                                      │  
                                │                                                                                                                              │                                      │  
                                │                                                                                                                              │                                      │  
                                │                                                                                                                              │                                      │  

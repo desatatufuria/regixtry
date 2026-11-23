@@ -14,11 +14,11 @@
     ▸ Image scanning           │  │   team/service-194     -     -     never            inherited  —       │  │ repository.                        │  
       Secret scanning          │  │   team/service-195     -     -     never            inherited  —       │  │                                    │  
       Signing policy           │  │   team/service-196     -     -     never            inherited  —       │  │ ACTIONS                            │  
-                               │  │   team/service-197     -     -     never            inherited  —       │  │ Edit override                    o │  
-  OPERATIONS                   │  │   team/service-198     -     -     never            inherited  —       │  │ Scan history                 enter │  
-      Scan runs                │  │ ▸ team/service-199     -     -     never            inherited  —       │  │ Refresh                          r │  
-      Secret findings          │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
-      Update channel           │  One row per repository, severity first. enter opens its scan history,       │                                    │  
-                               │  o edits its override.                                                       ╰────────────────────────────────────╯  
+      Login security           │  │   team/service-197     -     -     never            inherited  —       │  │ Edit override                    o │  
+                               │  │   team/service-198     -     -     never            inherited  —       │  │ Scan history                 enter │  
+  OPERATIONS                   │  │ ▸ team/service-199     -     -     never            inherited  —       │  │ Refresh                          r │  
+      Scan runs                │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
+      Secret findings          │  One row per repository, severity first. enter opens its scan history,       │                                    │  
+      Update channel           │  o edits its override.                                                       ╰────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   tab switch tabs   ↑↓ move   o override   enter scan history   r refresh   esc back   q quit                                            F2 mouse on  

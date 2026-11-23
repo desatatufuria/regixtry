@@ -14,11 +14,11 @@
       Image scanning           │  │    │    Key: 8bc6e1ef2423                                                 │  dentities                       1 │
       Secret scanning          │  │    │    Key: 9c8599515846                                                 │  pdated                      9 Nov │
     ▸ Signing policy           │  │    │    Key: 9314eb98c4dc                                                 │                                    │
-                               │  │    │    Key: 760f1941c174                                                 │  CTIONS                            │
-  OPERATIONS                   │  │    │    Key: 1e2e74ac4baf                                                 │  dit override                    o │
-      Scan runs                │  │    │                                                                      │  efresh                          r │
-      Secret findings          │  ╰──  │   Save  enter   Cancel  esc                                          │                                    │
-      Update channel           │  An   │  tab next field, space toggles or cycles, n adds and x deletes in a  │                                    │
-                               │  the  │  list                                                                │  ──────────────────────────────────╯
+      Login security           │  │    │    Key: 760f1941c174                                                 │  CTIONS                            │
+                               │  │    │    Key: 1e2e74ac4baf                                                 │  dit override                    o │
+  OPERATIONS                   │  │    │                                                                      │  efresh                          r │
+      Scan runs                │  ╰──  │   Save  enter   Cancel  esc                                          │                                    │
+      Secret findings          │  An   │  tab next field, space toggles or cycles, n adds and x deletes in a  │                                    │
+      Update channel           │  the  │  list                                                                │  ──────────────────────────────────╯
 ─────────────────────────────────────  ╰──────────────────────────────────────────────────────────────────────╯  ─────────────────────────────────────
   tab next field   space toggle   enter save   esc cancel                                                                                F2 mouse on  

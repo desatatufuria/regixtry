@@ -14,12 +14,12 @@
       Image scanning           │                                    │                                                              │
       Secret scanning          │                                    │  carol loses Writer access to every repository in odabank,   │
       Signing policy           │                                    │  unless an exact repository grant also gives it. It applies  │
-                               │                                    │  from the next request; no token is revoked.                 │
-  OPERATIONS                   │                                    │                                                              │
-      Scan runs                │                                    │  ╭────────────────────────────────────────────────────────╮  │
-      Secret findings          │                                    │  │ carol on project odabank                               │  │
-      Update channel           │                                    │  │ Project writer since 2026-11-10                        │  │
-                               │                                    │  ╰────────────────────────────────────────────────────────╯  │
+      Login security           │                                    │  from the next request; no token is revoked.                 │
+                               │                                    │                                                              │
+  OPERATIONS                   │                                    │  ╭────────────────────────────────────────────────────────╮  │
+      Scan runs                │                                    │  │ carol on project odabank                               │  │
+      Secret findings          │                                    │  │ Project writer since 2026-11-10                        │  │
+      Update channel           │                                    │  ╰────────────────────────────────────────────────────────╯  │
                                │                                    │                                                              │
                                │                                    │  Grant a project role again to restore it.                   │
                                │                                    │                                                              │

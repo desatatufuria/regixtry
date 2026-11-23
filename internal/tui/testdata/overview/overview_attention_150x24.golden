@@ -14,11 +14,11 @@
       Image scanning           │  ╭──────────────────────────────────────────────────────╮  ╭──────────────────────────────────────────────────────╮  
       Secret scanning          │  │ NEEDS ATTENTION                                      │  │ RECENT CHANGES                                       │  
       Signing policy           │  │   Robot gh-actions has no repository access  g grant │  │ No changes recorded yet.                             │  
-                               │  │   2 images have critical findings                    │  │                                                      │  
+      Login security           │  │   2 images have critical findings                    │  │                                                      │  
+                               │  │                                                      │  │                                                      │  
   OPERATIONS                   │  │                                                      │  │                                                      │  
       Scan runs                │  │                                                      │  │                                                      │  
       Secret findings          │  │                                                      │  │                                                      │  
-      Update channel           │  │                                                      │  │                                                      │  
-                               │  ╰──────────────────────────────────────────────────────╯  ╰──────────────────────────────────────────────────────╯  
+      Update channel           │  ╰──────────────────────────────────────────────────────╯  ╰──────────────────────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   ↑↓ move   tab attention   enter open   g grant access   r robot   t token   esc back   q quit                                          F2 mouse on  

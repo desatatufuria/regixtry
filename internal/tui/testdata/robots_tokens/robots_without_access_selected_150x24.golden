@@ -14,11 +14,11 @@
       Image scanning           │  Grant it a repository with g.                                             │ Tokens                             t │  
       Secret scanning          │  EXPIRES is the token that ends first.                                     │ Grant access                       g │  
       Signing policy           │                                                                            │ Disable robot                      d │  
-                               │                                                                            │ Delete robot                       x │  
-  OPERATIONS                   │                                                                            │                                      │  
-      Scan runs                │                                                                            │ NEEDS ATTENTION                      │  
-      Secret findings          │                                                                            │ No repository access         g grant │  
-      Update channel           │                                                                            │                                      │  
-                               │                                                                            ╰──────────────────────────────────────╯  
+      Login security           │                                                                            │ Delete robot                       x │  
+                               │                                                                            │                                      │  
+  OPERATIONS                   │                                                                            │ NEEDS ATTENTION                      │  
+      Scan runs                │                                                                            │ No repository access         g grant │  
+      Secret findings          │                                                                            │                                      │  
+      Update channel           │                                                                            ╰──────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   ↑↓ move   enter open   n new robot   t tokens   g grant access   d disable   e enable   x delete   r refresh   esc back   q quit                    

@@ -14,11 +14,11 @@
       Image scanning           │  │   team/infra                    old-deploy        Admin    5 Feb       │  │ Open principal               enter │  
       Secret scanning          │  │                                                                        │  │ Grant access                     g │  
       Signing policy           │  │                                                                        │  │ Revoke alice on team/api         x │  
-                               │  │                                                                        │  │ No Admin on this repository. Only  │  
-  OPERATIONS                   │  │                                                                        │  │ server admins can change access    │  
-      Scan runs                │  │                                                                        │  │ here.                              │  
-      Secret findings          │  │                                                                        │  │                                    │  
-      Update channel           │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
-                               │  Roles: Reader pulls, Writer pushes, Admin manages access.                   ╰────────────────────────────────────╯  
+      Login security           │  │                                                                        │  │ No Admin on this repository. Only  │  
+                               │  │                                                                        │  │ server admins can change access    │  
+  OPERATIONS                   │  │                                                                        │  │ here.                              │  
+      Scan runs                │  │                                                                        │  │                                    │  
+      Secret findings          │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
+      Update channel           │  Roles: Reader pulls, Writer pushes, Admin manages access.                   ╰────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   ↑↓ move   enter open   / search   g grant access   x revoke   esc back   q quit                                                        F2 mouse on  

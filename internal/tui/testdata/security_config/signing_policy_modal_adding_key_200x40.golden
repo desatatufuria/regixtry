@@ -14,12 +14,12 @@
       Image scanning           │  │                             │  identity configured.                                                │                https://token.actions.githubusercontent.com  │
       Secret scanning          │  │                             │  [x] Pull-time gate enforced                                         │  enough.                                                    │
     ▸ Signing policy           │  │                             │  Unsigned self-read (space cycles)                                   │                                                             │
-                               │  ╰───────────────────────────  │   pusher                                                             │  ───────────────────────────────────────────────────────────╯
-  OPERATIONS                   │  ╭───────────────────────────  │   Trusted Keys (2)                                                   │  ───────────────────────────────────────────────────────────╮
-      Scan runs                │  │ PER-REPOSITORY OVERRIDES    │  ▸  Key: 2c1d7289f2db                                                │                                                             │
-      Secret findings          │  │ REPOSITORY                  │    Key: aaf7110bc769                                                 │       STATUS     ENABLED  DETAIL                UPDATED     │
-      Update channel           │  │ team/api                    │  New Key (PEM)                                                       │       override   yes      1 key, 0 identities   9 Nov       │
-                               │  │ team/docs                   │   --▏                                                                │       override   no       not enforced          2 Nov       │
+      Login security           │  ╰───────────────────────────  │   pusher                                                             │  ───────────────────────────────────────────────────────────╯
+                               │  ╭───────────────────────────  │   Trusted Keys (2)                                                   │  ───────────────────────────────────────────────────────────╮
+  OPERATIONS                   │  │ PER-REPOSITORY OVERRIDES    │  ▸  Key: 2c1d7289f2db                                                │                                                             │
+      Scan runs                │  │ REPOSITORY                  │    Key: aaf7110bc769                                                 │       STATUS     ENABLED  DETAIL                UPDATED     │
+      Secret findings          │  │ team/api                    │  New Key (PEM)                                                       │       override   yes      1 key, 0 identities   9 Nov       │
+      Update channel           │  │ team/docs                   │   --▏                                                                │       override   no       not enforced          2 Nov       │
                                │  │ team/web                    │  Trusted Identities (1)                                              │       inherited  —        global policy         -           │
                                │  │ team/infra                  │    Identity: https://github.com/team/.* (https://token.actions.git…  │       inherited  —        global policy         -           │
                                │  │                             │  Clear all trusted keys                                              │                                                             │

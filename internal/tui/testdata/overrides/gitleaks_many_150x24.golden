@@ -14,11 +14,11 @@
       Image scanning           │  │   team/service-196   inherited  —        global settings   -           │  │                                    │  
     ▸ Secret scanning          │  │   team/service-197   inherited  —        global settings   -           │  │ ACTIONS                            │  
       Signing policy           │  │   team/service-198   inherited  —        global settings   -           │  │ Edit override                    o │  
-                               │  │   team/service-199   inherited  —        global settings   -           │  │ Refresh                          r │  
-  OPERATIONS                   │  │   team/api           override   yes      config path set   12 Nov      │  │                                    │  
-      Scan runs                │  │ ▸ team/docs          override   no       scanning off      2 Nov       │  │                                    │  
-      Secret findings          │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
-      Update channel           │  o edits the override of the selected repository. An override replaces       │                                    │  
-                               │  the global settings for it.                                                 ╰────────────────────────────────────╯  
+      Login security           │  │   team/service-199   inherited  —        global settings   -           │  │ Refresh                          r │  
+                               │  │   team/api           override   yes      config path set   12 Nov      │  │                                    │  
+  OPERATIONS                   │  │ ▸ team/docs          override   no       scanning off      2 Nov       │  │                                    │  
+      Scan runs                │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
+      Secret findings          │  o edits the override of the selected repository. An override replaces       │                                    │  
+      Update channel           │  the global settings for it.                                                 ╰────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   ↑↓ move   o override   r refresh   esc back   q quit                                                                                   F2 mouse on  

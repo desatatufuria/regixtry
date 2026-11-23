@@ -14,12 +14,12 @@
       Image scanning           │  │                                                              │  │ https://github.com/team/.*                        https://token.actions.githubusercontent.com  │  
       Secret scanning          │  │                                                              │  │ Any one matching key or identity is enough.                                                    │  
     ▸ Signing policy           │  │                                                              │  │                                                                                                │  
-                               │  ╰──────────────────────────────────────────────────────────────╯  ╰────────────────────────────────────────────────────────────────────────────────────────────────╯  
-  OPERATIONS                   │  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  
-      Scan runs                │  │ PER-REPOSITORY OVERRIDES                                                                                                                                         │  
-      Secret findings          │  │ REPOSITORY                                                                                                 STATUS     ENABLED  DETAIL                UPDATED     │  
-      Update channel           │  │ team/api                                                                                                   override   yes      1 key, 0 identities   9 Nov       │  
-                               │  │ team/docs                                                                                                  override   no       not enforced          2 Nov       │  
+      Login security           │  ╰──────────────────────────────────────────────────────────────╯  ╰────────────────────────────────────────────────────────────────────────────────────────────────╯  
+                               │  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  
+  OPERATIONS                   │  │ PER-REPOSITORY OVERRIDES                                                                                                                                         │  
+      Scan runs                │  │ REPOSITORY                                                                                                 STATUS     ENABLED  DETAIL                UPDATED     │  
+      Secret findings          │  │ team/api                                                                                                   override   yes      1 key, 0 identities   9 Nov       │  
+      Update channel           │  │ team/docs                                                                                                  override   no       not enforced          2 Nov       │  
                                │  │ team/web                                                                                                   inherited  —        global policy         -           │  
                                │  │ team/infra                                                                                                 inherited  —        global policy         -           │  
                                │  │                                                                                                                                                                  │  

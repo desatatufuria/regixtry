@@ -14,12 +14,12 @@
       Image scanning           │  │   team/service-179                                                   inherited  —        global settings   -           │  │                                      │  
     ▸ Secret scanning          │  │   team/service-180                                                   inherited  —        global settings   -           │  │ ACTIONS                              │  
       Signing policy           │  │   team/service-181                                                   inherited  —        global settings   -           │  │ Edit override                      o │  
-                               │  │   team/service-182                                                   inherited  —        global settings   -           │  │ Refresh                            r │  
-  OPERATIONS                   │  │   team/service-183                                                   inherited  —        global settings   -           │  │                                      │  
-      Scan runs                │  │   team/service-184                                                   inherited  —        global settings   -           │  │                                      │  
-      Secret findings          │  │   team/service-185                                                   inherited  —        global settings   -           │  │                                      │  
-      Update channel           │  │   team/service-186                                                   inherited  —        global settings   -           │  │                                      │  
-                               │  │   team/service-187                                                   inherited  —        global settings   -           │  │                                      │  
+      Login security           │  │   team/service-182                                                   inherited  —        global settings   -           │  │ Refresh                            r │  
+                               │  │   team/service-183                                                   inherited  —        global settings   -           │  │                                      │  
+  OPERATIONS                   │  │   team/service-184                                                   inherited  —        global settings   -           │  │                                      │  
+      Scan runs                │  │   team/service-185                                                   inherited  —        global settings   -           │  │                                      │  
+      Secret findings          │  │   team/service-186                                                   inherited  —        global settings   -           │  │                                      │  
+      Update channel           │  │   team/service-187                                                   inherited  —        global settings   -           │  │                                      │  
                                │  │   team/service-188                                                   inherited  —        global settings   -           │  │                                      │  
                                │  │   team/service-189                                                   inherited  —        global settings   -           │  │                                      │  
                                │  │   team/service-190                                                   inherited  —        global settings   -           │  │                                      │  

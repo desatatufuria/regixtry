@@ -14,11 +14,11 @@
       Image scanning           │  │ L  │  enter deletes the key, esc keeps it                                 │   https://token.actions.githubuse… │
       Secret scanning          │  │    │  Trusted Identities (1)                                              │  y is enough.                      │
     ▸ Signing policy           │  ╰──  │    Identity: https://github.com/team/.* (https://token.actions.git…  │  ──────────────────────────────────╯
-                               │  ╭──  │  Clear all trusted keys                                              │  ──────────────────────────────────╮
-  OPERATIONS                   │  │ P  │                                                                      │                                    │
-      Scan runs                │  │ R  │   Save  enter   Cancel  esc                                          │  DETAIL                UPDATED     │
-      Secret findings          │  │ t  │  tab next field, space toggles, n adds and x deletes in a list       │  1 key, 0 identities   9 Nov       │
-      Update channel           │  │ +  ╰──────────────────────────────────────────────────────────────────────╯                                    │
-                               │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+      Login security           │  ╭──  │  Clear all trusted keys                                              │  ──────────────────────────────────╮
+                               │  │ P  │                                                                      │                                    │
+  OPERATIONS                   │  │ R  │   Save  enter   Cancel  esc                                          │  DETAIL                UPDATED     │
+      Scan runs                │  │ t  │  tab next field, space toggles, n adds and x deletes in a list       │  1 key, 0 identities   9 Nov       │
+      Secret findings          │  │ +  ╰──────────────────────────────────────────────────────────────────────╯                                    │
+      Update channel           │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   tab next field   space toggle   enter save   esc cancel                                                                                F2 mouse on  

@@ -14,11 +14,11 @@
     ▸ Image scanning           │  │              │  Clear override, use the global settings         │      │  │ Updated                     14 Nov │
       Secret scanning          │  │              │                                                  │      │  │ LATEST SCAN                        │
       Signing policy           │  │              │   Save  enter   Cancel  esc                      │      │  │ Reference                    1.4.2 │
-                               │  │              │  tab next field, space toggles                   │      │  │ Runs                             7 │
-  OPERATIONS                   │  │              ╰──────────────────────────────────────────────────╯      │  │ ACTIONS                            │
-      Scan runs                │  │                                                                        │  │ Edit override                    o │
-      Secret findings          │  ╰────────────────────────────────────────────────────────────────────────╯  │ Scan history                 enter │
-      Update channel           │  One row per repository, severity first. enter opens its scan history,       │ Refresh                          r │
-                               │  o edits its override.                                                       ╰────────────────────────────────────╯
+      Login security           │  │              │  tab next field, space toggles                   │      │  │ Runs                             7 │
+                               │  │              ╰──────────────────────────────────────────────────╯      │  │ ACTIONS                            │
+  OPERATIONS                   │  │                                                                        │  │ Edit override                    o │
+      Scan runs                │  ╰────────────────────────────────────────────────────────────────────────╯  │ Scan history                 enter │
+      Secret findings          │  One row per repository, severity first. enter opens its scan history,       │ Refresh                          r │
+      Update channel           │  o edits its override.                                                       ╰────────────────────────────────────╯
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   tab next field   space toggle   enter save   esc cancel                                                                                F2 mouse on  

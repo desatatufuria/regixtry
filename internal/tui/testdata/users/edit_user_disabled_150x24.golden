@@ -14,11 +14,11 @@
       Image scanning           │  │ PASSWORD                                             │  ╰──────────────────────────────────────────────────────╯  
       Secret scanning          │  │ Set a new password for dave                  p reset │  ╭──────────────────────────────────────────────────────╮  
       Signing policy           │  ╰──────────────────────────────────────────────────────╯  │ DANGER AREA                                          │  
-                               │  ╭──────────────────────────────────────────────────────╮  │ dave is disabled and cannot sign in. Enabling        │  
-  OPERATIONS                   │  │ PROJECT ACCESS AND REPOSITORY GRANTS  g grant access │  │ restores their access; their grants were kept.       │  
-      Scan runs                │  │ dave has no project roles and no repository grants.  │  │ ╭────────────────╮                                   │  
-      Secret findings          │  │ Press g to grant access.                             │  │ │ Enable user  d │                                   │  
-      Update channel           │  │                                                      │  │ ╰────────────────╯                                   │  
-                               │  ╰──────────────────────────────────────────────────────╯  ╰──────────────────────────────────────────────────────╯  
+      Login security           │  ╭──────────────────────────────────────────────────────╮  │ dave is disabled and cannot sign in. Enabling        │  
+                               │  │ PROJECT ACCESS AND REPOSITORY GRANTS  g grant access │  │ restores their access; their grants were kept.       │  
+  OPERATIONS                   │  │ dave has no project roles and no repository grants.  │  │ ╭────────────────╮                                   │  
+      Scan runs                │  │ Press g to grant access.                             │  │ │ Enable user  d │                                   │  
+      Secret findings          │  │                                                      │  │ ╰────────────────╯                                   │  
+      Update channel           │  ╰──────────────────────────────────────────────────────╯  ╰──────────────────────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   space enable/disable   p password   g grant access   t tokens   d disable   r refresh   esc back   q quit                                           

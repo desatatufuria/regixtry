@@ -14,12 +14,12 @@
       Image scanning           │
       Secret scanning          │
       Signing policy           │
+      Login security           │
                                │
   OPERATIONS                   │
       Scan runs                │
       Secret findings          │
-      Update channel           │
-                               │                                              ╭──────────────────────────────────────────────────────────────╮
+      Update channel           │                                              ╭──────────────────────────────────────────────────────────────╮
                                │                                              │  New project                                                 │
                                │                                              │                                                              │
                                │                                              │  Project name                                                │

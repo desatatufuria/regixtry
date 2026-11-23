@@ -14,12 +14,12 @@
       Image scanning           │  │                                 │                                                              │                       │  │ Identities                         1 │
       Secret scanning          │  │                                 │  Remove this repository's override of the Signing settings.  │                       │  │ Updated                        9 Nov │
     ▸ Signing policy           │  │                                 │  It goes back to the global settings.                        │                       │  │                                      │
-                               │  │                                 │                                                              │                       │  │ ACTIONS                              │
-  OPERATIONS                   │  │                                 │  ╭────────────────────────────────────────────────────────╮  │                       │  │ Edit override                      o │
-      Scan runs                │  │                                 │  │ team/api                                               │  │                       │  │ Refresh                            r │
-      Secret findings          │  │                                 │  │ Signing override                                       │  │                       │  │                                      │
-      Update channel           │  │                                 │  ╰────────────────────────────────────────────────────────╯  │                       │  │                                      │
-                               │  │                                 │                                                              │                       │  │                                      │
+      Login security           │  │                                 │                                                              │                       │  │ ACTIONS                              │
+                               │  │                                 │  ╭────────────────────────────────────────────────────────╮  │                       │  │ Edit override                      o │
+  OPERATIONS                   │  │                                 │  │ team/api                                               │  │                       │  │ Refresh                            r │
+      Scan runs                │  │                                 │  │ Signing override                                       │  │                       │  │                                      │
+      Secret findings          │  │                                 │  ╰────────────────────────────────────────────────────────╯  │                       │  │                                      │
+      Update channel           │  │                                 │                                                              │                       │  │                                      │
                                │  │                                 │  Only this repository changes. Other repositories keep       │                       │  │                                      │
                                │  │                                 │  their overrides.                                            │                       │  │                                      │
                                │  │                                 │                                                              │                       │  │                                      │

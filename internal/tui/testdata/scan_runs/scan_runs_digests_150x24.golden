@@ -14,11 +14,11 @@
       Image scanning           │  │   team/api    000000…0008  completed  —          —          1     2    │  │ Trivy DB                   2 d ago │  
       Secret scanning          │  │                                                                        │  │ Checked                    2 h ago │  
       Signing policy           │  │                                                                        │  │ FINDINGS                           │  
-                               │  │                                                                        │  │ Critical                         1 │  
-  OPERATIONS                   │  │                                                                        │  │ High                             1 │  
-    ▸ Scan runs                │  │                                                                        │  │ Medium                          11 │  
-      Secret findings          │  ╰────────────────────────────────────────────────────────────────────────╯  │ Low                              7 │  
-      Update channel           │  One row per image digest, its latest result. Rescans only when the          │ ACTIONS                            │  
-                               │  vulnerability DB or scan settings change. enter opens its scan history.     ╰────────────────────────────────────╯  
+      Login security           │  │                                                                        │  │ Critical                         1 │  
+                               │  │                                                                        │  │ High                             1 │  
+  OPERATIONS                   │  │                                                                        │  │ Medium                          11 │  
+    ▸ Scan runs                │  ╰────────────────────────────────────────────────────────────────────────╯  │ Low                              7 │  
+      Secret findings          │  One row per image digest, its latest result. Rescans only when the          │ ACTIONS                            │  
+      Update channel           │  vulnerability DB or scan settings change. enter opens its scan history.     ╰────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   ↑↓ move   enter scan history   r refresh   esc back   q quit                                                                           F2 mouse on  

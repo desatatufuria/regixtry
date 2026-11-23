@@ -14,12 +14,12 @@
     ▸ Image scanning           │  │ c edit configuration.                 │  Applies to every repository without an          │    │  │                                                               │
       Secret scanning          │  ╰─────────────────────────────────────  │  override.                                       │  ──╯  ╰───────────────────────────────────────────────────────────────╯
       Signing policy           │  ╭─────────────────────────────────────  │  [x] Scheduled scans                             │  ─────────────────────────────────────────────────────────────────────╮
-                               │  │ LAST SWEEP                            │  Interval                                        │                                                                       │
-  OPERATIONS                   │  │ no sweep yet                          │   24h                                            │                                                                       │
-      Scan runs                │  ╰─────────────────────────────────────  │  Timeout                                         │  ─────────────────────────────────────────────────────────────────────╯
-      Secret findings          │  ╭─────────────────────────────────────  │   5m                                             │  ─────────────────────────────────────────────────────────────────────╮
-      Update channel           │  │ PER-REPOSITORY OVERRIDES              │  Registry Reachable URL                          │                                                                       │
-                               │  │ REPOSITORY                            │   http://regixtry:5000                           │                 STATUS     ENABLED  DETAIL                UPDATED     │
+      Login security           │  │ LAST SWEEP                            │  Interval                                        │                                                                       │
+                               │  │ no sweep yet                          │   24h                                            │                                                                       │
+  OPERATIONS                   │  ╰─────────────────────────────────────  │  Timeout                                         │  ─────────────────────────────────────────────────────────────────────╯
+      Scan runs                │  ╭─────────────────────────────────────  │   5m                                             │  ─────────────────────────────────────────────────────────────────────╮
+      Secret findings          │  │ PER-REPOSITORY OVERRIDES              │  Registry Reachable URL                          │                                                                       │
+      Update channel           │  │ REPOSITORY                            │   http://regixtry:5000                           │                 STATUS     ENABLED  DETAIL                UPDATED     │
                                │  │ team/api                              │  Max Concurrency                                 │                 override   yes      ignore file set       14 Nov      │
                                │  │ team/docs                             │   2                                              │                 override   no       scanning off          2 Nov       │
                                │  │ team/web                              │                                                  │                 inherited  —        global settings       -           │

@@ -14,11 +14,11 @@
       Image scanning           │  Role        Writer                                                                                                  
       Secret scanning          │  Covers      every repository in odabank                                                                             
       Signing policy           │                                                                                                                      
-                               │   Done  enter                                                                                                        
+      Login security           │   Done  enter                                                                                                        
+                               │                                                                                                                      
   OPERATIONS                   │                                                                                                                      
       Scan runs                │                                                                                                                      
       Secret findings          │                                                                                                                      
       Update channel           │                                                                                                                      
-                               │                                                                                                                      
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   c copy   v show alone   enter done                                                                                                                  

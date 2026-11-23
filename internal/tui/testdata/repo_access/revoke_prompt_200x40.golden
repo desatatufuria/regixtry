@@ -14,12 +14,12 @@
       Image scanning           │  │   team/infra                    │                                                              │    Admin    5 Feb       │  │                                    │
       Secret scanning          │  │                                 │  Revoke alice's Writer access to team/api?                   │                         │  │ ACTIONS ON SELECTED GRANT          │
       Signing policy           │  │                                 │                                                              │                         │  │ Open principal               enter │
-                               │  │                                 │  ╭────────────────────────────────────────────────────────╮  │                         │  │ Grant access                     g │
-  OPERATIONS                   │  │                                 │  │ alice on team/api                                      │  │                         │  │ Revoke alice on team/api         x │
-      Scan runs                │  │                                 │  │ Writer                                                 │  │                         │  │                                    │
-      Secret findings          │  │                                 │  ╰────────────────────────────────────────────────────────╯  │                         │  │ No Admin on this repository. Only  │
-      Update channel           │  │                                 │                                                              │                         │  │ server admins can change access    │
-                               │  │                                 │  alice loses Writer access to team/api. It applies from the  │                         │  │ here.                              │
+      Login security           │  │                                 │  ╭────────────────────────────────────────────────────────╮  │                         │  │ Grant access                     g │
+                               │  │                                 │  │ alice on team/api                                      │  │                         │  │ Revoke alice on team/api         x │
+  OPERATIONS                   │  │                                 │  │ Writer                                                 │  │                         │  │                                    │
+      Scan runs                │  │                                 │  ╰────────────────────────────────────────────────────────╯  │                         │  │ No Admin on this repository. Only  │
+      Secret findings          │  │                                 │                                                              │                         │  │ server admins can change access    │
+      Update channel           │  │                                 │  alice loses Writer access to team/api. It applies from the  │                         │  │ here.                              │
                                │  │                                 │  next request; no token is revoked. alice keeps access to    │                         │  │                                    │
                                │  │                                 │  every other repository.                                     │                         │  │                                    │
                                │  │                                 │                                                              │                         │  │                                    │

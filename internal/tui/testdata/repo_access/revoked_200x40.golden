@@ -14,12 +14,12 @@
       Image scanning           │  │                                                                                                                          │  │ ACTIONS ON SELECTED GRANT          │  
       Secret scanning          │  │                                                                                                                          │  │ Open principal               enter │  
       Signing policy           │  │                                                                                                                          │  │ Grant access                     g │  
-                               │  │                                                                                                                          │  │ Revoke bob on team/api           x │  
-  OPERATIONS                   │  │                                                                                                                          │  │                                    │  
-      Scan runs                │  │                                                                                                                          │  │ No Admin on this repository. Only  │  
-      Secret findings          │  │                                                                                                                          │  │ server admins can change access    │  
-      Update channel           │  │                                                                                                                          │  │ here.                              │  
+      Login security           │  │                                                                                                                          │  │ Revoke bob on team/api           x │  
                                │  │                                                                                                                          │  │                                    │  
+  OPERATIONS                   │  │                                                                                                                          │  │ No Admin on this repository. Only  │  
+      Scan runs                │  │                                                                                                                          │  │ server admins can change access    │  
+      Secret findings          │  │                                                                                                                          │  │ here.                              │  
+      Update channel           │  │                                                                                                                          │  │                                    │  
                                │  │                                                                                                                          │  │                                    │  
                                │  │                                                                                                                          │  │                                    │  
                                │  │                                                                                                                          │  │                                    │  

@@ -14,12 +14,12 @@
       Image scanning           │  │ PER-REPOSITORY OVERRIDES              │  Gitleaks configuration                          │                                                                       │
     ▸ Secret scanning          │  │ REPOSITORY                            │  Applies to every repository without an          │                 STATUS     ENABLED  DETAIL                UPDATED     │
       Signing policy           │  │ team/api                              │  override.                                       │                 override   yes      config path set       12 Nov      │
-                               │  │ team/docs                             │  [x] Enabled                                     │                 override   no       scanning off          2 Nov       │
-  OPERATIONS                   │  │ team/web                              │  Timeout                                         │                 inherited  —        global settings       -           │
-      Scan runs                │  │ team/infra                            │   2mx▏                                           │                 inherited  —        global settings       -           │
-      Secret findings          │  │                                       │  Max Concurrency                                 │                                                                       │
-      Update channel           │  │                                       │   2                                              │                                                                       │
-                               │  │                                       │  invalid timeout: time: unknown unit "mx" in     │                                                                       │
+      Login security           │  │ team/docs                             │  [x] Enabled                                     │                 override   no       scanning off          2 Nov       │
+                               │  │ team/web                              │  Timeout                                         │                 inherited  —        global settings       -           │
+  OPERATIONS                   │  │ team/infra                            │   2mx▏                                           │                 inherited  —        global settings       -           │
+      Scan runs                │  │                                       │  Max Concurrency                                 │                                                                       │
+      Secret findings          │  │                                       │   2                                              │                                                                       │
+      Update channel           │  │                                       │  invalid timeout: time: unknown unit "mx" in     │                                                                       │
                                │  │                                       │  duration "2mx"                                  │                                                                       │
                                │  │                                       │                                                  │                                                                       │
                                │  │                                       │   Save  enter   Cancel  esc                      │                                                                       │

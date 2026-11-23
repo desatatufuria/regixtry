@@ -14,11 +14,11 @@
       Image scanning           │                                                                    │ or you revoke it. Shorter for people, longer │  
       Secret scanning          │    old-deploy                                             expired  │ only for CI robots.                          │  
       Signing policy           │  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  │ The secret is shown once, right after        │  
-                               │  act_55f0…b81c                                 expired 2 Nov 2026  │ creation. Copy it before leaving.            │  
-  OPERATIONS                   │                                                                    │  Create token  enter   Cancel  esc           │  
+      Login security           │  act_55f0…b81c                                 expired 2 Nov 2026  │ creation. Copy it before leaving.            │  
+                               │                                                                    │  Create token  enter   Cancel  esc           │  
+  OPERATIONS                   │                                                                    │                                              │  
       Scan runs                │                                                                    │                                              │  
       Secret findings          │                                                                    │                                              │  
-      Update channel           │                                                                    │                                              │  
-                               │                                                                    ╰──────────────────────────────────────────────╯  
+      Update channel           │                                                                    ╰──────────────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   n new token   x revoke   g grant access   r refresh   ↑↓ move   esc back   q quit                                                                   

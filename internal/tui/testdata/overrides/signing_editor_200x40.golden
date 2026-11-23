@@ -14,12 +14,12 @@
       Image scanning           │  │                             │  Signing override                                                    │                   │  │ Identities                         1 │
       Secret scanning          │  │                             │  team/api. override active.                                          │                   │  │ Updated                        9 Nov │
     ▸ Signing policy           │  │                             │  [x] Pull-time gate enforced                                         │                   │  │                                      │
-                               │  │                             │  Trusted Keys (1)                                                    │                   │  │ ACTIONS                              │
-  OPERATIONS                   │  │                             │    Key: 2c1d7289f2db                                                 │                   │  │ Edit override                      o │
-      Scan runs                │  │                             │  Trusted Identities (1)                                              │                   │  │ Refresh                            r │
-      Secret findings          │  │                             │    Identity: https://github.com/team/.* (https://token.actions.git…  │                   │  │                                      │
-      Update channel           │  │                             │  Unsigned self-read (space cycles)                                   │                   │  │                                      │
-                               │  │                             │   pusher                                                             │                   │  │                                      │
+      Login security           │  │                             │  Trusted Keys (1)                                                    │                   │  │ ACTIONS                              │
+                               │  │                             │    Key: 2c1d7289f2db                                                 │                   │  │ Edit override                      o │
+  OPERATIONS                   │  │                             │  Trusted Identities (1)                                              │                   │  │ Refresh                            r │
+      Scan runs                │  │                             │    Identity: https://github.com/team/.* (https://token.actions.git…  │                   │  │                                      │
+      Secret findings          │  │                             │  Unsigned self-read (space cycles)                                   │                   │  │                                      │
+      Update channel           │  │                             │   pusher                                                             │                   │  │                                      │
                                │  │                             │  Clear override, use the global settings                             │                   │  │                                      │
                                │  │                             │                                                                      │                   │  │                                      │
                                │  │                             │   Save  enter   Cancel  esc                                          │                   │  │                                      │

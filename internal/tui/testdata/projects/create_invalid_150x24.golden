@@ -14,11 +14,11 @@
       Image scanning           │           │  │ type a lowercase name                                  │  │
       Secret scanning          │           │  ╰────────────────────────────────────────────────────────╯  │
       Signing policy           │           │                                                              │
-                               │           │  Nothing is created until the name is valid.                 │
-  OPERATIONS                   │           │                                                              │
-      Scan runs                │           │   Create project                                     enter   │
-      Secret findings          │           │   Cancel                                               esc   │
-      Update channel           │           ╰──────────────────────────────────────────────────────────────╯
-                               │
+      Login security           │           │  Nothing is created until the name is valid.                 │
+                               │           │                                                              │
+  OPERATIONS                   │           │   Create project                                     enter   │
+      Scan runs                │           │   Cancel                                               esc   │
+      Secret findings          │           ╰──────────────────────────────────────────────────────────────╯
+      Update channel           │
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   enter create   esc cancel                                                                                                              F2 mouse on  

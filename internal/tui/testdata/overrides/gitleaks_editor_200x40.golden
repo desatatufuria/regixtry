@@ -14,12 +14,12 @@
       Image scanning           │  │                                                                                                                        │  │                                      │
     ▸ Secret scanning          │  │                                       ╭──────────────────────────────────────────────────╮                             │  │ ACTIONS                              │
       Signing policy           │  │                                       │  Gitleaks override                               │                             │  │ Edit override                      o │
-                               │  │                                       │  team/api. override active.                      │                             │  │ Refresh                            r │
-  OPERATIONS                   │  │                                       │  [x] Scanning enabled                            │                             │  │                                      │
-      Scan runs                │  │                                       │  Config path                                     │                             │  │                                      │
-      Secret findings          │  │                                       │   /etc/gitleaks.toml                             │                             │  │                                      │
-      Update channel           │  │                                       │  Clear override, use the global settings         │                             │  │                                      │
-                               │  │                                       │                                                  │                             │  │                                      │
+      Login security           │  │                                       │  team/api. override active.                      │                             │  │ Refresh                            r │
+                               │  │                                       │  [x] Scanning enabled                            │                             │  │                                      │
+  OPERATIONS                   │  │                                       │  Config path                                     │                             │  │                                      │
+      Scan runs                │  │                                       │   /etc/gitleaks.toml                             │                             │  │                                      │
+      Secret findings          │  │                                       │  Clear override, use the global settings         │                             │  │                                      │
+      Update channel           │  │                                       │                                                  │                             │  │                                      │
                                │  │                                       │   Save  enter   Cancel  esc                      │                             │  │                                      │
                                │  │                                       │  tab next field, space toggles                   │                             │  │                                      │
                                │  │                                       ╰──────────────────────────────────────────────────╯                             │  │                                      │

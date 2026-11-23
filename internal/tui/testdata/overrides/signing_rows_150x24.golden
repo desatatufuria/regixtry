@@ -14,11 +14,11 @@
       Image scanning           │  │                                                                        │  │ Identities                       1 │  
       Secret scanning          │  │                                                                        │  │ Updated                      9 Nov │  
     ▸ Signing policy           │  │                                                                        │  │                                    │  
-                               │  │                                                                        │  │ ACTIONS                            │  
-  OPERATIONS                   │  │                                                                        │  │ Edit override                    o │  
-      Scan runs                │  │                                                                        │  │ Refresh                          r │  
-      Secret findings          │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
-      Update channel           │  An override replaces the global policy for that repository. o edits         │                                    │  
-                               │  the override of the selected repository.                                    ╰────────────────────────────────────╯  
+      Login security           │  │                                                                        │  │ ACTIONS                            │  
+                               │  │                                                                        │  │ Edit override                    o │  
+  OPERATIONS                   │  │                                                                        │  │ Refresh                          r │  
+      Scan runs                │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
+      Secret findings          │  An override replaces the global policy for that repository. o edits         │                                    │  
+      Update channel           │  the override of the selected repository.                                    ╰────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   ↑↓ move   o override   r refresh   esc back   q quit                                                                                   F2 mouse on  

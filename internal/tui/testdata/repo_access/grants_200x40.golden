@@ -14,12 +14,12 @@
       Image scanning           │  │   team/infra                                                                      old-deploy        Admin    5 Feb       │  │                                    │  
       Secret scanning          │  │                                                                                                                          │  │ ACTIONS ON SELECTED GRANT          │  
       Signing policy           │  │                                                                                                                          │  │ Open principal               enter │  
-                               │  │                                                                                                                          │  │ Grant access                     g │  
-  OPERATIONS                   │  │                                                                                                                          │  │ Revoke alice on team/api         x │  
-      Scan runs                │  │                                                                                                                          │  │                                    │  
-      Secret findings          │  │                                                                                                                          │  │ No Admin on this repository. Only  │  
-      Update channel           │  │                                                                                                                          │  │ server admins can change access    │  
-                               │  │                                                                                                                          │  │ here.                              │  
+      Login security           │  │                                                                                                                          │  │ Grant access                     g │  
+                               │  │                                                                                                                          │  │ Revoke alice on team/api         x │  
+  OPERATIONS                   │  │                                                                                                                          │  │                                    │  
+      Scan runs                │  │                                                                                                                          │  │ No Admin on this repository. Only  │  
+      Secret findings          │  │                                                                                                                          │  │ server admins can change access    │  
+      Update channel           │  │                                                                                                                          │  │ here.                              │  
                                │  │                                                                                                                          │  │                                    │  
                                │  │                                                                                                                          │  │                                    │  
                                │  │                                                                                                                          │  │                                    │  

@@ -14,12 +14,12 @@
       Image scanning           │                 +2 more                                                                                                                                                
       Secret scanning          │                                                                                                                                                                        
       Signing policy           │  Role        (*) Reader  ( ) Writer  ( ) Admin                                                                                                                         
-                               │  Lifetime    ( ) 7 days  ( ) 30 days  ( ) 90 days  ( ) 1 year  ( ) 2 years   (*) Custom    3y                                                                          
-  OPERATIONS                   │              Enter a whole number followed by h, d or y, up to 2 years (for example 12h, 30d, 2y)                                                                      
-      Scan runs                │              A leaked token works until it expires or you revoke it. Pick the shortest lifetime CI can live with.                                                      
+      Login security           │  Lifetime    ( ) 7 days  ( ) 30 days  ( ) 90 days  ( ) 1 year  ( ) 2 years   (*) Custom    3y                                                                          
+                               │              Enter a whole number followed by h, d or y, up to 2 years (for example 12h, 30d, 2y)                                                                      
+  OPERATIONS                   │              A leaked token works until it expires or you revoke it. Pick the shortest lifetime CI can live with.                                                      
+      Scan runs                │                                                                                                                                                                        
       Secret findings          │                                                                                                                                                                        
-      Update channel           │                                                                                                                                                                        
-                               │   Create robot  enter   Cancel  esc                                                                                                                                    
+      Update channel           │   Create robot  enter   Cancel  esc                                                                                                                                    
                                │                                                                                                                                                                        
                                │                                                                                                                                                                        
                                │                                                                                                                                                                        

@@ -14,12 +14,12 @@
     ▸ Image scanning           │  │                                       ╭──────────────────────────────────────────────────╮                             │  │ Ignore policy                      - │
       Secret scanning          │  │                                       │  Trivy override                                  │                             │  │ Updated                       14 Nov │
       Signing policy           │  │                                       │  team/api. override active.                      │                             │  │                                      │
-                               │  │                                       │  [x] Scanning enabled                            │                             │  │ LATEST SCAN                          │
-  OPERATIONS                   │  │                                       │  Ignore file path                                │                             │  │ Reference                      1.4.2 │
-      Scan runs                │  │                                       │   /etc/trivy/ignore                              │                             │  │ Status                     completed │
-      Secret findings          │  │                                       │  Ignore policy path                              │                             │  │ Critical                           2 │
-      Update channel           │  │                                       │                                                  │                             │  │ High                               5 │
-                               │  │                                       │  Clear override, use the global settings         │                             │  │ Runs                               7 │
+      Login security           │  │                                       │  [x] Scanning enabled                            │                             │  │ LATEST SCAN                          │
+                               │  │                                       │  Ignore file path                                │                             │  │ Reference                      1.4.2 │
+  OPERATIONS                   │  │                                       │   /etc/trivy/ignore                              │                             │  │ Status                     completed │
+      Scan runs                │  │                                       │  Ignore policy path                              │                             │  │ Critical                           2 │
+      Secret findings          │  │                                       │                                                  │                             │  │ High                               5 │
+      Update channel           │  │                                       │  Clear override, use the global settings         │                             │  │ Runs                               7 │
                                │  │                                       │                                                  │                             │  │ Scanned                 14 Mar 06:30 │
                                │  │                                       │   Save  enter   Cancel  esc                      │                             │  │                                      │
                                │  │                                       │  tab next field, space toggles                   │                             │  │ ACTIONS                              │

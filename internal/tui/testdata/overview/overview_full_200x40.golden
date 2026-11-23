@@ -14,12 +14,12 @@
       Image scanning           │  │ NEEDS ATTENTION                                                               │  │ RECENT CHANGES                                                                │  
       Secret scanning          │  │   Tokens expiring soon: 2. Soonest: alice in 5 hours                          │  │ 3 h ago  admin gave alice Writer on team/api                                  │  
       Signing policy           │  │   Robot gh-actions has no repository access                           g grant │  │ 2 d ago  admin issued token ci for ci-publisher (30 days)                     │  
-                               │  │   2 images have critical findings                                             │  │ <1 h ago admin quota.changed bob                                              │  
+      Login security           │  │   2 images have critical findings                                             │  │ <1 h ago admin quota.changed bob                                              │  
+                               │  │                                                                               │  │                                                                               │  
   OPERATIONS                   │  │                                                                               │  │                                                                               │  
       Scan runs                │  │                                                                               │  │                                                                               │  
       Secret findings          │  │                                                                               │  │                                                                               │  
       Update channel           │  │                                                                               │  │                                                                               │  
-                               │  │                                                                               │  │                                                                               │  
                                │  │                                                                               │  │                                                                               │  
                                │  │                                                                               │  │                                                                               │  
                                │  │                                                                               │  │                                                                               │  
