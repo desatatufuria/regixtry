@@ -408,6 +408,8 @@ Reached at start; no login. `Tab` opens the admin area (needs `-api-base-url`). 
 | **Tags** | move; `Enter` manifest; `d` delete tag; `s` sort (name, date); `Tab`; `Esc` back; `q` |
 | **Manifest, blobs, uploads** | `b` blobs, `u` uploads, `Esc`/`Backspace` back; `d`, `x` show "Delete unavailable" |
 
+A tag name is always drawn on one row, in the table and in the delete dialog, even if a pusher stored it with line breaks; the delete still removes the exact stored name.
+
 ### Folder tree
 
 Inside a project (`Enter` on a project) the Repositories screen is a folder tree over the slash-separated repository names. It is visual only: a folder is a name prefix, with no record, no permission and no backend call; it is derived on the client from the catalog the screen already holds. A repository that is also a folder (`odabank/payments` and `odabank/payments/strike`) is one row with both roles. Flat repositories (no `/`) are under the `(ungrouped)` project.
