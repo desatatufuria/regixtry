@@ -51,6 +51,14 @@ type Store struct {
 type uploadEntry struct {
 	mu     sync.Mutex
 	closed atomic.Bool
+	// done is closed, once, together with closed. It wakes a writer parked
+	// inside a body Read that no flag check could reach.
+	done chan struct{}
+	once sync.Once
+}
+
+func newUploadEntry() *uploadEntry {
+	return &uploadEntry{done: make(chan struct{})}
 }
 
 // Option configures a Store.
@@ -141,7 +149,7 @@ func (s *Store) GetUpload(_ context.Context, uploadID string) (domain.UploadStat
 }
 
 func (s *Store) uploadEntry(uploadID string) *uploadEntry {
-	entry, _ := s.uploads.LoadOrStore(uploadID, &uploadEntry{})
+	entry, _ := s.uploads.LoadOrStore(uploadID, newUploadEntry())
 	return entry.(*uploadEntry)
 }
 
@@ -151,6 +159,7 @@ func (s *Store) uploadEntry(uploadID string) *uploadEntry {
 // a writer arriving in between cannot get a fresh entry and reopen the file.
 func (entry *uploadEntry) close() {
 	entry.closed.Store(true)
+	entry.once.Do(func() { close(entry.done) })
 }
 
 // forget drops the tombstone once the upload's files are removed.
@@ -158,20 +167,141 @@ func (s *Store) forget(uploadID string, entry *uploadEntry) {
 	s.uploads.CompareAndDelete(uploadID, entry)
 }
 
+// Pump sizing: pumpBuffers buffers of pumpBufferSize circulate between the pump
+// goroutine and copyTo, so buffering is bounded at pumpBuffers*pumpBufferSize per chunk.
+const (
+	pumpBufferSize = 64 << 10
+	pumpBuffers    = 8
+)
+
+type pumpChunk struct {
+	buf []byte
+	n   int
+	err error
+}
+
 // abortableReader stops a body copy as soon as the upload is retired, so a
 // cancelled or reaped upload does not keep consuming disk until the client
-// finishes sending.
+// finishes sending, and does not keep the upload lock while the client is
+// silent.
+//
+// The body is an arbitrary io.Reader (the HTTP request body), which can be
+// neither closed nor cancelled from here, so its Read runs in a pump goroutine
+// that hands bytes over through a channel using its own buffers. copyTo selects
+// on that channel and on entry.done: when the entry closes, copyTo returns even
+// though the body Read is still parked. The pump never touches the upload file
+// and, once stopped, discards whatever the body later yields; it ends when the
+// body Read returns (the HTTP server closes the body once the handler is gone).
 type abortableReader struct {
 	reader   io.Reader
 	entry    *uploadEntry
 	uploadID string
+
+	started bool
+	stop    chan struct{}
+	data    chan pumpChunk
+	free    chan []byte
+	err     error // body error (io.EOF included) once the pump delivered it
 }
 
-func (r *abortableReader) Read(p []byte) (int, error) {
-	if r.entry.closed.Load() {
-		return 0, domain.NewNotFoundError("upload", r.uploadID)
+func (r *abortableReader) goneError() error {
+	return domain.NewNotFoundError("upload", r.uploadID)
+}
+
+func (r *abortableReader) start() {
+	r.started = true
+	r.stop = make(chan struct{})
+	r.data = make(chan pumpChunk, pumpBuffers)
+	r.free = make(chan []byte, pumpBuffers)
+	go r.pump(r.reader, r.stop, r.data, r.free, r.entry.done)
+}
+
+// pump takes everything it needs as arguments so it shares no mutable state
+// with copyTo other than the channels.
+func (r *abortableReader) pump(body io.Reader, stop <-chan struct{}, data chan<- pumpChunk, free <-chan []byte, done <-chan struct{}) {
+	allocated := 0
+	for {
+		var buf []byte
+		select {
+		case buf = <-free:
+		default:
+			// Buffers are allocated on demand so a tiny body costs one.
+			if allocated < pumpBuffers {
+				allocated++
+				buf = make([]byte, pumpBufferSize)
+				break
+			}
+			select {
+			case buf = <-free:
+			case <-stop:
+				return
+			case <-done:
+				return
+			}
+		}
+		n, err := body.Read(buf)
+		select {
+		case data <- pumpChunk{buf: buf, n: n, err: err}:
+		case <-stop:
+			return
+		case <-done:
+			return
+		}
+		if err != nil {
+			return
+		}
 	}
-	return r.reader.Read(p)
+}
+
+// Close releases the pump; PutUploadChunk calls it before returning.
+func (r *abortableReader) Close() {
+	if r.started {
+		close(r.stop)
+	}
+}
+
+// copyTo streams the body into dst straight from the pump's buffers (no
+// intermediate copy), accepting at most limit bytes when limit >= 0. It
+// returns the bytes written to dst; a body that ends normally returns a nil
+// error, a retired upload returns not found.
+func (r *abortableReader) copyTo(dst io.Writer, limit int64) (int64, error) {
+	var written int64
+	for {
+		if limit >= 0 && written >= limit {
+			return written, nil
+		}
+		if r.entry.closed.Load() {
+			return written, r.goneError()
+		}
+		if r.err != nil {
+			if r.err == io.EOF {
+				return written, nil
+			}
+			return written, r.err
+		}
+		if !r.started {
+			r.start()
+		}
+		select {
+		case chunk := <-r.data:
+			r.err = chunk.err
+			payload := chunk.buf[:chunk.n]
+			if limit >= 0 && int64(len(payload)) > limit-written {
+				payload = payload[:limit-written]
+			}
+			n, err := dst.Write(payload)
+			written += int64(n)
+			r.free <- chunk.buf
+			if err != nil {
+				return written, err
+			}
+			if n < len(payload) {
+				return written, io.ErrShortWrite
+			}
+		case <-r.entry.done:
+			return written, r.goneError()
+		}
+	}
 }
 
 func (s *Store) PutUploadChunk(ctx context.Context, uploadID string, content io.Reader) (domain.UploadState, error) {
@@ -194,7 +324,8 @@ func (s *Store) PutUploadChunk(ctx context.Context, uploadID string, content io.
 	// lock is held until then: CommitUpload can never observe it open.
 	defer file.Close()
 
-	var source io.Reader = &abortableReader{reader: content, entry: entry, uploadID: uploadID}
+	body := &abortableReader{reader: content, entry: entry, uploadID: uploadID}
+	defer body.Close()
 	var before int64
 	var remaining int64
 	capped := s.maxUploadSize > 0
@@ -208,12 +339,15 @@ func (s *Store) PutUploadChunk(ctx context.Context, uploadID string, content io.
 		if remaining < 0 {
 			remaining = 0
 		}
-		// One byte past the remaining budget is enough to detect overflow
-		// without ever accepting more than the cap.
-		source = io.LimitReader(source, remaining+1)
 	}
 
-	written, err := io.Copy(file, source)
+	// One byte past the remaining budget is enough to detect overflow without
+	// ever accepting more than the cap.
+	limit := int64(-1)
+	if capped {
+		limit = remaining + 1
+	}
+	written, err := body.copyTo(file, limit)
 	if capped && written > remaining {
 		// Roll the whole chunk back so the upload stays at its last good size.
 		if truncErr := file.Truncate(before); truncErr != nil {
@@ -734,7 +868,7 @@ func (s *Store) ReapOrphanUploads(ctx context.Context, olderThan time.Time, limi
 		if _, known := s.uploads.Load(name); known {
 			continue
 		}
-		fresh := &uploadEntry{}
+		fresh := newUploadEntry()
 		if _, loaded := s.uploads.LoadOrStore(name, fresh); loaded {
 			continue
 		}
