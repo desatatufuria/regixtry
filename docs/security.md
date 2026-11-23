@@ -183,6 +183,15 @@ A flood of distinct IPs (or distinct usernames) is therefore bounded at every st
 - **Reset:** `POST /admin/v1/security/login-backoff/reset` with `{"account":"alice"}` clears the in-memory backoff counter of that one account (an unknown username by its `hash:xxxxxxxx` label). It does not touch tokens already issued, the password, or the aggregated records. An account with no backoff state answers `404` and records nothing.
 - **Audit:** each successful reset records the access event `login.backoff.reset` (actor, and as subject the account's name or its `hash:` label, never a raw unknown username), visible in `GET /admin/v1/access-events` and the Overview's Recent changes. The reset is the only write in this area.
 
+## Signature verification: bounded candidates
+
+With a signing policy on, a pull of digest D is allowed only when a trusted key (or trusted identity) cryptographically verifies a bundle whose signed claims bind D. Anyone with push rights can add referrers or bundle-index entries that point at D, so discovery is bounded without letting a flood hide a genuine signature:
+
+- Byte-identical bundle documents count once, and a repeated (payload, signature) pair is verified once, however it is wrapped.
+- A candidate whose signed claims bind another digest (a replay of a public signature) can never verify for D and costs no cryptography; it is only probed afterwards, up to 256 candidates, to report `mismatched` instead of `untrusted`.
+- At most 1024 distinct bundle documents are read per verification and at most 16384 signature-verification units are spent on candidates that bind D (a keyless identity check weighs 16). Static-key bundles with fewer signatures are tried first; ties keep the stored order, never an attacker-controlled value.
+- When a bound is hit before anything verified, the status is `unverifiable` ("too many candidates"), never `unsigned` and never `verified`: the pull stays denied. A flood larger than these bounds can therefore still deny that digest until an administrator deletes the extra referrers, but it cannot make an unsigned digest look signed.
+
 ## Risks and limits
 
 - `local-http` transmits credentials and tokens unencrypted if used outside a trusted network.

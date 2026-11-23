@@ -3,10 +3,12 @@ package regixtry
 import (
 	"context"
 	"crypto/ecdsa"
+	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
 	"io"
 	"regexp"
+	"sort"
 
 	domain "regixtry/internal/domain/regixtry"
 	"regixtry/internal/domain/signing"
@@ -212,21 +214,38 @@ func (s *Service) verifySignature(ctx context.Context, repository, digest string
 	return bundleState, signatureMatch{}, bundleErr
 }
 
-// maxSignatureCandidates bounds how many cryptographically-matching bundle
-// candidates one verification will spend on claims checking. Discovery
-// evaluates every candidate rather than stopping at the first, because a
-// repository writer can plant junk. The cap is only consumed by a candidate
-// whose signature already verified under a TRUSTED key (a signer the
-// attacker would have to hold); junk that is malformed, names another
-// subject, is signed by an untrusted key, or fails keyless identity
-// verification is skipped without consuming it, so flooding a digest with
-// junk can never push a genuine signature out of the window. Per-candidate
-// work stays bounded (one blob read capped at signing.MaxPayloadBytes plus
-// the configured trusted keys, at most 16), and the cap is shared across the
-// bundle-index and Referrers API sources. The legacy `.sig` manifest has its
-// own bound, signing.MaxSignatureEntries layers. A candidate spends the cap
-// once, however many signatures it carries. Hitting the cap fails closed.
-const maxSignatureCandidates = 256
+// Bundle candidate discovery is bounded by three independent limits so that a
+// repository writer flooding one digest's referrers/bundle tags can neither
+// make verification expensive nor starve a genuine signature:
+//
+//   - maxBundleCandidatesInspected: distinct bundle documents (by layer
+//     digest) read and parsed per verification. Byte-identical bundles count
+//     once. Reading is cheap and cryptography-free.
+//   - maxBundleCryptoWork: signature verifications spent on candidates whose
+//     signed claims bind THIS digest. Candidates whose claims bind another
+//     digest (the replay of a public signature) can never verify here, so they
+//     cost no cryptography in this phase; identical (payload, signature)
+//     pairs inside differently wrapped bundles are verified once. Candidates
+//     are tried cheapest first (static key, fewest signatures), in list order
+//     otherwise, so the order never depends on an attacker-controlled value.
+//   - maxSignatureCandidates: distinct claim-mismatching candidates probed
+//     afterwards only to tell "mismatched" (a real trusted signature over
+//     another digest) from "untrusted".
+//
+// Hitting the first two limits without a verified signature yields the
+// distinct status unverifiable ("too many candidates"), never unsigned and
+// never verified: the gate stays fail-closed. A verified result still needs a
+// trusted signature that cryptographically verifies AND claims that bind this
+// digest, exactly as before. The legacy `.sig` manifest has its own bound,
+// signing.MaxSignatureEntries layers.
+const (
+	maxBundleCandidatesInspected = 1024
+	maxBundleCryptoWork          = 16384
+	maxSignatureCandidates       = 256
+	// keylessWorkUnits is the weight of one keyless identity verification
+	// (certificate chain, SCT and tlog checks) against maxBundleCryptoWork.
+	keylessWorkUnits = 16
+)
 
 // maxSignaturesPerBundle bounds the distinct DSSE signature entries inspected
 // inside ONE bundle document (identical entries are deduplicated first).
@@ -328,7 +347,7 @@ func (s *Service) verifyBundleSignature(ctx context.Context, repositoryRef domai
 	foundIndexCandidateSource := false
 	indexUnusable := false
 	mismatchSeen := false
-	budget := maxSignatureCandidates
+	var candidates [][]byte
 
 	indexManifest, err := s.metadata.ResolveManifest(ctx, s.tenant(ctx), repositoryRef, indexTag)
 	switch {
@@ -352,16 +371,7 @@ func (s *Service) verifyBundleSignature(ctx context.Context, repositoryRef domai
 				return "", signatureMatch{}, resolveErr // infrastructure error propagates unchanged
 			}
 
-			state, match, tryErr := s.tryVerifyBundleReferrerCandidate(ctx, digest, referrerManifest.Payload, keys, identities, &budget)
-			if tryErr != nil {
-				return "", signatureMatch{}, tryErr // infrastructure error propagates unchanged
-			}
-			switch state {
-			case signatureStateVerified:
-				return state, match, nil
-			case signatureStateMismatched:
-				mismatchSeen = true
-			}
+			candidates = append(candidates, referrerManifest.Payload)
 		}
 	case domain.IsCode(err, domain.ErrorCodeNotFound):
 		// No legacy bundle-index tag: fall through and try the real OCI 1.1
@@ -386,16 +396,21 @@ func (s *Service) verifyBundleSignature(ctx context.Context, repositoryRef domai
 	}
 
 	for _, row := range referrerRows {
-		state, match, tryErr := s.tryVerifyBundleReferrerCandidate(ctx, digest, row.Payload, keys, identities, &budget)
-		if tryErr != nil {
-			return "", signatureMatch{}, tryErr // infrastructure error propagates unchanged
-		}
-		switch state {
-		case signatureStateVerified:
-			return state, match, nil
-		case signatureStateMismatched:
-			mismatchSeen = true
-		}
+		candidates = append(candidates, row.Payload)
+	}
+
+	state, match, evalErr := s.evaluateBundleCandidates(ctx, digest, candidates, keys, identities)
+	if evalErr != nil {
+		return "", signatureMatch{}, evalErr // infrastructure error propagates unchanged
+	}
+	switch state {
+	case signatureStateVerified:
+		return state, match, nil
+	case signatureStateMismatched:
+		mismatchSeen = true
+	case signatureStateUnverifiable:
+		return signatureStateUnverifiable, signatureMatch{}, domain.NewPolicyViolationError(
+			fmt.Sprintf("pull of %s@%s is blocked by the signing policy: unverifiable: too many candidates", repository, digest))
 	}
 
 	if !foundIndexCandidateSource && len(referrerRows) == 0 {
@@ -420,58 +435,54 @@ func (s *Service) verifyBundleSignature(ctx context.Context, repositoryRef domai
 		fmt.Sprintf("pull of %s@%s is blocked by the signing policy: no bundle signature validated against a trusted key or trusted identity", repository, digest))
 }
 
-// tryVerifyBundleReferrerCandidate is verifyBundleSignature's shared
-// per-candidate verification logic, factored out so both discovery sources
-// -- the legacy bundle-index tag loop above and the real OCI 1.1 Referrers
-// API fallback -- run the EXACT SAME parsing/crypto logic against a
-// referrer manifest's raw payload, with zero duplication. referrerPayload is
-// the referrer manifest's own raw bytes: for the tag-index path this is a
-// freshly resolved domain.Manifest.Payload; for the Referrers API path it is
-// a ports.ReferrerRow.Payload the store already scoped to subject_digest ==
-// digest, so it can be handed to signing.ParseBundleReferrerManifest
-// directly, with no index-of-referrers indirection.
-//
-// It returns signatureStateVerified (accepted), signatureStateMismatched (a
-// real signature by a trusted key over a different digest's claims: never
-// accepted, but the caller must keep evaluating the other candidates so it
-// cannot shadow a genuine one), or "" (not usable / did not verify: skip). A
-// non-nil err is a genuine infrastructure error (a blob read failure) that
-// must propagate unchanged. budget is the shared maxSignatureCandidates
-// allowance, consumed only by candidates whose signature verified under a
-// trusted key; with none left such a candidate is skipped (fail closed).
-func (s *Service) tryVerifyBundleReferrerCandidate(ctx context.Context, digest string, referrerPayload []byte, keys []trustedKeyEntry, identities []ports.TrustedIdentity, budget *int) (state string, match signatureMatch, err error) {
-	subjectDigest, layerDigest, parseErr := signing.ParseBundleReferrerManifest(referrerPayload)
-	if parseErr != nil || subjectDigest == "" || layerDigest == "" {
-		return "", signatureMatch{}, nil // not a usable bundle referrer manifest; try the next candidate
+// signingWorkProbeKey carries an optional observer of the verification work
+// (one call per unit of cryptographic work) so tests can assert the bound.
+type signingWorkProbeKey struct{}
+
+func recordSigningWork(ctx context.Context, units int) {
+	if probe, ok := ctx.Value(signingWorkProbeKey{}).(func(int)); ok {
+		probe(units)
 	}
-	if subjectDigest != digest {
-		return "", signatureMatch{}, nil // a real signature, just not for THIS digest -- the filter must actually filter
-	}
+}
+
+// bundleCandidate is one parsed bundle document whose referrer subject is the
+// digest being verified.
+type bundleCandidate struct {
+	bundlePayload []byte
+	payload       []byte
+	pae           []byte
+	paeKey        string
+	signatures    []string // distinct, at most maxSignaturesPerBundle
+	keylessShaped bool
+}
+
+// loadBundleCandidate reads and parses one bundle layer. It returns nil for a
+// candidate that is not usable (missing/oversized blob, malformed document).
+func (s *Service) loadBundleCandidate(ctx context.Context, layerDigest string, identities []ports.TrustedIdentity) (*bundleCandidate, error) {
 	bundlePayload, err := s.openSignaturePayload(ctx, layerDigest)
 	if err != nil {
-		return "", signatureMatch{}, err // infrastructure error propagates unchanged
+		return nil, err // infrastructure error propagates unchanged
 	}
 	if bundlePayload == nil {
-		return "", signatureMatch{}, nil // bundle document blob missing or oversized; try the next candidate
+		return nil, nil
 	}
-
 	bundle, err := signing.ParseBundleDocument(bundlePayload)
 	if err != nil {
-		return "", signatureMatch{}, nil // not a usable bundle document; try the next candidate
+		return nil, nil
 	}
-
 	payload, err := base64.StdEncoding.DecodeString(bundle.Payload)
 	if err != nil {
-		return "", signatureMatch{}, nil // not a usable DSSE payload; try the next candidate
+		return nil, nil
 	}
+	pae := signing.PAE(bundle.PayloadType, payload)
+	paeSum := sha256.Sum256(pae)
 
-	paeBytes := signing.PAE(bundle.PayloadType, payload)
-	// Identical signature strings are inspected once (repetition costs
-	// nothing) and at most maxSignaturesPerBundle distinct entries are
-	// inspected: a writer-controlled bundle must not multiply the crypto work
-	// or the cap. Entries beyond that are ignored (fail closed for a genuine
-	// signature placed after them).
+	// Identical signature strings are inspected once and at most
+	// maxSignaturesPerBundle distinct entries are inspected: a
+	// writer-controlled bundle must not multiply the crypto work. Entries
+	// beyond that are ignored (fail closed for a genuine signature after them).
 	seen := make(map[string]struct{}, maxSignaturesPerBundle)
+	signatures := make([]string, 0, len(bundle.Signatures))
 	for _, signatureB64 := range bundle.Signatures {
 		if _, dup := seen[signatureB64]; dup {
 			continue
@@ -480,44 +491,150 @@ func (s *Service) tryVerifyBundleReferrerCandidate(ctx context.Context, digest s
 			break
 		}
 		seen[signatureB64] = struct{}{}
+		signatures = append(signatures, signatureB64)
+	}
 
-		for _, trusted := range keys {
-			if err := signing.Verify(trusted.key, paeBytes, signatureB64); err != nil {
-				continue
-			}
-			// The signature verifies under a trusted key: only now does the
-			// candidate consume the shared cap, once per candidate (every
-			// signature of this bundle shares one payload, hence one claims
-			// outcome; see maxSignatureCandidates).
-			if *budget <= 0 {
-				return "", signatureMatch{}, nil // candidate cap reached; fail closed
-			}
-			*budget--
-			if err := signing.CheckBundleClaims(payload, digest); err != nil {
-				// A real signature over a different digest: not accepted, but
-				// reported so the caller keeps evaluating other candidates.
-				return signatureStateMismatched, signatureMatch{}, nil
-			}
-			return signatureStateVerified, signatureMatch{KeyFingerprint: signing.Fingerprint(trusted.pemText)}, nil
+	keylessShaped := false
+	if len(identities) > 0 {
+		if vm, vmErr := signing.ParseBundleVerificationMaterial(bundlePayload); vmErr == nil && vm.HasCertificate {
+			keylessShaped = true
 		}
 	}
+	return &bundleCandidate{
+		bundlePayload: bundlePayload,
+		payload:       payload,
+		pae:           pae,
+		paeKey:        string(paeSum[:]),
+		signatures:    signatures,
+		keylessShaped: keylessShaped,
+	}, nil
+}
 
-	// The key loop above never matched this candidate; try the identity
-	// anchor next, still scoped to this same candidate bundle document
-	// (design.md Data Flow: key loop, then identity branch, OR semantics,
-	// never combined).
-	if len(identities) == 0 {
-		return "", signatureMatch{}, nil // no identity anchors configured; try the next candidate
+// verifyKeys tries every distinct signature of the candidate against every
+// trusted key. failed memoizes (payload, signature) pairs already known not to
+// verify, so differently wrapped copies of one signature cost nothing. work is
+// decremented per verification; ok=false with out-of-work reports exhaustion.
+func verifyCandidateKeys(ctx context.Context, cand *bundleCandidate, keys []trustedKeyEntry, failed map[string]struct{}, work *int) (matched *trustedKeyEntry, exhausted bool) {
+	for _, signatureB64 := range cand.signatures {
+		pairKey := cand.paeKey + signatureB64
+		if _, known := failed[pairKey]; known {
+			continue
+		}
+		for i := range keys {
+			if *work < 1 {
+				return nil, true
+			}
+			*work--
+			recordSigningWork(ctx, 1)
+			if err := signing.Verify(keys[i].key, cand.pae, signatureB64); err == nil {
+				return &keys[i], false
+			}
+		}
+		failed[pairKey] = struct{}{}
 	}
-	vm, vmErr := signing.ParseBundleVerificationMaterial(bundlePayload)
-	if vmErr != nil || !vm.HasCertificate {
-		return "", signatureMatch{}, nil // not a keyless-shaped candidate; try the next candidate
+	return nil, false
+}
+
+// evaluateBundleCandidates verifies the discovered referrer manifests of one
+// digest. It returns signatureStateVerified (accepted),
+// signatureStateMismatched (a trusted signature over another digest was
+// confirmed and nothing verified), signatureStateUnverifiable (a work bound was
+// hit before anything verified: too many candidates), or "" (nothing usable
+// verified). A non-nil err is an infrastructure error that propagates
+// unchanged. See maxBundleCandidatesInspected for the strategy.
+func (s *Service) evaluateBundleCandidates(ctx context.Context, digest string, manifests [][]byte, keys []trustedKeyEntry, identities []ports.TrustedIdentity) (string, signatureMatch, error) {
+	var matching, mismatching []*bundleCandidate
+	seenLayers := make(map[string]struct{})
+	exhausted := false
+
+	for _, manifestPayload := range manifests {
+		subjectDigest, layerDigest, parseErr := signing.ParseBundleReferrerManifest(manifestPayload)
+		if parseErr != nil || subjectDigest == "" || layerDigest == "" {
+			continue // not a usable bundle referrer manifest
+		}
+		if subjectDigest != digest {
+			continue // a real signature, just not for THIS digest -- the filter must actually filter
+		}
+		if _, dup := seenLayers[layerDigest]; dup {
+			continue // byte-identical bundle content counts once
+		}
+		if len(seenLayers) >= maxBundleCandidatesInspected {
+			exhausted = true
+			break
+		}
+		seenLayers[layerDigest] = struct{}{}
+
+		cand, err := s.loadBundleCandidate(ctx, layerDigest, identities)
+		if err != nil {
+			return "", signatureMatch{}, err
+		}
+		if cand == nil {
+			continue
+		}
+		if signing.CheckBundleClaims(cand.payload, digest) != nil {
+			// The signed claims bind another digest: this candidate can never
+			// verify here, so it spends no cryptography unless a mismatch has
+			// to be confirmed below.
+			mismatching = append(mismatching, cand)
+			continue
+		}
+		matching = append(matching, cand)
 	}
-	matchedSAN, keylessErr := signing.VerifyKeyless(bundlePayload, toSigningIdentities(identities), digest)
-	if keylessErr != nil {
-		return "", signatureMatch{}, nil // this candidate's identity anchor didn't match; try the next one
+
+	// Cheapest first: static-key bundles before keyless ones, fewer
+	// signatures first; stable, so ties keep the deterministic list order.
+	sort.SliceStable(matching, func(i, j int) bool {
+		if matching[i].keylessShaped != matching[j].keylessShaped {
+			return !matching[i].keylessShaped
+		}
+		return len(matching[i].signatures) < len(matching[j].signatures)
+	})
+
+	work := maxBundleCryptoWork
+	failed := make(map[string]struct{})
+	for _, cand := range matching {
+		trusted, out := verifyCandidateKeys(ctx, cand, keys, failed, &work)
+		if trusted != nil {
+			return signatureStateVerified, signatureMatch{KeyFingerprint: signing.Fingerprint(trusted.pemText)}, nil
+		}
+		if out {
+			exhausted = true
+			break
+		}
+		if !cand.keylessShaped {
+			continue
+		}
+		// The key loop never matched this candidate; try the identity anchor
+		// (OR semantics, never combined).
+		if work < keylessWorkUnits {
+			exhausted = true
+			break
+		}
+		work -= keylessWorkUnits
+		recordSigningWork(ctx, keylessWorkUnits)
+		matchedSAN, keylessErr := signing.VerifyKeyless(cand.bundlePayload, toSigningIdentities(identities), digest)
+		if keylessErr == nil {
+			return signatureStateVerified, signatureMatch{Identity: composeVerifiedIdentity(matchedSAN, identities)}, nil
+		}
 	}
-	return signatureStateVerified, signatureMatch{Identity: composeVerifiedIdentity(matchedSAN, identities)}, nil
+	if exhausted {
+		return signatureStateUnverifiable, signatureMatch{}, nil
+	}
+
+	// Nothing verified. Confirm (bounded) whether a trusted key really signed
+	// a claim for another digest: that is "mismatched" rather than "untrusted".
+	probeWork := maxSignatureCandidates * len(keys)
+	for i, cand := range mismatching {
+		if i >= maxSignatureCandidates {
+			break
+		}
+		if trusted, out := verifyCandidateKeys(ctx, cand, keys, failed, &probeWork); trusted != nil {
+			return signatureStateMismatched, signatureMatch{}, nil
+		} else if out {
+			break
+		}
+	}
+	return "", signatureMatch{}, nil
 }
 
 // toSigningIdentities maps the ports-layer trusted identities to
