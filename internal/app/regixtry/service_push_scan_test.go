@@ -754,6 +754,8 @@ func TestRefusedPushScansAreDeferredAndScannedOnceSlotsFree(t *testing.T) {
 	pushDistinctManifestsAs(t, service, "a/app", 5, "d", "writer-a")
 	digests := publishedDigests(t, service, "a/app", "d", 5)
 	waitUntil(t, "two admitted scans", func() bool { return pushScanSlotsInUse(service) == 2 })
+	// MaxConcurrency is 1: one scan is in the runner, the other waits on the gate.
+	waitUntil(t, "an admitted scan to be blocked in the runner", func() bool { return runner.entered.Load() == 1 })
 
 	service.SetScanRunner(&fakeScanRunner{})
 	close(runner.release)
@@ -778,7 +780,15 @@ func TestDeferredScanOfADeletedManifestIsDroppedWithoutARow(t *testing.T) {
 	pushDistinctManifestsAs(t, service, "a/app", 2, "s", "writer-a")
 	digests := publishedDigests(t, service, "a/app", "s", 2)
 	waitUntil(t, "one admitted scan", func() bool { return pushScanSlotsInUse(service) == 1 })
-	// s-1 was refused and deferred: delete it, then free the slot.
+	// The first scan must really be blocked in the blocking runner (not
+	// merely admitted) before the runner is swapped, and s-1 must be waiting
+	// in the retry list, so the test exercises "deleted while deferred".
+	waitUntil(t, "the first scan to enter the blocking runner", func() bool { return runner.entered.Load() == 1 })
+	waitUntil(t, "s-1 to be in the retry list", func() bool {
+		service.pushScans.mu.Lock()
+		defer service.pushScans.mu.Unlock()
+		return len(service.pushScans.deferred) == 1
+	})
 	ref, _ := parseRepository("a/app")
 	digest, err := domain.ParseDigest(digests[1])
 	if err != nil {
@@ -793,10 +803,15 @@ func TestDeferredScanOfADeletedManifestIsDroppedWithoutARow(t *testing.T) {
 	waitForPushScansIdle(t, service)
 
 	fake.mu.Lock()
-	calls := len(fake.calls)
+	calls := append([]string(nil), fake.calls...)
 	fake.mu.Unlock()
-	if calls != 0 {
-		t.Fatalf("scanner called %d times for deferred work, want 0 (manifest deleted)", calls)
+	for _, call := range calls {
+		if strings.Contains(call, digests[1]) {
+			t.Fatalf("scanner saw the deleted digest %s (calls %v), want it dropped", digests[1], calls)
+		}
+	}
+	if len(calls) != 0 {
+		t.Fatalf("scanner called for %v after the first scan was released on the blocking runner, want no calls", calls)
 	}
 	runs, _ := service.metadata.ListScanRuns(context.Background(), "tenant-a", "a/app", 50)
 	for _, run := range runs {
