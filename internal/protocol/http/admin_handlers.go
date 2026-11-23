@@ -97,6 +97,8 @@ func (r *Router) handleAdmin(w stdhttp.ResponseWriter, req *stdhttp.Request) {
 		r.handleAdminSecretScanFindings(w, req)
 	case subpath == "access-events":
 		r.handleAdminAccessEvents(w, req, *principal)
+	case strings.HasPrefix(subpath, "security/"):
+		r.handleAdminSecurity(w, req, *principal, strings.TrimPrefix(subpath, "security/"))
 	case subpath == "repository-grants":
 		r.handleAdminAllRepositoryGrants(w, req, *principal)
 	case subpath == "projects":
