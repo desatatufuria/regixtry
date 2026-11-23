@@ -107,6 +107,37 @@ func (s *Service) recordGrantDelete(ctx context.Context, actor domainauth.Princi
 	})
 }
 
+// recordProjectGrantPut records a project grant given or changed, worded like
+// recordGrantPut; the project is stored as "project:<name>" in the repository
+// column (the history table has no project column).
+func (s *Service) recordProjectGrantPut(ctx context.Context, actor domainauth.Principal, subject domainauth.User, grant domainauth.ProjectGrant, previous domainauth.RepoRole, hadPrevious bool) {
+	detail := ""
+	if hadPrevious {
+		if previous == grant.Role {
+			return
+		}
+		detail = roleLabel(previous) + " to " + roleLabel(grant.Role)
+	}
+
+	s.recordAccessEvent(ctx, actor, domainauth.AccessEvent{
+		Action:          domainauth.AccessActionProjectGrantPut,
+		SubjectUserID:   subject.ID,
+		SubjectUsername: subject.Username,
+		Repository:      domainauth.ProjectEventRepository(grant.Project),
+		Role:            string(grant.Role),
+		Detail:          detail,
+	})
+}
+
+func (s *Service) recordProjectGrantDelete(ctx context.Context, actor domainauth.Principal, subject domainauth.User, project string) {
+	s.recordAccessEvent(ctx, actor, domainauth.AccessEvent{
+		Action:          domainauth.AccessActionProjectGrantDelete,
+		SubjectUserID:   subject.ID,
+		SubjectUsername: subject.Username,
+		Repository:      domainauth.ProjectEventRepository(project),
+	})
+}
+
 func (s *Service) recordTokenIssued(ctx context.Context, actor domainauth.Principal, subject domainauth.User, token domainauth.Token, ttl time.Duration) {
 	s.recordAccessEvent(ctx, actor, domainauth.AccessEvent{
 		Action:          domainauth.AccessActionTokenIssued,
@@ -126,13 +157,15 @@ func (s *Service) recordTokenRevoked(ctx context.Context, actor domainauth.Princ
 	})
 }
 
-func (s *Service) recordRobotCreated(ctx context.Context, actor domainauth.Principal, robot domainauth.User, grant domainauth.RepoGrant, tokenName string, ttl time.Duration) {
+// recordRobotCreated records a robot created with its first grant. boundTo is
+// the repository, or "project:<name>" for a project robot.
+func (s *Service) recordRobotCreated(ctx context.Context, actor domainauth.Principal, robot domainauth.User, boundTo string, role domainauth.RepoRole, tokenName string, ttl time.Duration) {
 	s.recordAccessEvent(ctx, actor, domainauth.AccessEvent{
 		Action:          domainauth.AccessActionRobotCreated,
 		SubjectUserID:   robot.ID,
 		SubjectUsername: robot.Username,
-		Repository:      grant.Repository.String(),
-		Role:            string(grant.Role),
+		Repository:      boundTo,
+		Role:            string(role),
 		TokenName:       tokenName,
 		Detail:          humanLifetime(ttl),
 	})

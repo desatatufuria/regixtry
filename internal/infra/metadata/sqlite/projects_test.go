@@ -390,3 +390,54 @@ func TestStoreListProjectsScalesWithRepositories(t *testing.T) {
 		t.Fatalf("ListProjects took %s, want well under 5s", elapsed)
 	}
 }
+
+// TestStoreGetProjectEqualsTheListEntryForTrickyNames proves the targeted
+// lookup returns exactly what ListProjects returns for the same project, with
+// the same exact "P/" prefix semantics (underscore literal, odabank2 and a flat
+// odabank outside odabank, other tenants invisible).
+func TestStoreGetProjectEqualsTheListEntryForTrickyNames(t *testing.T) {
+	t.Parallel()
+	store := newTestStore(t)
+	defer store.Close()
+	ctx := context.Background()
+
+	for _, name := range []string{"odabank", "odabank2", "od_bank", "odxbank", "empty"} {
+		if err := store.CreateProject(ctx, "tenant-a", name, "root"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.CreateProject(ctx, "tenant-b", "odabank", "other"); err != nil {
+		t.Fatal(err)
+	}
+	for i, repository := range []string{"odabank", "odabank/a", "odabank/b/c", "odabank2/x", "od_bank/z", "odxbank/z", "odxbank/y"} {
+		publishInto(t, store, "tenant-a", repository, "v1", fmt.Sprintf(`{"schemaVersion":2,"n":%d}`, i))
+		publishInto(t, store, "tenant-a", repository, "v2", fmt.Sprintf(`{"schemaVersion":2,"m":%d}`, i))
+	}
+	publishInto(t, store, "tenant-b", "odabank/leak", "v1", `{"schemaVersion":2,"t":"b"}`)
+
+	listed, err := store.ListProjects(ctx, "tenant-a")
+	if err != nil || len(listed) != 5 {
+		t.Fatalf("ListProjects() = %d projects, %v", len(listed), err)
+	}
+	for _, want := range listed {
+		got, err := store.GetProject(ctx, "tenant-a", want.Name)
+		if err != nil || !reflect.DeepEqual(got, want) {
+			t.Errorf("GetProject(%q) = %+v, %v; ListProjects entry = %+v", want.Name, got, err, want)
+		}
+	}
+	odabank, _ := store.GetProject(ctx, "tenant-a", "odabank")
+	if odabank.Repositories != 2 || odabank.Tags != 4 || odabank.LastPushed.IsZero() {
+		t.Fatalf("odabank = %+v, want 2 repositories (the flat odabank and odabank2 excluded), 4 tags", odabank)
+	}
+	if empty, _ := store.GetProject(ctx, "tenant-a", "empty"); empty.Repositories != 0 || !empty.LastPushed.IsZero() {
+		t.Fatalf("empty = %+v", empty)
+	}
+	for _, missing := range []string{"nope", "odabank/a", "od%bank"} {
+		if _, err := store.GetProject(ctx, "tenant-a", missing); !domain.IsCode(err, domain.ErrorCodeNotFound) {
+			t.Errorf("GetProject(%q) error = %v, want not found", missing, err)
+		}
+	}
+	if _, err := store.GetProject(ctx, "tenant-c", "odabank"); !domain.IsCode(err, domain.ErrorCodeNotFound) {
+		t.Fatalf("another tenant error = %v, want not found", err)
+	}
+}

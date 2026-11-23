@@ -46,6 +46,18 @@ func (r *Router) handleAdmin(w stdhttp.ResponseWriter, req *stdhttp.Request) {
 		return
 	}
 
+	// The second and last delegate-eligible namespace: the member routes of a
+	// project. The service decides (global admin, or admin of exactly this
+	// project); every other projects/... route stays global-admin only below.
+	if project, username, ok := adminProjectMembersPath(subpath); ok {
+		principal, ok := r.requireAuthenticatedPrincipal(w, req)
+		if !ok {
+			return
+		}
+		r.handleAdminProjectMembers(w, req, *principal, project, username)
+		return
+	}
+
 	principal, ok := r.requireAdminPrincipal(w, req)
 	if !ok {
 		return
@@ -87,6 +99,10 @@ func (r *Router) handleAdmin(w stdhttp.ResponseWriter, req *stdhttp.Request) {
 		r.handleAdminAccessEvents(w, req, *principal)
 	case subpath == "repository-grants":
 		r.handleAdminAllRepositoryGrants(w, req, *principal)
+	case subpath == "projects":
+		r.handleAdminProjects(w, req, *principal, "")
+	case strings.HasPrefix(subpath, "projects/"):
+		r.handleAdminProjects(w, req, *principal, strings.TrimPrefix(subpath, "projects/"))
 	case subpath == "admin-tokens/expiring":
 		r.handleAdminExpiringTokens(w, req, *principal)
 	case subpath == "users":
@@ -1081,6 +1097,7 @@ func decodeAdminCreateRobotInput(req *stdhttp.Request) (ports.AdminCreateRobotIn
 	var payload struct {
 		Name       string              `json:"name"`
 		Repository string              `json:"repository"`
+		Project    string              `json:"project"`
 		Role       domainauth.RepoRole `json:"role"`
 		TTL        json.RawMessage     `json:"ttl"`
 		TTLSeconds *int64              `json:"ttl_seconds"`
@@ -1093,7 +1110,7 @@ func decodeAdminCreateRobotInput(req *stdhttp.Request) (ports.AdminCreateRobotIn
 		return ports.AdminCreateRobotInput{}, err
 	}
 
-	input := ports.AdminCreateRobotInput{Name: payload.Name, Repository: payload.Repository, Role: payload.Role}
+	input := ports.AdminCreateRobotInput{Name: payload.Name, Repository: payload.Repository, Project: payload.Project, Role: payload.Role}
 	input.TTL = ttl
 
 	return input, nil
@@ -1122,6 +1139,13 @@ func (r *Router) handleAdminUserResource(w stdhttp.ResponseWriter, req *stdhttp.
 			return
 		}
 		r.handleAdminUserPasswordReset(w, req, principal, userID)
+	case strings.HasSuffix(resource, "/project-grants"):
+		userID, ok := adminNestedUserID(resource, "/project-grants")
+		if !ok {
+			writeAdminError(w, domainauth.NewNotFoundError("route", req.URL.Path), ports.Challenge{})
+			return
+		}
+		r.handleAdminUserProjectGrants(w, req, principal, userID)
 	case strings.HasSuffix(resource, "/grants"):
 		userID, ok := adminNestedUserID(resource, "/grants")
 		if !ok {
@@ -1815,6 +1839,10 @@ func writeAdminError(w stdhttp.ResponseWriter, err error, challenge ports.Challe
 			status = stdhttp.StatusNotFound
 		case domainauth.ErrorCodeConflict:
 			status = stdhttp.StatusConflict
+		case domainauth.ErrorCodeUnavailable:
+			// A dependency failed mid-operation; the message is safe and says
+			// what to retry, the cause stays out of the body.
+			status = stdhttp.StatusServiceUnavailable
 		default:
 			status = stdhttp.StatusInternalServerError
 		}

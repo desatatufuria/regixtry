@@ -47,14 +47,37 @@ const (
 	AccessActionUserDeleted AccessAction = "user.deleted"
 	// AccessActionRobotDeleted is a robot account deleted.
 	AccessActionRobotDeleted AccessAction = "robot.deleted"
+	// AccessActionProjectGrantPut is a project grant given or whose role
+	// changed. The project is stored in the repository column as
+	// "project:<name>" (see ProjectEventRepository).
+	AccessActionProjectGrantPut AccessAction = "project.grant.put"
+	// AccessActionProjectGrantDelete is a project grant revoked.
+	AccessActionProjectGrantDelete AccessAction = "project.grant.delete"
+	// AccessActionProjectCreated is a project created by an administrator.
+	AccessActionProjectCreated AccessAction = "project.created"
+	// AccessActionProjectDeleted is a project deleted.
+	AccessActionProjectDeleted AccessAction = "project.deleted"
 )
+
+// accessEventProjectPrefix marks a project name stored in the repository
+// column of an access event. A repository name can never contain a colon, so
+// the prefix cannot be mistaken for a repository.
+const accessEventProjectPrefix = "project:"
+
+// ProjectEventRepository is the value an access event stores in its
+// repository column for a project: "project:odabank". The history table has
+// no project column and stays unchanged.
+func ProjectEventRepository(project string) string {
+	return accessEventProjectPrefix + project
+}
 
 // IsKnown reports whether the action is one of the recorded kinds.
 func (a AccessAction) IsKnown() bool {
 	switch a {
 	case AccessActionGrantPut, AccessActionGrantDelete, AccessActionTokenIssued, AccessActionTokenRevoked, AccessActionRobotCreated,
 		AccessActionUserCreated, AccessActionUserEnabled, AccessActionUserDisabled, AccessActionUserUpdated,
-		AccessActionUserPasswordReset, AccessActionUserDeleted, AccessActionRobotDeleted:
+		AccessActionUserPasswordReset, AccessActionUserDeleted, AccessActionRobotDeleted,
+		AccessActionProjectGrantPut, AccessActionProjectGrantDelete, AccessActionProjectCreated, AccessActionProjectDeleted:
 		return true
 	}
 

@@ -103,9 +103,13 @@ type UpdateUserInput struct {
 // (design.md Decision 2): exactly one repository+role is bound at creation,
 // enforced by the service, not the schema. TTL follows CreateAdminTokenInput's
 // convention: zero means DefaultAdminTokenTTL, reused unchanged.
+//
+// Project is an additive alternative to Repository: exactly one of the two
+// names the grant, and a project robot is reader or writer only.
 type CreateRobotInput struct {
 	Name       string
 	Repository string
+	Project    string
 	Role       domainauth.RepoRole
 	TTL        time.Duration
 }
@@ -113,12 +117,16 @@ type CreateRobotInput struct {
 // CreatedRobot is CreateRobot's result: the persisted robot user, its single
 // grant, and its issued admin-credential token (secret shown once, matching
 // CreateAdminToken's shape).
+//
+// A project robot has ProjectGrant set and a zero Grant; a repository robot
+// the opposite.
 type CreatedRobot struct {
-	User      domainauth.User
-	Grant     domainauth.RepoGrant
-	Secret    string
-	Accessor  string
-	ExpiresAt time.Time
+	User         domainauth.User
+	Grant        domainauth.RepoGrant
+	ProjectGrant domainauth.ProjectGrant
+	Secret       string
+	Accessor     string
+	ExpiresAt    time.Time
 }
 
 type CreatedAdminToken struct {
@@ -198,6 +206,40 @@ type AdminGrantPage struct {
 	Next   string            `json:"next"`
 }
 
+// AdminProjectMember is one member of a project: a user or robot holding a
+// project grant. Like AdminRepositoryGrant it carries no user ID, hash, flags
+// or token, so a project administrator never reads the user directory.
+type AdminProjectMember struct {
+	Username  string              `json:"username"`
+	IsRobot   bool                `json:"is_robot"`
+	Role      domainauth.RepoRole `json:"role"`
+	CreatedAt time.Time           `json:"created_at"`
+	UpdatedAt time.Time           `json:"updated_at"`
+}
+
+// AdminProjectMemberPage is one page of a project's members. Next is the
+// opaque cursor of the following page, empty on the last page.
+type AdminProjectMemberPage struct {
+	Members []AdminProjectMember `json:"members"`
+	Next    string               `json:"next"`
+}
+
+// AdminProjectGrant is one project grant of one user, as the global
+// administrator's per-user listing shows it.
+type AdminProjectGrant struct {
+	Project   string              `json:"project"`
+	Role      domainauth.RepoRole `json:"role"`
+	CreatedAt time.Time           `json:"created_at"`
+	UpdatedAt time.Time           `json:"updated_at"`
+}
+
+// AdminPutProjectGrantInput carries PUT /admin/v1/projects/{project}/members/{user}.
+type AdminPutProjectGrantInput struct {
+	Project  string              `json:"-"`
+	Username string              `json:"-"`
+	Role     domainauth.RepoRole `json:"role"`
+}
+
 type AdminPutRepositoryGrantInput struct {
 	Repository string              `json:"-"`
 	Username   string              `json:"-"`
@@ -208,17 +250,21 @@ type AdminPutRepositoryGrantInput struct {
 // route table): id/username/repository/role/enabled/created_at, matching
 // GET /admin/v1/robots' documented shape.
 type AdminRobot struct {
-	ID         string              `json:"id"`
-	Username   string              `json:"username"`
-	Repository string              `json:"repository"`
-	Role       domainauth.RepoRole `json:"role"`
-	Enabled    bool                `json:"enabled"`
-	CreatedAt  time.Time           `json:"created_at"`
+	ID         string `json:"id"`
+	Username   string `json:"username"`
+	Repository string `json:"repository"`
+	// Project is set instead of Repository for a robot holding a project
+	// grant; it is omitted for a repository robot.
+	Project   string              `json:"project,omitempty"`
+	Role      domainauth.RepoRole `json:"role"`
+	Enabled   bool                `json:"enabled"`
+	CreatedAt time.Time           `json:"created_at"`
 }
 
 type AdminCreateRobotInput struct {
 	Name       string              `json:"name"`
 	Repository string              `json:"repository"`
+	Project    string              `json:"project"`
 	Role       domainauth.RepoRole `json:"role"`
 	TTL        time.Duration       `json:"-"`
 }
@@ -298,6 +344,10 @@ type AdminHTTPService interface {
 	PutAdminRepositoryGrant(ctx context.Context, actor domainauth.Principal, input AdminPutRepositoryGrantInput) (AdminRepositoryGrant, error)
 	ListAdminAllRepositoryGrants(ctx context.Context, actor domainauth.Principal, limit int, after string) (AdminGrantPage, error)
 	DeleteAdminRepositoryGrant(ctx context.Context, actor domainauth.Principal, repository string, username string) error
+	ListAdminProjectMembers(ctx context.Context, actor domainauth.Principal, project string, limit int, after string) (AdminProjectMemberPage, error)
+	PutAdminProjectGrant(ctx context.Context, actor domainauth.Principal, input AdminPutProjectGrantInput) (AdminProjectMember, error)
+	DeleteAdminProjectGrant(ctx context.Context, actor domainauth.Principal, project string, username string) error
+	ListAdminUserProjectGrants(ctx context.Context, actor domainauth.Principal, userID string) ([]AdminProjectGrant, error)
 	CreateAdminRobot(ctx context.Context, actor domainauth.Principal, input AdminCreateRobotInput) (AdminCreatedRobot, error)
 	ListAdminRobots(ctx context.Context, actor domainauth.Principal) ([]AdminRobot, error)
 	DeleteAdminRobot(ctx context.Context, actor domainauth.Principal, userID string) error

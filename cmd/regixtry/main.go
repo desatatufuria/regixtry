@@ -2512,6 +2512,10 @@ func boundedDuration(value time.Duration, fallback time.Duration) time.Duration 
 func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 	var authStore ports.AuthStore
 	var authService ports.AuthService
+	// concreteAuth is the auth service when auth is enabled: the project
+	// service uses it to purge grants and record events, and it asks the
+	// metadata store whether a project exists.
+	var concreteAuth *appauth.Service
 	bearerRealm := cfg.Realm
 	if trimmed := strings.TrimSpace(cfg.AuthTokenRealmURL); trimmed != "" {
 		bearerRealm = trimmed
@@ -2536,7 +2540,7 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 			return nil, nil, err
 		}
 
-		concreteAuth := appauth.NewService(authStore)
+		concreteAuth = appauth.NewService(authStore)
 		concreteAuth.ConfigureLogin(loginPolicyFromConfig(cfg))
 		authService = concreteAuth
 		err = authService.EnsureBootstrapAdmin(context.Background())
@@ -2579,6 +2583,12 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 	service.SetDeleteEnabled(cfg.DeleteEnabled)
 	service.SetGCDeleteEnabled(cfg.GCDeleteEnabled)
 	service.SetRequireProject(cfg.RequireProject)
+	projectService := appregixtry.NewProjectService(service, metadataStore)
+	if concreteAuth != nil {
+		projectService.SetGrantCleaner(concreteAuth)
+		projectService.SetEventRecorder(concreteAuth)
+		concreteAuth.SetProjectLookup(projectDirectory{store: metadataStore, tenants: ports.NewSingleTenantResolver(cfg.Tenant)})
+	}
 	service.SetUploadLimits(
 		int(limitOrDefault(int64(cfg.MaxOpenUploads), appregixtry.DefaultMaxOpenUploads)),
 		int(limitOrDefault(int64(cfg.MaxOpenUploadsPerRepo), appregixtry.DefaultMaxOpenUploadsPerRepo)),
@@ -2638,7 +2648,7 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 		}()
 	}
 
-	return regixtryhttp.NewRouter(service, authService, regixtryhttp.WithMaxManifestBytes(limitOrDefault(cfg.MaxManifestBytes, regixtryhttp.DefaultMaxManifestBytes)), regixtryhttp.WithTrustedProxies(trustedProxies)), func() {
+	return regixtryhttp.NewRouter(service, authService, regixtryhttp.WithMaxManifestBytes(limitOrDefault(cfg.MaxManifestBytes, regixtryhttp.DefaultMaxManifestBytes)), regixtryhttp.WithTrustedProxies(trustedProxies), regixtryhttp.WithProjects(projectService)), func() {
 		// Wait for the scheduler goroutine to actually stop before closing the
 		// stores it reads/writes: cancelling schedulerCtx only takes effect
 		// between ticks (scheduler.Run checks ctx.Done() after each tick
@@ -2982,6 +2992,18 @@ func (localOperatorAccessController) Authorize(context.Context, ports.Action) er
 
 func (localOperatorAccessController) Challenge(ports.Action) ports.Challenge {
 	return ports.Challenge{Scheme: "Bearer", Realm: "regixtry", Service: "regixtry"}
+}
+
+// projectDirectory adapts the SQLite project store to ports.ProjectLookup, the
+// seam through which the auth service asks whether a project exists (in the
+// tenant the registry service resolves) without importing registry code.
+type projectDirectory struct {
+	store   ports.ProjectStore
+	tenants ports.TenantResolver
+}
+
+func (d projectDirectory) ProjectExists(ctx context.Context, project string) (bool, error) {
+	return d.store.ProjectExists(ctx, d.tenants.Resolve(ctx), project)
 }
 
 // authStoreUsernameResolver adapts ports.AuthStore to
