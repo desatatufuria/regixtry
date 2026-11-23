@@ -17,8 +17,11 @@ const (
 	loginFailuresDefaultLimit = 50
 	loginFailuresCursorMax    = 1024
 	loginSummaryWindow        = 15 * time.Minute
-	loginBackoffListMax       = 100
-	loginFlushBeforeReadTime  = 2 * time.Second
+	// loginFailuresDefaultFilterRange is the lower bound applied when an
+	// account, ip or reason filter comes without from.
+	loginFailuresDefaultFilterRange = 24 * time.Hour
+	loginBackoffListMax             = 100
+	loginFlushBeforeReadTime        = 2 * time.Second
 )
 
 var _ ports.LoginSecurityAdmin = (*Service)(nil)
@@ -46,7 +49,7 @@ func (s *Service) flushBeforeRead(ctx context.Context) {
 	}
 	flushCtx, cancel := context.WithTimeout(ctx, loginFlushBeforeReadTime)
 	defer cancel()
-	_ = s.failureAggregator.Flush(flushCtx)
+	_ = s.failureAggregator.FlushForRead(flushCtx)
 }
 
 // ListAdminLoginFailures pages the aggregated login failures newest first.
@@ -68,6 +71,22 @@ func (s *Service) ListAdminLoginFailures(ctx context.Context, actor domainauth.P
 	for _, text := range []string{filter.Account, filter.IP, filter.Reason} {
 		if !utf8.ValidString(text) || strings.ContainsRune(text, 0) || len(text) > 256 {
 			return ports.AdminLoginFailurePage{}, domainauth.NewValidationError("filters must be short valid text")
+		}
+	}
+	now := s.now()
+	// A text filter has no supporting index, so without a lower bound it would
+	// scan from the newest window back: default to the last 24 hours, and never
+	// accept a range wider than the retention.
+	if filter.From.IsZero() && (filter.Account != "" || filter.IP != "" || filter.Reason != "") {
+		filter.From = now.Add(-loginFailuresDefaultFilterRange)
+	}
+	if !filter.From.IsZero() {
+		end := filter.To
+		if end.IsZero() {
+			end = now
+		}
+		if end.Sub(filter.From) > LoginFailureRetention {
+			return ports.AdminLoginFailurePage{}, domainauth.NewValidationError("the time range must not exceed 30 days")
 		}
 	}
 	filter.Account = normalizeUsername(filter.Account)

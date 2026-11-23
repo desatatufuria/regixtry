@@ -532,3 +532,42 @@ func TestLoginBackoffAccountsExpireWithTheirWindow(t *testing.T) {
 func sha8(normalized string) string {
 	return accountHashForTest(normalized)
 }
+
+func TestLoginFailuresTextFiltersDefaultToTheLast24HoursAndRangesAreCapped(t *testing.T) {
+	t.Parallel()
+	e := newSecHTTP(t, appauth.BackoffLog)
+	now := time.Now().UTC()
+	rec := func(at time.Time, account string) ports.LoginFailureRecord {
+		return ports.LoginFailureRecord{WindowStart: at.Truncate(appauth.LoginFailureWindow), Endpoint: "/auth/token", Reason: "wrong password", Account: account, IP: "203.0.113.7", Count: 1, FirstSeen: at, LastSeen: at}
+	}
+	if err := e.store.AddLoginFailures(context.Background(), []ports.LoginFailureRecord{
+		rec(now.Add(-time.Hour), "recent"), rec(now.Add(-72*time.Hour), "old"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if page := e.failures(""); len(page.Failures) != 2 {
+		t.Fatalf("unfiltered rows = %d, want 2", len(page.Failures))
+	}
+	for _, q := range []string{"?account=old", "?ip=203.0.113.7", "?reason=wrong+password"} {
+		page := e.failures(q)
+		for _, f := range page.Failures {
+			if f.Account == "old" {
+				t.Fatalf("%s returned a row older than the default 24 h range", q)
+			}
+		}
+	}
+	if page := e.failures("?account=old&from=" + now.Add(-96*time.Hour).Format(time.RFC3339)); len(page.Failures) != 1 {
+		t.Fatalf("explicit from rows = %d, want the old row", len(page.Failures))
+	}
+	for name, q := range map[string]string{
+		"from 31 days ago":     "?from=" + now.Add(-31*24*time.Hour).Format(time.RFC3339),
+		"explicit 60 day span": "?from=" + now.Add(-70*24*time.Hour).Format(time.RFC3339) + "&to=" + now.Add(-10*24*time.Hour).Format(time.RFC3339),
+	} {
+		if rec := e.do(http.MethodGet, "/admin/v1/security/login-failures"+q, e.adminToken, ""); rec.Code != http.StatusUnprocessableEntity {
+			t.Errorf("%s = %d, want 422 (%s)", name, rec.Code, rec.Body.String())
+		}
+	}
+	if rec := e.do(http.MethodGet, "/admin/v1/security/login-failures?from="+now.Add(-29*24*time.Hour).Format(time.RFC3339), e.adminToken, ""); rec.Code != http.StatusOK {
+		t.Errorf("29 day range = %d, want 200", rec.Code)
+	}
+}
