@@ -754,7 +754,8 @@ func TestRefusedPushScansAreDeferredAndScannedOnceSlotsFree(t *testing.T) {
 	pushDistinctManifestsAs(t, service, "a/app", 5, "d", "writer-a")
 	digests := publishedDigests(t, service, "a/app", "d", 5)
 	waitUntil(t, "two admitted scans", func() bool { return pushScanSlotsInUse(service) == 2 })
-	waitUntil(t, "both admitted scans to be blocked in the runner", func() bool { return runner.entered.Load() == 2 })
+	// MaxConcurrency is 1: one scan is in the runner, the other waits on the gate.
+	waitUntil(t, "an admitted scan to be blocked in the runner", func() bool { return runner.entered.Load() == 1 })
 
 	service.SetScanRunner(&fakeScanRunner{})
 	close(runner.release)
