@@ -72,6 +72,70 @@ registry.example.com {
 
 with `-trusted-proxies 127.0.0.1` (add `::1` if Caddy connects over IPv6 loopback).
 
+## Watching and tuning login protection
+
+What the registry records about failed logins and why is in [security.md](security.md#login-failures-what-is-recorded-and-why). This is the routine for reading it and for moving the per-account backoff from `log` to `enforce`. Everything below needs a global administrator and the auth database (`-auth-postgres-dsn`); without it there are no admin routes and no persisted record, only the log line.
+
+### Where to look
+
+- **TUI** (`regixtry tui -api-base-url https://registry.example.com`): the Overview's NEEDS ATTENTION panel gets a row `N failed logins in 15 min; M accounts waiting` (amber from 20 failures, or in `enforce` mode from one waiting account; the row is absent when there is nothing to report). `Enter` on it opens `Admin > Security > Login security`: effective settings, the accounts waiting, and the failures of the last 24 hours. See [tui.md](tui.md#login-security).
+- **API** (a global admin token; an unrestricted one, not a `docker login` token):
+
+```sh
+TOKEN=$(curl -s -u admin:PASSWORD 'https://registry.example.com/auth/token?service=regixtry' | jq -r .token)
+B=https://registry.example.com/admin/v1/security
+
+curl -H "Authorization: Bearer $TOKEN" "$B/login-summary"
+curl -H "Authorization: Bearer $TOKEN" "$B/login-backoff"
+curl -H "Authorization: Bearer $TOKEN" "$B/login-failures?limit=20"
+curl -H "Authorization: Bearer $TOKEN" "$B/login-failures?account=alice&from=2026-03-01T00:00:00Z"
+curl -X POST -H "Authorization: Bearer $TOKEN" -d '{"account":"alice"}' "$B/login-backoff/reset"
+```
+
+Replies, filters, paging and errors are in [api.md](api.md#management-api). The log line `login failed endpoint=... ip=... reason=... account=...` (`journalctl -u regixtry | grep 'login failed'`) remains the per-attempt trail.
+
+### Reading log mode and enforce mode
+
+`GET .../login-backoff` (and the `backoff mode:` label in the TUI) reports `mode`:
+
+- `log` (the default): nothing is refused. An account that reached the threshold appears in the list with its failures and the time it **would** wait; the TUI column is headed `WOULD WAIT`, the rows are grey, and the service log has `login backoff would have blocked account=alice retry_after=4s mode=log`.
+- `enforce`: the same accounts really wait; the column reads `TIME LEFT` and their password logins answer `429` with `Retry-After`.
+- `off` (or threshold `0`): no state, the list is empty.
+
+An unknown username appears as `hash:xxxxxxxx` (TUI: `unknown #` and six digits) in both the list and the failures. An existing account that is only throttled appears in the failures by hash too, but in the waiting list by name.
+
+### Recommended path
+
+1. Run in `log` mode (the default) for at least a few days that include your normal peaks (CI bursts, Monday morning).
+2. Read who would wait: `login-backoff` and the Login security screen, plus `login-failures?reason=...` for the history. Expect attackers and typos; look for **legitimate** accounts: a robot or CI job that logs in with a password, a user with a stale saved password in a script, a shared account. Fix those first (robots use credential tokens, which are never delayed).
+3. Check the IP column makes sense (see the next section); a wrong IP does not change behavior but makes the data useless for investigation.
+4. Switch: set `-login-backoff-mode=enforce` (or `REGISTRY_LOGIN_BACKOFF_MODE=enforce`) and restart. The state is in memory, so the restart starts every account from zero. Keep watching the same screen for the first days.
+5. To go back, set the mode to `log` and restart.
+
+Systemd: add the line to the `EnvironmentFile` (`regixtry.env`) and `systemctl restart regixtry`. The shipped Compose file does not forward `REGISTRY_LOGIN_BACKOFF_MODE` or `REGISTRY_TRUSTED_PROXIES`: add them under the `regixtry` service `environment` (or pass the flags). After a `setup` or `upgrade` that regenerates the env file, check the lines are still there.
+
+### Trusted proxies: making the IP real
+
+Behind a proxy the TCP peer is the proxy, so without `-trusted-proxies` every failure carries the proxy's address and the IP column is the same everywhere (the TUI Login security screen shows `Trusted proxies: configured: no`). Set `-trusted-proxies` to the address of the proxy that connects to the registry, nothing wider:
+
+- nginx on `192.168.1.245` (the verified setup: it appends the real client to `X-Forwarded-For` and also sends `X-Real-IP`, which the registry ignores): `regixtry serve -trusted-proxies 192.168.1.245`, with the nginx block in [Reverse proxy and client IP](#reverse-proxy-and-client-ip).
+- Traefik and Caddy: the address Traefik or Caddy uses to reach the registry (see the examples above), for example a Docker network range for Traefik and `127.0.0.1` for a local Caddy.
+- Never `/0`: it is refused at startup, because it would let any client choose its recorded IP. A broad range has the same effect for the hosts inside it.
+- Check it after the change: fail a login on purpose from a known address and look at `login-failures?account=<name>`: `ip` must be that address, not the proxy's. If you chain two proxies, list both addresses (hops are skipped right to left).
+
+The IP is information only. It never delays or blocks anyone.
+
+### A legitimate admin is delayed
+
+In `enforce` mode a user (including the only administrator) can be kept waiting by someone else's wrong guesses, at most 5 minutes at a time. In order:
+
+1. **Reset** the account from another admin session: TUI `Login security`, select the account, `x`, confirm; or `POST .../login-backoff/reset` with `{"account":"alice"}`. It records the access event `login.backoff.reset`. A `404` means the account is no longer waiting.
+2. **Use a credential token.** Credential tokens (the 64-hex secrets of robots and of admin tokens) skip the backoff and the bcrypt limit, so an admin who holds one can obtain an access token with `curl -u admin:<64-hex-secret> 'https://registry.example.com/auth/token?service=regixtry'` and reset the account with it. Create such tokens in advance for the people who must always be able to get in (Users, issue token).
+3. **Wait** for the remaining time (never more than 300 seconds), or **restart** the service: the counters are in memory.
+4. `regixtry bootstrap-admin` on the host rotates the password of the bootstrap admin but does not clear the waiting state; use it when the password is the problem, not the delay.
+
+If the cause is a real attacker keeping one name in backoff, repeated resets only help the legitimate user briefly; restrict the source at the proxy (per-IP `limit_req`) using the IPs from `login-failures`.
+
 ## Upgrade and rollback
 
 `upgrade` uses the setup provenance record, runs preflight checks, supports `--ref` and `--yes`, and shows progress. Bootstrap rollback removes generated artifacts and stops the service. Review the command output and `journalctl` before retrying.
@@ -126,6 +190,14 @@ In the TUI (`regixtry tui -api-base-url ...`): `Admin > Access > Projects`, `n` 
 - Cancelling or reaping an upload no longer waits for a client that stopped sending: `DELETE .../blobs/uploads/<id>` and the reaper return while a writer is parked in a body read, and that writer's request ends.
 
 Note on the upload reaper: besides expired upload rows, it removes upload directories under `<storage-root>/content/uploads/` that have no session row and are older than the upload TTL.
+
+### Upgrade to the login protection release
+
+Two waves of login hardening ship together; the notes are in [release-notes-login.md](release-notes-login.md). Short form:
+
+1. **Before upgrading.** Decide on `-trusted-proxies` if you run behind nginx, Traefik or Caddy (otherwise every failure is attributed to the proxy). Check that nothing sets a password that is among the roughly 340 most common ones: it is now refused with `422` wherever a password is set; existing passwords keep working. Back up the Postgres auth database as usual (for example `pg_dump --format=custom "$DSN" > auth.dump`); the failures table is part of it and is small and bounded, so there is no reason to exclude it (if you prefer to, `pg_dump --exclude-table-data=auth_login_failures`).
+2. **What the first start does.** It creates one table, `auth_login_failures`, with `CREATE TABLE IF NOT EXISTS` in the auth database. Nothing existing is altered. The per-account backoff stays in `log` mode.
+3. **Rollback.** Stop the service and start the previous binary. It ignores `auth_login_failures`; the table stays and is not read or written. Dropping it is optional: `DROP TABLE auth_login_failures;` (the table holds only the aggregated failures, nothing else depends on it). Upgrading again recreates it if missing and continues counting into the existing rows. A binary older than this release does not know the `-trusted-proxies` and `-login-*` flags: remove them from the unit before starting it, because an unknown flag stops it from starting.
 
 ### Upgrade note: scan history purge (irreversible)
 

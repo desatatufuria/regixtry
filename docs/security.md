@@ -104,7 +104,7 @@ These are recommendations, not guarantees enforced by the program.
 
 ## Failed logins and rate limiting
 
-Every rejected credential (`/auth/token`, and bearer tokens on `/v2` and `/admin/v1`) writes one log line `login failed endpoint=<path> ip=<client> reason="<real reason>" account=<name>` and increments an in-process counter by reason. An unknown username is logged as `account_hash=<8 hex>`, never raw, to avoid log injection and unbounded cardinality; passwords and tokens are never logged. The client IP is the TCP peer unless `-trusted-proxies` names the proxies whose `X-Forwarded-For` to trust (see [operations.md](operations.md#reverse-proxy-and-client-ip)). Password checks are bcrypt (cost 10, about 85 ms): their concurrency is capped at `max(2, NumCPU/2)` (`-login-max-concurrency`) so a flood of bad passwords cannot starve `/v2`; excess logins wait at most 250 ms and then get `429` with `Retry-After: 1`. A valid credential token (64 hex) skips bcrypt, so CI robots keep working during a flood. A `-trusted-proxies` range of `/0` is refused at startup because it would trust every peer's `X-Forwarded-For`. There is no IP-based blocking in the registry: keep per-IP volume limits in the reverse proxy.
+Every rejected credential (`/auth/token`, and bearer tokens on `/v2` and `/admin/v1`) writes one log line `login failed endpoint=<path> ip=<client> reason="<real reason>" account=<name>` and increments an in-process counter by reason. An unknown username is logged as `account_hash=<8 hex>`, never raw, to avoid log injection and unbounded cardinality; passwords and tokens are never logged. The client IP is the TCP peer unless `-trusted-proxies` names the proxies whose `X-Forwarded-For` to trust (see [operations.md](operations.md#reverse-proxy-and-client-ip)). Password checks are bcrypt (cost 10, about 85 ms): their concurrency is capped at `max(2, NumCPU/2)` (`-login-max-concurrency`) so a flood of bad passwords cannot starve `/v2`; excess logins wait at most 250 ms and then get `429` with `Retry-After: 1`. A valid credential token (64 hex) skips bcrypt, so CI robots keep working during a flood. A `-trusted-proxies` range of `/0` is refused at startup because it would trust every peer's `X-Forwarded-For`. There is no IP-based blocking in the registry: keep per-IP volume limits in the reverse proxy. What is kept about failures, and for how long, is in [Login failures: what is recorded and why](#login-failures-what-is-recorded-and-why).
 
 ### Password policy
 
@@ -114,15 +114,63 @@ A password must have at least 8 characters (after trimming) and must not be one 
 
 Consecutive failed password logins are counted per normalized username (trimmed, case-insensitive; unknown usernames are tracked exactly like existing ones, so the behavior reveals nothing about which accounts exist). After 5 failures the next attempt must wait 2 s, then 4 s, 8 s, ... capped at 5 minutes (`-login-backoff-threshold`, `-login-backoff-base`, `-login-backoff-max`). A success, or 15 minutes without failures, resets the counter. State lives in memory (LRU of 10 000 accounts, per process, lost on restart; with several instances each counts separately).
 
-- **Mode `log` (default in this version):** nothing is refused; the registry logs `login backoff would have blocked account=<name> retry_after=...` (an unknown username appears as `account_hash=<8 hex>`). Use it to calibrate, then set `-login-backoff-mode=enforce`.
+- **Mode `log` (default in this version):** nothing is refused; the registry logs `login backoff would have blocked account=<name> retry_after=2s mode=log` (an unknown username appears as `account_hash=<8 hex>`). The accounts in this state are listed by the Login security screen and `GET /admin/v1/security/login-backoff` as the ones that would wait. Use it to calibrate, then set `-login-backoff-mode=enforce`.
 - **Mode `enforce`:** while an account is in backoff the password is not verified, one `login failed ... reason="throttled: account backoff"` line is logged, and the answer is `429` with `Retry-After: <seconds>` and error code `TOOMANYREQUESTS`, identical for existing and unknown usernames. Outside a backoff a failure is the usual uniform `401`.
 - `-login-backoff-threshold=0` (or mode `off`) disables it.
 
-Trade-offs to know: an attacker who knows an account name can keep it in backoff, at most 5 minutes at a time (no hard lockout); during that window the account's password is refused with `429`, but credential tokens (robots, CI) are exempt, and `regixtry bootstrap-admin` on the host is the last resort. Only secrets that are not token-shaped count: a wrong 64-hex secret never counts against the account, so strangers cannot put a robot in backoff. Flooding with many random usernames can evict an account's counter from the LRU: measured, 10,001 random usernames evicted a victim that was in backoff, which buys the attacker about 5 fresh guesses per ~10,000 requests, each of those requests costing a bcrypt whose concurrency is capped by the semaphore. The bcrypt concurrency cap and the proxy's per-IP limits remain the defense against volume. The per-account denial of service is bounded: an account is never blocked longer than 300 s (`-login-backoff-max`) per window, and never hard-locked.
+Trade-offs to know: an attacker who knows an account name can keep it in backoff, at most 5 minutes at a time (no hard lockout); during that window the account's password is refused with `429`, but credential tokens (robots, CI) are exempt. An administrator clears one account's counter with the reset action ([below](#reset-and-who-can-read)); `regixtry bootstrap-admin` changes the password but does not clear the in-memory counter, which ends with the wait (5 minutes at most), a reset or a restart of the service. Only secrets that are not token-shaped count: a wrong 64-hex secret never counts against the account, so strangers cannot put a robot in backoff. Flooding with many random usernames can evict an account's counter from the LRU: measured, 10,001 random usernames evicted a victim that was in backoff, which buys the attacker about 5 fresh guesses per ~10,000 requests, each of those requests costing a bcrypt whose concurrency is capped by the semaphore. The bcrypt concurrency cap and the proxy's per-IP limits remain the defense against volume. The per-account denial of service is bounded: an account is never blocked longer than 300 s (`-login-backoff-max`) per window, and never hard-locked.
+
+## Login failures: what is recorded and why
+
+Two records exist for a rejected credential. They answer different questions: the log line is the per-attempt trail, the persisted record is a bounded summary an administrator can read without shell access.
+
+**The log line (always).** Every rejected credential on `/auth/token`, and every refused bearer token on `/v2` and `/admin/v1`, writes one line:
+
+```
+login failed endpoint=/auth/token ip=203.0.113.7 reason="wrong password or unknown admin credential token" account=alice
+login failed endpoint=/auth/token ip=203.0.113.8 reason="unknown user" account_hash=be463d41
+login failed endpoint=/auth/token ip=203.0.113.7 reason="throttled: account backoff" account_hash=2bd806c9
+login failed endpoint=/admin/v1 ip=198.51.100.4 reason="invalid credentials"
+```
+
+A bearer failure has no account field. An enforced backoff refusal writes exactly one such line. Passwords and tokens are never logged. The hash is the first 8 hex digits of the SHA-256 of the trimmed, lowercased username; it is shown so one attacker-chosen name can be correlated without storing it. It is not a secret: anyone can check a candidate name against it (`printf %s ghost-raw | sha256sum | cut -c1-8`), so do not read it as anonymization of a guessable name.
+
+**The aggregated record (when an auth database is configured).** The same events are also folded into counters in memory and written to the table `auth_login_failures` in the auth database. Never one row per failure: one row per
+
+- 5-minute window (start aligned to a multiple of 5 minutes, UTC),
+- endpoint (`/auth/token`, `/v2`, `/admin/v1` or `other`),
+- reason (the server-side reason of the log line),
+- account: an existing account by its lowercase name; an unknown username **only** as `hash:xxxxxxxx` (the log's `account_hash`); a refused (throttled) attempt is always keyed by hash, because the refusal happens before the account is looked up, so an existing account that was throttled also appears as `hash:...`; empty for a bearer failure,
+- client IP, as the trusted-proxy rule extracts it (the TCP peer unless `-trusted-proxies` lists the peer and the proxy appended the real client; see [operations.md](operations.md#reverse-proxy-and-client-ip)),
+
+with a count and the first and last time seen. The raw text of an unknown username is never stored, returned or shown by any screen; each field is cut at 100 bytes.
+
+The numbers that bound it (fixed values, not flags; see [configuration.md](configuration.md#fixed-login-protection-values)):
+
+| Bound | Value |
+| --- | --- |
+| Window | 5 minutes |
+| Write rate | one flush every 60 seconds and one at shutdown, whatever the failure rate; a Postgres outage never blocks or fails a login (recording only updates a map in memory) |
+| Retention | 30 days: rows whose window started earlier are purged, in batches of 1000, by the periodic flush (which runs the purge after it wrote something, so an idle registry purges nothing until the next failure) |
+| Rows per window | 5000; a key that would be the 5001st folds into one `_overflow` row per window and endpoint, so totals stay exact while the table stays bounded (5000 rows plus the overflow rows) |
+| Live keys in memory between flushes | 10 000; further keys fold into one `_overflow` key, and records that cannot be written during an outage are kept for retry up to 10 000 and the oldest are dropped beyond that |
+
+A flood of distinct IPs (or distinct usernames) is therefore bounded at every step: at most 10 000 keys in memory per flush interval, at most 5000 rows per window in the table, and the remainder counted in `_overflow` rows. The exact attacker detail beyond those caps is not kept; the totals are.
+
+**Accuracy.** Counts are at-least-once: if the database reports an error while committing a chunk that did in fact commit, the retry adds that chunk again, so a count can be too high by at most one in-flight chunk (500 records) after such an error. A count is never too low, except for the records dropped from a full retry buffer (the service logs `login failures not flushed: ...` at most once a minute, without any name or IP). Reads flush the memory first, at most once every 2 seconds, so a read can be up to 2 seconds behind. A crash, or a shutdown flush that fails or exceeds its 5-second bound, loses the failures of the last 60 seconds.
+
+**The IP is information only.** It is recorded to help an administrator see where failures come from, never to decide anything: no refusal, delay or counter depends on it, and the registry has no IP-based blocking. Behind a proxy that is not listed in `-trusted-proxies`, every failure carries the proxy's address. Per-IP volume limits belong in the reverse proxy.
+
+### Reset and who can read
+
+- **Who can read:** only global administrators: the three `GET /admin/v1/security/...` routes and the reset all refuse any other principal (standard, read-only, repository admin, robot, or a scope-limited token) with `403`. The failures table is not reachable by any other route. The TUI Overview row and the Login security screen use the same routes.
+- **Reset:** `POST /admin/v1/security/login-backoff/reset` with `{"account":"alice"}` clears the in-memory backoff counter of that one account (an unknown username by its `hash:xxxxxxxx` label). It does not touch tokens already issued, the password, or the aggregated records. An account with no backoff state answers `404` and records nothing.
+- **Audit:** each successful reset records the access event `login.backoff.reset` (actor, and as subject the account's name or its `hash:` label, never a raw unknown username), visible in `GET /admin/v1/access-events` and the Overview's Recent changes. The reset is the only write in this area.
 
 ## Risks and limits
 
 - `local-http` transmits credentials and tokens unencrypted if used outside a trusted network.
 - The generated env file may contain the Postgres DSN; its real permissions derive from how bootstrap wrote it and should be reviewed operationally.
-- No metrics endpoint or persistent audit logging of failed logins is confirmed in the code. Failed credentials are written to the structured log with the client IP and reason and counted in memory (see [Failed logins](#failed-logins-and-rate-limiting)).
+- There is no metrics endpoint. Failed credentials are written to the structured log with the client IP and reason, counted in memory by reason, and summarized in the persisted aggregated record described in [Login failures](#login-failures-what-is-recorded-and-why) (bounded, at-least-once counts, 30 days). It is a summary for administrators, not a per-attempt audit trail: the log is the per-attempt trail, and a deployment without an auth database has no persisted record.
+- The login backoff state is per process and in memory: it is lost on restart and not shared between instances.
 - ⚠️ A formal review of the complete OCI-facing attack surface has not been confirmed from the current code.
