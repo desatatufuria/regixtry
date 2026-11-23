@@ -441,6 +441,9 @@ func TestPushAfterTheDBNextUpdateElapsedRescansInsteadOfTrustingCachedMetadata(t
 	runner.set(func(f *fingerprintRunner) { f.nextUpdate = &next })
 	clock := start
 	service.now = func() time.Time { return clock }
+	// Uploads are stamped by the real clock; this test jumps the fake clock
+	// 60 days, which would put every new upload past its absolute lifetime.
+	service.SetUploadFairness(DefaultMaxOpenUploadsPerIdentity, 0)
 
 	publishAndWait(t, service, "library/alpine", "v1", "layer-stale")
 	waitForCompletedRuns(t, service, "library/alpine", 1, runner)
