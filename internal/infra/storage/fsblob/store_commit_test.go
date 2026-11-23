@@ -282,6 +282,10 @@ func (endlessReader) Read(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// The writer may or may not be parked inside the body read when the cancel
+// lands (the schedule decides); before the body read became abortable that made
+// this test a deadlock about 1 run in 100. It now passes for either order, and
+// TestCancelUploadDoesNotWaitForAStalledBody pins the parked case.
 func TestCancelUploadStopsAStreamingWriter(t *testing.T) {
 	t.Parallel()
 

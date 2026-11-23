@@ -1,9 +1,15 @@
 package fsblob
 
 import (
+	"bytes"
 	"context"
+	"fmt"
+	"io"
 	"os"
+	"runtime"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -72,5 +78,164 @@ func TestCancelUploadDoesNotWaitForAStalledBody(t *testing.T) {
 	}
 	if _, statErr := os.Stat(store.uploadDir(upload.ID)); !os.IsNotExist(statErr) {
 		t.Fatalf("upload dir still present after cancel: %v", statErr)
+	}
+}
+
+// stallingBody feeds a few bytes and then goes silent until closed, like a
+// slow HTTP client that keeps the connection open.
+func stallingBody(payload []byte) (*io.PipeReader, func()) {
+	reader, writer := io.Pipe()
+	go func() { _, _ = writer.Write(payload) }()
+	return reader, func() { _ = writer.Close() }
+}
+
+// TestUploadLifecycleStress hammers writers, cancels, commits and reaps on a
+// shared store. Invariants: nothing deadlocks, no goroutine outlives its body
+// Read, a committed blob hashes to its digest, a cancelled upload leaves no
+// directory. Run it under -race.
+func TestUploadLifecycleStress(t *testing.T) {
+	duration := 30 * time.Second
+	if testing.Short() {
+		duration = 2 * time.Second
+	}
+	store := newTestStore(t)
+	settle := func() int {
+		for i := 0; i < 100; i++ {
+			runtime.GC()
+			time.Sleep(20 * time.Millisecond)
+			if n := runtime.NumGoroutine(); n <= 2 {
+				return n
+			}
+		}
+		return runtime.NumGoroutine()
+	}
+	baseline := settle()
+
+	deadline := time.Now().Add(duration)
+	var counter atomic.Int64
+	var wg sync.WaitGroup
+	for w := 0; w < 8; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ctx := context.Background()
+			for time.Now().Before(deadline) {
+				n := counter.Add(1)
+				upload, err := store.BeginUpload(ctx, domain.MustParseRepositoryRef("library/alpine"))
+				if err != nil {
+					t.Errorf("BeginUpload: %v", err)
+					return
+				}
+				payload := []byte(fmt.Sprintf("payload-%d-%s", n, strings.Repeat("x", int(n%97))))
+				switch n % 4 {
+				case 0: // cancel a stalled writer
+					body, release := stallingBody(payload)
+					werr := make(chan error, 1)
+					go func() { _, err := store.PutUploadChunk(ctx, upload.ID, body); werr <- err }()
+					waitForSize(store, upload.ID, int64(len(payload)))
+					if err := store.CancelUpload(ctx, upload.ID); err != nil {
+						t.Errorf("CancelUpload: %v", err)
+					}
+					if err := <-werr; !domain.IsCode(err, domain.ErrorCodeNotFound) {
+						t.Errorf("writer after cancel = %v, want not found", err)
+					}
+					release()
+				case 1: // reap must refuse while a stalled writer holds the upload, then cancel
+					body, release := stallingBody(payload)
+					werr := make(chan error, 1)
+					go func() { _, err := store.PutUploadChunk(ctx, upload.ID, body); werr <- err }()
+					waitForSize(store, upload.ID, int64(len(payload)))
+					if reaped, err := store.ReapUpload(ctx, upload.ID, time.Now().Add(time.Hour)); reaped || err != nil {
+						t.Errorf("ReapUpload during write = %v, %v, want false, nil", reaped, err)
+					}
+					_ = store.CancelUpload(ctx, upload.ID)
+					<-werr
+					release()
+				case 2: // full upload then commit
+					if _, err := store.PutUploadChunk(ctx, upload.ID, bytes.NewReader(payload)); err != nil {
+						t.Errorf("PutUploadChunk: %v", err)
+						return
+					}
+					digest := domain.DigestFromBytes(payload)
+					if _, err := store.CommitUpload(ctx, upload.ID, digest); err != nil {
+						t.Errorf("CommitUpload: %v", err)
+						return
+					}
+					if got := readBlob(t, store, digest); !bytes.Equal(got, payload) {
+						t.Errorf("committed blob corrupted")
+					}
+				default: // commit racing a cancel
+					if _, err := store.PutUploadChunk(ctx, upload.ID, bytes.NewReader(payload)); err != nil {
+						t.Errorf("PutUploadChunk: %v", err)
+						return
+					}
+					digest := domain.DigestFromBytes(payload)
+					var inner sync.WaitGroup
+					var commitErr error
+					inner.Add(2)
+					go func() { defer inner.Done(); _, commitErr = store.CommitUpload(ctx, upload.ID, digest) }()
+					go func() { defer inner.Done(); _ = store.CancelUpload(ctx, upload.ID) }()
+					inner.Wait()
+					if commitErr == nil {
+						if got := readBlob(t, store, digest); !bytes.Equal(got, payload) {
+							t.Errorf("committed blob corrupted")
+						}
+					}
+					_ = store.CancelUpload(ctx, upload.ID)
+				}
+				if n%4 != 2 {
+					if _, statErr := os.Stat(store.uploadDir(upload.ID)); !os.IsNotExist(statErr) {
+						t.Errorf("upload dir present after cancel: %v", statErr)
+					}
+				}
+			}
+		}()
+	}
+	finished := make(chan struct{})
+	go func() { wg.Wait(); close(finished) }()
+	select {
+	case <-finished:
+	case <-time.After(duration + 30*time.Second):
+		buf := make([]byte, 1<<20)
+		t.Fatalf("stress workers deadlocked:\n%s", buf[:runtime.Stack(buf, true)])
+	}
+	if after := settle(); after > baseline+1 {
+		buf := make([]byte, 1<<20)
+		t.Fatalf("goroutines = %d, baseline %d (leak):\n%s", after, baseline, buf[:runtime.Stack(buf, true)])
+	}
+	t.Logf("iterations: %d", counter.Load())
+}
+
+func waitForSize(store *Store, uploadID string, size int64) {
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if info, err := os.Stat(store.uploadFile(uploadID)); err == nil && info.Size() >= size {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func BenchmarkPutUploadChunk256MB(b *testing.B) {
+	store, err := New(b.TempDir())
+	if err != nil {
+		b.Fatal(err)
+	}
+	const size = 256 << 20
+	b.SetBytes(size)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		upload, err := store.BeginUpload(context.Background(), domain.MustParseRepositoryRef("library/alpine"))
+		if err != nil {
+			b.Fatal(err)
+		}
+		b.StartTimer()
+		if _, err := store.PutUploadChunk(context.Background(), upload.ID, io.LimitReader(endlessReader{}, size)); err != nil {
+			b.Fatal(err)
+		}
+		b.StopTimer()
+		_ = store.CancelUpload(context.Background(), upload.ID)
+		b.StartTimer()
 	}
 }
