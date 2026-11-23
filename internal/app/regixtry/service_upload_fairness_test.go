@@ -53,22 +53,36 @@ func TestBeginUploadPerIdentityCapLeavesRoomForOthers(t *testing.T) {
 	}
 }
 
-// Anonymous mode (no principal) is a single bucket, exactly like before.
-func TestBeginUploadAnonymousIsOneBucket(t *testing.T) {
+// Anonymous mode (no principal) has nobody to tell apart, so only the global
+// cap applies, exactly as before the per-identity cap existed; identified
+// owners keep theirs.
+func TestBeginUploadAnonymousIsOnlyLimitedByTheGlobalCap(t *testing.T) {
 	t.Parallel()
 
 	service, cleanup := newTestService(t, allowAllAccessController{})
 	defer cleanup()
+	service.SetUploadLimits(0, 0)
 	service.SetUploadFairness(2, 0)
 	ctx := context.Background()
 
-	for i := 0; i < 2; i++ {
+	for i := 0; i < 300; i++ {
 		if _, err := service.BeginUpload(ctx, fmt.Sprintf("team/r%d", i)); err != nil {
-			t.Fatalf("anonymous BeginUpload #%d error = %v", i, err)
+			t.Fatalf("anonymous BeginUpload #%d error = %v, want success (per-identity cap does not apply)", i, err)
 		}
 	}
-	if _, err := service.BeginUpload(ctx, "team/r2"); !domain.IsCode(err, domain.ErrorCodeTooManyRequests) {
-		t.Fatalf("third anonymous BeginUpload error = %v, want too many requests", err)
+	// The 300 legacy-style owner '' rows do not count against an identified owner.
+	for i := 0; i < 2; i++ {
+		if _, err := service.BeginUpload(ctxAs("named"), fmt.Sprintf("team/n%d", i)); err != nil {
+			t.Fatalf("identified BeginUpload #%d error = %v", i, err)
+		}
+	}
+	if _, err := service.BeginUpload(ctxAs("named"), "team/n2"); !domain.IsCode(err, domain.ErrorCodeTooManyRequests) {
+		t.Fatalf("identified 3rd BeginUpload error = %v, want too many requests", err)
+	}
+
+	service.SetUploadLimits(302, 0)
+	if _, err := service.BeginUpload(ctx, "team/z"); !domain.IsCode(err, domain.ErrorCodeTooManyRequests) {
+		t.Fatalf("anonymous BeginUpload at the global cap error = %v, want too many requests", err)
 	}
 }
 

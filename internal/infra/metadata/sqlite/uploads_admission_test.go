@@ -53,7 +53,7 @@ func TestSaveUploadAdmittedEnforcesBothCaps(t *testing.T) {
 }
 
 // A database created before the owner column existed upgrades in place; its
-// rows count toward the anonymous bucket and the migration is idempotent.
+// rows count only against the global cap and the migration is idempotent.
 func TestUploadsOwnerColumnMigrationIsAdditiveAndIdempotent(t *testing.T) {
 	t.Parallel()
 
@@ -77,8 +77,12 @@ func TestUploadsOwnerColumnMigrationIsAdditiveAndIdempotent(t *testing.T) {
 			t.Fatalf("legacy upload unreadable after migration #%d: %v", i, err)
 		}
 		if i == 0 {
-			if denied, err := store.SaveUploadAdmitted(context.Background(), "t", admissionState("new"), "", 0, 1); err != nil || denied != UploadDeniedIdentity {
-				t.Fatalf("anonymous bucket with one legacy row = %q, %v, want identity denial at cap 1", denied, err)
+			// Legacy rows (owner '') count only against the global cap.
+			if denied, err := store.SaveUploadAdmitted(context.Background(), "t", admissionState("new"), "", 0, 1); err != nil || denied != UploadAdmitted {
+				t.Fatalf("anonymous bucket with one legacy row = %q, %v, want admitted (no per-owner cap for '')", denied, err)
+			}
+			if denied, err := store.SaveUploadAdmitted(context.Background(), "t", admissionState("named"), "u1", 0, 1); err != nil || denied != UploadAdmitted {
+				t.Fatalf("identified owner next to legacy rows = %q, %v, want admitted", denied, err)
 			}
 		}
 		_ = store.Close()

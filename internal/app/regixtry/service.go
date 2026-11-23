@@ -303,7 +303,8 @@ type uploadAdmitter interface {
 
 // uploadOwner is the identity open uploads are counted against: the
 // authenticated user (or robot) id, so every token of one user shares one
-// quota. Without a principal (anonymous mode) it is "", a single bucket.
+// quota. Without a principal (anonymous mode) it is "", which the store
+// exempts from the per-identity cap (only the global cap applies).
 func uploadOwner(ctx context.Context) string {
 	principal := ports.PrincipalFromContext(ctx)
 	if principal == nil {

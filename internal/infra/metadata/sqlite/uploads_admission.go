@@ -18,7 +18,9 @@ const (
 // tenant holds fewer than maxOpen open uploads and owner holds fewer than
 // maxPerOwner (zero or negative disables that bound). The counts and the
 // insert are ONE statement through the write queue, so concurrent callers can
-// never overshoot either cap. It returns UploadAdmitted, UploadDeniedGlobal or
+// never overshoot either cap. The empty owner (anonymous callers and rows
+// that predate the owner column) is exempt from the per-owner cap: there is
+// nobody to tell apart in that bucket, so only the global cap applies to it. It returns UploadAdmitted, UploadDeniedGlobal or
 // UploadDeniedIdentity; a denied upload leaves no row. With requireProject
 // the project must still exist, as in SaveUpload.
 func (s *Store) SaveUploadAdmitted(ctx context.Context, tenant string, state domain.UploadState, owner string, maxOpen int, maxPerOwner int) (string, error) {
@@ -30,10 +32,10 @@ func (s *Store) SaveUploadAdmitted(ctx context.Context, tenant string, state dom
 		state.ID, tenant, state.Repository.String(), string(state.Status), state.Size,
 		state.StartedAt.UTC().Format(time.RFC3339Nano), state.UpdatedAt.UTC().Format(time.RFC3339Nano), state.Location, owner,
 		maxOpen, tenant, maxOpen,
-		maxPerOwner, tenant, owner, maxPerOwner,
+		maxPerOwner, owner, tenant, owner, maxPerOwner,
 	}
 	condition := `(? <= 0 OR (SELECT COUNT(*) FROM uploads WHERE tenant = ?) < ?)
-		AND (? <= 0 OR (SELECT COUNT(*) FROM uploads WHERE tenant = ? AND owner = ?) < ?)`
+		AND (? <= 0 OR ? = '' OR (SELECT COUNT(*) FROM uploads WHERE tenant = ? AND owner = ?) < ?)`
 	project, guarded := domain.ProjectOf(state.Repository)
 	guarded = guarded && s.requireProject
 	if guarded {
@@ -52,7 +54,9 @@ func (s *Store) SaveUploadAdmitted(ctx context.Context, tenant string, state dom
 		return UploadAdmitted, nil
 	}
 
-	// Refused: say which bound did it (a read; the refusal itself was atomic).
+	// Refused: say which bound did it. This is a separate read after the
+	// atomic refusal, so under concurrency it may name the wrong cap; the
+	// refusal itself is always correct.
 	if guarded {
 		exists, err := s.ProjectExists(ctx, tenant, project)
 		if err != nil {
