@@ -31,7 +31,7 @@ Draft. Single source for an operator upgrading to the release that adds projects
 
 1. Back up `metadata.db` (stopped cleanly, or with its `-wal` file) and keep it with the `content` directory.
 2. Back up the Postgres auth database. The release adds the table `auth_project_grants`; nothing existing changes.
-3. Decide on enforcement. To disable: `REGISTRY_REQUIRE_PROJECT=false` in the env file (systemd), or under `environment` of the `regixtry` service in `docker-compose.yml` (only listed variables reach the container), or `-require-project=false`.
+3. Decide on enforcement. To disable: `REGISTRY_REQUIRE_PROJECT=false` in the env file (systemd), or `REGIXTRY_REQUIRE_PROJECT=false` in the Compose `.env` (the shipped compose file forwards it; empty means the default), or `-require-project=false`.
 4. With enforcement on, plan which projects new customers need and create them before they push.
 
 The first start creates the `projects` table and, once, one project per first segment of the slashed repositories that exist then (`created_by` `migration`). Flat repositories create no project.
