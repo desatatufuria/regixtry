@@ -349,6 +349,8 @@ Rows show `▸` (collapsed) or `▾` (expanded) for a folder, `●` for a reposi
 
 Expansion and the cursor are kept by path when the catalog reloads (a vanished row moves the cursor to its nearest surviving ancestor). The mouse selects a row, a click on the fold marker opens or closes a folder, and the wheel scrolls; it never opens a delete. From 170 columns a detail panel shows the selected row.
 
+Two choices differ from a plain tree: `Enter` on a folder-only row goes into it (it does not toggle), and `Esc` at the project root keeps its older meaning (show every repository) instead of returning to Projects. `d` on a folder does nothing.
+
 Deletes ask the confirm dialog and need the server flag `-delete-enabled` / `REGISTRY_DELETE_ENABLED`; without it they fail with "... deletion is not enabled".
 
 | Delete | What it does |

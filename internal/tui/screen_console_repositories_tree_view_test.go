@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"os"
@@ -349,5 +351,36 @@ func TestTreeNamesGoThroughTheTerminalEscapeSanitizer(t *testing.T) {
 	raw := m.View().Content
 	if strings.Contains(raw, "\x07") || strings.Contains(raw, "\x1b]") {
 		t.Fatalf("a terminal escape from a repository name reached the screen: %q", raw)
+	}
+}
+
+// TestUnfilteredRepositoriesTableIsByteIdenticalToBefore pins the flat table:
+// its goldens are those of the commit before the tree (their hashes), and the
+// screen still renders exactly them.
+func TestUnfilteredRepositoriesTableIsByteIdenticalToBefore(t *testing.T) {
+	t.Parallel()
+	want := map[string]string{
+		"repositories_150x24": "cbbd2f136c7ed8e40c70eff6266723d18d074917e8ea2c0175e4271ab03e08bc",
+		"repositories_200x40": "f0c142d04ba57e91aab7629685d1532fb5ff601fc3c9d17046698f24236d8722",
+	}
+	for name, hash := range want {
+		raw, err := os.ReadFile(filepath.Join("testdata", "console", name+".golden"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if sum := sha256.Sum256(raw); hex.EncodeToString(sum[:]) != hash {
+			t.Fatalf("%s.golden changed: the unfiltered table must stay byte-identical", name)
+		}
+	}
+	for _, st := range consoleStates {
+		if st.name != "repositories" {
+			continue
+		}
+		for _, size := range []struct{ w, h int }{{150, 24}, {200, 40}} {
+			raw, _ := os.ReadFile(filepath.Join("testdata", "console", fmt.Sprintf("repositories_%dx%d.golden", size.w, size.h)))
+			if got := ansi.Strip(consoleModelFor(t, st, size.w, size.h).View().Content); got != string(raw) {
+				t.Fatalf("the unfiltered table at %dx%d differs from its golden", size.w, size.h)
+			}
+		}
 	}
 }
