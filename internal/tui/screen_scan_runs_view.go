@@ -80,7 +80,7 @@ func (s scanRunsScreen) notice(theme adminTheme, inner int) []string {
 	switch {
 	case s.err != "":
 		return []string{
-			theme.error.Render(grantTruncate("Could not read scan history: "+s.err, inner)),
+			theme.error.Render(grantTruncate(sanitizeDisplay("Could not read scan history: "+s.err), inner)),
 			theme.muted.Render("Press r to try again."),
 		}
 	case !s.loaded && s.isSecretFindings():
@@ -201,9 +201,9 @@ func (s scanRunsScreen) secretPanel(theme adminTheme, row secretRow, width, heig
 	inner := max(width-4, 1)
 	f := row.finding
 	head := []string{
-		theme.subheading.Render(grantTruncate(adminFirstNonEmpty(f.RuleID, "unknown"), inner)),
+		theme.subheading.Render(grantTruncate(sanitizeDisplay(adminFirstNonEmpty(f.RuleID, "unknown")), inner)),
 	}
-	head = append(head, theme.muted.Render(grantTruncate(row.run.Repository, inner)))
+	head = append(head, theme.muted.Render(grantTruncate(sanitizeDisplay(row.run.Repository), inner)))
 	head = append(head, wrapStyled(theme.muted, secretFindingPlace(f), inner)...)
 	finding := []string{scanSectionTitle(theme, "FINDING")}
 	if desc := strings.TrimSpace(f.Description); desc != "" {
@@ -224,7 +224,7 @@ func (s scanRunsScreen) secretPanel(theme adminTheme, row secretRow, width, heig
 
 // secretFindingPlace is "src/deploy/prod.env line 14" or "... lines 14 to 20".
 func secretFindingPlace(f ports.SecretFinding) string {
-	place := adminFirstNonEmpty(f.Path, f.BlobDigest, "unknown location")
+	place := sanitizeDisplay(adminFirstNonEmpty(f.Path, f.BlobDigest, "unknown location"))
 	switch {
 	case f.StartLine <= 0:
 		return place

@@ -102,14 +102,14 @@ func renderScanTable(theme adminTheme, specs []scanColSpec, rows [][]scanCell, c
 		if i == cursor {
 			plain := make([]string, len(cells))
 			for c, cell := range cells {
-				plain[c] = scanPad(cell.text, widths[c])
+				plain[c] = scanPad(sanitizeDisplay(cell.text), widths[c])
 			}
 			lines = append(lines, theme.selected.Padding(0).Render("▸ "+strings.Join(plain, gap)))
 			continue
 		}
 		styled := make([]string, len(cells))
 		for c, cell := range cells {
-			text := grantTruncate(cell.text, widths[c])
+			text := grantTruncate(sanitizeDisplay(cell.text), widths[c])
 			styled[c] = cell.style.Render(text) + strings.Repeat(" ", max(widths[c]-lipgloss.Width(text), 0))
 		}
 		lines = append(lines, "  "+strings.Join(styled, gap))
@@ -172,12 +172,14 @@ func scanSectionTitle(theme adminTheme, title string) string {
 	return theme.muted.Bold(true).Render(title)
 }
 
-// scanKV is one "label ........ value" row of a panel.
+// scanKV is one "label ........ value" row of a panel. The value may be
+// registry-supplied text, so it is neutralised here: a newline in it must not
+// open another row of the panel.
 func scanKV(theme adminTheme, label, value string, valueStyle lipgloss.Style, width int) string {
 	inner := max(width-4, 1)
 	left := theme.muted.Render(label)
 	room := max(inner-lipgloss.Width(label)-1, 1)
-	right := valueStyle.Render(grantTruncate(value, room))
+	right := valueStyle.Render(grantTruncate(sanitizeDisplay(value), room))
 	gap := max(inner-lipgloss.Width(left)-lipgloss.Width(right), 1)
 	return left + strings.Repeat(" ", gap) + right
 }
@@ -193,7 +195,7 @@ func scanAction(theme adminTheme, label, keyName string, width int) string {
 // scanTitleLine is a screen's title with its muted note on the right.
 func scanTitleLine(theme adminTheme, title, note string, width int) string {
 	right := theme.muted.Render(note)
-	left := theme.subheading.MaxWidth(max(width-lipgloss.Width(right)-2, 1)).Render(title)
+	left := theme.subheading.MaxWidth(max(width-lipgloss.Width(right)-2, 1)).Render(sanitizeDisplay(title))
 	gap := max(width-lipgloss.Width(left)-lipgloss.Width(right), 1)
 	return left + strings.Repeat(" ", gap) + right
 }
@@ -309,16 +311,16 @@ func scanRunPanelFor(theme adminTheme, run ports.ScanRun, now time.Time, actions
 	if ref := strings.TrimSpace(run.RequestedRef); ref != "" {
 		title += ":" + ref
 	}
-	subtitle := adminFirstNonEmpty(run.Status, "unknown")
+	subtitle := sanitizeDisplay(adminFirstNonEmpty(run.Status, "unknown"))
 	if trigger := strings.TrimSpace(run.Trigger); trigger != "" {
-		subtitle += ", trigger " + trigger
+		subtitle += ", trigger " + sanitizeDisplay(trigger)
 	}
-	head := []string{theme.subheading.Render(grantTruncate(title, inner))}
+	head := []string{theme.subheading.Render(grantTruncate(sanitizeDisplay(title), inner))}
 	head = append(head, wrapStyled(theme.muted, subtitle, inner)...)
 	if freshness && run.Stale {
 		reason := "Rescan failed: this result is kept and still enforced."
 		if detail := strings.TrimSpace(run.StaleReason); detail != "" {
-			reason = "Rescan failed: " + detail
+			reason = "Rescan failed: " + sanitizeDisplay(detail)
 		}
 		lines := wrapStyled(theme.warning, reason, inner)
 		if len(lines) > 2 {
