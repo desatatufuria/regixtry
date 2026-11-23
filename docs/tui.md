@@ -19,7 +19,7 @@ Against a container, use `docker exec` ([README](../README.md#the-tui-against-a-
 
 After login the operator lands on the **Overview**. Every admin screen is drawn inside one shell: a header with the breadcrumb and `signed in as <name>`, a sidebar, the screen body, and a footer of key hints with the mouse indicator (`F2 mouse on`).
 
-Text that comes from the registry (repository, tag, user and robot names, scan findings, error messages) is shown with terminal control characters made harmless: control characters appear as `·`, bidi and zero-width characters are dropped, and only the TUI's own colours reach the terminal.
+Text that comes from the registry (repository, tag, user and robot names, scan findings, error messages) is shown with terminal control characters made harmless: control characters appear as `·`, bidi and zero-width characters are dropped, and only the TUI's own colours reach the terminal. A value pushed by a repository writer, such as a platform, an artifact type, an annotation, a blob media type, or a scan finding's package, rule, description or path, is also kept on the single row the screen gives it: a line break inside it appears as `·` and never starts a new row.
 
 ```
 Admin › Access › Users                                    signed in as operator

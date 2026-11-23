@@ -2049,11 +2049,17 @@ func renderConsoleTextSection(content string, layout consoleLayout) string {
 // highlighted row) so the plain "Regixtry Console" screens (repositories,
 // tags, manifest, blobs, uploads) read consistently with the admin screens
 // instead of falling back to unstyled plain text.
+//
+// Every registry-supplied string (media types, annotations, platform fields,
+// referrer artifact types, blob media types) is passed through
+// sanitizeDisplay before it is formatted into a row: the frame sanitizer keeps
+// newlines for the layout, so only a per-field pass keeps a pusher's text on
+// the one row the renderer assigned it.
 func renderManifest(theme adminTheme, manifest appregixtry.ManifestDetails, signature appregixtry.SignatureStatusResult, referrers appregixtry.ReferrersIndex) string {
 	lines := []string{
-		theme.subheading.Render(fmt.Sprintf("Manifest · %s:%s", manifest.Repository, manifest.Reference)),
-		fmt.Sprintf("%s %s", theme.muted.Render("Digest:"), theme.text.Render(manifest.Digest)),
-		fmt.Sprintf("%s %s", theme.muted.Render("Media Type:"), theme.text.Render(manifest.MediaType)),
+		theme.subheading.Render(fmt.Sprintf("Manifest · %s:%s", sanitizeDisplay(manifest.Repository), sanitizeDisplay(manifest.Reference))),
+		fmt.Sprintf("%s %s", theme.muted.Render("Digest:"), theme.text.Render(sanitizeDisplay(manifest.Digest))),
+		fmt.Sprintf("%s %s", theme.muted.Render("Media Type:"), theme.text.Render(sanitizeDisplay(manifest.MediaType))),
 		// Manifest Size (the manifest JSON document's own byte size) and
 		// Total Image Size (the sum of every blob's size -- config + every
 		// layer, i.e. what a pull actually transfers) are deliberately two
@@ -2072,7 +2078,7 @@ func renderManifest(theme adminTheme, manifest appregixtry.ManifestDetails, sign
 		}
 		sort.Strings(keys)
 		for _, key := range keys {
-			lines = append(lines, fmt.Sprintf("%s %s", theme.muted.Render("Annotation "+key+"="), theme.text.Render(manifest.Annotations[key])))
+			lines = append(lines, fmt.Sprintf("%s %s", theme.muted.Render("Annotation "+sanitizeDisplay(key)+"="), theme.text.Render(sanitizeDisplay(manifest.Annotations[key]))))
 		}
 	}
 	lines = append(lines, renderManifestPlatformLines(theme, manifest.Platforms)...)
@@ -2101,12 +2107,12 @@ func renderManifestPlatformLines(theme adminTheme, platforms []appregixtry.Platf
 		// object.
 		target := "unknown"
 		if platform.OS != "" || platform.Architecture != "" {
-			target = platform.OS + "/" + platform.Architecture
+			target = sanitizeDisplay(platform.OS) + "/" + sanitizeDisplay(platform.Architecture)
 			if platform.Variant != "" {
-				target += "/" + platform.Variant
+				target += "/" + sanitizeDisplay(platform.Variant)
 			}
 		}
-		row := fmt.Sprintf("  %s  %s (%d bytes) [%s]", target, platform.Digest, platform.Size, platform.MediaType)
+		row := fmt.Sprintf("  %s  %s (%d bytes) [%s]", target, sanitizeDisplay(platform.Digest), platform.Size, sanitizeDisplay(platform.MediaType))
 		lines = append(lines, theme.text.Render(row))
 	}
 	return lines
@@ -2132,7 +2138,7 @@ func renderManifestReferrerLines(theme adminTheme, referrers appregixtry.Referre
 		if kind == "" {
 			kind = referrer.MediaType
 		}
-		row := fmt.Sprintf("  %s [%s]", referrer.Digest, kind)
+		row := fmt.Sprintf("  %s [%s]", sanitizeDisplay(referrer.Digest), sanitizeDisplay(kind))
 		if summary := summarizeAnnotations(referrer.Annotations); summary != "" {
 			row += "  " + summary
 		}
@@ -2159,7 +2165,7 @@ func summarizeAnnotations(annotations map[string]string) string {
 
 	pairs := make([]string, 0, len(keys))
 	for _, key := range keys {
-		pairs = append(pairs, fmt.Sprintf("%s=%s", key, annotations[key]))
+		pairs = append(pairs, fmt.Sprintf("%s=%s", sanitizeDisplay(key), sanitizeDisplay(annotations[key])))
 	}
 	return strings.Join(pairs, ", ")
 }
@@ -2182,14 +2188,14 @@ func renderSignatureLines(theme adminTheme, signature appregixtry.SignatureStatu
 	}
 
 	lines := []string{
-		fmt.Sprintf("%s %s", theme.muted.Render("Signature state:"), theme.text.Render(signature.State)),
+		fmt.Sprintf("%s %s", theme.muted.Render("Signature state:"), theme.text.Render(sanitizeDisplay(signature.State))),
 	}
 	if signature.Signature.Tag != "" {
-		lines = append(lines, fmt.Sprintf("%s %s", theme.muted.Render("Signature tag:"), theme.text.Render(signature.Signature.Tag)))
+		lines = append(lines, fmt.Sprintf("%s %s", theme.muted.Render("Signature tag:"), theme.text.Render(sanitizeDisplay(signature.Signature.Tag))))
 	}
 	lines = append(lines, fmt.Sprintf("%s %s", theme.muted.Render("Signature count:"), theme.text.Render(fmt.Sprintf("%d", signature.Signature.SignatureCount))))
 	if signature.Signature.VerifiedKeyFingerprint != "" {
-		lines = append(lines, fmt.Sprintf("%s %s", theme.muted.Render("Signed with:"), theme.text.Render(signature.Signature.VerifiedKeyFingerprint)))
+		lines = append(lines, fmt.Sprintf("%s %s", theme.muted.Render("Signed with:"), theme.text.Render(sanitizeDisplay(signature.Signature.VerifiedKeyFingerprint))))
 	}
 	// VerifiedIdentity (signing-keyless-verification) is mutually exclusive
 	// with VerifiedKeyFingerprint (queries.go's own discipline: a signature
@@ -2197,7 +2203,7 @@ func renderSignatureLines(theme adminTheme, signature appregixtry.SignatureStatu
 	// its own distinct line, never folded into "Signed with:" (spec:
 	// "Identity match reports SAN and issuer separately").
 	if signature.Signature.VerifiedIdentity != "" {
-		lines = append(lines, fmt.Sprintf("%s %s", theme.muted.Render("Verified identity:"), theme.text.Render(signature.Signature.VerifiedIdentity)))
+		lines = append(lines, fmt.Sprintf("%s %s", theme.muted.Render("Verified identity:"), theme.text.Render(sanitizeDisplay(signature.Signature.VerifiedIdentity))))
 	}
 	return lines
 }
@@ -2208,7 +2214,7 @@ func renderBlobs(theme adminTheme, blobs BlobsModel) string {
 		return strings.Join(append(lines, theme.muted.Render("No blobs are linked to the selected manifest.")), "\n")
 	}
 	for index, blob := range blobs.Items {
-		row := fmt.Sprintf("%s (%d bytes) [%s]", blob.Digest, blob.Size, blob.MediaType)
+		row := fmt.Sprintf("%s (%d bytes) [%s]", sanitizeDisplay(blob.Digest), blob.Size, sanitizeDisplay(blob.MediaType))
 		if index == blobs.Selected {
 			lines = append(lines, theme.selected.Render(row))
 			continue
@@ -2219,12 +2225,12 @@ func renderBlobs(theme adminTheme, blobs BlobsModel) string {
 }
 
 func renderUploads(theme adminTheme, uploads UploadsModel) string {
-	lines := []string{theme.subheading.Render(fmt.Sprintf("Uploads · %s", uploads.Repository))}
+	lines := []string{theme.subheading.Render(fmt.Sprintf("Uploads · %s", sanitizeDisplay(uploads.Repository)))}
 	if len(uploads.Items) == 0 {
 		return strings.Join(append(lines, theme.muted.Render("No in-progress uploads for this repository.")), "\n")
 	}
 	for _, upload := range uploads.Items {
-		lines = append(lines, theme.text.Render(fmt.Sprintf("%s · %s · %d bytes", upload.ID, upload.Status, upload.Size)))
+		lines = append(lines, theme.text.Render(fmt.Sprintf("%s · %s · %d bytes", sanitizeDisplay(upload.ID), sanitizeDisplay(upload.Status), upload.Size)))
 	}
 	return strings.Join(lines, "\n")
 }
