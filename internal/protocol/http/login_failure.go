@@ -85,7 +85,7 @@ func (r *Router) recordLoginFailure(req *stdhttp.Request, endpoint string, usern
 	if r.logger == nil {
 		return
 	}
-	line := fmt.Sprintf("login failed endpoint=%s ip=%s reason=%q", endpoint, clientIP(req, r.trustedProxies), reason)
+	line := fmt.Sprintf("login failed endpoint=%s ip=%s reason=%q", logEndpoint(endpoint), clientIP(req, r.trustedProxies), reason)
 	if username != "" {
 		line += " " + accountLogField(username, reason)
 	}
@@ -103,7 +103,7 @@ func (r *Router) recordLoginThrottle(req *stdhttp.Request, endpoint string, user
 	if r.logger == nil {
 		return
 	}
-	r.logger.Printf("login failed endpoint=%s ip=%s reason=%q %s", endpoint, clientIP(req, r.trustedProxies), reason, accountLogField(username, reason))
+	r.logger.Printf("login failed endpoint=%s ip=%s reason=%q %s", logEndpoint(endpoint), clientIP(req, r.trustedProxies), reason, accountLogField(username, reason))
 }
 
 // accountIdentity decides how a failed login's account is written anywhere it
@@ -177,6 +177,20 @@ func (r *Router) aggregateLoginFailure(req *stdhttp.Request, endpoint string, us
 func logToken(value string) string {
 	for _, c := range value {
 		plain := c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '.' || c == '_' || c == '-' || c == '@'
+		if !plain {
+			return strconv.Quote(value)
+		}
+	}
+	return value
+}
+
+// logEndpoint writes an endpoint label bare when it is only path characters
+// (the fixed labels /auth/token, /v2 and /admin/v1 always are, so operators'
+// greps keep working) and quotes anything else, because credentialEndpoint
+// falls back to the raw request path.
+func logEndpoint(value string) string {
+	for _, c := range value {
+		plain := c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '/' || c == '.' || c == '_' || c == '-'
 		if !plain {
 			return strconv.Quote(value)
 		}

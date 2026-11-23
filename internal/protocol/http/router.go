@@ -129,7 +129,7 @@ func (r *Router) logRequest(req *stdhttp.Request, statusCode int, duration time.
 		return
 	}
 
-	message := fmt.Sprintf("registry request method=%s path=%s status=%d duration=%s", req.Method, requestPath(req), statusCode, duration.Round(time.Microsecond))
+	message := fmt.Sprintf("registry request method=%s path=%q status=%d duration=%s", req.Method, requestPath(req), statusCode, duration.Round(time.Microsecond))
 	if authChallenge != "" {
 		message += fmt.Sprintf(" auth_challenge=%q", authChallenge)
 	}

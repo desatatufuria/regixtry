@@ -94,6 +94,8 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -d '{"account":"alice"}' "$B/logi
 
 Replies, filters, paging and errors are in [api.md](api.md#management-api). The log line `login failed endpoint=... ip=... reason=... account=...` (`journalctl -u regixtry | grep 'login failed'`) remains the per-attempt trail.
 
+Every request also writes one line `registry request method=... path="..." status=... duration=...`. The `path` value (decoded path plus raw query) is client-controlled, so it is always written quoted and escaped (a percent-encoded newline appears as `\n`, an escape byte as `\x1b`): a client cannot split a record or plant a fake `login failed` line. The `endpoint` of a `login failed` line is bare for `/auth/token`, `/v2` and `/admin/v1` and quoted for anything else.
+
 ### Reading log mode and enforce mode
 
 `GET .../login-backoff` (and the `backoff mode:` label in the TUI) reports `mode`:

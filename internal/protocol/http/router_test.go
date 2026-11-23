@@ -2086,7 +2086,7 @@ func TestRouterLogsUnauthorizedChallengeDetails(t *testing.T) {
 	handler.ServeHTTP(recorder, req)
 
 	output := logs.String()
-	if !strings.Contains(output, "method=POST") || !strings.Contains(output, "path=/v2/library/alpine/blobs/uploads/") || !strings.Contains(output, "status=401") {
+	if !strings.Contains(output, "method=POST") || !strings.Contains(output, `path="/v2/library/alpine/blobs/uploads/"`) || !strings.Contains(output, "status=401") {
 		t.Fatalf("log output = %q, want method/path/status details", output)
 	}
 	if !strings.Contains(output, `auth_challenge="Bearer realm=\"http://127.0.0.1:5000/auth/token\"`) || !strings.Contains(output, `scope=\"repository:library/alpine:pull,push\"`) {
@@ -2111,7 +2111,7 @@ func TestRouterLogsRequestPathWithQueryString(t *testing.T) {
 	handler.ServeHTTP(recorder, req)
 
 	output := logs.String()
-	if !strings.Contains(output, "path=/auth/token?service=registry&scope=repository:team/app:pull") || !strings.Contains(output, "status=200") {
+	if !strings.Contains(output, `path="/auth/token?service=registry&scope=repository:team/app:pull"`) || !strings.Contains(output, "status=200") {
 		t.Fatalf("log output = %q, want request URI and status", output)
 	}
 	if strings.Contains(output, "auth_challenge=") {
