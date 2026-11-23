@@ -20,8 +20,14 @@ const (
 	// repository, so a single noisy writer cannot consume every slot.
 	DefaultPushScanMaxPerRepository = 8
 	// DefaultPushScanMaxPerPusher bounds the same quantity for one pushing
-	// principal across all repositories (a quarter of the global default).
-	DefaultPushScanMaxPerPusher = 16
+	// principal across all repositories (an eighth of the global default).
+	DefaultPushScanMaxPerPusher = DefaultPushScanMaxPending / 8
+	// pushScanNewcomerReserveDivisor reserves 1/N of the global cap for
+	// identities that hold no slot yet: once the pool is within that
+	// reserve of full, only an identity with nothing in flight is admitted.
+	// Several identities that each stay inside their own per-pusher cap
+	// therefore cannot fill the pool and starve every other writer.
+	pushScanNewcomerReserveDivisor = 4
 
 	pushScanSkippedError = "skipped: push scan queue full"
 
@@ -82,6 +88,10 @@ func (l *pushScanLimiter) acquire(tenant string, repository string, pusher strin
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.total >= l.maxPending || l.perRepo[key] >= l.maxPerRepo || l.perPusher[pusherKey] >= l.maxPerPusher {
+		return nil, false
+	}
+	// Reserve the last slice of the pool for identities with no slot yet.
+	if l.perPusher[pusherKey] > 0 && l.total >= l.maxPending-l.maxPending/pushScanNewcomerReserveDivisor {
 		return nil, false
 	}
 	l.total++

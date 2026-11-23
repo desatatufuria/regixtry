@@ -622,3 +622,85 @@ func TestOverCapPushNeverBlocksOnTheStoreAndSkippedRowsAreCoalesced(t *testing.T
 		return skipped == len(repos)
 	})
 }
+
+func pushScanDigest(seed string, i int) string {
+	return "sha256:" + fmt.Sprintf("%s%d", seed, i) + strings.Repeat("0", 64-len(seed)-len(fmt.Sprint(i)))
+}
+
+func latestPushScanStatus(service *Service, repository string, digest string) string {
+	run, err := service.metadata.GetLatestScanRunByDigest(context.Background(), "tenant-a", repository, digest)
+	if err != nil {
+		return "none"
+	}
+	return run.Status
+}
+
+// TestSaturatingIdentitiesCannotStarveAnotherWritersPushScan reproduces the
+// run-2 audit lead: several writer identities, each inside its own per-pusher
+// cap, used to fill the whole global pool so a different writer's push was
+// never admitted. The last quarter of the pool is now reserved for
+// identities that hold no slot yet.
+func TestSaturatingIdentitiesCannotStarveAnotherWritersPushScan(t *testing.T) {
+	service, _, cleanup := newPushScanService(t)
+	defer cleanup()
+	service.SetPushScanLimits(8, 8, 4)
+
+	for i := 0; i < 6; i++ {
+		service.startPushScan("tenant-a", "a1/app", "t", pushScanDigest("a", i), "writer-a1")
+	}
+	for i := 0; i < 6; i++ {
+		service.startPushScan("tenant-a", "a2/app", "t", pushScanDigest("b", i), "writer-a2")
+	}
+	victim := pushScanDigest("c", 0)
+	service.startPushScan("tenant-a", "b/app", "t", victim, "writer-b")
+
+	waitUntil(t, "the victim's push to be admitted as a real scan", func() bool {
+		status := latestPushScanStatus(service, "b/app", victim)
+		return status == ports.ScanRunStatusQueued || status == ports.ScanRunStatusRunning
+	})
+	if got := pushScanSlotsInUse(service); got > 8 {
+		t.Fatalf("slots in use = %d, want <= 8 (global cap)", got)
+	}
+}
+
+func TestPushScanLimiterNeverExceedsCapsUnderParallelIdentitiesAndLeaksNoSlot(t *testing.T) {
+	limiter := newPushScanLimiter()
+	limiter.setLimits(24, 6, 5)
+	var mu sync.Mutex
+	var releases []func()
+	var wg sync.WaitGroup
+	for id := 0; id < 12; id++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 20; i++ {
+				if release, ok := limiter.acquire("t", fmt.Sprintf("repo%d/app", i%4), fmt.Sprintf("id%d", id)); ok {
+					mu.Lock()
+					releases = append(releases, release)
+					mu.Unlock()
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	limiter.mu.Lock()
+	total := limiter.total
+	for pusher, n := range limiter.perPusher {
+		if n > 5 {
+			t.Errorf("pusher %q holds %d, want <= 5", pusher, n)
+		}
+	}
+	limiter.mu.Unlock()
+	if total > 24 || total != len(releases) {
+		t.Fatalf("total = %d with %d held slots, want <= 24 and consistent", total, len(releases))
+	}
+	for _, release := range releases {
+		release()
+		release() // idempotent
+	}
+	limiter.mu.Lock()
+	defer limiter.mu.Unlock()
+	if limiter.total != 0 || len(limiter.perRepo) != 0 || len(limiter.perPusher) != 0 {
+		t.Fatalf("slots leaked: total=%d repo=%d pusher=%d", limiter.total, len(limiter.perRepo), len(limiter.perPusher))
+	}
+}
