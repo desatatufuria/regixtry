@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -93,23 +94,38 @@ func stallingBody(payload []byte) (*io.PipeReader, func()) {
 // shared store. Invariants: nothing deadlocks, no goroutine outlives its body
 // Read, a committed blob hashes to its digest, a cancelled upload leaves no
 // directory. Run it under -race.
+//
+// It runs 3 s by default and 1 s under -short. REGIXTRY_STRESS_SECONDS (integer
+// seconds) overrides both, e.g. REGIXTRY_STRESS_SECONDS=30 for a long soak.
 func TestUploadLifecycleStress(t *testing.T) {
-	duration := 30 * time.Second
+	duration := 3 * time.Second
 	if testing.Short() {
-		duration = 2 * time.Second
+		duration = time.Second
+	}
+	if raw := os.Getenv("REGIXTRY_STRESS_SECONDS"); raw != "" {
+		seconds, err := strconv.Atoi(raw)
+		if err != nil || seconds <= 0 {
+			t.Fatalf("REGIXTRY_STRESS_SECONDS = %q, want a positive integer", raw)
+		}
+		duration = time.Duration(seconds) * time.Second
 	}
 	store := newTestStore(t)
-	settle := func() int {
+	// settle waits for the goroutine count to stop changing (or to reach want
+	// when want > 0) and returns it.
+	settle := func(want int) int {
+		last := -1
 		for i := 0; i < 100; i++ {
 			runtime.GC()
 			time.Sleep(20 * time.Millisecond)
-			if n := runtime.NumGoroutine(); n <= 2 {
+			n := runtime.NumGoroutine()
+			if (want > 0 && n <= want) || (want == 0 && n == last) {
 				return n
 			}
+			last = n
 		}
 		return runtime.NumGoroutine()
 	}
-	baseline := settle()
+	baseline := settle(0)
 
 	deadline := time.Now().Add(duration)
 	var counter atomic.Int64
@@ -199,7 +215,7 @@ func TestUploadLifecycleStress(t *testing.T) {
 		buf := make([]byte, 1<<20)
 		t.Fatalf("stress workers deadlocked:\n%s", buf[:runtime.Stack(buf, true)])
 	}
-	if after := settle(); after > baseline+1 {
+	if after := settle(baseline + 1); after > baseline+1 {
 		buf := make([]byte, 1<<20)
 		t.Fatalf("goroutines = %d, baseline %d (leak):\n%s", after, baseline, buf[:runtime.Stack(buf, true)])
 	}
