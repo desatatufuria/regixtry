@@ -2516,6 +2516,9 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 	// service uses it to purge grants and record events, and it asks the
 	// metadata store whether a project exists.
 	var concreteAuth *appauth.Service
+	// failureAggregator folds login failures into bounded in-memory counters
+	// flushed to the auth store; nil unless Postgres auth is enabled.
+	var failureAggregator *appauth.LoginFailureAggregator
 	bearerRealm := cfg.Realm
 	if trimmed := strings.TrimSpace(cfg.AuthTokenRealmURL); trimmed != "" {
 		bearerRealm = trimmed
@@ -2542,6 +2545,10 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 
 		concreteAuth = appauth.NewService(authStore)
 		concreteAuth.ConfigureLogin(loginPolicyFromConfig(cfg))
+		if failureStore, ok := authStore.(ports.LoginFailureStore); ok {
+			failureAggregator = appauth.NewLoginFailureAggregator(failureStore, appauth.LoginFailureOptions{})
+			concreteAuth.SetLoginFailureAggregator(failureAggregator)
+		}
 		authService = concreteAuth
 		err = authService.EnsureBootstrapAdmin(context.Background())
 		if err != nil {
@@ -2648,7 +2655,34 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 		}()
 	}
 
-	return regixtryhttp.NewRouter(service, authService, regixtryhttp.WithMaxManifestBytes(limitOrDefault(cfg.MaxManifestBytes, regixtryhttp.DefaultMaxManifestBytes)), regixtryhttp.WithTrustedProxies(trustedProxies), regixtryhttp.WithProjects(projectService)), func() {
+	routerOptions := []regixtryhttp.RouterOption{
+		regixtryhttp.WithMaxManifestBytes(limitOrDefault(cfg.MaxManifestBytes, regixtryhttp.DefaultMaxManifestBytes)),
+		regixtryhttp.WithTrustedProxies(trustedProxies),
+		regixtryhttp.WithProjects(projectService),
+	}
+	failureCtx, cancelFailureFlush := context.WithCancel(context.Background())
+	failureFlushDone := make(chan struct{})
+	if failureAggregator != nil {
+		routerOptions = append(routerOptions, regixtryhttp.WithLoginFailureRecorder(failureAggregator))
+		go func() {
+			defer close(failureFlushDone)
+			failureAggregator.Run(failureCtx)
+		}()
+	} else {
+		close(failureFlushDone)
+	}
+
+	return regixtryhttp.NewRouter(service, authService, routerOptions...), func() {
+		// Stop the interval flush, then write what is still in memory, bounded,
+		// before the auth store closes. A store that is down never delays
+		// shutdown past the timeout.
+		cancelFailureFlush()
+		<-failureFlushDone
+		if failureAggregator != nil {
+			if err := failureAggregator.Shutdown(appauth.LoginFailureShutdownTimeout); err != nil {
+				log.Printf("login failures not flushed at shutdown: %v", err)
+			}
+		}
 		// Wait for the scheduler goroutine to actually stop before closing the
 		// stores it reads/writes: cancelling schedulerCtx only takes effect
 		// between ticks (scheduler.Run checks ctx.Done() after each tick

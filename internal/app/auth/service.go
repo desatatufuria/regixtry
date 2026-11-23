@@ -34,6 +34,9 @@ type Service struct {
 	// projects answers whether a project exists (see SetProjectLookup); nil
 	// until main installs it.
 	projects ports.ProjectLookup
+	// failureAggregator is flushed before the security endpoints read (see
+	// SetLoginFailureAggregator); nil when failures are not aggregated.
+	failureAggregator *LoginFailureAggregator
 }
 
 // robotRollbackTimeout is the default bound on the robot rollback delete.

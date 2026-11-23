@@ -32,6 +32,12 @@ type Router struct {
 	// attributing a request to a client IP; empty means RemoteAddr only.
 	trustedProxies []netip.Prefix
 	loginFailures  loginFailureStats
+	// failureRecorder receives every rejected credential once (see
+	// WithLoginFailureRecorder); nil when failures are not aggregated.
+	failureRecorder ports.LoginFailureRecorder
+	// security serves /admin/v1/security (the auth service when it supports
+	// it); nil answers 404 like any unknown admin route.
+	security ports.LoginSecurityAdmin
 }
 
 // DefaultMaxManifestBytes is the manifest PUT body cap NewRouter applies
@@ -67,10 +73,22 @@ func WithTrustedProxies(proxies []netip.Prefix) RouterOption {
 	}
 }
 
+// WithLoginFailureRecorder feeds every rejected credential (/auth/token
+// failures and refusals, bearer failures on /v2 and /admin/v1) to recorder,
+// from the single place that writes the "login failed" log line.
+func WithLoginFailureRecorder(recorder ports.LoginFailureRecorder) RouterOption {
+	return func(router *Router) {
+		router.failureRecorder = recorder
+	}
+}
+
 func NewRouter(service *appregixtry.Service, authService ports.AuthService, options ...RouterOption) *Router {
 	router := &Router{service: service, auth: authService, logger: log.Default(), mux: stdhttp.NewServeMux(), maxManifestBytes: DefaultMaxManifestBytes}
 	if adminService, ok := authService.(ports.AdminHTTPService); ok {
 		router.admin = adminService
+	}
+	if security, ok := authService.(ports.LoginSecurityAdmin); ok {
+		router.security = security
 	}
 	for _, option := range options {
 		if option != nil {

@@ -4,6 +4,7 @@ import (
 	"container/list"
 	"crypto/sha256"
 	"encoding/hex"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -186,4 +187,48 @@ func accountLogName(normalized string) string {
 		}
 	}
 	return normalized
+}
+
+// waitingAccount is one key that is waiting out a backoff right now.
+type waitingAccount struct {
+	key       string
+	failures  int
+	remaining time.Duration
+}
+
+// waiting lists the keys whose backoff has not finished, longest wait first
+// (ties by key). It reads the state without touching the LRU order or
+// forgetting anything.
+func (b *loginBackoff) waiting() []waitingAccount {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	now := b.policy.Now()
+	var out []waitingAccount
+	for _, element := range b.entries {
+		entry := element.Value.(*backoffEntry)
+		if now.Sub(entry.last) >= b.policy.ResetAfter {
+			continue
+		}
+		if wait := entry.blockedUntil.Sub(now); wait > 0 {
+			out = append(out, waitingAccount{key: entry.key, failures: entry.failures, remaining: wait})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].remaining != out[j].remaining {
+			return out[i].remaining > out[j].remaining
+		}
+		return out[i].key < out[j].key
+	})
+	return out
+}
+
+// clear forgets one key and reports whether it had any state.
+func (b *loginBackoff) clear(key string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	element, ok := b.entries[key]
+	if ok {
+		b.remove(element)
+	}
+	return ok
 }
