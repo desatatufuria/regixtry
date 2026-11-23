@@ -87,6 +87,25 @@ On a Linux daemon install the auth DSN (it carries the Postgres password) is sto
 
 Upgrade note: running `regixtry upgrade` (or `setup`) on an install made by an older version rewrites `regixtry.env` as `0600` (previously `0644`), removes the DSN flag from the unit, and strips the clear-text DSN from the provenance file. Until you do, the old files remain readable by all local users; rotate the Postgres password if the host has untrusted local users.
 
+## Fixed login protection values
+
+The login failure record and the login protection read-outs added no flag or environment variable. These values are constants in the source: changing one needs a new build.
+
+| Value | Fixed at | Where |
+| --- | --- | --- |
+| Aggregation window: 5 minutes | `LoginFailureWindow` | `internal/app/auth/login_aggregator.go` |
+| Flush interval: 60 seconds (and once at shutdown, bounded to 5 seconds) | `LoginFailureFlushInterval`, `LoginFailureShutdownTimeout` | `internal/app/auth/login_aggregator.go` |
+| Retention: 30 days (purged in batches of 1000) | `LoginFailureRetention` | `internal/app/auth/login_aggregator.go` |
+| Live keys in memory: 10 000; retry buffer after a failed flush: 10 000; records per database call: 500 | `defaultLoginFailureMaxKeys`, `defaultLoginFailureMaxPending`, `defaultLoginFailureChunk` | `internal/app/auth/login_aggregator.go` |
+| Read coalescing: a read flushes at most once every 2 seconds | `loginFailureReadFlushEvery` | `internal/app/auth/login_aggregator.go` |
+| Rows per window in the table: 5000 (then one `_overflow` row per endpoint) | `loginFailureRowsPerWindow` | `internal/infra/auth/postgres/login_failures.go` |
+| Summary window: 15 minutes; failures page: default 50, at most 200; default lower bound for a text filter: 24 hours; accounts listed: at most 100 | `loginSummaryWindow`, `loginFailuresDefaultLimit`, `loginFailuresMaxLimit`, `loginFailuresDefaultFilterRange`, `loginBackoffListMax` | `internal/app/auth/login_failures.go` |
+| Backoff state: 10 000 accounts (LRU), counter reset after 15 minutes without failures | `defaultBackoffMaxKeys`, `defaultBackoffReset` | `internal/app/auth/login_backoff.go` |
+| Wait for a bcrypt slot: 250 ms | `defaultLoginMaxWait` | `internal/app/auth/login_limiter.go` |
+| TUI Overview row turns amber at 20 failed logins (or, in `enforce` mode, 1 account waiting) | `loginWarnFailures`, `loginWarnWaitingEnforce` | `internal/tui/screen_login_security_summary.go` |
+
+What these mean for an operator is in [security.md](security.md#login-failures-what-is-recorded-and-why) and [operations.md](operations.md#watching-and-tuning-login-protection).
+
 ## Setup-managed environment
 
 Setup writes `REGISTRY_ADDR`, `REGISTRY_PUBLIC_URL`, `REGISTRY_STORAGE_ROOT`, `REGISTRY_DATABASE_PATH`, `REGISTRY_SERVICE_NAME`, and, when applicable, `REGISTRY_AUTH_POSTGRES_DSN`, `REGISTRY_TLS_CERT_FILE`, and `REGISTRY_TLS_KEY_FILE`. These values are interpreted in `internal/infra/install/linux/templates.go`.
