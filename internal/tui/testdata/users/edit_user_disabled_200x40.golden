@@ -16,8 +16,8 @@
       Signing policy           │  │ At least 8 characters. You type it twice.                                     │  │                                                                               │  
                                │  ╰───────────────────────────────────────────────────────────────────────────────╯  │                                                                               │  
   OPERATIONS                   │  ╭───────────────────────────────────────────────────────────────────────────────╮  │                                                                               │  
-      Scan runs                │  │ REPOSITORY GRANTS                                              g grant access │  │                                                                               │  
-      Secret findings          │  │ No repository grants.                                                         │  │                                                                               │  
+      Scan runs                │  │ PROJECT ACCESS AND REPOSITORY GRANTS                           g grant access │  │                                                                               │  
+      Secret findings          │  │ dave has no project roles and no repository grants. Press g to grant access.  │  │                                                                               │  
       Update channel           │  │                                                                               │  │                                                                               │  
                                │  │                                                                               │  │                                                                               │  
                                │  │                                                                               │  │                                                                               │  

@@ -17,11 +17,11 @@
                                │  │ At least 8 characters. You type it twice.                                     │  │                                                                               │  
   OPERATIONS                   │  ╰───────────────────────────────────────────────────────────────────────────────╯  │                                                                               │  
       Scan runs                │  ╭───────────────────────────────────────────────────────────────────────────────╮  │                                                                               │  
-      Secret findings          │  │ REPOSITORY GRANTS                                              g grant access │  │                                                                               │  
-      Update channel           │  │ team/docs                                                              Reader │  │                                                                               │  
-                               │  │ team/api                                                               Writer │  │                                                                               │  
-                               │  │ 2 repositories.                                                               │  │                                                                               │  
-                               │  │                                                                               │  │                                                                               │  
+      Secret findings          │  │ PROJECT ACCESS AND REPOSITORY GRANTS                           g grant access │  │                                                                               │  
+      Update channel           │  │   REPOSITORY                                                 ROLE     SOURCE  │  │                                                                               │  
+                               │  │   team/docs                                                  Reader   repo    │  │                                                                               │  
+                               │  │   team/api                                                   Writer   repo    │  │                                                                               │  
+                               │  │ 0 project roles, 2 repository grants.                                         │  │                                                                               │  
                                │  │                                                                               │  │                                                                               │  
                                │  │                                                                               │  │                                                                               │  
                                │  │                                                                               │  │                                                                               │  

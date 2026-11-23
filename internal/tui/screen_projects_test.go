@@ -77,8 +77,22 @@ func flattenView(out string) string {
 			lines[i] = string(runes[shellSidebarWidth+1:])
 		}
 	}
-	out = strings.Join(lines, "\n")
+	return flattenText(strings.Join(lines, "\n"))
+}
+
+// flattenText is flattenView for text that has no sidebar (a dialog).
+func flattenText(out string) string {
 	return strings.Join(strings.Fields(strings.NewReplacer("│", " ", "╭", " ", "╮", " ", "╰", " ", "╯", " ", "─", " ").Replace(out)), " ")
+}
+
+func requireDialog(t *testing.T, out string, texts ...string) {
+	t.Helper()
+	flat := flattenText(out)
+	for _, text := range texts {
+		if !strings.Contains(flat, strings.Join(strings.Fields(text), " ")) {
+			t.Errorf("dialog lacks %q\n%s", text, out)
+		}
+	}
 }
 
 func requireContains(t *testing.T, out string, texts ...string) {

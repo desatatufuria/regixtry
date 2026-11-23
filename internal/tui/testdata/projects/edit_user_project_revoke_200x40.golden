@@ -1,0 +1,40 @@
+  Admin › Access › Users › carol                                                                                                                                                 signed in as operator  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │
+                               │  carol
+    Overview                   │  user, created 3 Mar 2026
+                               │
+  ACCESS                       │
+    ▸ Users                    │
+      Robots                   │
+      Repository access        │
+      Projects                 │
+                               │                                    ╭──────────────────────────────────────────────────────────────╮
+  SECURITY                     │                                    │  Revoke Project writer?                                      │
+      Image scanning           │                                    │                                                              │
+      Secret scanning          │                                    │  carol loses Writer access to every repository in odabank,   │
+      Signing policy           │                                    │  unless an exact repository grant also gives it. It applies  │
+                               │                                    │  from the next request; no token is revoked.                 │
+  OPERATIONS                   │                                    │                                                              │
+      Scan runs                │                                    │  ╭────────────────────────────────────────────────────────╮  │
+      Secret findings          │                                    │  │ carol on project odabank                               │  │
+      Update channel           │                                    │  │ Project writer since 2026-11-10                        │  │
+                               │                                    │  ╰────────────────────────────────────────────────────────╯  │
+                               │                                    │                                                              │
+                               │                                    │  Grant a project role again to restore it.                   │
+                               │                                    │                                                              │
+                               │                                    │   Revoke                                         y / enter   │
+                               │                                    │   Cancel                                               esc   │
+                               │                                    ╰──────────────────────────────────────────────────────────────╯
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  y / enter confirm   esc cancel                                                                                                                                                                        

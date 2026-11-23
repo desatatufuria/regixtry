@@ -165,7 +165,7 @@ func TestEditUserRevokingTheLastGrantReturnsTheFocus(t *testing.T) {
 	client.grants["u-4"] = client.grants["u-4"][:1]
 	s, env := revokeFocus(t, client)
 	s, _ = editPress(t, s, env, testKeyRunes("x"), testKeyEnter())
-	if len(s.grants) != 0 || !strings.Contains(renderEdit(s, env), "No repository grants.") {
+	if len(s.grants) != 0 || !strings.Contains(renderEdit(s, env), "has no project roles and no repository grants.") {
 		t.Fatalf("grants = %v", s.grants)
 	}
 	if strings.Contains(strings.Join(helpKeys(s), "|"), "revoke") {

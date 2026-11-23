@@ -191,12 +191,12 @@ func (s robotsScreen) renderRow(theme adminTheme, robot ports.AdminRobot, select
 	widths := robotColumns(inner)
 
 	nameStyle, repoStyle, roleStyle := theme.text, theme.text, theme.text
-	repo, role := robot.Repository, grantRoleLabel(robot.Role)
+	repo, role := robotAccessName(robot), grantRoleLabel(robot.Role)
 	switch {
 	case withoutAccess(robot):
 		nameStyle, repoStyle, roleStyle = theme.warning, theme.warning, theme.warning
 		repo, role = "none", "none"
-	case robot.Repository == "":
+	case !robotHasGrant(robot):
 		nameStyle, repoStyle, roleStyle = theme.muted, theme.muted, theme.muted
 		repo, role = "none", "none"
 	case !robot.Enabled:
@@ -289,14 +289,17 @@ func (s robotsScreen) panelBlocks(theme adminTheme, inner int, now time.Time) []
 	head := []string{theme.subheading.Render(grantTruncate(robot.Username, inner)), theme.muted.Render(grantTruncate(subtitle, inner))}
 
 	access := []string{label("ACCESS")}
-	if robot.Repository == "" {
+	if !robotHasGrant(robot) {
 		access = append(access, theme.warning.Render("No repository access"))
 	} else {
 		chip := lipgloss.NewStyle().Foreground(theme.accent.GetForeground()).Render("[" + grantRoleLabel(robot.Role) + "]")
-		access = append(access, spread(grantTruncate(robot.Repository, max(inner-lipgloss.Width(chip)-1, 1)), chip, inner))
+		access = append(access, spread(grantTruncate(robotAccessName(robot), max(inner-lipgloss.Width(chip)-1, 1)), chip, inner))
 	}
 	counts := pluralUnit(boolInt(robot.Repository != ""), "repository")
-	if robot.Repository == "" {
+	switch {
+	case robot.Repository == "" && robot.Project != "":
+		counts = "every repository of project " + robot.Project
+	case robot.Repository == "":
 		counts = "0 repositories"
 	}
 	if tokens, known := s.tokens[robot.ID]; known {

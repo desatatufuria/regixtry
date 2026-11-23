@@ -16,11 +16,11 @@
       Signing policy           │  │ At least 8 characters. You type it twice.                                     │  │                                                                               │  
                                │  ╰───────────────────────────────────────────────────────────────────────────────╯  │                                                                               │  
   OPERATIONS                   │  ╭───────────────────────────────────────────────────────────────────────────────╮  │                                                                               │  
-      Scan runs                │  │ REPOSITORY GRANTS                                              g grant access │  │                                                                               │  
-      Secret findings          │  │ team/docs                                                              Reader │  │                                                                               │  
-      Update channel           │  │ team/api                                                               Writer │  │                                                                               │  
-                               │  │ 2 repositories.                                                               │  │                                                                               │  
-                               │  │                                                                               │  │                                                                               │  
+      Scan runs                │  │ PROJECT ACCESS AND REPOSITORY GRANTS                           g grant access │  │                                                                               │  
+      Secret findings          │  │   REPOSITORY                                                 ROLE     SOURCE  │  │                                                                               │  
+      Update channel           │  │   team/docs                                                  Reader   repo    │  │                                                                               │  
+                               │  │   team/api                                                   Writer   repo    │  │                                                                               │  
+                               │  │ 0 project roles, 2 repository grants.                                         │  │                                                                               │  
                                │  │                                                                               │  │                                                                               │  
                                │  │                                                                               │  │                                                                               │  
                                │  │                                                                               │  │                                                                               │  

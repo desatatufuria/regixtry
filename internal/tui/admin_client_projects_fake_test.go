@@ -141,6 +141,12 @@ func (f *fakeAdminClient) DeleteProjectMember(_ context.Context, _ AdminSession,
 		return f.projectsAPI.deleteMemberErr
 	}
 	f.projectsAPI.members[project] = slices.DeleteFunc(f.projectsAPI.members[project], func(m ports.AdminProjectMember) bool { return m.Username == username })
+	// The user's own project roles lose it too, so a reload tells the truth.
+	for _, user := range f.users {
+		if user.Username == username && f.projectsAPI.userGrants != nil {
+			f.projectsAPI.userGrants[user.ID] = slices.DeleteFunc(slices.Clone(f.projectsAPI.userGrants[user.ID]), func(g ports.AdminProjectGrant) bool { return g.Project == project })
+		}
+	}
 	return nil
 }
 

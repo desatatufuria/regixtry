@@ -77,7 +77,7 @@ func TestCreatingARobotEndToEndShowsTheSecretOnceAndTheListReloads(t *testing.T)
 	t.Parallel()
 	m, client := accessModel(t, nil)
 	m = overviewPress(t, m, testKeyRunes("r"))
-	m = overviewPress(t, m, testKeyRunes("release-bot"), testKeyTab(), testKeyRunes("team/api"), testKeyEnter(), testKeyEnter())
+	m = overviewPress(t, m, testKeyRunes("release-bot"), testKeyTab(), testKeyTab(), testKeyRunes("team/api"), testKeyEnter(), testKeyEnter())
 	if client.createRobotCalls != 1 {
 		t.Fatalf("CreateRobot calls = %d", client.createRobotCalls)
 	}
@@ -171,7 +171,7 @@ func TestExpiredSessionDuringCreationGoesToLoginAndDropsTheScreens(t *testing.T)
 	t.Parallel()
 	m, _ := accessModel(t, func(c *accessClient) { c.createRobotErr = NewAdminSessionExpiredError("session expired") })
 	m = overviewPress(t, m, testKeyRunes("r"))
-	m = overviewPress(t, m, testKeyRunes("bot"), testKeyTab(), testKeyRunes("team/api"), testKeyEnter(), testKeyEnter())
+	m = overviewPress(t, m, testKeyRunes("bot"), testKeyTab(), testKeyTab(), testKeyRunes("team/api"), testKeyEnter(), testKeyEnter())
 	if m.screen != screenAdminLogin || m.adminAuth != adminAuthStateExpired {
 		t.Fatalf("screen=%q auth=%q, want the expired login", m.screen, m.adminAuth)
 	}
@@ -198,7 +198,7 @@ func TestEscMidCreationBringsTheSecretBackWhenTheRobotIsCreated(t *testing.T) {
 	t.Parallel()
 	m, client := accessModel(t, nil)
 	m = overviewPress(t, m, testKeyRunes("r"))
-	m = overviewPress(t, m, testKeyRunes("late-bot"), testKeyTab(), testKeyRunes("team/api"), testKeyEnter())
+	m = overviewPress(t, m, testKeyRunes("late-bot"), testKeyTab(), testKeyTab(), testKeyRunes("team/api"), testKeyEnter())
 	updated, create := m.Update(testKeyEnter())
 	m = updated.(Model)
 	if create == nil {
@@ -222,7 +222,7 @@ func TestLeavingTheAdminPanelDropsEverySecret(t *testing.T) {
 	t.Parallel()
 	m, _ := accessModel(t, nil)
 	m = overviewPress(t, m, testKeyRunes("r"))
-	m = overviewPress(t, m, testKeyRunes("bot"), testKeyTab(), testKeyRunes("team/api"), testKeyEnter(), testKeyEnter())
+	m = overviewPress(t, m, testKeyRunes("bot"), testKeyTab(), testKeyTab(), testKeyRunes("team/api"), testKeyEnter(), testKeyEnter())
 	if !m.adminScreens[slotCreateRobot].(createRobotScreen).done {
 		t.Fatal("setup: no secret on screen")
 	}

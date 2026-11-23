@@ -1,0 +1,24 @@
+  Admin › Access › Users › carol                                                                                               signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │
+                               │  carol    ╭──────────────────────────────────────────────────────────────╮
+    Overview                   │  user, c  │  Revoke Project writer?                                      │
+                               │           │                                                              │
+  ACCESS                       │           │  carol loses Writer access to every repository in odabank,   │
+    ▸ Users                    │           │  unless an exact repository grant also gives it. It applies  │
+      Robots                   │           │  from the next request; no token is revoked.                 │
+      Repository access        │           │                                                              │
+      Projects                 │           │  ╭────────────────────────────────────────────────────────╮  │
+                               │           │  │ carol on project odabank                               │  │
+  SECURITY                     │           │  │ Project writer since 2026-11-10                        │  │
+      Image scanning           │           │  ╰────────────────────────────────────────────────────────╯  │
+      Secret scanning          │           │                                                              │
+      Signing policy           │           │  Grant a project role again to restore it.                   │
+                               │           │                                                              │
+  OPERATIONS                   │           │   Revoke                                         y / enter   │
+      Scan runs                │           │   Cancel                                               esc   │
+      Secret findings          │           ╰──────────────────────────────────────────────────────────────╯
+      Update channel           │
+                               │
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  y / enter confirm   esc cancel                                                                                                                      
