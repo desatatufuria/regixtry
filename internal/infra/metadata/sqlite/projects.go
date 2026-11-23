@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"time"
 
 	domain "regixtry/internal/domain/regixtry"
@@ -102,6 +103,44 @@ func (s *Store) ListProjects(ctx context.Context, tenant string) ([]ports.Projec
 		projects = append(projects, summary)
 	}
 	return projects, rows.Err()
+}
+
+// GetProject returns one project with the same totals ListProjects computes,
+// reading only the repositories under the exact "name/" prefix (the same range
+// DeleteProjectIfEmpty uses), so its cost does not depend on the other
+// projects. A missing project is a not found error.
+func (s *Store) GetProject(ctx context.Context, tenant string, name string) (ports.ProjectSummary, error) {
+	var (
+		summary    ports.ProjectSummary
+		createdAt  string
+		lastPushed sql.NullString
+	)
+	err := s.db.QueryRowContext(ctx, `
+		SELECT p.name, p.created_at, p.created_by,
+			COUNT(DISTINCT r.id), COUNT(t.id), MAX(m.created_at)
+		FROM projects p
+		LEFT JOIN repositories r ON r.tenant = p.tenant AND `+repositoryInProject+`
+		LEFT JOIN tags t ON t.repository_id = r.id AND t.tenant = r.tenant
+		LEFT JOIN manifests m ON m.id = t.manifest_id
+		WHERE p.tenant = ? AND p.name = ?
+		GROUP BY p.id
+	`, name, name, tenant, name).Scan(&summary.Name, &createdAt, &summary.CreatedBy, &summary.Repositories, &summary.Tags, &lastPushed)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ports.ProjectSummary{}, domain.NewNotFoundError("project", name)
+	}
+	if err != nil {
+		return ports.ProjectSummary{}, err
+	}
+	if summary.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt); err != nil {
+		return ports.ProjectSummary{}, err
+	}
+	if lastPushed.Valid {
+		if summary.LastPushed, err = time.Parse(time.RFC3339Nano, lastPushed.String); err != nil {
+			return ports.ProjectSummary{}, err
+		}
+	}
+
+	return summary, nil
 }
 
 // DeleteProjectIfEmpty removes the project in ONE write transaction, and only

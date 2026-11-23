@@ -29,6 +29,9 @@ type ProjectStore interface {
 	// wrapping domain.ErrProjectExists.
 	CreateProject(ctx context.Context, tenant string, name string, createdBy string) error
 	ProjectExists(ctx context.Context, tenant string, name string) (bool, error)
+	// GetProject returns one project with the same totals ListProjects
+	// computes for it; a missing project is a not found error.
+	GetProject(ctx context.Context, tenant string, name string) (ProjectSummary, error)
 	// ListProjects returns the tenant's projects ordered by name.
 	ListProjects(ctx context.Context, tenant string) ([]ProjectSummary, error)
 	// DeleteProjectIfEmpty removes a project only when it has no repository

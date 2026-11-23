@@ -228,17 +228,7 @@ func (p *ProjectService) GetProject(ctx context.Context, name string) (ports.Pro
 		return ports.ProjectSummary{}, err
 	}
 
-	projects, err := p.projects.ListProjects(ctx, p.service.tenant(ctx))
-	if err != nil {
-		return ports.ProjectSummary{}, err
-	}
-	for _, project := range projects {
-		if project.Name == name {
-			return project, nil
-		}
-	}
-
-	return ports.ProjectSummary{}, domain.NewNotFoundError("project", name)
+	return p.projects.GetProject(ctx, p.service.tenant(ctx), name)
 }
 
 // ListProjects returns the tenant's projects with their totals.
