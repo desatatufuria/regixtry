@@ -43,7 +43,7 @@ func (s overviewScreen) View(theme adminTheme, env screenEnv) screenFrame {
 			Operator:   env.Session.Username,
 			Active:     s.selectedID(),
 			Body:       strings.Join(lines, "\n"),
-			Hints:      overviewKeys.short,
+			Hints:      s.Keys().short,
 			Width:      width,
 			Height:     height,
 		}),
@@ -212,8 +212,11 @@ const attentionMarkerWidth = 2
 
 func renderAttentionItem(theme adminTheme, item attentionItem, width int, selected bool) string {
 	style := theme.warning
-	if item.tone == attentionCritical {
+	switch item.tone {
+	case attentionCritical:
 		style = theme.error
+	case attentionMuted:
+		style = theme.muted
 	}
 	marker, hintText := "  ", item.hint
 	if selected {
@@ -255,7 +258,7 @@ func mostUrgentAttention(items []attentionItem, keep int) []attentionItem {
 func urgentAttentionRows(items []attentionItem, keep, must int) []int {
 	chosen := make([]bool, len(items))
 	var order []int
-	for _, tone := range []attentionTone{attentionCritical, attentionWarning} {
+	for _, tone := range []attentionTone{attentionCritical, attentionWarning, attentionMuted} {
 		for i, item := range items {
 			if item.tone == tone && keep > 0 {
 				chosen[i] = true

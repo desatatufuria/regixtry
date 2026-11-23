@@ -213,6 +213,9 @@ const (
 	screenAdminProjects         screen = "admin-projects"
 	screenAdminProjectMembers   screen = "admin-project-members"
 	screenAdminGrantProjectRole screen = "admin-grant-project-role"
+	// screenAdminLoginSecurity is Admin > Security > Login security: the
+	// failed logins, the live backoff and the reset of one account.
+	screenAdminLoginSecurity screen = "admin-login-security"
 )
 
 // adminIntent is a one-shot field set before screenAdminLogin and consumed
