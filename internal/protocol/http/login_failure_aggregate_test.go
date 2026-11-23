@@ -2,9 +2,14 @@ package regixtryhttp
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -94,5 +99,65 @@ func TestRouterWithoutARecorderBehavesAsBefore(t *testing.T) {
 	defer cleanup()
 	if code := tokenExchange(handler, "admin", "wrong").Code; code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", code)
+	}
+}
+
+type downFailureStore struct{ calls int64 }
+
+func (d *downFailureStore) AddLoginFailures(context.Context, []ports.LoginFailureRecord) error {
+	atomic.AddInt64(&d.calls, 1)
+	return errors.New("postgres is down")
+}
+func (d *downFailureStore) PurgeLoginFailures(context.Context, time.Time, int) (int, error) {
+	return 0, errors.New("postgres is down")
+}
+func (d *downFailureStore) ListLoginFailures(context.Context, ports.LoginFailureFilter, *ports.LoginFailureCursor, int) ([]ports.LoginFailureRecord, error) {
+	return nil, errors.New("postgres is down")
+}
+func (d *downFailureStore) SummarizeLoginFailures(context.Context, time.Time) (ports.LoginFailureSummary, error) {
+	return ports.LoginFailureSummary{}, errors.New("postgres is down")
+}
+
+// A failing flush never touches a login: statuses are unchanged, the failure
+// path is as fast as with a healthy store, and the retry buffer stays bounded.
+func TestAFailingFlushNeverAffectsLogins(t *testing.T) {
+	t.Parallel()
+	timed := func(withDownStore bool) (time.Duration, []int, *appauth.LoginFailureAggregator) {
+		var agg *appauth.LoginFailureAggregator
+		var options []RouterOption
+		if withDownStore {
+			agg = appauth.NewLoginFailureAggregator(&downFailureStore{}, appauth.LoginFailureOptions{MaxKeys: 50, MaxPending: 50, FlushInterval: 5 * time.Millisecond, Logger: log.New(io.Discard, "", 0)})
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan struct{})
+			go func() { agg.Run(ctx); close(done) }()
+			t.Cleanup(func() { cancel(); <-done })
+			options = append(options, WithLoginFailureRecorder(agg))
+		}
+		handler, _, _, _, cleanup := newTestRouterWithRealAuthOptions(t, func(s *appauth.Service) {
+			s.ConfigureLogin(appauth.LoginPolicy{Compare: (&countingCompare{delay: time.Millisecond}).compare})
+		}, options...)
+		defer cleanup()
+		start := time.Now()
+		var statuses []int
+		for i := 0; i < 40; i++ {
+			statuses = append(statuses, tokenExchange(handler, fmt.Sprintf("ghost-%d", i), "bad-password").Code)
+		}
+		statuses = append(statuses, tokenExchange(handler, "admin", "fixture-pass-9x").Code)
+		return time.Since(start), statuses, agg
+	}
+	baseline, baselineStatuses, _ := timed(false)
+	withDown, downStatuses, agg := timed(true)
+	if fmt.Sprint(baselineStatuses) != fmt.Sprint(downStatuses) {
+		t.Fatalf("statuses differ with the store down:\n%v\n%v", baselineStatuses, downStatuses)
+	}
+	if downStatuses[len(downStatuses)-1] != http.StatusOK {
+		t.Fatalf("the valid login = %d, want 200", downStatuses[len(downStatuses)-1])
+	}
+	if stats := agg.Stats(); stats.Pending > 50 || stats.Live > 51 {
+		t.Fatalf("stats = %+v exceed the bounds", stats)
+	}
+	// 41 bcrypt-bound requests; a blocked flush would add its timeout, not noise.
+	if withDown > baseline*3+2*time.Second {
+		t.Fatalf("latency with the store down = %v vs %v healthy", withDown, baseline)
 	}
 }
