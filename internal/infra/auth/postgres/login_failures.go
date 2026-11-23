@@ -2,6 +2,8 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -30,6 +32,14 @@ func parseLoginFailureTime(value string) time.Time {
 	return parsed
 }
 
+// loginFailureRowsPerWindow caps the rows of one 5-minute window. Past it, a
+// key that is not already a row folds into one "_overflow" row per window and
+// endpoint, so totals stay exact and the table stays bounded under a
+// sustained flood of distinct IPs or names.
+const loginFailureRowsPerWindow = 5_000
+
+const loginFailureOverflow = "_overflow"
+
 // AddLoginFailures adds each record's count to its key in one transaction:
 // either every record is written or none. first_seen only moves earlier and
 // last_seen only later.
@@ -49,7 +59,48 @@ func (s *Store) AddLoginFailures(ctx context.Context, records []ports.LoginFailu
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	rowCap := s.windowRowCap
+	if rowCap <= 0 {
+		rowCap = loginFailureRowsPerWindow
+	}
+	type windowRows struct {
+		n     int
+		exact bool
+	}
+	windows := make(map[string]*windowRows)
 	for _, record := range records {
+		window := formatLoginFailureTime(record.WindowStart)
+		isOverflow := record.Reason == loginFailureOverflow && record.Account == loginFailureOverflow && record.IP == loginFailureOverflow
+		if !isOverflow {
+			state := windows[window]
+			if state == nil {
+				state = &windowRows{}
+				windows[window] = state
+				if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM auth_login_failures WHERE window_start = $1`, window).Scan(&state.n); err != nil {
+					return err
+				}
+				state.exact = true
+			}
+			if state.n >= rowCap && !state.exact {
+				if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM auth_login_failures WHERE window_start = $1`, window).Scan(&state.n); err != nil {
+					return err
+				}
+				state.exact = true
+			}
+			if state.n >= rowCap {
+				var one int
+				err := tx.QueryRowContext(ctx, `SELECT 1 FROM auth_login_failures WHERE window_start = $1 AND endpoint = $2 AND reason = $3 AND account = $4 AND ip = $5`,
+					window, record.Endpoint, record.Reason, record.Account, record.IP).Scan(&one)
+				if errors.Is(err, sql.ErrNoRows) {
+					record.Reason, record.Account, record.IP = loginFailureOverflow, loginFailureOverflow, loginFailureOverflow
+				} else if err != nil {
+					return err
+				}
+			} else {
+				state.n++
+				state.exact = false
+			}
+		}
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO auth_login_failures (window_start, endpoint, reason, account, ip, count, first_seen, last_seen)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)

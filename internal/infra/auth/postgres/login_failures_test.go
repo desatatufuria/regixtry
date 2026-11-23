@@ -297,3 +297,56 @@ func TestLoginFailureRowsNeverStoreAnUnknownRawName(t *testing.T) {
 		t.Fatalf("columns = %v, want %s", columns, want)
 	}
 }
+
+func TestAddLoginFailuresFoldsNewKeysIntoOverflowWhenTheWindowIsAtCap(t *testing.T) {
+	t.Parallel()
+	store := newSQLiteBackedStore(t)
+	defer store.Close()
+	store.windowRowCap = 3
+	ctx := context.Background()
+	other := lfBase.Add(5 * time.Minute)
+
+	if err := store.AddLoginFailures(ctx, []ports.LoginFailureRecord{
+		lfRecord(lfBase, "a", "203.0.113.1", 1), lfRecord(lfBase, "b", "203.0.113.2", 1), lfRecord(lfBase, "c", "203.0.113.3", 1),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// At cap: an existing key still adds normally; new keys fold per window.
+	if err := store.AddLoginFailures(ctx, []ports.LoginFailureRecord{
+		lfRecord(lfBase, "a", "203.0.113.1", 4),
+		lfRecord(lfBase, "d", "203.0.113.4", 2), lfRecord(lfBase, "e", "203.0.113.5", 3),
+		lfRecord(other, "z", "203.0.113.9", 1), // another window has its own budget
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// A later call also folds into the same overflow row.
+	if err := store.AddLoginFailures(ctx, []ports.LoginFailureRecord{lfRecord(lfBase, "f", "203.0.113.6", 5)}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := map[string]int64{}
+	var total int64
+	for _, r := range lfAll(t, store) {
+		got[r.WindowStart.Format("15:04")+"/"+r.Account] += r.Count
+		total += r.Count
+	}
+	want := map[string]int64{"12:00/a": 5, "12:00/b": 1, "12:00/c": 1, "12:00/_overflow": 10, "12:05/z": 1}
+	if len(got) != len(want) {
+		t.Fatalf("rows = %v, want %v", got, want)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Fatalf("row %s = %d, want %d (all: %v)", k, got[k], v, got)
+		}
+	}
+	if total != 18 {
+		t.Fatalf("total = %d, want 18: nothing lost", total)
+	}
+	summary, err := store.SummarizeLoginFailures(ctx, lfBase.Add(-time.Minute))
+	if err != nil || summary.Failures != 18 {
+		t.Fatalf("summary = %+v, %v; want failures 18 including the overflow rows", summary, err)
+	}
+	if summary.DistinctAccounts != 4 || summary.DistinctIPs != 4 {
+		t.Fatalf("summary = %+v; overflow must not count as an account or IP", summary)
+	}
+}
