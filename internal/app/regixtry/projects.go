@@ -150,7 +150,7 @@ func (p *ProjectService) CreateProject(ctx context.Context, name string) error {
 			return domain.NewProjectExistsError(name)
 		}
 		if _, err := p.purgeGrants(ctx, cleaner, name); err != nil {
-			return fmt.Errorf("project %q was not created: stale grants could not be purged: %w", name, err)
+			return domainauth.NewUnavailableError(fmt.Sprintf("project %q was not created because its stale grants could not be purged; retry the create", name), err)
 		}
 	}
 
@@ -206,7 +206,7 @@ func (p *ProjectService) DeleteProject(ctx context.Context, name string) error {
 	}
 	removed, err := p.purgeGrants(ctx, cleaner, name)
 	if err != nil {
-		return fmt.Errorf("project %q grants could not be purged (the project row is already deleted): %w", name, err)
+		return domainauth.NewUnavailableError(fmt.Sprintf("project %q was deleted but its grants could not be purged; retry the delete", name), err)
 	}
 	if !rowDeleted && removed == 0 {
 		return deleteErr

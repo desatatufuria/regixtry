@@ -366,8 +366,8 @@ func TestProjectServiceCreateFailsWithoutInsertingWhenThePurgeFails(t *testing.T
 	fixture.projects.SetGrantCleaner(&recordingCleaner{err: cause})
 
 	err := fixture.projects.CreateProject(ctx, "odabank")
-	if err == nil || !errors.Is(err, cause) || !domainauth.IsCode(err, domainauth.ErrorCodeForbidden) {
-		t.Fatalf("CreateProject() error = %v, want the purge failure wrapped with %%w", err)
+	if err == nil || !errors.Is(err, cause) || !domainauth.IsCode(err, domainauth.ErrorCodeUnavailable) {
+		t.Fatalf("CreateProject() error = %v, want a typed unavailable error wrapping the purge failure", err)
 	}
 	if exists, _ := fixture.projects.ProjectExists(ctx, "odabank"); exists {
 		t.Fatal("the project was created although stale grants could not be purged")
@@ -392,8 +392,10 @@ func TestProjectServiceDeleteConvergesAfterAFailedPurge(t *testing.T) {
 	cause := domainauth.NewValidationError("auth store down")
 	cleaner.err = cause
 	err := fixture.projects.DeleteProject(ctx, "odabank")
-	if err == nil || !errors.Is(err, cause) || !domainauth.IsCode(err, domainauth.ErrorCodeValidation) {
-		t.Fatalf("first DeleteProject() error = %v, want the purge failure wrapped with %%w", err)
+	var typed *domainauth.Error
+	if err == nil || !errors.Is(err, cause) || !errors.As(err, &typed) || typed.Code != domainauth.ErrorCodeUnavailable ||
+		typed.Message != `project "odabank" was deleted but its grants could not be purged; retry the delete` {
+		t.Fatalf("first DeleteProject() error = %v, want a typed unavailable error wrapping the purge failure", err)
 	}
 	if exists, _ := fixture.projects.ProjectExists(ctx, "odabank"); exists {
 		t.Fatal("the project row must be gone after the failed purge")

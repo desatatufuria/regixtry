@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -338,5 +339,60 @@ func TestAdminProjectRoutesWithoutProjectServiceAreUnsupported(t *testing.T) {
 	// Still authenticated first.
 	if rec := env.do(http.MethodGet, "/admin/v1/projects", "", ""); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("anonymous status = %d, want 401", rec.Code)
+	}
+}
+
+type failingCleaner struct {
+	mu  sync.Mutex
+	err error
+	ok  ports.ProjectGrantCleaner
+}
+
+func (c *failingCleaner) PurgeProjectGrants(ctx context.Context, project string) (int64, error) {
+	c.mu.Lock()
+	err := c.err
+	c.mu.Unlock()
+	if err != nil {
+		return 0, err
+	}
+	return c.ok.PurgeProjectGrants(ctx, project)
+}
+
+// TestAdminProjectDeleteFailedPurgeIsATypedRetryableError: the row is gone,
+// the grants are not; the client gets a clear 503, the retry converges, and
+// project.deleted is written exactly once.
+func TestAdminProjectDeleteFailedPurgeIsATypedRetryableError(t *testing.T) {
+	t.Parallel()
+	env := newProjectsHTTP(t, true)
+	cleaner := &failingCleaner{ok: env.auth}
+	env.projects.SetGrantCleaner(cleaner)
+	env.createProject("odabank")
+	env.user("ana")
+	env.grant("odabank", "ana", domainauth.RepoRoleReader)
+	cleaner.mu.Lock()
+	cleaner.err = errors.New("pq: connection refused to 10.1.2.3")
+	cleaner.mu.Unlock()
+
+	rec := env.do(http.MethodDelete, "/admin/v1/projects/odabank", env.adminToken, "")
+	want := `project "odabank" was deleted but its grants could not be purged; retry the delete`
+	if rec.Code != http.StatusServiceUnavailable || errorMessage(t, rec) != want || strings.Contains(rec.Body.String(), "10.1.2.3") {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	cleaner.mu.Lock()
+	cleaner.err = nil
+	cleaner.mu.Unlock()
+	if rec := env.do(http.MethodDelete, "/admin/v1/projects/odabank", env.adminToken, ""); rec.Code != http.StatusOK {
+		t.Fatalf("retry status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	events := decodeBody[[]map[string]any](t, env.do(http.MethodGet, "/admin/v1/access-events?limit=50", env.adminToken, ""))
+	deleted := 0
+	for _, e := range events {
+		if e["action"] == "project.deleted" {
+			deleted++
+		}
+	}
+	if deleted != 1 {
+		t.Fatalf("project.deleted written %d times, want exactly once", deleted)
 	}
 }

@@ -1839,6 +1839,10 @@ func writeAdminError(w stdhttp.ResponseWriter, err error, challenge ports.Challe
 			status = stdhttp.StatusNotFound
 		case domainauth.ErrorCodeConflict:
 			status = stdhttp.StatusConflict
+		case domainauth.ErrorCodeUnavailable:
+			// A dependency failed mid-operation; the message is safe and says
+			// what to retry, the cause stays out of the body.
+			status = stdhttp.StatusServiceUnavailable
 		default:
 			status = stdhttp.StatusInternalServerError
 		}

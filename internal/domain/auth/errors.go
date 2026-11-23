@@ -17,6 +17,9 @@ const (
 	ErrorCodeDisabledUser       ErrorCode = "DISABLED_USER"
 	ErrorCodeBootstrapRequired  ErrorCode = "BOOTSTRAP_REQUIRED"
 	ErrorCodeConflict           ErrorCode = "CONFLICT"
+	// ErrorCodeUnavailable is a dependency (the auth store) failing in the
+	// middle of a multi-store operation; the caller can retry.
+	ErrorCodeUnavailable ErrorCode = "UNAVAILABLE"
 )
 
 type Error struct {
@@ -44,6 +47,13 @@ func IsCode(err error, code ErrorCode) bool {
 	}
 
 	return authErr.Code == code
+}
+
+// NewUnavailableError wraps the failure of a dependency with a message that is
+// safe to show: the cause stays reachable with errors.Is and errors.As but is
+// never part of Message.
+func NewUnavailableError(message string, cause error) error {
+	return &Error{Code: ErrorCodeUnavailable, Message: message, Err: cause}
 }
 
 func NewValidationError(message string) error {
