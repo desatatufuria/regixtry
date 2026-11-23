@@ -10,13 +10,14 @@ Objective: close the five `needs_validation` leads of the security audit run-2 (
 - S6 No behavior change for legitimate flows; documented limits updated in docs/security.md; the 4 run-1 variants (push-scan goroutines, manifest body cap, upload cap/reaper, signing shadowing) are the same family as S3-S5.
 
 ## Tasks
-- T1 S1 read-only cap — pending
-- T2 S2 admin JSON body cap — pending
-- T3 S3 signing candidate cap — pending
-- T4 S4 open-upload cap fairness and absolute TTL — pending
-- T5 S5 push-scan admission fairness and gate behavior — pending
+- T1 S1 read-only cap — done: f5b6283..c86d6bb; one decision point `Principal.cappedRole`; independent verification (30 principals x 3 targets x ~22 verbs, 0 mismatches; 4,140-decision differential identical); native review approved; exact writer/admin grants for read-only targets refused 422 at grant time
+- T2 S2 admin JSON body cap 1 MiB — done: a3d2cbb, 08bc6cb; parent spot check; 192-request differential identical; delegate routes still authorize after decode (bounded by the cap)
+- T3 S3 signing candidate bounds — done: f34670d, 11d949e; independent verification (lead reproduced at baseline, never `signed` for untrusted/unsigned in any flood; residual: >=1025 distinct bundles still gives an honest `unverifiable`); native review approved (warning accepted)
+- T4 S4 per-identity open-upload cap (100, anonymous exempt), 72 h absolute lifetime, additive uploads.owner migration — done: 212b9ce..e0f550f; independent verification (caps hold under concurrency; regression in anonymous mode found and fixed); native review approved
+- T5 S5 push-scan admission fairness and deferral — done: f008bbf..c4a73d6; independent verification (identities needed to deny scanning 4 -> 22; gate unchanged: unscanned digest allowed as at baseline); native review approved
 
 ## Log
 - L1 2026-11-23 user answers: "Sí, tope de lectura (Recommended)", "Sí, 1 MB antes de autorizar (Recommended)", "Arreglarlos ahora" (the three other leads), "No, todavía no (Recommended)" (no new RC yet).
 - L2 Audit facts: read-only status is ignored by the exact-repo and project grant checks (`internal/domain/auth/principal.go` grants loop; `internal/app/regixtry/service.go` ~:706); signing cap `maxSignatureCandidates = 256` in `service_signing.go` (~:229, budget ~:331); open-upload cap in `service.go` ~:307; push-scan admission in `service_push_scan.go` ~:35-106; admin JSON decode in `admin_handlers.go` ~:1711.
 - L3 Standing rules: no Co-Authored-By/Claude-Session/AI attribution; Conventional Commits; never push; never `git stash`; disk above 15 GB.
+- L4 2026-11-23 closing: all five units merged into feature/audit2-fixes. Residual risks documented in docs/security.md: >=1025 distinct bundles can still make a digest `unverifiable` (fail closed); ~22 writer identities can still exhaust push-scan admission; the push-scan retry list is in memory (lost on restart); the unscanned-digest gate semantics are as at baseline (no require-scan mode); Postgres-specific SQL was never run against a real Postgres.
