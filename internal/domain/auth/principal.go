@@ -119,20 +119,32 @@ func (p Principal) hasGrantedRepositoryAccess(repository string, allows func(Rep
 	// repository's project (first segment, ==). One loop per source, so all
 	// six predicates built on this function inherit project grants.
 	for _, grant := range p.Grants {
-		if grant.Repository.String() == repository && allows(grant.Role) {
+		if grant.Repository.String() == repository && allows(p.cappedRole(grant.Role)) {
 			return true
 		}
 	}
 
 	if project, ok := projectOf(repository); ok {
 		for _, grant := range p.ProjectGrants {
-			if grant.Project == project && allows(grant.Role) {
+			if grant.Project == project && allows(p.cappedRole(grant.Role)) {
 				return true
 			}
 		}
 	}
 
 	return false
+}
+
+// cappedRole is the single read-only decision for grants: a global read-only
+// principal is held at reader whatever role a grant row carries, so rows that
+// predate the rule (a writer or admin grant on a user later made read-only)
+// have no effect. Every decision built on grants goes through it.
+func (p Principal) cappedRole(role RepoRole) RepoRole {
+	if p.IsReadOnly {
+		return RepoRoleReader
+	}
+
+	return role
 }
 
 func (p Principal) scopeAllowsRepository(repository string, allows func(Scope) bool) bool {
@@ -148,6 +160,20 @@ func (p Principal) scopeAllowsRepository(repository string, allows func(Scope) b
 func (p Principal) scopeAllowsCatalog() bool {
 	for _, scope := range p.Scopes {
 		if scope.IsRegixtryCatalog() {
+			return true
+		}
+	}
+
+	return false
+}
+
+// HasGrantedProjectAdminAccess reports whether the principal holds a project
+// admin grant on exactly this project. It is the one place the project
+// delegation decision lives; a read-only principal is capped at read and so
+// never administers.
+func (p Principal) HasGrantedProjectAdminAccess(project string) bool {
+	for _, grant := range p.ProjectGrants {
+		if grant.Project == project && p.cappedRole(grant.Role).AllowsAdmin() {
 			return true
 		}
 	}
