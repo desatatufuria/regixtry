@@ -16,15 +16,15 @@ Objective: first-level PROJECT entity that must exist before pushing, project-wi
 - S12 Security-critical: every site that matches grants by repository name must honour project grants (inventory in study 2.4); a test must fail if a new exact-match site appears.
 
 ## Tasks
-- T1 U1 model + SQLite store + backfill + project service, no enforcement (S1,S3,S5,S9) — wave 1 — route: delegated (parallel unit with disjoint surfaces) — pending
-- T2 U2 project grants in auth: Postgres table, Principal matching, token scopes, effective role, catalog post-limit filtering, duplicate hasRepoAdminGrant (S2,S3,S12) — wave 1 — delegated — pending
-- T3 U3 admin API for projects, delegation rules, robots with project, access events, cross-store create/delete orchestration (S5,S6,S11) — wave 2 — pending
-- T4 U4 extend design boards (Projects, Members, dialogs, inherited access, folder tree, revoke-grant action) — wave 2 — pending
-- T5 U5 enforcement at push + flag + flat-name rule (S4,S7) — wave 2 — pending
-- T6 U6 TUI screens: Console/Admin Projects, Members, dialogs, Edit user inherited access — wave 3 — pending
-- T7 U7 visual folder tree with breadcrumbs (S8) — wave 3 — pending
-- T8 U8 docs — wave 4 — pending
-- T9 Login hardening wave 2 (`login.failed` event + TUI), separate tracker after projects — pending
+- T1 U1 model + SQLite store + backfill + project service (S1,S3,S5,S9) — wave 1 — delegated — done: 4b551c2..f07052a, independent verification (blocker B1 flat-name count + scaling fixed), native review approved
+- T2 U2 project grants in auth (S2,S3,S12) — wave 1 — delegated — done: 855fffe..8dee165, verified (2772-decision differential identical), native review approved
+- T3 U3 admin API, delegation, robots with project, events, cross-store orchestration (S5,S6,S11) — wave 2 — done: c8fd40c..81e3058, verified (748 authorization cases), 4 native reviews approved
+- T4 U4 design boards 25-36 (Artifact KxBpWQsgQdsVE5kXhzTr3D) — done without explicit user approval, not visually reviewed
+- T5 U5 enforcement at push + flag + flat-name rule (S4,S7) — wave 2 — done: 51c06c7..8c703bf, verified, native review approved (0 findings)
+- T6 U6 TUI screens (S1,S2,S5,S6,S8) — wave 3 — done: bdcffee..54d4856 + overview fix; parent spot check; 204 goldens proven to differ only by the sidebar row; no independent verifier (no authorization change)
+- T7 U7 visual folder tree (S8) — wave 3 — done: c7ab4d6..1dabf26; parent spot check; mouse fuzz extended
+- T8 U8 docs + default flip (default ON only when an admin API exists) — wave 4 — done: 3398729..4a8bf4c, independent verification (24-combination matrix with real binaries, upgrade/rollback/re-upgrade) no blockers
+- T9 Login hardening wave 2: done on feature/login-w2 (see odd/tasks/login-w2.md)
 
 ## Log
 - L1 2026-11-22 user: "quiero que generes un estudio de cómo implementarlo. sí, primero debe de existir el proyecto como en harbor."
@@ -36,3 +36,4 @@ Objective: first-level PROJECT entity that must exist before pushing, project-wi
 - L8 2026-11-22 W1 evidence: U1 (feat/projects-u1-model) verified: no data-safety blocker; blocker B1 (flat repo `odabank` counted inside project `odabank`, contradicts S3) and A1 (ListProjects 141 s at 200k repos x 1960 projects) sent back to the writer; native review approved (3 warnings/suggestions). U2 (feat/projects-u2-auth) verified: no blocker (2772-decision differential identical on exact grants; project matrix clean; escalation none); native review approved (2 slices); small advisories sent back (guard regex blind spots, trim consistency, admin catalog over-fetch). U4 boards 25-36 published in Artifact KxBpWQsgQdsVE5kXhzTr3D (v29; not visually verified; extra key `f`). Pre-existing bug found: SQLITE_BUSY escapes BeginUpload ~1/60 under GC contention (fix unit fix/sqlite-busy-beginupload; lead: SaveUpload writes through s.db outside the write queue).
 - L9 Carry-over for U3 (from reviews/verifiers, MUST be implemented): (a) `DeleteProject` must be idempotent for the cross-store cleanup: when the project row is already gone (NotFound) still invoke the grant cleaner so a failed purge converges on retry; (b) wrap cleaner errors with %w to keep typed codes; (c) `CreateProject` purges stale grants of that name BEFORE inserting (study 1.5) and a test pins it; (d) refuse project ADMIN grants for read-only global users (a read-only user with a project admin grant can delete repositories); (e) construct `ProjectService` with `NewProjectService` and wire `SetGrantCleaner` to the auth store; (f) `requireAdminOrRepoAdmin` becomes project-aware with the escalation rules of study 2.7.
 - L7 Wave plan: W1 = U1 || U2 (disjoint surfaces); W2 = U3 || U5 || U4 after W1 merged; W3 = U6 || U7 after W2; W4 = U8 then login wave 2. Verification: independent verifier + native review for U1, U2, U3, U5.
+- L10 2026-11-23 closing: all tasks done; final checks on the projects tracker: go test ./... 20 ok, -race on 11 key packages ok. Known limits: no real Postgres in any test (sqlite adapter), TUI never run in a real terminal, boards 25-36 not approved by the user. Side fixes found on the way: SQLITE_BUSY (14 writes outside the queue), fsblob CancelUpload deadlock, fsblob stress test duration.
