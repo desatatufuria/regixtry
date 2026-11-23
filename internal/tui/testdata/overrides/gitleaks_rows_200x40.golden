@@ -8,18 +8,18 @@
       Users                    │  │ ▸ team/api                                                           override   yes      config path set   12 Nov      │  │ override                             │  
       Robots                   │  │   team/docs                                                          override   no       scanning off      2 Nov       │  │                                      │  
       Repository access        │  │   team/web                                                           inherited  —        global settings   -           │  │ OVERRIDE                             │  
-                               │  │   team/infra                                                         inherited  —        global settings   -           │  │ Scanning                          on │  
-  SECURITY                     │  │                                                                                                                        │  │ Config path       /etc/gitleaks.toml │  
-      Image scanning           │  │                                                                                                                        │  │ Updated                       12 Nov │  
-    ▸ Secret scanning          │  │                                                                                                                        │  │                                      │  
-      Signing policy           │  │                                                                                                                        │  │ ACTIONS                              │  
-                               │  │                                                                                                                        │  │ Edit override                      o │  
-  OPERATIONS                   │  │                                                                                                                        │  │ Refresh                            r │  
+      Projects                 │  │   team/infra                                                         inherited  —        global settings   -           │  │ Scanning                          on │  
+                               │  │                                                                                                                        │  │ Config path       /etc/gitleaks.toml │  
+  SECURITY                     │  │                                                                                                                        │  │ Updated                       12 Nov │  
+      Image scanning           │  │                                                                                                                        │  │                                      │  
+    ▸ Secret scanning          │  │                                                                                                                        │  │ ACTIONS                              │  
+      Signing policy           │  │                                                                                                                        │  │ Edit override                      o │  
+      Login security           │  │                                                                                                                        │  │ Refresh                            r │  
+                               │  │                                                                                                                        │  │                                      │  
+  OPERATIONS                   │  │                                                                                                                        │  │                                      │  
       Scan runs                │  │                                                                                                                        │  │                                      │  
       Secret findings          │  │                                                                                                                        │  │                                      │  
       Update channel           │  │                                                                                                                        │  │                                      │  
-                               │  │                                                                                                                        │  │                                      │  
-                               │  │                                                                                                                        │  │                                      │  
                                │  │                                                                                                                        │  │                                      │  
                                │  │                                                                                                                        │  │                                      │  
                                │  │                                                                                                                        │  │                                      │  

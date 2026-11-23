@@ -1,0 +1,24 @@
+  Admin › Access › Projects                                                                                                    signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │
+                               │  Projects                                                                                4 projects, sorted by name
+    Overview                   │
+                               │
+  ACCESS                       │
+      Users                    │           ╭──────────────────────────────────────────────────────────────╮
+      Robots                   │           │  Deletion is disabled                                        │
+      Repository access        │           │                                                              │
+    ▸ Projects                 │           │  This server does not allow deleting projects.               │
+                               │           │                                                              │
+  SECURITY                     │           │  Start the server with -delete-enabled to allow it. Nothing  │
+      Image scanning           │           │  was changed.                                                │
+      Secret scanning          │           │                                                              │
+      Signing policy           │           │   Close                                        esc / enter   │
+      Login security           │           ╰──────────────────────────────────────────────────────────────╯
+                               │
+  OPERATIONS                   │
+      Scan runs                │
+      Secret findings          │
+      Update channel           │
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  esc / enter close                                                                                                                      F2 mouse on  

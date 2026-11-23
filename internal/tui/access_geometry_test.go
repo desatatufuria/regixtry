@@ -124,14 +124,14 @@ var accessStates = []accessState{
 	}, contains: []string{"Loading robots..."}},
 
 	{name: "create_form_default", build: createStateAt(nil), contains: []string{"New robot", "Lifetime"}},
-	{name: "create_form_five_suggestions", build: createStateAt(fiveRepos(), append(accessType("ci-bot"), testKeyTab())...), contains: []string{"team/app-1", "+2 more"}},
-	{name: "create_form_suggestions_filtered", build: createStateAt(fiveRepos(), append(append(accessType("ci-bot"), testKeyTab()), accessType("team/app")...)...), contains: []string{"team/app-1", "+3 more"}},
-	{name: "create_form_custom_empty", build: createStateAt(fiveRepos(), append(toCustomLifetime(testKeyTab(), testKeyTab(), testKeyTab()), []keyMsg{}...)...), contains: []string{"Custom"}},
-	{name: "create_form_custom_valid", build: createStateAt(fiveRepos(), append(toCustomLifetime(testKeyTab(), testKeyTab(), testKeyTab()), accessType("12h")...)...), contains: []string{"in 12 hours"}},
-	{name: "create_form_custom_invalid", build: createStateAt(fiveRepos(), append(toCustomLifetime(testKeyTab(), testKeyTab(), testKeyTab()), accessType("3y")...)...), contains: []string{lifetimeInvalidText()[:30]}},
+	{name: "create_form_five_suggestions", build: createStateAt(fiveRepos(), append(accessType("ci-bot"), testKeyTab(), testKeyTab())...), contains: []string{"team/app-1", "+2 more"}},
+	{name: "create_form_suggestions_filtered", build: createStateAt(fiveRepos(), append(append(accessType("ci-bot"), testKeyTab(), testKeyTab()), accessType("team/app")...)...), contains: []string{"team/app-1", "+3 more"}},
+	{name: "create_form_custom_empty", build: createStateAt(fiveRepos(), append(toCustomLifetime(testKeyTab(), testKeyTab(), testKeyTab(), testKeyTab()), []keyMsg{}...)...), contains: []string{"Custom"}},
+	{name: "create_form_custom_valid", build: createStateAt(fiveRepos(), append(toCustomLifetime(testKeyTab(), testKeyTab(), testKeyTab(), testKeyTab()), accessType("12h")...)...), contains: []string{"in 12 hours"}},
+	{name: "create_form_custom_invalid", build: createStateAt(fiveRepos(), append(toCustomLifetime(testKeyTab(), testKeyTab(), testKeyTab(), testKeyTab()), accessType("3y")...)...), contains: []string{lifetimeInvalidText()[:30]}},
 	{name: "create_form_error", build: createStateAt(fiveRepos(), testKeyEnter()), contains: []string{"Name and repository are required."}},
 	{name: "create_form_long_multibyte", build: createStateAt(fiveRepos(), accessType(strings.Repeat("ñandú-", 20))...), contains: []string{"Name"}},
-	{name: "create_done_secret", build: createStateAt(fiveRepos(), append(append(accessType("release-bot"), testKeyTab()), testKeyEnter(), testKeyEnter())...), secret: accessSecret, contains: []string{"✓ Robot release-bot created"}},
+	{name: "create_done_secret", build: createStateAt(fiveRepos(), append(append(accessType("release-bot"), testKeyTab(), testKeyTab()), testKeyEnter(), testKeyEnter())...), secret: accessSecret, contains: []string{"✓ Robot release-bot created"}},
 
 	{name: "tokens_list", build: tokensStateAt(nil), contains: []string{"6 days left", "expired"}},
 	{name: "tokens_loading", build: func(t *testing.T, w, h int) (adminScreen, screenEnv) {

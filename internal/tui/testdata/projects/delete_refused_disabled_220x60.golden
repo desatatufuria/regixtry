@@ -1,0 +1,60 @@
+  Admin › Access › Projects                                                                                                                                                                          signed in as operator  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │
+                               │  Projects                                                                                                                                                      4 projects, sorted by name
+    Overview                   │
+                               │
+  ACCESS                       │
+      Users                    │
+      Robots                   │
+      Repository access        │
+    ▸ Projects                 │
+                               │
+  SECURITY                     │
+      Image scanning           │
+      Secret scanning          │
+      Signing policy           │
+      Login security           │
+                               │
+  OPERATIONS                   │
+      Scan runs                │
+      Secret findings          │
+      Update channel           │
+                               │
+                               │
+                               │
+                               │                                              ╭──────────────────────────────────────────────────────────────╮
+                               │                                              │  Deletion is disabled                                        │
+                               │                                              │                                                              │
+                               │                                              │  This server does not allow deleting projects.               │
+                               │                                              │                                                              │
+                               │                                              │  Start the server with -delete-enabled to allow it. Nothing  │
+                               │                                              │  was changed.                                                │
+                               │                                              │                                                              │
+                               │                                              │   Close                                        esc / enter   │
+                               │                                              ╰──────────────────────────────────────────────────────────────╯
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  esc / enter close                                                                                                                                                                                            F2 mouse on  

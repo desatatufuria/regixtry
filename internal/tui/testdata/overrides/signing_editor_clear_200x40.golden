@@ -8,18 +8,18 @@
       Users                    │  │ ▸ team/api                                                           override   yes      1 key, 1 identi…  9 Nov       │  │ override                             │
       Robots                   │  │   team/docs                                                          override   no       not enforced      2 Nov       │  │                                      │
       Repository access        │  │   team/web                                                           inherited  —        global policy     -           │  │ OVERRIDE                             │
-                               │  │   team/infra                                                         inherited  —        global policy     -           │  │ Pull-time gate              enforced │
-  SECURITY                     │  │                                 ╭──────────────────────────────────────────────────────────────╮                       │  │ Unsigned self-read            pusher │
-      Image scanning           │  │                                 │  Clear override                                              │                       │  │ Trusted keys                       1 │
-      Secret scanning          │  │                                 │                                                              │                       │  │ Identities                         1 │
-    ▸ Signing policy           │  │                                 │  Remove this repository's override of the Signing settings.  │                       │  │ Updated                        9 Nov │
-                               │  │                                 │  It goes back to the global settings.                        │                       │  │                                      │
-  OPERATIONS                   │  │                                 │                                                              │                       │  │ ACTIONS                              │
-      Scan runs                │  │                                 │  ╭────────────────────────────────────────────────────────╮  │                       │  │ Edit override                      o │
-      Secret findings          │  │                                 │  │ team/api                                               │  │                       │  │ Refresh                            r │
-      Update channel           │  │                                 │  │ Signing override                                       │  │                       │  │                                      │
-                               │  │                                 │  ╰────────────────────────────────────────────────────────╯  │                       │  │                                      │
-                               │  │                                 │                                                              │                       │  │                                      │
+      Projects                 │  │   team/infra                                                         inherited  —        global policy     -           │  │ Pull-time gate              enforced │
+                               │  │                                 ╭──────────────────────────────────────────────────────────────╮                       │  │ Unsigned self-read            pusher │
+  SECURITY                     │  │                                 │  Clear override                                              │                       │  │ Trusted keys                       1 │
+      Image scanning           │  │                                 │                                                              │                       │  │ Identities                         1 │
+      Secret scanning          │  │                                 │  Remove this repository's override of the Signing settings.  │                       │  │ Updated                        9 Nov │
+    ▸ Signing policy           │  │                                 │  It goes back to the global settings.                        │                       │  │                                      │
+      Login security           │  │                                 │                                                              │                       │  │ ACTIONS                              │
+                               │  │                                 │  ╭────────────────────────────────────────────────────────╮  │                       │  │ Edit override                      o │
+  OPERATIONS                   │  │                                 │  │ team/api                                               │  │                       │  │ Refresh                            r │
+      Scan runs                │  │                                 │  │ Signing override                                       │  │                       │  │                                      │
+      Secret findings          │  │                                 │  ╰────────────────────────────────────────────────────────╯  │                       │  │                                      │
+      Update channel           │  │                                 │                                                              │                       │  │                                      │
                                │  │                                 │  Only this repository changes. Other repositories keep       │                       │  │                                      │
                                │  │                                 │  their overrides.                                            │                       │  │                                      │
                                │  │                                 │                                                              │                       │  │                                      │

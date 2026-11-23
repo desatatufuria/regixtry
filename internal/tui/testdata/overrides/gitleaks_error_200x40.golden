@@ -8,18 +8,18 @@
       Users                    │  │ Could not read the overrides: the admin API is unreachable                                                             │  │                                      │  
       Robots                   │  │ Press r to try again.                                                                                                  │  │                                      │  
       Repository access        │  │                                                                                                                        │  │                                      │  
+      Projects                 │  │                                                                                                                        │  │                                      │  
                                │  │                                                                                                                        │  │                                      │  
   SECURITY                     │  │                                                                                                                        │  │                                      │  
       Image scanning           │  │                                                                                                                        │  │                                      │  
     ▸ Secret scanning          │  │                                                                                                                        │  │                                      │  
       Signing policy           │  │                                                                                                                        │  │                                      │  
+      Login security           │  │                                                                                                                        │  │                                      │  
                                │  │                                                                                                                        │  │                                      │  
   OPERATIONS                   │  │                                                                                                                        │  │                                      │  
       Scan runs                │  │                                                                                                                        │  │                                      │  
       Secret findings          │  │                                                                                                                        │  │                                      │  
       Update channel           │  │                                                                                                                        │  │                                      │  
-                               │  │                                                                                                                        │  │                                      │  
-                               │  │                                                                                                                        │  │                                      │  
                                │  │                                                                                                                        │  │                                      │  
                                │  │                                                                                                                        │  │                                      │  
                                │  │                                                                                                                        │  │                                      │  

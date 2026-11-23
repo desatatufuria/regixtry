@@ -59,6 +59,35 @@ func migrationStatements() []string {
 			detail TEXT NULL
 		);`,
 		`CREATE INDEX IF NOT EXISTS auth_access_events_occurred_idx ON auth_access_events (occurred_at, id);`,
+		// Project grants: one role per (user, project) over every repository
+		// whose first path segment equals project. Same RepoRole values as
+		// auth_repo_grants. Additive: a new table, nothing existing changes.
+		`CREATE TABLE IF NOT EXISTS auth_project_grants (
+			user_id TEXT NOT NULL,
+			project TEXT NOT NULL,
+			role TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			PRIMARY KEY(user_id, project),
+			FOREIGN KEY(user_id) REFERENCES auth_users(id) ON DELETE CASCADE
+		);`,
+		`CREATE INDEX IF NOT EXISTS auth_project_grants_project_idx ON auth_project_grants (project, user_id);`,
+		// Aggregated login failures: one row per (5-minute window, endpoint,
+		// reason, account key, ip). The account is an existing account's name or
+		// "hash:<8 hex>", never a raw unknown username. Additive: a new table
+		// that an older binary never reads. The primary key leads with
+		// window_start, so it already serves the by-window scans and the purge.
+		`CREATE TABLE IF NOT EXISTS auth_login_failures (
+			window_start TEXT NOT NULL,
+			endpoint TEXT NOT NULL,
+			reason TEXT NOT NULL,
+			account TEXT NOT NULL,
+			ip TEXT NOT NULL,
+			count BIGINT NOT NULL,
+			first_seen TEXT NOT NULL,
+			last_seen TEXT NOT NULL,
+			PRIMARY KEY(window_start, endpoint, reason, account, ip)
+		);`,
 	}
 }
 

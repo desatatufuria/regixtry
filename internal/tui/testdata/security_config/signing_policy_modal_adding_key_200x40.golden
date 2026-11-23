@@ -8,18 +8,18 @@
       Users                    │  │ Pull-time gate                                  [x] enforced │  │ FINGERPRINT                                                                        TYPE        │
       Robots                   │  │ Unsigned self-read                                    pusher │  │ 2c1d7289f2db                                                                       ECDSA P-256 │
       Repository access        │  │ Enforced: unsigned images cannot be pulled. self-read: off,  │  │ aaf7110bc769                                                                       ECDSA P-256 │
-                               │  │ pusher (whoever pushed tha  ╭──────────────────────────────────────────────────────────────────────╮                                                             │
-  SECURITY                     │  │ can push). p edit policy.   │  Signing policy                                                      │                                                             │
-      Image scanning           │  │ Last saved 9 Nov 2026 10:1  │  Applies to every repository without an override. 2 keys, 1          │                OIDC ISSUER                                  │
-      Secret scanning          │  │                             │  identity configured.                                                │                https://token.actions.githubusercontent.com  │
-    ▸ Signing policy           │  │                             │  [x] Pull-time gate enforced                                         │  enough.                                                    │
-                               │  │                             │  Unsigned self-read (space cycles)                                   │                                                             │
-  OPERATIONS                   │  ╰───────────────────────────  │   pusher                                                             │  ───────────────────────────────────────────────────────────╯
-      Scan runs                │  ╭───────────────────────────  │   Trusted Keys (2)                                                   │  ───────────────────────────────────────────────────────────╮
-      Secret findings          │  │ PER-REPOSITORY OVERRIDES    │  ▸  Key: 2c1d7289f2db                                                │                                                             │
-      Update channel           │  │ REPOSITORY                  │    Key: aaf7110bc769                                                 │       STATUS     ENABLED  DETAIL                UPDATED     │
-                               │  │ team/api                    │  New Key (PEM)                                                       │       override   yes      1 key, 0 identities   9 Nov       │
-                               │  │ team/docs                   │   --▏                                                                │       override   no       not enforced          2 Nov       │
+      Projects                 │  │ pusher (whoever pushed tha  ╭──────────────────────────────────────────────────────────────────────╮                                                             │
+                               │  │ can push). p edit policy.   │  Signing policy                                                      │                                                             │
+  SECURITY                     │  │ Last saved 9 Nov 2026 10:1  │  Applies to every repository without an override. 2 keys, 1          │                OIDC ISSUER                                  │
+      Image scanning           │  │                             │  identity configured.                                                │                https://token.actions.githubusercontent.com  │
+      Secret scanning          │  │                             │  [x] Pull-time gate enforced                                         │  enough.                                                    │
+    ▸ Signing policy           │  │                             │  Unsigned self-read (space cycles)                                   │                                                             │
+      Login security           │  ╰───────────────────────────  │   pusher                                                             │  ───────────────────────────────────────────────────────────╯
+                               │  ╭───────────────────────────  │   Trusted Keys (2)                                                   │  ───────────────────────────────────────────────────────────╮
+  OPERATIONS                   │  │ PER-REPOSITORY OVERRIDES    │  ▸  Key: 2c1d7289f2db                                                │                                                             │
+      Scan runs                │  │ REPOSITORY                  │    Key: aaf7110bc769                                                 │       STATUS     ENABLED  DETAIL                UPDATED     │
+      Secret findings          │  │ team/api                    │  New Key (PEM)                                                       │       override   yes      1 key, 0 identities   9 Nov       │
+      Update channel           │  │ team/docs                   │   --▏                                                                │       override   no       not enforced          2 Nov       │
                                │  │ team/web                    │  Trusted Identities (1)                                              │       inherited  —        global policy         -           │
                                │  │ team/infra                  │    Identity: https://github.com/team/.* (https://token.actions.git…  │       inherited  —        global policy         -           │
                                │  │                             │  Clear all trusted keys                                              │                                                             │

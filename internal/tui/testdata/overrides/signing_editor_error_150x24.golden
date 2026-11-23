@@ -8,17 +8,17 @@
       Users                    │  │ ▸  │  Trusted Keys (1)                                                    │  verride                           │
       Robots                   │  │    │    Key: 2c1d7289f2db                                                 │                                    │
       Repository access        │  │    │  Trusted Identities (1)                                              │  VERRIDE                           │
-                               │  │    │    Identity: https://github.com/team/.* (https://token.actions.git…  │  ull-time gate            enforced │
-  SECURITY                     │  │    │  Unsigned self-read (space cycles)                                   │  nsigned self-read          pusher │
-      Image scanning           │  │    │   pusher                                                             │  rusted keys                     1 │
-      Secret scanning          │  │    │  Clear override, use the global settings                             │  dentities                       1 │
-    ▸ Signing policy           │  │    │  enabled requires at least one usable entry in trusted_public_keys   │  pdated                      9 Nov │
-                               │  │    │  or trusted_identities                                               │                                    │
-  OPERATIONS                   │  │    │                                                                      │  CTIONS                            │
-      Scan runs                │  │    │   Save  enter   Cancel  esc                                          │  dit override                    o │
-      Secret findings          │  │    │  tab next field, space toggles or cycles, n adds and x deletes in a  │  efresh                          r │
-      Update channel           │  ╰──  │  list                                                                │                                    │
-                               │  An   ╰──────────────────────────────────────────────────────────────────────╯                                    │
-                               │  the override of the selected repository.                                    ╰────────────────────────────────────╯
+      Projects                 │  │    │    Identity: https://github.com/team/.* (https://token.actions.git…  │  ull-time gate            enforced │
+                               │  │    │  Unsigned self-read (space cycles)                                   │  nsigned self-read          pusher │
+  SECURITY                     │  │    │   pusher                                                             │  rusted keys                     1 │
+      Image scanning           │  │    │  Clear override, use the global settings                             │  dentities                       1 │
+      Secret scanning          │  │    │  enabled requires at least one usable entry in trusted_public_keys   │  pdated                      9 Nov │
+    ▸ Signing policy           │  │    │  or trusted_identities                                               │                                    │
+      Login security           │  │    │                                                                      │  CTIONS                            │
+                               │  │    │   Save  enter   Cancel  esc                                          │  dit override                    o │
+  OPERATIONS                   │  │    │  tab next field, space toggles or cycles, n adds and x deletes in a  │  efresh                          r │
+      Scan runs                │  ╰──  │  list                                                                │                                    │
+      Secret findings          │  An   ╰──────────────────────────────────────────────────────────────────────╯                                    │
+      Update channel           │  the override of the selected repository.                                    ╰────────────────────────────────────╯
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   tab next field   space toggle   enter save   esc cancel                                                                                F2 mouse on  

@@ -8,18 +8,18 @@
       Users                    │  │ ▸ team/api                                                           override   yes      1 key, 1 identi…  9 Nov       │  │ override                             │
       Robots                   │  │   team/docs                                                          override   no       not enforced      2 Nov       │  │                                      │
       Repository access        │  │   team/web                                                           inherited  —        global policy     -           │  │ OVERRIDE                             │
-                               │  │   team/infra                                                         inherited  —        global policy     -           │  │ Pull-time gate              enforced │
-  SECURITY                     │  │                             ╭──────────────────────────────────────────────────────────────────────╮                   │  │ Unsigned self-read            pusher │
-      Image scanning           │  │                             │  Signing override                                                    │                   │  │ Trusted keys                       1 │
-      Secret scanning          │  │                             │  team/api. override active.                                          │                   │  │ Identities                         1 │
-    ▸ Signing policy           │  │                             │  [x] Pull-time gate enforced                                         │                   │  │ Updated                        9 Nov │
-                               │  │                             │   Trusted Keys (1)                                                   │                   │  │                                      │
-  OPERATIONS                   │  │                             │  ▸  Key: 2c1d7289f2db                                                │                   │  │ ACTIONS                              │
-      Scan runs                │  │                             │  New Key (PEM)                                                       │                   │  │ Edit override                      o │
-      Secret findings          │  │                             │   Mopp6MmPX3JDLw== -----END PUBLIC KEY-----▏                         │                   │  │ Refresh                            r │
-      Update channel           │  │                             │  Trusted Identities (1)                                              │                   │  │                                      │
-                               │  │                             │    Identity: https://github.com/team/.* (https://token.actions.git…  │                   │  │                                      │
-                               │  │                             │  Unsigned self-read (space cycles)                                   │                   │  │                                      │
+      Projects                 │  │   team/infra                                                         inherited  —        global policy     -           │  │ Pull-time gate              enforced │
+                               │  │                             ╭──────────────────────────────────────────────────────────────────────╮                   │  │ Unsigned self-read            pusher │
+  SECURITY                     │  │                             │  Signing override                                                    │                   │  │ Trusted keys                       1 │
+      Image scanning           │  │                             │  team/api. override active.                                          │                   │  │ Identities                         1 │
+      Secret scanning          │  │                             │  [x] Pull-time gate enforced                                         │                   │  │ Updated                        9 Nov │
+    ▸ Signing policy           │  │                             │   Trusted Keys (1)                                                   │                   │  │                                      │
+      Login security           │  │                             │  ▸  Key: 2c1d7289f2db                                                │                   │  │ ACTIONS                              │
+                               │  │                             │  New Key (PEM)                                                       │                   │  │ Edit override                      o │
+  OPERATIONS                   │  │                             │   Mopp6MmPX3JDLw== -----END PUBLIC KEY-----▏                         │                   │  │ Refresh                            r │
+      Scan runs                │  │                             │  Trusted Identities (1)                                              │                   │  │                                      │
+      Secret findings          │  │                             │    Identity: https://github.com/team/.* (https://token.actions.git…  │                   │  │                                      │
+      Update channel           │  │                             │  Unsigned self-read (space cycles)                                   │                   │  │                                      │
                                │  │                             │   pusher                                                             │                   │  │                                      │
                                │  │                             │  Clear override, use the global settings                             │                   │  │                                      │
                                │  │                             │                                                                      │                   │  │                                      │

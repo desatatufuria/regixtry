@@ -31,6 +31,12 @@ type Service struct {
 	limiter *loginLimiter
 	backoff *loginBackoff
 	logger  *log.Logger
+	// projects answers whether a project exists (see SetProjectLookup); nil
+	// until main installs it.
+	projects ports.ProjectLookup
+	// failureAggregator is flushed before the security endpoints read (see
+	// SetLoginFailureAggregator); nil when failures are not aggregated.
+	failureAggregator *LoginFailureAggregator
 }
 
 // robotRollbackTimeout is the default bound on the robot rollback delete.
@@ -767,6 +773,12 @@ func (s *Service) PutRepoGrant(ctx context.Context, actor domainauth.Principal, 
 	if err := role.Validate(); err != nil {
 		return domainauth.RepoGrant{}, err
 	}
+	if err := refuseReadOnlyExactGrant(subject, role); err != nil {
+		return domainauth.RepoGrant{}, err
+	}
+	if err := s.refuseRepoGrantOnProjectRobot(ctx, subject); err != nil {
+		return domainauth.RepoGrant{}, err
+	}
 
 	// Read only to word the access history ("Reader to Writer"); a failed
 	// read never blocks the grant.
@@ -784,6 +796,18 @@ func (s *Service) PutRepoGrant(ctx context.Context, actor domainauth.Principal, 
 	}
 
 	return grant, nil
+}
+
+// refuseReadOnlyExactGrant keeps misleading data out of the store: a
+// read-only user is capped at read whatever its grants say (Principal), so a
+// writer or admin exact grant would be inert. Rows that predate this rule stay
+// capped at decision time.
+func refuseReadOnlyExactGrant(target domainauth.User, role domainauth.RepoRole) error {
+	if target.IsReadOnly && role != domainauth.RepoRoleReader {
+		return domainauth.NewValidationError("read-only users can only be readers")
+	}
+
+	return nil
 }
 
 func (s *Service) PutAdminUserRepoGrant(ctx context.Context, actor domainauth.Principal, input ports.AdminPutRepoGrantInput) (ports.AdminRepoGrant, error) {
@@ -888,6 +912,12 @@ func (s *Service) PutRepositoryGrant(ctx context.Context, actor domainauth.Princ
 	if err != nil {
 		return domainauth.RepoGrant{}, err
 	}
+	if err := refuseReadOnlyExactGrant(target, role); err != nil {
+		return domainauth.RepoGrant{}, err
+	}
+	if err := s.refuseRepoGrantOnProjectRobot(ctx, target); err != nil {
+		return domainauth.RepoGrant{}, err
+	}
 
 	// The existing grants bound a delegate and word the access history
 	// ("Reader to Writer"). For a global admin a failed read never blocks the
@@ -989,12 +1019,39 @@ func (s *Service) CreateRobot(ctx context.Context, actor domainauth.Principal, i
 		return ports.CreatedRobot{}, err
 	}
 
-	repo, err := regixtrydomain.ParseRepositoryRef(strings.TrimSpace(input.Repository))
-	if err != nil {
-		return ports.CreatedRobot{}, err
+	// A robot is bound to exactly one repository OR one project, never both.
+	// Neither falls through to the repository path and its usual error.
+	repositoryName := strings.TrimSpace(input.Repository)
+	projectName := strings.TrimSpace(input.Project)
+	if repositoryName != "" && projectName != "" {
+		return ports.CreatedRobot{}, domainauth.NewValidationError("a robot takes either a repository or a project, not both")
 	}
-	if err := input.Role.Validate(); err != nil {
-		return ports.CreatedRobot{}, err
+
+	var repo regixtrydomain.RepositoryRef
+	if projectName != "" {
+		var err error
+		if projectName, err = regixtrydomain.ParseProjectName(projectName); err != nil {
+			return ports.CreatedRobot{}, err
+		}
+		if err := input.Role.Validate(); err != nil {
+			return ports.CreatedRobot{}, err
+		}
+		// A robot token is an admin credential: a project admin robot would
+		// delegate project management, so only reader and writer exist.
+		if input.Role == domainauth.RepoRoleAdmin {
+			return ports.CreatedRobot{}, domainauth.NewValidationError("robots on a project can be reader or writer only")
+		}
+		if err := s.projectMustExist(ctx, projectName); err != nil {
+			return ports.CreatedRobot{}, err
+		}
+	} else {
+		var err error
+		if repo, err = regixtrydomain.ParseRepositoryRef(repositoryName); err != nil {
+			return ports.CreatedRobot{}, err
+		}
+		if err := input.Role.Validate(); err != nil {
+			return ports.CreatedRobot{}, err
+		}
 	}
 
 	// Validate everything CreateAdminToken will validate before the first
@@ -1018,10 +1075,23 @@ func (s *Service) CreateRobot(ctx context.Context, actor domainauth.Principal, i
 		return ports.CreatedRobot{}, err
 	}
 
-	grant := domainauth.RepoGrant{UserID: user.ID, Repository: repo, Role: input.Role, CreatedAt: now, UpdatedAt: now}
-	if err := s.store.PutRepoGrant(ctx, grant); err != nil {
-		s.rollbackRobot(ctx, user.ID)
-		return ports.CreatedRobot{}, err
+	var grant domainauth.RepoGrant
+	var projectGrant domainauth.ProjectGrant
+	boundTo := projectName
+	if projectName != "" {
+		projectGrant = domainauth.ProjectGrant{UserID: user.ID, Project: projectName, Role: input.Role, CreatedAt: now, UpdatedAt: now}
+		if err := s.store.PutProjectGrant(ctx, projectGrant); err != nil {
+			s.rollbackRobot(ctx, user.ID)
+			return ports.CreatedRobot{}, err
+		}
+		boundTo = domainauth.ProjectEventRepository(projectName)
+	} else {
+		grant = domainauth.RepoGrant{UserID: user.ID, Repository: repo, Role: input.Role, CreatedAt: now, UpdatedAt: now}
+		if err := s.store.PutRepoGrant(ctx, grant); err != nil {
+			s.rollbackRobot(ctx, user.ID)
+			return ports.CreatedRobot{}, err
+		}
+		boundTo = repo.String()
 	}
 
 	created, _, err := s.issueAdminToken(ctx, actor, ports.CreateAdminTokenInput{UserID: user.ID, Name: strings.TrimSpace(input.Name), TTL: input.TTL})
@@ -1030,9 +1100,9 @@ func (s *Service) CreateRobot(ctx context.Context, actor domainauth.Principal, i
 		return ports.CreatedRobot{}, err
 	}
 
-	s.recordRobotCreated(ctx, actor, user, grant, created.Token.Name, ttl)
+	s.recordRobotCreated(ctx, actor, user, boundTo, input.Role, created.Token.Name, ttl)
 
-	return ports.CreatedRobot{User: user, Grant: grant, Secret: created.Secret, Accessor: created.Accessor, ExpiresAt: created.ExpiresAt}, nil
+	return ports.CreatedRobot{User: user, Grant: grant, ProjectGrant: projectGrant, Secret: created.Secret, Accessor: created.Accessor, ExpiresAt: created.ExpiresAt}, nil
 }
 
 // rollbackRobot best-effort deletes the robot user CreateRobot just wrote
@@ -1058,6 +1128,7 @@ func (s *Service) CreateAdminRobot(ctx context.Context, actor domainauth.Princip
 	created, err := s.CreateRobot(ctx, actor, ports.CreateRobotInput{
 		Name:       input.Name,
 		Repository: input.Repository,
+		Project:    input.Project,
 		Role:       input.Role,
 		TTL:        input.TTL,
 	})
@@ -1066,7 +1137,7 @@ func (s *Service) CreateAdminRobot(ctx context.Context, actor domainauth.Princip
 	}
 
 	return ports.AdminCreatedRobot{
-		Robot:     toAdminRobot(created.User, created.Grant),
+		Robot:     toAdminRobot(created.User, created.Grant, created.ProjectGrant),
 		Secret:    created.Secret,
 		Accessor:  created.Accessor,
 		ExpiresAt: created.ExpiresAt,
@@ -1090,7 +1161,17 @@ func (s *Service) ListAdminRobots(ctx context.Context, actor domainauth.Principa
 		if len(grants) > 0 {
 			grant = grants[0]
 		}
-		result = append(result, toAdminRobot(robot, grant))
+		var projectGrant domainauth.ProjectGrant
+		if len(grants) == 0 {
+			projectGrants, err := s.store.ListProjectGrants(ctx, robot.ID)
+			if err != nil {
+				return nil, err
+			}
+			if len(projectGrants) > 0 {
+				projectGrant = projectGrants[0]
+			}
+		}
+		result = append(result, toAdminRobot(robot, grant, projectGrant))
 	}
 
 	return result, nil
@@ -1130,12 +1211,18 @@ func (s *Service) DeleteAdminRobot(ctx context.Context, actor domainauth.Princip
 	return s.DeleteRobot(ctx, actor, userID)
 }
 
-func toAdminRobot(user domainauth.User, grant domainauth.RepoGrant) ports.AdminRobot {
+func toAdminRobot(user domainauth.User, grant domainauth.RepoGrant, projectGrant domainauth.ProjectGrant) ports.AdminRobot {
+	role := grant.Role
+	if projectGrant.Project != "" {
+		role = projectGrant.Role
+	}
+
 	return ports.AdminRobot{
 		ID:         user.ID,
 		Username:   user.Username,
 		Repository: grant.Repository.String(),
-		Role:       grant.Role,
+		Project:    projectGrant.Project,
+		Role:       role,
 		Enabled:    user.Enabled,
 		CreatedAt:  user.CreatedAt,
 	}
@@ -1235,12 +1322,18 @@ func (s *Service) buildPrincipal(ctx context.Context, user domainauth.User, toke
 	if err != nil {
 		grants = nil
 	}
+	// Same fail-closed handling as the exact grants: a read error leaves the
+	// principal without project access, never with more.
+	projectGrants, err := s.store.ListProjectGrants(ctx, user.ID)
+	if err != nil {
+		projectGrants = nil
+	}
 	scopes, err := token.Scopes()
 	if err != nil {
 		return domainauth.Principal{}, err
 	}
 
-	return domainauth.Principal{Subject: token.Accessor, UserID: user.ID, Username: user.Username, IsAdmin: user.IsAdmin, IsReadOnly: user.IsReadOnly, Grants: grants, Scopes: scopes, ExpiresAt: token.ExpiresAt}, nil
+	return domainauth.Principal{Subject: token.Accessor, UserID: user.ID, Username: user.Username, IsAdmin: user.IsAdmin, IsReadOnly: user.IsReadOnly, Grants: grants, ProjectGrants: projectGrants, Scopes: scopes, ExpiresAt: token.ExpiresAt}, nil
 }
 
 func (s *Service) grantedScopes(ctx context.Context, user domainauth.User, requestedScopes []domainauth.Scope) ([]domainauth.Scope, error) {
@@ -1249,6 +1342,10 @@ func (s *Service) grantedScopes(ctx context.Context, user domainauth.User, reque
 	}
 
 	grants, err := s.store.ListRepoGrants(ctx, user.ID)
+	if err != nil {
+		return nil, err
+	}
+	projectGrants, err := s.store.ListProjectGrants(ctx, user.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -1263,7 +1360,7 @@ func (s *Service) grantedScopes(ctx context.Context, user domainauth.User, reque
 			continue
 		}
 
-		actions := intersectRequestedActions(user.IsAdmin, user.IsReadOnly, grants, requested)
+		actions := intersectRequestedActionsWithProjects(user.IsAdmin, user.IsReadOnly, grants, projectGrants, requested)
 		if len(actions) == 0 {
 			continue
 		}
@@ -1275,6 +1372,15 @@ func (s *Service) grantedScopes(ctx context.Context, user domainauth.User, reque
 }
 
 func intersectRequestedActions(isAdmin bool, isReadOnly bool, grants []domainauth.RepoGrant, requested domainauth.Scope) []string {
+	return intersectRequestedActionsWithProjects(isAdmin, isReadOnly, grants, nil, requested)
+}
+
+// intersectRequestedActionsWithProjects decides which of the requested
+// actions a token may carry. The requested scope always names one exact
+// repository; project grants are expanded here, at issue time, into the
+// actions on that exact repository (the token's scopes never name a project),
+// so a request for a repository outside the project gets nothing.
+func intersectRequestedActionsWithProjects(isAdmin bool, isReadOnly bool, grants []domainauth.RepoGrant, projectGrants []domainauth.ProjectGrant, requested domainauth.Scope) []string {
 	allowPull := false
 	allowPush := false
 	allowDelete := false
@@ -1292,26 +1398,22 @@ func intersectRequestedActions(isAdmin bool, isReadOnly bool, grants []domainaut
 		// never grants delete either: the absence of a line here is the
 		// guarantee, not a check.
 		allowPull = requested.AllowsPull()
-	} else {
-		for _, grant := range grants {
-			if grant.Repository.String() != requested.Repository().String() {
-				continue
-			}
-			if grant.Role.AllowsRead() && requested.AllowsPull() {
-				allowPull = true
-			}
-			if grant.Role.AllowsWrite() && requested.AllowsPush() {
-				allowPush = true
-			}
-			// Own statement, own requested.AllowsDelete() guard — never
-			// folded into the push branch as
-			// `AllowsPush() || AllowsDelete()`. A fifth verb must likewise
-			// add its own line, so no future action can inherit writer
-			// derivation by being forgotten (proposal Q4).
-			if grant.Role.AllowsWrite() && requested.AllowsDelete() {
-				allowDelete = true
-			}
-			break
+	} else if role, ok := domainauth.EffectiveRole(grants, projectGrants, requested.Repository().String()); ok {
+		// The role is the highest of the exact grant and the grant of the
+		// repository's project (first segment, ==).
+		if role.AllowsRead() && requested.AllowsPull() {
+			allowPull = true
+		}
+		if role.AllowsWrite() && requested.AllowsPush() {
+			allowPush = true
+		}
+		// Own statement, own requested.AllowsDelete() guard — never
+		// folded into the push branch as
+		// `AllowsPush() || AllowsDelete()`. A fifth verb must likewise
+		// add its own line, so no future action can inherit writer
+		// derivation by being forgotten (proposal Q4).
+		if role.AllowsWrite() && requested.AllowsDelete() {
+			allowDelete = true
 		}
 	}
 
@@ -1342,11 +1444,12 @@ func requireAdmin(actor domainauth.Principal) error {
 
 // requireAdminOrRepoAdmin authorizes the delegated repository-grant
 // namespace (design.md Decision 4): a global admin always passes, and a
-// repo-admin grant on the exact target repository also passes. This
-// deliberately reads actor.Grants directly instead of reusing
-// Principal.HasRepoAdminAccess, which additionally requires a push token
-// scope — a TUI/admin-API login requests zero scopes, so that helper would
-// make delegation permanently dead code on exactly the tokens it runs on.
+// repo-admin grant on the target repository (exact or through its project)
+// also passes. It uses Principal.HasGrantedRepoAdminAccess, the grant half
+// only, instead of Principal.HasRepoAdminAccess, which additionally requires a
+// push token scope — a TUI/admin-API login requests zero scopes, so that
+// helper would make delegation permanently dead code on exactly the tokens it
+// runs on.
 func requireAdminOrRepoAdmin(actor domainauth.Principal, repository string) error {
 	if !actor.IsUnrestricted() {
 		return domainauth.NewForbiddenError("a scope-limited token cannot be used for administration")
@@ -1355,13 +1458,38 @@ func requireAdminOrRepoAdmin(actor domainauth.Principal, repository string) erro
 		return nil
 	}
 
-	for _, grant := range actor.Grants {
-		if grant.Repository.String() == repository && grant.Role.AllowsAdmin() {
-			return nil
-		}
+	// One decision for the exact repository grant and the project grant, with
+	// the read-only cap applied inside Principal: a read-only actor never
+	// delegates, whatever its grants say.
+	if actor.HasGrantedRepoAdminAccess(repository) {
+		return nil
 	}
 
 	return domainauth.NewForbiddenError("repository administrator privileges are required")
+}
+
+// isProjectAdminOf reports whether the actor holds a project admin grant on
+// exactly this project. A read-only principal never delegates: the cap lives
+// in Principal, so this also covers grants that predate the rule.
+func isProjectAdminOf(actor domainauth.Principal, project string) bool {
+	return actor.HasGrantedProjectAdminAccess(project)
+}
+
+// requireAdminOrProjectAdmin authorizes the delegated project-member
+// namespace: a global admin always passes, a project admin passes for their
+// own project only. A scope-limited token never administers.
+func requireAdminOrProjectAdmin(actor domainauth.Principal, project string) error {
+	if !actor.IsUnrestricted() {
+		return domainauth.NewForbiddenError("a scope-limited token cannot be used for administration")
+	}
+	if actor.IsAdmin {
+		return nil
+	}
+	if isProjectAdminOf(actor, project) {
+		return nil
+	}
+
+	return domainauth.NewForbiddenError("project administrator privileges are required")
 }
 
 func normalizeUsername(username string) string {

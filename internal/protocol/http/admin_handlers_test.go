@@ -1993,8 +1993,8 @@ func TestAdminRepositoryGrantResponsesCarryNoUserIdentityFields(t *testing.T) {
 	if _, err := authService.PutRepoGrant(context.Background(), adminActor, victim.ID, "team/app", auth.RepoRoleReader); err != nil {
 		t.Fatalf("PutRepoGrant(victim, team/app, repo-reader) error = %v", err)
 	}
-	if _, err := authService.PutRepoGrant(context.Background(), adminActor, victim.ID, "team/other", auth.RepoRoleWriter); err != nil {
-		t.Fatalf("PutRepoGrant(victim, team/other, repo-writer) error = %v", err)
+	if _, err := authService.PutRepoGrant(context.Background(), adminActor, victim.ID, "team/other", auth.RepoRoleReader); err != nil {
+		t.Fatalf("PutRepoGrant(victim, team/other, repo-reader) error = %v", err)
 	}
 
 	adminLogin, err := authService.LoginWithPassword(context.Background(), adminActor.Username, "fixture-pass-9x", nil)

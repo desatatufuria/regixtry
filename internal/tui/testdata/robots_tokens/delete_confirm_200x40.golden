@@ -8,18 +8,18 @@
       Users                    │  │ ▸ ci-publisher                                                          team/api          Writer  enabled   6 days     │  │ ACCESS                               │
     ▸ Robots                   │  │   gh-actions                                                            none              none    enabled   89 days    │  │ team/api                    [Writer] │
       Repository access        │  │   staging-deploy                                                        team/web          Writer  enabled   18 days    │  │ 1 repository, 2 tokens               │
-                               │  │   old-deploy                                                            team/infra        Writer  disabled  expired    │  │                                      │
-  SECURITY                     │  ╰───────────────────────────────  ╭──────────────────────────────────────────────────────────────╮  ─────────────────────╯  │ ACTIONS                              │
-      Image scanning           │                                    │  Delete robot ci-publisher                                   │                          │ New robot                          n │
-      Secret scanning          │  EXPIRES is the token that ends f  │                                                              │                          │ Tokens                             t │
-      Signing policy           │                                    │  The robot account is removed together with its repository   │                          │ Grant access                       g │
-                               │                                    │  access and all of its tokens.                               │                          │ Disable robot                      d │
-  OPERATIONS                   │                                    │                                                              │                          │ Delete robot                       x │
-      Scan runs                │                                    │  ╭────────────────────────────────────────────────────────╮  │                          │                                      │
-      Secret findings          │                                    │  │ ci-publisher                                           │  │                          │ NEEDS ATTENTION                      │
-      Update channel           │                                    │  │ repository team/api, role Writer                       │  │                          │ Token release-pipeline expires in 6  │
-                               │                                    │  ╰────────────────────────────────────────────────────────╯  │                          │ days                         t renew │
-                               │                                    │                                                              │                          │                                      │
+      Projects                 │  │   old-deploy                                                            team/infra        Writer  disabled  expired    │  │                                      │
+                               │  ╰───────────────────────────────  ╭──────────────────────────────────────────────────────────────╮  ─────────────────────╯  │ ACTIONS                              │
+  SECURITY                     │                                    │  Delete robot ci-publisher                                   │                          │ New robot                          n │
+      Image scanning           │  EXPIRES is the token that ends f  │                                                              │                          │ Tokens                             t │
+      Secret scanning          │                                    │  The robot account is removed together with its repository   │                          │ Grant access                       g │
+      Signing policy           │                                    │  access and all of its tokens.                               │                          │ Disable robot                      d │
+      Login security           │                                    │                                                              │                          │ Delete robot                       x │
+                               │                                    │  ╭────────────────────────────────────────────────────────╮  │                          │                                      │
+  OPERATIONS                   │                                    │  │ ci-publisher                                           │  │                          │ NEEDS ATTENTION                      │
+      Scan runs                │                                    │  │ repository team/api, role Writer                       │  │                          │ Token release-pipeline expires in 6  │
+      Secret findings          │                                    │  ╰────────────────────────────────────────────────────────╯  │                          │ days                         t renew │
+      Update channel           │                                    │                                                              │                          │                                      │
                                │                                    │  Anything using its tokens stops working immediately. This   │                          │                                      │
                                │                                    │  cannot be undone.                                           │                          │                                      │
                                │                                    │                                                              │                          │                                      │

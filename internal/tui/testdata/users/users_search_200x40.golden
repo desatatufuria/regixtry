@@ -8,18 +8,18 @@
     ▸ Users                    │  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  │ user, enabled, created 3 Mar 2026  │  
       Robots                   │  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  │                                    │  
       Repository access        │  │   USERNAME                                                                                 ROLE       STATE     EXPIRING │  │ ACTIONS                            │  
-                               │  │ ▸ alice                                                                                    user       enabled   1        │  │ Open profile                 enter │  
-  SECURITY                     │  │                                                                                                                          │  │ Grant access                     g │  
-      Image scanning           │  │                                                                                                                          │  │ Tokens                           t │  
-      Secret scanning          │  │                                                                                                                          │  │ Reset password                   p │  
-      Signing policy           │  │                                                                                                                          │  │ Disable user                     d │  
-                               │  │                                                                                                                          │  │                                    │  
-  OPERATIONS                   │  │                                                                                                                          │  │ NEEDS ATTENTION                    │  
-      Scan runs                │  │                                                                                                                          │  │ Token phone expires in 6 days      │  
+      Projects                 │  │ ▸ alice                                                                                    user       enabled   1        │  │ Open profile                 enter │  
+                               │  │                                                                                                                          │  │ Grant access                     g │  
+  SECURITY                     │  │                                                                                                                          │  │ Tokens                           t │  
+      Image scanning           │  │                                                                                                                          │  │ Reset password                   p │  
+      Secret scanning          │  │                                                                                                                          │  │ Disable user                     d │  
+      Signing policy           │  │                                                                                                                          │  │                                    │  
+      Login security           │  │                                                                                                                          │  │ NEEDS ATTENTION                    │  
+                               │  │                                                                                                                          │  │ Token phone expires in 6 days      │  
+  OPERATIONS                   │  │                                                                                                                          │  │                                    │  
+      Scan runs                │  │                                                                                                                          │  │                                    │  
       Secret findings          │  │                                                                                                                          │  │                                    │  
       Update channel           │  │                                                                                                                          │  │                                    │  
-                               │  │                                                                                                                          │  │                                    │  
-                               │  │                                                                                                                          │  │                                    │  
                                │  │                                                                                                                          │  │                                    │  
                                │  │                                                                                                                          │  │                                    │  
                                │  │                                                                                                                          │  │                                    │  

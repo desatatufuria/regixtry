@@ -8,17 +8,17 @@
       Users                    │  │   ci-publisher        team/api          Writer  enabled   6 days     │  │ ACCESS                               │  
     ▸ Robots                   │  │ ▸ gh-actions          none              none    enabled   89 days    │  │ No repository access                 │  
       Repository access        │  │   staging-deploy      team/web          Writer  enabled   18 days    │  │ 0 repositories, 1 token              │  
-                               │  │   old-deploy          team/infra        Writer  disabled  expired    │  │                                      │  
-  SECURITY                     │  ╰──────────────────────────────────────────────────────────────────────╯  │ ACTIONS                              │  
-      Image scanning           │  gh-actions can authenticate but cannot pull or push.                      │ New robot                          n │  
-      Secret scanning          │  Grant it a repository with g.                                             │ Tokens                             t │  
-      Signing policy           │  EXPIRES is the token that ends first.                                     │ Grant access                       g │  
-                               │                                                                            │ Disable robot                      d │  
-  OPERATIONS                   │                                                                            │ Delete robot                       x │  
-      Scan runs                │                                                                            │                                      │  
-      Secret findings          │                                                                            │ NEEDS ATTENTION                      │  
-      Update channel           │                                                                            │ No repository access         g grant │  
+      Projects                 │  │   old-deploy          team/infra        Writer  disabled  expired    │  │                                      │  
+                               │  ╰──────────────────────────────────────────────────────────────────────╯  │ ACTIONS                              │  
+  SECURITY                     │  gh-actions can authenticate but cannot pull or push.                      │ New robot                          n │  
+      Image scanning           │  Grant it a repository with g.                                             │ Tokens                             t │  
+      Secret scanning          │  EXPIRES is the token that ends first.                                     │ Grant access                       g │  
+      Signing policy           │                                                                            │ Disable robot                      d │  
+      Login security           │                                                                            │ Delete robot                       x │  
                                │                                                                            │                                      │  
-                               │                                                                            ╰──────────────────────────────────────╯  
+  OPERATIONS                   │                                                                            │ NEEDS ATTENTION                      │  
+      Scan runs                │                                                                            │ No repository access         g grant │  
+      Secret findings          │                                                                            │                                      │  
+      Update channel           │                                                                            ╰──────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   ↑↓ move   enter open   n new robot   t tokens   g grant access   d disable   e enable   x delete   r refresh   esc back   q quit                    

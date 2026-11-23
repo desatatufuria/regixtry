@@ -8,17 +8,17 @@
       Users                    │  │ No robots yet. Press n to create one.                                │  │ New robot                          n │  
     ▸ Robots                   │  ╰──────────────────────────────────────────────────────────────────────╯  │                                      │  
       Repository access        │                                                                            │                                      │  
-                               │  EXPIRES is the token that ends first.                                     │                                      │  
+      Projects                 │  EXPIRES is the token that ends first.                                     │                                      │  
+                               │                                                                            │                                      │  
   SECURITY                     │                                                                            │                                      │  
       Image scanning           │                                                                            │                                      │  
       Secret scanning          │                                                                            │                                      │  
       Signing policy           │                                                                            │                                      │  
+      Login security           │                                                                            │                                      │  
                                │                                                                            │                                      │  
   OPERATIONS                   │                                                                            │                                      │  
       Scan runs                │                                                                            │                                      │  
       Secret findings          │                                                                            │                                      │  
-      Update channel           │                                                                            │                                      │  
-                               │                                                                            │                                      │  
-                               │                                                                            ╰──────────────────────────────────────╯  
+      Update channel           │                                                                            ╰──────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   ↑↓ move   enter open   n new robot   t tokens   g grant access   d disable   e enable   x delete   r refresh   esc back   q quit                    

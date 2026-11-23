@@ -8,18 +8,18 @@
       Users                    │  │   team/service-173                                                   inherited  —        global policy     -           │  │ override                             │  
       Robots                   │  │   team/service-174                                                   inherited  —        global policy     -           │  │                                      │  
       Repository access        │  │   team/service-175                                                   inherited  —        global policy     -           │  │ OVERRIDE                             │  
-                               │  │   team/service-176                                                   inherited  —        global policy     -           │  │ Pull-time gate          not enforced │  
-  SECURITY                     │  │   team/service-177                                                   inherited  —        global policy     -           │  │ Unsigned self-read               off │  
-      Image scanning           │  │   team/service-178                                                   inherited  —        global policy     -           │  │ Trusted keys                       0 │  
-      Secret scanning          │  │   team/service-179                                                   inherited  —        global policy     -           │  │ Identities                         0 │  
-    ▸ Signing policy           │  │   team/service-180                                                   inherited  —        global policy     -           │  │ Updated                        2 Nov │  
-                               │  │   team/service-181                                                   inherited  —        global policy     -           │  │                                      │  
-  OPERATIONS                   │  │   team/service-182                                                   inherited  —        global policy     -           │  │ ACTIONS                              │  
-      Scan runs                │  │   team/service-183                                                   inherited  —        global policy     -           │  │ Edit override                      o │  
-      Secret findings          │  │   team/service-184                                                   inherited  —        global policy     -           │  │ Refresh                            r │  
-      Update channel           │  │   team/service-185                                                   inherited  —        global policy     -           │  │                                      │  
-                               │  │   team/service-186                                                   inherited  —        global policy     -           │  │                                      │  
-                               │  │   team/service-187                                                   inherited  —        global policy     -           │  │                                      │  
+      Projects                 │  │   team/service-176                                                   inherited  —        global policy     -           │  │ Pull-time gate          not enforced │  
+                               │  │   team/service-177                                                   inherited  —        global policy     -           │  │ Unsigned self-read               off │  
+  SECURITY                     │  │   team/service-178                                                   inherited  —        global policy     -           │  │ Trusted keys                       0 │  
+      Image scanning           │  │   team/service-179                                                   inherited  —        global policy     -           │  │ Identities                         0 │  
+      Secret scanning          │  │   team/service-180                                                   inherited  —        global policy     -           │  │ Updated                        2 Nov │  
+    ▸ Signing policy           │  │   team/service-181                                                   inherited  —        global policy     -           │  │                                      │  
+      Login security           │  │   team/service-182                                                   inherited  —        global policy     -           │  │ ACTIONS                              │  
+                               │  │   team/service-183                                                   inherited  —        global policy     -           │  │ Edit override                      o │  
+  OPERATIONS                   │  │   team/service-184                                                   inherited  —        global policy     -           │  │ Refresh                            r │  
+      Scan runs                │  │   team/service-185                                                   inherited  —        global policy     -           │  │                                      │  
+      Secret findings          │  │   team/service-186                                                   inherited  —        global policy     -           │  │                                      │  
+      Update channel           │  │   team/service-187                                                   inherited  —        global policy     -           │  │                                      │  
                                │  │   team/service-188                                                   inherited  —        global policy     -           │  │                                      │  
                                │  │   team/service-189                                                   inherited  —        global policy     -           │  │                                      │  
                                │  │   team/service-190                                                   inherited  —        global policy     -           │  │                                      │  

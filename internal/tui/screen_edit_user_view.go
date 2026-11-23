@@ -119,18 +119,49 @@ func (s editUserScreen) profileLines(theme adminTheme, width int) []string {
 	}
 }
 
+// Columns of the access list: the role and the source chip sit at the right.
+const (
+	editUserColRole   = 7
+	editUserColSource = 7
+	// editUserAccessHeaderRows is the inner height from which the list keeps
+	// its column header (label, header, three rows and the summary).
+	editUserAccessHeaderRows = 6
+)
+
+// grantLines is the "Project access and repository grants" section: the
+// project roles the user holds (shown as odabank/*, source "project") next to
+// the exact repository grants (source "repo"), project roles first.
 func (s editUserScreen) grantLines(theme adminTheme, width, rows int) []string {
-	lines := []string{spreadText(userSectionTitle(theme, "REPOSITORY GRANTS"), theme.muted.Render("g grant access"), width)}
+	hint := "g grant access"
+	if s.grantsFocused && len(s.accessRows()) > 0 {
+		hint = "x revoke  g grant access"
+	}
+	lines := []string{spreadText(userSectionTitle(theme, "PROJECT ACCESS AND REPOSITORY GRANTS"), theme.muted.Render(hint), width)}
+	access := s.accessRows()
+	name := adminFirstNonEmpty(s.username, "this user")
 	switch {
 	case !s.loaded:
-		return append(lines, theme.muted.Render("Loading…"))
+		return append(lines, theme.muted.Render("Loading access…"))
 	case s.grantsErr != "":
-		return append(lines, theme.error.Render(fitText("Could not load grants: "+s.grantsErr, width)))
-	case len(s.grants) == 0:
-		return append(lines, theme.muted.Render(grantsSummary(0)))
+		return append(lines, theme.error.Render(fitText("Could not load access: "+s.grantsErr+".", width)))
+	case len(access) == 0:
+		text := fmt.Sprintf("%s has no project roles and no repository grants. Press g to grant access.", name)
+		if s.projectGrantsErr != "" {
+			text = fmt.Sprintf("%s has no repository grants. Could not load project roles: %s.", name, s.projectGrantsErr)
+		}
+		for _, line := range wrapText(text, width) {
+			lines = append(lines, theme.muted.Render(line))
+		}
+		return lines
+	}
+	roleW, sourceW := editUserColRole, editUserColSource
+	nameW := max(width-2-roleW-sourceW-2*editUserColumnGap, 6)
+	gap := strings.Repeat(" ", editUserColumnGap)
+	if rows >= editUserAccessHeaderRows {
+		lines = append(lines, theme.muted.Bold(true).Render("  "+padText("REPOSITORY", nameW)+gap+padText("ROLE", roleW)+gap+padText("SOURCE", sourceW)))
 	}
 	room := max(rows-len(lines)-1, 0) // the summary line below the list
-	visible := len(s.grants)
+	visible := len(access)
 	if visible > room {
 		visible = max(room-1, 0)
 		if s.grantsFocused {
@@ -139,25 +170,32 @@ func (s editUserScreen) grantLines(theme adminTheme, width, rows int) []string {
 		}
 	}
 	start, end := 0, visible
-	cursor := boundedIndex(s.grantCursor, len(s.grants))
+	cursor := boundedIndex(s.grantCursor, len(access))
 	if s.grantsFocused {
-		start, end = grantWindow(cursor, len(s.grants), visible)
+		start, end = grantWindow(cursor, len(access), visible)
 	}
 	for i := start; i < end; i++ {
-		grant := s.grants[i]
-		role := theme.muted.Render(grantRoleLabel(grant.Role))
+		row := access[i]
+		chip := "repo"
+		if row.project {
+			chip = "project"
+		}
+		cells := padText(grantTruncate(row.label(), nameW), nameW) + gap + padText(grantRoleLabel(row.role), roleW) + gap + padText(chip, sourceW)
 		switch {
-		case !s.grantsFocused:
-			lines = append(lines, spreadText(grant.Repository.String(), role, width))
-		case i == cursor:
-			lines = append(lines, theme.selected.Padding(0).Render("▸ "+spreadText(grant.Repository.String(), grantRoleLabel(grant.Role), max(width-2, 1))))
+		case s.grantsFocused && i == cursor:
+			lines = append(lines, theme.selected.Padding(0).Render("▸ "+cells))
+		case row.project:
+			lines = append(lines, theme.muted.Render("  "+cells))
 		default:
-			lines = append(lines, "  "+spreadText(grant.Repository.String(), role, max(width-2, 1)))
+			lines = append(lines, "  "+padText(grantTruncate(row.label(), nameW), nameW)+gap+theme.muted.Render(padText(grantRoleLabel(row.role), roleW)+gap+padText(chip, sourceW)))
 		}
 	}
-	summary := grantsSummary(len(s.grants))
-	if end-start < len(s.grants) {
-		summary = fmt.Sprintf("+%d more. %s", len(s.grants)-(end-start), summary)
+	summary := accessSummary(len(s.projectGrants), len(s.grants))
+	if s.projectGrantsErr != "" {
+		summary = "Could not load project roles: " + s.projectGrantsErr + "."
+	}
+	if end-start < len(access) {
+		summary = fmt.Sprintf("+%d more. %s", len(access)-(end-start), summary)
 	}
 	return append(lines, theme.muted.Render(summary))
 }

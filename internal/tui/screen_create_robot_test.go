@@ -20,10 +20,11 @@ func newCreateRobotFixture() (*accessClient, screenEnv, adminScreen) {
 	return client, env, newCreateRobotScreen()
 }
 
-// fillRobot types a name, moves to Repository and types a repository.
+// fillRobot types a name, moves to Repository (past the Scope field) and types
+// a repository.
 func fillRobot(t *testing.T, s adminScreen, env screenEnv, name, repository string) adminScreen {
 	t.Helper()
-	keys := append(accessType(name), testKeyTab())
+	keys := append(accessType(name), testKeyTab(), testKeyTab())
 	keys = append(keys, accessType(repository)...)
 	s, _ = accessPress(t, s, env, keys...)
 	return s
@@ -123,7 +124,7 @@ func TestCreateRobotAcceptsANameNotPushedYet(t *testing.T) {
 func TestCreateRobotRoleAndLifetimeUseLeftAndRight(t *testing.T) {
 	t.Parallel()
 	_, env, s := newCreateRobotFixture()
-	s, _ = accessPress(t, s, env, testKeyTab(), testKeyTab(), testKeyRight(), testKeyRight(), testKeyRight(), testKeyLeft())
+	s, _ = accessPress(t, s, env, testKeyTab(), testKeyTab(), testKeyTab(), testKeyRight(), testKeyRight(), testKeyRight(), testKeyLeft())
 	got := s.(createRobotScreen)
 	if got.role != domainauth.RepoRoleWriter || got.focus != robotFieldRole {
 		t.Fatalf("role=%q focus=%v", got.role, got.focus)
@@ -139,7 +140,7 @@ func TestCreateRobotRoleAndLifetimeUseLeftAndRight(t *testing.T) {
 func TestCreateRobotCustomLifetimeShowsItsExpiryAndRejectsGarbage(t *testing.T) {
 	t.Parallel()
 	_, env, s := newCreateRobotFixture()
-	toLifetime := []keyMsg{testKeyTab(), testKeyTab(), testKeyTab(), testKeyRight(), testKeyRight(), testKeyRight(), testKeyRight(), testKeyRight()}
+	toLifetime := []keyMsg{testKeyTab(), testKeyTab(), testKeyTab(), testKeyTab(), testKeyRight(), testKeyRight(), testKeyRight(), testKeyRight(), testKeyRight()}
 	s, _ = accessPress(t, s, env, append(toLifetime, accessType("12h")...)...)
 	mustContain(t, accessView(s, env), "Expires Sat 21 Nov 2026 21:30 UTC (in 12 hours)")
 
@@ -169,7 +170,7 @@ func TestCreateRobotRequiresNameAndRepository(t *testing.T) {
 		t.Fatalf("err=%q creating=%v calls=%d", got.err, got.creating, client.createRobotCalls)
 	}
 	noRepos := accessEnv(client)
-	s, _ = accessPress(t, s, noRepos, testKeyTab(), testKeyEnter())
+	s, _ = accessPress(t, s, noRepos, testKeyTab(), testKeyTab(), testKeyEnter())
 	if got := s.(createRobotScreen); got.err != "Repository is required." {
 		t.Fatalf("err = %q", got.err)
 	}
@@ -295,7 +296,7 @@ func TestCreateRobotEscCancelsToTheRobotsList(t *testing.T) {
 func TestCreateRobotPasteGoesIntoTheFocusedFieldOnly(t *testing.T) {
 	t.Parallel()
 	_, env, s := newCreateRobotFixture()
-	s, _ = accessPress(t, s, env, keyMsg{Text: "ci bot\n"}, testKeyTab(), keyMsg{Text: " team/api\n"})
+	s, _ = accessPress(t, s, env, keyMsg{Text: "ci bot\n"}, testKeyTab(), testKeyTab(), keyMsg{Text: " team/api\n"})
 	got := s.(createRobotScreen)
 	if got.name != "ci bot" || got.repository != "team/api" {
 		t.Fatalf("name=%q repository=%q", got.name, got.repository)
@@ -326,14 +327,14 @@ func TestCreateRobotKeysChangeWithTheState(t *testing.T) {
 	}
 }
 
-func TestCreateRobotStartsAsReaderOnTheNameFieldAndTabCyclesAllFourFields(t *testing.T) {
+func TestCreateRobotStartsAsReaderOnTheNameFieldAndTabCyclesAllFiveFields(t *testing.T) {
 	t.Parallel()
 	_, env, s := newCreateRobotFixture()
 	got := s.(createRobotScreen)
 	if got.role != domainauth.RepoRoleReader || got.focus != robotFieldName {
 		t.Fatalf("role=%q focus=%v, want Reader on Name (never the unrestricted role by accident)", got.role, got.focus)
 	}
-	want := []robotField{robotFieldRepository, robotFieldRole, robotFieldLifetime, robotFieldName}
+	want := []robotField{robotFieldScope, robotFieldRepository, robotFieldRole, robotFieldLifetime, robotFieldName}
 	for i, focus := range want {
 		s, _ = accessPress(t, s, env, testKeyTab())
 		if got := s.(createRobotScreen).focus; got != focus {

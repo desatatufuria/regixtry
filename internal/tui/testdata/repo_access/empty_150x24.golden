@@ -8,17 +8,17 @@
       Users                    │  │   REPOSITORY                    PRINCIPAL         ROLE     SINCE       │  │                                    │  
       Robots                   │  │ No grants yet. Press g to grant access.                                │  │                                    │  
     ▸ Repository access        │  │                                                                        │  │                                    │  
+      Projects                 │  │                                                                        │  │                                    │  
                                │  │                                                                        │  │                                    │  
   SECURITY                     │  │                                                                        │  │                                    │  
       Image scanning           │  │                                                                        │  │                                    │  
       Secret scanning          │  │                                                                        │  │                                    │  
       Signing policy           │  │                                                                        │  │                                    │  
+      Login security           │  │                                                                        │  │                                    │  
                                │  │                                                                        │  │                                    │  
   OPERATIONS                   │  │                                                                        │  │                                    │  
       Scan runs                │  │                                                                        │  │                                    │  
-      Secret findings          │  │                                                                        │  │                                    │  
-      Update channel           │  │                                                                        │  │                                    │  
-                               │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
-                               │  Roles: Reader pulls, Writer pushes, Admin manages access.                   ╰────────────────────────────────────╯  
+      Secret findings          │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
+      Update channel           │  Roles: Reader pulls, Writer pushes, Admin manages access.                   ╰────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   ↑↓ move   enter open   / search   g grant access   x revoke   esc back   q quit                                                        F2 mouse on  

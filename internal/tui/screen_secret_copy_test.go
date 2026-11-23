@@ -36,7 +36,7 @@ var secretStates = []struct {
 	build func(t *testing.T, w, h int) (adminScreen, screenEnv)
 }{
 	{"tokens", tokensStateAt(nil, testKeyRunes("n"), testKeyEnter())},
-	{"robot", createStateAt(fiveRepos(), append(append(accessType("release-bot"), testKeyTab()), testKeyEnter(), testKeyEnter())...)},
+	{"robot", createStateAt(fiveRepos(), append(append(accessType("release-bot"), testKeyTab(), testKeyTab()), testKeyEnter(), testKeyEnter())...)},
 }
 
 func TestCCopiesTheWholeSecretThroughTheClipboardCommand(t *testing.T) {

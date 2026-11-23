@@ -14,6 +14,8 @@ import (
 
 type Store struct {
 	db *sql.DB
+	// windowRowCap overrides loginFailureRowsPerWindow (tests only).
+	windowRowCap int
 }
 
 func New(dsn string) (*Store, error) {
@@ -152,6 +154,12 @@ func (s *Store) DeleteUser(ctx context.Context, userID string) error {
 
 	trimmedUserID := strings.TrimSpace(userID)
 	if _, err = tx.ExecContext(ctx, `DELETE FROM auth_repo_grants WHERE user_id = $1`, trimmedUserID); err != nil {
+		return err
+	}
+	// Explicit rather than relying on ON DELETE CASCADE: the sqlite test
+	// harness does not enforce foreign keys, and a deleted user must never
+	// leave project access behind.
+	if _, err = tx.ExecContext(ctx, `DELETE FROM auth_project_grants WHERE user_id = $1`, trimmedUserID); err != nil {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM auth_tokens WHERE user_id = $1`, trimmedUserID); err != nil {

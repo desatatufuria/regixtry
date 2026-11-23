@@ -8,18 +8,18 @@
       Users                    │  │   REPOSITORY                                                           CRIT  HIGH  LAST SCAN        STATUS     ENABLED │  │ team/api                             │
       Robots                   │  │ ▸ team/api                                                             2     5     ok 3 h ago       override   yes     │  │ override                             │
       Repository access        │  │   team/web                                                             -     -     failed 2 d ago   inherited  —       │  │                                      │
-                               │  │   team/docs                                                            0     0     ok 45 d ago      override   no      │  │ OVERRIDE                             │
-  SECURITY                     │  │   team/infra                                                           1     0     ok 1 y ago       inherited  —       │  │ Scanning                          on │
-    ▸ Image scanning           │  │                                                                                                                        │  │ Ignore file        /etc/trivy/ignore │
-      Secret scanning          │  │                                       ╭──────────────────────────────────────────────────╮                             │  │ Ignore policy                      - │
-      Signing policy           │  │                                       │  Trivy override                                  │                             │  │ Updated                       14 Nov │
-                               │  │                                       │  team/api. override active.                      │                             │  │                                      │
-  OPERATIONS                   │  │                                       │  [x] Scanning enabled                            │                             │  │ LATEST SCAN                          │
-      Scan runs                │  │                                       │  Ignore file path                                │                             │  │ Reference                      1.4.2 │
-      Secret findings          │  │                                       │   /etc/trivy/ignore                              │                             │  │ Status                     completed │
-      Update channel           │  │                                       │  Ignore policy path                              │                             │  │ Critical                           2 │
-                               │  │                                       │                                                  │                             │  │ High                               5 │
-                               │  │                                       │  Clear override, use the global settings         │                             │  │ Runs                               7 │
+      Projects                 │  │   team/docs                                                            0     0     ok 45 d ago      override   no      │  │ OVERRIDE                             │
+                               │  │   team/infra                                                           1     0     ok 1 y ago       inherited  —       │  │ Scanning                          on │
+  SECURITY                     │  │                                                                                                                        │  │ Ignore file        /etc/trivy/ignore │
+    ▸ Image scanning           │  │                                       ╭──────────────────────────────────────────────────╮                             │  │ Ignore policy                      - │
+      Secret scanning          │  │                                       │  Trivy override                                  │                             │  │ Updated                       14 Nov │
+      Signing policy           │  │                                       │  team/api. override active.                      │                             │  │                                      │
+      Login security           │  │                                       │  [x] Scanning enabled                            │                             │  │ LATEST SCAN                          │
+                               │  │                                       │  Ignore file path                                │                             │  │ Reference                      1.4.2 │
+  OPERATIONS                   │  │                                       │   /etc/trivy/ignore                              │                             │  │ Status                     completed │
+      Scan runs                │  │                                       │  Ignore policy path                              │                             │  │ Critical                           2 │
+      Secret findings          │  │                                       │                                                  │                             │  │ High                               5 │
+      Update channel           │  │                                       │  Clear override, use the global settings         │                             │  │ Runs                               7 │
                                │  │                                       │                                                  │                             │  │ Scanned                 14 Mar 06:30 │
                                │  │                                       │   Save  enter   Cancel  esc                      │                             │  │                                      │
                                │  │                                       │  tab next field, space toggles                   │                             │  │ ACTIONS                              │

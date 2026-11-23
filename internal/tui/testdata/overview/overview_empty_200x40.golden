@@ -8,18 +8,18 @@
       Users                    │  │ Grant repository access                         g  │  │ Create robot                                   r  │  │ Issue token                                    t  │  
       Robots                   │  │ Pick a user or robot, pick repositories, pick a    │  │ A CI identity with its first repository grant and │  │ Choose a lifetime and see the exact expiry date   │  
       Repository access        │  │ role. One screen.                                  │  │ token.                                            │  │ before creating.                                  │  
-                               │  ╰────────────────────────────────────────────────────╯  ╰───────────────────────────────────────────────────╯  ╰───────────────────────────────────────────────────╯  
-  SECURITY                     │                                                                                                                                                                        
-      Image scanning           │  ╭───────────────────────────────────────────────────────────────────────────────╮  ╭───────────────────────────────────────────────────────────────────────────────╮  
-      Secret scanning          │  │ NEEDS ATTENTION                                                               │  │ RECENT CHANGES                                                                │  
-      Signing policy           │  │ Nothing needs attention.                                                      │  │ No changes recorded yet.                                                      │  
+      Projects                 │  ╰────────────────────────────────────────────────────╯  ╰───────────────────────────────────────────────────╯  ╰───────────────────────────────────────────────────╯  
+                               │                                                                                                                                                                        
+  SECURITY                     │  ╭───────────────────────────────────────────────────────────────────────────────╮  ╭───────────────────────────────────────────────────────────────────────────────╮  
+      Image scanning           │  │ NEEDS ATTENTION                                                               │  │ RECENT CHANGES                                                                │  
+      Secret scanning          │  │ Nothing needs attention.                                                      │  │ No changes recorded yet.                                                      │  
+      Signing policy           │  │                                                                               │  │                                                                               │  
+      Login security           │  │                                                                               │  │                                                                               │  
                                │  │                                                                               │  │                                                                               │  
   OPERATIONS                   │  │                                                                               │  │                                                                               │  
       Scan runs                │  │                                                                               │  │                                                                               │  
       Secret findings          │  │                                                                               │  │                                                                               │  
       Update channel           │  │                                                                               │  │                                                                               │  
-                               │  │                                                                               │  │                                                                               │  
-                               │  │                                                                               │  │                                                                               │  
                                │  │                                                                               │  │                                                                               │  
                                │  │                                                                               │  │                                                                               │  
                                │  │                                                                               │  │                                                                               │  

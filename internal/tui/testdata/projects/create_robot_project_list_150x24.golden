@@ -1,0 +1,24 @@
+  Admin › Access › Robots › New robot                                                                                          signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                      
+                               │  New robot                                                                                                           
+    Overview                   │                                                                                                                      
+                               │  Name         e.g. ci-publisher                                                                                      
+  ACCESS                       │  Scope       ( ) Repository   (*) Project                                                                            
+      Users                    │  Project      e.g. odabank                                                                                           
+    ▸ Robots                   │               ▸ gosse  2 repositories                                                                                
+      Repository access        │                metalab  10 repositories                                                                              
+      Projects                 │                odabank  3 repositories                                                                               
+                               │                sandbox  0 repositories                                                                               
+  SECURITY                     │                                                                                                                      
+      Image scanning           │  Role        (*) Reader  ( ) Writer  ( ) Admin                                                                       
+      Secret scanning          │  Lifetime    ( ) 7 days  (*) 30 days  ( ) 90 days  ( ) 1 year  ( ) 2 years  ( ) Custom                               
+      Signing policy           │              Expires Mon 21 Dec 2026 09:30 UTC (in 30 days)                                                          
+      Login security           │              A leaked token works until it expires or you revoke it. Pick the shortest lifetime CI can live with.    
+                               │                                                                                                                      
+  OPERATIONS                   │                                                                                                                      
+      Scan runs                │   Create robot  enter   Cancel  esc                                                                                  
+      Secret findings          │                                                                                                                      
+      Update channel           │                                                                                                                      
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  tab next field   ↑↓ pick project   ←→ scope, role, lifetime   enter create   esc cancel                                                             

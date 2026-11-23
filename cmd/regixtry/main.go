@@ -313,6 +313,12 @@ type serveConfig struct {
 	// REGISTRY_DELETE_ENABLED: that flag is metadata-only and never touches
 	// blob files.
 	GCDeleteEnabled bool
+	// RequireProject refuses pushes to a project that does not exist and new
+	// repositories without a project (REGISTRY_REQUIRE_PROJECT; default on only with an auth DSN).
+	RequireProject bool
+	// RequireProjectExplicit records that a flag or env value chose
+	// RequireProject (as opposed to the effective default).
+	RequireProjectExplicit bool
 	// Upload and manifest size/concurrency limits. For each, zero means "use
 	// the built-in default" and a negative value disables the limit.
 	MaxManifestBytes      int64
@@ -441,6 +447,7 @@ func parseServeConfig(args []string) (serveConfig, error) {
 	flags.IntVar(&cfg.TrivyMaxConcurrency, "trivy-max-concurrency", 0, "maximum concurrent trivy runs")
 	flags.BoolVar(&cfg.DeleteEnabled, "delete-enabled", parseBoolEnv("REGISTRY_DELETE_ENABLED", false), "enable DELETE /v2/<name>/manifests/<reference> (manifest and tag deletion)")
 	flags.BoolVar(&cfg.GCDeleteEnabled, "gc-delete-enabled", parseBoolEnv("REGISTRY_GC_DELETE_ENABLED", false), "enable POST /admin/v1/gc/reports/{id}/delete (irreversibly unlinks unreferenced blob files; distinct from -delete-enabled, which is metadata-only)")
+	flags.BoolVar(&cfg.RequireProject, "require-project", false, "refuse pushes to a project that does not exist (404 NAME_UNKNOWN) and new repositories without a project; existing flat repositories keep working. Default: on when -auth-postgres-dsn is configured (the admin API creates projects), off otherwise; an explicit true without a DSN is a startup error; env REGISTRY_REQUIRE_PROJECT, flag wins")
 	flags.StringVar(&cfg.TrustedProxies, "trusted-proxies", os.Getenv("REGISTRY_TRUSTED_PROXIES"), "comma-separated CIDRs/IPs of reverse proxies whose X-Forwarded-For is trusted for client IP logging (empty = ignore X-Forwarded-For)")
 	var limitEnvErr error
 	trackEnv := func(err error) {
@@ -479,6 +486,10 @@ func parseServeConfig(args []string) (serveConfig, error) {
 	}
 
 	if err := flags.Parse(args); err != nil {
+		return serveConfig{}, err
+	}
+
+	if err := resolveRequireProject(flags, &cfg); err != nil {
 		return serveConfig{}, err
 	}
 
@@ -1533,6 +1544,7 @@ func runSetup(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 				}
 			}
 			_, _ = fmt.Fprintln(stdout, "TUI access: docker exec -it <container> regixtry tui -storage-root /var/lib/regixtry")
+			printCreateProjectHint(stdout, proj.PublicURL)
 		}
 		return nil
 	default:
@@ -2458,6 +2470,7 @@ func serve(ctx context.Context, listener net.Listener, cfg serveConfig, stdout i
 	}()
 
 	if stdout != nil {
+		fmt.Fprintln(stdout, projectEnforcementLogLine(cfg.RequireProject, cfg.RequireProjectExplicit))
 		fmt.Fprintf(stdout, "regixtry serving on %s\n", listener.Addr().String())
 	}
 
@@ -2478,6 +2491,54 @@ func serve(ctx context.Context, listener net.Listener, cfg serveConfig, stdout i
 		return <-errCh
 	case err := <-errCh:
 		return err
+	}
+}
+
+// resolveRequireProject applies flag > env > effective default. The default
+// is on only when the admin API exists (an auth DSN is configured), because
+// without it no project can be created. An explicit true without a DSN is an
+// error rather than a registry nobody can push to.
+func resolveRequireProject(flags *flag.FlagSet, cfg *serveConfig) error {
+	explicit := false
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == "require-project" {
+			explicit = true
+		}
+	})
+	if !explicit {
+		if value := strings.TrimSpace(os.Getenv("REGISTRY_REQUIRE_PROJECT")); value != "" {
+			parsed, err := strconv.ParseBool(value)
+			if err != nil {
+				return fmt.Errorf("invalid REGISTRY_REQUIRE_PROJECT %q: use true, false, 1 or 0", value)
+			}
+			cfg.RequireProject, explicit = parsed, true
+		}
+	}
+	hasDSN := strings.TrimSpace(cfg.AuthPostgresDSN) != ""
+	if !explicit {
+		cfg.RequireProject = hasDSN
+	}
+	cfg.RequireProjectExplicit = explicit
+	if cfg.RequireProject && !hasDSN {
+		return errors.New("project enforcement needs the admin API: configure -auth-postgres-dsn or set -require-project=false")
+	}
+	return nil
+}
+
+// projectEnforcementLogLine states the effective -require-project mode and
+// why, at serve start, so an operator sees which push contract is active.
+func projectEnforcementLogLine(require bool, explicit bool) string {
+	mode := "off"
+	if require {
+		mode = "on"
+	}
+	switch {
+	case explicit:
+		return "project enforcement: " + mode + " (explicit)"
+	case require:
+		return "project enforcement: on (default: admin API available)"
+	default:
+		return "project enforcement: off (default: no admin API, create-project is unavailable without -auth-postgres-dsn)"
 	}
 }
 
@@ -2508,6 +2569,13 @@ func boundedDuration(value time.Duration, fallback time.Duration) time.Duration 
 func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 	var authStore ports.AuthStore
 	var authService ports.AuthService
+	// concreteAuth is the auth service when auth is enabled: the project
+	// service uses it to purge grants and record events, and it asks the
+	// metadata store whether a project exists.
+	var concreteAuth *appauth.Service
+	// failureAggregator folds login failures into bounded in-memory counters
+	// flushed to the auth store; nil unless Postgres auth is enabled.
+	var failureAggregator *appauth.LoginFailureAggregator
 	bearerRealm := cfg.Realm
 	if trimmed := strings.TrimSpace(cfg.AuthTokenRealmURL); trimmed != "" {
 		bearerRealm = trimmed
@@ -2532,8 +2600,12 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 			return nil, nil, err
 		}
 
-		concreteAuth := appauth.NewService(authStore)
+		concreteAuth = appauth.NewService(authStore)
 		concreteAuth.ConfigureLogin(loginPolicyFromConfig(cfg))
+		if failureStore, ok := authStore.(ports.LoginFailureStore); ok {
+			failureAggregator = appauth.NewLoginFailureAggregator(failureStore, appauth.LoginFailureOptions{})
+			concreteAuth.SetLoginFailureAggregator(failureAggregator)
+		}
 		authService = concreteAuth
 		err = authService.EnsureBootstrapAdmin(context.Background())
 		if err != nil {
@@ -2553,7 +2625,7 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 		return nil, nil, err
 	}
 
-	metadataStore, err := metadata.New(cfg.DatabasePath)
+	metadataStore, err := metadata.New(cfg.DatabasePath, metadata.WithRequireProject(cfg.RequireProject))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -2574,6 +2646,13 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 	service.SetPushScanLimits(parseIntEnv("REGISTRY_PUSH_SCAN_MAX_PENDING", 0), parseIntEnv("REGISTRY_PUSH_SCAN_MAX_PER_REPOSITORY", 0), parseIntEnv("REGISTRY_PUSH_SCAN_MAX_PER_PUSHER", 0))
 	service.SetDeleteEnabled(cfg.DeleteEnabled)
 	service.SetGCDeleteEnabled(cfg.GCDeleteEnabled)
+	service.SetRequireProject(cfg.RequireProject)
+	projectService := appregixtry.NewProjectService(service, metadataStore)
+	if concreteAuth != nil {
+		projectService.SetGrantCleaner(concreteAuth)
+		projectService.SetEventRecorder(concreteAuth)
+		concreteAuth.SetProjectLookup(projectDirectory{store: metadataStore, tenants: ports.NewSingleTenantResolver(cfg.Tenant)})
+	}
 	service.SetUploadLimits(
 		int(limitOrDefault(int64(cfg.MaxOpenUploads), appregixtry.DefaultMaxOpenUploads)),
 		int(limitOrDefault(int64(cfg.MaxOpenUploadsPerRepo), appregixtry.DefaultMaxOpenUploadsPerRepo)),
@@ -2633,7 +2712,34 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 		}()
 	}
 
-	return regixtryhttp.NewRouter(service, authService, regixtryhttp.WithMaxManifestBytes(limitOrDefault(cfg.MaxManifestBytes, regixtryhttp.DefaultMaxManifestBytes)), regixtryhttp.WithTrustedProxies(trustedProxies)), func() {
+	routerOptions := []regixtryhttp.RouterOption{
+		regixtryhttp.WithMaxManifestBytes(limitOrDefault(cfg.MaxManifestBytes, regixtryhttp.DefaultMaxManifestBytes)),
+		regixtryhttp.WithTrustedProxies(trustedProxies),
+		regixtryhttp.WithProjects(projectService),
+	}
+	failureCtx, cancelFailureFlush := context.WithCancel(context.Background())
+	failureFlushDone := make(chan struct{})
+	if failureAggregator != nil {
+		routerOptions = append(routerOptions, regixtryhttp.WithLoginFailureRecorder(failureAggregator))
+		go func() {
+			defer close(failureFlushDone)
+			failureAggregator.Run(failureCtx)
+		}()
+	} else {
+		close(failureFlushDone)
+	}
+
+	return regixtryhttp.NewRouter(service, authService, routerOptions...), func() {
+		// Stop the interval flush, then write what is still in memory, bounded,
+		// before the auth store closes. A store that is down never delays
+		// shutdown past the timeout.
+		cancelFailureFlush()
+		<-failureFlushDone
+		if failureAggregator != nil {
+			if err := failureAggregator.Shutdown(appauth.LoginFailureShutdownTimeout); err != nil {
+				log.Printf("login failures not flushed at shutdown: %v", err)
+			}
+		}
 		// Wait for the scheduler goroutine to actually stop before closing the
 		// stores it reads/writes: cancelling schedulerCtx only takes effect
 		// between ticks (scheduler.Run checks ctx.Done() after each tick
@@ -2925,9 +3031,24 @@ func printSetupAuthGuidance(stdout io.Writer, cfg setupConfig, outcome setupAuth
 		_, _ = fmt.Fprintf(stdout, "Next: printf '%%s\\n' '<admin-password>' | docker login %s -u %s --password-stdin\n", registryHost, shellQuote(outcome.Username))
 	}
 
+	printCreateProjectHint(stdout, cfg.PublicURL)
+
 	if strings.HasPrefix(strings.TrimSpace(cfg.PublicURL), "http://") {
 		_, _ = fmt.Fprintln(stdout, "Docker may require this registry to be configured as insecure before login, push, or pull over HTTP.")
 	}
+}
+
+// printCreateProjectHint tells the operator of an auth-enabled install (which
+// enforces projects by default) to create the first project before pushing.
+func printCreateProjectHint(stdout io.Writer, publicURL string) {
+	base := strings.TrimRight(strings.TrimSpace(publicURL), "/")
+	if stdout == nil || base == "" {
+		return
+	}
+	_, _ = fmt.Fprintln(stdout, "Then create the first project: pushes need an existing project (the first path segment of the image name, for example <project>/<image>).")
+	_, _ = fmt.Fprintf(stdout, "  TOKEN=$(curl -s -u <admin-user>:<admin-password> '%s/auth/token?service=regixtry' | jq -r .token)\n", base)
+	_, _ = fmt.Fprintf(stdout, "  curl -X POST -H \"Authorization: Bearer $TOKEN\" -d '{\"name\":\"<project>\"}' %s/admin/v1/projects\n", base)
+	_, _ = fmt.Fprintln(stdout, "  or in the TUI: Admin > Access > Projects, then n.")
 }
 
 func dockerLoginHost(publicURL string) string {
@@ -2977,6 +3098,18 @@ func (localOperatorAccessController) Authorize(context.Context, ports.Action) er
 
 func (localOperatorAccessController) Challenge(ports.Action) ports.Challenge {
 	return ports.Challenge{Scheme: "Bearer", Realm: "regixtry", Service: "regixtry"}
+}
+
+// projectDirectory adapts the SQLite project store to ports.ProjectLookup, the
+// seam through which the auth service asks whether a project exists (in the
+// tenant the registry service resolves) without importing registry code.
+type projectDirectory struct {
+	store   ports.ProjectStore
+	tenants ports.TenantResolver
+}
+
+func (d projectDirectory) ProjectExists(ctx context.Context, project string) (bool, error) {
+	return d.store.ProjectExists(ctx, d.tenants.Resolve(ctx), project)
 }
 
 // authStoreUsernameResolver adapts ports.AuthStore to

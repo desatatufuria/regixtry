@@ -1,0 +1,24 @@
+  Admin › Access › Projects                                                                                                    signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │
+                               │  Project  ╭──────────────────────────────────────────────────────────────╮               4 projects, sorted by name
+    Overview                   │           │  New project                                                 │
+                               │           │                                                              │
+  ACCESS                       │           │  Project name                                                │
+      Users                    │           │   ▏                                                          │
+      Robots                   │           │  Enter a project name.                                       │
+      Repository access        │           │                                                              │
+    ▸ Projects                 │           │  ╭────────────────────────────────────────────────────────╮  │
+                               │           │  │ (no valid name yet)                                    │  │
+  SECURITY                     │           │  │ type a lowercase name                                  │  │
+      Image scanning           │           │  ╰────────────────────────────────────────────────────────╯  │
+      Secret scanning          │           │                                                              │
+      Signing policy           │           │  Nothing is created until the name is valid.                 │
+      Login security           │           │                                                              │
+                               │           │   Create project                                     enter   │
+  OPERATIONS                   │           │   Cancel                                               esc   │
+      Scan runs                │           ╰──────────────────────────────────────────────────────────────╯
+      Secret findings          │
+      Update channel           │
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  enter create   esc cancel                                                                                                              F2 mouse on  

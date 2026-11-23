@@ -207,6 +207,15 @@ const (
 	// screenAdminRepositoryAccess is "Repository access": every grant, by
 	// repository, with revoke.
 	screenAdminRepositoryAccess screen = "admin-repository-access"
+	// screenAdminProjects, screenAdminProjectMembers and
+	// screenAdminGrantProjectRole are the project screens: the projects list,
+	// one project's members and the grant-a-project-role form.
+	screenAdminProjects         screen = "admin-projects"
+	screenAdminProjectMembers   screen = "admin-project-members"
+	screenAdminGrantProjectRole screen = "admin-grant-project-role"
+	// screenAdminLoginSecurity is Admin > Security > Login security: the
+	// failed logins, the live backoff and the reset of one account.
+	screenAdminLoginSecurity screen = "admin-login-security"
 )
 
 // adminIntent is a one-shot field set before screenAdminLogin and consumed
@@ -683,6 +692,14 @@ func (m Model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.adminScreens[slotRepositoryAccess] = next
 			return m, next.Init(m.screenEnv())
 		}
+		if msg.To == screenAdminProjects {
+			// Always a fresh read: projects are created, deleted and filled
+			// from other screens, and a result of an earlier visit must not
+			// land on this one (new generation).
+			next := newAdminProjectsScreen()
+			m.adminScreens[slotProjects] = next
+			return m, next.Init(m.screenEnv())
+		}
 		if msg.To == screenAdminOverview {
 			// Coming back to the Overview refreshes "Needs attention": the
 			// operator may just have granted access or fixed a robot.
@@ -710,7 +727,7 @@ func (m Model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.openUserScreen(openUserScreenMsg{to: screenAdminUsers})
 		}
 		switch msg.To {
-		case screenSecurityTrivy, screenSecurityGitleaksConfig, screenSecuritySigningConfig:
+		case screenSecurityTrivy, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminLoginSecurity:
 			// Always a fresh screen with a new generation: a result still in
 			// flight for an earlier visit must not land on this one.
 			slot, _ := slotFor(msg.To)
@@ -756,12 +773,28 @@ func (m Model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	case overviewOpenMsg:
 		return m.openFromOverview(msg.action)
+	case openProjectMembersMsg:
+		next := newAdminProjectMembersScreen(msg.project, msg.toast)
+		m.adminScreens[slotProjectMembers] = next
+		m.screen = screenAdminProjectMembers
+		m.status = ""
+		return m, next.Init(m.screenEnv())
+	case openGrantProjectRoleMsg:
+		next := newGrantProjectRoleScreen(msg)
+		m.adminScreens[slotGrantProjectRole] = next
+		m.screen = screenAdminGrantProjectRole
+		m.status = ""
+		return m, next.Init(m.screenEnv())
 	case openRobotsMsg:
 		return m.mountRobots(msg.selectID)
 	case openCreateRobotMsg:
 		return m.mountCreateRobot()
 	case openTokensMsg:
 		return m.mountTokens(msg)
+	case projectScreenMsg:
+		return m.routeAccessMsg(msg)
+	case loginSecurityMsg:
+		return m.routeAccessMsg(msg)
 	case robotsLoadedMsg, robotsTokensLoadedMsg, robotEnabledMsg, robotDeletedMsg, robotCreatedMsg, tokensLoadedMsg, tokenCreatedMsg, tokenRevokedMsg:
 		return m.routeAccessMsg(msg.(accessMsg))
 	case openGrantAccessMsg:
@@ -1057,7 +1090,7 @@ func (m Model) viewScreen() string {
 		return renderAdminLogin(newAdminTheme(), view, m.viewport.Width, m.viewport.Height)
 	case screenAdminAuthenticating:
 		return renderAdminAuthenticating(newAdminTheme(), m.loadingText, m.viewport.Width, m.viewport.Height)
-	case screenAdminUsers, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserTokens, screenRepoAdminGrants, screenAdminRobots, screenAdminCreateRobot, screenSecurityGitleaksRepos, screenSecuritySigningRepos, screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminOverview, screenAdminScanRuns, screenAdminSecretFindings, screenAdminUpdateChannel, screenAdminGrantAccess, screenAdminRepositoryAccess:
+	case screenAdminUsers, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserTokens, screenRepoAdminGrants, screenAdminRobots, screenAdminCreateRobot, screenSecurityGitleaksRepos, screenSecuritySigningRepos, screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminOverview, screenAdminScanRuns, screenAdminSecretFindings, screenAdminUpdateChannel, screenAdminGrantAccess, screenAdminRepositoryAccess, screenAdminProjects, screenAdminProjectMembers, screenAdminGrantProjectRole, screenAdminLoginSecurity:
 		help := "Esc: back | q: quit"
 		if slot, ok := slotFor(m.screen); ok && m.adminScreens[slot] != nil {
 			// Migrated top-level screen: help is derived from the screen's
@@ -1771,6 +1804,10 @@ func (m *Model) dropAccessScreens() {
 	m.adminScreens[slotRobots] = nil
 	m.adminScreens[slotCreateRobot] = nil
 	m.adminScreens[slotTokens] = nil
+	m.adminScreens[slotProjects] = nil
+	m.adminScreens[slotLoginSecurity] = nil
+	m.adminScreens[slotProjectMembers] = nil
+	m.adminScreens[slotGrantProjectRole] = nil
 }
 
 func (m Model) logoutAdmin() Model {
@@ -1859,7 +1896,7 @@ func oppositeLoginField(field loginField) loginField {
 
 func isAdminScreen(current screen) bool {
 	switch current {
-	case screenAdminLogin, screenAdminAuthenticating, screenAdminUsers, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserTokens, screenRepoAdminGrants, screenAdminRobots, screenAdminCreateRobot, screenSecurityGitleaksRepos, screenSecuritySigningRepos, screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminOverview, screenAdminScanRuns, screenAdminSecretFindings, screenAdminUpdateChannel, screenAdminGrantAccess, screenAdminRepositoryAccess:
+	case screenAdminLogin, screenAdminAuthenticating, screenAdminUsers, screenAdminCreateUser, screenAdminEditUser, screenAdminChangePassword, screenAdminEditUserTokens, screenRepoAdminGrants, screenAdminRobots, screenAdminCreateRobot, screenSecurityGitleaksRepos, screenSecuritySigningRepos, screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenAdminOverview, screenAdminScanRuns, screenAdminSecretFindings, screenAdminUpdateChannel, screenAdminGrantAccess, screenAdminRepositoryAccess, screenAdminProjects, screenAdminProjectMembers, screenAdminGrantProjectRole, screenAdminLoginSecurity:
 		return true
 	default:
 		return false
@@ -1878,7 +1915,7 @@ func isAdminScreen(current screen) bool {
 // screen does not, because its filters hold the focus from the moment it opens.
 func isAdminPrincipalScreen(current screen) bool {
 	switch current {
-	case screenAdminLogin, screenAdminUsers, screenAdminEditUser, screenAdminEditUserTokens, screenRepoAdminGrants, screenAdminRobots, screenSecurityTrivy, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenSecurityTrivyRepos, screenSecurityGitleaksRepos, screenSecuritySigningRepos, screenAdminOverview, screenAdminScanRuns, screenAdminSecretFindings, screenAdminUpdateChannel, screenAdminRepositoryAccess:
+	case screenAdminLogin, screenAdminUsers, screenAdminEditUser, screenAdminEditUserTokens, screenRepoAdminGrants, screenAdminRobots, screenSecurityTrivy, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenSecurityTrivyRepos, screenSecurityGitleaksRepos, screenSecuritySigningRepos, screenAdminOverview, screenAdminScanRuns, screenAdminSecretFindings, screenAdminUpdateChannel, screenAdminRepositoryAccess, screenAdminProjects, screenAdminProjectMembers, screenAdminLoginSecurity:
 		return true
 	default:
 		return false
@@ -1918,6 +1955,12 @@ func (m Model) migratedScreenCapturesTextInput() bool {
 		return s.capturesInput()
 	case robotsScreen:
 		return s.confirm.Active()
+	case adminProjectsScreen:
+		return s.capturesInput()
+	case adminProjectMembersScreen:
+		return s.capturesInput()
+	case loginSecurityScreen:
+		return s.capturesInput()
 	case tokensScreen:
 		return s.capturesInput()
 	default:
@@ -1933,7 +1976,8 @@ func (m Model) canLogoutAdminFromCurrentScreen() bool {
 	switch m.screen {
 	case screenAdminUsers, screenAdminEditUser, screenAdminEditUserTokens, screenRepoAdminGrants, screenAdminRobots,
 		screenSecurityTrivy, screenSecurityTrivyRepos, screenSecurityGitleaksConfig, screenSecuritySigningConfig, screenSecurityGitleaksRepos, screenSecuritySigningRepos,
-		screenAdminOverview, screenAdminScanRuns, screenAdminSecretFindings, screenAdminUpdateChannel:
+		screenAdminOverview, screenAdminScanRuns, screenAdminSecretFindings, screenAdminUpdateChannel,
+		screenAdminProjects, screenAdminProjectMembers, screenAdminLoginSecurity:
 		return true
 	default:
 		return false

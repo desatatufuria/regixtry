@@ -1,0 +1,24 @@
+  Admin › Access › Projects                                                                                                    signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │
+                               │  Project  ╭──────────────────────────────────────────────────────────────╮               4 projects, sorted by name
+    Overview                   │           │  New project                                                 │
+                               │           │                                                              │
+  ACCESS                       │           │  Project name                                                │
+      Users                    │           │   Oda/bank▏                                                  │
+      Robots                   │           │  A project name has no slash. Repositories go inside the     │
+      Repository access        │           │  project.                                                    │
+    ▸ Projects                 │           │                                                              │
+                               │           │  ╭────────────────────────────────────────────────────────╮  │
+  SECURITY                     │           │  │ (no valid name yet)                                    │  │
+      Image scanning           │           │  │ type a lowercase name                                  │  │
+      Secret scanning          │           │  ╰────────────────────────────────────────────────────────╯  │
+      Signing policy           │           │                                                              │
+      Login security           │           │  Nothing is created until the name is valid.                 │
+                               │           │                                                              │
+  OPERATIONS                   │           │   Create project                                     enter   │
+      Scan runs                │           │   Cancel                                               esc   │
+      Secret findings          │           ╰──────────────────────────────────────────────────────────────╯
+      Update channel           │
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  enter create   esc cancel                                                                                                              F2 mouse on  

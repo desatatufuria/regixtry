@@ -25,6 +25,19 @@ type AuthStore interface {
 	ListRepoGrantsPage(ctx context.Context, after *domainauth.GrantCursor, limit int) ([]domainauth.RepositoryGrantRow, error)
 	PutRepoGrant(ctx context.Context, grant domainauth.RepoGrant) error
 	DeleteRepoGrant(ctx context.Context, userID string, repository regixtrydomain.RepositoryRef) error
+	// PutProjectGrant creates or updates one user's grant on one project.
+	PutProjectGrant(ctx context.Context, grant domainauth.ProjectGrant) error
+	// DeleteProjectGrant removes one user's grant on one project; not-found
+	// when there is none. Exact repository grants are never touched.
+	DeleteProjectGrant(ctx context.Context, userID string, project string) error
+	// ListProjectGrants returns every project grant of one user.
+	ListProjectGrants(ctx context.Context, userID string) ([]domainauth.ProjectGrant, error)
+	// ListProjectGrantsByProject returns up to limit grants of one project
+	// ordered by user id, strictly after afterUserID.
+	ListProjectGrantsByProject(ctx context.Context, project string, afterUserID string, limit int) ([]domainauth.ProjectGrant, error)
+	// DeleteProjectGrantsByProject removes every grant of a deleted project and
+	// returns how many it removed.
+	DeleteProjectGrantsByProject(ctx context.Context, project string) (int64, error)
 	CreateToken(ctx context.Context, token domainauth.Token) error
 	GetTokenBySecretHash(ctx context.Context, kind domainauth.TokenKind, secretHash string) (domainauth.Token, error)
 	GetTokenByAccessor(ctx context.Context, kind domainauth.TokenKind, accessor string) (domainauth.Token, error)
@@ -90,9 +103,13 @@ type UpdateUserInput struct {
 // (design.md Decision 2): exactly one repository+role is bound at creation,
 // enforced by the service, not the schema. TTL follows CreateAdminTokenInput's
 // convention: zero means DefaultAdminTokenTTL, reused unchanged.
+//
+// Project is an additive alternative to Repository: exactly one of the two
+// names the grant, and a project robot is reader or writer only.
 type CreateRobotInput struct {
 	Name       string
 	Repository string
+	Project    string
 	Role       domainauth.RepoRole
 	TTL        time.Duration
 }
@@ -100,12 +117,16 @@ type CreateRobotInput struct {
 // CreatedRobot is CreateRobot's result: the persisted robot user, its single
 // grant, and its issued admin-credential token (secret shown once, matching
 // CreateAdminToken's shape).
+//
+// A project robot has ProjectGrant set and a zero Grant; a repository robot
+// the opposite.
 type CreatedRobot struct {
-	User      domainauth.User
-	Grant     domainauth.RepoGrant
-	Secret    string
-	Accessor  string
-	ExpiresAt time.Time
+	User         domainauth.User
+	Grant        domainauth.RepoGrant
+	ProjectGrant domainauth.ProjectGrant
+	Secret       string
+	Accessor     string
+	ExpiresAt    time.Time
 }
 
 type CreatedAdminToken struct {
@@ -185,6 +206,40 @@ type AdminGrantPage struct {
 	Next   string            `json:"next"`
 }
 
+// AdminProjectMember is one member of a project: a user or robot holding a
+// project grant. Like AdminRepositoryGrant it carries no user ID, hash, flags
+// or token, so a project administrator never reads the user directory.
+type AdminProjectMember struct {
+	Username  string              `json:"username"`
+	IsRobot   bool                `json:"is_robot"`
+	Role      domainauth.RepoRole `json:"role"`
+	CreatedAt time.Time           `json:"created_at"`
+	UpdatedAt time.Time           `json:"updated_at"`
+}
+
+// AdminProjectMemberPage is one page of a project's members. Next is the
+// opaque cursor of the following page, empty on the last page.
+type AdminProjectMemberPage struct {
+	Members []AdminProjectMember `json:"members"`
+	Next    string               `json:"next"`
+}
+
+// AdminProjectGrant is one project grant of one user, as the global
+// administrator's per-user listing shows it.
+type AdminProjectGrant struct {
+	Project   string              `json:"project"`
+	Role      domainauth.RepoRole `json:"role"`
+	CreatedAt time.Time           `json:"created_at"`
+	UpdatedAt time.Time           `json:"updated_at"`
+}
+
+// AdminPutProjectGrantInput carries PUT /admin/v1/projects/{project}/members/{user}.
+type AdminPutProjectGrantInput struct {
+	Project  string              `json:"-"`
+	Username string              `json:"-"`
+	Role     domainauth.RepoRole `json:"role"`
+}
+
 type AdminPutRepositoryGrantInput struct {
 	Repository string              `json:"-"`
 	Username   string              `json:"-"`
@@ -195,17 +250,21 @@ type AdminPutRepositoryGrantInput struct {
 // route table): id/username/repository/role/enabled/created_at, matching
 // GET /admin/v1/robots' documented shape.
 type AdminRobot struct {
-	ID         string              `json:"id"`
-	Username   string              `json:"username"`
-	Repository string              `json:"repository"`
-	Role       domainauth.RepoRole `json:"role"`
-	Enabled    bool                `json:"enabled"`
-	CreatedAt  time.Time           `json:"created_at"`
+	ID         string `json:"id"`
+	Username   string `json:"username"`
+	Repository string `json:"repository"`
+	// Project is set instead of Repository for a robot holding a project
+	// grant; it is omitted for a repository robot.
+	Project   string              `json:"project,omitempty"`
+	Role      domainauth.RepoRole `json:"role"`
+	Enabled   bool                `json:"enabled"`
+	CreatedAt time.Time           `json:"created_at"`
 }
 
 type AdminCreateRobotInput struct {
 	Name       string              `json:"name"`
 	Repository string              `json:"repository"`
+	Project    string              `json:"project"`
 	Role       domainauth.RepoRole `json:"role"`
 	TTL        time.Duration       `json:"-"`
 }
@@ -285,6 +344,10 @@ type AdminHTTPService interface {
 	PutAdminRepositoryGrant(ctx context.Context, actor domainauth.Principal, input AdminPutRepositoryGrantInput) (AdminRepositoryGrant, error)
 	ListAdminAllRepositoryGrants(ctx context.Context, actor domainauth.Principal, limit int, after string) (AdminGrantPage, error)
 	DeleteAdminRepositoryGrant(ctx context.Context, actor domainauth.Principal, repository string, username string) error
+	ListAdminProjectMembers(ctx context.Context, actor domainauth.Principal, project string, limit int, after string) (AdminProjectMemberPage, error)
+	PutAdminProjectGrant(ctx context.Context, actor domainauth.Principal, input AdminPutProjectGrantInput) (AdminProjectMember, error)
+	DeleteAdminProjectGrant(ctx context.Context, actor domainauth.Principal, project string, username string) error
+	ListAdminUserProjectGrants(ctx context.Context, actor domainauth.Principal, userID string) ([]AdminProjectGrant, error)
 	CreateAdminRobot(ctx context.Context, actor domainauth.Principal, input AdminCreateRobotInput) (AdminCreatedRobot, error)
 	ListAdminRobots(ctx context.Context, actor domainauth.Principal) ([]AdminRobot, error)
 	DeleteAdminRobot(ctx context.Context, actor domainauth.Principal, userID string) error
@@ -319,4 +382,121 @@ type AuthService interface {
 	CreateRobot(ctx context.Context, actor domainauth.Principal, input CreateRobotInput) (CreatedRobot, error)
 	ListRobots(ctx context.Context, actor domainauth.Principal) ([]domainauth.User, error)
 	DeleteRobot(ctx context.Context, actor domainauth.Principal, userID string) error
+}
+
+// LoginFailureObservation is one rejected credential as the HTTP adapter sees
+// it. Account is the existing account's normalized name, or the short hash
+// label ("hash:<8 hex>") for an unknown username: a raw unknown username never
+// reaches this type. It is empty for bearer failures.
+type LoginFailureObservation struct {
+	At       time.Time
+	Endpoint string
+	Reason   string
+	Account  string
+	IP       string
+}
+
+// LoginFailureRecorder receives every rejected credential exactly once. An
+// implementation must never block the caller or fail a login.
+type LoginFailureRecorder interface {
+	RecordLoginFailure(observation LoginFailureObservation)
+}
+
+// LoginFailureRecord is the aggregated counter of one (window, endpoint,
+// reason, account, ip) key: the unit that is persisted.
+type LoginFailureRecord struct {
+	WindowStart time.Time `json:"window_start"`
+	Endpoint    string    `json:"endpoint"`
+	Reason      string    `json:"reason"`
+	Account     string    `json:"account"`
+	IP          string    `json:"ip"`
+	Count       int64     `json:"count"`
+	FirstSeen   time.Time `json:"first_seen"`
+	LastSeen    time.Time `json:"last_seen"`
+}
+
+// LoginFailureFilter narrows a failures listing. Zero values mean "any".
+type LoginFailureFilter struct {
+	From, To time.Time
+	Account  string
+	IP       string
+	Reason   string
+}
+
+// LoginFailureCursor is the sort key of the last row of a page.
+type LoginFailureCursor struct {
+	WindowStart time.Time
+	Endpoint    string
+	Reason      string
+	Account     string
+	IP          string
+}
+
+// LoginFailureSummary counts the failures recorded since a point in time.
+type LoginFailureSummary struct {
+	Failures         int64
+	DistinctIPs      int
+	DistinctAccounts int
+}
+
+// LoginFailureStore persists the aggregated login failures. It is optional on
+// an AuthStore: the auth service uses it when the store implements it.
+type LoginFailureStore interface {
+	// AddLoginFailures adds every record's count to its key (upsert-add),
+	// widening first_seen and last_seen, in one transaction.
+	AddLoginFailures(ctx context.Context, records []LoginFailureRecord) error
+	// PurgeLoginFailures deletes at most limit rows whose window started
+	// before the cutoff and returns how many it deleted.
+	PurgeLoginFailures(ctx context.Context, before time.Time, limit int) (int, error)
+	// ListLoginFailures returns rows newest window first, strictly after the
+	// cursor, at most limit.
+	ListLoginFailures(ctx context.Context, filter LoginFailureFilter, after *LoginFailureCursor, limit int) ([]LoginFailureRecord, error)
+	// SummarizeLoginFailures totals the rows seen at or after since.
+	SummarizeLoginFailures(ctx context.Context, since time.Time) (LoginFailureSummary, error)
+}
+
+// AdminLoginFailurePage is one page of aggregated login failures. Next is the
+// opaque cursor of the following page, empty on the last page.
+type AdminLoginFailurePage struct {
+	Failures []LoginFailureRecord `json:"failures"`
+	Next     string               `json:"next"`
+}
+
+// AdminLoginSummary is the last-15-minutes picture of login failures.
+type AdminLoginSummary struct {
+	WindowMinutes     int   `json:"window_minutes"`
+	Failures          int64 `json:"failures"`
+	DistinctIPs       int   `json:"distinct_ips"`
+	DistinctAccounts  int   `json:"distinct_accounts"`
+	AccountsInBackoff int   `json:"accounts_in_backoff"`
+}
+
+// AdminBackoffAccount is one account currently waiting out a login backoff.
+// Account is the name for an existing account, else "hash:<8 hex>".
+type AdminBackoffAccount struct {
+	Account          string `json:"account"`
+	Failures         int    `json:"failures"`
+	RemainingSeconds int    `json:"remaining_seconds"`
+}
+
+// AdminLoginBackoff is the live login backoff state of this process.
+type AdminLoginBackoff struct {
+	Mode                     string                `json:"mode"`
+	Threshold                int                   `json:"threshold"`
+	BaseSeconds              int                   `json:"base_seconds"`
+	MaxSeconds               int                   `json:"max_seconds"`
+	MaxConcurrency           int                   `json:"max_concurrency"`
+	TrustedProxiesConfigured bool                  `json:"trusted_proxies_configured"`
+	Accounts                 []AdminBackoffAccount `json:"accounts"`
+}
+
+// LoginSecurityAdmin is the global-administrator view of login failures and
+// the live backoff, served under /admin/v1/security.
+type LoginSecurityAdmin interface {
+	ListAdminLoginFailures(ctx context.Context, actor domainauth.Principal, filter LoginFailureFilter, limit int, after string) (AdminLoginFailurePage, error)
+	AdminLoginSummary(ctx context.Context, actor domainauth.Principal) (AdminLoginSummary, error)
+	AdminLoginBackoff(ctx context.Context, actor domainauth.Principal) (AdminLoginBackoff, error)
+	// ResetAdminLoginBackoff clears the backoff counter of one account and
+	// returns how the account is named (its name, or its hash label).
+	ResetAdminLoginBackoff(ctx context.Context, actor domainauth.Principal, account string) (string, error)
 }

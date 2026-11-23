@@ -1,0 +1,24 @@
+  Admin › Security › Login security                                                                                            signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │
+                               │  Login s  ╭──────────────────────────────────────────────────────────────╮                    backoff mode: enforce
+    Overview                   │  FAILED   │  Reset backoff?                                              │  WAITING 2
+                               │  ╭─ EFFE  │                                                              │  et by service flags. Read-only here. ─╮
+  ACCESS                       │  │ Backo  │  The login delay for this name ends now.                     │                                  5 min │
+      Users                    │  │ Failu  │                                                              │               8 logins checked at once │
+      Robots                   │  │ Base   │  ╭────────────────────────────────────────────────────────╮  │                         configured: no │
+      Repository access        │  ╰──────  │  │ unknown #ab12cd                                        │  │  ──────────────────────────────────────╯
+      Projects                 │  ╭─ ACCO  │  │ no such account, 12 failed logins, waiting 5 min       │  │  ──────────────────────────── x reset ─╮
+                               │  │   ACC  │  ╰────────────────────────────────────────────────────────╯  │                     FAILS  TIME LEFT   │
+  SECURITY                     │  │   ali  │                                                              │                         7  4 min       │
+      Image scanning           │  │ ▸ unk  │  Clears the failure counter for unknown #ab12cd. Anyone      │                        12  5 min       │
+      Secret scanning          │  ╰──────  │  using that name can try again immediately. Active access    │  ──────────────────────────────────────╯
+      Signing policy           │  ╭─ RECE  │  tokens are not affected.                                    │  ─────────────────────────── / filter ─╮
+    ▸ Login security           │  │   LAS  │                                                              │                                COUNT   │
+                               │  │   09:  │   Reset backoff                                  y / enter   │  0.113.7                           7 █ │
+  OPERATIONS                   │  │   09:  │   Cancel                                               esc   │  51.100.4                         12 █ │
+      Scan runs                │  │   09:  ╰──────────────────────────────────────────────────────────────╯  51.100.4                          3 █ │
+      Secret findings          │  │   09:14         v2        bad token     -                            2001:db8:85a3:0:0:8a2e:370:7334       2 │ │
+      Update channel           │  ╰─ newest first  ▾ 1-4 of 5 ─────────────────────────────────────────────────────────────────────────────────────╯
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  y / enter confirm   esc cancel                                                                                                         F2 mouse on  

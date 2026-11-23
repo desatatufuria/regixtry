@@ -8,18 +8,18 @@
     ▸ Users                    │  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  │ user, disabled, created 3 Mar 2026 │  
       Robots                   │  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  │                                    │  
       Repository access        │  │   USERNAME                                                                                 ROLE       STATE     EXPIRING │  │ ACTIONS                            │  
-                               │  │   admin                                                                                    admin      enabled   0        │  │ Open profile                 enter │  
-  SECURITY                     │  │   alice                                                                                    user       enabled   1        │  │ Grant access                     g │  
-      Image scanning           │  │   bob                                                                                      read-only  enabled   0        │  │ Tokens                           t │  
-      Secret scanning          │  │   carol                                                                                    user       enabled   2        │  │ Reset password                   p │  
-      Signing policy           │  │ ▸ dave                                                                                     user       disabled  0        │  │ Enable user                      d │  
-                               │  │                                                                                                                          │  │                                    │  
-  OPERATIONS                   │  │                                                                                                                          │  │ NEEDS ATTENTION                    │  
-      Scan runs                │  │                                                                                                                          │  │ User is disabled          d enable │  
+      Projects                 │  │   admin                                                                                    admin      enabled   0        │  │ Open profile                 enter │  
+                               │  │   alice                                                                                    user       enabled   1        │  │ Grant access                     g │  
+  SECURITY                     │  │   bob                                                                                      read-only  enabled   0        │  │ Tokens                           t │  
+      Image scanning           │  │   carol                                                                                    user       enabled   2        │  │ Reset password                   p │  
+      Secret scanning          │  │ ▸ dave                                                                                     user       disabled  0        │  │ Enable user                      d │  
+      Signing policy           │  │                                                                                                                          │  │                                    │  
+      Login security           │  │                                                                                                                          │  │ NEEDS ATTENTION                    │  
+                               │  │                                                                                                                          │  │ User is disabled          d enable │  
+  OPERATIONS                   │  │                                                                                                                          │  │                                    │  
+      Scan runs                │  │                                                                                                                          │  │                                    │  
       Secret findings          │  │                                                                                                                          │  │                                    │  
       Update channel           │  │                                                                                                                          │  │                                    │  
-                               │  │                                                                                                                          │  │                                    │  
-                               │  │                                                                                                                          │  │                                    │  
                                │  │                                                                                                                          │  │                                    │  
                                │  │                                                                                                                          │  │                                    │  
                                │  │                                                                                                                          │  │                                    │  

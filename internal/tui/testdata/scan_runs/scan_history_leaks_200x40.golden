@@ -8,18 +8,18 @@
       Users                    │  │ ▸ aws-access-key      src/deploy/prod.env:14  AWS Access Key (key, aws)                                                │  │ completed, trigger push              │  
       Robots                   │  │   generic-api-key     config/ci.yaml:42-44    Generic API Key                                                          │  │                                      │  
       Repository access        │  │                                                                                                                        │  │ RUN                                  │  
-                               │  │                                                                                                                        │  │ Digest              sha256:9c41…e0d2 │  
-  SECURITY                     │  │                                                                                                                        │  │ Started             14 Mar 08:30 UTC │  
-      Image scanning           │  │                                                                                                                        │  │ Finished            14 Mar 08:30 UTC │  
-      Secret scanning          │  │                                                                                                                        │  │ Trivy                         0.58.1 │  
-      Signing policy           │  │                                                                                                                        │  │                                      │  
-                               │  │                                                                                                                        │  │ FINDINGS                             │  
-  OPERATIONS                   │  │                                                                                                                        │  │ Critical                           2 │  
-    ▸ Scan runs                │  │                                                                                                                        │  │ High                               5 │  
-      Secret findings          │  │                                                                                                                        │  │ Medium                            11 │  
-      Update channel           │  │                                                                                                                        │  │ Low                                7 │  
-                               │  │                                                                                                                        │  │                                      │  
-                               │  │                                                                                                                        │  │                                      │  
+      Projects                 │  │                                                                                                                        │  │ Digest              sha256:9c41…e0d2 │  
+                               │  │                                                                                                                        │  │ Started             14 Mar 08:30 UTC │  
+  SECURITY                     │  │                                                                                                                        │  │ Finished            14 Mar 08:30 UTC │  
+      Image scanning           │  │                                                                                                                        │  │ Trivy                         0.58.1 │  
+      Secret scanning          │  │                                                                                                                        │  │                                      │  
+      Signing policy           │  │                                                                                                                        │  │ FINDINGS                             │  
+      Login security           │  │                                                                                                                        │  │ Critical                           2 │  
+                               │  │                                                                                                                        │  │ High                               5 │  
+  OPERATIONS                   │  │                                                                                                                        │  │ Medium                            11 │  
+    ▸ Scan runs                │  │                                                                                                                        │  │ Low                                7 │  
+      Secret findings          │  │                                                                                                                        │  │                                      │  
+      Update channel           │  │                                                                                                                        │  │                                      │  
                                │  │                                                                                                                        │  │                                      │  
                                │  │                                                                                                                        │  │                                      │  
                                │  │                                                                                                                        │  │                                      │  

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	domainauth "regixtry/internal/domain/auth"
 )
 
 const (
@@ -57,7 +58,8 @@ func (s createRobotScreen) formLines(theme adminTheme, env screenEnv, width, row
 	label := func(text string) string { return padRight(theme.muted.Render(text), createRobotLabelWidth) }
 
 	suggestions := grantRepoRows(env.KnownRepositories, s.repository)
-	selected := boundedIndex(s.suggestion, len(suggestions))
+	count := s.rowCount(suggestions)
+	selected := boundedIndex(s.suggestion, count)
 
 	build := func(window int, blanks bool) []string {
 		blank := func() []string {
@@ -68,20 +70,28 @@ func (s createRobotScreen) formLines(theme adminTheme, env screenEnv, width, row
 		}
 		lines := []string{theme.subheading.Render("New robot")}
 		lines = append(lines, blank()...)
-		lines = append(lines,
-			label("Name")+renderEntryField(theme, s.name, "e.g. ci-publisher", s.focus == robotFieldName, inputW),
-			label("Repository")+renderEntryField(theme, s.repository, "e.g. team/api", s.focus == robotFieldRepository, inputW),
-		)
-		lines = append(lines, s.suggestionLines(theme, suggestions, selected, window, indent, width)...)
+		lines = append(lines, label("Name")+renderEntryField(theme, s.name, "e.g. ci-publisher", s.focus == robotFieldName, inputW))
+		lines = append(lines, label("Scope")+s.scopeOptions(theme))
+		if s.scope == robotScopeProject {
+			lines = append(lines, label("Project")+renderEntryField(theme, s.project, "e.g. odabank", s.focus == robotFieldRepository, inputW))
+			lines = append(lines, s.projectSuggestionLines(theme, selected, window, indent, width)...)
+		} else {
+			lines = append(lines, label("Repository")+renderEntryField(theme, s.repository, "e.g. team/api", s.focus == robotFieldRepository, inputW))
+			lines = append(lines, s.suggestionLines(theme, suggestions, selected, window, indent, width)...)
+		}
 		lines = append(lines, blank()...)
 		lines = append(lines, label("Role")+s.roleOptions(theme))
+		if s.projectAdminRefused() {
+			lines = append(lines, indent+theme.error.Render(grantTruncate("Robots on a project can be Reader or Writer only. Admin is for users.", max(width-createRobotLabelWidth, 8))))
+		}
 		lines = append(lines, s.lifetimeLines(theme, env, indent, width)...)
 		lines = append(lines, blank()...)
+		lines = append(lines, s.summaryLines(theme, width)...)
 		lines = append(lines, s.statusLine(theme, width), s.buttons(theme))
 		return lines
 	}
 
-	window := min(createRobotSuggestionWindow, len(suggestions))
+	window := min(createRobotSuggestionWindow, count)
 	lines := build(window, true)
 	if len(lines) > rows {
 		lines = build(window, false)
@@ -142,6 +152,17 @@ func (s createRobotScreen) roleOptions(theme adminTheme) string {
 	var marks []string
 	for _, option := range grantRoleOptions {
 		mark := "( ) " + option.Label
+		if option.Role == domainauth.RepoRoleAdmin && s.scope == robotScopeProject {
+			// Not available on a project: struck out and dimmed, still
+			// selectable so the refusal can say why.
+			label := theme.muted.Strikethrough(true).Faint(true).Render(option.Label)
+			mark = "( ) " + label
+			if option.Role == s.role {
+				mark = "(*) " + label
+			}
+			marks = append(marks, mark)
+			continue
+		}
 		if option.Role == s.role {
 			mark = "(*) " + option.Label
 			if s.focus == robotFieldRole {
@@ -177,6 +198,71 @@ func (s createRobotScreen) lifetimeLines(theme adminTheme, env screenEnv, indent
 	return append(lines, indent+theme.warning.Render(grantTruncate("A leaked token works until it expires or you revoke it. Pick the shortest lifetime CI can live with.", max(width-createRobotLabelWidth, 8))))
 }
 
+func (s createRobotScreen) scopeOptions(theme adminTheme) string {
+	mark := func(scope robotScope, text string) string {
+		if s.scope != scope {
+			return "( ) " + text
+		}
+		out := "(*) " + text
+		if s.focus == robotFieldScope {
+			out = theme.selected.Render(out)
+		}
+		return out
+	}
+	return mark(robotScopeRepository, "Repository") + "  " + mark(robotScopeProject, "Project")
+}
+
+// projectSuggestionLines lists the projects the Project scope can pick, one
+// per row as "▸ odabank  3 repositories", or why there is nothing to pick.
+func (s createRobotScreen) projectSuggestionLines(theme adminTheme, selected, window int, indent string, width int) []string {
+	rows := s.projectRows()
+	if len(rows) == 0 {
+		switch {
+		case s.projectsRead != projectsRead_:
+			return []string{indent + theme.muted.Render("Loading…")}
+		case s.projectsErr != "":
+			return []string{indent + theme.muted.Render(grantTruncate("Could not load projects: "+s.projectsErr+". Type the exact name.", max(width-createRobotLabelWidth, 8)))}
+		case len(s.projects) == 0:
+			return []string{indent + theme.muted.Render("No projects yet. Create one in Admin › Access › Projects.")}
+		}
+		return []string{indent + theme.muted.Render("No match. Pick one from the list.")}
+	}
+	start := 0
+	if selected >= window {
+		start = selected - window + 1
+	}
+	end := min(start+window, len(rows))
+	textW := max(width-createRobotLabelWidth-2, 4)
+	var lines []string
+	for i := start; i < end; i++ {
+		count := plural(rows[i].Repositories, "repository")
+		name := grantTruncate(rows[i].Name, max(textW-lipgloss.Width(count)-4, 4))
+		if i == selected {
+			lines = append(lines, indent+theme.selected.Render("▸ "+name+"  "+count))
+			continue
+		}
+		lines = append(lines, indent+"  "+theme.text.Render(name)+theme.muted.Render("  "+count))
+	}
+	if more := len(rows) - window; more > 0 && window > 0 {
+		lines = append(lines, indent+"  "+theme.muted.Render(fmt.Sprintf("+%d more", more)))
+	}
+	return lines
+}
+
+// summaryLines is the box under a project robot's fields: what the grant
+// covers. A repository robot has none.
+func (s createRobotScreen) summaryLines(theme adminTheme, width int) []string {
+	if s.scope != robotScopeProject || s.projectAdminRefused() || strings.TrimSpace(s.project) == "" {
+		return nil
+	}
+	inner := max(width-4, 1)
+	box := []string{
+		theme.text.Bold(true).Render(grantTruncate(fmt.Sprintf("%s on every repository in %s", grantRoleLabel(s.role), strings.TrimSpace(s.project)), inner)),
+		theme.muted.Render(grantTruncate("Includes repositories pushed later. Use scope Repository to limit the robot to one repository.", inner)),
+	}
+	return strings.Split(lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(theme.borderColor).Padding(0, 1).Width(width).Render(strings.Join(box, "\n")), "\n")
+}
+
 func (s createRobotScreen) statusLine(theme adminTheme, width int) string {
 	switch {
 	case s.creating:
@@ -189,7 +275,7 @@ func (s createRobotScreen) statusLine(theme adminTheme, width int) string {
 
 func (s createRobotScreen) buttons(theme adminTheme) string {
 	create := theme.pill.Render("Create robot  enter")
-	if s.creating {
+	if s.creating || s.projectAdminRefused() {
 		create = theme.muted.Render("Create robot  enter")
 	}
 	return create + "  " + theme.muted.Render("Cancel  esc")
@@ -202,7 +288,10 @@ func (s createRobotScreen) doneLines(theme adminTheme, width, rows int) []string
 	created := s.created
 	boxW := min(width, createRobotMaxBoxWidth)
 	summary := theme.success.Render("✓") + " Robot " + theme.subheading.Render(created.name) + " created"
-	if created.repository != "" {
+	switch {
+	case created.project != "":
+		summary += fmt.Sprintf(", %s on project %s", grantRoleLabel(created.role), created.project)
+	case created.repository != "":
 		summary += fmt.Sprintf(", %s on %s", grantRoleLabel(created.role), created.repository)
 	}
 
@@ -219,7 +308,12 @@ func (s createRobotScreen) doneLines(theme adminTheme, width, rows int) []string
 	if !created.expires.IsZero() {
 		details = append(details, detail("Expires", exactExpiry(created.expires)))
 	}
-	details = append(details, detail("Repository", created.repository), detail("Role", grantRoleLabel(created.role)))
+	if created.project != "" {
+		details = append(details, detail("Scope", "project "+created.project), detail("Role", grantRoleLabel(created.role)),
+			detail("Covers", "every repository in "+created.project))
+	} else {
+		details = append(details, detail("Repository", created.repository), detail("Role", grantRoleLabel(created.role)))
+	}
 
 	button := []string{theme.pill.Render("Done  enter")}
 	// Whole when it fits (details above the button); otherwise the details go.
@@ -236,7 +330,10 @@ func (s createRobotScreen) revealSpec(width, height int) revealSpec {
 	if !created.expires.IsZero() {
 		facts = append(facts, "Expires  "+exactExpiry(created.expires))
 	}
-	if created.repository != "" {
+	switch {
+	case created.project != "":
+		facts = append(facts, "Scope  project "+created.project, "Role  "+grantRoleLabel(created.role), "Covers  every repository in "+created.project)
+	case created.repository != "":
 		facts = append(facts, "Repository  "+created.repository, "Role  "+grantRoleLabel(created.role))
 	}
 	return revealSpec{

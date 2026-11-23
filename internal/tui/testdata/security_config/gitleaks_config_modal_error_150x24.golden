@@ -8,17 +8,17 @@
       Users                    │  │ Secret scan  │  override.                                       │                                  [x] enabled │
       Robots                   │  │ Timeout      │  [x] Enabled                                     │                                           2m │
       Repository access        │  │ Max concurr  │  Timeout                                         │                                            2 │
-                               │  │ c edit conf  │   2mx▏                                           │                                              │
-  SECURITY                     │  ╰────────────  │  Max Concurrency                                 │  ────────────────────────────────────────────╯
-      Image scanning           │  ╭────────────  │   2                                              │  ────────────────────────────────────────────╮
-    ▸ Secret scanning          │  │ PER-REPOSIT  │  invalid timeout: time: unknown unit "mx" in     │                                              │
-      Signing policy           │  │ REPOSITORY   │  duration "2mx"                                  │   ENABLED  DETAIL                UPDATED     │
-                               │  │ team/api     │                                                  │   yes      config path set       12 Nov      │
-  OPERATIONS                   │  │ team/docs    │   Save  enter   Cancel  esc                      │   no       scanning off          2 Nov       │
-      Scan runs                │  │ team/web     │  tab next field, space toggles                   │   —        global settings       -           │
-      Secret findings          │  │ team/infra   ╰──────────────────────────────────────────────────╯   —        global settings       -           │
-      Update channel           │  │                                                                                                                │
-                               │  │                                                                                                                │
-                               │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+      Projects                 │  │ c edit conf  │   2mx▏                                           │                                              │
+                               │  ╰────────────  │  Max Concurrency                                 │  ────────────────────────────────────────────╯
+  SECURITY                     │  ╭────────────  │   2                                              │  ────────────────────────────────────────────╮
+      Image scanning           │  │ PER-REPOSIT  │  invalid timeout: time: unknown unit "mx" in     │                                              │
+    ▸ Secret scanning          │  │ REPOSITORY   │  duration "2mx"                                  │   ENABLED  DETAIL                UPDATED     │
+      Signing policy           │  │ team/api     │                                                  │   yes      config path set       12 Nov      │
+      Login security           │  │ team/docs    │   Save  enter   Cancel  esc                      │   no       scanning off          2 Nov       │
+                               │  │ team/web     │  tab next field, space toggles                   │   —        global settings       -           │
+  OPERATIONS                   │  │ team/infra   ╰──────────────────────────────────────────────────╯   —        global settings       -           │
+      Scan runs                │  │                                                                                                                │
+      Secret findings          │  │                                                                                                                │
+      Update channel           │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   tab next field   space toggle   enter save   esc cancel                                                                                F2 mouse on  

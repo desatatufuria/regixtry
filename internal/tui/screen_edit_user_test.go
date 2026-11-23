@@ -74,7 +74,7 @@ func TestEditUserViewHasTheBoardsPartsWithoutInventedData(t *testing.T) {
 	out := renderEdit(s, env)
 	for _, want := range []string{"Admin › Access › Users › carol", "user, created 3 Mar 2026", "PROFILE", "Username", "Role", "Enabled", "[x] enabled",
 		"PASSWORD", "Set a new password for carol", "p reset",
-		"REPOSITORY GRANTS", "g grant access", "team/docs", "Reader", "team/api", "Writer", "2 repositories.",
+		"PROJECT ACCESS AND REPOSITORY GRANTS", "g grant access", "team/docs", "Reader", "team/api", "Writer", "0 project roles, 2 repository grants.",
 		"TOKENS", "t manage", "laptop", "4 days left", "ci-local", "61 days left", "old-laptop", "expired",
 		"DANGER AREA", "Disable carol.", "Disable user  d", "space", "enable/disable", "password", "grant access", "tokens", "disable", "back"} {
 		if !strings.Contains(out, want) {
@@ -200,7 +200,7 @@ func TestEditUserUnknownUserAndLoadErrors(t *testing.T) {
 	client.usersErr = nil
 	s, env = editOpen(t, client, "u-4", "carol")
 	out2 = renderEdit(s, env)
-	for _, want := range []string{"Could not load grants: grants exploded", "Could not load tokens: tokens exploded"} {
+	for _, want := range []string{"Could not load access: grants exploded", "Could not load tokens: tokens exploded"} {
 		if !strings.Contains(out2, want) {
 			t.Errorf("lacks %q:\n%s", want, out2)
 		}

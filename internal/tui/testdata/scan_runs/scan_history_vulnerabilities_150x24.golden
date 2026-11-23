@@ -8,17 +8,17 @@
       Users                    │  │ ▸ CRITICAL   CVE-2026-1000     openssl          3.0.0       3.0.1      │  │ completed, trigger push            │  
       Robots                   │  │   HIGH       CVE-2026-1001     glibc            2.38        2.39       │  │                                    │  
       Repository access        │  │   LOW        CVE-2026-1002     ca-certificates  1.0         n/a        │  │ RUN                                │  
-                               │  │                                                                        │  │ Digest            sha256:9c41…e0d2 │  
-  SECURITY                     │  │                                                                        │  │ Started           14 Mar 08:30 UTC │  
-      Image scanning           │  │                                                                        │  │ Finished          14 Mar 08:30 UTC │  
-      Secret scanning          │  │                                                                        │  │ Trivy                       0.58.1 │  
-      Signing policy           │  │                                                                        │  │                                    │  
-                               │  │                                                                        │  │ FINDINGS                           │  
-  OPERATIONS                   │  │                                                                        │  │ Critical                         2 │  
-    ▸ Scan runs                │  │                                                                        │  │ High                             5 │  
-      Secret findings          │  │                                                                        │  │ Medium                          11 │  
-      Update channel           │  │                                                                        │  │ Low                              7 │  
-                               │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
-                               │  enter opens the advisory of the selected finding.                           ╰────────────────────────────────────╯  
+      Projects                 │  │                                                                        │  │ Digest            sha256:9c41…e0d2 │  
+                               │  │                                                                        │  │ Started           14 Mar 08:30 UTC │  
+  SECURITY                     │  │                                                                        │  │ Finished          14 Mar 08:30 UTC │  
+      Image scanning           │  │                                                                        │  │ Trivy                       0.58.1 │  
+      Secret scanning          │  │                                                                        │  │                                    │  
+      Signing policy           │  │                                                                        │  │ FINDINGS                           │  
+      Login security           │  │                                                                        │  │ Critical                         2 │  
+                               │  │                                                                        │  │ High                             5 │  
+  OPERATIONS                   │  │                                                                        │  │ Medium                          11 │  
+    ▸ Scan runs                │  │                                                                        │  │ Low                              7 │  
+      Secret findings          │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
+      Update channel           │  enter opens the advisory of the selected finding.                           ╰────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   ↑↓ move   enter open advisory   ←→ run   tab vulnerabilities / leaks   esc back   q quit                                               F2 mouse on  

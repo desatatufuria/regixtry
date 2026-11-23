@@ -170,6 +170,14 @@ const (
 	slotConsoleRepositories
 	slotConsoleProjects
 	slotConsoleTags
+	// slotProjects, slotProjectMembers and slotGrantProjectRole hold the
+	// project screens of the Access group.
+	slotProjects
+	slotProjectMembers
+	slotGrantProjectRole
+	// slotLoginSecurity holds loginSecurityScreen: Admin > Security > Login
+	// security, addressed via slotFor.
+	slotLoginSecurity
 	numScreenSlots
 )
 
@@ -229,6 +237,14 @@ func slotFor(id screen) (screenSlot, bool) {
 		return slotConsoleProjects, true
 	case screenTags:
 		return slotConsoleTags, true
+	case screenAdminProjects:
+		return slotProjects, true
+	case screenAdminProjectMembers:
+		return slotProjectMembers, true
+	case screenAdminGrantProjectRole:
+		return slotGrantProjectRole, true
+	case screenAdminLoginSecurity:
+		return slotLoginSecurity, true
 	default:
 		return 0, false
 	}
@@ -320,6 +336,10 @@ func newAdminScreenFor(id screen) adminScreen {
 		return newRepoAccessScreen()
 	case screenAdminRobots:
 		return newRobotsScreen()
+	case screenAdminProjects:
+		return newAdminProjectsScreen()
+	case screenAdminLoginSecurity:
+		return newLoginSecurityScreen()
 	default:
 		return nil
 	}

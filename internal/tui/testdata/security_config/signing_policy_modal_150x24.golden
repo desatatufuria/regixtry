@@ -8,17 +8,17 @@
       Users                    │  │ P  │  [x] Pull-time gate enforced                                         │                        TYPE        │
       Robots                   │  │ U  │  Unsigned self-read (space cycles)                                   │                        ECDSA P-256 │
       Repository access        │  │ E  │   pusher                                                             │                        ECDSA P-256 │
-                               │  │ p  │  Trusted Keys (2)                                                    │                                    │
-  SECURITY                     │  │ p  │    Key: 2c1d7289f2db                                                 │                                    │
-      Image scanning           │  │ w  │    Key: aaf7110bc769                                                 │   OIDC ISSUER                      │
-      Secret scanning          │  │ L  │  Trusted Identities (1)                                              │   https://token.actions.githubuse… │
-    ▸ Signing policy           │  │    │    Identity: https://github.com/team/.* (https://token.actions.git…  │  y is enough.                      │
-                               │  ╰──  │  Clear all trusted keys                                              │  ──────────────────────────────────╯
-  OPERATIONS                   │  ╭──  │                                                                      │  ──────────────────────────────────╮
-      Scan runs                │  │ P  │   Save  enter   Cancel  esc                                          │                                    │
-      Secret findings          │  │ R  │  tab next field, space toggles, n adds and x deletes in a list       │  DETAIL                UPDATED     │
-      Update channel           │  │ t  ╰──────────────────────────────────────────────────────────────────────╯  1 key, 0 identities   9 Nov       │
-                               │  │ +3 more, o opens the list                                                                                      │
-                               │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+      Projects                 │  │ p  │  Trusted Keys (2)                                                    │                                    │
+                               │  │ p  │    Key: 2c1d7289f2db                                                 │                                    │
+  SECURITY                     │  │ w  │    Key: aaf7110bc769                                                 │   OIDC ISSUER                      │
+      Image scanning           │  │ L  │  Trusted Identities (1)                                              │   https://token.actions.githubuse… │
+      Secret scanning          │  │    │    Identity: https://github.com/team/.* (https://token.actions.git…  │  y is enough.                      │
+    ▸ Signing policy           │  ╰──  │  Clear all trusted keys                                              │  ──────────────────────────────────╯
+      Login security           │  ╭──  │                                                                      │  ──────────────────────────────────╮
+                               │  │ P  │   Save  enter   Cancel  esc                                          │                                    │
+  OPERATIONS                   │  │ R  │  tab next field, space toggles, n adds and x deletes in a list       │  DETAIL                UPDATED     │
+      Scan runs                │  │ t  ╰──────────────────────────────────────────────────────────────────────╯  1 key, 0 identities   9 Nov       │
+      Secret findings          │  │ +3 more, o opens the list                                                                                      │
+      Update channel           │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   tab next field   space toggle   enter save   esc cancel                                                                                F2 mouse on  

@@ -8,17 +8,17 @@
       Users                    │  │ ▸ team/api    000000…0002  stale      2 d ago    2 h ago    1     1    │  │ Rescan failed: trivy exited with   │  
       Robots                   │  │   team/api    000000…0003  skipped    3 d ago    3 h ago    -     -    │  │ status 1: failed to download the   │  
       Repository access        │  │   team/api    000000…0004  completed  4 d ago    4 h ago    0     3    │  │ RESULT                             │  
-                               │  │   team/api    000000…0005  completed  5 d ago    5 h ago    1     4    │  │ Digest            sha256:0000…0002 │  
-  SECURITY                     │  │   team/api    000000…0006  completed  6 d ago    6 h ago    2     0    │  │ Finished          14 Mar 07:31 UTC │  
-      Image scanning           │  │   team/api    000000…0007  completed  7 d ago    7 h ago    0     1    │  │ Trivy                       0.58.1 │  
-      Secret scanning          │  │   team/api    000000…0008  completed  —          —          1     2    │  │ Trivy DB                   2 d ago │  
-      Signing policy           │  │                                                                        │  │ Checked                    2 h ago │  
-                               │  │                                                                        │  │ FINDINGS                           │  
-  OPERATIONS                   │  │                                                                        │  │ Critical                         1 │  
-    ▸ Scan runs                │  │                                                                        │  │ High                             1 │  
-      Secret findings          │  │                                                                        │  │ Medium                          11 │  
-      Update channel           │  ╰────────────────────────────────────────────────────────────────────────╯  │ Low                              7 │  
-                               │  One row per image digest, its latest result. Rescans only when the          │ ACTIONS                            │  
-                               │  vulnerability DB or scan settings change. enter opens its scan history.     ╰────────────────────────────────────╯  
+      Projects                 │  │   team/api    000000…0005  completed  5 d ago    5 h ago    1     4    │  │ Digest            sha256:0000…0002 │  
+                               │  │   team/api    000000…0006  completed  6 d ago    6 h ago    2     0    │  │ Finished          14 Mar 07:31 UTC │  
+  SECURITY                     │  │   team/api    000000…0007  completed  7 d ago    7 h ago    0     1    │  │ Trivy                       0.58.1 │  
+      Image scanning           │  │   team/api    000000…0008  completed  —          —          1     2    │  │ Trivy DB                   2 d ago │  
+      Secret scanning          │  │                                                                        │  │ Checked                    2 h ago │  
+      Signing policy           │  │                                                                        │  │ FINDINGS                           │  
+      Login security           │  │                                                                        │  │ Critical                         1 │  
+                               │  │                                                                        │  │ High                             1 │  
+  OPERATIONS                   │  │                                                                        │  │ Medium                          11 │  
+    ▸ Scan runs                │  ╰────────────────────────────────────────────────────────────────────────╯  │ Low                              7 │  
+      Secret findings          │  One row per image digest, its latest result. Rescans only when the          │ ACTIONS                            │  
+      Update channel           │  vulnerability DB or scan settings change. enter opens its scan history.     ╰────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   ↑↓ move   enter scan history   r refresh   esc back   q quit                                                                           F2 mouse on  

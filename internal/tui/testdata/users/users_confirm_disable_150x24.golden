@@ -8,17 +8,17 @@
     ▸ Users                    │           │  The user cannot sign in and their tokens stop working.      │
       Robots                   │           │                                                              │
       Repository access        │           │  ╭────────────────────────────────────────────────────────╮  │
-                               │           │  │ carol                                                  │  │
-  SECURITY                     │           │  │ user, enabled, created 3 Mar 2026                      │  │
-      Image scanning           │           │  ╰────────────────────────────────────────────────────────╯  │
-      Secret scanning          │           │                                                              │
-      Signing policy           │           │  Grants are kept. Enable carol again to restore access.      │
-                               │           │                                                              │
-  OPERATIONS                   │           │   Confirm                                        y / enter   │
-      Scan runs                │           │   Cancel                                               esc   │
-      Secret findings          │           ╰──────────────────────────────────────────────────────────────╯
+      Projects                 │           │  │ carol                                                  │  │
+                               │           │  │ user, enabled, created 3 Mar 2026                      │  │
+  SECURITY                     │           │  ╰────────────────────────────────────────────────────────╯  │
+      Image scanning           │           │                                                              │
+      Secret scanning          │           │  Grants are kept. Enable carol again to restore access.      │
+      Signing policy           │           │                                                              │
+      Login security           │           │   Confirm                                        y / enter   │
+                               │           │   Cancel                                               esc   │
+  OPERATIONS                   │           ╰──────────────────────────────────────────────────────────────╯
+      Scan runs                │
+      Secret findings          │
       Update channel           │
-                               │
-                               │
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   y / enter confirm   esc cancel                                                                                                                      

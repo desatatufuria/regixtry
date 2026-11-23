@@ -1,0 +1,23 @@
+# Login hardening, wave 2 (observability)
+Objective: make login failures visible to operators: an aggregated `login.failed` access event persisted in Postgres, a read-only admin endpoint with the live backoff state, and TUI surfaces (Overview attention row, Security screen, events history). Branch: `feature/login-w2` (tracker, stacked on `feature/projects` f05b39a, local; NEVER merge into develop). Wave 1 (T1-T4: trusted proxies and IP log, bcrypt limiter and 64-hex fast path, per-account backoff in log mode by default, common-password blocklist) is already in develop. Study: scratchpad `study-login-hardening.md` sections 1.4, 5.1, 5.4, 5.9. Runner: `go test`.
+
+## Specs
+- S1 Every login failure is already logged with IP and reason by wave 1 (`login failed endpoint= ip= reason= account=`). Wave 2 persists an AGGREGATED record, never one row per failure: one row per (window, endpoint, reason, account key or hash, IP) with a counter, first and last seen, so a flood cannot grow the table without bound; the write rate to Postgres is bounded (in-memory aggregation flushed on an interval and on shutdown; a Postgres outage never blocks or fails a login).
+- S2 New access event action `login.failed` (aggregated) following the existing access-event conventions (`IsKnown`, formatting helpers); fields: window start, endpoint, reason, account (existing accounts by name; unknown usernames ONLY as the short hash used in the log, never the raw name), client IP (as extracted by the trusted-proxy rule), count. Additive migration only; an old binary ignores the new rows or column.
+- S3 Read-only admin API (global admin only, additive under `/admin/v1/security/...`): login failures in a time range (paginated, filters by account/IP/reason), a summary (failures in the last 15 minutes, distinct IPs, distinct accounts), and the live backoff state (mode log|enforce|off, thresholds, accounts currently in backoff with remaining time, names only for existing accounts, hashes otherwise). One admin write: reset the backoff counter of ONE account (global admin only, audited with an access event).
+- S4 TUI: Overview "Needs attention" gets a row ("N failed logins in 15 min; M accounts waiting") with warning tone above a threshold; a Security screen (in the existing Admin menu) showing the effective login settings, the accounts in backoff and the recent failures, with the reset action behind the shared confirm (target + consequence); mouse never destructive; geometry 150x24..220x60; design extended on the board first.
+- S5 Follow-up from the wave 1 review: a router-level test that an enforced backoff 429 writes exactly ONE `login failed ... throttled` log line.
+- S6 No behavior change on any existing endpoint; default modes unchanged (backoff stays in log mode); IP is information only, never a blocking criterion.
+- Out of scope: MFA/TOTP, `-admin-allow-cidrs`, Postgres-shared backoff state, per-IP rate limits (those stay in the reverse proxy).
+
+## Tasks
+- T1 backend: aggregation + persistence + `login.failed` event + migration + read-only/reset admin API (S1,S2,S3,S5,S6) — pending
+- T2 board: Security screen, Overview row, failures history, reset dialog (S4) — pending
+- T3 TUI screens (S4) after T1 and T2 — pending
+- T4 docs (api.md, security.md, operations.md, configuration.md, tui.md) — pending
+
+## Log
+- L1 2026-11-22 user: "te pones con el tema de login que ya hablamos. Con los mismos permisos de review y de continuar de manera automática" and earlier decisions for the package (all recommended): 429 accepted with a 5 min cap, log-only first, in-memory state, `-trusted-proxies` empty by default, blocklist minimum 8, 64-hex fast path, MFA pending.
+- L2 Evidence for the real deployment: nginx 192.168.1.245 sends `X-Real-IP` and appends the real client to `X-Forwarded-For`; the registry port on the VM is 51243.
+- L4 2026-11-23 design decision (spec S2 corrected): the aggregated failures live in a NEW table `auth_login_failures` (not in `auth_access_events`, which has no IP or count columns and would fill the recent-changes log with aggregate rows), so there is NO `login.failed` access-event action; only the audit action `login.backoff.reset` is added. Backend verified (no blockers) and natively reviewed (3 slices approved); corrections sent: rate-limited pre-read flush, per-window row cap with overflow row, default 24 h range for filters, at-least-once counting documented, flaky timing assertion hardened. TUI screens (T3) in flight on feat/login-w2-tui (cut from the backend branch).
+- L3 Standing rules: no Co-Authored-By/Claude-Session/AI attribution; Conventional Commits; never push; never `git stash`; disk above 15 GB; user-facing times in hours/days.

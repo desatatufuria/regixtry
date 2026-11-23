@@ -8,17 +8,17 @@
       Users                    │  Press r to try again.                                                                                               
       Robots                   │                                                                                                                      
       Repository access        │                                                                                                                      
+      Projects                 │                                                                                                                      
                                │                                                                                                                      
   SECURITY                     │                                                                                                                      
     ▸ Image scanning           │                                                                                                                      
       Secret scanning          │                                                                                                                      
       Signing policy           │                                                                                                                      
+      Login security           │                                                                                                                      
                                │                                                                                                                      
   OPERATIONS                   │                                                                                                                      
       Scan runs                │                                                                                                                      
       Secret findings          │                                                                                                                      
       Update channel           │                                                                                                                      
-                               │                                                                                                                      
-                               │                                                                                                                      
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   tab switch tabs   c configure   p policy   o overrides   r refresh   esc back   q quit                                                 F2 mouse on  

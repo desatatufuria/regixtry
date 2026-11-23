@@ -8,18 +8,18 @@
       Users                    │  │   team/api                                                    0a1b2c…2c3d  stale      40 d ago   20 h ago   2     4    │  │                                      │  
       Robots                   │  │   team/web                                                    9c41e0…e0d2  running    —          —          -     -    │  │ RESULT                               │  
       Repository access        │  │   team/docs                                                   9c41e0…e0d2  failed     —          —          -     -    │  │ Digest              sha256:9c41…e0d2 │  
-                               │  │                                                                                                                        │  │ Finished            14 Mar 08:30 UTC │  
-  SECURITY                     │  │                                                                                                                        │  │ Trivy                         0.58.1 │  
-      Image scanning           │  │                                                                                                                        │  │ Trivy DB                     3 d ago │  
-      Secret scanning          │  │                                                                                                                        │  │ Checked                      5 h ago │  
-      Signing policy           │  │                                                                                                                        │  │                                      │  
-                               │  │                                                                                                                        │  │ FINDINGS                             │  
-  OPERATIONS                   │  │                                                                                                                        │  │ Critical                           2 │  
-    ▸ Scan runs                │  │                                                                                                                        │  │ High                               5 │  
-      Secret findings          │  │                                                                                                                        │  │ Medium                            11 │  
-      Update channel           │  │                                                                                                                        │  │ Low                                7 │  
-                               │  │                                                                                                                        │  │                                      │  
-                               │  │                                                                                                                        │  │ ACTIONS                              │  
+      Projects                 │  │                                                                                                                        │  │ Finished            14 Mar 08:30 UTC │  
+                               │  │                                                                                                                        │  │ Trivy                         0.58.1 │  
+  SECURITY                     │  │                                                                                                                        │  │ Trivy DB                     3 d ago │  
+      Image scanning           │  │                                                                                                                        │  │ Checked                      5 h ago │  
+      Secret scanning          │  │                                                                                                                        │  │                                      │  
+      Signing policy           │  │                                                                                                                        │  │ FINDINGS                             │  
+      Login security           │  │                                                                                                                        │  │ Critical                           2 │  
+                               │  │                                                                                                                        │  │ High                               5 │  
+  OPERATIONS                   │  │                                                                                                                        │  │ Medium                            11 │  
+    ▸ Scan runs                │  │                                                                                                                        │  │ Low                                7 │  
+      Secret findings          │  │                                                                                                                        │  │                                      │  
+      Update channel           │  │                                                                                                                        │  │ ACTIONS                              │  
                                │  │                                                                                                                        │  │ Scan history                   enter │  
                                │  │                                                                                                                        │  │ Refresh                            r │  
                                │  │                                                                                                                        │  │                                      │  

@@ -8,17 +8,17 @@
       Users                    │  │ ▸ tea  │  It goes back to the global settings.                        │   │ override                           │
       Robots                   │  │   tea  │                                                              │   │                                    │
       Repository access        │  │   tea  │  ╭────────────────────────────────────────────────────────╮  │   │ OVERRIDE                           │
-                               │  │   tea  │  │ team/api                                               │  │   │ Pull-time gate            enforced │
-  SECURITY                     │  │        │  │ Signing override                                       │  │   │ Unsigned self-read          pusher │
-      Image scanning           │  │        │  ╰────────────────────────────────────────────────────────╯  │   │ Trusted keys                     1 │
-      Secret scanning          │  │        │                                                              │   │ Identities                       1 │
-    ▸ Signing policy           │  │        │  Only this repository changes. Other repositories keep       │   │ Updated                      9 Nov │
-                               │  │        │  their overrides.                                            │   │                                    │
-  OPERATIONS                   │  │        │                                                              │   │ ACTIONS                            │
-      Scan runs                │  │        │   Clear override                                 y / enter   │   │ Edit override                    o │
-      Secret findings          │  │        │   Cancel                                               esc   │   │ Refresh                          r │
-      Update channel           │  ╰──────  ╰──────────────────────────────────────────────────────────────╯   │                                    │
-                               │  An override replaces the global policy for that repository. o edits         │                                    │
-                               │  the override of the selected repository.                                    ╰────────────────────────────────────╯
+      Projects                 │  │   tea  │  │ team/api                                               │  │   │ Pull-time gate            enforced │
+                               │  │        │  │ Signing override                                       │  │   │ Unsigned self-read          pusher │
+  SECURITY                     │  │        │  ╰────────────────────────────────────────────────────────╯  │   │ Trusted keys                     1 │
+      Image scanning           │  │        │                                                              │   │ Identities                       1 │
+      Secret scanning          │  │        │  Only this repository changes. Other repositories keep       │   │ Updated                      9 Nov │
+    ▸ Signing policy           │  │        │  their overrides.                                            │   │                                    │
+      Login security           │  │        │                                                              │   │ ACTIONS                            │
+                               │  │        │   Clear override                                 y / enter   │   │ Edit override                    o │
+  OPERATIONS                   │  │        │   Cancel                                               esc   │   │ Refresh                          r │
+      Scan runs                │  ╰──────  ╰──────────────────────────────────────────────────────────────╯   │                                    │
+      Secret findings          │  An override replaces the global policy for that repository. o edits         │                                    │
+      Update channel           │  the override of the selected repository.                                    ╰────────────────────────────────────╯
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   y / enter clear override   esc cancel                                                                                                  F2 mouse on  

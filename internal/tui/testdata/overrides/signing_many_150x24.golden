@@ -8,17 +8,17 @@
       Users                    │  │   team/service-190   inherited  —        global policy     -           │  │ override                           │  
       Robots                   │  │   team/service-191   inherited  —        global policy     -           │  │                                    │  
       Repository access        │  │   team/service-192   inherited  —        global policy     -           │  │ OVERRIDE                           │  
-                               │  │   team/service-193   inherited  —        global policy     -           │  │ Pull-time gate        not enforced │  
-  SECURITY                     │  │   team/service-194   inherited  —        global policy     -           │  │ Unsigned self-read             off │  
-      Image scanning           │  │   team/service-195   inherited  —        global policy     -           │  │ Trusted keys                     0 │  
-      Secret scanning          │  │   team/service-196   inherited  —        global policy     -           │  │ Identities                       0 │  
-    ▸ Signing policy           │  │   team/service-197   inherited  —        global policy     -           │  │ Updated                      2 Nov │  
-                               │  │   team/service-198   inherited  —        global policy     -           │  │                                    │  
-  OPERATIONS                   │  │   team/service-199   inherited  —        global policy     -           │  │ ACTIONS                            │  
-      Scan runs                │  │   team/api           override   yes      1 key, 1 identi…  9 Nov       │  │ Edit override                    o │  
-      Secret findings          │  │ ▸ team/docs          override   no       not enforced      2 Nov       │  │ Refresh                          r │  
-      Update channel           │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
-                               │  An override replaces the global policy for that repository. o edits         │                                    │  
-                               │  the override of the selected repository.                                    ╰────────────────────────────────────╯  
+      Projects                 │  │   team/service-193   inherited  —        global policy     -           │  │ Pull-time gate        not enforced │  
+                               │  │   team/service-194   inherited  —        global policy     -           │  │ Unsigned self-read             off │  
+  SECURITY                     │  │   team/service-195   inherited  —        global policy     -           │  │ Trusted keys                     0 │  
+      Image scanning           │  │   team/service-196   inherited  —        global policy     -           │  │ Identities                       0 │  
+      Secret scanning          │  │   team/service-197   inherited  —        global policy     -           │  │ Updated                      2 Nov │  
+    ▸ Signing policy           │  │   team/service-198   inherited  —        global policy     -           │  │                                    │  
+      Login security           │  │   team/service-199   inherited  —        global policy     -           │  │ ACTIONS                            │  
+                               │  │   team/api           override   yes      1 key, 1 identi…  9 Nov       │  │ Edit override                    o │  
+  OPERATIONS                   │  │ ▸ team/docs          override   no       not enforced      2 Nov       │  │ Refresh                          r │  
+      Scan runs                │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
+      Secret findings          │  An override replaces the global policy for that repository. o edits         │                                    │  
+      Update channel           │  the override of the selected repository.                                    ╰────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   ↑↓ move   o override   r refresh   esc back   q quit                                                                                   F2 mouse on  

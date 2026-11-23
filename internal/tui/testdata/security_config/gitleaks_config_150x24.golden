@@ -8,17 +8,17 @@
       Users                    │  │ Secret scanning                                                                                    [x] enabled │  
       Robots                   │  │ Timeout                                                                                                     2m │  
       Repository access        │  │ Max concurrency                                                                                              2 │  
-                               │  │ c edit configuration.                                                                                          │  
-  SECURITY                     │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  
-      Image scanning           │  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  
-    ▸ Secret scanning          │  │ PER-REPOSITORY OVERRIDES                                                                                       │  
-      Signing policy           │  │ REPOSITORY                                               STATUS     ENABLED  DETAIL                UPDATED     │  
-                               │  │ team/api                                                 override   yes      config path set       12 Nov      │  
-  OPERATIONS                   │  │ team/docs                                                override   no       scanning off          2 Nov       │  
-      Scan runs                │  │ team/web                                                 inherited  —        global settings       -           │  
-      Secret findings          │  │ team/infra                                               inherited  —        global settings       -           │  
-      Update channel           │  │                                                                                                                │  
-                               │  │                                                                                                                │  
+      Projects                 │  │ c edit configuration.                                                                                          │  
                                │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  
+  SECURITY                     │  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  
+      Image scanning           │  │ PER-REPOSITORY OVERRIDES                                                                                       │  
+    ▸ Secret scanning          │  │ REPOSITORY                                               STATUS     ENABLED  DETAIL                UPDATED     │  
+      Signing policy           │  │ team/api                                                 override   yes      config path set       12 Nov      │  
+      Login security           │  │ team/docs                                                override   no       scanning off          2 Nov       │  
+                               │  │ team/web                                                 inherited  —        global settings       -           │  
+  OPERATIONS                   │  │ team/infra                                               inherited  —        global settings       -           │  
+      Scan runs                │  │                                                                                                                │  
+      Secret findings          │  │                                                                                                                │  
+      Update channel           │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   c configure   o overrides   x disable   u upgrade runtime   r refresh   esc back   q quit                                              F2 mouse on  

@@ -109,6 +109,31 @@ type AdminClient interface {
 	// cursor a previous page returned as Next, "" for the first page; a zero
 	// limit leaves the server default.
 	ListAllRepositoryGrants(ctx context.Context, session AdminSession, limit int, after string) (ports.AdminGrantPage, error)
+	// ListProjects returns every project with its repository and tag counts,
+	// ordered by name (global administrator only).
+	ListProjects(ctx context.Context, session AdminSession) ([]ports.ProjectSummary, error)
+	CreateProject(ctx context.Context, session AdminSession, name string) (ports.ProjectSummary, error)
+	GetProject(ctx context.Context, session AdminSession, name string) (ports.ProjectSummary, error)
+	// DeleteProject removes an EMPTY project; a project that still holds
+	// repositories is a 409 and a server without -delete-enabled a 422.
+	DeleteProject(ctx context.Context, session AdminSession, name string) error
+	// ListProjectMembers returns one page of the users and robots holding a
+	// project role. after is the opaque cursor a previous page returned as
+	// Next, "" for the first page; a zero limit leaves the server default.
+	ListProjectMembers(ctx context.Context, session AdminSession, project string, limit int, after string) (ports.AdminProjectMemberPage, error)
+	PutProjectMember(ctx context.Context, session AdminSession, input ports.AdminPutProjectGrantInput) (ports.AdminProjectMember, error)
+	DeleteProjectMember(ctx context.Context, session AdminSession, project string, username string) error
+	// ListUserProjectGrants returns the project roles of one user, by project
+	// (global administrator only).
+	ListUserProjectGrants(ctx context.Context, session AdminSession, userID string) ([]ports.AdminProjectGrant, error)
+	// ListLoginFailures, GetLoginSummary and GetLoginBackoff are the read-only
+	// login security views of the Overview and the Login security screen;
+	// ResetLoginBackoff is their one write (clears the failure counter of one
+	// account and nothing else). All four are global administrator only.
+	ListLoginFailures(ctx context.Context, session AdminSession, query AdminLoginFailuresQuery) (ports.AdminLoginFailurePage, error)
+	GetLoginSummary(ctx context.Context, session AdminSession) (ports.AdminLoginSummary, error)
+	GetLoginBackoff(ctx context.Context, session AdminSession) (ports.AdminLoginBackoff, error)
+	ResetLoginBackoff(ctx context.Context, session AdminSession, account string) (string, error)
 }
 
 type HTTPAdminClient struct {
@@ -678,12 +703,14 @@ func (c *HTTPAdminClient) CreateRobot(ctx context.Context, session AdminSession,
 	var created ports.AdminCreatedRobot
 	body := struct {
 		Name       string `json:"name"`
-		Repository string `json:"repository"`
+		Repository string `json:"repository,omitempty"`
+		Project    string `json:"project,omitempty"`
 		Role       string `json:"role"`
 		TTLSeconds int64  `json:"ttl_seconds,omitempty"`
 	}{
 		Name:       strings.TrimSpace(input.Name),
 		Repository: strings.TrimSpace(input.Repository),
+		Project:    strings.TrimSpace(input.Project),
 		Role:       string(input.Role),
 	}
 	if input.TTL > 0 {
@@ -870,13 +897,71 @@ func decodeAdminAPIError(action string, resp *stdhttp.Response) error {
 	}
 
 	if resp.StatusCode == stdhttp.StatusNotFound {
-		return adminNotFoundError{message: fmt.Sprintf("%s: %s", action, message)}
+		return adminNotFoundError{message: fmt.Sprintf("%s: %s", action, message), detail: message}
+	}
+	switch resp.StatusCode {
+	case stdhttp.StatusForbidden, stdhttp.StatusConflict, stdhttp.StatusUnprocessableEntity, stdhttp.StatusServiceUnavailable:
+		return adminStatusError{status: resp.StatusCode, message: fmt.Sprintf("%s: %s", action, message), detail: message}
 	}
 	return fmt.Errorf("%s: %s", action, message)
 }
 
+// adminStatusError is a 403, 409, 422 or 503 from the admin API: its text is
+// the usual "<action>: <message>" and detail is the server's bare message, so
+// a screen can show the refusal without the transport prefix.
+type adminStatusError struct {
+	status  int
+	message string
+	detail  string
+}
+
+func (e adminStatusError) Error() string { return e.message }
+
+func adminStatusOf(err error) (status int, detail string, ok bool) {
+	var typed adminStatusError
+	if errors.As(err, &typed) {
+		return typed.status, typed.detail, true
+	}
+	return 0, "", false
+}
+
+// IsAdminForbidden reports whether err is a 403 from the admin API.
+func IsAdminForbidden(err error) bool { return hasAdminStatus(err, stdhttp.StatusForbidden) }
+
+// IsAdminConflict reports whether err is a 409 from the admin API.
+func IsAdminConflict(err error) bool { return hasAdminStatus(err, stdhttp.StatusConflict) }
+
+// IsAdminUnprocessable reports whether err is a 422 from the admin API.
+func IsAdminUnprocessable(err error) bool {
+	return hasAdminStatus(err, stdhttp.StatusUnprocessableEntity)
+}
+
+// IsAdminUnavailable reports whether err is a 503 from the admin API.
+func IsAdminUnavailable(err error) bool { return hasAdminStatus(err, stdhttp.StatusServiceUnavailable) }
+
+func hasAdminStatus(err error, status int) bool {
+	got, _, ok := adminStatusOf(err)
+	return ok && got == status
+}
+
+// adminErrorDetail is the server's bare message of a typed admin error, or the
+// error's own text for any other error.
+func adminErrorDetail(err error) string {
+	if err == nil {
+		return ""
+	}
+	if _, detail, ok := adminStatusOf(err); ok && detail != "" {
+		return detail
+	}
+	var notFound adminNotFoundError
+	if errors.As(err, &notFound) && notFound.detail != "" {
+		return notFound.detail
+	}
+	return err.Error()
+}
+
 // adminNotFoundError is a 404 from the admin API; its text is the usual one.
-type adminNotFoundError struct{ message string }
+type adminNotFoundError struct{ message, detail string }
 
 func (e adminNotFoundError) Error() string { return e.message }
 

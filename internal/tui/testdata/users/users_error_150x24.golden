@@ -8,17 +8,17 @@
     ▸ Users                    │  ╰────────────────────────────────────────────────────────────────────────╯  │ admin, enabled, created 3 Mar 2026 │  
       Robots                   │  ╭────────────────────────────────────────────────────────────────────────╮  │                                    │  
       Repository access        │  │   USERNAME                               ROLE       STATE     EXPIRING │  │ ACTIONS                            │  
-                               │  │ ▸ admin                                  admin      enabled   ?        │  │ Open profile                 enter │  
-  SECURITY                     │  │   alice                                  user       enabled   ?        │  │ Grant access                     g │  
-      Image scanning           │  │   bob                                    read-only  enabled   ?        │  │ Tokens                           t │  
-      Secret scanning          │  │   carol                                  user       enabled   ?        │  │ Reset password                   p │  
-      Signing policy           │  │   dave                                   user       disabled  ?        │  │ Disable user                     d │  
-                               │  │                                                                        │  │                                    │  
-  OPERATIONS                   │  │                                                                        │  │ NEEDS ATTENTION                    │  
-      Scan runs                │  │                                                                        │  │ Nothing needs attention.           │  
-      Secret findings          │  │                                                                        │  │                                    │  
-      Update channel           │  │                                                                        │  │                                    │  
-                               │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
-                               │  Could not load expiring tokens: expiring exploded                           ╰────────────────────────────────────╯  
+      Projects                 │  │ ▸ admin                                  admin      enabled   ?        │  │ Open profile                 enter │  
+                               │  │   alice                                  user       enabled   ?        │  │ Grant access                     g │  
+  SECURITY                     │  │   bob                                    read-only  enabled   ?        │  │ Tokens                           t │  
+      Image scanning           │  │   carol                                  user       enabled   ?        │  │ Reset password                   p │  
+      Secret scanning          │  │   dave                                   user       disabled  ?        │  │ Disable user                     d │  
+      Signing policy           │  │                                                                        │  │                                    │  
+      Login security           │  │                                                                        │  │ NEEDS ATTENTION                    │  
+                               │  │                                                                        │  │ Nothing needs attention.           │  
+  OPERATIONS                   │  │                                                                        │  │                                    │  
+      Scan runs                │  │                                                                        │  │                                    │  
+      Secret findings          │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
+      Update channel           │  Could not load expiring tokens: expiring exploded                           ╰────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   ↑↓ move   enter open   / search   n new user   g grant access   t tokens   p password   d disable   r refresh   esc back   q quit                   

@@ -207,12 +207,16 @@ func shellNavScreen(id shellNavID) screen {
 		return screenAdminRobots
 	case shellNavRepositoryAccess:
 		return screenAdminRepositoryAccess
+	case shellNavProjects:
+		return screenAdminProjects
 	case shellNavImageScanning:
 		return screenSecurityTrivy
 	case shellNavSecretScanning:
 		return screenSecurityGitleaksConfig
 	case shellNavSigningPolicy:
 		return screenSecuritySigningConfig
+	case shellNavLoginSecurity:
+		return screenAdminLoginSecurity
 	case shellNavScanRuns:
 		return screenAdminScanRuns
 	case shellNavSecretFindings:

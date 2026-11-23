@@ -8,17 +8,17 @@
       Users                    │  │  ▸ stable                                            current  │  │ Current version unknown (development build) │  
       Robots                   │  │   Default channel.                                            │  │ Update               no newer release known │  
       Repository access        │  │    insider                                                    │  │ The background update check compares the    │  
-                               │  │   Alternative channel for the update check.                   │  │ current version with the latest tag on the  │  
-  SECURITY                     │  │ Unchanged: stable (press space to pick the other channel)     │  │ selected channel.                           │  
-      Image scanning           │  ╰───────────────────────────────────────────────────────────────╯  ╰─────────────────────────────────────────────╯  
+      Projects                 │  │   Alternative channel for the update check.                   │  │ current version with the latest tag on the  │  
+                               │  │ Unchanged: stable (press space to pick the other channel)     │  │ selected channel.                           │  
+  SECURITY                     │  ╰───────────────────────────────────────────────────────────────╯  ╰─────────────────────────────────────────────╯  
+      Image scanning           │                                                                                                                      
       Secret scanning          │                                                                                                                      
       Signing policy           │                                                                                                                      
+      Login security           │                                                                                                                      
                                │                                                                                                                      
   OPERATIONS                   │                                                                                                                      
       Scan runs                │                                                                                                                      
       Secret findings          │                                                                                                                      
     ▸ Update channel           │                                                                                                                      
-                               │                                                                                                                      
-                               │                                                                                                                      
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   space toggle stable/insider   enter save   r refresh   esc back   q quit                                                                            

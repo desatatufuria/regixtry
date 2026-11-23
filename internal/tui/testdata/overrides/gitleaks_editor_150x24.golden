@@ -8,17 +8,17 @@
       Users                    │  │ ▸ team/api   │  Gitleaks override                               │      │  │ override                           │
       Robots                   │  │   team/docs  │  team/api. override active.                      │      │  │                                    │
       Repository access        │  │   team/web   │  [x] Scanning enabled                            │      │  │ OVERRIDE                           │
-                               │  │   team/infr  │  Config path                                     │      │  │ Scanning                        on │
-  SECURITY                     │  │              │   /etc/gitleaks.toml                             │      │  │ Config path     /etc/gitleaks.toml │
-      Image scanning           │  │              │  Clear override, use the global settings         │      │  │ Updated                     12 Nov │
-    ▸ Secret scanning          │  │              │                                                  │      │  │                                    │
-      Signing policy           │  │              │   Save  enter   Cancel  esc                      │      │  │ ACTIONS                            │
-                               │  │              │  tab next field, space toggles                   │      │  │ Edit override                    o │
-  OPERATIONS                   │  │              ╰──────────────────────────────────────────────────╯      │  │ Refresh                          r │
-      Scan runs                │  │                                                                        │  │                                    │
-      Secret findings          │  │                                                                        │  │                                    │
-      Update channel           │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │
-                               │  o edits the override of the selected repository. An override replaces       │                                    │
-                               │  the global settings for it.                                                 ╰────────────────────────────────────╯
+      Projects                 │  │   team/infr  │  Config path                                     │      │  │ Scanning                        on │
+                               │  │              │   /etc/gitleaks.toml                             │      │  │ Config path     /etc/gitleaks.toml │
+  SECURITY                     │  │              │  Clear override, use the global settings         │      │  │ Updated                     12 Nov │
+      Image scanning           │  │              │                                                  │      │  │                                    │
+    ▸ Secret scanning          │  │              │   Save  enter   Cancel  esc                      │      │  │ ACTIONS                            │
+      Signing policy           │  │              │  tab next field, space toggles                   │      │  │ Edit override                    o │
+      Login security           │  │              ╰──────────────────────────────────────────────────╯      │  │ Refresh                          r │
+                               │  │                                                                        │  │                                    │
+  OPERATIONS                   │  │                                                                        │  │                                    │
+      Scan runs                │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │
+      Secret findings          │  o edits the override of the selected repository. An override replaces       │                                    │
+      Update channel           │  the global settings for it.                                                 ╰────────────────────────────────────╯
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   tab next field   space toggle   enter save   esc cancel                                                                                F2 mouse on  

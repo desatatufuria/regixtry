@@ -8,18 +8,18 @@
       Users                    │  │   REPOSITORY                                                           CRIT  HIGH  LAST SCAN        STATUS     ENABLED │  │ team/service-199                     │  
       Robots                   │  │   team/service-172                                                     -     -     never            inherited  —       │  │ inherits the global settings         │  
       Repository access        │  │   team/service-173                                                     -     -     never            inherited  —       │  │                                      │  
-                               │  │   team/service-174                                                     -     -     never            inherited  —       │  │ OVERRIDE                             │  
-  SECURITY                     │  │   team/service-175                                                     -     -     never            inherited  —       │  │ Uses the global settings. o creates  │  
-    ▸ Image scanning           │  │   team/service-176                                                     -     -     never            inherited  —       │  │ an override for this repository.     │  
-      Secret scanning          │  │   team/service-177                                                     -     -     never            inherited  —       │  │                                      │  
-      Signing policy           │  │   team/service-178                                                     -     -     never            inherited  —       │  │ ACTIONS                              │  
-                               │  │   team/service-179                                                     -     -     never            inherited  —       │  │ Edit override                      o │  
-  OPERATIONS                   │  │   team/service-180                                                     -     -     never            inherited  —       │  │ Scan history                   enter │  
-      Scan runs                │  │   team/service-181                                                     -     -     never            inherited  —       │  │ Refresh                            r │  
-      Secret findings          │  │   team/service-182                                                     -     -     never            inherited  —       │  │                                      │  
-      Update channel           │  │   team/service-183                                                     -     -     never            inherited  —       │  │                                      │  
-                               │  │   team/service-184                                                     -     -     never            inherited  —       │  │                                      │  
-                               │  │   team/service-185                                                     -     -     never            inherited  —       │  │                                      │  
+      Projects                 │  │   team/service-174                                                     -     -     never            inherited  —       │  │ OVERRIDE                             │  
+                               │  │   team/service-175                                                     -     -     never            inherited  —       │  │ Uses the global settings. o creates  │  
+  SECURITY                     │  │   team/service-176                                                     -     -     never            inherited  —       │  │ an override for this repository.     │  
+    ▸ Image scanning           │  │   team/service-177                                                     -     -     never            inherited  —       │  │                                      │  
+      Secret scanning          │  │   team/service-178                                                     -     -     never            inherited  —       │  │ ACTIONS                              │  
+      Signing policy           │  │   team/service-179                                                     -     -     never            inherited  —       │  │ Edit override                      o │  
+      Login security           │  │   team/service-180                                                     -     -     never            inherited  —       │  │ Scan history                   enter │  
+                               │  │   team/service-181                                                     -     -     never            inherited  —       │  │ Refresh                            r │  
+  OPERATIONS                   │  │   team/service-182                                                     -     -     never            inherited  —       │  │                                      │  
+      Scan runs                │  │   team/service-183                                                     -     -     never            inherited  —       │  │                                      │  
+      Secret findings          │  │   team/service-184                                                     -     -     never            inherited  —       │  │                                      │  
+      Update channel           │  │   team/service-185                                                     -     -     never            inherited  —       │  │                                      │  
                                │  │   team/service-186                                                     -     -     never            inherited  —       │  │                                      │  
                                │  │   team/service-187                                                     -     -     never            inherited  —       │  │                                      │  
                                │  │   team/service-188                                                     -     -     never            inherited  —       │  │                                      │  

@@ -2,6 +2,7 @@ package compose
 
 import (
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -19,5 +20,17 @@ func TestEmbeddedComposeAssetMatchesRepoRootFile(t *testing.T) {
 	}
 	if string(repoRootBytes) != string(ComposeAsset) {
 		t.Fatalf("repo-root docker-compose.yml has drifted from the embedded asset (internal/infra/install/compose/assets/docker-compose.yml); keep both files byte-identical")
+	}
+}
+
+// The project-enforcement opt-out must reach the container: only variables
+// listed under the service environment are forwarded, and an empty value must
+// stay empty (serve treats it as unset, so the default applies).
+func TestComposeAssetForwardsRequireProjectWithEmptyDefault(t *testing.T) {
+	t.Parallel()
+
+	const want = `REGISTRY_REQUIRE_PROJECT: "${REGIXTRY_REQUIRE_PROJECT:-}"`
+	if !strings.Contains(string(ComposeAsset), want) {
+		t.Fatalf("compose asset does not forward %s", want)
 	}
 }

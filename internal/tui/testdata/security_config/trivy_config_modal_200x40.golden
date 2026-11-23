@@ -8,18 +8,18 @@
       Users                    │  │ TRIVY CONFIGURATION                                                                           │  │ SCAN POLICY                                                   │
       Robots                   │  │ Scheduled scans                                                                   [x] enabled │  │ Policy                                            [x] enabled │
       Repository access        │  │ Interval                                                                                  24h │  │ Severity threshold                              CRITICAL+HIGH │
-                               │  │ Timeout                                                                                    5m │  │ A scan that reaches the threshold blocks the pull. p edit     │
-  SECURITY                     │  │ Max concurrency                       ╭──────────────────────────────────────────────────╮  2 │  │ policy.                                                       │
-    ▸ Image scanning           │  │ Registry reachable URL                │  Trivy configuration                             │  0 │  │ Last saved 2 Nov 2026 10:14 UTC.                              │
-      Secret scanning          │  │ c edit configuration.                 │  Applies to every repository without an          │    │  │                                                               │
-      Signing policy           │  ╰─────────────────────────────────────  │  override.                                       │  ──╯  ╰───────────────────────────────────────────────────────────────╯
-                               │  ╭─────────────────────────────────────  │  [x] Scheduled scans                             │  ─────────────────────────────────────────────────────────────────────╮
-  OPERATIONS                   │  │ LAST SWEEP                            │  Interval                                        │                                                                       │
-      Scan runs                │  │ no sweep yet                          │   24h                                            │                                                                       │
-      Secret findings          │  ╰─────────────────────────────────────  │  Timeout                                         │  ─────────────────────────────────────────────────────────────────────╯
-      Update channel           │  ╭─────────────────────────────────────  │   5m                                             │  ─────────────────────────────────────────────────────────────────────╮
-                               │  │ PER-REPOSITORY OVERRIDES              │  Registry Reachable URL                          │                                                                       │
-                               │  │ REPOSITORY                            │   http://regixtry:5000                           │                 STATUS     ENABLED  DETAIL                UPDATED     │
+      Projects                 │  │ Timeout                                                                                    5m │  │ A scan that reaches the threshold blocks the pull. p edit     │
+                               │  │ Max concurrency                       ╭──────────────────────────────────────────────────╮  2 │  │ policy.                                                       │
+  SECURITY                     │  │ Registry reachable URL                │  Trivy configuration                             │  0 │  │ Last saved 2 Nov 2026 10:14 UTC.                              │
+    ▸ Image scanning           │  │ c edit configuration.                 │  Applies to every repository without an          │    │  │                                                               │
+      Secret scanning          │  ╰─────────────────────────────────────  │  override.                                       │  ──╯  ╰───────────────────────────────────────────────────────────────╯
+      Signing policy           │  ╭─────────────────────────────────────  │  [x] Scheduled scans                             │  ─────────────────────────────────────────────────────────────────────╮
+      Login security           │  │ LAST SWEEP                            │  Interval                                        │                                                                       │
+                               │  │ no sweep yet                          │   24h                                            │                                                                       │
+  OPERATIONS                   │  ╰─────────────────────────────────────  │  Timeout                                         │  ─────────────────────────────────────────────────────────────────────╯
+      Scan runs                │  ╭─────────────────────────────────────  │   5m                                             │  ─────────────────────────────────────────────────────────────────────╮
+      Secret findings          │  │ PER-REPOSITORY OVERRIDES              │  Registry Reachable URL                          │                                                                       │
+      Update channel           │  │ REPOSITORY                            │   http://regixtry:5000                           │                 STATUS     ENABLED  DETAIL                UPDATED     │
                                │  │ team/api                              │  Max Concurrency                                 │                 override   yes      ignore file set       14 Nov      │
                                │  │ team/docs                             │   2                                              │                 override   no       scanning off          2 Nov       │
                                │  │ team/web                              │                                                  │                 inherited  —        global settings       -           │

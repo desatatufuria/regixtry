@@ -8,17 +8,17 @@
       Users                    │  │   REPOSITORY           CRIT  HIGH  LAST SCAN        STATUS     ENABLED │  │ team/api                           │  
       Robots                   │  │ ▸ team/api             2     5     ok 3 h ago       override   yes     │  │ override                           │  
       Repository access        │  │   team/web             -     -     failed 2 d ago   inherited  —       │  │ OVERRIDE                           │  
-                               │  │   team/docs            0     0     ok 45 d ago      override   no      │  │ Scanning                        on │  
-  SECURITY                     │  │   team/infra           1     0     ok 1 y ago       inherited  —       │  │ Ignore file      /etc/trivy/ignore │  
-    ▸ Image scanning           │  │                                                                        │  │ Ignore policy                    - │  
-      Secret scanning          │  │                                                                        │  │ Updated                     14 Nov │  
-      Signing policy           │  │                                                                        │  │ LATEST SCAN                        │  
-                               │  │                                                                        │  │ Reference                    1.4.2 │  
-  OPERATIONS                   │  │                                                                        │  │ Runs                             7 │  
-      Scan runs                │  │                                                                        │  │ ACTIONS                            │  
-      Secret findings          │  │                                                                        │  │ Edit override                    o │  
-      Update channel           │  ╰────────────────────────────────────────────────────────────────────────╯  │ Scan history                 enter │  
-                               │  One row per repository, severity first. enter opens its scan history,       │ Refresh                          r │  
-                               │  o edits its override.                                                       ╰────────────────────────────────────╯  
+      Projects                 │  │   team/docs            0     0     ok 45 d ago      override   no      │  │ Scanning                        on │  
+                               │  │   team/infra           1     0     ok 1 y ago       inherited  —       │  │ Ignore file      /etc/trivy/ignore │  
+  SECURITY                     │  │                                                                        │  │ Ignore policy                    - │  
+    ▸ Image scanning           │  │                                                                        │  │ Updated                     14 Nov │  
+      Secret scanning          │  │                                                                        │  │ LATEST SCAN                        │  
+      Signing policy           │  │                                                                        │  │ Reference                    1.4.2 │  
+      Login security           │  │                                                                        │  │ Runs                             7 │  
+                               │  │                                                                        │  │ ACTIONS                            │  
+  OPERATIONS                   │  │                                                                        │  │ Edit override                    o │  
+      Scan runs                │  ╰────────────────────────────────────────────────────────────────────────╯  │ Scan history                 enter │  
+      Secret findings          │  One row per repository, severity first. enter opens its scan history,       │ Refresh                          r │  
+      Update channel           │  o edits its override.                                                       ╰────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   tab switch tabs   ↑↓ move   o override   enter scan history   r refresh   esc back   q quit                                            F2 mouse on  

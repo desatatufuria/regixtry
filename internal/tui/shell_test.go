@@ -79,8 +79,8 @@ func TestShellSidebarGroupsAndLabelsAreExact(t *testing.T) {
 	want := []string{
 		"regixtry admin",
 		"▸ Overview",
-		"ACCESS", "Users", "Robots", "Repository access",
-		"SECURITY", "Image scanning", "Secret scanning", "Signing policy",
+		"ACCESS", "Users", "Robots", "Repository access", "Projects",
+		"SECURITY", "Image scanning", "Secret scanning", "Signing policy", "Login security",
 		"OPERATIONS", "Scan runs", "Secret findings", "Update channel",
 	}
 	if strings.Join(sidebar, "|") != strings.Join(want, "|") {

@@ -8,17 +8,17 @@
       Users                    │  │ ▸ team/api           override   yes      1 key, 1 identi…  9 Nov       │  │ override                           │  
       Robots                   │  │   team/docs          override   no       not enforced      2 Nov       │  │                                    │  
       Repository access        │  │   team/web           inherited  —        global policy     -           │  │ OVERRIDE                           │  
-                               │  │   team/infra         inherited  —        global policy     -           │  │ Pull-time gate            enforced │  
-  SECURITY                     │  │                                                                        │  │ Unsigned self-read          pusher │  
-      Image scanning           │  │                                                                        │  │ Trusted keys                     1 │  
-      Secret scanning          │  │                                                                        │  │ Identities                       1 │  
-    ▸ Signing policy           │  │                                                                        │  │ Updated                      9 Nov │  
-                               │  │                                                                        │  │                                    │  
-  OPERATIONS                   │  │                                                                        │  │ ACTIONS                            │  
-      Scan runs                │  │                                                                        │  │ Edit override                    o │  
-      Secret findings          │  │                                                                        │  │ Refresh                          r │  
-      Update channel           │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
-                               │  An override replaces the global policy for that repository. o edits         │                                    │  
-                               │  the override of the selected repository.                                    ╰────────────────────────────────────╯  
+      Projects                 │  │   team/infra         inherited  —        global policy     -           │  │ Pull-time gate            enforced │  
+                               │  │                                                                        │  │ Unsigned self-read          pusher │  
+  SECURITY                     │  │                                                                        │  │ Trusted keys                     1 │  
+      Image scanning           │  │                                                                        │  │ Identities                       1 │  
+      Secret scanning          │  │                                                                        │  │ Updated                      9 Nov │  
+    ▸ Signing policy           │  │                                                                        │  │                                    │  
+      Login security           │  │                                                                        │  │ ACTIONS                            │  
+                               │  │                                                                        │  │ Edit override                    o │  
+  OPERATIONS                   │  │                                                                        │  │ Refresh                          r │  
+      Scan runs                │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
+      Secret findings          │  An override replaces the global policy for that repository. o edits         │                                    │  
+      Update channel           │  the override of the selected repository.                                    ╰────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   ↑↓ move   o override   r refresh   esc back   q quit                                                                                   F2 mouse on  

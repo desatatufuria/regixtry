@@ -8,17 +8,17 @@
       Users                    │  │   REPOSITOR  │  team/api. override active.                      │  LED │  │ team/api                           │
       Robots                   │  │ ▸ team/api   │  [x] Scanning enabled                            │      │  │ override                           │
       Repository access        │  │   team/web   │  Ignore file path                                │      │  │ OVERRIDE                           │
-                               │  │   team/docs  │   /etc/trivy/ignore                              │      │  │ Scanning                        on │
-  SECURITY                     │  │   team/infr  │  Ignore policy path                              │      │  │ Ignore file      /etc/trivy/ignore │
-    ▸ Image scanning           │  │              │                                                  │      │  │ Ignore policy                    - │
-      Secret scanning          │  │              │  Clear override, use the global settings         │      │  │ Updated                     14 Nov │
-      Signing policy           │  │              │  ignore_file_path must be an absolute path       │      │  │ LATEST SCAN                        │
-                               │  │              │                                                  │      │  │ Reference                    1.4.2 │
-  OPERATIONS                   │  │              │   Save  enter   Cancel  esc                      │      │  │ Runs                             7 │
-      Scan runs                │  │              │  tab next field, space toggles                   │      │  │ ACTIONS                            │
-      Secret findings          │  │              ╰──────────────────────────────────────────────────╯      │  │ Edit override                    o │
-      Update channel           │  ╰────────────────────────────────────────────────────────────────────────╯  │ Scan history                 enter │
-                               │  One row per repository, severity first. enter opens its scan history,       │ Refresh                          r │
-                               │  o edits its override.                                                       ╰────────────────────────────────────╯
+      Projects                 │  │   team/docs  │   /etc/trivy/ignore                              │      │  │ Scanning                        on │
+                               │  │   team/infr  │  Ignore policy path                              │      │  │ Ignore file      /etc/trivy/ignore │
+  SECURITY                     │  │              │                                                  │      │  │ Ignore policy                    - │
+    ▸ Image scanning           │  │              │  Clear override, use the global settings         │      │  │ Updated                     14 Nov │
+      Secret scanning          │  │              │  ignore_file_path must be an absolute path       │      │  │ LATEST SCAN                        │
+      Signing policy           │  │              │                                                  │      │  │ Reference                    1.4.2 │
+      Login security           │  │              │   Save  enter   Cancel  esc                      │      │  │ Runs                             7 │
+                               │  │              │  tab next field, space toggles                   │      │  │ ACTIONS                            │
+  OPERATIONS                   │  │              ╰──────────────────────────────────────────────────╯      │  │ Edit override                    o │
+      Scan runs                │  ╰────────────────────────────────────────────────────────────────────────╯  │ Scan history                 enter │
+      Secret findings          │  One row per repository, severity first. enter opens its scan history,       │ Refresh                          r │
+      Update channel           │  o edits its override.                                                       ╰────────────────────────────────────╯
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   tab next field   space toggle   enter save   esc cancel                                                                                F2 mouse on  

@@ -8,17 +8,17 @@
     ▸ Users                    │  │ PROFILE                                              │  │ TOKENS                                      t manage │  
       Robots                   │  │ Username                                        dave │  │ No tokens.                                           │  
       Repository access        │  │ Role                                            user │  │                                                      │  
-                               │  │ Enabled                                 [ ] disabled │  │                                                      │  
-  SECURITY                     │  ╰──────────────────────────────────────────────────────╯  │                                                      │  
-      Image scanning           │  ╭──────────────────────────────────────────────────────╮  │                                                      │  
-      Secret scanning          │  │ PASSWORD                                             │  ╰──────────────────────────────────────────────────────╯  
-      Signing policy           │  │ Set a new password for dave                  p reset │  ╭──────────────────────────────────────────────────────╮  
-                               │  ╰──────────────────────────────────────────────────────╯  │ DANGER AREA                                          │  
-  OPERATIONS                   │  ╭──────────────────────────────────────────────────────╮  │ dave is disabled and cannot sign in. Enabling        │  
-      Scan runs                │  │ REPOSITORY GRANTS                     g grant access │  │ restores their access; their grants were kept.       │  
-      Secret findings          │  │ No repository grants.                                │  │ ╭────────────────╮                                   │  
-      Update channel           │  │                                                      │  │ │ Enable user  d │                                   │  
-                               │  │                                                      │  │ ╰────────────────╯                                   │  
-                               │  ╰──────────────────────────────────────────────────────╯  ╰──────────────────────────────────────────────────────╯  
+      Projects                 │  │ Enabled                                 [ ] disabled │  │                                                      │  
+                               │  ╰──────────────────────────────────────────────────────╯  │                                                      │  
+  SECURITY                     │  ╭──────────────────────────────────────────────────────╮  │                                                      │  
+      Image scanning           │  │ PASSWORD                                             │  ╰──────────────────────────────────────────────────────╯  
+      Secret scanning          │  │ Set a new password for dave                  p reset │  ╭──────────────────────────────────────────────────────╮  
+      Signing policy           │  ╰──────────────────────────────────────────────────────╯  │ DANGER AREA                                          │  
+      Login security           │  ╭──────────────────────────────────────────────────────╮  │ dave is disabled and cannot sign in. Enabling        │  
+                               │  │ PROJECT ACCESS AND REPOSITORY GRANTS  g grant access │  │ restores their access; their grants were kept.       │  
+  OPERATIONS                   │  │ dave has no project roles and no repository grants.  │  │ ╭────────────────╮                                   │  
+      Scan runs                │  │ Press g to grant access.                             │  │ │ Enable user  d │                                   │  
+      Secret findings          │  │                                                      │  │ ╰────────────────╯                                   │  
+      Update channel           │  ╰──────────────────────────────────────────────────────╯  ╰──────────────────────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   space enable/disable   p password   g grant access   t tokens   d disable   r refresh   esc back   q quit                                           

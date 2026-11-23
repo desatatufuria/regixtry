@@ -1,0 +1,24 @@
+  Admin › Security › Login security                                                                                            signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                      
+                               │  Login security                                                                                   backoff mode: off  
+    Overview                   │   Backoff is off: failures are counted and nobody is delayed.                                                        
+                               │  FAILED LOGINS, 15 MIN 42   DISTINCT IPS 5   DISTINCT ACCOUNTS 9   ACCOUNTS WAITING 0 (off, nobody is delayed)       
+  ACCESS                       │  ╭─ EFFECTIVE SETTINGS ─────────────────────────────────────────────────── Set by service flags. Read-only here. ─╮  
+      Users                    │  │ Backoff mode                                       off  Max delay                                        5 min │  
+      Robots                   │  │ Failure threshold               5 failures per account  Concurrency limit             8 logins checked at once │  
+      Repository access        │  │ Base delay                                 under 1 min  Trusted proxies                         configured: no │  
+      Projects                 │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  
+                               │  ╭─ ACCOUNTS WAITING ─────────────────────────────────────────────────────────────────────────────────────────────╮  
+  SECURITY                     │  │   ACCOUNT                                                                                   FAILS  WOULD WAIT  │  
+      Image scanning           │  │ Nobody is waiting.                                                                                             │  
+      Secret scanning          │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  
+      Signing policy           │  ╭─ RECENT FAILURES ─────────────────────────────────────────────────────────────────────────────────── / filter ─╮  
+    ▸ Login security           │  │   LAST SEEN     ENDPOINT  REASON        ACCOUNT                      IP                                COUNT   │  
+                               │  │   09:29         token     bad password  alice                        203.0.113.7                           7 █ │  
+  OPERATIONS                   │  │   09:24         token     unknown user  unknown #ab12cd              198.51.100.4                         12 █ │  
+      Scan runs                │  │   09:19         token     throttled     unknown #ab12cd              198.51.100.4                          3 █ │  
+      Secret findings          │  │   09:14         v2        bad token     -                            2001:db8:85a3:0:0:8a2e:370:7334       2 │ │  
+      Update channel           │  ╰─ newest first  ▾ 1-4 of 5 ─────────────────────────────────────────────────────────────────────────────────────╯  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ↑↓ move   tab next panel   / filter   r refresh   esc back   q quit                                                                    F2 mouse on  
