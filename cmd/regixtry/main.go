@@ -2506,9 +2506,11 @@ func resolveRequireProject(flags *flag.FlagSet, cfg *serveConfig) error {
 	})
 	if !explicit {
 		if value := strings.TrimSpace(os.Getenv("REGISTRY_REQUIRE_PROJECT")); value != "" {
-			if parsed, err := strconv.ParseBool(value); err == nil {
-				cfg.RequireProject, explicit = parsed, true
+			parsed, err := strconv.ParseBool(value)
+			if err != nil {
+				return fmt.Errorf("invalid REGISTRY_REQUIRE_PROJECT %q: use true, false, 1 or 0", value)
 			}
+			cfg.RequireProject, explicit = parsed, true
 		}
 	}
 	hasDSN := strings.TrimSpace(cfg.AuthPostgresDSN) != ""
