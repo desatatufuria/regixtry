@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -784,9 +785,13 @@ func TestServicePublishManifestReturnsBeforeScanCompletes(t *testing.T) {
 // observable while the runner is still blocked.
 type blockingScanRunner struct {
 	release chan struct{}
+	// entered counts Run calls that have started, so a test can wait until
+	// a scan is really blocked in the runner before swapping it.
+	entered atomic.Int32
 }
 
 func (b *blockingScanRunner) Run(ctx context.Context, imageRef string, settings ports.ScanSettings) (ports.ScanResult, error) {
+	b.entered.Add(1)
 	select {
 	case <-b.release:
 	case <-ctx.Done():
