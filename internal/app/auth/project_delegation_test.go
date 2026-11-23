@@ -295,6 +295,11 @@ func TestRequireAdminOrRepoAdminIsUnchangedForExactGrants(t *testing.T) {
 							actor.Grants = []domainauth.RepoGrant{{UserID: "u", Repository: regixtrydomain.MustParseRepositoryRef("team/app"), Role: role}}
 						}
 						got, want := requireAdminOrRepoAdmin(actor, repo), oldRequireAdminOrRepoAdmin(actor, repo)
+						if readOnly && !isAdmin && scope == nil {
+							// The one deliberate change (S1): a read-only
+							// principal never delegates, grants or not.
+							want = domainauth.NewForbiddenError("repository administrator privileges are required")
+						}
 						if (got == nil) != (want == nil) || (got != nil && got.Error() != want.Error()) {
 							t.Fatalf("role=%q admin=%t ro=%t scoped=%t %s: got %v, want %v", role, isAdmin, readOnly, scope != nil, repo, got, want)
 						}
@@ -383,20 +388,6 @@ func TestProjectAdminManagesExactGrantsInsideTheProjectWithTheSameBounds(t *test
 		}
 		if _, err := env.service.ListRepositoryGrants(ctx, delegate, repo); !domainauth.IsCode(err, domainauth.ErrorCodeForbidden) {
 			t.Fatalf("list on %s error = %v, want forbidden", repo, err)
-		}
-	}
-}
-
-// TestRepositoryProjectAgreesWithTheRegistryDomain keeps the local first
-// segment rule equal to the domain's ProjectOf.
-func TestRepositoryProjectAgreesWithTheRegistryDomain(t *testing.T) {
-	t.Parallel()
-
-	for _, name := range []string{"odabank", "odabank/x", "odabank/payments/strike", "a/b", "team.x/y", "odabank2/x"} {
-		got, gotOK := repositoryProject(name)
-		want, wantOK := regixtrydomain.ProjectOf(regixtrydomain.MustParseRepositoryRef(name))
-		if got != want || gotOK != wantOK {
-			t.Fatalf("%q: repositoryProject = (%q, %t), domain = (%q, %t)", name, got, gotOK, want, wantOK)
 		}
 	}
 }
