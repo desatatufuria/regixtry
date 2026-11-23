@@ -1,0 +1,40 @@
+  Console › Projects › odabank                                                                                                                                                                          
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+    odabank                                                                                                                                                                  5 repositories, 15 tags
+
+    ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  ╭──────────────────────────────────────────╮
+    │   NAME                                                                                                         REPOS    TAGS  LAST PUSH        │  │ SELECTED                                 │
+    │ ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── │  │ odabank/ledger                           │
+    │ ▸   ● ledger                                                                                                       1       1  2026-11-21 08:41 │  │                                          │
+    │   ▸ ● payments                                                                                                     3       9  2026-11-20 08:41 │  │ Repository      yes                      │
+    │   ▸   zeta/                                                                                                        1       5  2026-11-17 08:41 │  │ Folder          no                       │
+    │                                                               ╭──────────────────────────────────────────────────────────────╮                 │  │ In this folder  1 repository             │
+    │                                                               │  Delete repository odabank/ledger                            │                 │  │                 1 tag                    │
+    │                                                               │                                                              │                 │  │ Last push       2026-11-21 08:41         │
+    │                                                               │  The repository is removed with 1 tag and every manifest,    │                 │  │ Access                                   │
+    │                                                               │  in one transaction.                                         │                 │  │ project odabank roles + exact grants     │
+    │                                                               │                                                              │                 │  │                                          │
+    │                                                               │  ╭────────────────────────────────────────────────────────╮  │                 │  │ enter opens the tags of odabank/ledger.  │
+    │                                                               │  │ odabank/ledger                                         │  │                 │  │                                          │
+    │                                                               │  │ 1 tag, last pushed 2026-11-21 08:41                    │  │                 │  │                                          │
+    │                                                               │  ╰────────────────────────────────────────────────────────╯  │                 │  │                                          │
+    │                                                               │                                                              │                 │  │                                          │
+    │                                                               │  Pulls by tag and by digest stop working at once. Blob       │                 │  │                                          │
+    │                                                               │  files stay until garbage collection. This cannot be         │                 │  │                                          │
+    │                                                               │  undone.                                                     │                 │  │                                          │
+    │                                                               │                                                              │                 │  │                                          │
+    │                                                               │   Delete                                         y / enter   │                 │  │                                          │
+    │                                                               │   Cancel                                               esc   │                 │  │                                          │
+    │                                                               ╰──────────────────────────────────────────────────────────────╯                 │  │                                          │
+    │                                                                                                                                                │  │                                          │
+    │                                                                                                                                                │  │                                          │
+    │                                                                                                                                                │  │                                          │
+    │                                                                                                                                                │  │                                          │
+    │                                                                                                                                                │  │                                          │
+    ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  ╰──────────────────────────────────────────╯
+
+    ● repository  ▸ collapsed folder  ▾ expanded folder. A row with both is a repository that also has children.
+    Folders carry no permissions. Grant access on the project or on a repository.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ↑↓ move   →/l expand   ←/h collapse   enter open tags   f into folder   bksp/esc up one level   q quit                                                                                   F2 mouse on  
