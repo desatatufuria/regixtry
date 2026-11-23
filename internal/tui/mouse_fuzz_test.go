@@ -206,6 +206,11 @@ func fuzzTargets() []mouseCase {
 			return runCmd(t, updated.(Model), cmd)
 		}})
 	}
+	// The folder tree under a project: clicks toggle folders, select and open,
+	// and none of them may ever delete.
+	targets = append(targets, mouseCase{name: "console folder tree", build: func(t *testing.T, w, h int) Model {
+		return consoleMouseModel(t, screenRepositories, newConsoleRepositoriesScreen(consoleRepos(treeNames...)).narrowedTo("odabank"), w, h)
+	}})
 	return targets
 }
 

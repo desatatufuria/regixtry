@@ -327,10 +327,29 @@ Reached at start; no login. `Tab` opens the admin area (needs `-api-base-url`). 
 
 | Screen | Keys |
 | --- | --- |
-| **Repositories** | `↑` `↓` / `j` `k`, `PgUp`/`PgDn`, `Home`/`End` move; `Enter` tags; `p` projects; `g` delegate access ([above](#delegating-access-repository-administrators)); `d` delete repository; `Tab` admin; `Esc` show all (inside a project); `q` quit |
+| **Repositories** | `↑` `↓` / `j` `k`, `PgUp`/`PgDn`, `Home`/`End` move; `Enter` tags; `p` projects; `g` delegate access ([above](#delegating-access-repository-administrators)); `d` delete repository; `Tab` admin; `Esc` show all (inside a project); `q` quit. Inside a project it is a [folder tree](#folder-tree) |
 | **Projects** (the first path segment of a repository name) | move; `Enter` its repositories; `d` delete project; `s` sort (name, date); `Tab`; `Esc` back; `q` |
 | **Tags** | move; `Enter` manifest; `d` delete tag; `s` sort (name, date); `Tab`; `Esc` back; `q` |
 | **Manifest, blobs, uploads** | `b` blobs, `u` uploads, `Esc`/`Backspace` back; `d`, `x` show "Delete unavailable" |
+
+### Folder tree
+
+Inside a project (`Enter` on a project) the Repositories screen is a folder tree over the slash-separated repository names. It is visual only: a folder is a name prefix, with no record, no permission and no backend call; it is derived on the client from the catalog the screen already holds. A repository that is also a folder (`odabank/payments` and `odabank/payments/strike`) is one row with both roles. Flat repositories (no `/`) are under the `(ungrouped)` project.
+
+Rows show `▸` (collapsed) or `▾` (expanded) for a folder, `●` for a repository, and the name (`/` after a folder-only name). `REPOS`, `TAGS` and `LAST PUSH` of a folder sum everything below it. The breadcrumb names the place (`Console › Projects › odabank › payments`).
+
+| Key | Does |
+| --- | --- |
+| `→` / `l` | expand the folder |
+| `←` / `h` | collapse it; on a leaf or a collapsed folder, move to the parent row |
+| `Enter` | open the tags of a repository row; on a folder-only row, go into it |
+| `f` | go into any folder (re-roots the view; a root that is also a repository keeps its own row first) |
+| `Backspace` / `Esc` | up one level; at the project root `Esc` shows every repository again |
+| `p`, `g`, `d`, `Tab`, `q` | as before; `d` and `g` act on repository rows only |
+
+Expansion and the cursor are kept by path when the catalog reloads (a vanished row moves the cursor to its nearest surviving ancestor). The mouse selects a row, a click on the fold marker opens or closes a folder, and the wheel scrolls; it never opens a delete. From 170 columns a detail panel shows the selected row.
+
+Two choices differ from a plain tree: `Enter` on a folder-only row goes into it (it does not toggle), and `Esc` at the project root keeps its older meaning (show every repository) instead of returning to Projects. `d` on a folder does nothing.
 
 Deletes ask the confirm dialog and need the server flag `-delete-enabled` / `REGISTRY_DELETE_ENABLED`; without it they fail with "... deletion is not enabled".
 
